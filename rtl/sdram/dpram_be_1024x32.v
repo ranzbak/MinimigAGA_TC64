@@ -77,6 +77,7 @@ module dpram_be_1024x32 (
 	wire [31:0] q_a = sub_wire0[31:0];
 	wire [31:0] q_b = sub_wire1[31:0];
 
+`ifdef MINIMIG_ALTERA
 	altsyncram	altsyncram_component (
 				.byteena_a (byteena_a),
 				.clock0 (clock),
@@ -130,6 +131,22 @@ module dpram_be_1024x32 (
 		altsyncram_component.width_byteena_a = 4,
 		altsyncram_component.width_byteena_b = 4,
 		altsyncram_component.wrcontrol_wraddress_reg_b = "CLOCK0";
+`endif
+
+`ifndef MINIMIG_ALTERA
+// Generic dual port RAM.          
+dpram_inf_generic #(.depth(10),.width(32)) gen_ram_1024_32(
+     .clock(clock),           
+     .address_a(address_a), // Address bus
+     .address_b(address_b),           
+     .data_a(data_a),  // data in                          
+     .data_b(data_b),                                
+     .q_a(sub_wire0),     // data out                             
+     .q_b(sub_wire1),                                    
+     .wren_a(wren_a), // Write enable                      
+     .wren_b(wren_b)                                       
+);                                                      
+`endif
 
 
 endmodule

@@ -103,8 +103,8 @@ wire [ 3-1:0] cpu_adr_blk;
 wire [ 8-1:0] cpu_adr_idx;
 wire [13-1:0] cpu_adr_tag;
 // cache line cache
-reg   [8-1:0] cpu_cacheline_lo[8];
-reg   [8-1:0] cpu_cacheline_hi[8];
+reg   [8-1:0] cpu_cacheline_lo[0:7];
+reg   [8-1:0] cpu_cacheline_hi[0:7];
 reg  [25-1:4] cpu_cacheline_adr;
 wire          cpu_cacheline_valid;
 reg           cpu_cacheline_dirty;

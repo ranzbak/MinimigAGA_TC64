@@ -35,3 +35,7 @@
 // `define MINIMIG_SERIAL_AUDIO
 `endif
 
+// OpenAARS
+`ifdef MINIMIG_OPENAARS
+
+`endif

@@ -26,7 +26,7 @@
 module akiko
 (
 	input	clk,
-  input clk7_en.
+    input clk7_en,
 	input	reset,
 	input	[23:1] address_in,
 	input	[15:0] data_in,

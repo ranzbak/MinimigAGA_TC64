@@ -573,7 +573,9 @@ assign host_adr  = mem_adr[23:0];
 `endif // MINIMIG_HOST_DIRECT
 
 // rtl version
+`ifndef MINIMIG_XILINX
 `include "minimig_version.vh"
+`endif
 reg  [8-1:0] rtl_ver;
 always @ (*) begin
   case (dat_cnt[2:0])

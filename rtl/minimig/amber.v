@@ -82,7 +82,7 @@ module amber
   output reg            _hsync_out=0,   // horizontal synchronisation out
   output reg            _vsync_out=0,   // vertical synchronisation out
   output reg				_csync_out=0,
-  output wire            selcsync=0,
+  output wire            selcsync,
   output wire				osd_blank_out,
   output wire				osd_pixel_out
 );

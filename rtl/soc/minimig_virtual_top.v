@@ -275,12 +275,13 @@ assign rtg_pixel=(rtg_ena && (!rtg_blank || (!rtg_blank_d && rtg_ext)) && rtg_pi
 wire rtg_clut_pixel;
 assign rtg_clut_pixel = rtg_clut_in_sel & !rtg_clut_in_sel_d; // Detect rising edge;
 reg rtg_pixel_d;
-// Export a VGA pixel strobe for the dither module.
-assign VGA_PIXEL=rtg_ena ? (rtg_pixel_d | (rtg_clut_pixel & rtg_clut)) : vga_strobe;
 
 reg [2:0] vga_strobe_ctr;
 wire vga_strobe;
 assign vga_strobe = vga_strobe_ctr==3'b000 ? 1'b1 : 1'b0;
+
+// Export a VGA pixel strobe for the dither module.
+assign VGA_PIXEL=rtg_ena ? (rtg_pixel_d | (rtg_clut_pixel & rtg_clut)) : vga_strobe;
 
 assign rtg_blank = rtg_vblank | hblank_out;
 
@@ -322,14 +323,14 @@ begin
 	end
 end
 
+wire [24:4] rtg_baseaddr;
+wire [24:0] rtg_addr;
+wire [15:0] rtg_dat;
+
 assign rtg_clut_idx = rtg_clut_in_sel_d ? rtg_dat[7:0] : rtg_dat[15:8];
 assign rtg_r=rtg_16bit ? {rtg_dat[15:11],rtg_dat[15:13]} : {rtg_dat[14:10],rtg_dat[14:12]};
 assign rtg_g=rtg_16bit ? {rtg_dat[10:5],rtg_dat[10:9]} : {rtg_dat[9:5],rtg_dat[9:7]};
 assign rtg_b={rtg_dat[4:0],rtg_dat[4:2]};
-
-wire [24:4] rtg_baseaddr;
-wire [24:0] rtg_addr;
-wire [15:0] rtg_dat;
 
 wire rtg_ramreq;
 wire [15:0] rtg_fromram;
@@ -479,9 +480,9 @@ assign tg68_cpustate=2'b01;
 assign tg68_nrst_out=1'b1;
 `else
 
-TG68K #(.havertg(havertg ? "true" : "false"),
-			.haveaudio(haveaudio ? "true" : "false"),
-			.havec2p(havec2p ? "true" : "false")
+TG68K #(.havertg(havertg ? 1'b1 : 1'b0),
+			.haveaudio(haveaudio ? 1'b1 : 1'b0),
+			.havec2p(havec2p ? 1'b1 : 1'b0)
 		) tg68k (
   .clk          (CLK_114          ),
   .reset        (tg68_rst         ),
@@ -813,7 +814,7 @@ assign rtg_ena = havertg && rtg_ena_mm;
 
 wire host_interrupt;
 
-EightThirtyTwo_Bridge #( debug ? "true" : "false") hostcpu
+EightThirtyTwo_Bridge #( debug ? 1'b1 : 1'b0) hostcpu
 (
 	.clk(CLK_114),
 	.nReset(reset_out),
@@ -831,7 +832,7 @@ EightThirtyTwo_Bridge #( debug ? "true" : "false") hostcpu
 );
 
 
-cfide #(.spimux(spimux ? "true" : "false"), .havespirtc(havespirtc ? "true" : "false")) mycfide
+cfide #(.spimux(spimux ? 1'b1 : 1'b0), .havespirtc(havespirtc ? 1'b1 : 1'b0)) mycfide
 ( 
 		.sysclk(CLK_114),
 		.n_reset(reset_out),

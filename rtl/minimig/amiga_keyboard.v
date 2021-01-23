@@ -41,30 +41,30 @@ assign osd_ctrl = osd_ctrl_reg;
 
 // serial transmitter
 always @(posedge clk) begin
-	reg [10:0] txcnt;
-	reg  [7:0] txsr;
+    reg [10:0] txcnt;
+    reg  [7:0] txsr;
 
-	if (reset) begin
-		kbclk <= 1;
-		kbdata <= 1;
-	end else if (clk7_en) begin
-		// initialize the transmitter when key_strobe detected
-		if (key_strobe) begin
-			txcnt <= { 3'h7, 8'hff };
-			txsr <= key_data;
-		end
+    if (reset) begin
+        kbclk <= 1;
+        kbdata <= 1;
+    end else if (clk7_en) begin
+        // initialize the transmitter when key_strobe detected
+        if (key_strobe) begin
+            txcnt <= { 3'h7, 8'hff };
+            txsr <= key_data;
+        end
 
-		// first put the data bit on kbdata
-		if (txcnt[7:0] == 8'hff) begin
-			kbdata <= txsr[7];
-			txsr <= { txsr[6:0], 1'b0 };
-		end
-		// then a clock pulse follows
-		if (txcnt[7:0] == 8'hc0) kbclk <= 0;
-		if (txcnt[7:0] == 8'h40) kbclk <= 1;
+        // first put the data bit on kbdata
+        if (txcnt[7:0] == 8'hff) begin
+            kbdata <= txsr[7];
+            txsr <= { txsr[6:0], 1'b0 };
+        end
+        // then a clock pulse follows
+        if (txcnt[7:0] == 8'hc0) kbclk <= 0;
+        if (txcnt[7:0] == 8'h40) kbclk <= 1;
 
-		if (|txcnt) txcnt <= txcnt - 1'd1;
-	end
+        if (|txcnt) txcnt <= txcnt - 1'd1;
+    end
 end
 
 `ifdef MINIMIG_PS2_KEYBOARD
@@ -110,27 +110,27 @@ assign keystrobe = keystrobe_reg | keystrobe_ps2;
 // !!! Amiga receives keycode ONE STEP ROTATED TO THE RIGHT AND INVERTED !!!
 always @(posedge clk) begin
 
-	if(osd_ctrl_strobe_ps2)
-		osd_ctrl_reg<=osd_ctrl_ps2;
-	else if (kbd_mouse_strobe)
-		osd_ctrl_reg<=kbd_mouse_data;
+    if(osd_ctrl_strobe_ps2)
+        osd_ctrl_reg<=osd_ctrl_ps2;
+    else if (kbd_mouse_strobe)
+        osd_ctrl_reg<=kbd_mouse_data;
 
-	if (reset) begin
-		key_data <= 8'h00;
-		key_strobe <= 0;
-	end else if (clk7_en) begin
-		keystrobe_reg<=1'b0;
-		if (keystrobe_ps2 & ~keyboard_disabled) begin
-			key_data <= ~{keydat[6:0],keydat[7]};
-			key_strobe <= 1;
-		end else if (kbd_mouse_strobe & ~keyboard_disabled) begin
-			keystrobe_reg<=1'b1;
-			key_data <= ~{kbd_mouse_data[6:0],kbd_mouse_data[7]};
-			key_strobe <= 1;
-		end else begin
-			key_strobe <= 0;
-		end
-	end
+    if (reset) begin
+        key_data <= 8'h00;
+        key_strobe <= 0;
+    end else if (clk7_en) begin
+        keystrobe_reg<=1'b0;
+        if (keystrobe_ps2 & ~keyboard_disabled) begin
+            key_data <= ~{keydat[6:0],keydat[7]};
+            key_strobe <= 1;
+        end else if (kbd_mouse_strobe & ~keyboard_disabled) begin
+            keystrobe_reg<=1'b1;
+            key_data <= ~{kbd_mouse_data[6:0],kbd_mouse_data[7]};
+            key_strobe <= 1;
+        end else begin
+            key_strobe <= 0;
+        end
+    end
 end
 
 `else
@@ -140,17 +140,17 @@ assign keystrobe=keystrobe_ps2;
 // sdr register
 // !!! Amiga receives keycode ONE STEP ROTATED TO THE RIGHT AND INVERTED !!!
 always @(posedge clk) begin
-	osd_ctrl_reg<=osd_ctrl_ps2;
-	if (reset) begin
-		key_data <= 8'h00;
-		key_strobe <= 0;
-	end else if (clk7_en) begin
-		if (keystrobe_ps2 & ~keyboard_disabled) begin
-			key_strobe <= 1;
-			key_data <= ~{keydat[6:0],keydat[7]};
-		end else begin
-			key_strobe <= 0;
-		end
+    osd_ctrl_reg<=osd_ctrl_ps2;
+    if (reset) begin
+        key_data <= 8'h00;
+        key_strobe <= 0;
+    end else if (clk7_en) begin
+        if (keystrobe_ps2 & ~keyboard_disabled) begin
+            key_strobe <= 1;
+            key_data <= ~{keydat[6:0],keydat[7]};
+        end else begin
+            key_strobe <= 0;
+        end
 end
 `endif
   
@@ -173,32 +173,32 @@ assign keystrobe = keystrobe_reg && ((kbd_mouse_type == 2) || (kbd_mouse_type ==
 
 reg kms_levelD;
 always @(posedge clk) begin
-	if (clk7n_en) begin
-		keystrobe_reg <= 0;
-		kms_levelD <= kms_level;
-		if (kms_level ^ kms_levelD)	keystrobe_reg <= 1;
-	end
+    if (clk7n_en) begin
+        keystrobe_reg <= 0;
+        kms_levelD <= kms_level;
+        if (kms_level ^ kms_levelD) keystrobe_reg <= 1;
+    end
 end
 
 // !!! Amiga receives keycode ONE STEP ROTATED TO THE RIGHT AND INVERTED !!!
 always @(posedge clk) begin
-	if (reset) begin
-		key_strobe <= 0;
-		key_data <= 0;
-		osd_ctrl_reg <= 0;
-	end else if (clk7_en) begin
-		key_strobe <= 0;
-		if (keystrobe && (kbd_mouse_type == 2) && ~keyboard_disabled) begin
-			key_strobe <= 1;
-			key_data <= ~{kbd_mouse_data[6:0],kbd_mouse_data[7]};
-			if (hrtmon_en && (kbd_mouse_data == 8'h5f))
-				freeze_reg <= 1;
-			else
-				freeze_reg <= 0;
-		end
-		if(keystrobe && ((kbd_mouse_type == 2) || (kbd_mouse_type == 3)))
-			osd_ctrl_reg <= kbd_mouse_data;
-	end
+    if (reset) begin
+        key_strobe <= 0;
+        key_data <= 0;
+        osd_ctrl_reg <= 0;
+    end else if (clk7_en) begin
+        key_strobe <= 0;
+        if (keystrobe && (kbd_mouse_type == 2) && ~keyboard_disabled) begin
+            key_strobe <= 1;
+            key_data <= ~{kbd_mouse_data[6:0],kbd_mouse_data[7]};
+            if (hrtmon_en && (kbd_mouse_data == 8'h5f))
+                freeze_reg <= 1;
+            else
+                freeze_reg <= 0;
+        end
+        if(keystrobe && ((kbd_mouse_type == 2) || (kbd_mouse_type == 3)))
+            osd_ctrl_reg <= kbd_mouse_data;
+    end
 end
 
 `endif

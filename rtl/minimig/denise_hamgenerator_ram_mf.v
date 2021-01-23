@@ -65,6 +65,8 @@ module denise_hamgenerator_ram_mf (
 	wire [31:0] sub_wire0;
 	wire [31:0] q = sub_wire0[31:0];
 
+`ifdef MINIMIG_ALTERA
+
 	altsyncram	altsyncram_component (
 				.address_a (wraddress),
 				.byteena_a (byteena_a),
@@ -110,7 +112,22 @@ module denise_hamgenerator_ram_mf (
 		altsyncram_component.width_a = 32,
 		altsyncram_component.width_b = 32,
 		altsyncram_component.width_byteena_a = 4;
+`endif
 
+`ifndef MINIMIG_ALTERA
+	// Dual port RAM.
+  dpram_inf_generic #(.depth(8),.width(32)) hamgenerator_ram(
+      .clock(clock),
+      .address_a(wraddress), // Address bus
+      .address_b(rdaddress),
+      .data_a(data),  // data in
+      .data_b({32{1'b1}}),
+      .q_a(),     // data out
+      .q_b(sub_wire0),
+      .wren_a(wren), // Write enable 
+      .wren_b(1'b0)
+  );
+`endif
 
 endmodule
 

@@ -305,7 +305,7 @@ sel_eth<='0';
   -- 32bit address space for 68020, limit address space to 24bit for 68000/68010
   cpuaddr <= addrtg68 WHEN cpu(1) = '1' ELSE X"00" & addrtg68(23 downto 0);
 
-pf68K_Kernel_inst: work.TG68KdotC_Kernel
+pf68K_Kernel_inst: entity work.TG68KdotC_Kernel
   generic map (
     SR_Read         => 2, -- 0=>user,   1=>privileged,    2=>switchable with CPU(0)
     VBR_Stackframe  => 2, -- 0=>no,     1=>yes/extended,  2=>switchable with CPU(0)
