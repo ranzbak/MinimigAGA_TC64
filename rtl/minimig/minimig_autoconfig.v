@@ -94,8 +94,8 @@ begin
 						3'b001 : begin // ZIII RAM
 								board_configured[1] <= 1'b1;
 								
-								roma_wr[8:6] = 3'b010;
-								roma_wr[5:0] = 6'h05;	// Write address for modifying size of 2nd ZIII RAM.
+								roma_wr[8:6] <= 3'b010;
+								roma_wr[5:0] <= 6'h05;	// Write address for modifying size of 2nd ZIII RAM.
 								ramsize <= |slowram_config ? 4'b1000 : 4'b0111; // 2 meg or 4 meg
 								rom_we<=1'b1;
 								acdevice<=3'b010;

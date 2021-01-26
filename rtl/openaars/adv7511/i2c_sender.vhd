@@ -177,7 +177,7 @@ architecture behave of work.i2c_sender is
 
 begin
 
-   my_i2c_master: entity i2c_master port map (
+   my_i2c_master: entity work.i2c_master port map (
        clk => clk,
        rst => rst,
 

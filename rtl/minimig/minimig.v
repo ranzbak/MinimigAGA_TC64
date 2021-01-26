@@ -146,8 +146,9 @@
 // SB:
 // 2012-03-23 - fixed sprite enable signal (coppermaster demo)
 
-module minimig
-(
+module minimig #(
+    parameter NTSC = 1'b0       //Agnus type (PAL/NTSC)
+)  (
 	//m68k pins
 	input	[23:1] cpu_address,	// m68k address bus
 	output 	[15:0] cpu_data,	// m68k data bus
@@ -272,12 +273,6 @@ module minimig
   input   ext_int2,	// External interrupt for Akiko
   input   ext_int6	// External interrupt for AHI audio
 );
-
-//--------------------------------------------------------------------------------------
-
-	parameter [0:0] NTSC = 1'b0;	//Agnus type (PAL/NTSC)
-
-//--------------------------------------------------------------------------------------
 
 //local signals for data bus
 wire		[15:0] cpu_data_in;		//cpu data bus in

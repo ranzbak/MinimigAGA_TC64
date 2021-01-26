@@ -34,7 +34,7 @@ module minimig_openaars_top (
   output dr_ras_n,
   output dr_cas_n,
   output [1:0] dr_dqm,
-  inout  [15:0] dr_dq,
+  inout  [15:0] dr_d,
   output dr_we_n,
   // ADV7511 video chip
   output dv_clk,
@@ -178,12 +178,12 @@ assign ps2_mdat_i = ps2_data2;
 
 
 // SDCard
-alias  sd_clk    = sd_m_clk;
-alias  sd_mosi   = sd_m_cmd;
+assign sd_clk    = sd_m_clk;
+assign sd_mosi   = sd_m_cmd;
 assign sd_miso   = sd_m_d[0];
 assign sd_m_d[0] = 1'bZ; // Using SPI mode, So we listen
-assign sd_m_d[1] = 1'b1;
-assign sd_m_d[2] = 1'b1;
+//assign sd_m_d[1] = 1'b1;
+//assign sd_m_d[2] = 1'b1;
 assign sd_m_d[3] = (~sd_cs) ? 1'b0 : 1'bZ;
 
 ////////////////////////////////////////
@@ -288,7 +288,7 @@ minimig_virtual_top
   .VGA_R(vga_r),
   .VGA_G(vga_g),
   .VGA_B(vga_b),
-  .SDRAM_DQ(dr_dq),
+  .SDRAM_DQ(dr_d),
   .SDRAM_A(dr_a),
   .SDRAM_DQML(dr_dqm[0]),
   .SDRAM_DQMH(dr_dqm[1]),

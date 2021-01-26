@@ -33,3 +33,6 @@ rtl/minimig/minimig_version.vh
 
 # Ignore Vivado project
 project_1/**
+
+# Ignore the built Rom generator
+fw/romgen/romgen

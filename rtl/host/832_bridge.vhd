@@ -102,7 +102,6 @@ port map(
 	debug_wr => debug_wr
 );
 
-
 gendebugbridge:
 if debug=true generate
 debugbridge : entity work.debug_bridge_jtag
@@ -117,11 +116,10 @@ port map(
 );
 end generate;
 
-
 bootrom: entity work.OSDBoot_832_ROM
 	generic map
 	(
-		maxAddrBitBRAM => 12
+		ADDR_WIDTH => 12
 	)
 	PORT MAP 
 	(

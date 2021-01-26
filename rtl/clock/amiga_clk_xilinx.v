@@ -16,54 +16,76 @@ module amiga_clk_xilinx (
 wire pll_114;
 wire dll_114;
 wire dll_28;
+wire clk_fb_main;
 reg [1:0] clk_7 = 0;
 
-
-// pll
-DCM #(
-  .CLKDV_DIVIDE(2.0), // Divide by: 1.5,2.0,2.5,3.0,3.5,4.0,4.5,5.0,5.5,6.0,6.5,7.0,7.5,8.0,9.0,10.0,11.0,12.0,13.0,14.0,15.0 or 16.0
-  .CLKFX_DIVIDE(17),   // Can be any integer from 1 to 32
-  .CLKFX_MULTIPLY(29), // Can be any integer from 2 to 32
-  .CLKIN_DIVIDE_BY_2("FALSE"), // TRUE/FALSE to enable CLKIN divide by two feature
-  .CLKIN_PERIOD(15.015),  // Specify period of input clock
-  .CLKOUT_PHASE_SHIFT("NONE"), // Specify phase shift of NONE, FIXED or VARIABLE
-  .CLK_FEEDBACK("NONE"),  // Specify clock feedback of NONE, 1X or 2X
-  .DESKEW_ADJUST("SYSTEM_SYNCHRONOUS"), // SOURCE_SYNCHRONOUS, SYSTEM_SYNCHRONOUS or an integer from 0 to 15
-  .DFS_FREQUENCY_MODE("LOW"),  // HIGH or LOW frequency mode for frequency synthesis
-  .DLL_FREQUENCY_MODE("LOW"),  // HIGH or LOW frequency mode for DLL
-  .DUTY_CYCLE_CORRECTION("TRUE"), // Duty cycle correction, TRUE or FALSE
-  .FACTORY_JF(16'h8080),   // FACTORY JF values
-  .PHASE_SHIFT(0),     // Amount of fixed phase shift from -255 to 255
-  .STARTUP_WAIT("TRUE")   // Delay configuration DONE until DCM LOCK, TRUE/FALSE
-) pll (
-  .CLKIN(inclk0),   // Clock input (from IBUFG, BUFG or DCM)
-  .CLKFX(pll_114)   // DCM CLK synthesis out (M/D) (113.611765 MHz)
-);
-
-// dll
-DCM #(
-  .CLKDV_DIVIDE(4.0), // Divide by: 1.5,2.0,2.5,3.0,3.5,4.0,4.5,5.0,5.5,6.0,6.5,7.0,7.5,8.0,9.0,10.0,11.0,12.0,13.0,14.0,15.0 or 16.0
-  .CLKFX_DIVIDE(1),   // Can be any integer from 1 to 32
-  .CLKFX_MULTIPLY(4), // Can be any integer from 2 to 32
-  .CLKIN_DIVIDE_BY_2("FALSE"), // TRUE/FALSE to enable CLKIN divide by two feature
-  .CLKIN_PERIOD(8.802),  // Specify period of input clock
-  .CLKOUT_PHASE_SHIFT("FIXED"), // Specify phase shift of NONE, FIXED or VARIABLE
-  .CLK_FEEDBACK("1X"),  // Specify clock feedback of NONE, 1X or 2X
-  .DESKEW_ADJUST("SYSTEM_SYNCHRONOUS"), // SOURCE_SYNCHRONOUS, SYSTEM_SYNCHRONOUS or an integer from 0 to 15
-  .DFS_FREQUENCY_MODE("LOW"),  // HIGH or LOW frequency mode for frequency synthesis
-  .DLL_FREQUENCY_MODE("LOW"),  // HIGH or LOW frequency mode for DLL
-  .DUTY_CYCLE_CORRECTION("TRUE"), // Duty cycle correction, TRUE or FALSE
-  .FACTORY_JF(16'h8080),   // FACTORY JF values
-  .PHASE_SHIFT(104),     // Amount of fixed phase shift from -255 to 255
-  .STARTUP_WAIT("TRUE")   // Delay configuration DONE until DCM LOCK, TRUE/FALSE
-) dll (
-  .RST(areset),
-  .CLKIN(pll_114),   // Clock input (from IBUFG, BUFG or DCM)
-  .CLK0(dll_114),
-  .CLKDV(dll_28),
-  .CLKFB(c0),
+MMCME2_BASE #(
+  .CLKIN1_PERIOD(20.0),     // 50        MHz (10 ns)
+  .CLKFBOUT_MULT_F(27.375), // 1368.75   MHz *16.875 common multiply
+  .DIVCLK_DIVIDE(1),        // 1368.75   MHz /1 common divide
+  .CLKOUT0_DIVIDE_F(12.0),  // 114.06250 MHz /12 divide
+  .BANDWIDTH("LOW"),
+  .CLKOUT1_DIVIDE(12),      // 114.06250 MHz /12 divide
+  .CLKOUT1_PHASE(-146.250), // -146.250' phase shift
+  .CLKOUT2_DIVIDE(49)       // 27.93367  MHz /49 divide
+) clk_main (
+  .PWRDWN(1'b0),
+  .RST(1'b0),
+  .CLKIN1(inclk0),
+  .CLKFBIN(clk_fb_main),
+  .CLKFBOUT(clk_fb_main),
+  .CLKOUT0(pll_114),        //  200 MHz HDMI base clock
+  .CLKOUT1(dll_114),
+  .CLKOUT2(dll_28),
   .LOCKED(locked)
 );
+
+
+// // pll
+// DCM #(
+//   .CLKDV_DIVIDE(2.0), // Divide by: 1.5,2.0,2.5,3.0,3.5,4.0,4.5,5.0,5.5,6.0,6.5,7.0,7.5,8.0,9.0,10.0,11.0,12.0,13.0,14.0,15.0 or 16.0
+//   .CLKFX_DIVIDE(17),   // Can be any integer from 1 to 32
+//   .CLKFX_MULTIPLY(29), // Can be any integer from 2 to 32
+//   .CLKIN_DIVIDE_BY_2("FALSE"), // TRUE/FALSE to enable CLKIN divide by two feature
+//   .CLKIN_PERIOD(15.015),  // Specify period of input clock
+//   .CLKOUT_PHASE_SHIFT("NONE"), // Specify phase shift of NONE, FIXED or VARIABLE
+//   .CLK_FEEDBACK("NONE"),  // Specify clock feedback of NONE, 1X or 2X
+//   .DESKEW_ADJUST("SYSTEM_SYNCHRONOUS"), // SOURCE_SYNCHRONOUS, SYSTEM_SYNCHRONOUS or an integer from 0 to 15
+//   .DFS_FREQUENCY_MODE("LOW"),  // HIGH or LOW frequency mode for frequency synthesis
+//   .DLL_FREQUENCY_MODE("LOW"),  // HIGH or LOW frequency mode for DLL
+//   .DUTY_CYCLE_CORRECTION("TRUE"), // Duty cycle correction, TRUE or FALSE
+//   .FACTORY_JF(16'h8080),   // FACTORY JF values
+//   .PHASE_SHIFT(0),     // Amount of fixed phase shift from -255 to 255
+//   .STARTUP_WAIT("TRUE")   // Delay configuration DONE until DCM LOCK, TRUE/FALSE
+// ) pll (
+//   .CLKIN(inclk0),   // Clock input (from IBUFG, BUFG or DCM)
+//   .CLKFX(pll_114)   // DCM CLK synthesis out (M/D) (113.611765 MHz)
+// );
+// 
+// // dll
+// DCM #(
+//   .CLKDV_DIVIDE(4.0), // Divide by: 1.5,2.0,2.5,3.0,3.5,4.0,4.5,5.0,5.5,6.0,6.5,7.0,7.5,8.0,9.0,10.0,11.0,12.0,13.0,14.0,15.0 or 16.0
+//   .CLKFX_DIVIDE(1),   // Can be any integer from 1 to 32
+//   .CLKFX_MULTIPLY(4), // Can be any integer from 2 to 32
+//   .CLKIN_DIVIDE_BY_2("FALSE"), // TRUE/FALSE to enable CLKIN divide by two feature
+//   .CLKIN_PERIOD(8.802),  // Specify period of input clock
+//   .CLKOUT_PHASE_SHIFT("FIXED"), // Specify phase shift of NONE, FIXED or VARIABLE
+//   .CLK_FEEDBACK("1X"),  // Specify clock feedback of NONE, 1X or 2X
+//   .DESKEW_ADJUST("SYSTEM_SYNCHRONOUS"), // SOURCE_SYNCHRONOUS, SYSTEM_SYNCHRONOUS or an integer from 0 to 15
+//   .DFS_FREQUENCY_MODE("LOW"),  // HIGH or LOW frequency mode for frequency synthesis
+//   .DLL_FREQUENCY_MODE("LOW"),  // HIGH or LOW frequency mode for DLL
+//   .DUTY_CYCLE_CORRECTION("TRUE"), // Duty cycle correction, TRUE or FALSE
+//   .FACTORY_JF(16'h8080),   // FACTORY JF values
+//   .PHASE_SHIFT(104),     // Amount of fixed phase shift from -255 to 255 -- 145' Shift
+//   .STARTUP_WAIT("TRUE")   // Delay configuration DONE until DCM LOCK, TRUE/FALSE
+// ) dll (
+//   .RST(areset),
+//   .CLKIN(pll_114),   // Clock input (from IBUFG, BUFG or DCM)
+//   .CLK0(dll_114),
+//   .CLKDV(dll_28),
+//   .CLKFB(c0),
+//   .LOCKED(locked)
+// );
 
 // 7MHz clock
 always @ (posedge c1) begin
