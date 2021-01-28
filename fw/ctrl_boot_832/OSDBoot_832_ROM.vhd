@@ -1206,6 +1206,8 @@ begin
 
 
 
+    -- Generate write enable signals
+    -- The Block ram generator doesn't like it when the compare is done in the if statement it self.
     wea <= bytesel when we = '1' else (others => '0');
     web <= bytesel2 when we2 = '1' else (others => '0');
 

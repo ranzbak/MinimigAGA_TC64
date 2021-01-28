@@ -576,6 +576,8 @@ sdram_ctrl sdram (
   .cache_inhibit(cache_inhibit    ),
   .cacheline_clr(cacheline_clr    ),
   .cpu_cache_ctrl (tg68_CACR_out    ),
+
+  // Interface to SDRam
   .sdata        (SDRAM_DQ         ),
   .sdaddr       (SDRAM_A[12:0]    ),
   .dqm          (sdram_dqm        ),
@@ -587,6 +589,7 @@ sdram_ctrl sdram (
   .sysclk       (CLK_114          ),
   .reset_in     (sdctl_rst        ),
   
+  // Host CPU
   .hostWR       (hostWR           ),
   .hostAddr     (hostaddr         ),
   .hostwe       (host_we           ),
@@ -595,6 +598,7 @@ sdram_ctrl sdram (
   .hostRD       (host_ramdata     ),
   .hostena      (host_ramack      ),
 
+  // Amiga CPU
   .cpuWR        (tg68_cin         ),
   .cpuAddr      (tg68_cad[24:1]   ),
   .cpuU         (tg68_cuds        ),
@@ -603,6 +607,7 @@ sdram_ctrl sdram (
   .cpuRD        (tg68_cout        ),
   .cpuena       (tg68_cpuena      ),
 
+  // Amiga chip ram
 //  .cpu_dma      (tg68_cdma        ),
   .chipWR       (ram_data         ),
   .chipWR2      (tg68_dat_out2    ),
@@ -617,11 +622,13 @@ sdram_ctrl sdram (
   .chipRD       (ramdata_in       ),
   .chip48       (chip48           ),
 
+  // RTG memory
   .rtgAddr      (rtg_addr_mangled ),
   .rtgce        (rtg_ramreq       ),
   .rtgfill      (rtg_fill         ),
   .rtgRd        (rtg_fromram      ),
 
+  // Audio memory
   .audAddr      (aud_ramaddr      ),
   .audce        (aud_ramreq       ),
   .audfill      (aud_fill         ),
@@ -667,6 +674,7 @@ reg	[7:0] kbd_mouse_data;
 wire	kbd_reset_n;
 reg	kbd_mouse_stb;
 reg	kbd_mouse_stb_r;
+(* mark_debug = "true", keep = "true" *)
 reg	clk7_en_d;
 
 assign kbd_reset_n = AMIGA_RESET_N;
@@ -818,16 +826,21 @@ EightThirtyTwo_Bridge #( debug ? 1'b1 : 1'b0) hostcpu
 (
 	.clk(CLK_114),
 	.nReset(reset_out),
-	.addr(hostaddr),
-	.q(hostWR),
-	.sel(hostbytesel),
-	.wr(host_we),
-	.hw_d(host_hwdata),
-	.hw_ack(host_hwack),
-	.hw_req(host_hwreq),
+	.addr(hostaddr),        // Address bus
+	.q(hostWR),             // Data out
+	.sel(hostbytesel),      // Byte select ah
+	.wr(host_we),           // Write enable ah
+
+    // To CFIDE Flopp hardware emulation
+	.hw_d(host_hwdata),     // Hardware data in
+	.hw_req(host_hwreq),    // Hardware request
+	.hw_ack(host_hwack),    // Hardware acknowledge
+
+    // To SDRAM
 	.ram_d(host_ramdata),
 	.ram_req(host_ramreq),
 	.ram_ack(host_ramack),
+
 	.interrupt(host_interrupt)
 );
 
@@ -873,7 +886,7 @@ cfide #(.spimux(spimux ? 1'b1 : 1'b0), .havespirtc(havespirtc ? 1'b1 : 1'b0)) my
 		.amiga_wr(tg68_cpustate[0]),
 		.amiga_ack(amigahost_ack),
 
-      .rtc_q(rtc),
+        .rtc_q(rtc),
 
 		.clk_28(CLK_28),
 		.tick_in(aud_tick)

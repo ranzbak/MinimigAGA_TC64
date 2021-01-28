@@ -97,8 +97,11 @@ wire        clk_28;
 wire        clk_114;
 wire        clk_fb_main;
 wire        pll_locked_main;
+wire        pll_locked_minimig;
 // Reset
 wire        reset_n;
+(* mark_debug = "true", keep = "true" *)
+wire        amiga_reset_n;
 // LED
 wire        led_disk;
 // Input
@@ -110,13 +113,21 @@ wire        amiga_tx;
 wire        amiga_rx;
 
 // Video interface
+(* mark_debug = "true", keep = "true" *)
 wire        vga_pixel;
+(* mark_debug = "true", keep = "true" *)
 wire        vga_selcs;
+(* mark_debug = "true", keep = "true" *)
 wire        vga_cs;
+(* mark_debug = "true", keep = "true" *)
 wire        vga_hs;
+(* mark_debug = "true", keep = "true" *)
 wire        vga_vs;
+(* mark_debug = "true", keep = "true" *)
 wire [7:0]  vga_r;
+(* mark_debug = "true", keep = "true" *)
 wire [7:0]  vga_g;
+(* mark_debug = "true", keep = "true" *)
 wire [7:0]  vga_b;
 // SDRAM 
 wire [15:0] sdram_dq;
@@ -146,9 +157,13 @@ wire [7:0]  amiga_key;
 wire [6:0]  joya;
 wire [6:0]  joyb;
 // SD Card
+(* mark_debug = "true", keep = "true" *)
 wire        sd_miso;
+(* mark_debug = "true", keep = "true" *)
 wire        sd_mosi;
+(* mark_debug = "true", keep = "true" *)
 wire        sd_clk;
+(* mark_debug = "true", keep = "true" *)
 wire        sd_cs;
 
 ////////////////////////////////////////
@@ -156,24 +171,27 @@ wire        sd_cs;
 ////////////////////////////////////////
 
 // Reset button
-assign reset_n = sys_reset_in & pll_locked_main; // Only release reset when PLL is stable
+(* mark_debug = "true", keep = "true" *)
+assign reset_n = sys_reset_in & pll_locked_main & pll_locked_minimig; // Only release reset when PLL is stable
+(* mark_debug = "true", keep = "true" *)
 assign menu_button = button_osd;
 
 // LED
 assign led_disk = led_fdisk;
 assign led_hdisk = sdram_ncs; // Workaround for now
+assign led_core = !sd_cs;
 
 // PS2 ports tristate
 // keyboard
-assign ps2_clk1 = (~ps2_clk_o) ? 1'b0 : 1'bZ;
+assign ps2_clk1 = (~ps2_clk_o) ? 1'bZ : 1'b0;
 assign ps2_clk_i = ps2_clk1;
-assign ps2_data1 = (~ps2_dat_o) ? 1'b0 : 1'bZ;
+assign ps2_data1 = (~ps2_dat_o) ? 1'bZ : 1'b0;
 assign ps2_dat_i = ps2_data1;
 
 // Mouse
-assign ps2_clk2 = (~ps2_mclk_o) ? 1'b0 : 1'bZ;
+assign ps2_clk2 = (~ps2_mclk_o) ? 1'bZ : 1'b0;
 assign ps2_mclk_i = ps2_clk2;
-assign ps2_data2 = (~ps2_mdat_o) ? 1'b0 : 1'bZ;
+assign ps2_data2 = (~ps2_mdat_o) ? 1'bZ : 1'b0;
 assign ps2_mdat_i = ps2_data2;
 
 
@@ -182,9 +200,9 @@ assign sd_clk    = sd_m_clk;
 assign sd_mosi   = sd_m_cmd;
 assign sd_miso   = sd_m_d[0];
 assign sd_m_d[0] = 1'bZ; // Using SPI mode, So we listen
-//assign sd_m_d[1] = 1'b1;
-//assign sd_m_d[2] = 1'b1;
-assign sd_m_d[3] = (~sd_cs) ? 1'b0 : 1'bZ;
+assign sd_m_d[1] = 1'bZ;
+assign sd_m_d[2] = 1'bZ;
+assign sd_m_d[3] = sd_cs ? 1'bZ : 1'b0;
 
 ////////////////////////////////////////
 // HDMI Clock                         //
@@ -215,7 +233,7 @@ MMCME2_BASE #(
 // Joystick bits(5-0) = fire2,fire,up,down,left,right mapped to GPIO header
 mcp23s17_input my_joystick_ports (
   .clk(clk_28),
-  .rst(reset_n),
+  .rst(!reset_n),
 
   .inta(js_inta),
 
@@ -233,7 +251,7 @@ mcp23s17_input my_joystick_ports (
 // i2s transmittor
 i2s_tx my_i2s_transmitter (
   .clk(clk_114),
-  .rst(reset_n),
+  .rst(!reset_n),
 
   .prescaler(16),
   .sclk(max_sclk),
@@ -242,6 +260,16 @@ i2s_tx my_i2s_transmitter (
 
   .left_chan(audio_l),
   .right_chan(audio_r)
+);
+
+// Module to configure the ADV7511 and Max9850
+i2c_sender myi2c_sender (                                                        
+  .clk(clk_28),                                         
+  .rst(!reset_n),                                          
+  .resend(1'b0),                                         
+  .read_regs(1'b0),                                      
+  .sioc(dv_scl),                                        
+  .siod(dv_sda)
 );
 
 // Video signal to dual data rate
@@ -272,6 +300,7 @@ minimig_virtual_top
   .CLK_IN(clk_50mhz),
   .CLK_28(clk_28),
   .CLK_114(clk_114),
+  .PLL_LOCKED(pll_locked_minimig),
   .RESET_N(reset_n),
   .LED_POWER(led_power),
   .LED_DISK(led_disk),
@@ -283,8 +312,8 @@ minimig_virtual_top
   .VGA_PIXEL(vga_pixel),
   .VGA_SELCS(vga_selcs),
   .VGA_CS(vga_cs),
-  .VGA_HS(vga_hs),
-  .VGA_VS(vga_vs),
+  .VGA_HS(!vga_hs),
+  .VGA_VS(!vga_vs),
   .VGA_R(vga_r),
   .VGA_G(vga_g),
   .VGA_B(vga_b),
@@ -310,7 +339,7 @@ minimig_virtual_top
   .PS2_MDAT_O(ps2_mdat_o),
   .PS2_MCLK_O(ps2_mclk_o),
   .AMIGA_RESET_N(amiga_reset_n),
-  .AMIGA_KEY(amiga_key),
+  .AMIGA_KEY(),
   .AMIGA_KEY_STB(amiga_key_stb),
   .C64_KEYS(64'hFEDCBA9876543210), // What for ?? 
   .JOYA(joya),

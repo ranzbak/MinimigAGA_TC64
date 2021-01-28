@@ -41,3 +41,6 @@ set_property PULLUP true [get_ports sd_m_cdet]
 
 
 
+
+
+
