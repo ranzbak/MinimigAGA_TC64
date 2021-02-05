@@ -1,76 +1,46 @@
-	others => (others => x"00")
+  others => ( x"00000000")
 );
 
--- Xilinx XST attributes
+-- Xilinx Vivado attributes
 attribute ram_style: string;
-attribute ram_style of ram: signal is "no_rw_check";
+attribute ram_style of ram: signal is "block";
 
--- Altera Quartus attributes
-attribute ramstyle: string;
-attribute ramstyle of ram: signal is "no_rw_check";
-
-signal q_local : word_t;
-signal q2_local : word_t;
+signal wea : std_logic_vector(NB_COL - 1 downto 0);
+signal web : std_logic_vector(NB_COL - 1 downto 0);
 
 begin
     
-	process(clk,q_local)
-	begin
+    -- Generate write enable signals
+    -- The Block ram generator doesn't like it when the compare is done in the if statement it self.
+    
+    
+    wea <= bytesel(0) & bytesel(1) & bytesel(2) & bytesel(3) when we = '1' else (others => '0');
+    web <= bytesel2(0) & bytesel2(1) & bytesel2(2) & bytesel2(3) when we2 = '1' else (others => '0');
 
-		q(31 downto 24)<=q_local(0);
-		q(23 downto 16)<=q_local(1);
-		q(15 downto 8)<=q_local(2);
-		q(7 downto 0)<=q_local(3);
+    ------- Port A -------
+    process(clk)
+    begin
+        if rising_edge(clk) then
+            q <= ram(to_integer(unsigned(addr)));
+            for i in 0 to NB_COL - 1 loop
+                if (wea(i) = '1') then
+                    ram(to_integer(unsigned(addr)))((i + 1) * COL_WIDTH - 1 downto i * COL_WIDTH) <= d((i + 1) * COL_WIDTH - 1 downto i * COL_WIDTH);
+                end if;
+            end loop;
+        end if;
+    end process;
 
-		if(rising_edge(clk)) then 
-			if(we = '1') then
-				-- edit this code if using other than four bytes per word
-				if(bytesel(3) = '1') then
-					ram(to_integer(unsigned(addr)))(3) <= d(7 downto 0);
-				end if;
-				if bytesel(2) = '1' then
-					ram(to_integer(unsigned(addr)))(2) <= d(15 downto 8);
-				end if;
-				if bytesel(1) = '1' then
-					ram(to_integer(unsigned(addr)))(1) <= d(23 downto 16);
-				end if;
-				if bytesel(0) = '1' then
-					ram(to_integer(unsigned(addr)))(0) <= d(31 downto 24);
-				end if;
-			end if;
-			q_local <= ram(to_integer(unsigned(addr)));
-		end if;
-	end process;
-
-	-- Second port
-	
-	process(clk,q2_local)
-	begin
-
-		q2(31 downto 24)<=q2_local(0);
-		q2(23 downto 16)<=q2_local(1);
-		q2(15 downto 8)<=q2_local(2);
-		q2(7 downto 0)<=q2_local(3);
-
-		if(rising_edge(clk)) then 
-			if(we2 = '1') then
-				-- edit this code if using other than four bytes per word
-				if(bytesel2(3) = '1') then
-					ram(to_integer(unsigned(addr2)))(3) <= d2(7 downto 0);
-				end if;
-				if bytesel2(2) = '1' then
-					ram(to_integer(unsigned(addr2)))(2) <= d2(15 downto 8);
-				end if;
-				if bytesel2(1) = '1' then
-					ram(to_integer(unsigned(addr2)))(1) <= d2(23 downto 16);
-				end if;
-				if bytesel2(0) = '1' then
-					ram(to_integer(unsigned(addr2)))(0) <= d2(31 downto 24);
-				end if;
-			end if;
-			q2_local <= ram(to_integer(unsigned(addr2)));
-		end if;
-	end process;
+    ------- Port B -------
+    process(clk)
+    begin
+        if rising_edge(clk) then
+            q2 <= ram(to_integer(unsigned(addr2)));
+            for i in 0 to NB_COL - 1 loop
+                if (web(i) = '1') then
+                    ram(to_integer(unsigned(addr2)))((i + 1) * COL_WIDTH - 1 downto i * COL_WIDTH) <= d2((i + 1) * COL_WIDTH - 1 downto i * COL_WIDTH);
+                end if;
+            end loop;
+        end if;
+    end process;
 
 end arch;
-
