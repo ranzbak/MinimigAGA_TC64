@@ -24,7 +24,19 @@ set_property IOSTANDARD LVTTL [get_ports ps2_data2]
 set_property PULLUP true [get_ports ps2_data2]
 
 # Don't care about the timing
-set_false_path -through [get_ports ps2_*]
+#set_false_path -through [get_ports ps2_*]
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

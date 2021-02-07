@@ -151,6 +151,7 @@ always @(posedge clk) begin
         end else begin
             key_strobe <= 0;
         end
+    end
 end
 `endif
   
@@ -202,5 +203,6 @@ always @(posedge clk) begin
 end
 
 `endif
+
 
 endmodule

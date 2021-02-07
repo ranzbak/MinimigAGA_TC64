@@ -24,9 +24,9 @@ MMCME2_BASE #(
   .CLKFBOUT_MULT_F(27.375), // 1368.75   MHz *16.875 common multiply
   .DIVCLK_DIVIDE(1),        // 1368.75   MHz /1 common divide
   .CLKOUT0_DIVIDE_F(12.0),  // 114.06250 MHz /12 divide
+  .CLKOUT0_PHASE(146.250), // 146.250' phase shift
   .BANDWIDTH("LOW"),
   .CLKOUT1_DIVIDE(12),      // 114.06250 MHz /12 divide
-  .CLKOUT1_PHASE(-146.250), // -146.250' phase shift
   .CLKOUT2_DIVIDE(49)       // 27.93367  MHz /49 divide
 ) clk_main (
   .PWRDWN(1'b0),
@@ -34,7 +34,7 @@ MMCME2_BASE #(
   .CLKIN1(inclk0),
   .CLKFBIN(clk_fb_main),
   .CLKFBOUT(clk_fb_main),
-  .CLKOUT0(pll_114),        //  200 MHz HDMI base clock
+  .CLKOUT0(pll_114),        //  114 MHz SDRAM clock
   .CLKOUT1(dll_114),
   .CLKOUT2(dll_28),
   .LOCKED(locked)
@@ -93,11 +93,10 @@ always @ (posedge c1) begin
 end
 
 // global clock buffers
-BUFG  BUFG_SDR (.I(pll_114),  .O(c2));
 BUFG  BUFG_114 (.I(dll_114),  .O(c0));
 BUFG  BUFG_28  (.I(dll_28),   .O(c1));
+BUFG  BUFG_SDR (.I(pll_114),  .O(c2));
 //BUFG  BUFG_7   (.I(clk_7[1]), .O(c3));
 
 
 endmodule
-

@@ -36,3 +36,14 @@ project_1/**
 
 # Ignore the built Rom generator
 fw/romgen/romgen
+fw/ctrl_boot_832/OSDBoot_832.bin
+fw/ctrl_boot_832/OSDBoot_832.map
+fw/ctrl_832/832OSDAD.bin
+fw/ctrl_832/832OSDAD.map
+
+# Ignore Xvhdl files
+xvhdl.*
+
+# Editor files
+.hdl_checker/*
+.vscode/*

@@ -12,7 +12,20 @@ set_property -dict {PACKAGE_PIN AB26 IOSTANDARD LVTTL} [get_ports uart3_rxd]
 set_property -dict {PACKAGE_PIN AC26 IOSTANDARD LVTTL} [get_ports uart3_txd]
 
 # Don't care about the timing
-set_false_path -through [get_ports uart3_*]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

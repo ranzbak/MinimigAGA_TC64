@@ -7,7 +7,6 @@
 
 `include "minimig_defines.vh"
 
-
 //`define HOSTONLY
 
 
@@ -16,15 +15,18 @@
 `define false 0
 
 module minimig_openaars_top (
-  input clk_50mhz,
+  input clk_50,
   // RS232
   output uart3_txd, // rs232 txd
   input uart3_rxd, // rs232 rxd
   // SD card (SPI)
   output sd_m_clk,
   output sd_m_cmd, 
-  inout [3:0] sd_m_d,
-  input sd_m_cdet,
+  input  sd_m_d0,
+  output sd_m_d1,
+  output sd_m_d2,
+  output sd_m_d3,
+  input  sd_m_cdet,
   // SDRAM
   output dr_clk,
   output dr_cke,
@@ -84,7 +86,14 @@ module minimig_openaars_top (
   // Board button input
   input sys_reset_in,
   input button_user,
-  input button_osd
+  input button_osd,
+  // pmod
+  output pmod_12,
+  output pmod_1,
+  output pmod_11,
+  output pmod_2,
+  output pmod_9,
+  output pmod_10
 );
 
 ////////////////////////////////////////
@@ -100,7 +109,6 @@ wire        pll_locked_main;
 wire        pll_locked_minimig;
 // Reset
 wire        reset_n;
-(* mark_debug = "true", keep = "true" *)
 wire        amiga_reset_n;
 // LED
 wire        led_disk;
@@ -113,21 +121,14 @@ wire        amiga_tx;
 wire        amiga_rx;
 
 // Video interface
-(* mark_debug = "true", keep = "true" *)
 wire        vga_pixel;
-(* mark_debug = "true", keep = "true" *)
 wire        vga_selcs;
-(* mark_debug = "true", keep = "true" *)
 wire        vga_cs;
-(* mark_debug = "true", keep = "true" *)
 wire        vga_hs;
 (* mark_debug = "true", keep = "true" *)
 wire        vga_vs;
-(* mark_debug = "true", keep = "true" *)
 wire [7:0]  vga_r;
-(* mark_debug = "true", keep = "true" *)
 wire [7:0]  vga_g;
-(* mark_debug = "true", keep = "true" *)
 wire [7:0]  vga_b;
 // SDRAM 
 wire [15:0] sdram_dq;
@@ -157,13 +158,9 @@ wire [7:0]  amiga_key;
 wire [6:0]  joya;
 wire [6:0]  joyb;
 // SD Card
-(* mark_debug = "true", keep = "true" *)
 wire        sd_miso;
-(* mark_debug = "true", keep = "true" *)
 wire        sd_mosi;
-(* mark_debug = "true", keep = "true" *)
 wire        sd_clk;
-(* mark_debug = "true", keep = "true" *)
 wire        sd_cs;
 
 ////////////////////////////////////////
@@ -171,38 +168,43 @@ wire        sd_cs;
 ////////////////////////////////////////
 
 // Reset button
-(* mark_debug = "true", keep = "true" *)
-assign reset_n = sys_reset_in & pll_locked_main & pll_locked_minimig; // Only release reset when PLL is stable
-(* mark_debug = "true", keep = "true" *)
+assign reset_n = sys_reset_in & pll_locked_minimig; // Only release reset when PLL is stable
 assign menu_button = button_osd;
 
 // LED
-assign led_disk = led_fdisk;
+assign led_disk  = led_fdisk;
 assign led_hdisk = sdram_ncs; // Workaround for now
-assign led_core = !sd_cs;
+assign led_core  = !sd_cs;
 
 // PS2 ports tristate
 // keyboard
-assign ps2_clk1 = (~ps2_clk_o) ? 1'bZ : 1'b0;
+assign ps2_clk1  = ps2_clk_o ? 1'bZ : 1'b0;
 assign ps2_clk_i = ps2_clk1;
-assign ps2_data1 = (~ps2_dat_o) ? 1'bZ : 1'b0;
+assign ps2_data1 = ps2_dat_o ? 1'bZ : 1'b0;
 assign ps2_dat_i = ps2_data1;
 
 // Mouse
-assign ps2_clk2 = (~ps2_mclk_o) ? 1'bZ : 1'b0;
+assign ps2_clk2   = ps2_mclk_o ? 1'bZ : 1'b0;
 assign ps2_mclk_i = ps2_clk2;
-assign ps2_data2 = (~ps2_mdat_o) ? 1'bZ : 1'b0;
+assign ps2_data2  = ps2_mdat_o ? 1'bZ : 1'b0;
 assign ps2_mdat_i = ps2_data2;
 
-
 // SDCard
-assign sd_clk    = sd_m_clk;
-assign sd_mosi   = sd_m_cmd;
-assign sd_miso   = sd_m_d[0];
-assign sd_m_d[0] = 1'bZ; // Using SPI mode, So we listen
-assign sd_m_d[1] = 1'bZ;
-assign sd_m_d[2] = 1'bZ;
-assign sd_m_d[3] = sd_cs ? 1'bZ : 1'b0;
+assign sd_m_clk   = sd_clk;
+assign sd_m_cmd   = sd_mosi;
+assign sd_miso    = sd_m_d0;
+assign sd_m_d1  = 1'b1;
+assign sd_m_d2  = 1'b1;
+assign sd_m_d3  = sd_cs;
+
+// HDMI CEC clock
+assign dv_cecclk  = clk_28;                 
+
+// PMOD pins
+assign pmod_10    = vga_vs;
+assign pmod_9     = vga_hs;
+assign pmod_2     = vga_cs;
+assign pmod_11    = vga_pixel;
 
 ////////////////////////////////////////
 // HDMI Clock                         //
@@ -216,7 +218,7 @@ MMCME2_BASE #(
 ) clk_hdmi (
   .PWRDWN(1'b0),
   .RST(1'b0),
-  .CLKIN1(clk_50mhz),
+  .CLKIN1(clk_50),
   .CLKFBIN(clk_fb_main),
   .CLKFBOUT(clk_fb_main),
   .CLKOUT0(clk_200),        //  200 MHz HDMI base clock
@@ -244,9 +246,11 @@ mcp23s17_input my_joystick_ports (
 
   .ready(),
 
-  .joya(joya),
-  .joyb(joyb)
+  .joya(joya[5:0]),
+  .joyb(joyb[5:0])
 );
+assign joya[6] = 1'b1;
+assign joyb[6] = 1'b1; 
 
 // i2s transmittor
 i2s_tx my_i2s_transmitter (
@@ -277,11 +281,13 @@ i2c_sender myi2c_sender (
 pal_to_ddr my_pal_to_ddr (
   .clk(clk_200),
   // Input PAL
-  .i_pal_vsync(vga_hs),
-  .i_pal_hsync(vga_vs),
+  .i_pal_vsync(!vga_hs),
+  .i_pal_hsync(!vga_vs),
   .i_pal_r(vga_r),
   .i_pal_g(vga_g),
   .i_pal_b(vga_b),
+  //.i_pal_pixel(vga_pixel),
+  //.i_pal_cs(vga_cs),
   // Output HDMI
   .o_clk_pixel(dv_clk),
   .o_de(dv_de),
@@ -292,12 +298,12 @@ pal_to_ddr my_pal_to_ddr (
 
 // Instatiation of the Minimig Core
 minimig_virtual_top 
-#( .debug(`false),
-  .havertg(`true),
-  .haveaudio(`true),
-  .havec2p(`true)
+#( .debug(1'b0),
+  .havertg(1'b1),
+  .haveaudio(1'b1),
+  .havec2p(1'b1)
 ) openaars_virtual_top (
-  .CLK_IN(clk_50mhz),
+  .CLK_IN(clk_50),
   .CLK_28(clk_28),
   .CLK_114(clk_114),
   .PLL_LOCKED(pll_locked_minimig),
@@ -305,15 +311,15 @@ minimig_virtual_top
   .LED_POWER(led_power),
   .LED_DISK(led_disk),
   .MENU_BUTTON(menu_button),
-  .CTRL_TX(ctrl_tx),
-  .CTRL_RX(ctrl_rx),
+  .CTRL_TX(uart3_txd),
+  .CTRL_RX(uart3_rxd),
   .AMIGA_TX(amiga_tx),
   .AMIGA_RX(amiga_rx),
   .VGA_PIXEL(vga_pixel),
   .VGA_SELCS(vga_selcs),
   .VGA_CS(vga_cs),
-  .VGA_HS(!vga_hs),
-  .VGA_VS(!vga_vs),
+  .VGA_HS(vga_hs),
+  .VGA_VS(vga_vs),
   .VGA_R(vga_r),
   .VGA_G(vga_g),
   .VGA_B(vga_b),

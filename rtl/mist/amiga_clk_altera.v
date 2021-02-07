@@ -56,9 +56,9 @@ module amiga_clk_altera (
 	input	  scanclk;
 	input	  scanclkena;
 	input	  scandata;
-	output	  c0;
-	output	  c1;
-	output	  c2;
+	output	  c0; // clk_sdram
+	output	  c1; // clk_114
+	output	  c2; // clk_28
 	output	  locked;
 	output	  scandataout;
 	output	  scandone;

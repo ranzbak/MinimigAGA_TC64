@@ -5,23 +5,23 @@
 
 module userio_ps2mouse
 (
-	input 	clk,		    	// 28MHz clock
-   input clk7_en,
-	input 	reset,			   	//reset 
-	input	ps2mdat_i,			//mouse PS/2 data
-	input	ps2mclk_i,			//mouse PS/2 clk
-	output	ps2mdat_o,			//mouse PS/2 data
-	output	ps2mclk_o,			//mouse PS/2 clk
-   input [5:0] mou_emu,
-   input sof,
-   output  reg [7:0]zcount,  // mouse Z counter
-	output	reg [7:0]ycount,	//mouse Y counter
-	output	reg [7:0]xcount,	//mouse X counter
-	output	reg _mleft,			//left mouse button output
-	output	reg _mthird,		//third(middle) mouse button output
-	output	reg _mright,		//right mouse button output
-	input	test_load,			//load test value to mouse counter
-	input	[15:0] test_data	//mouse counter test value
+	input wire clk,		    	// 28MHz clock
+    input wire clk7_en,
+	input wire reset,			   	//reset 
+	input wire ps2mdat_i,			//mouse PS/2 data
+	input wire ps2mclk_i,			//mouse PS/2 clk
+	output wire 	ps2mdat_o,			//mouse PS/2 data
+	output wire  	ps2mclk_o,			//mouse PS/2 clk
+    input wire [5:0] mou_emu,
+    input wire sof,
+    output reg [7:0]zcount,  // mouse Z counter
+	output reg [7:0]ycount,	//mouse Y counter
+	output reg [7:0]xcount,	//mouse X counter
+	output reg _mleft,			//left mouse button output
+	output reg _mthird,		//third(middle) mouse button output
+	output reg _mright,		//right mouse button output
+	input wire test_load,			//load test value to mouse counter
+	input wire [15:0] test_data	//mouse counter test value
 );
 
 reg           mclkout;
@@ -53,8 +53,8 @@ reg  [12-1:0] mcmd;
 
 // bidirectional open collector IO buffers
 // AMR - had to move this to the toplevel for TC64.
-assign ps2mclk_o = (mclkout);//  ? 1'bz : 1'b0;
-assign ps2mdat_o = (mdatout);// ? 1'bz : 1'b0;
+assign ps2mclk_o = mclkout;//  ? 1'bz : 1'b0;
+assign ps2mdat_o = mdatout;// ? 1'bz : 1'b0;
 
 // input synchronization of external signals
 always @ (posedge clk) begin
@@ -176,14 +176,14 @@ end
 // PS2 mouse state machine
 always @ (posedge clk) begin
   if (clk7_en) begin
-    if (reset || mtready)
+    if (reset == 1'b1 || mtready == 1'b1)
       mstate <= #1 0;
     else
       mstate <= #1 mnext;
   end
 end
 
-always @ (*) begin
+always @ (posedge clk) begin
   mclkout  = 1'b1;
   mtreset  = 1'b1;
   mrreset  = 1'b0;

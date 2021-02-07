@@ -1,0 +1,10 @@
+-CDSLIB ../out/arg/cds.lib
+-HDLVAR ../out/arg/hdl.var
+-MESSAGES
+-NOCOPYRIGHT
+-LOGFILE ../out/log/ncvlog.log
+-define no_macro_msg
+-DEFINE FAST_FUNC=1
+../../../../bench/ps2mouse/ps2mouse_tb.v
+../../../../bench/ps2mouse/ps2mouse_ctrl.v
+../../../../lib/models/ps2mouse.v

@@ -12,7 +12,7 @@ LIB_DIR=$(832DIR)/lib832
 INCLUDE_DIR = $(832DIR)/include
 STARTUP_DIR = $(832DIR)/Lib
 
-ROMGEN = ../../EightThirtyTwo/romgen/romgen
+ROMGEN = ../romgen/romgen
 
 # we use mincrt0.s from here
 STARTUP_DIR = .
@@ -40,6 +40,7 @@ COMMON_SOURCES=$(BUILD_DIR)/boot.o $(BUILD_DIR)/spi.o $(BUILD_DIR)/swap.o \
  
 # all sources
 ALL_SOURCES = $(LIB_DIR)/crt0.a $(ASM_SOURCES) $(COMMON_SOURCES) $(LIB_DIR)/lib832.a 
+VHDL_SOURCES = rom_prologue.vhd rom_epilogue.vhd
 
 ### build rules ###
 
@@ -57,7 +58,7 @@ clean:
 $(ROMGEN): ../romgen/romgen.c
 	make -C ../romgen/
 
-%_ROM.vhd: %.bin $(ROMGEN)
+%_ROM.vhd: %.bin $(ROMGEN) $(VHDL_SOURCES)
 	sed 's/soc_firmware/$*_ROM/' >$*_ROM.vhd <$(RTL_DIR)/rom_prologue.vhd
 	$(ROMGEN) $*.bin >>$*_ROM.vhd
 	cat >>$*_ROM.vhd $(RTL_DIR)/rom_epilogue.vhd

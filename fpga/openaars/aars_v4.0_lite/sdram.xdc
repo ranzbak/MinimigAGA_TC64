@@ -1,23 +1,5 @@
 #SDRAM
 
-# Timing constraints
-create_clock -period 8.889 -name VIRTUAL_DDR_clk -waveform {0.000 4.444}
-set_output_delay -clock [get_clocks VIRTUAL_DDR_clk] -min -add_delay -0.600 [get_ports {dr_a[*]}]
-set_output_delay -clock [get_clocks VIRTUAL_DDR_clk] -max -add_delay 1.800 [get_ports {dr_a[*]}]
-set_output_delay -clock [get_clocks VIRTUAL_DDR_clk] -min -add_delay -1.800 [get_ports {dr_ba[*]}]
-set_output_delay -clock [get_clocks VIRTUAL_DDR_clk] -max -add_delay 0.600 [get_ports {dr_ba[*]}]
-set_output_delay -clock [get_clocks VIRTUAL_DDR_clk] -min -add_delay -1.800 [get_ports {dr_dqm[*]}]
-set_output_delay -clock [get_clocks VIRTUAL_DDR_clk] -max -add_delay 0.600 [get_ports {dr_dqm[*]}]
-set_output_delay -clock [get_clocks VIRTUAL_DDR_clk] -min -add_delay -1.800 [get_ports dr_cas_n]
-set_output_delay -clock [get_clocks VIRTUAL_DDR_clk] -max -add_delay 0.600 [get_ports dr_cas_n]
-set_output_delay -clock [get_clocks VIRTUAL_DDR_clk] -min -add_delay -1.800 [get_ports dr_cs_n]
-set_output_delay -clock [get_clocks VIRTUAL_DDR_clk] -max -add_delay 0.600 [get_ports dr_cs_n]
-set_output_delay -clock [get_clocks VIRTUAL_DDR_clk] -min -add_delay -1.800 [get_ports dr_ras_n]
-set_output_delay -clock [get_clocks VIRTUAL_DDR_clk] -max -add_delay 0.600 [get_ports dr_ras_n]
-set_output_delay -clock [get_clocks VIRTUAL_DDR_clk] -min -add_delay -1.800 [get_ports dr_we_n]
-set_output_delay -clock [get_clocks VIRTUAL_DDR_clk] -max -add_delay 0.600 [get_ports dr_we_n]
-
-
 ## Address ##
 set_property -dict {PACKAGE_PIN J1 IOSTANDARD LVTTL DRIVE 12 SLEW FAST} [get_ports {dr_a[0]}]
 set_property -dict {PACKAGE_PIN M5 IOSTANDARD LVTTL DRIVE 12 SLEW FAST} [get_ports {dr_a[1]}]
@@ -66,6 +48,10 @@ set_property -dict {PACKAGE_PIN G9 IOSTANDARD LVTTL DRIVE 12 SLEW FAST} [get_por
 set_property -dict {PACKAGE_PIN H1 IOSTANDARD LVTTL DRIVE 12 SLEW FAST} [get_ports dr_we_n]
 set_property -dict {PACKAGE_PIN H9 IOSTANDARD LVTTL DRIVE 12 SLEW FAST} [get_ports dr_cke]
 set_property -dict {PACKAGE_PIN H2 IOSTANDARD LVTTL DRIVE 12 SLEW FAST} [get_ports dr_clk]
+
+
+
+
 
 
 

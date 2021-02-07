@@ -25,8 +25,7 @@ set_property CONFIG_VOLTAGE 3.3 [current_design]
 # Core board
 
 # Clock oscillator
-set_property -dict {PACKAGE_PIN U22 IOSTANDARD LVTTL} [get_ports clk_50mhz]
-create_clock -period 20.000 -name clk_50mhz -add [get_ports clk_50mhz]
+set_property -dict {PACKAGE_PIN U22 IOSTANDARD LVTTL} [get_ports clk_50]
 
 # Reset button
 # Included here to be complete
@@ -37,11 +36,19 @@ create_clock -period 20.000 -name clk_50mhz -add [get_ports clk_50mhz]
 # Reset input button
 set_property -dict {PACKAGE_PIN Y25 IOSTANDARD LVTTL} [get_ports sys_reset_in]
 
-# Constrain input delay of the reset signal
 
 
-# Inferred block ram/rom
-# set_property RAM_STYLE BLOCK [get_cells openaars_virtual_top/hostcpu/bootrom/ram_reg*]
+
+
+
+
+
+
+
+
+
+
+
 
 
 

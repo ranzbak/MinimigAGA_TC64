@@ -100,7 +100,6 @@ localparam [4:0]
     ST_READ_GPIOA  = 11,
     ST_READ_GPIOB  = 12,
     ST_DONE        = 13;
-(* mark_debug = "true", keep = "true" *)
 reg [4:0] mcp_state = ST_IDLE;
 
 //// SPI Master ////

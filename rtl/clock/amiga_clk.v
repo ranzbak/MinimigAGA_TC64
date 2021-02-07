@@ -75,7 +75,7 @@ amiga_clk_altera amiga_clk_i (
 );
 `endif
 
-`ifdef MINIMIG_XILINX
+//`ifdef MINIMIG_XILINX
 amiga_clk_xilinx amiga_clk_i (
   .areset   (rst      ),
   .inclk0   (clk_in   ),
@@ -84,7 +84,7 @@ amiga_clk_xilinx amiga_clk_i (
   .c2       (clk_sdram),
   .locked   (locked   )
 );
-`endif
+//`endif
 
 `ifdef MINIMIG_ALTERA_PLL_RECONFIG
 wire       pll_reconfig_busy;

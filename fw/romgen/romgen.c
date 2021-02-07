@@ -10,10 +10,11 @@
 
 #include <unistd.h>
 #include <stdio.h>
+#include <fcntl.h> // open function
 
 typedef unsigned char BYTE;
 
-main(int argc, char **argv)
+int main(int argc, char **argv)
 {
        BYTE    opcode[4];
        int     fd;
@@ -38,8 +39,8 @@ main(int argc, char **argv)
        while(1)
        {
        // Read 32 bits.
-//               s = read(fd, opcode, 4);
-               s = read(fd, opcode, 1);
+               s = read(fd, opcode, 4);
+//               s = read(fd, opcode, 1);
                if(s == -1)
                {
                        perror("File read");
@@ -50,11 +51,11 @@ main(int argc, char **argv)
                        break; // End of file.
 
        // Output to STDOUT.
-//               printf("%6d => x\"%02x%02x%02x%02x\",\n",
-//                      addr++, opcode[0], opcode[1],
-//                      opcode[2], opcode[3]);
-               printf("%6d => x\"%02x\",\n",
-                      addr++, opcode[0]);
+               printf("%6d => x\"%02x%02x%02x%02x\",\n",
+                      addr++, opcode[0], opcode[1],
+                      opcode[2], opcode[3]);
+//               printf("%6d => x\"%02x\",\n",
+//                      addr++, opcode[0]);
        }
 
        close(fd);

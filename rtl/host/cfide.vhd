@@ -22,6 +22,8 @@
 -- Modifications by Alastair M. Robinson to work with a cheap 
 -- Ebay Cyclone III board.
 
+
+
  
 library IEEE;
 use IEEE.std_logic_1164.all;
@@ -133,6 +135,23 @@ signal amiga_req_d : std_logic;
 
 signal rtc_select : std_logic;
 signal spirtcpresent : std_logic;
+
+attribute MARK_DEBUG : string;
+attribute MARK_DEBUG of addr : signal is "TRUE";
+attribute MARK_DEBUG of wr : signal is "TRUE";
+attribute MARK_DEBUG of d : signal is "TRUE";
+attribute MARK_DEBUG of q : signal is "TRUE";
+attribute MARK_DEBUG of sd_di : signal is "TRUE";
+attribute MARK_DEBUG of sd_cs : signal is "TRUE";
+attribute MARK_DEBUG of sd_clk : signal is "TRUE";
+attribute MARK_DEBUG of sd_do : signal is "TRUE";
+attribute MARK_DEBUG of sd_dimm : signal is "TRUE";
+attribute MARK_DEBUG of ack : signal is "TRUE";
+attribute MARK_DEBUG of req : signal is "TRUE";
+attribute MARK_DEBUG of SPI_select : signal is "TRUE";
+attribute MARK_DEBUG of sd_di_in : signal is "TRUE";
+attribute MARK_DEBUG of spi_wait : signal is "TRUE";
+attribute MARK_DEBUG of sd_in_shift : signal is "TRUE";
 
 begin
 

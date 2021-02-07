@@ -31,8 +31,11 @@ module userio_osd_spi
 
 
 //locals
+(* mark_debug="true", keep="true" *)
 reg [2:0] bit_cnt;		//bit counter
+(* mark_debug="true", keep="true" *)
 reg [7:0] sdi_reg;		//input shift register	(rising edge of SPI clock)
+(* mark_debug="true", keep="true" *)
 reg [7:0] sdo_reg;		//output shift register	 (falling edge of SPI clock)
 
 reg new_byte;			//new byte (8 bits) received

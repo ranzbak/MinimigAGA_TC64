@@ -17,7 +17,20 @@ set_property -dict {PACKAGE_PIN K26 IOSTANDARD LVTTL} [get_ports led_power]
 set_property -dict {PACKAGE_PIN K25 IOSTANDARD LVTTL} [get_ports led_fdisk]
 
 # We don't care for the LED timing
-set_false_path -through [get_ports led_*]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

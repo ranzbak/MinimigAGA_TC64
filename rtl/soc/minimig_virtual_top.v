@@ -24,7 +24,7 @@ module minimig_virtual_top
   input wire            RESET_N,
   
   // Button inputs
-  input						MENU_BUTTON,
+  input					MENU_BUTTON,
   
   // LED outputs
   output wire           LED_POWER,  // LED green
@@ -37,7 +37,7 @@ module minimig_virtual_top
   input wire            AMIGA_RX,    // UART Receiver
   
   // VGA
-  output wire				VGA_PIXEL,  // high pulse for each new pixel
+  output wire			VGA_PIXEL,  // high pulse for each new pixel
   output wire           VGA_SELCS,  // Select CSYNC
   output wire           VGA_CS,     // VGA C_SYNC
   output wire           VGA_HS,     // VGA H_SYNC
@@ -74,9 +74,9 @@ module minimig_virtual_top
   output                PS2_MCLK_O,     // PS2 Mouse Clock
 
   // Potential Amiga keyboard from docking station
-  input						AMIGA_RESET_N,
-  input						[7:0] AMIGA_KEY,
-  input						AMIGA_KEY_STB,
+  input					AMIGA_RESET_N,
+  input					[7:0] AMIGA_KEY,
+  input					AMIGA_KEY_STB,
   input			[63:0]	C64_KEYS,
   // Joystick
   input       [  7-1:0] JOYA,         // joystick port A
@@ -181,8 +181,8 @@ wire [  8-1:0] blue;
 reg            cs_reg;
 reg            vs_reg;
 reg            hs_reg;
-wire				hsyncpol;
-wire				vsyncpol;
+wire   		   hsyncpol;
+wire		   vsyncpol;
 reg  [  8-1:0] red_reg;
 reg  [  8-1:0] green_reg;
 reg  [  8-1:0] blue_reg;
@@ -378,7 +378,7 @@ assign osd_g = osd_pixel ? 2'b11 : 2'b00;
 assign osd_b = osd_pixel ? 2'b11 : 2'b10;
 assign VGA_CS           = cs_reg;
 assign VGA_VS           = vsyncpol ^ vs_reg;
-assign VGA_HS           = hsyncpol ^ hs_reg;
+assign VGA_HS           = hsyncpol ^ hs_reg; // oscillates 
 //assign VGA_R[7:0]       = osd_window ? {osd_r,red_reg[7:2]} : red_reg[7:0];
 assign VGA_G[7:0]       = osd_window ? {osd_g,green_reg[7:2]} : green_reg[7:0];
 assign VGA_B[7:0]       = osd_window ? {osd_b,blue_reg[7:2]} : blue_reg[7:0];
@@ -457,7 +457,7 @@ VideoStream myaudiostream
 //// amiga clocks ////
 amiga_clk amiga_clk (
   .rst          (1'b0             ), // async reset input
-  .clk_in       (CLK_IN           ), // input clock     ( 27.000000MHz)
+  .clk_in       (CLK_IN           ), // input clock     ( 50.000000MHz)
   .clk_114      (CLK_114          ), // output clock c0 (114.750000MHz)
   .clk_sdram    (clk_sdram        ), // output clock c2 (114.750000MHz, -146.25 deg)
   .clk_28       (CLK_28           ), // output clock c1 ( 28.687500MHz)
@@ -674,7 +674,6 @@ reg	[7:0] kbd_mouse_data;
 wire	kbd_reset_n;
 reg	kbd_mouse_stb;
 reg	kbd_mouse_stb_r;
-(* mark_debug = "true", keep = "true" *)
 reg	clk7_en_d;
 
 assign kbd_reset_n = AMIGA_RESET_N;
@@ -699,7 +698,9 @@ assign _ram_oe=1'b1;
 assign _ram_we=1'b1;
 `else
 
-minimig minimig (
+minimig #(
+    .NTSC(1'b0)
+) minimig (
 	//m68k pins
 	.cpu_address  (tg68_adr[23:1]   ), // M68K address bus
 	.cpu_data     (tg68_dat_in      ), // M68K data bus
@@ -825,23 +826,23 @@ wire host_interrupt;
 EightThirtyTwo_Bridge #( debug ? 1'b1 : 1'b0) hostcpu
 (
 	.clk(CLK_114),
-	.nReset(reset_out),
-	.addr(hostaddr),        // Address bus
-	.q(hostWR),             // Data out
-	.sel(hostbytesel),      // Byte select ah
-	.wr(host_we),           // Write enable ah
+	.nReset(reset_out),     // (nReset)
+	.addr(hostaddr),        // Address bus (addr)
+	.q(hostWR),             // Data out (hostWR)
+	.sel(hostbytesel),      // Byte select ah (0, 0, nUDS, nLDS)
+	.wr(host_we),           // Write enable ah (data_write)
 
     // To CFIDE Flopp hardware emulation
-	.hw_d(host_hwdata),     // Hardware data in
-	.hw_req(host_hwreq),    // Hardware request
-	.hw_ack(host_hwack),    // Hardware acknowledge
+	.hw_d(host_hwdata),     // Hardware data in (hostData switched via cfide)
+	.hw_req(host_hwreq),    // Hardware request (hw_select <= cpu_addr(23))
+	.hw_ack(host_hwack),    // Hardware acknowledge (clkena_in)
 
     // To SDRAM
-	.ram_d(host_ramdata),
-	.ram_req(host_ramreq),
-	.ram_ack(host_ramack),
+	.ram_d(host_ramdata),   // ram in from SDRAM  (hostData)
+	.ram_req(host_ramreq),  // Ram request (To SDRAM when ram request)
+	.ram_ack(host_ramack),  // Ram acknowledge (clkena_in)
 
-	.interrupt(host_interrupt)
+	.interrupt(host_interrupt) // TODO find out
 );
 
 
