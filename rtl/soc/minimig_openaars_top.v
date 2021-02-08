@@ -281,8 +281,8 @@ i2c_sender myi2c_sender (
 pal_to_ddr my_pal_to_ddr (
   .clk(clk_200),
   // Input PAL
-  .i_pal_vsync(!vga_hs),
-  .i_pal_hsync(!vga_vs),
+  .i_pal_vsync(!vga_vs),
+  .i_pal_hsync(!vga_hs),
   .i_pal_r(vga_r),
   .i_pal_g(vga_g),
   .i_pal_b(vga_b),

@@ -21,21 +21,21 @@ reg [1:0] clk_7 = 0;
 
 MMCME2_BASE #(
   .CLKIN1_PERIOD(20.0),     // 50        MHz (10 ns)
-  .CLKFBOUT_MULT_F(27.375), // 1368.75   MHz *16.875 common multiply
+  .CLKFBOUT_MULT_F(25.250), // 1368.75   MHz *16.875 common multiply
   .DIVCLK_DIVIDE(1),        // 1368.75   MHz /1 common divide
-  .CLKOUT0_DIVIDE_F(12.0),  // 114.06250 MHz /12 divide
-  .CLKOUT0_PHASE(146.250), // 146.250' phase shift
   .BANDWIDTH("LOW"),
-  .CLKOUT1_DIVIDE(12),      // 114.06250 MHz /12 divide
-  .CLKOUT2_DIVIDE(49)       // 27.93367  MHz /49 divide
+  .CLKOUT0_DIVIDE_F(11.0),  // 114.77273 MHz /11 divide
+  .CLKOUT1_DIVIDE(11),      // 114.77273 MHz /11 divide
+  .CLKOUT1_PHASE(-143.182),  // -143.182' phase shift
+  .CLKOUT2_DIVIDE(44)       // 28.69318  MHz /44 divide
 ) clk_main (
   .PWRDWN(1'b0),
   .RST(1'b0),
   .CLKIN1(inclk0),
   .CLKFBIN(clk_fb_main),
   .CLKFBOUT(clk_fb_main),
-  .CLKOUT0(pll_114),        //  114 MHz SDRAM clock
-  .CLKOUT1(dll_114),
+  .CLKOUT0(dll_114),        //  114 MHz SDRAM clock
+  .CLKOUT1(pll_114),
   .CLKOUT2(dll_28),
   .LOCKED(locked)
 );

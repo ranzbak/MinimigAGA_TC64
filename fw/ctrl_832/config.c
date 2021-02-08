@@ -15,7 +15,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#define EXTENDED_ROM
+//#define EXTENDED_ROM
 
 configTYPE config;
 fileTYPE file;
@@ -451,6 +451,8 @@ int ApplyConfiguration(char reloadkickstart, char applydrives)
 			ClearError(ERROR_FILESYSTEM); /* We don't need to report a missing ExtROM yet */
 		}
     }
+	sprintf(s, "##End result : %d", result);
+	BootPrint(s);
 	return(result);
 }
 

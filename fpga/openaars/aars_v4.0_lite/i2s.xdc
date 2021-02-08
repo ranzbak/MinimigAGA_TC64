@@ -44,3 +44,4 @@ set_property -dict {PACKAGE_PIN M1 IOSTANDARD LVTTL} [get_ports max_i2s]
 
 
 
+

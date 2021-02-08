@@ -62,7 +62,6 @@ module pal_to_hd_upsample(
     reg         r_pal_hsync_;
     reg         r_pal_vsync_;
     reg         r_hd_hsync_;
- 
     reg         r_frame_end;
 
     // Buffer to hold 2 lines of data
