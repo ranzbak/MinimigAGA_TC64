@@ -3,7 +3,10 @@
 // 2021, paul@etv.cx made it more friendly towards Vivado
 // inferrable dual-port memory
 
-module dpram_inf_generic #(parameter depth = 8, parameter width = 32 ) (
+module dpram_inf_generic #(
+  parameter depth = 8, 
+  parameter width = 32
+) (
   input  wire               clock,
   input  wire               wren_a,
   input  wire [  depth-1:0] address_a,
@@ -16,13 +19,14 @@ module dpram_inf_generic #(parameter depth = 8, parameter width = 32 ) (
 );
 
 // memory
+//(* ram_style = "block" *)
 reg [width-1:0] mem [0:(2**depth)-1];
 
 // Port A
 always @(posedge clock) begin
     q_a      <= mem[address_a];
     if(wren_a) begin
-        q_a      <= data_a;
+        //q_a      <= data_a;
         mem[address_a] <= data_a;
     end
 end
@@ -31,7 +35,7 @@ end
 always @(posedge clock) begin
     q_b      <= mem[address_b];
     if(wren_b) begin
-        q_b      <= data_b;
+        //q_b      <= data_b;
         mem[address_b] <= data_b;
     end
 end

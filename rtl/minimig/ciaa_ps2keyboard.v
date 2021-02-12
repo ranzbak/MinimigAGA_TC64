@@ -52,17 +52,24 @@
 module ciaa_ps2keyboard
 (
   input  clk,          //bus clock
+(* mark_debug="1", keep="1" *)
   input  clk7_en,
+(* mark_debug="1", keep="1" *)
   input  reset,          //reset (system reset in)
+(* mark_debug="1", keep="1" *)
   input  ps2kdat_i,      //keyboard PS/2 data
+(* mark_debug="1", keep="1" *)
   input  ps2kclk_i,      //keyboard PS/2 clk
+(* mark_debug="1", keep="1" *)
   output ps2kdat_o,      //keyboard PS/2 data
+(* mark_debug="1", keep="1" *)
   output ps2kclk_o,      //keyboard PS/2 clk
   input  leda,       //keyboard led a in
   input  ledb,       //keyboard led b in
   output aflock,   // auto fire toggle
   output kbdrst,       //keyboard reset out
   output [7:0] keydat,   //keyboard data out
+(* mark_debug="1", keep="1" *)
   output reg keystrobe,    //keyboard data out strobe
   input  keyack,       //keyboard data out acknowledge
   output [7:0] osd_ctrl,   //on-screen-display control
@@ -82,10 +89,11 @@ reg   pclkout;        //ps2 clk out
 wire  pdatout;        //ps2 data out
 wire  pclkneg;        //negative edge of ps2 clock strobe
 reg   pdatb,pclkb,pclkc;    //input synchronization 
-
+(* mark_debug="1", keep="1" *)
 reg   [11:0] preceive;    //ps2 receive register
 reg   [11:0] psend;     //ps2 send register
 reg   [19:0] ptimer;      //ps2 timer
+(* mark_debug="1", keep="1" *)
 reg   [2:0] kstate;     //keyboard controller current state
 reg   [2:0] knext;      //keyboard controller next state
 reg   capslock;       //capslock status
@@ -119,6 +127,7 @@ end
 assign pclkneg = pclkc & ~pclkb;
 
 //PS2 input shifter
+(* mark_debug="1", keep="1" *)
 wire prready;
 
 always @(posedge clk)
@@ -167,7 +176,7 @@ always @(posedge clk)
       kstate <= knext;
   end
     
-always @(posedge clk)
+always @(*)
 begin
   case(kstate)
     0://reset timer

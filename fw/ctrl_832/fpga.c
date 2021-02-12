@@ -122,10 +122,10 @@ void SendFileV2(RAFile* file, unsigned char* key, int keysize, int address, int 
 	printf("]\r");
 
 	if (kickfoundstr) {
-		printf(kickfoundstr);
+		printf("%s", kickfoundstr);
 	}
 	if (applypatchstr) {
-		printf(applypatchstr);
+		printf("%s", applypatchstr);
 	}
 }
 

@@ -201,15 +201,24 @@ int ColdBoot()
 			BootPrintEx("Loading kickstart ROM...\r\n");
 			result=ApplyConfiguration(1,1);
 
+            // TODO remove debug
+            BootPrintEx("OSD Reset");
+
 			OsdDoReset(SPI_RST_USR | SPI_RST_CPU,0);
+
+            BootPrintEx("Setup Interrupt handler");
 
 			SetIntHandler(inthandler);
 			EnableInterrupts();
+
+            BootPrintEx("Clear audio");
 
 			audio_clear();
 			if(drivesounds_loaded())
 				drivesounds_enable(config.drivesounds);
 
+            sprintf(s, "done: %d", result);
+            BootPrintEx(s);
 		}
 	}
 	return(result);
@@ -260,8 +269,8 @@ __geta4 int main(void)
     while(1)
     {
 		drivesounds_fill();
-		if(c64keyboard_checkreset())
-			OsdDoReset(SPI_RST_USR | SPI_RST_CPU,0);
+		//if(c64keyboard_checkreset())
+		//	OsdDoReset(SPI_RST_USR | SPI_RST_CPU,0);
 
 		if(rtc)
 			HandleRTC();

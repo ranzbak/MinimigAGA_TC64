@@ -148,6 +148,7 @@ wire           aga;
 wire           cache_inhibit;
 wire           cacheline_clr;
 wire [ 32-1:0] tg68_cad;
+(* mark_debug="1", keep="1" *)
 wire [  7-1:0] tg68_cpustate;
 wire           tg68_nrst_out;
 //wire           tg68_cdma;
@@ -175,8 +176,11 @@ wire           sdo;           // SPI data output
 wire           vs;
 wire           hs;
 wire           cs;
+(* mark_debug="true", keep="true" *)
 wire [  8-1:0] red;
+(* mark_debug="true", keep="true" *)
 wire [  8-1:0] green;
+(* mark_debug="true", keep="true" *)
 wire [  8-1:0] blue;
 reg            cs_reg;
 reg            vs_reg;
@@ -233,14 +237,19 @@ assign SDRAM_BA         = sdram_ba;
 
 // reset
 assign pll_rst          = 1'b0;
+(* mark_debug="1", keep="1" *)
 assign sdctl_rst        = PLL_LOCKED & RESET_N;
 
 
 // RTG support...
 
+(* mark_debug="true", keep="true" *)
 wire rtg_ena;	// RTG screen on/off
+(* mark_debug="true", keep="true" *)
 wire rtg_ena_mm; // RTG screen on/off
+(* mark_debug="true", keep="true" *)
 wire rtg_clut;	// Are we in high-colour or 8-bit CLUT mode?
+(* mark_debug="true", keep="true" *)
 wire rtg_16bit; // Is high-colour mode 15- or 16-bit?
 reg [3:0] rtg_pixelctr;	// Counter, compared against rtg_pixelwidth
 wire [3:0] rtg_pixelwidth; // Number of clocks per fetch - 1
@@ -378,7 +387,7 @@ assign osd_g = osd_pixel ? 2'b11 : 2'b00;
 assign osd_b = osd_pixel ? 2'b11 : 2'b10;
 assign VGA_CS           = cs_reg;
 assign VGA_VS           = vsyncpol ^ vs_reg;
-assign VGA_HS           = hsyncpol ^ hs_reg; // oscillates 
+assign VGA_HS           = hsyncpol ^ hs_reg;
 //assign VGA_R[7:0]       = osd_window ? {osd_r,red_reg[7:2]} : red_reg[7:0];
 assign VGA_G[7:0]       = osd_window ? {osd_g,green_reg[7:2]} : green_reg[7:0];
 assign VGA_B[7:0]       = osd_window ? {osd_b,blue_reg[7:2]} : blue_reg[7:0];
@@ -480,10 +489,10 @@ assign tg68_cpustate=2'b01;
 assign tg68_nrst_out=1'b1;
 `else
 
-TG68K #(.havertg(havertg ? 1'b1 : 1'b0),
-			.haveaudio(haveaudio ? 1'b1 : 1'b0),
-			.havec2p(havec2p ? 1'b1 : 1'b0)
-		) tg68k (
+TG68K #(.havertg(havertg ? "true" : "false"),
+			.haveaudio(haveaudio ? "true" : "false"),
+			.havec2p(havec2p ? "true" : "false")
+          ) tg68k (
   .clk          (CLK_114          ),
   .reset        (tg68_rst         ),
   .clkena_in    (tg68_ena28       ),
@@ -794,7 +803,7 @@ minimig #(
 	.rdata        (aud_amiga_right  ),  // right DAC data
 	//user i/o
 	.cpu_config   (cpu_config       ), // CPU config
-   .board_configured(board_configured),
+    .board_configured(board_configured),
 	.turbochipram (turbochipram     ), // turbo chipRAM
 	.turbokick    (turbokick        ), // turbo kickstart
 	.slow_config  (slow_config      ),

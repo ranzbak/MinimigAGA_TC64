@@ -109,6 +109,7 @@ wire        pll_locked_main;
 wire        pll_locked_minimig;
 // Reset
 wire        reset_n;
+(* mark_debug="true", keep="true" *)
 wire        amiga_reset_n;
 // LED
 wire        led_disk;
@@ -121,14 +122,21 @@ wire        amiga_tx;
 wire        amiga_rx;
 
 // Video interface
+(* mark_debug = "true", keep = "true" *)
 wire        vga_pixel;
+(* mark_debug = "true", keep = "true" *)
 wire        vga_selcs;
+(* mark_debug = "true", keep = "true" *)
 wire        vga_cs;
+(* mark_debug = "true", keep = "true" *)
 wire        vga_hs;
 (* mark_debug = "true", keep = "true" *)
 wire        vga_vs;
+(* mark_debug = "true", keep = "true" *)
 wire [7:0]  vga_r;
+(* mark_debug = "true", keep = "true" *)
 wire [7:0]  vga_g;
+(* mark_debug = "true", keep = "true" *)
 wire [7:0]  vga_b;
 // SDRAM 
 wire [15:0] sdram_dq;
@@ -168,7 +176,8 @@ wire        sd_cs;
 ////////////////////////////////////////
 
 // Reset button
-assign reset_n = sys_reset_in & pll_locked_minimig; // Only release reset when PLL is stable
+assign reset_n = sys_reset_in; // Only release reset when PLL is stable
+assign amiga_reset_n = sys_reset_in;
 assign menu_button = button_osd;
 
 // LED
@@ -299,9 +308,9 @@ pal_to_ddr my_pal_to_ddr (
 // Instatiation of the Minimig Core
 minimig_virtual_top 
 #( .debug(1'b0),
-  .havertg(1'b1),
+  .havertg(1'b0),
   .haveaudio(1'b1),
-  .havec2p(1'b1)
+  .havec2p(1'b0)
 ) openaars_virtual_top (
   .CLK_IN(clk_50),
   .CLK_28(clk_28),

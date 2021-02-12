@@ -1,3 +1,4 @@
+#include "boot.h"
 #include "errors.h"
 #include "hardware.h"
 #include "mmc.h"
@@ -15,7 +16,7 @@
 #include <stdio.h>
 #include <string.h>
 
-//#define EXTENDED_ROM
+#define EXTENDED_ROM
 
 configTYPE config;
 fileTYPE file;
@@ -80,25 +81,30 @@ int UploadKickstart(unsigned long dir,char *name)
 
 	if (RAOpen(&romfile, filename)) {
 		ClearError(ERROR_FILESYSTEM);
+		sprintf(s, "Boot file size: %ld", romfile.size);
+		BootPrintEx(s);
 		if ((romfile.size & 0xf) == 0xb && !keysize) {
 			FatalError(ERROR_ROM,"ROM requires key file",0,0);
 		}
 		else if (romfile.size == 0x100000) {
 			// 1MB Kickstart ROM
 			BootPrint("Uploading 1MB Kickstart ...");
+			BootPrintEx("Uploading 1MB Kickstart ...");
 			SendFileV2(&romfile, NULL, 0, 0xe00000, romfile.size>>10);
 			SendFileV2(&romfile, NULL, 0, 0xf80000, romfile.size>>10);
 			ClearVectorTable();
 			return(1024);
 		} else if(romfile.size == 0x80000) {
 			// 512KB Kickstart ROM
+			BootPrintEx("Uploading 512Kb Kickstart ...");
 			SendFileV2(&romfile, NULL, 0, 0xf80000, romfile.size>>9);
 			RAOpen(&romfile, filename);
 			SendFileV2(&romfile, NULL, 0, 0xe00000, romfile.size>>9);
 			ClearVectorTable();
 			return(512);
-		} else if ((romfile.size == 0x8000b)) {
+		} else if (romfile.size == 0x8000b) {
 			// 512KB Kickstart ROM
+			BootPrintEx("Uploading 512Kb Kickstart b ...");
 			SendFileV2(&romfile, romkey, keysize, 0xf80000, romfile.size>>9);
 			RAOpen(&romfile, filename);
 			SendFileV2(&romfile, romkey, keysize, 0xe00000, romfile.size>>9);
@@ -106,14 +112,16 @@ int UploadKickstart(unsigned long dir,char *name)
 			return(512);
 		} else if (romfile.size == 0x40000) {
 			// 256KB Kickstart ROM
+			BootPrintEx("Uploading 256Kb Kickstart ...");
 			SendFileV2(&romfile, NULL, 0, 0xf80000, romfile.size>>9);
 			RAOpen(&romfile, filename);
 			SendFileV2(&romfile, NULL, 0, 0xfc0000, romfile.size>>9);
 			ClearVectorTable();
 			ClearKickstartMirrorE0();
 			return(256);
-		} else if ((romfile.size == 0x4000b)) {
+		} else if (romfile.size == 0x4000b) {
 			// 256KB Kickstart ROM
+			BootPrintEx("Uploading 256Kb Kickstart b ...");
 			SendFileV2(&romfile, romkey, keysize, 0xf80000, romfile.size>>9);
 			RAOpen(&romfile, filename);
 			SendFileV2(&romfile, romkey, keysize, 0xfc0000, romfile.size>>9);
@@ -122,6 +130,7 @@ int UploadKickstart(unsigned long dir,char *name)
 			return(256);
 		} else {
 			FatalError(ERROR_ROM,"ROM size incorrect",romfile.size,0);
+			BootPrintEx("ROM size incorrect");
 		}
 	} else {
 		FatalError(ERROR_ROM,"ROM missing",0,0);
@@ -453,6 +462,7 @@ int ApplyConfiguration(char reloadkickstart, char applydrives)
     }
 	sprintf(s, "##End result : %d", result);
 	BootPrint(s);
+	BootPrintEx(s);
 	return(result);
 }
 
