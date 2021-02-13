@@ -71,3 +71,6 @@ set_property -dict {PACKAGE_PIN AC26 IOSTANDARD LVTTL} [get_ports uart3_txd]
 
 
 
+
+
+

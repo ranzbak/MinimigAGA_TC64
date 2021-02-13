@@ -87,3 +87,6 @@ set_property -dict {PACKAGE_PIN E25 IOSTANDARD LVTTL SLEW SLOW} [get_ports ps2_d
 
 
 
+
+
+

@@ -30,3 +30,6 @@ set_property -dict {PACKAGE_PIN U2 IOSTANDARD LVTTL} [get_ports pmod_10]
 
 
 
+
+
+
