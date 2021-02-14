@@ -20,14 +20,14 @@ wire clk_fb_main;
 reg [1:0] clk_7 = 0;
 
 MMCME2_BASE #(
-  .CLKIN1_PERIOD(20.0),     // 50        MHz (10 ns)
-  .CLKFBOUT_MULT_F(25.250), // 1368.75   MHz *16.875 common multiply
-  .DIVCLK_DIVIDE(1),        // 1368.75   MHz /1 common divide
+  .CLKIN1_PERIOD(20.0),     // 50        MHz (20 ns)
+  .CLKFBOUT_MULT_F(47.875), // 1368.75   MHz *16.875 common multiply
+  .DIVCLK_DIVIDE(3),        // 1368.75   MHz /1 common divide
   .BANDWIDTH("LOW"),
-  .CLKOUT0_DIVIDE_F(11.0),  // 114.77273 MHz /11 divide
-  .CLKOUT1_DIVIDE(11),      // 114.77273 MHz /11 divide
-  .CLKOUT1_PHASE(-143.182),  // -143.182' phase shift
-  .CLKOUT2_DIVIDE(44)       // 28.69318  MHz /44 divide
+  .CLKOUT0_DIVIDE_F(7.000),  // 114.77273 MHz /11 divide
+  .CLKOUT1_DIVIDE(7),      // 114.77273 MHz /11 divide
+  .CLKOUT1_PHASE(-141.429),  // -143.182' phase shift
+  .CLKOUT2_DIVIDE(28)       // 28.69318  MHz /44 divide
 ) clk_main (
   .PWRDWN(1'b0),
   .RST(1'b0),

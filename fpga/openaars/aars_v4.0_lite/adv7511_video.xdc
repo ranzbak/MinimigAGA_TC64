@@ -15,7 +15,9 @@ set_property -dict {PACKAGE_PIN V21 IOSTANDARD LVTTL} [get_ports dv_scl]
 
 # CLOCK AND ENABLE SIGNALS
 set_property -dict {PACKAGE_PIN M26 IOSTANDARD LVTTL} [get_ports dv_de]
-set_property -dict {PACKAGE_PIN L23 IOSTANDARD LVTTL DRIVE 8} [get_ports dv_clk]
+# set_property -dict {PACKAGE_PIN L23 IOSTANDARD LVTTL DRIVE 8} [get_ports dv_clk]
+set_property -dict {PACKAGE_PIN L23 IOSTANDARD LVTTL SLEW FAST} [get_ports dv_clk]
+
 
 # SYNC SIGNALS
 set_property -dict {PACKAGE_PIN K22 IOSTANDARD LVTTL} [get_ports dv_hsync]
