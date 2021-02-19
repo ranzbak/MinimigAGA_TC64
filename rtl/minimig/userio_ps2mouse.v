@@ -183,7 +183,7 @@ always @ (posedge clk) begin
   end
 end
 
-always @ (posedge clk) begin
+always @ (*) begin
   mclkout  = 1'b1;
   mtreset  = 1'b1;
   mrreset  = 1'b0;
