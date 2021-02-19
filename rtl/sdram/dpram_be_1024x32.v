@@ -134,17 +134,28 @@ module dpram_be_1024x32 (
 `endif
 
 `ifndef MINIMIG_ALTERA
-// Generic dual port RAM.          
-dpram_inf_generic #(.depth(10),.width(32)) gen_ram_1024_32(
-     .clock(clock),           
-     .address_a(address_a), // Address bus
-     .address_b(address_b),           
-     .data_a(data_a),  // data in                          
-     .data_b(data_b),                                
-     .q_a(sub_wire0),     // data out                             
-     .q_b(sub_wire1),                                    
-     .wren_a(wren_a), // Write enable                      
-     .wren_b(wren_b)                                       
+wire [3:0] byte_wr_a;
+wire [3:0] byte_wr_b;
+assign byte_wr_a = wren_a ? byteena_a : 4'b0000;
+assign byte_wr_b = wren_b ? byteena_b : 4'b0000;
+// Generic dual port RAM.
+bytewrite_tdp_ram_rf #(
+	.NUM_COL(4),
+	.COL_WIDTH(8),
+	.ADDR_WIDTH(10)
+) dpram_be_1024x32_inf (
+     .clkA(clock),           
+     .clkB(clock),           
+     .addrA(address_a), // Address bus
+	 .enaA(1'b1),
+     .addrB(address_b),           
+	 .enaB(1'b1),
+     .dinA(data_a),  // data in                          
+     .dinB(data_b),                                
+     .doutA(sub_wire0),     // data out                             
+     .doutB(sub_wire1),                                    
+     .weA(byte_wr_a), // Write enable                      
+     .weB(byte_wr_b)                                       
 );                                                      
 `endif
 

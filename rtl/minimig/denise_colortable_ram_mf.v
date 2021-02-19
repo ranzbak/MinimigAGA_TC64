@@ -119,16 +119,25 @@ module denise_colortable_ram_mf (
 
 `ifndef MINIMIG_ALTERA         
 // Dual port RAM.          
-dpram_inf_generic #(.depth(8),.width(32)) colortable_ram(
-     .clock(clock),           
-     .address_a(wraddress), // Address bus
-     .address_b(rdaddress),           
-     .data_a(data),  // data in                          
-     .data_b({32{1'b1}}),                                
-     .q_a(),     // data out                             
-     .q_b(sub_wire0),                                    
-     .wren_a(wren), // Write enable                      
-     .wren_b(1'b0)                                       
+wire [3:0] byte_wr_ena;
+assign byte_wr_ena = wren ? byteena_a : 4'b0000;
+bytewrite_tdp_ram_rf #(
+	.NUM_COL(4),
+	.COL_WIDTH(8),
+	.ADDR_WIDTH(8)
+) colortable_ram(
+     .clkA(clock),           
+     .clkB(clock),           
+     .addrA(wraddress), // Address bus
+     .addrB(rdaddress),           
+     .dinA(data),  // data in                          
+     .dinB({32{1'b1}}),                                
+     .doutA(),     // data out                             
+     .doutB(sub_wire0),                                    
+     .weA(byte_wr_ena), // Write enable                      
+     .weB(4'b0000),                                      
+	 .enaA(enable),
+	 .enaB(1'b1)
 );                                                      
 `endif
 

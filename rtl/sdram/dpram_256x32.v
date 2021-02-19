@@ -127,16 +127,23 @@ module dpram_256x32 (
 
 `ifndef MINIMIG_ALTERA
 // Generic dual port RAM.          
-dpram_inf_generic #(.depth(8),.width(32)) gen_ram_256_32(
-     .clock(clock),           
-     .address_a(wraddress), // Address bus
-     .address_b(rdaddress),           
-     .data_a(data_a),  // data in                          
-     .data_b(data_b),                                
-     .q_a(sub_wire0),     // data out                             
-     .q_b(sub_wire1),                                    
-     .wren_a(wren_a), // Write enable                      
-     .wren_b(wren_b)                                       
+bytewrite_tdp_ram_rf #(
+	.NUM_COL(1),
+	.ADDR_WIDTH(8),
+	.COL_WIDTH(32)
+) dpram_256x32_inf (
+	.clkA(clock),           
+    .clkB(clock),           
+    .addrA(address_a), // Address bus
+    .addrB(address_b),           
+    .dinA(data_a),  // data in                          
+    .dinB(data_b),                                
+	.enaA(1'b1),
+	.enaB(1'b1),
+    .doutA(sub_wire0),     // data out                             
+    .doutB(sub_wire1),                                    
+    .weA(wren_a), // Write enable                      
+    .weB(wren_b)                                       
 );                                                      
 `endif
 

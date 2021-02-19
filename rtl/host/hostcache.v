@@ -66,16 +66,23 @@ assign zdata_a = zcacheline;
 
 
 // Dual port RAM.
-dpram_inf_generic #(.depth(zcachebits),.width(32)) hostcache(
-	.clock(sysclk),
-	.address_a(zdata_a),
-	.address_b(ztag_a),
-	.data_a(zdata_w),
-	.data_b(ztag_w),
-	.q_a(zdata_q),
-	.q_b(ztag_q),
-	.wren_a(zdata_wren),
-	.wren_b(ztag_wren)
+bytewrite_tdp_ram_rf #(
+	.NUM_COL(1),
+	.COL_WIDTH(32),
+	.ADDR_WIDTH(zcachebits)
+) hostcache (
+	.clkA(sysclk),
+	.clkB(sysclk),
+	.addrA(zdata_a),
+	.addrB(ztag_a),
+	.dinA(zdata_w),
+	.dinB(ztag_w),
+	.doutA(zdata_q),
+	.doutB(ztag_q),
+	.weA(zdata_wren),
+	.weB(ztag_wren),
+	.enaA(1'b1),
+	.enaB(1'b1)
 );
 
 wire zdata_valid;

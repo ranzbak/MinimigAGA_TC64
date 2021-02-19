@@ -32,13 +32,21 @@ module sdram_ctrl(
   input  wire [  4-1:0] cpu_cache_ctrl,
   output wire           reset_out,
   // sdram
+  (* IOB="FORCE" *)
   output reg  [ 13-1:0] sdaddr,
+  (* IOB="FORCE", mark_debug="TRUE" *)
   output wire [  4-1:0] sd_cs,
+  (* IOB="FORCE" *)
   output reg  [  2-1:0] ba,
+  (* IOB="FORCE", mark_debug="TRUE" *)
   output wire           sd_we,
+  (* IOB="FORCE" *)
   output wire           sd_ras,
+  (* IOB="FORCE" *)
   output wire           sd_cas,
+  (* IOB="FORCE" *)
   output reg  [  2-1:0] dqm,
+  (* IOB="FORCE" *)
   inout       [ 16-1:0] sdata,
   // host
   input  wire [ 32-1:0] hostWR,
@@ -142,7 +150,9 @@ reg  [ 2-1:0] slot2_dqm2;
 reg           init_done;
 reg  [25-1:0] slot1_addr;
 reg  [25-1:0] slot2_addr;
+(* IOB="FORCE", mark_debug="TRUE" *)
 reg  [16-1:0] sdata_reg;
+(* IOB="FORCE" *)
 reg  [16-1:0] sdata_out;
 reg           sdata_oe;
 reg  [25-1:2] zmAddr;
@@ -157,6 +167,7 @@ reg           reset_sdstate;
 reg           clk7_enD;
 reg  [ 9-1:0] refreshcnt;
 reg           refresh_pending;
+(* mark_debug="TRUE", keep="TRUE" *)
 reg  [ 4-1:0] sdram_state;
 reg           snoop_act;
 // writebuffer
@@ -184,6 +195,7 @@ reg  [16-1:0] writebufferWR2_reg;
 wire [ 2-1:0] writebuffer_dqm2;
 reg           writebuffer_hold;
 
+(* mark_debug="TRUE", keep="TRUE"*)
 reg  [25-1:1] cpuAddr_r; // registered CPU address - cpuAddr must be stable one cycle before cpuCSn
 
 reg     [3:0] sd_cmd;   // current command sent to sd ram
