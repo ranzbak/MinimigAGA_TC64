@@ -107,14 +107,17 @@ wire        clk_114;
 wire        clk_fb_main;
 wire        pll_locked_main;
 wire        pll_locked_minimig;
+
 // Reset
 wire        reset_n;
-(* mark_debug="true", keep="true" *)
 wire        amiga_reset_n;
+
 // LED
 wire        led_disk;
+
 // Input
 wire        menu_button;
+
 // Serial
 wire        ctrl_tx;
 wire        ctrl_rx;
@@ -122,22 +125,15 @@ wire        amiga_tx;
 wire        amiga_rx;
 
 // Video interface
-(* mark_debug = "true", keep = "true" *)
 wire        vga_pixel;
-(* mark_debug = "true", keep = "true" *)
 wire        vga_selcs;
-(* mark_debug = "true", keep = "true" *)
 wire        vga_cs;
-(* mark_debug = "true", keep = "true" *)
 wire        vga_hs;
-(* mark_debug = "true", keep = "true" *)
 wire        vga_vs;
-(* mark_debug = "true", keep = "true" *)
 wire [7:0]  vga_r;
-(* mark_debug = "true", keep = "true" *)
 wire [7:0]  vga_g;
-(* mark_debug = "true", keep = "true" *)
 wire [7:0]  vga_b;
+
 // SDRAM 
 wire [15:0] sdram_dq;
 wire [12:0] sdram_a;
@@ -148,9 +144,11 @@ wire        sdram_ncs;
 wire        sdram_clk;
 wire        sdram_cke;
 wire [1:0]  sdram_ba;
+
 // Audio
 wire [15:0] audio_l;
 wire [15:0] audio_r;
+
 // PS2
 wire        ps2_dat_i;
 wire        ps2_clk_i;
@@ -160,11 +158,14 @@ wire        ps2_dat_o;
 wire        ps2_clk_o;
 wire        ps2_mdat_o;
 wire        ps2_mclk_o;
+
 // keyboard 
 wire [7:0]  amiga_key;
+
 // Joystick/mouse input
 wire [6:0]  joya;
 wire [6:0]  joyb;
+
 // SD Card
 wire        sd_miso;
 wire        sd_mosi;
@@ -181,9 +182,9 @@ assign amiga_reset_n = sys_reset_in;
 assign menu_button = button_osd;
 
 // LED
-assign led_disk  = led_fdisk;
-assign led_hdisk = sdram_ncs; // Workaround for now
-assign led_core  = !sd_cs;
+assign led_fdisk  = led_disk;
+assign led_hdisk = 1'b1; // Workaround for now
+assign led_core  = sd_cs;
 
 // PS2 ports tristate
 // keyboard
@@ -210,6 +211,7 @@ assign sd_m_d3  = sd_cs;
 assign dv_cecclk  = clk_28;                 
 
 // PMOD pins
+// TODO: remove debug when done with video
 assign pmod_10    = vga_vs;
 assign pmod_9     = vga_hs;
 assign pmod_2     = vga_cs;

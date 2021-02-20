@@ -69,7 +69,6 @@ module amber
   input  wire           osd_blank,      // OSD overlay enable (blank normal video)
   input  wire           osd_pixel,      // OSD pixel(video) data
   // input
-  (* mark_debug="true", keep="true" *)
   input  wire [  8-1:0] red_in,         // red componenent video in
   input  wire [  8-1:0] green_in,       // green component video in
   input  wire [  8-1:0] blue_in,        // blue component video in

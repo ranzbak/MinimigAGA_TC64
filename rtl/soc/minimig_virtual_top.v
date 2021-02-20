@@ -148,7 +148,6 @@ wire           aga;
 wire           cache_inhibit;
 wire           cacheline_clr;
 wire [ 32-1:0] tg68_cad;
-(* mark_debug="1", keep="1" *)
 wire [  7-1:0] tg68_cpustate;
 wire           tg68_nrst_out;
 //wire           tg68_cdma;
@@ -176,11 +175,8 @@ wire           sdo;           // SPI data output
 wire           vs;
 wire           hs;
 wire           cs;
-(* mark_debug="true", keep="true" *)
 wire [  8-1:0] red;
-(* mark_debug="true", keep="true" *)
 wire [  8-1:0] green;
-(* mark_debug="true", keep="true" *)
 wire [  8-1:0] blue;
 reg            cs_reg;
 reg            vs_reg;
@@ -237,19 +233,14 @@ assign SDRAM_BA         = sdram_ba;
 
 // reset
 assign pll_rst          = 1'b0;
-(* mark_debug="1", keep="1" *)
 assign sdctl_rst        = PLL_LOCKED & RESET_N;
 
 
 // RTG support...
 
-(* mark_debug="true", keep="true" *)
 wire rtg_ena;	// RTG screen on/off
-(* mark_debug="true", keep="true" *)
 wire rtg_ena_mm; // RTG screen on/off
-(* mark_debug="true", keep="true" *)
 wire rtg_clut;	// Are we in high-colour or 8-bit CLUT mode?
-(* mark_debug="true", keep="true" *)
 wire rtg_16bit; // Is high-colour mode 15- or 16-bit?
 reg [3:0] rtg_pixelctr;	// Counter, compared against rtg_pixelwidth
 wire [3:0] rtg_pixelwidth; // Number of clocks per fetch - 1

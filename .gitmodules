@@ -3,4 +3,4 @@
 	url = https://github.com/TobiFlex/TG68K.C.git
 [submodule "EightThirtyTwo"]
 	path = EightThirtyTwo
-	url = https://github.com/robinsonb5/EightThirtyTwo
+	url = git@github.com:ranzbak/EightThirtyTwo.git

@@ -43,7 +43,9 @@ fw/ctrl_832/832OSDAD.map
 
 # Ignore Xvhdl files
 xvhdl.*
+.Xil/*
 
 # Editor files
 .hdl_checker/*
 .vscode/*
+vivado*

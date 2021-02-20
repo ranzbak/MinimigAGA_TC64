@@ -163,7 +163,6 @@ module minimig #(
   input cpu_r_w,      // m68k read / write
   output  _cpu_dtack,     // m68k data acknowledge
   output  _cpu_reset,     // m68k reset
-(* mark_debug="1", keep="1" *)
   input _cpu_reset_in,    // m68k reset in
   input [31:0] cpu_vbr, // m68k VBR
   output wire ovr,      // NMI address decoding override
@@ -452,7 +451,6 @@ wire [ 16-1:0] host_wdat;
 wire [ 16-1:0] host_rdat;
 wire           host_ack;
 
-(* mark_debug="1", keep="1" *)
 wire           sys_reset;    //reset output from minimig_syscontrol.v
 
 assign reset = sys_reset | ~_cpu_reset_in; // both tg68k and minimig_syscontrol hold the reset signal for some clicks

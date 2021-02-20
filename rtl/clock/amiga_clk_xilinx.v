@@ -26,7 +26,7 @@ MMCME2_BASE #(
   .BANDWIDTH("LOW"),
   .CLKOUT0_DIVIDE_F(7.000),  // 114.77273 MHz /11 divide
   .CLKOUT1_DIVIDE(7),      // 114.77273 MHz /11 divide
-  .CLKOUT1_PHASE(-141.429),  // -143.182' phase shift
+  .CLKOUT1_PHASE(-154.286),  // -143.182' phase shift
   .CLKOUT2_DIVIDE(28)       // 28.69318  MHz /44 divide
 ) clk_main (
   .PWRDWN(1'b0),
