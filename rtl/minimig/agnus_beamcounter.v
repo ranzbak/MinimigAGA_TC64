@@ -27,11 +27,11 @@
 module agnus_beamcounter
 (
 	input	clk,					// bus clock
-  input clk7_en,
+	input clk7_en,
 	input	reset,					// reset
 	input	cck,					// CCK clock
 	input	ntsc,					// NTSC mode switch
-  input aga,
+	input aga,
 	input	ecs,					// ECS enable switch
 	input	a1k,					// enable A1000 VBL interrupt timing
 	input	[15:0] data_in,			// bus data in

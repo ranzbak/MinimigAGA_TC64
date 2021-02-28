@@ -1,7 +1,7 @@
 ------------------------------------------------------------------------------
 ------------------------------------------------------------------------------
 --                                                                          --
--- Copyright (c) 2008-2011 Tobias Gubener                                   -- 
+-- Copyright (c) 2008-2011 Tobias Gubener                                   --
 -- Subdesign fAMpIGA by TobiFlex                                            --
 --                                                                          --
 -- This source file is free software: you can redistribute it and/or modify --
@@ -19,33 +19,35 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 ------------------------------------------------------------------------------
--- Modifications by Alastair M. Robinson to work with a cheap 
+-- Modifications by Alastair M. Robinson to work with a cheap
 -- Ebay Cyclone III board.
 
 
 
- 
+
 library IEEE;
-use IEEE.std_logic_1164.all;
+use IEEE.STD_LOGIC_1164.all;
 use IEEE.STD_LOGIC_UNSIGNED.all;
+use ieee.numeric_std.all;
 
 entity cfide is
 	generic (
 		spimux : in boolean;
-		havespirtc : in boolean
+		havespirtc : in boolean;
+		havei2c : in boolean
 	);
-   port ( 
+   port (
 		sysclk	: in std_logic;
 		n_reset	: in std_logic;
-		
+
 		addr	: in std_logic_vector(31 downto 2);
-		d		: in std_logic_vector(15 downto 0);	
-		q		: out std_logic_vector(15 downto 0);		
+		d		: in std_logic_vector(15 downto 0);
+		q		: out std_logic_vector(15 downto 0);
 		req 	: in std_logic;
 		wr 	: in std_logic;
 		ack 	: out std_logic;
 
-		sd_di		: in std_logic;		
+		sd_di		: in std_logic;
 		sd_cs 	: out std_logic_vector(7 downto 0);
 		sd_clk 	: out std_logic;
 		sd_do		: out std_logic;
@@ -55,26 +57,34 @@ entity cfide is
 		debugRxD : in std_logic;
 		menu_button	: in std_logic:='1';
 		scandoubler	: out std_logic;
-		
+
 		audio_ena : out std_logic;
 		audio_clear : out std_logic;
 		audio_buf : in std_logic;
 		audio_amiga : in std_logic;
-		
+
 		vbl_int	: in std_logic;
 		interrupt	: out std_logic;
 		c64_keys	: in std_logic_vector(63 downto 0) :=X"FFFFFFFFFFFFFFFF";
 		amiga_key	: out std_logic_vector(7 downto 0);
 		amiga_key_stb	: out std_logic;
-		
+
 		amiga_addr : in std_logic_vector(7 downto 0);
 		amiga_d : in std_logic_vector(15 downto 0);
 		amiga_q : out std_logic_vector(15 downto 0);
 		amiga_req : in std_logic;
 		amiga_wr : in std_logic;
 		amiga_ack : out std_logic;
-		
+
 		rtc_q : out std_logic_vector(63 downto 0);
+
+		-- I2C interface
+		scl_i : in std_logic;
+		scl_o : out std_logic;
+		scl_t : out std_logic;
+		sda_i : in std_logic;
+		sda_o : out std_logic;
+		sda_t : out std_logic;
 
 		-- 28Mhz signals
 		clk_28	: in std_logic;
@@ -134,7 +144,30 @@ signal amiga_select : std_logic;
 signal amiga_req_d : std_logic;
 
 signal rtc_select : std_logic;
+signal i2c_select : std_logic;
 signal spirtcpresent : std_logic;
+
+-- I2C
+signal cmd_address : std_logic_vector(6 downto 0);
+signal cmd_start : std_logic;
+signal cmd_read : std_logic;
+signal cmd_write : std_logic;
+signal cmd_write_multiple : std_logic;
+signal cmd_stop : std_logic;
+signal cmd_valid : std_logic;
+signal cmd_ready : std_logic;
+
+signal data_in : std_logic_vector(7 downto 0);
+signal data_in_valid : std_logic;
+signal data_in_ready : std_logic;
+signal data_in_last : std_logic;
+
+signal data_out : std_logic_vector(7 downto 0);
+signal data_out_valid : std_logic;
+signal data_out_ready : std_logic;
+signal data_out_last : std_logic;
+
+signal r_busy : std_logic;
 
 -- attribute MARK_DEBUG : string;
 -- attribute MARK_DEBUG of addr : signal is "TRUE";
@@ -153,19 +186,24 @@ signal spirtcpresent : std_logic;
 -- attribute MARK_DEBUG of spi_wait : signal is "TRUE";
 -- attribute MARK_DEBUG of sd_in_shift : signal is "TRUE";
 
+-- I2C Prescaler
+-- prescale = Fclk / (FI2Cclk * 4)
+constant bit_0        : std_logic:= '0';
+constant i2c_prescale : std_logic_vector(15 downto 0) := std_logic_vector(to_unsigned(200, 16));
+
 begin
 
 -- Peripheral registers are only 16-bits wide.
 
-q(15 downto 0) <=	IOdata WHEN rs232_select='1' or SPI_select='1' ELSE
-		timecnt(23 downto 8) when timer_select='1' ELSE 
+q(15 downto 0) <= IOdata when rs232_select='1' or SPI_select='1' else
+		timecnt(23 downto 8) when timer_select='1' ELSE
 		audio_q when audio_select='1' else
 		keyboard_q when keyboard_select='1' else
 		amigatohost when amiga_select='1' else
 		platformdata;
 
 spirtcpresent <= '1' when havespirtc=true else '0';
-		
+
 platformdata <=  X"000"&"0" & spirtcpresent & "1" & menu_button; -- Reconfig not currently supported, 32 meg of RAM, menu button.
 IOdata <= sd_in;
 
@@ -199,6 +237,7 @@ interrupt_select <='1' when addr(23)='1' and addr(7 downto 4)=X"A" else '0';
 keyboard_select <='1' when addr(23)='1' and addr(7 downto 4)=X"9" else '0';
 amiga_select <= '1' when addr(23)='1' and addr(7 downto 4)=X"8" else '0';
 rtc_select <= '1' when addr(23)='1' and addr(7 downto 4)=X"7" else '0';
+i2c_select <= '1' when addr(23)='1' and addr(7 downto 4)=X"6" else '0';
 
 
 -- RTC handling at 0fffff70
@@ -218,6 +257,8 @@ begin
 					rtc_q(31 downto 16)<=d;
 				when "11" =>
 					rtc_q(15 downto 0)<=d;
+			    when others =>
+			        rtc_q <= (others => '0');
 			end case;
 		end if;
 	end if;
@@ -244,8 +285,8 @@ begin
 			else
 				amigatohost<=amiga_req&amiga_wr&"000000"&amiga_addr;
 			end if;
-		
-		end if;	
+
+		end if;
 	end if;
 end process;
 
@@ -270,6 +311,8 @@ begin
 					keyboard_q<=c64_keys(31 downto 16);
 				when "11" =>
 					keyboard_q<=c64_keys(15 downto 0);
+			    when others =>
+			        keyboard_q<=(others => '0');
 			end case;
 		end if;
 	end if;
@@ -307,16 +350,16 @@ process(clk_28,n_reset)
 begin
 	if rising_edge(clk_28) then
 		if req='1' and wr='1' then
-		
+
 			if platform_select='1' then	-- Write to platform registers
 				scandoubler<=d(0);
 			end if;
-			
+
 			if audio_select='1' then
 				audio_clear<=d(1);
 				audio_ena<=d(0);
 			end if;
-			
+
 		end if;
 	end if;
 end process;
@@ -345,7 +388,7 @@ begin
 						IOcpuena <= '1';
 					END IF;
 				END IF;
-					
+
 			WHEN io_aktion =>
 				if shift(9)='1' then
 					uart_ld <= '0';
@@ -355,28 +398,28 @@ begin
 				else
 					IOcpuena <= '1';
 				end if;
-				
-			WHEN OTHERS => 
+
+			WHEN OTHERS =>
 				support_state <= idle;
 		END CASE;
-	END IF;	
-end process; 
+	END IF;
+end process;
 
 -----------------------------------------------------------------
 -- SPI-Interface
------------------------------------------------------------------	
+-----------------------------------------------------------------
 	sd_cs <= NOT scs;
 	sd_clk <= NOT sck;
 	sd_do <= sd_out(15);
 	SD_busy <= shiftcnt(13);
-	
+
 	PROCESS (sysclk, n_reset, scs, sd_di, sd_dimm) BEGIN
 		IF scs(1)='0' and scs(7)='0' THEN
 			sd_di_in <= sd_di;
 		ELSE
 			sd_di_in <= sd_dimm;
 		END IF;
-		IF n_reset ='0' THEN 
+		IF n_reset ='0' THEN
 			shiftcnt <= (OTHERS => '0');
 			spi_div <= (OTHERS => '0');
 			scs <= (OTHERS => '0');
@@ -387,13 +430,13 @@ end process;
 		ELSIF rising_edge(sysclk) THEN
 
 			spi_wait_d<=spi_wait;
-			
+
 			if spi_wait_d='1' and sd_ack='1' then -- Unpause SPI as soon as the IO controller has written to the MUX
 				spi_wait<='0';
 			end if;
 
 			IF SPI_select='1' AND req='1' and wr='1' AND SD_busy='0' THEN	 --SD write
-				case addr(3 downto 2) is				
+				case addr(3 downto 2) is
 					when "10" => -- 8
 						spi_speed <= d(7 downto 0);
 					when "01" => -- 4
@@ -471,7 +514,7 @@ end process;
 				END IF;
 			END IF;
 
-		END IF;		
+		END IF;
 	END PROCESS;
 
 -----------------------------------------------------------------
@@ -488,21 +531,79 @@ begin
 
 	if n_reset='0' then
 		shiftout <= '0';
-		shift <= "0000000000"; 
+		shift <= "0000000000";
 	elsif rising_edge(clk_28) then
 		if uart_ld = '1' then
 			shift <=  '1' & d(7 downto 0) & '0';			--STOP,MSB...LSB, START
 		end if;
 		if clkgen/=0 then
 			clkgen <= clkgen-1;
-		else	
+		else
 --			clkgen <= "1111011001";--985;		--113.5MHz/115200
 			clkgen <= "0011110110";--246;		--28.36MHz/115200
 			shiftout <= not shift(0) and txbusy;
 			shift <=  '0' & shift(9 downto 1);
 		end if;
 	end if;
-end process; 
+end process;
+
+-----------------------------------------------------------------
+-- I2C bridge
+-----------------------------------------------------------------
+i2c_master: if (havei2c) generate
+
+	-- MMIO I2C
+process(clk_28) begin
+	if rising_edge(clk_28) then
+
+	end if;
+end process;
+
+	-- I2C Master
+	my_i2c_master: entity work.i2c_master port map (
+       clk => clk_28,
+       rst => (NOT n_reset),
+
+       -- Host interface
+       cmd_address => cmd_address,
+       cmd_start => cmd_start,
+       cmd_read => cmd_read,
+       cmd_write => cmd_write,
+       cmd_write_multiple => cmd_write_multiple,
+       cmd_stop => cmd_stop,
+       cmd_valid => cmd_valid,
+       cmd_ready => cmd_ready,
+
+       data_in => data_in,
+       data_in_valid => data_in_valid,
+       data_in_ready => data_in_ready,
+       data_in_last => data_in_last,
+
+       data_out => data_out,
+       data_out_valid => data_out_valid,
+       data_out_ready => data_out_ready,
+       data_out_last => data_out_last,
+
+       -- I2C interface
+       scl_i => scl_i,
+       scl_o => scl_o,
+       scl_t => scl_t,
+       sda_i => sda_i,
+       sda_o => sda_o,
+       sda_t => sda_t,
+
+        -- Status
+       busy => r_busy,
+       bus_control => open,
+       bus_active => open,
+       missed_ack => open,
+
+       -- Configuration
+       prescale => i2c_prescale,
+       stop_on_idle => bit_0
+   );
+
+end generate;
 
 
 -----------------------------------------------------------------
@@ -510,12 +611,12 @@ end process;
 -----------------------------------------------------------------
 process(clk_28)
 begin
-  	IF rising_edge(clk_28) THEN
+  	if rising_edge(clk_28) then
 		if tick_in='1' then
 			timecnt <= timecnt+1;
-		END IF;
+		end if;
 	end if;
-end process; 
+end process;
 
-end;  
+end;
 

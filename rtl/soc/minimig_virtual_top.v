@@ -846,7 +846,7 @@ EightThirtyTwo_Bridge #( debug ? 1'b1 : 1'b0) hostcpu
 );
 
 
-cfide #(.spimux(spimux ? 1'b1 : 1'b0), .havespirtc(havespirtc ? 1'b1 : 1'b0)) mycfide
+cfide #(.spimux(spimux ? 1'b1 : 1'b0), .havespirtc(havespirtc ? 1'b1 : 1'b0), .havei2c(1'b0)) mycfide
 ( 
 		.sysclk(CLK_114),
 		.n_reset(reset_out),

@@ -12,5 +12,5 @@ set_property -dict {PACKAGE_PIN D26 IOSTANDARD LVTTL SLEW SLOW} [get_ports ps2_c
 set_property -dict {PACKAGE_PIN D25 IOSTANDARD LVTTL SLEW SLOW} [get_ports ps2_data1]
 
 # PS/2 port 2 (Mouse)
-set_property -dict {PACKAGE_PIN E26 IOSTANDARD LVTTL SLEW SLOW} [get_ports ps2_clk2]
-set_property -dict {PACKAGE_PIN E25 IOSTANDARD LVTTL SLEW SLOW} [get_ports ps2_data2]
+set_property -dict {PACKAGE_PIN E26 IOSTANDARD LVTTL SLEW SLOW PULLUP true} [get_ports ps2_clk2]
+set_property -dict {PACKAGE_PIN E25 IOSTANDARD LVTTL SLEW SLOW PULLUP true} [get_ports ps2_data2]

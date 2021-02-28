@@ -177,8 +177,8 @@ wire        sd_cs;
 ////////////////////////////////////////
 
 // Reset button
-assign reset_n = sys_reset_in; // Only release reset when PLL is stable
-assign amiga_reset_n = sys_reset_in;
+//assign reset_n = !reset_28; // Only release reset when PLL is stable
+assign amiga_reset_n = reset_n;
 assign menu_button = button_osd;
 
 // LED
@@ -240,6 +240,24 @@ MMCME2_BASE #(
 ////////////////////////////////////////
 // Modules                            //
 ////////////////////////////////////////
+
+// Synchronize reset
+wire reset_n_50;
+gen_reset #(
+  .resetCycles(524284)
+) myReset (
+  .clk(clk_50),
+  .enable(pll_locked_main),
+  .button(!sys_reset_in),
+  .nreset(reset_n_50)
+);
+reg r_reset_n;
+reg r_reset_n_;
+always @(posedge clk_28) begin
+  r_reset_n_ <= reset_n_50;
+  r_reset_n <= r_reset_n_;
+end
+assign reset_n = r_reset_n;
 
 // SPI to joystick / mouse input
 // Joystick bits(5-0) = fire2,fire,up,down,left,right mapped to GPIO header

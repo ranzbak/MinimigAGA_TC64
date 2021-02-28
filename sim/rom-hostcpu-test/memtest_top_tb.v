@@ -46,11 +46,11 @@ module memtest_top_tb(
 
     // Clock generation
     initial begin
-        clk = 0;
+        clk_28 = 0;
         count = 0;
         reset_n = 1'b1;
     end
-    always #10 clk = ~clk;
+    always #35.71 clk_28 = ~clk_28;
     
     // Count to organize state
     always @(posedge clk) begin

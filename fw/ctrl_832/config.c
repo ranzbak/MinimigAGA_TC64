@@ -349,8 +349,6 @@ unsigned char LoadConfiguration(char *filename)
 
 		/* Version 2 configuration fields */
 		strncpy(config.extrom.name, "EXTENDED", sizeof(config.extrom.name));
-
-		BootPrint("Defaults set\n");
 	}
 
     return(result);

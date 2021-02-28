@@ -3,7 +3,7 @@
 
 
 `default_nettype none
-`timescale 1ns/1ps
+`timescale 1ns/10ps
 
 
 module ps2mouse_tb();
@@ -16,7 +16,6 @@ wire ps2mdat;
 
 wire mclk;
 wire mdat;
-
 
 // testbench
 initial begin
@@ -47,7 +46,7 @@ end
 
 initial begin
   RST = 1'b1;
-  #1;
+  #1000;
   RST = 1'b0;
   repeat(10) @ (posedge CLK7);
 end

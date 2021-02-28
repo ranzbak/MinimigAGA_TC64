@@ -198,20 +198,12 @@ int ColdBoot()
 			drivesounds_init("DRIVESNDBIN");
 			ClearError(ERROR_FILESYSTEM); /* Don't report a missing drivesnd.bin */			
 
-			BootPrintEx("Loading kickstart ROM...\r\n");
 			result=ApplyConfiguration(1,1);
-
-            // TODO remove debug
-            BootPrintEx("OSD Reset");
 
 			OsdDoReset(SPI_RST_USR | SPI_RST_CPU,0);
 
-            BootPrintEx("Setup Interrupt handler");
-
 			SetIntHandler(inthandler);
 			EnableInterrupts();
-
-            BootPrintEx("Clear audio");
 
 			audio_clear();
 			if(drivesounds_loaded())

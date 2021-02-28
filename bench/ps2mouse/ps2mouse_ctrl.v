@@ -21,11 +21,11 @@ reg           _mright;
 
 reg           mclkout;
 wire          mdatout;
-reg  [ 2-1:0] mdatr;
-reg  [ 3-1:0] mclkr;
+reg  [ 2-1:0] mdatr = 1'b11;
+reg  [ 3-1:0] mclkr = 1'b111;
 
 reg  [11-1:0] mreceive;
-reg  [12-1:0] msend;
+reg  [12-1:0] msend = 12'hfff;
 reg  [16-1:0] mtimer;
 reg  [ 3-1:0] mstate;
 reg  [ 3-1:0] mnext;
@@ -47,8 +47,8 @@ reg  [12-1:0] mcmd;
 
 
 // bidirectional open collector IO buffers
-assign mclk = (mclkout) ? 1'bz : 1'b0;
-assign mdat = (mdatout) ? 1'bz : 1'b0;
+assign mclk = (mclkout); // ? 1'bz : 1'b0;
+assign mdat = (mdatout); // ? 1'bz : 1'b0;
 
 // input synchronization of external signals
 always @ (posedge clk) begin

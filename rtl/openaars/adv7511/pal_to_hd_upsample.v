@@ -48,7 +48,6 @@ module pal_to_hd_upsample(
     parameter HD_H_RES  = 1360; // Resolution of the output signal
     parameter HD_H_FP   = 0;    // Horizontal front porge, move image to the right
     parameter HD_FT_BAR = 160;  // The width of the bar before and after the active area when in 4:3 mode
-    parameter PAL_H_FP  = 32;
 
     // Output registers
     reg [7:0]   r_hd_r;
@@ -57,7 +56,7 @@ module pal_to_hd_upsample(
 
     reg   [1:0] r_cur_read_buf  = 2'b00;  // Number of the current read buffer
     reg   [1:0] r_cur_write_buf = 2'b00;  // Number of the current write buffer
-    reg         r_next_buf      = 1'b0;  // signal when to swap buffer
+    reg         r_next_buf      = 1'b0;   // signal when to swap buffer
 
     reg         r_pal_hsync_;
     reg         r_pal_vsync_;
@@ -84,7 +83,7 @@ module pal_to_hd_upsample(
     // );
     bram_tdp #(
         .DATA(24),
-        .ADDR(13)
+        .ADDR(14)
     ) upsample_blk_ram (
         .a_clk(clk),    // input wire clka
         .a_wr(r_wea),      // input wire [0 : 0] wea
@@ -101,6 +100,9 @@ module pal_to_hd_upsample(
     reg         r_line_active = 1'b0;
     reg         r_act_active = 1'b0;
     reg [13:0]  r_line_count = 14'b0;
+    reg         r_long_frame = 1'b0;
+    reg [10:0]  r_v_count = 0;
+    reg [10:0]  r_v_count_prev = 0;
     reg [5:0]   r_pix_clock_dev = 6'd0;
     reg [13:0]  r_pal_h_pos = 14'b0;
     reg [11:0]  v_div_var = 12'b0;
@@ -114,6 +116,7 @@ module pal_to_hd_upsample(
         if (r_pal_hsync_ == 1'b0 && i_pal_hsync == 1'b1) begin
             r_line_active   <= 1'b0; // Stop counter
             r_line_count    <= 0;  // Reset counter
+            r_v_count       <= r_v_count + 1;
             v_div_var        = (r_line_count[13:6] / (HD_H_RES>>8)) - 1; // Shift numbers to make devider circuit faster
             r_pix_clock_dev <= v_div_var[5:0]; // Get the pixel clock relative to the system clock
         end
@@ -170,22 +173,30 @@ module pal_to_hd_upsample(
             r_next_buf <= 1'b1; // Switch buffer
 
             // Switch to next write buffer
-            if (r_cur_write_buf != 2'b11) begin
+            if (r_cur_write_buf != 3'b111) begin
                 r_cur_write_buf <= (r_cur_write_buf + 1);
             end else begin
-                r_cur_write_buf <= 2'd0;
+                r_cur_write_buf <= 0;
             end
 
             // Switch the current write buffer
             case (r_cur_write_buf)
                 0:
-                    r_addra <= 13'b0000;
+                    r_addra <= 13'h0000;
                 1:
                     r_addra <= 13'h0800;
                 2:
                     r_addra <= 13'h1000;
                 3:
                     r_addra <= 13'h1800;
+                4:
+                    r_addra <= 13'h2000;
+                5:
+                    r_addra <= 13'h2800;
+                6:
+                    r_addra <= 13'h3000;
+                7:
+                    r_addra <= 13'h3800;
             endcase;
         end
 
@@ -227,7 +238,7 @@ module pal_to_hd_upsample(
             if (r_next_buf) begin
                 r_next_buf <= 1'b0;
 
-                if (r_cur_read_buf != 2'b11) begin
+                if (r_cur_read_buf != 3'b111) begin
                     r_cur_read_buf <= r_cur_read_buf + 1;
                 end else begin
                     r_cur_read_buf <= 0;
@@ -236,24 +247,51 @@ module pal_to_hd_upsample(
             r_h_pos <= 0; // Reset horizontal counter
             case (r_cur_read_buf)
                 0:
-                    r_addrb <= 13'b0000 + OFFSET_HZ;
+                    r_addrb <= 14'h0000 + OFFSET_HZ;
                 1:
-                    r_addrb <= 13'h0800 + OFFSET_HZ;
+                    r_addrb <= 14'h0800 + OFFSET_HZ;
                 2:
-                    r_addrb <= 13'h1000 + OFFSET_HZ;
+                    r_addrb <= 14'h1000 + OFFSET_HZ;
                 3:
-                    r_addrb <= 13'h1800 + OFFSET_HZ;
+                    r_addrb <= 14'h1800 + OFFSET_HZ;
+                4:
+                    r_addrb <= 14'h2000 + OFFSET_HZ;
+                5:
+                    r_addrb <= 14'h2800 + OFFSET_HZ;
+                6:
+                    r_addrb <= 14'h3000 + OFFSET_HZ;
+                7:
+                    r_addrb <= 14'h3800 + OFFSET_HZ;
             endcase;
         end
 
         // Provide end of sync signal
         r_pal_vsync_ <=  i_pal_vsync;
         r_frame_end <= 1'b0;
+
+        // posedge vsync
+        if (r_pal_vsync_ == 1'b0 && i_pal_vsync == 1'b1) begin
+            if(r_v_count > r_v_count_prev) begin
+                r_long_frame <= 1'b1;
+            end
+        end
+
+        // Neg edge vsync
         if (r_pal_vsync_ == 1'b1 && i_pal_vsync == 1'b0) begin
+            r_v_count_prev <= r_v_count;
+            r_v_count <= 0;
             r_frame_end <= 1'b1;
+            r_long_frame <= 1'b0;
             // Reset the read and write buffer to start
-            r_cur_read_buf  <= 0;
-            r_cur_write_buf <= 2;
+            // When the current frame is long the next frame needs to
+            // be moved down one line to overlap the interlaced video
+            if(r_long_frame) begin
+                r_cur_read_buf  <= 0;
+                r_cur_write_buf <= 4;
+            end else begin
+                r_cur_read_buf  <= 0;
+                r_cur_write_buf <= 6;
+            end
         end
     end
 

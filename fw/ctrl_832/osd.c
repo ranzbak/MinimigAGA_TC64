@@ -77,7 +77,7 @@ const char *supporters[]=
 	"facebook group for their",
 	"enthusiasm and suggestions.",
 	0
-}
+};
 
 // conversion table of Amiga keyboard scan codes to ASCII codes
 const char keycode_table[128] =
@@ -189,7 +189,7 @@ void OsdWriteFramebuffer(unsigned char n, char *s)
 	{
 		i=(linelimit-i)/2;
 		fb+=i;
-		while(b = *s++)
+		while((b = *s++))
 		{
 	        p = &charfont[b][0];
 			*fb++|=*p++;

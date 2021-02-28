@@ -228,7 +228,7 @@ void fpga_init() {
 	BootPrintEx("Updates by Jakub Bednarski, Tobias Gubener, Sascha Boing, A.M. Robinson & others");
 	BootPrintEx(" ");
 	BootPrintEx("Ported to Turbo Chameleon 64 by Alastair M. Robinson");
-	BootPrintEx("Ported to OpenAARS by Paul Honig");
+	BootPrintEx("Ported to Open AARS by Paul Honig");
 	BootPrintEx(" ");
 	WaitTimer(1000);
     
