@@ -1,7 +1,8 @@
 # Minimig AGA
 
-For Turbo Chameleon TC64, MiST and other platforms.
-(This core should be easily portable to any FPGA board with VGA out, PS/2 in, SD-card, about 25,000 logic elements, and a 16-bit wide SDRAM supporting 13x9 layout for 32 megabytes of RAM.)
+This version of the Minimig AGA core is specific for the [OpenAARS](https://github.com/ranzbak/qmtech_minimig) board.
+The hardware design can be found at [https://github.com/ranzbak/qmtech_minimig](https://github.com/ranzbak/qmtech_minimig) the design is mode in KiCad 5 and is free to use.
+The intended FPGA core board is the 'Xilinx FPGA Artix7 development board XC7A100T DDR3', which can be obtained from Ebay or AliExpress.
 
 ### Foreword
 
@@ -23,10 +24,10 @@ This minimig variant has been upgraded with [AGA chipset](http://en.wikipedia.or
 - floppy disks : 1-4 floppies (supports ADF floppy image format), with normal & turbo speeds
 - hard disks : 1-2 hard disk images (supports whole disk images, partition images, using whole SD card and using SD card partition)
 - video standard : PAL / NTSC
-- supports normal & scandoubled video output (15kHz / 30kHz) - can be used with a monitor or a TV with a SCART cable
+- supports normal & scandoubled video output (15kHz / 30kHz) - can be used with a monitor or a TV with a HDMI cable
 - peripherals : real Amiga / C64 joysticks connected to C64 joystick ports, CDTV infra-red controllers, PS/2 keyboards,
-  PS/2 mice, Turbo Chameleon Docking Station for extra joysticks or real Amiga mouse, and MIDI in / out
-- supports basic retargetable graphics with a P96 driver
+  PS/2 mice, real Amiga mouse
+- supports basic retargetable graphics (RTG) with a P96 driver
 - has an implementation of the Akiko chunky to planar converter
 - has an extra audio channel which can be used from the Amiga to play CD-quality WAV files, or used on some platforms to emulate floppy drive sounds.
 
@@ -34,13 +35,13 @@ This minimig variant has been upgraded with [AGA chipset](http://en.wikipedia.or
 
 ### Hardware
 
-To use this minimig core, you will at the minimum need an SD/SDHC card, formatted with the FAT32 filesystem, a PS/2 keyboard and a compatible monitor / TV. Joysticks & mouse can be emulated on the keyboard. You will probably want to attach a set of speakers of headphones, a real Amiga or USB mouse and a real Amiga joystick.
+To use this Minimig core, you will at the minimum need an SD/SDHC card, formatted with the FAT32 filesystem, a PS/2 keyboard and a compatible monitor / TV. Joysticks & mouse can be emulated on the keyboard. You will probably want to attach a set of speakers of headphones, a real Amiga or PS/2 mouse and a real Amiga joystick.
 
 ### Software
 
 To use the core, you will also need a Kickstart ROM image file, which you can obtain by copying Kickstart ROM IC from your actual Amiga, or by buying an [Amiga Forever](http://www.amigaforever.com/) software pack. The Kickstart image should be placed on the root of the SD card with the name KICK.ROM. Minimig also supports the [AROS](http://aros.sourceforge.net/) kickstart ROM replacement.
 
-The minimig can read any ADF floppy images you place on the SD card. I recommend at least Workbench 1.3 or 3.1 (AmigaOS), some of the Amigas great games (I recommend Ruff'n'Tumble) or some of the amazing demos from the vast Amiga demoscene (like State of the Art from Spaceballs).
+The Minimig can read any ADF floppy images you place on the SD card. I recommend at least Workbench 1.3 or 3.1 (AmigaOS), some of the Amigas great games (I recommend Ruff'n'Tumble) or some of the amazing demos from the vast Amiga demoscene (like State of the Art from Spaceballs).
 
 The minimig can also use HDF harddisk images, which can be created with [WinUAE](http://www.winuae.net/).
 
@@ -156,9 +157,11 @@ Files needed for the Open AARS to boot
 | 832OSDAD.BIN  | Firmware responsible for the On screen display               |
 | kick.rom      | Default kickstart rom                                        |
 | hrtmon.rom\*  | Hardware monitor rom                                         |
-| rom.key\*     | If Amiga Forever rom files are used, this key file is needed |
+| rom.key\*\*   | If Amiga Forever rom files are used, this key file is needed |
 | minimig.art\* | Spining ball logo at boot time                               |
 | hardfile.hdf  | Harddisk image, can be created using UAE                     |
+
+'\*' = Optional, '\*\*' = Only needed when Amiga forever kickstart roms are used
 
 ## Sources
 
