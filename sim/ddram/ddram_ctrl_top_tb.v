@@ -42,6 +42,7 @@ module ddram_ctrl_top_tb;
     wire             cpuena;
 
     reg              enable = 1'b0;
+    wire             clkena;
 
     // DDR3 Ram dimensions
     parameter DM_BITS =  2;
@@ -153,6 +154,9 @@ module ddram_ctrl_top_tb;
                    .cpuRD(cpuRD),
                    .cpuena(cpuena)
                );
+
+    // generate clock enable
+    assign clkena = (cpustate == 2'b01 || cpuena);
 
     // Control intreface to DFI
     wire  [ 14:0]  dfi_address;          // pN

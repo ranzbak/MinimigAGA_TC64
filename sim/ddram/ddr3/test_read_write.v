@@ -4,13 +4,18 @@ module test_read_write (
         input  wire            sysclk,
         input  wire            reset,
         output reg      [25:1] cpuAddr = 0,
-        output reg   [  7-1:0] cpustate = 0,
+        output wire  [  7-1:0] cpustate,
         output reg             cpuL,
         output reg             cpuU,
         output reg   [ 16-1:0] cpuWR,
         input  wire  [ 16-1:0] cpuRD,
         input  wire            cpuena // low when busy, high when done
     );
+
+    // CPU State parameters
+    reg [1:0] cState = 2'b00;
+    reg       cpu_ncs = 1'b1;
+    reg       cpuLongWord = 1'b0;
 
 
     // Test data
@@ -113,6 +118,7 @@ module test_read_write (
     //
     // cpu bus time sharing based on cpustate
     // cpustate <= longword&clkena&slower(1 downto 0)&ramcs&state(1 downto 0)
+    // idle         : 7'xxxxxx01;
     // cpu_we       : 7'bxxxxx11;
     // cpu_ir       : 7'bxxxxx00;
     // cpu_dr       : 7'bxxxxx10;
@@ -121,6 +127,12 @@ module test_read_write (
     // cpuLongword = cpustate[6];
     // cpuCSn      = cpustate[2];
 
+    // CPU states
+    parameter CPU_IR = 2'b00;
+    parameter CPU_IDLE = 2'b01;
+    parameter CPU_DR = 2'b10;
+    parameter CPU_WE = 2'b11;
+
 
     // Handle posting write cycle
     always @(posedge sysclk) begin
@@ -128,7 +140,9 @@ module test_read_write (
         if (reset) begin
             state <= STATE_WRITE;
             test_pos <= 0;
-            cpustate <= 0;
+            cpuLongWord <= 1'b0;
+            cpu_ncs <= 1'b1;
+            cState <= 2'b00;
         end
         // Simple write sequence
         else begin
@@ -140,7 +154,8 @@ module test_read_write (
                     cpuU <= 1'b0;
                     cpuAddr <= addr[test_pos];
                     cpuWR <= data[test_pos];
-                    cpustate <= 7'b000011;
+                    cState <= CPU_WE;
+                    cpu_ncs <= 1'b0;
                     if (cpuena == 1'b1) begin
                         // both high and low bits
                         //cpuL <= byte_ena[test_pos][0];
@@ -150,7 +165,8 @@ module test_read_write (
 
                 end
                 STATE_WAIT_BUSY: begin
-                    cpustate <= 7'b000100;
+                    cpu_ncs <= 1'b1;
+                    //cState <= CPU_IDLE;
                     // Wait for the CPU to go busy
                     if (cpuena == 1'b0) begin
                         state <= STATE_WRITE;
@@ -170,20 +186,20 @@ module test_read_write (
                     //cpuL <= 1'b0;
                     //cpuU <= 1'b0;
                     cpuAddr <= addr[test_pos];
-
-                    cpustate <= 7'b000010;
+                    cpu_ncs <= 1'b0;
+                    cState <= CPU_DR;
                     // Wait for the CPU to go busy
                     if (cpuena == 1'b1) begin
                         //cpuL <= byte_ena[test_pos][0];
                         //cpuU <= byte_ena[test_pos][1];
-
                         state <= STATE_WAIT_READ;
                     end
                 end
                 STATE_WAIT_READ: begin
-                    cpustate <= 7'b000110;
+                    cpu_ncs <= 1'b1;
+                    cState <= CPU_IDLE;
                     // Wait for the CPU to go busy
-                    if (cpuena == 1'b0) begin
+                    if (cpuena == 1'b0 ) begin
                         $display("Readback: %h: %h : %h", test_pos, cpuAddr, cpuRD);
 
                         if (cpuRD != data[test_pos]) begin
@@ -201,5 +217,8 @@ module test_read_write (
             endcase
         end
     end
+
+    // CPU interface state
+    assign    cpustate = {cpuLongWord, 3'b000, cpu_ncs, cState[1:0]};
 
 endmodule
