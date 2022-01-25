@@ -45,6 +45,9 @@ fw/ctrl_832/832OSDAD.map
 xvhdl.*
 .Xil/*
 
+# Scratch files
+*.orig
+
 # Editor files
 .hdl_checker/*
 .vscode/*
