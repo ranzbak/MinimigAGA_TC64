@@ -233,6 +233,7 @@ module ddram_ctrl(
     reg  [ 15:0] ram_wr_q = 16'b0; // write mask / core command ah
     reg  [ 15:0] ram_wr_out_q = 16'b0; // write mask / core command ah
     reg  [ 127:0] ram_write_data_q = 128'b0; // core data bus
+    reg           ram_write_data_dirty = 1'b0; // Data waiting in buffer to be written
     reg  [ 127:0] ram_write_data_out_q = 128'b0; // core data bus
 
     // 128 bit read cache to make reads more efficient
@@ -249,6 +250,7 @@ module ddram_ctrl(
     parameter DDR3_FSM_WRITE_2 = 8; // Write state 2
     reg [3:0] controller_state_q = 0;
     reg [3:0] dat_offset_q = 0;
+    reg       inhibit_sdr_ack_q = 1'b0;
 
     always @(posedge sysclk) begin
         if (!reset) begin
@@ -274,36 +276,46 @@ module ddram_ctrl(
                     sdr_read_ack <= 1'b0;
 
                     // Burst cache read 
+                    ram_req_id_out_q <= ram_cur_id_q; // Set the ID
 
                     // On read request to DDR3
                     if (sdr_read_req == 1'b1) begin
-                        ram_addr_out_q <= {cpuAddr[26-1:1], 1'b0}; // Set the address per 16 bytes for burst cache
-                        // ram_addr_q <= sdr_adr; // Cache doesn't change output addr on read
-                        ram_req_id_out_q <= ram_cur_id_q;
-                        ram_rd_q <= 1'b1;
-                        // Start read sequence
-                        controller_state_q <= DDR3_FSM_READ;
+                        // If the write cache is dirty, clean that first
+                        if(ram_write_data_dirty == 1'b1) begin
+                            // Save to out registers
+                            ram_addr_out_q <= ram_addr_q; // Write out current data
+                            ram_wr_out_q <= ram_wr_q;
+                            ram_write_data_out_q <= ram_write_data_q;
+
+                            inhibit_sdr_ack_q <= 1'b1; // Inihibit write ack, we don't want to confuse the cache  
+                            controller_state_q <= DDR3_FSM_WRITE; // Write out dirty cache
+                        end else begin
+                            // I the cache is clean start the read
+                            ram_addr_out_q <= {cpuAddr[26-1:1], 1'b0}; // Set the address per 16 bytes for burst cache
+                            // ram_addr_q <= sdr_adr; // Cache doesn't change output addr on read
+                            ram_rd_q <= 1'b1;
+                            // Start read sequence
+                            controller_state_q <= DDR3_FSM_READ;
+                        end
                     end
                     // On Write request to DDR3
                     if (sdr_write_req == 1'b1) begin
-                        ram_req_id_out_q <= ram_cur_id_q; // Set the ID
                         // Start write sequence
                         if (ram_addr_q[26-1:4] == sdr_adr[26-1:4]) begin
                             // Supports 16-bit writes only
                             ram_wr_q <= ({14'h0, ~sdr_dqm_w[1:0]} << {sdr_adr[4-1:1], 1'b0}) | ram_wr_q; // Byte write mask
-                            //ram_write_data_q <= ~(128'hffff << sdr_adr[4-1:1]*16) | ({112'h0, sdr_dat_w[16-1:0]} << sdr_adr[4-1:1]*16); // Data to be written paddei to 128 bits
-                            ram_write_data_q[sdr_adr[4-1:1]*16 +: 16] <= sdr_dat_w[16-1:0];
+                            ram_write_data_q[sdr_adr[4-1:1]*16 +: 16] <= sdr_dat_w[16-1:0]; // Write data to cache
+                            ram_write_data_dirty <= 1'b1; // mark cache dirty
                             sdr_write_ack <= 1'b1;
                             controller_state_q <= DDR3_FSM_WRITE_2;
-                        end
-                        else begin
+                        end else begin
                             // Save to out registers
                             ram_addr_out_q <= ram_addr_q; // Write out current data
                             ram_wr_out_q <= ram_wr_q;
                             ram_write_data_out_q <= ram_write_data_q;
                             // Create new write cache
                             ram_wr_q <= {14'h0, ~sdr_dqm_w[1:0]} << {sdr_adr[4-1:1], 1'b0}; // new Byte write mask 
-                            ram_write_data_q <= {112'h0, sdr_dat_w[16-1:0]} << (sdr_adr[4-1:1] * 16); // Data to be written paddei to 128 bits
+                            ram_write_data_q <= {112'h0, sdr_dat_w[16-1:0]} << (sdr_adr[4-1:1] * 16); // Data to be written padded to 128 bits
                             controller_state_q <= DDR3_FSM_WRITE;
                         end
                         // Store previous address
@@ -324,9 +336,6 @@ module ddram_ctrl(
                     end
                 end
                 DDR3_FSM_READ_1: begin
-                    // When the command is accepted drop the rd signal
-                    //if (ram_accept == 1'b0) begin
-                    //end
                     // When the Read has completed
                     if (ram_ack == 1'b1 || sdr_read_ack == 1'b1) begin
                         // Indicate to the cache data is ready
@@ -335,16 +344,6 @@ module ddram_ctrl(
                         // Store new data and address in cache, reset dirty flag
                         dat_offset_q <= dat_offset_q + 1;
                         sdr_dat_r <= ram_read_data[dat_offset_q*16 +: 16];
-                        if (ram_addr_out_q[26-1:4] == ram_addr_q[26-1:4]) begin
-                            // Replace low byte if in cache
-                            if (ram_wr_q[dat_offset_q*2] == 1'b1) begin
-                                sdr_dat_r[7:0] <= ram_write_data_q[dat_offset_q*16 +: 8];
-                            end
-                            // Replace high byte if in cache
-                            if (ram_wr_q[dat_offset_q*2+1] == 1'b1) begin
-                                sdr_dat_r[15:8] <= ram_write_data_q[(dat_offset_q*16)+8 +: 8];
-                            end
-                        end
 
                         // When we went through all burst values return to idle
                         if (dat_offset_q == 8) begin
@@ -386,7 +385,11 @@ module ddram_ctrl(
                     //end
                     if (ram_ack == 1'b1) begin
                         // Indicate the write is done
-                        sdr_write_ack <= 1'b1;
+                        if ( !inhibit_sdr_ack_q) begin
+                            sdr_write_ack <= 1'b1;
+                        end
+                        // Clear durty flag as we are writing the data 
+                        ram_write_data_dirty <= 1'b0; // Clear dirty flag
 
                         // Increment the request ID
                         ram_cur_id_q <= ram_cur_id_q + 1;
@@ -397,6 +400,7 @@ module ddram_ctrl(
                 end
                 DDR3_FSM_WRITE_2: begin
                     sdr_write_ack <= 1'b0;
+                    inhibit_sdr_ack_q <= 1'b0; // Clear write ack inhibit
                     // reset the write register
                     ram_write_data_out_q <= 127'b0;
                     if (sdr_write_req == 1'b0) begin

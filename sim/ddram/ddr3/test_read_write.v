@@ -1,16 +1,16 @@
 `timescale 1ns/100ps
 
 module test_read_write (
-        input  wire            sysclk,
-        input  wire            reset,
-        output reg      [25:1] cpuAddr = 0,
-        output wire  [  7-1:0] cpustate,
-        output reg             cpuL,
-        output reg             cpuU,
-        output reg   [ 16-1:0] cpuWR,
-        input  wire  [ 16-1:0] cpuRD,
-        input  wire            cpuena // low when busy, high when done
-    );
+    input  wire            sysclk,
+    input  wire            reset,
+    output reg      [25:1] cpuAddr = 0,
+    output wire  [  7-1:0] cpustate,
+    output reg             cpuL,
+    output reg             cpuU,
+    output reg   [ 16-1:0] cpuWR,
+    input  wire  [ 16-1:0] cpuRD,
+    input  wire            cpuena // low when busy, high when done
+);
 
     // CPU State parameters
     reg [1:0] cState = 2'b00;
@@ -19,7 +19,7 @@ module test_read_write (
 
 
     // Test data
-    parameter TEST_SEQ_LEN = 6;
+    parameter TEST_SEQ_LEN = 22;
 
     reg [25:1] addr [0:TEST_SEQ_LEN];
     reg [15:0] data [0:TEST_SEQ_LEN];
@@ -27,80 +27,34 @@ module test_read_write (
 
     // Set values to read and write
     initial begin
-        // Address
-        addr[0] <= 26'h0;
-        addr[1] <= 26'h10;
-        addr[2] <= 26'h20;
-        addr[3] <= 26'h30;
-        addr[4] <= 26'h40;
-        addr[5] <= 26'h50;
-        addr[6] <= 26'h60;
-        // Higher offset
-        addr[7] <= 26'h100;
-        addr[8] <= 26'h101;
-        addr[9] <= 26'h102;
-        addr[10] <= 26'h103;
-        addr[11] <= 26'h104;
-        addr[12] <= 26'h105;
-        addr[13] <= 26'h106;
-        // Random order
-        addr[14] <= 26'h206;
-        addr[15] <= 26'h205;
-        addr[16] <= 26'h204;
-        addr[17] <= 26'h203;
-        addr[18] <= 26'h202;
-        addr[19] <= 26'h201;
-        addr[20] <= 26'h200;
 
-        // Data
-        data[0] <= 16'h1234;
-        data[1] <= 16'h5678;
-        data[2] <= 16'h9abc;
-        data[3] <= 16'hdef0;
-        data[4] <= 16'h1234;
-        data[5] <= 16'h5678;
-        data[6] <= 16'h89ab;
-        // data2
-        data[7] <= 16'h0000;
-        data[8] <= 16'h0101;
-        data[9] <= 16'h1010;
-        data[10] <= 16'habab;
-        data[11] <= 16'hbaba;
-        data[12] <= 16'h8a8a;
-        data[13] <= 16'ha8a8;
-        // data3
-        data[14] <= 16'hffff;
-        data[15] <= 16'heeee;
-        data[16] <= 16'hdddd;
-        data[17] <= 16'hcccc;
-        data[18] <= 16'hbbbb;
-        data[19] <= 16'haaaa;
-        data[20] <= 16'h0000;
+        // Data                 // Address             // Byte enable
+        data[0] <= 16'h1234;    addr[0] <= 26'h0;      byte_ena[0] <= 2'b11;
+        data[1] <= 16'h5678;    addr[1] <= 26'h10;     byte_ena[1] <= 2'b11;
+        data[2] <= 16'h9abc;    addr[2] <= 26'h20;     byte_ena[2] <= 2'b11;
+        data[3] <= 16'hdef0;    addr[3] <= 26'h30;     byte_ena[3] <= 2'b11;
+        data[4] <= 16'h1234;    addr[4] <= 26'h40;     byte_ena[4] <= 2'b11;
+        data[5] <= 16'h5678;    addr[5] <= 26'h50;     byte_ena[5] <= 2'b11;
+        data[6] <= 16'h89ab;    addr[6] <= 26'h60;     byte_ena[6] <= 2'b11;
+        // data2                // Higher offset       // partial
+        data[7] <= 16'h0000;    addr[7] <= 26'h100;    byte_ena[7]  <= 2'b11;
+        data[8] <= 16'h0101;    addr[8] <= 26'h101;    byte_ena[8]  <= 2'b11;
+        data[9] <= 16'h1010;    addr[9] <= 26'h102;    byte_ena[9]  <= 2'b11;
+        data[10] <= 16'habab;   addr[10] <= 26'h103;   byte_ena[10] <= 2'b11;
+        data[11] <= 16'hbaba;   addr[11] <= 26'h104;   byte_ena[11] <= 2'b11;
+        data[12] <= 16'h8a8a;   addr[12] <= 26'h105;   byte_ena[12] <= 2'b11;
+        data[13] <= 16'ha8a8;   addr[13] <= 26'h106;   byte_ena[13] <= 2'b11;
+        data[14] <= 16'haa88;   addr[14] <= 26'h107;   byte_ena[14] <= 2'b11;
+        // data3                // Random order        // partial high
+        data[15] <= 16'hffff;   addr[15] <= 26'h200;   byte_ena[15] <= 2'b11;
+        data[16] <= 16'heeee;   addr[16] <= 26'h201;   byte_ena[16] <= 2'b11;
+        data[17] <= 16'hdddd;   addr[17] <= 26'h202;   byte_ena[17] <= 2'b11;
+        data[18] <= 16'hcccc;   addr[18] <= 26'h203;   byte_ena[18] <= 2'b11;
+        data[19] <= 16'hbbbb;   addr[19] <= 26'h204;   byte_ena[19] <= 2'b11;
+        data[20] <= 16'haaaa;   addr[20] <= 26'h205;   byte_ena[20] <= 2'b11;
+        data[21] <= 16'h9999;   addr[21] <= 26'h206;   byte_ena[21] <= 2'b11;
+        data[22] <= 16'h8888;   addr[22] <= 26'h207;   byte_ena[22] <= 2'b11;
 
-        // Byte enable
-        byte_ena[0] <= 2'b11;
-        byte_ena[1] <= 2'b11;
-        byte_ena[2] <= 2'b11;
-        byte_ena[3] <= 2'b11;
-        byte_ena[4] <= 2'b11;
-        byte_ena[5] <= 2'b11;
-        byte_ena[6] <= 2'b11;
-        // partial
-        byte_ena[7] <= 2'b01;
-        byte_ena[8] <= 2'b01;
-        byte_ena[9] <= 2'b01;
-        byte_ena[10] <= 2'b01;
-        byte_ena[11] <= 2'b01;
-        byte_ena[12] <= 2'b01;
-        byte_ena[13] <= 2'b10;
-        // partial high
-        byte_ena[14] <= 2'b10;
-        byte_ena[15] <= 2'b10;
-        byte_ena[16] <= 2'b10;
-        byte_ena[17] <= 2'b10;
-        byte_ena[18] <= 2'b10;
-        byte_ena[19] <= 2'b10;
-        byte_ena[20] <= 2'b10;
 
     end
 
@@ -147,12 +101,14 @@ module test_read_write (
         // Simple write sequence
         else begin
             case (state)
+                // TODO: Add clear from 0 to 1024 to init
+
                 // Write test data
                 STATE_WRITE: begin
                     // TODO: Enable cpuL and cpuU later
                     cpuL <= 1'b0;
                     cpuU <= 1'b0;
-                    cpuAddr <= addr[test_pos];
+                    cpuAddr <= addr[test_pos][25:1];
                     cpuWR <= data[test_pos];
                     cState <= CPU_WE;
                     cpu_ncs <= 1'b0;
@@ -185,7 +141,7 @@ module test_read_write (
                 STATE_READ: begin
                     //cpuL <= 1'b0;
                     //cpuU <= 1'b0;
-                    cpuAddr <= addr[test_pos];
+                    cpuAddr <= addr[test_pos][25:1];
                     cpu_ncs <= 1'b0;
                     cState <= CPU_DR;
                     // Wait for the CPU to go busy
@@ -200,19 +156,25 @@ module test_read_write (
                     cState <= CPU_IDLE;
                     // Wait for the CPU to go busy
                     if (cpuena == 1'b0 ) begin
-                        $display("Readback: %h: %h : %h", test_pos, cpuAddr, cpuRD);
 
-                        if (cpuRD != data[test_pos]) begin
-                            $display("Readback error: %h : %h =/= %h", cpuAddr, cpuRD, data[test_pos]);
+                        if (cpuRD !== data[test_pos]) begin
+                            $display("Readback error: %h: %h : %h =/= %h", test_pos, cpuAddr, cpuRD, data[test_pos]);
+                        end else begin
+                            $display("Readback OK   : %h: %h : %h", test_pos, cpuAddr, cpuRD);
                         end
 
+
                         if (test_pos == TEST_SEQ_LEN) begin
-                            $display("Test passed");
+                            $display("Test finish");
                             $finish();
                         end
                         test_pos <= test_pos + 1;
                         state <= STATE_READ;
                     end
+                end
+                default: begin
+                    $display("Unknown state: %h", state);
+                    state <= STATE_WRITE;
                 end
             endcase
         end
