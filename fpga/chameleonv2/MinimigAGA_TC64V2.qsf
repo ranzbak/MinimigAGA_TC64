@@ -226,7 +226,7 @@ set_location_assignment PIN_N3 -to vsync_n
 
 #set_instance_assignment -name PARTITION_HIERARCHY root_partition -to | -section_id Top
 
-set_global_assignment -name LAST_QUARTUS_VERSION "18.1.0 Lite Edition"
+set_global_assignment -name LAST_QUARTUS_VERSION "20.1.1 Lite Edition"
 
 
 set_global_assignment -name MIN_CORE_JUNCTION_TEMP 0
@@ -294,31 +294,8 @@ set_instance_assignment -name FAST_INPUT_REGISTER ON -to ram_d[0]
 set_instance_assignment -name FAST_INPUT_REGISTER ON -to ram_d[15]
 set_instance_assignment -name FAST_INPUT_REGISTER ON -to ram_d[14]
 set_instance_assignment -name FAST_INPUT_REGISTER ON -to ram_d[13]
-set_global_assignment -name SDC_FILE constraints.sdc
-set_global_assignment -name VHDL_FILE ../../rtl/chameleonv2/chameleon2_toplevel.vhd
-set_global_assignment -name VERILOG_FILE ../../rtl/soc/minimig_virtual_top.v
-set_global_assignment -name VERILOG_FILE ../../rtl/io/i_sync.v
-set_global_assignment -name VERILOG_FILE ../../rtl/fifo/sync_fifo.v
-set_global_assignment -name QIP_FILE ../../rtl/cache/cache.qip
-set_global_assignment -name QIP_FILE ../../rtl/minimig/minimig.qip
-set_global_assignment -name QIP_FILE ../../rtl/sdram/sdram.qip
-set_global_assignment -name QIP_FILE ../../rtl/soc/tg68.qip
-set_global_assignment -name VERILOG_FILE ../../rtl/clock/amiga_clk.v
-set_global_assignment -name QIP_FILE ../../rtl/chameleonv2/chameleonv2.qip
-set_global_assignment -name QIP_FILE ../../rtl/chameleonv2/amiga_clk_altera.qip
-set_global_assignment -name VHDL_FILE ../../rtl/chameleonv2/gen_reset.vhd
-set_global_assignment -name VERILOG_FILE ../../rtl/virtual/hybrid_pwm_sd.v
-set_global_assignment -name VHDL_FILE ../../rtl/virtual/video_vga_dither.vhd
-set_global_assignment -name VHDL_FILE ../../rtl/akiko/akiko.vhd
-set_global_assignment -name VHDL_FILE ../../rtl/akiko/cornerturn.vhd
 set_global_assignment -name ENABLE_SIGNALTAP OFF
 set_global_assignment -name USE_SIGNALTAP_FILE stp1.stp
-set_global_assignment -name SIGNALTAP_FILE stp3.stp
-set_global_assignment -name VHDL_FILE ../../rtl/rtg/VideoStream.vhd
-set_global_assignment -name VERILOG_FILE ../../rtl/sdram/dpram_inf_generic.v
-set_global_assignment -name VHDL_FILE ../../rtl/audio/AudioMix.vhd
-set_global_assignment -name SIGNALTAP_FILE stp1.stp
-set_global_assignment -name VHDL_FILE ../../rtl/audio/audiofilter.vhd
 set_global_assignment -name PHYSICAL_SYNTHESIS_EFFORT EXTRA
 set_instance_assignment -name FAST_OUTPUT_REGISTER ON -to blu[4]
 set_instance_assignment -name FAST_OUTPUT_REGISTER ON -to blu[3]
@@ -357,8 +334,38 @@ set_instance_assignment -name FAST_OUTPUT_REGISTER ON -to low_a[1]
 set_instance_assignment -name FAST_OUTPUT_REGISTER ON -to low_a[0]
 set_global_assignment -name SEED 1
 set_global_assignment -name PRE_FLOW_SCRIPT_FILE "quartus_sh:../../tcl/build_id.tcl"
-set_global_assignment -name QIP_FILE ../../rtl/host/host.qip
 
 set_instance_assignment -name FAST_OUTPUT_REGISTER ON -to spi_clk
 set_instance_assignment -name FAST_INPUT_REGISTER ON -to spi_miso
+
+set_global_assignment -name EDA_SIMULATION_TOOL "ModelSim-Altera (Verilog)"
+set_global_assignment -name EDA_OUTPUT_DATA_FORMAT "VERILOG HDL" -section_id eda_simulation
+set_global_assignment -name VERILOG_INCLUDE_FILE ../openaars/minimig_version.vh
+set_global_assignment -name VHDL_FILE ../../fw/ctrl_boot_832/OSDBoot_832_ROM.vhd
+set_global_assignment -name SDC_FILE constraints.sdc
+set_global_assignment -name VHDL_FILE ../../rtl/chameleonv2/chameleon2_toplevel.vhd
+set_global_assignment -name VERILOG_FILE ../../rtl/soc/minimig_virtual_top.v
+set_global_assignment -name VERILOG_FILE ../../rtl/io/i_sync.v
+set_global_assignment -name VERILOG_FILE ../../rtl/fifo/sync_fifo.v
+set_global_assignment -name QIP_FILE ../../rtl/cache/cache.qip
+set_global_assignment -name QIP_FILE ../../rtl/minimig/minimig.qip
+set_global_assignment -name QIP_FILE ../../rtl/sdram/sdram.qip
+set_global_assignment -name QIP_FILE ../../rtl/soc/tg68.qip
+set_global_assignment -name VERILOG_FILE ../../rtl/clock/amiga_clk.v
+set_global_assignment -name QIP_FILE ../../rtl/chameleonv2/chameleonv2.qip
+set_global_assignment -name QIP_FILE ../../rtl/chameleonv2/amiga_clk_altera.qip
+set_global_assignment -name VHDL_FILE ../../rtl/chameleonv2/gen_reset.vhd
+set_global_assignment -name VERILOG_FILE ../../rtl/virtual/hybrid_pwm_sd.v
+set_global_assignment -name VHDL_FILE ../../rtl/virtual/video_vga_dither.vhd
+set_global_assignment -name VHDL_FILE ../../rtl/akiko/akiko.vhd
+set_global_assignment -name VHDL_FILE ../../rtl/akiko/cornerturn.vhd
+set_global_assignment -name SIGNALTAP_FILE stp3.stp
+set_global_assignment -name VHDL_FILE ../../rtl/rtg/VideoStream.vhd
+set_global_assignment -name VERILOG_FILE ../../rtl/sdram/dpram_inf_generic.v
+set_global_assignment -name VHDL_FILE ../../rtl/audio/AudioMix.vhd
+set_global_assignment -name SIGNALTAP_FILE stp1.stp
+set_global_assignment -name VHDL_FILE ../../rtl/audio/audiofilter.vhd
+set_global_assignment -name QIP_FILE ../../rtl/host/host.qip
+set_global_assignment -name QIP_FILE ../../EightThirtyTwo/RTL/debug_virtualjtag.qip
+set_global_assignment -name QIP_FILE ../../EightThirtyTwo/RTL/debug_fifo_altera.qip
 set_instance_assignment -name PARTITION_HIERARCHY root_partition -to | -section_id Top

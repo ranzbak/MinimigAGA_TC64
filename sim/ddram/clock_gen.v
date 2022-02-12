@@ -1,13 +1,15 @@
 `timescale 1ns/10ps
 
-module clock_gen (	input      enable,
-                       output reg clk);
+module clock_gen (
+    input      enable,
+    output reg clk
+);
 
-    parameter FREQ = 100000;  // in kHZ
-    parameter PHASE = 0; 		// in degrees
-    parameter DUTY = 50;  	// in percentage
+    parameter FREQ = 100000; // in kHZ
+    parameter PHASE = 0; // in degrees
+    parameter DUTY = 50; // in percentage
 
-    parameter real clk_pd  		= 1.0/(FREQ * 1e3) * 1e9; 	// convert to ns
+    parameter real clk_pd  		= 1.0/(FREQ * 1e3) * 1e9; // convert to ns
     parameter real clk_on  		= DUTY/100.0 * clk_pd;
     parameter real clk_off 		= (100.0 - DUTY)/100.0 * clk_pd;
     parameter real quarter 		= clk_pd/4;

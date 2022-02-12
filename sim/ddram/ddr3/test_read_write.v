@@ -19,9 +19,9 @@ module test_read_write (
 
 
     // Test data
-    parameter TEST_SEQ_LEN = 22;
+    parameter TEST_SEQ_LEN = 30;
 
-    reg [25:1] addr [0:TEST_SEQ_LEN];
+    reg [25:0] addr [0:TEST_SEQ_LEN];
     reg [15:0] data [0:TEST_SEQ_LEN];
     reg [1:0]  byte_ena [0:TEST_SEQ_LEN];
 
@@ -37,34 +37,53 @@ module test_read_write (
         data[5] <= 16'h5678;    addr[5] <= 26'h50;     byte_ena[5] <= 2'b11;
         data[6] <= 16'h89ab;    addr[6] <= 26'h60;     byte_ena[6] <= 2'b11;
         // data2                // Higher offset       // partial
-        data[7] <= 16'h0000;    addr[7] <= 26'h100;    byte_ena[7]  <= 2'b11;
-        data[8] <= 16'h0101;    addr[8] <= 26'h101;    byte_ena[8]  <= 2'b11;
-        data[9] <= 16'h1010;    addr[9] <= 26'h102;    byte_ena[9]  <= 2'b11;
-        data[10] <= 16'habab;   addr[10] <= 26'h103;   byte_ena[10] <= 2'b11;
-        data[11] <= 16'hbaba;   addr[11] <= 26'h104;   byte_ena[11] <= 2'b11;
-        data[12] <= 16'h8a8a;   addr[12] <= 26'h105;   byte_ena[12] <= 2'b11;
-        data[13] <= 16'ha8a8;   addr[13] <= 26'h106;   byte_ena[13] <= 2'b11;
-        data[14] <= 16'haa88;   addr[14] <= 26'h107;   byte_ena[14] <= 2'b11;
+        data[7] <= 16'h0000;    addr[7]  <= 26'h100;    byte_ena[7]  <= 2'b11;
+        data[8] <= 16'h0101;    addr[8]  <= 26'h102;    byte_ena[8]  <= 2'b11;
+        data[9] <= 16'h1010;    addr[9]  <= 26'h104;    byte_ena[9]  <= 2'b11;
+        data[10] <= 16'habab;   addr[10] <= 26'h106;   byte_ena[10] <= 2'b11;
+        data[11] <= 16'hbaba;   addr[11] <= 26'h108;   byte_ena[11] <= 2'b11;
+        data[12] <= 16'h8a8a;   addr[12] <= 26'h10a;   byte_ena[12] <= 2'b11;
+        data[13] <= 16'ha8a8;   addr[13] <= 26'h10c;   byte_ena[13] <= 2'b11;
+        data[14] <= 16'haa88;   addr[14] <= 26'h10e;   byte_ena[14] <= 2'b11;
         // data3                // Random order        // partial high
         data[15] <= 16'hffff;   addr[15] <= 26'h200;   byte_ena[15] <= 2'b11;
-        data[16] <= 16'heeee;   addr[16] <= 26'h201;   byte_ena[16] <= 2'b11;
-        data[17] <= 16'hdddd;   addr[17] <= 26'h202;   byte_ena[17] <= 2'b11;
-        data[18] <= 16'hcccc;   addr[18] <= 26'h203;   byte_ena[18] <= 2'b11;
-        data[19] <= 16'hbbbb;   addr[19] <= 26'h204;   byte_ena[19] <= 2'b11;
-        data[20] <= 16'haaaa;   addr[20] <= 26'h205;   byte_ena[20] <= 2'b11;
-        data[21] <= 16'h9999;   addr[21] <= 26'h206;   byte_ena[21] <= 2'b11;
-        data[22] <= 16'h8888;   addr[22] <= 26'h207;   byte_ena[22] <= 2'b11;
+        data[16] <= 16'heeee;   addr[16] <= 26'h202;   byte_ena[16] <= 2'b11;
+        data[17] <= 16'hdddd;   addr[17] <= 26'h204;   byte_ena[17] <= 2'b11;
+        data[18] <= 16'hcccc;   addr[18] <= 26'h206;   byte_ena[18] <= 2'b11;
+        data[19] <= 16'hbbbb;   addr[19] <= 26'h208;   byte_ena[19] <= 2'b11;
+        data[20] <= 16'haaaa;   addr[20] <= 26'h20a;   byte_ena[20] <= 2'b11;
+        data[21] <= 16'h9999;   addr[21] <= 26'h20c;   byte_ena[21] <= 2'b11;
+        data[22] <= 16'h8888;   addr[22] <= 26'h20e;   byte_ena[22] <= 2'b11;
+        // data3                // Random order        // partial high
+        data[23] <= 16'h0208;   addr[23] <= 26'h210;   byte_ena[23] <= 2'b11;
+        data[24] <= 16'h0209;   addr[24] <= 26'h212;   byte_ena[24] <= 2'b11;
+        data[25] <= 16'h020a;   addr[25] <= 26'h214;   byte_ena[25] <= 2'b11;
+        data[26] <= 16'h020b;   addr[26] <= 26'h216;   byte_ena[26] <= 2'b11;
+        data[27] <= 16'h020c;   addr[27] <= 26'h218;   byte_ena[27] <= 2'b11;
+        data[28] <= 16'h020d;   addr[28] <= 26'h21a;   byte_ena[28] <= 2'b11;
+        data[29] <= 16'h020e;   addr[29] <= 26'h21c;   byte_ena[29] <= 2'b11;
+        data[30] <= 16'h020f;   addr[30] <= 26'h21e;   byte_ena[30] <= 2'b11;
+        // data4                // Random order        // partial high
+        data[23] <= 16'h0208;   addr[31] <= 26'h210;   byte_ena[23] <= 2'b11;
+        data[24] <= 16'h0207;   addr[32] <= 26'h212;   byte_ena[24] <= 2'b11;
+        data[25] <= 16'h0206;   addr[33] <= 26'h214;   byte_ena[25] <= 2'b11;
+        data[26] <= 16'h0305;   addr[34] <= 26'h216;   byte_ena[26] <= 2'b11;
+        data[27] <= 16'h0302;   addr[35] <= 26'h218;   byte_ena[27] <= 2'b11;
+        data[28] <= 16'h0402;   addr[36] <= 26'h21a;   byte_ena[28] <= 2'b11;
+        data[29] <= 16'h0401;   addr[37] <= 26'h21c;   byte_ena[29] <= 2'b11;
+        data[30] <= 16'h0200;   addr[38] <= 26'h21e;   byte_ena[30] <= 2'b11;
 
 
     end
 
     // FSM states
-    parameter STATE_WRITE = 2'h0;
-    parameter STATE_WAIT_BUSY = 2'h1;
-    parameter STATE_READ = 2'h2;
-    parameter STATE_WAIT_READ = 2'h3;
+    parameter STATE_WRITE = 3'h0;
+    parameter STATE_WAIT_BUSY = 3'h1;
+    parameter STATE_READ = 3'h2;
+    parameter STATE_READ_2 = 3'h3;
+    parameter STATE_WAIT_READ = 3'h4;
 
-    reg [2:0] state = STATE_WRITE;
+    reg [3:0] state = STATE_WRITE;
     reg [7:0] test_pos = 0; // position in test sequence
 
     // Use cpustate register to set read/write state
@@ -141,13 +160,18 @@ module test_read_write (
                 STATE_READ: begin
                     //cpuL <= 1'b0;
                     //cpuU <= 1'b0;
+                    // The address needs to be set one cycle before the read command is issued
                     cpuAddr <= addr[test_pos][25:1];
+                    state <= STATE_READ_2;
+                end
+                STATE_READ_2: begin
                     cpu_ncs <= 1'b0;
                     cState <= CPU_DR;
                     // Wait for the CPU to go busy
                     if (cpuena == 1'b1) begin
                         //cpuL <= byte_ena[test_pos][0];
                         //cpuU <= byte_ena[test_pos][1];
+                        cpu_ncs <= 1'b1;
                         state <= STATE_WAIT_READ;
                     end
                 end

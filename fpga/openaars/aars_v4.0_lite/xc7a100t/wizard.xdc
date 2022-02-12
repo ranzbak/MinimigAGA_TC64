@@ -35,3 +35,34 @@ create_clock -period 13.477 -name clk_hdmi -waveform {0.000 6.739}
 set_output_delay -clock [get_clocks -of_objects [get_pins clk_hdmi/CLKOUT0]] -min -0.700 [get_ports {{dv_d[*]} dv_de dv_hsync dv_vsync}]
 set_output_delay -clock [get_clocks -of_objects [get_pins clk_hdmi/CLKOUT0]] -max 1.000 [get_ports {{dv_d[*]} dv_de dv_hsync dv_vsync}]
 
+
+
+set_multicycle_path -setup -start -from [get_clocks -of_objects [get_pins openaars_virtual_top/amiga_clk/amiga_clk_xilinx_i/clk_main/CLKOUT2]] -to [get_clocks -of_objects [get_pins openaars_virtual_top/amiga_clk/amiga_clk_xilinx_i/clk_main/CLKOUT0]] 4
+set_multicycle_path -hold -start -from [get_clocks -of_objects [get_pins openaars_virtual_top/amiga_clk/amiga_clk_xilinx_i/clk_main/CLKOUT2]] -to [get_clocks -of_objects [get_pins openaars_virtual_top/amiga_clk/amiga_clk_xilinx_i/clk_main/CLKOUT0]] 3
+
+set_property IOSTANDARD SSTL135 [get_ports {ddr3_dm_o[1]}]
+set_property IOSTANDARD SSTL135 [get_ports {ddr3_dm_o[0]}]
+set_property IOSTANDARD SSTL135 [get_ports {ddr3_ba_o[2]}]
+set_property IOSTANDARD SSTL135 [get_ports {ddr3_ba_o[1]}]
+set_property IOSTANDARD SSTL135 [get_ports {ddr3_ba_o[0]}]
+set_property IOSTANDARD SSTL135 [get_ports {ddr3_addr_o[13]}]
+set_property IOSTANDARD SSTL135 [get_ports {ddr3_addr_o[12]}]
+set_property IOSTANDARD SSTL135 [get_ports {ddr3_addr_o[11]}]
+set_property IOSTANDARD SSTL135 [get_ports {ddr3_addr_o[10]}]
+set_property IOSTANDARD SSTL135 [get_ports {ddr3_addr_o[9]}]
+set_property IOSTANDARD SSTL135 [get_ports {ddr3_addr_o[8]}]
+set_property IOSTANDARD SSTL135 [get_ports {ddr3_addr_o[7]}]
+set_property IOSTANDARD SSTL135 [get_ports {ddr3_addr_o[6]}]
+set_property IOSTANDARD SSTL135 [get_ports {ddr3_addr_o[5]}]
+set_property IOSTANDARD SSTL135 [get_ports {ddr3_addr_o[4]}]
+set_property IOSTANDARD SSTL135 [get_ports {ddr3_addr_o[3]}]
+set_property IOSTANDARD SSTL135 [get_ports {ddr3_addr_o[2]}]
+set_property IOSTANDARD SSTL135 [get_ports {ddr3_addr_o[1]}]
+set_property IOSTANDARD SSTL135 [get_ports {ddr3_addr_o[0]}]
+set_property IOSTANDARD SSTL135 [get_ports ddr3_cas_n_o]
+set_property IOSTANDARD SSTL135 [get_ports ddr3_cke_o]
+set_property IOSTANDARD SSTL135 [get_ports ddr3_cs_n_o]
+set_property IOSTANDARD SSTL135 [get_ports ddr3_odt_o]
+set_property IOSTANDARD SSTL135 [get_ports ddr3_ras_n_o]
+set_property IOSTANDARD SSTL135 [get_ports ddr3_reset_n_o]
+set_property IOSTANDARD SSTL135 [get_ports ddr3_we_n_o]

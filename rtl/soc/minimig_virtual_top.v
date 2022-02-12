@@ -14,110 +14,127 @@
 
 module minimig_virtual_top
   #(parameter hostonly=0,
-    parameter debug = 0,
-    parameter spimux = 0,
-    parameter havertg = 1,
-    parameter haveaudio = 1,
-    parameter havec2p = 1,
-    parameter havespirtc = 0,
-    parameter havei2c = 0,
-    parameter havevpos = 0,
-    parameter ram_64meg = 0)
+  parameter debug = 0,
+  parameter spimux = 0,
+  parameter havertg = 1,
+  parameter haveaudio = 1,
+  parameter havec2p = 1,
+  parameter havespirtc = 0,
+  parameter havei2c = 0,
+  parameter havevpos = 0,
+  parameter ram_64meg = 0)
    (
-     // clock inputs
-     input wire            CLK_IN,
-     output wire           CLK_114,
-     output wire           CLK_28,
-     output wire           PLL_LOCKED,
-     input wire            RESET_N,
+  // clock inputs
+  input wire            CLK_IN,
+  output wire           CLK_114,
+  output wire           CLK_28,
+  output wire           PLL_LOCKED,
+  input wire            RESET_N,
 
-     // Button inputs
-     input         MENU_BUTTON,
+  // Button inputs
+  input         MENU_BUTTON,
 
-     // LED outputs
-     output wire           LED_POWER,  // LED green
-     output wire           LED_DISK,   // LED red
+  // LED outputs
+  output wire           LED_POWER, // LED green
+  output wire           LED_DISK, // LED red
 
-     // UART
-     output wire           CTRL_TX,    // UART Transmitter
-     input wire            CTRL_RX,    // UART Receiver
-     output wire           AMIGA_TX,    // UART Transmitter
-     input wire            AMIGA_RX,    // UART Receiver
+  // UART
+  output wire           CTRL_TX, // UART Transmitter
+  input wire            CTRL_RX, // UART Receiver
+  output wire           AMIGA_TX, // UART Transmitter
+  input wire            AMIGA_RX, // UART Receiver
 
-     // VGA
-     output wire           VGA_PIXEL,  // high pulse for each new pixel
-     output wire           VGA_SELCS,  // Select CSYNC
-     output wire           VGA_CS,     // VGA C_SYNC
-     output wire           VGA_HS,     // VGA H_SYNC
-     output wire           VGA_VS,     // VGA V_SYNC
-     output wire [  8-1:0] VGA_R,      // VGA Red[5:0]
-     output wire [  8-1:0] VGA_G,      // VGA Green[5:0]
-     output wire [  8-1:0] VGA_B,      // VGA Blue[5:0]
+  // VGA
+  output wire           VGA_PIXEL, // high pulse for each new pixel
+  output wire           VGA_SELCS, // Select CSYNC
+  output wire           VGA_CS, // VGA C_SYNC
+  output wire           VGA_HS, // VGA H_SYNC
+  output wire           VGA_VS, // VGA V_SYNC
+  output wire [  8-1:0] VGA_R, // VGA Red[5:0]
+  output wire [  8-1:0] VGA_G, // VGA Green[5:0]
+  output wire [  8-1:0] VGA_B, // VGA Blue[5:0]
 
-     // RTG
-     output wire           RTG_ENABLE, // True when RTG is enabled
+  // RTG
+  output wire           RTG_ENABLE, // True when RTG is enabled
 
-     // SDRAM
-     inout  wire [ 16-1:0] SDRAM_DQ,   // SDRAM Data bus 16 Bits
-     output wire [ 13-1:0] SDRAM_A,    // SDRAM Address bus 13 Bits
-     output wire           SDRAM_DQML, // SDRAM Low-byte Data Mask
-     output wire           SDRAM_DQMH, // SDRAM High-byte Data Mask
-     output wire           SDRAM_nWE,  // SDRAM Write Enable
-     output wire           SDRAM_nCAS, // SDRAM Column Address Strobe
-     output wire           SDRAM_nRAS, // SDRAM Row Address Strobe
-     output wire           SDRAM_nCS,  // SDRAM Chip Select
-     output wire [  2-1:0] SDRAM_BA,   // SDRAM Bank Address
-     output wire           SDRAM_CLK,  // SDRAM Clock
-     output wire           SDRAM_CKE,  // SDRAM Clock Enable
+  // SDRAM
+  inout  wire [ 16-1:0] SDRAM_DQ, // SDRAM Data bus 16 Bits
+  output wire [ 13-1:0] SDRAM_A, // SDRAM Address bus 13 Bits
+  output wire           SDRAM_DQML, // SDRAM Low-byte Data Mask
+  output wire           SDRAM_DQMH, // SDRAM High-byte Data Mask
+  output wire           SDRAM_nWE, // SDRAM Write Enable
+  output wire           SDRAM_nCAS, // SDRAM Column Address Strobe
+  output wire           SDRAM_nRAS, // SDRAM Row Address Strobe
+  output wire           SDRAM_nCS, // SDRAM Chip Select
+  output wire [  2-1:0] SDRAM_BA, // SDRAM Bank Address
+  output wire           SDRAM_CLK, // SDRAM Clock
+  output wire           SDRAM_CKE, // SDRAM Clock Enable
 
-     // MINIMIG specific
-     output wire[15:0]     AUDIO_L,    // sigma-delta DAC output left
-     output wire[15:0]     AUDIO_R,    // sigma-delta DAC output right
+  // DDRAM
+  output wire          DDR3_CK_P_O,
+  output wire          DDR3_CK_N_O,
+  output wire          DDR3_CKE_O,
+  output wire          DDR3_RESET_N_O,
+  output wire          DDR3_RAS_N_O,
+  output wire          DDR3_CAS_N_O,
+  output wire          DDR3_WE_N_O,
+  output wire          DDR3_CS_N_O,
+  output wire [  2:0]  DDR3_BA_O,
+  output wire [ 13:0]  DDR3_ADDR_O,
+  output wire          DDR3_ODT_O,
+  output wire [  1:0]  DDR3_DM_O,
+  inout wire  [  1:0]  DDR3_DQS_P_IO,
+  inout wire  [  1:0]  DDR3_DQS_N_IO,
+  inout wire  [ 15:0]  DDR3_DQ_IO,
 
-     // Keyboard / Mouse
-     input                 PS2_DAT_I,      // PS2 Keyboard Data
-     input                 PS2_CLK_I,      // PS2 Keyboard Clock
-     input                 PS2_MDAT_I,     // PS2 Mouse Data
-     input                 PS2_MCLK_I,     // PS2 Mouse Clock
-     output                PS2_DAT_O,      // PS2 Keyboard Data
-     output                PS2_CLK_O,      // PS2 Keyboard Clock
-     output                PS2_MDAT_O,     // PS2 Mouse Data
-     output                PS2_MCLK_O,     // PS2 Mouse Clock
+  // MINIMIG specific
+  output wire[15:0]     AUDIO_L, // sigma-delta DAC output left
+  output wire[15:0]     AUDIO_R, // sigma-delta DAC output right
 
-     // Potential Amiga keyboard from docking station
-     input                 AMIGA_RESET_N,
-     input     [7:0]       AMIGA_KEY,
-     input                 AMIGA_KEY_STB,
-     input     [63:0]      C64_KEYS,
-     // Joystick
-     input       [  7-1:0] JOYA,         // joystick port A
-     input       [  7-1:0] JOYB,         // joystick port B
-     input       [  7-1:0] JOYC,         // joystick port A
-     input       [  7-1:0] JOYD,         // joystick port B
+  // Keyboard / Mouse
+  input                 PS2_DAT_I, // PS2 Keyboard Data
+  input                 PS2_CLK_I, // PS2 Keyboard Clock
+  input                 PS2_MDAT_I, // PS2 Mouse Data
+  input                 PS2_MCLK_I, // PS2 Mouse Clock
+  output                PS2_DAT_O, // PS2 Keyboard Data
+  output                PS2_CLK_O, // PS2 Keyboard Clock
+  output                PS2_MDAT_O, // PS2 Mouse Data
+  output                PS2_MCLK_O, // PS2 Mouse Clock
+
+  // Potential Amiga keyboard from docking station
+  input                 AMIGA_RESET_N,
+  input     [7:0]       AMIGA_KEY,
+  input                 AMIGA_KEY_STB,
+  input     [63:0]      C64_KEYS,
+  // Joystick
+  input       [  7-1:0] JOYA, // joystick port A
+  input       [  7-1:0] JOYB, // joystick port B
+  input       [  7-1:0] JOYC, // joystick port A
+  input       [  7-1:0] JOYD, // joystick port B
 
 `ifdef MINIMIG_I2C_BUS
      // I2C bus from the host CPU to pereferals on the board
-     input                 SCL_I, // Clock in
-     output                SCL_O, // Clock out
-     output                SCL_T, // Clock tristate
-     input                 SDA_I, // Clock in
-     output                SDA_O, // Clock out
-     output                SDA_T, // Clock tristate
+  input                 SCL_I, // Clock in
+  output                SCL_O, // Clock out
+  output                SCL_T, // Clock tristate
+  input                 SDA_I, // Clock in
+  output                SDA_O, // Clock out
+  output                SDA_T, // Clock tristate
 `endif
 
 `ifdef MINIMIG_VPOS
      // Video scaler positions
-     output    [ 16-1:0]   VPOS_DATA,
+  output    [ 16-1:0]   VPOS_DATA,
 `endif
 
      // SPI
-     input wire            SD_MISO,     // inout
-     output wire           SD_MOSI,
-     output wire           SD_CLK,
-     output wire           SD_CS,
-     input wire            SD_ACK,
-     output wire           RTC_CS
-   );
+  input wire            SD_MISO, // inout
+  output wire           SD_MOSI,
+  output wire           SD_CLK,
+  output wire           SD_CS,
+  input wire            SD_ACK,
+  output wire           RTC_CS
+);
 
 
   ////////////////////////////////////////
@@ -162,8 +179,12 @@ module minimig_virtual_top
   wire           tg68_ena7RD;
   wire           tg68_ena7WR;
   wire           tg68_ena28;
+  wire [ 16-1:0] sdram_cout;
+  wire [ 16-1:0] ddram_cout;
   wire [ 16-1:0] tg68_cout;
   wire [ 16-1:0] tg68_cin;
+  wire           sdram_cpuena;
+  wire           ddram_cpuena;
   wire           tg68_cpuena;
   wire [  4-1:0] cpu_config;
   wire [4:0]     board_configured;
@@ -185,19 +206,19 @@ module minimig_virtual_top
 
   // minimig
   wire           led;
-  wire [ 16-1:0] ram_data;      // sram data bus
-  wire [ 16-1:0] ram_data2;     // sram data bus 2nd word
-  wire [ 16-1:0] ramdata_in;    // sram data bus in
-  wire [ 48-1:0] chip48;        // big chip read
-  wire [ 23-1:1] ram_address;   // sram address bus
-  wire           _ram_bhe;      // sram upper byte select
-  wire           _ram_ble;      // sram lower byte select
-  wire           _ram_bhe2;     // sram upper byte select 2nd word
-  wire           _ram_ble2;     // sram lower byte select 2nd word
-  wire           _ram_we;       // sram write enable
-  wire           _ram_oe;       // sram output enable
-  wire           _15khz;        // scandoubler disable
-  wire           sdo;           // SPI data output
+  wire [ 16-1:0] ram_data; // sram data bus
+  wire [ 16-1:0] ram_data2; // sram data bus 2nd word
+  wire [ 16-1:0] ramdata_in; // sram data bus in
+  wire [ 48-1:0] chip48; // big chip read
+  wire [ 23-1:1] ram_address; // sram address bus
+  wire           _ram_bhe; // sram upper byte select
+  wire           _ram_ble; // sram lower byte select
+  wire           _ram_bhe2; // sram upper byte select 2nd word
+  wire           _ram_ble2; // sram lower byte select 2nd word
+  wire           _ram_we; // sram write enable
+  wire           _ram_oe; // sram output enable
+  wire           _15khz; // scandoubler disable
+  wire           sdo; // SPI data output
   wire           vs;
   wire           hs;
   wire           cs;
@@ -234,7 +255,7 @@ module minimig_virtual_top
 
   // Audio
   wire [15:0] aud_amiga_left;
-  wire [15:0] aud_amiga_right;    // sigma-delta DAC output right
+  wire [15:0] aud_amiga_right; // sigma-delta DAC output right
 
   // UART
   wire minimig_rxd;
@@ -265,11 +286,11 @@ module minimig_virtual_top
 
   wire rtg_ena; // RTG screen on/off
   wire rtg_ena_mm; // RTG screen on/off
-  wire rtg_clut;  // Are we in high-colour or 8-bit CLUT mode?
+  wire rtg_clut; // Are we in high-colour or 8-bit CLUT mode?
   wire rtg_16bit; // Is high-colour mode 15- or 16-bit?
   reg [3:0] rtg_pixelctr; // Counter, compared against rtg_pixelwidth
   wire [3:0] rtg_pixelwidth; // Number of clocks per fetch - 1
-  wire [7:0] rtg_clut_idx;  // The currently selected colour in indexed mode
+  wire [7:0] rtg_clut_idx; // The currently selected colour in indexed mode
   wire rtg_pixel; // Strobe the next pixel from the FIFO
 
   wire hblank_out;
@@ -279,17 +300,17 @@ module minimig_virtual_top
   reg rtg_blank_d;
   reg rtg_blank_d2;
   reg rtg_blank_d3;
-  reg [6:0] rtg_vbcounter;  // Vvbco counter
+  reg [6:0] rtg_vbcounter; // Vvbco counter
   wire [6:0] rtg_vbend; // Size of VBlank area
 
 
   wire [7:0] rtg_r; // 16-bit mode RGB data
   wire [7:0] rtg_g;
   wire [7:0] rtg_b;
-  reg rtg_clut_in_sel;  // Select first or second byte of 16-bit word as CLUT index
+  reg rtg_clut_in_sel; // Select first or second byte of 16-bit word as CLUT index
   reg rtg_clut_in_sel_d;
   wire rtg_ext; // Extend the active area by one clock.
-  wire [7:0] rtg_clut_r;  // RGB data from CLUT
+  wire [7:0] rtg_clut_r; // RGB data from CLUT
   wire [7:0] rtg_clut_g;
   wire [7:0] rtg_clut_b;
 
@@ -324,16 +345,16 @@ module minimig_virtual_top
     if(rtg_pixelctr=={1'b0,rtg_pixelwidth[3:1]})
       rtg_clut_in_sel<=1'b1;
 
-    // Increment the fetch clock, reset during blank.
+      // Increment the fetch clock, reset during blank.
     if(rtg_blank || rtg_pixel)
-    begin
-      rtg_pixelctr<=3'b0;
-      rtg_clut_in_sel<=1'b0;
-    end
+      begin
+        rtg_pixelctr<=3'b0;
+        rtg_clut_in_sel<=1'b0;
+      end
     else
-    begin
-      rtg_pixelctr<=rtg_pixelctr+1;
-    end
+      begin
+        rtg_pixelctr<=rtg_pixelctr+1;
+      end
   end
 
   always @(posedge CLK_28)
@@ -343,14 +364,14 @@ module minimig_virtual_top
     vs_reg    <= #1 vs;
     hs_reg    <= #1 hs;
     if(vblank_out)
-    begin
-      rtg_vblank<=1'b1;
-      rtg_vbcounter<=5'b0;
-    end
+      begin
+        rtg_vblank<=1'b1;
+        rtg_vbcounter<=5'b0;
+      end
     else if(rtg_vbcounter==rtg_vbend)
-    begin
-      rtg_vblank<=1'b0;
-    end
+      begin
+        rtg_vblank<=1'b0;
+      end
     else if(hs & !hs_reg)
     begin
       rtg_vbcounter<=rtg_vbcounter+1;
@@ -377,26 +398,26 @@ module minimig_virtual_top
   assign rtg_addr_mangled[22:0]=rtg_addr[22:0];
 
   VideoStream myvs
-              (
-                .clk(CLK_114),
-                .reset_n((!vblank_out) & rtg_ena),
-                .enable(rtg_ena),
-                .baseaddr({rtg_baseaddr[24:4],4'b0}),
-                // SDRAM interface
-                .a(rtg_addr),
-                .req(rtg_ramreq),
-                .d(rtg_fromram),
-                .fill(rtg_fill & havertg),
-                // Display interface
-                .rdreq(rtg_pixel & havertg),
-                .q(rtg_dat)
-              );
+  (
+    .clk(CLK_114),
+    .reset_n((!vblank_out) & rtg_ena),
+    .enable(rtg_ena),
+    .baseaddr({rtg_baseaddr[24:4],4'b0}),
+    // SDRAM interface
+    .a(rtg_addr),
+    .req(rtg_ramreq),
+    .d(rtg_fromram),
+    .fill(rtg_fill & havertg),
+    // Display interface
+    .rdreq(rtg_pixel & havertg),
+    .q(rtg_dat)
+  );
 
   always @ (posedge CLK_114)
   begin
-red_reg   <= #1 rtg_ena && !rtg_blank_d2 ? rtg_clut ? rtg_clut_r : rtg_r : red;
-green_reg <= #1 rtg_ena && !rtg_blank_d2 ? rtg_clut ? rtg_clut_g : rtg_g : green;
-blue_reg  <= #1 rtg_ena && !rtg_blank_d2 ? rtg_clut ? rtg_clut_b : rtg_b : blue;
+    red_reg   <= #1 rtg_ena && !rtg_blank_d2 ? rtg_clut ? rtg_clut_r : rtg_r : red;
+    green_reg <= #1 rtg_ena && !rtg_blank_d2 ? rtg_clut ? rtg_clut_g : rtg_g : green;
+    blue_reg  <= #1 rtg_ena && !rtg_blank_d2 ? rtg_clut ? rtg_clut_b : rtg_b : blue;
   end
 
 
@@ -423,7 +444,7 @@ blue_reg  <= #1 rtg_ena && !rtg_blank_d2 ? rtg_clut ? rtg_clut_b : rtg_b : blue;
   // Audio for CD images
   wire aud_int;
   reg [15:0] aud_left;
-  reg [15:0] aud_right;    // sigma-delta DAC output right
+  reg [15:0] aud_right; // sigma-delta DAC output right
 
   reg aud_tick;
   reg aud_tick_d;
@@ -441,17 +462,17 @@ blue_reg  <= #1 rtg_ena && !rtg_blank_d2 ? rtg_clut ? rtg_clut_b : rtg_b : blue;
 
   wire [22:0] aud_ramaddr;
   assign aud_ramaddr[15:0]=aud_addr;
-  assign aud_ramaddr[22:16]=7'b1101111;  // 0x6f0000 in SDRAM, 0x040000 to host, 0xec0000 to Amiga
+  assign aud_ramaddr[22:16]=7'b1101111; // 0x6f0000 in SDRAM, 0x040000 to host, 0xec0000 to Amiga
 
   reg [9:0] aud_ctr;
   always @(posedge CLK_28)
   begin
     aud_ctr<=aud_ctr+1;
     if (aud_ctr==10'd642)
-    begin
-      aud_tick<=1'b1;
-      aud_ctr<=10'b0;
-    end
+      begin
+        aud_tick<=1'b1;
+        aud_ctr<=10'b0;
+      end
     else
       aud_tick<=1'b0;
   end
@@ -474,37 +495,38 @@ blue_reg  <= #1 rtg_ena && !rtg_blank_d2 ? rtg_clut ? rtg_clut_b : rtg_b : blue;
 
   // We can use the same type of FIFO as we use for video.
   VideoStream myaudiostream
-              (
-                .clk(CLK_114),
-                .reset_n(aud_ena_host | aud_ena_cpu), // !aud_clear),
-                .enable(aud_ena_host | aud_ena_cpu),
-                .baseaddr(25'b0),
-                // SDRAM interface
-                .a(aud_addr),
-                .req(aud_ramreq),
-                .d(aud_fromram),
-                .fill(aud_fill & haveaudio),
-                // Display interface
-                .rdreq(aud_next & haveaudio),
-                .q(aud_sample)
-              );
+  (
+    .clk(CLK_114),
+    .reset_n(aud_ena_host | aud_ena_cpu), // !aud_clear),
+    .enable(aud_ena_host | aud_ena_cpu),
+    .baseaddr(25'b0),
+    // SDRAM interface
+    .a(aud_addr),
+    .req(aud_ramreq),
+    .d(aud_fromram),
+    .fill(aud_fill & haveaudio),
+    // Display interface
+    .rdreq(aud_next & haveaudio),
+    .q(aud_sample)
+  );
 
 
   //// amiga clocks ////
   amiga_clk amiga_clk (
-              .rst          (1'b0             ), // async reset input
-              .clk_in       (CLK_IN           ), // input clock     ( 50.000000MHz)
-              .clk_114      (CLK_114          ), // output clock c0 (114.750000MHz)
-              .clk_sdram    (clk_sdram        ), // output clock c2 (114.750000MHz, -146.25 deg)
-              .clk_28       (CLK_28           ), // output clock c1 ( 28.687500MHz)
-              .clk7_en      (clk7_en          ), // output clock 7 enable (on 28MHz clock domain)
-              .clk7n_en     (clk7n_en         ), // 7MHz negedge output clock enable (on 28MHz clock domain)
-              .c1           (c1               ), // clk28m clock domain signal synchronous with clk signal
-              .c3           (c3               ), // clk28m clock domain signal synchronous with clk signal delayed by 90 degrees
-              .cck          (cck              ), // colour clock output (3.54 MHz)
-              .eclk         (eclk             ), // 0.709379 MHz clock enable output (clk domain pulse)
-              .locked       (PLL_LOCKED       )  // pll locked output
-            );
+    .rst          (1'b0             ), // async reset input
+    .clk_in       (CLK_IN           ), // input clock     ( 50.000000MHz)
+    .clk_114      (CLK_114          ), // output clock c0 (114.750000MHz)
+    .clk_sdram    (clk_sdram        ), // output clock c2 (114.750000MHz, -146.25 deg)
+    .clk_28       (CLK_28           ), // output clock c1 ( 28.687500MHz)
+    .clk7_en      (clk7_en          ), // output clock 7 enable (on 28MHz clock domain)
+    .clk7n_en     (clk7n_en         ), // 7MHz negedge output clock enable (on 28MHz clock domain)
+    .c1           (c1               ), // clk28m clock domain signal synchronous with clk signal
+    .c3           (c3               ), // clk28m clock domain signal synchronous with clk signal delayed by 90 degrees
+    .cck          (cck              ), // colour clock output (3.54 MHz)
+    .eclk         (eclk             ), // 0.709379 MHz clock enable output (clk domain pulse)
+    .locked       (PLL_LOCKED       ), // pll locked output
+    .ntsc         (                 )
+  );
 
   wire amigahost_req;
   wire amigahost_ack;
@@ -516,78 +538,79 @@ blue_reg  <= #1 rtg_ena && !rtg_blank_d2 ? rtg_clut ? rtg_clut_b : rtg_b : blue;
   assign tg68_nrst_out=1'b1;
 `else
 
-  TG68K #(.havertg(havertg ? "true" : "false"),
-          .haveaudio(haveaudio ? "true" : "false"),
-          .havec2p(havec2p ? "true" : "false")
-         ) tg68k (
-          .clk          (CLK_114          ),
-          .reset        (tg68_rst         ),
-          .clkena_in    (tg68_ena28       ),
-          .IPL          (tg68_IPL         ),
-          .dtack        (tg68_dtack       ),
-          .vpa          (1'b1             ),
-          .ein          (1'b1             ),
-          .addr         (tg68_adr         ),
-          .data_read    (tg68_dat_in      ),
-          .data_read2   (tg68_dat_in2     ),
-          .data_write   (tg68_dat_out     ),
-          .data_write2  (tg68_dat_out2    ),
-          .as           (tg68_as          ),
-          .uds          (tg68_uds         ),
-          .lds          (tg68_lds         ),
-          .uds2         (tg68_uds2        ),
-          .lds2         (tg68_lds2        ),
-          .rw           (tg68_rw          ),
-          .vma          (                 ),
-          .wrd          (                 ),
-          .ena7RDreg    (tg68_ena7RD      ),
-          .ena7WRreg    (tg68_ena7WR      ),
-          .fromram      (tg68_cout        ),
-          .toram        (tg68_cin         ),
-          .ramready     (tg68_cpuena      ),
-          .cpu          (cpu_config[1:0]  ),
-          .turbochipram (turbochipram     ),
-          .turbokick    (turbokick        ),
-          .slow_config  (slow_config      ),
-          .aga          (aga              ),
-          .cache_inhibit(cache_inhibit    ),
-          .cacheline_clr(cacheline_clr    ),
-          .ziiram_active(board_configured[0]),
-          .ziiiram_active(board_configured[1]),
-          .ziiiram2_active(board_configured[2]),
-          .ziiiram3_active(board_configured[3]),
-          //  .fastramcfg   ({&memcfg[5:4],memcfg[5:4]}),
-          .eth_en       (1'b1), // TODO
-          .sel_eth      (),
-          .frometh      (16'd0),
-          .ethready     (1'b0),
-          .ramaddr      (tg68_cad         ),
-          .cpustate     (tg68_cpustate    ),
-          .nResetOut    (tg68_nrst_out    ),
-          .skipFetch    (                 ),
-          .ramlds       (tg68_clds        ),
-          .ramuds       (tg68_cuds        ),
-          .CACR_out     (tg68_CACR_out    ),
-          .VBR_out      (tg68_VBR_out     ),
-          // RTG signals
-          .rtg_addr(rtg_baseaddr),
-          .rtg_vbend(rtg_vbend),
-          .rtg_ext(rtg_ext),
-          .rtg_pixelclock(rtg_pixelwidth),
-          .rtg_clut(rtg_clut),
-          .rtg_16bit(rtg_16bit),
-          .rtg_clut_idx(rtg_clut_idx),
-          .rtg_clut_r(rtg_clut_r),
-          .rtg_clut_g(rtg_clut_g),
-          .rtg_clut_b(rtg_clut_b),
-          .audio_buf(aud_addr[15]),
-          .audio_ena(aud_ena_cpu),
-          .audio_int(aud_int),
-          // Amiga to host signals
-          .host_req(amigahost_req),
-          .host_ack(amigahost_ack),
-          .host_q(amigahost_q)
-        );
+  TG68K #(
+  .havertg(havertg ? "true" : "false"),
+  .haveaudio(haveaudio ? "true" : "false"),
+  .havec2p(havec2p ? "true" : "false")
+  ) tg68k (
+    .clk          (CLK_114          ),
+    .reset        (tg68_rst         ),
+    .clkena_in    (tg68_ena28       ),
+    .IPL          (tg68_IPL         ),
+    .dtack        (tg68_dtack       ),
+    .vpa          (1'b1             ),
+    .ein          (1'b1             ),
+    .addr         (tg68_adr         ),
+    .data_read    (tg68_dat_in      ),
+    .data_read2   (tg68_dat_in2     ),
+    .data_write   (tg68_dat_out     ),
+    .data_write2  (tg68_dat_out2    ),
+    .as           (tg68_as          ),
+    .uds          (tg68_uds         ),
+    .lds          (tg68_lds         ),
+    .uds2         (tg68_uds2        ),
+    .lds2         (tg68_lds2        ),
+    .rw           (tg68_rw          ),
+    .vma          (                 ),
+    .wrd          (                 ),
+    .ena7RDreg    (tg68_ena7RD      ),
+    .ena7WRreg    (tg68_ena7WR      ),
+    .fromram      (tg68_cout        ),
+    .toram        (tg68_cin         ),
+    .ramready     (tg68_cpuena      ),
+    .cpu          (cpu_config[1:0]  ),
+    .turbochipram (turbochipram     ),
+    .turbokick    (turbokick        ),
+    .slow_config  (slow_config      ),
+    .aga          (aga              ),
+    .cache_inhibit(cache_inhibit    ),
+    .cacheline_clr(cacheline_clr    ),
+    .ziiram_active(board_configured[0]),
+    .ziiiram_active(board_configured[1]),
+    .ziiiram2_active(board_configured[2]),
+    .ziiiram3_active(board_configured[3]),
+    //  .fastramcfg   ({&memcfg[5:4],memcfg[5:4]}),
+    .eth_en       (1'b1), // TODO
+    .sel_eth      (),
+    .frometh      (16'd0),
+    .ethready     (1'b0),
+    .ramaddr      (tg68_cad         ),
+    .cpustate     (tg68_cpustate    ),
+    .nResetOut    (tg68_nrst_out    ),
+    .skipFetch    (                 ),
+    .ramlds       (tg68_clds        ),
+    .ramuds       (tg68_cuds        ),
+    .CACR_out     (tg68_CACR_out    ),
+    .VBR_out      (tg68_VBR_out     ),
+    // RTG signals
+    .rtg_addr     (rtg_baseaddr     ),
+    .rtg_vbend    (rtg_vbend        ),
+    .rtg_ext      (rtg_ext          ),
+    .rtg_pixelclock(rtg_pixelwidth  ),
+    .rtg_clut     (rtg_clut         ),
+    .rtg_16bit    (rtg_16bit),
+    .rtg_clut_idx (rtg_clut_idx),
+    .rtg_clut_r   (rtg_clut_r),
+    .rtg_clut_g   (rtg_clut_g),
+    .rtg_clut_b   (rtg_clut_b),
+    .audio_buf    (aud_addr[15]),
+    .audio_ena    (aud_ena_cpu),
+    .audio_int    (aud_int),
+    // Amiga to host signals
+    .host_req     (amigahost_req),
+    .host_ack     (amigahost_ack),
+    .host_q       (amigahost_q)
+  );
 
 `endif
 
@@ -607,75 +630,133 @@ blue_reg  <= #1 rtg_ena && !rtg_blank_d2 ? rtg_clut ? rtg_clut_b : rtg_b : blue;
   wire           hostack;
   wire           hostce;
 
+  // Create cpu status regs for sdram and ddram
+  wire           cpu_nCs;
+  wire           sdram_nCs;
+  wire           ddram_nCs;
+  wire [7-1:0]   sdram_cpustate;
+  wire [7-1:0]   ddram_cpustate;
+  wire           sdram_reset_out;
+  wire           ddram_reset_out;
+
+  assign cpu_nCS = tg68_cpustate[2];
+  assign sdram_nCs = cpu_nCS || tg68_cad[25]; // Only select when Addr bit 25 is zero
+  assign ddram_nCS = cpu_nCs || ~tg68_cad[25]; // Only select when Addr bit 25 is one
+  assign sdram_cpustate = {tg68_cpustate[7-1:3], sdram_nCs, tg68_cpustate[1:0]};
+  assign ddram_cpustate = {tg68_cpustate[7-1:3], ddram_nCs, tg68_cpustate[1:0]};
+
+  assign tg68_cout = cpu_nCs ? ddram_cout : sdram_cout;
+  assign tg68_cpuena = cpu_nCs ? ddram_cpuena : sdram_cpuena;
+
+  assign reset_out = sdram_reset_out || ddram_reset_out;
+
   //sdram sdram (
   sdram_ctrl sdram (
-               .cache_rst    (tg68_rst         ),
-               .cache_inhibit(cache_inhibit    ),
-               .cacheline_clr(cacheline_clr    ),
-               .cpu_cache_ctrl (tg68_CACR_out    ),
+    .cache_rst    (tg68_rst         ),
+    .cache_inhibit(cache_inhibit    ),
+    .cacheline_clr(cacheline_clr    ),
+    .cpu_cache_ctrl (tg68_CACR_out    ),
 
-               // Interface to SDRam
-               .sdata        (SDRAM_DQ         ),
-               .sdaddr       (SDRAM_A[12:0]    ),
-               .dqm          (sdram_dqm        ),
-               .sd_cs        (sdram_cs         ),
-               .ba           (sdram_ba         ),
-               .sd_we        (SDRAM_nWE        ),
-               .sd_ras       (SDRAM_nRAS       ),
-               .sd_cas       (SDRAM_nCAS       ),
-               .sysclk       (CLK_114          ),
-               .reset_in     (sdctl_rst        ),
+    // Interface to SDRam
+    .sdata        (SDRAM_DQ         ),
+    .sdaddr       (SDRAM_A[12:0]    ),
+    .dqm          (sdram_dqm        ),
+    .sd_cs        (sdram_cs         ),
+    .ba           (sdram_ba         ),
+    .sd_we        (SDRAM_nWE        ),
+    .sd_ras       (SDRAM_nRAS       ),
+    .sd_cas       (SDRAM_nCAS       ),
+    .sysclk       (CLK_114          ),
+    .reset_in     (sdctl_rst        ),
 
-               // Host CPU
-               .hostWR       (hostWR           ),
-               .hostAddr     (hostaddr         ),
-               .hostwe       (host_we           ),
-               .hostce       (host_ramreq      ),
-               .hostbytesel  (hostbytesel      ),
-               .hostRD       (host_ramdata     ),
-               .hostena      (host_ramack      ),
+    // Host CPU
+    .hostWR       (hostWR           ),
+    .hostAddr     (hostaddr         ),
+    .hostwe       (host_we           ),
+    .hostce       (host_ramreq      ),
+    .hostbytesel  (hostbytesel      ),
+    .hostRD       (host_ramdata     ),
+    .hostena      (host_ramack      ),
 
-               // Amiga CPU
-               .cpuWR        (tg68_cin         ),
-               .cpuAddr      (tg68_cad[25:1]   ),
-               .cpuU         (tg68_cuds        ),
-               .cpuL         (tg68_clds        ),
-               .cpustate     (tg68_cpustate    ),
-               .cpuRD        (tg68_cout        ),
-               .cpuena       (tg68_cpuena      ),
+    // Amiga CPU
+    .cpuWR        (tg68_cin         ),
+    .cpuAddr      (tg68_cad[25:1]   ),
+    .cpuU         (tg68_cuds        ),
+    .cpuL         (tg68_clds        ),
+    .cpustate     (sdram_cpustate   ),
+    .cpuRD        (sdram_cout        ),
+    .cpuena       (sdram_cpuena      ),
 
-               // Amiga chip ram
-               //  .cpu_dma      (tg68_cdma        ),
-               .chipWR       (ram_data         ),
-               .chipWR2      (tg68_dat_out2    ),
-               .chipAddr     ({1'b0, ram_address[22:1]}),
-               .chipU        (_ram_bhe         ),
-               .chipL        (_ram_ble         ),
-               .chipU2       (_ram_bhe2        ),
-               .chipL2       (_ram_ble2        ),
-               .chipRW       (_ram_we          ),
-               .chip_dma     (_ram_oe          ),
-               .clk7_en      (clk7_en          ),
-               .chipRD       (ramdata_in       ),
-               .chip48       (chip48           ),
+    // Amiga chip ram
+    //  .cpu_dma      (tg68_cdma        ),
+    .chipWR       (ram_data         ),
+    .chipWR2      (tg68_dat_out2    ),
+    .chipAddr     ({1'b0, ram_address[22:1]}),
+    .chipU        (_ram_bhe         ),
+    .chipL        (_ram_ble         ),
+    .chipU2       (_ram_bhe2        ),
+    .chipL2       (_ram_ble2        ),
+    .chipRW       (_ram_we          ),
+    .chip_dma     (_ram_oe          ),
+    .clk7_en      (clk7_en          ),
+    .chipRD       (ramdata_in       ),
+    .chip48       (chip48           ),
 
-               // RTG memory
-               .rtgAddr      (rtg_addr_mangled ),
-               .rtgce        (rtg_ramreq       ),
-               .rtgfill      (rtg_fill         ),
-               .rtgRd        (rtg_fromram      ),
+    // RTG memory
+    .rtgAddr      (rtg_addr_mangled ),
+    .rtgce        (rtg_ramreq       ),
+    .rtgfill      (rtg_fill         ),
+    .rtgRd        (rtg_fromram      ),
 
-               // Audio memory
-               .audAddr      (aud_ramaddr      ),
-               .audce        (aud_ramreq       ),
-               .audfill      (aud_fill         ),
-               .audRd        (aud_fromram      ),
+    // Audio memory
+    .audAddr      (aud_ramaddr      ),
+    .audce        (aud_ramreq       ),
+    .audfill      (aud_fill         ),
+    .audRd        (aud_fromram      ),
 
-               .reset_out    (reset_out        ),
-               .enaWRreg     (tg68_ena28       ),
-               .ena7RDreg    (tg68_ena7RD      ),
-               .ena7WRreg    (tg68_ena7WR      )
-             );
+    .reset_out    (sdram_reset_out  ),
+    .enaWRreg     (tg68_ena28       ),
+    .ena7RDreg    (tg68_ena7RD      ),
+    .ena7WRreg    (tg68_ena7WR      )
+  );
+
+
+  // ddram_ctrl DDR3 high latency memory
+  ddram_ctrl myddram (
+    .sysclk       (CLK_114          ),
+    .cache_rst    (tg68_rst         ),
+    .cache_inhibit(cache_inhibit    ),
+    .cacheline_clr(cacheline_clr    ),
+    .cpu_cache_ctrl (tg68_CACR_out  ),
+    .reset_in     (sdctl_rst        ),
+    .reset_out    (ddram_reset_out  ),
+
+    // Amiga CPU
+    .cpuWR        (tg68_cin         ),
+    .cpuAddr      (tg68_cad[25:1]   ),
+    .cpuU         (tg68_cuds        ),
+    .cpuL         (tg68_clds        ),
+    .cpustate     (ddram_cpustate   ),
+    .cpuRD        (ddram_cout        ),
+    .cpuena       (ddram_cpuena      ),
+
+    // DDR3 interface
+    .DDR3_CK_P_O  (DDR3_CK_P_O   ),
+    .DDR3_CK_N_O  (DDR3_CK_N_O   ), // DDR3 clock
+    .DDR3_CKE_O   (DDR3_CKE_O    ),
+    .DDR3_RESET_N_O(DDR3_RESET_N_O ),
+    .DDR3_RAS_N_O (DDR3_RAS_N_O  ),
+    .DDR3_CAS_N_O (DDR3_CAS_N_O  ),
+    .DDR3_WE_N_O  (DDR3_WE_N_O   ),
+    .DDR3_CS_N_O  (DDR3_CS_N_O   ),
+    .DDR3_BA_O    (DDR3_BA_O     ),
+    .DDR3_ADDR_O  (DDR3_ADDR_O   ),
+    .DDR3_ODT_O   (DDR3_ODT_O    ),
+    .DDR3_DM_O    (DDR3_DM_O     ),
+    .DDR3_DQS_P_IO(DDR3_DQS_P_IO ),
+    .DDR3_DQS_N_IO(DDR3_DQS_N_IO ),
+    .DDR3_DQ_IO   (DDR3_DQ_IO    )
+  );
 
 
   // multiplex spi_do, drive it from user_io if that's selected, drive
@@ -739,124 +820,126 @@ blue_reg  <= #1 rtg_ena && !rtg_blank_d2 ? rtg_clut ? rtg_clut_b : rtg_b : blue;
 `else
 
   minimig #(
-            .NTSC(1'b0)
-          ) minimig (
-            //m68k pins
-            .cpu_address  (tg68_adr[23:1]   ), // M68K address bus
-            .cpu_data     (tg68_dat_in      ), // M68K data bus
-            .cpu_data2    (tg68_dat_in2     ), // M68K data bus 2nd word
-            .cpudata_in   (tg68_dat_out     ), // M68K data in
-            ._cpu_ipl     (tg68_IPL         ), // M68K interrupt request
-            ._cpu_as      (tg68_as          ), // M68K address strobe
-            ._cpu_uds     (tg68_uds         ), // M68K upper data strobe
-            ._cpu_lds     (tg68_lds         ), // M68K lower data strobe
-            ._cpu_uds2    (tg68_uds2        ), // M68K upper data strobe 2nd word
-            ._cpu_lds2    (tg68_lds2        ), // M68K lower data strobe 2nd word
-            .cpu_r_w      (tg68_rw          ), // M68K read / write
-            ._cpu_dtack   (tg68_dtack       ), // M68K data acknowledge
-            ._cpu_reset   (tg68_rst         ), // M68K reset
-            ._cpu_reset_in(tg68_nrst_out    ), // M68K reset out
-            .cpu_vbr      (tg68_VBR_out     ), // M68K VBR
-            .ovr          (tg68_ovr         ), // NMI override address decoding
-            //sram pins
-            .ram_data     (ram_data         ), // SRAM data bus
-            .ramdata_in   (ramdata_in       ), // SRAM data bus in
-            .ram_address  (ram_address[22:1]), // SRAM address bus
-            ._ram_bhe     (_ram_bhe         ), // SRAM upper byte select
-            ._ram_ble     (_ram_ble         ), // SRAM lower byte select
-            ._ram_bhe2    (_ram_bhe2        ), // SRAM upper byte select 2nd word
-            ._ram_ble2    (_ram_ble2        ), // SRAM lower byte select 2nd word
-            ._ram_we      (_ram_we          ), // SRAM write enable
-            ._ram_oe      (_ram_oe          ), // SRAM output enable
-            .chip48       (chip48           ), // big chipram read
-            //system  pins
-            .rst_ext      (!RESET_N         ), // reset from ctrl block
-            .rst_out      (                 ), // minimig reset status
-            .clk          (CLK_28           ), // output clock c1 ( 28.687500MHz)
-            .clk7_en      (clk7_en          ), // 7MHz clock enable
-            .clk7n_en     (clk7n_en         ), // 7MHz negedge clock enable
-            .c1           (c1               ), // clk28m clock domain signal synchronous with clk signal
-            .c3           (c3               ), // clk28m clock domain signal synchronous with clk signal delayed by 90 degrees
-            .cck          (cck              ), // colour clock output (3.54 MHz)
-            .eclk         (eclk             ), // 0.709379 MHz clock enable output (clk domain pulse)
-            //rs232 pins
-            .rxd          (AMIGA_RX         ),  // RS232 receive
-            .txd          (AMIGA_TX         ),  // RS232 send
-            .cts          (1'b0             ),  // RS232 clear to send
-            .rts          (                 ),  // RS232 request to send
-            //I/O
-            ._joy1        (JOYA             ),  // joystick 1 [fire7:fire,up,down,left,right] (default mouse port)
-            ._joy2        (JOYB             ),  // joystick 2 [fire7:fire,up,down,left,right] (default joystick port)
-            ._joy3        (JOYC             ),  // joystick 3 [fire7:fire,up,down,left,right]
-            ._joy4        (JOYD             ),  // joystick 4 [fire7:fire,up,down,left,right]
-            .mouse_btn1   (1'b1             ), // mouse button 1
-            .mouse_btn2   (1'b1             ), // mouse button 2
-            //  .mouse_btn    (mouse_buttons    ),  // mouse buttons
-            .mouse0_btn   (3'b000           ),
-            .mouse1_btn   (3'b000           ),
-            .kbd_reset_n  (kbd_reset_n),
-            .kbd_mouse_data (kbd_mouse_data ),  // mouse direction data, keycodes
-            //  .kbd_mouse_type (kbd_mouse_type ),  // type of data
-            .kbd_mouse_strobe (kbd_mouse_stb), // kbd/mouse data strobe
-            .kms_level    (1'b0             ), // kms_level        ),
-            ._15khz       (_15khz           ), // scandoubler disable
-            .rtc          (rtc              ), // real-time clock
-            .pwr_led      (LED_POWER        ), // power led
-            .disk_led     (LED_DISK         ), // power led
-            .msdat_i      (PS2_MDAT_I       ), // PS2 mouse data
-            .msclk_i      (PS2_MCLK_I       ), // PS2 mouse clk
-            .kbddat_i     (PS2_DAT_I        ), // PS2 keyboard data
-            .kbdclk_i     (PS2_CLK_I        ), // PS2 keyboard clk
-            .msdat_o      (PS2_MDAT_O       ), // PS2 mouse data
-            .msclk_o      (PS2_MCLK_O       ), // PS2 mouse clk
-            .kbddat_o     (PS2_DAT_O        ), // PS2 keyboard data
-            .kbdclk_o     (PS2_CLK_O        ), // PS2 keyboard clk
-            //host controller interface (SPI)
-            ._scs         ( {SPI_SS4,SPI_SS3,SPI_SS2}  ),  // SPI chip select spi_chipselect(6 downto 4),
-            .direct_sdi   (SD_MISO          ),  // SD Card direct in  SPI_SDO
-            .sdi          (SPI_DI           ),  // SPI data input
-            .sdo          (SPI_DO           ),  // SPI data output
-            .sck          (SPI_SCK          ),  // SPI clock
-            //video
-            .selcsync     (VGA_SELCS        ),  // composite sync
-            ._csync       (cs               ),  // horizontal sync
-            ._hsync       (hs               ),  // horizontal sync
-            .hsyncpol     (hsyncpol         ),
-            ._vsync       (vs               ),  // vertical sync
-            .vsyncpol     (vsyncpol         ),
-            .red          (red              ),  // red
-            .green        (green            ),  // green
-            .blue         (blue             ),  // blue
-            //audio
-            .left         (                 ),  // audio bitstream left
-            .right        (                 ),  // audio bitstream right
-            .ldata        (aud_amiga_left   ),  // left DAC data
-            .rdata        (aud_amiga_right  ),  // right DAC data
-            //user i/o
-            .cpu_config   (cpu_config       ), // CPU config
-            .board_configured(board_configured),
-            .turbochipram (turbochipram     ), // turbo chipRAM
-            .turbokick    (turbokick        ), // turbo kickstart
-            .slow_config  (slow_config      ),
-            .aga          (aga              ),
-            .init_b       (                 ), // vertical sync for MCU (sync OSD update)
-            .fifo_full    (                 ),
-            // fifo / track display
-            .trackdisp    (                 ),  // floppy track number
-            .secdisp      (                 ),  // sector
-            .floppy_fwr   (                 ),  // floppy fifo writing
-            .floppy_frd   (                 ),  // floppy fifo reading
-            .hd_fwr       (                 ),  // hd fifo writing
-            .hd_frd       (                 ),  // hd fifo  ading
-            .hblank_out   (hblank_out       ),
-            .vblank_out   (vblank_out       ),
-            .osd_blank_out(osd_window       ),  // Let the toplevel dither module handle drawing the OSD.
-            .osd_pixel_out(osd_pixel        ),
-            .rtg_ena      (rtg_ena_mm       ),
-            .ext_int2     (1'b0             ),
-            .ext_int6     (aud_int          ),
-            .ram_64meg    (ram_64meg        )
-          );
+  .NTSC(1'b0)
+  ) minimig (
+    //m68k pins
+    .cpu_address  (tg68_adr[23:1]   ), // M68K address bus
+    .cpu_data     (tg68_dat_in      ), // M68K data bus
+    .cpu_data2    (tg68_dat_in2     ), // M68K data bus 2nd word
+    .cpudata_in   (tg68_dat_out     ), // M68K data in
+    ._cpu_ipl     (tg68_IPL         ), // M68K interrupt request
+    ._cpu_as      (tg68_as          ), // M68K address strobe
+    ._cpu_uds     (tg68_uds         ), // M68K upper data strobe
+    ._cpu_lds     (tg68_lds         ), // M68K lower data strobe
+    ._cpu_uds2    (tg68_uds2        ), // M68K upper data strobe 2nd word
+    ._cpu_lds2    (tg68_lds2        ), // M68K lower data strobe 2nd word
+    .cpu_r_w      (tg68_rw          ), // M68K read / write
+    ._cpu_dtack   (tg68_dtack       ), // M68K data acknowledge
+    ._cpu_reset   (tg68_rst         ), // M68K reset
+    ._cpu_reset_in(tg68_nrst_out    ), // M68K reset out
+    .cpu_vbr      (tg68_VBR_out     ), // M68K VBR
+    .ovr          (tg68_ovr         ), // NMI override address decoding
+    //sram pins
+    .ram_data     (ram_data         ), // SRAM data bus
+    .ramdata_in   (ramdata_in       ), // SRAM data bus in
+    .ram_address  (ram_address[22:1]), // SRAM address bus
+    ._ram_bhe     (_ram_bhe         ), // SRAM upper byte select
+    ._ram_ble     (_ram_ble         ), // SRAM lower byte select
+    ._ram_bhe2    (_ram_bhe2        ), // SRAM upper byte select 2nd word
+    ._ram_ble2    (_ram_ble2        ), // SRAM lower byte select 2nd word
+    ._ram_we      (_ram_we          ), // SRAM write enable
+    ._ram_oe      (_ram_oe          ), // SRAM output enable
+    .chip48       (chip48           ), // big chipram read
+    //system  pins
+    .rst_ext      (!RESET_N         ), // reset from ctrl block
+    .rst_out      (                 ), // minimig reset status
+    .clk          (CLK_28           ), // output clock c1 ( 28.687500MHz)
+    .clk7_en      (clk7_en          ), // 7MHz clock enable
+    .clk7n_en     (clk7n_en         ), // 7MHz negedge clock enable
+    .c1           (c1               ), // clk28m clock domain signal synchronous with clk signal
+    .c3           (c3               ), // clk28m clock domain signal synchronous with clk signal delayed by 90 degrees
+    .cck          (cck              ), // colour clock output (3.54 MHz)
+    .eclk         (eclk             ), // 0.709379 MHz clock enable output (clk domain pulse)
+    //rs232 pins
+    .rxd          (AMIGA_RX         ), // RS232 receive
+    .txd          (AMIGA_TX         ), // RS232 send
+    .cts          (1'b0             ), // RS232 clear to send
+    .rts          (                 ), // RS232 request to send
+    //I/O
+    ._joy1        (JOYA             ), // joystick 1 [fire7:fire,up,down,left,right] (default mouse port)
+    ._joy2        (JOYB             ), // joystick 2 [fire7:fire,up,down,left,right] (default joystick port)
+    ._joy3        (JOYC             ), // joystick 3 [fire7:fire,up,down,left,right]
+    ._joy4        (JOYD             ), // joystick 4 [fire7:fire,up,down,left,right]
+    .mouse_btn1   (1'b1             ), // mouse button 1
+    .mouse_btn2   (1'b1             ), // mouse button 2
+    //  .mouse_btn    (mouse_buttons    ),  // mouse buttons
+    .mouse0_btn   (3'b000           ),
+    .mouse1_btn   (3'b000           ),
+    .mouse_idx    (                 ), // mouse index
+    .kbd_reset_n  (kbd_reset_n      ),
+    .kbd_mouse_data (kbd_mouse_data ), // mouse direction data, keycodes
+    .kbd_mouse_type (               ), // mouse type
+    //  .kbd_mouse_type (kbd_mouse_type ),  // type of data
+    .kbd_mouse_strobe (kbd_mouse_stb), // kbd/mouse data strobe
+    .kms_level    (1'b0             ), // kms_level        ),
+    ._15khz       (_15khz           ), // scandoubler disable
+    .rtc          (rtc              ), // real-time clock
+    .pwr_led      (LED_POWER        ), // power led
+    .disk_led     (LED_DISK         ), // power led
+    .msdat_i      (PS2_MDAT_I       ), // PS2 mouse data
+    .msclk_i      (PS2_MCLK_I       ), // PS2 mouse clk
+    .kbddat_i     (PS2_DAT_I        ), // PS2 keyboard data
+    .kbdclk_i     (PS2_CLK_I        ), // PS2 keyboard clk
+    .msdat_o      (PS2_MDAT_O       ), // PS2 mouse data
+    .msclk_o      (PS2_MCLK_O       ), // PS2 mouse clk
+    .kbddat_o     (PS2_DAT_O        ), // PS2 keyboard data
+    .kbdclk_o     (PS2_CLK_O        ), // PS2 keyboard clk
+    //host controller interface (SPI)
+    ._scs         ( {SPI_SS4,SPI_SS3,SPI_SS2}  ), // SPI chip select spi_chipselect(6 downto 4),
+    .direct_sdi   (SD_MISO          ), // SD Card direct in  SPI_SDO
+    .sdi          (SPI_DI           ), // SPI data input
+    .sdo          (SPI_DO           ), // SPI data output
+    .sck          (SPI_SCK          ), // SPI clock
+    //video
+    .selcsync     (VGA_SELCS        ), // composite sync
+    ._csync       (cs               ), // horizontal sync
+    ._hsync       (hs               ), // horizontal sync
+    .hsyncpol     (hsyncpol         ),
+    ._vsync       (vs               ), // vertical sync
+    .vsyncpol     (vsyncpol         ),
+    .red          (red              ), // red
+    .green        (green            ), // green
+    .blue         (blue             ), // blue
+    //audio
+    .left         (                 ), // audio bitstream left
+    .right        (                 ), // audio bitstream right
+    .ldata        (aud_amiga_left   ), // left DAC data
+    .rdata        (aud_amiga_right  ), // right DAC data
+    //user i/o
+    .cpu_config   (cpu_config       ), // CPU config
+    .board_configured(board_configured),
+    .turbochipram (turbochipram     ), // turbo chipRAM
+    .turbokick    (turbokick        ), // turbo kickstart
+    .slow_config  (slow_config      ),
+    .aga          (aga              ),
+    .init_b       (                 ), // vertical sync for MCU (sync OSD update)
+    .fifo_full    (                 ),
+    // fifo / track display
+    .trackdisp    (                 ), // floppy track number
+    .secdisp      (                 ), // sector
+    .floppy_fwr   (                 ), // floppy fifo writing
+    .floppy_frd   (                 ), // floppy fifo reading
+    .hd_fwr       (                 ), // hd fifo writing
+    .hd_frd       (                 ), // hd fifo  ading
+    .hblank_out   (hblank_out       ),
+    .vblank_out   (vblank_out       ),
+    .osd_blank_out(osd_window       ), // Let the toplevel dither module handle drawing the OSD.
+    .osd_pixel_out(osd_pixel        ),
+    .rtg_ena      (rtg_ena_mm       ),
+    .ext_int2     (1'b0             ),
+    .ext_int6     (aud_int          ),
+    .ram_64meg    (ram_64meg        )
+  );
 
   assign rtg_ena = havertg && rtg_ena_mm;
   assign RTG_ENABLE = rtg_ena;
@@ -866,105 +949,105 @@ blue_reg  <= #1 rtg_ena && !rtg_blank_d2 ? rtg_clut ? rtg_clut_b : rtg_b : blue;
   wire host_interrupt;
 
   EightThirtyTwo_Bridge #( debug ? 1'b1 : 1'b0) hostcpu
-                        (
-                          .clk(CLK_114),
-                          .nReset(reset_out),     // (nReset)
-                          .addr(hostaddr),        // Address bus (addr)
-                          .q(hostWR),             // Data out (hostWR)
-                          .sel(hostbytesel),      // Byte select ah (0, 0, nUDS, nLDS)
-                          .wr(host_we),           // Write enable ah (data_write)
+  (
+    .clk(CLK_114),
+    .nReset(reset_out), // (nReset)
+    .addr(hostaddr), // Address bus (addr)
+    .q(hostWR), // Data out (hostWR)
+    .sel(hostbytesel), // Byte select ah (0, 0, nUDS, nLDS)
+    .wr(host_we), // Write enable ah (data_write)
 
-                          // To CFIDE Flopp hardware emulation
-                          .hw_d(host_hwdata),     // Hardware data in (hostData switched via cfide)
-                          .hw_req(host_hwreq),    // Hardware request (hw_select <= cpu_addr(23))
-                          .hw_ack(host_hwack),    // Hardware acknowledge (clkena_in)
+    // To CFIDE Flopp hardware emulation
+    .hw_d(host_hwdata), // Hardware data in (hostData switched via cfide)
+    .hw_req(host_hwreq), // Hardware request (hw_select <= cpu_addr(23))
+    .hw_ack(host_hwack), // Hardware acknowledge (clkena_in)
 
-                          // To SDRAM
-                          .ram_d(host_ramdata),   // ram in from SDRAM  (hostData)
-                          .ram_req(host_ramreq),  // Ram request (To SDRAM when ram request)
-                          .ram_ack(host_ramack),  // Ram acknowledge (clkena_in)
+    // To SDRAM
+    .ram_d(host_ramdata), // ram in from SDRAM  (hostData)
+    .ram_req(host_ramreq), // Ram request (To SDRAM when ram request)
+    .ram_ack(host_ramack), // Ram acknowledge (clkena_in)
 
-                          .interrupt(host_interrupt) // TODO find out
-                        );
+    .interrupt(host_interrupt) // TODO find out
+  );
 
 
   cfide #(
-          .spimux(spimux ? 1'b1 : 1'b0),
-          .havespirtc(havespirtc ? 1'b1 : 1'b0),
-          .havei2c(havei2c ? 1'b1 : 1'b0),
-          .havevpos(havevpos ? 1'b1 : 1'b0)
-        ) mycfide (
-          .sysclk(CLK_114),
-          .n_reset(reset_out),
+  .spimux(spimux ? 1'b1 : 1'b0),
+  .havespirtc(havespirtc ? 1'b1 : 1'b0),
+  .havei2c(havei2c ? 1'b1 : 1'b0),
+  .havevpos(havevpos ? 1'b1 : 1'b0)
+  ) mycfide (
+    .sysclk(CLK_114),
+    .n_reset(reset_out),
 
-          .addr(hostaddr),
-          .d(hostWR[15:0]),
-          .req(host_hwreq),
-          .wr(host_we),
-          .ack(host_hwack),
-          .q(host_hwdata),
+    .addr(hostaddr),
+    .d(hostWR[15:0]),
+    .req(host_hwreq),
+    .wr(host_we),
+    .ack(host_hwack),
+    .q(host_hwdata),
 
-          .sd_di(SPI_DO),
-          .sd_cs(SPI_CS),
-          .sd_clk(SPI_SCK),
-          .sd_do(SPI_DI),
-          .sd_dimm(SD_MISO),
-          .sd_ack(SD_ACK),
+    .sd_di(SPI_DO),
+    .sd_cs(SPI_CS),
+    .sd_clk(SPI_SCK),
+    .sd_do(SPI_DI),
+    .sd_dimm(SD_MISO),
+    .sd_ack(SD_ACK),
 
-          .debugTxD(CTRL_TX),
-          .debugRxD(CTRL_RX),
-          .menu_button(MENU_BUTTON),
-          .scandoubler(_15khz),
+    .debugTxD(CTRL_TX),
+    //          .debugRxD(CTRL_RX),
+    .menu_button(MENU_BUTTON),
+    .scandoubler(_15khz),
 
-          .audio_ena(aud_ena_host),
-          .audio_clear(aud_clear),
-          .audio_buf(aud_addr[15]),
-          .audio_amiga(aud_ena_cpu),
-          .vbl_int(vblank_out),
-          .interrupt(host_interrupt),
-          .amiga_key(c64_translated_key),
-          .amiga_key_stb(c64_translated_key_stb),
-          .c64_keys(C64_KEYS),
+    .audio_ena(aud_ena_host),
+    .audio_clear(aud_clear),
+    .audio_buf(aud_addr[15]),
+    .audio_amiga(aud_ena_cpu),
+    .vbl_int(vblank_out),
+    .interrupt(host_interrupt),
+    .amiga_key(c64_translated_key),
+    .amiga_key_stb(c64_translated_key_stb),
+    .c64_keys(C64_KEYS),
 
-          .amiga_addr(tg68_cad[8:1]),
-          .amiga_d(tg68_cin),
-          .amiga_q(amigahost_q),
-          .amiga_req(amigahost_req),
-          .amiga_wr(tg68_cpustate[0]),
-          .amiga_ack(amigahost_ack),
+    .amiga_addr(tg68_cad[8:1]),
+    .amiga_d(tg68_cin),
+    .amiga_q(amigahost_q),
+    .amiga_req(amigahost_req),
+    .amiga_wr(tg68_cpustate[0]),
+    .amiga_ack(amigahost_ack),
 
-          .rtc_q(rtc),
+    .rtc_q(rtc),
 
 `ifdef MINIMIG_I2C_BUS
           // I2C interface
-          .scl_i(SCL_I),
-          .scl_o(SCL_O),
-          .scl_t(SCL_T),
-          .sda_i(SDA_I),
-          .sda_o(SDA_O),
-          .sda_t(SDA_T),
+    .scl_i(SCL_I),
+    .scl_o(SCL_O),
+    .scl_t(SCL_T),
+    .sda_i(SDA_I),
+    .sda_o(SDA_O),
+    .sda_t(SDA_T),
 `endif
 
 `ifdef MINIMIG_VPOS
           // Video v and h offset
-          .pos_data_q(VPOS_DATA),
+    .pos_data_q(VPOS_DATA),
 `endif
 
           .clk_28(CLK_28),
-          .tick_in(aud_tick)
-        );
+    .tick_in(aud_tick)
+  );
 
   AudioMix myaudiomix
-           (
-             .clk(CLK_28),
-             .reset_n(reset_out),
-             .audio_in_l1(aud_amiga_left),
-             .audio_in_l2(aud_left),
-             .audio_in_r1(aud_amiga_right),
-             .audio_in_r2(aud_right),
-             .audio_l(AUDIO_L),
-             .audio_r(AUDIO_R)
-           );
+  (
+    .clk(CLK_28),
+    .reset_n(reset_out),
+    .audio_in_l1(aud_amiga_left),
+    .audio_in_l2(aud_left),
+    .audio_in_r1(aud_amiga_right),
+    .audio_in_r2(aud_right),
+    .audio_l(AUDIO_L),
+    .audio_r(AUDIO_R)
+  );
 
 
 endmodule

@@ -133,18 +133,6 @@ module ddram_ctrl_top_tb;
         .cpu_cache_ctrl(cpu_cache_ctrl),
         .reset_out(reset_out),
 
-        // DDR3 Core interface
-        .ram_accept(ram_accept),
-        .ram_ack(ram_ack),
-        .ram_error(ram_error),
-        .ram_resp_id(ram_resp_id),
-        .ram_read_data(ram_read_data),
-        .ram_wr(ram_wr),
-        .ram_rd(ram_rd),
-        .ram_addr(ram_addr),
-        .ram_write_data(ram_write_data),
-        .ram_req_id(ram_req_id),
-
         // cpu
         .cpuAddr(cpuAddr),
         .cpustate(cpustate),
@@ -152,7 +140,24 @@ module ddram_ctrl_top_tb;
         .cpuU(cpuU),
         .cpuWR(cpuWR),
         .cpuRD(cpuRD),
-        .cpuena(cpuena)
+        .cpuena(cpuena),
+
+        // DDR3 interface
+        .DDR3_CK_P_O  (DDR3_CK_P_O   ),
+        .DDR3_CK_N_O  (DDR3_CK_N_O   ), // DDR3 clock
+        .DDR3_CKE_O   (DDR3_CKE_O    ),
+        .DDR3_RESET_N_O(DDR3_RESET_N_O ),
+        .DDR3_RAS_N_O (DDR3_RAS_N_O  ),
+        .DDR3_CAS_N_O (DDR3_CAS_N_O  ),
+        .DDR3_WE_N_O  (DDR3_WE_N_O   ),
+        .DDR3_CS_N_O  (DDR3_CS_N_O   ),
+        .DDR3_BA_O    (DDR3_BA_O     ),
+        .DDR3_ADDR_O  (DDR3_ADDR_O   ),
+        .DDR3_ODT_O   (DDR3_ODT_O    ),
+        .DDR3_DM_O    (DDR3_DM_O     ),
+        .DDR3_DQS_P_IO(DDR3_DQS_P_IO ),
+        .DDR3_DQS_N_IO(DDR3_DQS_N_IO ),
+        .DDR3_DQ_IO   (DDR3_DQ_IO    )
     );
 
     // generate clock enable

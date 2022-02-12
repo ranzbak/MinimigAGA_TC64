@@ -29,6 +29,9 @@ set_clock_groups -name async_generic -asynchronous -group [get_clocks -filter { 
 set_input_delay -clock [get_clocks -of_objects [get_pins openaars_virtual_top/amiga_clk/amiga_clk_i/clk_main/CLKOUT0]] -max 6.000 [get_ports -filter { NAME =~  "*dr_*" && DIRECTION != "OUT" }]
 set_input_delay -clock [get_clocks -of_objects [get_pins openaars_virtual_top/amiga_clk/amiga_clk_i/clk_main/CLKOUT0]] -min 3.600 [get_ports -filter { NAME =~  "*dr_*" && DIRECTION != "OUT" }]
 
+set_input_delay -clock [get_clocks -of_objects [get_pins openaars_virtual_top/amiga_clk/amiga_clk_i/clk_main/CLKOUT0]] -max 6.000 [get_ports -filter { NAME =~  "*ddr3_*" && DIRECTION != "OUT" }]
+set_input_delay -clock [get_clocks -of_objects [get_pins openaars_virtual_top/amiga_clk/amiga_clk_i/clk_main/CLKOUT0]] -min 3.600 [get_ports -filter { NAME =~  "*ddr3_*" && DIRECTION != "OUT" }]
+
 
 #output delay
 set_output_delay -clock [get_clocks -of_objects [get_pins openaars_virtual_top/amiga_clk/amiga_clk_i/clk_main/CLKOUT1]] -reference_pin [get_ports dr_clk] -max 1.500 [get_ports {{dr_d[*]} {dr_a[*]} {dr_dqm[*]} dr_we_n dr_cas_n dr_ras_n dr_cs_n {dr_ba[*]} dr_cke}]
@@ -93,6 +96,8 @@ set_false_path -from [get_clocks openaars_virtual_top/mycfide/sck_reg_n_0]
 set_false_path -from [get_clocks my_i2s_transmitter/max_sclk_OBUF]
 set_false_path -to [get_clocks my_i2s_transmitter/max_sclk_OBUF]
 set_false_path -to [get_clocks openaars_virtual_top/mycfide/sck_reg_n_0]
+
+
 
 
 
