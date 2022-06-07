@@ -1,41 +1,41 @@
 /**************************************************************************
-*
-*    File Name:  MT48LC16M16A2.V  
-*      Version:  2.1
-*         Date:  June 6th, 2002
-*        Model:  BUS Functional
-*    Simulator:  Model Technology
-*
-* Dependencies:  None
-*
-*        Email:  modelsupport@micron.com
-*      Company:  Micron Technology, Inc.
-*        Model:  MT48LC16M16A2 (4Meg x 16 x 4 Banks)
-*
-*  Description:  Micron 256Mb SDRAM Verilog model
-*
-*   Limitation:  - Doesn't check for 8192 cycle refresh
-*
-*         Note:  - Set simulator resolution to "ps" accuracy
-*                - Set Debug = 0 to disable $display messages
-*
-*   Disclaimer:  THESE DESIGNS ARE PROVIDED "AS IS" WITH NO WARRANTY 
-*                WHATSOEVER AND MICRON SPECIFICALLY DISCLAIMS ANY 
-*                IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR
-*                A PARTICULAR PURPOSE, OR AGAINST INFRINGEMENT.
-*
-*                Copyright © 2001 Micron Semiconductor Products, Inc.
-*                All rights researved
-*
-* Rev  Author          Date        Changes
-* ---  --------------------------  ---------------------------------------
-* 2.1  SH              06/06/2002  - Typo in bank multiplex
-*      Micron Technology Inc.
-*
-* 2.0  SH              04/30/2002  - Second release
-*      Micron Technology Inc.
-*
-**************************************************************************/
+ *
+ *    File Name:  MT48LC16M16A2.V  
+ *      Version:  2.1
+ *         Date:  June 6th, 2002
+ *        Model:  BUS Functional
+ *    Simulator:  Model Technology
+ *
+ * Dependencies:  None
+ *
+ *        Email:  modelsupport@micron.com
+ *      Company:  Micron Technology, Inc.
+ *        Model:  MT48LC16M16A2 (4Meg x 16 x 4 Banks)
+ *
+ *  Description:  Micron 256Mb SDRAM Verilog model
+ *
+ *   Limitation:  - Doesn't check for 8192 cycle refresh
+ *
+ *         Note:  - Set simulator resolution to "ps" accuracy
+ *                - Set Debug = 0 to disable $display messages
+ *
+ *   Disclaimer:  THESE DESIGNS ARE PROVIDED "AS IS" WITH NO WARRANTY 
+ *                WHATSOEVER AND MICRON SPECIFICALLY DISCLAIMS ANY 
+ *                IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR
+ *                A PARTICULAR PURPOSE, OR AGAINST INFRINGEMENT.
+ *
+ *                Copyright ï¿½ 2001 Micron Semiconductor Products, Inc.
+ *                All rights researved
+ *
+ * Rev  Author          Date        Changes
+ * ---  --------------------------  ---------------------------------------
+ * 2.1  SH              06/06/2002  - Typo in bank multiplex
+ *      Micron Technology Inc.
+ *
+ * 2.0  SH              04/30/2002  - Second release
+ *      Micron Technology Inc.
+ *
+ **************************************************************************/
 
 //`include "timescale.v"
 //`include "test-defines.v"
@@ -65,53 +65,53 @@ module mt48lc16m16a2 (Dq, Addr, Ba, Clk, Cke, Cs_n, Ras_n, Cas_n, We_n, Dqm);
    
 `ifdef MT48LC4M16    
    //Params for mt48lc4m16a2 (8MB part)
-   parameter addr_bits =      12;
-   parameter col_bits  =       8;
-   parameter mem_sizes =   1048576;
+    parameter addr_bits =      12;
+    parameter col_bits  =       8;
+    parameter mem_sizes =   1048576;
 `endif
    
    // Common to all parts
-   parameter data_bits =      16;
+    parameter data_bits =      16;
 
-   inout     [data_bits - 1 : 0] Dq;
-   input [addr_bits - 1 : 0] 	 Addr;
-   input [1 : 0] 		 Ba;
-   input                         Clk;
-   input                         Cke;
-   input                         Cs_n;
-   input                         Ras_n;
-   input                         Cas_n;
-   input                         We_n;
-   input [1 : 0] 		 Dqm;
-   
-   reg [data_bits - 1 : 0] 	 Bank0 [0 : mem_sizes];
-   reg [data_bits - 1 : 0] 	 Bank1 [0 : mem_sizes];
-   reg [data_bits - 1 : 0] 	 Bank2 [0 : mem_sizes];
-   reg [data_bits - 1 : 0] 	 Bank3 [0 : mem_sizes];
-   reg [31 : 0] 		 Bank0_32bit [0 : (mem_sizes/2)]; // Temporary 32-bit wide array to hold readmemh()'d data before loading into 16-bit wide array
-    reg                   [1 : 0] Bank_addr [0 : 3];                // Bank Address Pipeline
-    reg        [col_bits - 1 : 0] Col_addr [0 : 3];                 // Column Address Pipeline
-    reg                   [3 : 0] Command [0 : 3];                  // Command Operation Pipeline
-    reg                   [1 : 0] Dqm_reg0, Dqm_reg1;               // DQM Operation Pipeline
+    inout     [data_bits - 1 : 0] Dq;
+    input [addr_bits - 1 : 0]     Addr;
+    input [1 : 0]         Ba;
+    input                         Clk;
+    input                         Cke;
+    input                         Cs_n;
+    input                         Ras_n;
+    input                         Cas_n;
+    input                         We_n;
+    input [1 : 0]         Dqm;
+
+    reg [data_bits - 1 : 0]     Bank0 [0 : mem_sizes];
+    reg [data_bits - 1 : 0]     Bank1 [0 : mem_sizes];
+    reg [data_bits - 1 : 0]     Bank2 [0 : mem_sizes];
+    reg [data_bits - 1 : 0]     Bank3 [0 : mem_sizes];
+    reg [31 : 0]             Bank0_32bit [0 : (mem_sizes/2)]; // Temporary 32-bit wide array to hold readmemh()'d data before loading into 16-bit wide array
+    reg                   [1 : 0] Bank_addr [0 : 3]; // Bank Address Pipeline
+    reg        [col_bits - 1 : 0] Col_addr [0 : 3]; // Column Address Pipeline
+    reg                   [3 : 0] Command [0 : 3]; // Command Operation Pipeline
+    reg                   [1 : 0] Dqm_reg0, Dqm_reg1; // DQM Operation Pipeline
     reg       [addr_bits - 1 : 0] B0_row_addr, B1_row_addr, B2_row_addr, B3_row_addr;
 
     reg       [addr_bits - 1 : 0] Mode_reg;
     reg       [data_bits - 1 : 0] Dq_reg, Dq_dqm;
     reg        [col_bits - 1 : 0] Col_temp, Burst_counter;
 
-    reg                           Act_b0, Act_b1, Act_b2, Act_b3;   // Bank Activate
-    reg                           Pc_b0, Pc_b1, Pc_b2, Pc_b3;       // Bank Precharge
+    reg                           Act_b0, Act_b1, Act_b2, Act_b3; // Bank Activate
+    reg                           Pc_b0, Pc_b1, Pc_b2, Pc_b3; // Bank Precharge
 
-    reg                   [1 : 0] Bank_precharge       [0 : 3];     // Precharge Command
-    reg                           A10_precharge        [0 : 3];     // Addr[10] = 1 (All banks)
-    reg                           Auto_precharge       [0 : 3];     // RW Auto Precharge (Bank)
-    reg                           Read_precharge       [0 : 3];     // R  Auto Precharge
-    reg                           Write_precharge      [0 : 3];     //  W Auto Precharge
-    reg                           RW_interrupt_read    [0 : 3];     // RW Interrupt Read with Auto Precharge
-    reg                           RW_interrupt_write   [0 : 3];     // RW Interrupt Write with Auto Precharge
-    reg                   [1 : 0] RW_interrupt_bank;                // RW Interrupt Bank
-    integer                       RW_interrupt_counter [0 : 3];     // RW Interrupt Counter
-    integer                       Count_precharge      [0 : 3];     // RW Auto Precharge Counter
+    reg                   [1 : 0] Bank_precharge       [0 : 3]; // Precharge Command
+    reg                           A10_precharge        [0 : 3]; // Addr[10] = 1 (All banks)
+    reg                           Auto_precharge       [0 : 3]; // RW Auto Precharge (Bank)
+    reg                           Read_precharge       [0 : 3]; // R  Auto Precharge
+    reg                           Write_precharge      [0 : 3]; //  W Auto Precharge
+    reg                           RW_interrupt_read    [0 : 3]; // RW Interrupt Read with Auto Precharge
+    reg                           RW_interrupt_write   [0 : 3]; // RW Interrupt Write with Auto Precharge
+    reg                   [1 : 0] RW_interrupt_bank; // RW Interrupt Bank
+    integer                       RW_interrupt_counter [0 : 3]; // RW Interrupt Counter
+    integer                       Count_precharge      [0 : 3]; // RW Auto Precharge Counter
 
     reg                           Data_in_enable;
     reg                           Data_out_enable;
@@ -146,10 +146,10 @@ module mt48lc16m16a2 (Dq, Addr, Ba, Clk, Cke, Cs_n, Ras_n, Cas_n, We_n, Dqm);
     // Write Burst Mode
     wire      Write_burst_mode = Mode_reg[9];
 
-    wire      Debug            = 1'b1;                          // Debug messages : 1 = On
-    wire      Dq_chk           = Sys_clk & Data_in_enable;      // Check setup/hold time for DQ
-    
-    assign    Dq               = Dq_reg;                        // DQ buffer
+    wire      Debug            = 1'b1; // Debug messages : 1 = On
+    wire      Dq_chk           = Sys_clk & Data_in_enable; // Check setup/hold time for DQ
+
+    assign    Dq               = Dq_reg; // DQ buffer
 
     // Commands Operation
     `define   ACT       0
@@ -165,15 +165,15 @@ module mt48lc16m16a2 (Dq, Addr, Ba, Clk, Cke, Cs_n, Ras_n, Cas_n, We_n, Dqm);
     parameter tAC  =   5.4;
     parameter tHZ  =   5.4;
     parameter tOH  =   3.0;
-    parameter tMRD =   2.0;     // 2 Clk Cycles
+    parameter tMRD =   2.0; // 2 Clk Cycles
     parameter tRAS =  37.0;
     parameter tRC  =  60.0;
     parameter tRCD =  15.0;
     parameter tRFC =  66.0;
     parameter tRP  =  15.0;
     parameter tRRD =  14.0;
-    parameter tWRa =   7.0;     // A2 Version - Auto precharge mode (1 Clk + 7 ns)
-    parameter tWRm =  14.0;     // A2 Version - Manual precharge mode (14 ns)
+    parameter tWRa =   7.0; // A2 Version - Auto precharge mode (1 Clk + 7 ns)
+    parameter tWRm =  14.0; // A2 Version - Manual precharge mode (14 ns)
 
     // Timing Check variable
     time  MRD_chk;
@@ -184,8 +184,8 @@ module mt48lc16m16a2 (Dq, Addr, Ba, Clk, Cke, Cs_n, Ras_n, Cas_n, We_n, Dqm);
     time  RCD_chk0, RCD_chk1, RCD_chk2, RCD_chk3;
     time  RP_chk0, RP_chk1, RP_chk2, RP_chk3;
 
-   integer mem_cnt;
-   
+    integer mem_cnt;
+
 
     initial begin
         Dq_reg = {data_bits{1'bz}};
@@ -201,16 +201,16 @@ module mt48lc16m16a2 (Dq, Addr, Ba, Clk, Cke, Cs_n, Ras_n, Cas_n, We_n, Dqm);
         RC_chk0 = 0; RC_chk1 = 0; RC_chk2 = 0; RC_chk3 = 0;
         RP_chk0 = 0; RP_chk1 = 0; RP_chk2 = 0; RP_chk3 = 0;
         $timeformat (-9, 1, " ns", 12);
-//`define INIT_CLEAR_MEM_BANKS       
+        //`define INIT_CLEAR_MEM_BANKS       
 `ifdef INIT_CLEAR_MEM_BANKS // Added, jb
        // Initialse the memory before we use it, clearing x's
        for(mem_cnt = 0; mem_cnt < mem_sizes; mem_cnt = mem_cnt + 1)
-	 begin
-	    Bank0[mem_cnt] = 0;
-	    Bank1[mem_cnt] = 0;
-	    Bank2[mem_cnt] = 0;
-	    Bank3[mem_cnt] = 0;
-	 end
+     begin
+        Bank0[mem_cnt] = 0;
+        Bank1[mem_cnt] = 0;
+        Bank2[mem_cnt] = 0;
+        Bank3[mem_cnt] = 0;
+     end
 `endif
 
 `ifdef PRELOAD_RAM // Added jb
@@ -220,10 +220,10 @@ module mt48lc16m16a2 (Dq, Addr, Ba, Clk, Cke, Cs_n, Ras_n, Cas_n, We_n, Dqm);
        // can't figure out how to do, so we'll do it manually here.
        $readmemh("sram.vmem", Bank0_32bit);
        for (mem_cnt=0;mem_cnt < (mem_sizes/2); mem_cnt = mem_cnt + 1)
-	 begin
-	    Bank0[(mem_cnt*2)+1] = Bank0_32bit[mem_cnt][15:0];
-	    Bank0[(mem_cnt*2)] = Bank0_32bit[mem_cnt][31:16];
-	 end
+     begin
+        Bank0[(mem_cnt*2)+1] = Bank0_32bit[mem_cnt][15:0];
+        Bank0[(mem_cnt*2)] = Bank0_32bit[mem_cnt][31:16];
+     end
 `endif
 end
 
@@ -313,7 +313,7 @@ end
 
             // Precharge to Auto Refresh
             if (($time - RP_chk0 < tRP) || ($time - RP_chk1 < tRP) ||
-                ($time - RP_chk2 < tRP) || ($time - RP_chk3 < tRP)) begin
+            ($time - RP_chk2 < tRP) || ($time - RP_chk3 < tRP)) begin
                 $display ("%m : at time %t ERROR: tRP violation during Auto Refresh", $time);
             end
 
@@ -330,7 +330,7 @@ end
             // Record Current tRFC time
             RFC_chk = $time;
         end
-        
+
         // Load Mode Register
         if (Mode_reg_enable === 1'b1) begin
             // Register Mode
@@ -382,7 +382,7 @@ end
 
             // Precharge to Load Mode Register
             if (($time - RP_chk0 < tRP) || ($time - RP_chk1 < tRP) ||
-                ($time - RP_chk2 < tRP) || ($time - RP_chk3 < tRP)) begin
+            ($time - RP_chk2 < tRP) || ($time - RP_chk3 < tRP)) begin
                 $display ("%m : at time %t ERROR: tRP violation during Load Mode Register", $time);
             end
 
@@ -399,12 +399,12 @@ end
             // Reset MRD Counter
             MRD_chk = 0;
         end
-        
+
         // Active Block (Latch Bank Address and Row Address)
         if (Active_enable === 1'b1) begin
             // Activate an open bank can corrupt data
             if ((Ba === 2'b00 && Act_b0 === 1'b1) || (Ba === 2'b01 && Act_b1 === 1'b1) ||
-                (Ba === 2'b10 && Act_b2 === 1'b1) || (Ba === 2'b11 && Act_b3 === 1'b1)) begin
+            (Ba === 2'b10 && Act_b2 === 1'b1) || (Ba === 2'b11 && Act_b3 === 1'b1)) begin
                 $display ("%m : at time %t ERROR: Bank already activated -- data can be corrupted", $time);
             end
 
@@ -528,7 +528,7 @@ end
             RRD_chk = $time;
             Prev_bank = Ba;
         end
-        
+
         // Precharge Block
         if (Prech_enable == 1'b1) begin
             // Load Mode Register to Precharge
@@ -620,7 +620,7 @@ end
                 A10_precharge[1] = Addr[10];
             end
         end
-        
+
         // Burst terminate
         if (Burst_term === 1'b1) begin
             // Terminate a Write Immediately
@@ -640,20 +640,20 @@ end
                 $display ("%m : at time %t BST  : Burst Terminate",$time);
             end
         end
-        
+
         // Read, Write, Column Latch
         if (Read_enable === 1'b1) begin
             // Check to see if bank is open (ACT)
             if ((Ba == 2'b00 && Pc_b0 == 1'b1) || (Ba == 2'b01 && Pc_b1 == 1'b1) ||
-                (Ba == 2'b10 && Pc_b2 == 1'b1) || (Ba == 2'b11 && Pc_b3 == 1'b1)) begin
+            (Ba == 2'b10 && Pc_b2 == 1'b1) || (Ba == 2'b11 && Pc_b3 == 1'b1)) begin
                 $display("%m : at time %t ERROR: Bank is not Activated for Read", $time);
             end
 
             // Activate to Read or Write
             if ((Ba == 2'b00) && ($time - RCD_chk0 < tRCD) ||
-                (Ba == 2'b01) && ($time - RCD_chk1 < tRCD) ||
-                (Ba == 2'b10) && ($time - RCD_chk2 < tRCD) ||
-                (Ba == 2'b11) && ($time - RCD_chk3 < tRCD)) begin
+            (Ba == 2'b01) && ($time - RCD_chk1 < tRCD) ||
+            (Ba == 2'b10) && ($time - RCD_chk2 < tRCD) ||
+            (Ba == 2'b11) && ($time - RCD_chk3 < tRCD)) begin
                 $display("%m : at time %t ERROR: tRCD violation during Read", $time);
             end
 
@@ -697,15 +697,15 @@ end
         if (Write_enable == 1'b1) begin
             // Activate to Write
             if ((Ba == 2'b00 && Pc_b0 == 1'b1) || (Ba == 2'b01 && Pc_b1 == 1'b1) ||
-                (Ba == 2'b10 && Pc_b2 == 1'b1) || (Ba == 2'b11 && Pc_b3 == 1'b1)) begin
+            (Ba == 2'b10 && Pc_b2 == 1'b1) || (Ba == 2'b11 && Pc_b3 == 1'b1)) begin
                 $display("%m : at time %t ERROR: Bank is not Activated for Write", $time);
             end
 
             // Activate to Read or Write
             if ((Ba == 2'b00) && ($time - RCD_chk0 < tRCD) ||
-                (Ba == 2'b01) && ($time - RCD_chk1 < tRCD) ||
-                (Ba == 2'b10) && ($time - RCD_chk2 < tRCD) ||
-                (Ba == 2'b11) && ($time - RCD_chk3 < tRCD)) begin
+            (Ba == 2'b01) && ($time - RCD_chk1 < tRCD) ||
+            (Ba == 2'b10) && ($time - RCD_chk2 < tRCD) ||
+            (Ba == 2'b11) && ($time - RCD_chk3 < tRCD)) begin
                 $display("%m : at time %t ERROR: tRCD violation during Read", $time);
             end
 
@@ -732,7 +732,7 @@ end
             // Write interrupt Read (terminate Read immediately)
             if (Data_out_enable == 1'b1) begin
                 Data_out_enable = 1'b0;
-                
+
                 // Interrupting a Read with Autoprecharge
                 if (Auto_precharge[RW_interrupt_bank] == 1'b1 && Read_precharge[RW_interrupt_bank] == 1'b1) begin
                     RW_interrupt_read[RW_interrupt_bank] = 1'b1;
@@ -764,75 +764,75 @@ end
                   requirement but tRP will be compensate for the time after the 1 cycle.
         */
         if ((Auto_precharge[0] == 1'b1) && (Write_precharge[0] == 1'b1)) begin
-            if ((($time - RAS_chk0 >= tRAS) &&                                                          // Case 1
-               (((Burst_length_1 == 1'b1 || Write_burst_mode == 1'b1) && Count_precharge [0] >= 1) ||   // Case 2
-                 (Burst_length_2 == 1'b1                              && Count_precharge [0] >= 2) ||
-                 (Burst_length_4 == 1'b1                              && Count_precharge [0] >= 4) ||
-                 (Burst_length_8 == 1'b1                              && Count_precharge [0] >= 8))) ||
-                 (RW_interrupt_write[0] == 1'b1 && RW_interrupt_counter[0] >= 1)) begin                 // Case 3
-                    Auto_precharge[0] = 1'b0;
-                    Write_precharge[0] = 1'b0;
-                    RW_interrupt_write[0] = 1'b0;
-                    Pc_b0 = 1'b1;
-                    Act_b0 = 1'b0;
-                    RP_chk0 = $time + tWRa;
-                    if (Debug) begin
-                        $display ("%m : at time %t NOTE : Start Internal Auto Precharge for Bank 0", $time);
-                    end
+            if ((($time - RAS_chk0 >= tRAS) && // Case 1
+            (((Burst_length_1 == 1'b1 || Write_burst_mode == 1'b1) && Count_precharge [0] >= 1) || // Case 2
+            (Burst_length_2 == 1'b1                              && Count_precharge [0] >= 2) ||
+            (Burst_length_4 == 1'b1                              && Count_precharge [0] >= 4) ||
+            (Burst_length_8 == 1'b1                              && Count_precharge [0] >= 8))) ||
+            (RW_interrupt_write[0] == 1'b1 && RW_interrupt_counter[0] >= 1)) begin // Case 3
+                Auto_precharge[0] = 1'b0;
+                Write_precharge[0] = 1'b0;
+                RW_interrupt_write[0] = 1'b0;
+                Pc_b0 = 1'b1;
+                Act_b0 = 1'b0;
+                RP_chk0 = $time + tWRa;
+                if (Debug) begin
+                    $display ("%m : at time %t NOTE : Start Internal Auto Precharge for Bank 0", $time);
+                end
             end
         end
         if ((Auto_precharge[1] == 1'b1) && (Write_precharge[1] == 1'b1)) begin
-            if ((($time - RAS_chk1 >= tRAS) &&                                                          // Case 1
-               (((Burst_length_1 == 1'b1 || Write_burst_mode == 1'b1) && Count_precharge [1] >= 1) ||   // Case 2
-                 (Burst_length_2 == 1'b1                              && Count_precharge [1] >= 2) ||
-                 (Burst_length_4 == 1'b1                              && Count_precharge [1] >= 4) ||
-                 (Burst_length_8 == 1'b1                              && Count_precharge [1] >= 8))) ||
-                 (RW_interrupt_write[1] == 1'b1 && RW_interrupt_counter[1] >= 1)) begin                 // Case 3
-                    Auto_precharge[1] = 1'b0;
-                    Write_precharge[1] = 1'b0;
-                    RW_interrupt_write[1] = 1'b0;
-                    Pc_b1 = 1'b1;
-                    Act_b1 = 1'b0;
-                    RP_chk1 = $time + tWRa;
-                    if (Debug) begin
-                        $display ("%m : at time %t NOTE : Start Internal Auto Precharge for Bank 1", $time);
-                    end
+            if ((($time - RAS_chk1 >= tRAS) && // Case 1
+            (((Burst_length_1 == 1'b1 || Write_burst_mode == 1'b1) && Count_precharge [1] >= 1) || // Case 2
+            (Burst_length_2 == 1'b1                              && Count_precharge [1] >= 2) ||
+            (Burst_length_4 == 1'b1                              && Count_precharge [1] >= 4) ||
+            (Burst_length_8 == 1'b1                              && Count_precharge [1] >= 8))) ||
+            (RW_interrupt_write[1] == 1'b1 && RW_interrupt_counter[1] >= 1)) begin // Case 3
+                Auto_precharge[1] = 1'b0;
+                Write_precharge[1] = 1'b0;
+                RW_interrupt_write[1] = 1'b0;
+                Pc_b1 = 1'b1;
+                Act_b1 = 1'b0;
+                RP_chk1 = $time + tWRa;
+                if (Debug) begin
+                    $display ("%m : at time %t NOTE : Start Internal Auto Precharge for Bank 1", $time);
+                end
             end
         end
         if ((Auto_precharge[2] == 1'b1) && (Write_precharge[2] == 1'b1)) begin
-            if ((($time - RAS_chk2 >= tRAS) &&                                                          // Case 1
-               (((Burst_length_1 == 1'b1 || Write_burst_mode == 1'b1) && Count_precharge [2] >= 1) ||   // Case 2
-                 (Burst_length_2 == 1'b1                              && Count_precharge [2] >= 2) ||
-                 (Burst_length_4 == 1'b1                              && Count_precharge [2] >= 4) ||
-                 (Burst_length_8 == 1'b1                              && Count_precharge [2] >= 8))) ||
-                 (RW_interrupt_write[2] == 1'b1 && RW_interrupt_counter[2] >= 1)) begin                 // Case 3
-                    Auto_precharge[2] = 1'b0;
-                    Write_precharge[2] = 1'b0;
-                    RW_interrupt_write[2] = 1'b0;
-                    Pc_b2 = 1'b1;
-                    Act_b2 = 1'b0;
-                    RP_chk2 = $time + tWRa;
-                    if (Debug) begin
-                        $display ("%m : at time %t NOTE : Start Internal Auto Precharge for Bank 2", $time);
-                    end
+            if ((($time - RAS_chk2 >= tRAS) && // Case 1
+            (((Burst_length_1 == 1'b1 || Write_burst_mode == 1'b1) && Count_precharge [2] >= 1) || // Case 2
+            (Burst_length_2 == 1'b1                              && Count_precharge [2] >= 2) ||
+            (Burst_length_4 == 1'b1                              && Count_precharge [2] >= 4) ||
+            (Burst_length_8 == 1'b1                              && Count_precharge [2] >= 8))) ||
+            (RW_interrupt_write[2] == 1'b1 && RW_interrupt_counter[2] >= 1)) begin // Case 3
+                Auto_precharge[2] = 1'b0;
+                Write_precharge[2] = 1'b0;
+                RW_interrupt_write[2] = 1'b0;
+                Pc_b2 = 1'b1;
+                Act_b2 = 1'b0;
+                RP_chk2 = $time + tWRa;
+                if (Debug) begin
+                    $display ("%m : at time %t NOTE : Start Internal Auto Precharge for Bank 2", $time);
+                end
             end
         end
         if ((Auto_precharge[3] == 1'b1) && (Write_precharge[3] == 1'b1)) begin
-            if ((($time - RAS_chk3 >= tRAS) &&                                                          // Case 1
-               (((Burst_length_1 == 1'b1 || Write_burst_mode == 1'b1) && Count_precharge [3] >= 1) ||   // Case 2
-                 (Burst_length_2 == 1'b1                              && Count_precharge [3] >= 2) ||
-                 (Burst_length_4 == 1'b1                              && Count_precharge [3] >= 4) ||
-                 (Burst_length_8 == 1'b1                              && Count_precharge [3] >= 8))) ||
-                 (RW_interrupt_write[3] == 1'b1 && RW_interrupt_counter[3] >= 1)) begin                 // Case 3
-                    Auto_precharge[3] = 1'b0;
-                    Write_precharge[3] = 1'b0;
-                    RW_interrupt_write[3] = 1'b0;
-                    Pc_b3 = 1'b1;
-                    Act_b3 = 1'b0;
-                    RP_chk3 = $time + tWRa;
-                    if (Debug) begin
-                        $display ("%m : at time %t NOTE : Start Internal Auto Precharge for Bank 3", $time);
-                    end
+            if ((($time - RAS_chk3 >= tRAS) && // Case 1
+            (((Burst_length_1 == 1'b1 || Write_burst_mode == 1'b1) && Count_precharge [3] >= 1) || // Case 2
+            (Burst_length_2 == 1'b1                              && Count_precharge [3] >= 2) ||
+            (Burst_length_4 == 1'b1                              && Count_precharge [3] >= 4) ||
+            (Burst_length_8 == 1'b1                              && Count_precharge [3] >= 8))) ||
+            (RW_interrupt_write[3] == 1'b1 && RW_interrupt_counter[3] >= 1)) begin // Case 3
+                Auto_precharge[3] = 1'b0;
+                Write_precharge[3] = 1'b0;
+                RW_interrupt_write[3] = 1'b0;
+                Pc_b3 = 1'b1;
+                Act_b3 = 1'b0;
+                RP_chk3 = $time + tWRa;
+                if (Debug) begin
+                    $display ("%m : at time %t NOTE : Start Internal Auto Precharge for Bank 3", $time);
+                end
             end
         end
 
@@ -842,86 +842,86 @@ end
         //      and 2.  CAS Latency - 1 cycles before last burst
         //       or 3.  Interrupt by a Read or Write (with or without AutoPrecharge)
         if ((Auto_precharge[0] == 1'b1) && (Read_precharge[0] == 1'b1)) begin
-            if ((($time - RAS_chk0 >= tRAS) &&                                                      // Case 1
-                ((Burst_length_1 == 1'b1 && Count_precharge[0] >= 1) ||                             // Case 2
-                 (Burst_length_2 == 1'b1 && Count_precharge[0] >= 2) ||
-                 (Burst_length_4 == 1'b1 && Count_precharge[0] >= 4) ||
-                 (Burst_length_8 == 1'b1 && Count_precharge[0] >= 8))) ||
-                 (RW_interrupt_read[0] == 1'b1)) begin                                              // Case 3
-                    Pc_b0 = 1'b1;
-                    Act_b0 = 1'b0;
-                    RP_chk0 = $time;
-                    Auto_precharge[0] = 1'b0;
-                    Read_precharge[0] = 1'b0;
-                    RW_interrupt_read[0] = 1'b0;
-                    if (Debug) begin
-                        $display ("%m : at time %t NOTE : Start Internal Auto Precharge for Bank 0", $time);
-                    end
+            if ((($time - RAS_chk0 >= tRAS) && // Case 1
+            ((Burst_length_1 == 1'b1 && Count_precharge[0] >= 1) || // Case 2
+            (Burst_length_2 == 1'b1 && Count_precharge[0] >= 2) ||
+            (Burst_length_4 == 1'b1 && Count_precharge[0] >= 4) ||
+            (Burst_length_8 == 1'b1 && Count_precharge[0] >= 8))) ||
+            (RW_interrupt_read[0] == 1'b1)) begin // Case 3
+                Pc_b0 = 1'b1;
+                Act_b0 = 1'b0;
+                RP_chk0 = $time;
+                Auto_precharge[0] = 1'b0;
+                Read_precharge[0] = 1'b0;
+                RW_interrupt_read[0] = 1'b0;
+                if (Debug) begin
+                    $display ("%m : at time %t NOTE : Start Internal Auto Precharge for Bank 0", $time);
+                end
             end
         end
         if ((Auto_precharge[1] == 1'b1) && (Read_precharge[1] == 1'b1)) begin
             if ((($time - RAS_chk1 >= tRAS) &&
-                ((Burst_length_1 == 1'b1 && Count_precharge[1] >= 1) || 
-                 (Burst_length_2 == 1'b1 && Count_precharge[1] >= 2) ||
-                 (Burst_length_4 == 1'b1 && Count_precharge[1] >= 4) ||
-                 (Burst_length_8 == 1'b1 && Count_precharge[1] >= 8))) ||
-                 (RW_interrupt_read[1] == 1'b1)) begin
-                    Pc_b1 = 1'b1;
-                    Act_b1 = 1'b0;
-                    RP_chk1 = $time;
-                    Auto_precharge[1] = 1'b0;
-                    Read_precharge[1] = 1'b0;
-                    RW_interrupt_read[1] = 1'b0;
-                    if (Debug) begin
-                        $display ("%m : at time %t NOTE : Start Internal Auto Precharge for Bank 1", $time);
-                    end
+            ((Burst_length_1 == 1'b1 && Count_precharge[1] >= 1) ||
+            (Burst_length_2 == 1'b1 && Count_precharge[1] >= 2) ||
+            (Burst_length_4 == 1'b1 && Count_precharge[1] >= 4) ||
+            (Burst_length_8 == 1'b1 && Count_precharge[1] >= 8))) ||
+            (RW_interrupt_read[1] == 1'b1)) begin
+                Pc_b1 = 1'b1;
+                Act_b1 = 1'b0;
+                RP_chk1 = $time;
+                Auto_precharge[1] = 1'b0;
+                Read_precharge[1] = 1'b0;
+                RW_interrupt_read[1] = 1'b0;
+                if (Debug) begin
+                    $display ("%m : at time %t NOTE : Start Internal Auto Precharge for Bank 1", $time);
+                end
             end
         end
         if ((Auto_precharge[2] == 1'b1) && (Read_precharge[2] == 1'b1)) begin
             if ((($time - RAS_chk2 >= tRAS) &&
-                ((Burst_length_1 == 1'b1 && Count_precharge[2] >= 1) || 
-                 (Burst_length_2 == 1'b1 && Count_precharge[2] >= 2) ||
-                 (Burst_length_4 == 1'b1 && Count_precharge[2] >= 4) ||
-                 (Burst_length_8 == 1'b1 && Count_precharge[2] >= 8))) ||
-                 (RW_interrupt_read[2] == 1'b1)) begin
-                    Pc_b2 = 1'b1;
-                    Act_b2 = 1'b0;
-                    RP_chk2 = $time;
-                    Auto_precharge[2] = 1'b0;
-                    Read_precharge[2] = 1'b0;
-                    RW_interrupt_read[2] = 1'b0;
-                    if (Debug) begin
-                        $display ("%m : at time %t NOTE : Start Internal Auto Precharge for Bank 2", $time);
-                    end
+            ((Burst_length_1 == 1'b1 && Count_precharge[2] >= 1) ||
+            (Burst_length_2 == 1'b1 && Count_precharge[2] >= 2) ||
+            (Burst_length_4 == 1'b1 && Count_precharge[2] >= 4) ||
+            (Burst_length_8 == 1'b1 && Count_precharge[2] >= 8))) ||
+            (RW_interrupt_read[2] == 1'b1)) begin
+                Pc_b2 = 1'b1;
+                Act_b2 = 1'b0;
+                RP_chk2 = $time;
+                Auto_precharge[2] = 1'b0;
+                Read_precharge[2] = 1'b0;
+                RW_interrupt_read[2] = 1'b0;
+                if (Debug) begin
+                    $display ("%m : at time %t NOTE : Start Internal Auto Precharge for Bank 2", $time);
+                end
             end
         end
         if ((Auto_precharge[3] == 1'b1) && (Read_precharge[3] == 1'b1)) begin
             if ((($time - RAS_chk3 >= tRAS) &&
-                ((Burst_length_1 == 1'b1 && Count_precharge[3] >= 1) || 
-                 (Burst_length_2 == 1'b1 && Count_precharge[3] >= 2) ||
-                 (Burst_length_4 == 1'b1 && Count_precharge[3] >= 4) ||
-                 (Burst_length_8 == 1'b1 && Count_precharge[3] >= 8))) ||
-                 (RW_interrupt_read[3] == 1'b1)) begin
-                    Pc_b3 = 1'b1;
-                    Act_b3 = 1'b0;
-                    RP_chk3 = $time;
-                    Auto_precharge[3] = 1'b0;
-                    Read_precharge[3] = 1'b0;
-                    RW_interrupt_read[3] = 1'b0;
-                    if (Debug) begin
-                        $display("%m : at time %t NOTE : Start Internal Auto Precharge for Bank 3", $time);
-                    end
+            ((Burst_length_1 == 1'b1 && Count_precharge[3] >= 1) ||
+            (Burst_length_2 == 1'b1 && Count_precharge[3] >= 2) ||
+            (Burst_length_4 == 1'b1 && Count_precharge[3] >= 4) ||
+            (Burst_length_8 == 1'b1 && Count_precharge[3] >= 8))) ||
+            (RW_interrupt_read[3] == 1'b1)) begin
+                Pc_b3 = 1'b1;
+                Act_b3 = 1'b0;
+                RP_chk3 = $time;
+                Auto_precharge[3] = 1'b0;
+                Read_precharge[3] = 1'b0;
+                RW_interrupt_read[3] = 1'b0;
+                if (Debug) begin
+                    $display("%m : at time %t NOTE : Start Internal Auto Precharge for Bank 3", $time);
+                end
             end
         end
 
         // Internal Precharge or Bst
-        if (Command[0] == `PRECH) begin                         // Precharge terminate a read with same bank or all banks
+        if (Command[0] == `PRECH) begin // Precharge terminate a read with same bank or all banks
             if (Bank_precharge[0] == Bank || A10_precharge[0] == 1'b1) begin
                 if (Data_out_enable == 1'b1) begin
                     Data_out_enable = 1'b0;
                 end
             end
-        end else if (Command[0] == `BST) begin                  // BST terminate a read to current bank
+        end else if (Command[0] == `BST) begin // BST terminate a read to current bank
             if (Data_out_enable == 1'b1) begin
                 Data_out_enable = 1'b0;
             end
@@ -961,8 +961,8 @@ end
         end
 
         // DQ buffer (Driver/Receiver)
-        if (Data_in_enable == 1'b1) begin                                   // Writing Data to Memory
-            // Array buffer
+        if (Data_in_enable == 1'b1) begin // Writing Data to Memory
+        // Array buffer
             case (Bank)
                 2'b00 : Dq_dqm = Bank0 [{Row, Col}];
                 2'b01 : Dq_dqm = Bank1 [{Row, Col}];
@@ -1003,8 +1003,8 @@ end
             // Advance burst counter subroutine
             #tHZ Burst_decode;
 
-        end else if (Data_out_enable == 1'b1) begin                         // Reading Data from Memory
-            // Array buffer
+        end else if (Data_out_enable == 1'b1) begin // Reading Data from Memory
+        // Array buffer
             case (Bank)
                 2'b00 : Dq_dqm = Bank0[{Row, Col}];
                 2'b01 : Dq_dqm = Bank1[{Row, Col}];
@@ -1045,22 +1045,22 @@ end
             Burst_counter = Burst_counter + 1;
 
             // Burst Type
-            if (Mode_reg[3] == 1'b0) begin                                  // Sequential Burst
+            if (Mode_reg[3] == 1'b0) begin // Sequential Burst
                 Col_temp = Col + 1;
-            end else if (Mode_reg[3] == 1'b1) begin                         // Interleaved Burst
+            end else if (Mode_reg[3] == 1'b1) begin // Interleaved Burst
                 Col_temp[2] =  Burst_counter[2] ^  Col_brst[2];
                 Col_temp[1] =  Burst_counter[1] ^  Col_brst[1];
                 Col_temp[0] =  Burst_counter[0] ^  Col_brst[0];
             end
 
             // Burst Length
-            if (Burst_length_2) begin                                       // Burst Length = 2
+            if (Burst_length_2) begin // Burst Length = 2
                 Col [0] = Col_temp [0];
-            end else if (Burst_length_4) begin                              // Burst Length = 4
+            end else if (Burst_length_4) begin // Burst Length = 4
                 Col [1 : 0] = Col_temp [1 : 0];
-            end else if (Burst_length_8) begin                              // Burst Length = 8
+            end else if (Burst_length_8) begin // Burst Length = 8
                 Col [2 : 0] = Col_temp [2 : 0];
-            end else begin                                                  // Burst Length = FULL
+            end else begin // Burst Length = FULL
                 Col = Col_temp;
             end
 
@@ -1097,17 +1097,17 @@ end
     // Timing Parameters for -7E (133 MHz @ CL2)
     specify
         specparam
-            tAH  =  0.8,                                        // Addr, Ba Hold Time
-            tAS  =  1.5,                                        // Addr, Ba Setup Time
-            tCH  =  2.5,                                        // Clock High-Level Width
-            tCL  =  2.5,                                        // Clock Low-Level Width
-            tCK  =  7.0,                                        // Clock Cycle Time
-            tDH  =  0.8,                                        // Data-in Hold Time
-            tDS  =  1.5,                                        // Data-in Setup Time
-            tCKH =  0.8,                                        // CKE Hold  Time
-            tCKS =  1.5,                                        // CKE Setup Time
-            tCMH =  0.8,                                        // CS#, RAS#, CAS#, WE#, DQM# Hold  Time
-            tCMS =  1.5;                                        // CS#, RAS#, CAS#, WE#, DQM# Setup Time
+        tAH  =  0.8, // Addr, Ba Hold Time
+        tAS  =  1.5, // Addr, Ba Setup Time
+        tCH  =  2.5, // Clock High-Level Width
+        tCL  =  2.5, // Clock Low-Level Width
+        tCK  =  7.0, // Clock Cycle Time
+        tDH  =  0.8, // Data-in Hold Time
+        tDS  =  1.5, // Data-in Setup Time
+        tCKH =  0.8, // CKE Hold  Time
+        tCKS =  1.5, // CKE Setup Time
+        tCMH =  0.8, // CS#, RAS#, CAS#, WE#, DQM# Hold  Time
+        tCMS =  1.5; // CS#, RAS#, CAS#, WE#, DQM# Setup Time
         $width    (posedge Clk,           tCH);
         $width    (negedge Clk,           tCL);
         $period   (negedge Clk,           tCK);
@@ -1123,120 +1123,120 @@ end
         $setuphold(posedge Dq_chk, Dq,    tDS,  tDH);
     endspecify
 
-   task get_byte;
-      input [31:0] addr;
-      output [7:0] data;
-      reg [1:0]	   bank;
-      reg [15:0]   short;
-      
-      begin
-	 bank = addr[24:23];
-	 
-	 case(bank)
-	   2'b00:
-	     short = Bank0[addr[22:1]];
-	   2'b01:
-	     short = Bank1[addr[22:1]];
-	   2'b10:
-	     short = Bank2[addr[22:1]];
-	   2'b11:
-	     short = Bank3[addr[22:1]];
-	 endcase // case (bank)
+    task get_byte;
+        input [31:0] addr;
+        output [7:0] data;
+        reg [1:0]       bank;
+        reg [15:0]   short;
 
-	 // Get the byte from the short
-	 if (!addr[0])
-	   data = short[15:8];
-	 else
-	   data = short[7:0];
+        begin
+            bank = addr[24:23];
 
-	 //$display("SDRAM addr 0x%0h, bank %0d, short 0x%0h, byte 0x%0h", addr, bank, short, data);
-      end
-   endtask // get_byte
+            case(bank)
+                2'b00:
+                short = Bank0[addr[22:1]];
+                2'b01:
+                short = Bank1[addr[22:1]];
+                2'b10:
+                short = Bank2[addr[22:1]];
+                2'b11:
+                short = Bank3[addr[22:1]];
+            endcase // case (bank)
 
-   task set_byte;
-      input [31:0] addr;
-      input [7:0] data;
-      reg [1:0]	   bank;
-      reg [15:0]   short;
-      
-      begin
-	 bank = addr[24:23];
-	 
-	 case(bank)
-	   2'b00:
-	     short = Bank0[addr[22:1]];
-	   2'b01:
-	     short = Bank1[addr[22:1]];
-	   2'b10:
-	     short = Bank2[addr[22:1]];
-	   2'b11:
-	     short = Bank3[addr[22:1]];
-	 endcase // case (bank)
+            // Get the byte from the short
+            if (!addr[0])
+                data = short[15:8];
+            else
+                data = short[7:0];
 
-	 // set the byte in the short
-	 if (!addr[0])
-	   short[15:8] = data;
-	 else
-	   short[7:0] = data;
+                //$display("SDRAM addr 0x%0h, bank %0d, short 0x%0h, byte 0x%0h", addr, bank, short, data);
+        end
+    endtask // get_byte
 
-	 // Write short back to memory
-	 case(bank)
-	   2'b00:
-	     Bank0[addr[22:1]] = short;
-	   2'b01:
-	     Bank1[addr[22:1]] = short;
-	   2'b10:
-	     Bank2[addr[22:1]] = short;
-	   2'b11:
-	     Bank3[addr[22:1]] = short;
-	 endcase // case (bank)
-	 
-      end
-   endtask // set_byte
+    task set_byte;
+        input [31:0] addr;
+        input [7:0] data;
+        reg [1:0]       bank;
+        reg [15:0]   short;
 
-   task get_short;
-      input [31:0] addr;
-      output [15:0] data;
-      reg [1:0]	   bank;
-      reg [15:0]   short;
-      
-      begin
-	 bank = addr[24:23];
-	 
-	 case(bank)
-	   2'b00:
-	     short = Bank0[addr[22:1]];
-	   2'b01:
-	     short = Bank1[addr[22:1]];
-	   2'b10:
-	     short = Bank2[addr[22:1]];
-	   2'b11:
-	     short = Bank3[addr[22:1]];
-	 endcase // case (bank)
+        begin
+            bank = addr[24:23];
 
-	 data = short;
-      end
-   endtask // get_short
-   
-   task set_short;
-      input [31:0] addr;
-      input [15:0] data;
-      reg [1:0]	   bank;
-      begin
-	 bank = addr[24:23];
-	 
-	 // Write short back to memory
-	 case(bank)
-	   2'b00:
-	     Bank0[addr[22:1]] = data;
-	   2'b01:
-	     Bank1[addr[22:1]] = data;
-	   2'b10:
-	     Bank2[addr[22:1]] = data;
-	   2'b11:
-	     Bank3[addr[22:1]] = data;
-	 endcase // case (bank)
-      end
-   endtask // set_short
-   
+            case(bank)
+                2'b00:
+                short = Bank0[addr[22:1]];
+                2'b01:
+                short = Bank1[addr[22:1]];
+                2'b10:
+                short = Bank2[addr[22:1]];
+                2'b11:
+                short = Bank3[addr[22:1]];
+            endcase // case (bank)
+
+            // set the byte in the short
+            if (!addr[0])
+                short[15:8] = data;
+            else
+                short[7:0] = data;
+
+                // Write short back to memory
+            case(bank)
+                2'b00:
+                Bank0[addr[22:1]] = short;
+                2'b01:
+                Bank1[addr[22:1]] = short;
+                2'b10:
+                Bank2[addr[22:1]] = short;
+                2'b11:
+                Bank3[addr[22:1]] = short;
+            endcase // case (bank)
+
+        end
+    endtask // set_byte
+
+    task get_short;
+        input [31:0] addr;
+        output [15:0] data;
+        reg [1:0]       bank;
+        reg [15:0]   short;
+
+        begin
+            bank = addr[24:23];
+
+            case(bank)
+                2'b00:
+                short = Bank0[addr[22:1]];
+                2'b01:
+                short = Bank1[addr[22:1]];
+                2'b10:
+                short = Bank2[addr[22:1]];
+                2'b11:
+                short = Bank3[addr[22:1]];
+            endcase // case (bank)
+
+            data = short;
+        end
+    endtask // get_short
+
+    task set_short;
+        input [31:0] addr;
+        input [15:0] data;
+        reg [1:0]       bank;
+        begin
+            bank = addr[24:23];
+
+            // Write short back to memory
+            case(bank)
+                2'b00:
+                Bank0[addr[22:1]] = data;
+                2'b01:
+                Bank1[addr[22:1]] = data;
+                2'b10:
+                Bank2[addr[22:1]] = data;
+                2'b11:
+                Bank3[addr[22:1]] = data;
+            endcase // case (bank)
+        end
+    endtask // set_short
+
 endmodule

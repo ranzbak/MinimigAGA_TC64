@@ -59,269 +59,269 @@
 module paula
 (
 	// system bus interface
-  input clk,         // 28 MHz system clock
-  input clk7_en,
-  input clk7n_en,
-	input		cck,						//colour clock enable
-	input		reset,						//reset 
-	input		[8:1] reg_address_in,	//register address inputs
-	input	[15:0] data_in,			//bus data in
-	output	[15:0] data_out,		//bus data out
+	input clk, // 28 MHz system clock
+	input clk7_en,
+	input clk7n_en,
+	input		cck, //colour clock enable
+	input		reset, //reset 
+	input		[8:1] reg_address_in, //register address inputs
+	input	[15:0] data_in, //bus data in
+	output	[15:0] data_out, //bus data out
 	//serial (uart) 
-	output	txd,					//serial port transmitted data
-	input		rxd,						//serial port received data
+	output	txd, //serial port transmitted data
+	input		rxd, //serial port received data
 	//interrupts and dma
-  input ntsc,         // PAL/NTSC mode
-  input sof,          // start of vertical frame
-	input	strhor,					//start of video line (latches audio DMA requests)
-  input vblint,         // vertical blanking interrupt trigger
-	input	int2,					//level 2 interrupt
-	input	int3,					//level 3 interrupt
-	input	int6,					//level 6 interrupt
-	output	[2:0] _ipl,				//m68k interrupt request
-	output	[3:0] audio_dmal,		//audio dma data transfer request (to Agnus)
-	output	[3:0] audio_dmas,		//audio dma location pointer restart (to Agnus)
-	output	disk_dmal,				//disk dma data transfer request (to Agnus)
-	output	disk_dmas,				//disk dma special request (to Agnus)
+	input ntsc, // PAL/NTSC mode
+	input sof, // start of vertical frame
+	input	strhor, //start of video line (latches audio DMA requests)
+	input vblint, // vertical blanking interrupt trigger
+	input	int2, //level 2 interrupt
+	input	int3, //level 3 interrupt
+	input	int6, //level 6 interrupt
+	output	[2:0] _ipl, //m68k interrupt request
+	output	[3:0] audio_dmal, //audio dma data transfer request (to Agnus)
+	output	[3:0] audio_dmas, //audio dma location pointer restart (to Agnus)
+	output	disk_dmal, //disk dma data transfer request (to Agnus)
+	output	disk_dmas, //disk dma special request (to Agnus)
 	//disk control signals from cia and user
-	input	_step,					//step heads of disk
-	input	direc,					//step heads direction
-	input	[3:0] _sel,				//disk select		
-	input	side,					//upper/lower disk head
-	input	_motor,					//disk motor control
-	output	_track0,				//track zero detect
-	output	_change,				//disk has been removed from drive
-	output	_ready,					//disk is ready
-	output	_wprot,					//disk is write-protected
-  output  index,          // disk index pulse
-	output	disk_led,				//disk activity LED
+	input	_step, //step heads of disk
+	input	direc, //step heads direction
+	input	[3:0] _sel, //disk select		
+	input	side, //upper/lower disk head
+	input	_motor, //disk motor control
+	output	_track0, //track zero detect
+	output	_change, //disk has been removed from drive
+	output	_ready, //disk is ready
+	output	_wprot, //disk is write-protected
+	output  index, // disk index pulse
+	output	disk_led, //disk activity LED
 	//flash drive host controller interface	(SPI)
-	input	_scs,					//async. serial data enable
-	input	sdi,					//async. serial data input
-	output	sdo,					//async. serial data output
-	input	sck,					//async. serial data clock
+	input	_scs, //async. serial data enable
+	input	sdi, //async. serial data input
+	output	sdo, //async. serial data output
+	input	sck, //async. serial data clock
 	//audio outputs
-	output	left,					//audio bitstream left
-	output	right,					//audio bitstream right
-	output	[15:0]ldata,			//left DAC data
-	output	[15:0]rdata,			//right DAC data
-  // system configuration
-	input	[1:0] floppy_drives,	//number of extra floppy drives
-  // direct sector read from SD card
-	input	direct_scs,				//spi select line for direct transfers from SD card
-	input	direct_sdi,				//spi data line for direct transfers from SD card
-  // emulated Hard Disk Drive signals
-	input	hdd_cmd_req,      // command request
-	input	hdd_dat_req,     // data request
-	output	[2:0] hdd_addr,     // task file register address
-	output	[15:0] hdd_data_out,  // data bus output
-	input	[15:0] hdd_data_in,   // data bus input
-	output	hdd_wr,         // task file write enable
-	output	hdd_status_wr,      // drive status write enable
-	output	hdd_data_wr,      // data port write enable
-	output	hdd_data_rd,        // data port read enable
-  // fifo / track display
+	output	left, //audio bitstream left
+	output	right, //audio bitstream right
+	output	[15:0]ldata, //left DAC data
+	output	[15:0]rdata, //right DAC data
+	// system configuration
+	input	[1:0] floppy_drives, //number of extra floppy drives
+	// direct sector read from SD card
+	input	direct_scs, //spi select line for direct transfers from SD card
+	input	direct_sdi, //spi data line for direct transfers from SD card
+	// emulated Hard Disk Drive signals
+	input	hdd_cmd_req, // command request
+	input	hdd_dat_req, // data request
+	output	[2:0] hdd_addr, // task file register address
+	output	[15:0] hdd_data_out, // data bus output
+	input	[15:0] hdd_data_in, // data bus input
+	output	hdd_wr, // task file write enable
+	output	hdd_status_wr, // drive status write enable
+	output	hdd_data_wr, // data port write enable
+	output	hdd_data_rd, // data port read enable
+	// fifo / track display
 	output  [7:0]trackdisp,
 	output  [13:0]secdisp,
-  output  floppy_fwr,
-  output  floppy_frd,
-  input   filter
+	output  floppy_fwr,
+	output  floppy_frd,
+	input   filter
 );
-//--------------------------------------------------------------------------------------
+	//--------------------------------------------------------------------------------------
 
-//register names and addresses
-parameter DMACON  = 9'h096;	
-parameter ADKCON  = 9'h09e;
-parameter ADKCONR = 9'h010;	
+	//register names and addresses
+	parameter DMACON  = 9'h096;
+	parameter ADKCON  = 9'h09e;
+	parameter ADKCONR = 9'h010;
 
-//local signals
-reg		[4:0] dmacon;			//dmacon paula bits 
-reg		dmaen;					//master dma enable
-reg		[14:0] adkcon;			//audio and disk control register
-wire	[15:0] uartdata_out;	//UART data out
-wire	[15:0] intdata_out;		//interrupt controller data out
-wire	[15:0] diskdata_out;		//disk controller data out
-wire	[15:0] adkconr;			//ADKCONR register data out
-wire	rbfmirror;				//rbf mirror (from uart to interrupt controller)
-wire	rxint;					//uart rx interrupt request
-wire	txint;					//uart tx interrupt request
-wire	blckint;				//disk block finished interrupt
-wire	syncint;				//disk syncword match interrupt
-wire	[3:0] audint;			//audio channels 0,1,2,3 interrupt request
-wire	[3:0] audpen;			//audio channels 0,1,2,3 interrupt pending
-wire	[3:0] auden;			//audio channels 0,1,2,3 dma enable
-wire	dsken;					//disk dma enable
+	//local signals
+	reg		[4:0] dmacon; //dmacon paula bits 
+	reg		dmaen; //master dma enable
+	reg		[14:0] adkcon; //audio and disk control register
+	wire	[15:0] uartdata_out; //UART data out
+	wire	[15:0] intdata_out; //interrupt controller data out
+	wire	[15:0] diskdata_out; //disk controller data out
+	wire	[15:0] adkconr; //ADKCONR register data out
+	wire	rbfmirror; //rbf mirror (from uart to interrupt controller)
+	wire	rxint; //uart rx interrupt request
+	wire	txint; //uart tx interrupt request
+	wire	blckint; //disk block finished interrupt
+	wire	syncint; //disk syncword match interrupt
+	wire	[3:0] audint; //audio channels 0,1,2,3 interrupt request
+	wire	[3:0] audpen; //audio channels 0,1,2,3 interrupt pending
+	wire	[3:0] auden; //audio channels 0,1,2,3 dma enable
+	wire	dsken; //disk dma enable
 
 
-//--------------------------------------------------------------------------------------
-//--------------------------------------------------------------------------------------
+	//--------------------------------------------------------------------------------------
+	//--------------------------------------------------------------------------------------
 
-//data_out multiplexer
-assign data_out = uartdata_out | intdata_out | diskdata_out | adkconr;
+	//data_out multiplexer
+	assign data_out = uartdata_out | intdata_out | diskdata_out | adkconr;
 
-//--------------------------------------------------------------------------------------
+	//--------------------------------------------------------------------------------------
 
-//DMACON register write
-//NOTE: this register is also present in the Agnus module,
-//there DMACONR (read) is implemented
-always @(posedge clk) begin
-  if (clk7_en) begin
-		if (reset) begin
-      dmaen <= 0;
-			dmacon <= 5'd0;
-		end else if (reg_address_in[8:1]==DMACON[8:1]) begin
-			if (data_in[15])
-				{dmaen,dmacon[4:0]} <= {dmaen,dmacon[4:0]} | {data_in[9],data_in[4:0]};
-			else
-				{dmaen,dmacon[4:0]} <= {dmaen,dmacon[4:0]} & (~{data_in[9],data_in[4:0]});	
+	//DMACON register write
+	//NOTE: this register is also present in the Agnus module,
+	//there DMACONR (read) is implemented
+	always @(posedge clk) begin
+		if (clk7_en) begin
+			if (reset) begin
+				dmaen <= 0;
+				dmacon <= 5'd0;
+			end else if (reg_address_in[8:1]==DMACON[8:1]) begin
+				if (data_in[15])
+					{dmaen,dmacon[4:0]} <= {dmaen,dmacon[4:0]} | {data_in[9],data_in[4:0]};
+				else
+					{dmaen,dmacon[4:0]} <= {dmaen,dmacon[4:0]} & (~{data_in[9],data_in[4:0]});
+			end
 		end
-  end
-end
+	end
 
-//assign disk and audio dma enable bits
-assign	dsken = dmacon[4] & dmaen;
-assign	auden[3] = dmacon[3] & dmaen;
-assign	auden[2] = dmacon[2] & dmaen;
-assign	auden[1] = dmacon[1] & dmaen;
-assign	auden[0] = dmacon[0] & dmaen;
+	//assign disk and audio dma enable bits
+	assign	dsken = dmacon[4] & dmaen;
+	assign	auden[3] = dmacon[3] & dmaen;
+	assign	auden[2] = dmacon[2] & dmaen;
+	assign	auden[1] = dmacon[1] & dmaen;
+	assign	auden[0] = dmacon[0] & dmaen;
 
-//--------------------------------------------------------------------------------------
+	//--------------------------------------------------------------------------------------
 
-//ADKCON register write
-always @(posedge clk) begin
-  if (clk7_en) begin
-		if (reset)
-			adkcon <= 15'd0;
-		else if (reg_address_in[8:1]==ADKCON[8:1])
-		begin
-			if (data_in[15])
-				adkcon[14:0] <= adkcon[14:0] | data_in[14:0];
-			else
-				adkcon[14:0] <= adkcon[14:0] & (~data_in[14:0]);	
+	//ADKCON register write
+	always @(posedge clk) begin
+		if (clk7_en) begin
+			if (reset)
+				adkcon <= 15'd0;
+			else if (reg_address_in[8:1]==ADKCON[8:1])
+			begin
+				if (data_in[15])
+					adkcon[14:0] <= adkcon[14:0] | data_in[14:0];
+				else
+					adkcon[14:0] <= adkcon[14:0] & (~data_in[14:0]);
+			end
 		end
-  end
-end
+	end
 
-//ADKCONR register 
-assign adkconr[15:0] = (reg_address_in[8:1]==ADKCONR[8:1]) ? {1'b0,adkcon[14:0]} : 16'h0000;
+	//ADKCONR register 
+	assign adkconr[15:0] = (reg_address_in[8:1]==ADKCONR[8:1]) ? {1'b0,adkcon[14:0]} : 16'h0000;
 
-//--------------------------------------------------------------------------------------
+	//--------------------------------------------------------------------------------------
 
-//instantiate uart
-paula_uart pu1
-(
-	.clk(clk),
-  .clk7_en (clk7_en),
-	.reset(reset),
-	.rga_i(reg_address_in),
-	.data_i(data_in),
-	.data_o(uartdata_out),
-	.uartbrk(adkcon[11]),
-	.rbfmirror(rbfmirror),
-	.rxint(rxint),
-	.txint(txint),
-	.rxd(rxd),
-	.txd(txd)
-);
+	//instantiate uart
+	paula_uart pu1
+	(
+		.clk(clk),
+		.clk7_en (clk7_en),
+		.reset(reset),
+		.rga_i(reg_address_in),
+		.data_i(data_in),
+		.data_o(uartdata_out),
+		.uartbrk(adkcon[11]),
+		.rbfmirror(rbfmirror),
+		.rxint(rxint),
+		.txint(txint),
+		.rxd(rxd),
+		.txd(txd)
+	);
 
-//instantiate interrupt controller
-paula_intcontroller pi1
-(
-	.clk(clk),
-  .clk7_en (clk7_en),
-	.reset(reset),
-	.reg_address_in(reg_address_in),
-	.data_in(data_in),
-	.data_out(intdata_out),
-	.rxint(rxint),
-	.txint(txint),
-  .vblint(vblint),
-	.int2(int2),
-	.int3(int3),
-	.int6(int6),
-	.blckint(blckint),
-	.syncint(syncint),
-	.audint(audint),
-	.audpen(audpen),
-	.rbfmirror(rbfmirror),
-	._ipl(_ipl)
-);
+	//instantiate interrupt controller
+	paula_intcontroller pi1
+	(
+		.clk(clk),
+		.clk7_en (clk7_en),
+		.reset(reset),
+		.reg_address_in(reg_address_in),
+		.data_in(data_in),
+		.data_out(intdata_out),
+		.rxint(rxint),
+		.txint(txint),
+		.vblint(vblint),
+		.int2(int2),
+		.int3(int3),
+		.int6(int6),
+		.blckint(blckint),
+		.syncint(syncint),
+		.audint(audint),
+		.audpen(audpen),
+		.rbfmirror(rbfmirror),
+		._ipl(_ipl)
+	);
 
-//instantiate floppy controller / flashdrive host interface
-paula_floppy pf1
-(
-	.clk(clk),
-  .clk7_en (clk7_en),
-  .clk7n_en (clk7n_en),
-	.reset(reset),
-  .ntsc(ntsc),
-  .sof(sof),
-	.enable(dsken),
-	.reg_address_in(reg_address_in),
-	.data_in(data_in),
-	.data_out(diskdata_out),
-	.dmal(disk_dmal),
-	.dmas(disk_dmas),
-	._step(_step),
-	.direc(direc),
-	._sel(_sel),
-	.side(side),
-	._motor(_motor),
-	._track0(_track0),
-	._change(_change),
-	._ready(_ready),
-	._wprot(_wprot),
-  .index(index),
-	.blckint(blckint),
-	.syncint(syncint),
-	.wordsync(adkcon[10]),
-	._scs(_scs),
-	.sdi(sdi),
-	.sdo(sdo),
-	.sck(sck),
-	
-	.disk_led(disk_led),
-	.floppy_drives(floppy_drives),
+	//instantiate floppy controller / flashdrive host interface
+	paula_floppy pf1
+	(
+		.clk(clk),
+		.clk7_en (clk7_en),
+		.clk7n_en (clk7n_en),
+		.reset(reset),
+		.ntsc(ntsc),
+		.sof(sof),
+		.enable(dsken),
+		.reg_address_in(reg_address_in),
+		.data_in(data_in),
+		.data_out(diskdata_out),
+		.dmal(disk_dmal),
+		.dmas(disk_dmas),
+		._step(_step),
+		.direc(direc),
+		._sel(_sel),
+		.side(side),
+		._motor(_motor),
+		._track0(_track0),
+		._change(_change),
+		._ready(_ready),
+		._wprot(_wprot),
+		.index(index),
+		.blckint(blckint),
+		.syncint(syncint),
+		.wordsync(adkcon[10]),
+		._scs(_scs),
+		.sdi(sdi),
+		.sdo(sdo),
+		.sck(sck),
 
-	.direct_scs(direct_scs),
-	.direct_sdi(direct_sdi),
-	.hdd_cmd_req(hdd_cmd_req),
-	.hdd_dat_req(hdd_dat_req),
-	.hdd_addr(hdd_addr),
-	.hdd_data_out(hdd_data_out),
-	.hdd_data_in(hdd_data_in),
-	.hdd_wr(hdd_wr),
-	.hdd_status_wr(hdd_status_wr),
-	.hdd_data_wr(hdd_data_wr),
-	.hdd_data_rd(hdd_data_rd),
-  // fifo / track display
-	.trackdisp(trackdisp),
-	.secdisp(secdisp),
-  .floppy_fwr (floppy_fwr),
-  .floppy_frd (floppy_frd)
-);
+		.disk_led(disk_led),
+		.floppy_drives(floppy_drives),
 
-//instantiate audio controller
-paula_audio ad1
-(
-	.clk(clk),
-  .clk7_en (clk7_en),
-	.cck(cck),
-	.rst(reset),
-	.strhor(strhor),
-	.reg_address_in(reg_address_in),
-	.data_in(data_in),
-	.dmaena(auden[3:0]),
-	.audint(audint[3:0]),
-	.audpen(audpen),
-	.dmal(audio_dmal),
-	.dmas(audio_dmas),
-	.left(left),
-	.right(right),	
-	.ldata(ldata),
-	.rdata(rdata),
-	.filter(filter)
-);
+		.direct_scs(direct_scs),
+		.direct_sdi(direct_sdi),
+		.hdd_cmd_req(hdd_cmd_req),
+		.hdd_dat_req(hdd_dat_req),
+		.hdd_addr(hdd_addr),
+		.hdd_data_out(hdd_data_out),
+		.hdd_data_in(hdd_data_in),
+		.hdd_wr(hdd_wr),
+		.hdd_status_wr(hdd_status_wr),
+		.hdd_data_wr(hdd_data_wr),
+		.hdd_data_rd(hdd_data_rd),
+		// fifo / track display
+		.trackdisp(trackdisp),
+		.secdisp(secdisp),
+		.floppy_fwr (floppy_fwr),
+		.floppy_frd (floppy_frd)
+	);
+
+	//instantiate audio controller
+	paula_audio ad1
+	(
+		.clk(clk),
+		.clk7_en (clk7_en),
+		.cck(cck),
+		.rst(reset),
+		.strhor(strhor),
+		.reg_address_in(reg_address_in),
+		.data_in(data_in),
+		.dmaena(auden[3:0]),
+		.audint(audint[3:0]),
+		.audpen(audpen),
+		.dmal(audio_dmal),
+		.dmas(audio_dmas),
+		.left(left),
+		.right(right),
+		.ldata(ldata),
+		.rdata(rdata),
+		.filter(filter)
+	);
 
 
 endmodule

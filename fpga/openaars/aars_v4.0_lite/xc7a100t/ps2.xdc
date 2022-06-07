@@ -22,3 +22,10 @@ set_property SLEW SLOW [get_ports ps2_data2]
 set_property PULLUP true [get_ports ps2_data2]
 
 
+
+
+
+
+
+
+

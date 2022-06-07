@@ -20,17 +20,17 @@
 //////////////////////////////////////////////////////////////////////////////////
 
 module frame_freq #(
-    parameter CLK_FREQ_IN = 148  // Clock in frequency in MHz
-  ) (
-    input reset,
-    input clk,
-    input i_vsync,
-    output [$clog2(100)-1:0] o_freq,  // 7 bits frequency, 2 bits fraction
-    output o_valid
-  );
+  parameter CLK_FREQ_IN = 148 // Clock in frequency in MHz
+) (
+  input  wire reset,
+  input  wire clk,
+  input  wire i_vsync,
+  output wire [$clog2(100)-1:0] o_freq, // 7 bits frequency, 2 bits fraction
+  output wire o_valid
+);
 
   // vsync registers
-  reg [1:0] vsync_buf = 0;
+  reg [2:0] vsync_buf = 0;
 
   // Count registers
   reg [$clog2(CLK_FREQ_IN):0] r_cycle_count = 0;
@@ -49,14 +49,15 @@ module frame_freq #(
 
 
   // Handle Vsync input
+  wire [2:0] vsync_buf_next = {vsync_buf[1], vsync_buf[0], i_vsync};
   always @(posedge clk)
   begin
     // Create sync buffer
-    vsync_buf <= {vsync_buf[0], i_vsync};
+    vsync_buf <= vsync_buf_next;
 
     // Count from posedge HSync to posedge Hsync
     r_frame_end <= 1'b0;
-    if (vsync_buf == 2'b01)
+    if (vsync_buf[2:1] == 2'b01)
     begin
       r_frame_end <= 1'b1;
     end
@@ -164,27 +165,27 @@ module frame_freq #(
     // Lookup table from 45Hz to 77Hz
     case(r_lat_ms_count)
       'd13:
-        r_freq <= 77; // 1000/13 = 77
+      r_freq <= 77; // 1000/13 = 77
       'd14:
-        r_freq <= 71; // 1000/14 = 71
+      r_freq <= 71; // 1000/14 = 71
       'd15:
-        r_freq <= 67; // 1000/15 = 67
+      r_freq <= 67; // 1000/15 = 67
       'd16:
-        r_freq <= 63; // 1000/16 = 63
+      r_freq <= 63; // 1000/16 = 63
       'd17:
-        r_freq <= 59; // 1000/17 = 59
+      r_freq <= 59; // 1000/17 = 59
       'd18:
-        r_freq <= 56; // 1000/18 = 56
+      r_freq <= 56; // 1000/18 = 56
       'd19:
-        r_freq <= 53; // 1000/19 = 53
+      r_freq <= 53; // 1000/19 = 53
       'd20:
-        r_freq <= 50; // 1000/20 = 50
+      r_freq <= 50; // 1000/20 = 50
       'd21:
-        r_freq <= 48; // 1000/21 = 48
+      r_freq <= 48; // 1000/21 = 48
       'd22:
-        r_freq <= 40; // 1000/22 = 45
+      r_freq <= 40; // 1000/22 = 45
       default:
-        r_freq <= 0;
+      r_freq <= 0;
     endcase
 
     // Frame count valid

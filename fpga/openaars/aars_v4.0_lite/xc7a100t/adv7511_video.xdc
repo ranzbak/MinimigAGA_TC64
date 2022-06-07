@@ -48,3 +48,13 @@ set_property -dict {PACKAGE_PIN B5 IOSTANDARD LVTTL} [get_ports dv_int]
 create_clock -period 13.477 -name clk_hdmi -waveform {0.000 6.739}
 # set_output_delay -clock [get_clocks -of_objects [get_pins clk_hdmi/CLKOUT0]] -min -add_delay -0.700 [get_ports -filter { NAME =~  "*dv_*" && DIRECTION == "OUT" }]
 # set_output_delay -clock [get_clocks -of_objects [get_pins clk_hdmi/CLKOUT0]] -max -add_delay 1.000 [get_ports -filter { NAME =~  "*dv_*" && DIRECTION == "OUT" }]
+
+
+
+
+
+
+
+
+
+

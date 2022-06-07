@@ -96,5 +96,22 @@ set_false_path -to [get_clocks openaars_virtual_top/mycfide/sck_reg_n_0]
 
 
 
+set_multicycle_path -setup -from [get_pins -hierarchical -regexp -nocase openaars_virtual_top/tg68k/pf68K_Kernel_inst/.*] 4
+set_multicycle_path -hold -from [get_pins -hierarchical -regexp -nocase openaars_virtual_top/tg68k/pf68K_Kernel_inst/.*] 3
+set_multicycle_path -setup -from [get_pins -hierarchical -regexp -nocase openaars_virtual_top/tg68k/pf68K_Kernel_inst/memaddr.*] 3
+set_multicycle_path -setup -from [get_pins -hierarchical -regexp -nocase openaars_virtual_top/tg68k/pf68K_Kernel_inst/memaddr.*] 2
 
+set_multicycle_path -setup -from [get_pins -hierarchical -regexp -nocase .*openaars_virtual_top/tg68k/pf68K_Kernel_inst/memaddr.*] -to [get_pins -hierarchical -regexp .*openaars_virtual_top/tg68k/pf68K_Kernel_inst/.*] 4
+set_multicycle_path -hold -from [get_pins -hierarchical -regexp -nocase .*openaars_virtual_top/tg68k/pf68K_Kernel_inst/memaddr.*] -to [get_pins -hierarchical -regexp .*openaars_virtual_top/tg68k/pf68K_Kernel_inst/.*] 3
 
+set_multicycle_path -setup -from [get_pins -hierarchical -regexp -nocase .*openaars_virtual_top/tg68k/addr.*] 4
+set_multicycle_path -hold -from [get_pins -hierarchical -regexp -nocase .*openaars_virtual_top/tg68k/addr.*] 3
+
+# set_multicycle_path -from {openaars_virtual_top|tg68k|pf68K_Kernel_inst|*} -setup 4
+# set_multicycle_path -from {openaars_virtual_top|tg68k|pf68K_Kernel_inst|*} -hold 3
+# set_multicycle_path -from {openaars_virtual_top|tg68k|pf68K_Kernel_inst|memaddr*} -setup 3
+# set_multicycle_path -from {openaars_virtual_top|tg68k|pf68K_Kernel_inst|memaddr*} -hold 2
+# set_multicycle_path -from {openaars_virtual_top|tg68k|pf68K_Kernel_inst|memaddr*} -to {openaars_virtual_top|tg68k|pf68K_Kernel_inst|*} -setup 4
+# set_multicycle_path -from {openaars_virtual_top|tg68k|pf68K_Kernel_inst|memaddr*} -to {openaars_virtual_top|tg68k|pf68K_Kernel_inst|*} -hold 3
+# set_multicycle_path -from {openaars_virtual_top|tg68k|addr[*]} -setup 3
+# set_multicycle_path -from {openaars_virtual_top|tg68k|addr[*]} -hold 2

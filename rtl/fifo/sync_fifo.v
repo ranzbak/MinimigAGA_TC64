@@ -5,6 +5,7 @@
 /* 2011, rok.krajnc@gmail.com               */
 /********************************************/
 
+`default_nettype none
 
 module sync_fifo #(
   parameter FD    = 16,               // fifo depth

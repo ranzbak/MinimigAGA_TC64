@@ -25,12 +25,12 @@ reg  [ 2-1:0] CLK7_CNT = 2'b10;
 reg           CLK7_EN = 1'b1;
 
 always @ (posedge CLK28) begin
-  if (RST)
+  CLK7_CNT <= #1 CLK7_CNT + 2'b01;
+  CLK7_EN  <= #1 CLK7_CNT == 2'b00;
+  if (RST) begin
     CLK7_CNT <= #1 2'd2;
     CLK7_EN  <= #1 1'b1;
-  else
-    CLK7_CNT <= #1 CLK7_CNT + 2'b01;
-    CLK7_EN  <= #1 CLK7_CNT == 2'b00;
+  end
 end
 
 // counter used to generate e clock enable
@@ -77,7 +77,7 @@ initial begin
 
   // bench start
   $display("BENCH : start");
-  repeat(8) @ posedge CLK28;
+  repeat(8) @ (posedge CLK28);
 
   // default settings
   repeat (4) @ (posedge CLK28);

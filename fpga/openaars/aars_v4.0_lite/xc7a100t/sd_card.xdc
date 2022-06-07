@@ -33,3 +33,10 @@ set_property -dict {PACKAGE_PIN AA25 IOSTANDARD LVTTL} [get_ports sd_m_cdet]
 
 
 
+
+
+
+
+
+
+

@@ -46,50 +46,49 @@ use IEEE.numeric_std.ALL;
 -- -----------------------------------------------------------------------
 
 entity gen_reset is
-	generic (
-		resetCycles: integer := 4095
-	);
-	port (
-		clk : in std_logic;
-		enable : in std_logic := '1';
-		
-		button : in std_logic := '0';
-		initial_reset : out std_logic;
-		reset : out std_logic;
-		nreset : out std_logic
-	);
+    generic(
+        resetCycles : integer := 4095
+    );
+    port(
+        clk           : in  std_logic;
+        enable        : in  std_logic := '1';
+        button        : in  std_logic := '0';
+        initial_reset : out std_logic;
+        reset         : out std_logic;
+        nreset        : out std_logic
+    );
 end entity;
 
 -- -----------------------------------------------------------------------
 
 architecture rtl of gen_reset is
-	signal cnt : integer range 0 to resetCycles := 0;
-	signal initial_nreset_reg : std_logic := '0';
-	signal nresetLoc : std_logic := '0';
-	signal button_s : std_logic_vector(1 downto 0) := "00";
+    signal cnt                : integer range 0 to resetCycles := 0;
+    signal initial_nreset_reg : std_logic                      := '0';
+    signal nresetLoc          : std_logic                      := '0';
+    signal button_s           : std_logic_vector(1 downto 0)   := "00";
 begin
-	initial_reset <= not initial_nreset_reg;
-	reset <= not nresetLoc;
-	nreset <= nresetLoc;
+    initial_reset <= not initial_nreset_reg;
+    reset         <= not nresetLoc;
+    nreset        <= nresetLoc;
 
-	process(clk)
-	begin
-		if rising_edge(clk) then
-		
-			button_s<=button_s(0) & button;	-- Synchronise the async button signal.
-		
-			nresetLoc <= '1';
-			if cnt < resetCycles then
-				nresetLoc <= '0';
-				if enable = '1' then
-					cnt <= cnt + 1;
-				end if;
-			else
-				initial_nreset_reg <= '1';
-			end if;
-			if button_s(1) = '1' then
-				cnt <= 0;
-			end if;
-		end if;
-	end process;
+    process(clk)
+    begin
+        if rising_edge(clk) then
+
+            button_s <= button_s(0) & button; -- Synchronise the async button signal.
+
+            nresetLoc <= '1';
+            if cnt < resetCycles then
+                nresetLoc <= '0';
+                if enable = '1' then
+                    cnt <= cnt + 1;
+                end if;
+            else
+                initial_nreset_reg <= '1';
+            end if;
+            if button_s(1) = '1' then
+                cnt <= 0;
+            end if;
+        end if;
+    end process;
 end architecture;
