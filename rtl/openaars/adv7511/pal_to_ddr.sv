@@ -188,8 +188,11 @@ module pal_to_ddr(
   wire        w_60_adv_de;
 
   // Upscale the video signal using a line buffer
+  // 'h80 -> 4cm -> right border
+  // 'h00 -> 8cm -> right border
   pal_to_hd_upsample #(
-  .PAL_HD_H_RES(1980)
+  .PAL_HD_H_RES(1685),
+  .PAL_OFFSET_HZ('hd0)
   ) my50hzupsample(
     .clk_in(clk_114),
     .clk_out(clk_148),

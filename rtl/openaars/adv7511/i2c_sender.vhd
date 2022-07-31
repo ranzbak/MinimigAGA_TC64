@@ -64,7 +64,7 @@ architecture behave_i2c_sender of i2c_sender is
 
   -- ADV7511 interrupt
   signal dv_int_sync   : std_logic_vector(2 downto 0);
-  attribute ASYNC_REG of dv_int_sync: signal is "TRUE";
+  attribute ASYNC_REG of dv_int_sync : signal is "TRUE";
   signal dv_int_enable : std_logic;
 
   -- Tristate
@@ -110,7 +110,7 @@ architecture behave_i2c_sender of i2c_sender is
     -- Power cycle
     (addr => x"72", reg => x"41", val => x"40"), --  7 Power Down
     (addr => x"72", reg => x"41", val => x"10"), --  7 Power Up
-    (addr => x"ff", reg => x"d6", val => x"10"), --  Force HPD high (Power on), TMDS soft turn on
+    (addr => x"72", reg => x"d6", val => x"10"), --  Force HPD high (Power on), TMDS soft turn on
     -- Setup mandatory registers
     (addr => x"72", reg => x"98", val => x"03"), -- ADI required Write
     (addr => x"72", reg => x"99", val => x"02"), -- ADI required Write
@@ -140,8 +140,8 @@ architecture behave_i2c_sender of i2c_sender is
     (addr => x"72", reg => x"d1", val => x"ff"), -- Nbr of times to search for good phase
     (addr => x"72", reg => x"de", val => x"9c"), -- ADI required write
     (addr => x"72", reg => x"e4", val => x"9c"), -- ADI required write
-    (addr => x"72", reg => x"94", val => x"40"), -- Enable HDP interrupt
-    (addr => x"72", reg => x"96", val => x"40"), -- Clear HPD interrupt flag
+    (addr => x"72", reg => x"94", val => x"c0"), -- Enable HDP interrupt
+    (addr => x"72", reg => x"96", val => x"00"), -- Clear HPD interrupt flag
     (addr => x"72", reg => x"fa", val => x"00"), -- Nbr of times to search for good phase
     -- Set the video clock delay
     (addr => x"72", reg => x"ba", val => x"00"), -- Configure clock delay -1.2ns
@@ -153,7 +153,7 @@ architecture behave_i2c_sender of i2c_sender is
     (addr => x"72", reg => x"0a", val => x"00"), -- 
     (addr => x"72", reg => x"0c", val => x"3c"), -- s0-s3 channel I2S
     (addr => x"72", reg => x"14", val => x"02"), -- 16bit samples
-    (addr => x"72", reg => x"44", val => x"3a"), -- audio packet enable, AVI infroframe, audio info frame
+    (addr => x"72", reg => x"44", val => x"39"), -- audio packet enable, AVI infroframe, audio info frame
     (addr => x"72", reg => x"73", val => x"01"), -- 
     -------------------------
     -- Set Source Product Description Infoframe (SPD)

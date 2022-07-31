@@ -206,7 +206,7 @@ module minimig_openaars_top (
   // LED
   assign led_power = ~led_fpower;
   assign led_fdisk  = ~led_disk;
-  assign led_hdisk = ~(floppy_frd | floppy_fwr);
+  assign led_hdisk = ~(hd_frd | hd_fwr);
   assign led_core  = ~(floppy_frd | floppy_fwr | hd_fwr | hd_frd);
 
   // PS2 ports tristate
@@ -460,8 +460,8 @@ module minimig_openaars_top (
     .VPOS_DATA(vpos_data),
     .floppy_frd(),
     .floppy_fwr(),
-    .hd_fwr(),
-    .hd_frd()
+    .hd_fwr(hd_fwr),
+    .hd_frd(hd_frd)
   );
 
   // Assign video position data
