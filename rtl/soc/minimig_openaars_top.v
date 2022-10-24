@@ -1,3 +1,4 @@
+`timescale 1ns / 1ns
 /********************************************/
 /* minimig_mist_top.v                       */
 /* MiST Board Top File                      */
@@ -149,6 +150,8 @@ module minimig_openaars_top (
   // Audio
   wire [15:0] audio_l;
   wire [15:0] audio_r;
+  // wire [15:0] audio_l_mx;
+  // wire [15:0] audio_r_mx;
 
   // PS2
   wire        ps2_dat_i;
@@ -329,6 +332,20 @@ module minimig_openaars_top (
   assign joya[6] = 1'b1;
   assign joyb[6] = 1'b1;
 
+  // mix_channels my_mix_channels (
+  //   .clk(clk_114),
+  //   .rst_n(reset_n),
+
+  //   .en(1'b1),
+
+  //   .left_in(audio_l),
+  //   .right_in(audio_r),
+
+  //   .left_out(audio_l_mx),
+  //   .right_out(audio_r_mx)
+
+  // );
+
   // i2s transmittor
   i2s_tx my_i2s_transmitter (
     .clk(clk_114),
@@ -388,7 +405,8 @@ module minimig_openaars_top (
 
   // Instatiation of the Minimig Core
   minimig_virtual_top
-  #( .debug(1'b0),
+  #(
+  .debug(1'b0),
   .havertg(1'b1),
   .haveaudio(1'b1),
   .havec2p(1'b0),

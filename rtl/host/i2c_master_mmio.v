@@ -98,13 +98,13 @@ module i2c_master_mmio (
 
     reg [6:0]  cmd_address;
     reg        cmd_start = 0;
-    reg        cmd_read = 0;              
+    reg        cmd_read = 0;
     reg        cmd_write = 0;
     reg        cmd_write_multiple = 0;
     reg        cmd_stop = 0;
     reg        cmd_valid = 0;
     wire       cmd_ready;
-                                  
+
     //(* MARK_DEBUG="true", KEEP="true" *)
     reg  [7:0]data_in;
     //(* MARK_DEBUG="true", KEEP="true" *)
@@ -123,7 +123,7 @@ module i2c_master_mmio (
 
     reg        r_interrupt = 0;
     //reg [15:0] r_q = 0;
-    
+
     // data buffers
     reg [15:0] buf_write [0:7];
     reg [2:0]  prod_write = 0;
@@ -137,38 +137,38 @@ module i2c_master_mmio (
     reg        buf_read_empty = 0;
     reg        buf_read_empty_ = 0;
     reg        buf_read_full = 0;
-    
+
 
     // Enumerations
     localparam [4:0]
-        STATE_IDLE        = 4'd0,
-        STATE_READ        = 4'd1,
-        STATE_WRITE       = 4'd2,
-        STATE_WRITE_MULTI = 4'd3,
-        STATE_START       = 4'd4,
-        STATE_STOP        = 4'd5,
-        STATE_SET_ADDRESS = 4'hb,
-        STATE_SET_SOI     = 4'hc,
-        STATE_SET_SCL_L   = 4'hd,
-        STATE_SET_SCL_H   = 4'he,
-        STATE_RESET       = 4'hf;
+    STATE_IDLE        = 4'd0,
+    STATE_READ        = 4'd1,
+    STATE_WRITE       = 4'd2,
+    STATE_WRITE_MULTI = 4'd3,
+    STATE_START       = 4'd4,
+    STATE_STOP        = 4'd5,
+    STATE_SET_ADDRESS = 4'hb,
+    STATE_SET_SOI     = 4'hc,
+    STATE_SET_SCL_L   = 4'hd,
+    STATE_SET_SCL_H   = 4'he,
+    STATE_RESET       = 4'hf;
     reg [4:0] state_reg = STATE_IDLE;
 
     localparam [3:0]
-        CMD_NOP          = 4'h0,
-        CMD_READ         = 4'h1,
-        CMD_WRITE        = 4'h2,
-        CMD_WRITE_MULTI  = 4'h3,
-        CMD_START        = 4'h4,
-        CMD_STOP         = 4'h5,
-        // READ VALUE
-        CMD_READ_NEXT    = 4'ha,
-        // config
-        CMD_SET_ADDR     = 4'hb,
-        CMD_SET_SCL_L    = 4'hc,
-        CMD_SET_SCL_H    = 4'hd,
-        CMD_STOP_ON_IDLE = 4'he,
-        CMD_RESET        = 4'hf;
+    CMD_NOP          = 4'h0,
+    CMD_READ         = 4'h1,
+    CMD_WRITE        = 4'h2,
+    CMD_WRITE_MULTI  = 4'h3,
+    CMD_START        = 4'h4,
+    CMD_STOP         = 4'h5,
+    // READ VALUE
+    CMD_READ_NEXT    = 4'ha,
+    // config
+    CMD_SET_ADDR     = 4'hb,
+    CMD_SET_SCL_L    = 4'hc,
+    CMD_SET_SCL_H    = 4'hd,
+    CMD_STOP_ON_IDLE = 4'he,
+    CMD_RESET        = 4'hf;
 
     wire busy;
     wire bus_control;
@@ -211,67 +211,101 @@ module i2c_master_mmio (
         buf_read_empty_ <= buf_read_empty;
 
         // Buffer empty
-        if (con_write == prod_write) 
+        if (con_write == prod_write)
             buf_write_empty <= 1;
         if (con_read == prod_read)
             buf_read_empty <= 1;
 
-        // Buffer full?
+            // Buffer full?
         if ((prod_write+1) == con_write)
             buf_write_full <= 1;
         if ((prod_read+1) == prod_read)
             buf_read_full <= 1;
     end
 
+    reg _r_cmd_done;
+    reg _r_read_ready;
+    reg _r_write_ready;
+    reg _i2c_select;
+    reg _interrupt_select;
+    reg _req;
+    reg _wr;
+    reg _busy;
+
     // handle reads combinational
-    always @(r_cmd_done, r_read_ready, r_write_ready, i2c_select, interrupt_select, req, wr, busy) begin
-        /* Handle interrupt flag
-         * Go high when :
-         * read buffer has content (byte received)
-         */ 
-        if (buf_read_empty_ == 1'b1 & buf_read_empty == 1'b0) begin
-            r_interrupt <= 1'b1;
-        end
-        if (buf_write_empty == 1'b1 & busy_strobe == 1'b1) begin
-            r_interrupt <= 1'b1;
-        end
+    // TODO: Results in combinational logic without a clock
+    // always @(r_cmd_done, r_read_ready, r_write_ready, i2c_select, interrupt_select, req, wr, busy) begin
+    always @(posedge clk) begin
+        // Save state for next cycle, so we can detect changes
+        _r_cmd_done <= r_cmd_done;
+        _r_read_ready <= r_read_ready;
+        _r_write_ready <= r_write_ready;
+        _i2c_select <= i2c_select;
+        _interrupt_select <= interrupt_select;
+        _req <= req;
+        _wr <= wr;
+        _busy <= busy;
 
-        // Latch status flags
-        if (r_read_ready == 1'b1) begin
-            flag_read_ready <= 1'b1;
-        end
+        if (
+        _r_cmd_done != r_cmd_done
+        || _r_read_ready != r_read_ready
+        || _r_write_ready != r_write_ready
+        || _i2c_select != i2c_select
+        || _interrupt_select != interrupt_select
+        || _req != req
+        || _wr != wr
+        || _busy != busy
+        ) begin
 
-        if (r_write_ready == 1'b1) begin
-            flag_write_ready <= 1'b1;
-        end
 
-        // Clear interrupt when the interrupt register is read
-        if (interrupt_select == 1'b1 & wr == 1'b0) begin
-            r_interrupt <= 1'b0;
-            flag_read_ready <= 1'b0;
-            flag_write_ready <= 1'b0;
-        end
+            /* Handle interrupt flag
+             * Go high when :
+             * read buffer has content (byte received)
+             */
+            if (buf_read_empty_ == 1'b1 & buf_read_empty == 1'b0) begin
+                r_interrupt <= 1'b1;
+            end
+            if (buf_write_empty == 1'b1 & busy_strobe == 1'b1) begin
+                r_interrupt <= 1'b1;
+            end
 
-        // Handle data out asynchronous
-        if(i2c_select == 1'b1 & req == 1'b1 & wr == 1'b0 ) begin
-            case (addr[3:2])
-                2'b00: begin
-                    // Read answer from a read action
-                    q <= cmd_result;
-                end
-                2'b01: begin
-                    // Return status register
-                    q <= {6'b0, missed_ack, stop_on_idle, {4{1'b0}}, buf_read_full, buf_read_empty, buf_write_full, buf_write_empty};
-                end
-                2'b10: begin
-                    // Return IO prescale value
-                    q <= i2c_prescale;
-                end
-                2'b11: begin
-                    // do nothing
-                    q <= 16'h1337;
-                end
-            endcase
+            // Latch status flags
+            if (r_read_ready == 1'b1) begin
+                flag_read_ready <= 1'b1;
+            end
+
+            if (r_write_ready == 1'b1) begin
+                flag_write_ready <= 1'b1;
+            end
+
+            // Clear interrupt when the interrupt register is read
+            if (interrupt_select == 1'b1 & wr == 1'b0) begin
+                r_interrupt <= 1'b0;
+                flag_read_ready <= 1'b0;
+                flag_write_ready <= 1'b0;
+            end
+
+            // Handle data out asynchronous
+            if(i2c_select == 1'b1 & req == 1'b1 & wr == 1'b0 ) begin
+                case (addr[3:2])
+                    2'b00: begin
+                        // Read answer from a read action
+                        q <= cmd_result;
+                    end
+                    2'b01: begin
+                        // Return status register
+                        q <= {6'b0, missed_ack, stop_on_idle, {4{1'b0}}, buf_read_full, buf_read_empty, buf_write_full, buf_write_empty};
+                    end
+                    2'b10: begin
+                        // Return IO prescale value
+                        q <= i2c_prescale;
+                    end
+                    2'b11: begin
+                        // do nothing
+                        q <= 16'h1337;
+                    end
+                endcase
+            end
         end
     end
 
@@ -292,7 +326,7 @@ module i2c_master_mmio (
 
         // Generate strobe
         if (req_ == 1'b0 & req == 1'b1) req_strobe = 1'b1;
-        else req_strobe = 1'b0; 
+        else req_strobe = 1'b0;
 
         // Write to the buffer
         if(i2c_select == 1'b1 & req_strobe == 1'b1 & wr == 1'b1) begin
@@ -324,7 +358,7 @@ module i2c_master_mmio (
                     state_reg <= STATE_IDLE;
                     prod_write <= 0;
                     con_write <= 0;
-                end 
+                end
                 // When unsent data is present
                 if(prod_write != con_write) begin
                     // Fetch data
@@ -371,7 +405,7 @@ module i2c_master_mmio (
                             state_reg <= STATE_SET_SOI;
                         end
                         CMD_RESET: begin
-                            state_reg <= STATE_RESET; 
+                            state_reg <= STATE_RESET;
                         end
                     endcase
                 end
@@ -384,12 +418,12 @@ module i2c_master_mmio (
                 data_out_ready <= 1;
 
                 if (data_out_ready == 1) begin
-                    r_cmd_done <= 1'b1;       
+                    r_cmd_done <= 1'b1;
 
                     cmd_valid <= 0;
                     data_out_ready <= 0;
                     r_read_ready <= 1'b1;
-                    
+
                     // Write result to buffer read buffer
                     buf_read [prod_read] <= {8'h00, data_out};
                     prod_read <= prod_read + 1;
@@ -490,48 +524,48 @@ module i2c_master_mmio (
         endcase
     end
 
-	// I2C Master
-	i2c_master my_i2c_master(
-       .clk(clk),
-       .rst(rst),
+    // I2C Master
+    i2c_master my_i2c_master(
+        .clk(clk),
+        .rst(rst),
 
-       // Host interface
-       .cmd_address        ( cmd_address),
-       .cmd_start          ( cmd_start),
-       .cmd_read           ( cmd_read),
-       .cmd_write          ( cmd_write),
-       .cmd_write_multiple ( cmd_write_multiple),
-       .cmd_stop           ( cmd_stop),
-       .cmd_valid          ( cmd_valid),
-       .cmd_ready          ( cmd_ready),
+        // Host interface
+        .cmd_address        ( cmd_address),
+        .cmd_start          ( cmd_start),
+        .cmd_read           ( cmd_read),
+        .cmd_write          ( cmd_write),
+        .cmd_write_multiple ( cmd_write_multiple),
+        .cmd_stop           ( cmd_stop),
+        .cmd_valid          ( cmd_valid),
+        .cmd_ready          ( cmd_ready),
 
-       .data_in            ( data_in),
-       .data_in_valid      ( data_in_valid),
-       .data_in_ready      ( data_in_ready),
-       .data_in_last       ( data_in_last),
+        .data_in            ( data_in),
+        .data_in_valid      ( data_in_valid),
+        .data_in_ready      ( data_in_ready),
+        .data_in_last       ( data_in_last),
 
-       .data_out           ( data_out),
-       .data_out_valid     ( data_out_valid),
-       .data_out_ready     ( data_out_ready),
-       .data_out_last      ( data_out_last),
+        .data_out           ( data_out),
+        .data_out_valid     ( data_out_valid),
+        .data_out_ready     ( data_out_ready),
+        .data_out_last      ( data_out_last),
 
-       // I2C interface
-       .scl_i (scl_i),
-       .scl_o (scl_o),
-       .scl_t (scl_t),
-       .sda_i (sda_i),
-       .sda_o (sda_o),
-       .sda_t (sda_t),
+        // I2C interface
+        .scl_i (scl_i),
+        .scl_o (scl_o),
+        .scl_t (scl_t),
+        .sda_i (sda_i),
+        .sda_o (sda_o),
+        .sda_t (sda_t),
 
         // Status
-       .busy (busy),
-       .bus_control (bus_control),
-       .bus_active (bus_active),
-       .missed_ack (missed_ack),
+        .busy (busy),
+        .bus_control (bus_control),
+        .bus_active (bus_active),
+        .missed_ack (missed_ack),
 
-       // Configuration
-       .prescale (i2c_prescale),
-       .stop_on_idle (stop_on_idle)
-   );
+        // Configuration
+        .prescale (i2c_prescale),
+        .stop_on_idle (stop_on_idle)
+    );
 
 endmodule

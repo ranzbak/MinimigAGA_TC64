@@ -76,13 +76,13 @@ entity TG68K is
 		--    ovr           : in      std_logic;
 		ramaddr         : out    std_logic_vector(31 downto 0);
 		cpustate        : out    std_logic_vector(6 downto 0);
-		nResetOut       : buffer std_logic;
-		skipFetch       : buffer std_logic;
+		nResetOut       : out    std_logic;
+		skipFetch       : out    std_logic;
 		--    cpuDMA        : buffer  std_logic;
 		ramlds          : out    std_logic;
 		ramuds          : out    std_logic;
-		CACR_out        : buffer std_logic_vector(3 downto 0);
-		VBR_out         : buffer std_logic_vector(31 downto 0);
+		CACR_out        : out    std_logic_vector(3 downto 0);
+		VBR_out         : out 	 std_logic_vector(31 downto 0);
 		-- RTG interface
 		rtg_addr        : out    std_logic_vector(25 downto 4);
 		rtg_vbend       : out    std_logic_vector(6 downto 0);
@@ -181,7 +181,13 @@ ARCHITECTURE logic OF TG68K IS
 
 	signal chipset_cycle : std_logic;
 
+	signal nResetOut_w : std_logic;
+	signal VBR_out_w   : std_logic_vector(31 downto 0);
+
 BEGIN
+
+	nResetOut <= nResetOut_w;
+	VBR_out   <= VBR_out_w;
 
 	sel_eth <= '0';
 
@@ -192,7 +198,7 @@ BEGIN
 			NMI_addr            <= X"0000007c";
 			sel_nmi_vector_addr <= '0';
 		ELSIF rising_edge(clk) THEN
-			NMI_addr            <= VBR_out + X"0000007c";
+			NMI_addr            <= VBR_out_w + X"0000007c";
 			sel_nmi_vector_addr <= '0';
 			IF (cpuaddr(31 downto 2) = NMI_addr(31 downto 2)) THEN
 				sel_nmi_vector_addr <= '1';
@@ -317,7 +323,7 @@ BEGIN
 	cpuaddr <= addrtg68 WHEN cpu(1) = '1' ELSE X"00" & addrtg68(23 downto 0);
 
 	pf68K_Kernel_inst : entity work.TG68KdotC_Kernel
-		GENERIC MAP(
+		GENERIC MAP(                    -- @suppress "Generic map uses default values. Missing optional actuals: BarrelShifter"
 			SR_Read        => 2,        -- 0=>user,   1=>privileged,    2=>switchable with CPU(0)
 			VBR_Stackframe => 2,        -- 0=>no,     1=>yes/extended,  2=>switchable with CPU(0)
 			extAddr_Mode   => 2,        -- 0=>no,     1=>yes,           2=>switchable with CPU(1)
@@ -326,7 +332,7 @@ BEGIN
 			BitField       => 2,        -- 0=>no,     1=>yes,           2=>switchable with CPU(1)
 			MUL_Hardware   => 1         -- 0=>no,     1=>yes
 		)
-		PORT MAP(
+		PORT MAP(                       -- @suppress "The order of the associations is different from the declaration order"
 			clk            => clk,      -- : in std_logic;
 			nReset         => reset,    -- : in std_logic:='1';      --low active
 			clkena_in      => clkena,   -- : in std_logic:='1';
@@ -342,16 +348,19 @@ BEGIN
 			nWr            => wr,       -- : out std_logic;
 			nUDS           => uds_in,
 			nLDS           => lds_in,   -- : out std_logic;
-			nResetOut      => nResetOut,
+			nResetOut      => nResetOut_w,
 			skipFetch      => skipFetch, -- : out std_logic
 			CACR_out       => CACR_out,
-			VBR_out        => VBR_out
+			VBR_out        => VBR_out_w,
+			berr           => open,
+			FC             => open,
+			clr_berr       => open
 		);
 
 	PROCESS(clk)
 	BEGIN
 		IF rising_edge(clk) THEN
-			IF (reset = '0' OR nResetOut = '0') THEN
+			IF (reset = '0' OR nResetOut_w = '0') THEN
 				turbochip_d   <= '0';
 				turbokick_d   <= '0';
 				turboslow_d   <= '0';
@@ -373,7 +382,7 @@ BEGIN
 			haveaudio => haveaudio,
 			havec2p   => havec2p
 		)
-		PORT MAP(
+		PORT MAP(                       -- @suppress "The order of the associations is different from the declaration order"
 			clk            => clk,
 			reset_n        => reset,
 			addr           => cpuaddr(10 downto 0),

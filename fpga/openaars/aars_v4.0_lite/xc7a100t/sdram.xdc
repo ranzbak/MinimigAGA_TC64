@@ -1,4 +1,5 @@
 #SDRAM
+# AS4C16M16SA
 
 ## Address ##
 set_property -dict {PACKAGE_PIN J1 IOSTANDARD LVTTL DRIVE 12 SLEW FAST IOB TRUE} [get_ports {dr_a[0]}]
@@ -49,6 +50,52 @@ set_property -dict {PACKAGE_PIN H1 IOSTANDARD LVTTL DRIVE 12 SLEW FAST IOB TRUE}
 set_property -dict {PACKAGE_PIN H9 IOSTANDARD LVTTL DRIVE 12 SLEW FAST} [get_ports dr_cke]
 set_property -dict {PACKAGE_PIN H2 IOSTANDARD LVTTL DRIVE 12 SLEW FAST} [get_ports dr_clk]
 
+# Define SDRAM input clock
+
+# Input clocks
+# A safe amount of phase shift is at least the output hold time of your far-end device,
+# plus your best-case (fastest) calculated round-trip flight time, entered as your set_output_delay -min value (entered as a negative number for hold time.)
+# output hold time sdram = 2.5 ns
+# 60mm trace length = 0.7ns 6ns/meter * 0.06m *2
+# Phase shift SDRAM = 3.2 ns
+
+# Timing
+
+
+# Data sampling is edge aligned
+# Set-up time : 1.5 ns
+# hold time : 0.8 ns
+
+
+
+# name SDRAM ports
+
+
+# input delay
+# set_input_delay -clock $input_clock -reference_pin [get_ports dr_clk] -max $skew_bre $sdram_inputs
+# set_input_delay -clock $input_clock -reference_pin [get_ports dr_clk] -max $skew_bre $sdram_inputs
+set_input_delay -clock [get_clocks clk_114] -max 1.500 [get_ports [get_ports {dr_d[*]}]]
+set_input_delay -clock [get_clocks clk_114] -min -0.800 [get_ports [get_ports {dr_d[*]}]]
+
+
+
+# Output Delay Constraints
+# Clock pin
+set_output_delay -clock [get_clocks clk_114] -max 1.500 [get_ports [get_ports dr_clk]]
+set_output_delay -clock [get_clocks clk_114] -min -0.800 [get_ports [get_ports dr_clk]]
+
+# report_timing -to [get_ports $sdram_clk] -max_paths 20 -nworst 1 -delay_type min_max -name sys_sync_rise_out -file sys_sync_rise_out.txt;
+
+# Output pins
+set_output_delay -clock [get_clocks clk_114] -max 1.500 [get_ports [get_ports {{dr_d[*]} {dr_a[*]} dr_cs_n {dr_ba[*]} dr_dqm dr_ras_n dr_cas_n dr_we_n dr_cke}]]
+set_output_delay -clock [get_clocks clk_114] -min -0.800 [get_ports [get_ports {{dr_d[*]} {dr_a[*]} dr_cs_n {dr_ba[*]} dr_dqm dr_ras_n dr_cas_n dr_we_n dr_cke}]]
+
+# Adjust data window for SDRAM reads by 1 cycle
+# set_multicycle_path -setup -from clk_sd_114 -to [get_clocks clk_114] 2
+# set_multicycle_path -hold -from clk_sd_114 -to [get_clocks clk_114] 2
+
+# TODO: check if correct - don't care for dr_clk
+set_false_path -from [get_pins openaars_virtual_top/amiga_clk/amiga_clk_i/clk_main/CLKOUT1] -to [get_ports dr_clk]
 
 
 

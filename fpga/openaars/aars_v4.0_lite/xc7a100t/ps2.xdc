@@ -22,6 +22,21 @@ set_property SLEW SLOW [get_ports ps2_data2]
 set_property PULLUP true [get_ports ps2_data2]
 
 
+# Set timing constraints
+set_false_path -from [get_ports ps2_*]
+set_false_path -to [get_ports ps2_*]
+#set_false_path -from [get_ports ps2_data1]
+#set_false_path -to [get_ports ps2_data1]
+#set_false_path -from [get_ports ps2_clk2]
+#set_false_path -to [get_ports ps2_clk2]
+#set_false_path -from [get_ports ps2_data2]
+#set_false_path -to [get_ports ps2_data2]
+
+
+
+
+
+
 
 
 

@@ -26,7 +26,7 @@ module adv_ddr #(
 
   // OUTPUT
   output reg clk_pixel_out, // Output pixel clock after synchronization to clk_out
-  output reg de_out = 1'b0, // Data enable signal
+  output reg de_out, // Data enable signal
   output reg vsync_out, hsync_out,
   output reg [11:0] data_out // DDR data stream out
 );
@@ -53,6 +53,11 @@ module adv_ddr #(
   wire [2:0] hsync_s_next = {hsync_s[1], hsync_s[0], hsync};
   wire [1:0] clk_pixel_s_next = {clk_pixel_s[0], clk_in};
   wire [23:0] data_s_next [1:0];
+
+  initial begin
+    de_out <= 1'b0;
+  end;
+
   always @(posedge clk_out)
   begin
     clk_pixel_s <= clk_pixel_s_next;
@@ -124,8 +129,7 @@ module adv_ddr #(
         if (clk_pixel_s[1] == 1'b1)
           begin // Phase 0
           // Output the lower (1st) part
-            if (de_out)
-            begin
+            if (de_out) begin
               data_out <= data_s[1][11:0];
             end
             // Output vsync and hsync as well

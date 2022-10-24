@@ -30,6 +30,14 @@ set_property PULLUP true [get_ports sd_m_d3]
 set_property -dict {PACKAGE_PIN AA25 IOSTANDARD LVTTL} [get_ports sd_m_cdet]
 
 # Port timing
+set_false_path -from [get_ports sd_m_d0]
+
+
+
+
+
+
+
 
 
 

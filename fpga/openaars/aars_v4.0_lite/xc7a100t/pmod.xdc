@@ -23,6 +23,14 @@ set_property -dict {PACKAGE_PIN U2 IOSTANDARD LVTTL} [get_ports pmod_10]
 # U260	U2	34		Left	PMOD_10
 
 
+# TODO: ignore output delays because not connected
+set_false_path -to [get_ports pmod_*]
+
+
+
+
+
+
 
 
 

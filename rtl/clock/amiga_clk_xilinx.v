@@ -21,13 +21,17 @@ module amiga_clk_xilinx (
 
   MMCME2_BASE #(
   .CLKIN1_PERIOD(20.0), // 50        MHz (20 ns)
-  .CLKFBOUT_MULT_F(20.625), // 50 MHz  * <this value> = common multiply
-  .DIVCLK_DIVIDE(1), // <common multiply>  MHz / <this value> =  common divided frequency
+  .CLKFBOUT_MULT_F(45.375), // 50 MHz  * <this value> = common multiply
+  .DIVCLK_DIVIDE(2), // <common multiply>  MHz / <this value> =  common divided frequency
   .BANDWIDTH("OPTIMIZED"),
-  .CLKOUT0_DIVIDE_F(9.000), // 114.77273 MHz /11 divide
-  .CLKOUT1_DIVIDE(9), // 114.77273 MHz /11 divide
-  .CLKOUT1_PHASE(-155.0), // -143.182' phase shift
-  .CLKOUT2_DIVIDE(36) // 28.69318  MHz /44 divide
+  .CLKOUT0_DIVIDE_F(10.000), // 113.4375 MHz /10 divide
+  .CLKOUT1_DIVIDE(10), // 113.4375 MHz /10 divide
+  .CLKOUT1_PHASE(-144.0), // -144.00' phase shift
+  .CLKOUT2_DIVIDE(40), // 28.35938  MHz /40 divide
+  .REF_JITTER1(0.010),
+  .STARTUP_WAIT("TRUE")
+  // .REF_JITTER2(0.010),
+  // .COMPENSATION("ZHOLD")
   ) clk_main (
     .PWRDWN(1'b0),
     .RST(1'b0),
