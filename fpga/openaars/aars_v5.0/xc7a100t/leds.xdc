@@ -11,7 +11,7 @@
 set_property -dict {PACKAGE_PIN J19 IOSTANDARD LVTTL} [get_ports led_core]
 
 # LEDS
-set_property -dict {PACKAGE_PIN J21 IOSTANDARD LVTTL} [get_ports led_hdisk]
+set_property -dict {PACKAGE_PIN H22 IOSTANDARD LVTTL} [get_ports led_hdisk]
 set_property -dict {PACKAGE_PIN K21 IOSTANDARD LVTTL} [get_ports led_user]
 set_property -dict {PACKAGE_PIN K26 IOSTANDARD LVTTL} [get_ports led_power]
 set_property -dict {PACKAGE_PIN K25 IOSTANDARD LVTTL} [get_ports led_fdisk]
@@ -22,3 +22,6 @@ set_false_path -to [get_ports led_hdisk]
 set_false_path -to [get_ports led_user]
 set_false_path -to [get_ports led_power]
 set_false_path -to [get_ports led_fdisk]
+
+
+

@@ -82,7 +82,7 @@ entity TG68K is
 		ramlds          : out    std_logic;
 		ramuds          : out    std_logic;
 		CACR_out        : out    std_logic_vector(3 downto 0);
-		VBR_out         : out 	 std_logic_vector(31 downto 0);
+		VBR_out         : out    std_logic_vector(31 downto 0);
 		-- RTG interface
 		rtg_addr        : out    std_logic_vector(25 downto 4);
 		rtg_vbend       : out    std_logic_vector(6 downto 0);
@@ -333,7 +333,8 @@ BEGIN
 			MUL_Hardware   => 1         -- 0=>no,     1=>yes
 		)
 		PORT MAP(                       -- @suppress "The order of the associations is different from the declaration order"
-			clk            => clk,      -- : in std_logic;
+			clk            => clk,      -- : in std_logicvec
+
 			nReset         => reset,    -- : in std_logic:='1';      --low active
 			clkena_in      => clkena,   -- : in std_logic:='1';
 			data_in        => datatg68, -- : in std_logic_vector(15 downto 0);

@@ -56,7 +56,7 @@ module adv_ddr #(
 
   initial begin
     de_out <= 1'b0;
-  end;
+  end
 
   always @(posedge clk_out)
   begin

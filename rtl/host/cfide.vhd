@@ -24,7 +24,7 @@
 
 library IEEE;
 use IEEE.std_logic_1164.all;
-use IEEE.STD_LOGIC_UNSIGNED.all; -- @suppress "Deprecated package"
+use IEEE.STD_LOGIC_UNSIGNED.all;        -- @suppress "Deprecated package"
 use ieee.numeric_std.all;
 
 entity cfide is
@@ -96,14 +96,14 @@ architecture rtl of cfide is
     signal platform_select : std_logic;
     signal timer_select    : std_logic;
     signal SPI_select      : std_logic;
-    signal platformdata    : std_logic_vector(15 downto 0);
+    signal platformdata    : std_logic_vector(15 downto 0); -- X"000" & "0" & spirtcpresent & "1" & menu_button
     signal IOdata          : std_logic_vector(15 downto 0);
     signal I2Cdata         : std_logic_vector(15 downto 0);
     signal IOcpuena        : std_logic;
 
     type support_states is (idle, io_aktion);
     signal support_state : support_states;
-    --signal next_support_state		: support_states;
+    --signal next_support_state     : support_states;
 
     signal sd_out      : std_logic_vector(15 downto 0);
     signal sd_in       : std_logic_vector(15 downto 0);
@@ -112,7 +112,7 @@ architecture rtl of cfide is
     signal shiftcnt    : std_logic_vector(13 downto 0);
     signal sck         : std_logic;
     signal scs         : std_logic_vector(7 downto 0);
-    --signal dscs		: std_logic;
+    --signal dscs       : std_logic;
     signal SD_busy     : std_logic;
     signal spi_div     : std_logic_vector(8 downto 0);
     signal spi_speed   : std_logic_vector(7 downto 0);
@@ -158,12 +158,12 @@ begin
     -- Peripheral registers are only 16-bits wide.
 
     q(15 downto 0) <= IOdata when rs232_select = '1' or SPI_select = '1' else
-                      I2Cdata when i2c_select = '1' else
-                      timecnt(23 downto 8) when timer_select = '1' else
-                      audio_q when audio_select = '1' else
-                      keyboard_q when keyboard_select = '1' else
-                      amigatohost when amiga_select = '1' else
-                      platformdata;
+    I2Cdata when i2c_select = '1' else
+    timecnt(23 downto 8) when timer_select = '1' else
+    audio_q when audio_select = '1' else
+    keyboard_q when keyboard_select = '1' else
+    amigatohost when amiga_select = '1' else
+    platformdata;
 
     spirtcpresent <= '1' when havespirtc = true else '0';
 
@@ -178,7 +178,7 @@ begin
                 if rs232_select = '1' or SPI_select = '1' then
                     ack <= IOcpuena;
                 else
-                    --			if timer_select='1' or platform_select='1' or audio_select='1' then
+                    --          if timer_select='1' or platform_select='1' or audio_select='1' then
                     ack <= '1';
                 end if;
             end if;
@@ -328,7 +328,7 @@ begin
     process(sysclk)
     begin
         IF rising_edge(sysclk) THEN
-            --		support_state <= idle;
+            --      support_state <= idle;
             IOcpuena <= '0';
             CASE support_state IS
                 WHEN idle =>
@@ -383,7 +383,7 @@ begin
             scs       <= (OTHERS => '0');
             sck       <= '0';
             spi_speed <= "00000000";
-            --			dscs <= '0';
+            -- dscs      <= '0';
             spi_wait  <= '0';
         ELSIF rising_edge(sysclk) THEN
 
@@ -421,7 +421,7 @@ begin
                             scs(1) <= not d(0);
                         END IF;
                     when "00" =>        -- 0
-                        --						ELSE							--DA4000
+                        --                      ELSE                            --DA4000
                         if scs(1) = '1' THEN -- Wait for io component to propagate signals.
                             spi_wait <= '1'; -- Only wait if SPI needs to go through the MUX
                             if spimux = true then
@@ -497,8 +497,8 @@ begin
             if clkgen /= 0 then
                 clkgen <= clkgen - 1;
             else
-                --			clkgen <= "1111011001";--985;		--113.5MHz/115200
-                clkgen   <= "0011110110"; --246;		--28.36MHz/115200
+                --          clkgen <= "1111011001";--985;       --113.5MHz/115200
+                clkgen   <= "0011110110"; --246;        --28.36MHz/115200
                 shiftout <= not shift(0) and txbusy;
                 shift    <= '0' & shift(9 downto 1);
             end if;

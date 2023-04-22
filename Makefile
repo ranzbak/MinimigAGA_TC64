@@ -28,7 +28,6 @@ dirs: Makefile
 	@echo Creating release dirs $(REL_DIR)/$(RELEASE) ...
 	@mkdir -p $(REL_DIR)
 
-
 # fw
 fw: Makefile dirs
 	@echo Building firmware in $(FW_SRC_DIR) ...

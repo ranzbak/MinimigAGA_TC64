@@ -168,6 +168,7 @@ assign joy1_pin5 = ~(potreg[9]  & ~potreg[8]);
 
 // potcap reg
 reg  [4-1:0] potcap;
+reg [8-1:0] cd32pad2_reg;
 always @ (posedge clk) begin
   if (clk7_en) begin
     if (reset)
@@ -227,7 +228,6 @@ end
 
 assign cd32pad2_reg_load  = joy2_pin5;
 assign cd32pad2_reg_shift = _fire1_dat && !fire2_d;
-reg [8-1:0] cd32pad2_reg;
 always @ (posedge clk) begin
   if (clk7_en) begin
     if (reset)

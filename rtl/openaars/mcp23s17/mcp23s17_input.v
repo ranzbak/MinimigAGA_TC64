@@ -1,8 +1,8 @@
 /********************************************/
-/* minimig_openaars_top.v                   */
-/* MiST Board Top File                      */
+/* mcp23s17_input.v                         */
+/* MCP23s17 SPI bridge module               */
 /*                                          */
-/* 2019-2020, ranzbak@gmail.com             */
+/* 2019-2023, ranzbak@gmail.com             */
 /********************************************/
 
 module mcp23s17_input (
@@ -63,16 +63,21 @@ module mcp23s17_input (
     wire [7:0]  RX_Byte;
 
     // State machine registers
-    reg         st_done     = 1'b0; // Stage done, move to next stage
-    reg         st_dv       = 0; // Data valid
-    reg         st_wait     = 0; // 1 when wait is active
-    reg [4:0]   st_seq      = 0; // Sequence number of read data
-    reg [5:0]   st_wait_cnt = 0; // Wait before starting new transaction
-    reg [7:0]   st_data     = 0; // Received data
+    // reg         st_done; // Stage done, move to next stage 
+    reg         st_dv; // Data valid
+    reg         st_wait; // 1 when wait is active
+    reg [4:0]   st_seq; // Sequence number of read data
+    reg [5:0]   st_wait_cnt; // Wait before starting new transaction
+    reg [7:0]   st_data; // Received data
 
     // Joystick
-    reg [7:0]   joya_raw = 8'hff;
-    reg [7:0]   joyb_raw = 8'hff;
+    reg [7:0]   joya_raw;
+    reg [7:0]   joyb_raw;
+
+    initial begin
+        joya_raw = 8'hff;
+        joyb_raw = 8'hff;
+    end
 
     // Meta stability
     (* ASYNC_REG = "true" *) reg [1:0] inta_s;
@@ -102,7 +107,11 @@ module mcp23s17_input (
     ST_READ_GPIOA  = 11,
     ST_READ_GPIOB  = 12,
     ST_DONE        = 13;
-    reg [4:0] mcp_state = ST_IDLE;
+
+    reg [4:0] mcp_state;
+    initial begin
+        mcp_state = ST_IDLE;
+    end
 
     //// SPI Master ////
     SPI_Master
@@ -132,10 +141,10 @@ module mcp23s17_input (
     );
 
     // Triggers
-    reg tx_ready_  = 0;
-    reg tx_ready_t = 0; // Trigger value
-    reg rx_ready_   = 0;
-    reg rx_ready_t = 0;
+    reg tx_ready_  ;
+    reg tx_ready_t ; // Trigger value
+    reg rx_ready_   ;
+    reg rx_ready_t ;
     always @(posedge clk) begin
         // rx_ready pos edge trigger
         rx_ready_ <= RX_DV;
@@ -153,9 +162,9 @@ module mcp23s17_input (
     end
 
     // MCP23S17 Write Register
-    reg [3:0] tx_pos = 0;
-    reg [2:0] tx_wait_cnt = 0;
-    reg       tx_start = 0;
+    reg [3:0] tx_pos ;
+    // reg [2:0] tx_wait_cnt ;
+    reg       tx_start ;
     task write_mcp;
         input [7:0] reg_addr;
         input [7:0] cfg_value;
@@ -204,7 +213,7 @@ module mcp23s17_input (
                 // CS high for multiple clock cycles.
                 st_wait_cnt <= st_wait_cnt - 1;
                 if(st_wait_cnt == 0) begin
-                    st_done <= 1'b0; // Ack done
+                    // st_done <= 1'b0; // Ack done
                     mcp_state <= next_stage;
                 end else begin
                     st_wait <= 1'b1; // When we are not done stay in wait mode
@@ -214,11 +223,11 @@ module mcp23s17_input (
     endtask
 
     // MCP23S17 Read n registers
-    reg [4:0] rx_pos      = 0;
-    reg [2:0] rx_wait_cnt = 0;
-    reg       rx_wait     = 0;
-    reg       rx_ready_p  = 0;
-    reg       rx_start    = 0;
+    reg [4:0] rx_pos     ;
+    // reg [2:0] rx_wait_cnt;
+    // reg       rx_wait    ;
+    reg       rx_ready_p ;
+    reg       rx_start   ;
     task read_mcp;
         input   [7:0] reg_addr; // Address to start reading
         input   [4:0] num; // Number of values to read in sequence
@@ -278,8 +287,8 @@ module mcp23s17_input (
                         // When we are done, say so :-)
                         if(rx_pos >= (num + 2)) begin
                             cs <= 1'b1;
-                            rx_wait <= 1'b1;
-                            rx_wait_cnt <= 3'b111;
+                            // rx_wait <= 1'b1;
+                            // rx_wait_cnt <= 3'b111;
                             st_wait <= 1'b1;
                         end
                     end
@@ -291,7 +300,7 @@ module mcp23s17_input (
                 rx_pos <= 0;
                 st_wait_cnt <= st_wait_cnt - 1;
                 if(st_wait_cnt == 0) begin
-                    st_done <= 1'b0; // Ack done
+                    // st_done <= 1'b0; // Ack done
                     mcp_state <= next_stage;
                 end else begin
                     st_wait <= 1'b1; // When we are not done stay in wait mode
@@ -304,7 +313,7 @@ module mcp23s17_input (
         case (mcp_state)
             ST_IDLE: begin
                 mcp_state <= ST_SET_IODIRA;
-                st_done <= 0;
+                // st_done <= 0;
             end
             ST_SET_IOCON: begin
                 write_mcp(REG_ADR_IOCON, REG_VAL_IOCON, ST_WAITINT);

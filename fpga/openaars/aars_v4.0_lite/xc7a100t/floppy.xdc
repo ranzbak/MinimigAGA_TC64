@@ -30,19 +30,3 @@
 #set_property -dict {PACKAGE_PIN P13 IOSTANDARD LVTTL} [get_ports EXP_INDEX]
 # Disk write data (output)
 #set_property -dict {PACKAGE_PIN R15 IOSTANDARD LVTTL} [get_ports EXP_DKWDB]
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

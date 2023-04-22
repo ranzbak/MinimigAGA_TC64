@@ -12,3 +12,4 @@
 `define MINIMIG_HOST_DIRECT // The host can access memory directly, so doesn't need to upload over SPI
 `define MINIMIG_PARALLEL_AUDIO  // Use own sigma-delta for audio
 `define MINIMIG_I2C_BUS // Bus to control preferals from host CPU
+`define MINIMIG_RTC_BUS // SPI BUS TO RTC :w

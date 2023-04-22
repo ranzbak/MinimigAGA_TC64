@@ -7,13 +7,19 @@
 /********************************************/
 `include "minimig_defines.vh"
 
-`default_nettype none
+
 module minimig_openaars_top (
   // Crystal clock input
   input wire clk_50,
+  input wire clk_100_p,
+  input wire clk_100_n,
   // RS232
-  output wire uart3_txd, // rs232 txd
-  input  wire uart3_rxd, // rs232 rxd
+  output wire uart0_txd, // rs232 txd
+  input  wire uart0_rxd, // rs232 rxd
+  input  wire uart0_cts, // rs232 cts Clear to send
+  output wire uart0_rts, // rs232 rts Request to send
+  output wire uart1_txd, // rs232 txd
+  input  wire uart1_rxd, // rs232 rxd
   // SD card (SPI)
   output wire sd_m_clk,
   output wire sd_m_cmd,
@@ -22,6 +28,13 @@ module minimig_openaars_top (
   output wire sd_m_d2,
   output wire sd_m_d3,
   input  wire sd_m_cdet,
+  // RTC SPI
+  input wire rtc_int_n,
+  output wire rtc_spi_ce,
+  output wire rtc_spi_clk,
+  output wire rtc_spi_cmd,
+  input wire rtc_spi_data0,
+  input wire rtc_clkout,
   // SDRAM
   output wire dr_clk,
   output wire dr_cke,
@@ -62,35 +75,14 @@ module minimig_openaars_top (
   output wire max_i2s,
   // leds
   output wire led_core,
-  output wire led_power,
-  output wire led_fdisk,
   output wire led_hdisk,
   output wire led_user,
-  // Floppy interface
-  input wire exp_sel0,
-  input wire exp_sel1,
-  input wire exp_dir,
-  input wire exp_step,
-  input wire exp_chng,
-  input wire exp_index,
-  input wire exp_rdy,
-  input wire exp_dkrd,
-  input wire exp_trk0,
-  input wire exp_dkwdb,
-  input wire exp_dkweb,
-  input wire exp_side,
+  output wire led_power,
+  output wire led_fdisk,
   // Board button input
   (* mark_debug = "true" *)
   input wire button_reset_n_in,
-  input wire button_user_in,
-  input wire button_osd_in,
-  // pmod
-  output wire pmod_12,
-  output wire pmod_1,
-  output wire pmod_11,
-  output wire pmod_2,
-  output wire pmod_9,
-  output wire pmod_10
+  input wire button_osd_in
 );
 
   ////////////////////////////////////////
@@ -98,7 +90,7 @@ module minimig_openaars_top (
   ////////////////////////////////////////
 
   // Clock
-  wire        clk_in;
+  // wire        clk_in;
   wire        clk_28;
   wire        clk_114;
   wire        clk_148;
@@ -120,6 +112,8 @@ module minimig_openaars_top (
   wire        ctrl_rx;
   wire        amiga_tx;
   wire        amiga_rx;
+  wire        amiga_rts;
+  wire        amiga_cts;
 
   // Video interface
   wire        vga_pixel;
@@ -164,7 +158,7 @@ module minimig_openaars_top (
   wire        ps2_mclk_o;
 
   // keyboard
-  wire [7:0]  amiga_key;
+  // wire [7:0]  amiga_key;
 
   // Joystick/mouse input
   wire [6:0]  joya;
@@ -193,7 +187,7 @@ module minimig_openaars_top (
   // Display scaler
   wire [15:0] vpos_data;
 
-  // Floppy /HD activity 
+  // Floppy /HD activity
   wire  floppy_frd;
   wire  floppy_fwr;
   wire  hd_fwr;
@@ -209,6 +203,7 @@ module minimig_openaars_top (
   // LED
   assign led_power = ~led_fpower;
   assign led_fdisk  = ~led_disk;
+  assign led_user = sd_cs;
   assign led_hdisk = ~(hd_frd | hd_fwr);
   assign led_core  = ~(floppy_frd | floppy_fwr | hd_fwr | hd_frd);
 
@@ -237,44 +232,68 @@ module minimig_openaars_top (
   // HDMI CEC clock
   assign dv_cecclk  = clk_28;
 
-  // PMOD pins
-  // TODO: remove debug when done with video
-  assign pmod_10    = vga_vs;
-  assign pmod_9     = vga_hs;
-  assign pmod_2     = vga_cs;
-  assign pmod_11    = vga_pixel;
-
   // Sync button input to lowest clock
-  wire user_button;
-  wire osd_button;
-  wire reset_button_n;
+  wire button_osd_n;
+  wire button_reset_n;
   sync_buttons sync_buttons_i (
     .clk(clk_28),
     .sys_reset_n_in(button_reset_n_in),
-    .button_user_in(button_user_in),
     .button_osd_in(button_osd_in),
-    .user_button(user_button),
-    .osd_button(osd_button),
-    .reset_button_n(reset_button_n)
+    .osd_button(button_osd_n),
+    .reset_button_n(button_reset_n)
   );
 
-  // UART Either Amiga or Debug
-  //assign ctrl_rx = uart3_rxd;
-  //assign uart3_txd = ctrl_tx;
-  assign amiga_rx = uart3_rxd;
-  assign uart3_txd = amiga_tx;
+  // UART Either Debug
+  assign amiga_rx = uart0_rxd;
+  assign uart0_txd = amiga_tx;
+
+  // UART Either Amiga 
+  assign amiga_cts = uart0_cts;
+  assign uart0_rts = amiga_rts;
+  assign ctrl_rx = uart1_rxd;
+  assign uart1_txd = ctrl_tx;
 
   ////////////////////////////////////////
-  // HDMI Clock                         //
+  // HDMI Clock 74.25MHz                //
   ////////////////////////////////////////
+
+  // wire clk_100_l;
+  // wire clk_100_g;
+
+  // IBUFDS clk_100_ds (
+  //   .I(clk_100_p),
+  //   .IB(clk_100_n),
+  //   .O(clk_100_l)
+  // );
+
+  // BUFG clk_100_bufg (
+  //   .I(clk_100_l),
+  //   .O(clk_100_g)
+  // );
+
+  // // Test if the clock works
+  // reg led_user_r;
+
+  // always @(posedge clk_100_g) begin
+  //   if (reset_button_n == 1'b0) begin
+  //     led_user_r <= 1'b0;
+  //   end else begin
+  //     led_user_r <= 1'b1;
+  //   end
+  // end
+
+  // assign led_user = led_user_r;
+    
+
   MMCME2_ADV #(
   .BANDWIDTH("OPTIMIZED"),
-  .CLKFBOUT_MULT_F(23.0), // 1000  MHz
+  .CLKFBOUT_MULT_F(37.125), // 1000  MHz
   .CLKFBOUT_PHASE(0.000), // No offset
   .CLKIN1_PERIOD(20), // 50      MHz (20 ns)
-  .CLKOUT0_DIVIDE_F(7.75), // 148    MHz /4 divide
-  .DIVCLK_DIVIDE(1),
-  .REF_JITTER1(0.010)
+  .CLKOUT0_DIVIDE_F(6.25), // 148.5 MHz /4 divide
+  .DIVCLK_DIVIDE(2),
+  .REF_JITTER1(0.002),
+  .REF_JITTER2(0.010)
   ) clk_hdmi (
     .PWRDWN(1'b0),
     .RST(1'b0),
@@ -303,9 +322,11 @@ module minimig_openaars_top (
   gen_reset #(
   .resetCycles(524284)
   ) myReset (
-    .clk(clk_28), // Needs to be crystal clock 
+    .clk(clk_28), // Needs to be crystal clock
     .enable(1'b1),
-    .button(!reset_button_n), // pin is active low, module needs active high
+    .button(!button_reset_n), // pin is active low, module needs active high
+    .initial_reset(),
+    .reset(),
     .nreset(reset_n)
   );
 
@@ -420,11 +441,13 @@ module minimig_openaars_top (
     .RESET_N(reset_n),
     .LED_POWER(led_fpower),
     .LED_DISK(led_disk),
-    .MENU_BUTTON(user_button),
+    .MENU_BUTTON(button_osd_n),
     .CTRL_TX(ctrl_tx),
     .CTRL_RX(ctrl_rx),
     .AMIGA_TX(amiga_tx),
     .AMIGA_RX(amiga_rx),
+    .AMIGA_RTS(amiga_rts),
+    .AMIGA_CTS(amiga_cts),
     .VGA_PIXEL(vga_pixel),
     .VGA_SELCS(vga_selcs),
     .VGA_CS(vga_cs),
@@ -456,9 +479,9 @@ module minimig_openaars_top (
     .PS2_MDAT_O(ps2_mdat_o),
     .PS2_MCLK_O(ps2_mclk_o),
     .AMIGA_RESET_N(reset_n),
-    .AMIGA_KEY(),
+    // .AMIGA_KEY(),
     .AMIGA_KEY_STB(amiga_key_stb),
-    .C64_KEYS(64'hFEDCBA9876543210), // What for ??
+    // .C64_KEYS(64'hFEDCBA9876543210), // What for ??
     .JOYA(joya),
     .JOYB(joyb),
     .JOYC(),

@@ -96,12 +96,3 @@ set_output_delay -clock [get_clocks clk_114] -min -0.800 [get_ports [get_ports {
 
 # TODO: check if correct - don't care for dr_clk
 set_false_path -from [get_pins openaars_virtual_top/amiga_clk/amiga_clk_i/clk_main/CLKOUT1] -to [get_ports dr_clk]
-
-
-
-
-
-
-
-
-

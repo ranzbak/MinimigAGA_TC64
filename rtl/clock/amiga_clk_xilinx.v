@@ -3,112 +3,70 @@
 
 
 module amiga_clk_xilinx (
-  input  wire areset,
-  input  wire inclk0,
-  output wire c0,
-  output wire c1,
-  output wire c2,
-  output wire locked
+    input  wire areset,
+    input  wire inclk0,
+    output wire c0,
+    output wire c1,
+    output wire c2,
+    output wire locked
 );
 
 
-  // internal wires
-  wire pll_114;
-  wire dll_114;
-  wire dll_28;
-  wire clk_fb_main;
-  reg [1:0] clk_7 = 0;
+    // internal wires
+    wire pll_114;
+    wire dll_114;
+    wire dll_28;
+    wire clk_fb_main;
+    wire locked_async;
+    // Synchonize the PLL locked signal to the dll_114 clock
+    (* ASYNC_REG = "TRUE" *) reg [1:0] locked_sync_reg;
+    // reg [1:0] clk_7;
 
-  MMCME2_BASE #(
-  .CLKIN1_PERIOD(20.0), // 50        MHz (20 ns)
-  .CLKFBOUT_MULT_F(45.375), // 50 MHz  * <this value> = common multiply
-  .DIVCLK_DIVIDE(2), // <common multiply>  MHz / <this value> =  common divided frequency
-  .BANDWIDTH("OPTIMIZED"),
-  .CLKOUT0_DIVIDE_F(10.000), // 113.4375 MHz /10 divide
-  .CLKOUT1_DIVIDE(10), // 113.4375 MHz /10 divide
-  .CLKOUT1_PHASE(-144.0), // -144.00' phase shift
-  .CLKOUT2_DIVIDE(40), // 28.35938  MHz /40 divide
-  .REF_JITTER1(0.010),
-  .STARTUP_WAIT("TRUE")
-  // .REF_JITTER2(0.010),
-  // .COMPENSATION("ZHOLD")
-  ) clk_main (
-    .PWRDWN(1'b0),
-    .RST(1'b0),
-    .CLKIN1(inclk0),
-    .CLKFBIN(clk_fb_main),
-    .CLKFBOUT(clk_fb_main),
-    .CLKOUT0(dll_114), //  114 MHz SDRAM clock
-    .CLKOUT1(pll_114),
-    .CLKOUT2(dll_28),
-    .LOCKED(locked_async)
-  );
+    initial begin
+        locked_sync_reg = 2'b11;
+        // clk_7 = 2'b0;
+    end
+
+    MMCME2_ADV #(
+    .CLKIN1_PERIOD(20.0), // 50        MHz (20 ns)
+    .CLKFBOUT_MULT_F(45.375), // 50 MHz  * <this value> = common multiply
+    .DIVCLK_DIVIDE(2), // <common multiply>  MHz / <this value> =  common divided frequency
+    .BANDWIDTH("OPTIMIZED"),
+    .CLKOUT0_DIVIDE_F(10.000), // 113.4375 MHz /10 divide
+    .CLKOUT1_DIVIDE(10), // 113.4375 MHz /10 divide
+    .CLKOUT1_PHASE(-144.0), // -144.00' phase shift
+    .CLKOUT2_DIVIDE(40), // 28.35938  MHz /40 divide
+    .REF_JITTER1(0.010),
+    .STARTUP_WAIT("TRUE")
+    // .REF_JITTER2(0.010),
+    // .COMPENSATION("ZHOLD")
+    ) clk_main (
+        .PWRDWN(1'b0),
+        .RST(1'b0),
+        .CLKIN1(inclk0),
+        .CLKFBIN(clk_fb_main),
+        .CLKFBOUT(clk_fb_main),
+        .CLKOUT0(dll_114), //  114 MHz SDRAM clock
+        .CLKOUT1(pll_114),
+        .CLKOUT2(dll_28),
+        .LOCKED(locked_async)
+    );
 
 
-  // Synchonize the PLL locked signal to the dll_114 clock
-  reg [1:0] locked_sync_reg = 2'b11;
-  always @(posedge dll_114) begin
-    locked_sync_reg <= {locked_sync_reg[0], locked_async};
-  end
-  assign locked = locked_sync_reg[1];
+    always @(posedge dll_114) begin
+        locked_sync_reg <= {locked_sync_reg[0], locked_async};
+    end
+    assign locked = locked_sync_reg[1];
 
+    // always @ (posedge c1) begin
+    //     clk_7 <= #1 clk_7 + 2'd1;
+    // end
 
-  // // pll
-  // DCM #(
-  //   .CLKDV_DIVIDE(2.0), // Divide by: 1.5,2.0,2.5,3.0,3.5,4.0,4.5,5.0,5.5,6.0,6.5,7.0,7.5,8.0,9.0,10.0,11.0,12.0,13.0,14.0,15.0 or 16.0
-  //   .CLKFX_DIVIDE(17),   // Can be any integer from 1 to 32
-  //   .CLKFX_MULTIPLY(29), // Can be any integer from 2 to 32
-  //   .CLKIN_DIVIDE_BY_2("FALSE"), // TRUE/FALSE to enable CLKIN divide by two feature
-  //   .CLKIN_PERIOD(15.015),  // Specify period of input clock
-  //   .CLKOUT_PHASE_SHIFT("NONE"), // Specify phase shift of NONE, FIXED or VARIABLE
-  //   .CLK_FEEDBACK("NONE"),  // Specify clock feedback of NONE, 1X or 2X
-  //   .DESKEW_ADJUST("SYSTEM_SYNCHRONOUS"), // SOURCE_SYNCHRONOUS, SYSTEM_SYNCHRONOUS or an integer from 0 to 15
-  //   .DFS_FREQUENCY_MODE("LOW"),  // HIGH or LOW frequency mode for frequency synthesis
-  //   .DLL_FREQUENCY_MODE("LOW"),  // HIGH or LOW frequency mode for DLL
-  //   .DUTY_CYCLE_CORRECTION("TRUE"), // Duty cycle correction, TRUE or FALSE
-  //   .FACTORY_JF(16'h8080),   // FACTORY JF values
-  //   .PHASE_SHIFT(0),     // Amount of fixed phase shift from -255 to 255
-  //   .STARTUP_WAIT("TRUE")   // Delay configuration DONE until DCM LOCK, TRUE/FALSE
-  // ) pll (
-  //   .CLKIN(inclk0),   // Clock input (from IBUFG, BUFG or DCM)
-  //   .CLKFX(pll_114)   // DCM CLK synthesis out (M/D) (113.611765 MHz)
-  // );
-  // 
-  // // dll
-  // DCM #(
-  //   .CLKDV_DIVIDE(4.0), // Divide by: 1.5,2.0,2.5,3.0,3.5,4.0,4.5,5.0,5.5,6.0,6.5,7.0,7.5,8.0,9.0,10.0,11.0,12.0,13.0,14.0,15.0 or 16.0
-  //   .CLKFX_DIVIDE(1),   // Can be any integer from 1 to 32
-  //   .CLKFX_MULTIPLY(4), // Can be any integer from 2 to 32
-  //   .CLKIN_DIVIDE_BY_2("FALSE"), // TRUE/FALSE to enable CLKIN divide by two feature
-  //   .CLKIN_PERIOD(8.802),  // Specify period of input clock
-  //   .CLKOUT_PHASE_SHIFT("FIXED"), // Specify phase shift of NONE, FIXED or VARIABLE
-  //   .CLK_FEEDBACK("1X"),  // Specify clock feedback of NONE, 1X or 2X
-  //   .DESKEW_ADJUST("SYSTEM_SYNCHRONOUS"), // SOURCE_SYNCHRONOUS, SYSTEM_SYNCHRONOUS or an integer from 0 to 15
-  //   .DFS_FREQUENCY_MODE("LOW"),  // HIGH or LOW frequency mode for frequency synthesis
-  //   .DLL_FREQUENCY_MODE("LOW"),  // HIGH or LOW frequency mode for DLL
-  //   .DUTY_CYCLE_CORRECTION("TRUE"), // Duty cycle correction, TRUE or FALSE
-  //   .FACTORY_JF(16'h8080),   // FACTORY JF values
-  //   .PHASE_SHIFT(104),     // Amount of fixed phase shift from -255 to 255 -- 145' Shift
-  //   .STARTUP_WAIT("TRUE")   // Delay configuration DONE until DCM LOCK, TRUE/FALSE
-  // ) dll (
-  //   .RST(areset),
-  //   .CLKIN(pll_114),   // Clock input (from IBUFG, BUFG or DCM)
-  //   .CLK0(dll_114),
-  //   .CLKDV(dll_28),
-  //   .CLKFB(c0),
-  //   .LOCKED(locked)
-  // );
-
-  // 7MHz clock
-  always @ (posedge c1) begin
-    clk_7 <= #1 clk_7 + 2'd1;
-  end
-
-  // global clock buffers
-  BUFG  BUFG_114 (.I(dll_114),  .O(c0));
-  BUFG  BUFG_28  (.I(dll_28),   .O(c1));
-  BUFG  BUFG_SDR (.I(pll_114),  .O(c2));
-  //BUFG  BUFG_7   (.I(clk_7[1]), .O(c3));
+    // global clock buffers
+    BUFG  BUFG_114 (.I(dll_114),  .O(c0));
+    BUFG  BUFG_28  (.I(dll_28),   .O(c1));
+    BUFG  BUFG_SDR (.I(pll_114),  .O(c2));
+    //BUFG  BUFG_7   (.I(clk_7[1]), .O(c3));
 
 
 endmodule
