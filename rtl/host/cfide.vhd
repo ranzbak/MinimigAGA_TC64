@@ -143,13 +143,13 @@ architecture rtl of cfide is
 
     signal reset : std_logic;
 
-    attribute MARK_DEBUG : string;
-    attribute MARK_DEBUG of pos_data_q : signal is "TRUE";
-    attribute MARK_DEBUG of d : signal is "TRUE";
-    attribute MARK_DEBUG of req : signal is "TRUE";
-    attribute MARK_DEBUG of videoscl_select : signal is "TRUE";
-    attribute MARK_DEBUG of wr : signal is "TRUE";
-    attribute MARK_DEBUG of addr : signal is "TRUE";
+-- attribute MARK_DEBUG : string;
+-- attribute MARK_DEBUG of pos_data_q : signal is "TRUE";
+-- attribute MARK_DEBUG of d : signal is "TRUE";
+-- attribute MARK_DEBUG of req : signal is "TRUE";
+-- attribute MARK_DEBUG of videoscl_select : signal is "TRUE";
+-- attribute MARK_DEBUG of wr : signal is "TRUE";
+-- attribute MARK_DEBUG of addr : signal is "TRUE";
 
 begin
 
@@ -190,10 +190,10 @@ begin
 
     audio_q <= X"000" & "00" & audio_amiga & audio_buf;
 
-    SPI_select       <= '1' when addr(23) = '1' and addr(7 downto 4) = X"E" ELSE '0';
-    rs232_select     <= '1' when addr(23) = '1' and addr(7 downto 4) = X"F" ELSE '0';
-    timer_select     <= '1' when addr(23) = '1' and addr(7 downto 4) = X"D" ELSE '0';
-    platform_select  <= '1' when addr(23) = '1' and addr(7 downto 4) = X"C" ELSE '0';
+    SPI_select       <= '1' when addr(23) = '1' and addr(7 downto 4) = X"E" else '0';
+    rs232_select     <= '1' when addr(23) = '1' and addr(7 downto 4) = X"F" else '0';
+    timer_select     <= '1' when addr(23) = '1' and addr(7 downto 4) = X"D" else '0';
+    platform_select  <= '1' when addr(23) = '1' and addr(7 downto 4) = X"C" else '0';
     audio_select     <= '1' when addr(23) = '1' and addr(7 downto 4) = X"B" else '0';
     interrupt_select <= '1' when addr(23) = '1' and addr(7 downto 4) = X"A" else '0';
     keyboard_select  <= '1' when addr(23) = '1' and addr(7 downto 4) = X"9" else '0';
@@ -514,7 +514,7 @@ begin
         --   my_i2c_master: entity work.i2c_master port map (
         my_i2c_mmio : entity work.i2c_master_mmio
             port map(
-                clk              => clk_28,
+                clk              => sysclk,
                 rst              => reset,
                 d                => d,
                 q                => I2Cdata,

@@ -32,7 +32,7 @@ set_input_jitter clk_100_p 0.002
 
 # Differential pair constraints
 # set_property -dict {IOSTANDARD LVDS_25 DIFF_TERM TRUE}  [get_ports {clk_100_p clk_100_n}]
-set_property -dict {IOSTANDARD LVTTL}  [get_ports {clk_100_p clk_100_n}]
+set_property -dict {IOSTANDARD LVTTL} [get_ports {clk_100_p clk_100_n}]
 
 # Set the input clock jitter
 set_input_jitter clk_100_p 0.002
@@ -40,4 +40,5 @@ set_input_jitter clk_100_p 0.002
 # Rename the hdmi clock outputs
 create_generated_clock -name clk_148 -master_clock [get_clocks clk_50] [get_pins clk_hdmi/CLKOUT0]
 set_clock_groups -asynchronous -group [get_clocks clk_148] -group [get_clocks VIRTUAL_clk_148]
+
 

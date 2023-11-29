@@ -19,29 +19,29 @@
 //
 //////////////////////////////////////////////////////////////////////////////////
 module pal_to_ddr(
-  input clk_148,
-  input clk_114,
-  input reset,
-  // VGA input
-  input vga_clk_pixel,
-  // Pal input
-  input i_pal_hsync,
-  input i_pal_vsync,
-  input [7:0] i_pal_r,
-  input [7:0] i_pal_g,
-  input [7:0] i_pal_b,
-  // Offset
-  input [7:0] i_hoffset,
-  input [7:0] i_voffset,
-  // RTG
-  input       i_rtg_enable,
-  // OUTPUT
-  output o_clk_pixel, // Output pixel clock after synchronization to clk_ddr
-  output o_de, // Data enable signal
-  output o_vsync,
-  output o_hsync,
-  output [11:0] o_data // DDR data stream out
-);
+    input clk_148,
+    input clk_114,
+    input reset,
+    // VGA input
+    input vga_clk_pixel,
+    // Pal input
+    input i_pal_hsync,
+    input i_pal_vsync,
+    input [7:0] i_pal_r,
+    input [7:0] i_pal_g,
+    input [7:0] i_pal_b,
+    // Offset
+    input [7:0] i_hoffset,
+    input [7:0] i_voffset,
+    // RTG
+    input       i_rtg_enable,
+    // OUTPUT
+    output o_clk_pixel, // Output pixel clock after synchronization to clk_ddr
+    output o_de, // Data enable signal
+    output o_vsync,
+    output o_hsync,
+    output [11:0] o_data // DDR data stream out
+  );
   // Generated RGB values
   wire [7:0] w_r;
   wire [7:0] w_g;
@@ -133,12 +133,11 @@ module pal_to_ddr(
   wire [$clog2(100):0] cur_fps;
   wire                 fps_valid;
   reg                  r_50hz = 1'b0;
-  reg                  r_60hz = 1'b0;
   frame_freq myfreq(
     .clk(clk_148),
     .reset(reset),
     .i_vsync(w_pal_vsync),
-    .o_freq(cur_fps), // 7 bits frequency, 2 bits fraction
+    .o_freq(cur_fps[6:0]), // 7 bits frequency, 2 bits fraction
     .o_valid(fps_valid) //
   );
 
@@ -146,17 +145,12 @@ module pal_to_ddr(
   always @(posedge clk_148)
   begin
     r_50hz <= 1'b0;
-    r_60hz <= 1'b0;
     if (fps_valid == 1'b1)
     begin
       if (cur_fps < 53)
-        begin
-          r_50hz <= 1'b1;
-        end
-      else
-        begin
-          r_60hz <= 1'b1;
-        end
+      begin
+        r_50hz <= 1'b1;
+      end
     end
   end
 
@@ -191,8 +185,8 @@ module pal_to_ddr(
   // 'h80 -> 4cm -> right border
   // 'h00 -> 8cm -> right border
   pal_to_hd_upsample #(
-  .PAL_HD_H_RES(1685),
-  .PAL_OFFSET_HZ('hd0)
+    .PAL_HD_H_RES(1685),
+    .PAL_OFFSET_HZ('hd0)
   ) my50hzupsample(
     .clk_in(clk_114),
     .clk_out(clk_148),
@@ -222,14 +216,14 @@ module pal_to_ddr(
 
   // Generate the 720p Hsync and Vsync signals
   signal_generator #(
-  .PAL_HZ_ACT_PIX(1280),
-  .PAL_HZ_FRONT_PORCH(440),
-  .PAL_HZ_SYNC_WIDTH(40),
-  .PAL_HZ_BACK_PORCH(220),
-  .PAL_VT_ACT_LN(720),
-  .PAL_VT_FRONT_PORCH(5),
-  .PAL_VT_SYNC_WIDTH(5),
-  .PAL_VT_BACK_PORCH(20)
+    .PAL_HZ_ACT_PIX(1280),
+    .PAL_HZ_FRONT_PORCH(440),
+    .PAL_HZ_SYNC_WIDTH(40),
+    .PAL_HZ_BACK_PORCH(220),
+    .PAL_VT_ACT_LN(720),
+    .PAL_VT_FRONT_PORCH(5),
+    .PAL_VT_SYNC_WIDTH(5),
+    .PAL_VT_BACK_PORCH(20)
   ) hd_50hz_gen(
     .clk(clk_148),
     .reset(reset),
@@ -252,7 +246,7 @@ module pal_to_ddr(
 
   // Upscale the video signal using a line buffer
   pal_to_hd_upsample #(
-  .PAL_HD_H_RES(1980) // Total pixels in a line
+    .PAL_HD_H_RES(1980) // Total pixels in a line
   ) my60hzupsample (
     .clk_out(clk_148),
     .clk_in(clk_114),
@@ -282,14 +276,14 @@ module pal_to_ddr(
 
   // Generate the 720p Hsync and Vsync signals
   signal_generator #(
-  .PAL_HZ_ACT_PIX(1280),
-  .PAL_HZ_FRONT_PORCH(110),
-  .PAL_HZ_SYNC_WIDTH(40),
-  .PAL_HZ_BACK_PORCH(220),
-  .PAL_VT_ACT_LN(720),
-  .PAL_VT_FRONT_PORCH(5),
-  .PAL_VT_SYNC_WIDTH(5),
-  .PAL_VT_BACK_PORCH(20)
+    .PAL_HZ_ACT_PIX(1280),
+    .PAL_HZ_FRONT_PORCH(110),
+    .PAL_HZ_SYNC_WIDTH(40),
+    .PAL_HZ_BACK_PORCH(220),
+    .PAL_VT_ACT_LN(720),
+    .PAL_VT_FRONT_PORCH(5),
+    .PAL_VT_SYNC_WIDTH(5),
+    .PAL_VT_BACK_PORCH(20)
   ) hd_60hz_gen (
     .clk(clk_148),
     .reset(reset),
@@ -313,29 +307,29 @@ module pal_to_ddr(
 
   // Switch between 50 and 60 Hz video conversion
   assign w_adv_clk  =
-  (r_50hz ? w_50_adv_clk : w_60_adv_clk);
+    (r_50hz ? w_50_adv_clk : w_60_adv_clk);
   assign w_hd_vsync =
-  (r_50hz ? w_50_hd_vsync : w_60_hd_vsync);
+    (r_50hz ? w_50_hd_vsync : w_60_hd_vsync);
   assign w_hd_hsync =
-  (r_50hz ? w_50_hd_hsync : w_60_hd_hsync);
+    (r_50hz ? w_50_hd_hsync : w_60_hd_hsync);
   assign w_vsync   =
-  (r_50hz ? w_50_vsync : w_60_vsync);
+    (r_50hz ? w_50_vsync : w_60_vsync);
   assign w_o_r     =
-  (r_50hz ? w_50_o_r : w_60_o_r);
+    (r_50hz ? w_50_o_r : w_60_o_r);
   assign w_o_g     =
-  (r_50hz ? w_50_o_g : w_60_o_g);
+    (r_50hz ? w_50_o_g : w_60_o_g);
   assign w_o_b     =
-  (r_50hz ? w_50_o_b : w_60_o_b);
+    (r_50hz ? w_50_o_b : w_60_o_b);
 
   // ADV DDR output
   adv_ddr #(
-  .PX_TO_DE(280),
-  .PX_ACT_DE(1280),
-  .PX_TOTAL(1980),
+    .PX_TO_DE(280),
+    .PX_ACT_DE(1280),
+    .PX_TOTAL(1980),
 
-  .PY_TO_DE(5),
-  .ACT_720P(720),
-  .V_LINES_TOTAL(750)
+    .PY_TO_DE(5),
+    .ACT_720P(720),
+    .V_LINES_TOTAL(750)
   ) myadr_ddr (
     // INPUT
     .clk_out(clk_148), // DDR clock at 4xpixel clock

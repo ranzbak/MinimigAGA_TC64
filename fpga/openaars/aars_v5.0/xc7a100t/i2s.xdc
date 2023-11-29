@@ -16,3 +16,4 @@ set_property -dict {PACKAGE_PIN P5 IOSTANDARD LVTTL} [get_ports max_i2s]
 
 
 
+

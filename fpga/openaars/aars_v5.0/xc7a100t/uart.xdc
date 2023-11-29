@@ -25,3 +25,4 @@ set_false_path -to [get_ports {uart0_txd uart0_rts uart1_txd uart1_rts}]
 
 
 
+
