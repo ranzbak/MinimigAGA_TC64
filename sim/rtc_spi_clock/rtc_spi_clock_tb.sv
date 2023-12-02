@@ -124,7 +124,7 @@ assign cpu_address = addr_counter;
 // End simulation at 1000 clock cycles
 initial begin
     // Simulation run for a specific time
-    #(100000 * CLK_PERIOD_28MHZ);
+    #(500000 * CLK_PERIOD_28MHZ);
 
     // Finish simulation
     $finish;

@@ -47,14 +47,22 @@ module rtc_spi_clock #(
 wire         rtc_spi_clk_w;
 
 // OKI write state signals
+(* MARK_DEBUG = "true" *)
 wire         oki_write_dirty;
+(* MARK_DEBUG = "true" *)
 logic        oki_clear_dirty;
 // wire        oki_hold;
+(* MARK_DEBUG = "true" *)
 logic [3:0]  pcf_addr;
+(* MARK_DEBUG = "true" *)
 logic [7:0]  pcf_rx_data;
+(* MARK_DEBUG = "true" *)
 wire  [7:0]  pcf_tx_data;
+(* MARK_DEBUG = "true" *)
 logic        pcf_dv;
-logic        pcf_wr;
+(* MARK_DEBUG = "true" *)
+logic        pcf_wr_n;
+(* MARK_DEBUG = "true" *)
 logic        pcf_latch;
 
 // SPI control registers
@@ -131,9 +139,8 @@ end
 assign cnt_read_pcf_next = (cnt_read_pcf + 1);
 
 // Synchronize the interrupt input
-  (* keep = "true" *)
+  (* ASYNC_REG = "true" *)
 logic [1:0] rtc_int_n_sync;
-(* keep = "true" *)
 wire [1:0] rtc_int_n_sync_next;
 always_ff @(posedge clk) begin
   if (reset == 1'b1) begin
@@ -170,7 +177,7 @@ oki_pcf_buffer my_oki_buffer (
   .pcf_rx_data    (pcf_rx_data),
   .pcf_tx_data    (pcf_tx_data),
   .pcf_dv         (pcf_dv),
-  .pcf_wr         (pcf_wr),
+  .pcf_wr_n         (pcf_wr_n),
   .pcf_latch      (pcf_latch)         // Latch written data to active buffer
 );
 
@@ -270,7 +277,7 @@ typedef enum {
   STATE_WRITE_5
 } pcf_fsm_state_t;
 
-(* fsm_encoding = "one_hot" *) // Set FSM state encoding
+(* fsm_encoding = "one_hot", MARK_DEBUG = "true" *) // Set FSM state encoding
 pcf_fsm_state_t pcf_fsm_state;
 
 // PCF2123 CONTROL COMMANDS
@@ -326,7 +333,7 @@ always_ff @(posedge clk) begin
     oki_clear_dirty <= 1'b0;
     pcf_addr <= 4'h0;
     pcf_dv <= 1'b0;
-    pcf_wr <= 1'b1; // Read by default
+    pcf_wr_n <= 1'b1; // Read by default
     pcf_fsm_state <= STATE_RST_1;
     pcf_latch <= 1'b0;
     pcf_rx_data <= 8'h00;
@@ -436,12 +443,11 @@ always_ff @(posedge clk) begin
 
         // Make sure there is a little delay before starting the next transaction
 //          if (clk_out_tr == 1'b1) begin
-        // if (oki_write_dirty == 1'b1) begin
-        // When data is touched write it back
-        // pcf_fsm_state <= STATE_WRITE_0;
+        if (oki_write_dirty == 1'b1) begin
+          // When data is touched write it back
+          pcf_fsm_state <= STATE_WRITE_0;
         // end else if (rtc_int_n_sync[1] == 1'b0) begin
-        // end else if (tr_read_pcf == 1'b1) begin
-        if (tr_read_pcf == 1'b1) begin
+        end else if (tr_read_pcf == 1'b1) begin
           // When data is not touched just load updates from the chip
           rx_pos <= 4'h0;
           pcf_fsm_state <= STATE_READ_0;
@@ -465,45 +471,37 @@ always_ff @(posedge clk) begin
         if (tx_dv == 1'b1) begin
           tx_dv <= 1'b0; //
           state_next <= 1'b0;
-          pcf_fsm_state <= STATE_READ_3;
+          pcf_fsm_state <= STATE_READ_2;
+          tx_byte <= 8'h00; // Send 0 to start at address 0x0
         end
       end
       // Not used for now, because we need the first byte
       // TODO: Remove if not needed at all
-      // STATE_READ_2: begin
-      //   if (tx_ready_t == 1'b1) begin
-      //     //   state_next <= 1'b1;
-      //     // end
+      STATE_READ_2: begin
+        if (tx_ready_t == 1'b1) begin
+          // Skip the address byte in the buffer
+          tx_byte <= 8'h00;
+          tx_dv <= 1'b1;
+          state_next <= 1'b1;
+        end
 
-      //     // if (state_next & rtc_spi_clk_w == 1'b0) begin
-      //     tx_dv <= 1'b1; // send a 0x00 byte in order for the slave to end a byte back
-      //     tx_byte <= 8'h00;
+        if (state_next == 1'b1) begin
+          tx_dv <= 1'b0;
+          state_next <= 1'b0;
+          pcf_fsm_state <= STATE_READ_3;
+        end
 
-      //     // Skip the address byte in the buffer
-      //     state_next <= 1'b1;
-
-      //     // if (state_next == 1'b0) begin
-      //     //   tx_dv <= 1'b1;
-      //     // end
-
-      //     if (state_next == 1'b1) begin
-      //       tx_dv <= 1'b0;
-      //       state_next <= 1'b0;
-      //       pcf_fsm_state <= STATE_READ_3;
-      //     end
-
-      //   end
-      // end
+      end
       STATE_READ_3: begin
         tx_dv <= 1'b0;
         pcf_dv <= 1'b0;
 
         // When the read is ready store value
-        if (rx_ready_t) begin
+        if (rx_ready_t == 1'b1) begin
           state_next <= 1'b0;
           pcf_addr <= rx_pos;
           pcf_rx_data <= rx_byte;
-          pcf_wr <= 1'b0;
+          pcf_wr_n <= 1'b0;
           pcf_dv <= 1'b1;
           // Setup for next value
           rx_pos <= rx_pos_next;
@@ -578,7 +576,7 @@ always_ff @(posedge clk) begin
         tx_byte <= 8'h00;
 
         // Prepare to read the next value from the PCF2123
-        pcf_wr <= 1'b1; // Write
+        pcf_wr_n <= 1'b1; // Write
         pcf_addr <= tx_pos;
         // Send the register values to the PCF2123
         if (rx_ready_t == 1'b1) begin

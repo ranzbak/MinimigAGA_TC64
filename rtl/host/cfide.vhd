@@ -143,13 +143,13 @@ architecture rtl of cfide is
 
     signal reset : std_logic;
 
-    attribute MARK_DEBUG : string;
-    attribute MARK_DEBUG of pos_data_q : signal is "TRUE";
-    attribute MARK_DEBUG of d : signal is "TRUE";
-    attribute MARK_DEBUG of req : signal is "TRUE";
-    attribute MARK_DEBUG of videoscl_select : signal is "TRUE";
-    attribute MARK_DEBUG of wr : signal is "TRUE";
-    attribute MARK_DEBUG of addr : signal is "TRUE";
+-- attribute MARK_DEBUG : string;
+-- attribute MARK_DEBUG of pos_data_q : signal is "TRUE";
+-- attribute MARK_DEBUG of d : signal is "TRUE";
+-- attribute MARK_DEBUG of req : signal is "TRUE";
+-- attribute MARK_DEBUG of videoscl_select : signal is "TRUE";
+-- attribute MARK_DEBUG of wr : signal is "TRUE";
+-- attribute MARK_DEBUG of addr : signal is "TRUE";
 
 begin
 

@@ -25,7 +25,7 @@ module oki_pcf_buffer (
   input  wire [3:0] pcf_addr,
   input  wire [7:0] pcf_rx_data,
   output logic [7:0] pcf_tx_data,
-  input  wire       pcf_wr,            // low is write
+  input  wire       pcf_wr_n,            // low is write
   input  wire       pcf_dv,            // active high
   input  wire       pcf_latch          // Latch written data to active buffer
 );
@@ -156,13 +156,13 @@ always @(posedge clk) begin
     end
   end else begin
     // Write to the PCF registers
-    if (pcf_dv == 1'b1 && pcf_wr == 1'b0) begin
+    if (pcf_dv == 1'b1 && pcf_wr_n == 1'b0) begin
       pcf_refresh_reg[pcf_addr] <= pcf_rx_data;
     end
 
     // Read from the PCF registers
     // Latched when the oki_clear_dirty strobe is given
-    if (pcf_wr == 1'b1) begin
+    if (pcf_wr_n == 1'b1) begin
       pcf_tx_data <= pcf_tx_reg[pcf_addr];
     end
   end

@@ -80,7 +80,7 @@ module minimig_openaars_top (
   output wire led_power,
   output wire led_fdisk,
   // Board button input
-  (* mark_debug = "true" *)
+  // (* mark_debug = "true" *)
   input wire button_reset_n_in,
   input wire button_osd_in
 );
@@ -99,7 +99,7 @@ wire        pll_locked_main;
 wire        pll_locked_minimig;
 
 // Reset
-(* mark_debug = "true" *)
+// (* mark_debug = "true" *)
 wire        reset_n;
 wire        amiga_key_stb;
 
