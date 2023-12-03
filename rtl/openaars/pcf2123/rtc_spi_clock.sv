@@ -47,24 +47,15 @@ module rtc_spi_clock #(
 wire         rtc_spi_clk_w;
 
 // OKI write state signals
-(* MARK_DEBUG = "true" *)
 wire         oki_write_dirty;
-(* MARK_DEBUG = "true" *)
 logic        oki_clear_dirty;
-(* MARK_DEBUG = "true" *)
 logic        oki_write_valid;
 // wire        oki_hold;
-(* MARK_DEBUG = "true" *)
 logic [3:0]  pcf_addr;
-(* MARK_DEBUG = "true" *)
 logic [7:0]  pcf_rx_data;
-(* MARK_DEBUG = "true" *)
 wire  [7:0]  pcf_tx_data;
-(* MARK_DEBUG = "true" *)
 logic        pcf_dv;
-(* MARK_DEBUG = "true" *)
 logic        pcf_wr_n;
-(* MARK_DEBUG = "true" *)
 logic        pcf_latch;
 
 // SPI control registers
@@ -281,7 +272,7 @@ typedef enum {
   STATE_WRITE_5
 } pcf_fsm_state_t;
 
-(* fsm_encoding = "one_hot", MARK_DEBUG = "true" *) // Set FSM state encoding
+(* fsm_encoding = "one_hot" *) // Set FSM state encoding
 pcf_fsm_state_t pcf_fsm_state;
 
 // PCF2123 CONTROL COMMANDS

@@ -200,28 +200,6 @@ architecture behave_i2c_sender of i2c_sender is
     others => (addr => x"ff", reg => x"ff", val => x"ff") -- 25 FFFF end of sequence
   );
 
--- ATTRIBUTE MARK_DEBUG : string;
--- ATTRIBUTE MARK_DEBUG of send_state: SIGNAL IS "TRUE";
--- ATTRIBUTE MARK_DEBUG of cmd_read: SIGNAL IS "TRUE";
--- ATTRIBUTE MARK_DEBUG of cmd_ready: SIGNAL IS "TRUE";
--- ATTRIBUTE MARK_DEBUG of cmd_start: SIGNAL IS "TRUE";
--- ATTRIBUTE MARK_DEBUG of cmd_stop: SIGNAL IS "TRUE";
--- ATTRIBUTE MARK_DEBUG of cmd_valid: SIGNAL IS "TRUE";
--- ATTRIBUTE MARK_DEBUG of cmd_write: SIGNAL IS "TRUE";
--- ATTRIBUTE MARK_DEBUG of cmd_write_multiple: SIGNAL IS "TRUE";
--- ATTRIBUTE MARK_DEBUG of data_in: SIGNAL IS "TRUE";
--- ATTRIBUTE MARK_DEBUG of data_in_valid: SIGNAL IS "TRUE";
--- ATTRIBUTE MARK_DEBUG of data_in_ready: SIGNAL IS "TRUE";
--- ATTRIBUTE MARK_DEBUG of data_in_last: SIGNAL IS "TRUE";
--- ATTRIBUTE MARK_DEBUG of data_out: SIGNAL IS "TRUE";
--- ATTRIBUTE MARK_DEBUG of data_out_valid: SIGNAL IS "TRUE";
--- ATTRIBUTE MARK_DEBUG of data_out_ready: SIGNAL IS "TRUE";
--- ATTRIBUTE MARK_DEBUG of data_out_last: SIGNAL IS "TRUE";
--- ATTRIBUTE MARK_DEBUG of scl_i: SIGNAL IS "TRUE";
--- ATTRIBUTE MARK_DEBUG of scl_o: SIGNAL IS "TRUE";
--- ATTRIBUTE MARK_DEBUG of sda_i: SIGNAL IS "TRUE";
--- ATTRIBUTE MARK_DEBUG of sda_o: SIGNAL IS "TRUE";
-
 begin
 
   my_i2c_master : entity work.i2c_master
