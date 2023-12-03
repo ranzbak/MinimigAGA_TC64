@@ -23,21 +23,21 @@
 // Gary handles kickstart area and bootrom overlay
 // Gary handles CIA e clock synchronization
 //
-// 20-12-2005	- started coding
-// 21-12-2005	- done more coding
-// 25-12-2005	- changed blitter nasty handling
-// 15-01-2006	- fixed sensitivity list
-// 12-11-2006	- debugging for new Minimig rev1.0 board
-// 17-11-2006	- removed debugging and added decode for $C0000 ram
+// 20-12-2005   - started coding
+// 21-12-2005   - done more coding
+// 25-12-2005   - changed blitter nasty handling
+// 15-01-2006   - fixed sensitivity list
+// 12-11-2006   - debugging for new Minimig rev1.0 board
+// 17-11-2006   - removed debugging and added decode for $C0000 ram
 // ----------
 // JB:
-// 2008-10-06	- added decoders for IDE and GAYLE register range
-// 2008-10-15	- signal name change cpuok -> dbr
-// 2009-05-23	- better timing model for CIA interface
-// 2009-05-24	- clean-up & renaming
-// 2009-05-25	- ram, cpu and custom chips bus multiplexer
-// 2009-09-01	- fixed sel_kick
-// 2010-08-15	- clean-up
+// 2008-10-06   - added decoders for IDE and GAYLE register range
+// 2008-10-15   - signal name change cpuok -> dbr
+// 2009-05-23   - better timing model for CIA interface
+// 2009-05-24   - clean-up & renaming
+// 2009-05-25   - ram, cpu and custom chips bus multiplexer
+// 2009-09-01   - fixed sel_kick
+// 2010-08-15   - clean-up
 //
 // SB:
 // 2010-10-18 - added special memory config like in A500 Rev.6 with 512kb + 512kb of memory
@@ -48,56 +48,56 @@
 
 module gary
 (
-	input 	[23:1] cpu_address_in,	//cpu address bus input
-	input	[20:1] dma_address_in,	//agnus dma memory address input
-	output	[23:1] ram_address_out, //ram address bus output
-	input	[15:0] cpu_data_out,
-	output	[15:0] cpu_data_in,
-	input	[15:0] custom_data_out,
-	output	[15:0] custom_data_in,
-	input	[15:0] ram_data_out,
-	output	[15:0] ram_data_in,
-	input	a1k,
-	input	cpu_rd,					//cpu read
-	input	cpu_hwr,				//cpu high write
-	input	cpu_lwr,				//cpu low write
-	input	cpu_hwr2,				//cpu high write 2nd word
-	input	cpu_lwr2,				//cpu low write 2nd word
-	input	cpu_hlt,
+	input   [23:1] cpu_address_in,  //cpu address bus input
+	input   [20:1] dma_address_in,  //agnus dma memory address input
+	output  [23:1] ram_address_out, //ram address bus output
+	input   [15:0] cpu_data_out,
+	output  [15:0] cpu_data_in,
+	input   [15:0] custom_data_out,
+	output  [15:0] custom_data_in,
+	input   [15:0] ram_data_out,
+	output  [15:0] ram_data_in,
+	input   a1k,
+	input   cpu_rd,                 //cpu read
+	input   cpu_hwr,                //cpu high write
+	input   cpu_lwr,                //cpu low write
+	input   cpu_hwr2,               //cpu high write 2nd word
+	input   cpu_lwr2,               //cpu low write 2nd word
+	input   cpu_hlt,
 
-	input	ovl,					//overlay kickstart rom over chipram
-	input	dbr,					//Agnus takes the bus
-	input	dbwe,					//Agnus does a write cycle
-	output	dbs,					//data bus slow down
-	output	xbs,					//cross bridge select, active dbr prevents access
+	input   ovl,                    //overlay kickstart rom over chipram
+	input   dbr,                    //Agnus takes the bus
+	input   dbwe,                   //Agnus does a write cycle
+	output  dbs,                    //data bus slow down
+	output  xbs,                    //cross bridge select, active dbr prevents access
 
-	input	[3:0] memory_config,	//selected memory configuration
-	input	ecs,					//ECS chipset enable
-	input	[1:0] hdc_ena,			//enables hdd interface
+	input   [3:0] memory_config,    //selected memory configuration
+	input   ecs,                    //ECS chipset enable
+	input   [1:0] hdc_ena,          //enables hdd interface
 
-	output	ram_rd,					//bus read
-	output	ram_hwr,				//bus high write
-	output	ram_lwr,				//bus low write
-	output	ram_hwr2,				//bus high write 2nd word
-	output	ram_lwr2,				//bus low write 2nd word
+	output  ram_rd,                 //bus read
+	output  ram_hwr,                //bus high write
+	output  ram_lwr,                //bus low write
+	output  ram_hwr2,               //bus high write 2nd word
+	output  ram_lwr2,               //bus low write 2nd word
 
-	output 	sel_reg,  				//select chip register bank
-	output 	reg [3:0] sel_chip, 	//select chip memory
-	output	reg [2:0] sel_slow,		//select slowfast memory ($C00000)
-	output	reg sel_kick,			//select kickstart rom
-	output	reg sel_kickext,			//select kickstart rom
-	output	reg sel_kick1mb,		//1MB kickstart rom 'upper' half
-	output	sel_cia,				//select CIA space
-	output 	sel_cia_a,				//select cia A
-	output 	sel_cia_b, 				//select cia B
-	output	sel_rtc,				//select $DCxxxx
-	output	sel_ide,				//select $DAxxxx
-	output	sel_gayle,				//select $DExxxx
-	output	sel_autoconfig		// select $E8xxxx
+	output  sel_reg,                //select chip register bank
+	output  reg [3:0] sel_chip,     //select chip memory
+	output  reg [2:0] sel_slow,     //select slowfast memory ($C00000)
+	output  reg sel_kick,           //select kickstart rom
+	output  reg sel_kickext,            //select kickstart rom
+	output  reg sel_kick1mb,        //1MB kickstart rom 'upper' half
+	output  sel_cia,                //select CIA space
+	output  sel_cia_a,              //select cia A
+	output  sel_cia_b,              //select cia B
+	output  sel_rtc,                //select $DCxxxx
+	output  sel_ide,                //select $DAxxxx
+	output  sel_gayle,              //select $DExxxx
+	output  sel_autoconfig      // select $E8xxxx
 );
 
-wire	[2:0] t_sel_slow;
-wire	sel_bank_1; 				// $200000-$3FFFFF
+wire    [2:0] t_sel_slow;
+wire    sel_bank_1;                 // $200000-$3FFFFF
 
 //--------------------------------------------------------------------------------------
 
@@ -116,7 +116,7 @@ assign ram_lwr2 = dbr ? 1'b0 : cpu_lwr2;
 
 //--------------------------------------------------------------------------------------
 
-// ram address multiplexer (512KB bank)		
+// ram address multiplexer (512KB bank)
 // assign ram_address_out = dbr ? dma_address_in[18:1] : cpu_address_in[18:1];
 // output full address to make mapping easier.
 assign ram_address_out = dbr ? {3'b000, dma_address_in[20:1]} : cpu_address_in[23:1];
@@ -161,15 +161,15 @@ assign t_sel_slow[2] = &memory_config[3:2] && cpu_address_in[23:19]==5'b1101_0; 
 // 512kb extra rom area at $e0 and $f0 write able only at a1k chipset mode
 //assign t_sel_slow[2] = (cpu_address_in[23:19]==5'b1110_0 || cpu_address_in[23:19]==5'b1111_0) && (a1k | cpu_rd) ? 1'b1 : 1'b0; //$E00000 - $E7FFFF & $F00000 - $F7FFFF
 
-assign sel_ide = |hdc_ena && cpu_address_in[23:16]==8'b1101_1010 ? 1'b1 : 1'b0;		//IDE registers at $DA0000 - $DAFFFF	
+assign sel_ide = |hdc_ena && cpu_address_in[23:16]==8'b1101_1010 ? 1'b1 : 1'b0;     //IDE registers at $DA0000 - $DAFFFF
 
-assign sel_gayle = hdc_ena && cpu_address_in[23:12]==12'b1101_1110_0001 ? 1'b1 : 1'b0;		//GAYLE registers at $DE1000 - $DE1FFF
+assign sel_gayle = hdc_ena && cpu_address_in[23:12]==12'b1101_1110_0001 ? 1'b1 : 1'b0;      //GAYLE registers at $DE1000 - $DE1FFF
 
-assign sel_autoconfig = cpu_address_in[23:16]==12'b1110_1000 ? 1'b1 : 1'b0;		//AUTOCONFIG registers at $E80000 - $E8FFFF
+assign sel_autoconfig = cpu_address_in[23:16]==12'b1110_1000 ? 1'b1 : 1'b0;     //AUTOCONFIG registers at $E80000 - $E8FFFF
 
 assign sel_rtc = (cpu_address_in[23:16]==8'b1101_1100) ? 1'b1 : 1'b0;   //RTC registers at $DC0000 - $DCFFFF
 
-assign sel_reg = cpu_address_in[23:21]==3'b110 ? ~(|t_sel_slow | sel_rtc | sel_ide | sel_gayle) : 1'b0;		//chip registers at $DF0000 - $DFFFFF
+assign sel_reg = cpu_address_in[23:21]==3'b110 ? ~(|t_sel_slow | sel_rtc | sel_ide | sel_gayle) : 1'b0;     //chip registers at $DF0000 - $DFFFFF
 
 assign sel_cia = cpu_address_in[23:20]==4'b1011 ? 1'b1 : 1'b0;
 

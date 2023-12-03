@@ -18,6 +18,7 @@ module oki_pcf_buffer (
   input  wire       oki_rw_n,
   input  wire       oki_cs_n,
   output logic      oki_write_dirty,
+  output wire       oki_write_valid,   // 1 if valid otherwise 0
   input  wire       oki_clear_dirty,
   output wire       oki_hold,         // 1 When the Hold bit is set
   // PCF interface for refreshing PCF data
@@ -75,7 +76,7 @@ assign oki_read_wire[4'hF] = {
 assign oki_tx_data = (oki_rd_n == 1'b0 && oki_rw_n == 1'b1 && oki_cs_n == 1'b0) ? oki_read_wire[oki_addr] : 4'h0;
 
 // Read OKI register
-always @(posedge clk) begin
+always_ff @(posedge clk) begin
 
   if (rst_n == 1'b0) begin
     oki_write_dirty <= 1'b0;
@@ -84,6 +85,7 @@ always @(posedge clk) begin
 
     oki_status_t <= 2'b00;
 
+    pcf_tx_data <= 8'h00;
 
     for (int loop = 0; loop < 16; loop++) begin
       pcf_read_reg[loop] <= 8'h00;
@@ -109,7 +111,6 @@ always @(posedge clk) begin
 
     if (oki_rd_n == 1'b1 && oki_rw_n == 1'b0 && oki_cs_n == 1'b0) begin
       // Handle a write action to the OKI RTC
-      oki_write_dirty <= 1'b1;
       oki_status_busy <= 1'b1;
       case (oki_addr)
         4'h0: pcf_write_reg[2][3:0] <= oki_rx_data;  // Seconds 1
@@ -125,7 +126,11 @@ always @(posedge clk) begin
         4'h8: pcf_write_reg[7][3:0] <= oki_rx_data;  // months 1
         4'h9: pcf_write_reg[7][7:4] <= {3'b000, oki_rx_data[0]};  // Months 10
         4'hA: pcf_write_reg[8][3:0] <= oki_rx_data;  // years 1
-        4'hB: pcf_write_reg[8][7:4] <= oki_rx_data;  // years 10
+        4'hB: begin
+          pcf_write_reg[8][7:4] <= oki_rx_data;  // years 10
+          // Only when complete configuration is written, write out.
+          oki_write_dirty <= 1'b1;
+        end
         4'hC: pcf_write_reg[6][3:0] <= {1'h0, oki_rx_data[2:0]};  // weekday (0 - 6)
         4'hD: oki_status_hold <= oki_rx_data[0];  // Config register D
         4'hE: oki_status_t <= oki_rx_data[1:0];  // Config register E
@@ -146,15 +151,7 @@ always @(posedge clk) begin
         pcf_tx_reg[loop] <= pcf_write_reg[loop];
       end
     end
-  end
 
-  // Write to the refresh register
-  if (rst_n == 1'b0) begin
-    pcf_tx_data <= 8'h00;
-    for (int loop = 0; loop < 16; loop++) begin
-      pcf_refresh_reg[loop] <= 8'h00;
-    end
-  end else begin
     // Write to the PCF registers
     if (pcf_dv == 1'b1 && pcf_wr_n == 1'b0) begin
       pcf_refresh_reg[pcf_addr] <= pcf_rx_data;
@@ -168,6 +165,8 @@ always @(posedge clk) begin
   end
 end
 
+// BCD encoded day of the month and month of the year cannot be be 0x00
+assign oki_write_valid = pcf_write_reg[7] != 8'h00 && pcf_write_reg[5] != 8'h00;
 
 // CocoTB test block
 `ifdef COCOTB_SIM

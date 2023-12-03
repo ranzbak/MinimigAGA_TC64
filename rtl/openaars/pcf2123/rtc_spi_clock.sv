@@ -51,6 +51,8 @@ wire         rtc_spi_clk_w;
 wire         oki_write_dirty;
 (* MARK_DEBUG = "true" *)
 logic        oki_clear_dirty;
+(* MARK_DEBUG = "true" *)
+logic        oki_write_valid;
 // wire        oki_hold;
 (* MARK_DEBUG = "true" *)
 logic [3:0]  pcf_addr;
@@ -168,6 +170,7 @@ oki_pcf_buffer my_oki_buffer (
   .oki_cs_n       (cs_n),
   .oki_write_dirty(oki_write_dirty),  // High when write was done
   .oki_clear_dirty(oki_clear_dirty),  // Resets oki_write_dirty when high
+  .oki_write_valid(oki_write_valid), //
   .oki_hold       (),         // 1 When the Hold bit is set
 
   // PCF interface for refreshing PCF data from SPI
@@ -253,6 +256,7 @@ SPI_Master #(
 // Reset the PCF2123
 typedef enum {
   // Reset the PCF2123
+  STATE_RST_0,
   STATE_RST_1,
   STATE_RST_2,
   STATE_RST_3,
@@ -334,7 +338,7 @@ always_ff @(posedge clk) begin
     pcf_addr <= 4'h0;
     pcf_dv <= 1'b0;
     pcf_wr_n <= 1'b1; // Read by default
-    pcf_fsm_state <= STATE_RST_1;
+    pcf_fsm_state <= STATE_RST_0;
     pcf_latch <= 1'b0;
     pcf_rx_data <= 8'h00;
     rtc_spi_ce <= 1'b0; // No select
@@ -346,17 +350,16 @@ always_ff @(posedge clk) begin
   end else begin
     unique case (pcf_fsm_state)
       // Reset
-      STATE_RST_1: begin
+      STATE_RST_0: begin
+        rtc_spi_ce <= 1'b1;
         tx_dv <= 1'b0;
-        rtc_spi_ce <= 1'b1; // assert select
-
-        if (rtc_spi_ce == 1'b1) begin
-          // Send the command byte of the reset sequence
+        // delay_to_next_state(STATE_RST_1, clk_out_dev_tr);
+        pcf_fsm_state <= STATE_RST_1;
+      end
+      STATE_RST_1: begin
+        if (tx_ready_t) begin
           tx_byte <= RESET_SEQ_1;
           tx_dv <= 1'b1;
-        end
-
-        if (tx_ready_t) begin
           pcf_fsm_state <= STATE_RST_2;
         end
       end
@@ -533,14 +536,23 @@ always_ff @(posedge clk) begin
 
       // Write modified registers to the PCF IC
       STATE_WRITE_0: begin
-        rtc_spi_ce <= 1'b1; // Start the SPI transaction
-        delay_to_next_state(STATE_WRITE_1, clk_out_dev_tr);
+        if (oki_write_valid == 1'b1) begin
+          // If registers are set to 0 ignore the write
+          rtc_spi_ce <= 1'b1; // Start the SPI transaction
+          delay_to_next_state(STATE_WRITE_1, clk_out_dev_tr);
+        end else begin
+          // When the write is invalid, reset and ignore
+          oki_clear_dirty <= 1'b1;
+          if (oki_write_dirty <= 1'b0) begin
+            pcf_fsm_state <= STATE_IDLE;
+          end
+        end
       end
 
       STATE_WRITE_1: begin
         // Clear the write flag
         oki_clear_dirty <= 1'b1;
-        tx_pos <= 4'h0; // Clear the TX counter
+        tx_pos <= 4'h1; // Clear the TX counter, skip first garbage byte
         rtc_spi_ce <= 1'b1; // Start the transaction
         // Send the write command to the PCF2123
         tx_byte <= PCF_WRITE_CMD;
