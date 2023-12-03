@@ -2,14 +2,15 @@
 set_false_path -to [get_ports {io_scl io_sda js_cs js_mosi js_sck max_i2s max_lrclk sd_m_cmd sd_m_d3}]
 
 # CPU constraints
-set_multicycle_path -setup -start -from [get_pins -hier -regexp openaars_virtual_top/tg68k/pf68K_Kernel_inst/.*] 4
-set_multicycle_path -hold -start -from [get_pins -hier -regexp openaars_virtual_top/tg68k/pf68K_Kernel_inst/.*] 3
-set _xlnx_shared_i0 [get_pins -hier -regexp openaars_virtual_top/tg68k/pf68K_Kernel_inst/memaddr.*]
-set_multicycle_path -setup -start -from $_xlnx_shared_i0 3
-set_multicycle_path -hold -start -from [get_pins -hier -regexp openaars_virtual_top/tg68k/pf68K_Kernel_inst/memaddr.*] 2
+set _xlnx_shared_i0 [get_pins -hier -regexp openaars_virtual_top/tg68k/pf68K_Kernel_inst/.*]
+set_multicycle_path -setup -start -from $_xlnx_shared_i0 4
+set_multicycle_path -hold -start -from $_xlnx_shared_i0 3
+set _xlnx_shared_i1 [get_pins -hier -regexp openaars_virtual_top/tg68k/pf68K_Kernel_inst/memaddr.*]
+set_multicycle_path -setup -start -from $_xlnx_shared_i1 3
+set_multicycle_path -hold -start -from $_xlnx_shared_i1 2
 
-set_multicycle_path -setup -from $_xlnx_shared_i0 -to $_xlnx_shared_i0 4
-set_multicycle_path -hold -from [get_pins -hier -regexp openaars_virtual_top/tg68k/pf68K_Kernel_inst/memaddr.*] -to [get_pins -hier -regexp openaars_virtual_top/tg68k/pf68K_Kernel_inst/memaddr.*] 3
+set_multicycle_path -setup -from $_xlnx_shared_i1 -to $_xlnx_shared_i1 4
+set_multicycle_path -hold -from $_xlnx_shared_i1 -to $_xlnx_shared_i1 3
 
 set_multicycle_path -setup -start -from [get_cells openaars_virtual_top/tg68k/addr*] 3
 set_multicycle_path -hold -start -from [get_cells openaars_virtual_top/tg68k/addr*] 2
@@ -28,11 +29,12 @@ set_multicycle_path -hold -from [get_clocks dll_28] -to [get_clocks clk_114] 3
 set_multicycle_path -setup -from [get_clocks clk_sd_114] -to [get_clocks clk_114] 2
 
 # Neither in nor out of the C2P requires single-cycle speed
-set _xlnx_shared_i1 [get_pins -hier -regexp -nocase openaars_virtual_top/tg68k/pf68K_Kernel_inst/.*]
-set_multicycle_path -setup -start -from [get_pins -hier -regexp -nocase openaars_virtual_top/tg68k/myakiko/c2p.myc2p/rdptr.*] -to $_xlnx_shared_i1 2
-set_multicycle_path -hold -start -from [get_pins -hier -regexp -nocase openaars_virtual_top/tg68k/myakiko/c2p.myc2p/rdptr.*] -to [get_pins -hier -regexp -nocase openaars_virtual_top/tg68k/pf68K_Kernel_inst/.*] 2
-set_multicycle_path -setup -start -from [get_pins -hier -regexp -nocase openaars_virtual_top/tg68k/myakiko/c2p.myc2p/buf_reg.*] -to $_xlnx_shared_i1 2
-set_multicycle_path -hold -start -from [get_pins -hier -regexp -nocase openaars_virtual_top/tg68k/myakiko/c2p.myc2p/buf_reg.*] -to [get_pins -hier -regexp -nocase openaars_virtual_top/tg68k/pf68K_Kernel_inst/.*] 2
+set _xlnx_shared_i2 [get_pins -hier -regexp -nocase openaars_virtual_top/tg68k/pf68K_Kernel_inst/.*]
+set_multicycle_path -setup -start -from [get_pins -hier -regexp -nocase openaars_virtual_top/tg68k/myakiko/c2p.myc2p/rdptr.*] -to $_xlnx_shared_i2 2
+set_multicycle_path -hold -start -from [get_pins -hier -regexp -nocase openaars_virtual_top/tg68k/myakiko/c2p.myc2p/rdptr.*] -to $_xlnx_shared_i2 2
+set _xlnx_shared_i3 [get_pins -hier -regexp -nocase openaars_virtual_top/tg68k/myakiko/c2p.myc2p/buf_reg.*]
+set_multicycle_path -setup -start -from $_xlnx_shared_i3 -to $_xlnx_shared_i2 2
+set_multicycle_path -hold -start -from $_xlnx_shared_i3 -to $_xlnx_shared_i2 2
 
 # Likewise RTG and audio address have 8 cycles of downtime between bursts
 # set _xlnx_shared_i8 [get_pins -hier -regexp -nocase openaars_virtual_top/sdram/.*]
@@ -85,8 +87,20 @@ set_max_delay -from openaars_virtual_top/sdram/sdata_oe_reg/C 9.700
 
 
 
-set_property PULLUP true [get_ports sd_m_cdet]
-set_property PULLUP true [get_ports sd_m_clk]
-set_property PULLUP true [get_ports sd_m_cmd]
+set_property PULLTYPE PULLUP [get_ports sd_m_cdet]
+set_property PULLTYPE PULLUP [get_ports sd_m_clk]
+set_property PULLTYPE PULLUP [get_ports sd_m_cmd]
 set_property -dict {PACKAGE_PIN F23 IOSTANDARD LVTTL} [get_ports sd_m_cdet]
 set_false_path -from [get_ports sd_m_d0]
+
+connect_debug_port u_ila_0/probe4 [get_nets [list openaars_virtual_top/minimig/myrtc_spi_clock/n_0_0]]
+connect_debug_port u_ila_0/probe5 [get_nets [list openaars_virtual_top/minimig/myrtc_spi_clock/n_0_1]]
+
+
+
+
+connect_debug_port u_ila_0/probe6 [get_nets [list openaars_virtual_top/minimig/myrtc_spi_clock/pcf_wr]]
+
+
+
+

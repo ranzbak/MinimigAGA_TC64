@@ -1,14 +1,15 @@
 ----------------------------------------------------------------------------------
 -- Engineer: <mfield@concepts.co.nz
--- 
+--
 -- Description: Send register writes over an I2C-like interface
 --
 -- Changed to adv7511 init by emu.(AN-1720)
--- 
+--
 ----------------------------------------------------------------------------------
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
+
 
 -- library work;
 
@@ -90,7 +91,7 @@ architecture behave_i2c_sender of i2c_sender is
     SECOND_BYTE_RD,
     STOP_RD
   );
-  signal send_state : State_type := START;
+  signal send_state_r : State_type := START;
 
   constant bit_0 : std_logic := '0';
 
@@ -148,13 +149,13 @@ architecture behave_i2c_sender of i2c_sender is
     -- Audio I2S
     (addr => x"72", reg => x"01", val => x"00"), -- N = 6144
     (addr => x"72", reg => x"02", val => x"18"), -- N and CTS for 48kHz @ 74.25 MHz pixel clock
-    (addr => x"72", reg => x"03", val => x"00"), -- CTS is calculated 
+    (addr => x"72", reg => x"03", val => x"00"), -- CTS is calculated
     -- (addr => x"72", reg => x"06", val => x"0a"), -- [7]=1 CTS to automatic
-    (addr => x"72", reg => x"0a", val => x"00"), -- 
+    (addr => x"72", reg => x"0a", val => x"00"), --
     (addr => x"72", reg => x"0c", val => x"3c"), -- s0-s3 channel I2S
     (addr => x"72", reg => x"14", val => x"02"), -- 16bit samples
     (addr => x"72", reg => x"44", val => x"39"), -- audio packet enable, AVI infroframe, audio info frame
-    (addr => x"72", reg => x"73", val => x"01"), -- 
+    (addr => x"72", reg => x"73", val => x"01"), --
     -------------------------
     -- Set Source Product Description Infoframe (SPD)
     -------------------------
@@ -163,24 +164,24 @@ architecture behave_i2c_sender of i2c_sender is
     -- 83 01 19 40 41 42 43 44 45 00 00 30 31 32 33 34
     (addr => x"70", reg => x"1f", val => x"80"), -- Allow config of new packet, while sending previous data
     (addr => x"70", reg => x"00", val => x"83"), -- Packet type 3
-    (addr => x"70", reg => x"01", val => x"01"), -- Version 1 
+    (addr => x"70", reg => x"01", val => x"01"), -- Version 1
     (addr => x"70", reg => x"02", val => x"19"), -- Length 19
-    (addr => x"70", reg => x"03", val => x"40"), -- 
-    (addr => x"70", reg => x"04", val => x"41"), --  
-    (addr => x"70", reg => x"05", val => x"42"), --  
-    (addr => x"70", reg => x"04", val => x"43"), --  
-    (addr => x"70", reg => x"07", val => x"44"), -- 
-    (addr => x"70", reg => x"08", val => x"45"), -- 
-    (addr => x"70", reg => x"09", val => x"00"), -- 
-    (addr => x"70", reg => x"0a", val => x"00"), -- 
-    (addr => x"70", reg => x"0b", val => x"30"), -- 
-    (addr => x"70", reg => x"0c", val => x"31"), -- 
-    (addr => x"70", reg => x"0d", val => x"32"), -- 
-    (addr => x"70", reg => x"0e", val => x"33"), -- 
-    (addr => x"70", reg => x"0f", val => x"34"), -- 
-    (addr => x"70", reg => x"10", val => x"00"), -- 
-    (addr => x"70", reg => x"11", val => x"00"), -- 
-    (addr => x"70", reg => x"12", val => x"00"), -- 
+    (addr => x"70", reg => x"03", val => x"40"), --
+    (addr => x"70", reg => x"04", val => x"41"), --
+    (addr => x"70", reg => x"05", val => x"42"), --
+    (addr => x"70", reg => x"04", val => x"43"), --
+    (addr => x"70", reg => x"07", val => x"44"), --
+    (addr => x"70", reg => x"08", val => x"45"), --
+    (addr => x"70", reg => x"09", val => x"00"), --
+    (addr => x"70", reg => x"0a", val => x"00"), --
+    (addr => x"70", reg => x"0b", val => x"30"), --
+    (addr => x"70", reg => x"0c", val => x"31"), --
+    (addr => x"70", reg => x"0d", val => x"32"), --
+    (addr => x"70", reg => x"0e", val => x"33"), --
+    (addr => x"70", reg => x"0f", val => x"34"), --
+    (addr => x"70", reg => x"10", val => x"00"), --
+    (addr => x"70", reg => x"11", val => x"00"), --
+    (addr => x"70", reg => x"12", val => x"00"), --
     (addr => x"70", reg => x"1f", val => x"00"), -- send new information, latch current data to buffer
 
     ---------------------
@@ -192,34 +193,12 @@ architecture behave_i2c_sender of i2c_sender is
     (addr => x"20", reg => x"05", val => x"FD"), -- Power on, Mclk enable, charge pump enable, headphone out enable, DAC enable
     (addr => x"20", reg => x"06", val => x"00"), -- Transparent internal clock devider
     (addr => x"20", reg => x"07", val => x"40"), -- Use internal oscillator for charge pump
-    (addr => x"20", reg => x"08", val => x"00"), -- Non intereger mode 45C5 +- 48Khz 
-    (addr => x"20", reg => x"09", val => x"00"), -- 
+    (addr => x"20", reg => x"08", val => x"00"), -- Non intereger mode 45C5 +- 48Khz
+    (addr => x"20", reg => x"09", val => x"00"), --
     (addr => x"20", reg => x"0a", val => x"08"), -- Slave mode, 16 bits
     -- Fill the rest of the array with 'FF'
     others => (addr => x"ff", reg => x"ff", val => x"ff") -- 25 FFFF end of sequence
   );
-
-  -- ATTRIBUTE MARK_DEBUG : string;
-  -- ATTRIBUTE MARK_DEBUG of send_state: SIGNAL IS "TRUE";
-  -- ATTRIBUTE MARK_DEBUG of cmd_read: SIGNAL IS "TRUE";
-  -- ATTRIBUTE MARK_DEBUG of cmd_ready: SIGNAL IS "TRUE";
-  -- ATTRIBUTE MARK_DEBUG of cmd_start: SIGNAL IS "TRUE";
-  -- ATTRIBUTE MARK_DEBUG of cmd_stop: SIGNAL IS "TRUE";
-  -- ATTRIBUTE MARK_DEBUG of cmd_valid: SIGNAL IS "TRUE";
-  -- ATTRIBUTE MARK_DEBUG of cmd_write: SIGNAL IS "TRUE";
-  -- ATTRIBUTE MARK_DEBUG of cmd_write_multiple: SIGNAL IS "TRUE";
-  -- ATTRIBUTE MARK_DEBUG of data_in: SIGNAL IS "TRUE";
-  -- ATTRIBUTE MARK_DEBUG of data_in_valid: SIGNAL IS "TRUE";
-  -- ATTRIBUTE MARK_DEBUG of data_in_ready: SIGNAL IS "TRUE";
-  -- ATTRIBUTE MARK_DEBUG of data_in_last: SIGNAL IS "TRUE";
-  -- ATTRIBUTE MARK_DEBUG of data_out: SIGNAL IS "TRUE";
-  -- ATTRIBUTE MARK_DEBUG of data_out_valid: SIGNAL IS "TRUE";
-  -- ATTRIBUTE MARK_DEBUG of data_out_ready: SIGNAL IS "TRUE";
-  -- ATTRIBUTE MARK_DEBUG of data_out_last: SIGNAL IS "TRUE";
-  -- ATTRIBUTE MARK_DEBUG of scl_i: SIGNAL IS "TRUE";
-  -- ATTRIBUTE MARK_DEBUG of scl_o: SIGNAL IS "TRUE";
-  -- ATTRIBUTE MARK_DEBUG of sda_i: SIGNAL IS "TRUE";
-  -- ATTRIBUTE MARK_DEBUG of sda_o: SIGNAL IS "TRUE";
 
 begin
 
@@ -288,16 +267,24 @@ begin
   begin
     if rising_edge(clk) then
       if (rst = '1') then
-        send_state <= START;
+        send_state_r <= START;
+        data_in_valid <= '0';
+        data_in_last <= '0';
+        cmd_start <= '0';
+        cmd_valid <= '0';
+        cmd_stop <= '0';
+        cmd_read <= '0';
+        cmd_write <= '0';
+        cmd_write_multiple <= '0';
       else
-        case send_state is
+        case send_state_r is
           -- WRITE SEQUENCE
           -- Send start and address
           when START =>
 
             -- ffff is end of initialization sequence
             if (reg_value = X"ffffff") then
-              send_state <= WAIT_RETRANS;
+              send_state_r <= WAIT_RETRANS;
             else
               cmd_valid          <= '1';
               -- cmd_write <= '1';
@@ -306,7 +293,7 @@ begin
               data_in_valid      <= '1';
               data_in            <= reg_value(15 downto 8);
               if (data_in_ready = '1') then
-                send_state <= FIRST_BYTE;
+                send_state_r <= FIRST_BYTE;
               end if;
             end if;
           -- Send first data byte (register)
@@ -318,7 +305,7 @@ begin
             cmd_stop      <= '1';
             if (data_in_ready = '1') then
               cmd_valid  <= '0';
-              send_state <= SECOND_BYTE;
+              send_state_r <= SECOND_BYTE;
             end if;
 
           -- Send second data byte (content)
@@ -329,7 +316,7 @@ begin
             cmd_stop           <= '1';
             if (cmd_ready = '1') then
               cmd_valid  <= '0';
-              send_state <= STOP;
+              send_state_r <= STOP;
             end if;
 
           -- Send stop
@@ -338,7 +325,7 @@ begin
             data_in_last  <= '0';
             cmd_stop      <= '0';
             address       <= std_logic_vector(unsigned(address) + 1);
-            send_state    <= START;
+            send_state_r    <= START;
 
           -- wait for retransfer signal
           when WAIT_RETRANS =>
@@ -348,10 +335,10 @@ begin
             cmd_stop           <= '0';
             address            <= (others => '0');
             if (resend = '1' or dv_int_enable = '1') then
-              send_state <= START;
+              send_state_r <= START;
             end if;
             if (read_regs = '1') then
-              send_state <= START_RD;
+              send_state_r <= START_RD;
             end if;
 
           -- READ SEQUENCE
@@ -360,7 +347,7 @@ begin
           when START_RD =>
             -- ffff is end of initialization sequence
             if (address = X"ff") then
-              send_state <= WAIT_RETRANS;
+              send_state_r <= WAIT_RETRANS;
             else
               cmd_valid     <= '1';
               cmd_write     <= '1';
@@ -368,7 +355,7 @@ begin
               data_in       <= address;
               if (data_in_ready = '1') then
                 cmd_valid  <= '0';
-                send_state <= FIRST_BYTE_RD;
+                send_state_r <= FIRST_BYTE_RD;
               end if;
             end if;
           -- Send start and write register address again
@@ -380,9 +367,9 @@ begin
             cmd_valid     <= '1';
             if (data_in_ready = '1') then
               cmd_valid  <= '0';
-              send_state <= START_2_RD;
+              send_state_r <= START_2_RD;
             end if;
-          -- Read byte 
+          -- Read byte
           when START_2_RD =>
             cmd_valid      <= '1';
             cmd_read       <= '1';
@@ -392,7 +379,7 @@ begin
             if (data_out_valid = '1') then
               data_out_ready <= '0';
               cmd_valid      <= '0';
-              send_state     <= SECOND_BYTE_RD;
+              send_state_r     <= SECOND_BYTE_RD;
               -- Valid output
               out_valid      <= '1';
               out_addr       <= address;
@@ -409,7 +396,7 @@ begin
             data_in_valid <= '0';
             if (cmd_ready = '1') then
               cmd_valid  <= '0';
-              send_state <= STOP_RD;
+              send_state_r <= STOP_RD;
             end if;
           -- Return to begin of loop
           when STOP_RD =>
@@ -417,7 +404,7 @@ begin
             cmd_stop       <= '0';
             data_out_ready <= '0';
             address        <= std_logic_vector(unsigned(address) + 1);
-            send_state     <= START_RD;
+            send_state_r     <= START_RD;
         end case;
       end if;
     end if;

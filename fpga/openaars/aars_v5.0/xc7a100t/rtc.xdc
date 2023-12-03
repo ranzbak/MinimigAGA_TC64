@@ -22,4 +22,8 @@ set_property -dict {PACKAGE_PIN U1} [get_ports rtc_clkout]
 
 set_property -dict {IOSTANDARD LVTTL SLEW SLOW} [get_ports rtc_*]
 
+# For this low speed SPI interface we don't care about timing.
+set_false_path -to [get_ports {rtc_*}]
+set_false_path -from [get_ports {rtc_*}]
+
 
