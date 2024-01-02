@@ -51,3 +51,7 @@ xvhdl.*
 vivado*
 fw/ctrl_832/*.asm
 fw/ctrl_832/swoopBuf
+xvlog.*
+.library_mapping.xml
+.log*
+unisims

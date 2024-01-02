@@ -1099,8 +1099,9 @@ minimig_syscontrol CONTROL1
 
 wire [15:0] autoconfig_data_out;
 
-minimig_autoconfig autoconfig
-(
+minimig_autoconfig #(
+  .TOCCATA_SND(1'b1)
+) autoconfig (
   .clk(clk),
   .clk7_en(clk7_en),
   .reset(reset),
@@ -1116,6 +1117,8 @@ minimig_autoconfig autoconfig
   .ram_64meg(ram_64meg),
   .slowram_config(memory_config[3:2]),
   .board_configured(board_configured),
+  .board_base_addr(),
+  .board_shutup(),
   .autoconfig_done(autoconfig_done)
 );
 

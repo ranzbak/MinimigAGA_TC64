@@ -1,7 +1,8 @@
 // Minimig autoconfig logic
 
-module minimig_autoconfig
-(
+module minimig_autoconfig #(
+	parameter TOCCATA_SND = 1'b0 // Toccata sound card enabled?
+) (
 	input clk,
 	input clk7_en,
 	input reset,
@@ -18,6 +19,7 @@ module minimig_autoconfig
 	input ram_64meg,
 	output reg [4:0] board_configured,
 	output reg [4:0] board_shutup,
+	output reg [3:0] board_base_addr [0:4], // Base address for the cards
 	output reg autoconfig_done
 );
 
@@ -45,6 +47,7 @@ Autoconfig_ROM acrom
 
 reg init;
 
+integer loop;
 always @(posedge clk)
 begin
 	rom_we<=1'b0;
@@ -57,6 +60,10 @@ begin
 		roma_wr<=9'h001;
 		ramsize<=4'b1111; // disabled
 		autoconfig_done<=1'b0;
+
+		for (loop = 0; loop < 4; loop = loop + 1) begin
+			board_base_addr[loop]<= 4'h0;
+		end
 	end else begin
 
 
@@ -90,9 +97,10 @@ begin
 								board_configured[0] <= 1'b1;
 								acdevice<=(&fastram_config & m68020) ? 3'b001 : 3'b111; // ZIII RAM next
 							end
-							3'b101: begin // Taccata sound card
+							3'b101: begin // Toccata sound card
 								board_configured[4] <= 1'b1;
 								acdevice<=3'b111; // NULL device to terminate the chain
+								board_base_addr[4] <= data_in[15:12]; // Store Toccata base address
 							end
 							default :
 								;
@@ -116,7 +124,11 @@ begin
 							end
 							3'b011 : begin // ZIII RAM 3 - Use leftover space in the memory map.
 								board_configured[3] <= 1'b1;
-								acdevice<=3'b101; // NULL device to terminate the chain
+								if (TOCCATA_SND == 1'b1) begin
+									acdevice<=3'b101; // Toccata sound card
+								end else begin
+									acdevice<=3'b111; // NULL device to terminate the chain
+								end
 							end
 							3'b100 : begin // ETH
 								board_configured[3] <= 1'b1;
