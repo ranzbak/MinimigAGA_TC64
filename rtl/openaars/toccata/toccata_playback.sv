@@ -1,4 +1,3 @@
-
 /********************************************/
 /* toccata_playback.v                       */
 /* Toccata sound playback                   */
@@ -14,7 +13,7 @@ module toccata_playback #(
     input  logic        rst,
 
     // Control parameters
-    input  wire         pen,        // Playback disable - 0, enable - 1
+    input  wire         pen,        // Playback, disable - 0, enable - 1
     input  wire  [2:0]  freq_sel,   // See table below
     input  wire         sm,         // 0 - Mono, 1 - Stereo
     input  wire         lc,         // 0 - Linear, 1 - companded (not supported)

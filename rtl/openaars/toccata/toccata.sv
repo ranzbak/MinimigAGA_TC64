@@ -68,6 +68,8 @@ struct {
     logic        acal;
     logic        aci;
     logic        int_;
+    logic        pul;
+    logic        plr;
 } ad;
 
 
@@ -89,9 +91,19 @@ localparam CODEC_FIFO_MASK  = 8'h68; //
 // TOCC_FIFO_STAT   0x1ffe
 
 // Status register bits:
+// Halt playback :
+//      (disables interrupt, let buffer drain)
+//      - 0x01, 0x04, 0x10 (0, 2, 4)
+// Start playback :
+//      (Start playback without interrupt)
+//      - 0x01 (0)
+//      - 0x01, 0x10 (0, 4)
+//  - Fill buffer
+//      (Enable codec and enable interrupt)
+//      - 0x01, 0x04, 0x10, 0x80
 localparam STATUS_ACTIVE = 0;
 localparam STATUS_RESET = 1;
-localparam STATUS_FIFO_CODEC = 2;
+localparam STATUS_FIFO_CODEC = 2; // In NetBSD driver TOC_MAGIC
 localparam STATUS_FIFO_RECORD = 3;
 localparam STATUS_FIFO_PLAY = 4;
 localparam STATUS_RECORD_INTENA = 6;
@@ -123,8 +135,12 @@ logic [1:0] acal_;          // ACAL state
 logic [1:0] acal_next;      // ACAL next state
 logic [1:0] hsync_;         // HSYNC state
 logic [1:0] hsync_next;     // HSYNC next state
+logic       write_second_byte; // write second byte to FIFO
+logic [7:0] second_byte;    // second byte value
 
 logic [5:0] auto_callibration; // auto callibration counter
+logic prl_next = !status[2];
+logic pul_next = !status[3];
 
 // interrupt change registers
 struct {
@@ -135,6 +151,7 @@ struct {
     logic full;
     logic empty;
     logic half_full;
+    logic half_empty;
     logic [7:0] data_out;
     logic endata;
 } fifo;
@@ -155,6 +172,7 @@ logic [15:0]  playback_right;
 // Contains written byte through hwr or lwr
 logic [7:0] din_byte;
 
+// Toccata FIFO to 2-complement 16-bit audio output
 toccata_playback #(
     .CLK_FREQUENCY(CLK_FREQUENCY)
 ) my_playback (
@@ -176,6 +194,36 @@ toccata_playback #(
     .rdata(playback_right),
     .endata(fifo.endata)
 );
+
+// Dummy Toccata audio capture module
+struct {
+    logic rd;
+    logic empty;
+    logic half_full;
+    logic full;
+    logic endata;
+} cap;
+toccata_capture #(
+    .CLK_FREQUENCY(CLK_FREQUENCY)
+) my_capture (
+    .clk(clk),
+    .rst(rst),
+
+    .cen(ad.cen),
+    .freq_sel(ad.freq_sel),
+    .sm(ad.sm),
+    .fmt(ad.fmt),
+    .css(ad.css),
+
+    .data_out(),
+    .rd(cap.rd),
+    .empty(cap.empty),
+    .half_full(cap.half_full),
+    .full(cap.full),
+
+    .endata(cap.endata)
+);
+
 
 // Volume playback
 toccata_volume my_toccata_volume (
@@ -203,12 +251,17 @@ toccata_fifo #(
     .full(fifo.full),
     .empty(fifo.empty),
     .half_full(fifo.half_full),
+    .half_empty(fifo.half_empty),
     .data_out(fifo.data_out)
 );
 
 always_comb begin
     // Set interrupt pin
     t_int_ = irq_reg[IRQ_INT_IRQ];
+
+    // AD1848 status register
+    ad.plr = status[2];
+    ad.pul = status[3];
 
     // Decode AD1848 audio registers
     ad.int_ = ad1848_regs[2][0];
@@ -225,13 +278,17 @@ always_comb begin
     ad.aci = ad1848_regs[11][5];
 
     // Detect changes in the signals that generate interrupts
-    fifo_half_next = {fifo_half_[0], fifo.half_full};
+    fifo_half_next = {fifo_half_[0], fifo.half_empty};
     acal_next = {acal_[0], ad.acal};
     hsync_next = {hsync_[0], hsync};
 
     // Get the byte written from the high or low byte
     // High byte write has priority
     din_byte = hwr ? data_in[15:8] : lwr ? data_in[7:0] : 0;
+
+    // prl and pul signal generation
+    prl_next = !status[2];
+    pul_next =!status[3];
 end
 
 
@@ -239,6 +296,7 @@ end
 always_ff @(posedge clk) begin
     fifo.wr_en <= 1'b0;
     fifo.rst <= 1'b0;
+    write_second_byte <= 1'b0;
 
     if (rst == 1) begin
         // Reset the ad1848 registers
@@ -268,6 +326,9 @@ always_ff @(posedge clk) begin
             auto_callibration <= 50;
         end
 
+        // Set Playback Underrun bit when FIFO is empty
+        ad1848_regs[11][6] <= fifo.empty;
+
         // Simulate auto callibration cycle
         if (hsync_next == 2'b01 && auto_callibration > 0) begin
             auto_callibration <= auto_callibration - 1;
@@ -285,14 +346,21 @@ always_ff @(posedge clk) begin
 
         // populate interrupt record
         // We don't do recording, so we only trigger the playback interrupt
-        irq_reg[IRQ_PLAY_HALF] <= fifo.half_full;
+        irq_reg[IRQ_PLAY_HALF] <= fifo.half_empty;
 
         // When the ACAL bit is set, run a fake auto calibration
         // This is needed to keep the drivers happy
 
 
-        // When selected start answering
-        if (sel == 1'b1) begin
+        // Handle second byte to FIFO first
+        // This is to handle 16-bit writes
+        if (write_second_byte == 1'b1) begin
+            // Write second byte to the FIFO
+            fifo.wr_en <= 1'b1;
+            fifo.data_in <= second_byte;
+        end else if (sel == 1'b1) begin
+            // When selected start answering
+
             // Put data into the registers
             if (lwr || hwr) begin // Might need to trigger on both
                 // Decode codec reg 1
@@ -348,7 +416,9 @@ always_ff @(posedge clk) begin
                         // When not resetting, store the status
                         status <= din_byte;
 
-                        if (din_byte[STATUS_ACTIVE] == 1'b1) begin
+                        // When only Status active is set and nothing else,
+                        // Reset the buffer
+                        if (din_byte == 8'h01) begin // STATUS_ACTIVE
                             // Activate card
                             fifo.rst <= 1'b1; // Start with a clean FIFO
                             irq_reg <= 8'h80; // Clear all interrupts
@@ -366,9 +436,16 @@ always_ff @(posedge clk) begin
                 // Decode codec FIFO (DMA)
                 if ((addr[15:8] & CODEC_FIFO_MASK) == CODEC_FIFO) begin
                     if (status[STATUS_FIFO_PLAY] == 1'b1 && fifo.full == 1'b0) begin
-                        // Write byte to the FIFO
-                        fifo.wr_en <= 1'b1;
-                        fifo.data_in <= din_byte;
+                        if (lwr == 1'b1) begin
+                            // Write byte to the FIFO
+                            fifo.wr_en <= 1'b1;
+                            fifo.data_in <= data_in[7:0];
+                        end
+                        if (hwr == 1'b1) begin
+                            // Setup second byte write
+                            write_second_byte <= 1'b1;
+                            second_byte <= data_in[15:8];
+                        end
                     end
                 end
             end
@@ -418,14 +495,44 @@ always_ff @(posedge clk) begin
             end
         end
 
+        // Generate plr and pul registers
+
+        // prl = status[2]
+        // pul = status[3]
+        // Mono prl = 1
+        // 8-bit pul = 1
+        // MONO 16-bit stereo pul alternates
+        // Stereo 16-bit stereo pul alternates, prl alternates at 1 -> 0
+
+        // Lower / higher byte
+        if (ad.fmt == 1'b0) begin // 8-bit
+            status[3] <= 1'b1;
+        end else begin // 16-bit
+            // Update on write to FIFO
+            if (fifo.wr_en == 1'b1) begin
+                // Flip left / right channel every other write
+                status[3] <= pul_next;
+            end
+        end
+
+        // Right lef channel bits in status generation
+        if (ad.sm == 1'b0) begin // Mono
+            status[2] <= 1'b1;
+        end else begin // Stereo
+            // Update on write to FIFO
+            if (fifo.wr_en == 1'b1) begin
+                // 8-bit Stereo flip every byte
+                // 16-bit Stereo flip every second byte
+                if ((pul_next == 1'b0 && ad.fmt == 1'b1) || ad.fmt == 1'b0) begin
+                    // Flip upper and lower en overy write
+                    status[2] <= prl_next;
+                end
+            end
+        end
+
 // Paula sound forward
 // register 4 for left channel value
 // register 5 for right channel value
-
-// Toccata sound
-// register 6 for left channel value
-// register 7 for right channel value
-
 
     end
 end

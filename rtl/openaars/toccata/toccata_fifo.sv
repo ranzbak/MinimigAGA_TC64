@@ -17,6 +17,7 @@ module toccata_fifo #(
     output logic full,
     output logic empty,
     output logic half_full,
+    output logic half_empty,
     output logic [DATA_WIDTH-1:0] data_out
 );
 
@@ -34,6 +35,7 @@ always_comb begin
     full = (count == FIFO_DEPTH);
     empty = (count == 0);
     half_full = (count >= FIFO_DEPTH/2);
+    half_empty = (count <= FIFO_DEPTH/2);
 
     // Data out
     data_out = fifo_array[read_ptr];
