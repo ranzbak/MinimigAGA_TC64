@@ -104,8 +104,9 @@ begin
 	ram[sndbase+'h0] = 4'b1100; // Zorro-II card, no link, no ROM
 	ram[sndbase+'h2/2] = 4'b0001; // Next board not related, size 'h64k
 	// Inverted from here on
-	ram[sndbase+'h6/3] = 4'b0011; // Lower byte product number
-	ram[ethbase+'h8/2] = 4'b1111;   // Not memory, silenceable, normal size, Zorro II
+	ram[sndbase+'h6/2] = 4'b0011; // Lower byte product number
+	// ram[ethbase+'h8/2] = 4'b1111;   // Not memory, silenceable, normal size, Zorro II
+
 	ram[ethbase+'ha/2] = 4'b1101;   // logical size 64k
 
 	ram[sndbase+'h10/2] = 4'b1011; // Manufacturer ID: 0x4754
@@ -113,7 +114,8 @@ begin
 	ram[sndbase+'h14/2] = 4'b1010;
 	ram[sndbase+'h16/2] = 4'b1011;
 
-	ram[sndbase+'h26/2] = 4'b0100;  // Serial no: 11
+// ram[sndbase+'h26/2] = 4'b0100;  // Serial no: 11
+// ram[sndbase+'h26/2] = 4'b0000;  // Serial no: 11
 
 
 // Toccata sound card auto configuration ROM

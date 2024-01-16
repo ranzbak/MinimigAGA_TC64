@@ -244,10 +244,10 @@ module minimig #(
   output  [7:0] green, //green
   output  [7:0] blue, //blue
   //audio
-  output  left, //audio bitstream left
-  output  right, //audio bitstream right
-  output  [15:0]ldata, //left DAC data
-  output  [15:0]rdata, //right DAC data
+  output         left, //audio bitstream left
+  output         right, //audio bitstream right
+  output  [15:0] ldata, //left DAC data
+  output  [15:0] rdata, //right DAC data
   //user i/o
   output  [3:0] cpu_config,
   output  [4:0] board_configured,
@@ -298,6 +298,7 @@ wire  [15:0] gary_data_out; //data out from memory bus multiplexer
 wire  [15:0] gayle_data_out; //Gayle data out
 wire  [15:0] cia_data_out; //cia A+B data bus out
 wire  [15:0] rtc_data_out; //RTC data out
+wire  [15:0] toc_data_out; //Toccata sound card data out
 wire  [15:0] ar3_data_out; //Action Replay data out
 
 //local signals for spi bus
@@ -346,10 +347,12 @@ wire  sel_reg; //chip register select
 wire  sel_cia_a; //cia A select
 wire  sel_cia_b; //cia B select
 wire  sel_rtc; // RTC select
+wire  sel_toccata; // Toccata sound card select
 wire  sel_autoconfig;
 wire  int2; //intterrupt 2
 wire  int3; //intterrupt 3
 wire  int6; //intterrupt 6
+wire  int6_toc; //intterrupt 6 Toccata
 wire  [7:0] osd_ctrl; //OSD control
 wire  kb_lmb;
 wire  kb_rmb;
@@ -397,6 +400,17 @@ wire  _track0; //track zero detect
 wire  _change; //disk has been removed from drive
 wire  _ready; //disk is ready
 wire  _wprot; //disk is write-protected
+
+// Internal audio signals
+(* MARK_DEBUG="true", KEEP="true" *)
+wire [15:0] ldata_toc;  // Toccata left audio channel
+(* MARK_DEBUG="true", KEEP="true" *)
+wire [15:0] rdata_toc;  // Toccata right audio channel
+(* MARK_DEBUG="true", KEEP="true" *)
+wire signed [15:0] ldata_paula; // Paula left audio
+(* MARK_DEBUG="true", KEEP="true" *)
+wire signed [15:0] rdata_paula; // Paula right audio
+
 
 //--------------------------------------------------------------------------------------
 
@@ -593,7 +607,7 @@ paula PAULA1
   .vblint(vbl_int),
   .int2(int2|gayle_irq|ext_int2),
   .int3(int3),
-  .int6(int6|ext_int6),
+  .int6(int6| int6_toc |ext_int6),
   ._ipl(_iplx),
   .audio_dmal(audio_dmal),
   .audio_dmas(audio_dmas),
@@ -616,8 +630,8 @@ paula PAULA1
   .sck(sck),
   .left(left),
   .right(right),
-  .ldata(ldata),
-  .rdata(rdata),
+  .ldata(ldata_paula),
+  .rdata(rdata_paula),
 
   .floppy_drives(floppy_config[3:2]),
   //ide stuff
@@ -1050,6 +1064,7 @@ gary GARY1
   .sel_cia_a(sel_cia_a),
   .sel_cia_b(sel_cia_b),
   .sel_rtc(sel_rtc),
+  .sel_toccata(sel_toccata),
   .sel_ide(sel_ide),
   .sel_gayle(sel_gayle),
   .sel_autoconfig(sel_autoconfig)
@@ -1117,7 +1132,7 @@ minimig_autoconfig #(
   .ram_64meg(ram_64meg),
   .slowram_config(memory_config[3:2]),
   .board_configured(board_configured),
-  .board_base_addr(),
+  // .board_base_addr(),
   .board_shutup(),
   .autoconfig_done(autoconfig_done)
 );
@@ -1149,18 +1164,56 @@ rtc_spi_clock #(
   .rtc_spi_data0(rtc_spi_data0)
 );
 
+toccata #(
+  .CLK_FREQUENCY(28_359_380)
+) mytoccata (
+  .clk(clk),
+  .rst(reset),
+  .hsync(_hsync),
+  .data_in(cpu_data_out),
+  .data_out(toc_data_out),
+  .addr(cpu_address_out[15:1]),
+  .rd(cpu_rd),
+  .hwr(cpu_hwr),
+  .lwr(cpu_lwr),
+  .sel(sel_toccata),
+  .toc_int(int6_toc),
+  .out_left(ldata_toc),
+  .out_right(rdata_toc)
+);
+
 //data multiplexer
 assign cpu_data_in[15:0] = gary_data_out[15:0]
   | cia_data_out[15:0]
   | gayle_data_out[15:0]
   | cart_data_out[15:0]
   | {12'h000, rtc_data_out}
+  | toc_data_out[15:0]
   | autoconfig_data_out;
 
 assign custom_data_out[15:0] = agnus_data_out[15:0]
   | paula_data_out[15:0]
   | denise_data_out[15:0]
   | user_data_out[15:0];
+
+
+// Mix the Paula and the Toccata data
+AudioMix tocAudioMix
+(
+  .clk(clk),
+  .reset_n(!reset),
+  .audio_in_l1(ldata_paula),
+  .audio_in_l2(16'h0080),
+  .audio_in_r1(rdata_paula),
+  .audio_in_r2(16'h0080),
+  .audio_l(ldata),
+  .audio_r(rdata)
+);
+
+// Debug baseline to make sure we didn't break something in Paula
+// assign ldata = ldata_paula;
+// assign rdata = rdata_paula;
+
 
 //--------------------------------------------------------------------------------------
 

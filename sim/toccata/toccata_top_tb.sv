@@ -13,7 +13,7 @@ logic hsync;
 logic [15:0] data_in, data_out;
 logic [15:0] addr;
 logic rd, hwr, lwr, sel;
-logic t_int_;
+logic toc_int;
 logic [15:0] out_left, out_right;
 
 // Instantiate the Unit Under Test (UUT)
@@ -28,7 +28,7 @@ toccata uut (
     .hwr(hwr),
     .lwr(lwr),
     .sel(sel),
-    .t_int_(t_int_),
+    .toc_int(toc_int),
     .out_left(out_left),
     .out_right(out_right)
 );
@@ -49,6 +49,7 @@ typedef enum int {
     // Dump registers
     IDLE,
     WRITE,
+    READ_STATUS,
     READ,
     CHECK,
     // Check autocallibration
@@ -60,6 +61,10 @@ typedef enum int {
     SET_ACAL_LOW_IDX,
     CHECK_ACAL_LOW,
     // Audio playback tests
+    UNMUTE_LEFT_DAC_1,
+    UNMUTE_LEFT_DAC_2,
+    UNMUTE_RIGHT_DAC_1,
+    UNMUTE_RIGHT_DAC_2,
     // 8-bit mono
     SET_PLAYBACK_BUFFER,
     SET_PLAYBACK_FORMAT_IDX,
@@ -162,10 +167,17 @@ always_ff @(posedge clk) begin
             end
             WRITE: begin
                 addr <= 16'h6700;
-                data_in <= {step[7:0], 8'h00};
+                data_in <= {8'h00, step[7:0]};
                 lwr <= 1'b0;
                 hwr <= 1'b1;
-                state <= state.next();
+                state <= READ_STATUS;
+            end
+            READ_STATUS : begin
+                addr <= 16'h0000;
+                rd <= 1'b1;
+                if (rd == 1'b1) begin
+                    state <= READ;
+                end
             end
             READ: begin
                 addr <= 16'h6800;
@@ -184,7 +196,7 @@ always_ff @(posedge clk) begin
                 addr <= 16'h6700;
                 hwr <= 1'b1;
                 lwr <= 1'b0;
-                data_in <= {8'h09, 8'h00};
+                data_in <= {8'h00, 8'h09};
                 state <= ENABLE_ACAL_WR;
             end
             ENABLE_ACAL_WR : begin
@@ -192,7 +204,7 @@ always_ff @(posedge clk) begin
                 addr <= 16'h6800;
                 hwr <= 1'b1;
                 lwr <= 1'b0;
-                data_in <= {8'b0000_1100, 8'h00}; // SDC, ACAL
+                data_in <= {8'h00, 8'b0000_1100}; // SDC, ACAL
                 state <= SET_ACI_IDX;
             end
             SET_ACI_IDX : begin
@@ -200,7 +212,7 @@ always_ff @(posedge clk) begin
                 addr <= 16'h6700;
                 hwr <= 1'b1;
                 lwr <= 1'b0;
-                data_in <= {8'h0B, 8'h00}; // Reg nr 11
+                data_in <= {8'h00, 8'h0B}; // Reg nr 11
                 state <= CHECK_ACI_HIGH;
                 $display("%d - ACI bit set", clk_cycles);
             end
@@ -209,7 +221,7 @@ always_ff @(posedge clk) begin
                 hwr <= 1'b0;
                 lwr <= 1'b0;
                 rd <= 1'b1;
-                if (data_out_high[5] == 1'b1 && rd == 1'b1) begin
+                if (data_out[5] == 1'b1 && rd == 1'b1) begin
                     $display("%d - ACAL found to be high", clk_cycles);
                     rd <= 1'b0;
                     state <= CHECK_ACI_LOW;
@@ -242,13 +254,53 @@ always_ff @(posedge clk) begin
                 rd <= 1'b1;
                 if (data_out_high[3] == 1'b0) begin
                     $display("%d - ACAL found to be low", clk_cycles);
-                    state <= SET_PLAYBACK_BUFFER;
+                    state <= UNMUTE_LEFT_DAC_1;
                     rd <= 1'b0;
                 end
             end
             // ----------------------------------------------------------------
             // Start the audio playback tests
             // ----------------------------------------------------------------
+            UNMUTE_LEFT_DAC_1 : begin
+                addr <= 16'h6700;
+                hwr <= 1'b1;
+                lwr <= 1'b0;
+                data_in <= {8'h06, 8'h00};
+                if (hwr == 1'b1) begin
+                    state <= UNMUTE_LEFT_DAC_2;
+                    hwr <= 1'b0;
+                end
+            end
+            UNMUTE_LEFT_DAC_2 : begin
+                addr <= 16'h6800;
+                hwr <= 1'b1;
+                lwr <= 1'b0;
+                data_in <= {8'h00, 8'h00}; // Unmute lef dac
+                if (hwr == 1'b1) begin
+                    state <= UNMUTE_RIGHT_DAC_1;
+                    hwr <= 1'b0;
+                end
+            end
+            UNMUTE_RIGHT_DAC_1 : begin
+                addr <= 16'h6700;
+                hwr <= 1'b1;
+                lwr <= 1'b0;
+                data_in <= {8'h07, 8'h00};
+                if (hwr == 1'b1) begin
+                    state <= UNMUTE_RIGHT_DAC_2;
+                    hwr <= 1'b0;
+                end
+            end
+            UNMUTE_RIGHT_DAC_2 : begin
+                addr <= 16'h6800;
+                hwr <= 1'b1;
+                lwr <= 1'b0;
+                data_in <= {8'h00, 8'h00}; // Unmute lef dac
+                if (hwr == 1'b1) begin
+                    state <= SET_PLAYBACK_BUFFER;
+                    hwr <= 1'b0;
+                end
+            end
             SET_PLAYBACK_BUFFER : begin
                 // Start buffering but do not start playback yet
                 addr <= 16'h0000;

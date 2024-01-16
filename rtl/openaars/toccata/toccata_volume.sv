@@ -11,7 +11,9 @@ module toccata_volume (
     input  wire signed  [15:0] audio_in_left,
     input  wire signed  [15:0] audio_in_right,
     input  wire         [5:0]  attenuation_left,
+    input  wire                mute_left,
     input  wire         [5:0]  attenuation_right,
+    input  wire                mute_right,
     output logic signed [15:0] audio_out_left,
     output logic signed [15:0] audio_out_right
 );
@@ -37,12 +39,20 @@ end
 always_ff @(posedge clk) begin
     if (rst) begin
         // Hold the output nutral during reset
-        audio_out_left <= 8000;
-        audio_out_right <= 8000;
+        audio_out_left <= 'h0000;
+        audio_out_right <= 'h0000;
     end else begin
         // Using inferred DSP blocks to do volume calculations
-        audio_out_left <= ($signed(audio_in_left) * attenuation_factors[attenuation_left]) >>> 15;
-        audio_out_right <= ($signed(audio_in_right) * attenuation_factors[attenuation_right]) >>> 15;
+        if (mute_left) begin
+            audio_out_left <= 'h0000;
+        end else begin
+            audio_out_left <= ($signed(audio_in_left) * attenuation_factors[attenuation_left]) >>> 15;
+        end
+        if (mute_right) begin
+            audio_out_right <= 'h0000;
+        end else begin
+            audio_out_right <= ($signed(audio_in_right) * attenuation_factors[attenuation_right]) >>> 15;
+        end
     end
 end
 

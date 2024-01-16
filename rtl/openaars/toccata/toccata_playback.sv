@@ -159,10 +159,10 @@ always_ff @(posedge clk) begin
         pb_state <= idle;
         tmp_8bit_left <= 8'sh80;
         tmp_8bit_right <= 8'sh80;
-        tmp_16bit_left <= 16'h8000;
-        tmp_16bit_right <= 16'h8000;
-        ldata <= 16'h8000;
-        rdata <= 16'h8000;
+        tmp_16bit_left <= 16'h0000;
+        tmp_16bit_right <= 16'h0000;
+        ldata <= 16'h0000;
+        rdata <= 16'h0000;
     end else begin
         // Detect changes between previous and current
         if (sm != _sm || lc != _lc || _fmt != _fmt) begin
@@ -188,6 +188,9 @@ always_ff @(posedge clk) begin
         end
 
         // FSM to handle different sample modes
+        //
+        // LC == 1'b1 is for Companded audio, because we don't implement it
+        // we treat it like a normal 8-bit audio stream.
         case (pb_state)
             idle: begin
                 // Don't start playing if the buffer is empty
@@ -206,7 +209,7 @@ always_ff @(posedge clk) begin
                 pb_state <= pb_state.next();
             end
             STEP_1_MONO: begin
-                if (fmt == 1'b0) begin // 8-bit
+                if (fmt == 1'b0 || lc == 1'b1) begin // 8-bit
                     // Make 8-bit unsigned to 8 bits signed
                     tmp_8bit_left <= data_in - 8'sh80;
                 end else begin // 16 bit
@@ -217,7 +220,7 @@ always_ff @(posedge clk) begin
                 pb_state <= pb_state.next();
             end
             STEP_2_MONO: begin
-                if (fmt == 1'b0) begin // 8-bit
+                if (fmt == 1'b0 || lc == 1'b1) begin // 8-bit
                     // Output the 8-bit signed data on both left and right channels
                     ldata <= {tmp_8bit_left, 8'h00};
                     rdata <= {tmp_8bit_left, 8'h00};
@@ -236,7 +239,7 @@ always_ff @(posedge clk) begin
                 pb_state <= pb_state.next();
             end
             STEP_1_STEREO: begin
-                if (fmt == 1'b0) begin // 8-bit
+                if (fmt == 1'b0 || lc == 1'b1) begin // 8-bit
                     // Make 8-bit unsigned to 8 bits signed
                     tmp_8bit_left <= data_in - 8'sh80;
                 end else begin // 16 bit
@@ -247,7 +250,7 @@ always_ff @(posedge clk) begin
                 pb_state <= pb_state.next();
             end
             STEP_2_STEREO: begin
-                if (fmt == 1'b0) begin // 8-bit
+                if (fmt == 1'b0 || lc == 1'b1) begin // 8-bit
                     // Make 8-bit unsigned to 8 bits signed
                     tmp_8bit_right <= data_in - 8'sh80;
                 end else begin // 16-bit
@@ -258,7 +261,7 @@ always_ff @(posedge clk) begin
                 pb_state <= pb_state.next();
             end
             STEP_3_STEREO: begin
-                if (fmt == 1'b0) begin // 8-bit
+                if (fmt == 1'b0 || lc == 1'b1) begin // 8-bit
                     // Output received data
                     ldata <= {tmp_8bit_left, 8'h00};
                     rdata <= {tmp_8bit_right, 8'h00};

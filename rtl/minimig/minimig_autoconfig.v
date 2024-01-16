@@ -19,9 +19,11 @@ module minimig_autoconfig #(
 	input ram_64meg,
 	output reg [4:0] board_configured,
 	output reg [4:0] board_shutup,
-	output reg [3:0] board_base_addr [0:4], // Base address for the cards
+	// output reg [3:0] board_base_addr [0:4], // Base address for the cards
 	output reg autoconfig_done
 );
+
+reg [3:0] board_base_addr [0:4];
 
 
 reg [2:0] acdevice;
