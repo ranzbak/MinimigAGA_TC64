@@ -27,8 +27,11 @@ module toccata_playback #(
     input  wire         empty,      // 1 - FIFO is empty
 
     // Audio interface
+    (* DEBUG = "true", KEEP = "true" *)
     output logic [15:0] ldata,      // Left DAC data
+    (* DEBUG = "true", KEEP = "true" *)
     output logic [15:0] rdata,      // Right DAC data
+    (* DEBUG = "true", KEEP = "true" *)
     output logic        endata      // Strobe on new sample data
 );
 
@@ -110,12 +113,12 @@ always_ff @(posedge clk) begin
             audio_dev <= DEV_1_6_615_KHZ[DELAY_COUNTER_BITS:0];
     endcase
 
-    `ifdef DEBUG
-    // $display("audio_dev = %0d", audio_dev);
-    // In order to not make the simulation too long,
-    // We replace the delay with a value of 5 during simulations.
+`ifdef DEBUG
+// $display("audio_dev = %0d", audio_dev);
+// In order to not make the simulation too long,
+// We replace the delay with a value of 5 during simulations.
     audio_dev <= 20;
-    `endif
+`endif
 end
 
 // Byte ordering in playback modes
@@ -145,6 +148,7 @@ typedef enum { idle,
 } pbStateType;
 pbStateType pb_state = idle;
 always_ff @(posedge clk) begin
+    pb_en <= 1'b0;
     rd_en <= 1'b0;
     endata <= 1'b0;
     rst_fifo <= 1'b0;
@@ -195,6 +199,7 @@ always_ff @(posedge clk) begin
             idle: begin
                 // Don't start playing if the buffer is empty
                 if (pb_en == 1'b1 && empty == 1'b0) begin
+                    endata <= 1'b1; // signal new data is available
                     if (sm == 1'b0) begin
                         pb_state <= STEP_0_MONO;
                     end else begin
@@ -206,7 +211,9 @@ always_ff @(posedge clk) begin
             STEP_0_MONO: begin
                 // Pulse read enable to get new byte
                 rd_en <= 1'b1;
-                pb_state <= pb_state.next();
+                if (rd_en == 1'b1) begin
+                    pb_state <= pb_state.next();
+                end
             end
             STEP_1_MONO: begin
                 if (fmt == 1'b0 || lc == 1'b1) begin // 8-bit
@@ -229,14 +236,16 @@ always_ff @(posedge clk) begin
                     ldata <= {data_in, tmp_8bit_left};
                     rdata <= {data_in, tmp_8bit_left};
                 end
-                endata <= 1'b1; // Signal new data is available
                 pb_state <= idle;
             end
             // Handle stereo decoding
             STEP_0_STEREO: begin
                 // Start by initiating the first read
                 rd_en <= 1'b1;
-                pb_state <= pb_state.next();
+                if (rd_en == 1'b1) begin
+                    pb_state <= pb_state.next();
+                    rd_en <= 1'b0;
+                end
             end
             STEP_1_STEREO: begin
                 if (fmt == 1'b0 || lc == 1'b1) begin // 8-bit
@@ -247,38 +256,46 @@ always_ff @(posedge clk) begin
                     tmp_16bit_left[7:0] <= data_in;
                 end
                 rd_en <= 1'b1; // read next byte
-                pb_state <= pb_state.next();
+                if (rd_en == 1'b1) begin
+                    pb_state <= pb_state.next();
+                    rd_en <= 1'b0;
+                end
             end
             STEP_2_STEREO: begin
                 if (fmt == 1'b0 || lc == 1'b1) begin // 8-bit
                     // Make 8-bit unsigned to 8 bits signed
                     tmp_8bit_right <= data_in - 8'sh80;
+                    pb_state <= pb_state.next();
                 end else begin // 16-bit
                     // Get left chonnel msb
                     tmp_16bit_left[15:8] <= data_in;
                     rd_en <= 1'b1; // read next byte
+                    if (rd_en == 1'b1) begin
+                        pb_state <= pb_state.next();
+                        rd_en <= 1'b0;
+                    end
                 end
-                pb_state <= pb_state.next();
             end
             STEP_3_STEREO: begin
                 if (fmt == 1'b0 || lc == 1'b1) begin // 8-bit
                     // Output received data
                     ldata <= {tmp_8bit_left, 8'h00};
                     rdata <= {tmp_8bit_right, 8'h00};
-                    endata <= 1'b1; // signal new data is available
                     pb_state <= idle;
                 end else begin // 16-bit
                     // Get right channel lsb first
                     tmp_16bit_right[7:0] <= data_in;
                     rd_en <= 1'b1; // read next byte
-                    pb_state <= pb_state.next();
+                    if (rd_en == 1'b1) begin
+                        pb_state <= pb_state.next();
+                        rd_en <= 1'b0;
+                    end
                 end
             end
             STEP_4_STEREO: begin
                 // Output received data on both channels 16-bit
                 ldata <= tmp_16bit_left;
                 rdata <= {data_in, tmp_16bit_right[7:0]};
-                endata <= 1'b1; // signal new data is available
                 pb_state <= idle;
             end
         endcase

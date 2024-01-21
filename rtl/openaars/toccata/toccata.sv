@@ -120,23 +120,28 @@ logic [7:0]  toc_status; // Toccata status register
 localparam IRQ_RECORD_HALF = 2;
 localparam IRQ_PLAY_HALF   = 3;
 localparam IRQ_INT_IRQ     = 7;
+logic       clear_irq;     // Clear interrupt after read has ended
 logic [7:0] irq_reg;
 
 // FIFO change registers
-logic [1:0] fifo_play_half_;   // Delta FIFO half
-logic [1:0] fifo_cap_half_;   // Delta FIFO half
-logic [1:0] fifo_play_half_next; // Delta FIFO half next state
-logic [1:0] fifo_cap_half_next; // Delta FIFO half next state
+// logic [1:0] fifo_play_half_;   // Delta FIFO half
+// logic [1:0] fifo_cap_half_;   // Delta FIFO half
+// logic [1:0] fifo_play_half_next; // Delta FIFO half next state
+// logic [1:0] fifo_cap_half_next; // Delta FIFO half next state
 logic [1:0] acal_;          // ACAL state
 logic [1:0] acal_next;      // ACAL next state
 logic [1:0] hsync_;         // HSYNC state
 logic [1:0] hsync_next;     // HSYNC next state
 logic       write_second_byte; // write second byte to FIFO
 logic [7:0] second_byte;    // second byte value
+logic       rd_;            // READ edge detect
+logic       lwr_;           // LWR edge detect
+logic       hwr_;           // HWR edge detect
 
 logic [5:0] auto_callibration; // auto callibration counter
 
 // interrupt change registers
+(* MARK_DEBUG="true", KEEP="true" *)
 struct {
     logic rst;
     logic wr_en;
@@ -167,8 +172,13 @@ logic [15:0]  playback_right;
 logic [7:0] din_byte;
 logic       fifo_rst_playback;
 
-logic       toc_int_prev;
-logic       toc_int_cur;
+// logic       toc_int_prev;
+// logic       toc_int_cur;
+
+logic       loc_rd_en;
+
+(* MARK_DEBUG="true", KEEP="true" *)
+logic [2:0] reg_select;
 
 // Toccata FIFO to 2-complement 16-bit audio output
 toccata_playback #(
@@ -247,7 +257,7 @@ toccata_fifo #(
     .clk(clk),
     .rst(fifo.rst | fifo_rst_playback),
     .wr_en(fifo.wr_en),
-    .rd_en(fifo.rd_en),
+    .rd_en(fifo.rd_en || loc_rd_en),
     .data_in(fifo.data_in),
     .full(fifo.full),
     .empty(fifo.empty),
@@ -258,11 +268,12 @@ toccata_fifo #(
 
 always_comb begin
 
-    //  IRQ bit derived from the 6 previous bits being set or not
-    irq_reg[IRQ_INT_IRQ] = !(|irq_reg[6:0]); // Active low
+
+    // Generate reg select pattern
+    reg_select = {addr[14], addr[13], addr[11]};
 
     // Current interrupt register value
-    toc_int_cur = !irq_reg[IRQ_INT_IRQ];
+    // toc_int_cur = !irq_reg[IRQ_INT_IRQ];
 
     // Decode AD1848 audio registers
     ad.int_ = ad1848_regs[2][0];
@@ -281,8 +292,8 @@ always_comb begin
     ad.aci = ad1848_regs[11][5];
 
     // Detect changes in the signals that generate interrupts
-    fifo_play_half_next = {fifo_play_half_[0], fifo.half_empty};
-    fifo_cap_half_next = {fifo_cap_half_[0], cap.half_full};
+    // fifo_play_half_next = {fifo_play_half_[0], fifo.half_empty};
+    // fifo_cap_half_next = {fifo_cap_half_[0], cap.half_full};
     acal_next = {acal_[0], ad.acal};
     hsync_next = {hsync_[0], hsync};
 
@@ -294,16 +305,23 @@ end
 
 always_ff @(posedge clk) begin
     fifo.wr_en <= 1'b0;
+    loc_rd_en <= 1'b0;
     fifo.rst <= 1'b0;
     write_second_byte <= 1'b0;
 
+    // Edge detect registers write
+    rd_ <= rd;
+    lwr_ <= lwr;
+    hwr_ <= hwr;
 
     // generate interrupt pulses
-    toc_int <= 1'b0;
-    if (toc_int_cur == 1'b1 && toc_int_prev == 1'b0) begin
-        toc_int <= !irq_reg[IRQ_INT_IRQ];
+    // Set the interrupt until cleared
+    if (irq_reg[IRQ_INT_IRQ] == 1'b1) begin
+        irq_reg[IRQ_INT_IRQ] <= !(|irq_reg[6:0]); // Active low
     end
-    toc_int_prev <= toc_int_cur;
+    toc_int <= !irq_reg[IRQ_INT_IRQ];
+
+    // toc_int_prev <= toc_int_cur;
 
     if (rst == 1) begin
         // Reset the ad1848 registers
@@ -314,22 +332,23 @@ always_ff @(posedge clk) begin
         fifo.rst <= 1'b1;
         ad1848_index <= ad1848_reset_index;
         data_out <= 16'h0000;
-        irq_reg[6:0] <= 7'h00;
+        irq_reg <= 8'h80;
         auto_callibration <= 0;
         toc_status <= 0; // Initial status set
+        clear_irq <= 0;
     end else begin
         // Update int trigger records
-        fifo_play_half_ <= fifo_play_half_next;
-        fifo_cap_half_ <= fifo_cap_half_next;
+        // fifo_play_half_ <= fifo_play_half_next;
+        // fifo_cap_half_ <= fifo_cap_half_next;
         acal_ <= acal_next;
         hsync_ <= hsync_next;
 
         // Play half empty interrupt
-        if (fifo_play_half_ == 2'b01 && toc_status[STATUS_PLAY_INTENA] == 1'b1) begin
+        if (fifo.half_empty && toc_status[STATUS_FIFO_PLAY] == 1'b1 && toc_status[STATUS_PLAY_INTENA] == 1'b1) begin
             irq_reg[IRQ_PLAY_HALF] <= 1'b1; // Half empty interrupt
         end
         // Capture half full interrupt
-        if (fifo_cap_half_ == 2'b01 && toc_status[STATUS_RECORD_INTENA] == 1'b1) begin
+        if (cap.half_full && toc_status[STATUS_FIFO_RECORD] == 1'b1 && toc_status[STATUS_RECORD_INTENA] == 1'b1) begin
             irq_reg[IRQ_RECORD_HALF] <= 1'b1; // Half full interrupt
         end
 
@@ -364,6 +383,7 @@ always_ff @(posedge clk) begin
             // Write second byte to the FIFO
             fifo.wr_en <= 1'b1;
             fifo.data_in <= second_byte;
+            write_second_byte <= 1'b0;
         end else if (sel == 1'b1) begin
             // When selected start answering
 
@@ -372,14 +392,13 @@ always_ff @(posedge clk) begin
             // =================================================================
             if (lwr || hwr) begin // Might need to trigger on both
 
-                case ({addr[14], addr[13], addr[11]})
+                case (reg_select)
                     CODEC_STATUS: begin // 'h00xx - status register
                         // If the reset bit is set, stop codec, reset fifo
                         if (din_byte[STATUS_RESET] == 1'b1) begin
                             // Reset the card, and stop playback
                             fifo.rst <= 1'b1;
-                            toc_status <= 8'h00; // Inactivate card
-                            irq_reg[6:0] <= 7'h00; // Clear all interrupts
+                            irq_reg <= 8'h80; // Clear all interrupts
 
                             // Reset registers
                             ad1848_regs[9][0] <= 1'b0;
@@ -387,6 +406,9 @@ always_ff @(posedge clk) begin
                             ad1848_regs[9][6] <= 1'b0;
                             ad1848_regs[9][7] <= 1'b0;
                             ad1848_regs[10][1] <= 1'b0;
+
+                            // Status register clear
+                            toc_status <= 8'h00; // Inactivate card
                         end else begin
                             // When not resetting, store the status
                             toc_status <= din_byte;
@@ -396,7 +418,7 @@ always_ff @(posedge clk) begin
                             if (din_byte == 8'h01) begin // STATUS_ACTIVE
                                 // Activate card
                                 fifo.rst <= 1'b1; // Start with a clean FIFO
-                                irq_reg[6:0] <= 7'h00; // Clear all interrupts
+                                irq_reg <= 8'h80; // Clear all interrupts
                             end
 
                             // Store bytes in the AD1848 registers
@@ -405,31 +427,42 @@ always_ff @(posedge clk) begin
                             ad1848_regs[9][6] <= din_byte[STATUS_PLAY_INTENA];
                             ad1848_regs[9][7] <= din_byte[STATUS_RECORD_INTENA];
                             ad1848_regs[10][1] <= din_byte[STATUS_PLAY_INTENA] | din_byte[STATUS_RECORD_INTENA];
+                            // Unmute channels
+                            // ad1848_regs[6][7] <= din_byte[STATUS_FIFO_CODEC] ? !din_byte[STATUS_FIFO_PLAY] : 1'b1;
+                            // ad1848_regs[7][7] <= din_byte[STATUS_FIFO_CODEC] ? !din_byte[STATUS_FIFO_PLAY] : 1'b1;
+                            // TODO: Force unmute channels
+                            ad1848_regs[6][7] <= 1'b0;
+                            ad1848_regs[7][7] <= 1'b0;
                         end
                     end
                     CODEC_FIFO: begin // 'h20xx - FIFO register
-
-                        if (toc_status[STATUS_FIFO_PLAY] == 1'b1 && fifo.full == 1'b0) begin
-                            // Write value only when presented in the lower byte
-                            if (lwr == 1'b1) begin
-                                // Write byte to the FIFO
-                                fifo.wr_en <= 1'b1;
-                                fifo.data_in <= data_in[7:0];
-                            end
-
-                            if (hwr == 1) begin
-                                // Write high byte to FIFO as well
-                                write_second_byte <= 1'b1;
-                                second_byte <= data_in[15:8];
-                            end
-
-                            // On write to FIFO clear FIFO half empty flag
-                            irq_reg[IRQ_PLAY_HALF] <= 1'b0;
+                        // TODO: Evaluate later, STATUS_FIFO_PLAY should be taken into account
+                        // but driver initialization seems to indicate not??
+                        // if (toc_status[STATUS_FIFO_PLAY] == 1'b1 && fifo.full == 1'b0) begin
+                        // if (fifo.full) begin
+                        // Write value only when presented in the lower byte
+                        if (lwr == 1'b1 && lwr_ == 1'b0) begin
+                            // Write byte to the FIFO
+                            fifo.wr_en <= 1'b1;
+                            fifo.data_in <= data_in[7:0];
                         end
+
+                        if (hwr == 1'b1 && hwr_ == 1'b0) begin
+                            // Write high byte to FIFO as well
+                            write_second_byte <= 1'b1;
+                            second_byte <= data_in[15:8];
+                        end
+
+                        // On write to FIFO clear FIFO half empty flag
+                        irq_reg[IRQ_PLAY_HALF] <= 1'b0;
+                    // end
                     end
                     CODEC_REG_1: begin // 'h60xx - Index register
                         if (lwr == 1'b1) begin
-                            ad1848_index <= data_in[7:0]; // Data in high byte BIG Endian
+                            ad1848_index <= data_in[7:0]; // mod 16
+                            `ifdef DEBUG
+                            $display("Set index: %1h", data_in[3:0]);
+                            `endif
                         end
                     end
                     CODEC_REG_2: begin // 'h68xx - AD1848 register
@@ -437,21 +470,19 @@ always_ff @(posedge clk) begin
                             `ifdef DEBUG
                             $display("write - index: %1h data: %2h", ad1848_index, data_in[15:8]);
                             `endif
-                            case (ad1848_index)
-                                8'h03: begin
+                            case (ad1848_index[3:0])
+                                4'h3: begin
                                     // PIO register
                                     fifo.wr_en <= 1'b1;
                                     fifo.data_in <= data_in[7:0];
                                 end
-                                8'h0c: begin
+                                4'hc: begin
                                 // Ignore
                                 end
                                 default: begin
                                     // Only write to the first 16 register, there is no more
-                                    if (ad1848_index[7:4] == 4'h0) begin
-                                        // Store the values in the registers
-                                        ad1848_regs[ad1848_index] <= data_in[7:0];
-                                    end
+                                    // Store the values in the registers
+                                    ad1848_regs[ad1848_index[3:0]] <= data_in[7:0];
                                 end
                             endcase
                         end
@@ -467,14 +498,22 @@ always_ff @(posedge clk) begin
                     CODEC_STATUS: begin // 'h00xx - status register
                         // Clear the interrupt register after reading
                         // IRQ_INT_IRQ is active low, so reset
-                        irq_reg[6:0] <= 7'h00;
+                        clear_irq <= 1'b1;
 
                         // Return the current interrupt status register
                         data_out <= {irq_reg, irq_reg};
                     end
                     CODEC_FIFO: begin // 20xx - FIFO register
-                        // Return dummy value from record module
-                        data_out <= {8'h00, cap.data_out};
+                        if (ad.cen == 0) begin
+                            // When not recording, return current byte in the playback FIFO
+                            if (fifo.empty == 1'b0 && rd_ == 1'b0) begin
+                                loc_rd_en <= 1'b1;
+                            end
+                            data_out <= {8'h00, fifo.data_out};
+                        end else begin
+                            // Return dummy value from record module
+                            data_out <= {8'h00, cap.data_out};
+                        end
                     end
                     CODEC_REG_1: begin // 60xx - INDEX REGISTER
                         // Return the current index address
@@ -487,14 +526,8 @@ always_ff @(posedge clk) begin
                                 data_out <= 16'h0000;
                             end
                             default: begin
-                                if (ad1848_index[7:4] == 4'h0) begin
-                                    // Return the current value
-                                    data_out[15:8] <= 8'h00;
-                                    data_out[7:0] <= ad1848_regs[ad1848_index];
-                                end else begin
-                                    // We only have 16 registers, ignore all else
-                                    data_out <= 16'h0000;
-                                end
+                                // Return the current value 16 registers anything else wrap
+                                data_out <= {8'h000, ad1848_regs[ad1848_index[3:0]]};
                             end
                         endcase
                     end
@@ -506,6 +539,11 @@ always_ff @(posedge clk) begin
         end else begin
             // Make sure no data is on the output when not selected
             data_out <= 16'h0000;
+            // Clear irq if requested
+            if (clear_irq) begin
+                irq_reg <= 8'h80;
+                clear_irq <= 0;
+            end
         end
 
 // Paula sound forward

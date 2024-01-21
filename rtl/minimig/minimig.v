@@ -402,13 +402,9 @@ wire  _ready; //disk is ready
 wire  _wprot; //disk is write-protected
 
 // Internal audio signals
-(* MARK_DEBUG="true", KEEP="true" *)
 wire [15:0] ldata_toc;  // Toccata left audio channel
-(* MARK_DEBUG="true", KEEP="true" *)
 wire [15:0] rdata_toc;  // Toccata right audio channel
-(* MARK_DEBUG="true", KEEP="true" *)
 wire signed [15:0] ldata_paula; // Paula left audio
-(* MARK_DEBUG="true", KEEP="true" *)
 wire signed [15:0] rdata_paula; // Paula right audio
 
 
@@ -1203,17 +1199,12 @@ AudioMix tocAudioMix
   .clk(clk),
   .reset_n(!reset),
   .audio_in_l1(ldata_paula),
-  .audio_in_l2(16'h0080),
+  .audio_in_l2(ldata_toc),
   .audio_in_r1(rdata_paula),
-  .audio_in_r2(16'h0080),
+  .audio_in_r2(rdata_toc),
   .audio_l(ldata),
   .audio_r(rdata)
 );
-
-// Debug baseline to make sure we didn't break something in Paula
-// assign ldata = ldata_paula;
-// assign rdata = rdata_paula;
-
 
 //--------------------------------------------------------------------------------------
 
