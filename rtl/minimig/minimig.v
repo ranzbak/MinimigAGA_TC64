@@ -331,6 +331,8 @@ wire  reset; //global reset
 wire  aflock;
 wire  cpu_custom;
 wire  autoconfig_done;
+wire  [7:0] toccata_base_addr; // IO base address for Toccata card
+wire  [4:0] autoconfig_shutup; // IO shutup register, when bit 1 board needs to shut up
 wire  dbr; //data bus request, Agnus tells CPU that she is using the bus
 wire  dbwe; //data bus write enable, Agnus tells the RAM it's writing data
 wire  dbs; //data bus slow down, used for slowing down CPU access to chip, slow and custor register address space
@@ -1021,6 +1023,7 @@ assign cpu_data_in2 = chip48[47:32];
 //instantiate gary
 gary GARY1
 (
+  .clk(clk),
   .cpu_address_in(cpu_address_out),
   .dma_address_in(dma_address_out),
   .ram_address_out(ram_address_out),
@@ -1063,7 +1066,11 @@ gary GARY1
   .sel_toccata(sel_toccata),
   .sel_ide(sel_ide),
   .sel_gayle(sel_gayle),
-  .sel_autoconfig(sel_autoconfig)
+  .sel_autoconfig(sel_autoconfig),
+  // Auto config IO BASE
+  .autoconfig_done(autoconfig_done),
+  .autoconfig_shutup(autoconfig_shutup),
+  .toccata_base_addr(toccata_base_addr)
 );
 
 gayle GAYLE1
@@ -1128,8 +1135,8 @@ minimig_autoconfig #(
   .ram_64meg(ram_64meg),
   .slowram_config(memory_config[3:2]),
   .board_configured(board_configured),
-  // .board_base_addr(),
-  .board_shutup(),
+  .toccata_base_addr(toccata_base_addr),
+  .board_shutup(autoconfig_shutdown),
   .autoconfig_done(autoconfig_done)
 );
 

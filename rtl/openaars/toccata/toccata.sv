@@ -13,21 +13,13 @@ module toccata #(
     input wire          rst,
     input wire          hsync,
     // Zorro II interface
-    (* MARK_DEBUG="true", KEEP="true" *)
     input  wire  [15:0] data_in,
-    (* MARK_DEBUG="true", KEEP="true" *)
     output logic [15:0] data_out,
-    (* MARK_DEBUG="true", KEEP="true" *)
     input  wire  [15:1] addr,
-    (* MARK_DEBUG="true", KEEP="true" *)
     input  wire         rd,
-    (* MARK_DEBUG="true", KEEP="true" *)
     input  wire         hwr,
-    (* MARK_DEBUG="true", KEEP="true" *)
     input  wire         lwr,
-    (* MARK_DEBUG="true", KEEP="true" *)
     input  wire         sel,
-    (* MARK_DEBUG="true", KEEP="true" *)
     output logic        toc_int, // Toccata interrupt active high
     // Audio output
     output logic [15:0] out_left,
@@ -141,7 +133,6 @@ logic       hwr_;           // HWR edge detect
 logic [5:0] auto_callibration; // auto callibration counter
 
 // interrupt change registers
-(* MARK_DEBUG="true", KEEP="true" *)
 struct {
     logic rst;
     logic wr_en;
@@ -177,7 +168,6 @@ logic       fifo_rst_playback;
 
 logic       loc_rd_en;
 
-(* MARK_DEBUG="true", KEEP="true" *)
 logic [2:0] reg_select;
 
 // Toccata FIFO to 2-complement 16-bit audio output

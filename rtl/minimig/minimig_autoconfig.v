@@ -17,14 +17,18 @@ module minimig_autoconfig #(
 	input   [1:0] fastram_config,
 	input m68020,
 	input ram_64meg,
+	(* MARK_DEBUG = "true", KEEP = "true" *)
 	output reg [4:0] board_configured,
+	(* MARK_DEBUG = "true", KEEP = "true" *)
 	output reg [4:0] board_shutup,
-	// output reg [3:0] board_base_addr [0:4], // Base address for the cards
+	(* MARK_DEBUG = "true", KEEP = "true" *)
+	output wire [7:0] toccata_base_addr, // Base address for the cards
 	output reg autoconfig_done
 );
 
-reg [3:0] board_base_addr [0:4];
-
+// IO base for cards
+reg [7:0] board_base_addr [0:4];
+assign toccata_base_addr = board_base_addr[4];
 
 reg [2:0] acdevice;
 reg [3:0] ramsize;
@@ -64,7 +68,7 @@ begin
 		autoconfig_done<=1'b0;
 
 		for (loop = 0; loop < 4; loop = loop + 1) begin
-			board_base_addr[loop]<= 4'h0;
+			board_base_addr[loop] <= 8'h00;
 		end
 	end else begin
 
@@ -102,7 +106,7 @@ begin
 							3'b101: begin // Toccata sound card
 								board_configured[4] <= 1'b1;
 								acdevice<=3'b111; // NULL device to terminate the chain
-								board_base_addr[4] <= data_in[15:12]; // Store Toccata base address
+								board_base_addr[4] <= data_in[7:0]; // Store Toccata base address
 							end
 							default :
 								;

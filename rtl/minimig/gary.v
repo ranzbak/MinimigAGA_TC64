@@ -48,6 +48,7 @@
 
 module gary
 (
+	input          clk,
 	input   [23:1] cpu_address_in,  //cpu address bus input
 	input   [20:1] dma_address_in,  //agnus dma memory address input
 	output  [23:1] ram_address_out, //ram address bus output
@@ -94,11 +95,18 @@ module gary
 	output  sel_toccata,            //select toccata sound card
 	output  sel_ide,                //select $DAxxxx
 	output  sel_gayle,              //select $DExxxx
-	output  sel_autoconfig      // select $E8xxxx
+	output  sel_autoconfig,         // select $E8xxxx
+
+	input         autoconfig_done,   // 1 if the autoconfig is done
+	input   [4:0] autoconfig_shutup, // autoconfig shutup register, silence card if one
+	input   [7:0] toccata_base_addr //base address for the Toccata sound card
 );
 
-wire    [2:0] t_sel_slow;
-wire    sel_bank_1;                 // $200000-$3FFFFF
+wire    [2:0]   t_sel_slow;
+wire            sel_bank_1;                 // $200000-$3FFFFF
+reg     [7:0]   toccata_base_addr_reg;
+reg             autoconfig_done_reg;
+reg     [4:0]   autoconfig_shutup_reg;
 
 //--------------------------------------------------------------------------------------
 
@@ -123,6 +131,13 @@ assign ram_lwr2 = dbr ? 1'b0 : cpu_lwr2;
 assign ram_address_out = dbr ? {3'b000, dma_address_in[20:1]} : cpu_address_in[23:1];
 
 //--------------------------------------------------------------------------------------
+
+always @(posedge clk) begin
+	// Pipeline base address registers
+	toccata_base_addr_reg <= toccata_base_addr;
+	autoconfig_done_reg <= autoconfig_done;
+	autoconfig_shutup_reg <= autoconfig_shutup;
+end
 
 //chipram, kickstart and bootrom address decode
 always @(*)
@@ -170,7 +185,8 @@ assign sel_autoconfig = cpu_address_in[23:16]==12'b1110_1000 ? 1'b1 : 1'b0;     
 
 assign sel_rtc = cpu_address_in[23:16]==8'b1101_1100 ? 1'b1 : 1'b0;   //RTC registers at $DC0000 - $DCFFFF
 
-assign sel_toccata = cpu_address_in[23:16]==8'b1110_1001 ? 1'b1 : 1'b0; //Toccata sound card at $E90000 - $E9FFFF
+// assign sel_toccata = cpu_address_in[23:16]==8'b1110_1001 ? 1'b1 : 1'b0; //Toccata sound card at $E90000 - $E9FFFF
+assign sel_toccata = (cpu_address_in[23:16] == toccata_base_addr_reg) && (autoconfig_shutup_reg[4] == 1'b0) && (autoconfig_done_reg == 1'b1) ? 1'b1 : 1'b0; //Toccata sound card at $E90000 - $E9FFFF
 
 assign sel_reg = cpu_address_in[23:21]==3'b110 ? ~(|t_sel_slow | sel_rtc | sel_ide | sel_gayle) : 1'b0;     //chip registers at $DF0000 - $DFFFFF
 
