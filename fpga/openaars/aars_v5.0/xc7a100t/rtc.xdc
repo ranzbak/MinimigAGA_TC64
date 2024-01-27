@@ -20,10 +20,16 @@ set_property -dict {PACKAGE_PIN T2} [get_ports rtc_spi_data0]
 set_property -dict {PACKAGE_PIN U1} [get_ports rtc_clkout]
 
 
-set_property -dict {IOSTANDARD LVTTL SLEW SLOW} [get_ports rtc_*]
+set_property IOSTANDARD LVTTL [get_ports rtc_clkout]
+set_property IOSTANDARD LVTTL [get_ports rtc_int_n]
+set_property IOSTANDARD LVTTL [get_ports rtc_spi_ce]
+set_property IOSTANDARD LVTTL [get_ports rtc_spi_clk]
+set_property IOSTANDARD LVTTL [get_ports rtc_spi_cmd]
+set_property IOSTANDARD LVTTL [get_ports rtc_spi_data0]
+set_property SLEW SLOW [get_ports rtc_spi_ce]
+set_property SLEW SLOW [get_ports rtc_spi_clk]
+set_property SLEW SLOW [get_ports rtc_spi_cmd]
 
 # For this low speed SPI interface we don't care about timing.
-set_false_path -to [get_ports {rtc_*}]
-set_false_path -from [get_ports {rtc_*}]
-
-
+set_false_path -to [get_ports rtc_*]
+set_false_path -from [get_ports rtc_*]

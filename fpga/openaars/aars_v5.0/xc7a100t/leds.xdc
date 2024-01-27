@@ -22,6 +22,3 @@ set_false_path -to [get_ports led_hdisk]
 set_false_path -to [get_ports led_user]
 set_false_path -to [get_ports led_power]
 set_false_path -to [get_ports led_fdisk]
-
-
-

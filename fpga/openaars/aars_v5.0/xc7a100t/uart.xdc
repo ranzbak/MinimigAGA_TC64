@@ -22,6 +22,3 @@ set_property -dict {PACKAGE_PIN AC24 IOSTANDARD LVTTL} [get_ports uart1_rxd]
 # Don't care about the timing
 set_false_path -from [get_ports {uart0_rxd uart0_cts uart1_rxd uart1_cts}]
 set_false_path -to [get_ports {uart0_txd uart0_rts uart1_txd uart1_rts}]
-
-
-

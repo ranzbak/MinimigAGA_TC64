@@ -92,15 +92,3 @@ set_property PULLTYPE PULLUP [get_ports sd_m_clk]
 set_property PULLTYPE PULLUP [get_ports sd_m_cmd]
 set_property -dict {PACKAGE_PIN F23 IOSTANDARD LVTTL} [get_ports sd_m_cdet]
 set_false_path -from [get_ports sd_m_d0]
-
-connect_debug_port u_ila_0/probe4 [get_nets [list openaars_virtual_top/minimig/myrtc_spi_clock/n_0_0]]
-connect_debug_port u_ila_0/probe5 [get_nets [list openaars_virtual_top/minimig/myrtc_spi_clock/n_0_1]]
-
-
-
-
-connect_debug_port u_ila_0/probe6 [get_nets [list openaars_virtual_top/minimig/myrtc_spi_clock/pcf_wr]]
-
-
-
-

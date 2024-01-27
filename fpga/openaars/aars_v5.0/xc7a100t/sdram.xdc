@@ -15,8 +15,8 @@ set_property -dict {PACKAGE_PIN L5 IOB TRUE} [get_ports {dr_a[9]}]
 set_property -dict {PACKAGE_PIN P3 IOB TRUE} [get_ports {dr_a[10]}]
 set_property -dict {PACKAGE_PIN N2 IOB TRUE} [get_ports {dr_a[11]}]
 set_property -dict {PACKAGE_PIN M2 IOB TRUE} [get_ports {dr_a[12]}]
-                                  
-## DATA ##                        
+
+## DATA ##
 set_property -dict {PACKAGE_PIN C2 IOB TRUE} [get_ports {dr_d[0]}]
 set_property -dict {PACKAGE_PIN D4 IOB TRUE} [get_ports {dr_d[1]}]
 set_property -dict {PACKAGE_PIN D5 IOB TRUE} [get_ports {dr_d[2]}]
@@ -33,24 +33,24 @@ set_property -dict {PACKAGE_PIN C1 IOB TRUE} [get_ports {dr_d[12]}]
 set_property -dict {PACKAGE_PIN E5 IOB TRUE} [get_ports {dr_d[13]}]
 set_property -dict {PACKAGE_PIN B2 IOB TRUE} [get_ports {dr_d[14]}]
 set_property -dict {PACKAGE_PIN A3 IOB TRUE} [get_ports {dr_d[15]}]
-                                  
-## BANK ##                        
+
+## BANK ##
 set_property -dict {PACKAGE_PIN K5 IOB TRUE} [get_ports {dr_ba[0]}]
 set_property -dict {PACKAGE_PIN L4 IOB TRUE} [get_ports {dr_ba[1]}]
-                                  
-## CONTROL ##                     
+
+## CONTROL ##
 set_property -dict {PACKAGE_PIN N3 IOB TRUE} [get_ports dr_cs_n]
-                                  
+
 set_property -dict {PACKAGE_PIN H4 IOB TRUE} [get_ports {dr_dqm[0]}]
 set_property -dict {PACKAGE_PIN J4 IOB TRUE} [get_ports {dr_dqm[1]}]
-                                  
+
 set_property -dict {PACKAGE_PIN L2 IOB TRUE} [get_ports dr_ras_n]
 set_property -dict {PACKAGE_PIN G9 IOB TRUE} [get_ports dr_cas_n]
 set_property -dict {PACKAGE_PIN H1 IOB TRUE} [get_ports dr_we_n]
 set_property -dict {PACKAGE_PIN H9} [get_ports dr_cke]
 set_property -dict {PACKAGE_PIN H2} [get_ports dr_clk]
 
-set_property -dict {IOSTANDARD LVTTL DRIVE 12 SLEW FAST} [get_ports {dr_*}]
+set_property -dict {IOSTANDARD LVTTL DRIVE 12 SLEW FAST} [get_ports dr_*]
 
 # Define SDRAM input clock
 
@@ -65,8 +65,6 @@ set_property -dict {IOSTANDARD LVTTL DRIVE 12 SLEW FAST} [get_ports {dr_*}]
 
 
 # Data sampling is edge aligned
-set sdram_setup_time 1.5
-set sdram_hold_time -0.8
 
 # name SDRAM ports
 
@@ -74,21 +72,21 @@ set sdram_hold_time -0.8
 # input delay
 # set_input_delay -clock $input_clock -reference_pin [get_ports dr_clk] -max $skew_bre $sdram_inputs
 # set_input_delay -clock $input_clock -reference_pin [get_ports dr_clk] -max $skew_bre $sdram_inputs
-set_input_delay -clock [get_clocks clk_114] -max $sdram_setup_time [get_ports [get_ports {dr_d[*]}]]
-set_input_delay -clock [get_clocks clk_114] -min $sdram_hold_time [get_ports [get_ports {dr_d[*]}]]
+set_input_delay -clock [get_clocks clk_114] -max 1.500 [get_ports [get_ports {dr_d[*]}]]
+set_input_delay -clock [get_clocks clk_114] -min -0.800 [get_ports [get_ports {dr_d[*]}]]
 
 
 
 # Output Delay Constraints
 # Clock pin
-set_output_delay -clock [get_clocks clk_114] -max $sdram_setup_time [get_ports [get_ports dr_clk]]
-set_output_delay -clock [get_clocks clk_114] -min $sdram_hold_time [get_ports [get_ports dr_clk]]
+set_output_delay -clock [get_clocks clk_114] -max 1.500 [get_ports [get_ports dr_clk]]
+set_output_delay -clock [get_clocks clk_114] -min -0.800 [get_ports [get_ports dr_clk]]
 
 # report_timing -to [get_ports $sdram_clk] -max_paths 20 -nworst 1 -delay_type min_max -name sys_sync_rise_out -file sys_sync_rise_out.txt;
 
 # Output pins
-set_output_delay -clock [get_clocks clk_114] -max $sdram_setup_time [get_ports [get_ports {{dr_d[*]} {dr_a[*]} dr_cs_n {dr_ba[*]} dr_dqm dr_ras_n dr_cas_n dr_we_n dr_cke}]]
-set_output_delay -clock [get_clocks clk_114] -min $sdram_hold_time [get_ports [get_ports {{dr_d[*]} {dr_a[*]} dr_cs_n {dr_ba[*]} dr_dqm dr_ras_n dr_cas_n dr_we_n dr_cke}]]
+set_output_delay -clock [get_clocks clk_114] -max 1.500 [get_ports [get_ports {{dr_d[*]} {dr_a[*]} dr_cs_n {dr_ba[*]} dr_dqm dr_ras_n dr_cas_n dr_we_n dr_cke}]]
+set_output_delay -clock [get_clocks clk_114] -min -0.800 [get_ports [get_ports {{dr_d[*]} {dr_a[*]} dr_cs_n {dr_ba[*]} dr_dqm dr_ras_n dr_cas_n dr_we_n dr_cke}]]
 
 # Adjust data window for SDRAM reads by 1 cycle
 # set_multicycle_path -setup -from clk_sd_114 -to [get_clocks clk_114] 2
@@ -96,6 +94,3 @@ set_output_delay -clock [get_clocks clk_114] -min $sdram_hold_time [get_ports [g
 
 # TODO: check if correct - don't care for dr_clk
 set_false_path -from [get_pins openaars_virtual_top/amiga_clk/amiga_clk_i/clk_main/CLKOUT1] -to [get_ports dr_clk]
-
-
-

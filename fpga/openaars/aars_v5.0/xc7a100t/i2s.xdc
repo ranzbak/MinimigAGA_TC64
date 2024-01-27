@@ -13,6 +13,3 @@ set_property -dict {PACKAGE_PIN P5 IOSTANDARD LVTTL} [get_ports max_i2s]
 # Timing constraints
 # TODO check invalid path
 # set_false_path -from [get_clocks -of_objects [get_pins openaars_virtual_top/amiga_clk/amiga_clk_i/clk_main/CLKOUT0]] -to [get_clocks my_i2s_transmitter/max_sclk_OBUF]
-
-
-

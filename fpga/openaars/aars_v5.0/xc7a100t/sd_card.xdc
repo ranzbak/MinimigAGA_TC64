@@ -16,10 +16,9 @@ set_property PACKAGE_PIN H26 [get_ports sd_m_d2]
 set_property PACKAGE_PIN G26 [get_ports sd_m_d3]
 
 # Low when card is inserted, otherwise high
-set_property PACKAGE_PIN F23 [get_ports sd_m_cdet]
 
-set_property -dict {IOSTANDARD LVTTL SLEW SLOW } [get_ports {sd_m_clk sd_m_cmd sd_m_d1 sd_m_d2 sd_m_d3}]
-set_property -dict {IOSTANDARD LVTTL } [get_ports {sd_m_d0 sd_m_cdet}]
+set_property -dict {IOSTANDARD LVTTL SLEW SLOW} [get_ports {sd_m_clk sd_m_cmd sd_m_d1 sd_m_d2 sd_m_d3}]
+set_property -dict {IOSTANDARD LVTTL} [get_ports {sd_m_d0 sd_m_cdet}]
 
 
 # Port timing
