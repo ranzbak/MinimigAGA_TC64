@@ -55,3 +55,7 @@ xvlog.*
 .library_mapping.xml
 .log*
 unisims
+.dvt
+.editorconfig
+.project
+.settings
