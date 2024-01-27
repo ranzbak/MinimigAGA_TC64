@@ -418,11 +418,8 @@ always_ff @(posedge clk) begin
                             ad1848_regs[9][7] <= din_byte[STATUS_RECORD_INTENA];
                             ad1848_regs[10][1] <= din_byte[STATUS_PLAY_INTENA] | din_byte[STATUS_RECORD_INTENA];
                             // Unmute channels
-                            // ad1848_regs[6][7] <= din_byte[STATUS_FIFO_CODEC] ? !din_byte[STATUS_FIFO_PLAY] : 1'b1;
-                            // ad1848_regs[7][7] <= din_byte[STATUS_FIFO_CODEC] ? !din_byte[STATUS_FIFO_PLAY] : 1'b1;
-                            // TODO: Force unmute channels
-                            ad1848_regs[6][7] <= 1'b0;
-                            ad1848_regs[7][7] <= 1'b0;
+                            ad1848_regs[6][7] <= din_byte[STATUS_FIFO_CODEC] ? !din_byte[STATUS_FIFO_PLAY] : 1'b1;
+                            ad1848_regs[7][7] <= din_byte[STATUS_FIFO_CODEC] ? !din_byte[STATUS_FIFO_PLAY] : 1'b1;
                         end
                     end
                     CODEC_FIFO: begin // 'h20xx - FIFO register
