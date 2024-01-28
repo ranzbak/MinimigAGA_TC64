@@ -24,39 +24,62 @@ This is the Minimig I2C handler.
 
 #include "i2c.h"
 
-void i2c_set_divider(unsigned short div) {
+void i2c_set_divider(unsigned short div)
+{
   unsigned int divout;
-  //unsigned int divout = ((div & 0xff)<<16) |  ((div & 0xff00)<<16) | 0xaaaa;
+  // unsigned int divout = ((div & 0xff)<<16) |  ((div & 0xff00)<<16) | 0xaaaa;
   divout = (CMD_I2C_SET_SCL_L << 8) | div | 0xaaaa0000;
-  I2C(HW_I2C_DATA)=divout;
+  I2C(HW_I2C_DATA) = divout;
   divout = (CMD_I2C_SET_SCL_H << 8) | ((0xff00 & div) >> 8) | 0xaaaa0000;
-  I2C(HW_I2C_DATA)=divout;
+  I2C(HW_I2C_DATA) = divout;
 }
 
-void i2c_set_address(unsigned char addr) {
-  I2C(HW_I2C_DATA)=CMD_I2C_SET_ADDR << 8 | addr | 0xaaa0000;
+void i2c_set_address(unsigned char addr)
+{
+  I2C(HW_I2C_DATA) = CMD_I2C_SET_ADDR << 8 | addr | 0xaaa0000;
 }
 
-void i2c_start() {
-  I2C(HW_I2C_DATA)=CMD_I2C_START<<8 | 0xaaaa0000;
+void i2c_start()
+{
+  I2C(HW_I2C_DATA) = CMD_I2C_START << 8 | 0xaaaa0000;
 }
 
-void i2c_stop() {
-  I2C(HW_I2C_DATA)=CMD_I2C_STOP<<8 | 0xaaaa0000;
+void i2c_stop()
+{
+  I2C(HW_I2C_DATA) = CMD_I2C_STOP << 8 | 0xaaaa0000;
 }
 
-void i2c_write(unsigned char byte) {
-  I2C(HW_I2C_DATA)=CMD_I2C_WRITE<<8 | (unsigned short)byte | 0xaaaa0000;
+void i2c_write(unsigned char byte)
+{
+  I2C(HW_I2C_DATA) = CMD_I2C_WRITE << 8 | (unsigned short)byte | 0xaaaa0000;
 }
 
 // Be aware, the send buffer is only 8 bytes!
-void i2c_write_multi(unsigned char *byte, unsigned char size) {
-  for (unsigned char pos=0; pos<size; pos++) {
-    if (pos+1 == size) {
+void i2c_write_multi(unsigned char *byte, unsigned char size)
+{
+  for (unsigned char pos = 0; pos < size; pos++)
+  {
+    if (pos + 1 == size)
+    {
       // last byte
-      I2C(HW_I2C_DATA)=(CMD_I2C_WRITEMULTI | CMD_I2C_LAST_BYTE)<<8 | (unsigned short) *(byte+pos);
-    } else {
-      I2C(HW_I2C_DATA)=CMD_I2C_WRITEMULTI<<8 | (unsigned short) *(byte+pos);
+      I2C(HW_I2C_DATA) = (CMD_I2C_WRITEMULTI | CMD_I2C_LAST_BYTE) << 8 | (unsigned short)*(byte + pos);
+    }
+    else
+    {
+      I2C(HW_I2C_DATA) = CMD_I2C_WRITEMULTI << 8 | (unsigned short)*(byte + pos);
     }
   }
+}
+
+// Read status
+unsigned int i2c_read_status()
+{
+  return I2C(HW_I2C_STATUS);
+}
+
+// Busy wait the bus is no longer busy
+void i2c_wait_not_busy()
+{
+  while (I2C(HW_I2C_STATUS) & STATUS_I2C_BUSY)
+    ;
 }
