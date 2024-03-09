@@ -213,18 +213,23 @@ always_ff @(posedge clk) begin
                 rd_en <= 1'b1;
                 if (rd_en == 1'b1) begin
                     pb_state <= pb_state.next();
+                    rd_en <= 1'b0;
                 end
             end
             STEP_1_MONO: begin
                 if (fmt == 1'b0 || lc == 1'b1) begin // 8-bit
                     // Make 8-bit unsigned to 8 bits signed
                     tmp_8bit_left <= data_in - 8'sh80;
+                    pb_state <= pb_state.next();
                 end else begin // 16 bit
                     // Store the LSB first
                     tmp_8bit_left <= data_in;
                     rd_en <= 1'b1; // Get the MSB
+                    if (rd_en == 1'b1) begin
+                        pb_state <= pb_state.next();
+                        rd_en <= 1'b0;
+                    end
                 end
-                pb_state <= pb_state.next();
             end
             STEP_2_MONO: begin
                 if (fmt == 1'b0 || lc == 1'b1) begin // 8-bit
