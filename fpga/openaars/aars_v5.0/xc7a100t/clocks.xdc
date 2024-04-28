@@ -17,7 +17,7 @@ create_generated_clock -name clk_sd_114 -master_clock [get_clocks clk_50] [get_p
 create_generated_clock -name dll_28 -master_clock [get_clocks clk_50] [get_pins openaars_virtual_top/amiga_clk/amiga_clk_i/clk_main/CLKOUT2]
 
 # Make SDRAM clock independent of the main clock
-set_clock_groups -name sdram_async -asynchronous -group [get_clocks clk_114] -group [get_clocks clk_sd_114]
+# set_clock_groups -name sdram_async -asynchronous -group [get_clocks clk_114] -group [get_clocks clk_sd_114]
 
 
 # Rename the hdmi clock outputs

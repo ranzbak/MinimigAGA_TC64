@@ -11,20 +11,20 @@ module sync_buttons (
     output wire osd_button,
     output wire reset_button_n
 );
-    (* ASYNC_REG = "true" *) reg [1:0] sys_reset_s;
-    (* ASYNC_REG = "true" *) reg [1:0] button_osd_s;
+(* ASYNC_REG = "TRUE" *) reg [1:0] sys_reset_s;
+(* ASYNC_REG = "TRUE" *) reg [1:0] button_osd_s;
 
-    // Setup next step
-    wire [1:0] sys_reset_next = {sys_reset_s[0], sys_reset_n_in};
-    wire [1:0] button_osd_next = {button_osd_s[0], button_osd_in};
+// Setup next step
+wire [1:0] sys_reset_next = {sys_reset_s[0], sys_reset_n_in};
+wire [1:0] button_osd_next = {button_osd_s[0], button_osd_in};
 
-    // Apply next sync step
-    always @(posedge clk) begin
-        sys_reset_s <= sys_reset_next;
-        button_osd_s <= button_osd_next;
-    end
+// Apply next sync step
+always @(posedge clk) begin
+    sys_reset_s <= sys_reset_next;
+    button_osd_s <= button_osd_next;
+end
 
-    // assign output signals
-    assign osd_button = button_osd_s[1];
-    assign reset_button_n = sys_reset_s[1];
+// assign output signals
+assign osd_button = button_osd_s[1];
+assign reset_button_n = sys_reset_s[1];
 endmodule

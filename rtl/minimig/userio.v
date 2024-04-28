@@ -287,9 +287,9 @@ end
 always @ (posedge clk) begin
   if (clk7_en) begin
     if (key_disable || !_mleft1)
-      joy2enable <= #1 0;
+      joy2enable <= 0;
     else if (!_xjoy2[4])
-      joy2enable <= #1 1;
+      joy2enable <= 1;
   end
 end
 
@@ -320,7 +320,7 @@ always @ (*) begin
 //    if (~_xjoy2[3] && ~_xjoy2[2])
 //      t_osd_ctrl = KEY_MENU;
 //    else
-      t_osd_ctrl = osd_ctrl;
+    t_osd_ctrl = osd_ctrl;
 end
 
 // port 1 automatic mouse/joystick switch
@@ -402,10 +402,10 @@ always @(*) begin
     data_out[15:0] = mouse1dat;
   else if (reg_address_in[8:1]==POTINP[8:1])//read mouse and joysticks extra buttons
     data_out[15:0] = {1'b0, potcap[3],
-                      1'b0, potcap[2],
-                      1'b0, potcap[1],
-                      1'b0, potcap[0],
-                      8'h00};
+      1'b0, potcap[2],
+      1'b0, potcap[1],
+      1'b0, potcap[0],
+      8'h00};
   else if (reg_address_in[8:1]==SCRDAT[8:1])//read mouse scroll wheel
     data_out[15:0] = {8'h00,mouse0scr};
   else
@@ -462,37 +462,37 @@ reg  [ 7:0] zcount0, zcount1;
 reg         wheel_next; // next byte will be the wheel data
 // mouse counters
 always @(posedge clk) begin
-	if(reset) begin
-		xcount0 <= #1 8'd0;
-		ycount0 <= #1 8'd0;
-		zcount0 <= #1 8'd0;
-		xcount1 <= #1 8'd0;
-		ycount1 <= #1 8'd0;
-		zcount1 <= #1 8'd0;
-	end else if (test_load && clk7_en) begin
-		ycount0[7:2] <= #1 test_data[15:10];
-		xcount0[7:2] <= #1 test_data[7:2];
-	end else if (kbd_mouse_strobe) begin
-		if(kbd_mouse_type == 2'b00) begin
-			wheel_next <= 0;
-			if (!mouse_idx)
-				xcount0[7:0] <= #1 xcount0[7:0] + kbd_mouse_data;
-			else
-				xcount1[7:0] <= #1 xcount1[7:0] + kbd_mouse_data;
-		end else if(kbd_mouse_type == 2'b01) begin
-			if (wheel_next)
-				if (!mouse_idx)
-					zcount0[7:0] <= #1 zcount0[7:0] - kbd_mouse_data;
-				else
-					zcount1[7:0] <= #1 zcount1[7:0] - kbd_mouse_data;
-			else begin
-				wheel_next <= 1;
-				if (!mouse_idx)
-					ycount0[7:0] <= #1 ycount0[7:0] + kbd_mouse_data;
-				else
-					ycount1[7:0] <= #1 ycount1[7:0] + kbd_mouse_data;
-			end
-		end
+  if(reset) begin
+    xcount0 <= #1 8'd0;
+    ycount0 <= #1 8'd0;
+    zcount0 <= #1 8'd0;
+    xcount1 <= #1 8'd0;
+    ycount1 <= #1 8'd0;
+    zcount1 <= #1 8'd0;
+  end else if (test_load && clk7_en) begin
+    ycount0[7:2] <= #1 test_data[15:10];
+    xcount0[7:2] <= #1 test_data[7:2];
+  end else if (kbd_mouse_strobe) begin
+    if(kbd_mouse_type == 2'b00) begin
+      wheel_next <= 0;
+      if (!mouse_idx)
+        xcount0[7:0] <= #1 xcount0[7:0] + kbd_mouse_data;
+      else
+        xcount1[7:0] <= #1 xcount1[7:0] + kbd_mouse_data;
+    end else if(kbd_mouse_type == 2'b01) begin
+      if (wheel_next)
+        if (!mouse_idx)
+          zcount0[7:0] <= #1 zcount0[7:0] - kbd_mouse_data;
+        else
+          zcount1[7:0] <= #1 zcount1[7:0] - kbd_mouse_data;
+      else begin
+        wheel_next <= 1;
+        if (!mouse_idx)
+          ycount0[7:0] <= #1 ycount0[7:0] + kbd_mouse_data;
+        else
+          ycount1[7:0] <= #1 ycount1[7:0] + kbd_mouse_data;
+      end
+    end
   end
 end
 

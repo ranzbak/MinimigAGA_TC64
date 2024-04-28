@@ -34,7 +34,7 @@ MMCME2_ADV #(
     .BANDWIDTH("OPTIMIZED"),
     .CLKOUT0_DIVIDE_F(10.000), // 113.4375 MHz /10 divide
     .CLKOUT1_DIVIDE(10), // 113.4375 MHz /10 divide
-    .CLKOUT1_PHASE(-144.0), // -144.00' phase shift
+    .CLKOUT1_PHASE(-121.5), // -144.00' phase shift
     .CLKOUT2_DIVIDE(40), // 28.35938  MHz /40 divide
     .REF_JITTER1(0.010),
     .STARTUP_WAIT("TRUE")

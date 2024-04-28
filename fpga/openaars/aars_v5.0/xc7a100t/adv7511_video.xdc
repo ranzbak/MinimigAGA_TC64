@@ -62,5 +62,5 @@ set_false_path -from [get_ports dv_int]
 set_false_path -from [get_ports {io_scl io_sda}]
 
 # Set output delays for the high speed ADV7511 ports
-set_output_delay -clock [get_clocks VIRTUAL_clk_148] -min -add_delay -0.700 [get_ports {{dv_d[*]} dv_clk dv_de dv_hsync dv_vsync dv_vsync}]
-set_output_delay -clock [get_clocks VIRTUAL_clk_148] -max -add_delay 2.000 [get_ports {{dv_d[*]} dv_clk dv_de dv_hsync dv_vsync dv_vsync}]
+set_output_delay -clock [get_clocks VIRTUAL_clk_148] -min -add_delay -1.000 [get_ports {{dv_d[*]} dv_clk dv_de dv_hsync dv_vsync dv_vsync}]
+set_output_delay -clock [get_clocks VIRTUAL_clk_148] -max -add_delay 0.700 [get_ports {{dv_d[*]} dv_clk dv_de dv_hsync dv_vsync dv_vsync}]

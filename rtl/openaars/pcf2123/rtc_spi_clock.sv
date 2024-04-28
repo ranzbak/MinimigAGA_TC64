@@ -75,10 +75,10 @@ wire  [ 7:0] rx_byte;
 // This to not continuously read / write to the SPI master, halting the counters
 // (* ASYNC_REG = "true" *)
 
-(* ASYNC_REG = "true" *)
+(* ASYNC_REG = "TRUE" *)
 logic [2:0] clk_out_cc;
 logic [2:0] clk_out_cc_next;
-(* ASYNC_REG = "true" *)
+(* ASYNC_REG = "TRUE" *)
 logic [11:0] clk_out_dev;
 logic [11:0] clk_out_dev_next;
 logic        clk_out_tr;
@@ -132,7 +132,7 @@ end
 assign cnt_read_pcf_next = (cnt_read_pcf + 1);
 
 // Synchronize the interrupt input
-  (* ASYNC_REG = "true" *)
+  (* ASYNC_REG = "TRUE" *)
 logic [1:0] rtc_int_n_sync;
 wire [1:0] rtc_int_n_sync_next;
 always_ff @(posedge clk) begin
@@ -440,7 +440,7 @@ always_ff @(posedge clk) begin
         if (oki_write_dirty == 1'b1) begin
           // When data is touched write it back
           pcf_fsm_state <= STATE_WRITE_0;
-        // end else if (rtc_int_n_sync[1] == 1'b0) begin
+          // end else if (rtc_int_n_sync[1] == 1'b0) begin
         end else if (tr_read_pcf == 1'b1) begin
           // When data is not touched just load updates from the chip
           rx_pos <= 4'h0;

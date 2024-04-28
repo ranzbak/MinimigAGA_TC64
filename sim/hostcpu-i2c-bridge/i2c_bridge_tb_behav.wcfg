@@ -11,15 +11,15 @@
       </db_ref>
    </db_ref_list>
    <zoom_setting>
-      <ZoomStartTime time="240838fs"></ZoomStartTime>
-      <ZoomEndTime time="377639fs"></ZoomEndTime>
-      <Cursor1Time time="272304fs"></Cursor1Time>
+      <ZoomStartTime time="0.000000 us"></ZoomStartTime>
+      <ZoomEndTime time="33.450001 us"></ZoomEndTime>
+      <Cursor1Time time="0.000000 us"></Cursor1Time>
    </zoom_setting>
    <column_width_setting>
-      <NameColumnWidth column_width="188"></NameColumnWidth>
-      <ValueColumnWidth column_width="91"></ValueColumnWidth>
+      <NameColumnWidth column_width="156"></NameColumnWidth>
+      <ValueColumnWidth column_width="138"></ValueColumnWidth>
    </column_width_setting>
-   <WVObjectSize size="24" />
+   <WVObjectSize size="18" />
    <wvobject type="logic" fp_name="/i2c_bridge_tb/clk_114">
       <obj_property name="ElementShortName">clk_114</obj_property>
       <obj_property name="ObjectShortName">clk_114</obj_property>
@@ -32,61 +32,37 @@
       <obj_property name="ElementShortName">count[31:0]</obj_property>
       <obj_property name="ObjectShortName">count[31:0]</obj_property>
    </wvobject>
+   <wvobject type="array" fp_name="/i2c_bridge_tb/state_reg">
+      <obj_property name="ElementShortName">state_reg[31:0]</obj_property>
+      <obj_property name="ObjectShortName">state_reg[31:0]</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/i2c_bridge_tb/mycfide/my_i2c_mmio/r_interrupt">
+      <obj_property name="ElementShortName">r_interrupt</obj_property>
+      <obj_property name="ObjectShortName">r_interrupt</obj_property>
+   </wvobject>
    <wvobject type="logic" fp_name="/i2c_bridge_tb/reset_n">
       <obj_property name="ElementShortName">reset_n</obj_property>
       <obj_property name="ObjectShortName">reset_n</obj_property>
-   </wvobject>
-   <wvobject type="array" fp_name="/i2c_bridge_tb/addr_p">
-      <obj_property name="ElementShortName">addr_p[31:0]</obj_property>
-      <obj_property name="ObjectShortName">addr_p[31:0]</obj_property>
    </wvobject>
    <wvobject type="logic" fp_name="/i2c_bridge_tb/mycfide/i2c_select">
       <obj_property name="ElementShortName">i2c_select</obj_property>
       <obj_property name="ObjectShortName">i2c_select</obj_property>
    </wvobject>
-   <wvobject type="logic" fp_name="/i2c_bridge_tb/mycfide/my_i2c_mmio/cmd_valid">
-      <obj_property name="ElementShortName">cmd_valid</obj_property>
-      <obj_property name="ObjectShortName">cmd_valid</obj_property>
-   </wvobject>
-   <wvobject type="logic" fp_name="/i2c_bridge_tb/mycfide/my_i2c_mmio/cmd_ready">
-      <obj_property name="ElementShortName">cmd_ready</obj_property>
-      <obj_property name="ObjectShortName">cmd_ready</obj_property>
-   </wvobject>
-   <wvobject type="logic" fp_name="/i2c_bridge_tb/mycfide/my_i2c_mmio/cmd_read">
-      <obj_property name="ElementShortName">cmd_read</obj_property>
-      <obj_property name="ObjectShortName">cmd_read</obj_property>
-   </wvobject>
-   <wvobject type="logic" fp_name="/i2c_bridge_tb/mycfide/my_i2c_mmio/cmd_write_multiple">
-      <obj_property name="ElementShortName">cmd_write_multiple</obj_property>
-      <obj_property name="ObjectShortName">cmd_write_multiple</obj_property>
-   </wvobject>
    <wvobject type="array" fp_name="/i2c_bridge_tb/mycfide/my_i2c_mmio/cmd_address">
       <obj_property name="ElementShortName">cmd_address[6:0]</obj_property>
       <obj_property name="ObjectShortName">cmd_address[6:0]</obj_property>
    </wvobject>
-   <wvobject type="logic" fp_name="/i2c_bridge_tb/mycfide/my_i2c_mmio/cmd_stop">
-      <obj_property name="ElementShortName">cmd_stop</obj_property>
-      <obj_property name="ObjectShortName">cmd_stop</obj_property>
-   </wvobject>
-   <wvobject type="logic" fp_name="/i2c_bridge_tb/mycfide/my_i2c_mmio/cmd_start">
-      <obj_property name="ElementShortName">cmd_start</obj_property>
-      <obj_property name="ObjectShortName">cmd_start</obj_property>
-   </wvobject>
    <wvobject type="logic" fp_name="/i2c_bridge_tb/mycfide/my_i2c_mmio/busy">
       <obj_property name="ElementShortName">busy</obj_property>
       <obj_property name="ObjectShortName">busy</obj_property>
-   </wvobject>
-   <wvobject type="logic" fp_name="/i2c_bridge_tb/mycfide/my_i2c_mmio/my_i2c_master/data_in_ready">
-      <obj_property name="ElementShortName">data_in_ready</obj_property>
-      <obj_property name="ObjectShortName">data_in_ready</obj_property>
    </wvobject>
    <wvobject type="logic" fp_name="/i2c_bridge_tb/mycfide/my_i2c_mmio/data_in_valid">
       <obj_property name="ElementShortName">data_in_valid</obj_property>
       <obj_property name="ObjectShortName">data_in_valid</obj_property>
    </wvobject>
    <wvobject type="array" fp_name="/i2c_bridge_tb/mycfide/my_i2c_mmio/state_reg">
-      <obj_property name="ElementShortName">state_reg[4:0]</obj_property>
-      <obj_property name="ObjectShortName">state_reg[4:0]</obj_property>
+      <obj_property name="ElementShortName">state_reg[31:0]</obj_property>
+      <obj_property name="ObjectShortName">state_reg[31:0]</obj_property>
    </wvobject>
    <wvobject type="logic" fp_name="/i2c_bridge_tb/mycfide/my_i2c_mmio/my_i2c_master/data_out_valid">
       <obj_property name="ElementShortName">data_out_valid</obj_property>
@@ -100,21 +76,18 @@
       <obj_property name="ElementShortName">req</obj_property>
       <obj_property name="ObjectShortName">req</obj_property>
    </wvobject>
-   <wvobject type="logic" fp_name="/i2c_bridge_tb/mycfide/my_i2c_mmio/r_interrupt">
-      <obj_property name="ElementShortName">r_interrupt</obj_property>
-      <obj_property name="ObjectShortName">r_interrupt</obj_property>
-   </wvobject>
-   <wvobject type="logic" fp_name="/i2c_bridge_tb/mycfide/my_i2c_mmio/flag_cmd_done">
-      <obj_property name="ElementShortName">flag_cmd_done</obj_property>
-      <obj_property name="ObjectShortName">flag_cmd_done</obj_property>
-   </wvobject>
    <wvobject type="array" fp_name="/i2c_bridge_tb/q">
       <obj_property name="ElementShortName">q[15:0]</obj_property>
       <obj_property name="ObjectShortName">q[15:0]</obj_property>
    </wvobject>
+   <wvobject type="logic" fp_name="/i2c_bridge_tb/mycfide/my_i2c_mmio/my_i2c_master/data_in_ready">
+      <obj_property name="ElementShortName">data_in_ready</obj_property>
+      <obj_property name="ObjectShortName">data_in_ready</obj_property>
+   </wvobject>
    <wvobject type="group" fp_name="group7">
       <obj_property name="label">I2C</obj_property>
       <obj_property name="DisplayName">label</obj_property>
+      <obj_property name="isExpanded"></obj_property>
       <wvobject type="array" fp_name="/i2c_bridge_tb/my_i2c_slave/out">
          <obj_property name="ElementShortName">out[7:0]</obj_property>
          <obj_property name="ObjectShortName">out[7:0]</obj_property>
@@ -134,6 +107,23 @@
       <wvobject type="logic" fp_name="/i2c_bridge_tb/sda_t">
          <obj_property name="ElementShortName">sda_t</obj_property>
          <obj_property name="ObjectShortName">sda_t</obj_property>
+      </wvobject>
+   </wvobject>
+   <wvobject type="group" fp_name="group161">
+      <obj_property name="label">buffer_status</obj_property>
+      <obj_property name="DisplayName">label</obj_property>
+      <obj_property name="isExpanded"></obj_property>
+      <wvobject type="logic" fp_name="/i2c_bridge_tb/mycfide/my_i2c_mmio/buf_write_empty">
+         <obj_property name="ElementShortName">buf_write_empty</obj_property>
+         <obj_property name="ObjectShortName">buf_write_empty</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/i2c_bridge_tb/mycfide/my_i2c_mmio/buf_read_empty">
+         <obj_property name="ElementShortName">buf_read_empty</obj_property>
+         <obj_property name="ObjectShortName">buf_read_empty</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/i2c_bridge_tb/mycfide/my_i2c_mmio/buf_read_empty_">
+         <obj_property name="ElementShortName">buf_read_empty_</obj_property>
+         <obj_property name="ObjectShortName">buf_read_empty_</obj_property>
       </wvobject>
    </wvobject>
 </wave_config>

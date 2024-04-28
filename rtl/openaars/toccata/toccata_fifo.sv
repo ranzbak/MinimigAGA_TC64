@@ -26,7 +26,6 @@ module toccata_fifo #(
 logic [DATA_WIDTH-1:0] fifo_array [FIFO_DEPTH-1:0];
 // int read_ptr = 0, write_ptr = 0;
 logic [$clog2(FIFO_DEPTH): 0] count; // To handle full and empty states
-logic [$clog2(FIFO_DEPTH): 0] prev_count; // To handle full and empty states
 logic [$clog2(FIFO_DEPTH)-1: 0] write_ptr = 0;
 logic [$clog2(FIFO_DEPTH)-1: 0] write_ptr_next = 0;
 logic [$clog2(FIFO_DEPTH)-1: 0] read_ptr = 0;
@@ -34,23 +33,47 @@ logic [$clog2(FIFO_DEPTH)-1: 0] read_ptr_next = 0;
 
 logic [DATA_WIDTH-1:0] output_next;
 
+logic arm_flags;
+
+// Sequential logic for flags.
+// To avoid spurious interrupts if reads and writes happen too close together, we "arm"
+// the half_* flags when the counter reaches the halfway point, then trigger the
+// flag when the counter moves 7 or 8 steps aware from centre.  (Might be able to get away with less)
+
+always_ff @(posedge clk) begin
+    if (rst) begin
+        arm_flags <= 1'b0;
+        half_empty <= 1'b0;
+        half_full <= 1'b0;
+    end else begin
+        half_empty <= 1'b0;
+        half_full <= 1'b0;
+        if (count==(FIFO_DEPTH/2))  // count[3:0]==4'b0000
+            arm_flags <= 1'b1;
+        if (count[3:0]==4'b1000) begin // -8
+            half_empty <= arm_flags;
+            arm_flags <= 1'b0;
+        end
+        if (count[3:0]==4'b0111) begin // +7
+            half_full <= arm_flags;
+            arm_flags <= 1'b0;
+        end
+    end
+end
+
 always_comb begin
     // flags
     full = (count == FIFO_DEPTH - 1);
     empty = (count == 0);
-    half_full = (count > FIFO_DEPTH/2 && prev_count <= FIFO_DEPTH/2);
-    half_empty = (count < FIFO_DEPTH/2 && prev_count >= FIFO_DEPTH/2);
 
     // Next pointer state
     write_ptr_next = write_ptr + 1;
     read_ptr_next = read_ptr + 1;
-
 end
 
 
 // Sequential logic for read and write operations
 always_ff @(posedge clk) begin
-    prev_count <= count;
 
     if (rst) begin
         read_ptr <= 0;

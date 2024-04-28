@@ -130,17 +130,6 @@ wire [7:0]  voffset;
 // RTG
 wire        rtg_ena;
 
-// SDRAM
-wire [15:0] sdram_dq;
-wire [12:0] sdram_a;
-wire        sdram_nwe;
-wire        sdram_ncas;
-wire        sdram_nras;
-wire        sdram_ncs;
-wire        sdram_clk;
-wire        sdram_cke;
-wire [1:0]  sdram_ba;
-
 // Audio
 wire [15:0] audio_l;
 wire [15:0] audio_r;

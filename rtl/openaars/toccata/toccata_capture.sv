@@ -77,6 +77,7 @@ logic [DELAY_COUNTER_BITS:0] audio_dev = DEV_1_5_5125_KHZ[DELAY_COUNTER_BITS:0];
 logic [DELAY_COUNTER_BITS:0] audio_delay = 0;
 always_ff @(posedge clk) begin
     // Sample frequency devider selection, by xtal and register
+    (* FULL_CASE *)
     case ({css, freq_sel})
         // CSS is 0, 24.576 MHz
         4'h0:
@@ -203,7 +204,7 @@ always_ff @(posedge clk) begin
 
         // Prevent overflows that are over FIFO_SIZE
         if (fifo_counter > FIFO_SIZE) begin
-            fifo_counter <= FIFO_SIZE;
+            fifo_counter <= FIFO_SIZE[10:0];
         end
 
         // Always present the same fake data

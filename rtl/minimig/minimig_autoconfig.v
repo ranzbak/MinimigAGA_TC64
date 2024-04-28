@@ -17,11 +17,8 @@ module minimig_autoconfig #(
 	input   [1:0] fastram_config,
 	input m68020,
 	input ram_64meg,
-	(* MARK_DEBUG = "true", KEEP = "true" *)
 	output reg [4:0] board_configured,
-	(* MARK_DEBUG = "true", KEEP = "true" *)
 	output reg [4:0] board_shutup,
-	(* MARK_DEBUG = "true", KEEP = "true" *)
 	output wire [7:0] toccata_base_addr, // Base address for the cards
 	output reg autoconfig_done
 );

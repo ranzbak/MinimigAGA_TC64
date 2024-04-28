@@ -157,7 +157,7 @@ ARCHITECTURE logic OF TG68K IS
 	--SIGNAL sel_eth          : std_logic;
 	SIGNAL sel_slow        : std_logic;
 	SIGNAL sel_slowram     : std_logic;
-	-- SIGNAL sel_cart         : std_logic; 
+	-- SIGNAL sel_cart         : std_logic;
 	SIGNAL sel_32          : std_logic;
 	signal sel_undecoded   : std_logic;
 	signal sel_undecoded_d : std_logic;
@@ -244,7 +244,7 @@ BEGIN
 
 	sel_akiko     <= '1' when cpuaddr(31 downto 16) = X"00B8" else '0';
 	sel_32        <= '1' when cpu(1) = '1' and cpuaddr(31 downto 24) /= X"00" and cpuaddr(31 downto 24) /= X"ff" else '0'; -- Decode 32-bit space, but exclude interrupt vectors
-	--	sel_z3ram       <= '1' WHEN (cpuaddr(31 downto 24)=z3ram_base) else '0'; -- AND z3ram_ena='1' ELSE '0';
+	--  sel_z3ram       <= '1' WHEN (cpuaddr(31 downto 24)=z3ram_base) else '0'; -- AND z3ram_ena='1' ELSE '0';
 	-- First block of ZIII RAM - 0x40000000 - 0x40ffffff
 	sel_z3ram     <= '1' WHEN (cpuaddr(31 downto 30) = "01") and cpuaddr(26 downto 24) = "000" AND z3ram_ena = '1' ELSE '0';
 	-- Second block of ZIII RAM - 32 meg from 0x42000000 - 0x43ffffff
@@ -263,7 +263,7 @@ BEGIN
 	sel_audio     <= '1' WHEN (cpuaddr(31 downto 24) = X"00") AND (cpuaddr(23 downto 18) = "111011") ELSE '0'; -- $EC0000 - $EFFFFF
 	sel_undecoded <= '1' WHEN sel_32 = '1' and sel_z3ram = '0' and sel_z3ram2 = '0' and sel_z3ram3 = '0' else '0';
 	sel_ram       <= '1' WHEN (sel_z2ram = '1' OR sel_z3ram = '1' OR sel_z3ram2 = '1' OR sel_z3ram3 = '1' OR sel_chipram = '1' OR sel_slowram = '1' OR sel_kickram = '1' OR sel_audio = '1') ELSE
-	                 '0';
+	'0';
 
 	cache_inhibit <= '1' WHEN sel_kickram = '1' ELSE '0';
 
@@ -293,20 +293,20 @@ BEGIN
 	--
 	-- 1010  1    0       A -> 2
 	-- 1100  1    0       C -> 4
-	-- 1110  1    0       E -> 6 
+	-- 1110  1    0       E -> 6
 
 	-- On 64-meg platforms we need an extra 32 meg merged into the memory map.
 	-- If we configure that range second, it should end up in 42000000 - 43ffffff
 	-- so the extra 2 or 4 meg will end up at either 41000000 or 4400000, depending
 	-- on whether the extra 32 meg is configured.
 
-	-- addr(25) will be high only when 32-meg block is active
+	-- addr(25) will be high only when the second 32-meg block is active (64-mb mode)
 	-- addr(24) will be high for the 16-meg block or the second half of the 32-meg block
 
-	-- The extra ZIII mapping maps 41000000 -> 200000, (or 44000000 -> 200000)
+	-- The extra ZIII mapping maps 41000000 -> 2000000, (or 44000000 -> 2000000)
 	-- bits 23 downto 20 are mapped like so:
 	-- 0000->0010 (1st 2 meg), 0010->0100 (2nd 2 meg),
-	-- 0100->0010 (3rd 2 meg, aliases 1st), 0110->0100 (4th 2 meg, aliases 2nd), 
+	-- 0100->0010 (3rd 2 meg, aliases 1st), 0110->0100 (4th 2 meg, aliases 2nd),
 	-- addr(23) <= addr(23) and not sel_ziii_3;
 	-- addr(22) <= (addr(22) and not sel_ziii_3) or (addr(21) and sel_ziii_3);
 	-- addr(21) <= addr(21) xor sel_ziii_3;
@@ -455,7 +455,7 @@ BEGIN
 	END PROCESS;
 
 	clkena <= '1' WHEN (clkena_in = '1' AND (state = "01" OR (ena7RDreg = '1' AND clkena_e = '1') OR (ena7WRreg = '1' AND clkena_f = '1') OR ramready = '1' OR sel_undecoded_d = '1' OR akiko_ack = '1')) ELSE
-	          '0';
+	'0';
 
 	PROCESS(clk)
 	BEGIN
@@ -469,7 +469,7 @@ BEGIN
 	END PROCESS;
 
 	chipset_cycle <= '1' when (sel_ram = '0' OR sel_nmi_vector = '1') AND sel_akiko = '0' and sel_undecoded = '0' else
-	                 '0';
+	'0';
 
 	PROCESS(clk, reset)
 	BEGIN

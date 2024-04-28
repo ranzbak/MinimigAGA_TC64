@@ -76,6 +76,7 @@ logic [DELAY_COUNTER_BITS:0] audio_delay = 0;
 
 always_ff @(posedge clk) begin
     // Sample frequency devider selection, by xtal and register
+    (* FULL_CASE *)
     case ({css, freq_sel})
         // CSS is 0, 24.576 MHz
         4'h0:
@@ -191,10 +192,11 @@ always_ff @(posedge clk) begin
             end
         end
 
-        // FSM to handle different sample modes
-        //
-        // LC == 1'b1 is for Companded audio, because we don't implement it
-        // we treat it like a normal 8-bit audio stream.
+            // FSM to handle different sample modes
+            //
+            // LC == 1'b1 is for Companded audio, because we don't implement it
+            // we treat it like a normal 8-bit audio stream.
+            (* FULL_CASE *)
         case (pb_state)
             idle: begin
                 // Don't start playing if the buffer is empty

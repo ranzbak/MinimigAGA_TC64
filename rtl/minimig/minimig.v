@@ -1136,7 +1136,7 @@ minimig_autoconfig #(
   .slowram_config(memory_config[3:2]),
   .board_configured(board_configured),
   .toccata_base_addr(toccata_base_addr),
-  .board_shutup(autoconfig_shutdown),
+  .board_shutup(autoconfig_shutup),
   .autoconfig_done(autoconfig_done)
 );
 
