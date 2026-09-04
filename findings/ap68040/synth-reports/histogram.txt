@@ -1,0 +1,5 @@
+endpoints examined: 5000
+datapath > 2 x 8.815 ns (17.63): 1148
+datapath > 3 x 8.815 ns (26.45): 0
+datapath > 4 x 8.815 ns (35.26): 0
+datapath > 5 x 8.815 ns (44.08): 0
