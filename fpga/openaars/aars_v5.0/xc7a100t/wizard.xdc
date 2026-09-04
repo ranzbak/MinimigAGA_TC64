@@ -21,26 +21,29 @@ set_multicycle_path -hold  -start 3 -from [get_clocks clk_114] -to [get_clocks d
 # every cycle (edge detectors, enables, configuration bits latched into the CPU island). The
 # clock-to-clock rules above must not relax these; they are single-cycle and short. Cell-scoped
 # exceptions take precedence over the clock-scoped ones. (Vivado TIMING-46 list.)
-set cdc_1cycle_pairs {
-  {openaars_virtual_top/amiga_clk/clk7_en_reg_reg                openaars_virtual_top/sdram/clk7_enD_reg}
-  {openaars_virtual_top/aud_tick_reg                             openaars_virtual_top/aud_tick_d_reg}
-  {openaars_virtual_top/hostcpu/hw_req_reg                       openaars_virtual_top/mycfide/i2c_master.my_i2c_mmio/_req_reg}
-  {openaars_virtual_top/hostcpu/wr_reg                           openaars_virtual_top/mycfide/i2c_master.my_i2c_mmio/_wr_reg}
-  {openaars_virtual_top/minimig/autoconfig/board_configured_reg[0] openaars_virtual_top/tg68k/z2ram_ena_reg}
-  {openaars_virtual_top/minimig/autoconfig/board_configured_reg[1] openaars_virtual_top/tg68k/z3ram_ena_reg}
-  {openaars_virtual_top/minimig/autoconfig/board_configured_reg[2] openaars_virtual_top/tg68k/z3ram2_ena_reg}
-  {openaars_virtual_top/minimig/autoconfig/board_configured_reg[3] openaars_virtual_top/tg68k/z3ram3_ena_reg}
-  {openaars_virtual_top/minimig/cpu_config_reg_reg[0]            openaars_virtual_top/tg68k/pf68K_Kernel_inst/use_VBR_Stackframe_reg}
-  {openaars_virtual_top/tg68k/lds2_reg                           openaars_virtual_top/minimig/CPU1/l_lds2_reg}
-  {openaars_virtual_top/tg68k/uds2_reg                           openaars_virtual_top/minimig/CPU1/l_uds2_reg}
-}
-foreach pair $cdc_1cycle_pairs {
-  set f [get_cells -quiet [lindex $pair 0]]; set t [get_cells -quiet [lindex $pair 1]]
-  if {$f ne "" && $t ne ""} {
-    set_multicycle_path -setup 1 -from $f -to $t
-    set_multicycle_path -hold  0 -from $f -to $t
-  }
-}
+# (Written out explicitly: Vivado silently drops foreach/if in an XDC at implementation.)
+set_multicycle_path -setup 1 -from [get_cells -quiet {openaars_virtual_top/amiga_clk/clk7_en_reg_reg}] -to [get_cells -quiet {openaars_virtual_top/sdram/clk7_enD_reg}]
+set_multicycle_path -hold  0 -from [get_cells -quiet {openaars_virtual_top/amiga_clk/clk7_en_reg_reg}] -to [get_cells -quiet {openaars_virtual_top/sdram/clk7_enD_reg}]
+set_multicycle_path -setup 1 -from [get_cells -quiet {openaars_virtual_top/aud_tick_reg}] -to [get_cells -quiet {openaars_virtual_top/aud_tick_d_reg}]
+set_multicycle_path -hold  0 -from [get_cells -quiet {openaars_virtual_top/aud_tick_reg}] -to [get_cells -quiet {openaars_virtual_top/aud_tick_d_reg}]
+set_multicycle_path -setup 1 -from [get_cells -quiet {openaars_virtual_top/hostcpu/hw_req_reg}] -to [get_cells -quiet {openaars_virtual_top/mycfide/i2c_master.my_i2c_mmio/_req_reg}]
+set_multicycle_path -hold  0 -from [get_cells -quiet {openaars_virtual_top/hostcpu/hw_req_reg}] -to [get_cells -quiet {openaars_virtual_top/mycfide/i2c_master.my_i2c_mmio/_req_reg}]
+set_multicycle_path -setup 1 -from [get_cells -quiet {openaars_virtual_top/hostcpu/wr_reg}] -to [get_cells -quiet {openaars_virtual_top/mycfide/i2c_master.my_i2c_mmio/_wr_reg}]
+set_multicycle_path -hold  0 -from [get_cells -quiet {openaars_virtual_top/hostcpu/wr_reg}] -to [get_cells -quiet {openaars_virtual_top/mycfide/i2c_master.my_i2c_mmio/_wr_reg}]
+set_multicycle_path -setup 1 -from [get_cells -quiet {openaars_virtual_top/minimig/autoconfig/board_configured_reg[0]}] -to [get_cells -quiet {openaars_virtual_top/tg68k/z2ram_ena_reg}]
+set_multicycle_path -hold  0 -from [get_cells -quiet {openaars_virtual_top/minimig/autoconfig/board_configured_reg[0]}] -to [get_cells -quiet {openaars_virtual_top/tg68k/z2ram_ena_reg}]
+set_multicycle_path -setup 1 -from [get_cells -quiet {openaars_virtual_top/minimig/autoconfig/board_configured_reg[1]}] -to [get_cells -quiet {openaars_virtual_top/tg68k/z3ram_ena_reg}]
+set_multicycle_path -hold  0 -from [get_cells -quiet {openaars_virtual_top/minimig/autoconfig/board_configured_reg[1]}] -to [get_cells -quiet {openaars_virtual_top/tg68k/z3ram_ena_reg}]
+set_multicycle_path -setup 1 -from [get_cells -quiet {openaars_virtual_top/minimig/autoconfig/board_configured_reg[2]}] -to [get_cells -quiet {openaars_virtual_top/tg68k/z3ram2_ena_reg}]
+set_multicycle_path -hold  0 -from [get_cells -quiet {openaars_virtual_top/minimig/autoconfig/board_configured_reg[2]}] -to [get_cells -quiet {openaars_virtual_top/tg68k/z3ram2_ena_reg}]
+set_multicycle_path -setup 1 -from [get_cells -quiet {openaars_virtual_top/minimig/autoconfig/board_configured_reg[3]}] -to [get_cells -quiet {openaars_virtual_top/tg68k/z3ram3_ena_reg}]
+set_multicycle_path -hold  0 -from [get_cells -quiet {openaars_virtual_top/minimig/autoconfig/board_configured_reg[3]}] -to [get_cells -quiet {openaars_virtual_top/tg68k/z3ram3_ena_reg}]
+set_multicycle_path -setup 1 -from [get_cells -quiet {openaars_virtual_top/minimig/cpu_config_reg_reg[0]}] -to [get_cells -quiet {openaars_virtual_top/tg68k/pf68K_Kernel_inst/use_VBR_Stackframe_reg}]
+set_multicycle_path -hold  0 -from [get_cells -quiet {openaars_virtual_top/minimig/cpu_config_reg_reg[0]}] -to [get_cells -quiet {openaars_virtual_top/tg68k/pf68K_Kernel_inst/use_VBR_Stackframe_reg}]
+set_multicycle_path -setup 1 -from [get_cells -quiet {openaars_virtual_top/tg68k/lds2_reg}] -to [get_cells -quiet {openaars_virtual_top/minimig/CPU1/l_lds2_reg}]
+set_multicycle_path -hold  0 -from [get_cells -quiet {openaars_virtual_top/tg68k/lds2_reg}] -to [get_cells -quiet {openaars_virtual_top/minimig/CPU1/l_lds2_reg}]
+set_multicycle_path -setup 1 -from [get_cells -quiet {openaars_virtual_top/tg68k/uds2_reg}] -to [get_cells -quiet {openaars_virtual_top/minimig/CPU1/l_uds2_reg}]
+set_multicycle_path -hold  0 -from [get_cells -quiet {openaars_virtual_top/tg68k/uds2_reg}] -to [get_cells -quiet {openaars_virtual_top/minimig/CPU1/l_uds2_reg}]
 
 ###############################################################################
 # Minimig / SDRAM domains <-> HDMI domain (clk_148).
