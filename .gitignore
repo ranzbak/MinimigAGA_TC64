@@ -49,6 +49,7 @@ xvhdl.*
 .hdl_checker/*
 .vscode/*
 vivado*
+!tools/vivado/
 fw/ctrl_832/*.asm
 fw/ctrl_832/swoopBuf
 xvlog.*
