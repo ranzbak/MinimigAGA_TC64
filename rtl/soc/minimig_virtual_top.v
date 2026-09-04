@@ -21,7 +21,10 @@ module minimig_virtual_top #(
     parameter havespirtc = 1,
     parameter havei2c = 1,
     parameter havevpos = 0,
-    parameter ram_64meg = 0)
+    parameter ram_64meg = 0,
+    // Zorro-III fast RAM on the DDR3 island instead of the SDRAM.
+    // findings/ddr3/design.md; the island itself lives in minimig_openaars_top.v.
+    parameter haveddr3 = 1)
 (
     // clock inputs
     input wire            CLK_IN,
@@ -136,7 +139,20 @@ module minimig_virtual_top #(
     output wire           floppy_fwr,
     output wire           floppy_frd,
     output wire           hd_fwr,
-    output wire           hd_frd
+    output wire           hd_frd,
+
+    // DDR3 island native 128-bit request port (clk_mem domain).  The island
+    // (rtl/ddr3/ddr3_top.v) is instantiated one level up, in
+    // minimig_openaars_top.v; only this handshake crosses between them.
+    input wire            DDR3_CLK_MEM,     // island clk100
+    input wire            DDR3_INIT_DONE,   // island controller init complete
+    output wire           DDR3_REQ_VALID,
+    output wire [ 16-1:0] DDR3_REQ_WR,      // byte enables; 0 = read
+    output wire [ 32-1:0] DDR3_REQ_ADDR,
+    output wire [128-1:0] DDR3_REQ_WDATA,
+    input wire            DDR3_REQ_ACCEPT,
+    input wire            DDR3_RESP_VALID,
+    input wire [128-1:0]  DDR3_RESP_RDATA
 );
 
 
@@ -195,6 +211,16 @@ wire           cache_inhibit;
 wire           cacheline_clr;
 wire [ 32-1:0] tg68_cad;
 wire [  7-1:0] tg68_cpustate;
+// DDR3 Zorro-III fast RAM port (TG68K <-> ddr3_fastram)
+wire [ 26-1:1] tg68_ddraddr;
+wire           tg68_ddrcs;
+wire [ 16-1:0] tg68_ddrout;
+wire           tg68_ddrena;
+wire           tg68_ddrready;
+// cpustate as seen by the DDR3 backend: the wrapper's cpustate with the chip
+// select (bit 2) replaced by the DDR3 one.  Everything else, cpuLongword
+// (bit 6) included, is passed through untouched.
+wire [  7-1:0] tg68_ddrcpustate = {tg68_cpustate[6:3], tg68_ddrcs, tg68_cpustate[1:0]};
 wire           tg68_nrst_out;
 //wire           tg68_cdma;
 wire           tg68_clds;
@@ -526,12 +552,15 @@ wire [15:0] amigahost_q;
 
 assign tg68_cpustate=2'b01;
 assign tg68_nrst_out=1'b1;
+assign tg68_ddraddr = 25'd0;
+assign tg68_ddrcs   = 1'b1;
 `else
 
 TG68K #(
     .havertg(havertg ? "true" : "false"),
     .haveaudio(haveaudio ? "true" : "false"),
-    .havec2p(havec2p ? "true" : "false")
+    .havec2p(havec2p ? "true" : "false"),
+    .haveddr3(haveddr3 ? "true" : "false")
 ) tg68k (
     .clk          (CLK_114          ),
     .reset        (tg68_rst         ),
@@ -558,6 +587,11 @@ TG68K #(
     .fromram      (tg68_cout        ),
     .toram        (tg68_cin         ),
     .ramready     (tg68_cpuena      ),
+    .ddraddr      (tg68_ddraddr     ),
+    .ddrcs        (tg68_ddrcs       ),
+    .fromddr      (tg68_ddrout      ),
+    .ddr_ready    (tg68_ddrready    ),
+    .ddr_ena      (tg68_ddrena      ),
     .cpu          (cpu_config[1:0]  ),
     .turbochipram (turbochipram     ),
     .turbokick    (turbokick        ),
@@ -691,6 +725,61 @@ sdram_ctrl sdram (
 );
 
 
+////////////////////////////////////////
+// Zorro-III fast RAM on the DDR3     //
+////////////////////////////////////////
+// Same front end as the SDRAM path (rtl/sdram/cpu_cache_new.v) with a DDR3
+// backend; see rtl/ddr3/ddr3_fastram.v.  The CPU port is wired exactly like
+// the SDRAM's, except that the address comes straight from the CPU
+// (identity map, design.md D6) instead of through the SDRAM remap, and the
+// chip select is the DDR3 one.
+generate
+if (haveddr3) begin : g_ddr3_fastram
+
+ddr3_fastram ddr3_fastram_i (
+    .sysclk         (CLK_114          ),
+    .reset_in       (sdctl_rst        ),
+    .cache_rst      (tg68_rst         ),
+    .cacheline_clr  (cacheline_clr    ),
+    .cpu_cache_ctrl (tg68_CACR_out    ),
+    .ddr_ready      (tg68_ddrready    ),
+
+    // Amiga CPU
+    .cpuAddr        (tg68_ddraddr[25:1]),
+    .cpustate       (tg68_ddrcpustate ),
+    .cpuU           (tg68_cuds        ),
+    .cpuL           (tg68_clds        ),
+    .cpuWR          (tg68_cin         ),
+    .cpuRD          (tg68_ddrout      ),
+    .cpuena         (tg68_ddrena      ),
+
+    // DDR3 island, 100 MHz domain
+    .clk_mem        (DDR3_CLK_MEM     ),
+    .init_done      (DDR3_INIT_DONE   ),
+    .req_valid      (DDR3_REQ_VALID   ),
+    .req_wr         (DDR3_REQ_WR      ),
+    .req_addr       (DDR3_REQ_ADDR    ),
+    .req_wdata      (DDR3_REQ_WDATA   ),
+    .req_accept     (DDR3_REQ_ACCEPT  ),
+    .resp_valid     (DDR3_RESP_VALID  ),
+    .resp_rdata     (DDR3_RESP_RDATA  )
+);
+
+end
+else begin : g_no_ddr3_fastram
+
+assign tg68_ddrout    = 16'h0000;
+assign tg68_ddrena    = 1'b0;
+assign tg68_ddrready  = 1'b0;
+assign DDR3_REQ_VALID = 1'b0;
+assign DDR3_REQ_WR    = 16'h0000;
+assign DDR3_REQ_ADDR  = 32'h00000000;
+assign DDR3_REQ_WDATA = 128'd0;
+
+end
+endgenerate
+
+
 // multiplex spi_do, drive it from user_io if that's selected, drive
 // it from minimig if it's selected and leave it open else (also
 // to be able to monitor sd card data directly)
@@ -750,7 +839,11 @@ assign _ram_we=1'b1;
 `else
 
 minimig #(
-    .NTSC(1'b0)
+    .NTSC(1'b0),
+    // The "leftover" third Zorro-III board is SDRAM scraps; it does not exist
+    // once the Zorro-III fast RAM is on the DDR3 (design.md D8), so it must not
+    // be autoconfigured either or the OS would add memory that is not there.
+    .Z3RAM3(haveddr3 ? 1'b0 : 1'b1)
 ) minimig (
     //m68k pins
     .cpu_address  (tg68_adr[23:1]   ), // M68K address bus

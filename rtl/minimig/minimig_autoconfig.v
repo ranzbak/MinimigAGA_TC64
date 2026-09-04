@@ -1,7 +1,15 @@
 // Minimig autoconfig logic
 
 module minimig_autoconfig #(
-	parameter TOCCATA_SND = 1'b0 // Toccata sound card enabled?
+	parameter TOCCATA_SND = 1'b0, // Toccata sound card enabled?
+	// Third Zorro-III RAM board ("leftover" space in the SDRAM map).  It does
+	// not exist when the Zorro-III fast RAM lives on the DDR3 island
+	// (findings/ddr3/design.md D8), and a board that is autoconfigured but has
+	// no memory behind it would corrupt the OS free list.  With this 0 the
+	// chain skips straight from the ZIII board(s) to the Toccata card or to the
+	// NULL terminator, using the same acdevice values the 0x44 handler already
+	// uses -- no new mechanism.
+	parameter Z3RAM3 = 1'b1
 ) (
 	input clk,
 	input clk7_en,
@@ -28,6 +36,10 @@ reg [7:0] board_base_addr [0:4];
 assign toccata_base_addr = board_base_addr[4];
 
 reg [2:0] acdevice;
+// What follows the third ZIII RAM board in the chain: the Toccata card if it is
+// enabled, otherwise the NULL device that terminates autoconfig.  Also used
+// directly when Z3RAM3 = 0 and that board is skipped altogether.
+wire [2:0] ac_after_z3ram3 = (TOCCATA_SND == 1'b1) ? 3'b101 : 3'b111;
 reg [3:0] ramsize;
 wire [8:0] roma_rd;
 reg [8:0] roma_wr;
@@ -118,20 +130,16 @@ begin
 								ramsize <= |slowram_config ? 4'b1000 : 4'b0111; // 2 meg or 4 meg
 								rom_we<=1'b1;
 								// skip straight to 3'b011 on 32 meg platforms
-								acdevice<=ram_64meg ? 3'b010 : 3'b011;
+								acdevice<=ram_64meg ? 3'b010 : (Z3RAM3 ? 3'b011 : ac_after_z3ram3);
 //                              acdevice<=3'b011; // Ethernet after ZIII RAM
 							end
 							3'b010 : begin // ZIII RAM 2 - 2nd 32 meg on 64 meg platforms
 								board_configured[2] <= 1'b1;
-								acdevice<=3'b011;
+								acdevice<=Z3RAM3 ? 3'b011 : ac_after_z3ram3;
 							end
 							3'b011 : begin // ZIII RAM 3 - Use leftover space in the memory map.
 								board_configured[3] <= 1'b1;
-								if (TOCCATA_SND == 1'b1) begin
-									acdevice<=3'b101; // Toccata sound card
-								end else begin
-									acdevice<=3'b111; // NULL device to terminate the chain
-								end
+								acdevice<=ac_after_z3ram3;
 							end
 							3'b100 : begin // ETH
 								board_configured[3] <= 1'b1;

@@ -30,7 +30,10 @@ entity TG68K is
 	generic(
 		havertg   : boolean := true;
 		haveaudio : boolean := true;
-		havec2p   : boolean := true
+		havec2p   : boolean := true;
+		-- Zorro-III fast RAM lives on the DDR3 island instead of the SDRAM.
+		-- See findings/ddr3/design.md, decisions D1/D6/D8.
+		haveddr3  : boolean := true
 	);
 	port(
 		clk             : in     std_logic;
@@ -58,6 +61,12 @@ entity TG68K is
 		fromram         : in     std_logic_vector(15 downto 0);
 		toram           : out    std_logic_vector(15 downto 0);
 		ramready        : in     std_logic                     := '0';
+		-- DDR3 Zorro-III fast RAM port (used only when haveddr3)
+		ddraddr         : out    std_logic_vector(25 downto 1);
+		ddrcs           : out    std_logic;
+		fromddr         : in     std_logic_vector(15 downto 0) := (others => '0');
+		ddr_ready       : in     std_logic                     := '0';
+		ddr_ena         : in     std_logic                     := '0';
 		cpu             : in     std_logic_vector(1 downto 0);
 		ziiram_active   : in     std_logic;
 		ziiiram_active  : in     std_logic;
@@ -167,6 +176,14 @@ ARCHITECTURE logic OF TG68K IS
 	signal sel_ram_d       : std_logic;
 	SIGNAL cpu_int         : std_logic;
 
+	-- DDR3 fast RAM
+	SIGNAL have_ddr        : std_logic; -- '1' when the haveddr3 generic is true
+	SIGNAL sel_z3ram3_dec  : std_logic; -- raw decode of the "leftover" ZIII board
+	SIGNAL sel_z3ram_sdram : std_logic; -- ZIII boards that still live on the SDRAM
+	SIGNAL sel_ddr         : std_logic;
+	SIGNAL sel_ddr_d       : std_logic;
+	SIGNAL mem_ready       : std_logic; -- SDRAM or DDR3 access acknowledge
+
 	-- Akiko registers
 	signal akiko_d    : std_logic_vector(15 downto 0);
 	signal akiko_q    : std_logic_vector(15 downto 0);
@@ -224,7 +241,8 @@ BEGIN
 		END IF;
 	END PROCESS;
 
-	datatg68 <= fromram WHEN cpu_int = '0' AND sel_ram_d = '1' AND sel_nmi_vector = '0' ELSE datatg68_c;
+	datatg68 <= fromddr WHEN cpu_int = '0' AND sel_ddr_d = '1' AND sel_nmi_vector = '0' ELSE
+	            fromram WHEN cpu_int = '0' AND sel_ram_d = '1' AND sel_nmi_vector = '0' ELSE datatg68_c;
 
 	-- Register incoming data
 	process(clk)
@@ -250,7 +268,11 @@ BEGIN
 	-- Second block of ZIII RAM - 32 meg from 0x42000000 - 0x43ffffff
 	sel_z3ram2    <= '1' WHEN (cpuaddr(31 downto 30) = "01") and cpuaddr(25) = '1' AND z3ram2_ena = '1' ELSE '0';
 	-- Third block of ZIII RAM - either 2 or 4 meg, starting at either 0x41000000 or 0x44000000
-	sel_z3ram3    <= '1' WHEN (cpuaddr(31 downto 30) = "01") and cpuaddr(26) = z3ram2_ena and cpuaddr(24) = not z3ram2_ena and z3ram3_ena = '1' ELSE '0';
+	sel_z3ram3_dec <= '1' WHEN (cpuaddr(31 downto 30) = "01") and cpuaddr(26) = z3ram2_ena and cpuaddr(24) = not z3ram2_ena and z3ram3_ena = '1' ELSE '0';
+	-- With the DDR3 fast RAM the "leftover SDRAM" ZIII board does not exist
+	-- (design.md D8).  minimig_autoconfig.v is told to skip it too, so the OS
+	-- never sees a board here and z3ram3_ena never comes back.
+	sel_z3ram3    <= sel_z3ram3_dec AND NOT have_ddr;
 	sel_z2ram     <= '1' WHEN (cpuaddr(31 downto 24) = X"00") AND ((cpuaddr(23 downto 21) = "001") OR (cpuaddr(23 downto 21) = "010") OR (cpuaddr(23 downto 21) = "011") OR (cpuaddr(23 downto 21) = "100")) AND z2ram_ena = '1' ELSE '0';
 	--sel_eth         <= '1' WHEN (cpuaddr(31 downto 24) = eth_base) AND eth_cfgd='1' ELSE '0';
 	sel_chip      <= '1' WHEN (cpuaddr(31 downto 24) = X"00") AND (cpuaddr(23 downto 21) = "000") ELSE '0'; --$000000 - $1FFFFF
@@ -262,12 +284,25 @@ BEGIN
 	-- sel_cart        <= '1' WHEN (cpuaddr(31 downto 24) = X"00") AND (cpuaddr(23 downto 20)="1010") ELSE '0'; -- $A00000 - $A7FFFF (actually matches up to $AFFFFF)
 	sel_audio     <= '1' WHEN (cpuaddr(31 downto 24) = X"00") AND (cpuaddr(23 downto 18) = "111011") ELSE '0'; -- $EC0000 - $EFFFFF
 	sel_undecoded <= '1' WHEN sel_32 = '1' and sel_z3ram = '0' and sel_z3ram2 = '0' and sel_z3ram3 = '0' else '0';
-	sel_ram       <= '1' WHEN (sel_z2ram = '1' OR sel_z3ram = '1' OR sel_z3ram2 = '1' OR sel_z3ram3 = '1' OR sel_chipram = '1' OR sel_slowram = '1' OR sel_kickram = '1' OR sel_audio = '1') ELSE
+	-- '1' when the DDR3 fast RAM is present.  Everything DDR3-specific is gated
+	-- with this, so haveddr3 = false reproduces today's core exactly.
+	have_ddr        <= '1' WHEN haveddr3 ELSE '0';
+	-- The two 32-bit boards go to the DDR3 when it is there, to the SDRAM if not.
+	sel_ddr         <= (sel_z3ram OR sel_z3ram2) AND have_ddr;
+	sel_z3ram_sdram <= (sel_z3ram OR sel_z3ram2 OR sel_z3ram3) AND NOT have_ddr;
+	sel_ram       <= '1' WHEN (sel_z2ram = '1' OR sel_z3ram_sdram = '1' OR sel_chipram = '1' OR sel_slowram = '1' OR sel_kickram = '1' OR sel_audio = '1') ELSE
 	'0';
 
 	cache_inhibit <= '1' WHEN sel_kickram = '1' ELSE '0';
 
 	ramcs <= NOT (NOT cpu_int AND sel_ram_d AND NOT sel_nmi_vector) OR slower(0);
+	-- Same shape as ramcs, slower(0) throttle included, so the DDR3 backend sees
+	-- exactly the chip-select timing sdram_ctrl sees (address one cycle early).
+	ddrcs <= NOT (NOT cpu_int AND sel_ddr_d AND NOT sel_nmi_vector) OR slower(0);
+	-- Identity map (design.md D6): DDR3 byte address = CPU byte address.  Board 1
+	-- (0x40000000, 16 MB) and board 2 (0x42000000, 32 MB) both live inside the low
+	-- 64 MB, which is all the backend's cpuAddr(25 downto 1) covers.
+	ddraddr <= cpuaddr(25 downto 1);
 
 	cpustate <= longword & clkena & slower(1 downto 0) & ramcs & state(1 downto 0);
 	ramlds   <= lds_in;
@@ -373,6 +408,7 @@ BEGIN
 				cacheline_clr <= (turbochipram XOR turbochip_d);
 			END IF;
 			sel_ram_d <= sel_ram;
+			sel_ddr_d <= sel_ddr;
 		END IF;
 	END PROCESS;
 
@@ -454,7 +490,13 @@ BEGIN
 		END IF;
 	END PROCESS;
 
-	clkena <= '1' WHEN (clkena_in = '1' AND (state = "01" OR (ena7RDreg = '1' AND clkena_e = '1') OR (ena7WRreg = '1' AND clkena_f = '1') OR ramready = '1' OR sel_undecoded_d = '1' OR akiko_ack = '1')) ELSE
+	-- Each memory's acknowledge is qualified with its own select, so an SDRAM ack
+	-- can never release a DDR3 access nor the other way round.  ddr_ready is the
+	-- island's init/reset-done flag: before it a DDR3 access is simply held (the
+	-- CPU stalls), never released with rubbish and never faulted.
+	mem_ready <= ((ramready AND sel_ram_d) OR (ddr_ena AND sel_ddr_d AND ddr_ready)) WHEN haveddr3 ELSE ramready;
+
+	clkena <= '1' WHEN (clkena_in = '1' AND (state = "01" OR (ena7RDreg = '1' AND clkena_e = '1') OR (ena7WRreg = '1' AND clkena_f = '1') OR mem_ready = '1' OR sel_undecoded_d = '1' OR akiko_ack = '1')) ELSE
 	'0';
 
 	PROCESS(clk)

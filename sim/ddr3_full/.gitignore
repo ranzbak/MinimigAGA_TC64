@@ -1,0 +1,14 @@
+# xsim products; xsim_run.log is the checked-in reference run
+project.prj
+xsim.dir/
+xsim*.jou
+xsim*.backup.*
+xsim.log
+xelab.*
+xvlog.*
+webtalk*
+*.wdb
+*.vcd
+.Xil/
+# stdout of a manual `./run.sh > bench.stdout` invocation
+bench.stdout

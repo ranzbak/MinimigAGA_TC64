@@ -119,44 +119,66 @@ create_generated_clock -name clk_ddr400    [get_pins $ddr3_pll/CLKOUT1]
 create_generated_clock -name clk_ddr200    [get_pins $ddr3_pll/CLKOUT2]
 create_generated_clock -name clk_ddr400_90 [get_pins $ddr3_pll/CLKOUT3]
 
-# The island shares only the 50 MHz reference with the Minimig clock tree.  At
-# this stage (stage A) nothing crosses between them except the asynchronous
-# board reset, which enters through the island's own reset synchroniser
-# (ddr3_top.v), so the two sets are unrelated for timing.  When the Zorro-III
-# cache backend is connected (task 3) the crossing is a toggle handshake and is
-# bounded with set_max_delay -datapath_only, which survives this clock group.
+# The island shares only the 50 MHz reference with the Minimig clock tree.  The
+# only things that cross are the asynchronous board reset, which enters through
+# the island's own reset synchroniser (ddr3_top.v), and the Zorro-III fast RAM
+# handshake below, which is a toggle handshake bounded with
+# set_max_delay -datapath_only -- that survives this clock group.
 set_clock_groups -asynchronous \
   -group {clk_ddr100 clk_ddr400 clk_ddr200 clk_ddr400_90} \
   -group {clk_114 dll_28 clk_sd_114 clk_148 clk_50}
 
 #-----------------------------------------------------------------------------
-# DDR3 pin timing
+# Zorro-III fast RAM clock domain crossing
 #-----------------------------------------------------------------------------
-# The upstream reference design for this controller
-# (core_ddr3_controller examples/arty_a7/arty_revb.xdc, read in full) contains
-# NO timing constraints on the DDR3 pins at all: only PACKAGE_PIN, IOSTANDARD,
-# SLEW and IN_TERM, plus a create_clock on its 100 MHz board oscillator.  It
-# relies on the default behaviour that unconstrained top-level ports are not
-# reported.  Rather than depend on that, state it explicitly here.
+# rtl/ddr3/ddr3_cdc.v, instantiated as `cdc` inside rtl/ddr3/ddr3_fastram.v
+# (itself instantiated as g_ddr3_fastram.ddr3_fastram_i inside
+# minimig_virtual_top).  The module header states the invariant these
+# constraints depend on: the payload registers on each side are only written
+# while the two toggles agree, i.e. while the far side is idle, so they are
+# stable for the whole round trip through both two-flop synchronisers.  Only
+# the toggles are synchronised; the buses are quasi-static.
 #
-# Why this is legal: none of these pins is timed by static timing analysis in
-# the usual input/output-delay sense.
-#   * Commands, address, CK, DM and write data leave through OSERDESE2 clocked
-#     by clk_ddr400 / clk_ddr400_90.  Their relationship to the DRAM is set by
-#     the serialiser phase and the board's matched routing, not by a fabric
-#     setup/hold arc.
-#   * Read data is captured by ISERDESE2 strobed by DQS through IDELAYE2, with
-#     the tap value calibrated at run time (DQS_TAP_DELAY_INIT, then the BIST
-#     sweep of rtl/ddr3/ddr3_bist.v).  A calibrated, source-synchronous capture
-#     is not something set_input_delay can describe.
-# Adding set_input_delay / set_output_delay here would produce failing paths
-# that mean nothing and would hide the paths that do matter (the island's own
-# clk_ddr100 / clk_ddr400 logic, which IS timed and must meet).
-set ddr3_out_ports [get_ports {ddr3_addr[*] ddr3_ba[*] ddr3_ras_n ddr3_cas_n \
-                               ddr3_we_n ddr3_cke ddr3_odt ddr3_reset_n \
-                               ddr3_ck_p ddr3_ck_n ddr3_dm[*]}]
-set ddr3_bidi_ports [get_ports {ddr3_dq[*] ddr3_dqs_p[*] ddr3_dqs_n[*]}]
-
-set_false_path -to   $ddr3_out_ports
-set_false_path -to   $ddr3_bidi_ports
-set_false_path -from $ddr3_bidi_ports
+# Therefore the buses must NOT be timed edge-to-edge, but their skew must stay
+# well inside one destination clock period, which is what -datapath_only does.
+# 8 ns is comfortably under both periods (8.815 ns on clk_114, 10 ns on
+# clk_ddr100) and is trivially met by any placement.
+#
+# NO CONTROL FLOW HERE.  Vivado's XDC reader rejects `if` / `foreach` -- and it
+# does so in IMPLEMENTATION as well as synthesis ("CRITICAL WARNING:
+# [Designutils 20-1307] Command 'if' is not supported in the xdc constraint
+# file"), silently dropping the guarded constraint.  So these are unconditional.
+#
+# Consequence for the fallback build (minimig_openaars_top.v HAVEDDR3 = 0):
+# the cells below do not exist, and set_max_delay with an empty -from is a hard
+# ERROR ([Vivado 12-4739] "No valid object(s) found"), not a warning.  Synthesis
+# is unaffected -- implementation-specific constraints are deferred, not
+# evaluated -- so the fallback SYNTHESISES fine; a fallback IMPLEMENTATION must
+# disable this file, e.g.
+#   set_property is_enabled false [get_files .../ddr3.xdc]
+# or comment out the four exceptions below.
+#
+# Precedence note: set_clock_groups above has higher precedence than
+# set_max_delay -datapath_only (UG903), so on the clk_114 <-> clk_ddr100 pair
+# the group is what actually makes the paths unconstrained and these four
+# appear as overridden.  They are kept because they state the real requirement
+# -- bounded skew, not "don't care" -- and they become the operative constraint
+# the moment the clock group is narrowed.  Check with
+#   report_exceptions            (they must be listed)
+#   report_exceptions -ignored   (none of them may say "Non-existent path")
+# Verified on the routed checkpoint of the first stage-B build: both are listed
+# with max_dpo=8 and status "Totally overridden path by CG" (the clock group),
+# and neither appears in the -ignored report.  Because they are overridden they
+# do not change placement or routing.
+set_max_delay -datapath_only -to [get_clocks clk_ddr100] 8.000 -from [get_cells -hier -filter { \
+    NAME =~ "*ddr3_fastram_i/cdc/req_rd_r_reg"   || \
+    NAME =~ "*ddr3_fastram_i/cdc/req_wr_r_reg*"  || \
+    NAME =~ "*ddr3_fastram_i/cdc/req_adr_r_reg*" || \
+    NAME =~ "*ddr3_fastram_i/cdc/req_wd_r_reg*"}]
+set_max_delay -datapath_only -to [get_clocks clk_114] 8.000 -from [get_cells -hier -filter { \
+    NAME =~ "*ddr3_fastram_i/cdc/rdata_r_reg*"}]
+# The two optional set_false_path lines from the module header are deliberately
+# NOT here.  The toggles are already covered by ASYNC_REG plus the asynchronous
+# clock group, and opt_design absorbs req_sync_reg[0] / ack_sync_reg[0] into the
+# following flop, so a constraint naming them would become "non-existent" the
+# moment anyone re-reads this file on a placed or routed checkpoint.

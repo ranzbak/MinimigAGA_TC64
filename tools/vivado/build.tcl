@@ -61,6 +61,12 @@ add_src $R/rtl/ddr3/ddr3_pll.v
 add_src $R/rtl/ddr3/ddr3_bist.v
 add_src $R/rtl/ddr3/ddr3_top.v
 
+# Zorro-III fast RAM: the cache backend and the clk_114 <-> clk100 handshake.
+# Task 2 deliberately left these out (nothing instantiated them yet); task 4
+# wires them into minimig_virtual_top.v, so they must be in the build now.
+add_src $R/rtl/ddr3/ddr3_fastram.v
+add_src $R/rtl/ddr3/ddr3_cdc.v
+
 #-----------------------------------------------------------------------------
 # vio_ddr3: the bring-up VIO for the BIST and the PHY tap sweep
 # (minimig_openaars_top.v parameter DDR3_BIST_VIO).

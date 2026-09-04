@@ -147,7 +147,11 @@
 // 2012-03-23 - fixed sprite enable signal (coppermaster demo)
 
 module minimig #(
-  parameter NTSC = 1'b0 //Agnus type (PAL/NTSC)
+  parameter NTSC = 1'b0, //Agnus type (PAL/NTSC)
+  // Offer the third ("leftover") Zorro-III RAM board in the autoconfig chain.
+  // 0 when the Zorro-III fast RAM lives on the DDR3 island; see
+  // rtl/minimig/minimig_autoconfig.v and findings/ddr3/design.md D8.
+  parameter Z3RAM3 = 1'b1
 )  (
   //m68k pins
   input [23:1] cpu_address, // m68k address bus
@@ -1118,7 +1122,8 @@ minimig_syscontrol CONTROL1
 wire [15:0] autoconfig_data_out;
 
 minimig_autoconfig #(
-  .TOCCATA_SND(1'b1)
+  .TOCCATA_SND(1'b1),
+  .Z3RAM3(Z3RAM3)
 ) autoconfig (
   .clk(clk),
   .clk7_en(clk7_en),

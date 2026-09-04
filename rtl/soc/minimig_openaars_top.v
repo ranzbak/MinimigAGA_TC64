@@ -11,9 +11,14 @@
 module minimig_openaars_top #(
   // Stage A of the DDR3 bring-up (findings/ddr3/implementation-plan.md section 2)
   // wires the island's BIST and PHY tap controls to a VIO so the memory can be
-  // exercised from the hardware manager with no CPU involvement.  Set to 0 once
-  // the Zorro-III fast RAM actually drives the request port (task 4).
-  parameter DDR3_BIST_VIO = 1
+  // exercised from the hardware manager with no CPU involvement.  Now that the
+  // Zorro-III fast RAM drives the request port (task 4) it is off by default:
+  // no VIO, no debug hub, and the BIST mux leaves the port to the fast RAM.
+  parameter DDR3_BIST_VIO = 0,
+  // Zorro-III fast RAM on the DDR3 island (rtl/ddr3/ddr3_fastram.v).  With 0
+  // the Zorro-III boards fall back onto the SDRAM exactly as before; the island
+  // is still built, it just has no requester.
+  parameter HAVEDDR3 = 1
 ) (
   // Crystal clock input
   input wire clk_50,
@@ -111,6 +116,20 @@ module minimig_openaars_top #(
 ////////////////////////////////////////
 // internal signals                   //
 ////////////////////////////////////////
+
+// DDR3 island (instantiated at the bottom of the file; declared here because
+// minimig_virtual_top, which drives the request port, comes first)
+wire         ddr3_clk100;
+wire         ddr3_rst100;
+wire         ddr3_init_done;
+wire         ddr3_pll_locked;
+wire         ddr3_req_valid;
+wire [15:0]  ddr3_req_wr;
+wire [31:0]  ddr3_req_addr;
+wire [127:0] ddr3_req_wdata;
+wire         ddr3_req_accept;
+wire         ddr3_resp_valid;
+wire [127:0] ddr3_resp_rdata;
 
 // Clock
 // wire        clk_in;
@@ -445,7 +464,8 @@ minimig_virtual_top
   .havec2p(1'b0),
   .havei2c(1'b1),
   .havevpos(1'b1),
-  .havespirtc(1'b1)
+  .havespirtc(1'b1),
+  .haveddr3(HAVEDDR3)
 ) openaars_virtual_top (
   .CLK_IN(clk_50),
   .CLK_28(clk_28),
@@ -523,21 +543,27 @@ minimig_virtual_top
   .floppy_frd(),
   .floppy_fwr(),
   .hd_fwr(hd_fwr),
-  .hd_frd(hd_frd)
+  .hd_frd(hd_frd),
+  // DDR3 fast RAM <-> island
+  .DDR3_CLK_MEM(ddr3_clk100),
+  .DDR3_INIT_DONE(ddr3_init_done),
+  .DDR3_REQ_VALID(ddr3_req_valid),
+  .DDR3_REQ_WR(ddr3_req_wr),
+  .DDR3_REQ_ADDR(ddr3_req_addr),
+  .DDR3_REQ_WDATA(ddr3_req_wdata),
+  .DDR3_REQ_ACCEPT(ddr3_req_accept),
+  .DDR3_RESP_VALID(ddr3_resp_valid),
+  .DDR3_RESP_RDATA(ddr3_resp_rdata)
 );
 
 ////////////////////////////////////////
-// DDR3 island (stage A: BIST only)   //
+// DDR3 island                        //
 ////////////////////////////////////////
 // Self-contained: its own PLL off clk_50, its own reset from the board reset
 // chain, the vendored DLL-off controller and 7-series PHY, and a BIST.
-// The external 128-bit request port is tied idle here; the Zorro-III cache
-// backend (rtl/ddr3/ddr3_fastram.v) takes it over in task 4.
-wire         ddr3_clk100;
-wire         ddr3_rst100;
-wire         ddr3_init_done;
-wire         ddr3_pll_locked;
-
+// The external 128-bit request port is driven by the Zorro-III fast RAM
+// backend (rtl/ddr3/ddr3_fastram.v) inside minimig_virtual_top.  The BIST is
+// only in the way while bist_busy is high, which needs DDR3_BIST_VIO = 1.
 wire         bist_busy;
 wire         bist_done;
 wire [31:0]  bist_err_count;
@@ -566,14 +592,14 @@ ddr3_top ddr3_island (
   .init_done(ddr3_init_done),
   .pll_locked(ddr3_pll_locked),
 
-  // External request port: idle in stage A
-  .req_valid(1'b0),
-  .req_wr(16'b0),
-  .req_addr(32'b0),
-  .req_wdata(128'b0),
-  .req_accept(),
-  .resp_valid(),
-  .resp_rdata(),
+  // External request port: the Zorro-III fast RAM cache backend
+  .req_valid(ddr3_req_valid),
+  .req_wr(ddr3_req_wr),
+  .req_addr(ddr3_req_addr),
+  .req_wdata(ddr3_req_wdata),
+  .req_accept(ddr3_req_accept),
+  .resp_valid(ddr3_resp_valid),
+  .resp_rdata(ddr3_resp_rdata),
 
   .bist_start(bist_start),
   .bist_pattern(bist_pattern),
