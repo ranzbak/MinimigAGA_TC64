@@ -54,6 +54,9 @@ module ddr3_core
     input [ 15:0] inport_req_id_i,      // Request ID for the input port
 
     // Outputs
+    output         init_done_o,        // LOCAL ADDITION (not upstream): high once the
+                                       // power-up / mode-register init sequence has finished
+                                       // (state_q != STATE_INIT). See README.md.
     output         cfg_stall_o,        // Configuration stall/output not ready signal
     output         inport_accept_o,    // Input port accept signal
     output         inport_ack_o,       // Input port acknowledge signal
@@ -496,6 +499,11 @@ module ddr3_core
 
   // Config stall
   assign cfg_stall_o = ~(state_q == STATE_IDLE && cmd_accept_w);
+
+  // LOCAL ADDITION (not upstream): initialisation complete.
+  // STATE_INIT is entered on reset and left exactly once, when the power-up delay,
+  // ZQCL and the four mode-register writes have all been issued.
+  assign init_done_o = (state_q != STATE_INIT);
 
   //-----------------------------------------------------------------
   // DDR3 DFI Interface

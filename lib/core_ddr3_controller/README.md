@@ -193,3 +193,48 @@ Read these before writing `rtl/ddr3/ddr3_top.v`.
   simulation therefore proves the toolchain, the PHY gearing, the command sequencing
   and the data path; it does **not** prove that DLL-off works on the real part. That
   remains hardware stage A (design.md, "Risks").
+
+## The one change made to the vendored RTL (task 2)
+
+`src_v/ddr3_core.sv` has **one** local modification, marked in the file with
+`LOCAL ADDITION (not upstream)` in two places:
+
+```verilog
+    output         init_done_o,        // new port, next to cfg_stall_o
+...
+    assign init_done_o = (state_q != STATE_INIT);
+```
+
+Why: the island (`rtl/ddr3/ddr3_top.v`) and the bring-up VIO need to show that
+the power-up sequence — the 500 µs / 60 µs (simulation) start delay, ZQCL and
+the four mode-register writes — has finished, and the core exposes nothing that
+says so. `STATE_INIT` is entered on reset and left exactly once, so
+`state_q != STATE_INIT` is the cheapest correct indicator. It is a pure
+combinational read of an existing register: no logic, no timing and no
+behaviour changed, and the vendored testbench (which leaves the new output
+unconnected) still passes unmodified.
+
+Nothing else in `src_v/` or `tb/` differs from the upstream commit recorded
+above. If the core is ever re-vendored, re-apply exactly these two lines.
+
+## What task 2 built on top
+
+* `rtl/ddr3/ddr3_pll.v` — PLLE2_BASE from the board's 50 MHz oscillator
+  (`CLKFBOUT_MULT` 24 instead of `artix7_pll.v`'s 12), BUFG on all four
+  outputs, `RST` and `LOCKED` brought out.
+* `rtl/ddr3/ddr3_top.v` — PLL + reset synchroniser + `ddr3_core` + `ddr3_dfi_phy`
+  + BIST, wired exactly as `tb/ddr3_core_xc7/testbench.v` does
+  (`DDR_MHZ(100)`, `DDR_WRITE_LATENCY(4)`, `DDR_READ_LATENCY(4)`;
+  `REFCLK_FREQUENCY(200)`, `DQS_TAP_DELAY_INIT(27)`, `DQ_TAP_DELAY_INIT(0)`,
+  `TPHY_RDLAT(5)`), plus a mux that hands the native port to the BIST while it
+  runs. The PHY's `cfg_valid_i` / `cfg_i` are driven (not left floating) from
+  the BIST's register block so the DQS/DQ tap sweep can be done over a VIO.
+* `rtl/ddr3/ddr3_bist.v` — five patterns, two modes, error count and first-error
+  capture; also the PHY `cfg_i` field packing.
+* `sim/ddr3_island/` — xsim bench for the whole island against the same Micron
+  model, using the same flow as `tb/ddr3_core_xc7/makefile`.
+
+Note for anyone reading the DDR3 pin list: the QMTech core board has **47** DDR3
+pins, not 48. `CS#` is strapped low on the module, so `ddr3_cs_n_o` from the PHY
+is left unconnected at the FPGA top level (the vendor UCF and the vendor MIG
+project both omit it too).

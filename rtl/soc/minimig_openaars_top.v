@@ -8,7 +8,13 @@
 `include "minimig_defines.vh"
 
 
-module minimig_openaars_top (
+module minimig_openaars_top #(
+  // Stage A of the DDR3 bring-up (findings/ddr3/implementation-plan.md section 2)
+  // wires the island's BIST and PHY tap controls to a VIO so the memory can be
+  // exercised from the hardware manager with no CPU involvement.  Set to 0 once
+  // the Zorro-III fast RAM actually drives the request port (task 4).
+  parameter DDR3_BIST_VIO = 1
+) (
   // Crystal clock input
   input wire clk_50,
   // input wire clk_100_p,
@@ -82,7 +88,24 @@ module minimig_openaars_top (
   // Board button input
   // (* mark_debug = "true" *)
   input wire button_reset_n_in,
-  input wire button_osd_in
+  input wire button_osd_in,
+  // DDR3 (QMTech core board, 256 MB MT41K128M16, all bank 16).
+  // Names and pin assignment: fpga/openaars/aars_v5.0/xc7a100t/ddr3.xdc.
+  // 47 pins: the module straps CS# low, so there is no ddr3_cs_n port here.
+  output wire [13:0] ddr3_addr,
+  output wire [2:0]  ddr3_ba,
+  output wire        ddr3_ras_n,
+  output wire        ddr3_cas_n,
+  output wire        ddr3_we_n,
+  output wire        ddr3_cke,
+  output wire        ddr3_odt,
+  output wire        ddr3_reset_n,
+  output wire        ddr3_ck_p,
+  output wire        ddr3_ck_n,
+  output wire [1:0]  ddr3_dm,
+  inout  wire [15:0] ddr3_dq,
+  inout  wire [1:0]  ddr3_dqs_p,
+  inout  wire [1:0]  ddr3_dqs_n
 );
 
 ////////////////////////////////////////
@@ -502,6 +525,134 @@ minimig_virtual_top
   .hd_fwr(hd_fwr),
   .hd_frd(hd_frd)
 );
+
+////////////////////////////////////////
+// DDR3 island (stage A: BIST only)   //
+////////////////////////////////////////
+// Self-contained: its own PLL off clk_50, its own reset from the board reset
+// chain, the vendored DLL-off controller and 7-series PHY, and a BIST.
+// The external 128-bit request port is tied idle here; the Zorro-III cache
+// backend (rtl/ddr3/ddr3_fastram.v) takes it over in task 4.
+wire         ddr3_clk100;
+wire         ddr3_rst100;
+wire         ddr3_init_done;
+wire         ddr3_pll_locked;
+
+wire         bist_busy;
+wire         bist_done;
+wire [31:0]  bist_err_count;
+wire [31:0]  bist_first_err_addr;
+wire [31:0]  bist_first_err_xor;
+wire [31:0]  bist_lines_done;
+
+wire         bist_start;
+wire [2:0]   bist_pattern;
+wire [4:0]   bist_range_log2;
+wire         bist_mode;
+wire         phy_cfg_valid;
+wire [1:0]   phy_dqs_inc;
+wire [1:0]   phy_dqs_rst;
+wire [1:0]   phy_dq_inc;
+wire [1:0]   phy_dq_rst;
+wire [2:0]   phy_rdlat;
+wire [3:0]   phy_rdsel;
+
+ddr3_top ddr3_island (
+  .clk_50(clk_50),
+  .reset_n(reset_n),          // board reset chain (gen_reset, active low)
+
+  .clk100(ddr3_clk100),
+  .rst100(ddr3_rst100),
+  .init_done(ddr3_init_done),
+  .pll_locked(ddr3_pll_locked),
+
+  // External request port: idle in stage A
+  .req_valid(1'b0),
+  .req_wr(16'b0),
+  .req_addr(32'b0),
+  .req_wdata(128'b0),
+  .req_accept(),
+  .resp_valid(),
+  .resp_rdata(),
+
+  .bist_start(bist_start),
+  .bist_pattern(bist_pattern),
+  .bist_range_log2(bist_range_log2),
+  .bist_mode(bist_mode),
+  .bist_busy(bist_busy),
+  .bist_done(bist_done),
+  .bist_err_count(bist_err_count),
+  .bist_first_err_addr(bist_first_err_addr),
+  .bist_first_err_xor(bist_first_err_xor),
+  .bist_lines_done(bist_lines_done),
+
+  .phy_cfg_valid(phy_cfg_valid),
+  .phy_dqs_inc(phy_dqs_inc),
+  .phy_dqs_rst(phy_dqs_rst),
+  .phy_dq_inc(phy_dq_inc),
+  .phy_dq_rst(phy_dq_rst),
+  .phy_rdlat(phy_rdlat),
+  .phy_rdsel(phy_rdsel),
+
+  .ddr3_addr(ddr3_addr),
+  .ddr3_ba(ddr3_ba),
+  .ddr3_ras_n(ddr3_ras_n),
+  .ddr3_cas_n(ddr3_cas_n),
+  .ddr3_we_n(ddr3_we_n),
+  .ddr3_cs_n(),                 // no package pin: strapped low on the module
+  .ddr3_cke(ddr3_cke),
+  .ddr3_odt(ddr3_odt),
+  .ddr3_reset_n(ddr3_reset_n),
+  .ddr3_ck_p(ddr3_ck_p),
+  .ddr3_ck_n(ddr3_ck_n),
+  .ddr3_dm(ddr3_dm),
+  .ddr3_dq(ddr3_dq),
+  .ddr3_dqs_p(ddr3_dqs_p),
+  .ddr3_dqs_n(ddr3_dqs_n)
+);
+
+generate
+if (DDR3_BIST_VIO) begin : g_ddr3_vio
+  // Probe order is the ltx/hardware-manager order; see tools/vivado/build.tcl
+  // where the IP is created.  probe_out9 (rdlat) is initialised to 5, the
+  // TPHY_RDLAT the PHY is parameterised with.
+  vio_ddr3 vio_ddr3_i (
+    .clk(ddr3_clk100),
+    .probe_in0(bist_busy),
+    .probe_in1(bist_done),
+    .probe_in2(bist_err_count),
+    .probe_in3(bist_first_err_addr),
+    .probe_in4(bist_first_err_xor),
+    .probe_in5(bist_lines_done),
+    .probe_in6(ddr3_init_done),
+    .probe_in7(ddr3_pll_locked),
+    .probe_out0(bist_start),
+    .probe_out1(bist_pattern),
+    .probe_out2(bist_range_log2),
+    .probe_out3(bist_mode),
+    .probe_out4(phy_cfg_valid),
+    .probe_out5(phy_dqs_inc),
+    .probe_out6(phy_dqs_rst),
+    .probe_out7(phy_dq_inc),
+    .probe_out8(phy_dq_rst),
+    .probe_out9(phy_rdlat),
+    .probe_out10(phy_rdsel)
+  );
+end
+else begin : g_no_ddr3_vio
+  assign bist_start      = 1'b0;
+  assign bist_pattern    = 3'b0;
+  assign bist_range_log2 = 5'd28;
+  assign bist_mode       = 1'b0;
+  assign phy_cfg_valid   = 1'b0;
+  assign phy_dqs_inc     = 2'b0;
+  assign phy_dqs_rst     = 2'b0;
+  assign phy_dq_inc      = 2'b0;
+  assign phy_dq_rst      = 2'b0;
+  assign phy_rdlat       = 3'd5;
+  assign phy_rdsel       = 4'd0;
+end
+endgenerate
 
 // Assign video position data
 assign hoffset = vpos_data[7:0];

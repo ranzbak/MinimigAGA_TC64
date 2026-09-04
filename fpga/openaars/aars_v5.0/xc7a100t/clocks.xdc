@@ -24,3 +24,7 @@ create_generated_clock -name clk_148 [get_pins clk_hdmi/CLKOUT0]
 #   clk_148 shares only the 50 MHz reference with them; every crossing goes through
 #   synchronisers and is bounded with set_max_delay -datapath_only in wizard.xdc rather than
 #   masked with a false path.
+
+# The DDR3 island has its own PLL (rtl/ddr3/ddr3_pll.v) off this same clk_50;
+# its four generated clocks and the asynchronous clock group against the Minimig
+# clocks above are declared in ddr3.xdc.
