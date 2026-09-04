@@ -7,6 +7,7 @@ subdirectory has its own README with an ordered work plan.
 |---|---|---|
 | PAL → HDMI video | [adv7511/](adv7511/) | 13 fixes: line flicker, unstable H/V offset controls, geometry, 50/60 Hz switching |
 | AP68040 CPU swap | [ap68040/](ap68040/) | Compatibility assessment ([compatibility.md](ap68040/compatibility.md)) and measured headroom ([performance.md](ap68040/performance.md)): fits at 28.7k LUTs after one RAM-primitive fix, 47 MHz standalone, 37.8 MHz realistic in-system; DDR3 fast RAM assessment ([ddr3-fast-ram.md](ap68040/ddr3-fast-ram.md)); DLL-off in-domain DDR3 as the no-MIG alternative ([ddr3-dll-off.md](ap68040/ddr3-dll-off.md)); the seven DRAM masters and how the SDRAM/DDR3 split must serve chipset, OSD core and RTG ([memory-masters.md](ap68040/memory-masters.md)) |
+| DDR3 fast RAM | [ddr3/](ddr3/) | **Design + implementation plan** for Zorro-III fast RAM on the on-board DDR3 using the vendored `core_ddr3_controller` (DLL-off, 100 MHz island); Z2 RAM and the RTG framebuffer stay on SDRAM |
 | Timing constraints | [constraints/](constraints/) | 12 fixes: SDRAM delay formulas, disabled hold checks, unconstrained HDMI output, unsynchronised reset, SDRAM read capture clock, blanket multicycles — **verified in Vivado**, see [constraints/verification-vivado.md](constraints/verification-vivado.md) |
 
 ## Work overview
