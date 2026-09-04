@@ -62,3 +62,25 @@ unisims
 *.wcfg
 dvt_build.log
 *.meta
+# Simulation products (iverilog/vvp binaries, waveforms, run logs)
+sim/**/build/
+*.vvp
+*.vcd
+*.fst
+*.lxt
+*.lxt2
+
+# Vivado / JVM byproducts outside the project directory
+hs_err_pid*.log
+*.jou
+*.str
+.Xil/
+webtalk*
+usage_statistics_webtalk*
+sys_sync_rise_out.txt
+
+# Sigasi project file
+project.server.json
+
+findings/**/*.rpt
+findings/**/sim-logs/

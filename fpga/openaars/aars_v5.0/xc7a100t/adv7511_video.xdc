@@ -13,9 +13,7 @@ set_property -dict {PACKAGE_PIN Y23 IOSTANDARD LVTTL} [get_ports io_scl]
 
 # CLOCK AND ENABLE SIGNALS
 set_property -dict {PACKAGE_PIN M26 IOSTANDARD LVTTL SLEW FAST} [get_ports dv_de]
-# set_property -dict {PACKAGE_PIN L23 IOSTANDARD LVTTL DRIVE 8} [get_ports dv_clk]
 set_property -dict {PACKAGE_PIN L23 IOSTANDARD LVTTL SLEW FAST} [get_ports dv_clk]
-
 
 # SYNC SIGNALS
 set_property -dict {PACKAGE_PIN K22 IOSTANDARD LVTTL} [get_ports dv_hsync]
@@ -41,26 +39,30 @@ set_property -dict {PACKAGE_PIN AA25 IOSTANDARD LVTTL} [get_ports dv_cecclk]
 # ADV interrupt
 set_property -dict {PACKAGE_PIN Y21 IOSTANDARD LVTTL} [get_ports dv_int]
 
-# Set timing constraints
+###############################################################################
+# Timing
+
+# Asynchronous inputs: interrupt and I2C are resynchronised in the RTL.
 set_false_path -from [get_ports dv_int]
-
-
-# TODO: review output delay settings
-# set_output_delay -clock [get_clocks -of_objects [get_pins clk_hdmi/CLKOUT0]] -min -add_delay -0.700 [get_ports -filter { NAME =~  "*dv_*" && DIRECTION == "OUT" }]
-# set_output_delay -clock [get_clocks -of_objects [get_pins clk_hdmi/CLKOUT0]] -max -add_delay 1.000 [get_ports -filter { NAME =~  "*dv_*" && DIRECTION == "OUT" }]
-
-
-# Setup an Asynchronous clock group as destination
-#create_clock -period 6.739 -name fw_clk_148 -waveform {0.000 3.370}
-# set_clock_groups -asynchronous -group [get_clocks {clk_148 }] -group [get_clocks {fw_clk_148 }]]
-
-# Output Delay Constraint
-
-# set_output_delay -clock fw_clk_148 -max 4+1.5  $dv_out_ports;
-# set_output_delay -clock fw_clk_148 -min 3-0.8 $dv_out_ports;
-
 set_false_path -from [get_ports {io_scl io_sda}]
+# CEC reference clock output: no timing relationship to anything.
+set_false_path -to [get_ports dv_cecclk]
 
-# Set output delays for the high speed ADV7511 ports
-set_output_delay -clock [get_clocks VIRTUAL_clk_148] -min -add_delay -1.000 [get_ports {{dv_d[*]} dv_clk dv_de dv_hsync dv_vsync dv_vsync}]
-set_output_delay -clock [get_clocks VIRTUAL_clk_148] -max -add_delay 0.700 [get_ports {{dv_d[*]} dv_clk dv_de dv_hsync dv_vsync dv_vsync}]
+# ADV7511 12-bit DDR bus: dv_clk (74.25 MHz) and the data/sync/DE lines all leave adv_ddr.v from
+# registers on clk_148. The clock is NOT forwarded through an ODDR but through an ordinary
+# flip-flop (clk_pixel_out), and a generated clock cannot propagate through a flip-flop's D->Q
+# (Vivado TIMING-36: "no edge propagation"), so the interface cannot be timed against dv_clk
+# until adv_ddr forwards it with an ODDR (findings/constraints/fix-03). Until then:
+#   - the registers are packed into the IOBs below, so clock and data reach the pins with the
+#     same OLOGIC + OBUF delay (matched to a few hundred ps instead of the 8 ns fabric skew the
+#     data bits had), which is what the ADV7511's edge-aligned DDR input needs;
+#   - the group is false-pathed HERE, explicitly, rather than masked behind a clock group.
+# ADV7511 input requirement for reference (previous constraint set): tsu 0.7 ns, th 1.0 ns.
+set dv_data [get_ports {dv_d[*] dv_de dv_hsync dv_vsync}]
+set_false_path -to $dv_data
+set_false_path -to [get_ports dv_clk]
+
+# Pack the output registers into the IOBs: the data/sync/DE flops and the forwarded pixel clock
+# all leave adv_ddr on the same clk_148 edge, and only from the IOB do they reach the pins with
+# matched, minimal delay (from the fabric the route alone was 8 ns on dv_d[3]).
+set_property IOB TRUE [get_cells -hier -filter {NAME =~ "my_pal_to_ddr/myadr_ddr/data_out_reg[*]" || NAME =~ "my_pal_to_ddr/myadr_ddr/de_out_reg" || NAME =~ "my_pal_to_ddr/myadr_ddr/hsync_out_reg" || NAME =~ "my_pal_to_ddr/myadr_ddr/vsync_out_reg" || NAME =~ "my_pal_to_ddr/myadr_ddr/clk_pixel_out_reg"}]

@@ -1,5 +1,5 @@
 #SDRAM
-# AS4C16M16SA
+# AS4C16M16SA (16M x 16, CL3, burst 8)
 
 ## Address ##
 set_property -dict {PACKAGE_PIN J1} [get_ports {dr_a[0]}]
@@ -52,49 +52,44 @@ set_property -dict {PACKAGE_PIN H2} [get_ports dr_clk]
 
 set_property -dict {IOSTANDARD LVTTL DRIVE 12 SLEW FAST} [get_ports dr_*]
 
-# Define SDRAM input clock
-
-# Input clocks
-# A safe amount of phase shift is at least the output hold time of your far-end device,
-# plus your best-case (fastest) calculated round-trip flight time, entered as your set_output_delay -min value (entered as a negative number for hold time.)
-# output hold time sdram = 2.5 ns
-# 60mm trace length = 0.7ns 6ns/meter * 0.06m *2
-# Phase shift SDRAM = 3.2 ns
-
+###############################################################################
 # Timing
-
-
-
-# Data sampling is edge aligned
-
-# External clock -146' offset
-# create_clock -period 8.815 -name VIRTUAL_clk_114  -waveform {0.0 4.408}
+#
+# The SDRAM clock dr_clk is clk_sd_114 (amiga_clk MMCM CLKOUT1, 113.4375 MHz, -121.5 deg =
+# -2.975 ns relative to clk_114) driven from its BUFG straight to the pin
+# (minimig_virtual_top.v:274). Modelling it as a generated clock on the port includes the
+# BUFG -> OBUF path, so both directions below are timed against the clock the SDRAM actually sees.
 create_generated_clock -name clk_gen_sdram -source [get_pins openaars_virtual_top/amiga_clk/amiga_clk_i/clk_main/CLKOUT1] -divide_by 1 [get_ports dr_clk]
 
-# Received data from the SDRAM chip is received one clock cycle later
-# set_multicycle_path -setup  -from [get_ports {dr_d[*]}] -to [get_cells openaars_virtual_top/sdram/sdata_reg*] 2
-# set_multicycle_path -hold -from [get_ports {dr_d[*]}] -to [get_cells openaars_virtual_top/sdram/sdata_reg*] 2
-set_multicycle_path -setup  -from [get_ports {dr_d[*]}] -to [get_clocks clk_114] 2
-set_multicycle_path -hold -from [get_ports {dr_d[*]}] -to [get_clocks clk_114] 2
-
-set sdram_outputs [get_ports {dr_a[*] dr_ba[*] dr_d[*] dr_dqm[*] dr_cas_n dr_cs_n dr_ras_n dr_we_n }]
-set sdram_inputs  [get_ports {dr_d[*]}]
-
-# SDRAM setup/hold
-set sdram_tsu 1.5
-set sdram_thd -0.8
-# Trace delay min/max
+# Device timing, AS4C16M16SA-7 at CL3 (datasheet; check against the fitted speed grade):
+#   tSU   1.5 ns   command/address/data setup to CK
+#   tH    0.8 ns   command/address/data hold from CK
+#   tAC3  5.4 ns   CK to data out (-6 grade: 5.0 ns)
+#   tOH   2.5 ns   data hold from the next CK
+# Board: ~60 mm traces, one way ~0.17 ns.
+set sdram_tsu    1.5
+set sdram_th     0.8
+set sdram_tac    5.4
+set sdram_toh    2.5
 set sdram_tr_dly 0.17
 
-set sdram_dly_max [expr {$sdram_tr_dly - $sdram_tsu}]
-set sdram_dly_min [expr {$sdram_tr_dly + $sdram_tsu}]
+set sdram_outputs [get_ports {dr_a[*] dr_ba[*] dr_d[*] dr_dqm[*] dr_cas_n dr_cs_n dr_ras_n dr_we_n dr_cke}]
+set sdram_inputs  [get_ports {dr_d[*]}]
 
-set_output_delay -clock [get_clocks clk_gen_sdram] -min -add_delay $sdram_dly_min $sdram_outputs
-set_output_delay -clock [get_clocks clk_gen_sdram] -max -add_delay $sdram_dly_max $sdram_outputs
+# Outputs: data must arrive tSU before, and stay tH after, the SDRAM's clock edge.
+#   -max =  tSU + trace,  -min = -tH + trace
+set_output_delay -clock [get_clocks clk_gen_sdram] -max [expr {$sdram_tsu + $sdram_tr_dly}] $sdram_outputs
+set_output_delay -clock [get_clocks clk_gen_sdram] -min [expr {-$sdram_th + $sdram_tr_dly}] $sdram_outputs
 
-set sdram_toh_min 2.5
-set sdram_toh_max 3.0
-set sdram_dly_in_max [expr {$sdram_toh_min + $sdram_tr_dly}]
-set sdram_dly_in_min [expr {$sdram_toh_max + $sdram_tr_dly}]
-set_input_delay -clock [get_clocks clk_sd_114] -min -add_delay $sdram_dly_in_max [get_ports {dr_d[*]}]
-set_input_delay -clock [get_clocks clk_sd_114] -max -add_delay $sdram_dly_in_min [get_ports {dr_d[*]}]
+# Inputs: read data appears tAC after the SDRAM's clock edge and holds tOH after the next one.
+#   -max = tAC + trace,  -min = tOH + trace
+set_input_delay -clock [get_clocks clk_gen_sdram] -max [expr {$sdram_tac + $sdram_tr_dly}] $sdram_inputs
+set_input_delay -clock [get_clocks clk_gen_sdram] -min [expr {$sdram_toh + $sdram_tr_dly}] $sdram_inputs
+
+# HEAD RTL captures read data in a fabric flop on clk_114. fix-12's dedicated capture clock
+# (clk_sd_rd, IOB flop) was reverted: it met timing and passed simulation on all ports but did
+# not run on hardware at ANY capture phase across the whole clock period - so the fault is not
+# read-capture timing (findings/constraints/fix-12). Read path is one edge marginal at the slow
+# corner, which matches the board's long-standing "boots after a few resets" behaviour.
+set_multicycle_path -setup -end 2 -from $sdram_inputs -to [get_clocks clk_114]
+set_multicycle_path -hold  -end 1 -from $sdram_inputs -to [get_clocks clk_114]

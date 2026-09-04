@@ -1,25 +1,26 @@
-
 # Clocks
-
-# Main input clock
+#
+# Board oscillator: 50 MHz on U22 (QMTech core board Y1).
 create_clock -period 20.000 -name clk_50 -waveform {0.000 10.000} [get_ports clk_50]
-
-# External clocks
-create_clock -period 6.734 -name VIRTUAL_clk_148 -waveform {0.000 3.367}
-
-# Clock oscillator
 set_property -dict {PACKAGE_PIN U22 IOSTANDARD LVTTL} [get_ports clk_50]
 
+# amiga_clk MMCM (rtl/clock/amiga_clk_xilinx.v): VCO = 50 x 45.375 / 2 = 1134.375 MHz
+#   CLKOUT0 /10 -> clk_114     113.4375 MHz            system, SDRAM controller, CPU
+#   CLKOUT1 /10 -> clk_sd_114  113.4375 MHz, -121.5 deg forwarded to the SDRAM as dr_clk (sdram.xdc)
+#   CLKOUT2 /40 -> dll_28       28.359375 MHz           Amiga chipset
+# These are renames of the auto-derived MMCM clocks; ratio and phase come from the MMCM attributes.
+set amiga_mmcm openaars_virtual_top/amiga_clk/amiga_clk_i/clk_main
+create_generated_clock -name clk_114    [get_pins $amiga_mmcm/CLKOUT0]
+create_generated_clock -name clk_sd_114 [get_pins $amiga_mmcm/CLKOUT1]
+create_generated_clock -name dll_28     [get_pins $amiga_mmcm/CLKOUT2]
 
-# Rename the amiga_clk output pins
-create_generated_clock -name clk_114 -master_clock [get_clocks clk_50] [get_pins openaars_virtual_top/amiga_clk/amiga_clk_i/clk_main/CLKOUT0]
-create_generated_clock -name clk_sd_114 -master_clock [get_clocks clk_50] [get_pins openaars_virtual_top/amiga_clk/amiga_clk_i/clk_main/CLKOUT1]
-create_generated_clock -name dll_28 -master_clock [get_clocks clk_50] [get_pins openaars_virtual_top/amiga_clk/amiga_clk_i/clk_main/CLKOUT2]
+# HDMI MMCM (rtl/soc/minimig_openaars_top.v clk_hdmi): 50 x 37.125 / 2 / 6.25 = 148.5 MHz
+#   clk_148 is the ADV7511 DDR data clock; the 74.25 MHz pixel clock is a fabric divider of it.
+create_generated_clock -name clk_148 [get_pins clk_hdmi/CLKOUT0]
 
-# Make SDRAM clock independent of the main clock
-# set_clock_groups -name sdram_async -asynchronous -group [get_clocks clk_114] -group [get_clocks clk_sd_114]
-
-
-# Rename the hdmi clock outputs
-create_generated_clock -name clk_148 -master_clock [get_clocks clk_50] [get_pins clk_hdmi/CLKOUT0]
-set_clock_groups -asynchronous -group [get_clocks clk_148] -group [get_clocks VIRTUAL_clk_148]
+# Clock domain relationships
+#   clk_114 / clk_sd_114 / dll_28 are phase-aligned siblings: timed synchronously, with the
+#   multicycle rules in wizard.xdc where the design samples at the slower rate.
+#   clk_148 shares only the 50 MHz reference with them; every crossing goes through
+#   synchronisers and is bounded with set_max_delay -datapath_only in wizard.xdc rather than
+#   masked with a false path.

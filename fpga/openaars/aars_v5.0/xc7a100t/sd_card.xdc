@@ -22,4 +22,13 @@ set_property -dict {IOSTANDARD LVTTL} [get_ports {sd_m_d0 sd_m_cdet}]
 
 
 # Port timing
+# Card data in is resampled by the SPI logic; no input timing requirement.
 set_false_path -from [get_ports sd_m_d0]
+# sd_m_cmd / sd_m_d3 are false-pathed with the other slow serial outputs in wizard.xdc.
+
+# The SPI bit clock is a flip-flop toggled by the cfide state machine (rtl/host/cfide.vhd sck),
+# driven from clk_114; /70 is the fastest it runs. The generated clock exists so that the
+# registers clocked by it have a clock. Its crossings with clk_114/dll_28 are inside cfide and
+# by construction many cycles apart, hence the asynchronous group.
+create_generated_clock -name openaars_virtual_top/mycfide/sck_reg_n_0 -source [get_pins openaars_virtual_top/amiga_clk/amiga_clk_i/clk_main/CLKOUT0] -divide_by 70 [get_pins openaars_virtual_top/mycfide/sck_reg/Q]
+set_clock_groups -name async_mycfide -asynchronous -group [get_clocks {clk_114 dll_28}] -group [get_clocks openaars_virtual_top/mycfide/sck_reg_n_0]

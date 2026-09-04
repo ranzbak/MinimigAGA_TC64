@@ -1,58 +1,58 @@
-# Slower IO clocks
+# Cross-cutting timing exceptions: things that belong to no single interface.
+# Every exception here states the design fact that makes it legal.
+# Interface-specific timing lives in the interface's own xdc (sdram.xdc, adv7511_video.xdc,
+# i2s.xdc, sd_card.xdc, ...); CPU exceptions in cpu.xdc; clocks in clocks.xdc.
+
+# Slow serial outputs (I2C, joystick SPI, I2S, SD card): no external timing requirement.
 set_false_path -to [get_ports {io_scl io_sda js_cs js_mosi js_sck max_i2s max_lrclk sd_m_cmd sd_m_d3}]
 
-# CPU constraints
-set _xlnx_shared_i0 [get_pins -hier -regexp openaars_virtual_top/tg68k/pf68K_Kernel_inst/.*]
-set _xlnx_shared_i1 [all_registers]
-set_multicycle_path -setup -start -from $_xlnx_shared_i0 -to $_xlnx_shared_i1 4
-set_multicycle_path -hold -start -from $_xlnx_shared_i0 -to $_xlnx_shared_i1 3
+###############################################################################
+# Chipset (dll_28) <-> system (clk_114): phase-aligned 1:4 siblings from one MMCM.
+#
+# dll_28 -> clk_114 (slow to fast): data launched on the 28 MHz edge is stable for 4 fast
+# cycles; relax the CAPTURE edge (-end on both, so the hold check stays on the launch edge).
+set_multicycle_path -setup -end 4 -from [get_clocks dll_28] -to [get_clocks clk_114]
+set_multicycle_path -hold  -end 3 -from [get_clocks dll_28] -to [get_clocks clk_114]
+# clk_114 -> dll_28 (fast to slow): consumers sample on the 28 MHz edge; relax the LAUNCH edge.
+set_multicycle_path -setup -start 4 -from [get_clocks clk_114] -to [get_clocks dll_28]
+set_multicycle_path -hold  -start 3 -from [get_clocks clk_114] -to [get_clocks dll_28]
 
-set _xlnx_shared_i2 [get_pins -hier -regexp openaars_virtual_top/tg68k/pf68K_Kernel_inst/memaddr.*]
-set_multicycle_path -setup -start -from $_xlnx_shared_i2 -to $_xlnx_shared_i1 3
-set_multicycle_path -hold -start -from $_xlnx_shared_i2 -to $_xlnx_shared_i1 2
+# Direct flip-flop to flip-flop crossings between dll_28 and clk_114 whose consumer samples on
+# every cycle (edge detectors, enables, configuration bits latched into the CPU island). The
+# clock-to-clock rules above must not relax these; they are single-cycle and short. Cell-scoped
+# exceptions take precedence over the clock-scoped ones. (Vivado TIMING-46 list.)
+set cdc_1cycle_pairs {
+  {openaars_virtual_top/amiga_clk/clk7_en_reg_reg                openaars_virtual_top/sdram/clk7_enD_reg}
+  {openaars_virtual_top/aud_tick_reg                             openaars_virtual_top/aud_tick_d_reg}
+  {openaars_virtual_top/hostcpu/hw_req_reg                       openaars_virtual_top/mycfide/i2c_master.my_i2c_mmio/_req_reg}
+  {openaars_virtual_top/hostcpu/wr_reg                           openaars_virtual_top/mycfide/i2c_master.my_i2c_mmio/_wr_reg}
+  {openaars_virtual_top/minimig/autoconfig/board_configured_reg[0] openaars_virtual_top/tg68k/z2ram_ena_reg}
+  {openaars_virtual_top/minimig/autoconfig/board_configured_reg[1] openaars_virtual_top/tg68k/z3ram_ena_reg}
+  {openaars_virtual_top/minimig/autoconfig/board_configured_reg[2] openaars_virtual_top/tg68k/z3ram2_ena_reg}
+  {openaars_virtual_top/minimig/autoconfig/board_configured_reg[3] openaars_virtual_top/tg68k/z3ram3_ena_reg}
+  {openaars_virtual_top/minimig/cpu_config_reg_reg[0]            openaars_virtual_top/tg68k/pf68K_Kernel_inst/use_VBR_Stackframe_reg}
+  {openaars_virtual_top/tg68k/lds2_reg                           openaars_virtual_top/minimig/CPU1/l_lds2_reg}
+  {openaars_virtual_top/tg68k/uds2_reg                           openaars_virtual_top/minimig/CPU1/l_uds2_reg}
+}
+foreach pair $cdc_1cycle_pairs {
+  set f [get_cells -quiet [lindex $pair 0]]; set t [get_cells -quiet [lindex $pair 1]]
+  if {$f ne "" && $t ne ""} {
+    set_multicycle_path -setup 1 -from $f -to $t
+    set_multicycle_path -hold  0 -from $f -to $t
+  }
+}
 
-set_multicycle_path -setup -start -from [get_cells openaars_virtual_top/tg68k/addr*] -to $_xlnx_shared_i1 3
-set_multicycle_path -hold -start -from [get_cells openaars_virtual_top/tg68k/addr*] -to $_xlnx_shared_i1 2
+###############################################################################
+# Minimig / SDRAM domains <-> HDMI domain (clk_148).
+#
+# The domains are unrelated in phase; every crossing is a synchroniser or a toggle handshake.
+# Bound the data paths to one destination period so the synchronisers are placed tightly, but
+# do not mask them (a false path would let placement stretch them arbitrarily).
+set_max_delay -datapath_only 6.734 -from [get_clocks {dll_28 clk_114 clk_sd_114}] -to [get_clocks clk_148]
+set_max_delay -datapath_only 8.815 -from [get_clocks clk_148] -to [get_clocks {dll_28 clk_114 clk_sd_114}]
 
-# # Dram to cache line constraints
-# Incorrect
-set_multicycle_path -from [get_pins -hier -regexp openaars_virtual_top/sdram/cpu_cache/dtram/.*] -to [get_pins -hier -regexp openaars_virtual_top/sdram/cpu_cacheline_.*] -setup 2
-set_multicycle_path -from [get_pins -hier -regexp openaars_virtual_top/sdram/cpu_cache/dtram/.*] -to [get_pins -hier -regexp openaars_virtual_top/sdram/cpu_cacheline_.*] -hold 1
-
-# From 28 -> 114 MHz four cycles in the 114 network
-set_multicycle_path -setup -from [get_clocks dll_28] -to [get_clocks clk_114] 4
-set_multicycle_path -hold -from [get_clocks dll_28] -to [get_clocks clk_114] 3
-
-# The returning signals from SDRAM can take 2 cycles
-set_multicycle_path -setup -from [get_clocks clk_sd_114] -to [get_clocks clk_114] 2
-
-# Neither in nor out of the C2P requires single-cycle speed
-set _xlnx_shared_i3 [get_pins -hier -regexp -nocase openaars_virtual_top/tg68k/pf68K_Kernel_inst/.*]
-set_multicycle_path -setup -start -from [get_pins -hier -regexp -nocase openaars_virtual_top/tg68k/myakiko/c2p.myc2p/rdptr.*] -to $_xlnx_shared_i3 2
-set_multicycle_path -hold -start -from [get_pins -hier -regexp -nocase openaars_virtual_top/tg68k/myakiko/c2p.myc2p/rdptr.*] -to $_xlnx_shared_i3 2
-set _xlnx_shared_i4 [get_pins -hier -regexp -nocase openaars_virtual_top/tg68k/myakiko/c2p.myc2p/buf_reg.*]
-set_multicycle_path -setup -start -from $_xlnx_shared_i4 -to $_xlnx_shared_i3 2
-set_multicycle_path -hold -start -from $_xlnx_shared_i4 -to $_xlnx_shared_i3 2
-
-
-
-# All datapaths from the Minimig core to the HDMI output module use double flip flop transitions
-# set_false_path -from [get_clocks -of_objects [get_pins openaars_virtual_top/amiga_clk/amiga_clk_i/clk_main/CLKOUT2]] -to [get_clocks -of_objects [get_pins clk_hdmi/CLKOUT0]]
-set_false_path -from [get_clocks {dll_28 clk_114 clk_sd_114}] -to [get_clocks clk_148]
-
-set_multicycle_path -setup -start -from [get_clocks -of_objects [get_pins openaars_virtual_top/amiga_clk/amiga_clk_i/clk_main/CLKOUT0]] -to [get_clocks -of_objects [get_pins openaars_virtual_top/amiga_clk/amiga_clk_i/clk_main/CLKOUT2]] 4
-set_multicycle_path -hold -start -from [get_clocks -of_objects [get_pins openaars_virtual_top/amiga_clk/amiga_clk_i/clk_main/CLKOUT0]] -to [get_clocks -of_objects [get_pins openaars_virtual_top/amiga_clk/amiga_clk_i/clk_main/CLKOUT2]] 3
-
-set_max_delay -from [get_clocks -of_objects [get_pins openaars_virtual_top/amiga_clk/amiga_clk_i/clk_main/CLKOUT0]] -to [get_clocks -of_objects [get_pins clk_hdmi/CLKOUT0]] 1.800
-set_multicycle_path -hold -end -from [get_clocks -of_objects [get_pins openaars_virtual_top/amiga_clk/amiga_clk_i/clk_main/CLKOUT0]] -to [get_clocks -of_objects [get_pins clk_hdmi/CLKOUT0]] 2
-
-
-create_generated_clock -name my_i2s_transmitter/max_sclk_OBUF -source [get_pins openaars_virtual_top/amiga_clk/amiga_clk_i/clk_main/CLKOUT0] -divide_by 70 [get_pins my_i2s_transmitter/sclk_reg/Q]
-create_generated_clock -name openaars_virtual_top/mycfide/sck_reg_n_0 -source [get_pins openaars_virtual_top/amiga_clk/amiga_clk_i/clk_main/CLKOUT0] -divide_by 70 [get_pins openaars_virtual_top/mycfide/sck_reg/Q]
-
-set_clock_groups -name async_mycfide -asynchronous -group [get_clocks {clk_114, dll_28}] -group [get_clocks openaars_virtual_top/mycfide/sck_reg_n_0]
-set_clock_groups -name async_mycfide -asynchronous -group [get_clocks {clk_114 dll_28}] -group [get_clocks openaars_virtual_top/mycfide/sck_reg_n_0]
-
+###############################################################################
+# Placement
 create_pblock sdram_controller
 add_cells_to_pblock [get_pblocks sdram_controller] [get_cells -quiet [list openaars_virtual_top/sdram]]
 resize_pblock [get_pblocks sdram_controller] -add {SLICE_X52Y51:SLICE_X89Y99}
