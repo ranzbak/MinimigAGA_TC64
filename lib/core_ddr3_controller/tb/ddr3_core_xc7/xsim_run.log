@@ -1,0 +1,416 @@
+/opt/Xilinx/Vivado/2023.2/bin/xelab -prj project.prj -debug typical -relax -L secureip -L unisims_ver -L unimacro_ver testbench glbl -s top_sim
+Vivado Simulator v2023.2
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+Running: /opt/Xilinx/Vivado/2023.2/bin/unwrapped/lnx64.o/xelab -prj project.prj -debug typical -relax -L secureip -L unisims_ver -L unimacro_ver testbench glbl -s top_sim 
+Multi-threading is on. Using 6 slave threads.
+INFO: [VRFC 10-2263] Analyzing SystemVerilog file "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/ddr3_dfi_seq.sv" into library work
+INFO: [VRFC 10-311] analyzing module ddr3_dfi_seq
+INFO: [VRFC 10-311] analyzing module ddr3_dfi_fifo
+INFO: [VRFC 10-2263] Analyzing SystemVerilog file "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/ddr3_core.sv" into library work
+INFO: [VRFC 10-311] analyzing module ddr3_core
+INFO: [VRFC 10-311] analyzing module ddr3_fifo
+INFO: [VRFC 10-2263] Analyzing Verilog file "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/examples/arty_a7/artix7_pll.v" into library work
+INFO: [VRFC 10-311] analyzing module artix7_pll
+INFO: [VRFC 10-2263] Analyzing Verilog file "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/tb/ddr3_core_xc7/ddr3.v" into library work
+INFO: [VRFC 10-311] analyzing module ddr3
+INFO: [VRFC 10-2263] Analyzing Verilog file "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/tb/ddr3_core_xc7/testbench.v" into library work
+INFO: [VRFC 10-311] analyzing module testbench
+INFO: [VRFC 10-2263] Analyzing Verilog file "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v" into library work
+INFO: [VRFC 10-311] analyzing module ddr3_dfi_phy
+INFO: [VRFC 10-2263] Analyzing Verilog file "/opt/Xilinx/Vivado/2023.2/data/verilog/src/glbl.v" into library work
+INFO: [VRFC 10-311] analyzing module glbl
+Starting static elaboration
+Pass Through NonSizing Optimizer
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:352]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:354]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:355]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TBYTEIN' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:360]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:361]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:405]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:407]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:408]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TBYTEIN' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:413]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:414]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:458]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:460]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:461]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TBYTEIN' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:466]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:467]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:511]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:513]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:514]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TBYTEIN' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:519]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:520]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:564]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:566]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:567]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TBYTEIN' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:572]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:573]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:617]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:619]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:620]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TBYTEIN' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:625]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:626]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:670]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:672]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:673]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TBYTEIN' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:678]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:679]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:723]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:725]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:726]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TBYTEIN' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:731]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:732]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:776]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:778]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:779]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TBYTEIN' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:784]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:785]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:829]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:831]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:832]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TBYTEIN' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:837]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:838]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:882]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:884]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:885]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TBYTEIN' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:890]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:891]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:935]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:937]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:938]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TBYTEIN' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:943]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:944]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:988]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:990]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:991]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TBYTEIN' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:996]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:997]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1041]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1043]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1044]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TBYTEIN' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1049]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1050]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1094]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1096]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1097]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TBYTEIN' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1102]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1103]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1147]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1149]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1150]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TBYTEIN' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1155]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1156]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1213]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1215]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1216]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'T1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1217]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'T2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1218]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'T3' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1219]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'T4' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1220]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TBYTEIN' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1221]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1222]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1253]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1255]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1256]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'T1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1257]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'T2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1258]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'T3' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1259]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'T4' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1260]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TBYTEIN' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1261]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1262]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'D1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1290]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'D2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1291]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'D3' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1292]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'D4' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1293]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'D5' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1294]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'D6' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1295]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'D7' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1296]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'D8' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1297]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1298]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1300]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1301]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TBYTEIN' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1306]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1307]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'D1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1330]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'D2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1331]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'D3' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1332]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'D4' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1333]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'D5' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1334]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'D6' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1335]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'D7' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1336]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'D8' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1337]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1338]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1340]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1341]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TBYTEIN' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1346]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'TCE' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1347]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'BITSLIP' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1487]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'CLKDIVP' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1505]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'DYNCLKDIVSEL' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1506]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'DYNCLKSEL' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1507]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OFB' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1508]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1509]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1510]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'BITSLIP' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1564]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'CLKDIVP' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1582]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'DYNCLKDIVSEL' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1583]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'DYNCLKSEL' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1584]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OFB' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1585]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1586]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1587]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'BITSLIP' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1641]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'CLKDIVP' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1659]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'DYNCLKDIVSEL' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1660]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'DYNCLKSEL' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1661]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OFB' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1662]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1663]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1664]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'BITSLIP' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1718]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'CLKDIVP' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1736]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'DYNCLKDIVSEL' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1737]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'DYNCLKSEL' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1738]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OFB' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1739]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1740]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1741]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'BITSLIP' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1795]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'CLKDIVP' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1813]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'DYNCLKDIVSEL' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1814]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'DYNCLKSEL' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1815]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OFB' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1816]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1817]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1818]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'BITSLIP' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1872]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'CLKDIVP' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1890]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'DYNCLKDIVSEL' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1891]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'DYNCLKSEL' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1892]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OFB' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1893]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1894]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1895]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'BITSLIP' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1949]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'CLKDIVP' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1967]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'DYNCLKDIVSEL' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1968]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'DYNCLKSEL' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1969]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OFB' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1970]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1971]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:1972]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'BITSLIP' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2026]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'CLKDIVP' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2044]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'DYNCLKDIVSEL' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2045]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'DYNCLKSEL' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2046]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OFB' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2047]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2048]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2049]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'BITSLIP' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2103]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'CLKDIVP' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2121]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'DYNCLKDIVSEL' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2122]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'DYNCLKSEL' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2123]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OFB' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2124]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2125]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2126]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'BITSLIP' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2180]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'CLKDIVP' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2198]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'DYNCLKDIVSEL' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2199]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'DYNCLKSEL' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2200]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OFB' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2201]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2202]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2203]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'BITSLIP' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2257]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'CLKDIVP' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2275]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'DYNCLKDIVSEL' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2276]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'DYNCLKSEL' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2277]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OFB' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2278]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2279]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2280]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'BITSLIP' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2334]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'CLKDIVP' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2352]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'DYNCLKDIVSEL' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2353]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'DYNCLKSEL' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2354]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OFB' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2355]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2356]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2357]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'BITSLIP' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2411]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'CLKDIVP' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2429]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'DYNCLKDIVSEL' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2430]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'DYNCLKSEL' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2431]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OFB' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2432]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2433]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2434]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'BITSLIP' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2488]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'CLKDIVP' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2506]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'DYNCLKDIVSEL' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2507]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'DYNCLKSEL' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2508]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OFB' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2509]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2510]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2511]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'BITSLIP' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2565]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'CLKDIVP' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2583]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'DYNCLKDIVSEL' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2584]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'DYNCLKSEL' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2585]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OFB' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2586]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2587]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2588]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'BITSLIP' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2642]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'CLKDIVP' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2660]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'DYNCLKDIVSEL' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2661]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'DYNCLKSEL' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2662]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'OFB' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2663]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN1' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2664]
+WARNING: [VRFC 10-3091] actual bit length 32 differs from formal bit length 1 for port 'SHIFTIN2' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v:2665]
+WARNING: [VRFC 10-3091] actual bit length 1 differs from formal bit length 2 for port 'dfi_rddata_dnv_i' [/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/tb/ddr3_core_xc7/testbench.v:210]
+Completed static elaboration
+Starting simulation data flow analysis
+WARNING: [XSIM 43-4099] "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/examples/arty_a7/artix7_pll.v" Line 2. Module artix7_pll doesn't have a timescale but at least one module in design has a timescale.
+WARNING: [XSIM 43-4099] "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v" Line 25. Module ddr3_dfi_phy(DQS_TAP_DELAY_INIT=27,DQ_TAP_DELAY_INIT=0,TPHY_RDLAT=5) doesn't have a timescale but at least one module in design has a timescale.
+WARNING: [XSIM 43-4099] "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/ddr3_core.sv" Line 26. Module ddr3_core(DDR_MHZ=100,DDR_WRITE_LATENCY=4,DDR_READ_LATENCY=4) doesn't have a timescale but at least one module in design has a timescale.
+WARNING: [XSIM 43-4099] "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/ddr3_core.sv" Line 571. Module ddr3_fifo(WIDTH=16,DEPTH=8,ADDR_W=3) doesn't have a timescale but at least one module in design has a timescale.
+WARNING: [XSIM 43-4099] "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/ddr3_dfi_seq.sv" Line 26. Module ddr3_dfi_seq(DDR_MHZ=100,DDR_WRITE_LATENCY=4,DDR_READ_LATENCY=4) doesn't have a timescale but at least one module in design has a timescale.
+WARNING: [XSIM 43-4099] "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/ddr3_dfi_seq.sv" Line 429. Module ddr3_dfi_fifo(DEPTH=4,ADDR_W=2) doesn't have a timescale but at least one module in design has a timescale.
+WARNING: [XSIM 43-4099] "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/examples/arty_a7/artix7_pll.v" Line 2. Module artix7_pll doesn't have a timescale but at least one module in design has a timescale.
+WARNING: [XSIM 43-4099] "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/phy/xc7/ddr3_dfi_phy.v" Line 25. Module ddr3_dfi_phy(DQS_TAP_DELAY_INIT=27,DQ_TAP_DELAY_INIT=0,TPHY_RDLAT=5) doesn't have a timescale but at least one module in design has a timescale.
+WARNING: [XSIM 43-4099] "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/ddr3_core.sv" Line 26. Module ddr3_core(DDR_MHZ=100,DDR_WRITE_LATENCY=4,DDR_READ_LATENCY=4) doesn't have a timescale but at least one module in design has a timescale.
+WARNING: [XSIM 43-4099] "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/ddr3_core.sv" Line 571. Module ddr3_fifo(WIDTH=16,DEPTH=8,ADDR_W=3) doesn't have a timescale but at least one module in design has a timescale.
+WARNING: [XSIM 43-4099] "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/ddr3_dfi_seq.sv" Line 26. Module ddr3_dfi_seq(DDR_MHZ=100,DDR_WRITE_LATENCY=4,DDR_READ_LATENCY=4) doesn't have a timescale but at least one module in design has a timescale.
+WARNING: [XSIM 43-4099] "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/src_v/ddr3_dfi_seq.sv" Line 429. Module ddr3_dfi_fifo(DEPTH=4,ADDR_W=2) doesn't have a timescale but at least one module in design has a timescale.
+Completed simulation data flow analysis
+Time Resolution for simulation is 1ps
+Compiling module unisims_ver.IBUF
+Compiling module unisims_ver.PLLE2_ADV(CLKFBOUT_MULT=12,CLKIN...
+Compiling module unisims_ver.PLLE2_BASE(CLKFBOUT_MULT=12,CLKI...
+Compiling module unisims_ver.BUFH
+Compiling module work.artix7_pll
+Compiling module work.ddr3_default
+Compiling module unisims_ver.OBUFDS(IOSTANDARD="DIFF_SSTL135"...
+Compiling module unisims_ver.IOBUFDS(IOSTANDARD="DIFF_SSTL135...
+Compiling module unisims_ver.OSERDESE2(DATA_RATE_TQ="BUF",DAT...
+Compiling module unisims_ver.IOBUF(IOSTANDARD="SSTL135",SLEW=...
+Compiling module unisims_ver.IDELAYE2(HIGH_PERFORMANCE_MODE="...
+Compiling module unisims_ver.IDELAYCTRL_default
+Compiling module unisims_ver.IDELAYE2(HIGH_PERFORMANCE_MODE="...
+Compiling module unisims_ver.ISERDESE2(IOBDELAY="IFD",NUM_CE=...
+Compiling module work.ddr3_dfi_phy(DQS_TAP_DELAY_INIT=...
+Compiling module work.ddr3_fifo(WIDTH=16,DEPTH=8,ADDR_...
+Compiling module work.ddr3_dfi_fifo(DEPTH=4,ADDR_W=2)
+Compiling module work.ddr3_dfi_seq(DDR_MHZ=100,DDR_WRI...
+Compiling module work.ddr3_core(DDR_MHZ=100,DDR_WRITE_...
+Compiling module work.testbench
+Compiling module work.glbl
+Built simulation snapshot top_sim
+/opt/Xilinx/Vivado/2023.2/bin/xsim top_sim -t run.tcl
+
+****** xsim v2023.2 (64-bit)
+  **** SW Build 4029153 on Fri Oct 13 20:13:54 MDT 2023
+  **** IP Build 4028589 on Sat Oct 14 00:45:43 MDT 2023
+  **** SharedData Build 4025554 on Tue Oct 10 17:18:54 MDT 2023
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source xsim.dir/top_sim/xsim_script.tcl
+# xsim {top_sim} -autoloadwcfg -tclbatch {run.tcl}
+Time resolution is 1 ps
+source run.tcl
+## run 10ms
+TCK_MIN =        2500
+testbench.u_ram.file_io_open: at time                    0 WARNING: no +model_data option specified, using /tmp.
+testbench.u_ram.open_bank_file: at time 0 INFO: opening /tmp/testbench.u_ram.open_bank_file.0.
+testbench.u_ram.open_bank_file: at time 0 INFO: opening /tmp/testbench.u_ram.open_bank_file.1.
+testbench.u_ram.open_bank_file: at time 0 INFO: opening /tmp/testbench.u_ram.open_bank_file.2.
+testbench.u_ram.open_bank_file: at time 0 INFO: opening /tmp/testbench.u_ram.open_bank_file.3.
+testbench.u_ram.open_bank_file: at time 0 INFO: opening /tmp/testbench.u_ram.open_bank_file.4.
+testbench.u_ram.open_bank_file: at time 0 INFO: opening /tmp/testbench.u_ram.open_bank_file.5.
+testbench.u_ram.open_bank_file: at time 0 INFO: opening /tmp/testbench.u_ram.open_bank_file.6.
+testbench.u_ram.open_bank_file: at time 0 INFO: opening /tmp/testbench.u_ram.open_bank_file.7.
+LOAD_MODE: bank 2
+testbench.u_ram.cmd_task: at time 37020000.0 ps INFO: Load Mode 2
+testbench.u_ram.cmd_task: at time 37020000.0 ps INFO: Load Mode 2 Partial Array Self Refresh = Bank 0-7
+testbench.u_ram.cmd_task: at time 37020000.0 ps INFO: Load Mode 2 CAS Write Latency =           6
+testbench.u_ram.cmd_task: at time 37020000.0 ps INFO: Load Mode 2 Auto Self Refresh = Disabled
+testbench.u_ram.cmd_task: at time 37020000.0 ps INFO: Load Mode 2 Self Refresh Temperature = Normal
+testbench.u_ram.cmd_task: at time 37020000.0 ps INFO: Load Mode 2 Dynamic ODT = Disabled
+LOAD_MODE: bank 3
+testbench.u_ram.cmd_task: at time 38020000.0 ps INFO: Load Mode 3
+testbench.u_ram.cmd_task: at time 38020000.0 ps INFO: Load Mode 3 MultiPurpose Register Select = Pre-defined pattern
+testbench.u_ram.cmd_task: at time 38020000.0 ps INFO: Load Mode 3 MultiPurpose Register Enable = Disabled
+LOAD_MODE: bank 1
+testbench.u_ram.cmd_task: at time 39020000.0 ps INFO: Load Mode 1
+testbench.u_ram.cmd_task: at time 39020000.0 ps INFO: Load Mode 1 DLL Enable = Disabled
+testbench.u_ram.cmd_task: at time 39020000.0 ps WARNING: Load Mode 1 DLL off mode is not fully modeled
+testbench.u_ram.cmd_task: at time 39020000.0 ps INFO: Load Mode 1 Output Drive Strength =          40 Ohm
+testbench.u_ram.cmd_task: at time 39020000.0 ps INFO: Load Mode 1 ODT Rtt = Disabled
+testbench.u_ram.cmd_task: at time 39020000.0 ps INFO: Load Mode 1 Additive Latency = 0
+testbench.u_ram.cmd_task: at time 39020000.0 ps INFO: Load Mode 1 Write Levelization = Disabled
+testbench.u_ram.cmd_task: at time 39020000.0 ps INFO: Load Mode 1 TDQS Enable = Disabled
+testbench.u_ram.cmd_task: at time 39020000.0 ps INFO: Load Mode 1 Qoff = Enabled
+LOAD_MODE: bank 0
+testbench.u_ram.cmd_task: at time 40020000.0 ps INFO: Load Mode 0
+testbench.u_ram.cmd_task: at time 40020000.0 ps INFO: Load Mode 0 Burst Length =  8
+testbench.u_ram.cmd_task: at time 40020000.0 ps INFO: Load Mode 0 Burst Order = Sequential
+testbench.u_ram.cmd_task: at time 40020000.0 ps INFO: Load Mode 0 CAS Latency =           6
+testbench.u_ram.cmd_task: at time 40020000.0 ps INFO: Load Mode 0 DLL Reset = Reset DLL
+testbench.u_ram.cmd_task: at time 40020000.0 ps INFO: Load Mode 0 Write Recovery =          16
+testbench.u_ram.cmd_task: at time 40020000.0 ps INFO: Load Mode 0 Power Down Mode = DLL off
+testbench.u_ram.cmd_task: at time 41020000.0 ps INFO: ZQ        long = 1
+testbench.u_ram.cmd_task: at time 41020000.0 ps INFO: Initialization Sequence is complete
+testbench.u_ram.cmd_task: at time 60920000.0 ps INFO: Precharge All
+testbench.u_ram.cmd_task: at time 61050000.0 ps INFO: Refresh  
+testbench.u_ram.cmd_task: at time 61320000.0 ps INFO: Activate  bank 0 row 0000
+testbench.u_ram.cmd_task: at time 61350000.0 ps INFO: Write     bank 0 col 000, auto precharge 0
+testbench.u_ram.cmd_task: at time 61390000.0 ps INFO: Write     bank 0 col 008, auto precharge 0
+testbench.u_ram.data_task: at time 61415000.0 ps INFO: WRITE @ DQS= bank = 0 row = 0000 col = 00000000 data = 1100
+testbench.u_ram.data_task: at time 61420000.0 ps INFO: WRITE @ DQS= bank = 0 row = 0000 col = 00000001 data = 3322
+testbench.u_ram.data_task: at time 61425000.0 ps INFO: WRITE @ DQS= bank = 0 row = 0000 col = 00000002 data = 5544
+testbench.u_ram.data_task: at time 61430000.0 ps INFO: WRITE @ DQS= bank = 0 row = 0000 col = 00000003 data = 7766
+testbench.u_ram.cmd_task: at time 61430000.0 ps INFO: Write     bank 0 col 010, auto precharge 0
+testbench.u_ram.data_task: at time 61435000.0 ps INFO: WRITE @ DQS= bank = 0 row = 0000 col = 00000004 data = 9988
+testbench.u_ram.data_task: at time 61440000.0 ps INFO: WRITE @ DQS= bank = 0 row = 0000 col = 00000005 data = bbaa
+testbench.u_ram.data_task: at time 61445000.0 ps INFO: WRITE @ DQS= bank = 0 row = 0000 col = 00000006 data = ddcc
+testbench.u_ram.data_task: at time 61450000.0 ps INFO: WRITE @ DQS= bank = 0 row = 0000 col = 00000007 data = ffee
+testbench.u_ram.data_task: at time 61455000.0 ps INFO: WRITE @ DQS= bank = 0 row = 0000 col = 00000008 data = 0000
+testbench.u_ram.data_task: at time 61460000.0 ps INFO: WRITE @ DQS= bank = 0 row = 0000 col = 00000009 data = 0000
+testbench.u_ram.data_task: at time 61465000.0 ps INFO: WRITE @ DQS= bank = 0 row = 0000 col = 0000000a data = aaaa
+testbench.u_ram.data_task: at time 61470000.0 ps INFO: WRITE @ DQS= bank = 0 row = 0000 col = 0000000b data = 5555
+testbench.u_ram.data_task: at time 61475000.0 ps INFO: WRITE @ DQS= bank = 0 row = 0000 col = 0000000c data = 600d
+testbench.u_ram.data_task: at time 61480000.0 ps INFO: WRITE @ DQS= bank = 0 row = 0000 col = 0000000d data = d0d0
+testbench.u_ram.data_task: at time 61485000.0 ps INFO: WRITE @ DQS= bank = 0 row = 0000 col = 0000000e data = fead
+testbench.u_ram.data_task: at time 61490000.0 ps INFO: WRITE @ DQS= bank = 0 row = 0000 col = 0000000f data = beaf
+testbench.u_ram.data_task: at time 61495000.0 ps INFO: WRITE @ DQS= bank = 0 row = 0000 col = 00000010 data = 3333
+testbench.u_ram.data_task: at time 61500000.0 ps INFO: WRITE @ DQS= bank = 0 row = 0000 col = 00000011 data = 3333
+testbench.u_ram.data_task: at time 61505000.0 ps INFO: WRITE @ DQS= bank = 0 row = 0000 col = 00000012 data = 2222
+testbench.u_ram.data_task: at time 61510000.0 ps INFO: WRITE @ DQS= bank = 0 row = 0000 col = 00000013 data = 2222
+testbench.u_ram.data_task: at time 61515000.0 ps INFO: WRITE @ DQS= bank = 0 row = 0000 col = 00000014 data = 1111
+testbench.u_ram.data_task: at time 61520000.0 ps INFO: WRITE @ DQS= bank = 0 row = 0000 col = 00000015 data = 1111
+testbench.u_ram.data_task: at time 61525000.0 ps INFO: WRITE @ DQS= bank = 0 row = 0000 col = 00000016 data = ffff
+testbench.u_ram.data_task: at time 61530000.0 ps INFO: WRITE @ DQS= bank = 0 row = 0000 col = 00000017 data = ffff
+testbench.u_ram.cmd_task: at time 61580000.0 ps INFO: Read      bank 0 col 000, auto precharge 0
+testbench.u_ram.data_task: at time 61625000.0 ps INFO: READ @ DQS= bank = 0 row = 0000 col = 00000000 data = 1100
+testbench.u_ram.data_task: at time 61630000.0 ps INFO: READ @ DQS= bank = 0 row = 0000 col = 00000001 data = 3322
+testbench.u_ram.data_task: at time 61635000.0 ps INFO: READ @ DQS= bank = 0 row = 0000 col = 00000002 data = 5544
+testbench.u_ram.data_task: at time 61640000.0 ps INFO: READ @ DQS= bank = 0 row = 0000 col = 00000003 data = 7766
+testbench.u_ram.data_task: at time 61645000.0 ps INFO: READ @ DQS= bank = 0 row = 0000 col = 00000004 data = 9988
+testbench.u_ram.data_task: at time 61650000.0 ps INFO: READ @ DQS= bank = 0 row = 0000 col = 00000005 data = bbaa
+testbench.u_ram.data_task: at time 61655000.0 ps INFO: READ @ DQS= bank = 0 row = 0000 col = 00000006 data = ddcc
+testbench.u_ram.data_task: at time 61660000.0 ps INFO: READ @ DQS= bank = 0 row = 0000 col = 00000007 data = ffee
+testbench.u_ram.cmd_task: at time 61750000.0 ps INFO: Read      bank 0 col 008, auto precharge 0
+testbench.u_ram.data_task: at time 61795000.0 ps INFO: READ @ DQS= bank = 0 row = 0000 col = 00000008 data = 0000
+testbench.u_ram.data_task: at time 61800000.0 ps INFO: READ @ DQS= bank = 0 row = 0000 col = 00000009 data = 0000
+testbench.u_ram.data_task: at time 61805000.0 ps INFO: READ @ DQS= bank = 0 row = 0000 col = 0000000a data = aaaa
+testbench.u_ram.data_task: at time 61810000.0 ps INFO: READ @ DQS= bank = 0 row = 0000 col = 0000000b data = 5555
+testbench.u_ram.data_task: at time 61815000.0 ps INFO: READ @ DQS= bank = 0 row = 0000 col = 0000000c data = 600d
+testbench.u_ram.data_task: at time 61820000.0 ps INFO: READ @ DQS= bank = 0 row = 0000 col = 0000000d data = d0d0
+testbench.u_ram.data_task: at time 61825000.0 ps INFO: READ @ DQS= bank = 0 row = 0000 col = 0000000e data = fead
+testbench.u_ram.data_task: at time 61830000.0 ps INFO: READ @ DQS= bank = 0 row = 0000 col = 0000000f data = beaf
+testbench.u_ram.cmd_task: at time 61920000.0 ps INFO: Read      bank 0 col 010, auto precharge 0
+testbench.u_ram.data_task: at time 61965000.0 ps INFO: READ @ DQS= bank = 0 row = 0000 col = 00000010 data = 3333
+testbench.u_ram.data_task: at time 61970000.0 ps INFO: READ @ DQS= bank = 0 row = 0000 col = 00000011 data = 3333
+testbench.u_ram.data_task: at time 61975000.0 ps INFO: READ @ DQS= bank = 0 row = 0000 col = 00000012 data = 2222
+testbench.u_ram.data_task: at time 61980000.0 ps INFO: READ @ DQS= bank = 0 row = 0000 col = 00000013 data = 2222
+testbench.u_ram.data_task: at time 61985000.0 ps INFO: READ @ DQS= bank = 0 row = 0000 col = 00000014 data = 1111
+testbench.u_ram.data_task: at time 61990000.0 ps INFO: READ @ DQS= bank = 0 row = 0000 col = 00000015 data = 1111
+testbench.u_ram.data_task: at time 61995000.0 ps INFO: READ @ DQS= bank = 0 row = 0000 col = 00000016 data = ffff
+testbench.u_ram.data_task: at time 62000000.0 ps INFO: READ @ DQS= bank = 0 row = 0000 col = 00000017 data = ffff
+$finish called at time : 63055 ns : File "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/lib/core_ddr3_controller/tb/ddr3_core_xc7/testbench.v" Line 305
+run: Time (s): cpu = 00:00:00.78 ; elapsed = 00:00:29 . Memory (MB): peak = 1441.133 ; gain = 27.039 ; free physical = 21086 ; free virtual = 35768
+## quit
+INFO: xsimkernel Simulation Memory Usage: 142404 KB (Peak: 187384 KB), Simulation CPU Usage: 29250 ms
+INFO: [Common 17-206] Exiting xsim at Fri Sep  4 22:21:29 2026...
