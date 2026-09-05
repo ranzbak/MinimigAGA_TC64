@@ -1,0 +1,490 @@
+// -----------------------------------------------------------------------------
+// autoconfig_tb.sv -- what does the Minimig autoconfig block actually offer the
+// Amiga OS?
+//
+// The bench instantiates rtl/minimig/minimig_autoconfig.v (with its nibble ROM)
+// twice, once with Z3RAM3 = 0 (the DDR3 fast-RAM build) and once with
+// Z3RAM3 = 1 (SDRAM builds); see minimig_virtual_top.v:
+//   minimig ... .Z3RAM3(haveddr3 ? 1'b0 : 1'b1)
+// and then plays expansion.library at it:
+//
+//   * read the AUTOCONFIG ROM one nibble at a time: the high nibble of register
+//     N at offset N, the low nibble at offset N+2 (Zorro II style mapping --
+//     Minimig only decodes the $00E8xxxx configuration block, which per the
+//     Zorro III spec 8.1 "always look[s] like Zorro II cycles").
+//   * complement every register except register 00 (spec 8.1: "all read
+//     registers except for the 00 register are physically complemented").
+//   * decode er_Type / er_Product / er_Flags / er_Manufacturer / er_SerialNumber
+//     exactly as chapter 8.2 says, including the size extension bit
+//     (er_Flags bit 5) and the sub-size (logical size) nibble er_Flags[3:0].
+//   * allocate a base address the way the OS would and write it to the board;
+//     stop when the chain reports "no board".
+//
+// Address allocation model (assumptions, all documented in the report):
+//   Zorro II  memory board (ERTF_MEMLIST)  -> $00200000 upward (Z2 RAM space)
+//   Zorro II  I/O board                    -> $00E90000 upward (Z2 I/O space)
+//   Zorro III board >= 16 MB               -> $40000000 upward.  This is what
+//        real Kickstarts hand the Minimig ZIII RAM board and what TG68K.vhd
+//        decodes (sel_z3ram = cpuaddr(31:30)="01" and cpuaddr(26:24)="000").
+//   Zorro III board <  16 MB               -> $08000000 upward, the A3000
+//        "32-Bit Memory Expansion Space" of figure 1-1 of the Zorro III spec
+//        ($08000000-$0FFFFFFF), where small Zorro III boards commonly land.
+//        Nothing in the Minimig wrapper decodes there.
+//
+// Two OS write orderings are exercised, because the ordering decides whether a
+// trailing base-address write lands on the *next* device in the chain:
+//   WRPOL=0 ("44,48"): spec 8.2 ordering for a Zorro III PIC in the Zorro II
+//        configuration block -- register 44 (A31-A24) first, then register 48
+//        (A23-A16); "writing to register 48 actually configures the board".
+//   WRPOL=1 ("48,44"): register 48 first, register 44 last (the ordering the
+//        spec gives for a Zorro III PIC in the Zorro III configuration block).
+// The RTL acts on 44 for Zorro III boards and on 48 for Zorro II boards, so
+// under WRPOL=0 the trailing 48 write is seen by whatever device the chain has
+// already advanced to.
+//
+// Run:  ./run.sh            (compact table)
+//       ./run.sh -v         (full per-board register dump)
+// -----------------------------------------------------------------------------
+
+`timescale 1ns / 1ps
+
+module autoconfig_tb;
+
+  // ---------------------------------------------------------------- clock/bus
+  logic        clk = 1'b0;
+  logic        clk7_en = 1'b0;
+  logic        reset = 1'b1;
+  logic        rd = 1'b0, hwr = 1'b0, lwr = 1'b0;
+  logic  [8:1] address = 8'h00;
+  logic [15:0] data_in = 16'h0000;
+  logic  [1:0] fastram_config = 2'b00;
+  logic  [1:0] slowram_config = 2'b00;
+  logic        m68020 = 1'b0;
+  logic        ram_64meg = 1'b0;
+
+  logic        sel_r = 1'b0;      // bus select, steered to one of the two DUTs
+  logic        dsel  = 1'b0;      // 0 -> Z3RAM3=0 instance, 1 -> Z3RAM3=1
+
+  always #5 clk = ~clk;
+
+  logic [1:0] ckdiv = 2'b00;
+  always @(posedge clk) begin
+    ckdiv   <= ckdiv + 2'd1;
+    clk7_en <= (ckdiv == 2'b10);  // one enable in four, as minimig.v does
+  end
+
+  // ------------------------------------------------------------------- DUTs
+  wire [15:0] dout0, dout1;
+  wire  [4:0] bcfg0, bcfg1, bshut0, bshut1;
+  wire  [7:0] tocc0, tocc1;
+  wire        done0, done1;
+  wire        sel0 = sel_r & ~dsel;
+  wire        sel1 = sel_r &  dsel;
+
+  minimig_autoconfig #(.TOCCATA_SND(1'b1), .Z3RAM3(1'b0)) dut_z3ram3_0 (
+    .clk(clk), .clk7_en(clk7_en), .reset(reset),
+    .address_in(address), .data_out(dout0), .data_in(data_in),
+    .rd(rd), .hwr(hwr), .lwr(lwr), .sel(sel0),
+    .slowram_config(slowram_config), .fastram_config(fastram_config),
+    .m68020(m68020), .ram_64meg(ram_64meg),
+    .board_configured(bcfg0), .board_shutup(bshut0),
+    .toccata_base_addr(tocc0), .autoconfig_done(done0));
+
+  minimig_autoconfig #(.TOCCATA_SND(1'b1), .Z3RAM3(1'b1)) dut_z3ram3_1 (
+    .clk(clk), .clk7_en(clk7_en), .reset(reset),
+    .address_in(address), .data_out(dout1), .data_in(data_in),
+    .rd(rd), .hwr(hwr), .lwr(lwr), .sel(sel1),
+    .slowram_config(slowram_config), .fastram_config(fastram_config),
+    .m68020(m68020), .ram_64meg(ram_64meg),
+    .board_configured(bcfg1), .board_shutup(bshut1),
+    .toccata_base_addr(tocc1), .autoconfig_done(done1));
+
+  wire [15:0] dout  = dsel ? dout1  : dout0;
+  wire  [4:0] bcfg  = dsel ? bcfg1  : bcfg0;
+  wire  [4:0] bshut = dsel ? bshut1 : bshut0;
+  // Read the Toccata base out of the DUT array directly: Icarus does not
+  // re-evaluate the continuous assign "toccata_base_addr = board_base_addr[4]"
+  // when the array is written through the variable-index reset loop, so the
+  // port itself stays X in simulation even though the register is cleared.
+  function automatic [7:0] tocc_base();
+    begin
+      tocc_base = dsel ? dut_z3ram3_1.board_base_addr[4]
+                       : dut_z3ram3_0.board_base_addr[4];
+    end
+  endfunction
+  wire        done  = dsel ? done1  : done0;
+
+  // ------------------------------------------------------------- bus helpers
+  task automatic wait_clk7();
+    begin
+      do @(posedge clk); while (clk7_en !== 1'b1);
+    end
+  endtask
+
+  // Read one AUTOCONFIG nibble.  data_out = sel ? {rom_q,12'hfff} : 0 and the
+  // nibble ROM has two clocks of read latency, so hold the address a while.
+  task automatic ac_nib(input integer off, output logic [3:0] n);
+    begin
+      @(negedge clk);
+      address = off[8:1];
+      sel_r   = 1'b1;
+      rd      = 1'b1;
+      repeat (5) @(posedge clk);
+      n = dout[15:12];
+      @(negedge clk);
+      rd    = 1'b0;
+      sel_r = 1'b0;
+    end
+  endtask
+
+  // Read a logical 8 bit register (high nibble at off, low nibble at off+2) and
+  // undo the hardware complement for every register except register 00.
+  task automatic ac_reg(input integer off, output logic [7:0] b);
+    logic [3:0] hi, lo;
+    begin
+      ac_nib(off,   hi);
+      ac_nib(off+2, lo);
+      b = {hi, lo};
+      if (off != 0) b = ~b;
+    end
+  endtask
+
+  // One write bus cycle containing exactly one clk7_en pulse, so the block sees
+  // the write once (it latches on clk7_en && sel && (lwr|hwr)).  A 68000/68020
+  // byte write replicates the byte on both halves of the data bus, which is why
+  // the RTL may take data_in[7:0] for a byte write to the even address $48.
+  task automatic ac_write(input integer off, input [7:0] val);
+    begin
+      wait_clk7();                     // land just after an enable
+      @(negedge clk);
+      address = off[8:1];
+      data_in = {val, val};
+      sel_r   = 1'b1;
+      hwr     = 1'b1;
+      lwr     = 1'b1;
+      wait_clk7();                     // the single enable that latches it
+      @(negedge clk);
+      hwr     = 1'b0;
+      lwr     = 1'b0;
+      sel_r   = 1'b0;
+      repeat (2) @(posedge clk);
+    end
+  endtask
+
+  task automatic do_reset();
+    begin
+      @(negedge clk);
+      reset = 1'b1; sel_r = 1'b0; rd = 1'b0; hwr = 1'b0; lwr = 1'b0;
+      address = 8'h00; data_in = 16'h0000;
+      repeat (8) @(posedge clk);
+      @(negedge clk);
+      reset = 1'b0;
+      repeat (16) @(posedge clk);      // let the init state write the ZII size
+    end
+  endtask
+
+  // ---------------------------------------------------------- size decoding
+  // Zorro III spec 8.2, register 00 bits 2-0, with the register 08 bit 5
+  // ("size extension") interpretation.
+  function automatic longint unsigned phys_size(input [2:0] code, input bit ext);
+    begin
+      if (!ext) begin
+        case (code)
+          3'b000: phys_size = 64'h800000;   // 8 MB
+          3'b001: phys_size = 64'h10000;    // 64 KB
+          3'b010: phys_size = 64'h20000;    // 128 KB
+          3'b011: phys_size = 64'h40000;    // 256 KB
+          3'b100: phys_size = 64'h80000;    // 512 KB
+          3'b101: phys_size = 64'h100000;   // 1 MB
+          3'b110: phys_size = 64'h200000;   // 2 MB
+          3'b111: phys_size = 64'h400000;   // 4 MB
+        endcase
+      end else begin
+        case (code)
+          3'b000: phys_size = 64'h1000000;  // 16 MB
+          3'b001: phys_size = 64'h2000000;  // 32 MB
+          3'b010: phys_size = 64'h4000000;  // 64 MB
+          3'b011: phys_size = 64'h8000000;  // 128 MB
+          3'b100: phys_size = 64'h10000000; // 256 MB
+          3'b101: phys_size = 64'h20000000; // 512 MB
+          3'b110: phys_size = 64'h40000000; // 1 GB
+          3'b111: phys_size = 64'h0;        // RESERVED
+        endcase
+      end
+    end
+  endfunction
+
+  // Register 08 bits 3-0, the sub-size (logical size) table.
+  // 0 = same as physical, 1 = sized by the OS, 2 = 64 KB .. 13 = 14 MB.
+  function automatic longint unsigned sub_size(input [3:0] code);
+    begin
+      case (code)
+        4'h0: sub_size = 64'h0;          // "matches physical"
+        4'h1: sub_size = 64'h0;          // "auto sized by the OS"
+        4'h2: sub_size = 64'h10000;
+        4'h3: sub_size = 64'h20000;
+        4'h4: sub_size = 64'h40000;
+        4'h5: sub_size = 64'h80000;
+        4'h6: sub_size = 64'h100000;
+        4'h7: sub_size = 64'h200000;
+        4'h8: sub_size = 64'h400000;
+        4'h9: sub_size = 64'h600000;
+        4'hA: sub_size = 64'h800000;
+        4'hB: sub_size = 64'hA00000;
+        4'hC: sub_size = 64'hC00000;
+        4'hD: sub_size = 64'hE00000;
+        default: sub_size = 64'h0;       // reserved
+      endcase
+    end
+  endfunction
+
+  function automatic string hsize(input longint unsigned s);
+    begin
+      if (s == 0)                  hsize = "-";
+      else if (s >= 64'h100000)    hsize = $sformatf("%0dM", s / 64'h100000);
+      else                         hsize = $sformatf("%0dK", s / 64'h400);
+    end
+  endfunction
+
+  // ------------------------------------------------------- OS allocator state
+  longint unsigned z2mem_next, z2io_next, z3big_next, z3small_next;
+
+  task automatic alloc_pool(input integer pool, input longint unsigned size,
+                            output longint unsigned base);
+    longint unsigned al, p, b;
+    begin
+      al = (size == 0) ? 64'h10000 : size;
+      case (pool)
+        0: begin p = z2mem_next;   b = 64'h00200000; end
+        1: begin p = z2io_next;    b = 64'h00E90000; end
+        2: begin p = z3big_next;   b = 64'h40000000; end
+        default: begin p = z3small_next; b = 64'h08000000; end
+      endcase
+      // align inside the region, not in absolute terms: an 8 MB Zorro II board
+      // has to fit the 8 MB Zorro II space that starts at $00200000.
+      p    = b + ((p - b + al - 1) & ~(al - 1));
+      base = p;
+      p    = p + al;
+      case (pool)
+        0: z2mem_next   = p;
+        1: z2io_next    = p;
+        2: z3big_next   = p;
+        default: z3small_next = p;
+      endcase
+    end
+  endtask
+
+  // ----------------------------------------------------------------- the OS
+  integer verbose = 0;
+  integer WRPOL   = 0;                    // 0 = write 44 then 48, 1 = 48 then 44
+  string  summary;
+  integer nboards;
+  longint unsigned fast_linked;
+  string  notes;
+  string  s_order, s_boards, s_ml;
+
+  task automatic config_chain();
+    logic [7:0] er_type, er_prod, er_flags, er_man_hi, er_man_lo;
+    logic [7:0] s0, s1, s2, s3;
+    logic [15:0] manuf;
+    logic [31:0] serial;
+    bit    memlist, romvec, chained, memspace, noshutup, extended;
+    logic [2:0] szcode;
+    logic [3:0] subcode;
+    longint unsigned psize, lsize, base;
+    string kind;
+    integer idx, pool;
+    begin : body
+      z2mem_next   = 64'h00200000;
+      z2io_next    = 64'h00E90000;
+      z3big_next   = 64'h40000000;
+      z3small_next = 64'h08000000;
+      nboards = 0; fast_linked = 0;
+      summary = "";
+      notes   = "";
+
+      for (idx = 0; idx < 8; idx = idx + 1) begin
+        ac_reg('h00, er_type);
+        ac_reg('h04, er_prod);
+        ac_reg('h08, er_flags);
+        ac_reg('h10, er_man_hi);
+        ac_reg('h14, er_man_lo);
+        ac_reg('h18, s0); ac_reg('h1c, s1); ac_reg('h20, s2); ac_reg('h24, s3);
+        manuf  = {er_man_hi, er_man_lo};
+        serial = {s0, s1, s2, s3};
+
+        // End of chain.  An empty Zorro slot floats high, so er_Type reads $FF
+        // and er_Manufacturer reads $0000 after complementing; the Minimig NULL
+        // device (acdevice 3'b111, every nibble 1111) mimics exactly that.
+        if (er_type[7:6] == 2'b00 || er_type[7:6] == 2'b01 ||
+            manuf == 16'h0000 || manuf == 16'hFFFF) begin
+          if (verbose)
+            $display("      -- end of chain (er_Type=%02x er_Manufacturer=%04x)",
+                     er_type, manuf);
+          disable body;
+        end
+
+        memlist  = er_type[5];
+        romvec   = er_type[4];
+        chained  = er_type[3];
+        szcode   = er_type[2:0];
+        memspace = er_flags[7];
+        noshutup = er_flags[6];
+        extended = er_flags[5];
+        subcode  = er_flags[3:0];
+
+        if (er_type[7:6] == 2'b10) begin
+          kind  = "Z3";
+          psize = phys_size(szcode, extended);
+          lsize = (sub_size(subcode) != 0) ? sub_size(subcode) : psize;
+        end else begin
+          kind  = "Z2";
+          psize = phys_size(szcode, 1'b0);   // no size extension on Zorro II
+          lsize = psize;
+        end
+
+        // ---- allocate as expansion.library would
+        if (er_type[7:6] == 2'b10) pool = (psize >= 64'h1000000) ? 2 : 3;
+        else                       pool = memlist ? 0 : 1;
+        alloc_pool(pool, psize, base);
+
+        if (verbose) begin
+          $display("   board %0d: %s  er_Type=$%02x  (memlist=%0d, rom=%0d, chained=%0d, size code %03b)",
+                   nboards, kind, er_type, memlist, romvec, chained, szcode);
+          $display("            er_Product=$%02x  er_Flags=$%02x (memspace=%0d noshutup=%0d extended=%0d subsize=%04b)",
+                   er_prod, er_flags, memspace, noshutup, extended, subcode);
+          $display("            er_Manufacturer=$%04x  er_SerialNumber=$%08x", manuf, serial);
+          $display("            physical %s, linked %s -> assigned base $%08x   [board_configured=%05b]",
+                   hsize(psize), hsize(lsize), base[31:0], bcfg);
+        end
+
+        if (memlist) s_ml = ""; else s_ml = "io";
+        summary = $sformatf("%s | %s %s%s@$%08x", summary, kind, hsize(lsize),
+                            s_ml, base[31:0]);
+        if (memlist) fast_linked = fast_linked + lsize;
+
+        // ---- hand the board its base address
+        if (er_type[7:6] == 2'b10) begin
+          if (WRPOL == 0) begin
+            ac_write('h44, base[31:24]);   // A31-A24
+            ac_write('h48, base[23:16]);   // A23-A16, "writing 48 configures"
+          end else begin
+            ac_write('h48, base[23:16]);
+            ac_write('h44, base[31:24]);
+          end
+        end else begin
+          ac_write('h4a, base[19:16]);     // nibble register, ignored by the RTL
+          ac_write('h48, base[23:16]);     // this configures a Zorro II board
+        end
+        nboards = nboards + 1;
+      end
+      notes = " [chain still offering boards after 8!]";
+    end
+  endtask
+
+  // ------------------------------------------------- raw device image dump
+  // acdevice is only ever changed by a configuration write, so after reset and
+  // init we can poke it and read out the ROM image of every device -- including
+  // the ones the state machine can no longer select.
+  task automatic dump_device(input [2:0] dev);
+    logic [7:0] er_type, er_prod, er_flags, mh, ml, s0, s1, s2, s3;
+    logic [3:0] n;
+    integer o;
+    string names[8];
+    string img;
+    begin
+      names[0] = "z2base   (ZII fast RAM)";
+      names[1] = "z3base   (ZIII fast RAM)";
+      names[2] = "z3base2  (ZIII RAM 2, 64 meg platforms)";
+      names[3] = "z3base3  (ZIII RAM 3, leftover SDRAM)";
+      names[4] = "ethbase  (Ethernet placeholder)";
+      names[5] = "sndbase  (Toccata sound card)";
+      names[6] = "unused   (all ones)";
+      names[7] = "NULL     (chain terminator)";
+      dut_z3ram3_0.acdevice = dev;
+      img = "";
+      for (o = 0; o <= 'h26; o = o + 2) begin
+        ac_nib(o, n);
+        img = $sformatf("%s%04b ", img, n);
+      end
+      ac_reg('h00, er_type); ac_reg('h04, er_prod); ac_reg('h08, er_flags);
+      ac_reg('h10, mh); ac_reg('h14, ml);
+      ac_reg('h18, s0); ac_reg('h1c, s1); ac_reg('h20, s2); ac_reg('h24, s3);
+      $display(" acdevice %03b  %s", dev, names[dev]);
+      $display("   raw nibbles $00..$26 : %s", img);
+      $display("   er_Type=$%02x er_Product=$%02x er_Flags=$%02x er_Manufacturer=$%04x er_Serial=$%08x",
+               er_type, er_prod, er_flags, {mh, ml}, {s0, s1, s2, s3});
+      if (er_type[7:6] == 2'b00 || {mh, ml} == 16'h0000)
+        $display("   -> no board (chain terminator)");
+      else
+        $display("   -> %s, %s, physical %s, linked %s, %s",
+                 (er_type[7:6] == 2'b10) ? "Zorro III" : "Zorro II",
+                 er_type[5] ? "memory (linked into the free pool)" : "I/O (not linked)",
+                 hsize((er_type[7:6] == 2'b10) ? phys_size(er_type[2:0], er_flags[5])
+                                               : phys_size(er_type[2:0], 1'b0)),
+                 hsize((sub_size(er_flags[3:0]) != 0 && er_type[7:6] == 2'b10)
+                        ? sub_size(er_flags[3:0])
+                        : ((er_type[7:6] == 2'b10) ? phys_size(er_type[2:0], er_flags[5])
+                                                   : phys_size(er_type[2:0], 1'b0))),
+                 er_flags[7] ? "memory space" : "I/O space");
+    end
+  endtask
+
+  // ---------------------------------------------------------------- the sweep
+  integer f, mm, sr, z3, pol, dv;
+
+  initial begin
+    if ($test$plusargs("verbose")) verbose = 1;
+
+    $display("");
+    $display("=== minimig_autoconfig: boards offered to AmigaOS  (ram_64meg=0, TOCCATA_SND=1) ===");
+    $display("");
+    $display(" Z3RAM3 fast 020 slow wrorder | boards as the OS sees them (linked size @ assigned base)");
+    $display(" ------ ---- --- ---- ------- | -------------------------------------------------------");
+
+    for (z3 = 1; z3 >= 0; z3 = z3 - 1) begin
+      for (f = 0; f <= 3; f = f + 1) begin
+        for (mm = 0; mm <= 1; mm = mm + 1) begin
+          for (sr = 0; sr <= 1; sr = sr + 1) begin
+            for (pol = 0; pol <= 1; pol = pol + 1) begin
+              dsel           = z3[0];
+              fastram_config = f[1:0];
+              slowram_config = sr[1:0];
+              m68020         = mm[0];
+              ram_64meg      = 1'b0;
+              WRPOL          = pol;
+              do_reset();
+              if (pol) s_order = " 48,44 "; else s_order = " 44,48 ";
+              if (verbose)
+                $display("--- Z3RAM3=%0d fastram_config=%02b m68020=%0d slowram_config=%02b write order %s ---",
+                         z3, f[1:0], mm, sr[1:0], s_order);
+              config_chain();
+              if (nboards == 0) s_boards = "  (no board offered)";
+              else              s_boards = summary;
+              $display("   %0d     %02b   %0d   %02b  %s |%s",
+                       z3, f[1:0], mm, sr[1:0], s_order, s_boards);
+              $display("                                 |   boards=%0d linked-fast=%s configured=%05b shutup=%05b toccata_base=$%02x done=%0d%s",
+                       nboards, hsize(fast_linked), bcfg, bshut, tocc_base(), done, notes);
+            end
+          end
+        end
+      end
+    end
+
+    // ---- every device image in the ROM, reachable or not
+    $display("");
+    $display("=== raw AUTOCONFIG ROM images, one per acdevice value ===");
+    $display("    (fastram_config=11 so acdevice 000 carries the 8 MB size nibble)");
+    $display("");
+    dsel = 1'b0; fastram_config = 2'b11; slowram_config = 2'b00;
+    m68020 = 1'b1; ram_64meg = 1'b0;
+    do_reset();
+    for (dv = 0; dv <= 7; dv = dv + 1) begin
+      dump_device(dv[2:0]);
+      $display("");
+    end
+
+    $finish;
+  end
+
+endmodule

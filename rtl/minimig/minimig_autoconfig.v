@@ -36,6 +36,17 @@ reg [7:0] board_base_addr [0:4];
 assign toccata_base_addr = board_base_addr[4];
 
 reg [2:0] acdevice;
+// A Zorro III PIC that configures in the Zorro II configuration block is given
+// its base address with *two* writes (Zorro III spec 8.2, register 44/48):
+// register 44 takes A31-A24 and register 48 takes A23-A16, and the ordering
+// table lists 44 first.  This block acts on the 44 write, so the 48 write that
+// follows arrives after acdevice has already moved on and would be taken as the
+// configuration of the *next* device -- with TOCCATA_SND and Z3RAM3 = 0 that
+// next device is the Toccata card, which was then silently configured at base
+// $00 and never offered to the OS at all.  No real board can be configured
+// before the OS has read its ROM, so a base-address write at 48 that arrives
+// with no configuration-space read in between is always such a leftover.
+reg z3_base_wr;
 // What follows the third ZIII RAM board in the chain: the Toccata card if it is
 // enabled, otherwise the NULL device that terminates autoconfig.  Also used
 // directly when Z3RAM3 = 0 and that board is skipped altogether.
@@ -75,8 +86,11 @@ begin
 		roma_wr<=9'h001;
 		ramsize<=4'b1111; // disabled
 		autoconfig_done<=1'b0;
+		z3_base_wr<=1'b0;
 
-		for (loop = 0; loop < 4; loop = loop + 1) begin
+		// board_base_addr is [0:4]; entry 4 is the Toccata base that gary.v
+		// compares against A23-A16, so it has to be cleared too.
+		for (loop = 0; loop < 5; loop = loop + 1) begin
 			board_base_addr[loop] <= 8'h00;
 		end
 	end else begin
@@ -103,10 +117,15 @@ begin
 			if(clk7_en && sel)
 				autoconfig_done <= (acdevice==3'b111) ? 1'b1 : 1'b0;
 
+			// Any read of the configuration space means the OS has moved on
+			// to the next board, so the next 48 write is that board's own.
+			if(clk7_en && sel && !(lwr|hwr))
+				z3_base_wr <= 1'b0;
+
 			if(clk7_en && sel && (lwr|hwr))
 			begin
 				case({address_in,1'b0})
-					9'h048 : begin  // Zorro II configures at 48
+					9'h048 : if(!z3_base_wr) begin  // Zorro II configures at 48
 						case(acdevice)
 							3'b000 : begin // ZII RAM
 								board_configured[0] <= 1'b1;
@@ -125,6 +144,7 @@ begin
 						case(acdevice)
 							3'b001 : begin // ZIII RAM
 								board_configured[1] <= 1'b1;
+								z3_base_wr <= 1'b1;
 								roma_wr[8:6] <= 3'b011; // Third ZIII entry
 								roma_wr[5:0] <= 6'h05;  // Write address for modifying size of 2nd ZIII RAM.
 								ramsize <= |slowram_config ? 4'b1000 : 4'b0111; // 2 meg or 4 meg
@@ -135,14 +155,17 @@ begin
 							end
 							3'b010 : begin // ZIII RAM 2 - 2nd 32 meg on 64 meg platforms
 								board_configured[2] <= 1'b1;
+								z3_base_wr <= 1'b1;
 								acdevice<=Z3RAM3 ? 3'b011 : ac_after_z3ram3;
 							end
 							3'b011 : begin // ZIII RAM 3 - Use leftover space in the memory map.
 								board_configured[3] <= 1'b1;
+								z3_base_wr <= 1'b1;
 								acdevice<=ac_after_z3ram3;
 							end
 							3'b100 : begin // ETH
 								board_configured[3] <= 1'b1;
+								z3_base_wr <= 1'b1;
 								acdevice<=3'b111; // NULL device to terminate the chain
 							end
 							default:
