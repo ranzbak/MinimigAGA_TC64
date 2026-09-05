@@ -1074,6 +1074,7 @@ gary GARY1
   // Auto config IO BASE
   .autoconfig_done(autoconfig_done),
   .autoconfig_shutup(autoconfig_shutup),
+  .autoconfig_configured(board_configured), // gary gates sel_toccata on bit 4
   .toccata_base_addr(toccata_base_addr)
 );
 

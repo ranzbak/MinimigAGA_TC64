@@ -42,6 +42,26 @@
 // under WRPOL=0 the trailing 48 write is seen by whatever device the chain has
 // already advanced to.
 //
+// On top of the sweep the bench runs two extra checks:
+//
+//   * ec_Shutup (spec 8.2, register 4C): a run in which the OS shuts the Zorro II
+//     RAM board up instead of configuring it.  That board leaves NOSHUTUP clear
+//     (its er_Flags nibble is the ROM default $F, so er_Flags reads $0x), so the
+//     OS is allowed to do it, and the chain must still walk on to the Zorro III
+//     board and reach the NULL terminator.
+//
+//   * gary.v's Toccata decode.  gary.v itself is not in this bench (it needs the
+//     whole chip bus), so the single line that matters is modelled here and
+//     checked against the state of the block after every configuration:
+//        assign sel_toccata = (cpu_address_in[23:16] == toccata_base_addr_reg)
+//                          && (autoconfig_configured_reg[4] == 1'b1)
+//                          && (autoconfig_shutup_reg[4] == 1'b0)
+//                          && (autoconfig_done_reg   == 1'b1);
+//     The board_configured[4] term is the new one: autoconfig_done alone only
+//     says the chain reached the NULL device, which also happens when the
+//     Toccata was never offered -- and then base register 4 still holds its
+//     reset value $00, so the card decoded $000000-$00FFFF on top of chip RAM.
+//
 // Run:  ./run.sh            (compact table)
 //       ./run.sh -v         (full per-board register dump)
 // -----------------------------------------------------------------------------
@@ -277,6 +297,7 @@ module autoconfig_tb;
   // ----------------------------------------------------------------- the OS
   integer verbose = 0;
   integer WRPOL   = 0;                    // 0 = write 44 then 48, 1 = 48 then 44
+  integer SHUTUP_IDX = -1;                // chain position the OS shuts up, -1 = none
   string  summary;
   integer nboards;
   longint unsigned fast_linked;
@@ -294,6 +315,7 @@ module autoconfig_tb;
     longint unsigned psize, lsize, base;
     string kind;
     integer idx, pool;
+    bit    do_shutup;
     begin : body
       z2mem_next   = 64'h00200000;
       z2io_next    = 64'h00E90000;
@@ -343,42 +365,156 @@ module autoconfig_tb;
           lsize = psize;
         end
 
-        // ---- allocate as expansion.library would
-        if (er_type[7:6] == 2'b10) pool = (psize >= 64'h1000000) ? 2 : 3;
-        else                       pool = memlist ? 0 : 1;
-        alloc_pool(pool, psize, base);
+        // ---- the OS either configures this board or shuts it up
+        do_shutup = (idx == SHUTUP_IDX);
 
-        if (verbose) begin
-          $display("   board %0d: %s  er_Type=$%02x  (memlist=%0d, rom=%0d, chained=%0d, size code %03b)",
-                   nboards, kind, er_type, memlist, romvec, chained, szcode);
-          $display("            er_Product=$%02x  er_Flags=$%02x (memspace=%0d noshutup=%0d extended=%0d subsize=%04b)",
-                   er_prod, er_flags, memspace, noshutup, extended, subcode);
-          $display("            er_Manufacturer=$%04x  er_SerialNumber=$%08x", manuf, serial);
-          $display("            physical %s, linked %s -> assigned base $%08x   [board_configured=%05b]",
-                   hsize(psize), hsize(lsize), base[31:0], bcfg);
-        end
-
-        if (memlist) s_ml = ""; else s_ml = "io";
-        summary = $sformatf("%s | %s %s%s@$%08x", summary, kind, hsize(lsize),
-                            s_ml, base[31:0]);
-        if (memlist) fast_linked = fast_linked + lsize;
-
-        // ---- hand the board its base address
-        if (er_type[7:6] == 2'b10) begin
-          if (WRPOL == 0) begin
-            ac_write('h44, base[31:24]);   // A31-A24
-            ac_write('h48, base[23:16]);   // A23-A16, "writing 48 configures"
-          end else begin
-            ac_write('h48, base[23:16]);
-            ac_write('h44, base[31:24]);
+        if (do_shutup) begin
+          // ec_Shutup, Zorro III spec 8.2: writing register 4C tells a board
+          // that is not going to be used to stop answering in the
+          // configuration space.  Legal for any board that leaves NOSHUTUP
+          // (er_Flags bit 6) clear.  No address is allocated for it.
+          if (verbose) begin
+            $display("   board %0d: %s  er_Type=$%02x  er_Flags=$%02x (noshutup=%0d)",
+                     nboards, kind, er_type, er_flags, noshutup);
+            $display("            OS writes ec_Shutup (register 4C)%s",
+                     noshutup ? "   -- but the board advertises NOSHUTUP!" : "");
           end
+          summary = $sformatf("%s | %s %s SHUT-UP", summary, kind, hsize(lsize));
+          if (noshutup) notes = " [shut-up asked of a NOSHUTUP board!]";
+          ac_write('h4c, 8'h00);
         end else begin
-          ac_write('h4a, base[19:16]);     // nibble register, ignored by the RTL
-          ac_write('h48, base[23:16]);     // this configures a Zorro II board
+          // ---- allocate as expansion.library would
+          if (er_type[7:6] == 2'b10) pool = (psize >= 64'h1000000) ? 2 : 3;
+          else                       pool = memlist ? 0 : 1;
+          alloc_pool(pool, psize, base);
+
+          if (verbose) begin
+            $display("   board %0d: %s  er_Type=$%02x  (memlist=%0d, rom=%0d, chained=%0d, size code %03b)",
+                     nboards, kind, er_type, memlist, romvec, chained, szcode);
+            $display("            er_Product=$%02x  er_Flags=$%02x (memspace=%0d noshutup=%0d extended=%0d subsize=%04b)",
+                     er_prod, er_flags, memspace, noshutup, extended, subcode);
+            $display("            er_Manufacturer=$%04x  er_SerialNumber=$%08x", manuf, serial);
+            $display("            physical %s, linked %s -> assigned base $%08x   [board_configured=%05b]",
+                     hsize(psize), hsize(lsize), base[31:0], bcfg);
+          end
+
+          if (memlist) s_ml = ""; else s_ml = "io";
+          summary = $sformatf("%s | %s %s%s@$%08x", summary, kind, hsize(lsize),
+                              s_ml, base[31:0]);
+          if (memlist) fast_linked = fast_linked + lsize;
+
+          // ---- hand the board its base address
+          if (er_type[7:6] == 2'b10) begin
+            if (WRPOL == 0) begin
+              ac_write('h44, base[31:24]);   // A31-A24
+              ac_write('h48, base[23:16]);   // A23-A16, "writing 48 configures"
+            end else begin
+              ac_write('h48, base[23:16]);
+              ac_write('h44, base[31:24]);
+            end
+          end else begin
+            ac_write('h4a, base[19:16]);     // nibble register, ignored by the RTL
+            ac_write('h48, base[23:16]);     // this configures a Zorro II board
+          end
         end
         nboards = nboards + 1;
       end
       notes = " [chain still offering boards after 8!]";
+    end
+  endtask
+
+  // -------------------------------------------- gary.v sel_toccata gate model
+  // gary.v is not instantiated here (it needs the whole chip bus), so the one
+  // decode line that consumes this block's outputs is modelled instead.  New
+  // condition, rtl/minimig/gary.v:
+  //   assign sel_toccata = (cpu_address_in[23:16] == toccata_base_addr_reg)
+  //                     && (autoconfig_configured_reg[4] == 1'b1)   <-- new
+  //                     && (autoconfig_shutup_reg[4]     == 1'b0)
+  //                     && (autoconfig_done_reg          == 1'b1);
+  // gary registers all three autoconfig inputs one clock before using them, so
+  // comparing against the settled end-of-chain state is exactly what it sees.
+  function automatic bit gary_sel_toccata(input [7:0] a2316);
+    begin
+      gary_sel_toccata = (a2316 === tocc_base()) && (bcfg[4] === 1'b1)
+                          && (bshut[4] === 1'b0) && (done === 1'b1);
+    end
+  endfunction
+
+  // The old line, without the board_configured[4] term, for contrast.
+  function automatic bit gary_sel_toccata_old(input [7:0] a2316);
+    begin
+      gary_sel_toccata_old = (a2316 === tocc_base())
+                          && (bshut[4] === 1'b0) && (done === 1'b1);
+    end
+  endfunction
+
+  integer tocc_checked = 0;   // configurations examined
+  integer tocc_bad_new = 0;   // ... where the new decode opens a bogus window
+  integer tocc_bad_old = 0;   // ... where the old decode did
+
+  // After a chain has been walked: if the Toccata was never configured, no CPU
+  // address may select it.  Sweep every possible A23-A16.
+  task automatic check_toccata_gate(input string what);
+    integer a;
+    bit hit_new, hit_old;
+    begin
+      hit_new = 1'b0;
+      hit_old = 1'b0;
+      for (a = 0; a < 256; a = a + 1) begin
+        if (bcfg[4] !== 1'b1) begin
+          if (gary_sel_toccata(a[7:0]))     hit_new = 1'b1;
+          if (gary_sel_toccata_old(a[7:0])) hit_old = 1'b1;
+        end
+      end
+      tocc_checked = tocc_checked + 1;
+      if (hit_new) begin
+        tocc_bad_new = tocc_bad_new + 1;
+        $display("   FAIL: sel_toccata can assert at $%02xxxxx with board_configured[4]=0  (%s)",
+                 tocc_base(), what);
+      end
+      if (hit_old) tocc_bad_old = tocc_bad_old + 1;
+    end
+  endtask
+
+  // ------------------------------------------------------- ec_Shutup runs
+  // Walk the chain but write register 4C ("shut up", spec 8.2) instead of a
+  // base address for the board at chain position SIDX, then check that the
+  // chain still moves on and terminates.
+  task automatic shutup_run(input integer z3, input integer f, input integer mm,
+                            input integer sr, input integer pol, input integer sidx,
+                            input [4:0] exp_cfg, input [4:0] exp_shut);
+    string tag;
+    begin
+      dsel           = z3[0];
+      fastram_config = f[1:0];
+      slowram_config = sr[1:0];
+      m68020         = mm[0];
+      ram_64meg      = 1'b0;
+      WRPOL          = pol;
+      SHUTUP_IDX     = sidx;
+      do_reset();
+      if (pol) s_order = " 48,44 "; else s_order = " 44,48 ";
+      tag = $sformatf("Z3RAM3=%0d fast=%02b 020=%0d order%s shut board %0d",
+                      z3, f[1:0], mm, s_order, sidx);
+      if (verbose)
+        $display("--- %s ---", tag);
+      config_chain();
+      $display("   %0d     %02b   %0d   %02b  %s   %0d  |%s",
+               z3, f[1:0], mm, sr[1:0], s_order, sidx, summary);
+      $display("                                        |   boards=%0d linked-fast=%s configured=%05b shutup=%05b toccata_base=$%02x done=%0d%s",
+               nboards, hsize(fast_linked), bcfg, bshut, tocc_base(), done, notes);
+      check_toccata_gate(tag);
+      if ((bshut & exp_shut) !== exp_shut)
+        $display("   FAIL: board_shutup=%05b, expected at least %05b", bshut, exp_shut);
+      else if ((bcfg & exp_cfg) !== exp_cfg)
+        $display("   FAIL: board_configured=%05b, expected at least %05b -- the chain stalled on the shut-up board",
+                 bcfg, exp_cfg);
+      else if (done !== 1'b1)
+        $display("   FAIL: autoconfig_done=0, the chain never reached the NULL terminator");
+      else
+        $display("   OK: shut-up board dropped, chain reached configured=%05b and the NULL terminator",
+                 bcfg);
+      SHUTUP_IDX = -1;
     end
   endtask
 
@@ -465,6 +601,8 @@ module autoconfig_tb;
                        z3, f[1:0], mm, sr[1:0], s_order, s_boards);
               $display("                                 |   boards=%0d linked-fast=%s configured=%05b shutup=%05b toccata_base=$%02x done=%0d%s",
                        nboards, hsize(fast_linked), bcfg, bshut, tocc_base(), done, notes);
+              check_toccata_gate($sformatf("Z3RAM3=%0d fast=%02b 020=%0d slow=%02b order%s",
+                                           z3, f[1:0], mm, sr[1:0], s_order));
             end
           end
         end
@@ -483,6 +621,35 @@ module autoconfig_tb;
       dump_device(dv[2:0]);
       $display("");
     end
+
+    // ---- the OS shuts a board up instead of configuring it (spec 8.2, reg 4C)
+    // Runs last: every 44 write rewrites the ZIII RAM 3 size nibble in the
+    // shared ROM, so the raw dump above has to be taken before these.
+    $display("");
+    $display("=== ec_Shutup: the OS silences a board and the chain must walk on ===");
+    $display("    (fast=11, 020=1, so the ZII RAM board is followed by the ZIII board)");
+    $display("");
+    $display(" Z3RAM3 fast 020 slow wrorder shut | boards as the OS sees them");
+    $display(" ------ ---- --- ---- ------- ---- | -------------------------------------------------------");
+    // board 0 is the ZII RAM board (er_Flags NOSHUTUP clear -> the OS may do this)
+    shutup_run(1, 3, 1, 0, 0, 0, 5'b11010, 5'b00001);  // SDRAM build, 44 then 48
+    shutup_run(1, 3, 1, 0, 1, 0, 5'b11010, 5'b00001);  // SDRAM build, 48 then 44
+    shutup_run(0, 3, 1, 0, 0, 0, 5'b10010, 5'b00001);  // DDR3 build,  44 then 48
+    shutup_run(0, 3, 1, 0, 1, 0, 5'b10010, 5'b00001);  // DDR3 build,  48 then 44
+    // board 2 is the Toccata card in the DDR3 build (ZII RAM, ZIII RAM, Toccata)
+    shutup_run(0, 3, 1, 0, 0, 2, 5'b00011, 5'b10000);
+    shutup_run(0, 3, 1, 0, 1, 2, 5'b00011, 5'b10000);
+
+    // ---- what gary.v would decode for the Toccata in all of the above
+    $display("");
+    $display("=== gary.v sel_toccata gating ===");
+    $display(" %0d configurations checked.", tocc_checked);
+    $display(" with board_configured[4] required : %0d open a window while the Toccata is unconfigured",
+             tocc_bad_new);
+    $display(" on autoconfig_done alone (old)    : %0d did -- a 64 KB window at $%02xxxxx, i.e. over chip RAM",
+             tocc_bad_old, 8'h00);
+    if (tocc_bad_new != 0)
+      $display(" *** sel_toccata is still reachable without board_configured[4] ***");
 
     $finish;
   end

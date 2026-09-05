@@ -51,6 +51,25 @@ reg z3_base_wr;
 // enabled, otherwise the NULL device that terminates autoconfig.  Also used
 // directly when Z3RAM3 = 0 and that board is skipped altogether.
 wire [2:0] ac_after_z3ram3 = (TOCCATA_SND == 1'b1) ? 3'b101 : 3'b111;
+
+// The device the chain moves to once the OS is done with the current one --
+// whether that is because the board was configured (register 44/48) or because
+// it was told to shut up (register 4C).  Kept in one place so the two paths
+// cannot drift apart.
+function [2:0] ac_next;
+	input [2:0] dev;
+	begin
+		case(dev)
+			3'b000  : ac_next = (&fastram_config & m68020) ? 3'b001 : 3'b111; // ZII RAM -> ZIII RAM
+			3'b001  : ac_next = ram_64meg ? 3'b010 : (Z3RAM3 ? 3'b011 : ac_after_z3ram3);
+			3'b010  : ac_next = Z3RAM3 ? 3'b011 : ac_after_z3ram3;
+			3'b011  : ac_next = ac_after_z3ram3;
+			3'b100  : ac_next = 3'b111; // ETH
+			3'b101  : ac_next = 3'b111; // Toccata
+			default : ac_next = 3'b111; // unused / NULL: stay on the terminator
+		endcase
+	end
+endfunction
 reg [3:0] ramsize;
 wire [8:0] roma_rd;
 reg [8:0] roma_wr;
@@ -129,7 +148,7 @@ begin
 						case(acdevice)
 							3'b000 : begin // ZII RAM
 								board_configured[0] <= 1'b1;
-								acdevice<=(&fastram_config & m68020) ? 3'b001 : 3'b111; // ZIII RAM next
+								acdevice<=ac_next(acdevice); // ZIII RAM next, or the NULL device
 							end
 							3'b101: begin // Toccata sound card
 								board_configured[4] <= 1'b1;
@@ -150,18 +169,18 @@ begin
 								ramsize <= |slowram_config ? 4'b1000 : 4'b0111; // 2 meg or 4 meg
 								rom_we<=1'b1;
 								// skip straight to 3'b011 on 32 meg platforms
-								acdevice<=ram_64meg ? 3'b010 : (Z3RAM3 ? 3'b011 : ac_after_z3ram3);
+								acdevice<=ac_next(acdevice);
 //                              acdevice<=3'b011; // Ethernet after ZIII RAM
 							end
 							3'b010 : begin // ZIII RAM 2 - 2nd 32 meg on 64 meg platforms
 								board_configured[2] <= 1'b1;
 								z3_base_wr <= 1'b1;
-								acdevice<=Z3RAM3 ? 3'b011 : ac_after_z3ram3;
+								acdevice<=ac_next(acdevice);
 							end
 							3'b011 : begin // ZIII RAM 3 - Use leftover space in the memory map.
 								board_configured[3] <= 1'b1;
 								z3_base_wr <= 1'b1;
-								acdevice<=ac_after_z3ram3;
+								acdevice<=ac_next(acdevice);
 							end
 							3'b100 : begin // ETH
 								board_configured[3] <= 1'b1;
@@ -172,14 +191,26 @@ begin
 								;
 						endcase
 					end
-					9'h04c : begin // Zorre II / III shut up register
+					9'h04c : begin // Zorro II / III shut up register (ec_Shutup, spec 8.2)
+						// A board that is told to shut up has to stop answering
+						// in the configuration space just as a configured one
+						// does, and the chain has to move on to the next board.
+						// Without the advance the OS keeps being offered the
+						// same board forever and autoconfig never terminates --
+						// the ZII RAM board and the Toccata both advertise
+						// NOSHUTUP clear, so the OS is allowed to do this.
 						case(acdevice)
-							3'b101: begin // Shut up Toccata Sound card
-								board_shutup[4] <= 1'b1;
-							end
+							3'b000: board_shutup[0] <= 1'b1; // ZII RAM
+							3'b001: board_shutup[1] <= 1'b1; // ZIII RAM
+							3'b010: board_shutup[2] <= 1'b1; // ZIII RAM 2
+							3'b011: board_shutup[3] <= 1'b1; // ZIII RAM 3
+							3'b100: board_shutup[3] <= 1'b1; // ETH (shares bit 3 with the 44 handler)
+							3'b101: board_shutup[4] <= 1'b1; // Toccata sound card
 							default:
 								;
 						endcase
+						// Same successor the 44/48 handlers would have picked.
+						acdevice<=ac_next(acdevice);
 					end
 				endcase
 			end

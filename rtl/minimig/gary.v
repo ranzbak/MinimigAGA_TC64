@@ -99,6 +99,7 @@ module gary
 
 	input         autoconfig_done,   // 1 if the autoconfig is done
 	input   [4:0] autoconfig_shutup, // autoconfig shutup register, silence card if one
+	input   [4:0] autoconfig_configured, // board_configured from minimig_autoconfig; bit 4 = Toccata
 	input   [7:0] toccata_base_addr //base address for the Toccata sound card
 );
 
@@ -107,6 +108,7 @@ wire            sel_bank_1;                 // $200000-$3FFFFF
 reg     [7:0]   toccata_base_addr_reg;
 reg             autoconfig_done_reg;
 reg     [4:0]   autoconfig_shutup_reg;
+reg     [4:0]   autoconfig_configured_reg;
 
 //--------------------------------------------------------------------------------------
 
@@ -137,6 +139,7 @@ always @(posedge clk) begin
 	toccata_base_addr_reg <= toccata_base_addr;
 	autoconfig_done_reg <= autoconfig_done;
 	autoconfig_shutup_reg <= autoconfig_shutup;
+	autoconfig_configured_reg <= autoconfig_configured;
 end
 
 //chipram, kickstart and bootrom address decode
@@ -186,7 +189,13 @@ assign sel_autoconfig = cpu_address_in[23:16]==12'b1110_1000 ? 1'b1 : 1'b0;     
 assign sel_rtc = cpu_address_in[23:16]==8'b1101_1100 ? 1'b1 : 1'b0;   //RTC registers at $DC0000 - $DCFFFF
 
 // assign sel_toccata = cpu_address_in[23:16]==8'b1110_1001 ? 1'b1 : 1'b0; //Toccata sound card at $E90000 - $E9FFFF
-assign sel_toccata = (cpu_address_in[23:16] == toccata_base_addr_reg) && (autoconfig_shutup_reg[4] == 1'b0) && (autoconfig_done_reg == 1'b1) ? 1'b1 : 1'b0; //Toccata sound card at $E90000 - $E9FFFF
+// The Toccata window only exists once the OS has actually configured the card:
+// autoconfig_done alone just means the chain has reached the NULL device, which
+// also happens when the Toccata was never offered (TOCCATA_SND=0, or the chain
+// terminated earlier) or when the OS shut it up.  Without board_configured[4]
+// an unconfigured card decodes a 64 KB window at whatever the (reset: $00) base
+// register holds, i.e. on top of chip RAM.
+assign sel_toccata = (cpu_address_in[23:16] == toccata_base_addr_reg) && (autoconfig_configured_reg[4] == 1'b1) && (autoconfig_shutup_reg[4] == 1'b0) && (autoconfig_done_reg == 1'b1) ? 1'b1 : 1'b0; //Toccata sound card at the autoconfigured base, 64 KB
 
 assign sel_reg = cpu_address_in[23:21]==3'b110 ? ~(|t_sel_slow | sel_rtc | sel_ide | sel_gayle) : 1'b0;     //chip registers at $DF0000 - $DFFFFF
 
