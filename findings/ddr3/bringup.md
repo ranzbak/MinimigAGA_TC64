@@ -346,3 +346,297 @@ Reading the result:
 * **errors on both** - the DM lanes / write path itself. `first_err_xor`
   (low 32 bits of expected XOR read) says which of bytes 0..3 moved when they
   should not have, or failed to.
+
+---
+
+# Wrapper bus-cycle classification bug
+
+Date 2026-09-05. This is the defect behind "the island passes every BIST
+pattern over the full 256 MB but the Amiga still sees garbage in fast RAM"
+that the masked-write section above was written to chase. It is not in the
+island at all. It is in `rtl/soc/TG68K.vhd`, one missing term.
+
+Fixed in commit `9e03809`. Regression bench: `sim/ddr3_cpu`.
+
+## Symptom
+
+With `build/stageB2` (`HAVEDDR3=1`, Zorro-III fast RAM on the DDR3):
+
+* the board autoconfigures and the OS accepts it, but `avail` reports only the
+  **2 MB Zorro-II** board -- the 16 MB Zorro-III one contributes nothing,
+* the exec **MemHeader at 0x40000000 is garbage**: the OS walks it, does not
+  like what it finds, and drops the board,
+* reads come back **stale** -- the value the CPU gets is a value that address
+  held at some earlier moment, not the one the island just returned,
+* one boot got far enough to load a program into fast RAM and died with a
+  **privilege violation** (`Ramlib Program failed (error #80000008)`),
+* meanwhile `tools/vivado/ddr3_bist.tcl` gives 0 errors on all seven BIST
+  patterns over the full 256 MB, including the masked-write ones, and
+  `sim/ddr3_full` passes every check.
+
+## Recorder evidence
+
+`tools/vivado/ila_fastram_capture.tcl` armed on the first `cpuena` after
+`ddr_ready`, storage-qualified to cycles that carry information (a CPU select
+or a non-idle backend). `build/stageB2/boot.csv`, 288 stored samples of a real
+Workbench boot:
+
+| Observation | Value |
+|---|---|
+| Distinct CPU byte addresses in the whole capture | **8**: 0x0, 0x2, 0x4, 0x6, 0x8, 0xa, 0x10, 0x12 |
+| What those addresses are | bytes 0..0x13 of the board: `ln_Succ`, `ln_Pred`, `ln_Type`/`ln_Pri`, `ln_Name`, `mh_Attributes`, `mh_First` |
+| Acknowledged read data at byte 0x0 | `0000`, `4000` **and** `ffff` |
+| Acknowledged read data at byte 0x2 | `0000`, `0044` **and** `ffff` |
+
+Two things to read off that. First, **header-only traffic**: over an entire
+boot the CPU never touched anything past offset 0x13 of a 16 MB board. The OS
+reads the header, decides the board is nonsense, and never allocates from it --
+which is exactly what "avail shows 2 MB" means.
+
+Second, **the data changes under the acknowledge**: the same longword of the
+same header, read with `cpuena` high, is acknowledged with three different
+values in one capture. The island had not changed the DRAM between those
+reads; what changed was *when* the CPU was allowed to latch `fromddr`.
+
+## Mechanism
+
+Task 4 moved the Zorro-III selects out of `sel_ram` and into a new `sel_ddr`:
+
+```vhdl
+sel_ddr         <= (sel_z3ram OR sel_z3ram2) AND have_ddr;
+sel_z3ram_sdram <= (sel_z3ram OR sel_z3ram2 OR sel_z3ram3) AND NOT have_ddr;
+sel_ram         <= '1' WHEN (sel_z2ram = '1' OR sel_z3ram_sdram = '1' OR ...
+```
+
+`ramcs`/`ddrcs`, `datatg68` and `mem_ready` were all updated to know about the
+new select. `chipset_cycle` was not:
+
+```vhdl
+chipset_cycle <= '1' when (sel_ram = '0' OR sel_nmi_vector = '1')
+                 AND sel_akiko = '0' and sel_undecoded = '0' else '0';
+```
+
+With `haveddr3 = true`, `sel_ram` is `'0'` for every Zorro-III access, so
+**every DDR3 access was classified as a 7 MHz chipset bus cycle**. Two
+consequences, and the second is the damaging one.
+
+1. The `S_state` machine starts a real 68000-style chipset cycle for it:
+   `as` low, `addr`/`data_write` driven, `dtack` sampled. Harmless in itself
+   (nothing on the chipset bus answers at 0x40000000), but it means the machine
+   is *running* whenever the CPU is doing fast RAM.
+
+2. That machine grants `clkena`:
+
+   ```vhdl
+   clkena <= '1' WHEN (clkena_in = '1' AND (state = "01"
+             OR (ena7RDreg = '1' AND clkena_e = '1')
+             OR (ena7WRreg = '1' AND clkena_f = '1')
+             OR mem_ready = '1' OR sel_undecoded_d = '1' OR akiko_ack = '1'));
+   ```
+
+   `mem_ready` is the only term qualified with `ddr_ena`/`ddr_ready`/`sel_ddr_d`.
+   `clkena_e` and `clkena_f` are set by the chipset state machine and gated only
+   by the 7.09 MHz strobes `ena7RDreg`/`ena7WRreg`. Because the chipset machine
+   free-runs at its own cadence while the CPU is being released by the DDR3
+   acknowledge, `S_state` drifts out of step with the accesses and issues
+   `clkena` at essentially arbitrary points -- including in the middle of a
+   DDR3 read that has not come back yet. The kernel then latches whatever
+   `datatg68` (= `fromddr`, since `sel_ddr_d` is high) holds at that instant:
+   the previous word delivered on that port, or the untouched output of the
+   cache. Writes are retired the same way, before the write buffer has taken
+   them.
+
+That is precisely "reads return stale data" and "the same address acknowledges
+three different values". It is invisible to every BIST pattern and to
+`sim/ddr3_full`, because both of those drive the island (or `ddr3_fastram`'s
+CPU port) directly and never go through the wrapper's cycle classification.
+
+## Fix
+
+`rtl/soc/TG68K.vhd`, commit `9e03809`:
+
+```vhdl
+-- A DDR3 (Zorro III) access is a memory cycle released by the DDR3 acknowledge,
+-- never a 7 MHz chipset cycle.
+chipset_cycle <= '1' when ((sel_ram = '0' AND sel_ddr = '0') OR sel_nmi_vector = '1')
+                 AND sel_akiko = '0' and sel_undecoded = '0' else '0';
+```
+
+A DDR3 access is now a memory cycle in exactly the sense an SDRAM access is:
+the chipset machine stays idle for it and the only thing that can release the
+CPU is `mem_ready`, i.e. `ddr_ena AND sel_ddr_d AND ddr_ready`.
+
+`haveddr3 = false` is unaffected: `sel_ddr` is constant `'0'` there and the
+expression collapses to what it always was.
+
+## The new bench: `sim/ddr3_cpu`
+
+The lesson of this bug is that **no simulation existed of the thing that broke**.
+`sim/ddr3_island` proves the controller and the PHY; `sim/ddr3_full` proves the
+cache backend, the CDC and the byte lanes by driving `ddr3_fastram`'s CPU port
+with hand-written tasks. Neither contains a TG68K, so neither can see how the
+wrapper decides what kind of bus cycle an address deserves.
+
+`sim/ddr3_cpu` closes that gap. It is a mixed VHDL/Verilog xsim bench (same
+flow as `sim/ddr3_full`, extended with the VHDL half of the design) in which
+
+* the DUT is the **real** `rtl/soc/TG68K.vhd` with `haveddr3` true, the real
+  `TG68KdotC_Kernel` and `akiko` inside it, wired to the real
+  `rtl/ddr3/ddr3_fastram.v`, `rtl/ddr3/ddr3_top.v` and the Micron DDR3 model
+  exactly as `rtl/soc/minimig_virtual_top.v` wires them (`cpustate` bit 2
+  replaced by `ddrcs`, `fromddr`/`ddr_ena`/`ddr_ready`, `cpu_cache_ctrl` from
+  `CACR_out`),
+* `ena7RDreg`/`ena7WRreg`/`enaWRreg` are generated with the real `sdram_ctrl`
+  cadence (16 sysclk per 7.09 MHz period; `enaWRreg` at ph2/6/10/14,
+  `ena7RDreg` at ph6, `ena7WRreg` at ph14), so the chipset strobes that
+  released the CPU in the broken design are present and ticking,
+* autoconfig state is post-boot: `ziiram_active` and `ziiiram_active` high,
+  so 0x40000000 is a live Zorro-III board, `cpu = "11"` so the 32-bit space
+  decodes,
+* only the **SDRAM side is a model** -- a behavioural 128 kB word memory
+  holding the 68k program, its vectors, its stack and a mailbox, answered on
+  both the `fromram`/`ramready` port and the chipset bus (the reset vector
+  fetches happen before `turbochip_d` is set and really do go out as chipset
+  cycles).
+
+A real 68k program (`asm/ddr3_cpu_test.asm`, assembled with the
+`sim/tg68vswf68ksim` vasm flow) then
+
+1. writes a pattern over the fast RAM with **byte, word and longword stores**,
+   four values per 16-byte cache line,
+2. reads it back with byte, word and longword loads (`cpu_cache_new` has no
+   write allocate and does not update tags on writes, so every one of these is
+   a real DDR3 line fill),
+3. writes and re-reads longwords at offsets 2, 6, 10 and 14 of each line --
+   **misaligned in the line**, and the one at 14 straddles into the next line,
+   which is the case `longword_en` excludes from the single-request path,
+4. writes an **exec MemHeader** at 0x40000000 (`ln_Succ`, `ln_Pred`, `ln_Type`,
+   `ln_Name`, `mh_Attributes`, `mh_First`, `mh_Lower`, `mh_Upper`, `mh_Free`)
+   and reads every field back, `mh_Free` with its own failure code,
+5. runs a **running-counter loop**: store the next counter at the next address,
+   then immediately read back both the previous location and the one just
+   written (back-to-back write then read),
+
+and writes a pass code, or a failure code plus the first mismatch address,
+expected and got, to a mailbox at 0x00001000 in the bench RAM. The bench prints
+`DDR3 CPU TB: PASS` or `FAIL code N` with those three values, traces a phase
+marker so a timeout still says how far the program got, and then **checks the
+DRAM independently** through the Micron model's backdoor (`memory_read`, with
+the vendored core's RBC address decode) so a program that "passed" out of its
+own cache cannot hide a DRAM that never received the data.
+
+The pattern region is **1 kB (64 cache lines) rather than the full 64 kB**, and
+the misaligned and counter regions are 16 lines and 64 longwords. The whole
+chain is simulated down to the ISERDES/OSERDES, so every DDR3 write is a real
+100 MHz round trip and the read-back phase is 68k-instruction bound at about
+6.7 us of simulated time per cache line; the default sizes come to roughly
+0.8 ms of simulated time and 15-20 minutes of wall clock, and 64 kB would be
+about an hour a run. The sizes are a command-line argument
+(`PATBYTES=... MISLINES=... CNTN=... run.sh`), passed to both vasm and the
+bench so the two cannot disagree.
+
+### It has teeth
+
+`mutant/TG68K_mutant.vhd` is the wrapper with the `AND sel_ddr = '0'` term
+removed -- the code as it stood before `9e03809`. `./run.sh --mutant` compiles
+that copy instead of the real file (the committed `rtl/soc/TG68K.vhd` is never
+touched). Both logs are checked in.
+
+Real file, `xsim_run_pass.log`:
+
+```
+INFO: program phase 1 at  67042482.0 ps
+INFO: program phase 2 at 208011962.0 ps
+INFO: program phase 3 at 639946962.0 ps
+INFO: program phase 4 at 729331062.0 ps
+INFO: program phase 5 at 740402702.0 ps
+INFO: program phase 6 at 847064202.0 ps
+
+DDR3 CPU TB: PASS  (68k program completed all phases)
+
+INFO: checking the DDR3 array through the Micron model backdoor
+PASS: DDR3 array contents match the pattern (independent backdoor read)
+
+DDR3 CPU TB: 2 passed, 0 failed
+```
+
+Mutant, `xsim_run_mutant.log`:
+
+```
+INFO: program phase 1 at  67042482.0 ps
+INFO: program phase 2 at 212172642.0 ps
+
+DDR3 CPU TB: FAIL code 2  pattern read-back, BYTE load
+       first mismatch address : 40000000
+       expected               : 000000c0
+       got                    : 00000000
+       last phase reached     : 2
+
+INFO: checking the DDR3 array through the Micron model backdoor
+       DRAM mismatch at 40000042: expected 0010 got 000a
+       DRAM mismatch at 40000046: expected 0011 got 000b
+       DRAM mismatch at 4000004a: expected 0012 got 000c
+       ...
+FAIL: DDR3 array contents wrong in 439 places (independent backdoor read)
+```
+
+Two things in that mutant log are worth reading carefully, because both are
+also what the board did.
+
+* The **first** byte of the read-back, at `0x40000000`, is already wrong: the
+  program wrote `0xC0` there and reads `0x00`. That is the byte the OS reads
+  first when it walks the MemHeader.
+* The independent backdoor read shows the mutant does not only mis-read, it
+  **loses writes**. From cache line 4 onwards the DRAM holds pattern values
+  that are progressively behind the ones the program stored (`expected 0010 got
+  000a`, and the gap grows), because the spurious `clkena` retires a write
+  before `cpu_cache_new` has taken it. The first three lines happen to be
+  intact -- the free-running chipset state machine needs a few accesses to
+  drift into the wrong phase, which is exactly why a short BIST-style burst
+  never caught this and a running OS did.
+
+### Running it
+
+```
+export LD_LIBRARY_PATH=<shim with libtinfo.so.5>
+sim/ddr3_cpu/run.sh              # real wrapper   -> xsim_run_pass.log,   PASS
+sim/ddr3_cpu/run.sh --mutant     # pre-fix copy   -> xsim_run_mutant.log, FAIL
+```
+
+Each takes roughly 15-20 minutes; they build and assemble into separate
+directories (`run_pass/`, `run_mutant/`) and can run at the same time.  For a
+quick change-and-see loop the region sizes and a port trace are on the command
+line:
+
+```
+PATBYTES=64 MISLINES=2 CNTN=8 TRACE=1 sim/ddr3_cpu/run.sh     # ~6 minutes
+```
+
+`TRACE=1` prints every DDR3 chip-select, every acknowledge and every island
+request (`TRACE CPU ... sel/ack`, `TRACE REQ ...`), which is what identified
+the two bench bugs below.
+
+### Two things that bit while writing it, worth knowing
+
+* **The PHY read alignment must be left at the module defaults here.**
+  `sim/ddr3_island` drives `phy_cfg_valid` with `rdsel` 15 because it inserts a
+  DQ/DQS transport delay to stand in for tDQSCK; `sim/ddr3_full` and this bench
+  insert no skew, so the right setting is `phy_cfg_valid = 0`, i.e.
+  `TPHY_RDLAT(5)` / `RDSEL_INIT(11)` out of `ddr3_top.v`.  Driving the island
+  bench's value here moves the sample point off the eye: every write still
+  lands in the DRAM correctly and every read comes back as the wrong beat, so
+  the backdoor check passes on data the CPU cannot read.  That failure looks
+  uncannily like the wrapper bug and is not.
+* **A `time` literal above 2^31 must be sized.** `localparam time TIMEOUT =
+  2_500_000_000;` is an unsized decimal, therefore 32-bit *signed*, therefore
+  negative, and `#TIMEOUT` is then zero delay -- the bench "timed out" at 4 ns
+  and reported a DRAM full of X. `64'd2_500_000_000` is correct.
+
+## What to take from this
+
+The island benches and the BIST answer "does the memory work". They cannot
+answer "does the CPU wrapper treat this address as memory". Any future change
+that moves a select between `sel_ram`, `sel_ddr` and the chipset path must be
+re-checked against **all four** places that consume those selects --
+`ramcs`/`ddrcs`, `datatg68`, `mem_ready` and `chipset_cycle` -- and
+`sim/ddr3_cpu` is the bench that will notice when one is missed.

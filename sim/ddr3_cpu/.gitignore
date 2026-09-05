@@ -1,0 +1,7 @@
+# xsim products and the per-variant assembled program; the checked-in reference
+# runs are xsim_run_pass.log and xsim_run_mutant.log
+run_pass/
+run_mutant/
+# a manual asm/build_68k_test.sh invocation; run.sh assembles into run_<variant>/
+asm/*.bin
+asm/*.lst
