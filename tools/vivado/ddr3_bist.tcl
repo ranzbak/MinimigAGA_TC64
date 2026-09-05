@@ -18,8 +18,10 @@ proc P {n} { global vio; set p [get_hw_probes -of_objects $vio -filter "NAME =~ 
 proc rd {n} { global vio; refresh_hw_vio $vio; return [get_property INPUT_VALUE [P $n]] }
 proc wr {n v} { global vio; set_property OUTPUT_VALUE $v [P $n]; commit_hw_vio $vio }
 puts "=== pll_locked [rd ddr3_pll_locked]  init_done [rd ddr3_init_done]  busy [rd bist_busy] ==="
+set vmode [expr {[lsearch $argv verify] >= 0 ? 1 : 0}]
 proc run_bist {pat range} {
-  wr bist_pattern $pat; wr bist_range_log2 $range; wr bist_mode 0; wr bist_start 0
+  global vmode
+  wr bist_pattern $pat; wr bist_range_log2 $range; wr bist_mode $vmode; wr bist_start 0
   set t0 [clock milliseconds]; wr bist_start 1; after 20; wr bist_start 0
   set n 0
   while {[rd bist_done] != 1 && $n < 24000} { after 50; incr n }

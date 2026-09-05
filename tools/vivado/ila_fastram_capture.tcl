@@ -81,9 +81,10 @@ connect_hw_server -allow_non_jtag
 open_hw_target
 set dev [lindex [get_hw_devices] 0]
 current_hw_device $dev
+if {[lsearch $argv program] >= 0} { set_property PROGRAM.FILE [file rootname $ltx].bit $dev; program_hw_device $dev; puts "=== programmed ===" }
 set_property PROBES.FILE      $ltx $dev
 set_property FULL_PROBES.FILE $ltx $dev
-refresh_hw_device -update_hw_probes false $dev
+refresh_hw_device $dev
 
 set ila [lindex [get_hw_ilas -of_objects $dev] 0]
 if {$ila eq ""} {
@@ -139,32 +140,10 @@ puts "=== ILA armed at [clock format [clock seconds] -format %H:%M:%S];\
 # Poll rather than wait_on_hw_ila: the supervisor is reprogramming and booting
 # the board while this runs, and a status line every few seconds is the only
 # way to tell "still waiting for the trigger" from "the debug hub went away".
-# CORE_STATUS is only refreshed by refresh_hw_device, hence the call in the
-# loop; -update_hw_probes false keeps it cheap.
-set t0     [clock seconds]
-set done   0
-set lastst ""
-while {[expr {[clock seconds] - $t0}] < $tmo} {
-    after 2000
-    if {[catch {refresh_hw_device -update_hw_probes false -quiet $dev} msg]} {
-        puts "    ... device refresh failed: $msg"
-        continue
-    }
-    set st [get_property CORE_STATUS $ila]
-    if {$st ne $lastst} {
-        puts "    ... [expr {[clock seconds] - $t0}]s  $st"
-        set lastst $st
-    }
-    if {[string match -nocase "*idle*" $st]} { set done 1 ; break }
-}
-
-if {!$done} {
-    puts "=== TIMEOUT after ${tmo}s, status [get_property CORE_STATUS $ila]."
-    puts "=== The trigger (first cpuena with ddr_ready) never fired, or the"
-    puts "=== board was not programmed/booted in time.  Uploading the buffer"
-    puts "=== as it stands anyway. ==="
-}
-
+# Wait for the trigger (wait_on_hw_ila returns on trigger or timeout; there is no
+# CORE_STATUS property on hw_ila objects).
+set triggered 1
+if {[catch {wait_on_hw_ila -timeout [expr {int(ceil($tmo/60.0))}] $ila} msg]} { puts "=== wait ended: $msg ==="; set triggered 0 }
 upload_hw_ila_data $ila
 file mkdir [file dirname [file normalize $csv]]
 write_hw_ila_data -csv_file $csv -force [current_hw_ila_data]

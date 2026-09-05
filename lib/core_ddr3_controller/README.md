@@ -32,7 +32,7 @@ what has been simulated here, so they are what is vendored.
 | `src_v/ddr3_core.sv` | The controller: bank/row state machine, refresh, native 128-bit request port. This is the piece the Zorro-III backend talks to. Also contains `ddr3_fifo`. |
 | `src_v/ddr3_dfi_seq.sv` | DDR command sequencer: timing delays (tRCD/tRP/tRFC/tWTR), write-data FIFO, 128-bit ↔ 32-bit DFI gearing. Instantiated by `ddr3_core`. Also contains `ddr3_dfi_fifo`. |
 | `src_v/ddr3_const.svh` | Copied for completeness because the plan lists it. **It is dead code** — neither `.sv` file `include`s it; both declare `cmd_t` / `state_t` inline. Do not add it to a build. |
-| `src_v/phy/xc7/ddr3_dfi_phy.v` | The Xilinx 7-series DFI PHY: OSERDESE2 command/data output, ISERDESE2 + IDELAYE2 DQS-strobed read capture, its own `IDELAYCTRL`. This is the reason we use this core (D2). |
+| `src_v/phy/xc7/ddr3_dfi_phy.v` | The Xilinx 7-series DFI PHY: OSERDESE2 command/data output, ISERDESE2 + IDELAYE2 read capture, its own `IDELAYCTRL`. This is the reason we use this core (D2). **Locally modified**: the read capture no longer uses the DQS strobe — see "Local modification 2" below. |
 | `examples/arty_a7/artix7_pll.v` | PLLE2_BASE giving 100 / 400 / 400@90° / 200 MHz from a 1200 MHz VCO. Used by the testbench; the template for the island PLL in task 2 (which will take 50 MHz in and use `CLKFBOUT_MULT(24)`). |
 | `tb/ddr3_core_xc7/testbench.v` | The controller's own testbench: 3 × 128-bit write then 3 × 128-bit read-back compare. |
 | `tb/ddr3_core_xc7/ddr3.v` | Micron DDR3 Verilog simulation model v1.70 (**not Apache-2.0**, see `LICENSE`). |
@@ -194,7 +194,7 @@ Read these before writing `rtl/ddr3/ddr3_top.v`.
   and the data path; it does **not** prove that DLL-off works on the real part. That
   remains hardware stage A (design.md, "Risks").
 
-## The one change made to the vendored RTL (task 2)
+## Local modification 1: `init_done_o` on the core (task 2)
 
 `src_v/ddr3_core.sv` has **one** local modification, marked in the file with
 `LOCAL ADDITION (not upstream)` in two places:
@@ -214,8 +214,8 @@ combinational read of an existing register: no logic, no timing and no
 behaviour changed, and the vendored testbench (which leaves the new output
 unconnected) still passes unmodified.
 
-Nothing else in `src_v/` or `tb/` differs from the upstream commit recorded
-above. If the core is ever re-vendored, re-apply exactly these two lines.
+If the core is ever re-vendored, re-apply exactly these two lines. The other
+local change is in the xc7 PHY; see "Local modification 2" below.
 
 ## What task 2 built on top
 
@@ -238,3 +238,87 @@ Note for anyone reading the DDR3 pin list: the QMTech core board has **47** DDR3
 pins, not 48. `CS#` is strapped low on the module, so `ddr3_cs_n_o` from the PHY
 is left unconnected at the FPGA top level (the vendor UCF and the vendor MIG
 project both omit it too).
+
+## Local modification 2: the xc7 PHY read path (no DQS strobe)
+
+`src_v/phy/xc7/ddr3_dfi_phy.v` now differs from upstream in its **read capture
+only**. The write path (command registers, the 20 OSERDESE2 for DQ/DQS/DM, the
+IOBUF/IOBUFDS ring) is byte-for-byte upstream, and it was proven correct on
+hardware.
+
+### Why
+
+Upstream captures reads with the DQS strobe: 16 ISERDESE2 in
+`INTERFACE_TYPE("MEMORY")`, `DATA_WIDTH(4)`, `CLK` = DQS through an IDELAYE2,
+`OCLK`/`CLKDIV` from BUFGs. 7-series requires MEMORY-mode CLK/OCLK/CLKDIV to
+come from the same buffer type or a BUFIO/BUFR pair. On the QMTECH XC7A100T
+core board the DQS pins (B20/A20 and A23/A24) are byte-group strobe pins, not
+clock-capable pins, so they cannot drive a BUFIO or a BUFR and the topology is
+unbuildable. Vivado says so — `REQP-1580` x16, "Unsupported clocking topology
+used for ISERDESE2 ... This can result in corrupted data" — and the board
+behaved exactly as advertised: the first beat of every burst read back
+correctly and beats 2-8 were scrambled at every DQS and DQ delay tap. See
+`findings/ddr3/bringup.md`.
+
+### What changed
+
+* The 16 DQ ISERDESE2 are now `INTERFACE_TYPE("NETWORKING")`, `DATA_WIDTH(8)`,
+  `DATA_RATE("DDR")`, `CLK` = `clk_ddr_i` (400 MHz BUFG) / `CLKB` = `~clk_ddr_i`,
+  `CLKDIV` = `clk_i` (100 MHz BUFG), `OCLK`/`OCLKB` tied low (unused in this
+  mode), `BITSLIP` tied low, `IOBDELAY("IFD")` still capturing the per-lane DQ
+  IDELAYE2 output. That is **oversampling off the controller's own clocks**:
+  800 Msps, one sample every 1.25 ns, eight samples per 100 MHz cycle. With the
+  DRAM DLL off at CK = 100 MHz a read beat is 5 ns, so there are four
+  oversamples per beat and two beats per cycle. It is a supported topology and
+  needs no clock-capable strobe pin.
+* The two **DQS input IDELAYE2 were deleted**. The IOBUFDS pair stays (DQS is
+  still an output during writes); their `O` pins are simply left unconnected.
+  `cfg_i[19:16]` (`DLY_DQS_RST` / `DLY_DQS_INC`) keep their positions in the
+  register map and are now **no-ops**, as is the `DQS_TAP_DELAY_INIT`
+  parameter. The 16 per-lane DQ IDELAYE2 are unchanged and still give 78 ps of
+  fine trim through `cfg_i[23:20]`.
+* `RDSEL` (`cfg_i[3:0]`) has a new, precisely defined meaning. Each cycle the
+  PHY keeps the previous cycle's eight samples as well, giving a 16-sample
+  sliding window per DQ bit (index 0 oldest). Then
+
+  ```
+  sel   = RDSEL[2:0] + (RDSEL[3] ? 4 : 0)        // 0 .. 11
+  beat0 = window[sel]                            // earlier beat
+  beat1 = window[sel + 4]                        // later beat, 4 samples = 5 ns
+  dfi_rddata_o = {beat1, beat0}                  // unchanged beat order
+  ```
+
+  `RDSEL[2:0]` walks the oversample phase across the eye and `RDSEL[3]` slides
+  the pair by a half cycle across the window boundary, so the 16 codes reach
+  13.75 ns — more than a full `clk_i` cycle, overlapping the whole-cycle steps
+  of `RDLAT`. The full timing diagram is in the file, above the assembly.
+* Two new parameters: `RDSEL_INIT` (reset value of `RDSEL`, was hard-coded
+  `4'hF`) and a changed `TPHY_RDLAT` default. `RDLAT` keeps its meaning
+  exactly: `clk_i` cycles from `dfi_rddata_en_i` to `dfi_rddata_valid_o`.
+  `cfg_valid_i` semantics are untouched.
+
+### The values to use
+
+`rtl/ddr3/ddr3_top.v` instantiates the PHY with `TPHY_RDLAT(5)`,
+`RDSEL_INIT(4'd11)` and `DQ_TAP_DELAY_INIT(0)`. Those are **measured on the
+board**, not taken from simulation: the stage-A2 JTAG sweep passes at rdlat 5
+with rdsel 6, 7, 10, 11, 12, 13 (one four-oversample window, `sel` 6..9, plus
+its alias at rdlat 6 rdsel 0, 1) and rdsel 11 is its centre, where all five BIST
+patterns over the full 256 MB give zero errors and the DQ IDELAY is clean from
+tap 0 to 22.
+
+`sim/ddr3_island` finds the same window one beat (4 oversamples, 5 ns) earlier,
+because the Micron model's DLL-off strobe timing is not representative — it says
+so itself ("Load Mode 1 DLL off mode is not fully modeled"). The bench therefore
+proves that the capture assembles bursts correctly and that the window is one
+beat wide and tracks tDQSCK; it does **not** pick these two numbers. See
+`findings/ddr3/bringup.md`, "Read-path rework", for the numbers and for the
+sweep procedure to run on a new board. `DQS_TAP_DELAY_INIT` is ignored.
+
+### Cost
+
+Out-of-context synthesis of `ddr3_top` for `xc7a100tfgg676-2`: 1132 -> 1194
+Slice LUTs (+62) and 697 -> 821 registers (+124, the 128-bit sample history).
+16 ISERDESE2 unchanged, IDELAYE2 18 -> 16 (the two DQS delays are gone).
+Post-place `report_drc -checks {REQP-1580}` with the real board pinout:
+16 violations before, **0** after.

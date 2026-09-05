@@ -1,0 +1,36 @@
+
+****** xsim v2023.2 (64-bit)
+  **** SW Build 4029153 on Fri Oct 13 20:13:54 MDT 2023
+  **** IP Build 4028589 on Sat Oct 14 00:45:43 MDT 2023
+  **** SharedData Build 4025554 on Tue Oct 10 17:18:54 MDT 2023
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source xsim.dir/island_sim/xsim_script.tcl
+# xsim {island_sim} -testplusarg SKEW_PS=8000 -autoloadwcfg -tclbatch {/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_island/run.tcl}
+Time resolution is 1 ps
+source /home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_island/run.tcl
+## run all
+TCK_MIN =        2500
+ddr3_island_tb.u_ram.file_io_open: at time                    0 WARNING: no +model_data option specified, using /tmp.
+INFO: DQS_SKEW_PS = 8000 ps, quick = 0
+=== DDR3 ISLAND TB start ===
+PASS: PLL locks
+LOAD_MODE: bank 2
+LOAD_MODE: bank 3
+LOAD_MODE: bank 1
+ddr3_island_tb.u_ram.cmd_task: at time 39935000.0 ps WARNING: Load Mode 1 DLL off mode is not fully modeled
+LOAD_MODE: bank 0
+PASS: controller init_done
+INFO: init_done at 62000000.0 ps
+INFO: reset defaults (rdlat=6 rdsel=3) at 8000 ps skew: errors=256 lines=256
+GRID rdlat 3 : rdsel 0..15 errors:      0    256    256    256    256    256    256    256    256    256    256    256    256    256    256    256
+GRID rdlat 4 : rdsel 0..15 errors:    256    256    256    256    256    256    256    256    256    256    256    256    256    256    256    256
+GRID rdlat 5 : rdsel 0..15 errors:    256    256    256    256    256    256    256    256    256    256    256    256    256    256    256    256
+GRID rdlat 6 : rdsel 0..15 errors:    256    256    256    256    256      0      0     29    256    113     88     92      0    256    256    256
+GRID rdlat 7 : rdsel 0..15 errors:      0    256    256    256    256    256    256    221    256    256    256    256    256    256    256    256
+INFO: passing (rdlat,rdsel), 5 of 80: (3,0) (6,5) (6,6) (6,12) (7,0)
+INFO: widest passing run at 8000 ps skew: rdlat 6 rdsel 5..6, centre rdsel 6
+PASS: alignment sweep: at least one passing (rdlat,rdsel)
+INFO: module defaults do NOT pass at this skew (expected: the window moves with tDQSCK)
+INFO: full run uses the SWEPT alignment rdlat=6 rdsel=6

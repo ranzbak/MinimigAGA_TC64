@@ -312,17 +312,28 @@ u_core
 //
 // The PHY instantiates its own IDELAYCTRL on clk_ref_i, so the island only has
 // to supply the 200 MHz reference.  Do not add a second one.
-// cfg_valid_i / cfg_i are the DQS/DQ tap and read-latency controls; the
-// vendored testbench leaves them floating, we drive them from the BIST's
-// register block so the bring-up sweep can use a VIO.
+// cfg_valid_i / cfg_i are the DQ tap, read-latency and read-sample controls;
+// the vendored testbench leaves them floating, we drive them from the BIST's
+// register block so the bring-up sweep can use a VIO.  The DQS tap fields
+// (cfg_i[19:16]) are now no-ops - the read path is oversampled off clk400 and
+// clk100, not strobed by DQS (findings/ddr3/bringup.md, "Read-path rework").
+// TPHY_RDLAT(5) / RDSEL_INIT(4'd11) are MEASURED ON THE BOARD (stage-A2 JTAG
+// BIST): the whole passing window there is rdlat 5 with rdsel 6,7,10,11,12,13
+// (plus its alias rdlat 6, rdsel 0,1), and rdsel 11 is its centre.
+// sim/ddr3_island finds the same window shape one beat (4 oversamples, 5 ns)
+// earlier, because the Micron model's DLL-off strobe timing is not
+// representative - hardware is the source of truth for these two numbers.
+// See findings/ddr3/bringup.md, "Read-path rework".
 //-----------------------------------------------------------------
 ddr3_dfi_phy
 #(
      .REFCLK_FREQUENCY(200)
-    ,.DQS_TAP_DELAY_INIT(27)
-    ,.DQ_TAP_DELAY_INIT(0)
-    ,.TPHY_RDLAT(5)
-)
+    ,.DQ_TAP_DELAY_INIT(0)          // per-lane DQ IDELAYE2 start tap (78 ps each);
+                                    // the board is clean from tap 0 to 22
+    ,.TPHY_RDLAT(5)                 // clk100 cycles, dfi_rddata_en -> rddata_valid
+    ,.RDSEL_INIT(4'd11)             // oversample select, see the PHY header
+)                                   // DQS_TAP_DELAY_INIT is dead: the read path
+                                    // no longer captures with the DQS strobe.
 u_phy
 (
      .clk_i(clk100_w)

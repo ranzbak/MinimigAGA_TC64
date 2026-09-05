@@ -28,11 +28,23 @@ module ddr3_dfi_phy
 //-----------------------------------------------------------------
 #(
      parameter REFCLK_FREQUENCY = 200
+    // DQS_TAP_DELAY_INIT is DEAD since the read path stopped capturing with the
+    // DQS strobe (see "Read Data Strobe (DQS) - input side unused" below).  It
+    // is kept so that instantiations do not have to change.
     ,parameter DQS_TAP_DELAY_INIT = 15
     ,parameter DQ_TAP_DELAY_INIT = 1
-    ,parameter TPHY_RDLAT       = 4
+    // TPHY_RDLAT: clk_i cycles from dfi_rddata_en_i to dfi_rddata_valid_o.
+    // Overridable at runtime by cfg_i[10:8].  5 is the value MEASURED on the
+    // QMTECH XC7A100T board with this oversampled read capture; see
+    // findings/ddr3/bringup.md, "Read-path rework".
+    ,parameter TPHY_RDLAT       = 5
     ,parameter TPHY_WRLAT       = 3
     ,parameter TPHY_WRDATA      = 0
+    // RDSEL_INIT: reset value of the read-sample select, cfg_i[3:0].  11 (sample
+    // phase 3, half-cycle offset set) is the centre of the window measured on
+    // the board.  Simulation against the Micron model prefers one beat earlier;
+    // the board wins.
+    ,parameter RDSEL_INIT       = 4'hB
 )
 //-----------------------------------------------------------------
 // Ports
@@ -115,7 +127,7 @@ reg [3:0] rd_sel_q;
 
 always @ (posedge clk_i )
 if (rst_i)
-    rd_sel_q <= 4'hF;
+    rd_sel_q <= RDSEL_INIT;
 else if (cfg_valid_i)
     rd_sel_q <= cfg_i[`DDR_PHY_CFG_RDSEL_R];
 
@@ -1356,64 +1368,21 @@ u_serdes_dqs1
 );
 
 //-----------------------------------------------------------------
-// Read Data Strobe (DQS)
+// Read Data Strobe (DQS) - input side unused
+//
+// The DQS pads are still driven during writes (see the OSERDESE2 above and
+// the IOBUFDS pair), but the READ path no longer captures with the strobe.
+// On this board (QMTECH XC7A100T core module) the DQS pins B20/A20 and
+// A23/A24 are byte-group strobe pins, not clock-capable pins: they cannot
+// drive a BUFIO/BUFR, so a MEMORY-mode ISERDESE2 clocked by DQS mixes a
+// strobe-region CLK with BUFG OCLK/CLKDIV.  That is DRC REQP-1580 and it is
+// what broke beats 2..8 of every burst on hardware (findings/ddr3/bringup.md).
+//
+// The two input IDELAYE2 delay lines that used to sit here (u_dqs_delay0/1)
+// have been REMOVED; the IOBUFDS `O` pins (dqs_in_w) are simply left
+// unconnected.  cfg_i[19:16] (DLY_DQS_RST / DLY_DQS_INC) keep their bit
+// positions in the register map but are now no-ops.
 //-----------------------------------------------------------------
-wire [1:0] dqs_delayed_w;
-
-
-IDELAYE2 
-#(
-     .IDELAY_TYPE("VARIABLE")
-    ,.DELAY_SRC("IDATAIN")
-    ,.CINVCTRL_SEL("FALSE")
-    ,.IDELAY_VALUE(DQS_TAP_DELAY_INIT)
-    ,.HIGH_PERFORMANCE_MODE ("TRUE")
-    ,.REFCLK_FREQUENCY(REFCLK_FREQUENCY)
-    ,.PIPE_SEL("FALSE")
-    ,.SIGNAL_PATTERN("CLOCK")
-)
-u_dqs_delay0
-(
-     .C(clk_i)
-    ,.REGRST(1'b0)
-    ,.CE(dqs_delay_inc_q[0])
-    ,.INC(1'b1)                     // Increment/decrement number of tap delays.
-    ,.DATAIN(1'b0)
-    ,.IDATAIN(dqs_in_w[0])       // Data input for IDELAY from the IBUF.
-    ,.LDPIPEEN(1'b0)
-    ,.CINVCTRL(1'b0)
-    ,.DATAOUT(dqs_delayed_w[0])  // Delayed data
-    ,.LD(dqs_delay_rst_q[0])     // Set the IDELAYE2 delay to IDELAY_VALUE
-    ,.CNTVALUEIN(5'b0)
-    ,.CNTVALUEOUT()
-);
-
-IDELAYE2 
-#(
-     .IDELAY_TYPE("VARIABLE")
-    ,.DELAY_SRC("IDATAIN")
-    ,.CINVCTRL_SEL("FALSE")
-    ,.IDELAY_VALUE(DQS_TAP_DELAY_INIT)
-    ,.HIGH_PERFORMANCE_MODE ("TRUE")
-    ,.REFCLK_FREQUENCY(REFCLK_FREQUENCY)
-    ,.PIPE_SEL("FALSE")
-    ,.SIGNAL_PATTERN("CLOCK")
-)
-u_dqs_delay1
-(
-     .C(clk_i)
-    ,.REGRST(1'b0)
-    ,.CE(dqs_delay_inc_q[1])
-    ,.INC(1'b1)                     // Increment/decrement number of tap delays.
-    ,.DATAIN(1'b0)
-    ,.IDATAIN(dqs_in_w[1])       // Data input for IDELAY from the IBUF.
-    ,.LDPIPEEN(1'b0)
-    ,.CINVCTRL(1'b0)
-    ,.DATAOUT(dqs_delayed_w[1])  // Delayed data
-    ,.LD(dqs_delay_rst_q[1])     // Set the IDELAYE2 delay to IDELAY_VALUE
-    ,.CNTVALUEIN(5'b0)
-    ,.CNTVALUEOUT()
-);
 
 //-----------------------------------------------------------------
 // Read capture
@@ -1460,54 +1429,57 @@ u_dq_delay0
     ,.CNTVALUEOUT()
 );
 
-wire [3:0] rd_dq0_in_w;
+wire [7:0] rd_dq0_in_w;
 ISERDESE2
 #(
      .SERDES_MODE("MASTER")
-    ,.INTERFACE_TYPE("MEMORY")
-    ,.DATA_WIDTH(4)
+    ,.INTERFACE_TYPE("NETWORKING")   // CK-clocked oversampling, no DQS strobe
+    ,.DATA_WIDTH(8)
     ,.DATA_RATE("DDR")
     ,.NUM_CE(1)
-    ,.IOBDELAY("IFD")
+    ,.IOBDELAY("IFD")                // capture the IDELAYE2 output (DDLY)
 )
 u_serdes_dq_in0
 (
-    // DQS input strobe
-     .CLK(dqs_delayed_w[0])
-    ,.CLKB(~dqs_delayed_w[0])
+    // Sample clock: the 400 MHz BUFG, both edges -> 800 Msps
+     .CLK(clk_ddr_i)
+    ,.CLKB(~clk_ddr_i)
 
-    // Fast clock
-    ,.OCLK(clk_ddr_i)
-    ,.OCLKB(~clk_ddr_i)
-
-    // Slow clock
+    // Fabric clock: the 100 MHz BUFG, 8 samples per cycle
     ,.CLKDIV(clk_i)
-    ,.RST(rst_i)
+    ,.CLKDIVP(1'b0)
 
-    ,.BITSLIP(0)
+    // Unused in NETWORKING mode
+    ,.OCLK(1'b0)
+    ,.OCLKB(1'b0)
+
+    ,.RST(rst_i)
+    ,.BITSLIP(1'b0)
     ,.CE1(1'b1)
-    
-    // TODO:
+    ,.CE2(1'b0)
+
     ,.DDLY(dq_delayed_w[0])
     ,.D(1'b0)
 
-    // Parallel output
-    ,.Q4(rd_dq0_in_w[3])
-    ,.Q3(rd_dq0_in_w[2])
-    ,.Q2(rd_dq0_in_w[1])
+    // Parallel output: Q8 is the OLDEST sample, Q1 the NEWEST.
     ,.Q1(rd_dq0_in_w[0])
+    ,.Q2(rd_dq0_in_w[1])
+    ,.Q3(rd_dq0_in_w[2])
+    ,.Q4(rd_dq0_in_w[3])
+    ,.Q5(rd_dq0_in_w[4])
+    ,.Q6(rd_dq0_in_w[5])
+    ,.Q7(rd_dq0_in_w[6])
+    ,.Q8(rd_dq0_in_w[7])
 
     // Unused
     ,.O()
     ,.SHIFTOUT1()
     ,.SHIFTOUT2()
-    ,.CE2(1'b0)
-    ,.CLKDIVP(0)
-    ,.DYNCLKDIVSEL(0)
-    ,.DYNCLKSEL(0)
-    ,.OFB(0)
-    ,.SHIFTIN1(0)
-    ,.SHIFTIN2(0)
+    ,.DYNCLKDIVSEL(1'b0)
+    ,.DYNCLKSEL(1'b0)
+    ,.OFB(1'b0)
+    ,.SHIFTIN1(1'b0)
+    ,.SHIFTIN2(1'b0)
 );
 
 IDELAYE2 
@@ -1537,54 +1509,57 @@ u_dq_delay1
     ,.CNTVALUEOUT()
 );
 
-wire [3:0] rd_dq1_in_w;
+wire [7:0] rd_dq1_in_w;
 ISERDESE2
 #(
      .SERDES_MODE("MASTER")
-    ,.INTERFACE_TYPE("MEMORY")
-    ,.DATA_WIDTH(4)
+    ,.INTERFACE_TYPE("NETWORKING")   // CK-clocked oversampling, no DQS strobe
+    ,.DATA_WIDTH(8)
     ,.DATA_RATE("DDR")
     ,.NUM_CE(1)
-    ,.IOBDELAY("IFD")
+    ,.IOBDELAY("IFD")                // capture the IDELAYE2 output (DDLY)
 )
 u_serdes_dq_in1
 (
-    // DQS input strobe
-     .CLK(dqs_delayed_w[0])
-    ,.CLKB(~dqs_delayed_w[0])
+    // Sample clock: the 400 MHz BUFG, both edges -> 800 Msps
+     .CLK(clk_ddr_i)
+    ,.CLKB(~clk_ddr_i)
 
-    // Fast clock
-    ,.OCLK(clk_ddr_i)
-    ,.OCLKB(~clk_ddr_i)
-
-    // Slow clock
+    // Fabric clock: the 100 MHz BUFG, 8 samples per cycle
     ,.CLKDIV(clk_i)
-    ,.RST(rst_i)
+    ,.CLKDIVP(1'b0)
 
-    ,.BITSLIP(0)
+    // Unused in NETWORKING mode
+    ,.OCLK(1'b0)
+    ,.OCLKB(1'b0)
+
+    ,.RST(rst_i)
+    ,.BITSLIP(1'b0)
     ,.CE1(1'b1)
-    
-    // TODO:
+    ,.CE2(1'b0)
+
     ,.DDLY(dq_delayed_w[1])
     ,.D(1'b0)
 
-    // Parallel output
-    ,.Q4(rd_dq1_in_w[3])
-    ,.Q3(rd_dq1_in_w[2])
-    ,.Q2(rd_dq1_in_w[1])
+    // Parallel output: Q8 is the OLDEST sample, Q1 the NEWEST.
     ,.Q1(rd_dq1_in_w[0])
+    ,.Q2(rd_dq1_in_w[1])
+    ,.Q3(rd_dq1_in_w[2])
+    ,.Q4(rd_dq1_in_w[3])
+    ,.Q5(rd_dq1_in_w[4])
+    ,.Q6(rd_dq1_in_w[5])
+    ,.Q7(rd_dq1_in_w[6])
+    ,.Q8(rd_dq1_in_w[7])
 
     // Unused
     ,.O()
     ,.SHIFTOUT1()
     ,.SHIFTOUT2()
-    ,.CE2(1'b0)
-    ,.CLKDIVP(0)
-    ,.DYNCLKDIVSEL(0)
-    ,.DYNCLKSEL(0)
-    ,.OFB(0)
-    ,.SHIFTIN1(0)
-    ,.SHIFTIN2(0)
+    ,.DYNCLKDIVSEL(1'b0)
+    ,.DYNCLKSEL(1'b0)
+    ,.OFB(1'b0)
+    ,.SHIFTIN1(1'b0)
+    ,.SHIFTIN2(1'b0)
 );
 
 IDELAYE2 
@@ -1614,54 +1589,57 @@ u_dq_delay2
     ,.CNTVALUEOUT()
 );
 
-wire [3:0] rd_dq2_in_w;
+wire [7:0] rd_dq2_in_w;
 ISERDESE2
 #(
      .SERDES_MODE("MASTER")
-    ,.INTERFACE_TYPE("MEMORY")
-    ,.DATA_WIDTH(4)
+    ,.INTERFACE_TYPE("NETWORKING")   // CK-clocked oversampling, no DQS strobe
+    ,.DATA_WIDTH(8)
     ,.DATA_RATE("DDR")
     ,.NUM_CE(1)
-    ,.IOBDELAY("IFD")
+    ,.IOBDELAY("IFD")                // capture the IDELAYE2 output (DDLY)
 )
 u_serdes_dq_in2
 (
-    // DQS input strobe
-     .CLK(dqs_delayed_w[0])
-    ,.CLKB(~dqs_delayed_w[0])
+    // Sample clock: the 400 MHz BUFG, both edges -> 800 Msps
+     .CLK(clk_ddr_i)
+    ,.CLKB(~clk_ddr_i)
 
-    // Fast clock
-    ,.OCLK(clk_ddr_i)
-    ,.OCLKB(~clk_ddr_i)
-
-    // Slow clock
+    // Fabric clock: the 100 MHz BUFG, 8 samples per cycle
     ,.CLKDIV(clk_i)
-    ,.RST(rst_i)
+    ,.CLKDIVP(1'b0)
 
-    ,.BITSLIP(0)
+    // Unused in NETWORKING mode
+    ,.OCLK(1'b0)
+    ,.OCLKB(1'b0)
+
+    ,.RST(rst_i)
+    ,.BITSLIP(1'b0)
     ,.CE1(1'b1)
-    
-    // TODO:
+    ,.CE2(1'b0)
+
     ,.DDLY(dq_delayed_w[2])
     ,.D(1'b0)
 
-    // Parallel output
-    ,.Q4(rd_dq2_in_w[3])
-    ,.Q3(rd_dq2_in_w[2])
-    ,.Q2(rd_dq2_in_w[1])
+    // Parallel output: Q8 is the OLDEST sample, Q1 the NEWEST.
     ,.Q1(rd_dq2_in_w[0])
+    ,.Q2(rd_dq2_in_w[1])
+    ,.Q3(rd_dq2_in_w[2])
+    ,.Q4(rd_dq2_in_w[3])
+    ,.Q5(rd_dq2_in_w[4])
+    ,.Q6(rd_dq2_in_w[5])
+    ,.Q7(rd_dq2_in_w[6])
+    ,.Q8(rd_dq2_in_w[7])
 
     // Unused
     ,.O()
     ,.SHIFTOUT1()
     ,.SHIFTOUT2()
-    ,.CE2(1'b0)
-    ,.CLKDIVP(0)
-    ,.DYNCLKDIVSEL(0)
-    ,.DYNCLKSEL(0)
-    ,.OFB(0)
-    ,.SHIFTIN1(0)
-    ,.SHIFTIN2(0)
+    ,.DYNCLKDIVSEL(1'b0)
+    ,.DYNCLKSEL(1'b0)
+    ,.OFB(1'b0)
+    ,.SHIFTIN1(1'b0)
+    ,.SHIFTIN2(1'b0)
 );
 
 IDELAYE2 
@@ -1691,54 +1669,57 @@ u_dq_delay3
     ,.CNTVALUEOUT()
 );
 
-wire [3:0] rd_dq3_in_w;
+wire [7:0] rd_dq3_in_w;
 ISERDESE2
 #(
      .SERDES_MODE("MASTER")
-    ,.INTERFACE_TYPE("MEMORY")
-    ,.DATA_WIDTH(4)
+    ,.INTERFACE_TYPE("NETWORKING")   // CK-clocked oversampling, no DQS strobe
+    ,.DATA_WIDTH(8)
     ,.DATA_RATE("DDR")
     ,.NUM_CE(1)
-    ,.IOBDELAY("IFD")
+    ,.IOBDELAY("IFD")                // capture the IDELAYE2 output (DDLY)
 )
 u_serdes_dq_in3
 (
-    // DQS input strobe
-     .CLK(dqs_delayed_w[0])
-    ,.CLKB(~dqs_delayed_w[0])
+    // Sample clock: the 400 MHz BUFG, both edges -> 800 Msps
+     .CLK(clk_ddr_i)
+    ,.CLKB(~clk_ddr_i)
 
-    // Fast clock
-    ,.OCLK(clk_ddr_i)
-    ,.OCLKB(~clk_ddr_i)
-
-    // Slow clock
+    // Fabric clock: the 100 MHz BUFG, 8 samples per cycle
     ,.CLKDIV(clk_i)
-    ,.RST(rst_i)
+    ,.CLKDIVP(1'b0)
 
-    ,.BITSLIP(0)
+    // Unused in NETWORKING mode
+    ,.OCLK(1'b0)
+    ,.OCLKB(1'b0)
+
+    ,.RST(rst_i)
+    ,.BITSLIP(1'b0)
     ,.CE1(1'b1)
-    
-    // TODO:
+    ,.CE2(1'b0)
+
     ,.DDLY(dq_delayed_w[3])
     ,.D(1'b0)
 
-    // Parallel output
-    ,.Q4(rd_dq3_in_w[3])
-    ,.Q3(rd_dq3_in_w[2])
-    ,.Q2(rd_dq3_in_w[1])
+    // Parallel output: Q8 is the OLDEST sample, Q1 the NEWEST.
     ,.Q1(rd_dq3_in_w[0])
+    ,.Q2(rd_dq3_in_w[1])
+    ,.Q3(rd_dq3_in_w[2])
+    ,.Q4(rd_dq3_in_w[3])
+    ,.Q5(rd_dq3_in_w[4])
+    ,.Q6(rd_dq3_in_w[5])
+    ,.Q7(rd_dq3_in_w[6])
+    ,.Q8(rd_dq3_in_w[7])
 
     // Unused
     ,.O()
     ,.SHIFTOUT1()
     ,.SHIFTOUT2()
-    ,.CE2(1'b0)
-    ,.CLKDIVP(0)
-    ,.DYNCLKDIVSEL(0)
-    ,.DYNCLKSEL(0)
-    ,.OFB(0)
-    ,.SHIFTIN1(0)
-    ,.SHIFTIN2(0)
+    ,.DYNCLKDIVSEL(1'b0)
+    ,.DYNCLKSEL(1'b0)
+    ,.OFB(1'b0)
+    ,.SHIFTIN1(1'b0)
+    ,.SHIFTIN2(1'b0)
 );
 
 IDELAYE2 
@@ -1768,54 +1749,57 @@ u_dq_delay4
     ,.CNTVALUEOUT()
 );
 
-wire [3:0] rd_dq4_in_w;
+wire [7:0] rd_dq4_in_w;
 ISERDESE2
 #(
      .SERDES_MODE("MASTER")
-    ,.INTERFACE_TYPE("MEMORY")
-    ,.DATA_WIDTH(4)
+    ,.INTERFACE_TYPE("NETWORKING")   // CK-clocked oversampling, no DQS strobe
+    ,.DATA_WIDTH(8)
     ,.DATA_RATE("DDR")
     ,.NUM_CE(1)
-    ,.IOBDELAY("IFD")
+    ,.IOBDELAY("IFD")                // capture the IDELAYE2 output (DDLY)
 )
 u_serdes_dq_in4
 (
-    // DQS input strobe
-     .CLK(dqs_delayed_w[0])
-    ,.CLKB(~dqs_delayed_w[0])
+    // Sample clock: the 400 MHz BUFG, both edges -> 800 Msps
+     .CLK(clk_ddr_i)
+    ,.CLKB(~clk_ddr_i)
 
-    // Fast clock
-    ,.OCLK(clk_ddr_i)
-    ,.OCLKB(~clk_ddr_i)
-
-    // Slow clock
+    // Fabric clock: the 100 MHz BUFG, 8 samples per cycle
     ,.CLKDIV(clk_i)
-    ,.RST(rst_i)
+    ,.CLKDIVP(1'b0)
 
-    ,.BITSLIP(0)
+    // Unused in NETWORKING mode
+    ,.OCLK(1'b0)
+    ,.OCLKB(1'b0)
+
+    ,.RST(rst_i)
+    ,.BITSLIP(1'b0)
     ,.CE1(1'b1)
-    
-    // TODO:
+    ,.CE2(1'b0)
+
     ,.DDLY(dq_delayed_w[4])
     ,.D(1'b0)
 
-    // Parallel output
-    ,.Q4(rd_dq4_in_w[3])
-    ,.Q3(rd_dq4_in_w[2])
-    ,.Q2(rd_dq4_in_w[1])
+    // Parallel output: Q8 is the OLDEST sample, Q1 the NEWEST.
     ,.Q1(rd_dq4_in_w[0])
+    ,.Q2(rd_dq4_in_w[1])
+    ,.Q3(rd_dq4_in_w[2])
+    ,.Q4(rd_dq4_in_w[3])
+    ,.Q5(rd_dq4_in_w[4])
+    ,.Q6(rd_dq4_in_w[5])
+    ,.Q7(rd_dq4_in_w[6])
+    ,.Q8(rd_dq4_in_w[7])
 
     // Unused
     ,.O()
     ,.SHIFTOUT1()
     ,.SHIFTOUT2()
-    ,.CE2(1'b0)
-    ,.CLKDIVP(0)
-    ,.DYNCLKDIVSEL(0)
-    ,.DYNCLKSEL(0)
-    ,.OFB(0)
-    ,.SHIFTIN1(0)
-    ,.SHIFTIN2(0)
+    ,.DYNCLKDIVSEL(1'b0)
+    ,.DYNCLKSEL(1'b0)
+    ,.OFB(1'b0)
+    ,.SHIFTIN1(1'b0)
+    ,.SHIFTIN2(1'b0)
 );
 
 IDELAYE2 
@@ -1845,54 +1829,57 @@ u_dq_delay5
     ,.CNTVALUEOUT()
 );
 
-wire [3:0] rd_dq5_in_w;
+wire [7:0] rd_dq5_in_w;
 ISERDESE2
 #(
      .SERDES_MODE("MASTER")
-    ,.INTERFACE_TYPE("MEMORY")
-    ,.DATA_WIDTH(4)
+    ,.INTERFACE_TYPE("NETWORKING")   // CK-clocked oversampling, no DQS strobe
+    ,.DATA_WIDTH(8)
     ,.DATA_RATE("DDR")
     ,.NUM_CE(1)
-    ,.IOBDELAY("IFD")
+    ,.IOBDELAY("IFD")                // capture the IDELAYE2 output (DDLY)
 )
 u_serdes_dq_in5
 (
-    // DQS input strobe
-     .CLK(dqs_delayed_w[0])
-    ,.CLKB(~dqs_delayed_w[0])
+    // Sample clock: the 400 MHz BUFG, both edges -> 800 Msps
+     .CLK(clk_ddr_i)
+    ,.CLKB(~clk_ddr_i)
 
-    // Fast clock
-    ,.OCLK(clk_ddr_i)
-    ,.OCLKB(~clk_ddr_i)
-
-    // Slow clock
+    // Fabric clock: the 100 MHz BUFG, 8 samples per cycle
     ,.CLKDIV(clk_i)
-    ,.RST(rst_i)
+    ,.CLKDIVP(1'b0)
 
-    ,.BITSLIP(0)
+    // Unused in NETWORKING mode
+    ,.OCLK(1'b0)
+    ,.OCLKB(1'b0)
+
+    ,.RST(rst_i)
+    ,.BITSLIP(1'b0)
     ,.CE1(1'b1)
-    
-    // TODO:
+    ,.CE2(1'b0)
+
     ,.DDLY(dq_delayed_w[5])
     ,.D(1'b0)
 
-    // Parallel output
-    ,.Q4(rd_dq5_in_w[3])
-    ,.Q3(rd_dq5_in_w[2])
-    ,.Q2(rd_dq5_in_w[1])
+    // Parallel output: Q8 is the OLDEST sample, Q1 the NEWEST.
     ,.Q1(rd_dq5_in_w[0])
+    ,.Q2(rd_dq5_in_w[1])
+    ,.Q3(rd_dq5_in_w[2])
+    ,.Q4(rd_dq5_in_w[3])
+    ,.Q5(rd_dq5_in_w[4])
+    ,.Q6(rd_dq5_in_w[5])
+    ,.Q7(rd_dq5_in_w[6])
+    ,.Q8(rd_dq5_in_w[7])
 
     // Unused
     ,.O()
     ,.SHIFTOUT1()
     ,.SHIFTOUT2()
-    ,.CE2(1'b0)
-    ,.CLKDIVP(0)
-    ,.DYNCLKDIVSEL(0)
-    ,.DYNCLKSEL(0)
-    ,.OFB(0)
-    ,.SHIFTIN1(0)
-    ,.SHIFTIN2(0)
+    ,.DYNCLKDIVSEL(1'b0)
+    ,.DYNCLKSEL(1'b0)
+    ,.OFB(1'b0)
+    ,.SHIFTIN1(1'b0)
+    ,.SHIFTIN2(1'b0)
 );
 
 IDELAYE2 
@@ -1922,54 +1909,57 @@ u_dq_delay6
     ,.CNTVALUEOUT()
 );
 
-wire [3:0] rd_dq6_in_w;
+wire [7:0] rd_dq6_in_w;
 ISERDESE2
 #(
      .SERDES_MODE("MASTER")
-    ,.INTERFACE_TYPE("MEMORY")
-    ,.DATA_WIDTH(4)
+    ,.INTERFACE_TYPE("NETWORKING")   // CK-clocked oversampling, no DQS strobe
+    ,.DATA_WIDTH(8)
     ,.DATA_RATE("DDR")
     ,.NUM_CE(1)
-    ,.IOBDELAY("IFD")
+    ,.IOBDELAY("IFD")                // capture the IDELAYE2 output (DDLY)
 )
 u_serdes_dq_in6
 (
-    // DQS input strobe
-     .CLK(dqs_delayed_w[0])
-    ,.CLKB(~dqs_delayed_w[0])
+    // Sample clock: the 400 MHz BUFG, both edges -> 800 Msps
+     .CLK(clk_ddr_i)
+    ,.CLKB(~clk_ddr_i)
 
-    // Fast clock
-    ,.OCLK(clk_ddr_i)
-    ,.OCLKB(~clk_ddr_i)
-
-    // Slow clock
+    // Fabric clock: the 100 MHz BUFG, 8 samples per cycle
     ,.CLKDIV(clk_i)
-    ,.RST(rst_i)
+    ,.CLKDIVP(1'b0)
 
-    ,.BITSLIP(0)
+    // Unused in NETWORKING mode
+    ,.OCLK(1'b0)
+    ,.OCLKB(1'b0)
+
+    ,.RST(rst_i)
+    ,.BITSLIP(1'b0)
     ,.CE1(1'b1)
-    
-    // TODO:
+    ,.CE2(1'b0)
+
     ,.DDLY(dq_delayed_w[6])
     ,.D(1'b0)
 
-    // Parallel output
-    ,.Q4(rd_dq6_in_w[3])
-    ,.Q3(rd_dq6_in_w[2])
-    ,.Q2(rd_dq6_in_w[1])
+    // Parallel output: Q8 is the OLDEST sample, Q1 the NEWEST.
     ,.Q1(rd_dq6_in_w[0])
+    ,.Q2(rd_dq6_in_w[1])
+    ,.Q3(rd_dq6_in_w[2])
+    ,.Q4(rd_dq6_in_w[3])
+    ,.Q5(rd_dq6_in_w[4])
+    ,.Q6(rd_dq6_in_w[5])
+    ,.Q7(rd_dq6_in_w[6])
+    ,.Q8(rd_dq6_in_w[7])
 
     // Unused
     ,.O()
     ,.SHIFTOUT1()
     ,.SHIFTOUT2()
-    ,.CE2(1'b0)
-    ,.CLKDIVP(0)
-    ,.DYNCLKDIVSEL(0)
-    ,.DYNCLKSEL(0)
-    ,.OFB(0)
-    ,.SHIFTIN1(0)
-    ,.SHIFTIN2(0)
+    ,.DYNCLKDIVSEL(1'b0)
+    ,.DYNCLKSEL(1'b0)
+    ,.OFB(1'b0)
+    ,.SHIFTIN1(1'b0)
+    ,.SHIFTIN2(1'b0)
 );
 
 IDELAYE2 
@@ -1999,54 +1989,57 @@ u_dq_delay7
     ,.CNTVALUEOUT()
 );
 
-wire [3:0] rd_dq7_in_w;
+wire [7:0] rd_dq7_in_w;
 ISERDESE2
 #(
      .SERDES_MODE("MASTER")
-    ,.INTERFACE_TYPE("MEMORY")
-    ,.DATA_WIDTH(4)
+    ,.INTERFACE_TYPE("NETWORKING")   // CK-clocked oversampling, no DQS strobe
+    ,.DATA_WIDTH(8)
     ,.DATA_RATE("DDR")
     ,.NUM_CE(1)
-    ,.IOBDELAY("IFD")
+    ,.IOBDELAY("IFD")                // capture the IDELAYE2 output (DDLY)
 )
 u_serdes_dq_in7
 (
-    // DQS input strobe
-     .CLK(dqs_delayed_w[0])
-    ,.CLKB(~dqs_delayed_w[0])
+    // Sample clock: the 400 MHz BUFG, both edges -> 800 Msps
+     .CLK(clk_ddr_i)
+    ,.CLKB(~clk_ddr_i)
 
-    // Fast clock
-    ,.OCLK(clk_ddr_i)
-    ,.OCLKB(~clk_ddr_i)
-
-    // Slow clock
+    // Fabric clock: the 100 MHz BUFG, 8 samples per cycle
     ,.CLKDIV(clk_i)
-    ,.RST(rst_i)
+    ,.CLKDIVP(1'b0)
 
-    ,.BITSLIP(0)
+    // Unused in NETWORKING mode
+    ,.OCLK(1'b0)
+    ,.OCLKB(1'b0)
+
+    ,.RST(rst_i)
+    ,.BITSLIP(1'b0)
     ,.CE1(1'b1)
-    
-    // TODO:
+    ,.CE2(1'b0)
+
     ,.DDLY(dq_delayed_w[7])
     ,.D(1'b0)
 
-    // Parallel output
-    ,.Q4(rd_dq7_in_w[3])
-    ,.Q3(rd_dq7_in_w[2])
-    ,.Q2(rd_dq7_in_w[1])
+    // Parallel output: Q8 is the OLDEST sample, Q1 the NEWEST.
     ,.Q1(rd_dq7_in_w[0])
+    ,.Q2(rd_dq7_in_w[1])
+    ,.Q3(rd_dq7_in_w[2])
+    ,.Q4(rd_dq7_in_w[3])
+    ,.Q5(rd_dq7_in_w[4])
+    ,.Q6(rd_dq7_in_w[5])
+    ,.Q7(rd_dq7_in_w[6])
+    ,.Q8(rd_dq7_in_w[7])
 
     // Unused
     ,.O()
     ,.SHIFTOUT1()
     ,.SHIFTOUT2()
-    ,.CE2(1'b0)
-    ,.CLKDIVP(0)
-    ,.DYNCLKDIVSEL(0)
-    ,.DYNCLKSEL(0)
-    ,.OFB(0)
-    ,.SHIFTIN1(0)
-    ,.SHIFTIN2(0)
+    ,.DYNCLKDIVSEL(1'b0)
+    ,.DYNCLKSEL(1'b0)
+    ,.OFB(1'b0)
+    ,.SHIFTIN1(1'b0)
+    ,.SHIFTIN2(1'b0)
 );
 
 IDELAYE2 
@@ -2076,54 +2069,57 @@ u_dq_delay8
     ,.CNTVALUEOUT()
 );
 
-wire [3:0] rd_dq8_in_w;
+wire [7:0] rd_dq8_in_w;
 ISERDESE2
 #(
      .SERDES_MODE("MASTER")
-    ,.INTERFACE_TYPE("MEMORY")
-    ,.DATA_WIDTH(4)
+    ,.INTERFACE_TYPE("NETWORKING")   // CK-clocked oversampling, no DQS strobe
+    ,.DATA_WIDTH(8)
     ,.DATA_RATE("DDR")
     ,.NUM_CE(1)
-    ,.IOBDELAY("IFD")
+    ,.IOBDELAY("IFD")                // capture the IDELAYE2 output (DDLY)
 )
 u_serdes_dq_in8
 (
-    // DQS input strobe
-     .CLK(dqs_delayed_w[1])
-    ,.CLKB(~dqs_delayed_w[1])
+    // Sample clock: the 400 MHz BUFG, both edges -> 800 Msps
+     .CLK(clk_ddr_i)
+    ,.CLKB(~clk_ddr_i)
 
-    // Fast clock
-    ,.OCLK(clk_ddr_i)
-    ,.OCLKB(~clk_ddr_i)
-
-    // Slow clock
+    // Fabric clock: the 100 MHz BUFG, 8 samples per cycle
     ,.CLKDIV(clk_i)
-    ,.RST(rst_i)
+    ,.CLKDIVP(1'b0)
 
-    ,.BITSLIP(0)
+    // Unused in NETWORKING mode
+    ,.OCLK(1'b0)
+    ,.OCLKB(1'b0)
+
+    ,.RST(rst_i)
+    ,.BITSLIP(1'b0)
     ,.CE1(1'b1)
-    
-    // TODO:
+    ,.CE2(1'b0)
+
     ,.DDLY(dq_delayed_w[8])
     ,.D(1'b0)
 
-    // Parallel output
-    ,.Q4(rd_dq8_in_w[3])
-    ,.Q3(rd_dq8_in_w[2])
-    ,.Q2(rd_dq8_in_w[1])
+    // Parallel output: Q8 is the OLDEST sample, Q1 the NEWEST.
     ,.Q1(rd_dq8_in_w[0])
+    ,.Q2(rd_dq8_in_w[1])
+    ,.Q3(rd_dq8_in_w[2])
+    ,.Q4(rd_dq8_in_w[3])
+    ,.Q5(rd_dq8_in_w[4])
+    ,.Q6(rd_dq8_in_w[5])
+    ,.Q7(rd_dq8_in_w[6])
+    ,.Q8(rd_dq8_in_w[7])
 
     // Unused
     ,.O()
     ,.SHIFTOUT1()
     ,.SHIFTOUT2()
-    ,.CE2(1'b0)
-    ,.CLKDIVP(0)
-    ,.DYNCLKDIVSEL(0)
-    ,.DYNCLKSEL(0)
-    ,.OFB(0)
-    ,.SHIFTIN1(0)
-    ,.SHIFTIN2(0)
+    ,.DYNCLKDIVSEL(1'b0)
+    ,.DYNCLKSEL(1'b0)
+    ,.OFB(1'b0)
+    ,.SHIFTIN1(1'b0)
+    ,.SHIFTIN2(1'b0)
 );
 
 IDELAYE2 
@@ -2153,54 +2149,57 @@ u_dq_delay9
     ,.CNTVALUEOUT()
 );
 
-wire [3:0] rd_dq9_in_w;
+wire [7:0] rd_dq9_in_w;
 ISERDESE2
 #(
      .SERDES_MODE("MASTER")
-    ,.INTERFACE_TYPE("MEMORY")
-    ,.DATA_WIDTH(4)
+    ,.INTERFACE_TYPE("NETWORKING")   // CK-clocked oversampling, no DQS strobe
+    ,.DATA_WIDTH(8)
     ,.DATA_RATE("DDR")
     ,.NUM_CE(1)
-    ,.IOBDELAY("IFD")
+    ,.IOBDELAY("IFD")                // capture the IDELAYE2 output (DDLY)
 )
 u_serdes_dq_in9
 (
-    // DQS input strobe
-     .CLK(dqs_delayed_w[1])
-    ,.CLKB(~dqs_delayed_w[1])
+    // Sample clock: the 400 MHz BUFG, both edges -> 800 Msps
+     .CLK(clk_ddr_i)
+    ,.CLKB(~clk_ddr_i)
 
-    // Fast clock
-    ,.OCLK(clk_ddr_i)
-    ,.OCLKB(~clk_ddr_i)
-
-    // Slow clock
+    // Fabric clock: the 100 MHz BUFG, 8 samples per cycle
     ,.CLKDIV(clk_i)
-    ,.RST(rst_i)
+    ,.CLKDIVP(1'b0)
 
-    ,.BITSLIP(0)
+    // Unused in NETWORKING mode
+    ,.OCLK(1'b0)
+    ,.OCLKB(1'b0)
+
+    ,.RST(rst_i)
+    ,.BITSLIP(1'b0)
     ,.CE1(1'b1)
-    
-    // TODO:
+    ,.CE2(1'b0)
+
     ,.DDLY(dq_delayed_w[9])
     ,.D(1'b0)
 
-    // Parallel output
-    ,.Q4(rd_dq9_in_w[3])
-    ,.Q3(rd_dq9_in_w[2])
-    ,.Q2(rd_dq9_in_w[1])
+    // Parallel output: Q8 is the OLDEST sample, Q1 the NEWEST.
     ,.Q1(rd_dq9_in_w[0])
+    ,.Q2(rd_dq9_in_w[1])
+    ,.Q3(rd_dq9_in_w[2])
+    ,.Q4(rd_dq9_in_w[3])
+    ,.Q5(rd_dq9_in_w[4])
+    ,.Q6(rd_dq9_in_w[5])
+    ,.Q7(rd_dq9_in_w[6])
+    ,.Q8(rd_dq9_in_w[7])
 
     // Unused
     ,.O()
     ,.SHIFTOUT1()
     ,.SHIFTOUT2()
-    ,.CE2(1'b0)
-    ,.CLKDIVP(0)
-    ,.DYNCLKDIVSEL(0)
-    ,.DYNCLKSEL(0)
-    ,.OFB(0)
-    ,.SHIFTIN1(0)
-    ,.SHIFTIN2(0)
+    ,.DYNCLKDIVSEL(1'b0)
+    ,.DYNCLKSEL(1'b0)
+    ,.OFB(1'b0)
+    ,.SHIFTIN1(1'b0)
+    ,.SHIFTIN2(1'b0)
 );
 
 IDELAYE2 
@@ -2230,54 +2229,57 @@ u_dq_delay10
     ,.CNTVALUEOUT()
 );
 
-wire [3:0] rd_dq10_in_w;
+wire [7:0] rd_dq10_in_w;
 ISERDESE2
 #(
      .SERDES_MODE("MASTER")
-    ,.INTERFACE_TYPE("MEMORY")
-    ,.DATA_WIDTH(4)
+    ,.INTERFACE_TYPE("NETWORKING")   // CK-clocked oversampling, no DQS strobe
+    ,.DATA_WIDTH(8)
     ,.DATA_RATE("DDR")
     ,.NUM_CE(1)
-    ,.IOBDELAY("IFD")
+    ,.IOBDELAY("IFD")                // capture the IDELAYE2 output (DDLY)
 )
 u_serdes_dq_in10
 (
-    // DQS input strobe
-     .CLK(dqs_delayed_w[1])
-    ,.CLKB(~dqs_delayed_w[1])
+    // Sample clock: the 400 MHz BUFG, both edges -> 800 Msps
+     .CLK(clk_ddr_i)
+    ,.CLKB(~clk_ddr_i)
 
-    // Fast clock
-    ,.OCLK(clk_ddr_i)
-    ,.OCLKB(~clk_ddr_i)
-
-    // Slow clock
+    // Fabric clock: the 100 MHz BUFG, 8 samples per cycle
     ,.CLKDIV(clk_i)
-    ,.RST(rst_i)
+    ,.CLKDIVP(1'b0)
 
-    ,.BITSLIP(0)
+    // Unused in NETWORKING mode
+    ,.OCLK(1'b0)
+    ,.OCLKB(1'b0)
+
+    ,.RST(rst_i)
+    ,.BITSLIP(1'b0)
     ,.CE1(1'b1)
-    
-    // TODO:
+    ,.CE2(1'b0)
+
     ,.DDLY(dq_delayed_w[10])
     ,.D(1'b0)
 
-    // Parallel output
-    ,.Q4(rd_dq10_in_w[3])
-    ,.Q3(rd_dq10_in_w[2])
-    ,.Q2(rd_dq10_in_w[1])
+    // Parallel output: Q8 is the OLDEST sample, Q1 the NEWEST.
     ,.Q1(rd_dq10_in_w[0])
+    ,.Q2(rd_dq10_in_w[1])
+    ,.Q3(rd_dq10_in_w[2])
+    ,.Q4(rd_dq10_in_w[3])
+    ,.Q5(rd_dq10_in_w[4])
+    ,.Q6(rd_dq10_in_w[5])
+    ,.Q7(rd_dq10_in_w[6])
+    ,.Q8(rd_dq10_in_w[7])
 
     // Unused
     ,.O()
     ,.SHIFTOUT1()
     ,.SHIFTOUT2()
-    ,.CE2(1'b0)
-    ,.CLKDIVP(0)
-    ,.DYNCLKDIVSEL(0)
-    ,.DYNCLKSEL(0)
-    ,.OFB(0)
-    ,.SHIFTIN1(0)
-    ,.SHIFTIN2(0)
+    ,.DYNCLKDIVSEL(1'b0)
+    ,.DYNCLKSEL(1'b0)
+    ,.OFB(1'b0)
+    ,.SHIFTIN1(1'b0)
+    ,.SHIFTIN2(1'b0)
 );
 
 IDELAYE2 
@@ -2307,54 +2309,57 @@ u_dq_delay11
     ,.CNTVALUEOUT()
 );
 
-wire [3:0] rd_dq11_in_w;
+wire [7:0] rd_dq11_in_w;
 ISERDESE2
 #(
      .SERDES_MODE("MASTER")
-    ,.INTERFACE_TYPE("MEMORY")
-    ,.DATA_WIDTH(4)
+    ,.INTERFACE_TYPE("NETWORKING")   // CK-clocked oversampling, no DQS strobe
+    ,.DATA_WIDTH(8)
     ,.DATA_RATE("DDR")
     ,.NUM_CE(1)
-    ,.IOBDELAY("IFD")
+    ,.IOBDELAY("IFD")                // capture the IDELAYE2 output (DDLY)
 )
 u_serdes_dq_in11
 (
-    // DQS input strobe
-     .CLK(dqs_delayed_w[1])
-    ,.CLKB(~dqs_delayed_w[1])
+    // Sample clock: the 400 MHz BUFG, both edges -> 800 Msps
+     .CLK(clk_ddr_i)
+    ,.CLKB(~clk_ddr_i)
 
-    // Fast clock
-    ,.OCLK(clk_ddr_i)
-    ,.OCLKB(~clk_ddr_i)
-
-    // Slow clock
+    // Fabric clock: the 100 MHz BUFG, 8 samples per cycle
     ,.CLKDIV(clk_i)
-    ,.RST(rst_i)
+    ,.CLKDIVP(1'b0)
 
-    ,.BITSLIP(0)
+    // Unused in NETWORKING mode
+    ,.OCLK(1'b0)
+    ,.OCLKB(1'b0)
+
+    ,.RST(rst_i)
+    ,.BITSLIP(1'b0)
     ,.CE1(1'b1)
-    
-    // TODO:
+    ,.CE2(1'b0)
+
     ,.DDLY(dq_delayed_w[11])
     ,.D(1'b0)
 
-    // Parallel output
-    ,.Q4(rd_dq11_in_w[3])
-    ,.Q3(rd_dq11_in_w[2])
-    ,.Q2(rd_dq11_in_w[1])
+    // Parallel output: Q8 is the OLDEST sample, Q1 the NEWEST.
     ,.Q1(rd_dq11_in_w[0])
+    ,.Q2(rd_dq11_in_w[1])
+    ,.Q3(rd_dq11_in_w[2])
+    ,.Q4(rd_dq11_in_w[3])
+    ,.Q5(rd_dq11_in_w[4])
+    ,.Q6(rd_dq11_in_w[5])
+    ,.Q7(rd_dq11_in_w[6])
+    ,.Q8(rd_dq11_in_w[7])
 
     // Unused
     ,.O()
     ,.SHIFTOUT1()
     ,.SHIFTOUT2()
-    ,.CE2(1'b0)
-    ,.CLKDIVP(0)
-    ,.DYNCLKDIVSEL(0)
-    ,.DYNCLKSEL(0)
-    ,.OFB(0)
-    ,.SHIFTIN1(0)
-    ,.SHIFTIN2(0)
+    ,.DYNCLKDIVSEL(1'b0)
+    ,.DYNCLKSEL(1'b0)
+    ,.OFB(1'b0)
+    ,.SHIFTIN1(1'b0)
+    ,.SHIFTIN2(1'b0)
 );
 
 IDELAYE2 
@@ -2384,54 +2389,57 @@ u_dq_delay12
     ,.CNTVALUEOUT()
 );
 
-wire [3:0] rd_dq12_in_w;
+wire [7:0] rd_dq12_in_w;
 ISERDESE2
 #(
      .SERDES_MODE("MASTER")
-    ,.INTERFACE_TYPE("MEMORY")
-    ,.DATA_WIDTH(4)
+    ,.INTERFACE_TYPE("NETWORKING")   // CK-clocked oversampling, no DQS strobe
+    ,.DATA_WIDTH(8)
     ,.DATA_RATE("DDR")
     ,.NUM_CE(1)
-    ,.IOBDELAY("IFD")
+    ,.IOBDELAY("IFD")                // capture the IDELAYE2 output (DDLY)
 )
 u_serdes_dq_in12
 (
-    // DQS input strobe
-     .CLK(dqs_delayed_w[1])
-    ,.CLKB(~dqs_delayed_w[1])
+    // Sample clock: the 400 MHz BUFG, both edges -> 800 Msps
+     .CLK(clk_ddr_i)
+    ,.CLKB(~clk_ddr_i)
 
-    // Fast clock
-    ,.OCLK(clk_ddr_i)
-    ,.OCLKB(~clk_ddr_i)
-
-    // Slow clock
+    // Fabric clock: the 100 MHz BUFG, 8 samples per cycle
     ,.CLKDIV(clk_i)
-    ,.RST(rst_i)
+    ,.CLKDIVP(1'b0)
 
-    ,.BITSLIP(0)
+    // Unused in NETWORKING mode
+    ,.OCLK(1'b0)
+    ,.OCLKB(1'b0)
+
+    ,.RST(rst_i)
+    ,.BITSLIP(1'b0)
     ,.CE1(1'b1)
-    
-    // TODO:
+    ,.CE2(1'b0)
+
     ,.DDLY(dq_delayed_w[12])
     ,.D(1'b0)
 
-    // Parallel output
-    ,.Q4(rd_dq12_in_w[3])
-    ,.Q3(rd_dq12_in_w[2])
-    ,.Q2(rd_dq12_in_w[1])
+    // Parallel output: Q8 is the OLDEST sample, Q1 the NEWEST.
     ,.Q1(rd_dq12_in_w[0])
+    ,.Q2(rd_dq12_in_w[1])
+    ,.Q3(rd_dq12_in_w[2])
+    ,.Q4(rd_dq12_in_w[3])
+    ,.Q5(rd_dq12_in_w[4])
+    ,.Q6(rd_dq12_in_w[5])
+    ,.Q7(rd_dq12_in_w[6])
+    ,.Q8(rd_dq12_in_w[7])
 
     // Unused
     ,.O()
     ,.SHIFTOUT1()
     ,.SHIFTOUT2()
-    ,.CE2(1'b0)
-    ,.CLKDIVP(0)
-    ,.DYNCLKDIVSEL(0)
-    ,.DYNCLKSEL(0)
-    ,.OFB(0)
-    ,.SHIFTIN1(0)
-    ,.SHIFTIN2(0)
+    ,.DYNCLKDIVSEL(1'b0)
+    ,.DYNCLKSEL(1'b0)
+    ,.OFB(1'b0)
+    ,.SHIFTIN1(1'b0)
+    ,.SHIFTIN2(1'b0)
 );
 
 IDELAYE2 
@@ -2461,54 +2469,57 @@ u_dq_delay13
     ,.CNTVALUEOUT()
 );
 
-wire [3:0] rd_dq13_in_w;
+wire [7:0] rd_dq13_in_w;
 ISERDESE2
 #(
      .SERDES_MODE("MASTER")
-    ,.INTERFACE_TYPE("MEMORY")
-    ,.DATA_WIDTH(4)
+    ,.INTERFACE_TYPE("NETWORKING")   // CK-clocked oversampling, no DQS strobe
+    ,.DATA_WIDTH(8)
     ,.DATA_RATE("DDR")
     ,.NUM_CE(1)
-    ,.IOBDELAY("IFD")
+    ,.IOBDELAY("IFD")                // capture the IDELAYE2 output (DDLY)
 )
 u_serdes_dq_in13
 (
-    // DQS input strobe
-     .CLK(dqs_delayed_w[1])
-    ,.CLKB(~dqs_delayed_w[1])
+    // Sample clock: the 400 MHz BUFG, both edges -> 800 Msps
+     .CLK(clk_ddr_i)
+    ,.CLKB(~clk_ddr_i)
 
-    // Fast clock
-    ,.OCLK(clk_ddr_i)
-    ,.OCLKB(~clk_ddr_i)
-
-    // Slow clock
+    // Fabric clock: the 100 MHz BUFG, 8 samples per cycle
     ,.CLKDIV(clk_i)
-    ,.RST(rst_i)
+    ,.CLKDIVP(1'b0)
 
-    ,.BITSLIP(0)
+    // Unused in NETWORKING mode
+    ,.OCLK(1'b0)
+    ,.OCLKB(1'b0)
+
+    ,.RST(rst_i)
+    ,.BITSLIP(1'b0)
     ,.CE1(1'b1)
-    
-    // TODO:
+    ,.CE2(1'b0)
+
     ,.DDLY(dq_delayed_w[13])
     ,.D(1'b0)
 
-    // Parallel output
-    ,.Q4(rd_dq13_in_w[3])
-    ,.Q3(rd_dq13_in_w[2])
-    ,.Q2(rd_dq13_in_w[1])
+    // Parallel output: Q8 is the OLDEST sample, Q1 the NEWEST.
     ,.Q1(rd_dq13_in_w[0])
+    ,.Q2(rd_dq13_in_w[1])
+    ,.Q3(rd_dq13_in_w[2])
+    ,.Q4(rd_dq13_in_w[3])
+    ,.Q5(rd_dq13_in_w[4])
+    ,.Q6(rd_dq13_in_w[5])
+    ,.Q7(rd_dq13_in_w[6])
+    ,.Q8(rd_dq13_in_w[7])
 
     // Unused
     ,.O()
     ,.SHIFTOUT1()
     ,.SHIFTOUT2()
-    ,.CE2(1'b0)
-    ,.CLKDIVP(0)
-    ,.DYNCLKDIVSEL(0)
-    ,.DYNCLKSEL(0)
-    ,.OFB(0)
-    ,.SHIFTIN1(0)
-    ,.SHIFTIN2(0)
+    ,.DYNCLKDIVSEL(1'b0)
+    ,.DYNCLKSEL(1'b0)
+    ,.OFB(1'b0)
+    ,.SHIFTIN1(1'b0)
+    ,.SHIFTIN2(1'b0)
 );
 
 IDELAYE2 
@@ -2538,54 +2549,57 @@ u_dq_delay14
     ,.CNTVALUEOUT()
 );
 
-wire [3:0] rd_dq14_in_w;
+wire [7:0] rd_dq14_in_w;
 ISERDESE2
 #(
      .SERDES_MODE("MASTER")
-    ,.INTERFACE_TYPE("MEMORY")
-    ,.DATA_WIDTH(4)
+    ,.INTERFACE_TYPE("NETWORKING")   // CK-clocked oversampling, no DQS strobe
+    ,.DATA_WIDTH(8)
     ,.DATA_RATE("DDR")
     ,.NUM_CE(1)
-    ,.IOBDELAY("IFD")
+    ,.IOBDELAY("IFD")                // capture the IDELAYE2 output (DDLY)
 )
 u_serdes_dq_in14
 (
-    // DQS input strobe
-     .CLK(dqs_delayed_w[1])
-    ,.CLKB(~dqs_delayed_w[1])
+    // Sample clock: the 400 MHz BUFG, both edges -> 800 Msps
+     .CLK(clk_ddr_i)
+    ,.CLKB(~clk_ddr_i)
 
-    // Fast clock
-    ,.OCLK(clk_ddr_i)
-    ,.OCLKB(~clk_ddr_i)
-
-    // Slow clock
+    // Fabric clock: the 100 MHz BUFG, 8 samples per cycle
     ,.CLKDIV(clk_i)
-    ,.RST(rst_i)
+    ,.CLKDIVP(1'b0)
 
-    ,.BITSLIP(0)
+    // Unused in NETWORKING mode
+    ,.OCLK(1'b0)
+    ,.OCLKB(1'b0)
+
+    ,.RST(rst_i)
+    ,.BITSLIP(1'b0)
     ,.CE1(1'b1)
-    
-    // TODO:
+    ,.CE2(1'b0)
+
     ,.DDLY(dq_delayed_w[14])
     ,.D(1'b0)
 
-    // Parallel output
-    ,.Q4(rd_dq14_in_w[3])
-    ,.Q3(rd_dq14_in_w[2])
-    ,.Q2(rd_dq14_in_w[1])
+    // Parallel output: Q8 is the OLDEST sample, Q1 the NEWEST.
     ,.Q1(rd_dq14_in_w[0])
+    ,.Q2(rd_dq14_in_w[1])
+    ,.Q3(rd_dq14_in_w[2])
+    ,.Q4(rd_dq14_in_w[3])
+    ,.Q5(rd_dq14_in_w[4])
+    ,.Q6(rd_dq14_in_w[5])
+    ,.Q7(rd_dq14_in_w[6])
+    ,.Q8(rd_dq14_in_w[7])
 
     // Unused
     ,.O()
     ,.SHIFTOUT1()
     ,.SHIFTOUT2()
-    ,.CE2(1'b0)
-    ,.CLKDIVP(0)
-    ,.DYNCLKDIVSEL(0)
-    ,.DYNCLKSEL(0)
-    ,.OFB(0)
-    ,.SHIFTIN1(0)
-    ,.SHIFTIN2(0)
+    ,.DYNCLKDIVSEL(1'b0)
+    ,.DYNCLKSEL(1'b0)
+    ,.OFB(1'b0)
+    ,.SHIFTIN1(1'b0)
+    ,.SHIFTIN2(1'b0)
 );
 
 IDELAYE2 
@@ -2615,125 +2629,169 @@ u_dq_delay15
     ,.CNTVALUEOUT()
 );
 
-wire [3:0] rd_dq15_in_w;
+wire [7:0] rd_dq15_in_w;
 ISERDESE2
 #(
      .SERDES_MODE("MASTER")
-    ,.INTERFACE_TYPE("MEMORY")
-    ,.DATA_WIDTH(4)
+    ,.INTERFACE_TYPE("NETWORKING")   // CK-clocked oversampling, no DQS strobe
+    ,.DATA_WIDTH(8)
     ,.DATA_RATE("DDR")
     ,.NUM_CE(1)
-    ,.IOBDELAY("IFD")
+    ,.IOBDELAY("IFD")                // capture the IDELAYE2 output (DDLY)
 )
 u_serdes_dq_in15
 (
-    // DQS input strobe
-     .CLK(dqs_delayed_w[1])
-    ,.CLKB(~dqs_delayed_w[1])
+    // Sample clock: the 400 MHz BUFG, both edges -> 800 Msps
+     .CLK(clk_ddr_i)
+    ,.CLKB(~clk_ddr_i)
 
-    // Fast clock
-    ,.OCLK(clk_ddr_i)
-    ,.OCLKB(~clk_ddr_i)
-
-    // Slow clock
+    // Fabric clock: the 100 MHz BUFG, 8 samples per cycle
     ,.CLKDIV(clk_i)
-    ,.RST(rst_i)
+    ,.CLKDIVP(1'b0)
 
-    ,.BITSLIP(0)
+    // Unused in NETWORKING mode
+    ,.OCLK(1'b0)
+    ,.OCLKB(1'b0)
+
+    ,.RST(rst_i)
+    ,.BITSLIP(1'b0)
     ,.CE1(1'b1)
-    
-    // TODO:
+    ,.CE2(1'b0)
+
     ,.DDLY(dq_delayed_w[15])
     ,.D(1'b0)
 
-    // Parallel output
-    ,.Q4(rd_dq15_in_w[3])
-    ,.Q3(rd_dq15_in_w[2])
-    ,.Q2(rd_dq15_in_w[1])
+    // Parallel output: Q8 is the OLDEST sample, Q1 the NEWEST.
     ,.Q1(rd_dq15_in_w[0])
+    ,.Q2(rd_dq15_in_w[1])
+    ,.Q3(rd_dq15_in_w[2])
+    ,.Q4(rd_dq15_in_w[3])
+    ,.Q5(rd_dq15_in_w[4])
+    ,.Q6(rd_dq15_in_w[5])
+    ,.Q7(rd_dq15_in_w[6])
+    ,.Q8(rd_dq15_in_w[7])
 
     // Unused
     ,.O()
     ,.SHIFTOUT1()
     ,.SHIFTOUT2()
-    ,.CE2(1'b0)
-    ,.CLKDIVP(0)
-    ,.DYNCLKDIVSEL(0)
-    ,.DYNCLKSEL(0)
-    ,.OFB(0)
-    ,.SHIFTIN1(0)
-    ,.SHIFTIN2(0)
+    ,.DYNCLKDIVSEL(1'b0)
+    ,.DYNCLKSEL(1'b0)
+    ,.OFB(1'b0)
+    ,.SHIFTIN1(1'b0)
+    ,.SHIFTIN2(1'b0)
 );
 
-wire [15:0] rd_data0_w;
-wire [15:0] rd_data1_w;
-wire [15:0] rd_data2_w;
-wire [15:0] rd_data3_w;
+//-----------------------------------------------------------------
+// Read data assembly - oversampled, no DQS
+//
+// Each DQ lane is deserialised 8:1 by an ISERDESE2 in NETWORKING mode with
+// CLK = clk_ddr_i (400 MHz, BUFG) sampling on both edges and CLKDIV = clk_i
+// (100 MHz, BUFG).  That is 800 Msps = one sample every 1.25 ns, and eight
+// samples per 100 MHz cycle.
+//
+// The DDR3 runs DLL-off at CK = 100 MHz, so one read beat is 5 ns wide:
+// exactly FOUR oversamples per beat and TWO beats per clk_i cycle.
+//
+//                      one clk_i cycle = 10 ns = 8 oversamples
+//                    |<--------------------------------------->|
+//   clk_i         ___|~~~~~~~~~~~~~~~~~~~~|____________________|~~~~
+//   DQ from DRAM  ...|<-- beat A -->|<-- beat B -->|<-- beat C -->|
+//                    |    5 ns      |
+//   sample index      0   1   2   3   4   5   6   7   0   1   2  ...
+//                     ^-- 1.25 ns --^
+//
+// So samples 0..3 of a cycle sit inside one beat and samples 4..7 inside the
+// next; whichever sample is nearest the centre of its beat is the one to keep.
+//
+// `rd_smp_w` holds the eight samples presented at THIS clk_i edge, index 0 =
+// oldest, index 7 = newest (ISERDESE2 Q8 is the oldest bit, Q1 the newest).
+// `rd_smp_q` is the same eight samples from the PREVIOUS cycle, so the pair
+// forms a 16-sample sliding window per DQ bit:
+//
+//   rd_win_w index :  0  1  2  3  4  5  6  7 | 8  9 10 11 12 13 14 15
+//                    <---- previous cycle --->|<---- this cycle ------>
+//                    older  <--------- time --------->  newer
+//
+// The read-sample select cfg_i[3:0] (`RDSEL`, rd_sel_q) picks the pair:
+//
+//   sel  = rd_sel_q[2:0]  +  (rd_sel_q[3] ? 4 : 0)     -> 0 .. 11
+//   beat0 = rd_win_w[sel]        (the EARLIER beat)
+//   beat1 = rd_win_w[sel + 4]    (the LATER beat, one beat = 4 samples)
+//
+//   * rd_sel_q[2:0] walks the sample point across the eye in 1.25 ns steps.
+//     0..3 stay inside one beat; 4..7 are the same four phases one beat (5 ns)
+//     later, which is how the beat pairing (which physical beat becomes beat0)
+//     is corrected.
+//   * rd_sel_q[3] adds a further half cycle (4 samples = 5 ns), sliding the
+//     beat pair across the previous/current window boundary, so that the whole
+//     16-sample history is reachable.
+//   * sel spans 0..11 so that sel+4 never leaves the 16-sample window; the
+//     reachable range is 13.75 ns, more than one full clk_i cycle, and it
+//     overlaps with the whole-cycle steps of RDLAT (cfg_i[10:8]).
+//
+// dfi_rddata_o keeps the original beat order: the EARLIER beat in [15:0] and
+// the LATER beat in [31:16] (the old rd_sel_q==0 case was
+// {rd_data1_w, rd_data0_w} with rd_data0_w = the first captured beat).
+//
+// RDLAT is unchanged in meaning: clk_i cycles from dfi_rddata_en_i to
+// dfi_rddata_valid_o.  The pipeline depth from the ISERDES outputs to
+// dfi_rddata_o is one register (rd_capture_q) exactly as before; rd_smp_q is
+// a parallel history register, it does not add latency.
+//-----------------------------------------------------------------
 
-assign rd_data0_w[0]  = rd_dq0_in_w[0];
-assign rd_data1_w[0]  = rd_dq0_in_w[1];
-assign rd_data2_w[0]  = rd_dq0_in_w[2];
-assign rd_data3_w[0]  = rd_dq0_in_w[3];
-assign rd_data0_w[1]  = rd_dq1_in_w[0];
-assign rd_data1_w[1]  = rd_dq1_in_w[1];
-assign rd_data2_w[1]  = rd_dq1_in_w[2];
-assign rd_data3_w[1]  = rd_dq1_in_w[3];
-assign rd_data0_w[2]  = rd_dq2_in_w[0];
-assign rd_data1_w[2]  = rd_dq2_in_w[1];
-assign rd_data2_w[2]  = rd_dq2_in_w[2];
-assign rd_data3_w[2]  = rd_dq2_in_w[3];
-assign rd_data0_w[3]  = rd_dq3_in_w[0];
-assign rd_data1_w[3]  = rd_dq3_in_w[1];
-assign rd_data2_w[3]  = rd_dq3_in_w[2];
-assign rd_data3_w[3]  = rd_dq3_in_w[3];
-assign rd_data0_w[4]  = rd_dq4_in_w[0];
-assign rd_data1_w[4]  = rd_dq4_in_w[1];
-assign rd_data2_w[4]  = rd_dq4_in_w[2];
-assign rd_data3_w[4]  = rd_dq4_in_w[3];
-assign rd_data0_w[5]  = rd_dq5_in_w[0];
-assign rd_data1_w[5]  = rd_dq5_in_w[1];
-assign rd_data2_w[5]  = rd_dq5_in_w[2];
-assign rd_data3_w[5]  = rd_dq5_in_w[3];
-assign rd_data0_w[6]  = rd_dq6_in_w[0];
-assign rd_data1_w[6]  = rd_dq6_in_w[1];
-assign rd_data2_w[6]  = rd_dq6_in_w[2];
-assign rd_data3_w[6]  = rd_dq6_in_w[3];
-assign rd_data0_w[7]  = rd_dq7_in_w[0];
-assign rd_data1_w[7]  = rd_dq7_in_w[1];
-assign rd_data2_w[7]  = rd_dq7_in_w[2];
-assign rd_data3_w[7]  = rd_dq7_in_w[3];
-assign rd_data0_w[8]  = rd_dq8_in_w[0];
-assign rd_data1_w[8]  = rd_dq8_in_w[1];
-assign rd_data2_w[8]  = rd_dq8_in_w[2];
-assign rd_data3_w[8]  = rd_dq8_in_w[3];
-assign rd_data0_w[9]  = rd_dq9_in_w[0];
-assign rd_data1_w[9]  = rd_dq9_in_w[1];
-assign rd_data2_w[9]  = rd_dq9_in_w[2];
-assign rd_data3_w[9]  = rd_dq9_in_w[3];
-assign rd_data0_w[10]  = rd_dq10_in_w[0];
-assign rd_data1_w[10]  = rd_dq10_in_w[1];
-assign rd_data2_w[10]  = rd_dq10_in_w[2];
-assign rd_data3_w[10]  = rd_dq10_in_w[3];
-assign rd_data0_w[11]  = rd_dq11_in_w[0];
-assign rd_data1_w[11]  = rd_dq11_in_w[1];
-assign rd_data2_w[11]  = rd_dq11_in_w[2];
-assign rd_data3_w[11]  = rd_dq11_in_w[3];
-assign rd_data0_w[12]  = rd_dq12_in_w[0];
-assign rd_data1_w[12]  = rd_dq12_in_w[1];
-assign rd_data2_w[12]  = rd_dq12_in_w[2];
-assign rd_data3_w[12]  = rd_dq12_in_w[3];
-assign rd_data0_w[13]  = rd_dq13_in_w[0];
-assign rd_data1_w[13]  = rd_dq13_in_w[1];
-assign rd_data2_w[13]  = rd_dq13_in_w[2];
-assign rd_data3_w[13]  = rd_dq13_in_w[3];
-assign rd_data0_w[14]  = rd_dq14_in_w[0];
-assign rd_data1_w[14]  = rd_dq14_in_w[1];
-assign rd_data2_w[14]  = rd_dq14_in_w[2];
-assign rd_data3_w[14]  = rd_dq14_in_w[3];
-assign rd_data0_w[15]  = rd_dq15_in_w[0];
-assign rd_data1_w[15]  = rd_dq15_in_w[1];
-assign rd_data2_w[15]  = rd_dq15_in_w[2];
-assign rd_data3_w[15]  = rd_dq15_in_w[3];
+// rd_smp_w[k*16 + b] = sample k (0 = oldest) of DQ lane b, this cycle.
+wire [127:0] rd_smp_w;
+
+assign {rd_smp_w[  0+ 0], rd_smp_w[ 16+ 0], rd_smp_w[ 32+ 0], rd_smp_w[ 48+ 0],
+        rd_smp_w[ 64+ 0], rd_smp_w[ 80+ 0], rd_smp_w[ 96+ 0], rd_smp_w[112+ 0]} = rd_dq0_in_w;
+assign {rd_smp_w[  0+ 1], rd_smp_w[ 16+ 1], rd_smp_w[ 32+ 1], rd_smp_w[ 48+ 1],
+        rd_smp_w[ 64+ 1], rd_smp_w[ 80+ 1], rd_smp_w[ 96+ 1], rd_smp_w[112+ 1]} = rd_dq1_in_w;
+assign {rd_smp_w[  0+ 2], rd_smp_w[ 16+ 2], rd_smp_w[ 32+ 2], rd_smp_w[ 48+ 2],
+        rd_smp_w[ 64+ 2], rd_smp_w[ 80+ 2], rd_smp_w[ 96+ 2], rd_smp_w[112+ 2]} = rd_dq2_in_w;
+assign {rd_smp_w[  0+ 3], rd_smp_w[ 16+ 3], rd_smp_w[ 32+ 3], rd_smp_w[ 48+ 3],
+        rd_smp_w[ 64+ 3], rd_smp_w[ 80+ 3], rd_smp_w[ 96+ 3], rd_smp_w[112+ 3]} = rd_dq3_in_w;
+assign {rd_smp_w[  0+ 4], rd_smp_w[ 16+ 4], rd_smp_w[ 32+ 4], rd_smp_w[ 48+ 4],
+        rd_smp_w[ 64+ 4], rd_smp_w[ 80+ 4], rd_smp_w[ 96+ 4], rd_smp_w[112+ 4]} = rd_dq4_in_w;
+assign {rd_smp_w[  0+ 5], rd_smp_w[ 16+ 5], rd_smp_w[ 32+ 5], rd_smp_w[ 48+ 5],
+        rd_smp_w[ 64+ 5], rd_smp_w[ 80+ 5], rd_smp_w[ 96+ 5], rd_smp_w[112+ 5]} = rd_dq5_in_w;
+assign {rd_smp_w[  0+ 6], rd_smp_w[ 16+ 6], rd_smp_w[ 32+ 6], rd_smp_w[ 48+ 6],
+        rd_smp_w[ 64+ 6], rd_smp_w[ 80+ 6], rd_smp_w[ 96+ 6], rd_smp_w[112+ 6]} = rd_dq6_in_w;
+assign {rd_smp_w[  0+ 7], rd_smp_w[ 16+ 7], rd_smp_w[ 32+ 7], rd_smp_w[ 48+ 7],
+        rd_smp_w[ 64+ 7], rd_smp_w[ 80+ 7], rd_smp_w[ 96+ 7], rd_smp_w[112+ 7]} = rd_dq7_in_w;
+assign {rd_smp_w[  0+ 8], rd_smp_w[ 16+ 8], rd_smp_w[ 32+ 8], rd_smp_w[ 48+ 8],
+        rd_smp_w[ 64+ 8], rd_smp_w[ 80+ 8], rd_smp_w[ 96+ 8], rd_smp_w[112+ 8]} = rd_dq8_in_w;
+assign {rd_smp_w[  0+ 9], rd_smp_w[ 16+ 9], rd_smp_w[ 32+ 9], rd_smp_w[ 48+ 9],
+        rd_smp_w[ 64+ 9], rd_smp_w[ 80+ 9], rd_smp_w[ 96+ 9], rd_smp_w[112+ 9]} = rd_dq9_in_w;
+assign {rd_smp_w[  0+10], rd_smp_w[ 16+10], rd_smp_w[ 32+10], rd_smp_w[ 48+10],
+        rd_smp_w[ 64+10], rd_smp_w[ 80+10], rd_smp_w[ 96+10], rd_smp_w[112+10]} = rd_dq10_in_w;
+assign {rd_smp_w[  0+11], rd_smp_w[ 16+11], rd_smp_w[ 32+11], rd_smp_w[ 48+11],
+        rd_smp_w[ 64+11], rd_smp_w[ 80+11], rd_smp_w[ 96+11], rd_smp_w[112+11]} = rd_dq11_in_w;
+assign {rd_smp_w[  0+12], rd_smp_w[ 16+12], rd_smp_w[ 32+12], rd_smp_w[ 48+12],
+        rd_smp_w[ 64+12], rd_smp_w[ 80+12], rd_smp_w[ 96+12], rd_smp_w[112+12]} = rd_dq12_in_w;
+assign {rd_smp_w[  0+13], rd_smp_w[ 16+13], rd_smp_w[ 32+13], rd_smp_w[ 48+13],
+        rd_smp_w[ 64+13], rd_smp_w[ 80+13], rd_smp_w[ 96+13], rd_smp_w[112+13]} = rd_dq13_in_w;
+assign {rd_smp_w[  0+14], rd_smp_w[ 16+14], rd_smp_w[ 32+14], rd_smp_w[ 48+14],
+        rd_smp_w[ 64+14], rd_smp_w[ 80+14], rd_smp_w[ 96+14], rd_smp_w[112+14]} = rd_dq14_in_w;
+assign {rd_smp_w[  0+15], rd_smp_w[ 16+15], rd_smp_w[ 32+15], rd_smp_w[ 48+15],
+        rd_smp_w[ 64+15], rd_smp_w[ 80+15], rd_smp_w[ 96+15], rd_smp_w[112+15]} = rd_dq15_in_w;
+
+// Previous cycle's eight samples.
+reg [127:0] rd_smp_q;
+
+always @ (posedge clk_i )
+if (rst_i)
+    rd_smp_q <= 128'b0;
+else
+    rd_smp_q <= rd_smp_w;
+
+// 16-sample sliding window, oldest at index 0.
+wire [255:0] rd_win_w = {rd_smp_w, rd_smp_q};
+
+wire [3:0] rd_sel_base_w = {1'b0, rd_sel_q[2:0]} + (rd_sel_q[3] ? 4'd4 : 4'd0);
+
+wire [15:0] rd_beat0_w = rd_win_w[{rd_sel_base_w,            4'b0} +: 16];
+wire [15:0] rd_beat1_w = rd_win_w[{rd_sel_base_w + 4'd4,     4'b0} +: 16];
 
 reg [31:0] rd_capture_q;
 
@@ -2741,26 +2799,7 @@ always @ (posedge clk_i )
 if (rst_i)
     rd_capture_q <= 32'b0;
 else
-begin
-    case (rd_sel_q)
-    4'd0:  rd_capture_q <= {rd_data1_w, rd_data0_w};
-    4'd1:  rd_capture_q <= {rd_data1_w, rd_data1_w};
-    4'd2:  rd_capture_q <= {rd_data1_w, rd_data2_w};
-    4'd3:  rd_capture_q <= {rd_data1_w, rd_data3_w};
-    4'd4:  rd_capture_q <= {rd_data2_w, rd_data0_w};
-    4'd5:  rd_capture_q <= {rd_data2_w, rd_data1_w};
-    4'd6:  rd_capture_q <= {rd_data2_w, rd_data2_w};
-    4'd7:  rd_capture_q <= {rd_data2_w, rd_data3_w};
-    4'd8:  rd_capture_q <= {rd_data3_w, rd_data0_w};
-    4'd9:  rd_capture_q <= {rd_data3_w, rd_data1_w};
-    4'd10: rd_capture_q <= {rd_data3_w, rd_data2_w};
-    4'd11: rd_capture_q <= {rd_data3_w, rd_data3_w};   
-    4'd12: rd_capture_q <= {rd_data0_w, rd_data0_w};
-    4'd13: rd_capture_q <= {rd_data0_w, rd_data1_w};
-    4'd14: rd_capture_q <= {rd_data0_w, rd_data2_w};
-    4'd15: rd_capture_q <= {rd_data0_w, rd_data3_w};
-    endcase
-end
+    rd_capture_q <= {rd_beat1_w, rd_beat0_w};
 
 assign dfi_rddata_o       = rd_capture_q;
 assign dfi_rddata_dnv_o   = 2'b0;
