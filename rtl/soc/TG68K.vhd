@@ -510,7 +510,10 @@ BEGIN
 		END IF;
 	END PROCESS;
 
-	chipset_cycle <= '1' when (sel_ram = '0' OR sel_nmi_vector = '1') AND sel_akiko = '0' and sel_undecoded = '0' else
+	-- A DDR3 (Zorro III) access is a memory cycle released by the DDR3 acknowledge, never a 7 MHz chipset cycle.
+	-- (sel_ram no longer covers the Z3 selects when haveddr3; without this term every DDR3 access was released
+	-- on the chipset strobes with whatever fromddr held at that moment.)
+	chipset_cycle <= '1' when ((sel_ram = '0' AND sel_ddr = '0') OR sel_nmi_vector = '1') AND sel_akiko = '0' and sel_undecoded = '0' else
 	'0';
 
 	PROCESS(clk, reset)
