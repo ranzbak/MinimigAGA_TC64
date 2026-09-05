@@ -1,5 +1,9 @@
 # DDR3 built-in self-test over JTAG (stage-A bitstream with vio_ddr3).
 # usage: -tclargs <bitstream> "<pattern list>" <range_log2> [program] [dqs_sweep <from> <to>]
+# Patterns: 0 address 1 55/AA 2 walking-1 3 LFSR 4 zeros+ones 5 masked (DM byte
+# enables) 6 wordwr (one 16-bit word per request) - 5 and 6 are the CPU-path DM
+# proof, need range_log2 >= 9 for full mask coverage, and are passed straight
+# through here because bist_pattern is 3 bits wide and 5/6 fit (no probe change).
 set bit [lindex $argv 0]; set ltx [file rootname $bit].ltx
 set patterns [lindex $argv 1]; set range [lindex $argv 2]
 set do_prog [expr {[lsearch $argv program] >= 0}]
@@ -18,7 +22,7 @@ proc run_bist {pat range} {
   wr bist_pattern $pat; wr bist_range_log2 $range; wr bist_mode 0; wr bist_start 0
   set t0 [clock milliseconds]; wr bist_start 1; after 20; wr bist_start 0
   set n 0
-  while {[rd bist_done] != 1 && $n < 6000} { after 50; incr n }
+  while {[rd bist_done] != 1 && $n < 24000} { after 50; incr n }
   set dt [expr {[clock milliseconds] - $t0}]
   puts [format "=== pattern %d range 2^%d: done %s busy %s errors %s lines %s first_err_addr 0x%08x xor 0x%08x  (%d ms) ===" \
     $pat $range [rd bist_done] [rd bist_busy] [rd bist_err_count] [rd bist_lines_done] [rd bist_first_err_addr] [rd bist_first_err_xor] $dt]
@@ -35,7 +39,7 @@ proc run_bist_quiet {pat range} {
   wr bist_pattern $pat; wr bist_range_log2 $range; wr bist_mode 0; wr bist_start 0
   wr bist_start 1; after 20; wr bist_start 0
   set n 0
-  while {[rd bist_done] != 1 && $n < 6000} { after 50; incr n }
+  while {[rd bist_done] != 1 && $n < 24000} { after 50; incr n }
   return [rd bist_err_count]
 }
 set g [lsearch $argv grid]

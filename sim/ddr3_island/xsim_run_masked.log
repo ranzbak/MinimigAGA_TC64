@@ -1,0 +1,43 @@
+
+****** xsim v2023.2 (64-bit)
+  **** SW Build 4029153 on Fri Oct 13 20:13:54 MDT 2023
+  **** IP Build 4028589 on Sat Oct 14 00:45:43 MDT 2023
+  **** SharedData Build 4025554 on Tue Oct 10 17:18:54 MDT 2023
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source xsim.dir/island_sim/xsim_script.tcl
+# xsim {island_sim} -testplusarg SKEW_PS=4000 -testplusarg MASKONLY -autoloadwcfg -tclbatch {/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_island/run.tcl}
+Time resolution is 1 ps
+source /home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_island/run.tcl
+## run all
+TCK_MIN =        2500
+ddr3_island_tb.u_ram.file_io_open: at time                    0 WARNING: no +model_data option specified, using /tmp.
+INFO: DQS_SKEW_PS = 4000 ps, quick = 0
+=== DDR3 ISLAND TB start ===
+PASS: PLL locks
+LOAD_MODE: bank 2
+LOAD_MODE: bank 3
+LOAD_MODE: bank 1
+ddr3_island_tb.u_ram.cmd_task: at time 39935000.0 ps WARNING: Load Mode 1 DLL off mode is not fully modeled
+LOAD_MODE: bank 0
+PASS: controller init_done
+INFO: init_done at 62000000.0 ps
+INFO: DM tests at rdlat=5 rdsel=15 over 2^12 bytes (256 lines)
+INFO: pattern 5 (masked): errors=0 lines=256 (expected 256) first_err_addr=00000000 xor=00000000 at 158210000.0 ps
+PASS: BIST pattern 5 (masked byte-enable write) clean
+INFO: pattern 5 verify-only: errors=0 lines=256 first_err_addr=00000000 xor=00000000
+PASS: BIST pattern 5 verify-only (masked data retained) clean
+INFO: pattern 6 (wordwr): errors=0 lines=256 (expected 256) first_err_addr=00000000 xor=00000000 at 375720000.0 ps
+PASS: BIST pattern 6 (16-bit word writes) clean
+INFO: pattern 6 verify-only: errors=0 lines=256 first_err_addr=00000000 xor=00000000
+PASS: BIST pattern 6 verify-only (word-written data retained) clean
+INFO: DM[0] stuck-low control: errors=1 addr=00000000 xor=00ff0000 lines=1
+PASS: DM negative control: pattern 5 flags the stuck DM lane
+INFO: skew 4000 ps, defaults rdlat=5 rdsel=11
+DDR3 ISLAND TB: 7 passed, 0 failed
+$finish called at time : 422360 ns : File "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_island/ddr3_island_tb.sv" Line 555
+run: Time (s): cpu = 00:00:00.44 ; elapsed = 00:04:11 . Memory (MB): peak = 1425.312 ; gain = 0.000 ; free physical = 17480 ; free virtual = 35281
+## quit
+INFO: xsimkernel Simulation Memory Usage: 132604 KB (Peak: 185588 KB), Simulation CPU Usage: 250840 ms
+INFO: [Common 17-206] Exiting xsim at Sat Sep  5 12:25:31 2026...

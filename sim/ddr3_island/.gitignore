@@ -1,6 +1,9 @@
-# xsim products; xsim_run.log is the checked-in reference run
+# xsim products; xsim_run.log, xsim_run_skew*.log and xsim_run_masked.log are
+# the checked-in reference runs (run.sh writes one log per DQS_SKEW_PS value;
+# xsim_run_masked.log is "./run.sh 4000 -- MASKONLY", the DM-mode run)
 project.prj
 xsim.dir/
+run_skew*/
 xsim*.jou
 xsim*.backup.*
 xsim.log
