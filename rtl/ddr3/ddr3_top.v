@@ -153,6 +153,29 @@ wire         mem_accept_w;
 wire         mem_ack_w;
 wire [127:0] mem_read_data_w;
 
+//-----------------------------------------------------------------
+// init_done, registered before it leaves the island
+//
+// ddr3_core drives init_done_o combinationally from its state register.  Its
+// only consumer is the two-flop synchroniser in rtl/ddr3/ddr3_fastram.v
+// (init_sync), and combinational logic immediately in front of a synchroniser
+// is a real hazard -- a decode glitch can be captured as a spurious "ready" --
+// as well as a Critical report_cdc finding (CDC-10, "combinational logic
+// detected before a synchronizer").  One clk100 flop here fixes both.  The
+// signal goes high once, after calibration, and never changes again, so the
+// extra cycle of latency is free.
+//-----------------------------------------------------------------
+wire         init_done_w;
+reg          init_done_q;
+
+always @(posedge clk100_w)
+if (rst100_w)
+    init_done_q <= 1'b0;
+else
+    init_done_q <= init_done_w;
+
+assign init_done = init_done_q;
+
 ddr3_bist u_bist
 (
      .clk_i(clk100_w)
@@ -253,7 +276,7 @@ u_core
     ,.cfg_data_i(32'b0)
     ,.cfg_stall_o()
 
-    ,.init_done_o(init_done)
+    ,.init_done_o(init_done_w)
 
     ,.inport_wr_i(core_wr_w)
     ,.inport_rd_i(core_rd_w)

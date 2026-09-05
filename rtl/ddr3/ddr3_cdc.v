@@ -53,23 +53,34 @@
 // CONSTRAINTS THE INTEGRATOR MUST ADD  (ddr3.xdc)
 // ---------------------------------------------------------------------------
 //
-//   # the island and the Minimig clock tree are unrelated
-//   set_clock_groups -asynchronous \
-//       -group [get_clocks {ddr3_clk100 ddr3_clk400 ddr3_clk400_90 ddr3_clk200}] \
-//       -group [get_clocks {clk_114 dll_28 clk_sd_114}]
+//   The destination clock must NOT be put in an asynchronous clock group with
+//   the source clock.  set_clock_groups outranks set_max_delay (UG903), so a
+//   group makes every bound below vanish: report_exceptions then shows them as
+//   "Totally overridden path by CG" and neither the placer nor the router ever
+//   sees them.  Group away only the clocks that have no fabric crossing at all.
 //
-//   # the payload buses are quasi-static: bound the skew, do not time them
-//   set_max_delay -datapath_only -from [get_cells {*/req_rd_r*  */req_wr_r*
-//                                                  */req_adr_r* */req_wd_r*}] \
-//                 -to   [get_clocks ddr3_clk100] 8.000
-//   set_max_delay -datapath_only -from [get_cells {*/rdata_r*}] \
-//                 -to   [get_clocks clk_114] 8.000
-//   set_false_path -from [get_cells {*/req_tgl*}] -to [get_cells {*/req_sync_reg[0]*}]
-//   set_false_path -from [get_cells {*/ack_tgl*}] -to [get_cells {*/ack_sync_reg[0]*}]
+//   # the payload buses are quasi-static: bound the skew, do not time them.
+//   # The bound is ONE DESTINATION PERIOD; anything looser and the far side
+//   # could latch a torn address or half-updated write data.
+//   set_max_delay -datapath_only 10.000 -to [get_clocks clk_ddr100] \
+//       -from [get_cells {*/req_rd_r_reg */req_wr_r_reg* */req_adr_r_reg*
+//                         */req_wd_r_reg*}]
+//   set_max_delay -datapath_only  8.815 -to [get_clocks clk_114] \
+//       -from [get_cells {*/rdata_r_reg*}]
 //
-//   (the two set_false_path lines are optional -- ASYNC_REG plus the async
-//    clock group already covers the toggles; the set_max_delay lines are NOT
-//    optional, they are what keeps the bus skew below one destination period.)
+//   # the toggles are the only genuinely asynchronous bits; bound them too, so
+//   # that what is left of the destination period is settling time for the
+//   # first synchroniser stage
+//   set_max_delay -datapath_only 10.000 -from [get_cells {*/req_tgl_reg}] \
+//                                       -to   [get_cells {*/req_sync_reg*}]
+//   set_max_delay -datapath_only  8.815 -from [get_cells {*/ack_tgl_reg}] \
+//                                       -to   [get_cells {*/ack_sync_reg*}]
+//
+//   The live version of all four, with the fact that makes each of them legal,
+//   is in fpga/openaars/aars_v5.0/xc7a100t/ddr3.xdc.  Any OTHER crossing that
+//   appears once the destination clock leaves the asynchronous group (in this
+//   design: the island's init_done into ddr3_fastram's init_sync, and the board
+//   reset into the island's reset synchroniser) must be constrained there too.
 //
 // ---------------------------------------------------------------------------
 // RESET
@@ -112,7 +123,17 @@ module ddr3_cdc (
   output wire [128-1:0] req_wdata,
   input  wire         req_accept,
   input  wire         resp_valid,     // one pulse per request, read or write
-  input  wire [128-1:0] resp_rdata
+  input  wire [128-1:0] resp_rdata,
+
+  // ---- debug taps, src_clk domain only (for an ILA on the CPU side) -------
+  // Both are registers of THIS module read in the source domain: dbg_req_tgl
+  // is the source-side toggle itself, dbg_ack_tgl is the SYNCHRONISED copy of
+  // the destination toggle (ack_sync[1]), not the raw ack_tgl.  Probing the
+  // raw destination register from a clk_sys ILA would itself be an
+  // unsynchronised crossing, which is exactly what we are trying to measure.
+  output wire         dbg_req_tgl,
+  output wire         dbg_ack_tgl,
+  output wire         dbg_busy
 );
 
 
@@ -167,6 +188,13 @@ always @ (posedge src_clk) begin
     end
   end
 end
+
+
+//// debug taps (source domain) ////
+
+assign dbg_req_tgl = req_tgl;
+assign dbg_ack_tgl = ack_sync[1];
+assign dbg_busy    = busy;
 
 
 //// destination side ////

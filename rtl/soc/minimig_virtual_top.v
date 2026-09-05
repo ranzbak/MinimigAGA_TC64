@@ -24,7 +24,12 @@ module minimig_virtual_top #(
     parameter ram_64meg = 0,
     // Zorro-III fast RAM on the DDR3 island instead of the SDRAM.
     // findings/ddr3/design.md; the island itself lives in minimig_openaars_top.v.
-    parameter haveddr3 = 1)
+    parameter haveddr3 = 1,
+    // Debug build only: instantiate ila_fastram (tools/vivado/build_ila.tcl
+    // sets this generic to 1) on the CPU side of the DDR3 fast RAM, so a real
+    // Workbench boot can be captured.  0 in every normal build, and then not
+    // one flip-flop of it exists.
+    parameter DDR3_FASTRAM_ILA = 0)
 (
     // clock inputs
     input wire            CLK_IN,
@@ -221,6 +226,29 @@ wire           tg68_ddrready;
 // select (bit 2) replaced by the DDR3 one.  Everything else, cpuLongword
 // (bit 6) included, is passed through untouched.
 wire [  7-1:0] tg68_ddrcpustate = {tg68_cpustate[6:3], tg68_ddrcs, tg68_cpustate[1:0]};
+// DDR3 fast RAM debug taps (clk_114 domain), driven by ddr3_fastram and probed
+// by ila_fastram when DDR3_FASTRAM_ILA = 1.  Declared unconditionally so the
+// port map below is the same in both builds; with the ILA off nothing reads
+// them and synthesis prunes the lot.
+wire [  2-1:0] ddr3_dbg_bstate;
+wire           ddr3_dbg_cdc_ready;
+wire           ddr3_dbg_cdc_req;
+wire           ddr3_dbg_cdc_done;
+wire           ddr3_dbg_req_rd;
+wire [ 16-1:0] ddr3_dbg_req_be;
+wire [ 32-1:0] ddr3_dbg_req_addr;
+wire [128-1:0] ddr3_dbg_req_wdata;
+wire           ddr3_dbg_req_tgl;
+wire [128-1:0] ddr3_dbg_resp_rdata;
+wire           ddr3_dbg_ack_tgl;
+wire           ddr3_dbg_sdr_read_req;
+wire           ddr3_dbg_sdr_read_ack;
+wire [ 16-1:0] ddr3_dbg_sdr_dat_r;
+wire           ddr3_dbg_sdr_write_req;
+wire           ddr3_dbg_sdr_write_ack;
+wire [ 26-1:1] ddr3_dbg_sdr_adr;
+wire [ 32-1:0] ddr3_dbg_sdr_dat_w;
+wire [  4-1:0] ddr3_dbg_sdr_dqm_w;
 wire           tg68_nrst_out;
 //wire           tg68_cdma;
 wire           tg68_clds;
@@ -762,7 +790,28 @@ ddr3_fastram ddr3_fastram_i (
     .req_wdata      (DDR3_REQ_WDATA   ),
     .req_accept     (DDR3_REQ_ACCEPT  ),
     .resp_valid     (DDR3_RESP_VALID  ),
-    .resp_rdata     (DDR3_RESP_RDATA  )
+    .resp_rdata     (DDR3_RESP_RDATA  ),
+
+    // clk_114-side debug taps, see ila_fastram below
+    .dbg_bstate       (ddr3_dbg_bstate       ),
+    .dbg_cdc_ready    (ddr3_dbg_cdc_ready    ),
+    .dbg_cdc_req      (ddr3_dbg_cdc_req      ),
+    .dbg_cdc_done     (ddr3_dbg_cdc_done     ),
+    .dbg_req_rd       (ddr3_dbg_req_rd       ),
+    .dbg_req_be       (ddr3_dbg_req_be       ),
+    .dbg_req_addr     (ddr3_dbg_req_addr     ),
+    .dbg_req_wdata    (ddr3_dbg_req_wdata    ),
+    .dbg_req_tgl      (ddr3_dbg_req_tgl      ),
+    .dbg_resp_rdata   (ddr3_dbg_resp_rdata   ),
+    .dbg_ack_tgl      (ddr3_dbg_ack_tgl      ),
+    .dbg_sdr_read_req (ddr3_dbg_sdr_read_req ),
+    .dbg_sdr_read_ack (ddr3_dbg_sdr_read_ack ),
+    .dbg_sdr_dat_r    (ddr3_dbg_sdr_dat_r    ),
+    .dbg_sdr_write_req(ddr3_dbg_sdr_write_req),
+    .dbg_sdr_write_ack(ddr3_dbg_sdr_write_ack),
+    .dbg_sdr_adr      (ddr3_dbg_sdr_adr      ),
+    .dbg_sdr_dat_w    (ddr3_dbg_sdr_dat_w    ),
+    .dbg_sdr_dqm_w    (ddr3_dbg_sdr_dqm_w    )
 );
 
 end
@@ -775,6 +824,69 @@ assign DDR3_REQ_VALID = 1'b0;
 assign DDR3_REQ_WR    = 16'h0000;
 assign DDR3_REQ_ADDR  = 32'h00000000;
 assign DDR3_REQ_WDATA = 128'd0;
+
+end
+endgenerate
+
+
+////////////////////////////////////////
+// DDR3 fast RAM ILA (debug builds)   //
+////////////////////////////////////////
+// tools/vivado/build_ila.tcl creates ila_fastram (depth 8192, storage
+// qualification on) and sets the sources_1 generic DDR3_FASTRAM_ILA=1; every
+// other build leaves the parameter at 0 and this block does not exist.
+//
+// Everything probed is a register in the CLK_114 domain -- the CPU port of
+// ddr3_fastram and the clk_114 side of its CDC (ddr3_cdc.v exports the
+// SYNCHRONISED ack toggle, never the island's own register).  So the ILA adds
+// no clock-domain crossing of its own, which is the point: it must not
+// perturb the thing it is measuring.
+//
+// probe0  cpuAddr[25:1]        probe12 dbg_resp_rdata[127:0]
+// probe1  cpustate[6:0]        probe13 dbg_ack_tgl
+// probe2  cpuU                 probe14 dbg_bstate[1:0]
+// probe3  cpuL                 probe15 dbg_sdr_read_req
+// probe4  cpuWR[15:0]          probe16 dbg_sdr_read_ack
+// probe5  cpuRD[15:0]          probe17 dbg_sdr_dat_r[15:0]
+// probe6  cpuena               probe18 dbg_sdr_write_req
+// probe7  ddr_ready            probe19 dbg_sdr_write_ack
+// probe8  dbg_req_rd           probe20 dbg_sdr_adr[25:1]
+// probe9  dbg_req_be[15:0]     probe21 dbg_sdr_dat_w[31:0]
+// probe10 dbg_req_addr[31:0]   probe22 dbg_sdr_dqm_w[3:0]
+// probe11 dbg_req_wdata[127:0] probe23 {cdc_ready,cdc_req,cdc_done,req_tgl}
+generate
+if (haveddr3 && DDR3_FASTRAM_ILA) begin : g_ddr3_fastram_ila
+
+wire [4-1:0] ddr3_dbg_cdc_state = {ddr3_dbg_cdc_ready, ddr3_dbg_cdc_req,
+                                   ddr3_dbg_cdc_done,  ddr3_dbg_req_tgl};
+
+ila_fastram ila_fastram_i (
+    .clk     (CLK_114                ),
+    .probe0  (tg68_ddraddr[25:1]     ),
+    .probe1  (tg68_ddrcpustate       ),
+    .probe2  (tg68_cuds              ),
+    .probe3  (tg68_clds              ),
+    .probe4  (tg68_cin               ),
+    .probe5  (tg68_ddrout            ),
+    .probe6  (tg68_ddrena            ),
+    .probe7  (tg68_ddrready          ),
+    .probe8  (ddr3_dbg_req_rd        ),
+    .probe9  (ddr3_dbg_req_be        ),
+    .probe10 (ddr3_dbg_req_addr      ),
+    .probe11 (ddr3_dbg_req_wdata     ),
+    .probe12 (ddr3_dbg_resp_rdata    ),
+    .probe13 (ddr3_dbg_ack_tgl       ),
+    .probe14 (ddr3_dbg_bstate        ),
+    .probe15 (ddr3_dbg_sdr_read_req  ),
+    .probe16 (ddr3_dbg_sdr_read_ack  ),
+    .probe17 (ddr3_dbg_sdr_dat_r     ),
+    .probe18 (ddr3_dbg_sdr_write_req ),
+    .probe19 (ddr3_dbg_sdr_write_ack ),
+    .probe20 (ddr3_dbg_sdr_adr       ),
+    .probe21 (ddr3_dbg_sdr_dat_w     ),
+    .probe22 (ddr3_dbg_sdr_dqm_w     ),
+    .probe23 (ddr3_dbg_cdc_state     )
+);
 
 end
 endgenerate

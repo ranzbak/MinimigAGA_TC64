@@ -132,7 +132,38 @@ module ddr3_fastram (
   output wire [128-1:0] req_wdata,
   input  wire           req_accept,
   input  wire           resp_valid,
-  input  wire [128-1:0] resp_rdata
+  input  wire [128-1:0] resp_rdata,
+
+  // ---- debug taps for an ILA on the CPU side (clk_sys domain only) --------
+  //
+  // Every signal below is a register (or a wire out of one) in the sysclk
+  // domain, so an ILA clocked by CLK_114 samples them synchronously; nothing
+  // here is a hierarchical peek into the 100 MHz island.  dbg_ack_tgl is the
+  // SYNCHRONISED copy of the island's ack toggle, see ddr3_cdc.v.
+  //
+  // They are outputs rather than hierarchical references so that the ILA can
+  // be instantiated in minimig_virtual_top.v without a `XSDB`-style
+  // cross-module reference; left unconnected (DDR3_FASTRAM_ILA = 0) synthesis
+  // prunes the whole set.
+  output wire [  2-1:0] dbg_bstate,      // backend FSM state
+  output wire           dbg_cdc_ready,   // CDC can take a request
+  output wire           dbg_cdc_req,     // request pulse into the CDC
+  output wire           dbg_cdc_done,    // response pulse out of the CDC
+  output wire           dbg_req_rd,      // registered request: 1 = read
+  output wire [ 16-1:0] dbg_req_be,      //   byte enables
+  output wire [ 32-1:0] dbg_req_addr,    //   byte address
+  output wire [128-1:0] dbg_req_wdata,   //   write payload
+  output wire           dbg_req_tgl,     //   request toggle (source side)
+  output wire [128-1:0] dbg_resp_rdata,  // captured response payload
+  output wire           dbg_ack_tgl,     // ack toggle, synchronised
+  output wire           dbg_sdr_read_req,
+  output wire           dbg_sdr_read_ack,
+  output wire [ 16-1:0] dbg_sdr_dat_r,
+  output wire           dbg_sdr_write_req,
+  output wire           dbg_sdr_write_ack,
+  output wire [ 26-1:1] dbg_sdr_adr,
+  output wire [ 32-1:0] dbg_sdr_dat_w,
+  output wire [  4-1:0] dbg_sdr_dqm_w
 );
 
 
@@ -344,6 +375,29 @@ always @ (posedge sysclk) begin
 end
 
 
+//// debug taps ////
+// Pure observation: no logic depends on these, so the module behaves
+// identically whether or not they are connected.
+
+assign dbg_bstate        = bstate;
+assign dbg_cdc_ready     = cdc_ready;
+assign dbg_cdc_req       = cdc_req;
+assign dbg_cdc_done      = cdc_done;
+assign dbg_req_rd        = cdc_rd;
+assign dbg_req_be        = cdc_be;
+assign dbg_req_addr      = cdc_addr;
+assign dbg_req_wdata     = cdc_wdata;
+assign dbg_resp_rdata    = cdc_rdata;
+assign dbg_sdr_read_req  = cache_req;
+assign dbg_sdr_read_ack  = readcache_fill;
+assign dbg_sdr_dat_r     = sdr_dat_r;
+assign dbg_sdr_write_req = writebuffer_req;
+assign dbg_sdr_write_ack = writebuffer_ack;
+assign dbg_sdr_adr       = writebufferAddr;
+assign dbg_sdr_dat_w     = writebufferWR;
+assign dbg_sdr_dqm_w     = writebuffer_dqm;
+
+
 //// clock domain crossing to the 100 MHz island ////
 
 ddr3_cdc cdc (
@@ -366,7 +420,10 @@ ddr3_cdc cdc (
   .req_wdata  (req_wdata),
   .req_accept (req_accept),
   .resp_valid (resp_valid),
-  .resp_rdata (resp_rdata)
+  .resp_rdata (resp_rdata),
+  .dbg_req_tgl(dbg_req_tgl),
+  .dbg_ack_tgl(dbg_ack_tgl),
+  .dbg_busy   ()
 );
 
 endmodule
