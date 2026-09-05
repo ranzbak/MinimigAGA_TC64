@@ -69,7 +69,7 @@ if {$csv eq ""} {
 set R   [file normalize [file dirname [info script]]/../..]
 set ltx [expr {[llength $argv] > 1 ? [file normalize [lindex $argv 1]] \
                                    : "$R/build/stageB2/minimig_openaars_top.ltx"}]
-set tmo [expr {[llength $argv] > 2 ? [lindex $argv 2] : 120}]
+set tmo [expr {[llength $argv] > 2 ? [lindex $argv 2] : 240}]
 
 if {![file exists $ltx]} { error "no probes file: $ltx" }
 
@@ -143,7 +143,10 @@ puts "=== ILA armed at [clock format [clock seconds] -format %H:%M:%S];\
 # Wait for the trigger (wait_on_hw_ila returns on trigger or timeout; there is no
 # CORE_STATUS property on hw_ila objects).
 set triggered 1
-if {[catch {wait_on_hw_ila -timeout [expr {int(ceil($tmo/60.0))}] $ila} msg]} { puts "=== wait ended: $msg ==="; set triggered 0 }
+# wait_on_hw_ila -timeout takes SECONDS. (A previous version of this script
+# divided by 60 as if converting to minutes, which cut every requested wait
+# to about 1/60th of its intended length -- fixed here.)
+if {[catch {wait_on_hw_ila -timeout $tmo $ila} msg]} { puts "=== wait ended: $msg ==="; set triggered 0 }
 upload_hw_ila_data $ila
 file mkdir [file dirname [file normalize $csv]]
 write_hw_ila_data -csv_file $csv -force [current_hw_ila_data]
