@@ -10,8 +10,6 @@
 --   sed -e "s|chipset_cycle <= '1' when ((sel_ram = '0' AND sel_ddr = '0') OR sel_nmi_vector = '1')|chipset_cycle <= '1' when (sel_ram = '0' OR sel_nmi_vector = '1')|" \
 --       rtl/soc/TG68K.vhd > sim/ddr3_cpu/mutant/TG68K_mutant.vhd
 ------------------------------------------------------------------------------
-------------------------------------------------------------------------------
-------------------------------------------------------------------------------
 --                                                                          --
 -- Copyright (c) 2009-2011 Tobias Gubener                                   --
 -- Subdesign fAMpIGA by TobiFlex                                            --
@@ -44,8 +42,16 @@ entity TG68K is
 		haveaudio : boolean := true;
 		havec2p   : boolean := true;
 		-- Zorro-III fast RAM lives on the DDR3 island instead of the SDRAM.
-		-- See findings/ddr3/design.md, decisions D1/D6/D8.
-		haveddr3  : boolean := true
+		-- See findings/ddr3/design.md, decisions D1/D6, and
+		-- findings/ddr3/z3ram3-on-ddr3-plan.md (which supersedes D8).
+		haveddr3  : boolean := true;
+		-- Size of the third ZIII board, log2 of its byte size: 24 = 16 MB,
+		-- 25 = 32 MB, 26 = 64 MB.  It is the DDR3 board when haveddr3, and the
+		-- board is size-aligned, so this also says how many address bits are
+		-- compared against the base the OS assigned and how many are offset
+		-- into the board.  Must agree with the size the autoconfig ROM
+		-- advertises (rtl/minimig/minimig_autoconfig_rom.v).
+		z3ram3_size_log2 : integer := 24
 	);
 	port(
 		clk             : in     std_logic;
@@ -84,6 +90,11 @@ entity TG68K is
 		ziiiram_active  : in     std_logic;
 		ziiiram2_active : in     std_logic;
 		ziiiram3_active : in     std_logic;
+		-- A31-A24 of the base the OS assigned to the third ZIII RAM board,
+		-- latched by rtl/minimig/minimig_autoconfig.v.  Valid once
+		-- ziiiram3_active is set; the decode below follows it rather than
+		-- assuming an address.
+		z3ram3_base     : in     std_logic_vector(7 downto 0)  := (others => '0');
 		eth_en          : in     std_logic                     := '0'; -- @suppress "Unused port: eth_en is not used in work.TG68K(logic)"
 		sel_eth         : buffer std_logic;
 		frometh         : in     std_logic_vector(15 downto 0);
@@ -190,8 +201,13 @@ ARCHITECTURE logic OF TG68K IS
 
 	-- DDR3 fast RAM
 	SIGNAL have_ddr        : std_logic; -- '1' when the haveddr3 generic is true
-	SIGNAL sel_z3ram3_dec  : std_logic; -- raw decode of the "leftover" ZIII board
 	SIGNAL sel_z3ram_sdram : std_logic; -- ZIII boards that still live on the SDRAM
+	-- Zero fill above the third board's offset, so that the DDR3 word address
+	-- is one concurrent assignment (two assignments to slices of ddraddr would
+	-- be two drivers).  A null range when z3ram3_size_log2 = 26, where the
+	-- board covers the whole 64 MB the backend can address and the map is the
+	-- identity again; concatenating a null vector is legal and drops out.
+	CONSTANT ddr_zero_hi   : std_logic_vector(25 downto z3ram3_size_log2) := (others => '0');
 	SIGNAL sel_ddr         : std_logic;
 	SIGNAL sel_ddr_d       : std_logic;
 	SIGNAL mem_ready       : std_logic; -- SDRAM or DDR3 access acknowledge
@@ -275,16 +291,23 @@ BEGIN
 	sel_akiko     <= '1' when cpuaddr(31 downto 16) = X"00B8" else '0';
 	sel_32        <= '1' when cpu(1) = '1' and cpuaddr(31 downto 24) /= X"00" and cpuaddr(31 downto 24) /= X"ff" else '0'; -- Decode 32-bit space, but exclude interrupt vectors
 	--  sel_z3ram       <= '1' WHEN (cpuaddr(31 downto 24)=z3ram_base) else '0'; -- AND z3ram_ena='1' ELSE '0';
+	-- Third block of ZIII RAM.  Decoded against the base the OS actually
+	-- assigned (latched in minimig_autoconfig.v), not against a guess: the OS
+	-- allocates ZIII bases from its own free list and puts this board wherever
+	-- it likes -- $08000000 for the small SDRAM board, elsewhere for the 16 MB
+	-- DDR3 one -- and the old hard-wired $41000000/$44000000 decode is exactly
+	-- why the board had to be disabled before.  The board is size-aligned, so
+	-- the bits above its size are the base and the rest are the offset.
+	sel_z3ram3    <= '1' WHEN cpuaddr(31 downto z3ram3_size_log2) = z3ram3_base(7 downto z3ram3_size_log2 - 24)
+	                          AND z3ram3_ena = '1' ELSE '0';
 	-- First block of ZIII RAM - 0x40000000 - 0x40ffffff
-	sel_z3ram     <= '1' WHEN (cpuaddr(31 downto 30) = "01") and cpuaddr(26 downto 24) = "000" AND z3ram_ena = '1' ELSE '0';
 	-- Second block of ZIII RAM - 32 meg from 0x42000000 - 0x43ffffff
-	sel_z3ram2    <= '1' WHEN (cpuaddr(31 downto 30) = "01") and cpuaddr(25) = '1' AND z3ram2_ena = '1' ELSE '0';
-	-- Third block of ZIII RAM - either 2 or 4 meg, starting at either 0x41000000 or 0x44000000
-	sel_z3ram3_dec <= '1' WHEN (cpuaddr(31 downto 30) = "01") and cpuaddr(26) = z3ram2_ena and cpuaddr(24) = not z3ram2_ena and z3ram3_ena = '1' ELSE '0';
-	-- With the DDR3 fast RAM the "leftover SDRAM" ZIII board does not exist
-	-- (design.md D8).  minimig_autoconfig.v is told to skip it too, so the OS
-	-- never sees a board here and z3ram3_ena never comes back.
-	sel_z3ram3    <= sel_z3ram3_dec AND NOT have_ddr;
+	-- Both still assume where the OS puts them, which holds because they are
+	-- configured first and land on the bottom of the ZIII free space.  Board 3
+	-- wins if the OS ever does place it inside one of these ranges, so that an
+	-- address can never select two backends at once.
+	sel_z3ram     <= '1' WHEN (cpuaddr(31 downto 30) = "01") and cpuaddr(26 downto 24) = "000" AND z3ram_ena = '1' AND sel_z3ram3 = '0' ELSE '0';
+	sel_z3ram2    <= '1' WHEN (cpuaddr(31 downto 30) = "01") and cpuaddr(25) = '1' AND z3ram2_ena = '1' AND sel_z3ram3 = '0' ELSE '0';
 	sel_z2ram     <= '1' WHEN (cpuaddr(31 downto 24) = X"00") AND ((cpuaddr(23 downto 21) = "001") OR (cpuaddr(23 downto 21) = "010") OR (cpuaddr(23 downto 21) = "011") OR (cpuaddr(23 downto 21) = "100")) AND z2ram_ena = '1' ELSE '0';
 	--sel_eth         <= '1' WHEN (cpuaddr(31 downto 24) = eth_base) AND eth_cfgd='1' ELSE '0';
 	sel_chip      <= '1' WHEN (cpuaddr(31 downto 24) = X"00") AND (cpuaddr(23 downto 21) = "000") ELSE '0'; --$000000 - $1FFFFF
@@ -299,9 +322,13 @@ BEGIN
 	-- '1' when the DDR3 fast RAM is present.  Everything DDR3-specific is gated
 	-- with this, so haveddr3 = false reproduces today's core exactly.
 	have_ddr        <= '1' WHEN haveddr3 ELSE '0';
-	-- The two 32-bit boards go to the DDR3 when it is there, to the SDRAM if not.
-	sel_ddr         <= (sel_z3ram OR sel_z3ram2) AND have_ddr;
-	sel_z3ram_sdram <= (sel_z3ram OR sel_z3ram2 OR sel_z3ram3) AND NOT have_ddr;
+	-- The DDR3 is an extra board, not a different backing for the boards the
+	-- SDRAM already serves: boards 1 and 2 stay on the SDRAM whether or not the
+	-- DDR3 is fitted, and board 3 is the DDR3 board when it is (falling back to
+	-- the leftover SDRAM board when it is not).  See
+	-- findings/ddr3/z3ram3-on-ddr3-plan.md.
+	sel_ddr         <= sel_z3ram3 AND have_ddr;
+	sel_z3ram_sdram <= sel_z3ram OR sel_z3ram2 OR (sel_z3ram3 AND NOT have_ddr);
 	sel_ram       <= '1' WHEN (sel_z2ram = '1' OR sel_z3ram_sdram = '1' OR sel_chipram = '1' OR sel_slowram = '1' OR sel_kickram = '1' OR sel_audio = '1') ELSE
 	'0';
 
@@ -311,10 +338,12 @@ BEGIN
 	-- Same shape as ramcs, slower(0) throttle included, so the DDR3 backend sees
 	-- exactly the chip-select timing sdram_ctrl sees (address one cycle early).
 	ddrcs <= NOT (NOT cpu_int AND sel_ddr_d AND NOT sel_nmi_vector) OR slower(0);
-	-- Identity map (design.md D6): DDR3 byte address = CPU byte address.  Board 1
-	-- (0x40000000, 16 MB) and board 2 (0x42000000, 32 MB) both live inside the low
-	-- 64 MB, which is all the backend's cpuAddr(25 downto 1) covers.
-	ddraddr <= cpuaddr(25 downto 1);
+	-- The DDR3 address is the offset inside board 3, which the OS may have put
+	-- anywhere, so the base bits are dropped and what is left is zero-extended
+	-- to the 25-bit word address the backend takes (design.md D6, amended by
+	-- findings/ddr3/z3ram3-on-ddr3-plan.md: identity only when the board covers
+	-- the whole 64 MB).  One assignment, so ddraddr has one driver.
+	ddraddr <= ddr_zero_hi & cpuaddr(z3ram3_size_log2 - 1 downto 1);
 
 	cpustate <= longword & clkena & slower(1 downto 0) & ramcs & state(1 downto 0);
 	ramlds   <= lds_in;

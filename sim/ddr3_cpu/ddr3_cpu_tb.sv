@@ -29,7 +29,10 @@
 // Wiring is exactly rtl/soc/minimig_virtual_top.v:
 //   * ddr3_fastram sees cpustate with bit 2 replaced by ddrcs
 //     (tg68_ddrcpustate), everything else including cpuLongword passed through,
-//   * cpuAddr = ddraddr = cpuaddr(25 downto 1), identity mapped,
+//   * cpuAddr = ddraddr = the offset inside board 3, zero-extended: the
+//     board's base bits are dropped, so with a 16 MB board this is
+//     cpuaddr(23 downto 1) and not the identity map it was when the DDR3
+//     was board 1,
 //   * fromddr / ddr_ena / ddr_ready come back from cpuRD / cpuena / ddr_ready,
 //   * cpu_cache_ctrl is the wrapper's CACR_out (the program enables the caches
 //     with movec, as the OS does),
@@ -39,9 +42,14 @@
 //     (7.09 MHz each) -- rtl/sdram/sdram_ctrl.v lines ~344-375.
 //
 // Autoconfig state is the one the OS leaves behind: ziiram_active = 1 and
-// ziiiram_active = 1, so 0x40000000 is a live 16 MB Zorro-III board on the
-// DDR3, ziiiram2/3 inactive.  cpu = 2'b11 (32-bit address space enabled, which
-// is what makes 0x40000000 decodable at all).
+// ziiiram3_active = 1 with z3ram3_base = $41, so 0x41000000 is a live 16 MB
+// Zorro-III board on the DDR3.  Board 1 (ziiiram_active) is left inactive:
+// on hardware it is a live SDRAM board, but this bench's SDRAM model is a
+// 128 kB array indexed by the low ramaddr bits, so a live board 1 would
+// alias onto the program's own memory.  What matters here -- that the DDR3
+// answers only inside board 3 -- is asserted directly instead, below.
+// cpu = 2'b11 (32-bit address space enabled, which is what makes 0x41000000
+// decodable at all).
 //
 // The 68k program is asm/ddr3_cpu_test.asm; see its header for the mailbox
 // layout and the failure codes.  This bench
@@ -63,7 +71,13 @@ module ddr3_cpu_tb;
 //-----------------------------------------------------------------
 // Program layout -- must agree with asm/ddr3_cpu_test.asm
 //-----------------------------------------------------------------
-localparam [31:0] DDRBASE  = 32'h4000_0000;
+// The DDR3 fast RAM is Zorro-III board 3 now, not board 1: an extra board
+// whose base the OS assigns and minimig_autoconfig.v latches.  $41000000 is
+// where the OS puts it once the 16 MB board 1 has taken $40000000 (see the
+// bench in sim/autoconfig).  Must match Z3RAM3_BASE below and DDRBASE in
+// asm/ddr3_cpu_test.asm.
+localparam [31:0] DDRBASE  = 32'h4100_0000;
+localparam [ 7:0] Z3RAM3_BASE = 8'h41;   // A31-A24, as the OS would write it
 localparam [31:0] PATOFF   = 32'h0000_0000;
 localparam [31:0] MISOFF   = 32'h0000_1000;
 localparam [31:0] CNTOFF   = 32'h0000_2000;
@@ -85,10 +99,10 @@ localparam [31:0] CBASE    = 32'h5EED_0000;
 localparam [31:0] MBOX     = 32'h0000_1000;   // in the bench chip RAM
 
 // MemHeader values
-localparam [31:0] MH_NAME  = 32'h4000_0100;
-localparam [31:0] MH_FIRST = 32'h4000_0020;
-localparam [31:0] MH_LOWER = 32'h4000_0000;
-localparam [31:0] MH_UPPER = 32'h4100_0000;
+localparam [31:0] MH_NAME  = 32'h4100_0100;
+localparam [31:0] MH_FIRST = 32'h4100_0020;
+localparam [31:0] MH_LOWER = 32'h4100_0000;
+localparam [31:0] MH_UPPER = 32'h4200_0000;
 localparam [31:0] MH_FREE  = 32'h00FF_FFE0;
 localparam [15:0] MH_ATTR  = 16'h0005;
 localparam [ 7:0] MH_TYPE  = 8'd10;
@@ -218,9 +232,10 @@ TG68K tg68k (
     .ddr_ena        (tg68_ddrena      ),
     .cpu            (2'b11            ),   // 68020 mode: 32-bit address space
     .ziiram_active  (1'b1             ),   // autoconfig done: 2 MB Zorro-II
-    .ziiiram_active (1'b1             ),   // ... and the 16 MB Zorro-III board
+    .ziiiram_active (1'b0             ),   // board 1: SDRAM on hardware, see header
     .ziiiram2_active(1'b0             ),
-    .ziiiram3_active(1'b0             ),
+    .ziiiram3_active(1'b1             ),   // ... and the 16 MB DDR3 board
+    .z3ram3_base    (Z3RAM3_BASE      ),   // where the OS put it
     .eth_en         (1'b0             ),
     .sel_eth        (                 ),
     .frometh        (16'h0000         ),
@@ -508,6 +523,30 @@ initial begin
   void'($value$plusargs("TRMAX=%d", TRMAX));
 end
 
+// The DDR3 must answer for board 3 and nothing else, and the address it gets
+// must be the offset inside that board.  Both are new with the board moving
+// off its old hard-wired $40000000 decode: the base now comes from what the
+// OS assigned (z3ram3_base) and the base bits are dropped on the way to the
+// backend, so a decode that leaked or an offset that kept the base bits would
+// corrupt memory silently rather than fail a read-back.
+integer ddr_decode_errs = 0;
+always @(posedge clk) begin
+  if (tg68_rst && !tg68_ddrcs) begin
+    if (tg68_adr[31:24] !== Z3RAM3_BASE) begin
+      if (ddr_decode_errs < 20)
+        $display("FAIL: DDR3 selected outside board 3 at adr=%08x (base $%02x)",
+                 tg68_adr, Z3RAM3_BASE);
+      ddr_decode_errs = ddr_decode_errs + 1;
+    end
+    if (tg68_ddraddr !== {2'b00, tg68_adr[23:1]}) begin
+      if (ddr_decode_errs < 20)
+        $display("FAIL: ddraddr %07x is not the offset in board 3 for adr=%08x (expected %07x)",
+                 tg68_ddraddr, tg68_adr, {2'b00, tg68_adr[23:1]});
+      ddr_decode_errs = ddr_decode_errs + 1;
+    end
+  end
+end
+
 always @(posedge clk) begin
   ddrcs_d  <= tg68_ddrcs;
   ddrena_d <= tg68_ddrena;
@@ -624,6 +663,12 @@ task final_report;
   input integer code;
   input [1023:0] why;
   begin
+    if (ddr_decode_errs != 0) begin
+      nfail = nfail + 1;
+      $display("");
+      $display("DDR3 CPU TB: FAIL  %0d board-3 decode errors (see FAIL lines above)",
+               ddr_decode_errs);
+    end
     if (code == 1) begin
       $display("");
       $display("DDR3 CPU TB: PASS  (68k program completed all phases)");

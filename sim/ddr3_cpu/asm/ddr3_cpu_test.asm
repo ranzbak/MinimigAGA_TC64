@@ -3,7 +3,7 @@
 ;
 ; Runs on the real TG68KdotC kernel inside the real rtl/soc/TG68K.vhd wrapper.
 ; Program, vectors and stack live in the bench's behavioural chip RAM (the
-; wrapper's SDRAM-side port); everything it exercises at $40000000 is the real
+; wrapper's SDRAM-side port); everything it exercises at $41000000 is the real
 ; ddr3_fastram + ddr3_top + Micron DDR3 model chain.
 ;
 ; It writes a status word to a mailbox the bench polls:
@@ -34,7 +34,11 @@
 ; clock per run.  Raise it here (multiple of 16) if you want more.
 ;-----------------------------------------------------------------------------
 
-DDRBASE   equ $40000000        ; Zorro-III board 1, on the DDR3 island
+DDRBASE   equ $41000000        ; Zorro-III board 3, on the DDR3 island.
+                               ; Board 1 ($40000000) is SDRAM-backed now; the
+                               ; DDR3 is an extra board whose base the OS
+                               ; assigns and the hardware latches.  Must match
+                               ; z3ram3_base in the bench.
 
 PATOFF    equ $00000000        ; byte/word/long pattern region
 MISOFF    equ $00001000        ; misaligned / line-straddling longwords
@@ -64,11 +68,11 @@ CBASE     equ $5EED0000
 
 ; exec MemHeader, written at the base of the board exactly as exec does
 MH_TYPE   equ 10               ; NT_MEMORY
-MH_NAME   equ $40000100
+MH_NAME   equ $41000100
 MH_ATTR   equ $0005            ; MEMF_PUBLIC|MEMF_FAST
-MH_FIRST  equ $40000020
-MH_LOWER  equ $40000000
-MH_UPPER  equ $41000000
+MH_FIRST  equ $41000020
+MH_LOWER  equ $41000000
+MH_UPPER  equ $42000000
 MH_FREE   equ $00FFFFE0
 
 ;-----------------------------------------------------------------------------
