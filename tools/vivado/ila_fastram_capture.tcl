@@ -143,10 +143,11 @@ puts "=== ILA armed at [clock format [clock seconds] -format %H:%M:%S];\
 # Wait for the trigger (wait_on_hw_ila returns on trigger or timeout; there is no
 # CORE_STATUS property on hw_ila objects).
 set triggered 1
-# wait_on_hw_ila -timeout takes SECONDS. (A previous version of this script
-# divided by 60 as if converting to minutes, which cut every requested wait
-# to about 1/60th of its intended length -- fixed here.)
-if {[catch {wait_on_hw_ila -timeout $tmo $ila} msg]} { puts "=== wait ended: $msg ==="; set triggered 0 }
+# wait_on_hw_ila -timeout takes MINUTES, not seconds -- verified empirically
+# (a 5-unit timeout did not return within 60 real seconds; a prior "fix" here
+# assumed seconds and was itself a regression, undone now). $tmo is specified
+# in seconds by every caller of this script, so convert.
+if {[catch {wait_on_hw_ila -timeout [expr {int(ceil($tmo/60.0))}] $ila} msg]} { puts "=== wait ended: $msg ==="; set triggered 0 }
 upload_hw_ila_data $ila
 file mkdir [file dirname [file normalize $csv]]
 write_hw_ila_data -csv_file $csv -force [current_hw_ila_data]
