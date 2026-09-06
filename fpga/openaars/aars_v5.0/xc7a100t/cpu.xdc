@@ -34,9 +34,13 @@ set cpu_wrapper openaars_virtual_top/tg68k
 # The kernel instance inside that wrapper, per core.  Only one of the two is
 # elaborated (TG68K.vhd's cpu_core generic picks the generate branch), so the
 # other pattern simply matches nothing and one file serves both builds.
-#   pf68K_Kernel_inst  TG68KdotC_Kernel (rtl/tg68k)
-#   g_ap040.ap040      ap040_tg68k_compat (lib/AP68040)
-set cpu_kernel_tg68k $cpu_wrapper/pf68K_Kernel_inst
+# Note the generate label in each: Vivado names a VHDL if-generate instance
+# "<label>.<instance>", so making the kernel a generate MOVED it in the
+# netlist.  That is what silently emptied these sets the first time -- ten
+# "No valid object(s) found" criticals and no CPU exceptions in the bitstream.
+#   g_tg68k.pf68K_Kernel_inst  TG68KdotC_Kernel (rtl/tg68k)
+#   g_ap040.ap040              ap040_tg68k_compat (lib/AP68040)
+set cpu_kernel_tg68k $cpu_wrapper/g_tg68k.pf68K_Kernel_inst
 set cpu_kernel_ap040 $cpu_wrapper/g_ap040.ap040
 
 # Registers inside the kernel that advance on the FREE-RUNNING clock rather
