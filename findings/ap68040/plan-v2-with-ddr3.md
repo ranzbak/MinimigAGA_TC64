@@ -122,6 +122,166 @@ core never advertises a valid WB3. NetBSD's `trap.c` would double-apply RMW
 stores if it completed writebacks itself. AmigaOS's `68040.library` does not,
 so this matters only for stage F.
 
+## Timing
+
+### What the CPU island is today, and why the 040 fits in it unchanged
+
+`clk_114` is 113.4375 MHz, 8.815 ns. The CPU does not run at that rate: the
+kernel advances only on `clkena`, which the wrapper builds
+(`TG68K.vhd:499`) from `enaWRreg` — pulsed by `sdram_ctrl.v:343-360` on
+phases 2, 6, 10 and 14 of its 16-phase round, i.e. every 4th `clk_114`,
+28.36 MHz — further gated on bus readiness (`mem_ready`, chipset
+`ena7RD/WR`, `sel_undecoded_d`, `akiko_ack`). Every kernel register therefore
+holds for at least 4 cycles, which `cpu.xdc` turns into:
+
+| Path | Exception | Budget |
+|---|---|---|
+| kernel → kernel, kernel → wrapper | `-setup -start 4 / -hold -start 3` | 35.26 ns |
+| kernel → memory side (`sdram`, `minimig`) | `-setup -start 3 / -hold -start 2` | 26.45 ns, because `sdram_ctrl` wants the address one cycle before chip-select |
+| wrapper `addr*` registers → memory side | same 3-cycle rule | 26.45 ns |
+
+The AP68040, placed and routed on its own at 45 % of the device with the
+RAM fix: worst path **21.0 ns**, 39–40 logic levels, 66 % of it routing;
+of the 5,000 worst endpoints, **0** exceed 26.45 ns and 1,148 exceed
+17.63 ns ([performance.md](performance.md), [synth-reports/histogram.txt](synth-reports/histogram.txt)).
+So under today's 4-cycle regime the core has 14 ns of margin; under a
+3-cycle regime 5.4 ns standalone. The TG68K's in-system worst is 19.4 ns for
+comparison — the 040 is the same class of path, not a harder one. Its
+outputs to the bus are registered and change only on `clkena` edges
+(`ap040_bus16_adapter.v` header), so the 3-cycle rule on kernel → memory is
+satisfied for the same reason it is for the TG68K. The FPU is already inside
+the 21.0 ns figure (full configuration was measured), and its 16 DSP48s sit
+in the same multicycle island.
+
+Conclusion: **stage A changes no clock and no exception values**; only the
+three cell-set definitions in `cpu.xdc` move to the new instance.
+
+### Where it can still go wrong, in order of likelihood
+
+1. **The clock-enable net.** `clkena` is a *combinational* signal in the
+   wrapper fanning out to the CE pin of every kernel flip-flop. The TG68K has
+   roughly 2–3k of those; the AP68040 has **7,391**. That net is a genuine
+   single-cycle path (enable source → CE, 8.815 ns) and no multicycle covers
+   it. Vivado will replicate a high-fanout net, but a 7k-fanout CE driven by a
+   LUT is the one path in this swap that is *new*, not just bigger. Watch it
+   first in the A6 timing report. Mitigation ladder: let `phys_opt_design`
+   replicate; then `MAX_FANOUT` on the wrapper's `clkena`; then register a
+   duplicate enable tree in the wrapper — which shifts the kernel by one
+   `clk_114` relative to the SDRAM round and must be re-benched in
+   `sim/ddr3_cpu` before it is trusted, since the bus contract counts
+   completions on that enable.
+2. **Free-running logic inside the kernel set.** The compat top's stall
+   watchdog counts on the raw clock by design (`ap040_tg68k_compat.v:14-28`),
+   and `ap040_bus_timeout.v` may too. Their registers are single-cycle and
+   must be *excluded* from the multicycle cell set, or Vivado relaxes them
+   (TIMING-46 would flag some, not all). Step 0.3 finds them by reading for
+   `always` blocks not qualified by `ce` and excludes them by instance name.
+3. **Congestion at 64 %, then 71 %.** The 21.0 ns was measured at 45 %
+   utilisation with nothing else on the die. Budget 10–20 % degradation
+   in-system: 23–25 ns, still inside 35.26 with room, but *outside* the
+   3-cycle 26.45 ns once the safety margin is counted. That is why the
+   37.8 MHz option (D1) is a measured experiment after A6, never assumed.
+4. **The SDRAM read path** (`clk_gen_sdram → clk_114`, 16 endpoints,
+   −0.544 ns today, fix-12 reverted). It is I/O timing at the SDRAM bank, not
+   CPU logic, but 28.7k extra LUTs change the placement around the
+   `sdram_controller` pblock (`wizard.xdc:59-64`). Sign-off rule: no worse
+   than today. If it degrades, add a pblock for the CPU island on the far
+   side of the die from the SDRAM I/O before touching anything else.
+5. **The DDR3 side is untouched.** No new clock crossing: the 040 sits behind
+   the same `cpu_cache_new`/`ddr3_fastram`/`ddr3_cdc` chain, and the
+   `set_max_delay -datapath_only` bounds in `ddr3.xdc` do not change. The
+   040's caches change the *traffic* (8-sub-cycle line fills, copy-back
+   writes) but not any timing path. The island's own slack (2.27 ns intra
+   `clk_ddr100`) is unaffected.
+6. **Stage B walker requester.** Its address register drives the `cpuaddr`
+   mux → `sel_*` decode → memory side. Name it to match the existing
+   `addr*` filter in `cpu.xdc` (or extend the filter) so it gets the 3-cycle
+   rule the kernel address gets; it holds its value until `walker_ack`, so the
+   rule is honest. The mux itself is one LUT level on a 26.45 ns path.
+7. **Stage E dual-core.** The kernel-output mux is one LUT level on 3-cycle
+   paths — fine. The unselected core is held in reset with `clkena_in` low:
+   its registers are static, so it costs routing resources but no timing
+   paths that matter. Both kernel instances get their own cell set. The
+   select is latched at reset (`cpu_config` bit 4 below) and is quasi-static;
+   `set_false_path -from` that register keeps it out of the CE-path report.
+   What decides E is not any of this but item 3 at 71 %.
+
+### Sign-off per stage
+
+| Stage | Must hold |
+|---|---|
+| A6 | kernel island WNS ≥ 0 under `-start 4`; CE net WNS ≥ 0 with no replication warnings left unresolved; SDRAM read path ≥ −0.544 ns (no worse than today); DDR3 CDC exceptions unchanged in `report_exceptions` |
+| D1 | same under `-start 3 / -hold -start 2` on the kernel island; measured, two build iterations maximum |
+| D3 | `report_exceptions` shows no multicycles on the core at all (sibling 37.8 MHz clock, slow→fast 1:3 rule as `dll_28 → clk_114` uses) |
+| E | A6's rules at ≈ 71 %; two build iterations, then stop |
+
+### Calendar
+
+Critical path to a usable MMU + FPU 68040 at 28 MHz: stage 0 (S) → A (M,
+one hardware session at A6) → B (S–M, one hardware session at B3) → C (S).
+Roughly one to two weeks including bench time, with three hardware sessions
+(A6, B3, C). D and E are afterwards and independent of each other.
+
+## OSD and firmware
+
+### How the CPU setting reaches the RTL today
+
+`fw/ctrl_832/osd.c:880` `ConfigCPU()` sends `OSD_CMD_CPU` (0x14) followed by
+one byte, `cpu & 0x0f`. `rtl/minimig/userio_osd.v:416` takes `wrdat[3:0]`
+into `t_cpu_config`; bits 1:0 (CPU type, the TG68K's `cpu(1:0)`) are copied
+to `cpu_config` **only while reset is active** (`:83-89`), bits 3:2 (turbo
+chip / kick) immediately. `cpu_config[3:0]` runs `userio.v` → `minimig.v` →
+`minimig_virtual_top.v:214` → `.cpu(cpu_config[1:0])` on the wrapper. The
+menu (`menu.c:85`) shows `config_cpu_msg[] = {"68000", "68010", "-",
+"020 alpha"}` indexed by `config.cpu & 3` and cycles 0 → 1 → 3, skipping 2
+(`:1323-1326`). `config.cpu` is saved to the SD-card config file as is.
+
+The firmware already reads something back from the core:
+`fpga.c:205-209` sends `OSD_CMD_VERSION` (0x88) and clocks four bytes,
+`rtl_ver` in `userio_osd.v:588-596`, selected by `dat_cnt[2:0]` — a 3-bit
+index of which only 0–3 are used; 4–7 fall to `default` and return
+`MINION_VER`. That is the hook.
+
+### Changes, by build
+
+**Sole-core AP040 build.** The wrapper ignores `cpu(1:0)` (its 68040 branch
+fixes 32-bit decode on). The OSD must say so rather than offer a choice that
+does nothing:
+
+| Where | Change |
+|---|---|
+| `userio_osd.v` | `rtl_ver` case gains `3'd4: 8'hA4` (a magic byte) and `3'd5: CORE_CAPS`. Old cores return `MINION_VER` for both, so a firmware that sees anything but 0xA4 in byte 4 knows there is nothing to read. `CORE_CAPS` is a parameter plumbed down from the top: bit 0 AP040 fitted, bit 1 AP040 *selectable* (dual build), bit 2 FPU, bit 3 MMU. Bytes 0–3 unchanged, so old firmware keeps working. |
+| `minimig.v`, `userio.v` | pass `CORE_CAPS` through |
+| `minimig_openaars_top.v` | `CORE_CAPS` derived from `CPU_CORE` and the AP040 parameters |
+| `fpga.c:205` | clock two more bytes after the four; keep `core_caps` in a global (0 unless byte 4 == 0xA4); append " 68040" (and "/FPU", "/MMU") to the boot banner |
+| `menu.c` | if `core_caps & 1` and not `& 2`: CPU line reads "68040", not selectable (skip `menusub == 0` in the select handler) |
+
+Turbo chip / Kick stay as they are. (With the MMU on and MuFastROM in use,
+turbo Kick is redundant for 040 users, but it is harmless and the menu does
+not need to know.)
+
+**Dual-core build (stage E).** The select must survive the same rules as
+the CPU type: applied at reset only, and the RTL — not the firmware — is the
+authority on whether it exists.
+
+| Where | Change |
+|---|---|
+| `osd.c` `ConfigCPU` | send `cpu & 0x1f` |
+| `userio_osd.v` | `t_cpu_config` and `cpu_config` become `[4:0]`; bit 4 is copied under reset next to bits 1:0, so a core switch takes effect at the next reset exactly as a CPU-type change does today |
+| `userio.v`, `minimig.v`, `minimig_virtual_top.v` | widen to 5 bits; the wrapper gets `.cpu(cpu_config[1:0])` and `.core_sel(cpu_config[4])` |
+| `TG68K.vhd` | in the dual build, `core_sel` picks the kernel; the unselected one is held in reset with `clkena_in` low. In a sole build the port is unused. |
+| `menu.c` | when `core_caps & 2`: cycle 68000 → 68010 → 020 → **68040**; 68040 encodes as `config.cpu` bit 4 set with bits 1:0 = 11 (so an old core that only looks at bits 1:0 gets the TG68K in 020 mode — the closest thing). Leaving 68040 clears bit 4. |
+| `config.c` | nothing: bit 4 lives inside the `unsigned char` that is already saved. Check the load path does not mask it. |
+
+Compatibility both ways: old firmware + new core sends bit 4 = 0 → TG68K
+selected in a dual build, ignored in a sole build. New firmware + old core
+reads byte 4 ≠ 0xA4 → `core_caps` = 0 → menu exactly as today.
+
+One behaviour to keep: the firmware does not reset the machine when the CPU
+type changes; the user does. Same for the core select. If that is felt to
+be a trap, `menu.c` can call `OsdDoReset` when bit 4 changes — a one-line
+addition, but a change in behaviour, so it is a decision, not a default.
+
 ## Order of work
 
 Effort: S = hours, M = days, L = a week or more including bench time. Each
@@ -145,7 +305,7 @@ DDR3 (`findings/ddr3/z3ram3-on-ddr3-plan.md`).
 | A1 | `rtl/soc/TG68K.vhd`: generic `cpu_core : string` ("TG68K" default, "AP040"). The kernel instantiation (`pf68K_Kernel_inst`, ~line 430) becomes a `generate` with two branches; **all decode, Zorro-III, DDR3, Akiko, chipset state machine and NMI logic stay as they are**. AP040 branch: component declaration for `ap040_tg68k_compat`; `cpu(1)` forced '1'; `skipFetch` '0'; ports per the table above. New wrapper inputs `snoop_stb`, `snoop_addr[31:0]`. Top levels pass `CPU_CORE` down; `AP040_HAS_FPU`/`HAS_MMU`/`ENABLE_CACHE` exposed as top-level parameters, **all 1 by default**. | TG68K build bit-identical in behaviour (sim/ddr3_cpu, sim/autoconfig unchanged) |
 | A2 | `sdram_ctrl.v`: bring out `snoop_act` and the chip address as outputs; `minimig_virtual_top.v` wires them to the wrapper. | lint clean |
 | A3 | `cpu.xdc`: kernel set = the AP040 instance minus the watchdog; wrapper and memory sets unchanged. `-setup -start 4 / -hold -start 3` as today (28.36 MHz, 35.3 ns budget; core worst path 21 ns). | `report_exceptions` shows the sets populated for both builds |
-| A4 | Firmware: `fw/ctrl_832/menu.c:85` `config_cpu_msg[3]` "020 alpha" → "68040" for the AP040 bitstream; the wrapper ignores `cpu` in the AP040 branch, so the OSD choice is cosmetic there. (Becomes real in stage E.) | — |
+| A4 | OSD: the capability bytes on `OSD_CMD_VERSION` and the firmware side of "OSD and firmware" above, sole-core rows. The wrapper ignores `cpu(1:0)` in the AP040 branch; the menu says "68040" because the core told it so, not because it was built that way. | firmware built; boot banner shows 68040/FPU/MMU on the AP040 bitstream and is unchanged on the TG68K one |
 | A5 | **Bench**: `sim/ddr3_cpu` gets `CPU_CORE` as a plusarg/define and compiles the AP040 sources under xsim; the same 68k program runs (assembled `-m68020`, valid 040 code). Add: chip-RAM access through the AGA longword path (the `longword` contract, `TG68K.vhd:589/630`), a 32-bit fast-RAM write (`longword_en` in `ddr3_fastram.v`), `movec` to a 040-layout CACR and the `cpu_cache_ctrl` mapping, and an interrupt (IPL) with autovector. Mutant run stays. Run the variants **one at a time** (`sim/ddr3_cpu/run.sh` header). | PASS + backdoor PASS with CPU_CORE=AP040; TG68K variant unchanged |
 | A6 | **Hardware**: build `CPU_CORE=AP040`, program by reprogramming (never soft reset). Boot **without startup-sequence** so SetPatch never runs and the MMU stays off — no `NOMMU` mechanism to get right on the first try. Then `ShowConfig` (CPU line must say 68040), `avail` (42 MB as today), ATK on the SDRAM board and the DDR3 board. Then a normal boot: SetPatch loads `68040.library`, which **will** enable the MMU and hit the tied-off walker → watchdog → access error. Expected; it is the exit condition for stage B. | Workbench up with MMU off; ATK clean on both boards; the MMU-on boot fails in the documented way |
 | A7 | Baseline numbers: `bench_loop` cycles per instruction TG68K vs AP040 (from 0.2 and the TG68K equivalent), and a fast-RAM memory benchmark on hardware for both bitstreams. | table below filled |
@@ -194,12 +354,13 @@ smaller build; if not, drop the parameter from the top level.
 
 ### Stage E — both cores in one bitstream, OSD-selected (M, bounded experiment)
 
-Both kernels under the wrapper's `generate`, selected by `cpu_config[1:0]`
-latched at reset ("11" = AP040, else TG68K in its 68000/010/020 mode); the
-unselected core held in reset with `clkena` low; the kernel-side outputs
-muxed (one LUT level on paths that have a 3-cycle budget); two kernel
-multicycle sets in `cpu.xdc`. Then the real question: place and route at
-≈ 71 %.
+Both kernels under the wrapper's `generate`, selected by `cpu_config[4]`
+latched at reset (the dual-build rows of "OSD and firmware": bit 4 = AP040,
+else TG68K in the 68000/010/020 mode bits 1:0 select); the unselected core
+held in reset with `clkena` low; the kernel-side outputs muxed (one LUT
+level on paths that have a 3-cycle budget); two kernel multicycle sets in
+`cpu.xdc`; `CORE_CAPS` bit 1 set so the menu offers the choice. Then the
+real question: place and route at ≈ 71 %.
 
 Accept if WNS ≥ 0 on the CPU island with the SDRAM read path no worse than
 today's −0.544 ns. Otherwise stop, keep the two bitstreams, and record the
@@ -225,6 +386,9 @@ Walker port from B, the restart-model caveat above. Not on the AmigaOS path.
 | Risk | Shows as | Mitigation |
 |---|---|---|
 | Timing at 64 % (sole) / 71 % (dual) with 40-level paths and the DDR3 island | negative WNS on the kernel island | stage order: sole core first at 28 MHz; D1/D3 only after A6; E time-boxed |
+| The `clkena` net: combinational, fanning out to 7,391 CE pins, single-cycle | negative WNS on enable → CE paths, or a replication storm | "Timing" item 1: watch it first at A6; `MAX_FANOUT`, then a registered enable tree re-benched in `sim/ddr3_cpu` |
+| SDRAM read path degrades with the placement change | `clk_gen_sdram → clk_114` worse than −0.544 ns | CPU-island pblock away from the SDRAM bank; sign-off rule "no worse than today" |
+| Firmware and core disagree about which CPUs exist | menu offers a choice the RTL ignores, or hides one it has | capability bytes behind a magic value on `OSD_CMD_VERSION`; old/new compatibility both ways in "OSD and firmware" |
 | `dpram` read-during-write semantics changed by the Xilinx-inferable form | cache/ATC stale for one cycle on a same-row collision | `tb_ap040_cache_snoop.v` in 0.2 |
 | Free-running watchdog inside the multicycle set | wrong constraint, TIMING-46 | exclusion in 0.3 |
 | 040 CACR → `cpu_cache_ctrl` mapping | external cache never enabled, or never cleared | A5 checks the mapping explicitly |
@@ -240,6 +404,8 @@ Walker port from B, the restart-model caveat above. Not on the AmigaOS path.
 | AP68040 self-tests at 0e76761 with the RAM override | — | 0.2 |
 | `bench_loop` cycles per instruction, AP040 / TG68K | — | 0.2 / A7 |
 | Post-route WNS, sole-core build, kernel island | — | A6 |
+| Post-route WNS on the `clkena` → CE paths, and the replication Vivado applied | — | A6 |
+| SDRAM read path WNS with the 040 placed (today −0.544 ns) | — | A6 |
 | Fast-RAM benchmark, TG68K vs AP040, 28 MHz | — | A7 |
 | Same after D1 (37.8 MHz) and D2 (line port) | — | D1 / D2 |
 | Post-route LUTs and WNS, dual-core build | — | E |
