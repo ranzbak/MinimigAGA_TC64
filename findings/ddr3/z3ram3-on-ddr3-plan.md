@@ -45,16 +45,27 @@ in the unused `acdevice = 3'b100` slot, see "Later".
 * Board 3 already exists in the autoconfig chain (`acdevice = 3'b011`,
   ROM entry `z3base3`, enable `ziiiram3_active = board_configured[3]`,
   `sel_z3ram3` in TG68K). No new chain mechanics are needed.
-* Board 3 is disabled today because of a known bug, and that bug is the one
-  thing this plan has to fix anyway: the OS assigns Zorro-III bases from its
-  own free list (it put the 4 MB board at $08000000; the bench in
-  `sim/autoconfig` reproduces this), while `TG68K.vhd` *guesses* the base:
+* Board 3 is disabled in the DDR3 build (design.md D8) because it is scraps
+  of SDRAM address space. It works perfectly well in the SDRAM build:
+  ShowConfig on hardware (Kickstart 46.143, 2026-09-06) lists it as
+  `Prod=5017/17 ($1399/$11) (@$41000000, size 4meg, subsize 4meg Mem)`,
+  i.e. the OS packs it contiguously after the 16 MB board and the hard-wired
+  decode below happens to be right.
+
+  **Do not read the `sim/autoconfig` bench as evidence about placement.** Its
+  allocator model puts sub-16 MB Zorro-III boards in a separate pool from
+  $08000000, which is not what real Kickstart does. An earlier version of this
+  plan claimed the board was broken by that mismatch; the hardware says
+  otherwise. What follows still holds -- the decode should track the OS rather
+  than assume -- but as engineering hygiene, not as a bug fix:
 
   ```vhdl
   sel_z3ram3_dec <= '1' WHEN cpuaddr(31 downto 30) = "01" and cpuaddr(26) = z3ram2_ena
                              and cpuaddr(24) = not z3ram2_ena and z3ram3_ena = '1' ...
   ```
-  i.e. $41000000 (or $44000000 with board 2), never what the OS wrote.
+  i.e. $41000000 (or $44000000 with board 2), never what the OS wrote. That
+  guess matches reality today, but only by luck: it holds for one board order
+  and one set of sizes, and the 16 MB DDR3 board changes both.
 
 * **None of the RAM boards latch their assigned base.** `minimig_autoconfig.v`
   stores only the Toccata's (`board_base_addr[4]`); boards 0-3 rely on the
