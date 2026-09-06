@@ -148,10 +148,12 @@
 
 module minimig #(
   parameter NTSC = 1'b0, //Agnus type (PAL/NTSC)
-  // Offer the third ("leftover") Zorro-III RAM board in the autoconfig chain.
-  // 0 when the Zorro-III fast RAM lives on the DDR3 island; see
-  // rtl/minimig/minimig_autoconfig.v and findings/ddr3/design.md D8.
-  parameter Z3RAM3 = 1'b1
+  // Offer the third Zorro-III RAM board in the autoconfig chain.  0 only when
+  // nothing answers at that board's address; see rtl/minimig/minimig_autoconfig.v.
+  parameter Z3RAM3 = 1'b1,
+  // That third board is the DDR3 fast RAM board (16 MB) rather than the
+  // leftover SDRAM board; see findings/ddr3/z3ram3-on-ddr3-plan.md.
+  parameter Z3RAM3_DDR3 = 1'b0
 )  (
   //m68k pins
   input [23:1] cpu_address, // m68k address bus
@@ -255,6 +257,7 @@ module minimig #(
   //user i/o
   output  [3:0] cpu_config,
   output  [4:0] board_configured,
+  output  [7:0] z3ram3_base, // A31-A24 the OS gave the third ZIII RAM board
   output  turbochipram,
   output  turbokick,
   output  [1:0] slow_config,
@@ -1124,7 +1127,8 @@ wire [15:0] autoconfig_data_out;
 
 minimig_autoconfig #(
   .TOCCATA_SND(1'b1),
-  .Z3RAM3(Z3RAM3)
+  .Z3RAM3(Z3RAM3),
+  .Z3RAM3_DDR3(Z3RAM3_DDR3)
 ) autoconfig (
   .clk(clk),
   .clk7_en(clk7_en),
@@ -1142,6 +1146,7 @@ minimig_autoconfig #(
   .slowram_config(memory_config[3:2]),
   .board_configured(board_configured),
   .toccata_base_addr(toccata_base_addr),
+  .z3ram3_base(z3ram3_base),
   .board_shutup(autoconfig_shutup),
   .autoconfig_done(autoconfig_done)
 );
