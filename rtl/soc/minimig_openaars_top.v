@@ -20,6 +20,12 @@ module minimig_openaars_top #(
   // is still built, it just has no requester.
   parameter HAVEDDR3 = 1,
   parameter Z3RAM3_FORCE_OFF = 0, // diagnostic-only: see minimig_virtual_top.v
+  // Size of the third Zorro-III board -- the DDR3 fast RAM board when
+  // HAVEDDR3 -- as log2 of its byte size: 24 = 16 MB, 25 = 32 MB, 26 = 64 MB.
+  // Changing it means changing the size the autoconfig ROM advertises too
+  // (rtl/minimig/minimig_autoconfig_rom.v); see
+  // findings/ddr3/z3ram3-on-ddr3-plan.md.
+  parameter Z3RAM3_SIZE_LOG2 = 24,
   // Debug build only (tools/vivado/build_ila.tcl): put ila_fastram on the
   // clk_114 side of the Zorro-III fast RAM so a real Workbench boot can be
   // captured.  Passed straight down to minimig_virtual_top; 0 everywhere else.
@@ -472,6 +478,7 @@ minimig_virtual_top
   .havespirtc(1'b1),
   .haveddr3(HAVEDDR3),
   .Z3RAM3_FORCE_OFF(Z3RAM3_FORCE_OFF),
+  .z3ram3_size_log2(Z3RAM3_SIZE_LOG2),
   .DDR3_FASTRAM_ILA(DDR3_FASTRAM_ILA)
 ) openaars_virtual_top (
   .CLK_IN(clk_50),

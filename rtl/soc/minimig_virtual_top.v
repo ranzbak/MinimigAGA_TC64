@@ -25,7 +25,11 @@ module minimig_virtual_top #(
     // Zorro-III fast RAM on the DDR3 island instead of the SDRAM.
     // findings/ddr3/design.md; the island itself lives in minimig_openaars_top.v.
     parameter haveddr3 = 1,
-    parameter Z3RAM3_FORCE_OFF = 0, // diagnostic-only: force the leftover 3rd ZIII board off even when haveddr3=0
+    parameter Z3RAM3_FORCE_OFF = 0, // diagnostic-only: force the 3rd ZIII board out of the autoconfig chain
+    // Size of the 3rd ZIII board, log2 of its byte size: 24 = 16 MB, 25 = 32 MB,
+    // 26 = 64 MB.  Must match what the autoconfig ROM advertises for that board
+    // (rtl/minimig/minimig_autoconfig_rom.v, Z3RAM3_DDR3 entry).
+    parameter z3ram3_size_log2 = 24,
     // Debug build only: instantiate ila_fastram (tools/vivado/build_ila.tcl
     // sets this generic to 1) on the CPU side of the DDR3 fast RAM, so a real
     // Workbench boot can be captured.  0 in every normal build, and then not
@@ -209,6 +213,9 @@ wire [ 16-1:0] tg68_cin;
 wire           tg68_cpuena;
 wire [  4-1:0] cpu_config;
 wire [4:0]     board_configured;
+// A31-A24 the OS assigned to the third ZIII RAM board (the DDR3 board when
+// haveddr3); minimig latches it during autoconfig, TG68K decodes against it.
+wire [7:0]     z3ram3_base;
 wire           turbochipram;
 wire           turbokick;
 wire [1:0]     slow_config;
@@ -589,7 +596,8 @@ TG68K #(
     .havertg(havertg ? "true" : "false"),
     .haveaudio(haveaudio ? "true" : "false"),
     .havec2p(havec2p ? "true" : "false"),
-    .haveddr3(haveddr3 ? "true" : "false")
+    .haveddr3(haveddr3 ? "true" : "false"),
+    .z3ram3_size_log2(z3ram3_size_log2)
 ) tg68k (
     .clk          (CLK_114          ),
     .reset        (tg68_rst         ),
@@ -632,6 +640,7 @@ TG68K #(
     .ziiiram_active(board_configured[1]),
     .ziiiram2_active(board_configured[2]),
     .ziiiram3_active(board_configured[3]),
+    .z3ram3_base  (z3ram3_base      ),
     //  .fastramcfg   ({&memcfg[5:4],memcfg[5:4]}),
     .eth_en       (1'b1), // TODO
     .sel_eth      (),
@@ -953,10 +962,13 @@ assign _ram_we=1'b1;
 
 minimig #(
     .NTSC(1'b0),
-    // The "leftover" third Zorro-III board is SDRAM scraps; it does not exist
-    // once the Zorro-III fast RAM is on the DDR3 (design.md D8), so it must not
-    // be autoconfigured either or the OS would add memory that is not there.
-    .Z3RAM3((haveddr3 || Z3RAM3_FORCE_OFF) ? 1'b0 : 1'b1)
+    // The third Zorro-III board is offered either way now: SDRAM scraps
+    // (2/4 MB) without the DDR3, the DDR3 fast RAM board (16 MB) with it.
+    // Both are decoded against the base the OS assigns, so neither adds
+    // memory that is not there -- which is what forced this board off before
+    // (findings/ddr3/z3ram3-on-ddr3-plan.md, supersedes design.md D8).
+    .Z3RAM3(Z3RAM3_FORCE_OFF ? 1'b0 : 1'b1),
+    .Z3RAM3_DDR3(haveddr3 ? 1'b1 : 1'b0)
 ) minimig (
     //m68k pins
     .cpu_address  (tg68_adr[23:1]   ), // M68K address bus
