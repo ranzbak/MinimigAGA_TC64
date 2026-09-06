@@ -38,6 +38,24 @@ cd "$D"
 VARIANT=pass
 if [ "$1" = "--mutant" ]; then VARIANT=mutant; shift; fi
 
+# Which CPU core the wrapper is built with.  The AP68040 (lib/AP68040) presents
+# a TG68K-shaped port set, so the whole bench -- chipset model, DDR3 chain,
+# 68k program -- is the same; only the kernel inside rtl/soc/TG68K.vhd changes.
+#   ./run.sh            TG68K   -> run_pass/        xsim_run_pass.log
+#   ./run.sh --ap040    AP68040 -> run_pass_ap040/  xsim_run_pass_ap040.log
+CPU=tg68k
+if [ "$1" = "--ap040" ]; then CPU=ap040; shift; fi
+if [ "$CPU" = "ap040" ]; then
+    # The mutant is a TG68K-specific mutation (the chipset_cycle term); there is
+    # nothing for it to mean with a different kernel.
+    if [ "$VARIANT" = "mutant" ]; then
+        echo "--mutant and --ap040 are not a combination: the mutant is the" >&2
+        echo "TG68K wrapper as it stood before the chipset_cycle fix." >&2
+        exit 2
+    fi
+    VARIANT=pass_ap040
+fi
+
 VIVADO_PATH=${VIVADO_PATH:-/opt/Xilinx/Vivado/2023.2}
 R="$D/../.."
 LIB="$R/lib/core_ddr3_controller"
@@ -84,6 +102,19 @@ echo "sv work \"$LIB/src_v/ddr3_dfi_seq.sv\""           >> $PRJ
 echo "sv work \"$LIB/src_v/ddr3_core.sv\""              >> $PRJ
 echo "sv work \"$D/ddr3_cpu_tb.sv\""                    >> $PRJ
 
+# ---- AP68040, when that is the core under test ----------------------------
+# SystemVerilog; ap040_defs.svh is on the include path passed to xelab below.
+# The RAM primitive is the project's, not the submodule's -- rtl/cpu040/dpram.v.
+if [ "$CPU" = "ap040" ]; then
+    AP=$R/lib/AP68040/rtl
+    for f in ap040_tg68k_compat ap040_core ap040_alu ap040_muldiv ap040_regfile \
+             ap040_fpu ap040_mmu ap040_cache ap040_bus16_adapter \
+             ap040_bus_timeout ap040_walker_cdc; do
+        echo "sv work \"$AP/$f.v\""                      >> $PRJ
+    done
+    echo "verilog work \"$R/rtl/cpu040/dpram.v\""        >> $PRJ
+fi
+
 # ---- Verilog-2001 ---------------------------------------------------------
 echo "verilog work \"$LIB/src_v/phy/xc7/ddr3_dfi_phy.v\"" >> $PRJ
 echo "verilog work \"$LIB/tb/ddr3_core_xc7/ddr3.v\""      >> $PRJ
@@ -104,7 +135,10 @@ quit
 EOF
 
 # The Micron model includes 2048Mb_ddr3_parameters.vh from its own directory.
-"$VIVADO_PATH/bin/xelab" -prj $PRJ -i "$LIB/tb/ddr3_core_xc7" \
+AP040_ELAB=""
+if [ "$CPU" = "ap040" ]; then AP040_ELAB="-i $R/lib/AP68040/rtl -d CPU_AP040"; fi
+
+"$VIVADO_PATH/bin/xelab" -prj $PRJ -i "$LIB/tb/ddr3_core_xc7" $AP040_ELAB \
     -d SOC_SIM -debug typical -relax \
     -L secureip -L unisims_ver -L unimacro_ver \
     ddr3_cpu_tb glbl -s cpu_sim

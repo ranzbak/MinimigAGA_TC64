@@ -31,16 +31,19 @@ set tg68_seq {IS_SEQUENTIAL || PRIMITIVE_TYPE =~ "DMEM.*" || PRIMITIVE_TYPE =~ "
 #-----------------------------------------------------------------------------
 set cpu_wrapper openaars_virtual_top/tg68k
 
-# The kernel instance inside that wrapper, per core.
+# The kernel instance inside that wrapper, per core.  Only one of the two is
+# elaborated (TG68K.vhd's cpu_core generic picks the generate branch), so the
+# other pattern simply matches nothing and one file serves both builds.
 #   pf68K_Kernel_inst  TG68KdotC_Kernel (rtl/tg68k)
-#   g_ap040.ap040      ap040_tg68k_compat, stage A's generate branch
-set cpu_kernels {pf68K_Kernel_inst g_ap040.ap040}
+#   g_ap040.ap040      ap040_tg68k_compat (lib/AP68040)
+set cpu_kernel_tg68k $cpu_wrapper/pf68K_Kernel_inst
+set cpu_kernel_ap040 $cpu_wrapper/g_ap040.ap040
 
 # Registers inside the kernel that advance on the FREE-RUNNING clock rather
 # than on clkena, and therefore keep honest single-cycle timing.  Relaxing
 # these would be wrong, not merely generous.
 #
-#   core_stall_watchdog  ap040_bus_timeout, 21-bit counter with no enable at
+#   core_stall_watchdog  ap040_bus_timeout, a 21-bit counter with no enable at
 #                        all: it exists to notice a clkena wedge, so a wedge
 #                        must not be able to stop it (ap040_tg68k_compat.v:14-28)
 #   walker_wr_d / wsnp_* the walker-write snoop edge detector in the same file
@@ -51,20 +54,14 @@ set cpu_kernels {pf68K_Kernel_inst g_ap040.ap040}
 # for TIMING-46 and for CE pins tied high inside the kernel set -- because a
 # register that samples every cycle and receives a 4-cycle exception is exactly
 # the class of bug findings/constraints/fix-04 was about.
-set cpu_free_running {*core_stall_watchdog/* *walker_wr_d* *wsnp_pend* *wsnp_addr*}
-
-# Build the filter fragments once.
-set _in {}
-set _out {}
-foreach k $cpu_kernels {
-    lappend _in  "NAME =~ $cpu_wrapper/$k/*"
-    lappend _out "NAME !~ $cpu_wrapper/$k/*"
-}
-set cpu_is_kernel  [join $_in  " || "]
-set cpu_not_kernel [join $_out " && "]
-set _fr {}
-foreach f $cpu_free_running { lappend _fr "NAME !~ $f" }
-set cpu_not_free [join $_fr " && "]
+#
+# Written out longhand: an XDC file is not general Tcl, and Vivado rejects
+# foreach ("Command 'foreach' is not supported in the xdc constraint file",
+# Designutils 20-1307).  Building these strings in a loop cost a build: the
+# variables were left unset and all ten exceptions below were silently dropped.
+set cpu_is_kernel  "NAME =~ $cpu_kernel_tg68k/* || NAME =~ $cpu_kernel_ap040/*"
+set cpu_not_kernel "NAME !~ $cpu_kernel_tg68k/* && NAME !~ $cpu_kernel_ap040/*"
+set cpu_not_free   "NAME !~ *core_stall_watchdog/* && NAME !~ *walker_wr_d* && NAME !~ *wsnp_pend* && NAME !~ *wsnp_addr*"
 
 set tg68_kernel [get_cells -hier -filter "($cpu_is_kernel) && ($cpu_not_free) && ($tg68_seq)"]
 set tg68_wrap   [get_cells -hier -filter "NAME =~ $cpu_wrapper/* && ($cpu_not_kernel) && ($tg68_seq)"]

@@ -202,7 +202,14 @@ reg  [15:0] tg68_dat_in, tg68_dat_in2;         // chipset-side read data
 reg  [15:0] fromram;                           // SDRAM-side read data
 reg         ramready;
 
-TG68K tg68k (
+// Which kernel the wrapper builds.  run.sh --ap040 defines CPU_AP040 and adds
+// the AP68040 sources; everything else in this bench is identical, which is
+// the whole point of that core presenting a TG68K-shaped port set.
+`ifdef CPU_AP040
+TG68K #(.cpu_core("AP040")) tg68k (
+`else
+TG68K #(.cpu_core("TG68K")) tg68k (
+`endif
     .clk            (clk              ),
     .reset          (tg68_rst         ),
     .clkena_in      (ena28            ),
@@ -239,6 +246,12 @@ TG68K tg68k (
     .ziiiram2_active(1'b0             ),
     .ziiiram3_active(1'b1             ),   // ... and the 16 MB DDR3 board
     .z3ram3_base    (Z3RAM3_BASE      ),   // where the OS put it
+    // Chipset DMA write snoop.  This bench has no chipset and nothing but the
+    // CPU writes memory, so there is nothing to snoop; on hardware these come
+    // from sdram_ctrl.  (An AP68040 caching chip RAM would need them -- but
+    // the core's own window logic leaves the low chip space uncached anyway.)
+    .snoop_stb      (1'b0             ),
+    .snoop_addr     (32'd0            ),
     .eth_en         (1'b0             ),
     .sel_eth        (                 ),
     .frometh        (16'h0000         ),
