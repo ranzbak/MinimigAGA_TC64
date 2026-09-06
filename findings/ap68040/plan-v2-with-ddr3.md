@@ -271,7 +271,7 @@ authority on whether it exists.
 | `userio.v`, `minimig.v`, `minimig_virtual_top.v` | widen to 5 bits; the wrapper gets `.cpu(cpu_config[1:0])` and `.core_sel(cpu_config[4])` |
 | `TG68K.vhd` | in the dual build, `core_sel` picks the kernel; the unselected one is held in reset with `clkena_in` low. In a sole build the port is unused. |
 | `menu.c` | when `core_caps & 2`: cycle 68000 → 68010 → 020 → **68040**; 68040 encodes as `config.cpu` bit 4 set with bits 1:0 = 11 (so an old core that only looks at bits 1:0 gets the TG68K in 020 mode — the closest thing). Leaving 68040 clears bit 4. |
-| `config.c` | nothing: bit 4 lives inside the `unsigned char` that is already saved. Check the load path does not mask it. |
+| `config.c` | nothing: bit 4 lives inside the `unsigned char` that is already saved, and the load path does not mask it (checked: `config.c:337` only sets the default 0, `:428` passes the byte to `ConfigCPU` as is). |
 
 Compatibility both ways: old firmware + new core sends bit 4 = 0 → TG68K
 selected in a dual build, ignored in a sole build. New firmware + old core
