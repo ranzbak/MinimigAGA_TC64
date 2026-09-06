@@ -296,7 +296,16 @@ BEGIN
 	-- aligned and nothing else is placed inside that window -- checked, not
 	-- assumed, by sim/autoconfig.  Making it exact means latching A23-A16 from
 	-- the register-48 write too; see the plan's "Later" list.
-	sel_z3ram3    <= '1' WHEN cpuaddr(31 downto z3ram3_size_log2) = z3ram3_base(7 downto z3ram3_size_log2 - 24)
+	-- sel_32 first, and not merely as an optimisation: it excludes the 24-bit
+	-- space (cpuaddr(31 downto 24) = 0x00) and the interrupt vectors (0xff),
+	-- where a Zorro-III board can never live.  Without it a base register that
+	-- reads back as 0 -- an unconnected wire, a board the OS has not placed
+	-- yet, a bug upstream -- makes this board answer for chip RAM, the CIAs and
+	-- the custom registers the moment it is enabled, and the machine dies with
+	-- a black screen before it can say why.  It cost a bring-up cycle on
+	-- 2026-09-06 (z3ram3_base left undriven in minimig_virtual_top.v).
+	sel_z3ram3    <= '1' WHEN sel_32 = '1'
+	                          AND cpuaddr(31 downto z3ram3_size_log2) = z3ram3_base(7 downto z3ram3_size_log2 - 24)
 	                          AND z3ram3_ena = '1' ELSE '0';
 	-- First block of ZIII RAM - 0x40000000 - 0x40ffffff
 	-- Second block of ZIII RAM - 32 meg from 0x42000000 - 0x43ffffff

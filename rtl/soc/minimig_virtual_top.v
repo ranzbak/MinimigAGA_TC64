@@ -1064,6 +1064,7 @@ minimig #(
     //user i/o
     .cpu_config   (cpu_config       ), // CPU config
     .board_configured(board_configured),
+    .z3ram3_base  (z3ram3_base      ), // -> TG68K, which decodes board 3 against it
     .turbochipram (turbochipram     ), // turbo chipRAM
     .turbokick    (turbokick        ), // turbo kickstart
     .slow_config  (slow_config      ),
