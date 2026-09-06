@@ -288,6 +288,14 @@ BEGIN
 	-- DDR3 one -- and the old hard-wired $41000000/$44000000 decode is exactly
 	-- why the board had to be disabled before.  The board is size-aligned, so
 	-- the bits above its size are the base and the rest are the offset.
+	--
+	-- z3ram3_base is A31-A24, so the compare has 16 MB granularity.  That is
+	-- exact for the 16 MB DDR3 board.  For the 4 MB leftover SDRAM board
+	-- (haveddr3 = false) it claims the rest of the 16 MB the board sits in,
+	-- which is harmless only because every ZIII base the OS hands out is 16 MB
+	-- aligned and nothing else is placed inside that window -- checked, not
+	-- assumed, by sim/autoconfig.  Making it exact means latching A23-A16 from
+	-- the register-48 write too; see the plan's "Later" list.
 	sel_z3ram3    <= '1' WHEN cpuaddr(31 downto z3ram3_size_log2) = z3ram3_base(7 downto z3ram3_size_log2 - 24)
 	                          AND z3ram3_ena = '1' ELSE '0';
 	-- First block of ZIII RAM - 0x40000000 - 0x40ffffff

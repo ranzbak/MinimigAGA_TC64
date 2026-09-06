@@ -757,6 +757,18 @@ module autoconfig_tb;
               s_verdict = $sformatf("FAIL: linked %s, expected %s",
                                     hsize(z3ram3_alloc_lsize), hsize(exp_lsize));
               z3b_bad = z3b_bad + 1;
+            end else if (z3ram3_alloc_base[23:0] != 24'd0) begin
+              // z3ram3_base carries A31-A24 only, so TG68K.vhd can only
+              // compare on a 16 MB boundary.  Every ZIII base the OS hands
+              // out is 16 MB aligned, which is what makes that enough -- but
+              // it is an assumption about the OS's allocator, and assuming
+              // where the OS puts this board is the bug this whole change
+              // exists to fix.  So check it rather than trust it: if this
+              // ever fires, the decode needs A23-A16 latched from the
+              // register-48 write as well.
+              s_verdict = $sformatf("FAIL: base $%08x is not 16 MB aligned",
+                                    z3ram3_alloc_base[31:0]);
+              z3b_bad = z3b_bad + 1;
             end else if (z3ram3_base_val() !== z3ram3_alloc_base[31:24]) begin
               s_verdict = $sformatf("FAIL: latched $%02x, OS used $%02x",
                                     z3ram3_base_val(), z3ram3_alloc_base[31:24]);

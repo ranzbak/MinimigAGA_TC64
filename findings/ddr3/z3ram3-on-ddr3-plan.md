@@ -330,6 +330,14 @@ constraints for this change; if a step seems to need it, the step is wrong.
   Beyond 64 MB needs the `cpu_cache_new` tag widened (design.md stage C).
 * Boards 1 and 2 decoded from latched bases too (same latch in the 44
   handler, same compare in TG68K); removes the last hard-wired guesses.
+* Latch A23-A16 from the register-48 write, so the compare can be exact for
+  a board smaller than 16 MB. Today `z3ram3_base` is A31-A24 only, so the
+  decode has 16 MB granularity: exact for the 16 MB DDR3 board, but the
+  4 MB leftover SDRAM board claims the remaining 12 MB of the 16 MB it sits
+  in. That is harmless only while every ZIII base the OS hands out is 16 MB
+  aligned and nothing else is placed inside that window -- `sim/autoconfig`
+  asserts the alignment rather than assuming it, so this will announce
+  itself if it ever stops holding.
 * The 4 MB SDRAM leftover back as a 4th board in the free `3'b100` slot.
 * `fw/ctrl_832` OSD memory menu, if it wants to show the DDR3 size.
 
