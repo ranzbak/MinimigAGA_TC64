@@ -23,6 +23,16 @@
 # Trigger      : the first cpuena (cache acknowledge) rising edge while
 #                ddr_ready is high, i.e. the first completed CPU access to the
 #                DDR3 fast RAM after the island has finished initialising.
+#
+#                NOTE since the DDR3 became Zorro-III board 3 rather than
+#                board 1 (findings/ddr3/z3ram3-on-ddr3-plan.md): the first
+#                DDR3 access is no longer the Kickstart relocation into
+#                0x40000000, which now goes to the SDRAM.  Exec adds boards in
+#                autoconfig order, so the DDR3 is only touched once the OS
+#                spills past the SDRAM boards -- much later in the boot, and
+#                not at all on a short one.  Arm accordingly, and do not read
+#                "no trigger" as "no DDR3 traffic" without checking that the
+#                board was configured at all.
 # Storage      : only cycles that carry information -- a CPU access is
 #                selected (cpustate[2], the active-low chip select, is 0) OR
 #                the backend FSM is not idle (bstate != 0).  Idle clk_114

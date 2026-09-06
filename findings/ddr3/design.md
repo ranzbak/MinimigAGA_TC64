@@ -23,15 +23,16 @@ everything that is DMA-visible or streamed: chip RAM, slow RAM, Kickstart, the
 | D3 | **Run it at its proven 100 MHz on its own PLL; bridge to `clk_114` with a one-request handshake.** | The PHY needs clk, 4x clk, 4x clk at 90°, and a 200 MHz IDELAY reference in the ratios of a 1200 MHz VCO. The Minimig MMCM cannot make those at 113 MHz, and it must not be touched (fix-12 lesson). A PLLE2 from `clk_50` (×24 = 1200 MHz) gives 100/400/400@90°/200 exactly as on Arty. |
 | D4 | **Native 128-bit port, not AXI.** | One BL8 = 128 bits = one 8-word cache line. The cache already speaks 8-word bursts. AXI wrapper is dead weight. |
 | D5 | **Reuse `cpu_cache_new` unchanged as the front end.** | The SDRAM path's cache and write buffer are proven with the TG68K handshake. Only the backend (`sdr_*` signals) is reimplemented on the DDR3. |
-| D6 | **Identity address mapping: DDR3 byte address = CPU address bits 27:0.** | Z3 space 0x40000000–0x4FFFFFFF maps one-to-one onto 256 MB. No translation logic, and the future 256 MB board is the same design. |
+| D6 | **~~Identity address mapping: DDR3 byte address = CPU address bits 27:0.~~ Superseded: the DDR3 address is the offset inside the board.** | Was: Z3 space 0x40000000–0x4FFFFFFF maps one-to-one onto 256 MB. The DDR3 is now the third Z3 board, whose base the OS assigns and the hardware latches, so the base bits are dropped and the offset is zero-extended (`z3ram3_size_log2` in `TG68K.vhd`). Identity again only when the board covers the whole 64 MB the backend addresses. See [z3ram3-on-ddr3-plan.md](z3ram3-on-ddr3-plan.md). |
 | D7 | **Stage B keeps today's board sizes; stage C grows the board.** | Autoconfig, OSD menu and the cache tag width are separate work; ship the swap first. |
-| D8 | **The "leftover" Z3 board (`sel_z3ram3`, 0x41000000) is disabled when DDR3 is present.** | It is scraps of SDRAM address space; pointless next to 256 MB. |
+| D8 | **~~The "leftover" Z3 board (`sel_z3ram3`, 0x41000000) is disabled when DDR3 is present.~~ Superseded: that board *is* the DDR3 board.** | Was: scraps of SDRAM address space, pointless next to 256 MB. In fact it was disabled because its decode guessed 0x41000000 while the OS placed it at 0x08000000. Boards 1 and 2 now stay on the SDRAM and board 3 carries the DDR3, decoded against the latched base, so the DDR3 adds memory instead of taking 4 MB away. See [z3ram3-on-ddr3-plan.md](z3ram3-on-ddr3-plan.md). |
 
 ## Architecture
 
 ```
 TG68K.vhd                     rtl/ddr3/ddr3_fastram.v            core_ddr3_controller
- sel_z3ram/z3ram2 ─ ddr_cs ─► cpu_cache_new ─ sdr_* ─► line bridge ─ CDC ─► ddr3_core ─ DFI ─► ddr3_dfi_phy ─► pins
+ sel_z3ram3 ────── ddr_cs ─► cpu_cache_new ─ sdr_* ─► line bridge ─ CDC ─► ddr3_core ─ DFI ─► ddr3_dfi_phy ─► pins
+ (board 3, base latched from autoconfig; boards 1 and 2 stay on the SDRAM)
  datatg68 ◄─ fromddr ────────  cpu_dat_r                          (clk_114 │ 100 MHz)
  ramready ◄─ ddr_ready ──────  cpu_ack
 ```
