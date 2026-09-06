@@ -78,6 +78,9 @@ module ddr3_cpu_tb;
 // asm/ddr3_cpu_test.asm.
 localparam [31:0] DDRBASE  = 32'h4100_0000;
 localparam [ 7:0] Z3RAM3_BASE = 8'h41;   // A31-A24, as the OS would write it
+// Offset inside the board = what actually reaches the DDR3.  16 MB board,
+// i.e. TG68K's z3ram3_size_log2 = 24.
+localparam [31:0] Z3RAM3_OFFMASK = 32'h00FF_FFFF;
 localparam [31:0] PATOFF   = 32'h0000_0000;
 localparam [31:0] MISOFF   = 32'h0000_1000;
 localparam [31:0] CNTOFF   = 32'h0000_2000;
@@ -523,27 +526,26 @@ initial begin
   void'($value$plusargs("TRMAX=%d", TRMAX));
 end
 
-// The DDR3 must answer for board 3 and nothing else, and the address it gets
-// must be the offset inside that board.  Both are new with the board moving
-// off its old hard-wired $40000000 decode: the base now comes from what the
-// OS assigned (z3ram3_base) and the base bits are dropped on the way to the
-// backend, so a decode that leaked or an offset that kept the base bits would
-// corrupt memory silently rather than fail a read-back.
+// The base bits must be gone from the address that reaches the backend: with
+// the DDR3 moved to board 3 the OS picks the base and TG68K drops it, so
+// ddraddr is the offset inside a 16 MB board and its top two bits (25:24)
+// cannot be set.  Keeping a base bit here would put every access 16 MB or
+// more away from where the CPU meant, silently.
+//
+// Only this much is checkable from the wrapper's ports.  "The DDR3 is never
+// selected outside board 3" needs the CPU's current address, and the addr
+// port is not it: TG68K.vhd:588 drives addr from a clocked process during
+// chipset cycles only, so it is stale or X during DDR3 accesses.  That
+// property is covered instead by the backdoor read below, which finds the
+// data only if the base was stripped exactly right, and by sim/autoconfig,
+// which checks the latched base against what the OS assigned.
 integer ddr_decode_errs = 0;
 always @(posedge clk) begin
-  if (tg68_rst && !tg68_ddrcs) begin
-    if (tg68_adr[31:24] !== Z3RAM3_BASE) begin
-      if (ddr_decode_errs < 20)
-        $display("FAIL: DDR3 selected outside board 3 at adr=%08x (base $%02x)",
-                 tg68_adr, Z3RAM3_BASE);
-      ddr_decode_errs = ddr_decode_errs + 1;
-    end
-    if (tg68_ddraddr !== {2'b00, tg68_adr[23:1]}) begin
-      if (ddr_decode_errs < 20)
-        $display("FAIL: ddraddr %07x is not the offset in board 3 for adr=%08x (expected %07x)",
-                 tg68_ddraddr, tg68_adr, {2'b00, tg68_adr[23:1]});
-      ddr_decode_errs = ddr_decode_errs + 1;
-    end
+  if (tg68_rst && !tg68_ddrcs && tg68_ddraddr[25:24] !== 2'b00) begin
+    if (ddr_decode_errs < 20)
+      $display("FAIL: ddraddr %07x has base bits set; expected an offset inside a 16 MB board",
+               tg68_ddraddr);
+    ddr_decode_errs = ddr_decode_errs + 1;
   end
 end
 
@@ -610,10 +612,16 @@ task ddr_read_line;
   reg [2:0] bnk;
   reg [14:0] row;
   reg [9:0] col;
+  reg [31:0] off;
   begin
-    bnk = a[13:11];
-    row = a[28:14];
-    col = {a[10:4], 3'b000};
+    // The DDR3 sees the offset inside board 3, not the CPU address: TG68K
+    // drops the base bits (z3ram3_size_log2).  Callers pass CPU addresses, so
+    // strip the base here or the backdoor reads a part of the array the CPU
+    // never wrote.
+    off = a & Z3RAM3_OFFMASK;
+    bnk = off[13:11];
+    row = off[28:14];
+    col = {off[10:4], 3'b000};
     u_ram.memory_read(bnk, row, col, d);
   end
 endtask

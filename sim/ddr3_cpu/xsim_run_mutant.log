@@ -24,27 +24,27 @@ INFO: CPU released at 64389167.0 ps (ddr_ready=1 init_done=1 pll_locked=1)
 INFO: program phase 1 at 67042482.0 ps
 INFO: program phase 2 at 212172642.0 ps
 
-DDR3 CPU TB: FAIL code 2  pattern read-back, BYTE load
-       first mismatch address : 40000000
-       expected               : 000000c0
-       got                    : 00000000
+DDR3 CPU TB: FAIL code 99  unexpected 68k exception (bus/address error, privilege violation, ...)
+       first mismatch address : eeeeeeee
+       expected               : eeeeeeee
+       got                    : eeeeeeee
        last phase reached     : 2
 
 INFO: checking the DDR3 array through the Micron model backdoor
-       DRAM mismatch at 40000042: expected 0010 got 000a
-       DRAM mismatch at 40000046: expected 0011 got 000b
-       DRAM mismatch at 4000004a: expected 0012 got 000c
-       DRAM mismatch at 4000004e: expected 0013 got 000c
-       DRAM mismatch at 40000052: expected 0014 got 000c
-       DRAM mismatch at 40000056: expected 0015 got 000d
-       DRAM mismatch at 4000005a: expected 0016 got 000e
-       DRAM mismatch at 4000005e: expected 0017 got 000f
-FAIL: DDR3 array contents wrong in 439 places (independent backdoor read)
+       DRAM mismatch at 41000022: expected 0008 got 0006
+       DRAM mismatch at 41000026: expected 0009 got 0006
+       DRAM mismatch at 4100002a: expected 000a got 0006
+       DRAM mismatch at 4100002e: expected 000b got 0007
+       DRAM mismatch at 41000032: expected 000c got 0008
+       DRAM mismatch at 41000036: expected 000d got 0009
+       DRAM mismatch at 4100003a: expected 000e got 0009
+       DRAM mismatch at 4100003e: expected 000f got 0009
+FAIL: DDR3 array contents wrong in 521 places (independent backdoor read)
 
 DDR3 CPU TB: 2 checks failed
 
-$finish called at time : 215240262 ps : File "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/ddr3_cpu_tb.sv" Line 742
-run: Time (s): cpu = 00:00:01 ; elapsed = 00:02:55 . Memory (MB): peak = 1441.133 ; gain = 91.039 ; free physical = 9260 ; free virtual = 31874
+$finish called at time : 215945462 ps : File "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/ddr3_cpu_tb.sv" Line 795
+run: Time (s): cpu = 00:00:00.33 ; elapsed = 00:01:21 . Memory (MB): peak = 1443.094 ; gain = 0.000 ; free physical = 19707 ; free virtual = 40410
 ## quit
-INFO: xsimkernel Simulation Memory Usage: 147564 KB (Peak: 188444 KB), Simulation CPU Usage: 167760 ms
-INFO: [Common 17-206] Exiting xsim at Sat Sep  5 16:09:36 2026...
+INFO: xsimkernel Simulation Memory Usage: 147568 KB (Peak: 188448 KB), Simulation CPU Usage: 80790 ms
+INFO: [Common 17-206] Exiting xsim at Sun Sep  6 22:06:41 2026...

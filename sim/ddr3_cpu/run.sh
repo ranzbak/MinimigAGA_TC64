@@ -16,6 +16,14 @@
 # fail.  The two variants build in separate directories (run_pass/, run_mutant/)
 # so they can run at the same time without sharing an xsim work library.
 #
+# RUN THEM ONE AT A TIME ANYWAY.  On 2026-09-06 a pass run started alongside a
+# mutant run reported a read-back failure (code 2) and 362 wrong words in the
+# backdoor check; the identical configuration passed three times when run on
+# its own, before and after.  The cause was never found -- the separate
+# directories look right -- so this is one unexplained observation, not a
+# diagnosis.  It is enough to distrust a concurrent run: a false failure here
+# costs an afternoon chasing a bug that is not in the design.
+#
 # Vivado 2023.2 on modern Ubuntu needs libtinfo.so.5:
 #   mkdir -p /somewhere/shim
 #   ln -s /lib/x86_64-linux-gnu/libtinfo.so.6 /somewhere/shim/libtinfo.so.5
