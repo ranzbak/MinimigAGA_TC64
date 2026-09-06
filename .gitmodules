@@ -4,3 +4,6 @@
 [submodule "EightThirtyTwo"]
 	path = EightThirtyTwo
 	url = git@github.com:ranzbak/EightThirtyTwo.git
+[submodule "lib/AP68040"]
+	path = lib/AP68040
+	url = git@github.com:apolkosnik/AP68040.git
