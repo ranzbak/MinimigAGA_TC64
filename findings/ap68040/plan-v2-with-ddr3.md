@@ -1,6 +1,9 @@
 # AP68040 with MMU and FPU — implementation plan, second edition
 
-Date 2026-09-06. Status: **plan only; nothing implemented, nothing built.**
+Date 2026-09-06, updated 2026-09-07. Status: **stage 0 done, stage A's RTL
+done and simulating; nothing on hardware yet.** The AP68040 runs the
+`sim/ddr3_cpu` program through this project's wrapper and DDR3 chain. See
+"Log" near the end for what was found on the way.
 Supersedes the order of work in [README.md](README.md), which was written
 before the DDR3 fast RAM landed and assumed it would arrive as an in-domain
 DLL-off controller. It arrived differently (see "What changed since the first
@@ -412,6 +415,35 @@ hierarchy, query the netlist for the new path and check the cell counts
 before trusting a constraint or spending a build on it.  `read_xdc` against an
 open run takes a minute and would have caught both.
 
+**2026-09-07, first AP040 bitstream.** It fits and the CPU island closes:
+43,750 LUTs (69 %, ILA included) and `clk_114` at +0.290 ns with no failing
+endpoint.  Getting there took one more fix of the same family.
+
+The first build failed `clk_114` at −0.436 ns on 18 endpoints -- all of them
+from a *single* register, and all wrapper-to-kernel while kernel-to-kernel was
+clean, so the multicycle island was working and the path was simply new.  It
+was new because of the snoop: taking `cache_snoop_addr` as a raw tap on
+`sdram_ctrl`'s `chipAddr` closed a loop from the CPU wrapper's address
+register, out through `minimig`, through `sdram_ctrl` combinationally, and
+back into the 040's cache tag RAM across the die -- 14 logic levels.
+Registering the exported pair fixed it outright.
+
+Worth recording why that fix and not a constraint: a wrapper-to-kernel
+multicycle would have been the easy answer and would also have covered
+`datatg68_c`, which is registered every cycle and feeds the core's `data_in`.
+Relaxing that would have been wrong in the way `findings/constraints/fix-04`
+is about.
+
+**Two numbers to carry forward.**  Block RAM is at 82 %, not LUTs, and that is
+what will decide stage E: the 040's caches and ATC are BRAM-hungry and a
+second core cannot have 82 % again.  And the SDRAM read path is −0.643 ns
+against −0.544 in the TG68K build, so the sign-off rule stated above ("no
+worse than today") is **not met** -- about 0.1 ns of congestion.  It is the
+same known path that fails in every build of this design and works on
+hardware, but if the AP040 bitstream shows SDRAM flakiness where the TG68K one
+does not, this is the first suspect, and a pblock keeping the CPU island away
+from the SDRAM bank is the lever.
+
 ## Risks
 
 | Risk | Shows as | Mitigation |
@@ -436,9 +468,12 @@ open run takes a minute and would have caught both.
 | `sim/ddr3_cpu` with CPU_CORE=AP040, smoke (PATBYTES=64) | **PASS + backdoor PASS**, first run | A5, 2026-09-07 |
 | Program phase 6 reached, AP040 vs TG68K, same program | 287 us vs 141 us | A5 smoke; 16-bit split transfers, 040 internal caches off |
 | `bench_loop` cycles per instruction, AP040 / TG68K | — | 0.2 / A7 |
-| Post-route WNS, sole-core build, kernel island | — | A6 |
-| Post-route WNS on the `clkena` → CE paths, and the replication Vivado applied | — | A6 |
-| SDRAM read path WNS with the 040 placed (today −0.544 ns) | — | A6 |
+| **Post-route, sole-core AP040 build with ILA** (2026-09-07) | | |
+|   LUTs / FF / BRAM / DSP | **43,750 (69 %)** / 26,335 (21 %) / **111 (82 %)** / 28 | A6 |
+|   `clk_114` (the CPU island) | **+0.290 ns, 0 failing endpoints** | A6 |
+|   `clk_ddr100` | +1.774 ns, 0 failing | A6 |
+|   `clk_gen_sdram` → `clk_114` (the known SDRAM read path) | **−0.643 ns, 16 failing** (TG68K build: −0.544) | A6 |
+| Post-route WNS on the `clkena` → CE paths | not the limit; no CE path in the top 40 violators | A6 |
 | Fast-RAM benchmark, TG68K vs AP040, 28 MHz | — | A7 |
 | Same after D1 (37.8 MHz) and D2 (line port) | — | D1 / D2 |
 | Post-route LUTs and WNS, dual-core build | — | E |
