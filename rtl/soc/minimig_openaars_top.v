@@ -19,6 +19,7 @@ module minimig_openaars_top #(
   // the Zorro-III boards fall back onto the SDRAM exactly as before; the island
   // is still built, it just has no requester.
   parameter HAVEDDR3 = 1,
+  parameter Z3RAM3_FORCE_OFF = 0, // diagnostic-only: see minimig_virtual_top.v
   // Debug build only (tools/vivado/build_ila.tcl): put ila_fastram on the
   // clk_114 side of the Zorro-III fast RAM so a real Workbench boot can be
   // captured.  Passed straight down to minimig_virtual_top; 0 everywhere else.
@@ -470,6 +471,7 @@ minimig_virtual_top
   .havevpos(1'b1),
   .havespirtc(1'b1),
   .haveddr3(HAVEDDR3),
+  .Z3RAM3_FORCE_OFF(Z3RAM3_FORCE_OFF),
   .DDR3_FASTRAM_ILA(DDR3_FASTRAM_ILA)
 ) openaars_virtual_top (
   .CLK_IN(clk_50),

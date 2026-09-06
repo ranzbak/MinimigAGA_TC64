@@ -25,6 +25,7 @@ module minimig_virtual_top #(
     // Zorro-III fast RAM on the DDR3 island instead of the SDRAM.
     // findings/ddr3/design.md; the island itself lives in minimig_openaars_top.v.
     parameter haveddr3 = 1,
+    parameter Z3RAM3_FORCE_OFF = 0, // diagnostic-only: force the leftover 3rd ZIII board off even when haveddr3=0
     // Debug build only: instantiate ila_fastram (tools/vivado/build_ila.tcl
     // sets this generic to 1) on the CPU side of the DDR3 fast RAM, so a real
     // Workbench boot can be captured.  0 in every normal build, and then not
@@ -955,7 +956,7 @@ minimig #(
     // The "leftover" third Zorro-III board is SDRAM scraps; it does not exist
     // once the Zorro-III fast RAM is on the DDR3 (design.md D8), so it must not
     // be autoconfigured either or the OS would add memory that is not there.
-    .Z3RAM3(haveddr3 ? 1'b0 : 1'b1)
+    .Z3RAM3((haveddr3 || Z3RAM3_FORCE_OFF) ? 1'b0 : 1'b1)
 ) minimig (
     //m68k pins
     .cpu_address  (tg68_adr[23:1]   ), // M68K address bus
