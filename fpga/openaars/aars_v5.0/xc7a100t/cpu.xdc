@@ -13,7 +13,7 @@
 #
 # The destination sets are explicit cell lists so that the exceptions can never land on a
 # consumer that samples every cycle (a direct FF->FF with CE tied high, Vivado TIMING-46).
-# If the CPU core is replaced, only the three set definitions below change.
+# If the CPU core is replaced, only the "Who the CPU is" block below changes.
 # The wrapper set includes Akiko (CLUT block RAM and C2P), which the kernel writes on clkena.
 #
 # Multicycle form: same clock on both ends, so -start (move the launch edge) is used
@@ -22,8 +22,52 @@
 # Endpoint filter: flip-flops, distributed RAM (the register file is RAM32X1D) and block RAM
 # (Akiko CLUT). IS_SEQUENTIAL alone misses the RAM primitives.
 set tg68_seq {IS_SEQUENTIAL || PRIMITIVE_TYPE =~ "DMEM.*" || PRIMITIVE_TYPE =~ "BMEM.*"}
-set tg68_kernel [get_cells -hier -filter "NAME =~ openaars_virtual_top/tg68k/pf68K_Kernel_inst/* && ($tg68_seq)"]
-set tg68_wrap   [get_cells -hier -filter "NAME =~ openaars_virtual_top/tg68k/* && NAME !~ openaars_virtual_top/tg68k/pf68K_Kernel_inst/* && ($tg68_seq)"]
+
+#-----------------------------------------------------------------------------
+# Who the CPU is.  Everything below is written against these three lists, so a
+# core swap changes only this block (findings/ap68040/plan-v2-with-ddr3.md,
+# step 0.3).  A pattern that matches nothing simply contributes nothing, so one
+# file serves both the TG68K and the AP68040 build.
+#-----------------------------------------------------------------------------
+set cpu_wrapper openaars_virtual_top/tg68k
+
+# The kernel instance inside that wrapper, per core.
+#   pf68K_Kernel_inst  TG68KdotC_Kernel (rtl/tg68k)
+#   g_ap040.ap040      ap040_tg68k_compat, stage A's generate branch
+set cpu_kernels {pf68K_Kernel_inst g_ap040.ap040}
+
+# Registers inside the kernel that advance on the FREE-RUNNING clock rather
+# than on clkena, and therefore keep honest single-cycle timing.  Relaxing
+# these would be wrong, not merely generous.
+#
+#   core_stall_watchdog  ap040_bus_timeout, 21-bit counter with no enable at
+#                        all: it exists to notice a clkena wedge, so a wedge
+#                        must not be able to stop it (ap040_tg68k_compat.v:14-28)
+#   walker_wr_d / wsnp_* the walker-write snoop edge detector in the same file
+#                        (:293-305), also ungated
+#
+# NOT AUDITED EXHAUSTIVELY YET: these two are the blocks read out of the source
+# at step 0.3.  Stage A3 must re-check against the elaborated netlist -- look
+# for TIMING-46 and for CE pins tied high inside the kernel set -- because a
+# register that samples every cycle and receives a 4-cycle exception is exactly
+# the class of bug findings/constraints/fix-04 was about.
+set cpu_free_running {*core_stall_watchdog/* *walker_wr_d* *wsnp_pend* *wsnp_addr*}
+
+# Build the filter fragments once.
+set _in {}
+set _out {}
+foreach k $cpu_kernels {
+    lappend _in  "NAME =~ $cpu_wrapper/$k/*"
+    lappend _out "NAME !~ $cpu_wrapper/$k/*"
+}
+set cpu_is_kernel  [join $_in  " || "]
+set cpu_not_kernel [join $_out " && "]
+set _fr {}
+foreach f $cpu_free_running { lappend _fr "NAME !~ $f" }
+set cpu_not_free [join $_fr " && "]
+
+set tg68_kernel [get_cells -hier -filter "($cpu_is_kernel) && ($cpu_not_free) && ($tg68_seq)"]
+set tg68_wrap   [get_cells -hier -filter "NAME =~ $cpu_wrapper/* && ($cpu_not_kernel) && ($tg68_seq)"]
 set tg68_mem    [get_cells -hier -filter "(NAME =~ openaars_virtual_top/sdram/* || NAME =~ openaars_virtual_top/minimig/*) && ($tg68_seq)"]
 
 # Kernel island
@@ -37,12 +81,12 @@ set_multicycle_path -setup -start 3 -from $tg68_kernel -to $tg68_mem
 set_multicycle_path -hold  -start 2 -from $tg68_kernel -to $tg68_mem
 
 # Wrapper address registers feeding the memory side: same 3-cycle stability as the kernel address.
-set_multicycle_path -setup -start 3 -from [get_cells -quiet -hier -filter "NAME =~ openaars_virtual_top/tg68k/addr* && ($tg68_seq)"] -to $tg68_mem
-set_multicycle_path -hold  -start 2 -from [get_cells -quiet -hier -filter "NAME =~ openaars_virtual_top/tg68k/addr* && ($tg68_seq)"] -to $tg68_mem
+set_multicycle_path -setup -start 3 -from [get_cells -quiet -hier -filter "NAME =~ $cpu_wrapper/addr* && ($tg68_seq)"] -to $tg68_mem
+set_multicycle_path -hold  -start 2 -from [get_cells -quiet -hier -filter "NAME =~ $cpu_wrapper/addr* && ($tg68_seq)"] -to $tg68_mem
 
 # Akiko C2P: neither direction requires single-cycle speed (data consumed on clkena).
-set c2p_rdptr [get_cells -hier -filter "NAME =~ openaars_virtual_top/tg68k/myakiko/c2p.myc2p/rdptr_reg* && ($tg68_seq)"]
-set c2p_buf   [get_cells -hier -filter "NAME =~ openaars_virtual_top/tg68k/myakiko/c2p.myc2p/buf_reg* && ($tg68_seq)"]
+set c2p_rdptr [get_cells -hier -filter "NAME =~ $cpu_wrapper/myakiko/c2p.myc2p/rdptr_reg* && ($tg68_seq)"]
+set c2p_buf   [get_cells -hier -filter "NAME =~ $cpu_wrapper/myakiko/c2p.myc2p/buf_reg* && ($tg68_seq)"]
 set_multicycle_path -setup -start 2 -from $c2p_rdptr -to $tg68_kernel
 set_multicycle_path -hold  -start 1 -from $c2p_rdptr -to $tg68_kernel
 set_multicycle_path -setup -start 2 -from $c2p_buf   -to $tg68_kernel

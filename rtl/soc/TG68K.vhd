@@ -35,6 +35,18 @@ entity TG68K is
 		-- See findings/ddr3/design.md, decisions D1/D6, and
 		-- findings/ddr3/z3ram3-on-ddr3-plan.md (which supersedes D8).
 		haveddr3  : boolean := true;
+		-- Which CPU core the wrapper instantiates.  "TG68K" is the
+		-- TG68KdotC kernel this design has always used; "AP040" is the
+		-- AP68040 (lib/AP68040, MC68040 with MMU and FPU), which presents a
+		-- TG68K-shaped port set so that everything else in this file --
+		-- decode, Zorro III, DDR3, Akiko, the 7 MHz chipset state machine --
+		-- is unchanged.  See findings/ap68040/plan-v2-with-ddr3.md stage A.
+		cpu_core  : string  := "TG68K";
+		-- AP68040 configuration, ignored for the TG68K.  All three on by
+		-- default: the full core places and routes at 28,694 LUTs.
+		ap040_has_mmu      : integer := 1;
+		ap040_has_fpu      : integer := 1;
+		ap040_enable_cache : integer := 1;
 		-- Size of the third ZIII board, log2 of its byte size: 24 = 16 MB,
 		-- 25 = 32 MB, 26 = 64 MB.  It is the DDR3 board when haveddr3, and the
 		-- board is size-aligned, so this also says how many address bits are
@@ -85,6 +97,11 @@ entity TG68K is
 		-- ziiiram3_active is set; the decode below follows it rather than
 		-- assuming an address.
 		z3ram3_base     : in     std_logic_vector(7 downto 0)  := (others => '0');
+		-- Chipset DMA write snoop, for the AP68040's data cache: sdram_ctrl
+		-- already produces these for cpu_cache_new, and they are in this
+		-- clock domain.  Unused by the TG68K, which has no internal cache.
+		snoop_stb       : in     std_logic                     := '0';
+		snoop_addr      : in     std_logic_vector(31 downto 0) := (others => '0');
 		eth_en          : in     std_logic                     := '0'; -- @suppress "Unused port: eth_en is not used in work.TG68K(logic)"
 		sel_eth         : buffer std_logic;
 		frometh         : in     std_logic_vector(15 downto 0);
@@ -219,7 +236,85 @@ ARCHITECTURE logic OF TG68K IS
 	signal nResetOut_w : std_logic;
 	signal VBR_out_w   : std_logic_vector(31 downto 0);
 
+	-- Which core is built.  Both strings are five characters, so this is a
+	-- plain constrained comparison.
+	CONSTANT use_ap040 : boolean := (cpu_core = "AP040");
+
+	-- The AP68040 is always a 68040: 32-bit address space and AGA longword
+	-- chip access, whatever the OSD's CPU setting says.  The TG68K keeps
+	-- taking that setting.  Everything downstream reads cpu_i, not cpu.
+	SIGNAL cpu_i : std_logic_vector(1 downto 0);
+
+	-- AP68040 cache maintenance (CINV / CPUSH), mapped onto the external
+	-- cache's clear bit below.
+	SIGNAL ap040_maint : std_logic;
+
+	COMPONENT ap040_tg68k_compat IS
+		GENERIC(
+			AP040_HAS_MMU      : integer := 1;
+			AP040_HAS_FPU      : integer := 1;
+			AP040_ENABLE_CACHE : integer := 1;
+			AP040_FAST_SIM     : integer := 0
+		);
+		PORT(
+			clk               : in  std_logic;
+			nreset            : in  std_logic;
+			clkena_in         : in  std_logic;
+			cache_allow_all   : in  std_logic;
+			cache_snoop_stb   : in  std_logic;
+			cache_snoop_addr  : in  std_logic_vector(31 downto 0);
+			cache_z2_ena      : in  std_logic;
+			cache_z3_base0    : in  std_logic_vector(4 downto 0);
+			cache_z3_ena0     : in  std_logic;
+			cache_z3_base1    : in  std_logic_vector(3 downto 0);
+			cache_z3_ena1     : in  std_logic;
+			data_in           : in  std_logic_vector(15 downto 0);
+			ipl               : in  std_logic_vector(2 downto 0);
+			ipl_autovector    : in  std_logic;
+			berr              : in  std_logic;
+			addr_out          : out std_logic_vector(31 downto 0);
+			data_write        : out std_logic_vector(15 downto 0);
+			nwr               : out std_logic;
+			nuds              : out std_logic;
+			nlds              : out std_logic;
+			busstate          : out std_logic_vector(1 downto 0);
+			longword          : out std_logic;
+			nresetout         : out std_logic;
+			fc                : out std_logic_vector(2 downto 0);
+			nmi_ack_toggle    : out std_logic;
+			cache_maint_req   : out std_logic;
+			cache_maint_ic    : out std_logic;
+			cache_maint_dc    : out std_logic;
+			mmu_addr_log      : out std_logic_vector(31 downto 0);
+			mmu_addr_phys     : out std_logic_vector(31 downto 0);
+			mmu_cache_inhibit : out std_logic;
+			walker_req        : out std_logic;
+			walker_we         : out std_logic;
+			walker_addr       : out std_logic_vector(31 downto 0);
+			walker_wdat       : out std_logic_vector(31 downto 0);
+			walker_ack        : in  std_logic;
+			walker_data       : in  std_logic_vector(31 downto 0);
+			walker_berr       : in  std_logic;
+			cache_req         : out std_logic;
+			cache_addr        : out std_logic_vector(31 downto 0);
+			cache_data        : in  std_logic_vector(15 downto 0);
+			cache_ack         : in  std_logic;
+			cache_burst       : out std_logic;
+			cache_burst_len   : out std_logic_vector(2 downto 0);
+			cache_ramaddr     : out std_logic_vector(28 downto 1);
+			cacr_out          : out std_logic_vector(31 downto 0);
+			vbr_out           : out std_logic_vector(31 downto 0);
+			debug_busy        : out std_logic;
+			debug_fault       : out std_logic;
+			debug_halted      : out std_logic;
+			debug_status      : out std_logic_vector(255 downto 0);
+			debug_status2     : out std_logic_vector(127 downto 0)
+		);
+	END COMPONENT;
+
 BEGIN
+
+	cpu_i <= "11" WHEN use_ap040 ELSE cpu;
 
 	nResetOut <= nResetOut_w;
 	VBR_out   <= VBR_out_w;
@@ -279,7 +374,7 @@ BEGIN
 	end process;
 
 	sel_akiko     <= '1' when cpuaddr(31 downto 16) = X"00B8" else '0';
-	sel_32        <= '1' when cpu(1) = '1' and cpuaddr(31 downto 24) /= X"00" and cpuaddr(31 downto 24) /= X"ff" else '0'; -- Decode 32-bit space, but exclude interrupt vectors
+	sel_32        <= '1' when cpu_i(1) = '1' and cpuaddr(31 downto 24) /= X"00" and cpuaddr(31 downto 24) /= X"ff" else '0'; -- Decode 32-bit space, but exclude interrupt vectors
 	--  sel_z3ram       <= '1' WHEN (cpuaddr(31 downto 24)=z3ram_base) else '0'; -- AND z3ram_ena='1' ELSE '0';
 	-- Third block of ZIII RAM.  Decoded against the base the OS actually
 	-- assigned (latched in minimig_autoconfig.v), not against a guess: the OS
@@ -403,43 +498,159 @@ BEGIN
 	ramaddr(20 downto 0)  <= cpuaddr(20 downto 0);
 
 	-- 32bit address space for 68020, limit address space to 24bit for 68000/68010
-	cpuaddr <= addrtg68 WHEN cpu(1) = '1' ELSE X"00" & addrtg68(23 downto 0);
+	cpuaddr <= addrtg68 WHEN cpu_i(1) = '1' ELSE X"00" & addrtg68(23 downto 0);
 
-	pf68K_Kernel_inst : entity work.TG68KdotC_Kernel
-		GENERIC MAP(                    -- @suppress "Generic map uses default values. Missing optional actuals: BarrelShifter"
-			SR_Read        => 2,        -- 0=>user,   1=>privileged,    2=>switchable with CPU(0)
-			VBR_Stackframe => 2,        -- 0=>no,     1=>yes/extended,  2=>switchable with CPU(0)
-			extAddr_Mode   => 2,        -- 0=>no,     1=>yes,           2=>switchable with CPU(1)
-			MUL_Mode       => 2,        -- 0=>16Bit,  1=>32Bit,         2=>switchable with CPU(1),  3=>no MUL,
-			DIV_Mode       => 2,        -- 0=>16Bit,  1=>32Bit,         2=>switchable with CPU(1),  3=>no DIV,
-			BitField       => 2,        -- 0=>no,     1=>yes,           2=>switchable with CPU(1)
-			MUL_Hardware   => 1         -- 0=>no,     1=>yes
-		)
-		PORT MAP(                       -- @suppress "The order of the associations is different from the declaration order"
-			clk            => clk,      -- : in std_logicvec
+	--------------------------------------------------------------------------
+	-- The CPU kernel.  Exactly one branch is elaborated; everything else in
+	-- this file is common to both cores.
+	--------------------------------------------------------------------------
+	g_tg68k : IF NOT use_ap040 GENERATE
+		pf68K_Kernel_inst : entity work.TG68KdotC_Kernel
+			GENERIC MAP(                    -- @suppress "Generic map uses default values. Missing optional actuals: BarrelShifter"
+				SR_Read        => 2,        -- 0=>user,   1=>privileged,    2=>switchable with CPU(0)
+				VBR_Stackframe => 2,        -- 0=>no,     1=>yes/extended,  2=>switchable with CPU(0)
+				extAddr_Mode   => 2,        -- 0=>no,     1=>yes,           2=>switchable with CPU(1)
+				MUL_Mode       => 2,        -- 0=>16Bit,  1=>32Bit,         2=>switchable with CPU(1),  3=>no MUL,
+				DIV_Mode       => 2,        -- 0=>16Bit,  1=>32Bit,         2=>switchable with CPU(1),  3=>no DIV,
+				BitField       => 2,        -- 0=>no,     1=>yes,           2=>switchable with CPU(1)
+				MUL_Hardware   => 1         -- 0=>no,     1=>yes
+			)
+			PORT MAP(                       -- @suppress "The order of the associations is different from the declaration order"
+				clk            => clk,      -- : in std_logicvec
 
-			nReset         => reset,    -- : in std_logic:='1';      --low active
-			clkena_in      => clkena,   -- : in std_logic:='1';
-			data_in        => datatg68, -- : in std_logic_vector(15 downto 0);
-			IPL            => cpuIPL,   -- : in std_logic_vector(2 downto 0):="111";
-			IPL_autovector => '1',      -- : in std_logic:='0';
-			CPU            => cpu,
-			regin_out      => open,     -- : out std_logic_vector(31 downto 0);
-			addr_out       => addrtg68, -- : buffer std_logic_vector(31 downto 0);
-			data_write     => w_datatg68, -- : out std_logic_vector(15 downto 0);
-			busstate       => state,    -- : buffer std_logic_vector(1 downto 0);
-			longword       => longword,
-			nWr            => wr,       -- : out std_logic;
-			nUDS           => uds_in,
-			nLDS           => lds_in,   -- : out std_logic;
-			nResetOut      => nResetOut_w,
-			skipFetch      => skipFetch, -- : out std_logic
-			CACR_out       => CACR_out,
-			VBR_out        => VBR_out_w,
-			berr           => open,
-			FC             => open,
-			clr_berr       => open
-		);
+				nReset         => reset,    -- : in std_logic:='1';      --low active
+				clkena_in      => clkena,   -- : in std_logic:='1';
+				data_in        => datatg68, -- : in std_logic_vector(15 downto 0);
+				IPL            => cpuIPL,   -- : in std_logic_vector(2 downto 0):="111";
+				IPL_autovector => '1',      -- : in std_logic:='0';
+				CPU            => cpu,
+				regin_out      => open,     -- : out std_logic_vector(31 downto 0);
+				addr_out       => addrtg68, -- : buffer std_logic_vector(31 downto 0);
+				data_write     => w_datatg68, -- : out std_logic_vector(15 downto 0);
+				busstate       => state,    -- : buffer std_logic_vector(1 downto 0);
+				longword       => longword,
+				nWr            => wr,       -- : out std_logic;
+				nUDS           => uds_in,
+				nLDS           => lds_in,   -- : out std_logic;
+				nResetOut      => nResetOut_w,
+				skipFetch      => skipFetch, -- : out std_logic
+				CACR_out       => CACR_out,
+				VBR_out        => VBR_out_w,
+				berr           => open,
+				FC             => open,
+				clr_berr       => open
+			);
+		-- The TG68K has no cache-maintenance sideband.
+		ap040_maint <= '0';
+	END GENERATE;
+
+	g_ap040 : IF use_ap040 GENERATE
+		ap040 : COMPONENT ap040_tg68k_compat
+			GENERIC MAP(
+				AP040_HAS_MMU      => ap040_has_mmu,
+				AP040_HAS_FPU      => ap040_has_fpu,
+				AP040_ENABLE_CACHE => ap040_enable_cache,
+				AP040_FAST_SIM     => 0
+			)
+			PORT MAP(
+				clk            => clk,
+				nreset         => reset,
+				clkena_in      => clkena,
+				data_in        => datatg68,
+				ipl            => cpuIPL,
+				ipl_autovector => '1',
+				-- The SoC never raises a bus error: undecoded 32-bit space is
+				-- auto-completed with $FFFF by sel_undecoded, exactly as it is
+				-- for the TG68K.  The core has its own stall watchdog.
+				berr           => '0',
+
+				addr_out       => addrtg68,
+				data_write     => w_datatg68,
+				busstate       => state,
+				longword       => longword,
+				nwr            => wr,
+				nuds           => uds_in,
+				nlds           => lds_in,
+				nresetout      => nResetOut_w,
+				fc             => open,
+				nmi_ack_toggle => open,
+				vbr_out        => VBR_out_w,
+
+				-- Cacheable windows for the 040's internal caches.  Chip RAM
+				-- is covered by cache_z2_ena and the core's own hard-wired
+				-- $200000-$9FFFFF window; the Zorro III windows follow the
+				-- autoconfig state this wrapper already tracks.  Board 0 is
+				-- addr(31:27), so 01000 is $40000000-$41FFFFFF and covers the
+				-- 16 MB SDRAM board; board 1 is addr(31:28) and follows the
+				-- base the OS gave the DDR3 board wherever it put it.
+				cache_allow_all  => '0',
+				cache_snoop_stb  => snoop_stb,
+				cache_snoop_addr => snoop_addr,
+				cache_z2_ena     => z2ram_ena,
+				cache_z3_base0   => "01000",
+				cache_z3_ena0    => z3ram_ena,
+				cache_z3_base1   => z3ram3_base(7 downto 4),
+				cache_z3_ena1    => z3ram3_ena,
+
+				-- Stage A: no table-walk port.  A walk that never acks is
+				-- turned into an access error by the core's watchdog, so the
+				-- MMU is unusable but the core does not hang -- boot without a
+				-- startup-sequence so 68040.library never enables it.  Stage B
+				-- gives the walker a path through this wrapper's own bus.
+				walker_req     => open,
+				walker_we      => open,
+				walker_addr    => open,
+				walker_wdat    => open,
+				walker_ack     => '0',
+				walker_data    => (others => '0'),
+				walker_berr    => '0',
+
+				-- Stage D: the 16-byte line port.  Stubbed to zero inside the
+				-- compat top in this revision of the core, so nothing to
+				-- connect yet; fills are eight 16-bit sub-cycles for now.
+				cache_req      => open,
+				cache_addr     => open,
+				cache_data     => (others => '0'),
+				cache_ack      => '0',
+				cache_burst    => open,
+				cache_burst_len=> open,
+				cache_ramaddr  => open,
+
+				cache_maint_req => ap040_maint,
+				cache_maint_ic  => open,
+				cache_maint_dc  => open,
+
+				mmu_addr_log      => open,
+				mmu_addr_phys     => open,
+				mmu_cache_inhibit => open,
+				cacr_out          => open,
+				debug_busy        => open,
+				debug_fault       => open,
+				debug_halted      => open,
+				debug_status      => open,
+				debug_status2     => open
+			);
+
+		-- The AP68040 has no skipFetch (a TG68K debug output, unconnected at
+		-- the top level anyway).
+		skipFetch <= '0';
+
+		-- CACR_out feeds cpu_cache_ctrl on both external caches (sdram_ctrl
+		-- and ddr3_fastram), whose nibble means {clear, -, freeze, enable}.
+		-- The 040's CACR is a different register entirely -- data enable is
+		-- bit 31, instruction enable bit 15 -- so it is mapped here rather
+		-- than passed through.
+		--
+		-- Enable is held high.  The external cache is write-through and
+		-- physically tagged, sdram_ctrl snoops every chipset write into it,
+		-- and nothing but the CPU writes the DDR3, so it stays coherent
+		-- whatever the 040 does with its own caches.  Clear follows
+		-- CINV/CPUSH as belt and braces: by that reasoning an external flush
+		-- is never actually required, and the edge detector only samples
+		-- while the chip select is low, so a missed pulse costs nothing
+		-- either.  Stage A5 checks the mapping against the real registers.
+		CACR_out <= ap040_maint & "001";
+	END GENERATE;
 
 	PROCESS(clk)
 	BEGIN
@@ -595,7 +806,7 @@ BEGIN
 							rw         <= wr;
 							data_write <= w_datatg68;
 							addr       <= cpuaddr;
-							IF aga = '1' AND cpu(1) = '1' AND longword = '1' AND state = "11" AND cpuaddr(1 downto 0) = "00" AND sel_chip = '1' THEN
+							IF aga = '1' AND cpu_i(1) = '1' AND longword = '1' AND state = "11" AND cpuaddr(1 downto 0) = "00" AND sel_chip = '1' THEN
 								-- 32 bit write
 								clkena_e <= '1';
 							END IF;
@@ -636,7 +847,7 @@ BEGIN
 						END IF;
 
 						clkena_e <= '1';
-						IF aga = '1' AND cpu(1) = '1' AND longword = '1' AND state(0) = '0' AND cpuaddr(1 downto 0) = "00" AND (sel_chip = '1' OR sel_kick = '1') THEN
+						IF aga = '1' AND cpu_i(1) = '1' AND longword = '1' AND state(0) = '0' AND cpuaddr(1 downto 0) = "00" AND (sel_chip = '1' OR sel_kick = '1') THEN
 							-- 32 bit read
 							clkena_f <= '1';
 						END IF;

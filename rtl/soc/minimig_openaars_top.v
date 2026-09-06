@@ -26,6 +26,12 @@ module minimig_openaars_top #(
   // (rtl/minimig/minimig_autoconfig_rom.v); see
   // findings/ddr3/z3ram3-on-ddr3-plan.md.
   parameter Z3RAM3_SIZE_LOG2 = 24,
+  // CPU core: "TG68K" (default) or "AP040".  Build-time, one bitstream each;
+  // findings/ap68040/plan-v2-with-ddr3.md stage A.
+  parameter CPU_CORE = "TG68K",
+  parameter AP040_HAS_MMU = 1,
+  parameter AP040_HAS_FPU = 1,
+  parameter AP040_ENABLE_CACHE = 1,
   // Debug build only (tools/vivado/build_ila.tcl): put ila_fastram on the
   // clk_114 side of the Zorro-III fast RAM so a real Workbench boot can be
   // captured.  Passed straight down to minimig_virtual_top; 0 everywhere else.
@@ -479,6 +485,10 @@ minimig_virtual_top
   .haveddr3(HAVEDDR3),
   .Z3RAM3_FORCE_OFF(Z3RAM3_FORCE_OFF),
   .z3ram3_size_log2(Z3RAM3_SIZE_LOG2),
+  .cpu_core(CPU_CORE),
+  .ap040_has_mmu(AP040_HAS_MMU),
+  .ap040_has_fpu(AP040_HAS_FPU),
+  .ap040_enable_cache(AP040_ENABLE_CACHE),
   .DDR3_FASTRAM_ILA(DDR3_FASTRAM_ILA)
 ) openaars_virtual_top (
   .CLK_IN(clk_50),

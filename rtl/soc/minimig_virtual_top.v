@@ -30,6 +30,12 @@ module minimig_virtual_top #(
     // 26 = 64 MB.  Must match what the autoconfig ROM advertises for that board
     // (rtl/minimig/minimig_autoconfig_rom.v, Z3RAM3_DDR3 entry).
     parameter z3ram3_size_log2 = 24,
+    // Which CPU core: "TG68K" (default) or "AP040" (the AP68040, MC68040 with
+    // MMU and FPU).  See findings/ap68040/plan-v2-with-ddr3.md.
+    parameter cpu_core = "TG68K",
+    parameter ap040_has_mmu = 1,
+    parameter ap040_has_fpu = 1,
+    parameter ap040_enable_cache = 1,
     // Debug build only: instantiate ila_fastram (tools/vivado/build_ila.tcl
     // sets this generic to 1) on the CPU side of the DDR3 fast RAM, so a real
     // Workbench boot can be captured.  0 in every normal build, and then not
@@ -216,6 +222,10 @@ wire [4:0]     board_configured;
 // A31-A24 the OS assigned to the third ZIII RAM board (the DDR3 board when
 // haveddr3); minimig latches it during autoconfig, TG68K decodes against it.
 wire [7:0]     z3ram3_base;
+// Chipset DMA write snoop out of sdram_ctrl, into a CPU that has its own data
+// cache.  Unused by the TG68K.
+wire           snoop_stb;
+wire [31:0]    snoop_addr;
 wire           turbochipram;
 wire           turbokick;
 wire [1:0]     slow_config;
@@ -597,7 +607,11 @@ TG68K #(
     .haveaudio(haveaudio ? "true" : "false"),
     .havec2p(havec2p ? "true" : "false"),
     .haveddr3(haveddr3 ? "true" : "false"),
-    .z3ram3_size_log2(z3ram3_size_log2)
+    .z3ram3_size_log2(z3ram3_size_log2),
+    .cpu_core(cpu_core),
+    .ap040_has_mmu(ap040_has_mmu),
+    .ap040_has_fpu(ap040_has_fpu),
+    .ap040_enable_cache(ap040_enable_cache)
 ) tg68k (
     .clk          (CLK_114          ),
     .reset        (tg68_rst         ),
@@ -641,6 +655,8 @@ TG68K #(
     .ziiiram2_active(board_configured[2]),
     .ziiiram3_active(board_configured[3]),
     .z3ram3_base  (z3ram3_base      ),
+    .snoop_stb    (snoop_stb        ), // chipset DMA write snoop, for the
+    .snoop_addr   (snoop_addr       ), // AP68040's data cache
     //  .fastramcfg   ({&memcfg[5:4],memcfg[5:4]}),
     .eth_en       (1'b1), // TODO
     .sel_eth      (),
@@ -698,6 +714,8 @@ sdram_ctrl sdram (
     .cache_inhibit(cache_inhibit    ),
     .cacheline_clr(cacheline_clr    ),
     .cpu_cache_ctrl (tg68_CACR_out    ),
+    .snoop_stb_out  (snoop_stb        ),
+    .snoop_addr_out (snoop_addr       ),
 
     // Interface to SDRam
     .sdata        (SDRAM_DQ         ),

@@ -32,6 +32,12 @@ module sdram_ctrl(
     input  wire           cacheline_clr,
     input  wire [  4-1:0] cpu_cache_ctrl,
     output wire           reset_out,
+    // Chipset DMA write snoop, brought out for a CPU with its own data cache
+    // (the AP68040's cache_snoop_*).  These are the same signals this module
+    // already feeds to its internal cpu_cache_new, in the same clock domain;
+    // nothing here changes for a CPU that does not use them.
+    output wire           snoop_stb_out,
+    output wire [ 32-1:0] snoop_addr_out,
     // sdram
     (* IOB="FORCE" *)
     output reg  [ 13-1:0] sdaddr,
@@ -169,6 +175,13 @@ reg  [ 9-1:0] refreshcnt;
 reg           refresh_pending;
 reg  [ 4-1:0] sdram_state;
 reg           snoop_act;
+// Brought out for a CPU with its own data cache; cpu_cache_new takes the low
+// 26 bits of the same address.
+assign snoop_stb_out  = snoop_act;
+// chipAddr is [23:1], a word address in the 24-bit chip space, so the byte
+// address is {chipAddr, 1'b0} zero-extended.  cpu_cache_new saw exactly this
+// value before, as {1'b0, chipAddr, 1'b0} into its 26-bit port.
+assign snoop_addr_out = {8'd0, chipAddr, 1'b0};
 // writebuffer
 reg           slot1_write;
 reg           slot2_write;
@@ -289,8 +302,8 @@ cpu_cache_new cpu_cache (
     .sdr_dqm_w        ({writebuffer_dqm2, writebuffer_dqm}),
     .sdr_write_req    (writebuffer_req),
     .sdr_write_ack    (writebuffer_hold),
-    .snoop_act        (snoop_act), // snoop act (write only - just update existing data in cache)
-    .snoop_adr        ({1'b0, chipAddr, 1'b0}), // snoop address
+    .snoop_act        (snoop_stb_out), // snoop act (write only - just update existing data in cache)
+    .snoop_adr        (snoop_addr_out[26-1:0]), // snoop address
     .snoop_dat_w      ({chipWR2, chipWR}), // snoop write data
     .snoop_bs         ({!chipU2, !chipL2, !chipU, !chipL})
 );
