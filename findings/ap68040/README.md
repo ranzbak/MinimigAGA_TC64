@@ -1,5 +1,11 @@
 # AP68040 + DDR3 — implementation plan
 
+> **2026-09-06:** the DDR3 fast RAM landed by a different route than the
+> C-track below assumed (100 MHz island, `findings/ddr3/`). The current
+> order of work, with today's resource numbers and the MMU/FPU decisions,
+> is [plan-v2-with-ddr3.md](plan-v2-with-ddr3.md). The assessments
+> (compatibility, performance, memory masters) below still stand.
+
 Everything in this directory was established by reading the sources, by Vivado
 out-of-context synthesis/place-and-route on the xc7a100t-2, and by the board
 schematic and the Micron datasheet. No RTL or constraint has been modified.
