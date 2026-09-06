@@ -2,14 +2,21 @@
 
 module minimig_autoconfig #(
 	parameter TOCCATA_SND = 1'b0, // Toccata sound card enabled?
-	// Third Zorro-III RAM board ("leftover" space in the SDRAM map).  It does
-	// not exist when the Zorro-III fast RAM lives on the DDR3 island
-	// (findings/ddr3/design.md D8), and a board that is autoconfigured but has
-	// no memory behind it would corrupt the OS free list.  With this 0 the
-	// chain skips straight from the ZIII board(s) to the Toccata card or to the
-	// NULL terminator, using the same acdevice values the 0x44 handler already
-	// uses -- no new mechanism.
-	parameter Z3RAM3 = 1'b1
+	// Third Zorro-III RAM board.  With this 0 the chain skips straight from
+	// the ZIII board(s) to the Toccata card or to the NULL terminator, using
+	// the same acdevice values the 0x44 handler already uses -- no new
+	// mechanism.  A board that is autoconfigured but has no memory behind it
+	// would corrupt the OS free list, so this is 0 whenever nothing answers
+	// at that board's address.
+	parameter Z3RAM3 = 1'b1,
+	// The third ZIII board is the DDR3 fast RAM board (16 MB) rather than the
+	// "leftover SDRAM" board (2/4 MB).  Changes what the ROM advertises and
+	// stops the first ZIII board's handler rewriting the size nibble.  The
+	// base address the OS assigns is latched either way and published as
+	// z3ram3_base, because the decode in TG68K.vhd has to follow the OS
+	// rather than guess -- guessing is what broke this board before
+	// (findings/ddr3/z3ram3-on-ddr3-plan.md, supersedes design.md D8).
+	parameter Z3RAM3_DDR3 = 1'b0
 ) (
 	input clk,
 	input clk7_en,
@@ -28,12 +35,17 @@ module minimig_autoconfig #(
 	output reg [4:0] board_configured,
 	output reg [4:0] board_shutup,
 	output wire [7:0] toccata_base_addr, // Base address for the cards
+	// A31-A24 of the base the OS assigned to the third ZIII RAM board, valid
+	// once board_configured[3] is set.  TG68K.vhd decodes that board against
+	// this instead of assuming an address.
+	output wire [7:0] z3ram3_base,
 	output reg autoconfig_done
 );
 
 // IO base for cards
 reg [7:0] board_base_addr [0:4];
 assign toccata_base_addr = board_base_addr[4];
+assign z3ram3_base       = board_base_addr[3];
 
 reg [2:0] acdevice;
 // A Zorro III PIC that configures in the Zorro II configuration block is given
@@ -80,7 +92,9 @@ assign roma_rd[5:0] = address_in[6:1];
 assign roma_rd[8:6] = acdevice;
 assign data_out = sel ? {rom_q,12'hfff} : 16'h0000;
 
-Autoconfig_ROM acrom
+Autoconfig_ROM #(
+	.Z3RAM3_DDR3(Z3RAM3_DDR3)
+) acrom
 (
 	.clk(clk),
 	.a_read(roma_rd),
@@ -164,10 +178,18 @@ begin
 							3'b001 : begin // ZIII RAM
 								board_configured[1] <= 1'b1;
 								z3_base_wr <= 1'b1;
-								roma_wr[8:6] <= 3'b011; // Third ZIII entry
-								roma_wr[5:0] <= 6'h05;  // Write address for modifying size of 2nd ZIII RAM.
-								ramsize <= |slowram_config ? 4'b1000 : 4'b0111; // 2 meg or 4 meg
-								rom_we<=1'b1;
+								// The third ZIII board's logical size follows the
+								// leftover SDRAM actually available.  When that board
+								// is the DDR3 one its size is fixed in the ROM (16 MB,
+								// see Autoconfig_ROM), so leave the nibble alone --
+								// rewriting it here would offer 16 MB of DDR3 with a
+								// 2 or 4 MB logical size.
+								if (!Z3RAM3_DDR3) begin
+									roma_wr[8:6] <= 3'b011; // Third ZIII entry
+									roma_wr[5:0] <= 6'h05;  // Write address for modifying size of 2nd ZIII RAM.
+									ramsize <= |slowram_config ? 4'b1000 : 4'b0111; // 2 meg or 4 meg
+									rom_we<=1'b1;
+								end
 								// skip straight to 3'b011 on 32 meg platforms
 								acdevice<=ac_next(acdevice);
 //                              acdevice<=3'b011; // Ethernet after ZIII RAM
@@ -177,9 +199,17 @@ begin
 								z3_base_wr <= 1'b1;
 								acdevice<=ac_next(acdevice);
 							end
-							3'b011 : begin // ZIII RAM 3 - Use leftover space in the memory map.
+							3'b011 : begin // ZIII RAM 3 - leftover SDRAM, or the DDR3 board.
 								board_configured[3] <= 1'b1;
 								z3_base_wr <= 1'b1;
+								// Latch the base the OS picked.  A Zorro III PIC
+								// configuring in the Zorro II configuration block takes
+								// A31-A24 from register 44 (ZIII spec 8.2), which is the
+								// upper data byte; a 68k byte write to the even address
+								// $44 drives the same byte there too.  TG68K.vhd decodes
+								// this board against this value, so the OS is followed
+								// rather than second-guessed.
+								board_base_addr[3] <= data_in[15:8];
 								acdevice<=ac_next(acdevice);
 							end
 							3'b100 : begin // ETH

@@ -83,7 +83,9 @@ module autoconfig_tb;
   logic        ram_64meg = 1'b0;
 
   logic        sel_r = 1'b0;      // bus select, steered to one of the two DUTs
-  logic        dsel  = 1'b0;      // 0 -> Z3RAM3=0 instance, 1 -> Z3RAM3=1
+  // 0 -> Z3RAM3=0, 1 -> Z3RAM3=1 (leftover SDRAM board), 2 -> Z3RAM3=1 with
+  // Z3RAM3_DDR3=1 (that board is the 16 MB DDR3 fast RAM board instead).
+  logic  [1:0] dsel  = 2'd0;
 
   always #5 clk = ~clk;
 
@@ -94,12 +96,14 @@ module autoconfig_tb;
   end
 
   // ------------------------------------------------------------------- DUTs
-  wire [15:0] dout0, dout1;
-  wire  [4:0] bcfg0, bcfg1, bshut0, bshut1;
-  wire  [7:0] tocc0, tocc1;
-  wire        done0, done1;
-  wire        sel0 = sel_r & ~dsel;
-  wire        sel1 = sel_r &  dsel;
+  wire [15:0] dout0, dout1, dout2;
+  wire  [4:0] bcfg0, bcfg1, bcfg2, bshut0, bshut1, bshut2;
+  wire  [7:0] tocc0, tocc1, tocc2;
+  wire  [7:0] z3b0, z3b1, z3b2;
+  wire        done0, done1, done2;
+  wire        sel0 = sel_r & (dsel == 2'd0);
+  wire        sel1 = sel_r & (dsel == 2'd1);
+  wire        sel2 = sel_r & (dsel == 2'd2);
 
   minimig_autoconfig #(.TOCCATA_SND(1'b1), .Z3RAM3(1'b0)) dut_z3ram3_0 (
     .clk(clk), .clk7_en(clk7_en), .reset(reset),
@@ -108,7 +112,7 @@ module autoconfig_tb;
     .slowram_config(slowram_config), .fastram_config(fastram_config),
     .m68020(m68020), .ram_64meg(ram_64meg),
     .board_configured(bcfg0), .board_shutup(bshut0),
-    .toccata_base_addr(tocc0), .autoconfig_done(done0));
+    .toccata_base_addr(tocc0), .z3ram3_base(z3b0), .autoconfig_done(done0));
 
   minimig_autoconfig #(.TOCCATA_SND(1'b1), .Z3RAM3(1'b1)) dut_z3ram3_1 (
     .clk(clk), .clk7_en(clk7_en), .reset(reset),
@@ -117,22 +121,44 @@ module autoconfig_tb;
     .slowram_config(slowram_config), .fastram_config(fastram_config),
     .m68020(m68020), .ram_64meg(ram_64meg),
     .board_configured(bcfg1), .board_shutup(bshut1),
-    .toccata_base_addr(tocc1), .autoconfig_done(done1));
+    .toccata_base_addr(tocc1), .z3ram3_base(z3b1), .autoconfig_done(done1));
 
-  wire [15:0] dout  = dsel ? dout1  : dout0;
-  wire  [4:0] bcfg  = dsel ? bcfg1  : bcfg0;
-  wire  [4:0] bshut = dsel ? bshut1 : bshut0;
+  // The third ZIII board is the DDR3 fast RAM board: 16 MB, and the size
+  // nibble is not rewritten by the first ZIII board's handler.
+  minimig_autoconfig #(.TOCCATA_SND(1'b1), .Z3RAM3(1'b1), .Z3RAM3_DDR3(1'b1)) dut_z3ram3_ddr3 (
+    .clk(clk), .clk7_en(clk7_en), .reset(reset),
+    .address_in(address), .data_out(dout2), .data_in(data_in),
+    .rd(rd), .hwr(hwr), .lwr(lwr), .sel(sel2),
+    .slowram_config(slowram_config), .fastram_config(fastram_config),
+    .m68020(m68020), .ram_64meg(ram_64meg),
+    .board_configured(bcfg2), .board_shutup(bshut2),
+    .toccata_base_addr(tocc2), .z3ram3_base(z3b2), .autoconfig_done(done2));
+
+  wire [15:0] dout  = (dsel == 2'd2) ? dout2  : dsel ? dout1  : dout0;
+  wire  [4:0] bcfg  = (dsel == 2'd2) ? bcfg2  : dsel ? bcfg1  : bcfg0;
+  wire  [4:0] bshut = (dsel == 2'd2) ? bshut2 : dsel ? bshut1 : bshut0;
   // Read the Toccata base out of the DUT array directly: Icarus does not
   // re-evaluate the continuous assign "toccata_base_addr = board_base_addr[4]"
   // when the array is written through the variable-index reset loop, so the
   // port itself stays X in simulation even though the register is cleared.
   function automatic [7:0] tocc_base();
     begin
-      tocc_base = dsel ? dut_z3ram3_1.board_base_addr[4]
-                       : dut_z3ram3_0.board_base_addr[4];
+      tocc_base = (dsel == 2'd2) ? dut_z3ram3_ddr3.board_base_addr[4]
+                : dsel           ? dut_z3ram3_1.board_base_addr[4]
+                                 : dut_z3ram3_0.board_base_addr[4];
     end
   endfunction
-  wire        done  = dsel ? done1  : done0;
+  // Same story for the third ZIII board's latched base (board_base_addr[3]):
+  // read the register, not the port.  This is A31-A24 of whatever the OS
+  // assigned, and is what TG68K.vhd decodes that board against.
+  function automatic [7:0] z3ram3_base_val();
+    begin
+      z3ram3_base_val = (dsel == 2'd2) ? dut_z3ram3_ddr3.board_base_addr[3]
+                      : dsel           ? dut_z3ram3_1.board_base_addr[3]
+                                       : dut_z3ram3_0.board_base_addr[3];
+    end
+  endfunction
+  wire        done  = (dsel == 2'd2) ? done2 : dsel ? done1  : done0;
 
   // ------------------------------------------------------------- bus helpers
   task automatic wait_clk7();
@@ -300,6 +326,12 @@ module autoconfig_tb;
   integer SHUTUP_IDX = -1;                // chain position the OS shuts up, -1 = none
   string  summary;
   integer nboards;
+  // Where the OS put the third ZIII RAM board in the run just done, and how
+  // big it said it was; see the capture in config_chain.
+  bit              z3ram3_seen;
+  longint unsigned z3ram3_alloc_base;
+  longint unsigned z3ram3_alloc_size;
+  longint unsigned z3ram3_alloc_lsize;
   longint unsigned fast_linked;
   string  notes;
   string  s_order, s_boards, s_ml;
@@ -324,6 +356,8 @@ module autoconfig_tb;
       nboards = 0; fast_linked = 0;
       summary = "";
       notes   = "";
+      z3ram3_seen = 1'b0; z3ram3_alloc_base = 0;
+      z3ram3_alloc_size = 0; z3ram3_alloc_lsize = 0;
 
       for (idx = 0; idx < 8; idx = idx + 1) begin
         ac_reg('h00, er_type);
@@ -387,6 +421,18 @@ module autoconfig_tb;
           if (er_type[7:6] == 2'b10) pool = (psize >= 64'h1000000) ? 2 : 3;
           else                       pool = memlist ? 0 : 1;
           alloc_pool(pool, psize, base);
+
+          // Remember where the OS put the third ZIII RAM board.  It carries
+          // serial 3 (the second ZIII board carries 4), so this identifies it
+          // whether or not ram_64meg put that second board in the chain.
+          // TG68K.vhd has to decode the board here, so the base the OS chose
+          // and the base the hardware latched must agree.
+          if (er_type[7:6] == 2'b10 && memlist && serial == 32'd3) begin
+            z3ram3_alloc_base  = base;
+            z3ram3_alloc_size  = psize;   // what the board occupies
+            z3ram3_alloc_lsize = lsize;   // what the OS adds to the free list
+            z3ram3_seen        = 1'b1;
+          end
 
           if (verbose) begin
             $display("   board %0d: %s  er_Type=$%02x  (memlist=%0d, rom=%0d, chained=%0d, size code %03b)",
@@ -567,7 +613,10 @@ module autoconfig_tb;
   endtask
 
   // ---------------------------------------------------------------- the sweep
-  integer f, mm, sr, z3, pol, dv;
+  integer f, mm, sr, z3, pol, dv, r64;
+  integer z3b_checked = 0, z3b_bad = 0;
+  longint unsigned exp_size, exp_lsize;
+  string  s_verdict, s_third;
 
   initial begin
     if ($test$plusargs("verbose")) verbose = 1;
@@ -650,6 +699,88 @@ module autoconfig_tb;
              tocc_bad_old, 8'h00);
     if (tocc_bad_new != 0)
       $display(" *** sel_toccata is still reachable without board_configured[4] ***");
+
+    // ---- the third ZIII board, as the leftover SDRAM board and as the DDR3 one
+    // Two things are checked.  The size the board advertises, which decides
+    // how much memory the OS adds and therefore has to be 16 MB for the DDR3
+    // board rather than the 2/4 MB the leftover board offers.  And the base:
+    // the OS allocates it from its own free list, and minimig_autoconfig.v has
+    // to latch exactly that value, because TG68K.vhd decodes the board against
+    // it.  Assuming the base is what broke this board before -- the hardware
+    // looked at $41000000 while the OS had placed it at $08000000.
+    // Both write orderings matter: under 44,48 the trailing 48 write lands on
+    // whatever device the chain has already moved to, so a base latched on the
+    // 44 write must survive it.
+    $display("");
+    $display("=== the third ZIII board: size offered, and the base the OS assigns ===");
+    $display("    fast=11, 020=1.  DDR3=1 is Z3RAM3_DDR3, i.e. the DDR3 fast RAM board.");
+    $display("");
+    $display(" DDR3 64meg slow wrorder | third ZIII board            | latched base | verdict");
+    $display(" ---- ----- ---- ------- | --------------------------- | ------------ | -------");
+    for (z3 = 0; z3 <= 1; z3 = z3 + 1) begin
+      for (r64 = 0; r64 <= 1; r64 = r64 + 1) begin
+        for (sr = 0; sr <= 1; sr = sr + 1) begin
+          for (pol = 0; pol <= 1; pol = pol + 1) begin
+            dsel           = z3 ? 2'd2 : 2'd1;
+            fastram_config = 2'b11;
+            slowram_config = sr[1:0];
+            m68020         = 1'b1;
+            ram_64meg      = r64[0];
+            WRPOL          = pol;
+            SHUTUP_IDX     = -1;
+            do_reset();
+            if (pol) s_order = " 48,44 "; else s_order = " 44,48 ";
+            config_chain();
+
+            // The DDR3 board is 16 MB and its linked size matches, so the OS
+            // adds all of it.  The leftover board always occupies 4 MB (fixed
+            // in the ROM) but links only the SDRAM actually spare, which is
+            // what slowram_config decides and what the first ZIII board's
+            // handler writes into the size nibble.
+            if (z3) begin
+              exp_size  = 64'h1000000;
+              exp_lsize = 64'h1000000;
+            end else begin
+              exp_size  = 64'h400000;
+              exp_lsize = (sr != 0) ? 64'h200000 : 64'h400000;
+            end
+
+            z3b_checked = z3b_checked + 1;
+            if (!z3ram3_seen) begin
+              s_verdict = "FAIL: board never offered";
+              z3b_bad = z3b_bad + 1;
+            end else if (z3ram3_alloc_size != exp_size) begin
+              s_verdict = $sformatf("FAIL: size %s, expected %s",
+                                    hsize(z3ram3_alloc_size), hsize(exp_size));
+              z3b_bad = z3b_bad + 1;
+            end else if (z3ram3_alloc_lsize != exp_lsize) begin
+              s_verdict = $sformatf("FAIL: linked %s, expected %s",
+                                    hsize(z3ram3_alloc_lsize), hsize(exp_lsize));
+              z3b_bad = z3b_bad + 1;
+            end else if (z3ram3_base_val() !== z3ram3_alloc_base[31:24]) begin
+              s_verdict = $sformatf("FAIL: latched $%02x, OS used $%02x",
+                                    z3ram3_base_val(), z3ram3_alloc_base[31:24]);
+              z3b_bad = z3b_bad + 1;
+            end else begin
+              s_verdict = "OK";
+            end
+
+            if (z3ram3_seen)
+              s_third = $sformatf("%3s phys, %3s linked @ $%08x",
+                                  hsize(z3ram3_alloc_size), hsize(z3ram3_alloc_lsize),
+                                  z3ram3_alloc_base[31:0]);
+            else
+              s_third = "        (never offered)     ";
+            $display("   %0d     %0d    %02b  %s | %s |     $%02x      | %s",
+                     z3, r64, sr[1:0], s_order, s_third, z3ram3_base_val(), s_verdict);
+          end
+        end
+      end
+    end
+    $display("");
+    $display(" %0d configurations checked, %0d bad.", z3b_checked, z3b_bad);
+    if (z3b_bad != 0)
+      $display(" *** the third ZIII board is not decodable from what the hardware latched ***");
 
     $finish;
   end

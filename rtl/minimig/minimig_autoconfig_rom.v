@@ -1,4 +1,12 @@
 module Autoconfig_ROM
+#(
+	// The third Zorro-III RAM board is the DDR3 fast RAM board, not the
+	// "leftover SDRAM" board.  It is then advertised with the same shape as
+	// the first ZIII board (16 MB, extended size, logical size = physical),
+	// which the OS is known to accept, instead of the 2/4 MB entry.
+	// See findings/ddr3/z3ram3-on-ddr3-plan.md.
+	parameter Z3RAM3_DDR3 = 1'b0
+)
 (
 	input clk,
 	input [3:0] d,
@@ -69,14 +77,24 @@ begin
 	ram[z3base2+'h26/2] = 4'b1011;  // Serial no: 4
 
 
-	// 2 or 4 meg of 32-bit Fast RAM (unused RAM in Bank 0)
+	// Third ZIII board.  Z3RAM3_DDR3 = 0: 2 or 4 meg of 32-bit Fast RAM
+	// (unused RAM in Bank 0), the size nibble at 'ha/2 being rewritten at
+	// run time by minimig_autoconfig.v.  Z3RAM3_DDR3 = 1: the DDR3 board,
+	// 16 MB, same size encoding as the first ZIII board above (size code
+	// 000 plus the extended-size flag in register 08); minimig_autoconfig.v
+	// leaves the size alone in that case.  Product ID (0x11), manufacturer
+	// (0x1399) and serial (3) stay as they are either way, so the board is
+	// always distinguishable from the first ZIII board (0x10 / 0x139c / 2).
 
 	ram[z3base3+'h0] = 4'b1010; // Zorro-III card, add mem, no ROM
-	ram[z3base3+'h2/2] = 4'b0111;   // 4MB
+	ram[z3base3+'h2/2] = Z3RAM3_DDR3 ? 4'b0000    // 16MB (extended in reg 08)
+	                                 : 4'b0111;   // 4MB
 	ram[z3base3+'h4/2] = 4'b1110;   // ProductID = 0x11
 	ram[z3base3+'h6/2] = 4'b1110;   // ProductID = 0x11
-	ram[z3base3+'h8/2] = 4'b0010;   // Memory card, not silenceable, reserved
-	ram[z3base3+'ha/2] = 4'b1000;   // 0111 - 2 meg
+	ram[z3base3+'h8/2] = Z3RAM3_DDR3 ? 4'b0000    // memory, not silenceable, extended size (16 meg), reserved
+	                                 : 4'b0010;   // Memory card, not silenceable, reserved
+	ram[z3base3+'ha/2] = Z3RAM3_DDR3 ? 4'b1111    // 0000 - logical size matches physical size
+	                                 : 4'b1000;   // 0111 - 2 meg
 	ram[z3base3+'h10/2] = 4'b1110;  // Manufacturer ID: 0x1399
 	ram[z3base3+'h12/2] = 4'b1100;
 	ram[z3base3+'h14/2] = 4'b0110;
