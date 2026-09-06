@@ -177,11 +177,27 @@ reg  [ 4-1:0] sdram_state;
 reg           snoop_act;
 // Brought out for a CPU with its own data cache; cpu_cache_new takes the low
 // 26 bits of the same address.
-assign snoop_stb_out  = snoop_act;
+//
+// REGISTERED on the way out, unlike the copy cpu_cache_new gets.  chipAddr is
+// combinational from the CPU address, and a CPU with its own cache is on the
+// far side of the die: taking the tap raw made a path from the wrapper's
+// address register, out through minimig, through here and back into the
+// AP68040's cache tag RAM -- 14 logic levels and every one of the 18 setup
+// failures in the first AP040 build (-0.436 ns).  A snoop invalidate arriving
+// one cycle later is harmless: the CPU only advances on clkena, once every
+// four cycles.  cpu_cache_new keeps the unregistered pair it has always had,
+// so nothing changes for the TG68K.
+reg           snoop_stb_r;
+reg  [32-1:0] snoop_addr_r;
+always @ (posedge sysclk) begin
+    snoop_stb_r  <= #1 snoop_act;
+    snoop_addr_r <= #1 {8'd0, chipAddr, 1'b0};
+end
+assign snoop_stb_out  = snoop_stb_r;
 // chipAddr is [23:1], a word address in the 24-bit chip space, so the byte
 // address is {chipAddr, 1'b0} zero-extended.  cpu_cache_new saw exactly this
 // value before, as {1'b0, chipAddr, 1'b0} into its 26-bit port.
-assign snoop_addr_out = {8'd0, chipAddr, 1'b0};
+assign snoop_addr_out = snoop_addr_r;
 // writebuffer
 reg           slot1_write;
 reg           slot2_write;
@@ -302,8 +318,8 @@ cpu_cache_new cpu_cache (
     .sdr_dqm_w        ({writebuffer_dqm2, writebuffer_dqm}),
     .sdr_write_req    (writebuffer_req),
     .sdr_write_ack    (writebuffer_hold),
-    .snoop_act        (snoop_stb_out), // snoop act (write only - just update existing data in cache)
-    .snoop_adr        (snoop_addr_out[26-1:0]), // snoop address
+    .snoop_act        (snoop_act), // snoop act (write only - just update existing data in cache)
+    .snoop_adr        ({1'b0, chipAddr, 1'b0}), // snoop address (unregistered, as before)
     .snoop_dat_w      ({chipWR2, chipWR}), // snoop write data
     .snoop_bs         ({!chipU2, !chipL2, !chipU, !chipL})
 );
