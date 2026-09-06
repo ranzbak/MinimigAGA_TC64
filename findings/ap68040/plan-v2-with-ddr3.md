@@ -381,6 +381,37 @@ Walker port from B, the restart-model caveat above. Not on the AmigaOS path.
   native Amiga program; running it on the board after B3 is the strongest
   integration check available and costs nothing to set up.
 
+## Log
+
+**2026-09-07, stages 0 and A (RTL).** Core vendored and pinned; RAM primitive
+replaced and the core's own suite run against it; wrapper generate, snoop
+path and constraints written; the AP68040 ran the full `sim/ddr3_cpu` program
+through this project's wrapper and DDR3 chain on the first attempt.
+
+Two bugs, both mine, both the same shape -- something moved and a downstream
+reference still named the old place, and neither is visible to any bench:
+
+* `z3ram3_base` was declared and consumed but never driven between `minimig`
+  and `TG68K`; an undriven wire synthesises to zero, the board-3 decode then
+  matched `$00`, and the machine black-screened as soon as the OS configured
+  that board.  Synthesis warned about nothing.  (That one is the DDR3 work,
+  fixed under `findings/ddr3/`, but it is the same lesson.)
+* Making the kernel a generate renamed it: Vivado calls a VHDL if-generate
+  instance `<label>.<instance>`, so every cell moved from
+  `tg68k/pf68K_Kernel_inst/...` to `tg68k/g_tg68k.pf68K_Kernel_inst/...`.
+  `cpu.xdc` and `wizard.xdc` both still named the old path, so twelve
+  multicycle exceptions were dropped and a bitstream was written with no CPU
+  timing exceptions at all.
+
+Also: an XDC file is not general Tcl.  `foreach` is rejected outright
+(Designutils 20-1281), which silently produced empty filter strings and cost
+a build before the log said so.
+
+**Rule for the rest of this work:** after moving or renaming anything in the
+hierarchy, query the netlist for the new path and check the cell counts
+before trusting a constraint or spending a build on it.  `read_xdc` against an
+open run takes a minute and would have caught both.
+
 ## Risks
 
 | Risk | Shows as | Mitigation |
@@ -401,7 +432,9 @@ Walker port from B, the restart-model caveat above. Not on the AmigaOS path.
 
 | | Value | Where |
 |---|---|---|
-| AP68040 self-tests at 0e76761 with the RAM override | — | 0.2 |
+| AP68040 self-tests at 0e76761 with the RAM override | **all 11 pass**, cache_snoop included | 0.2, 2026-09-07 |
+| `sim/ddr3_cpu` with CPU_CORE=AP040, smoke (PATBYTES=64) | **PASS + backdoor PASS**, first run | A5, 2026-09-07 |
+| Program phase 6 reached, AP040 vs TG68K, same program | 287 us vs 141 us | A5 smoke; 16-bit split transfers, 040 internal caches off |
 | `bench_loop` cycles per instruction, AP040 / TG68K | — | 0.2 / A7 |
 | Post-route WNS, sole-core build, kernel island | — | A6 |
 | Post-route WNS on the `clkena` → CE paths, and the replication Vivado applied | — | A6 |
