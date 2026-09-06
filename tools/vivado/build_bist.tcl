@@ -13,9 +13,10 @@
 # Note the runs use the constraints fileset XC7A100T, not constrs_1; a file
 # added to constrs_1 is silently ignored.
 #
-# KEEP IN SYNC WITH tools/vivado/build.tcl: the only differences are this
-# header, the explicit repo root below, and the two set_property generic lines
-# around the run.
+# KEEP IN SYNC WITH tools/vivado/build.tcl: the differences are this header,
+# the explicit repo root below, the vio_ddr3 IP block (this script owns it;
+# build.tcl no longer creates debug cores), and the two set_property generic
+# lines around the run.
 set out [lindex $argv 0]
 # Repo root, set explicitly: second -tclargs wins, else it is derived from
 # this script's own location.

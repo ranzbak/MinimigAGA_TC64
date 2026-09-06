@@ -68,58 +68,44 @@ add_src $R/rtl/ddr3/ddr3_fastram.v
 add_src $R/rtl/ddr3/ddr3_cdc.v
 
 #-----------------------------------------------------------------------------
-# vio_ddr3: the bring-up VIO for the BIST and the PHY tap sweep
-# (minimig_openaars_top.v parameter DDR3_BIST_VIO).
+# AP68040 (lib/AP68040, submodule pinned at 0e76761): an MC68040 with MMU, FPU
+# and split caches whose top level presents a TG68K-shaped port set.  Built in
+# whenever the sources are present; which core is actually instantiated is the
+# CPU_CORE generic on minimig_openaars_top, so an unused core costs parse time
+# and nothing else.  findings/ap68040/plan-v2-with-ddr3.md.
 #
-# probe_in : 0 busy, 1 done, 2 err_count, 3 first_err_addr, 4 first_err_xor,
-#            5 lines_done, 6 init_done, 7 pll_locked
-# probe_out: 0 start, 1 pattern, 2 range_log2, 3 mode, 4 phy_cfg_valid,
-#            5 dqs_inc, 6 dqs_rst, 7 dq_inc, 8 dq_rst, 9 rdlat (init 5),
-#            10 rdsel
+# rtl/cpu040/dpram.v replaces the submodule's primitives/dpram.v: the original
+# writes both RAM ports in one process, which Vivado will not infer as block
+# RAM, and the core then does not fit the device.  See that file.
 #-----------------------------------------------------------------------------
-set ipdir $R/ip/ddr3
-file mkdir $ipdir
-if {[get_ips -quiet vio_ddr3] eq ""} {
-    puts "build.tcl: creating vio_ddr3"
-    create_ip -name vio -vendor xilinx.com -library ip -version 3.0 \
-        -module_name vio_ddr3 -dir $ipdir
-    set_property -dict [list \
-        CONFIG.C_NUM_PROBE_IN      {8} \
-        CONFIG.C_PROBE_IN0_WIDTH   {1} \
-        CONFIG.C_PROBE_IN1_WIDTH   {1} \
-        CONFIG.C_PROBE_IN2_WIDTH   {32} \
-        CONFIG.C_PROBE_IN3_WIDTH   {32} \
-        CONFIG.C_PROBE_IN4_WIDTH   {32} \
-        CONFIG.C_PROBE_IN5_WIDTH   {32} \
-        CONFIG.C_PROBE_IN6_WIDTH   {1} \
-        CONFIG.C_PROBE_IN7_WIDTH   {1} \
-        CONFIG.C_NUM_PROBE_OUT     {11} \
-        CONFIG.C_PROBE_OUT0_WIDTH  {1} \
-        CONFIG.C_PROBE_OUT1_WIDTH  {3} \
-        CONFIG.C_PROBE_OUT2_WIDTH  {5} \
-        CONFIG.C_PROBE_OUT3_WIDTH  {1} \
-        CONFIG.C_PROBE_OUT4_WIDTH  {1} \
-        CONFIG.C_PROBE_OUT5_WIDTH  {2} \
-        CONFIG.C_PROBE_OUT6_WIDTH  {2} \
-        CONFIG.C_PROBE_OUT7_WIDTH  {2} \
-        CONFIG.C_PROBE_OUT8_WIDTH  {2} \
-        CONFIG.C_PROBE_OUT9_WIDTH  {3} \
-        CONFIG.C_PROBE_OUT10_WIDTH {4} \
-        CONFIG.C_PROBE_OUT2_INIT_VAL {0x1c} \
-        CONFIG.C_PROBE_OUT9_INIT_VAL {0x5} \
-    ] [get_ips vio_ddr3]
-    generate_target all [get_files [get_property IP_FILE [get_ips vio_ddr3]]]
-    catch { create_ip_run [get_files [get_property IP_FILE [get_ips vio_ddr3]]] }
-}
-
-# Make sure the IP's out-of-context synthesis result exists before the top run.
-set ipr [get_runs -quiet vio_ddr3_synth_1]
-if {$ipr ne "" && [get_property PROGRESS $ipr] ne "100%"} {
-    launch_runs $ipr -jobs 8
-    wait_on_run $ipr
+if {[file exists $R/lib/AP68040/rtl/ap040_tg68k_compat.v]} {
+    foreach f [list ap040_tg68k_compat ap040_core ap040_alu ap040_muldiv \
+                    ap040_regfile ap040_fpu ap040_mmu ap040_cache \
+                    ap040_bus16_adapter ap040_bus_timeout ap040_walker_cdc] {
+        add_src $R/lib/AP68040/rtl/$f.v
+    }
+    add_src $R/rtl/cpu040/dpram.v
+    # ap040_defs.svh is `include`d by every one of them.
+    set_property include_dirs [list $R/lib/AP68040/rtl] [get_filesets sources_1]
+    # They use SystemVerilog (packed structs, always_ff); Vivado needs telling.
+    foreach f [get_files -quiet -of_objects [get_filesets sources_1] *ap040_*.v] {
+        set_property file_type SystemVerilog $f
+    }
+} else {
+    puts "build.tcl: lib/AP68040 not checked out; CPU_CORE=AP040 will not build"
+    puts "build.tcl:   git submodule update --init lib/AP68040"
 }
 
 #-----------------------------------------------------------------------------
+# No debug cores here.  The DDR3 bring-up VIO (vio_ddr3, DDR3_BIST_VIO) and
+# the fast-RAM ILA (ila_fastram, DDR3_FASTRAM_ILA) are created and used only
+# by tools/vivado/build_bist.tcl and tools/vivado/build_ila.tcl, which
+# generate the IP into ip/ddr3 on demand; the RTL instantiates them only when
+# those generics are 1, and the project defaults are 0.  Until 2026-09-07 this
+# script created the VIO and ran its out-of-context synthesis on every default
+# build, for a core that nothing instantiated -- wasted minutes and a pair of
+# CRITICAL WARNINGs about IP constraints with no module to apply to.
+#
 # Build
 #-----------------------------------------------------------------------------
 reset_run synth_1

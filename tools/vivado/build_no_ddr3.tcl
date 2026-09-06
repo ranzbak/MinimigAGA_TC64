@@ -79,58 +79,9 @@ add_src $R/rtl/ddr3/ddr3_fastram.v
 add_src $R/rtl/ddr3/ddr3_cdc.v
 
 #-----------------------------------------------------------------------------
-# vio_ddr3: the bring-up VIO for the BIST and the PHY tap sweep
-# (minimig_openaars_top.v parameter DDR3_BIST_VIO).
+# No debug cores: see the note in tools/vivado/build.tcl.  The VIO and ILA
+# belong to build_bist.tcl and build_ila.tcl, which create them on demand.
 #
-# probe_in : 0 busy, 1 done, 2 err_count, 3 first_err_addr, 4 first_err_xor,
-#            5 lines_done, 6 init_done, 7 pll_locked
-# probe_out: 0 start, 1 pattern, 2 range_log2, 3 mode, 4 phy_cfg_valid,
-#            5 dqs_inc, 6 dqs_rst, 7 dq_inc, 8 dq_rst, 9 rdlat (init 5),
-#            10 rdsel
-#-----------------------------------------------------------------------------
-set ipdir $R/ip/ddr3
-file mkdir $ipdir
-if {[get_ips -quiet vio_ddr3] eq ""} {
-    puts "build.tcl: creating vio_ddr3"
-    create_ip -name vio -vendor xilinx.com -library ip -version 3.0 \
-        -module_name vio_ddr3 -dir $ipdir
-    set_property -dict [list \
-        CONFIG.C_NUM_PROBE_IN      {8} \
-        CONFIG.C_PROBE_IN0_WIDTH   {1} \
-        CONFIG.C_PROBE_IN1_WIDTH   {1} \
-        CONFIG.C_PROBE_IN2_WIDTH   {32} \
-        CONFIG.C_PROBE_IN3_WIDTH   {32} \
-        CONFIG.C_PROBE_IN4_WIDTH   {32} \
-        CONFIG.C_PROBE_IN5_WIDTH   {32} \
-        CONFIG.C_PROBE_IN6_WIDTH   {1} \
-        CONFIG.C_PROBE_IN7_WIDTH   {1} \
-        CONFIG.C_NUM_PROBE_OUT     {11} \
-        CONFIG.C_PROBE_OUT0_WIDTH  {1} \
-        CONFIG.C_PROBE_OUT1_WIDTH  {3} \
-        CONFIG.C_PROBE_OUT2_WIDTH  {5} \
-        CONFIG.C_PROBE_OUT3_WIDTH  {1} \
-        CONFIG.C_PROBE_OUT4_WIDTH  {1} \
-        CONFIG.C_PROBE_OUT5_WIDTH  {2} \
-        CONFIG.C_PROBE_OUT6_WIDTH  {2} \
-        CONFIG.C_PROBE_OUT7_WIDTH  {2} \
-        CONFIG.C_PROBE_OUT8_WIDTH  {2} \
-        CONFIG.C_PROBE_OUT9_WIDTH  {3} \
-        CONFIG.C_PROBE_OUT10_WIDTH {4} \
-        CONFIG.C_PROBE_OUT2_INIT_VAL {0x1c} \
-        CONFIG.C_PROBE_OUT9_INIT_VAL {0x5} \
-    ] [get_ips vio_ddr3]
-    generate_target all [get_files [get_property IP_FILE [get_ips vio_ddr3]]]
-    catch { create_ip_run [get_files [get_property IP_FILE [get_ips vio_ddr3]]] }
-}
-
-# Make sure the IP's out-of-context synthesis result exists before the top run.
-set ipr [get_runs -quiet vio_ddr3_synth_1]
-if {$ipr ne "" && [get_property PROGRESS $ipr] ne "100%"} {
-    launch_runs $ipr -jobs 8
-    wait_on_run $ipr
-}
-
-#-----------------------------------------------------------------------------
 # Build
 #-----------------------------------------------------------------------------
 set_property generic {HAVEDDR3=0} [get_filesets sources_1]
