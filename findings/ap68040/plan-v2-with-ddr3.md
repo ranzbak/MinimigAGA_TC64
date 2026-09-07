@@ -9,10 +9,13 @@
 > never renamed in the end -- the walker landed first and the free experiment
 > was not needed.
 >
-> Tagged `unoptimized_040_working`. Bitstream `build/stage_ap040_mmu` (both
-> ILAs in). What has NOT happened is stage D, which is what "unoptimized" in
-> that tag name means: `clkena` is still every 4, and every cache fill is still
-> eight 16-bit sub-cycles.
+> Tagged `unoptimized_040_working` at that point. Since then, in simulation
+> only: the OSD reports the CPU (`CORE_CAPS`), and **D1** raised the enable
+> from every 4 cycles to every 3 (−19 % on the bench). Neither has been run on
+> hardware yet -- `build/stage_ap040_osd` is the OSD change alone and
+> `build/stage_ap040_d1` is both, and the firmware in `fw/ctrl_832` must go on
+> the SD card for the OSD half. Still not done: D2, the DDR3 line port, which
+> is where the rest of the speed is.
 
 Date 2026-09-06, updated 2026-09-07. Status: **stages 0, A and B done and on
 hardware.** The AP68040 is the sole core in `build/stage_ap040_mmu`
@@ -520,7 +523,7 @@ smaller build; if not, drop the parameter from the top level.
 
 | # | Step | Depends on | Exit criterion |
 |---|---|---|---|
-| D1 | `clkena` every 3 (`enaWRreg` on 5 of 16 phases) + `-setup -start 3 / -hold -start 2` on the kernel island — [performance.md](performance.md) option 1a; every core path fits 26.45 ns with 5 ns to spare standalone. **Written 2026-09-08, see the note below; awaiting build.** | A6 | timing closes in the full design; A7 benchmark ≈ +25–30 % |
+| D1 | `clkena` every 3 (`enaWRreg` on 5 of 16 phases) + `-setup -start 3 / -hold -start 2` on the kernel island — [performance.md](performance.md) option 1a. **DONE in RTL and simulation 2026-09-08, bitstream `build/stage_ap040_d1`, not yet run on hardware.** Timing closes: WNS −0.544 ns with the known SDRAM read capture as the only violated path. Measured −19.2 % on the pattern program, −18.5 % on the MMU one, short of +25–30 % because the benchmark is half DDR3 latency — which is D2. See the note below for the prerequisite option 1a omits. | A6 | timing closes in the full design; A7 benchmark ≈ +25–30 % |
 | D2 | Line port to the DDR3: expose the 040 cache's fill/write-back request from the compat top (it is stubbed at `:434`; this is core-side work, upstream has no line port in this checkout) and connect it to `ddr3_fastram`'s existing 16-byte line CDC, bypassing `cpu_cache_new` and the 16-bit adapter for board 3. Chip RAM and board 1 stay on the 16-bit path. | A6 | a line fill = one CDC round trip instead of eight sub-cycles |
 | D3 | Sibling 37.8 MHz clock for the CPU island, `clkena_in` = handshake only, multicycles removed — option 1b. | D1 | `report_exceptions` shows none on the core |
 
