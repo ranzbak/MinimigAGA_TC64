@@ -1,26 +1,28 @@
 # AP68040 with MMU and FPU — implementation plan, second edition
 
-> **NEXT SESSION STARTS AT [Stage B](#stage-b--mmu-walker-port-m--start-here).**
+> **NEXT SESSION STARTS AT [B4](#stage-b--mmu-walker-port-m--done), then Stage C
+> and Stage D.**
 >
-> Stage A is done and on hardware: the 68040 boots AmigaDOS to a Shell with the
-> startup-sequence skipped. `SetPatch` crashes it, because it enables the MMU
-> and the table-walker port is still tied off. Stage B is the only known
-> blocker between here and Workbench, and its section carries the confirmed
-> capture, the design, the deadlock hazard to avoid, the reference
-> implementation and the bench to write first.
+> Stages 0, A and B are done and on hardware, 2026-09-07. The 68040 boots
+> **Workbench with the MMU on**: `SetPatch` programs it through
+> `68040.library`, the walker answers, and the machine runs. The library was
+> never renamed in the end -- the walker landed first and the free experiment
+> was not needed.
 >
-> Free experiment before any RTL: rename `LIBS:68040.library` on the boot
-> volume. `SetPatch` then skips MMU setup, and Workbench should boot with the
-> MMU merely unused. That both gives a working machine and confirms the walker
-> is the last blocker.
+> Tagged `unoptimized_040_working`. Bitstream `build/stage_ap040_mmu` (both
+> ILAs in). What has NOT happened is stage D, which is what "unoptimized" in
+> that tag name means: `clkena` is still every 4, and every cache fill is still
+> eight 16-bit sub-cycles.
 
-Date 2026-09-06, updated 2026-09-07. Status: **stages 0 and A done and on
-hardware.** The AP68040 is the sole core in `build/stage_ap040_fix`
-(WNS -0.504 ns, the usual SDRAM read path, hold clean) and boots Kickstart
-46.143 through Exec into AmigaDOS: ExecBase published, memory list and
-allocator working, dispatcher idling at $F815BA, interrupts arriving, and a
-Shell when the startup-sequence is skipped. Stage B (the MMU walker) is the
-next task and the only known blocker for Workbench. See "Log" near the end for
+Date 2026-09-06, updated 2026-09-07. Status: **stages 0, A and B done and on
+hardware.** The AP68040 is the sole core in `build/stage_ap040_mmu`
+(WNS -0.501 ns, the usual SDRAM read path, hold clean, plus a new -0.243 ns
+noted in B) and boots Kickstart 46.143 all the way to **Workbench with the MMU
+on**: ExecBase published, memory list and allocator working, interrupts
+arriving, `SetPatch` programming the MMU through `68040.library`, and the
+table walker answering its descriptor reads and write-backs. Tagged
+`unoptimized_040_working`. B4 (MuFastROM/MuScan) is what is left of stage B;
+stage D is the whole of the performance work and has not started. See "Log" near the end for
 what was found on the way -- two bugs, both the same bug on different ports.
 Supersedes the order of work in [README.md](README.md), which was written
 before the DDR3 fast RAM landed and assumed it would arrive as an in-domain
@@ -281,6 +283,44 @@ Turbo chip / Kick stay as they are. (With the MMU on and MuFastROM in use,
 turbo Kick is redundant for 040 users, but it is harmless and the menu does
 not need to know.)
 
+**Status: the sole-core changes above are done** (2026-09-08). `CORE_CAPS` is
+a parameter on `minimig_virtual_top` derived from `cpu_core` and the AP040
+parameters, passed down through `minimig.v` and `userio.v` to `userio_osd.v`,
+where version bytes 4 and 5 are `8'hA4` and `CORE_CAPS`. The firmware reads
+both in `fpga.c`, keeps `core_caps` (0 unless the magic byte matches), prints
+`CPU: MC68040 + FPU + MMU` in the boot banner, and `menu.c` shows a greyed,
+unselectable `CPU : 68040/FPU/MMU` line with `menumask` bit 0 cleared. Old
+firmware on a new core and new firmware on an old core both behave exactly as
+before -- that is what the magic byte is for.
+
+### Building and installing the firmware
+
+The firmware is **not** in the bitstream. The boot ROM that is in the
+bitstream reads `832OSDAD.BIN` from the root of the SD card's first FAT
+partition (`fw/ctrl_boot_832/Makefile`, `-DOSDNAME=\"832OSDADBIN\"`), so the
+firmware is a file on the card and the bitstream is programmed over JTAG.
+They are updated independently -- but a firmware that reports the CPU needs a
+core that answers the query, so after this change update **both**.
+
+    # 1. firmware -- needs the EightThirtyTwo toolchain at the repo root
+    #    (git clone https://github.com/robinsonb5/EightThirtyTwo, make)
+    cd fw/ctrl_832
+    make                       # -> 832OSDAD.bin, about 90 KB
+
+    # 2. onto the SD card: the FAT root, 8.3 name, uppercase
+    cp 832OSDAD.bin /media/<you>/<card>/832OSDAD.BIN
+    sync
+
+    # 3. bitstream over JTAG
+    LD_LIBRARY_PATH=<libtinfo5 shim> /opt/Xilinx/Vivado/2023.2/bin/vivado \
+        -mode batch -nolog -nojournal -source tools/vivado/program.tcl \
+        -tclargs build/stage_ap040_osd/minimig_openaars_top.bit
+
+The name matters: `LoadFile` matches the packed 8.3 form, so it must be
+`832OSDAD.BIN` in the **root**, not in a directory and not renamed. Keep a
+copy of the previous `832OSDAD.BIN` on the card under another name before
+overwriting -- a firmware that does not boot leaves no OSD to fix it from.
+
 **Dual-core build (stage E).** The select must survive the same rules as
 the CPU type: applied at reset only, and the RTL — not the firmware — is the
 authority on whether it exists.
@@ -331,7 +371,41 @@ DDR3 (`findings/ddr3/z3ram3-on-ddr3-plan.md`).
 | A6 | **Hardware**: build `CPU_CORE=AP040`, program by reprogramming (never soft reset). Boot **without startup-sequence** so SetPatch never runs and the MMU stays off — no `NOMMU` mechanism to get right on the first try. Then `ShowConfig` (CPU line must say 68040), `avail` (42 MB as today), ATK on the SDRAM board and the DDR3 board. Then a normal boot: SetPatch loads `68040.library`, which **will** enable the MMU and hit the tied-off walker → watchdog → access error. Expected; it is the exit condition for stage B. | Workbench up with MMU off; ATK clean on both boards; the MMU-on boot fails in the documented way |
 | A7 | Baseline numbers: `bench_loop` cycles per instruction TG68K vs AP040 (from 0.2 and the TG68K equivalent), and a fast-RAM memory benchmark on hardware for both bitstreams. | table below filled |
 
-### Stage B — MMU walker port (M) — **START HERE**
+### Stage B — MMU walker port (M) — **DONE**
+
+**Done and on hardware, 2026-09-07** -- Workbench boots with the MMU on. What
+was built, and what is worth carrying forward:
+
+* **The walker rides the CPU's own bus**, as designed below, and the design
+  survived contact. `rtl/soc/TG68K.vhd` muxes the five signals the bus side
+  derives from -- address, bus state, byte selects, write data, write strobe --
+  so a descriptor cycle is indistinguishable from a CPU cycle to every
+  consumer, the 7 MHz chipset FSM included. Two 16-bit sub-cycles at A and
+  A+2, an idle gap between them, completion on `clkena`.
+* **The clkena deadlock was avoided structurally, not by gating.** The bus is
+  released BEFORE the acknowledge goes out, so `bstate` is the core's own idle
+  state and `clkena` is running when the core consumes the ack. The extra
+  `wk_ack` term in `clkena` is belt and braces on top of that -- and it is the
+  first thing to try removing in D1, because `wk_active` reaching `clkena`
+  through the mux costs 0.243 ns on the FPU multiplier's clock enable.
+* **Bench**: `./run.sh --mmu` builds a two-level table with the root and
+  pointer tables in chip RAM and the leaf page table in the DDR3, so both
+  ports carry descriptors, then walks a warm page, a cold one (U and M clear,
+  so the read and the write each force a write-back -- walker WRITES into the
+  DDR3), an invalid descriptor and a table branch into space that decodes as
+  nothing. `--mmumutant` ties `walker_ack` low and must fail; it does, on the
+  stall watchdog.
+* **A lesson about watchdogs.** The stall watchdog's first threshold, 120k
+  cycles, failed a *healthy* pattern run: that program's phase 2 -> 3 gap is
+  legitimately 1.18 ms. A watchdog tuned by guess is a bug generator. The
+  thresholds are per program now and both numbers are measured.
+* **And one about mutant guards.** `run.sh` tested for `DDR3 CPU TB: PASS`,
+  which is only the 68k program's own phases. `--lwmutant` completes every
+  phase while 1895 assertions fail around it, so the guard called it a mutant
+  that did not fail. It tests the summary line now: a mutant check that can
+  only see the program's own verdict cannot see an assertion at all.
+
+The original statement of the problem follows.
 
 **Confirmed on hardware 2026-09-07.** The 040 boots AmigaDOS to a Shell with
 the startup-sequence skipped. `SetPatch` crashes it, run by hand from that
@@ -410,8 +484,8 @@ is `(|wk_addr(1 downto 0)) OR sel_undecoded`.
 | B0 | Close the bench gap FIRST. `sim/ddr3_cpu`'s RAM model reads `cpustate[2:0]` and ignores bit 6, which is why the `cpustate(6)` bug reached hardware. Make the model honour the 32-bit-write bit, and assert it is never set while the AP040 is the core. | the bench fails on a reverted `cpustate(6)` fix |
 | B1 | Requester in the wrapper, multiplexed into the kernel-side bus signals as above; `walker_berr` from misalignment or `sel_undecoded`; `clkena` kept alive under `wk_active`. | lint clean, `./run.sh --ap040` and `--ap040 --chipbus` still PASS |
 | B2 | **Bench the router.** `sim/ddr3_cpu` program builds a two-level table with the root in chip RAM and leaves in DDR3 fast RAM, so both ports are exercised; loads URP/SRP/TC with `movec`; enables translation; touches a mapped page, a page with M clear (forces a descriptor write-back), an unmapped page (expects an access-error frame), and a misaligned root (expects `walker_berr`, not a hang). `lib/AP68040/tb` `t_mmu` already proves the MMU itself -- this proves OUR router. Add a watchdog that fails on no progress, so a `clkena` deadlock reports as a failure rather than a timeout. | PASS, and a mutant with `walker_ack` tied low FAILS |
-| B3 | Hardware: restore `LIBS:68040.library`, boot with SetPatch. | **Workbench with the MMU on** |
-| B4 | Then MuFastROM (`MuFastROM ON`, MMULib) and `MuScan` to confirm Kickstart runs from fast RAM. | MuScan shows ROM in fast RAM |
+| B3 | Hardware: boot with SetPatch. **DONE** -- the library was never renamed; the walker landed before the free experiment was needed. | **Workbench with the MMU on** -- met |
+| B4 | Then MuFastROM (`MuFastROM ON`, MMULib) and `MuScan` to confirm Kickstart runs from fast RAM. **NEXT** | MuScan shows ROM in fast RAM |
 
 **Debug kit that already exists**, if B3 misbehaves: `tools/vivado/build_ap040.tcl`
 builds with `CPU040_DEBUG_ILA=1`; the CPU ILA carries `dbg_pc`, `tg68_adr`,

@@ -36,8 +36,8 @@ INFO: MMU walker program -- no pattern in the DDR3 to check
 
 DDR3 CPU TB: 2 passed, 0 failed
 
-$finish called at time : 880420162 ps : File "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/ddr3_cpu_tb.sv" Line 952
-run: Time (s): cpu = 00:00:02 ; elapsed = 00:06:20 . Memory (MB): peak = 1443.094 ; gain = 91.039 ; free physical = 14400 ; free virtual = 36886
+$finish called at time : 880420162 ps : File "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/ddr3_cpu_tb.sv" Line 967
+run: Time (s): cpu = 00:00:00.44 ; elapsed = 00:03:54 . Memory (MB): peak = 1262.691 ; gain = 8.004 ; free physical = 17180 ; free virtual = 39852
 ## quit
-INFO: xsimkernel Simulation Memory Usage: 150028 KB (Peak: 190908 KB), Simulation CPU Usage: 378200 ms
-INFO: [Common 17-206] Exiting xsim at Mon Sep  7 23:07:16 2026...
+INFO: xsimkernel Simulation Memory Usage: 150028 KB (Peak: 190908 KB), Simulation CPU Usage: 233910 ms
+INFO: [Common 17-206] Exiting xsim at Mon Sep  7 23:49:47 2026...

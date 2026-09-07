@@ -1260,7 +1260,13 @@ void HandleUI(void)
         OsdColor(OSDCOLOR_SUBMENU);
         helptext = helptexts[HELPTEXT_CHIPSET];
         parentstate = menustate;
-        menumask = 0x3f;
+        // With a 68040 that cannot be switched away from, the CPU line still
+        // says what the machine is -- but it is not a choice, so it is not
+        // selectable and the cursor never lands on it.  On every other core
+        // core_caps is 0 and this is the menu exactly as it was.
+        menumask = CORE_CPU_FIXED_040() ? 0x3e : 0x3f;
+        if (CORE_CPU_FIXED_040() && menusub == 0)
+            menusub = 1;
         OsdSetTitle("Chipset", OSD_ARROW_LEFT | OSD_ARROW_RIGHT);
 
 #if 0
@@ -1281,8 +1287,15 @@ void HandleUI(void)
 #endif
         OsdWrite(0, "", 0, 0);
         strcpy(s, "         CPU : ");
-        strcat(s, config_cpu_msg[config.cpu & 0x03]);
-        OsdWrite(1, s, menusub == 0, 0);
+        if (CORE_CPU_FIXED_040()) {
+            strcat(s, "68040");
+            if (core_caps & CORE_CAPS_FPU) strcat(s, "/FPU");
+            if (core_caps & CORE_CAPS_MMU) strcat(s, "/MMU");
+            OsdWrite(1, s, 0, 1);       // shown, greyed, not selectable
+        } else {
+            strcat(s, config_cpu_msg[config.cpu & 0x03]);
+            OsdWrite(1, s, menusub == 0, 0);
+        }
         strcpy(s, "       Turbo : ");
         strcat(s, config_turbo_msg[(config.cpu >> 2) & 0x03]);
         OsdWrite(2, s, menusub == 1, 0);
@@ -1318,7 +1331,7 @@ void HandleUI(void)
 
         if (select)
         {
-            if (menusub == 0)
+            if (menusub == 0 && !CORE_CPU_FIXED_040())
             {
                 int cpu = (config.cpu + 1) & 3;
                 menustate = MENU_SETTINGS_CHIPSET1;

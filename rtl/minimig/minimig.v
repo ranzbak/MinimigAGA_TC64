@@ -153,7 +153,10 @@ module minimig #(
   parameter Z3RAM3 = 1'b1,
   // That third board is the DDR3 fast RAM board (16 MB) rather than the
   // leftover SDRAM board; see findings/ddr3/z3ram3-on-ddr3-plan.md.
-  parameter Z3RAM3_DDR3 = 1'b0
+  parameter Z3RAM3_DDR3 = 1'b0,
+  // Which CPU core the SoC around this instance is built with, for the OSD to
+  // read back: bit 0 AP68040 fitted, bit 1 selectable, bit 2 FPU, bit 3 MMU.
+  parameter [7:0] CORE_CAPS = 8'h00
 )  (
   //m68k pins
   input [23:1] cpu_address, // m68k address bus
@@ -679,7 +682,7 @@ always @(posedge clk) begin
 end
 
 //instantiate user IO
-userio USERIO1
+userio #(.CORE_CAPS(CORE_CAPS)) USERIO1
 (
   .clk(clk),
   .clk7_en(clk7_en),

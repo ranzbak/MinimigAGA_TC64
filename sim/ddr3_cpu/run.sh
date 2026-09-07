@@ -97,6 +97,19 @@ fi
 TURBOCHIP=1
 if [ "$1" = "--chipbus" ]; then TURBOCHIP=0; shift; fi
 
+# Chip RAM over the 7 MHz bus is roughly sixteen times slower per access than
+# the SDRAM-side port, and the bench's TIMEOUT is 2.5 ms, so the default region
+# sizes do NOT fit: the run dies mid-pattern with a timeout and a few hundred
+# "DRAM mismatch" lines, which reads exactly like a corruption bug and is not
+# one.  It cost an evening on 2026-09-08 -- the checked-in chipbus log had been
+# made with the reduced sizes and said so only in its xsim command line.  So
+# --chipbus picks the reduced sizes unless the caller has set them explicitly.
+if [ "$TURBOCHIP" = "0" ]; then
+    PATBYTES=${PATBYTES:-64}
+    MISLINES=${MISLINES:-2}
+    CNTN=${CNTN:-8}
+fi
+
 VIVADO_PATH=${VIVADO_PATH:-/opt/Xilinx/Vivado/2023.2}
 R="$D/../.."
 LIB="$R/lib/core_ddr3_controller"
@@ -129,7 +142,11 @@ PLUS="+PATBYTES=$PATBYTES +MISLINES=$MISLINES +CNTN=$CNTN +TURBOCHIP=$TURBOCHIP"
 if [ "$IS_MMU" = "1" ]; then PLUS="$PLUS +MMUTEST"; fi
 if [ -n "$TRACE" ]; then PLUS="$PLUS +TRACE +TRMAX=${TRMAX:-200}"; fi
 
-if [ "$IS_MMUMUTANT" = "1" ]; then
+# PREB1=<file> swaps in another copy of the wrapper, so a regression can be
+# bisected against a known-good one without touching the working tree.
+if [ -n "$PREB1" ]; then
+    TG68K_SRC="$PREB1"
+elif [ "$IS_MMUMUTANT" = "1" ]; then
     # Generated: the walker acknowledge tied low again, which is exactly stage
     # A.  A walk then never completes and the core's watchdog turns it into an
     # access fault -- on hardware that was the SetPatch crash.
@@ -225,8 +242,12 @@ echo
 grep -E "^(PASS|FAIL|INFO:|DDR3 CPU TB|       )" "xsim_run_$VARIANT.log" || true
 
 if [ "$IS_MUTANT" = "1" ]; then
-    # the mutant must NOT pass
-    if grep -q "DDR3 CPU TB: PASS" "xsim_run_$VARIANT.log"; then
+    # The mutant must NOT pass.  Test the SUMMARY line, not "DDR3 CPU TB: PASS":
+    # that one is only the 68k program's own phases, and a mutant can complete
+    # every phase while the bench's assertions fail around it.  --lwmutant does
+    # exactly that (1895 32-bit-write protocol violations, program PASS), and
+    # the old grep called that a mutant that did not fail.
+    if grep -q "DDR3 CPU TB: 2 passed, 0 failed" "xsim_run_$VARIANT.log"; then
         echo "MUTANT DID NOT FAIL -- the bench has no teeth"; exit 1
     fi
     echo "mutant failed as required"

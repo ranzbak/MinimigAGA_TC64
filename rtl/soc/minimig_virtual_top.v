@@ -1029,8 +1029,20 @@ assign _ram_oe=1'b1;
 assign _ram_we=1'b1;
 `else
 
+// What the OSD tells the firmware about this build.  Bit 0 AP68040 fitted,
+// bit 1 AP68040 selectable (a dual-core build -- stage E, not this one),
+// bit 2 FPU, bit 3 MMU.  Derived from the same parameters that pick the
+// kernel, so the RTL is the authority and the firmware only reports it.
+localparam use_ap040_caps = (cpu_core == "AP040");
+localparam [7:0] CORE_CAPS = { 4'b0000,
+                               (use_ap040_caps && (ap040_has_mmu != 0)) ? 1'b1 : 1'b0,
+                               (use_ap040_caps && (ap040_has_fpu != 0)) ? 1'b1 : 1'b0,
+                               1'b0,
+                               use_ap040_caps ? 1'b1 : 1'b0 };
+
 minimig #(
     .NTSC(1'b0),
+    .CORE_CAPS(CORE_CAPS),
     // The third Zorro-III board is offered either way now: SDRAM scraps
     // (2/4 MB) without the DDR3, the DDR3 fast RAM board (16 MB) with it.
     // Both are decoded against the base the OS assigns, so neither adds

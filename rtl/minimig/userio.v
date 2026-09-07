@@ -25,7 +25,10 @@
 
 
 
-module userio (
+module userio #(
+  // Passed straight through to the OSD controller; see userio_osd.v.
+  parameter [7:0] CORE_CAPS = 8'h00
+) (
   input  wire           clk,                // bus clock
   input  wire           reset,              // reset
   input  wire           clk7_en,
@@ -518,7 +521,7 @@ assign _mthird1 = ~mouse1_btn[2];
 
 
 //instantiate osd controller
-userio_osd osd1
+userio_osd #(.CORE_CAPS(CORE_CAPS)) osd1
 (
   .clk              (clk),
   .clk7_en          (clk7_en),

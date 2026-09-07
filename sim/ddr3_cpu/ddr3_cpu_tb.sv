@@ -702,9 +702,24 @@ reg        stalled     = 1'b0;
 // end of a 2.5 ms simulation with nothing to say about where.  STALL is
 // generous -- phase 1 of the pattern program legitimately takes ~560 us -- so
 // this fires on a stop, not on slow progress.
-// 8815 ps a cycle, so 120k cycles is ~1.06 ms.  Phase 1 of the pattern
-// program is the longest legitimate gap at ~560 us (64k cycles).
-localparam integer STALL = 120_000;
+// 8815 ps a cycle.  The threshold has to be per program, because the two have
+// very different phase lengths, and one that fits the pattern program is
+// useless for catching a wedged walk:
+//
+//   pattern program  phases 2 -> 3 is the longest legitimate gap, 1.18 ms
+//                    (134k cycles), so anything tighter is a false failure --
+//                    and one was: 120k cycles failed a healthy run at phase 2
+//   MMU program      the table build is 733 us (83k cycles); everything after
+//                    it is 5-20 us, so 1.06 ms is generous and still catches a
+//                    wedged walk well inside the 2.5 ms TIMEOUT -- that pair of
+//                    numbers is measured, from the passing run and from
+//                    --mmumutant, which fired at 1.87 ms
+//
+// The pattern program's own 2.5 ms TIMEOUT is the backstop for it; the tight
+// threshold goes where it is wanted, on the walker.
+localparam integer STALL_PAT = 300_000;
+localparam integer STALL_MMU = 120_000;
+wire [31:0] stall_limit = mmutest ? STALL_MMU : STALL_PAT;
 
 always @(posedge clk) begin
   if (mbox_l(16) !== phase_seen) begin
@@ -713,11 +728,11 @@ always @(posedge clk) begin
     $display("INFO: program phase %0d at %t", phase_seen, $time);
   end else if (!stalled && mbox_l(0) === 32'd0) begin
     stall_cnt = stall_cnt + 1;
-    if (stall_cnt > STALL) begin
+    if (stall_cnt > stall_limit) begin
       stalled = 1'b1;
       $display("");
       $display("FAIL: no progress for %0d cycles at phase %0d (t = %t).  A walk",
-               STALL, phase_seen, $time);
+               stall_limit, phase_seen, $time);
       $display("      that never acknowledges, or a clkena stopped while the");
       $display("      walker owns the bus, looks exactly like this.");
     end

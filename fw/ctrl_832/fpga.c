@@ -195,9 +195,14 @@ unsigned char GetFPGAStatus(void)
 }
 
 
+// What the core told us about itself, 0 if it is too old to be asked.  See
+// CORE_CAPS_* in fpga.h and userio_osd.v's rtl_ver.
+unsigned char core_caps = 0;
+
 void fpga_init() {
 	unsigned long time = GetTimer(0);
 	char ver_beta,ver_major,ver_minor,ver_minion;
+	char ver_magic,ver_caps;
 	char rtl_ver[45];
 	int rstval;
 
@@ -207,7 +212,14 @@ void fpga_init() {
 	ver_major  = SPI(0xff);
 	ver_minor  = SPI(0xff);
 	ver_minion = SPI(0xff);
+	// Two more bytes, which an older core does not have: it answers
+	// MINION_VER to both, so the magic byte is what says the second one means
+	// anything.  Without this check a 68000 core would look like whatever its
+	// minion version happens to spell.
+	ver_magic  = SPI(0xff);
+	ver_caps   = SPI(0xff);
 	DisableOsd();
+	core_caps = (ver_magic == (char)0xA4) ? ver_caps : 0;
 	SPIN; SPIN; SPIN; SPIN;
 
 	OsdDoReset(SPI_RST_USR | SPI_RST_CPU | SPI_CPU_HLT,SPI_RST_CPU | SPI_CPU_HLT);
@@ -223,6 +235,12 @@ void fpga_init() {
 	BootPrintEx(rtl_ver);
 	sprintf(rtl_ver, "Firmware version: %s",MM_FIRMWARE_VERSION);
 	BootPrintEx(rtl_ver);
+	if (core_caps & CORE_CAPS_AP040) {
+		sprintf(rtl_ver, "CPU: MC68040%s%s",
+			(core_caps & CORE_CAPS_FPU) ? " + FPU" : "",
+			(core_caps & CORE_CAPS_MMU) ? " + MMU" : "");
+		BootPrintEx(rtl_ver);
+	}
 	BootPrintEx(" ");
 	BootPrintEx("Minimig AGA by Rok Krajnc.  Original Minimig by Dennis van Weeren");
 	BootPrintEx("Updates by Jakub Bednarski, Tobias Gubener, Sascha Boing, A.M. Robinson & others");

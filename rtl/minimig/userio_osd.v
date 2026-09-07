@@ -1,7 +1,13 @@
 //on screen display controller
 
 
-module userio_osd
+module userio_osd #(
+	// What this core is, for a firmware new enough to ask.  Bit 0 AP68040
+	// fitted, bit 1 AP68040 selectable (a dual-core build), bit 2 FPU,
+	// bit 3 MMU.  Read back as byte 5 of OSD_CMD_VERSION, behind the magic
+	// byte 4; see findings/ap68040/plan-v2-with-ddr3.md, "OSD and firmware".
+	parameter [7:0] CORE_CAPS = 8'h00
+)
 (
 	input 	clk,		    	// 28MHz clock
 	input	clk7_en,
@@ -585,12 +591,19 @@ assign host_adr  = mem_adr[23:0];
 //`ifndef MINIMIG_XILINX
 `include "minimig_version.vh"
 //`endif
+// Bytes 0-3 are the version and are untouched, so old firmware sees exactly
+// what it saw before.  Bytes 4 and 5 are new: 4 is a magic value, 5 the core's
+// capabilities.  An older core answers MINION_VER to both, so a firmware that
+// does not find 0xA4 in byte 4 knows there is nothing here to read and must
+// fall back to its old behaviour -- which is why the magic byte exists at all.
 reg  [8-1:0] rtl_ver;
 always @ (*) begin
   case (dat_cnt[2:0])
-    2'b00   : rtl_ver = BETA_FLAG;
-    2'b01   : rtl_ver = MAJOR_VER;
-    2'b10   : rtl_ver = MINOR_VER;
+    3'd0    : rtl_ver = BETA_FLAG;
+    3'd1    : rtl_ver = MAJOR_VER;
+    3'd2    : rtl_ver = MINOR_VER;
+    3'd4    : rtl_ver = 8'hA4;
+    3'd5    : rtl_ver = CORE_CAPS;
     default : rtl_ver = MINION_VER;
   endcase
 end
