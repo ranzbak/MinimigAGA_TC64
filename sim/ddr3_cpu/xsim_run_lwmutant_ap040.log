@@ -1,0 +1,53 @@
+
+****** xsim v2023.2 (64-bit)
+  **** SW Build 4029153 on Fri Oct 13 20:13:54 MDT 2023
+  **** IP Build 4028589 on Sat Oct 14 00:45:43 MDT 2023
+  **** SharedData Build 4025554 on Tue Oct 10 17:18:54 MDT 2023
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source xsim.dir/cpu_sim/xsim_script.tcl
+# xsim {cpu_sim} -testplusarg prog=/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/run_lwmutant_ap040/prog.bin -testplusarg PATBYTES=1024 -testplusarg MISLINES=16 -testplusarg CNTN=64 -testplusarg TURBOCHIP=1 -autoloadwcfg -tclbatch {run.tcl}
+Time resolution is 1 ps
+source run.tcl
+## run all
+TCK_MIN =        2500
+ddr3_cpu_tb.u_ram.file_io_open: at time                    0 WARNING: no +model_data option specified, using /tmp.
+WARNING: Insufficient data from the input file for $fread
+INFO: loaded 2164 bytes of 68k program from /home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/run_lwmutant_ap040/prog.bin
+LOAD_MODE: bank 2
+LOAD_MODE: bank 3
+LOAD_MODE: bank 1
+ddr3_cpu_tb.u_ram.cmd_task: at time 39935000.0 ps WARNING: Load Mode 1 DLL off mode is not fully modeled
+LOAD_MODE: bank 0
+INFO: CPU released at 64389167.0 ps (ddr_ready=1 init_done=1 pll_locked=1)
+FAIL: cpustate[6] set with the AP68040 as the core (SDRAM port, addr 00001000)
+FAIL: cpustate[6] set with the AP68040 as the core (SDRAM port, addr 00001000)
+FAIL: cpustate[6] set with the AP68040 as the core (SDRAM port, addr 00001000)
+FAIL: cpustate[6] set with the AP68040 as the core (SDRAM port, addr 00001000)
+FAIL: cpustate[6] set with the AP68040 as the core (SDRAM port, addr 00001000)
+FAIL: cpustate[6] set with the AP68040 as the core (SDRAM port, addr 00001002)
+FAIL: cpustate[6] set with the AP68040 as the core (SDRAM port, addr 00001002)
+FAIL: cpustate[6] set with the AP68040 as the core (SDRAM port, addr 00001002)
+INFO: program phase 1 at 77937822.0 ps
+INFO: program phase 2 at 634199582.0 ps
+INFO: program phase 3 at 1818759282.0 ps
+INFO: program phase 4 at 2065473502.0 ps
+INFO: program phase 5 at 2092694222.0 ps
+INFO: program phase 7 at 2431049182.0 ps
+INFO: program phase 8 at 2470011482.0 ps
+
+DDR3 CPU TB: PASS  (68k program completed all phases)
+
+INFO: checking the DDR3 array through the Micron model backdoor
+PASS: DDR3 array contents match the pattern (independent backdoor read)
+
+DDR3 CPU TB: FAIL  1895 32-bit-write protocol violations on the RAM port
+
+DDR3 CPU TB: 1 checks failed
+
+$finish called at time : 2471316102 ps : File "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/ddr3_cpu_tb.sv" Line 954
+run: Time (s): cpu = 00:00:02 ; elapsed = 00:15:26 . Memory (MB): peak = 1443.094 ; gain = 27.039 ; free physical = 8523 ; free virtual = 31246
+## quit
+INFO: xsimkernel Simulation Memory Usage: 150008 KB (Peak: 190888 KB), Simulation CPU Usage: 924000 ms
+INFO: [Common 17-206] Exiting xsim at Mon Sep  7 22:59:53 2026...

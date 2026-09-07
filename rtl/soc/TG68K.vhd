@@ -269,6 +269,54 @@ ARCHITECTURE logic OF TG68K IS
 	-- what put Kickstart on its yellow screen.
 	SIGNAL longword_pair : std_logic;
 
+	--------------------------------------------------------------------------
+	-- Stage B: the MMU table walker's path to memory.
+	--
+	-- A walk happens during address translation, before the core's own bus
+	-- request exists, so the wrapper's memory side is idle whenever
+	-- walker_req is high and the walker can simply borrow it.  No new port on
+	-- sdram_ctrl (its slot arbiter already uses all eight types), no arbiter,
+	-- and no ap040_walker_cdc (that module is for hosts whose wrapper is in
+	-- another clock domain; everything here is clk_114 with clkena).
+	--
+	-- The borrowing is done by muxing the handful of signals the whole bus
+	-- side of this file derives from -- address, bus state, byte selects,
+	-- write data, write strobe -- so a walker cycle is indistinguishable from
+	-- a CPU cycle to the decode, to sdram_ctrl, to the DDR3 backend and to the
+	-- 7 MHz chipset FSM.  That last one matters: with Turbo chip RAM off, a
+	-- descriptor in chip RAM has to go out over the chipset bus, and it does,
+	-- without a line of its own.
+	--
+	-- A descriptor is a longword and this bus is 16 bits, so each walk
+	-- transaction is TWO sub-cycles, at A and A+2, with an idle gap between
+	-- them -- never the paired-transfer path (longword_pair is 0 for this
+	-- core, and for the reason recorded at cpustate below).
+	SIGNAL wk_req     : std_logic;                      -- from the core
+	SIGNAL wk_we      : std_logic;
+	SIGNAL wk_addr    : std_logic_vector(31 downto 0);
+	SIGNAL wk_wdat    : std_logic_vector(31 downto 0);
+	SIGNAL wk_ack     : std_logic;                      -- to the core, a LEVEL
+	SIGNAL wk_data    : std_logic_vector(31 downto 0);
+	SIGNAL wk_berr    : std_logic;                      -- also a level
+	SIGNAL wk_active  : std_logic;                      -- walker owns the bus
+	SIGNAL wk_bstate  : std_logic_vector(1 downto 0);
+	SIGNAL wk_busaddr : std_logic_vector(31 downto 0);
+	SIGNAL wk_wdat16  : std_logic_vector(15 downto 0);
+	TYPE   wk_state_t IS (WK_IDLE, WK_HI, WK_GAP, WK_LO, WK_DONE);
+	SIGNAL wk_st      : wk_state_t;
+
+	-- The muxed bus-side signals.  Everything below this point uses these and
+	-- not the core's own outputs; with the TG68K, or with the walker idle,
+	-- they ARE the core's own outputs.
+	SIGNAL bstate     : std_logic_vector(1 downto 0);
+	SIGNAL buds       : std_logic;
+	SIGNAL blds       : std_logic;
+	SIGNAL bwr        : std_logic;
+	SIGNAL bwdata     : std_logic_vector(15 downto 0);
+	-- '1' on the cycle the current bus access is complete, i.e. the clkena
+	-- release term factored out so the walker can use the same completion.
+	SIGNAL bus_ready  : std_logic;
+
 	-- AP68040 cache maintenance (CINV / CPUSH), mapped onto the external
 	-- cache's clear bit below.
 	SIGNAL ap040_maint : std_logic;
@@ -366,11 +414,24 @@ BEGIN
 		END IF;
 	END PROCESS;
 
-	sel_nmi_vector <= '1' WHEN sel_nmi_vector_addr = '1' AND state = "10" ELSE '0';
+	-- NOT during a walk: a descriptor that happens to live at the NMI vector
+	-- address is a descriptor, and must be read from memory, not answered from
+	-- the vector shim.
+	sel_nmi_vector <= '1' WHEN sel_nmi_vector_addr = '1' AND bstate = "10" AND wk_active = '0' ELSE '0';
 
-	toram   <= w_datatg68;
-	wrd     <= wr;
-	cpu_int <= '1' WHEN state = "01" else '0';
+	--------------------------------------------------------------------------
+	-- The bus-side mux.  wk_active is a constant '0' unless the AP68040 is
+	-- built with its MMU, so for the TG68K this is wiring, not logic.
+	--------------------------------------------------------------------------
+	bstate  <= wk_bstate  WHEN wk_active = '1' ELSE state;
+	buds    <= '0'        WHEN wk_active = '1' ELSE uds_in;  -- descriptors are
+	blds    <= '0'        WHEN wk_active = '1' ELSE lds_in;  -- aligned longwords
+	bwr     <= NOT wk_we  WHEN wk_active = '1' ELSE wr;      -- wr is active low
+	bwdata  <= wk_wdat16  WHEN wk_active = '1' ELSE w_datatg68;
+
+	toram   <= bwdata;
+	wrd     <= bwr;
+	cpu_int <= '1' WHEN bstate = "01" else '0';
 	PROCESS(clk)
 	BEGIN
 		IF rising_edge(clk) THEN
@@ -444,7 +505,7 @@ BEGIN
 	--sel_eth         <= '1' WHEN (cpuaddr(31 downto 24) = eth_base) AND eth_cfgd='1' ELSE '0';
 	sel_chip      <= '1' WHEN (cpuaddr(31 downto 24) = X"00") AND (cpuaddr(23 downto 21) = "000") ELSE '0'; --$000000 - $1FFFFF
 	sel_chipram   <= '1' WHEN sel_chip = '1' AND turbochip_d = '1' ELSE '0';
-	sel_kick      <= '1' WHEN (cpuaddr(31 downto 24) = X"00") AND ((cpuaddr(23 downto 19) = "11111") OR (cpuaddr(23 downto 19) = "11100")) AND state /= "11" ELSE '0'; -- $F8xxxx, $E0xxxx, read only
+	sel_kick      <= '1' WHEN (cpuaddr(31 downto 24) = X"00") AND ((cpuaddr(23 downto 19) = "11111") OR (cpuaddr(23 downto 19) = "11100")) AND bstate /= "11" ELSE '0'; -- $F8xxxx, $E0xxxx, read only
 	sel_kickram   <= '1' WHEN sel_kick = '1' AND turbokick_d = '1' ELSE '0';
 	sel_slow      <= '1' WHEN (cpuaddr(31 downto 24) = X"00") AND ((cpuaddr(23 downto 20) = X"C" AND ((cpuaddr(19) = '0' AND slow_config /= "00") OR (cpuaddr(19) = '1' AND slow_config(1) = '1'))) OR (cpuaddr(23 downto 19) = X"D" & '0' AND slow_config = "11")) ELSE '0'; -- $C00000 - $D7FFFF
 	sel_slowram   <= '1' WHEN sel_slow = '1' AND turboslow_d = '1' ELSE '0';
@@ -494,9 +555,9 @@ BEGIN
 	-- bus -- already fixed -- carried the instruction fetches and the stack
 	-- correctly.  sim/ddr3_cpu cannot see it: its RAM model uses only
 	-- cpustate[2:0] and ignores this bit.
-	cpustate <= longword_pair & clkena & slower(1 downto 0) & ramcs & state(1 downto 0);
-	ramlds   <= lds_in;
-	ramuds   <= uds_in;
+	cpustate <= longword_pair & clkena & slower(1 downto 0) & ramcs & bstate(1 downto 0);
+	ramlds   <= blds;
+	ramuds   <= buds;
 
 	-- This is the mapping to the SDRAM
 	-- map $00-$1F to $00-$1F (chipram), $A0-$FF to $20-$7F. All non-fastram goes into the first
@@ -544,14 +605,24 @@ BEGIN
 	ramaddr(21)           <= cpuaddr(21) xor sel_z3ram3;
 	ramaddr(20 downto 0)  <= cpuaddr(20 downto 0);
 
-	-- 32bit address space for 68020, limit address space to 24bit for 68000/68010
-	cpuaddr <= addrtg68 WHEN cpu_i(1) = '1' ELSE X"00" & addrtg68(23 downto 0);
+	-- 32bit address space for 68020, limit address space to 24bit for 68000/68010.
+	-- A walk drives a physical address straight in: translation is what the
+	-- walk is for, and the 040 is 32-bit anyway.
+	cpuaddr <= wk_busaddr WHEN wk_active = '1' ELSE
+	           addrtg68   WHEN cpu_i(1) = '1' ELSE X"00" & addrtg68(23 downto 0);
 
 	--------------------------------------------------------------------------
 	-- The CPU kernel.  Exactly one branch is elaborated; everything else in
 	-- this file is common to both cores.
 	--------------------------------------------------------------------------
 	g_tg68k : IF NOT use_ap040 GENERATE
+		-- No table walker: the TG68K has no MMU.  wk_active follows and is a
+		-- constant '0', so the whole router folds away.
+		wk_req  <= '0';
+		wk_we   <= '0';
+		wk_addr <= (others => '0');
+		wk_wdat <= (others => '0');
+
 		pf68K_Kernel_inst : entity work.TG68KdotC_Kernel
 			GENERIC MAP(                    -- @suppress "Generic map uses default values. Missing optional actuals: BarrelShifter"
 				SR_Read        => 2,        -- 0=>user,   1=>privileged,    2=>switchable with CPU(0)
@@ -645,18 +716,17 @@ BEGIN
 				cache_z3_base1   => z3ram3_base(7 downto 4),
 				cache_z3_ena1    => z3ram3_ena,
 
-				-- Stage A: no table-walk port.  A walk that never acks is
-				-- turned into an access error by the core's watchdog, so the
-				-- MMU is unusable but the core does not hang -- boot without a
-				-- startup-sequence so 68040.library never enables it.  Stage B
-				-- gives the walker a path through this wrapper's own bus.
-				walker_req     => open,
-				walker_we      => open,
-				walker_addr    => open,
-				walker_wdat    => open,
-				walker_ack     => '0',
-				walker_data    => (others => '0'),
-				walker_berr    => '0',
+				-- Stage B: the table walker rides this wrapper's own memory
+				-- path, two 16-bit sub-cycles per descriptor.  See the router
+				-- below; ap040_walker_cdc is deliberately NOT used (one clock
+				-- domain here).
+				walker_req     => wk_req,
+				walker_we      => wk_we,
+				walker_addr    => wk_addr,
+				walker_wdat    => wk_wdat,
+				walker_ack     => wk_ack,
+				walker_data    => wk_data,
+				walker_berr    => wk_berr,
 
 				-- Stage D: the 16-byte line port.  Stubbed to zero inside the
 				-- compat top in this revision of the core, so nothing to
@@ -722,7 +792,7 @@ BEGIN
 				turbokick_d   <= '0';
 				turboslow_d   <= '0';
 				cacheline_clr <= '0';
-			ELSIF state = "01" THEN     -- No mem access, so safe to switch chipram access mode
+			ELSIF bstate = "01" THEN    -- No mem access, so safe to switch chipram access mode
 				turbochip_d   <= turbochipram;
 				turbokick_d   <= turbokick;
 				turboslow_d   <= turbochipram OR aga;
@@ -767,7 +837,7 @@ BEGIN
 			audio_int      => audio_int
 		);
 
-	akiko_d <= w_datatg68;
+	akiko_d <= bwdata;
 	process(clk)
 	begin
 		if rising_edge(clk) then
@@ -775,9 +845,9 @@ BEGIN
 				akiko_req <= '0';
 				akiko_wr  <= '0';
 			end if;
-			if sel_akiko = '1' and state(1) = '1' and slower(2) = '0' then
+			if sel_akiko = '1' and bstate(1) = '1' and slower(2) = '0' then
 				akiko_req <= not clkena;
-				if state(0) = '1' then  -- write cycle
+				if bstate(0) = '1' then -- write cycle
 					akiko_wr <= '1';
 				end if;
 			end if;
@@ -817,7 +887,21 @@ BEGIN
 	-- CPU stalls), never released with rubbish and never faulted.
 	mem_ready <= ((ramready AND sel_ram_d) OR (ddr_ena AND sel_ddr_d AND ddr_ready)) WHEN haveddr3 ELSE ramready;
 
-	clkena <= '1' WHEN (clkena_in = '1' AND (state = "01" OR (ena7RDreg = '1' AND clkena_e = '1') OR (ena7WRreg = '1' AND clkena_f = '1') OR mem_ready = '1' OR sel_undecoded_d = '1' OR akiko_ack = '1')) ELSE
+	-- The clkena release term, factored out under its own name so the walker
+	-- FSM can wait on exactly the condition that releases the CPU -- memory,
+	-- chipset bus, undecoded auto-complete or Akiko, whichever answers.
+	bus_ready <= '1' WHEN ((ena7RDreg = '1' AND clkena_e = '1') OR (ena7WRreg = '1' AND clkena_f = '1') OR mem_ready = '1' OR sel_undecoded_d = '1' OR akiko_ack = '1') ELSE
+	'0';
+
+	-- The wk_ack term is the deadlock guard the plan calls for.  The core
+	-- consumes walker_ack only under its own ce, and ce is this signal: hand
+	-- back an acknowledge while clkena happens to be stopped and the machine
+	-- hangs silently.  By construction the walker has already released the bus
+	-- when it acknowledges (wk_active is low in WK_DONE), so bstate is the
+	-- core's own idle state and this term is belt and braces -- but it is one
+	-- gate, and the failure it guards against looks exactly like the AllocMem
+	-- spin that cost a day.
+	clkena <= '1' WHEN (clkena_in = '1' AND (bstate = "01" OR bus_ready = '1' OR wk_ack = '1' OR wk_berr = '1')) ELSE
 	'0';
 
 	PROCESS(clk)
@@ -828,6 +912,112 @@ BEGIN
 			ELSE
 				slower(3 downto 0) <= '0' & slower(3 downto 1); -- enaWRreg&slower(3 downto 1);
 			END IF;
+		END IF;
+	END PROCESS;
+
+	--------------------------------------------------------------------------
+	-- The walker router.
+	--
+	-- One descriptor = two 16-bit sub-cycles at A and A+2, high word first,
+	-- with an idle gap between them so the chip select drops and the
+	-- controller's acknowledge -- a level -- clears before the second is
+	-- issued.  Completion is clkena, which is the exact instant the core
+	-- itself samples read data, so the capture cannot be a cycle early or
+	-- late.  The bus is released BEFORE the acknowledge goes out, so the core
+	-- is guaranteed an enable to consume it with (see clkena above).
+	--
+	-- Errors, following walker_mem_bad in the MiSTer reference: a misaligned
+	-- descriptor address, or one that decodes as nothing, raises walker_berr
+	-- rather than hanging.  The MMU turns that into an unsuccessful table
+	-- search -- a Guru -- instead of the silent halt a missing acknowledge
+	-- produces (which is stage A's behaviour, with the port tied off).
+	--------------------------------------------------------------------------
+	PROCESS(clk, reset)
+	BEGIN
+		IF reset = '0' THEN
+			wk_st      <= WK_IDLE;
+			wk_active  <= '0';
+			wk_bstate  <= "01";
+			wk_busaddr <= (others => '0');
+			wk_wdat16  <= (others => '0');
+			wk_data    <= (others => '0');
+			wk_ack     <= '0';
+			wk_berr    <= '0';
+		ELSIF rising_edge(clk) THEN
+			CASE wk_st IS
+				WHEN WK_IDLE =>
+					wk_ack    <= '0';
+					wk_berr   <= '0';
+					wk_active <= '0';
+					wk_bstate <= "01";
+					IF wk_req = '1' THEN
+						IF wk_addr(1 downto 0) /= "00" THEN
+							-- a descriptor is a longword; this table is corrupt
+							wk_berr <= '1';
+							wk_st   <= WK_DONE;
+						ELSE
+							wk_busaddr <= wk_addr;
+							wk_wdat16  <= wk_wdat(31 downto 16);
+							IF wk_we = '1' THEN wk_bstate <= "11"; ELSE wk_bstate <= "10"; END IF;
+							wk_active  <= '1';
+							wk_st      <= WK_HI;
+						END IF;
+					END IF;
+
+				WHEN WK_HI =>
+					-- sel_undecoded, not sel_undecoded_d: the registered copy
+					-- still holds the PREVIOUS access's decode on the first
+					-- cycle of ours, and the core's last address is often in
+					-- undecoded space.  The combinational one is already ours.
+					IF sel_undecoded = '1' THEN
+						-- nothing lives at this physical address
+						wk_active <= '0';
+						wk_bstate <= "01";
+						wk_berr   <= '1';
+						wk_st     <= WK_DONE;
+					ELSIF clkena = '1' THEN
+						wk_data(31 downto 16) <= datatg68;
+						wk_busaddr            <= wk_addr(31 downto 2) & "10";
+						wk_wdat16             <= wk_wdat(15 downto 0);
+						wk_bstate             <= "01";
+						wk_st                 <= WK_GAP;
+					END IF;
+
+				WHEN WK_GAP =>
+					-- Hold the bus, idle, until the acknowledge that released
+					-- the first sub-cycle has cleared.  Without this the
+					-- second sub-cycle can complete on the first one's stale
+					-- level and read the same word twice.
+					IF bus_ready = '0' THEN
+						IF wk_we = '1' THEN wk_bstate <= "11"; ELSE wk_bstate <= "10"; END IF;
+						wk_st     <= WK_LO;
+					END IF;
+
+				WHEN WK_LO =>
+					IF sel_undecoded = '1' THEN
+						wk_active <= '0';
+						wk_bstate <= "01";
+						wk_berr   <= '1';
+						wk_st     <= WK_DONE;
+					ELSIF clkena = '1' THEN
+						wk_data(15 downto 0) <= datatg68;
+						wk_active            <= '0';
+						wk_bstate            <= "01";
+						wk_ack               <= '1';
+						wk_st                <= WK_DONE;
+					END IF;
+
+				WHEN WK_DONE =>
+					-- ap040_mmu drops walker_req when it has taken the answer
+					-- (walk_ack is qualified with w_active && w_issued), and
+					-- inserts a request-low cycle before the next descriptor,
+					-- so this is the whole handshake.
+					IF wk_req = '0' THEN
+						wk_ack  <= '0';
+						wk_berr <= '0';
+						wk_st   <= WK_IDLE;
+					END IF;
+			END CASE;
 		END IF;
 	END PROCESS;
 
@@ -851,24 +1041,24 @@ BEGIN
 			clkena_f <= '0';
 		ELSIF rising_edge(clk) THEN
 			IF S_state = "01" AND clkena_e = '1' THEN
-				uds2        <= uds_in;
-				lds2        <= lds_in;
-				data_write2 <= w_datatg68;
+				uds2        <= buds;
+				lds2        <= blds;
+				data_write2 <= bwdata;
 			END IF;
 
 			IF ena7WRreg = '1' THEN
 				CASE S_state IS
 					WHEN "00" =>
 						IF cpu_int = '0' AND chipset_cycle = '1' THEN
-							uds        <= uds_in;
-							lds        <= lds_in;
+							uds        <= buds;
+							lds        <= blds;
 							uds2       <= '1';
 							lds2       <= '1';
 							as         <= '0';
-							rw         <= wr;
-							data_write <= w_datatg68;
+							rw         <= bwr;
+							data_write <= bwdata;
 							addr       <= cpuaddr;
-							IF aga = '1' AND cpu_i(1) = '1' AND longword_pair = '1' AND state = "11" AND cpuaddr(1 downto 0) = "00" AND sel_chip = '1' THEN
+							IF aga = '1' AND cpu_i(1) = '1' AND longword_pair = '1' AND bstate = "11" AND cpuaddr(1 downto 0) = "00" AND sel_chip = '1' THEN
 								-- 32 bit write
 								clkena_e <= '1';
 							END IF;
@@ -909,7 +1099,7 @@ BEGIN
 						END IF;
 
 						clkena_e <= '1';
-						IF aga = '1' AND cpu_i(1) = '1' AND longword_pair = '1' AND state(0) = '0' AND cpuaddr(1 downto 0) = "00" AND (sel_chip = '1' OR sel_kick = '1') THEN
+						IF aga = '1' AND cpu_i(1) = '1' AND longword_pair = '1' AND bstate(0) = '0' AND cpuaddr(1 downto 0) = "00" AND (sel_chip = '1' OR sel_kick = '1') THEN
 							-- 32 bit read
 							clkena_f <= '1';
 						END IF;

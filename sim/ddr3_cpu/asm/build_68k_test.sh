@@ -8,8 +8,14 @@
 #
 # BIN=<path> puts the binary somewhere else; run.sh uses that so that two
 # variants building at the same time cannot race on one output file.
+#
+# SRC=mmu_walk_test.asm builds the stage-B MMU walker program instead, which
+# needs -m68040 for movec urp/srp/tc and pflusha.  run.sh --mmu does that.
 set -e
 cd "$(dirname "$0")"
 BIN=${BIN:-ddr3_cpu_test.bin}
-vasmm68k_mot -m68020 -Fbin -L "${BIN%.bin}.lst" -o "$BIN" "$@" ddr3_cpu_test.asm
+SRC=${SRC:-ddr3_cpu_test.asm}
+CPUOPT=-m68020
+if [ "$SRC" = "mmu_walk_test.asm" ]; then CPUOPT=-m68040; fi
+vasmm68k_mot $CPUOPT -Fbin -L "${BIN%.bin}.lst" -o "$BIN" "$@" "$SRC"
 ls -l "$BIN"

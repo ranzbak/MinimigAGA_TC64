@@ -499,25 +499,95 @@ end
 // cpustate[2] is ramcs, active low; [1:0] is 00 instruction read, 10 data
 // read, 11 write.  ramready is a level, cleared when the select goes away,
 // exactly like sdram_ctrl's cpuena.
+//
+// cpustate[6] is the 32-bit-write flag, and it is NOT decoration.  sdram_ctrl
+// turns it into cpuLongword; cpu_cache_new answers a set bit on a write by
+// acknowledging at once and entering CPU_SM_WAIT_LOWORD, where it takes the
+// next write cycle as a continuation of THE SAME request: one address, latched
+// from the first cycle, two words banked together at A and A+2.  A core whose
+// adapter instead issues two fully independent word cycles leaves the
+// controller holding a half-written longword -- that is the AllocMem failure of
+// 2026-09-07, and this model was blind to it because it read only cpustate[2:0].
+// It is not blind any more: the paired protocol is modelled, a violation of it
+// is reported, and under CPU_AP040 the bit is asserted never to be set at all
+// (the AP68040's bus16 adapter cannot speak the protocol, so TG68K.vhd gates
+// longword_pair to 0 for that core).
 wire        ramcs_n = tg68_cpustate[2];
 wire [15:0] ramwa   = tg68_cad[16:1];
+wire        ram_wr  = (tg68_cpustate[1:0] == 2'b11);
+
+reg         lw_pend;                 // a paired 32-bit write awaits its low word
+reg  [15:0] lw_addr;                 // word address latched on the high-word cycle
+reg  [15:0] lw_dat;                  // the high word itself
+reg  [ 1:0] lw_bs;                   // its {uds,lds}, active low
+integer     lw_errs;                 // protocol violations seen on this port
+
+initial lw_errs = 0;
 
 always @(posedge clk) begin
   if (!sdctl_rst) begin
     ramready <= 1'b0;
     fromram  <= 16'h0000;
+    lw_pend  <= 1'b0;
   end else if (ramcs_n) begin
     ramready <= 1'b0;
   end else if (!ramready) begin
-    if (tg68_cpustate[1:0] == 2'b11 && tg68_rst) begin
-      if (!tg68_cuds) chipmem[ramwa][15:8] <= tg68_cin[15:8];
-      if (!tg68_clds) chipmem[ramwa][ 7:0] <= tg68_cin[ 7:0];
+    if (ram_wr && tg68_rst) begin
+      if (lw_pend) begin
+        // Low word of a paired write.  The controller ignores this cycle's
+        // address and uses the latched one, so the words land at A and A+2
+        // whatever the core presents here -- but a core that has wandered
+        // somewhere else entirely is a protocol violation, not a write.
+        if (ramwa !== lw_addr && ramwa !== lw_addr + 16'd1) begin
+          $display("FAIL: paired 32-bit write: high word at %08x, low word cycle at %08x",
+                   {16'd0, lw_addr, 1'b0}, {16'd0, ramwa, 1'b0});
+          lw_errs = lw_errs + 1;
+        end
+        if (!lw_bs[1])   chipmem[lw_addr][15:8] <= lw_dat[15:8];
+        if (!lw_bs[0])   chipmem[lw_addr][ 7:0] <= lw_dat[ 7:0];
+        if (!tg68_cuds)  chipmem[lw_addr + 16'd1][15:8] <= tg68_cin[15:8];
+        if (!tg68_clds)  chipmem[lw_addr + 16'd1][ 7:0] <= tg68_cin[ 7:0];
+        lw_pend <= 1'b0;
+      end else if (tg68_cpustate[6]) begin
+        // High word of a paired write: acknowledged now, committed with its
+        // partner.  Nothing reaches memory yet, exactly as in the controller.
+        lw_addr <= ramwa;
+        lw_dat  <= tg68_cin;
+        lw_bs   <= {tg68_cuds, tg68_clds};
+        lw_pend <= 1'b1;
+      end else begin
+        if (!tg68_cuds) chipmem[ramwa][15:8] <= tg68_cin[15:8];
+        if (!tg68_clds) chipmem[ramwa][ 7:0] <= tg68_cin[ 7:0];
+      end
     end else begin
+      if (lw_pend) begin
+        $display("FAIL: a read at %08x split a paired 32-bit write started at %08x",
+                 {16'd0, ramwa, 1'b0}, {16'd0, lw_addr, 1'b0});
+        lw_errs = lw_errs + 1;
+        lw_pend <= 1'b0;
+      end
       fromram <= chipmem[ramwa];
     end
     ramready <= 1'b1;
   end
 end
+
+`ifdef CPU_AP040
+// The AP68040 issues two independent word cycles for a longword, so it must
+// never claim the paired protocol -- on EITHER memory port; bit 6 is the same
+// bit in cpustate and in the DDR3 port's tg68_ddrcpustate.  Revert the
+// longword_pair gate in TG68K.vhd and this fires.
+always @(posedge clk) begin
+  if (tg68_rst && sdctl_rst && tg68_cpustate[6] && tg68_cpustate[1:0] == 2'b11
+      && (!tg68_cpustate[2] || !tg68_ddrcs)) begin
+    if (lw_errs < 8)
+      $display("FAIL: cpustate[6] set with the AP68040 as the core (%s port, addr %08x)",
+               !tg68_cpustate[2] ? "SDRAM" : "DDR3",
+               !tg68_cpustate[2] ? {16'd0, ramwa, 1'b0} : {6'd0, tg68_ddraddr, 1'b0});
+    lw_errs = lw_errs + 1;
+  end
+end
+`endif
 
 // ---- chipset-side bus ------------------------------------------------
 wire        cs_addr_ok = (tg68_adr[31:17] === 15'd0);
@@ -545,6 +615,10 @@ end
 //-----------------------------------------------------------------
 // Optional trace of the DDR3 port (+TRACE, first +TRMAX events of each kind)
 //-----------------------------------------------------------------
+// The MMU walker program (run.sh --mmu) writes no pattern into the DDR3, so
+// the backdoor comparison below has nothing to check; its own phases are the
+// test.
+integer mmutest  = 0;
 integer trace_on = 0;
 integer TRMAX    = 200;
 integer tr_cpu   = 0;
@@ -554,6 +628,7 @@ reg     ddrcs_d  = 1'b1;
 reg     ddrena_d = 1'b0;
 
 initial begin
+  mmutest  = $test$plusargs("MMUTEST");
   trace_on = $test$plusargs("TRACE");
   void'($value$plusargs("TRMAX=%d", TRMAX));
 end
@@ -618,10 +693,34 @@ function [31:0] mbox_l;
 endfunction
 
 reg [31:0] phase_seen = 32'd0;
+integer    stall_cnt   = 0;
+reg        stalled     = 1'b0;
+
+// The stall watchdog.  A walk that never acknowledges, or a clkena that stops
+// while the walker owns the bus, does not crash and does not fault: the
+// machine simply stops, and without this it reports as a bare timeout at the
+// end of a 2.5 ms simulation with nothing to say about where.  STALL is
+// generous -- phase 1 of the pattern program legitimately takes ~560 us -- so
+// this fires on a stop, not on slow progress.
+// 8815 ps a cycle, so 120k cycles is ~1.06 ms.  Phase 1 of the pattern
+// program is the longest legitimate gap at ~560 us (64k cycles).
+localparam integer STALL = 120_000;
+
 always @(posedge clk) begin
   if (mbox_l(16) !== phase_seen) begin
     phase_seen = mbox_l(16);
+    stall_cnt  = 0;
     $display("INFO: program phase %0d at %t", phase_seen, $time);
+  end else if (!stalled && mbox_l(0) === 32'd0) begin
+    stall_cnt = stall_cnt + 1;
+    if (stall_cnt > STALL) begin
+      stalled = 1'b1;
+      $display("");
+      $display("FAIL: no progress for %0d cycles at phase %0d (t = %t).  A walk",
+               STALL, phase_seen, $time);
+      $display("      that never acknowledges, or a clkena stopped while the");
+      $display("      walker owns the bus, looks exactly like this.");
+    end
   end
 end
 
@@ -747,12 +846,14 @@ initial begin : main
   // Deliberately a plain loop and not fork/join_any with a `disable`: xsim's
   // handling of `disable <named fork block>` terminated this whole initial
   // block, which looks exactly like a hung simulation.
-  while (status === 32'd0 && !timed_out) begin
+  while (status === 32'd0 && !timed_out && !stalled) begin
     @(posedge clk);
     status = mbox_l(0);
   end
 
-  if (timed_out) begin
+  if (stalled) begin
+    final_report(0, "the program stopped making progress (stall watchdog)");
+  end else if (timed_out) begin
     final_report(0, "the 68k program never wrote the mailbox (timeout)");
   end else begin
     case (status)
@@ -769,6 +870,14 @@ initial begin : main
       32'd11 : final_report(11, "ADDQ.L #4,(a0) longword read-modify-write, chip RAM");
       32'd12 : final_report(12, "Exec List relocation left a pointer wrong");
       32'd13 : final_report(13, "Exec List relocation left the list EMPTY -- the AllocMem symptom");
+      // stage B, the MMU walker program
+      32'd20 : final_report(20, "translated read of a warm page");
+      32'd21 : final_report(21, "translated write/read-back of a warm page");
+      32'd22 : final_report(22, "cold page (U/M clear): data wrong after the write-backs");
+      32'd23 : final_report(23, "the page descriptor did not come back with U and M set");
+      32'd24 : final_report(24, "an invalid page descriptor did not fault");
+      32'd25 : final_report(25, "a table branch into undecoded space did not fault (walker_berr)");
+      32'd26 : final_report(26, "data wrong after translation was turned off again");
       32'd99 : final_report(99, "unexpected 68k exception (bus/address error, privilege violation, ...)");
       default: final_report(status, "unknown failure code");
     endcase
@@ -778,6 +887,10 @@ initial begin : main
   // Independent DRAM check.  Runs whatever the program said, so a FAIL run
   // still reports what did and did not reach the DRAM.
   //---------------------------------------------------------------
+  if (mmutest) begin
+    $display("");
+    $display("INFO: MMU walker program -- no pattern in the DDR3 to check");
+  end else begin
   $display("");
   $display("INFO: checking the DDR3 array through the Micron model backdoor");
 
@@ -821,6 +934,14 @@ initial begin : main
     $display("PASS: DDR3 array contents match the pattern (independent backdoor read)");
   end else begin
     $display("FAIL: DDR3 array contents wrong in %0d places (independent backdoor read)", bd_errs);
+    nfail = nfail + 1;
+  end
+  end
+
+  if (lw_errs != 0) begin
+    $display("");
+    $display("DDR3 CPU TB: FAIL  %0d 32-bit-write protocol violations on the RAM port",
+             lw_errs);
     nfail = nfail + 1;
   end
 

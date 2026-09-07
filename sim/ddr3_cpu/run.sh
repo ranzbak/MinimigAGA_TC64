@@ -12,6 +12,9 @@
 #   ./run.sh              real rtl/soc/TG68K.vhd  -> xsim_run_pass.log
 #   ./run.sh --mutant     mutant/TG68K_mutant.vhd -> xsim_run_mutant.log
 #   ./run.sh --ap040      AP68040 kernel          -> xsim_run_pass_ap040.log
+#   ./run.sh --lwmutant   AP68040 with the longword_pair gate reverted; MUST fail
+#   ./run.sh --mmu        AP68040, the stage-B MMU walker program
+#   ./run.sh --mmumutant  the same with walker_ack tied low; MUST fail
 #   ./run.sh --chipbus    turbochipram = 0, chip RAM over the 7 MHz chipset bus
 #
 # The flags combine in that order, e.g.
@@ -44,6 +47,27 @@ VARIANT=pass
 IS_MUTANT=0
 if [ "$1" = "--mutant" ]; then VARIANT=mutant; IS_MUTANT=1; shift; fi
 
+# --lwmutant: the AP040 run with the longword_pair gate reverted, i.e. the
+# wrapper as it stood before commit c2ecc99, when cpustate(6) carried the raw
+# longword flag to a core that answers a longword with two independent word
+# cycles.  That is the bug that reached hardware as the AllocMem hang, and the
+# bench was blind to it.  It MUST fail now.  Implies --ap040.
+IS_LWMUTANT=0
+if [ "$1" = "--lwmutant" ]; then IS_LWMUTANT=1; IS_MUTANT=1; shift; set -- --ap040 "$@"; fi
+
+# --mmu: the stage-B walker bench.  A different 68k program (asm/mmu_walk_test.asm)
+# builds a two-level table with the root in chip RAM and the leaves in the DDR3
+# fast RAM, turns translation on and exercises a warm page, a cold one (which
+# forces U and M write-backs -- walker WRITES), an invalid descriptor and a
+# table branch that decodes as nothing.  Implies --ap040: the TG68K has no MMU.
+#
+# --mmumutant is the same run with walker_ack tied low, i.e. the stage-A
+# tie-off.  It MUST fail; that is what says the bench can see the walker at all.
+IS_MMU=0
+IS_MMUMUTANT=0
+if [ "$1" = "--mmu" ];       then IS_MMU=1;                  shift; set -- --ap040 "$@"; fi
+if [ "$1" = "--mmumutant" ]; then IS_MMU=1; IS_MMUMUTANT=1; IS_MUTANT=1; shift; set -- --ap040 "$@"; fi
+
 # Which CPU core the wrapper is built with.  The AP68040 (lib/AP68040) presents
 # a TG68K-shaped port set, so the whole bench -- chipset model, DDR3 chain,
 # 68k program -- is the same; only the kernel inside rtl/soc/TG68K.vhd changes.
@@ -54,12 +78,15 @@ if [ "$1" = "--ap040" ]; then CPU=ap040; shift; fi
 if [ "$CPU" = "ap040" ]; then
     # The mutant is a TG68K-specific mutation (the chipset_cycle term); there is
     # nothing for it to mean with a different kernel.
-    if [ "$IS_MUTANT" = "1" ]; then
+    if [ "$IS_MUTANT" = "1" ] && [ "$IS_LWMUTANT" = "0" ] && [ "$IS_MMUMUTANT" = "0" ]; then
         echo "--mutant and --ap040 are not a combination: the mutant is the" >&2
         echo "TG68K wrapper as it stood before the chipset_cycle fix." >&2
         exit 2
     fi
     VARIANT=pass_ap040
+    if [ "$IS_LWMUTANT" = "1" ];  then VARIANT=lwmutant_ap040;  fi
+    if [ "$IS_MMU" = "1" ];       then VARIANT=mmu_ap040;       fi
+    if [ "$IS_MMUMUTANT" = "1" ]; then VARIANT=mmumutant_ap040; fi
 fi
 
 # Turbo chip RAM.  Default on, as the bench has always run.  --chipbus clears
@@ -88,13 +115,42 @@ W="$D/run_$VARIANT"
 rm -rf "$W"
 mkdir -p "$W"
 
-BIN="$W/prog.bin" "$D/asm/build_68k_test.sh" \
-    -DPATBYTES=$PATBYTES -DMISLINES=$MISLINES -DCNTN=$CNTN
+if [ "$IS_MMU" = "1" ]; then
+    BIN="$W/prog.bin" SRC=mmu_walk_test.asm "$D/asm/build_68k_test.sh"
+else
+    BIN="$W/prog.bin" "$D/asm/build_68k_test.sh" \
+        -DPATBYTES=$PATBYTES -DMISLINES=$MISLINES -DCNTN=$CNTN
+fi
 
 PLUS="+PATBYTES=$PATBYTES +MISLINES=$MISLINES +CNTN=$CNTN +TURBOCHIP=$TURBOCHIP"
+# The MMU program writes no pattern, so the backdoor check of the DDR3 array
+# has nothing to compare against and is skipped; the program's own phases are
+# the check.
+if [ "$IS_MMU" = "1" ]; then PLUS="$PLUS +MMUTEST"; fi
 if [ -n "$TRACE" ]; then PLUS="$PLUS +TRACE +TRMAX=${TRMAX:-200}"; fi
 
-if [ "$IS_MUTANT" = "1" ]; then
+if [ "$IS_MMUMUTANT" = "1" ]; then
+    # Generated: the walker acknowledge tied low again, which is exactly stage
+    # A.  A walk then never completes and the core's watchdog turns it into an
+    # access fault -- on hardware that was the SetPatch crash.
+    TG68K_SRC="$W/TG68K_mmumutant.vhd"
+    sed "s|walker_ack     => wk_ack,|walker_ack     => '0',|" \
+        "$R/rtl/soc/TG68K.vhd" > "$TG68K_SRC"
+    if ! grep -q "walker_ack     => '0'," "$TG68K_SRC"; then
+        echo "--mmumutant: the walker_ack port map moved; fix the sed in run.sh" >&2
+        exit 2
+    fi
+elif [ "$IS_LWMUTANT" = "1" ]; then
+    # Generated, not checked in: one line of the real wrapper, reverted.  The
+    # sed must match or the mutation silently does nothing, so verify it did.
+    TG68K_SRC="$W/TG68K_lwmutant.vhd"
+    sed "s|longword_pair <= '0' WHEN use_ap040 ELSE longword;|longword_pair <= longword;|" \
+        "$R/rtl/soc/TG68K.vhd" > "$TG68K_SRC"
+    if ! grep -q "longword_pair <= longword;" "$TG68K_SRC"; then
+        echo "--lwmutant: the longword_pair line moved; fix the sed in run.sh" >&2
+        exit 2
+    fi
+elif [ "$IS_MUTANT" = "1" ]; then
     TG68K_SRC="$D/mutant/TG68K_mutant.vhd"
 else
     TG68K_SRC="$R/rtl/soc/TG68K.vhd"
