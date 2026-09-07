@@ -256,6 +256,19 @@ ARCHITECTURE logic OF TG68K IS
 	-- taking that setting.  Everything downstream reads cpu_i, not cpu.
 	SIGNAL cpu_i : std_logic_vector(1 downto 0);
 
+	-- The chipset 32-bit optimisation below is a TG68K contract, not a bus
+	-- feature: on a longword-aligned chip/Kick access the wrapper answers ONE
+	-- request with TWO words, the second through data_read2, and the kernel is
+	-- built to consume both.  The AP68040 is not: ap040_bus16_adapter's stated
+	-- contract is one stable request at a time, exactly one completion per
+	-- 16-bit sub-cycle, and a long transfer split into two separate word cycles
+	-- with an IDLE between them.  Handing it a word it never asked for puts the
+	-- two out of step and the next fetch never completes -- on hardware the
+	-- 040 wedged on the fetch straight after the first longword-aligned one
+	-- ($00F800D4 took the paired path, $00F800D6 then hung forever), which is
+	-- what put Kickstart on its yellow screen.
+	SIGNAL longword_pair : std_logic;
+
 	-- AP68040 cache maintenance (CINV / CPUSH), mapped onto the external
 	-- cache's clear bit below.
 	SIGNAL ap040_maint : std_logic;
@@ -331,6 +344,7 @@ ARCHITECTURE logic OF TG68K IS
 BEGIN
 
 	cpu_i <= "11" WHEN use_ap040 ELSE cpu;
+	longword_pair <= '0' WHEN use_ap040 ELSE longword;
 
 	nResetOut <= nResetOut_w;
 	VBR_out   <= VBR_out_w;
@@ -837,7 +851,7 @@ BEGIN
 							rw         <= wr;
 							data_write <= w_datatg68;
 							addr       <= cpuaddr;
-							IF aga = '1' AND cpu_i(1) = '1' AND longword = '1' AND state = "11" AND cpuaddr(1 downto 0) = "00" AND sel_chip = '1' THEN
+							IF aga = '1' AND cpu_i(1) = '1' AND longword_pair = '1' AND state = "11" AND cpuaddr(1 downto 0) = "00" AND sel_chip = '1' THEN
 								-- 32 bit write
 								clkena_e <= '1';
 							END IF;
@@ -878,7 +892,7 @@ BEGIN
 						END IF;
 
 						clkena_e <= '1';
-						IF aga = '1' AND cpu_i(1) = '1' AND longword = '1' AND state(0) = '0' AND cpuaddr(1 downto 0) = "00" AND (sel_chip = '1' OR sel_kick = '1') THEN
+						IF aga = '1' AND cpu_i(1) = '1' AND longword_pair = '1' AND state(0) = '0' AND cpuaddr(1 downto 0) = "00" AND (sel_chip = '1' OR sel_kick = '1') THEN
 							-- 32 bit read
 							clkena_f <= '1';
 						END IF;
