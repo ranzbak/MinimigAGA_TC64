@@ -536,6 +536,39 @@ AP040 simulation and the failing hardware were never exercising the same logic.
 `./run.sh --ap040 --chipbus` closes that gap; `--chipbus` alone is the TG68K
 control that must still pass.
 
+**Fixed, and what it cost to find.**  `cpustate(6)` still carried the raw
+`longword` on the SDRAM/DDR3 port.  `sdram_ctrl` makes `cpuLongword` of it and
+`cpu_cache_new` answers a set bit by acking the high word at once and entering
+`CPU_SM_WAIT_LOWORD`, expecting the low word as a continuation of the SAME
+request -- the TG68K's paired-write protocol.  The AP040 issues two independent
+word cycles, so the controller banked half a longword.  The $F800D6 hang again,
+on the port `longword_pair` did not reach.
+
+Two hypotheses were wrong before this one, and both were refuted by evidence
+rather than argument: the list-relocation instructions (phase 7 passes) and the
+three wrapper divergences from the reference integration (they are TC64-fork
+lineage, predating the 040).  What actually found it was the bus trace, and
+specifically what the trace did NOT contain -- the ExecBase reads were absent
+from the chipset bus while the stack pushes were there, which placed ExecBase
+in slow/fast RAM and pointed at the other port.  `sim/ddr3_cpu` is blind to
+this: its RAM model reads `cpustate[2:0]` and ignores bit 6.  **Close that gap
+before trusting the bench on the RAM port again.**
+
+**Where it stands now.**  Exec runs.  ExecBase is published at $4, the memory
+list is intact, allocation works and the dispatcher reaches its idle loop
+($F815BA-$F815D2, `STOP #$2000`).  Interrupts arrive -- the machine wakes from
+the STOP and runs on into fast RAM.  It then fatal-halts:
+
+    dbg_pc = $400B53FE   dbg_ir = 4E7B (MOVEC)   dbg_flags = E   tg68_adr = $0000000A
+
+`dbg_flags` is {fault, in_exc, halted, busy}, and $0000000A is the second word
+of the longword at $8 -- vector 2, the access fault.  So MOVEC enabled the MMU,
+the next access wanted a table walk, the tied-off walker never acked, the
+watchdog made an access fault of it and the core halted on the vector fetch.
+
+That is **stage B, exactly as predicted** ("a walk that never acks becomes a
+bus error via the watchdog").  It is the next piece of work, not a new bug.
+
 ## Risks
 
 | Risk | Shows as | Mitigation |
