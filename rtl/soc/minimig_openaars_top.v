@@ -34,6 +34,8 @@ module minimig_openaars_top #(
   parameter AP040_HAS_MMU = 1,
   parameter AP040_HAS_FPU = 1,
   parameter AP040_ENABLE_CACHE = 1,
+  // Bring-up only: ILA on the AP68040's fault outputs (build_ap040.tcl).
+  parameter CPU040_DEBUG_ILA = 0,
   // Debug build only (tools/vivado/build_ila.tcl): put ila_fastram on the
   // clk_114 side of the Zorro-III fast RAM so a real Workbench boot can be
   // captured.  Passed straight down to minimig_virtual_top; 0 everywhere else.
@@ -491,6 +493,7 @@ minimig_virtual_top
   .ap040_has_mmu(AP040_HAS_MMU),
   .ap040_has_fpu(AP040_HAS_FPU),
   .ap040_enable_cache(AP040_ENABLE_CACHE),
+  .CPU040_DEBUG_ILA(CPU040_DEBUG_ILA),
   .DDR3_FASTRAM_ILA(DDR3_FASTRAM_ILA)
 ) openaars_virtual_top (
   .CLK_IN(clk_50),

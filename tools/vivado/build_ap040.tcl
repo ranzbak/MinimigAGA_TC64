@@ -225,9 +225,48 @@ foreach ip {vio_ddr3 ila_fastram} {
 #-----------------------------------------------------------------------------
 # Build
 #-----------------------------------------------------------------------------
+#-----------------------------------------------------------------------------
+# ila_cpu040: the AP68040's fault outputs.  A Kickstart yellow screen says an
+# exception happened before the trap handlers existed and nothing more; this
+# names it -- vector, PC, opcode, SR, and the faulting address.
+#   probe0 pc[31:0]   probe1 fault_addr[31:0]  probe2 ir[15:0]  probe3 sr[15:0]
+#   probe4 exc_vec[7:0]  probe5 flags[3:0]  probe6 addr[31:0]  probe7 cpustate[6:0]
+#-----------------------------------------------------------------------------
+if {$ila} {
+    set ipdir $R/ip/ddr3
+    file mkdir $ipdir
+    if {[get_ips -quiet ila_cpu040] eq ""} {
+        puts "build_ap040.tcl: creating ila_cpu040"
+        create_ip -name ila -vendor xilinx.com -library ip -version 6.2 \
+            -module_name ila_cpu040 -dir $ipdir
+        set_property -dict [list \
+            CONFIG.C_NUM_OF_PROBES {8} \
+            CONFIG.C_DATA_DEPTH {1024} \
+            CONFIG.C_TRIGIN_EN {false} \
+            CONFIG.C_EN_STRG_QUAL {1} \
+            CONFIG.C_ADV_TRIGGER {false} \
+            CONFIG.C_PROBE0_WIDTH {32} \
+            CONFIG.C_PROBE1_WIDTH {32} \
+            CONFIG.C_PROBE2_WIDTH {16} \
+            CONFIG.C_PROBE3_WIDTH {16} \
+            CONFIG.C_PROBE4_WIDTH {8} \
+            CONFIG.C_PROBE5_WIDTH {4} \
+            CONFIG.C_PROBE6_WIDTH {32} \
+            CONFIG.C_PROBE7_WIDTH {7} \
+        ] [get_ips ila_cpu040]
+        generate_target all [get_files [get_property IP_FILE [get_ips ila_cpu040]]]
+        catch { create_ip_run [get_files [get_property IP_FILE [get_ips ila_cpu040]]] }
+    }
+    set ipr [get_runs -quiet ila_cpu040_synth_1]
+    if {$ipr ne "" && [get_property PROGRESS $ipr] ne "100%"} {
+        launch_runs $ipr -jobs 8
+        wait_on_run $ipr
+    }
+}
+
 # The one functional difference from build.tcl: which kernel the wrapper
 # elaborates, and whether the fast-RAM ILA comes along for the ride.
-set_property generic "CPU_IS_AP040=1 HAVEDDR3=1 DDR3_BIST_VIO=0 DDR3_FASTRAM_ILA=$ila" \
+set_property generic "CPU_IS_AP040=1 HAVEDDR3=1 DDR3_BIST_VIO=0 DDR3_FASTRAM_ILA=$ila CPU040_DEBUG_ILA=$ila" \
     [get_filesets sources_1]
 
 # The debug core adds a few thousand LUTs and flip-flops to clk_114, and with

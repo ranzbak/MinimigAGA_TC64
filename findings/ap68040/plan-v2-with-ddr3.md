@@ -434,9 +434,22 @@ multicycle would have been the easy answer and would also have covered
 Relaxing that would have been wrong in the way `findings/constraints/fix-04`
 is about.
 
-**Two numbers to carry forward.**  Block RAM is at 82 %, not LUTs, and that is
-what will decide stage E: the 040's caches and ATC are BRAM-hungry and a
-second core cannot have 82 % again.  And the SDRAM read path is −0.643 ns
+**Correction, same day.**  I reported block RAM at 82 % and called it the
+binding constraint.  That was the *debug* bitstream: the fast-RAM ILA is 24
+probes about 461 bits wide by 4096 deep, roughly 1.9 Mbit, and it accounts for
+almost all of it.  The shipping build, no ILA, measures:
+
+| | LUTs | of 63,400 | BRAM tiles | `clk_114` |
+|---|---|---|---|---|
+| AP68040, MMU + FPU + caches, no ILA | **39,750** | **62.7 %** | **59.5 (44 %)** | **+0.694 ns, 0 failing** |
+| the same with both ILAs | 43,750 | 69 % | 111 (82 %) | +0.290 ns, 0 failing |
+
+So the estimate at the top of this document (≈ 64 %) was right, block RAM is
+not close to binding, and stage E's dual-core question stays where the plan
+first put it: LUTs, at roughly 70 %, with BRAM around 44 %.  Do not plan
+against the 82 % figure.
+
+**The one number that is genuinely worse.**  The SDRAM read path is −0.643 ns
 against −0.544 in the TG68K build, so the sign-off rule stated above ("no
 worse than today") is **not met** -- about 0.1 ns of congestion.  It is the
 same known path that fails in every build of this design and works on

@@ -102,6 +102,17 @@ entity TG68K is
 		-- clock domain.  Unused by the TG68K, which has no internal cache.
 		snoop_stb       : in     std_logic                     := '0';
 		snoop_addr      : in     std_logic_vector(31 downto 0) := (others => '0');
+		-- AP68040 fault observation, for an ILA during bring-up.  Zero with the
+		-- TG68K.  Sliced out of the core's debug_status/debug_status2 (see
+		-- ap040_core.v:6134-6152): everything needed to name an exception --
+		-- which vector, at what PC, on which opcode, and the address that
+		-- faulted if it was an access error.
+		dbg_pc          : out    std_logic_vector(31 downto 0);
+		dbg_fault_addr  : out    std_logic_vector(31 downto 0);
+		dbg_ir          : out    std_logic_vector(15 downto 0);
+		dbg_sr          : out    std_logic_vector(15 downto 0);
+		dbg_exc_vec     : out    std_logic_vector(7 downto 0);
+		dbg_flags       : out    std_logic_vector(3 downto 0); -- fault, in_exc, halted, busy
 		eth_en          : in     std_logic                     := '0'; -- @suppress "Unused port: eth_en is not used in work.TG68K(logic)"
 		sel_eth         : buffer std_logic;
 		frometh         : in     std_logic_vector(15 downto 0);
@@ -248,6 +259,11 @@ ARCHITECTURE logic OF TG68K IS
 	-- AP68040 cache maintenance (CINV / CPUSH), mapped onto the external
 	-- cache's clear bit below.
 	SIGNAL ap040_maint : std_logic;
+	SIGNAL ap040_dbg1  : std_logic_vector(255 downto 0);
+	SIGNAL ap040_dbg2  : std_logic_vector(127 downto 0);
+	SIGNAL ap040_fault : std_logic;
+	SIGNAL ap040_halt  : std_logic;
+	SIGNAL ap040_busy  : std_logic;
 
 	COMPONENT ap040_tg68k_compat IS
 		GENERIC(
@@ -540,8 +556,14 @@ BEGIN
 				FC             => open,
 				clr_berr       => open
 			);
-		-- The TG68K has no cache-maintenance sideband.
-		ap040_maint <= '0';
+		-- The TG68K has no cache-maintenance sideband, and no fault view.
+		ap040_maint    <= '0';
+		dbg_pc         <= (others => '0');
+		dbg_fault_addr <= (others => '0');
+		dbg_ir         <= (others => '0');
+		dbg_sr         <= (others => '0');
+		dbg_exc_vec    <= (others => '0');
+		dbg_flags      <= (others => '0');
 	END GENERATE;
 
 	g_ap040 : IF use_ap040 GENERATE
@@ -624,12 +646,21 @@ BEGIN
 				mmu_addr_phys     => open,
 				mmu_cache_inhibit => open,
 				cacr_out          => open,
-				debug_busy        => open,
-				debug_fault       => open,
-				debug_halted      => open,
-				debug_status      => open,
-				debug_status2     => open
+				debug_busy        => ap040_busy,
+				debug_fault       => ap040_fault,
+				debug_halted      => ap040_halt,
+				debug_status      => ap040_dbg1,
+				debug_status2     => ap040_dbg2
 			);
+
+		-- ap040_core.v:6141  debug_status  = {magic, .., state, a0, d2, d1, d0, a7, ir, sr, pc}
+		-- ap040_core.v:6134  debug_status2 = {aer_fa, usp, isp, 16'd0, exc_vec, 5'd0, in_exc, fault, 1'b0}
+		dbg_pc         <= ap040_dbg1(31 downto 0);
+		dbg_sr         <= ap040_dbg1(47 downto 32);
+		dbg_ir         <= ap040_dbg1(63 downto 48);
+		dbg_fault_addr <= ap040_dbg2(127 downto 96);
+		dbg_exc_vec    <= ap040_dbg2(15 downto 8);
+		dbg_flags      <= ap040_fault & ap040_dbg2(2) & ap040_halt & ap040_busy;
 
 		-- The AP68040 has no skipFetch (a TG68K debug output, unconnected at
 		-- the top level anyway).

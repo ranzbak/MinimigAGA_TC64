@@ -36,6 +36,9 @@ module minimig_virtual_top #(
     parameter ap040_has_mmu = 1,
     parameter ap040_has_fpu = 1,
     parameter ap040_enable_cache = 1,
+    // Bring-up only (tools/vivado/build_ap040.tcl): an ILA on the AP68040's
+    // fault outputs, so an exception can be named instead of guessed at.
+    parameter CPU040_DEBUG_ILA = 0,
     // Debug build only: instantiate ila_fastram (tools/vivado/build_ila.tcl
     // sets this generic to 1) on the CPU side of the DDR3 fast RAM, so a real
     // Workbench boot can be captured.  0 in every normal build, and then not
@@ -226,6 +229,13 @@ wire [7:0]     z3ram3_base;
 // cache.  Unused by the TG68K.
 wire           snoop_stb;
 wire [31:0]    snoop_addr;
+// AP68040 fault observation (zero with the TG68K); see the ILA below.
+wire [31:0]    dbg_pc;
+wire [31:0]    dbg_fault_addr;
+wire [15:0]    dbg_ir;
+wire [15:0]    dbg_sr;
+wire [7:0]     dbg_exc_vec;
+wire [3:0]     dbg_flags;
 wire           turbochipram;
 wire           turbokick;
 wire [1:0]     slow_config;
@@ -657,6 +667,12 @@ TG68K #(
     .z3ram3_base  (z3ram3_base      ),
     .snoop_stb    (snoop_stb        ), // chipset DMA write snoop, for the
     .snoop_addr   (snoop_addr       ), // AP68040's data cache
+    .dbg_pc       (dbg_pc           ),
+    .dbg_fault_addr(dbg_fault_addr  ),
+    .dbg_ir       (dbg_ir           ),
+    .dbg_sr       (dbg_sr           ),
+    .dbg_exc_vec  (dbg_exc_vec      ),
+    .dbg_flags    (dbg_flags        ),
     //  .fastramcfg   ({&memcfg[5:4],memcfg[5:4]}),
     .eth_en       (1'b1), // TODO
     .sel_eth      (),
@@ -882,6 +898,27 @@ endgenerate
 // probe9  dbg_req_be[15:0]     probe21 dbg_sdr_dat_w[31:0]
 // probe10 dbg_req_addr[31:0]   probe22 dbg_sdr_dqm_w[3:0]
 // probe11 dbg_req_wdata[127:0] probe23 {cdc_ready,cdc_req,cdc_done,req_tgl}
+// AP68040 fault capture.  Trigger on dbg_flags[3] (the core's fault_r) and the
+// capture names the exception outright: which vector, the PC it happened at,
+// the opcode in the instruction register, the SR, and the address that faulted
+// if it was an access error.  A yellow Kickstart screen means an exception
+// before the trap handlers are installed, which is otherwise invisible.
+generate
+if (CPU040_DEBUG_ILA) begin : g_cpu040_ila
+  ila_cpu040 ila_cpu040_i (
+    .clk    (CLK_114),
+    .probe0 (dbg_pc),          // 32
+    .probe1 (dbg_fault_addr),  // 32
+    .probe2 (dbg_ir),          // 16
+    .probe3 (dbg_sr),          // 16
+    .probe4 (dbg_exc_vec),     // 8
+    .probe5 (dbg_flags),       // 4  {fault, in_exc, halted, busy}
+    .probe6 (tg68_adr),        // 32 the wrapper's bus address, for context
+    .probe7 (tg68_cpustate)    // 7
+  );
+end
+endgenerate
+
 generate
 if (haveddr3 && DDR3_FASTRAM_ILA) begin : g_ddr3_fastram_ila
 
