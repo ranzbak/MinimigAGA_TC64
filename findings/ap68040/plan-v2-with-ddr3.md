@@ -462,6 +462,36 @@ and the CPU island has more margin with the 040 (+0.694 ns) than with the
 TG68K (+0.067 ns) -- the multicycle budget is generous for both, and the 040
 is simply placed better here.
 
+**2026-09-07, first hardware run.**  Yellow Kickstart screen, which means an
+exception before the trap handlers exist.  The fault ILA (stage A's
+`CPU040_DEBUG_ILA`) named it without guesswork: the core reset cleanly, read
+SSP and PC, entered Kickstart at $00F800D2, fetched D2 and D4, and hung on D6
+with a request outstanding and `clkena` never pulsing.
+
+The addresses were the diagnosis.  $F800D4 is the first longword-aligned
+fetch, and the wrapper answers those with its AGA paired-word path: ONE request
+served with TWO words, the second through `data_read2`, no second address from
+the CPU.  The TG68K kernel expects that; `ap040_bus16_adapter` documents the
+opposite contract -- one request, one completion per 16-bit sub-cycle, longs
+split into two separate cycles.  So the wrapper delivered $F800D6 unasked and
+the two fell permanently out of step.  Gated on `longword_pair` now: the
+kernel's `longword` for the TG68K, constant 0 for the AP040.  The SDRAM and
+DDR3 sides keep using `longword`, because serving two sub-cycles from one
+cache line is exactly how the 040 drives them.
+
+**Where it stands after that fix.**  The 040 executes Kickstart -- real
+instructions (MOVE.L, RTS, BRA, BNE), condition codes changing, no exception
+at all -- roughly 1,500 bytes further in.  It then spins forever at
+$F8068E-$F806A2, repeatedly touching $3E8, with SR = 2700, so it is not
+waiting on an interrupt.  Screen black, no disk activity.
+
+That is a NEW failure, not the old one moved.  What the current ILA cannot say
+is whether the loop reads back wrong data or waits on something else, because
+it probes addresses and not data.  **Next step: put the chipset read/write data
+(`r_data`, `data_read`, `w_datatg68`) and `uds/lds` on the ILA** and watch one
+iteration.  Do not guess between "wrong data" and "waiting for an event" --
+five bugs this session were found by looking and none by guessing.
+
 ## Risks
 
 | Risk | Shows as | Mitigation |
