@@ -449,13 +449,18 @@ not close to binding, and stage E's dual-core question stays where the plan
 first put it: LUTs, at roughly 70 %, with BRAM around 44 %.  Do not plan
 against the 82 % figure.
 
-**The one number that is genuinely worse.**  The SDRAM read path is −0.643 ns
-against −0.544 in the TG68K build, so the sign-off rule stated above ("no
-worse than today") is **not met** -- about 0.1 ns of congestion.  It is the
-same known path that fails in every build of this design and works on
-hardware, but if the AP040 bitstream shows SDRAM flakiness where the TG68K one
-does not, this is the first suspect, and a pblock keeping the CPU island away
-from the SDRAM bank is the lever.
+**And the SDRAM path is not worse either.**  The debug bitstream measured
+−0.643 ns against the TG68K's −0.544 and I named it as a risk; the shipping
+build measures **−0.544**, the same number.  That degradation was the ILA's
+congestion too.  Both of the caveats raised against the first AP040 bitstream
+were artifacts of the debug cores in it, which is an argument for measuring
+the configuration you intend to ship before drawing conclusions from one you
+do not.
+
+The sign-off rule ("SDRAM read path no worse than today") is therefore met,
+and the CPU island has more margin with the 040 (+0.694 ns) than with the
+TG68K (+0.067 ns) -- the multicycle budget is generous for both, and the 040
+is simply placed better here.
 
 ## Risks
 
