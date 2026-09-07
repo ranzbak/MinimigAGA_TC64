@@ -477,7 +477,24 @@ BEGIN
 	-- the whole 64 MB).  One assignment, so ddraddr has one driver.
 	ddraddr <= ddr_zero_hi & cpuaddr(z3ram3_size_log2 - 1 downto 1);
 
-	cpustate <= longword & clkena & slower(1 downto 0) & ramcs & state(1 downto 0);
+	-- cpustate(6) is the RAM port's 32-bit-write flag, and it is the same
+	-- paired-transfer protocol the AGA chipset path uses, so it takes the same
+	-- gate.  sdram_ctrl derives cpuLongword from it and cpu_cache_new answers
+	-- a set bit by acknowledging the high word at once and moving to
+	-- CPU_SM_WAIT_LOWORD, where it expects the low word as a continuation of
+	-- THE SAME request.  The TG68K supplies exactly that.  The AP68040 does
+	-- not: its bus16 adapter issues two fully independent word cycles, so the
+	-- controller banks a half-written longword and the two sides desync --
+	-- the $F800D6 hang again, on the port that fix did not reach.
+	--
+	-- Found on hardware: Kickstart 46.143 spun in AllocMem because
+	-- SysBase->MemList (ExecBase+$142) read back zero.  ExecBase lives in
+	-- slow/fast RAM, which leaves on this port, so Exec's list relocation
+	-- stored its pointers through the broken 32-bit write while the chipset
+	-- bus -- already fixed -- carried the instruction fetches and the stack
+	-- correctly.  sim/ddr3_cpu cannot see it: its RAM model uses only
+	-- cpustate[2:0] and ignores this bit.
+	cpustate <= longword_pair & clkena & slower(1 downto 0) & ramcs & state(1 downto 0);
 	ramlds   <= lds_in;
 	ramuds   <= uds_in;
 
