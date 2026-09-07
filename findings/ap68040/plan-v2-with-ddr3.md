@@ -524,7 +524,7 @@ smaller build; if not, drop the parameter from the top level.
 | # | Step | Depends on | Exit criterion |
 |---|---|---|---|
 | D1 | `clkena` every 3 (`enaWRreg` on 5 of 16 phases) + `-setup -start 3 / -hold -start 2` on the kernel island — [performance.md](performance.md) option 1a. **DONE in RTL and simulation 2026-09-08, bitstream `build/stage_ap040_d1`, not yet run on hardware.** Timing closes: WNS −0.544 ns with the known SDRAM read capture as the only violated path. Measured −19.2 % on the pattern program, −18.5 % on the MMU one, short of +25–30 % because the benchmark is half DDR3 latency — which is D2. See the note below for the prerequisite option 1a omits. | A6 | timing closes in the full design; A7 benchmark ≈ +25–30 % |
-| D2 | Line port to the DDR3: expose the 040 cache's fill/write-back request from the compat top (it is stubbed at `:434`; this is core-side work, upstream has no line port in this checkout) and connect it to `ddr3_fastram`'s existing 16-byte line CDC, bypassing `cpu_cache_new` and the 16-bit adapter for board 3. Chip RAM and board 1 stay on the 16-bit path. | A6 | a line fill = one CDC round trip instead of eight sub-cycles |
+| D2 | Line port to the DDR3 — see the survey below, written 2026-09-08 before starting it. | A6 | a line fill = one CDC round trip instead of eight sub-cycles |
 | D3 | Sibling 37.8 MHz clock for the CPU island, `clkena_in` = handshake only, multicycles removed — option 1b. | D1 | `report_exceptions` shows none on the core |
 
 **D1 has a prerequisite option 1a does not mention.** The five enable phases
@@ -543,6 +543,37 @@ until the CPU's next enable, and the end-of-cycle test moves out of the
 `ena7RDreg` branch for the same reason. A side effect worth having: the
 release now lands 2-3 cycles after the answer instead of waiting a full 7 MHz
 round.
+
+**D2, surveyed but not started.** What the checkout actually does today, so
+the next session does not have to find it again:
+
+* There is **no line port**. `cache_req`, `cache_addr`, `cache_burst`,
+  `cache_burst_len` and `cache_ramaddr` are tied to zero inside
+  `ap040_tg68k_compat.v:433-438` ("external cache/burst interface idle until
+  milestone G") and nothing drives them. The wrapper leaves them open.
+* A cache fill is **four longword beats on the ordinary bus**:
+  `ap040_cache.v:302-306` -- `m_req = fill_active`, `m_size = AP040_SZ_L`,
+  `m_addr = {r_addr[31:4], r_beat, 2'b00}`. `ap040_bus16_adapter` then splits
+  each longword into two word cycles, which is where the eight sub-cycles per
+  line come from.
+* So D2 is: recognise `fill_active` in the compat top, issue **one** 16-byte
+  request, and answer the four beats out of a 128-bit buffer. That is new
+  logic inside the core's top level (a small FSM plus the buffer), not
+  plumbing -- and `lib/AP68040` is a **git submodule** (0e76761), so it needs
+  its own commit and a pointer bump here.
+* The SoC side is ready: `ddr3_fastram.v` already speaks 16-byte lines to the
+  island through `ddr3_cdc.v` (`cdc_req`/`cdc_rd`/`cdc_be`/`cdc_addr`, with
+  `dbg_cdc_ready`/`req`/`done` brought out for an ILA). The open question is
+  whether the line request bypasses `cpu_cache_new` or arbitrates with it;
+  bypassing is the point of the exercise, but `cpu_cache_new` is also what
+  snoops chipset writes into board 3, so read the coherency argument in
+  `findings/ddr3/design.md` before cutting it out.
+* Two things that must not be forgotten: the **walker borrows the same bus**
+  (stage B), so a line fill and a descriptor read have to be ordered rather
+  than allowed to interleave; and the bench models the SDRAM side itself, so
+  a line path needs a model in `sim/ddr3_cpu` before it can be trusted -- see
+  what happened in D1 when the bench and the RTL disagreed about the enable
+  cadence.
 
 ### Stage E — both cores in one bitstream, OSD-selected (M, bounded experiment)
 
