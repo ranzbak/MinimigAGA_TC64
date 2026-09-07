@@ -369,15 +369,35 @@ always @ (posedge sysclk) begin
         enaWRreg      <= #1 1'b0;
         ena7RDreg     <= #1 1'b0;
         ena7WRreg     <= #1 1'b0;
+        // enaWRreg is the CPU's clock enable and nothing else's (it leaves
+        // this module only as tg68_ena28 -> the wrapper's clkena_in).  Five
+        // pulses in the sixteen-phase round instead of four, spaced 3-3-3-3-4,
+        // so the core advances at an average 35.4 MHz instead of 28.4 and the
+        // multicycle exceptions in cpu.xdc become -start 3 / -hold 2, the
+        // MINIMUM spacing being what a constraint has to cover.
+        // findings/ap68040/performance.md option 1a.
+        //
+        // ph6 and ph14 keep ena7RDreg and ena7WRreg -- the 7 MHz chipset
+        // timing is untouched -- but note that enaWRreg no longer coincides
+        // with ena7RDreg at ph6, and it cannot: five gaps of at least 3
+        // summing to 16 are four 3s and one 4, and no partial sum of those
+        // reaches the 8 phases between 6 and 14.  The wrapper used to rely on
+        // that coincidence to release a chipset access; TG68K.vhd now latches
+        // the release instead (chipset_done) precisely because of this.
         case(sdram_state) // LATENCY=3
             ph2 : begin
                 enaWRreg  <= #1 1'b1;
             end
-            ph6 : begin
+            ph5 : begin
                 enaWRreg  <= #1 1'b1;
+            end
+            ph6 : begin
                 ena7RDreg <= #1 1'b1;
             end
-            ph10 : begin
+            ph8 : begin
+                enaWRreg  <= #1 1'b1;
+            end
+            ph11 : begin
                 enaWRreg  <= #1 1'b1;
             end
             ph14 : begin

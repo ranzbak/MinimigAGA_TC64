@@ -316,6 +316,10 @@ ARCHITECTURE logic OF TG68K IS
 	-- '1' on the cycle the current bus access is complete, i.e. the clkena
 	-- release term factored out so the walker can use the same completion.
 	SIGNAL bus_ready  : std_logic;
+	-- The 7 MHz chipset bus answers on a single-cycle pulse; these hold that
+	-- answer until the CPU's next clock enable.  See where they are driven.
+	SIGNAL chipset_ready : std_logic;
+	SIGNAL chipset_done  : std_logic;
 
 	-- AP68040 cache maintenance (CINV / CPUSH), mapped onto the external
 	-- cache's clear bit below.
@@ -890,7 +894,32 @@ BEGIN
 	-- The clkena release term, factored out under its own name so the walker
 	-- FSM can wait on exactly the condition that releases the CPU -- memory,
 	-- chipset bus, undecoded auto-complete or Akiko, whichever answers.
-	bus_ready <= '1' WHEN ((ena7RDreg = '1' AND clkena_e = '1') OR (ena7WRreg = '1' AND clkena_f = '1') OR mem_ready = '1' OR sel_undecoded_d = '1' OR akiko_ack = '1') ELSE
+	--
+	-- The chipset half of it is LATCHED (chipset_done) rather than taken
+	-- straight from ena7RDreg/ena7WRreg.  Those are single-cycle pulses on
+	-- phases 6 and 14 of the SDRAM round, and the raw term only ever released
+	-- the CPU because clkena_in happened to pulse on those same phases.  With
+	-- the enable at five phases instead of four (3-3-3-3-4, performance.md
+	-- option 1a) that coincidence is gone -- and it cannot be restored, since
+	-- no partial sum of those gaps spans the eight phases from 6 to 14.  So
+	-- the pulse is caught here and held until the CPU's next enable, at most
+	-- three cycles later, which is invisible next to a 140 ns chipset cycle.
+	chipset_ready <= '1' WHEN ((ena7RDreg = '1' AND clkena_e = '1') OR (ena7WRreg = '1' AND clkena_f = '1')) ELSE '0';
+
+	PROCESS(clk, reset)
+	BEGIN
+		IF reset = '0' THEN
+			chipset_done <= '0';
+		ELSIF rising_edge(clk) THEN
+			IF chipset_ready = '1' THEN
+				chipset_done <= '1';
+			ELSIF clkena = '1' THEN
+				chipset_done <= '0';
+			END IF;
+		END IF;
+	END PROCESS;
+
+	bus_ready <= '1' WHEN (chipset_ready = '1' OR chipset_done = '1' OR mem_ready = '1' OR sel_undecoded_d = '1' OR akiko_ack = '1') ELSE
 	'0';
 
 	-- The wk_ack term is the deadlock guard the plan calls for.  The core
@@ -1040,6 +1069,22 @@ BEGIN
 			clkena_e <= '0';
 			clkena_f <= '0';
 		ELSIF rising_edge(clk) THEN
+			-- End the chipset cycle when the CPU has actually taken its
+			-- answer.  This used to live inside the ena7RDreg branch, where it
+			-- worked only because clkena could only ever be high on the same
+			-- phase; with the enable at five phases that is no longer true, so
+			-- the test belongs out here.  It also means the release now lands
+			-- on the next enable (2-3 cycles) instead of waiting a full 7 MHz
+			-- round, which is a small speed-up in its own right.
+			--
+			-- Assignment order matters: the ena7RDreg branch below re-asserts
+			-- clkena_e in state "11", and would override this -- but clkena is
+			-- never high on phase 6, so the two cannot fire together.
+			IF (chipset_ready = '1' OR chipset_done = '1') AND clkena = '1' THEN
+				S_state  <= "00";
+				clkena_e <= '0';
+			END IF;
+
 			IF S_state = "01" AND clkena_e = '1' THEN
 				uds2        <= buds;
 				lds2        <= blds;
@@ -1102,10 +1147,6 @@ BEGIN
 						IF aga = '1' AND cpu_i(1) = '1' AND longword_pair = '1' AND bstate(0) = '0' AND cpuaddr(1 downto 0) = "00" AND (sel_chip = '1' OR sel_kick = '1') THEN
 							-- 32 bit read
 							clkena_f <= '1';
-						END IF;
-						IF clkena = '1' THEN
-							S_state  <= "00";
-							clkena_e <= '0';
 						END IF;
 					WHEN OTHERS => null;
 				END CASE;

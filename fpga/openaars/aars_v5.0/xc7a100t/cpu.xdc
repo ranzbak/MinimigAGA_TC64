@@ -71,19 +71,29 @@ set tg68_kernel [get_cells -hier -filter "($cpu_is_kernel) && ($cpu_not_free) &&
 set tg68_wrap   [get_cells -hier -filter "NAME =~ $cpu_wrapper/* && ($cpu_not_kernel) && ($tg68_seq)"]
 set tg68_mem    [get_cells -hier -filter "(NAME =~ openaars_virtual_top/sdram/* || NAME =~ openaars_virtual_top/minimig/*) && ($tg68_seq)"]
 
-# Kernel island
-set_multicycle_path -setup -start 4 -from $tg68_kernel -to $tg68_kernel
-set_multicycle_path -hold  -start 3 -from $tg68_kernel -to $tg68_kernel
-set_multicycle_path -setup -start 4 -from $tg68_kernel -to $tg68_wrap
-set_multicycle_path -hold  -start 3 -from $tg68_kernel -to $tg68_wrap
+# Kernel island.
+#
+# The CPU's clock enable is enaWRreg, pulsed on five of the sixteen SDRAM
+# phases (2, 5, 8, 11, 14 -- sdram_ctrl.v), spacing 3-3-3-3-4.  A multicycle
+# exception has to cover the MINIMUM spacing, so these are 3 and not 4: every
+# kernel register holds for at least 3 cycles, 26.45 ns.  It was 4 (35.26 ns)
+# while the enable was on four phases; findings/ap68040/performance.md option
+# 1a made the change, and the AP68040's worst path is 21.0 ns standalone, so
+# the budget is met with about 5 ns to spare before congestion.
+set_multicycle_path -setup -start 3 -from $tg68_kernel -to $tg68_kernel
+set_multicycle_path -hold  -start 2 -from $tg68_kernel -to $tg68_kernel
+set_multicycle_path -setup -start 3 -from $tg68_kernel -to $tg68_wrap
+set_multicycle_path -hold  -start 2 -from $tg68_kernel -to $tg68_wrap
 
-# Kernel outputs to the memory side (SDRAM controller, cache, chipset interface)
-set_multicycle_path -setup -start 3 -from $tg68_kernel -to $tg68_mem
-set_multicycle_path -hold  -start 2 -from $tg68_kernel -to $tg68_mem
+# Kernel outputs to the memory side (SDRAM controller, cache, chipset
+# interface): one cycle less than the island, because sdram_ctrl wants the
+# address stable a cycle before the chip select.  2 cycles = 17.63 ns.
+set_multicycle_path -setup -start 2 -from $tg68_kernel -to $tg68_mem
+set_multicycle_path -hold  -start 1 -from $tg68_kernel -to $tg68_mem
 
-# Wrapper address registers feeding the memory side: same 3-cycle stability as the kernel address.
-set_multicycle_path -setup -start 3 -from [get_cells -quiet -hier -filter "NAME =~ $cpu_wrapper/addr* && ($tg68_seq)"] -to $tg68_mem
-set_multicycle_path -hold  -start 2 -from [get_cells -quiet -hier -filter "NAME =~ $cpu_wrapper/addr* && ($tg68_seq)"] -to $tg68_mem
+# Wrapper address registers feeding the memory side: same rule as the kernel address.
+set_multicycle_path -setup -start 2 -from [get_cells -quiet -hier -filter "NAME =~ $cpu_wrapper/addr* && ($tg68_seq)"] -to $tg68_mem
+set_multicycle_path -hold  -start 1 -from [get_cells -quiet -hier -filter "NAME =~ $cpu_wrapper/addr* && ($tg68_seq)"] -to $tg68_mem
 
 # Akiko C2P: neither direction requires single-cycle speed (data consumed on clkena).
 set c2p_rdptr [get_cells -hier -filter "NAME =~ $cpu_wrapper/myakiko/c2p.myc2p/rdptr_reg* && ($tg68_seq)"]

@@ -171,8 +171,17 @@ end
 //-----------------------------------------------------------------
 // sdram_ctrl's enable cadence (rtl/sdram/sdram_ctrl.v ~344-375)
 //-----------------------------------------------------------------
-// 16 sysclk = one 7.09 MHz period.  enaWRreg at ph2/6/10/14, ena7RDreg at ph6,
-// ena7WRreg at ph14, all registered exactly as the controller registers them.
+// 16 sysclk = one 7.09 MHz period.  This bench does NOT compile sdram_ctrl --
+// it models that side itself -- so this cadence has to be kept in step with
+// the controller by hand.  It was out of step once already: D1 moved enaWRreg
+// to five phases in sdram_ctrl.v and the bench happily went on pulsing four,
+// so three green runs said nothing about the change they were meant to test.
+// If the phases move again, they move here too.
+//
+// enaWRreg at ph2/5/8/11/14 (spacing 3-3-3-3-4, findings/ap68040/performance.md
+// option 1a), ena7RDreg at ph6, ena7WRreg at ph14, all registered exactly as
+// the controller registers them.  Note that enaWRreg no longer coincides with
+// ena7RDreg -- that is the whole reason TG68K.vhd latches the chipset answer.
 reg [3:0] ph        = 4'd0;
 reg       ena28     = 1'b0;                   // = enaWRreg  -> clkena_in
 reg       ena7RDreg = 1'b0;
@@ -186,7 +195,8 @@ always @(posedge clk) begin
     ena7WRreg <= 1'b0;
   end else begin
     ph        <= ph + 4'd1;
-    ena28     <= (ph == 4'd2) || (ph == 4'd6) || (ph == 4'd10) || (ph == 4'd14);
+    ena28     <= (ph == 4'd2) || (ph == 4'd5) || (ph == 4'd8) ||
+                 (ph == 4'd11) || (ph == 4'd14);
     ena7RDreg <= (ph == 4'd6);
     ena7WRreg <= (ph == 4'd14);
   end

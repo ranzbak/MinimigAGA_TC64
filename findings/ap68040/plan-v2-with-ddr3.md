@@ -520,9 +520,26 @@ smaller build; if not, drop the parameter from the top level.
 
 | # | Step | Depends on | Exit criterion |
 |---|---|---|---|
-| D1 | `clkena` every 3 (`enaWRreg` on 5 of 16 phases) + `-setup -start 3 / -hold -start 2` on the kernel island — [performance.md](performance.md) option 1a; every core path fits 26.45 ns with 5 ns to spare standalone. | A6 | timing closes in the full design; A7 benchmark ≈ +25–30 % |
+| D1 | `clkena` every 3 (`enaWRreg` on 5 of 16 phases) + `-setup -start 3 / -hold -start 2` on the kernel island — [performance.md](performance.md) option 1a; every core path fits 26.45 ns with 5 ns to spare standalone. **Written 2026-09-08, see the note below; awaiting build.** | A6 | timing closes in the full design; A7 benchmark ≈ +25–30 % |
 | D2 | Line port to the DDR3: expose the 040 cache's fill/write-back request from the compat top (it is stubbed at `:434`; this is core-side work, upstream has no line port in this checkout) and connect it to `ddr3_fastram`'s existing 16-byte line CDC, bypassing `cpu_cache_new` and the 16-bit adapter for board 3. Chip RAM and board 1 stay on the 16-bit path. | A6 | a line fill = one CDC round trip instead of eight sub-cycles |
 | D3 | Sibling 37.8 MHz clock for the CPU island, `clkena_in` = handshake only, multicycles removed — option 1b. | D1 | `report_exceptions` shows none on the core |
+
+**D1 has a prerequisite option 1a does not mention.** The five enable phases
+must be spaced 3-3-3-3-4, and `ena7RDreg`/`ena7WRreg` sit on phases 6 and 14.
+Five gaps of at least 3 summing to 16 are four 3s and one 4, and no partial
+sum of those spans the eight phases from 6 to 14 -- so the enable **cannot**
+land on both. It has to keep 14 (which it does: 2, 5, 8, 11, 14) and lose 6.
+
+That matters because the wrapper's release term was
+`(ena7RDreg = '1' AND clkena_e = '1')`, which only ever released the CPU
+because `clkena_in` happened to pulse on phase 6 as well. Lose the
+coincidence and every chipset access hangs -- silently, with no fault, which
+is the same failure signature as the walker deadlock. So D1 also latches the
+chipset answer (`chipset_ready` -> `chipset_done` in `TG68K.vhd`) and holds it
+until the CPU's next enable, and the end-of-cycle test moves out of the
+`ena7RDreg` branch for the same reason. A side effect worth having: the
+release now lands 2-3 cycles after the answer instead of waiting a full 7 MHz
+round.
 
 ### Stage E — both cores in one bitstream, OSD-selected (M, bounded experiment)
 

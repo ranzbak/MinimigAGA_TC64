@@ -21,14 +21,14 @@ LOAD_MODE: bank 1
 ddr3_cpu_tb.u_ram.cmd_task: at time 39935000.0 ps WARNING: Load Mode 1 DLL off mode is not fully modeled
 LOAD_MODE: bank 0
 INFO: CPU released at 64389167.0 ps (ddr_ready=1 init_done=1 pll_locked=1)
-INFO: program phase 1 at 80159202.0 ps
-INFO: program phase 2 at 813144082.0 ps
-INFO: program phase 3 at 818961982.0 ps
-INFO: program phase 4 at 825802422.0 ps
-INFO: program phase 5 at 836944582.0 ps
-INFO: program phase 6 at 856584402.0 ps
-INFO: program phase 7 at 874778562.0 ps
-INFO: program phase 8 at 879115542.0 ps
+INFO: program phase 1 at 77021062.0 ps
+INFO: program phase 2 at 663403677.0 ps
+INFO: program phase 3 at 668057997.0 ps
+INFO: program phase 4 at 673646707.0 ps
+INFO: program phase 5 at 682928902.0 ps
+INFO: program phase 6 at 698637232.0 ps
+INFO: program phase 7 at 713190797.0 ps
+INFO: program phase 8 at 716663907.0 ps
 
 DDR3 CPU TB: PASS  (68k program completed all phases)
 
@@ -36,8 +36,8 @@ INFO: MMU walker program -- no pattern in the DDR3 to check
 
 DDR3 CPU TB: 2 passed, 0 failed
 
-$finish called at time : 880420162 ps : File "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/ddr3_cpu_tb.sv" Line 967
-run: Time (s): cpu = 00:00:00.44 ; elapsed = 00:03:54 . Memory (MB): peak = 1262.691 ; gain = 8.004 ; free physical = 17180 ; free virtual = 39852
+$finish called at time : 717704077 ps : File "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/ddr3_cpu_tb.sv" Line 977
+run: Time (s): cpu = 00:00:00.36 ; elapsed = 00:03:17 . Memory (MB): peak = 1318.688 ; gain = 0.000 ; free physical = 16875 ; free virtual = 39959
 ## quit
-INFO: xsimkernel Simulation Memory Usage: 150028 KB (Peak: 190908 KB), Simulation CPU Usage: 233910 ms
-INFO: [Common 17-206] Exiting xsim at Mon Sep  7 23:49:47 2026...
+INFO: xsimkernel Simulation Memory Usage: 150028 KB (Peak: 190908 KB), Simulation CPU Usage: 197410 ms
+INFO: [Common 17-206] Exiting xsim at Tue Sep  8 01:34:30 2026...
