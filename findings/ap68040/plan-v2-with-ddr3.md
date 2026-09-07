@@ -485,12 +485,56 @@ at all -- roughly 1,500 bytes further in.  It then spins forever at
 $F8068E-$F806A2, repeatedly touching $3E8, with SR = 2700, so it is not
 waiting on an interrupt.  Screen black, no disk activity.
 
-That is a NEW failure, not the old one moved.  What the current ILA cannot say
-is whether the loop reads back wrong data or waits on something else, because
-it probes addresses and not data.  **Next step: put the chipset read/write data
-(`r_data`, `data_read`, `w_datatg68`) and `uds/lds` on the ILA** and watch one
-iteration.  Do not guess between "wrong data" and "waiting for an event" --
-five bugs this session were found by looking and none by guessing.
+That is a NEW failure, not the old one moved.
+
+**What the loop actually is.**  The ILA snapshot was read wrongly at first --
+as a stalled bus cycle, then as the exception-vector fill.  It is neither.  All
+1024 samples hold a nine-PC cycle, and the ROM names it.  The ROM had to be
+identified first: `tools/kick_dis.py` takes Amiga addresses, and an opcode
+fingerprint straight off the ILA (`$F80690`=`2002`, `$F80692`=`4eae`,
+`$F80698`=`2d40`, `$F8069A`=`6608`, `$F8069C`=`223c`, `$F806A2`=`60ec`) matches
+exactly one image on this machine, `kick.a1200.46.143.rom`, at exactly
+`$F8068E`.  Match the ROM by content, never by filename: five other 3.x images
+here disassemble to plausible-looking nonsense at that address.  The fingerprint
+also shows `dbg_pc` runs one instruction ahead of `dbg_ir`.
+
+```asm
+00F805D8  move.l  #$604, d0        ; 1540 bytes
+00F805DE  move.l  #$10001, d1      ; MEMF_CLEAR | MEMF_PUBLIC
+00F805E4  jsr     -$c6(a6)         ; AllocMem -- SUCCEEDS
+00F805EA  beq.w   $f806bc          ; not taken, or we would never reach the loop
+...
+00F80686  rol.l   #$8, d2          ; d2 = $1800 = 6144
+00F80688  move.l  #$10004, d1      ; MEMF_CLEAR | MEMF_FAST
+00F8068E  move.l  d2, d0
+00F80690  jsr     -$c6(a6)         ; AllocMem -- returns 0
+00F80698  bne.b   $f806a2
+00F8069A  move.l  #$50000, d1      ; MEMF_CLEAR | MEMF_REVERSE, any type
+00F806A0  bra.b   $f8068e          ; forever
+```
+
+Exec is allocating its supervisor stack and cannot.  Three things follow, and
+they rule out most of what looked likely before:
+
+* The 040 is executing correctly.  It runs a `jsr`, returns from it, and sets
+  and clears Z.  The `$3E8`/`$3EA` writes are the return-address push -- so
+  `$3E8` is the supervisor stack (SSP near `$400`), not the vector table, and
+  the 040 is splitting the longword into two word cycles exactly as intended.
+* Longword chip RAM access is not broken outright.  A corrupted push would
+  send the matching `rts` somewhere random; the loop is stable instead.
+* **The first AllocMem succeeded.**  Memory exists and the allocator works
+  once.  A 6 kB request then fails even asking for any memory type at all.
+  That is the free list being wrong after the first allocation -- which was
+  `MEMF_CLEAR`, so it wrote 1540 bytes of zeros -- not memory being absent.
+
+**The untested path.**  `sim/ddr3_cpu` tied `turbochipram` to 1, so
+`sel_chipram` makes `sel_ram`, `chipset_cycle` is 0, and every chip access
+leaves on the SDRAM-side port.  The AP040 run therefore never issued a single
+chipset-bus cycle.  The user has Turbo off, which is the opposite: all chip RAM
+goes over the 7 MHz chipset bus -- the path `longword_pair` changes.  The green
+AP040 simulation and the failing hardware were never exercising the same logic.
+`./run.sh --ap040 --chipbus` closes that gap; `--chipbus` alone is the TG68K
+control that must still pass.
 
 ## Risks
 

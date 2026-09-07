@@ -11,6 +11,11 @@
 #
 #   ./run.sh              real rtl/soc/TG68K.vhd  -> xsim_run_pass.log
 #   ./run.sh --mutant     mutant/TG68K_mutant.vhd -> xsim_run_mutant.log
+#   ./run.sh --ap040      AP68040 kernel          -> xsim_run_pass_ap040.log
+#   ./run.sh --chipbus    turbochipram = 0, chip RAM over the 7 MHz chipset bus
+#
+# The flags combine in that order, e.g.
+#   ./run.sh --ap040 --chipbus   -> xsim_run_pass_ap040_chipbus.log
 #
 # The mutant is the wrapper as it stood before the chipset_cycle fix; it MUST
 # fail.  The two variants build in separate directories (run_pass/, run_mutant/)
@@ -36,7 +41,8 @@ D="$(cd "$(dirname "$0")" && pwd)"
 cd "$D"
 
 VARIANT=pass
-if [ "$1" = "--mutant" ]; then VARIANT=mutant; shift; fi
+IS_MUTANT=0
+if [ "$1" = "--mutant" ]; then VARIANT=mutant; IS_MUTANT=1; shift; fi
 
 # Which CPU core the wrapper is built with.  The AP68040 (lib/AP68040) presents
 # a TG68K-shaped port set, so the whole bench -- chipset model, DDR3 chain,
@@ -48,13 +54,21 @@ if [ "$1" = "--ap040" ]; then CPU=ap040; shift; fi
 if [ "$CPU" = "ap040" ]; then
     # The mutant is a TG68K-specific mutation (the chipset_cycle term); there is
     # nothing for it to mean with a different kernel.
-    if [ "$VARIANT" = "mutant" ]; then
+    if [ "$IS_MUTANT" = "1" ]; then
         echo "--mutant and --ap040 are not a combination: the mutant is the" >&2
         echo "TG68K wrapper as it stood before the chipset_cycle fix." >&2
         exit 2
     fi
     VARIANT=pass_ap040
 fi
+
+# Turbo chip RAM.  Default on, as the bench has always run.  --chipbus clears
+# it so chip RAM goes out over the 7 MHz chipset bus instead of the SDRAM-side
+# port, which is what the core does when the user sets Turbo to none -- and is
+# the one path an AP68040 run has never taken, because turbochipram used to be
+# tied to 1 here.  Results land in run_<variant>_chipbus/.
+TURBOCHIP=1
+if [ "$1" = "--chipbus" ]; then TURBOCHIP=0; shift; fi
 
 VIVADO_PATH=${VIVADO_PATH:-/opt/Xilinx/Vivado/2023.2}
 R="$D/../.."
@@ -68,6 +82,8 @@ PATBYTES=${PATBYTES:-1024}
 MISLINES=${MISLINES:-16}
 CNTN=${CNTN:-64}
 
+if [ "$TURBOCHIP" = "0" ]; then VARIANT="${VARIANT}_chipbus"; fi
+
 W="$D/run_$VARIANT"
 rm -rf "$W"
 mkdir -p "$W"
@@ -75,10 +91,10 @@ mkdir -p "$W"
 BIN="$W/prog.bin" "$D/asm/build_68k_test.sh" \
     -DPATBYTES=$PATBYTES -DMISLINES=$MISLINES -DCNTN=$CNTN
 
-PLUS="+PATBYTES=$PATBYTES +MISLINES=$MISLINES +CNTN=$CNTN"
+PLUS="+PATBYTES=$PATBYTES +MISLINES=$MISLINES +CNTN=$CNTN +TURBOCHIP=$TURBOCHIP"
 if [ -n "$TRACE" ]; then PLUS="$PLUS +TRACE +TRMAX=${TRMAX:-200}"; fi
 
-if [ "$VARIANT" = "mutant" ]; then
+if [ "$IS_MUTANT" = "1" ]; then
     TG68K_SRC="$D/mutant/TG68K_mutant.vhd"
 else
     TG68K_SRC="$R/rtl/soc/TG68K.vhd"
@@ -152,7 +168,7 @@ cd "$D"
 echo
 grep -E "^(PASS|FAIL|INFO:|DDR3 CPU TB|       )" "xsim_run_$VARIANT.log" || true
 
-if [ "$VARIANT" = "mutant" ]; then
+if [ "$IS_MUTANT" = "1" ]; then
     # the mutant must NOT pass
     if grep -q "DDR3 CPU TB: PASS" "xsim_run_$VARIANT.log"; then
         echo "MUTANT DID NOT FAIL -- the bench has no teeth"; exit 1

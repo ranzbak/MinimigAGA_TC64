@@ -67,9 +67,25 @@ def main():
     md = Cs(CS_ARCH_M68K, CS_MODE_BIG_ENDIAN | CS_MODE_M68K_040)
     off = start - base
     n = min(end - start, len(data) - off)
-    for ins in md.disasm(data[off:off + n], start):
-        raw = " ".join(f"{b:02x}" for b in ins.bytes)
-        print(f"{ins.address:08X}  {raw:<20}  {ins.mnemonic:<10} {ins.op_str}")
+
+    # Resync past anything capstone will not decode.  Kickstart interleaves
+    # jump tables, LVO tables and string data with code, and a disassembly that
+    # stops dead at the first of them shows nothing useful -- the run that found
+    # the AllocMem loop returned zero lines because $F80660 happened to start on
+    # a data word.  Emit the offending word as data and carry on.
+    addr = start
+    while addr < start + n:
+        i = addr - base
+        got = False
+        for ins in md.disasm(data[i:start + n - base], addr):
+            raw = " ".join(f"{b:02x}" for b in ins.bytes)
+            print(f"{ins.address:08X}  {raw:<20}  {ins.mnemonic:<10} {ins.op_str}")
+            addr = ins.address + ins.size
+            got = True
+        if not got:
+            word = int.from_bytes(data[i:i + 2], "big")
+            print(f"{addr:08X}  {data[i]:02x} {data[i+1]:02x}                 dc.w       ${word:04x}")
+            addr += 2
     return 0
 
 

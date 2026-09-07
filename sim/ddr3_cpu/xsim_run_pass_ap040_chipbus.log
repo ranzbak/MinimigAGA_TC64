@@ -1,0 +1,42 @@
+
+****** xsim v2023.2 (64-bit)
+  **** SW Build 4029153 on Fri Oct 13 20:13:54 MDT 2023
+  **** IP Build 4028589 on Sat Oct 14 00:45:43 MDT 2023
+  **** SharedData Build 4025554 on Tue Oct 10 17:18:54 MDT 2023
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source xsim.dir/cpu_sim/xsim_script.tcl
+# xsim {cpu_sim} -testplusarg prog=/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/run_pass_ap040_chipbus/prog.bin -testplusarg PATBYTES=64 -testplusarg MISLINES=2 -testplusarg CNTN=8 -testplusarg TURBOCHIP=0 -autoloadwcfg -tclbatch {run.tcl}
+Time resolution is 1 ps
+source run.tcl
+## run all
+TCK_MIN =        2500
+ddr3_cpu_tb.u_ram.file_io_open: at time                    0 WARNING: no +model_data option specified, using /tmp.
+WARNING: Insufficient data from the input file for $fread
+INFO: loaded 1794 bytes of 68k program from /home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/run_pass_ap040_chipbus/prog.bin
+LOAD_MODE: bank 2
+LOAD_MODE: bank 3
+LOAD_MODE: bank 1
+ddr3_cpu_tb.u_ram.cmd_task: at time 39935000.0 ps WARNING: Load Mode 1 DLL off mode is not fully modeled
+LOAD_MODE: bank 0
+INFO: CPU released at 64389167.0 ps (ddr_ready=1 init_done=1 pll_locked=1)
+INFO: program phase 1 at 100230957.0 ps
+INFO: program phase 2 at 194586717.0 ps
+INFO: program phase 3 at 464960397.0 ps
+INFO: program phase 4 at 572291837.0 ps
+INFO: program phase 5 at 660723917.0 ps
+INFO: program phase 6 at 782300397.0 ps
+
+DDR3 CPU TB: PASS  (68k program completed all phases)
+
+INFO: checking the DDR3 array through the Micron model backdoor
+PASS: DDR3 array contents match the pattern (independent backdoor read)
+
+DDR3 CPU TB: 2 passed, 0 failed
+
+$finish called at time : 787659917 ps : File "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/ddr3_cpu_tb.sv" Line 827
+run: Time (s): cpu = 00:00:00.57 ; elapsed = 00:04:29 . Memory (MB): peak = 1260.730 ; gain = 8.004 ; free physical = 17716 ; free virtual = 39780
+## quit
+INFO: xsimkernel Simulation Memory Usage: 149996 KB (Peak: 190876 KB), Simulation CPU Usage: 267900 ms
+INFO: [Common 17-206] Exiting xsim at Mon Sep  7 20:43:03 2026...

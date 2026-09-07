@@ -101,6 +101,25 @@ localparam [31:0] CBASE    = 32'h5EED_0000;
 
 localparam [31:0] MBOX     = 32'h0000_1000;   // in the bench chip RAM
 
+// Turbo chip RAM.  With it set, sel_chipram makes sel_ram, chipset_cycle is 0
+// and every chip access leaves on the SDRAM-side port.  With it clear the
+// wrapper drives the 7 MHz chipset bus instead -- as/uds/lds/data_write and,
+// on a TG68K, the AGA paired-word optimisation that answers one longword
+// request with two words through uds2/lds2/data_read2.
+//
+// That second path is why this is a plusarg.  The AP68040 turns the paired
+// word off (longword_pair in rtl/soc/TG68K.vhd), so a longword becomes two
+// separate word cycles, and with turbochipram tied to 1 the AP040 run never
+// issued a single chipset cycle -- the path the core actually uses when the
+// user has Turbo set to none was never simulated.  Kickstart 46.143 gets as
+// far as AllocMem and then cannot allocate a 6 kB supervisor stack, which is
+// what the chipset-bus path being wrong would look like.
+//
+//   +TURBOCHIP=0   drive chip RAM over the chipset bus (Turbo off)
+//   +TURBOCHIP=1   default, as before
+reg turbochipram = 1'b1;
+initial void'($value$plusargs("TURBOCHIP=%b", turbochipram));
+
 // MemHeader values
 localparam [31:0] MH_NAME  = 32'h4100_0100;
 localparam [31:0] MH_FIRST = 32'h4100_0020;
@@ -258,7 +277,7 @@ TG68K #(.cpu_core("TG68K")) tg68k (
     .ethready       (1'b0             ),
     .slow_config    (2'b00            ),
     .aga            (1'b1             ),
-    .turbochipram   (1'b1             ),
+    .turbochipram   (turbochipram     ),
     .turbokick      (1'b0             ),
     .cache_inhibit  (cache_inhibit    ),
     .cacheline_clr  (cacheline_clr    ),
