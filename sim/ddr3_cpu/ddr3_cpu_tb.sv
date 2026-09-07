@@ -765,6 +765,10 @@ initial begin : main
       32'd7  : final_report(7,  "MemHeader mh_Free read-back");
       32'd8  : final_report(8,  "counter loop, previous location");
       32'd9  : final_report(9,  "counter loop, just-written location");
+      32'd10 : final_report(10, "MOVEM.L through displacement addressing, chip RAM");
+      32'd11 : final_report(11, "ADDQ.L #4,(a0) longword read-modify-write, chip RAM");
+      32'd12 : final_report(12, "Exec List relocation left a pointer wrong");
+      32'd13 : final_report(13, "Exec List relocation left the list EMPTY -- the AllocMem symptom");
       32'd99 : final_report(99, "unexpected 68k exception (bus/address error, privilege violation, ...)");
       default: final_report(status, "unknown failure code");
     endcase

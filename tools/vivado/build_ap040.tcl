@@ -226,11 +226,23 @@ foreach ip {vio_ddr3 ila_fastram} {
 # Build
 #-----------------------------------------------------------------------------
 #-----------------------------------------------------------------------------
-# ila_cpu040: the AP68040's fault outputs.  A Kickstart yellow screen says an
-# exception happened before the trap handlers existed and nothing more; this
-# names it -- vector, PC, opcode, SR, and the faulting address.
-#   probe0 pc[31:0]   probe1 fault_addr[31:0]  probe2 ir[15:0]  probe3 sr[15:0]
-#   probe4 exc_vec[7:0]  probe5 flags[3:0]  probe6 addr[31:0]  probe7 cpustate[6:0]
+# ila_cpu040: the chipset bus, with its data, and where the CPU is.
+#
+# This started as a fault capture -- vector, faulting address, SR -- because a
+# yellow Kickstart screen was assumed to be an exception before the trap
+# handlers existed.  It is not.  The 040 reaches Exec with no exception at all
+# and spins in AllocMem (Kickstart 46.143 $F8068E-$F806A0), so the fault ports
+# earn nothing and the read/write data earns everything: telling "the memory
+# region is small" from "the free list is corrupt" needs the mc_Bytes the
+# allocator reads back, and both look identical in an address-only trace.
+#
+#   probe0 pc[31:0]      probe1 adr[31:0]   probe2 data_read[15:0]
+#   probe3 data_write[15:0]  probe4 {as,rw,uds,lds}  probe5 flags[3:0]
+#   probe6 ir[15:0]      probe7 cpustate[6:0]
+#
+# 4096 deep, and storage qualification stays on: with Turbo off a chip access
+# is a 7 MHz chipset cycle against an 8.8 ns clock, so capturing on !as is the
+# difference between 4096 real transfers and about 64.
 #-----------------------------------------------------------------------------
 if {$ila} {
     set ipdir $R/ip/ddr3
@@ -239,24 +251,28 @@ if {$ila} {
         puts "build_ap040.tcl: creating ila_cpu040"
         create_ip -name ila -vendor xilinx.com -library ip -version 6.2 \
             -module_name ila_cpu040 -dir $ipdir
-        set_property -dict [list \
-            CONFIG.C_NUM_OF_PROBES {8} \
-            CONFIG.C_DATA_DEPTH {1024} \
-            CONFIG.C_TRIGIN_EN {false} \
-            CONFIG.C_EN_STRG_QUAL {1} \
-            CONFIG.C_ADV_TRIGGER {false} \
-            CONFIG.C_PROBE0_WIDTH {32} \
-            CONFIG.C_PROBE1_WIDTH {32} \
-            CONFIG.C_PROBE2_WIDTH {16} \
-            CONFIG.C_PROBE3_WIDTH {16} \
-            CONFIG.C_PROBE4_WIDTH {8} \
-            CONFIG.C_PROBE5_WIDTH {4} \
-            CONFIG.C_PROBE6_WIDTH {32} \
-            CONFIG.C_PROBE7_WIDTH {7} \
-        ] [get_ips ila_cpu040]
-        generate_target all [get_files [get_property IP_FILE [get_ips ila_cpu040]]]
-        catch { create_ip_run [get_files [get_property IP_FILE [get_ips ila_cpu040]]] }
     }
+    # Applied every run, not only on creation.  The probe map changed once
+    # already; an existing IP left at the old widths would elaborate against
+    # the new port list and fail somewhere far from here.  Re-applying is free
+    # when nothing changed -- Vivado only marks the IP out of date if it did.
+    set_property -dict [list \
+        CONFIG.C_NUM_OF_PROBES {8} \
+        CONFIG.C_DATA_DEPTH {4096} \
+        CONFIG.C_TRIGIN_EN {false} \
+        CONFIG.C_EN_STRG_QUAL {1} \
+        CONFIG.C_ADV_TRIGGER {false} \
+        CONFIG.C_PROBE0_WIDTH {32} \
+        CONFIG.C_PROBE1_WIDTH {32} \
+        CONFIG.C_PROBE2_WIDTH {16} \
+        CONFIG.C_PROBE3_WIDTH {16} \
+        CONFIG.C_PROBE4_WIDTH {4} \
+        CONFIG.C_PROBE5_WIDTH {4} \
+        CONFIG.C_PROBE6_WIDTH {16} \
+        CONFIG.C_PROBE7_WIDTH {7} \
+    ] [get_ips ila_cpu040]
+    generate_target all [get_files [get_property IP_FILE [get_ips ila_cpu040]]]
+    catch { create_ip_run [get_files [get_property IP_FILE [get_ips ila_cpu040]]] }
     set ipr [get_runs -quiet ila_cpu040_synth_1]
     if {$ipr ne "" && [get_property PROGRESS $ipr] ne "100%"} {
         launch_runs $ipr -jobs 8
@@ -307,10 +323,10 @@ report_clock_interaction -delay_type min_max -file $out/clock_interaction.rpt
 
 # Deliverables next to the other stage bitstreams.
 set impldir $R/project_1/project_1.runs/impl_1
-file mkdir $R/build/stage_ap040
+file mkdir $out
 foreach ext {bit ltx} {
     if {[file exists $impldir/minimig_openaars_top.$ext]} {
-        file copy -force $impldir/minimig_openaars_top.$ext $R/build/stage_ap040/
+        file copy -force $impldir/minimig_openaars_top.$ext $out/
         puts "build_ap040.tcl: copied minimig_openaars_top.$ext to build/stage_ap040/"
     } else {
         puts "build_ap040.tcl: WARNING minimig_openaars_top.$ext not produced"

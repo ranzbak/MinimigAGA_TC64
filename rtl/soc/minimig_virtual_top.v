@@ -898,22 +898,36 @@ endgenerate
 // probe9  dbg_req_be[15:0]     probe21 dbg_sdr_dat_w[31:0]
 // probe10 dbg_req_addr[31:0]   probe22 dbg_sdr_dqm_w[3:0]
 // probe11 dbg_req_wdata[127:0] probe23 {cdc_ready,cdc_req,cdc_done,req_tgl}
-// AP68040 fault capture.  Trigger on dbg_flags[3] (the core's fault_r) and the
-// capture names the exception outright: which vector, the PC it happened at,
-// the opcode in the instruction register, the SR, and the address that faulted
-// if it was an access error.  A yellow Kickstart screen means an exception
-// before the trap handlers are installed, which is otherwise invisible.
+// AP68040 capture: the chipset bus with its data, plus where the CPU is.
+//
+// The first version of this ILA probed dbg_fault_addr and exc_vec, on the
+// theory that a yellow Kickstart screen meant an exception before the trap
+// handlers existed.  It does not: the 040 reaches Exec with no exception at
+// all and spins in AllocMem, unable to allocate a 6 kB supervisor stack after
+// a 1540-byte allocation has just succeeded (Kickstart 46.143 $F8068E-$F806A0,
+// see findings/ap68040/plan-v2-with-ddr3.md).  Addresses alone cannot say
+// whether the memory region is genuinely small or the free list is corrupt --
+// both spin here, and telling them apart needs the MemChunk mc_Bytes the
+// allocator reads back.  So the fault ports give up their probes to the
+// chipset read and write data.
+//
+// With Turbo off every chip RAM access is a 7 MHz chipset cycle, roughly 140 ns
+// against this 8.8 ns clock, so an unqualified 1024-sample window covers about
+// 64 bus cycles.  Hence 4096 deep and storage qualification: capture on
+// !tg68_as and the window holds 4096 real transfers instead of mostly idle.
 generate
 if (CPU040_DEBUG_ILA) begin : g_cpu040_ila
+  // as/rw/uds/lds are active low; grouped so one probe carries the cycle type.
+  wire [3:0] bus_ctl = {tg68_as, tg68_rw, tg68_uds, tg68_lds};
   ila_cpu040 ila_cpu040_i (
     .clk    (CLK_114),
     .probe0 (dbg_pc),          // 32
-    .probe1 (dbg_fault_addr),  // 32
-    .probe2 (dbg_ir),          // 16
-    .probe3 (dbg_sr),          // 16
-    .probe4 (dbg_exc_vec),     // 8
+    .probe1 (tg68_adr),        // 32 chipset bus address
+    .probe2 (tg68_dat_in),     // 16 read data  -- mc_Next / mc_Bytes land here
+    .probe3 (tg68_dat_out),    // 16 write data
+    .probe4 (bus_ctl),         // 4  {as, rw, uds, lds}, all active low
     .probe5 (dbg_flags),       // 4  {fault, in_exc, halted, busy}
-    .probe6 (tg68_adr),        // 32 the wrapper's bus address, for context
+    .probe6 (dbg_ir),          // 16 opcode, one instruction behind dbg_pc
     .probe7 (tg68_cpustate)    // 7
   );
 end

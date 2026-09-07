@@ -23,6 +23,10 @@
 ;   7  MemHeader mh_Free read-back
 ;   8  counter loop, previous location read back wrong
 ;   9  counter loop, just-written location read back wrong
+;  10  MOVEM.L through displacement addressing, chip RAM
+;  11  ADDQ.L #4,(a0) longword read-modify-write, chip RAM
+;  12  Exec List relocation left a pointer wrong
+;  13  Exec List relocation left the list empty -- the AllocMem symptom
 ;  99  unexpected 68k exception (bus/address error, privilege violation, ...)
 ;
 ; Build with asm/build_68k_test.sh (vasmm68k_mot, -m68020 -Fbin).
@@ -367,9 +371,126 @@ cn_loop:
           dbra      d6,cn_loop
 
 ;-----------------------------------------------------------------------------
+; Phase 7 -- the Exec idioms the AP68040 hardware failure implicates.
+;
+; Kickstart 46.143 relocates SysBase->MemList from the old ExecBase to the new
+; one at $F80650-$F8067A, in between the AllocMem that succeeds ($F805E4) and
+; the AllocMem that fails forever ($F80690).  AllocMem walks that list with
+; "movea.l (a0),a0 / tst.l (a0) / beq fail", so a relocation that leaves the
+; list empty makes every later AllocMem return 0 for every size and every
+; memory type -- exactly what the board does.
+;
+; The idiom is longword pointer traffic over a 16-bit bus, which is the one
+; thing the AP040 does differently from the TG68K here (longword_pair off, so
+; every longword is two separate word cycles):
+;
+;   * MOVEM.L to and from displacement addressing, as at $F80626/$F8063E
+;   * ADDQ.L #4,(a0) -- a longword read-modify-write, two reads, two writes
+;   * the six-instruction List relocation itself
+;
+; This runs in chip RAM, so under --chipbus it goes out over the 7 MHz chipset
+; bus -- the path the failing board uses with Turbo off.
+;-----------------------------------------------------------------------------
+CHIPSCR   equ $00008000        ; scratch in the bench's chip RAM, clear of the
+                               ; program (< $800) and the mailbox ($1000)
+LOLD      equ CHIPSCR+$40      ; the "old" List header
+LNODE     equ CHIPSCR+$80      ; its one node
+LNEW      equ CHIPSCR+$C0      ; the "new" List header
+
+          moveq     #7,d7
+          move.l    d7,MBOX+16
+
+; ---- MOVEM.L store and load, displacement addressing ----------------------
+          movea.l   #CHIPSCR,a0
+          move.l    #$11111111,d0
+          move.l    #$22222222,d1
+          move.l    #$33333333,d2
+          move.l    #$44444444,d3
+          movem.l   d0-d3,$20(a0)
+          moveq     #0,d0
+          moveq     #0,d1
+          moveq     #0,d2
+          moveq     #0,d3
+          movem.l   $20(a0),d0-d3
+          cmpi.l    #$11111111,d0
+          bne       f_mvm0
+          cmpi.l    #$22222222,d1
+          bne       f_mvm1
+          cmpi.l    #$33333333,d2
+          bne       f_mvm2
+          cmpi.l    #$44444444,d3
+          bne       f_mvm3
+
+; ---- ADDQ.L #4,(a0): longword read-modify-write ---------------------------
+          movea.l   #CHIPSCR,a0
+          move.l    #$12345678,(a0)
+          addq.l    #4,(a0)
+          move.l    (a0),d3
+          move.l    #$1234567C,d4
+          move.l    a0,d2
+          cmp.l     d4,d3
+          bne       f_rmw
+
+; ---- the List relocation, instruction for instruction ---------------------
+; A one-node Amiga List: lh_Head = node, lh_Tail = 0, lh_TailPred = node;
+; node ln_Succ = &lh_Tail, ln_Pred = &lh_Head.
+          movea.l   #LOLD,a2
+          movea.l   #LNODE,a1
+          movea.l   #LNEW,a3
+          move.l    a1,(a2)              ; old lh_Head    = node
+          clr.l     4(a2)                ; old lh_Tail    = 0
+          move.l    a1,8(a2)             ; old lh_TailPred= node
+          move.l    #LOLD+4,(a1)         ; node ln_Succ   = &old lh_Tail
+          move.l    a2,4(a1)             ; node ln_Pred   = &old lh_Head
+          moveq     #0,d0                ; scrub the destination first, so a
+          move.l    d0,(a3)              ; relocation that writes nothing at
+          move.l    d0,4(a3)             ; all is caught rather than passing
+          move.l    d0,8(a3)             ; on whatever was already there
+
+          movea.l   (a2),a0              ; --- $F80666, verbatim
+          move.l    a0,(a3)
+          move.l    a3,4(a0)
+          movea.l   8(a2),a0
+          move.l    a0,8(a3)
+          move.l    a3,(a0)
+          addq.l    #4,(a0)              ; --- $F80678
+
+          move.l    #LNEW,d2             ; new lh_Head must be the node
+          move.l    #LNODE,d4
+          move.l    LNEW,d3
+          cmp.l     d4,d3
+          bne       f_list
+          move.l    #LNEW+8,d2           ; new lh_TailPred must be the node
+          move.l    #LNODE,d4
+          move.l    LNEW+8,d3
+          cmp.l     d4,d3
+          bne       f_list
+          move.l    #LNODE+4,d2          ; node ln_Pred must be the new header
+          move.l    #LNEW,d4
+          move.l    LNODE+4,d3
+          cmp.l     d4,d3
+          bne       f_list
+          move.l    #LNODE,d2            ; node ln_Succ must be new header + 4
+          move.l    #LNEW+4,d4
+          move.l    LNODE,d3
+          cmp.l     d4,d3
+          bne       f_list
+
+; ---- and now walk it the way AllocMem does --------------------------------
+; movea.l (a0),a0 / tst.l (a0) / beq -> "no memory".  A zero here is the
+; hardware symptom exactly.
+          movea.l   #LNEW,a0
+          movea.l   (a0),a0
+          move.l    (a0),d3
+          move.l    a0,d2
+          move.l    #LNEW+4,d4
+          tst.l     d3
+          beq       f_walk
+
+;-----------------------------------------------------------------------------
 ; Done
 ;-----------------------------------------------------------------------------
-          moveq     #6,d7
+          moveq     #8,d7
           move.l    d7,MBOX+16
           moveq     #0,d2
           moveq     #0,d3
@@ -394,6 +515,28 @@ f_free:   moveq     #7,d7
 f_cnt:    moveq     #8,d7
           bra       report
 f_cnt2:   moveq     #9,d7
+          bra       report
+
+; Phase 7.  The MOVEM.L handlers move the offending register into d3 last,
+; because d3 is itself one of the four being checked.
+f_mvm0:   move.l    d0,d3
+          move.l    #$11111111,d4
+          bra       f_mvm
+f_mvm1:   move.l    d1,d3
+          move.l    #$22222222,d4
+          bra       f_mvm
+f_mvm2:   move.l    d2,d3
+          move.l    #$33333333,d4
+          bra       f_mvm
+f_mvm3:   move.l    #$44444444,d4
+f_mvm:    move.l    #CHIPSCR+$20,d2
+          moveq     #10,d7
+          bra       report
+f_rmw:    moveq     #11,d7
+          bra       report
+f_list:   moveq     #12,d7
+          bra       report
+f_walk:   moveq     #13,d7
           bra       report
 
 EXCEPT:   move.l    #$EEEEEEEE,d2
