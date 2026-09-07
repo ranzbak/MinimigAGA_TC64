@@ -1,9 +1,27 @@
 # AP68040 with MMU and FPU — implementation plan, second edition
 
-Date 2026-09-06, updated 2026-09-07. Status: **stage 0 done, stage A's RTL
-done and simulating; nothing on hardware yet.** The AP68040 runs the
-`sim/ddr3_cpu` program through this project's wrapper and DDR3 chain. See
-"Log" near the end for what was found on the way.
+> **NEXT SESSION STARTS AT [Stage B](#stage-b--mmu-walker-port-m--start-here).**
+>
+> Stage A is done and on hardware: the 68040 boots AmigaDOS to a Shell with the
+> startup-sequence skipped. `SetPatch` crashes it, because it enables the MMU
+> and the table-walker port is still tied off. Stage B is the only known
+> blocker between here and Workbench, and its section carries the confirmed
+> capture, the design, the deadlock hazard to avoid, the reference
+> implementation and the bench to write first.
+>
+> Free experiment before any RTL: rename `LIBS:68040.library` on the boot
+> volume. `SetPatch` then skips MMU setup, and Workbench should boot with the
+> MMU merely unused. That both gives a working machine and confirms the walker
+> is the last blocker.
+
+Date 2026-09-06, updated 2026-09-07. Status: **stages 0 and A done and on
+hardware.** The AP68040 is the sole core in `build/stage_ap040_fix`
+(WNS -0.504 ns, the usual SDRAM read path, hold clean) and boots Kickstart
+46.143 through Exec into AmigaDOS: ExecBase published, memory list and
+allocator working, dispatcher idling at $F815BA, interrupts arriving, and a
+Shell when the startup-sequence is skipped. Stage B (the MMU walker) is the
+next task and the only known blocker for Workbench. See "Log" near the end for
+what was found on the way -- two bugs, both the same bug on different ports.
 Supersedes the order of work in [README.md](README.md), which was written
 before the DDR3 fast RAM landed and assumed it would arrive as an in-domain
 DLL-off controller. It arrived differently (see "What changed since the first
@@ -313,30 +331,107 @@ DDR3 (`findings/ddr3/z3ram3-on-ddr3-plan.md`).
 | A6 | **Hardware**: build `CPU_CORE=AP040`, program by reprogramming (never soft reset). Boot **without startup-sequence** so SetPatch never runs and the MMU stays off — no `NOMMU` mechanism to get right on the first try. Then `ShowConfig` (CPU line must say 68040), `avail` (42 MB as today), ATK on the SDRAM board and the DDR3 board. Then a normal boot: SetPatch loads `68040.library`, which **will** enable the MMU and hit the tied-off walker → watchdog → access error. Expected; it is the exit condition for stage B. | Workbench up with MMU off; ATK clean on both boards; the MMU-on boot fails in the documented way |
 | A7 | Baseline numbers: `bench_loop` cycles per instruction TG68K vs AP040 (from 0.2 and the TG68K equivalent), and a fast-RAM memory benchmark on hardware for both bitstreams. | table below filled |
 
-### Stage B — MMU walker port (S–M)
+### Stage B — MMU walker port (M) — **START HERE**
 
-Required for AmigaOS, not only for NetBSD: `68040.library` builds page tables
-and enables translation at boot to control cache modes; MuFastROM/MMULib remap
-Kickstart into fast RAM through it.
+**Confirmed on hardware 2026-09-07.** The 040 boots AmigaDOS to a Shell with
+the startup-sequence skipped. `SetPatch` crashes it, run by hand from that
+Shell. The capture: `dbg_pc` = $400B53FE, `dbg_ir` = 4E7B (MOVEC),
+`dbg_flags` = {fault, in_exc, halted}, last bus address $0000000A -- the second
+word of the longword at $8, i.e. vector 2. So MOVEC enabled translation, the
+first table walk found `walker_ack` tied to 0, `ap040_bus_timeout` turned the
+missing acknowledge into an access fault, and the core halted on the vector
+fetch. This is the only known blocker between here and Workbench.
 
-Design: **the walker rides the CPU's own memory path.** A page-table walk
-happens during address translation, before the core's bus request exists, so
-the wrapper's bus is idle (`busstate = 01`) whenever `walker_req` is high.
-The wrapper adds a small requester that, while `walker_req` is up and the
-kernel is idle, drives `cpuaddr`/`state`/`uds`/`lds`/`data` in the kernel's
-place as two 16-bit sub-cycles (read or write), through the **existing**
-`sel_*` decode, `ramcs`/`ddrcs`, `mem_ready` and `clkena` logic, and returns
-`walker_data` with a level `walker_ack` held until `walker_req` drops. No
-new SDRAM or DDR3 port, no arbiter, no CDC. Tables in chip RAM go to the SDRAM
-port, tables in fast RAM to board 1 (SDRAM) or board 3 (DDR3) by address,
-exactly as CPU data does. The walker's U/M-bit update is a read then a write,
-two requests. `walker_berr` from an access into undecoded space (`sel_undecoded`).
+**Before writing RTL, run the free experiment.** On the boot volume:
+
+    rename LIBS:68040.library LIBS:68040.library.off
+
+`SetPatch` only programs the MMU because that library is present; without it it
+still installs its patches and enables the caches. If Workbench then boots, the
+walker is confirmed as the last blocker and there is a usable machine to work
+from. If it still crashes, something else is wrong and this stage is not the
+whole story -- find that out before spending a day on the router.
+
+**Design: the walker rides the CPU's own memory path.** A walk happens during
+address translation, before the core's bus request exists, so the wrapper's bus
+is idle whenever `walker_req` is high. No new SDRAM or DDR3 port, no arbiter --
+`sdram_ctrl`'s slot arbiter already uses all eight types (REFRESH, CHIP,
+CPU_READCACHE, CPU_WRITECACHE, HOST, RTG, AUDIO, IDLE = 7), so a dedicated port
+means widening it, and that is the module every other master depends on.
+
+No CDC either: `ap040_walker_cdc.v` exists for hosts whose wrapper is in
+another clock domain (the MiSTer tree runs `cpu_wrapper` on clk_sys and memory
+on clk_114). Ours is already clk_114 throughout. **Do not instantiate it.**
+
+Everything on the RAM port derives from `cpuaddr`, so the mux is small. In
+`rtl/soc/TG68K.vhd`:
+
+  * `cpuaddr` (:548) -- currently `addrtg68 WHEN cpu_i(1) = '1' ELSE ...`;
+    take `wk_addr` when the walker owns the bus. `sel_ram`, `sel_ddr`,
+    `ramaddr` (:539-545), `ramcs` (:469) and `cpustate` (:497) then follow with
+    no further change.
+  * `state` -- "10" for a walker read, "11" for a write, so `cpustate[1:0]`
+    is right.
+  * `uds_in` / `lds_in` -- both asserted; descriptors are aligned longwords.
+  * `w_datatg68` -- the write half on a U/M-bit update.
+  * capture `fromram` / `fromddr` into `wk_data`; hold `walker_ack` as a LEVEL
+    until `walker_req` drops (`ap040_mmu.v`: `walk_ack = w_active && w_issued
+    && walker_ack && !walker_berr`, and the walk FSM advances under `ce`, so a
+    one-cycle pulse can be missed).
+
+A longword descriptor is **two 16-bit sub-cycles** at A and A+2. Do not try to
+use the paired-transfer path: `longword_pair` is 0 for the AP040 precisely
+because the core issues independent word cycles (see the Log -- that mismatch
+caused both the $F800D6 hang and the AllocMem failure, on the two ports).
+
+**The hazard that will bite: clock-enable deadlock.** The core consumes
+`walker_ack` only under its `ce`, and `ce` is `clkena_in`, which this wrapper
+gates on bus state (:820, the `state = "01"` term). Mux `state` away from idle
+during a walk and `clkena` can stop, so the core never consumes the ack and the
+machine hangs -- with no fault, which looks like the old AllocMem spin and will
+waste hours. apolkosnik hit this: the `ap040x3` branch note says gating the
+core on the bus wait "froze the whole stack for the length of every external
+transaction", and that branch moves to a free-running `ce_core = 1'b1` with
+only the bus16 adapter still gated. **Keep `clkena` alive while the walker owns
+the bus** (add a `wk_active` term), and assert in the bench that the core sees
+at least one enable per walk.
+
+**Reference implementation**, for the address translation and the error cases:
+`apol/ap040` (and x3) in the MiSTer tree, `rtl/cpu_wrapper.v` around lines
+449-490 -- `walker_sel_z3ram0/1`, `walker_sel_z2ram`, `walker_sel_dd`,
+`walker_sel_rtg`, `walker_ramaddr`, and especially `walker_mem_bad`: a
+misaligned descriptor address, or a high address that decodes as nothing, must
+raise `walker_berr` rather than hang. That is what turns a corrupt table into a
+Guru instead of the fatal halt we get today. Our equivalent of `walker_mem_bad`
+is `(|wk_addr(1 downto 0)) OR sel_undecoded`.
 
 | # | Step | Exit criterion |
 |---|---|---|
-| B1 | Requester in the wrapper as above; multiplexed into the kernel-side bus signals; `berr` optionally driven from `sel_undecoded_d` for walker accesses. | lint clean |
-| B2 | **Bench**: `sim/ddr3_cpu` program builds a two-level table in DDR3 fast RAM (root in chip RAM to exercise both paths), loads URP/SRP/TC via `movec`, enables translation, touches a mapped page and a page with the M bit clear, checks the descriptor's U/M bits through the backdoor, then an unmapped page and checks the access-error frame. `lib/AP68040/tb` `t_mmu` already proves the MMU; this proves the router. | PASS |
-| B3 | Hardware: normal boot with SetPatch; `68040.library` enables the MMU. Then MuFastROM (`MuFastROM ON` from MMULib) and confirm Kickstart runs from fast RAM (`MuScan`). | Workbench with MMU on; MuScan shows ROM in fast RAM |
+| B0 | Close the bench gap FIRST. `sim/ddr3_cpu`'s RAM model reads `cpustate[2:0]` and ignores bit 6, which is why the `cpustate(6)` bug reached hardware. Make the model honour the 32-bit-write bit, and assert it is never set while the AP040 is the core. | the bench fails on a reverted `cpustate(6)` fix |
+| B1 | Requester in the wrapper, multiplexed into the kernel-side bus signals as above; `walker_berr` from misalignment or `sel_undecoded`; `clkena` kept alive under `wk_active`. | lint clean, `./run.sh --ap040` and `--ap040 --chipbus` still PASS |
+| B2 | **Bench the router.** `sim/ddr3_cpu` program builds a two-level table with the root in chip RAM and leaves in DDR3 fast RAM, so both ports are exercised; loads URP/SRP/TC with `movec`; enables translation; touches a mapped page, a page with M clear (forces a descriptor write-back), an unmapped page (expects an access-error frame), and a misaligned root (expects `walker_berr`, not a hang). `lib/AP68040/tb` `t_mmu` already proves the MMU itself -- this proves OUR router. Add a watchdog that fails on no progress, so a `clkena` deadlock reports as a failure rather than a timeout. | PASS, and a mutant with `walker_ack` tied low FAILS |
+| B3 | Hardware: restore `LIBS:68040.library`, boot with SetPatch. | **Workbench with the MMU on** |
+| B4 | Then MuFastROM (`MuFastROM ON`, MMULib) and `MuScan` to confirm Kickstart runs from fast RAM. | MuScan shows ROM in fast RAM |
+
+**Debug kit that already exists**, if B3 misbehaves: `tools/vivado/build_ap040.tcl`
+builds with `CPU040_DEBUG_ILA=1`; the CPU ILA carries `dbg_pc`, `tg68_adr`,
+`tg68_dat_in`, `tg68_dat_out`, `bus_ctl` = {as,rw,uds,lds}, `dbg_flags` =
+{fault,in_exc,halted,busy}, `dbg_ir`, 4096 deep, storage-qualified on `!as`.
+`tools/vivado/ila_bus_decode.py <csv> --longs --pc` turns a capture into
+longword bus transfers; `tools/kick_dis.py <rom> <start> <end>` disassembles
+Kickstart at Amiga addresses. The board runs **46.143**
+(`~/work/amiga/helloworld/kickstart/kick.a1200.46.143.rom`, md5
+79bfe8876cd5abe397c50f60ea4306b9) -- verify any ROM by opcode fingerprint
+against a capture before trusting a disassembly, offsets move between versions.
+
+**Two lessons from stage A, worth the time they cost.** Both bugs were the same
+bug on different ports -- the wrapper answering one request with two words while
+the adapter issues two independent cycles -- and neither was findable by
+reasoning: the winning move both times was a bus capture, and the second time
+it was what the trace did NOT contain (ExecBase reads absent from the chipset
+bus) that located it. And both slipped through because the bench did not model
+the path. If stage B stalls, capture before theorising, and check what the
+bench is not modelling.
 
 ### Stage C — FPU on hardware (S)
 
