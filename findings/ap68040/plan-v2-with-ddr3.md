@@ -955,6 +955,62 @@ CPU release, `--mmu` phase 6 634.25 -> 615.44 us (-2.97 %) and phase 8
 phase 8 855.71 -> 847.24 us (-0.99 %), which is what a 7 MHz-bus-bound run
 should show.  No bitstream in this task.
 
+**2026-09-08, stage D task 2 -- Vivado build and sign-off of the x3-core
+state.**  Two bitstreams from superproject commit 4b033dc (no RTL touched):
+`build/stage_ap040_x3` (ila = 0, the shipping config, signed off) and
+`build/stage_ap040_x3_ila` (ila = 1, the CPU ILA for the stall capture --
+numbers reported, not signed off).  Build times: ila = 0 took 20 min 28 s;
+ila = 1 took 26 min 46 s.
+
+Two things worth a cold reader's attention.  First, `build/stage_ap040_ddr3only`
+-- "the current board bitstream" this task compares against -- turns out to
+have been built with **ila = 1** itself (its own build log's `-tclargs
+build/stage_ap040_ddr3only 1`, and it carries a `.ltx`), not ila = 0 as this
+task's brief assumed.  `build_ap040.tcl`'s single `ila` argument gates both
+`DDR3_FASTRAM_ILA` and `CPU040_DEBUG_ILA`, and forces `PHYS_OPT_DESIGN` /
+`POST_ROUTE_PHYS_OPT_DESIGN` on unconditionally (for every build, ila or not)
+specifically to claw back the ILA's own congestion cost.  So the ila = 0 x3
+build being signed off here carries strictly less debug logic than the
+baseline it beat -- a fair "no regression" test, but not the like-for-like
+congestion match the brief pictured.
+
+Second, `ap040_fill_cdc.v` -- new in the x3 overlay -- does **not** enter the
+Vivado project via `build_ap040.tcl`: that script neither sources
+`tools/vivado/build.tcl` (whose add_src loop is the only place that lists the
+AP68040 core files) nor adds AP68040 sources itself, and `project_1.xpr`
+currently carries the other 10 AP68040 files but not this one.  Harmless for
+this task -- nothing in the tree instantiates `ap040_fill_cdc` yet (task 1
+left the fill channel "declared but not routed") -- but D task 3 (routing the
+fill channel) needs a `build.tcl` run, or a `build_ap040.tcl` fix, before that
+file can be synthesized at all.
+
+Sign-off, ila = 0 vs `build/stage_ap040_ddr3only`: `clk_114` WNS improved
+(−0.347 ns vs −0.588 ns) with one extra failing endpoint --
+`g_cache.cache/st_snooped_reg`, −0.262 ns -- which is `st_snooped`, a
+free-running register by the x3 source's own comment
+(`ap040_cache.v`: "set free-running -- the snoop is -- and consumed/cleared
+in the ce domain", same sentence covering `look_snooped`) and already excluded
+from the kernel multicycle set by `cpu.xdc`'s pre-existing `*_snooped_reg*`
+wildcard (`exceptions.rpt` confirms the `-start 3`/`-hold 2` kernel set's
+filter carries that exclusion and both `cycles=3(start)`/`cycles=2(start)`
+lines resolve without "Invalid endpoint"). Not a constraint gap. SDRAM read
+path also improved (−0.510 ns vs −0.602 ns, same 16 failing endpoints). DDR3
+CDC `set_max_delay -datapath_only` exceptions unchanged, byte-identical.
+Kernel multicycle set populated, unchanged filter text. **PASS.**  ila = 1
+numbers reported for the stall capture but not signed off (ILA congestion is
+known to cost ~0.1-0.4 ns): actual cost is bigger than that guess -- `clk_114`
+WNS −0.753 ns (vs the ila=1 baseline's −0.588 ns, i.e. 0.165 ns worse) with
+**210** failing endpoints on `clk_114` (baseline 1, x3 ila=0 build 2), worst
+path the same `atc_ram -> st_snooped_reg` pair at 11 logic levels. SDRAM path
+unaffected (−0.508 ns, 16 failing, same as ila=0's −0.510/16). Utilization
+close to the ila=1 baseline (45,635 LUT / 29,266 FF / 125.5 BRAM / 28 DSP).
+Not a sign-off requirement for this build, but a heads-up worth having before
+using it for the stall capture: this bitstream's kernel timing is well
+outside spec, well past a token ILA tax.
+
+Full sign-off table, both build logs, and both `.xpr` source-list findings:
+`.superpowers/sdd/plan-v2-with-ddr3/task-2-report.md`.
+
 ## Risks
 
 | Risk | Shows as | Mitigation |
@@ -985,6 +1041,16 @@ should show.  No bitstream in this task.
 |   `clk_114` (the CPU island) | **+0.290 ns, 0 failing endpoints** | A6 |
 |   `clk_ddr100` | +1.774 ns, 0 failing | A6 |
 |   `clk_gen_sdram` → `clk_114` (the known SDRAM read path) | **−0.643 ns, 16 failing** (TG68K build: −0.544) | A6 |
+| **Post-route, x3-core build, ila = 0** (`build/stage_ap040_x3`, 2026-09-08, signed off against `build/stage_ap040_ddr3only`) | | |
+|   LUTs / FF / BRAM / DSP | **40,127 (63 %)** / 19,316 (15 %) / **59.5 (44 %)** / 28 | D task 2 |
+|   `clk_114` (the CPU island) | **−0.347 ns, 2 failing endpoints**: `mmu/atc_ram -> g_cache.cache/look_snooped_reg` (same pair as baseline's sole failure) and, new, `mmu/atc_ram -> g_cache.cache/st_snooped_reg` (−0.262 ns) — both free-running snoop registers already excluded from the kernel multicycle set by `cpu.xdc`'s `*_snooped_reg*` wildcard, not a constraint gap. Baseline: −0.588 ns, 1 endpoint. | D task 2 |
+|   `clk_gen_sdram` → `clk_114` (the known SDRAM read path) | **−0.510 ns, 16 failing** (baseline: −0.602 ns, 16 failing) | D task 2 |
+|   DDR3 CDC `set_max_delay -datapath_only` exceptions | unchanged from baseline, same two lines (`cdc/req_*_r_reg*`, `cdc/rdata_r_reg*`) | D task 2 |
+|   Build wall clock | 20 min 28 s (23:18:23 → 23:38:51) | D task 2 |
+| **Post-route, x3-core build, ila = 1** (`build/stage_ap040_x3_ila`, 2026-09-08, CPU ILA for the stall capture — not signed off, reported only) | | |
+|   `clk_114` (the CPU island) | **−0.753 ns, 210 failing endpoints** (baseline: −0.588 ns, 1) | D task 2 |
+|   `clk_gen_sdram` → `clk_114` | **−0.508 ns, 16 failing** (baseline: −0.602 ns, 16) | D task 2 |
+|   Build wall clock | 26 min 46 s (23:43:06 → 00:09:52) | D task 2 |
 | Post-route WNS on the `clkena` → CE paths | not the limit; no CE path in the top 40 violators | A6 |
 | Fast-RAM benchmark, TG68K vs AP040, 28 MHz | — | A7 |
 | Same after D1 (37.8 MHz) and D2 (line port) | — | D1 / D2 |
