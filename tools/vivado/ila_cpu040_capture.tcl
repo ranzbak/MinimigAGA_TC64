@@ -68,7 +68,15 @@ set_property CAPTURE_COMPARE_VALUE {eq4'b0XXX} [pr $ila *bus_ctl*]
 # "now" is what answers "is it running, and where": a PC that moves through a
 # handful of values in a 200-byte window is a spin, not progress.
 set_property CONTROL.TRIGGER_CONDITION AND $ila
-if {$mode eq "now"} {
+if {$mode eq "busy"} {
+    # Fire on the first cycle the CPU actually wants the bus (cpustate[1:0] is
+    # 01 when idle), then capture every clock from there.  This is what to use
+    # for a stall measurement: an idle Amiga sits in STOP with the PC frozen
+    # and no bus cycles at all, so an untriggered capture measures nothing.
+    set_property CONTROL.CAPTURE_MODE ALWAYS $ila
+    set_property CONTROL.TRIGGER_POSITION 16 $ila
+    set_property TRIGGER_COMPARE_VALUE {neq7'bxxxxx01} [must $ila *cpustate*]
+} elseif {$mode eq "now"} {
     set_property CONTROL.CAPTURE_MODE ALWAYS $ila
     set_property CONTROL.TRIGGER_POSITION 0 $ila
     set_property TRIGGER_COMPARE_VALUE {eq4'bxxxx} [pr $ila *dbg_flags*]

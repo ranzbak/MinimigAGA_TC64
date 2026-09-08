@@ -519,7 +519,84 @@ unimplemented instruction (FSIN) so the FPSP trap path through
 covers the library. Record whether `AP040_HAS_FPU=0` is ever wanted as a
 smaller build; if not, drop the parameter from the top level.
 
-### Stage D — performance (M each, independent, in this order)
+### Stage D — REVISED 2026-09-08 evening, after measuring and after reading apol/ap040x3
+
+Two things changed the plan, and a cold session should read this section before
+the table below it.
+
+**1. What the machine actually spends its time on.** Measured with the CPU ILA
+while a demo ran (`tools/vivado/ila_cpu040_capture.tcl ... now`, then count
+`cpustate` bit 5, which IS `clkena`), 144 us of clk_114:
+
+| | |
+|---|---|
+| core advanced | 14.4 % of clocks (the 4-phase enable ceiling is 25 %) |
+| bus request pending | 44.8 % |
+| stalled on memory | 44.2 % |
+| instruction rate | 2.78 per us, i.e. ~5.2 clk_114 or ~1.3 enables per instruction |
+
+So **perfect memory would be worth about x1.8, not x5**. SysInfo says 0.19x an
+A4000 68040/25; roughly half that gap is memory and half is the enable rate and
+the sequencer. Tight loops that miss stall 62 %; straight-line code 23 %. And
+note the core is not wildly inefficient per enable -- 1.3 enables per
+instruction -- so the enable RATE is the bigger structural limit, which is D1
+and D3 territory, not D2.
+
+**2. Most of stage D already exists upstream, in apol/ap040x3.** Their
+`rtl/ap040/` is ahead of our `lib/AP68040` submodule (0e76761): 407 changed
+lines in `ap040_cache.v` alone, plus a file we do not have at all,
+`ap040_fill_cdc.v`. Each feature is behind a parameter with an A/B reference:
+
+* `FILL_CHANNEL` (their plan X3.4) -- a miss takes the whole line as one
+  payload over `fill_req`/`fill_addr`/`fill_data`/`fill_ack`/`fill_err`,
+  instead of four longword transactions through the adapter. **This is D2**,
+  already built, with a better interface than the `cache_*` stub we have.
+* `POST_STORES` (X3.3) -- a store is acknowledged one cycle after acceptance
+  and drains from a latched copy, so the core stops waiting on every write.
+* Store-hit update in place (X3.2) -- a store that hits a resident line
+  updates it rather than clearing the row, as a 68040 does in write-through.
+* A `C_IDLE` bypass fix, measured upstream at **x1.41 with a zero-latency bus
+  and x2.27 with a latent one** on loop-heavy code. Ours is very much latent.
+
+Their wrapper also enables the core as `~cpu_req | bus_complete | bus_berr` --
+every clock unless a bus request is outstanding -- on `clk_sys` 28.6875 MHz
+single-cycle. That removes the cadence rounding which is most of our gap
+between a 25 % ceiling and 14.4 % measured. It is NOT a straight copy: our core
+is on clk_114 inside a multicycle island, and their timing closure says nothing
+about ours.
+
+**Revised order.** Do not hand-roll D2 against the old submodule.
+
+1. **Bump `lib/AP68040` to the x3 core.** Contained: new files, new ports on
+   the compat top, their own suite (`tb/run_tests.sh`) as the gate. Leave the
+   wrapper NOT routing `fill_req`, so everything falls back to the adapter path
+   and the only behavioural difference is the cache fix -- which alone may beat
+   D2. Build, then re-measure with SysInfo and the ILA stall capture.
+2. **Route the fill channel** to `ddr3_fastram`. Their `fill_ena_zorro` /
+   `fill_ena_chip` pick which memories may serve a line. Coherency is a
+   non-issue on the DDR3 board: `ddr3_fastram` already ties `snoop_act` to 0
+   ("no chipset snooping here") because chipset DMA cannot reach Zorro-III
+   space, and `cpu_cache_new` is write-through with a single master, so
+   reading a line around it cannot return stale data.
+3. **Then the enable scheme**, which subsumes D1.
+
+**D1 is written but does not boot, and the bisect is done.** Five enable phases
+(2,5,8,11,14) plus the latched chipset release: the machine hangs in
+expansion.library's ConfigDev walk, reading `$00000019` from a board whose
+`cd_BoardAddr` is nil. `chipset_done` is NOT the culprit -- with it kept and
+the cadence reverted to four phases the same board boots (ILA: CopyMem, then
+ROM, then 4096 samples at `$F815D2`, the dispatcher idle). Confirmed on both a
+false-constraint build (WNS -1.141, 1236 endpoints) and a corrected one
+(WNS -0.391, 17), so it is logic, not timing. The untested hypothesis is
+`slower`: `ramcs` opens three cycles after an enable and `slower` reloads on
+every enable, so at a three-cycle spacing the select opens on the very cycle
+the next enable can release the CPU, breaking the "address stable one cycle
+before `cpustate[2]` goes low" contract both controllers state in their
+headers. Try reloading `"0011"` instead of `"0111"`. **Teach `sim/ddr3_cpu` to
+enforce that contract first** -- it models the SDRAM side itself and passed all
+three broken variants happily.
+
+### Stage D — the original table (M each, independent, in this order)
 
 | # | Step | Depends on | Exit criterion |
 |---|---|---|---|
