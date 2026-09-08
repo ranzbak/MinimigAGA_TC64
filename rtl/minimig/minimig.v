@@ -442,7 +442,7 @@ wire  hires; //hires signal from Denise for interpolation filter enable in Amber
 //wire  aron;         //Action Replay is enabled
 wire  cpu_speed; //requests CPU to switch speed mode
 wire  turbo; //CPU is working in turbo mode
-reg   [6:0] memory_config; //memory configuration
+reg   [8-1:0] memory_config; //memory configuration; bit 7 = fast RAM on the DDR3 board only
 reg   [3:0] floppy_config; //floppy drives configuration (drive number and speed)
 reg   [4:0] chipset_config; //chipset features selection
 reg   [2:0] ide_config0; //HDD & HDC config: bit #0 enables Gayle primary channel, bit #1 enables Master drive, bit #2 enables Slave drive
@@ -662,7 +662,7 @@ paula PAULA1
   .filter(!_led)
 );
 
-wire  [6:0] userio_memory_config; //memory configuration
+wire  [8-1:0] userio_memory_config; //memory configuration
 wire  [3:0] userio_floppy_config; //floppy drives configuration (drive number and speed)
 wire  [4:0] userio_chipset_config; //chipset features selection
 wire  [2:0] userio_ide_config0; //HDD & HDC config: bit #0 enables Gayle, bit #1 enables Master drive, bit #2 enables Slave drive
@@ -1144,6 +1144,7 @@ minimig_autoconfig #(
   .lwr(cpu_lwr),
   .sel(sel_autoconfig),
   .fastram_config(memory_config[5:4]),
+  .ddr3_only(memory_config[7]),
   .m68020(cpu_config[1]),
   .ram_64meg(ram_64meg),
   .slowram_config(memory_config[3:2]),

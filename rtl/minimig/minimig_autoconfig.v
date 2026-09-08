@@ -30,6 +30,13 @@ module minimig_autoconfig #(
 	input sel,
 	input [1:0] slowram_config,
 	input   [1:0] fastram_config,
+	// Offer ONLY the third Zorro-III board (the DDR3 fast RAM) to the OS:
+	// skip the Zorro-II board and Zorro-III boards 1 and 2 entirely, so every
+	// fast-RAM access the OS makes lands on the DDR3.  It exists to measure
+	// that path on its own -- with the other boards in the chain the OS
+	// allocates from whichever it likes and a benchmark says nothing about
+	// which memory answered.  Only meaningful with Z3RAM3 = 1.
+	input         ddr3_only,
 	input m68020,
 	input ram_64meg,
 	output reg [4:0] board_configured,
@@ -73,7 +80,8 @@ function [2:0] ac_next;
 	begin
 		case(dev)
 			3'b000  : ac_next = (&fastram_config & m68020) ? 3'b001 : 3'b111; // ZII RAM -> ZIII RAM
-			3'b001  : ac_next = ram_64meg ? 3'b010 : (Z3RAM3 ? 3'b011 : ac_after_z3ram3);
+			3'b001  : ac_next = ddr3_only ? (Z3RAM3 ? 3'b011 : ac_after_z3ram3)
+			                              : (ram_64meg ? 3'b010 : (Z3RAM3 ? 3'b011 : ac_after_z3ram3));
 			3'b010  : ac_next = Z3RAM3 ? 3'b011 : ac_after_z3ram3;
 			3'b011  : ac_next = ac_after_z3ram3;
 			3'b100  : ac_next = 3'b111; // ETH
@@ -141,8 +149,15 @@ begin
 			roma_wr[8:0] <= 9'h001; // Write address for modifying size of ZII RAM.
 			rom_we<=1'b1;
 
-			// Either 1st board (ZII fast RAM) or null board if RAM is disabled
-			acdevice <= |fastram_config ? 3'b000 : 3'b111;
+			// Either 1st board (ZII fast RAM) or null board if RAM is disabled.
+			// With ddr3_only the chain starts at the third ZIII board instead,
+			// so the ZII board and ZIII boards 1 and 2 are never offered and
+			// their board_configured bits stay clear -- which is what gates
+			// their address decodes in TG68K.vhd.
+			if (ddr3_only && Z3RAM3)
+				acdevice <= 3'b011;
+			else
+				acdevice <= |fastram_config ? 3'b000 : 3'b111;
 			init<=1'b0;
 		end
 		else

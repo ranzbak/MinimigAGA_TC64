@@ -1414,7 +1414,7 @@ void HandleUI(void)
     case MENU_SETTINGS_MEMORY1:
         OsdColor(OSDCOLOR_SUBMENU);
         helptext = helptexts[HELPTEXT_MEMORY];
-        menumask = 0x3f;
+        menumask = 0x7f;
         parentstate = menustate;
 
         OsdSetTitle("Memory", OSD_ARROW_LEFT | OSD_ARROW_RIGHT);
@@ -1441,9 +1441,18 @@ void HandleUI(void)
         strcpy(s, "      HRTmon: ");
         strcat(s, (config.memory & 0x40) ? "enabled " : "disabled");
         OsdWrite(5, s, menusub == 4, 0);
-        OsdWrite(6, "", 0, 0);
 
-        OsdWrite(7, STD_BACK, menusub == 5, 0);
+        // Which fast-RAM boards autoconfig offers.  "DDR3 only" drops the
+        // Zorro-II board and Zorro-III boards 1 and 2 from the chain so every
+        // fast-RAM allocation lands on the DDR3 board -- the only way to
+        // benchmark that memory rather than whichever board the OS happened
+        // to allocate from.  Takes effect at the next reset, like the rest of
+        // the memory map.
+        strcpy(s, "      Boards: ");
+        strcat(s, (config.memory & 0x80) ? "DDR3 only" : "all      ");
+        OsdWrite(6, s, menusub == 5, 0);
+
+        OsdWrite(7, STD_BACK, menusub == 6, 0);
 
         menustate = MENU_SETTINGS_MEMORY2;
         break;
@@ -1483,7 +1492,13 @@ void HandleUI(void)
                 //   config.disable_ar3 &= 0xFE;
                 menustate = MENU_SETTINGS_MEMORY1;
             }
-            else if (menusub == 5)
+            else if (menusub == 5) /* fast-RAM boards: all / DDR3 only */
+            {
+                config.memory ^= 0x80;
+                ConfigMemory(config.memory);
+                menustate = MENU_SETTINGS_MEMORY1;
+            }
+            else if (menusub == 6)
             {
                 menustate = MENU_MAIN2_1;
                 menusub = 3;
