@@ -198,7 +198,7 @@ if [ "$CPU" = "ap040" ]; then
     AP=$R/lib/AP68040/rtl
     for f in ap040_tg68k_compat ap040_core ap040_alu ap040_muldiv ap040_regfile \
              ap040_fpu ap040_mmu ap040_cache ap040_bus16_adapter \
-             ap040_bus_timeout ap040_walker_cdc; do
+             ap040_bus_timeout ap040_walker_cdc ap040_fill_cdc; do
         echo "sv work \"$AP/$f.v\""                      >> $PRJ
     done
     echo "verilog work \"$R/rtl/cpu040/dpram.v\""        >> $PRJ

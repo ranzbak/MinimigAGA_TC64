@@ -47,6 +47,10 @@ entity TG68K is
 		ap040_has_mmu      : integer := 1;
 		ap040_has_fpu      : integer := 1;
 		ap040_enable_cache : integer := 1;
+		-- Posted stores: a store to a cacheable page is acknowledged by the
+		-- data cache and drained behind the core's back (AP040 plan X3.3).
+		-- 0 is the synchronous-store reference the A/B measurement wants.
+		ap040_post_stores  : integer := 1;
 		-- Size of the third ZIII board, log2 of its byte size: 24 = 16 MB,
 		-- 25 = 32 MB, 26 = 64 MB.  It is the DDR3 board when haveddr3, and the
 		-- board is size-aligned, so this also says how many address bits are
@@ -335,7 +339,9 @@ ARCHITECTURE logic OF TG68K IS
 			AP040_HAS_MMU      : integer := 1;
 			AP040_HAS_FPU      : integer := 1;
 			AP040_ENABLE_CACHE : integer := 1;
-			AP040_FAST_SIM     : integer := 0
+			AP040_FAST_SIM     : integer := 0;
+			AP040_POST_STORES  : integer := 1;
+			AP040_FILL_CHANNEL : integer := 1
 		);
 		PORT(
 			clk               : in  std_logic;
@@ -363,6 +369,13 @@ ARCHITECTURE logic OF TG68K IS
 			nresetout         : out std_logic;
 			fc                : out std_logic_vector(2 downto 0);
 			nmi_ack_toggle    : out std_logic;
+			fill_ena_zorro    : in  std_logic;
+			fill_ena_chip     : in  std_logic;
+			fill_req          : out std_logic;
+			fill_addr         : out std_logic_vector(31 downto 4);
+			fill_data         : in  std_logic_vector(127 downto 0);
+			fill_ack          : in  std_logic;
+			fill_err          : in  std_logic;
 			cache_maint_req   : out std_logic;
 			cache_maint_ic    : out std_logic;
 			cache_maint_dc    : out std_logic;
@@ -678,7 +691,16 @@ BEGIN
 				AP040_HAS_MMU      => ap040_has_mmu,
 				AP040_HAS_FPU      => ap040_has_fpu,
 				AP040_ENABLE_CACHE => ap040_enable_cache,
-				AP040_FAST_SIM     => 0
+				AP040_FAST_SIM     => 0,
+				AP040_POST_STORES  => ap040_post_stores,
+				-- The channel is compiled in but not served: fill_ena_zorro
+				-- and fill_ena_chip are both low below, and the cache's
+				-- fill_ok is their AND-of-windows, so every miss takes the
+				-- adapter path exactly as before (ap040_cache.v:93-110, and
+				-- the C_LOOK miss arm needs "FILL_CHANNEL != 0 && fill_ok").
+				-- Routing it is a later step; leaving the parameter at 1
+				-- keeps the port set stable when that step lands.
+				AP040_FILL_CHANNEL => 1
 			)
 			PORT MAP(
 				clk            => clk,
@@ -732,9 +754,21 @@ BEGIN
 				walker_data    => wk_data,
 				walker_berr    => wk_berr,
 
-				-- Stage D: the 16-byte line port.  Stubbed to zero inside the
-				-- compat top in this revision of the core, so nothing to
-				-- connect yet; fills are eight 16-bit sub-cycles for now.
+				-- Stage D: the line-fill channel.  NOT routed in this
+				-- revision.  Both enables low means the cache never raises
+				-- fill_req, so a miss is still eight 16-bit sub-cycles down
+				-- the adapter; the outputs are left open until a RAM
+				-- controller has a fill port to answer them.
+				fill_ena_zorro => '0',
+				fill_ena_chip  => '0',
+				fill_req       => open,
+				fill_addr      => open,
+				fill_data      => (others => '0'),
+				fill_ack       => '0',
+				fill_err       => '0',
+
+				-- The older 16-byte burst port, stubbed to zero inside the
+				-- compat top and superseded by the fill channel above.
 				cache_req      => open,
 				cache_addr     => open,
 				cache_data     => (others => '0'),

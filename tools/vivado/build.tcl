@@ -81,7 +81,8 @@ add_src $R/rtl/ddr3/ddr3_cdc.v
 if {[file exists $R/lib/AP68040/rtl/ap040_tg68k_compat.v]} {
     foreach f [list ap040_tg68k_compat ap040_core ap040_alu ap040_muldiv \
                     ap040_regfile ap040_fpu ap040_mmu ap040_cache \
-                    ap040_bus16_adapter ap040_bus_timeout ap040_walker_cdc] {
+                    ap040_bus16_adapter ap040_bus_timeout ap040_walker_cdc \
+                    ap040_fill_cdc] {
         add_src $R/lib/AP68040/rtl/$f.v
     }
     add_src $R/rtl/cpu040/dpram.v

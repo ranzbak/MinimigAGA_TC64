@@ -894,6 +894,67 @@ watchdog made an access fault of it and the core halted on the vector fetch.
 That is **stage B, exactly as predicted** ("a walk that never acks becomes a
 bus error via the watchdog").  It is the next piece of work, not a new bug.
 
+**2026-09-08, stage D task 1 -- the x3 overlay.**  `lib/AP68040` carries the
+`apol/ap040x3` core: `ap040_cache.v`, `ap040_core.v`, `ap040_mmu.v`,
+`ap040_tg68k_compat.v` and the new `ap040_fill_cdc.v`, copied verbatim from
+`Minimig-AGA_MiSTer` branch `apol/ap040x3` commit 8665741, directory
+`rtl/ap040`, on a local branch `x3-overlay`.  Three benches came with them --
+`tb_ap040_program.v`, `tb_ap040_cache_snoop.v`, `asm/t_exceptions.s` -- because
+without them the suite does not measure this core: test 136 aimed one fixed
+interrupt delay at the inside of a `MOVE to SR`, which only landed there while
+the core froze during bus waits, so it fails on a *working* x3 core.  The
+wrapper declares the `fill_*` port group and ties both enables low, so
+`fill_ok` is a constant 0 and every miss still takes the adapter path; the
+channel is compiled in (`AP040_FILL_CHANNEL => 1`) only to keep the port set
+stable for the task that routes it.  `AP040_POST_STORES` is a new TG68K
+generic, default 1.
+
+**And one line that is NOT verbatim.**  x3's A2b-0 also frees the core, MMU and
+cache from the clock enable (`ce_core = 1'b1`).  That reasoning holds where
+`clkena_in` is a pure bus wait, which is what MiSTer's `cpu_wrapper.v` supplies
+("`~cpu_req | bus_complete | bus_berr`", high on every idle cycle).  It is not
+what `TG68K.vhd` supplies: this wrapper ANDs the bus wait with `enaWRreg`, so
+the enable is high on 5 of every 16 `clk_114` phases.  `ap040_bus16_adapter`
+clears `mem_ack` *inside* `else if (clkena_in)`, so under a duty-cycled enable
+the acknowledge is not the one-clock pulse its header promises -- it is held
+for the whole phase gap.  A gated cache samples it once; a free-running one
+reads the stale level as the acknowledge of the NEXT request.  `--ap040` died
+at phase 0 on the first run.  Reproduced in two minutes rather than
+twenty-five by gating `tb_ap040_program`'s own `clkena_in` to those five
+phases: free-running fails `t_integer` test 67 and runs away to
+`pc=ffff6708`; re-gated passes the whole suite.  So `ce_core` is `clkena_in`
+here, as a second commit so the verbatim state stays in history.
+
+**What that costs, and the lesson.**  On the same gated bench the free-running
+core needs **2.4x fewer cycles** than the re-gated one (t_integer 12,342 /
+13,488 / 12,220 against 30,722 / 32,210 / 30,572).  A2b-0 is the prize in stage
+D, not a side effect of it -- and it needs two things this task did not do: a
+one-pulse-per-completion acknowledge (a three-line rising-edge detector in the
+compat top was tested and works, on the gated *and* the ungated bench, but the
+honest place for it is `ap040_bus16_adapter` upstream), and a rewrite of
+`cpu.xdc`, whose whole kernel island rests on "every kernel register holds its
+value for at least 3 `clk_114` cycles".  With the re-gating that premise is
+true again and `cpu.xdc` needs no edit today; `st_snooped` is the one new
+free-running register and the existing `*_snooped_reg*` wildcard already
+excludes it.
+
+The lesson is the one this bench keeps teaching: a core's own suite cannot see
+its host.  Eleven legs passed on the verbatim overlay because they drive
+`clkena_in` as a pure bus wait.  The reverse also holds -- a naively gated
+`tb_ap040_program` is not a valid harness for the interrupt and walker legs
+either: the *stock* 0e76761 core fails it at `exceptions` 141 and at `mmu`.
+It is sound only as a discriminator for the desync itself.
+
+**Gates.**  Core suite 11/11 with `rtl/cpu040/dpram.v`.  `sim/ddr3_cpu`:
+`--ap040`, `--ap040 --chipbus` and `--mmu` PASS, `--lwmutant` and
+`--mmumutant` fail as required, plain `./run.sh` (TG68K) PASS.  Phase
+timestamps moved everywhere, so the change reaches the bench: measured from
+CPU release, `--mmu` phase 6 634.25 -> 615.44 us (-2.97 %) and phase 8
+652.27 -> 631.12 us (-3.24 %); `--ap040` phase 8 1939.83 -> 1870.30 us
+(-3.58 %), with the instruction-bound phase 1->2 gap -11.07 %; `--chipbus`
+phase 8 855.71 -> 847.24 us (-0.99 %), which is what a 7 MHz-bus-bound run
+should show.  No bitstream in this task.
+
 ## Risks
 
 | Risk | Shows as | Mitigation |
@@ -917,6 +978,7 @@ bus error via the watchdog").  It is the next piece of work, not a new bug.
 | AP68040 self-tests at 0e76761 with the RAM override | **all 11 pass**, cache_snoop included | 0.2, 2026-09-07 |
 | `sim/ddr3_cpu` with CPU_CORE=AP040, smoke (PATBYTES=64) | **PASS + backdoor PASS**, first run | A5, 2026-09-07 |
 | Program phase 6 reached, AP040 vs TG68K, same program | 287 us vs 141 us | A5 smoke; 16-bit split transfers, 040 internal caches off |
+| `sim/ddr3_cpu --mmu` phase 6, x3 overlay vs 0e76761 | **615.44 us vs 634.25 us, −2.97 %** (from CPU release) | D task 1, 2026-09-08; core re-gated, fill channel not routed |
 | `bench_loop` cycles per instruction, AP040 / TG68K | — | 0.2 / A7 |
 | **Post-route, sole-core AP040 build with ILA** (2026-09-07) | | |
 |   LUTs / FF / BRAM / DSP | **43,750 (69 %)** / 26,335 (21 %) / **111 (82 %)** / 28 | A6 |
