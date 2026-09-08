@@ -1,7 +1,7 @@
 # Capture the AP68040's bus and fault state while the machine boots.
 #
 #   vivado -mode batch -source tools/vivado/ila_cpu040_capture.tcl \
-#          -tclargs <bitstream-dir> <out.csv> [minutes] [program]
+#          -tclargs <bitstream-dir> <out.csv> [minutes] [program] [fault|now]
 #
 # Needs a bitstream built with CPU040_DEBUG_ILA=1 (tools/vivado/build_ap040.tcl
 # with <ila> = 1), which puts ila_cpu040 on dbg_pc / tg68_adr / bus_ctl /
@@ -20,6 +20,7 @@ set dir     [lindex $argv 0]
 set out     [lindex $argv 1]
 set minutes [expr {[llength $argv] > 2 ? [lindex $argv 2] : 10}]
 set doprog  [expr {[llength $argv] > 3 ? [lindex $argv 3] : 0}]
+set mode    [expr {[llength $argv] > 4 ? [lindex $argv 4] : "fault"}]
 
 open_hw_manager
 connect_hw_server -allow_non_jtag
@@ -51,7 +52,9 @@ puts "=== using ILA: $ila ==="
 
 proc pr {ila pat} { return [get_hw_probes -of_objects $ila -filter "NAME =~ $pat"] }
 
-set_property CONTROL.DATA_DEPTH 4096 $ila
+# WINDOW_COUNT must be 1: the depth is split across windows, so a stale window
+# count leaves one sample per window and the capture looks empty.
+set_property CONTROL.WINDOW_COUNT 1 $ila
 set_property CONTROL.TRIGGER_POSITION 3584 $ila
 foreach p [get_hw_probes -of_objects $ila] {
     set_property TRIGGER_COMPARE_VALUE {} $p
@@ -60,9 +63,18 @@ foreach p [get_hw_probes -of_objects $ila] {
 # store only real bus cycles: as is bus_ctl[3], active low
 set_property CONTROL.CAPTURE_MODE BASIC $ila
 set_property CAPTURE_COMPARE_VALUE {eq4'b0XXX} [pr $ila *bus_ctl*]
-# trigger on the fault flag, dbg_flags[3]
+# trigger on the fault flag, dbg_flags[3] -- or, with <mode> = now, on
+# anything, which captures whatever the CPU is executing at this instant.
+# "now" is what answers "is it running, and where": a PC that moves through a
+# handful of values in a 200-byte window is a spin, not progress.
 set_property CONTROL.TRIGGER_CONDITION AND $ila
-set_property TRIGGER_COMPARE_VALUE {eq4'b1XXX} [pr $ila *dbg_flags*]
+if {$mode eq "now"} {
+    set_property CONTROL.CAPTURE_MODE ALWAYS $ila
+    set_property CONTROL.TRIGGER_POSITION 0 $ila
+    set_property TRIGGER_COMPARE_VALUE {eq4'bxxxx} [pr $ila *dbg_flags*]
+} else {
+    set_property TRIGGER_COMPARE_VALUE {eq4'b1xxx} [pr $ila *dbg_flags*]
+}
 
 run_hw_ila $ila
 puts "=== ILA armed at [clock format [clock seconds] -format %H:%M:%S] -- boot the machine now ==="
@@ -72,8 +84,11 @@ if {$rc} {
     puts "=== NO TRIGGER within $minutes minutes: the boot took no access fault ==="
     puts "=== ($err) ==="
 } else {
-    upload_hw_ila_data $ila
-    write_hw_ila_data -csv_file $out -force [current_hw_ila_data]
+    # Write the object upload_hw_ila_data RETURNS.  [current_hw_ila_data] looks
+    # like it should work and is what the older scripts here use, but with this
+    # core it yields a one-sample file -- four attempts went into finding that.
+    set data [upload_hw_ila_data $ila]
+    write_hw_ila_data -csv_file $out -force $data
     puts "=== FAULT captured, CSV written: $out ==="
 }
 close_hw_manager

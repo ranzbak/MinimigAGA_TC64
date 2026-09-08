@@ -385,19 +385,19 @@ always @ (posedge sysclk) begin
         // that coincidence to release a chipset access; TG68K.vhd now latches
         // the release instead (chipset_done) precisely because of this.
         case(sdram_state) // LATENCY=3
+            // BISECT 2026-09-08: back to four phases while the chipset_done
+            // change is tested on its own.  D1 is two changes -- this cadence
+            // and the latched chipset release -- and the machine stopped
+            // booting; this build keeps the release and reverts the cadence,
+            // so whichever half is at fault, the next boot names it.
             ph2 : begin
                 enaWRreg  <= #1 1'b1;
             end
-            ph5 : begin
-                enaWRreg  <= #1 1'b1;
-            end
             ph6 : begin
+                enaWRreg  <= #1 1'b1;
                 ena7RDreg <= #1 1'b1;
             end
-            ph8 : begin
-                enaWRreg  <= #1 1'b1;
-            end
-            ph11 : begin
+            ph10 : begin
                 enaWRreg  <= #1 1'b1;
             end
             ph14 : begin
