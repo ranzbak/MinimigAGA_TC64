@@ -544,7 +544,35 @@ until the CPU's next enable, and the end-of-cycle test moves out of the
 release now lands 2-3 cycles after the answer instead of waiting a full 7 MHz
 round.
 
-**D2, surveyed but not started.** What the checkout actually does today, so
+**D2, second survey (2026-09-08 evening), after SysInfo said 0.19x an A4000
+68040/25.** The first survey below assumed the win was in the DDR3 transfer.
+It is not. Reading the three interfaces properly:
+
+* `cpu_cache_new` **already fetches the whole 16-byte line on the first miss**
+  (`cpu_cacheline_lo/hi[0:7]`, `cpu_cacheline_valid`) and serves the other
+  seven words as hits. So a 040 line fill costs **one** DDR3 round trip, not
+  eight.
+* What it costs eight of is **CPU-side handshakes**. Each word pays `slower`'s
+  three-cycle chip-select setup, the rounding up to the next clock enable, and
+  the bus16 adapter's two sub-cycles per longword. That -- not memory latency
+  -- is the term to remove.
+* The stub port on the compat top is shaped for exactly that and is **not** a
+  128-bit line port: `cache_data` is `[15:0]`, with `cache_burst`,
+  `cache_burst_len[2:0]` and `cache_ramaddr[28:1]`. One address phase, then
+  words streamed on `cache_ack`.
+
+So D2 is: on a fill, raise the burst request once, and stream the eight words
+back at one per clock from `cpu_cache_new`'s line buffer (or straight from
+`ddr3_cdc`'s 128-bit response register), instead of eight independent selects.
+The DDR3 side needs no widening; it is already 16 bytes wide and idle between
+those handshakes.
+
+Coherency note before bypassing anything: `cpu_cache_new` is write-through and
+snoops chipset DMA writes into board 3, so reading a line around it is safe
+only while writes keep going through it. Read `findings/ddr3/design.md` before
+cutting it out of the read path.
+
+**First survey, kept because the file locations are still right.** What the checkout actually does today, so
 the next session does not have to find it again:
 
 * There is **no line port**. `cache_req`, `cache_addr`, `cache_burst`,
