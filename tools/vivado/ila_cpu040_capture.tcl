@@ -75,7 +75,7 @@ if {$mode eq "busy"} {
     # and no bus cycles at all, so an untriggered capture measures nothing.
     set_property CONTROL.CAPTURE_MODE ALWAYS $ila
     set_property CONTROL.TRIGGER_POSITION 16 $ila
-    set_property TRIGGER_COMPARE_VALUE {neq7'bxxxxx01} [must $ila *cpustate*]
+    set_property TRIGGER_COMPARE_VALUE {neq7'bxxxxx01} [pr $ila *cpustate*]
 } elseif {$mode eq "now"} {
     set_property CONTROL.CAPTURE_MODE ALWAYS $ila
     set_property CONTROL.TRIGGER_POSITION 0 $ila
