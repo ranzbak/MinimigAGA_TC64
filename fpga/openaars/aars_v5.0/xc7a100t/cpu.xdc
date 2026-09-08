@@ -65,7 +65,32 @@ set cpu_kernel_ap040 $cpu_wrapper/g_ap040.ap040
 # variables were left unset and all ten exceptions below were silently dropped.
 set cpu_is_kernel  "NAME =~ $cpu_kernel_tg68k/* || NAME =~ $cpu_kernel_ap040/*"
 set cpu_not_kernel "NAME !~ $cpu_kernel_tg68k/* && NAME !~ $cpu_kernel_ap040/*"
-set cpu_not_free   "NAME !~ *core_stall_watchdog/* && NAME !~ *walker_wr_d* && NAME !~ *wsnp_pend* && NAME !~ *wsnp_addr*"
+# Registers inside the core that do NOT advance on the clock enable.  A
+# multicycle exception on one of these is simply false: it updates every
+# clock, so the tool would check a single-cycle path against the island's
+# budget and report slack that does not exist.  This is the TIMING-46 class
+# fix-04 was about, and the list is no longer guesswork -- it comes from
+# reading every always @(posedge clk) in lib/AP68040/rtl for its enable guard
+# (2026-09-08):
+#
+#   core_stall_watchdog   ap040_bus_timeout, counts on the free clock by design
+#   walker_wr_d, wsnp_*   the compat top's walker-write snoop, free-running
+#   ipl_s*, irq_*, nmi_*  ap040_core.v:151, samples the asynchronous IPL every
+#                         clock -- measured 8.404 ns of real datapath against
+#                         8.815 ns, while the exception reported +26 ns
+#   l_row, l_tag, l_ld    ap040_mmu.v:163, the ATC lookup pipe, no ce at all
+#                         -- measured 6.237 ns
+#   *_snooped             ap040_cache.v:253, "set free-running -- the snoop is"
+#
+# All of them meet single-cycle timing today; the point is that from here on
+# the tool checks that instead of taking it on trust.
+set cpu_not_free   "NAME !~ *core_stall_watchdog/* && NAME !~ *walker_wr_d* && NAME !~ *wsnp_pend* && NAME !~ *wsnp_addr* && \
+                    NAME !~ *core/ipl_s1_reg* && NAME !~ *core/ipl_s2_reg* && \
+                    NAME !~ *core/irq_lvl_reg* && NAME !~ *core/irq_hold_lvl_reg* && \
+                    NAME !~ *core/irq_ack_d_reg* && NAME !~ *core/nmi_arm_reg* && \
+                    NAME !~ *core/nmi_ack_d_reg* && \
+                    NAME !~ *mmu/l_row_reg* && NAME !~ *mmu/l_tag_reg* && NAME !~ *mmu/l_ld_reg* && \
+                    NAME !~ *_snooped_reg*"
 
 set tg68_kernel [get_cells -hier -filter "($cpu_is_kernel) && ($cpu_not_free) && ($tg68_seq)"]
 set tg68_wrap   [get_cells -hier -filter "NAME =~ $cpu_wrapper/* && ($cpu_not_kernel) && ($tg68_seq)"]
