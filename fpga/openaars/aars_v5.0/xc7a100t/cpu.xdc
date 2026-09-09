@@ -75,17 +75,24 @@ set cpu_not_kernel "NAME !~ $cpu_kernel_tg68k/* && NAME !~ $cpu_kernel_ap040/*"
 #
 #   core_stall_watchdog   ap040_bus_timeout, counts on the free clock by design
 #   walker_wr_d, wsnp_*   the compat top's walker-write snoop, free-running
-#   l_row, l_tag, l_ld    ap040_mmu.v:163, the ATC lookup pipe, no ce at all
+#   l_row, l_tag, l_ld    ap040_mmu.v:165-167, the ATC lookup pipe, no ce at all
 #                         -- measured 6.237 ns
-#   *_snooped             ap040_cache.v:253, "set free-running -- the snoop is"
+#   *_snooped             ap040_cache.v:345 (st_snooped), :376 (fill_snooped,
+#                         look_snooped), "set free-running -- the snoop is"
 #
-# All of them meet single-cycle timing today; the point is that from here on
-# the tool checks that instead of taking it on trust.
+# All of them meet single-cycle timing today EXCEPT `*_snooped`: the
+# free-running pair `atc_ram -> g_cache.cache/{look,st}_snooped_reg` fails
+# setup by roughly -0.3 to -0.6 ns in EVERY AP040 build measured so far,
+# including the pre-x3 baseline -- it is the WNS-defining path for the
+# `clk_114` island.  Relaxing it with a multicycle exception would still be
+# wrong for the same free-running reason (it really can change any cycle);
+# the fix, if there is one, is RTL or floorplan, not a constraint change, and
+# it stays excluded here on purpose.
 set cpu_not_free   "NAME !~ *core_stall_watchdog/* && NAME !~ *walker_wr_d* && NAME !~ *wsnp_pend* && NAME !~ *wsnp_addr* && \
                     NAME !~ *mmu/l_row_reg* && NAME !~ *mmu/l_tag_reg* && NAME !~ *mmu/l_ld_reg* && \
                     NAME !~ *_snooped_reg*"
 
-# The interrupt sampler (ipl_s*, irq_*, nmi_*, ap040_core.v:151) is NOT in that
+# The interrupt sampler (ipl_s*, irq_*, nmi_*, ap040_core.v:150ff) is NOT in that
 # list, and that is a decision rather than an oversight.  It free-runs, so the
 # cone from it into the sequencer is physically single-cycle: 15 levels, 9.86 ns
 # of which 80 % routing, against 8.815 ns.  It cannot be placed out of trouble
@@ -104,7 +111,13 @@ set cpu_not_free   "NAME !~ *core_stall_watchdog/* && NAME !~ *walker_wr_d* && N
 # asynchronous arrival against a deadline it was never required to meet.
 #
 # The snoop flags are the opposite case and stay excluded: a late snoop is a
-# stale cache line, not a deferred interrupt.  They meet single-cycle today.
+# stale cache line, not a deferred interrupt.  They do NOT meet single-cycle
+# today -- `atc_ram -> g_cache.cache/{look,st}_snooped_reg` fails setup by
+# roughly -0.3 to -0.6 ns in every AP040 build measured, including the
+# pre-x3 baseline, and is the WNS-defining path on `clk_114`.  They stay
+# excluded anyway because the exclusion is correct regardless of whether the
+# path currently meets timing: it really can change on any clock, and
+# constraining it would only hide the violation rather than fix it.
 
 # ... but "no clock enable" is not the same as "changes every cycle".  A flop
 # clocked every cycle whose INPUT only moves just after an enable edge has an
@@ -137,13 +150,21 @@ set tg68_mem    [get_cells -hier -filter "(NAME =~ openaars_virtual_top/sdram/* 
 
 # Kernel island.
 #
-# The CPU's clock enable is enaWRreg, pulsed on five of the sixteen SDRAM
-# phases (2, 5, 8, 11, 14 -- sdram_ctrl.v), spacing 3-3-3-3-4.  A multicycle
-# exception has to cover the MINIMUM spacing, so these are 3 and not 4: every
-# kernel register holds for at least 3 cycles, 26.45 ns.  It was 4 (35.26 ns)
-# while the enable was on four phases; findings/ap68040/performance.md option
-# 1a made the change, and the AP68040's worst path is 21.0 ns standalone, so
-# the budget is met with about 5 ns to spare before congestion.
+# The CPU's clock enable is enaWRreg, pulsed on FOUR of the sixteen SDRAM
+# phases (2, 6, 10, 14, spacing 4-4-4-4), the single shared cadence in
+# rtl/sdram/cpu_enable_cadence.v (used by both sdram_ctrl.v and
+# sim/ddr3_cpu).  At four phases the minimum spacing is 4 cycles, 35.26 ns,
+# which would allow -start 4 / -hold 3.  The values below are -start 3 /
+# -hold 2 (26.45 ns) instead -- tighter than four phases needs.  That dates
+# from a five-phase enable (spacing 3-3-3-3-4, findings/ap68040/performance.md
+# option 1a, "D1") which was tried in RTL and reverted (it does not boot);
+# a later bench-only five-phase experiment (findings/ap68040/plan-v2-with-ddr3.md,
+# task 4) confirmed the "0111" hypothesis was not the boot fix and left the
+# cadence at four phases for good.  The tighter -start 3 / -hold 2 values
+# were kept deliberately rather than loosened back to -start 4 / -hold 3:
+# the AP68040's worst path (21.0 ns standalone) is met either way, and a
+# tighter-than-necessary exception only costs margin the design isn't using,
+# never correctness.
 set_multicycle_path -setup -start 3 -from $tg68_kernel -to $tg68_kernel
 set_multicycle_path -hold  -start 2 -from $tg68_kernel -to $tg68_kernel
 set_multicycle_path -setup -start 3 -from $tg68_kernel -to $tg68_wrap

@@ -914,7 +914,14 @@ bus error via the watchdog").  It is the next piece of work, not a new bug.
 `apol/ap040x3` core: `ap040_cache.v`, `ap040_core.v`, `ap040_mmu.v`,
 `ap040_tg68k_compat.v` and the new `ap040_fill_cdc.v`, copied verbatim from
 `Minimig-AGA_MiSTer` branch `apol/ap040x3` commit 8665741, directory
-`rtl/ap040`, on a local branch `x3-overlay`.  Three benches came with them --
+`rtl/ap040`, on a local branch `x3-overlay` (now at commit `c5d5cc3`); that
+branch is local-only and is **not fetchable from `lib/AP68040`'s upstream
+remote** until someone pushes it to a fork and `.gitmodules` is repointed --
+a fresh clone of this superproject cannot resolve the submodule pointer today.
+Upstream AP68040 commit `a8a50ce` (a cache-invalidation race fix and an FPU
+frame fix) was deliberately **not** merged into `x3-overlay`, to keep the
+overlay to one variable versus the hardware-verified core; the race it fixes
+is believed to still be present.  Three benches came with them --
 `tb_ap040_program.v`, `tb_ap040_cache_snoop.v`, `asm/t_exceptions.s` -- because
 without them the suite does not measure this core: test 136 aimed one fixed
 interrupt delay at the inside of a `MOVE to SR`, which only landed there while
@@ -930,13 +937,17 @@ cache from the clock enable (`ce_core = 1'b1`).  That reasoning holds where
 `clkena_in` is a pure bus wait, which is what MiSTer's `cpu_wrapper.v` supplies
 ("`~cpu_req | bus_complete | bus_berr`", high on every idle cycle).  It is not
 what `TG68K.vhd` supplies: this wrapper ANDs the bus wait with `enaWRreg`, so
-the enable is high on 5 of every 16 `clk_114` phases.  `ap040_bus16_adapter`
+the enable is high on **four** of every 16 `clk_114` phases (2, 6, 10, 14 --
+`rtl/sdram/cpu_enable_cadence.v` is the single source; this report originally
+said five, matching `sim/ddr3_cpu`'s own cadence at the time this task ran,
+but the RTL had already been reverted to four by commit `2f962f1` beforehand).
+`ap040_bus16_adapter`
 clears `mem_ack` *inside* `else if (clkena_in)`, so under a duty-cycled enable
 the acknowledge is not the one-clock pulse its header promises -- it is held
 for the whole phase gap.  A gated cache samples it once; a free-running one
 reads the stale level as the acknowledge of the NEXT request.  `--ap040` died
 at phase 0 on the first run.  Reproduced in two minutes rather than
-twenty-five by gating `tb_ap040_program`'s own `clkena_in` to those five
+twenty-five by gating `tb_ap040_program`'s own `clkena_in` to those four
 phases: free-running fails `t_integer` test 67 and runs away to
 `pc=ffff6708`; re-gated passes the whole suite.  So `ce_core` is `clkena_in`
 here, as a second commit so the verbatim state stays in history.
@@ -970,6 +981,14 @@ CPU release, `--mmu` phase 6 634.25 -> 615.44 us (-2.97 %) and phase 8
 (-3.58 %), with the instruction-bound phase 1->2 gap -11.07 %; `--chipbus`
 phase 8 855.71 -> 847.24 us (-0.99 %), which is what a 7 MHz-bus-bound run
 should show.  No bitstream in this task.
+
+**Annotated 2026-09-09 (final fix wave):** the bench's `CACR` write was the
+68020 encoding (`$3`), which `ap040_core.v` masks to zero DE/IE, so every one
+of the above figures was measured with the 040's internal caches OFF (task 3
+found and fixed this with `-DCACRVAL`). These percentages therefore measure
+the x3 core re-gate on its own -- the register-file/pipeline change -- not
+the x3 cache fix; task 3's own A/B (caches on, fill channel routed) is the
+first measurement that exercises the cache at all.
 
 **2026-09-08, stage D task 2 -- Vivado build and sign-off of the x3-core
 state.**  Two bitstreams from superproject commit 4b033dc (no RTL touched):
@@ -1059,16 +1078,49 @@ the MMU program agrees at 30.5 over its four fills.  The whole-program figure
 is small only because this program sweeps memory once: 82 fills in 1.87 ms.
 Turning the caches on at all costs +0.94 % here for the same reason, so the
 routed channel is very slightly ahead of task 1's caches-off number overall.
+(This A/B's 82/87 split is the count at this point in the log, before fix
+round 1 below adds the undecoded-hole auto-completion; the shipped state's
+count is 83 over the channel -- 1 of them undecoded and auto-completed -- and
+5 down the adapter, as recorded further down at commit `5a20f8e` onward.)
 
-Two things measured on the way that are worth carrying: the fill router's
-`clkena` term keeps the CPU alive on `fl_ack`/`fl_err` but does **not**
-suppress `clkena` during a fill, so a clock enable landing in the router's
-gap cycle reloads `slower` and costs about three cycles of the next word's
-select -- suppressing it is the next lever and is worth roughly another eight
-cycles a line; and the fill's `busstate` is a data read, so an instruction
-line now allocates in `cpu_cache_new`'s data half instead of its instruction
-half (the fill port carries no I/D bit, upstream included).  Full contract,
-design, seven-leg results and phase tables:
+Two things measured on the way that are worth carrying: at the time of this
+build the fill router's `clkena` term kept the CPU alive on `fl_ack`/`fl_err`,
+but it did **not** suppress `clkena` during a fill, so a clock enable landing
+in the router's gap cycle reloaded `slower` and cost about three cycles of the
+next word's select -- suppressing it is the next lever and is worth roughly
+another eight cycles a line; and the fill's `busstate` is a data read, so an
+instruction line now allocates in `cpu_cache_new`'s data half instead of its
+instruction half (the fill port carries no I/D bit, upstream included).
+
+**That `clkena` sentence is now false and superseded.** Commit `727e4f4`
+removed the `fl_ack`/`fl_err` terms (and the walker's `wk_ack`/`wk_berr`
+terms) from `clkena` outright: both FSMs release the bus (`bstate <= "01"`)
+in the same cycle they raise their acknowledge, so the pre-existing
+`bstate = "01"` term in `clkena` already covers the ack cycle and the four
+ack terms were redundant. They were also costing timing on the `clkena` CE
+net -- seven new failing `clk_114` endpoints, sourced from `fl_active_reg`
+through `clkena` to FPU and MMU CE/D pins, on the `stage_ap040_x3fill2`
+sign-off -- closed by the removal (`stage_ap040_x3fill3`). The bench now
+asserts the invariant directly: `clkena` still pulses on every cycle
+`fl_ack`/`wk_ack` is held, so the ack can never be dropped by the change.
+
+Two fix rounds followed the pass described above, both against the fill
+router:
+
+* **Fix round 1** (commit `5a20f8e`) -- an undecoded cacheable fill raised
+  `fill_err`, and the cache's `C_FERR` state waits for a withdrawal the core
+  never makes for a line it never requested: RED showed a **hang**, not a
+  Guru, which is worse than the bus error it was trying to report. Fixed to
+  match the SoC-wide policy that undecoded space auto-completes with $FFFF
+  and never raises a bus error: the fill router now completes an undecoded
+  line with all-$FFFF words and `fill_ack`, the same policy the adapter path
+  already used.
+* **Fix round 2** (commit `727e4f4`) -- the ack-term removal above, with the
+  bench invariant that `fl_active`/`wk_active` still hold `bstate` (and
+  through it `clkena`) for the whole transfer, so removing the belt-and-braces
+  ack terms cannot let a CE pulse land inside a transfer.
+
+Full contract, design, seven-leg results and phase tables:
 `.superpowers/sdd/plan-v2-with-ddr3/task-3-report.md`.
 
 **2026-09-09, stage D task 5a -- build and boot check of the fill-channel
@@ -1126,8 +1178,16 @@ counter. They had already disagreed once -- that is how three green runs
 `rtl/sdram/cpu_enable_cadence.v`, combinational, instantiated by both sides,
 registered where each side registered its own before. Four phases: TG68K and
 AP68040 legs pass, timestamps moved from the five-phase reference exactly as a
-20 % slower enable rate predicts (AP68040 phase 8: 1933.2 us at five phases,
-2387.4 us at four).
+20 % slower enable rate predicts. **Figures corrected 2026-09-09 (final fix
+wave): the 1933.2 us / 2387.4 us pair quoted here previously were absolute
+simulation times; every other time in this document, including task 3's
+figures above, is measured from CPU release (64,389,167 ps in every run), per
+task-3-report.md and task-4-report.md's convention.** From release, AP68040
+phase 8 is **1868.8 us at five phases, 2323.0 us at four** -- 1933.2 − 64.389
+and 2387.4 − 64.389 respectively. The five-phase figure reconciles with task
+3's own reference run (1867.70 us, §5.1 above) plus the 1.128 us the new
+undecoded-fill read costs (task 3 fix round 1, F5): 1867.70 + 1.128 = 1868.83
+us.
 
 The bench's address/select assertion gained the half it was missing -- the
 address must HOLD while the select is low, because both controllers do
@@ -1204,7 +1264,19 @@ open, and it is not something this bench currently sees.
 |   `clk_gen_sdram` → `clk_114` | **−0.319 ns, 16 failing** | D task 5a |
 |   Build wall clock | 35 min 7 s (03:25:32 → 04:00:39) | D task 5a |
 |   Boot check (`tools/vivado/ila_boot_probe.tcl`, screen-free) | **BOOTED**, first probe: idle-loop signature byte-for-byte matches the 2026-09-09 00:25 reference (`dbg_pc=00F815D2`, `dbg_ir=4E72`, `dbg_flags=0`, no bus cycles); "busy"/"write" captures show live interrupt handling and a chip-register write. Left programmed on the board. | D task 5a |
+| **Post-route, ack-terms-removed build, ila = 0** (`build/stage_ap040_x3fill3`, 2026-09-09, `727e4f4`, signed off against `build/stage_ap040_x3fill2`'s regression) | | |
+|   LUTs / FF / BRAM / DSP | **40,359 (63.66 %)** / — / — / 28 | final fix wave, confirmed from `timing_summary.rpt`/`utilization.rpt` |
+|   `clk_114` (the CPU island) | **−0.343 ns, 3 failing endpoints** (`stage_ap040_x3` baseline: −0.347 ns, 2) | final fix wave |
+|   `clk_gen_sdram` → `clk_114` (the known SDRAM read path) | **−0.314 ns, 16 failing** (better than the −0.510/−0.512 ns of the two prior builds) | final fix wave |
+|   `clk_148` | **+0.026 ns, 0 failing** | final fix wave |
+| **Post-route, THE BITSTREAM ON THE BOARD, ila = 0** (`build/stage_ap040_x3cad`, 2026-09-09, RTL at `b7680d4`, the cadence-extraction commit) | | |
+|   LUTs / FF / BRAM / DSP | **40,392 (63.71 %)** / 19,622 (15.47 %) / 54 RAMB36 + 11 RAMB18 / 28 | final fix wave, confirmed from `timing_summary.rpt`/`utilization.rpt` |
+|   `clk_114` (the CPU island) | **−0.408 ns, 2 failing endpoints**, both the free-running `atc_ram -> {look,st}_snooped` snoop pair (confirmed: the worst path's destination is `g_cache.cache/st_snooped_reg/D`) | final fix wave |
+|   `clk_gen_sdram` → `clk_114` (the known SDRAM read path) | **−0.481 ns, 16 failing** | final fix wave |
+|   `clk_148` | **+0.024 ns, 0 failing** | final fix wave |
+|   Boots Workbench with the MMU on; Paul verified on screen 07:36, SysInfo 0.23x | this is the ship state hardware-verified for the branch | final fix wave |
 | Post-route WNS on the `clkena` → CE paths | not the limit; no CE path in the top 40 violators | A6 |
 | Fast-RAM benchmark, TG68K vs AP040, 28 MHz | — | A7 |
-| Same after D1 (37.8 MHz) and D2 (line port) | D2 measured in simulation, above; hardware number still owed | D1 / D2 |
+| **SysInfo, real hardware, vs A4000/040-25** | **0.19x** on the pre-x3 (`0e76761`) core -> **0.23x** on the x3-core build (`build/stage_ap040_x3_ila`, 2026-09-09 00:25) -> **still 0.23x** with the fill channel routed (`build/stage_ap040_x3fill_ila` and the ship build `build/stage_ap040_x3cad`, verified 07:36). D2 (the line-fill channel) produced **no SysInfo gain**: SysInfo is a cache-resident benchmark that takes no line fills once its working set is cached, so the channel it exercises never runs during the measurement. This supersedes the "hardware number still owed" row below for D2 specifically — the D2 hardware number is not owed, it is measured, and it is zero on SysInfo. A workload with real cache misses (a miss-heavy benchmark) and an ILA stall re-measurement (per A6/A7) are what would show the channel's effect; the from-release simulation deltas in the rows above (D2's -1.0 to -1.15 %, D1's refuted five-phase experiment) are the only place the channel's effect is currently visible. | final fix wave |
+| Same after D1 (37.8 MHz) and D2 (line port) | D2 measured in simulation, above, **and now on hardware via SysInfo (see row above): zero gain, cache-resident benchmark**. D1 is reverted in RTL (does not boot); the five-phase bench experiment (task 4) is refuted -- the next lever for a hardware gain is unknown, not `slower`. | D1 / D2 |
 | Post-route LUTs and WNS, dual-core build | — | E |

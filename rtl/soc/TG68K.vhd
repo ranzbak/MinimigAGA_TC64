@@ -317,7 +317,8 @@ ARCHITECTURE logic OF TG68K IS
 	-- whole line as ONE 128-bit payload, instead of sending four longwords
 	-- (eight 16-bit sub-cycles) down the bus16 adapter.  Each of those eight
 	-- sub-cycles costs the core a full clock-enable round trip, and with
-	-- clkena_in high on five of sixteen phases that is where a miss spends its
+	-- clkena_in high on four of sixteen phases (2, 6, 10, 14 --
+	-- rtl/sdram/cpu_enable_cadence.v is the single source) that is where a miss spends its
 	-- time -- not in the DDR3, which already fetches the whole line on the
 	-- first word and serves the other seven from cpu_cache_new's line buffer
 	-- (findings/ap68040/plan-v2-with-ddr3.md, "D2, second survey").

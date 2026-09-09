@@ -124,6 +124,14 @@ fi
 TURBOCHIP=1
 if [ "$1" = "--chipbus" ]; then TURBOCHIP=0; shift; fi
 
+# Every flag this script understands has now been shifted off. Anything left
+# is a flag we did not recognise -- most often a typo, or a combination whose
+# earlier member already consumed the position the later one needed (e.g.
+# "--mmu --nofill": --mmu shifts and re-inserts --ap040, so --nofill is never
+# in $1 when the --nofill check runs, and used to be dropped on the floor
+# silently, quietly running a plain --mmu instead). Reject rather than ignore.
+[ $# -gt 0 ] && { echo "run.sh: unknown flag(s): $*" >&2; exit 2; }
+
 # Chip RAM over the 7 MHz bus is roughly sixteen times slower per access than
 # the SDRAM-side port, and the bench's TIMEOUT is 2.5 ms, so the default region
 # sizes do NOT fit: the run dies mid-pattern with a timeout and a few hundred

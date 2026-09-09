@@ -37,9 +37,10 @@
 //   * cpu_cache_ctrl is the wrapper's CACR_out (the program enables the caches
 //     with movec, as the OS does),
 //   * ena7RDreg / ena7WRreg / enaWRreg are generated with the sdram_ctrl
-//     cadence: a free-running 16-phase counter on sysclk, enaWRreg at
-//     ph2/6/10/14 (28.36 MHz), ena7RDreg at ph6 and ena7WRreg at ph14
-//     (7.09 MHz each) -- rtl/sdram/sdram_ctrl.v lines ~344-375.
+//     cadence: a free-running 16-phase counter on sysclk, enaWRreg at the
+//     phases rtl/sdram/cpu_enable_cadence.v names (the single source shared
+//     by sdram_ctrl.v and this bench, 28.36 MHz), ena7RDreg at ph6 and
+//     ena7WRreg at ph14 (7.09 MHz each).
 //
 // Autoconfig state is the one the OS leaves behind: ziiram_active = 1 and
 // ziiiram3_active = 1 with z3ram3_base = $41, so 0x41000000 is a live 16 MB
