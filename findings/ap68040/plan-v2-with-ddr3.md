@@ -520,6 +520,24 @@ unimplemented instruction (FSIN) so the FPSP trap path through
 covers the library. Record whether `AP040_HAS_FPU=0` is ever wanted as a
 smaller build; if not, drop the parameter from the top level.
 
+**Half done 2026-09-09, by SysInfo.** SysInfo detects the FPU and reports a
+MFLOPS figure on the shipped core, which settles the first program: the unit is
+present, the hardware datapath executes, and the result rate is hardware rather
+than emulation (a software fallback would collapse the figure by an order of
+magnitude). **Still open, and deliberately deferred:** the unimplemented-
+instruction path. The 68040 implements only add, subtract, multiply, divide,
+square root, moves and compares in hardware; every transcendental raises an
+unimplemented-instruction exception that `68040.library`'s FPSP emulates, and
+SysInfo's benchmark never takes that trap. It depends on the core pushing the
+correct FPU state frame. **We have a named reason to suspect it**: upstream
+`AP68040` commit a8a50ce is described as the core raising its exception without
+preparing the required FPU state frame, leaving the kernel handler reading
+stale stack contents, and that commit was deliberately NOT merged into the x3
+overlay (one variable at a time -- see the 2026-09-09 log). So the FSIN test is
+the test that would expose exactly what a8a50ce fixes, and the fix is already
+written if it fails. Numerical correctness is also unchecked: SysInfo times
+operations, it does not compare results.
+
 ### Stage D — REVISED 2026-09-08 evening, after measuring and after reading apol/ap040x3
 
 Two things changed the plan, and a cold session should read this section before
