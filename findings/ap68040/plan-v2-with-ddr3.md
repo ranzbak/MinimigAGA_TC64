@@ -596,11 +596,27 @@ headers. Try reloading `"0011"` instead of `"0111"`. **Teach `sim/ddr3_cpu` to
 enforce that contract first** -- it models the SDRAM side itself and passed all
 three broken variants happily.
 
+**That hypothesis is refuted in simulation (task 4, 2026-09-09).** The bench
+now enforces the whole contract on both RAM ports -- the address settled one
+cycle before the select falls *and* held for as long as it is low -- and both
+halves are shown to have teeth by mutants that break each one on its own
+(335 setup failures from a chip select closing one cycle late, 7651 hold
+failures from a four-deep pipeline on `ramaddr`/`ddraddr`; both fail the
+summary line). With the cadence at five phases and `slower` untouched at
+`"0111"`, `./run.sh --ap040` passes with zero violations of either half, the
+fill counters unchanged (83 channel fills, 1 auto-completed, 5 adapter, 0 bus
+errors). So `slower` is not what stops the five-phase build booting, and
+`"0011"` is not the fix to try next. The cadence stays at four phases in the
+RTL, but it now has ONE source, `rtl/sdram/cpu_enable_cadence.v`, shared by
+`sdram_ctrl.v` and the bench, so the five-phase experiment is a four-line edit
+that the bench necessarily sees. Full evidence:
+`.superpowers/sdd/plan-v2-with-ddr3/task-4-report.md`.
+
 ### Stage D — the original table (M each, independent, in this order)
 
 | # | Step | Depends on | Exit criterion |
 |---|---|---|---|
-| D1 | `clkena` every 3 (`enaWRreg` on 5 of 16 phases) + `-setup -start 3 / -hold -start 2` on the kernel island — [performance.md](performance.md) option 1a. **DONE in RTL and simulation 2026-09-08, bitstream `build/stage_ap040_d1`, not yet run on hardware.** Timing closes: WNS −0.544 ns with the known SDRAM read capture as the only violated path. Measured −19.2 % on the pattern program, −18.5 % on the MMU one, short of +25–30 % because the benchmark is half DDR3 latency — which is D2. See the note below for the prerequisite option 1a omits. | A6 | timing closes in the full design; A7 benchmark ≈ +25–30 % |
+| D1 | `clkena` every 3 (`enaWRreg` on 5 of 16 phases) + `-setup -start 3 / -hold -start 2` on the kernel island — [performance.md](performance.md) option 1a. **DONE in RTL and simulation 2026-09-08, bitstream `build/stage_ap040_d1`, not yet run on hardware.** Timing closes: WNS −0.544 ns with the known SDRAM read capture as the only violated path. Measured −19.2 % on the pattern program, −18.5 % on the MMU one, short of +25–30 % because the benchmark is half DDR3 latency — which is D2. See the note below for the prerequisite option 1a omits. **REVERTED in RTL 2026-09-08 (commit 2f962f1): it does not boot.** The cadence now has one source, `rtl/sdram/cpu_enable_cadence.v`, shared by `sdram_ctrl.v` and `sim/ddr3_cpu`, and the bench enforces both halves of the address/select contract on both RAM ports. The `slower` hypothesis above is **refuted**: five phases with `"0111"` untouched pass the bench with no contract violation (task 4, 2026-09-09). The next lever is unknown; it is not `slower`. | A6 | timing closes in the full design; A7 benchmark ≈ +25–30 % |
 | D2 | Line port to the DDR3 — see the survey below, written 2026-09-08 before starting it. | A6 | a line fill = one CDC round trip instead of eight sub-cycles |
 | D3 | Sibling 37.8 MHz clock for the CPU island, `clkena_in` = handshake only, multicycles removed — option 1b. | D1 | `report_exceptions` shows none on the core |
 
@@ -1101,6 +1117,35 @@ outside the idle loop. **Booted**, first probe, no fallback needed;
 of `5a20f8e` (`build/stage_ap040_x3fill2`) was already in flight by the time
 this task finished, for a like-for-like sign-off of the state that is
 actually on the board now.
+
+**2026-09-09, task 4 -- one cadence source, and the `slower` hypothesis is
+refuted.** The sixteen-phase round's enable list was in two places:
+`sdram_ctrl.v`'s case statement and, hand-copied, `sim/ddr3_cpu`'s own phase
+counter. They had already disagreed once -- that is how three green runs
+"tested" a five-phase D1 the bench was still driving at four. The list is now
+`rtl/sdram/cpu_enable_cadence.v`, combinational, instantiated by both sides,
+registered where each side registered its own before. Four phases: TG68K and
+AP68040 legs pass, timestamps moved from the five-phase reference exactly as a
+20 % slower enable rate predicts (AP68040 phase 8: 1933.2 us at five phases,
+2387.4 us at four).
+
+The bench's address/select assertion gained the half it was missing -- the
+address must HOLD while the select is low, because both controllers do
+`cpuAddr_r <= cpuAddr` every clock and it is `cpuAddr_r` that reaches
+`slot1_addr`/`cdc_addr` when the round finally gets to the CPU's slot. Both
+halves have teeth, each shown by its own mutant: a chip select closing one
+cycle late gives 335 setup failures, a four-deep pipeline on
+`ramaddr`/`ddraddr` gives 7651 hold failures, both on the summary line.
+
+Then the experiment, one variable: the phase list to 2/5/8/11/14, `slower`
+left at `"0111"`, `./run.sh --ap040`. **It passes, with zero violations of
+either half** and identical fill counters -- and its phase timestamps
+reproduce the task-3 five-phase log to the picosecond, which is the check that
+the shared module really is the old cadence. So the "select opens on the very
+cycle the next enable can release the CPU" story is not what breaks the
+five-phase build, and reloading `"0011"` is not the fix to try; `slower` was
+left alone and the RTL is back at four phases. What does break it is still
+open, and it is not something this bench currently sees.
 
 ## Risks
 
