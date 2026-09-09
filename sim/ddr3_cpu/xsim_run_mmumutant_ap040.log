@@ -21,10 +21,10 @@ LOAD_MODE: bank 1
 ddr3_cpu_tb.u_ram.cmd_task: at time 39935000.0 ps WARNING: Load Mode 1 DLL off mode is not fully modeled
 LOAD_MODE: bank 0
 INFO: CPU released at 64389167.0 ps (ddr_ready=1 init_done=1 pll_locked=1)
-INFO: program phase 1 at 80335502.0 ps
-INFO: program phase 2 at 840541102.0 ps
+INFO: program phase 1 at 76368752.0 ps
+INFO: program phase 2 at 646522952.0 ps
 
-FAIL: no progress for 120000 cycles at phase 2 (t = 1898349917.0 ps).  A walk
+FAIL: no progress for 120000 cycles at phase 2 (t = 1704331767.0 ps).  A walk
       that never acknowledges, or a clkena stopped while the
       walker owns the bus, looks exactly like this.
 
@@ -37,8 +37,8 @@ INFO: cache line fills -- 0 over the channel (0 of them undecoded, auto-complete
 
 DDR3 CPU TB: 1 checks failed
 
-$finish called at time : 1898349917 ps : File "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/ddr3_cpu_tb.sv" Line 1256
-run: Time (s): cpu = 00:00:01 ; elapsed = 00:08:55 . Memory (MB): peak = 1505.133 ; gain = 0.000 ; free physical = 14815 ; free virtual = 39442
+$finish called at time : 1704331767 ps : File "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/ddr3_cpu_tb.sv" Line 1307
+run: Time (s): cpu = 00:00:00.81 ; elapsed = 00:07:40 . Memory (MB): peak = 1316.727 ; gain = 0.000 ; free physical = 15216 ; free virtual = 40700
 ## quit
-INFO: xsimkernel Simulation Memory Usage: 150156 KB (Peak: 191036 KB), Simulation CPU Usage: 534480 ms
-INFO: [Common 17-206] Exiting xsim at Wed Sep  9 08:27:19 2026...
+INFO: xsimkernel Simulation Memory Usage: 150164 KB (Peak: 191044 KB), Simulation CPU Usage: 459840 ms
+INFO: [Common 17-206] Exiting xsim at Wed Sep  9 16:07:13 2026...

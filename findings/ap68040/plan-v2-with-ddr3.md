@@ -637,7 +637,7 @@ that the bench necessarily sees. Full evidence:
 |---|---|---|---|
 | D1 | `clkena` every 3 (`enaWRreg` on 5 of 16 phases) + `-setup -start 3 / -hold -start 2` on the kernel island — [performance.md](performance.md) option 1a. **DONE in RTL and simulation 2026-09-08, bitstream `build/stage_ap040_d1`, not yet run on hardware.** Timing closes: WNS −0.544 ns with the known SDRAM read capture as the only violated path. Measured −19.2 % on the pattern program, −18.5 % on the MMU one, short of +25–30 % because the benchmark is half DDR3 latency — which is D2. See the note below for the prerequisite option 1a omits. **REVERTED in RTL 2026-09-08 (commit 2f962f1): it does not boot.** The cadence now has one source, `rtl/sdram/cpu_enable_cadence.v`, shared by `sdram_ctrl.v` and `sim/ddr3_cpu`, and the bench enforces both halves of the address/select contract on both RAM ports. The `slower` hypothesis above is **refuted**: five phases with `"0111"` untouched pass the bench with no contract violation (task 4, 2026-09-09). The next lever is unknown; it is not `slower`. | A6 | timing closes in the full design; A7 benchmark ≈ +25–30 % |
 | D2 | Line port to the DDR3 — see the survey below, written 2026-09-08 before starting it. | A6 | a line fill = one CDC round trip instead of eight sub-cycles |
-| D3 | Sibling 37.8 MHz clock for the CPU island, `clkena_in` = handshake only, multicycles removed — option 1b. | D1 | `report_exceptions` shows none on the core |
+| D3 | Sibling 37.8 MHz clock for the CPU island, `clkena_in` = handshake only, multicycles removed — option 1b. **DONE in RTL, bench and constraints 2026-09-09** (`ed2c50b`, `70710c3`, `0e1d303`); no bitstream yet. MMCM CLKOUT3 /30 = 37.8125 MHz exactly, a phase-aligned 1:3 sibling of `clk_114`; only the AP68040 kernel moves, everything else in `TG68K.vhd` stays on `clk_114`. `clkena` keeps its two-term shape and its one-cycle-pulse SHAPE (a phase marker replaces `enaWRreg` as the first term) because eight places in the `clk_114` domain read it as "the CPU advanced on this edge" and two of them deadlock on a level. `cpu.xdc` has no multicycles on the AP68040 at all; the 1:3 crossing is **2 clk_114 cycles, not 3** (derived — see the D3 log entry), and the reverse direction is deliberately not relaxed. Bench: all eight legs behave, AP040 legs **-24.4 %** wall clock. | D1 | `report_exceptions` shows none on the core — **met in the constraints, owed from the first build** |
 
 **D1 has a prerequisite option 1a does not mention.** The five enable phases
 must be spaced 3-3-3-3-4, and `ena7RDreg`/`ena7WRreg` sit on phases 6 and 14.
@@ -1331,6 +1331,118 @@ core bench's gated-vs-free comparison. The FPU's 19.9 ns path is what caps the
 ratio at 37.8 rather than higher; the rest of the distance to real silicon is
 the sequencer's cycles per instruction, i.e. upstream's pipeline work.
 
+**2026-09-09 evening, D3 -- the CPU island on its own clock.** The AP68040
+kernel now runs on `clk_38`, a fourth MMCM output at 1134.375 / 30 =
+**37.8125 MHz exactly**, i.e. `clk_114 / 3` off the same VCO with no phase
+shift.  Every `clk_38` edge coincides with a `clk_114` one, so this is a
+synchronous 1:3 sibling and not a CDC: no synchronisers, no asynchronous clock
+group, static timing analyses the real edges.  Only the kernel moves; the
+decode, both bus routers, `slower`, the chipset machine, Akiko and every
+register facing `sdram_ctrl` or `ddr3_fastram` stay on `clk_114`, because that
+is the clock the controllers are on.  With `cpu_core = "TG68K"` the new port is
+not read at all.
+
+**Measured: -24.4 % on every AP040 leg of `sim/ddr3_cpu`, uniformly.**  That is
+1.323x against a predicted 1.333x, and the prediction was not an estimate --
+the SysInfo stall capture had shown the core sitting at exactly the 25.0 %
+four-phase enable ceiling with 0 % memory stalls, so the only term D3 could
+move was the enable rate and the only thing that could erode it was memory,
+which is not there.  The chipbus leg moves -1.9 %, which is the same statement
+from the other side: a 7 MHz bus does not care how fast the CPU is.  Expect
+SysInfo near **0.31x** and expect a demo to show nothing.
+
+**Three things the stage turned out to contain that "put the core on a faster
+clock" does not suggest.**
+
+*One.* `clkena` is not only the core's clock enable.  Eight places in the
+`clk_114` domain read it as "the CPU advanced on this edge" -- `slower`'s
+reload, `chipset_done`'s clear, `akiko_req`, the walker's data captures, the
+chipset machine's end-of-cycle test, `cpustate(5)` (which is what the ILA stall
+scripts count).  Handing them the plain level `bstate = "01" OR bus_ready`
+breaks three and **deadlocks two**: `slower` would reload every cycle and open
+a chip select on the edge the address moved, and `chipset_done` and `akiko_req`
+would clear one `clk_114` cycle after the bus answered, which is *before* the
+core's next `clk_38` edge -- dropping `bus_ready` out from under the release
+they were holding.  So `clkena` keeps its shape: a one-`clk_114`-cycle pulse,
+now on one edge in three instead of four in sixteen.  The `clk_114` domain
+cannot count its own three phases (nothing aligns a fabric divider to the
+MMCM's), so the kernel's clock supplies the alignment -- a toggle on `clk_cpu`,
+sampled and differenced on `clk_114`, delayed twice.  Everything downstream of
+`clkena` then keeps working unchanged and means what it always meant.
+
+*Two.* The `clkena_e` comment in the chipset machine was **false**, and had
+been since the cadence was written down: it claimed `clkena` could never be
+high on phase 6, but `cpu_enable_cadence.v` puts `ena_cpu` on 2/6/10/14 and
+`ena7rd` on 6, so the `ena7RDreg` branch overrode the clear on *every* chipset
+read.  What actually cleared the flag was the same test firing a second time on
+the next enable.  The clear now sits at the bottom of the process and wins
+outright, so the release does not depend on that second firing.
+
+*Three, and it is the one that would have reached hardware.*  `snoop_stb` is
+**one `clk_114` cycle wide by construction** -- `sdram_ctrl.v:492` clears
+`snoop_act` unconditionally every `sysclk`, `:633` sets it at ph2 -- and only
+one `clk_114` cycle in three precedes a `clk_38` edge.  So D3 as first written
+dropped **two chipset DMA snoops in three**.  `ap040_cache.v:111-116` states
+the contract and, in the next line, records the last time it was violated: "a
+ce-gated snoop port was the 5.1 loss: chipset writes landing while clkena is
+frozen simply vanished".  Losing them through the clock instead of the enable
+is the same bug: stale data-cache lines after blitter or trackdisk DMA into
+chip RAM, intermittent, data-dependent, **never a hang** -- and worse now,
+because Turbo chip RAM is on and the 040 caches chip RAM in earnest
+(`ap040_tg68k_compat.v:396` makes `$000000-$1fffff` cacheable on the D side).
+The wrapper now latches the pulse and its address and clears the latch on the
+phase marker, so the kernel sees a level high at exactly one `clk_38` edge --
+the single pulse in its own clock domain the contract asks for.  It is cleared
+on the phase marker and not on `clkena` deliberately: `clkena` stops for the
+whole of a bus access, and a second snoop arriving inside that window would be
+merged into the first and lost.
+
+**`sim/ddr3_cpu` could not see any of that**, and that is the more useful
+finding.  It tied `snoop_stb` to zero, with a comment asserting that the core's
+window logic "leaves the low chip space uncached anyway" -- which
+`ap040_tg68k_compat.v:396` flatly contradicts.  A dropped snoop is silent, so
+no other assertion in the bench would ever have caught it.  The bench now
+drives real one-cycle snoops on the `clk_114` grid at chip RAM addresses,
+walking **all three phases** relative to `clk_38` (period 128, and 128 mod 3 =
+2, so the phase rotates), counts how many the core actually saw at a `clk_38`
+edge and how many made the cache drive a port-B invalidate, and fails if any
+went missing or if the run did not cover all three phases.  `--snoopmutant`
+reverts the hold and must fail.
+
+**`ce_core` stays `clkena_in`** (the submodule is untouched at `c5d5cc3`) and
+the rising-edge-ack fix from task 1 is **not** needed.  `ap040_bus16_adapter.v`
+sets `mem_ack` in the same block that returns `busstate` to IDLE, so in the
+cycle after an acknowledge `bstate` is `"01"` and the new enable is high by
+construction -- the documented one-cycle pulse is true again and the desync
+that forced `c5d5cc3` cannot happen.  That makes `ce_core = 1'b1` *safe* in the
+common case, but it buys nothing this stage measures (on cache-resident code
+`bstate` is idle continuously, so the two settings are identical) and it
+reopens a window: `bstate` is the MUXED bus state, so a router owning the bus in
+the acknowledge cycle would leave `mem_ack` uncleared for a free-running cache
+to double-consume.  Gating the cache with the same signal makes that
+structurally impossible.  One variable per stage; `ce_core = 1'b1` is now a
+clean, separately measurable follow-up whose precondition genuinely holds.
+
+**Constraints.**  `cpu.xdc` has **no multicycle exceptions on the AP68040 at
+all** -- the island is a clock domain instead of an exception, which is the
+stage's exit criterion; the TG68K keeps every one of them, because its enable
+really is still `enaWRreg`.  The 1:3 crossing was derived rather than copied
+from the 1:4 `dll_28` idiom, and comes out at **two `clk_114` cycles, not
+three**: with a three-cycle enable gap the wrapper registers its answer to the
+core one cycle before the core samples it, so the value has to be settled at
+T+2, and the memory contract and the new chipset guard land on the same number.
+The reverse direction gets **nothing**, deliberately -- `clkena`, `datatg68`,
+`bus_ready` and both routers' acknowledges are produced on the free `clk_114`
+clock and can rise on the edge immediately before a `clk_38` one, which is the
+whole point of a handshake.  Two cell-scoped overrides: the phase marker's own
+crossing must stay single-cycle, and `ddr3_fastram` joined the memory set,
+which it should have been in all along.
+
+Not built.  `report_exceptions` and the `atc_ram -> {look,st}_snooped_reg`
+prediction (it should stop being the WNS path, having gone from 8.815 ns to
+26.45 ns) are owed from the first bitstream.  Full write-up:
+[sdd-d3/task-d3-report.md](sdd-d3/task-d3-report.md).
+
 ## Risks
 
 | Risk | Shows as | Mitigation |
@@ -1399,6 +1511,8 @@ the sequencer's cycles per instruction, i.e. upstream's pipeline work.
 |   `clk_gen_sdram` → `clk_114` (the known SDRAM read path) | **−0.481 ns, 16 failing** | final fix wave |
 |   `clk_148` | **+0.024 ns, 0 failing** | final fix wave |
 |   Boots Workbench with the MMU on; Paul verified on screen 07:36, SysInfo 0.23x | this is the ship state hardware-verified for the branch | final fix wave |
+| **D3, the CPU island on clk_38 (37.8125 MHz), `sim/ddr3_cpu`** (`ed2c50b`, `70710c3`, `0e1d303`, `a67e5d5`, 2026-09-09) | AP040 legs **-24.4 %** from CPU release, uniformly: `--ap040` phase 8 2323.01 -> 1755.71 us, `--mmu` 838.10 -> 634.02 us, `--nofill` 2351.82 -> 1774.78 us.  37.8125 / 28.359375 = 1.333, measured 1.323 -- **the clock ratio and nothing else**, as the SysInfo stall measurement predicted.  `--ap040 --chipbus` is **-1.9 %** and that is the right answer: it is chipset-bound.  TG68K control **bit-identical**, every phase timestamp unchanged.  All three mutants still fail.  D2's A/B survives on top of it (`--ap040` vs `--nofill` = -1.074 %, against -1.072 % before) | D3 |
+| **The snoop that D3 nearly lost** | `snoop_act` is one clk_114 cycle wide by construction (`sdram_ctrl.v:492,633`), and only one clk_114 cycle in three precedes a clk_38 edge, so moving the kernel to its own clock dropped **two chipset DMA snoops in three** -- silent stale D-cache lines after blitter or trackdisk writes, never a hang.  `sim/ddr3_cpu` could not see it: it tied `snoop_stb` to zero and its comment said chip RAM was uncached, which `ap040_tg68k_compat.v:396` contradicts.  The wrapper now holds the pulse until a clk_38 edge takes it, and the bench drives real snoops across all three clk_114 phases with `--snoop` / `--snoopmutant` | D3, review |
 | Post-route WNS on the `clkena` → CE paths | not the limit; no CE path in the top 40 violators | A6 |
 | Fast-RAM benchmark, TG68K vs AP040, 28 MHz | — | A7 |
 | **SysInfo, real hardware, vs A4000/040-25** | **0.19x** on the pre-x3 (`0e76761`) core -> **0.23x** on the x3-core build (`build/stage_ap040_x3_ila`, 2026-09-09 00:25) -> **still 0.23x** with the fill channel routed (`build/stage_ap040_x3fill_ila` and the ship build `build/stage_ap040_x3cad`, verified 07:36). D2 (the line-fill channel) produced **no SysInfo gain**: SysInfo is a cache-resident benchmark that takes no line fills once its working set is cached, so the channel it exercises never runs during the measurement. This supersedes the "hardware number still owed" row below for D2 specifically — the D2 hardware number is not owed, it is measured, and it is zero on SysInfo. A workload with real cache misses (a miss-heavy benchmark) and an ILA stall re-measurement (per A6/A7) are what would show the channel's effect; the from-release simulation deltas in the rows above (D2's -1.0 to -1.15 %, D1's refuted five-phase experiment) are the only place the channel's effect is currently visible. | final fix wave |

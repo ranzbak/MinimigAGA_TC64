@@ -1,0 +1,53 @@
+
+****** xsim v2023.2 (64-bit)
+  **** SW Build 4029153 on Fri Oct 13 20:13:54 MDT 2023
+  **** IP Build 4028589 on Sat Oct 14 00:45:43 MDT 2023
+  **** SharedData Build 4025554 on Tue Oct 10 17:18:54 MDT 2023
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source xsim.dir/cpu_sim/xsim_script.tcl
+# xsim {cpu_sim} -testplusarg prog=/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/run_snoopmutant_ap040/prog.bin -testplusarg PATBYTES=1024 -testplusarg MISLINES=16 -testplusarg CNTN=64 -testplusarg TURBOCHIP=1 -testplusarg SNOOP -autoloadwcfg -tclbatch {run.tcl}
+Time resolution is 1 ps
+source run.tcl
+## run all
+TCK_MIN =        2500
+ddr3_cpu_tb.u_ram.file_io_open: at time                    0 WARNING: no +model_data option specified, using /tmp.
+WARNING: Insufficient data from the input file for $fread
+INFO: loaded 2192 bytes of 68k program from /home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/run_snoopmutant_ap040/prog.bin
+LOAD_MODE: bank 2
+LOAD_MODE: bank 3
+LOAD_MODE: bank 1
+ddr3_cpu_tb.u_ram.cmd_task: at time 39935000.0 ps WARNING: Load Mode 1 DLL off mode is not fully modeled
+LOAD_MODE: bank 0
+INFO: CPU released at 64389167.0 ps (ddr_ready=1 init_done=1 pll_locked=1)
+INFO: program phase 1 at 74147372.0 ps
+INFO: program phase 2 at 447471437.0 ps
+INFO: program phase 3 at 1344247832.0 ps
+INFO: program phase 4 at 1520001302.0 ps
+INFO: program phase 5 at 1539782162.0 ps
+INFO: program phase 7 at 1790216312.0 ps
+INFO: program phase 8 at 1820469392.0 ps
+
+DDR3 CPU TB: PASS  (68k program completed all phases)
+
+INFO: checking the DDR3 array through the Micron model backdoor
+PASS: DDR3 array contents match the pattern (independent backdoor read)
+
+INFO: cache line fills -- 85 over the channel (1 of them undecoded, auto-completed), 5 down the adapter, 0 bus errors
+
+INFO: chipset snoops -- 1557 issued (519/519/519 in clk phase 0/1/2), 519 seen by the core, 519 invalidated a cache set
+DDR3 CPU TB: FAIL  1038 of 1557 chipset snoops never reached the core.
+       snoop_act is one clk cycle wide and the kernel is on clk_cpu, so a raw
+       pulse is only sampled when it lands in the one cycle in three before a
+       clk_cpu edge; the wrapper has to hold it (TG68K.vhd, snp_stb_held).
+       A lost snoop is a stale data-cache line after chipset DMA -- silent
+       corruption, never a hang, which is why nothing else here would see it.
+
+DDR3 CPU TB: 1 checks failed
+
+$finish called at time : 1821421412 ps : File "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/ddr3_cpu_tb.sv" Line 1437
+run: Time (s): cpu = 00:00:00.97 ; elapsed = 00:08:20 . Memory (MB): peak = 1316.727 ; gain = 0.000 ; free physical = 15100 ; free virtual = 40654
+## quit
+INFO: xsimkernel Simulation Memory Usage: 150172 KB (Peak: 191052 KB), Simulation CPU Usage: 499510 ms
+INFO: [Common 17-206] Exiting xsim at Wed Sep  9 16:32:48 2026...
