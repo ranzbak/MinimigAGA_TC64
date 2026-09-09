@@ -1226,6 +1226,69 @@ five-phase build, and reloading `"0011"` is not the fix to try; `slower` was
 left alone and the RTL is back at four phases. What does break it is still
 open, and it is not something this bench currently sees.
 
+**2026-09-09, the stall re-measurement, and what it says about D2 and D3.**
+Taken on `build/stage_ap040_x3cad_ila` (the shipped RTL plus both debug cores),
+144 us in four windows, while **roots2** ran -- the same demo as the pre-x3
+baseline, which matters more than it sounds: a first set of captures taken
+during a different workload read 22.1 % core advance and was thrown away. Read
+back with `stall_stats.py` (kept with the ledger under
+[sdd-2026-09-09/](sdd-2026-09-09/)), which counts `cpustate` bit 5 for the
+enable and bits 1:0 for the bus request.
+
+| | pre-x3 baseline | now, same demo |
+|---|---|---|
+| core advanced | 14.4 % | **15.6 %** |
+| bus request pending | 44.8 % | **41.4 %** |
+
+So the night's memory work is worth about **8 % on this workload**, not the
+50 % the mismatched capture suggested. The decomposition says why. Taking the
+address on every clock with a request outstanding:
+
+| what the core waits for | of its waiting | of all clocks |
+|---|---|---|
+| chip RAM below $200000 | 67.9 % | **28.1 %** |
+| custom registers $D80000-$DFFFFF | 32.1 % | **13.3 %** |
+| fast RAM (Zorro, DDR3), ROM | 0 % | 0 % |
+
+**Every stall in this demo is on the 7 MHz chipset side, and none of it is on
+fast RAM.** The DDR3 board's own select is active 5.5 % of clocks and its
+backend is busy 4.8 % (second ILA core, `ddr3_dbg_bstate` idle 95 % of the
+time), i.e. the fast path answers quickly and is almost never what the core is
+waiting for. That is the whole explanation for D2 measuring ~1 % on the bench,
+0 % on SysInfo and 8 % here: **the fill channel serves Zorro windows, and this
+workload never waits on one.**
+
+Consequences worth carrying:
+
+* **For demo-class code the lever is Turbo Chip RAM, not the CPU.** The 13.3 %
+  on custom registers is irreducible -- those are real chipset registers -- but
+  the 28.1 % on chip RAM is exactly what routing CPU chip accesses through the
+  fast memory path removes. It is an OSD toggle, currently off, and it would
+  also be the first hardware exercise of the stage-A cache snoop path, which
+  exists precisely for that configuration. Untried as of this entry.
+* **D3 is still worth doing but it does not touch this.** A faster core clock
+  shortens the time between memory accesses; it does nothing to a 7 MHz bus.
+  Judge D3 on fast-RAM-resident code (SysInfo, compilers, the OS), not on demos.
+* **Method note.** `cpustate` bit 2 is the SDRAM select only; the DDR3 select
+  lives on the other ILA core, so a capture from the CPU ILA alone reads 0 %
+  "memory selected" even while the DDR3 port is working. And compare only
+  captures of the same workload -- that mistake cost a wrong conclusion here
+  before roots2 was re-run.
+
+**2026-09-09, FPU against integer core, measured on the routed design.** Worst
+raw datapath delay inside `g_fpu.fpu` is **19.9 ns over 49 logic levels**;
+inside the rest of the kernel it is **9.4 ns over 11 levels**; crossings are
+13.8 to 17.4 ns. So **the FPU, not the integer core, sets the ceiling for any
+free-running clock**: about 50 MHz on paper, which makes D3's 37.8 MHz
+comfortable and anything near 47 MHz marginal. An integer-only build would
+allow far more. **Decision (Paul, 2026-09-09): keep one clock for both, keep
+the FPU, no domain split** -- the added complexity is not wanted, and 37.8 MHz
+is the target either way. The alternatives are recorded rather than taken: an
+`AP040_HAS_FPU=0` variant, or an FPU-only multicycle exception (honest only if
+the FPU's datapath registers really are enabled less often than every clock,
+which nobody has checked). Numbers came off the debug bitstream, so absolute
+delays are pessimistic by perhaps 5-10 %; the two-to-one ratio is solid.
+
 ## Risks
 
 | Risk | Shows as | Mitigation |
