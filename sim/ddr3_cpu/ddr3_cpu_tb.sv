@@ -734,6 +734,75 @@ end
 
 `ifdef CPU_AP040
 //-----------------------------------------------------------------
+// The invariant that lets clkena carry two terms instead of six.
+//
+// TG68K.vhd's clkena used to OR in wk_ack, wk_berr, fl_ack and fl_err as
+// deadlock guards: the core consumes those acknowledges under its own ce, and
+// ce IS clkena, so an acknowledge raised while clkena happens to be stopped
+// would hang the machine silently.  They were removed because they are
+// redundant AND because they are expensive -- clkena is the clock enable of
+// 7,391 kernel flops, and the ship build of the fill router had seven new
+// failing clk_114 endpoints running from fl_active_reg into kernel CE pins.
+//
+// What replaces them is an invariant of the two bus routers:
+//
+//   whenever the walker or the line fill holds its acknowledge or its bus
+//   error, it has already released the bus and the core's own bus side is
+//   idle -- so bstate is "01", and clkena's first term enables the core
+//   anyway.
+//
+// bstate is cpustate[1:0] here, and clkena is cpustate[5] (TG68K.vhd builds
+// cpustate as longword_pair & clkena & slower(1:0) & ramcs & bstate).  Two
+// checks, because the invariant has two halves:
+//
+//   ack_idle_errs   an acknowledge held in a cycle where bstate is not "01".
+//                   This is the property that makes the removal safe.
+//   ack_dry_errs    an acknowledge that dropped without the CPU having been
+//                   enabled once while it was up.  A hang would already trip
+//                   the stall watchdog; this names the cause instead of
+//                   leaving a timeout to be diagnosed.
+//
+// Both hold on the OLD code too -- they are properties of the routers, which
+// this change did not touch -- so a run of the old wrapper passes them.  That
+// is the point: it is what makes the four removed terms redundant rather than
+// load-bearing.  Measured, not argued: see the fix-round-2 section of
+// .superpowers/sdd/plan-v2-with-ddr3/task-3-report.md.
+//-----------------------------------------------------------------
+integer ack_idle_errs = 0;
+integer ack_dry_errs  = 0;
+
+wire wk_ack_w  = ddr3_cpu_tb.tg68k.wk_ack;
+wire wk_berr_w = ddr3_cpu_tb.tg68k.wk_berr;
+wire fl_ack_w  = ddr3_cpu_tb.tg68k.fl_ack;
+wire fl_err_w  = ddr3_cpu_tb.tg68k.fl_err;
+
+wire any_ack   = wk_ack_w | wk_berr_w | fl_ack_w | fl_err_w;
+reg  any_ack_d = 1'b0;
+reg  ack_ena   = 1'b0;          // clkena seen while this acknowledge was up
+
+always @(posedge clk) begin
+  if (tg68_rst) begin
+    if (any_ack && tg68_cpustate[1:0] !== 2'b01) begin
+      if (ack_idle_errs < 8)
+        $display("FAIL: acknowledge held with the bus NOT idle (wk_ack=%b wk_berr=%b fl_ack=%b fl_err=%b, bstate=%b) at %t",
+                 wk_ack_w, wk_berr_w, fl_ack_w, fl_err_w, tg68_cpustate[1:0], $time);
+      ack_idle_errs = ack_idle_errs + 1;
+    end
+    if (any_ack && tg68_cpustate[5]) ack_ena <= 1'b1;
+    if (!any_ack &&  any_ack_d) begin
+      if (!ack_ena) begin
+        if (ack_dry_errs < 8)
+          $display("FAIL: an acknowledge dropped without the CPU ever being enabled while it was up (t = %t)",
+                   $time);
+        ack_dry_errs = ack_dry_errs + 1;
+      end
+      ack_ena <= 1'b0;
+    end
+  end
+  any_ack_d <= any_ack;
+end
+
+//-----------------------------------------------------------------
 // Stage D: the line-fill channel.
 //
 // Two counters and one assertion, all from inside the DUT because the channel
@@ -771,8 +840,8 @@ integer fill_excl  = 0;
 wire       fl_ok_w     = ddr3_cpu_tb.tg68k.fl_ok;
 wire       fl_busy_w   = ddr3_cpu_tb.tg68k.fl_busy;
 wire       fl_active_w = ddr3_cpu_tb.tg68k.fl_active;
-wire       fl_err_w    = ddr3_cpu_tb.tg68k.fl_err;
 wire       wk_active_w = ddr3_cpu_tb.tg68k.wk_active;
+// fl_err_w is declared with the acknowledge-invariant checks above.
 wire [3:0] cst_w       = ddr3_cpu_tb.tg68k.g_ap040.ap040.g_cache.cache.cst;
 
 reg       fl_busy_d = 1'b0;
@@ -1110,6 +1179,17 @@ initial begin : main
   if (fill_excl != 0) begin
     $display("DDR3 CPU TB: FAIL  %0d cycles with the walker and the line fill both on the bus",
              fill_excl);
+    nfail = nfail + 1;
+  end
+  if (ack_idle_errs != 0) begin
+    $display("DDR3 CPU TB: FAIL  %0d cycles with a router acknowledge held while the bus was NOT idle;",
+             ack_idle_errs);
+    $display("       clkena's bstate term does not cover those, so the removed ack terms were needed");
+    nfail = nfail + 1;
+  end
+  if (ack_dry_errs != 0) begin
+    $display("DDR3 CPU TB: FAIL  %0d router acknowledges dropped without the CPU being enabled while up",
+             ack_dry_errs);
     nfail = nfail + 1;
   end
 `endif

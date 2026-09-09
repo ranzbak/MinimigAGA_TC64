@@ -1034,24 +1034,43 @@ BEGIN
 	bus_ready <= '1' WHEN (chipset_ready = '1' OR chipset_done = '1' OR mem_ready = '1' OR sel_undecoded_d = '1' OR akiko_ack = '1') ELSE
 	'0';
 
-	-- The wk_ack term is the deadlock guard the plan calls for.  The core
-	-- consumes walker_ack only under its own ce, and ce is this signal: hand
-	-- back an acknowledge while clkena happens to be stopped and the machine
-	-- hangs silently.  By construction the walker has already released the bus
-	-- when it acknowledges (wk_active is low in WK_DONE), so bstate is the
-	-- core's own idle state and this term is belt and braces -- but it is one
-	-- gate, and the failure it guards against looks exactly like the AllocMem
-	-- spin that cost a day.
+	-- This net is the clock enable of 7,391 kernel flops and is the plan's
+	-- number-one timing risk ("Timing" item 1).  It carries exactly two terms
+	-- for that reason, and it used to carry four more: wk_ack, wk_berr,
+	-- fl_ack and fl_err, added as deadlock guards for the two bus borrowers.
+	-- They were REDUNDANT, and they cost real time -- the ship build of the
+	-- fill router had seven new failing clk_114 endpoints, every one of them
+	-- starting at fl_active_reg and ending on a kernel clock-enable pin
+	-- (build/stage_ap040_x3fill2/violators.rpt; the plan's D1 note had
+	-- already priced the wk_ack term at 0.243 ns on the FPU multiplier's
+	-- enable and named it as the first thing to remove).
 	--
-	-- fl_ack is there for exactly the same reason and is NOT belt and braces
-	-- (fl_err is wired but never raised, see FL_DEC): the line-fill FSM holds
-	-- bstate at "01" only after it has
-	-- released the bus, and the cache samples fill_ack under ce, so without
-	-- these terms a fill that completes while clkena_in is between pulses --
-	-- or, worse, while the fill's own bus activity is what stopped clkena --
-	-- would never be consumed.  A stalled machine with no fault, again.
-	clkena <= '1' WHEN (clkena_in = '1' AND (bstate = "01" OR bus_ready = '1' OR wk_ack = '1' OR wk_berr = '1'
-	                                         OR fl_ack = '1' OR fl_err = '1')) ELSE
+	-- What makes them redundant is an invariant of the two routers, not an
+	-- accident:
+	--
+	--   In every cycle in which the walker or the line fill holds its
+	--   acknowledge or its bus error, it has ALREADY released the bus and
+	--   the core's own bus side is idle -- so bstate is "01" and the first
+	--   term below enables the core anyway.
+	--
+	-- Each half of that is by construction.  RELEASED: every state that
+	-- raises wk_ack/wk_berr (WK_IDLE's misaligned arm, WK_HI, WK_LO) or
+	-- fl_ack (FL_DEC's auto-complete arm, FL_SEL's last word) clears its own
+	-- *_active in the SAME assignment, and WK_DONE/FL_DONE hold it clear; the
+	-- two routers cannot overlap, so with both *_active low bstate IS the
+	-- core's busstate.  IDLE: the core is waiting for that answer and has
+	-- nothing outstanding through the bus16 adapter -- the MMU is mid-walk,
+	-- or the cache is parked in C_FILLC -- and the one case that could have
+	-- broken it, a posted store draining through the adapter underneath a
+	-- table walk, is closed inside the core by ap040_mmu's walk_hold, which
+	-- is ap040_cache's post_busy (ap040_mmu.v:53 and :478,
+	-- ap040_cache.v:362).
+	--
+	-- sim/ddr3_cpu asserts the invariant directly, so it is checked and not
+	-- merely argued: an acknowledge held while cpustate(1 downto 0) is not
+	-- the idle state is a FAIL, and so is an acknowledge that drops without
+	-- the CPU having been enabled at least once while it was up.
+	clkena <= '1' WHEN (clkena_in = '1' AND (bstate = "01" OR bus_ready = '1')) ELSE
 	'0';
 
 	PROCESS(clk)
