@@ -14,7 +14,7 @@ source run.tcl
 TCK_MIN =        2500
 ddr3_cpu_tb.u_ram.file_io_open: at time                    0 WARNING: no +model_data option specified, using /tmp.
 WARNING: Insufficient data from the input file for $fread
-INFO: loaded 2164 bytes of 68k program from /home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/run_lwmutant_ap040/prog.bin
+INFO: loaded 2192 bytes of 68k program from /home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/run_lwmutant_ap040/prog.bin
 LOAD_MODE: bank 2
 LOAD_MODE: bank 3
 LOAD_MODE: bank 1
@@ -29,13 +29,13 @@ FAIL: cpustate[6] set with the AP68040 as the core (SDRAM port, addr 00001000)
 FAIL: cpustate[6] set with the AP68040 as the core (SDRAM port, addr 00001002)
 FAIL: cpustate[6] set with the AP68040 as the core (SDRAM port, addr 00001002)
 FAIL: cpustate[6] set with the AP68040 as the core (SDRAM port, addr 00001002)
-INFO: program phase 1 at 77937822.0 ps
-INFO: program phase 2 at 634199582.0 ps
-INFO: program phase 3 at 1818759282.0 ps
-INFO: program phase 4 at 2065473502.0 ps
-INFO: program phase 5 at 2092694222.0 ps
-INFO: program phase 7 at 2431049182.0 ps
-INFO: program phase 8 at 2470011482.0 ps
+INFO: program phase 1 at 77373662.0 ps
+INFO: program phase 2 at 570625802.0 ps
+INFO: program phase 3 at 1752928862.0 ps
+INFO: program phase 4 at 1983176662.0 ps
+INFO: program phase 5 at 2009163282.0 ps
+INFO: program phase 7 at 2337786482.0 ps
+INFO: program phase 8 at 2378123922.0 ps
 
 DDR3 CPU TB: PASS  (68k program completed all phases)
 
@@ -44,10 +44,12 @@ PASS: DDR3 array contents match the pattern (independent backdoor read)
 
 DDR3 CPU TB: FAIL  1895 32-bit-write protocol violations on the RAM port
 
+INFO: cache line fills -- 83 over the channel (1 of them undecoded, auto-completed), 5 down the adapter, 0 bus errors
+
 DDR3 CPU TB: 1 checks failed
 
-$finish called at time : 2471316102 ps : File "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/ddr3_cpu_tb.sv" Line 954
-run: Time (s): cpu = 00:00:02 ; elapsed = 00:15:26 . Memory (MB): peak = 1443.094 ; gain = 27.039 ; free physical = 8523 ; free virtual = 31246
+$finish called at time : 2379393282 ps : File "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/ddr3_cpu_tb.sv" Line 1256
+run: Time (s): cpu = 00:00:01 ; elapsed = 00:11:37 . Memory (MB): peak = 1441.133 ; gain = 0.000 ; free physical = 14832 ; free virtual = 39475
 ## quit
-INFO: xsimkernel Simulation Memory Usage: 150008 KB (Peak: 190888 KB), Simulation CPU Usage: 924000 ms
-INFO: [Common 17-206] Exiting xsim at Mon Sep  7 22:59:53 2026...
+INFO: xsimkernel Simulation Memory Usage: 150156 KB (Peak: 191036 KB), Simulation CPU Usage: 696710 ms
+INFO: [Common 17-206] Exiting xsim at Wed Sep  9 08:17:37 2026...

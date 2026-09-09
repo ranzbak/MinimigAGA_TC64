@@ -37,7 +37,7 @@ PASS: DDR3 array contents match the pattern (independent backdoor read)
 DDR3 CPU TB: 2 passed, 0 failed
 
 $finish called at time : 868713842 ps : File "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/ddr3_cpu_tb.sv" Line 1255
-run: Time (s): cpu = 00:00:00.46 ; elapsed = 00:04:17 . Memory (MB): peak = 1260.730 ; gain = 8.004 ; free physical = 14655 ; free virtual = 39158
+run: Time (s): cpu = 00:00:00.89 ; elapsed = 00:06:15 . Memory (MB): peak = 1441.133 ; gain = 0.000 ; free physical = 12369 ; free virtual = 36709
 ## quit
-INFO: xsimkernel Simulation Memory Usage: 148012 KB (Peak: 188892 KB), Simulation CPU Usage: 256760 ms
-INFO: [Common 17-206] Exiting xsim at Wed Sep  9 05:43:58 2026...
+INFO: xsimkernel Simulation Memory Usage: 148012 KB (Peak: 188892 KB), Simulation CPU Usage: 373540 ms
+INFO: [Common 17-206] Exiting xsim at Wed Sep  9 06:56:42 2026...
