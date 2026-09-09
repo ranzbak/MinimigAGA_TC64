@@ -277,11 +277,12 @@ end
 // would ever notice it.
 //
 // WHAT IS DRIVEN.  One-cycle pulses on the clk grid, at chip RAM addresses,
-// spaced SNOOP_EVERY clk cycles.  SNOOP_EVERY is 128, and 128 mod 3 = 2, so
-// the pulse walks all three phases relative to clk_cpu -- including the two
-// that are dropped without the fix -- and 128 >= 16 means two pulses can
-// never merge in the wrapper's latch, which is also true of the hardware
-// (a chip slot-1 write happens at most once per sixteen-cycle SDRAM round).
+// spaced by a repeating table of gaps (see the table below): 16 clk cycles,
+// which is the hardware minimum, and then 8, 4, 3 and 2, which are tighter
+// than the SDRAM round can ever produce and are there only to locate the
+// point at which the wrapper's hold starts merging.  The table sums to 98 and
+// 98 mod 3 = 2, so every gap walks all three phases relative to clk_cpu --
+// including the two that are dropped without the fix.
 // ph3 counts the clk grid with 0 on the cycle after a coincident edge, so
 // ph3 == 2 is the one window a raw pulse would survive.
 //
@@ -298,7 +299,48 @@ end
 integer snoop_on = 0;
 initial snoop_on = $test$plusargs("SNOOP");
 
-localparam integer SNOOP_EVERY = 128;
+// SPACING SWEEP.  128 was never the interesting number: it only proved the
+// hold delivers an isolated pulse from any of the three phases.  The no-merge
+// half of the argument -- "a chip slot-1 write happens at most once per
+// sixteen-cycle SDRAM round, so the <=3-cycle hold can never contain two
+// snoops" -- was never exercised, because 128 is eight rounds apart.
+//
+// The true minimum from the RTL: sdram_state is a free-running 16-phase
+// counter (sdram_ctrl.v:418-435, ph0..ph15 -> ph0, no branches), snoop_act is
+// set in exactly one place, at ph2 (:633), and cleared unconditionally every
+// cycle (:492).  So back-to-back chip slot-1 writes put snoop_act pulses
+// exactly 16 clk cycles apart, and 16 is the legal minimum.
+//
+// The generator now walks a repeating table of gaps: the legal 16, then 8, 4,
+// 3 and 2, which are all TIGHTER than anything the hardware can produce.  The
+// illegal ones are there to show where the hold actually breaks rather than
+// leaving the answer binary.  The table sums to 98 and 98 mod 3 = 2, so every
+// gap value still visits all three clk phases over the run.
+localparam integer NSEQ = 12;
+integer snoop_seq [0:NSEQ-1];
+integer snoop_gapi [0:NSEQ-1];        // bucket index for each gap
+localparam integer NGAP = 5;          // 16, 8, 4, 3, 2
+integer gap_name [0:NGAP-1];
+integer snoop_iss_g [0:NGAP-1];
+integer snoop_seen_g [0:NGAP-1];
+integer snoop_si = 0;
+
+initial begin : snoop_seq_init
+  integer i;
+  gap_name[0]=16; gap_name[1]=8; gap_name[2]=4; gap_name[3]=3; gap_name[4]=2;
+  snoop_seq[0]=16; snoop_seq[1]=16; snoop_seq[2]=16; snoop_seq[3]=16;
+  snoop_seq[4]=8;  snoop_seq[5]=8;
+  snoop_seq[6]=4;  snoop_seq[7]=4;
+  snoop_seq[8]=3;  snoop_seq[9]=3;
+  snoop_seq[10]=3; snoop_seq[11]=3;
+  snoop_gapi[0]=0; snoop_gapi[1]=0; snoop_gapi[2]=0; snoop_gapi[3]=0;
+  snoop_gapi[4]=1; snoop_gapi[5]=1;
+  snoop_gapi[6]=2; snoop_gapi[7]=2;
+  snoop_gapi[8]=3; snoop_gapi[9]=3;
+  snoop_gapi[10]=3; snoop_gapi[11]=3;
+  for (i=0; i<NGAP; i=i+1) begin snoop_iss_g[i]=0; snoop_seen_g[i]=0; end
+end
+
 // Chip RAM addresses the 68k program's data actually lives in, walked so that
 // successive snoops hit different cache sets (s_addr[9:4] is the set).
 localparam [31:0] SNOOP_BASE = 32'h0000_0800;
@@ -314,6 +356,17 @@ integer    snoop_ph1  = 0;
 integer    snoop_ph2  = 0;
 integer    snoop_cnt  = 0;
 
+// A merge does not only lose a strobe: the second write overwrites the held
+// address, so the FIRST address is never invalidated even though a strobe is
+// still delivered.  Queue every issued address and compare it against what
+// the core is actually shown, in order.  That catches a merge directly.
+localparam integer SNOOP_QD = 4096;
+reg [31:0] snoop_q_addr [0:SNOOP_QD-1];
+integer    snoop_q_gap  [0:SNOOP_QD-1];
+integer    snoop_q_wr   = 0;
+integer    snoop_q_rd   = 0;
+integer    snoop_addr_err = 0;
+
 always @(posedge clk) ph3 <= (ph3 == 2'd2) ? 2'd0 : ph3 + 2'd1;
 
 always @(posedge clk) begin
@@ -321,10 +374,15 @@ always @(posedge clk) begin
   if (!tg68_rst) begin
     snoop_cnt <= 0;
   end else if (snoop_on) begin
-    if (snoop_cnt == SNOOP_EVERY - 1) begin
+    if (snoop_cnt == snoop_seq[snoop_si] - 1) begin
       snoop_cnt     <= 0;
       snoop_stb_tb  <= 1'b1;
       snoop_addr_tb <= SNOOP_BASE + ((snoop_iss % 64) << 4);
+      snoop_q_addr[snoop_q_wr % SNOOP_QD] = SNOOP_BASE + ((snoop_iss % 64) << 4);
+      snoop_q_gap [snoop_q_wr % SNOOP_QD] = snoop_gapi[snoop_si];
+      snoop_q_wr     = snoop_q_wr + 1;
+      snoop_iss_g[snoop_gapi[snoop_si]] = snoop_iss_g[snoop_gapi[snoop_si]] + 1;
+      snoop_si      <= (snoop_si == NSEQ-1) ? 0 : snoop_si + 1;
       snoop_iss      = snoop_iss + 1;
       case (ph3)
         2'd0: snoop_ph0 = snoop_ph0 + 1;
@@ -345,10 +403,24 @@ end
 wire core_snp_stb = ddr3_cpu_tb.tg68k.g_ap040.ap040.cache_snoop_stb;
 wire core_snp_wr  = ddr3_cpu_tb.tg68k.g_ap040.ap040.g_cache.cache.snoop_wr;
 
+wire [31:0] core_snp_addr = ddr3_cpu_tb.tg68k.g_ap040.ap040.cache_snoop_addr;
+
 always @(posedge clk_cpu) begin
   if (tg68_rst && core_snp_stb) begin
     snoop_seen = snoop_seen + 1;
     if (core_snp_wr) snoop_inv = snoop_inv + 1;
+    if (snoop_q_rd < snoop_q_wr) begin
+      snoop_seen_g[snoop_q_gap[snoop_q_rd % SNOOP_QD]] =
+          snoop_seen_g[snoop_q_gap[snoop_q_rd % SNOOP_QD]] + 1;
+      if (core_snp_addr !== snoop_q_addr[snoop_q_rd % SNOOP_QD]) begin
+        snoop_addr_err = snoop_addr_err + 1;
+        if (snoop_addr_err <= 8)
+          $display("INFO: snoop address out of order at %0t -- core saw %h, expected %h (gap %0d)",
+                   $time, core_snp_addr, snoop_q_addr[snoop_q_rd % SNOOP_QD],
+                   gap_name[snoop_q_gap[snoop_q_rd % SNOOP_QD]]);
+      end
+      snoop_q_rd = snoop_q_rd + 1;
+    end
   end
 end
 `endif
@@ -1198,6 +1270,7 @@ endtask
 // Result
 //-----------------------------------------------------------------
 integer nfail;
+integer sgi;
 
 task final_report;
   input integer code;
@@ -1403,6 +1476,18 @@ initial begin : main
     $display("");
     $display("INFO: chipset snoops -- %0d issued (%0d/%0d/%0d in clk phase 0/1/2), %0d seen by the core, %0d invalidated a cache set",
              snoop_iss, snoop_ph0, snoop_ph1, snoop_ph2, snoop_seen, snoop_inv);
+    for (sgi = 0; sgi < NGAP; sgi = sgi + 1)
+      $display("INFO:   gap %2d clk cycles%s -- %0d issued, %0d seen",
+               gap_name[sgi],
+               (gap_name[sgi] >= 16) ? " (the hardware minimum)" : " (tighter than hardware can make)",
+               snoop_iss_g[sgi], snoop_seen_g[sgi]);
+    $display("INFO:   %0d snoop addresses reached the core out of order (a merge loses the first address)",
+             snoop_addr_err);
+    if (snoop_addr_err != 0) begin
+      $display("DDR3 CPU TB: FAIL  %0d snoop addresses were delivered out of order -- the hold merged snoops",
+               snoop_addr_err);
+      nfail = nfail + 1;
+    end
     if (snoop_iss == 0) begin
       $display("DDR3 CPU TB: FAIL  +SNOOP was set but no snoop was issued");
       nfail = nfail + 1;
