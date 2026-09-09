@@ -1443,6 +1443,55 @@ prediction (it should stop being the WNS path, having gone from 8.815 ns to
 26.45 ns) are owed from the first bitstream.  Full write-up:
 [sdd-d3/task-d3-report.md](sdd-d3/task-d3-report.md).
 
+**2026-09-09 evening, D3 on hardware: 0.29x, and one boot hang that is not explained.**
+
+`build/stage_ap040_d3` (ila=0, commit 762146c) and `build/stage_ap040_d3_ila`.
+**SysInfo 0.23x -> 0.29x = 1.26x**, against 1.33x from the clock ratio and 1.32x
+from the bench. The shortfall is small; SysInfo's granularity and OS overhead
+that does not scale with the core both plausibly account for it. The machine is
+stable in use after boot.
+
+**Timing is the cleanest this design has ever been, and D3 fixed a carried
+hazard for free.** clk_114 **+0.183 ns, 0 failing** (it was -0.408 with 2
+failing); clk_38 +0.707; the crossings +6.645 and +0.273; clk_148 +0.087;
+clk_ddr100 +1.415. The **only** violated path in the whole design is the
+pre-existing SDRAM read capture at -0.501 / 16, which predates the 68040 and is
+better than the TG68K baseline's -0.544. **`atc_ram -> {look,st}_snooped` now
+MEETS**: it failed setup in every AP040 bitstream ever built here, including the
+one that had been booting for two days, and moving the kernel to a 26.45 ns
+period resolved it as a side effect. No hold violations. `report_exceptions`
+shows **zero multicycles on the AP68040**, this stage's stated exit criterion.
+Smaller, too: 39,623 LUTs against 40,392.
+
+**The hang, recorded because it is not understood.** On the first boot of the
+shipping build Workbench stuck partway; SysInfo still ran and gave 0.29x; a
+later boot completed and the machine has been stable since. Captured at the
+stuck point with the debug build: core at `$00F815D2` executing `4E72` (STOP) in
+Exec's dispatcher idle loop, **no fault flags, advancing on every clk_38 edge,
+zero bus stalls**, waking on interrupts and running the dispatch chain across 80
+addresses in `$F813xx-$F819xx` while reading `$DFF01E`/`$DFF01C`. That is
+indistinguishable from a normally idle machine, so the capture cannot say
+whether the boot had finished or every task was blocked.
+
+Two things it DOES settle:
+
+* **It is not D1's failure.** D1 dies early, inside expansion.library's ConfigDev
+  walk. This reaches the dispatcher and services interrupts normally, so the
+  three-cycle enable spacing is not failing the way D1's does.
+* **It is not the snoop path.** That was the prime suspect -- boot is when disk
+  DMA writes chip RAM hardest, and the D3 snoop hold's no-merge argument was
+  untested at close spacing. Tested since: the true minimum spacing is 16 cycles
+  (derived from `sdram_ctrl`'s free-running phase counter, `snoop_act` set at ph2
+  only and cleared every cycle), and the hold is clean at 16 and stays clean down
+  to a gap of 3, five times tighter than the controller can produce, with
+  delivery ORDER checked as well as delivery. It loses one only at a gap of 2,
+  which is unreachable.
+
+So the cause is unknown and intermittent, it is somewhere above Exec, and
+nothing in the CPU capture points at it. **Do not treat D3 as finished on
+hardware until this either recurs with a signature or fails to recur over a
+measured number of cold boots.**
+
 ## Risks
 
 | Risk | Shows as | Mitigation |
