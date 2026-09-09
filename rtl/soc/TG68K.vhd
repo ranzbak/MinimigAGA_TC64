@@ -192,9 +192,19 @@ ARCHITECTURE logic OF TG68K IS
 	-- clkena in this file (slower, chipset_done, akiko_req, the chipset FSM,
 	-- cpustate) was written against.
 	SIGNAL cpu_ce_phase : std_logic;
+	-- cpu_ph is high in (T+1,T+2) and cpu_ph2 in (T+2,T+3), where the kernel's
+	-- clock edges are at T and T+3.  cpu_ph2 is the enable phase; cpu_ph is
+	-- declared HERE rather than inside the g_ap040 block because the walker
+	-- routers below need it -- see bus_step.  It keeps its initial '0' in a
+	-- TG68K build, where the g_ap040 block that drives it is not elaborated.
+	SIGNAL cpu_ph       : std_logic := '0';
 	SIGNAL cpu_ph2      : std_logic := '0';
 	-- '1' when the kernel's bus outputs have settled; see where it is driven.
 	SIGNAL cpu_bus_settled : std_logic;
+	-- The clkena release term on its own, and the AP68040's registered clkena.
+	-- See where they are driven.
+	SIGNAL bus_release  : std_logic;
+	SIGNAL clkena_r     : std_logic := '0';
 	-- SIGNAL vmaena           : std_logic;
 	SIGNAL eind        : std_logic;
 	SIGNAL eindd       : std_logic;
@@ -326,6 +336,10 @@ ARCHITECTURE logic OF TG68K IS
 	SIGNAL wk_wdat16  : std_logic_vector(15 downto 0);
 	TYPE   wk_state_t IS (WK_IDLE, WK_HI, WK_GAP, WK_LO, WK_DONE);
 	SIGNAL wk_st      : wk_state_t;
+	-- '1' on the clk edges the walker and line-fill routers are allowed to
+	-- advance on; see the note above the walker process.  Constant '1' for
+	-- the TG68K, where both routers fold away anyway.
+	SIGNAL bus_step   : std_logic;
 
 	--------------------------------------------------------------------------
 	-- Stage D: the line-fill requester -- the walker router's twin.
@@ -812,7 +826,8 @@ BEGIN
 		-- from configuration.
 		SIGNAL cpu_tgl   : std_logic := '0';
 		SIGNAL cpu_tgl_d : std_logic := '0';
-		SIGNAL cpu_ph    : std_logic := '0';
+		-- cpu_ph is declared in the architecture region, next to cpu_ph2: the
+		-- bus routers are outside this generate and read it (bus_step).
 
 		-- STAGE D3, THE OTHER HALF OF THE CROSSING.  The chipset DMA write
 		-- snoop is the one bus -> core signal that is NOT a level the core
@@ -1245,8 +1260,78 @@ BEGIN
 	-- With the TG68K, cpu_ce_phase is clkena_in -- enaWRreg, four of sixteen
 	-- clk phases -- and both this expression and the kernel's clock are
 	-- exactly what they were.
-	clkena <= '1' WHEN (cpu_ce_phase = '1' AND (bstate = "01" OR bus_ready = '1')) ELSE
-	'0';
+	bus_release <= '1' WHEN (bstate = "01" OR bus_ready = '1') ELSE '0';
+
+	-- STAGE D3-FIX.  THE AP68040's clkena IS A REGISTER, DECIDED ONE clk EDGE
+	-- EARLY.  Same waveform, one clk cycle older content, and one flop instead
+	-- of a die-crossing combinational cone in front of 7,391 clock-enable pins.
+	--
+	-- What forced this.  bus_release's cone runs out of this wrapper, across
+	-- the die into a memory controller, through its cache-hit logic and back:
+	--
+	--   cpuaddr -> the decode -> sdram_ctrl / ddr3_fastram -> cpu_cache_new's
+	--   cpu_cacheline_valid -> cpu_ack -> cpuena / ddr_ena -> mem_ready ->
+	--   bus_ready -> clkena
+	--
+	-- and combinationally on into the kernel from there.  Left whole, that is
+	-- ONE clk period, 8.815 ns, for the whole round trip plus four levels of
+	-- MMU logic on the far side; measured 8.24 ns in build/stage_ap040_d3 and
+	-- 8.28 ns after the bus routers were fixed, i.e. 0.3 ns of margin on the
+	-- net that decides whether the core advances at all.  Cutting it at
+	-- clkena leaves 3.5 ns of controller round trip on one side of the flop
+	-- and 4.5 ns of kernel logic on the other, each against 8.815 ns.
+	--
+	-- WHY THE WAVEFORM IS UNCHANGED.  cpu_ph is high in (T+1,T+2), so this
+	-- register goes high at edge T+2, is high through (T+2,T+3), and goes low
+	-- at edge T+3 -- exactly where cpu_ph2 AND bus_release put it before.
+	-- Every clk-domain consumer of clkena (slower's reload, chipset_done's
+	-- clear, akiko_req, the two routers' captures, the chipset FSM's
+	-- end-of-cycle test, cpustate(5)) samples it at edge T+3 and sees the same
+	-- one-cycle pulse it always saw.
+	--
+	-- WHY THE CONTENT IS THE SAME FOR bstate, AND ONLY ONE CYCLE OLD FOR
+	-- bus_ready.
+	--
+	--   * `state`, the kernel's own bus state, changes only on clk_cpu edges,
+	--     so it is the same during (T+1,T+2) as during (T+2,T+3).
+	--   * `wk_active`/`wk_bstate`/`fl_active`/`fl_bstate`, the borrowers' half
+	--     of the bstate mux, cannot change at edge T+2 at all: bus_step skips
+	--     that edge.  That is the same invariant the cpu.xdc exception rests
+	--     on, used a second time.
+	--     So `bstate = "01"` is EXACTLY equal in the two cycles: the idle
+	--     release, which is what CPU-bound code lives on, is unaffected and
+	--     costs nothing.  The 1.26x measured on hardware is not touched.
+	--   * `bus_ready` is a genuine one-clk-cycle delay, and every term of it
+	--     is a LEVEL that stays up until the core consumes it -- mem_ready
+	--     (the controller holds its acknowledge until the select drops),
+	--     chipset_done (cleared only by clkena), akiko_ack (dropped only by
+	--     clkena), sel_undecoded_d (a level while the address is out).  The
+	--     one pulse among them, chipset_ready, is latched by chipset_done in
+	--     the very next cycle, so it cannot be missed either.  Nothing is
+	--     lost; an acknowledge that lands in (T+1,T+2) instead of (T+2,T+3)
+	--     releases the core at T+6 rather than T+3.
+	--
+	-- COST: one clk cycle of acknowledge latency, which the 1:3 quantisation
+	-- turns into one clk_cpu cycle (26.45 ns) for one memory access in three
+	-- and nothing for the other two -- 8.8 ns on average per access that
+	-- actually goes to memory, and zero for a core running out of its own
+	-- caches.  Measured in sim/ddr3_cpu; see
+	-- findings/ap68040/sdd-d3/task-d3fix-report.md.
+	--
+	-- mem_ready is registered here and NOT where the two bus routers read it:
+	-- FL_SEL/FL_GAP and WK_GAP keep the live copy, so a line fill's eight
+	-- words still stream at the clk rate.
+	PROCESS(clk)
+	BEGIN
+		IF rising_edge(clk) THEN
+			clkena_r <= cpu_ph AND bus_release;
+		END IF;
+	END PROCESS;
+
+	-- The TG68K keeps the combinational expression exactly as it was
+	-- (cpu_ce_phase is clkena_in there, and cpu_ph is a constant '0', so
+	-- clkena_r folds away with the rest of the AP68040 plumbing).
+	clkena <= clkena_r WHEN use_ap040 ELSE (cpu_ce_phase AND bus_release);
 
 	PROCESS(clk)
 	BEGIN
@@ -1275,7 +1360,79 @@ BEGIN
 	-- rather than hanging.  The MMU turns that into an unsuccessful table
 	-- search -- a Guru -- instead of the silent halt a missing acknowledge
 	-- produces (which is stage A's behaviour, with the port tied off).
+	--
+	-- STAGE D3-FIX.  WHY BOTH BUS ROUTERS SKIP ONE clk EDGE IN THREE.
+	--
+	-- wk_active/wk_busaddr and fl_active/fl_busaddr select the bus-side address
+	-- mux above, and that mux is the head of the longest combinational chain in
+	-- the design:
+	--
+	--   cpuaddr -> sel_kickram -> cache_inhibit -> sdram_ctrl -> cpu_cache_new's
+	--   cpu_cacheline_valid -> cpu_ack -> cpuena -> ramready -> mem_ready ->
+	--   bus_ready -> clkena -> the kernel
+	--
+	-- (and the same round trip again through ddr3_fastram's own cpu_cache_new).
+	-- Out of the wrapper, across the die into a memory controller, through its
+	-- cache-hit logic and all the way back into the CPU island.  Driven from the
+	-- kernel's own addrtg68 that chain is clk_cpu -> clk_cpu and has 26.45 ns;
+	-- driven from these registers it is clk -> clk_cpu and has ONE clk period,
+	-- 8.815 ns.  It measured 8.24 ns in build/stage_ap040_d3 and 8.81 ns in
+	-- build/stage_ap040_d3_ila -- and in those bitstreams wk_active, wk_busaddr
+	-- and fl_busaddr were, in that order, the startpoint of EVERY clk -> clk_cpu
+	-- path with less than 0.3 ns of slack.  This is what the intermittent
+	-- AN_MemCorrupt Guru was standing on.
+	--
+	-- Before stage D3 the walker half was covered by a multicycle (cpu.xdc's
+	-- $cpu_ce_aligned, -setup -start 2, 17.63 ns) and D3 deleted it -- correctly:
+	-- the exception's premise was "every transition of wk_active is triggered by
+	-- a ce-aligned event", and with the kernel on its own clock that is false.
+	-- It is false in five specific places across the two routers, all of them
+	-- waits on something the memory side produces:
+	--
+	--   * WK_IDLE -> WK_HI is gated on fl_busy, which the line-fill router drops
+	--     on whatever edge its eighth word lands on;
+	--   * the sel_undecoded abort in WK_HI and WK_LO fires on the first edge in
+	--     the state, one edge after the state was entered;
+	--   * WK_GAP -> WK_LO is gated on bus_ready falling;
+	--   * FL_SEL -> FL_GAP is gated on mem_ready rising, and FL_GAP -> FL_SEL on
+	--     it falling -- twice per word, eight words per line.
+	--
+	-- Each of those can land on the clk edge IMMEDIATELY BEFORE a clk_cpu edge,
+	-- and that -- not the average case -- is what makes the honest requirement
+	-- one clk period.
+	--
+	-- So make the premise true by construction instead of asserting it away.
+	-- bus_step is NOT cpu_ph, and cpu_ph is the phase marker's middle register,
+	-- high in (T+1,T+2) when the kernel's edges are at T and T+3 -- so an edge
+	-- that samples cpu_ph = '1' IS edge T+2, the one clk edge before the kernel
+	-- samples, and gating both routers on bus_step skips exactly that edge and
+	-- no other: T, T+1, T+3 and T+4 all run.  Every register in both routers
+	-- therefore holds its value across the pair of clk cycles (T+1,T+2) and
+	-- (T+2,T+3), which is precisely and only the premise -setup -start 2 needs.
+	-- cpu.xdc states the exception against this paragraph; IF THIS GATE IS EVER
+	-- REMOVED, THAT EXCEPTION MUST GO WITH IT.
+	--
+	-- Two is the maximum and three would be false: both routers still run at
+	-- edge T+1, so a value launched at T can be gone by T+1.
+	--
+	-- NO EVENT CAN BE LOST BY SKIPPING AN EDGE, and that is what makes the gate
+	-- safe rather than merely slower.  Every condition either router waits on is
+	-- a LEVEL held until it is consumed -- fl_busy, wk_req, fl_req, bus_ready,
+	-- mem_ready, sel_undecoded, wk_st -- with exactly one exception, clkena,
+	-- which is a pulse and is high in (T+2,T+3): it is therefore only ever
+	-- sampled at edge T+3, where cpu_ph is '0' and the routers run.
+	--
+	-- What the gate costs is one clk cycle on those five transitions, one time
+	-- in three.  For the walker that is about 1.7 clk cycles, 15 ns, per
+	-- descriptor, on a path only taken on an ATC miss.  For the line fill it is
+	-- about 6.7 clk cycles, 59 ns, per 16-byte line.  Measured in sim/ddr3_cpu;
+	-- see findings/ap68040/sdd-d3/task-d3fix-report.md.
+	--
+	-- A no-op for the TG68K: use_ap040 is false, bus_step is a constant '1', and
+	-- wk_req/fl_req are tied low so both routers fold away as they always did.
 	--------------------------------------------------------------------------
+	bus_step <= '1' WHEN NOT use_ap040 ELSE NOT cpu_ph;
+
 	PROCESS(clk, reset)
 	BEGIN
 		IF reset = '0' THEN
@@ -1288,85 +1445,88 @@ BEGIN
 			wk_ack     <= '0';
 			wk_berr    <= '0';
 		ELSIF rising_edge(clk) THEN
-			CASE wk_st IS
-				WHEN WK_IDLE =>
-					wk_ack    <= '0';
-					wk_berr   <= '0';
-					wk_active <= '0';
-					wk_bstate <= "01";
-					-- Order, never interleave, with the line fill (stage D).
-					-- The two share every bus-side signal, so one waits while
-					-- the other owns them.  The walker has priority: the fill
-					-- FSM refuses to start while wk_req is high, so a request
-					-- arriving in the same cycle can only be taken here.
-					IF wk_req = '1' AND fl_busy = '0' THEN
-						IF wk_addr(1 downto 0) /= "00" THEN
-							-- a descriptor is a longword; this table is corrupt
-							wk_berr <= '1';
-							wk_st   <= WK_DONE;
-						ELSE
-							wk_busaddr <= wk_addr;
-							wk_wdat16  <= wk_wdat(31 downto 16);
-							IF wk_we = '1' THEN wk_bstate <= "11"; ELSE wk_bstate <= "10"; END IF;
-							wk_active  <= '1';
-							wk_st      <= WK_HI;
+			-- One clk edge in three is skipped; see the note above.
+			IF bus_step = '1' THEN
+				CASE wk_st IS
+					WHEN WK_IDLE =>
+						wk_ack    <= '0';
+						wk_berr   <= '0';
+						wk_active <= '0';
+						wk_bstate <= "01";
+						-- Order, never interleave, with the line fill (stage D).
+						-- The two share every bus-side signal, so one waits while
+						-- the other owns them.  The walker has priority: the fill
+						-- FSM refuses to start while wk_req is high, so a request
+						-- arriving in the same cycle can only be taken here.
+						IF wk_req = '1' AND fl_busy = '0' THEN
+							IF wk_addr(1 downto 0) /= "00" THEN
+								-- a descriptor is a longword; this table is corrupt
+								wk_berr <= '1';
+								wk_st   <= WK_DONE;
+							ELSE
+								wk_busaddr <= wk_addr;
+								wk_wdat16  <= wk_wdat(31 downto 16);
+								IF wk_we = '1' THEN wk_bstate <= "11"; ELSE wk_bstate <= "10"; END IF;
+								wk_active  <= '1';
+								wk_st      <= WK_HI;
+							END IF;
 						END IF;
-					END IF;
 
-				WHEN WK_HI =>
-					-- sel_undecoded, not sel_undecoded_d: the registered copy
-					-- still holds the PREVIOUS access's decode on the first
-					-- cycle of ours, and the core's last address is often in
-					-- undecoded space.  The combinational one is already ours.
-					IF sel_undecoded = '1' THEN
-						-- nothing lives at this physical address
-						wk_active <= '0';
-						wk_bstate <= "01";
-						wk_berr   <= '1';
-						wk_st     <= WK_DONE;
-					ELSIF clkena = '1' THEN
-						wk_data(31 downto 16) <= datatg68;
-						wk_busaddr            <= wk_addr(31 downto 2) & "10";
-						wk_wdat16             <= wk_wdat(15 downto 0);
-						wk_bstate             <= "01";
-						wk_st                 <= WK_GAP;
-					END IF;
+					WHEN WK_HI =>
+						-- sel_undecoded, not sel_undecoded_d: the registered copy
+						-- still holds the PREVIOUS access's decode on the first
+						-- cycle of ours, and the core's last address is often in
+						-- undecoded space.  The combinational one is already ours.
+						IF sel_undecoded = '1' THEN
+							-- nothing lives at this physical address
+							wk_active <= '0';
+							wk_bstate <= "01";
+							wk_berr   <= '1';
+							wk_st     <= WK_DONE;
+						ELSIF clkena = '1' THEN
+							wk_data(31 downto 16) <= datatg68;
+							wk_busaddr            <= wk_addr(31 downto 2) & "10";
+							wk_wdat16             <= wk_wdat(15 downto 0);
+							wk_bstate             <= "01";
+							wk_st                 <= WK_GAP;
+						END IF;
 
-				WHEN WK_GAP =>
-					-- Hold the bus, idle, until the acknowledge that released
-					-- the first sub-cycle has cleared.  Without this the
-					-- second sub-cycle can complete on the first one's stale
-					-- level and read the same word twice.
-					IF bus_ready = '0' THEN
-						IF wk_we = '1' THEN wk_bstate <= "11"; ELSE wk_bstate <= "10"; END IF;
-						wk_st     <= WK_LO;
-					END IF;
+					WHEN WK_GAP =>
+						-- Hold the bus, idle, until the acknowledge that released
+						-- the first sub-cycle has cleared.  Without this the
+						-- second sub-cycle can complete on the first one's stale
+						-- level and read the same word twice.
+						IF bus_ready = '0' THEN
+							IF wk_we = '1' THEN wk_bstate <= "11"; ELSE wk_bstate <= "10"; END IF;
+							wk_st     <= WK_LO;
+						END IF;
 
-				WHEN WK_LO =>
-					IF sel_undecoded = '1' THEN
-						wk_active <= '0';
-						wk_bstate <= "01";
-						wk_berr   <= '1';
-						wk_st     <= WK_DONE;
-					ELSIF clkena = '1' THEN
-						wk_data(15 downto 0) <= datatg68;
-						wk_active            <= '0';
-						wk_bstate            <= "01";
-						wk_ack               <= '1';
-						wk_st                <= WK_DONE;
-					END IF;
+					WHEN WK_LO =>
+						IF sel_undecoded = '1' THEN
+							wk_active <= '0';
+							wk_bstate <= "01";
+							wk_berr   <= '1';
+							wk_st     <= WK_DONE;
+						ELSIF clkena = '1' THEN
+							wk_data(15 downto 0) <= datatg68;
+							wk_active            <= '0';
+							wk_bstate            <= "01";
+							wk_ack               <= '1';
+							wk_st                <= WK_DONE;
+						END IF;
 
-				WHEN WK_DONE =>
-					-- ap040_mmu drops walker_req when it has taken the answer
-					-- (walk_ack is qualified with w_active && w_issued), and
-					-- inserts a request-low cycle before the next descriptor,
-					-- so this is the whole handshake.
-					IF wk_req = '0' THEN
-						wk_ack  <= '0';
-						wk_berr <= '0';
-						wk_st   <= WK_IDLE;
-					END IF;
-			END CASE;
+					WHEN WK_DONE =>
+						-- ap040_mmu drops walker_req when it has taken the answer
+						-- (walk_ack is qualified with w_active && w_issued), and
+						-- inserts a request-low cycle before the next descriptor,
+						-- so this is the whole handshake.
+						IF wk_req = '0' THEN
+							wk_ack  <= '0';
+							wk_berr <= '0';
+							wk_st   <= WK_IDLE;
+						END IF;
+				END CASE;
+			END IF;
 		END IF;
 	END PROCESS;
 
@@ -1429,83 +1589,88 @@ BEGIN
 			fl_ack     <= '0';
 			fl_err     <= '0';
 		ELSIF rising_edge(clk) THEN
-			CASE fl_st IS
-				WHEN FL_IDLE =>
-					fl_ack    <= '0';
-					fl_err    <= '0';
-					fl_active <= '0';
-					fl_bstate <= "01";
-					-- The walker gets the bus first (see WK_IDLE), and the
-					-- core's own bus side must be idle -- it is, because the
-					-- cache is sitting in C_FILLC waiting for this answer and
-					-- has nothing outstanding through the adapter.  Checking
-					-- it anyway costs one gate and turns a future violation
-					-- into a stall the bench can see instead of a lost access.
-					IF fl_req = '1' AND wk_req = '0' AND wk_st = WK_IDLE
-					   AND state = "01" THEN
-						fl_busy    <= '1';
-						fl_word    <= "000";
-						fl_busaddr <= fl_addr & "0000";
-						fl_active  <= '1';   -- take the bus, select still idle
-						fl_st      <= FL_DEC;
-					END IF;
-
-				WHEN FL_DEC =>
-					-- The address has been on cpuaddr for a whole cycle, so
-					-- the combinational decode below is ours and the
-					-- controllers' cpuAddr_r has caught it.  (sel_* and not
-					-- their registered copies, for the reason WK_HI records:
-					-- the registered ones still hold the previous access.)
-					IF fl_ok = '0' THEN
-						-- Nothing decodes here: auto-complete the whole line
-						-- with $FFFF words and acknowledge, exactly as the
-						-- eight adapter reads would have (see above).  No bus
-						-- transfer is needed, so it is released at once.
+			-- One clk edge in three is skipped, exactly as the walker above:
+			-- fl_busaddr and fl_active head the same combinational chain, and
+			-- every condition below is a level, so nothing can be missed.
+			IF bus_step = '1' THEN
+				CASE fl_st IS
+					WHEN FL_IDLE =>
+						fl_ack    <= '0';
+						fl_err    <= '0';
 						fl_active <= '0';
 						fl_bstate <= "01";
-						fl_line   <= (others => '1');
-						fl_ack    <= '1';
-						fl_st     <= FL_DONE;
-					ELSE
-						fl_bstate <= "10";   -- a data read; the select opens
-						fl_st     <= FL_SEL;
-					END IF;
+						-- The walker gets the bus first (see WK_IDLE), and the
+						-- core's own bus side must be idle -- it is, because the
+						-- cache is sitting in C_FILLC waiting for this answer and
+						-- has nothing outstanding through the adapter.  Checking
+						-- it anyway costs one gate and turns a future violation
+						-- into a stall the bench can see instead of a lost access.
+						IF fl_req = '1' AND wk_req = '0' AND wk_st = WK_IDLE
+						   AND state = "01" THEN
+							fl_busy    <= '1';
+							fl_word    <= "000";
+							fl_busaddr <= fl_addr & "0000";
+							fl_active  <= '1';   -- take the bus, select still idle
+							fl_st      <= FL_DEC;
+						END IF;
 
-				WHEN FL_SEL =>
-					IF mem_ready = '1' THEN
-						-- offset 0 first, shifted in from the right
-						fl_line   <= fl_line(111 downto 0) & datatg68;
-						fl_bstate <= "01";   -- close the select
-						IF fl_word = "111" THEN
+					WHEN FL_DEC =>
+						-- The address has been on cpuaddr for a whole cycle, so
+						-- the combinational decode below is ours and the
+						-- controllers' cpuAddr_r has caught it.  (sel_* and not
+						-- their registered copies, for the reason WK_HI records:
+						-- the registered ones still hold the previous access.)
+						IF fl_ok = '0' THEN
+							-- Nothing decodes here: auto-complete the whole line
+							-- with $FFFF words and acknowledge, exactly as the
+							-- eight adapter reads would have (see above).  No bus
+							-- transfer is needed, so it is released at once.
 							fl_active <= '0';
+							fl_bstate <= "01";
+							fl_line   <= (others => '1');
 							fl_ack    <= '1';
 							fl_st     <= FL_DONE;
 						ELSE
-							fl_word    <= fl_word + 1;
-							fl_busaddr <= fl_busaddr(31 downto 4) & (fl_word + 1) & '0';
-							fl_st      <= FL_GAP;
+							fl_bstate <= "10";   -- a data read; the select opens
+							fl_st     <= FL_SEL;
 						END IF;
-					END IF;
 
-				WHEN FL_GAP =>
-					-- The next word's address is already out (set above), so
-					-- this wait doubles as its setup cycle.
-					IF mem_ready = '0' THEN
-						fl_bstate <= "10";
-						fl_st     <= FL_SEL;
-					END IF;
+					WHEN FL_SEL =>
+						IF mem_ready = '1' THEN
+							-- offset 0 first, shifted in from the right
+							fl_line   <= fl_line(111 downto 0) & datatg68;
+							fl_bstate <= "01";   -- close the select
+							IF fl_word = "111" THEN
+								fl_active <= '0';
+								fl_ack    <= '1';
+								fl_st     <= FL_DONE;
+							ELSE
+								fl_word    <= fl_word + 1;
+								fl_busaddr <= fl_busaddr(31 downto 4) & (fl_word + 1) & '0';
+								fl_st      <= FL_GAP;
+							END IF;
+						END IF;
 
-				WHEN FL_DONE =>
-					-- ap040_cache drops fill_req in the cycle it takes the
-					-- line (C_FILLC, under ce), so the level is held until
-					-- then and fl_line is not touched meanwhile.
-					IF fl_req = '0' THEN
-						fl_ack  <= '0';
-						fl_err  <= '0';
-						fl_busy <= '0';
-						fl_st   <= FL_IDLE;
-					END IF;
-			END CASE;
+					WHEN FL_GAP =>
+						-- The next word's address is already out (set above), so
+						-- this wait doubles as its setup cycle.
+						IF mem_ready = '0' THEN
+							fl_bstate <= "10";
+							fl_st     <= FL_SEL;
+						END IF;
+
+					WHEN FL_DONE =>
+						-- ap040_cache drops fill_req in the cycle it takes the
+						-- line (C_FILLC, under ce), so the level is held until
+						-- then and fl_line is not touched meanwhile.
+						IF fl_req = '0' THEN
+							fl_ack  <= '0';
+							fl_err  <= '0';
+							fl_busy <= '0';
+							fl_st   <= FL_IDLE;
+						END IF;
+				END CASE;
+			END IF;
 		END IF;
 	END PROCESS;
 
