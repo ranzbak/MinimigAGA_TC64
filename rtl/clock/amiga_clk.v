@@ -9,6 +9,7 @@ module amiga_clk (
     output wire           clk_114, // SDRAM ctrl   clock (114.750000MHz)
     output wire           clk_sdram, // SDRAM output clock (114.750000MHz, -146.25 deg)
     output wire           clk_28, // 28MHz output clock ( 28.375160MHz)
+    output wire           clk_38, // CPU island clock   ( 37.812500MHz = clk_114/3)
     output wire           clk7_en, // 7MHz output clock enable (on 28MHz clock domain)
     output wire           clk7n_en, // 7MHz negedge output clock enable (on 28MHz clock domain)
     output wire           c1, // clk28m clock domain signal synchronous with clk signal
@@ -22,6 +23,7 @@ module amiga_clk (
     // simulation clocks ////
 `ifdef SOC_SIM
     reg            clk_114_r;
+    reg            clk_38_r;
     reg            clk_28_r;
     reg            clk_sdram_r;
     reg            pll_locked_r;
@@ -38,6 +40,19 @@ module amiga_clk (
         #3;
         forever #4.357  clk_114_r   = ~clk_114_r;
     end
+    // The CPU island clock: exactly one third of clk_114 and phase aligned
+    // with it, so every clk_38 edge falls on a clk_114 edge.  Written as its
+    // own delay chain rather than a divider off clk_114_r so that the two are
+    // simultaneous in the same time step and not a delta cycle apart, which
+    // is what the hardware does and what makes a clk_114 flop sample the
+    // pre-edge value of a clk_38 register.
+    initial begin
+        clk_38_r      = 1'b1;
+        #1;
+        wait (pll_locked_r);
+        #3;
+        forever #13.071 clk_38_r   = ~clk_38_r;
+    end
     initial begin
         clk_28_r      = 1'b1;
         #1;
@@ -53,6 +68,7 @@ module amiga_clk (
         forever #4.357  clk_sdram_r = ~clk_sdram_r;
     end
     assign clk_114    = clk_114_r;
+    assign clk_38     = clk_38_r;
     assign clk_28     = clk_28_r;
     assign clk_sdram  = clk_sdram_r;
     assign locked = pll_locked_r;
@@ -73,6 +89,9 @@ amiga_clk_altera amiga_clk_i (
   .c2       (clk_28   ),
   .locked   (locked   )
 );
+// The Altera PLL has no fourth output and the AP68040 island is a Xilinx
+// build only; the TG68K never uses clk_38 (rtl/soc/TG68K.vhd, g_tg68k).
+assign clk_38 = clk_114;
 `endif
 
 //`ifdef MINIMIG_XILINX
@@ -82,6 +101,7 @@ amiga_clk_altera amiga_clk_i (
         .c0       (clk_114  ),
         .c1       (clk_28   ),
         .c2       (clk_sdram),
+        .c3       (clk_38   ),
         .locked   (locked   )
     );
     //`endif

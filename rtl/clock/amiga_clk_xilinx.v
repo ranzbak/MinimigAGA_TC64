@@ -8,6 +8,7 @@ module amiga_clk_xilinx (
     output wire c0,
     output wire c1,
     output wire c2,
+    output wire c3,
     output wire locked
 );
 
@@ -16,6 +17,7 @@ module amiga_clk_xilinx (
 wire pll_114;
 wire dll_114;
 wire dll_28;
+wire dll_38;
 wire clk_fb_main;
 wire locked_async;
 // Synchonize the PLL locked signal to the dll_114 clock
@@ -36,6 +38,13 @@ MMCME2_ADV #(
     .CLKOUT1_DIVIDE(10), // 113.4375 MHz /10 divide
     .CLKOUT1_PHASE(-121.5), // -144.00' phase shift
     .CLKOUT2_DIVIDE(40), // 28.35938  MHz /40 divide
+    // The CPU island's own clock.  1134.375 / 30 = 37.8125 MHz EXACTLY, i.e.
+    // clk_114 / 3 off the same VCO with no phase shift, so every clk_38 rising
+    // edge coincides with a clk_114 one.  That makes the CPU island a
+    // SYNCHRONOUS 1:3 sibling of the system clock, not an asynchronous domain:
+    // static timing analyses the real edges and no synchroniser belongs on the
+    // crossing (findings/ap68040/plan-v2-with-ddr3.md, stage D3).
+    .CLKOUT3_DIVIDE(30), // 37.81250  MHz /30 divide  -- the AP68040 island
     .REF_JITTER1(0.010),
     .STARTUP_WAIT("TRUE")
 // .REF_JITTER2(0.010),
@@ -49,6 +58,7 @@ MMCME2_ADV #(
     .CLKOUT0(dll_114), //  114 MHz SDRAM clock
     .CLKOUT1(pll_114),
     .CLKOUT2(dll_28),
+    .CLKOUT3(dll_38),
     .LOCKED(locked_async)
 );
 
@@ -66,6 +76,7 @@ assign locked = locked_sync_reg[1];
 BUFG  BUFG_114 (.I(dll_114),  .O(c0));
 BUFG  BUFG_28  (.I(dll_28),   .O(c1));
 BUFG  BUFG_SDR (.I(pll_114),  .O(c2));
+BUFG  BUFG_38  (.I(dll_38),   .O(c3));
 //BUFG  BUFG_7   (.I(clk_7[1]), .O(c3));
 
 
