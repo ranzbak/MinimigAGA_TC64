@@ -334,6 +334,8 @@ ARCHITECTURE logic OF TG68K IS
 	SIGNAL fl_req     : std_logic;                      -- from the core, a level
 	SIGNAL fl_addr    : std_logic_vector(31 downto 4);  -- the line address
 	SIGNAL fl_ack     : std_logic;                      -- to the core, a LEVEL
+	-- fl_err is wired but never raised: FL_DEC auto-completes an address that
+	-- decodes to nothing instead of faulting it, which is this SoC's policy.
 	SIGNAL fl_err     : std_logic;                      -- also a level
 	SIGNAL fl_line    : std_logic_vector(127 downto 0); -- the assembled payload
 	SIGNAL fl_busy    : std_logic;                      -- a fill is in progress
@@ -587,16 +589,24 @@ BEGIN
 	sel_ram       <= '1' WHEN (sel_z2ram = '1' OR sel_z3ram_sdram = '1' OR sel_chipram = '1' OR sel_slowram = '1' OR sel_kickram = '1' OR sel_audio = '1') ELSE
 	'0';
 
-	-- Stage D.  A line fill is served only where a RAM controller answers a
-	-- Zorro window: the DDR3 board, or one of the ZII/ZIII boards on the
-	-- SDRAM.  The core cannot tell board 1 from board 3 -- its cache_z3_*
-	-- windows say "Zorro III RAM", not which memory backs it -- so the
-	-- wrapper decodes every fill address with the SAME logic the CPU's own
-	-- address takes, and anything else (undecoded 32-bit space, chip RAM,
-	-- the custom registers, a fill_addr from a corrupt cache) answers
-	-- fill_err rather than hanging or reading an unrelated bank.  That is
-	-- walker_mem_bad, one window set later; see the MiSTer reference's
-	-- fill_mem_bad in rtl/cpu_wrapper.v.
+	-- Stage D.  '1' where a RAM controller actually answers: the DDR3 board,
+	-- or one of the ZII/ZIII boards on the SDRAM.  The core cannot tell board
+	-- 1 from board 3 -- its cache_z3_* windows say "Zorro III RAM", not which
+	-- memory backs it -- so the wrapper decodes every fill address with the
+	-- SAME logic the CPU's own address takes.
+	--
+	-- It is NARROWER than those windows, and deliberately so.  cache_z3_base0
+	-- is addr(31:27) and cache_z3_base1 addr(31:28)
+	-- (ap040_tg68k_compat.v:397-401), i.e. a 128 MB and a 256 MB window
+	-- around boards that are 16 or 32 MB -- so a cacheable read of a hole
+	-- inside one, past the end of the DDR3 board or where board 1 would be if
+	-- it were fitted, is perfectly reachable and the core WILL raise fill_req
+	-- for it.  The router answers those out of fl_ok = '0' with a line of
+	-- $FFFF words, not with a bus error: this SoC auto-completes an address
+	-- that decodes to nothing (sel_undecoded, and the note beside the core's
+	-- berr input), so the eight adapter reads this replaces returned exactly
+	-- that.  Widening fl_ok is not the alternative -- it would hand the fill
+	-- to a controller that cannot decode the address.
 	fl_ok <= '1' WHEN (sel_ddr = '1' OR sel_z2ram = '1' OR sel_z3ram_sdram = '1') ELSE '0';
 
 	cache_inhibit <= '1' WHEN sel_kickram = '1' ELSE '0';
@@ -786,9 +796,13 @@ BEGIN
 				-- is covered by cache_z2_ena and the core's own hard-wired
 				-- $200000-$9FFFFF window; the Zorro III windows follow the
 				-- autoconfig state this wrapper already tracks.  Board 0 is
-				-- addr(31:27), so 01000 is $40000000-$41FFFFFF and covers the
-				-- 16 MB SDRAM board; board 1 is addr(31:28) and follows the
-				-- base the OS gave the DDR3 board wherever it put it.
+				-- addr(31:27), so 01000 is $40000000-$47FFFFFF -- 128 MB
+				-- around the 16 MB SDRAM board; board 1 is addr(31:28), a
+				-- 256 MB window following the base the OS gave the DDR3 board
+				-- wherever it put it.  Both are much wider than the board
+				-- inside them, so a cacheable read can land in a hole no
+				-- board decodes; fl_ok above says how the fill router answers
+				-- one.
 				cache_allow_all  => '0',
 				cache_snoop_stb  => snoop_stb,
 				cache_snoop_addr => snoop_addr,
@@ -1029,8 +1043,9 @@ BEGIN
 	-- gate, and the failure it guards against looks exactly like the AllocMem
 	-- spin that cost a day.
 	--
-	-- fl_ack / fl_err are there for exactly the same reason and are NOT belt
-	-- and braces: the line-fill FSM holds bstate at "01" only after it has
+	-- fl_ack is there for exactly the same reason and is NOT belt and braces
+	-- (fl_err is wired but never raised, see FL_DEC): the line-fill FSM holds
+	-- bstate at "01" only after it has
 	-- released the bus, and the cache samples fill_ack under ce, so without
 	-- these terms a fill that completes while clkena_in is between pulses --
 	-- or, worse, while the fill's own bus activity is what stopped clkena --
@@ -1190,11 +1205,22 @@ BEGIN
 	-- what ap040_fill_cdc.v does with the controller's four longword beats
 	-- ("m_line <= {m_line[95:0], m_dat}"), which is the check on this.
 	--
-	-- Errors: fill_err is a bus error, not a fallback -- the cache takes
-	-- C_FERR, invalidates the row and lets the core fault.  It is raised only
-	-- for an address no RAM controller answers (fl_ok), which the core should
-	-- never ask for; it exists so that a wrapper/core disagreement about the
-	-- windows is a Guru and not a silent hang.
+	-- An address that decodes to NOTHING is auto-completed, not faulted.  The
+	-- core's cacheable Zorro windows are far wider than the boards inside
+	-- them (see fl_ok), so a cacheable read of a hole in one is ordinary
+	-- traffic; and this SoC's policy for an address that decodes to nothing
+	-- is to complete it with $FFFF -- sel_undecoded does exactly that for the
+	-- CPU, and the note beside the core's berr input says the SoC never
+	-- raises a bus error at all.  So FL_DEC answers a line of all ones and
+	-- acknowledges, bit for bit what the eight adapter reads it replaces
+	-- returned.
+	--
+	-- fill_err stays wired for the case that cannot happen.  Measured what
+	-- the alternative costs: with fill_err raised there instead, the cache
+	-- took C_FERR and the machine did not merely Guru, it STOPPED -- the
+	-- bench's 68k program timed out at phase 7 with no fault reported
+	-- (sim/ddr3_cpu, 2026-09-09).  err_hold waits for the core to withdraw a
+	-- request the core has no reason to withdraw.
 	--------------------------------------------------------------------------
 	PROCESS(clk, reset)
 	BEGIN
@@ -1237,9 +1263,14 @@ BEGIN
 					-- their registered copies, for the reason WK_HI records:
 					-- the registered ones still hold the previous access.)
 					IF fl_ok = '0' THEN
+						-- Nothing decodes here: auto-complete the whole line
+						-- with $FFFF words and acknowledge, exactly as the
+						-- eight adapter reads would have (see above).  No bus
+						-- transfer is needed, so it is released at once.
 						fl_active <= '0';
 						fl_bstate <= "01";
-						fl_err    <= '1';
+						fl_line   <= (others => '1');
+						fl_ack    <= '1';
 						fl_st     <= FL_DONE;
 					ELSE
 						fl_bstate <= "10";   -- a data read; the select opens

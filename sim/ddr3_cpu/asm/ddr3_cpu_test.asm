@@ -27,6 +27,8 @@
 ;  11  ADDQ.L #4,(a0) longword read-modify-write, chip RAM
 ;  12  Exec List relocation left a pointer wrong
 ;  13  Exec List relocation left the list empty -- the AllocMem symptom
+;  14  a cacheable read of an undecoded hole inside the Zorro III window did
+;      not read back $FFFFFFFF
 ;  99  unexpected 68k exception (bus/address error, privilege violation, ...)
 ;
 ; Build with asm/build_68k_test.sh (vasmm68k_mot, -m68020 -Fbin).
@@ -74,6 +76,12 @@ CNTN      equ 64
           ifnd      CACRVAL
 CACRVAL   equ 3
           endif
+
+; A longword-aligned address inside the AP68040's cacheable Zorro III window
+; (cache_z3_base1 = $4, so all of $4xxxxxxx) that NO board in this bench
+; decodes: board 3 is 16 MB at $41000000 and boards 1 and 2 are disabled
+; (ddr3_cpu_tb.sv, ziiiram_active/ziiiram2_active = 0).  Reads $FFFF a word.
+UNDECODED equ $42000000
 
 MBOX      equ $00001000        ; bench-observed mailbox, in the bench chip RAM
 STACKTOP  equ $00007000
@@ -502,6 +510,30 @@ LNEW      equ CHIPSCR+$C0      ; the "new" List header
           beq       f_walk
 
 ;-----------------------------------------------------------------------------
+; A CACHEABLE read of a hole inside the Zorro III window.
+;
+; The AP68040's cacheable Zorro windows are much wider than the boards inside
+; them: cache_z3_base0 is addr(31:27), a 128 MB window, and cache_z3_base1 is
+; addr(31:28), a 256 MB one (ap040_tg68k_compat.v:397-401).  UNDECODED is
+; inside cache_z3_base1's window here -- the DDR3 board's base is $41 and the
+; window is all of $4xxxxxxx -- but no board decodes it, so sel_undecoded
+; auto-completes it with $FFFF, which is the SoC's stated policy for every
+; address that decodes to nothing (TG68K.vhd, "The SoC never raises a bus
+; error").  With the caches on it is also a cache MISS in a cacheable window,
+; so it is a line fill, and the line-fill router has to answer it the same
+; way: a line of all ones, acknowledged, no fault.
+;
+; No phase marker on purpose, so that the phase numbering the bench and the
+; plan's tables use does not shift.  It sits just before the phase-8 marker,
+; which is therefore the one timestamp it moves: measured +1.128 us on
+; run.sh --ap040 (2026-09-09), phases 1-7 bit-identical.
+;-----------------------------------------------------------------------------
+          move.l    UNDECODED,d3
+          move.l    #$FFFFFFFF,d4
+          cmp.l     d4,d3
+          bne       f_und
+
+;-----------------------------------------------------------------------------
 ; Done
 ;-----------------------------------------------------------------------------
           moveq     #8,d7
@@ -551,6 +583,9 @@ f_rmw:    moveq     #11,d7
 f_list:   moveq     #12,d7
           bra       report
 f_walk:   moveq     #13,d7
+          bra       report
+f_und:    move.l    #UNDECODED,d2
+          moveq     #14,d7
           bra       report
 
 EXCEPT:   move.l    #$EEEEEEEE,d2

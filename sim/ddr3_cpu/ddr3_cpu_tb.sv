@@ -745,7 +745,16 @@ end
 //            C_FILL entries (ap040_cache.v:233).  With fill_ena_zorro = 1 and
 //            fill_ena_chip = 0 these are the chip/kick/slow lines and the
 //            cache-inhibited ones; a Zorro-window miss must never be one.
-//   fill_err lines answered with a bus error (fl_err) -- expected zero.
+//   fill_err lines answered with a bus error (fl_err) -- expected zero, and a
+//            FAIL if it is not: the SoC never raises a bus error, it
+//            auto-completes an undecoded address with $FFFF.
+//   fill_und channel fills whose address decoded to NOTHING and were therefore
+//            served as a line of all ones.  The 68k program takes exactly one,
+//            reading UNDECODED = $42000000 -- inside the core's cacheable
+//            cache_z3_base1 window ($4xxxxxxx) but outside every board in this
+//            bench.  Before the auto-complete arm existed that read raised
+//            fl_err, the cache took C_FERR and the program died in its access
+//            fault handler with status 99.
 //
 // The assertion is the ordering rule: the walker router and the fill router
 // drive the same muxed bus signals, so they must never own them at once.
@@ -756,8 +765,10 @@ localparam [3:0] CST_FILLC = 4'd8;    // C_FILLC, ap040_cache.v:235
 integer fill_ch    = 0;
 integer fill_ad    = 0;
 integer fill_be    = 0;
+integer fill_und   = 0;
 integer fill_excl  = 0;
 
+wire       fl_ok_w     = ddr3_cpu_tb.tg68k.fl_ok;
 wire       fl_busy_w   = ddr3_cpu_tb.tg68k.fl_busy;
 wire       fl_active_w = ddr3_cpu_tb.tg68k.fl_active;
 wire       fl_err_w    = ddr3_cpu_tb.tg68k.fl_err;
@@ -770,7 +781,13 @@ reg [3:0] cst_d     = 4'd0;
 
 always @(posedge clk) begin
   if (tg68_rst) begin
-    if ( fl_busy_w && !fl_busy_d)              fill_ch = fill_ch + 1;
+    // fl_busy rises at the edge into FL_DEC, so the cycle sampled here is
+    // FL_DEC itself -- the one where the router reads fl_ok and decides
+    // between a memory transfer and the auto-complete.
+    if ( fl_busy_w && !fl_busy_d) begin
+      fill_ch = fill_ch + 1;
+      if (!fl_ok_w) fill_und = fill_und + 1;
+    end
     if ( fl_err_w  && !fl_err_d )              fill_be = fill_be + 1;
     if ((cst_w === CST_FILL) && (cst_d !== CST_FILL)) fill_ad = fill_ad + 1;
     if (wk_active_w && fl_active_w) begin
@@ -988,6 +1005,7 @@ initial begin : main
       32'd11 : final_report(11, "ADDQ.L #4,(a0) longword read-modify-write, chip RAM");
       32'd12 : final_report(12, "Exec List relocation left a pointer wrong");
       32'd13 : final_report(13, "Exec List relocation left the list EMPTY -- the AllocMem symptom");
+      32'd14 : final_report(14, "cacheable read of an undecoded hole in the Zorro III window");
       // stage B, the MMU walker program
       32'd20 : final_report(20, "translated read of a warm page");
       32'd21 : final_report(21, "translated write/read-back of a warm page");
@@ -1072,8 +1090,23 @@ initial begin : main
 
 `ifdef CPU_AP040
   $display("");
-  $display("INFO: cache line fills -- %0d over the channel, %0d down the adapter, %0d bus errors",
-           fill_ch, fill_ad, fill_be);
+  $display("INFO: cache line fills -- %0d over the channel (%0d of them undecoded, auto-completed), %0d down the adapter, %0d bus errors",
+           fill_ch, fill_und, fill_ad, fill_be);
+  if (fill_be != 0) begin
+    $display("DDR3 CPU TB: FAIL  %0d line fills answered with a bus error; this SoC auto-completes",
+             fill_be);
+    $display("       an address that decodes to nothing with $FFFF and never raises one");
+    nfail = nfail + 1;
+  end
+  // The pattern program reads UNDECODED once, after phase 8.  With the channel
+  // in use that read MUST be a channel fill taking the auto-complete arm; with
+  // the channel off (--nofill, fill_ch = 0) it is eight adapter reads instead
+  // and there is nothing here to check.  The MMU program does not read it.
+  if (!mmutest && fill_ch != 0 && fill_und == 0) begin
+    $display("DDR3 CPU TB: FAIL  the cacheable read of the undecoded Zorro III hole did not");
+    $display("       take a line fill over the channel");
+    nfail = nfail + 1;
+  end
   if (fill_excl != 0) begin
     $display("DDR3 CPU TB: FAIL  %0d cycles with the walker and the line fill both on the bus",
              fill_excl);
