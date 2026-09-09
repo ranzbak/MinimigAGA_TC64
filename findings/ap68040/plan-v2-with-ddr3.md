@@ -1055,6 +1055,53 @@ half (the fill port carries no I/D bit, upstream included).  Full contract,
 design, seven-leg results and phase tables:
 `.superpowers/sdd/plan-v2-with-ddr3/task-3-report.md`.
 
+**2026-09-09, stage D task 5a -- build and boot check of the fill-channel
+state.** Two builds against `fb71459` (D2, the line-fill channel): ila = 0
+(`build/stage_ap040_x3fill`) signed off clean against the immediately-prior
+`stage_ap040_x3` baseline -- `clk_114` −0.398 ns (baseline −0.347 ns), two
+failing endpoints, both the pre-existing free-running `look_snooped_reg` /
+`st_snooped_reg` snoop pair, no new endpoint; SDRAM path −0.512 ns/16 (was
+−0.510 ns/16); DDR3 CDC exceptions and the kernel `-start 3` multicycle set
+unchanged. LUT 40,260 (63.5 %), 133 more than the pre-fill-channel baseline,
+consistent with the second bus master added to `TG68K.vhd`. Also checked
+task-3-report.md section 2.7's claim that the fill address register
+(`fl_busaddr`) is deliberately kept OUT of the wrapper `addr*` 3-cycle
+relaxation (its 2-cycle-only stable window would be unsafe under that
+relaxation's `-start 2`): confirmed against the built `exceptions.rpt` --
+`fl_busaddr` appears in no exception at all, and the `addr*` filter's two
+lines are unchanged from baseline. Build wall clock 24 min 51 s.
+
+**Then the working tree moved out from under the second build.** While
+`build/stage_ap040_x3fill_ila` (ila = 1) was synthesizing, a fix round landed
+and committed as `5a20f8e` ("a line fill of an address that decodes to
+nothing completes, it does not fault") -- `rtl/soc/TG68K.vhd` was edited on
+disk mid-build, before `synth_design` read sources, so **the ila = 1
+bitstream was actually built from `5a20f8e`, not `fb71459`**, though the
+ila = 0 build above is unaffected and clean. Its numbers (not signed off, per
+the standing rule for ila = 1 builds): `clk_114` −0.641 ns, 4 failing
+endpoints -- the same two-member snoop family plus two new, very small
+(−0.008 ns) endpoints on `wk_busaddr -> bf_t40_reg[11]/[12]/CE`, not
+attributable with confidence to either commit given the mid-build
+substitution and the ILA-congestion noise this configuration already carries
+(task 2 measured 210 such endpoints from ILA congestion alone on the
+otherwise-clean x3 core). SDRAM path −0.319 ns/16, actually better than the
+ila = 0 number. LUT 45,784 (72.2 %) / BRAM 125.5 (93 %), both cores' worth of
+ILA. Build wall clock 35 min 7 s. Full numbers, endpoint names, and the
+mid-build timeline: `.superpowers/sdd/plan-v2-with-ddr3/task-5a-report.md`.
+
+**Boot check, screen-free, on the (`5a20f8e`) ila = 1 bitstream:**
+programmed, waited 200 s, then three ILA captures per
+`tools/vivado/ila_boot_probe.tcl`. "now" (trigger-on-anything, 4096 samples):
+every sample `dbg_pc=00F815D2`, `dbg_ir=4E72` (STOP), `dbg_flags=0`, no bus
+cycle -- byte-for-byte the reference booted signature Paul confirmed at
+Workbench on 2026-09-09 00:25. "busy" shows the CPU leaving that idle state on
+an interrupt; "write" shows a live write to a chip register ($DFF1C8) from
+outside the idle loop. **Booted**, first probe, no fallback needed;
+`build/stage_ap040_x3fill_ila` left on the board. A separate ila = 0 rebuild
+of `5a20f8e` (`build/stage_ap040_x3fill2`) was already in flight by the time
+this task finished, for a like-for-like sign-off of the state that is
+actually on the board now.
+
 ## Risks
 
 | Risk | Shows as | Mitigation |
@@ -1100,6 +1147,18 @@ design, seven-leg results and phase tables:
 |   `clk_114` (the CPU island) | **−0.753 ns, 210 failing endpoints** (baseline: −0.588 ns, 1) | D task 2 |
 |   `clk_gen_sdram` → `clk_114` | **−0.508 ns, 16 failing** (baseline: −0.602 ns, 16) | D task 2 |
 |   Build wall clock | 26 min 46 s (23:43:06 → 00:09:52) | D task 2 |
+| **Post-route, fill-channel build, ila = 0** (`build/stage_ap040_x3fill`, 2026-09-09, `fb71459`, signed off against `build/stage_ap040_x3`) | | |
+|   LUTs / FF / BRAM / DSP | **40,260 (63.5 %)** / 19,628 (15.5 %) / **59.5 (44 %)** / 28 | D task 5a |
+|   `clk_114` (the CPU island) | **−0.398 ns, 2 failing endpoints**, same free-running snoop pair (`look_snooped_reg`, `st_snooped_reg`) as every prior build, no new endpoint. Baseline (`stage_ap040_x3`): −0.347 ns, 2 | D task 5a |
+|   `clk_gen_sdram` → `clk_114` (the known SDRAM read path) | **−0.512 ns, 16 failing** (baseline: −0.510 ns, 16 failing) | D task 5a |
+|   `fl_busaddr` vs the wrapper `addr*` 3-cycle set | **not in that set, or in any exception** — deliberate, per task-3-report.md §2.7 (its 2-cycle stable window is unsafe under `-start 2`); brief's premise that it "must be inside" the set does not match the documented design | D task 5a |
+|   Build wall clock | 24 min 51 s (02:57:30 → 03:22:21) | D task 5a |
+| **Post-route, fill-channel build, ila = 1** (`build/stage_ap040_x3fill_ila`, 2026-09-09 — built from `5a20f8e`, not `fb71459`: RTL changed on disk mid-build; not signed off, reported only) | | |
+|   LUTs / FF / BRAM / DSP | **45,784 (72.2 %)** / 29,562 (23.3 %) / **125.5 (93 %)** / 28 | D task 5a |
+|   `clk_114` (the CPU island) | **−0.641 ns, 4 failing endpoints**: the usual 2-member snoop pair plus two new, very small (−0.008 ns) endpoints `wk_busaddr -> bf_t40_reg[11]/[12]/CE`, not attributable with confidence given the mid-build RTL substitution and known ILA-congestion noise (210 endpoints from ILA alone, task 2) | D task 5a |
+|   `clk_gen_sdram` → `clk_114` | **−0.319 ns, 16 failing** | D task 5a |
+|   Build wall clock | 35 min 7 s (03:25:32 → 04:00:39) | D task 5a |
+|   Boot check (`tools/vivado/ila_boot_probe.tcl`, screen-free) | **BOOTED**, first probe: idle-loop signature byte-for-byte matches the 2026-09-09 00:25 reference (`dbg_pc=00F815D2`, `dbg_ir=4E72`, `dbg_flags=0`, no bus cycles); "busy"/"write" captures show live interrupt handling and a chip-register write. Left programmed on the board. | D task 5a |
 | Post-route WNS on the `clkena` → CE paths | not the limit; no CE path in the top 40 violators | A6 |
 | Fast-RAM benchmark, TG68K vs AP040, 28 MHz | — | A7 |
 | Same after D1 (37.8 MHz) and D2 (line port) | D2 measured in simulation, above; hardware number still owed | D1 / D2 |
