@@ -24,7 +24,8 @@ noted in B) and boots Kickstart 46.143 all the way to **Workbench with the MMU
 on**: ExecBase published, memory list and allocator working, interrupts
 arriving, `SetPatch` programming the MMU through `68040.library`, and the
 table walker answering its descriptor reads and write-backs. Tagged
-`unoptimized_040_working`. B4 (MuFastROM/MuScan) is what is left of stage B;
+`unoptimized_040_working`. **Stage B is complete**: B4 (MuFastROM/MuScan) passed
+on hardware 2026-09-09, with Kickstart mirrored into fast RAM;
 stage D is the whole of the performance work and has not started. See "Log" near the end for
 what was found on the way -- two bugs, both the same bug on different ports.
 Supersedes the order of work in [README.md](README.md), which was written
@@ -488,7 +489,7 @@ is `(|wk_addr(1 downto 0)) OR sel_undecoded`.
 | B1 | Requester in the wrapper, multiplexed into the kernel-side bus signals as above; `walker_berr` from misalignment or `sel_undecoded`; `clkena` kept alive under `wk_active`. | lint clean, `./run.sh --ap040` and `--ap040 --chipbus` still PASS |
 | B2 | **Bench the router.** `sim/ddr3_cpu` program builds a two-level table with the root in chip RAM and leaves in DDR3 fast RAM, so both ports are exercised; loads URP/SRP/TC with `movec`; enables translation; touches a mapped page, a page with M clear (forces a descriptor write-back), an unmapped page (expects an access-error frame), and a misaligned root (expects `walker_berr`, not a hang). `lib/AP68040/tb` `t_mmu` already proves the MMU itself -- this proves OUR router. Add a watchdog that fails on no progress, so a `clkena` deadlock reports as a failure rather than a timeout. | PASS, and a mutant with `walker_ack` tied low FAILS |
 | B3 | Hardware: boot with SetPatch. **DONE** -- the library was never renamed; the walker landed before the free experiment was needed. | **Workbench with the MMU on** -- met |
-| B4 | Then MuFastROM (`MuFastROM ON`, MMULib) and `MuScan` to confirm Kickstart runs from fast RAM. **NEXT** | MuScan shows ROM in fast RAM |
+| B4 | Then MuFastROM (`MuFastROM ON`, MMULib) and `MuScan` to confirm Kickstart runs from fast RAM. **DONE 2026-09-09** -- MuFastROM, MuMapRom and MuMapForce all ran without a crash and MuScan reports the Kickstart mirrored into RAM. That is the walker building and serving a fresh set of page tables under a live OS, descriptor write-backs included, which is a harder exercise than anything in `sim/ddr3_cpu`. (`MuSetCacheMode` was not found in the archive; it is not needed for this criterion.) | MuScan shows ROM in fast RAM -- **met** |
 
 **Debug kit that already exists**, if B3 misbehaves: `tools/vivado/build_ap040.tcl`
 builds with `CPU040_DEBUG_ILA=1`; the CPU ILA carries `dbg_pc`, `tg68_adr`,
