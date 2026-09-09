@@ -42,6 +42,33 @@
 //     by sdram_ctrl.v and this bench, 28.36 MHz), ena7RDreg at ph6 and
 //     ena7WRreg at ph14 (7.09 MHz each).
 //
+// STAGE D3, 2026-09-09 -- WHAT CHANGED HERE AND WHY.  This file has a history
+// of drifting out of step with the RTL (see the cadence note further down: for
+// a while it pulsed four enables while sdram_ctrl pulsed five, and three green
+// runs said nothing about the change they were meant to test), so the change
+// is written out rather than left to be inferred from the diff.
+//
+//   * There is a SECOND clock now, clk_cpu at 37.8125 MHz.  It is exactly one
+//     third of the 113.4375 MHz one and phase aligned with it -- every clk_cpu
+//     edge falls in the same time step as a clk edge -- because that is what
+//     the MMCM produces (CLKOUT0 /10 and CLKOUT3 /30 off one 1134.375 MHz
+//     VCO).  It drives the wrapper's new clk_cpu port, i.e. the AP68040
+//     kernel and nothing else.
+//   * enaWRreg NO LONGER GATES THE CPU.  With the AP68040 the wrapper ignores
+//     clkena_in and builds its clock enable from the clk_cpu phase instead
+//     (rtl/soc/TG68K.vhd, cpu_ce_phase), so the core advances on every one of
+//     its own 37.8 MHz clocks except while a bus request is outstanding.  The
+//     cadence module is still instantiated and still drives ena7RDreg and
+//     ena7WRreg, which are the 7 MHz chipset strobes and are unchanged; its
+//     ena_cpu output still becomes `ena28` and is still wired to clkena_in,
+//     where the TG68K leg uses it exactly as before and the AP68040 leg
+//     does not read it at all.
+//   * Every assertion is unchanged: the port setup/hold contract on both RAM
+//     ports, the walker/fill mutual exclusion, ack_idle_errs / ack_dry_errs
+//     and the cpustate(6) 32-bit-write guard.  cpustate[5] is still clkena and
+//     is still a ONE-cycle pulse on the clk edge the core advances on, which
+//     is what ack_dry_errs counts.
+//
 // Autoconfig state is the one the OS leaves behind: ziiram_active = 1 and
 // ziiiram3_active = 1 with z3ram3_base = $41, so 0x41000000 is a live 16 MB
 // Zorro-III board on the DDR3.  Board 1 (ziiiram_active) is left inactive:
@@ -141,9 +168,28 @@ localparam time TIMEOUT = 64'd2_500_000_000;  // 2.5 ms (must be sized: an
 //-----------------------------------------------------------------
 // Clocks and reset
 //-----------------------------------------------------------------
-// Minimig system clock, 113.4375 MHz.
+// Minimig system clock, 113.4375 MHz.  Period 8815 ps, rising edges at
+// 4407, 13222, 22037, 30852, ... ps.
 reg clk = 1'b0;
 always begin #4407 clk = 1'b1; #4408 clk = 1'b0; end
+
+// The CPU island clock, 37.8125 MHz = clk / 3, phase aligned: rising edges at
+// 4407, 30852, 57297, ... ps, i.e. on every third clk edge and in the same
+// time step as it.  On hardware both come off one MMCM (CLKOUT0 /10 and
+// CLKOUT3 /30 of a 1134.375 MHz VCO), so this is a synchronous 1:3 sibling
+// and not a CDC; modelling it as its own delay chain rather than as a divider
+// off clk keeps the two edges in the SAME time step instead of a delta cycle
+// apart, which is what makes a clk register sample the pre-edge value of a
+// clk_cpu one -- the hold check the real design has to meet.
+reg clk_cpu = 1'b0;
+initial begin
+  #4407;
+  forever begin
+    clk_cpu = 1'b1;
+    #13222 clk_cpu = 1'b0;
+    #13223;
+  end
+end
 
 // board oscillator for the DDR3 island's own PLL
 reg clk_50 = 1'b0;
@@ -182,6 +228,10 @@ end
 // sides instantiate it.  What is modelled here is only the sixteen-phase
 // counter and the registers -- placed exactly where sdram_ctrl places them, so
 // the enables land on the same clock edges the controller would produce.
+// Stage D3: with the AP68040 the wrapper no longer takes its clock enable
+// from ena28 -- see the note in the file header.  The module is kept because
+// ena7RDreg/ena7WRreg come out of the same cadence and are the chipset's,
+// and because the TG68K leg still uses ena_cpu exactly as it always has.
 reg [3:0] ph        = 4'd0;
 reg       ena28     = 1'b0;                   // = enaWRreg  -> clkena_in
 reg       ena7RDreg = 1'b0;
@@ -248,6 +298,7 @@ TG68K #(.cpu_core("AP040")) tg68k (
 TG68K #(.cpu_core("TG68K")) tg68k (
 `endif
     .clk            (clk              ),
+    .clk_cpu        (clk_cpu          ),
     .reset          (tg68_rst         ),
     .clkena_in      (ena28            ),
     .IPL            (3'b111           ),

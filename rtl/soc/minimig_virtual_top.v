@@ -583,12 +583,18 @@ VideoStream myaudiostream
 
 
 //// amiga clocks ////
+// The AP68040's own clock: clk_114 / 3 = 37.8125 MHz off the same MMCM, phase
+// aligned with it.  Used by nothing but the CPU island inside the wrapper, and
+// by nothing at all when cpu_core is "TG68K" (rtl/soc/TG68K.vhd, g_tg68k).
+wire CLK_38;
+
 amiga_clk amiga_clk (
     .rst          (1'b0             ), // async reset input
     .clk_in       (CLK_IN           ), // input clock     ( 50.000000MHz)
     .clk_114      (CLK_114          ), // output clock c0 (114.750000MHz)
     .clk_sdram    (clk_sdram        ), // output clock c2 (114.750000MHz, -146.25 deg)
     .clk_28       (CLK_28           ), // output clock c1 ( 28.687500MHz)
+    .clk_38       (CLK_38           ), // output clock c3 ( 37.812500MHz, CPU island)
     .clk7_en      (clk7_en          ), // output clock 7 enable (on 28MHz clock domain)
     .clk7n_en     (clk7n_en         ), // 7MHz negedge output clock enable (on 28MHz clock domain)
     .c1           (c1               ), // clk28m clock domain signal synchronous with clk signal
@@ -624,6 +630,7 @@ TG68K #(
     .ap040_enable_cache(ap040_enable_cache)
 ) tg68k (
     .clk          (CLK_114          ),
+    .clk_cpu      (CLK_38           ),
     .reset        (tg68_rst         ),
     .clkena_in    (tg68_ena28       ),
     .IPL          (tg68_IPL         ),

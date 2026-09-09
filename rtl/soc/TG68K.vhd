@@ -61,6 +61,12 @@ entity TG68K is
 	);
 	port(
 		clk             : in     std_logic;
+		-- The CPU island's own clock, 37.8125 MHz, a phase-aligned 1:3 sibling
+		-- of clk on the same MMCM (rtl/clock/amiga_clk_xilinx.v CLKOUT3).  It
+		-- clocks the AP68040 kernel and NOTHING else; with cpu_core = "TG68K"
+		-- this port is unused and the kernel stays on clk exactly as before.
+		-- See findings/ap68040/plan-v2-with-ddr3.md, stage D3.
+		clk_cpu         : in     std_logic                     := '0';
 		reset           : in     std_logic;
 		clkena_in       : in     std_logic                     := '1';
 		IPL             : in     std_logic_vector(2 downto 0)  := "111";
@@ -177,6 +183,18 @@ ARCHITECTURE logic OF TG68K IS
 	SIGNAL state       : std_logic_vector(1 downto 0);
 	signal longword    : std_logic;
 	SIGNAL clkena      : std_logic;
+	-- The first term of clkena: which clock edge the CPU kernel is allowed to
+	-- advance on.  With the TG68K it is clkena_in, the SDRAM controller's
+	-- enaWRreg (four of sixteen clk phases).  With the AP68040 the kernel runs
+	-- on clk_cpu and this is the clk-domain marker for "the next clk edge is
+	-- also a clk_cpu edge", so clkena stays a one-clk-cycle pulse on the exact
+	-- edge the kernel advances -- which is what every clk-domain consumer of
+	-- clkena in this file (slower, chipset_done, akiko_req, the chipset FSM,
+	-- cpustate) was written against.
+	SIGNAL cpu_ce_phase : std_logic;
+	SIGNAL cpu_ph2      : std_logic;
+	-- '1' when the kernel's bus outputs have settled; see where it is driven.
+	SIGNAL cpu_bus_settled : std_logic;
 	-- SIGNAL vmaena           : std_logic;
 	SIGNAL eind        : std_logic;
 	SIGNAL eindd       : std_logic;
@@ -702,6 +720,11 @@ BEGIN
 	-- this file is common to both cores.
 	--------------------------------------------------------------------------
 	g_tg68k : IF NOT use_ap040 GENERATE
+		-- The kernel below is clocked by clk and enabled by clkena_in, exactly
+		-- as it always has been, so clk_cpu is not read anywhere in this
+		-- branch and the TG68K build is unchanged by stage D3.
+		cpu_ph2 <= '0';
+
 		-- No table walker: the TG68K has no MMU.  wk_active follows and is a
 		-- constant '0', so the whole router folds away.  Same for the line
 		-- fill: the TG68K has no internal cache to fill, so fl_busy and
@@ -759,6 +782,54 @@ BEGIN
 	END GENERATE;
 
 	g_ap040 : IF use_ap040 GENERATE
+		-- The 1:3 phase marker.  clk_cpu is clk divided by three off the same
+		-- MMCM with no phase shift, so every clk_cpu rising edge lands on a
+		-- clk one; what the clk side needs to know is WHICH of its three
+		-- edges that is, and it cannot count them on its own because nothing
+		-- aligns its counter to the MMCM's divider.
+		--
+		-- So the kernel's clock supplies the alignment: cpu_tgl flips on every
+		-- clk_cpu edge, the clk domain samples it (getting the pre-edge value
+		-- on the coincident edge, which is the ordinary hold check every other
+		-- signal leaving this island already has), and the difference is a
+		-- one-clk-cycle pulse in the cycle AFTER the clk_cpu edge.  Two more
+		-- registers move it to the cycle BEFORE the next one:
+		--
+		--   clk_cpu edge at T (= clk edge T), edges T+1, T+2, next at T+3
+		--   cpu_tgl   flips at T
+		--   cpu_tgl_d flips at T+1        -> cpu_tgl XOR cpu_tgl_d high in (T,T+1)
+		--   cpu_ph                        high in (T+1,T+2)
+		--   cpu_ph2                       high in (T+2,T+3)
+		--
+		-- so a clk register sampling at edge T+3 -- the next clk_cpu edge --
+		-- sees cpu_ph2 = '1', and cpu_ph2 is '0' on the other two edges.  That
+		-- makes clkena below a pulse on exactly the clk edges the kernel
+		-- advances on, which is the shape enaWRreg used to give it.
+		--
+		-- Free-running by design, like the core's stall watchdog: a wedge
+		-- anywhere else must not be able to stop the phase marker, and the
+		-- three registers power up at '0' together so the chain is in step
+		-- from configuration.
+		SIGNAL cpu_tgl   : std_logic := '0';
+		SIGNAL cpu_tgl_d : std_logic := '0';
+		SIGNAL cpu_ph    : std_logic := '0';
+	BEGIN
+		PROCESS(clk_cpu)
+		BEGIN
+			IF rising_edge(clk_cpu) THEN
+				cpu_tgl <= NOT cpu_tgl;
+			END IF;
+		END PROCESS;
+
+		PROCESS(clk)
+		BEGIN
+			IF rising_edge(clk) THEN
+				cpu_tgl_d <= cpu_tgl;
+				cpu_ph    <= cpu_tgl XOR cpu_tgl_d;
+				cpu_ph2   <= cpu_ph;
+			END IF;
+		END PROCESS;
+
 		ap040 : COMPONENT ap040_tg68k_compat
 			GENERIC MAP(
 				AP040_HAS_MMU      => ap040_has_mmu,
@@ -770,7 +841,12 @@ BEGIN
 				AP040_FILL_CHANNEL => 1
 			)
 			PORT MAP(
-				clk            => clk,
+				-- The CPU island's own 37.8125 MHz clock.  Everything else in
+				-- this file -- the decode, both bus routers, slower, the
+				-- chipset state machine, Akiko, the registers facing
+				-- sdram_ctrl and ddr3_fastram -- stays on clk, because that
+				-- is the clock the controllers are on.
+				clk            => clk_cpu,
 				nreset         => reset,
 				clkena_in      => clkena,
 				data_in        => datatg68,
@@ -1035,6 +1111,33 @@ BEGIN
 	bus_ready <= '1' WHEN (chipset_ready = '1' OR chipset_done = '1' OR mem_ready = '1' OR sel_undecoded_d = '1' OR akiko_ack = '1') ELSE
 	'0';
 
+	-- Which clock edge the kernel may advance on; see the signal declaration.
+	cpu_ce_phase <= cpu_ph2 WHEN use_ap040 ELSE clkena_in;
+
+	-- STAGE D3.  '1' once the kernel's bus outputs have settled, which is what
+	-- the 7 MHz chipset state machine below waits for before it samples them.
+	--
+	-- `slower` reloads "0111" on clkena -- a one-cycle pulse on exactly the clk
+	-- edge the kernel advances on -- and shifts down otherwise, so slower(1)
+	-- first reads '0' on the third clk cycle after that edge.  The machine can
+	-- therefore start no earlier than the edge after that, and the address,
+	-- byte selects, write data and bus state it latches there were settled two
+	-- clk cycles after the kernel advanced.  That is exactly the budget
+	-- cpu.xdc gives a path out of the CPU island (-setup -end 2 on
+	-- clk_38 -> clk_114), and it is the same number the memory side has always
+	-- had from the same `slower`.
+	--
+	-- Without it the machine could sample those signals ONE clk cycle after
+	-- they moved: ena7WRreg lands on phase 14 of a sixteen-phase round and the
+	-- kernel now advances every three cycles, and 16 and 3 are coprime, so
+	-- every relative phase occurs.
+	--
+	-- A no-op for the TG68K, and constant-folded away in that build: its
+	-- enable is enaWRreg on phases 2/6/10/14 and ena7WRreg is phase 14, so
+	-- `slower` has always been "0000" by the time the machine looks (reloaded
+	-- on the phase-10 enable, three shifts, then the phase-14 edge).
+	cpu_bus_settled <= NOT slower(1) WHEN use_ap040 ELSE '1';
+
 	-- This net is the clock enable of 7,391 kernel flops and is the plan's
 	-- number-one timing risk ("Timing" item 1).  It carries exactly two terms
 	-- for that reason, and it used to carry four more: wk_ack, wk_berr,
@@ -1071,7 +1174,23 @@ BEGIN
 	-- merely argued: an acknowledge held while cpustate(1 downto 0) is not
 	-- the idle state is a FAIL, and so is an acknowledge that drops without
 	-- the CPU having been enabled at least once while it was up.
-	clkena <= '1' WHEN (clkena_in = '1' AND (bstate = "01" OR bus_ready = '1')) ELSE
+	--
+	-- STAGE D3.  The first term is no longer a duty cycle.  With the AP68040
+	-- the kernel runs on clk_cpu, 37.8125 MHz, and cpu_ph2 marks the clk edge
+	-- that IS a clk_cpu edge -- so clkena is high on one clk edge in three and
+	-- the kernel advances on EVERY one of its own clocks except while a bus
+	-- request is outstanding.  That is upstream's shape
+	-- ("~cpu_req | bus_complete | bus_berr", rtl/cpu_wrapper.v:285 in the
+	-- MiSTer tree): a bus handshake, not a divider.  Measured value of the
+	-- change: SysInfo's speed test runs entirely out of the internal caches
+	-- and sat at exactly the 25.0 % four-phase enable ceiling with 0 % memory
+	-- stalls, so this is 37.8125 / 28.359375 = 1.33x on CPU-bound code and
+	-- nothing at all on chipset-bound code.
+	--
+	-- With the TG68K, cpu_ce_phase is clkena_in -- enaWRreg, four of sixteen
+	-- clk phases -- and both this expression and the kernel's clock are
+	-- exactly what they were.
+	clkena <= '1' WHEN (cpu_ce_phase = '1' AND (bstate = "01" OR bus_ready = '1')) ELSE
 	'0';
 
 	PROCESS(clk)
@@ -1362,12 +1481,23 @@ BEGIN
 			-- on the next enable (2-3 cycles) instead of waiting a full 7 MHz
 			-- round, which is a small speed-up in its own right.
 			--
-			-- Assignment order matters: the ena7RDreg branch below re-asserts
-			-- clkena_e in state "11", and would override this -- but clkena is
-			-- never high on phase 6, so the two cannot fire together.
+			-- The matching clkena_e <= '0' is at the BOTTOM of this process,
+			-- not here, and that is deliberate (stage D3).  The ena7RDreg
+			-- branch below re-asserts clkena_e in state "11" and would
+			-- override a clear written here.  It used to, on every chipset
+			-- read: with enaWRreg on phases 2/6/10/14 and ena7RDreg on 6, the
+			-- release and that branch always fell on the same edge, and what
+			-- actually cleared clkena_e was this same test firing a second
+			-- time on the phase-10 enable, chipset_done still being up.  That
+			-- second firing is gone -- chipset_done is now cleared on the
+			-- first enable after it is set, and with a three-cycle enable
+			-- there may not be another one before the next chipset cycle -- so
+			-- the clear has to win outright.  Putting it last does that and
+			-- changes nothing for the TG68K: between the two firings the only
+			-- readers of clkena_e are `ena7RDreg AND clkena_e` (ena7RDreg is
+			-- low there) and `S_state = "01"` (S_state is "00" there).
 			IF (chipset_ready = '1' OR chipset_done = '1') AND clkena = '1' THEN
-				S_state  <= "00";
-				clkena_e <= '0';
+				S_state <= "00";
 			END IF;
 
 			IF S_state = "01" AND clkena_e = '1' THEN
@@ -1379,7 +1509,10 @@ BEGIN
 			IF ena7WRreg = '1' THEN
 				CASE S_state IS
 					WHEN "00" =>
-						IF cpu_int = '0' AND chipset_cycle = '1' THEN
+						-- cpu_bus_settled: with the AP68040 the signals
+						-- latched below come off a 37.8125 MHz island, so wait
+						-- until they have settled; see where it is driven.
+						IF cpu_int = '0' AND chipset_cycle = '1' AND cpu_bus_settled = '1' THEN
 							uds        <= buds;
 							lds        <= blds;
 							uds2       <= '1';
@@ -1435,6 +1568,12 @@ BEGIN
 						END IF;
 					WHEN OTHERS => null;
 				END CASE;
+			END IF;
+
+			-- Last, so that it wins over the ena7RDreg "11" branch above; see
+			-- the note at the top of this process.
+			IF (chipset_ready = '1' OR chipset_done = '1') AND clkena = '1' THEN
+				clkena_e <= '0';
 			END IF;
 		END IF;
 	END PROCESS;

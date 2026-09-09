@@ -312,6 +312,9 @@ module minimig_mist_top (
 
   TG68K tg68k (
     .clk          (clk_114          ),
+    // This top is TG68K-only -- it has no cpu_core generic -- so the CPU
+    // island clock is never read; tie it to the system clock.
+    .clk_cpu      (clk_114          ),
     .reset        (tg68_rst         ),
     .clkena_in    (tg68_ena28       ),
     .IPL          (tg68_IPL         ),
