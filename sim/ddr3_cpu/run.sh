@@ -15,6 +15,8 @@
 #   ./run.sh --lwmutant   AP68040 with the longword_pair gate reverted; MUST fail
 #   ./run.sh --mmu        AP68040, the stage-B MMU walker program
 #   ./run.sh --mmumutant  the same with walker_ack tied low; MUST fail
+#   ./run.sh --fillmutant AP68040 with the line fill assembled backwards; MUST fail
+#   ./run.sh --nofill     AP68040 with the fill channel off; the A/B reference
 #   ./run.sh --chipbus    turbochipram = 0, chip RAM over the 7 MHz chipset bus
 #
 # The flags combine in that order, e.g.
@@ -68,6 +70,28 @@ IS_MMUMUTANT=0
 if [ "$1" = "--mmu" ];       then IS_MMU=1;                  shift; set -- --ap040 "$@"; fi
 if [ "$1" = "--mmumutant" ]; then IS_MMU=1; IS_MMUMUTANT=1; IS_MUTANT=1; shift; set -- --ap040 "$@"; fi
 
+# --fillmutant: the stage-D line-fill router with the eight words assembled in
+# the WRONG ORDER -- shifted in from the left instead of the right, so word 0
+# of the line ends up in fill_data[15:0] where the cache expects the word at
+# offset 14 (ap040_cache.v:93-99).  That is not a straw man: it is exactly the
+# layout cpu_cache_new and ddr3_fastram use internally (word k at [16k+15:16k],
+# ddr3_fastram.v:47-60), and the two conventions are opposite, so getting them
+# confused is the likely mistake.  Every line then comes back byte-reversed,
+# which the pattern read-back must catch.  It MUST fail.  Implies --ap040.
+IS_FILLMUTANT=0
+if [ "$1" = "--fillmutant" ]; then IS_FILLMUTANT=1; IS_MUTANT=1; shift; set -- --ap040 "$@"; fi
+
+# --nofill: the same wrapper with fill_ena_zorro tied low, so the cache's
+# fill_ok is a constant 0 and every line goes down the bus16 adapter as eight
+# 16-bit sub-cycles -- the pre-stage-D behaviour, with everything else
+# (including the internal caches, see CACRVAL below) identical.  This is the
+# A/B reference for the phase-timestamp table, NOT a mutant: it must PASS.
+# The wrapper's own Task 1 state cannot be used for that comparison because it
+# has no fl_* signals for the bench's fill counters to reference.  Implies
+# --ap040.
+IS_NOFILL=0
+if [ "$1" = "--nofill" ]; then IS_NOFILL=1; shift; set -- --ap040 "$@"; fi
+
 # Which CPU core the wrapper is built with.  The AP68040 (lib/AP68040) presents
 # a TG68K-shaped port set, so the whole bench -- chipset model, DDR3 chain,
 # 68k program -- is the same; only the kernel inside rtl/soc/TG68K.vhd changes.
@@ -78,15 +102,18 @@ if [ "$1" = "--ap040" ]; then CPU=ap040; shift; fi
 if [ "$CPU" = "ap040" ]; then
     # The mutant is a TG68K-specific mutation (the chipset_cycle term); there is
     # nothing for it to mean with a different kernel.
-    if [ "$IS_MUTANT" = "1" ] && [ "$IS_LWMUTANT" = "0" ] && [ "$IS_MMUMUTANT" = "0" ]; then
+    if [ "$IS_MUTANT" = "1" ] && [ "$IS_LWMUTANT" = "0" ] && [ "$IS_MMUMUTANT" = "0" ] \
+       && [ "$IS_FILLMUTANT" = "0" ]; then
         echo "--mutant and --ap040 are not a combination: the mutant is the" >&2
         echo "TG68K wrapper as it stood before the chipset_cycle fix." >&2
         exit 2
     fi
     VARIANT=pass_ap040
-    if [ "$IS_LWMUTANT" = "1" ];  then VARIANT=lwmutant_ap040;  fi
-    if [ "$IS_MMU" = "1" ];       then VARIANT=mmu_ap040;       fi
-    if [ "$IS_MMUMUTANT" = "1" ]; then VARIANT=mmumutant_ap040; fi
+    if [ "$IS_LWMUTANT" = "1" ];   then VARIANT=lwmutant_ap040;   fi
+    if [ "$IS_MMU" = "1" ];        then VARIANT=mmu_ap040;        fi
+    if [ "$IS_MMUMUTANT" = "1" ];  then VARIANT=mmumutant_ap040;  fi
+    if [ "$IS_FILLMUTANT" = "1" ]; then VARIANT=fillmutant_ap040; fi
+    if [ "$IS_NOFILL" = "1" ];     then VARIANT=nofill_ap040;     fi
 fi
 
 # Turbo chip RAM.  Default on, as the bench has always run.  --chipbus clears
@@ -128,11 +155,21 @@ W="$D/run_$VARIANT"
 rm -rf "$W"
 mkdir -p "$W"
 
+# The CACR the program writes.  The AP68040 masks MOVEC to CACR with
+# $80008000 (ap040_core.v:3352), so the 68020 value 3 this program has always
+# written leaves BOTH of its internal caches off -- and with no caches there
+# are no line fills, which is why the fill counters read zero until this was
+# found.  The TG68K is a 68020 and keeps the 68020 value, so its leg is
+# unchanged; the AP68040 gets DE and IE set.
+CACRVAL=3
+if [ "$CPU" = "ap040" ]; then CACRVAL='$80008003'; fi
+
 if [ "$IS_MMU" = "1" ]; then
-    BIN="$W/prog.bin" SRC=mmu_walk_test.asm "$D/asm/build_68k_test.sh"
+    BIN="$W/prog.bin" SRC=mmu_walk_test.asm "$D/asm/build_68k_test.sh" \
+        -DCACRVAL="$CACRVAL"
 else
     BIN="$W/prog.bin" "$D/asm/build_68k_test.sh" \
-        -DPATBYTES=$PATBYTES -DMISLINES=$MISLINES -DCNTN=$CNTN
+        -DPATBYTES=$PATBYTES -DMISLINES=$MISLINES -DCNTN=$CNTN -DCACRVAL="$CACRVAL"
 fi
 
 PLUS="+PATBYTES=$PATBYTES +MISLINES=$MISLINES +CNTN=$CNTN +TURBOCHIP=$TURBOCHIP"
@@ -155,6 +192,24 @@ elif [ "$IS_MMUMUTANT" = "1" ]; then
         "$R/rtl/soc/TG68K.vhd" > "$TG68K_SRC"
     if ! grep -q "walker_ack     => '0'," "$TG68K_SRC"; then
         echo "--mmumutant: the walker_ack port map moved; fix the sed in run.sh" >&2
+        exit 2
+    fi
+elif [ "$IS_NOFILL" = "1" ]; then
+    # Generated: the fill channel's enable tied low.  One line.
+    TG68K_SRC="$W/TG68K_nofill.vhd"
+    sed "s|fill_ena_zorro => '1',|fill_ena_zorro => '0',|" \
+        "$R/rtl/soc/TG68K.vhd" > "$TG68K_SRC"
+    if ! grep -q "fill_ena_zorro => '0'," "$TG68K_SRC"; then
+        echo "--nofill: the fill_ena_zorro port map moved; fix the sed in run.sh" >&2
+        exit 2
+    fi
+elif [ "$IS_FILLMUTANT" = "1" ]; then
+    # Generated: the line-fill router's word assembly reversed.  One line.
+    TG68K_SRC="$W/TG68K_fillmutant.vhd"
+    sed "s|fl_line   <= fl_line(111 downto 0) \& datatg68;|fl_line   <= datatg68 \& fl_line(127 downto 16);|" \
+        "$R/rtl/soc/TG68K.vhd" > "$TG68K_SRC"
+    if ! grep -q "fl_line   <= datatg68 & fl_line(127 downto 16);" "$TG68K_SRC"; then
+        echo "--fillmutant: the fill assembly line moved; fix the sed in run.sh" >&2
         exit 2
     fi
 elif [ "$IS_LWMUTANT" = "1" ]; then

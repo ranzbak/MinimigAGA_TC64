@@ -693,6 +693,99 @@ always @(posedge clk100) begin
 end
 
 //-----------------------------------------------------------------
+// The memory port's address/select contract, on BOTH ports.
+//
+// sdram_ctrl.v:226 and ddr3_fastram.v:20 say the same thing: "cpuAddr must be
+// stable ONE CYCLE BEFORE cpustate[2] goes low", because each registers
+// cpuAddr into cpuAddr_r and it is cpuAddr_r -- not the live address -- that
+// addresses the memory.  Break it and the controller fetches the previous
+// access's line; on a hit inside cpu_cache_new's line buffer it still answers,
+// with the wrong word, which is exactly the kind of failure that reads as
+// random corruption.  Nothing checked it before: the plan's D1 note
+// (findings/ap68040/plan-v2-with-ddr3.md) lists it as an untested hypothesis
+// for a wrapper variant that did not boot, and says to teach this bench the
+// rule first.  The line-fill router (stage D) opens the select itself, so this
+// is also the check on it.
+//-----------------------------------------------------------------
+integer    port_setup_errs = 0;
+reg [25:1] ramaddr_d, ddraddr_d;
+reg        ramcsn_d = 1'b1, ddrcsn_d = 1'b1;
+
+always @(posedge clk) begin
+  if (tg68_rst && sdctl_rst) begin
+    if (ramcsn_d && !tg68_cpustate[2] && tg68_cad[25:1] !== ramaddr_d) begin
+      if (port_setup_errs < 8)
+        $display("FAIL: SDRAM select opened at %08x with the address changing in the same cycle (was %08x)",
+                 {6'd0, tg68_cad[25:1], 1'b0}, {6'd0, ramaddr_d, 1'b0});
+      port_setup_errs = port_setup_errs + 1;
+    end
+    if (ddrcsn_d && !tg68_ddrcs && tg68_ddraddr !== ddraddr_d) begin
+      if (port_setup_errs < 8)
+        $display("FAIL: DDR3 select opened at %08x with the address changing in the same cycle (was %08x)",
+                 {6'd0, tg68_ddraddr, 1'b0}, {6'd0, ddraddr_d, 1'b0});
+      port_setup_errs = port_setup_errs + 1;
+    end
+  end
+  ramaddr_d <= tg68_cad[25:1];
+  ramcsn_d  <= tg68_cpustate[2];
+  ddraddr_d <= tg68_ddraddr;
+  ddrcsn_d  <= tg68_ddrcs;
+end
+
+`ifdef CPU_AP040
+//-----------------------------------------------------------------
+// Stage D: the line-fill channel.
+//
+// Two counters and one assertion, all from inside the DUT because the channel
+// is invisible at the wrapper's ports: a channel fill and eight ordinary word
+// reads look the same from outside, which is the point of it.
+//
+//   fill_ch  lines the wrapper served over the channel (fl_busy rising)
+//   fill_ad  lines the cache pulled down the bus16 adapter instead, i.e.
+//            C_FILL entries (ap040_cache.v:233).  With fill_ena_zorro = 1 and
+//            fill_ena_chip = 0 these are the chip/kick/slow lines and the
+//            cache-inhibited ones; a Zorro-window miss must never be one.
+//   fill_err lines answered with a bus error (fl_err) -- expected zero.
+//
+// The assertion is the ordering rule: the walker router and the fill router
+// drive the same muxed bus signals, so they must never own them at once.
+//-----------------------------------------------------------------
+localparam [3:0] CST_FILL  = 4'd4;    // C_FILL,  ap040_cache.v:233
+localparam [3:0] CST_FILLC = 4'd8;    // C_FILLC, ap040_cache.v:235
+
+integer fill_ch    = 0;
+integer fill_ad    = 0;
+integer fill_be    = 0;
+integer fill_excl  = 0;
+
+wire       fl_busy_w   = ddr3_cpu_tb.tg68k.fl_busy;
+wire       fl_active_w = ddr3_cpu_tb.tg68k.fl_active;
+wire       fl_err_w    = ddr3_cpu_tb.tg68k.fl_err;
+wire       wk_active_w = ddr3_cpu_tb.tg68k.wk_active;
+wire [3:0] cst_w       = ddr3_cpu_tb.tg68k.g_ap040.ap040.g_cache.cache.cst;
+
+reg       fl_busy_d = 1'b0;
+reg       fl_err_d  = 1'b0;
+reg [3:0] cst_d     = 4'd0;
+
+always @(posedge clk) begin
+  if (tg68_rst) begin
+    if ( fl_busy_w && !fl_busy_d)              fill_ch = fill_ch + 1;
+    if ( fl_err_w  && !fl_err_d )              fill_be = fill_be + 1;
+    if ((cst_w === CST_FILL) && (cst_d !== CST_FILL)) fill_ad = fill_ad + 1;
+    if (wk_active_w && fl_active_w) begin
+      if (fill_excl < 8)
+        $display("FAIL: the walker and the line fill own the bus at the same time (t = %t)", $time);
+      fill_excl = fill_excl + 1;
+    end
+  end
+  fl_busy_d <= fl_busy_w;
+  fl_err_d  <= fl_err_w;
+  cst_d     <= cst_w;
+end
+`endif
+
+//-----------------------------------------------------------------
 // Mailbox watcher and phase trace
 //-----------------------------------------------------------------
 function [31:0] mbox_l;
@@ -969,6 +1062,24 @@ initial begin : main
              lw_errs);
     nfail = nfail + 1;
   end
+
+  if (port_setup_errs != 0) begin
+    $display("");
+    $display("DDR3 CPU TB: FAIL  %0d chip selects opened without a settled address",
+             port_setup_errs);
+    nfail = nfail + 1;
+  end
+
+`ifdef CPU_AP040
+  $display("");
+  $display("INFO: cache line fills -- %0d over the channel, %0d down the adapter, %0d bus errors",
+           fill_ch, fill_ad, fill_be);
+  if (fill_excl != 0) begin
+    $display("DDR3 CPU TB: FAIL  %0d cycles with the walker and the line fill both on the bus",
+             fill_excl);
+    nfail = nfail + 1;
+  end
+`endif
 
   $display("");
   if (nfail == 0) $display("DDR3 CPU TB: 2 passed, 0 failed");

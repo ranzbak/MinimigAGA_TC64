@@ -60,6 +60,20 @@ MISLINES  equ 16
           ifnd      CNTN
 CNTN      equ 64
           endif
+; Which CACR the program writes.  The default is the 68020 encoding this
+; program has always used -- bit 0 enables the instruction cache -- because
+; the TG68KdotC kernel is a 68020 and drives CACR_out straight from it.
+;
+; The AP68040 is not: ap040_core.v:3352 masks MOVEC to CACR with $80008000,
+; so bits 31 (DE) and 15 (IE) are the only ones that mean anything and a
+; value of 3 leaves BOTH internal caches OFF.  That is how this bench had
+; always run the AP68040 -- with no data or instruction cache, hence no cache
+; line fills at all, which the fill counters in ddr3_cpu_tb.sv now report.
+; run.sh --ap040 passes -DCACRVAL=$80008003, which turns both on for the 040
+; and leaves the TG68K leg bit-identical.
+          ifnd      CACRVAL
+CACRVAL   equ 3
+          endif
 
 MBOX      equ $00001000        ; bench-observed mailbox, in the bench chip RAM
 STACKTOP  equ $00007000
@@ -91,7 +105,7 @@ MH_FREE   equ $00FFFFE0
 ;-----------------------------------------------------------------------------
 START:
 ;-----------------------------------------------------------------------------
-          move.l    #3,d0
+          move.l    #CACRVAL,d0
           movec     d0,cacr              ; enable both caches, as the OS does
           moveq     #0,d0
           move.l    d0,MBOX

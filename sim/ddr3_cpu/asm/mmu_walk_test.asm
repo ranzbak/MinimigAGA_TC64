@@ -101,6 +101,22 @@ START:
           movec     d0,dtt1
           movec     d0,tc
 
+          ; Internal caches on, as they are on hardware whenever the MMU is.
+          ; The value comes from run.sh (-DCACRVAL); ap040_core.v:3352 masks
+          ; MOVEC to CACR with $80008000, so this sets DE and IE and nothing
+          ; else.  Without it this program ran with no caches at all and so
+          ; never took a cache line fill -- which left the line-fill channel,
+          ; and every cached access made through a TRANSLATED address,
+          ; completely untested.  A stale descriptor read back from the data
+          ; cache after the walker has written U/M is exactly what the compat
+          ; top's walker-write snoop exists to prevent, and phases 22-23 are
+          ; where it would show.
+          ifnd      CACRVAL
+CACRVAL   equ 0
+          endif
+          move.l    #CACRVAL,d1
+          movec     d1,cacr
+
 ;-----------------------------------------------------------------------------
 ; Build the tables, with translation still off.
 ;-----------------------------------------------------------------------------

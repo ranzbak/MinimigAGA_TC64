@@ -1011,6 +1011,50 @@ outside spec, well past a token ILA tax.
 Full sign-off table, both build logs, and both `.xpr` source-list findings:
 `.superpowers/sdd/plan-v2-with-ddr3/task-2-report.md`.
 
+**2026-09-09, stage D task 3 -- the line-fill channel routed (D2).**
+`rtl/soc/TG68K.vhd` gains a second bus master beside the stage-B walker: a
+five-state router that takes the cache's `fill_req`, decodes the line address
+with the wrapper's own `sel_*` logic, streams the eight words through the
+existing memory port at the free `clk_114` rate and hands the cache the whole
+line as one 128-bit payload.  No CDC (one clock domain here, as for the
+walker), no new port on any controller, `fill_ena_zorro = 1` and
+`fill_ena_chip = 0`.  The two masters are ordered, not interleaved: the walker
+refuses to start while `fl_busy`, the fill refuses to start while `wk_req` is
+high or the walker is out of `WK_IDLE`, and `ddr3_cpu_tb.sv` asserts they are
+never both on the bus.
+
+**The bench had never enabled the 040's internal caches, so it had never taken
+a line fill at all.**  `ddr3_cpu_test.asm` wrote `CACR = 3` -- the 68020
+encoding -- and `ap040_core.v:3352` masks MOVEC to CACR with `$80008000`, so
+DE and IE stayed clear.  The first run of the new fill counters read "0 over
+the channel, 0 down the adapter", which is what found it.  `run.sh` now passes
+`-DCACRVAL`: `$80008003` for the AP68040, and the unchanged `3` for the
+TG68K, whose control leg comes out with every phase timestamp bit-identical to
+task 1's.  Both programs got it, so the MMU leg is the first cached traffic
+this bench has ever run through a translated address.
+
+The A/B is one line of the port map (`--nofill` ties `fill_ena_zorro` low and
+must PASS; it is the reference, not a mutant).  82 of 87 line fills move to
+the channel and the program ends **1.072 % earlier** -- phase 8 at 1867.70 us
+against 1887.93 us from CPU release, with phases 3, 4, 5 and 7 all between
+-1.0 and -1.15 % and the write-sweep phases 1 and 2, which take no fills, bit
+for bit identical.  That is **28.0 `clk_114` cycles removed per line**, and
+the MMU program agrees at 30.5 over its four fills.  The whole-program figure
+is small only because this program sweeps memory once: 82 fills in 1.87 ms.
+Turning the caches on at all costs +0.94 % here for the same reason, so the
+routed channel is very slightly ahead of task 1's caches-off number overall.
+
+Two things measured on the way that are worth carrying: the fill router's
+`clkena` term keeps the CPU alive on `fl_ack`/`fl_err` but does **not**
+suppress `clkena` during a fill, so a clock enable landing in the router's
+gap cycle reloads `slower` and costs about three cycles of the next word's
+select -- suppressing it is the next lever and is worth roughly another eight
+cycles a line; and the fill's `busstate` is a data read, so an instruction
+line now allocates in `cpu_cache_new`'s data half instead of its instruction
+half (the fill port carries no I/D bit, upstream included).  Full contract,
+design, seven-leg results and phase tables:
+`.superpowers/sdd/plan-v2-with-ddr3/task-3-report.md`.
+
 ## Risks
 
 | Risk | Shows as | Mitigation |
@@ -1036,6 +1080,11 @@ Full sign-off table, both build logs, and both `.xpr` source-list findings:
 | Program phase 6 reached, AP040 vs TG68K, same program | 287 us vs 141 us | A5 smoke; 16-bit split transfers, 040 internal caches off |
 | `sim/ddr3_cpu --mmu` phase 6, x3 overlay vs 0e76761 | **615.44 us vs 634.25 us, −2.97 %** (from CPU release) | D task 1, 2026-09-08; core re-gated, fill channel not routed |
 | `bench_loop` cycles per instruction, AP040 / TG68K | — | 0.2 / A7 |
+| **`sim/ddr3_cpu` with the AP68040's internal caches ON at all** | the bench had never done it: the program wrote CACR = 3, the 68020 encoding, and `ap040_core.v:3352` masks MOVEC to CACR with `$80008000`, so DE and IE were both clear and the core took **zero** cache line fills.  Fixed with `-DCACRVAL`; the TG68K leg is bit-identical (every phase timestamp unchanged) | D task 3, 2026-09-09 |
+| Cost of turning those caches on, pattern program | **+0.94 %** (phase 8, 1870.30 -> 1887.93 us from CPU release): this program sweeps memory once and has almost no reuse, so the cache mostly adds a lookup cycle and fetches eight words where one was wanted | D task 3 |
+| **Line-fill channel routed (D2), A/B on one binary** (`--ap040` vs `--nofill`, same program, same caches, one line of the port map differing) | 82 of 87 line fills move from the bus16 adapter to the channel; **phase 8 1887.93 -> 1867.70 us, -1.072 %**, phases 3/4/5/7 all -1.0 to -1.15 %, phases 1-2 (the write sweep, no fills) bit-identical | D task 3 |
+| Cost removed per Zorro line fill | **-20.23 us / 82 fills = 0.247 us = 28.0 `clk_114` cycles**; cross-checked on the MMU program, -1.075 us / 4 fills = 30.5 cycles | D task 3 |
+| `sim/ddr3_cpu --mmu` **phase 6**, channel on vs off, both with caches on | **655.686 us vs 656.762 us, -0.164 %** (from CPU release).  Only four fills in that program, and they are taken through TRANSLATED addresses -- the first cached traffic this bench has ever run under the MMU | D task 3 |
 | **Post-route, sole-core AP040 build with ILA** (2026-09-07) | | |
 |   LUTs / FF / BRAM / DSP | **43,750 (69 %)** / 26,335 (21 %) / **111 (82 %)** / 28 | A6 |
 |   `clk_114` (the CPU island) | **+0.290 ns, 0 failing endpoints** | A6 |
@@ -1053,5 +1102,5 @@ Full sign-off table, both build logs, and both `.xpr` source-list findings:
 |   Build wall clock | 26 min 46 s (23:43:06 → 00:09:52) | D task 2 |
 | Post-route WNS on the `clkena` → CE paths | not the limit; no CE path in the top 40 violators | A6 |
 | Fast-RAM benchmark, TG68K vs AP040, 28 MHz | — | A7 |
-| Same after D1 (37.8 MHz) and D2 (line port) | — | D1 / D2 |
+| Same after D1 (37.8 MHz) and D2 (line port) | D2 measured in simulation, above; hardware number still owed | D1 / D2 |
 | Post-route LUTs and WNS, dual-core build | — | E |

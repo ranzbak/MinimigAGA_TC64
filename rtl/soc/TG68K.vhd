@@ -309,6 +309,42 @@ ARCHITECTURE logic OF TG68K IS
 	TYPE   wk_state_t IS (WK_IDLE, WK_HI, WK_GAP, WK_LO, WK_DONE);
 	SIGNAL wk_st      : wk_state_t;
 
+	--------------------------------------------------------------------------
+	-- Stage D: the line-fill requester -- the walker router's twin.
+	--
+	-- On a miss in a window the wrapper serves, the AP68040's data/instruction
+	-- cache raises fill_req with the 16-byte line address and waits for the
+	-- whole line as ONE 128-bit payload, instead of sending four longwords
+	-- (eight 16-bit sub-cycles) down the bus16 adapter.  Each of those eight
+	-- sub-cycles costs the core a full clock-enable round trip, and with
+	-- clkena_in high on five of sixteen phases that is where a miss spends its
+	-- time -- not in the DDR3, which already fetches the whole line on the
+	-- first word and serves the other seven from cpu_cache_new's line buffer
+	-- (findings/ap68040/plan-v2-with-ddr3.md, "D2, second survey").
+	--
+	-- So this FSM borrows the bus exactly as the walker does -- same mux, same
+	-- decode, same controllers, no new port anywhere -- and streams the eight
+	-- words itself at the free clk_114 rate.  The core sees one handshake.
+	--
+	-- ap040_fill_cdc.v is deliberately NOT instantiated, for the same reason
+	-- ap040_walker_cdc is not: it bridges two clock domains and there is only
+	-- one here.  Its semantics are kept -- the acknowledge is a LEVEL held
+	-- until the core drops its request (the core consumes it under ce, which
+	-- this wrapper stops and starts), and the payload is stable while it is.
+	SIGNAL fl_req     : std_logic;                      -- from the core, a level
+	SIGNAL fl_addr    : std_logic_vector(31 downto 4);  -- the line address
+	SIGNAL fl_ack     : std_logic;                      -- to the core, a LEVEL
+	SIGNAL fl_err     : std_logic;                      -- also a level
+	SIGNAL fl_line    : std_logic_vector(127 downto 0); -- the assembled payload
+	SIGNAL fl_busy    : std_logic;                      -- a fill is in progress
+	SIGNAL fl_active  : std_logic;                      -- the fill owns the bus
+	SIGNAL fl_bstate  : std_logic_vector(1 downto 0);
+	SIGNAL fl_busaddr : std_logic_vector(31 downto 0);
+	SIGNAL fl_word    : std_logic_vector(2 downto 0);   -- which of the eight
+	SIGNAL fl_ok      : std_logic;                      -- the line decodes to RAM
+	TYPE   fl_state_t IS (FL_IDLE, FL_DEC, FL_SEL, FL_GAP, FL_DONE);
+	SIGNAL fl_st      : fl_state_t;
+
 	-- The muxed bus-side signals.  Everything below this point uses these and
 	-- not the core's own outputs; with the TG68K, or with the walker idle,
 	-- they ARE the core's own outputs.
@@ -431,19 +467,28 @@ BEGIN
 		END IF;
 	END PROCESS;
 
-	-- NOT during a walk: a descriptor that happens to live at the NMI vector
-	-- address is a descriptor, and must be read from memory, not answered from
-	-- the vector shim.
-	sel_nmi_vector <= '1' WHEN sel_nmi_vector_addr = '1' AND bstate = "10" AND wk_active = '0' ELSE '0';
+	-- NOT during a walk, and not during a line fill: a descriptor -- or a word
+	-- of a cache line -- that happens to live at the NMI vector address is
+	-- memory, and must be read from memory, not answered from the vector shim.
+	sel_nmi_vector <= '1' WHEN sel_nmi_vector_addr = '1' AND bstate = "10"
+	                          AND wk_active = '0' AND fl_active = '0' ELSE '0';
 
 	--------------------------------------------------------------------------
-	-- The bus-side mux.  wk_active is a constant '0' unless the AP68040 is
-	-- built with its MMU, so for the TG68K this is wiring, not logic.
+	-- The bus-side mux.  wk_active and fl_active are constant '0' unless the
+	-- AP68040 is built (with its MMU, and with the fill channel enabled), so
+	-- for the TG68K this is wiring, not logic.  The two are mutually exclusive
+	-- by construction -- see the two FSMs' start conditions -- so their order
+	-- here only decides what a broken build would do, not what a working one
+	-- does; the walker is first because it is the older master.
 	--------------------------------------------------------------------------
-	bstate  <= wk_bstate  WHEN wk_active = '1' ELSE state;
-	buds    <= '0'        WHEN wk_active = '1' ELSE uds_in;  -- descriptors are
-	blds    <= '0'        WHEN wk_active = '1' ELSE lds_in;  -- aligned longwords
-	bwr     <= NOT wk_we  WHEN wk_active = '1' ELSE wr;      -- wr is active low
+	bstate  <= wk_bstate  WHEN wk_active = '1' ELSE
+	           fl_bstate  WHEN fl_active = '1' ELSE state;
+	buds    <= '0'        WHEN wk_active = '1' OR fl_active = '1' ELSE uds_in;
+	blds    <= '0'        WHEN wk_active = '1' OR fl_active = '1' ELSE lds_in;
+	-- descriptors are aligned longwords and a line word is a whole word, so
+	-- both borrowers take both byte lanes; wr is active low and a fill reads
+	bwr     <= NOT wk_we  WHEN wk_active = '1' ELSE
+	           '1'        WHEN fl_active = '1' ELSE wr;
 	bwdata  <= wk_wdat16  WHEN wk_active = '1' ELSE w_datatg68;
 
 	toram   <= bwdata;
@@ -542,6 +587,18 @@ BEGIN
 	sel_ram       <= '1' WHEN (sel_z2ram = '1' OR sel_z3ram_sdram = '1' OR sel_chipram = '1' OR sel_slowram = '1' OR sel_kickram = '1' OR sel_audio = '1') ELSE
 	'0';
 
+	-- Stage D.  A line fill is served only where a RAM controller answers a
+	-- Zorro window: the DDR3 board, or one of the ZII/ZIII boards on the
+	-- SDRAM.  The core cannot tell board 1 from board 3 -- its cache_z3_*
+	-- windows say "Zorro III RAM", not which memory backs it -- so the
+	-- wrapper decodes every fill address with the SAME logic the CPU's own
+	-- address takes, and anything else (undecoded 32-bit space, chip RAM,
+	-- the custom registers, a fill_addr from a corrupt cache) answers
+	-- fill_err rather than hanging or reading an unrelated bank.  That is
+	-- walker_mem_bad, one window set later; see the MiSTer reference's
+	-- fill_mem_bad in rtl/cpu_wrapper.v.
+	fl_ok <= '1' WHEN (sel_ddr = '1' OR sel_z2ram = '1' OR sel_z3ram_sdram = '1') ELSE '0';
+
 	cache_inhibit <= '1' WHEN sel_kickram = '1' ELSE '0';
 
 	ramcs <= NOT (NOT cpu_int AND sel_ram_d AND NOT sel_nmi_vector) OR slower(0);
@@ -626,6 +683,7 @@ BEGIN
 	-- A walk drives a physical address straight in: translation is what the
 	-- walk is for, and the 040 is 32-bit anyway.
 	cpuaddr <= wk_busaddr WHEN wk_active = '1' ELSE
+	           fl_busaddr WHEN fl_active = '1' ELSE
 	           addrtg68   WHEN cpu_i(1) = '1' ELSE X"00" & addrtg68(23 downto 0);
 
 	--------------------------------------------------------------------------
@@ -634,11 +692,15 @@ BEGIN
 	--------------------------------------------------------------------------
 	g_tg68k : IF NOT use_ap040 GENERATE
 		-- No table walker: the TG68K has no MMU.  wk_active follows and is a
-		-- constant '0', so the whole router folds away.
+		-- constant '0', so the whole router folds away.  Same for the line
+		-- fill: the TG68K has no internal cache to fill, so fl_busy and
+		-- fl_active are constant '0' and that router folds away too.
 		wk_req  <= '0';
 		wk_we   <= '0';
 		wk_addr <= (others => '0');
 		wk_wdat <= (others => '0');
+		fl_req  <= '0';
+		fl_addr <= (others => '0');
 
 		pf68K_Kernel_inst : entity work.TG68KdotC_Kernel
 			GENERIC MAP(                    -- @suppress "Generic map uses default values. Missing optional actuals: BarrelShifter"
@@ -693,13 +755,7 @@ BEGIN
 				AP040_ENABLE_CACHE => ap040_enable_cache,
 				AP040_FAST_SIM     => 0,
 				AP040_POST_STORES  => ap040_post_stores,
-				-- The channel is compiled in but not served: fill_ena_zorro
-				-- and fill_ena_chip are both low below, and the cache's
-				-- fill_ok is their AND-of-windows, so every miss takes the
-				-- adapter path exactly as before (ap040_cache.v:93-110, and
-				-- the C_LOOK miss arm needs "FILL_CHANNEL != 0 && fill_ok").
-				-- Routing it is a later step; leaving the parameter at 1
-				-- keeps the port set stable when that step lands.
+				-- The line-fill channel, routed by the fill router below.
 				AP040_FILL_CHANNEL => 1
 			)
 			PORT MAP(
@@ -754,18 +810,26 @@ BEGIN
 				walker_data    => wk_data,
 				walker_berr    => wk_berr,
 
-				-- Stage D: the line-fill channel.  NOT routed in this
-				-- revision.  Both enables low means the cache never raises
-				-- fill_req, so a miss is still eight 16-bit sub-cycles down
-				-- the adapter; the outputs are left open until a RAM
-				-- controller has a fill port to answer them.
-				fill_ena_zorro => '0',
+				-- Stage D: the line-fill channel, served by the fill router
+				-- below out of this wrapper's own memory path -- the walker's
+				-- twin, and ap040_fill_cdc is left out for the same reason
+				-- ap040_walker_cdc is (one clock domain here).
+				--
+				-- Zorro lines only.  A chip-RAM line stays on the adapter:
+				-- with Turbo chip RAM off it is a 7 MHz chipset cycle, where
+				-- eight words would hold the bus for a millisecond and lock
+				-- out the chipset's own DMA; with it on, chip RAM is the one
+				-- window the chipset also writes, and the fill would have to
+				-- be ordered against the snoop that this wrapper delivers on
+				-- the free clock.  There is nothing to win there and a
+				-- coherency rule to break, so the enable stays low.
+				fill_ena_zorro => '1',
 				fill_ena_chip  => '0',
-				fill_req       => open,
-				fill_addr      => open,
-				fill_data      => (others => '0'),
-				fill_ack       => '0',
-				fill_err       => '0',
+				fill_req       => fl_req,
+				fill_addr      => fl_addr,
+				fill_data      => fl_line,
+				fill_ack       => fl_ack,
+				fill_err       => fl_err,
 
 				-- The older 16-byte burst port, stubbed to zero inside the
 				-- compat top and superseded by the fill channel above.
@@ -964,7 +1028,15 @@ BEGIN
 	-- core's own idle state and this term is belt and braces -- but it is one
 	-- gate, and the failure it guards against looks exactly like the AllocMem
 	-- spin that cost a day.
-	clkena <= '1' WHEN (clkena_in = '1' AND (bstate = "01" OR bus_ready = '1' OR wk_ack = '1' OR wk_berr = '1')) ELSE
+	--
+	-- fl_ack / fl_err are there for exactly the same reason and are NOT belt
+	-- and braces: the line-fill FSM holds bstate at "01" only after it has
+	-- released the bus, and the cache samples fill_ack under ce, so without
+	-- these terms a fill that completes while clkena_in is between pulses --
+	-- or, worse, while the fill's own bus activity is what stopped clkena --
+	-- would never be consumed.  A stalled machine with no fault, again.
+	clkena <= '1' WHEN (clkena_in = '1' AND (bstate = "01" OR bus_ready = '1' OR wk_ack = '1' OR wk_berr = '1'
+	                                         OR fl_ack = '1' OR fl_err = '1')) ELSE
 	'0';
 
 	PROCESS(clk)
@@ -1013,7 +1085,12 @@ BEGIN
 					wk_berr   <= '0';
 					wk_active <= '0';
 					wk_bstate <= "01";
-					IF wk_req = '1' THEN
+					-- Order, never interleave, with the line fill (stage D).
+					-- The two share every bus-side signal, so one waits while
+					-- the other owns them.  The walker has priority: the fill
+					-- FSM refuses to start while wk_req is high, so a request
+					-- arriving in the same cycle can only be taken here.
+					IF wk_req = '1' AND fl_busy = '0' THEN
 						IF wk_addr(1 downto 0) /= "00" THEN
 							-- a descriptor is a longword; this table is corrupt
 							wk_berr <= '1';
@@ -1079,6 +1156,129 @@ BEGIN
 						wk_ack  <= '0';
 						wk_berr <= '0';
 						wk_st   <= WK_IDLE;
+					END IF;
+			END CASE;
+		END IF;
+	END PROCESS;
+
+	--------------------------------------------------------------------------
+	-- The line-fill router (stage D).
+	--
+	-- Eight word reads at the line address, offset 0 first, streamed at the
+	-- free clk_114 rate, then one acknowledge to the core.  The controllers
+	-- see ordinary CPU data reads: the first one misses and fetches the whole
+	-- 16-byte line into cpu_cache_new's line buffer, the other seven are hits
+	-- out of that buffer, which is why this costs one memory round trip and
+	-- not eight.
+	--
+	-- Per word: put the address out with the select IDLE, wait a cycle, open
+	-- the select, take the answer, close the select, wait for the level to
+	-- clear.  The wait is the walker's WK_GAP and is there for the same
+	-- reason -- cpu_cache_new clears its acknowledge only when the select
+	-- goes away, so without it the next word completes on the previous one's
+	-- stale level and the line is filled with one word eight times.  The
+	-- idle cycle before the select is the port contract both controllers
+	-- state in their headers: "cpuAddr must be stable ONE CYCLE BEFORE
+	-- cpustate[2] goes low", because each registers cpuAddr into cpuAddr_r
+	-- and it is cpuAddr_r that addresses the memory on a miss.
+	--
+	-- Word order.  fill_data carries the longword at line offset 0 in
+	-- [127:96] and the one at offset 12 in [31:0] (ap040_cache.v:93-99), so
+	-- the 16-bit word at line offset 2k lands in bits [127-16k : 112-16k]:
+	-- shifting each word in from the right as it arrives, offset 0 first,
+	-- puts every one of them where the cache expects it.  That is bit for bit
+	-- what ap040_fill_cdc.v does with the controller's four longword beats
+	-- ("m_line <= {m_line[95:0], m_dat}"), which is the check on this.
+	--
+	-- Errors: fill_err is a bus error, not a fallback -- the cache takes
+	-- C_FERR, invalidates the row and lets the core fault.  It is raised only
+	-- for an address no RAM controller answers (fl_ok), which the core should
+	-- never ask for; it exists so that a wrapper/core disagreement about the
+	-- windows is a Guru and not a silent hang.
+	--------------------------------------------------------------------------
+	PROCESS(clk, reset)
+	BEGIN
+		IF reset = '0' THEN
+			fl_st      <= FL_IDLE;
+			fl_busy    <= '0';
+			fl_active  <= '0';
+			fl_bstate  <= "01";
+			fl_busaddr <= (others => '0');
+			fl_word    <= "000";
+			fl_line    <= (others => '0');
+			fl_ack     <= '0';
+			fl_err     <= '0';
+		ELSIF rising_edge(clk) THEN
+			CASE fl_st IS
+				WHEN FL_IDLE =>
+					fl_ack    <= '0';
+					fl_err    <= '0';
+					fl_active <= '0';
+					fl_bstate <= "01";
+					-- The walker gets the bus first (see WK_IDLE), and the
+					-- core's own bus side must be idle -- it is, because the
+					-- cache is sitting in C_FILLC waiting for this answer and
+					-- has nothing outstanding through the adapter.  Checking
+					-- it anyway costs one gate and turns a future violation
+					-- into a stall the bench can see instead of a lost access.
+					IF fl_req = '1' AND wk_req = '0' AND wk_st = WK_IDLE
+					   AND state = "01" THEN
+						fl_busy    <= '1';
+						fl_word    <= "000";
+						fl_busaddr <= fl_addr & "0000";
+						fl_active  <= '1';   -- take the bus, select still idle
+						fl_st      <= FL_DEC;
+					END IF;
+
+				WHEN FL_DEC =>
+					-- The address has been on cpuaddr for a whole cycle, so
+					-- the combinational decode below is ours and the
+					-- controllers' cpuAddr_r has caught it.  (sel_* and not
+					-- their registered copies, for the reason WK_HI records:
+					-- the registered ones still hold the previous access.)
+					IF fl_ok = '0' THEN
+						fl_active <= '0';
+						fl_bstate <= "01";
+						fl_err    <= '1';
+						fl_st     <= FL_DONE;
+					ELSE
+						fl_bstate <= "10";   -- a data read; the select opens
+						fl_st     <= FL_SEL;
+					END IF;
+
+				WHEN FL_SEL =>
+					IF mem_ready = '1' THEN
+						-- offset 0 first, shifted in from the right
+						fl_line   <= fl_line(111 downto 0) & datatg68;
+						fl_bstate <= "01";   -- close the select
+						IF fl_word = "111" THEN
+							fl_active <= '0';
+							fl_ack    <= '1';
+							fl_st     <= FL_DONE;
+						ELSE
+							fl_word    <= fl_word + 1;
+							fl_busaddr <= fl_busaddr(31 downto 4) & (fl_word + 1) & '0';
+							fl_st      <= FL_GAP;
+						END IF;
+					END IF;
+
+				WHEN FL_GAP =>
+					-- The next word's address is already out (set above), so
+					-- this wait doubles as its setup cycle.
+					IF mem_ready = '0' THEN
+						fl_bstate <= "10";
+						fl_st     <= FL_SEL;
+					END IF;
+
+				WHEN FL_DONE =>
+					-- ap040_cache drops fill_req in the cycle it takes the
+					-- line (C_FILLC, under ce), so the level is held until
+					-- then and fl_line is not touched meanwhile.
+					IF fl_req = '0' THEN
+						fl_ack  <= '0';
+						fl_err  <= '0';
+						fl_busy <= '0';
+						fl_st   <= FL_IDLE;
 					END IF;
 			END CASE;
 		END IF;
