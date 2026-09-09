@@ -17,6 +17,8 @@
 #   ./run.sh --mmumutant  the same with walker_ack tied low; MUST fail
 #   ./run.sh --fillmutant AP68040 with the line fill assembled backwards; MUST fail
 #   ./run.sh --nofill     AP68040 with the fill channel off; the A/B reference
+#   ./run.sh --snoop      AP68040 with chipset DMA write snoops driven
+#   ./run.sh --snoopmutant  the same with the wrapper's snoop hold reverted; MUST fail
 #   ./run.sh --chipbus    turbochipram = 0, chip RAM over the 7 MHz chipset bus
 #
 # The flags combine in that order, e.g.
@@ -92,6 +94,25 @@ if [ "$1" = "--fillmutant" ]; then IS_FILLMUTANT=1; IS_MUTANT=1; shift; set -- -
 IS_NOFILL=0
 if [ "$1" = "--nofill" ]; then IS_NOFILL=1; shift; set -- --ap040 "$@"; fi
 
+# --snoop: the chipset DMA write snoop, which nothing drove until stage D3.
+# The bench asserts snoop_stb for one clk cycle at a time, at chip RAM
+# addresses, walking all three clk phases relative to clk_cpu, and checks that
+# every one of them reaches the core and invalidates a cache set.
+#
+# It has to be its own leg rather than being on in every leg, because a snoop
+# invalidates a resident line and so perturbs the phase timestamps the other
+# legs are compared on.  With the flag off snoop_stb is tied low exactly as it
+# always was.  Implies --ap040: the TG68K has no cache to snoop.
+#
+# --snoopmutant is the same run with the wrapper's hold reverted -- the raw
+# one-cycle pulse straight to the kernel, which is what stage D3 shipped with
+# before this was found.  Two snoops in three then never reach a core on
+# clk_cpu.  It MUST fail; that is what says this bench can see the bug at all.
+IS_SNOOP=0
+IS_SNOOPMUTANT=0
+if [ "$1" = "--snoop" ];       then IS_SNOOP=1;                             shift; set -- --ap040 "$@"; fi
+if [ "$1" = "--snoopmutant" ]; then IS_SNOOP=1; IS_SNOOPMUTANT=1; IS_MUTANT=1; shift; set -- --ap040 "$@"; fi
+
 # Which CPU core the wrapper is built with.  The AP68040 (lib/AP68040) presents
 # a TG68K-shaped port set, so the whole bench -- chipset model, DDR3 chain,
 # 68k program -- is the same; only the kernel inside rtl/soc/TG68K.vhd changes.
@@ -103,7 +124,7 @@ if [ "$CPU" = "ap040" ]; then
     # The mutant is a TG68K-specific mutation (the chipset_cycle term); there is
     # nothing for it to mean with a different kernel.
     if [ "$IS_MUTANT" = "1" ] && [ "$IS_LWMUTANT" = "0" ] && [ "$IS_MMUMUTANT" = "0" ] \
-       && [ "$IS_FILLMUTANT" = "0" ]; then
+       && [ "$IS_FILLMUTANT" = "0" ] && [ "$IS_SNOOPMUTANT" = "0" ]; then
         echo "--mutant and --ap040 are not a combination: the mutant is the" >&2
         echo "TG68K wrapper as it stood before the chipset_cycle fix." >&2
         exit 2
@@ -114,6 +135,8 @@ if [ "$CPU" = "ap040" ]; then
     if [ "$IS_MMUMUTANT" = "1" ];  then VARIANT=mmumutant_ap040;  fi
     if [ "$IS_FILLMUTANT" = "1" ]; then VARIANT=fillmutant_ap040; fi
     if [ "$IS_NOFILL" = "1" ];     then VARIANT=nofill_ap040;     fi
+    if [ "$IS_SNOOP" = "1" ];      then VARIANT=snoop_ap040;      fi
+    if [ "$IS_SNOOPMUTANT" = "1" ]; then VARIANT=snoopmutant_ap040; fi
 fi
 
 # Turbo chip RAM.  Default on, as the bench has always run.  --chipbus clears
@@ -185,6 +208,7 @@ PLUS="+PATBYTES=$PATBYTES +MISLINES=$MISLINES +CNTN=$CNTN +TURBOCHIP=$TURBOCHIP"
 # has nothing to compare against and is skipped; the program's own phases are
 # the check.
 if [ "$IS_MMU" = "1" ]; then PLUS="$PLUS +MMUTEST"; fi
+if [ "$IS_SNOOP" = "1" ]; then PLUS="$PLUS +SNOOP"; fi
 if [ -n "$TRACE" ]; then PLUS="$PLUS +TRACE +TRMAX=${TRMAX:-200}"; fi
 
 # PREB1=<file> swaps in another copy of the wrapper, so a regression can be
@@ -209,6 +233,18 @@ elif [ "$IS_NOFILL" = "1" ]; then
         "$R/rtl/soc/TG68K.vhd" > "$TG68K_SRC"
     if ! grep -q "fill_ena_zorro => '0'," "$TG68K_SRC"; then
         echo "--nofill: the fill_ena_zorro port map moved; fix the sed in run.sh" >&2
+        exit 2
+    fi
+elif [ "$IS_SNOOPMUTANT" = "1" ]; then
+    # Generated: the wrapper's snoop hold reverted, the raw one-cycle pulse
+    # handed straight to a kernel on clk_cpu.  Two lines.
+    TG68K_SRC="$W/TG68K_snoopmutant.vhd"
+    sed -e "s|cache_snoop_stb  => snp_stb_held,|cache_snoop_stb  => snoop_stb,|" \
+        -e "s|cache_snoop_addr => snp_addr_held,|cache_snoop_addr => snoop_addr,|" \
+        "$R/rtl/soc/TG68K.vhd" > "$TG68K_SRC"
+    if ! grep -q "cache_snoop_stb  => snoop_stb," "$TG68K_SRC" \
+       || ! grep -q "cache_snoop_addr => snoop_addr," "$TG68K_SRC"; then
+        echo "--snoopmutant: the snoop port map moved; fix the sed in run.sh" >&2
         exit 2
     fi
 elif [ "$IS_FILLMUTANT" = "1" ]; then

@@ -261,6 +261,99 @@ always @(posedge clk) begin
 end
 
 //-----------------------------------------------------------------
+// Stage D3: the chipset DMA write snoop, and the clk_38 crossing it has to
+// survive.
+//
+// WHY THIS EXISTS.  sdram_ctrl makes snoop_act exactly ONE clk cycle wide
+// (cleared unconditionally every sysclk at sdram_ctrl.v:492, set at ph2 at
+// :633) and registers it out still one cycle wide (:190-196).  With the
+// AP68040 kernel on clk_cpu, only one clk cycle in three precedes a clk_cpu
+// edge, so a raw pulse reaches the cache only if it happens to land in that
+// one and two snoops in three vanish.  The consumer's contract
+// (ap040_cache.v:111-116) is "s_stb is a single CLOCK pulse in THIS clock
+// domain, ce-independent, with s_addr held alongside it", and the line under
+// it records the previous occurrence of this same loss.  The failure mode is
+// a stale D-cache line after DMA, not a hang, so nothing else in this bench
+// would ever notice it.
+//
+// WHAT IS DRIVEN.  One-cycle pulses on the clk grid, at chip RAM addresses,
+// spaced SNOOP_EVERY clk cycles.  SNOOP_EVERY is 128, and 128 mod 3 = 2, so
+// the pulse walks all three phases relative to clk_cpu -- including the two
+// that are dropped without the fix -- and 128 >= 16 means two pulses can
+// never merge in the wrapper's latch, which is also true of the hardware
+// (a chip slot-1 write happens at most once per sixteen-cycle SDRAM round).
+// ph3 counts the clk grid with 0 on the cycle after a coincident edge, so
+// ph3 == 2 is the one window a raw pulse would survive.
+//
+// WHAT IS CHECKED.
+//   snoop_iss   pulses this bench issued
+//   snoop_seen  clk_cpu edges at which the CORE saw its snoop strobe high
+//   snoop_inv   clk_cpu edges at which the cache actually drove a port-B
+//               invalidate for one (ap040_cache.v:505, snoop_wr -> inv_wren)
+//   snoop_ph[]  how many were issued in each of the three clk phases
+// Every issued snoop must be seen exactly once and must invalidate, and all
+// three phases must have been exercised -- otherwise the test could pass by
+// only ever using the window that works anyway.
+//-----------------------------------------------------------------
+integer snoop_on = 0;
+initial snoop_on = $test$plusargs("SNOOP");
+
+localparam integer SNOOP_EVERY = 128;
+// Chip RAM addresses the 68k program's data actually lives in, walked so that
+// successive snoops hit different cache sets (s_addr[9:4] is the set).
+localparam [31:0] SNOOP_BASE = 32'h0000_0800;
+
+reg        snoop_stb_tb  = 1'b0;
+reg [31:0] snoop_addr_tb = 32'd0;
+reg [ 1:0] ph3           = 2'd2;      // 0 = cycle after a coincident edge
+integer    snoop_iss  = 0;
+integer    snoop_seen = 0;
+integer    snoop_inv  = 0;
+integer    snoop_ph0  = 0;
+integer    snoop_ph1  = 0;
+integer    snoop_ph2  = 0;
+integer    snoop_cnt  = 0;
+
+always @(posedge clk) ph3 <= (ph3 == 2'd2) ? 2'd0 : ph3 + 2'd1;
+
+always @(posedge clk) begin
+  snoop_stb_tb <= 1'b0;
+  if (!tg68_rst) begin
+    snoop_cnt <= 0;
+  end else if (snoop_on) begin
+    if (snoop_cnt == SNOOP_EVERY - 1) begin
+      snoop_cnt     <= 0;
+      snoop_stb_tb  <= 1'b1;
+      snoop_addr_tb <= SNOOP_BASE + ((snoop_iss % 64) << 4);
+      snoop_iss      = snoop_iss + 1;
+      case (ph3)
+        2'd0: snoop_ph0 = snoop_ph0 + 1;
+        2'd1: snoop_ph1 = snoop_ph1 + 1;
+        default: snoop_ph2 = snoop_ph2 + 1;
+      endcase
+    end else begin
+      snoop_cnt <= snoop_cnt + 1;
+    end
+  end
+end
+
+`ifdef CPU_AP040
+// What the core actually got.  s_stb is the compat top's merge of the
+// wrapper's strobe with its own walker-write snoop, so the wrapper's strobe
+// is sampled directly to keep the two apart; snoop_wr is the cache's own
+// invalidate decision on that same edge.
+wire core_snp_stb = ddr3_cpu_tb.tg68k.g_ap040.ap040.cache_snoop_stb;
+wire core_snp_wr  = ddr3_cpu_tb.tg68k.g_ap040.ap040.g_cache.cache.snoop_wr;
+
+always @(posedge clk_cpu) begin
+  if (tg68_rst && core_snp_stb) begin
+    snoop_seen = snoop_seen + 1;
+    if (core_snp_wr) snoop_inv = snoop_inv + 1;
+  end
+end
+`endif
+
+//-----------------------------------------------------------------
 // TG68K wrapper
 //-----------------------------------------------------------------
 wire [31:0] tg68_adr;
@@ -334,12 +427,19 @@ TG68K #(.cpu_core("TG68K")) tg68k (
     .ziiiram2_active(1'b0             ),
     .ziiiram3_active(1'b1             ),   // ... and the 16 MB DDR3 board
     .z3ram3_base    (Z3RAM3_BASE      ),   // where the OS put it
-    // Chipset DMA write snoop.  This bench has no chipset and nothing but the
-    // CPU writes memory, so there is nothing to snoop; on hardware these come
-    // from sdram_ctrl.  (An AP68040 caching chip RAM would need them -- but
-    // the core's own window logic leaves the low chip space uncached anyway.)
-    .snoop_stb      (1'b0             ),
-    .snoop_addr     (32'd0            ),
+    // Chipset DMA write snoop.  On hardware these come from sdram_ctrl, one
+    // clk cycle wide, whenever the chipset writes chip RAM behind the CPU's
+    // back.  This bench has no chipset, so with +SNOOP off they are tied low
+    // exactly as they always were and every other leg is unaffected; with
+    // +SNOOP on they are driven by the generator below.
+    //
+    // The old comment here said the core's window logic "leaves the low chip
+    // space uncached anyway".  That is WRONG and it is why nothing ever drove
+    // this port: ap040_tg68k_compat.v:396 makes $000000-$1fffff cacheable on
+    // the D side, and with Turbo chip RAM on the 040 caches chip RAM in
+    // earnest.  A dropped snoop there is a stale cache line.
+    .snoop_stb      (snoop_stb_tb     ),
+    .snoop_addr     (snoop_addr_tb    ),
     .eth_en         (1'b0             ),
     .sel_eth        (                 ),
     .frometh        (16'h0000         ),
@@ -1297,6 +1397,36 @@ initial begin : main
     $display("DDR3 CPU TB: FAIL  %0d router acknowledges dropped without the CPU being enabled while up",
              ack_dry_errs);
     nfail = nfail + 1;
+  end
+
+  if (snoop_on) begin
+    $display("");
+    $display("INFO: chipset snoops -- %0d issued (%0d/%0d/%0d in clk phase 0/1/2), %0d seen by the core, %0d invalidated a cache set",
+             snoop_iss, snoop_ph0, snoop_ph1, snoop_ph2, snoop_seen, snoop_inv);
+    if (snoop_iss == 0) begin
+      $display("DDR3 CPU TB: FAIL  +SNOOP was set but no snoop was issued");
+      nfail = nfail + 1;
+    end
+    if (snoop_ph0 == 0 || snoop_ph1 == 0 || snoop_ph2 == 0) begin
+      $display("DDR3 CPU TB: FAIL  the snoops did not cover all three clk phases, so this run");
+      $display("       says nothing about the two that a raw one-cycle pulse would miss");
+      nfail = nfail + 1;
+    end
+    if (snoop_seen != snoop_iss) begin
+      $display("DDR3 CPU TB: FAIL  %0d of %0d chipset snoops never reached the core.",
+               snoop_iss - snoop_seen, snoop_iss);
+      $display("       snoop_act is one clk cycle wide and the kernel is on clk_cpu, so a raw");
+      $display("       pulse is only sampled when it lands in the one cycle in three before a");
+      $display("       clk_cpu edge; the wrapper has to hold it (TG68K.vhd, snp_stb_held).");
+      $display("       A lost snoop is a stale data-cache line after chipset DMA -- silent");
+      $display("       corruption, never a hang, which is why nothing else here would see it.");
+      nfail = nfail + 1;
+    end
+    if (snoop_inv != snoop_seen) begin
+      $display("DDR3 CPU TB: FAIL  %0d snoops reached the core but did not invalidate a cache set",
+               snoop_seen - snoop_inv);
+      nfail = nfail + 1;
+    end
   end
 `endif
 

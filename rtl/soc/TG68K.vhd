@@ -192,7 +192,7 @@ ARCHITECTURE logic OF TG68K IS
 	-- clkena in this file (slower, chipset_done, akiko_req, the chipset FSM,
 	-- cpustate) was written against.
 	SIGNAL cpu_ce_phase : std_logic;
-	SIGNAL cpu_ph2      : std_logic;
+	SIGNAL cpu_ph2      : std_logic := '0';
 	-- '1' when the kernel's bus outputs have settled; see where it is driven.
 	SIGNAL cpu_bus_settled : std_logic;
 	-- SIGNAL vmaena           : std_logic;
@@ -813,6 +813,48 @@ BEGIN
 		SIGNAL cpu_tgl   : std_logic := '0';
 		SIGNAL cpu_tgl_d : std_logic := '0';
 		SIGNAL cpu_ph    : std_logic := '0';
+
+		-- STAGE D3, THE OTHER HALF OF THE CROSSING.  The chipset DMA write
+		-- snoop is the one bus -> core signal that is NOT a level the core
+		-- can wait for, and moving the kernel to clk_cpu breaks it outright.
+		--
+		-- sdram_ctrl makes snoop_act exactly one clk cycle wide -- cleared
+		-- unconditionally every sysclk (sdram_ctrl.v:492), set at ph2 (:633)
+		-- -- and registers it out still one cycle wide (:190-196).  Only one
+		-- clk cycle in three precedes a clk_cpu edge, so a raw pulse reaches
+		-- the cache only when it happens to land in that one: TWO SNOOPS IN
+		-- THREE VANISH.
+		--
+		-- The consumer states what it needs, and states what happened last
+		-- time it did not get it (ap040_cache.v:111-116): "s_stb is a single
+		-- CLOCK pulse in THIS clock domain, ce-independent, with s_addr held
+		-- alongside it.  (A ce-gated snoop port was the 5.1 loss: chipset
+		-- writes landing while clkena is frozen simply vanished.)"  Losing
+		-- them through the clock instead of through the enable is the same
+		-- bug with the same signature: stale data-cache lines after blitter
+		-- or trackdisk DMA into chip RAM, intermittent, data-dependent and
+		-- never a hang.  Chip RAM IS cached on the D side -- the
+		-- $000000-$1fffff window at ap040_tg68k_compat.v:396 -- and with
+		-- Turbo chip RAM on the 040 caches it in earnest.
+		--
+		-- So the pulse and its address are latched here and the latch is
+		-- cleared on cpu_ph2, the clk cycle the kernel takes it: the kernel
+		-- then sees a level that is high at EXACTLY ONE clk_cpu edge and low
+		-- at the next, which is the single pulse in its own clock domain the
+		-- contract asks for.
+		--
+		-- Cleared on cpu_ph2 and NOT on clkena, although clkena is the
+		-- "held until consumed" shape everything else on this crossing uses.
+		-- clkena stops for the whole of a bus access -- a chipset cycle is
+		-- some eighty clk cycles -- and a second snoop arriving inside that
+		-- window would be merged into the first and lost.  On cpu_ph2 the
+		-- latch is never held for more than three clk cycles, and a chip
+		-- slot-1 write happens at most once per sixteen-cycle SDRAM round,
+		-- so two snoops can never merge.  The set wins over the clear, so a
+		-- snoop arriving on the clearing edge is delivered one clk_cpu
+		-- period later rather than dropped.
+		SIGNAL snp_stb_held  : std_logic := '0';
+		SIGNAL snp_addr_held : std_logic_vector(31 downto 0) := (others => '0');
 	BEGIN
 		PROCESS(clk_cpu)
 		BEGIN
@@ -827,6 +869,19 @@ BEGIN
 				cpu_tgl_d <= cpu_tgl;
 				cpu_ph    <= cpu_tgl XOR cpu_tgl_d;
 				cpu_ph2   <= cpu_ph;
+			END IF;
+		END PROCESS;
+
+		-- The snoop holder; see the note beside its signals.
+		PROCESS(clk)
+		BEGIN
+			IF rising_edge(clk) THEN
+				IF snoop_stb = '1' THEN
+					snp_stb_held  <= '1';
+					snp_addr_held <= snoop_addr;
+				ELSIF cpu_ph2 = '1' THEN
+					snp_stb_held  <= '0';
+				END IF;
 			END IF;
 		END PROCESS;
 
@@ -881,8 +936,8 @@ BEGIN
 				-- board decodes; fl_ok above says how the fill router answers
 				-- one.
 				cache_allow_all  => '0',
-				cache_snoop_stb  => snoop_stb,
-				cache_snoop_addr => snoop_addr,
+				cache_snoop_stb  => snp_stb_held,
+				cache_snoop_addr => snp_addr_held,
 				cache_z2_ena     => z2ram_ena,
 				cache_z3_base0   => "01000",
 				cache_z3_ena0    => z3ram_ena,
@@ -1487,15 +1542,19 @@ BEGIN
 			-- override a clear written here.  It used to, on every chipset
 			-- read: with enaWRreg on phases 2/6/10/14 and ena7RDreg on 6, the
 			-- release and that branch always fell on the same edge, and what
-			-- actually cleared clkena_e was this same test firing a second
-			-- time on the phase-10 enable, chipset_done still being up.  That
-			-- second firing is gone -- chipset_done is now cleared on the
-			-- first enable after it is set, and with a three-cycle enable
-			-- there may not be another one before the next chipset cycle -- so
-			-- the clear has to win outright.  Putting it last does that and
-			-- changes nothing for the TG68K: between the two firings the only
-			-- readers of clkena_e are `ena7RDreg AND clkena_e` (ena7RDreg is
-			-- low there) and `S_state = "01"` (S_state is "00" there).
+			-- actually cleared clkena_e was this same test firing a SECOND
+			-- time on the next enable, chipset_done still being up.
+			--
+			-- Putting the clear last makes it clear OUTRIGHT, so the release
+			-- no longer depends on that second firing happening.  (It does
+			-- still happen: chipset_ready wins the priority in the
+			-- chipset_done process above, so chipset_done is set on the very
+			-- edge the CPU is released, bus_ready stays high and the next
+			-- cpu_ph2 fires this test again.  The point is that the release
+			-- is no longer built on it.)  It changes nothing for the TG68K:
+			-- between the two firings the only readers of clkena_e are
+			-- `ena7RDreg AND clkena_e` (ena7RDreg is low there) and
+			-- `S_state = "01"` (S_state is "00" there).
 			IF (chipset_ready = '1' OR chipset_done = '1') AND clkena = '1' THEN
 				S_state <= "00";
 			END IF;
