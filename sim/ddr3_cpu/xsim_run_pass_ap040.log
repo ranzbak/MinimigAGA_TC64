@@ -22,12 +22,12 @@ ddr3_cpu_tb.u_ram.cmd_task: at time 39935000.0 ps WARNING: Load Mode 1 DLL off m
 LOAD_MODE: bank 0
 INFO: CPU released at 64389167.0 ps (ddr_ready=1 init_done=1 pll_locked=1)
 INFO: program phase 1 at 74147372.0 ps
-INFO: program phase 2 at 447471437.0 ps
-INFO: program phase 3 at 1343877602.0 ps
-INFO: program phase 4 at 1519631072.0 ps
-INFO: program phase 5 at 1539411932.0 ps
-INFO: program phase 7 at 1789846082.0 ps
-INFO: program phase 8 at 1820099162.0 ps
+INFO: program phase 2 at 464396237.0 ps
+INFO: program phase 3 at 1365932732.0 ps
+INFO: program phase 4 at 1545520727.0 ps
+INFO: program phase 5 at 1565909822.0 ps
+INFO: program phase 7 at 1821183407.0 ps
+INFO: program phase 8 at 1851462932.0 ps
 
 DDR3 CPU TB: PASS  (68k program completed all phases)
 
@@ -38,8 +38,8 @@ INFO: cache line fills -- 83 over the channel (1 of them undecoded, auto-complet
 
 DDR3 CPU TB: 2 passed, 0 failed
 
-$finish called at time : 1821051182 ps : File "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/ddr3_cpu_tb.sv" Line 1437
-run: Time (s): cpu = 00:00:00.95 ; elapsed = 00:08:17 . Memory (MB): peak = 1316.727 ; gain = 0.000 ; free physical = 15271 ; free virtual = 40756
+$finish called at time : 1852414952 ps : File "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/ddr3_cpu_tb.sv" Line 1522
+run: Time (s): cpu = 00:00:02 ; elapsed = 00:14:35 . Memory (MB): peak = 1441.133 ; gain = 62.203 ; free physical = 13829 ; free virtual = 38197
 ## quit
-INFO: xsimkernel Simulation Memory Usage: 150172 KB (Peak: 191052 KB), Simulation CPU Usage: 497270 ms
-INFO: [Common 17-206] Exiting xsim at Wed Sep  9 16:41:30 2026...
+INFO: xsimkernel Simulation Memory Usage: 150256 KB (Peak: 191136 KB), Simulation CPU Usage: 871710 ms
+INFO: [Common 17-206] Exiting xsim at Thu Sep 10 00:40:30 2026...

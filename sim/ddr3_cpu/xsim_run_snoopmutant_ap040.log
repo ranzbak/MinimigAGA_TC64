@@ -21,33 +21,48 @@ LOAD_MODE: bank 1
 ddr3_cpu_tb.u_ram.cmd_task: at time 39935000.0 ps WARNING: Load Mode 1 DLL off mode is not fully modeled
 LOAD_MODE: bank 0
 INFO: CPU released at 64389167.0 ps (ddr_ready=1 init_done=1 pll_locked=1)
+INFO: snoop address out of order at 64953327.0 ps -- core saw 00000830, expected 00000810 (gap 16)
+INFO: snoop address out of order at 65164887.0 ps -- core saw 00000870, expected 00000820 (gap 16)
+INFO: snoop address out of order at 65191332.0 ps -- core saw 00000880, expected 00000830 (gap 16)
+INFO: snoop address out of order at 65217777.0 ps -- core saw 00000890, expected 00000840 (gap 8)
+INFO: snoop address out of order at 65244222.0 ps -- core saw 000008a0, expected 00000850 (gap 8)
+INFO: snoop address out of order at 65270667.0 ps -- core saw 000008b0, expected 00000860 (gap 4)
+INFO: snoop address out of order at 65693787.0 ps -- core saw 000008e0, expected 00000870 (gap 4)
+INFO: snoop address out of order at 65905347.0 ps -- core saw 00000900, expected 00000880 (gap 3)
 INFO: program phase 1 at 74147372.0 ps
-INFO: program phase 2 at 447471437.0 ps
-INFO: program phase 3 at 1344247832.0 ps
-INFO: program phase 4 at 1520001302.0 ps
-INFO: program phase 5 at 1539782162.0 ps
-INFO: program phase 7 at 1790216312.0 ps
-INFO: program phase 8 at 1820469392.0 ps
+INFO: program phase 2 at 464396237.0 ps
+INFO: program phase 3 at 1385184692.0 ps
+INFO: program phase 4 at 1564666907.0 ps
+INFO: program phase 5 at 1585426232.0 ps
+INFO: program phase 7 at 1847787077.0 ps
+INFO: program phase 8 at 1879600412.0 ps
 
 DDR3 CPU TB: PASS  (68k program completed all phases)
 
 INFO: checking the DDR3 array through the Micron model backdoor
 PASS: DDR3 array contents match the pattern (independent backdoor read)
 
-INFO: cache line fills -- 85 over the channel (1 of them undecoded, auto-completed), 5 down the adapter, 0 bus errors
+INFO: cache line fills -- 153 over the channel (1 of them undecoded, auto-completed), 7 down the adapter, 0 bus errors
 
-INFO: chipset snoops -- 1557 issued (519/519/519 in clk phase 0/1/2), 519 seen by the core, 519 invalidated a cache set
-DDR3 CPU TB: FAIL  1038 of 1557 chipset snoops never reached the core.
+INFO: chipset snoops -- 24722 issued (8238/8243/8241 in clk phase 0/1/2), 8242 seen by the core, 8242 invalidated a cache set
+INFO:   gap 16 clk cycles           (the hardware minimum) -- 8242 issued, 2744 seen
+INFO:   gap  8 clk cycles (tighter than hardware can make) -- 4120 issued, 1376 seen
+INFO:   gap  4 clk cycles (tighter than hardware can make) -- 4120 issued, 1376 seen
+INFO:   gap  3 clk cycles (tighter than hardware can make) -- 8240 issued, 2746 seen
+INFO:   gap  2 clk cycles (tighter than hardware can make) -- 0 issued, 0 seen
+INFO:   8070 snoop addresses reached the core out of order (a merge loses the first address)
+DDR3 CPU TB: FAIL  8070 snoop addresses were delivered out of order -- the hold merged snoops
+DDR3 CPU TB: FAIL  16480 of 24722 chipset snoops never reached the core.
        snoop_act is one clk cycle wide and the kernel is on clk_cpu, so a raw
        pulse is only sampled when it lands in the one cycle in three before a
        clk_cpu edge; the wrapper has to hold it (TG68K.vhd, snp_stb_held).
        A lost snoop is a stale data-cache line after chipset DMA -- silent
        corruption, never a hang, which is why nothing else here would see it.
 
-DDR3 CPU TB: 1 checks failed
+DDR3 CPU TB: 2 checks failed
 
-$finish called at time : 1821421412 ps : File "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/ddr3_cpu_tb.sv" Line 1437
-run: Time (s): cpu = 00:00:00.97 ; elapsed = 00:08:20 . Memory (MB): peak = 1316.727 ; gain = 0.000 ; free physical = 15100 ; free virtual = 40654
+$finish called at time : 1880552432 ps : File "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/ddr3_cpu_tb.sv" Line 1522
+run: Time (s): cpu = 00:00:01 ; elapsed = 00:08:44 . Memory (MB): peak = 1316.727 ; gain = 0.000 ; free physical = 16419 ; free virtual = 40888
 ## quit
-INFO: xsimkernel Simulation Memory Usage: 150172 KB (Peak: 191052 KB), Simulation CPU Usage: 499510 ms
-INFO: [Common 17-206] Exiting xsim at Wed Sep  9 16:32:48 2026...
+INFO: xsimkernel Simulation Memory Usage: 150256 KB (Peak: 191136 KB), Simulation CPU Usage: 524290 ms
+INFO: [Common 17-206] Exiting xsim at Thu Sep 10 01:31:09 2026...
