@@ -60,7 +60,15 @@ foreach p [get_hw_probes -of_objects $ila] {
     set_property TRIGGER_COMPARE_VALUE {} $p
     set_property CAPTURE_COMPARE_VALUE {} $p
 }
-if {$mode eq "fast"} {
+if {$mode eq "now"} {
+    # Trigger on anything and keep the whole window after it, so the 4096
+    # samples are an UNBIASED run of consecutive clocks.  This is the mode for
+    # measuring a rate -- what fraction of clocks the core advances -- because
+    # busy/fast both start their window at an access and would over-represent
+    # the cycles that follow one.
+    set_property CONTROL.TRIGGER_POSITION 0 $ila
+    set_property TRIGGER_COMPARE_VALUE {eq4'bxxxx} [pr $ila *dbg_flags*]
+} elseif {$mode eq "fast"} {
     # any access whose address is in the Zorro III window, i.e. fast RAM
     set_property TRIGGER_COMPARE_VALUE {eq32'b01000xxxxxxxxxxxxxxxxxxxxxxxxxxx} [pr $ila *tg68_adr*]
 } else {

@@ -1289,6 +1289,48 @@ the FPU's datapath registers really are enabled less often than every clock,
 which nobody has checked). Numbers came off the debug bitstream, so absolute
 delays are pessimistic by perhaps 5-10 %; the two-to-one ratio is solid.
 
+**2026-09-09 afternoon, Turbo Chip on, and what SysInfo's loop actually does.**
+Two measurements that between them settle what D3 is worth.
+
+**Turbo Chip RAM on, roots2, same method as the morning:**
+
+| | turbo off | turbo on |
+|---|---|---|
+| core advanced | 15.6 % | **18.6 %** |
+| bus request pending | 41.4 % | **30.3 %** |
+| waiting on chip RAM | 28.1 % of clocks | **0 %** |
+| waiting on custom registers | 13.3 % | 30.3 % |
+
+Chip RAM stalls are gone outright and the core does ~19 % more work per second.
+The register share rising is not a regression -- the demo gets through more in a
+shorter time. What is left is one thing: 52 reads of `$DFF005` (the top half of
+VPOSR, i.e. asking where the beam is) costing **70 clocks each**, against 8-10
+clocks for every other chipset access. That is the CPU waiting for a chipset
+slot while display DMA holds the bus, which is the Amiga's architecture and
+nothing CPU-side can change. **A demo is therefore the wrong benchmark for D3.**
+
+**SysInfo's speed test, 24 unbiased 36 us windows (`tools/vivado/ila_stall_burst.tcl`,
+mode `now`) while the Speed button was clicked repeatedly.** Per window, the
+compute-bound ones read:
+
+    core advanced 25.0 %      bus request pending 0.0 %
+
+**25.0 % is exactly the four-phase enable ceiling, with zero memory stalls.**
+The loop is entirely cache-resident, so memory is not a factor in that number at
+all -- which is the whole reason D2 measured zero on SysInfo, and it is measured
+now rather than argued. The windows that are not at the ceiling are the OS
+between clicks (CIA at `$BFE001`/`$BFDF00`, `$DFF002`, `$DFF09A`) and the
+interrupt handler polling `$DFF01E` at ~4 %.
+
+**So D3's value is exactly the clock ratio, for CPU-bound code.** The core is
+limited by two things and nothing else: one advance every four clocks (28.36 MHz
+effective) and ~11 cycles per instruction. Free-running at 37.8 MHz is
+37.8/28.36 = **1.33x**, with no memory term to erode it, which would put SysInfo
+near **0.31x**. That supersedes the 2x figure estimated on 2026-09-08 from the
+core bench's gated-vs-free comparison. The FPU's 19.9 ns path is what caps the
+ratio at 37.8 rather than higher; the rest of the distance to real silicon is
+the sequencer's cycles per instruction, i.e. upstream's pipeline work.
+
 ## Risks
 
 | Risk | Shows as | Mitigation |
