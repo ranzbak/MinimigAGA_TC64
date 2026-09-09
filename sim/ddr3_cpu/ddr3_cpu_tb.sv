@@ -169,23 +169,31 @@ initial begin
 end
 
 //-----------------------------------------------------------------
-// sdram_ctrl's enable cadence (rtl/sdram/sdram_ctrl.v ~344-375)
+// sdram_ctrl's enable cadence
 //-----------------------------------------------------------------
 // 16 sysclk = one 7.09 MHz period.  This bench does NOT compile sdram_ctrl --
-// it models that side itself -- so this cadence has to be kept in step with
-// the controller by hand.  It was out of step once already: D1 moved enaWRreg
-// to five phases in sdram_ctrl.v and the bench happily went on pulsing four,
-// so three green runs said nothing about the change they were meant to test.
-// If the phases move again, they move here too.
+// it models that side itself -- and for as long as the phase list was copied
+// out by hand the two could differ, which they did: D1 moved enaWRreg to five
+// phases in sdram_ctrl.v and this bench happily went on pulsing four, so three
+// green runs said nothing about the change they were meant to test.
 //
-// enaWRreg at ph2/5/8/11/14 (spacing 3-3-3-3-4, findings/ap68040/performance.md
-// option 1a), ena7RDreg at ph6, ena7WRreg at ph14, all registered exactly as
-// the controller registers them.  Note that enaWRreg no longer coincides with
-// ena7RDreg -- that is the whole reason TG68K.vhd latches the chipset answer.
+// The phase list now has ONE source, rtl/sdram/cpu_enable_cadence.v, and both
+// sides instantiate it.  What is modelled here is only the sixteen-phase
+// counter and the registers -- placed exactly where sdram_ctrl places them, so
+// the enables land on the same clock edges the controller would produce.
 reg [3:0] ph        = 4'd0;
 reg       ena28     = 1'b0;                   // = enaWRreg  -> clkena_in
 reg       ena7RDreg = 1'b0;
 reg       ena7WRreg = 1'b0;
+
+wire      cad_ena_cpu, cad_ena7rd, cad_ena7wr;
+
+cpu_enable_cadence cadence (
+  .phase   (ph         ),
+  .ena_cpu (cad_ena_cpu),
+  .ena7rd  (cad_ena7rd ),
+  .ena7wr  (cad_ena7wr )
+);
 
 always @(posedge clk) begin
   if (!sdctl_rst) begin
@@ -195,10 +203,9 @@ always @(posedge clk) begin
     ena7WRreg <= 1'b0;
   end else begin
     ph        <= ph + 4'd1;
-    ena28     <= (ph == 4'd2) || (ph == 4'd5) || (ph == 4'd8) ||
-                 (ph == 4'd11) || (ph == 4'd14);
-    ena7RDreg <= (ph == 4'd6);
-    ena7WRreg <= (ph == 4'd14);
+    ena28     <= cad_ena_cpu;
+    ena7RDreg <= cad_ena7rd;
+    ena7WRreg <= cad_ena7wr;
   end
 end
 
@@ -706,8 +713,33 @@ end
 // for a wrapper variant that did not boot, and says to teach this bench the
 // rule first.  The line-fill router (stage D) opens the select itself, so this
 // is also the check on it.
+//
+// THE OTHER HALF OF THE CONTRACT (added in task 4).  Both controllers do
+//
+//     always @(posedge sysclk) cpuAddr_r <= cpuAddr;
+//
+// unconditionally -- sdram_ctrl.v:240, ddr3_fastram.v:220 -- and cpuAddr_r is
+// what they latch into slot1_addr / cdc_addr when the round finally reaches
+// the CPU's slot, which can be many clocks after the select opened.  So the
+// address must not merely be settled one cycle BEFORE the select falls, it
+// must HOLD for as long as the select is low.  Both halves are one rule:
+//
+//     while cpustate[2] (resp. ddrcs) is low, the address equals the address
+//     of the previous clock.
+//
+// The falling edge of the select is the first case of that (the select is low
+// now and was high a cycle ago -- the address must already have been what it
+// is), the held-low cycles are the rest.  The address is allowed to change on
+// the cycle the select goes back high, and that is exactly what the wrapper
+// does: `slower` reloads on clkena, so slower(0) closes the select on the same
+// clock edge the core's address register advances, and the fill router's
+// FL_SEL sets fl_bstate = "01" and the next fl_busaddr in the same edge too.
+// A cadence whose enable spacing lets the select still be open when the next
+// enable lands would break that alignment -- which is the hypothesis the
+// five-phase experiment tests.
 //-----------------------------------------------------------------
 integer    port_setup_errs = 0;
+integer    port_hold_errs  = 0;
 reg [25:1] ramaddr_d, ddraddr_d;
 reg        ramcsn_d = 1'b1, ddrcsn_d = 1'b1;
 
@@ -724,6 +756,19 @@ always @(posedge clk) begin
         $display("FAIL: DDR3 select opened at %08x with the address changing in the same cycle (was %08x)",
                  {6'd0, tg68_ddraddr, 1'b0}, {6'd0, ddraddr_d, 1'b0});
       port_setup_errs = port_setup_errs + 1;
+    end
+    // ... and it has to stay there while the select is held low.
+    if (!ramcsn_d && !tg68_cpustate[2] && tg68_cad[25:1] !== ramaddr_d) begin
+      if (port_hold_errs < 8)
+        $display("FAIL: SDRAM address moved to %08x while the select was still low (was %08x)",
+                 {6'd0, tg68_cad[25:1], 1'b0}, {6'd0, ramaddr_d, 1'b0});
+      port_hold_errs = port_hold_errs + 1;
+    end
+    if (!ddrcsn_d && !tg68_ddrcs && tg68_ddraddr !== ddraddr_d) begin
+      if (port_hold_errs < 8)
+        $display("FAIL: DDR3 address moved to %08x while the select was still low (was %08x)",
+                 {6'd0, tg68_ddraddr, 1'b0}, {6'd0, ddraddr_d, 1'b0});
+      port_hold_errs = port_hold_errs + 1;
     end
   end
   ramaddr_d <= tg68_cad[25:1];
@@ -1154,6 +1199,15 @@ initial begin : main
     $display("");
     $display("DDR3 CPU TB: FAIL  %0d chip selects opened without a settled address",
              port_setup_errs);
+    nfail = nfail + 1;
+  end
+
+  if (port_hold_errs != 0) begin
+    $display("");
+    $display("DDR3 CPU TB: FAIL  %0d cycles with the address moving while a chip select was low;",
+             port_hold_errs);
+    $display("       the controllers re-register cpuAddr every clock, so the access ends up");
+    $display("       reading or writing the wrong line");
     nfail = nfail + 1;
   end
 

@@ -68,6 +68,21 @@ add_src $R/rtl/ddr3/ddr3_fastram.v
 add_src $R/rtl/ddr3/ddr3_cdc.v
 
 #-----------------------------------------------------------------------------
+# The CPU enable cadence.
+#
+# rtl/sdram/sdram_ctrl.v has been in project_1.xpr since long before this
+# script existed, so it is not listed here; cpu_enable_cadence.v is new, and a
+# file that is not in the project's sources_1 fileset is simply not compiled --
+# synthesis would stop with "module cpu_enable_cadence not found" (or, worse on
+# some flows, a black box).  add_src is idempotent, so this line puts it in the
+# project on the next build and does nothing thereafter.  The same file is
+# listed in sim/ddr3_cpu/run.sh, sim/sdram_timing/run.sh,
+# bench/cpu_cache_sdram_verilator/Makefile and rtl/sdram/sdram.qip -- every
+# source list that already carried sdram_ctrl.v or the DDR3 CPU bench.
+#-----------------------------------------------------------------------------
+add_src $R/rtl/sdram/cpu_enable_cadence.v
+
+#-----------------------------------------------------------------------------
 # AP68040 (lib/AP68040, submodule pinned at 0e76761): an MC68040 with MMU, FPU
 # and split caches whose top level presents a TG68K-shaped port set.  Built in
 # whenever the sources are present; which core is actually instantiated is the

@@ -267,6 +267,7 @@ echo "verilog work \"$R/rtl/ddr3/ddr3_bist.v\""           >> $PRJ
 echo "verilog work \"$R/rtl/ddr3/ddr3_top.v\""            >> $PRJ
 echo "verilog work \"$R/rtl/ddr3/ddr3_cdc.v\""            >> $PRJ
 echo "verilog work \"$R/rtl/ddr3/ddr3_fastram.v\""        >> $PRJ
+echo "verilog work \"$R/rtl/sdram/cpu_enable_cadence.v\"" >> $PRJ
 echo "verilog work \"$R/rtl/sdram/cpu_cache_new.v\""      >> $PRJ
 echo "verilog work \"$R/rtl/sdram/dpram_inf_256x32.v\""   >> $PRJ
 echo "verilog work \"$R/rtl/sdram/dpram_inf_be_1024x32.v\"" >> $PRJ

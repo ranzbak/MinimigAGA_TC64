@@ -360,53 +360,31 @@ always @ (posedge sysclk) begin
 end
 
 //// write / read control ////
+// The phase list itself lives in rtl/sdram/cpu_enable_cadence.v -- ONE source,
+// shared with sim/ddr3_cpu, which does not compile this module and used to
+// hand-copy the cadence (and got it wrong).  That module is combinational and
+// gives the NEXT value of each enable from the current phase; the registers
+// below are exactly where they always were, so the timing is unchanged.
+wire cadence_ena_cpu;
+wire cadence_ena7rd;
+wire cadence_ena7wr;
+
+cpu_enable_cadence cadence (
+    .phase   (sdram_state    ),   // LATENCY=3
+    .ena_cpu (cadence_ena_cpu),
+    .ena7rd  (cadence_ena7rd ),
+    .ena7wr  (cadence_ena7wr )
+);
+
 always @ (posedge sysclk) begin
     if(!reset_sdstate) begin
         enaWRreg      <= #1 1'b0;
         ena7RDreg     <= #1 1'b0;
         ena7WRreg     <= #1 1'b0;
     end else begin
-        enaWRreg      <= #1 1'b0;
-        ena7RDreg     <= #1 1'b0;
-        ena7WRreg     <= #1 1'b0;
-        // enaWRreg is the CPU's clock enable and nothing else's (it leaves
-        // this module only as tg68_ena28 -> the wrapper's clkena_in).  Five
-        // pulses in the sixteen-phase round instead of four, spaced 3-3-3-3-4,
-        // so the core advances at an average 35.4 MHz instead of 28.4 and the
-        // multicycle exceptions in cpu.xdc become -start 3 / -hold 2, the
-        // MINIMUM spacing being what a constraint has to cover.
-        // findings/ap68040/performance.md option 1a.
-        //
-        // ph6 and ph14 keep ena7RDreg and ena7WRreg -- the 7 MHz chipset
-        // timing is untouched -- but note that enaWRreg no longer coincides
-        // with ena7RDreg at ph6, and it cannot: five gaps of at least 3
-        // summing to 16 are four 3s and one 4, and no partial sum of those
-        // reaches the 8 phases between 6 and 14.  The wrapper used to rely on
-        // that coincidence to release a chipset access; TG68K.vhd now latches
-        // the release instead (chipset_done) precisely because of this.
-        case(sdram_state) // LATENCY=3
-            // BISECT 2026-09-08: back to four phases while the chipset_done
-            // change is tested on its own.  D1 is two changes -- this cadence
-            // and the latched chipset release -- and the machine stopped
-            // booting; this build keeps the release and reverts the cadence,
-            // so whichever half is at fault, the next boot names it.
-            ph2 : begin
-                enaWRreg  <= #1 1'b1;
-            end
-            ph6 : begin
-                enaWRreg  <= #1 1'b1;
-                ena7RDreg <= #1 1'b1;
-            end
-            ph10 : begin
-                enaWRreg  <= #1 1'b1;
-            end
-            ph14 : begin
-                enaWRreg  <= #1 1'b1;
-                ena7WRreg <= #1 1'b1;
-            end
-            default : begin
-            end
-        endcase
+        enaWRreg      <= #1 cadence_ena_cpu;
+        ena7RDreg     <= #1 cadence_ena7rd;
+        ena7WRreg     <= #1 cadence_ena7wr;
     end
 end
 
