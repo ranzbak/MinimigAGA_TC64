@@ -73,12 +73,25 @@ add_src $R/rtl/ddr3/ddr3_cdc.v
 # rtl/sdram/sdram_ctrl.v has been in project_1.xpr since long before this
 # script existed, so it is not listed here; cpu_enable_cadence.v is new, and a
 # file that is not in the project's sources_1 fileset is simply not compiled --
-# synthesis would stop with "module cpu_enable_cadence not found" (or, worse on
-# some flows, a black box).  add_src is idempotent, so this line puts it in the
-# project on the next build and does nothing thereafter.  The same file is
-# listed in sim/ddr3_cpu/run.sh, sim/sdram_timing/run.sh,
-# bench/cpu_cache_sdram_verilator/Makefile and rtl/sdram/sdram.qip -- every
-# source list that already carried sdram_ctrl.v or the DDR3 CPU bench.
+# synthesis stops with "module 'cpu_enable_cadence' not found".  add_src is
+# idempotent, so this line puts it in the project on the next build and does
+# nothing thereafter.
+#
+# WHERE ELSE THIS FILE HAS TO BE LISTED.  Each of the six tools/vivado/build*
+# scripts opens project_1.xpr itself and carries its own add_src list, so a new
+# rtl/ file has to go in ALL SIX or whichever one you run next fails:
+# build.tcl, build_ap040.tcl, build_bist.tcl, build_ila.tcl, build_no_ddr3.tcl,
+# build_no_ddr3_clean.tcl.  The marker to search for is NOT sdram_ctrl.v --
+# these scripts carry nothing from rtl/sdram at all -- it is the
+# ddr3_fastram.v / ddr3_cdc.v pair, which is the last new rtl/ file that went
+# through the same exercise; this add_src sits directly after it in every one.
+# Outside Vivado the same file is listed in sim/ddr3_cpu/run.sh,
+# sim/sdram_timing/run.sh, bench/cpu_cache_sdram_verilator/Makefile and
+# rtl/sdram/sdram.qip.
+#
+# That is where it is listed, not a proof that nothing else needs it: rebuild.tcl
+# and the legacy .lst file sets name sdram_ctrl.v and were deliberately left
+# alone, being stale by existing practice.
 #-----------------------------------------------------------------------------
 add_src $R/rtl/sdram/cpu_enable_cadence.v
 

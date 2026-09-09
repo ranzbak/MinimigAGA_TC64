@@ -77,6 +77,11 @@ add_src $R/rtl/ddr3/ddr3_top.v
 add_src $R/rtl/ddr3/ddr3_fastram.v
 add_src $R/rtl/ddr3/ddr3_cdc.v
 
+# The CPU enable cadence (Task 4, one source for sdram_ctrl and the bench).
+# KEEP IN SYNC WITH tools/vivado/build.tcl: project_1.xpr predates the file,
+# and a source that is not in sources_1 is simply not compiled.
+add_src $R/rtl/sdram/cpu_enable_cadence.v
+
 #-----------------------------------------------------------------------------
 # vio_ddr3: the bring-up VIO for the BIST and the PHY tap sweep
 # (minimig_openaars_top.v parameter DDR3_BIST_VIO).
