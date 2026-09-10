@@ -91,3 +91,355 @@ several -- is consistent with a rarely-hit window rather than a systematic loss.
 * Not the router gating or the enable retiming: both were reverted or replaced
   in this candidate and the corruption remains.
 * Not a pre-existing chipset defect: the pre-D3 control is clean.
+
+---
+
+# The snoop is NOT lost (2026-09-10, late evening)
+
+Step 2 of the list above was done rather than argued, and it settles step 1 as
+well: **no snoop has ever failed to cross.**
+
+## What was built
+
+`rtl/soc/TG68K.vhd` gained `dbg_snoop`, carried on `ila_cpu040`'s new probe8
+(`rtl/soc/minimig_virtual_top.v`, `tools/vivado/build_ap040.tcl`).  Two
+free-running counters ride it:
+
+| field | clock | counts |
+|---|---|---|
+| `snp_in_cnt` (7:0) | `clk_114` | every snoop the BUS offered (`snoop_stb`) |
+| `snp_out_cnt` (15:8) | `clk_38` | every snoop the KERNEL saw (`snp_stb_held` at a `clk_38` edge -- literally the value `ap040_cache`'s ce-independent `s_stb` port samples) |
+
+plus the live `snoop_stb`, `snp_stb_held`, `cpu_ph2` and `snoop_addr(21:1)`.
+
+Both start at zero out of configuration and are **never cleared**, so at any
+instant `(in - out) mod 256` is the total number of snoops that failed to
+cross, for all time.  A lost snoop is then a subtraction on a single sample
+instead of a waveform to be argued about, and it does not matter when the
+sample is taken relative to the failure: the difference is permanent.
+
+Read with `tools/vivado/ila_snoop_check.tcl`.  Bitstream
+`build/stage_ap040_d3snoop_ila` -- the `d3stable` tree plus the probes, and
+timing equal or better than `d3stable` on every CPU clock pair
+(`clk_114 -> clk_38` WNS 1.06 / WHS 0.07, `clk_38 -> clk_38` WNS 0.86, the
+only violation the same 16 pre-existing `clk_gen_sdram -> clk_114` paths that
+every build in this project has, including the shipping baseline).
+
+## What was measured
+
+The build **reproduces the defect**: Paul ran *Way Too Rude* with Turbo Chip on
+and it corrupted as before.  Across samples taken before, during and after that
+run:
+
+```
+=== sample  1  in 234  out 234  lost   0    ... idle at Workbench
+=== sample  6  in 150  out 150  lost   0
+=== sample 10  in  58  out  58  lost   0
+--- demo started, corruption observed ---
+=== sample  1  in  31  out  31  lost   0
+=== sample  2  in   3  out   3  lost   0    ... counters idle: the demo's
+=== sample  8  in   3  out   3  lost   0        task is wedged, as reported
+```
+
+`in == out` on every sample, `lost = 0` throughout, **including after the
+corruption had already happened**.  (The absolute values move because the
+counters are 8 bits and wrap; `lost` is computed from two counters read in the
+same ILA word, so wrapping cannot affect it.)
+
+## What that proves, and what it does not
+
+Proved: every `snoop_stb` that `sdram_ctrl` offered arrived at the 040's cache
+port across the `clk_114 -> clk_38` crossing.  The crossing stage D3 introduced
+is clean, `snp_stb_held` is the right shape, and the "cross it as a toggle with
+an acknowledge instead" idea in step 3 above would be solving a problem that
+does not exist.
+
+Not proved: that `sdram_ctrl` *raised* a snoop for every chipset write that
+needed one (`sdram_ctrl.v:633` snoops slot 1 CHIP writes only), nor that the
+cache *acted* correctly on each snoop it received.  Both are unchanged by D3,
+and the pre-D3 control is clean, so neither can be the whole story on its own.
+
+Also settled, from the reports rather than from argument: the crossing is not
+under-constrained either.  `clk_114 -> clk_38` in `d3stable` reports WHS
+**0.11 ns over 8069 endpoints, 0 failing** -- the coincident-edge hold that the
+holder's clear depends on is checked, and met.
+
+## The next suspect, and why it is weaker than it looks
+
+Posted stores.  `ap040_post_stores` defaults to 1, and chip RAM
+`$000000-$1fffff` is hard-wired cacheable on the D side
+(`ap040_tg68k_compat.v:396`), so with Turbo Chip on a CPU store to chip RAM is
+a store to a *cacheable* page and is therefore **acknowledged before it reaches
+memory** (`ap040_cache.v:360`, `st_post_ok`).  D3 tripled the core's rate
+against the bus and so tripled that drain window.  That is the other direction
+of the same symptom: uncleared pixels are equally what a write that has not
+landed yet looks like to display DMA or to the blitter.
+
+Against it, from the RTL: the drain is **one slot deep** and every subsequent
+access waits for it.  `ap040_cache.v:664` holds a following *store* while
+`dr_active` -- including a cache-inhibited IO write such as `BLTSIZE`, which
+takes the same `if (c_write)` branch -- and `:713` holds a bypassed *read* for
+the same reason, "as the 68040 completes pending writes before a serialized
+access".  So memory order is program order and a blitter cannot be started
+before the pixels it is to read have landed.  The remaining exposure is only
+display DMA reading a buffer at most one store late, which is a stale word for
+one frame and self-correcting -- not pixels that accumulate.
+
+It is being measured anyway, because that argument is exactly the shape of the
+three that have already been wrong: `AP040_POST_STORES` is now a build-time
+generic threaded from `minimig_openaars_top` down to `TG68K.vhd`
+(`tools/vivado/build_ap040.tcl` takes it as a fourth `-tclargs`), and
+`build/stage_ap040_d3nopost_ila` is the synchronous-store leg.
+
+## Ruled out on this pass
+
+* the snoop crossing (measured, above);
+* the snoop crossing's timing (WHS 0.11 ns, 0 failing);
+* the I-cache caching chip RAM behind a decruncher: `c_nocache` includes
+  `mm_instr & cache_chip` (`ap040_tg68k_compat.v:437`), so instruction fetches
+  from the chip window bypass the cache, and D3 did not touch it;
+* a snoop displacing a store's own row invalidate and losing it: the recording
+  and the clear of `store_inv_lost` are both inside the same `else if (ce)`
+  block as the write that serves it (`ap040_cache.v:591,612,617`), so they
+  cannot separate.  The one hole is a `C_FERR` fill-error invalidate taking
+  priority in the same cycle, which needs a bus error, and undecoded space is
+  auto-completed with $FFFF rather than faulted.
+
+## Next
+
+1. `build/stage_ap040_d3nopost_ila` -- posted stores off.  One demo run.
+2. If it still corrupts: make chip RAM **non-cacheable** on the 040
+   (`cache_chip`) as a bisect.  Clean would put the fault inside the 040's data
+   cache; still corrupting would exonerate it and point at the wrapper and
+   `sdram_ctrl`'s own `cpu_cache_new`, which is the path Turbo Chip switches
+   on and the reason the Turbo-off control is clean.  It is also a plausible
+   *fix* rather than only a probe: a real 040 Amiga marks chip RAM
+   noncacheable through the MMU in `68040.library`, which is precisely why this
+   class of bug cannot arise there.
+
+---
+
+# Found: chip-RAM CPU writes are POSTED IN THE CONTROLLER (2026-09-10, night)
+
+The file's title is now a misnomer and is kept only so the commits that
+reference it still resolve.  The snoop was never the problem, and neither was
+the 040.  **The defect is in `sdram_ctrl`, it predates stage D3, and D3 merely
+widened its window until this demo fell through.**
+
+## The two controls that broke it open
+
+Both from Paul, at the machine, within an hour:
+
+1. **I and D caches disabled in SysInfo -- no difference.**  `movec` to CACR is
+   honoured for real by this core (`ap040_core.v:3352` keeps bits 31 and 15,
+   the 68040 DE/IE layout, and they are wired straight to the cache as
+   `.de`/`.ie`, `ap040_tg68k_compat.v:421`); with DE clear, `bypass` forces
+   every data access past the cache (`ap040_cache.v:196`).  So the corruption
+   survives with the 040's caches out of the picture entirely.
+
+   It cut deeper than intended, because the *external* cache does not follow
+   CACR at all: `CACR_out <= ap040_maint & "001"` (`rtl/soc/TG68K.vhd:1104`)
+   holds `cpu_cache_ctrl`'s enable bit high whatever the 040 does.  So the run
+   with caches off still had `sdram_ctrl`'s own `cpu_cache_new` fully active --
+   and by then it was the only cache left in the path.
+
+2. **Kickstart turbo on, chip turbo off -- clean.**  This is the one that
+   names the region.  Kickstart under Turbo goes through exactly the same
+   SDRAM, the same `cpu_cache_new`, the same slots -- and it is fine, because
+   Kickstart is read-only and is never a DMA target.  Chip RAM is the only
+   window where a CPU write and chipset DMA meet in the same memory.
+
+## The mechanism, end to end
+
+A CPU write is acknowledged the cycle after it is handed to the write buffer:
+`cpu_cache_ack <= 1'b1` in `CPU_SM_WRITE` (`rtl/sdram/cpu_cache_new.v`),
+one cycle after `sdr_write_req` goes up and long before SDRAM has the data.
+`cpuena = ccachehit` (`sdram_ctrl.v:281`), so that acknowledge is what releases
+the CPU.  **Every CPU write in this design is a posted write, at the
+controller, independently of whatever the CPU's own caches are doing.**
+
+That is invisible for any region only the CPU can see.  Chip RAM under Turbo is
+not such a region, and three things compound:
+
+* a chip-RAM write can drain **only through slot 1**.  `wb_slot2ok` requires a
+  non-zero bank -- "Reserve bank 0 for slot 1", `sdram_ctrl.v:459` -- and chip
+  RAM is bank 0 (`ba <= 2'b00` for every chipset access);
+* **slot 1 goes to the chipset first**: "we give the chipset first priority",
+  `sdram_ctrl.v:561`;
+* the chipset reads chip RAM straight out of that SDRAM, and **nothing
+  forwards the buffered write to that read**.  There is not one comparison
+  between `chipAddr` and `writebufferAddr` in the whole controller -- grep for
+  it; the file has none.
+
+So while the chipset is saturating slot 1 -- which is what a demo does -- the
+CPU's write to chip RAM sits in the buffer for exactly as long as the chipset
+is busy reading the buffer that write was meant to update.  The chipset reads
+the old value.  Uncleared pixels, at random points, accumulating.
+
+## Why every control fits
+
+| control | result | why |
+|---|---|---|
+| Turbo chip on | corrupts | the above |
+| Turbo chip off | clean | chip writes go via the 7 MHz chipset machine and never enter the buffer |
+| **Turbo kick on, chip off** | **clean** | Kickstart is read-only, never a DMA target |
+| 040 I+D caches off | **still corrupts** | the buffer is in `sdram_ctrl`, not in the 040 |
+| pre-D3, turbo on | clean | narrower window |
+| snoop counters | 0 lost | the opposite direction; irrelevant |
+| roots2 and the other demos | clean | they do not saturate slot 1 against CPU chip writes the way a C2P intro does |
+
+## Why stage D3 exposed it
+
+D3 did not create this.  It raised the rate at which the CPU issues writes --
+the core advances on every clk_38 edge instead of one clk_114 edge in four --
+so more writes are in flight per unit of chipset time, and the odds that any
+given buffered write is still unwritten when DMA reads it went up with it.
+Turbo chip RAM has always been the Minimig feature that some software does not
+survive; D3 moved this demo across that line.
+
+**This is worth being precise about: it is a pre-existing hazard in
+`sdram_ctrl`, not a stage D3 regression.**  It would be reachable by any core
+fast enough, and it is reachable on the TG68K build too, given a workload that
+saturates slot 1 hard enough.
+
+## The fix
+
+`cpu_wr_sync`: hold the CPU's acknowledge until SDRAM has actually taken the
+write.
+
+* `rtl/sdram/cpu_cache_new.v` -- new input `cpu_wr_sync` and new state
+  `CPU_SM_WSYNC`.  Both write paths (16-bit via `CPU_SM_WRITE`, aligned 32-bit
+  via `CPU_SM_WRITE_32BIT`) go there instead of acknowledging, and wait for
+  `sdr_write_ack`.  `sdr_write_req` is already held until that acknowledge
+  (`:534`), so the wait is all that is needed.
+* `rtl/sdram/sdram_ctrl.v` -- the port, passed to its `cpu_cache` instance.
+* `rtl/ddr3/ddr3_fastram.v` -- tied to 0.  The Zorro III DDR3 board is
+  CPU-private; no DMA reads it, so a buffered write there can never be read
+  stale.
+* `rtl/soc/TG68K.vhd` -- `cpu_wr_sync <= sel_chipram`, and `sel_chipram`
+  already folds in `turbochip_d`, so the signal is low whenever Turbo chip RAM
+  is off and the whole question goes away with it.
+* `rtl/soc/minimig_virtual_top.v` -- the wire.
+
+Cost: nothing on Kickstart, Zorro, DDR3 or slow RAM, nothing when slot 1 is
+uncontended, and a stall equal to the chipset's slot-1 occupancy when it is.
+That is strictly better than Turbo chip RAM off, which pays a 7 MHz chipset
+cycle on every access whether contended or not.
+
+Risk noted rather than assumed away: `CPU_SM_WSYNC` waits on a signal the
+controller produces, so a slot 1 that never yields would wedge the CPU.  It
+always yields -- blanking alone guarantees it -- and the 040's own bus
+watchdog (`ap040_bus_timeout`) would turn a genuine wedge into a halt rather
+than a silent hang.
+
+Build: `build/stage_ap040_d3chipsync_ila` (the `d3stable` tree + the snoop
+counters + this fix).  `build/stage_ap040_d3nopost_ila` was built as the
+posted-store A/B leg and is kept as a control; it was not tested on hardware,
+because by the time it landed the two controls above had already moved the
+fault out of the 040.
+
+---
+
+# Two real bugs, proven and fixed in simulation -- and neither is the demo's (2026-09-11, overnight)
+
+Both hardware fixes failed. The second one made the corruption *worse* by
+Paul's description, which is the signal that stopped the guess-and-build loop:
+two speculative RTL changes deep, on a forty-minute cycle with a human at the
+screen, debugging a moving target. The tree was put back to `d3stable` exactly
+and the effort moved to building a reproducer.
+
+## The gap that let this happen
+
+`sdram_ctrl` + `cpu_cache_new` **under simultaneous CPU and chipset traffic is
+simulated nowhere**. `sim/ddr3_cpu` drives `ddr3_fastram` with a behavioural
+stand-in for the controller and has no chipset master at all; `sim/sdram_timing`
+drives the real controller but only for read-path timing, one master at a time.
+Every control we had pointed into that region and there was no way to look at
+it except by reading source and building bitstreams.
+
+## The new bench
+
+`sim/sdram_coherency/` -- the real `rtl/sdram/sdram_ctrl.v`, the Alliance
+vendor SDRAM model, the routed board delays, and both masters live. One process
+owns each port (two processes assigning the same reg is a race that reads like
+a DUT bug) and the main process asks them through mailboxes. Four checks:
+
+| check | what it proves |
+|---|---|
+| C2P | chipset writes an address the CPU has never touched, CPU reads it |
+| **C2P line buffer primed** | CPU reads A first, THEN the chipset writes A, then the CPU reads again |
+| C2P two-way primed | same, with the line buffer displaced first, so the hit comes from the tag RAM ways |
+| P2C | CPU writes, chipset reads -- with a retry that separates **late** from **lost** |
+| P2C longword | the same by 32-bit write, which is what the AP68040 actually issues |
+
+`+nobg` runs it with no background traffic at all and must pass; that validates
+the bench before any failure it reports is believed. Runs in about a minute.
+
+## What it found, on unmodified HEAD RTL
+
+```
+C2P line buffer primed   15 checked, 15 FAILED     got 5000  want f000
+P2C                      20 checked,  6 FAILED     (6 late, 0 lost)
+C2P                      20 checked,  0 FAILED
+C2P two-way primed       15 checked,  0 FAILED
+```
+
+* **The line buffer is unsnooped, and it fails 100 % of the time.** The CPU
+  returns the value from before the chipset's write, deterministically, with no
+  contention needed. The two-way control passing in the same run is what makes
+  it precise: the ways ARE snooped, the sixteen-byte buffer in front of them is
+  not.
+* **Every CPU write is posted at the controller and the chipset can read the
+  address before it lands.** All six failures came back on the retry, so *late*
+  and never *lost* -- which is exactly the posted-write mechanism, measured
+  rather than argued.
+
+Both fixes were then switched on (`+wrsync`, `-DCL_SNOOP`) and every check
+passes, longword included. So the fixes are sound and they do what they claim.
+
+One incidental finding worth keeping: **contention MASKS the line-buffer bug**
+in this bench, because background CPU reads displace the buffer between the
+prime and the re-read. A stale line buffer is therefore intermittent and
+workload-shaped on hardware -- which is what "only this one demo" looks like.
+
+## Why neither can be the demo's bug
+
+`sdram_ctrl` and `cpu_cache_new` are **byte-identical in the pre-D3 build.**
+Both bugs above are present in `stage_ap040_x3cad`, and `x3cad` runs *Way Too
+Rude* with Turbo Chip on, cleanly. A defect that exists equally on both sides
+of a clean/dirty control cannot be the differentiator.
+
+That should have been said much earlier and it re-frames the search: **the
+demo's fault is in what stage D3 changed**, which is the `clk_38` island, the
+bus routers gated on `bus_step`, the registered `clkena`, and `bus_fresh` --
+all of it in `rtl/soc/TG68K.vhd`, none of it in the controller.
+
+## The bisect now building
+
+`build/stage_ap040_d3div4_ila`: the D3 architecture **entirely intact**, with
+the island clock divided by four instead of three -- 28.359 MHz, the pre-D3 CPU
+rate. Everything downstream is ratio-agnostic (the phase marker derives
+`cpu_ph` from a toggle, so it makes a one-in-N pulse for any N), so this is a
+single-variable experiment:
+
+* **clean** -> a rate-dependent window: something in the D3 wrapper races and
+  D3 only made it likelier. Chase the windows, not the structure.
+* **still corrupts** -> structural: the fault is in what D3 *is*, not how fast
+  it runs, and the router gating and `clkena` retiming are next.
+
+`CPU_CLK_DIVIDE` is now a proper build knob (`build_ap040.tcl` fifth
+`-tclargs`, default 30), threaded to the MMCM, so this is reproducible and so
+the island clock can be tuned later -- which the plan wants anyway.
+
+## State of the tree
+
+* Both fixes are **committed but default OFF**: `cpu_cache_new`'s `CL_SNOOP`
+  parameter defaults to 0 and `cpu_wr_sync` is tied low at the `sdram_ctrl`
+  instantiation, so a build is `d3stable` exactly unless switched on. They are
+  proven improvements and should be turned on once the demo's actual fault is
+  found -- turning them on now would just add variables to the search.
+* `sim/sdram_coherency/` is the regression that locks both down.
+* The board holds `build/stage_ap040_d3clsnoop_ila`, which corrupts. For a
+  usable machine, program `build/stage_ap040_x3cad` (pre-D3, 0.23x, known
+  good) or `build/stage_ap040_d3stable` (D3, 0.28x, corrupts only on this one
+  demo with Turbo Chip on).

@@ -1,0 +1,182 @@
+diff --git a/rtl/sdram/cpu_cache_new.v b/rtl/sdram/cpu_cache_new.v
+index 42e351c..b0d886b 100644
+--- a/rtl/sdram/cpu_cache_new.v
++++ b/rtl/sdram/cpu_cache_new.v
+@@ -23,6 +23,25 @@ module cpu_cache_new (
+   input  wire [ 26-1:0] cpu_adr, // cpu address
+   input  wire [  2-1:0] cpu_bs, // cpu byte selects
+   input  wire           cpu_32bit, // cpu 32 bit write
++  // Unposted write.  A CPU write is normally acknowledged the cycle after it
++  // is handed to the write buffer, long before SDRAM takes it -- the buffer
++  // drains through the controller's slots whenever one is free.  That is
++  // invisible to the CPU, and safe for every region only the CPU can see.
++  //
++  // Chip RAM under Turbo is NOT such a region.  It lives in the same SDRAM,
++  // the chipset reads it there directly (sdram_ctrl slot 1, type CHIP), and
++  // NOTHING forwards the buffered write to that read: there is not one
++  // comparison between the chipset address and the write buffer's in the
++  // whole controller.  Worse, a chip-RAM write can only drain through slot 1
++  // -- wb_slot2ok requires a non-zero bank and chip RAM is bank 0 -- and
++  // slot 1 goes to the chipset FIRST.  So under heavy chipset DMA (a demo)
++  // the CPU's write sits in the buffer for exactly as long as the chipset is
++  // busy reading the buffer it was meant to update.  Uncleared pixels.
++  //
++  // With cpu_wr_sync the acknowledge waits for sdr_write_ack, so the write is
++  // in SDRAM before the CPU moves on.  The cost is paid only on writes to the
++  // window that needs it, and only when slot 1 is contended.
++  input  wire           cpu_wr_sync, // hold the ack until SDRAM has the write
+   input  wire           cpu_we, // cpu write
+   input  wire           cpu_ir, // cpu instruction read
+   input  wire           cpu_dr, // cpu data read
+@@ -110,6 +129,7 @@ module cpu_cache_new (
+   wire          cpu_cacheline_valid;
+   reg           cpu_cacheline_dirty;
+   reg           cpu_cacheline_match;
++  reg           cpu_cacheline_snooped; // a snoop hit the line while it was being filled
+   reg   [2-1:0] cpu_cacheline_cnt;
+   // idram0
+   wire [10-1:0] idram0_cpu_adr;
+@@ -213,7 +233,8 @@ module cpu_cache_new (
+   CPU_SM_SDWAI = 4'd8,
+   CPU_SM_FILL1 = 4'd9,
+   CPU_SM_FILL2 = 4'd10,
+-  CPU_SM_FILLW = 4'd11;
++  CPU_SM_FILLW = 4'd11,
++  CPU_SM_WSYNC = 4'd12;   // unposted write: wait for SDRAM to take it
+ 
+   // sdram-side state machine
+   localparam [1:0]
+@@ -255,6 +276,12 @@ module cpu_cache_new (
+   assign cpu_adr_tag = cpu_adr[25:12]; // tag, 14 bits
+ 
+   always @(posedge clk) cpu_cacheline_match <= cpu_adr[25:4] == cpu_cacheline_adr && !cpu_cacheline_dirty;
++  // the states in which cpu_cacheline_lo/hi is being written by a fill
++  wire cl_fill_active = (cpu_sm_state == CPU_SM_READ)  ||
++                        (cpu_sm_state == CPU_SM_SDWAI) ||
++                        (cpu_sm_state == CPU_SM_FILL1) ||
++                        (cpu_sm_state == CPU_SM_FILL2) ||
++                        (cpu_sm_state == CPU_SM_FILLW);
+   assign cpu_cacheline_valid = cpu_cacheline_match && (cpu_sm_state == CPU_SM_IDLE) && (cpu_ir || cpu_dr) && !cache_inhibit;
+   assign cpu_32bit_ena = cpu_32bit && cpu_cs && write_ena;
+   assign cpu_ack = cpu_cache_ack || cpu_cacheline_valid || cpu_32bit_ena;
+@@ -277,6 +304,7 @@ module cpu_cache_new (
+       cpu_sm_bs         <= #1 4'b1111;
+       cpu_adr_blk_ptr   <= #1 3'b000;
+       cpu_cacheline_dirty <= #1 1'b1;
++      cpu_cacheline_snooped <= #1 1'b0;
+     end else begin
+       // default values
+       fill              <= #1 1'b0;
+@@ -331,6 +359,8 @@ module cpu_cache_new (
+               cpu_adr_blk_ptr <= #1 cpu_adr_blk_ptr_next;
+               cpu_sm_state <= #1 CPU_SM_READ;
+               cpu_cacheline_cnt <= #1 2'b00;
++              // a fresh line starts clean; the snoop block below re-arms it
++              cpu_cacheline_snooped <= #1 1'b0;
+             end
+           end else begin
+             if (cc_clr)
+@@ -358,10 +388,14 @@ module cpu_cache_new (
+             cpu_sm_state <= #1 CPU_SM_WRITE;
+           end else begin
+             // aligned 32 bit write, do it in one step
+-            cpu_cache_ack <= #1 1'b1;
+             cpu_sm_bs <= #1 {cpu_bs, ~sdr_dqm_w[1:0]};
+             cpu_sm_mem_dat_w <= #1 {cpu_dat_w, sdr_dat_w[15:0]};
+-            cpu_sm_state <= #1 CPU_SM_WB;
++            if (cpu_wr_sync) begin
++              cpu_sm_state <= #1 CPU_SM_WSYNC;
++            end else begin
++              cpu_cache_ack <= #1 1'b1;
++              cpu_sm_state <= #1 CPU_SM_WB;
++            end
+           end
+           cpu_sm_iram0_we <= #1 itag0_match && itag0_valid /*&& !cc_fr*/;
+           cpu_sm_iram1_we <= #1 itag1_match && itag1_valid /*&& !cc_fr*/;
+@@ -377,9 +411,20 @@ module cpu_cache_new (
+           cpu_sm_iram1_we <= #1 itag1_match && itag1_valid /*&& !cc_fr*/;
+           cpu_sm_dram0_we <= #1 dtag0_match && dtag0_valid /*&& !cc_fr*/;
+           cpu_sm_dram1_we <= #1 dtag1_match && dtag1_valid /*&& !cc_fr*/;
+-          cpu_cache_ack <= #1 1'b1;
+-
+-          cpu_sm_state <= #1 CPU_SM_WB;
++          if (cpu_wr_sync && !sdr_write_ack) begin
++            cpu_sm_state <= #1 CPU_SM_WSYNC;
++          end else begin
++            cpu_cache_ack <= #1 1'b1;
++            cpu_sm_state <= #1 CPU_SM_WB;
++          end
++        end
++        CPU_SM_WSYNC : begin
++          // sdr_write_req stays up until the controller takes it (it is
++          // cleared on sdr_write_ack below), so this simply waits.
++          if (sdr_write_ack) begin
++            cpu_cache_ack <= #1 1'b1;
++            cpu_sm_state <= #1 CPU_SM_WB;
++          end
+         end
+         CPU_SM_WB : begin
+           if (!cpu_cs) cpu_sm_state <= #1 CPU_SM_IDLE;
+@@ -388,7 +433,9 @@ module cpu_cache_new (
+           cpu_cacheline_adr <= #1 cpu_adr[25:4];
+           cpu_cacheline_cnt <= #1 cpu_cacheline_cnt + 1'b1;
+           if(cpu_cacheline_cnt == 2'b01) begin
+-            cpu_cacheline_dirty <= #1 1'b0;
++            // NOT an unconditional clear: a snoop taken earlier in this fill
++            // means the words already latched may predate the chipset's write
++            cpu_cacheline_dirty <= #1 cpu_cacheline_snooped;
+             cpu_cache_ack <= #1 1'b1; //early ack
+           end
+           if(cpu_cacheline_cnt == 2'b11)
+@@ -470,7 +517,7 @@ module cpu_cache_new (
+               cpu_sm_state <= #1 CPU_SM_FILLW;
+             end else begin
+               cpu_cacheline_adr <= #1 cpu_adr[25:4];
+-              cpu_cacheline_dirty <= #1 1'b0;
++              cpu_cacheline_dirty <= #1 cpu_cacheline_snooped;
+ 
+               // update tag ram
+               if (cpu_ir) begin
+@@ -536,6 +583,42 @@ module cpu_cache_new (
+       // when CPU lowers its request signal, lower ack too
+       if (!cpu_cs) cpu_cache_ack <= #1 1'b0;
+ 
++      // SNOOP THE LINE BUFFER.  cpu_cacheline_lo/hi is a sixteen-byte buffer
++      // in front of both ways, tagged by cpu_cacheline_adr, and a hit on it
++      // answers the CPU in the same cycle (cpu_cacheline_valid feeds cpu_ack
++      // directly).  Every other structure in this module is kept coherent
++      // with chipset DMA by snoop_act -- the sdram-side machine below updates
++      // the matching way -- but this buffer was NOT, and nothing else clears
++      // it: cpu_cacheline_dirty is set only by reset, cacheline_clr, a CPU
++      // write that misses it, and a refill.
++      //
++      // With Turbo chip RAM that is a straight coherency hole, and the only
++      // window it can appear in: chip RAM is the one region the chipset
++      // writes AND the CPU reads through this cache.  The chipset writes,
++      // the way is updated, and the CPU goes on reading the stale sixteen
++      // bytes it already had until something displaces them.  Kickstart under
++      // Turbo cannot show it (read-only, never a DMA target) and the Zorro
++      // boards cannot (CPU-private) -- which is exactly the pattern the
++      // hardware showed.
++      //
++      // Placed after the case so it WINS: a refill completing in the same
++      // cycle as a snoop to the line it just fetched must not validate it.
++      // Over-invalidation is always safe here; the line is simply refetched.
++      // Two terms, because during a fill the buffer's tag is a cycle behind:
++      // cpu_cacheline_adr is only latched on the FIRST cycle of CPU_SM_READ,
++      // so a snoop landing in that cycle would be compared against the
++      // PREVIOUS line's tag and missed.  Matching the fill's own address
++      // (cpu_adr, held for as long as the CPU holds the access) closes it.
++      // Deliberately NOT a blanket "any snoop during a fill": under
++      // saturating chipset DMA that would poison every fill and turn the
++      // buffer off altogether.
++      if (snoop_act && ((snoop_adr[25:4] == cpu_cacheline_adr) ||
++                        (cl_fill_active &&
++                         (snoop_adr[25:4] == cpu_adr[25:4])))) begin
++        cpu_cacheline_dirty   <= #1 1'b1;
++        cpu_cacheline_snooped <= #1 1'b1;
++      end
++
+     end
+   end
+ 

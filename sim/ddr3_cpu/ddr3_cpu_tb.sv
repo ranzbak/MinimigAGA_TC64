@@ -348,6 +348,17 @@ localparam [31:0] SNOOP_BASE = 32'h0000_0800;
 reg        snoop_stb_tb  = 1'b0;
 reg [31:0] snoop_addr_tb = 32'd0;
 reg [ 1:0] ph3           = 2'd2;      // 0 = cycle after a coincident edge
+// The generator below is free-running on clk: it is still issuing snoops at
+// the instant the 68k program writes its mailbox and the bench tallies.  A
+// snoop issued in the last few clk cycles has not yet had a clk_cpu edge to
+// be delivered on, so counting it as lost is a truncation artefact, not a
+// dropped snoop.  snoop_stop quiesces the generator before the tally and the
+// tally waits for the pipe to drain; snoop_inflight records how many were
+// outstanding at that moment, so the artefact is visible in the log instead
+// of being silently absorbed.  A REAL loss still fails: nothing here forgives
+// a snoop that was issued with time to spare (--snoopmutant proves that).
+reg        snoop_stop     = 1'b0;
+integer    snoop_inflight = 0;
 integer    snoop_iss  = 0;
 integer    snoop_seen = 0;
 integer    snoop_inv  = 0;
@@ -373,7 +384,7 @@ always @(posedge clk) begin
   snoop_stb_tb <= 1'b0;
   if (!tg68_rst) begin
     snoop_cnt <= 0;
-  end else if (snoop_on) begin
+  end else if (snoop_on && !snoop_stop) begin
     if (snoop_cnt == snoop_seq[snoop_si] - 1) begin
       snoop_cnt     <= 0;
       snoop_stb_tb  <= 1'b1;
@@ -452,7 +463,9 @@ wire [ 6:0] tg68_ddrcpustate = {tg68_cpustate[6:3], tg68_ddrcs, tg68_cpustate[1:
 
 reg  [15:0] tg68_dat_in, tg68_dat_in2;         // chipset-side read data
 reg  [15:0] fromram;                           // SDRAM-side read data
-reg         ramready;
+reg         ramready;                          // the held (slow-path) acknowledge
+wire [15:0] fromram_w;                         // what the wrapper actually sees;
+wire        ramready_w;                        //   see the line-buffer model below
 
 // Which kernel the wrapper builds.  run.sh --ap040 defines CPU_AP040 and adds
 // the AP68040 sources; everything else in this bench is identical, which is
@@ -485,9 +498,9 @@ TG68K #(.cpu_core("TG68K")) tg68k (
     .wrd            (                 ),
     .ena7RDreg      (ena7RDreg        ),
     .ena7WRreg      (ena7WRreg        ),
-    .fromram        (fromram          ),
+    .fromram        (fromram_w        ),
     .toram          (tg68_cin         ),
-    .ramready       (ramready         ),
+    .ramready       (ramready_w       ),
     .ddraddr        (tg68_ddraddr     ),
     .ddrcs          (tg68_ddrcs       ),
     .fromddr        (tg68_ddrout      ),
@@ -757,6 +770,97 @@ wire        ramcs_n = tg68_cpustate[2];
 wire [15:0] ramwa   = tg68_cad[16:1];
 wire        ram_wr  = (tg68_cpustate[1:0] == 2'b11);
 
+// ---- cpu_cache_new's line buffer, modelled (AP68040 legs only) ---------
+// The real controller does NOT wait for the select before it answers a read.
+// rtl/sdram/cpu_cache_new.v keeps the last 16-byte line it fetched in a line
+// buffer, registers a compare of the LIVE address against it every clock
+// (:257, cpu_cacheline_match), and drives the acknowledge combinationally from
+// that compare whenever its state machine is idle and the bus state is a read
+// (:258-260):
+//
+//     cpu_cacheline_valid = match && sm_idle && (cpu_ir || cpu_dr) && !cache_inhibit
+//     cpu_ack             = cpu_cache_ack || cpu_cacheline_valid || cpu_32bit_ena
+//
+// The read data is likewise the buffered word at the live address's offset,
+// registered every clock (:294).  So on a line-buffer hit the acknowledge is
+// up within two clocks of the address appearing, with the select still IDLE
+// and slower still counting down, and it goes DOWN again as soon as the
+// address moves to another line -- it is a function of the address, not of
+// the select.  The model above this comment only ever acknowledged after the
+// select opened, so nothing in this bench could see a consumer that judges
+// that acknowledge against the wrong address: the D3-FIX walker bug of
+// 2026-09-10 (findings/ap68040/sdd-d3/task-d3stable-report.md) passed every
+// leg here and halted the machine.  This is the model that catches it.
+//
+// Kept to the AP68040 legs so that the TG68K control run stays byte-identical
+// to its committed log; the fast path is just as real for the TG68K, but
+// that run's job is to prove the TG68K build unchanged, not to re-time it.
+//
+// Faithfulness, by line of cpu_cache_new.v:
+//   :257  lb_match is registered from the live address, so it is one clock
+//         behind an address change -- exactly the window the walker bug lives in
+//   :258  valid needs the machine idle: once a real access has started
+//         (lb_busy) the fast path is off until the select drops
+//   :294  the read data is the buffered word at the live offset, registered
+//   :313-316  a write updates the buffered word if the line matches ...
+//   :313  ... and invalidates the buffer if it does not
+//   :464-469  a cache-inhibited read puts its word in the buffer and marks the
+//         buffer dirty, so the NEXT access cannot hit on it
+//   :296  cacheline_clr marks it dirty
+// The real controller fills the buffer over the eight clocks of the SDRAM
+// burst; this model fills it whole when it acknowledges the first word, which
+// only makes a following hit possible EARLIER, never later.
+`ifdef CPU_AP040
+// The compare is over the 128 kB this port serves (tg68_cad[16:4]): the
+// wrapper's ramaddr has board-select bits above that which are X until the
+// autoconfig inputs settle, and an X in the compare would take the slow path
+// down with it.  Every term is X-safe for the same reason.
+// The buffered line is read straight out of chipmem at lb_adr rather than
+// copied: nothing but this port writes chipmem once turbochip is on, and
+// cpu_cache_new mirrors the CPU's own writes into its buffer (:313-316), so
+// the two never differ.  (A per-word copy loop was tried first and xsim did
+// not apply the non-blocking loop writes; the trace showed every line after
+// the first carrying the first line's words.)
+reg  [16:4] lb_adr     = 13'd0;
+reg         lb_dirty   = 1'b1;
+reg         lb_match   = 1'b0;
+reg         lb_busy    = 1'b0;
+reg  [15:0] fromram_lb = 16'h0000;
+wire        ram_isrd   = (tg68_cpustate[0] === 1'b0);  // 00 fetch or 10 data read
+wire        lb_valid   = (lb_match === 1'b1) && !lb_busy && ram_isrd && (cache_inhibit === 1'b0);
+assign      ramready_w = ramready || lb_valid;
+assign      fromram_w  = fromram_lb;
+integer     lb_hits = 0;
+always @(posedge clk) begin
+  lb_match   <= (tg68_cad[16:4] === lb_adr) && !lb_dirty;
+  if (ramcs_n) lb_busy <= 1'b0;
+  else if (!lb_busy && !lb_valid) lb_busy <= 1'b1;
+  // bookkeeping: hits, and hits taken with the select still idle
+  if (lb_valid && !ramready && tg68_cpustate[5]) lb_hits = lb_hits + 1;
+  // +LBDBG traces this port for 400 events; +LBDBGT=<ps> delays the start.
+  if (lbdbg > 0 && $time >= lbdbgt && sdctl_rst && (!ramcs_n || lb_valid || ramready || tg68_cpustate[5])) begin
+    $display("LBDBG %t csn=%b st=%b cad=%08x rdy=%b valid=%b match=%b busy=%b dirty=%b adr=%04x data=%04x inh=%b wk=%b",
+             $time, ramcs_n, tg68_cpustate, tg68_cad, ramready, lb_valid, lb_match, lb_busy, lb_dirty, lb_adr, fromram_lb, cache_inhibit,
+             tg68k.wk_active);
+    lbdbg = lbdbg - 1;
+  end
+  if (lbdbg > 0 && $time >= lbdbgt && sdctl_rst && !tg68_as) begin
+    $display("LBDBG %t chipset bus adr=%08x rw=%b", $time, tg68_adr, tg68_rw);
+    lbdbg = lbdbg - 1;
+  end
+end
+integer lbdbg  = 0;
+longint lbdbgt = 0;
+initial begin
+  if ($test$plusargs("LBDBG")) lbdbg = 400;
+  void'($value$plusargs("LBDBGT=%d", lbdbgt));
+end
+`else
+wire        lb_valid   = 1'b0;
+assign      ramready_w = ramready;
+assign      fromram_w  = fromram;
+`endif
+
 reg         lw_pend;                 // a paired 32-bit write awaits its low word
 reg  [15:0] lw_addr;                 // word address latched on the high-word cycle
 reg  [15:0] lw_dat;                  // the high word itself
@@ -766,13 +870,30 @@ integer     lw_errs;                 // protocol violations seen on this port
 initial lw_errs = 0;
 
 always @(posedge clk) begin
+`ifdef CPU_AP040
+  // cpu_cache_new.v:294, the read data's default every clock: the buffered
+  // word at the live offset.  Overridden below, as :466 does, in the cycle a
+  // slow-path read is acknowledged, so data and acknowledge rise together.
+  fromram_lb <= chipmem[{lb_adr, tg68_cad[3:1]}];
+`endif
   if (!sdctl_rst) begin
     ramready <= 1'b0;
     fromram  <= 16'h0000;
     lw_pend  <= 1'b0;
+`ifdef CPU_AP040
+    lb_dirty <= 1'b1;
+`endif
   end else if (ramcs_n) begin
     ramready <= 1'b0;
-  end else if (!ramready) begin
+`ifdef CPU_AP040
+    if (cacheline_clr) lb_dirty <= 1'b1;
+`endif
+  end else if (!ramready && !lb_valid) begin
+    // a line-buffer hit (lb_valid) never starts an access: cpu_cache_new stays
+    // in CPU_SM_IDLE and cpu_cache_ack is never raised for it
+`ifdef CPU_AP040
+    if (cacheline_clr) lb_dirty <= 1'b1;
+`endif
     if (ram_wr && tg68_rst) begin
       if (lw_pend) begin
         // Low word of a paired write.  The controller ignores this cycle's
@@ -799,6 +920,12 @@ always @(posedge clk) begin
       end else begin
         if (!tg68_cuds) chipmem[ramwa][15:8] <= tg68_cin[15:8];
         if (!tg68_clds) chipmem[ramwa][ 7:0] <= tg68_cin[ 7:0];
+`ifdef CPU_AP040
+        // cpu_cache_new.v:313-316: update the buffered word on a matching
+        // line, invalidate the buffer otherwise
+        // (the buffered word is chipmem itself, updated just above)
+        if (!lb_match) lb_dirty <= 1'b1;
+`endif
       end
     end else begin
       if (lw_pend) begin
@@ -808,6 +935,17 @@ always @(posedge clk) begin
         lw_pend <= 1'b0;
       end
       fromram <= chipmem[ramwa];
+`ifdef CPU_AP040
+      fromram_lb <= chipmem[ramwa];
+      if (cache_inhibit) begin
+        // cpu_cache_new.v:464-469: the buffer is marked dirty, so nothing
+        // later can hit on it
+        lb_dirty <= 1'b1;
+      end else begin
+        lb_adr   <= tg68_cad[16:4];
+        lb_dirty <= 1'b0;
+      end
+`endif
     end
     ramready <= 1'b1;
   end
@@ -1440,6 +1578,8 @@ initial begin : main
   $display("");
   $display("INFO: cache line fills -- %0d over the channel (%0d of them undecoded, auto-completed), %0d down the adapter, %0d bus errors",
            fill_ch, fill_und, fill_ad, fill_be);
+  $display("INFO: SDRAM port -- %0d reads completed out of the modelled line buffer, select idle",
+           lb_hits);
   if (fill_be != 0) begin
     $display("DDR3 CPU TB: FAIL  %0d line fills answered with a bus error; this SoC auto-completes",
              fill_be);
@@ -1473,7 +1613,21 @@ initial begin : main
   end
 
   if (snoop_on) begin
+    // Quiesce and drain -- see snoop_stop.  A snoop takes at most one clk edge
+    // into snp_stb_held plus one clk_cpu period (three clk) to reach the core.
+    snoop_inflight = snoop_iss - snoop_seen;
+    snoop_stop     = 1'b1;
+    repeat (12) @(posedge clk);
+    // Printed as a BEFORE/AFTER pair on purpose: it separates the two reasons
+    // a snoop can be outstanding.  A tail drains (after = 0); a snoop the
+    // wrapper really dropped does not (after = before), so this line says
+    // which one a run is looking at instead of leaving it to be guessed.
     $display("");
+    $display("INFO: snoops outstanding at the tally: %0d; still outstanding after a 12-cycle",
+             snoop_inflight);
+    $display("INFO:   drain: %0d.  The generator free-runs on clk and issues up to the last edge,",
+             snoop_iss - snoop_seen);
+    $display("INFO:   so a tail drains to 0; anything left after the drain was genuinely lost.");
     $display("INFO: chipset snoops -- %0d issued (%0d/%0d/%0d in clk phase 0/1/2), %0d seen by the core, %0d invalidated a cache set",
              snoop_iss, snoop_ph0, snoop_ph1, snoop_ph2, snoop_seen, snoop_inv);
     for (sgi = 0; sgi < NGAP; sgi = sgi + 1)

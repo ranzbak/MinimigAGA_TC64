@@ -227,15 +227,61 @@ set_multicycle_path -quiet -hold  -start 1 -from $tg68_kernel -to $tg68_mem
 set_multicycle_path -setup -end 2 -from [get_clocks clk_38] -to [get_clocks clk_114]
 set_multicycle_path -hold  -end 1 -from [get_clocks clk_38] -to [get_clocks clk_114]
 
-# KNOWN LOOSE, recorded rather than tightened.  A few wrapper registers read a
-# kernel output on the very NEXT clk_114 edge and so want one cycle, not two:
-# akiko_req/akiko_wr (gated by slower(2), which opens one cycle earlier than
-# slower(1) does), and the walker and line-fill routers, which test wk_req,
-# fl_req and the kernel's busstate unguarded on every edge.  All of them were
-# loose by TWO under the old -start 3 island and have never been near the
-# critical path -- a 16-bit address compare and a two-bit state test.  Making
-# them exact is an RTL change (another cpu_bus_settled term) and a second
-# variable; stage D3 has one.
+# THE NEXT-EDGE SAMPLERS: single-cycle, by name, overriding the two above.
+#
+# The derivation above rests on "the copy that matters at edge T+3 is the one
+# captured at T+2".  That was true while clkena was decided combinationally at
+# T+3.  Since the D3 fix clkena is a REGISTER decided at T+2 (rtl/soc/TG68K.vhd,
+# clkena_r), and the copies that matter to THAT decision are the ones captured
+# at T+1 -- one clk_114 period after the kernel's address moved.  Under a
+# blanket -end 2 those captures are not timed at all: the tool is told they
+# may take 17.63 ns, the design consumes them after 8.815 ns, and whether the
+# bitstream works is decided by where the placer happened to put things.
+# Measured on the routed d3fixc checkpoint the worst of them,
+# bus16/addr_out_reg[26] -> sdram/cpu_cache/cpu_cacheline_match_reg, took
+# 7.394 ns -- inside one period, by 1.0 ns, by luck.  These are exactly the
+# registers whose value at T+1 the T+2 decision reads
+# (findings/ap68040/sdd-d3/task-d3stable-report.md has the enumeration):
+#
+#   sel_ram_d, sel_ddr_d, sel_undecoded_d      the wrapper's decode copies
+#   sdram/cpu_cache/cpu_cacheline_match         cpu_cache_new.v:257, the
+#   ddr3_fastram_i/cpu_cache/cpu_cacheline_match  line-buffer hit compare
+#
+# and with them the registers that were "KNOWN LOOSE" here before: akiko_req
+# and akiko_wr (gated by slower(2), one cycle earlier than slower(1)), and
+# both bus routers, which sample wk_req/wk_addr/wk_wdat/wk_we, fl_req/fl_addr
+# and the kernel's busstate on the very next edge -- a router that starts one
+# edge after the kernel raised its request copies the kernel's address into
+# wk_busaddr/fl_busaddr on that edge, single-cycle.  Every one of these is now
+# what it physically is: one clk_114 period from the kernel.  Cell-scoped
+# exceptions take priority over the clock-scoped pair above, so this is an
+# override, not a conflict; report_exceptions shows both.
+#
+# -hold 0 keeps the hold check on the coincident launch edge, as -end 1 did.
+set cpu_next_edge [get_cells -quiet -hier -filter "(NAME =~ $cpu_wrapper/sel_ram_d_reg* || \
+                                                  NAME =~ $cpu_wrapper/sel_ddr_d_reg* || \
+                                                  NAME =~ $cpu_wrapper/sel_undecoded_d_reg* || \
+                                                  NAME =~ $cpu_wrapper/akiko_req_reg* || \
+                                                  NAME =~ $cpu_wrapper/akiko_wr_reg* || \
+                                                  NAME =~ $cpu_wrapper/wk_st_reg* || \
+                                                  NAME =~ $cpu_wrapper/wk_active_reg* || \
+                                                  NAME =~ $cpu_wrapper/wk_bstate_reg* || \
+                                                  NAME =~ $cpu_wrapper/wk_busaddr_reg* || \
+                                                  NAME =~ $cpu_wrapper/wk_wdat16_reg* || \
+                                                  NAME =~ $cpu_wrapper/wk_ack_reg* || \
+                                                  NAME =~ $cpu_wrapper/wk_berr_reg* || \
+                                                  NAME =~ $cpu_wrapper/fl_st_reg* || \
+                                                  NAME =~ $cpu_wrapper/fl_busy_reg* || \
+                                                  NAME =~ $cpu_wrapper/fl_active_reg* || \
+                                                  NAME =~ $cpu_wrapper/fl_bstate_reg* || \
+                                                  NAME =~ $cpu_wrapper/fl_busaddr_reg* || \
+                                                  NAME =~ $cpu_wrapper/fl_word_reg* || \
+                                                  NAME =~ $cpu_wrapper/fl_ack_reg* || \
+                                                  NAME =~ $cpu_wrapper/fl_err_reg* || \
+                                                  NAME =~ openaars_virtual_top/sdram/cpu_cache/cpu_cacheline_match_reg* || \
+                                                  NAME =~ openaars_virtual_top/g_ddr3_fastram.ddr3_fastram_i/cpu_cache/cpu_cacheline_match_reg*) && ($tg68_seq)"]
+set_multicycle_path -quiet -setup 1 -from [get_clocks clk_38] -to $cpu_next_edge
+set_multicycle_path -quiet -hold  0 -from [get_clocks clk_38] -to $cpu_next_edge
 
 # The phase marker must NOT be relaxed at all.  cpu_tgl flips on every clk_38
 # edge and cpu_tgl_d has to catch it on the very next clk_114 edge; that is

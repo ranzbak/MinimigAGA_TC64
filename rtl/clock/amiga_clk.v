@@ -2,7 +2,11 @@
 /* 2012, rok.krajnc@gmail.com */
 
 
-module amiga_clk (
+module amiga_clk #(
+    // AP68040 island clock divider; see amiga_clk_xilinx.v.  30 = clk_114/3
+    // (stage D3), 40 = clk_114/4 (the pre-D3 rate, D3 architecture kept).
+    parameter CPU_CLK_DIVIDE = 30
+) (
     input  wire           rst, // asynhronous reset input
     input  wire           ntsc, // pal/ntsc clock select
     input  wire           clk_in, // input clock        ( 27.000000MHz)
@@ -95,7 +99,7 @@ assign clk_38 = clk_114;
 `endif
 
 //`ifdef MINIMIG_XILINX
-    amiga_clk_xilinx amiga_clk_i (
+    amiga_clk_xilinx #(.CPU_CLK_DIVIDE(CPU_CLK_DIVIDE)) amiga_clk_i (
         .areset   (rst      ),
         .inclk0   (clk_in   ),
         .c0       (clk_114  ),

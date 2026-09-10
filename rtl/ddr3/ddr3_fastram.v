@@ -250,6 +250,9 @@ assign ddr_ready = reset;
 // with the snoop port tied off and the cache never inhibited.
 
 cpu_cache_new cpu_cache (
+    // No unposted writes here: the Zorro III DDR3 board is CPU-private, no
+    // chipset DMA reads it, so a buffered write can never be read stale.
+    .cpu_wr_sync      (1'b0),
   .clk              (sysclk),                     // clock
   .rst              (!reset || !cache_rst),       // cache reset
   .cache_en         (1'b1),                       // cache enable

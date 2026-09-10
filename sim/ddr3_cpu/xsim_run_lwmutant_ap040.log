@@ -29,13 +29,13 @@ FAIL: cpustate[6] set with the AP68040 as the core (SDRAM port, addr 00001002)
 FAIL: cpustate[6] set with the AP68040 as the core (SDRAM port, addr 00001002)
 FAIL: cpustate[6] set with the AP68040 as the core (SDRAM port, addr 00001004)
 FAIL: cpustate[6] set with the AP68040 as the core (SDRAM port, addr 00001004)
-INFO: program phase 1 at 74147372.0 ps
-INFO: program phase 2 at 457626317.0 ps
-INFO: program phase 3 at 1359638822.0 ps
-INFO: program phase 4 at 1535921192.0 ps
-INFO: program phase 5 at 1555966502.0 ps
-INFO: program phase 7 at 1807564232.0 ps
-INFO: program phase 8 at 1837843757.0 ps
+INFO: program phase 1 at 73406912.0 ps
+INFO: program phase 2 at 417826592.0 ps
+INFO: program phase 3 at 1178728577.0 ps
+INFO: program phase 4 at 1329385742.0 ps
+INFO: program phase 5 at 1346469212.0 ps
+INFO: program phase 7 at 1563503327.0 ps
+INFO: program phase 8 at 1589313647.0 ps
 
 DDR3 CPU TB: PASS  (68k program completed all phases)
 
@@ -45,11 +45,12 @@ PASS: DDR3 array contents match the pattern (independent backdoor read)
 DDR3 CPU TB: FAIL  1784 32-bit-write protocol violations on the RAM port
 
 INFO: cache line fills -- 83 over the channel (1 of them undecoded, auto-completed), 5 down the adapter, 0 bus errors
+INFO: SDRAM port -- 9415 reads completed out of the modelled line buffer, select idle
 
 DDR3 CPU TB: 1 checks failed
 
-$finish called at time : 1838795777 ps : File "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/ddr3_cpu_tb.sv" Line 1522
-run: Time (s): cpu = 00:00:01 ; elapsed = 00:08:33 . Memory (MB): peak = 1316.727 ; gain = 0.000 ; free physical = 16446 ; free virtual = 40891
+$finish called at time : 1590133442 ps : File "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/ddr3_cpu_tb.sv" Line 1651
+run: Time (s): cpu = 00:00:00.88 ; elapsed = 00:07:22 . Memory (MB): peak = 1316.727 ; gain = 0.000 ; free physical = 17523 ; free virtual = 40486
 ## quit
-INFO: xsimkernel Simulation Memory Usage: 150256 KB (Peak: 191136 KB), Simulation CPU Usage: 512700 ms
-INFO: [Common 17-206] Exiting xsim at Thu Sep 10 01:11:09 2026...
+INFO: xsimkernel Simulation Memory Usage: 150268 KB (Peak: 191148 KB), Simulation CPU Usage: 441620 ms
+INFO: [Common 17-206] Exiting xsim at Thu Sep 10 18:27:24 2026...

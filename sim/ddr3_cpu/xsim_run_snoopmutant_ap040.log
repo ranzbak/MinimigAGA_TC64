@@ -29,30 +29,33 @@ INFO: snoop address out of order at 65244222.0 ps -- core saw 000008a0, expected
 INFO: snoop address out of order at 65270667.0 ps -- core saw 000008b0, expected 00000860 (gap 4)
 INFO: snoop address out of order at 65693787.0 ps -- core saw 000008e0, expected 00000870 (gap 4)
 INFO: snoop address out of order at 65905347.0 ps -- core saw 00000900, expected 00000880 (gap 3)
-INFO: program phase 1 at 74147372.0 ps
-INFO: program phase 2 at 464396237.0 ps
-INFO: program phase 3 at 1385184692.0 ps
-INFO: program phase 4 at 1564666907.0 ps
-INFO: program phase 5 at 1585426232.0 ps
-INFO: program phase 7 at 1847787077.0 ps
-INFO: program phase 8 at 1879600412.0 ps
+INFO: program phase 1 at 73486247.0 ps
+INFO: program phase 2 at 424702292.0 ps
+INFO: program phase 3 at 1202581967.0 ps
+INFO: program phase 4 at 1356359642.0 ps
+INFO: program phase 5 at 1374553802.0 ps
+INFO: program phase 7 at 1600341212.0 ps
+INFO: program phase 8 at 1626468872.0 ps
 
 DDR3 CPU TB: PASS  (68k program completed all phases)
 
 INFO: checking the DDR3 array through the Micron model backdoor
 PASS: DDR3 array contents match the pattern (independent backdoor read)
 
-INFO: cache line fills -- 153 over the channel (1 of them undecoded, auto-completed), 7 down the adapter, 0 bus errors
+INFO: cache line fills -- 147 over the channel (1 of them undecoded, auto-completed), 5 down the adapter, 0 bus errors
+INFO: SDRAM port -- 9394 reads completed out of the modelled line buffer, select idle
 
-INFO: chipset snoops -- 24722 issued (8238/8243/8241 in clk phase 0/1/2), 8242 seen by the core, 8242 invalidated a cache set
-INFO:   gap 16 clk cycles           (the hardware minimum) -- 8242 issued, 2744 seen
-INFO:   gap  8 clk cycles (tighter than hardware can make) -- 4120 issued, 1376 seen
-INFO:   gap  4 clk cycles (tighter than hardware can make) -- 4120 issued, 1376 seen
-INFO:   gap  3 clk cycles (tighter than hardware can make) -- 8240 issued, 2746 seen
+INFO: 14184 snoop(s) were still in flight when the program ended (the free-running
+INFO:   generator issues up to the last clk edge); tallied after a 12-cycle drain
+INFO: chipset snoops -- 21276 issued (7092/7092/7092 in clk phase 0/1/2), 7092 seen by the core, 7092 invalidated a cache set
+INFO:   gap 16 clk cycles           (the hardware minimum) -- 7092 issued, 2361 seen
+INFO:   gap  8 clk cycles (tighter than hardware can make) -- 3546 issued, 1184 seen
+INFO:   gap  4 clk cycles (tighter than hardware can make) -- 3546 issued, 1184 seen
+INFO:   gap  3 clk cycles (tighter than hardware can make) -- 7092 issued, 2363 seen
 INFO:   gap  2 clk cycles (tighter than hardware can make) -- 0 issued, 0 seen
-INFO:   8070 snoop addresses reached the core out of order (a merge loses the first address)
-DDR3 CPU TB: FAIL  8070 snoop addresses were delivered out of order -- the hold merged snoops
-DDR3 CPU TB: FAIL  16480 of 24722 chipset snoops never reached the core.
+INFO:   6944 snoop addresses reached the core out of order (a merge loses the first address)
+DDR3 CPU TB: FAIL  6944 snoop addresses were delivered out of order -- the hold merged snoops
+DDR3 CPU TB: FAIL  14184 of 21276 chipset snoops never reached the core.
        snoop_act is one clk cycle wide and the kernel is on clk_cpu, so a raw
        pulse is only sampled when it lands in the one cycle in three before a
        clk_cpu edge; the wrapper has to hold it (TG68K.vhd, snp_stb_held).
@@ -61,8 +64,8 @@ DDR3 CPU TB: FAIL  16480 of 24722 chipset snoops never reached the core.
 
 DDR3 CPU TB: 2 checks failed
 
-$finish called at time : 1880552432 ps : File "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/ddr3_cpu_tb.sv" Line 1522
-run: Time (s): cpu = 00:00:01 ; elapsed = 00:08:44 . Memory (MB): peak = 1316.727 ; gain = 0.000 ; free physical = 16419 ; free virtual = 40888
+$finish called at time : 1627420892 ps : File "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/ddr3_cpu_tb.sv" Line 1670
+run: Time (s): cpu = 00:00:01 ; elapsed = 00:08:37 . Memory (MB): peak = 1316.727 ; gain = 0.000 ; free physical = 16795 ; free virtual = 39854
 ## quit
-INFO: xsimkernel Simulation Memory Usage: 150256 KB (Peak: 191136 KB), Simulation CPU Usage: 524290 ms
-INFO: [Common 17-206] Exiting xsim at Thu Sep 10 01:31:09 2026...
+INFO: xsimkernel Simulation Memory Usage: 150268 KB (Peak: 191148 KB), Simulation CPU Usage: 516280 ms
+INFO: [Common 17-206] Exiting xsim at Thu Sep 10 19:45:20 2026...

@@ -35,11 +35,12 @@ INFO: checking the DDR3 array through the Micron model backdoor
 PASS: DDR3 array contents match the pattern (independent backdoor read)
 
 INFO: cache line fills -- 9 over the channel (1 of them undecoded, auto-completed), 5 down the adapter, 0 bus errors
+INFO: SDRAM port -- 0 reads completed out of the modelled line buffer, select idle
 
 DDR3 CPU TB: 2 passed, 0 failed
 
-$finish called at time : 940829357 ps : File "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/ddr3_cpu_tb.sv" Line 1522
-run: Time (s): cpu = 00:00:01 ; elapsed = 00:05:00 . Memory (MB): peak = 1441.133 ; gain = 124.406 ; free physical = 16469 ; free virtual = 40918
+$finish called at time : 940829357 ps : File "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/ddr3_cpu_tb.sv" Line 1651
+run: Time (s): cpu = 00:00:02 ; elapsed = 00:07:21 . Memory (MB): peak = 1441.133 ; gain = 91.039 ; free physical = 12822 ; free virtual = 35570
 ## quit
-INFO: xsimkernel Simulation Memory Usage: 150256 KB (Peak: 191136 KB), Simulation CPU Usage: 299010 ms
-INFO: [Common 17-206] Exiting xsim at Thu Sep 10 00:52:46 2026...
+INFO: xsimkernel Simulation Memory Usage: 150268 KB (Peak: 191148 KB), Simulation CPU Usage: 433540 ms
+INFO: [Common 17-206] Exiting xsim at Thu Sep 10 17:51:34 2026...

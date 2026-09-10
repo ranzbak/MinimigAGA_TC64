@@ -21,8 +21,8 @@ LOAD_MODE: bank 1
 ddr3_cpu_tb.u_ram.cmd_task: at time 39935000.0 ps WARNING: Load Mode 1 DLL off mode is not fully modeled
 LOAD_MODE: bank 0
 INFO: CPU released at 64389167.0 ps (ddr_ready=1 init_done=1 pll_locked=1)
-INFO: program phase 1 at 74147372.0 ps
-INFO: program phase 2 at 464396237.0 ps
+INFO: program phase 1 at 73486247.0 ps
+INFO: program phase 2 at 424702292.0 ps
 
 DDR3 CPU TB: FAIL code 2  pattern read-back, BYTE load
        first mismatch address : 41000000
@@ -31,24 +31,25 @@ DDR3 CPU TB: FAIL code 2  pattern read-back, BYTE load
        last phase reached     : 2
 
 INFO: checking the DDR3 array through the Micron model backdoor
-       DRAM mismatch at 41001002: expected beef got edc7
-       DRAM mismatch at 41001006: expected beef got 0000
-       DRAM mismatch at 41001008: expected 0001 got c0de
-       DRAM mismatch at 4100100a: expected beef got 00fe
-       DRAM mismatch at 4100100c: expected 0002 got c0de
-       DRAM mismatch at 4100100e: expected beef got 00ff
-       DRAM mismatch at 41001010: expected 0003 got XXXX
-       DRAM mismatch at 41001012: expected beef got edc7
-FAIL: DDR3 array contents wrong in 270 places (independent backdoor read)
+       DRAM mismatch at 41001002: expected beef got xxxx
+       DRAM mismatch at 41001004: expected 0000 got xxxx
+       DRAM mismatch at 41001006: expected beef got xxxx
+       DRAM mismatch at 41001008: expected 0001 got xxxx
+       DRAM mismatch at 4100100a: expected beef got xxxx
+       DRAM mismatch at 4100100c: expected 0002 got xxxx
+       DRAM mismatch at 4100100e: expected beef got xxxx
+       DRAM mismatch at 41001010: expected 0003 got xxxx
+FAIL: DDR3 array contents wrong in 271 places (independent backdoor read)
 
 INFO: cache line fills -- 1 over the channel (0 of them undecoded, auto-completed), 0 down the adapter, 0 bus errors
+INFO: SDRAM port -- 1527 reads completed out of the modelled line buffer, select idle
 DDR3 CPU TB: FAIL  the cacheable read of the undecoded Zorro III hole did not
        take a line fill over the channel
 
 DDR3 CPU TB: 3 checks failed
 
-$finish called at time : 470557922 ps : File "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/ddr3_cpu_tb.sv" Line 1522
-run: Time (s): cpu = 00:00:00.47 ; elapsed = 00:02:14 . Memory (MB): peak = 1505.133 ; gain = 0.000 ; free physical = 16296 ; free virtual = 40833
+$finish called at time : 430149962 ps : File "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/ddr3_cpu_tb.sv" Line 1651
+run: Time (s): cpu = 00:00:00.27 ; elapsed = 00:02:01 . Memory (MB): peak = 1441.133 ; gain = 0.000 ; free physical = 17498 ; free virtual = 40473
 ## quit
-INFO: xsimkernel Simulation Memory Usage: 150256 KB (Peak: 191136 KB), Simulation CPU Usage: 134000 ms
-INFO: [Common 17-206] Exiting xsim at Thu Sep 10 01:22:02 2026...
+INFO: xsimkernel Simulation Memory Usage: 150268 KB (Peak: 191148 KB), Simulation CPU Usage: 120950 ms
+INFO: [Common 17-206] Exiting xsim at Thu Sep 10 18:37:40 2026...

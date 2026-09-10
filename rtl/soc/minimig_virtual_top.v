@@ -36,6 +36,8 @@ module minimig_virtual_top #(
     parameter ap040_has_mmu = 1,
     parameter ap040_has_fpu = 1,
     parameter ap040_enable_cache = 1,
+    parameter ap040_post_stores = 1,
+    parameter cpu_clk_divide = 30,
     // Bring-up only (tools/vivado/build_ap040.tcl): an ILA on the AP68040's
     // fault outputs, so an exception can be named instead of guessed at.
     parameter CPU040_DEBUG_ILA = 0,
@@ -236,6 +238,8 @@ wire [15:0]    dbg_ir;
 wire [15:0]    dbg_sr;
 wire [7:0]     dbg_exc_vec;
 wire [3:0]     dbg_flags;
+// Stage D3 snoop instrumentation; see TG68K.vhd's dbg_snoop and probe8.
+wire [40:0]    dbg_snoop;
 wire           turbochipram;
 wire           turbokick;
 wire [1:0]     slow_config;
@@ -588,7 +592,7 @@ VideoStream myaudiostream
 // by nothing at all when cpu_core is "TG68K" (rtl/soc/TG68K.vhd, g_tg68k).
 wire CLK_38;
 
-amiga_clk amiga_clk (
+amiga_clk #(.CPU_CLK_DIVIDE(cpu_clk_divide)) amiga_clk (
     .rst          (1'b0             ), // async reset input
     .clk_in       (CLK_IN           ), // input clock     ( 50.000000MHz)
     .clk_114      (CLK_114          ), // output clock c0 (114.750000MHz)
@@ -627,7 +631,8 @@ TG68K #(
     .cpu_core(cpu_core),
     .ap040_has_mmu(ap040_has_mmu),
     .ap040_has_fpu(ap040_has_fpu),
-    .ap040_enable_cache(ap040_enable_cache)
+    .ap040_enable_cache(ap040_enable_cache),
+    .ap040_post_stores(ap040_post_stores)
 ) tg68k (
     .clk          (CLK_114          ),
     .clk_cpu      (CLK_38           ),
@@ -680,6 +685,7 @@ TG68K #(
     .dbg_sr       (dbg_sr           ),
     .dbg_exc_vec  (dbg_exc_vec      ),
     .dbg_flags    (dbg_flags        ),
+    .dbg_snoop    (dbg_snoop        ),
     //  .fastramcfg   ({&memcfg[5:4],memcfg[5:4]}),
     .eth_en       (1'b1), // TODO
     .sel_eth      (),
@@ -735,6 +741,9 @@ wire           hostce;
 sdram_ctrl sdram (
     .cache_rst    (tg68_rst         ),
     .cache_inhibit(cache_inhibit    ),
+    // Unposted chip-RAM writes: proven in sim/sdram_coherency, tied off here
+    // so this build is d3stable exactly.  See findings/ap68040/sdd-d3/.
+    .cpu_wr_sync  (1'b0             ),
     .cacheline_clr(cacheline_clr    ),
     .cpu_cache_ctrl (tg68_CACR_out    ),
     .snoop_stb_out  (snoop_stb        ),
@@ -935,7 +944,8 @@ if (CPU040_DEBUG_ILA) begin : g_cpu040_ila
     .probe4 (bus_ctl),         // 4  {as, rw, uds, lds}, all active low
     .probe5 (dbg_flags),       // 4  {fault, in_exc, halted, busy}
     .probe6 (dbg_ir),          // 16 opcode, one instruction behind dbg_pc
-    .probe7 (tg68_cpustate)    // 7
+    .probe7 (tg68_cpustate),   // 7
+    .probe8 (dbg_snoop)        // 41 snoop crossing: see TG68K.vhd dbg_snoop
   );
 end
 endgenerate

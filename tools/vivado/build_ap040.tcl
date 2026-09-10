@@ -25,6 +25,19 @@ set out [lindex $argv 0]
 # Repo root, set explicitly: second -tclargs wins, else it is derived from
 # this script's own location.
 set ila [expr {[llength $argv] > 1 ? [lindex $argv 1] : 1}]
+# Posted stores in the AP68040's data cache: 1 is the design, 0 makes every
+# store synchronous.  The A/B leg for the D3 chip-RAM coherency defect -- with
+# Turbo chip RAM on, a store to chip RAM is a store to a CACHEABLE page and is
+# therefore acknowledged before it reaches memory, so display DMA or the
+# blitter can read the buffer before the write lands.  Stage D3 tripled the
+# core's rate against the bus and so tripled that window.
+# findings/ap68040/sdd-d3/d3-snoop-coherency.md.
+set post [expr {[llength $argv] > 3 ? [lindex $argv 3] : 1}]
+# AP68040 island clock divider: 30 = clk_114/3 (stage D3, shipping),
+# 40 = clk_114/4, which is the PRE-D3 CPU RATE with the D3 architecture
+# otherwise untouched -- the single-variable bisect for whether the chip
+# RAM corruption is a rate-dependent window or a structural fault.
+set cpudiv [expr {[llength $argv] > 4 ? [lindex $argv 4] : 30}]
 set R [expr {[llength $argv] > 2 ? [file normalize [lindex $argv 2]] \
                                  : [file normalize [file dirname [info script]]/../..]}]
 open_project $R/project_1/project_1.xpr
@@ -244,6 +257,10 @@ foreach ip {vio_ddr3 ila_fastram} {
 #   probe0 pc[31:0]      probe1 adr[31:0]   probe2 data_read[15:0]
 #   probe3 data_write[15:0]  probe4 {as,rw,uds,lds}  probe5 flags[3:0]
 #   probe6 ir[15:0]      probe7 cpustate[6:0]
+#   probe8 snoop[40:0] -- the stage D3 snoop crossing, see TG68K.vhd's
+#          dbg_snoop: two free-running counters, one counting the snoops
+#          the bus offered and one counting the snoops the kernel saw, so
+#          a lost snoop is a subtraction rather than an argument.
 #
 # 4096 deep, and storage qualification stays on: with Turbo off a chip access
 # is a 7 MHz chipset cycle against an 8.8 ns clock, so capturing on !as is the
@@ -262,7 +279,7 @@ if {$ila} {
     # the new port list and fail somewhere far from here.  Re-applying is free
     # when nothing changed -- Vivado only marks the IP out of date if it did.
     set_property -dict [list \
-        CONFIG.C_NUM_OF_PROBES {8} \
+        CONFIG.C_NUM_OF_PROBES {9} \
         CONFIG.C_DATA_DEPTH {4096} \
         CONFIG.C_TRIGIN_EN {false} \
         CONFIG.C_EN_STRG_QUAL {1} \
@@ -275,6 +292,7 @@ if {$ila} {
         CONFIG.C_PROBE5_WIDTH {4} \
         CONFIG.C_PROBE6_WIDTH {16} \
         CONFIG.C_PROBE7_WIDTH {7} \
+        CONFIG.C_PROBE8_WIDTH {41} \
     ] [get_ips ila_cpu040]
     generate_target all [get_files [get_property IP_FILE [get_ips ila_cpu040]]]
     catch { create_ip_run [get_files [get_property IP_FILE [get_ips ila_cpu040]]] }
@@ -287,7 +305,7 @@ if {$ila} {
 
 # The one functional difference from build.tcl: which kernel the wrapper
 # elaborates, and whether the fast-RAM ILA comes along for the ride.
-set_property generic "CPU_IS_AP040=1 HAVEDDR3=1 DDR3_BIST_VIO=0 DDR3_FASTRAM_ILA=$ila CPU040_DEBUG_ILA=$ila" \
+set_property generic "CPU_IS_AP040=1 HAVEDDR3=1 DDR3_BIST_VIO=0 DDR3_FASTRAM_ILA=$ila CPU040_DEBUG_ILA=$ila AP040_POST_STORES=$post CPU_CLK_DIVIDE=$cpudiv" \
     [get_filesets sources_1]
 
 # The debug core adds a few thousand LUTs and flip-flops to clk_114, and with

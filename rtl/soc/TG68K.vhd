@@ -123,6 +123,17 @@ entity TG68K is
 		dbg_sr          : out    std_logic_vector(15 downto 0);
 		dbg_exc_vec     : out    std_logic_vector(7 downto 0);
 		dbg_flags       : out    std_logic_vector(3 downto 0); -- fault, in_exc, halted, busy
+		-- Stage D3 snoop instrumentation, read by ila_cpu040's probe8.  The
+		-- crossing that carries a chipset DMA write snoop into the kernel is
+		-- the one bus -> core path that is a PULSE and not a level (see the
+		-- holder in the g_ap040 branch), and nothing until now could say
+		-- whether a pulse ever fails to cross.  Two free-running counters
+		-- answer it directly: one counts what the bus offered, the other what
+		-- the kernel actually saw.  Zero in a TG68K build.
+		--   (40:20) snoop_addr(21:1)   (19) unused
+		--   (18) cpu_ph2  (17) snp_stb_held  (16) snoop_stb
+		--   (15:8) snp_out_cnt (kernel side)  (7:0) snp_in_cnt (bus side)
+		dbg_snoop       : out    std_logic_vector(40 downto 0);
 		eth_en          : in     std_logic                     := '0'; -- @suppress "Unused port: eth_en is not used in work.TG68K(logic)"
 		sel_eth         : buffer std_logic;
 		frometh         : in     std_logic_vector(15 downto 0);
@@ -205,6 +216,11 @@ ARCHITECTURE logic OF TG68K IS
 	-- See where they are driven.
 	SIGNAL bus_release  : std_logic;
 	SIGNAL clkena_r     : std_logic := '0';
+	-- '1' in the one clk cycle after a bus router took the bus: the cycle in
+	-- which the completion cone is still answering for the PREVIOUS address.
+	-- See bus_fresh, where it is driven.
+	SIGNAL wk_active_d  : std_logic := '0';
+	SIGNAL bus_fresh    : std_logic;
 	-- SIGNAL vmaena           : std_logic;
 	SIGNAL eind        : std_logic;
 	SIGNAL eindd       : std_logic;
@@ -793,6 +809,7 @@ BEGIN
 		dbg_sr         <= (others => '0');
 		dbg_exc_vec    <= (others => '0');
 		dbg_flags      <= (others => '0');
+		dbg_snoop      <= (others => '0');
 	END GENERATE;
 
 	g_ap040 : IF use_ap040 GENERATE
@@ -870,6 +887,22 @@ BEGIN
 		-- period later rather than dropped.
 		SIGNAL snp_stb_held  : std_logic := '0';
 		SIGNAL snp_addr_held : std_logic_vector(31 downto 0) := (others => '0');
+
+		-- The instrumentation behind dbg_snoop.  snp_in_cnt counts on clk
+		-- every snoop the bus offers; snp_out_cnt counts on clk_cpu every
+		-- snoop the KERNEL sees -- literally the value ap040_cache's
+		-- ce-independent s_stb port samples, counted in the port's own clock
+		-- domain.  Free-running and never cleared, so the two track within
+		-- one and diverge FOR GOOD the first time a pulse fails to cross: a
+		-- lost snoop is then a subtraction on one ILA sample rather than a
+		-- waveform to be argued about.  snp_out_cnt is resynchronised into
+		-- clk before it is probed; it is a multi-bit crossing, but it changes
+		-- at most once per SDRAM round and is read as a level, so a sample
+		-- taken across an increment is at worst off by one.
+		SIGNAL snp_in_cnt    : std_logic_vector(7 downto 0) := (others => '0');
+		SIGNAL snp_out_cnt   : std_logic_vector(7 downto 0) := (others => '0');
+		SIGNAL snp_out_s1    : std_logic_vector(7 downto 0) := (others => '0');
+		SIGNAL snp_out_s2    : std_logic_vector(7 downto 0) := (others => '0');
 	BEGIN
 		PROCESS(clk_cpu)
 		BEGIN
@@ -899,6 +932,30 @@ BEGIN
 				END IF;
 			END IF;
 		END PROCESS;
+
+		-- The two snoop counters; see their signals.
+		PROCESS(clk)
+		BEGIN
+			IF rising_edge(clk) THEN
+				IF snoop_stb = '1' THEN
+					snp_in_cnt <= snp_in_cnt + 1;
+				END IF;
+				snp_out_s1 <= snp_out_cnt;
+				snp_out_s2 <= snp_out_s1;
+			END IF;
+		END PROCESS;
+
+		PROCESS(clk_cpu)
+		BEGIN
+			IF rising_edge(clk_cpu) THEN
+				IF snp_stb_held = '1' THEN
+					snp_out_cnt <= snp_out_cnt + 1;
+				END IF;
+			END IF;
+		END PROCESS;
+
+		dbg_snoop <= snoop_addr(21 DOWNTO 1) & '0' & cpu_ph2 & snp_stb_held &
+		             snoop_stb & snp_out_s2 & snp_in_cnt;
 
 		ap040 : COMPONENT ap040_tg68k_compat
 			GENERIC MAP(
@@ -1063,6 +1120,7 @@ BEGIN
 			END IF;
 			sel_ram_d <= sel_ram;
 			sel_ddr_d <= sel_ddr;
+			wk_active_d <= wk_active;
 		END IF;
 	END PROCESS;
 
@@ -1260,7 +1318,10 @@ BEGIN
 	-- With the TG68K, cpu_ce_phase is clkena_in -- enaWRreg, four of sixteen
 	-- clk phases -- and both this expression and the kernel's clock are
 	-- exactly what they were.
-	bus_release <= '1' WHEN (bstate = "01" OR bus_ready = '1') ELSE '0';
+	-- STAGE D3-STABLE.  bus_ready is masked in the one cycle after the walker
+	-- takes the bus.  See bus_fresh below, and the D3-FIX note under it for
+	-- why that cycle is the only one that needs it.
+	bus_release <= '1' WHEN (bstate = "01" OR (bus_ready = '1' AND bus_fresh = '0')) ELSE '0';
 
 	-- STAGE D3-FIX.  THE AP68040's clkena IS A REGISTER, DECIDED ONE clk EDGE
 	-- EARLY.  Same waveform, one clk cycle older content, and one flop instead
@@ -1301,15 +1362,52 @@ BEGIN
 	--     So `bstate = "01"` is EXACTLY equal in the two cycles: the idle
 	--     release, which is what CPU-bound code lives on, is unaffected and
 	--     costs nothing.  The 1.26x measured on hardware is not touched.
-	--   * `bus_ready` is a genuine one-clk-cycle delay, and every term of it
-	--     is a LEVEL that stays up until the core consumes it -- mem_ready
-	--     (the controller holds its acknowledge until the select drops),
-	--     chipset_done (cleared only by clkena), akiko_ack (dropped only by
-	--     clkena), sel_undecoded_d (a level while the address is out).  The
-	--     one pulse among them, chipset_ready, is latched by chipset_done in
-	--     the very next cycle, so it cannot be missed either.  Nothing is
-	--     lost; an acknowledge that lands in (T+1,T+2) instead of (T+2,T+3)
-	--     releases the core at T+6 rather than T+3.
+	--   * `bus_ready` is a genuine one-clk-cycle delay.  Its slow terms are
+	--     levels held until the core consumes them -- cpu_cache_ack (cleared
+	--     only when the select drops, cpu_cache_new.v:537), chipset_done and
+	--     akiko_ack (cleared only by clkena) -- and its one pulse,
+	--     chipset_ready, is latched by chipset_done the next cycle.  None of
+	--     those can be missed; one that lands in (T+1,T+2) instead of
+	--     (T+2,T+3) releases the core at T+6 rather than T+3.
+	--
+	--     ITS FAST TERMS ARE NOT LEVELS, AND THIS IS WHERE ac9b725 HUNG THE
+	--     MACHINE (findings/ap68040/sdd-d3/task-d3stable-report.md).
+	--     cpu_cache_new answers a read that hits its line buffer WITHOUT
+	--     waiting for the select: cpu_cacheline_match is registered from the
+	--     LIVE address every clock (:257) and cpu_ack is combinational from it
+	--     while the machine is idle and the bus state is a read (:258-260).
+	--     sel_undecoded_d is the same shape, a registered decode of the live
+	--     address.  So the value of bus_ready in cycle (T+1,T+2) is an answer
+	--     about the address that was on cpuaddr in cycle (T,T+1) -- and that
+	--     is only the right question if the address has not moved since.
+	--
+	--     For the kernel's own accesses it has not: the kernel changed its
+	--     address at T, and the T+1 captures see it (cpu.xdc now times those
+	--     captures single-cycle, by name, because they ARE one cycle).  For
+	--     the walker it HAS: a request the kernel raises at T is seen by the
+	--     router at T+1, which is when wk_busaddr goes onto the bus -- so the
+	--     T+1 captures still hold the kernel's idle address, which is the last
+	--     address the bus16 adapter completed.  After any SDRAM read that is
+	--     a line-buffer hit, and with bstate = wk_bstate = "10" supplying the
+	--     read qualifier, cpu_cacheline_valid is up in (T+1,T+2) for an access
+	--     nobody issued, clkena_r fires at T+2, and WK_HI at T+3 takes
+	--     datatg68 -- the buffered word at the DESCRIPTOR's offset in the
+	--     PREVIOUS access's line -- as the high word of the descriptor.  Every
+	--     walk that follows a fast-RAM read gets a garbage upper half, which
+	--     is a fault as soon as the 68040.library turns translation on, and
+	--     the fault handler's own walk gets the same treatment: the E flags
+	--     the ILA showed.  sim/ddr3_cpu could not see it because its SDRAM
+	--     model acknowledged only after the select; it models the line buffer
+	--     now, and --mmu at ac9b725 fails on it.
+	--
+	--     bus_fresh, below, is the mask: bus_ready is ignored in exactly that
+	--     one cycle, and the walker's completion is taken at T+5/T+6 from
+	--     captures made with its own address on the bus.  The fill router
+	--     needs nothing: it takes the bus with fl_bstate = "01", so the T+2
+	--     decision is the idle term, and it samples mem_ready itself only
+	--     from T+4 on.  The second half of a walk (WK_GAP -> WK_LO) puts its
+	--     bus state up at least two cycles after its address, so it needs
+	--     nothing either.
 	--
 	-- COST: one clk cycle of acknowledge latency, which the 1:3 quantisation
 	-- turns into one clk_cpu cycle (26.45 ns) for one memory access in three
@@ -1321,6 +1419,20 @@ BEGIN
 	-- mem_ready is registered here and NOT where the two bus routers read it:
 	-- FL_SEL/FL_GAP and WK_GAP keep the live copy, so a line fill's eight
 	-- words still stream at the clk rate.
+	--
+	-- bus_fresh: '1' in the single clk cycle after the walker took the bus,
+	-- (S,S+1) where S is the edge wk_active rose.  A walker start is at S = T+1
+	-- (the kernel raised wk_req at T) or, when a line fill had the bus, at
+	-- S = T (fl_busy dropped at T-2, WK_IDLE saw it at T).  Only the first
+	-- lands on the decision at T+2 with the address one cycle old, and it is
+	-- the only case that does: wk_bstate goes non-idle for the second
+	-- sub-cycle two or more cycles after wk_busaddr moved (WK_GAP waits for
+	-- the previous acknowledge to clear), and the kernel's own accesses put
+	-- address and bus state up together at T.  Constant '0' for the TG68K,
+	-- where wk_active is constant '0' too, so bus_release folds back to
+	-- exactly what it was.
+	bus_fresh <= '0' WHEN NOT use_ap040 ELSE (wk_active AND NOT wk_active_d);
+
 	PROCESS(clk)
 	BEGIN
 		IF rising_edge(clk) THEN

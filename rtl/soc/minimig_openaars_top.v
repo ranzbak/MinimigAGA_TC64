@@ -34,6 +34,14 @@ module minimig_openaars_top #(
   parameter AP040_HAS_MMU = 1,
   parameter AP040_HAS_FPU = 1,
   parameter AP040_ENABLE_CACHE = 1,
+  // Posted stores in the AP68040's data cache.  1 is the design; 0 makes
+  // every store synchronous, which is the A/B leg for "is a CPU write to
+  // chip RAM visible to chipset DMA in time" (the D3 coherency defect,
+  // findings/ap68040/sdd-d3/d3-snoop-coherency.md).
+  parameter AP040_POST_STORES = 1,
+  // AP68040 island clock divider: 30 = clk_114/3 (stage D3),
+  // 40 = clk_114/4 (pre-D3 rate, D3 architecture otherwise intact).
+  parameter CPU_CLK_DIVIDE = 30,
   // Bring-up only: ILA on the AP68040's fault outputs (build_ap040.tcl).
   parameter CPU040_DEBUG_ILA = 0,
   // Debug build only (tools/vivado/build_ila.tcl): put ila_fastram on the
@@ -493,6 +501,8 @@ minimig_virtual_top
   .ap040_has_mmu(AP040_HAS_MMU),
   .ap040_has_fpu(AP040_HAS_FPU),
   .ap040_enable_cache(AP040_ENABLE_CACHE),
+  .ap040_post_stores(AP040_POST_STORES),
+  .cpu_clk_divide(CPU_CLK_DIVIDE),
   .CPU040_DEBUG_ILA(CPU040_DEBUG_ILA),
   .DDR3_FASTRAM_ILA(DDR3_FASTRAM_ILA)
 ) openaars_virtual_top (

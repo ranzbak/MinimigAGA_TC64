@@ -1,0 +1,38 @@
+diff --git a/rtl/ddr3/ddr3_fastram.v b/rtl/ddr3/ddr3_fastram.v
+index 570f2c9..6275d6c 100644
+--- a/rtl/ddr3/ddr3_fastram.v
++++ b/rtl/ddr3/ddr3_fastram.v
+@@ -250,6 +250,9 @@ assign ddr_ready = reset;
+ // with the snoop port tied off and the cache never inhibited.
+ 
+ cpu_cache_new cpu_cache (
++    // No unposted writes here: the Zorro III DDR3 board is CPU-private, no
++    // chipset DMA reads it, so a buffered write can never be read stale.
++    .cpu_wr_sync      (1'b0),
+   .clk              (sysclk),                     // clock
+   .rst              (!reset || !cache_rst),       // cache reset
+   .cache_en         (1'b1),                       // cache enable
+diff --git a/rtl/sdram/sdram_ctrl.v b/rtl/sdram/sdram_ctrl.v
+index 7de3474..d5c2961 100644
+--- a/rtl/sdram/sdram_ctrl.v
++++ b/rtl/sdram/sdram_ctrl.v
+@@ -29,6 +29,11 @@ module sdram_ctrl(
+     input  wire           reset_in,
+     input  wire           cache_rst,
+     input  wire           cache_inhibit,
++    // Unposted write: hold the CPU's acknowledge until SDRAM has actually
++    // taken the write.  Raised by the wrapper for chip RAM under Turbo, the
++    // one region the chipset reads out of this same SDRAM -- see the note on
++    // cpu_wr_sync in cpu_cache_new.v.
++    input  wire           cpu_wr_sync,
+     input  wire           cacheline_clr,
+     input  wire [  4-1:0] cpu_cache_ctrl,
+     output wire           reset_out,
+@@ -299,6 +304,7 @@ cpu_cache_new cpu_cache (
+     .cache_en         (1'b1), // cache enable
+     .cpu_cache_ctrl   (cpu_cache_ctrl), // CPU cache control
+     .cache_inhibit    (cache_inhibit), // cache inhibit
++    .cpu_wr_sync      (cpu_wr_sync), // unposted write (chip RAM under Turbo)
+     .cacheline_clr    (cacheline_clr),
+     .cpu_cs           (!cpuCSn), // cpu activity
+     .cpu_adr          ({cpuAddr, 1'b0}), // cpu address

@@ -210,6 +210,9 @@ PLUS="+PATBYTES=$PATBYTES +MISLINES=$MISLINES +CNTN=$CNTN +TURBOCHIP=$TURBOCHIP"
 if [ "$IS_MMU" = "1" ]; then PLUS="$PLUS +MMUTEST"; fi
 if [ "$IS_SNOOP" = "1" ]; then PLUS="$PLUS +SNOOP"; fi
 if [ -n "$TRACE" ]; then PLUS="$PLUS +TRACE +TRMAX=${TRMAX:-200}"; fi
+# XPLUS: extra +plusargs handed straight to xsim, e.g. XPLUS=+LBDBG for the
+# SDRAM-port line-buffer trace.
+if [ -n "$XPLUS" ]; then PLUS="$PLUS $XPLUS"; fi
 
 # PREB1=<file> swaps in another copy of the wrapper, so a regression can be
 # bisected against a known-good one without touching the working tree.

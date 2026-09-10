@@ -21,10 +21,10 @@ LOAD_MODE: bank 1
 ddr3_cpu_tb.u_ram.cmd_task: at time 39935000.0 ps WARNING: Load Mode 1 DLL off mode is not fully modeled
 LOAD_MODE: bank 0
 INFO: CPU released at 64389167.0 ps (ddr_ready=1 init_done=1 pll_locked=1)
-INFO: program phase 1 at 76368752.0 ps
-INFO: program phase 2 at 650278142.0 ps
+INFO: program phase 1 at 75363842.0 ps
+INFO: program phase 2 at 580119557.0 ps
 
-FAIL: no progress for 120000 cycles at phase 2 (t = 1708086957.0 ps).  A walk
+FAIL: no progress for 120000 cycles at phase 2 (t = 1637928372.0 ps).  A walk
       that never acknowledges, or a clkena stopped while the
       walker owns the bus, looks exactly like this.
 
@@ -34,11 +34,12 @@ DDR3 CPU TB: FAIL  the program stopped making progress (stall watchdog)
 INFO: MMU walker program -- no pattern in the DDR3 to check
 
 INFO: cache line fills -- 0 over the channel (0 of them undecoded, auto-completed), 0 down the adapter, 0 bus errors
+INFO: SDRAM port -- 2664 reads completed out of the modelled line buffer, select idle
 
 DDR3 CPU TB: 1 checks failed
 
-$finish called at time : 1708086957 ps : File "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/ddr3_cpu_tb.sv" Line 1522
-run: Time (s): cpu = 00:00:00.92 ; elapsed = 00:07:54 . Memory (MB): peak = 1316.727 ; gain = 0.000 ; free physical = 16489 ; free virtual = 40951
+$finish called at time : 1637928372 ps : File "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/ddr3_cpu_tb.sv" Line 1651
+run: Time (s): cpu = 00:00:01 ; elapsed = 00:07:28 . Memory (MB): peak = 1441.133 ; gain = 124.406 ; free physical = 17468 ; free virtual = 40445
 ## quit
-INFO: xsimkernel Simulation Memory Usage: 150256 KB (Peak: 191136 KB), Simulation CPU Usage: 473690 ms
-INFO: [Common 17-206] Exiting xsim at Thu Sep 10 01:19:25 2026...
+INFO: xsimkernel Simulation Memory Usage: 150268 KB (Peak: 191148 KB), Simulation CPU Usage: 448350 ms
+INFO: [Common 17-206] Exiting xsim at Thu Sep 10 18:35:15 2026...

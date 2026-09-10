@@ -2,7 +2,17 @@
 /* 2012, rok.krajnc@gmail.com */
 
 
-module amiga_clk_xilinx (
+module amiga_clk_xilinx #(
+    // The AP68040 island clock, CLKOUT3.  VCO is 1134.375 MHz, so
+    //   30 -> 37.81250 MHz, clk_114 / 3   (stage D3, the shipping value)
+    //   40 -> 28.35938 MHz, clk_114 / 4   (the pre-D3 CPU RATE, with the D3
+    //        architecture otherwise untouched -- the single-variable bisect
+    //        for "is this a rate-dependent window or a structural fault",
+    //        findings/ap68040/sdd-d3/d3-snoop-coherency.md)
+    // Everything downstream is ratio-agnostic: the phase marker derives
+    // cpu_ph from a toggle, so it produces a one-in-N pulse for any N.
+    parameter CPU_CLK_DIVIDE = 30
+) (
     input  wire areset,
     input  wire inclk0,
     output wire c0,
@@ -44,7 +54,7 @@ MMCME2_ADV #(
     // SYNCHRONOUS 1:3 sibling of the system clock, not an asynchronous domain:
     // static timing analyses the real edges and no synchroniser belongs on the
     // crossing (findings/ap68040/plan-v2-with-ddr3.md, stage D3).
-    .CLKOUT3_DIVIDE(30), // 37.81250  MHz /30 divide  -- the AP68040 island
+    .CLKOUT3_DIVIDE(CPU_CLK_DIVIDE), // the AP68040 island; see the parameter
     .REF_JITTER1(0.010),
     .STARTUP_WAIT("TRUE")
 // .REF_JITTER2(0.010),

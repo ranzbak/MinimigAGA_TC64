@@ -21,33 +21,5 @@ LOAD_MODE: bank 1
 ddr3_cpu_tb.u_ram.cmd_task: at time 39935000.0 ps WARNING: Load Mode 1 DLL off mode is not fully modeled
 LOAD_MODE: bank 0
 INFO: CPU released at 64389167.0 ps (ddr_ready=1 init_done=1 pll_locked=1)
-INFO: program phase 1 at 74147372.0 ps
-INFO: program phase 2 at 464396237.0 ps
-INFO: program phase 3 at 1429480067.0 ps
-INFO: program phase 4 at 1609253177.0 ps
-INFO: program phase 5 at 1630382732.0 ps
-INFO: program phase 7 at 1906177637.0 ps
-INFO: program phase 8 at 1938757877.0 ps
-
-DDR3 CPU TB: PASS  (68k program completed all phases)
-
-INFO: checking the DDR3 array through the Micron model backdoor
-PASS: DDR3 array contents match the pattern (independent backdoor read)
-
-INFO: cache line fills -- 310 over the channel (1 of them undecoded, auto-completed), 8 down the adapter, 0 bus errors
-
-INFO: chipset snoops -- 25526 issued (8508/8509/8509 in clk phase 0/1/2), 25526 seen by the core, 25526 invalidated a cache set
-INFO:   gap 16 clk cycles           (the hardware minimum) -- 8510 issued, 8510 seen
-INFO:   gap  8 clk cycles (tighter than hardware can make) -- 4254 issued, 4254 seen
-INFO:   gap  4 clk cycles (tighter than hardware can make) -- 4254 issued, 4254 seen
-INFO:   gap  3 clk cycles (tighter than hardware can make) -- 8508 issued, 8508 seen
-INFO:   gap  2 clk cycles (tighter than hardware can make) -- 0 issued, 0 seen
-INFO:   0 snoop addresses reached the core out of order (a merge loses the first address)
-
-DDR3 CPU TB: 2 passed, 0 failed
-
-$finish called at time : 1939709897 ps : File "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/ddr3_cpu_tb.sv" Line 1522
-run: Time (s): cpu = 00:00:01 ; elapsed = 00:08:59 . Memory (MB): peak = 1316.727 ; gain = 0.000 ; free physical = 16462 ; free virtual = 40918
-## quit
-INFO: xsimkernel Simulation Memory Usage: 150256 KB (Peak: 191136 KB), Simulation CPU Usage: 538790 ms
-INFO: [Common 17-206] Exiting xsim at Thu Sep 10 01:02:14 2026...
+INFO: program phase 1 at 73486247.0 ps
+INFO: program phase 2 at 424702292.0 ps

@@ -21,13 +21,13 @@ LOAD_MODE: bank 1
 ddr3_cpu_tb.u_ram.cmd_task: at time 39935000.0 ps WARNING: Load Mode 1 DLL off mode is not fully modeled
 LOAD_MODE: bank 0
 INFO: CPU released at 64389167.0 ps (ddr_ready=1 init_done=1 pll_locked=1)
-INFO: program phase 1 at 74147372.0 ps
-INFO: program phase 2 at 464396237.0 ps
-INFO: program phase 3 at 1365932732.0 ps
-INFO: program phase 4 at 1545520727.0 ps
-INFO: program phase 5 at 1565909822.0 ps
-INFO: program phase 7 at 1821183407.0 ps
-INFO: program phase 8 at 1851462932.0 ps
+INFO: program phase 1 at 73486247.0 ps
+INFO: program phase 2 at 424702292.0 ps
+INFO: program phase 3 at 1185683612.0 ps
+INFO: program phase 4 at 1339434842.0 ps
+INFO: program phase 5 at 1356888542.0 ps
+INFO: program phase 7 at 1576752272.0 ps
+INFO: program phase 8 at 1602879932.0 ps
 
 DDR3 CPU TB: PASS  (68k program completed all phases)
 
@@ -35,11 +35,12 @@ INFO: checking the DDR3 array through the Micron model backdoor
 PASS: DDR3 array contents match the pattern (independent backdoor read)
 
 INFO: cache line fills -- 83 over the channel (1 of them undecoded, auto-completed), 5 down the adapter, 0 bus errors
+INFO: SDRAM port -- 9394 reads completed out of the modelled line buffer, select idle
 
 DDR3 CPU TB: 2 passed, 0 failed
 
-$finish called at time : 1852414952 ps : File "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/ddr3_cpu_tb.sv" Line 1522
-run: Time (s): cpu = 00:00:02 ; elapsed = 00:14:35 . Memory (MB): peak = 1441.133 ; gain = 62.203 ; free physical = 13829 ; free virtual = 38197
+$finish called at time : 1603726172 ps : File "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/ddr3_cpu/ddr3_cpu_tb.sv" Line 1651
+run: Time (s): cpu = 00:00:03 ; elapsed = 00:15:55 . Memory (MB): peak = 1441.133 ; gain = 91.039 ; free physical = 14806 ; free virtual = 37564
 ## quit
-INFO: xsimkernel Simulation Memory Usage: 150256 KB (Peak: 191136 KB), Simulation CPU Usage: 871710 ms
-INFO: [Common 17-206] Exiting xsim at Thu Sep 10 00:40:30 2026...
+INFO: xsimkernel Simulation Memory Usage: 150268 KB (Peak: 191148 KB), Simulation CPU Usage: 942460 ms
+INFO: [Common 17-206] Exiting xsim at Thu Sep 10 17:43:28 2026...
