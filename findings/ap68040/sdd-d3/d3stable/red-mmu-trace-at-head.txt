@@ -1,0 +1,41 @@
+# sim/ddr3_cpu, ./run.sh --mmu at ac9b725's RTL (HEAD 23e8777), with the bench's SDRAM
+# model extended to cpu_cache_new's line buffer (XPLUS='+LBDBG +LBDBGT=580200000').
+# One line per clk_114 edge on the SDRAM port.  st = cpustate = {lw, clkena, slower(1:0),
+# ramcs, bstate}; cad = the bus-side address; valid = the modelled cpu_cacheline_valid;
+# match/adr = the registered line-buffer compare and the buffered line (address >> 4);
+# data = fromram; wk = wk_active.  Lines 85-89 are the walk: see task-d3stable-report.md.
+    66	LBDBG 581344842.0 ps csn=1 st=0101100 cad=00000502 rdy=0 valid=1 match=1 busy=0 dirty=0 adr=0050 data=4e7b inh=0 wk=0
+    67	LBDBG 581371287.0 ps csn=1 st=0101101 cad=00000502 rdy=0 valid=0 match=1 busy=0 dirty=0 adr=0050 data=4e7b inh=0 wk=0
+    68	LBDBG 581397732.0 ps csn=1 st=0101101 cad=00000502 rdy=0 valid=0 match=1 busy=0 dirty=0 adr=0050 data=4e7b inh=0 wk=0
+    69	LBDBG 581424177.0 ps csn=1 st=0101101 cad=00000502 rdy=0 valid=0 match=1 busy=0 dirty=0 adr=0050 data=4e7b inh=0 wk=0
+    70	LBDBG 581450622.0 ps csn=1 st=0101101 cad=00000502 rdy=0 valid=0 match=1 busy=0 dirty=0 adr=0050 data=4e7b inh=0 wk=0
+    71	LBDBG 581459437.0 ps csn=1 st=0011100 cad=00000504 rdy=0 valid=1 match=1 busy=0 dirty=0 adr=0050 data=4e7b inh=0 wk=0
+    72	LBDBG 581468252.0 ps csn=1 st=0011100 cad=00000504 rdy=0 valid=1 match=1 busy=0 dirty=0 adr=0050 data=0003 inh=0 wk=0
+    73	LBDBG 581477067.0 ps csn=1 st=0101100 cad=00000504 rdy=0 valid=1 match=1 busy=0 dirty=0 adr=0050 data=0003 inh=0 wk=0
+    74	LBDBG 581503512.0 ps csn=1 st=0101101 cad=00000506 rdy=0 valid=0 match=1 busy=0 dirty=0 adr=0050 data=4e71 inh=0 wk=0
+    75	LBDBG 581512327.0 ps csn=1 st=0011100 cad=00000506 rdy=0 valid=1 match=1 busy=0 dirty=0 adr=0050 data=4e71 inh=0 wk=0
+    76	LBDBG 581521142.0 ps csn=1 st=0011100 cad=00000506 rdy=0 valid=1 match=1 busy=0 dirty=0 adr=0050 data=4e71 inh=0 wk=0
+    77	LBDBG 581529957.0 ps csn=1 st=0101100 cad=00000506 rdy=0 valid=1 match=1 busy=0 dirty=0 adr=0050 data=4e71 inh=0 wk=0
+    78	LBDBG 581556402.0 ps csn=1 st=0101101 cad=00000506 rdy=0 valid=0 match=1 busy=0 dirty=0 adr=0050 data=4e71 inh=0 wk=0
+    79	LBDBG 581582847.0 ps csn=1 st=0101101 cad=00000506 rdy=0 valid=0 match=1 busy=0 dirty=0 adr=0050 data=4e71 inh=0 wk=0
+    80	LBDBG 581609292.0 ps csn=1 st=0101101 cad=00000506 rdy=0 valid=0 match=1 busy=0 dirty=0 adr=0050 data=4e71 inh=0 wk=0
+    81	LBDBG 581635737.0 ps csn=1 st=0101101 cad=00000506 rdy=0 valid=0 match=1 busy=0 dirty=0 adr=0050 data=4e71 inh=0 wk=0
+    82	LBDBG 581662182.0 ps csn=1 st=0101101 cad=00000506 rdy=0 valid=0 match=1 busy=0 dirty=0 adr=0050 data=4e71 inh=0 wk=0
+    83	LBDBG 581688627.0 ps csn=1 st=0101101 cad=00000506 rdy=0 valid=0 match=1 busy=0 dirty=0 adr=0050 data=4e71 inh=0 wk=0
+    84	LBDBG 581715072.0 ps csn=1 st=0101101 cad=00000506 rdy=0 valid=0 match=1 busy=0 dirty=0 adr=0050 data=4e71 inh=0 wk=0
+    85	LBDBG 581732702.0 ps csn=1 st=0011110 cad=00008000 rdy=0 valid=1 match=1 busy=0 dirty=0 adr=0050 data=4e71 inh=0 wk=1
+    86	LBDBG 581741517.0 ps csn=1 st=0101110 cad=00008000 rdy=0 valid=0 match=0 busy=0 dirty=0 adr=0050 data=8000 inh=0 wk=1
+    87	LBDBG 581776777.0 ps csn=0 st=0000010 cad=00008002 rdy=0 valid=0 match=0 busy=0 dirty=0 adr=0050 data=4e7b inh=0 wk=1
+    88	LBDBG 581785592.0 ps csn=0 st=0000010 cad=00008002 rdy=1 valid=0 match=0 busy=1 dirty=0 adr=0800 data=820a inh=0 wk=1
+    89	LBDBG 581794407.0 ps csn=0 st=0100010 cad=00008002 rdy=1 valid=0 match=1 busy=1 dirty=0 adr=0800 data=820a inh=0 wk=1
+    90	LBDBG 581803222.0 ps csn=1 st=0011101 cad=00000506 rdy=1 valid=0 match=1 busy=1 dirty=0 adr=0800 data=820a inh=0 wk=0
+    91	LBDBG 581820852.0 ps csn=1 st=0101101 cad=00000506 rdy=0 valid=0 match=0 busy=0 dirty=0 adr=0800 data=0000 inh=0 wk=0
+    92	LBDBG 581847297.0 ps csn=1 st=0101101 cad=00000506 rdy=0 valid=0 match=0 busy=0 dirty=0 adr=0800 data=0000 inh=0 wk=0
+    93	LBDBG 581900187.0 ps csn=1 st=0100101 cad=00000506 rdy=0 valid=0 match=0 busy=0 dirty=0 adr=0800 data=0000 inh=0 wk=0
+    94	LBDBG 581926632.0 ps csn=1 st=0101101 cad=00000506 rdy=0 valid=0 match=0 busy=0 dirty=0 adr=0800 data=0000 inh=0 wk=0
+    95	LBDBG 581953077.0 ps csn=1 st=0101101 cad=00000506 rdy=0 valid=0 match=0 busy=0 dirty=0 adr=0800 data=0000 inh=0 wk=0
+    96	LBDBG 581979522.0 ps csn=1 st=0101101 cad=00000506 rdy=0 valid=0 match=0 busy=0 dirty=0 adr=0800 data=0000 inh=0 wk=0
+    97	LBDBG 582005967.0 ps csn=1 st=0101101 cad=00000506 rdy=0 valid=0 match=0 busy=0 dirty=0 adr=0800 data=0000 inh=0 wk=0
+    98	LBDBG 582032412.0 ps csn=1 st=0101101 cad=00000506 rdy=0 valid=0 match=0 busy=0 dirty=0 adr=0800 data=0000 inh=0 wk=0
+    99	LBDBG 582058857.0 ps csn=1 st=0101101 cad=00000506 rdy=0 valid=0 match=0 busy=0 dirty=0 adr=0800 data=0000 inh=0 wk=0
+   100	LBDBG 582085302.0 ps csn=1 st=0101101 cad=00000506 rdy=0 valid=0 match=0 busy=0 dirty=0 adr=0800 data=0000 inh=0 wk=0
