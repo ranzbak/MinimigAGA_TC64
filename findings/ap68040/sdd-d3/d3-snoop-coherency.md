@@ -34,6 +34,13 @@ of killing the machine.
 Uncleared pixels are the signature of a write that never reached memory, or a
 read that returned stale data.
 
+**The test case.** *Way Too Rude*, by Logicoma and Loonies, Revision 2020,
+Amiga intro compo:
+<https://files.scene.org/view/parties/2020/revision20/amiga-intro/logicoma_and_loonies_-_way_too_rude.zip>
+Worth having because it is the only workload found so far that reproduces this,
+and a party intro of that vintage leans hard on chunky-to-planar conversion and
+bulk chip-RAM writes -- exactly the traffic a lost snoop corrupts.
+
 ## The controls, which make this a D3 regression and not a chipset bug
 
 | build | Turbo Chip | demo | result |
