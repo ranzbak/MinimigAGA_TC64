@@ -1639,6 +1639,32 @@ transmitter once from reset or has any HPD handling at all, and whether the
 configuration lives in the 832 firmware or in RTL.  That decides whether the
 fix is firmware or gateware.
 
+### RTG (Picasso 96) does not work
+
+Reported by Paul on 2026-09-09 ("the picasso 96 interface seems to be inactive
+with this core") and still true on 2026-09-11.
+
+**The control that has not been run, and should be first:** does RTG work on a
+TG68K build of the same tree?  That single test splits the problem in half.
+If it fails there too, this is an RTG/firmware defect that has nothing to do
+with the 68040 and the whole AP68040 investigation is a red herring for it.  If
+it works there and not with the AP040, it is something the CPU swap changed --
+and the candidates are narrow, because the RTG path barely touches the CPU.
+
+What is known about the path.  `sdram_ctrl` carries a first-class RTG master:
+`rtgAddr`, `rtgce`, `rtgfill`, `rtgRd`, arbitrated in slot 2 via `rtg_slot2ok`,
+with `cpu_reservertg` and `wb_reservertg` making the CPU and the write buffer
+yield a bank to it.  So RTG has its own DMA and its own bank reservation, and a
+CPU that hogs slots could starve it without either side being "broken".  That
+is worth keeping in mind given stage D3 changed how often the CPU asks for
+slots -- but it is a hypothesis, not a finding, and the TG68K control outranks
+it.
+
+Also unknown and cheap to establish: whether the RTG board is being autoconfig'd
+at all (does the OS see it), or whether it is configured and simply produces no
+output.  Those are different bugs and the OSD or a MuScan-style tool should say
+which.
+
 ### The SD card is SPI, and should be SDIO
 
 Two reasons, and the first is the one that matters.
