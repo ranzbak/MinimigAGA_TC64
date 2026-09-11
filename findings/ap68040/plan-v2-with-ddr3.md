@@ -1492,6 +1492,53 @@ nothing in the CPU capture points at it. **Do not treat D3 as finished on
 hardware until this either recurs with a signature or fails to recur over a
 measured number of cold boots.**
 
+## Stage E — collapse the adapter stack
+
+**Paul, 2026-09-11, after three days of coherency bugs: "Is a wrapper in a
+wrapper in a wrapper a good idea?"  No.  It is the root cause, and this stage
+is the answer to it.**
+
+The memory path as built:
+
+```
+ap040_core  ->  ap040_tg68k_compat  ->  TG68K.vhd  ->  sdram_ctrl  ->  cpu_cache_new
+  (68040)      makes it TG68K-shaped   16-bit bus     re-joins to 32    ways + line buffer
+```
+
+Every bug found in stage D was **at a seam between those layers, not inside a
+module**.  That is not a coincidence and it is worth stating as a finding in
+its own right:
+
+| seam | what it cost |
+|---|---|
+| three caches in series (040 D-cache, `cpu_cache_new`'s ways, its line buffer) | each needs its own coherency story; two of the three were broken, and the one that got a day of attention -- the 040's snoop crossing -- was the one that was correct |
+| 32 -> 16 -> 32 (`bus16` splits, `longword_pair`/`longword_en` rejoins) | `--lwmutant` exists to guard it; the `mem_done` latch broke it; misaligned and line-straddling longwords are a permanent hazard class |
+| two posted-write paths (`st_posted` in the 040, the write buffer in `sdram_ctrl`), neither aware of the other | half a day spent fixing the wrong one |
+| an enable protocol translated twice (`clkena`, `slower`, `bus_step`, `bus_fresh`) | exists to make a handshake look like a duty cycle for a chipset FSM that is not even in the path when Turbo chip RAM is on; `bus_fresh` and the D1 non-boot both live here |
+
+**The shape of the fix is already proven.**  Stage D2's line-fill channel
+bypassed the 16-bit adapter and went straight to memory, and it worked first
+time, in simulation and on hardware.  Stage E is that generalised: a native
+32-bit CPU port from the compat top into `sdram_ctrl`, with `TG68K.vhd`'s
+chipset state machine used only for actual chipset cycles.  It would delete
+
+* the `bus16` split and its longword reassembly,
+* one of the two posted-write paths,
+* most of `slower`, and with it the reason `cpu_bus_settled` exists,
+* and the need for `cpu_cache_new`'s line buffer to be coherent at all, since
+  the 040's own D-cache would be the only cache in front of memory.
+
+**Sequencing, and why this is NOT next.**  You do not re-architect a memory
+path while it holds an unlocated corruption bug: the only clean control in the
+investigation is "pre-D3 works", and a rewrite throws it away.  Stage E starts
+when the stage D defect is understood -- not necessarily fixed, but named.
+
+Exit criteria when it does start: `sim/sdram_coherency` extended with the real
+`TG68K.vhd` in front of the controller (removing the hand-written CPU agent,
+which is itself an invented layer and the last seam the bench models rather
+than tests), passing before and after the change; `ddr3_cpu` all legs including
+every mutant; SysInfo no lower than the stage D number.
+
 ## Risks
 
 | Risk | Shows as | Mitigation |

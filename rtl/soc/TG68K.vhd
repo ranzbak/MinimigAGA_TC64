@@ -51,6 +51,13 @@ entity TG68K is
 		-- data cache and drained behind the core's back (AP040 plan X3.3).
 		-- 0 is the synchronous-store reference the A/B measurement wants.
 		ap040_post_stores  : integer := 1;
+		-- clk / clk_cpu, the AP68040 island's clock ratio.  3 is stage D3 as
+		-- shipped (37.8125 MHz); 4 runs the same architecture at the pre-D3 CPU
+		-- rate.  THE PHASE MARKER BELOW DEPENDS ON THIS AND IS NOT RATIO-AGNOSTIC
+		-- -- getting that wrong produces a core that never executes an
+		-- instruction, because clkena lands one clk cycle before the kernel's
+		-- edge instead of on it.  Must match amiga_clk's CPU_CLK_DIVIDE / 10.
+		cpu_clk_ratio      : integer := 3;
 		-- Size of the third ZIII board, log2 of its byte size: 24 = 16 MB,
 		-- 25 = 32 MB, 26 = 64 MB.  It is the DDR3 board when haveddr3, and the
 		-- board is size-aligned, so this also says how many address bits are
@@ -203,8 +210,10 @@ ARCHITECTURE logic OF TG68K IS
 	-- clkena in this file (slower, chipset_done, akiko_req, the chipset FSM,
 	-- cpustate) was written against.
 	SIGNAL cpu_ce_phase : std_logic;
-	-- cpu_ph is high in (T+1,T+2) and cpu_ph2 in (T+2,T+3), where the kernel's
-	-- clock edges are at T and T+3.  cpu_ph2 is the enable phase; cpu_ph is
+	-- cpu_ph is high in (T+N-2,T+N-1) and cpu_ph2 in (T+N-1,T+N), where the
+	-- kernel's clock edges are at T and T+N and N is cpu_clk_ratio -- see the
+	-- marker in the g_ap040 branch, which is NOT ratio-agnostic.
+	-- cpu_ph2 is the enable phase; cpu_ph is
 	-- declared HERE rather than inside the g_ap040 block because the walker
 	-- routers below need it -- see bus_step.  It keeps its initial '0' in a
 	-- TG68K build, where the g_ap040 block that drives it is not elaborated.
@@ -843,6 +852,8 @@ BEGIN
 		-- from configuration.
 		SIGNAL cpu_tgl   : std_logic := '0';
 		SIGNAL cpu_tgl_d : std_logic := '0';
+		SIGNAL ph_a      : std_logic := '0';
+		SIGNAL ph_b      : std_logic := '0';
 		-- cpu_ph is declared in the architecture region, next to cpu_ph2: the
 		-- bus routers are outside this generate and read it (bus_step).
 
@@ -911,14 +922,29 @@ BEGIN
 			END IF;
 		END PROCESS;
 
+		-- THE MARKER TRACKS THE CLOCK RATIO.  What clkena needs is a pulse in
+		-- the clk cycle IMMEDIATELY BEFORE a clk_cpu edge, because clkena_r
+		-- registers cpu_ph and the kernel samples the result on its own next
+		-- edge.  With edges at T and T+N that cycle is (T+N-2, T+N-1), and
+		-- the XOR of the toggle and its delayed copy marks (T+1, T+2).  Those
+		-- coincide only at N = 3, which is why ph_b exists: one more stage
+		-- for N = 4.  cpu_clk_ratio is a generic, so the selection below is a
+		-- constant and synthesises to a wire, not a mux.
+		--
+		-- This is the bug that made the first divide-by-4 bitstream show a
+		-- black screen: the marker was asserted to be ratio-agnostic, the
+		-- enable landed one cycle early, and the core never advanced at all.
 		PROCESS(clk)
 		BEGIN
 			IF rising_edge(clk) THEN
 				cpu_tgl_d <= cpu_tgl;
-				cpu_ph    <= cpu_tgl XOR cpu_tgl_d;
+				ph_a      <= cpu_tgl XOR cpu_tgl_d;   -- high in (T+1, T+2)
+				ph_b      <= ph_a;                    -- high in (T+2, T+3)
 				cpu_ph2   <= cpu_ph;
 			END IF;
 		END PROCESS;
+
+		cpu_ph <= ph_a WHEN cpu_clk_ratio = 3 ELSE ph_b;
 
 		-- The snoop holder; see the note beside its signals.
 		PROCESS(clk)

@@ -632,7 +632,10 @@ TG68K #(
     .ap040_has_mmu(ap040_has_mmu),
     .ap040_has_fpu(ap040_has_fpu),
     .ap040_enable_cache(ap040_enable_cache),
-    .ap040_post_stores(ap040_post_stores)
+    .ap040_post_stores(ap040_post_stores),
+    // The island's clock RATIO, which the phase marker needs; the MMCM
+    // divider is clk_114's (10) times it.
+    .cpu_clk_ratio(cpu_clk_divide/10)
 ) tg68k (
     .clk          (CLK_114          ),
     .clk_cpu      (CLK_38           ),
