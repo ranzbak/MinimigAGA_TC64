@@ -1539,6 +1539,41 @@ which is itself an invented layer and the last seam the bench models rather
 than tests), passing before and after the change; `ddr3_cpu` all legs including
 every mutant; SysInfo no lower than the stage D number.
 
+## The pipelined core, and what it does to the ordering
+
+Paul, 2026-09-11: "For the big wins we need to wait for the pipelined ap68040
+core to be released, that will make a huge difference."  That is right, and it
+sets the ceiling on everything else here: at roughly ten to eleven cycles per
+instruction the core is the dominant term and no amount of wrapper work moves
+it much.
+
+But the split we MEASURED says the wrapper is not a rounding error either.  The
+CPU ILA, 144 us, pre-x3: the core advanced on **14.4 % of clocks against a
+25 % enable ceiling, and stalled on memory for 44.2 %**.  Call it half the loss
+in the enable scheme -- which is what stage D3 is -- and half in the memory
+path.
+
+So a pipelined core does not remove the memory work, it **promotes it**.  Once
+the compute half is fixed the memory half is what is left, and every seam in
+the stage E table costs more the faster the core runs: a 32 -> 16 -> 32 split
+spends two bus cycles per longword whatever the CPU does, and three caches in
+series each add latency to every miss.
+
+**Ordering, and why it does not change:**
+
+1. finish stage D (D3 stable at ratio 3)
+2. stage E, the adapter collapse
+3. drop in the pipelined core when it is released
+
+Doing stage E *after* the new core lands would mean debugging a new core and a
+rewritten memory path at the same time, with no known-good control for either.
+That is precisely the mistake that made the 2026-09-08..11 stretch expensive,
+and it is worth not repeating deliberately.
+
+The corollary is that stage E is not competing with the pipelined core for
+effort -- it is preparation for it, and it is work that can be done now, on a
+design whose behaviour is understood, against a bench that exists.
+
 ## Backlog, outside the CPU work
 
 Raised by Paul 2026-09-11.  Neither is an AP68040 matter; both are recorded
