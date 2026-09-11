@@ -1574,6 +1574,48 @@ The corollary is that stage E is not competing with the pipelined core for
 effort -- it is preparation for it, and it is work that can be done now, on a
 design whose behaviour is understood, against a bench that exists.
 
+### The candidate: apolkosnik/AP68040 PR #1, "Pipelined 68040"
+
+<https://github.com/apolkosnik/AP68040/pull/1>, by nonarkitten.  **Draft, not
+merged**, ten commits covering milestones 9-17, opened for visibility rather
+than review, and described by its author as incomplete and untested for
+production.  All nineteen of its test files green, with mutation testing --
+which says good things about the method even while the coverage is partial.
+
+It is a SEPARATE CORE, not an upgrade: `ap040_pipe_core.v`, `ap040_pipe_l1.v`,
+`ap040_ea_fetch.v`, `ap040_execute.v`, `ap040_decode.v`,
+`ap040_pipe_regfile.v`, alongside `ap040_core.v` rather than replacing it.
+
+**What that means here, three things.**
+
+*Integration is already planned for.*  `rtl/soc/TG68K.vhd` selects its kernel
+with the `cpu_core` generic and a generate branch, and step 0.3 of this plan
+exists so that a core swap changes one block.  A third branch is the documented
+extension point.
+
+*It raises the priority of stage E rather than lowering it.*  The PR adds an
+**L1 cache with a write buffer**.  Behind the current adapter stack that makes
+FOUR caches in series and THREE posted-write paths, reached through a
+32 -> 16 -> 32 split.  An unsnooped cache and an unforwarded write buffer are
+exactly the two defects `sim/sdram_coherency` found this week; the pipelined
+core brings one more of each.  Collapsing the stack first is the difference
+between dropping the core in and repeating 2026-09-08..11.
+
+*The timeline risk is coverage, not quality.*  The milestones listed are
+address modes, control flow, exceptions, supervisor state and MOVEC.  **No MMU
+and no FPU.**  This project needs both -- the MMU for 68040.library and
+MuFastROM (stage B), the FPU because SysInfo probes it and reports MFLOPS
+(stage C).  So "wait for the pipelined core" may mean waiting for substantially
+more than what is in the PR today, and that is an argument for the work in this
+plan proceeding rather than pausing.
+
+**What we bring to it that it does not have: a scoreboard.**  `sim/ddr3_cpu`
+with its mutant legs, and `sim/sdram_coherency` with both masters live, test a
+core against THIS memory path -- which is where every defect of the past week
+actually lived.  When the pipelined core is ready, that harness is what says
+whether it works here, and it is worth keeping in a state where a new kernel
+can be dropped into it.
+
 ## Backlog, outside the CPU work
 
 Raised by Paul 2026-09-11.  Neither is an AP68040 matter; both are recorded
