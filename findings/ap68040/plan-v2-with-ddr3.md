@@ -1644,12 +1644,41 @@ fix is firmware or gateware.
 Reported by Paul on 2026-09-09 ("the picasso 96 interface seems to be inactive
 with this core") and still true on 2026-09-11.
 
-**The control that has not been run, and should be first:** does RTG work on a
-TG68K build of the same tree?  That single test splits the problem in half.
-If it fails there too, this is an RTG/firmware defect that has nothing to do
-with the 68040 and the whole AP68040 investigation is a red herring for it.  If
-it works there and not with the AP040, it is something the CPU swap changed --
-and the candidates are narrow, because the RTG path barely touches the CPU.
+**The control is RUN (2026-09-11): RTG WORKS on the TG68K build and fails on
+the AP040.**  So it is the CPU swap, not RTG or the firmware.
+
+And it is **not a stage D3 regression**: it was reported on 2026-09-09 against
+`stage_ap040_x3cad`, which is pre-D3.  It is the AP040 core or its wrapper
+generally, which means it can be worked on independently of the D3 corruption
+hunt -- a separate, smaller problem.
+
+**Ruled out already, by reading the decode:**
+
+* *Not the 040 caching the RTG registers.*  They live in Akiko, selected at
+  `cpuaddr(31 downto 16) = X"00B8"`.  That address is outside every cacheable
+  window the wrapper gives the core: `cache_chip` is $000000-$1fffff, and the
+  Z2 test `(!a[31:24] && (a[23] ^ |a[22:21]))` evaluates FALSE for $00B8xxxx
+  (bit 23 = 1, bit 21 = 1, so 1 XOR 1 = 0).  `c_nocache` is therefore true
+  there, which also means those stores are NOT posted -- they stay synchronous.
+* *Not undecoded space returning $FFFF.*  `sel_undecoded` is gated on `sel_32`
+  and only covers the 32-bit window above 24 bits; $00B8xxxx is not in it.
+
+**Next checks, cheapest first:**
+
+1. Does the OS see the board at all -- autoconfig'd but blank, or absent?
+   Different bugs, and MuScan or the OSD should say which in a minute.
+2. The Akiko access path with the 040.  `akiko_req`/`akiko_wr` are raised only
+   when `sel_akiko = '1' and bstate(1) = '1' and slower(2) = '0'`, and cpu.xdc
+   carries both in the single-cycle `cpu_next_edge` group.  Worth confirming
+   that path actually completes for the 040's access shape.
+3. Whether the 040's LONGWORD writes to $00B8xxxx deliver both halves through
+   the wrapper's `longword_pair` path.  An RTG register set that receives only
+   half of each 32-bit write would look exactly like "inactive".
+4. The framebuffer itself lives in Zorro III fast RAM and the RTG DMA reads it
+   straight out of SDRAM, so it has the same posted-write-versus-DMA-read shape
+   as the chip RAM defect.  That would give stale or torn output rather than
+   nothing, so it is a lower-ranked explanation for "inactive" -- but it is the
+   same bug class and `sim/sdram_coherency` could test it directly.
 
 What is known about the path.  `sdram_ctrl` carries a first-class RTG master:
 `rtgAddr`, `rtgce`, `rtgfill`, `rtgRd`, arbitrated in slot 2 via `rtg_slot2ok`,
