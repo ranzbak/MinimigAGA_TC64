@@ -443,3 +443,30 @@ the island clock can be tuned later -- which the plan wants anyway.
   usable machine, program `build/stage_ap040_x3cad` (pre-D3, 0.23x, known
   good) or `build/stage_ap040_d3stable` (D3, 0.28x, corrupts only on this one
   demo with Turbo Chip on).
+
+## The bisect is built and on the board
+
+`build/stage_ap040_d3div4_ila` -- `CPU_CLK_DIVIDE=40`, so the island runs at
+28.359 MHz, the pre-D3 CPU rate, with the D3 architecture otherwise untouched.
+Timing is clean: `clk_114 -> clk_38` WNS 0.80, `clk_38 -> clk_38` **3.39**
+(it was 0.54 at divide 30 -- the jump is the longer period, and is the proof
+the divider actually took effect), zero failing endpoints apart from the same
+16 pre-existing `clk_gen_sdram -> clk_114` paths every build in this project
+has.  It is programmed and waiting.
+
+**The test:** Turbo Chip on, Kickstart turbo on, caches on, run *Way Too Rude*.
+
+* **Clean** -> a rate-dependent window.  D3 did not break anything structural;
+  it made an existing race likelier.  Then the question is which race, and the
+  candidates are the ones D3 touched in `rtl/soc/TG68K.vhd`: `bus_step` gating
+  both routers, the registered `clkena`, `bus_fresh`.  Expect roughly 0.23x on
+  SysInfo, i.e. the D3 speedup given back -- that is the price of the
+  information, not a regression.
+* **Still corrupts** -> structural, and the rate is irrelevant.  The fault is
+  in what D3 *is*.  Highest-value next step then is not another build but
+  extending `sim/sdram_coherency` with the real `TG68K.vhd` wrapper in front of
+  the controller, so the D3 wrapper itself comes under the same scoreboard that
+  just caught two bugs in an evening.
+
+Either answer halves the search, which is the first time that has been true
+since this started.
