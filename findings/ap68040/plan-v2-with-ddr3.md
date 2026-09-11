@@ -1539,6 +1539,53 @@ which is itself an invented layer and the last seam the bench models rather
 than tests), passing before and after the change; `ddr3_cpu` all legs including
 every mutant; SysInfo no lower than the stage D number.
 
+## Backlog, outside the CPU work
+
+Raised by Paul 2026-09-11.  Neither is an AP68040 matter; both are recorded
+here because this is the live plan and there is nowhere better yet.
+
+### HDMI does not re-initialise when the display is power-cycled
+
+Turn the monitor off and on again and the core does not bring the link back --
+it stays dark until the FPGA itself is reconfigured.  A sink that disappears
+and returns should be re-detected and the video path restarted.
+
+What that means in practice: hot-plug detect has to be treated as an EVENT, not
+as a level sampled once at start-up.  On HPD returning, the ADV7511 needs its
+register set re-applied -- power-up out of the low-power state, re-assert the
+AVI InfoFrame and audio configuration, and re-run EDID if the sink's timing is
+used.  The I2C path to it already exists (`adv7511_i2c.sh`,
+`sim/hostcpu-i2c-bridge/`), so this is sequencing and state, not new plumbing.
+
+Worth knowing before starting: whether the current code configures the
+transmitter once from reset or has any HPD handling at all, and whether the
+configuration lives in the 832 firmware or in RTL.  That decides whether the
+fix is firmware or gateware.
+
+### The SD card is SPI, and should be SDIO
+
+Two reasons, and the first is the one that matters.
+
+**Integrity.**  SPI mode on an SD card has no protection worth the name.  The
+data CRC is optional in SPI mode and commonly disabled; a bit flipped on the
+wire is accepted silently, which means a corrupt sector read into a mounted
+filesystem, or worse, written back.  There is no safeguard against this in the
+current path.  SDIO/SD 4-bit mode makes CRC16 per data line mandatory and the
+controller can detect and retry.
+
+**Performance.**  Four data lines instead of one, and a clock that is not
+limited by SPI framing overhead.  Roughly an order of magnitude on sustained
+transfer, which matters for HDF and ADF access and for anything that streams.
+
+Cost to be honest about: a real SD host controller is considerably more work
+than an SPI shift register -- command/response state machine, CRC7 on commands
+and CRC16 on data, the initialisation ladder (CMD0/CMD8/ACMD41/CMD2/CMD3),
+card-state tracking, and multi-block transfers with proper stop handling.  It
+also touches the 832 firmware's block layer, not only RTL.  Check first whether
+the board actually routes all four DAT lines to the FPGA; if only DAT0 is
+wired, the integrity argument still stands (1-bit SD mode also has mandatory
+CRC) but the performance argument mostly does not.
+
 ## Risks
 
 | Risk | Shows as | Mitigation |
