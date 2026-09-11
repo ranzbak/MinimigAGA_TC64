@@ -241,6 +241,33 @@ ARCHITECTURE logic OF TG68K IS
 	SIGNAL turbokick_d : std_logic := '0';
 	SIGNAL turboslow_d : std_logic := '0';
 	SIGNAL slower      : std_logic_vector(3 downto 0);
+	-- PHASE ALIGNMENT OF BUS-CYCLE STARTS (stage D3, 2026-09-11).
+	--
+	-- The SDRAM round is sixteen clk phases and enaWRreg marks four of them.
+	-- Before stage D3 the kernel advanced ONLY on those, so a CPU bus cycle
+	-- could only ever start on four fixed phases of the round.  On its own
+	-- clock the kernel advances whenever the bus is free, and 16 has no common
+	-- factor with 3, so a bus cycle can start on ANY of the sixteen -- including
+	-- phases no CPU access had ever landed on in this design.
+	--
+	-- Measured, three points, on hardware with Turbo chip RAM on:
+	--   ratio 3 (coprime with 16, all phases)   corrupts
+	--   ratio 4 (divides 16, four fixed phases) CLEAN
+	--   ratio 5 (coprime with 16, all phases)   corrupts, and worse
+	-- Ratio 5 is SLOWER than ratio 4, so this cannot be a rate-dependent race:
+	-- what ratio 4 has and the others lack is a fixed phase relationship.
+	-- cpu.xdc already records the same hazard for the 7 MHz chipset machine
+	-- ("16 and 3 are coprime, so without a guard it could latch the kernel's
+	-- outputs one clk cycle after they moved") and guards that ONE consumer
+	-- with cpu_bus_settled; it evidently reaches further than that.
+	--
+	-- So the select is held off until the first enaWRreg after `slower` has
+	-- drained, which puts every bus-cycle start back on a fixed four-phase
+	-- grid.  The kernel keeps its own clock and its full rate: this costs at
+	-- most four clk cycles on an access that actually goes to memory, and
+	-- NOTHING on a cache hit, which is where the stage D3 speedup comes from.
+	SIGNAL cpu_phase_ok   : std_logic := '0';
+	SIGNAL cpu_phase_gate : std_logic;
 
 	TYPE sync_states IS (sync0, sync1, sync2, sync3, sync4, sync5, sync6, sync7, sync8, sync9);
 	SIGNAL sync_state : sync_states;
@@ -669,10 +696,14 @@ BEGIN
 
 	cache_inhibit <= '1' WHEN sel_kickram = '1' ELSE '0';
 
-	ramcs <= NOT (NOT cpu_int AND sel_ram_d AND NOT sel_nmi_vector) OR slower(0);
+	-- See cpu_phase_ok.  Constant '1' for the TG68K, whose bus cycles are
+	-- already on the enaWRreg grid by construction, so this folds away there.
+	cpu_phase_gate <= cpu_phase_ok WHEN use_ap040 ELSE '1';
+
+	ramcs <= NOT (NOT cpu_int AND sel_ram_d AND NOT sel_nmi_vector AND cpu_phase_gate) OR slower(0);
 	-- Same shape as ramcs, slower(0) throttle included, so the DDR3 backend sees
 	-- exactly the chip-select timing sdram_ctrl sees (address one cycle early).
-	ddrcs <= NOT (NOT cpu_int AND sel_ddr_d AND NOT sel_nmi_vector) OR slower(0);
+	ddrcs <= NOT (NOT cpu_int AND sel_ddr_d AND NOT sel_nmi_vector AND cpu_phase_gate) OR slower(0);
 	-- The DDR3 address is the offset inside board 3, which the OS may have put
 	-- anywhere, so the base bits are dropped and what is left is zero-extended
 	-- to the 25-bit word address the backend takes (design.md D6, amended by
@@ -852,8 +883,9 @@ BEGIN
 		-- from configuration.
 		SIGNAL cpu_tgl   : std_logic := '0';
 		SIGNAL cpu_tgl_d : std_logic := '0';
-		SIGNAL ph_a      : std_logic := '0';
-		SIGNAL ph_b      : std_logic := '0';
+		-- ph_sr(k) is high in (T+1+k, T+2+k); cpu_ph wants (T+N-2, T+N-1), so
+		-- it is ph_sr(N-3).  Four stages covers ratios 3 to 6.
+		SIGNAL ph_sr     : std_logic_vector(3 downto 0) := (others => '0');
 		-- cpu_ph is declared in the architecture region, next to cpu_ph2: the
 		-- bus routers are outside this generate and read it (bus_step).
 
@@ -927,9 +959,9 @@ BEGIN
 		-- registers cpu_ph and the kernel samples the result on its own next
 		-- edge.  With edges at T and T+N that cycle is (T+N-2, T+N-1), and
 		-- the XOR of the toggle and its delayed copy marks (T+1, T+2).  Those
-		-- coincide only at N = 3, which is why ph_b exists: one more stage
-		-- for N = 4.  cpu_clk_ratio is a generic, so the selection below is a
-		-- constant and synthesises to a wire, not a mux.
+		-- coincide only at N = 3, so the shift register below supplies one
+		-- more stage per ratio step.  cpu_clk_ratio is a generic, so the index
+		-- is a constant and the selection synthesises to a wire, not a mux.
 		--
 		-- This is the bug that made the first divide-by-4 bitstream show a
 		-- black screen: the marker was asserted to be ratio-agnostic, the
@@ -938,13 +970,12 @@ BEGIN
 		BEGIN
 			IF rising_edge(clk) THEN
 				cpu_tgl_d <= cpu_tgl;
-				ph_a      <= cpu_tgl XOR cpu_tgl_d;   -- high in (T+1, T+2)
-				ph_b      <= ph_a;                    -- high in (T+2, T+3)
+				ph_sr     <= ph_sr(2 DOWNTO 0) & (cpu_tgl XOR cpu_tgl_d);
 				cpu_ph2   <= cpu_ph;
 			END IF;
 		END PROCESS;
 
-		cpu_ph <= ph_a WHEN cpu_clk_ratio = 3 ELSE ph_b;
+		cpu_ph <= ph_sr(cpu_clk_ratio - 3);
 
 		-- The snoop holder; see the note beside its signals.
 		PROCESS(clk)
@@ -1470,6 +1501,21 @@ BEGIN
 	-- (cpu_ce_phase is clkena_in there, and cpu_ph is a constant '0', so
 	-- clkena_r folds away with the rest of the AP68040 plumbing).
 	clkena <= clkena_r WHEN use_ap040 ELSE (cpu_ce_phase AND bus_release);
+
+	-- The phase gate; see cpu_phase_ok's declaration.  Cleared when the kernel
+	-- advances (a new access may be coming) and set again only on an enaWRreg
+	-- phase once `slower` has drained, so the select opens on a fixed four
+	-- phases of the sixteen-phase round however the island clock is divided.
+	PROCESS(clk)
+	BEGIN
+		IF rising_edge(clk) THEN
+			IF clkena = '1' THEN
+				cpu_phase_ok <= '0';
+			ELSIF clkena_in = '1' AND slower(0) = '0' THEN
+				cpu_phase_ok <= '1';
+			END IF;
+		END IF;
+	END PROCESS;
 
 	PROCESS(clk)
 	BEGIN

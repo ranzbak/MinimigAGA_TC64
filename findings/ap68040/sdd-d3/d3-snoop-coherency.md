@@ -470,3 +470,77 @@ has.  It is programmed and waiting.
 
 Either answer halves the search, which is the first time that has been true
 since this started.
+
+---
+
+# Phase is proven; aligning the bus-cycle START is not the fix (2026-09-11)
+
+## The three-point proof
+
+Hardware, Turbo chip RAM on, *Way Too Rude*:
+
+| island ratio | clock | vs the 16-phase SDRAM round | result |
+|---|---|---|---|
+| 3 | 37.81 MHz | coprime -- walks all 16 phases | corrupts |
+| **4** | **28.36 MHz** | **divides 16 -- four fixed phases** | **CLEAN, 0.21x** |
+| 5 | 22.69 MHz | coprime -- walks all 16 phases | corrupts WORSE: flashing lines in Workbench, then a memory-corruption Guru, 0.17x |
+
+Ratio 5 is **slower** than the ratio that is clean, so this cannot be a
+rate-dependent race -- a slower CPU cannot lose a window a faster one wins.
+What ratio 4 has and the other two lack is a fixed phase relationship to the
+SDRAM round.  Rate is eliminated by contradiction.
+
+Ratio 5 also corrupted the **Workbench**, not just the demo, which says the
+defect was never demo-specific; *Way Too Rude* was only the workload that
+provoked it soonest.
+
+Linear scaling holds across all three (0.21 x 37.8/28.4 = 0.28, and 0.17 is
+ratio 5's prediction to two places), so the island clock buys speed exactly and
+nothing else.
+
+## The fix that did NOT work
+
+`cpu_phase_ok` in `rtl/soc/TG68K.vhd`: hold `ramcs`/`ddrcs` off until the first
+`enaWRreg` after `slower` has drained, putting every bus-cycle START back on a
+fixed four-phase grid while the kernel keeps its own clock and full rate.
+
+Result: **SysInfo 0.28x -- the gate costs nothing, exactly as predicted -- and
+*Way Too Rude* still corrupts.**
+
+So the cost model was right and the hypothesis was too narrow.  Aligning the
+REQUEST is not sufficient.
+
+## What that leaves, and the refinement it points to
+
+Three readings, in the order they are worth testing:
+
+1. **The return path, not the request path.**  This is the strongest, and it is
+   what the failed fix actually rules in.  The gate pins when a select OPENS.
+   It does nothing about when the answer ARRIVES: `ramready`/`cpuena` comes
+   back on whatever clk phase the controller finishes on, and the kernel
+   samples it on its own clk_38 edge.  At ratio 4 the kernel's edges divide the
+   round, so completions land in a fixed relationship to it; at ratios 3 and 5
+   they do not.  If the hazard is a completion sampled at a phase where some
+   producer is mid-update, this fix could never have helped -- and the
+   registered `clkena` decided one edge early (the D3-FIX) is exactly the sort
+   of thing that would be sensitive to it.
+2. **The grid is fixed but wrong.**  The gate lands starts on {3,7,11,15};
+   pre-D3 used {5,9,13,1}.  Ratio 4's set is a third set and is clean, which is
+   why "fixed" looked sufficient -- but it is cheap to shift the grid and see.
+3. **Ratio 4 is clean for some other reason entirely** and the phase reading is
+   coincidence.  Hard to sustain against three points, but not impossible.
+
+`cpu_phase_ok` is kept in the tree.  It is cheap (0.28x is unchanged), it is
+correct as far as it goes, and reading (1) says the next experiment sits on top
+of it rather than replacing it.
+
+## State
+
+* Board holds `build/stage_ap040_d3phase_ila` -- 0.28x, corrupts on the demo.
+* `build/stage_ap040_d3div4_ila` -- 0.21x, **stable**, the only clean D3 build.
+* `build/stage_ap040_x3cad` -- 0.23x, pre-D3, stable; still the best thing to
+  run if the machine has to be usable.
+* Timing on the phase build: 0 failing endpoints on every CPU pair, but
+  `clk_38 -> clk_38` WNS is **0.11 ns** against 0.63 in `d3stable`.  Placement
+  variance rather than the gate, which is outside the kernel -- noted because a
+  build with 0.11 ns has been worth distrusting before.
