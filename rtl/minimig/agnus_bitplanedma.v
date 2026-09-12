@@ -86,6 +86,10 @@ wire         mod;                 // end of data fetch, add modulo
 
 reg          hardena;             // hardware display data fetch enable ($18-$D8)
 reg          softena;             // software display data fetch enable
+// ECS/AGA only: remembers that soft_start and soft_stop coincided, so the
+// fetch window opened by a degenerate DDFSTRT == DDFSTOP is closed again after
+// exactly one fetch cycle.  See the softena block below.
+reg          softena_off;
 reg          ddfena;              // combined display data fetch
 reg          ddfena_0;
 
@@ -347,13 +351,31 @@ always @ (posedge clk) begin
 end
 
 // softena : software display data fetch window
+//
+// DDFSTRT == DDFSTOP is a degenerate window and the two chipsets disagree
+// about it.  On OCS the fetch runs on to the hard stop; on ECS and AGA it must
+// stop after ONE complete fetch cycle.  Only the OCS behaviour was implemented
+// here, so an ECS/AGA program using the degenerate window over-fetched -- the
+// sprite/copper "chunky" section of Sanity's Roots 2.0 renders wrong because
+// of it.
+//
+// soft_start and soft_stop are both true in that slot.  The set branch below
+// wins the cycle, which is the one fetch cycle ECS owes; softena_off remembers
+// that it happened and clears softena on the NEXT hpos[0].  Gated on `ecs`, so
+// OCS timing is untouched by construction.
+//
+// From MiSTer commit 7cd8a422, "Fix for demo Sanity: Roots 2.0
+// sprite-copper-chunky section (#184)", 2025-02-03, credited to Allistair
+// Robinson.  findings/aga-chipset/mister-fixes.md section 1.8.
 always @ (posedge clk) begin
   if (clk7_en) begin
-    if (hpos[0])
+    if (hpos[0]) begin
+      softena_off <= #1 soft_stop && soft_start && ecs;
       if (soft_start && (ecs || vdiwena && dmaena) && !ddfstrt_sel) // OCS: display can start only when vdiwena condition is true
         softena <= #1 1'b1;
-      else if (soft_stop || !ecs && hard_stop)
+      else if (soft_stop || (!ecs && hard_stop) || softena_off)
         softena <= #1 1'b0;
+    end
   end
 end
 

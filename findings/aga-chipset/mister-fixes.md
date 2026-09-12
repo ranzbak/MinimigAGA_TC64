@@ -108,9 +108,9 @@ Each of these touches one or two files that are otherwise near-identical between
 - **MiSTer commit:** `7cd8a422` "Fix for demo Sanity: Roots 2.0 sprite-copper-chunky section (#184)", 2025-02-03 ("Kudos go to Allistair Robinson").
 - **Their code:** `rtl/agnus_bitplanedma.v` adds `reg softena_off`, set to `soft_stop && soft_start && ecs` each `hpos[0]`, and ORed into the softena clear condition.
 - **Our code:** `rtl/minimig/agnus_bitplanedma.v:349-357` — the pre-fix `softena` block.
-- **Status:** **we lack it.**
-- **Risk/effort:** ~6 lines in a block that is otherwise identical between the trees. The change is gated on `ecs` so OCS titles are untouched by construction.
-- **How to test here:** Sanity "Roots 2.0", the sprite-copper-chunky section.
+- **Status:** **APPLIED 2026-09-12** (`rtl/minimig/agnus_bitplanedma.v`). `softena_off` is set from `soft_stop && soft_start && ecs` on each `hpos[0]` and ORed into the softena clear, so the degenerate window opens for exactly one fetch cycle and is closed on the next slot. Gated on `ecs`, so OCS timing is unchanged by construction.
+- **Risk/effort:** ~6 lines in a block that is otherwise identical between the trees.
+- **How to test here:** Sanity "Roots 2.0", the sprite-copper-chunky section. **NOT YET TESTED ON HARDWARE** -- applied during a session with no JTAG access. It is a reading-verified transcription of the upstream change, not a confirmed fix.
 
 ## 1.9 BPLxMOD not registered, and no scandouble-modulo delay (RAMJAM Copperslave)
 
