@@ -188,13 +188,24 @@ always begin #4407 clk = 1'b1; #4408 clk = 1'b0; end
 // off clk keeps the two edges in the SAME time step instead of a delta cycle
 // apart, which is what makes a clk register sample the pre-edge value of a
 // clk_cpu one -- the hold check the real design has to meet.
+// CPU_RATIO: clk / clk_cpu.  3 is stage D3 as shipped.  4 runs the kernel at
+// the pre-D3 rate, and on hardware ratio 4 is the one clean configuration
+// while 3 and 5 corrupt -- so a result that differs between the two here is
+// the simulation reproducing the hardware's phase dependence.  The default
+// period is exactly the one this bench always used (13222 + 13223 ps).
+`ifndef CPU_RATIO
+`define CPU_RATIO 3
+`endif
+localparam integer CPUP    = `CPU_RATIO * 8815;
+localparam integer CPUP_HI = CPUP / 2;
+localparam integer CPUP_LO = CPUP - CPUP_HI;
 reg clk_cpu = 1'b0;
 initial begin
   #4407;
   forever begin
     clk_cpu = 1'b1;
-    #13222 clk_cpu = 1'b0;
-    #13223;
+    #CPUP_HI clk_cpu = 1'b0;
+    #CPUP_LO;
   end
 end
 
@@ -724,7 +735,7 @@ wire        ramready_w;                        //   see the line-buffer model be
 // the AP68040 sources; everything else in this bench is identical, which is
 // the whole point of that core presenting a TG68K-shaped port set.
 `ifdef CPU_AP040
-TG68K #(.cpu_core("AP040")) tg68k (
+TG68K #(.cpu_core("AP040"), .cpu_clk_ratio(`CPU_RATIO)) tg68k (
 `else
 TG68K #(.cpu_core("TG68K")) tg68k (
 `endif
