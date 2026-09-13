@@ -283,6 +283,32 @@ endtask
 // slot 1 while the chipset takes slot 1 first -- an agent that never pauses
 // starves the CPU completely.
 localparam [23:1] DMA_BASE = 23'h020000;   // well clear of the 2 KB program
+// Where DMA entry k lives.  By default a private window, which proves the
+// controller path but CANNOT reproduce a coherency bug: the 68k program never
+// touches it, so CPU and chipset never share a cache line.  With DMA_OVERLAP
+// the first six entries move into the longword slots phase 7 of
+// ddr3_cpu_test.asm leaves unused INSIDE the lines it reads ($8000 ADDQ,
+// $8040 old List, $8080 node, $80C0 new List) -- same 16-byte cpu_cache_new
+// line, same 040 D-cache set, disjoint words, so the program's own checks stay
+// valid while the chipset writes underneath them.  Every slot is a multiple
+// of 4, as a chipset write covers a longword pair.
+function [23:1] dma_addr(input integer k);
+  begin
+`ifdef DMA_OVERLAP
+    case (k)
+      0: dma_addr = 23'h004004;   // byte $8008
+      1: dma_addr = 23'h004006;   // byte $800C
+      2: dma_addr = 23'h004026;   // byte $804C
+      3: dma_addr = 23'h004044;   // byte $8088
+      4: dma_addr = 23'h004046;   // byte $808C
+      5: dma_addr = 23'h004066;   // byte $80CC
+      default: dma_addr = DMA_BASE + {k[21:0], 1'b0};
+    endcase
+`else
+    dma_addr = DMA_BASE + {k[21:0], 1'b0};
+`endif
+  end
+endfunction
 reg  [15:0] dma_model [0:63];
 integer     dma_i, dma_writes = 0, dma_err = 0;
 reg         dma_run = 1'b0;
@@ -309,7 +335,7 @@ initial begin : dma_agent
     else begin
       dma_i = {$random(dma_seed)} % 64;
       dma_model[dma_i] = dma_model[dma_i] + 16'h0101;
-      ch_write(DMA_BASE + {dma_i[22:1], 1'b0}, dma_model[dma_i]);   // 2-word spacing
+      ch_write(dma_addr(dma_i), dma_model[dma_i]);
       dma_writes = dma_writes + 1;
       repeat (16 * (1 + ({$random(dma_seed)} % 3))) @(posedge clk);
     end
@@ -324,14 +350,14 @@ task dma_verify;
     dma_run = 1'b0;
     repeat (64) @(posedge clk);
     for (chk_i = 0; chk_i < 64; chk_i = chk_i + 1) begin
-      vq_adr = DMA_BASE + {chk_i[22:1], 1'b0}; vq_req = 1'b1;       // 2-word spacing
+      vq_adr = dma_addr(chk_i); vq_req = 1'b1;
       while (!vq_done) @(posedge clk);
       chk_d = vq_dat; vq_done = 1'b0;
       if (chk_d !== dma_model[chk_i]) begin
         dma_err = dma_err + 1;
         if (dma_err <= 20)
           $display("FAIL DMA window %06h: got %04h want %04h",
-                   {DMA_BASE + {chk_i[22:1], 1'b0}, 1'b0}, chk_d, dma_model[chk_i]);
+                   {dma_addr(chk_i), 1'b0}, chk_d, dma_model[chk_i]);
       end
     end
     $display("=== DMA window: %0d writes during CPU execution, %0d wrong ===",
@@ -347,7 +373,7 @@ task preload_sdram;
       ch_write(pl_i[23:1], {progbytes[pl_i], progbytes[pl_i+1]});
     for (pl_i = 0; pl_i < 64; pl_i = pl_i + 1) begin
       dma_model[pl_i] = 16'hD000 + pl_i[15:0];
-      ch_write(DMA_BASE + {pl_i[22:1], 1'b0}, dma_model[pl_i]);     // 2-word spacing
+      ch_write(dma_addr(pl_i), dma_model[pl_i]);
     end
     $display("INFO: preload done at %t", $time);
   end
