@@ -617,3 +617,20 @@ is the next run.  If that is clean too, the remaining difference from the
 hardware is the SHAPE of the traffic -- a chunky-to-planar demo writes whole
 bitplanes the chipset is concurrently displaying, not a handful of longwords --
 and the kernel's outputs into sdram_ctrl, which no test has yet targeted.
+
+## Shared cache lines, phase 7 repeated 40 times: clean (2026-09-14)
+
+`REALSDRAM=1 DMA_OVERLAP=1 P7LOOPS=40`:
+
+    INFO: program phase 8 at 2969830797.0 ps     (1.89 ms unlooped)
+    DDR3 CPU TB: PASS  (68k program completed all phases)
+    DMA window: 6457 writes during CPU execution, 0 wrong
+
+Phase 8 moved out by ~1.08 ms, so all forty passes really ran (~27 us each),
+with the chipset writing ~7 times in 8 into the unused slots of the lines those
+passes read and write.  Sustained chipset DMA inside the CPU's cache lines does
+not reproduce the hardware corruption in this bench.
+
+That still leaves the direction every DMA agent so far has skipped: the CPU
+writes and the CHIPSET reads.  The P2C probe (commit 99d7a12) is the first test
+of that with the real CPU and real controller, and runs next.
