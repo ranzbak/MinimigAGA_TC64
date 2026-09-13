@@ -1492,6 +1492,54 @@ nothing in the CPU capture points at it. **Do not treat D3 as finished on
 hardware until this either recurs with a signature or fails to recur over a
 measured number of cold boots.**
 
+## D4 — make the crossing an actual handshake, not a phase argument
+
+Paul, 2026-09-13: *"The whole CPU signalling design is made to be asynchronous,
+so at least we know it's possible, it'll be work though."*  That is the right
+reading and it names the destination.
+
+**The interface already IS a handshake.**  `bus_ready` means "the core runs
+when memory answers" -- upstream's `~cpu_req | bus_complete | bus_berr`.
+Nothing in the design demands a fixed timing relationship between the CPU and
+the memory side.
+
+**But stage D3 did not implement it as one.**  `cpu.xdc` states the choice
+plainly: *"The kernel's crossings to and from clk_114 are SYNCHRONOUS 1:3, not
+a CDC."*  Every crossing is a level sampled on an argument about which
+`clk_114` edge coincides with which `clk_38` edge.
+
+**The evidence attacks exactly that.**  The corruption is phase-dependent:
+ratios coprime with the sixteen-phase SDRAM round corrupt (3 and 5), a ratio
+that divides it does not (4), and a SLOWER coprime ratio corrupts worse -- so
+it is not rate.  A design resting on edge coincidence is the one thing that
+could behave that way, and "this is ratio-agnostic" is a claim this project has
+now made wrongly twice (the phase marker, and the bus-start alignment).
+
+**The precedent is already in the tree and it is clean.**  The MMU table walker
+and the line-fill channel cross as toggle-plus-acknowledge, and neither has
+ever been implicated in any of this.  What keeps failing is the IMPLICIT
+crossings -- `clkena`, `ramready`, `datatg68` -- levels sampled on a phase
+argument.
+
+**What D4 would be:** a real request/acknowledge crossing on the memory
+handshake, with synchronisers, so the clock ratio becomes a free parameter
+instead of a correctness premise.
+
+**Cost, honestly:** two clocks of synchroniser latency per access in each
+direction.  On a `clk_38` memory access that is a few percent, and it is only
+paid on accesses that actually reach memory -- nothing on a cache hit, which is
+where the stage D3 speedup comes from.  Against that it buys: ratios that are
+not 3, including ratios ABOVE 3 where the remaining performance is, and an end
+to the class of bug that has consumed 2026-09-08..13.
+
+**Sequencing.**  D4 is the destination but not necessarily the next step: it is
+a rewrite of the crossing, and doing it before the current defect is understood
+would throw away the one clean control (pre-D3 works) and risk fixing the bug
+by accident without knowing which crossing was wrong.  Finish the
+`sim/ddr3_cpu` REALSDRAM work first -- that bench can observe `ramready`'s
+arrival phase against the kernel's sampling edge directly, which no hardware
+capture could -- then decide whether D4 is a repair or a redesign.
+
 ## Stage E — collapse the adapter stack
 
 **Paul, 2026-09-11, after three days of coherency bugs: "Is a wrapper in a
