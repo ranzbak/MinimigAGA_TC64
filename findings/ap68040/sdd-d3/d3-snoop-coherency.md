@@ -544,3 +544,30 @@ of it rather than replacing it.
   `clk_38 -> clk_38` WNS is **0.11 ns** against 0.63 in `d3stable`.  Placement
   variance rather than the gate, which is outside the kernel -- noted because a
   build with 0.11 ns has been worth distrusting before.
+
+---
+
+# Ruled out: `datatg68` sampled off-edge (2026-09-13)
+
+The D4 contract enumeration found `data_in <- datatg68` to be the one crossing
+into clk_38 that is neither held stable across the capture window nor shaped
+into a pulse on the destination's edge.  `datatg68_r` in `rtl/soc/TG68K.vhd`
+captures the read data on the same clk edge that decides `clkena_r`, so the
+kernel gets data and enable from one instant.
+
+Hardware, `build/stage_ap040_d3datareg_ila` (ratio 3, phase gate, data
+capture; timing clean, 0 failing endpoints on every CPU pair): **Way Too Rude
+with chip and Kickstart turbo still corrupts.**
+
+So the contract gap was real on paper and is not the defect.  The change is
+kept: it makes the crossing correct by construction for one register, the same
+reasoning that kept `cpu_phase_ok`.
+
+Crossed off so far, all with evidence: lost snoops to the 040, snoop crossing
+timing, the 040's I/D caches, clock rate, phase alignment of bus-cycle starts,
+the Kickstart turbo path, `cacheline_clr`, temperature, the AP68040 core itself
+(identical commit pre-D3 and D3), upstream's cache race (made it worse), and now
+the read-data crossing.  Every clk_114 -> clk_38 input on the contract list is
+now either proven or fixed and still corrupting, which says the defect is NOT a
+crossing INTO the kernel.  The remaining direction is the kernel's OUTPUTS into
+clk_114 -- address, bus state, write data -- as sampled by sdram_ctrl.

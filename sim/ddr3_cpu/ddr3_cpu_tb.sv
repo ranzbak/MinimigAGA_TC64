@@ -209,11 +209,150 @@ initial begin
   board_reset_n = 1'b1;
   sdctl_rst     = 1'b1;
   wait (ddr_ready === 1'b1);
+`ifdef REALSDRAM
+  // With the real controller there is no chipmem array feeding the CPU, so the
+  // program has to be in SDRAM before the 040 fetches anything.  Written
+  // through the CHIPSET port rather than poked into the vendor model's banks:
+  // that uses the controller's own address path, so it cannot disagree with
+  // the mapping the CPU will use to read it back.
+  sdram_reset_in = 1'b1;
+  wait (sdram_reset_out === 1'b1);
+  repeat (32) @(posedge clk);
+  preload_sdram;
+`endif
   repeat (20) @(posedge clk);
+`ifdef NOCPU
+  // CONTROL: the CPU is never released, so the chipset DMA agent is the ONLY
+  // master on the controller.  Same number of writes as the CPU run made.  If
+  // the DMA window is still wrong here, the fault is in the bench or in
+  // sdram_ctrl's chipset path and has nothing to do with the CPU; if it is
+  // clean here and wrong with the CPU running, CPU contention causes it.
+  dma_run = 1'b1;
+  wait (dma_writes >= 3960);
+  dma_verify;
+  $display("DDR3 CPU TB: NOCPU CONTROL -- %0d writes, %0d wrong", dma_writes, dma_err);
+  $finish;
+`endif
   tg68_rst = 1'b1;
+`ifdef REALSDRAM
+  dma_run = 1'b1;                 // chipset DMA runs for as long as the CPU does
+`endif
   $display("INFO: CPU released at %t (ddr_ready=%b init_done=%b pll_locked=%b)",
            $time, ddr_ready, init_done, pll_locked);
 end
+
+`ifdef REALSDRAM
+// ---- chipset-port helpers, shared by the preload and the DMA agent ----
+localparam [3:0] CH_PH2 = 4'd2, CH_PH12 = 4'd12, CH_PH15 = 4'd15;
+
+task ch_wait(input [3:0] st);
+  begin @(posedge clk); while (u_sdram.sdram_state !== st) @(posedge clk); end
+endtask
+
+task ch_write(input [23:1] a, input [15:0] d);
+  begin
+    ch_wait(CH_PH15);
+    chipAddr = a; chipWR = d; chipWR2 = 16'hDEAD;   // must be MASKED off
+    chipRW = 1'b0; chip_dma = 1'b1;
+    chipL = 1'b0; chipU = 1'b0; chipL2 = 1'b1; chipU2 = 1'b1;
+    ch_wait(CH_PH2);
+    chipRW = 1'b1;
+    ch_wait(CH_PH12);
+  end
+endtask
+
+task ch_read(input [23:1] a, output [15:0] d);
+  begin
+    ch_wait(CH_PH15);
+    chipAddr = a; chipRW = 1'b1; chip_dma = 1'b0; chipL = 1'b0; chipU = 1'b0;
+    ch_wait(CH_PH2);
+    chip_dma = 1'b1;
+    ch_wait(CH_PH12);
+    d = chipRD;
+    ch_wait(CH_PH15);
+  end
+endtask
+
+// ---- the chipset DMA agent -------------------------------------------------
+// THIS is the ingredient that makes the configuration the corrupting one: the
+// chipset hammering chip RAM in SDRAM while the CPU executes out of it.  Its
+// window is disjoint from the program's, so any mismatch is a controller
+// coherency failure and not the CPU overwriting its own test data.
+//
+// Duty-cycled, because chip RAM is bank 0 and a CPU access there can only use
+// slot 1 while the chipset takes slot 1 first -- an agent that never pauses
+// starves the CPU completely.
+localparam [23:1] DMA_BASE = 23'h020000;   // well clear of the 2 KB program
+reg  [15:0] dma_model [0:63];
+integer     dma_i, dma_writes = 0, dma_err = 0;
+reg         dma_run = 1'b0;
+integer     dma_seed = 32'h0BADF00D;
+
+// ONE PROCESS OWNS THE CHIPSET PORT.  dma_verify asks for reads through this
+// mailbox instead of calling ch_read itself: two processes assigning chipAddr
+// is a race that reads exactly like a DUT bug, and the first version of this
+// agent had it.
+reg        vq_req = 1'b0, vq_done = 1'b0;
+reg [23:1] vq_adr;
+reg [15:0] vq_dat;
+
+initial begin : dma_agent
+  wait (dma_run === 1'b1);
+  forever begin
+    if (vq_req) begin
+      vq_req = 1'b0;
+      ch_read(vq_adr, vq_dat);
+      vq_done = 1'b1;
+      while (vq_done) @(posedge clk);
+    end
+    else if (!dma_run) @(posedge clk);
+    else begin
+      dma_i = {$random(dma_seed)} % 64;
+      dma_model[dma_i] = dma_model[dma_i] + 16'h0101;
+      ch_write(DMA_BASE + {dma_i[22:1], 1'b0}, dma_model[dma_i]);   // 2-word spacing
+      dma_writes = dma_writes + 1;
+      repeat (16 * (1 + ({$random(dma_seed)} % 3))) @(posedge clk);
+    end
+  end
+end
+
+// Read the DMA window back and check every word survived the CPU's traffic.
+integer chk_i;
+reg [15:0] chk_d;
+task dma_verify;
+  begin
+    dma_run = 1'b0;
+    repeat (64) @(posedge clk);
+    for (chk_i = 0; chk_i < 64; chk_i = chk_i + 1) begin
+      vq_adr = DMA_BASE + {chk_i[22:1], 1'b0}; vq_req = 1'b1;       // 2-word spacing
+      while (!vq_done) @(posedge clk);
+      chk_d = vq_dat; vq_done = 1'b0;
+      if (chk_d !== dma_model[chk_i]) begin
+        dma_err = dma_err + 1;
+        if (dma_err <= 20)
+          $display("FAIL DMA window %06h: got %04h want %04h",
+                   {DMA_BASE + {chk_i[22:1], 1'b0}, 1'b0}, chk_d, dma_model[chk_i]);
+      end
+    end
+    $display("=== DMA window: %0d writes during CPU execution, %0d wrong ===",
+             dma_writes, dma_err);
+  end
+endtask
+
+integer pl_i;
+task preload_sdram;
+  begin
+    $display("INFO: preloading %0d words into SDRAM through the chipset port", nread/2);
+    for (pl_i = 0; pl_i < nread; pl_i = pl_i + 2)
+      ch_write(pl_i[23:1], {progbytes[pl_i], progbytes[pl_i+1]});
+    for (pl_i = 0; pl_i < 64; pl_i = pl_i + 1) begin
+      dma_model[pl_i] = 16'hD000 + pl_i[15:0];
+      ch_write(DMA_BASE + {pl_i[22:1], 1'b0}, dma_model[pl_i]);     // 2-word spacing
+    end
+    $display("INFO: preload done at %t", $time);
+  end
+endtask
+`endif
 
 //-----------------------------------------------------------------
 // sdram_ctrl's enable cadence
@@ -254,9 +393,18 @@ always @(posedge clk) begin
     ena7WRreg <= 1'b0;
   end else begin
     ph        <= ph + 4'd1;
+`ifdef REALSDRAM
+    // sdram_ctrl produces these on hardware, and the corruption depends on the
+    // CPU's phase against the sixteen-phase round -- so the bench must not
+    // invent them here.
+    ena28     <= enaWR_real;
+    ena7RDreg <= ena7RD_real;
+    ena7WRreg <= ena7WR_real;
+`else
     ena28     <= cad_ena_cpu;
     ena7RDreg <= cad_ena7rd;
     ena7WRreg <= cad_ena7wr;
+`endif
   end
 end
 
@@ -464,6 +612,17 @@ wire [ 6:0] tg68_ddrcpustate = {tg68_cpustate[6:3], tg68_ddrcs, tg68_cpustate[1:
 reg  [15:0] tg68_dat_in, tg68_dat_in2;         // chipset-side read data
 reg  [15:0] fromram;                           // SDRAM-side read data
 reg         ramready;                          // the held (slow-path) acknowledge
+`ifdef REALSDRAM
+// The real controller's side of the handshake; see real_sdram.vh.
+wire [15:0] fromram_real;
+wire        ramready_real;
+wire        enaWR_real, ena7RD_real, ena7WR_real;
+reg         sdram_reset_in = 1'b0;
+reg  [3:0]  c16_real = 4'd0;
+always @(posedge clk) c16_real <= c16_real + 4'd1;
+wire        clk7_en_real = (c16_real < 4'd4);
+`include "real_sdram.vh"
+`endif
 wire [15:0] fromram_w;                         // what the wrapper actually sees;
 wire        ramready_w;                        //   see the line-buffer model below
 
@@ -828,8 +987,13 @@ reg         lb_busy    = 1'b0;
 reg  [15:0] fromram_lb = 16'h0000;
 wire        ram_isrd   = (tg68_cpustate[0] === 1'b0);  // 00 fetch or 10 data read
 wire        lb_valid   = (lb_match === 1'b1) && !lb_busy && ram_isrd && (cache_inhibit === 1'b0);
+`ifdef REALSDRAM
+assign      ramready_w = ramready_real;   // the real sdram_ctrl answers
+assign      fromram_w  = fromram_real;
+`else
 assign      ramready_w = ramready || lb_valid;
 assign      fromram_w  = fromram_lb;
+`endif
 integer     lb_hits = 0;
 always @(posedge clk) begin
   lb_match   <= (tg68_cad[16:4] === lb_adr) && !lb_dirty;
@@ -857,8 +1021,13 @@ initial begin
 end
 `else
 wire        lb_valid   = 1'b0;
+`ifdef REALSDRAM
+assign      ramready_w = ramready_real;   // the real sdram_ctrl answers
+assign      fromram_w  = fromram_real;
+`else
 assign      ramready_w = ramready;
 assign      fromram_w  = fromram;
+`endif
 `endif
 
 reg         lw_pend;                 // a paired 32-bit write awaits its low word
@@ -1670,6 +1839,18 @@ initial begin : main
 `endif
 
   $display("");
+`ifdef REALSDRAM
+  // Stop the DMA agent and check every word it wrote survived the CPU's
+  // traffic through the real controller.  A mismatch here is a chip-RAM
+  // coherency failure between the two masters -- the hardware symptom.
+  dma_verify;
+  if (dma_err != 0) begin
+    nfail = nfail + 1;
+    $display("DDR3 CPU TB: FAIL  %0d words in the chipset DMA window were wrong after",
+             dma_err);
+    $display("                   the CPU ran against it -- chip RAM coherency.");
+  end
+`endif
   if (nfail == 0) $display("DDR3 CPU TB: 2 passed, 0 failed");
   else            $display("DDR3 CPU TB: %0d checks failed", nfail);
   $display("");

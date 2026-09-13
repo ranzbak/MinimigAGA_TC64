@@ -315,6 +315,13 @@ echo "verilog work \"$R/rtl/ddr3/ddr3_top.v\""            >> $PRJ
 echo "verilog work \"$R/rtl/ddr3/ddr3_cdc.v\""            >> $PRJ
 echo "verilog work \"$R/rtl/ddr3/ddr3_fastram.v\""        >> $PRJ
 echo "verilog work \"$R/rtl/sdram/cpu_enable_cadence.v\"" >> $PRJ
+if [ -n "$REALSDRAM" ]; then
+    # The REAL controller and the vendor SDRAM part, so that the AP68040, the
+    # wrapper, sdram_ctrl and a chipset DMA master all run together -- the
+    # configuration the hardware runs and that nothing simulated before.
+    echo "verilog work \"$R/rtl/sdram/sdram_ctrl.v\""    >> $PRJ
+    echo "verilog work \"$R/lib/models/AS4C16M16SA.v\""  >> $PRJ
+fi
 echo "verilog work \"$R/rtl/sdram/cpu_cache_new.v\""      >> $PRJ
 echo "verilog work \"$R/rtl/sdram/dpram_inf_256x32.v\""   >> $PRJ
 echo "verilog work \"$R/rtl/sdram/dpram_inf_be_1024x32.v\"" >> $PRJ
@@ -331,7 +338,7 @@ AP040_ELAB=""
 if [ "$CPU" = "ap040" ]; then AP040_ELAB="-i $R/lib/AP68040/rtl -d CPU_AP040"; fi
 
 "$VIVADO_PATH/bin/xelab" -prj $PRJ -i "$LIB/tb/ddr3_core_xc7" $AP040_ELAB \
-    -d SOC_SIM -debug typical -relax \
+    -d SOC_SIM ${REALSDRAM:+-d REALSDRAM -i $D} ${NOCPU:+-d NOCPU} -debug typical -relax \
     -L secureip -L unisims_ver -L unimacro_ver \
     ddr3_cpu_tb glbl -s cpu_sim
 

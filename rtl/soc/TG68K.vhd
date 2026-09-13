@@ -273,6 +273,23 @@ ARCHITECTURE logic OF TG68K IS
 	SIGNAL sync_state : sync_states;
 	SIGNAL datatg68_c : std_logic_vector(15 downto 0);
 	SIGNAL datatg68   : std_logic_vector(15 downto 0);
+	-- The kernel's read data, CAPTURED AT THE EDGE THAT GRANTS THE ENABLE.
+	--
+	-- datatg68 is a combinational mux of fromram / fromddr / datatg68_c that
+	-- changes on clk edges, and the AP68040 samples it on a clk_cpu edge whose
+	-- position relative to those changes depends on the clock ratio.  Of every
+	-- signal crossing into clk_cpu it is the ONLY one that is neither held
+	-- stable across the capture window (what a multicycle asserts, and what
+	-- bus_step makes true for the two routers) nor shaped into a pulse on the
+	-- destination's edge (clkena_r, snp_stb_held).  cpu.xdc argues only that it
+	-- must not be RELAXED -- "genuinely single-cycle" -- which is not the same
+	-- as showing it is stable when the kernel looks at it.
+	--
+	-- clkena_r is decided at T+N-2 and the kernel advances at T+N, so capturing
+	-- the data on that same edge hands the core a value and an enable from ONE
+	-- instant, stable for the whole clk_cpu period.  Zero cost: it is one
+	-- register on a path that had two clk cycles of slack anyway.
+	SIGNAL datatg68_r : std_logic_vector(15 downto 0) := (others => '0');
 	SIGNAL w_datatg68 : std_logic_vector(15 downto 0);
 	SIGNAL ramcs      : std_logic;
 
@@ -821,7 +838,7 @@ BEGIN
 
 				nReset         => reset,    -- : in std_logic:='1';      --low active
 				clkena_in      => clkena,   -- : in std_logic:='1';
-				data_in        => datatg68, -- : in std_logic_vector(15 downto 0);
+				data_in        => datatg68_r, -- captured with the enable; see its note
 				IPL            => cpuIPL,   -- : in std_logic_vector(2 downto 0):="111";
 				IPL_autovector => '1',      -- : in std_logic:='0';
 				CPU            => cpu,
@@ -1494,6 +1511,10 @@ BEGIN
 	BEGIN
 		IF rising_edge(clk) THEN
 			clkena_r <= cpu_ph AND bus_release;
+			-- capture the read data with the grant; see datatg68_r
+			IF (cpu_ph AND bus_release) = '1' THEN
+				datatg68_r <= datatg68;
+			END IF;
 		END IF;
 	END PROCESS;
 
