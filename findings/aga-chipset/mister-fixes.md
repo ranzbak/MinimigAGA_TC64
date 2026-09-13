@@ -110,7 +110,9 @@ Each of these touches one or two files that are otherwise near-identical between
 - **Our code:** `rtl/minimig/agnus_bitplanedma.v:349-357` — the pre-fix `softena` block.
 - **Status:** **APPLIED 2026-09-12** (`rtl/minimig/agnus_bitplanedma.v`). `softena_off` is set from `soft_stop && soft_start && ecs` on each `hpos[0]` and ORed into the softena clear, so the degenerate window opens for exactly one fetch cycle and is closed on the next slot. Gated on `ecs`, so OCS timing is unchanged by construction.
 - **Risk/effort:** ~6 lines in a block that is otherwise identical between the trees.
-- **How to test here:** Sanity "Roots 2.0", the sprite-copper-chunky section. **NOT YET TESTED ON HARDWARE** -- applied during a session with no JTAG access. It is a reading-verified transcription of the upstream change, not a confirmed fix.
+- **How to test here:** Sanity "Roots 2.0", the sprite-copper-chunky section.
+- **Hardware 2026-09-13: still graphical corruption -- but the test is CONFOUNDED and proves nothing about this fix.** The only bitstream ever built with fix 1.8 in it was `stage_ap040_d3cacherace_ila`, which also carried the AP68040 cache-race change that was reverted the same day for making the machine globally worse: Workbench corruption, sound corruption, and graphics corruption across the board. Roots 2.0 rendering wrong on a build that renders everything wrong says nothing about a bitplane-fetch fix.
+- **Re-test required** on a build that is otherwise stable -- i.e. this fix on top of `x3cad` or a clean D3 -- before any conclusion is drawn. Do not mark it failed on the 2026-09-13 evidence.
 
 ## 1.9 BPLxMOD not registered, and no scandouble-modulo delay (RAMJAM Copperslave)
 
