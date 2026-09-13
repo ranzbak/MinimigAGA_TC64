@@ -597,3 +597,23 @@ window, so CPU and chipset shared no cache line and a coherency bug could not
 have fired.  `DMA_OVERLAP` moves the chipset into the unused longword slots of
 the lines phase 7 reads ($8008 $800C $804C $8088 $808C $80CC) and is the first
 configuration of this bench that can fail for the reason the hardware does.
+
+## Shared cache lines, one pass: clean (2026-09-14)
+
+`REALSDRAM=1 DMA_OVERLAP=1`: the chipset writes, ~7 times in 8, into the unused
+longword slots of the 16-byte lines phase 7 reads and writes ($8008 $800C
+$804C $8088 $808C $80CC), for the whole of the CPU's execution.
+
+    DDR3 CPU TB: PASS  (68k program completed all phases)
+    DMA window: 3919 writes during CPU execution, 0 wrong
+
+Controls for the same leg, both clean: CPU run on disjoint memory (3960 writes,
+0 wrong) and the CPU-off control (3960 writes, 0 wrong).
+
+So chipset DMA sharing cache lines with the CPU does not, on its own and at this
+exposure, reproduce the hardware corruption.  Phase 7 is ~37 us of a ~1.9 ms
+run, so the collision window was small; `P7LOOPS=40` repeats it forty times and
+is the next run.  If that is clean too, the remaining difference from the
+hardware is the SHAPE of the traffic -- a chunky-to-planar demo writes whole
+bitplanes the chipset is concurrently displaying, not a handful of longwords --
+and the kernel's outputs into sdram_ctrl, which no test has yet targeted.
