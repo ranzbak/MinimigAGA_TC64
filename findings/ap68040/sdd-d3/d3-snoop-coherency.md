@@ -571,3 +571,29 @@ the read-data crossing.  Every clk_114 -> clk_38 input on the contract list is
 now either proven or fixed and still corrupting, which says the defect is NOT a
 crossing INTO the kernel.  The remaining direction is the kernel's OUTPUTS into
 clk_114 -- address, bus state, write data -- as sampled by sdram_ctrl.
+
+---
+
+# REALSDRAM bench: sound, and clean on disjoint memory (2026-09-14)
+
+`sim/ddr3_cpu` with `REALSDRAM=1`: the real AP68040 and `TG68K.vhd` wrapper
+driving the REAL `sdram_ctrl` + vendor SDRAM part, with the controller's own
+enables and a chipset DMA agent running for the whole of the CPU's execution.
+
+After three bench defects of my own (two processes on the chipset port; window
+entries one word apart when a chipset write covers a longword pair; and
+`{x[22:1],1'b0}` clearing bit 0 instead of doubling), the corrected run:
+
+    DMA window: 3960 writes during CPU execution, 0 wrong
+    DDR3 CPU TB: 2 passed, 0 failed
+
+So every earlier "32 wrong words" result was the bench, never the design.  The
+tell was cheap and is worth reusing: decode each wrong value back to the entry
+that wrote it from the SDRAM model's WRITE log -- the aliasing appeared during
+the preload, before the CPU was released.
+
+What this does NOT show: the 68k program's data traffic never touched the DMA
+window, so CPU and chipset shared no cache line and a coherency bug could not
+have fired.  `DMA_OVERLAP` moves the chipset into the unused longword slots of
+the lines phase 7 reads ($8008 $800C $804C $8088 $808C $80CC) and is the first
+configuration of this bench that can fail for the reason the hardware does.
