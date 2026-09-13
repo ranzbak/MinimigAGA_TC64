@@ -337,6 +337,12 @@ reg  [23:1] p2c_adr;
 integer     p2c_j;
 `endif
 integer     p2c_reads = 0, p2c_err = 0, p2c_changes = 0;
+// A read is only judged once the CPU has WRITTEN that word at least once.  The
+// shadow chipmem starts at zero while real SDRAM starts undefined, and the CPU
+// does not write the probe until phase 7 -- so before that every read is
+// 'xxxx' against '0000', a false failure.  The first version of this probe did
+// exactly that, and the 20-line display cap then hid everything after it.
+reg  [0:65535] p2c_written = '0;
 reg  [15:0] p2c_pre, p2c_got, p2c_post, p2c_last = 16'h0000;
 `endif
 reg         dma_run = 1'b0;
@@ -371,9 +377,10 @@ initial begin : dma_agent
       p2c_pre = chipmem[p2c_adr[16:1]];
       ch_read(p2c_adr, p2c_got);
       p2c_post = chipmem[p2c_adr[16:1]];
-      p2c_reads = p2c_reads + 1;
+      if (p2c_pre !== 16'h0000 || p2c_post !== 16'h0000) p2c_written[p2c_adr[16:1]] = 1'b1;
+      if (p2c_written[p2c_adr[16:1]]) p2c_reads = p2c_reads + 1;
       if (p2c_post !== p2c_last) begin p2c_changes = p2c_changes + 1; p2c_last = p2c_post; end
-      if (p2c_got !== p2c_pre && p2c_got !== p2c_post) begin
+      if (p2c_written[p2c_adr[16:1]] && p2c_got !== p2c_pre && p2c_got !== p2c_post) begin
         p2c_err = p2c_err + 1;
         if (p2c_err <= 20)
           $display("FAIL P2C probe at %t, byte %06h: chipset read %04h, CPU had written %04h (before) / %04h (after)",
