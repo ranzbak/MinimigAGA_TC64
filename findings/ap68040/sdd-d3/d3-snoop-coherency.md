@@ -634,3 +634,58 @@ not reproduce the hardware corruption in this bench.
 That still leaves the direction every DMA agent so far has skipped: the CPU
 writes and the CHIPSET reads.  The P2C probe (commit 99d7a12) is the first test
 of that with the real CPU and real controller, and runs next.
+
+---
+
+# REPRODUCED IN SIMULATION: the chipset reads a value the CPU has already written (2026-09-14)
+
+First failure in this investigation that is the DESIGN rather than the bench.
+
+`REALSDRAM=1 DMA_OVERLAP=1 P7LOOPS=40`, the P2C probe: every pass of phase 7
+the real AP68040 writes its pass counter to byte $8012; the chipset agent reads
+it back through the real `sdram_ctrl`, bracketed by the bench's shadow of what
+the CPU believes it wrote (recorded from its own bus cycle, before the
+controller drains the write into SDRAM).
+
+    P2C probe: 688 chipset reads of the CPU's counter, 40 value changes seen, 5 stale
+    FAIL P2C probe at 2067254132.0 ps: chipset read 0022, CPU had written 0021 (before) / 0021 (after)
+    DDR3 CPU TB: PASS  (68k program completed all phases)
+
+Every stale read returns EXACTLY the previous pass's value, and the CPU's
+program passes -- the CPU never sees a problem, only the chipset does.  That is
+the hardware symptom's direction: uncleared pixels.
+
+**The timing, from the SDRAM model's own write log** (byte $8012 = Row 32,
+Col 9; 40 writes, one per pass):
+
+    read 2067.2541us  want 0x0021: landed 2067.3405us = 86.3 ns AFTER the read began
+    read 2210.5508us  want 0x001c: landed 2210.6371us = 86.3 ns AFTER the read began
+    read 2295.7389us  want 0x0019: landed 2295.8253us = 86.3 ns AFTER the read began
+    read 2495.4516us  want 0x0012: landed 2495.5379us = 86.3 ns AFTER the read began
+
+Identical to the picosecond, four times.  The CPU's write was accepted into the
+controller's write buffer before the chipset read started, and physically
+reached SDRAM 86.3 ns -- about ten clk_114 cycles -- later.  A chipset read
+inside that window samples the old value.
+
+**Why that is enough for accumulating corruption.**  A display read would show
+one stale frame and recover.  The BLITTER reads, combines and writes back, so a
+stale source or destination word is written back permanently -- which fits
+"uncleared pixels that accumulate" far better than any mechanism before it.
+
+**The standing objection, and the test that answers it.**  `sdram_ctrl`'s write
+buffer is byte-identical before stage D3, and pre-D3 is clean on hardware.  But
+whether a chipset read can fall inside that 86 ns window depends on WHEN the CPU
+writes relative to the sixteen-phase SDRAM round -- precisely what the island
+clock ratio changes, and precisely what distinguished the clean ratio 4 from the
+corrupting ratios 3 and 5.  Two runs settle it:
+
+* `WRSYNC=1` -- `cpu_wr_sync`, proven in `sim/sdram_coherency` to remove
+  posted-write lag.  Stale reads should go to zero if this is the mechanism.
+* `CPU_RATIO=4`, no `WRSYNC` -- if ratio 4 is clean here as it is on hardware,
+  the simulation reproduces the phase dependence, and the posted-write race is
+  the D3 corruption.
+
+Note the phase-alignment gate (`cpu_phase_ok`) is in the RTL under test here, and
+did not prevent it -- consistent with that gate aligning when a bus cycle STARTS
+while this race is about when the drained write LANDS.
