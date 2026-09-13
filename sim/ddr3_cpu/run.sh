@@ -201,7 +201,7 @@ if [ "$IS_MMU" = "1" ]; then
 else
     BIN="$W/prog.bin" "$D/asm/build_68k_test.sh" \
         -DPATBYTES=$PATBYTES -DMISLINES=$MISLINES -DCNTN=$CNTN -DCACRVAL="$CACRVAL" \
-        ${P7LOOPS:+-DP7LOOPS=$P7LOOPS}
+        ${P7LOOPS:+-DP7LOOPS=$P7LOOPS} ${P2CBLOCK:+-DP2CBLOCK=$P2CBLOCK}
 fi
 
 PLUS="+PATBYTES=$PATBYTES +MISLINES=$MISLINES +CNTN=$CNTN +TURBOCHIP=$TURBOCHIP"
@@ -339,7 +339,7 @@ AP040_ELAB=""
 if [ "$CPU" = "ap040" ]; then AP040_ELAB="-i $R/lib/AP68040/rtl -d CPU_AP040"; fi
 
 "$VIVADO_PATH/bin/xelab" -prj $PRJ -i "$LIB/tb/ddr3_core_xc7" $AP040_ELAB \
-    -d SOC_SIM ${REALSDRAM:+-d REALSDRAM -i $D} ${NOCPU:+-d NOCPU} ${DMA_OVERLAP:+-d DMA_OVERLAP} -debug typical -relax \
+    -d SOC_SIM ${REALSDRAM:+-d REALSDRAM -i $D} ${NOCPU:+-d NOCPU} ${DMA_OVERLAP:+-d DMA_OVERLAP} ${P2CBLOCK:+-d P2CBLOCK=$P2CBLOCK} -debug typical -relax \
     -L secureip -L unisims_ver -L unimacro_ver \
     ddr3_cpu_tb glbl -s cpu_sim
 

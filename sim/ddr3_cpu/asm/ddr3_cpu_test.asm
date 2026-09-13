@@ -419,6 +419,7 @@ LOLD      equ CHIPSCR+$40      ; the "old" List header
 LNODE     equ CHIPSCR+$80      ; its one node
 LNEW      equ CHIPSCR+$C0      ; the "new" List header
 P2CPROBE  equ CHIPSCR+$10      ; P7LOOPS pass counter, read back by the chipset
+P2CBLK    equ CHIPSCR+$100     ; P2CBLOCK longword block, read back by the chipset
 
           moveq     #7,d7
           move.l    d7,MBOX+16
@@ -526,6 +527,18 @@ p7_top:
 ; see what the CPU wrote -- the direction of the hardware's uncleared pixels,
 ; which no DMA agent had checked with the real CPU and controller together.
           move.l    d6,P2CPROBE
+; P2CBLOCK: the chunky-to-planar shape -- a whole block of longwords written in
+; a tight (an)+ burst every pass, values changing each pass, for the chipset to
+; read back.  d5 is free here (only phases 1-6 use it); d0 is reloaded at the
+; top of every pass; a4 is used nowhere else in this program.
+          ifd       P2CBLOCK
+          lea       P2CBLK,a4
+          move.w    #P2CBLOCK-1,d5
+          move.l    d6,d0
+p2cb_top: move.l    d0,(a4)+
+          addq.l    #1,d0
+          dbra      d5,p2cb_top
+          endif
           dbra      d6,p7_top
           endif
 

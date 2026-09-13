@@ -329,6 +329,13 @@ integer     dma_i, dma_writes = 0, dma_err = 0;
 // reading a stale value the CPU has already overwritten -- the hardware's
 // uncleared-pixel direction.
 localparam [23:1] P2C_WORD = 23'h004009;
+reg  [23:1] p2c_adr;
+`ifdef P2CBLOCK
+// P2CBLOCK: the probe reads a random longword's LOW word inside the block the
+// CPU bursts out every pass at byte $8100 -- chip word $4081 + 2*j for
+// longword j.  Same bracketing rule as the single-word probe.
+integer     p2c_j;
+`endif
 integer     p2c_reads = 0, p2c_err = 0, p2c_changes = 0;
 reg  [15:0] p2c_pre, p2c_got, p2c_post, p2c_last = 16'h0000;
 `endif
@@ -355,16 +362,22 @@ initial begin : dma_agent
     else if (!dma_run) @(posedge clk);
 `ifdef DMA_OVERLAP
     else if (({$random(dma_seed)} % 4) == 0) begin
-      p2c_pre = chipmem[P2C_WORD[16:1]];
-      ch_read(P2C_WORD, p2c_got);
-      p2c_post = chipmem[P2C_WORD[16:1]];
+`ifdef P2CBLOCK
+      p2c_j   = {$random(dma_seed)} % `P2CBLOCK;
+      p2c_adr = 23'h004081 + {p2c_j[21:0], 1'b0};
+`else
+      p2c_adr = P2C_WORD;
+`endif
+      p2c_pre = chipmem[p2c_adr[16:1]];
+      ch_read(p2c_adr, p2c_got);
+      p2c_post = chipmem[p2c_adr[16:1]];
       p2c_reads = p2c_reads + 1;
       if (p2c_post !== p2c_last) begin p2c_changes = p2c_changes + 1; p2c_last = p2c_post; end
       if (p2c_got !== p2c_pre && p2c_got !== p2c_post) begin
         p2c_err = p2c_err + 1;
         if (p2c_err <= 20)
-          $display("FAIL P2C probe at %t: chipset read %04h, CPU had written %04h (before) / %04h (after)",
-                   $time, p2c_got, p2c_pre, p2c_post);
+          $display("FAIL P2C probe at %t, byte %06h: chipset read %04h, CPU had written %04h (before) / %04h (after)",
+                   $time, {p2c_adr, 1'b0}, p2c_got, p2c_pre, p2c_post);
       end
     end
 `endif
