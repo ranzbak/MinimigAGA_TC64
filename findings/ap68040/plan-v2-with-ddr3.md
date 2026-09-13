@@ -1639,6 +1639,28 @@ transmitter once from reset or has any HPD handling at all, and whether the
 configuration lives in the 832 firmware or in RTL.  That decides whether the
 fix is firmware or gateware.
 
+### The reset circuitry is incomplete
+
+Raised by Paul 2026-09-13, **for later, not now**.
+
+No detail captured yet beyond "not complete".  What exists today, so whoever
+picks this up starts from a map rather than from grep:
+
+* `nResetOut` -- the CPU's own RESET-instruction output from `TG68K.vhd`
+  (`nResetOut_w` on the AP68040 branch).  Whether a 68040 `RESET` opcode
+  currently reaches anything is unverified.
+* `reset_out` from `sdram_ctrl`, which holds the machine off until SDRAM
+  initialisation completes.
+* `tg68_rst` and `cache_rst` at the `minimig_virtual_top` level.
+* The 832 control CPU has its own reset path and its own view of when the
+  Amiga side may run.
+
+**Capture before working on it:** which reset is incomplete and what the
+observable symptom is.  A warm reset that does not clear state, a cold boot
+needing a second attempt, a peripheral surviving a reset it should not, and the
+RESET opcode being a no-op are four different defects in four different places.
+The entry is not actionable until it says which.
+
 ### RTG (Picasso 96) does not work
 
 Reported by Paul on 2026-09-09 ("the picasso 96 interface seems to be inactive
