@@ -318,6 +318,20 @@ function [23:1] dma_addr(input integer k);
 endfunction
 reg  [15:0] dma_model [0:63];
 integer     dma_i, dma_writes = 0, dma_err = 0;
+`ifdef DMA_OVERLAP
+// P2C probe: the chipset reads the low word of the CPU's P7LOOPS pass counter
+// at byte $8012 (chip word $4009) through the REAL controller, and compares it
+// with the bench's shadow chipmem -- what the CPU believes it wrote, recorded
+// from its own bus cycle before cpu_cache_new drains the write into SDRAM.
+// The read is bracketed by a shadow snapshot before and after, and must equal
+// one of them: one CPU pass is ~37 us against a ~141 ns chipset read, so at
+// most one legitimate change can fall inside it.  Anything else is the chipset
+// reading a stale value the CPU has already overwritten -- the hardware's
+// uncleared-pixel direction.
+localparam [23:1] P2C_WORD = 23'h004009;
+integer     p2c_reads = 0, p2c_err = 0, p2c_changes = 0;
+reg  [15:0] p2c_pre, p2c_got, p2c_post, p2c_last = 16'h0000;
+`endif
 reg         dma_run = 1'b0;
 integer     dma_seed = 32'h0BADF00D;
 
@@ -339,6 +353,21 @@ initial begin : dma_agent
       while (vq_done) @(posedge clk);
     end
     else if (!dma_run) @(posedge clk);
+`ifdef DMA_OVERLAP
+    else if (({$random(dma_seed)} % 4) == 0) begin
+      p2c_pre = chipmem[P2C_WORD[16:1]];
+      ch_read(P2C_WORD, p2c_got);
+      p2c_post = chipmem[P2C_WORD[16:1]];
+      p2c_reads = p2c_reads + 1;
+      if (p2c_post !== p2c_last) begin p2c_changes = p2c_changes + 1; p2c_last = p2c_post; end
+      if (p2c_got !== p2c_pre && p2c_got !== p2c_post) begin
+        p2c_err = p2c_err + 1;
+        if (p2c_err <= 20)
+          $display("FAIL P2C probe at %t: chipset read %04h, CPU had written %04h (before) / %04h (after)",
+                   $time, p2c_got, p2c_pre, p2c_post);
+      end
+    end
+`endif
     else begin
 `ifdef DMA_OVERLAP
       // Concentrate on the six slots that share cache lines with phase 7:
@@ -377,6 +406,10 @@ task dma_verify;
     end
     $display("=== DMA window: %0d writes during CPU execution, %0d wrong ===",
              dma_writes, dma_err);
+`ifdef DMA_OVERLAP
+    $display("=== P2C probe: %0d chipset reads of the CPU's counter, %0d value changes seen, %0d stale ===",
+             p2c_reads, p2c_changes, p2c_err);
+`endif
   end
 endtask
 
@@ -1885,6 +1918,12 @@ initial begin : main
   // traffic through the real controller.  A mismatch here is a chip-RAM
   // coherency failure between the two masters -- the hardware symptom.
   dma_verify;
+`ifdef DMA_OVERLAP
+  if (p2c_err != 0) begin
+    nfail = nfail + 1;
+    $display("DDR3 CPU TB: FAIL  %0d chipset reads returned a value the CPU had already overwritten", p2c_err);
+  end
+`endif
   if (dma_err != 0) begin
     nfail = nfail + 1;
     $display("DDR3 CPU TB: FAIL  %0d words in the chipset DMA window were wrong after",

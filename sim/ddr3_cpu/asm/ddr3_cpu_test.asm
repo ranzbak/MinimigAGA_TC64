@@ -418,6 +418,7 @@ CHIPSCR   equ $00008000        ; scratch in the bench's chip RAM, clear of the
 LOLD      equ CHIPSCR+$40      ; the "old" List header
 LNODE     equ CHIPSCR+$80      ; its one node
 LNEW      equ CHIPSCR+$C0      ; the "new" List header
+P2CPROBE  equ CHIPSCR+$10      ; P7LOOPS pass counter, read back by the chipset
 
           moveq     #7,d7
           move.l    d7,MBOX+16
@@ -520,6 +521,11 @@ p7_top:
           tst.l     d3
           beq       f_walk
           ifd       P7LOOPS
+; P2C probe: the pass counter, written into a chip-RAM line nothing else uses.
+; The bench's chipset agent reads it back through the real sdram_ctrl and must
+; see what the CPU wrote -- the direction of the hardware's uncleared pixels,
+; which no DMA agent had checked with the real CPU and controller together.
+          move.l    d6,P2CPROBE
           dbra      d6,p7_top
           endif
 
