@@ -1492,53 +1492,60 @@ nothing in the CPU capture points at it. **Do not treat D3 as finished on
 hardware until this either recurs with a signature or fails to recur over a
 measured number of cold boots.**
 
-## D4 — make the crossing an actual handshake, not a phase argument
+## D4 — find the crossing that breaks its own contract.  KEEP 1:3 synchronous.
 
-Paul, 2026-09-13: *"The whole CPU signalling design is made to be asynchronous,
-so at least we know it's possible, it'll be work though."*  That is the right
-reading and it names the destination.
+**Corrected 2026-09-13.**  An earlier version of this section proposed turning
+the crossing into an asynchronous req/ack CDC.  That was a misreading of Paul's
+point and it is the wrong direction:
 
-**The interface already IS a handshake.**  `bus_ready` means "the core runs
-when memory answers" -- upstream's `~cpu_req | bus_complete | bus_berr`.
-Nothing in the design demands a fixed timing relationship between the CPU and
-the memory side.
+> *"It's better when it's not async on FPGA implementations, I'm just saying
+> that it should work because 1/3 sync is less problematic than async clock
+> crossings."*
 
-**But stage D3 did not implement it as one.**  `cpu.xdc` states the choice
-plainly: *"The kernel's crossings to and from clk_114 are SYNCHRONOUS 1:3, not
-a CDC."*  Every crossing is a level sampled on an argument about which
-`clk_114` edge coincides with which `clk_38` edge.
+He is right.  Synchronous 1:3 off the same MMCM is **the better engineering
+choice here**: deterministic, no metastability, no synchroniser latency, and
+fully analysable by static timing.  An async CDC would add two clocks each way
+and be harder to verify, not easier.  The argument was that because the
+interface is a HANDSHAKE it already tolerates variable latency, so a 1:3
+synchronous crossing -- a strictly easier problem than async -- ought to work.
 
-**The evidence attacks exactly that.**  The corruption is phase-dependent:
-ratios coprime with the sixteen-phase SDRAM round corrupt (3 and 5), a ratio
-that divides it does not (4), and a SLOWER coprime ratio corrupts worse -- so
-it is not rate.  A design resting on edge coincidence is the one thing that
-could behave that way, and "this is ratio-agnostic" is a claim this project has
-now made wrongly twice (the phase marker, and the bus-start alignment).
+**So D4 is not a redesign.  It is finding the one crossing that violates its
+stated contract.**
 
-**The precedent is already in the tree and it is clean.**  The MMU table walker
-and the line-fill channel cross as toggle-plus-acknowledge, and neither has
-ever been implicated in any of this.  What keeps failing is the IMPLICIT
-crossings -- `clkena`, `ramready`, `datatg68` -- levels sampled on a phase
-argument.
+The contract, written out, because this is what has to be checked signal by
+signal.  For every `clk_114 -> clk_38` crossing, correctness requires ONE of:
 
-**What D4 would be:** a real request/acknowledge crossing on the memory
-handshake, with synchronisers, so the clock ratio becomes a free parameter
-instead of a correctness premise.
+1. the source is **stable across the entire capture window** -- which is
+   exactly what a multicycle exception asserts, and what `bus_step` was added
+   to make TRUE for the two bus routers rather than merely assert; or
+2. the source is a **pulse shaped to the destination's edge** -- what
+   `snp_stb_held` does for the snoop, and what `clkena_r` is meant to do.
 
-**Cost, honestly:** two clocks of synchroniser latency per access in each
-direction.  On a `clk_38` memory access that is a few percent, and it is only
-paid on accesses that actually reach memory -- nothing on a cache hit, which is
-where the stage D3 speedup comes from.  Against that it buys: ratios that are
-not 3, including ratios ABOVE 3 where the remaining performance is, and an end
-to the class of bug that has consumed 2026-09-08..13.
+Anything that is neither is a latent bug that shows only at the phases where it
+matters.  The known members of category (2) are `clkena` and the snoop; of
+category (1), the walker and fill routers.  **`ramready`, `datatg68` and the
+rest of `bus_ready`'s cone are in NEITHER category and have never been
+justified** -- `cpu.xdc` says of them only that they "can rise on the edge
+immediately before a clk_38 one -- that is the whole point of the handshake".
+That is an argument for why they are not relaxed; it is not an argument that
+sampling them is safe.
 
-**Sequencing.**  D4 is the destination but not necessarily the next step: it is
-a rewrite of the crossing, and doing it before the current defect is understood
-would throw away the one clean control (pre-D3 works) and risk fixing the bug
-by accident without knowing which crossing was wrong.  Finish the
-`sim/ddr3_cpu` REALSDRAM work first -- that bench can observe `ramready`'s
-arrival phase against the kernel's sampling edge directly, which no hardware
-capture could -- then decide whether D4 is a repair or a redesign.
+**Why this should be deterministic, and why that helps.**  With a 1:3 ratio the
+CPU's request phase against the sixteen-phase SDRAM round walks through all
+sixteen, but it does so deterministically.  So a contract violation is a
+deterministic failure at specific phases, not a random one -- which is
+consistent with `--chipbus` failing with the same count on repeated runs, and
+means a simulation that hits the bad phase will hit it every time.
+
+**Method, not guesswork.**  Enumerate every signal crossing into `clk_38`,
+classify each as (1) or (2), and for each one either point at the RTL that
+makes it true or mark it unproven.  The REALSDRAM bench can then watch the
+unproven ones directly -- `ramready`'s arrival phase against the kernel's
+sampling edge is observable there and was never observable on hardware.
+
+Three claims of the form "this is a level / is ratio-independent, so sampling it
+later is safe" have already been wrong in this project.  The list above is how
+that stops being a recurring surprise.
 
 ## Stage E — collapse the adapter stack
 
