@@ -1621,11 +1621,25 @@ can be dropped into it.
 Raised by Paul 2026-09-11.  Neither is an AP68040 matter; both are recorded
 here because this is the live plan and there is nowhere better yet.
 
-### HDMI does not re-initialise when the display is power-cycled
+### HDMI does not re-initialise after the sink goes away and comes back
 
-Turn the monitor off and on again and the core does not bring the link back --
-it stays dark until the FPGA itself is reconfigured.  A sink that disappears
-and returns should be re-detected and the video path restarted.
+Two cases, confirmed by Paul as both wanted (2026-09-11, restated 2026-09-13):
+
+* **monitor powered off and on again**, and
+* **cable disconnected and reconnected.**
+
+In both the core fails to bring the link back -- it stays dark until the FPGA
+itself is reconfigured.  A sink that disappears and returns should be
+re-detected and the video path restarted.
+
+**They may not be the same mechanism, and that decides the fix.**  Unplugging
+the cable drops hot-plug detect cleanly, so it is a genuine HPD event.  Many
+monitors in standby **keep HPD asserted**, in which case no event ever arrives
+and HPD handling alone would fix the cable case while leaving the power-cycle
+case exactly as broken as it is now.  Establish which this display does before
+designing the fix: if HPD stays high through standby, the link also needs
+periodic revalidation (re-read the sink, or re-assert configuration on a timer
+or on a detected TMDS fault) rather than pure event handling.
 
 What that means in practice: hot-plug detect has to be treated as an EVENT, not
 as a level sampled once at start-up.  On HPD returning, the ADV7511 needs its
