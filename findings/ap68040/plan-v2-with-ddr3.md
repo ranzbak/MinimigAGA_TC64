@@ -1653,6 +1653,36 @@ transmitter once from reset or has any HPD handling at all, and whether the
 configuration lives in the 832 firmware or in RTL.  That decides whether the
 fix is firmware or gateware.
 
+### Action Replay is present but not configured or working
+
+Wanted working and correctly configured (Paul, 2026-09-13).  **The RTL already
+exists**, so this is a configuration and firmware job rather than new gateware:
+
+* `rtl/minimig/cart.v` -- the Action Replay / HRTmon cartridge block, already
+  instantiated as `CART1` in `rtl/minimig/minimig.v:1002`.
+* `sel_cart` (`minimig.v:432`, "Action Replay RAM select") takes part in the
+  memory decode, and `cart_data_out` is already ORed into the chipset read
+  mux (`minimig.v:1207`).
+* It is enabled by **`hrtmon_en <= memory_config[6]`** (`minimig.v:853`).
+
+So the questions to answer, in order, and none of them need RTL work to
+establish:
+
+1. Does the 832 firmware ever SET `memory_config[6]`, and is there an OSD entry
+   for it?  If the bit is never set the block is inert however correct it is.
+2. Is an HRTmon image actually loaded into the cartridge memory, and from
+   where -- the SD card, or built in?  A cartridge enabled with no ROM behind
+   it is the same as no cartridge.
+3. Does the freeze button reach it?  Check what drives the cartridge's
+   entry/NMI path and whether any input on this board is mapped to it.
+4. Only then: whether the AP68040 changes anything.  A 68040 executing from
+   cartridge space touches the same cacheability and decode questions as
+   Kickstart turbo does, and `sel_cart` is not in the wrapper's decode at all.
+
+Worth doing early for a selfish reason: a working freezer is a **debugging
+tool**.  Being able to stop a wedged demo and look at memory would have been
+worth a great deal during the stage D corruption hunt.
+
 ### The reset circuitry is incomplete
 
 Raised by Paul 2026-09-13, **for later, not now**.
