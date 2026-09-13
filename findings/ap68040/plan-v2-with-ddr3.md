@@ -1655,11 +1655,24 @@ picks this up starts from a map rather than from grep:
 * The 832 control CPU has its own reset path and its own view of when the
   Amiga side may run.
 
-**Capture before working on it:** which reset is incomplete and what the
-observable symptom is.  A warm reset that does not clear state, a cold boot
-needing a second attempt, a peripheral surviving a reset it should not, and the
-RESET opcode being a no-op are four different defects in four different places.
-The entry is not actionable until it says which.
+**The symptom, from Paul 2026-09-13.**  When the reset is used and the firmware
+loader is showing a white screen, **the white screen comes back after the reset
+too -- even when the underlying problem has been fixed.**  So whatever state
+drives that screen survives the reset instead of being cleared and re-derived.
+
+**Why this costs more than it looks.**  A reset cannot be trusted to tell you
+whether a fix worked: a stale failure indication is indistinguishable from a
+real one, so the only truthful test is a power cycle.  That is a tax on every
+debugging iteration, and it is the kind of thing that quietly wastes hours --
+plausibly some of this week's.  Fixing it is worth more than its size suggests.
+
+**Where to look, given that symptom.**  The white screen is produced on the
+loader/OSD side, so the question is what of that state is reset-derived and
+what is latched: whether the 832 re-runs its init on this reset at all, whether
+the video path's mode and framebuffer state are cleared, and whether the reset
+reaches the OSD at all or only the Amiga side.  That the screen persists says
+the reset is not reaching something it should, rather than that it clears too
+much.
 
 ### RTG (Picasso 96) does not work
 
