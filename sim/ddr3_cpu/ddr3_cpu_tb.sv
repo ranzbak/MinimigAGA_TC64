@@ -333,7 +333,15 @@ initial begin : dma_agent
     end
     else if (!dma_run) @(posedge clk);
     else begin
+`ifdef DMA_OVERLAP
+      // Concentrate on the six slots that share cache lines with phase 7:
+      // phase 7 is only a few dozen CPU accesses, and a uniform pick over 64
+      // entries would put just 6 writes in 64 where they can collide with it.
+      dma_i = (({$random(dma_seed)} % 8) < 7) ? ({$random(dma_seed)} % 6)
+                                               : ({$random(dma_seed)} % 64);
+`else
       dma_i = {$random(dma_seed)} % 64;
+`endif
       dma_model[dma_i] = dma_model[dma_i] + 16'h0101;
       ch_write(dma_addr(dma_i), dma_model[dma_i]);
       dma_writes = dma_writes + 1;
