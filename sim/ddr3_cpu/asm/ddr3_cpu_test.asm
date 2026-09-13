@@ -422,6 +422,17 @@ LNEW      equ CHIPSCR+$C0      ; the "new" List header
           moveq     #7,d7
           move.l    d7,MBOX+16
 
+; P7LOOPS: repeat the whole of phase 7, for the sim/ddr3_cpu DMA_OVERLAP leg,
+; where the chipset writes into the unused slots of these same cache lines.  Once
+; through is a few dozen accesses and ~37 us -- far too short a window to catch
+; a coherency race.  Every pass re-initialises its own data, so it loops
+; cleanly.  d6 is free here: only phases 1-6 use it.  Not defined, nothing is
+; assembled and the program is byte-identical to before.
+          ifd       P7LOOPS
+          move.w    #P7LOOPS-1,d6
+p7_top:
+          endif
+
 ; ---- MOVEM.L store and load, displacement addressing ----------------------
           movea.l   #CHIPSCR,a0
           move.l    #$11111111,d0
@@ -508,6 +519,9 @@ LNEW      equ CHIPSCR+$C0      ; the "new" List header
           move.l    #LNEW+4,d4
           tst.l     d3
           beq       f_walk
+          ifd       P7LOOPS
+          dbra      d6,p7_top
+          endif
 
 ;-----------------------------------------------------------------------------
 ; A CACHEABLE read of a hole inside the Zorro III window.

@@ -161,7 +161,14 @@ localparam [ 7:0] MH_TYPE  = 8'd10;
 // finishes in roughly 0.8 ms of simulated time (phase 2 is instruction bound,
 // about 6.7 us per cache line); this leaves a wide margin and still bounds a
 // mutant run that hangs instead of reporting.
-localparam time TIMEOUT = 64'd2_500_000_000;  // 2.5 ms (must be sized: an
+`ifdef DMA_OVERLAP
+// The overlap leg loops phase 7 (asm P7LOOPS) at ~37 us a pass; 2.5 ms would
+// time out a healthy run.
+localparam time TIMEOUT = 64'd6_000_000_000;
+`else
+localparam time TIMEOUT = 64'd2_500_000_000;
+`endif
+//  // 2.5 ms (must be sized: an
                                               // unsized literal above 2^31 is
                                               // negative and #TIMEOUT is then 0)
 
