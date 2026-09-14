@@ -856,3 +856,27 @@ acknowledge.  Each looked like a reproduction.
 return to hardware, now that the bench says exactly what to look for.  An ILA
 build probing chip-RAM writes and the chipset's reads of them, triggered on a
 stale read-back inside Way Too Rude, would test the hardware directly.
+
+## Hardware: `d3wrsync` is WORSE -- "even more glitches" (2026-09-14)
+
+Paul, running Way Too Rude on `build/stage_ap040_d3wrsync_ila` (ratio 3,
+`cpu_phase_ok`, `datatg68_r`, `cpu_wr_sync <= sel_chipram`): **even more
+glitches** than the builds before it.
+
+That is the second change to make the hardware worse while being correct in
+simulation.  The upstream cache-race guard (`store_inv_lost` on reads, reverted
+2026-09-13) did the same.  What the two share: both make chip-RAM accesses at
+ratio 3 WAIT longer -- one holds reads while an invalidate is owed, the other
+holds the CPU's acknowledge until SDRAM has the write.  And the configurations
+that are CLEAN go the opposite way: ratio 4 runs the kernel slower on four fixed
+SDRAM phases, and pre-D3 did the same.
+
+That is a pattern, not a proof.  It is consistent with the defect being about
+WHEN a chip-RAM access completes relative to the SDRAM round -- more waiting at a
+coprime ratio is more chances to complete on a bad phase -- and inconsistent
+with a pure coherency hole, which a correct synchronisation fix should shrink.
+
+Action: `cpu_wr_sync` tied off again at the `sdram_ctrl` instantiation.  The
+wrapper still drives it and the simulation fix stays available, but it is out
+of the build path.  The race it fixes is real and present at ratio 4, where the
+hardware is clean -- so it is not what the hardware is showing.
