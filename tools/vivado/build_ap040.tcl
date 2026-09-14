@@ -49,6 +49,8 @@ set phgate  [expr {[llength $argv] > 6 ? [lindex $argv 6] : 1}]
 set datareg [expr {[llength $argv] > 7 ? [lindex $argv 7] : 1}]
 # Phase gate opening delay in clk cycles (9th -tclargs, default 0 = as built).
 set phdly   [expr {[llength $argv] > 8 ? [lindex $argv 8] : 0}]
+# 1 = the phase gate opens only on a waiting access (10th -tclargs, default 0).
+set phreq   [expr {[llength $argv] > 9 ? [lindex $argv 9] : 0}]
 set R [expr {[llength $argv] > 2 ? [file normalize [lindex $argv 2]] \
                                  : [file normalize [file dirname [info script]]/../..]}]
 open_project $R/project_1/project_1.xpr
@@ -317,7 +319,7 @@ if {$ila} {
 
 # The one functional difference from build.tcl: which kernel the wrapper
 # elaborates, and whether the fast-RAM ILA comes along for the ride.
-set_property generic "CPU_IS_AP040=1 HAVEDDR3=1 DDR3_BIST_VIO=0 DDR3_FASTRAM_ILA=$ila CPU040_DEBUG_ILA=$ila AP040_POST_STORES=$post CPU_CLK_DIVIDE=$cpudiv CPU_PHASE_GATE=$phgate CPU_DATA_REG=$datareg CPU_PHASE_GATE_DLY=$phdly" \
+set_property generic "CPU_IS_AP040=1 HAVEDDR3=1 DDR3_BIST_VIO=0 DDR3_FASTRAM_ILA=$ila CPU040_DEBUG_ILA=$ila AP040_POST_STORES=$post CPU_CLK_DIVIDE=$cpudiv CPU_PHASE_GATE=$phgate CPU_DATA_REG=$datareg CPU_PHASE_GATE_DLY=$phdly CPU_PHASE_GATE_REQ=$phreq" \
     [get_filesets sources_1]
 
 # The debug core adds a few thousand LUTs and flip-flops to clk_114, and with

@@ -72,6 +72,13 @@ entity TG68K is
 		-- 2/6/10/14 (ratio 4 without the gate, clean) to 3/7/11/15, and crashes
 		-- ratio 4; 3 is meant to put them back.  Range 0 to 4.
 		cpu_phase_gate_dly : integer := 0;
+		-- 1 = the gate opens ONLY when a RAM/DDR access is already waiting on
+		-- the opening phase; one arriving later waits for the next opening.  At 0
+		-- the gate is 'not before the first opening after the kernel advanced',
+		-- so an access arriving after that opening starts at whatever phase it
+		-- arrives on -- which at ratio 3 is not an alignment at all (hardware
+		-- histogram 2026-09-14, CPU_PHASE_GATE_DLY=3: acknowledges still spread).
+		cpu_phase_gate_req : integer := 0;
 		-- Size of the third ZIII board, log2 of its byte size: 24 = 16 MB,
 		-- 25 = 32 MB, 26 = 64 MB.  It is the DDR3 board when haveddr3, and the
 		-- board is size-aligned, so this also says how many address bits are
@@ -320,6 +327,8 @@ ARCHITECTURE logic OF TG68K IS
 	-- see cpu_phase_gate_dly.
 	SIGNAL ena_sr         : std_logic_vector(3 downto 0) := (others => '0');
 	SIGNAL gate_open      : std_logic;
+	-- A RAM/DDR access is waiting; constant '1' unless cpu_phase_gate_req.
+	SIGNAL gate_req       : std_logic;
 
 	TYPE sync_states IS (sync0, sync1, sync2, sync3, sync4, sync5, sync6, sync7, sync8, sync9);
 	SIGNAL sync_state : sync_states;
@@ -1585,6 +1594,9 @@ BEGIN
 	-- advances (a new access may be coming) and set again only on an enaWRreg
 	-- phase once `slower` has drained, so the select opens on a fixed four
 	-- phases of the sixteen-phase round however the island clock is divided.
+	gate_req <= '1' WHEN cpu_phase_gate_req = 0 ELSE
+	            (NOT cpu_int AND (sel_ram_d OR sel_ddr_d) AND NOT sel_nmi_vector);
+
 	g_gate_dly0 : IF cpu_phase_gate_dly = 0 GENERATE
 		gate_open <= clkena_in;
 	END GENERATE;
@@ -1598,7 +1610,7 @@ BEGIN
 			ena_sr <= ena_sr(2 DOWNTO 0) & clkena_in;
 			IF clkena = '1' THEN
 				cpu_phase_ok <= '0';
-			ELSIF gate_open = '1' AND slower(0) = '0' THEN
+			ELSIF gate_open = '1' AND gate_req = '1' AND slower(0) = '0' THEN
 				cpu_phase_ok <= '1';
 			END IF;
 		END IF;
