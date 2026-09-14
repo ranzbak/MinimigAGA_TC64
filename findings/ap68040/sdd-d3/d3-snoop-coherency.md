@@ -754,3 +754,28 @@ The differentiator is still something that fails at ratio 3 and passes at
 ratio 4.  Next: the block-burst probe (`P2CBLOCK=32`, the chunky-to-planar
 shape) WITH `WRSYNC` on, so the known race is suppressed and any stale read is a
 different mechanism, at ratio 3 and then ratio 4.
+
+## Block bursts: the stall is the workload, not `cpu_wr_sync` (2026-09-14)
+
+`P2CBLOCK=32` (32 longwords burst every pass, the chunky-to-planar shape),
+`P7LOOPS=40`, ratio 3:
+
+* **With `WRSYNC`**: 2 stale reads, stall watchdog, undecoded-hole check
+  failed (that check sits after phase 7, which was never reached).
+* **Without `WRSYNC` (control)**: 11 stale reads -- every one exactly the
+  previous pass's value, the known posted-write race at full strength -- and
+  the stall watchdog fired just the same.
+
+So the "stall" is not `cpu_wr_sync` starving the CPU: the CPU was still writing
+its block at 4.52 ms in the WRSYNC run, and the watchdog trips without WRSYNC
+too.  Forty block passes under a chipset agent that barely releases slot 1
+simply run longer than 300,000 cycles without a phase marker.  For the board
+build this means no evidence that `cpu_wr_sync` raises hang risk -- though a
+bench this contrived cannot prove it harmless either.
+
+The two stale reads WITH `WRSYNC` were bench bug five: the shadow `chipmem`
+is written at the START of a write access, not at its acknowledge, so during a
+`cpu_wr_sync` hold it shows a value the CPU has not been told is written.  Fixed
+in c289caa (the probe now uses an acknowledge-time shadow; under DMA_OVERLAP
+the watchdog is 1,000,000 cycles and TIMEOUT 12 ms).  The WRSYNC block probe is
+being rerun, correctly judged, at ratio 3 and ratio 4 with `P7LOOPS=10`.
