@@ -802,3 +802,57 @@ than at ratio 4, and `bus_fresh` masks the acknowledge for one cycle after the
 walker takes the bus.  The OS on the hardware runs with translation on; the
 `--mmu` leg has only ever run against the behavioural memory model.  Next:
 `--mmu` under `REALSDRAM` + `WRSYNC`, ratio 3 and ratio 4.
+
+## MMU walker against the real controller: clean at both ratios (2026-09-14)
+
+`--mmu`, `REALSDRAM=1 WRSYNC=1`:
+
+    ratio 3: all 8 phases, PASS, DMA window 2025 writes 0 wrong
+    ratio 4: all 8 phases, PASS, DMA window 2221 writes 0 wrong
+
+The walker's page tables ($8000-$86FF) do not overlap the chipset DMA window
+($40000-$4007F), so this exercised the walker's bus router (`bus_step`,
+`bus_fresh`) against the real controller rather than DMA racing page-table
+reads -- and it is clean.
+
+---
+
+# Handoff, end of 2026-09-14
+
+**Board:** `build/stage_ap040_d3wrsync_ila` (JTAG, not flashed) -- ratio 3,
+`cpu_phase_ok`, `datatg68_r`, `cpu_wr_sync <= sel_chipram`, timing clean.
+**Expected to still corrupt Way Too Rude**, because the race `cpu_wr_sync` fixes
+is present at the hardware-clean ratio 4 too and so cannot be the differentiator.
+Worth testing: it is correct, and a surprise either way is information.
+
+**What the simulation now establishes**, with the real AP68040, wrapper,
+`sdram_ctrl`, vendor SDRAM and a chipset DMA agent together:
+
+| configuration | ratio 3 | ratio 4 |
+|---|---|---|
+| CPU + chipset on disjoint memory | clean | -- |
+| chipset writing into the CPU's cache lines, 1 and 40 passes | clean | -- |
+| chipset reading CPU writes (posted-write race) | stale | stale, worse |
+| the same with `cpu_wr_sync` | clean | clean |
+| block bursts with `cpu_wr_sync` | clean | clean |
+| MMU walker + DMA | clean | clean |
+
+**Nothing in the bench differs between ratio 3 and ratio 4.**  So either the
+differentiator needs traffic this bench does not make -- interrupts, a blitter
+read-modify-write, copper and audio DMA, the fill channel from Zorro under
+DMA, the real OS with translation on -- or it is not in the paths the bench
+covers.
+
+**Real defects found and fixed along the way:** the posted-write race
+(`cpu_wr_sync`, now in the RTL), and the unsnooped `cpu_cache_new` line buffer
+(`CL_SNOOP`, still off by default).
+
+**Bench bugs found and fixed (five):** shared chipset port, longword-pair
+spacing, `{x[22:1],1'b0}` clearing instead of doubling, shadow initialised to
+zero against undefined SDRAM, shadow written at access start instead of at the
+acknowledge.  Each looked like a reproduction.
+
+**Suggested next step, to decide with Paul:** stop widening the bench blind and
+return to hardware, now that the bench says exactly what to look for.  An ILA
+build probing chip-RAM writes and the chipset's reads of them, triggered on a
+stale read-back inside Way Too Rude, would test the hardware directly.
