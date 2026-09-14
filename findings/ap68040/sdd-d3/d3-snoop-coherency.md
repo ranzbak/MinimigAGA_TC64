@@ -689,3 +689,25 @@ corrupting ratios 3 and 5.  Two runs settle it:
 Note the phase-alignment gate (`cpu_phase_ok`) is in the RTL under test here, and
 did not prevent it -- consistent with that gate aligning when a bus cycle STARTS
 while this race is about when the drained write LANDS.
+
+## Mechanism confirmed: `cpu_wr_sync` removes the stale reads (2026-09-14)
+
+Same run, `WRSYNC=1` (sdram_ctrl's `cpu_wr_sync` held high -- every CPU write
+reaching the controller in this bench is chip RAM, so that is what the
+wrapper's `sel_chipram` drives):
+
+    P2C probe: 772 chipset reads of the CPU's counter, 40 value changes seen, 0 stale
+    DDR3 CPU TB: 2 passed, 0 failed          (without WRSYNC: 5 stale in 688)
+
+So the 86.3 ns posted-write lag is the mechanism, and holding the CPU's
+acknowledge until SDRAM has the write removes it.  Cost: phase 8 moves from
+3.007 ms to 3.168 ms, about 5 % of the run.
+
+**The contradiction still to explain.**  `build/stage_ap040_d3chipsync_ila` put
+`cpu_wr_sync <= sel_chipram` on hardware and Way Too Rude still corrupted.  The
+genuine difference: that build predates `cpu_phase_ok` and `datatg68_r`, so
+hardware has never run `cpu_wr_sync` together with the RTL that just passed
+here.  `build/stage_ap040_d3wrsync_ila` is exactly that combination.  The
+ratio-4 run (next) says whether this race also carries the hardware's phase
+dependence; if it does not, it is a real defect but perhaps not the whole of
+the D3 corruption.
