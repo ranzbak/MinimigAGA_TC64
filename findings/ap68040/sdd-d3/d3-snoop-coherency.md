@@ -905,3 +905,32 @@ both with `cpu_phase_ok` and `datatg68_r`, `cpu_wr_sync` tied off, `CL_SNOOP`
 off.  Capture: `tools/vivado/ila_phase_hist.tcl`; decode:
 `tools/vivado/phase_hist.py`.  Bins filled at ratio 3 and empty at ratio 4 are
 the candidates.
+
+## Correction: Workbench DOES glitch on `d3wrsync`, byte-wide (2026-09-14)
+
+Paul, taking back the clarification above: Workbench glitches too on
+`stage_ap040_d3wrsync_ila`, more subtly than on earlier builds.  **In some icons,
+runs of pixels 8 long are missing.**
+
+8 pixels is one bitplane byte.  So the damage is BYTE-granular, not word
+(16 pixels) and not whole lines: a single byte of one plane ends up zero or
+stale while its partner byte in the same word is right.  Paths that act per
+byte and are worth checking against that:
+
+- `cpu_cache_new` CPU_SM_IDLE / CPU_SM_WRITE: a byte write updates only one
+  byte of the 16-byte line buffer and of the I/D cache memories
+  (`cpu_sm_bs`); the other byte comes from the cache, so a stale partner
+  byte is written back into the cache, not SDRAM.  `cpu_bs`, `cpu_dat_w` and
+  `cpu_adr` are sampled one cycle apart in IDLE and WRITE.
+- `ap040_bus16_adapter.v`: odd-aligned and odd-length transfers are split into
+  byte sub-cycles (`nuds <= f_odd`, `nlds <= !f_odd && !f_word`), each with a
+  one-qualified-clock IDLE gap.  The wrapper's `ramcs` must drop across that gap
+  at ratio 3 for the cache to see a new access.
+- `sdram_ctrl` snoop: `snoop_adr` is fed unregistered from `chipAddr` while
+  `snoop_act` is registered at the slot-1 CHIP write, and the cache takes the
+  address in SDR_SM_IDLE and the data in SDR_SM_SNOOP.  Unchanged from pre-D3,
+  so on its own it cannot be the ratio-3 difference.
+
+None tested yet.  The histogram capture goes ahead as planned; a
+byte-granular check (CPU byte writes next to chipset word writes in the same
+word) is the bench counterpart if the histogram points at chip-RAM writes.
