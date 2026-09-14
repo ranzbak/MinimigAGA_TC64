@@ -245,6 +245,7 @@ wire           turbokick;
 wire [1:0]     slow_config;
 wire           aga;
 wire           cache_inhibit;
+wire           cpu_wr_sync;   // unposted chip-RAM writes, see TG68K.vhd
 wire           cacheline_clr;
 wire [ 32-1:0] tg68_cad;
 wire [  7-1:0] tg68_cpustate;
@@ -674,6 +675,7 @@ TG68K #(
     .slow_config  (slow_config      ),
     .aga          (aga              ),
     .cache_inhibit(cache_inhibit    ),
+    .cpu_wr_sync  (cpu_wr_sync      ),
     .cacheline_clr(cacheline_clr    ),
     .ziiram_active(board_configured[0]),
     .ziiiram_active(board_configured[1]),
@@ -744,9 +746,8 @@ wire           hostce;
 sdram_ctrl sdram (
     .cache_rst    (tg68_rst         ),
     .cache_inhibit(cache_inhibit    ),
-    // Unposted chip-RAM writes: proven in sim/sdram_coherency, tied off here
-    // so this build is d3stable exactly.  See findings/ap68040/sdd-d3/.
-    .cpu_wr_sync  (1'b0             ),
+    // Unposted chip-RAM writes, driven by the wrapper's sel_chipram.
+    .cpu_wr_sync  (cpu_wr_sync      ),
     .cacheline_clr(cacheline_clr    ),
     .cpu_cache_ctrl (tg68_CACR_out    ),
     .snoop_stb_out  (snoop_stb        ),
