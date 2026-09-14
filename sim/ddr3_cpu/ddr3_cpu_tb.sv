@@ -164,7 +164,7 @@ localparam [ 7:0] MH_TYPE  = 8'd10;
 `ifdef DMA_OVERLAP
 // The overlap leg loops phase 7 (asm P7LOOPS) at ~37 us a pass; 2.5 ms would
 // time out a healthy run.
-localparam time TIMEOUT = 64'd6_000_000_000;
+localparam time TIMEOUT = 64'd12_000_000_000;
 `else
 localparam time TIMEOUT = 64'd2_500_000_000;
 `endif
@@ -340,6 +340,20 @@ integer     dma_i, dma_writes = 0, dma_err = 0;
 // reading a stale value the CPU has already overwritten -- the hardware's
 // uncleared-pixel direction.
 localparam [23:1] P2C_WORD = 23'h004009;
+// ACK-TIME SHADOW.  The bench's chipmem is written at the START of a CPU write
+// access, not at its acknowledge.  Without cpu_wr_sync those are one cycle apart
+// and chipmem is a fine reference; WITH it the acknowledge is held until SDRAM
+// has the write, so chipmem shows a value the CPU has not yet been told is
+// written, and a chipset read inside that hold was flagged stale falsely (bench
+// bug five).  p2c_acked records a word only when the CPU is acknowledged.
+reg  [15:0] p2c_acked [0:65535];
+integer     p2c_ai;
+initial for (p2c_ai = 0; p2c_ai < 65536; p2c_ai = p2c_ai + 1) p2c_acked[p2c_ai] = 16'h0000;
+always @(posedge clk)
+  if (ram_wr && !ramcs_n && ramready_w && !tg68_cpustate[6]) begin
+    if (!tg68_cuds) p2c_acked[ramwa][15:8] <= tg68_cin[15:8];
+    if (!tg68_clds) p2c_acked[ramwa][ 7:0] <= tg68_cin[ 7:0];
+  end
 reg  [23:1] p2c_adr;
 `ifdef P2CBLOCK
 // P2CBLOCK: the probe reads a random longword's LOW word inside the block the
@@ -385,9 +399,9 @@ initial begin : dma_agent
 `else
       p2c_adr = P2C_WORD;
 `endif
-      p2c_pre = chipmem[p2c_adr[16:1]];
+      p2c_pre = p2c_acked[p2c_adr[16:1]];
       ch_read(p2c_adr, p2c_got);
-      p2c_post = chipmem[p2c_adr[16:1]];
+      p2c_post = p2c_acked[p2c_adr[16:1]];
       if (p2c_pre !== 16'h0000 || p2c_post !== 16'h0000) p2c_written[p2c_adr[16:1]] = 1'b1;
       if (p2c_written[p2c_adr[16:1]]) p2c_reads = p2c_reads + 1;
       if (p2c_post !== p2c_last) begin p2c_changes = p2c_changes + 1; p2c_last = p2c_post; end
@@ -1587,7 +1601,15 @@ reg        stalled     = 1'b0;
 //
 // The pattern program's own 2.5 ms TIMEOUT is the backstop for it; the tight
 // threshold goes where it is wanted, on the walker.
+`ifdef DMA_OVERLAP
+// A looped phase 7 under a saturating chipset agent, with cpu_wr_sync holding
+// each chip-RAM write until slot 1 frees, legitimately goes more than 300,000
+// cycles without a phase marker while still progressing -- it tripped this as a
+// false stall.  ~8.8 ms here; TIMEOUT below is the backstop.
+localparam integer STALL_PAT = 1_000_000;
+`else
 localparam integer STALL_PAT = 300_000;
+`endif
 localparam integer STALL_MMU = 120_000;
 wire [31:0] stall_limit = mmutest ? STALL_MMU : STALL_PAT;
 
