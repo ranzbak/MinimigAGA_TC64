@@ -958,3 +958,29 @@ ack -> kernel release: 0 clk 1039, 1 clk 693, 2 clk 706, >= 3 never.
 - Release delay 0/1/2 clk is the 1:3 edge wait, bounded; nothing waits 3+.
 
 Ratio 4 capture next.  Candidates are bins filled here and empty there.
+
+## Ratio 4 on the histogram tree: turbo boot crashes, no-turbo boots (2026-09-14)
+
+`stage_ap040_d3phist_r4_ila` (CPU_CLK_DIVIDE 40), JTAG.  With Turbo on the
+machine crashes during boot; the CPU is not frozen -- two ILA samples 2 s apart
+show it executing Kickstart ($F9FE0C.., then $F82A50..).  With Turbo off it
+boots.
+
+This is NOT like-for-like with the clean ratio-4 build `d3div4` (09-11 10:56).
+Since then the tree gained `cpu_phase_ok` (the phase gate), `datatg68_r` (read
+data captured with the grant), the AGA 1.8 fix, the histogram, and the
+cpu_wr_sync tie-off; the upstream cache guard came and went.  The gate and the
+data capture have never run at ratio 4 on hardware.
+
+Checked and ruled out: a ratio-3 timing exception giving false slack at ratio
+4.  cpu.xdc's clk_38 -> clk_114 `-end 2` is ratio-independent, and the bus
+routers' `-start 2` rests on `bus_step` skipping edge T+N-1, which
+`ph_sr(cpu_clk_ratio-3)` places correctly at any ratio.
+
+Open hypothesis: at a ratio dividing 16, the offset between clk_38 edges and
+sdram_ctrl's round is fixed per load but differs between loads (0..3), and
+`cpu_phase_ok` opens on enaWRreg phases, so its behaviour depends on that
+offset.  The bench only ever ran one offset.  `sim/ddr3_cpu` now takes
+`CPU_PHASE` (clk_cpu start delay in clk periods) and `RUNTAG` (own run dir and
+log); sweep of offsets 0-3 at CPU_RATIO=4 running.  Asked Paul to split Kick
+turbo from Chip turbo on the ratio-4 build.

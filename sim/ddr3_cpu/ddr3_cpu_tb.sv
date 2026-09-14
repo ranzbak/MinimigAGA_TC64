@@ -199,9 +199,18 @@ always begin #4407 clk = 1'b1; #4408 clk = 1'b0; end
 localparam integer CPUP    = `CPU_RATIO * 8815;
 localparam integer CPUP_HI = CPUP / 2;
 localparam integer CPUP_LO = CPUP - CPUP_HI;
+// CPU_PHASE: start clk_cpu this many clk periods late.  At a ratio that divides
+// sixteen (4) the offset between clk_cpu edges and sdram_ctrl's round is fixed
+// for a whole run but is NOT fixed across hardware loads -- the MMCM output and
+// the controller's round counter come up independently -- so each offset is a
+// different machine.  Default 0 is the alignment this bench always had.
+`ifndef CPU_PHASE
+`define CPU_PHASE 0
+`endif
 reg clk_cpu = 1'b0;
 initial begin
   #4407;
+  #(`CPU_PHASE * 8815);
   forever begin
     clk_cpu = 1'b1;
     #CPUP_HI clk_cpu = 1'b0;
