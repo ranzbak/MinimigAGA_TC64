@@ -984,3 +984,48 @@ offset.  The bench only ever ran one offset.  `sim/ddr3_cpu` now takes
 `CPU_PHASE` (clk_cpu start delay in clk periods) and `RUNTAG` (own run dir and
 log); sweep of offsets 0-3 at CPU_RATIO=4 running.  Asked Paul to split Kick
 turbo from Chip turbo on the ratio-4 build.
+
+## The phase gate breaks ratio 4; the clean histogram (2026-09-14)
+
+Paul, on the ratio-4 builds:
+
+| build | Chip turbo | Kick turbo | result |
+|---|---|---|---|
+| `d3phist_r4_ila` (gate ON, datareg ON) | on | on | crash during boot |
+| same | off | on | boots, Way Too Rude stable |
+| same | off | off | boots |
+| `d3r4_nogate_ila` (gate OFF, datareg ON) | on | on | **boots, Way Too Rude clean** |
+
+(Gate-off value proven by the identical generic path: build B's synthesis log
+shows `cpu_phase_gate_en 1 / cpu_data_reg_en 0 / cpu_clk_ratio 4` exactly as
+passed.)
+
+So `cpu_phase_gate_en` (the `cpu_phase_ok` gate, added in `d3phase`) is what
+crashes ratio 4 with Chip turbo.  Build B (gate on, datareg off) was stopped
+unfinished: it keeps the proven-bad gate and could only crash.
+
+Acknowledge phase histogram, same capture method, demo running:
+
+| ph16 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| r4 gate OFF, **clean** (20669) | 0 | 1 | **4790** | 17 | 0 | 1 | **4882** | 19 | 0 | 7 | **3797** | 10 | 0 | **3230** | **3914** | 1 |
+| r3 gate ON, corrupt (2456) | 21 | 3 | 0 | **585** | 5 | 15 | 2 | **439** | 13 | 6 | 0 | **495** | 3 | **510** | 4 | **355** |
+
+ack -> release: r4 clean 0:17383 1:3238 3:47; r3 corrupt 0:1039 1:693 2:706.
+
+Read-out:
+- The clean configuration acknowledges on **2 / 6 / 10 / 14** (plus 13).
+- With the gate, the grid acknowledges move **one phase later, to 3 / 7 / 11 / 15**
+  (plus 13).  At ratio 4 the gate forces every access there and the machine
+  dies in boot; at ratio 3 it pushes most of them there and the demo corrupts.
+- **Phase 13 is in BOTH**, so 13 is not the defect -- the earlier guess about
+  it is withdrawn.
+- Confound: the ratio-3 capture had the gate on.  Ratio 3 corrupted before
+  the gate existed too, where accesses spread over all phases (3 is coprime
+  with 16) and some fraction lands on 3/7/11/15.  `stage_ap040_d3r3_nogate_ila`
+  (ratio 3, gate off, histogram) is building to take that confound out.
+
+Working hypothesis: a chip-RAM access acknowledged one phase after the
+enaWRreg grid (3/7/11/15) is the unsafe case; acknowledged ON the grid it is
+safe.  If the ratio-3 gate-off capture shows corruption scaling with the
+3/7/11/15 share, the fix is a gate that aligns accesses to 2/6/10/14 instead.
