@@ -1029,3 +1029,30 @@ Working hypothesis: a chip-RAM access acknowledged one phase after the
 enaWRreg grid (3/7/11/15) is the unsafe case; acknowledged ON the grid it is
 safe.  If the ratio-3 gate-off capture shows corruption scaling with the
 3/7/11/15 share, the fix is a gate that aligns accesses to 2/6/10/14 instead.
+
+## Offset sweep in sim: all clean; ratio 3 without the gate: less corruption (2026-09-14)
+
+`sim/ddr3_cpu` REALSDRAM + DMA_OVERLAP + P7LOOPS=10, WRSYNC off, CPU_RATIO=4,
+gate ON (the hardware-crashing configuration), CPU_PHASE 0..3:
+
+| CPU_PHASE | program | DMA writes wrong | P2C stale |
+|---|---|---|---|
+| 0 | PASS | 0 / 4631 | 0 |
+| 1 | PASS | 0 / 4714 | 0 |
+| 2 | PASS | 0 / 4707 | 0 |
+| 3 | PASS | 0 / 4698 | 0 |
+
+The clock-offset hypothesis is not supported by the bench: no offset makes the
+gate fail there.  Whatever the gate breaks on hardware is outside what the
+bench drives -- Kickstart boot traffic, the audio slot, copper and disk DMA are
+the obvious gaps.  Hardware is the only instrument for this defect for now.
+
+Hardware, `stage_ap040_d3r3_nogate_ila` (ratio 3, gate OFF, datareg ON; bound
+generics verified in its synthesis log), Chip + Kick turbo, Way Too Rude:
+**less corruption than with the gate, but still corruption.**  So the gate
+made ratio 3 worse, and is not the whole of it.
+
+Built alongside (separate tree copy, so the two runs did not share
+project_1): `stage_ap040_d3r3_gdly3_ila` -- ratio 3, gate ON, gate opening
+delayed 3 clk (`CPU_PHASE_GATE_DLY=3`, meant to land acknowledges on
+2/6/10/14), datareg ON; bound generics verified.  Next on the board.
