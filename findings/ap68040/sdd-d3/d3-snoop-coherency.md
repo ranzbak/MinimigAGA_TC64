@@ -1075,3 +1075,39 @@ ack -> release: 0:4812 1:10121 2:408.
   hypothesis, not yet a proof (the other phases differ between them too).
 - Next: `stage_ap040_d3r3_gdly3_ila`, which should put ~all acknowledges on
   2/6/10/14 at ratio 3.
+
+## RATIO 3, GATE DELAY 3: acknowledges on 2/6/10/14 and no corruption so far (2026-09-14)
+
+`stage_ap040_d3r3_gdly3_ila`: ratio 3, gate ON, `CPU_PHASE_GATE_DLY=3`,
+datareg ON, `CPU_PHASE_GATE_REQ` not present (0).  Bound generics verified
+in its synthesis log.
+
+Capture during Way Too Rude, Chip + Kick turbo, 15 windows, 22640 acknowledges:
+
+| ph16 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| r3 gate dly 3 (demo) | 3 | 0 | **4371** | 29 | 8 | 0 | **4671** | 7 | 8 | 0 | **3840** | 25 | 6 | **5772** | **3891** | 9 |
+| r4 gate off, clean | 0 | 1 | **4790** | 17 | 0 | 1 | **4882** | 19 | 0 | 7 | **3797** | 10 | 0 | **3230** | **3914** | 1 |
+
+ack -> release: 0:8679 1:7336 2:6624 (the 1:3 edge wait, bounded).
+
+The same grid as the clean ratio-4 build, at ratio 3.  **Paul: "no corruption
+yet", "still no corruption."**  Full demo run, Workbench icons and SysInfo
+still to confirm.
+
+Correction to the section before: the gate-delay-3 capture that looked
+"still spread" was the BOOT (samples 1-6 only, 4635 acknowledges), not the
+demo.  Boot traffic arrives differently; the demo is what corrupted.  The
+`CPU_PHASE_GATE_REQ` variants (`gd3req`, `gd2req`, building) were started on
+that misreading.  They remain useful only if boot or Workbench show strays.
+
+Summary across the four hardware points -- corruption tracks where chip-RAM
+acknowledges land, not the clock ratio:
+
+| build | share on 3/7/11/15 | result |
+|---|---|---|
+| r3 gate as built (open on enaWRreg) | ~78 % | corrupts |
+| r4 gate as built | all | crashes in boot |
+| r3 gate off | ~14 % | corrupts less |
+| r4 gate off | ~0.3 % | clean |
+| r3 gate delay 3 | ~0.3 % | clean so far |
