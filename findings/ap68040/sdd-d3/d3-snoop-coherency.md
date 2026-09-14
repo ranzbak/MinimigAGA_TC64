@@ -885,3 +885,23 @@ Clarified by Paul: **Workbench did not glitch; only the demo glitched more.**
 So `cpu_wr_sync` did not break something new -- it made the existing demo
 corruption MORE LIKELY.  That strengthens the pattern above: making ratio-3
 chip-RAM accesses wait longer increases the same failure.
+
+## Next: measure chip-RAM acknowledge phase on hardware (2026-09-14)
+
+The bench has no ratio-dependent failure left, and the two changes that made
+hardware worse both made ratio-3 chip-RAM accesses wait longer.  So the next
+step measures, on hardware, WHEN chip-RAM accesses complete against the SDRAM
+round at ratio 3 (corrupts) versus ratio 4 (clean).
+
+`TG68K.vhd` `dbg_phist` -> `ila_cpu040` probe9, 384 bits: a 16-bin histogram of
+the SDRAM round phase each chip-RAM acknowledge lands on (phase counter
+re-synchronised on `ena7WRreg`), and an 8-bin histogram of clk cycles from that
+acknowledge to the kernel's release (`clkena_r`).  Snapshotted and cleared every
+2**22 cycles (~37 ms), so one ILA sample is one complete window.  Taps are
+registered, keeping load off the critical `ramready` net.
+
+Builds: `stage_ap040_d3phist_r3_ila` (CPU_CLK_DIVIDE 30) and `..._r4_ila` (40),
+both with `cpu_phase_ok` and `datatg68_r`, `cpu_wr_sync` tied off, `CL_SNOOP`
+off.  Capture: `tools/vivado/ila_phase_hist.tcl`; decode:
+`tools/vivado/phase_hist.py`.  Bins filled at ratio 3 and empty at ratio 4 are
+the candidates.

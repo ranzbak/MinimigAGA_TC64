@@ -141,6 +141,13 @@ entity TG68K is
 		--   (18) cpu_ph2  (17) snp_stb_held  (16) snoop_stb
 		--   (15:8) snp_out_cnt (kernel side)  (7:0) snp_in_cnt (bus side)
 		dbg_snoop       : out    std_logic_vector(40 downto 0);
+		-- Chip-RAM acknowledge phase histogram, ila_cpu040 probe9.  384 bits:
+		--   (127:0)   8 bins x 16: clk cycles from a chip-RAM acknowledge to the
+		--             kernel's release (clkena_r), bin 7 = 7 or more
+		--   (383:128) 16 bins x 16: SDRAM round phase the acknowledge landed on
+		-- Snapshot of one 2**22-cycle window (~37 ms), refreshed every window, so a
+		-- single ILA sample reads a complete histogram.
+		dbg_phist       : out    std_logic_vector(383 downto 0);
 		eth_en          : in     std_logic                     := '0'; -- @suppress "Unused port: eth_en is not used in work.TG68K(logic)"
 		sel_eth         : buffer std_logic;
 		frometh         : in     std_logic_vector(15 downto 0);
@@ -248,6 +255,26 @@ ARCHITECTURE logic OF TG68K IS
 	SIGNAL turbokick_d : std_logic := '0';
 	SIGNAL turboslow_d : std_logic := '0';
 	SIGNAL slower      : std_logic_vector(3 downto 0);
+	-- The acknowledge-phase histogram behind dbg_phist.  Stage D3 corrupts at
+	-- clock ratios coprime with the 16-phase SDRAM round (3, 5) and is clean at
+	-- ratio 4; two changes that made chip-RAM accesses wait longer made it worse.
+	-- So what is measured is WHEN a chip-RAM access completes against the round,
+	-- and how long the kernel then takes to see it -- built at ratio 3 and 4 and
+	-- compared.  Taps are registered, so nothing here loads the critical ramready
+	-- net more than one flop.
+	TYPE ph_hist16_t IS ARRAY (0 TO 15) OF std_logic_vector(15 DOWNTO 0);
+	TYPE ph_hist8_t  IS ARRAY (0 TO 7)  OF std_logic_vector(15 DOWNTO 0);
+	SIGNAL ph16        : std_logic_vector(3 DOWNTO 0)  := (others => '0');
+	SIGNAL ph_ack_r    : std_logic := '0';
+	SIGNAL ph_ack_d    : std_logic := '0';
+	SIGNAL ph_chip_r   : std_logic := '0';
+	SIGNAL ph_pend     : std_logic := '0';
+	SIGNAL ph_dly      : std_logic_vector(2 DOWNTO 0)  := (others => '0');
+	SIGNAL ph_win      : std_logic_vector(21 DOWNTO 0) := (others => '0');
+	SIGNAL ph_cnt_ph   : ph_hist16_t := (others => (others => '0'));
+	SIGNAL ph_cnt_dly  : ph_hist8_t  := (others => (others => '0'));
+	SIGNAL ph_snap_ph  : ph_hist16_t := (others => (others => '0'));
+	SIGNAL ph_snap_dly : ph_hist8_t  := (others => (others => '0'));
 	-- PHASE ALIGNMENT OF BUS-CYCLE STARTS (stage D3, 2026-09-11).
 	--
 	-- The SDRAM round is sixteen clk phases and enaWRreg marks four of them.
@@ -1547,6 +1574,56 @@ BEGIN
 			END IF;
 		END IF;
 	END PROCESS;
+
+	-- The acknowledge-phase histogram; see ph_hist16_t.
+	PROCESS(clk)
+		VARIABLE v_ph  : integer RANGE 0 TO 15;
+		VARIABLE v_dly : integer RANGE 0 TO 7;
+	BEGIN
+		IF rising_edge(clk) THEN
+			-- position in the 16-phase round, re-synchronised on ena7WRreg
+			IF ena7WRreg = '1' THEN
+				ph16 <= (others => '0');
+			ELSE
+				ph16 <= ph16 + 1;
+			END IF;
+			ph_ack_r  <= ramready AND sel_ram_d;
+			ph_ack_d  <= ph_ack_r;
+			ph_chip_r <= sel_chipram;
+
+			ph_win <= ph_win + 1;
+			IF ph_win = "1111111111111111111111" THEN
+				ph_snap_ph  <= ph_cnt_ph;
+				ph_snap_dly <= ph_cnt_dly;
+				ph_cnt_ph   <= (others => (others => '0'));
+				ph_cnt_dly  <= (others => (others => '0'));
+				ph_pend     <= '0';
+			ELSE
+				-- a chip-RAM acknowledge rising: bin its round phase, start timing
+				IF ph_ack_r = '1' AND ph_ack_d = '0' AND ph_chip_r = '1' THEN
+					v_ph := conv_integer(ph16);
+					ph_cnt_ph(v_ph) <= ph_cnt_ph(v_ph) + 1;
+					ph_pend <= '1';
+					ph_dly  <= (others => '0');
+				ELSIF ph_pend = '1' THEN
+					IF clkena_r = '1' THEN
+						v_dly := conv_integer(ph_dly);
+						ph_cnt_dly(v_dly) <= ph_cnt_dly(v_dly) + 1;
+						ph_pend <= '0';
+					ELSIF ph_dly /= "111" THEN
+						ph_dly <= ph_dly + 1;
+					END IF;
+				END IF;
+			END IF;
+		END IF;
+	END PROCESS;
+
+	g_phist_ph : FOR i IN 0 TO 15 GENERATE
+		dbg_phist(128 + 16*i + 15 DOWNTO 128 + 16*i) <= ph_snap_ph(i);
+	END GENERATE;
+	g_phist_dly : FOR i IN 0 TO 7 GENERATE
+		dbg_phist(16*i + 15 DOWNTO 16*i) <= ph_snap_dly(i);
+	END GENERATE;
 
 	PROCESS(clk)
 	BEGIN

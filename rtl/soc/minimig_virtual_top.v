@@ -240,6 +240,8 @@ wire [7:0]     dbg_exc_vec;
 wire [3:0]     dbg_flags;
 // Stage D3 snoop instrumentation; see TG68K.vhd's dbg_snoop and probe8.
 wire [40:0]    dbg_snoop;
+// Chip-RAM acknowledge phase histogram; see TG68K.vhd's dbg_phist and probe9.
+wire [383:0]   dbg_phist;
 wire           turbochipram;
 wire           turbokick;
 wire [1:0]     slow_config;
@@ -691,6 +693,7 @@ TG68K #(
     .dbg_exc_vec  (dbg_exc_vec      ),
     .dbg_flags    (dbg_flags        ),
     .dbg_snoop    (dbg_snoop        ),
+    .dbg_phist    (dbg_phist        ),
     //  .fastramcfg   ({&memcfg[5:4],memcfg[5:4]}),
     .eth_en       (1'b1), // TODO
     .sel_eth      (),
@@ -953,7 +956,8 @@ if (CPU040_DEBUG_ILA) begin : g_cpu040_ila
     .probe5 (dbg_flags),       // 4  {fault, in_exc, halted, busy}
     .probe6 (dbg_ir),          // 16 opcode, one instruction behind dbg_pc
     .probe7 (tg68_cpustate),   // 7
-    .probe8 (dbg_snoop)        // 41 snoop crossing: see TG68K.vhd dbg_snoop
+    .probe8 (dbg_snoop),       // 41 snoop crossing: see TG68K.vhd dbg_snoop
+    .probe9 (dbg_phist)        // 384 chip-RAM acknowledge phase histogram
   );
 end
 endgenerate
