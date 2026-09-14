@@ -38,6 +38,11 @@ set post [expr {[llength $argv] > 3 ? [lindex $argv 3] : 1}]
 # otherwise untouched -- the single-variable bisect for whether the chip
 # RAM corruption is a rate-dependent window or a structural fault.
 set cpudiv [expr {[llength $argv] > 4 ? [lindex $argv 4] : 30}]
+# ila_cpu040 capture depth (6th -tclargs, default 4096).  An ILA stores EVERY
+# probe at the full depth, so a wide probe is expensive: the 384-bit dbg_phist
+# histogram at 4096 samples pushed the design to 167 RAMB36 against 135 on the
+# part.  The histogram needs one sample, so its builds pass 1024.
+set cpuiladepth [expr {[llength $argv] > 5 ? [lindex $argv 5] : 4096}]
 set R [expr {[llength $argv] > 2 ? [file normalize [lindex $argv 2]] \
                                  : [file normalize [file dirname [info script]]/../..]}]
 open_project $R/project_1/project_1.xpr
@@ -280,7 +285,7 @@ if {$ila} {
     # when nothing changed -- Vivado only marks the IP out of date if it did.
     set_property -dict [list \
         CONFIG.C_NUM_OF_PROBES {10} \
-        CONFIG.C_DATA_DEPTH {4096} \
+        CONFIG.C_DATA_DEPTH $cpuiladepth \
         CONFIG.C_TRIGIN_EN {false} \
         CONFIG.C_EN_STRG_QUAL {1} \
         CONFIG.C_ADV_TRIGGER {false} \
