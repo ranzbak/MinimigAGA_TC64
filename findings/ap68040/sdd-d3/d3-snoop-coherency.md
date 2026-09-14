@@ -880,3 +880,8 @@ Action: `cpu_wr_sync` tied off again at the `sdram_ctrl` instantiation.  The
 wrapper still drives it and the simulation fix stays available, but it is out
 of the build path.  The race it fixes is real and present at ratio 4, where the
 hardware is clean -- so it is not what the hardware is showing.
+
+Clarified by Paul: **Workbench did not glitch; only the demo glitched more.**
+So `cpu_wr_sync` did not break something new -- it made the existing demo
+corruption MORE LIKELY.  That strengthens the pattern above: making ratio-3
+chip-RAM accesses wait longer increases the same failure.
