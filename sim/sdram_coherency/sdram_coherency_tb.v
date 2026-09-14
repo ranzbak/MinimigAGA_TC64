@@ -106,13 +106,29 @@ wire         cpuena;
 // switch is given: +wrsync drives cpu_wr_sync for the whole (chip RAM) window,
 // -DCL_SNOOP compiles in the line-buffer snoop invalidate.
 reg wrsync = 1'b0;
+// CACHE-INHIBIT AND CACHELINE-CLR, previously tied to zero here -- which meant
+// the KICKSTART TURBO path was never simulated at all.
+//
+// On hardware `cache_inhibit <= sel_kickram` (rtl/soc/TG68K.vhd), and inside
+// cpu_cache_new that signal kills cpu_cacheline_valid and drives the
+// ci_inv_pend machinery -- a cache-inhibited HIT owes a row invalidate, and
+// ci_inv_pend shares port B with store_inv_lost.  That is the same port-B
+// contention upstream's a8a50ce is about, so leaving it at zero left the most
+// interesting corner of this module untested.
+//
+// `cacheline_clr <= turbochipram XOR turbochip_d` pulses whenever Turbo chip
+// RAM is toggled in the OSD -- which happened in every one of the hardware
+// tests that corrupted -- and forces cpu_cacheline_dirty.  Also never
+// simulated.
+reg ci_now  = 1'b0;
+reg clr_now = 1'b0;
 `ifdef CL_SNOOP
 sdram_ctrl #(.CL_SNOOP(1)) dut (
 `else
 sdram_ctrl dut (
 `endif
   .sysclk(clk), .clk7_en(clk7_en), .reset_in(reset_in), .cache_rst(reset_in),
-  .cache_inhibit(1'b0), .cacheline_clr(1'b0), .cpu_wr_sync(wrsync), .cpu_cache_ctrl(4'b0011), .reset_out(reset_out),
+  .cache_inhibit(ci_now), .cacheline_clr(clr_now), .cpu_wr_sync(wrsync), .cpu_cache_ctrl(4'b0011), .reset_out(reset_out),
   .sdaddr(sdaddr), .sd_cs(sd_cs), .ba(ba), .sd_we(sd_we), .sd_ras(sd_ras), .sd_cas(sd_cas),
   .dqm(dqm), .sdata(sdata_fpga),
   .hostWR(32'd0), .hostAddr(22'd0), .hostce(1'b0), .hostwe(1'b0), .hostbytesel(4'b0000),
@@ -169,6 +185,7 @@ localparam [22:1] W_CPU  = 22'h006000;   // CPU background load
 localparam [22:1] W_CLB  = 22'h008000;   // C2P with the line buffer primed
 localparam [22:1] W_WAY  = 22'h00a000;   // C2P with the 2-way cache primed
 localparam [22:1] W_LW   = 22'h00c000;   // longword CPU writes
+localparam [22:1] W_KICK = 22'h00e000;   // accessed CACHE-INHIBITED, as Kickstart is
 
 // ---------------------------------------------------------------- scoreboard
 integer errors   = 0;
@@ -180,6 +197,8 @@ integer bg_err   = 0, bg_chk  = 0;
 integer clb_err  = 0, clb_chk = 0;   // C2P with the CPU's LINE BUFFER primed
 integer way_err  = 0, way_chk = 0;   // C2P with the 2-way cache primed
 integer lw_err   = 0, lw_chk  = 0;   // P2C by longword write
+integer ci_err   = 0, ci_chk  = 0;   // cache-inhibited (Kickstart turbo) path
+integer clr_err  = 0, clr_chk = 0;   // coherency across a cacheline_clr pulse
 integer timeouts = 0;
 
 task fail;
@@ -292,6 +311,7 @@ task cpu_read;
   integer c;
   begin
     @(posedge clk); cpuAddr = {3'b000, a};
+                    ci_now = (a[22:12] == W_KICK[22:12]);   // sel_kickram
     @(posedge clk); cpustate = 7'b0000010;      // ramcs low, [1:0] = 10 data read
     c = 0;
     @(posedge clk);
@@ -312,6 +332,7 @@ task cpu_write;
   integer c;
   begin
     @(posedge clk); cpuAddr = {3'b000, a}; cpuWR = d; cpuL = 1'b0; cpuU = 1'b0;
+                    ci_now = (a[22:12] == W_KICK[22:12]);   // sel_kickram
     @(posedge clk); cpustate = 7'b0000011;      // ramcs low, [1:0] = 11 write
     c = 0;
     @(posedge clk);
@@ -424,7 +445,7 @@ endtask
 integer i, j;
 reg [15:0] rd;
 reg [15:0] rd2;
-reg [22:1] ta, tb, tw, tl, tl2;      // scratch word address, so {ta,1'b0} has a defined width
+reg [22:1] ta, tb, tw, tl, tl2, tk, tc;      // scratch word address, so {ta,1'b0} has a defined width
 
 initial begin
   $timeformat(-9, 3, " ns", 10);
@@ -521,6 +542,39 @@ initial begin
       fail("P2C lw lo   ", {tl2, 1'b0}, rd, 16'h9000 + j);
     end
 
+    // ---- CACHE-INHIBITED read, the Kickstart turbo shape ----
+    // A cache-inhibited read must bypass the cache AND kill any line resident
+    // for that row (ci_inv_pend).  Prime the line cacheable first so there IS
+    // something to kill, then let the chipset move memory underneath, then
+    // read it cache-inhibited: the answer must come from memory, not the line.
+    tk = W_KICK + 2*j;
+    do_chip_write(tk, 16'hA000 + j);
+    do_cpu_read  (tk, rd);                 // ci_now is asserted for this window
+    do_chip_write(tk, 16'hB000 + j);
+    do_cpu_read  (tk, rd);
+    ci_chk = ci_chk + 1; checks = checks + 1;
+    if (rd !== (16'hB000 + j)) begin
+      ci_err = ci_err + 1;
+      fail("CI kick read", {tk, 1'b0}, rd, 16'hB000 + j);
+    end
+
+    // ---- coherency across a cacheline_clr pulse ----
+    // cacheline_clr fires whenever Turbo chip RAM is toggled, which happened
+    // in every hardware test that corrupted.  Prime a line, pulse it, and the
+    // next read must still return what memory holds.
+    tc = W_CLB + 2*j + 1;
+    do_chip_write(tc, 16'hC000 + j);
+    do_cpu_read  (tc, rd);                 // line now resident
+    @(posedge clk); clr_now = 1'b1;
+    @(posedge clk); clr_now = 1'b0;
+    do_chip_write(tc, 16'hD000 + j);
+    do_cpu_read  (tc, rd);
+    clr_chk = clr_chk + 1; checks = checks + 1;
+    if (rd !== (16'hD000 + j)) begin
+      clr_err = clr_err + 1;
+      fail("CLR line rd ", {tc, 1'b0}, rd, 16'hD000 + j);
+    end
+
     // ---- P2C: the CPU writes, then the chipset must see it ----
     ta = W_P2C + 2*j;
     do_cpu_write (ta, 16'hE000 + j);
@@ -554,6 +608,8 @@ initial begin
   $display("  C2P line buffer primed            %0d checked, %0d FAILED", clb_chk, clb_err);
   $display("  C2P two-way cache primed          %0d checked, %0d FAILED", way_chk, way_err);
   $display("  P2C longword write                %0d checked, %0d FAILED", lw_chk, lw_err);
+  $display("  cache-inhibited (Kickstart) read   %0d checked, %0d FAILED", ci_chk, ci_err);
+  $display("  read across a cacheline_clr pulse  %0d checked, %0d FAILED", clr_chk, clr_err);
   $display("  background CPU reads              %0d checked, %0d FAILED", bg_chk, bg_err);
   $display("  port timeouts                     %0d", timeouts);
   if (errors == 0 && timeouts == 0) $display("=== PASS ===");
