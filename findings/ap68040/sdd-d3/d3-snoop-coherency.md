@@ -934,3 +934,27 @@ byte and are worth checking against that:
 None tested yet.  The histogram capture goes ahead as planned; a
 byte-granular check (CPU byte writes next to chipset word writes in the same
 word) is the bench counterpart if the histogram points at chip-RAM writes.
+
+## Ratio 3 phase histogram, Way Too Rude running and glitching (2026-09-14)
+
+`stage_ap040_d3phist_r3_ila`, JTAG.  The first load froze early in Kickstart
+(CPU bus idle after the INTENA $C000 write, no firmware boot after reset);
+a plain reload booted normally.  Build unchanged between the two, so the
+first freeze was the load, not the image -- noted, not chased.
+
+10 windows of ~37 ms each, 3 s apart, demo glitching on screen:
+
+| round phase (ph16, 0 = cycle after ena7WRreg) | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| chip-RAM acks (sum) | 21 | 3 | 0 | **585** | 5 | 15 | 2 | **439** | 13 | 6 | 0 | **495** | 3 | **510** | 4 | **355** |
+
+ack -> kernel release: 0 clk 1039, 1 clk 693, 2 clk 706, >= 3 never.
+
+- Four grid phases 3/7/11/15 (every 4) carry most acknowledges, as expected
+  from enaWRreg on ph2/6/10/14.
+- **Phase 13 is off that grid and carries 21 %**, and it tracks traffic:
+  0-4 in the quiet windows, 81-225 in the busy ones (windows 5, 6, 8).
+- A thin spread (~70 total) lands on 0, 4, 5, 8, 9, 12, 14.
+- Release delay 0/1/2 clk is the 1:3 edge wait, bounded; nothing waits 3+.
+
+Ratio 4 capture next.  Candidates are bins filled here and empty there.
