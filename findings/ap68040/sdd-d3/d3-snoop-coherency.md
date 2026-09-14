@@ -779,3 +779,26 @@ is written at the START of a write access, not at its acknowledge, so during a
 in c289caa (the probe now uses an acknowledge-time shadow; under DMA_OVERLAP
 the watchdog is 1,000,000 cycles and TIMEOUT 12 ms).  The WRSYNC block probe is
 being rerun, correctly judged, at ratio 3 and ratio 4 with `P7LOOPS=10`.
+
+## `cpu_wr_sync` removes the race completely, at both ratios (2026-09-14)
+
+Block-burst probe (`P2CBLOCK=32`), `WRSYNC` on, judged against the acknowledge
+(`p2c_acked`), `P7LOOPS=10`:
+
+    ratio 3: P2C probe: 481 chipset reads, 464 value changes seen, 0 stale   PASS, no stall
+    ratio 4: P2C probe: 551 chipset reads, 542 value changes seen, 0 stale   PASS, no stall
+
+With it off, the same traffic gave 11 stale reads.  So the posted-write race is
+fully accounted for and fully fixed, for single words and whole blocks, at the
+hardware-corrupting ratio and the hardware-clean one.
+
+**What that leaves.**  This bench now has no failure that differs between ratio
+3 and ratio 4, so it does not yet reproduce what distinguishes the corrupting D3
+build.  The thing it has never run is the MMU TABLE WALKER against the real
+controller -- and the walker's bus router is the most ratio-dependent machinery
+in the wrapper: `bus_step` skips the single clk edge before each kernel edge
+(`NOT cpu_ph`), which falls at a different place in the SDRAM round at ratio 3
+than at ratio 4, and `bus_fresh` masks the acknowledge for one cycle after the
+walker takes the bus.  The OS on the hardware runs with translation on; the
+`--mmu` leg has only ever run against the behavioural memory model.  Next:
+`--mmu` under `REALSDRAM` + `WRSYNC`, ratio 3 and ratio 4.
