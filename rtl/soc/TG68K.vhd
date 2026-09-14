@@ -65,6 +65,13 @@ entity TG68K is
 		-- instead of the copy captured with the grant (see datatg68_r).
 		cpu_phase_gate_en  : integer := 1;
 		cpu_data_reg_en    : integer := 1;
+		-- Where the phase gate opens: 0 = on clkena_in (enaWRreg) itself, as
+		-- built; N = on clkena_in delayed N clk cycles.  enaWRreg repeats every
+		-- four cycles, so 3 opens one cycle BEFORE the next enaWRreg.  Hardware
+		-- 2026-09-14: the gate at 0 moves chip-RAM acknowledges from phases
+		-- 2/6/10/14 (ratio 4 without the gate, clean) to 3/7/11/15, and crashes
+		-- ratio 4; 3 is meant to put them back.  Range 0 to 4.
+		cpu_phase_gate_dly : integer := 0;
 		-- Size of the third ZIII board, log2 of its byte size: 24 = 16 MB,
 		-- 25 = 32 MB, 26 = 64 MB.  It is the DDR3 board when haveddr3, and the
 		-- board is size-aligned, so this also says how many address bits are
@@ -309,6 +316,10 @@ ARCHITECTURE logic OF TG68K IS
 	-- NOTHING on a cache hit, which is where the stage D3 speedup comes from.
 	SIGNAL cpu_phase_ok   : std_logic := '0';
 	SIGNAL cpu_phase_gate : std_logic;
+	-- clkena_in delayed 1..4 clk cycles, and the phase the gate opens on;
+	-- see cpu_phase_gate_dly.
+	SIGNAL ena_sr         : std_logic_vector(3 downto 0) := (others => '0');
+	SIGNAL gate_open      : std_logic;
 
 	TYPE sync_states IS (sync0, sync1, sync2, sync3, sync4, sync5, sync6, sync7, sync8, sync9);
 	SIGNAL sync_state : sync_states;
@@ -1574,12 +1585,20 @@ BEGIN
 	-- advances (a new access may be coming) and set again only on an enaWRreg
 	-- phase once `slower` has drained, so the select opens on a fixed four
 	-- phases of the sixteen-phase round however the island clock is divided.
+	g_gate_dly0 : IF cpu_phase_gate_dly = 0 GENERATE
+		gate_open <= clkena_in;
+	END GENERATE;
+	g_gate_dlyn : IF cpu_phase_gate_dly > 0 GENERATE
+		gate_open <= ena_sr(cpu_phase_gate_dly - 1);
+	END GENERATE;
+
 	PROCESS(clk)
 	BEGIN
 		IF rising_edge(clk) THEN
+			ena_sr <= ena_sr(2 DOWNTO 0) & clkena_in;
 			IF clkena = '1' THEN
 				cpu_phase_ok <= '0';
-			ELSIF clkena_in = '1' AND slower(0) = '0' THEN
+			ELSIF gate_open = '1' AND slower(0) = '0' THEN
 				cpu_phase_ok <= '1';
 			END IF;
 		END IF;

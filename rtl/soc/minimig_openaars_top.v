@@ -45,6 +45,8 @@ module minimig_openaars_top #(
   // A/B switches for two D3 fixes (TG68K.vhd); 1 = as built.
   parameter CPU_PHASE_GATE = 1,
   parameter CPU_DATA_REG = 1,
+  // Phase gate opening delay in clk cycles (TG68K.vhd cpu_phase_gate_dly).
+  parameter CPU_PHASE_GATE_DLY = 0,
   // Bring-up only: ILA on the AP68040's fault outputs (build_ap040.tcl).
   parameter CPU040_DEBUG_ILA = 0,
   // Debug build only (tools/vivado/build_ila.tcl): put ila_fastram on the
@@ -508,6 +510,7 @@ minimig_virtual_top
   .cpu_clk_divide(CPU_CLK_DIVIDE),
   .cpu_phase_gate_en(CPU_PHASE_GATE),
   .cpu_data_reg_en(CPU_DATA_REG),
+  .cpu_phase_gate_dly(CPU_PHASE_GATE_DLY),
   .CPU040_DEBUG_ILA(CPU040_DEBUG_ILA),
   .DDR3_FASTRAM_ILA(DDR3_FASTRAM_ILA)
 ) openaars_virtual_top (
