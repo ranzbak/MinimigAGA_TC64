@@ -58,6 +58,13 @@ entity TG68K is
 		-- instruction, because clkena lands one clk cycle before the kernel's
 		-- edge instead of on it.  Must match amiga_clk's CPU_CLK_DIVIDE / 10.
 		cpu_clk_ratio      : integer := 3;
+		-- A/B switches for the two D3 fixes that have never run at ratio 4 on
+		-- hardware.  1 keeps each exactly as built.  cpu_phase_gate_en = 0 lets
+		-- ramcs/ddrcs assert without waiting for an enaWRreg phase (see
+		-- cpu_phase_ok); cpu_data_reg_en = 0 hands the kernel datatg68 itself
+		-- instead of the copy captured with the grant (see datatg68_r).
+		cpu_phase_gate_en  : integer := 1;
+		cpu_data_reg_en    : integer := 1;
 		-- Size of the third ZIII board, log2 of its byte size: 24 = 16 MB,
 		-- 25 = 32 MB, 26 = 64 MB.  It is the DDR3 board when haveddr3, and the
 		-- board is size-aligned, so this also says how many address bits are
@@ -324,6 +331,8 @@ ARCHITECTURE logic OF TG68K IS
 	-- instant, stable for the whole clk_cpu period.  Zero cost: it is one
 	-- register on a path that had two clk cycles of slack anyway.
 	SIGNAL datatg68_r : std_logic_vector(15 downto 0) := (others => '0');
+	-- What the kernel's data_in actually gets; see cpu_data_reg_en.
+	SIGNAL datatg68_k : std_logic_vector(15 downto 0);
 	SIGNAL w_datatg68 : std_logic_vector(15 downto 0);
 	SIGNAL ramcs      : std_logic;
 
@@ -752,7 +761,8 @@ BEGIN
 
 	-- See cpu_phase_ok.  Constant '1' for the TG68K, whose bus cycles are
 	-- already on the enaWRreg grid by construction, so this folds away there.
-	cpu_phase_gate <= cpu_phase_ok WHEN use_ap040 ELSE '1';
+	cpu_phase_gate <= cpu_phase_ok WHEN use_ap040 AND cpu_phase_gate_en /= 0 ELSE '1';
+	datatg68_k     <= datatg68_r WHEN cpu_data_reg_en /= 0 ELSE datatg68;
 
 	ramcs <= NOT (NOT cpu_int AND sel_ram_d AND NOT sel_nmi_vector AND cpu_phase_gate) OR slower(0);
 	-- Same shape as ramcs, slower(0) throttle included, so the DDR3 backend sees
@@ -875,7 +885,7 @@ BEGIN
 
 				nReset         => reset,    -- : in std_logic:='1';      --low active
 				clkena_in      => clkena,   -- : in std_logic:='1';
-				data_in        => datatg68_r, -- captured with the enable; see its note
+				data_in        => datatg68_k, -- captured with the enable; see datatg68_r
 				IPL            => cpuIPL,   -- : in std_logic_vector(2 downto 0):="111";
 				IPL_autovector => '1',      -- : in std_logic:='0';
 				CPU            => cpu,

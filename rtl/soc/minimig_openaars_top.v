@@ -42,6 +42,9 @@ module minimig_openaars_top #(
   // AP68040 island clock divider: 30 = clk_114/3 (stage D3),
   // 40 = clk_114/4 (pre-D3 rate, D3 architecture otherwise intact).
   parameter CPU_CLK_DIVIDE = 30,
+  // A/B switches for two D3 fixes (TG68K.vhd); 1 = as built.
+  parameter CPU_PHASE_GATE = 1,
+  parameter CPU_DATA_REG = 1,
   // Bring-up only: ILA on the AP68040's fault outputs (build_ap040.tcl).
   parameter CPU040_DEBUG_ILA = 0,
   // Debug build only (tools/vivado/build_ila.tcl): put ila_fastram on the
@@ -503,6 +506,8 @@ minimig_virtual_top
   .ap040_enable_cache(AP040_ENABLE_CACHE),
   .ap040_post_stores(AP040_POST_STORES),
   .cpu_clk_divide(CPU_CLK_DIVIDE),
+  .cpu_phase_gate_en(CPU_PHASE_GATE),
+  .cpu_data_reg_en(CPU_DATA_REG),
   .CPU040_DEBUG_ILA(CPU040_DEBUG_ILA),
   .DDR3_FASTRAM_ILA(DDR3_FASTRAM_ILA)
 ) openaars_virtual_top (
