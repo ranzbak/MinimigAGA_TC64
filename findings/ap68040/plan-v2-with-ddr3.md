@@ -715,7 +715,12 @@ the next session does not have to find it again:
   what happened in D1 when the bench and the RTL disagreed about the enable
   cadence.
 
-### Stage E — both cores in one bitstream, OSD-selected (M, bounded experiment)
+### Stage E — both cores in one bitstream, OSD-selected (M, bounded experiment) — DROPPED
+
+**Dropped 2026-09-15 (Paul):** the design is AP68040-only from here; the TG68K
+stays reachable through tag `d3_stable`. Two cores cost LUT/BRAM for software
+that mostly runs on the 040. "Stage E" now means the adapter collapse below;
+see [stage-e/2026-09-15-stage-e-design.md](stage-e/2026-09-15-stage-e-design.md).
 
 Both kernels under the wrapper's `generate`, selected by `cpu_config[4]`
 latched at reset (the dual-build rows of "OSD and firmware": bit 4 = AP040,
@@ -1588,6 +1593,11 @@ path while it holds an unlocated corruption bug: the only clean control in the
 investigation is "pre-D3 works", and a rewrite throws it away.  Stage E starts
 when the stage D defect is understood -- not necessarily fixed, but named.
 
+**2026-09-15: that precondition is met.** The defect is named -- chip-RAM
+acknowledges must land on SDRAM phases 2/6/10/14 -- and `d3_stable` is the clean
+control. The design (draft, awaiting Paul's review) is
+[stage-e/2026-09-15-stage-e-design.md](stage-e/2026-09-15-stage-e-design.md).
+
 Exit criteria when it does start: `sim/sdram_coherency` extended with the real
 `TG68K.vhd` in front of the controller (removing the hand-written CPU agent,
 which is itself an invented layer and the last seam the bench models rather
@@ -1813,6 +1823,16 @@ hunt -- a separate, smaller problem.
    as the chip RAM defect.  That would give stale or torn output rather than
    nothing, so it is a lower-ranked explanation for "inactive" -- but it is the
    same bug class and `sim/sdram_coherency` could test it directly.
+
+**2026-09-15, read of the driver (`amiga_sw/rtg/minimig.card.asm`):** mode
+switching runs from the vertical-blank interrupt (`VBL_ISR` → `SetHardware`:
+Akiko reg 2, custom timing registers, BEAMCON0 bit 6 = `displaydual` =
+`rtg_ena`); the framebuffer is 4 MB from Zorro II fast RAM, with a plain
+`MEMF_FAST` fallback that `SetPanning` can only map to Zorro III board 1; the
+driver never reads back a real register (only the ID). Check 3 above and the
+`akiko_wr` hold (cleared only when the address leaves $00B8xxxx) are therefore
+low-ranked; the framebuffer-reach lead is the strongest. Ranked leads and a
+one-build ILA diagnosis against `build/stage_tg68k`: stage E design spec §7.
 
 What is known about the path.  `sdram_ctrl` carries a first-class RTG master:
 `rtgAddr`, `rtgce`, `rtgfill`, `rtgRd`, arbitrated in slot 2 via `rtg_slot2ok`,

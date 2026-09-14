@@ -1135,3 +1135,20 @@ unchanged.  The `CPU_PHASE_GATE_REQ` builds were stopped unfinished: not needed.
 
 Next: the same configuration without the debug ILA, JTAG-loaded for Paul to
 confirm, and written to the MT25QL128 only on his go-ahead.
+
+## Final D3 image without debug ILA (2026-09-15)
+
+`build/stage_ap040_d3stable_gd3`, commit 46f0b71 (tag `d3_stable`): ratio 3,
+gate on, `CPU_PHASE_GATE_DLY=3`, `CPU_PHASE_GATE_REQ=0`, datareg on, ILA off.
+Timing: clk_114->clk_38 +0.98, clk_38->clk_114 +1.70, clk_38 +1.17 ns; the
+SDRAM capture path -0.55 ns as in every build.
+
+Verified, not assumed: the bound generics come from THIS build's own synthesis
+run (the project's `synth_1/runme.log` still held the stopped `gd3req` run
+above it, which is why the build script's summary showed both 0 and 1 for the
+ILA and REQ switches). The netlist agrees: 59.5 BRAM tiles (ILA build 127),
+40,300 LUTs (ILA build 47,271), no `.ltx`, no ILA cells. Gotcha for later
+builds: take bound values only after the LAST `Starting synth_design`.
+
+Not yet hardware-tested. Flash only after Paul confirms Way Too Rude, the
+Workbench icons and SysInfo on this image.
