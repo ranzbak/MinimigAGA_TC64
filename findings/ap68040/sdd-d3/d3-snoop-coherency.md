@@ -1056,3 +1056,22 @@ Built alongside (separate tree copy, so the two runs did not share
 project_1): `stage_ap040_d3r3_gdly3_ila` -- ratio 3, gate ON, gate opening
 delayed 3 clk (`CPU_PHASE_GATE_DLY=3`, meant to land acknowledges on
 2/6/10/14), datareg ON; bound generics verified.  Next on the board.
+
+### Ratio 3 gate OFF, histogram over reboot + Way Too Rude
+
+30 windows, 5 s apart; the demo windows are the high-count ones (4269, 4281,
+2720, 1144, 993, 838 acknowledges).  Sum 15364:
+
+| ph16 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| r3 gate OFF (less corruption) | 438 | 615 | 597 | 655 | 1696 | 1694 | 1424 | 261 | 1491 | 1619 | 1412 | 786 | 364 | 1251 | 591 | 470 |
+
+ack -> release: 0:4812 1:10121 2:408.
+
+- Every phase is used, as expected at a coprime ratio.
+- Share on 3/7/11/15: **14 %** (2172).  With the gate it was **78 %**, and the
+  demo corrupted more.  Ratio 4 without the gate put ~0.3 % there and was clean.
+  Corruption tracks the 3/7/11/15 share across all three -- consistent with the
+  hypothesis, not yet a proof (the other phases differ between them too).
+- Next: `stage_ap040_d3r3_gdly3_ila`, which should put ~all acknowledges on
+  2/6/10/14 at ratio 3.
