@@ -725,3 +725,32 @@ passing in simulation before it was built.  Test: power-cycle, a minute in
 Workbench, Way Too Rude with chip and Kickstart turbo, then SysInfo (~0.28x
 expected, minus a little for the synchronous chip-RAM writes).  JTAG only --
 not flashed.
+
+## Ratio 4: the race is WORSE, so it is not the D3 differentiator (2026-09-14)
+
+Same P2C probe, `CPU_RATIO=4` -- the ratio that is CLEAN on hardware -- no
+`WRSYNC`:
+
+    P2C probe: 859 chipset reads of the CPU's counter, 40 value changes seen, 10 stale
+    DDR3 CPU TB: PASS  (68k program completed all phases)
+
+Ratio 3 gave 5 stale in 688; ratio 4 gives 10 in 859.  On hardware ratio 4 shows
+no corruption at all.  So the posted-write race **does not carry the hardware's
+phase dependence**: it is present at the clean ratio, and there it produces
+nothing visible.
+
+Conclusions, stated plainly:
+
+* The race is a REAL defect and `cpu_wr_sync` is a correct fix for it (0 stale
+  at ratio 3 with it on).  It stays in the RTL.
+* It is **not the Way Too Rude corruption**.  This also resolves the old
+  contradiction honestly: `d3chipsync` ran `cpu_wr_sync` on hardware and still
+  corrupted because this race was never the cause.
+* The build on the board (`d3wrsync`) is therefore expected to STILL corrupt.
+  It is worth testing anyway -- it is correct, and a surprise either way would
+  be information -- but it is not claimed as the fix.
+
+The differentiator is still something that fails at ratio 3 and passes at
+ratio 4.  Next: the block-burst probe (`P2CBLOCK=32`, the chunky-to-planar
+shape) WITH `WRSYNC` on, so the known race is suppressed and any stale read is a
+different mechanism, at ratio 3 and then ratio 4.
