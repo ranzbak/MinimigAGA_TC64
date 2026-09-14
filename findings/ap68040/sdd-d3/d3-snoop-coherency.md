@@ -1111,3 +1111,27 @@ acknowledges land, not the clock ratio:
 | r3 gate off | ~14 % | corrupts less |
 | r4 gate off | ~0.3 % | clean |
 | r3 gate delay 3 | ~0.3 % | clean so far |
+
+## D3 STABLE: gate delay 3 runs Way Too Rude to the end, SysInfo 0.28x (2026-09-14)
+
+Paul, `stage_ap040_d3r3_gdly3_ila`, Chip + Kick turbo: **"demo completed
+without corruption.  Sysinfo speed 0.28."**  Workbench icon check pending.
+
+That meets the D3 bar: Way Too Rude clean with both turbos, SysInfo >= 0.23x.
+
+Root cause, as far as the hardware shows it: with Turbo chip RAM the CPU's
+chip-RAM accesses must complete on phases 2/6/10/14 of the SDRAM round -- the
+placement the pre-D3 enable scheme gave by construction.  The kernel on its own
+1:3 clock completes them on any phase; the first gate (open on enaWRreg) pushed
+most onto 3/7/11/15, which is worse still and crashes ratio 4.  Opening the
+gate three clk cycles later -- one before the next enaWRreg -- restores the
+2/6/10/14 placement at the 1:3 rate.  WHY 3/7/11/15 corrupts inside
+sdram_ctrl / cpu_cache_new is not yet explained; the bench does not reproduce
+it (offset sweep clean), so that is an open question, not a blocker.
+
+Now the default: `CPU_PHASE_GATE_DLY=3` in minimig_openaars_top.v and
+build_ap040.tcl.  TG68K.vhd's own generic default stays 0, so sim/ddr3_cpu is
+unchanged.  The `CPU_PHASE_GATE_REQ` builds were stopped unfinished: not needed.
+
+Next: the same configuration without the debug ILA, JTAG-loaded for Paul to
+confirm, and written to the MT25QL128 only on his go-ahead.

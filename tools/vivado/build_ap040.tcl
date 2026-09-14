@@ -47,8 +47,10 @@ set cpuiladepth [expr {[llength $argv] > 5 ? [lindex $argv 5] : 4096}]
 # the chip/DDR select phase gate, and the read data captured with the grant.
 set phgate  [expr {[llength $argv] > 6 ? [lindex $argv 6] : 1}]
 set datareg [expr {[llength $argv] > 7 ? [lindex $argv 7] : 1}]
-# Phase gate opening delay in clk cycles (9th -tclargs, default 0 = as built).
-set phdly   [expr {[llength $argv] > 8 ? [lindex $argv 8] : 0}]
+# Phase gate opening delay in clk cycles (9th -tclargs).  Default 3: at ratio 3
+# it lands chip-RAM acknowledges on 2/6/10/14 and is the configuration that
+# runs clean with Chip turbo (hardware 2026-09-14).  0 = the gate as first built.
+set phdly   [expr {[llength $argv] > 8 ? [lindex $argv 8] : 3}]
 # 1 = the phase gate opens only on a waiting access (10th -tclargs, default 0).
 set phreq   [expr {[llength $argv] > 9 ? [lindex $argv 9] : 0}]
 set R [expr {[llength $argv] > 2 ? [file normalize [lindex $argv 2]] \
