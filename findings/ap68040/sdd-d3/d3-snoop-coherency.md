@@ -711,3 +711,17 @@ here.  `build/stage_ap040_d3wrsync_ila` is exactly that combination.  The
 ratio-4 run (next) says whether this race also carries the hardware's phase
 dependence; if it does not, it is a real defect but perhaps not the whole of
 the D3 corruption.
+
+## On the board: `stage_ap040_d3wrsync_ila` (2026-09-14, programmed over JTAG)
+
+Ratio 3 (37.8 MHz), `cpu_phase_ok`, `datatg68_r`, and `cpu_wr_sync <= sel_chipram`
+(commit 8847d0b); `CL_SNOOP` off.  Timing: 0 failing endpoints on every CPU
+clock pair (`clk_114 -> clk_38` 0.97, `clk_38 -> clk_114` 1.39, `clk_38 -> clk_38`
+0.32 ns); only the 16 pre-existing `clk_gen_sdram -> clk_114` SDRAM read-capture
+paths, at -0.65 ns.
+
+This is the first hardware build whose fix was reproduced failing and then
+passing in simulation before it was built.  Test: power-cycle, a minute in
+Workbench, Way Too Rude with chip and Kickstart turbo, then SysInfo (~0.28x
+expected, minus a little for the synchronous chip-RAM writes).  JTAG only --
+not flashed.
