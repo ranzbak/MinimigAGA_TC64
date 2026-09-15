@@ -1894,11 +1894,16 @@ this setup). With the library present, capture 4
 saw no Akiko access during a full boot. So the MMU tables that library builds
 do not map `$B80000`; the TG68K works only because it has no MMU.
 
-Fix to try on that system: map the Akiko range as valid, uncached I/O in
-`ENVARC:MMU-Configuration` (MMULib syntax, e.g. a `SetCacheMode` line for
-`0x00B80000` size `0x00080000` -- check the MMULib documentation for the exact
-keywords), restore `68040.library`, reset, and confirm Picasso96Mode lists the
-board. Longer term (backlog): present the RTG registers through Zorro
+**FIXED AND CONFIRMED (Paul, 2026-09-15 evening: "solved, it works again").**
+With `68040.library` restored, this one line in `ENVARC:MMU-Configuration`
+(copied to `ENV:`) makes RTG work on the AP68040:
+
+    SetCacheMode 0x00b80000 0x00080000 Valid IOSpace CacheInhibit
+
+The keywords follow MMULib's own sample configuration, which marks I/O ranges
+`Valid IOSpace CacheInhibit`. No `For <manufacturer> <product>` prefix: Akiko is
+at a fixed address, not an autoconfig board. (AmigaDOS: the redirection goes
+right after the command, `Echo >ENVARC:MMU-Configuration "..."`.) Longer term (backlog): present the RTG registers through Zorro
 autoconfig, which MMU libraries map automatically; that needs RTL and driver
 changes.
 
