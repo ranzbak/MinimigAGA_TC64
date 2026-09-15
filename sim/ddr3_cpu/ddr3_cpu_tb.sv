@@ -1995,6 +1995,11 @@ initial begin : main
            pm_total, pm_stray, `PLACEMENT_OFFSET);
   for (pm_i = 0; pm_i < 16; pm_i = pm_i + 1)
     $display("    ph %2d : %0d", pm_i, pm_bin[pm_i]);
+  // Reported only, and deliberately not starting with "    ph " or "=== placement",
+  // so the busy-leg reference compare (ref/overlap_gate3.txt) is unchanged.
+  $display("  placement split by access type at the acknowledge:");
+  for (pm_i = 0; pm_i < 16; pm_i = pm_i + 1)
+    $display("  split ph %2d : read %0d  write %0d", pm_i, pm_bin_rd[pm_i], pm_bin_wr[pm_i]);
 `ifdef DMA_OVERLAP
   // Busy leg: a reference, not a gate (Paul, 2026-09-15). Under chipset
   // contention the bench scatters ~13 % of acknowledges off the calibrated grid

@@ -42,6 +42,21 @@ longint    pm_total = 0, pm_stray = 0;
 integer    pm_i;
 initial for (pm_i = 0; pm_i < 16; pm_i = pm_i + 1) pm_bin[pm_i] = 0;
 
+// Stage E step 2 (the bench-vs-board one-phase offset): the same bins split by
+// the access type at the acknowledge -- a write (cpustate[1:0] = 11) or not.
+// If reads and writes land one phase apart, a write-heavy workload on the
+// board (Way Too Rude) and the pattern program's mix here would show different
+// peaks with nothing wrong in either.  Reported only; the judgement below
+// still uses pm_bin.
+reg        pm_wr_r = 1'b0;
+longint    pm_bin_rd [0:15];
+longint    pm_bin_wr [0:15];
+integer    pm_j;
+initial for (pm_j = 0; pm_j < 16; pm_j = pm_j + 1) begin
+  pm_bin_rd[pm_j] = 0;
+  pm_bin_wr[pm_j] = 0;
+end
+
 // The phase the hardware would report for this bench phase (4-bit wrap).
 wire [3:0] pm_hw   = pm_ph16 - `PLACEMENT_OFFSET;
 // Chip RAM is the bottom 2 MB of ramaddr (bits 25:21 zero).
@@ -52,8 +67,11 @@ always @(posedge clk) begin
   pm_ack_r  <= ramready_real && !ramcs_n;
   pm_ack_d  <= pm_ack_r;
   pm_chip_r <= pm_chip;
+  pm_wr_r   <= ram_wr;
   if (pm_ack_r && !pm_ack_d && pm_chip_r) begin
     pm_bin[pm_ph16] = pm_bin[pm_ph16] + 1;
+    if (pm_wr_r) pm_bin_wr[pm_ph16] = pm_bin_wr[pm_ph16] + 1;
+    else         pm_bin_rd[pm_ph16] = pm_bin_rd[pm_ph16] + 1;
     pm_total        = pm_total + 1;
     if (!(pm_hw == 4'd2 || pm_hw == 4'd6 || pm_hw == 4'd10 ||
           pm_hw == 4'd14 || pm_hw == 4'd13))
