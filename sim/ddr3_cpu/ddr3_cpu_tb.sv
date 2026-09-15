@@ -760,6 +760,12 @@ reg         ramready;                          // the held (slow-path) acknowled
 wire [15:0] fromram_real;
 wire        ramready_real;
 wire        enaWR_real, ena7RD_real, ena7WR_real;
+reg         sdram_reset_in = 1'b0;
+reg  [3:0]  c16_real = 4'd0;
+always @(posedge clk) c16_real <= c16_real + 4'd1;
+wire        clk7_en_real = (c16_real < 4'd4);
+`include "real_sdram.vh"
+`endif
 // What the wrapper's enable ports see. sdram_ctrl's enaWRreg/ena7RDreg/
 // ena7WRreg are already REGISTERED outputs, and minimig_virtual_top.v wires
 // them straight into the wrapper. Feeding the real controller through this
@@ -768,6 +774,9 @@ wire        enaWR_real, ena7RD_real, ena7WR_real;
 // opens on clkena_in, it moved every chip-RAM acknowledge off the hardware's
 // SDRAM phases (Stage E1, findings/ap68040/stage-e/e0-e1-results.md). The
 // cadence registers remain the source when the bench models the controller.
+// Keep this block OUTSIDE the REALSDRAM section above: nested inside it, the
+// `else branch vanished, the ports below became undriven implicit nets, and
+// every leg without REALSDRAM (--chipbus) hung before program phase 1.
 `ifdef REALSDRAM
 wire        w_ena28     = enaWR_real;
 wire        w_ena7RDreg = ena7RD_real;
@@ -776,12 +785,6 @@ wire        w_ena7WRreg = ena7WR_real;
 wire        w_ena28     = ena28;
 wire        w_ena7RDreg = ena7RDreg;
 wire        w_ena7WRreg = ena7WRreg;
-`endif
-reg         sdram_reset_in = 1'b0;
-reg  [3:0]  c16_real = 4'd0;
-always @(posedge clk) c16_real <= c16_real + 4'd1;
-wire        clk7_en_real = (c16_real < 4'd4);
-`include "real_sdram.vh"
 `endif
 wire [15:0] fromram_w;                         // what the wrapper actually sees;
 wire        ramready_w;                        //   see the line-buffer model below

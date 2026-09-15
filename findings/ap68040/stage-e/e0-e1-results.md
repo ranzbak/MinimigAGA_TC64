@@ -280,6 +280,54 @@ removes nothing in this bench and stays as a cross-check.
   acknowledges with the same histogram as `e1ovl`, reported not judged.
   Saved as `sim/ddr3_cpu/ref/overlap_gate3.txt`.
 
+### Tracing the chipbus hang
+
+- The committed passing chipbus log was last written at f374e1b (09-11 00:04).
+  The leg was not run again until 2026-09-15.
+- Hang signature: the CPU is released at 64 µs, then no line fills, no adapter
+  traffic, no bus errors, no SDRAM-port reads, and no program phase. It stops
+  before the first instruction completes.
+- On the board, Turbo-off boots worked on builds that already had the phase gate
+  and the registered read data, so a bench interaction is the more likely cause.
+- Suspects since f374e1b that can reach the chipset path: dcb0e1a (ratio-aware
+  phase marker, changes when `clkena` fires), 4e05663 (the phase gate
+  `cpu_phase_ok`), ba323b9 (read data registered with the grant `datatg68_r`),
+  and the switch commits c08ef67 / 9cc855f / 7c72275 / 7d51f59 if a default
+  changed behaviour. The AP68040 cache-guard bump and revert net to zero, and
+  the bench commits of that period only touch REALSDRAM code.
+- **Step 1 (running):** chipbus with `PREB1` wrapper copies that switch off the
+  registered read data, the phase gate, or both.
+- **Step 1 result:** all three hang the same way (mailbox timeout). Read data
+  not registered (`cb_nodatareg`), phase gate off (`cb_nogate`), both off
+  (`cb_both`). Neither ba323b9 nor 4e05663 is the cause.
+- **Step 2:** a binary search over the 26 commits since f374e1b, each in its
+  own worktree with its own bench (submodules unpacked from the local
+  submodule repositories: lib/AP68040's x3-overlay commits exist only here, so
+  `git submodule update` cannot fetch them). f374e1b passed with today's tools;
+  0d4591b, c08ef67, 46f0b71 (d3_stable) and 4a0d2f6 passed; **ea947e0 is the
+  first bad commit.**
+
+### Chipbus hang: cause and fix — a testbench bug from E1 Task 2
+
+- ea947e0 added the `w_ena28`/`w_ena7RDreg`/`w_ena7WRreg` wires (direct
+  enables under REALSDRAM, the bench's cadence registers otherwise), but put
+  the block **inside** the `` `ifdef REALSDRAM `` section that declares the
+  real controller. Without REALSDRAM the `` `else `` branch was never compiled,
+  so the wrapper's `clkena_in`, `ena7RDreg` and `ena7WRreg` ports connected to
+  undeclared names, which elaborate (with `-relax`) as undriven implicit nets.
+  The enables sat at Z, the CPU never advanced, and the leg timed out.
+- Not the RTL, not the gate, not the registered read data: every leg without
+  REALSDRAM was broken, and `--chipbus` was the only one in the regression.
+- Fix: the wire block moved below the REALSDRAM section's `` `endif ``. The
+  REALSDRAM code is textually unchanged.
+- Verification (`e1nest`, `e1nestrs`):
+  - `--ap040 --chipbus`: 2 passed; phases 1–8 at exactly the timestamps of the
+    last good log (phase 1 98.397 µs … phase 8 937.021 µs).
+  - `REALSDRAM=1 --ap040`: 2 passed, DMA 3958 writes 0 wrong, placement **1953
+    acknowledges, 78 off** — identical to the `e1cal3` reference.
+- On the board, Turbo-off boot of the shipping image is still a close-out
+  check (Task 5), but nothing in this trace points at it.
+
 ### `sim/sdram_coherency` reference for E4a: first attempt incomplete
 
 Both legs (`fast sg7 +nobg`, `fast sg7`) hit a 15-minute `timeout` (exit 124)
@@ -290,9 +338,9 @@ Rerunning both with `+rounds=50` to completion.
 
 ### Pending
 
-- Gate delay 0 and 3 on the corrected bench (`e1fix0`, `e1fix3`). Pass
-  criterion for E1: gate 0 lands mainly on 3/7/11/15 and fails; gate 3 lands
-  on 2/6/10/14 (+13) and passes; both bench histograms match the hardware rows
-  above bin for bin in where the peaks are.
-- Address-guard cross-check (plan Task 2 Step 4).
-- DMA overlap leg at gate 3 (plan Task 2 Step 5).
+- Regression green again with the chipbus fix, so E4a can start (Paul,
+  2026-09-15: "Do E4a first"). E1 Task 4 (time-boxed reproduction) follows E4a.
+- [Paul] Task 5: board test of `build/stage_ap040_d3stable_gd3`, including a
+  Turbo-off boot. [Paul] Task 8: RTG capture.
+- Done above: gate 0/3 on the corrected bench (calibrated), address-guard
+  cross-check, DMA overlap leg (reference, not gate).
