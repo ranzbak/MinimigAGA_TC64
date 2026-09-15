@@ -111,6 +111,11 @@ Implementation plan for E0 and E1: [2026-09-15-e0-e1-plan.md](2026-09-15-e0-e1-p
 O1-O5 taken as the recommended options (Paul, 2026-09-15: "Start a new branch,
 and start implementing"); O6 (flashing) still needs his explicit yes.
 
+**E4a, pulled forward (Paul, 2026-09-15: "Do E4a first, I agree"):** remove what
+is already dead right after E1, before E2. Plan:
+[2026-09-15-e4a-plan.md](2026-09-15-e4a-plan.md). It does not reduce the
+32→16→32 conversions; those go in E2/E3.
+
 ### E0 — Close D3, and diagnose RTG (PROPOSED as a precondition)
 
 - Hardware-test `build/stage_ap040_d3stable_gd3`: Way Too Rude, Workbench icons
