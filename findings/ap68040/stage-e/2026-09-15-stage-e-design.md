@@ -153,6 +153,12 @@ is already dead right after E1, before E2. Plan:
   into E2's design. If not, the placement check is the contract.
 - **Exit:** all existing `sim/ddr3_cpu` legs still pass (mutants still fail), the
   placement leg passes at 3, the mutant fails at 0.
+- **Calibrated, not absolute (Paul, 2026-09-15).** The bench lands chip-RAM
+  acknowledges exactly one phase later than the hardware (two anchors, two
+  binning formulas), so the monitor judges against the hardware grid shifted
+  by `PLACEMENT_OFFSET` = 1, with a 10 % stray limit. **Before E2 changes the
+  port, the offset must be explained with a hardware capture.** Details:
+  [e0-e1-results.md](e0-e1-results.md).
 
 ### E2 — Native 32-bit port into `sdram_ctrl`
 

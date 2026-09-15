@@ -139,6 +139,48 @@ So the monitor now uses the same three registers as `dbg_phist`:
 phase difference was the measurement; still on 3/7/11/15 it is real, and the
 work stops for a report.
 
+### Result with the `dbg_phist`-equivalent monitor: the offset is not the measurement
+
+Runs `e1pm3`, `e1pm0`. Both: program PASS, DMA 0 wrong, placement FAIL.
+
+| ph16 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| bench, `dbg_phist` formula, gate 3 (13163) | 603 | 702 | 734 | **1302** | 576 | 563 | 664 | **1285** | 830 | 718 | 624 | **1323** | 921 | 651 | 571 | **1096** |
+| bench, `dbg_phist` formula, gate 0 (13161) | **1193** | 746 | 679 | 732 | **1211** | 699 | 620 | 657 | **1231** | 729 | 655 | 716 | **1229** | 796 | 644 | 624 |
+| hardware, gate 3 (22640) | 3 | 0 | **4371** | 29 | 8 | 0 | **4671** | 7 | 8 | 0 | **3840** | 25 | 6 | **5772** | **3891** | 9 |
+
+- The peaks did not move: gate 3 still peaks on 3/7/11/15, gate 0 on 0/4/8/12.
+  **The bench's one-phase-late placement is real, not an artefact of binning.**
+- Binned without the chip select, the bench shows about seven times as many
+  acknowledge edges, spread over every phase (roughly 600–900 per bin). The
+  hardware capture, with the same formula, has no such floor (~0.4 % off its
+  peaks). So the bench's acknowledge activity differs from the board's in more
+  than the offset, and simulation alone cannot say which detail is right.
+- What does agree: moving the gate from 0 to 3 shifts the peaks by exactly
+  three phases, on the bench and on the hardware alike.
+- **Consequence:** as specified, the bench cannot check the absolute placement
+  rule (2/6/10/14 at the shipping gate). E1 Task 2 stops here for Paul's decision.
+
+### Decision (Paul, 2026-09-15): calibrate and move on
+
+Chosen over "find the offset first" and "drop the absolute check".
+
+- **Monitor:** back to the select-gated formula (`ramready_real && !ramcs_n`),
+  whose peaks are sharp. The `dbg_phist` formula is recorded above as tried.
+- **Grid:** acknowledges are judged against the hardware grid 2/6/10/14 (+13),
+  shifted by `PLACEMENT_OFFSET` = 1 (bench phase = hardware phase + 1). Two
+  measured anchors back that value: gate 3 bench 3/7/11/15 vs board 2/6/10/14,
+  gate 0 bench 0/4/8/12 vs board 3/7/11/15.
+- **Limit:** `PLACEMENT_STRAY_PPM` = 100000 (10 %). On the bench, 94 of 1953
+  shipping-gate acknowledges (4.8 %) fall off the shifted grid, against 0.4 % on
+  the board. The delay-0 mutant lands ~94 % off, so 10 % separates the two with
+  a wide margin on both sides.
+- **E4a proves each removal by identical histograms** before and after, which
+  does not depend on the offset.
+- **Open, and a hard precondition for E2:** explain why the bench lands one
+  phase late. That needs a hardware capture of the same acknowledge timing,
+  because E2 rewrites exactly the port whose timing differs.
+
 ### `sim/sdram_coherency` reference for E4a: first attempt incomplete
 
 Both legs (`fast sg7 +nobg`, `fast sg7`) hit a 15-minute `timeout` (exit 124)
