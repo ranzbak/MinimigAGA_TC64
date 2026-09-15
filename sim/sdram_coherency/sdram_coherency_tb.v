@@ -371,6 +371,139 @@ task cpu_write_lw;
   end
 endtask
 
+// ---------------------------------------------------------------- port sweep (Stage E2 Task 2)
+// Every size (B, W, L) at every offset of one sixteen-byte line, split onto
+// the 16-bit port exactly as lib/AP68040/rtl/ap040_bus16_adapter.v does it:
+// a byte is one cycle (UDS for an even address, LDS for an odd one); a word is
+// one cycle when even and byte + byte when odd; a longword is two word cycles
+// when even and byte + word + byte when odd.  Stage E2 replaces this port with
+// the unit port, and this same sweep -- with the unit split table in
+// cpu_access -- must still pass.
+//
+// Each case writes a pattern unique to (size, offset, byte), reads it back
+// with the same size, then reads the eight bytes around it one at a time
+// against a golden copy of the window, so a write that lands in the wrong
+// byte, the wrong word or the wrong line is caught as well as a bad read.
+//
+// +sweep runs it before the rounds; +sweepmut runs it with single-byte reads
+// taking the wrong half of the word, and MUST fail.  Neither changes anything
+// when absent.
+localparam [22:1] W_SWP = 22'h010000;    // CPU only: no chipset traffic here
+integer   swp_err  = 0, swp_chk = 0;
+integer   SWEEP    = 0;
+integer   SWEEPMUT = 0;
+reg [7:0] swp_gold [0:63];              // the window's bytes as last written
+reg       p_req_sw = 1'b0;               // mailbox: main asks cpu_seq to sweep
+
+// One word cycle with explicit byte selects (active low).
+task cpu_write_bs;
+  input [22:1] a;
+  input [15:0] d;
+  input        u_n;
+  input        l_n;
+  integer c;
+  begin
+    @(posedge clk); cpuAddr = {3'b000, a}; cpuWR = d; cpuU = u_n; cpuL = l_n;
+                    ci_now = 1'b0;
+    @(posedge clk); cpustate = 7'b0000011;      // ramcs low, [1:0] = 11 write
+    c = 0;
+    @(posedge clk);
+    while (cpuena !== 1'b1 && c < 4000) begin @(posedge clk); c = c + 1; end
+    if (c >= 4000) begin
+      timeouts = timeouts + 1;
+      $display("TIMEOUT cpu_write_bs %06h at %t", {a, 1'b0}, $time);
+    end
+    @(posedge clk); cpustate = 7'b0000100; cpuU = 1'b0; cpuL = 1'b0;
+    @(posedge clk);
+  end
+endtask
+
+// A B/W/L access at a byte address, right-aligned data, split as the adapter
+// splits it.  size: 0 byte, 1 word, 2 longword (AP040_SZ_*).
+task cpu_access;
+  input         we;
+  input  [1:0]  size;
+  input  [22:0] adr;
+  input  [31:0] wdat;
+  output [31:0] rdat;
+  reg    [22:0] cur;
+  reg    [2:0]  left;
+  reg    [31:0] wsh;
+  reg    [31:0] rsh;
+  reg    [15:0] d;
+  begin
+    cur  = adr;
+    left = (size == 2'd0) ? 3'd1 : (size == 2'd1) ? 3'd2 : 3'd4;
+    wsh  = (size == 2'd0) ? {wdat[7:0], 24'd0} :
+           (size == 2'd1) ? {wdat[15:0], 16'd0} : wdat;
+    rsh  = 32'd0;
+    while (left != 3'd0) begin
+      if (!cur[0] && left >= 3'd2) begin
+        // a whole word at an even address
+        if (we) cpu_write_bs(cur[22:1], wsh[31:16], 1'b0, 1'b0);
+        else begin
+          cpu_read(cur[22:1], d);
+          rsh = {rsh[15:0], d};
+        end
+        wsh  = {wsh[15:0], 16'd0};
+        cur  = cur + 23'd2;
+        left = left - 3'd2;
+      end else begin
+        // one byte: the high half of the word when even (UDS), low when odd
+        if (we) cpu_write_bs(cur[22:1], {wsh[31:24], wsh[31:24]}, cur[0], !cur[0]);
+        else begin
+          cpu_read(cur[22:1], d);
+          rsh = {rsh[23:0], (cur[0] ^ SWEEPMUT[0]) ? d[7:0] : d[15:8]};
+        end
+        wsh  = {wsh[23:0], 8'd0};
+        cur  = cur + 23'd1;
+        left = left - 3'd1;
+      end
+    end
+    rdat = rsh;
+  end
+endtask
+
+task port_sweep;
+  integer    s, o, k, n, base;
+  reg [31:0] pat, got, want;
+  begin
+    // seed all 64 bytes of the window so every neighbour read has an answer
+    for (k = 0; k < 32; k = k + 1) begin
+      cpu_write_bs(W_SWP + k, {8'h40 + k[7:0], 8'h80 + k[7:0]}, 1'b0, 1'b0);
+      swp_gold[2*k]   = 8'h40 + k[7:0];
+      swp_gold[2*k+1] = 8'h80 + k[7:0];
+    end
+    for (s = 0; s < 3; s = s + 1)
+      for (o = 0; o < 16; o = o + 1) begin
+        base = 16 + o;                       // offset o of the window's second line
+        n    = (s == 0) ? 1 : (s == 1) ? 2 : 4;
+        // byte k of the pattern is {size, k, offset}: unique per case and byte
+        pat  = {s[1:0], 2'd0, o[3:0], s[1:0], 2'd1, o[3:0],
+                s[1:0], 2'd2, o[3:0], s[1:0], 2'd3, o[3:0]};
+        want = pat >> (8*(4-n));             // the first n bytes, right-aligned
+        cpu_access(1'b1, s[1:0], {W_SWP, 1'b0} + base, want, got);
+        for (k = 0; k < n; k = k + 1) swp_gold[base + k] = pat[31 - 8*k -: 8];
+        cpu_access(1'b0, s[1:0], {W_SWP, 1'b0} + base, 32'd0, got);
+        swp_chk = swp_chk + 1; checks = checks + 1;
+        if (got !== want) begin
+          swp_err = swp_err + 1;
+          fail("SWEEP rdback", {W_SWP, 1'b0} + base, got[15:0], want[15:0]);
+          if (errors <= 40) $display("      size %0d offset %0d: got %08h want %08h", s, o, got, want);
+        end
+        for (k = base - 2; k < base + 6; k = k + 1) begin
+          cpu_access(1'b0, 2'd0, {W_SWP, 1'b0} + k, 32'd0, got);
+          swp_chk = swp_chk + 1; checks = checks + 1;
+          if (got[7:0] !== swp_gold[k]) begin
+            swp_err = swp_err + 1;
+            fail("SWEEP byte  ", {W_SWP, 1'b0} + k, {8'd0, got[7:0]}, {8'd0, swp_gold[k]});
+            if (errors <= 40) $display("      after size %0d offset %0d", s, o);
+          end
+        end
+      end
+  end
+endtask
+
 integer    bi;
 reg [22:1] ba_bg;   // the background address, kept so fail() can print it
 integer    cseed = 32'h1234_5678;
@@ -383,6 +516,12 @@ initial begin : cpu_seq
     if (p_req_wr) begin
       p_req_wr = 1'b0;
       cpu_write(p_adr, p_val);
+      p_done = 1'b1;
+      while (p_done) @(posedge clk);
+    end
+    else if (p_req_sw) begin
+      p_req_sw = 1'b0;
+      port_sweep;
       p_done = 1'b1;
       while (p_done) @(posedge clk);
     end
@@ -469,6 +608,18 @@ initial begin
   do_chip_read(W_CHIP + 2*7, rd);
   if (rd !== bg_chip[7]) $display("SANITY chip read-back FAILED: got %04h want %04h", rd, bg_chip[7]);
   $display("=== windows seeded at %t ===", $time);
+
+  // Stage E2 Task 2: the port sweep, before any background traffic starts.
+  if ($test$plusargs("sweep"))    SWEEP = 1;
+  if ($test$plusargs("sweepmut")) begin SWEEP = 1; SWEEPMUT = 1; end
+  if (SWEEP) begin
+    p_req_sw = 1'b1;
+    while (!p_done) @(posedge clk);
+    p_done = 1'b0;
+    $display("  port sweep%0s: %0d checked, %0d failed   (at %t)",
+             SWEEPMUT ? " (MUTANT: byte reads take the wrong half)" : "",
+             swp_chk, swp_err, $time);
+  end
 
   seeded = 1'b1;
   run_bg = NOBG ? 1'b0 : 1'b1;

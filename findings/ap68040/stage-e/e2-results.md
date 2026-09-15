@@ -37,3 +37,26 @@ The `e4a` tag waits for Paul's hardware test; 971119d differs from the
 Two columns added and the posted-write count corrected, as above. Both rows
 taken with the new script: `d3_stable` from a scratch `git archive` of the three
 files it reads.
+
+### Task 2 — port sweep in `sim/sdram_coherency` (on today's 16-bit port)
+
+New in `sdram_coherency_tb.v`: `cpu_write_bs` (a word cycle with explicit byte
+selects), `cpu_access` (a B/W/L request at a byte address, split onto the
+16-bit port exactly as `ap040_bus16_adapter.v` splits it), and `port_sweep`,
+run by the CPU sequencer through a mailbox (the bench's one-owner-per-port
+rule). For each size at each of the 16 offsets of one line, in a CPU-only
+window (`W_SWP`, word address $010000): write a pattern unique to (size,
+offset, byte), read it back with the same size, then read the eight
+surrounding bytes one at a time against a golden copy. 3 × 16 × 9 = 432 checks.
+`+sweep` runs it before the rounds; `+sweepmut` makes single-byte reads take
+the wrong half of the word. Without either plusarg the bench is unchanged.
+
+| leg | result |
+|---|---|
+| `./run.sh fast sg7 +nobg +sweep +rounds=1` | **port sweep: 432 checked, 0 failed** (the one other failure is the known "C2P line buffer primed", 1 of 1 round) |
+| `./run.sh fast sg7 +nobg +sweepmut +rounds=1` | **416 of 432 failed**: the check has teeth. The 16 that pass are the read-backs of W and L at the eight even offsets, which are whole-word cycles with no single-byte read for the mutant to corrupt |
+| `./run.sh fast sg7 +nobg +rounds=50` | 52 errors, 0 timeouts; every category = E4a reference (line buffer 50, longword 2) |
+| `./run.sh fast sg7 +rounds=50` | 14 errors, 0 timeouts; every category = E4a reference (P2C 4 late 0 lost, longword 10, 3552 background reads 0 failed) |
+
+The sweep is the test Task 3's unit port must pass unchanged (with
+`cpu_access` switched to the unit split table).
