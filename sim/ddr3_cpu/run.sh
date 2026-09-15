@@ -12,7 +12,7 @@
 #   ./run.sh              real rtl/soc/TG68K.vhd  -> xsim_run_pass.log
 #   ./run.sh --mutant     mutant/TG68K_mutant.vhd -> xsim_run_mutant.log
 #   ./run.sh --ap040      AP68040 kernel          -> xsim_run_pass_ap040.log
-#   ./run.sh --lwmutant   AP68040 with the longword_pair gate reverted; MUST fail
+#   ./run.sh --lwmutant   AP68040 with the raw longword flag back on cpustate(6); MUST fail
 #   ./run.sh --mmu        AP68040, the stage-B MMU walker program
 #   ./run.sh --mmumutant  the same with walker_ack tied low; MUST fail
 #   ./run.sh --fillmutant AP68040 with the line fill assembled backwards; MUST fail
@@ -52,10 +52,10 @@ VARIANT=pass
 IS_MUTANT=0
 if [ "$1" = "--mutant" ]; then VARIANT=mutant; IS_MUTANT=1; shift; fi
 
-# --lwmutant: the AP040 run with the longword_pair gate reverted, i.e. the
-# wrapper as it stood before commit c2ecc99, when cpustate(6) carried the raw
-# longword flag to a core that answers a longword with two independent word
-# cycles.  That is the bug that reached hardware as the AllocMem hang, and the
+# --lwmutant: the AP040 run with cpustate(6) carrying the raw longword flag
+# again -- the wrapper as it stood before commit c2ecc99 -- to controllers that
+# see a core answering a longword with two independent word cycles. (Since E4a
+# cpustate(6) is the constant '0'; the mutant puts longword back there.)  That is the bug that reached hardware as the AllocMem hang, and the
 # bench was blind to it.  It MUST fail now.  Implies --ap040.
 IS_LWMUTANT=0
 if [ "$1" = "--lwmutant" ]; then IS_LWMUTANT=1; IS_MUTANT=1; shift; set -- --ap040 "$@"; fi
@@ -286,10 +286,11 @@ elif [ "$IS_LWMUTANT" = "1" ]; then
     # Generated, not checked in: one line of the real wrapper, reverted.  The
     # sed must match or the mutation silently does nothing, so verify it did.
     TG68K_SRC="$W/TG68K_lwmutant.vhd"
-    sed "s|longword_pair <= '0' WHEN use_ap040 ELSE longword;|longword_pair <= longword;|" \
+    # (& in a sed replacement means the matched text, hence \&.)
+    sed "s|cpustate <= '0' & clkena|cpustate <= longword \& clkena|" \
         "$R/rtl/soc/TG68K.vhd" > "$TG68K_SRC"
-    if ! grep -q "longword_pair <= longword;" "$TG68K_SRC"; then
-        echo "--lwmutant: the longword_pair line moved; fix the sed in run.sh" >&2
+    if ! grep -q "cpustate <= longword & clkena" "$TG68K_SRC"; then
+        echo "--lwmutant: the cpustate line moved; fix the sed in run.sh" >&2
         exit 2
     fi
 elif [ "$IS_MUTANT" = "1" ]; then

@@ -225,10 +225,11 @@ In the Vivado 2023.2 GUI:
    (Revision 2020 demo) to the end: no graphics or sound corruption.
 4. **SysInfo** speed: at least **0.28×** an A4000/040-25 for the D3 core.
    Without turbo it's slower.
-5. **Boot once with Turbo off** (Chip RAM and Kickstart). On 2026-09-15 the
-   `--ap040 --chipbus` simulation leg (chip RAM over the chipset bus) hung with
-   the shipping gate delay 3, so this configuration must be seen working on the
-   board before an image is flashed.
+5. **Boot once with Turbo off** (Chip RAM and Kickstart). Chip RAM then goes
+   over the 7 MHz chipset bus, a path the Turbo tests never use, so it must be
+   seen working on the board before an image is flashed. (The
+   `--ap040 --chipbus` simulation hang of 2026-09-15 turned out to be a
+   test-bench bug, fixed in 8167cde; the leg passes.)
 
 ### 5.2 Phase histogram (needs a build with ILAs)
 

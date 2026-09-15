@@ -191,7 +191,6 @@ ARCHITECTURE logic OF TG68K IS
 	-- SIGNAL vpad             : std_logic;
 	SIGNAL waitm       : std_logic;
 	SIGNAL clkena_e    : std_logic;
-	SIGNAL clkena_f    : std_logic;
 	SIGNAL S_state     : std_logic_vector(1 downto 0);
 	-- SIGNAL decode           : std_logic;
 	SIGNAL wr          : std_logic;
@@ -378,18 +377,6 @@ ARCHITECTURE logic OF TG68K IS
 	-- taking that setting.  Everything downstream reads cpu_i, not cpu.
 	SIGNAL cpu_i : std_logic_vector(1 downto 0);
 
-	-- The chipset 32-bit optimisation below is a TG68K contract, not a bus
-	-- feature: on a longword-aligned chip/Kick access the wrapper answers ONE
-	-- request with TWO words, the second through data_read2, and the kernel is
-	-- built to consume both.  The AP68040 is not: ap040_bus16_adapter's stated
-	-- contract is one stable request at a time, exactly one completion per
-	-- 16-bit sub-cycle, and a long transfer split into two separate word cycles
-	-- with an IDLE between them.  Handing it a word it never asked for puts the
-	-- two out of step and the next fetch never completes -- on hardware the
-	-- 040 wedged on the fetch straight after the first longword-aligned one
-	-- ($00F800D4 took the paired path, $00F800D6 then hung forever), which is
-	-- what put Kickstart on its yellow screen.
-	SIGNAL longword_pair : std_logic;
 
 	--------------------------------------------------------------------------
 	-- Stage B: the MMU table walker's path to memory.
@@ -411,8 +398,8 @@ ARCHITECTURE logic OF TG68K IS
 	--
 	-- A descriptor is a longword and this bus is 16 bits, so each walk
 	-- transaction is TWO sub-cycles, at A and A+2, with an idle gap between
-	-- them -- never the paired-transfer path (longword_pair is 0 for this
-	-- core, and for the reason recorded at cpustate below).
+	-- them -- there is no paired-transfer path (removed in Stage E4a; the
+	-- reason the AP68040 cannot use one is recorded at cpustate below).
 	SIGNAL wk_req     : std_logic;                      -- from the core
 	SIGNAL wk_we      : std_logic;
 	SIGNAL wk_addr    : std_logic_vector(31 downto 0);
@@ -570,7 +557,6 @@ ARCHITECTURE logic OF TG68K IS
 BEGIN
 
 	cpu_i <= "11" WHEN use_ap040 ELSE cpu;
-	longword_pair <= '0' WHEN use_ap040 ELSE longword;
 
 	nResetOut <= nResetOut_w;
 	VBR_out   <= VBR_out_w;
@@ -749,15 +735,17 @@ BEGIN
 	-- the whole 64 MB).  One assignment, so ddraddr has one driver.
 	ddraddr <= ddr_zero_hi & cpuaddr(z3ram3_size_log2 - 1 downto 1);
 
-	-- cpustate(6) is the RAM port's 32-bit-write flag, and it is the same
-	-- paired-transfer protocol the AGA chipset path uses, so it takes the same
-	-- gate.  sdram_ctrl derives cpuLongword from it and cpu_cache_new answers
+	-- cpustate(6) is the RAM port's 32-bit-write flag, and it is the constant
+	-- '0'.  sdram_ctrl derives cpuLongword from it and cpu_cache_new answers
 	-- a set bit by acknowledging the high word at once and moving to
 	-- CPU_SM_WAIT_LOWORD, where it expects the low word as a continuation of
-	-- THE SAME request.  The TG68K supplies exactly that.  The AP68040 does
-	-- not: its bus16 adapter issues two fully independent word cycles, so the
-	-- controller banks a half-written longword and the two sides desync --
-	-- the $F800D6 hang again, on the port that fix did not reach.
+	-- THE SAME request.  The AP68040 cannot supply that: its bus16 adapter
+	-- issues two fully independent word cycles, so the controller would bank a
+	-- half-written longword and the two sides desync.  (The TG68K's paired AGA
+	-- chipset cycles that also used this flag were removed in Stage E4a.)
+	-- sim/ddr3_cpu's --lwmutant puts the raw longword flag back here and MUST
+	-- fail; Stage E2's 32-bit port makes a longword one access and retires the
+	-- flag.
 	--
 	-- Found on hardware: Kickstart 46.143 spun in AllocMem because
 	-- SysBase->MemList (ExecBase+$142) read back zero.  ExecBase lives in
@@ -766,7 +754,7 @@ BEGIN
 	-- bus -- already fixed -- carried the instruction fetches and the stack
 	-- correctly.  sim/ddr3_cpu cannot see it: its RAM model uses only
 	-- cpustate[2:0] and ignores this bit.
-	cpustate <= longword_pair & clkena & slower(1 downto 0) & ramcs & bstate(1 downto 0);
+	cpustate <= '0' & clkena & slower(1 downto 0) & ramcs & bstate(1 downto 0);
 	ramlds   <= blds;
 	ramuds   <= buds;
 
@@ -1276,7 +1264,7 @@ BEGIN
 	-- no partial sum of those gaps spans the eight phases from 6 to 14.  So
 	-- the pulse is caught here and held until the CPU's next enable, at most
 	-- three cycles later, which is invisible next to a 140 ns chipset cycle.
-	chipset_ready <= '1' WHEN ((ena7RDreg = '1' AND clkena_e = '1') OR (ena7WRreg = '1' AND clkena_f = '1')) ELSE '0';
+	chipset_ready <= '1' WHEN (ena7RDreg = '1' AND clkena_e = '1') ELSE '0';
 
 	PROCESS(clk, reset)
 	BEGIN
@@ -1937,7 +1925,6 @@ BEGIN
 			uds2     <= '1';
 			lds2     <= '1';
 			clkena_e <= '0';
-			clkena_f <= '0';
 		ELSIF rising_edge(clk) THEN
 			-- End the chipset cycle when the CPU has actually taken its
 			-- answer.  This used to live inside the ena7RDreg branch, where it
@@ -1991,10 +1978,6 @@ BEGIN
 							rw         <= bwr;
 							data_write <= bwdata;
 							addr       <= cpuaddr;
-							IF aga = '1' AND cpu_i(1) = '1' AND longword_pair = '1' AND bstate = "11" AND cpuaddr(1 downto 0) = "00" AND sel_chip = '1' THEN
-								-- 32 bit write
-								clkena_e <= '1';
-							END IF;
 							S_state <= "01";
 						END IF;
 					WHEN "01" =>
@@ -2005,14 +1988,9 @@ BEGIN
 							S_state <= "11";
 						END IF;
 					WHEN "11" =>
-						IF clkena_f = '1' THEN
-							clkena_f <= '0';
-							r_data   <= data_read2;
-						END IF;
 					WHEN OTHERS => null;
 				END CASE;
 			ELSIF ena7RDreg = '1' THEN
-				clkena_f <= '0';
 				CASE S_state IS
 					WHEN "00" =>
 						cpuIPL <= IPL;
@@ -2032,10 +2010,6 @@ BEGIN
 						END IF;
 
 						clkena_e <= '1';
-						IF aga = '1' AND cpu_i(1) = '1' AND longword_pair = '1' AND bstate(0) = '0' AND cpuaddr(1 downto 0) = "00" AND (sel_chip = '1' OR sel_kick = '1') THEN
-							-- 32 bit read
-							clkena_f <= '1';
-						END IF;
 					WHEN OTHERS => null;
 				END CASE;
 			END IF;

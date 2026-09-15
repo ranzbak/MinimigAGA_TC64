@@ -184,3 +184,46 @@ diff caught it, and it was restored before the comparison below.)
 | E4a T4 gate switches | 2051 | 987 | 695 | 587 | 1 | 6 | 1 | 0 | dbg_phist dbg_rtg |
 
 Against Task 3: wrapper −29 lines (−16 code); switch uses 15 → 0.
+
+### Task 5 — remove the 32-bit AGA chipset cycle path (`longword_pair`)
+
+For the AP68040 every branch guarded by `longword_pair` was already constant
+off. Removed: `longword_pair` (declaration, comment, assignment), `clkena_f`,
+the 32-bit write branch in chipset state "00", the 32-bit read branch in the
+ena7RDreg state "11", the `clkena_f`/`data_read2` capture in the ena7WRreg state
+"11", and the `clkena_f` term of `chipset_ready` (now `ena7RDreg AND
+clkena_e`). `cpustate(6)` is the constant `'0'`; the comment above it keeps the
+AllocMem history and names `--lwmutant` as its guard.
+
+Kept on purpose:
+- the second-word latch (`S_state = "01" AND clkena_e`): its outputs still reach
+  `minimig_m68k_bridge` (`_uds2/_lds2`) and `sdram_ctrl` (`chipWR2`), though it
+  never fired for the AP68040; E2 rewrites that port;
+- the `IF clkena_e = '0' THEN r_data <= data_read` guard, which also keeps a
+  second `ena7RDreg` in state "11" from overwriting the captured word;
+- the `data_read2` input port (both tops connect it; E2).
+
+`--lwmutant` retargeted: its sed now puts `longword` back on `cpustate(6)`
+(`cpustate <= '0' & clkena` → `cpustate <= longword & clkena`, with `\&` in the
+sed replacement) and asserts the substitution. Bench and wrapper comments that
+named `longword_pair` now describe the constant.
+
+- Analysis: xvhdl over the six VHDL files and `xvlog --sv` on the testbench —
+  exit 0, no errors. No `longword_pair` or `clkena_f` left in `rtl/`, `tools/`
+  (bar the complexity script's own counter) or `fpga/openaars`.
+- `./run.sh --ap040` (`t5`): 2 passed; phase 8 at **1677190382 ps**, identical to
+  the fixed-bench baseline.
+- `./run.sh --ap040 --chipbus` (`t5`): 2 passed; phase 8 at **937021277 ps**,
+  identical.
+- `./run.sh --lwmutant` (`t5`): **mutant failed as required** — **2021**
+  32-bit-write protocol violations, identical to the baseline: the mutant still
+  catches the same bug with only the RAM-port bit reverted.
+- `REALSDRAM=1 ./run.sh --ap040` (`t5`): 2 passed; DMA 3958 writes 0 wrong;
+  placement **1953 / 78 off**, bins identical to `e1cal3`.
+- Busy leg (`t5ovl`): **identical** to `ref/overlap_gate3.txt`.
+
+| label | wrapper lines | wrapper code | cpu_cache_new code | sdram_ctrl code | posted-write paths | longword_pair uses | g_tg68k uses | switch uses | debug probes |
+|---|---|---|---|---|---|---|---|---|---|
+| E4a T5 longword_pair | 2025 | 972 | 695 | 587 | 1 | 0 | 1 | 0 | dbg_phist dbg_rtg |
+
+Against Task 4: wrapper −26 lines (−15 code); `longword_pair` uses 6 → 0.

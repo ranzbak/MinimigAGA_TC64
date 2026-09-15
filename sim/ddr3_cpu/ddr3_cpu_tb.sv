@@ -135,9 +135,9 @@ localparam [31:0] MBOX     = 32'h0000_1000;   // in the bench chip RAM
 // on a TG68K, the AGA paired-word optimisation that answers one longword
 // request with two words through uds2/lds2/data_read2.
 //
-// That second path is why this is a plusarg.  The AP68040 turns the paired
-// word off (longword_pair in rtl/soc/TG68K.vhd), so a longword becomes two
-// separate word cycles, and with turbochipram tied to 1 the AP040 run never
+// That second path is why this is a plusarg.  The AP68040 never used the paired
+// word (the path was removed from rtl/soc/TG68K.vhd in Stage E4a), so a
+// longword becomes two separate word cycles, and with turbochipram tied to 1 the AP040 run never
 // issued a single chipset cycle -- the path the core actually uses when the
 // user has Turbo set to none was never simulated.  Kickstart 46.143 gets as
 // far as AllocMem and then cannot allocate a 6 kB supervisor stack, which is
@@ -1079,8 +1079,8 @@ end
 // 2026-09-07, and this model was blind to it because it read only cpustate[2:0].
 // It is not blind any more: the paired protocol is modelled, a violation of it
 // is reported, and under CPU_AP040 the bit is asserted never to be set at all
-// (the AP68040's bus16 adapter cannot speak the protocol, so TG68K.vhd gates
-// longword_pair to 0 for that core).
+// (the AP68040's bus16 adapter cannot speak the protocol, so TG68K.vhd ties
+// cpustate(6) to '0').
 wire        ramcs_n = tg68_cpustate[2];
 wire [15:0] ramwa   = tg68_cad[16:1];
 wire        ram_wr  = (tg68_cpustate[1:0] == 2'b11);
@@ -1282,8 +1282,8 @@ end
 `ifdef CPU_AP040
 // The AP68040 issues two independent word cycles for a longword, so it must
 // never claim the paired protocol -- on EITHER memory port; bit 6 is the same
-// bit in cpustate and in the DDR3 port's tg68_ddrcpustate.  Revert the
-// longword_pair gate in TG68K.vhd and this fires.
+// bit in cpustate and in the DDR3 port's tg68_ddrcpustate.  Put the raw
+// longword flag back on cpustate(6) in TG68K.vhd (--lwmutant) and this fires.
 always @(posedge clk) begin
   if (tg68_rst && sdctl_rst && tg68_cpustate[6] && tg68_cpustate[1:0] == 2'b11
       && (!tg68_cpustate[2] || !tg68_ddrcs)) begin
@@ -1487,7 +1487,7 @@ end
 //   anyway.
 //
 // bstate is cpustate[1:0] here, and clkena is cpustate[5] (TG68K.vhd builds
-// cpustate as longword_pair & clkena & slower(1:0) & ramcs & bstate).  Two
+// cpustate as '0' & clkena & slower(1:0) & ramcs & bstate).  Two
 // checks, because the invariant has two halves:
 //
 //   ack_idle_errs   an acknowledge held in a cycle where bstate is not "01".
