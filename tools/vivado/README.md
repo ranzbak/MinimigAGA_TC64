@@ -15,3 +15,10 @@ Vivado 2023.2 needs `libtinfo.so.5`; a directory containing a symlink of that na
 Written during the September 2026 constraint work. The VIO/ILA scripts expect the
 instrumented builds described in `findings/constraints/fix-12-*.md` and the hierarchy
 prefix `openaars_virtual_top/amiga_clk/amiga_clk_i/`; adapt the prefix for a new design.
+
+## AP68040 build, program and test runbook
+
+Step-by-step procedures for the AP68040 core: environment, `build_ap040.tcl`
+arguments and post-build checks, JTAG loading, flashing, the hardware test with
+phase-histogram and RTG captures, and the simulation legs:
+[`doc/build-program-test.md`](../../doc/build-program-test.md).
