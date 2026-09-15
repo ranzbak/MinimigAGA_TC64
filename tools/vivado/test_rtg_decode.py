@@ -41,6 +41,37 @@ class DecodeTest(unittest.TestCase):
         self.assertEqual(rows[0]["name"], "id")
         self.assertEqual(rows[0]["rtg_ena"], 1)
 
+    def test_every_sample_capture_folds_one_access(self):
+        # "always" mode: one ID read held for 3 clk cycles, idle, then a write.
+        path = self.write_csv([
+            (rtg_word(1, 0, 2, 0x10E, 0x8320), rtg_state(0, 0)),
+            (rtg_word(1, 0, 2, 0x10E, 0x8320), rtg_state(0, 0)),
+            (rtg_word(1, 0, 2, 0x10E, 0x8320), rtg_state(0, 0)),
+            (rtg_word(0, 0, 0, 0x000, 0x0000), rtg_state(0, 0)),
+            (rtg_word(1, 1, 3, 0x104, 0x0001), rtg_state(0, 0)),
+        ])
+        rows = rtg_decode.decode_rows(path)
+        self.assertEqual([(r["name"], r["samples"]) for r in rows], [("id", 3), ("control", 1)])
+
+    def test_identical_accesses_split_by_idle_stay_separate(self):
+        path = self.write_csv([
+            (rtg_word(1, 0, 2, 0x10E, 0x8320), rtg_state(0, 0)),
+            (rtg_word(0, 0, 0, 0x000, 0x0000), rtg_state(0, 0)),
+            (rtg_word(1, 0, 2, 0x10E, 0x8320), rtg_state(0, 0)),
+        ])
+        rows = rtg_decode.decode_rows(path)
+        self.assertEqual([(r["name"], r["samples"]) for r in rows], [("id", 1), ("id", 1)])
+
+    def test_wrong_ila_csv_is_reported(self):
+        fd, path = tempfile.mkstemp(suffix=".csv")
+        with os.fdopen(fd, "w") as f:
+            f.write("Sample in Buffer,Sample in Window,TRIGGER,"
+                    "openaars_virtual_top/tg68_ddraddr[25:1]\n")
+            f.write("Radix - UNSIGNED,UNSIGNED,UNSIGNED,HEX\n")
+        self.addCleanup(os.remove, path)
+        with self.assertRaisesRegex(ValueError, "no dbg_rtg column"):
+            rtg_decode.decode_rows(path)
+
     def test_clut_range(self):
         path = self.write_csv([(rtg_word(1, 1, 3, 0x404, 0x00FF), rtg_state(0, 0))])
         self.assertEqual(rtg_decode.decode_rows(path)[0]["name"], "clut[1]")

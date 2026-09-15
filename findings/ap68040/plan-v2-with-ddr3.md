@@ -1834,6 +1834,78 @@ driver never reads back a real register (only the ID). Check 3 above and the
 low-ranked; the framebuffer-reach lead is the strongest. Ranked leads and a
 one-build ILA diagnosis against `build/stage_tg68k`: stage E design spec §7.
 
+**2026-09-15 evening, on the board (`build/stage_ap040_e0rtg_ila`, JTAG).**
+Picasso96Mode reports **"no board"**: the failure is before any mode switch.
+`FindCard` has two exits: the word at `$B8010E` masked `$FFF0` must be `$8320`
+(Akiko answers `X"8320"` for every RTG register read), and a 4 MB / 4 MB / 2 MB
+fast-RAM allocation. With 64 MB of DDR3 the allocation is not the suspect, so
+the ID read is. The 2026-09-11 control (RTG works on the TG68K build, which
+also has the DDR3 autoconfig) rules out the DDR3 change; Paul confirms RTG has
+never worked on any AP68040 build.
+
+ILA evidence (`tools/vivado/ila_rtg_capture.tcl`, trigger `dbg_rtg` bit 31 =
+`akiko_req`):
+- Captures 1–3 proved nothing. Capture 1 armed the *fast-RAM* ILA (the script
+  picked its ILA by asking each for a probe name; it now selects `ila_cpu040`
+  by cell name). Captures 2–3 used storage qualification with a 1024-sample
+  window: a few accesses never fill it, and Vivado reports "No data to upload"
+  for an unfilled window even when it triggered.
+- **Capture 4** (every-sample mode, 21:33:33–21:43:33, one reset and a full
+  boot to Workbench inside the window): **never triggered.**
+- **Positive control** (same script and ILA, trigger `bstate(1)` on
+  `dbg_rtg`): triggered at once, 1024 samples, PC in Kickstart ROM around
+  `$F81340`, `akiko_req` 0 throughout. The trigger encoding and the bit layout
+  are right, so capture 4 is a real negative: **during that boot no CPU access
+  reached the Akiko decode.**
+
+What is left: either `FindCard` ran and its read of `$B8010E` faulted before
+the bus (68040 MMU tables not covering `$B80000`), or `FindCard` never ran on
+this boot (card driver or monitor file not loaded on the AP68040 path). Next
+step: `tools/vivado/ila_fault_capture.tcl` (trigger on `dbg_flags` bit 3,
+`ap040_fault`) across a reset, plus checking on the Amiga where the Picasso96
+monitor file is and that `LIBS:Picasso96/minimig.card` is present.
+(`rx` is not available on that system: `rexxsyslib.library` V45 missing.)
+
+Later that evening: `minimig.card` is 0.1, and **the same HD image switches to
+800×600 RTG on the TG68K flash build** -- same driver, same settings, so the
+software is not the difference. `68040.library` on that system is 46.3 (AmigaOS
+3.2). A `dbg_flags` bit-3 fault capture across the same kind of reset stayed
+quiet, but that trigger cannot see an access error: `ap040_fault` is the core's
+`fault_r`, set only by `fatal_halt` (double fault, `S_HALT`); an access error
+goes through `aerr_start` (latches `aer_fa` = `dbg_fault_addr`, vector 2 =
+`dbg_exc_vec`), and neither is on `ila_cpu040`. Next, cheapest first: compare
+`ShowConfig`/`Avail` on the AP68040 and TG68K boots (autoconfig/memory list);
+boot once with `LIBS:68040.library` renamed (MMU stays off -- if a board then
+appears, the 3.2 MMU setup hides `$B80000`); only then a build that probes
+`dbg_exc_vec` and `dbg_fault_addr` and triggers on vector 2.
+
+**ROOT CAUSE (2026-09-15, 22:07): the MMU tables, not the RTL.** That system
+runs `68040.library` 46.3 with `mmu.library` 46.16 (MMULib) and no
+`ENVARC:MMU-Configuration`. With `68040.library` renamed, the startup-sequence
+does not complete, but after `LoadWB` and loading the Picasso96 monitor by hand
+**RTG starts on the AP68040**. The Akiko capture of that session (every-sample
+mode) triggered within 28 s on exactly one access: `FindCard`'s
+`move.w ($00B8010E).l,d1` (PC `$40122E1A`, IR `$3239`, running from Zorro III
+fast RAM), `akiko_req` high for 4 samples in bus state 10, and the CPU carried
+on to `$40122E1C` -- the read completes. Paul: the mode switch AND the
+Picasso96 test screen work in that session, so the framebuffer allocation and
+scan-out are fine too (the "framebuffer out of reach" lead is not the cause on
+this setup). With the library present, capture 4
+saw no Akiko access during a full boot. So the MMU tables that library builds
+do not map `$B80000`; the TG68K works only because it has no MMU.
+
+Fix to try on that system: map the Akiko range as valid, uncached I/O in
+`ENVARC:MMU-Configuration` (MMULib syntax, e.g. a `SetCacheMode` line for
+`0x00B80000` size `0x00080000` -- check the MMULib documentation for the exact
+keywords), restore `68040.library`, reset, and confirm Picasso96Mode lists the
+board. Longer term (backlog): present the RTG registers through Zorro
+autoconfig, which MMU libraries map automatically; that needs RTL and driver
+changes.
+
+Tooling note: `dbg_rtg` carries `akiko_d`, the CPU's WRITE data bus, so a
+decoded READ shows a stale value, not what the CPU read (`akiko_q` into
+`datatg68_c` is not probed). `rtg_decode.py` now says so instead of printing it.
+
 What is known about the path.  `sdram_ctrl` carries a first-class RTG master:
 `rtgAddr`, `rtgce`, `rtgfill`, `rtgRd`, arbitrated in slot 2 via `rtg_slot2ok`,
 with `cpu_reservertg` and `wb_reservertg` making the CPU and the write buffer
@@ -1871,6 +1943,19 @@ also touches the 832 firmware's block layer, not only RTL.  Check first whether
 the board actually routes all four DAT lines to the FPGA; if only DAT0 is
 wired, the integrity argument still stands (1-bit SD mode also has mandatory
 CRC) but the performance argument mostly does not.
+
+### Keyboard and mouse focus between the Amiga and the OSD gets out of sync
+
+Raised by Paul 2026-09-15.  Sometimes the switch of keyboard and mouse between
+the Amiga and the OSD goes out of step, and after that the OSD no longer reacts
+to F12 (the key that opens it) or to the arrow keys.
+
+Not yet reproduced on purpose or captured, and no cause is known.  Questions to
+start from when it is picked up: which side decides where the PS/2 streams go
+at that moment (the 832 firmware's OSD state or the RTL's routing), whether a
+key-up is lost across the switch so a key or the OSD-enable state sticks, and
+whether it follows a reset (see the reset circuitry item above) or a particular
+key sequence.
 
 ## Risks
 

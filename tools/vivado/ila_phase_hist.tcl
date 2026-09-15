@@ -28,17 +28,20 @@ set_property PROBES.FILE      $dir/minimig_openaars_top.ltx $dev
 set_property FULL_PROBES.FILE $dir/minimig_openaars_top.ltx $dev
 refresh_hw_device $dev
 
-set ila {}
-foreach cand [get_hw_ilas -of_objects $dev] {
-    if {[llength [get_hw_probes -quiet -of_objects $cand -filter {NAME =~ *dbg_phist*}]]} {
-        set ila $cand; break
-    }
-}
-if {$ila eq ""} {
-    puts "=== NO dbg_phist PROBE in this bitstream ==="
+# Pick the ILA by its cell name, not by asking each ILA for a probe name: that
+# test matched the fast-RAM ILA in the E0 RTG capture (2026-09-15) and armed the
+# wrong core.
+set ila [get_hw_ilas -quiet -of_objects $dev -filter {CELL_NAME =~ *ila_cpu040*}]
+if {[llength $ila] != 1} {
+    puts "=== NO single ila_cpu040 in this bitstream (ILAs: [get_property CELL_NAME [get_hw_ilas -quiet -of_objects $dev]]) ==="
     close_hw_manager; return
 }
-set hist [get_hw_probes -of_objects $ila -filter {NAME =~ *dbg_phist*}]
+set hist [get_hw_probes -quiet -of_objects $ila -filter {NAME =~ *dbg_phist*}]
+if {[llength $hist] != 1} {
+    puts "=== NO dbg_phist PROBE on ila_cpu040 in this bitstream ==="
+    close_hw_manager; return
+}
+puts "=== using [get_property CELL_NAME $ila] ($ila) ==="
 
 set_property CONTROL.WINDOW_COUNT 1 $ila
 set_property CONTROL.CAPTURE_MODE ALWAYS $ila

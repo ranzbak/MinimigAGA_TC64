@@ -33,24 +33,41 @@ def decode_rows(path):
     with open(path, newline="") as f:
         rows = list(csv.reader(f))
     head = rows[0]
-    c_rtg = next(i for i, h in enumerate(head) if "dbg_rtg" in h)
+    c_rtg = next((i for i, h in enumerate(head) if "dbg_rtg" in h), None)
+    if c_rtg is None:
+        # Seen 2026-09-15: a capture that armed ila_fastram instead of
+        # ila_cpu040 wrote a CSV with no dbg_rtg column and no samples.
+        raise ValueError(f"{path}: no dbg_rtg column -- the capture came from "
+                         "the wrong ILA, or nothing was uploaded")
     c_st = c_rtg + 1
     out = []
+    gap = True   # an idle sample (akiko_req low) ends the current access
     for row in rows[2:]:
         if len(row) <= c_st or not row[c_rtg].strip():
+            gap = True
             continue
         w, s = _hex(row[c_rtg]), _hex(row[c_st])
         if not (w >> 31) & 1:
+            gap = True
             continue
         reg = (w >> 16) & 0xFFF
-        out.append({
+        row = {
             "kind": "W" if (w >> 30) & 1 else "R",
             "reg": reg,
             "name": _name(reg),
             "data": w & 0xFFFF,
             "rtg_ena": (s >> 28) & 1,
             "rtg_addr": (s & 0x3FFFFF) << 4,
-        })
+            "samples": 1,
+        }
+        # An every-sample ("always") capture holds one access for as many clk
+        # cycles as akiko_req stays high; fold identical consecutive rows.
+        prev = out[-1] if (out and not gap) else None
+        if prev and all(prev[k] == row[k] for k in ("kind", "reg", "data", "rtg_ena", "rtg_addr")):
+            prev["samples"] += 1
+        else:
+            out.append(row)
+        gap = False
     return out
 
 
@@ -69,11 +86,17 @@ def framebuffer(rows):
 
 def main(paths):
     for p in paths:
-        rows = decode_rows(p)
+        try:
+            rows = decode_rows(p)
+        except ValueError as e:
+            sys.exit(str(e))
         print(f"--- {p}: {len(rows)} Akiko accesses")
         for r in rows:
-            print(f"  {r['kind']} {r['name']:<13} ${0xB80000 + r['reg']:06X} = ${r['data']:04X}"
-                  f"   rtg_ena={r['rtg_ena']} rtg_addr=${r['rtg_addr']:07X}")
+            # dbg_rtg carries akiko_d, the CPU's WRITE data bus: meaningful for a
+            # write, stale for a read (the read value, akiko_q, is not probed).
+            val = f"= ${r['data']:04X}" if r["kind"] == "W" else "(read value not captured)"
+            print(f"  {r['kind']} {r['name']:<13} ${0xB80000 + r['reg']:06X} {val:<26}"
+                  f" samples={r['samples']} rtg_ena={r['rtg_ena']} rtg_addr=${r['rtg_addr']:07X}")
         fb = framebuffer(rows)
         if fb is None:
             print("  framebuffer address: not written in this capture")
