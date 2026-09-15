@@ -76,3 +76,39 @@ and the test fixture's column name changed.
 | E4a T1 dbg_snoop | 2090 | 1005 | 727 | 591 | 1+wsync-option | 6 | 1 | 15 | dbg_phist dbg_rtg |
 
 −52 wrapper lines, −26 code lines against the baseline.
+
+### Task 2 — remove `cpu_wr_sync`
+
+Removed: the `cpu_wr_sync` input and the `CPU_SM_WSYNC` state of
+`cpu_cache_new` (both write branches now take their posted `else` arm), the
+port in `sdram_ctrl`, the ties in `ddr3_fastram` and `minimig_virtual_top`, the
+wrapper's output and its `sel_chipram` assignment, the `WRSYNC` bench define
+(`real_sdram.vh`, `run.sh`) and sdram_coherency's `+wrsync` plusarg. Both
+controllers had it tied to 0, so shipped behaviour is unchanged. Two
+`ddr3_cpu_tb.sv` comments that explain bench logic by this option now name it
+as history. The coherency summary line no longer prints a `wrsync` field.
+
+- Analysis: `xvlog --relax` on `cpu_cache_new.v`, `sdram_ctrl.v`,
+  `ddr3_fastram.v` and `xvhdl` over the six VHDL files — exit 0, no errors.
+- `sim/sdram_coherency fast sg7 +nobg +rounds=50`: **52 errors, 0 timeouts**,
+  every check equal to the reference (line buffer 50, longword 2, rest 0).
+- `sim/sdram_coherency fast sg7 +rounds=50`: **14 errors, 0 timeouts** = reference.
+- `REALSDRAM=1 ./run.sh --ap040` (`t2`): 2 passed; placement **1953 / 78 off** =
+  `e1cal3`.
+- `REALSDRAM=1 DMA_OVERLAP=1 P7LOOPS=10 ./run.sh --ap040` (`t2ovl`): summary
+  **identical** to `sim/ddr3_cpu/ref/overlap_gate3.txt` (29 lines), compared with
+  the command in that file's header. (A first diff of the console capture
+  "differed" only by the reference's `#` header and a repeated log tail; the
+  runbook now gives the exact command.)
+
+| label | wrapper lines | wrapper code | cpu_cache_new code | sdram_ctrl code | posted-write paths | longword_pair uses | g_tg68k uses | switch uses | debug probes |
+|---|---|---|---|---|---|---|---|---|---|
+| E4a T2 cpu_wr_sync | 2080 | 1003 | 711 | 589 | 1 | 6 | 1 | 15 | dbg_phist dbg_rtg |
+
+Against Task 1: wrapper −10 lines (−2 code), `cpu_cache_new` −16 code,
+`sdram_ctrl` −2 code; posted-write paths `1+wsync-option` → `1`.
+
+Found while waiting (recorded in the plan): the second-word latch Task 5 would
+drop has readers, so it stays; and six other board ports compile this RTL —
+out of scope (Paul: "I'm only building for the qmtech board"), marked
+unsupported in Task 6.

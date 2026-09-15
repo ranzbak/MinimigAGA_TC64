@@ -6,9 +6,11 @@ this machine on 2026-09-14/15, branch `stage-e`, unless it is marked
 **not yet run**.
 
 Stage E4a (`findings/ap68040/stage-e/2026-09-15-e4a-plan.md`) will remove some
-things described here: build arguments 7–10, `tools/vivado/ila_snoop_check.tcl`,
-the `WRSYNC` bench switch and the TG68K simulation legs. Those spots are marked
-**(changes in E4a)**.
+things described here: build arguments 7–10 and the TG68K simulation legs.
+Those spots are marked **(changes in E4a)**. Already gone: the `dbg_snoop` ILA
+probe with `tools/vivado/ila_snoop_check.tcl` (so `ila_cpu040` probes are now
+probe8 `dbg_phist`, probe9 `dbg_rtg`, probe10 RTG state), and the `WRSYNC`
+bench switch.
 
 ---
 
@@ -336,7 +338,6 @@ busy leg (below) about 40.
 | `CPU_PHASE_GATE_DLY=<d>` | the wrapper's phase-gate delay; default **3** (shipping). `0` = the gate as first built |
 | `CPU_RATIO=3` or `4` | CPU clock ratio (3 = D3) |
 | `CPU_PHASE=0..3` | start the CPU clock 0–3 clk periods late |
-| `WRSYNC=1` | hold CPU write acknowledges until SDRAM has them **(changes in E4a: removed)** |
 | `NOCPU=1` | keep the CPU in reset: chipset-only control run |
 | `RUNTAG=<word>` | own run directory and log (`xsim_run_<variant>_<word>.log`), so legs don't overwrite each other |
 | `PATBYTES=64 MISLINES=2 CNTN=8` | smaller program regions for a quick debug run |
@@ -354,7 +355,15 @@ a 16-bin histogram of where chip-RAM acknowledges land:
   corrupting gate.
 - Busy leg `REALSDRAM=1 DMA_OVERLAP=1 P7LOOPS=10 ./run.sh --ap040`: the placement
   histogram is only reported. Its summary lines must match the saved reference
-  `sim/ddr3_cpu/ref/overlap_gate3.txt` exactly (being created in E1).
+  `sim/ddr3_cpu/ref/overlap_gate3.txt` exactly. Compare against the **log**
+  (not a copy of the console, which repeats lines), skipping the reference's
+  `#` header — no output from `diff` means identical:
+
+  ```bash
+  cd sim/ddr3_cpu
+  grep -E '^(INFO: program phase|DDR3 CPU TB|=== DMA|=== P2C|=== placement|    ph )' \
+       xsim_run_pass_ap040_<RUNTAG>.log | diff <(grep -v '^#' ref/overlap_gate3.txt) -
+  ```
 
 **`run.sh` overwrites tracked reference logs.** Without `RUNTAG`, a leg writes
 `xsim_run_<variant>.log`, and several of those are committed references

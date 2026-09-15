@@ -79,14 +79,6 @@ sdram_ctrl u_sdram (
     .cache_inhibit  (cache_inhibit    ),
     .cacheline_clr  (cacheline_clr    ),
     .cpu_cache_ctrl (tg68_CACR_out    ),
-`ifdef WRSYNC
-    // Unposted CPU writes.  Every CPU write reaching sdram_ctrl in this bench is
-    // chip RAM (fast RAM goes to ddr3_fastram), so tying it high is exactly what
-    // the wrapper's sel_chipram would drive.
-    .cpu_wr_sync    (1'b1             ),
-`else
-    .cpu_wr_sync    (1'b0             ),
-`endif
     .reset_out      (sdram_reset_out  ),
 
     .sdaddr         (sd_addr          ),

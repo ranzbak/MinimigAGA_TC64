@@ -28,25 +28,6 @@ module cpu_cache_new #(
   input  wire [ 26-1:0] cpu_adr, // cpu address
   input  wire [  2-1:0] cpu_bs, // cpu byte selects
   input  wire           cpu_32bit, // cpu 32 bit write
-  // Unposted write.  A CPU write is normally acknowledged the cycle after it
-  // is handed to the write buffer, long before SDRAM takes it -- the buffer
-  // drains through the controller's slots whenever one is free.  That is
-  // invisible to the CPU, and safe for every region only the CPU can see.
-  //
-  // Chip RAM under Turbo is NOT such a region.  It lives in the same SDRAM,
-  // the chipset reads it there directly (sdram_ctrl slot 1, type CHIP), and
-  // NOTHING forwards the buffered write to that read: there is not one
-  // comparison between the chipset address and the write buffer's in the
-  // whole controller.  Worse, a chip-RAM write can only drain through slot 1
-  // -- wb_slot2ok requires a non-zero bank and chip RAM is bank 0 -- and
-  // slot 1 goes to the chipset FIRST.  So under heavy chipset DMA (a demo)
-  // the CPU's write sits in the buffer for exactly as long as the chipset is
-  // busy reading the buffer it was meant to update.  Uncleared pixels.
-  //
-  // With cpu_wr_sync the acknowledge waits for sdr_write_ack, so the write is
-  // in SDRAM before the CPU moves on.  The cost is paid only on writes to the
-  // window that needs it, and only when slot 1 is contended.
-  input  wire           cpu_wr_sync, // hold the ack until SDRAM has the write
   input  wire           cpu_we, // cpu write
   input  wire           cpu_ir, // cpu instruction read
   input  wire           cpu_dr, // cpu data read
@@ -238,8 +219,7 @@ module cpu_cache_new #(
   CPU_SM_SDWAI = 4'd8,
   CPU_SM_FILL1 = 4'd9,
   CPU_SM_FILL2 = 4'd10,
-  CPU_SM_FILLW = 4'd11,
-  CPU_SM_WSYNC = 4'd12;   // unposted write: wait for SDRAM to take it
+  CPU_SM_FILLW = 4'd11;
 
   // sdram-side state machine
   localparam [1:0]
@@ -395,12 +375,8 @@ module cpu_cache_new #(
             // aligned 32 bit write, do it in one step
             cpu_sm_bs <= #1 {cpu_bs, ~sdr_dqm_w[1:0]};
             cpu_sm_mem_dat_w <= #1 {cpu_dat_w, sdr_dat_w[15:0]};
-            if (cpu_wr_sync) begin
-              cpu_sm_state <= #1 CPU_SM_WSYNC;
-            end else begin
-              cpu_cache_ack <= #1 1'b1;
-              cpu_sm_state <= #1 CPU_SM_WB;
-            end
+            cpu_cache_ack <= #1 1'b1;
+            cpu_sm_state <= #1 CPU_SM_WB;
           end
           cpu_sm_iram0_we <= #1 itag0_match && itag0_valid /*&& !cc_fr*/;
           cpu_sm_iram1_we <= #1 itag1_match && itag1_valid /*&& !cc_fr*/;
@@ -416,20 +392,8 @@ module cpu_cache_new #(
           cpu_sm_iram1_we <= #1 itag1_match && itag1_valid /*&& !cc_fr*/;
           cpu_sm_dram0_we <= #1 dtag0_match && dtag0_valid /*&& !cc_fr*/;
           cpu_sm_dram1_we <= #1 dtag1_match && dtag1_valid /*&& !cc_fr*/;
-          if (cpu_wr_sync && !sdr_write_ack) begin
-            cpu_sm_state <= #1 CPU_SM_WSYNC;
-          end else begin
-            cpu_cache_ack <= #1 1'b1;
-            cpu_sm_state <= #1 CPU_SM_WB;
-          end
-        end
-        CPU_SM_WSYNC : begin
-          // sdr_write_req stays up until the controller takes it (it is
-          // cleared on sdr_write_ack below), so this simply waits.
-          if (sdr_write_ack) begin
-            cpu_cache_ack <= #1 1'b1;
-            cpu_sm_state <= #1 CPU_SM_WB;
-          end
+          cpu_cache_ack <= #1 1'b1;
+          cpu_sm_state <= #1 CPU_SM_WB;
         end
         CPU_SM_WB : begin
           if (!cpu_cs) cpu_sm_state <= #1 CPU_SM_IDLE;

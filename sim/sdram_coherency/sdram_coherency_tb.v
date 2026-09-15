@@ -102,10 +102,10 @@ reg          cpuL = 1'b0, cpuU = 1'b0;
 wire [15:0]  cpuRD;
 wire         cpuena;
 
-// FIX SELECTION.  Both default off, so the DUT is what HEAD builds unless a
-// switch is given: +wrsync drives cpu_wr_sync for the whole (chip RAM) window,
-// -DCL_SNOOP compiles in the line-buffer snoop invalidate.
-reg wrsync = 1'b0;
+// FIX SELECTION.  Default off, so the DUT is what HEAD builds unless the
+// switch is given: -DCL_SNOOP compiles in the line-buffer snoop invalidate.
+// (The +wrsync switch for the unposted-write option went with that option in
+// Stage E4a.)
 // CACHE-INHIBIT AND CACHELINE-CLR, previously tied to zero here -- which meant
 // the KICKSTART TURBO path was never simulated at all.
 //
@@ -128,7 +128,7 @@ sdram_ctrl #(.CL_SNOOP(1)) dut (
 sdram_ctrl dut (
 `endif
   .sysclk(clk), .clk7_en(clk7_en), .reset_in(reset_in), .cache_rst(reset_in),
-  .cache_inhibit(ci_now), .cacheline_clr(clr_now), .cpu_wr_sync(wrsync), .cpu_cache_ctrl(4'b0011), .reset_out(reset_out),
+  .cache_inhibit(ci_now), .cacheline_clr(clr_now), .cpu_cache_ctrl(4'b0011), .reset_out(reset_out),
   .sdaddr(sdaddr), .sd_cs(sd_cs), .ba(ba), .sd_we(sd_we), .sd_ras(sd_ras), .sd_cas(sd_cas),
   .dqm(dqm), .sdata(sdata_fpga),
   .hostWR(32'd0), .hostAddr(22'd0), .hostce(1'b0), .hostwe(1'b0), .hostbytesel(4'b0000),
@@ -451,13 +451,12 @@ initial begin
   $timeformat(-9, 3, " ns", 10);
   if (!$value$plusargs("rounds=%d", ROUNDS)) ROUNDS = 200;
   if ($test$plusargs("nobg")) NOBG = 1;
-  if ($test$plusargs("wrsync")) wrsync = 1'b1;
 
   repeat (20) @(posedge clk);
   reset_in = 1'b1;
   @(posedge reset_out);
-  $display("=== sdram_coherency [%0s] init at %t, %0d rounds, background %0s, wrsync %0d, cl_snoop %0d ===",
-           CORNER, $time, ROUNDS, NOBG ? "OFF" : "ON", wrsync,
+  $display("=== sdram_coherency [%0s] init at %t, %0d rounds, background %0s, cl_snoop %0d ===",
+           CORNER, $time, ROUNDS, NOBG ? "OFF" : "ON",
            `ifdef CL_SNOOP 1 `else 0 `endif );
   repeat (64) @(posedge clk);
 

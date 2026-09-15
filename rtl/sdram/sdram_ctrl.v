@@ -31,11 +31,6 @@ module sdram_ctrl #(
     input  wire           reset_in,
     input  wire           cache_rst,
     input  wire           cache_inhibit,
-    // Unposted write: hold the CPU's acknowledge until SDRAM has actually
-    // taken the write.  Raised by the wrapper for chip RAM under Turbo, the
-    // one region the chipset reads out of this same SDRAM -- see the note on
-    // cpu_wr_sync in cpu_cache_new.v.
-    input  wire           cpu_wr_sync,
     input  wire           cacheline_clr,
     input  wire [  4-1:0] cpu_cache_ctrl,
     output wire           reset_out,
@@ -306,7 +301,6 @@ cpu_cache_new #(.CL_SNOOP(CL_SNOOP)) cpu_cache (
     .cache_en         (1'b1), // cache enable
     .cpu_cache_ctrl   (cpu_cache_ctrl), // CPU cache control
     .cache_inhibit    (cache_inhibit), // cache inhibit
-    .cpu_wr_sync      (cpu_wr_sync), // unposted write (chip RAM under Turbo)
     .cacheline_clr    (cacheline_clr),
     .cpu_cs           (!cpuCSn), // cpu activity
     .cpu_adr          ({cpuAddr, 1'b0}), // cpu address

@@ -358,11 +358,12 @@ integer     dma_i, dma_writes = 0, dma_err = 0;
 // uncleared-pixel direction.
 localparam [23:1] P2C_WORD = 23'h004009;
 // ACK-TIME SHADOW.  The bench's chipmem is written at the START of a CPU write
-// access, not at its acknowledge.  Without cpu_wr_sync those are one cycle apart
-// and chipmem is a fine reference; WITH it the acknowledge is held until SDRAM
-// has the write, so chipmem shows a value the CPU has not yet been told is
-// written, and a chipset read inside that hold was flagged stale falsely (bench
-// bug five).  p2c_acked records a word only when the CPU is acknowledged.
+// access, not at its acknowledge.  With posted writes those are one cycle apart
+// and chipmem is a fine reference; the stage D3 cpu_wr_sync option (removed in
+// E4a) held the acknowledge until SDRAM had the write, so chipmem showed a value
+// the CPU had not yet been told was written, and a chipset read inside that hold
+// was flagged stale falsely (bench bug five).  p2c_acked records a word only
+// when the CPU is acknowledged, which is right either way.
 reg  [15:0] p2c_acked [0:65535];
 integer     p2c_ai;
 initial for (p2c_ai = 0; p2c_ai < 65536; p2c_ai = p2c_ai + 1) p2c_acked[p2c_ai] = 16'h0000;
@@ -1650,10 +1651,11 @@ reg        stalled     = 1'b0;
 // The pattern program's own 2.5 ms TIMEOUT is the backstop for it; the tight
 // threshold goes where it is wanted, on the walker.
 `ifdef DMA_OVERLAP
-// A looped phase 7 under a saturating chipset agent, with cpu_wr_sync holding
-// each chip-RAM write until slot 1 frees, legitimately goes more than 300,000
-// cycles without a phase marker while still progressing -- it tripped this as a
-// false stall.  ~8.8 ms here; TIMEOUT below is the backstop.
+// A looped phase 7 under a saturating chipset agent legitimately goes more than
+// 300,000 cycles without a phase marker while still progressing -- with the D3
+// cpu_wr_sync option (removed in E4a) holding each chip-RAM write until slot 1
+// freed, it tripped this as a false stall.  ~8.8 ms here; TIMEOUT below is the
+// backstop.
 localparam integer STALL_PAT = 1_000_000;
 `else
 localparam integer STALL_PAT = 300_000;

@@ -170,13 +170,6 @@ entity TG68K is
 		turbochipram    : in     std_logic;
 		turbokick       : in     std_logic;
 		cache_inhibit   : out    std_logic;
-		-- Unposted chip-RAM writes: sdram_ctrl holds the CPU's acknowledge until
-		-- SDRAM has actually taken the write.  Without it a write is acknowledged at
-		-- the controller's write buffer and lands ~86 ns later, and a chipset read
-		-- inside that window returns the value the CPU already overwrote --
-		-- reproduced in sim/ddr3_cpu (REALSDRAM, DMA_OVERLAP, P2C probe: 5 stale in
-		-- 688) and removed by this (0 stale in 772).  findings/ap68040/sdd-d3/.
-		cpu_wr_sync     : out    std_logic;
 		cacheline_clr   : out    std_logic;
 		--    ovr           : in      std_logic;
 		ramaddr         : out    std_logic_vector(31 downto 0);
@@ -767,9 +760,6 @@ BEGIN
 	fl_ok <= '1' WHEN (sel_ddr = '1' OR sel_z2ram = '1' OR sel_z3ram_sdram = '1') ELSE '0';
 
 	cache_inhibit <= '1' WHEN sel_kickram = '1' ELSE '0';
-	-- Chip RAM under Turbo is the one region the chipset reads out of the same
-	-- SDRAM the CPU writes; sel_chipram already folds in turbochip_d.
-	cpu_wr_sync   <= sel_chipram;
 
 	-- See cpu_phase_ok.  Constant '1' for the TG68K, whose bus cycles are
 	-- already on the enaWRreg grid by construction, so this folds away there.
