@@ -207,6 +207,14 @@ localparam integer CPUP_LO = CPUP - CPUP_HI;
 `ifndef CPU_PHASE
 `define CPU_PHASE 0
 `endif
+// CPU_PHASE_GATE_DLY: where TG68K.vhd's chip-RAM phase gate opens (its
+// cpu_phase_gate_dly generic). 3 is the shipping value (tag d3_stable): it
+// lands chip-RAM acknowledges on SDRAM phases 2/6/10/14 on hardware. The VHDL
+// default is 0, the gate as first built -- which this bench silently ran until
+// Stage E1.
+`ifndef CPU_PHASE_GATE_DLY
+`define CPU_PHASE_GATE_DLY 3
+`endif
 reg clk_cpu = 1'b0;
 initial begin
   #4407;
@@ -758,7 +766,8 @@ wire        ramready_w;                        //   see the line-buffer model be
 // the AP68040 sources; everything else in this bench is identical, which is
 // the whole point of that core presenting a TG68K-shaped port set.
 `ifdef CPU_AP040
-TG68K #(.cpu_core("AP040"), .cpu_clk_ratio(`CPU_RATIO)) tg68k (
+TG68K #(.cpu_core("AP040"), .cpu_clk_ratio(`CPU_RATIO),
+        .cpu_phase_gate_dly(`CPU_PHASE_GATE_DLY)) tg68k (
 `else
 TG68K #(.cpu_core("TG68K")) tg68k (
 `endif
