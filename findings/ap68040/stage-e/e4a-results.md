@@ -322,3 +322,25 @@ DDR3_FASTRAM_ILA=0 cpu_clk_ratio=3 HAVEDDR3=1`; ILA build both ILAs on. The LUT
 count barely moves because the TG68K branch was never elaborated in an AP040
 build: E4a removes source, not hardware. Hardware protocol (Paul) and the tag
 `e4a` follow.
+
+## Found while writing the E2 plan: `datatg68_r` never reached the AP68040
+
+`datatg68_r` (`TG68K.vhd:306`, captured at `:1400`) is assigned and never read.
+It is not something E4a disconnected:
+
+- ba323b9 ("capture datatg68 with the enable") changed the `data_in` of the
+  **TG68K kernel** instance. At `d3_stable` that mapping is inside `g_tg68k`
+  (`data_in => datatg68_k`), while the AP68040 instance in `g_ap040` maps
+  `data_in => datatg68`, unregistered.
+- E4a Task 4 folded `datatg68_k` to `datatg68_r` in the TG68K instance; Task 6
+  deleted that instance, leaving `datatg68_r` with no reader.
+- So every AP68040 build, `d3_stable` included, has had the same read-data
+  path. **E4a changed nothing here; the loaded `stage_ap040_e4a` is unaffected.**
+
+What it means: the hardware result recorded with ba323b9 ("Way Too Rude still
+corrupts") was measured on an AP68040 build that did not contain the fix, and
+the `cb_nodatareg` chipbus experiment switched off a register the AP68040 never
+used. The read-data crossing into clk_38 is still in neither D4 category, and
+it is a candidate for the unexplained 3/7/11/15 corruption. A zero-delay
+simulation cannot show it (the data is stable at the kernel edge there). The E2
+plan (finding 4, and the separate one-line hardware A/B) takes it up.
