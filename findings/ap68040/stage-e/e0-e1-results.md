@@ -194,6 +194,45 @@ a 10 % stray limit. Program PASS and DMA 0 wrong in both.
 Both histograms match `e1fix3` and `e1fix0` bin for bin, which confirms the
 formula went back exactly. Committed as E1 Task 2.
 
+### DMA overlap leg at the shipping gate (`e1ovl`): two failures, neither in the design
+
+`REALSDRAM=1 DMA_OVERLAP=1 P7LOOPS=10`: exit 1. Program PASS, DMA window 3670
+writes, 0 wrong.
+
+| ph16 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| bench, overlap, gate 3 (2602) | 0 | 0 | 70 | **454** | 18 | 0 | 47 | **464** | 0 | 0 | 40 | **696** | 0 | 167 | 102 | **544** |
+
+- **P2C "1 stale" is a bench judging error (bench trap 4 again).** The failing
+  read got `xxxx` from byte $8012 while the CPU's FIRST write to it (0009) was
+  landing: "before 0000 / after 0009". The probe marks a word written if a
+  value is seen before OR after the read, then judges that same read against
+  the shadow's initial 0000. The word is never preloaded, so undefined data is
+  correct. Fix: judge a read only if the word was written before the read
+  began.
+- **Placement: 342 of 2602 off the calibrated grid (13.1 %, limit 10 %).** The
+  peaks are still on bench 3/7/11/15. Under chipset contention the scatter grows
+  to 167 on bench 13 and 157 on bench 2/6/10 (one phase early). The board stays
+  at 0.4 % under Way Too Rude, so this is the bench diverging further under
+  load, not the design.
+
+### Decision (Paul, 2026-09-15): the busy leg must match a saved reference exactly
+
+Chosen over "loosen the limit to 20 %" and "explain the spread first".
+
+- **Quiet leg** (`REALSDRAM=1 ./run.sh --ap040`): keeps the calibrated
+  pass/fail placement check. The gate-0 mutant proves it can fail.
+- **Busy leg** (`REALSDRAM=1 DMA_OVERLAP=1 P7LOOPS=10`): the placement
+  histogram is printed but no longer fails the run. After the P2C judging fix,
+  its exact numbers (placement bins, DMA writes and wrong, P2C reads, changes
+  and stale) are saved as a reference. Every E4a step must reproduce them
+  identically. The runs use fixed random seeds and have come out identical run
+  to run (e1fix0 equals e1dly3 bin for bin), so exact comparison is meaningful.
+- **Bench fixes pending** until the guard-check and regression chain ends,
+  because every leg compiles `ddr3_cpu_tb.sv`: the P2C probe judges a read only
+  if the word was written before the read began, and under `DMA_OVERLAP`
+  placement is reported, not judged.
+
 ### `sim/sdram_coherency` reference for E4a: first attempt incomplete
 
 Both legs (`fast sg7 +nobg`, `fast sg7`) hit a 15-minute `timeout` (exit 124)
