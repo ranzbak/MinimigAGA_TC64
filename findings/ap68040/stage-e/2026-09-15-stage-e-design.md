@@ -107,6 +107,10 @@ of 1.
 Each sub-project gets its own plan, bench legs and hardware test. They run in
 order, and each starts from the previous one's hardware-verified tag.
 
+Implementation plan for E0 and E1: [2026-09-15-e0-e1-plan.md](2026-09-15-e0-e1-plan.md).
+O1-O5 taken as the recommended options (Paul, 2026-09-15: "Start a new branch,
+and start implementing"); O6 (flashing) still needs his explicit yes.
+
 ### E0 — Close D3, and diagnose RTG (PROPOSED as a precondition)
 
 - Hardware-test `build/stage_ap040_d3stable_gd3`: Way Too Rude, Workbench icons
