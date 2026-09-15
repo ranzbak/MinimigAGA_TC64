@@ -362,3 +362,37 @@ Rerunning both with `+rounds=50` to completion.
   Turbo-off boot. [Paul] Task 8: RTG capture.
 - Done above: gate 0/3 on the corrected bench (calibrated), address-guard
   cross-check, DMA overlap leg (reference, not gate).
+
+## Stage E step 2 — the bench's one-phase offset is the read/write mix (2026-09-16)
+
+The calibration above ("bench one phase later than the board, cause unknown")
+is explained. The placement monitor now also bins each chip-RAM acknowledge by
+access type (commit 2c25042; report lines `  split ph NN : read N  write N`).
+Bins are bench phases, counted the same way as before.
+
+| run | gate | reads land on | writes land on |
+|---|---|---|---|
+| `s2`, quiet (`REALSDRAM=1 --ap040`) | 3 | 3/7/11/15 (563/457/422/417), +4 (30) | **2/6/10/14** (11/7/7/16), **+13** (23) |
+| `s2ovl`, busy leg | 3 | 3/7/11/15 (454/464/696/544), +4 (18) | **2/6/10/14** (70/47/40/102), **+13** (167) |
+| `s2g`, quiet (`--gatemutant`) | 0 | 0/4/8/12 (427/467/452/441), +5 (49), +11 (72) | **3/7/11/15** (13/8/6/11), **+13** (26) |
+| `e1rep0`, overlap `P7LOOPS=40 P2CBLOCK=32` | 0 | 0/4/8/12 (321/321/283/291), +5 (13), +11 (19) | **3/7/11/15** (4/2/1/7), **+13** (8) |
+| board `dbg_phist`, Way Too Rude | 3 | — | 2/6/10/14, +13 (all accesses) |
+| board `dbg_phist`, Way Too Rude | 0 | — | 3/7/11/15, +13 (all accesses) |
+
+- **Bench writes land exactly where the board's acknowledges land, at both
+  gates, phase 13 included.** Reads land one phase after writes.
+- The combined bench histogram was dominated by reads (the pattern program
+  reads chip RAM far more than it writes it), so its peaks sat one phase after
+  the board's. Way Too Rude on the board is write-heavy, so its histogram shows
+  the write grid. Nothing is wrong in either; the bench models placement
+  correctly. `PLACEMENT_OFFSET = 1` was a calibration to the read mix.
+- **For the rule:** the D3 hardware histograms are dominated by writes, so
+  what they showed is consistent with "a chip-RAM WRITE acknowledged on
+  3/7/11/15 corrupts". Reads on 3/7/11/15 are the normal placement with the
+  shipping gate.
+- E2 judges reads and writes separately (plan D7) and drops the offset. A
+  hardware confirmation remains possible but is no longer a precondition: a
+  `dbg_phist` split by access type, or a capture under a read-heavy workload.
+- Aside from the same work: the D3 read-data capture (ba323b9) never reached
+  the AP68040 (e4a-results.md), so the read-data crossing is a live candidate
+  for WHY that placement corrupts.
