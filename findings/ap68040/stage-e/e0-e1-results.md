@@ -267,6 +267,19 @@ removes nothing in this bench and stays as a cross-check.
   They were backed up to the session scratchpad and restored from HEAD, so the
   committed references are unchanged; the verdicts above are the record.
 
+### Chipbus hang is NOT the gate; busy-leg reference saved
+
+- **`--ap040 --chipbus` with `CPU_PHASE_GATE_DLY=0` hangs the same way** (`e1cb0`:
+  mailbox timeout, never reaches program phase 1). The gate delay is not the
+  cause, and today's testbench changes apply only under REALSDRAM/DMA_OVERLAP.
+  The leg most likely broke earlier and was not rerun; on the board, Turbo-off
+  boots worked on the gate-0 histogram builds. Being traced.
+- **Busy-leg reference** (`e1ref`, patched testbench, shipping gate): exit 0,
+  program PASS (phase 8 at 2.148 ms), DMA 3670 writes 0 wrong, **P2C 167 reads,
+  0 stale** (the judging fix removed the false failure), placement 2602
+  acknowledges with the same histogram as `e1ovl`, reported not judged.
+  Saved as `sim/ddr3_cpu/ref/overlap_gate3.txt`.
+
 ### `sim/sdram_coherency` reference for E4a: first attempt incomplete
 
 Both legs (`fast sg7 +nobg`, `fast sg7`) hit a 15-minute `timeout` (exit 124)

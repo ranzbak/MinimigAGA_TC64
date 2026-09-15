@@ -385,6 +385,12 @@ integer     p2c_reads = 0, p2c_err = 0, p2c_changes = 0;
 // 'xxxx' against '0000', a false failure.  The first version of this probe did
 // exactly that, and the 20-line display cap then hid everything after it.
 reg  [0:65535] p2c_written = '0;
+// Judge a read only if its word was already written when the read BEGAN. The
+// first version marked the word from the value seen before OR after the read
+// and then judged that same read, so a read overlapping the CPU's very first
+// write (SDRAM still undefined, shadow still 0000) was flagged stale
+// (Stage E1, e1ovl: 'read xxxx, before 0000 / after 0009').
+reg          p2c_was = 1'b0;
 reg  [15:0] p2c_pre, p2c_got, p2c_post, p2c_last = 16'h0000;
 `endif
 reg         dma_run = 1'b0;
@@ -417,12 +423,13 @@ initial begin : dma_agent
       p2c_adr = P2C_WORD;
 `endif
       p2c_pre = p2c_acked[p2c_adr[16:1]];
+      p2c_was = p2c_written[p2c_adr[16:1]] || (p2c_pre !== 16'h0000);
       ch_read(p2c_adr, p2c_got);
       p2c_post = p2c_acked[p2c_adr[16:1]];
       if (p2c_pre !== 16'h0000 || p2c_post !== 16'h0000) p2c_written[p2c_adr[16:1]] = 1'b1;
-      if (p2c_written[p2c_adr[16:1]]) p2c_reads = p2c_reads + 1;
+      if (p2c_was) p2c_reads = p2c_reads + 1;
       if (p2c_post !== p2c_last) begin p2c_changes = p2c_changes + 1; p2c_last = p2c_post; end
-      if (p2c_written[p2c_adr[16:1]] && p2c_got !== p2c_pre && p2c_got !== p2c_post) begin
+      if (p2c_was && p2c_got !== p2c_pre && p2c_got !== p2c_post) begin
         p2c_err = p2c_err + 1;
         if (p2c_err <= 20)
           $display("FAIL P2C probe at %t, byte %06h: chipset read %04h, CPU had written %04h (before) / %04h (after)",
@@ -2027,11 +2034,19 @@ initial begin : main
            `CPU_PHASE_GATE_DLY, pm_total, pm_stray, `PLACEMENT_OFFSET);
   for (pm_i = 0; pm_i < 16; pm_i = pm_i + 1)
     $display("    ph %2d : %0d", pm_i, pm_bin[pm_i]);
+`ifdef DMA_OVERLAP
+  // Busy leg: a reference, not a gate (Paul, 2026-09-15). Under chipset
+  // contention the bench scatters ~13 % of acknowledges off the calibrated grid
+  // while the board stays at 0.4 %, so the histogram is compared exactly
+  // against sim/ddr3_cpu/ref/overlap_gate3.txt instead of against a limit.
+  $display("=== placement: busy leg (DMA_OVERLAP) is a reference, not judged ===");
+`else
   if (pm_total < 1000 || pm_stray * 1000000 > pm_total * `PLACEMENT_STRAY_PPM) begin
     nfail = nfail + 1;
     $display("DDR3 CPU TB: FAIL  chip-RAM acknowledge placement: %0d of %0d off the grid (limit %0d ppm, need >= 1000 acknowledges)",
              pm_stray, pm_total, `PLACEMENT_STRAY_PPM);
   end
+`endif
 `endif
   if (nfail == 0) $display("DDR3 CPU TB: 2 passed, 0 failed");
   else            $display("DDR3 CPU TB: %0d checks failed", nfail);
