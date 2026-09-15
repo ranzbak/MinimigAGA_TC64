@@ -89,6 +89,64 @@ the grid).
   cycles. Changed only after the corrected-bench runs, so each run varies one
   thing.
 
+### Corrected bench (direct enables): prediction confirmed, still one phase off
+
+Runs `e1fix0` and `e1fix3` after the fix. Both: program PASS, DMA 0 wrong
+(3964 / 3958 writes), placement FAIL.
+
+| ph16 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| bench fixed, gate 0 | **427** | 0 | 0 | 13 | **467** | 49 | 0 | 8 | **452** | 0 | 0 | 78 | **441** | 26 | 0 | 11 |
+| bench fixed, gate 3 | 0 | 0 | 11 | **563** | 30 | 0 | 7 | **457** | 0 | 0 | 7 | **422** | 0 | 23 | 16 | **417** |
+| hardware, gate as built (0) | 21 | 3 | 0 | **585** | 5 | 15 | 2 | **439** | 13 | 6 | 0 | **495** | 3 | **510** | 4 | **355** |
+| hardware, gate 3 (clean) | 3 | 0 | **4371** | 29 | 8 | 0 | **4671** | 7 | 8 | 0 | **3840** | 25 | 6 | **5772** | **3891** | 9 |
+
+- The prediction written before these runs held exactly. Removing the register
+  moved every peak one phase earlier: gate 0 onto 0/4/8/12, gate 3 onto
+  3/7/11/15. The fixed bench's gate 0 is bin-for-bin the old bench's gate 3
+  (427/467/452/441): one register fewer plus three more cycles of opening delay
+  lands on the same phases.
+- **The fixed bench still sits one phase LATER than the hardware**: its gate 3
+  lands where the hardware's gate 0 lands. So the monitor fails the shipping
+  gate the hardware runs clean with. E1 Task 2 is not done, and E4a stays
+  blocked on it.
+- Also unlike the hardware, the bench shows no gate-independent peak on 13 at
+  gate 3 (23 against 5772).
+- Next suspect is the measurement, not the design: the monitor bins
+  `ramready_real AND !ramcs_n`, `dbg_phist` bins `ramready AND sel_ram_d`. Test:
+  make the monitor use a registered address decode like `sel_ram_d`, rerun
+  gate 3.
+
+### Monitor made to bin exactly like `dbg_phist`
+
+Two RTL facts decide how to mirror the hardware's formula in the bench:
+- `cpu_cache_new` clears `cpu_cache_ack` only with a registered
+  `if (!cpu_cs) cpu_cache_ack <= 0` (`cpu_cache_new.v:589`), so `ramready`
+  stays high for one clk after the chip select falls.
+- The wrapper's `ramaddr` (the bench's `tg68_cad`) follows `cpuaddr`
+  combinationally with no select gating (`TG68K.vhd:860-866`), and bits 25:21
+  are all zero only for $000000-$1FFFFF.
+
+So the monitor now uses the same three registers as `dbg_phist`:
+
+| register | hardware (`TG68K.vhd`) | monitor before | monitor now |
+|---|---|---|---|
+| select | `sel_ram_d <= sel_ram` | — | `pm_sel_d <= (tg68_cad[25:21] == 0)` |
+| acknowledge | `ph_ack_r <= ramready AND sel_ram_d` | `ramready_real && !ramcs_n` | `ramready_real && pm_sel_d` |
+| chip flag | `ph_chip_r <= sel_chipram` | `!ramcs_n && chip decode` | chip decode |
+
+`xvlog` clean. Gate 3 (`e1pm3`) runs first: on 2/6/10/14 (+13) the remaining
+phase difference was the measurement; still on 3/7/11/15 it is real, and the
+work stops for a report.
+
+### `sim/sdram_coherency` reference for E4a: first attempt incomplete
+
+Both legs (`fast sg7 +nobg`, `fast sg7`) hit a 15-minute `timeout` (exit 124)
+before printing a summary, so they are not a reference. The partial output shows
+the two known defects on unmodified RTL: `C2P linebuf` (line buffer not
+invalidated by snoops, `CL_SNOOP` off) and `P2C LATE` (posted-write lateness).
+Rerunning both with `+rounds=50` to completion.
+
 ### Pending
 
 - Gate delay 0 and 3 on the corrected bench (`e1fix0`, `e1fix3`). Pass
