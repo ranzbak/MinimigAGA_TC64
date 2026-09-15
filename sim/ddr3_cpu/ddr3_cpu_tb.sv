@@ -753,6 +753,23 @@ reg         ramready;                          // the held (slow-path) acknowled
 wire [15:0] fromram_real;
 wire        ramready_real;
 wire        enaWR_real, ena7RD_real, ena7WR_real;
+// What the wrapper's enable ports see. sdram_ctrl's enaWRreg/ena7RDreg/
+// ena7WRreg are already REGISTERED outputs, and minimig_virtual_top.v wires
+// them straight into the wrapper. Feeding the real controller through this
+// bench's own cadence registers (below) put a SECOND flip-flop in the path --
+// one clk the hardware does not have -- and since the stage D3 phase gate
+// opens on clkena_in, it moved every chip-RAM acknowledge off the hardware's
+// SDRAM phases (Stage E1, findings/ap68040/stage-e/e0-e1-results.md). The
+// cadence registers remain the source when the bench models the controller.
+`ifdef REALSDRAM
+wire        w_ena28     = enaWR_real;
+wire        w_ena7RDreg = ena7RD_real;
+wire        w_ena7WRreg = ena7WR_real;
+`else
+wire        w_ena28     = ena28;
+wire        w_ena7RDreg = ena7RDreg;
+wire        w_ena7WRreg = ena7WRreg;
+`endif
 reg         sdram_reset_in = 1'b0;
 reg  [3:0]  c16_real = 4'd0;
 always @(posedge clk) c16_real <= c16_real + 4'd1;
@@ -774,7 +791,7 @@ TG68K #(.cpu_core("TG68K")) tg68k (
     .clk            (clk              ),
     .clk_cpu        (clk_cpu          ),
     .reset          (tg68_rst         ),
-    .clkena_in      (ena28            ),
+    .clkena_in      (w_ena28          ),
     .IPL            (3'b111           ),
     .dtack          (1'b0             ),   // the chipset always acks
     .vpa            (1'b1             ),
@@ -792,8 +809,8 @@ TG68K #(.cpu_core("TG68K")) tg68k (
     .rw             (tg68_rw          ),
     .vma            (                 ),
     .wrd            (                 ),
-    .ena7RDreg      (ena7RDreg        ),
-    .ena7WRreg      (ena7WRreg        ),
+    .ena7RDreg      (w_ena7RDreg      ),
+    .ena7WRreg      (w_ena7WRreg      ),
     .fromram        (fromram_w        ),
     .toram          (tg68_cin         ),
     .ramready       (ramready_w       ),
@@ -1065,6 +1082,9 @@ end
 wire        ramcs_n = tg68_cpustate[2];
 wire [15:0] ramwa   = tg68_cad[16:1];
 wire        ram_wr  = (tg68_cpustate[1:0] == 2'b11);
+`ifdef REALSDRAM
+`include "placement_monitor.vh"
+`endif
 
 // ---- cpu_cache_new's line buffer, modelled (AP68040 legs only) ---------
 // The real controller does NOT wait for the select before it answers a read.
@@ -2000,6 +2020,17 @@ initial begin : main
     $display("DDR3 CPU TB: FAIL  %0d words in the chipset DMA window were wrong after",
              dma_err);
     $display("                   the CPU ran against it -- chip RAM coherency.");
+  end
+`endif
+`ifdef REALSDRAM
+  $display("=== placement (CPU_PHASE_GATE_DLY=%0d): %0d chip-RAM acknowledges, %0d off hardware phases 2/6/10/14/13 (bench offset +%0d) ===",
+           `CPU_PHASE_GATE_DLY, pm_total, pm_stray, `PLACEMENT_OFFSET);
+  for (pm_i = 0; pm_i < 16; pm_i = pm_i + 1)
+    $display("    ph %2d : %0d", pm_i, pm_bin[pm_i]);
+  if (pm_total < 1000 || pm_stray * 1000000 > pm_total * `PLACEMENT_STRAY_PPM) begin
+    nfail = nfail + 1;
+    $display("DDR3 CPU TB: FAIL  chip-RAM acknowledge placement: %0d of %0d off the grid (limit %0d ppm, need >= 1000 acknowledges)",
+             pm_stray, pm_total, `PLACEMENT_STRAY_PPM);
   end
 `endif
   if (nfail == 0) $display("DDR3 CPU TB: 2 passed, 0 failed");

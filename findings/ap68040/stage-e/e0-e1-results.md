@@ -181,6 +181,19 @@ Chosen over "find the offset first" and "drop the absolute check".
   phase late. That needs a hardware capture of the same acknowledge timing,
   because E2 rewrites exactly the port whose timing differs.
 
+### Calibrated monitor: shipping gate passes, gate-0 mutant fails
+
+Runs `e1cal3`, `e1cal0`, with the select-gated formula, `PLACEMENT_OFFSET` = 1 and
+a 10 % stray limit. Program PASS and DMA 0 wrong in both.
+
+| gate | exit | acknowledges off the calibrated grid | verdict |
+|---|---|---|---|
+| 3 (shipping) | 0, `2 passed, 0 failed` | 78 of 1953 (4.0 %) | PASS |
+| 0 (mutant) | 1 | 1862 of 1972 (94.4 %) | FAIL, as required |
+
+Both histograms match `e1fix3` and `e1fix0` bin for bin, which confirms the
+formula went back exactly. Committed as E1 Task 2.
+
 ### `sim/sdram_coherency` reference for E4a: first attempt incomplete
 
 Both legs (`fast sg7 +nobg`, `fast sg7`) hit a 15-minute `timeout` (exit 124)
