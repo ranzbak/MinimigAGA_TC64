@@ -344,3 +344,35 @@ used. The read-data crossing into clk_38 is still in neither D4 category, and
 it is a candidate for the unexplained 3/7/11/15 corruption. A zero-delay
 simulation cannot show it (the data is stable at the kernel edge there). The E2
 plan (finding 4, and the separate one-line hardware A/B) takes it up.
+
+### The A/B bitstreams are built and waiting (2026-09-16, JTAG only)
+
+Built overnight from HEAD in two scratchpad worktrees, each `e4a` plus
+`data_in => datatg68_r` on the AP68040 instance (the capture the core never
+had), with Paul's three uncommitted firmware files copied in so the hardware
+sources otherwise equal `stage_ap040_e4a`. Each build directory holds its own
+`source.diff`.
+
+| | `stage_ap040_e4a` | `_dreg3` (gate 3) | `_dreg0` (gate 3 → 0) |
+|---|---|---|---|
+| clk_38 → clk_114 | +1.574 ns, 0 fail | +1.640 ns, 0 fail | +1.352 ns, 0 fail |
+| clk_114 → clk_38 | +0.927 ns, 0 fail | +1.283 ns, 0 fail | +1.031 ns, 0 fail |
+| clk_gen_sdram → clk_114 (known, pre-existing) | −0.600 ns, 16 fail | −0.488 ns, 16 fail | −0.518 ns, 16 fail |
+| LUTs / BRAM | 40287 / 59.5 | 40291 / 59.5 | 40315 / 59.5 |
+| ignored exceptions | 20 | 20 | 20 |
+
+**What the A/B decides.** `_dreg0` also reverts the phase gate to opening on
+`clkena_in`, i.e. the placement that corrupted Way Too Rude at ratio 3 and
+crashed the boot at ratio 4 with Chip turbo (tag `d3_stable` notes). With the
+read data now captured on the edge that grants the enable:
+
+- if `_dreg0` runs Way Too Rude cleanly with Chip+Kick turbo, the 3/7/11/15
+  mechanism IS the read-data crossing, and Stage E2 can drop the placement rule
+  instead of carrying it forward;
+- if `_dreg0` still corrupts, the crossing is not the mechanism and the rule
+  stands. `_dreg3` then says only whether the capture costs anything (it should
+  not: SysInfo and Way Too Rude as `e4a`).
+
+Order on the board: `_dreg3` first (it is the safe one), then `_dreg0`.
+**JTAG only, neither goes to flash**; `_dreg0` is deliberately the
+configuration that is expected to fail.
