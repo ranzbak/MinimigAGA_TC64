@@ -328,6 +328,24 @@ removes nothing in this bench and stays as a cross-check.
 - On the board, Turbo-off boot of the shipping image is still a close-out
   check (Task 5), but nothing in this trace points at it.
 
+### Task 3 regression, rerun on the fixed bench (`fixreg`, commit 8167cde)
+
+Every leg without REALSDRAM ran with undriven enables from ea947e0 until the
+fix, so the morning's table above is void as a baseline — its numbers differ
+from these (e.g. `--lwmutant` 2158 violations then, 2021 now). This table is
+the E4a starting point.
+
+| leg | exit | verdict |
+|---|---|---|
+| `--ap040` | 0 | 2 passed, 0 failed (phase 8 at 1.677 ms) |
+| `--mmu` | 0 | 2 passed, 0 failed (phase 8 at 707.9 µs) |
+| `--ap040 --chipbus` (`e1nest`) | 0 | 2 passed, 0 failed (phase 8 at 937.0 µs) |
+| `REALSDRAM=1 --ap040` (`e1nestrs`) | 0 | 2 passed; placement 1953 / 78 off, = `e1cal3` |
+| `--lwmutant` | 0 | mutant failed as required (2021 32-bit-write protocol violations) |
+| `--mmumutant` | 0 | mutant failed as required (stall watchdog) |
+| `--fillmutant` | 0 | mutant failed as required (undecoded Z3 hole read, BYTE load read-back) |
+| `--snoopmutant` | 0 | mutant failed as required (14890 of 22340 snoops never reached the core) |
+
 ### `sim/sdram_coherency` reference for E4a: first attempt incomplete
 
 Both legs (`fast sg7 +nobg`, `fast sg7`) hit a 15-minute `timeout` (exit 124)
