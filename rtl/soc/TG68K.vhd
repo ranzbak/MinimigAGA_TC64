@@ -169,6 +169,9 @@ entity TG68K is
 		-- Snapshot of one 2**22-cycle window (~37 ms), refreshed every window, so a
 		-- single ILA sample reads a complete histogram.
 		dbg_phist       : out    std_logic_vector(383 downto 0);
+		-- Stage E0 RTG diagnosis: {akiko_req, akiko_wr, bstate, cpuaddr(11:0),
+		-- akiko_d} for ila_cpu040 probe10. Observation only.
+		dbg_rtg         : out    std_logic_vector(31 downto 0);
 		eth_en          : in     std_logic                     := '0'; -- @suppress "Unused port: eth_en is not used in work.TG68K(logic)"
 		sel_eth         : buffer std_logic;
 		frometh         : in     std_logic_vector(15 downto 0);
@@ -1300,6 +1303,7 @@ BEGIN
 		);
 
 	akiko_d <= bwdata;
+	dbg_rtg <= akiko_req & akiko_wr & bstate & cpuaddr(11 downto 0) & akiko_d;
 	process(clk)
 	begin
 		if rising_edge(clk) then

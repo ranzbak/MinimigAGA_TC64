@@ -247,6 +247,8 @@ wire [3:0]     dbg_flags;
 wire [40:0]    dbg_snoop;
 // Chip-RAM acknowledge phase histogram; see TG68K.vhd's dbg_phist and probe9.
 wire [383:0]   dbg_phist;
+// Stage E0 RTG diagnosis; see TG68K.vhd's dbg_rtg and probe10/11.
+wire [31:0]    dbg_rtg;
 wire           turbochipram;
 wire           turbokick;
 wire [1:0]     slow_config;
@@ -703,6 +705,7 @@ TG68K #(
     .dbg_flags    (dbg_flags        ),
     .dbg_snoop    (dbg_snoop        ),
     .dbg_phist    (dbg_phist        ),
+    .dbg_rtg      (dbg_rtg          ),
     //  .fastramcfg   ({&memcfg[5:4],memcfg[5:4]}),
     .eth_en       (1'b1), // TODO
     .sel_eth      (),
@@ -966,7 +969,9 @@ if (CPU040_DEBUG_ILA) begin : g_cpu040_ila
     .probe6 (dbg_ir),          // 16 opcode, one instruction behind dbg_pc
     .probe7 (tg68_cpustate),   // 7
     .probe8 (dbg_snoop),       // 41 snoop crossing: see TG68K.vhd dbg_snoop
-    .probe9 (dbg_phist)        // 384 chip-RAM acknowledge phase histogram
+    .probe9 (dbg_phist),       // 384 chip-RAM acknowledge phase histogram
+    .probe10(dbg_rtg),         // 32  {akiko_req, akiko_wr, bstate, cpuaddr[11:0], akiko_d}
+    .probe11({rtg_ena, rtg_16bit, rtg_clut, rtg_pixelwidth, rtg_baseaddr}) // 29
   );
 end
 endgenerate

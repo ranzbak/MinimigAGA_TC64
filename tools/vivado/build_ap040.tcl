@@ -294,7 +294,7 @@ if {$ila} {
     # the new port list and fail somewhere far from here.  Re-applying is free
     # when nothing changed -- Vivado only marks the IP out of date if it did.
     set_property -dict [list \
-        CONFIG.C_NUM_OF_PROBES {10} \
+        CONFIG.C_NUM_OF_PROBES {12} \
         CONFIG.C_DATA_DEPTH $cpuiladepth \
         CONFIG.C_TRIGIN_EN {false} \
         CONFIG.C_EN_STRG_QUAL {1} \
@@ -309,6 +309,8 @@ if {$ila} {
         CONFIG.C_PROBE7_WIDTH {7} \
         CONFIG.C_PROBE8_WIDTH {41} \
         CONFIG.C_PROBE9_WIDTH {384} \
+        CONFIG.C_PROBE10_WIDTH {32} \
+        CONFIG.C_PROBE11_WIDTH {29} \
     ] [get_ips ila_cpu040]
     generate_target all [get_files [get_property IP_FILE [get_ips ila_cpu040]]]
     catch { create_ip_run [get_files [get_property IP_FILE [get_ips ila_cpu040]]] }
