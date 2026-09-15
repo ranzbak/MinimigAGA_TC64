@@ -222,6 +222,10 @@ In the Vivado 2023.2 GUI:
    (Revision 2020 demo) to the end: no graphics or sound corruption.
 4. **SysInfo** speed: at least **0.28×** an A4000/040-25 for the D3 core.
    Without turbo it's slower.
+5. **Boot once with Turbo off** (Chip RAM and Kickstart). On 2026-09-15 the
+   `--ap040 --chipbus` simulation leg (chip RAM over the chipset bus) hung with
+   the shipping gate delay 3, so this configuration must be seen working on the
+   board before an image is flashed.
 
 ### 5.2 Phase histogram (needs a build with ILAs)
 
@@ -351,6 +355,13 @@ a 16-bin histogram of where chip-RAM acknowledges land:
 - Busy leg `REALSDRAM=1 DMA_OVERLAP=1 P7LOOPS=10 ./run.sh --ap040`: the placement
   histogram is only reported. Its summary lines must match the saved reference
   `sim/ddr3_cpu/ref/overlap_gate3.txt` exactly (being created in E1).
+
+**`run.sh` overwrites tracked reference logs.** Without `RUNTAG`, a leg writes
+`xsim_run_<variant>.log`, and several of those are committed references
+(`git ls-files sim/ddr3_cpu | grep xsim_run_`). Use `RUNTAG=<word>` for
+experiments. If you ran without it, check `git status` and put the committed
+version back with `git restore sim/ddr3_cpu/xsim_run_<variant>.log`, unless you
+mean to update the reference.
 
 **Before trusting a result, check the bench-trap list** in
 `findings/ap68040/stage-e/e0-e1-results.md` and the notes at the top of

@@ -233,6 +233,40 @@ Chosen over "loosen the limit to 20 %" and "explain the spread first".
   if the word was written before the read began, and under `DMA_OVERLAP`
   placement is reported, not judged.
 
+## Task 2 Step 4 — address-guard cross-check
+
+Monitor without the chip address guard (`pm_chip = !ramcs_n`), gate 3: 1953
+acknowledges, 78 off the grid, **identical** to the guarded run `e1cal3`. The guard
+removes nothing in this bench and stays as a cross-check.
+
+## Task 3 — regression legs (2026-09-15, after commit ea947e0)
+
+| leg | exit | verdict |
+|---|---|---|
+| `--ap040` | 0 | 2 passed, 0 failed |
+| `--mmu` | 0 | 2 passed, 0 failed |
+| `--ap040 --chipbus` | 1 | **FAIL: the 68k program never wrote the mailbox (timeout); DDR3 backdoor 64 wrong** |
+| `--lwmutant` | 0 | mutant failed as required (2158 32-bit-write protocol violations) |
+| `--mmumutant` | 0 | mutant failed as required (stall watchdog) |
+| `--fillmutant` | 0 | mutant failed as required (undecoded Z3 hole read, BYTE load read-back) |
+| `--snoopmutant` | 0 | mutant failed as required (14679 of 22021 snoops never reached the core) |
+
+### `--ap040 --chipbus` regression: hang with the shipping gate
+
+- The run never reached program phase 1. The committed reference log reached
+  phase 1 at 98.4 µs and finished at 941 µs; this one sat until the 2.5 ms
+  timeout. A hang from the start, not a slow run.
+- **Prime suspect: E1 Task 1 (7d51f59).** It passes `CPU_PHASE_GATE_DLY` (default
+  3) to the wrapper in EVERY leg, not only REALSDRAM. Before it, the chipbus leg
+  ran the VHDL default 0. Chipbus legs use the bench's own modelled enable
+  cadence, so this may be a bench artefact, but it may also be real.
+- **Hardware consequence to check:** the shipping image (gate delay 3) has not
+  been booted with Turbo OFF on the board. Added to the D3 close-out test.
+- Experiment running: the same leg with `CPU_PHASE_GATE_DLY=0` (`e1cb0`).
+- The regression runs overwrote seven tracked reference logs in `sim/ddr3_cpu`.
+  They were backed up to the session scratchpad and restored from HEAD, so the
+  committed references are unchanged; the verdicts above are the record.
+
 ### `sim/sdram_coherency` reference for E4a: first attempt incomplete
 
 Both legs (`fast sg7 +nobg`, `fast sg7`) hit a 15-minute `timeout` (exit 124)
