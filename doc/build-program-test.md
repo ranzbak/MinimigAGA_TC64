@@ -77,7 +77,7 @@ aborts with `locale::facet::_S_create_c_locale name not valid`.
 N=stage_ap040_mybuild                     # output directory name under build/
 mkdir -p build/$N
 $V -mode batch -nolog -nojournal -source tools/vivado/build_ap040.tcl \
-   -tclargs $PWD/build/$N 0 $PWD 1 30 4096 1 1 3 0 > build/$N.log 2>&1
+   -tclargs $PWD/build/$N 0 $PWD 1 30 4096 > build/$N.log 2>&1
 grep -q "=== ALL DONE ===" build/$N.log && echo BUILD OK || grep "^ERROR" build/$N.log
 ```
 
@@ -103,9 +103,9 @@ Typical builds:
 
 ```bash
 # shipping image, no debug logic
-... -tclargs $PWD/build/$N 0 $PWD 1 30 4096 1 1 3 0
+... -tclargs $PWD/build/$N 0 $PWD 1 30 4096
 # same with ILAs, for a phase-histogram or RTG capture
-... -tclargs $PWD/build/$N 1 $PWD 1 30 1024 1 1 3 0
+... -tclargs $PWD/build/$N 1 $PWD 1 30 1024
 ```
 
 ### 2.3 What to check after every build
@@ -269,15 +269,28 @@ booted machine.
 ### 5.4 RTG capture (needs a build with the `dbg_rtg` probe, e.g. `build/stage_ap040_e0rtg_ila`)
 
 1. Load the build, boot to Workbench, **don't activate RTG yet**.
-2. Arm the capture (5-minute timeout):
+2. Arm the capture. Arguments: build directory, output CSV, timeout in
+   **minutes**, and the capture mode:
 
    ```bash
    $V -mode batch -nolog -nojournal -source tools/vivado/ila_rtg_capture.tcl \
-      -tclargs $PWD/build/stage_ap040_e0rtg_ila ~/captures/rtg.csv 5 2>&1 | grep -E "^===|ERROR"
+      -tclargs $PWD/build/stage_ap040_e0rtg_ila ~/captures/rtg.csv 10 always > ~/captures/rtg.log 2>&1 &
+   grep -E "^===|ERROR" ~/captures/rtg.log      # repeat until "armed" shows
    ```
 
+   - `always` (default): records every sample from the first Akiko access. One
+     access is enough, so use it to see whether the RTG driver's boot-time ID
+     check (`$B8010E`) reaches the chip at all.
+   - `qual`: records only samples with an Akiko request, up to 1024 of them. Use
+     it only for a busy mode switch. **With just a few accesses the window never
+     fills, and Vivado then reports `No data to upload` even when it triggered**
+     — three captures on 2026-09-15 came back empty that way.
+   - The log's first `===` line must name `ila_cpu040`. If it names anything
+     else, the wrong ILA was armed.
+
 3. When `=== armed: ACTIVATE AN RTG SCREEN MODE NOW` appears, switch on an RTG
-   screen mode.
+   screen mode, or reset the Amiga (reset, **not** power) so the driver checks
+   for the board while it boots.
 4. Decode:
 
    ```bash
@@ -285,7 +298,22 @@ booted machine.
    ```
 
    It lists every Akiko register read/write, and the framebuffer address the
-   driver wrote. An address at or above `$01000000` that isn't Zorro III board 1
+   driver wrote. For a READ it prints "(read value not captured)": the probe
+   carries the CPU's write-data bus, not the value read back.
+
+**Picasso96 says "no board" on an AP68040 build?** Check this first, before any
+capture. With `68040.library` and `mmu.library` (MMULib) loaded, the MMU tables
+do not cover Akiko at `$B80000`, so the driver's ID check never reaches the
+hardware (found 2026-09-15; the TG68K has no MMU, which is why it works there).
+In a Shell:
+
+```
+Echo >ENVARC:MMU-Configuration "SetCacheMode 0x00b80000 0x00080000 Valid IOSpace CacheInhibit"
+Copy ENVARC:MMU-Configuration ENV:
+```
+
+then reset. (If the file already exists, add the line with an editor instead of
+overwriting it.) An address at or above `$01000000` that isn't Zorro III board 1
    means scan-out can't reach the framebuffer. See
    `findings/ap68040/stage-e/2026-09-15-stage-e-design.md` §7.
 
@@ -328,7 +356,6 @@ busy leg (below) about 40.
 | `./run.sh --snoop` | chipset write snoops reach the 040's cache | pass |
 | `./run.sh --lwmutant`, `--mmumutant`, `--fillmutant`, `--snoopmutant` | deliberately broken copies of the wrapper | print `mutant failed as required` |
 | `REALSDRAM=1 ./run.sh --gatemutant` | the phase gate as first built (opens on enaWRreg) | print `mutant failed as required` (placement check) |
-| `./run.sh`, `./run.sh --mutant` | TG68K core **(changes in E4a: removed)** | pass / fail |
 
 **Switches** (environment variables in front of `./run.sh`):
 

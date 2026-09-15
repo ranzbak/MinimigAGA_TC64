@@ -30,9 +30,6 @@ module minimig_virtual_top #(
     // 26 = 64 MB.  Must match what the autoconfig ROM advertises for that board
     // (rtl/minimig/minimig_autoconfig_rom.v, Z3RAM3_DDR3 entry).
     parameter z3ram3_size_log2 = 24,
-    // Which CPU core: "TG68K" (default) or "AP040" (the AP68040, MC68040 with
-    // MMU and FPU).  See findings/ap68040/plan-v2-with-ddr3.md.
-    parameter cpu_core = "TG68K",
     parameter ap040_has_mmu = 1,
     parameter ap040_has_fpu = 1,
     parameter ap040_enable_cache = 1,
@@ -590,8 +587,7 @@ VideoStream myaudiostream
 
 //// amiga clocks ////
 // The AP68040's own clock: clk_114 / 3 = 37.8125 MHz off the same MMCM, phase
-// aligned with it.  Used by nothing but the CPU island inside the wrapper, and
-// by nothing at all when cpu_core is "TG68K" (rtl/soc/TG68K.vhd, g_tg68k).
+// aligned with it.  Used by nothing but the CPU island inside the wrapper.
 wire CLK_38;
 
 amiga_clk #(.CPU_CLK_DIVIDE(cpu_clk_divide)) amiga_clk (
@@ -630,7 +626,6 @@ TG68K #(
     .havec2p(havec2p ? "true" : "false"),
     .haveddr3(haveddr3 ? "true" : "false"),
     .z3ram3_size_log2(z3ram3_size_log2),
-    .cpu_core(cpu_core),
     .ap040_has_mmu(ap040_has_mmu),
     .ap040_has_fpu(ap040_has_fpu),
     .ap040_enable_cache(ap040_enable_cache),
@@ -670,7 +665,6 @@ TG68K #(
     .fromddr      (tg68_ddrout      ),
     .ddr_ready    (tg68_ddrready    ),
     .ddr_ena      (tg68_ddrena      ),
-    .cpu          (cpu_config[1:0]  ),
     .turbochipram (turbochipram     ),
     .turbokick    (turbokick        ),
     .slow_config  (slow_config      ),
@@ -1055,12 +1049,11 @@ assign _ram_we=1'b1;
 // bit 1 AP68040 selectable (a dual-core build -- stage E, not this one),
 // bit 2 FPU, bit 3 MMU.  Derived from the same parameters that pick the
 // kernel, so the RTL is the authority and the firmware only reports it.
-localparam use_ap040_caps = (cpu_core == "AP040");
 localparam [7:0] CORE_CAPS = { 4'b0000,
-                               (use_ap040_caps && (ap040_has_mmu != 0)) ? 1'b1 : 1'b0,
-                               (use_ap040_caps && (ap040_has_fpu != 0)) ? 1'b1 : 1'b0,
+                               (ap040_has_mmu != 0) ? 1'b1 : 1'b0,
+                               (ap040_has_fpu != 0) ? 1'b1 : 1'b0,
                                1'b0,
-                               use_ap040_caps ? 1'b1 : 1'b0 };
+                               1'b1 };
 
 minimig #(
     .NTSC(1'b0),

@@ -26,11 +26,6 @@ module minimig_openaars_top #(
   // (rtl/minimig/minimig_autoconfig_rom.v); see
   // findings/ddr3/z3ram3-on-ddr3-plan.md.
   parameter Z3RAM3_SIZE_LOG2 = 24,
-  // CPU core, build-time, one bitstream each (findings/ap68040/plan-v2-with-ddr3.md
-  // stage A).  An integer rather than the string it becomes: a Vivado fileset
-  // generic is set from Tcl, and quoting a string through set_property is
-  // fragile in a way a plain 0/1 is not.
-  parameter CPU_IS_AP040 = 0,
   parameter AP040_HAS_MMU = 1,
   parameter AP040_HAS_FPU = 1,
   parameter AP040_ENABLE_CACHE = 1,
@@ -497,7 +492,6 @@ minimig_virtual_top
   .haveddr3(HAVEDDR3),
   .Z3RAM3_FORCE_OFF(Z3RAM3_FORCE_OFF),
   .z3ram3_size_log2(Z3RAM3_SIZE_LOG2),
-  .cpu_core(CPU_IS_AP040 ? "AP040" : "TG68K"),
   .ap040_has_mmu(AP040_HAS_MMU),
   .ap040_has_fpu(AP040_HAS_FPU),
   .ap040_enable_cache(AP040_ENABLE_CACHE),

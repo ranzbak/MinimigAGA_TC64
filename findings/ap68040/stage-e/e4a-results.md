@@ -227,3 +227,98 @@ named `longword_pair` now describe the constant.
 | E4a T5 longword_pair | 2025 | 972 | 695 | 587 | 1 | 0 | 1 | 0 | dbg_phist dbg_rtg |
 
 Against Task 4: wrapper −26 lines (−15 code); `longword_pair` uses 6 → 0.
+
+### Task 6 — remove the TG68K CPU branch
+
+Scope first (Paul, 2026-09-15: "I'm only building for the qmtech board"): six
+other ports compile this RTL (MiST directly; Chameleon v1/v2, DE0-Nano,
+DE10-Lite and virtual through `minimig_virtual_top`). They are now unsupported
+on this branch; `README.md` says so and names `d3_stable` as the last tag that
+builds them.
+
+Removed:
+- `TG68K.vhd`: `g_tg68k` (the only user of `rtl/tg68k`, instantiated as
+  `entity work.TG68KdotC_Kernel`), the `cpu_core` generic, `use_ap040`,
+  `cpu_i`, the `cpu` port; every `X WHEN use_ap040 ELSE Y` folded to `X`
+  (`cpu_phase_gate`, `cpu_ce_phase`, `cpu_bus_settled`, `bus_fresh`, `clkena`,
+  `bus_step`), `sel_32` and `cpuaddr` lose their `cpu_i(1)` terms, TG68K-only
+  comments reworded. **`g_ap040` is kept as an always-true generate**: Vivado
+  names the kernel `tg68k/g_ap040.ap040`, and `cpu.xdc`, the ILA scripts and
+  the sim hierarchy name that path; unwrapping it would rename it and the
+  `-quiet` timing rules would drop silently.
+- Tops: `minimig_virtual_top.v` `cpu_core` parameter and map, `.cpu` connection
+  (`cpu_config` stays, `minimig` uses it), `CORE_CAPS` with `use_ap040_caps`
+  folded to 1 (same value an AP040 build had); `minimig_openaars_top.v`
+  `CPU_IS_AP040`.
+- Constraints: `cpu.xdc` TG68K kernel sets (`cpu_kernel_tg68k`,
+  `cpu_not_kernel`, `tg68_kernel`, `tg68_wrap`), the TG68K island block and the
+  C2P→kernel rules (`tg68_seq`, `tg68_mem` stay); `wizard.xdc` two rules into
+  `g_tg68k.pf68K_Kernel_inst`; `clocks.xdc` comment.
+- Build: `build.tcl` stops with a pointer to `build_ap040.tcl` / `d3_stable`;
+  `build_ap040.tcl` drops `CPU_IS_AP040=1`. The local `project_1.xpr` also lost
+  the three `rtl/tg68k` sources and the `tg68vswf68k30sim` fileset (TG68K vs
+  WF68K30, which took the kernel from `sources_1`), **but `project_1/**` is
+  git-ignored (`.gitignore:35`), so that change lives only in this working
+  copy** and is not in any commit. `rebuild.tcl`, the tracked project
+  recreation script, is not edited: it has no AP68040 at all (last touched
+  2024-03), so it cannot recreate this design anyway.
+- Bench: `run.sh` requires `--ap040` (or a flag that implies it) and exits 2
+  with the leg list otherwise; `--mutant`, the TG68K sources in the `.prj` and
+  `-d CPU_AP040` gone; the 12 `CPU_AP040` conditionals in `ddr3_cpu_tb.sv`
+  collapsed by a nesting-aware script (block 1131–1155 held a nested
+  `REALSDRAM` conditional); `git rm` of `mutant/TG68K_mutant.vhd`,
+  `xsim_run_pass.log`, `xsim_run_mutant.log`.
+
+A first suite run failed every `ddr3_cpu` leg at elaboration: the testbench
+still connected `.cpu (2'b11)` to the removed port (`binding VHDL entity
+'tg68k_default' does not have port 'cpu'`). xvlog analysis cannot see a port
+mismatch; only elaboration does. Line removed; suite rerun.
+
+- Analysis: xvhdl on `cornerturn.vhd`, `akiko.vhd`, `TG68K.vhd` **without**
+  `TG68K_Pack`, ALU or kernel — exit 0; xvlog on both tops and the testbench —
+  exit 0. `./run.sh` and `./run.sh --mutant` exit 2 with the message.
+
+| leg | result |
+|---|---|
+| `--ap040` | 2 passed, phase 8 at 1677190382 ps (= fixed-bench baseline) |
+| `--mmu` | 2 passed, 707928242 ps (=) |
+| `--ap040 --chipbus` | 2 passed, 937021277 ps (=) |
+| `--nofill` | 2 passed, 1694291482 ps (no earlier fixed-bench baseline) |
+| `--snoop` | 2 passed, 1762554842 ps (= Task 1) |
+| `REALSDRAM=1 --ap040` | 2 passed, placement 1953 / 78, bins = `e1cal3` |
+| busy leg | identical to `ref/overlap_gate3.txt` |
+| `--lwmutant` | failed as required, 2021 violations (=) |
+| `--mmumutant` | failed as required, stall watchdog |
+| `--fillmutant` | failed as required, 3 checks |
+| `--snoopmutant` | failed as required, 14890 of 22340 (=) |
+| `REALSDRAM=1 --gatemutant` | failed as required, 1862 / 1972, bins = `e1cal0` |
+| sdram_coherency `+nobg` / default | 52 / 14 errors (= reference) |
+
+| label | wrapper lines | wrapper code | cpu_cache_new code | sdram_ctrl code | posted-write paths | longword_pair uses | g_tg68k uses | switch uses | debug probes |
+|---|---|---|---|---|---|---|---|---|---|
+| E4a T6 TG68K branch | 1934 | 917 | 695 | 587 | 1 | 0 | 0 | 0 | dbg_phist dbg_rtg |
+
+Against Task 5: wrapper −91 lines (−55 code). Against the E4a baseline
+(stage-e e6b1b90): wrapper 2142 → 1934 lines (1031 → 917 code),
+`cpu_cache_new` 727 → 695, `sdram_ctrl` 591 → 587; posted-write paths
+`1+wsync-option` → 1; `longword_pair`, `g_tg68k` and switch uses → 0.
+
+### Task 7 — builds (hardware test pending)
+
+Both built from HEAD d3e0924 plus the uncommitted Task 6 tree (diff saved as
+`build/<name>/source.diff`); their hardware sources are identical.
+
+| | `stage_ap040_d3stable_gd3` | `stage_ap040_e4a` | `stage_ap040_e4a_ila` |
+|---|---|---|---|
+| clk_114 → clk_38 | +0.98 ns, 0 fail | +0.93 ns, 0 fail | +0.79 ns, 0 fail |
+| clk_38 → clk_114 | +1.70 ns, 0 fail | +1.57 ns, 0 fail | +1.26 ns, 0 fail |
+| clk_38 → clk_38 | +1.17 ns, 0 fail | +1.59 ns, 0 fail | +0.79 ns, 0 fail |
+| clk_gen_sdram → clk_114 (known) | −0.55 ns, 16 fail | −0.60 ns, 16 fail | −0.54 ns, 16 fail |
+| LUTs / BRAM | 40,300 / 59.5 | 40,287 / 59.5 | 47,286 / 127.5 |
+| ignored exceptions | 0 | 0 | — |
+
+Generics confirmed from synthesis: no-ILA build `CPU040_DEBUG_ILA=0
+DDR3_FASTRAM_ILA=0 cpu_clk_ratio=3 HAVEDDR3=1`; ILA build both ILAs on. The LUT
+count barely moves because the TG68K branch was never elaborated in an AP040
+build: E4a removes source, not hardware. Hardware protocol (Paul) and the tag
+`e4a` follow.

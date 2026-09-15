@@ -13,8 +13,8 @@ set_property -dict {PACKAGE_PIN U22 IOSTANDARD LVTTL} [get_ports clk_50]
 #
 # clk_38 is 1134.375 / 30 = 37.8125 MHz EXACTLY, i.e. clk_114 / 3 with no phase
 # shift, so every clk_38 edge coincides with a clk_114 one.  It clocks the
-# AP68040 kernel and nothing else (rtl/soc/TG68K.vhd, port clk_cpu); in a
-# cpu_core = "TG68K" build nothing reads it.  The crossings between it and
+# AP68040 kernel and nothing else (rtl/soc/TG68K.vhd, port clk_cpu).  The
+# crossings between it and
 # clk_114 are SYNCHRONOUS and are timed as such -- see cpu.xdc, and do not put
 # the two in an asynchronous clock group.
 set amiga_mmcm openaars_virtual_top/amiga_clk/amiga_clk_i/clk_main

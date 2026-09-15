@@ -1,9 +1,9 @@
-# AP68040 build: tools/vivado/build.tcl with the fileset generics
-#   CPU_IS_AP040=1 HAVEDDR3=1 DDR3_FASTRAM_ILA=<0|1>
-# so that rtl/soc/TG68K.vhd elaborates its AP040 generate branch -- the
-# MC68040 in lib/AP68040, with MMU, FPU and its split caches -- instead of the
-# TG68KdotC kernel.  Everything else in the design is unchanged; that core
-# presents a TG68K-shaped port set.  findings/ap68040/plan-v2-with-ddr3.md.
+# AP68040 build, the design's only CPU since Stage E4a: the MC68040 in
+# lib/AP68040, with MMU, FPU and its split caches, inside rtl/soc/TG68K.vhd
+# (which presents a TG68K-shaped port set; the TG68KdotC kernel itself was
+# removed and builds at tag d3_stable).  Fileset generics
+#   HAVEDDR3=1 DDR3_FASTRAM_ILA=<0|1>
+# findings/ap68040/plan-v2-with-ddr3.md.
 #
 #   vivado -mode batch -source tools/vivado/build_ap040.tcl -tclargs <report-dir> [<ila>] [<repo-root>] [<post-stores>] [<cpu-clk-divide>] [<cpu-ila-depth>]
 #
@@ -14,13 +14,14 @@
 #
 # The generics are set on sources_1 immediately before the run and cleared
 # immediately after, so the project is left as it was found (project defaults
-# are CPU_IS_AP040=0, HAVEDDR3=1, DDR3_FASTRAM_ILA=0).
+# are HAVEDDR3=1, DDR3_FASTRAM_ILA=0).
 #
 # Vivado 2023.2 needs libtinfo.so.5 and must NOT be given -stack.
 #
 # Note the runs use the constraints fileset XC7A100T, not constrs_1.
 #
-# KEEP IN SYNC WITH tools/vivado/build.tcl.
+# (tools/vivado/build.tcl, which built the TG68K design, is retired since
+# Stage E4a; this is the build script.)
 set out [lindex $argv 0]
 # Repo root, set explicitly: second -tclargs wins, else it is derived from
 # this script's own location.
@@ -105,7 +106,7 @@ add_src $R/rtl/ddr3/ddr3_fastram.v
 add_src $R/rtl/ddr3/ddr3_cdc.v
 
 # The CPU enable cadence (Task 4, one source for sdram_ctrl and the bench).
-# KEEP IN SYNC WITH tools/vivado/build.tcl: project_1.xpr predates the file,
+# project_1.xpr predates the file,
 # and a source that is not in sources_1 is simply not compiled.
 add_src $R/rtl/sdram/cpu_enable_cadence.v
 
@@ -318,7 +319,7 @@ if {$ila} {
 
 # The one functional difference from build.tcl: which kernel the wrapper
 # elaborates, and whether the fast-RAM ILA comes along for the ride.
-set_property generic "CPU_IS_AP040=1 HAVEDDR3=1 DDR3_BIST_VIO=0 DDR3_FASTRAM_ILA=$ila CPU040_DEBUG_ILA=$ila AP040_POST_STORES=$post CPU_CLK_DIVIDE=$cpudiv" \
+set_property generic "HAVEDDR3=1 DDR3_BIST_VIO=0 DDR3_FASTRAM_ILA=$ila CPU040_DEBUG_ILA=$ila AP040_POST_STORES=$post CPU_CLK_DIVIDE=$cpudiv" \
     [get_filesets sources_1]
 
 # The debug core adds a few thousand LUTs and flip-flops to clk_114, and with

@@ -4,7 +4,7 @@
 -- Copyright (c) 2009-2011 Tobias Gubener                                   --
 -- Subdesign fAMpIGA by TobiFlex                                            --
 --                                                                          --
--- This is the TOP-Level for TG68KdotC_Kernel to generate 68K Bus signals   --
+-- This is the TOP-Level for the CPU kernel to generate 68K Bus signals     --
 --                                                                          --
 -- This source file is free software: you can redistribute it and/or modify --
 -- it under the terms of the GNU General Public License as published        --
@@ -35,14 +35,12 @@ entity TG68K is
 		-- See findings/ddr3/design.md, decisions D1/D6, and
 		-- findings/ddr3/z3ram3-on-ddr3-plan.md (which supersedes D8).
 		haveddr3  : boolean := true;
-		-- Which CPU core the wrapper instantiates.  "TG68K" is the
-		-- TG68KdotC kernel this design has always used; "AP040" is the
-		-- AP68040 (lib/AP68040, MC68040 with MMU and FPU), which presents a
-		-- TG68K-shaped port set so that everything else in this file --
+		-- The CPU is the AP68040 (lib/AP68040, MC68040 with MMU and FPU).  It
+		-- presents a TG68K-shaped port set, so everything else in this file --
 		-- decode, Zorro III, DDR3, Akiko, the 7 MHz chipset state machine --
-		-- is unchanged.  See findings/ap68040/plan-v2-with-ddr3.md stage A.
-		cpu_core  : string  := "TG68K";
-		-- AP68040 configuration, ignored for the TG68K.  All three on by
+		-- was unchanged by it.  The TG68KdotC kernel was removed in Stage E4a
+		-- (tag d3_stable still has it).  findings/ap68040/plan-v2-with-ddr3.md.
+		-- AP68040 configuration.  All three on by
 		-- default: the full core places and routes at 28,694 LUTs.
 		ap040_has_mmu      : integer := 1;
 		ap040_has_fpu      : integer := 1;
@@ -70,8 +68,7 @@ entity TG68K is
 		clk             : in     std_logic;
 		-- The CPU island's own clock, 37.8125 MHz, a phase-aligned 1:3 sibling
 		-- of clk on the same MMCM (rtl/clock/amiga_clk_xilinx.v CLKOUT3).  It
-		-- clocks the AP68040 kernel and NOTHING else; with cpu_core = "TG68K"
-		-- this port is unused and the kernel stays on clk exactly as before.
+		-- clocks the AP68040 kernel and NOTHING else.
 		-- See findings/ap68040/plan-v2-with-ddr3.md, stage D3.
 		clk_cpu         : in     std_logic                     := '0';
 		reset           : in     std_logic;
@@ -104,7 +101,6 @@ entity TG68K is
 		fromddr         : in     std_logic_vector(15 downto 0) := (others => '0');
 		ddr_ready       : in     std_logic                     := '0';
 		ddr_ena         : in     std_logic                     := '0';
-		cpu             : in     std_logic_vector(1 downto 0);
 		ziiram_active   : in     std_logic;
 		ziiiram_active  : in     std_logic;
 		ziiiram2_active : in     std_logic;
@@ -116,11 +112,11 @@ entity TG68K is
 		z3ram3_base     : in     std_logic_vector(7 downto 0)  := (others => '0');
 		-- Chipset DMA write snoop, for the AP68040's data cache: sdram_ctrl
 		-- already produces these for cpu_cache_new, and they are in this
-		-- clock domain.  Unused by the TG68K, which has no internal cache.
+		-- clock domain.
 		snoop_stb       : in     std_logic                     := '0';
 		snoop_addr      : in     std_logic_vector(31 downto 0) := (others => '0');
-		-- AP68040 fault observation, for an ILA during bring-up.  Zero with the
-		-- TG68K.  Sliced out of the core's debug_status/debug_status2 (see
+		-- AP68040 fault observation, for an ILA during bring-up.  Sliced out of
+		-- the core's debug_status/debug_status2 (see
 		-- ap040_core.v:6134-6152): everything needed to name an exception --
 		-- which vector, at what PC, on which opcode, and the address that
 		-- faulted if it was an access error.
@@ -200,8 +196,7 @@ ARCHITECTURE logic OF TG68K IS
 	signal longword    : std_logic;
 	SIGNAL clkena      : std_logic;
 	-- The first term of clkena: which clock edge the CPU kernel is allowed to
-	-- advance on.  With the TG68K it is clkena_in, the SDRAM controller's
-	-- enaWRreg (four of sixteen clk phases).  With the AP68040 the kernel runs
+	-- advance on.  The AP68040 kernel runs
 	-- on clk_cpu and this is the clk-domain marker for "the next clk edge is
 	-- also a clk_cpu edge", so clkena stays a one-clk-cycle pulse on the exact
 	-- edge the kernel advances -- which is what every clk-domain consumer of
@@ -213,8 +208,7 @@ ARCHITECTURE logic OF TG68K IS
 	-- marker in the g_ap040 branch, which is NOT ratio-agnostic.
 	-- cpu_ph2 is the enable phase; cpu_ph is
 	-- declared HERE rather than inside the g_ap040 block because the walker
-	-- routers below need it -- see bus_step.  It keeps its initial '0' in a
-	-- TG68K build, where the g_ap040 block that drives it is not elaborated.
+	-- routers below need it -- see bus_step.
 	SIGNAL cpu_ph       : std_logic := '0';
 	SIGNAL cpu_ph2      : std_logic := '0';
 	-- '1' when the kernel's bus outputs have settled; see where it is driven.
@@ -368,14 +362,6 @@ ARCHITECTURE logic OF TG68K IS
 	signal nResetOut_w : std_logic;
 	signal VBR_out_w   : std_logic_vector(31 downto 0);
 
-	-- Which core is built.  Both strings are five characters, so this is a
-	-- plain constrained comparison.
-	CONSTANT use_ap040 : boolean := (cpu_core = "AP040");
-
-	-- The AP68040 is always a 68040: 32-bit address space and AGA longword
-	-- chip access, whatever the OSD's CPU setting says.  The TG68K keeps
-	-- taking that setting.  Everything downstream reads cpu_i, not cpu.
-	SIGNAL cpu_i : std_logic_vector(1 downto 0);
 
 
 	--------------------------------------------------------------------------
@@ -414,8 +400,7 @@ ARCHITECTURE logic OF TG68K IS
 	TYPE   wk_state_t IS (WK_IDLE, WK_HI, WK_GAP, WK_LO, WK_DONE);
 	SIGNAL wk_st      : wk_state_t;
 	-- '1' on the clk edges the walker and line-fill routers are allowed to
-	-- advance on; see the note above the walker process.  Constant '1' for
-	-- the TG68K, where both routers fold away anyway.
+	-- advance on; see the note above the walker process.
 	SIGNAL bus_step   : std_logic;
 
 	--------------------------------------------------------------------------
@@ -458,8 +443,8 @@ ARCHITECTURE logic OF TG68K IS
 	SIGNAL fl_st      : fl_state_t;
 
 	-- The muxed bus-side signals.  Everything below this point uses these and
-	-- not the core's own outputs; with the TG68K, or with the walker idle,
-	-- they ARE the core's own outputs.
+	-- not the core's own outputs; with the walker and the fill idle, they ARE
+	-- the core's own outputs.
 	SIGNAL bstate     : std_logic_vector(1 downto 0);
 	SIGNAL buds       : std_logic;
 	SIGNAL blds       : std_logic;
@@ -556,7 +541,6 @@ ARCHITECTURE logic OF TG68K IS
 
 BEGIN
 
-	cpu_i <= "11" WHEN use_ap040 ELSE cpu;
 
 	nResetOut <= nResetOut_w;
 	VBR_out   <= VBR_out_w;
@@ -586,8 +570,8 @@ BEGIN
 
 	--------------------------------------------------------------------------
 	-- The bus-side mux.  wk_active and fl_active are constant '0' unless the
-	-- AP68040 is built (with its MMU, and with the fill channel enabled), so
-	-- for the TG68K this is wiring, not logic.  The two are mutually exclusive
+	-- AP68040 is built with its MMU and with the fill channel enabled.  The
+	-- two are mutually exclusive
 	-- by construction -- see the two FSMs' start conditions -- so their order
 	-- here only decides what a broken build would do, not what a working one
 	-- does; the walker is first because it is the older master.
@@ -638,7 +622,7 @@ BEGIN
 	end process;
 
 	sel_akiko     <= '1' when cpuaddr(31 downto 16) = X"00B8" else '0';
-	sel_32        <= '1' when cpu_i(1) = '1' and cpuaddr(31 downto 24) /= X"00" and cpuaddr(31 downto 24) /= X"ff" else '0'; -- Decode 32-bit space, but exclude interrupt vectors
+	sel_32        <= '1' when cpuaddr(31 downto 24) /= X"00" and cpuaddr(31 downto 24) /= X"ff" else '0'; -- Decode 32-bit space, but exclude interrupt vectors
 	--  sel_z3ram       <= '1' WHEN (cpuaddr(31 downto 24)=z3ram_base) else '0'; -- AND z3ram_ena='1' ELSE '0';
 	-- Third block of ZIII RAM.  Decoded against the base the OS actually
 	-- assigned (latched in minimig_autoconfig.v), not against a guess: the OS
@@ -720,9 +704,8 @@ BEGIN
 
 	cache_inhibit <= '1' WHEN sel_kickram = '1' ELSE '0';
 
-	-- See cpu_phase_ok.  Constant '1' for the TG68K, whose bus cycles are
-	-- already on the enaWRreg grid by construction, so this folds away there.
-	cpu_phase_gate <= cpu_phase_ok WHEN use_ap040 ELSE '1';
+	-- See cpu_phase_ok.
+	cpu_phase_gate <= cpu_phase_ok;
 
 	ramcs <= NOT (NOT cpu_int AND sel_ram_d AND NOT sel_nmi_vector AND cpu_phase_gate) OR slower(0);
 	-- Same shape as ramcs, slower(0) throttle included, so the DDR3 backend sees
@@ -741,8 +724,8 @@ BEGIN
 	-- CPU_SM_WAIT_LOWORD, where it expects the low word as a continuation of
 	-- THE SAME request.  The AP68040 cannot supply that: its bus16 adapter
 	-- issues two fully independent word cycles, so the controller would bank a
-	-- half-written longword and the two sides desync.  (The TG68K's paired AGA
-	-- chipset cycles that also used this flag were removed in Stage E4a.)
+	-- half-written longword and the two sides desync.  (The TG68K and its
+	-- paired AGA chipset cycles, which used this flag, went in Stage E4a.)
 	-- sim/ddr3_cpu's --lwmutant puts the raw longword flag back here and MUST
 	-- fail; Stage E2's 32-bit port makes a longword one access and retires the
 	-- flag.
@@ -809,75 +792,18 @@ BEGIN
 	-- walk is for, and the 040 is 32-bit anyway.
 	cpuaddr <= wk_busaddr WHEN wk_active = '1' ELSE
 	           fl_busaddr WHEN fl_active = '1' ELSE
-	           addrtg68   WHEN cpu_i(1) = '1' ELSE X"00" & addrtg68(23 downto 0);
+	           addrtg68;
 
 	--------------------------------------------------------------------------
-	-- The CPU kernel.  Exactly one branch is elaborated; everything else in
-	-- this file is common to both cores.
+	-- The CPU kernel: the AP68040.
 	--------------------------------------------------------------------------
-	g_tg68k : IF NOT use_ap040 GENERATE
-		-- The kernel below is clocked by clk and enabled by clkena_in, exactly
-		-- as it always has been, so clk_cpu is not read anywhere in this
-		-- branch and the TG68K build is unchanged by stage D3.
-		cpu_ph2 <= '0';
 
-		-- No table walker: the TG68K has no MMU.  wk_active follows and is a
-		-- constant '0', so the whole router folds away.  Same for the line
-		-- fill: the TG68K has no internal cache to fill, so fl_busy and
-		-- fl_active are constant '0' and that router folds away too.
-		wk_req  <= '0';
-		wk_we   <= '0';
-		wk_addr <= (others => '0');
-		wk_wdat <= (others => '0');
-		fl_req  <= '0';
-		fl_addr <= (others => '0');
-
-		pf68K_Kernel_inst : entity work.TG68KdotC_Kernel
-			GENERIC MAP(                    -- @suppress "Generic map uses default values. Missing optional actuals: BarrelShifter"
-				SR_Read        => 2,        -- 0=>user,   1=>privileged,    2=>switchable with CPU(0)
-				VBR_Stackframe => 2,        -- 0=>no,     1=>yes/extended,  2=>switchable with CPU(0)
-				extAddr_Mode   => 2,        -- 0=>no,     1=>yes,           2=>switchable with CPU(1)
-				MUL_Mode       => 2,        -- 0=>16Bit,  1=>32Bit,         2=>switchable with CPU(1),  3=>no MUL,
-				DIV_Mode       => 2,        -- 0=>16Bit,  1=>32Bit,         2=>switchable with CPU(1),  3=>no DIV,
-				BitField       => 2,        -- 0=>no,     1=>yes,           2=>switchable with CPU(1)
-				MUL_Hardware   => 1         -- 0=>no,     1=>yes
-			)
-			PORT MAP(                       -- @suppress "The order of the associations is different from the declaration order"
-				clk            => clk,      -- : in std_logicvec
-
-				nReset         => reset,    -- : in std_logic:='1';      --low active
-				clkena_in      => clkena,   -- : in std_logic:='1';
-				data_in        => datatg68_r, -- captured with the enable
-				IPL            => cpuIPL,   -- : in std_logic_vector(2 downto 0):="111";
-				IPL_autovector => '1',      -- : in std_logic:='0';
-				CPU            => cpu,
-				regin_out      => open,     -- : out std_logic_vector(31 downto 0);
-				addr_out       => addrtg68, -- : buffer std_logic_vector(31 downto 0);
-				data_write     => w_datatg68, -- : out std_logic_vector(15 downto 0);
-				busstate       => state,    -- : buffer std_logic_vector(1 downto 0);
-				longword       => longword,
-				nWr            => wr,       -- : out std_logic;
-				nUDS           => uds_in,
-				nLDS           => lds_in,   -- : out std_logic;
-				nResetOut      => nResetOut_w,
-				skipFetch      => skipFetch, -- : out std_logic
-				CACR_out       => CACR_out,
-				VBR_out        => VBR_out_w,
-				berr           => open,
-				FC             => open,
-				clr_berr       => open
-			);
-		-- The TG68K has no cache-maintenance sideband, and no fault view.
-		ap040_maint    <= '0';
-		dbg_pc         <= (others => '0');
-		dbg_fault_addr <= (others => '0');
-		dbg_ir         <= (others => '0');
-		dbg_sr         <= (others => '0');
-		dbg_exc_vec    <= (others => '0');
-		dbg_flags      <= (others => '0');
-	END GENERATE;
-
-	g_ap040 : IF use_ap040 GENERATE
+	-- Always elaborated since Stage E4a removed the TG68K branch.  It stays a
+	-- generate on purpose: Vivado names an if-generate instance
+	-- "<label>.<instance>", and fpga/openaars/.../cpu.xdc, the ILA scripts and
+	-- sim/ddr3_cpu all name the kernel as tg68k/g_ap040.ap040.  Unwrapping it
+	-- would rename that path, and the -quiet timing rules would drop silently.
+	g_ap040 : IF true GENERATE
 		-- The 1:3 phase marker.  clk_cpu is clk divided by three off the same
 		-- MMCM with no phase shift, so every clk_cpu rising edge lands on a
 		-- clk one; what the clk side needs to know is WHICH of its three
@@ -1022,8 +948,8 @@ BEGIN
 				ipl            => cpuIPL,
 				ipl_autovector => '1',
 				-- The SoC never raises a bus error: undecoded 32-bit space is
-				-- auto-completed with $FFFF by sel_undecoded, exactly as it is
-				-- for the TG68K.  The core has its own stall watchdog.
+				-- auto-completed with $FFFF by sel_undecoded.  The core has its
+				-- own stall watchdog.
 				berr           => '0',
 
 				addr_out       => addrtg68,
@@ -1283,7 +1209,7 @@ BEGIN
 	'0';
 
 	-- Which clock edge the kernel may advance on; see the signal declaration.
-	cpu_ce_phase <= cpu_ph2 WHEN use_ap040 ELSE clkena_in;
+	cpu_ce_phase <= cpu_ph2;
 
 	-- STAGE D3.  '1' once the kernel's bus outputs have settled, which is what
 	-- the 7 MHz chipset state machine below waits for before it samples them.
@@ -1302,12 +1228,7 @@ BEGIN
 	-- they moved: ena7WRreg lands on phase 14 of a sixteen-phase round and the
 	-- kernel now advances every three cycles, and 16 and 3 are coprime, so
 	-- every relative phase occurs.
-	--
-	-- A no-op for the TG68K, and constant-folded away in that build: its
-	-- enable is enaWRreg on phases 2/6/10/14 and ena7WRreg is phase 14, so
-	-- `slower` has always been "0000" by the time the machine looks (reloaded
-	-- on the phase-10 enable, three shifts, then the phase-14 edge).
-	cpu_bus_settled <= NOT slower(1) WHEN use_ap040 ELSE '1';
+	cpu_bus_settled <= NOT slower(1);
 
 	-- This net is the clock enable of 7,391 kernel flops and is the plan's
 	-- number-one timing risk ("Timing" item 1).  It carries exactly two terms
@@ -1357,10 +1278,6 @@ BEGIN
 	-- and sat at exactly the 25.0 % four-phase enable ceiling with 0 % memory
 	-- stalls, so this is 37.8125 / 28.359375 = 1.33x on CPU-bound code and
 	-- nothing at all on chipset-bound code.
-	--
-	-- With the TG68K, cpu_ce_phase is clkena_in -- enaWRreg, four of sixteen
-	-- clk phases -- and both this expression and the kernel's clock are
-	-- exactly what they were.
 	-- STAGE D3-STABLE.  bus_ready is masked in the one cycle after the walker
 	-- takes the bus.  See bus_fresh below, and the D3-FIX note under it for
 	-- why that cycle is the only one that needs it.
@@ -1471,10 +1388,8 @@ BEGIN
 	-- the only case that does: wk_bstate goes non-idle for the second
 	-- sub-cycle two or more cycles after wk_busaddr moved (WK_GAP waits for
 	-- the previous acknowledge to clear), and the kernel's own accesses put
-	-- address and bus state up together at T.  Constant '0' for the TG68K,
-	-- where wk_active is constant '0' too, so bus_release folds back to
-	-- exactly what it was.
-	bus_fresh <= '0' WHEN NOT use_ap040 ELSE (wk_active AND NOT wk_active_d);
+	-- address and bus state up together at T.
+	bus_fresh <= wk_active AND NOT wk_active_d;
 
 	PROCESS(clk)
 	BEGIN
@@ -1487,10 +1402,7 @@ BEGIN
 		END IF;
 	END PROCESS;
 
-	-- The TG68K keeps the combinational expression exactly as it was
-	-- (cpu_ce_phase is clkena_in there, and cpu_ph is a constant '0', so
-	-- clkena_r folds away with the rest of the AP68040 plumbing).
-	clkena <= clkena_r WHEN use_ap040 ELSE (cpu_ce_phase AND bus_release);
+	clkena <= clkena_r;
 
 	-- The phase gate; see cpu_phase_ok's declaration.  Cleared when the kernel
 	-- advances (a new access may be coming) and set again only on an enaWRreg
@@ -1661,11 +1573,8 @@ BEGIN
 	-- descriptor, on a path only taken on an ATC miss.  For the line fill it is
 	-- about 6.7 clk cycles, 59 ns, per 16-byte line.  Measured in sim/ddr3_cpu;
 	-- see findings/ap68040/sdd-d3/task-d3fix-report.md.
-	--
-	-- A no-op for the TG68K: use_ap040 is false, bus_step is a constant '1', and
-	-- wk_req/fl_req are tied low so both routers fold away as they always did.
 	--------------------------------------------------------------------------
-	bus_step <= '1' WHEN NOT use_ap040 ELSE NOT cpu_ph;
+	bus_step <= NOT cpu_ph;
 
 	PROCESS(clk, reset)
 	BEGIN
@@ -1949,8 +1858,8 @@ BEGIN
 			-- chipset_done process above, so chipset_done is set on the very
 			-- edge the CPU is released, bus_ready stays high and the next
 			-- cpu_ph2 fires this test again.  The point is that the release
-			-- is no longer built on it.)  It changes nothing for the TG68K:
-			-- between the two firings the only readers of clkena_e are
+			-- is no longer built on it.)  Between the two firings the only readers
+			-- of clkena_e are
 			-- `ena7RDreg AND clkena_e` (ena7RDreg is low there) and
 			-- `S_state = "01"` (S_state is "00" there).
 			IF (chipset_ready = '1' OR chipset_done = '1') AND clkena = '1' THEN

@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
 #-----------------------------------------------------------------------------
-# sim/ddr3_cpu -- the TG68K wrapper driving the DDR3 Zorro-III fast RAM.
+# sim/ddr3_cpu -- the CPU wrapper (rtl/soc/TG68K.vhd, the AP68040 inside) driving
+# the DDR3 Zorro-III fast RAM.
 #
 # Mixed VHDL + Verilog + SystemVerilog xsim flow, copied from sim/ddr3_full and
-# extended with the VHDL half of the design (the TG68K wrapper, the TG68KdotC
-# kernel and akiko).  glbl.v is elaborated alongside the top and the unisim /
+# extended with the VHDL half of the design (the wrapper and akiko) and the
+# AP68040's SystemVerilog.  glbl.v is elaborated alongside the top and the unisim /
 # secureip / unimacro libraries are pulled in for the island's PLLE2_BASE,
 # OSERDESE2, ISERDESE2, IDELAYE2 and IDELAYCTRL.  -d SOC_SIM makes
 # cpu_cache_new.v use its inferred-RAM tag/data memories.
 #
-#   ./run.sh              real rtl/soc/TG68K.vhd  -> xsim_run_pass.log
-#   ./run.sh --mutant     mutant/TG68K_mutant.vhd -> xsim_run_mutant.log
 #   ./run.sh --ap040      AP68040 kernel          -> xsim_run_pass_ap040.log
 #   ./run.sh --lwmutant   AP68040 with the raw longword flag back on cpustate(6); MUST fail
 #   ./run.sh --mmu        AP68040, the stage-B MMU walker program
@@ -25,9 +24,10 @@
 # The flags combine in that order, e.g.
 #   ./run.sh --ap040 --chipbus   -> xsim_run_pass_ap040_chipbus.log
 #
-# The mutant is the wrapper as it stood before the chipset_cycle fix; it MUST
-# fail.  The two variants build in separate directories (run_pass/, run_mutant/)
-# so they can run at the same time without sharing an xsim work library.
+# Without --ap040 (or a flag that implies it) the script prints the legs and
+# exits: the TG68K legs (./run.sh alone, --mutant) were removed in Stage E4a and
+# are reachable at tag d3_stable.  Each variant builds in its own directory
+# (run_<variant>/), so two could run without sharing an xsim work library.
 #
 # RUN THEM ONE AT A TIME ANYWAY.  On 2026-09-06 a pass run started alongside a
 # mutant run reported a read-back failure (code 2) and 362 wrong words in the
@@ -50,7 +50,6 @@ cd "$D"
 
 VARIANT=pass
 IS_MUTANT=0
-if [ "$1" = "--mutant" ]; then VARIANT=mutant; IS_MUTANT=1; shift; fi
 
 # --lwmutant: the AP040 run with cpustate(6) carrying the raw longword flag
 # again -- the wrapper as it stood before commit c2ecc99 -- to controllers that
@@ -121,23 +120,18 @@ if [ "$1" = "--snoopmutant" ]; then IS_SNOOP=1; IS_SNOOPMUTANT=1; IS_MUTANT=1; s
 IS_GATEMUTANT=0
 if [ "$1" = "--gatemutant" ]; then IS_GATEMUTANT=1; IS_MUTANT=1; shift; set -- --ap040 "$@"; fi
 
-# Which CPU core the wrapper is built with.  The AP68040 (lib/AP68040) presents
-# a TG68K-shaped port set, so the whole bench -- chipset model, DDR3 chain,
-# 68k program -- is the same; only the kernel inside rtl/soc/TG68K.vhd changes.
-#   ./run.sh            TG68K   -> run_pass/        xsim_run_pass.log
+# The CPU is the AP68040 (lib/AP68040) inside rtl/soc/TG68K.vhd.  Every leg says
+# so with --ap040 or a flag that implies it; the TG68K legs that ran without it
+# were removed in Stage E4a and are reachable at tag d3_stable.
 #   ./run.sh --ap040    AP68040 -> run_pass_ap040/  xsim_run_pass_ap040.log
-CPU=tg68k
-if [ "$1" = "--ap040" ]; then CPU=ap040; shift; fi
+if [ "$1" != "--ap040" ]; then
+    echo "run.sh: every leg is an AP68040 leg; pass --ap040 or one of the flags that" >&2
+    echo "imply it -- see the leg list at the top of $0.  (The TG68K legs, ./run.sh" >&2
+    echo "alone and --mutant, were removed in Stage E4a; tag d3_stable has them.)" >&2
+    exit 2
+fi
+CPU=ap040; shift
 if [ "$CPU" = "ap040" ]; then
-    # The mutant is a TG68K-specific mutation (the chipset_cycle term); there is
-    # nothing for it to mean with a different kernel.
-    if [ "$IS_MUTANT" = "1" ] && [ "$IS_LWMUTANT" = "0" ] && [ "$IS_MMUMUTANT" = "0" ] \
-       && [ "$IS_FILLMUTANT" = "0" ] && [ "$IS_SNOOPMUTANT" = "0" ] \
-       && [ "$IS_GATEMUTANT" = "0" ]; then
-        echo "--mutant and --ap040 are not a combination: the mutant is the" >&2
-        echo "TG68K wrapper as it stood before the chipset_cycle fix." >&2
-        exit 2
-    fi
     VARIANT=pass_ap040
     if [ "$IS_LWMUTANT" = "1" ];   then VARIANT=lwmutant_ap040;   fi
     if [ "$IS_MMU" = "1" ];        then VARIANT=mmu_ap040;        fi
@@ -203,10 +197,8 @@ mkdir -p "$W"
 # $80008000 (ap040_core.v:3352), so the 68020 value 3 this program has always
 # written leaves BOTH of its internal caches off -- and with no caches there
 # are no line fills, which is why the fill counters read zero until this was
-# found.  The TG68K is a 68020 and keeps the 68020 value, so its leg is
-# unchanged; the AP68040 gets DE and IE set.
-CACRVAL=3
-if [ "$CPU" = "ap040" ]; then CACRVAL='$80008003'; fi
+# found.  So the program writes $80008003: DE and IE set.
+CACRVAL='$80008003'
 
 if [ "$IS_MMU" = "1" ]; then
     BIN="$W/prog.bin" SRC=mmu_walk_test.asm "$D/asm/build_68k_test.sh" \
@@ -293,8 +285,6 @@ elif [ "$IS_LWMUTANT" = "1" ]; then
         echo "--lwmutant: the cpustate line moved; fix the sed in run.sh" >&2
         exit 2
     fi
-elif [ "$IS_MUTANT" = "1" ]; then
-    TG68K_SRC="$D/mutant/TG68K_mutant.vhd"
 else
     TG68K_SRC="$R/rtl/soc/TG68K.vhd"
 fi
@@ -305,9 +295,6 @@ PRJ=project.prj
 : > $PRJ
 
 # ---- VHDL, in dependency order -------------------------------------------
-echo "vhdl work \"$R/rtl/tg68k/TG68K_Pack.vhd\""        >> $PRJ
-echo "vhdl work \"$R/rtl/tg68k/TG68K_ALU.vhd\""         >> $PRJ
-echo "vhdl work \"$R/rtl/tg68k/TG68KdotC_Kernel.vhd\""  >> $PRJ
 echo "vhdl work \"$R/rtl/akiko/cornerturn.vhd\""        >> $PRJ
 echo "vhdl work \"$R/rtl/akiko/akiko.vhd\""             >> $PRJ
 echo "vhdl work \"$TG68K_SRC\""                         >> $PRJ
@@ -359,7 +346,7 @@ EOF
 
 # The Micron model includes 2048Mb_ddr3_parameters.vh from its own directory.
 AP040_ELAB=""
-if [ "$CPU" = "ap040" ]; then AP040_ELAB="-i $R/lib/AP68040/rtl -d CPU_AP040"; fi
+if [ "$CPU" = "ap040" ]; then AP040_ELAB="-i $R/lib/AP68040/rtl"; fi
 
 "$VIVADO_PATH/bin/xelab" -prj $PRJ -i "$LIB/tb/ddr3_core_xc7" $AP040_ELAB \
     -d SOC_SIM ${REALSDRAM:+-d REALSDRAM -i $D} ${NOCPU:+-d NOCPU} ${DMA_OVERLAP:+-d DMA_OVERLAP} ${P2CBLOCK:+-d P2CBLOCK=$P2CBLOCK} ${CPU_RATIO:+-d CPU_RATIO=$CPU_RATIO} ${CPU_PHASE:+-d CPU_PHASE=$CPU_PHASE} -debug typical -relax \

@@ -4,6 +4,8 @@ This version of the Minimig AGA core is specific for the [OpenAARS](https://gith
 The hardware design can be found at [https://github.com/ranzbak/qmtech_minimig](https://github.com/ranzbak/qmtech_minimig) the design is mode in KiCad 5 and is free to use.
 The intended FPGA core board is the 'Xilinx FPGA Artix7 development board XC7A100T DDR3', which can be obtained from Ebay or AliExpress.
 
+**Supported board.** Only the OpenAARS / QMTech XC7A100T build (`fpga/openaars`, `project_1`) is maintained. Since Stage E4a its CPU is the AP68040 (MC68040 with MMU and FPU) only. The other ports under `fpga/` (MiST, Chameleon v1/v2, DE0-Nano, DE10-Lite, virtual) share RTL with this build but no longer build from this branch; tag `d3_stable` is the last version that builds them, with the TG68K CPU.
+
 ### Foreword
 
 [minimig](http://en.wikipedia.org/wiki/Minimig) (short for Mini Amiga) is an open source re-implementation of an Amiga using a field-programmable gate array (FPGA). Original minimig author is Dennis van Weeren.

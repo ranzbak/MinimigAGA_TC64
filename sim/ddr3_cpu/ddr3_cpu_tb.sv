@@ -11,11 +11,11 @@
 // haveddr3 every DDR3 access was classified as a 7 MHz chipset cycle and the
 // CPU was released on ena7RDreg/ena7WRreg with clkena_e/clkena_f instead of on
 // the DDR3 acknowledge.  This bench closes that gap: the DUT is the real
-// wrapper with the real TG68KdotC kernel inside it, running a real 68k program.
+// wrapper with the real CPU inside it (the AP68040 since Stage E4a), running a real 68k program.
 //
 // What is real and what is a model
 // --------------------------------
-//   real : rtl/soc/TG68K.vhd (wrapper + TG68KdotC_Kernel + akiko),
+//   real : rtl/soc/TG68K.vhd (wrapper + the AP68040 + akiko),
 //          rtl/ddr3/ddr3_fastram.v (cpu_cache_new + backend + ddr3_cdc),
 //          rtl/ddr3/ddr3_top.v (PLL + vendored DLL-off core + xc7 PHY),
 //          the Micron 2Gb DDR3 model.
@@ -89,8 +89,9 @@
 //     model's backdoor (memory_read), so a program that "passes" by reading
 //     its own cache cannot hide a DRAM that never got the data.
 //
-// Run with ./run.sh (real TG68K.vhd) and ./run.sh --mutant (the pre-fix copy
-// in mutant/, which must FAIL).
+// Run with ./run.sh --ap040 and the other legs listed at the top of run.sh;
+// each mutant leg must FAIL.  (The TG68K legs, ./run.sh alone and --mutant,
+// were removed in Stage E4a.)
 //-----------------------------------------------------------------
 `timescale 1ps / 1ps
 
@@ -690,7 +691,6 @@ always @(posedge clk) begin
   end
 end
 
-`ifdef CPU_AP040
 // What the core actually got.  s_stb is the compat top's merge of the
 // wrapper's strobe with its own walker-write snoop, so the wrapper's strobe
 // is sampled directly to keep the two apart; snoop_wr is the cache's own
@@ -718,7 +718,6 @@ always @(posedge clk_cpu) begin
     end
   end
 end
-`endif
 
 //-----------------------------------------------------------------
 // TG68K wrapper
@@ -782,14 +781,10 @@ wire        w_ena7WRreg = ena7WRreg;
 wire [15:0] fromram_w;                         // what the wrapper actually sees;
 wire        ramready_w;                        //   see the line-buffer model below
 
-// Which kernel the wrapper builds.  run.sh --ap040 defines CPU_AP040 and adds
-// the AP68040 sources; everything else in this bench is identical, which is
-// the whole point of that core presenting a TG68K-shaped port set.
-`ifdef CPU_AP040
-TG68K #(.cpu_core("AP040"), .cpu_clk_ratio(`CPU_RATIO)) tg68k (
-`else
-TG68K #(.cpu_core("TG68K")) tg68k (
-`endif
+// The wrapper builds the AP68040 (its TG68K branch was removed in Stage E4a).
+// The core presents a TG68K-shaped port set, which is why the rest of this
+// bench did not have to change for it.
+TG68K #(.cpu_clk_ratio(`CPU_RATIO)) tg68k (
     .clk            (clk              ),
     .clk_cpu        (clk_cpu          ),
     .reset          (tg68_rst         ),
@@ -821,7 +816,6 @@ TG68K #(.cpu_core("TG68K")) tg68k (
     .fromddr        (tg68_ddrout      ),
     .ddr_ready      (tg68_ddrready    ),
     .ddr_ena        (tg68_ddrena      ),
-    .cpu            (2'b11            ),   // 68020 mode: 32-bit address space
     .ziiram_active  (1'b1             ),   // autoconfig done: 2 MB Zorro-II
     .ziiiram_active (1'b0             ),   // board 1: SDRAM on hardware, see header
     .ziiiram2_active(1'b0             ),
@@ -1078,7 +1072,7 @@ end
 // controller holding a half-written longword -- that is the AllocMem failure of
 // 2026-09-07, and this model was blind to it because it read only cpustate[2:0].
 // It is not blind any more: the paired protocol is modelled, a violation of it
-// is reported, and under CPU_AP040 the bit is asserted never to be set at all
+// is reported, and the bit is asserted never to be set at all
 // (the AP68040's bus16 adapter cannot speak the protocol, so TG68K.vhd ties
 // cpustate(6) to '0').
 wire        ramcs_n = tg68_cpustate[2];
@@ -1128,7 +1122,6 @@ wire        ram_wr  = (tg68_cpustate[1:0] == 2'b11);
 // The real controller fills the buffer over the eight clocks of the SDRAM
 // burst; this model fills it whole when it acknowledges the first word, which
 // only makes a following hit possible EARLIER, never later.
-`ifdef CPU_AP040
 // The compare is over the 128 kB this port serves (tg68_cad[16:4]): the
 // wrapper's ramaddr has board-select bits above that which are X until the
 // autoconfig inputs settle, and an X in the compare would take the slow path
@@ -1178,16 +1171,6 @@ initial begin
   if ($test$plusargs("LBDBG")) lbdbg = 400;
   void'($value$plusargs("LBDBGT=%d", lbdbgt));
 end
-`else
-wire        lb_valid   = 1'b0;
-`ifdef REALSDRAM
-assign      ramready_w = ramready_real;   // the real sdram_ctrl answers
-assign      fromram_w  = fromram_real;
-`else
-assign      ramready_w = ramready;
-assign      fromram_w  = fromram;
-`endif
-`endif
 
 reg         lw_pend;                 // a paired 32-bit write awaits its low word
 reg  [15:0] lw_addr;                 // word address latched on the high-word cycle
@@ -1198,30 +1181,22 @@ integer     lw_errs;                 // protocol violations seen on this port
 initial lw_errs = 0;
 
 always @(posedge clk) begin
-`ifdef CPU_AP040
   // cpu_cache_new.v:294, the read data's default every clock: the buffered
   // word at the live offset.  Overridden below, as :466 does, in the cycle a
   // slow-path read is acknowledged, so data and acknowledge rise together.
   fromram_lb <= chipmem[{lb_adr, tg68_cad[3:1]}];
-`endif
   if (!sdctl_rst) begin
     ramready <= 1'b0;
     fromram  <= 16'h0000;
     lw_pend  <= 1'b0;
-`ifdef CPU_AP040
     lb_dirty <= 1'b1;
-`endif
   end else if (ramcs_n) begin
     ramready <= 1'b0;
-`ifdef CPU_AP040
     if (cacheline_clr) lb_dirty <= 1'b1;
-`endif
   end else if (!ramready && !lb_valid) begin
     // a line-buffer hit (lb_valid) never starts an access: cpu_cache_new stays
     // in CPU_SM_IDLE and cpu_cache_ack is never raised for it
-`ifdef CPU_AP040
     if (cacheline_clr) lb_dirty <= 1'b1;
-`endif
     if (ram_wr && tg68_rst) begin
       if (lw_pend) begin
         // Low word of a paired write.  The controller ignores this cycle's
@@ -1248,12 +1223,10 @@ always @(posedge clk) begin
       end else begin
         if (!tg68_cuds) chipmem[ramwa][15:8] <= tg68_cin[15:8];
         if (!tg68_clds) chipmem[ramwa][ 7:0] <= tg68_cin[ 7:0];
-`ifdef CPU_AP040
         // cpu_cache_new.v:313-316: update the buffered word on a matching
         // line, invalidate the buffer otherwise
         // (the buffered word is chipmem itself, updated just above)
         if (!lb_match) lb_dirty <= 1'b1;
-`endif
       end
     end else begin
       if (lw_pend) begin
@@ -1263,7 +1236,6 @@ always @(posedge clk) begin
         lw_pend <= 1'b0;
       end
       fromram <= chipmem[ramwa];
-`ifdef CPU_AP040
       fromram_lb <= chipmem[ramwa];
       if (cache_inhibit) begin
         // cpu_cache_new.v:464-469: the buffer is marked dirty, so nothing
@@ -1273,13 +1245,11 @@ always @(posedge clk) begin
         lb_adr   <= tg68_cad[16:4];
         lb_dirty <= 1'b0;
       end
-`endif
     end
     ramready <= 1'b1;
   end
 end
 
-`ifdef CPU_AP040
 // The AP68040 issues two independent word cycles for a longword, so it must
 // never claim the paired protocol -- on EITHER memory port; bit 6 is the same
 // bit in cpustate and in the DDR3 port's tg68_ddrcpustate.  Put the raw
@@ -1294,7 +1264,6 @@ always @(posedge clk) begin
     lw_errs = lw_errs + 1;
   end
 end
-`endif
 
 // ---- chipset-side bus ------------------------------------------------
 wire        cs_addr_ok = (tg68_adr[31:17] === 15'd0);
@@ -1467,7 +1436,6 @@ always @(posedge clk) begin
   ddrcsn_d  <= tg68_ddrcs;
 end
 
-`ifdef CPU_AP040
 //-----------------------------------------------------------------
 // The invariant that lets clkena carry two terms instead of six.
 //
@@ -1604,7 +1572,6 @@ always @(posedge clk) begin
   fl_err_d  <= fl_err_w;
   cst_d     <= cst_w;
 end
-`endif
 
 //-----------------------------------------------------------------
 // Mailbox watcher and phase trace
@@ -1911,7 +1878,6 @@ initial begin : main
     nfail = nfail + 1;
   end
 
-`ifdef CPU_AP040
   $display("");
   $display("INFO: cache line fills -- %0d over the channel (%0d of them undecoded, auto-completed), %0d down the adapter, %0d bus errors",
            fill_ch, fill_und, fill_ad, fill_be);
@@ -2004,7 +1970,6 @@ initial begin : main
       nfail = nfail + 1;
     end
   end
-`endif
 
   $display("");
 `ifdef REALSDRAM

@@ -1,12 +1,5 @@
-# CPU timing exceptions.  Two cores, and since stage D3 two different stories.
-#
-# TG68K (rtl/tg68k/TG68KdotC_Kernel.vhd inside rtl/soc/TG68K.vhd)
-#   The kernel is clocked by clk_114 and advances only when clkena is high. The SDRAM controller
-#   pulses clkena once per 4 clk_114 cycles (enaWRreg, 28.36 MHz) and the wrapper gates it further
-#   on bus readiness. Every kernel register therefore holds its value for at least 4 clk_114
-#   cycles, so kernel -> kernel and kernel -> wrapper paths get 4 cycles' worth (the numbers below
-#   are 3, deliberately tighter; see the island block).  That is a MULTICYCLE story and it is
-#   unchanged.
+# CPU timing exceptions.  (The TG68K core and its clk_114 multicycle island were
+# removed in Stage E4a; tag d3_stable has them.)
 #
 # AP68040 (lib/AP68040, the g_ap040 branch)
 #   Since stage D3 the kernel is on its OWN CLOCK, clk_38 = 37.8125 MHz = clk_114 / 3, phase
@@ -27,43 +20,29 @@
 #
 # The destination sets are explicit cell lists so that the exceptions can never land on a
 # consumer that samples every cycle (a direct FF->FF with CE tied high, Vivado TIMING-46).
-# If the CPU core is replaced, only the "Who the CPU is" block below changes.
-# The wrapper set includes Akiko (CLUT block RAM and C2P), which the kernel writes on clkena.
 #
-# Multicycle form: for the TG68K both ends are clk_114, so -start (move the launch edge) is used
-# and hold is always setup - 1.  For the AP68040 the two ends are different clocks and the form
-# follows wizard.xdc's: -end on a slow -> fast path (relax the capture edge, keep the hold check
-# on the launch edge), -start on fast -> slow.
+# Multicycle form: across clk_38 and clk_114 the form follows wizard.xdc's: -end on a slow ->
+# fast path (relax the capture edge, keep the hold check on the launch edge), -start on fast ->
+# slow.  On a same-clock path (the wrapper address rule at the bottom) -start is used and hold
+# is setup - 1.
 #
-# The TG68K block below matches nothing in an AP68040 build and everything scoped to it carries
-# -quiet for that reason; so does the AP68040 phase marker, which does not exist in a TG68K one.
 # The check that the exceptions actually landed is report_exceptions, not the absence of
-# warnings -- and report_exceptions on an AP68040 build must show NONE on the core, which is
-# this stage's stated exit criterion.
+# warnings -- and report_exceptions must show NONE on the core, which is stage D3's stated exit
+# criterion.
 
 # Endpoint filter: flip-flops, distributed RAM (the register file is RAM32X1D) and block RAM
 # (Akiko CLUT). IS_SEQUENTIAL alone misses the RAM primitives.
 set tg68_seq {IS_SEQUENTIAL || PRIMITIVE_TYPE =~ "DMEM.*" || PRIMITIVE_TYPE =~ "BMEM.*"}
 
 #-----------------------------------------------------------------------------
-# Who the CPU is.  Everything below is written against these three lists, so a
-# core swap changes only this block (findings/ap68040/plan-v2-with-ddr3.md,
-# step 0.3).  A pattern that matches nothing simply contributes nothing, so one
-# file serves both the TG68K and the AP68040 build.
+# Who the CPU is: the wrapper instance.  The AP68040's own rules are clock-scoped
+# (see below), so no kernel cell list is needed.  The kernel itself sits at
+# $cpu_wrapper/g_ap040.ap040: Vivado names a VHDL if-generate instance
+# "<label>.<instance>", which is why TG68K.vhd keeps g_ap040 as a generate --
+# moving it once silently emptied these sets (ten "No valid object(s) found"
+# criticals and no CPU exceptions in the bitstream).
 #-----------------------------------------------------------------------------
 set cpu_wrapper openaars_virtual_top/tg68k
-
-# The kernel instance inside that wrapper, per core.  Only one of the two is
-# elaborated (TG68K.vhd's cpu_core generic picks the generate branch), so the
-# other pattern simply matches nothing and one file serves both builds.
-# Note the generate label in each: Vivado names a VHDL if-generate instance
-# "<label>.<instance>", so making the kernel a generate MOVED it in the
-# netlist.  That is what silently emptied these sets the first time -- ten
-# "No valid object(s) found" criticals and no CPU exceptions in the bitstream.
-#   g_tg68k.pf68K_Kernel_inst  TG68KdotC_Kernel (rtl/tg68k)
-#   g_ap040.ap040              ap040_tg68k_compat (lib/AP68040)
-set cpu_kernel_tg68k $cpu_wrapper/g_tg68k.pf68K_Kernel_inst
-set cpu_kernel_ap040 $cpu_wrapper/g_ap040.ap040
 
 # THE FREE-RUNNING REGISTERS INSIDE THE AP68040, AND WHY THEY ARE NO LONGER
 # EXCLUDED FROM ANYTHING.
@@ -123,19 +102,10 @@ set cpu_kernel_ap040 $cpu_wrapper/g_ap040.ap040
 # cone has 26.45 ns and the question does not arise; if the island clock is
 # ever raised, this is the path that decides how far.
 
-# Written out longhand: an XDC file is not general Tcl, and Vivado rejects
-# foreach ("Command 'foreach' is not supported in the xdc constraint file",
-# Designutils 20-1307).  Building these strings in a loop cost a build: the
-# variables were left unset and all ten exceptions below were silently dropped.
-set cpu_not_kernel "NAME !~ $cpu_kernel_tg68k/* && NAME !~ $cpu_kernel_ap040/*"
-
-# Only the TG68K kernel needs a cell list now.  The AP68040's rules are all
-# clock-scoped, which is the whole point of stage D3: there is nothing left to
-# name, because the island is a clock domain instead of an exception.  The set
-# is empty in an AP040 build, so everything written against it carries -quiet.
-set tg68_kernel  [get_cells -quiet -hier -filter "NAME =~ $cpu_kernel_tg68k/* && ($tg68_seq)"]
-
-set tg68_wrap   [get_cells -hier -filter "NAME =~ $cpu_wrapper/* && ($cpu_not_kernel) && ($tg68_seq)"]
+# Write every set out longhand: an XDC file is not general Tcl, and Vivado
+# rejects foreach ("Command 'foreach' is not supported in the xdc constraint
+# file", Designutils 20-1307).  Building strings in a loop once cost a build: the
+# variables were left unset and ten exceptions were silently dropped.
 
 # The memory side: everything that takes cpuAddr/cpustate and states the
 # "address stable one cycle before the chip select" contract in its header.
@@ -145,35 +115,6 @@ set tg68_wrap   [get_cells -hier -filter "NAME =~ $cpu_wrapper/* && ($cpu_not_ke
 set tg68_mem    [get_cells -hier -filter "(NAME =~ openaars_virtual_top/sdram/* || \
                                            NAME =~ openaars_virtual_top/minimig/* || \
                                            NAME =~ openaars_virtual_top/g_ddr3_fastram.ddr3_fastram_i/*) && ($tg68_seq)"]
-
-#=============================================================================
-# TG68K: the kernel island.  Unchanged by stage D3.
-#=============================================================================
-#
-# The CPU's clock enable is enaWRreg, pulsed on FOUR of the sixteen SDRAM
-# phases (2, 6, 10, 14, spacing 4-4-4-4), the single shared cadence in
-# rtl/sdram/cpu_enable_cadence.v (used by both sdram_ctrl.v and
-# sim/ddr3_cpu).  At four phases the minimum spacing is 4 cycles, 35.26 ns,
-# which would allow -start 4 / -hold 3.  The values below are -start 3 /
-# -hold 2 (26.45 ns) instead -- tighter than four phases needs.  That dates
-# from a five-phase enable (spacing 3-3-3-3-4, findings/ap68040/performance.md
-# option 1a, "D1") which was tried in RTL and reverted (it does not boot);
-# a later bench-only five-phase experiment (findings/ap68040/plan-v2-with-ddr3.md,
-# task 4) confirmed the "0111" hypothesis was not the boot fix and left the
-# cadence at four phases for good.  The tighter -start 3 / -hold 2 values
-# were kept deliberately rather than loosened back to -start 4 / -hold 3:
-# a tighter-than-necessary exception only costs margin the design isn't
-# using, never correctness.
-set_multicycle_path -quiet -setup -start 3 -from $tg68_kernel -to $tg68_kernel
-set_multicycle_path -quiet -hold  -start 2 -from $tg68_kernel -to $tg68_kernel
-set_multicycle_path -quiet -setup -start 3 -from $tg68_kernel -to $tg68_wrap
-set_multicycle_path -quiet -hold  -start 2 -from $tg68_kernel -to $tg68_wrap
-
-# Kernel outputs to the memory side: one cycle less than the island, because
-# the controllers want the address stable a cycle before the chip select.
-# 2 cycles = 17.63 ns.
-set_multicycle_path -quiet -setup -start 2 -from $tg68_kernel -to $tg68_mem
-set_multicycle_path -quiet -hold  -start 1 -from $tg68_kernel -to $tg68_mem
 
 #=============================================================================
 # AP68040: the clk_38 island.  Stage D3.
@@ -416,14 +357,8 @@ set_multicycle_path -quiet -hold  -start 1 -from $bus_routers -to [get_clocks cl
 set_multicycle_path -setup -start 2 -from [get_cells -quiet -hier -filter "NAME =~ $cpu_wrapper/addr* && ($tg68_seq)"] -to $tg68_mem
 set_multicycle_path -hold  -start 1 -from [get_cells -quiet -hier -filter "NAME =~ $cpu_wrapper/addr* && ($tg68_seq)"] -to $tg68_mem
 
-# Akiko C2P: neither direction requires single-cycle speed (data consumed on clkena).
-# Scoped to the TG68K kernel: with the AP68040 the C2P result reaches the core
+# Akiko C2P: no exception.  With the AP68040 the C2P result reaches the core
 # only through the wrapper's own datatg68_c register, so there is no C2P ->
-# kernel path to except, and a clk_114 -> clk_38 relaxation would be false for
-# the reason given above.
-set c2p_rdptr [get_cells -quiet -hier -filter "NAME =~ $cpu_wrapper/myakiko/c2p.myc2p/rdptr_reg* && ($tg68_seq)"]
-set c2p_buf   [get_cells -quiet -hier -filter "NAME =~ $cpu_wrapper/myakiko/c2p.myc2p/buf_reg* && ($tg68_seq)"]
-set_multicycle_path -quiet -setup -start 2 -from $c2p_rdptr -to $tg68_kernel
-set_multicycle_path -quiet -hold  -start 1 -from $c2p_rdptr -to $tg68_kernel
-set_multicycle_path -quiet -setup -start 2 -from $c2p_buf   -to $tg68_kernel
-set_multicycle_path -quiet -hold  -start 1 -from $c2p_buf   -to $tg68_kernel
+# kernel path to relax, and a clk_114 -> clk_38 relaxation would be false for
+# the reason given above.  (The TG68K-scoped C2P rules went with that core in
+# Stage E4a.)
