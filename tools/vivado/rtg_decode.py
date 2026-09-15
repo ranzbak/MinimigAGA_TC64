@@ -3,9 +3,9 @@
 
     tools/vivado/rtg_decode.py <csv> [<csv> ...]
 
-Probe layout (rtl/soc/TG68K.vhd dbg_rtg, minimig_virtual_top.v probe11):
+Probe layout (rtl/soc/TG68K.vhd dbg_rtg, minimig_virtual_top.v probe10):
     dbg_rtg  [31] akiko_req [30] akiko_wr [29:28] bstate [27:16] cpuaddr[11:0] [15:0] data
-    probe11  [28] rtg_ena [27] rtg_16bit [26] rtg_clut [25:22] pixelwidth [21:0] rtg_addr[25:4]
+    probe10  [28] rtg_ena [27] rtg_16bit [26] rtg_clut [25:22] pixelwidth [21:0] rtg_addr[25:4]
 Register map (rtl/akiko/akiko.vhd): $B80100 framebuffer address high word,
 $B80102 low word, $B80104 control, $B80106 pixel format, $B8010E id,
 $B80400-$B807FF CLUT (4 bytes per entry).

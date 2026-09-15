@@ -1,5 +1,5 @@
 # Read the chip-RAM acknowledge phase histogram (TG68K.vhd dbg_phist,
-# ila_cpu040 probe9) while a workload runs.
+# ila_cpu040 probe8) while a workload runs.
 #
 #   vivado -mode batch -source tools/vivado/ila_phase_hist.tcl \
 #          -tclargs <bitstream-dir> <out-prefix> [samples] [gap-seconds]

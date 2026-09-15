@@ -45,4 +45,34 @@ the reference, not a regression. Without `+rounds=50` the default 15-minute
 
 ## Tasks
 
-(Task 1 onwards: legs run, results, and the row after the removal.)
+Baseline regression for these tasks: the fixed-bench rerun in
+[e0-e1-results.md](e0-e1-results.md) ("Task 3 regression, rerun on the fixed
+bench", commit f74ec3d). The morning table there was run on a bench with
+undriven enables and is not a baseline.
+
+### Task 1 — remove `dbg_snoop`
+
+Removed: the `dbg_snoop` port and its TG68K-branch tie, the four counter
+signals (`snp_in_cnt`, `snp_out_cnt`, `snp_out_s1/s2`), their two processes and
+the assignment; the wire, port map and ILA probe in `minimig_virtual_top.v`;
+`tools/vivado/ila_snoop_check.tcl`. Kept: `snp_stb_held`/`snp_addr_held`, the
+snoop hold itself. `ila_cpu040` is now 11 probes: probe8 `dbg_phist` (384),
+probe9 `dbg_rtg` (32), probe10 RTG state (29). The capture scripts find probes
+by name and `rtg_decode.py` reads the column after `dbg_rtg`, so only comments
+and the test fixture's column name changed.
+
+- Analysis: `xvhdl --relax` over run.sh's six VHDL files (TG68K_Pack, ALU,
+  Kernel, cornerturn, akiko, TG68K) — exit 0, no errors. The plan's two-file
+  form cannot pass: the architecture needs the kernel and akiko units.
+- `python3 -m unittest test_rtg_decode`: 3 tests OK.
+- `./run.sh --snoop` (`t1`): exit 0, 2 passed, phase 8 at 1.763 ms.
+- `./run.sh --snoopmutant` (`t1`): mutant failed as required — 14890 of 22340
+  snoops never reached the core, 7295 out of order, phase 8 at 1704693182 ps:
+  **identical** to the fixed-bench baseline, as it must be for a probe that
+  only observed.
+
+| label | wrapper lines | wrapper code | cpu_cache_new code | sdram_ctrl code | posted-write paths | longword_pair uses | g_tg68k uses | switch uses | debug probes |
+|---|---|---|---|---|---|---|---|---|---|
+| E4a T1 dbg_snoop | 2090 | 1005 | 727 | 591 | 1+wsync-option | 6 | 1 | 15 | dbg_phist dbg_rtg |
+
+−52 wrapper lines, −26 code lines against the baseline.

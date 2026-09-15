@@ -3,7 +3,7 @@
 
     tools/vivado/phase_hist.py <csv> [<csv> ...]
 
-Each CSV holds ila_cpu040's samples; dbg_phist (probe9, 384 bits) carries a
+Each CSV holds ila_cpu040's samples; dbg_phist (probe8, 384 bits) carries a
 snapshot of one ~37 ms window, laid out as TG68K.vhd documents it:
 
     bits 127:0    8 x 16  clk cycles from a chip-RAM acknowledge to clkena_r

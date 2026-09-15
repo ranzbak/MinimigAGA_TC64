@@ -1,4 +1,4 @@
-# Capture every Akiko access (dbg_rtg, ila_cpu040 probe10) while Paul activates
+# Capture every Akiko access (dbg_rtg, ila_cpu040 probe9) while Paul activates
 # an RTG screen mode. Storage qualification keeps only samples with akiko_req
 # high, so the 1024-deep window holds 1024 register accesses, not idle clocks.
 #

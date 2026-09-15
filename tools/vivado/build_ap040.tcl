@@ -272,10 +272,10 @@ foreach ip {vio_ddr3 ila_fastram} {
 #   probe0 pc[31:0]      probe1 adr[31:0]   probe2 data_read[15:0]
 #   probe3 data_write[15:0]  probe4 {as,rw,uds,lds}  probe5 flags[3:0]
 #   probe6 ir[15:0]      probe7 cpustate[6:0]
-#   probe8 snoop[40:0] -- the stage D3 snoop crossing, see TG68K.vhd's
-#          dbg_snoop: two free-running counters, one counting the snoops
-#          the bus offered and one counting the snoops the kernel saw, so
-#          a lost snoop is a subtraction rather than an argument.
+#   probe8 dbg_phist[383:0] -- chip-RAM acknowledge phase histogram
+#   probe9 dbg_rtg[31:0]    probe10 {rtg_ena,rtg_16bit,rtg_clut,pixelwidth,baseaddr}[28:0]
+# (The stage D3 dbg_snoop counters were removed in Stage E4a; they proved no
+# snoop is lost across clk_114 -> clk_38.)
 #
 # 4096 deep, and storage qualification stays on: with Turbo off a chip access
 # is a 7 MHz chipset cycle against an 8.8 ns clock, so capturing on !as is the
@@ -294,7 +294,7 @@ if {$ila} {
     # the new port list and fail somewhere far from here.  Re-applying is free
     # when nothing changed -- Vivado only marks the IP out of date if it did.
     set_property -dict [list \
-        CONFIG.C_NUM_OF_PROBES {12} \
+        CONFIG.C_NUM_OF_PROBES {11} \
         CONFIG.C_DATA_DEPTH $cpuiladepth \
         CONFIG.C_TRIGIN_EN {false} \
         CONFIG.C_EN_STRG_QUAL {1} \
@@ -307,10 +307,9 @@ if {$ila} {
         CONFIG.C_PROBE5_WIDTH {4} \
         CONFIG.C_PROBE6_WIDTH {16} \
         CONFIG.C_PROBE7_WIDTH {7} \
-        CONFIG.C_PROBE8_WIDTH {41} \
-        CONFIG.C_PROBE9_WIDTH {384} \
-        CONFIG.C_PROBE10_WIDTH {32} \
-        CONFIG.C_PROBE11_WIDTH {29} \
+        CONFIG.C_PROBE8_WIDTH {384} \
+        CONFIG.C_PROBE9_WIDTH {32} \
+        CONFIG.C_PROBE10_WIDTH {29} \
     ] [get_ips ila_cpu040]
     generate_target all [get_files [get_property IP_FILE [get_ips ila_cpu040]]]
     catch { create_ip_run [get_files [get_property IP_FILE [get_ips ila_cpu040]]] }

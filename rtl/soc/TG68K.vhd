@@ -151,18 +151,7 @@ entity TG68K is
 		dbg_sr          : out    std_logic_vector(15 downto 0);
 		dbg_exc_vec     : out    std_logic_vector(7 downto 0);
 		dbg_flags       : out    std_logic_vector(3 downto 0); -- fault, in_exc, halted, busy
-		-- Stage D3 snoop instrumentation, read by ila_cpu040's probe8.  The
-		-- crossing that carries a chipset DMA write snoop into the kernel is
-		-- the one bus -> core path that is a PULSE and not a level (see the
-		-- holder in the g_ap040 branch), and nothing until now could say
-		-- whether a pulse ever fails to cross.  Two free-running counters
-		-- answer it directly: one counts what the bus offered, the other what
-		-- the kernel actually saw.  Zero in a TG68K build.
-		--   (40:20) snoop_addr(21:1)   (19) unused
-		--   (18) cpu_ph2  (17) snp_stb_held  (16) snoop_stb
-		--   (15:8) snp_out_cnt (kernel side)  (7:0) snp_in_cnt (bus side)
-		dbg_snoop       : out    std_logic_vector(40 downto 0);
-		-- Chip-RAM acknowledge phase histogram, ila_cpu040 probe9.  384 bits:
+		-- Chip-RAM acknowledge phase histogram, ila_cpu040 probe8.  384 bits:
 		--   (127:0)   8 bins x 16: clk cycles from a chip-RAM acknowledge to the
 		--             kernel's release (clkena_r), bin 7 = 7 or more
 		--   (383:128) 16 bins x 16: SDRAM round phase the acknowledge landed on
@@ -170,7 +159,7 @@ entity TG68K is
 		-- single ILA sample reads a complete histogram.
 		dbg_phist       : out    std_logic_vector(383 downto 0);
 		-- Stage E0 RTG diagnosis: {akiko_req, akiko_wr, bstate, cpuaddr(11:0),
-		-- akiko_d} for ila_cpu040 probe10. Observation only.
+		-- akiko_d} for ila_cpu040 probe9. Observation only.
 		dbg_rtg         : out    std_logic_vector(31 downto 0);
 		eth_en          : in     std_logic                     := '0'; -- @suppress "Unused port: eth_en is not used in work.TG68K(logic)"
 		sel_eth         : buffer std_logic;
@@ -936,7 +925,6 @@ BEGIN
 		dbg_sr         <= (others => '0');
 		dbg_exc_vec    <= (others => '0');
 		dbg_flags      <= (others => '0');
-		dbg_snoop      <= (others => '0');
 	END GENERATE;
 
 	g_ap040 : IF use_ap040 GENERATE
@@ -1017,22 +1005,6 @@ BEGIN
 		-- period later rather than dropped.
 		SIGNAL snp_stb_held  : std_logic := '0';
 		SIGNAL snp_addr_held : std_logic_vector(31 downto 0) := (others => '0');
-
-		-- The instrumentation behind dbg_snoop.  snp_in_cnt counts on clk
-		-- every snoop the bus offers; snp_out_cnt counts on clk_cpu every
-		-- snoop the KERNEL sees -- literally the value ap040_cache's
-		-- ce-independent s_stb port samples, counted in the port's own clock
-		-- domain.  Free-running and never cleared, so the two track within
-		-- one and diverge FOR GOOD the first time a pulse fails to cross: a
-		-- lost snoop is then a subtraction on one ILA sample rather than a
-		-- waveform to be argued about.  snp_out_cnt is resynchronised into
-		-- clk before it is probed; it is a multi-bit crossing, but it changes
-		-- at most once per SDRAM round and is read as a level, so a sample
-		-- taken across an increment is at worst off by one.
-		SIGNAL snp_in_cnt    : std_logic_vector(7 downto 0) := (others => '0');
-		SIGNAL snp_out_cnt   : std_logic_vector(7 downto 0) := (others => '0');
-		SIGNAL snp_out_s1    : std_logic_vector(7 downto 0) := (others => '0');
-		SIGNAL snp_out_s2    : std_logic_vector(7 downto 0) := (others => '0');
 	BEGIN
 		PROCESS(clk_cpu)
 		BEGIN
@@ -1076,30 +1048,6 @@ BEGIN
 				END IF;
 			END IF;
 		END PROCESS;
-
-		-- The two snoop counters; see their signals.
-		PROCESS(clk)
-		BEGIN
-			IF rising_edge(clk) THEN
-				IF snoop_stb = '1' THEN
-					snp_in_cnt <= snp_in_cnt + 1;
-				END IF;
-				snp_out_s1 <= snp_out_cnt;
-				snp_out_s2 <= snp_out_s1;
-			END IF;
-		END PROCESS;
-
-		PROCESS(clk_cpu)
-		BEGIN
-			IF rising_edge(clk_cpu) THEN
-				IF snp_stb_held = '1' THEN
-					snp_out_cnt <= snp_out_cnt + 1;
-				END IF;
-			END IF;
-		END PROCESS;
-
-		dbg_snoop <= snoop_addr(21 DOWNTO 1) & '0' & cpu_ph2 & snp_stb_held &
-		             snoop_stb & snp_out_s2 & snp_in_cnt;
 
 		ap040 : COMPONENT ap040_tg68k_compat
 			GENERIC MAP(

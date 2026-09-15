@@ -3,7 +3,7 @@ import rtg_decode
 
 HEADER = ("Sample in Buffer,Sample in Window,TRIGGER,"
           "openaars_virtual_top/dbg_rtg[31:0],"
-          "openaars_virtual_top/g_cpu040_ila.probe11[28:0]\n")
+          "openaars_virtual_top/g_cpu040_ila.probe10[28:0]\n")
 RADIX = "Radix - UNSIGNED,UNSIGNED,UNSIGNED,HEX,HEX\n"
 
 def rtg_word(req, wr, bstate, addr12, data):
