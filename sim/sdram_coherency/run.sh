@@ -13,7 +13,7 @@ set -e
 cd "$(dirname "$0")"
 mkdir -p build
 CORNER=${1:-fast}; GRADE=${2:-sg7}; shift 2 2>/dev/null || true
-DEF="-DSOC_SIM -D$GRADE${CLS:+ -DCL_SNOOP}"; [ "$CORNER" = fast ] && DEF="$DEF -DFAST"
+DEF="-DSOC_SIM -D$GRADE";[ "$CORNER" = fast ] && DEF="$DEF -DFAST"
 R=../../rtl/sdram
 iverilog -g2012 -gspecify $DEF -o build/tb_${CORNER}_${GRADE} -s sdram_coherency_tb \
   sdram_coherency_tb.v ../../lib/models/AS4C16M16SA.v \

@@ -102,10 +102,8 @@ reg          cpuL = 1'b0, cpuU = 1'b0;
 wire [15:0]  cpuRD;
 wire         cpuena;
 
-// FIX SELECTION.  Default off, so the DUT is what HEAD builds unless the
-// switch is given: -DCL_SNOOP compiles in the line-buffer snoop invalidate.
-// (The +wrsync switch for the unposted-write option went with that option in
-// Stage E4a.)
+// (The +wrsync and -DCL_SNOOP fix switches went with those options in Stage
+// E4a; the DUT is always what HEAD builds.)
 // CACHE-INHIBIT AND CACHELINE-CLR, previously tied to zero here -- which meant
 // the KICKSTART TURBO path was never simulated at all.
 //
@@ -122,11 +120,7 @@ wire         cpuena;
 // simulated.
 reg ci_now  = 1'b0;
 reg clr_now = 1'b0;
-`ifdef CL_SNOOP
-sdram_ctrl #(.CL_SNOOP(1)) dut (
-`else
 sdram_ctrl dut (
-`endif
   .sysclk(clk), .clk7_en(clk7_en), .reset_in(reset_in), .cache_rst(reset_in),
   .cache_inhibit(ci_now), .cacheline_clr(clr_now), .cpu_cache_ctrl(4'b0011), .reset_out(reset_out),
   .sdaddr(sdaddr), .sd_cs(sd_cs), .ba(ba), .sd_we(sd_we), .sd_ras(sd_ras), .sd_cas(sd_cas),
@@ -455,9 +449,8 @@ initial begin
   repeat (20) @(posedge clk);
   reset_in = 1'b1;
   @(posedge reset_out);
-  $display("=== sdram_coherency [%0s] init at %t, %0d rounds, background %0s, cl_snoop %0d ===",
-           CORNER, $time, ROUNDS, NOBG ? "OFF" : "ON",
-           `ifdef CL_SNOOP 1 `else 0 `endif );
+  $display("=== sdram_coherency [%0s] init at %t, %0d rounds, background %0s ===",
+           CORNER, $time, ROUNDS, NOBG ? "OFF" : "ON");
   repeat (64) @(posedge clk);
 
   // Seed both background windows so a background read has a known answer.

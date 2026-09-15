@@ -10,12 +10,7 @@
 
 // AMR - adjust for 8-word bursts.
 
-module cpu_cache_new #(
-  // Both of these default OFF so the module is bit-for-bit what it was before
-  // the sim/sdram_coherency investigation.  Turn them on one at a time.
-  //   CL_SNOOP  invalidate the line buffer when a chipset write hits it
-  parameter CL_SNOOP = 0
-) (
+module cpu_cache_new (
   // system
   input  wire           clk, // clock
   input  wire           rst, // cache reset
@@ -115,7 +110,6 @@ module cpu_cache_new #(
   wire          cpu_cacheline_valid;
   reg           cpu_cacheline_dirty;
   reg           cpu_cacheline_match;
-  reg           cpu_cacheline_snooped; // a snoop hit the line while it was being filled
   reg   [2-1:0] cpu_cacheline_cnt;
   // idram0
   wire [10-1:0] idram0_cpu_adr;
@@ -261,12 +255,6 @@ module cpu_cache_new #(
   assign cpu_adr_tag = cpu_adr[25:12]; // tag, 14 bits
 
   always @(posedge clk) cpu_cacheline_match <= cpu_adr[25:4] == cpu_cacheline_adr && !cpu_cacheline_dirty;
-  // the states in which cpu_cacheline_lo/hi is being written by a fill
-  wire cl_fill_active = (cpu_sm_state == CPU_SM_READ)  ||
-                        (cpu_sm_state == CPU_SM_SDWAI) ||
-                        (cpu_sm_state == CPU_SM_FILL1) ||
-                        (cpu_sm_state == CPU_SM_FILL2) ||
-                        (cpu_sm_state == CPU_SM_FILLW);
   assign cpu_cacheline_valid = cpu_cacheline_match && (cpu_sm_state == CPU_SM_IDLE) && (cpu_ir || cpu_dr) && !cache_inhibit;
   assign cpu_32bit_ena = cpu_32bit && cpu_cs && write_ena;
   assign cpu_ack = cpu_cache_ack || cpu_cacheline_valid || cpu_32bit_ena;
@@ -289,7 +277,6 @@ module cpu_cache_new #(
       cpu_sm_bs         <= #1 4'b1111;
       cpu_adr_blk_ptr   <= #1 3'b000;
       cpu_cacheline_dirty <= #1 1'b1;
-      cpu_cacheline_snooped <= #1 1'b0;
     end else begin
       // default values
       fill              <= #1 1'b0;
@@ -344,8 +331,6 @@ module cpu_cache_new #(
               cpu_adr_blk_ptr <= #1 cpu_adr_blk_ptr_next;
               cpu_sm_state <= #1 CPU_SM_READ;
               cpu_cacheline_cnt <= #1 2'b00;
-              // a fresh line starts clean; the snoop block below re-arms it
-              cpu_cacheline_snooped <= #1 1'b0;
             end
           end else begin
             if (cc_clr)
@@ -402,9 +387,7 @@ module cpu_cache_new #(
           cpu_cacheline_adr <= #1 cpu_adr[25:4];
           cpu_cacheline_cnt <= #1 cpu_cacheline_cnt + 1'b1;
           if(cpu_cacheline_cnt == 2'b01) begin
-            // NOT an unconditional clear: a snoop taken earlier in this fill
-            // means the words already latched may predate the chipset's write
-            cpu_cacheline_dirty <= #1 (CL_SNOOP ? cpu_cacheline_snooped : 1'b0);
+            cpu_cacheline_dirty <= #1 1'b0;
             cpu_cache_ack <= #1 1'b1; //early ack
           end
           if(cpu_cacheline_cnt == 2'b11)
@@ -486,7 +469,7 @@ module cpu_cache_new #(
               cpu_sm_state <= #1 CPU_SM_FILLW;
             end else begin
               cpu_cacheline_adr <= #1 cpu_adr[25:4];
-              cpu_cacheline_dirty <= #1 (CL_SNOOP ? cpu_cacheline_snooped : 1'b0);
+              cpu_cacheline_dirty <= #1 1'b0;
 
               // update tag ram
               if (cpu_ir) begin
@@ -552,7 +535,7 @@ module cpu_cache_new #(
       // when CPU lowers its request signal, lower ack too
       if (!cpu_cs) cpu_cache_ack <= #1 1'b0;
 
-      // SNOOP THE LINE BUFFER.  cpu_cacheline_lo/hi is a sixteen-byte buffer
+      // THE LINE BUFFER IS NOT SNOOPED.  cpu_cacheline_lo/hi is a sixteen-byte buffer
       // in front of both ways, tagged by cpu_cacheline_adr, and a hit on it
       // answers the CPU in the same cycle (cpu_cacheline_valid feeds cpu_ack
       // directly).  Every other structure in this module is kept coherent
@@ -570,23 +553,10 @@ module cpu_cache_new #(
       // boards cannot (CPU-private) -- which is exactly the pattern the
       // hardware showed.
       //
-      // Placed after the case so it WINS: a refill completing in the same
-      // cycle as a snoop to the line it just fetched must not validate it.
-      // Over-invalidation is always safe here; the line is simply refetched.
-      // Two terms, because during a fill the buffer's tag is a cycle behind:
-      // cpu_cacheline_adr is only latched on the FIRST cycle of CPU_SM_READ,
-      // so a snoop landing in that cycle would be compared against the
-      // PREVIOUS line's tag and missed.  Matching the fill's own address
-      // (cpu_adr, held for as long as the CPU holds the access) closes it.
-      // Deliberately NOT a blanket "any snoop during a fill": under
-      // saturating chipset DMA that would poison every fill and turn the
-      // buffer off altogether.
-      if (CL_SNOOP && snoop_act && ((snoop_adr[25:4] == cpu_cacheline_adr) ||
-                        (cl_fill_active &&
-                         (snoop_adr[25:4] == cpu_adr[25:4])))) begin
-        cpu_cacheline_dirty   <= #1 1'b1;
-        cpu_cacheline_snooped <= #1 1'b1;
-      end
+      // NOT FIXED HERE.  An invalidate on snoop_act (the CL_SNOOP option) made
+      // the hardware worse (build d3clsnoop) and was removed in Stage E4a.
+      // Whether the line buffer stays at all is decided in Stage E4;
+      // sim/sdram_coherency counts the hole as "C2P line buffer primed".
 
     end
   end

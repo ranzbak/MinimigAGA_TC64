@@ -22,9 +22,7 @@
 //////////////////////////////////////////////////////////////////////////////
 
 
-module sdram_ctrl #(
-    parameter CL_SNOOP = 0   // see cpu_cache_new: line-buffer snoop invalidate
-)(
+module sdram_ctrl (
     // system
     input  wire           sysclk,
     input  wire           clk7_en,
@@ -295,7 +293,7 @@ end
 ////////////////////////////////////////
 
 //// cpu cache ////
-cpu_cache_new #(.CL_SNOOP(CL_SNOOP)) cpu_cache (
+cpu_cache_new cpu_cache (
     .clk              (sysclk), // clock
     .rst              (!reset || !cache_rst), // cache reset
     .cache_en         (1'b1), // cache enable

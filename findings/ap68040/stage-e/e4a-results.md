@@ -112,3 +112,32 @@ Found while waiting (recorded in the plan): the second-word latch Task 5 would
 drop has readers, so it stays; and six other board ports compile this RTL —
 out of scope (Paul: "I'm only building for the qmtech board"), marked
 unsupported in Task 6.
+
+### Task 3 — remove `CL_SNOOP`
+
+Removed: the `CL_SNOOP` parameter of `cpu_cache_new` and `sdram_ctrl`, the
+`cpu_cacheline_snooped` register with its clears, `cl_fill_active`, and the
+snoop-invalidate block; both `(CL_SNOOP ? cpu_cacheline_snooped : 1'b0)` uses
+are now the `1'b0` they evaluated to. sdram_coherency loses `CLS=1`, its
+`ifdef CL_SNOOP` instance and the `cl_snoop` summary field. The comment that
+describes the line-buffer hole stays, marked NOT FIXED HERE: the hole is real
+("C2P line buffer primed"), and E4 decides whether the buffer stays.
+
+- Analysis: `xvlog --relax` on `cpu_cache_new.v` and `sdram_ctrl.v`, and an
+  iverilog compile of the coherency bench — both exit 0. No `CL_SNOOP`,
+  `cacheline_snooped`, `cl_fill_active` or `CLS` left anywhere.
+- `sim/sdram_coherency fast sg7 +nobg +rounds=50`: **52 errors, 0 timeouts**,
+  every check equal to the reference.
+- `sim/sdram_coherency fast sg7 +rounds=50`: **14 errors, 0 timeouts** (P2C 4
+  late 0 lost, longword 10, 3552 background reads 0 failed) = reference.
+- `REALSDRAM=1 ./run.sh --ap040` (`t3`): 2 passed; DMA 3958 writes 0 wrong;
+  placement **1953 / 78 off**.
+- Busy leg (`t3ovl`, not required by the plan; the only leg with saturating
+  chipset writes into the lines the CPU reads): **identical** to
+  `ref/overlap_gate3.txt`.
+
+| label | wrapper lines | wrapper code | cpu_cache_new code | sdram_ctrl code | posted-write paths | longword_pair uses | g_tg68k uses | switch uses | debug probes |
+|---|---|---|---|---|---|---|---|---|---|
+| E4a T3 CL_SNOOP | 2080 | 1003 | 695 | 587 | 1 | 6 | 1 | 15 | dbg_phist dbg_rtg |
+
+Against Task 2: `cpu_cache_new` −16 code, `sdram_ctrl` −2 code.
