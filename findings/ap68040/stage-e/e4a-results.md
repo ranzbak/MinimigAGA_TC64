@@ -141,3 +141,46 @@ describes the line-buffer hole stays, marked NOT FIXED HERE: the hole is real
 | E4a T3 CL_SNOOP | 2080 | 1003 | 695 | 587 | 1 | 6 | 1 | 15 | dbg_phist dbg_rtg |
 
 Against Task 2: `cpu_cache_new` −16 code, `sdram_ctrl` −2 code.
+
+### Task 4 — fold the settled phase-gate and data-capture switches
+
+Folded to the shipping settings (gate on, data captured with the grant, gate
+delay 3, no request gate) and removed: TG68K.vhd's `cpu_phase_gate_en`,
+`cpu_data_reg_en`, `cpu_phase_gate_dly` and `cpu_phase_gate_req` generics,
+`gate_open`, `gate_req`, `datatg68_k` and the `g_gate_dly*` generates; the
+matching parameters and maps in `minimig_virtual_top.v` and
+`minimig_openaars_top.v`; `build_ap040.tcl` arguments 7–10 (it now stops with an
+error if given more than 6); the bench's `CPU_PHASE_GATE_DLY` define, instance
+parameter and `run.sh` pass-through. The gate is now one process: `ena_sr`
+shrinks to 3 bits and the gate opens on `ena_sr(2)` — `clkena_in` delayed 3 clk
+cycles, the same tap as `ena_sr(cpu_phase_gate_dly - 1)` at delay 3. A comment
+at the process records why 2/6/10/14 and that the mechanism is unexplained.
+
+New leg `REALSDRAM=1 ./run.sh --gatemutant`: run.sh generates the wrapper with
+`ena_sr(2)` replaced by `clkena_in` (the gate as first built) and asserts the
+substitution.
+
+The busy-leg reference's placement line dropped its `(CPU_PHASE_GATE_DLY=3)`
+label, which no longer exists; its numbers are unchanged and its header says
+so. (The first relabel also lost the space after the colon; the Task 4 busy-leg
+diff caught it, and it was restored before the comparison below.)
+
+- Analysis: xvhdl over the six VHDL files; `xvlog --sv --relax -d REALSDRAM -d
+  CPU_AP040 -d SOC_SIM` on `ddr3_cpu_tb.sv`; `xvlog --relax` on both tops — all
+  exit 0, no errors. No switch name left outside an unrelated `datareg` signal
+  in `rtl/tg68k/TG68K_ALU.vhd`.
+- `REALSDRAM=1 ./run.sh --ap040` (`t4`): 2 passed; DMA 3958 writes 0 wrong;
+  placement **1953 / 78 off**, all 16 bins **identical to `e1cal3`** (the
+  shipping gate through the old generic).
+- `REALSDRAM=1 ./run.sh --gatemutant` (`t4`): **mutant failed as required** —
+  1862 of 1972 off the grid; all 16 bins **identical to `e1cal0`** (the old
+  `CPU_PHASE_GATE_DLY=0` leg).
+- Busy leg (`t4ovl`): **identical** to `ref/overlap_gate3.txt` (29 lines).
+- `./run.sh --ap040 --chipbus` (`t4`): 2 passed, phase 8 at 937021277 ps, as
+  before.
+
+| label | wrapper lines | wrapper code | cpu_cache_new code | sdram_ctrl code | posted-write paths | longword_pair uses | g_tg68k uses | switch uses | debug probes |
+|---|---|---|---|---|---|---|---|---|---|
+| E4a T4 gate switches | 2051 | 987 | 695 | 587 | 1 | 6 | 1 | 0 | dbg_phist dbg_rtg |
+
+Against Task 3: wrapper −29 lines (−16 code); switch uses 15 → 0.

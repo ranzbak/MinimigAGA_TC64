@@ -5,7 +5,7 @@
 # TG68KdotC kernel.  Everything else in the design is unchanged; that core
 # presents a TG68K-shaped port set.  findings/ap68040/plan-v2-with-ddr3.md.
 #
-#   vivado -mode batch -source tools/vivado/build_ap040.tcl -tclargs <report-dir> [<ila>] [<repo-root>]
+#   vivado -mode batch -source tools/vivado/build_ap040.tcl -tclargs <report-dir> [<ila>] [<repo-root>] [<post-stores>] [<cpu-clk-divide>] [<cpu-ila-depth>]
 #
 # <ila> = 1 (default) puts ila_fastram on the CPU side of the DDR3 fast RAM so
 # a boot can be captured with tools/vivado/ila_fastram_capture.tcl; 0 builds
@@ -43,16 +43,12 @@ set cpudiv [expr {[llength $argv] > 4 ? [lindex $argv 4] : 30}]
 # histogram at 4096 samples pushed the design to 167 RAMB36 against 135 on the
 # part.  The histogram needs one sample, so its builds pass 1024.
 set cpuiladepth [expr {[llength $argv] > 5 ? [lindex $argv 5] : 4096}]
-# A/B switches for two D3 fixes (7th and 8th -tclargs, default 1 = as built):
-# the chip/DDR select phase gate, and the read data captured with the grant.
-set phgate  [expr {[llength $argv] > 6 ? [lindex $argv 6] : 1}]
-set datareg [expr {[llength $argv] > 7 ? [lindex $argv 7] : 1}]
-# Phase gate opening delay in clk cycles (9th -tclargs).  Default 3: at ratio 3
-# it lands chip-RAM acknowledges on 2/6/10/14 and is the configuration that
-# runs clean with Chip turbo (hardware 2026-09-14).  0 = the gate as first built.
-set phdly   [expr {[llength $argv] > 8 ? [lindex $argv 8] : 3}]
-# 1 = the phase gate opens only on a waiting access (10th -tclargs, default 0).
-set phreq   [expr {[llength $argv] > 9 ? [lindex $argv 9] : 0}]
+# Arguments 7-10 (phase gate, data register, gate delay, request gate) were
+# folded into the RTL in Stage E4a: the shipping settings are the only ones.
+# Refuse them rather than silently ignore a build that asks for something else.
+if {[llength $argv] > 6} {
+    error "build_ap040.tcl: arguments 7-10 were removed in Stage E4a (the phase gate is fixed in rtl/soc/TG68K.vhd); pass at most 6"
+}
 set R [expr {[llength $argv] > 2 ? [file normalize [lindex $argv 2]] \
                                  : [file normalize [file dirname [info script]]/../..]}]
 open_project $R/project_1/project_1.xpr
@@ -322,7 +318,7 @@ if {$ila} {
 
 # The one functional difference from build.tcl: which kernel the wrapper
 # elaborates, and whether the fast-RAM ILA comes along for the ride.
-set_property generic "CPU_IS_AP040=1 HAVEDDR3=1 DDR3_BIST_VIO=0 DDR3_FASTRAM_ILA=$ila CPU040_DEBUG_ILA=$ila AP040_POST_STORES=$post CPU_CLK_DIVIDE=$cpudiv CPU_PHASE_GATE=$phgate CPU_DATA_REG=$datareg CPU_PHASE_GATE_DLY=$phdly CPU_PHASE_GATE_REQ=$phreq" \
+set_property generic "CPU_IS_AP040=1 HAVEDDR3=1 DDR3_BIST_VIO=0 DDR3_FASTRAM_ILA=$ila CPU040_DEBUG_ILA=$ila AP040_POST_STORES=$post CPU_CLK_DIVIDE=$cpudiv" \
     [get_filesets sources_1]
 
 # The debug core adds a few thousand LUTs and flip-flops to clk_114, and with

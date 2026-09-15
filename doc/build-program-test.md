@@ -6,11 +6,12 @@ this machine on 2026-09-14/15, branch `stage-e`, unless it is marked
 **not yet run**.
 
 Stage E4a (`findings/ap68040/stage-e/2026-09-15-e4a-plan.md`) will remove some
-things described here: build arguments 7–10 and the TG68K simulation legs.
-Those spots are marked **(changes in E4a)**. Already gone: the `dbg_snoop` ILA
-probe with `tools/vivado/ila_snoop_check.tcl` (so `ila_cpu040` probes are now
-probe8 `dbg_phist`, probe9 `dbg_rtg`, probe10 RTG state), and the `WRSYNC`
-bench switch.
+things described here: the TG68K simulation legs. Those spots are marked
+**(changes in E4a)**. Already gone: the `dbg_snoop` ILA probe with
+`tools/vivado/ila_snoop_check.tcl` (so `ila_cpu040` probes are now probe8
+`dbg_phist`, probe9 `dbg_rtg`, probe10 RTG state), the `WRSYNC` bench switch,
+and build arguments 7–10 with the `CPU_PHASE_GATE_DLY` bench switch (the phase
+gate is fixed in the RTL; `--gatemutant` is its check).
 
 ---
 
@@ -93,10 +94,10 @@ finished.
 | 4 | post stores | `1` | the 040 cache's posted stores; `0` = all stores synchronous (A/B only) |
 | 5 | CPU clock divide | `30` | `30` = clk_114/3 = 37.8 MHz (D3); `40` = /4, the pre-D3 rate |
 | 6 | CPU ILA depth | `4096` | **use `1024` with `ila = 1`**, or the ILA does not fit (2.4) |
-| 7 | phase gate | `1` | **(changes in E4a)** `0` removes the chip-RAM phase gate |
-| 8 | data register | `1` | **(changes in E4a)** `0` = read data not registered with the grant |
-| 9 | gate delay | `3` | **(changes in E4a)** clk cycles the gate opens after enaWRreg; `3` is the fix, `0` corrupts |
-| 10 | request gate | `0` | **(changes in E4a)** unused option |
+
+Arguments 7–10 (phase gate, data register, gate delay, request gate) were
+removed in Stage E4a: the shipping settings are built into the RTL. The script
+stops with an error if you pass more than 6 arguments.
 
 Typical builds:
 
@@ -127,13 +128,13 @@ grep -E "^(clk_114 +clk_38|clk_38 +clk_38|clk_38 +clk_114|clk_gen_sdram +clk_114
   That's known and not a new problem. A much worse value would be.
 
 **Build switches that were really used.** The build log only echoes
-`$phgate`-style names, so read synthesis's own record, and only its **last**
+`$ila`-style names, so read synthesis's own record, and only its **last**
 run (the file keeps earlier runs):
 
 ```bash
 f=project_1/project_1.runs/synth_1/runme.log
 last=$(grep -n 'Starting synth_design' $f | tail -1 | cut -d: -f1)
-tail -n +$last $f | grep -iE '(cpu_clk_ratio|cpu_phase_gate_en|cpu_data_reg_en|cpu_phase_gate_dly|cpu_phase_gate_req|CPU040_DEBUG_ILA|DDR3_FASTRAM_ILA)[^a-z].*bound to' \
+tail -n +$last $f | grep -iE '(cpu_clk_ratio|CPU040_DEBUG_ILA|DDR3_FASTRAM_ILA)[^a-z].*bound to' \
   | sed -E 's/.*Parameter ([A-Za-z0-9_]+) bound to: *([0-9]+).*/\1=\2/' | sort -u
 ```
 
@@ -325,6 +326,7 @@ busy leg (below) about 40.
 | `./run.sh --nofill` | line fills through the 16-bit adapter (A/B reference) | pass |
 | `./run.sh --snoop` | chipset write snoops reach the 040's cache | pass |
 | `./run.sh --lwmutant`, `--mmumutant`, `--fillmutant`, `--snoopmutant` | deliberately broken copies of the wrapper | print `mutant failed as required` |
+| `REALSDRAM=1 ./run.sh --gatemutant` | the phase gate as first built (opens on enaWRreg) | print `mutant failed as required` (placement check) |
 | `./run.sh`, `./run.sh --mutant` | TG68K core **(changes in E4a: removed)** | pass / fail |
 
 **Switches** (environment variables in front of `./run.sh`):
@@ -335,7 +337,6 @@ busy leg (below) about 40.
 | `DMA_OVERLAP=1` | the chipset writes into the same cache lines the CPU uses, and reads back what the CPU wrote (P2C probe) |
 | `P7LOOPS=<n>` | repeat program phase 7 n times (use 10 with `DMA_OVERLAP`) |
 | `P2CBLOCK=<n>` | CPU writes a block of n longwords per loop for the chipset to read |
-| `CPU_PHASE_GATE_DLY=<d>` | the wrapper's phase-gate delay; default **3** (shipping). `0` = the gate as first built |
 | `CPU_RATIO=3` or `4` | CPU clock ratio (3 = D3) |
 | `CPU_PHASE=0..3` | start the CPU clock 0–3 clk periods late |
 | `NOCPU=1` | keep the CPU in reset: chipset-only control run |
@@ -350,8 +351,9 @@ a 16-bin histogram of where chip-RAM acknowledges land:
   later** than the real board, so bench step 3 means board step 2. The check
   already allows for that (`PLACEMENT_OFFSET` = 1) and fails a run if more than
   10 % land off the good steps.
-- Quiet leg `REALSDRAM=1 ./run.sh --ap040`: must pass. With
-  `CPU_PHASE_GATE_DLY=0` it must fail. That proves the check can catch the old,
+- Quiet leg `REALSDRAM=1 ./run.sh --ap040`: must pass. `REALSDRAM=1 ./run.sh
+  --gatemutant` (the gate opening on enaWRreg, as first built) must print
+  `mutant failed as required`. That proves the check can catch the old,
   corrupting gate.
 - Busy leg `REALSDRAM=1 DMA_OVERLAP=1 P7LOOPS=10 ./run.sh --ap040`: the placement
   histogram is only reported. Its summary lines must match the saved reference

@@ -2,6 +2,7 @@
 # REALSDRAM=1 DMA_OVERLAP=1 P7LOOPS=10 ./run.sh --ap040   (gate delay 3, calibrated monitor, P2C judging fix)
 # Taken from xsim_run_pass_ap040_e1ref.log at commit 102a3dc + the testbench patch in the same commit as this file.
 # Compare: grep -E '^(INFO: program phase|DDR3 CPU TB|=== DMA|=== P2C|=== placement|    ph )' <log> | diff sim/ddr3_cpu/ref/overlap_gate3.txt -  (ignoring these # lines)
+# E4a Task 4 folded the gate delay into the RTL and dropped the "(CPU_PHASE_GATE_DLY=3)" label from the placement line; every number is unchanged.
 INFO: program phase 1 at 245096667.0 ps
 INFO: program phase 2 at 619240527.0 ps
 INFO: program phase 3 at 1433887567.0 ps
@@ -12,7 +13,7 @@ INFO: program phase 8 at 2147655747.0 ps
 DDR3 CPU TB: PASS  (68k program completed all phases)
 === DMA window: 3670 writes during CPU execution, 0 wrong ===
 === P2C probe: 167 chipset reads of the CPU's counter, 9 value changes seen, 0 stale ===
-=== placement (CPU_PHASE_GATE_DLY=3): 2602 chip-RAM acknowledges, 342 off hardware phases 2/6/10/14/13 (bench offset +1) ===
+=== placement: 2602 chip-RAM acknowledges, 342 off hardware phases 2/6/10/14/13 (bench offset +1) ===
     ph  0 : 0
     ph  1 : 0
     ph  2 : 70

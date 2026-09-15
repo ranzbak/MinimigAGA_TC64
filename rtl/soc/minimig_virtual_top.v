@@ -38,11 +38,6 @@ module minimig_virtual_top #(
     parameter ap040_enable_cache = 1,
     parameter ap040_post_stores = 1,
     parameter cpu_clk_divide = 30,
-    // A/B switches for two D3 fixes (TG68K.vhd); 1 = as built.
-    parameter cpu_phase_gate_en = 1,
-    parameter cpu_data_reg_en = 1,
-    parameter cpu_phase_gate_dly = 0,
-    parameter cpu_phase_gate_req = 0,
     // Bring-up only (tools/vivado/build_ap040.tcl): an ILA on the AP68040's
     // fault outputs, so an exception can be named instead of guessed at.
     parameter CPU040_DEBUG_ILA = 0,
@@ -640,10 +635,6 @@ TG68K #(
     .ap040_has_fpu(ap040_has_fpu),
     .ap040_enable_cache(ap040_enable_cache),
     .ap040_post_stores(ap040_post_stores),
-    .cpu_phase_gate_en(cpu_phase_gate_en),
-    .cpu_data_reg_en(cpu_data_reg_en),
-    .cpu_phase_gate_dly(cpu_phase_gate_dly),
-    .cpu_phase_gate_req(cpu_phase_gate_req),
     // The island's clock RATIO, which the phase marker needs; the MMCM
     // divider is clk_114's (10) times it.
     .cpu_clk_ratio(cpu_clk_divide/10)

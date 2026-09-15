@@ -19,6 +19,7 @@
 #   ./run.sh --nofill     AP68040 with the fill channel off; the A/B reference
 #   ./run.sh --snoop      AP68040 with chipset DMA write snoops driven
 #   ./run.sh --snoopmutant  the same with the wrapper's snoop hold reverted; MUST fail
+#   REALSDRAM=1 ./run.sh --gatemutant  phase gate opening on enaWRreg (as first built); placement MUST fail
 #   ./run.sh --chipbus    turbochipram = 0, chip RAM over the 7 MHz chipset bus
 #
 # The flags combine in that order, e.g.
@@ -113,6 +114,13 @@ IS_SNOOPMUTANT=0
 if [ "$1" = "--snoop" ];       then IS_SNOOP=1;                             shift; set -- --ap040 "$@"; fi
 if [ "$1" = "--snoopmutant" ]; then IS_SNOOP=1; IS_SNOOPMUTANT=1; IS_MUTANT=1; shift; set -- --ap040 "$@"; fi
 
+# --gatemutant: the phase gate opening ON enaWRreg (the gate as first built),
+# i.e. TG68K.vhd's ena_sr(2) replaced by clkena_in. On hardware it lands chip-RAM
+# acknowledges on 3/7/11/15 and corrupts. With REALSDRAM=1 the placement
+# monitor MUST fail. Implies --ap040.
+IS_GATEMUTANT=0
+if [ "$1" = "--gatemutant" ]; then IS_GATEMUTANT=1; IS_MUTANT=1; shift; set -- --ap040 "$@"; fi
+
 # Which CPU core the wrapper is built with.  The AP68040 (lib/AP68040) presents
 # a TG68K-shaped port set, so the whole bench -- chipset model, DDR3 chain,
 # 68k program -- is the same; only the kernel inside rtl/soc/TG68K.vhd changes.
@@ -124,7 +132,8 @@ if [ "$CPU" = "ap040" ]; then
     # The mutant is a TG68K-specific mutation (the chipset_cycle term); there is
     # nothing for it to mean with a different kernel.
     if [ "$IS_MUTANT" = "1" ] && [ "$IS_LWMUTANT" = "0" ] && [ "$IS_MMUMUTANT" = "0" ] \
-       && [ "$IS_FILLMUTANT" = "0" ] && [ "$IS_SNOOPMUTANT" = "0" ]; then
+       && [ "$IS_FILLMUTANT" = "0" ] && [ "$IS_SNOOPMUTANT" = "0" ] \
+       && [ "$IS_GATEMUTANT" = "0" ]; then
         echo "--mutant and --ap040 are not a combination: the mutant is the" >&2
         echo "TG68K wrapper as it stood before the chipset_cycle fix." >&2
         exit 2
@@ -137,6 +146,7 @@ if [ "$CPU" = "ap040" ]; then
     if [ "$IS_NOFILL" = "1" ];     then VARIANT=nofill_ap040;     fi
     if [ "$IS_SNOOP" = "1" ];      then VARIANT=snoop_ap040;      fi
     if [ "$IS_SNOOPMUTANT" = "1" ]; then VARIANT=snoopmutant_ap040; fi
+    if [ "$IS_GATEMUTANT" = "1" ]; then VARIANT=gatemutant_ap040; fi
 fi
 
 # Turbo chip RAM.  Default on, as the bench has always run.  --chipbus clears
@@ -254,6 +264,15 @@ elif [ "$IS_SNOOPMUTANT" = "1" ]; then
         echo "--snoopmutant: the snoop port map moved; fix the sed in run.sh" >&2
         exit 2
     fi
+elif [ "$IS_GATEMUTANT" = "1" ]; then
+    # Generated, not checked in: the phase gate reverted to open on clkena_in.
+    TG68K_SRC="$W/TG68K_gatemutant.vhd"
+    sed "s|ELSIF ena_sr(2) = '1' AND slower(0) = '0' THEN|ELSIF clkena_in = '1' AND slower(0) = '0' THEN|" \
+        "$R/rtl/soc/TG68K.vhd" > "$TG68K_SRC"
+    if ! grep -q "ELSIF clkena_in = '1' AND slower(0) = '0' THEN" "$TG68K_SRC"; then
+        echo "--gatemutant: the phase gate line moved; fix the sed in run.sh" >&2
+        exit 2
+    fi
 elif [ "$IS_FILLMUTANT" = "1" ]; then
     # Generated: the line-fill router's word assembly reversed.  One line.
     TG68K_SRC="$W/TG68K_fillmutant.vhd"
@@ -342,7 +361,7 @@ AP040_ELAB=""
 if [ "$CPU" = "ap040" ]; then AP040_ELAB="-i $R/lib/AP68040/rtl -d CPU_AP040"; fi
 
 "$VIVADO_PATH/bin/xelab" -prj $PRJ -i "$LIB/tb/ddr3_core_xc7" $AP040_ELAB \
-    -d SOC_SIM ${REALSDRAM:+-d REALSDRAM -i $D} ${NOCPU:+-d NOCPU} ${DMA_OVERLAP:+-d DMA_OVERLAP} ${P2CBLOCK:+-d P2CBLOCK=$P2CBLOCK} ${CPU_RATIO:+-d CPU_RATIO=$CPU_RATIO} ${CPU_PHASE:+-d CPU_PHASE=$CPU_PHASE} ${CPU_PHASE_GATE_DLY:+-d CPU_PHASE_GATE_DLY=$CPU_PHASE_GATE_DLY} -debug typical -relax \
+    -d SOC_SIM ${REALSDRAM:+-d REALSDRAM -i $D} ${NOCPU:+-d NOCPU} ${DMA_OVERLAP:+-d DMA_OVERLAP} ${P2CBLOCK:+-d P2CBLOCK=$P2CBLOCK} ${CPU_RATIO:+-d CPU_RATIO=$CPU_RATIO} ${CPU_PHASE:+-d CPU_PHASE=$CPU_PHASE} -debug typical -relax \
     -L secureip -L unisims_ver -L unimacro_ver \
     ddr3_cpu_tb glbl -s cpu_sim
 
