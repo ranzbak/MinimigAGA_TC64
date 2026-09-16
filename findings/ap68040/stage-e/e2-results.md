@@ -90,3 +90,46 @@ match the E4a Task 6 suite exactly:
 
 Analysis clean (`xvlog` on the compat top and the adapter, `xvhdl` on the
 wrapper). Handshake signals drop 8 → 7 with `datatg68_r` gone.
+
+### Task 4a — the unit splitter as its own entity, with its own bench
+
+Task 4 rewrites the wrapper in one pass, and the bench that would judge it
+(`sim/ddr3_cpu`) is deleted and rebuilt in the same step -- so the riskiest
+part of it, the split table, would have had no verdict until the very end.
+It is now `rtl/soc/ap040_ram_seq.vhd`, a standalone entity with
+`sim/ram_seq/`, and it is green before the wrapper is touched.
+
+**The split table is superseded.** Instead of encoding D3's hand-written
+table, `ram_seq` walks the operand's byte range and takes, each step, as many
+bytes as fit in BOTH the current two-word window AND the current 16-byte
+line. "No unit crosses a line" becomes a property of the arithmetic rather
+than a table entry that can be mistyped -- and it is cheaper than the table:
+a longword at an odd offset takes TWO units (offset 1 -> bytes 1..3 as
+`bs=0111`, then byte 4), not the table's byte+word+byte. The worst case
+anywhere is two units.
+
+The unit count confirms the derivation arithmetically. Per sweep: byte 16
+units; word 15x1 plus offset-15 x2 = 17; long 7 even singles plus offset-14
+x2 plus 8 odd x2 = 25. That is 58, doubled for write+read = **116**, which is
+exactly what the bench counts.
+
+| leg | result |
+|---|---|
+| `./run.sh open` (gate held open) | **144 checked, 0 failed, 0 line crossings, 116 units, max 2 per access** |
+| `./run.sh gated` (gate open 1 cycle in 4, the D3 grid shape) | identical: 144 / 0 / 0 / 116 / max 2 |
+| `./run.sh mutant` (`line_mutant=1` drops the line limit) | **6 line crossings at word 39**, units 116 -> 112. MUST fail, and does |
+
+Note what the mutant does NOT catch: its data checks still report 0 failed,
+because the behavioural memory has no concept of a line and a crossing unit
+still lands the right bytes in it. The teeth are entirely in the explicit
+crossing assertion inside the memory model. That is the point -- in the real
+controller the same unit corrupts a DIFFERENT line, which is how this failed
+in Task 3: every functional check passed while the DDR3 backdoor showed 26
+mismatches exactly one 16-byte line apart.
+
+Two bench faults were caught by the tools before they could mislead, both of
+them mine: `access` is a VHDL reserved word, and `mem` then `units_here` each
+had two drivers. The `units_here` one is worth remembering -- an unresolved
+integer with two drivers fails elaboration outright, but `mem` is an array of
+a RESOLVED type, where a second driver silently resolves to 'X' and would
+have looked like a DUT fault.
