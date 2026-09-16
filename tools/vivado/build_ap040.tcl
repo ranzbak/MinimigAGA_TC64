@@ -109,6 +109,8 @@ add_src $R/rtl/ddr3/ddr3_cdc.v
 # project_1.xpr predates the file,
 # and a source that is not in sources_1 is simply not compiled.
 add_src $R/rtl/sdram/cpu_enable_cadence.v
+# Stage E2: the unit splitter TG68K.vhd instantiates for both RAM ports.
+add_src $R/rtl/soc/ap040_ram_seq.vhd
 
 set ipdir $R/ip/ddr3
 file mkdir $ipdir
