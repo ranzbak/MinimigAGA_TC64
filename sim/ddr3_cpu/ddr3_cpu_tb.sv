@@ -163,7 +163,11 @@ localparam [ 7:0] MH_TYPE  = 8'd10;
 // time out a healthy run.
 localparam time TIMEOUT = 64'd12_000_000_000;
 `else
-localparam time TIMEOUT = 64'd2_500_000_000;
+// 4 ms since Stage E2 Task 4b-2: the unit-port wrapper reaches phase 8 later
+// than E4a (--snoop 2517 us against 1763 us; the speed is Task 5's), and a
+// healthy --snoop run timed out at 2.5 ms in its last phase.  Still bounds a
+// hung mutant; the stall watchdog catches a wedge well before this.
+localparam time TIMEOUT = 64'd4_000_000_000;
 `endif
 //  // 2.5 ms (must be sized: an
                                               // unsized literal above 2^31 is
