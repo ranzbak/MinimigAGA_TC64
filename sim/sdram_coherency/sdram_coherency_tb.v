@@ -95,12 +95,16 @@ reg  [15:0]  chipWR = 16'd0, chipWR2 = 16'd0;
 wire [15:0]  chipRD;
 wire [47:0]  chip48;
 
-reg  [25:1]  cpuAddr  = 25'd0;
-reg  [6:0]   cpustate = 7'b0000100;   // bit6 longword, bit2 = cpuCSn (1 = idle), [1:0] = state
-reg  [15:0]  cpuWR    = 16'd0;
-reg          cpuL = 1'b0, cpuU = 1'b0;
-wire [15:0]  cpuRD;
-wire         cpuena;
+// The unit port (Stage E2 Task 3): cpu_req is a level, cpu_bs is
+// {A hi, A lo, A+2 hi, A+2 lo}, cpu_wdat/cpu_rdat are {word A, word A+2}.
+reg  [25:1]  cpuAddr  = 25'd0;        // word address of word A
+reg          cpu_req  = 1'b0;
+reg          cpu_we   = 1'b0;
+reg          cpu_ir   = 1'b0;
+reg  [ 3:0]  cpu_bs   = 4'b0000;
+reg  [31:0]  cpu_wdat = 32'd0;
+wire [31:0]  cpu_rdat;
+wire         cpu_ack;
 
 // (The +wrsync and -DCL_SNOOP fix switches went with those options in Stage
 // E4a; the DUT is always what HEAD builds.)
@@ -132,9 +136,9 @@ sdram_ctrl dut (
   .chipRD(chipRD), .chip48(chip48),
   .rtgAddr(26'd0), .rtgce(1'b0), .rtgfill(), .rtgRd(),
   .audAddr(23'd0), .audce(1'b0), .audfill(), .audRd(),
-  .cpuAddr(cpuAddr), .cpustate(cpustate), .cpuL(cpuL), .cpuU(cpuU),
-  .cpuWR(cpuWR), .cpuRD(cpuRD),
-  .enaWRreg(), .ena7RDreg(), .ena7WRreg(), .cpuena(cpuena)
+  .cpu_req(cpu_req), .cpu_we(cpu_we), .cpu_ir(cpu_ir), .cpu_wadr(cpuAddr),
+  .cpu_bs(cpu_bs), .cpu_wdat(cpu_wdat), .cpu_rdat(cpu_rdat),
+  .enaWRreg(), .ena7RDreg(), .ena7WRreg(), .cpu_ack(cpu_ack)
 );
 
 // ---------------------------------------------------------------- board / IOB delay model
@@ -299,75 +303,65 @@ end
 // ---------------------------------------------------------------- CPU sequencer
 // The port contract: cpuAddr stable one cycle before cpustate[2] falls
 // (sdram_ctrl.v:226), then held until cpuena, then released.
+// One unit: address and fields up, request high, wait for the level
+// acknowledge, request low.  Every other task is built from this.
+task cpu_unit;
+  input         we;
+  input         ir;
+  input  [22:1] a;          // word address of word A
+  input  [ 3:0] bs;
+  input  [31:0] wdat;
+  output [31:0] rdat;
+  integer c;
+  begin
+    @(posedge clk); cpuAddr = {3'b000, a}; cpu_we = we; cpu_ir = ir;
+                    cpu_bs = bs; cpu_wdat = wdat;
+                    ci_now = (a[22:12] == W_KICK[22:12]);   // sel_kickram
+    @(posedge clk); cpu_req = 1'b1;
+    c = 0;
+    @(posedge clk);
+    while (cpu_ack !== 1'b1 && c < 4000) begin @(posedge clk); c = c + 1; end
+    if (c >= 4000) begin
+      timeouts = timeouts + 1;
+      $display("TIMEOUT cpu_unit %0s %06h at %t", we ? "write" : "read", {a, 1'b0}, $time);
+    end
+    rdat = cpu_rdat;
+    @(posedge clk); cpu_req = 1'b0; cpu_we = 1'b0; cpu_ir = 1'b0; cpu_bs = 4'b0000;
+    @(posedge clk);
+  end
+endtask
+
+reg [31:0] cu_rd;
+
 task cpu_read;
   input  [22:1] a;
   output [15:0] d;
-  integer c;
   begin
-    @(posedge clk); cpuAddr = {3'b000, a};
-                    ci_now = (a[22:12] == W_KICK[22:12]);   // sel_kickram
-    @(posedge clk); cpustate = 7'b0000010;      // ramcs low, [1:0] = 10 data read
-    c = 0;
-    @(posedge clk);
-    while (cpuena !== 1'b1 && c < 4000) begin @(posedge clk); c = c + 1; end
-    if (c >= 4000) begin
-      timeouts = timeouts + 1;
-      $display("TIMEOUT cpu_read %06h at %t", {a, 1'b0}, $time);
-    end
-    d = cpuRD;
-    @(posedge clk); cpustate = 7'b0000100;
-    @(posedge clk);
+    cpu_unit(1'b0, 1'b0, a, 4'b1100, 32'd0, cu_rd);   // word A only
+    d = cu_rd[31:16];
   end
 endtask
 
 task cpu_write;
   input [22:1] a;
   input [15:0] d;
-  integer c;
   begin
-    @(posedge clk); cpuAddr = {3'b000, a}; cpuWR = d; cpuL = 1'b0; cpuU = 1'b0;
-                    ci_now = (a[22:12] == W_KICK[22:12]);   // sel_kickram
-    @(posedge clk); cpustate = 7'b0000011;      // ramcs low, [1:0] = 11 write
-    c = 0;
-    @(posedge clk);
-    while (cpuena !== 1'b1 && c < 4000) begin @(posedge clk); c = c + 1; end
-    if (c >= 4000) begin
-      timeouts = timeouts + 1;
-      $display("TIMEOUT cpu_write %06h at %t", {a, 1'b0}, $time);
-    end
-    @(posedge clk); cpustate = 7'b0000100;
-    @(posedge clk);
+    cpu_unit(1'b1, 1'b0, a, 4'b1100, {d, 16'd0}, cu_rd);
   end
 endtask
 
-// LONGWORD WRITE.  The AP68040 does these constantly and the 16-bit path
-// above never touches CPU_SM_WAIT_LOWORD / CPU_SM_WRITE_32BIT, which is a
-// third of cpu_cache_new's write logic and the half that any change to the
-// acknowledge has to keep working.  Protocol, from cpu_cache_new's IDLE
-// branch: assert the write with cpuLongword set and the word at A; the cache
-// acknowledges immediately (cpu_32bit_ena) and waits for cs to fall; assert
-// again with the word at A+2; that cycle issues the 32-bit SDRAM write.
+// LONGWORD WRITE.  On the unit port this is simply a two-word unit: one
+// request, both words, four byte selects.  The paired protocol it replaced
+// (cpuLongword, CPU_SM_WAIT_LOWORD, CPU_SM_WRITE_32BIT -- acknowledge the
+// first half at once and take the next bus cycle as its partner) is gone with
+// the 16-bit port, and with it the class of failure where a core that cannot
+// speak the pairing leaves the controller holding half a longword.
 task cpu_write_lw;
   input [22:1] a;
   input [15:0] w_hi;   // the word AT a
   input [15:0] w_lo;   // the word at a+2
-  integer c;
   begin
-    @(posedge clk); cpuAddr = {3'b000, a}; cpuWR = w_hi; cpuL = 1'b0; cpuU = 1'b0;
-    @(posedge clk); cpustate = 7'b1000011;      // longword | ramcs low | write
-    c = 0;
-    @(posedge clk);
-    while (cpuena !== 1'b1 && c < 4000) begin @(posedge clk); c = c + 1; end
-    if (c >= 4000) begin timeouts = timeouts + 1; $display("TIMEOUT lw phase1 %06h at %t", {a,1'b0}, $time); end
-    @(posedge clk); cpustate = 7'b0000100;      // cs high between the halves
-    @(posedge clk); cpuWR = w_lo;
-    @(posedge clk); cpustate = 7'b1000011;
-    c = 0;
-    @(posedge clk);
-    while (cpuena !== 1'b1 && c < 4000) begin @(posedge clk); c = c + 1; end
-    if (c >= 4000) begin timeouts = timeouts + 1; $display("TIMEOUT lw phase2 %06h at %t", {a,1'b0}, $time); end
-    @(posedge clk); cpustate = 7'b0000100;
-    @(posedge clk);
+    cpu_unit(1'b1, 1'b0, a, 4'b1111, {w_hi, w_lo}, cu_rd);
   end
 endtask
 
@@ -396,25 +390,13 @@ reg [7:0] swp_gold [0:63];              // the window's bytes as last written
 reg       p_req_sw = 1'b0;               // mailbox: main asks cpu_seq to sweep
 
 // One word cycle with explicit byte selects (active low).
-task cpu_write_bs;
+task cpu_write_bs;                       // one word, explicit byte selects
   input [22:1] a;
   input [15:0] d;
   input        u_n;
   input        l_n;
-  integer c;
   begin
-    @(posedge clk); cpuAddr = {3'b000, a}; cpuWR = d; cpuU = u_n; cpuL = l_n;
-                    ci_now = 1'b0;
-    @(posedge clk); cpustate = 7'b0000011;      // ramcs low, [1:0] = 11 write
-    c = 0;
-    @(posedge clk);
-    while (cpuena !== 1'b1 && c < 4000) begin @(posedge clk); c = c + 1; end
-    if (c >= 4000) begin
-      timeouts = timeouts + 1;
-      $display("TIMEOUT cpu_write_bs %06h at %t", {a, 1'b0}, $time);
-    end
-    @(posedge clk); cpustate = 7'b0000100; cpuU = 1'b0; cpuL = 1'b0;
-    @(posedge clk);
+    cpu_unit(1'b1, 1'b0, a, {~u_n, ~l_n, 2'b00}, {d, 16'd0}, cu_rd);
   end
 endtask
 
@@ -437,23 +419,40 @@ task cpu_access;
     wsh  = (size == 2'd0) ? {wdat[7:0], 24'd0} :
            (size == 2'd1) ? {wdat[15:0], 16'd0} : wdat;
     rsh  = 32'd0;
+    // THE UNIT SPLIT TABLE (Stage E2, plan D3).  Take as much as fits in one
+    // unit -- at most two consecutive words inside one 16-byte line -- and
+    // repeat.  A longword at an even offset is ONE request; an odd-aligned one
+    // becomes byte + word + byte, as the old adapter split it, except each
+    // piece is now a unit instead of a 16-bit bus cycle.
     while (left != 3'd0) begin
-      if (!cur[0] && left >= 3'd2) begin
-        // a whole word at an even address
-        if (we) cpu_write_bs(cur[22:1], wsh[31:16], 1'b0, 1'b0);
+      if (!cur[0] && left >= 3'd4 && cur[3:0] != 4'd14) begin
+        // a longword at an even offset, inside the line: one two-word unit
+        if (we) cpu_unit(1'b1, 1'b0, cur[22:1], 4'b1111, wsh, cu_rd);
         else begin
-          cpu_read(cur[22:1], d);
-          rsh = {rsh[15:0], d};
+          cpu_unit(1'b0, 1'b0, cur[22:1], 4'b1111, 32'd0, cu_rd);
+          rsh = cu_rd;
+        end
+        wsh  = 32'd0;
+        cur  = cur + 23'd4;
+        left = left - 3'd4;
+      end else if (!cur[0] && left >= 3'd2) begin
+        // a whole word at an even address: one one-word unit
+        if (we) cpu_unit(1'b1, 1'b0, cur[22:1], 4'b1100, {wsh[31:16], 16'd0}, cu_rd);
+        else begin
+          cpu_unit(1'b0, 1'b0, cur[22:1], 4'b1100, 32'd0, cu_rd);
+          rsh = {rsh[15:0], cu_rd[31:16]};
         end
         wsh  = {wsh[15:0], 16'd0};
         cur  = cur + 23'd2;
         left = left - 3'd2;
       end else begin
-        // one byte: the high half of the word when even (UDS), low when odd
-        if (we) cpu_write_bs(cur[22:1], {wsh[31:24], wsh[31:24]}, cur[0], !cur[0]);
+        // one byte: the high half of the word when even, the low half when odd
+        if (we) cpu_unit(1'b1, 1'b0, cur[22:1],
+                         cur[0] ? 4'b0100 : 4'b1000,
+                         {wsh[31:24], wsh[31:24], 16'd0}, cu_rd);
         else begin
-          cpu_read(cur[22:1], d);
-          rsh = {rsh[23:0], (cur[0] ^ SWEEPMUT[0]) ? d[7:0] : d[15:8]};
+          cpu_unit(1'b0, 1'b0, cur[22:1], cur[0] ? 4'b0100 : 4'b1000, 32'd0, cu_rd);
+          rsh = {rsh[23:0], (cur[0] ^ SWEEPMUT[0]) ? cu_rd[23:16] : cu_rd[31:24]};
         end
         wsh  = {wsh[23:0], 8'd0};
         cur  = cur + 23'd1;

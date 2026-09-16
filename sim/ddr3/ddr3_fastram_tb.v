@@ -34,12 +34,16 @@ initial begin #1731; forever #5000 clk_mem = ~clk_mem; end
 // ---------------------------------------------------------------- DUT wires
 reg          reset_in  = 1'b0;                    // active low
 reg          cache_rst = 1'b0;                    // active low
-reg  [25:1]  cpuAddr   = 25'd0;
-reg  [ 6:0]  cpustate  = 7'b0000100;              // bit2 = 1: not selected
-reg          cpuL = 1'b1, cpuU = 1'b1;
-reg  [15:0]  cpuWR = 16'd0;
-wire [15:0]  cpuRD;
-wire         cpuena;
+// The unit port (Stage E2 Task 3): see rtl/sdram/cpu_cache_new.v.
+reg  [25:1]  cpuAddr   = 25'd0;                   // word address of word A
+reg          cpu_req   = 1'b0;
+reg          cpu_we    = 1'b0;
+reg          cpu_ir    = 1'b0;
+reg  [ 3:0]  cpu_bs    = 4'b0000;
+reg  [31:0]  cpu_wdat  = 32'd0;
+wire [31:0]  cpu_rdat;
+wire         cpu_ack;
+reg  [31:0]  cu_rd;
 wire         ddr_ready;
 
 wire         req_valid;
@@ -58,13 +62,14 @@ ddr3_fastram dut (
   .cacheline_clr  (1'b0),
   .cpu_cache_ctrl (4'b0011),
   .ddr_ready      (ddr_ready),
-  .cpuAddr        (cpuAddr),
-  .cpustate       (cpustate),
-  .cpuL           (cpuL),
-  .cpuU           (cpuU),
-  .cpuWR          (cpuWR),
-  .cpuRD          (cpuRD),
-  .cpuena         (cpuena),
+  .cpu_req        (cpu_req),
+  .cpu_we         (cpu_we),
+  .cpu_ir         (cpu_ir),
+  .cpu_wadr       (cpuAddr),
+  .cpu_bs         (cpu_bs),
+  .cpu_wdat       (cpu_wdat),
+  .cpu_rdat       (cpu_rdat),
+  .cpu_ack        (cpu_ack),
   .clk_mem        (clk_mem),
   .init_done      (init_done),
   .req_valid      (req_valid),
@@ -150,7 +155,29 @@ endtask
 // sim/sdram_timing/sdram_timing_tb.v does.
 task cpu_idle;
   begin
-    cpustate = 7'b0000100;
+    cpu_req = 1'b0; cpu_we = 1'b0; cpu_ir = 1'b0; cpu_bs = 4'b0000;
+    repeat (2) @(posedge clk);
+  end
+endtask
+
+// One unit, held until the level acknowledge.
+task cpu_unit;
+  input          we;
+  input          ir;
+  input  [25:1]  a;
+  input  [ 3:0]  bs;
+  input  [31:0]  wdat;
+  output [31:0]  rdat;
+  output integer c;
+  begin
+    @(posedge clk); cpuAddr = a; cpu_we = we; cpu_ir = ir; cpu_bs = bs; cpu_wdat = wdat;
+    @(posedge clk); cpu_req = 1'b1;
+    c = 0;
+    @(posedge clk);
+    while (cpu_ack !== 1'b1 && c < TMO) begin @(posedge clk); c = c + 1; end
+    rdat = cpu_rdat;
+    if (c >= TMO) $display("  ** cpu_unit timeout at word address %h", a);
+    @(posedge clk); cpu_idle;
     repeat (2) @(posedge clk);
   end
 endtask
@@ -161,15 +188,8 @@ task cpu_read;
   output [15:0]  d;
   output integer c;
   begin
-    @(posedge clk); cpuAddr = a; cpuU = 1'b0; cpuL = 1'b0;
-    @(posedge clk); cpustate = ir ? 7'b0000000 : 7'b0000010;
-    c = 0;
-    @(posedge clk);
-    while (cpuena !== 1'b1 && c < TMO) begin @(posedge clk); c = c + 1; end
-    d = cpuRD;
-    if (c >= TMO) $display("  ** cpu_read timeout at word address %h", a);
-    @(posedge clk); cpu_idle;
-    repeat (2) @(posedge clk);
+    cpu_unit(1'b0, ir, a, 4'b1100, 32'd0, cu_rd, c);
+    d = cu_rd[31:16];
   end
 endtask
 
@@ -179,26 +199,17 @@ task cpu_write;
   input  [ 1:0]  bs;                              // {upper, lower}, active high
   output integer c;
   begin
-    @(posedge clk); cpuAddr = a; cpuWR = d; cpuU = ~bs[1]; cpuL = ~bs[0];
-    @(posedge clk); cpustate = 7'b0000011;
-    c = 0;
-    @(posedge clk);
-    while (cpuena !== 1'b1 && c < TMO) begin @(posedge clk); c = c + 1; end
-    if (c >= TMO) $display("  ** cpu_write timeout at word address %h", a);
-    @(posedge clk); cpu_idle;
-    repeat (2) @(posedge clk);
+    cpu_unit(1'b1, 1'b0, a, {bs, 2'b00}, {d, 16'd0}, cu_rd, c);
   end
 endtask
 
-// 32-bit write, as the TG68K issues it: word at a, then word at a+1.
-// cpustate[6] (cpuLongword) is asserted on the FIRST bus cycle ONLY:
-// rtl/tg68k/TG68KdotC_Kernel.vhd line 424 drives longword <= not
-// memmaskmux(3), and memmask shifts left two bits after each bus cycle
-// (line 1082), so bit 3 is '1' -- longword '0' -- for the second word.
-// That is what stops cpu_cache_new starting a fresh 32-bit sequence on the
-// second half, and it is what makes a line-straddling longword degrade
-// safely into two independent 16-bit writes (longword_en also masks
-// cpuAddr_r[3:1] == 3'b111).
+// 32-bit write.  On the unit port this is ONE request carrying both words,
+// with all four byte selects.  The TG68K's paired protocol it replaced --
+// cpustate[6] asserted on the first bus cycle only, the cache acknowledging
+// the first half and taking the next cycle as its partner -- is gone with the
+// 16-bit port, and so is the failure mode where a core that cannot speak the
+// pairing leaves the controller holding half a longword.  The wrapper never
+// sends a unit that would straddle a line (the case longword_en used to mask).
 task cpu_write32;
   input  [25:1]  a;
   input  [15:0]  w0;
@@ -206,22 +217,18 @@ task cpu_write32;
   output integer c;
   integer c2;
   begin
-    @(posedge clk); cpuAddr = a; cpuWR = w0; cpuU = 1'b0; cpuL = 1'b0;
-    @(posedge clk); cpustate = 7'b1000011;
-    c = 0;
-    @(posedge clk);
-    while (cpuena !== 1'b1 && c < TMO) begin @(posedge clk); c = c + 1; end
-    if (c >= TMO) $display("  ** cpu_write32 lo timeout at word address %h", a);
-    @(posedge clk); cpu_idle;
-    @(posedge clk); cpuAddr = a + 1'b1; cpuWR = w1;
-    @(posedge clk); cpustate = 7'b0000011;      // longword flag drops here
-    c2 = 0;
-    @(posedge clk);
-    while (cpuena !== 1'b1 && c2 < TMO) begin @(posedge clk); c2 = c2 + 1; end
-    if (c2 >= TMO) $display("  ** cpu_write32 hi timeout at word address %h", a);
-    @(posedge clk); cpu_idle;
-    repeat (2) @(posedge clk);
-    c = c + c2;
+    if (a[3:1] == 3'b111) begin
+      // The second word is in the NEXT line, so this is not one unit: the
+      // wrapper splits it, and so must the bench.  (The 16-bit port degraded
+      // the same case into two independent cycles via longword_en; sending it
+      // as a single unit put word A+2 eight words low -- 26 backdoor
+      // mismatches, every one exactly a line apart, on 2026-09-16.)
+      cpu_unit(1'b1, 1'b0, a,        4'b1100, {w0, 16'd0}, cu_rd, c);
+      cpu_unit(1'b1, 1'b0, a + 1'b1, 4'b1100, {w1, 16'd0}, cu_rd, c2);
+      c = c + c2;
+    end else begin
+      cpu_unit(1'b1, 1'b0, a, 4'b1111, {w0, w1}, cu_rd, c);
+    end
   end
 endtask
 
@@ -429,11 +436,11 @@ initial begin
   for (k = 0; k < 3; k = k + 1) begin
     wa = WBASE + 16'h0400 + k * 8;
     // start a read and pull reset while it is somewhere in the CDC/memory
-    @(posedge clk); cpuAddr = wa; cpuU = 1'b0; cpuL = 1'b0;
-    @(posedge clk); cpustate = 7'b0000000;
+    @(posedge clk); cpuAddr = wa; cpu_bs = 4'b1100; cpu_we = 1'b0; cpu_ir = 1'b1;
+    @(posedge clk); cpu_req = 1'b1;
     repeat (3 + k * 12) @(posedge clk);
     reset_in = 1'b0; cache_rst = 1'b0;
-    cpustate = 7'b0000100;
+    cpu_req = 1'b0; cpu_ir = 1'b0; cpu_bs = 4'b0000;
     repeat (10) @(posedge clk);
     reset_in = 1'b1; cache_rst = 1'b1;
     wait (ddr_ready === 1'b1);

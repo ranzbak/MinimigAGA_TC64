@@ -85,17 +85,19 @@ module sdram_ctrl (
     input wire            audce,
     output wire           audfill,
     output wire    [15:0] audRd,
-    // cpu
-    input  wire    [25:1] cpuAddr,
-    input  wire [  7-1:0] cpustate,
-    input  wire           cpuL,
-    input  wire           cpuU,
-    input  wire [ 16-1:0] cpuWR,
-    output wire [ 16-1:0] cpuRD,
+    // cpu -- the unit port (Stage E2 Task 3): at most two consecutive words
+    // inside one 16-byte line, one byte select per byte.  See cpu_cache_new.v.
+    input  wire           cpu_req,
+    input  wire           cpu_we,
+    input  wire           cpu_ir,
+    input  wire    [25:1] cpu_wadr,
+    input  wire [  4-1:0] cpu_bs,
+    input  wire [ 32-1:0] cpu_wdat,
+    output wire [ 32-1:0] cpu_rdat,
     output reg            enaWRreg,
     output reg            ena7RDreg,
     output reg            ena7WRreg,
-    output wire           cpuena
+    output wire           cpu_ack
 );
 
 
@@ -164,8 +166,6 @@ reg           sdata_oe;
 reg  [26-1:2] zmAddr;
 wire          ccache_fill;
 wire          ccachehit;
-wire          cpuLongword;
-wire          cpuCSn;
 //reg  [ 8-1:0] hostslot_cnt;
 reg  [ 8-1:0] reset_cnt;
 reg           reset;
@@ -212,7 +212,6 @@ reg           cache_fill_2;
 reg  [16-1:0] chip48_1;
 reg  [16-1:0] chip48_2;
 reg  [16-1:0] chip48_3;
-wire          longword_en;
 wire          writebuffer_req;
 wire [26-1:1] writebufferAddr;
 wire [16-1:0] writebufferWR;
@@ -223,7 +222,9 @@ reg  [16-1:0] writebufferWR2_reg;
 wire [ 2-1:0] writebuffer_dqm2;
 reg           writebuffer_hold;
 
-reg  [26-1:1] cpuAddr_r; // registered CPU address - cpuAddr must be stable one cycle before cpuCSn
+// Registered CPU address.  With the unit port the request is a level held
+// until the acknowledge, so this is simply one cycle behind cpu_req rising.
+reg  [26-1:1] cpuAddr_r;
 
 reg     [3:0] sd_cmd; // current command sent to sd ram
 
@@ -237,10 +238,7 @@ assign sd_we  = sd_cmd[0];
 // misc signals
 ////////////////////////////////////////
 
-always @(posedge sysclk) cpuAddr_r <= cpuAddr;
-
-assign cpuLongword = cpustate[6];
-assign cpuCSn      = cpustate[2];
+always @(posedge sysclk) cpuAddr_r <= cpu_wadr;
 
 ////////////////////////////////////////
 // reset
@@ -300,16 +298,14 @@ cpu_cache_new cpu_cache (
     .cpu_cache_ctrl   (cpu_cache_ctrl), // CPU cache control
     .cache_inhibit    (cache_inhibit), // cache inhibit
     .cacheline_clr    (cacheline_clr),
-    .cpu_cs           (!cpuCSn), // cpu activity
-    .cpu_adr          ({cpuAddr, 1'b0}), // cpu address
-    .cpu_bs           ({!cpuU, !cpuL}), // cpu byte selects
-    .cpu_32bit        (longword_en), // cpu 32 bit write
-    .cpu_we           (&cpustate[1:0]), // cpu write
-    .cpu_ir           (!(|cpustate[1:0])), // cpu instruction read
-    .cpu_dr           (cpustate[1] && !cpustate[0]), // cpu data read
-    .cpu_dat_w        (cpuWR), // cpu write data
-    .cpu_dat_r        (cpuRD), // cpu read data
-    .cpu_ack          (ccachehit), // cpu acknowledge
+    .cpu_req          (cpu_req),
+    .cpu_we           (cpu_we),
+    .cpu_ir           (cpu_ir),
+    .cpu_wadr         (cpu_wadr),
+    .cpu_bs           (cpu_bs),
+    .cpu_wdat         (cpu_wdat),
+    .cpu_rdat         (cpu_rdat),
+    .cpu_ack          (ccachehit),
     .sdr_dat_r        (sdata_reg), // sdram read data
     .sdr_read_req     (cache_req), // sdram read request from cache
     .sdr_read_ack     (readcache_fill), // sdram read acknowledge to cache
@@ -324,8 +320,7 @@ cpu_cache_new cpu_cache (
     .snoop_bs         ({!chipU2, !chipL2, !chipU, !chipL})
 );
 
-assign longword_en = cpuLongword && cpuAddr_r[3:1]!=3'b111 && cpustate[1:0]==2'b11;
-assign cpuena = ccachehit;
+assign cpu_ack = ccachehit;
 assign readcache_fill = (cache_fill_1 && slot1_type == CPU_READCACHE) || (cache_fill_2 && slot2_type == CPU_READCACHE);
 
 //// chip line read ////
@@ -600,7 +595,7 @@ always @ (posedge sysclk) begin
                     sdaddr              <= #1 cpuAddr_r[22:10];
                     ba                  <= #1 cpuAddr_r[24:23];
                     slot1_bank          <= #1 cpuAddr_r[24:23];
-                    slot1_dqm           <= #1 {cpuU,cpuL};
+                    slot1_dqm           <= #1 2'b00;
                     sd_cmd              <= #1 CMD_ACTIVE;
                     slot1_addr          <= #1 {cpuAddr_r[25:1], 1'b0};
                 end
@@ -726,7 +721,7 @@ always @ (posedge sysclk) begin
                     sdaddr            <= #1 cpuAddr_r[22:10];
                     ba                <= #1 cpuAddr_r[24:23];
                     slot2_bank        <= #1 cpuAddr_r[24:23];
-                    slot2_dqm         <= #1 {cpuU, cpuL};
+                    slot2_dqm         <= #1 2'b00;
                     slot2_addr        <= #1 {cpuAddr_r[25:1], 1'b0};
                     sd_cmd            <= #1 CMD_ACTIVE;
                 end

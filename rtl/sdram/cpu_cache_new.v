@@ -18,17 +18,32 @@ module cpu_cache_new (
   input  wire [  4-1:0] cpu_cache_ctrl, // CPU cache control
   input  wire           cache_inhibit, // cache inhibit
   input  wire           cacheline_clr,
-  // cpu
-  input  wire           cpu_cs, // cpu activity
-  input  wire [ 26-1:0] cpu_adr, // cpu address
-  input  wire [  2-1:0] cpu_bs, // cpu byte selects
-  input  wire           cpu_32bit, // cpu 32 bit write
+  // cpu -- the UNIT PORT (Stage E2 Task 3).  One request is at most two
+  // CONSECUTIVE WORDS INSIDE ONE 16-BYTE LINE, with a byte select per byte.
+  // The wrapper splits anything that does not fit (an odd-aligned longword, a
+  // word at line offset 15, a longword at 14) with the table in
+  // findings/ap68040/stage-e/2026-09-15-e2-plan.md; this module therefore never
+  // sees an access that crosses a line, and a longword is ONE request instead
+  // of the paired cpu_32bit protocol the bus16 adapter could not speak.
+  //
+  //   cpu_req    level, every field below stable while it is high
+  //   cpu_wadr   word address of word A
+  //   cpu_bs     {A hi, A lo, A+2 hi, A+2 lo}, active high; bs[1:0] != 0 means
+  //              a two-word unit, and then cpu_wadr[3:1] != 3'b111
+  //   cpu_wdat   {word A, word A+2}
+  //   cpu_rdat   {word A, word A+2}, valid with cpu_ack
+  //   cpu_ack    LEVEL, high only while cpu_req is high.  Unlike the old port
+  //              this never answers before the request: the line buffer's
+  //              "answer without waiting for the select" fast path is gone, and
+  //              with it the class of bug that needed bus_fresh in the wrapper.
+  input  wire           cpu_req,
   input  wire           cpu_we, // cpu write
-  input  wire           cpu_ir, // cpu instruction read
-  input  wire           cpu_dr, // cpu data read
-  input  wire [ 16-1:0] cpu_dat_w, // cpu write data
-  output reg  [ 16-1:0] cpu_dat_r, // cpu read data
-  output                cpu_ack, // cpu acknowledge
+  input  wire           cpu_ir, // cpu instruction read (selects the I ways)
+  input  wire [ 26-1:1] cpu_wadr,
+  input  wire [  4-1:0] cpu_bs,
+  input  wire [ 32-1:0] cpu_wdat,
+  output reg  [ 32-1:0] cpu_rdat,
+  output                cpu_ack,
   // sdram
   input  wire [ 16-1:0] sdr_dat_r, // sdram read data
   output reg            sdr_read_req, // sdram read request from cache
@@ -56,9 +71,12 @@ module cpu_cache_new (
   reg           write_ena;
   // state signals
   reg           fill;
+  // '1' while the next CPU_SM_FILL2 beat is the second word of the unit
+  // (word A+2).  The SDRAM burst is wrapped and starts at word A, so exactly
+  // one beat completes a two-word unit.
+  reg           fill_first;
   reg           cpu_acked;
   reg           cpu_cache_ack;
-  wire          cpu_32bit_ena;
   reg  [11-1:0] cpu_sm_adr;
   wire [11-1:0] cpu_sm_adr_next = { cpu_sm_adr[10:3], cpu_sm_adr[2:0] + 2'b01 };
   reg           cpu_sm_itag_we;
@@ -204,8 +222,12 @@ module cpu_cache_new (
   localparam [3:0]
   CPU_SM_INIT  = 4'd0,
   CPU_SM_IDLE  = 4'd1,
-  CPU_SM_WAIT_LOWORD = 4'd2,
-  CPU_SM_WRITE_32BIT = 4'd3,
+  // 4'd2 and 4'd3 were CPU_SM_WAIT_LOWORD and CPU_SM_WRITE_32BIT, the paired
+  // 32-bit write protocol: one request acknowledged at once, then a second bus
+  // cycle taken as its low half.  The unit port carries both words in ONE
+  // request, so the pair is gone; WRITE2 is the second WAY write an
+  // odd-aligned unit needs, which is a different thing entirely.
+  CPU_SM_WRITE2 = 4'd2,
   CPU_SM_WRITE = 4'd4,
   CPU_SM_WB    = 4'd5,
   CPU_SM_READ  = 4'd6,
@@ -229,7 +251,7 @@ module cpu_cache_new (
   always @ (posedge clk) begin
     if (rst)
       cc_clr_r <= #1 2'd0;
-    else if (!cpu_cs)
+    else if (!cpu_req)
       cc_clr_r <= #1 {cc_clr_r[0], cpu_cache_ctrl[3]};
   end
 
@@ -242,27 +264,41 @@ module cpu_cache_new (
       cc_en  <= #1 1'b0;
       cc_fr  <= #1 1'b0;
       cc_clr <= #1 1'b0;
-    end else if (!cpu_cs) begin
+    end else if (!cpu_req) begin
       cc_en  <= #1 cpu_cache_enable;
       cc_fr  <= #1 cpu_cache_freeze;
       cc_clr <= #1 cpu_cache_clear;
     end
   end
 
-  // slice up cpu address
-  assign cpu_adr_blk = cpu_adr[3:1]; // cache block address (inside cache row), 3 bits for 8x16 rows
-  assign cpu_adr_idx = cpu_adr[11:4]; // cache row address, 8 bits
-  assign cpu_adr_tag = cpu_adr[25:12]; // tag, 14 bits
+  // slice up the cpu address.  cpu_wadr is a WORD address, so bit k of it is
+  // bit k of the byte address the old cpu_adr carried: the slices are unchanged.
+  assign cpu_adr_blk = cpu_wadr[3:1]; // cache block address (inside cache row), 3 bits for 8x16 rows
+  assign cpu_adr_idx = cpu_wadr[11:4]; // cache row address, 8 bits
+  assign cpu_adr_tag = cpu_wadr[25:12]; // tag, 14 bits
 
-  always @(posedge clk) cpu_cacheline_match <= cpu_adr[25:4] == cpu_cacheline_adr && !cpu_cacheline_dirty;
-  assign cpu_cacheline_valid = cpu_cacheline_match && (cpu_sm_state == CPU_SM_IDLE) && (cpu_ir || cpu_dr) && !cache_inhibit;
-  assign cpu_32bit_ena = cpu_32bit && cpu_cs && write_ena;
-  assign cpu_ack = cpu_cache_ack || cpu_cacheline_valid || cpu_32bit_ena;
+  // The unit's two words.  cpu_blk_b never wraps out of the line: the wrapper
+  // splits a request that would cross one, so cpu_bs[1:0] != 0 implies
+  // cpu_wadr[3:1] != 3'b111.
+  wire [3-1:0] cpu_blk_a = cpu_wadr[3:1];
+  wire [3-1:0] cpu_blk_b = cpu_wadr[3:1] + 3'd1;
+  wire         cpu_two   = |cpu_bs[1:0];   // a two-word unit
+
+  always @(posedge clk) cpu_cacheline_match <= cpu_wadr[25:4] == cpu_cacheline_adr && !cpu_cacheline_dirty;
+  assign cpu_cacheline_valid = cpu_cacheline_match && (cpu_sm_state == CPU_SM_IDLE) && !cpu_we && !cache_inhibit;
+  // ACKNOWLEDGE ONLY WHILE A REQUEST IS UP.  The old port drove cpu_ack from a
+  // registered compare of the LIVE address, so it answered before the select
+  // and even with no access outstanding; a consumer that judged that answer
+  // against the wrong address is the D3-FIX walker bug, and bus_fresh in the
+  // wrapper existed to mask exactly that one cycle.  Gating on cpu_req removes
+  // the class.
+  assign cpu_ack = cpu_req && (cpu_cache_ack || cpu_cacheline_valid);
 
   // cpu side state machine
   always @ (posedge clk) begin
     if (rst) begin
       fill              <= #1 1'b0;
+      fill_first        <= #1 1'b0;
       sdr_read_req      <= #1 1'b0;
       sdr_write_req     <= #1 1'b0;
       write_ena         <= #1 1'b0;
@@ -290,8 +326,11 @@ module cpu_cache_new (
       cpu_sm_dram1_we   <= #1 1'b0;
       cpu_sm_bs         <= #1 4'b1111;
 
-      // Fill the 16 bits from the two CPU cache lines 
-      cpu_dat_r <= {cpu_cacheline_hi[cpu_adr_blk], cpu_cacheline_lo[cpu_adr_blk]};
+      // The unit's two words out of the line buffer, every clock: word A in
+      // the high half, word A+2 in the low half.  A one-word unit simply
+      // ignores the low half (its cpu_bs[1:0] is zero).
+      cpu_rdat <= {cpu_cacheline_hi[cpu_blk_a], cpu_cacheline_lo[cpu_blk_a],
+                   cpu_cacheline_hi[cpu_blk_b], cpu_cacheline_lo[cpu_blk_b]};
 
       if (cacheline_clr) cpu_cacheline_dirty <= #1 1'b1;
 
@@ -309,23 +348,24 @@ module cpu_cache_new (
           cpu_adr_blk_ptr <= #1 cpu_adr_blk;
           write_ena <= #1 !sdr_write_req && !sdr_write_ack;
           // waiting for CPU access
-          if (cpu_cs) begin
+          if (cpu_req) begin
             if (cpu_we) begin
               if (!cpu_cacheline_match) cpu_cacheline_dirty <= #1 1'b1; //invalidate
-              if (cpu_bs[0]) cpu_cacheline_lo[cpu_adr_blk_ptr] <= #1 cpu_dat_w[ 7: 0]; //update low byte
-              if (cpu_bs[1]) cpu_cacheline_hi[cpu_adr_blk_ptr] <= #1 cpu_dat_w[15: 8]; //update hi byte
+              // the unit's bytes, into the line buffer: word A then word A+2
+              if (cpu_bs[3]) cpu_cacheline_hi[cpu_blk_a] <= #1 cpu_wdat[31:24];
+              if (cpu_bs[2]) cpu_cacheline_lo[cpu_blk_a] <= #1 cpu_wdat[23:16];
+              if (cpu_bs[1]) cpu_cacheline_hi[cpu_blk_b] <= #1 cpu_wdat[15: 8];
+              if (cpu_bs[0]) cpu_cacheline_lo[cpu_blk_b] <= #1 cpu_wdat[ 7: 0];
 
               if (write_ena) begin
-                sdr_adr <= #1 cpu_adr[25:1];
-                sdr_dqm_w <= #1 {2'b11, ~cpu_bs};
-                sdr_dat_w <= #1 {cpu_dat_w, cpu_dat_w};
-                if (cpu_32bit) begin
-                  cpu_cache_ack <= #1 1'b1;
-                  cpu_sm_state <= #1 CPU_SM_WAIT_LOWORD;
-                end else begin
-                  sdr_write_req <= #1 1'b1;
-                  cpu_sm_state <= #1 CPU_SM_WRITE;
-                end
+                // ONE write-buffer request for the whole unit.  sdram_ctrl
+                // writes sdr_dat_w[15:0] at sdr_adr and [31:16] at sdr_adr+1,
+                // so the low half carries word A; dqm is active low.
+                sdr_adr   <= #1 cpu_wadr[25:1];
+                sdr_dqm_w <= #1 ~{cpu_bs[1:0], cpu_bs[3:2]};
+                sdr_dat_w <= #1 {cpu_wdat[15:0], cpu_wdat[31:16]};
+                sdr_write_req <= #1 1'b1;
+                cpu_sm_state <= #1 CPU_SM_WRITE;
               end
             end else if (!cpu_cacheline_valid) begin
               cpu_adr_blk_ptr <= #1 cpu_adr_blk_ptr_next;
@@ -339,40 +379,37 @@ module cpu_cache_new (
               cpu_sm_state <= #1 CPU_SM_IDLE;
           end
         end
-        CPU_SM_WAIT_LOWORD : begin
-          if (!cpu_cs) cpu_sm_state <= #1 CPU_SM_WRITE_32BIT;
-        end
-        CPU_SM_WRITE_32BIT : if (cpu_cs) begin
-          sdr_dqm_w[3:2] <= #1 ~cpu_bs;
-          sdr_dat_w[31:16] <= #1 cpu_dat_w;
-          sdr_write_req <= #1 1'b1;
-
-          if (cpu_bs[0])     cpu_cacheline_lo[cpu_adr_blk]      <= #1 cpu_dat_w[ 7: 0]; //update low byte
-          if (cpu_bs[1])     cpu_cacheline_hi[cpu_adr_blk]      <= #1 cpu_dat_w[15: 8]; //update hi byte
-
-          // on hit update cache, on miss no update neccessary; tags don't get updated on writes
-          if (!cpu_adr_blk[0]) begin
-            // unaligned 32 bit write, hi word
-            cpu_sm_bs <= #1 {~sdr_dqm_w[1:0], 2'b00};
-            cpu_sm_mem_dat_w[31:16] <= #1 sdr_dat_w[15:0];
-            cpu_sm_state <= #1 CPU_SM_WRITE;
-          end else begin
-            // aligned 32 bit write, do it in one step
-            cpu_sm_bs <= #1 {cpu_bs, ~sdr_dqm_w[1:0]};
-            cpu_sm_mem_dat_w <= #1 {cpu_dat_w, sdr_dat_w[15:0]};
+        // A way entry at {idx, blk[2:1]} holds word 2m in bits [15:0] and word
+        // 2m+1 in [31:16]; cpu_sm_bs is {hi 2m+1, lo 2m+1, hi 2m, lo 2m}.  A
+        // unit whose word A is EVEN sits entirely in one entry; an odd word A
+        // puts its second word in the next entry, so that takes two writes.
+        CPU_SM_WRITE : begin
+          cpu_adr_blk_ptr <= #1 cpu_blk_a;
+          if (!cpu_blk_a[0]) begin
+            cpu_sm_bs        <= #1 {cpu_bs[1], cpu_bs[0], cpu_bs[3], cpu_bs[2]};
+            cpu_sm_mem_dat_w <= #1 {cpu_wdat[15:0], cpu_wdat[31:16]};
             cpu_cache_ack <= #1 1'b1;
-            cpu_sm_state <= #1 CPU_SM_WB;
+            cpu_sm_state  <= #1 CPU_SM_WB;
+          end else begin
+            cpu_sm_bs        <= #1 {cpu_bs[3], cpu_bs[2], 2'b00};
+            cpu_sm_mem_dat_w <= #1 {cpu_wdat[31:16], 16'h0000};
+            if (cpu_two) begin
+              cpu_sm_state  <= #1 CPU_SM_WRITE2;
+            end else begin
+              cpu_cache_ack <= #1 1'b1;
+              cpu_sm_state  <= #1 CPU_SM_WB;
+            end
           end
           cpu_sm_iram0_we <= #1 itag0_match && itag0_valid /*&& !cc_fr*/;
           cpu_sm_iram1_we <= #1 itag1_match && itag1_valid /*&& !cc_fr*/;
           cpu_sm_dram0_we <= #1 dtag0_match && dtag0_valid /*&& !cc_fr*/;
           cpu_sm_dram1_we <= #1 dtag1_match && dtag1_valid /*&& !cc_fr*/;
         end
-        CPU_SM_WRITE : begin
-          // on hit update cache, on miss no update neccessary; tags don't get updated on writes
-          cpu_adr_blk_ptr <= #1 cpu_adr_blk;
-          cpu_sm_bs <= #1 cpu_adr_blk[0] ? {cpu_bs, 2'b00} : {2'b00, cpu_bs};
-          cpu_sm_mem_dat_w <= #1 { cpu_dat_w, cpu_dat_w };
+        CPU_SM_WRITE2 : begin
+          // the second word of an odd-aligned unit, in the next way entry
+          cpu_adr_blk_ptr  <= #1 cpu_blk_b;
+          cpu_sm_bs        <= #1 {2'b00, cpu_bs[1], cpu_bs[0]};
+          cpu_sm_mem_dat_w <= #1 {16'h0000, cpu_wdat[15:0]};
           cpu_sm_iram0_we <= #1 itag0_match && itag0_valid /*&& !cc_fr*/;
           cpu_sm_iram1_we <= #1 itag1_match && itag1_valid /*&& !cc_fr*/;
           cpu_sm_dram0_we <= #1 dtag0_match && dtag0_valid /*&& !cc_fr*/;
@@ -381,17 +418,20 @@ module cpu_cache_new (
           cpu_sm_state <= #1 CPU_SM_WB;
         end
         CPU_SM_WB : begin
-          if (!cpu_cs) cpu_sm_state <= #1 CPU_SM_IDLE;
+          if (!cpu_req) cpu_sm_state <= #1 CPU_SM_IDLE;
         end
         CPU_SM_READ : begin
-          cpu_cacheline_adr <= #1 cpu_adr[25:4];
+          cpu_cacheline_adr <= #1 cpu_wadr[25:4];
           cpu_cacheline_cnt <= #1 cpu_cacheline_cnt + 1'b1;
-          if(cpu_cacheline_cnt == 2'b01) begin
+          // Early ack, one beat later for a two-word unit: each beat copies one
+          // 32-bit way entry (two words) into the buffer, so word A+2 can still
+          // be one beat behind word A when they straddle two entries.
+          if(cpu_cacheline_cnt == (cpu_two ? 2'b10 : 2'b01)) begin
             cpu_cacheline_dirty <= #1 1'b0;
             cpu_cache_ack <= #1 1'b1; //early ack
           end
           if(cpu_cacheline_cnt == 2'b11)
-            cpu_sm_state <= #1 cpu_cs ? CPU_SM_WAIT : CPU_SM_IDLE;
+            cpu_sm_state <= #1 cpu_req ? CPU_SM_WAIT : CPU_SM_IDLE;
 
           cpu_adr_blk_ptr <= cpu_adr_blk_ptr_next;
           // on hit update LRU flag in tag memory
@@ -443,7 +483,7 @@ module cpu_cache_new (
         end
         CPU_SM_WAIT : begin
           cpu_adr_blk_ptr <= #1 cpu_adr_blk;
-          if (!cpu_cs) cpu_sm_state <= #1 CPU_SM_IDLE;
+          if (!cpu_req) cpu_sm_state <= #1 CPU_SM_IDLE;
         end
         CPU_SM_SDWAI : begin
           if (!sdr_read_ack) begin
@@ -458,17 +498,20 @@ module cpu_cache_new (
             sdr_read_req <= #1 1'b1;
           end else begin
             sdr_read_req <= #1 1'b0;
-            // read data to cpu
-            cpu_cache_ack <= #1 1'b1;
-            cpu_cacheline_lo[cpu_adr[3:1]] <= #1 sdr_dat_r[7:0];
-            cpu_cacheline_hi[cpu_adr[3:1]] <= #1 sdr_dat_r[15:8];
-            cpu_dat_r <= sdr_dat_r;
+            // Word A, the first of the wrapped burst.  A one-word unit is
+            // complete here; a two-word unit waits for A+2, which is the next
+            // beat (CPU_SM_FILL2, fill_first).
+            if (!cpu_two) cpu_cache_ack <= #1 1'b1;
+            fill_first <= #1 1'b1;
+            cpu_cacheline_lo[cpu_blk_a] <= #1 sdr_dat_r[7:0];
+            cpu_cacheline_hi[cpu_blk_a] <= #1 sdr_dat_r[15:8];
+            cpu_rdat[31:16] <= sdr_dat_r;
             if (cache_inhibit) begin
               // don't update cache if caching is inhibited
               cpu_cacheline_dirty <= #1 1'b1; //invalidate
               cpu_sm_state <= #1 CPU_SM_FILLW;
             end else begin
-              cpu_cacheline_adr <= #1 cpu_adr[25:4];
+              cpu_cacheline_adr <= #1 cpu_wadr[25:4];
               cpu_cacheline_dirty <= #1 1'b0;
 
               // update tag ram
@@ -503,7 +546,14 @@ module cpu_cache_new (
         end
         CPU_SM_FILL2 : begin
           if (sdr_read_ack) begin
-            if (!cpu_cs) cpu_acked <= #1 1'b1;
+            // The first beat here is word A+2 (the burst is wrapped and starts
+            // at word A), so it completes a two-word unit.
+            if (fill_first) begin
+              fill_first <= #1 1'b0;
+              cpu_rdat[15:0] <= sdr_dat_r;
+              if (cpu_two) cpu_cache_ack <= #1 1'b1;
+            end
+            if (!cpu_req) cpu_acked <= #1 1'b1;
             // cache line fill 2nd...8th word
             cpu_cacheline_lo[cpu_sm_adr_next[2:0]] <= #1 sdr_dat_r[7:0];
             cpu_cacheline_hi[cpu_sm_adr_next[2:0]] <= #1 sdr_dat_r[15:8];
@@ -515,13 +565,13 @@ module cpu_cache_new (
             cpu_sm_iram1_we <= #1 !cpu_sm_ilru &&  cpu_sm_id;
             cpu_sm_dram0_we <= #1  cpu_sm_dlru && !cpu_sm_id;
             cpu_sm_dram1_we <= #1 !cpu_sm_dlru && !cpu_sm_id;
-          end else if (!cpu_cs | cpu_acked) begin
+          end else if (!cpu_req | cpu_acked) begin
             cpu_sm_state <= #1 CPU_SM_IDLE;
             cpu_adr_blk_ptr <= #1 cpu_adr_blk; // if CS already activated during fill
           end
         end
         CPU_SM_FILLW : begin
-          if (!cpu_cs) begin
+          if (!cpu_req) begin
             cpu_sm_state <= #1 CPU_SM_IDLE;
             cpu_adr_blk_ptr <= #1 cpu_adr_blk; // if CS already activated during fill
           end
@@ -532,8 +582,8 @@ module cpu_cache_new (
       // when the SDRAM ack'ed the write, lower the request
       if (sdr_write_ack) sdr_write_req <= #1 1'b0;
 
-      // when CPU lowers its request signal, lower ack too
-      if (!cpu_cs) cpu_cache_ack <= #1 1'b0;
+      // when the CPU drops its request, lower the acknowledge too
+      if (!cpu_req) cpu_cache_ack <= #1 1'b0;
 
       // THE LINE BUFFER IS NOT SNOOPED.  cpu_cacheline_lo/hi is a sixteen-byte buffer
       // in front of both ways, tagged by cpu_cacheline_adr, and a hit on it
@@ -560,6 +610,27 @@ module cpu_cache_new (
 
     end
   end
+
+
+`ifdef SOC_SIM
+  // THE UNIT INVARIANT, CHECKED.  A two-word unit must not cross a 16-byte
+  // line: word A+2 would then belong to the next line, and this module would
+  // write it into the current one -- eight words low, silently.  That is
+  // exactly what a converted bench task did on 2026-09-16 (26 DDR3 backdoor
+  // mismatches, every one a line apart, with every functional check passing),
+  // and it cost a full bench run to find.  A master that gets the split wrong
+  // now says so on the cycle it happens.
+  // An all-zero cpu_bs is NOT an error: a write with no byte enabled is a
+  // legitimate no-op (sim/ddr3/ddr3_fastram_tb.v section (b) issues one
+  // deliberately), and a read ignores the selects anyway.  Only the
+  // line-crossing case is a real fault, because it silently lands a word in
+  // the wrong line.
+  always @(posedge clk) begin
+    if (!rst && cpu_req && |cpu_bs[1:0] && cpu_wadr[3:1] == 3'b111)
+      $display("FAIL cpu_cache_new: two-word unit at word %06h CROSSES a line (bs %b) at %t",
+               cpu_wadr, cpu_bs, $time);
+  end
+`endif
 
 
   //// sdram side ////

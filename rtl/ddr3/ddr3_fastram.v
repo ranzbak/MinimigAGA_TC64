@@ -17,14 +17,16 @@
 // ---------------------------------------------------------------------------
 //
 // Identical to sdram_ctrl's:
-//   cpuAddr[25:1]  must be stable ONE CYCLE BEFORE cpustate[2] goes low.
-//                  It is registered here into cpuAddr_r, exactly as
-//                  sdram_ctrl does, and cpuAddr_r is what addresses the DDR3.
-//   cpustate[2]    chip select, active low (cpuCSn).
-//   cpustate[1:0]  00 = instruction read, 10 = data read, 11 = write.
-//   cpustate[6]    longword (32-bit) access flag (cpuLongword).
-//   cpuU, cpuL     byte selects, active low.
-//   cpuena         access complete (level), = cache hit/ack.
+//   cpu_req        level; every field below is stable while it is high.
+//   cpu_wadr[25:1] word address of word A, registered here into cpuAddr_r,
+//                  which is what addresses the DDR3.
+//   cpu_we/cpu_ir  write / instruction fetch.
+//   cpu_bs[3:0]    {A hi, A lo, A+2 hi, A+2 lo}, active high.  bs[1:0] != 0 is
+//                  a two-word unit, and the wrapper guarantees such a unit
+//                  never crosses a 16-byte line.
+//   cpu_wdat/rdat  {word A, word A+2}.
+//   cpu_ack        access complete (level), = cache hit/ack, and only ever
+//                  high while cpu_req is.
 //
 //   longword_en    = cpuLongword && cpuAddr_r[3:1] != 3'b111 && write
 //                    -- exactly the sdram_ctrl expression.  The [3:1]!=111
@@ -115,13 +117,15 @@ module ddr3_fastram (
   output wire           ddr_ready,       // init + reset done
 
   // ---- CPU port, identical to sdram_ctrl's --------------------------------
-  input  wire    [25:1] cpuAddr,
-  input  wire [  7-1:0] cpustate,
-  input  wire           cpuL,
-  input  wire           cpuU,
-  input  wire [ 16-1:0] cpuWR,
-  output wire [ 16-1:0] cpuRD,
-  output wire           cpuena,
+  // cpu -- the unit port (Stage E2 Task 3); see rtl/sdram/cpu_cache_new.v
+  input  wire           cpu_req,
+  input  wire           cpu_we,
+  input  wire           cpu_ir,
+  input  wire    [25:1] cpu_wadr,
+  input  wire [  4-1:0] cpu_bs,
+  input  wire [ 32-1:0] cpu_wdat,
+  output wire [ 32-1:0] cpu_rdat,
+  output wire           cpu_ack,
 
   // ---- memory island port, clk_mem (100 MHz) ------------------------------
   input  wire           clk_mem,
@@ -170,9 +174,6 @@ module ddr3_fastram (
 //// local signals ////
 
 wire          ccachehit;
-wire          cpuLongword;
-wire          cpuCSn;
-wire          longword_en;
 
 reg  [26-1:1] cpuAddr_r;      // registered CPU address, see header
 
@@ -212,18 +213,16 @@ reg  [ 2-1:0] bstate;
 reg  [ 3-1:0] burst_cnt;
 reg  [ 3-1:0] burst_first;
 
-wire [16-1:0] cpu_dat_r_w;   // cpu_cache_new read data
 
 
 //// misc signals ////
 
-always @ (posedge sysclk) cpuAddr_r <= #1 cpuAddr;
+// Registered CPU address.  The unit port holds its request until the
+// acknowledge, so this is one cycle behind cpu_req rising; the backend
+// addresses the DDR3 from it, exactly as before.
+always @ (posedge sysclk) cpuAddr_r <= #1 cpu_wadr;
 
-assign cpuLongword = cpustate[6];
-assign cpuCSn      = cpustate[2];
-assign longword_en = cpuLongword && cpuAddr_r[3:1] != 3'b111 && cpustate[1:0] == 2'b11;
-assign cpuena      = ccachehit;
-assign cpuRD       = cpu_dat_r_w;
+assign cpu_ack = ccachehit;
 
 
 //// reset and init ////
@@ -258,16 +257,14 @@ cpu_cache_new cpu_cache (
   .cpu_cache_ctrl   (cpu_cache_ctrl),             // CPU cache control
   .cache_inhibit    (1'b0),                       // cache inhibit
   .cacheline_clr    (cacheline_clr),
-  .cpu_cs           (!cpuCSn),                    // cpu activity
-  .cpu_adr          ({cpuAddr, 1'b0}),            // cpu address
-  .cpu_bs           ({!cpuU, !cpuL}),             // cpu byte selects
-  .cpu_32bit        (longword_en),                // cpu 32 bit write
-  .cpu_we           (&cpustate[1:0]),             // cpu write
-  .cpu_ir           (!(|cpustate[1:0])),          // cpu instruction read
-  .cpu_dr           (cpustate[1] && !cpustate[0]),// cpu data read
-  .cpu_dat_w        (cpuWR),                      // cpu write data
-  .cpu_dat_r        (cpu_dat_r_w),                // cpu read data
-  .cpu_ack          (ccachehit),                  // cpu acknowledge
+  .cpu_req          (cpu_req),
+  .cpu_we           (cpu_we),
+  .cpu_ir           (cpu_ir),
+  .cpu_wadr         (cpu_wadr),
+  .cpu_bs           (cpu_bs),
+  .cpu_wdat         (cpu_wdat),
+  .cpu_rdat         (cpu_rdat),
+  .cpu_ack          (ccachehit),
   .sdr_dat_r        (sdr_dat_r),                  // memory read data
   .sdr_read_req     (cache_req),                  // memory read request
   .sdr_read_ack     (readcache_fill),             // memory read acknowledge
