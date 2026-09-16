@@ -287,6 +287,20 @@ ARCHITECTURE logic OF TG68K IS
 	SIGNAL sync_state : sync_states;
 	SIGNAL datatg68_c : std_logic_vector(15 downto 0);
 	SIGNAL datatg68   : std_logic_vector(15 downto 0);
+	-- THE READ-DATA CAPTURE (Stage E2, RTG investigation 2026-09-16).
+	-- datatg68 is a combinational mux that changes on clk edges, while the
+	-- adapter samples it on a clk_cpu edge: the one clk_114 -> clk_38 signal
+	-- that is neither held across the capture window nor shaped to the
+	-- destination edge (plan-v2, D4).  clkena_r is decided at T+N-2 and the
+	-- kernel advances at T+N, so capturing on that same edge hands the core a
+	-- value and an enable from ONE instant.  One register on a path with two
+	-- clk cycles of slack.
+	--
+	-- Re-added after E2 Task 1 removed it as dead: it WAS dead where it sat
+	-- (the compat top's data_in, which ap040_tg68k_compat.v ties off with
+	-- `wire unused_d = |data_in` when AP040_BUS16 = 0).  The live read path is
+	-- the adapter this wrapper now instantiates itself.
+	SIGNAL datatg68_r : std_logic_vector(15 downto 0) := (others => '0');
 	SIGNAL w_datatg68 : std_logic_vector(15 downto 0);
 	SIGNAL ramcs      : std_logic;
 
@@ -1104,7 +1118,7 @@ BEGIN
 				mem_fc     => m_fc,
 				mem_ack    => m_ack,
 				mem_rdata  => m_rdata,
-				data_in    => datatg68,
+				data_in    => datatg68_r,
 				addr_out   => addrtg68,
 				data_write => w_datatg68,
 				nwr        => wr,
@@ -1468,6 +1482,10 @@ BEGIN
 	BEGIN
 		IF rising_edge(clk) THEN
 			clkena_r <= cpu_ph AND bus_release;
+			-- capture the read data with the grant; see datatg68_r
+			IF (cpu_ph AND bus_release) = '1' THEN
+				datatg68_r <= datatg68;
+			END IF;
 		END IF;
 	END PROCESS;
 
