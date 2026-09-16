@@ -133,3 +133,40 @@ had two drivers. The `units_here` one is worth remembering -- an unresolved
 integer with two drivers fails elaboration outright, but `mem` is an array of
 a RESOLVED type, where a second driver silently resolves to 'X' and would
 have looked like a DUT fault.
+
+### Task 4b-1 — the fill router is deleted
+
+Task 4b is the wrapper restructure, and it splits once more. The walker
+cannot move on its own: it reaches memory THROUGH the 16-bit bus signals
+(`wk_bstate`/`wk_busaddr` -> `bstate`/`cpuaddr` -> `ramcs`), so it and the
+unit port have to land together. The fill router is different -- nothing
+depends on it once the channel is off, it only consumes the bus -- so it
+comes out first, on its own, and the file that follows is smaller.
+
+Deleted: the `fl_*` declarations, `fl_ok` and its comment, the whole
+`FL_IDLE..FL_DONE` router process, and the `fl_active`/`fl_busy` terms in the
+bus-side mux, the `cpuaddr` mux, `sel_nmi_vector` and `WK_IDLE`.
+`AP040_FILL_CHANNEL => 0` and `fill_ena_zorro => '0'` stub the channel inside
+the compat top, and the core's fill ports are left open.
+
+**Verdict: `xvhdl` clean** (with `rtl/akiko/akiko.vhd` compiled into `work`
+first -- the wrapper's only VHDL instantiation), and no `fl_`/`FL_` reference
+survives outside comments. The bus now has two masters where it had three.
+
+Two things worth writing down about how this was done, both of which caught a
+mistake before it reached the file:
+
+* The three deleted blocks are long and comment-wrapped, so the boundaries
+  were computed and PRINTED first, writing nothing. That dry run is what
+  caught the second range: walking up to the nearest separator line put the
+  `fl_ok` block's start at line 665, inside the bus-side mux -- deleting it
+  would have removed `bstate`, `buds`, `blds`, `bwr`, `bwdata` and the address
+  decode with it. `fl_ok`'s comment has no separator above it and needed a
+  different rule (walk up over contiguous comment lines, which stops at 772).
+* The entity/signal edit for the unit port had been made FIRST, which left the
+  wrapper non-compiling and would have made this step's `xvhdl` meaningless --
+  every error would have come from the half-finished port, not from the
+  deletion. It was set aside (scratchpad copy) and this step was applied to
+  HEAD's file instead. It belongs with the `ram_seq` wiring in Task 4b-2,
+  where those ports first have something on the other end.
+
