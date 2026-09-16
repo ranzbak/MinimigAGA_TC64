@@ -172,22 +172,24 @@ set_multicycle_path -hold  -end 1 -from [get_clocks clk_38] -to [get_clocks clk_
 # decision is really one clk_114 period from the kernel.  Under a blanket -end
 # 2 it would not be timed at all.
 #
-# Stage E2 emptied this list down to one.  sel_ram_d/sel_ddr_d, the two
-# cpu_cache_new line-buffer compares and the bus routers are gone or no longer
-# see the island (the controllers take ap040_ram_seq's registers, the walker is
-# on clk_38), and akiko_req/akiko_wr are driven by the Akiko sequencer, which
-# latches only through the masked q_req.  What remains:
+# Stage E2 emptied this list.  sel_ram_d/sel_ddr_d, the two cpu_cache_new
+# line-buffer compares and the bus routers are gone or no longer see the island
+# (the controllers take ap040_ram_seq's registers, the walker is on clk_38), and
+# akiko_req/akiko_wr are driven by the Akiko sequencer, which latches only
+# through the masked q_req.
 #
-#   sel_undecoded_d   the wrapper's registered decode of x_addr, in
-#                     bus_ready16, and read by the clk_38 walker.  Its T+1
-#                     copy is never what releases an access -- the adapter is
-#                     idle then, and idle releases anyway -- but it is kept
-#                     single-cycle rather than argued loose.
-#
-# -hold 0 keeps the hold check on the coincident launch edge, as -end 1 did.
-set cpu_next_edge [get_cells -quiet -hier -filter "(NAME =~ $cpu_wrapper/sel_undecoded_d_reg*) && ($tg68_seq)"]
-set_multicycle_path -quiet -setup 1 -from [get_clocks clk_38] -to $cpu_next_edge
-set_multicycle_path -quiet -hold  0 -from [get_clocks clk_38] -to $cpu_next_edge
+# The last one, sel_undecoded_d, went after the first E2 build
+# (build/stage_ap040_e2t4, -0.483 ns): it is now registered from the MASTER
+# address, which is combinational out of the MMU's ATC RAM, where it used to be
+# registered from the adapter's addr_out.  Its T+1 copy is never read:
+#   * x_addr changes only on a kernel edge K at which the 16-bit adapter is
+#     idle (the core cannot advance with an adapter access outstanding unless
+#     the adapter is between sub-cycles, and then the address is held);
+#   * the adapter cannot take the new access before K+3, so the decision at
+#     K+2 sees state = "01" and releases on the idle term whatever
+#     bus_ready16 says;
+#   * the clk_38 walker reads it only at its completion, long after.
+# So it is a two-cycle path like the rest of the crossing and needs no rule.
 
 # The phase marker must NOT be relaxed at all.  cpu_tgl flips on every clk_38
 # edge and cpu_tgl_d has to catch it on the very next clk_114 edge; that is
