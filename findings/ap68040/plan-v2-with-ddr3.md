@@ -1681,6 +1681,85 @@ actually lived.  When the pipelined core is ready, that harness is what says
 whether it works here, and it is worth keeping in a state where a new kernel
 can be dropped into it.
 
+### Deferred: converge `lib/AP68040` with upstream main
+
+Paul, 2026-09-16, on <https://github.com/apolkosnik/AP68040/commit/880b81c>
+("FPU state-frame revisions, BUSY resume, MOVEM restart, nonresident ATC"):
+**"Let's put updating the core in the todo list, and not touch it for now."**
+Recorded here rather than in the backlog below because it is the same ordering
+argument as the pipelined core above, applied to upstream `main`.
+
+**It is a re-base, not a pull.** Measured 2026-09-16:
+
+```
+HEAD vs origin/main:  1314 insertions, 1090 deletions, 8 RTL files
+  ap040_core.v   879 lines apart
+  ap040_cache.v  667 lines apart
+```
+
+Our divergence is `3a6180b "Overlay the ap040x3 core from Minimig-AGA_MiSTer"`
+-- a hand overlay of a different branch. Upstream's
+`1c3a9e9 "Bring the Minimig branch's CPU work back"` did **not** absorb it:
+`POST_STORES`, `FILL_CHANNEL` and `C_FILLC` are all absent from
+`origin/main`'s `ap040_cache.v`. So merging means giving up the overlay and
+re-applying what still matters.
+
+What is at stake, checked file by file:
+
+| ours | status if we re-base |
+|---|---|
+| `FILL_CHANNEL`, `C_FILLC`, `ap040_fill_cdc.v` | **dead weight now** -- E2 Task 4b-1 deleted the fill router and the wrapper passes `AP040_FILL_CHANNEL => 0` |
+| `POST_STORES` | **live** -- the wrapper passes `AP040_POST_STORES => ap040_post_stores`; would have to be re-applied |
+| `AP040_BUS16` (67cfd07) | ours, from E2 Task 1; trivially re-applied |
+| `c5d5cc3`, re-gate `ce <= clkena_in` | **load-bearing, and measured** |
+
+That last row is the hazard. Same core, on the core's own bench with
+`clkena_in` gated to our five phases: `ce_core = 1'b1` **fails t_integer test
+67 and runs away to `pc=ffff6708`**; `ce_core = clkena_in` passes all tests
+(30722/32210/30572 cycles). Our enable is high on 5 of every 16 `clk_114`
+phases, not continuously as the MiSTer `cpu_wrapper.v` supplies. Upstream is
+moving further the other way: the new compat layer adds a required
+`tick_in` port ("P2 tick grid; tie 1 elsewhere"), which our VHDL
+instantiation would also have to supply.
+
+**The linked commit is the weakest of the batch for us.** FPU state-frame ABI
+(52- vs 44-byte NeXT frames), BUSY resume, MOVEM restart, nonresident ATC --
+NeXT/FPSP work. MOVEM restart and nonresident ATC are general MMU correctness
+but bite under demand paging and PFLUSH semantics, which is not what AmigaOS
+does. The commits underneath it are the valuable ones:
+
+* `9be2325` **snoop lookup guard** -- the most relevant item. This project
+  depends on snooping for Turbo chip RAM coherency, and the commit's own
+  finding is that the guard previously could not be shown to matter, because
+  `dpram` answered a read-during-write with old data. It adds the
+  read-during-write modes and a directed don't-care test.
+* `95e29fb` **MOVES SFC/DFC** -- a real core bug: `fc_ovr` was read one edge
+  early on the fast issue path, so the access went out as FC 5 where FC 1 was
+  required, with the wrong MMU root. AmigaOS leans on MOVES far less than
+  NetBSD does, but it is a correctness fix.
+* `3458e64` + `745be02` **bitfield read sizing** -- read before wanting. Sizing
+  bitfield reads by span moves most of them onto the cached path; 745be02 calls
+  it "a large change in data cache traffic that no test here could see". Here
+  that interacts with snooping and Turbo chip RAM. A behaviour change, not
+  obviously a win.
+
+**When.** After E2 lands, is hardware-tested and is tagged -- not during it.
+Swapping the core underneath the half-finished Task 4b wrapper restructure
+would destroy attribution: a new failure could be D4's decode move or 879 lines
+of new core, and no bench separates them. This is the same mistake the
+2026-09-08..11 stretch made and the same reason stage E precedes the pipelined
+core above.
+
+**The gate when we do it:** the core's own bench with `clkena_in` duty-cycled
+to our five phases. That is the A/B that caught the `ce` regression and the
+only thing that will catch it again. Cherry-picking `9be2325` alone is not
+obviously cheaper -- it touches `dpram.v` and `ap040_cache.v`, which is
+where the overlay is thickest.
+
+One thing that improved: the fill-channel half of the divergence became dead
+weight when E2 retired the fill router, so convergence gets cheaper from here,
+not more expensive.
+
 ## Backlog, outside the CPU work
 
 Raised by Paul 2026-09-11.  Neither is an AP68040 matter; both are recorded
