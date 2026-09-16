@@ -206,3 +206,26 @@ decode copies feeding `mem_ready` and the `datatg68` mux) and
 placement gate moves inside `ram_seq`, where it gates EVERY unit of a split
 access rather than only the first.
 
+#### `cpuaddr` splits three ways
+
+`cpuaddr` cannot simply be repointed at the master address: the adapter's
+`addr_out` ADVANCES across sub-cycles (A, then A+2) while the master address
+stays fixed for the whole access, so the chipset needs one and the router
+needs the other. Every consumer sorts into one of three groups:
+
+| consumer | wants |
+|---|---|
+| all `sel_*`, the NMI compare, the `ramaddr`/`ddraddr` mapping | the MASTER address `x_addr` -- they decide routing and mapping for a whole access |
+| the chipset FSM's `addr <= cpuaddr`, and `dbg_rtg` | the ADAPTER's advancing address (`cpuaddr` keeps this meaning) |
+| the Akiko instance's `addr => cpuaddr(10 downto 0)` | the SEQUENCER's per-register address (D3b) |
+
+**This changes a behaviour, quietly.** Today every 16-bit sub-cycle re-decodes
+itself from the adapter's advancing address. After D4 an access decodes ONCE,
+from the master address. That is what a router requires -- one access, one
+destination -- and it is the more correct rule, since a single operand cannot
+belong to two memory windows. But it is a real change, not a refactor: an
+access whose two sub-cycles would have decoded differently (one straddling a
+window boundary) now follows its first byte. Every window boundary here is at
+bit 18 or above and a unit spans at most four bytes, so nothing reachable
+straddles one -- worth re-checking if a window is ever narrowed.
+
