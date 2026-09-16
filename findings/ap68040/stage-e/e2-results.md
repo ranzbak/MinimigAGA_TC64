@@ -170,3 +170,39 @@ mistake before it reached the file:
   HEAD's file instead. It belongs with the `ram_seq` wiring in Task 4b-2,
   where those ports first have something on the other end.
 
+### Task 4b-2 — the design note the plan was missing: THE DECODE MOVES
+
+Task 4b-2 is the irreducible core: master mux, the three-way router,
+`ram_seq` instantiated, the Akiko sequencer, the walker on clk_38, and the
+deletion of `bus_step`, `bus_fresh`, `wk_active_d`, `cpustate`, `ramcs` and
+`mem_ready`. It does not split further -- the walker's descriptor reads go to
+RAM, so the moment `ram_seq` owns the RAM port the walker must go through it
+too, and keeping both paths alive would put two drivers on the controller
+port.
+
+Reading the decode before writing it turned up what the plan did not say.
+**`sel_*` is computed from `cpuaddr`, which is `addrtg68` -- the ADAPTER's
+registered output.** Under D4 a RAM access never reaches the adapter, so
+nothing would drive `cpuaddr` for one: the router has to decode the MASTER
+address (`x_addr`), and the mapped `ram_wadr` has to come from there too.
+
+That is not a rename. Three decode terms are entangled with the BUS-SIDE
+state rather than the address, and each has to be re-expressed on the master
+channel:
+
+| today | why it exists | on the master channel |
+|---|---|---|
+| `sel_kick ... AND bstate /= "11"` | the kick window is READ ONLY | `AND NOT x_we` |
+| `sel_nmi_vector ... bstate = "10"` | a DATA READ, not a fetch ("00") | `NOT x_instr AND NOT x_we` |
+| `cpu_int <= '1' WHEN bstate = "01"` | qualifies `ramcs` with bus idle | gone -- `ram_seq` owns the select |
+
+Get one of these wrong and the result is a wrong memory window -- a silent
+decode fault, not a compile error. `sel_kick` in particular: drop the term and
+writes start landing in the Kickstart window.
+
+Also retired with the 16-bit RAM path: `sel_ram_d`/`sel_ddr_d` (the registered
+decode copies feeding `mem_ready` and the `datatg68` mux) and
+`cpu_phase_gate`, whose one job was qualifying `ramcs`/`ddrcs` -- the D3
+placement gate moves inside `ram_seq`, where it gates EVERY unit of a split
+access rather than only the first.
+
