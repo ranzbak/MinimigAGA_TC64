@@ -86,10 +86,9 @@ set cpu_wrapper openaars_virtual_top/tg68k
 # clk_38 period.  For wk_active the claim as written was false -- the walker
 # router has transitions that fire on a clk_114 edge of their own, so it could
 # change on the edge before the kernel samples -- and deleting it was right.
-# It has since come BACK, for the walker and the line-fill router both, with
-# the premise made TRUE in RTL rather than asserted: rtl/soc/TG68K.vhd gates
-# both routers on `bus_step`, which skips exactly that one edge in three.  See
-# the bus-router block at the end of the clk_114 -> clk_38 section.
+# It came back once, for the walker and the line-fill router, with the premise
+# made true in RTL (`bus_step`), and went again in Stage E2: the fill router is
+# deleted and the walker is a clk_38 master on the kernel's own enable.
 #
 # Kept because the finding cost a day and is still true: ipl_s* was NEVER in
 # the exclusion list, and that was a decision.  The cone from the interrupt
@@ -107,11 +106,10 @@ set cpu_wrapper openaars_virtual_top/tg68k
 # file", Designutils 20-1307).  Building strings in a loop once cost a build: the
 # variables were left unset and ten exceptions were silently dropped.
 
-# The memory side: everything that takes cpuAddr/cpustate and states the
-# "address stable one cycle before the chip select" contract in its header.
-# ddr3_fastram is in this list since stage D3 -- it was missed before, and its
-# cpu_cache_new instance wants the same rule sdram_ctrl's does
-# (ddr3_fastram.v:20).  minimig is here for the chipset side.
+# The memory side.  Since Stage E2 the two controllers take the unit port from
+# ap040_ram_seq registers on clk_114, so only the wrapper's own chipset address
+# rule at the bottom still uses this set; the controllers stay in it because
+# that rule is scoped by destination.  minimig is here for the chipset side.
 set tg68_mem    [get_cells -hier -filter "(NAME =~ openaars_virtual_top/sdram/* || \
                                            NAME =~ openaars_virtual_top/minimig/* || \
                                            NAME =~ openaars_virtual_top/g_ddr3_fastram.ddr3_fastram_i/*) && ($tg68_seq)"]
@@ -146,14 +144,12 @@ set tg68_mem    [get_cells -hier -filter "(NAME =~ openaars_virtual_top/sdram/* 
 #   sel_undecoded_d is the sharpest case: it is bus_ready all by itself, so a
 #   decode that has not settled by T+2 releases the core at T+3 with $FFFF.
 #
-#   The memory side lands on the same number from the other direction.  Both
-#   controllers register cpuAddr unconditionally and compare the registered
-#   copy on the cycle they act on the select (sdram_ctrl.v:226,240 and
-#   ddr3_fastram.v:20,220), and `slower` -- reloaded by clkena, which is now a
-#   one-cycle pulse on exactly the clk_114 edge the kernel advances on -- holds
-#   ramcs and ddrcs off until the select can first open during (T+3,T+4).  The
-#   compare that gates it was captured at T+3 from the address during
-#   (T+2,T+3): settled at T+2 again.
+#   The memory side (Stage E2).  The master channel x_* is clk_38 and changes
+#   only at T.  The sequencers that take it to the controllers (ap040_ram_seq
+#   x2, the Akiko sequencer) see it through q_req, which is masked on edges T
+#   (clkena_r) and T+1 (x_fresh), so the first edge that latches an access is
+#   T+2: settled at T+2 again.  The controllers themselves see only the
+#   sequencers' clk_114 registers.
 #
 #   And the 7 MHz chipset state machine, which is why rtl/soc/TG68K.vhd grew
 #   cpu_bus_settled in stage D3.  ena7WRreg lands on phase 14 of a sixteen
@@ -171,56 +167,25 @@ set_multicycle_path -hold  -end 1 -from [get_clocks clk_38] -to [get_clocks clk_
 # THE NEXT-EDGE SAMPLERS: single-cycle, by name, overriding the two above.
 #
 # The derivation above rests on "the copy that matters at edge T+3 is the one
-# captured at T+2".  That was true while clkena was decided combinationally at
-# T+3.  Since the D3 fix clkena is a REGISTER decided at T+2 (rtl/soc/TG68K.vhd,
-# clkena_r), and the copies that matter to THAT decision are the ones captured
-# at T+1 -- one clk_114 period after the kernel's address moved.  Under a
-# blanket -end 2 those captures are not timed at all: the tool is told they
-# may take 17.63 ns, the design consumes them after 8.815 ns, and whether the
-# bitstream works is decided by where the placer happened to put things.
-# Measured on the routed d3fixc checkpoint the worst of them,
-# bus16/addr_out_reg[26] -> sdram/cpu_cache/cpu_cacheline_match_reg, took
-# 7.394 ns -- inside one period, by 1.0 ns, by luck.  These are exactly the
-# registers whose value at T+1 the T+2 decision reads
-# (findings/ap68040/sdd-d3/task-d3stable-report.md has the enumeration):
+# captured at T+2".  Since the D3 fix clkena is a REGISTER decided at T+2
+# (rtl/soc/TG68K.vhd, clkena_r), and a register whose T+1 copy feeds that
+# decision is really one clk_114 period from the kernel.  Under a blanket -end
+# 2 it would not be timed at all.
 #
-#   sel_ram_d, sel_ddr_d, sel_undecoded_d      the wrapper's decode copies
-#   sdram/cpu_cache/cpu_cacheline_match         cpu_cache_new.v:257, the
-#   ddr3_fastram_i/cpu_cache/cpu_cacheline_match  line-buffer hit compare
+# Stage E2 emptied this list down to one.  sel_ram_d/sel_ddr_d, the two
+# cpu_cache_new line-buffer compares and the bus routers are gone or no longer
+# see the island (the controllers take ap040_ram_seq's registers, the walker is
+# on clk_38), and akiko_req/akiko_wr are driven by the Akiko sequencer, which
+# latches only through the masked q_req.  What remains:
 #
-# and with them the registers that were "KNOWN LOOSE" here before: akiko_req
-# and akiko_wr (gated by slower(2), one cycle earlier than slower(1)), and
-# both bus routers, which sample wk_req/wk_addr/wk_wdat/wk_we, fl_req/fl_addr
-# and the kernel's busstate on the very next edge -- a router that starts one
-# edge after the kernel raised its request copies the kernel's address into
-# wk_busaddr/fl_busaddr on that edge, single-cycle.  Every one of these is now
-# what it physically is: one clk_114 period from the kernel.  Cell-scoped
-# exceptions take priority over the clock-scoped pair above, so this is an
-# override, not a conflict; report_exceptions shows both.
+#   sel_undecoded_d   the wrapper's registered decode of x_addr, in
+#                     bus_ready16, and read by the clk_38 walker.  Its T+1
+#                     copy is never what releases an access -- the adapter is
+#                     idle then, and idle releases anyway -- but it is kept
+#                     single-cycle rather than argued loose.
 #
 # -hold 0 keeps the hold check on the coincident launch edge, as -end 1 did.
-set cpu_next_edge [get_cells -quiet -hier -filter "(NAME =~ $cpu_wrapper/sel_ram_d_reg* || \
-                                                  NAME =~ $cpu_wrapper/sel_ddr_d_reg* || \
-                                                  NAME =~ $cpu_wrapper/sel_undecoded_d_reg* || \
-                                                  NAME =~ $cpu_wrapper/akiko_req_reg* || \
-                                                  NAME =~ $cpu_wrapper/akiko_wr_reg* || \
-                                                  NAME =~ $cpu_wrapper/wk_st_reg* || \
-                                                  NAME =~ $cpu_wrapper/wk_active_reg* || \
-                                                  NAME =~ $cpu_wrapper/wk_bstate_reg* || \
-                                                  NAME =~ $cpu_wrapper/wk_busaddr_reg* || \
-                                                  NAME =~ $cpu_wrapper/wk_wdat16_reg* || \
-                                                  NAME =~ $cpu_wrapper/wk_ack_reg* || \
-                                                  NAME =~ $cpu_wrapper/wk_berr_reg* || \
-                                                  NAME =~ $cpu_wrapper/fl_st_reg* || \
-                                                  NAME =~ $cpu_wrapper/fl_busy_reg* || \
-                                                  NAME =~ $cpu_wrapper/fl_active_reg* || \
-                                                  NAME =~ $cpu_wrapper/fl_bstate_reg* || \
-                                                  NAME =~ $cpu_wrapper/fl_busaddr_reg* || \
-                                                  NAME =~ $cpu_wrapper/fl_word_reg* || \
-                                                  NAME =~ $cpu_wrapper/fl_ack_reg* || \
-                                                  NAME =~ $cpu_wrapper/fl_err_reg* || \
-                                                  NAME =~ openaars_virtual_top/sdram/cpu_cache/cpu_cacheline_match_reg* || \
-                                                  NAME =~ openaars_virtual_top/g_ddr3_fastram.ddr3_fastram_i/cpu_cache/cpu_cacheline_match_reg*) && ($tg68_seq)"]
+set cpu_next_edge [get_cells -quiet -hier -filter "(NAME =~ $cpu_wrapper/sel_undecoded_d_reg*) && ($tg68_seq)"]
 set_multicycle_path -quiet -setup 1 -from [get_clocks clk_38] -to $cpu_next_edge
 set_multicycle_path -quiet -hold  0 -from [get_clocks clk_38] -to $cpu_next_edge
 
@@ -245,110 +210,23 @@ set_multicycle_path -quiet -hold  0 -from $cpu_phase_src -to $cpu_phase_dst
 # all.  It would assert that a clk_114 register feeding the island does not
 # change in the clk_114 cycles just before the island samples, and the
 # wrapper's answers do exactly that:
-# `clkena` itself, `datatg68`, `bus_ready`, `mem_ready`, the walker's and the
-# fill router's acknowledges and payloads are all produced on the FREE clk_114
-# clock and can rise on the edge immediately before a clk_38 one -- that is the
-# whole point of the handshake, that the core is released as soon as memory
-# answers rather than on the next slot of a cadence.
+# `clkena` itself, and since Stage E2 the completion x_ack_r with its data
+# x_rdata_r (and datatg68_r for the adapter), are all registered on the clk_114
+# edge immediately before a clk_38 one -- that is the whole point of the
+# handshake, that the core is released as soon as memory answers rather than
+# on the next slot of a cadence.  Category 2 of plan-v2's D4: a pulse shaped
+# to the destination edge, genuinely one clk_114 period.
 #
 # Leaving the default is not a compromise for those: it is 8.815 ns, which is
 # exactly the requirement they meet today (nothing in this file ever relaxed a
 # path INTO the kernel, including the clkena net that fans out to 7,391 kernel
 # clock-enable pins).  The absence of a rule here is the derivation's answer,
-# not an omission -- for everything except the walker router, below.
+# not an omission.
 
-#---------------------------------------------------------------------------
-# ... except the two bus routers, which are now stable by construction.
-#---------------------------------------------------------------------------
-# THE ONE EXCEPTION INTO THE ISLAND, AND WHY IT IS NOT THE MISTAKE ABOVE.
-#
-# `wk_active`/`wk_busaddr` and `fl_active`/`fl_busaddr` select the bus-side
-# address mux in rtl/soc/TG68K.vhd, and that mux is the head of the longest
-# combinational chain in the design:
-#
-#   cpuaddr -> sel_kickram -> cache_inhibit -> sdram_ctrl -> cpu_cache_new's
-#   cpu_cacheline_valid -> cpu_ack -> cpuena -> ramready -> mem_ready ->
-#   bus_ready -> clkena -> the kernel
-#
-# -- out of the wrapper, across the die into a memory controller, through its
-# cache-hit logic and all the way back into the CPU island (and the same round
-# trip again through ddr3_fastram's own cpu_cache_new).  Driven from the
-# kernel's addrtg68 that chain is clk_38 -> clk_38 and has 26.45 ns.  Driven
-# from these registers it is clk_114 -> clk_38 and has 8.815 ns, and it
-# measured 8.24 ns in build/stage_ap040_d3.  Measured on those two routed
-# checkpoints, wk_active, wk_busaddr and fl_busaddr are, in that order, the
-# startpoint of EVERY clk_114 -> clk_38 path with less than 0.3 ns of slack:
-# 3987 of the 4000 worst, then all of the next 3000, then all of the rest down
-# to 0.107 ns.  This one pair of routers is the crossing's whole problem, and
-# the intermittent AN_MemCorrupt Guru is what a mis-captured clkena or a
-# mis-captured ATC entry looks like from Exec.
-#
-# Before stage D3 the walker half was covered: cpu.xdc had `$cpu_ce_aligned`,
-# a -setup -start 2 on `wk_active` worth 17.63 ns, and stage D3 deleted it --
-# on the correct ground that its premise ("every transition of wk_active is
-# triggered by a ce-aligned event") is false once the kernel has its own clock.
-# It is false in five specific places, all of them waits on something the
-# memory side produces:
-#
-#   * WK_IDLE -> WK_HI is gated on fl_busy, which the line-fill router drops on
-#     whatever clk_114 edge its eighth word lands on;
-#   * the sel_undecoded abort in WK_HI and WK_LO fires on the first edge in the
-#     state, one edge after the state was entered;
-#   * WK_GAP -> WK_LO is gated on bus_ready falling;
-#   * FL_SEL -> FL_GAP is gated on mem_ready rising and FL_GAP -> FL_SEL on it
-#     falling -- twice per word, eight words per line.
-#
-# So the premise was MADE true instead of asserted: `bus_step` gates both
-# router processes, and bus_step is `NOT cpu_ph`.  cpu_ph is the phase marker's
-# middle register, high in (T+1,T+2) when the kernel's edges are at T and T+3,
-# so an edge that samples cpu_ph = '1' IS edge T+2 -- the one clk_114 edge
-# before the kernel samples -- and that edge alone is skipped.  Every register
-# in both routers therefore holds its value across (T+1,T+2) and (T+2,T+3),
-# which is exactly and only what -setup -start 2 asserts.  Nothing is lost by
-# skipping an edge: every condition either router waits on is a level held
-# until consumed, with the single exception of `clkena`, which is high in
-# (T+2,T+3) and is therefore only ever sampled at edge T+3, where the routers
-# run.  The derivation is written out at the walker process itself in
-# rtl/soc/TG68K.vhd; IF THAT GATE IS EVER REMOVED, THIS EXCEPTION MUST GO WITH
-# IT.
-#
-# Two is the maximum and three would be false: both routers still run at edge
-# T+1, so a value launched at T can be gone by T+1.
-#
-# Scoped `-to [get_clocks clk_38]` and no further.  The same registers also
-# feed sdram_ctrl and ddr3_fastram, which sample cpuAddr unconditionally on
-# every clk_114 edge; those paths keep the single-cycle rule they have always
-# had.  And nothing here touches `clkena`'s own cone from `bus_ready`, which
-# stays 8.815 ns, nor `datatg68`, which is genuinely single-cycle: cpu_cache_new
-# sets `cpu_dat_r <= sdr_dat_r` and `cpu_cache_ack <= 1'b1` in the SAME
-# statement block in CPU_SM_FILL1 (rtl/sdram/cpu_cache_new.v), on whichever
-# clk_114 edge the SDRAM burst's first word lands on -- which can be the edge
-# before a clk_38 one.  A -setup 2 on the read data would be exactly the kind
-# of claim that is true in the abstract and false in effect.
-#
-# -hold -start 1 keeps the hold check where it was: verified on the routed
-# checkpoint, the hold requirement for these paths is still 0.000 ns
-# (clk_38 rise@0 - clk_114 rise@0), the coincident-edge check, with the same
-# 0.128 ns of slack it had before the exception.
-set bus_routers [get_cells -quiet -hier -filter "(NAME =~ $cpu_wrapper/wk_st_reg* || \
-                                               NAME =~ $cpu_wrapper/wk_active_reg* || \
-                                               NAME =~ $cpu_wrapper/wk_bstate_reg* || \
-                                               NAME =~ $cpu_wrapper/wk_busaddr_reg* || \
-                                               NAME =~ $cpu_wrapper/wk_wdat16_reg* || \
-                                               NAME =~ $cpu_wrapper/wk_data_reg* || \
-                                               NAME =~ $cpu_wrapper/wk_ack_reg* || \
-                                               NAME =~ $cpu_wrapper/wk_berr_reg* || \
-                                               NAME =~ $cpu_wrapper/fl_st_reg* || \
-                                               NAME =~ $cpu_wrapper/fl_busy_reg* || \
-                                               NAME =~ $cpu_wrapper/fl_active_reg* || \
-                                               NAME =~ $cpu_wrapper/fl_bstate_reg* || \
-                                               NAME =~ $cpu_wrapper/fl_busaddr_reg* || \
-                                               NAME =~ $cpu_wrapper/fl_word_reg* || \
-                                               NAME =~ $cpu_wrapper/fl_line_reg* || \
-                                               NAME =~ $cpu_wrapper/fl_ack_reg* || \
-                                               NAME =~ $cpu_wrapper/fl_err_reg*) && ($tg68_seq)"]
-set_multicycle_path -quiet -setup -start 2 -from $bus_routers -to [get_clocks clk_38]
-set_multicycle_path -quiet -hold  -start 1 -from $bus_routers -to [get_clocks clk_38]
+# Stage E2 deleted the one exception that used to follow here: a -setup -start
+# 2 from the clk_114 walker and line-fill routers into the island, valid only
+# because `bus_step` froze both routers on the edge before each kernel edge.
+# The fill router is gone, the walker is on clk_38, and bus_step with them.
 
 #=============================================================================
 # Wrapper and Akiko.  Unchanged.

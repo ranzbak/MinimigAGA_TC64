@@ -26,7 +26,8 @@ module cpu_cache_new (
   // sees an access that crosses a line, and a longword is ONE request instead
   // of the paired cpu_32bit protocol the bus16 adapter could not speak.
   //
-  //   cpu_req    level, every field below stable while it is high
+  //   cpu_req    level, every field below stable while it is high AND on the
+  //              clock edge before it rises (see the SOC_SIM check at cpu_ack)
   //   cpu_wadr   word address of word A
   //   cpu_bs     {A hi, A lo, A+2 hi, A+2 lo}, active high; bs[1:0] != 0 means
   //              a two-word unit, and then cpu_wadr[3:1] != 3'b111
@@ -293,6 +294,27 @@ module cpu_cache_new (
   // wrapper existed to mask exactly that one cycle.  Gating on cpu_req removes
   // the class.
   assign cpu_ack = cpu_req && (cpu_cache_ack || cpu_cacheline_valid);
+
+  // FIELDS ONE CYCLE BEFORE THE REQUEST.  cpu_cacheline_match, the hit path's
+  // cpu_rdat, cpu_adr_blk_ptr and the way RAM read addresses are all
+  // registered from the LIVE cpu_wadr, and CPU_SM_IDLE acts in the first cycle
+  // cpu_req is high -- so the fields must already have been there on the edge
+  // before it, exactly as the old port needed the address one cycle before the
+  // select.  ap040_ram_seq meets this with a setup cycle.  Found in
+  // sim/ddr3_cpu (E2 Task 4b-2): a master raising fields and request on one
+  // edge got a line-buffer hit with the previous offset's words (the reset PC
+  // came back as the SSP), then a block pointer from the old address.
+`ifdef SOC_SIM
+  reg         chk_req_d = 1'b0;
+  reg [62:0]  chk_fld_d = 63'd0;
+  wire [62:0] chk_fld   = {cpu_we, cpu_ir, cpu_wadr, cpu_bs, cpu_wdat};
+  always @(posedge clk) begin
+    if (!rst && cpu_req && !chk_req_d && chk_fld !== chk_fld_d)
+      $display("ERROR: cpu_cache_new: unit port fields changed on the edge cpu_req rose (t = %t)", $time);
+    chk_req_d <= cpu_req;
+    chk_fld_d <= chk_fld;
+  end
+`endif
 
   // cpu side state machine
   always @ (posedge clk) begin

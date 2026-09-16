@@ -11,15 +11,20 @@
 # cpu_cache_new.v use its inferred-RAM tag/data memories.
 #
 #   ./run.sh --ap040      AP68040 kernel          -> xsim_run_pass_ap040.log
-#   ./run.sh --lwmutant   AP68040 with the raw longword flag back on cpustate(6); MUST fail
+#   ./run.sh --ackmutant  AP68040 with the router's completion pulse held; MUST fail
 #   ./run.sh --mmu        AP68040, the stage-B MMU walker program
 #   ./run.sh --mmumutant  the same with walker_ack tied low; MUST fail
-#   ./run.sh --fillmutant AP68040 with the line fill assembled backwards; MUST fail
-#   ./run.sh --nofill     AP68040 with the fill channel off; the A/B reference
 #   ./run.sh --snoop      AP68040 with chipset DMA write snoops driven
 #   ./run.sh --snoopmutant  the same with the wrapper's snoop hold reverted; MUST fail
-#   REALSDRAM=1 ./run.sh --gatemutant  phase gate opening on enaWRreg (as first built); placement MUST fail
+#   ./run.sh --gatemutant phase gate opening on enaWRreg (as first built); placement MUST fail
 #   ./run.sh --chipbus    turbochipram = 0, chip RAM over the 7 MHz chipset bus
+#
+# Stage E2 (decision D6): EVERY leg runs the real sdram_ctrl and SDRAM part
+# (real_sdram.vh); the behavioural SDRAM model is retired, so REALSDRAM is no
+# longer a switch.  Retired with the 16-bit RAM port: --lwmutant (the
+# cpustate(6) flag it set no longer exists), --nofill and --fillmutant (the
+# fill router they edited was deleted in E2 Task 4b-1; the fill channel is off
+# and a line fills over m_*).
 #
 # The flags combine in that order, e.g.
 #   ./run.sh --ap040 --chipbus   -> xsim_run_pass_ap040_chipbus.log
@@ -51,13 +56,13 @@ cd "$D"
 VARIANT=pass
 IS_MUTANT=0
 
-# --lwmutant: the AP040 run with cpustate(6) carrying the raw longword flag
-# again -- the wrapper as it stood before commit c2ecc99 -- to controllers that
-# see a core answering a longword with two independent word cycles. (Since E4a
-# cpustate(6) is the constant '0'; the mutant puts longword back there.)  That is the bug that reached hardware as the AllocMem hang, and the
-# bench was blind to it.  It MUST fail now.  Implies --ap040.
-IS_LWMUTANT=0
-if [ "$1" = "--lwmutant" ]; then IS_LWMUTANT=1; IS_MUTANT=1; shift; set -- --ap040 "$@"; fi
+# --ackmutant: the router's completion pulse x_ack_r HELD instead of cleared
+# every clk edge (TG68K.vhd, `x_ack_r  <= '0';` -> `x_ack_r  <= x_ack_r;`), so
+# the acknowledge is still up at the core's next enable and one access is
+# taken as the answer to the next.  It MUST fail with a program error or a
+# watchdog.  Implies --ap040.
+IS_ACKMUTANT=0
+if [ "$1" = "--ackmutant" ]; then IS_ACKMUTANT=1; IS_MUTANT=1; shift; set -- --ap040 "$@"; fi
 
 # --mmu: the stage-B walker bench.  A different 68k program (asm/mmu_walk_test.asm)
 # builds a two-level table with the root in chip RAM and the leaves in the DDR3
@@ -71,28 +76,6 @@ IS_MMU=0
 IS_MMUMUTANT=0
 if [ "$1" = "--mmu" ];       then IS_MMU=1;                  shift; set -- --ap040 "$@"; fi
 if [ "$1" = "--mmumutant" ]; then IS_MMU=1; IS_MMUMUTANT=1; IS_MUTANT=1; shift; set -- --ap040 "$@"; fi
-
-# --fillmutant: the stage-D line-fill router with the eight words assembled in
-# the WRONG ORDER -- shifted in from the left instead of the right, so word 0
-# of the line ends up in fill_data[15:0] where the cache expects the word at
-# offset 14 (ap040_cache.v:93-99).  That is not a straw man: it is exactly the
-# layout cpu_cache_new and ddr3_fastram use internally (word k at [16k+15:16k],
-# ddr3_fastram.v:47-60), and the two conventions are opposite, so getting them
-# confused is the likely mistake.  Every line then comes back byte-reversed,
-# which the pattern read-back must catch.  It MUST fail.  Implies --ap040.
-IS_FILLMUTANT=0
-if [ "$1" = "--fillmutant" ]; then IS_FILLMUTANT=1; IS_MUTANT=1; shift; set -- --ap040 "$@"; fi
-
-# --nofill: the same wrapper with fill_ena_zorro tied low, so the cache's
-# fill_ok is a constant 0 and every line goes down the bus16 adapter as eight
-# 16-bit sub-cycles -- the pre-stage-D behaviour, with everything else
-# (including the internal caches, see CACRVAL below) identical.  This is the
-# A/B reference for the phase-timestamp table, NOT a mutant: it must PASS.
-# The wrapper's own Task 1 state cannot be used for that comparison because it
-# has no fl_* signals for the bench's fill counters to reference.  Implies
-# --ap040.
-IS_NOFILL=0
-if [ "$1" = "--nofill" ]; then IS_NOFILL=1; shift; set -- --ap040 "$@"; fi
 
 # --snoop: the chipset DMA write snoop, which nothing drove until stage D3.
 # The bench asserts snoop_stb for one clk cycle at a time, at chip RAM
@@ -114,8 +97,8 @@ if [ "$1" = "--snoop" ];       then IS_SNOOP=1;                             shif
 if [ "$1" = "--snoopmutant" ]; then IS_SNOOP=1; IS_SNOOPMUTANT=1; IS_MUTANT=1; shift; set -- --ap040 "$@"; fi
 
 # --gatemutant: the phase gate opening ON enaWRreg (the gate as first built),
-# i.e. TG68K.vhd's ena_sr(2) replaced by clkena_in. On hardware it lands chip-RAM
-# acknowledges on 3/7/11/15 and corrupts. With REALSDRAM=1 the placement
+# i.e. TG68K.vhd's ena_sr(2) replaced by clkena_in in unit_gate. On hardware it
+# lands chip-RAM write acknowledges on 3/7/11/15 and corrupts. The placement
 # monitor MUST fail. Implies --ap040.
 IS_GATEMUTANT=0
 if [ "$1" = "--gatemutant" ]; then IS_GATEMUTANT=1; IS_MUTANT=1; shift; set -- --ap040 "$@"; fi
@@ -133,11 +116,9 @@ fi
 CPU=ap040; shift
 if [ "$CPU" = "ap040" ]; then
     VARIANT=pass_ap040
-    if [ "$IS_LWMUTANT" = "1" ];   then VARIANT=lwmutant_ap040;   fi
+    if [ "$IS_ACKMUTANT" = "1" ];  then VARIANT=ackmutant_ap040;  fi
     if [ "$IS_MMU" = "1" ];        then VARIANT=mmu_ap040;        fi
     if [ "$IS_MMUMUTANT" = "1" ];  then VARIANT=mmumutant_ap040;  fi
-    if [ "$IS_FILLMUTANT" = "1" ]; then VARIANT=fillmutant_ap040; fi
-    if [ "$IS_NOFILL" = "1" ];     then VARIANT=nofill_ap040;     fi
     if [ "$IS_SNOOP" = "1" ];      then VARIANT=snoop_ap040;      fi
     if [ "$IS_SNOOPMUTANT" = "1" ]; then VARIANT=snoopmutant_ap040; fi
     if [ "$IS_GATEMUTANT" = "1" ]; then VARIANT=gatemutant_ap040; fi
@@ -235,15 +216,6 @@ elif [ "$IS_MMUMUTANT" = "1" ]; then
         echo "--mmumutant: the walker_ack port map moved; fix the sed in run.sh" >&2
         exit 2
     fi
-elif [ "$IS_NOFILL" = "1" ]; then
-    # Generated: the fill channel's enable tied low.  One line.
-    TG68K_SRC="$W/TG68K_nofill.vhd"
-    sed "s|fill_ena_zorro => '1',|fill_ena_zorro => '0',|" \
-        "$R/rtl/soc/TG68K.vhd" > "$TG68K_SRC"
-    if ! grep -q "fill_ena_zorro => '0'," "$TG68K_SRC"; then
-        echo "--nofill: the fill_ena_zorro port map moved; fix the sed in run.sh" >&2
-        exit 2
-    fi
 elif [ "$IS_SNOOPMUTANT" = "1" ]; then
     # Generated: the wrapper's snoop hold reverted, the raw one-cycle pulse
     # handed straight to a kernel on clk_cpu.  Two lines.
@@ -259,30 +231,19 @@ elif [ "$IS_SNOOPMUTANT" = "1" ]; then
 elif [ "$IS_GATEMUTANT" = "1" ]; then
     # Generated, not checked in: the phase gate reverted to open on clkena_in.
     TG68K_SRC="$W/TG68K_gatemutant.vhd"
-    sed "s|ELSIF ena_sr(2) = '1' AND slower(0) = '0' THEN|ELSIF clkena_in = '1' AND slower(0) = '0' THEN|" \
+    sed "s|unit_gate <= ena_sr(2) AND NOT slower(0);|unit_gate <= clkena_in AND NOT slower(0);|" \
         "$R/rtl/soc/TG68K.vhd" > "$TG68K_SRC"
-    if ! grep -q "ELSIF clkena_in = '1' AND slower(0) = '0' THEN" "$TG68K_SRC"; then
+    if ! grep -q "unit_gate <= clkena_in AND NOT slower(0);" "$TG68K_SRC"; then
         echo "--gatemutant: the phase gate line moved; fix the sed in run.sh" >&2
         exit 2
     fi
-elif [ "$IS_FILLMUTANT" = "1" ]; then
-    # Generated: the line-fill router's word assembly reversed.  One line.
-    TG68K_SRC="$W/TG68K_fillmutant.vhd"
-    sed "s|fl_line   <= fl_line(111 downto 0) \& datatg68;|fl_line   <= datatg68 \& fl_line(127 downto 16);|" \
+elif [ "$IS_ACKMUTANT" = "1" ]; then
+    # Generated: the completion pulse held.  One line; verify it matched.
+    TG68K_SRC="$W/TG68K_ackmutant.vhd"
+    sed "s|x_ack_r  <= '0';|x_ack_r  <= x_ack_r;|" \
         "$R/rtl/soc/TG68K.vhd" > "$TG68K_SRC"
-    if ! grep -q "fl_line   <= datatg68 & fl_line(127 downto 16);" "$TG68K_SRC"; then
-        echo "--fillmutant: the fill assembly line moved; fix the sed in run.sh" >&2
-        exit 2
-    fi
-elif [ "$IS_LWMUTANT" = "1" ]; then
-    # Generated, not checked in: one line of the real wrapper, reverted.  The
-    # sed must match or the mutation silently does nothing, so verify it did.
-    TG68K_SRC="$W/TG68K_lwmutant.vhd"
-    # (& in a sed replacement means the matched text, hence \&.)
-    sed "s|cpustate <= '0' & clkena|cpustate <= longword \& clkena|" \
-        "$R/rtl/soc/TG68K.vhd" > "$TG68K_SRC"
-    if ! grep -q "cpustate <= longword & clkena" "$TG68K_SRC"; then
-        echo "--lwmutant: the cpustate line moved; fix the sed in run.sh" >&2
+    if ! grep -q "x_ack_r  <= x_ack_r;" "$TG68K_SRC"; then
+        echo "--ackmutant: the x_ack_r clear moved; fix the sed in run.sh" >&2
         exit 2
     fi
 else
@@ -297,6 +258,7 @@ PRJ=project.prj
 # ---- VHDL, in dependency order -------------------------------------------
 echo "vhdl work \"$R/rtl/akiko/cornerturn.vhd\""        >> $PRJ
 echo "vhdl work \"$R/rtl/akiko/akiko.vhd\""             >> $PRJ
+echo "vhdl work \"$R/rtl/soc/ap040_ram_seq.vhd\""       >> $PRJ
 echo "vhdl work \"$TG68K_SRC\""                         >> $PRJ
 
 # ---- SystemVerilog --------------------------------------------------------
@@ -326,13 +288,11 @@ echo "verilog work \"$R/rtl/ddr3/ddr3_top.v\""            >> $PRJ
 echo "verilog work \"$R/rtl/ddr3/ddr3_cdc.v\""            >> $PRJ
 echo "verilog work \"$R/rtl/ddr3/ddr3_fastram.v\""        >> $PRJ
 echo "verilog work \"$R/rtl/sdram/cpu_enable_cadence.v\"" >> $PRJ
-if [ -n "$REALSDRAM" ]; then
-    # The REAL controller and the vendor SDRAM part, so that the AP68040, the
-    # wrapper, sdram_ctrl and a chipset DMA master all run together -- the
-    # configuration the hardware runs and that nothing simulated before.
-    echo "verilog work \"$R/rtl/sdram/sdram_ctrl.v\""    >> $PRJ
-    echo "verilog work \"$R/lib/models/AS4C16M16SA.v\""  >> $PRJ
-fi
+# The REAL controller and the vendor SDRAM part, so that the AP68040, the
+# wrapper, sdram_ctrl and a chipset DMA master all run together -- the
+# configuration the hardware runs.  Every leg since Stage E2 (D6).
+echo "verilog work \"$R/rtl/sdram/sdram_ctrl.v\""        >> $PRJ
+echo "verilog work \"$R/lib/models/AS4C16M16SA.v\""      >> $PRJ
 echo "verilog work \"$R/rtl/sdram/cpu_cache_new.v\""      >> $PRJ
 echo "verilog work \"$R/rtl/sdram/dpram_inf_256x32.v\""   >> $PRJ
 echo "verilog work \"$R/rtl/sdram/dpram_inf_be_1024x32.v\"" >> $PRJ
@@ -349,7 +309,7 @@ AP040_ELAB=""
 if [ "$CPU" = "ap040" ]; then AP040_ELAB="-i $R/lib/AP68040/rtl"; fi
 
 "$VIVADO_PATH/bin/xelab" -prj $PRJ -i "$LIB/tb/ddr3_core_xc7" $AP040_ELAB \
-    -d SOC_SIM ${REALSDRAM:+-d REALSDRAM -i $D} ${NOCPU:+-d NOCPU} ${DMA_OVERLAP:+-d DMA_OVERLAP} ${P2CBLOCK:+-d P2CBLOCK=$P2CBLOCK} ${CPU_RATIO:+-d CPU_RATIO=$CPU_RATIO} ${CPU_PHASE:+-d CPU_PHASE=$CPU_PHASE} -debug typical -relax \
+    -d SOC_SIM -d REALSDRAM -i $D ${NOCPU:+-d NOCPU} ${DMA_OVERLAP:+-d DMA_OVERLAP} ${P2CBLOCK:+-d P2CBLOCK=$P2CBLOCK} ${CPU_RATIO:+-d CPU_RATIO=$CPU_RATIO} ${CPU_PHASE:+-d CPU_PHASE=$CPU_PHASE} -debug typical -relax \
     -L secureip -L unisims_ver -L unimacro_ver \
     ddr3_cpu_tb glbl -s cpu_sim
 

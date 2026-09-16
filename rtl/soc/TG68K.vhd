@@ -92,15 +92,33 @@ entity TG68K is
 		wrd             : out    std_logic;
 		ena7RDreg       : in     std_logic                     := '1';
 		ena7WRreg       : in     std_logic                     := '1';
-		fromram         : in     std_logic_vector(15 downto 0);
-		toram           : out    std_logic_vector(15 downto 0);
-		ramready        : in     std_logic                     := '0';
-		-- DDR3 Zorro-III fast RAM port (used only when haveddr3)
-		ddraddr         : out    std_logic_vector(25 downto 1);
-		ddrcs           : out    std_logic;
-		fromddr         : in     std_logic_vector(15 downto 0) := (others => '0');
+		-- THE UNIT PORT (Stage E2).  One request is at most two consecutive
+		-- words inside one 16-byte line, with a byte select per byte;
+		-- ap040_ram_seq splits anything that does not fit.
+		--   *_req   level, fields stable while it is high
+		--   *_wadr  word address of word A (already mapped for the controller)
+		--   *_bs    {A hi, A lo, A+2 hi, A+2 lo}, active high
+		--   *_wdat  {word A, word A+2};  *_rdat the same, valid with *_ack
+		--   *_ack   level, only ever high while *_req is
+		ram_req         : out    std_logic;
+		ram_we          : out    std_logic;
+		ram_ir          : out    std_logic;
+		ram_wadr        : out    std_logic_vector(25 downto 1);
+		ram_bs          : out    std_logic_vector(3 downto 0);
+		ram_wdat        : out    std_logic_vector(31 downto 0);
+		ram_rdat        : in     std_logic_vector(31 downto 0) := (others => '0');
+		ram_ack         : in     std_logic                     := '0';
+		-- DDR3 Zorro-III fast RAM, the same port (used only when haveddr3)
+		ddr_req         : out    std_logic;
+		ddr_we          : out    std_logic;
+		ddr_ir          : out    std_logic;
+		ddr_wadr        : out    std_logic_vector(25 downto 1);
+		ddr_bs          : out    std_logic_vector(3 downto 0);
+		ddr_wdat        : out    std_logic_vector(31 downto 0);
+		ddr_rdat        : in     std_logic_vector(31 downto 0) := (others => '0');
+		ddr_ack         : in     std_logic                     := '0';
+		-- the DDR3 island's init-done flag: before it an access is held
 		ddr_ready       : in     std_logic                     := '0';
-		ddr_ena         : in     std_logic                     := '0';
 		ziiram_active   : in     std_logic;
 		ziiiram_active  : in     std_logic;
 		ziiiram2_active : in     std_logic;
@@ -133,7 +151,7 @@ entity TG68K is
 		-- Snapshot of one 2**22-cycle window (~37 ms), refreshed every window, so a
 		-- single ILA sample reads a complete histogram.
 		dbg_phist       : out    std_logic_vector(383 downto 0);
-		-- Stage E0 RTG diagnosis: {akiko_req, akiko_wr, bstate, cpuaddr(11:0),
+		-- Stage E0 RTG diagnosis: {akiko_req, akiko_wr, state, cpuaddr(11:0),
 		-- akiko_d} for ila_cpu040 probe9. Observation only.
 		dbg_rtg         : out    std_logic_vector(31 downto 0);
 		eth_en          : in     std_logic                     := '0'; -- @suppress "Unused port: eth_en is not used in work.TG68K(logic)"
@@ -147,14 +165,9 @@ entity TG68K is
 		cache_inhibit   : out    std_logic;
 		cacheline_clr   : out    std_logic;
 		--    ovr           : in      std_logic;
-		ramaddr         : out    std_logic_vector(31 downto 0);
-		cpustate        : out    std_logic_vector(6 downto 0);
 		nResetOut       : out    std_logic;
 		skipFetch       : out    std_logic;
-		--    cpuDMA        : buffer  std_logic;
-		ramlds          : out    std_logic;
-		ramuds          : out    std_logic;
-		CACR_out        : out    std_logic_vector(3 downto 0);
+		CACR_out       : out    std_logic_vector(3 downto 0);
 		VBR_out         : out    std_logic_vector(31 downto 0);
 		-- RTG interface
 		rtg_addr        : out    std_logic_vector(25 downto 4);
@@ -174,7 +187,13 @@ entity TG68K is
 		-- Host interface
 		host_req        : out    std_logic;
 		host_ack        : in     std_logic                     := '0';
-		host_q          : in     std_logic_vector(15 downto 0) := "----------------"
+		host_q          : in     std_logic_vector(15 downto 0) := "----------------";
+		-- The Akiko register cycle the host is asked to serve.  Before Stage
+		-- E2 the host read these off the RAM port (ramaddr(8:1), toram and
+		-- cpustate(0)), which Akiko traffic no longer shares.
+		host_addr       : out    std_logic_vector(8 downto 1);
+		host_d          : out    std_logic_vector(15 downto 0);
+		host_wr         : out    std_logic
 	);
 end TG68K;
 
@@ -193,22 +212,21 @@ ARCHITECTURE logic OF TG68K IS
 	SIGNAL uds_in      : std_logic;
 	SIGNAL lds_in      : std_logic;
 	SIGNAL state       : std_logic_vector(1 downto 0);
-	signal longword    : std_logic;
 	SIGNAL clkena      : std_logic;
 	-- The first term of clkena: which clock edge the CPU kernel is allowed to
 	-- advance on.  The AP68040 kernel runs
 	-- on clk_cpu and this is the clk-domain marker for "the next clk edge is
 	-- also a clk_cpu edge", so clkena stays a one-clk-cycle pulse on the exact
 	-- edge the kernel advances -- which is what every clk-domain consumer of
-	-- clkena in this file (slower, chipset_done, akiko_req, the chipset FSM,
-	-- cpustate) was written against.
+	-- clkena in this file (slower, chipset_done, the chipset FSM) was written
+	-- against.
 	SIGNAL cpu_ce_phase : std_logic;
 	-- cpu_ph is high in (T+N-2,T+N-1) and cpu_ph2 in (T+N-1,T+N), where the
 	-- kernel's clock edges are at T and T+N and N is cpu_clk_ratio -- see the
 	-- marker in the g_ap040 branch, which is NOT ratio-agnostic.
 	-- cpu_ph2 is the enable phase; cpu_ph is
-	-- declared HERE rather than inside the g_ap040 block because the walker
-	-- routers below need it -- see bus_step.
+	-- declared HERE rather than inside the g_ap040 block because the
+	-- completion process below needs it.
 	SIGNAL cpu_ph       : std_logic := '0';
 	SIGNAL cpu_ph2      : std_logic := '0';
 	-- '1' when the kernel's bus outputs have settled; see where it is driven.
@@ -217,11 +235,6 @@ ARCHITECTURE logic OF TG68K IS
 	-- See where they are driven.
 	SIGNAL bus_release  : std_logic;
 	SIGNAL clkena_r     : std_logic := '0';
-	-- '1' in the one clk cycle after a bus router took the bus: the cycle in
-	-- which the completion cone is still answering for the PREVIOUS address.
-	-- See bus_fresh, where it is driven.
-	SIGNAL wk_active_d  : std_logic := '0';
-	SIGNAL bus_fresh    : std_logic;
 	-- SIGNAL vmaena           : std_logic;
 	SIGNAL eind        : std_logic;
 	SIGNAL eindd       : std_logic;
@@ -238,7 +251,7 @@ ARCHITECTURE logic OF TG68K IS
 	-- ratio 4; two changes that made chip-RAM accesses wait longer made it worse.
 	-- So what is measured is WHEN a chip-RAM access completes against the round,
 	-- and how long the kernel then takes to see it -- built at ratio 3 and 4 and
-	-- compared.  Taps are registered, so nothing here loads the critical ramready
+	-- compared.  Taps are registered, so nothing here loads the critical ram_ack
 	-- net more than one flop.
 	TYPE ph_hist16_t IS ARRAY (0 TO 15) OF std_logic_vector(15 DOWNTO 0);
 	TYPE ph_hist8_t  IS ARRAY (0 TO 7)  OF std_logic_vector(15 DOWNTO 0);
@@ -273,22 +286,26 @@ ARCHITECTURE logic OF TG68K IS
 	-- outputs one clk cycle after they moved") and guards that ONE consumer
 	-- with cpu_bus_settled; it evidently reaches further than that.
 	--
-	-- So the select is held off until the first enaWRreg after `slower` has
-	-- drained, which puts every bus-cycle start back on a fixed four-phase
+	-- So a unit is launched only on the first enaWRreg phase after `slower`
+	-- has drained, which puts every bus-cycle start back on a fixed four-phase
 	-- grid.  The kernel keeps its own clock and its full rate: this costs at
 	-- most four clk cycles on an access that actually goes to memory, and
 	-- NOTHING on a cache hit, which is where the stage D3 speedup comes from.
-	SIGNAL cpu_phase_ok   : std_logic := '0';
-	SIGNAL cpu_phase_gate : std_logic;
-	-- clkena_in delayed 1..3 clk cycles; the phase gate opens on ena_sr(2).
+	--
+	-- Stage E2: this is a one-cycle PULSE, not the level cpu_phase_ok was.
+	-- The level stayed open until the next clkena, which was harmless while
+	-- every 16-bit sub-cycle came with its own clkena; ap040_ram_seq launches
+	-- the second unit of a split access with no clkena in between, and a
+	-- level would put that unit off the grid.
+	SIGNAL unit_gate      : std_logic;
+	-- clkena_in delayed 1..3 clk cycles; the gate opens on ena_sr(2).
 	SIGNAL ena_sr         : std_logic_vector(2 downto 0) := (others => '0');
 
 	TYPE sync_states IS (sync0, sync1, sync2, sync3, sync4, sync5, sync6, sync7, sync8, sync9);
 	SIGNAL sync_state : sync_states;
 	SIGNAL datatg68_c : std_logic_vector(15 downto 0);
-	SIGNAL datatg68   : std_logic_vector(15 downto 0);
 	-- THE READ-DATA CAPTURE (Stage E2, RTG investigation 2026-09-16).
-	-- datatg68 is a combinational mux that changes on clk edges, while the
+	-- datatg68_c changes on clk edges, while the
 	-- adapter samples it on a clk_cpu edge: the one clk_114 -> clk_38 signal
 	-- that is neither held across the capture window nor shaped to the
 	-- destination edge (plan-v2, D4).  clkena_r is decided at T+N-2 and the
@@ -299,10 +316,11 @@ ARCHITECTURE logic OF TG68K IS
 	-- Re-added after E2 Task 1 removed it as dead: it WAS dead where it sat
 	-- (the compat top's data_in, which ap040_tg68k_compat.v ties off with
 	-- `wire unused_d = |data_in` when AP040_BUS16 = 0).  The live read path is
-	-- the adapter this wrapper now instantiates itself.
+	-- the adapter this wrapper now instantiates itself.  Since Task 4b-2 it
+	-- carries only the adapter's traffic (chipset, NMI vector, undecoded);
+	-- RAM and Akiko reads are captured the same way in x_rdata_r.
 	SIGNAL datatg68_r : std_logic_vector(15 downto 0) := (others => '0');
 	SIGNAL w_datatg68 : std_logic_vector(15 downto 0);
-	SIGNAL ramcs      : std_logic;
 
 	SIGNAL z2ram_ena       : std_logic;
 	SIGNAL z3ram_ena       : std_logic;
@@ -324,10 +342,7 @@ ARCHITECTURE logic OF TG68K IS
 	signal sel_undecoded   : std_logic;
 	signal sel_undecoded_d : std_logic;
 	signal sel_akiko       : std_logic;
-	signal sel_akiko_d     : std_logic;
 	signal sel_audio       : std_logic;
-	signal sel_ram_d       : std_logic;
-	SIGNAL cpu_int         : std_logic;
 
 	-- DDR3 fast RAM
 	SIGNAL have_ddr        : std_logic; -- '1' when the haveddr3 generic is true
@@ -339,10 +354,9 @@ ARCHITECTURE logic OF TG68K IS
 	-- identity again; concatenating a null vector is legal and drops out.
 	CONSTANT ddr_zero_hi   : std_logic_vector(25 downto z3ram3_size_log2) := (others => '0');
 	SIGNAL sel_ddr         : std_logic;
-	SIGNAL sel_ddr_d       : std_logic;
-	SIGNAL mem_ready       : std_logic; -- SDRAM or DDR3 access acknowledge
 
 	-- Akiko registers
+	signal akiko_addr : std_logic_vector(10 downto 0);
 	signal akiko_d    : std_logic_vector(15 downto 0);
 	signal akiko_q    : std_logic_vector(15 downto 0);
 	signal akiko_wr   : std_logic;
@@ -351,7 +365,6 @@ ARCHITECTURE logic OF TG68K IS
 	signal host_req_r : std_logic;
 
 	SIGNAL NMI_addr            : std_logic_vector(31 downto 0);
-	SIGNAL sel_nmi_vector_addr : std_logic;
 	SIGNAL sel_nmi_vector      : std_logic;
 
 	signal chipset_cycle : std_logic;
@@ -362,27 +375,21 @@ ARCHITECTURE logic OF TG68K IS
 
 
 	--------------------------------------------------------------------------
-	-- Stage B: the MMU table walker's path to memory.
+	-- THE MASTER CHANNEL (Stage E2 Task 4, decision D4).
 	--
-	-- A walk happens during address translation, before the core's own bus
-	-- request exists, so the wrapper's memory side is idle whenever
-	-- walker_req is high and the walker can simply borrow it.  No new port on
-	-- sdram_ctrl (its slot arbiter already uses all eight types), no arbiter,
-	-- and no ap040_walker_cdc (that module is for hosts whose wrapper is in
-	-- another clock domain; everything here is clk_114 with clkena).
+	-- Everything that masters the bus sits on clk_38 behind ONE mux: the
+	-- core's m_* and the MMU table walker.  The walker is a ce-gated clk_38
+	-- master that asks for one longword per descriptor; a walk happens during
+	-- address translation, before the core's own request exists, so m_req is
+	-- idle whenever the walker owns the mux (asserted in sim/ddr3_cpu).
 	--
-	-- The borrowing is done by muxing the handful of signals the whole bus
-	-- side of this file derives from -- address, bus state, byte selects,
-	-- write data, write strobe -- so a walker cycle is indistinguishable from
-	-- a CPU cycle to the decode, to sdram_ctrl, to the DDR3 backend and to the
-	-- 7 MHz chipset FSM.  That last one matters: with Turbo chip RAM off, a
-	-- descriptor in chip RAM has to go out over the chipset bus, and it does,
-	-- without a line of its own.
-	--
-	-- A descriptor is a longword and this bus is 16 bits, so each walk
-	-- transaction is TWO sub-cycles, at A and A+2, with an idle gap between
-	-- them -- there is no paired-transfer path (removed in Stage E4a; the
-	-- reason the AP68040 cannot use one is recorded at cpustate below).
+	-- One router decodes x_addr once per access and sends it to one of three
+	-- places: RAM (ap040_ram_seq, one per controller), Akiko (its own
+	-- sequencer, decision D3b), or the 16-bit adapter, which is left with the
+	-- chipset bus, the NMI vector and undecoded space.  Completion returns to
+	-- the master as ONE clkena-shaped pulse with the data captured on that
+	-- same edge (x_ack_r / x_rdata_r) -- or, for the adapter's traffic, as the
+	-- adapter's own mem_ack.
 	SIGNAL wk_req     : std_logic;                      -- from the core
 	SIGNAL wk_we      : std_logic;
 	SIGNAL wk_addr    : std_logic_vector(31 downto 0);
@@ -390,28 +397,58 @@ ARCHITECTURE logic OF TG68K IS
 	SIGNAL wk_ack     : std_logic;                      -- to the core, a LEVEL
 	SIGNAL wk_data    : std_logic_vector(31 downto 0);
 	SIGNAL wk_berr    : std_logic;                      -- also a level
-	SIGNAL wk_active  : std_logic;                      -- walker owns the bus
-	SIGNAL wk_bstate  : std_logic_vector(1 downto 0);
-	SIGNAL wk_busaddr : std_logic_vector(31 downto 0);
-	SIGNAL wk_wdat16  : std_logic_vector(15 downto 0);
-	TYPE   wk_state_t IS (WK_IDLE, WK_HI, WK_GAP, WK_LO, WK_DONE);
+	SIGNAL wk_go      : std_logic;                      -- walker owns the mux
+	TYPE   wk_state_t IS (WK_IDLE, WK_BUSY, WK_DONE);
 	SIGNAL wk_st      : wk_state_t;
-	-- '1' on the clk edges the walker and line-fill routers are allowed to
-	-- advance on; see the note above the walker process.
-	SIGNAL bus_step   : std_logic;
 
+	SIGNAL x_req      : std_logic;
+	SIGNAL x_we       : std_logic;
+	SIGNAL x_instr    : std_logic;
+	SIGNAL x_size     : std_logic_vector(1 downto 0);
+	SIGNAL x_addr     : std_logic_vector(31 downto 0);
+	SIGNAL x_wdata    : std_logic_vector(31 downto 0);
+	SIGNAL x_ack      : std_logic;                      -- clkena-shaped
+	SIGNAL x_rdata    : std_logic_vector(31 downto 0);
+	-- the router's three destinations; x_sdram and x_ddr are both RAM
+	SIGNAL x_sdram    : std_logic;
+	SIGNAL x_ddr      : std_logic;
+	SIGNAL x_akiko    : std_logic;
+	SIGNAL x_a16      : std_logic;
+	-- x_req as the clk_114 sequencers may see it; see where it is driven
+	SIGNAL x_fresh    : std_logic := '0';
+	SIGNAL q_req      : std_logic;
+	SIGNAL q_sdram    : std_logic;                      -- q_req, per destination
+	SIGNAL q_ddr      : std_logic;
+	SIGNAL a16_req    : std_logic;
+	-- the completion, category 2: a pulse on the kernel's edge, data with it
+	SIGNAL x_done     : std_logic;
+	SIGNAL x_ack_r    : std_logic := '0';
+	SIGNAL x_rdata_r  : std_logic_vector(31 downto 0) := (others => '0');
 
-	-- The muxed bus-side signals.  Everything below this point uses these and
-	-- not the core's own outputs; with the walker and the fill idle, they ARE
-	-- the core's own outputs.
-	SIGNAL bstate     : std_logic_vector(1 downto 0);
-	SIGNAL buds       : std_logic;
-	SIGNAL blds       : std_logic;
-	SIGNAL bwr        : std_logic;
-	SIGNAL bwdata     : std_logic_vector(15 downto 0);
-	-- '1' on the cycle the current bus access is complete, i.e. the clkena
-	-- release term factored out so the walker can use the same completion.
-	SIGNAL bus_ready  : std_logic;
+	-- the adapter's side of the core handshake
+	SIGNAL a16_ack    : std_logic;
+	SIGNAL a16_rdata  : std_logic_vector(31 downto 0);
+
+	-- ap040_ram_seq, SDRAM (rs_) and DDR3 (rd_)
+	SIGNAL ramaddr    : std_logic_vector(25 downto 0);  -- mapped SDRAM address
+	SIGNAL ddraddr    : std_logic_vector(25 downto 0);  -- offset in board 3
+	SIGNAL rs_ack     : std_logic;
+	SIGNAL rs_rdata   : std_logic_vector(31 downto 0);
+	SIGNAL rd_ack     : std_logic;
+	SIGNAL rd_rdata   : std_logic_vector(31 downto 0);
+
+	-- The Akiko sequencer (decision D3b): the adapter's split, one Akiko
+	-- register cycle per 16-bit sub-cycle, with akiko_req low between them.
+	TYPE   ak_state_t IS (AK_IDLE, AK_SETUP, AK_CYC, AK_GAP);
+	SIGNAL ak_st      : ak_state_t;
+	SIGNAL ak_left    : std_logic_vector(2 downto 0);   -- bytes still to move
+	SIGNAL ak_wsh     : std_logic_vector(31 downto 0);  -- left-aligned
+	SIGNAL ak_rsh     : std_logic_vector(31 downto 0);  -- bytes shifted in
+	SIGNAL ak_done    : std_logic;
+
+	-- The 16-bit adapter's bus side, which now carries only chipset traffic.
+	-- '1' on the cycle the adapter's current sub-cycle is complete.
+	SIGNAL bus_ready16 : std_logic;
 	-- The 7 MHz chipset bus answers on a single-cycle pulse; these hold that
 	-- answer until the CPU's next clock enable.  See where they are driven.
 	SIGNAL chipset_ready : std_logic;
@@ -559,37 +596,24 @@ BEGIN
 	BEGIN
 		IF reset = '0' THEN
 			NMI_addr            <= X"0000007c";
-			sel_nmi_vector_addr <= '0';
 		ELSIF rising_edge(clk) THEN
 			NMI_addr            <= VBR_out_w + X"0000007c";
-			sel_nmi_vector_addr <= '0';
-			IF (cpuaddr(31 downto 2) = NMI_addr(31 downto 2)) THEN
-				sel_nmi_vector_addr <= '1';
-			END IF;
 		END IF;
 	END PROCESS;
 
-	-- NOT during a walk, and not during a line fill: a descriptor -- or a word
-	-- of a cache line -- that happens to live at the NMI vector address is
+	-- A DATA READ of the vector longword -- not a fetch, not a store, and not
+	-- a walk: a descriptor that happens to live at the NMI vector address is
 	-- memory, and must be read from memory, not answered from the vector shim.
-	sel_nmi_vector <= '1' WHEN sel_nmi_vector_addr = '1' AND bstate = "10"
-	                          AND wk_active = '0' ELSE '0';
+	--
+	-- Stage E2: on the master channel.  This was `bstate = "10"`, the
+	-- adapter's bus state, which a RAM access no longer reaches; and the
+	-- compare is combinational, because a registered copy of it is one clk
+	-- cycle behind x_addr on the first edge the router's decision is taken.
+	sel_nmi_vector <= '1' WHEN x_addr(31 downto 2) = NMI_addr(31 downto 2)
+	                          AND x_instr = '0' AND x_we = '0'
+	                          AND wk_go = '0' ELSE '0';
 
-	--------------------------------------------------------------------------
-	-- The bus-side mux.  wk_active is constant '0' unless the AP68040 is built
-	-- with its MMU.  The line fill was the second borrower here and went with
-	-- E2 decision D4, so the walker is now the only master besides the core.
-	--------------------------------------------------------------------------
-	bstate  <= wk_bstate  WHEN wk_active = '1' ELSE state;
-	buds    <= '0'        WHEN wk_active = '1' ELSE uds_in;
-	blds    <= '0'        WHEN wk_active = '1' ELSE lds_in;
-	-- descriptors are aligned longwords, so the walker takes both byte lanes
-	bwr     <= NOT wk_we  WHEN wk_active = '1' ELSE wr;
-	bwdata  <= wk_wdat16  WHEN wk_active = '1' ELSE w_datatg68;
-
-	toram   <= bwdata;
-	wrd     <= bwr;
-	cpu_int <= '1' WHEN bstate = "01" else '0';
+	wrd     <= wr;
 	PROCESS(clk)
 	BEGIN
 		IF rising_edge(clk) THEN
@@ -598,13 +622,9 @@ BEGIN
 			z3ram2_ena <= ziiiram2_active;
 			z3ram3_ena <= ziiiram3_active;
 
-			sel_akiko_d     <= sel_akiko;
 			sel_undecoded_d <= sel_undecoded;
 		END IF;
 	END PROCESS;
-
-	datatg68 <= fromddr WHEN cpu_int = '0' AND sel_ddr_d = '1' AND sel_nmi_vector = '0' ELSE
-	            fromram WHEN cpu_int = '0' AND sel_ram_d = '1' AND sel_nmi_vector = '0' ELSE datatg68_c;
 
 	-- Register incoming data
 	process(clk)
@@ -612,8 +632,6 @@ BEGIN
 		if rising_edge(clk) then
 			if sel_undecoded = '1' then
 				datatg68_c <= X"FFFF";
-			elsif sel_akiko_d = '1' then
-				datatg68_c <= akiko_q;
 			elsif sel_eth = '1' then
 				datatg68_c <= frometh;
 			else
@@ -622,9 +640,9 @@ BEGIN
 		end if;
 	end process;
 
-	sel_akiko     <= '1' when cpuaddr(31 downto 16) = X"00B8" else '0';
-	sel_32        <= '1' when cpuaddr(31 downto 24) /= X"00" and cpuaddr(31 downto 24) /= X"ff" else '0'; -- Decode 32-bit space, but exclude interrupt vectors
-	--  sel_z3ram       <= '1' WHEN (cpuaddr(31 downto 24)=z3ram_base) else '0'; -- AND z3ram_ena='1' ELSE '0';
+	sel_akiko     <= '1' when x_addr(31 downto 16) = X"00B8" else '0';
+	sel_32        <= '1' when x_addr(31 downto 24) /= X"00" and x_addr(31 downto 24) /= X"ff" else '0'; -- Decode 32-bit space, but exclude interrupt vectors
+	--  sel_z3ram       <= '1' WHEN (x_addr(31 downto 24)=z3ram_base) else '0'; -- AND z3ram_ena='1' ELSE '0';
 	-- Third block of ZIII RAM.  Decoded against the base the OS actually
 	-- assigned (latched in minimig_autoconfig.v), not against a guess: the OS
 	-- allocates ZIII bases from its own free list and puts this board wherever
@@ -641,7 +659,7 @@ BEGIN
 	-- assumed, by sim/autoconfig.  Making it exact means latching A23-A16 from
 	-- the register-48 write too; see the plan's "Later" list.
 	-- sel_32 first, and not merely as an optimisation: it excludes the 24-bit
-	-- space (cpuaddr(31 downto 24) = 0x00) and the interrupt vectors (0xff),
+	-- space (x_addr(31 downto 24) = 0x00) and the interrupt vectors (0xff),
 	-- where a Zorro-III board can never live.  Without it a base register that
 	-- reads back as 0 -- an unconnected wire, a board the OS has not placed
 	-- yet, a bug upstream -- makes this board answer for chip RAM, the CIAs and
@@ -649,7 +667,7 @@ BEGIN
 	-- a black screen before it can say why.  It cost a bring-up cycle on
 	-- 2026-09-06 (z3ram3_base left undriven in minimig_virtual_top.v).
 	sel_z3ram3    <= '1' WHEN sel_32 = '1'
-	                          AND cpuaddr(31 downto z3ram3_size_log2) = z3ram3_base(7 downto z3ram3_size_log2 - 24)
+	                          AND x_addr(31 downto z3ram3_size_log2) = z3ram3_base(7 downto z3ram3_size_log2 - 24)
 	                          AND z3ram3_ena = '1' ELSE '0';
 	-- First block of ZIII RAM - 0x40000000 - 0x40ffffff
 	-- Second block of ZIII RAM - 32 meg from 0x42000000 - 0x43ffffff
@@ -657,18 +675,18 @@ BEGIN
 	-- configured first and land on the bottom of the ZIII free space.  Board 3
 	-- wins if the OS ever does place it inside one of these ranges, so that an
 	-- address can never select two backends at once.
-	sel_z3ram     <= '1' WHEN (cpuaddr(31 downto 30) = "01") and cpuaddr(26 downto 24) = "000" AND z3ram_ena = '1' AND sel_z3ram3 = '0' ELSE '0';
-	sel_z3ram2    <= '1' WHEN (cpuaddr(31 downto 30) = "01") and cpuaddr(25) = '1' AND z3ram2_ena = '1' AND sel_z3ram3 = '0' ELSE '0';
-	sel_z2ram     <= '1' WHEN (cpuaddr(31 downto 24) = X"00") AND ((cpuaddr(23 downto 21) = "001") OR (cpuaddr(23 downto 21) = "010") OR (cpuaddr(23 downto 21) = "011") OR (cpuaddr(23 downto 21) = "100")) AND z2ram_ena = '1' ELSE '0';
-	--sel_eth         <= '1' WHEN (cpuaddr(31 downto 24) = eth_base) AND eth_cfgd='1' ELSE '0';
-	sel_chip      <= '1' WHEN (cpuaddr(31 downto 24) = X"00") AND (cpuaddr(23 downto 21) = "000") ELSE '0'; --$000000 - $1FFFFF
+	sel_z3ram     <= '1' WHEN (x_addr(31 downto 30) = "01") and x_addr(26 downto 24) = "000" AND z3ram_ena = '1' AND sel_z3ram3 = '0' ELSE '0';
+	sel_z3ram2    <= '1' WHEN (x_addr(31 downto 30) = "01") and x_addr(25) = '1' AND z3ram2_ena = '1' AND sel_z3ram3 = '0' ELSE '0';
+	sel_z2ram     <= '1' WHEN (x_addr(31 downto 24) = X"00") AND ((x_addr(23 downto 21) = "001") OR (x_addr(23 downto 21) = "010") OR (x_addr(23 downto 21) = "011") OR (x_addr(23 downto 21) = "100")) AND z2ram_ena = '1' ELSE '0';
+	--sel_eth         <= '1' WHEN (x_addr(31 downto 24) = eth_base) AND eth_cfgd='1' ELSE '0';
+	sel_chip      <= '1' WHEN (x_addr(31 downto 24) = X"00") AND (x_addr(23 downto 21) = "000") ELSE '0'; --$000000 - $1FFFFF
 	sel_chipram   <= '1' WHEN sel_chip = '1' AND turbochip_d = '1' ELSE '0';
-	sel_kick      <= '1' WHEN (cpuaddr(31 downto 24) = X"00") AND ((cpuaddr(23 downto 19) = "11111") OR (cpuaddr(23 downto 19) = "11100")) AND bstate /= "11" ELSE '0'; -- $F8xxxx, $E0xxxx, read only
+	sel_kick      <= '1' WHEN (x_addr(31 downto 24) = X"00") AND ((x_addr(23 downto 19) = "11111") OR (x_addr(23 downto 19) = "11100")) AND x_we = '0' ELSE '0'; -- $F8xxxx, $E0xxxx, read only
 	sel_kickram   <= '1' WHEN sel_kick = '1' AND turbokick_d = '1' ELSE '0';
-	sel_slow      <= '1' WHEN (cpuaddr(31 downto 24) = X"00") AND ((cpuaddr(23 downto 20) = X"C" AND ((cpuaddr(19) = '0' AND slow_config /= "00") OR (cpuaddr(19) = '1' AND slow_config(1) = '1'))) OR (cpuaddr(23 downto 19) = X"D" & '0' AND slow_config = "11")) ELSE '0'; -- $C00000 - $D7FFFF
+	sel_slow      <= '1' WHEN (x_addr(31 downto 24) = X"00") AND ((x_addr(23 downto 20) = X"C" AND ((x_addr(19) = '0' AND slow_config /= "00") OR (x_addr(19) = '1' AND slow_config(1) = '1'))) OR (x_addr(23 downto 19) = X"D" & '0' AND slow_config = "11")) ELSE '0'; -- $C00000 - $D7FFFF
 	sel_slowram   <= '1' WHEN sel_slow = '1' AND turboslow_d = '1' ELSE '0';
-	-- sel_cart        <= '1' WHEN (cpuaddr(31 downto 24) = X"00") AND (cpuaddr(23 downto 20)="1010") ELSE '0'; -- $A00000 - $A7FFFF (actually matches up to $AFFFFF)
-	sel_audio     <= '1' WHEN (cpuaddr(31 downto 24) = X"00") AND (cpuaddr(23 downto 18) = "111011") ELSE '0'; -- $EC0000 - $EFFFFF
+	-- sel_cart        <= '1' WHEN (x_addr(31 downto 24) = X"00") AND (x_addr(23 downto 20)="1010") ELSE '0'; -- $A00000 - $A7FFFF (actually matches up to $AFFFFF)
+	sel_audio     <= '1' WHEN (x_addr(31 downto 24) = X"00") AND (x_addr(23 downto 18) = "111011") ELSE '0'; -- $EC0000 - $EFFFFF
 	sel_undecoded <= '1' WHEN sel_32 = '1' and sel_z3ram = '0' and sel_z3ram2 = '0' and sel_z3ram3 = '0' else '0';
 	-- '1' when the DDR3 fast RAM is present.  Everything DDR3-specific is gated
 	-- with this, so haveddr3 = false reproduces today's core exactly.
@@ -686,42 +704,221 @@ BEGIN
 
 	cache_inhibit <= '1' WHEN sel_kickram = '1' ELSE '0';
 
-	-- See cpu_phase_ok.
-	cpu_phase_gate <= cpu_phase_ok;
+	--------------------------------------------------------------------------
+	-- THE ROUTER (Stage E2 Task 4).  Every sel_* above is decoded from the
+	-- MASTER address x_addr, once per access -- not from the adapter's
+	-- advancing address, which a RAM access never reaches.  Every window
+	-- boundary is at bit 18 or above and an access spans at most four bytes,
+	-- so an access that decoded differently at its first and last byte would
+	-- need a window to be narrowed first.
+	--
+	-- Precedence: the NMI vector shim beats RAM and Akiko; everything that is
+	-- not RAM or Akiko goes to the adapter.
+	--------------------------------------------------------------------------
+	x_sdram <= sel_ram   AND NOT sel_nmi_vector;
+	x_ddr   <= sel_ddr   AND NOT sel_nmi_vector;
+	x_akiko <= sel_akiko AND NOT sel_nmi_vector;
+	x_a16   <= NOT (x_sdram OR x_ddr OR x_akiko);
 
-	ramcs <= NOT (NOT cpu_int AND sel_ram_d AND NOT sel_nmi_vector AND cpu_phase_gate) OR slower(0);
-	-- Same shape as ramcs, slower(0) throttle included, so the DDR3 backend sees
-	-- exactly the chip-select timing sdram_ctrl sees (address one cycle early).
-	ddrcs <= NOT (NOT cpu_int AND sel_ddr_d AND NOT sel_nmi_vector AND cpu_phase_gate) OR slower(0);
+	-- x_req AS THE clk_114 SEQUENCERS SEE IT.  x_* is clk_38 and changes only
+	-- on a kernel edge K, the edge clkena_r was high into; cpu.xdc gives a
+	-- path from the island two clk cycles, so the first clk edge that may
+	-- look at a new x_* is K+2.  q_req is therefore masked on the two edges
+	-- before that: K itself (clkena_r high) and K+1 (x_fresh high).
+	--
+	-- The mask on K is also what ends each sequencer's completion level.
+	-- Both hold their done flag until they see the request low, and the
+	-- core does not always give them that: ap040_cache keeps m_req high
+	-- straight from one line-fill beat into the next, changing only the
+	-- address.  With the mask, every access the core consumes is followed by
+	-- at least one clk edge on which q_req is low.
+	--
+	-- Neither mask can land inside an access: clkena_r is only high on a
+	-- completion, or while no request is outstanding.
+	q_req   <= x_req AND NOT clkena_r AND NOT x_fresh;
+	q_sdram <= q_req AND x_sdram;
+	q_ddr   <= q_req AND x_ddr;
+
+	ram_seq_sdram : entity work.ap040_ram_seq
+		PORT MAP(
+			clk    => clk,
+			reset  => reset,
+			req    => q_sdram,
+			we     => x_we,
+			ir     => x_instr,
+			size   => x_size,
+			addr   => ramaddr,
+			wdata  => x_wdata,
+			ack    => rs_ack,
+			rdata  => rs_rdata,
+			gate   => unit_gate,
+			u_req  => ram_req,
+			u_we   => ram_we,
+			u_ir   => ram_ir,
+			u_wadr => ram_wadr,
+			u_bs   => ram_bs,
+			u_wdat => ram_wdat,
+			u_rdat => ram_rdat,
+			u_ack  => ram_ack
+		);
+
+	-- DDR3: same sequencer, same gate.  ddr_ready is the island's init/reset-
+	-- done flag: before it an access is simply held (the CPU stalls), never
+	-- released with rubbish and never faulted.
 	-- The DDR3 address is the offset inside board 3, which the OS may have put
 	-- anywhere, so the base bits are dropped and what is left is zero-extended
-	-- to the 25-bit word address the backend takes (design.md D6, amended by
-	-- findings/ddr3/z3ram3-on-ddr3-plan.md: identity only when the board covers
-	-- the whole 64 MB).  One assignment, so ddraddr has one driver.
-	ddraddr <= ddr_zero_hi & cpuaddr(z3ram3_size_log2 - 1 downto 1);
+	-- (design.md D6, amended by findings/ddr3/z3ram3-on-ddr3-plan.md: identity
+	-- only when the board covers the whole 64 MB).  One assignment, so
+	-- ddraddr has one driver.
+	ddraddr <= ddr_zero_hi & x_addr(z3ram3_size_log2 - 1 downto 0);
 
-	-- cpustate(6) is the RAM port's 32-bit-write flag, and it is the constant
-	-- '0'.  sdram_ctrl derives cpuLongword from it and cpu_cache_new answers
-	-- a set bit by acknowledging the high word at once and moving to
-	-- CPU_SM_WAIT_LOWORD, where it expects the low word as a continuation of
-	-- THE SAME request.  The AP68040 cannot supply that: its bus16 adapter
-	-- issues two fully independent word cycles, so the controller would bank a
-	-- half-written longword and the two sides desync.  (The TG68K and its
-	-- paired AGA chipset cycles, which used this flag, went in Stage E4a.)
-	-- sim/ddr3_cpu's --lwmutant puts the raw longword flag back here and MUST
-	-- fail; Stage E2's 32-bit port makes a longword one access and retires the
-	-- flag.
+	g_ddr_seq : IF haveddr3 GENERATE
+		SIGNAL ddr_ack_q : std_logic;
+	BEGIN
+		ddr_ack_q <= ddr_ack AND ddr_ready;
+
+		ram_seq_ddr : entity work.ap040_ram_seq
+			PORT MAP(
+				clk    => clk,
+				reset  => reset,
+				req    => q_ddr,
+				we     => x_we,
+				ir     => x_instr,
+				size   => x_size,
+				addr   => ddraddr,
+				wdata  => x_wdata,
+				ack    => rd_ack,
+				rdata  => rd_rdata,
+				gate   => unit_gate,
+				u_req  => ddr_req,
+				u_we   => ddr_we,
+				u_ir   => ddr_ir,
+				u_wadr => ddr_wadr,
+				u_bs   => ddr_bs,
+				u_wdat => ddr_wdat,
+				u_rdat => ddr_rdat,
+				u_ack  => ddr_ack_q
+			);
+	END GENERATE;
+
+	g_no_ddr_seq : IF NOT haveddr3 GENERATE
+		ddr_req  <= '0';
+		ddr_we   <= '0';
+		ddr_ir   <= '0';
+		ddr_wadr <= (OTHERS => '0');
+		ddr_bs   <= (OTHERS => '0');
+		ddr_wdat <= (OTHERS => '0');
+		rd_ack   <= '0';
+		rd_rdata <= (OTHERS => '0');
+	END GENERATE;
+
+	--------------------------------------------------------------------------
+	-- The Akiko sequencer (decision D3b).  Akiko's registers are 16 bits, so
+	-- an access is split EXACTLY as ap040_bus16_adapter.v splits it -- a byte
+	-- is one cycle on its word, an even word one cycle, an even longword two
+	-- (A, A+2), anything odd byte-first -- and akiko_addr is the advancing
+	-- byte address the adapter's addr_out was.  Two rules come from akiko.vhd:
 	--
-	-- Found on hardware: Kickstart 46.143 spun in AllocMem because
-	-- SysBase->MemList (ExecBase+$142) read back zero.  ExecBase lives in
-	-- slow/fast RAM, which leaves on this port, so Exec's list relocation
-	-- stored its pointers through the broken 32-bit write while the chipset
-	-- bus -- already fixed -- carried the instruction fetches and the stack
-	-- correctly.  sim/ddr3_cpu cannot see it: its RAM model uses only
-	-- cpustate[2:0] and ignores this bit.
-	cpustate <= '0' & clkena & slower(1 downto 0) & ramcs & bstate(1 downto 0);
-	ramlds   <= blds;
-	ramuds   <= buds;
+	--   * its ack is REGISTERED from req, so it is still high on the edge
+	--     after req drops;
+	--   * cornerturn acknowledges the RISING edge of req.
+	--
+	-- So req goes low for two clk cycles (AK_GAP, AK_SETUP) between register
+	-- cycles, and AK_CYC waits for the ack its own req produced.
+	--
+	-- A fetch from Akiko space is served as a read.  (Before E2 it raised no
+	-- akiko_req at all and hung the CPU.)
+	--------------------------------------------------------------------------
+	PROCESS(clk, reset)
+		VARIABLE odd_v  : boolean;
+		VARIABLE two_v  : boolean;
+	BEGIN
+		IF reset = '0' THEN
+			ak_st      <= AK_IDLE;
+			ak_left    <= (OTHERS => '0');
+			ak_wsh     <= (OTHERS => '0');
+			ak_rsh     <= (OTHERS => '0');
+			ak_done    <= '0';
+			akiko_addr <= (OTHERS => '0');
+			akiko_d    <= (OTHERS => '0');
+			akiko_req  <= '0';
+			akiko_wr   <= '0';
+		ELSIF rising_edge(clk) THEN
+			-- the completion level lasts exactly as long as the request does
+			IF (q_req AND x_akiko) = '0' THEN
+				ak_done <= '0';
+			END IF;
+
+			odd_v := akiko_addr(0) = '1';
+			two_v := NOT odd_v AND ak_left(2 DOWNTO 1) /= "00";
+
+			CASE ak_st IS
+				WHEN AK_IDLE =>
+					akiko_req <= '0';
+					akiko_wr  <= '0';
+					IF (q_req AND x_akiko) = '1' AND ak_done = '0' THEN
+						akiko_addr <= x_addr(10 DOWNTO 0);
+						ak_rsh     <= (OTHERS => '0');
+						CASE x_size IS
+							WHEN "00" =>
+								ak_left <= "001";
+								ak_wsh  <= x_wdata(7 DOWNTO 0) & X"000000";
+							WHEN "01" =>
+								ak_left <= "010";
+								ak_wsh  <= x_wdata(15 DOWNTO 0) & X"0000";
+							WHEN OTHERS =>
+								ak_left <= "100";
+								ak_wsh  <= x_wdata;
+						END CASE;
+						akiko_wr <= x_we;
+						ak_st    <= AK_SETUP;
+					END IF;
+
+				WHEN AK_SETUP =>
+					IF two_v THEN
+						akiko_d <= ak_wsh(31 DOWNTO 16);
+					ELSE
+						akiko_d <= ak_wsh(31 DOWNTO 24) & ak_wsh(31 DOWNTO 24);
+					END IF;
+					akiko_req <= '1';
+					ak_st     <= AK_CYC;
+
+				WHEN AK_CYC =>
+					IF akiko_ack = '1' THEN
+						-- big endian, as the adapter's rshift
+						IF odd_v THEN
+							ak_rsh <= ak_rsh(23 DOWNTO 0) & akiko_q(7 DOWNTO 0);
+						ELSIF two_v THEN
+							ak_rsh <= ak_rsh(15 DOWNTO 0) & akiko_q;
+						ELSE
+							ak_rsh <= ak_rsh(23 DOWNTO 0) & akiko_q(15 DOWNTO 8);
+						END IF;
+						IF two_v THEN
+							akiko_addr <= akiko_addr + 2;
+							ak_left    <= ak_left - 2;
+							ak_wsh     <= ak_wsh(15 DOWNTO 0) & X"0000";
+						ELSE
+							akiko_addr <= akiko_addr + 1;
+							ak_left    <= ak_left - 1;
+							ak_wsh     <= ak_wsh(23 DOWNTO 0) & X"00";
+						END IF;
+						akiko_req <= '0';
+						ak_st     <= AK_GAP;
+					END IF;
+
+				WHEN AK_GAP =>
+					IF ak_left = "000" THEN
+						akiko_wr <= '0';
+						ak_done  <= '1';
+						ak_st    <= AK_IDLE;
+					ELSE
+						ak_st    <= AK_SETUP;
+					END IF;
+			END CASE;
+		END IF;
+	END PROCESS;
+
+	x_done <= rs_ack OR rd_ack OR ak_done;
 
 	-- This is the mapping to the SDRAM
 	-- map $00-$1F to $00-$1F (chipram), $A0-$FF to $20-$7F. All non-fastram goes into the first
@@ -761,18 +958,16 @@ BEGIN
 	-- addr(22) <= (addr(22) and not sel_ziii_3) or (addr(21) and sel_ziii_3);
 	-- addr(21) <= addr(21) xor sel_ziii_3;
 
-	ramaddr(31 downto 26) <= "000000";
 	ramaddr(25)           <= sel_z3ram2; -- Second block of 32 meg
-	ramaddr(24)           <= (cpuaddr(24) and sel_z3ram2) or sel_z3ram; -- Remap the first block of Zorro III RAM to 0x1000000
-	ramaddr(23)           <= (cpuaddr(23) xor (cpuaddr(22) or cpuaddr(21))) and not sel_z3ram3;
-	ramaddr(22)           <= cpuaddr(21) when sel_z3ram3 = '1' else cpuaddr(22);
-	ramaddr(21)           <= cpuaddr(21) xor sel_z3ram3;
-	ramaddr(20 downto 0)  <= cpuaddr(20 downto 0);
+	ramaddr(24)           <= (x_addr(24) and sel_z3ram2) or sel_z3ram; -- Remap the first block of Zorro III RAM to 0x1000000
+	ramaddr(23)           <= (x_addr(23) xor (x_addr(22) or x_addr(21))) and not sel_z3ram3;
+	ramaddr(22)           <= x_addr(21) when sel_z3ram3 = '1' else x_addr(22);
+	ramaddr(21)           <= x_addr(21) xor sel_z3ram3;
+	ramaddr(20 downto 0)  <= x_addr(20 downto 0);
 
-	-- 32bit address space for 68020, limit address space to 24bit for 68000/68010.
-	-- A walk drives a physical address straight in: translation is what the
-	-- walk is for, and the 040 is 32-bit anyway.
-	cpuaddr <= wk_busaddr WHEN wk_active = '1' ELSE addrtg68;
+	-- The adapter's ADVANCING address (A, then A+2 within one access): what
+	-- the 7 MHz chipset machine latches, and what dbg_rtg shows.
+	cpuaddr <= addrtg68;
 
 	--------------------------------------------------------------------------
 	-- The CPU kernel: the AP68040.
@@ -818,7 +1013,7 @@ BEGIN
 		-- it is ph_sr(N-3).  Four stages covers ratios 3 to 6.
 		SIGNAL ph_sr     : std_logic_vector(3 downto 0) := (others => '0');
 		-- cpu_ph is declared in the architecture region, next to cpu_ph2: the
-		-- bus routers are outside this generate and read it (bus_step).
+		-- completion process is outside this generate and reads it.
 
 		-- STAGE D3, THE OTHER HALF OF THE CROSSING.  The chipset DMA write
 		-- snoop is the one bus -> core signal that is NOT a level the core
@@ -912,21 +1107,22 @@ BEGIN
 				AP040_ENABLE_CACHE => ap040_enable_cache,
 				AP040_FAST_SIM     => 0,
 				AP040_POST_STORES  => ap040_post_stores,
-				-- The line-fill channel, routed by the fill router below.
+				-- The line-fill channel is off (E2 D4/D5): a line fills over m_*.
 				AP040_FILL_CHANNEL => 0,
 				-- The 16-bit adapter is instantiated below, in this file.
 				AP040_BUS16        => 0
 			)
 			PORT MAP(
-				-- The CPU island's own 37.8125 MHz clock.  Everything else in
-				-- this file -- the decode, both bus routers, slower, the
-				-- chipset state machine, Akiko, the registers facing
-				-- sdram_ctrl and ddr3_fastram -- stays on clk, because that
-				-- is the clock the controllers are on.
+				-- The CPU island's own 37.8125 MHz clock.  So are the master
+				-- mux, the walker and the 16-bit adapter.  The router's
+				-- sequencers, slower, the chipset state machine, Akiko and the
+				-- registers facing sdram_ctrl and ddr3_fastram stay on clk,
+				-- because that is the clock the controllers are on.
 				clk            => clk_cpu,
 				nreset         => reset,
 				clkena_in      => clkena,
-				data_in        => datatg68,
+				-- unused with AP040_BUS16 => 0: the adapter below has data_in
+				data_in        => (others => '0'),
 				ipl            => cpuIPL,
 				ipl_autovector => '1',
 				-- The SoC never raises a bus error: undecoded 32-bit space is
@@ -955,8 +1151,8 @@ BEGIN
 				-- 256 MB window following the base the OS gave the DDR3 board
 				-- wherever it put it.  Both are much wider than the board
 				-- inside them, so a cacheable read can land in a hole no
-				-- board decodes; fl_ok above says how the fill router answers
-				-- one.
+				-- board decodes, which the router sends to the adapter as
+				-- undecoded space.
 				cache_allow_all  => '0',
 				cache_snoop_stb  => snp_stb_held,
 				cache_snoop_addr => snp_addr_held,
@@ -967,9 +1163,9 @@ BEGIN
 				cache_z3_ena1    => z3ram3_ena,
 
 				-- Stage B: the table walker rides this wrapper's own memory
-				-- path, two 16-bit sub-cycles per descriptor.  See the router
-				-- below; ap040_walker_cdc is deliberately NOT used (one clock
-				-- domain here).
+				-- path, one longword per descriptor through the master mux.
+				-- ap040_walker_cdc is deliberately NOT used: the walker FSM
+				-- below is on the core's own clock and enable.
 				walker_req     => wk_req,
 				walker_we      => wk_we,
 				walker_addr    => wk_addr,
@@ -1027,25 +1223,44 @@ BEGIN
 				m_rdata           => m_rdata
 			);
 
-		-- The 16-bit adapter, moved out of the compat top (Stage E2 Task 1): the
-		-- same module, clock, enable and connections, one hierarchy level up.
-		-- Stage E2 Task 4 feeds it only the requests the router does not send
-		-- to RAM.
+		-- The master mux.  The walker owns it from the ce edge it raises wk_go
+		-- to the ce edge it takes its answer; m_req is idle for all of that.
+		x_req   <= '1'     WHEN wk_go = '1' ELSE m_req;
+		x_we    <= wk_we   WHEN wk_go = '1' ELSE m_write;
+		x_instr <= '0'     WHEN wk_go = '1' ELSE m_instr;
+		x_size  <= "10"    WHEN wk_go = '1' ELSE m_size;    -- AP040_SZ_L
+		x_addr  <= wk_addr WHEN wk_go = '1' ELSE m_addr;
+		x_wdata <= wk_wdat WHEN wk_go = '1' ELSE m_wdata;
+
+		-- The answer, from whichever side served it, to whichever master
+		-- asked.  a16_ack is the adapter's own registered pulse, x_ack_r the
+		-- router's; they can never both be high, since an access goes to one
+		-- side only.
+		a16_req <= x_req AND x_a16;
+
+		x_ack   <= a16_ack OR x_ack_r;
+		x_rdata <= a16_rdata WHEN a16_ack = '1' ELSE x_rdata_r;
+		m_ack   <= x_ack AND NOT wk_go;
+		m_rdata <= x_rdata;
+
+		-- The 16-bit adapter, moved out of the compat top (Stage E2 Task 1).
+		-- Since Task 4b-2 it gets only what the router does not send to RAM
+		-- or Akiko: the chipset bus, the NMI vector and undecoded space.
 		bus16 : COMPONENT ap040_bus16_adapter
 			PORT MAP(
 				clk        => clk_cpu,
 				nreset     => reset,
 				clkena_in  => clkena,
-				mem_req    => m_req,
+				mem_req    => a16_req,
 				mem_berr   => '0',
-				mem_write  => m_write,
-				mem_instr  => m_instr,
-				mem_size   => m_size,
-				mem_addr   => m_addr,
-				mem_wdata  => m_wdata,
+				mem_write  => x_we,
+				mem_instr  => x_instr,
+				mem_size   => x_size,
+				mem_addr   => x_addr,
+				mem_wdata  => x_wdata,
 				mem_fc     => m_fc,
-				mem_ack    => m_ack,
-				mem_rdata  => m_rdata,
+				mem_ack    => a16_ack,
+				mem_rdata  => a16_rdata,
 				data_in    => datatg68_r,
 				addr_out   => addrtg68,
 				data_write => w_datatg68,
@@ -1053,9 +1268,69 @@ BEGIN
 				nuds       => uds_in,
 				nlds       => lds_in,
 				busstate   => state,
-				longword   => longword,
+				longword   => OPEN,
 				fc         => OPEN
 			);
+
+		--------------------------------------------------------------------------
+		-- The walker (Stage E2, decision D4): a clk_38 master on the core's own
+		-- enable, one longword request per descriptor through the master mux.
+		--
+		-- Errors, following walker_mem_bad in the MiSTer reference: a
+		-- misaligned descriptor address, or one that decodes as nothing, raises
+		-- walker_berr rather than hanging.  The MMU turns that into an
+		-- unsuccessful table search -- a Guru -- instead of a silent halt.  An
+		-- undecoded descriptor still runs its access (the adapter auto-completes
+		-- it); sel_undecoded_d has been stable for the whole of it by then.
+		--------------------------------------------------------------------------
+		PROCESS(clk_cpu, reset)
+		BEGIN
+			IF reset = '0' THEN
+				wk_st   <= WK_IDLE;
+				wk_go   <= '0';
+				wk_ack  <= '0';
+				wk_berr <= '0';
+				wk_data <= (OTHERS => '0');
+			ELSIF rising_edge(clk_cpu) THEN
+				IF clkena = '1' THEN
+					CASE wk_st IS
+						WHEN WK_IDLE =>
+							IF wk_req = '1' THEN
+								IF wk_addr(1 DOWNTO 0) /= "00" THEN
+									-- a descriptor is a longword; this table is corrupt
+									wk_berr <= '1';
+									wk_st   <= WK_DONE;
+								ELSE
+									wk_go   <= '1';
+									wk_st   <= WK_BUSY;
+								END IF;
+							END IF;
+
+						WHEN WK_BUSY =>
+							IF x_ack = '1' THEN
+								wk_go   <= '0';
+								wk_data <= x_rdata;
+								IF sel_undecoded_d = '1' THEN
+									wk_berr <= '1';   -- nothing lives here
+								ELSE
+									wk_ack  <= '1';
+								END IF;
+								wk_st   <= WK_DONE;
+							END IF;
+
+						WHEN WK_DONE =>
+							-- ap040_mmu drops walker_req when it has taken the
+							-- answer and inserts a request-low cycle before the
+							-- next descriptor, so this is the whole handshake.
+							IF wk_req = '0' THEN
+								wk_ack  <= '0';
+								wk_berr <= '0';
+								wk_st   <= WK_IDLE;
+							END IF;
+					END CASE;
+				END IF;
+			END IF;
+		END PROCESS;
 
 		-- ap040_core.v:6141  debug_status  = {magic, .., state, a0, d2, d1, d0, a7, ir, sr, pc}
 		-- ap040_core.v:6134  debug_status2 = {aer_fa, usp, isp, 16'd0, exc_vec, 5'd0, in_exc, fault, 1'b0}
@@ -1095,19 +1370,23 @@ BEGIN
 				turbokick_d   <= '0';
 				turboslow_d   <= '0';
 				cacheline_clr <= '0';
-			ELSIF bstate = "01" THEN    -- No mem access, so safe to switch chipram access mode
+			ELSIF q_req = '0' AND clkena_r = '0' AND x_fresh = '0' AND state = "01" THEN    -- No mem access, so safe to switch chipram access mode
+				-- (the master's request, not just the adapter's bus state: a
+				-- RAM access never reaches the adapter, and these switch the
+				-- router's decode.  Not on the two edges after a kernel edge,
+				-- where x_req and state are not settled; see q_req.)
 				turbochip_d   <= turbochipram;
 				turbokick_d   <= turbokick;
 				turboslow_d   <= turbochipram OR aga;
 				cacheline_clr <= (turbochipram XOR turbochip_d);
 			END IF;
-			sel_ram_d <= sel_ram;
-			sel_ddr_d <= sel_ddr;
-			wk_active_d <= wk_active;
 		END IF;
 	END PROCESS;
 
-	host_req <= host_req_r;
+	host_req  <= host_req_r;
+	host_addr <= akiko_addr(8 downto 1);
+	host_d    <= akiko_d;
+	host_wr   <= akiko_wr;
 	myakiko : entity work.akiko
 		GENERIC MAP(
 			havertg   => havertg,
@@ -1117,7 +1396,7 @@ BEGIN
 		PORT MAP(                       -- @suppress "The order of the associations is different from the declaration order"
 			clk            => clk,
 			reset_n        => reset,
-			addr           => cpuaddr(10 downto 0),
+			addr           => akiko_addr,
 			d              => akiko_d,
 			q              => akiko_q,
 			wr             => akiko_wr,
@@ -1141,23 +1420,7 @@ BEGIN
 			audio_int      => audio_int
 		);
 
-	akiko_d <= bwdata;
-	dbg_rtg <= akiko_req & akiko_wr & bstate & cpuaddr(11 downto 0) & akiko_d;
-	process(clk)
-	begin
-		if rising_edge(clk) then
-			if sel_akiko = '0' then
-				akiko_req <= '0';
-				akiko_wr  <= '0';
-			end if;
-			if sel_akiko = '1' and bstate(1) = '1' and slower(2) = '0' then
-				akiko_req <= not clkena;
-				if bstate(0) = '1' then -- write cycle
-					akiko_wr <= '1';
-				end if;
-			end if;
-		end if;
-	end process;
+	dbg_rtg <= akiko_req & akiko_wr & state & cpuaddr(11 downto 0) & akiko_d;
 
 	PROCESS(clk)
 	BEGIN
@@ -1186,15 +1449,8 @@ BEGIN
 		END IF;
 	END PROCESS;
 
-	-- Each memory's acknowledge is qualified with its own select, so an SDRAM ack
-	-- can never release a DDR3 access nor the other way round.  ddr_ready is the
-	-- island's init/reset-done flag: before it a DDR3 access is simply held (the
-	-- CPU stalls), never released with rubbish and never faulted.
-	mem_ready <= ((ramready AND sel_ram_d) OR (ddr_ena AND sel_ddr_d AND ddr_ready)) WHEN haveddr3 ELSE ramready;
-
-	-- The clkena release term, factored out under its own name so the walker
-	-- FSM can wait on exactly the condition that releases the CPU -- memory,
-	-- chipset bus, undecoded auto-complete or Akiko, whichever answers.
+	-- The adapter's completion, bus_ready16: chipset bus or undecoded
+	-- auto-complete, whichever answers.
 	--
 	-- The chipset half of it is LATCHED (chipset_done) rather than taken
 	-- straight from ena7RDreg/ena7WRreg.  Those are single-cycle pulses on
@@ -1220,7 +1476,7 @@ BEGIN
 		END IF;
 	END PROCESS;
 
-	bus_ready <= '1' WHEN (chipset_ready = '1' OR chipset_done = '1' OR mem_ready = '1' OR sel_undecoded_d = '1' OR akiko_ack = '1') ELSE
+	bus_ready16 <= '1' WHEN (chipset_ready = '1' OR chipset_done = '1' OR sel_undecoded_d = '1') ELSE
 	'0';
 
 	-- Which clock edge the kernel may advance on; see the signal declaration.
@@ -1246,183 +1502,82 @@ BEGIN
 	cpu_bus_settled <= NOT slower(1);
 
 	-- This net is the clock enable of 7,391 kernel flops and is the plan's
-	-- number-one timing risk ("Timing" item 1).  It carries exactly two terms
-	-- for that reason, and it used to carry four more: wk_ack, wk_berr,
-	-- fl_ack and fl_err, added as deadlock guards for the two bus borrowers.
-	-- They were REDUNDANT, and they cost real time -- the ship build of the
-	-- fill router had seven new failing clk_114 endpoints, every one of them
-	-- starting at fl_active_reg and ending on a kernel clock-enable pin
-	-- (build/stage_ap040_x3fill2/violators.rpt; the plan's D1 note had
-	-- already priced the wk_ack term at 0.243 ns on the FPU multiplier's
-	-- enable and named it as the first thing to remove).
+	-- number-one timing risk ("Timing" item 1), which is why it is a register
+	-- (clkena_r below) and why its inputs are all levels.
 	--
-	-- What makes them redundant is an invariant of the two routers, not an
-	-- accident:
-	--
-	--   In every cycle in which the walker or the line fill holds its
-	--   acknowledge or its bus error, it has ALREADY released the bus and
-	--   the core's own bus side is idle -- so bstate is "01" and the first
-	--   term below enables the core anyway.
-	--
-	-- Each half of that is by construction.  RELEASED: every state that
-	-- raises wk_ack/wk_berr (WK_IDLE's misaligned arm, WK_HI, WK_LO) or
-	-- fl_ack (FL_DEC's auto-complete arm, FL_SEL's last word) clears its own
-	-- *_active in the SAME assignment, and WK_DONE/FL_DONE hold it clear; the
-	-- two routers cannot overlap, so with both *_active low bstate IS the
-	-- core's busstate.  IDLE: the core is waiting for that answer and has
-	-- nothing outstanding through the bus16 adapter -- the MMU is mid-walk,
-	-- or the cache is parked in C_FILLC -- and the one case that could have
-	-- broken it, a posted store draining through the adapter underneath a
-	-- table walk, is closed inside the core by ap040_mmu's walk_hold, which
-	-- is ap040_cache's post_busy (ap040_mmu.v:53 and :478,
-	-- ap040_cache.v:362).
-	--
-	-- sim/ddr3_cpu asserts the invariant directly, so it is checked and not
-	-- merely argued: an acknowledge held while cpustate(1 downto 0) is not
-	-- the idle state is a FAIL, and so is an acknowledge that drops without
-	-- the CPU having been enabled at least once while it was up.
-	--
-	-- STAGE D3.  The first term is no longer a duty cycle.  With the AP68040
-	-- the kernel runs on clk_cpu, 37.8125 MHz, and cpu_ph2 marks the clk edge
-	-- that IS a clk_cpu edge -- so clkena is high on one clk edge in three and
-	-- the kernel advances on EVERY one of its own clocks except while a bus
-	-- request is outstanding.  That is upstream's shape
+	-- STAGE D3.  The kernel runs on clk_cpu, 37.8125 MHz, and cpu_ph2 marks
+	-- the clk edge that IS a clk_cpu edge -- so clkena is high on one clk edge
+	-- in three and the kernel advances on EVERY one of its own clocks except
+	-- while a bus request is outstanding.  That is upstream's shape
 	-- ("~cpu_req | bus_complete | bus_berr", rtl/cpu_wrapper.v:285 in the
-	-- MiSTer tree): a bus handshake, not a divider.  Measured value of the
-	-- change: SysInfo's speed test runs entirely out of the internal caches
-	-- and sat at exactly the 25.0 % four-phase enable ceiling with 0 % memory
-	-- stalls, so this is 37.8125 / 28.359375 = 1.33x on CPU-bound code and
-	-- nothing at all on chipset-bound code.
-	-- STAGE D3-STABLE.  bus_ready is masked in the one cycle after the walker
-	-- takes the bus.  See bus_fresh below, and the D3-FIX note under it for
-	-- why that cycle is the only one that needs it.
-	bus_release <= '1' WHEN (bstate = "01" OR (bus_ready = '1' AND bus_fresh = '0')) ELSE '0';
+	-- MiSTer tree): a bus handshake, not a divider.
+	--
+	-- STAGE E2.  The request is the master channel's, x_req, and what
+	-- completes it depends on where the router sent it:
+	--
+	--   * RAM or Akiko: the sequencer's done level (x_done).  It is set only
+	--     once the sequencer has run THIS access, and cleared on the edge
+	--     after the kernel consumed it (see q_req), three edges before this
+	--     is next decided -- so it can never release a newer access.
+	--   * the adapter: its own idle state (it needs an enable to take the
+	--     request, and one between sub-cycles) or bus_ready16.  Its terms are
+	--     levels held until clkena consumes them -- chipset_done, and
+	--     sel_undecoded_d, registered from an x_addr the core has held since
+	--     it raised the request, three or more edges before the adapter
+	--     starts.
+	--
+	-- The D3-FIX hazard (a line-buffer answer about the PREVIOUS address,
+	-- which bus_fresh masked for the clk_114 walker) cannot occur: the
+	-- walker is on clk_38 and the controllers no longer answer before the
+	-- select.
+	bus_release <= '1' WHEN x_req = '0' OR x_done = '1' OR
+	                        (x_a16 = '1' AND (state = "01" OR bus_ready16 = '1')) ELSE '0';
 
 	-- STAGE D3-FIX.  THE AP68040's clkena IS A REGISTER, DECIDED ONE clk EDGE
-	-- EARLY.  Same waveform, one clk cycle older content, and one flop instead
-	-- of a die-crossing combinational cone in front of 7,391 clock-enable pins.
+	-- EARLY: cpu_ph is high in (T+1,T+2), so clkena_r is high through
+	-- (T+2,T+3) and the kernel advances at T+3.  Every clk-domain consumer of
+	-- clkena (slower's reload, chipset_done's clear, the chipset FSM's
+	-- end-of-cycle test) samples it at T+3.
 	--
-	-- What forced this.  bus_release's cone runs out of this wrapper, across
-	-- the die into a memory controller, through its cache-hit logic and back:
+	-- THE COMPLETION, CATEGORY 2 (Stage E2).  For an access the router sent
+	-- to RAM or Akiko, x_ack_r is set on the same edge as clkena_r and the
+	-- read data is captured with it: a pulse shaped to the kernel's edge,
+	-- and a value that does not move across it.  This is the registered read
+	-- data the AP68040 never had before E2 (e2 plan, finding 4).  datatg68_r
+	-- does the same for the adapter.
 	--
-	--   cpuaddr -> the decode -> sdram_ctrl / ddr3_fastram -> cpu_cache_new's
-	--   cpu_cacheline_valid -> cpu_ack -> cpuena / ddr_ena -> mem_ready ->
-	--   bus_ready -> clkena
-	--
-	-- and combinationally on into the kernel from there.  Left whole, that is
-	-- ONE clk period, 8.815 ns, for the whole round trip plus four levels of
-	-- MMU logic on the far side; measured 8.24 ns in build/stage_ap040_d3 and
-	-- 8.28 ns after the bus routers were fixed, i.e. 0.3 ns of margin on the
-	-- net that decides whether the core advances at all.  Cutting it at
-	-- clkena leaves 3.5 ns of controller round trip on one side of the flop
-	-- and 4.5 ns of kernel logic on the other, each against 8.815 ns.
-	--
-	-- WHY THE WAVEFORM IS UNCHANGED.  cpu_ph is high in (T+1,T+2), so this
-	-- register goes high at edge T+2, is high through (T+2,T+3), and goes low
-	-- at edge T+3 -- exactly where cpu_ph2 AND bus_release put it before.
-	-- Every clk-domain consumer of clkena (slower's reload, chipset_done's
-	-- clear, akiko_req, the two routers' captures, the chipset FSM's
-	-- end-of-cycle test, cpustate(5)) samples it at edge T+3 and sees the same
-	-- one-cycle pulse it always saw.
-	--
-	-- WHY THE CONTENT IS THE SAME FOR bstate, AND ONLY ONE CYCLE OLD FOR
-	-- bus_ready.
-	--
-	--   * `state`, the kernel's own bus state, changes only on clk_cpu edges,
-	--     so it is the same during (T+1,T+2) as during (T+2,T+3).
-	--   * `wk_active`/`wk_bstate`/`fl_active`/`fl_bstate`, the borrowers' half
-	--     of the bstate mux, cannot change at edge T+2 at all: bus_step skips
-	--     that edge.  That is the same invariant the cpu.xdc exception rests
-	--     on, used a second time.
-	--     So `bstate = "01"` is EXACTLY equal in the two cycles: the idle
-	--     release, which is what CPU-bound code lives on, is unaffected and
-	--     costs nothing.  The 1.26x measured on hardware is not touched.
-	--   * `bus_ready` is a genuine one-clk-cycle delay.  Its slow terms are
-	--     levels held until the core consumes them -- cpu_cache_ack (cleared
-	--     only when the select drops, cpu_cache_new.v:537), chipset_done and
-	--     akiko_ack (cleared only by clkena) -- and its one pulse,
-	--     chipset_ready, is latched by chipset_done the next cycle.  None of
-	--     those can be missed; one that lands in (T+1,T+2) instead of
-	--     (T+2,T+3) releases the core at T+6 rather than T+3.
-	--
-	--     ITS FAST TERMS ARE NOT LEVELS, AND THIS IS WHERE ac9b725 HUNG THE
-	--     MACHINE (findings/ap68040/sdd-d3/task-d3stable-report.md).
-	--     cpu_cache_new answers a read that hits its line buffer WITHOUT
-	--     waiting for the select: cpu_cacheline_match is registered from the
-	--     LIVE address every clock (:257) and cpu_ack is combinational from it
-	--     while the machine is idle and the bus state is a read (:258-260).
-	--     sel_undecoded_d is the same shape, a registered decode of the live
-	--     address.  So the value of bus_ready in cycle (T+1,T+2) is an answer
-	--     about the address that was on cpuaddr in cycle (T,T+1) -- and that
-	--     is only the right question if the address has not moved since.
-	--
-	--     For the kernel's own accesses it has not: the kernel changed its
-	--     address at T, and the T+1 captures see it (cpu.xdc now times those
-	--     captures single-cycle, by name, because they ARE one cycle).  For
-	--     the walker it HAS: a request the kernel raises at T is seen by the
-	--     router at T+1, which is when wk_busaddr goes onto the bus -- so the
-	--     T+1 captures still hold the kernel's idle address, which is the last
-	--     address the bus16 adapter completed.  After any SDRAM read that is
-	--     a line-buffer hit, and with bstate = wk_bstate = "10" supplying the
-	--     read qualifier, cpu_cacheline_valid is up in (T+1,T+2) for an access
-	--     nobody issued, clkena_r fires at T+2, and WK_HI at T+3 takes
-	--     datatg68 -- the buffered word at the DESCRIPTOR's offset in the
-	--     PREVIOUS access's line -- as the high word of the descriptor.  Every
-	--     walk that follows a fast-RAM read gets a garbage upper half, which
-	--     is a fault as soon as the 68040.library turns translation on, and
-	--     the fault handler's own walk gets the same treatment: the E flags
-	--     the ILA showed.  sim/ddr3_cpu could not see it because its SDRAM
-	--     model acknowledged only after the select; it models the line buffer
-	--     now, and --mmu at ac9b725 fails on it.
-	--
-	--     bus_fresh, below, is the mask: bus_ready is ignored in exactly that
-	--     one cycle, and the walker's completion is taken at T+5/T+6 from
-	--     captures made with its own address on the bus.  The fill router
-	--     needs nothing: it takes the bus with fl_bstate = "01", so the T+2
-	--     decision is the idle term, and it samples mem_ready itself only
-	--     from T+4 on.  The second half of a walk (WK_GAP -> WK_LO) puts its
-	--     bus state up at least two cycles after its address, so it needs
-	--     nothing either.
-	--
-	-- COST: one clk cycle of acknowledge latency, which the 1:3 quantisation
-	-- turns into one clk_cpu cycle (26.45 ns) for one memory access in three
-	-- and nothing for the other two -- 8.8 ns on average per access that
-	-- actually goes to memory, and zero for a core running out of its own
-	-- caches.  Measured in sim/ddr3_cpu; see
-	-- findings/ap68040/sdd-d3/task-d3fix-report.md.
-	--
-	-- mem_ready is registered here and NOT where the two bus routers read it:
-	-- FL_SEL/FL_GAP and WK_GAP keep the live copy, so a line fill's eight
-	-- words still stream at the clk rate.
-	--
-	-- bus_fresh: '1' in the single clk cycle after the walker took the bus,
-	-- (S,S+1) where S is the edge wk_active rose.  A walker start is at S = T+1
-	-- (the kernel raised wk_req at T) or, when a line fill had the bus, at
-	-- S = T (fl_busy dropped at T-2, WK_IDLE saw it at T).  Only the first
-	-- lands on the decision at T+2 with the address one cycle old, and it is
-	-- the only case that does: wk_bstate goes non-idle for the second
-	-- sub-cycle two or more cycles after wk_busaddr moved (WK_GAP waits for
-	-- the previous acknowledge to clear), and the kernel's own accesses put
-	-- address and bus state up together at T.
-	bus_fresh <= wk_active AND NOT wk_active_d;
-
+	-- x_fresh is clkena_r one clk cycle later; see q_req.
 	PROCESS(clk)
 	BEGIN
 		IF rising_edge(clk) THEN
 			clkena_r <= cpu_ph AND bus_release;
-			-- capture the read data with the grant; see datatg68_r
+			x_fresh  <= clkena_r;
+			x_ack_r  <= '0';
 			IF (cpu_ph AND bus_release) = '1' THEN
-				datatg68_r <= datatg68;
+				-- capture the read data with the grant; see datatg68_r
+				datatg68_r <= datatg68_c;
+				IF x_req = '1' AND x_done = '1' THEN
+					x_ack_r <= '1';
+					IF rs_ack = '1' THEN
+						x_rdata_r <= rs_rdata;
+					ELSIF rd_ack = '1' THEN
+						x_rdata_r <= rd_rdata;
+					ELSE
+						x_rdata_r <= ak_rsh;
+					END IF;
+				END IF;
 			END IF;
 		END IF;
 	END PROCESS;
 
 	clkena <= clkena_r;
 
-	-- The phase gate; see cpu_phase_ok's declaration.  Cleared when the kernel
-	-- advances (a new access may be coming) and set again only on an enaWRreg
-	-- phase once `slower` has drained, so the select opens on a fixed four
-	-- phases of the sixteen-phase round however the island clock is divided.
+	-- The phase gate; see unit_gate's declaration.  Open for one clk cycle on
+	-- an enaWRreg phase once `slower` has drained, so every unit ap040_ram_seq
+	-- launches starts on a fixed four phases of the sixteen-phase round
+	-- however the island clock is divided.  slower(0) keeps the earliest
+	-- launch where the level gate (cpu_phase_ok, before E2) put it: four clk
+	-- edges after the kernel edge that issued the access.
 	--
 	-- The gate opens three clk cycles after enaWRreg -- one before the next,
 	-- since enaWRreg repeats every four -- which lands chip-RAM acknowledges on
@@ -1436,13 +1591,10 @@ BEGIN
 	BEGIN
 		IF rising_edge(clk) THEN
 			ena_sr <= ena_sr(1 DOWNTO 0) & clkena_in;
-			IF clkena = '1' THEN
-				cpu_phase_ok <= '0';
-			ELSIF ena_sr(2) = '1' AND slower(0) = '0' THEN
-				cpu_phase_ok <= '1';
-			END IF;
 		END IF;
 	END PROCESS;
+
+	unit_gate <= ena_sr(2) AND NOT slower(0);
 
 	-- The acknowledge-phase histogram; see ph_hist16_t.
 	PROCESS(clk)
@@ -1456,7 +1608,7 @@ BEGIN
 			ELSE
 				ph16 <= ph16 + 1;
 			END IF;
-			ph_ack_r  <= ramready AND sel_ram_d;
+			ph_ack_r  <= ram_ack;
 			ph_ack_d  <= ph_ack_r;
 			ph_chip_r <= sel_chipram;
 
@@ -1505,195 +1657,10 @@ BEGIN
 		END IF;
 	END PROCESS;
 
-	--------------------------------------------------------------------------
-	-- The walker router.
-	--
-	-- One descriptor = two 16-bit sub-cycles at A and A+2, high word first,
-	-- with an idle gap between them so the chip select drops and the
-	-- controller's acknowledge -- a level -- clears before the second is
-	-- issued.  Completion is clkena, which is the exact instant the core
-	-- itself samples read data, so the capture cannot be a cycle early or
-	-- late.  The bus is released BEFORE the acknowledge goes out, so the core
-	-- is guaranteed an enable to consume it with (see clkena above).
-	--
-	-- Errors, following walker_mem_bad in the MiSTer reference: a misaligned
-	-- descriptor address, or one that decodes as nothing, raises walker_berr
-	-- rather than hanging.  The MMU turns that into an unsuccessful table
-	-- search -- a Guru -- instead of the silent halt a missing acknowledge
-	-- produces (which is stage A's behaviour, with the port tied off).
-	--
-	-- STAGE D3-FIX.  WHY BOTH BUS ROUTERS SKIP ONE clk EDGE IN THREE.
-	--
-	-- wk_active/wk_busaddr and fl_active/fl_busaddr select the bus-side address
-	-- mux above, and that mux is the head of the longest combinational chain in
-	-- the design:
-	--
-	--   cpuaddr -> sel_kickram -> cache_inhibit -> sdram_ctrl -> cpu_cache_new's
-	--   cpu_cacheline_valid -> cpu_ack -> cpuena -> ramready -> mem_ready ->
-	--   bus_ready -> clkena -> the kernel
-	--
-	-- (and the same round trip again through ddr3_fastram's own cpu_cache_new).
-	-- Out of the wrapper, across the die into a memory controller, through its
-	-- cache-hit logic and all the way back into the CPU island.  Driven from the
-	-- kernel's own addrtg68 that chain is clk_cpu -> clk_cpu and has 26.45 ns;
-	-- driven from these registers it is clk -> clk_cpu and has ONE clk period,
-	-- 8.815 ns.  It measured 8.24 ns in build/stage_ap040_d3 and 8.81 ns in
-	-- build/stage_ap040_d3_ila -- and in those bitstreams wk_active, wk_busaddr
-	-- and fl_busaddr were, in that order, the startpoint of EVERY clk -> clk_cpu
-	-- path with less than 0.3 ns of slack.  This is what the intermittent
-	-- AN_MemCorrupt Guru was standing on.
-	--
-	-- Before stage D3 the walker half was covered by a multicycle (cpu.xdc's
-	-- $cpu_ce_aligned, -setup -start 2, 17.63 ns) and D3 deleted it -- correctly:
-	-- the exception's premise was "every transition of wk_active is triggered by
-	-- a ce-aligned event", and with the kernel on its own clock that is false.
-	-- It is false in five specific places across the two routers, all of them
-	-- waits on something the memory side produces:
-	--
-	--   * WK_IDLE -> WK_HI is gated on fl_busy, which the line-fill router drops
-	--     on whatever edge its eighth word lands on;
-	--   * the sel_undecoded abort in WK_HI and WK_LO fires on the first edge in
-	--     the state, one edge after the state was entered;
-	--   * WK_GAP -> WK_LO is gated on bus_ready falling;
-	--   * FL_SEL -> FL_GAP is gated on mem_ready rising, and FL_GAP -> FL_SEL on
-	--     it falling -- twice per word, eight words per line.
-	--
-	-- Each of those can land on the clk edge IMMEDIATELY BEFORE a clk_cpu edge,
-	-- and that -- not the average case -- is what makes the honest requirement
-	-- one clk period.
-	--
-	-- So make the premise true by construction instead of asserting it away.
-	-- bus_step is NOT cpu_ph, and cpu_ph is the phase marker's middle register,
-	-- high in (T+1,T+2) when the kernel's edges are at T and T+3 -- so an edge
-	-- that samples cpu_ph = '1' IS edge T+2, the one clk edge before the kernel
-	-- samples, and gating both routers on bus_step skips exactly that edge and
-	-- no other: T, T+1, T+3 and T+4 all run.  Every register in both routers
-	-- therefore holds its value across the pair of clk cycles (T+1,T+2) and
-	-- (T+2,T+3), which is precisely and only the premise -setup -start 2 needs.
-	-- cpu.xdc states the exception against this paragraph; IF THIS GATE IS EVER
-	-- REMOVED, THAT EXCEPTION MUST GO WITH IT.
-	--
-	-- Two is the maximum and three would be false: both routers still run at
-	-- edge T+1, so a value launched at T can be gone by T+1.
-	--
-	-- NO EVENT CAN BE LOST BY SKIPPING AN EDGE, and that is what makes the gate
-	-- safe rather than merely slower.  Every condition either router waits on is
-	-- a LEVEL held until it is consumed -- fl_busy, wk_req, fl_req, bus_ready,
-	-- mem_ready, sel_undecoded, wk_st -- with exactly one exception, clkena,
-	-- which is a pulse and is high in (T+2,T+3): it is therefore only ever
-	-- sampled at edge T+3, where cpu_ph is '0' and the routers run.
-	--
-	-- What the gate costs is one clk cycle on those five transitions, one time
-	-- in three.  For the walker that is about 1.7 clk cycles, 15 ns, per
-	-- descriptor, on a path only taken on an ATC miss.  For the line fill it is
-	-- about 6.7 clk cycles, 59 ns, per 16-byte line.  Measured in sim/ddr3_cpu;
-	-- see findings/ap68040/sdd-d3/task-d3fix-report.md.
-	--------------------------------------------------------------------------
-	bus_step <= NOT cpu_ph;
-
-	PROCESS(clk, reset)
-	BEGIN
-		IF reset = '0' THEN
-			wk_st      <= WK_IDLE;
-			wk_active  <= '0';
-			wk_bstate  <= "01";
-			wk_busaddr <= (others => '0');
-			wk_wdat16  <= (others => '0');
-			wk_data    <= (others => '0');
-			wk_ack     <= '0';
-			wk_berr    <= '0';
-		ELSIF rising_edge(clk) THEN
-			-- One clk edge in three is skipped; see the note above.
-			IF bus_step = '1' THEN
-				CASE wk_st IS
-					WHEN WK_IDLE =>
-						wk_ack    <= '0';
-						wk_berr   <= '0';
-						wk_active <= '0';
-						wk_bstate <= "01";
-						-- Order, never interleave, with the line fill (stage D).
-						-- The two share every bus-side signal, so one waits while
-						-- the other owns them.  The walker has priority: the fill
-						-- FSM refuses to start while wk_req is high, so a request
-						-- arriving in the same cycle can only be taken here.
-						IF wk_req = '1' THEN
-							IF wk_addr(1 downto 0) /= "00" THEN
-								-- a descriptor is a longword; this table is corrupt
-								wk_berr <= '1';
-								wk_st   <= WK_DONE;
-							ELSE
-								wk_busaddr <= wk_addr;
-								wk_wdat16  <= wk_wdat(31 downto 16);
-								IF wk_we = '1' THEN wk_bstate <= "11"; ELSE wk_bstate <= "10"; END IF;
-								wk_active  <= '1';
-								wk_st      <= WK_HI;
-							END IF;
-						END IF;
-
-					WHEN WK_HI =>
-						-- sel_undecoded, not sel_undecoded_d: the registered copy
-						-- still holds the PREVIOUS access's decode on the first
-						-- cycle of ours, and the core's last address is often in
-						-- undecoded space.  The combinational one is already ours.
-						IF sel_undecoded = '1' THEN
-							-- nothing lives at this physical address
-							wk_active <= '0';
-							wk_bstate <= "01";
-							wk_berr   <= '1';
-							wk_st     <= WK_DONE;
-						ELSIF clkena = '1' THEN
-							wk_data(31 downto 16) <= datatg68;
-							wk_busaddr            <= wk_addr(31 downto 2) & "10";
-							wk_wdat16             <= wk_wdat(15 downto 0);
-							wk_bstate             <= "01";
-							wk_st                 <= WK_GAP;
-						END IF;
-
-					WHEN WK_GAP =>
-						-- Hold the bus, idle, until the acknowledge that released
-						-- the first sub-cycle has cleared.  Without this the
-						-- second sub-cycle can complete on the first one's stale
-						-- level and read the same word twice.
-						IF bus_ready = '0' THEN
-							IF wk_we = '1' THEN wk_bstate <= "11"; ELSE wk_bstate <= "10"; END IF;
-							wk_st     <= WK_LO;
-						END IF;
-
-					WHEN WK_LO =>
-						IF sel_undecoded = '1' THEN
-							wk_active <= '0';
-							wk_bstate <= "01";
-							wk_berr   <= '1';
-							wk_st     <= WK_DONE;
-						ELSIF clkena = '1' THEN
-							wk_data(15 downto 0) <= datatg68;
-							wk_active            <= '0';
-							wk_bstate            <= "01";
-							wk_ack               <= '1';
-							wk_st                <= WK_DONE;
-						END IF;
-
-					WHEN WK_DONE =>
-						-- ap040_mmu drops walker_req when it has taken the answer
-						-- (walk_ack is qualified with w_active && w_issued), and
-						-- inserts a request-low cycle before the next descriptor,
-						-- so this is the whole handshake.
-						IF wk_req = '0' THEN
-							wk_ack  <= '0';
-							wk_berr <= '0';
-							wk_st   <= WK_IDLE;
-						END IF;
-				END CASE;
-			END IF;
-		END IF;
-	END PROCESS;
-
-
-	-- A DDR3 (Zorro III) access is a memory cycle released by the DDR3 acknowledge, never a 7 MHz chipset cycle.
-	-- (sel_ram no longer covers the Z3 selects when haveddr3; without this term every DDR3 access was released
-	-- on the chipset strobes with whatever fromddr held at that moment.)
-	chipset_cycle <= '1' when ((sel_ram = '0' AND sel_ddr = '0') OR sel_nmi_vector = '1') AND sel_akiko = '0' and sel_undecoded = '0' else
-	'0';
+	-- What the adapter carries that is a real 7 MHz chipset cycle: everything
+	-- the router gave it except undecoded space, which bus_ready16
+	-- auto-completes.
+	chipset_cycle <= x_a16 AND NOT sel_undecoded;
 
 	PROCESS(clk, reset)
 	BEGIN
@@ -1728,7 +1695,7 @@ BEGIN
 			-- no longer depends on that second firing happening.  (It does
 			-- still happen: chipset_ready wins the priority in the
 			-- chipset_done process above, so chipset_done is set on the very
-			-- edge the CPU is released, bus_ready stays high and the next
+			-- edge the CPU is released, bus_ready16 stays high and the next
 			-- cpu_ph2 fires this test again.  The point is that the release
 			-- is no longer built on it.)  Between the two firings the only readers
 			-- of clkena_e are
@@ -1739,9 +1706,9 @@ BEGIN
 			END IF;
 
 			IF S_state = "01" AND clkena_e = '1' THEN
-				uds2        <= buds;
-				lds2        <= blds;
-				data_write2 <= bwdata;
+				uds2        <= uds_in;
+				lds2        <= lds_in;
+				data_write2 <= w_datatg68;
 			END IF;
 
 			IF ena7WRreg = '1' THEN
@@ -1750,14 +1717,14 @@ BEGIN
 						-- cpu_bus_settled: with the AP68040 the signals
 						-- latched below come off a 37.8125 MHz island, so wait
 						-- until they have settled; see where it is driven.
-						IF cpu_int = '0' AND chipset_cycle = '1' AND cpu_bus_settled = '1' THEN
-							uds        <= buds;
-							lds        <= blds;
+						IF state /= "01" AND chipset_cycle = '1' AND cpu_bus_settled = '1' THEN
+							uds        <= uds_in;
+							lds        <= lds_in;
 							uds2       <= '1';
 							lds2       <= '1';
 							as         <= '0';
-							rw         <= bwr;
-							data_write <= bwdata;
+							rw         <= wr;
+							data_write <= w_datatg68;
 							addr       <= cpuaddr;
 							S_state <= "01";
 						END IF;

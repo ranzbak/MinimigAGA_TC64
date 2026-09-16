@@ -9,8 +9,8 @@
 // WRAPPER + REAL sdram_ctrl + CHIPSET DMA together, with Turbo chip RAM on.
 // That combination has never been simulated anywhere.
 //
-// Included only under `REALSDRAM, so every existing leg stays bit-for-bit as
-// it was.
+// Included under `REALSDRAM, which run.sh sets for every leg since Stage E2
+// (decision D6: the behavioural model is retired).
 //
 // A second thing this fixes by construction: the bench generates enaWRreg /
 // ena7RDreg / ena7WRreg itself from rtl/sdram/cpu_enable_cadence.v.  On
@@ -119,19 +119,20 @@ sdram_ctrl u_sdram (
     .audfill        (                 ),
     .audRd          (                 ),
 
-    // The CPU side, straight off the wrapper -- no model in between.
-    .cpuAddr        (tg68_cad[25:1]   ),
-    .cpustate       (tg68_cpustate    ),
-    .cpuL           (tg68_clds        ),
-    .cpuU           (tg68_cuds        ),
-    .cpuWR          (tg68_cin         ),
-    .cpuRD          (fromram_real     ),
+    // The CPU side, straight off the wrapper's unit port -- no model between.
+    .cpu_req        (ram_req          ),
+    .cpu_we         (ram_we           ),
+    .cpu_ir         (ram_ir           ),
+    .cpu_wadr       (ram_wadr         ),
+    .cpu_bs         (ram_bs           ),
+    .cpu_wdat       (ram_wdat         ),
+    .cpu_rdat       (ram_rdat         ),
+    .cpu_ack        (ram_ack          ),
 
     // The enables the bench used to invent for itself.
     .enaWRreg       (enaWR_real       ),
     .ena7RDreg      (ena7RD_real      ),
-    .ena7WRreg      (ena7WR_real      ),
-    .cpuena         (ramready_real    )
+    .ena7WRreg      (ena7WR_real      )
 );
 
 sdr16mx16 u_sdram_chip (

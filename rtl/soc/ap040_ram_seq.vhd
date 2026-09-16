@@ -81,6 +81,7 @@ ARCHITECTURE rtl OF ap040_ram_seq IS
 	SIGNAL rbuf   : std_logic_vector(31 downto 0);  -- read operand, left-aligned
 	SIGNAL sz_r   : std_logic_vector(1 downto 0);
 	SIGNAL done_r : std_logic;
+	SIGNAL armed  : std_logic;                  -- this unit's fields are out
 
 	SIGNAL u_req_r  : std_logic;
 	SIGNAL u_we_r   : std_logic;
@@ -153,6 +154,7 @@ BEGIN
 			rbuf     <= (OTHERS => '0');
 			sz_r     <= (OTHERS => '0');
 			done_r   <= '0';
+			armed    <= '0';
 			u_req_r  <= '0';
 			u_we_r   <= '0';
 			u_ir_r   <= '0';
@@ -178,26 +180,33 @@ BEGIN
 						sz_r   <= size;
 						u_we_r <= we;
 						u_ir_r <= ir;
+						armed  <= '0';
 						st     <= RS_LAUNCH;
 					END IF;
 
 				WHEN RS_LAUNCH =>
-					-- Hold here until the placement gate opens, then present
-					-- one unit.  Every unit is gated, not just the first.
-					IF gate = '1' THEN
-						bs_v := (OTHERS => '0');
-						wd_v := (OTHERS => '0');
-						FOR p IN 0 TO 3 LOOP
-							IF p >= p0 AND p < p0 + ncov THEN
-								k := to_integer(pos) + (p - p0);
-								bs_v(3 - p) := '1';
-								wd_v(31 - 8*p downto 24 - 8*p) :=
-									wsh(31 - 8*k downto 24 - 8*k);
-							END IF;
-						END LOOP;
-						u_wadr_r <= std_logic_vector(cur(25 downto 1));
-						u_bs_r   <= bs_v;
-						u_wdat_r <= wd_v;
+					-- The unit's fields go out on the first edge here and the
+					-- request only on a later one, when the placement gate is
+					-- open: cpu_cache_new registers the live address and acts
+					-- in the request's first cycle, so it needs the fields a
+					-- cycle early, as the old port had the address a cycle
+					-- before the select.  Every unit is gated, not just the
+					-- first.
+					bs_v := (OTHERS => '0');
+					wd_v := (OTHERS => '0');
+					FOR p IN 0 TO 3 LOOP
+						IF p >= p0 AND p < p0 + ncov THEN
+							k := to_integer(pos) + (p - p0);
+							bs_v(3 - p) := '1';
+							wd_v(31 - 8*p downto 24 - 8*p) :=
+								wsh(31 - 8*k downto 24 - 8*k);
+						END IF;
+					END LOOP;
+					u_wadr_r <= std_logic_vector(cur(25 downto 1));
+					u_bs_r   <= bs_v;
+					u_wdat_r <= wd_v;
+					armed    <= '1';
+					IF gate = '1' AND armed = '1' THEN
 						u_req_r  <= '1';
 						st       <= RS_WAIT;
 					END IF;
@@ -217,6 +226,7 @@ BEGIN
 						left    <= left - to_unsigned(ncov, 3);
 						pos     <= pos + to_unsigned(ncov, 3);
 						u_req_r <= '0';
+						armed   <= '0';
 						st      <= RS_GAP;
 					END IF;
 

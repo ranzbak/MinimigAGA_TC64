@@ -18,22 +18,21 @@
 //   real : rtl/soc/TG68K.vhd (wrapper + the AP68040 + akiko),
 //          rtl/ddr3/ddr3_fastram.v (cpu_cache_new + backend + ddr3_cdc),
 //          rtl/ddr3/ddr3_top.v (PLL + vendored DLL-off core + xc7 PHY),
-//          the Micron 2Gb DDR3 model.
-//   model: the SDRAM side.  The wrapper's fromram/ramready port is answered by
-//          a behavioural 128 kB word memory that holds the 68k program, its
-//          vectors, its stack and the mailbox.  The chipset side (as/uds/lds/
-//          data_read/dtack) is answered by the same array, because the very
+//          the Micron 2Gb DDR3 model,
+//          rtl/sdram/sdram_ctrl.v and the vendor SDRAM part (real_sdram.vh;
+//          every leg since Stage E2, decision D6).
+//   model: the chipset side (as/uds/lds/data_read/dtack), answered by a
+//          128 kB word array, chipmem, that also SHADOWS what the CPU writes to
+//          chip RAM over the SDRAM port -- the mailbox lives there.  The very
 //          first vector fetches happen before turbochip_d has been set and so
 //          go out as real chipset cycles.
 //
 // Wiring is exactly rtl/soc/minimig_virtual_top.v:
-//   * ddr3_fastram sees cpustate with bit 2 replaced by ddrcs
-//     (tg68_ddrcpustate), everything else including cpuLongword passed through,
-//   * cpuAddr = ddraddr = the offset inside board 3, zero-extended: the
-//     board's base bits are dropped, so with a 16 MB board this is
-//     cpuaddr(23 downto 1) and not the identity map it was when the DDR3
-//     was board 1,
-//   * fromddr / ddr_ena / ddr_ready come back from cpuRD / cpuena / ddr_ready,
+//   * both controllers take the wrapper's unit ports (ram_* and ddr_*),
+//   * ddr_wadr = the offset inside board 3, zero-extended: the board's base
+//     bits are dropped, so with a 16 MB board this is cpuaddr(23 downto 1)
+//     and not the identity map it was when the DDR3 was board 1,
+//   * ddr_ready comes back from ddr3_fastram,
 //   * cpu_cache_ctrl is the wrapper's CACR_out (the program enables the caches
 //     with movec, as the OS does),
 //   * ena7RDreg / ena7WRreg / enaWRreg are generated with the sdram_ctrl
@@ -63,11 +62,8 @@
 //     ena_cpu output still becomes `ena28` and is still wired to clkena_in,
 //     where the TG68K leg uses it exactly as before and the AP68040 leg
 //     does not read it at all.
-//   * Every assertion is unchanged: the port setup/hold contract on both RAM
-//     ports, the walker/fill mutual exclusion, ack_idle_errs / ack_dry_errs
-//     and the cpustate(6) 32-bit-write guard.  cpustate[5] is still clkena and
-//     is still a ONE-cycle pulse on the clk edge the core advances on, which
-//     is what ack_dry_errs counts.
+//   * (Stage E2 replaced the 16-bit port's assertions with the unit port's and
+//     the master channel's; see those sections.)
 //
 // Autoconfig state is the one the OS leaves behind: ziiram_active = 1 and
 // ziiiram3_active = 1 with z3ram3_base = $41, so 0x41000000 is a live 16 MB
@@ -361,9 +357,11 @@ reg  [15:0] p2c_acked [0:65535];
 integer     p2c_ai;
 initial for (p2c_ai = 0; p2c_ai < 65536; p2c_ai = p2c_ai + 1) p2c_acked[p2c_ai] = 16'h0000;
 always @(posedge clk)
-  if (ram_wr && !ramcs_n && ramready_w && !tg68_cpustate[6]) begin
-    if (!tg68_cuds) p2c_acked[ramwa][15:8] <= tg68_cin[15:8];
-    if (!tg68_clds) p2c_acked[ramwa][ 7:0] <= tg68_cin[ 7:0];
+  if (ram_req && ram_we && ram_ack && ram_wadr[25:17] == 9'd0) begin
+    if (ram_bs[3]) p2c_acked[ram_wadr[16:1]      ][15:8] <= ram_wdat[31:24];
+    if (ram_bs[2]) p2c_acked[ram_wadr[16:1]      ][ 7:0] <= ram_wdat[23:16];
+    if (ram_bs[1]) p2c_acked[ram_wadr[16:1] + 1'b1][15:8] <= ram_wdat[15: 8];
+    if (ram_bs[0]) p2c_acked[ram_wadr[16:1] + 1'b1][ 7:0] <= ram_wdat[ 7: 0];
   end
 reg  [23:1] p2c_adr;
 `ifdef P2CBLOCK
@@ -725,32 +723,31 @@ end
 wire [31:0] tg68_adr;
 wire [15:0] tg68_dat_out, tg68_dat_out2;
 wire        tg68_as, tg68_uds, tg68_lds, tg68_uds2, tg68_lds2, tg68_rw;
-wire [15:0] tg68_cin;                          // toram
 wire        tg68_nrst_out;
-wire [31:0] tg68_cad;                          // ramaddr
-wire [ 6:0] tg68_cpustate;
-wire        tg68_clds, tg68_cuds;
 wire [ 3:0] tg68_CACR_out;
 wire [31:0] tg68_VBR_out;
 wire        cache_inhibit, cacheline_clr;
 
-wire [25:1] tg68_ddraddr;
-wire        tg68_ddrcs;
-wire [15:0] tg68_ddrout;
-wire        tg68_ddrena;
+// The unit port (Stage E2), exactly as minimig_virtual_top.v wires it: the
+// wrapper's SDRAM port to sdram_ctrl, its DDR3 port to ddr3_fastram.
+wire        ram_req, ram_we, ram_ir, ram_ack;
+wire [25:1] ram_wadr;
+wire [ 3:0] ram_bs;
+wire [31:0] ram_wdat, ram_rdat;
+wire        ddr_req, ddr_we, ddr_ir, ddr_ack;
+wire [25:1] ddr_wadr;
+wire [ 3:0] ddr_bs;
+wire [31:0] ddr_wdat, ddr_rdat;
 wire        tg68_ddrready;
 
-// exactly minimig_virtual_top.v: cpustate with the chip select (bit 2)
-// replaced by the DDR3 one, everything else untouched.
-wire [ 6:0] tg68_ddrcpustate = {tg68_cpustate[6:3], tg68_ddrcs, tg68_cpustate[1:0]};
-
 reg  [15:0] tg68_dat_in, tg68_dat_in2;         // chipset-side read data
-reg  [15:0] fromram;                           // SDRAM-side read data
-reg         ramready;                          // the held (slow-path) acknowledge
+`ifndef REALSDRAM
+// Stage E2 decision D6: the behavioural SDRAM model is retired, every leg runs
+// the real sdram_ctrl.  run.sh always defines REALSDRAM.
+initial $fatal(1, "ddr3_cpu_tb: build with -d REALSDRAM (run.sh does)");
+`endif
 `ifdef REALSDRAM
-// The real controller's side of the handshake; see real_sdram.vh.
-wire [15:0] fromram_real;
-wire        ramready_real;
+// The real controller's enables; see real_sdram.vh.
 wire        enaWR_real, ena7RD_real, ena7WR_real;
 reg         sdram_reset_in = 1'b0;
 reg  [3:0]  c16_real = 4'd0;
@@ -778,8 +775,6 @@ wire        w_ena28     = ena28;
 wire        w_ena7RDreg = ena7RDreg;
 wire        w_ena7WRreg = ena7WRreg;
 `endif
-wire [15:0] fromram_w;                         // what the wrapper actually sees;
-wire        ramready_w;                        //   see the line-buffer model below
 
 // The wrapper builds the AP68040 (its TG68K branch was removed in Stage E4a).
 // The core presents a TG68K-shaped port set, which is why the rest of this
@@ -808,14 +803,23 @@ TG68K #(.cpu_clk_ratio(`CPU_RATIO)) tg68k (
     .wrd            (                 ),
     .ena7RDreg      (w_ena7RDreg      ),
     .ena7WRreg      (w_ena7WRreg      ),
-    .fromram        (fromram_w        ),
-    .toram          (tg68_cin         ),
-    .ramready       (ramready_w       ),
-    .ddraddr        (tg68_ddraddr     ),
-    .ddrcs          (tg68_ddrcs       ),
-    .fromddr        (tg68_ddrout      ),
+    .ram_req        (ram_req          ),
+    .ram_we         (ram_we           ),
+    .ram_ir         (ram_ir           ),
+    .ram_wadr       (ram_wadr         ),
+    .ram_bs         (ram_bs           ),
+    .ram_wdat       (ram_wdat         ),
+    .ram_rdat       (ram_rdat         ),
+    .ram_ack        (ram_ack          ),
+    .ddr_req        (ddr_req          ),
+    .ddr_we         (ddr_we           ),
+    .ddr_ir         (ddr_ir           ),
+    .ddr_wadr       (ddr_wadr         ),
+    .ddr_bs         (ddr_bs           ),
+    .ddr_wdat       (ddr_wdat         ),
+    .ddr_rdat       (ddr_rdat         ),
+    .ddr_ack        (ddr_ack          ),
     .ddr_ready      (tg68_ddrready    ),
-    .ddr_ena        (tg68_ddrena      ),
     .ziiram_active  (1'b1             ),   // autoconfig done: 2 MB Zorro-II
     .ziiiram_active (1'b0             ),   // board 1: SDRAM on hardware, see header
     .ziiiram2_active(1'b0             ),
@@ -844,12 +848,8 @@ TG68K #(.cpu_clk_ratio(`CPU_RATIO)) tg68k (
     .turbokick      (1'b0             ),
     .cache_inhibit  (cache_inhibit    ),
     .cacheline_clr  (cacheline_clr    ),
-    .ramaddr        (tg68_cad         ),
-    .cpustate       (tg68_cpustate    ),
     .nResetOut      (tg68_nrst_out    ),
     .skipFetch      (                 ),
-    .ramlds         (tg68_clds        ),
-    .ramuds         (tg68_cuds        ),
     .CACR_out       (tg68_CACR_out    ),
     .VBR_out        (tg68_VBR_out     ),
     .rtg_addr       (                 ),
@@ -867,7 +867,10 @@ TG68K #(.cpu_clk_ratio(`CPU_RATIO)) tg68k (
     .audio_int      (                 ),
     .host_req       (                 ),
     .host_ack       (1'b0             ),
-    .host_q         (16'h0000         )
+    .host_q         (16'h0000         ),
+    .host_addr      (                 ),
+    .host_d         (                 ),
+    .host_wr        (                 )
 );
 
 //-----------------------------------------------------------------
@@ -892,13 +895,14 @@ ddr3_fastram u_fast (
     .cacheline_clr  (cacheline_clr    ),
     .cpu_cache_ctrl (tg68_CACR_out    ),
     .ddr_ready      (ddr_ready        ),
-    .cpuAddr        (tg68_ddraddr[25:1]),
-    .cpustate       (tg68_ddrcpustate ),
-    .cpuU           (tg68_cuds        ),
-    .cpuL           (tg68_clds        ),
-    .cpuWR          (tg68_cin         ),
-    .cpuRD          (tg68_ddrout      ),
-    .cpuena         (tg68_ddrena      ),
+    .cpu_req        (ddr_req          ),
+    .cpu_we         (ddr_we           ),
+    .cpu_ir         (ddr_ir           ),
+    .cpu_wadr       (ddr_wadr         ),
+    .cpu_bs         (ddr_bs           ),
+    .cpu_wdat       (ddr_wdat         ),
+    .cpu_rdat       (ddr_rdat         ),
+    .cpu_ack        (ddr_ack          ),
     .clk_mem        (clk100           ),
     .init_done      (init_done        ),
     .req_valid      (req_valid        ),
@@ -1018,18 +1022,15 @@ ddr3 u_ram (
 defparam u_ram.DEBUG = 0;
 
 //-----------------------------------------------------------------
-// Behavioural chip RAM: 128 kB, word addressed.  Program, vectors, stack,
-// mailbox.  Answered on BOTH of the wrapper's memory-side ports:
+// chipmem: 128 kB, word addressed.  Program, vectors, stack, mailbox.
 //
-//   * the SDRAM port (ramaddr / cpustate[2] / ramuds / ramlds / toram ->
-//     fromram / ramready).  This is where all the program's own traffic goes
-//     once turbochip_d is set, i.e. sel_chipram -> sel_ram.
-//   * the chipset bus (as / addr / rw / uds / lds -> data_read).  The reset
-//     vector fetches happen before turbochip_d is set and go out here, and it
-//     is also where a MUTANT wrapper wrongly sends the Zorro-III traffic.
-//
-// The two never overlap: the wrapper is in exactly one of the two paths for
-// any one access.
+//   * the chipset bus (as / addr / rw / uds / lds -> data_read) is answered
+//     from it.  The reset vector fetches happen before turbochip_d is set and
+//     go out here, and it is also where a MUTANT wrapper wrongly sends the
+//     Zorro-III traffic.
+//   * the SDRAM unit port is answered by the real controller (the program is
+//     preloaded into SDRAM), and chipmem shadows its acknowledged chip-RAM
+//     writes so the mailbox watcher can read them.
 //-----------------------------------------------------------------
 localparam integer MEMW = 65536;               // 16-bit words = 128 kB
 reg [15:0] chipmem [0:MEMW-1];
@@ -1058,210 +1059,43 @@ initial begin
   end
 end
 
-// ---- SDRAM-side port -------------------------------------------------
-// cpustate[2] is ramcs, active low; [1:0] is 00 instruction read, 10 data
-// read, 11 write.  ramready is a level, cleared when the select goes away,
-// exactly like sdram_ctrl's cpuena.
-//
-// cpustate[6] is the 32-bit-write flag, and it is NOT decoration.  sdram_ctrl
-// turns it into cpuLongword; cpu_cache_new answers a set bit on a write by
-// acknowledging at once and entering CPU_SM_WAIT_LOWORD, where it takes the
-// next write cycle as a continuation of THE SAME request: one address, latched
-// from the first cycle, two words banked together at A and A+2.  A core whose
-// adapter instead issues two fully independent word cycles leaves the
-// controller holding a half-written longword -- that is the AllocMem failure of
-// 2026-09-07, and this model was blind to it because it read only cpustate[2:0].
-// It is not blind any more: the paired protocol is modelled, a violation of it
-// is reported, and the bit is asserted never to be set at all
-// (the AP68040's bus16 adapter cannot speak the protocol, so TG68K.vhd ties
-// cpustate(6) to '0').
-wire        ramcs_n = tg68_cpustate[2];
-wire [15:0] ramwa   = tg68_cad[16:1];
-wire        ram_wr  = (tg68_cpustate[1:0] == 2'b11);
+// ---- the SDRAM unit port: the shadow ----------------------------------
+// Stage E2 decision D6: sdram_ctrl answers the port (real_sdram.vh); what is
+// kept here is chipmem as a SHADOW of chip RAM, so the mailbox watcher and the
+// chipset bus below see what the CPU wrote.  A word is recorded when the
+// controller ACKNOWLEDGES the unit, byte by byte from cpu_bs:
+//   bs[3] word A hi   bs[2] word A lo   bs[1] word A+2 hi   bs[0] word A+2 lo
+// Only chip RAM: chipmem is 128 kB, and a Zorro II address would alias onto
+// the program.  (The paired 32-bit write protocol this section used to model,
+// and --lwmutant with it, went with the 16-bit port.)
+always @(posedge clk)
+  if (tg68_rst && ram_req && ram_we && ram_ack && ram_wadr[25:17] == 9'd0) begin
+    if (ram_bs[3]) chipmem[ram_wadr[16:1]      ][15:8] <= ram_wdat[31:24];
+    if (ram_bs[2]) chipmem[ram_wadr[16:1]      ][ 7:0] <= ram_wdat[23:16];
+    if (ram_bs[1]) chipmem[ram_wadr[16:1] + 1'b1][15:8] <= ram_wdat[15: 8];
+    if (ram_bs[0]) chipmem[ram_wadr[16:1] + 1'b1][ 7:0] <= ram_wdat[ 7: 0];
+  end
 `ifdef REALSDRAM
 `include "placement_monitor.vh"
 `endif
 
-// ---- cpu_cache_new's line buffer, modelled (AP68040 legs only) ---------
-// The real controller does NOT wait for the select before it answers a read.
-// rtl/sdram/cpu_cache_new.v keeps the last 16-byte line it fetched in a line
-// buffer, registers a compare of the LIVE address against it every clock
-// (:257, cpu_cacheline_match), and drives the acknowledge combinationally from
-// that compare whenever its state machine is idle and the bus state is a read
-// (:258-260):
-//
-//     cpu_cacheline_valid = match && sm_idle && (cpu_ir || cpu_dr) && !cache_inhibit
-//     cpu_ack             = cpu_cache_ack || cpu_cacheline_valid || cpu_32bit_ena
-//
-// The read data is likewise the buffered word at the live address's offset,
-// registered every clock (:294).  So on a line-buffer hit the acknowledge is
-// up within two clocks of the address appearing, with the select still IDLE
-// and slower still counting down, and it goes DOWN again as soon as the
-// address moves to another line -- it is a function of the address, not of
-// the select.  The model above this comment only ever acknowledged after the
-// select opened, so nothing in this bench could see a consumer that judges
-// that acknowledge against the wrong address: the D3-FIX walker bug of
-// 2026-09-10 (findings/ap68040/sdd-d3/task-d3stable-report.md) passed every
-// leg here and halted the machine.  This is the model that catches it.
-//
-// Kept to the AP68040 legs so that the TG68K control run stays byte-identical
-// to its committed log; the fast path is just as real for the TG68K, but
-// that run's job is to prove the TG68K build unchanged, not to re-time it.
-//
-// Faithfulness, by line of cpu_cache_new.v:
-//   :257  lb_match is registered from the live address, so it is one clock
-//         behind an address change -- exactly the window the walker bug lives in
-//   :258  valid needs the machine idle: once a real access has started
-//         (lb_busy) the fast path is off until the select drops
-//   :294  the read data is the buffered word at the live offset, registered
-//   :313-316  a write updates the buffered word if the line matches ...
-//   :313  ... and invalidates the buffer if it does not
-//   :464-469  a cache-inhibited read puts its word in the buffer and marks the
-//         buffer dirty, so the NEXT access cannot hit on it
-//   :296  cacheline_clr marks it dirty
-// The real controller fills the buffer over the eight clocks of the SDRAM
-// burst; this model fills it whole when it acknowledges the first word, which
-// only makes a following hit possible EARLIER, never later.
-// The compare is over the 128 kB this port serves (tg68_cad[16:4]): the
-// wrapper's ramaddr has board-select bits above that which are X until the
-// autoconfig inputs settle, and an X in the compare would take the slow path
-// down with it.  Every term is X-safe for the same reason.
-// The buffered line is read straight out of chipmem at lb_adr rather than
-// copied: nothing but this port writes chipmem once turbochip is on, and
-// cpu_cache_new mirrors the CPU's own writes into its buffer (:313-316), so
-// the two never differ.  (A per-word copy loop was tried first and xsim did
-// not apply the non-blocking loop writes; the trace showed every line after
-// the first carrying the first line's words.)
-reg  [16:4] lb_adr     = 13'd0;
-reg         lb_dirty   = 1'b1;
-reg         lb_match   = 1'b0;
-reg         lb_busy    = 1'b0;
-reg  [15:0] fromram_lb = 16'h0000;
-wire        ram_isrd   = (tg68_cpustate[0] === 1'b0);  // 00 fetch or 10 data read
-wire        lb_valid   = (lb_match === 1'b1) && !lb_busy && ram_isrd && (cache_inhibit === 1'b0);
-`ifdef REALSDRAM
-assign      ramready_w = ramready_real;   // the real sdram_ctrl answers
-assign      fromram_w  = fromram_real;
-`else
-assign      ramready_w = ramready || lb_valid;
-assign      fromram_w  = fromram_lb;
-`endif
-integer     lb_hits = 0;
+// +LBDBG traces the SDRAM unit port for 400 events; +LBDBGT=<ps> delays it.
+integer lbdbg  = 0;
+longint lbdbgt = 0;
+initial begin
+  if ($test$plusargs("LBDBG")) lbdbg = 6000;
+  void'($value$plusargs("LBDBGT=%d", lbdbgt));
+end
 always @(posedge clk) begin
-  lb_match   <= (tg68_cad[16:4] === lb_adr) && !lb_dirty;
-  if (ramcs_n) lb_busy <= 1'b0;
-  else if (!lb_busy && !lb_valid) lb_busy <= 1'b1;
-  // bookkeeping: hits, and hits taken with the select still idle
-  if (lb_valid && !ramready && tg68_cpustate[5]) lb_hits = lb_hits + 1;
-  // +LBDBG traces this port for 400 events; +LBDBGT=<ps> delays the start.
-  if (lbdbg > 0 && $time >= lbdbgt && sdctl_rst && (!ramcs_n || lb_valid || ramready || tg68_cpustate[5])) begin
-    $display("LBDBG %t csn=%b st=%b cad=%08x rdy=%b valid=%b match=%b busy=%b dirty=%b adr=%04x data=%04x inh=%b wk=%b",
-             $time, ramcs_n, tg68_cpustate, tg68_cad, ramready, lb_valid, lb_match, lb_busy, lb_dirty, lb_adr, fromram_lb, cache_inhibit,
-             tg68k.wk_active);
+  if (lbdbg > 0 && $time >= lbdbgt && sdctl_rst && (ram_req || ram_ack)) begin
+    $display("LBDBG %t req=%b we=%b ir=%b wadr=%07x bs=%b wdat=%08x ack=%b rdat=%08x inh=%b wk=%b pc=%08x xa=%08x sz=%0d xrd=%08x xack=%b",
+             $time, ram_req, ram_we, ram_ir, {ram_wadr, 1'b0}, ram_bs, ram_wdat, ram_ack, ram_rdat,
+             cache_inhibit, tg68k.wk_go, tg68k.dbg_pc, tg68k.x_addr, tg68k.x_size, tg68k.x_rdata_r, tg68k.x_ack_r);
     lbdbg = lbdbg - 1;
   end
   if (lbdbg > 0 && $time >= lbdbgt && sdctl_rst && !tg68_as) begin
     $display("LBDBG %t chipset bus adr=%08x rw=%b", $time, tg68_adr, tg68_rw);
     lbdbg = lbdbg - 1;
-  end
-end
-integer lbdbg  = 0;
-longint lbdbgt = 0;
-initial begin
-  if ($test$plusargs("LBDBG")) lbdbg = 400;
-  void'($value$plusargs("LBDBGT=%d", lbdbgt));
-end
-
-reg         lw_pend;                 // a paired 32-bit write awaits its low word
-reg  [15:0] lw_addr;                 // word address latched on the high-word cycle
-reg  [15:0] lw_dat;                  // the high word itself
-reg  [ 1:0] lw_bs;                   // its {uds,lds}, active low
-integer     lw_errs;                 // protocol violations seen on this port
-
-initial lw_errs = 0;
-
-always @(posedge clk) begin
-  // cpu_cache_new.v:294, the read data's default every clock: the buffered
-  // word at the live offset.  Overridden below, as :466 does, in the cycle a
-  // slow-path read is acknowledged, so data and acknowledge rise together.
-  fromram_lb <= chipmem[{lb_adr, tg68_cad[3:1]}];
-  if (!sdctl_rst) begin
-    ramready <= 1'b0;
-    fromram  <= 16'h0000;
-    lw_pend  <= 1'b0;
-    lb_dirty <= 1'b1;
-  end else if (ramcs_n) begin
-    ramready <= 1'b0;
-    if (cacheline_clr) lb_dirty <= 1'b1;
-  end else if (!ramready && !lb_valid) begin
-    // a line-buffer hit (lb_valid) never starts an access: cpu_cache_new stays
-    // in CPU_SM_IDLE and cpu_cache_ack is never raised for it
-    if (cacheline_clr) lb_dirty <= 1'b1;
-    if (ram_wr && tg68_rst) begin
-      if (lw_pend) begin
-        // Low word of a paired write.  The controller ignores this cycle's
-        // address and uses the latched one, so the words land at A and A+2
-        // whatever the core presents here -- but a core that has wandered
-        // somewhere else entirely is a protocol violation, not a write.
-        if (ramwa !== lw_addr && ramwa !== lw_addr + 16'd1) begin
-          $display("FAIL: paired 32-bit write: high word at %08x, low word cycle at %08x",
-                   {16'd0, lw_addr, 1'b0}, {16'd0, ramwa, 1'b0});
-          lw_errs = lw_errs + 1;
-        end
-        if (!lw_bs[1])   chipmem[lw_addr][15:8] <= lw_dat[15:8];
-        if (!lw_bs[0])   chipmem[lw_addr][ 7:0] <= lw_dat[ 7:0];
-        if (!tg68_cuds)  chipmem[lw_addr + 16'd1][15:8] <= tg68_cin[15:8];
-        if (!tg68_clds)  chipmem[lw_addr + 16'd1][ 7:0] <= tg68_cin[ 7:0];
-        lw_pend <= 1'b0;
-      end else if (tg68_cpustate[6]) begin
-        // High word of a paired write: acknowledged now, committed with its
-        // partner.  Nothing reaches memory yet, exactly as in the controller.
-        lw_addr <= ramwa;
-        lw_dat  <= tg68_cin;
-        lw_bs   <= {tg68_cuds, tg68_clds};
-        lw_pend <= 1'b1;
-      end else begin
-        if (!tg68_cuds) chipmem[ramwa][15:8] <= tg68_cin[15:8];
-        if (!tg68_clds) chipmem[ramwa][ 7:0] <= tg68_cin[ 7:0];
-        // cpu_cache_new.v:313-316: update the buffered word on a matching
-        // line, invalidate the buffer otherwise
-        // (the buffered word is chipmem itself, updated just above)
-        if (!lb_match) lb_dirty <= 1'b1;
-      end
-    end else begin
-      if (lw_pend) begin
-        $display("FAIL: a read at %08x split a paired 32-bit write started at %08x",
-                 {16'd0, ramwa, 1'b0}, {16'd0, lw_addr, 1'b0});
-        lw_errs = lw_errs + 1;
-        lw_pend <= 1'b0;
-      end
-      fromram <= chipmem[ramwa];
-      fromram_lb <= chipmem[ramwa];
-      if (cache_inhibit) begin
-        // cpu_cache_new.v:464-469: the buffer is marked dirty, so nothing
-        // later can hit on it
-        lb_dirty <= 1'b1;
-      end else begin
-        lb_adr   <= tg68_cad[16:4];
-        lb_dirty <= 1'b0;
-      end
-    end
-    ramready <= 1'b1;
-  end
-end
-
-// The AP68040 issues two independent word cycles for a longword, so it must
-// never claim the paired protocol -- on EITHER memory port; bit 6 is the same
-// bit in cpustate and in the DDR3 port's tg68_ddrcpustate.  Put the raw
-// longword flag back on cpustate(6) in TG68K.vhd (--lwmutant) and this fires.
-always @(posedge clk) begin
-  if (tg68_rst && sdctl_rst && tg68_cpustate[6] && tg68_cpustate[1:0] == 2'b11
-      && (!tg68_cpustate[2] || !tg68_ddrcs)) begin
-    if (lw_errs < 8)
-      $display("FAIL: cpustate[6] set with the AP68040 as the core (%s port, addr %08x)",
-               !tg68_cpustate[2] ? "SDRAM" : "DDR3",
-               !tg68_cpustate[2] ? {16'd0, ramwa, 1'b0} : {6'd0, tg68_ddraddr, 1'b0});
-    lw_errs = lw_errs + 1;
   end
 end
 
@@ -1300,8 +1134,8 @@ integer TRMAX    = 200;
 integer tr_cpu   = 0;
 integer tr_ack   = 0;
 integer tr_req   = 0;
-reg     ddrcs_d  = 1'b1;
-reg     ddrena_d = 1'b0;
+reg     ddrreq_d = 1'b0;
+reg     ddrack_d = 1'b0;
 
 initial begin
   mmutest  = $test$plusargs("MMUTEST");
@@ -1324,27 +1158,26 @@ end
 // which checks the latched base against what the OS assigned.
 integer ddr_decode_errs = 0;
 always @(posedge clk) begin
-  if (tg68_rst && !tg68_ddrcs && tg68_ddraddr[25:24] !== 2'b00) begin
+  if (tg68_rst && ddr_req && ddr_wadr[25:24] !== 2'b00) begin
     if (ddr_decode_errs < 20)
-      $display("FAIL: ddraddr %07x has base bits set; expected an offset inside a 16 MB board",
-               tg68_ddraddr);
+      $display("FAIL: ddr_wadr %07x has base bits set; expected an offset inside a 16 MB board",
+               {ddr_wadr, 1'b0});
     ddr_decode_errs = ddr_decode_errs + 1;
   end
 end
 
 always @(posedge clk) begin
-  ddrcs_d  <= tg68_ddrcs;
-  ddrena_d <= tg68_ddrena;
+  ddrreq_d <= ddr_req;
+  ddrack_d <= ddr_ack;
   if (trace_on && tg68_rst) begin
-    if (ddrcs_d && !tg68_ddrcs && tr_cpu < TRMAX) begin
-      $display("TRACE CPU  %t sel  adr=%08x st=%b lw=%b U=%b L=%b wdat=%04x",
-               $time, {6'd0, tg68_ddraddr, 1'b0}, tg68_ddrcpustate[1:0],
-               tg68_ddrcpustate[6], tg68_cuds, tg68_clds, tg68_cin);
+    if (!ddrreq_d && ddr_req && tr_cpu < TRMAX) begin
+      $display("TRACE CPU  %t req  adr=%08x we=%b ir=%b bs=%b wdat=%08x",
+               $time, {6'd0, ddr_wadr, 1'b0}, ddr_we, ddr_ir, ddr_bs, ddr_wdat);
       tr_cpu = tr_cpu + 1;
     end
-    if (!ddrena_d && tg68_ddrena && !tg68_ddrcs && tr_ack < TRMAX) begin
-      $display("TRACE CPU  %t ack  adr=%08x st=%b rdat=%04x",
-               $time, {6'd0, tg68_ddraddr, 1'b0}, tg68_ddrcpustate[1:0], tg68_ddrout);
+    if (!ddrack_d && ddr_ack && tr_ack < TRMAX) begin
+      $display("TRACE CPU  %t ack  adr=%08x we=%b rdat=%08x",
+               $time, {6'd0, ddr_wadr, 1'b0}, ddr_we, ddr_rdat);
       tr_ack = tr_ack + 1;
     end
   end
@@ -1359,218 +1192,99 @@ always @(posedge clk100) begin
 end
 
 //-----------------------------------------------------------------
-// The memory port's address/select contract, on BOTH ports.
+// The unit port's contract, on BOTH ports (rtl/sdram/cpu_cache_new.v header).
 //
-// sdram_ctrl.v:226 and ddr3_fastram.v:20 say the same thing: "cpuAddr must be
-// stable ONE CYCLE BEFORE cpustate[2] goes low", because each registers
-// cpuAddr into cpuAddr_r and it is cpuAddr_r -- not the live address -- that
-// addresses the memory.  Break it and the controller fetches the previous
-// access's line; on a hit inside cpu_cache_new's line buffer it still answers,
-// with the wrong word, which is exactly the kind of failure that reads as
-// random corruption.  Nothing checked it before: the plan's D1 note
-// (findings/ap68040/plan-v2-with-ddr3.md) lists it as an untested hypothesis
-// for a wrapper variant that did not boot, and says to teach this bench the
-// rule first.  The line-fill router (stage D) opens the select itself, so this
-// is also the check on it.
+//   hold   while cpu_req is high every field is stable: cpu_cache_new
+//          registers cpu_wadr every clock and latches its registered copy when
+//          the round reaches the CPU slot, possibly many clocks later, so a
+//          field that moves under a held request lands the access on the wrong
+//          line or with the wrong data.
+//   ack    cpu_ack is only ever high while cpu_req is.  ap040_ram_seq takes an
+//          acknowledge as its unit's completion, so an acknowledge left over
+//          from the previous unit would complete the next one unread.
 //
-// THE OTHER HALF OF THE CONTRACT (added in task 4).  Both controllers do
-//
-//     always @(posedge sysclk) cpuAddr_r <= cpuAddr;
-//
-// unconditionally -- sdram_ctrl.v:240, ddr3_fastram.v:220 -- and cpuAddr_r is
-// what they latch into slot1_addr / cdc_addr when the round finally reaches
-// the CPU's slot, which can be many clocks after the select opened.  So the
-// address must not merely be settled one cycle BEFORE the select falls, it
-// must HOLD for as long as the select is low.  Both halves are one rule:
-//
-//     while cpustate[2] (resp. ddrcs) is low, the address equals the address
-//     of the previous clock.
-//
-// The falling edge of the select is the first case of that (the select is low
-// now and was high a cycle ago -- the address must already have been what it
-// is), the held-low cycles are the rest.  The address is allowed to change on
-// the cycle the select goes back high, and that is exactly what the wrapper
-// does: `slower` reloads on clkena, so slower(0) closes the select on the same
-// clock edge the core's address register advances, and the fill router's
-// FL_SEL sets fl_bstate = "01" and the next fl_busaddr in the same edge too.
-// A cadence whose enable spacing lets the select still be open when the next
-// enable lands would break that alignment -- which is the hypothesis the
-// five-phase experiment tests.
+// These replace the 16-bit port's address/select setup and hold checks.
 //-----------------------------------------------------------------
-integer    port_setup_errs = 0;
-integer    port_hold_errs  = 0;
-reg [25:1] ramaddr_d, ddraddr_d;
-reg        ramcsn_d = 1'b1, ddrcsn_d = 1'b1;
+integer    port_hold_errs = 0;
+integer    port_ack_errs  = 0;
+reg        ramreq_d = 1'b0, ddrreq_c = 1'b0;
+reg [66:0] ramfld_d, ddrfld_d;
+wire [66:0] ramfld = {ram_we, ram_ir, ram_wadr, ram_bs, ram_wdat, 3'b000};
+wire [66:0] ddrfld = {ddr_we, ddr_ir, ddr_wadr, ddr_bs, ddr_wdat, 3'b000};
 
 always @(posedge clk) begin
   if (tg68_rst && sdctl_rst) begin
-    if (ramcsn_d && !tg68_cpustate[2] && tg68_cad[25:1] !== ramaddr_d) begin
-      if (port_setup_errs < 8)
-        $display("FAIL: SDRAM select opened at %08x with the address changing in the same cycle (was %08x)",
-                 {6'd0, tg68_cad[25:1], 1'b0}, {6'd0, ramaddr_d, 1'b0});
-      port_setup_errs = port_setup_errs + 1;
-    end
-    if (ddrcsn_d && !tg68_ddrcs && tg68_ddraddr !== ddraddr_d) begin
-      if (port_setup_errs < 8)
-        $display("FAIL: DDR3 select opened at %08x with the address changing in the same cycle (was %08x)",
-                 {6'd0, tg68_ddraddr, 1'b0}, {6'd0, ddraddr_d, 1'b0});
-      port_setup_errs = port_setup_errs + 1;
-    end
-    // ... and it has to stay there while the select is held low.
-    if (!ramcsn_d && !tg68_cpustate[2] && tg68_cad[25:1] !== ramaddr_d) begin
+    if (ramreq_d && ram_req && ramfld !== ramfld_d) begin
       if (port_hold_errs < 8)
-        $display("FAIL: SDRAM address moved to %08x while the select was still low (was %08x)",
-                 {6'd0, tg68_cad[25:1], 1'b0}, {6'd0, ramaddr_d, 1'b0});
+        $display("FAIL: SDRAM unit port fields moved under a held request at %t (%h -> %h)",
+                 $time, ramfld_d, ramfld);
       port_hold_errs = port_hold_errs + 1;
     end
-    if (!ddrcsn_d && !tg68_ddrcs && tg68_ddraddr !== ddraddr_d) begin
+    if (ddrreq_c && ddr_req && ddrfld !== ddrfld_d) begin
       if (port_hold_errs < 8)
-        $display("FAIL: DDR3 address moved to %08x while the select was still low (was %08x)",
-                 {6'd0, tg68_ddraddr, 1'b0}, {6'd0, ddraddr_d, 1'b0});
+        $display("FAIL: DDR3 unit port fields moved under a held request at %t (%h -> %h)",
+                 $time, ddrfld_d, ddrfld);
       port_hold_errs = port_hold_errs + 1;
+    end
+    if ((ram_ack === 1'b1 && !ram_req) || (ddr_ack === 1'b1 && !ddr_req)) begin
+      if (port_ack_errs < 8)
+        $display("FAIL: a unit port acknowledge high without its request at %t (SDRAM %b/%b, DDR3 %b/%b)",
+                 $time, ram_req, ram_ack, ddr_req, ddr_ack);
+      port_ack_errs = port_ack_errs + 1;
     end
   end
-  ramaddr_d <= tg68_cad[25:1];
-  ramcsn_d  <= tg68_cpustate[2];
-  ddraddr_d <= tg68_ddraddr;
-  ddrcsn_d  <= tg68_ddrcs;
+  ramreq_d <= ram_req;
+  ddrreq_c <= ddr_req;
+  ramfld_d <= ramfld;
+  ddrfld_d <= ddrfld;
 end
 
 //-----------------------------------------------------------------
-// The invariant that lets clkena carry two terms instead of six.
+// The master channel's invariants (Stage E2, decision D4).
 //
-// TG68K.vhd's clkena used to OR in wk_ack, wk_berr, fl_ack and fl_err as
-// deadlock guards: the core consumes those acknowledges under its own ce, and
-// ce IS clkena, so an acknowledge raised while clkena happens to be stopped
-// would hang the machine silently.  They were removed because they are
-// redundant AND because they are expensive -- clkena is the clock enable of
-// 7,391 kernel flops, and the ship build of the fill router had seven new
-// failing clk_114 endpoints running from fl_active_reg into kernel CE pins.
-//
-// What replaces them is an invariant of the two bus routers:
-//
-//   whenever the walker or the line fill holds its acknowledge or its bus
-//   error, it has already released the bus and the core's own bus side is
-//   idle -- so bstate is "01", and clkena's first term enables the core
-//   anyway.
-//
-// bstate is cpustate[1:0] here, and clkena is cpustate[5] (TG68K.vhd builds
-// cpustate as '0' & clkena & slower(1:0) & ramcs & bstate).  Two
-// checks, because the invariant has two halves:
-//
-//   ack_idle_errs   an acknowledge held in a cycle where bstate is not "01".
-//                   This is the property that makes the removal safe.
-//   ack_dry_errs    an acknowledge that dropped without the CPU having been
-//                   enabled once while it was up.  A hang would already trip
-//                   the stall watchdog; this names the cause instead of
-//                   leaving a timeout to be diagnosed.
-//
-// Both hold on the OLD code too -- they are properties of the routers, which
-// this change did not touch -- so a run of the old wrapper passes them.  That
-// is the point: it is what makes the four removed terms redundant rather than
-// load-bearing.  Measured, not argued: see the fix-round-2 section of
-// .superpowers/sdd/plan-v2-with-ddr3/task-3-report.md.
+//   mux_excl_errs  the core's m_req high while the walker owns the master mux.
+//                  A walk happens during address translation, before the
+//                  core's own request exists, and ap040_mmu's walk_hold keeps a
+//                  posted store from draining under it; if either is ever
+//                  false the mux hands one master's answer to the other.
+//   ack_ena_errs   the router's completion pulse x_ack_r without clkena_r on
+//                  the same clk cycle.  The core consumes an acknowledge under
+//                  its enable, so one delivered without it is lost and the
+//                  access hangs (or, held, is taken twice -- --ackmutant).
 //-----------------------------------------------------------------
-integer ack_idle_errs = 0;
-integer ack_dry_errs  = 0;
+integer mux_excl_errs = 0;
+integer ack_ena_errs  = 0;
 
-wire wk_ack_w  = ddr3_cpu_tb.tg68k.wk_ack;
-wire wk_berr_w = ddr3_cpu_tb.tg68k.wk_berr;
-wire fl_ack_w  = ddr3_cpu_tb.tg68k.fl_ack;
-wire fl_err_w  = ddr3_cpu_tb.tg68k.fl_err;
-
-wire any_ack   = wk_ack_w | wk_berr_w | fl_ack_w | fl_err_w;
-reg  any_ack_d = 1'b0;
-reg  ack_ena   = 1'b0;          // clkena seen while this acknowledge was up
+always @(posedge clk_cpu) begin
+  if (tg68_rst && tg68k.wk_go === 1'b1 && tg68k.m_req === 1'b1) begin
+    if (mux_excl_errs < 8)
+      $display("FAIL: m_req high while the walker owns the master mux (t = %t)", $time);
+    mux_excl_errs = mux_excl_errs + 1;
+  end
+end
 
 always @(posedge clk) begin
-  if (tg68_rst) begin
-    if (any_ack && tg68_cpustate[1:0] !== 2'b01) begin
-      if (ack_idle_errs < 8)
-        $display("FAIL: acknowledge held with the bus NOT idle (wk_ack=%b wk_berr=%b fl_ack=%b fl_err=%b, bstate=%b) at %t",
-                 wk_ack_w, wk_berr_w, fl_ack_w, fl_err_w, tg68_cpustate[1:0], $time);
-      ack_idle_errs = ack_idle_errs + 1;
-    end
-    if (any_ack && tg68_cpustate[5]) ack_ena <= 1'b1;
-    if (!any_ack &&  any_ack_d) begin
-      if (!ack_ena) begin
-        if (ack_dry_errs < 8)
-          $display("FAIL: an acknowledge dropped without the CPU ever being enabled while it was up (t = %t)",
-                   $time);
-        ack_dry_errs = ack_dry_errs + 1;
-      end
-      ack_ena <= 1'b0;
-    end
+  if (tg68_rst && tg68k.x_ack_r === 1'b1 && tg68k.clkena_r !== 1'b1) begin
+    if (ack_ena_errs < 8)
+      $display("FAIL: x_ack_r without clkena_r (t = %t)", $time);
+    ack_ena_errs = ack_ena_errs + 1;
   end
-  any_ack_d <= any_ack;
 end
 
 //-----------------------------------------------------------------
-// Stage D: the line-fill channel.
-//
-// Two counters and one assertion, all from inside the DUT because the channel
-// is invisible at the wrapper's ports: a channel fill and eight ordinary word
-// reads look the same from outside, which is the point of it.
-//
-//   fill_ch  lines the wrapper served over the channel (fl_busy rising)
-//   fill_ad  lines the cache pulled down the bus16 adapter instead, i.e.
-//            C_FILL entries (ap040_cache.v:233).  With fill_ena_zorro = 1 and
-//            fill_ena_chip = 0 these are the chip/kick/slow lines and the
-//            cache-inhibited ones; a Zorro-window miss must never be one.
-//   fill_err lines answered with a bus error (fl_err) -- expected zero, and a
-//            FAIL if it is not: the SoC never raises a bus error, it
-//            auto-completes an undecoded address with $FFFF.
-//   fill_und channel fills whose address decoded to NOTHING and were therefore
-//            served as a line of all ones.  The 68k program takes exactly one,
-//            reading UNDECODED = $42000000 -- inside the core's cacheable
-//            cache_z3_base1 window ($4xxxxxxx) but outside every board in this
-//            bench.  Before the auto-complete arm existed that read raised
-//            fl_err, the cache took C_FERR and the program died in its access
-//            fault handler with status 99.
-//
-// The assertion is the ordering rule: the walker router and the fill router
-// drive the same muxed bus signals, so they must never own them at once.
+// Cache line fills.  The fill channel is off since Stage E2 (D5): a cache
+// miss fills its line over m_* as longword reads.  fill_ad counts C_FILL
+// entries (ap040_cache.v:233), for the A/B record.
 //-----------------------------------------------------------------
 localparam [3:0] CST_FILL  = 4'd4;    // C_FILL,  ap040_cache.v:233
-localparam [3:0] CST_FILLC = 4'd8;    // C_FILLC, ap040_cache.v:235
 
-integer fill_ch    = 0;
 integer fill_ad    = 0;
-integer fill_be    = 0;
-integer fill_und   = 0;
-integer fill_excl  = 0;
-
-wire       fl_ok_w     = ddr3_cpu_tb.tg68k.fl_ok;
-wire       fl_busy_w   = ddr3_cpu_tb.tg68k.fl_busy;
-wire       fl_active_w = ddr3_cpu_tb.tg68k.fl_active;
-wire       wk_active_w = ddr3_cpu_tb.tg68k.wk_active;
-// fl_err_w is declared with the acknowledge-invariant checks above.
-wire [3:0] cst_w       = ddr3_cpu_tb.tg68k.g_ap040.ap040.g_cache.cache.cst;
-
-reg       fl_busy_d = 1'b0;
-reg       fl_err_d  = 1'b0;
-reg [3:0] cst_d     = 4'd0;
+wire [3:0] cst_w   = ddr3_cpu_tb.tg68k.g_ap040.ap040.g_cache.cache.cst;
+reg  [3:0] cst_d   = 4'd0;
 
 always @(posedge clk) begin
-  if (tg68_rst) begin
-    // fl_busy rises at the edge into FL_DEC, so the cycle sampled here is
-    // FL_DEC itself -- the one where the router reads fl_ok and decides
-    // between a memory transfer and the auto-complete.
-    if ( fl_busy_w && !fl_busy_d) begin
-      fill_ch = fill_ch + 1;
-      if (!fl_ok_w) fill_und = fill_und + 1;
-    end
-    if ( fl_err_w  && !fl_err_d )              fill_be = fill_be + 1;
-    if ((cst_w === CST_FILL) && (cst_d !== CST_FILL)) fill_ad = fill_ad + 1;
-    if (wk_active_w && fl_active_w) begin
-      if (fill_excl < 8)
-        $display("FAIL: the walker and the line fill own the bus at the same time (t = %t)", $time);
-      fill_excl = fill_excl + 1;
-    end
-  end
-  fl_busy_d <= fl_busy_w;
-  fl_err_d  <= fl_err_w;
-  cst_d     <= cst_w;
+  if (tg68_rst && (cst_w === CST_FILL) && (cst_d !== CST_FILL)) fill_ad = fill_ad + 1;
+  cst_d <= cst_w;
 end
 
 //-----------------------------------------------------------------
@@ -1855,63 +1569,31 @@ initial begin : main
   end
   end
 
-  if (lw_errs != 0) begin
-    $display("");
-    $display("DDR3 CPU TB: FAIL  %0d 32-bit-write protocol violations on the RAM port",
-             lw_errs);
-    nfail = nfail + 1;
-  end
-
-  if (port_setup_errs != 0) begin
-    $display("");
-    $display("DDR3 CPU TB: FAIL  %0d chip selects opened without a settled address",
-             port_setup_errs);
-    nfail = nfail + 1;
-  end
-
   if (port_hold_errs != 0) begin
     $display("");
-    $display("DDR3 CPU TB: FAIL  %0d cycles with the address moving while a chip select was low;",
+    $display("DDR3 CPU TB: FAIL  %0d cycles with a unit port's fields moving under a held request;",
              port_hold_errs);
-    $display("       the controllers re-register cpuAddr every clock, so the access ends up");
-    $display("       reading or writing the wrong line");
+    $display("       the controllers latch the fields late, so the access lands on the wrong line");
+    nfail = nfail + 1;
+  end
+
+  if (port_ack_errs != 0) begin
+    $display("");
+    $display("DDR3 CPU TB: FAIL  %0d cycles with a unit port acknowledge high and its request low",
+             port_ack_errs);
     nfail = nfail + 1;
   end
 
   $display("");
-  $display("INFO: cache line fills -- %0d over the channel (%0d of them undecoded, auto-completed), %0d down the adapter, %0d bus errors",
-           fill_ch, fill_und, fill_ad, fill_be);
-  $display("INFO: SDRAM port -- %0d reads completed out of the modelled line buffer, select idle",
-           lb_hits);
-  if (fill_be != 0) begin
-    $display("DDR3 CPU TB: FAIL  %0d line fills answered with a bus error; this SoC auto-completes",
-             fill_be);
-    $display("       an address that decodes to nothing with $FFFF and never raises one");
+  $display("INFO: cache line fills -- %0d over m_* (C_FILL entries)", fill_ad);
+  if (mux_excl_errs != 0) begin
+    $display("DDR3 CPU TB: FAIL  %0d clk_cpu edges with m_req high while the walker owned the mux",
+             mux_excl_errs);
     nfail = nfail + 1;
   end
-  // The pattern program reads UNDECODED once, after phase 8.  With the channel
-  // in use that read MUST be a channel fill taking the auto-complete arm; with
-  // the channel off (--nofill, fill_ch = 0) it is eight adapter reads instead
-  // and there is nothing here to check.  The MMU program does not read it.
-  if (!mmutest && fill_ch != 0 && fill_und == 0) begin
-    $display("DDR3 CPU TB: FAIL  the cacheable read of the undecoded Zorro III hole did not");
-    $display("       take a line fill over the channel");
-    nfail = nfail + 1;
-  end
-  if (fill_excl != 0) begin
-    $display("DDR3 CPU TB: FAIL  %0d cycles with the walker and the line fill both on the bus",
-             fill_excl);
-    nfail = nfail + 1;
-  end
-  if (ack_idle_errs != 0) begin
-    $display("DDR3 CPU TB: FAIL  %0d cycles with a router acknowledge held while the bus was NOT idle;",
-             ack_idle_errs);
-    $display("       clkena's bstate term does not cover those, so the removed ack terms were needed");
-    nfail = nfail + 1;
-  end
-  if (ack_dry_errs != 0) begin
-    $display("DDR3 CPU TB: FAIL  %0d router acknowledges dropped without the CPU being enabled while up",
-             ack_dry_errs);
+  if (ack_ena_errs != 0) begin
+    $display("DDR3 CPU TB: FAIL  %0d router completions (x_ack_r) delivered without clkena_r",
+             ack_ena_errs);
     nfail = nfail + 1;
   end
 
@@ -1991,26 +1673,39 @@ initial begin : main
   end
 `endif
 `ifdef REALSDRAM
-  $display("=== placement: %0d chip-RAM acknowledges, %0d off hardware phases 2/6/10/14/13 (bench offset +%0d) ===",
-           pm_total, pm_stray, `PLACEMENT_OFFSET);
+  $display("=== placement: %0d chip-RAM acknowledges (%0d reads, %0d off 0/4/8/12; %0d writes, %0d off 2/6/10/14/13) ===",
+           pm_total, pm_rd_total, pm_rd_stray, pm_wr_total, pm_wr_stray);
   for (pm_i = 0; pm_i < 16; pm_i = pm_i + 1)
     $display("    ph %2d : %0d", pm_i, pm_bin[pm_i]);
-  // Reported only, and deliberately not starting with "    ph " or "=== placement",
-  // so the busy-leg reference compare (ref/overlap_gate3.txt) is unchanged.
   $display("  placement split by access type at the acknowledge:");
   for (pm_i = 0; pm_i < 16; pm_i = pm_i + 1)
     $display("  split ph %2d : read %0d  write %0d", pm_i, pm_bin_rd[pm_i], pm_bin_wr[pm_i]);
 `ifdef DMA_OVERLAP
   // Busy leg: a reference, not a gate (Paul, 2026-09-15). Under chipset
-  // contention the bench scatters ~13 % of acknowledges off the calibrated grid
-  // while the board stays at 0.4 %, so the histogram is compared exactly
-  // against sim/ddr3_cpu/ref/overlap_gate3.txt instead of against a limit.
+  // contention the bench scatters acknowledges off the grid while the board
+  // stays at 0.4 %, so the histogram is compared exactly against a saved
+  // reference instead of against a limit.  E2 changes the port's timing by
+  // construction; the reference is re-baselined with Paul's OK (plan D7).
   $display("=== placement: busy leg (DMA_OVERLAP) is a reference, not judged ===");
 `else
-  if (pm_total < 1000 || pm_stray * 1000000 > pm_total * `PLACEMENT_STRAY_PPM) begin
+  // D7: reads and writes each against their own grid.  The pattern program
+  // writes chip RAM far less than it reads it, so writes need a lower floor.
+  // Judged on the pattern program with Turbo chip RAM only: --chipbus sends
+  // chip RAM over the chipset bus and the MMU program barely touches it, so
+  // those legs (REALSDRAM only since E2, D6) report placement without a verdict.
+  if (!turbochipram || mmutest)
+    $display("=== placement: not judged on this leg (%s) ===", mmutest ? "MMU program" : "Turbo chip RAM off");
+  else begin
+  if (pm_rd_total < 1000 || pm_rd_stray * 1000000 > pm_rd_total * `PLACEMENT_STRAY_PPM) begin
     nfail = nfail + 1;
-    $display("DDR3 CPU TB: FAIL  chip-RAM acknowledge placement: %0d of %0d off the grid (limit %0d ppm, need >= 1000 acknowledges)",
-             pm_stray, pm_total, `PLACEMENT_STRAY_PPM);
+    $display("DDR3 CPU TB: FAIL  chip-RAM READ acknowledge placement: %0d of %0d off 0/4/8/12 (limit %0d ppm, need >= 1000)",
+             pm_rd_stray, pm_rd_total, `PLACEMENT_STRAY_PPM);
+  end
+  if (pm_wr_total < 20 || pm_wr_stray * 1000000 > pm_wr_total * `PLACEMENT_STRAY_PPM) begin
+    nfail = nfail + 1;
+    $display("DDR3 CPU TB: FAIL  chip-RAM WRITE acknowledge placement: %0d of %0d off 2/6/10/14/13 (limit %0d ppm, need >= 20)",
+             pm_wr_stray, pm_wr_total, `PLACEMENT_STRAY_PPM);
+  end
   end
 `endif
 `endif

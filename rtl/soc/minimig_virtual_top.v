@@ -216,9 +216,6 @@ wire           tg68_rw;
 wire           tg68_ena7RD;
 wire           tg68_ena7WR;
 wire           tg68_ena28;
-wire [ 16-1:0] tg68_cout;
-wire [ 16-1:0] tg68_cin;
-wire           tg68_cpuena;
 wire [  4-1:0] cpu_config;
 wire [4:0]     board_configured;
 // A31-A24 the OS assigned to the third ZIII RAM board (the DDR3 board when
@@ -245,18 +242,29 @@ wire [1:0]     slow_config;
 wire           aga;
 wire           cache_inhibit;
 wire           cacheline_clr;
-wire [ 32-1:0] tg68_cad;
-wire [  7-1:0] tg68_cpustate;
-// DDR3 Zorro-III fast RAM port (TG68K <-> ddr3_fastram)
-wire [ 26-1:1] tg68_ddraddr;
-wire           tg68_ddrcs;
-wire [ 16-1:0] tg68_ddrout;
-wire           tg68_ddrena;
+// The unit port (Stage E2), TG68K <-> sdram_ctrl; see rtl/sdram/cpu_cache_new.v
+wire           tg68_ram_req;
+wire           tg68_ram_we;
+wire           tg68_ram_ir;
+wire [ 26-1:1] tg68_ram_wadr;
+wire [  4-1:0] tg68_ram_bs;
+wire [ 32-1:0] tg68_ram_wdat;
+wire [ 32-1:0] tg68_ram_rdat;
+wire           tg68_ram_ack;
+// The same port, TG68K <-> ddr3_fastram (Zorro-III fast RAM on the DDR3)
+wire           tg68_ddr_req;
+wire           tg68_ddr_we;
+wire           tg68_ddr_ir;
+wire [ 26-1:1] tg68_ddr_wadr;
+wire [  4-1:0] tg68_ddr_bs;
+wire [ 32-1:0] tg68_ddr_wdat;
+wire [ 32-1:0] tg68_ddr_rdat;
+wire           tg68_ddr_ack;
 wire           tg68_ddrready;
-// cpustate as seen by the DDR3 backend: the wrapper's cpustate with the chip
-// select (bit 2) replaced by the DDR3 one.  Everything else, cpuLongword
-// (bit 6) included, is passed through untouched.
-wire [  7-1:0] tg68_ddrcpustate = {tg68_cpustate[6:3], tg68_ddrcs, tg68_cpustate[1:0]};
+// The Akiko register cycle the host serves (cfide's amiga_* inputs)
+wire [  9-1:1] tg68_host_addr;
+wire [ 16-1:0] tg68_host_d;
+wire           tg68_host_wr;
 // DDR3 fast RAM debug taps (clk_114 domain), driven by ddr3_fastram and probed
 // by ila_fastram when DDR3_FASTRAM_ILA = 1.  Declared unconditionally so the
 // port map below is the same in both builds; with the ILA off nothing reads
@@ -282,8 +290,6 @@ wire [ 32-1:0] ddr3_dbg_sdr_dat_w;
 wire [  4-1:0] ddr3_dbg_sdr_dqm_w;
 wire           tg68_nrst_out;
 //wire           tg68_cdma;
-wire           tg68_clds;
-wire           tg68_cuds;
 wire [  4-1:0] tg68_CACR_out;
 wire [ 32-1:0] tg68_VBR_out;
 wire           tg68_ovr;
@@ -614,10 +620,22 @@ wire [15:0] amigahost_q;
 //// TG68K main CPU ////
 `ifdef HOSTONLY
 
-assign tg68_cpustate=2'b01;
 assign tg68_nrst_out=1'b1;
-assign tg68_ddraddr = 25'd0;
-assign tg68_ddrcs   = 1'b1;
+assign tg68_ram_req  = 1'b0;
+assign tg68_ram_we   = 1'b0;
+assign tg68_ram_ir   = 1'b0;
+assign tg68_ram_wadr = 25'd0;
+assign tg68_ram_bs   = 4'd0;
+assign tg68_ram_wdat = 32'd0;
+assign tg68_ddr_req  = 1'b0;
+assign tg68_ddr_we   = 1'b0;
+assign tg68_ddr_ir   = 1'b0;
+assign tg68_ddr_wadr = 25'd0;
+assign tg68_ddr_bs   = 4'd0;
+assign tg68_ddr_wdat = 32'd0;
+assign tg68_host_addr = 8'd0;
+assign tg68_host_d    = 16'd0;
+assign tg68_host_wr   = 1'b0;
 `else
 
 TG68K #(
@@ -657,14 +675,23 @@ TG68K #(
     .wrd          (                 ),
     .ena7RDreg    (tg68_ena7RD      ),
     .ena7WRreg    (tg68_ena7WR      ),
-    .fromram      (tg68_cout        ),
-    .toram        (tg68_cin         ),
-    .ramready     (tg68_cpuena      ),
-    .ddraddr      (tg68_ddraddr     ),
-    .ddrcs        (tg68_ddrcs       ),
-    .fromddr      (tg68_ddrout      ),
+    .ram_req      (tg68_ram_req     ),
+    .ram_we       (tg68_ram_we      ),
+    .ram_ir       (tg68_ram_ir      ),
+    .ram_wadr     (tg68_ram_wadr    ),
+    .ram_bs       (tg68_ram_bs      ),
+    .ram_wdat     (tg68_ram_wdat    ),
+    .ram_rdat     (tg68_ram_rdat    ),
+    .ram_ack      (tg68_ram_ack     ),
+    .ddr_req      (tg68_ddr_req     ),
+    .ddr_we       (tg68_ddr_we      ),
+    .ddr_ir       (tg68_ddr_ir      ),
+    .ddr_wadr     (tg68_ddr_wadr    ),
+    .ddr_bs       (tg68_ddr_bs      ),
+    .ddr_wdat     (tg68_ddr_wdat    ),
+    .ddr_rdat     (tg68_ddr_rdat    ),
+    .ddr_ack      (tg68_ddr_ack     ),
     .ddr_ready    (tg68_ddrready    ),
-    .ddr_ena      (tg68_ddrena      ),
     .turbochipram (turbochipram     ),
     .turbokick    (turbokick        ),
     .slow_config  (slow_config      ),
@@ -691,12 +718,8 @@ TG68K #(
     .sel_eth      (),
     .frometh      (16'd0),
     .ethready     (1'b0),
-    .ramaddr      (tg68_cad         ),
-    .cpustate     (tg68_cpustate    ),
     .nResetOut    (tg68_nrst_out    ),
     .skipFetch    (                 ),
-    .ramlds       (tg68_clds        ),
-    .ramuds       (tg68_cuds        ),
     .CACR_out     (tg68_CACR_out    ),
     .VBR_out      (tg68_VBR_out     ),
     // RTG signals
@@ -716,7 +739,10 @@ TG68K #(
     // Amiga to host signals
     .host_req(amigahost_req),
     .host_ack(amigahost_ack),
-    .host_q(amigahost_q)
+    .host_q(amigahost_q),
+    .host_addr(tg68_host_addr),
+    .host_d(tg68_host_d),
+    .host_wr(tg68_host_wr)
 );
 
 `endif
@@ -768,13 +794,14 @@ sdram_ctrl sdram (
     .hostena      (host_ramack      ),
 
     // Amiga CPU
-    .cpuWR        (tg68_cin         ),
-    .cpuAddr      (tg68_cad[25:1]   ),
-    .cpuU         (tg68_cuds        ),
-    .cpuL         (tg68_clds        ),
-    .cpustate     (tg68_cpustate    ),
-    .cpuRD        (tg68_cout        ),
-    .cpuena       (tg68_cpuena      ),
+    .cpu_req      (tg68_ram_req     ),
+    .cpu_we       (tg68_ram_we      ),
+    .cpu_ir       (tg68_ram_ir      ),
+    .cpu_wadr     (tg68_ram_wadr    ),
+    .cpu_bs       (tg68_ram_bs      ),
+    .cpu_wdat     (tg68_ram_wdat    ),
+    .cpu_rdat     (tg68_ram_rdat    ),
+    .cpu_ack      (tg68_ram_ack     ),
 
     // Amiga chip ram
     //  .cpu_dma      (tg68_cdma        ),
@@ -814,10 +841,8 @@ sdram_ctrl sdram (
 // Zorro-III fast RAM on the DDR3     //
 ////////////////////////////////////////
 // Same front end as the SDRAM path (rtl/sdram/cpu_cache_new.v) with a DDR3
-// backend; see rtl/ddr3/ddr3_fastram.v.  The CPU port is wired exactly like
-// the SDRAM's, except that the address comes straight from the CPU
-// (identity map, design.md D6) instead of through the SDRAM remap, and the
-// chip select is the DDR3 one.
+// backend; see rtl/ddr3/ddr3_fastram.v.  The unit port is TG68K's second
+// one, driven by its own ap040_ram_seq with the board-3 offset as address.
 generate
 if (haveddr3) begin : g_ddr3_fastram
 
@@ -830,13 +855,14 @@ ddr3_fastram ddr3_fastram_i (
     .ddr_ready      (tg68_ddrready    ),
 
     // Amiga CPU
-    .cpuAddr        (tg68_ddraddr[25:1]),
-    .cpustate       (tg68_ddrcpustate ),
-    .cpuU           (tg68_cuds        ),
-    .cpuL           (tg68_clds        ),
-    .cpuWR          (tg68_cin         ),
-    .cpuRD          (tg68_ddrout      ),
-    .cpuena         (tg68_ddrena      ),
+    .cpu_req        (tg68_ddr_req     ),
+    .cpu_we         (tg68_ddr_we      ),
+    .cpu_ir         (tg68_ddr_ir      ),
+    .cpu_wadr       (tg68_ddr_wadr    ),
+    .cpu_bs         (tg68_ddr_bs      ),
+    .cpu_wdat       (tg68_ddr_wdat    ),
+    .cpu_rdat       (tg68_ddr_rdat    ),
+    .cpu_ack        (tg68_ddr_ack     ),
 
     // DDR3 island, 100 MHz domain
     .clk_mem        (DDR3_CLK_MEM     ),
@@ -874,8 +900,8 @@ ddr3_fastram ddr3_fastram_i (
 end
 else begin : g_no_ddr3_fastram
 
-assign tg68_ddrout    = 16'h0000;
-assign tg68_ddrena    = 1'b0;
+assign tg68_ddr_rdat  = 32'd0;
+assign tg68_ddr_ack   = 1'b0;
 assign tg68_ddrready  = 1'b0;
 assign DDR3_REQ_VALID = 1'b0;
 assign DDR3_REQ_WR    = 16'h0000;
@@ -899,13 +925,15 @@ endgenerate
 // no clock-domain crossing of its own, which is the point: it must not
 // perturb the thing it is measuring.
 //
-// probe0  cpuAddr[25:1]        probe12 dbg_resp_rdata[127:0]
-// probe1  cpustate[6:0]        probe13 dbg_ack_tgl
-// probe2  cpuU                 probe14 dbg_bstate[1:0]
-// probe3  cpuL                 probe15 dbg_sdr_read_req
-// probe4  cpuWR[15:0]          probe16 dbg_sdr_read_ack
-// probe5  cpuRD[15:0]          probe17 dbg_sdr_dat_r[15:0]
-// probe6  cpuena               probe18 dbg_sdr_write_req
+// Probe WIDTHS are the IP's (build_ila.tcl); since Stage E2 the first seven
+// carry the unit port:
+// probe0  cpu_wadr[25:1]       probe12 dbg_resp_rdata[127:0]
+// probe1  {req,we,ir,bs[3:0]}  probe13 dbg_ack_tgl
+// probe2  cpu_bs[1:0] != 0     probe14 dbg_bstate[1:0]
+// probe3  cpu_ir               probe15 dbg_sdr_read_req
+// probe4  cpu_wdat[31:16]      probe16 dbg_sdr_read_ack
+// probe5  cpu_rdat[31:16]      probe17 dbg_sdr_dat_r[15:0]
+// probe6  cpu_ack              probe18 dbg_sdr_write_req
 // probe7  ddr_ready            probe19 dbg_sdr_write_ack
 // probe8  dbg_req_rd           probe20 dbg_sdr_adr[25:1]
 // probe9  dbg_req_be[15:0]     probe21 dbg_sdr_dat_w[31:0]
@@ -941,9 +969,10 @@ if (CPU040_DEBUG_ILA) begin : g_cpu040_ila
     .probe4 (bus_ctl),         // 4  {as, rw, uds, lds}, all active low
     .probe5 (dbg_flags),       // 4  {fault, in_exc, halted, busy}
     .probe6 (dbg_ir),          // 16 opcode, one instruction behind dbg_pc
-    .probe7 (tg68_cpustate),   // 7
+    .probe7 ({tg68_ram_req, tg68_ram_we, tg68_ram_ir, tg68_ram_ack,
+              tg68_ddr_req, tg68_ddr_ack, 1'b0}), // 7 (the unit ports' handshakes since E2)
     .probe8 (dbg_phist),       // 384 chip-RAM acknowledge phase histogram
-    .probe9 (dbg_rtg),         // 32  {akiko_req, akiko_wr, bstate, cpuaddr[11:0], akiko_d}
+    .probe9 (dbg_rtg),         // 32  {akiko_req, akiko_wr, state, cpuaddr[11:0], akiko_d}
     .probe10({rtg_ena, rtg_16bit, rtg_clut, rtg_pixelwidth, rtg_baseaddr}) // 29
   );
 end
@@ -957,13 +986,13 @@ wire [4-1:0] ddr3_dbg_cdc_state = {ddr3_dbg_cdc_ready, ddr3_dbg_cdc_req,
 
 ila_fastram ila_fastram_i (
     .clk     (CLK_114                ),
-    .probe0  (tg68_ddraddr[25:1]     ),
-    .probe1  (tg68_ddrcpustate       ),
-    .probe2  (tg68_cuds              ),
-    .probe3  (tg68_clds              ),
-    .probe4  (tg68_cin               ),
-    .probe5  (tg68_ddrout            ),
-    .probe6  (tg68_ddrena            ),
+    .probe0  (tg68_ddr_wadr          ),
+    .probe1  ({tg68_ddr_req, tg68_ddr_we, tg68_ddr_ir, tg68_ddr_bs}),
+    .probe2  (|tg68_ddr_bs[1:0]      ),
+    .probe3  (tg68_ddr_ir            ),
+    .probe4  (tg68_ddr_wdat[31:16]   ),
+    .probe5  (tg68_ddr_rdat[31:16]   ),
+    .probe6  (tg68_ddr_ack           ),
     .probe7  (tg68_ddrready          ),
     .probe8  (ddr3_dbg_req_rd        ),
     .probe9  (ddr3_dbg_req_be        ),
@@ -1256,11 +1285,11 @@ cfide #(
     .vbl_int(vblank_out),
     .interrupt(host_interrupt),
 
-    .amiga_addr(tg68_cad[8:1]),
-    .amiga_d(tg68_cin),
+    .amiga_addr(tg68_host_addr),
+    .amiga_d(tg68_host_d),
     .amiga_q(amigahost_q),
     .amiga_req(amigahost_req),
-    .amiga_wr(tg68_cpustate[0]),
+    .amiga_wr(tg68_host_wr),
     .amiga_ack(amigahost_ack),
 
     .rtc_q(rtc),
