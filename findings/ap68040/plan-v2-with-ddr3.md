@@ -2041,6 +2041,22 @@ key-up is lost across the switch so a key or the OSD-enable state sticks, and
 whether it follows a reset (see the reset circuitry item above) or a particular
 key sequence.
 
+**More symptoms, 2026-09-16 (Paul).**  Several times in one day the keyboard
+stopped working altogether, and Caps Lock did not work.  So this is broader
+than the OSD focus switch: the keyboard path itself can stop delivering keys,
+and at least one key does not behave.  Not yet known whether these are one
+fault or several, or which build(s) they were seen on.  Extra questions:
+
+- when the keyboard stops, does the mouse still work, and does the OSD (F12)
+  still open?  That separates the PS/2 receive path from the Amiga-side
+  delivery (`ciaa_ps2keyboard.v`, the CIA-A serial handshake) from the OSD
+  routing;
+- does it recover by itself, on an OSD open/close, on an Amiga reset, or only
+  on a power cycle?
+- Caps Lock is a toggle on the Amiga side (the keyboard sends it as a
+  latched down/up with the LED state), so it is a natural first suspect for
+  a key-up/down or LED-command handling bug rather than a lost byte.
+
 ## Risks
 
 | Risk | Shows as | Mitigation |
