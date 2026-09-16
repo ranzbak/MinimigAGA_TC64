@@ -287,23 +287,6 @@ ARCHITECTURE logic OF TG68K IS
 	SIGNAL sync_state : sync_states;
 	SIGNAL datatg68_c : std_logic_vector(15 downto 0);
 	SIGNAL datatg68   : std_logic_vector(15 downto 0);
-	-- The kernel's read data, CAPTURED AT THE EDGE THAT GRANTS THE ENABLE.
-	--
-	-- datatg68 is a combinational mux of fromram / fromddr / datatg68_c that
-	-- changes on clk edges, and the AP68040 samples it on a clk_cpu edge whose
-	-- position relative to those changes depends on the clock ratio.  Of every
-	-- signal crossing into clk_cpu it is the ONLY one that is neither held
-	-- stable across the capture window (what a multicycle asserts, and what
-	-- bus_step makes true for the two routers) nor shaped into a pulse on the
-	-- destination's edge (clkena_r, snp_stb_held).  cpu.xdc argues only that it
-	-- must not be RELAXED -- "genuinely single-cycle" -- which is not the same
-	-- as showing it is stable when the kernel looks at it.
-	--
-	-- clkena_r is decided at T+N-2 and the kernel advances at T+N, so capturing
-	-- the data on that same edge hands the core a value and an enable from ONE
-	-- instant, stable for the whole clk_cpu period.  Zero cost: it is one
-	-- register on a path that had two clk cycles of slack anyway.
-	SIGNAL datatg68_r : std_logic_vector(15 downto 0) := (others => '0');
 	SIGNAL w_datatg68 : std_logic_vector(15 downto 0);
 	SIGNAL ramcs      : std_logic;
 
@@ -466,6 +449,17 @@ ARCHITECTURE logic OF TG68K IS
 	SIGNAL ap040_fault : std_logic;
 	SIGNAL ap040_halt  : std_logic;
 	SIGNAL ap040_busy  : std_logic;
+	-- The core's 32-bit master channel (Stage E2).  Task 1 feeds it straight
+	-- into the 16-bit adapter, which now lives in this file.
+	SIGNAL m_req       : std_logic;
+	SIGNAL m_write     : std_logic;
+	SIGNAL m_instr     : std_logic;
+	SIGNAL m_size      : std_logic_vector(1 downto 0);
+	SIGNAL m_addr      : std_logic_vector(31 downto 0);
+	SIGNAL m_wdata     : std_logic_vector(31 downto 0);
+	SIGNAL m_fc        : std_logic_vector(2 downto 0);
+	SIGNAL m_ack       : std_logic;
+	SIGNAL m_rdata     : std_logic_vector(31 downto 0);
 
 	COMPONENT ap040_tg68k_compat IS
 		GENERIC(
@@ -474,7 +468,8 @@ ARCHITECTURE logic OF TG68K IS
 			AP040_ENABLE_CACHE : integer := 1;
 			AP040_FAST_SIM     : integer := 0;
 			AP040_POST_STORES  : integer := 1;
-			AP040_FILL_CHANNEL : integer := 1
+			AP040_FILL_CHANNEL : integer := 1;
+			AP040_BUS16        : integer := 1
 		);
 		PORT(
 			clk               : in  std_logic;
@@ -535,7 +530,43 @@ ARCHITECTURE logic OF TG68K IS
 			debug_fault       : out std_logic;
 			debug_halted      : out std_logic;
 			debug_status      : out std_logic_vector(255 downto 0);
-			debug_status2     : out std_logic_vector(127 downto 0)
+			debug_status2     : out std_logic_vector(127 downto 0);
+			m_req             : out std_logic;
+			m_write           : out std_logic;
+			m_instr           : out std_logic;
+			m_size            : out std_logic_vector(1 downto 0);
+			m_addr            : out std_logic_vector(31 downto 0);
+			m_wdata           : out std_logic_vector(31 downto 0);
+			m_fc              : out std_logic_vector(2 downto 0);
+			m_ack             : in  std_logic;
+			m_rdata           : in  std_logic_vector(31 downto 0)
+		);
+	END COMPONENT;
+
+	COMPONENT ap040_bus16_adapter IS
+		PORT(
+			clk        : in  std_logic;
+			nreset     : in  std_logic;
+			clkena_in  : in  std_logic;
+			mem_req    : in  std_logic;
+			mem_berr   : in  std_logic;
+			mem_write  : in  std_logic;
+			mem_instr  : in  std_logic;
+			mem_size   : in  std_logic_vector(1 downto 0);
+			mem_addr   : in  std_logic_vector(31 downto 0);
+			mem_wdata  : in  std_logic_vector(31 downto 0);
+			mem_fc     : in  std_logic_vector(2 downto 0);
+			mem_ack    : out std_logic;
+			mem_rdata  : out std_logic_vector(31 downto 0);
+			data_in    : in  std_logic_vector(15 downto 0);
+			addr_out   : out std_logic_vector(31 downto 0);
+			data_write : out std_logic_vector(15 downto 0);
+			nwr        : out std_logic;
+			nuds       : out std_logic;
+			nlds       : out std_logic;
+			busstate   : out std_logic_vector(1 downto 0);
+			longword   : out std_logic;
+			fc         : out std_logic_vector(2 downto 0)
 		);
 	END COMPONENT;
 
@@ -933,7 +964,9 @@ BEGIN
 				AP040_FAST_SIM     => 0,
 				AP040_POST_STORES  => ap040_post_stores,
 				-- The line-fill channel, routed by the fill router below.
-				AP040_FILL_CHANNEL => 1
+				AP040_FILL_CHANNEL => 1,
+				-- The 16-bit adapter is instantiated below, in this file.
+				AP040_BUS16        => 0
 			)
 			PORT MAP(
 				-- The CPU island's own 37.8125 MHz clock.  Everything else in
@@ -952,13 +985,13 @@ BEGIN
 				-- own stall watchdog.
 				berr           => '0',
 
-				addr_out       => addrtg68,
-				data_write     => w_datatg68,
-				busstate       => state,
-				longword       => longword,
-				nwr            => wr,
-				nuds           => uds_in,
-				nlds           => lds_in,
+				addr_out       => OPEN,
+				data_write     => OPEN,
+				busstate       => OPEN,
+				longword       => OPEN,
+				nwr            => OPEN,
+				nuds           => OPEN,
+				nlds           => OPEN,
 				nresetout      => nResetOut_w,
 				fc             => open,
 				nmi_ack_toggle => open,
@@ -1039,7 +1072,47 @@ BEGIN
 				debug_fault       => ap040_fault,
 				debug_halted      => ap040_halt,
 				debug_status      => ap040_dbg1,
-				debug_status2     => ap040_dbg2
+				debug_status2     => ap040_dbg2,
+
+				m_req             => m_req,
+				m_write           => m_write,
+				m_instr           => m_instr,
+				m_size            => m_size,
+				m_addr            => m_addr,
+				m_wdata           => m_wdata,
+				m_fc              => m_fc,
+				m_ack             => m_ack,
+				m_rdata           => m_rdata
+			);
+
+		-- The 16-bit adapter, moved out of the compat top (Stage E2 Task 1): the
+		-- same module, clock, enable and connections, one hierarchy level up.
+		-- Stage E2 Task 4 feeds it only the requests the router does not send
+		-- to RAM.
+		bus16 : COMPONENT ap040_bus16_adapter
+			PORT MAP(
+				clk        => clk_cpu,
+				nreset     => reset,
+				clkena_in  => clkena,
+				mem_req    => m_req,
+				mem_berr   => '0',
+				mem_write  => m_write,
+				mem_instr  => m_instr,
+				mem_size   => m_size,
+				mem_addr   => m_addr,
+				mem_wdata  => m_wdata,
+				mem_fc     => m_fc,
+				mem_ack    => m_ack,
+				mem_rdata  => m_rdata,
+				data_in    => datatg68,
+				addr_out   => addrtg68,
+				data_write => w_datatg68,
+				nwr        => wr,
+				nuds       => uds_in,
+				nlds       => lds_in,
+				busstate   => state,
+				longword   => longword,
+				fc         => OPEN
 			);
 
 		-- ap040_core.v:6141  debug_status  = {magic, .., state, a0, d2, d1, d0, a7, ir, sr, pc}
@@ -1395,10 +1468,6 @@ BEGIN
 	BEGIN
 		IF rising_edge(clk) THEN
 			clkena_r <= cpu_ph AND bus_release;
-			-- capture the read data with the grant; see datatg68_r
-			IF (cpu_ph AND bus_release) = '1' THEN
-				datatg68_r <= datatg68;
-			END IF;
 		END IF;
 	END PROCESS;
 
