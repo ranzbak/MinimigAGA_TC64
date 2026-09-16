@@ -363,6 +363,33 @@ Rerunning both with `+rounds=50` to completion.
 - Done above: gate 0/3 on the corrected bench (calibrated), address-guard
   cross-check, DMA overlap leg (reference, not gate).
 
+## Task 4 Step 1 — first attempt void: concurrent xsim legs corrupt each other (2026-09-16)
+
+The plan's Step 1 pair (`DMA_OVERLAP=1 P7LOOPS=40 P2CBLOCK=32`, gate 3 versus
+gate 0) was run overnight alongside other simulations. Both legs failed
+identically at program phase 2 — `FAIL code 2 pattern read-back, BYTE load`,
+DDR3 array wrong in 665 / 690 places, `X`/`Z` in the backdoor dump — with chip
+RAM clean (`DMA window: 0 wrong`). Identical failures at both gates is not a
+reproduction, so the settings were isolated:
+
+| leg | conditions | result |
+|---|---|---|
+| `P7LOOPS=40`, no `P2CBLOCK` | with other sims running | same phase-2 DDR3 failure |
+| `P7LOOPS=10 P2CBLOCK=32` | with other sims running | same |
+| `P7LOOPS=40`, **no chipset agent at all** | with other sims running | same |
+| `P7LOOPS=11` (one byte from the reference) | with other sims running | same |
+| **the saved reference command itself** | with other sims running | **same** |
+| **the saved reference command** | **alone, twice** | **PASS, bit-identical to `ref/overlap_gate3.txt`** |
+
+The passing and failing runs use the same `prog.bin` (md5 equal), the same
+xelab command line, and a tree with no tracked change; phase 1 and 2 timestamps
+match and the runs diverge afterwards. So the inputs are identical and the
+simulator diverged — `xelab` defaults to `-mt auto`, and thread partitioning
+depends on what else the machine is doing. **Every `sim/ddr3_cpu` leg run
+concurrently with another is void**, which is what `run.sh`'s header has always
+said. Step 1 is being re-run serially; the E2 Task 1 legs that ran under load
+are re-running too.
+
 ## Stage E step 2 — the bench's one-phase offset is the read/write mix (2026-09-16)
 
 The calibration above ("bench one phase later than the board, cause unknown")
