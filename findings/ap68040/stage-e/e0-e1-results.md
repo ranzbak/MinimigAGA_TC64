@@ -387,8 +387,35 @@ match and the runs diverge afterwards. So the inputs are identical and the
 simulator diverged — `xelab` defaults to `-mt auto`, and thread partitioning
 depends on what else the machine is doing. **Every `sim/ddr3_cpu` leg run
 concurrently with another is void**, which is what `run.sh`'s header has always
-said. Step 1 is being re-run serially; the E2 Task 1 legs that ran under load
-are re-running too.
+said. Step 1 was re-run serially; the E2 Task 1 legs that ran under load were
+re-run too.
+
+## Task 4 Step 1 — the real result: no reproduction (2026-09-16, serial)
+
+`REALSDRAM=1 DMA_OVERLAP=1 P7LOOPS=40 P2CBLOCK=32`, one leg at a time, nothing
+else on the machine. Forty passes of phase 7 with the chipset agent saturating
+the same cache lines, and a 32-longword block written in a tight burst each
+pass for the chipset to read back.
+
+| | gate 3 (`--ap040`) | gate 0 (`--gatemutant`) |
+|---|---|---|
+| 68k program | PASS, phase 8 at 4.630 ms | PASS, phase 8 at 4.620 ms |
+| DMA window | 8517 writes, **0 wrong** | 8497 writes, **0 wrong** |
+| P2C probe | 1759 reads, 1709 value changes, **0 stale** | 1753 reads, 1703 changes, **0 stale** |
+| placement | 9876 acknowledges, 3593 off the calibrated grid (reported, not judged) | 9905 acknowledges, 7287 off — the mutant, as designed |
+| verdict | 2 passed, 0 failed | 2 passed, 0 failed (`mutant failed as required` on placement only) |
+
+**Not reproduced.** Gate 0 puts every chip-RAM write on 3/7/11/15 — the
+placement that corrupts Way Too Rude on the board — and the bench still sees no
+wrong DMA read, no stale chipset read and no program failure, with 8500 chipset
+writes and 1700 chipset read-backs interleaved. Whatever the hardware mechanism
+is, this bench does not model it: the placement check remains the contract, as
+E1's design allows.
+
+That is consistent with the read-data crossing being the mechanism (see
+e4a-results.md): a zero-delay simulation samples stable data at the kernel edge
+whatever the phase, so it cannot show that fault at all. The hardware A/B
+(`build/stage_ap040_e4a_dreg0`) is the test that can.
 
 ## Stage E step 2 — the bench's one-phase offset is the read/write mix (2026-09-16)
 

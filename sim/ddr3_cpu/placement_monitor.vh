@@ -9,17 +9,24 @@
 //   ack_r  <= ramready AND the chip-RAM select
 //   bin ph16 on (ack_r AND NOT ack_d AND chip)
 //
-// CALIBRATED, NOT ABSOLUTE (Paul, 2026-09-15). This bench places chip-RAM
-// acknowledges exactly one phase LATER than the hardware: with the shipping
-// gate (delay 3) it peaks on 3/7/11/15, where dbg_phist on the board peaks on
-// 2/6/10/14; with the gate as first built (delay 0) it peaks on 0/4/8/12,
-// where the board peaks on 3/7/11/15. Two anchors, both +1. The cause is not
-// found -- binning with dbg_phist's own formula (ramready AND a registered
-// address decode, no select) moved no peak and only added a floor of edges
-// the board does not show -- and MUST be explained with a hardware capture
-// before Stage E2 changes the port (findings/ap68040/stage-e/e0-e1-results.md).
-// So acknowledges are judged against the hardware grid shifted by
-// PLACEMENT_OFFSET, with the select-gated formula, whose peaks are sharp.
+// CALIBRATED, AND THE CALIBRATION IS EXPLAINED (2026-09-16). The COMBINED
+// histogram here peaks exactly one phase LATER than dbg_phist on the board
+// (gate 3: bench 3/7/11/15 against the board's 2/6/10/14; gate 0: bench
+// 0/4/8/12 against the board's 3/7/11/15). Split by access type -- the
+// pm_bin_rd / pm_bin_wr bins below -- the offset disappears:
+//
+//   bench WRITES land on 2/6/10/14 (+13) at gate 3 and 3/7/11/15 (+13) at
+//   gate 0, which is the board's grid exactly, phase 13 included;
+//   bench READS land one phase after the writes.
+//
+// The pattern program reads chip RAM far more than it writes it, so the
+// combined peaks follow the reads; Way Too Rude on the board is write-heavy,
+// so its histogram follows the writes. Nothing is wrong in either, and the D3
+// rule as measured on hardware is about WRITES.
+// PLACEMENT_OFFSET = 1 is therefore a calibration to this program's read mix,
+// kept so the judgement below is unchanged; Stage E2 judges reads and writes
+// separately instead (plan D7). Details:
+// findings/ap68040/stage-e/e0-e1-results.md, "Stage E step 2".
 //
 // PLACEMENT_STRAY_PPM: the bench scatters about 5 % of acknowledges off its
 // peaks at the shipping gate (94 of 1953), against 0.4 % on the board. 10 %

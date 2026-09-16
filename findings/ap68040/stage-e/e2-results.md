@@ -60,3 +60,33 @@ the wrong half of the word. Without either plusarg the bench is unchanged.
 
 The sweep is the test Task 3's unit port must pass unchanged (with
 `cpu_access` switched to the unit split table).
+
+### Task 1 — the adapter moves into the wrapper: bit-exact
+
+Done in a scratchpad worktree and kept on local branches, because it implements
+D1's recommendation and Paul has not answered D1. `ap040_tg68k_compat.v` gains
+`AP040_BUS16` (default 1) and the `m_*` master channel; with `AP040_BUS16 => 0`
+the wrapper instantiates `ap040_bus16_adapter` itself, on the same clock, the
+same enable and the same connections. The dead `datatg68_r` and its paragraph
+go with it.
+
+Every leg run **one at a time** (the concurrent-run trap above). All twelve
+match the E4a Task 6 suite exactly:
+
+| leg | result | E4a reference |
+|---|---|---|
+| `--ap040` | phase 8 at 1677190382 ps | same |
+| `--mmu` | 707928242 ps | same |
+| `--ap040 --chipbus` | 937021277 ps | same |
+| `--nofill` | 1694291482 ps | same |
+| `--snoop` | 1762554842 ps | same |
+| `REALSDRAM=1 --ap040` | placement 1953 / 78 off | same |
+| busy leg | **identical to `ref/overlap_gate3.txt`** | same |
+| `--lwmutant` | 2021 protocol violations | same |
+| `--mmumutant` | stall watchdog | same |
+| `--fillmutant` | 3 checks failed | same |
+| `--snoopmutant` | 14890 of 22340, 7295 out of order | same |
+| `REALSDRAM=1 --gatemutant` | 1862 of 1972 off the grid | same |
+
+Analysis clean (`xvlog` on the compat top and the adapter, `xvhdl` on the
+wrapper). Handshake signals drop 8 → 7 with `datatg68_r` gone.
