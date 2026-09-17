@@ -468,8 +468,12 @@ losing board power would boot the flash image).
 |---|---|
 | `e2t1cap_noila` (flashed, pre-E2) | **4.15 MB/s** |
 | `stage_ap040_e2t4d` (E2) | **3.54 MB/s** |
+| `stage_ap040_e2t5a` (E2 + Task 5a's two savings) | **3.62 MB/s** |
 
-**-14.7 %.** So the slowdown is real on the board, not a bench artefact -- and
+**-14.7 %**, and -12.8 % after Task 5a (+2.3 % for three clk off a 9.4-clk
+access -- the bench predicted more, and the reason is the same one it showed:
+cycles saved BEFORE the placement gate become a longer wait for its next pulse,
+so the gate now sets the rate).  Task 5a on hardware: 3.54 -> 3.62 MB/s. So the slowdown is real on the board, not a bench artefact -- and
 smaller than the bench's -22 %, as expected for a workload that is not purely
 memory-bound. SysInfo cannot see it (its speed test runs in the 040's caches:
 0.28x on both). This is the number Task 5 has to move; the candidates are in
