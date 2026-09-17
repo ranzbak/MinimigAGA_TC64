@@ -333,7 +333,8 @@ RAM unit now costs a setup cycle plus the wait for the next gate pulse, where a
 |---|---|
 | `stage_ap040_e2t4` | do not use: clk_38 -> clk_114 **-0.483 ns** on ATC RAM -> `m_addr` -> decode -> `sel_undecoded_d`, which cpu.xdc still timed single-cycle. The decode is now registered from the master address, combinational out of the ATC RAM; its T+1 copy is never read (reasoning in cpu.xdc), so the rule went (`639175f`) |
 | **`stage_ap040_e2t4b`** (ship) | clk_114 +0.491, clk_38 +0.142, clk_ddr100 +2.332, clk_114 -> clk_38 +0.303, **clk_38 -> clk_114 +0.004** (ATC RAM -> router decode -> `ram_seq_sdram/rbuf` CE, a legitimate two-cycle path with almost nothing to spare); clk_gen_sdram -> clk_114 -0.552 / 16 (the known SDRAM read path; `stage_ap040_e2t1cap_noila`, flashed, is -0.484). 40,722 LUTs, 59.5 BRAM |
-| `stage_ap040_e2t4b_ila` | as above with both ILAs at depth 1024; clk_38 -> clk_114 +1.265, clk_114 -> clk_38 +0.083; clk_gen_sdram -0.552 |
+| `stage_ap040_e2t4b_ila` | superseded: its concatenated probes (ila_cpu040 probe7, ila_fastram probe1/2) took arbitrary net names, so the capture scripts would not find them |
+| **`stage_ap040_e2t4c_ila`** (812a97e) | both ILAs, depth 1024, named probes (`tg68_ram_hs`, `ddr_ila_st`, `ddr_ila_two`). clk_114 +0.015, clk_38 +1.013, clk_ddr100 +1.495, clk_38 -> clk_114 +0.917, clk_114 -> clk_38 +0.111; clk_gen_sdram -0.530 / 16 |
 
 The +0.004 ns path is the first thing to fix when Task 5 touches the router:
 shorten the decode between the ATC and `q_sdram`, or register the route (which
