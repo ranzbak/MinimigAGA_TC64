@@ -144,6 +144,16 @@ BEGIN
 		VARIABLE bs_v   : std_logic_vector(3 downto 0);
 		VARIABLE wd_v   : std_logic_vector(31 downto 0);
 		VARIABLE k      : integer RANGE 0 TO 7;
+		-- the first unit's shape, straight from the inputs: RS_IDLE presents it
+		-- in the same edge that latches the access, so the setup cycle IS the
+		-- latch cycle (Stage E2 Task 5a, -1 clk per access)
+		VARIABLE a_v    : unsigned(25 downto 0);
+		VARIABLE w_v    : std_logic_vector(31 downto 0);
+		VARIABLE p0_v   : integer RANGE 0 TO 1;
+		VARIABLE n_v    : integer RANGE 1 TO 4;
+		VARIABLE lw_v   : integer RANGE 3 TO 4;
+		VARIABLE ll_v   : integer RANGE 1 TO 16;
+		VARIABLE lf_v   : integer RANGE 1 TO 4;
 	BEGIN
 		IF reset = '0' THEN
 			st       <= RS_IDLE;
@@ -172,15 +182,40 @@ BEGIN
 				WHEN RS_IDLE =>
 					u_req_r <= '0';
 					IF req = '1' AND done_r = '0' THEN
-						cur    <= unsigned(addr);
+						a_v    := unsigned(addr);
+						w_v    := left_align(wdata, size);
+						cur    <= a_v;
 						left   <= size_bytes(size);
 						pos    <= (OTHERS => '0');
-						wsh    <= left_align(wdata, size);
+						wsh    <= w_v;
 						rbuf   <= (OTHERS => '0');
 						sz_r   <= size;
 						u_we_r <= we;
 						u_ir_r <= ir;
-						armed  <= '0';
+						-- the first unit's fields, so RS_LAUNCH only waits for
+						-- the gate.  Same arithmetic as the ncov process, on
+						-- the inputs instead of the registered copies.
+						IF a_v(0) = '1' THEN p0_v := 1; ELSE p0_v := 0; END IF;
+						lw_v := 4 - p0_v;
+						ll_v := 16 - to_integer(a_v(3 downto 0));
+						lf_v := to_integer(size_bytes(size));
+						n_v  := lf_v;
+						IF n_v > lw_v THEN n_v := lw_v; END IF;
+						IF line_mutant = 0 AND n_v > ll_v THEN n_v := ll_v; END IF;
+						bs_v := (OTHERS => '0');
+						wd_v := (OTHERS => '0');
+						FOR p IN 0 TO 3 LOOP
+							IF p >= p0_v AND p < p0_v + n_v THEN
+								k := p - p0_v;
+								bs_v(3 - p) := '1';
+								wd_v(31 - 8*p downto 24 - 8*p) :=
+									w_v(31 - 8*k downto 24 - 8*k);
+							END IF;
+						END LOOP;
+						u_wadr_r <= std_logic_vector(a_v(25 downto 1));
+						u_bs_r   <= bs_v;
+						u_wdat_r <= wd_v;
+						armed  <= '1';
 						st     <= RS_LAUNCH;
 					END IF;
 
@@ -227,20 +262,31 @@ BEGIN
 						pos     <= pos + to_unsigned(ncov, 3);
 						u_req_r <= '0';
 						armed   <= '0';
-						st      <= RS_GAP;
+						-- The LAST unit finishes here, on the acknowledge edge:
+						-- RS_GAP only exists to drop the request before the
+						-- NEXT unit, and RS_DONE only to raise done_r, which
+						-- this edge can do (Stage E2 Task 5a, -2 clk per
+						-- access; with the 1:3 quantisation that is often a
+						-- whole clk_38 period).
+						IF left = to_unsigned(ncov, 3) THEN
+							done_r <= '1';
+							st     <= RS_IDLE;
+						ELSE
+							st     <= RS_GAP;
+						END IF;
 					END IF;
 
 				WHEN RS_GAP =>
-					-- One cycle with the request low.  Both RAM controllers
-					-- hold their acknowledge until the select drops, so a new
-					-- address presented on the ack edge would be lost.
-					IF left = 0 THEN
-						st <= RS_DONE;
-					ELSE
-						st <= RS_LAUNCH;
-					END IF;
+					-- One cycle with the request low, between the units of a
+					-- split access.  Both RAM controllers hold their
+					-- acknowledge until the request drops, so a new address
+					-- presented on the ack edge would be lost.  (The last unit
+					-- does not come through here; see RS_WAIT.)
+					st <= RS_LAUNCH;
 
 				WHEN RS_DONE =>
+					-- unreachable since Task 5a; kept so the state encoding and
+					-- the bench's state names do not change
 					done_r <= '1';
 					st     <= RS_IDLE;
 
