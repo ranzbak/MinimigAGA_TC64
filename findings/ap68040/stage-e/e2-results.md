@@ -430,3 +430,35 @@ rising on the 16-bit port.  Under contention the write grid did NOT scatter.
 
 **Still open before Task 4 is done:** Paul's OK to save the busy leg as
 `ref/overlap_e2.txt`, and the hardware test.
+
+### Hardware, 2026-09-17 (Paul) -- stage_ap040_e2t4d passes
+
+**`stage_ap040_e2t4b` did not boot.** Kickstart loaded, the Amiga started, black
+screen and no disk activity. Boot probe (`stage_ap040_e2t4c_ila`, 240 s):
+`dbg_pc` frozen at $F801FA, `dbg_ir` $49F9, busy without fault,
+`tg68_ram_hs` = $51 -- an instruction fetch with `ram_req` high and `ram_ack`
+never. Cause in `cpu_cache_new`: a cache-inhibited read (Kickstart turbo,
+`sel_kickram`) leaves CPU_SM_FILL1 for CPU_SM_FILLW, which acknowledged only a
+one-word unit; word A+2 of a two-word unit is loaded in FILL2, which that path
+never visits. Fixed in `0a6091a` (FILLW takes the next burst beat). The third
+controller bug the unit port exposed; the first two were the setup rule above.
+Neither bench ran it: `sim/ddr3_cpu` has Turbo kick off, and
+`sim/sdram_coherency`'s cache-inhibited category read single words. It now also
+reads a two-word unit ("CI kick long": 3 of 3 timeouts before the fix, 0
+after). With `+nocilong` the fixed controller reproduces the Task 3 reference
+exactly (52 / 4 errors); with the new check on, the totals are 57 / 5 because it
+adds accesses and moves the timing of later categories. `sim/ddr3` 9 passed.
+
+**`stage_ap040_e2t4d`** (0a6091a; clk_38 -> clk_114 +1.320, clk_114 +0.386,
+clk_38 +0.448, clk_ddr100 +0.165, clk_gen_sdram -0.479 / 16), JTAG, not flashed:
+
+| check | result |
+|---|---|
+| boot to Workbench | **pass** |
+| Way Too Rude, Chip + Kick turbo | **no corruption** |
+| SysInfo | **0.28x**, same as the flashed e2t1cap -- expected: its speed test runs in the 040's own caches, which E2 does not touch, so it cannot show the memory-path slowdown |
+| RTG after an Amiga power cycle | **works** (also exercises the Akiko sequencer and the new host ports) |
+
+Assumes the board kept the JTAG image throughout (an Amiga power cycle keeps it;
+losing board power would boot the flash image). Not yet measured on hardware:
+anything memory-bound, where the bench's +22 % would show.
