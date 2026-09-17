@@ -129,7 +129,7 @@ grab $ila ${pfx}_now.csv "now" 1
 clear_all $ila
 set_property CONTROL.CAPTURE_MODE ALWAYS $ila
 set_property CONTROL.TRIGGER_POSITION 16 $ila
-set_property TRIGGER_COMPARE_VALUE {neq7'bxxxxx01} [pr $ila *cpustate*]
+set_property TRIGGER_COMPARE_VALUE {eq7'bxxxxxx1} [pr $ila *tg68_ram_hs*]
 grab $ila ${pfx}_busy.csv "busy" 2
 
 # --- write: the first store, with its history -----------------------------

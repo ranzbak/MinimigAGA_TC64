@@ -930,6 +930,7 @@ endgenerate
 // probe0  cpu_wadr[25:1]       probe12 dbg_resp_rdata[127:0]
 // probe1  {req,we,ir,bs[3:0]}  probe13 dbg_ack_tgl
 // probe2  cpu_bs[1:0] != 0     probe14 dbg_bstate[1:0]
+//         (probe1 is net ddr_ila_st, probe2 ddr_ila_two)
 // probe3  cpu_ir               probe15 dbg_sdr_read_req
 // probe4  cpu_wdat[31:16]      probe16 dbg_sdr_read_ack
 // probe5  cpu_rdat[31:16]      probe17 dbg_sdr_dat_r[15:0]
@@ -960,6 +961,14 @@ generate
 if (CPU040_DEBUG_ILA) begin : g_cpu040_ila
   // as/rw/uds/lds are active low; grouped so one probe carries the cycle type.
   wire [3:0] bus_ctl = {tg68_as, tg68_rw, tg68_uds, tg68_lds};
+  // The unit ports' handshakes (Stage E2), as ONE named net so the capture
+  // scripts can find the probe by name (a concatenation in the port map
+  // takes whatever net name synthesis leaves).  Bit 0 is "the CPU is using a
+  // bus": either RAM request, or the chipset's address strobe -- what the old
+  // cpustate[1:0] /= "01" trigger meant.
+  wire [6:0] tg68_ram_hs = {tg68_ram_req, tg68_ram_we, tg68_ram_ir, tg68_ram_ack,
+                            tg68_ddr_req, tg68_ddr_ack,
+                            tg68_ram_req | tg68_ddr_req | ~tg68_as};
   ila_cpu040 ila_cpu040_i (
     .clk    (CLK_114),
     .probe0 (dbg_pc),          // 32
@@ -969,8 +978,7 @@ if (CPU040_DEBUG_ILA) begin : g_cpu040_ila
     .probe4 (bus_ctl),         // 4  {as, rw, uds, lds}, all active low
     .probe5 (dbg_flags),       // 4  {fault, in_exc, halted, busy}
     .probe6 (dbg_ir),          // 16 opcode, one instruction behind dbg_pc
-    .probe7 ({tg68_ram_req, tg68_ram_we, tg68_ram_ir, tg68_ram_ack,
-              tg68_ddr_req, tg68_ddr_ack, 1'b0}), // 7 (the unit ports' handshakes since E2)
+    .probe7 (tg68_ram_hs),     // 7  {ram req,we,ir,ack, ddr req,ack, busy} (E2)
     .probe8 (dbg_phist),       // 384 chip-RAM acknowledge phase histogram
     .probe9 (dbg_rtg),         // 32  {akiko_req, akiko_wr, state, cpuaddr[11:0], akiko_d}
     .probe10({rtg_ena, rtg_16bit, rtg_clut, rtg_pixelwidth, rtg_baseaddr}) // 29
@@ -983,12 +991,16 @@ if (haveddr3 && DDR3_FASTRAM_ILA) begin : g_ddr3_fastram_ila
 
 wire [4-1:0] ddr3_dbg_cdc_state = {ddr3_dbg_cdc_ready, ddr3_dbg_cdc_req,
                                    ddr3_dbg_cdc_done,  ddr3_dbg_req_tgl};
+// Named for the same reason as tg68_ram_hs: the capture script finds probes by
+// net name.
+wire [7-1:0] ddr_ila_st  = {tg68_ddr_req, tg68_ddr_we, tg68_ddr_ir, tg68_ddr_bs};
+wire         ddr_ila_two = |tg68_ddr_bs[1:0];
 
 ila_fastram ila_fastram_i (
     .clk     (CLK_114                ),
     .probe0  (tg68_ddr_wadr          ),
-    .probe1  ({tg68_ddr_req, tg68_ddr_we, tg68_ddr_ir, tg68_ddr_bs}),
-    .probe2  (|tg68_ddr_bs[1:0]      ),
+    .probe1  (ddr_ila_st             ),
+    .probe2  (ddr_ila_two            ),
     .probe3  (tg68_ddr_ir            ),
     .probe4  (tg68_ddr_wdat[31:16]   ),
     .probe5  (tg68_ddr_rdat[31:16]   ),

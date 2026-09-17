@@ -72,8 +72,8 @@ if {$mode eq "now"} {
     # any access whose address is in the Zorro III window, i.e. fast RAM
     set_property TRIGGER_COMPARE_VALUE {eq32'b01000xxxxxxxxxxxxxxxxxxxxxxxxxxx} [pr $ila *tg68_adr*]
 } else {
-    # cpustate[1:0] /= "01": the core wants the bus
-    set_property TRIGGER_COMPARE_VALUE {neq7'bxxxxx01} [pr $ila *cpustate*]
+    # tg68_ram_hs[0]: the CPU is using a bus (cpustate[1:0] /= "01" before E2)
+    set_property TRIGGER_COMPARE_VALUE {eq7'bxxxxxx1} [pr $ila *tg68_ram_hs*]
 }
 
 puts "=== armed at [clock format [clock seconds] -format %H:%M:%S], $count windows, mode $mode -- START THE WORKLOAD NOW ==="

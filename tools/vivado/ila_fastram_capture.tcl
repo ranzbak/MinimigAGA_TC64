@@ -20,7 +20,7 @@
 #
 # Vivado 2023.2 needs libtinfo.so.5 and must NOT be given -stack.
 #
-# Trigger      : the first cpuena (cache acknowledge) rising edge while
+# Trigger      : the first cpu_ack (unit port acknowledge) rising edge while
 #                ddr_ready is high, i.e. the first completed CPU access to the
 #                DDR3 fast RAM after the island has finished initialising.
 #
@@ -34,7 +34,7 @@
 #                "no trigger" as "no DDR3 traffic" without checking that the
 #                board was configured at all.
 # Storage      : only cycles that carry information -- a CPU access is
-#                selected (cpustate[2], the active-low chip select, is 0) OR
+#                requested (cpu_req, ddr_ila_st[6], is 1) OR
 #                the backend FSM is not idle (bstate != 0).  Idle clk_114
 #                cycles, of which there are thousands between accesses, are not
 #                stored, so the 4096-sample buffer holds thousands of DDR3
@@ -46,13 +46,13 @@
 # synthesis decorates them with the instance path.  The names in
 # build/stageB2/minimig_openaars_top.ltx, in probe order, are:
 #
-#   probe0   25  openaars_virtual_top/tg68_ddraddr          cpuAddr[25:1]
-#   probe1    7  openaars_virtual_top/tg68_ddrcpustate      cpustate[6:0]
-#   probe2    1  openaars_virtual_top/tg68_cuds             cpuU
-#   probe3    1  openaars_virtual_top/tg68_clds             cpuL
-#   probe4   16  openaars_virtual_top/tg68_cin              cpuWR
-#   probe5   16  openaars_virtual_top/tg68_ddrout           cpuRD
-#   probe6    1  openaars_virtual_top/tg68_ddrena           cpuena
+#   probe0   25  openaars_virtual_top/tg68_ddr_wadr         cpu_wadr[25:1]
+#   probe1    7  openaars_virtual_top/ddr_ila_st            {cpu_req, cpu_we, cpu_ir, cpu_bs[3:0]}
+#   probe2    1  openaars_virtual_top/ddr_ila_two           cpu_bs[1:0] != 0 (two-word unit)
+#   probe3    1  openaars_virtual_top/tg68_ddr_ir           cpu_ir
+#   probe4   16  openaars_virtual_top/tg68_ddr_wdat[31:16]  cpu_wdat, word A
+#   probe5   16  openaars_virtual_top/tg68_ddr_rdat[31:16]  cpu_rdat, word A
+#   probe6    1  openaars_virtual_top/tg68_ddr_ack          cpu_ack (the unit port, Stage E2)
 #   probe7    1  openaars_virtual_top/tg68_ddrready         ddr_ready
 #   probe8    1  openaars_virtual_top/ddr3_dbg_req_rd       CDC request: read
 #   probe9   16  openaars_virtual_top/ddr3_dbg_req_be         byte enables
@@ -110,9 +110,9 @@ proc probe {ila pat} {
     return [lindex $p 0]
 }
 
-set p_cpuena    [probe $ila ddrena]
+set p_cpuena    [probe $ila tg68_ddr_ack]
 set p_ddrready  [probe $ila ddrready]
-set p_cpustate  [probe $ila ddrcpustate]
+set p_cpustate  [probe $ila ddr_ila_st]
 set p_bstate    [probe $ila dbg_bstate]
 puts "=== trigger on   : [get_property NAME $p_cpuena] rising & [get_property NAME $p_ddrready] ==="
 puts "=== qualified by : [get_property NAME $p_cpustate] / [get_property NAME $p_bstate] ==="
@@ -127,17 +127,17 @@ foreach p [get_hw_probes -of_objects $ila] {
 
 set_property CONTROL.TRIGGER_POSITION 256 $ila
 
-# trigger: cpuena rising AND ddr_ready high
+# trigger: cpu_ack rising AND ddr_ready high
 set_property CONTROL.TRIGGER_CONDITION AND $ila
 set_property TRIGGER_COMPARE_VALUE {eq1'bR} $p_cpuena
 set_property TRIGGER_COMPARE_VALUE {eq1'b1} $p_ddrready
 
-# storage qualification: CPU chip select low (cpustate[2] == 0, active low),
-# or the backend busy.  x = don't care, MSB first, so bit 2 of a 7-bit probe
-# is the fifth character.
+# storage qualification: a unit request up (ddr_ila_st[6] == 1), or the backend
+# busy.  x = don't care, MSB first, so bit 6 of a 7-bit probe is the first
+# character.
 set_property CONTROL.CAPTURE_MODE BASIC $ila
 set_property CONTROL.CAPTURE_CONDITION OR $ila
-set_property CAPTURE_COMPARE_VALUE {eq7'bxxxx0xx} $p_cpustate
+set_property CAPTURE_COMPARE_VALUE {eq7'b1xxxxxx} $p_cpustate
 set_property CAPTURE_COMPARE_VALUE {neq2'b00}     $p_bstate
 
 #-----------------------------------------------------------------------------

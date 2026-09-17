@@ -166,13 +166,13 @@ if {[get_ips -quiet vio_ddr3] eq ""} {
 # ddr3_fastram / the clk_114 half of ddr3_cdc, so the core adds no crossing of
 # its own.
 #
-# probe0  cpuAddr[25:1]        probe12 dbg_resp_rdata[127:0]
-# probe1  cpustate[6:0]        probe13 dbg_ack_tgl
-# probe2  cpuU                 probe14 dbg_bstate[1:0]
-# probe3  cpuL                 probe15 dbg_sdr_read_req
-# probe4  cpuWR[15:0]          probe16 dbg_sdr_read_ack
-# probe5  cpuRD[15:0]          probe17 dbg_sdr_dat_r[15:0]
-# probe6  cpuena               probe18 dbg_sdr_write_req
+# probe0  cpu_wadr[25:1]       probe12 dbg_resp_rdata[127:0]
+# probe1  ddr_ila_st[6:0]      probe13 dbg_ack_tgl        (Stage E2: probes 0-6
+# probe2  ddr_ila_two          probe14 dbg_bstate[1:0]     are the unit port,
+# probe3  cpu_ir               probe15 dbg_sdr_read_req    widths unchanged)
+# probe4  cpu_wdat[31:16]      probe16 dbg_sdr_read_ack
+# probe5  cpu_rdat[31:16]      probe17 dbg_sdr_dat_r[15:0]
+# probe6  cpu_ack              probe18 dbg_sdr_write_req
 # probe7  ddr_ready            probe19 dbg_sdr_write_ack
 # probe8  dbg_req_rd           probe20 dbg_sdr_adr[25:1]
 # probe9  dbg_req_be[15:0]     probe21 dbg_sdr_dat_w[31:0]
@@ -180,7 +180,7 @@ if {[get_ips -quiet vio_ddr3] eq ""} {
 # probe11 dbg_req_wdata[127:0] probe23 {cdc_ready,cdc_req,cdc_done,req_tgl}
 #
 # Comparators: only four probes take part in a trigger or storage-qualifier
-# condition (probe1 cpustate and probe14 bstate qualify storage, probe6 cpuena
+# condition (probe1 ddr_ila_st and probe14 bstate qualify storage, probe6 cpu_ack
 # and probe7 ddr_ready arm the trigger -- see
 # tools/vivado/ila_fastram_capture.tcl), and those get two match units each so
 # the supervisor can put either probe on either side.  Every other probe is
@@ -270,7 +270,7 @@ foreach ip {vio_ddr3 ila_fastram} {
 #
 #   probe0 pc[31:0]      probe1 adr[31:0]   probe2 data_read[15:0]
 #   probe3 data_write[15:0]  probe4 {as,rw,uds,lds}  probe5 flags[3:0]
-#   probe6 ir[15:0]      probe7 cpustate[6:0]
+#   probe6 ir[15:0]      probe7 tg68_ram_hs[6:0] (unit-port handshakes + busy, E2)
 #   probe8 dbg_phist[383:0] -- chip-RAM acknowledge phase histogram
 #   probe9 dbg_rtg[31:0]    probe10 {rtg_ena,rtg_16bit,rtg_clut,pixelwidth,baseaddr}[28:0]
 # (The stage D3 dbg_snoop counters were removed in Stage E4a; they proved no

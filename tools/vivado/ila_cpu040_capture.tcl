@@ -5,7 +5,7 @@
 #
 # Needs a bitstream built with CPU040_DEBUG_ILA=1 (tools/vivado/build_ap040.tcl
 # with <ila> = 1), which puts ila_cpu040 on dbg_pc / tg68_adr / bus_ctl /
-# dbg_flags / dbg_ir / cpustate.
+# dbg_flags / dbg_ir / tg68_ram_hs (the unit-port handshakes, cpustate before E2).
 #
 # Trigger: dbg_flags[3] = fault.  Storage is qualified on !as, so the 4096
 # samples are bus cycles rather than idle clocks, and the trigger sits near the
@@ -69,13 +69,14 @@ set_property CAPTURE_COMPARE_VALUE {eq4'b0XXX} [pr $ila *bus_ctl*]
 # handful of values in a 200-byte window is a spin, not progress.
 set_property CONTROL.TRIGGER_CONDITION AND $ila
 if {$mode eq "busy"} {
-    # Fire on the first cycle the CPU actually wants the bus (cpustate[1:0] is
-    # 01 when idle), then capture every clock from there.  This is what to use
+    # Fire on the first cycle the CPU actually uses a bus (tg68_ram_hs[0]: a
+    # RAM unit request or the chipset address strobe; cpustate[1:0] /= 01
+    # before Stage E2), then capture every clock from there.  This is what to use
     # for a stall measurement: an idle Amiga sits in STOP with the PC frozen
     # and no bus cycles at all, so an untriggered capture measures nothing.
     set_property CONTROL.CAPTURE_MODE ALWAYS $ila
     set_property CONTROL.TRIGGER_POSITION 16 $ila
-    set_property TRIGGER_COMPARE_VALUE {neq7'bxxxxx01} [pr $ila *cpustate*]
+    set_property TRIGGER_COMPARE_VALUE {eq7'bxxxxxx1} [pr $ila *tg68_ram_hs*]
 } elseif {$mode eq "now"} {
     set_property CONTROL.CAPTURE_MODE ALWAYS $ila
     set_property CONTROL.TRIGGER_POSITION 0 $ila
