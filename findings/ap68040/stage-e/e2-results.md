@@ -319,7 +319,32 @@ reached phase 8 at 2517 us and timed out finishing its last phase.
 load 4 errors; `sim/ddr3` 9 passed, 0 failed. The new setup check never fired
 in either bench.
 
-**SPEED: E2 is SLOWER in the bench, not faster.** Phase 8 is 34 % later on the
+**SPEED -- CORRECTED FIGURES FIRST (measured after the table above was written).**
+The E4a column above is NOT comparable: those legs ran the behavioural SDRAM
+model, which releases the CPU at ~70 us, while every E2 leg runs real SDRAM,
+which preloads the program first (CPU released at 232 us) and runs the chipset
+DMA agent throughout. Measured from CPU release against E4a's own REALSDRAM leg
+(`xsim_run_pass_ap040_t6brs.log`: release 232.19 us, phase 8 1892.09 us):
+
+| run | phase 8 minus release | vs E4a |
+|---|---|---|
+| E4a REALSDRAM `--ap040` (t6brs) | 1659.9 us | -- |
+| E2 `--ap040` (e2t4c) | 2020.3 us | **+21.7 %** |
+| E2 with `unit_gate <= '1'` (analysis only, PREB1 copy, RUNTAG spd_nogate) | 1905.7 us | +14.8 % |
+| E1 busy reference vs E2 busy leg | 1914.3 -> 2296.9 us | +20.0 % |
+
+So the regression is about +22 %, not +34 %.  Of it, the placement gate's wait
+is about a third (114.6 us); the fill channel is about 1 % (E4a `--nofill`
+1694.3 vs 1677.2 us).  Largest remaining suspect, not yet measured: Task 3
+removed cpu_cache_new's answer-before-select line-buffer path, so a buffer HIT
+that used to complete with no select and no gate wait now goes through
+ap040_ram_seq's setup cycle, a request, and (when gated) the next gate pulse.
+The next measurement is a count of units that were buffer hits and their
+request-to-acknowledge time.  The MMU, chipbus and snoop legs have no E4a
+REALSDRAM baseline, so their E2 times stand alone.
+
+**SPEED (as first written, superseded by the corrected table above):
+E2 is SLOWER in the bench, not faster.** Phase 8 is 34 % later on the
 pattern program and 53 % later on the MMU program. The plan expected the
 opposite. Not yet measured apart (Paul: correctness first, speed is Task 5).
 Candidates: the fill channel has been off since Task 4b-1, so every cache line
