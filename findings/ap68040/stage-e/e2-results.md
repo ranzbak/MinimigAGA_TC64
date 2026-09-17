@@ -464,7 +464,12 @@ Way Too Rude with Chip + Kick turbo -- **no corruption**, with read
 acknowledges no longer on any grid (Task 5b).  That is the check the gate
 bypass had to pass: the D3 rule was measured on WRITE acknowledges, which still
 go through the gate, and this says reads really were not part of it.
-MemTest 4.00 MB/s.
+MemTest 4.00 MB/s.  RTG after an Amiga power cycle: **works**.
+
+**So `stage_ap040_e2t5b` passes the whole hardware test** (boot, Way Too Rude
+with Chip + Kick turbo, SysInfo 0.28x, RTG, MemTest 4.00 vs 4.15 pre-E2), with
+every sim leg green and every mutant failing.  It is the candidate to flash;
+nothing has been flashed, the board still boots `e2t1cap_noila` from flash.
 
 Assumes the board kept the JTAG image throughout (an Amiga power cycle keeps it;
 losing board power would boot the flash image).
