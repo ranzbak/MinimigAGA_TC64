@@ -718,6 +718,9 @@ initial begin
     // the cache-inhibited fill path acknowledged only a one-word unit, so a
     // two-word one never completed and the CPU stalled at $F801FA with
     // cpu_req high.  Its own window of pairs, clear of tk.
+    // +nocilong skips it, to compare the other categories against runs made
+    // before it existed (it adds accesses, which moves their timing).
+    if (!$test$plusargs("nocilong")) begin
     tk2 = W_KICK + 22'd64 + 2*j;
     do_chip_write(tk2,        16'hE000 + j);
     do_chip_write(tk2 + 22'd1, 16'hE100 + j);
@@ -726,6 +729,7 @@ initial begin
     if (rd !== (16'hE000 + j) || rd2 !== (16'hE100 + j)) begin
       ci_err = ci_err + 1;
       fail("CI kick long", {tk2, 1'b0}, {rd, rd2} >> 16, 16'hE000 + j);
+    end
     end
 
     // ---- coherency across a cacheline_clr pulse ----
