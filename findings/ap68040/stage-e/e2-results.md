@@ -501,7 +501,8 @@ into the setup cycle, and whether a line-buffer hit needs the placement gate).
 ### The posted-write hole (D8) -- open, deprioritised by Paul 2026-09-18
 
 The busy leg on `t5b` reports **1 stale P2C read of 158 probes** (E1 reference
-and the pre-5b E2 busy leg: 0). Not new: a CPU write is acknowledged before it
+and the pre-5b E2 busy leg: 0), the same in two runs (`t5bbusy`, `t5bbusy2`) --
+deterministic, not a flake. Not new: a CPU write is acknowledged before it
 reaches SDRAM, so a chipset read inside that window sees the old value -- the
 second posted-write path the complexity table has counted since Task 0. Task 5b
 did not create it; it made the CPU faster, which widens the window. The
