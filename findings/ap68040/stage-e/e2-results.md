@@ -229,3 +229,128 @@ window boundary) now follows its first byte. Every window boundary here is at
 bit 18 or above and a unit spans at most four bytes, so nothing reachable
 straddles one -- worth re-checking if a window is ever narrowed.
 
+
+### Task 4b-2, 4c, 4d — the restructure lands, and the bench says it works
+
+Commits `759aae4` (wrapper, top, xdc, bench), `84c8042` (build script),
+`639175f` (xdc, one path), `8f97016` (bench timeout). Branch `e2-t4`.
+
+**What was built**, against the design notes above:
+
+- One master mux on clk_38: `x_* = walker WHEN wk_go ELSE m_*`. The walker is
+  a ce-gated clk_38 FSM, one longword per descriptor, berr on a misaligned
+  address or on `sel_undecoded_d` at completion.
+- One router, decoding `x_addr` once: `x_sdram`, `x_ddr`, `x_akiko`, and
+  everything else (`x_a16`) to the 16-bit adapter. The three bus-state terms
+  became `NOT x_we` (kick), `NOT x_instr AND NOT x_we` (NMI vector) and gone
+  (`cpu_int`). The NMI compare is combinational: a registered copy is one clk
+  behind `x_addr` on the router's first sample.
+- Two `ap040_ram_seq` instances (SDRAM, DDR3), no demux. `ddr_ready` qualifies
+  the DDR3 acknowledge.
+- The Akiko sequencer (D3b) splits exactly as the adapter did, with `akiko_req`
+  low for two cycles between register cycles (Akiko's `ack` is registered and
+  cornerturn acks the rising edge). A fetch from Akiko space is now served as
+  a read; before E2 it raised no request and hung.
+- **Found while wiring the top:** the 832 host bridge read Akiko host requests
+  off the old RAM port (`ramaddr(8:1)`, `toram`, `cpustate(0)`). The wrapper
+  now exports `host_addr`/`host_d`/`host_wr` from the Akiko sequencer.
+- Completion: `x_ack_r` on the `clkena_r` edge with `x_rdata_r` captured on it
+  (category 2). `bus_release = NOT x_req OR x_done OR (x_a16 AND (state = "01"
+  OR bus_ready16))`.
+- The clk_114 sequencers see `q_req = x_req AND NOT clkena_r AND NOT x_fresh`:
+  masked on the kernel edge K and K+1, so nothing latches a clk_38 value before
+  K+2, and every consumed access is followed by a req-low edge. The cache keeps
+  `m_req` high straight from one C_FILL beat into the next, so without the mask
+  a sequencer's done level would never clear.
+- The placement gate is a one-cycle pulse (`unit_gate = ena_sr(2) AND NOT
+  slower(0)`), so the second unit of a split access is also on the grid.
+- Deleted: `bus_step`, `bus_fresh`, `wk_active_d`, `cpustate`, `ramcs`,
+  `ddrcs`, `mem_ready`, `cpu_int`, `sel_ram_d`, `sel_ddr_d`, `sel_akiko_d`,
+  `cpu_phase_ok`, the bus-side mux and the clk_114 walker router.
+
+**Two controller bugs the unit port exposed, both one cause.**
+`cpu_cache_new` registers the live `cpu_wadr` (line compare, hit-path
+`cpu_rdat`, block pointer, way RAM addresses) and acts in the first cycle
+`cpu_req` is high. The old port met that by putting the address up a cycle
+before the select. `ap040_ram_seq` put fields and request out on one edge, and:
+
+1. `--ap040` never wrote the mailbox. Trace: the read of vector 1 was
+   acknowledged in its first cycle as a line-buffer hit with vector 0's word,
+   so the CPU started at $7000 (the SSP).
+2. With the hit qualified, the program took an exception early: a refetch at
+   $40A came back as the word at $41A, the previous line's buffer at the new
+   offset, because the idle state started the read with the old block pointer.
+
+Fixing it inside the controller (wait for `cpu_req_d`) made the program pass
+but moved every access a cycle later, and chip-RAM WRITES landed on 3/7/11/15,
+the grid that corrupts on the board. So the controller change was reverted and
+the plan's own `RS_SETUP` idea restored in `ap040_ram_seq`: each unit's fields
+go out one edge before its request, which the gate still places. Writes went
+straight back to 2/6/10/14/13. `cpu_cache_new`'s header now states the rule,
+and a SOC_SIM check reports any field change on the edge `cpu_req` rises.
+The Task 3 benches never presented fields and request together, which is why
+they did not see it.
+
+**Read placement re-baselined (Paul, 2026-09-16).** Reads now land on
+0/4/8/12 (e2t4b: 6146 of 6558), no longer 3/7/11/15. The unit port removed the
+answer-before-select path, so read acknowledges moved; writes, which the
+hardware evidence is about, did not. D7 now judges reads on 0/4/8/12 and writes
+on 2/6/10/14/13, 10 % stray each, on the pattern program with Turbo chip RAM.
+
+**sim/ddr3_cpu, one leg at a time** (RUNTAG `e2t4c`; `--mmu` `e2t4b`):
+
+| leg | result | phase 8 | E4a phase 8 |
+|---|---|---|---|
+| `--ap040` | **2 passed, 0 failed**; reads 412/6558 off, writes 0/64 off | 2252.5 us | 1677.2 us |
+| `--mmu` | **2 passed, 0 failed** | 1080.3 us | 707.9 us |
+| `--ap040 --chipbus` | **2 passed, 0 failed**; DMA 2127 writes, 0 wrong | 1116.7 us | 937.0 us |
+| `--snoop` | **2 passed, 0 failed**; 31189 snoops all seen and invalidating, 0 out of order | 2522.2 us | 1762.6 us |
+| `--gatemutant` | **failed as required**: writes 37/64 off (to 3/7/11/15), reads 6076/6558 off | | |
+| `--ackmutant` | **failed as required**: 180913 completions without `clkena_r`; program code 14 | | |
+| `--mmumutant` | **failed as required**: stall watchdog at phase 2 | | |
+| `--snoopmutant` | **failed as required**: 9544 of 28634 snoops reached the core, out of order | | |
+
+`--lwmutant`, `--nofill` and `--fillmutant` are retired (their targets no
+longer exist). The bench timeout went from 2.5 ms to 4 ms: a healthy `--snoop`
+reached phase 8 at 2517 us and timed out finishing its last phase.
+
+**Controller regression**, unchanged from Task 3: `sim/sdram_coherency` sweep
+432/0, sweep mutant 416 of 432, `+nobg` 50 rounds 52 errors, 50 rounds with
+load 4 errors; `sim/ddr3` 9 passed, 0 failed. The new setup check never fired
+in either bench.
+
+**SPEED: E2 is SLOWER in the bench, not faster.** Phase 8 is 34 % later on the
+pattern program and 53 % later on the MMU program. The plan expected the
+opposite. Not yet measured apart (Paul: correctness first, speed is Task 5).
+Candidates: the fill channel has been off since Task 4b-1, so every cache line
+fill is four gated longword reads over `m_*` (88 fills on `--ap040`); and every
+RAM unit now costs a setup cycle plus the wait for the next gate pulse, where a
+16-bit sub-cycle that followed a clkena used to find the gate already open.
+
+**Builds** (tree copy, `build_ap040.tcl`):
+
+| build | result |
+|---|---|
+| `stage_ap040_e2t4` | do not use: clk_38 -> clk_114 **-0.483 ns** on ATC RAM -> `m_addr` -> decode -> `sel_undecoded_d`, which cpu.xdc still timed single-cycle. The decode is now registered from the master address, combinational out of the ATC RAM; its T+1 copy is never read (reasoning in cpu.xdc), so the rule went (`639175f`) |
+| **`stage_ap040_e2t4b`** (ship) | clk_114 +0.491, clk_38 +0.142, clk_ddr100 +2.332, clk_114 -> clk_38 +0.303, **clk_38 -> clk_114 +0.004** (ATC RAM -> router decode -> `ram_seq_sdram/rbuf` CE, a legitimate two-cycle path with almost nothing to spare); clk_gen_sdram -> clk_114 -0.552 / 16 (the known SDRAM read path; `stage_ap040_e2t1cap_noila`, flashed, is -0.484). 40,722 LUTs, 59.5 BRAM |
+| `stage_ap040_e2t4b_ila` | as above with both ILAs at depth 1024; clk_38 -> clk_114 +1.265, clk_114 -> clk_38 +0.083; clk_gen_sdram -0.552 |
+
+The +0.004 ns path is the first thing to fix when Task 5 touches the router:
+shorten the decode between the ATC and `q_sdram`, or register the route (which
+costs a cycle).
+
+**Complexity row**
+
+| label | wrapper lines | wrapper code | cpu_cache_new code | sdram_ctrl code | posted-write paths | longword_pair uses | g_tg68k uses | switch uses | debug probes | RAM width conversions | handshake signals |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| e2-t4 639175f | 1773 | 1027 | 715 | 580 | 2 | 0 | 0 | 0 | dbg_phist dbg_rtg | **0** | 6 (4 in code) |
+
+RAM width conversions reached 0. Two budget lines are NOT met and are stated
+rather than argued: wrapper code rose from 917 (e4a) to 1027 (the router, two
+sequencer hookups and the Akiko sequencer outweigh what was deleted), and the
+script's handshake count is 6 because it greps comments too -- in code the
+remaining ones are `clkena_r`, `slower`, `datatg68_r`, `cpu_bus_settled` (4,
+the plan's limit).
+
+**Still open before Task 4 is done:** the busy leg's numbers for Paul
+(`DMA_OVERLAP=1 P7LOOPS=10`, reference not saved), and the hardware test.
