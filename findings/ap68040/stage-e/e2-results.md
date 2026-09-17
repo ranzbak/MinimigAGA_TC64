@@ -497,3 +497,24 @@ memory-bound. SysInfo cannot see it (its speed test runs in the 040's caches:
 0.28x on both). This is the number Task 5 has to move; the candidates are in
 the speed section above (finish on the last unit's acknowledge, merge RS_IDLE
 into the setup cycle, and whether a line-buffer hit needs the placement gate).
+
+### The posted-write hole (D8) -- open, deprioritised by Paul 2026-09-18
+
+The busy leg on `t5b` reports **1 stale P2C read of 158 probes** (E1 reference
+and the pre-5b E2 busy leg: 0). Not new: a CPU write is acknowledged before it
+reaches SDRAM, so a chipset read inside that window sees the old value -- the
+second posted-write path the complexity table has counted since Task 0. Task 5b
+did not create it; it made the CPU faster, which widens the window. The
+coherency bench's "P2C late" category is the same hole (3 of 50 under load,
+pre-E2 as well).
+
+Paul's call: **low priority, no corruption seen on hardware** -- including a
+12-hour Amiga Test Kit memory run. Worth noting what that run does and does not
+cover: it exercises memory from the CPU only, and a posted write always reads
+back correctly to the CPU that made it, so the stale-read class is invisible to
+it. The hardware signature would be display artefacts (the uncleared-pixel
+direction), not memory errors.
+
+If it is ever picked up, the experiment is D8 as planned: `CPU_WRITE_SYNC` in
+`cpu_cache_new` holds the acknowledge until `sdr_write_ack`, and the busy leg
+plus AIBB MemTest price it.
