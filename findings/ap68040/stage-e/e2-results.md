@@ -459,6 +459,13 @@ clk_38 +0.448, clk_ddr100 +0.165, clk_gen_sdram -0.479 / 16), JTAG, not flashed:
 | SysInfo | **0.28x**, same as the flashed e2t1cap -- expected: its speed test runs in the 040's own caches, which E2 does not touch, so it cannot show the memory-path slowdown |
 | RTG after an Amiga power cycle | **works** (also exercises the Akiko sequencer and the new host ports) |
 
+`stage_ap040_e2t5b` (bc5dda6, all three speed changes) on hardware:
+Way Too Rude with Chip + Kick turbo -- **no corruption**, with read
+acknowledges no longer on any grid (Task 5b).  That is the check the gate
+bypass had to pass: the D3 rule was measured on WRITE acknowledges, which still
+go through the gate, and this says reads really were not part of it.
+MemTest 4.00 MB/s.
+
 Assumes the board kept the JTAG image throughout (an Amiga power cycle keeps it;
 losing board power would boot the flash image).
 
