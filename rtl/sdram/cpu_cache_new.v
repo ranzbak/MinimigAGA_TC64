@@ -593,6 +593,18 @@ module cpu_cache_new (
           end
         end
         CPU_SM_FILLW : begin
+          // A cache-inhibited read (Kickstart turbo) leaves CPU_SM_FILL1
+          // straight to here, so a TWO-WORD unit still needs word A+2: the
+          // next beat of the same wrapped burst, taken without touching the
+          // cache.  Before this, only a one-word unit was ever acknowledged on
+          // this path, and the AP68040's first longword fetch out of Kickstart
+          // hung the machine at $F801FA (hardware, E2 Task 4b-2;
+          // sim/sdram_coherency "CI kick long").
+          if (fill_first && sdr_read_ack) begin
+            fill_first <= #1 1'b0;
+            cpu_rdat[15:0] <= #1 sdr_dat_r;
+            if (cpu_two) cpu_cache_ack <= #1 1'b1;
+          end
           if (!cpu_req) begin
             cpu_sm_state <= #1 CPU_SM_IDLE;
             cpu_adr_blk_ptr <= #1 cpu_adr_blk; // if CS already activated during fill

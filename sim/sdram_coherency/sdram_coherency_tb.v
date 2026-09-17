@@ -218,8 +218,8 @@ endtask
 // raises done when the transfer is complete.
 reg        c_req_wr = 1'b0, c_req_rd = 1'b0, c_done = 1'b0;
 reg [22:1] c_adr;   reg [15:0] c_val, c_got;
-reg        p_req_wr = 1'b0, p_req_rd = 1'b0, p_req_lw = 1'b0, p_done = 1'b0;
-reg [22:1] p_adr;   reg [15:0] p_val, p_val2, p_got;
+reg        p_req_wr = 1'b0, p_req_rd = 1'b0, p_req_lw = 1'b0, p_req_rl = 1'b0, p_done = 1'b0;
+reg [22:1] p_adr;   reg [15:0] p_val, p_val2, p_got, p_got2;
 
 reg        seeded = 1'b0;
 reg        run_bg = 1'b0;
@@ -537,6 +537,16 @@ initial begin : cpu_seq
       p_done = 1'b1;
       while (p_done) @(posedge clk);
     end
+    else if (p_req_rl) begin
+      // one TWO-WORD read unit (a longword at an even offset), word A in
+      // p_got and word A+2 in p_got2
+      p_req_rl = 1'b0;
+      cpu_unit(1'b0, 1'b0, p_adr, 4'b1111, 32'd0, cu_rd);
+      p_got  = cu_rd[31:16];
+      p_got2 = cu_rd[15:0];
+      p_done = 1'b1;
+      while (p_done) @(posedge clk);
+    end
     else if (run_bg) begin
       bi = {$random(cseed)} % 64;
       ba_bg = W_CPU + 2*bi;
@@ -568,6 +578,10 @@ task do_cpu_write_lw; input [22:1] a; input [15:0] v1; input [15:0] v2;
   begin p_adr = a; p_val = v1; p_val2 = v2; p_req_lw = 1'b1;
         while (!p_done) @(posedge clk); p_done = 1'b0; end
 endtask
+task do_cpu_read_long; input [22:1] a; output [15:0] v1; output [15:0] v2;
+  begin p_adr = a; p_req_rl = 1'b1;
+        while (!p_done) @(posedge clk); v1 = p_got; v2 = p_got2; p_done = 1'b0; end
+endtask
 task do_cpu_read;   input [22:1] a; output [15:0] v;
   begin p_adr = a; p_req_rd = 1'b1;
         while (!p_done) @(posedge clk); v = p_got; p_done = 1'b0; end
@@ -577,7 +591,7 @@ endtask
 integer i, j;
 reg [15:0] rd;
 reg [15:0] rd2;
-reg [22:1] ta, tb, tw, tl, tl2, tk, tc;      // scratch word address, so {ta,1'b0} has a defined width
+reg [22:1] ta, tb, tw, tl, tl2, tk, tk2, tc;      // scratch word address, so {ta,1'b0} has a defined width
 
 initial begin
   $timeformat(-9, 3, " ns", 10);
@@ -698,6 +712,20 @@ initial begin
     if (rd !== (16'hB000 + j)) begin
       ci_err = ci_err + 1;
       fail("CI kick read", {tk, 1'b0}, rd, 16'hB000 + j);
+    end
+    // ... and as a TWO-WORD unit, which is how the AP68040 fetches a longword
+    // out of Kickstart.  Found on hardware (E2 Task 4b-2, stage_ap040_e2t4b):
+    // the cache-inhibited fill path acknowledged only a one-word unit, so a
+    // two-word one never completed and the CPU stalled at $F801FA with
+    // cpu_req high.  Its own window of pairs, clear of tk.
+    tk2 = W_KICK + 22'd64 + 2*j;
+    do_chip_write(tk2,        16'hE000 + j);
+    do_chip_write(tk2 + 22'd1, 16'hE100 + j);
+    do_cpu_read_long(tk2, rd, rd2);
+    ci_chk = ci_chk + 1; checks = checks + 1;
+    if (rd !== (16'hE000 + j) || rd2 !== (16'hE100 + j)) begin
+      ci_err = ci_err + 1;
+      fail("CI kick long", {tk2, 1'b0}, {rd, rd2} >> 16, 16'hE000 + j);
     end
 
     // ---- coherency across a cacheline_clr pulse ----
