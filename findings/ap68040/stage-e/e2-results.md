@@ -339,8 +339,38 @@ is about a third (114.6 us); the fill channel is about 1 % (E4a `--nofill`
 removed cpu_cache_new's answer-before-select line-buffer path, so a buffer HIT
 that used to complete with no select and no gate wait now goes through
 ap040_ram_seq's setup cycle, a request, and (when gated) the next gate pulse.
-The next measurement is a count of units that were buffer hits and their
-request-to-acknowledge time.  The MMU, chipbus and snoop legs have no E4a
+**Measured (RUNTAG spd_count, report-only counters now in the bench; phase 8
+identical to e2t4c, so they do not perturb):**
+
+| | count | mean clk |
+|---|---|---|
+| SDRAM units, request -> acknowledge | 6506 | 1.36 |
+| ... of which line-buffer hits | **4588 (70 %)** | **0.00** |
+| SDRAM accesses, x_req -> consumed by the core | 6505 | **9.41** |
+| DDR3 accesses | 2021 | 11.35 |
+| adapter accesses | 4 | 12.00 |
+
+The controller is not the cost: most units are hits answered in the cycle the
+request rises. The cost is the pipeline around them, ~9.4 clk (three CPU
+clocks) for an access whose memory latency is zero. Budget for a one-unit hit,
+kernel edge K:
+
+| clk | what | removable? |
+|---|---|---|
+| K, K+1 | q_req mask (clkena_r, x_fresh) | no: the two-cycle crossing |
+| K+2 | RS_IDLE latches | could merge with the setup cycle (fields straight from x_*) |
+| K+3 | RS_LAUNCH: fields out, not yet armed | needed by cpu_cache_new, but see above |
+| K+4.. | wait for the gate pulse (0-3 clk) | the D3 rule; gate-open run shows ~1/3 of the loss |
+| +1 | RS_WAIT sees ack | -- |
+| +1, +1 | RS_GAP, RS_DONE on the LAST unit | yes: set done on the ack edge when nothing is left |
+| 0-2 | wait for the cpu_ph decision edge | quantised to the CPU clock |
+| +1 | clkena_r -> consumed | no |
+
+Candidates for Task 5, cheapest first: (a) finish on the ack edge of the last
+unit (-2 clk, often a whole CPU clock after quantisation); (b) merge RS_IDLE
+into the setup cycle (-1 clk); (c) whether a HIT needs the placement gate at
+all -- it touches no SDRAM slot, but a gated request is also what places the
+acknowledge, so this is a D3-rule question for Paul, not an optimisation.  The MMU, chipbus and snoop legs have no E4a
 REALSDRAM baseline, so their E2 times stand alone.
 
 **SPEED (as first written, superseded by the corrected table above):

@@ -1276,6 +1276,59 @@ always @(posedge clk) begin
 end
 
 //-----------------------------------------------------------------
+// Speed accounting (Stage E2, report only -- nothing here is judged).
+//
+//   SDRAM units   clk cycles from ram_req rising to ram_ack rising, split by
+//                 whether cpu_cache_new answered from its line buffer
+//                 (cpu_cacheline_valid on the acknowledge edge)
+//   accesses      clk cycles from the master's request being up (x_req, first
+//                 clk edge it is seen) to the core consuming the answer
+//                 (x_ack at a clk_cpu edge), by destination
+//-----------------------------------------------------------------
+longint   sp_cyc = 0;
+always @(posedge clk) sp_cyc <= sp_cyc + 1;
+
+longint   su_n = 0, su_hit = 0, su_lat = 0, su_hit_lat = 0;
+longint   su_t0 = 0;
+reg       su_req_d = 1'b0, su_ack_d = 1'b0;
+always @(posedge clk) begin
+  if (tg68_rst) begin
+    if (ram_req && !su_req_d) su_t0 = sp_cyc;
+    if (ram_req && ram_ack && !su_ack_d) begin
+      su_n   = su_n + 1;
+      su_lat = su_lat + (sp_cyc - su_t0);
+`ifdef REALSDRAM
+      if (u_sdram.cpu_cache.cpu_cacheline_valid === 1'b1) begin
+        su_hit     = su_hit + 1;
+        su_hit_lat = su_hit_lat + (sp_cyc - su_t0);
+      end
+`endif
+    end
+  end
+  su_req_d <= ram_req;
+  su_ack_d <= ram_ack;
+end
+
+longint   ac_n [0:3];
+longint   ac_lat [0:3];
+longint   ac_t0 = 0;
+reg       ac_up = 1'b0;
+integer   ac_k;
+initial for (ac_k = 0; ac_k < 4; ac_k = ac_k + 1) begin ac_n[ac_k] = 0; ac_lat[ac_k] = 0; end
+always @(posedge clk_cpu) begin
+  if (tg68_rst) begin
+    if (tg68k.x_req === 1'b1 && !ac_up) begin ac_up = 1'b1; ac_t0 = sp_cyc; end
+    if (ac_up && tg68k.x_ack === 1'b1) begin
+      ac_k = (tg68k.x_sdram === 1'b1) ? 0 : (tg68k.x_ddr === 1'b1) ? 1 :
+             (tg68k.x_akiko === 1'b1) ? 2 : 3;
+      ac_n[ac_k]   = ac_n[ac_k] + 1;
+      ac_lat[ac_k] = ac_lat[ac_k] + (sp_cyc - ac_t0);
+      ac_up = 1'b0;
+    end
+  end
+end
+
+//-----------------------------------------------------------------
 // Cache line fills.  The fill channel is off since Stage E2 (D5): a cache
 // miss fills its line over m_* as longword reads.  fill_ad counts C_FILL
 // entries (ap040_cache.v:233), for the A/B record.
@@ -1590,6 +1643,11 @@ initial begin : main
 
   $display("");
   $display("INFO: cache line fills -- %0d over m_* (C_FILL entries)", fill_ad);
+  $display("INFO: speed -- SDRAM units %0d, mean %0.2f clk req->ack; line-buffer hits %0d, mean %0.2f clk",
+           su_n, su_n ? 1.0*su_lat/su_n : 0.0, su_hit, su_hit ? 1.0*su_hit_lat/su_hit : 0.0);
+  $display("INFO: speed -- accesses (x_req->consumed, clk): SDRAM %0d mean %0.2f, DDR3 %0d mean %0.2f, Akiko %0d mean %0.2f, adapter %0d mean %0.2f",
+           ac_n[0], ac_n[0] ? 1.0*ac_lat[0]/ac_n[0] : 0.0, ac_n[1], ac_n[1] ? 1.0*ac_lat[1]/ac_n[1] : 0.0,
+           ac_n[2], ac_n[2] ? 1.0*ac_lat[2]/ac_n[2] : 0.0, ac_n[3], ac_n[3] ? 1.0*ac_lat[3]/ac_n[3] : 0.0);
   if (mux_excl_errs != 0) begin
     $display("DDR3 CPU TB: FAIL  %0d clk_cpu edges with m_req high while the walker owned the mux",
              mux_excl_errs);
