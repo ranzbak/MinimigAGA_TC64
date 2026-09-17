@@ -45,6 +45,13 @@ module cpu_cache_new (
   input  wire [ 32-1:0] cpu_wdat,
   output reg  [ 32-1:0] cpu_rdat,
   output                cpu_ack,
+  // '1' when the CURRENT fields would be answered out of the line buffer, i.e.
+  // without an SDRAM slot.  The wrapper's ap040_ram_seq launches such a unit
+  // without waiting for the D3 placement gate: a hit disturbs no slot and no
+  // chipset access, and the gate's one-in-four pulse was the largest remaining
+  // cost of the unit port (Stage E2 Task 5b).  Valid one clock after the
+  // fields, like cpu_cacheline_match itself.
+  output                cpu_hit,
   // sdram
   input  wire [ 16-1:0] sdr_dat_r, // sdram read data
   output reg            sdr_read_req, // sdram read request from cache
@@ -294,6 +301,7 @@ module cpu_cache_new (
   // wrapper existed to mask exactly that one cycle.  Gating on cpu_req removes
   // the class.
   assign cpu_ack = cpu_req && (cpu_cache_ack || cpu_cacheline_valid);
+  assign cpu_hit = cpu_cacheline_valid;
 
   // FIELDS ONE CYCLE BEFORE THE REQUEST.  cpu_cacheline_match, the hit path's
   // cpu_rdat, cpu_adr_blk_ptr and the way RAM read addresses are all

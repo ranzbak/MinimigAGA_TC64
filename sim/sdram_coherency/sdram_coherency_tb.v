@@ -138,7 +138,7 @@ sdram_ctrl dut (
   .audAddr(23'd0), .audce(1'b0), .audfill(), .audRd(),
   .cpu_req(cpu_req), .cpu_we(cpu_we), .cpu_ir(cpu_ir), .cpu_wadr(cpuAddr),
   .cpu_bs(cpu_bs), .cpu_wdat(cpu_wdat), .cpu_rdat(cpu_rdat),
-  .enaWRreg(), .ena7RDreg(), .ena7WRreg(), .cpu_ack(cpu_ack)
+  .enaWRreg(), .ena7RDreg(), .ena7WRreg(), .cpu_ack(cpu_ack), .cpu_hit()
 );
 
 // ---------------------------------------------------------------- board / IOB delay model

@@ -97,7 +97,8 @@ module sdram_ctrl (
     output reg            enaWRreg,
     output reg            ena7RDreg,
     output reg            ena7WRreg,
-    output wire           cpu_ack
+    output wire           cpu_ack,
+    output wire           cpu_hit
 );
 
 
@@ -306,6 +307,7 @@ cpu_cache_new cpu_cache (
     .cpu_wdat         (cpu_wdat),
     .cpu_rdat         (cpu_rdat),
     .cpu_ack          (ccachehit),
+  .cpu_hit          (cpu_hit),
     .sdr_dat_r        (sdata_reg), // sdram read data
     .sdr_read_req     (cache_req), // sdram read request from cache
     .sdr_read_ack     (readcache_fill), // sdram read acknowledge to cache

@@ -734,11 +734,11 @@ wire        cache_inhibit, cacheline_clr;
 
 // The unit port (Stage E2), exactly as minimig_virtual_top.v wires it: the
 // wrapper's SDRAM port to sdram_ctrl, its DDR3 port to ddr3_fastram.
-wire        ram_req, ram_we, ram_ir, ram_ack;
+wire        ram_req, ram_we, ram_ir, ram_ack, ram_hit;
 wire [25:1] ram_wadr;
 wire [ 3:0] ram_bs;
 wire [31:0] ram_wdat, ram_rdat;
-wire        ddr_req, ddr_we, ddr_ir, ddr_ack;
+wire        ddr_req, ddr_we, ddr_ir, ddr_ack, ddr_hit;
 wire [25:1] ddr_wadr;
 wire [ 3:0] ddr_bs;
 wire [31:0] ddr_wdat, ddr_rdat;
@@ -815,6 +815,7 @@ TG68K #(.cpu_clk_ratio(`CPU_RATIO)) tg68k (
     .ram_wdat       (ram_wdat         ),
     .ram_rdat       (ram_rdat         ),
     .ram_ack        (ram_ack          ),
+    .ram_hit        (ram_hit          ),
     .ddr_req        (ddr_req          ),
     .ddr_we         (ddr_we           ),
     .ddr_ir         (ddr_ir           ),
@@ -823,6 +824,7 @@ TG68K #(.cpu_clk_ratio(`CPU_RATIO)) tg68k (
     .ddr_wdat       (ddr_wdat         ),
     .ddr_rdat       (ddr_rdat         ),
     .ddr_ack        (ddr_ack          ),
+    .ddr_hit        (ddr_hit          ),
     .ddr_ready      (tg68_ddrready    ),
     .ziiram_active  (1'b1             ),   // autoconfig done: 2 MB Zorro-II
     .ziiiram_active (1'b0             ),   // board 1: SDRAM on hardware, see header
@@ -907,6 +909,7 @@ ddr3_fastram u_fast (
     .cpu_wdat       (ddr_wdat         ),
     .cpu_rdat       (ddr_rdat         ),
     .cpu_ack        (ddr_ack          ),
+    .cpu_hit        (ddr_hit          ),
     .clk_mem        (clk100           ),
     .init_done      (init_done        ),
     .req_valid      (req_valid        ),
@@ -1758,11 +1761,10 @@ initial begin : main
   if (!turbochipram || mmutest)
     $display("=== placement: not judged on this leg (%s) ===", mmutest ? "MMU program" : "Turbo chip RAM off");
   else begin
-  if (pm_rd_total < 1000 || pm_rd_stray * 1000000 > pm_rd_total * `PLACEMENT_STRAY_PPM) begin
-    nfail = nfail + 1;
-    $display("DDR3 CPU TB: FAIL  chip-RAM READ acknowledge placement: %0d of %0d off 0/4/8/12 (limit %0d ppm, need >= 1000)",
-             pm_rd_stray, pm_rd_total, `PLACEMENT_STRAY_PPM);
-  end
+  // Reads are reported only since Task 5b: a line-buffer hit skips the
+  // placement gate, so read acknowledges are deliberately off any grid.
+  $display("INFO: chip-RAM READ acknowledges: %0d, %0d off the pre-5b grid 0/4/8/12 (reported, not judged)",
+           pm_rd_total, pm_rd_stray);
   if (pm_wr_total < 20 || pm_wr_stray * 1000000 > pm_wr_total * `PLACEMENT_STRAY_PPM) begin
     nfail = nfail + 1;
     $display("DDR3 CPU TB: FAIL  chip-RAM WRITE acknowledge placement: %0d of %0d off 2/6/10/14/13 (limit %0d ppm, need >= 20)",

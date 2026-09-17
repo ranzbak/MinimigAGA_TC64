@@ -126,6 +126,7 @@ module ddr3_fastram (
   input  wire [ 32-1:0] cpu_wdat,
   output wire [ 32-1:0] cpu_rdat,
   output wire           cpu_ack,
+  output wire           cpu_hit,
 
   // ---- memory island port, clk_mem (100 MHz) ------------------------------
   input  wire           clk_mem,
@@ -265,6 +266,7 @@ cpu_cache_new cpu_cache (
   .cpu_wdat         (cpu_wdat),
   .cpu_rdat         (cpu_rdat),
   .cpu_ack          (ccachehit),
+  .cpu_hit          (cpu_hit),
   .sdr_dat_r        (sdr_dat_r),                  // memory read data
   .sdr_read_req     (cache_req),                  // memory read request
   .sdr_read_ack     (readcache_fill),             // memory read acknowledge

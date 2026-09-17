@@ -14,13 +14,22 @@
 // "Stage E step 2"):
 //
 //   writes  2/6/10/14, plus 13     -- the board's grid, phase 13 included
-//   reads   0/4/8/12               -- re-baselined for the unit port
+//   reads   NOT JUDGED since Task 5b -- see below
 //
 // so each is judged against its own grid and the old single calibrated
 // PLACEMENT_OFFSET (a fit to the pattern program's read mix) is gone.
 //
+// READS ARE NO LONGER ON A GRID, BY DESIGN (Task 5b, 2026-09-17).  A unit the
+// controller can answer from its line buffer takes no SDRAM slot, so
+// ap040_ram_seq launches it without waiting for the placement gate (cpu_hit);
+// 70 % of reads are such hits and they now complete wherever they fall.  That
+// is the point of the change -- it took the per-access cost from 7.97 to 4.83
+// clk -- so the read bins are REPORTED, not judged.  What still is judged is
+// the WRITE grid, which is what the hardware rule was measured on: a write is
+// never a line-buffer hit, so every write still goes through the gate.
+//
 // The READ grid moved with E2 and was re-baselined with Paul's OK
-// (2026-09-16, plan D7).  At E4a reads landed on 3/7/11/15 (+4), one phase
+// (2026-09-16, plan D7); that baseline is history now.  At E4a reads landed on 3/7/11/15 (+4), one phase
 // after writes; the unit port removed cpu_cache_new's answer-before-select
 // line-buffer path, and reads now land two phases after writes (full --ap040
 // leg, e2t4b: 6146 of 6558 on 0/4/8/12, 412 on 3/7/11/15).  The hardware

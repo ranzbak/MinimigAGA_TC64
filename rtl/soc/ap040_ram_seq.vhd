@@ -57,6 +57,12 @@ ENTITY ap040_ram_seq IS
 		-- D3 placement gate: a unit may only be LAUNCHED while this is high,
 		-- so every unit of a split access lands on the grid, not just the first
 		gate     : IN  std_logic;
+		-- ... EXCEPT a unit the controller can answer from its line buffer,
+		-- which takes no SDRAM slot and cannot disturb the chipset's accesses.
+		-- Valid one clock after the fields go out, which is exactly when
+		-- RS_LAUNCH first looks at it (Stage E2 Task 5b).  The D3 rule is about
+		-- where chip-RAM WRITE acknowledges land, and a write is never a hit.
+		hit      : IN  std_logic := '0';
 		-- the unit port
 		u_req    : OUT std_logic;
 		u_we     : OUT std_logic;
@@ -241,7 +247,7 @@ BEGIN
 					u_bs_r   <= bs_v;
 					u_wdat_r <= wd_v;
 					armed    <= '1';
-					IF gate = '1' AND armed = '1' THEN
+					IF (gate = '1' OR hit = '1') AND armed = '1' THEN
 						u_req_r  <= '1';
 						st       <= RS_WAIT;
 					END IF;

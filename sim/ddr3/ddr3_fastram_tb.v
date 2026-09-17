@@ -70,6 +70,7 @@ ddr3_fastram dut (
   .cpu_wdat       (cpu_wdat),
   .cpu_rdat       (cpu_rdat),
   .cpu_ack        (cpu_ack),
+  .cpu_hit        (),
   .clk_mem        (clk_mem),
   .init_done      (init_done),
   .req_valid      (req_valid),

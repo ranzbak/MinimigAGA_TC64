@@ -128,6 +128,7 @@ sdram_ctrl u_sdram (
     .cpu_wdat       (ram_wdat         ),
     .cpu_rdat       (ram_rdat         ),
     .cpu_ack        (ram_ack          ),
+    .cpu_hit        (ram_hit          ),
 
     // The enables the bench used to invent for itself.
     .enaWRreg       (enaWR_real       ),

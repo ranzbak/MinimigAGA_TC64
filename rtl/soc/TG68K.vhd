@@ -108,6 +108,10 @@ entity TG68K is
 		ram_wdat        : out    std_logic_vector(31 downto 0);
 		ram_rdat        : in     std_logic_vector(31 downto 0) := (others => '0');
 		ram_ack         : in     std_logic                     := '0';
+		-- '1' when the fields on the port now would be answered from the
+		-- controller's line buffer: such a unit needs no SDRAM slot, so
+		-- ap040_ram_seq launches it without waiting for the placement gate.
+		ram_hit         : in     std_logic                     := '0';
 		-- DDR3 Zorro-III fast RAM, the same port (used only when haveddr3)
 		ddr_req         : out    std_logic;
 		ddr_we          : out    std_logic;
@@ -117,6 +121,7 @@ entity TG68K is
 		ddr_wdat        : out    std_logic_vector(31 downto 0);
 		ddr_rdat        : in     std_logic_vector(31 downto 0) := (others => '0');
 		ddr_ack         : in     std_logic                     := '0';
+		ddr_hit         : in     std_logic                     := '0';
 		-- the DDR3 island's init-done flag: before it an access is held
 		ddr_ready       : in     std_logic                     := '0';
 		ziiram_active   : in     std_logic;
@@ -752,6 +757,7 @@ BEGIN
 			ack    => rs_ack,
 			rdata  => rs_rdata,
 			gate   => unit_gate,
+			hit    => ram_hit,
 			u_req  => ram_req,
 			u_we   => ram_we,
 			u_ir   => ram_ir,
@@ -790,6 +796,7 @@ BEGIN
 				ack    => rd_ack,
 				rdata  => rd_rdata,
 				gate   => unit_gate,
+				hit    => ddr_hit,
 				u_req  => ddr_req,
 				u_we   => ddr_we,
 				u_ir   => ddr_ir,

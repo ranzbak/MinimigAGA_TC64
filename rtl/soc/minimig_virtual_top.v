@@ -251,6 +251,7 @@ wire [  4-1:0] tg68_ram_bs;
 wire [ 32-1:0] tg68_ram_wdat;
 wire [ 32-1:0] tg68_ram_rdat;
 wire           tg68_ram_ack;
+wire           tg68_ram_hit;   // line-buffer hit: skips the placement gate
 // The same port, TG68K <-> ddr3_fastram (Zorro-III fast RAM on the DDR3)
 wire           tg68_ddr_req;
 wire           tg68_ddr_we;
@@ -260,6 +261,7 @@ wire [  4-1:0] tg68_ddr_bs;
 wire [ 32-1:0] tg68_ddr_wdat;
 wire [ 32-1:0] tg68_ddr_rdat;
 wire           tg68_ddr_ack;
+wire           tg68_ddr_hit;
 wire           tg68_ddrready;
 // The Akiko register cycle the host serves (cfide's amiga_* inputs)
 wire [  9-1:1] tg68_host_addr;
@@ -683,6 +685,7 @@ TG68K #(
     .ram_wdat     (tg68_ram_wdat    ),
     .ram_rdat     (tg68_ram_rdat    ),
     .ram_ack      (tg68_ram_ack     ),
+    .ram_hit      (tg68_ram_hit     ),
     .ddr_req      (tg68_ddr_req     ),
     .ddr_we       (tg68_ddr_we      ),
     .ddr_ir       (tg68_ddr_ir      ),
@@ -691,6 +694,7 @@ TG68K #(
     .ddr_wdat     (tg68_ddr_wdat    ),
     .ddr_rdat     (tg68_ddr_rdat    ),
     .ddr_ack      (tg68_ddr_ack     ),
+    .ddr_hit      (tg68_ddr_hit     ),
     .ddr_ready    (tg68_ddrready    ),
     .turbochipram (turbochipram     ),
     .turbokick    (turbokick        ),
@@ -802,6 +806,7 @@ sdram_ctrl sdram (
     .cpu_wdat     (tg68_ram_wdat    ),
     .cpu_rdat     (tg68_ram_rdat    ),
     .cpu_ack      (tg68_ram_ack     ),
+    .cpu_hit      (tg68_ram_hit     ),
 
     // Amiga chip ram
     //  .cpu_dma      (tg68_cdma        ),
@@ -863,6 +868,7 @@ ddr3_fastram ddr3_fastram_i (
     .cpu_wdat       (tg68_ddr_wdat    ),
     .cpu_rdat       (tg68_ddr_rdat    ),
     .cpu_ack        (tg68_ddr_ack     ),
+    .cpu_hit        (tg68_ddr_hit     ),
 
     // DDR3 island, 100 MHz domain
     .clk_mem        (DDR3_CLK_MEM     ),
@@ -902,6 +908,7 @@ else begin : g_no_ddr3_fastram
 
 assign tg68_ddr_rdat  = 32'd0;
 assign tg68_ddr_ack   = 1'b0;
+assign tg68_ddr_hit   = 1'b0;
 assign tg68_ddrready  = 1'b0;
 assign DDR3_REQ_VALID = 1'b0;
 assign DDR3_REQ_WR    = 16'h0000;
