@@ -352,5 +352,25 @@ script's handshake count is 6 because it greps comments too -- in code the
 remaining ones are `clkena_r`, `slower`, `datatg68_r`, `cpu_bus_settled` (4,
 the plan's limit).
 
-**Still open before Task 4 is done:** the busy leg's numbers for Paul
-(`DMA_OVERLAP=1 P7LOOPS=10`, reference not saved), and the hardware test.
+**Busy leg** (`DMA_OVERLAP=1 P7LOOPS=10 --ap040`, RUNTAG `e2t4busy`) -- recorded,
+NOT saved as a reference until Paul approves (plan D7):
+
+| | E2 (e2t4busy) | E1 reference (`ref/overlap_gate3.txt`) |
+|---|---|---|
+| program | PASS | PASS |
+| phase 8 | 2529.1 us | 2147.7 us |
+| DMA window | 4416 writes, 0 wrong | 3670 writes, 0 wrong |
+| P2C probe | 176 reads, 10 changes, 0 stale | 167 reads, 9 changes, 0 stale |
+| chip-RAM acknowledges | 7726 (7300 reads, 426 writes) | 2602 |
+| writes off 2/6/10/14/13 | **0 of 426** | (combined count only: 342 of 2602 off, calibrated) |
+| reads off 0/4/8/12 | 421 of 7300 | -- |
+
+Combined bins: ph0 1760, ph2 55, ph3 84, ph4 1620, ph6 50, ph7 150, ph8 1719,
+ph10 38, ph11 87, ph12 1780, ph13 189, ph14 94, ph15 100 (1, 5, 9 zero). Split:
+every write on 2/6/10/13/14; reads on 0/4/8/12 with 421 on 3/7/11/15.
+The acknowledge count is not comparable with E1's: every unit is an
+acknowledge now, including line-buffer hits, where E1 counted `ramready`
+rising on the 16-bit port.  Under contention the write grid did NOT scatter.
+
+**Still open before Task 4 is done:** Paul's OK to save the busy leg as
+`ref/overlap_e2.txt`, and the hardware test.
