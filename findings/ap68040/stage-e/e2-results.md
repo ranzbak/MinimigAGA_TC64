@@ -460,5 +460,18 @@ clk_38 +0.448, clk_ddr100 +0.165, clk_gen_sdram -0.479 / 16), JTAG, not flashed:
 | RTG after an Amiga power cycle | **works** (also exercises the Akiko sequencer and the new host ports) |
 
 Assumes the board kept the JTAG image throughout (an Amiga power cycle keeps it;
-losing board power would boot the flash image). Not yet measured on hardware:
-anything memory-bound, where the bench's +22 % would show.
+losing board power would boot the flash image).
+
+**MEMORY BANDWIDTH ON HARDWARE (AIBB 6.5 MemTest, Paul 2026-09-17):**
+
+| build | MemTest |
+|---|---|
+| `e2t1cap_noila` (flashed, pre-E2) | **4.15 MB/s** |
+| `stage_ap040_e2t4d` (E2) | **3.54 MB/s** |
+
+**-14.7 %.** So the slowdown is real on the board, not a bench artefact -- and
+smaller than the bench's -22 %, as expected for a workload that is not purely
+memory-bound. SysInfo cannot see it (its speed test runs in the 040's caches:
+0.28x on both). This is the number Task 5 has to move; the candidates are in
+the speed section above (finish on the last unit's acknowledge, merge RS_IDLE
+into the setup cycle, and whether a line-buffer hit needs the placement gate).
