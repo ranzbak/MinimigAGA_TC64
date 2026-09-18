@@ -2057,6 +2057,31 @@ fault or several, or which build(s) they were seen on.  Extra questions:
   latched down/up with the LED state), so it is a natural first suspect for
   a key-up/down or LED-command handling bug rather than a lost byte.
 
+### Show the FPGA temperature on the first line of the Chipset OSD menu
+
+Asked for by Paul, 2026-09-18.  The XC7A100T has an on-die temperature sensor
+in its XADC block; nothing in this design instantiates it today (no XADC or
+SYSMON anywhere in rtl/ or fpga/).  Wanted: the die temperature on the first
+line of the Chipset menu, where the CPU line now sits.
+
+What it needs, smallest first:
+- an `XADC` (or `SYSMONE1`) instance with the DRP tied to a small always-on
+  reader, or the simpler `-- temperature only` configuration: read DRP address
+  0x00, convert with T = (code * 503.975 / 65536) - 273.15;
+- a byte or two of it exposed the way `CORE_CAPS` is: an SPI read the firmware
+  can poll (`userio_osd.v`, note the byte-counter limit below);
+- `menu.c`: print it on line 0 of MENU_CHIPSET, refreshed on the menu's own
+  timer, not on every redraw.
+
+Two traps worth writing down before anyone starts:
+- `userio_osd.v`'s SPI byte counter saturates at 4 (`if (rx && (dat_cnt != 4))`),
+  which is why `OSD_CMD_VERSION`'s sixth byte (CORE_CAPS) can never be read and
+  the OSD still says "020 alpha" -- see the CPU-line item.  A temperature read
+  must not assume it can use byte 5 either.
+- The OSD firmware polls over the same SPI link the disk code uses; a
+  temperature poll on every menu redraw would add traffic to a link that
+  already loses OSD key events (see the keyboard item).  Poll it on a timer.
+
 ## Risks
 
 | Risk | Shows as | Mitigation |
