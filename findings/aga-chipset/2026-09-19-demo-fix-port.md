@@ -3,7 +3,7 @@
 Written for Paul, to be read at the board.
 
 The survey in [`mister-fixes.md`](mister-fixes.md) listed fourteen findings and
-changed no RTL. This is the first batch actually ported: **eight of them**,
+changed no RTL. This is the first batch actually ported: **ten of them**,
 chosen because each is small, self-contained, and can be judged by a named demo
 or program rather than by reading the diff again.
 
@@ -16,7 +16,7 @@ not tested".
 | Bitstream | Contains | State |
 |---|---|---|
 | `build/stage_ap040_keyq` | keyboard/OSD fixes only — F12, Caps Lock, the CPU line | built, **loaded on the board now** |
-| `build/stage_ap040_demo1` | the eight chipset fixes below, on top of the same base | built, **not loaded** |
+| `build/stage_ap040_demo1` | the ten chipset fixes below, on top of the same base | built, **not loaded** |
 
 They are separate on purpose. On 2026-09-13 the only bitstream carrying fix 1.8
 also carried a CPU cache change that made the whole machine misbehave, and the
@@ -65,6 +65,7 @@ symptoms.
 | Essence "Crazy Sexy Cool" | sprites in the border, previously hidden by playfield | 1.11 sprite priority |
 | Risky Woods | in-game music tempo and sound effects | 1.2 CIA timers |
 | Hybris | cannon/turret sprite vertical jitter | 1.14 beam readback |
+| Crystal Kingdom Dizzy [cr FLT] | black screen versus a running game | 1.4 CIA CNT/INMODE |
 | Sanity "Roots 2.0" | the sprite-copper-chunky section | 1.8 — **the confounded re-test**, see below |
 
 **Regressions to check on the same image**, because three of these fixes touch
@@ -77,7 +78,7 @@ paths the whole display uses:
   not MiSTer's**: AMR reversed the HDIWSTRT/HDIWSTOP comparison here so that
   `HDIWSTART==HDIWSTOP` blanks correctly. That is the one real risk in this
   batch. It is committed on its own so it can be reverted without taking the
-  other seven with it.
+  other eight with it.
 - The OS clock, and anything beam-synchronised, for the beam readback (1.14).
 
 **Sanity "Roots 2.0" is a re-test, not a new test.** Fix 1.8 went in on
@@ -106,11 +107,14 @@ Three of the fourteen, each for a stated reason rather than for time:
   worth mixing into a batch whose value is that each item is individually
   falsifiable.
 
-Also still open and untouched: **1.4**, the CIA CNT pin and INMODE count-source
-selects (Crystal Kingdom Dizzy). Not risky — the survey's own summary is "a
-mode that used to count now correctly counts nothing" — but it is four files
-plus a port in `minimig.v`, so it wants its own pass rather than being appended
-here.
+**1.4 was ported after all** (CIA CNT pin and INMODE count-source selects,
+Crystal Kingdom Dizzy). It is five files rather than one, which is why it was
+set aside at first, but the behaviour change is almost entirely "a mode that
+used to count the wrong thing now correctly counts nothing": CNT is tied high
+at both CIAs, exactly as MiSTer ties it, because CIA-A's CNT is KCLK and
+CIA-B's is a parallel-port handshake and this core models neither. The one live
+mode, CRB 11, is cascade gated by CNT high, which with CNT constant is the
+plain cascade it already did.
 
 ## If something breaks
 
