@@ -1097,11 +1097,26 @@ assign _ram_we=1'b1;
 // bit 1 AP68040 selectable (a dual-core build -- stage E, not this one),
 // bit 2 FPU, bit 3 MMU.  Derived from the same parameters that pick the
 // kernel, so the RTL is the authority and the firmware only reports it.
-localparam [7:0] CORE_CAPS = { 4'b0000,
+// Bit 5 says the XADC die-temperature register is decoded, so the firmware can
+// show it; on a build without it the OSD leaves that line blank rather than
+// reading whatever else answers that address.  (Bit 4 is the OSD's own, added
+// in userio_osd.v, which is what knows whether the key queue is there.)
+localparam [7:0] CORE_CAPS = { 2'b00,
+                               1'b1,
+                               1'b0,
                                (ap040_has_mmu != 0) ? 1'b1 : 1'b0,
                                (ap040_has_fpu != 0) ? 1'b1 : 1'b0,
                                1'b0,
                                1'b1 };
+
+// FPGA die temperature.  Runs on CLK_114, the clock cfide uses, so the reading
+// reaches the host register without a clock crossing.
+wire [11:0] xadc_temp_raw;
+fpga_temp fpga_temp_inst (
+    .clk(CLK_114),
+    .reset(~reset_out),
+    .temp_raw(xadc_temp_raw)
+);
 
 minimig #(
     .NTSC(1'b0),
@@ -1277,6 +1292,8 @@ cfide #(
 ) mycfide (
     .sysclk(CLK_114),
     .n_reset(reset_out),
+
+    .xadc_temp({4'b0000, xadc_temp_raw}),
 
     .addr(hostaddr),
     .d(hostWR[15:0]),

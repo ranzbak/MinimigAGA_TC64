@@ -52,6 +52,11 @@ entity cfide is
         debugTxD      : out std_logic;
         debugRxD      : in  std_logic;
         menu_button   : in  std_logic                     := '1';
+        -- FPGA die temperature, the XADC's raw 12-bit reading (rtl/soc/fpga_temp.v).
+        -- Defaulted, so a build without the XADC needs no change here; such a
+        -- build also leaves CORE_CAPS_TEMP clear, and the firmware then does
+        -- not read this at all.
+        xadc_temp     : in  std_logic_vector(15 downto 0) := (others => '0');
         scandoubler   : out std_logic;
         audio_ena     : out std_logic;
         audio_clear   : out std_logic;
@@ -139,6 +144,7 @@ architecture rtl of cfide is
     signal i2c_select      : std_logic;
     signal videoscl_select : std_logic;
     signal i2c_int         : std_logic;
+    signal xadc_select     : std_logic;
     signal spirtcpresent   : std_logic;
 
     signal reset : std_logic;
@@ -163,6 +169,7 @@ begin
     audio_q when audio_select = '1' else
     keyboard_q when keyboard_select = '1' else
     amigatohost when amiga_select = '1' else
+    xadc_temp when xadc_select = '1' else
     platformdata;
 
     spirtcpresent <= '1' when havespirtc = true else '0';
@@ -201,6 +208,8 @@ begin
     rtc_select       <= '1' when addr(23) = '1' and addr(7 downto 4) = X"7" else '0';
     i2c_select       <= '1' when addr(23) = '1' and addr(7 downto 4) = X"6" else '0';
     videoscl_select  <= '1' when addr(23) = '1' and addr(7 downto 4) = X"5" else '0';
+    -- FPGA die temperature at 0fffff40; X"4" was the one free window left.
+    xadc_select      <= '1' when addr(23) = '1' and addr(7 downto 4) = X"4" else '0';
 
     -- RTC handling at 0fffff70
 

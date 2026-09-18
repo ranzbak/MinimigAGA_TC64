@@ -111,6 +111,8 @@ add_src $R/rtl/ddr3/ddr3_cdc.v
 add_src $R/rtl/sdram/cpu_enable_cadence.v
 # Stage E2: the unit splitter TG68K.vhd instantiates for both RAM ports.
 add_src $R/rtl/soc/ap040_ram_seq.vhd
+# The XADC die-temperature reader, for the Chipset OSD menu's first line.
+add_src $R/rtl/soc/fpga_temp.v
 
 set ipdir $R/ip/ddr3
 file mkdir $ipdir
