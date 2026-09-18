@@ -17,6 +17,15 @@ not tested".
 |---|---|---|
 | `build/stage_ap040_keyq` | keyboard/OSD fixes only — F12, Caps Lock, the CPU line | built, **loaded on the board now** |
 | `build/stage_ap040_demo1` | the ten chipset fixes below, on top of the same base | built, **not loaded** |
+| `build/stage_ap040_temp` | the die temperature on the Chipset menu, on top of demo1 | built, **not loaded** |
+
+The temperature image is third for a reason: the XADC configuration in it has
+never been read back from a running board, so if the number it shows is absurd,
+that says nothing about the ten chipset fixes underneath it. Test `demo1`
+first, and treat `temp` as a separate question. One firmware binary is correct
+on all three — the temperature line only appears when the core says it decodes
+the register, so on `keyq` and `demo1` that line stays blank instead of
+printing whatever else answers that address.
 
 They are separate on purpose. On 2026-09-13 the only bitstream carrying fix 1.8
 also carried a CPU cache change that made the whole machine misbehave, and the
