@@ -38,7 +38,7 @@ Each of these touches one or two files that are otherwise near-identical between
 - **MiSTer commit:** `74d6ce0a` "gary: decode the custom registers at $DFxxxx, not across all of $C0-$DF (#235)", 2026-08-28.
 - **Their code:** `rtl/gary.v`, `assign sel_reg = cpu_address_in[23:16]==8'b1101_1111;`
 - **Our code:** `rtl/minimig/gary.v:200`, still `cpu_address_in[23:21]==3'b110 ? ~(|t_sel_slow | sel_rtc | sel_ide | sel_gayle) : 1'b0`. Note our `gary.v` also decodes `sel_toccata`, but the Toccata base is autoconfigured into `$E9xxxx`/Zorro space and does not overlap, so the carve-out list is the same problem verbatim.
-- **Status:** **we lack it.** Same defect, same line, no restructuring.
+- **Status: PORTED 2026-09-19**, commit `4cea0bd`. Built into `build/stage_ap040_demo1`; lints clean and meets timing with no new violations, but **not yet run on hardware**. Test: WhichAmiga 1.4 -- the display must survive the DMAC probe. See `findings/aga-chipset/2026-09-19-demo-fix-port.md`.
 - **Risk/effort:** lowest in this document. One line. The four carve-outs become dead but harmless; they can be deleted in the same edit or left. `xbs` at `gary.v:220` and the `dbs` decode should be re-read once to confirm they stay consistent. No timing impact: the new expression is strictly narrower and shallower.
 - **How to test here:** run WhichAmiga 1.4 (it probes `$00DD0080` for an A3000/A4000 DMAC) and confirm the display survives the DMAC probe. Cheaper regression: a CPU-side bench that writes `$FFFF` to `$00DD0080` and then reads back COP1LCH via `$DFF080`'s shadow behaviour, or simply reads `$00DD001C` and checks it does not mirror INTENAR.
 
@@ -48,7 +48,7 @@ Each of these touches one or two files that are otherwise near-identical between
 - **MiSTer commit:** `058288b4` "Fix from TC64: fixed CIA timing bug which more-or-less fixes Risky Woods music and sound effects. (#198)", 2025-07-21. The message credits "MiST-TC64" — i.e. robinsonb5's *MiST* core, not this repository.
 - **Their code:** `rtl/cia_timera.v` and `cia_timerb.v` add `thi_load_latched` / `thi_load_eclk` and change `assign reload = thi_load_eclk | forceload | underflow;`
 - **Our code:** `rtl/minimig/cia_timera.v:76,80` and `cia_timerb.v:74,78` — plain `thi_load`, no eclk gate.
-- **Status:** **we lack it**, despite the commit subject saying "Fix from TC64".
+- **Status: PORTED 2026-09-19**, commit `15d132a`. Built into `build/stage_ap040_demo1`; lints clean and meets timing with no new violations, but **not yet run on hardware**. Test: Risky Woods, in-game music and effects. See `findings/aga-chipset/2026-09-19-demo-fix-port.md`.
 - **Risk/effort:** small and mechanical; both files are otherwise only comment-divergent from MiSTer. Watch that our `cia_timera.v:41` (`else if (thi_load && oneshot)` starts the timer) still sees the *ungated* `thi_load`, as it does in MiSTer — the fix changes only `reload`, not the start condition.
 - **How to test here:** Risky Woods, in-game music and effects. A finer probe is a CIA timer bench in simulation measuring the interval between the first two underflows after a high-byte write.
 
@@ -88,7 +88,7 @@ Each of these touches one or two files that are otherwise near-identical between
 - **MiSTer commit:** `b4787057` "Fixes for Nexus 7 (Andromeda) and Domination (Contraz) demos (#182)", 2025-01-21 (first hunk).
 - **Their code:** `rtl/agnus_blitter.v` — `else if (enable)` replaces `else if (bltbdat_wrtn)`.
 - **Our code:** `rtl/minimig/agnus_blitter.v:411` still `else if (bltbdat_wrtn)`; `bltbdat_wrtn` is generated at `:387-393`.
-- **Status:** **we lack it.** One-line change; `bltbdat_wrtn` becomes unused.
+- **Status: PORTED 2026-09-19**, commit `a9d39cd`. Built into `build/stage_ap040_demo1`; lints clean and meets timing with no new violations, but **not yet run on hardware**. Test: Contraz "Domination", plus a blitter-heavy regression sweep. See `findings/aga-chipset/2026-09-19-demo-fix-port.md`.
 - **Risk/effort:** one line, but it widens when `bltbhold` is written from "on a BLTBDAT write" to "every enabled blitter cycle". Read the surrounding FSM once to satisfy yourself that `shiftbout` is stable on non-B cycles; MiSTer has shipped it since January 2025.
 - **How to test here:** Contraz "Domination" demo. A regression sweep over any blitter-heavy title (Deluxe Paint fills, Workbench window drags) is cheap insurance.
 
@@ -98,7 +98,7 @@ Each of these touches one or two files that are otherwise near-identical between
 - **MiSTer commit:** `b4787057` (second hunk), 2025-01-21.
 - **Their code:** `rtl/denise.v` splits the BPLCON4 latch: `bplxor` is cleared on reset **or** on `hpos[8:0]==hdiwstop[8:0]`, and loaded from `bplcon4[15:8]` only when `display_ena`; `esprm`/`osprm` keep their own always block.
 - **Our code:** `rtl/minimig/denise.v:245-258` — one always block, `bplxor <= bplcon4[15:8]` unconditionally.
-- **Status:** **we lack it.**
+- **Status: PORTED 2026-09-19**, commit `1963b24`. Built into `build/stage_ap040_demo1`; lints clean and meets timing with no new violations, but **not yet run on hardware**. Test: Andromeda "Nexus 7", Shade Cluster. See `findings/aga-chipset/2026-09-19-demo-fix-port.md`.
 - **Risk/effort:** small, and it composes with our own `window`/`blank` divergence in the same file rather than colliding with it — MiSTer's version keys off `hdiwstop` and `display_ena`, both of which exist here with the same meaning. Confirm our `display_ena` is the same signal as theirs before porting (in our `denise.v` it is, and it is already used at `:467` in `t_blank`).
 - **How to test here:** Andromeda "Nexus 7", Shade Cluster part.
 
@@ -120,7 +120,7 @@ Each of these touches one or two files that are otherwise near-identical between
 - **MiSTer commit:** `6fc0d5e1` "Fixes for 'Copper Slave' and 'Hamazing' demos (thx to Robinsonb5) (#206)", 2026-01-01 (first hunk).
 - **Their code:** `rtl/agnus_bitplanedma.v` turns the two wires into regs clocked on `clk7_en && hpos[0]`.
 - **Our code:** `rtl/minimig/agnus_bitplanedma.v:68-69, 441-442` — still `wire`/`assign`.
-- **Status:** **we lack it.**
+- **Status: PORTED 2026-09-19**, commit `009b4f0`. Built into `build/stage_ap040_demo1`; lints clean and meets timing with no new violations, but **not yet run on hardware**. Test: RAMJAM "Copperslave". See `findings/aga-chipset/2026-09-19-demo-fix-port.md`.
 - **Risk/effort:** ~8 lines, mechanical. It adds one colour clock of latency to modulo application, which is the intent. It interacts with nothing else in the file.
 - **How to test here:** RAMJAM "Copperslave".
 
@@ -130,7 +130,7 @@ Each of these touches one or two files that are otherwise near-identical between
 - **MiSTer commit:** `6fc0d5e1` (second hunk), 2026-01-01.
 - **Their code:** `rtl/denise.v` — each of the eight `assign bpldata[n] = ...` gains `window_ena &&`.
 - **Our code:** `rtl/minimig/denise.v:335-342` — unmasked.
-- **Status:** **we lack it.**
+- **Status: PORTED 2026-09-19**, commit `eacfb4b`. Built into `build/stage_ap040_demo1`; lints clean and meets timing with no new violations, but **not yet run on hardware**. Test: Desire "Hamazing", Hambarger scene, then border-blank titles. See `findings/aga-chipset/2026-09-19-demo-fix-port.md`.
 - **Risk/effort:** eight lines, and `window_ena` already exists here at `denise.v:309-312`. **Caveat specific to our fork:** our `window` generation at `denise.v:299-306` is *deliberately different* from MiSTer's — robinsonb5 reversed the HDIWSTRT/HDIWSTOP comparison order here so that `HDIWSTART==HDIWSTOP` blanks correctly in `brdrblnk` mode. Masking `bpldata` with `window_ena` therefore couples this fix to a signal whose edge cases we changed on purpose. Port with that in mind, and re-check border-blank titles.
 - **How to test here:** Desire "Hamazing", Hambarger scene; then a border-blank regression (whatever exercised `5630811` / `e3b8195` / `6e45b6f` in our own history).
 
@@ -140,7 +140,7 @@ Each of these touches one or two files that are otherwise near-identical between
 - **MiSTer commit:** `099c5a42` "Fix for Crazy Sexy Cool demo by Essence (#202)", 2025-11-28 ("ported from MiST fix made by Robinsonb5").
 - **Their code:** `rtl/denise.v` — `wire [2:1] nplayfield_masked = nplayfield & {window_ena,window_ena};` fed to `denise_spritepriority`.
 - **Our code:** `rtl/minimig/denise.v:385` — `.nplayfield(nplayfield)` on the `denise_spritepriority` instance (the other `nplayfield` reference here, `denise.v:352`, is the `denise_playfields` instance where `nplayfield` is an *output* — it is not a second site to change, and MiSTer left it alone too).
-- **Status:** **we lack it.**
+- **Status: PORTED 2026-09-19**, commit `eacfb4b`. Built into `build/stage_ap040_demo1`; lints clean and meets timing with no new violations, but **not yet run on hardware**. Test: Essence "Crazy Sexy Cool", then border-blank titles. See `findings/aga-chipset/2026-09-19-demo-fix-port.md`.
 - **Risk/effort:** two lines. Same `window_ena` caveat as 1.10.
 - **How to test here:** Essence "Crazy Sexy Cool".
 
@@ -160,7 +160,7 @@ Each of these touches one or two files that are otherwise near-identical between
 - **MiSTer commit:** `06f30afb` "agnus: VHPOSR reads one colour clock high (#234)", 2026-08-28. Measured against the **vAmigaTS VPOS suite** on A500 ECS PAL: before, 191 of 304 probe rows read +1 CCK and 76 read 0; after, 268 of 304 read 0.
 - **Their code:** `rtl/agnus_beamcounter.v`, combinational readback only: `data_out[15:0] = {vpos[7:0], |hpos[8:1] ? hpos[8:1] - 8'd1 : ersy ? 8'd0 : htotal[8:1]};` — the wrap case is gated on `ersy` because `hpos[8:1]==0` means "wrap" when free-running and "zero" when a genlock ERSY freeze holds the counter.
 - **Our code:** `rtl/minimig/agnus_beamcounter.v:130` — `{vpos[7:0],hpos[8:1]}`. We do have `ersy` (`:61,169-171`) and `htotal` (`:250`), so both operands exist.
-- **Status:** **we lack it.**
+- **Status: PORTED 2026-09-19**, commit `a188d95`. Built into `build/stage_ap040_demo1`; lints clean and meets timing with no new violations, but **not yet run on hardware**. Test: the vAmigaTS VPOS suite. See `findings/aga-chipset/2026-09-19-demo-fix-port.md`.
 - **Risk/effort:** one expression, in an `always @(*)` block that cannot move the raster (MiSTer's commit message makes exactly this argument). Low risk. See 2.2 for why I would port this one *before* 1.14 and evaluate them separately.
 - **How to test here:** the vAmigaTS VPOS suite, which is what MiSTer scored against — this is the most directly reproducible test in the whole document. The commit notes 36 copper-WAIT probe rows carry a second, independent `-4`/`-11` error that this change does not address, so do not expect a clean sweep.
 
@@ -170,7 +170,7 @@ Each of these touches one or two files that are otherwise near-identical between
 - **MiSTer commits:** `2764b513` "agnus: delay vertical beam readback by one colour clock" (2026-09-07) and its merge `002eef2c` (2026-09-08). WinUAE `683311be` cited as the reference.
 - **Their code:** `rtl/agnus_beamcounter.v` — two `clk7_en` registers `vpos_d1`/`vpos_rb`; `vpos_rb` replaces `vpos` in **both** the VPOSR and VHPOSR readbacks and nowhere else.
 - **Our code:** `rtl/minimig/agnus_beamcounter.v:128,130` read `vpos` directly.
-- **Status:** **we lack it.**
+- **Status: PORTED 2026-09-19**, commit `a188d95`. Built into `build/stage_ap040_demo1`; lints clean and meets timing with no new violations, but **not yet run on hardware**. Test: Hybris, cannon/turret sprite jitter. See `findings/aga-chipset/2026-09-19-demo-fix-port.md`.
 - **Risk/effort:** ~11 lines, self-contained, and by construction affects only the two readback expressions. Two 11-bit registers is a trivial area cost.
 - **How to test here:** Hybris, cannon/turret sprite vertical jitter. Note MiSTer's own caveat: their CPU-polling reproduction has limits and hardware acceptance was recorded separately, so a negative result on our hardware is not strong evidence the port is wrong.
 
