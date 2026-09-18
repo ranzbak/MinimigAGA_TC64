@@ -90,6 +90,7 @@ ciaa_ps2keyboard  kbd1
   .keydat(keydat[7:0]),
   .keystrobe(keystrobe_ps2),
   .keyack(keyack),
+  .keyboard_disabled(keyboard_disabled),
   .osd_ctrl(osd_ctrl_ps2),
   .osd_strobe(osd_ctrl_strobe_ps2),
   ._lmb(_lmb),

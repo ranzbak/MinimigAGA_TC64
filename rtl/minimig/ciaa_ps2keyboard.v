@@ -65,6 +65,7 @@ module ciaa_ps2keyboard
   output [7:0] keydat, //keyboard data out
   output reg keystrobe, //keyboard data out strobe
   input  keyack, //keyboard data out acknowledge
+  input  keyboard_disabled, //OSD is open, the Amiga sees no keystrokes
   output [7:0] osd_ctrl, //on-screen-display control
   output osd_strobe,
   output _lmb, //emulated left mouse button
@@ -349,11 +350,18 @@ always @(posedge clk)
   end
 
 //toggle capslock status on capslock downstroke event
+//
+//This register is the Amiga keyboard's caps state, and the Amiga only learns
+//of a change from the keycode we send it -- which amiga_keyboard.v drops while
+//keyboard_disabled is set.  Toggling anyway when the OSD is open would leave
+//this register and the Amiga one apart, and every later press would then do
+//the opposite of what the key says (and the LED, driven from capslock too,
+//would lie).  So while the OSD has the keyboard, the key does nothing at all.
 always @(posedge clk)
   if (clk7_en) begin
     if (reset)
       capslock <= 1'd0;
-    else if (valid && !keydat[7] && caps && !(keyequal && (keydat[7]==keydat2[7])))
+    else if (valid && !keydat[7] && caps && !keyboard_disabled && !(keyequal && (keydat[7]==keydat2[7])))
       capslock <= ~capslock;
   end
 
