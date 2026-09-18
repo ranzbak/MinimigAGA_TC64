@@ -122,12 +122,35 @@ module agnus_beamcounter
 
     //--------------------------------------------------------------------------------------
 
+    // The vertical beam READBACK lags the counter by one colour clock on real
+    // Agnus.  Reporting vpos directly makes the line number change a colour
+    // clock early, so a program polling the beam across the straddle reads a
+    // torn value -- Hybris polls exactly there and its cannon/turret sprite
+    // jitters by a pixel.  These two registers exist only for the two
+    // readbacks below; the raster itself still runs off vpos.
+    // MiSTer 2764b513 (WinUAE 683311be as reference);
+    // findings/aga-chipset/mister-fixes.md 1.14.
+    reg [10:0] vpos_d1;
+    reg [10:0] vpos_rb;
+    always @(posedge clk)
+        if (clk7_en) begin
+            vpos_d1 <= #1 vpos;
+            vpos_rb <= #1 vpos_d1;
+        end
+
     //beamcounter read registers VPOSR and VHPOSR
     always @(*)
     if (reg_address_in[8:1]==VPOSR[8:1] || reg_address_in[8:1]==VPOSW[8:1])
-        data_out[15:0] = {long_frame,1'b0,ecs,ntsc,2'b00,{2{aga}},long_line,4'b0000,vpos[10:8]};
+        data_out[15:0] = {long_frame,1'b0,ecs,ntsc,2'b00,{2{aga}},long_line,4'b0000,vpos_rb[10:8]};
     else if (reg_address_in[8:1]==VHPOSR[8:1] || reg_address_in[8:1]==VHPOSW[8:1])
-        data_out[15:0] = {vpos[7:0],hpos[8:1]};
+        // The horizontal half reads one colour clock high as well: the
+        // internal hpos runs ahead of what Agnus reports.  hpos[8:1]==0 means
+        // "wrapped" while free-running, so it reports htotal -- but under a
+        // genlock ERSY freeze the counter really is being held at zero, and
+        // then zero is the honest answer.
+        // MiSTer 06f30afb (#234), measured on the vAmigaTS VPOS suite;
+        // findings/aga-chipset/mister-fixes.md 1.13.
+        data_out[15:0] = {vpos_rb[7:0], |hpos[8:1] ? hpos[8:1] - 8'd1 : ersy ? 8'd0 : htotal[8:1]};
     else
         data_out[15:0] = 0;
 
