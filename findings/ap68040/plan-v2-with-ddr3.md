@@ -2057,6 +2057,38 @@ fault or several, or which build(s) they were seen on.  Extra questions:
   latched down/up with the LED state), so it is a natural first suspect for
   a key-up/down or LED-command handling bug rather than a lost byte.
 
+**Two of these are fixed, 2026-09-19** (build `stage_ap040_keyq`, awaiting
+Paul's hardware test).  They were separate faults, as suspected:
+
+*F12 stops opening the OSD.*  `OSD_CMD_READ` answers a LEVEL, and the firmware
+called a change of that level an event, so a key that went down and up between
+two polls was never seen at all.  A missed key-UP is the expensive one:
+`HandleUI` keeps `ctrl`/`lalt`/`lshift` in statics, and a modifier stuck down
+sends F12 to the debug-mode branch instead of the OSD, permanently -- while
+every other key still works, because those reach the Amiga by a different path.
+That is exactly the reported shape.  `userio_osd.v` now queues every change of
+`osd_ctrl`, sixteen deep, drained by command 0x98; `OsdGetCtrl` hands them to
+`HandleUI` one per call.  A full queue drops the NEWEST event and says so, so
+the firmware clears its modifiers rather than keeping a wrong one; dropping the
+oldest would lose a key-up, which is the failure being removed.  The level read
+stays, because the auto-repeat asks whether a key is HELD, which is a level and
+not an event -- and `main.c`'s boot-time "is F1 held" now asks for the level
+outright (`OsdGetKeyLevel`).
+
+*Caps Lock inverted.*  `capslock` in `ciaa_ps2keyboard.v` is the Amiga
+keyboard's caps state, and the Amiga only learns of a change from the keycode
+we send it -- which `amiga_keyboard.v` drops while `keyboard_disabled` is set,
+i.e. while the OSD has the keyboard.  The toggle did not check that, so a Caps
+press with the OSD open moved our register and not the Amiga's, and from then
+on every press did the opposite of what the key said (and the LED, driven from
+the same register, lied).  The toggle is now gated on `keyboard_disabled`: with
+the OSD open the key does nothing at all, which is what the rest of the
+keyboard already did.
+
+Still open from this entry: the keyboard stopping altogether.  The queue makes
+one of its shapes impossible, but nothing here explains a total stop, so treat
+it as unfixed until Paul sees a run without one.
+
 ### Show the FPGA temperature on the first line of the Chipset OSD menu
 
 Asked for by Paul, 2026-09-18.  The XC7A100T has an on-die temperature sensor
@@ -2075,9 +2107,15 @@ What it needs, smallest first:
 
 Two traps worth writing down before anyone starts:
 - `userio_osd.v`'s SPI byte counter saturates at 4 (`if (rx && (dat_cnt != 4))`),
-  which is why `OSD_CMD_VERSION`'s sixth byte (CORE_CAPS) can never be read and
-  the OSD still says "020 alpha" -- see the CPU-line item.  A temperature read
-  must not assume it can use byte 5 either.
+  which is why `OSD_CMD_VERSION`'s sixth byte (CORE_CAPS) could never be read
+  and the OSD said "020 alpha" -- the firmware read the magic byte twice, took
+  0xA4 for the capability byte, found no AP040 bit in it and fell back to the
+  old CPU menu, with the whole `core_caps` mechanism working correctly on both
+  sides of a value that never arrived.  **Fixed 2026-09-19:** the saturation
+  stays, because the memory-write path depends on it (a stream of bytes after
+  the address keeps triggering at `dat_cnt == 4`), and the version reply got
+  its own counter instead.  A temperature read should do the same rather than
+  widen `dat_cnt`.
 - The OSD firmware polls over the same SPI link the disk code uses; a
   temperature poll on every menu redraw would add traffic to a link that
   already loses OSD key events (see the keyboard item).  Poll it on a timer.

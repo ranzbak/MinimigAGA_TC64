@@ -35,6 +35,7 @@ This is the Minimig OSD (on-screen-display) handler.
 
 //#include "AT91SAM7S256.h"
 #include "osd.h"
+#include "fpga.h"
 #include "hardware.h"
 #include "stdio.h"
 
@@ -932,19 +933,78 @@ void ConfigAutofire(unsigned char autofire)
 }
 
 
+unsigned char osd_keyq_lost = 0;
+
+// Events the core has handed over but HandleUI has not been given yet.  It
+// acts on one event per call, so they go out one at a time.  Fifteen is what
+// the core's queue holds, so one drain can never overrun this.
+static unsigned char kq_buf[15];
+static unsigned char kq_head = 0;
+static unsigned char kq_tail = 0;
+
+// The key the core is holding right now.  A level, not an event.
+unsigned char OsdGetKeyLevel(void)
+{
+    unsigned char c;
+    EnableOsd();
+    c = SPI(OSD_CMD_READ);
+    DisableOsd();
+    return c;
+}
+
+// The next key EVENT, or 0 if none is waiting.
+//
+// OSD_CMD_READ answers a level, so this used to be "the level changed since
+// the last poll" -- and a key that went down and up between two polls was
+// never seen at all.  A missed key-UP is the expensive one: HandleUI keeps
+// ctrl/lalt/lshift in statics, and a modifier stuck down makes F12 toggle
+// debug mode instead of opening the OSD, permanently, while every other key
+// still works because those reach the Amiga by another path.  The core now
+// queues every change; `level' is only the fallback for a core that has no
+// queue, where the old behaviour is all there is.
+static unsigned char OsdNextEvent(unsigned char level)
+{
+    static unsigned char prev = 0;
+    unsigned char i, n, st;
+
+    if (!(core_caps & CORE_CAPS_KEYQ))
+    {
+        unsigned char c = (level != prev) ? level : 0;
+        prev = level;
+        return c;
+    }
+
+    if (kq_head == kq_tail)
+    {
+        kq_head = 0;
+        kq_tail = 0;
+        EnableOsd();
+        SPI(OSD_CMD_KEYQ);
+        st = SPI(0xff);             // {overflow, 0, 0, 0, count[3:0]}
+        n = st & 0x0f;
+        for (i = 0; i < n; i++)
+            kq_buf[i] = SPI(0xff);
+        DisableOsd();
+        kq_tail = n;
+        if (st & 0x80)
+            osd_keyq_lost = 1;      // events were dropped, see HandleUI
+    }
+
+    return (kq_head != kq_tail) ? kq_buf[kq_head++] : 0;
+}
+
 // get key status
 unsigned char OsdGetCtrl(void)
 {
-    static unsigned char c2;
     static unsigned long delay=0;
     static unsigned long repeat=0;
     static unsigned char repeat2=0;
     unsigned char c1,c;
 
     // send command and get current ctrl status
-    EnableOsd();
-    c1 = SPI(OSD_CMD_READ);
-    DisableOsd();
+    c1 = OsdGetKeyLevel();
+
+    c = OsdNextEvent(c1);
 
     // add front menu button
     if (!CheckButton())
@@ -952,17 +1012,14 @@ unsigned char OsdGetCtrl(void)
     else if (CheckTimer(delay))
     {
         c1 = KEY_MENU;
+        c  = KEY_MENU;
         delay = GetTimer(-1);
     }
 
-    // generate normal "key-pressed" event
-    c = 0;
-    if (c1 != c2)
-       c = c1;
-
-    c2 = c1;
-
-    // generate repeat "key-pressed" events
+    // generate repeat "key-pressed" events.  This asks whether a key is HELD,
+    // which is what the level is for, so it keeps reading c1.  It only fills
+    // in when there is no real event to deliver: with a queue there can be one
+    // waiting, and overwriting it here would drop it.
     if (c1 & KEY_UPSTROKE)
     {
         repeat = GetTimer(REPEATDELAY);
@@ -970,13 +1027,13 @@ unsigned char OsdGetCtrl(void)
     else if (CheckTimer(repeat))
     {
         repeat = GetTimer(REPEATRATE);
-        if (c1 == KEY_UP || c1 == KEY_DOWN)
+        if (!c && (c1 == KEY_UP || c1 == KEY_DOWN))
            c = c1;
         repeat2++;
         if (repeat2 == 2)
         {
             repeat2 = 0;
-            if (c1 == KEY_PGUP || c1 == KEY_PGDN || GetASCIIKey(c1))
+            if (!c && (c1 == KEY_PGUP || c1 == KEY_PGDN || GetASCIIKey(c1)))
                 c = c1;
         }
     }

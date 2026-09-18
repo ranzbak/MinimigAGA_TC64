@@ -611,14 +611,36 @@ assign host_adr  = mem_adr[23:0];
 // capabilities.  An older core answers MINION_VER to both, so a firmware that
 // does not find 0xA4 in byte 4 knows there is nothing here to read and must
 // fall back to its old behaviour -- which is why the magic byte exists at all.
+// dat_cnt STOPS at 4 -- the memory-write path relies on that, it is how a
+// stream of bytes after the address keeps triggering at "dat_cnt == 4" -- so
+// byte 5 of this reply could not be told apart from byte 4 and CORE_CAPS was
+// unreachable: the firmware read the magic twice, took 0xA4 for the capability
+// byte, found no AP040 bit in it and fell back to the old CPU menu, which is
+// the "020 alpha" the OSD showed.  This counter belongs to the version reply
+// alone and simply keeps counting.
+// Bit 4 of the capability byte is this module's own to answer: the key queue
+// below lives here, so this is what knows whether it is there.  Bits 0-3 come
+// in from the top, which is what knows which CPU was built.
+localparam [7:0] CAPS_KEYQ = 8'h10;
+
+reg  [2:0] ver_cnt = 3'h0;
+always @ (posedge clk) begin
+  if (clk7_en) begin
+    if (rx && cmd)
+      ver_cnt <= #1 3'h0;
+    else if (rx && (ver_cnt != 3'h7))
+      ver_cnt <= #1 ver_cnt + 3'h1;
+  end
+end
+
 reg  [8-1:0] rtl_ver;
 always @ (*) begin
-  case (dat_cnt[2:0])
+  case (ver_cnt)
     3'd0    : rtl_ver = BETA_FLAG;
     3'd1    : rtl_ver = MAJOR_VER;
     3'd2    : rtl_ver = MINOR_VER;
     3'd4    : rtl_ver = 8'hA4;
-    3'd5    : rtl_ver = CORE_CAPS;
+    3'd5    : rtl_ver = CORE_CAPS | CAPS_KEYQ;
     default : rtl_ver = MINION_VER;
   endcase
 end
@@ -648,7 +670,13 @@ reg        kq_ovf  = 1'b0;
 reg  [7:0] osd_ctrl_d = 8'd0;
 wire [3:0] kq_count = kq_wptr - kq_rptr;
 wire       kq_full  = (kq_count == 4'd15);
+`ifdef KEYQ_MUTANT
+// sim/osd_keyq's teeth check: nothing is ever queued.  If the bench still
+// passes with this defined, it is not testing what it claims to.
+wire       kq_event = 1'b0;
+`else
 wire       kq_event = (osd_ctrl != osd_ctrl_d);
+`endif
 
 always @ (posedge clk) begin
   if (clk7_en) begin

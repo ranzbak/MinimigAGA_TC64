@@ -43,6 +43,10 @@
 #define OSD_CMD_OSD_WR 0x0c
 // #define OSD_CMD_WR        0x1c
 #define OSD_CMD_VERSION 0x88
+// Drain the core's key-event queue.  Data byte 0 is {overflow,3'b000,count},
+// every later byte pops one event, oldest first.  Only present when
+// CORE_CAPS_KEYQ is set; see userio_osd.v.
+#define OSD_CMD_KEYQ 0x98
 
 #define DISABLE_KEYBOARD 0x02 // disable keyboard while OSD is active
 
@@ -127,6 +131,13 @@ void ConfigFloppy(unsigned char drives, unsigned char speed);
 void ConfigIDE(unsigned char gayle, unsigned char master, unsigned char slave);
 void ConfigAutofire(unsigned char autofire);
 unsigned char OsdGetCtrl(void);
+// The key the core is holding right now, not an event: for "was F1 held at
+// boot", where the answer is a state and not a change.
+unsigned char OsdGetKeyLevel(void);
+// Set when the core's key queue overflowed and events were lost.  HandleUI
+// clears it, and forgets which modifiers it thought were down: after a drop
+// there is no telling, and a modifier believed held is what breaks F12.
+extern unsigned char osd_keyq_lost;
 void OsdDisableMenuButton(unsigned char disable);
 unsigned char GetASCIIKey(unsigned char c);
 void OSD_PrintText(unsigned char line, char *text, unsigned long start, unsigned long width, unsigned long offset, unsigned char invert);

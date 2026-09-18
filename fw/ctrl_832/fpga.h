@@ -26,6 +26,7 @@ extern unsigned char core_caps;
 #define CORE_CAPS_AP040_SEL  0x02   // ... and it can be selected (dual build)
 #define CORE_CAPS_FPU        0x04
 #define CORE_CAPS_MMU        0x08
+#define CORE_CAPS_KEYQ       0x10   // the OSD has a key-event queue (OSD_CMD_KEYQ)
 
 // True when the core has a 68040 that cannot be switched away from: the CPU
 // menu line is then a statement of fact, not a choice.

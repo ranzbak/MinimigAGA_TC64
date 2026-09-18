@@ -221,6 +221,18 @@ void HandleUI(void)
     // get user control codes
     c = OsdGetCtrl();
 
+    // The core's key queue overflowed, so an event was dropped and one of them
+    // may have been a key-up.  There is no telling which, and a modifier we
+    // wrongly believe is held is exactly what makes F12 stop opening the OSD,
+    // so let all three go: the worst that costs is one missed chord.
+    if (osd_keyq_lost)
+    {
+        osd_keyq_lost = 0;
+        ctrl = false;
+        lalt = false;
+        lshift = false;
+    }
+
     // decode and set events
     menu = false;
     select = false;

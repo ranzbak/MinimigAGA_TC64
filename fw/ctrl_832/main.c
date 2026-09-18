@@ -164,7 +164,10 @@ int ColdBoot()
 
 			fpga_init();	// Display splashscreen
 
-			key = OsdGetCtrl();
+			// Which function key is being HELD, not which one changed:
+			// OsdGetCtrl now answers with queued events, and the press
+			// that happened before the splash screen is not one.
+			key = OsdGetKeyLevel();
 			sprintf(s,"Got key: %x\n",key);
 			BootPrint(s);
 			if ((key == KEY_F1) || (key == KEY_F3))
