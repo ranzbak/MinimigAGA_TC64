@@ -1305,7 +1305,19 @@ void HandleUI(void)
         OsdWrite(5, "", 0,0);
         OsdWrite(6, "", 0,0);
 #endif
-        OsdWrite(0, "", 0, 0);
+        // The die temperature, on the first line, where Paul asked for it.  The
+        // XADC transfer function is T = raw * 503.975 / 4096 - 273.15; whole
+        // degrees is as much as this line can usefully say.  Only a core that
+        // decodes the register says so in its capabilities -- on any other one
+        // that address reads the platform register, which would print a
+        // confident and entirely fictional number.
+        if (core_caps & CORE_CAPS_TEMP) {
+            int t = (int)((((unsigned long)(FPGA_TEMP_RAW & 0x0fff)) * 504) >> 12) - 273;
+            sprintf(s, "        FPGA : %d C", t);
+            OsdWrite(0, s, 0, 1);
+        } else {
+            OsdWrite(0, "", 0, 0);
+        }
         strcpy(s, "         CPU : ");
         if (CORE_CPU_FIXED_040()) {
             strcat(s, "68040");

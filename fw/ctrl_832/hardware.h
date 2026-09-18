@@ -42,6 +42,11 @@
 #define RS232(x) (*(volatile unsigned char *)0x0ffffff3)=x
 
 #define TIMER (*(volatile unsigned short *)0x0fffffd2)
+
+// FPGA die temperature: the XADC's raw 12-bit reading, see rtl/soc/fpga_temp.v.
+// Only decoded when CORE_CAPS_TEMP is set -- on a core without it this address
+// reads the platform register instead, so check the capability before using it.
+#define FPGA_TEMP_RAW (*(volatile unsigned short *)0x0fffff40)
 #define SPIN {int v=TIMER;}	// Waste a few cycles to let the FPGA catch up
 
 #if 1
