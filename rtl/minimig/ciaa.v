@@ -91,6 +91,7 @@ module ciaa
   output   [7:0] data_out,    // bus data out
   input   tick,        // tick (counter input for TOD timer)
   input   eclk,          // eclk (counter input for timer A/B)
+  input   cnt_in,        // CNT pin (counter input for timer A/B), idle high
   output   irq,           // interrupt request out
   input  [7:2] porta_in,   // porta in
   output   [3:0] porta_out,  // porta out
@@ -316,6 +317,7 @@ cia_timera tmra
   .data_in(data_in),
   .data_out(tmra_out),
   .eclk(eclk),
+  .cnt(cnt_in),
   .spmode(spmode),
   .tmra_ovf(tmra_ovf),
   .irq(ta)
@@ -336,6 +338,7 @@ cia_timerb tmrb
   .data_in(data_in),
   .data_out(tmrb_out),
   .eclk(eclk),
+  .cnt(cnt_in),
   .tmra_ovf(tmra_ovf),
   .irq(tb)
 );

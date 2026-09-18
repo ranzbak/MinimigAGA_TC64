@@ -872,6 +872,10 @@ ciaa CIAA1
   .data_out(cia_data_out[7:0]),
   .tick(_vsync_i),
   .eclk(eclk[8]),
+  // CNT is not modelled: CIA-A's is KCLK and CIA-B's a parallel-port
+  // handshake, neither of which exists here.  Idle high, so selecting it
+  // as a timer count source correctly counts nothing.
+  .cnt_in(1'b1),
   .irq(int2),
   .porta_in({_fire1,_fire0,_ready,_track0,_wprot,_change}),
   .porta_out({_fire1_dat,_fire0_dat,_led,ovl}),
@@ -895,6 +899,10 @@ ciab CIAB1
   .data_out(cia_data_out[15:8]),
   .tick(_hsync_i),
   .eclk(eclk[8]),
+  // CNT is not modelled: CIA-A's is KCLK and CIA-B's a parallel-port
+  // handshake, neither of which exists here.  Idle high, so selecting it
+  // as a timer count source correctly counts nothing.
+  .cnt_in(1'b1),
   .irq(int6),
   .flag(index),
   .porta_in({1'b0,cts,1'b0,_joy3[4],1'b1,_joy4[4]}),

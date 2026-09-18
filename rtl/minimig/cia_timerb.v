@@ -10,6 +10,7 @@ module cia_timerb
   input   [7:0] data_in,      // bus data in
   output   [7:0] data_out,      // bus data out
   input  eclk,            // count enable
+  input  cnt,            // CNT pin, idle high
   input  tmra_ovf,        // timer A underflow
   output  irq            // intterupt out
 );
@@ -27,8 +28,27 @@ wire  zero;          // timer counter is zero
 wire  underflow;        // timer is going to underflow
 wire  count;          // count enable signal
 
+// CRB bits 6:5 (INMODE) select the count source, and all four modes are
+// distinct.  Only bit 6 was decoded, so 00 and 01 both meant PHI2 and 10 and 11
+// both meant cascade -- the CNT modes did not exist.
+//
+// CNT is tied high here (see cia_timera.v), so mode 01 correctly counts
+// nothing, and mode 11 -- cascade gated by CNT high -- collapses to plain
+// cascade, exactly what mode 10 does and what this code did before.
+(* ASYNC_REG = "TRUE" *) reg [2:0] cnt_sync = 3'b111;
+always @(posedge clk)
+  if (clk7_en) begin
+    if (reset)
+      cnt_sync <= 3'b111;
+    else
+      cnt_sync <= {cnt_sync[1:0], cnt};
+  end
+
+wire cnt_rise = cnt_sync[1] & ~cnt_sync[2];
+
 // Timer B count signal source
-assign count = tmcr[6] ? tmra_ovf : eclk;
+assign count = tmcr[6] ? (tmcr[5] ? (tmra_ovf & cnt_sync[1]) : tmra_ovf)
+                       : (tmcr[5] ? cnt_rise                 : eclk);
 
 // writing timer control register
 always @(posedge clk)

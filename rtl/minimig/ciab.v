@@ -14,6 +14,7 @@ module ciab
   output   [7:0] data_out,    // bus data out
   input   tick,        // tick (counter input for TOD timer)
   input   eclk,           // eclk (counter input for timer A/B)
+  input   cnt_in,        // CNT pin (counter input for timer A/B), idle high
   input   flag,         // flag (set FLG bit in ICR register)
   output   irq,           // interrupt request out
   input  [5:0] porta_in,   // input port
@@ -204,6 +205,7 @@ cia_timera tmra
   .data_in(data_in),
   .data_out(tmra_out),
   .eclk(eclk),
+  .cnt(cnt_in),
   .tmra_ovf(tmra_ovf),
   .irq(ta)
 );
@@ -223,6 +225,7 @@ cia_timerb tmrb
   .data_in(data_in),
   .data_out(tmrb_out),
   .eclk(eclk),
+  .cnt(cnt_in),
   .tmra_ovf(tmra_ovf),
   .irq(tb)
 );
