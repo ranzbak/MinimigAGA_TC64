@@ -71,6 +71,36 @@ void i2c_write_multi(unsigned char *byte, unsigned char size)
   }
 }
 
+// Read one register of an I2C device: write the register pointer, repeated
+// start, read one byte with a NAK.  The read result appears in the master's
+// read buffer and is fetched from HW_I2C_DATA (rtl/host/i2c_master_mmio.sv).
+unsigned char i2c_read_reg(unsigned char dev, unsigned char reg)
+{
+  unsigned int guard;
+
+  i2c_set_address(dev);
+  i2c_write(reg);               // the core starts the transaction itself
+  // Read one byte WITH the stop: the stop has to ride on the read command,
+  // a stand-alone CMD_I2C_STOP is ignored by the master core.  Without it the
+  // bus stays held and everything after this fails.
+  I2C(HW_I2C_DATA) = (CMD_I2C_READ | CMD_I2C_LAST_BYTE) << 8 | 0xaaaa0000;
+
+  // NEVER SPIN FOR EVER: this runs in the OSD's main loop, and a device that
+  // does not answer (no monitor, or the RTL's own I2C master mid-burst on the
+  // same pins) must not take the firmware down with it.
+  guard = 200000;
+  while ((I2C(HW_I2C_STATUS) & STATUS_I2C_BUSY) && --guard)
+    ;
+  if (!guard)
+    return 0xff;
+  guard = 200000;
+  while ((I2C(HW_I2C_STATUS) & STATUS_I2C_RBUF_EMPTY) && --guard)
+    ;
+  if (!guard)
+    return 0xff;
+  return (unsigned char)(I2C(HW_I2C_DATA) & 0xff);
+}
+
 // Read status
 unsigned int i2c_read_status()
 {

@@ -63,6 +63,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "version.h"
 
 #include <stdio.h>
+#include "adv7511.h"
+
+static unsigned long adv_timer = 0;
 
 const char version[] = MM_VERSTRING;
 
@@ -257,6 +260,7 @@ __geta4 int main(void)
 //	cd_setcuefile(&cd,"EXODUS_THELASTWAR.CUE");
 //	cd_playaudio(&cd,4);
 
+    adv_timer = GetTimer(250);
     while(1)
     {
 		drivesounds_fill();
@@ -269,6 +273,21 @@ __geta4 int main(void)
 //		cd_continueaudio(&cd);
         HandleFpga();
         HandleUI();
+		// The HDMI transmitter forgets its configuration when the monitor goes
+		// away: Hot Plug Detect low RESETS registers 0x00-0x93, 0x94-0x97,
+		// 0xAF-0xCC and the whole packet memory (Programming Guide, Table 97).
+		// So the picture cannot come back by itself -- something has to write
+		// the configuration again once HPD is high, which until now was a
+		// person pressing LSHIFT + keypad '.'.  adv7511_poll() does it.
+		//
+		// The first attempt at this (23:01) wedged the I2C bus and took the
+		// manual re-init down with it: a read command needs its STOP to ride
+		// on the command itself, and every wait here is now bounded.
+		if (CheckTimer(adv_timer))
+		{
+			adv_timer = GetTimer(250);
+			adv7511_poll();
+		}
 		if(ErrorMask)
 		{
 			ShowError();

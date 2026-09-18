@@ -37,7 +37,10 @@ unsigned char adv7511_init_main_vals[] = {
     0xDE, 0x9C, // ADI required write
     0xE4, 0x9C, // ADI required write
     0x94, 0xC0, // Enable HDP interrupt
-    0x96, 0x00, // Clear HPD interrupt flag
+    // Writing a 1 CLEARS an interrupt flag (Programming Guide 4.11); 0x00
+    // cleared nothing and left the interrupt pin stuck active.  0xC0 clears
+    // both HPD (bit 7) and Monitor Sense (bit 6).
+    0x96, 0xC0, // Clear HPD + Monitor Sense interrupt flags
     0xFA, 0x00, // Nbr of times to search for good phase
     // Set the video clock delay
     0xBA, 0x00, // Configure clock delay -1.2ns
@@ -118,6 +121,69 @@ void adv_send_config(unsigned char i2c_addr, char *cfg_buf)
  * The function initializes the ADV7511 device by setting its address and writing configuration values
  * to its registers using I2C communication.
  */
+// THE DISPLAY COMING BACK.  Switching a monitor off, or unplugging HDMI, takes
+// Hot Plug Detect low; switching it on again takes it high, and the part must
+// be configured again -- until now by hand, with LSHIFT + keypad '.'.
+//
+// Polled rather than interrupt-driven: the interrupt pin does reach the FPGA
+// (dv_int, and rtl/openaars/adv7511/i2c_sender.vhd re-sends its table on a
+// change), but that path does not recover the display on this board, and the
+// firmware has to read 0x42 anyway -- an edge alone does not say whether the
+// monitor arrived or left (Programming Guide 4.11.2: the interrupt fires on
+// both transitions).
+//
+//   0x42[6] HPD state, 0x42[5] Monitor Sense state   (read only)
+//   0x96[7] HPD interrupt, 0x96[6] Monitor Sense interrupt -- WRITE 1 TO CLEAR
+//
+// Call it a few times a second from the main loop.  It re-initialises only on
+// a low->high transition of HPD, so a monitor that is simply absent costs one
+// I2C read per call and nothing else.
+static unsigned char adv_hpd_was = 0;
+
+unsigned char adv7511_status(void)
+{
+    return i2c_read_reg(ADV_CTRL_ADDR, 0x42);
+}
+
+unsigned char adv7511_int_flags(void)
+{
+    return i2c_read_reg(ADV_CTRL_ADDR, 0x96);
+}
+
+int adv7511_poll(void)
+{
+    unsigned char st  = adv7511_status();
+    unsigned char hpd;
+    int reinit = 0;
+
+    // 0xff is i2c_read_reg's "no answer": the device did not respond, or the
+    // bus is held by the RTL's own master on the same pins.  Do nothing --
+    // never re-initialise on a failed read, and never touch the bus again this
+    // pass.  (0xff is not a plausible value here either: 0x42 has six reserved
+    // bits that read 0.)
+    if (st == 0xff)
+        return 0;
+
+    hpd = (st & 0x40) ? 1 : 0;
+
+    if (hpd && !adv_hpd_was)
+    {
+        // the sink is back: configure the part again
+        adv7511_init();
+        reinit = 1;
+    }
+    adv_hpd_was = hpd;
+
+    // clear both interrupt flags so the pin re-arms (writing 1 clears)
+    i2c_set_address(ADV_CTRL_ADDR);
+    i2c_write(0x96);
+    i2c_write(0xC0);
+    i2c_stop();
+    i2c_wait_not_busy();
+
+    return reinit;
+}
+
 void adv7511_init(void)
 {
     i2c_set_divider(0x0020);

@@ -28,7 +28,9 @@
 #define STATUS_I2C_BUS_STOP_ON_IDLE 0x0180
 #define STATUS_I2C_BUS_MISSED_ACK 0x0200
 
-// Commands
+// Commands (rtl/host/i2c_master_mmio.sv)
+#define CMD_I2C_READ 0x01
+#define CMD_I2C_READ_NEXT 0x0a
 #define CMD_I2C_WRITE 0x02
 #define CMD_I2C_WRITEMULTI 0x03
 #define CMD_I2C_START 0x04
@@ -48,5 +50,6 @@ void i2c_start();
 void i2c_stop();
 void i2c_write(unsigned char byte);
 void i2c_write_multi(unsigned char *byte, unsigned char size);
+unsigned char i2c_read_reg(unsigned char dev, unsigned char reg);
 
 #endif

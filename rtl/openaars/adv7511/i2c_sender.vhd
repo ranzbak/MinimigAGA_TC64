@@ -142,7 +142,16 @@ architecture behave_i2c_sender of i2c_sender is
     (addr => x"72", reg => x"de", val => x"9c"), -- ADI required write
     (addr => x"72", reg => x"e4", val => x"9c"), -- ADI required write
     (addr => x"72", reg => x"94", val => x"c0"), -- Enable HDP interrupt
-    (addr => x"72", reg => x"96", val => x"00"), -- Clear HPD interrupt flag
+    -- Clear the HPD and Monitor Sense interrupt flags.  WRITING 1 CLEARS:
+    -- "the system controller must write a 1 to the interrupt register to clear
+    -- the register and set the interrupt pin back to inactive.  The pin will
+    -- remain active until each active interrupt register is cleared"
+    -- (ADV7511 Programming Guide, 4.11, doc/ADV7511_Programming_Guide.pdf).
+    -- This wrote 0x00, which clears nothing: after the first hot-plug event
+    -- the flag stayed set, dv_int stayed active, and the change detector in
+    -- this file never saw another edge -- so the display never came back by
+    -- itself and needed the firmware's manual re-init (LSHIFT + keypad '.').
+    (addr => x"72", reg => x"96", val => x"c0"), -- Clear HPD + Monitor Sense flags
     (addr => x"72", reg => x"fa", val => x"00"), -- Nbr of times to search for good phase
     -- Set the video clock delay
     (addr => x"72", reg => x"ba", val => x"00"), -- Configure clock delay -1.2ns

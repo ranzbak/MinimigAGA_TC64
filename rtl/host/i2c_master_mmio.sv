@@ -229,7 +229,9 @@ always_ff @(posedge clk) begin
     // Buffer full?
     if ((prod_write_next) == con_write)
         buf_write_full <= 1;
-    if ((prod_read_next) == prod_read)
+    // full when the producer would catch the consumer (this compared
+    // prod_read_next with prod_read, which can never be equal)
+    if ((prod_read_next) == con_read)
         buf_read_full <= 1;
 end
 
@@ -323,8 +325,15 @@ always_ff @(posedge clk) begin
             if(i2c_select == 1'b1 & req == 1'b1 & wr == 1'b0 ) begin
                 case (addr[3:2])
                     2'b00: begin
-                        // Read answer from a read action
-                        q <= cmd_result_r;
+                        // Read answer from a read action.  THE DATA IS IN THE
+                        // READ BUFFER: STATE_READ puts each received byte in
+                        // buf_read[prod_read], and this returned cmd_result_r,
+                        // which is only ever assigned 0 -- so every I2C read
+                        // came back as zero and no firmware could read a
+                        // register.  That is why the ADV7511 driver only ever
+                        // wrote, and why nothing could poll the HDMI hot-plug
+                        // state (findings: HDMI does not re-initialise).
+                        q <= buf_read[con_read];
                     end
                     2'b01: begin
                         // Return status register
@@ -396,8 +405,11 @@ always_ff @(posedge clk) begin
             prod_write <= prod_write_next;
         end
 
-        // Read from the buffer
-        if(i2c_select == 1'b1 & req_strobe == 1'b1 & wr == 1'b0) begin
+        // Read from the buffer: POP ONLY ON A DATA READ.  This advanced on
+        // every read of the block, so polling the status register (addr 01)
+        // consumed received bytes.
+        if(i2c_select == 1'b1 & req_strobe == 1'b1 & wr == 1'b0
+           & addr[3:2] == 2'b00) begin
             con_read <= con_read_next;
         end
 
@@ -477,16 +489,27 @@ always_ff @(posedge clk) begin
                 end
             end
 
-            // Read a byte
+            // Read a byte.  The LAST_BYTE flag (bit 12, as for WRITE_MULTI)
+            // makes this the last read of the transaction and sends the STOP
+            // with it.  It has to ride on the read command: i2c_master.v only
+            // accepts a command with exactly one of cmd_read / cmd_write /
+            // cmd_write_multiple set ("invalid or unspecified - ignore"), so
+            // the wrapper's separate CMD_STOP is dropped on the floor and a
+            // read left the bus held -- after which the firmware's next
+            // transaction never completed and its wait-for-idle spun for ever.
+            // (The core raises the repeated start by itself for a read while
+            // the bus is active, so no explicit START is needed either.)
             STATE_READ: begin
                 cmd_valid_r <= 1;
                 cmd_read_r <= 1;
+                cmd_stop_r <= cmd_in[12];
                 data_out_ready <= 1;
 
                 if (data_out_ready == 1) begin
                     r_cmd_done <= 1'b1;
 
                     cmd_valid_r <= 0;
+                    cmd_stop_r <= 0;
                     data_out_ready <= 0;
                     r_read_ready <= 1'b1;
 
