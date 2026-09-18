@@ -65,8 +65,8 @@ wire [ 8: 2] ddfdiff;
 wire [ 8: 2] ddfdiff_masked;
 reg  [15: 1] bpl1mod;             // modulo for odd bitplanes
 reg  [15: 1] bpl2mod;             // modulo for even bitplanes
-wire [15: 1] bpl1mod_bscan;       // modulo for odd bitplanes, adjusted for bitplane scandoubling
-wire [15: 1] bpl2mod_bscan;       // modulo for even bitplanes, adjusted for bitplane scandoubling
+reg  [15: 1] bpl1mod_bscan;       // modulo for odd bitplanes, adjusted for bitplane scandoubling
+reg  [15: 1] bpl2mod_bscan;       // modulo for even bitplanes, adjusted for bitplane scandoubling
 
 reg  [ 5: 0] bplcon0;             // bitplane control (SHRES, HIRES and BPU bits)
 reg  [ 5: 0] bplcon0_delayed;     // delayed bplcon0 (compatibility)
@@ -460,8 +460,17 @@ end
 assign dma = (ddfrun) && dmaena_delayed[1] && hpos[0] && (plane[4:0] < {1'b0,bpu[3:0]}) ? 1'b1 : 1'b0;
 
 // adjust BPLxMOD for scandoubling
-assign bpl1mod_bscan = fmode[14] ? ((vdiwstrt[0] ^ vpos[0]) ? bpl2mod : bpl1mod) : bpl1mod;
-assign bpl2mod_bscan = fmode[14] ? ((vdiwstrt[0] ^ vpos[0]) ? bpl2mod : bpl1mod) : bpl2mod;
+// Registered, one colour clock behind, instead of combinational.  A modulo
+// written part way through a line used to reach the pointer arithmetic in the
+// same colour clock, which is a cycle earlier than the real chip applies it --
+// the RAMJAM "Copperslave" demo writes one from the copper mid-line and shows
+// the error as a wrong line stride.  MiSTer 6fc0d5e1 (#206);
+// findings/aga-chipset/mister-fixes.md 1.9.
+always @(posedge clk)
+  if (clk7_en && hpos[0]) begin
+    bpl1mod_bscan <= fmode[14] ? ((vdiwstrt[0] ^ vpos[0]) ? bpl2mod : bpl1mod) : bpl1mod;
+    bpl2mod_bscan <= fmode[14] ? ((vdiwstrt[0] ^ vpos[0]) ? bpl2mod : bpl1mod) : bpl2mod;
+  end
 
 // dma pointer arithmetic unit
 always @ (*) begin
