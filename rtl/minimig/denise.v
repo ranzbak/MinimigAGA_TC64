@@ -246,14 +246,22 @@ end
 always @ (posedge clk) begin
   if (clk7_en) begin
     if (reset) begin
-      bplxor   <= 8'd0;
       esprm    <= 4'd1;
       osprm    <= 4'd1;
     end else begin
-      bplxor   <= bplcon4[15:8];
       esprm    <= bplcon4[7:4];
       osprm    <= bplcon4[3:0];
     end
+    // BPLAM (the colour-index XOR) only applies inside the active display.
+    // Applied continuously it also recolours the border, which is what put a
+    // block of white lines through the "Shade Cluster" part of Andromeda's
+    // Nexus 7.  So it clears at the end of the display window and is loaded
+    // only while the window is open.  MiSTer b4787057 (#182);
+    // findings/aga-chipset/mister-fixes.md 1.7.
+    if (reset || (hpos[8:0] == hdiwstop[8:0]))
+      bplxor <= 8'd0;
+    else if (display_ena)
+      bplxor <= bplcon4[15:8];
   end
 end
 
