@@ -307,6 +307,13 @@ localparam [5:0]
   SPI_OSD_BUFFER_ADR   = 6'b0_000_11,
   SPI_MEM_WRITE_ADR    = 6'b0_001_11,
   SPI_VERSION_ADR      = 6'b1_000_10,
+  // The OSD key-event QUEUE (command byte 0x98).  OSD_CMD_READ (osd_ctrl) is a
+  // LEVEL: the firmware polls it and calls a change an event, so an event that
+  // begins and ends between two polls is never seen.  A missed key-UP is the
+  // expensive one -- menu.c keeps ctrl/lalt in statics, and a stuck modifier
+  // makes F12 toggle debug mode instead of opening the OSD, for good.  This
+  // queue keeps every event until it is read.
+  SPI_KEYQ_ADR         = 6'b1_001_10,
   SPI_MEM_READ_ADR     = 6'b1_001_11;
 
 
@@ -348,6 +355,7 @@ reg spi_osd_buffer_sel    = 1'b0;
 reg spi_mem_write_sel     = 1'b0;
 reg spi_version_sel       = 1'b0;
 reg spi_mem_read_sel      = 1'b0;
+reg spi_keyq_sel          = 1'b0;
 always @ (*) begin
   spi_reset_ctrl_sel   = 1'b0;
   spi_clock_ctrl_sel   = 1'b0;
@@ -364,6 +372,7 @@ always @ (*) begin
   spi_mem_write_sel    = 1'b0;
   spi_version_sel      = 1'b0;
   spi_mem_read_sel     = 1'b0;
+  spi_keyq_sel         = 1'b0;
   case (cmd_dat)
     SPI_RESET_CTRL_ADR   : spi_reset_ctrl_sel   = 1'b1;
     SPI_CLOCK_CTRL_ADR   : spi_clock_ctrl_sel   = 1'b1;
@@ -379,6 +388,7 @@ always @ (*) begin
     SPI_OSD_BUFFER_ADR   : spi_osd_buffer_sel   = 1'b1;
     SPI_MEM_WRITE_ADR    : spi_mem_write_sel    = 1'b1;
     SPI_VERSION_ADR      : spi_version_sel      = 1'b1;
+    SPI_KEYQ_ADR         : spi_keyq_sel         = 1'b1;
     SPI_MEM_READ_ADR     : spi_mem_read_sel     = 1'b1;
     default: begin
       spi_reset_ctrl_sel   = 1'b0;
@@ -396,6 +406,7 @@ always @ (*) begin
       spi_mem_write_sel    = 1'b0;
       spi_version_sel      = 1'b0;
       spi_mem_read_sel     = 1'b0;
+      spi_keyq_sel         = 1'b0;
     end
   endcase
 end
@@ -613,8 +624,56 @@ always @ (*) begin
 end
 
 
+//----------------------------------------------------------------------------
+// The OSD key-event queue.  Sixteen events deep, written on every CHANGE of
+// osd_ctrl (which is how the firmware defined an event anyway) and drained by
+// SPI_KEYQ_ADR:
+//
+//   data byte 0 : {overflow, 3'b000, count[3:0]}   -- how many are waiting
+//   data byte n : the n-th event, oldest first, popped as it is shifted out
+//
+// Empty reads return 0x00, so a firmware that asks for more than `count` gets
+// nothing rather than a stale repeat.  A full queue DROPS THE NEWEST event and
+// sets the overflow flag: dropping the oldest would lose a key-up and leave a
+// modifier stuck, the very failure this exists to remove.  The flag clears
+// when the count byte is read.
+//
+// osd_ctrl keeps its OSD_CMD_READ path unchanged: it is still the level the
+// firmware's auto-repeat watches.
+//----------------------------------------------------------------------------
+reg  [7:0] kq_mem [0:15];
+reg  [3:0] kq_wptr = 4'd0;
+reg  [3:0] kq_rptr = 4'd0;
+reg        kq_ovf  = 1'b0;
+reg  [7:0] osd_ctrl_d = 8'd0;
+wire [3:0] kq_count = kq_wptr - kq_rptr;
+wire       kq_full  = (kq_count == 4'd15);
+wire       kq_event = (osd_ctrl != osd_ctrl_d);
+
+always @ (posedge clk) begin
+  if (clk7_en) begin
+    osd_ctrl_d <= #1 osd_ctrl;
+    if (kq_event) begin
+      if (kq_full) kq_ovf <= #1 1'b1;
+      else begin
+        kq_mem[kq_wptr] <= #1 osd_ctrl;
+        kq_wptr <= #1 kq_wptr + 4'd1;
+      end
+    end
+    // a byte has been shifted out: byte 0 is the status, every later one pops
+    if (rx && !cmd && spi_keyq_sel) begin
+      if (dat_cnt == 3'd0) kq_ovf <= #1 1'b0;
+      else if (kq_count != 4'd0) kq_rptr <= #1 kq_rptr + 4'd1;
+    end
+  end
+end
+
+wire [7:0] kq_rddat = (dat_cnt == 3'd0) ? {kq_ovf, 3'b000, kq_count}
+                    : (kq_count != 4'd0) ? kq_mem[kq_rptr] : 8'h00;
+
 // read data
 assign rddat =  (spi_version_sel)  ? rtl_ver :
+                (spi_keyq_sel)     ? kq_rddat :
                 (spi_mem_read_sel) ? 8'd00  : osd_ctrl;
 
 
