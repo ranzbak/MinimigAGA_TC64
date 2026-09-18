@@ -74,8 +74,25 @@ always @(posedge clk)
     thi_load <= thi & wr & (~start | oneshot);
   end
 
+// Reload on an E-clock edge, not on the next 7 MHz tick -- see the same change
+// in cia_timera.v for why (Risky Woods music and effects).  The one-shot START
+// keeps the ungated thi_load.
+// MiSTer 058288b4 (#198); findings/aga-chipset/mister-fixes.md 1.2.
+reg thi_load_latched;
+always @(posedge clk)
+  if (clk7_en) begin
+    if (reset)
+      thi_load_latched <= 1'b0;
+    else if (thi_load)
+      thi_load_latched <= 1'b1;
+    else if (eclk)
+      thi_load_latched <= 1'b0;
+  end
+
+wire thi_load_eclk = thi_load_latched & eclk;
+
 // timer counter reload signal
-assign reload = thi_load | forceload | underflow;
+assign reload = thi_load_eclk | forceload | underflow;
 
 // timer counter
 always @(posedge clk)

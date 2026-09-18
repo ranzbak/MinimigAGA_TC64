@@ -76,8 +76,29 @@ always @(posedge clk)
     thi_load <= thi & wr & (~start | oneshot);
   end
 
+// The reload has to land on an E-clock edge, not on the next 7 MHz tick.  The
+// counter only decrements on E, so reloading between two E edges makes the
+// first interval after the reload short by up to a whole E period -- which is
+// heard rather than seen: Risky Woods gets its music tempo wrong and drops
+// sound effects.  So the request is latched and held until E comes round.
+// Note the one-shot START above still uses the UNGATED thi_load, as it does in
+// MiSTer: this changes when the counter is reloaded, not when it is started.
+// MiSTer 058288b4 (#198); findings/aga-chipset/mister-fixes.md 1.2.
+reg thi_load_latched;
+always @(posedge clk)
+  if (clk7_en) begin
+    if (reset)
+      thi_load_latched <= 1'b0;
+    else if (thi_load)
+      thi_load_latched <= 1'b1;
+    else if (eclk)
+      thi_load_latched <= 1'b0;
+  end
+
+wire thi_load_eclk = thi_load_latched & eclk;
+
 // timer counter reload signal
-assign reload = thi_load | forceload | underflow;
+assign reload = thi_load_eclk | forceload | underflow;
 
 // timer counter
 always @(posedge clk)
