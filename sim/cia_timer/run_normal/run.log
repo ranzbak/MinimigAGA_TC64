@@ -1,0 +1,13 @@
+VCD info: dumpfile cia_timer.vcd opened for output.
+--- timer A, INMODE=0 (E clock) ---
+  ok: timer A counts on E (156 -> 212)
+--- timer A, INMODE=1 (CNT, tied high) ---
+  ok: timer A counter after 20000 clk, INMODE=1 = 255
+--- timer B, INMODE=01 (CNT, tied high) ---
+  ok: timer B counter after 20000 clk, INMODE=01 = 255
+--- reload is aligned to the E clock ---
+  ok: timer A reload landed on an E-clock edge
+  ok: timer A reloaded to 0x1234 = 4660
+
+=== PASS: 0 failures ===
+/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/cia_timer/cia_timer_tb.v:179: $finish called at 2184754200 (1ps)

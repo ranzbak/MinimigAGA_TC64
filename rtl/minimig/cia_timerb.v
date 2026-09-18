@@ -47,8 +47,13 @@ always @(posedge clk)
 wire cnt_rise = cnt_sync[1] & ~cnt_sync[2];
 
 // Timer B count signal source
+`ifdef CIA_INMODE_MUTANT
+// sim/cia_timer's teeth check: only CRB bit 6 decoded, as it was before.
+assign count = tmcr[6] ? tmra_ovf : eclk;
+`else
 assign count = tmcr[6] ? (tmcr[5] ? (tmra_ovf & cnt_sync[1]) : tmra_ovf)
                        : (tmcr[5] ? cnt_rise                 : eclk);
+`endif
 
 // writing timer control register
 always @(posedge clk)

@@ -51,7 +51,12 @@ always @(posedge clk)
 wire cnt_rise = cnt_sync[1] & ~cnt_sync[2];
 
 // count enable signal
+`ifdef CIA_INMODE_MUTANT
+// sim/cia_timer's teeth check: INMODE stored and ignored, as it was before.
+assign count = eclk;
+`else
 assign count = tmcr[5] ? cnt_rise : eclk;
+`endif
 
 // writing timer control register
 always @(posedge clk)
@@ -120,7 +125,12 @@ always @(posedge clk)
 wire thi_load_eclk = thi_load_latched & eclk;
 
 // timer counter reload signal
+`ifdef CIA_RELOAD_MUTANT
+// sim/cia_timer's teeth check: reload on the next 7 MHz tick, as it was.
+assign reload = thi_load | forceload | underflow;
+`else
 assign reload = thi_load_eclk | forceload | underflow;
+`endif
 
 // timer counter
 always @(posedge clk)
