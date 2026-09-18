@@ -337,8 +337,46 @@ set pro_was [get_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED $impl]
 set_property STEPS.PHYS_OPT_DESIGN.IS_ENABLED true $impl
 set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED true $impl
 
-reset_run synth_1
-launch_runs impl_1 -to_step write_bitstream -jobs 8
+# RE-SYNTHESISE ONLY WHEN SOMETHING ACTUALLY CHANGED.  This was an
+# unconditional `reset_run synth_1`, so every build re-ran the longest stage
+# even when only a constraint file had changed (an XDC is read by
+# implementation, not synthesis).  Vivado already tracks its own inputs:
+# NEEDS_REFRESH covers edited sources, and the generic string above is
+# compared by hand because setting it does not always mark the run stale.
+# A stale synthesis is never reused: any doubt resets the run.
+#
+# NOT INCREMENTAL IMPLEMENTATION.  Reusing a previous routed checkpoint
+# (INCREMENTAL_CHECKPOINT) would cut implementation time too, and it is
+# deliberately not used here: Paul has had builds that met timing with it and
+# then misbehaved on the board, while the same design built from scratch was
+# fine.  The result depends on the reference checkpoint, which is exactly what
+# a timing-critical design must not do.  Do not add it.
+set synthrun [get_runs synth_1]
+set gen_now  [get_property generic [get_filesets sources_1]]
+set gen_file $R/project_1/.last_generics
+set gen_was  ""
+if {[file exists $gen_file]} {
+    set fh [open $gen_file r]; set gen_was [string trim [read $fh]]; close $fh
+}
+if {$gen_now ne $gen_was
+    || [get_property NEEDS_REFRESH $synthrun]
+    || [get_property PROGRESS $synthrun] ne "100%"
+    || [get_property STATUS $synthrun] eq "Not started"} {
+    puts "build_ap040.tcl: re-synthesising (generics or sources changed)"
+    reset_run synth_1
+} else {
+    puts "build_ap040.tcl: synthesis is up to date, implementing only"
+}
+set fh [open $gen_file w]; puts $fh $gen_now; close $fh
+
+# STOP_AFTER_ROUTE=1 in the environment skips write_bitstream: a timing-only
+# experiment does not need a file it will never load.
+set last_step "write_bitstream"
+if {[info exists ::env(STOP_AFTER_ROUTE)] && $::env(STOP_AFTER_ROUTE) eq "1"} {
+    set last_step "route_design"
+    puts "build_ap040.tcl: STOP_AFTER_ROUTE=1, no bitstream will be written"
+}
+launch_runs impl_1 -to_step $last_step -jobs 8
 wait_on_run impl_1
 open_run impl_1
 file mkdir $out
