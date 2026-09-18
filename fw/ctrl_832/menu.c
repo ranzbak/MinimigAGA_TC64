@@ -121,7 +121,9 @@ void (*confirmfunc)();
 
 extern unsigned char DEBUG;
 
-unsigned char config_autofire = 0;
+// (config_autofire used to live here: a second, private copy of the autofire
+// rate that only the Ctrl-Alt-KP0 shortcut wrote.  config.autofire is the one
+// that is saved and shown, so the shortcut uses that now.)
 
 // file selection menu variables
 char *fs_pFileExt = NULL;
@@ -338,11 +340,17 @@ void HandleUI(void)
         {
             if (menustate == MENU_NONE2 || menustate == MENU_INFO)
             {
-                config_autofire++;
-                config_autofire &= 3;
-                ConfigAutofire(config_autofire);
+                // config.autofire, not the private config_autofire this used
+                // to keep: that second copy meant the shortcut and the menu
+                // disagreed about the current rate, the shortcut's setting was
+                // never saved, and -- because it sent a two-bit value -- using
+                // it switched the CD32 pad off in the core as a side effect.
+                // Bits 1:0 are the rate; bit 2 is the CD32 pad and is preserved.
+                config.autofire = (config.autofire & 0x04)
+                                | ((config.autofire + 1) & 0x03);
+                ConfigAutofire(config.autofire);
                 if (menustate == MENU_NONE2 || menustate == MENU_INFO)
-                    InfoMessage(config_autofire_msg[config_autofire]);
+                    InfoMessage(config_autofire_msg[config.autofire & 0x03]);
             }
         }
         break;

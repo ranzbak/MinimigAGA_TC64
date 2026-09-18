@@ -928,7 +928,11 @@ void ConfigAutofire(unsigned char autofire)
     EnableOsd();
     //SPI(OSDCMDAUTOFIRE | (autofire & 0x03));
     SPI(OSD_CMD_JOY);
-    SPI(autofire & 0x03);
+    // Three bits, not two: userio_osd.v takes wrdat[2:0] as {cd32pad,
+    // autofire_config}.  Masking with 0x03 dropped the CD32 pad bit on the way
+    // out, so that menu item wrote config, redrew itself, and changed nothing
+    // in the core.
+    SPI(autofire & 0x07);
     DisableOsd();
 }
 

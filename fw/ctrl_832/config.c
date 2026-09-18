@@ -432,6 +432,10 @@ int ApplyConfiguration(char reloadkickstart, char applydrives)
     ConfigVideo(config.filter.hires, config.filter.lores, config.scanlines);
 	ConfigVideoPos(config.videopos.hpos, config.videopos.vpos);
     ConfigMisc(config.misc);
+    // Every other setting is pushed to the core here; this one was not, so the
+    // autofire rate AND the CD32 pad setting were saved and reloaded faithfully
+    // and then never reached the hardware until the menu item was touched again.
+    ConfigAutofire(config.autofire);
 
     if(reloadkickstart) {
 //		WaitTimer(100);
