@@ -121,9 +121,29 @@ assign pclkneg = pclkc & ~pclkb;
 //PS2 input shifter
 wire prready;
 
+// A FRAME THAT NEVER FINISHES MUST NOT WEDGE THE RECEIVER.  The shifter is
+// re-aligned only when the state machine resets it, and the one place that
+// does so while idle (state 5 -> 0) is gated on !prbusy -- which is true from
+// the first bit of a frame onwards.  So a frame interrupted part way (the
+// keyboard unplugged mid-byte, a glitch on the clock line, a marginal cable)
+// left a partial frame in the shifter for good: every later byte was then
+// framed on the wrong bit boundary, which reads as a keyboard that produces
+// garbage or nothing at all and recovers only on a core reset -- not even on
+// a replug.  A PS/2 frame is 11 bits at 10-16.7 kHz, so at most about 1.1 ms;
+// 2.3 ms of no clock edge with a frame in progress means the device is gone.
+reg  [13:0] pridle = 14'd0;
+wire        prstale = pridle[13];
 always @(posedge clk)
   if (clk7_en) begin
-    if (prreset  ||  prready)
+    if (pclkneg || !prbusy || prreset)
+      pridle <= 14'd0;
+    else
+      pridle <= pridle + 14'd1;
+  end
+
+always @(posedge clk)
+  if (clk7_en) begin
+    if (prreset  ||  prready  ||  prstale)
       preceive[11:0] <= 12'b111111111111;
     else if (pclkneg)
       preceive[11:0] <= {1'b0,pdatb,preceive[10:1]};

@@ -47,6 +47,9 @@ module userio_ps2mouse
   reg           intellimouse=0;
   wire          mcmd_done;
   reg  [ 4-1:0] mcmd_cnt=1;
+  // '1' for one cycle when the mouse has announced a power-up self-test
+  // (BAT 0xAA followed by device id 0x00): the init sequence must run again.
+  reg           mcmd_restart;
   reg           mcmd_inc=0;
   reg  [12-1:0] mcmd;
 
@@ -67,10 +70,25 @@ module userio_ps2mouse
   // detect mouse clock negative edge
   assign mclkneg = mclkr[2] & !mclkr[1];
 
+  // A FRAME THAT NEVER FINISHES MUST NOT WEDGE THE RECEIVER: same rule as the
+  // keyboard's (ciaa_ps2keyboard.v).  Without it a byte interrupted part way
+  // leaves the shifter mid-frame and every later byte is framed on the wrong
+  // boundary.  The state machine's own timeout now covers the mid-packet case,
+  // but not a frame broken inside state 3, where the timer is held.
+  reg  [13:0] mridle = 14'd0;
+  wire        mrbusy  = ~mreceive[10];
+  wire        mrstale = mridle[13];
+  always @ (posedge clk) begin
+    if (clk7_en) begin
+      if (mclkneg || !mrbusy || mrreset) mridle <= #1 14'd0;
+      else                               mridle <= #1 mridle + 14'd1;
+    end
+  end
+
   // PS2 mouse input shifter
   always @ (posedge clk) begin
     if (clk7_en) begin
-      if (mrreset)
+      if (mrreset || mrstale)
         mreceive[10:0] <= #1 11'b11111111111;
       else if (mclkneg)
         mreceive[10:0] <= #1 {mdatr[1],mreceive[10:1]};
@@ -82,7 +100,7 @@ module userio_ps2mouse
   // PS2 mouse data counter
   always @ (posedge clk) begin
     if (clk7_en) begin
-      if (reset)
+      if (reset || mcmd_restart)
         mcmd_cnt <= #1 4'd0;
       else if (mcmd_inc && !mcmd_done)
         mcmd_cnt <= #1 mcmd_cnt + 4'd1;
@@ -190,6 +208,7 @@ module userio_ps2mouse
     msreset  = 1'b0;
     mpacket  = 3'd0;
     mcmd_inc = 1'b0;
+    mcmd_restart = 1'b0;
     case(mstate)
 
       0 : begin
@@ -239,19 +258,57 @@ module userio_ps2mouse
         // get first packet byte
         mtreset=1;
         if (mrready) begin
-          // we got our first packet byte
-          mpacket=1;
-          mrreset=1;
-          mnext=4;
+          if (mreceive[8:1] == 8'hAA) begin
+            // A HOT-PLUGGED MOUSE ANNOUNCES ITSELF.  A PS/2 mouse powers up
+            // with data reporting DISABLED and sends BAT 0xAA then its device
+            // id 0x00.  The init sequence below runs once out of reset and
+            // mcmd_cnt then sits at done forever, so before this a mouse
+            // plugged in after boot (or one that browned out on the 5 V line)
+            // stayed silent until the whole core was reset -- and a core reset
+            // does not power-cycle the device, which is why replugging did not
+            // help either.  0xAA can also be a legitimate first packet byte
+            // (buttons + Y overflow), so the id byte is checked too, and a
+            // mismatch just costs one packet.
+            mrreset=1;
+            mnext=7;
+          end else begin
+            // we got our first packet byte
+            mpacket=1;
+            mrreset=1;
+            mnext=4;
+          end
         end else begin
           // we are still waiting
           mnext=3;
         end
       end
 
-      4 : begin
-        // get second packet byte
+      7 : begin
+        // the byte after 0xAA: device id 0x00 confirms a self-test
         mtreset=1;
+        if (mrready) begin
+          mrreset=1;
+          if (mreceive[8:1] == 8'h00) begin
+            mcmd_restart = 1'b1;   // re-run the init sequence
+            mnext=0;
+          end else begin
+            mnext=3;               // not a self-test; resync on the next packet
+          end
+        end else begin
+          mnext=7;
+        end
+      end
+
+      4 : begin
+        // get second packet byte.  MID-PACKET, so the timer RUNS: mtready
+        // (~9.4 ms) throws the machine back to state 0, which re-sends the
+        // last init command -- 0xF4, enable reporting -- and resynchronises.
+        // A packet's three bytes arrive within about a millisecond at any
+        // sample rate this code sets, so the timeout cannot fire on a healthy
+        // stream.  Before this, a mouse unplugged (or browning out) in the
+        // middle of a packet left the machine waiting for a byte that never
+        // came, with no way out but a core reset.
+        mtreset=0;
         if (mrready) begin
           // we got our second packet byte
           mpacket=2;
@@ -264,8 +321,8 @@ module userio_ps2mouse
       end
 
       5 : begin
-        // get third packet byte 
-        mtreset=1;
+        // get third packet byte  (mid-packet: timer runs, see state 4)
+        mtreset=0;
         if (mrready) begin
           // we got our third packet byte
           mpacket=3;
@@ -278,8 +335,8 @@ module userio_ps2mouse
       end
 
       6 : begin
-        // get fourth packet byte
-        mtreset=1;
+        // get fourth packet byte  (mid-packet: timer runs, see state 4)
+        mtreset=0;
         if (mrready) begin
           // we got our fourth packet byte
           mpacket = (mcmd_cnt == 8) ? 5 : 4;
