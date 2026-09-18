@@ -340,14 +340,26 @@ denise_bitplanes bplm0
   .bpldata(bpldata_out)
 );
 
-assign bpldata[1] = l_bpu > 0 ? bpldata_out[1] : 1'b0;
-assign bpldata[2] = l_bpu > 1 ? bpldata_out[2] : 1'b0;
-assign bpldata[3] = l_bpu > 2 ? bpldata_out[3] : 1'b0;
-assign bpldata[4] = l_bpu > 3 ? bpldata_out[4] : 1'b0;
-assign bpldata[5] = l_bpu > 4 ? bpldata_out[5] : 1'b0;
-assign bpldata[6] = l_bpu > 5 ? bpldata_out[6] : 1'b0;
-assign bpldata[7] = l_bpu > 6 ? bpldata_out[7] : 1'b0;
-assign bpldata[8] = l_bpu > 7 ? bpldata_out[8] : 1'b0;
+// Masked with window_ena: bitplane data from OUTSIDE the display window must
+// not reach the rest of Denise.  The HAM generator is what shows it, because
+// it accumulates -- pixels scrolled off the left-hand edge modified the HAM
+// colour before the window even opened, which is the wrong-colour "Hambarger"
+// scene in Desire's Hamazing.  MiSTer 6fc0d5e1 (#206);
+// findings/aga-chipset/mister-fixes.md 1.10.
+//
+// CAVEAT, specific to this fork: our `window' above is deliberately NOT
+// MiSTer's -- AMR reversed the HDIWSTRT/HDIWSTOP comparison so that
+// HDIWSTART==HDIWSTOP blanks correctly in brdrblnk mode.  This fix therefore
+// couples the bitplane path to a signal whose edge cases we changed on
+// purpose, so border-blank titles are the regression to watch.
+assign bpldata[1] = window_ena && l_bpu > 0 ? bpldata_out[1] : 1'b0;
+assign bpldata[2] = window_ena && l_bpu > 1 ? bpldata_out[2] : 1'b0;
+assign bpldata[3] = window_ena && l_bpu > 2 ? bpldata_out[3] : 1'b0;
+assign bpldata[4] = window_ena && l_bpu > 3 ? bpldata_out[4] : 1'b0;
+assign bpldata[5] = window_ena && l_bpu > 4 ? bpldata_out[5] : 1'b0;
+assign bpldata[6] = window_ena && l_bpu > 5 ? bpldata_out[6] : 1'b0;
+assign bpldata[7] = window_ena && l_bpu > 6 ? bpldata_out[7] : 1'b0;
+assign bpldata[8] = window_ena && l_bpu > 7 ? bpldata_out[8] : 1'b0;
 
 // instantiate playfield module
 denise_playfields plfm0
@@ -386,11 +398,22 @@ denise_sprites sprm0
   .sprdata(sprdata)
 );
 
+// Playfield data from outside the display window must not win priority over a
+// sprite legitimately drawn in the border (brdsprt) -- Essence's "Crazy Sexy
+// Cool".  MiSTer 099c5a42 (#202); findings/aga-chipset/mister-fixes.md 1.11.
+//
+// In THIS tree the mask is already implied: nplayfield is a pure function of
+// bpldata (denise_playfields only ORs the planes together), and bpldata is
+// masked with the same window_ena a few lines above.  It is written out anyway
+// to match the reference, so that a later change to the bpldata masking cannot
+// quietly take this with it.
+wire [2:1] nplayfield_masked = nplayfield & {window_ena, window_ena};
+
 // instantiate video priority logic module
 denise_spritepriority spm0
 (
   .bplcon2(bplcon2[5:0]),
-  .nplayfield(nplayfield),
+  .nplayfield(nplayfield_masked),
   .nsprite(nsprite),
   .sprsel(sprsel)
 );
