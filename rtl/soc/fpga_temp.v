@@ -10,7 +10,13 @@
 // here has to drive a conversion or program a channel sequence.  That is why
 // this module configures almost nothing: the one setting that does matter is
 // the DCLK divider, because ADCCLK has to land inside the XADC's operating
-// range, and with DCLK at 28 MHz a divider of 4 puts it at about 7 MHz.
+// range (1-26 MHz), and with DCLK at 113.4 MHz a divider of 8 puts it at about
+// 14 MHz.
+//
+// It runs on clk_114, the clock cfide already uses, so the reading needs no
+// clock crossing to reach the host bus.  A 12-bit value that changes every
+// 20 ms is exactly the kind of thing that gets torn by a careless crossing,
+// and the cheapest way not to get that wrong is not to have one.
 //
 // All this module does, then, is read DRP address 0x00 (the temperature status
 // register) over and over and latch the result.  The 12-bit reading sits in
@@ -33,15 +39,15 @@
 // should climb under load) before trusting it.
 
 module fpga_temp (
-  input  wire        clk,        // 28 MHz, also DCLK
+  input  wire        clk,        // clk_114 (113.4 MHz), also DCLK
   input  wire        reset,      // active high
   output reg  [11:0] temp_raw    // last temperature reading, DO[15:4]
 );
 
-// About 20 ms at 28 MHz.  Nothing depends on the exact interval.
-localparam [19:0] INTERVAL = 20'd560000;
+// About 20 ms at 113.4 MHz.  Nothing depends on the exact interval.
+localparam [21:0] INTERVAL = 22'd2268000;
 
-reg [19:0] tick = 20'd0;
+reg [21:0] tick = 22'd0;
 reg        den  = 1'b0;
 
 wire [15:0] do_w;
@@ -49,7 +55,7 @@ wire        drdy_w;
 
 always @(posedge clk) begin
   if (reset) begin
-    tick     <= 20'd0;
+    tick     <= 22'd0;
     den      <= 1'b0;
     temp_raw <= 12'd0;
   end else begin
@@ -57,10 +63,10 @@ always @(posedge clk) begin
     den <= 1'b0;
 
     if (tick == INTERVAL) begin
-      tick <= 20'd0;
+      tick <= 22'd0;
       den  <= 1'b1;
     end else begin
-      tick <= tick + 20'd1;
+      tick <= tick + 22'd1;
     end
 
     if (drdy_w)
@@ -73,7 +79,7 @@ XADC #(
   // no averaging changes, no alarms acted on here.
   .INIT_40(16'h0000),   // config reg 0
   .INIT_41(16'h0000),   // config reg 1 -- SEQ[3:0] = 0000, default mode
-  .INIT_42(16'h0400)    // config reg 2 -- DCLK divider = 4
+  .INIT_42(16'h0800)    // config reg 2 -- DCLK divider = 8
 ) xadc_inst (
   .DO       (do_w),
   .DRDY     (drdy_w),
