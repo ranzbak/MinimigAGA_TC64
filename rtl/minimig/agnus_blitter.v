@@ -408,7 +408,16 @@ always @(posedge clk)
   if (clk7_en) begin
   	if (line)
   		bltbhold[15:0] <= {16{shiftbout[0]}}; // in line mode only one selected bit of BLTBDAT register (LSB) is used for texturing
-  	else if (bltbdat_wrtn)
+  	// Every enabled blitter cycle, not only the cycles that wrote BLTBDAT.
+  	// `clr.w bltcon1' is a read-modify-write, and the read half of it is a
+  	// phantom read of a write-only register: the decode sees line mode
+  	// asserted for that moment and the branch above overwrites bltbhold with
+  	// {16{shiftbout[0]}}, wiping the B texture in the middle of a blit.
+  	// Keying the reload off `enable' instead means the correct value is put
+  	// back on the next cycle rather than being held until the next BLTBDAT
+  	// write.  MiSTer b4787057 (#182), shipping since January 2025;
+  	// findings/aga-chipset/mister-fixes.md 1.6.  bltbdat_wrtn is now unused.
+  	else if (enable)
   		bltbhold[15:0] <= shiftbout[15:0];
   end
 	
