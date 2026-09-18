@@ -197,7 +197,19 @@ assign sel_rtc = cpu_address_in[23:16]==8'b1101_1100 ? 1'b1 : 1'b0;   //RTC regi
 // register holds, i.e. on top of chip RAM.
 assign sel_toccata = (cpu_address_in[23:16] == toccata_base_addr_reg) && (autoconfig_configured_reg[4] == 1'b1) && (autoconfig_shutup_reg[4] == 1'b0) && (autoconfig_done_reg == 1'b1) ? 1'b1 : 1'b0; //Toccata sound card at the autoconfigured base, 64 KB
 
-assign sel_reg = cpu_address_in[23:21]==3'b110 ? ~(|t_sel_slow | sel_rtc | sel_ide | sel_gayle) : 1'b0;     //chip registers at $DF0000 - $DFFFFF
+// The custom registers live at $DF0000-$DFFFFF and NOWHERE ELSE.  This used to
+// decode the whole of $C00000-$DFFFFF minus whatever else was claimed, so every
+// hole in that 2 MB -- and there are many, since slow RAM is usually smaller
+// than $C0-$D7 and nothing at all answers most of $D8-$DE -- aliased onto a
+// real custom register chosen by address bits 8:1.  A guest probing for
+// hardware it does not have would then WRITE one: MiSTer traced a permanent
+// blank display to WhichAmiga 1.4 writing $00DD0080, which is COP1LCH, taking
+// the copper list pointer with it.  Reads aliased just as badly.
+// MiSTer 74d6ce0a (#235); findings/aga-chipset/mister-fixes.md 1.1.
+//
+// The carve-outs the old expression needed (slow RAM, RTC, IDE, Gayle) are all
+// outside $DFxxxx, so they are simply not reachable here any more.
+assign sel_reg = cpu_address_in[23:16]==8'b1101_1111 ? 1'b1 : 1'b0;     //chip registers at $DF0000 - $DFFFFF
 
 assign sel_cia = cpu_address_in[23:20]==4'b1011 ? 1'b1 : 1'b0;
 
