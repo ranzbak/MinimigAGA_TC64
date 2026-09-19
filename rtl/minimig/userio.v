@@ -73,7 +73,12 @@ module userio #(
   output wire           osd_pixel,          // osd video pixel
   output wire [  2-1:0] lr_filter,
   output wire [  2-1:0] hr_filter,
-  output wire [  7-1:0] memory_config,
+  // EIGHT bits, not seven.  userio_osd drives eight and minimig.v declares
+  // eight; this port sat in the middle and truncated bit 7 -- "fast RAM: DDR3
+  // board only" -- so ddr3_only could never be anything but 0 and the OSD
+  // setting did nothing.  Both ends of the wire were correct, which is why
+  // reading them told us nothing.
+  output wire [  8-1:0] memory_config,
   output wire [  5-1:0] chipset_config,
   output wire [  4-1:0] floppy_config,
   output wire [  2-1:0] scanline,
