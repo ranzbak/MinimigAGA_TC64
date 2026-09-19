@@ -416,7 +416,14 @@ always @(*) begin
 end
 
 // assign fire outputs to cia A
-assign _fire0 = cd32pad && !cd32pad1_reg_load ? fire1_d : _sjoy1[4] & _mleft0 & _lmb;
+// Port 1 is the MOUSE port, so CD32 pad mode may only take it over when it is
+// actually in joystick mode.  The pot half of this pair already checks
+// joy1enable (see potcap[1] above); this half did not, so switching CD32Pad on
+// handed the left button to the pad's serial data line -- idle high, i.e. the
+// mouse button stops working -- while the second button pin became the shift
+// clock and read permanently pressed.  Port 2 needs no such guard: it is the
+// joystick port.
+assign _fire0 = joy1enable && cd32pad && !cd32pad1_reg_load ? fire1_d : _sjoy1[4] & _mleft0 & _lmb;
 assign _fire1 = cd32pad && !cd32pad2_reg_load ? fire2_d : _sjoy2[4] & _mleft1;
 
 //JB: some trainers writes to JOYTEST register to reset current mouse counter
