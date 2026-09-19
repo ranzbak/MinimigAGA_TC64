@@ -461,7 +461,15 @@ int ApplyConfiguration(char reloadkickstart, char applydrives)
 			if(!UploadExtROM(config.extromdir,config.extrom.name))
 			{
 				strcpy(config.extrom.name, "EXTENDED");
-				result=UploadExtROM(config.extromdir,config.extrom.name);
+				// Deliberately NOT assigned to result.  The extended ROM is
+				// optional -- the ClearError below says as much -- and a 512K
+				// Kickstart with no ExtROM present is the ordinary case.  This
+				// used to overwrite result with 0 there, so ApplyConfiguration
+				// reported failure after a perfectly good load.  Nothing
+				// noticed while the caller ignored the return value; once
+				// ColdBoot() started trusting it to decide whether to release
+				// the CPU, it refused to boot a machine that was fine.
+				UploadExtROM(config.extromdir,config.extrom.name);
 			}
 			ClearError(ERROR_FILESYSTEM); /* We don't need to report a missing ExtROM yet */
 		}
