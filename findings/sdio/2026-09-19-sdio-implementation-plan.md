@@ -421,6 +421,39 @@ justifies continuing.
 
 ## 8. Hot-swap: remove and re-insert without a reboot
 
+> **CLOSED 2026-09-19, and NOT by anything in this plan.** Paul's actual
+> requirement -- "removing and inserting the SD-card again makes it available to
+> the Amiga without the whole machine needing a reboot" -- turned out to be
+> satisfied by machinery that already existed, once the firmware boot path was
+> fixed that morning (commit 21729c5).
+>
+> Confirmed on hardware: selecting a floppy image from the OSD after a card swap
+> works; triggering I/O after a swap raises the error screen, and pressing Enter
+> reboots cleanly. The error page has always rendered "Reboot" for a fatal error
+> (`menu.c:2238`) and always called `ColdBoot()` on select (`menu.c:2260`); what
+> was missing was that `ColdBoot()`'s failure paths left the CPU halted with
+> interrupts off, so pressing Reboot could wedge the machine instead of
+> retrying. With that fixed the flow works end to end.
+>
+> **Consequences for this plan.** The elaborate design below -- `CardRemount()`,
+> CID compare to keep hardfiles and floppies mounted, removal detection per
+> `sd_host` state, the direct-path replay under removal -- is **no longer
+> required**. It buys transparency (a running Workbench surviving a swap) that
+> nobody asked for, and Paul explicitly accepted a reboot. Treat section 8 as a
+> design study for a goal that has been met more cheaply, not as scope.
+>
+> What this removes from the schedule: the +3 days added for hot-swap, the
+> Stage 3 `CardRemount()` work, and the Stage 1 register-interface additions
+> that existed only to report removal reasons. Bounded timeouts in `sd_host`
+> stay -- those are good practice regardless and guard against the no-watchdog
+> problem in `findings/reset/2026-09-19-reset-logic-review.md`.
+>
+> Optional polish, firmware-only, if it ever irritates: the screen says
+> `CMD17 Read block` rather than "SD card removed -- re-insert and press Enter",
+> and the error only appears on the next disk access rather than the moment the
+> card leaves (a CMD13 poll would fix that). Neither is needed for the flow to
+> work.
+
 What Paul asked for: "removing and inserting the SD-card again makes it
 available to the Amiga without the whole machine needing a reboot." Split into
 the four things that have to be true: the host notices the card is gone

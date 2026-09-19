@@ -107,6 +107,28 @@ kickstart: the ROM is uploaded by `ApplyConfiguration`, which runs only from
 machine whose ROM is still missing or half-written, which looks exactly like
 "reset does nothing".
 
+## Confirmed on hardware, 2026-09-19
+
+Recommendations 1-3 were implemented the same day (commit 21729c5) and Paul
+tested them. An SD card swap now recovers: selecting a floppy image from the
+OSD after the swap works, and triggering I/O after a swap raises the error
+screen, where Enter reboots cleanly.
+
+That result is worth more than the fix itself, because it closed a separate
+request outright. Paul had asked for SD card hot-swap -- "removing and
+inserting the SD-card again makes it available to the Amiga without the whole
+machine needing a reboot" -- and it turned out the machinery already existed:
+the error page has always offered "Reboot" for a fatal error and always called
+`ColdBoot()` on select. The only thing stopping it working was `ColdBoot()`
+leaving the CPU halted with interrupts off on its failure paths. See
+`findings/sdio/2026-09-19-sdio-implementation-plan.md` section 8, where the
+elaborate hot-swap design is now marked as out of scope.
+
+**Recommendations 4 and 5 are still open** -- `cpurst` has no reset term, and
+there is no watchdog on the 832. The firmware half is done; the structural half
+is not, and it is what still makes a hung 832 unrecoverable except by the board
+reset button.
+
 ## Recommendations, cheapest first
 
 1. **Make `ColdBoot()` symmetric** (firmware, small, no RTL). One exit that
