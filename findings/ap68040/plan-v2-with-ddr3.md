@@ -2134,6 +2134,57 @@ if that clears it, the expander lost its configuration and the fix is to
 re-initialise or poll it; if only power-off clears it, the chip itself wedges
 and needs its RESET pin wired.
 
+### Let the FAST memory menu choose DDR3 as the backing store
+
+Asked for by Paul, 2026-09-19: "Can the 2.0, 4.0 be mapped in DDR3 instead of
+SDRAM, and if we add 16MB for the whole DDR3 range as an option, Maximum will
+also include the SDRAM."
+
+**What exists already.** The Memory menu has two independent lines:
+`FAST: none / 2.0 MB / 4.0 MB / Maximum` (`config.memory[5:4]`), which sizes
+the SDRAM-backed fast RAM, and `Boards: all / DDR3 only` (`config.memory[7]`
+-> `memory_config[7]` -> `ddr3_only` in `minimig_autoconfig.v`), which drops the
+Zorro-II board and Zorro-III boards 1 and 2 from the chain so every allocation
+lands on the DDR3 board.  The DDR3 board is Zorro-III board 3, fixed at 16 MB
+in the autoconfig ROM (`Z3RAM3_DDR3`), so "a 16 MB option" already exists in
+substance -- as a second menu line rather than an entry on the FAST line.  With
+`Boards: all` and `FAST: Maximum`, the OS is already offered both memories.
+
+So what is actually being asked for is a **UI collapse**: one line reading
+something like `2 MB SDRAM / 4 MB SDRAM / 16 MB DDR3 / Maximum (both)`, instead
+of a size line and a boards line that interact.  That part is firmware-only
+(menu.c plus the bit packing in `config.memory`) and needs no RTL.
+
+**But re-backing the 2/4 MB windows with DDR3 is not a menu change.** Those
+sizes belong to the Zorro-II board and Zorro-III boards 1 and 2, whose windows
+are decoded to the SDRAM controller in `TG68K.vhd`.  Pointing them at the DDR3
+controller means changing that decode and the router, not the menu.  Given the
+DDR3 board already exists at 16 MB, the cheaper route to "fast RAM in DDR3" is
+the boards toggle we have.
+
+**The hard constraint, and it bites the existing option too: RTG's framebuffer
+must live in SDRAM.**  `VideoStream` in `minimig_virtual_top.v` fetches the
+framebuffer over the SDRAM interface only -- a 26-bit address with the CPU's
+address mangling replicated -- and there is no DDR3 path for it.  Picasso96
+allocates the framebuffer from fast RAM (`FindCard` asks for
+`MEMF_24BITDMA|MEMF_FAST` and silently falls back to plain `MEMF_FAST`), so:
+
+- **`Boards: DDR3 only` and RTG are expected to be mutually exclusive TODAY.**
+  With only the DDR3 board offered, the framebuffer is allocated there and the
+  video fetcher cannot read it.  This has not been tested -- the DDR3-only
+  option was added for benchmarking and RTG was not exercised with it -- but it
+  follows from the code and should be confirmed before it surprises anyone.
+  Worth a note in the menu or the runbook either way.
+- Any future "FAST = DDR3" that removes SDRAM fast RAM inherits the same
+  problem.
+
+Three ways out, cheapest first: keep at least one SDRAM fast-RAM board offered
+whenever RTG is in use (a menu interlock, firmware-only); give `VideoStream` a
+DDR3 read path and route by address (real work, and it puts display fetch on
+the DDR3 arbiter alongside the CPU); or carve the framebuffer out of a fixed
+SDRAM region never offered to autoconfig, which sidesteps allocation entirely
+but costs that SDRAM whether or not RTG is used.
+
 ### Show the FPGA temperature on the first line of the Chipset OSD menu
 
 Asked for by Paul, 2026-09-18.  The XC7A100T has an on-die temperature sensor
