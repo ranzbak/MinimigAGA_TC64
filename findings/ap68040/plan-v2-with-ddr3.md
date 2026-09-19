@@ -2119,6 +2119,19 @@ load, and on the Ctrl-Alt-KP0 shortcut.  Lesson: a change that makes a dead
 setting live is a behavioural change, not a cosmetic one, and should be flagged
 and tested as such.
 
+**CONFIRMED ON HARDWARE 2026-09-19** (Paul, `stage_ap040_mousefix`): with the
+fix in, CD32Pad can be switched ON and the mouse keeps working.  That is the
+direct inverse of the fault he could previously reproduce on demand, so it is a
+positive result and this item is closed.
+
+He also saw no stuck right mouse button in that session.  **That does not close
+the older fault** -- see the next paragraph.  It was always intermittent
+("sometimes the right mouse button stops functioning"), and an intermittent
+fault that fails to appear in one sitting has not been shown to be gone.
+Before treating it as fixed, establish that it could still have occurred inside
+the window; the same reasoning error is recorded in [[vivado-lab-gotchas]] for
+the RTG captures.
+
 **This is NOT the older right-mouse-button fault.**  Paul's earlier reports --
 RMB stopping on its own, and RMB plus RTG dying together with only a power
 cycle recovering -- predate that firmware change, and until it the cd32pad bit
