@@ -107,9 +107,24 @@ unsigned int i2c_read_status()
   return I2C(HW_I2C_STATUS);
 }
 
-// Busy wait the bus is no longer busy
+// Busy wait the bus is no longer busy.
+//
+// BOUNDED, and it has to be.  This runs from HandleUI, so a bus that never
+// goes idle does not just lose an I2C transfer -- it stops the 832 returning
+// to its main loop at all.  The OSD freezes on whatever it was showing, and an
+// Amiga reset cannot clear it, because nothing on the Amiga side resets the
+// 832 (see findings/reset/2026-09-19-reset-logic-review.md).  That is exactly
+// how LSHIFT + keypad '.' left its notification on screen for good: it calls
+// adv7511_init(), which is all writes, and every write waited here forever.
+//
+// The read path was bounded when it caused the same hang on 2026-09-18; the
+// write path was missed.  The guard is deliberately generous -- a real
+// transfer finishes far inside it -- so this only fires when the bus is
+// genuinely stuck, and then the caller carries on rather than taking the whole
+// firmware down with it.
 void i2c_wait_not_busy()
 {
-  while (I2C(HW_I2C_STATUS) & STATUS_I2C_BUSY)
+  unsigned int guard = 200000;   // same bound the read path above uses
+  while ((I2C(HW_I2C_STATUS) & STATUS_I2C_BUSY) && --guard)
     ;
 }
