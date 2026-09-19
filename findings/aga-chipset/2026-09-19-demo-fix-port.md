@@ -94,6 +94,47 @@ paths the whole display uses:
 2026-09-12 and has never had an honest hardware run. Whatever it does on this
 image is the first real result.
 
+## TURN TURBO OFF BEFORE BLAMING A CHIPSET FIX
+
+Learned the hard way on the first run of this batch, 2026-09-19. RAMJAM
+"Copperslave" flickered through the opening effects and then lost the display
+signal entirely — which looked exactly like fix 1.9 (the bitplane modulo) had
+broken it, since that is the very demo 1.9 targets.
+
+**It was the CPU speed.** With Turbo off the demo does not crash and renders
+far better. Paul called it: an AP68040 with Turbo chip and kick RAM reaches
+chip RAM without waiting for the Amiga's bus slots, so the CPU-to-chipset
+timing ratio is nowhere near what a demo written for a 7 MHz 68000 assumes.
+Beam-chasing code that polls VHPOSR and writes registers "just in time" simply
+overruns.
+
+Two things follow:
+
+- **A demo that misbehaves is not evidence against a chipset fix until it has
+  been retried with Turbo off.** Record the Turbo state with every demo result;
+  a result without it is ambiguous.
+- Before suspecting a fix, check whether the port is even in question: 1.9 was
+  character-for-character upstream's, and the pointer-arithmetic block that
+  consumes it is byte-identical between our tree and MiSTer's. That took one
+  diff against the reference clone at
+  `~/work/fpga/Xilinx/artix7/minimig/Minimig-AGA_MiSTer` and would have ruled
+  it out before any reverting was considered.
+
+The other candidate explanations, both still worth remembering for a demo that
+loses the display: the demo may not support AGA at all (try ECS/OCS in the
+OSD), or it may switch to a mode the scandoubler and ADV7511 cannot carry,
+which looks identical from the monitor's side and is not a chipset fault.
+
+## Results so far, 2026-09-19 (image `stage_ap040_mousefix`)
+
+| Test | Result |
+|---|---|
+| Sanity "Roots 2.0" | **PASS — fix 1.8 confirmed.** This closes the 2026-09-13 run recorded as CONFOUNDED; it is the first honest result for that fix, and it is a pass |
+| Essence "Crazy Sexy Cool" | **PASS** — looks good (fixes 1.10/1.11, the `window_ena` pair, the highest-risk item in the batch) |
+| RAMJAM "Copperslave" | Crashes with **Turbo on**, fine with **Turbo off** — CPU speed, not fix 1.9. Whether the modulo error itself is gone is still to be confirmed with Turbo off |
+| Contraz "Domination" | not available on the Amiga yet — TBD |
+| Desire "Hamazing" | not available yet — TBD |
+
 ## What was deliberately NOT ported
 
 Three of the fourteen, each for a stated reason rather than for time:
