@@ -2257,8 +2257,19 @@ void HandleUI(void)
         if (select)
         {
             OsdHide();
-            if (ErrorFatal)
-                ColdBoot();
+            // A ROM error means there is no usable Kickstart in RAM and the
+            // CPU is being held, so dismissing it has to retry the boot --
+            // otherwise the only way out is the board reset button.  A fatal
+            // error retries for the same reason.
+            if (ErrorFatal || (ErrorMask & (1 << ERROR_ROM)))
+                ColdBoot();     // does its own ClearError(ERROR_ALL)
+            else
+                // Nothing else clears it.  main()'s error loop spins on
+                // `while(ErrorMask)', so a flag left set there keeps the 832
+                // out of its main loop for good: drive sounds, the RTC and the
+                // HDMI re-init poll never run again, and the error is latched
+                // until the board is reset.
+                ClearError(ERROR_ALL);
             menustate = MENU_NONE1;
         }
         break;

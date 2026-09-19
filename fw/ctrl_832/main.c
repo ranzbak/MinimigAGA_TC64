@@ -207,10 +207,17 @@ int ColdBoot()
 			BootPrintEx("Loading kickstart ROM...");
 			result=ApplyConfiguration(1,1);
 
-			OsdDoReset(SPI_RST_USR | SPI_RST_CPU,0);
-
-			SetIntHandler(inthandler);
-			EnableInterrupts();
+			// Only let the CPU go if there is actually a ROM for it to run.
+			// Releasing it onto RAM that holds no valid Kickstart is what
+			// produced the white/grey screen that came back on every reset:
+			// the 68040 restarts, finds the same rubbish, and fails the same
+			// way.  Held in reset instead, the machine stays quiet and the OSD
+			// stays usable, so another Kickstart can be chosen -- which
+			// re-runs ApplyConfiguration and releases the CPU properly.
+			if(result)
+				OsdDoReset(SPI_RST_USR | SPI_RST_CPU,0);
+			else if(!ErrorMask)
+				SetError(ERROR_ROM,"Kickstart ROM failed to load",0,0);
 
 			audio_clear();
 			if(drivesounds_loaded())
@@ -218,6 +225,16 @@ int ColdBoot()
 
 		}
 	}
+
+	// One exit, always.  Whatever went wrong above -- no card, no filesystem,
+	// no ROM -- the interrupt handler has to be installed and interrupts
+	// re-enabled to match the DisableInterrupts() on the way in.  Leaving them
+	// off was what turned "the boot failed" into "the machine is wedged": the
+	// 832 kept running but without its timers, so nothing that depends on them
+	// (drive sounds, the RTC, the HDMI re-init poll) worked again.
+	SetIntHandler(inthandler);
+	EnableInterrupts();
+
 	return(result);
 }
 
