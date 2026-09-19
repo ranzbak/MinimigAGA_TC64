@@ -131,7 +131,7 @@ which looks identical from the monitor's side and is not a chipset fault.
 |---|---|
 | Sanity "Roots 2.0" | **PASS — fix 1.8 confirmed.** This closes the 2026-09-13 run recorded as CONFOUNDED; it is the first honest result for that fix, and it is a pass |
 | Essence "Crazy Sexy Cool" | **PASS** — looks good (fixes 1.10/1.11, the `window_ena` pair, the highest-risk item in the batch) |
-| RAMJAM "Copperslave" | Crashes with **Turbo on**, fine with **Turbo off** — CPU speed, not fix 1.9. Whether the modulo error itself is gone is still to be confirmed with Turbo off |
+| RAMJAM "Copperslave" | **PASS with chip/kick Turbo OFF** — runs to completion, no crash. Crashes with Turbo ON, which is CPU speed and not fix 1.9. One caveat on the wording: this shows the demo now runs clean, not that we ever *observed* the modulo error on our tree beforehand — upstream reports it without the fix, so the inference is reasonable but it is an inference |
 | Contraz "Domination" | not available on the Amiga yet — TBD |
 | Desire "Hamazing" | not available yet — TBD |
 
