@@ -2089,6 +2089,51 @@ Still open from this entry: the keyboard stopping altogether.  The queue makes
 one of its shapes impossible, but nothing here explains a total stop, so treat
 it as unfixed until Paul sees a run without one.
 
+### CD32 pad mode killed the mouse -- found and fixed 2026-09-19, CONFIRMED
+
+Paul, on the `keyq` image: the left mouse button stopped registering and the
+right read permanently pressed; both behaved while the OSD was open; it started
+"after some button bashing".  Confirmed by direct test -- **CD32Pad is off by
+default, and turning it on triggers it.**
+
+Root cause is a latent bug in `userio.v`, exposed by a firmware change made the
+night before.  Port 1 is the MOUSE port, and CD32 pad mode should only take it
+over when it is in joystick mode.  Its pot line knew that; its fire line did
+not:
+
+    if (joy1enable & cd32pad & ~joy1_pin5)  potcap[1] <= ...   guarded
+    assign _fire0 = cd32pad && !cd32pad1_reg_load ? fire1_d : ...  NOT guarded
+
+So with CD32Pad on, the left button became the pad's serial DATA line (idle
+high -- the button simply never registers) and the second button pin became the
+shift CLOCK (permanently pressed).  `key_disable` masks the joystick path while
+the OSD is open, which is why both looked fine in the menu.  Fixed by adding
+the missing `joy1enable` guard (5f0d1da).
+
+**Why it appeared only now.**  `ConfigAutofire` masked its argument with 0x03
+and silently dropped the cd32pad bit, so the menu item wrote config, redrew
+itself, and never reached the hardware -- the feature had never once run on
+this board.  77ff81e fixed that mask and added the missing `ConfigAutofire`
+call to `ApplyConfiguration`, making the setting live at boot, on any config
+load, and on the Ctrl-Alt-KP0 shortcut.  Lesson: a change that makes a dead
+setting live is a behavioural change, not a cosmetic one, and should be flagged
+and tested as such.
+
+**This is NOT the older right-mouse-button fault.**  Paul's earlier reports --
+RMB stopping on its own, and RMB plus RTG dying together with only a power
+cycle recovering -- predate that firmware change, and until it the cd32pad bit
+could not reach the RTL at all.  Those remain OPEN and are a different fault.
+The investigation there did establish one useful fact: the only mouse-button
+contributions `key_disable` masks are the ones from `_joy1` (JOYA, the
+MCP23S17 port expander on the GPIO header), so a stuck button that releases
+when the OSD opens is coming from that expander -- which the FPGA configures
+exactly once at `reset_n`, has no reset line to, and never re-verifies.  That
+also explains why a Minimig core reset never cleared it while a power cycle
+did.  Next time it happens, press the BOARD reset button before power-cycling:
+if that clears it, the expander lost its configuration and the fix is to
+re-initialise or poll it; if only power-off clears it, the chip itself wedges
+and needs its RESET pin wired.
+
 ### Show the FPGA temperature on the first line of the Chipset OSD menu
 
 Asked for by Paul, 2026-09-18.  The XC7A100T has an on-die temperature sensor
