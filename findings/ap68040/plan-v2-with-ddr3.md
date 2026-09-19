@@ -2178,7 +2178,45 @@ allocates the framebuffer from fast RAM (`FindCard` asks for
 - Any future "FAST = DDR3" that removes SDRAM fast RAM inherits the same
   problem.
 
-Three ways out, cheapest first: keep at least one SDRAM fast-RAM board offered
+**OPEN BUG, 2026-09-19: `Boards: DDR3 only` does not take effect.**  Paul set
+it, reset from the OSD menu, and still saw 40 MB of fast RAM -- which is
+all boards (8 MB Zorro II + 16 MB Zorro III board 1 + 16 MB DDR3), i.e. the
+chain enumerated as though `ddr3_only` were 0.  Deprioritised by Paul the same
+day ("not that important, just note it for later").
+
+**Do not repeat the static trace -- it was done and every link checks out:**
+
+- `menu.c` toggles `config.memory ^= 0x80` and calls `ConfigMemory`;
+- `ConfigMemory` sends the whole byte, unmasked (it is NOT the cd32pad-style
+  bug -- that was the first thing suspected and it is not this);
+- `userio_osd.v` takes all 8 bits into `t_memory_config`, and copies bit 7 to
+  `memory_config[7]` under `reset`;
+- `minimig.v` registers it and wires it straight to `.ddr3_only(memory_config[7])`;
+- `Z3RAM3` is 1 (`Z3RAM3_FORCE_OFF` defaults 0 and no build overrides it), so
+  the `ddr3_only && Z3RAM3` test should pass;
+- from board 3 the chain goes straight to the terminator, so the SDRAM boards
+  are unreachable once it starts there;
+- **one reset is enough, and the OSD reset is the right kind**: `OsdReset()`
+  sends `OSD_CMD_RST` with `0x1`, setting `usrrst` -> `minimig_syscontrol` ->
+  `sys_reset`, which asserts both the `reset` that loads `memory_config[7]` and
+  the `sys_reset` that re-runs `minimig_autoconfig`.  Autoconfig's `init` fires
+  on the first cycle after reset releases, by which time bit 7 has propagated.
+  A plain reset also does not reload the config from SD, so an unsaved toggle
+  is not being overwritten -- the only two reload sites are the explicit "load
+  config" and "load kickstart" actions.
+
+So the fault is not visible by reading, and three rounds of "it should work"
+were wrong.  **Next step is measurement, not more analysis:** expose
+`memory_config` on the host register added for the die temperature
+(`0fffff40`, see `fpga_temp.v` and `cfide.vhd`) and print it as hex on the
+Memory menu.  That splits it immediately -- bit 7 clear in the RTL means the
+SPI write or the reset-time load is at fault; bit 7 set with 40 MB still
+enumerated means autoconfig is not re-running or `ddr3_only` is not reaching
+it.  A free discriminator to try first: set `FAST: none` with `Boards: all` and
+reset; if fast RAM disappears, the memory-config path works and the fault is
+specific to bit 7.
+
+Three ways out of the RTG constraint, cheapest first: keep at least one SDRAM fast-RAM board offered
 whenever RTG is in use (a menu interlock, firmware-only); give `VideoStream` a
 DDR3 read path and route by address (real work, and it puts display fetch on
 the DDR3 arbiter alongside the CPU); or carve the framebuffer out of a fixed
