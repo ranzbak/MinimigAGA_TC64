@@ -1312,9 +1312,16 @@ void HandleUI(void)
         // that address reads the platform register, which would print a
         // confident and entirely fictional number.
         if (core_caps & CORE_CAPS_TEMP) {
-            int t = (int)((((unsigned long)(FPGA_TEMP_RAW & 0x0fff)) * 504) >> 12) - 273;
-            sprintf(s, "        FPGA : %d C", t);
-            OsdWrite(0, s, 0, 1);
+            unsigned short raw = FPGA_TEMP_RAW;
+            int t = (int)((((unsigned long)(raw & 0x0fff)) * 504) >> 12) - 273;
+            // The raw word is shown alongside until this is trusted.  It reads
+            // -273 when raw is 0, and a failed address decode lands in the same
+            // place -- cfide answers an unrecognised address with platformdata,
+            // which is also a small number -- so the two cannot be told apart
+            // from the temperature alone.  0000 means nothing is arriving;
+            // anything else means the decode works and the XADC is the suspect.
+            sprintf(s, "        FPGA : %d C  %04x", t, raw);
+            OsdWrite(0, s, 0, 0);
         } else {
             OsdWrite(0, "", 0, 0);
         }
