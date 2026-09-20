@@ -1293,7 +1293,16 @@ cfide #(
     .sysclk(CLK_114),
     .n_reset(reset_out),
 
-    .xadc_temp({4'b0000, xadc_temp_raw}),
+    // Top nibble is a MARKER, not data.  The firmware prints this word as hex
+    // beside the temperature, and -273 C -- what the transfer function gives
+    // for a raw value of zero -- is also what a failed address decode looks
+    // like, because cfide answers an unrecognised address with platformdata,
+    // another small number.  With the marker the next reading says which:
+    //   Axxx  the decode works; xxx is the XADC's own value (A000 = XADC dead)
+    //   other the decode is wrong and this is not our register at all
+    // The firmware masks to the low 12 bits for the conversion, so the marker
+    // does not disturb the temperature.
+    .xadc_temp({4'hA, xadc_temp_raw}),
 
     .addr(hostaddr),
     .d(hostWR[15:0]),
