@@ -223,17 +223,24 @@ void HandleUI(void)
     // get user control codes
     c = OsdGetCtrl();
 
-    // The core's key queue overflowed, so an event was dropped and one of them
-    // may have been a key-up.  There is no telling which, and a modifier we
-    // wrongly believe is held is exactly what makes F12 stop opening the OSD,
-    // so let all three go: the worst that costs is one missed chord.
+    // The core's key queue overflowed, so an event was dropped.  The flag is
+    // cleared and otherwise ignored.
+    //
+    // This used to clear ctrl/lalt/lshift on the theory that a dropped key-up
+    // could leave a modifier stuck.  That cost far more than it bought: it
+    // wipes modifiers the user is still HOLDING, and InfoMessage is slow
+    // enough (OsdWaitVBL plus eight OSD line writes over SPI) that events pile
+    // up behind it.  The visible result was that LSHIFT + keypad +/- changed
+    // the volume exactly once and then did nothing until shift was released
+    // and pressed again.
+    //
+    // A stuck modifier is what the QUEUE itself fixes, by delivering key-ups
+    // reliably; blanking state on overflow was a second line of defence for a
+    // rare case, breaking a common one.  If a stuck modifier is ever seen
+    // again, the answer is a deeper queue so overflow cannot happen, not
+    // throwing away state we were told correctly.
     if (osd_keyq_lost)
-    {
         osd_keyq_lost = 0;
-        ctrl = false;
-        lalt = false;
-        lshift = false;
-    }
 
     // decode and set events
     menu = false;
