@@ -162,7 +162,21 @@ int adv7511_poll(void)
     // pass.  (0xff is not a plausible value here either: 0x42 has six reserved
     // bits that read 0.)
     if (st == 0xff)
+    {
+        // Treat "no answer" as the sink being gone, and SAY SO in adv_hpd_was.
+        // Returning without touching it was a latent trap: if the part stops
+        // answering while the display is off -- and HPD low resets most of its
+        // registers, so that is entirely possible -- then adv_hpd_was stays at
+        // 1 from when the display was on.  The display comes back, hpd reads 1,
+        // and there is no rising edge to trigger on.  The re-init then never
+        // happens again, which is exactly the fault Paul reported.
+        //
+        // Still no re-initialising on a failed read: we only record that there
+        // is nothing there.  The worst this can cause is one extra re-init
+        // after a transient read failure, which is harmless.
+        adv_hpd_was = 0;
         return 0;
+    }
 
     hpd = (st & 0x40) ? 1 : 0;
 
