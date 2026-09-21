@@ -1327,7 +1327,10 @@ void HandleUI(void)
             // which is also a small number -- so the two cannot be told apart
             // from the temperature alone.  0000 means nothing is arriving;
             // anything else means the decode works and the XADC is the suspect.
-            sprintf(s, "        FPGA : %d C  %04x", t, raw);
+            // HDMI status rides along on the same line while the HPD question
+            // is open: is the part answering at all when the display is off?
+            // ff = no answer, otherwise bit 6 (0x40) is Hot Plug Detect.
+            sprintf(s, "     FPGA %d C %04x HDMI %02x", t, raw, adv_last_status);
             OsdWrite(0, s, 0, 0);
         } else {
             OsdWrite(0, "", 0, 0);

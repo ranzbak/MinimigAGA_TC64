@@ -13,4 +13,8 @@ unsigned char adv7511_status(void);     // register 0x42: [6] HPD, [5] mon sense
 unsigned char adv7511_int_flags(void);  // register 0x96: [7] HPD, [6] mon sense
 int adv7511_poll(void);
 
+// Last status byte (register 0x42) the poll read, for the OSD to display.
+// Bit 6 is Hot Plug Detect; 0xff means the device did not answer at all.
+extern unsigned char adv_last_status;
+
 #endif

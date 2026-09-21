@@ -150,9 +150,18 @@ unsigned char adv7511_int_flags(void)
     return i2c_read_reg(ADV_CTRL_ADDR, 0x96);
 }
 
+// The last status byte the poll read, purely so the OSD can show it.  Costs no
+// extra I2C traffic: the poll has already fetched it.  This exists to settle
+// one question -- when the display is off, does the part stop answering (0xff)
+// or does it answer with HPD still set?  Those need different fixes and the
+// symptom is identical.
+unsigned char adv_last_status = 0;
+
 int adv7511_poll(void)
 {
     unsigned char st  = adv7511_status();
+
+    adv_last_status = st;
     unsigned char hpd;
     int reinit = 0;
 
