@@ -46,13 +46,7 @@
 // FPGA die temperature: the XADC's raw 12-bit reading, see rtl/soc/fpga_temp.v.
 // Only decoded when CORE_CAPS_TEMP is set -- on a core without it this address
 // reads the platform register instead, so check the capability before using it.
-// +2, not +0: a 16-bit register sits in the LOW halfword of its 32-bit word on
-// this big-endian bus, exactly like TIMER (0x...d2) and PLATFORM (0x...c2).
-// This was 0x...40, which reads the upper halfword -- the half cfide never
-// drives -- so it returned exactly 0, and the temperature read -273 C no matter
-// what the XADC was doing.  The marker nibble added in fe015dd is what exposed
-// it: a real read of the register cannot be zero, and neither can platformdata.
-#define FPGA_TEMP_RAW (*(volatile unsigned short *)0x0fffff42)
+#define FPGA_TEMP_RAW (*(volatile unsigned short *)0x0fffff40)
 #define SPIN {int v=TIMER;}	// Waste a few cycles to let the FPGA catch up
 
 #if 1

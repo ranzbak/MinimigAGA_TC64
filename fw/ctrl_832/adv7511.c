@@ -155,13 +155,7 @@ unsigned char adv7511_int_flags(void)
 // one question -- when the display is off, does the part stop answering (0xff)
 // or does it answer with HPD still set?  Those need different fixes and the
 // symptom is identical.
-// Starts at a SENTINEL, not 0.  With both this and the history starting at 0, a
-// poll that never ran and a poll whose every read returned 00 displayed the same
-// "HDMI 0" -- and those are opposite faults (poll not being called, versus HPD
-// reading low).  0xEE cannot come back from register 0x42, whose reserved bits
-// read 0, so the very first real read always differs and is always recorded.
-// History still 0 afterwards therefore means the poll has never run.
-unsigned char adv_last_status = 0xEE;
+unsigned char adv_last_status = 0;
 
 // The last four status bytes that DIFFERED from the one before, newest in the
 // low byte.  A plain "last value" readout cannot answer the question that
