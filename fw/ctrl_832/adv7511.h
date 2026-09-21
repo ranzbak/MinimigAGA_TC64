@@ -17,4 +17,8 @@ int adv7511_poll(void);
 // Bit 6 is Hot Plug Detect; 0xff means the device did not answer at all.
 extern unsigned char adv_last_status;
 
+// Last four status bytes that changed, newest in the low byte.  Survives the
+// display being off, which a live readout cannot: the OSD is unreadable then.
+extern unsigned long adv_status_hist;
+
 #endif

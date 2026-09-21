@@ -157,10 +157,19 @@ unsigned char adv7511_int_flags(void)
 // symptom is identical.
 unsigned char adv_last_status = 0;
 
+// The last four status bytes that DIFFERED from the one before, newest in the
+// low byte.  A plain "last value" readout cannot answer the question that
+// matters, because the reading wanted is the one taken while the display is
+// off -- and the OSD cannot be read with the display off.  Keeping the changes
+// means the sequence can be read afterwards, with the display back on.
+unsigned long adv_status_hist = 0;
+
 int adv7511_poll(void)
 {
     unsigned char st  = adv7511_status();
 
+    if (st != adv_last_status)
+        adv_status_hist = (adv_status_hist << 8) | st;
     adv_last_status = st;
     unsigned char hpd;
     int reinit = 0;

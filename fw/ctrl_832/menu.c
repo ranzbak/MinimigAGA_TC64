@@ -335,11 +335,19 @@ void HandleUI(void)
     case KEY_KPDOT:
         if (lshift) // Refresh ADV7511 configuration
         {
+            // Works from ANY menu state.  It used to be allowed only with no
+            // menu open (or a notification showing), which made it useless in
+            // precisely the situation where it is wanted -- looking at the
+            // HDMI status page and needing to kick the transmitter.  LSHIFT +
+            // keypad '.' is not a chord any menu uses for navigation.
+            //
+            // The notification is only raised when there is no menu in the
+            // way; drawing one over a menu would corrupt what the menu had
+            // already written, and it also used to re-arm its own dismiss
+            // timer on every press.
             if (menustate == MENU_NONE2 || menustate == MENU_INFO)
-            {
                 InfoMessage("Refreshing ADV7511 config");
-                adv7511_init();
-            }
+            adv7511_init();
         }
         break;
     case KEY_KP0:
@@ -1330,7 +1338,7 @@ void HandleUI(void)
             // HDMI status rides along on the same line while the HPD question
             // is open: is the part answering at all when the display is off?
             // ff = no answer, otherwise bit 6 (0x40) is Hot Plug Detect.
-            sprintf(s, "     FPGA %d C %04x HDMI %02x", t, raw, adv_last_status);
+            sprintf(s, "  %dC %04x HDMI %08lx", t, raw, adv_status_hist);
             OsdWrite(0, s, 0, 0);
         } else {
             OsdWrite(0, "", 0, 0);
