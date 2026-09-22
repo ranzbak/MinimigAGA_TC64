@@ -49,6 +49,10 @@ entity TG68K is
 		-- data cache and drained behind the core's back (AP040 plan X3.3).
 		-- 0 is the synchronous-store reference the A/B measurement wants.
 		ap040_post_stores  : integer := 1;
+		-- 1: the pipelined core (../AP68040-pipelined, rtl/compat/
+		-- ap040_pipe_tg68k_compat.v) in place of lib/AP68040's, behind the same
+		-- ports (findings/ap040-pipelined/PLAN.md M5).  0: the reference core.
+		ap040_pipelined    : integer := 0;
 		-- clk / clk_cpu, the AP68040 island's clock ratio.  3 is stage D3 as
 		-- shipped (37.8125 MHz); 4 runs the same architecture at the pre-D3 CPU
 		-- rate.  THE PHASE MARKER BELOW DEPENDS ON THIS AND IS NOT RATIO-AGNOSTIC
@@ -480,6 +484,88 @@ ARCHITECTURE logic OF TG68K IS
 	SIGNAL m_rdata     : std_logic_vector(31 downto 0);
 
 	COMPONENT ap040_tg68k_compat IS
+		GENERIC(
+			AP040_HAS_MMU      : integer := 1;
+			AP040_HAS_FPU      : integer := 1;
+			AP040_ENABLE_CACHE : integer := 1;
+			AP040_FAST_SIM     : integer := 0;
+			AP040_POST_STORES  : integer := 1;
+			AP040_FILL_CHANNEL : integer := 1;
+			AP040_BUS16        : integer := 1
+		);
+		PORT(
+			clk               : in  std_logic;
+			nreset            : in  std_logic;
+			clkena_in         : in  std_logic;
+			cache_allow_all   : in  std_logic;
+			cache_snoop_stb   : in  std_logic;
+			cache_snoop_addr  : in  std_logic_vector(31 downto 0);
+			cache_z2_ena      : in  std_logic;
+			cache_z3_base0    : in  std_logic_vector(4 downto 0);
+			cache_z3_ena0     : in  std_logic;
+			cache_z3_base1    : in  std_logic_vector(3 downto 0);
+			cache_z3_ena1     : in  std_logic;
+			data_in           : in  std_logic_vector(15 downto 0);
+			ipl               : in  std_logic_vector(2 downto 0);
+			ipl_autovector    : in  std_logic;
+			berr              : in  std_logic;
+			addr_out          : out std_logic_vector(31 downto 0);
+			data_write        : out std_logic_vector(15 downto 0);
+			nwr               : out std_logic;
+			nuds              : out std_logic;
+			nlds              : out std_logic;
+			busstate          : out std_logic_vector(1 downto 0);
+			longword          : out std_logic;
+			nresetout         : out std_logic;
+			fc                : out std_logic_vector(2 downto 0);
+			nmi_ack_toggle    : out std_logic;
+			fill_ena_zorro    : in  std_logic;
+			fill_ena_chip     : in  std_logic;
+			fill_req          : out std_logic;
+			fill_addr         : out std_logic_vector(31 downto 4);
+			fill_data         : in  std_logic_vector(127 downto 0);
+			fill_ack          : in  std_logic;
+			fill_err          : in  std_logic;
+			cache_maint_req   : out std_logic;
+			cache_maint_ic    : out std_logic;
+			cache_maint_dc    : out std_logic;
+			mmu_addr_log      : out std_logic_vector(31 downto 0);
+			mmu_addr_phys     : out std_logic_vector(31 downto 0);
+			mmu_cache_inhibit : out std_logic;
+			walker_req        : out std_logic;
+			walker_we         : out std_logic;
+			walker_addr       : out std_logic_vector(31 downto 0);
+			walker_wdat       : out std_logic_vector(31 downto 0);
+			walker_ack        : in  std_logic;
+			walker_data       : in  std_logic_vector(31 downto 0);
+			walker_berr       : in  std_logic;
+			cache_req         : out std_logic;
+			cache_addr        : out std_logic_vector(31 downto 0);
+			cache_data        : in  std_logic_vector(15 downto 0);
+			cache_ack         : in  std_logic;
+			cache_burst       : out std_logic;
+			cache_burst_len   : out std_logic_vector(2 downto 0);
+			cache_ramaddr     : out std_logic_vector(28 downto 1);
+			cacr_out          : out std_logic_vector(31 downto 0);
+			vbr_out           : out std_logic_vector(31 downto 0);
+			debug_busy        : out std_logic;
+			debug_fault       : out std_logic;
+			debug_halted      : out std_logic;
+			debug_status      : out std_logic_vector(255 downto 0);
+			debug_status2     : out std_logic_vector(127 downto 0);
+			m_req             : out std_logic;
+			m_write           : out std_logic;
+			m_instr           : out std_logic;
+			m_size            : out std_logic_vector(1 downto 0);
+			m_addr            : out std_logic_vector(31 downto 0);
+			m_wdata           : out std_logic_vector(31 downto 0);
+			m_fc              : out std_logic_vector(2 downto 0);
+			m_ack             : in  std_logic;
+			m_rdata           : in  std_logic_vector(31 downto 0)
+		);
+	END COMPONENT;
+
+	COMPONENT ap040_pipe_tg68k_compat IS
 		GENERIC(
 			AP040_HAS_MMU      : integer := 1;
 			AP040_HAS_FPU      : integer := 1;
@@ -1107,128 +1193,256 @@ BEGIN
 			END IF;
 		END PROCESS;
 
-		ap040 : COMPONENT ap040_tg68k_compat
-			GENERIC MAP(
-				AP040_HAS_MMU      => ap040_has_mmu,
-				AP040_HAS_FPU      => ap040_has_fpu,
-				AP040_ENABLE_CACHE => ap040_enable_cache,
-				AP040_FAST_SIM     => 0,
-				AP040_POST_STORES  => ap040_post_stores,
-				-- The line-fill channel is off (E2 D4/D5): a line fills over m_*.
-				AP040_FILL_CHANNEL => 0,
-				-- The 16-bit adapter is instantiated below, in this file.
-				AP040_BUS16        => 0
-			)
-			PORT MAP(
-				-- The CPU island's own 37.8125 MHz clock.  So are the master
-				-- mux, the walker and the 16-bit adapter.  The router's
-				-- sequencers, slower, the chipset state machine, Akiko and the
-				-- registers facing sdram_ctrl and ddr3_fastram stay on clk,
-				-- because that is the clock the controllers are on.
-				clk            => clk_cpu,
-				nreset         => reset,
-				clkena_in      => clkena,
-				-- unused with AP040_BUS16 => 0: the adapter below has data_in
-				data_in        => (others => '0'),
-				ipl            => cpuIPL,
-				ipl_autovector => '1',
-				-- The SoC never raises a bus error: undecoded 32-bit space is
-				-- auto-completed with $FFFF by sel_undecoded.  The core has its
-				-- own stall watchdog.
-				berr           => '0',
+		-- The core: lib/AP68040's, or the pipelined one (ap040_pipelined).
+		g_ref : IF ap040_pipelined = 0 GENERATE
+			ap040 : COMPONENT ap040_tg68k_compat
+				GENERIC MAP(
+					AP040_HAS_MMU      => ap040_has_mmu,
+					AP040_HAS_FPU      => ap040_has_fpu,
+					AP040_ENABLE_CACHE => ap040_enable_cache,
+					AP040_FAST_SIM     => 0,
+					AP040_POST_STORES  => ap040_post_stores,
+					-- The line-fill channel is off (E2 D4/D5): a line fills over m_*.
+					AP040_FILL_CHANNEL => 0,
+					-- The 16-bit adapter is instantiated below, in this file.
+					AP040_BUS16        => 0
+				)
+				PORT MAP(
+					-- The CPU island's own 37.8125 MHz clock.  So are the master
+					-- mux, the walker and the 16-bit adapter.  The router's
+					-- sequencers, slower, the chipset state machine, Akiko and the
+					-- registers facing sdram_ctrl and ddr3_fastram stay on clk,
+					-- because that is the clock the controllers are on.
+					clk            => clk_cpu,
+					nreset         => reset,
+					clkena_in      => clkena,
+					-- unused with AP040_BUS16 => 0: the adapter below has data_in
+					data_in        => (others => '0'),
+					ipl            => cpuIPL,
+					ipl_autovector => '1',
+					-- The SoC never raises a bus error: undecoded 32-bit space is
+					-- auto-completed with $FFFF by sel_undecoded.  The core has its
+					-- own stall watchdog.
+					berr           => '0',
 
-				addr_out       => OPEN,
-				data_write     => OPEN,
-				busstate       => OPEN,
-				longword       => OPEN,
-				nwr            => OPEN,
-				nuds           => OPEN,
-				nlds           => OPEN,
-				nresetout      => nResetOut_w,
-				fc             => open,
-				nmi_ack_toggle => open,
-				vbr_out        => VBR_out_w,
+					addr_out       => OPEN,
+					data_write     => OPEN,
+					busstate       => OPEN,
+					longword       => OPEN,
+					nwr            => OPEN,
+					nuds           => OPEN,
+					nlds           => OPEN,
+					nresetout      => nResetOut_w,
+					fc             => open,
+					nmi_ack_toggle => open,
+					vbr_out        => VBR_out_w,
 
-				-- Cacheable windows for the 040's internal caches.  Chip RAM
-				-- is covered by cache_z2_ena and the core's own hard-wired
-				-- $200000-$9FFFFF window; the Zorro III windows follow the
-				-- autoconfig state this wrapper already tracks.  Board 0 is
-				-- addr(31:27), so 01000 is $40000000-$47FFFFFF -- 128 MB
-				-- around the 16 MB SDRAM board; board 1 is addr(31:28), a
-				-- 256 MB window following the base the OS gave the DDR3 board
-				-- wherever it put it.  Both are much wider than the board
-				-- inside them, so a cacheable read can land in a hole no
-				-- board decodes, which the router sends to the adapter as
-				-- undecoded space.
-				cache_allow_all  => '0',
-				cache_snoop_stb  => snp_stb_held,
-				cache_snoop_addr => snp_addr_held,
-				cache_z2_ena     => z2ram_ena,
-				cache_z3_base0   => "01000",
-				cache_z3_ena0    => z3ram_ena,
-				cache_z3_base1   => z3ram3_base(7 downto 4),
-				cache_z3_ena1    => z3ram3_ena,
+					-- Cacheable windows for the 040's internal caches.  Chip RAM
+					-- is covered by cache_z2_ena and the core's own hard-wired
+					-- $200000-$9FFFFF window; the Zorro III windows follow the
+					-- autoconfig state this wrapper already tracks.  Board 0 is
+					-- addr(31:27), so 01000 is $40000000-$47FFFFFF -- 128 MB
+					-- around the 16 MB SDRAM board; board 1 is addr(31:28), a
+					-- 256 MB window following the base the OS gave the DDR3 board
+					-- wherever it put it.  Both are much wider than the board
+					-- inside them, so a cacheable read can land in a hole no
+					-- board decodes, which the router sends to the adapter as
+					-- undecoded space.
+					cache_allow_all  => '0',
+					cache_snoop_stb  => snp_stb_held,
+					cache_snoop_addr => snp_addr_held,
+					cache_z2_ena     => z2ram_ena,
+					cache_z3_base0   => "01000",
+					cache_z3_ena0    => z3ram_ena,
+					cache_z3_base1   => z3ram3_base(7 downto 4),
+					cache_z3_ena1    => z3ram3_ena,
 
-				-- Stage B: the table walker rides this wrapper's own memory
-				-- path, one longword per descriptor through the master mux.
-				-- ap040_walker_cdc is deliberately NOT used: the walker FSM
-				-- below is on the core's own clock and enable.
-				walker_req     => wk_req,
-				walker_we      => wk_we,
-				walker_addr    => wk_addr,
-				walker_wdat    => wk_wdat,
-				walker_ack     => wk_ack,
-				walker_data    => wk_data,
-				walker_berr    => wk_berr,
+					-- Stage B: the table walker rides this wrapper's own memory
+					-- path, one longword per descriptor through the master mux.
+					-- ap040_walker_cdc is deliberately NOT used: the walker FSM
+					-- below is on the core's own clock and enable.
+					walker_req     => wk_req,
+					walker_we      => wk_we,
+					walker_addr    => wk_addr,
+					walker_wdat    => wk_wdat,
+					walker_ack     => wk_ack,
+					walker_data    => wk_data,
+					walker_berr    => wk_berr,
 
-				-- Stage D's line-fill channel is OFF (E2 decision D4).  The
-				-- router that served it borrowed the bus on clk_114 and was one
-				-- of the three masters D4 collapses; with the unit port a line
-				-- fill has no 16-bit sub-cycles to stream, so the channel is
-				-- retired rather than converted.  AP040_FILL_CHANNEL => 0 below
-				-- stubs it inside the compat top as well.
-				fill_ena_zorro => '0',
-				fill_ena_chip  => '0',
-				fill_req       => open,
-				fill_addr      => open,
-				fill_data      => (others => '0'),
-				fill_ack       => '0',
-				fill_err       => '0',
+					-- Stage D's line-fill channel is OFF (E2 decision D4).  The
+					-- router that served it borrowed the bus on clk_114 and was one
+					-- of the three masters D4 collapses; with the unit port a line
+					-- fill has no 16-bit sub-cycles to stream, so the channel is
+					-- retired rather than converted.  AP040_FILL_CHANNEL => 0 below
+					-- stubs it inside the compat top as well.
+					fill_ena_zorro => '0',
+					fill_ena_chip  => '0',
+					fill_req       => open,
+					fill_addr      => open,
+					fill_data      => (others => '0'),
+					fill_ack       => '0',
+					fill_err       => '0',
 
-				-- The older 16-byte burst port, stubbed to zero inside the
-				-- compat top and superseded by the fill channel above.
-				cache_req      => open,
-				cache_addr     => open,
-				cache_data     => (others => '0'),
-				cache_ack      => '0',
-				cache_burst    => open,
-				cache_burst_len=> open,
-				cache_ramaddr  => open,
+					-- The older 16-byte burst port, stubbed to zero inside the
+					-- compat top and superseded by the fill channel above.
+					cache_req      => open,
+					cache_addr     => open,
+					cache_data     => (others => '0'),
+					cache_ack      => '0',
+					cache_burst    => open,
+					cache_burst_len=> open,
+					cache_ramaddr  => open,
 
-				cache_maint_req => ap040_maint,
-				cache_maint_ic  => open,
-				cache_maint_dc  => open,
+					cache_maint_req => ap040_maint,
+					cache_maint_ic  => open,
+					cache_maint_dc  => open,
 
-				mmu_addr_log      => open,
-				mmu_addr_phys     => open,
-				mmu_cache_inhibit => open,
-				cacr_out          => open,
-				debug_busy        => ap040_busy,
-				debug_fault       => ap040_fault,
-				debug_halted      => ap040_halt,
-				debug_status      => ap040_dbg1,
-				debug_status2     => ap040_dbg2,
+					mmu_addr_log      => open,
+					mmu_addr_phys     => open,
+					mmu_cache_inhibit => open,
+					cacr_out          => open,
+					debug_busy        => ap040_busy,
+					debug_fault       => ap040_fault,
+					debug_halted      => ap040_halt,
+					debug_status      => ap040_dbg1,
+					debug_status2     => ap040_dbg2,
 
-				m_req             => m_req,
-				m_write           => m_write,
-				m_instr           => m_instr,
-				m_size            => m_size,
-				m_addr            => m_addr,
-				m_wdata           => m_wdata,
-				m_fc              => m_fc,
-				m_ack             => m_ack,
-				m_rdata           => m_rdata
-			);
+					m_req             => m_req,
+					m_write           => m_write,
+					m_instr           => m_instr,
+					m_size            => m_size,
+					m_addr            => m_addr,
+					m_wdata           => m_wdata,
+					m_fc              => m_fc,
+					m_ack             => m_ack,
+					m_rdata           => m_rdata
+				);
+		END GENERATE;
+
+		g_pipe : IF ap040_pipelined /= 0 GENERATE
+			ap040 : COMPONENT ap040_pipe_tg68k_compat
+				GENERIC MAP(
+					AP040_HAS_MMU      => ap040_has_mmu,
+					AP040_HAS_FPU      => ap040_has_fpu,
+					AP040_ENABLE_CACHE => ap040_enable_cache,
+					AP040_FAST_SIM     => 0,
+					AP040_POST_STORES  => ap040_post_stores,
+					-- The line-fill channel is off (E2 D4/D5): a line fills over m_*.
+					AP040_FILL_CHANNEL => 0,
+					-- The 16-bit adapter is instantiated below, in this file.
+					AP040_BUS16        => 0
+				)
+				PORT MAP(
+					-- The CPU island's own 37.8125 MHz clock.  So are the master
+					-- mux, the walker and the 16-bit adapter.  The router's
+					-- sequencers, slower, the chipset state machine, Akiko and the
+					-- registers facing sdram_ctrl and ddr3_fastram stay on clk,
+					-- because that is the clock the controllers are on.
+					clk            => clk_cpu,
+					nreset         => reset,
+					clkena_in      => clkena,
+					-- unused with AP040_BUS16 => 0: the adapter below has data_in
+					data_in        => (others => '0'),
+					ipl            => cpuIPL,
+					ipl_autovector => '1',
+					-- The SoC never raises a bus error: undecoded 32-bit space is
+					-- auto-completed with $FFFF by sel_undecoded.  The core has its
+					-- own stall watchdog.
+					berr           => '0',
+
+					addr_out       => OPEN,
+					data_write     => OPEN,
+					busstate       => OPEN,
+					longword       => OPEN,
+					nwr            => OPEN,
+					nuds           => OPEN,
+					nlds           => OPEN,
+					nresetout      => nResetOut_w,
+					fc             => open,
+					nmi_ack_toggle => open,
+					vbr_out        => VBR_out_w,
+
+					-- Cacheable windows for the 040's internal caches.  Chip RAM
+					-- is covered by cache_z2_ena and the core's own hard-wired
+					-- $200000-$9FFFFF window; the Zorro III windows follow the
+					-- autoconfig state this wrapper already tracks.  Board 0 is
+					-- addr(31:27), so 01000 is $40000000-$47FFFFFF -- 128 MB
+					-- around the 16 MB SDRAM board; board 1 is addr(31:28), a
+					-- 256 MB window following the base the OS gave the DDR3 board
+					-- wherever it put it.  Both are much wider than the board
+					-- inside them, so a cacheable read can land in a hole no
+					-- board decodes, which the router sends to the adapter as
+					-- undecoded space.
+					cache_allow_all  => '0',
+					cache_snoop_stb  => snp_stb_held,
+					cache_snoop_addr => snp_addr_held,
+					cache_z2_ena     => z2ram_ena,
+					cache_z3_base0   => "01000",
+					cache_z3_ena0    => z3ram_ena,
+					cache_z3_base1   => z3ram3_base(7 downto 4),
+					cache_z3_ena1    => z3ram3_ena,
+
+					-- Stage B: the table walker rides this wrapper's own memory
+					-- path, one longword per descriptor through the master mux.
+					-- ap040_walker_cdc is deliberately NOT used: the walker FSM
+					-- below is on the core's own clock and enable.
+					walker_req     => wk_req,
+					walker_we      => wk_we,
+					walker_addr    => wk_addr,
+					walker_wdat    => wk_wdat,
+					walker_ack     => wk_ack,
+					walker_data    => wk_data,
+					walker_berr    => wk_berr,
+
+					-- Stage D's line-fill channel is OFF (E2 decision D4).  The
+					-- router that served it borrowed the bus on clk_114 and was one
+					-- of the three masters D4 collapses; with the unit port a line
+					-- fill has no 16-bit sub-cycles to stream, so the channel is
+					-- retired rather than converted.  AP040_FILL_CHANNEL => 0 below
+					-- stubs it inside the compat top as well.
+					fill_ena_zorro => '0',
+					fill_ena_chip  => '0',
+					fill_req       => open,
+					fill_addr      => open,
+					fill_data      => (others => '0'),
+					fill_ack       => '0',
+					fill_err       => '0',
+
+					-- The older 16-byte burst port, stubbed to zero inside the
+					-- compat top and superseded by the fill channel above.
+					cache_req      => open,
+					cache_addr     => open,
+					cache_data     => (others => '0'),
+					cache_ack      => '0',
+					cache_burst    => open,
+					cache_burst_len=> open,
+					cache_ramaddr  => open,
+
+					cache_maint_req => ap040_maint,
+					cache_maint_ic  => open,
+					cache_maint_dc  => open,
+
+					mmu_addr_log      => open,
+					mmu_addr_phys     => open,
+					mmu_cache_inhibit => open,
+					cacr_out          => open,
+					debug_busy        => ap040_busy,
+					debug_fault       => ap040_fault,
+					debug_halted      => ap040_halt,
+					debug_status      => ap040_dbg1,
+					debug_status2     => ap040_dbg2,
+
+					m_req             => m_req,
+					m_write           => m_write,
+					m_instr           => m_instr,
+					m_size            => m_size,
+					m_addr            => m_addr,
+					m_wdata           => m_wdata,
+					m_fc              => m_fc,
+					m_ack             => m_ack,
+					m_rdata           => m_rdata
+				);
+		END GENERATE;
 
 		-- The master mux.  The walker owns it from the ce edge it raises wk_go
 		-- to the ce edge it takes its answer; m_req is idle for all of that.

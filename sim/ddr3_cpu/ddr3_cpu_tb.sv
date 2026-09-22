@@ -1,3 +1,9 @@
+// TG68K.vhd's core generate: g_ref (lib/AP68040) or g_pipe (ap040_pipelined)
+`ifdef AP040_PIPELINED
+`define AP040_INST g_pipe
+`else
+`define AP040_INST g_ref
+`endif
 //-----------------------------------------------------------------
 // ddr3_cpu_tb -- the TG68K WRAPPER driving the DDR3 Zorro-III fast RAM.
 //
@@ -697,10 +703,10 @@ end
 // wrapper's strobe with its own walker-write snoop, so the wrapper's strobe
 // is sampled directly to keep the two apart; snoop_wr is the cache's own
 // invalidate decision on that same edge.
-wire core_snp_stb = ddr3_cpu_tb.tg68k.g_ap040.ap040.cache_snoop_stb;
-wire core_snp_wr  = ddr3_cpu_tb.tg68k.g_ap040.ap040.g_cache.cache.snoop_wr;
+wire core_snp_stb = ddr3_cpu_tb.tg68k.g_ap040.`AP040_INST.ap040.cache_snoop_stb;
+wire core_snp_wr  = ddr3_cpu_tb.tg68k.g_ap040.`AP040_INST.ap040.g_cache.cache.snoop_wr;
 
-wire [31:0] core_snp_addr = ddr3_cpu_tb.tg68k.g_ap040.ap040.cache_snoop_addr;
+wire [31:0] core_snp_addr = ddr3_cpu_tb.tg68k.g_ap040.`AP040_INST.ap040.cache_snoop_addr;
 
 always @(posedge clk_cpu) begin
   if (tg68_rst && core_snp_stb) begin
@@ -783,7 +789,11 @@ wire        w_ena7WRreg = ena7WRreg;
 // The wrapper builds the AP68040 (its TG68K branch was removed in Stage E4a).
 // The core presents a TG68K-shaped port set, which is why the rest of this
 // bench did not have to change for it.
+`ifdef AP040_PIPELINED
+TG68K #(.cpu_clk_ratio(`CPU_RATIO), .ap040_pipelined(1)) tg68k (
+`else
 TG68K #(.cpu_clk_ratio(`CPU_RATIO)) tg68k (
+`endif
     .clk            (clk              ),
     .clk_cpu        (clk_cpu          ),
     .reset          (tg68_rst         ),
@@ -1339,7 +1349,7 @@ end
 localparam [3:0] CST_FILL  = 4'd4;    // C_FILL,  ap040_cache.v:233
 
 integer fill_ad    = 0;
-wire [3:0] cst_w   = ddr3_cpu_tb.tg68k.g_ap040.ap040.g_cache.cache.cst;
+wire [3:0] cst_w   = ddr3_cpu_tb.tg68k.g_ap040.`AP040_INST.ap040.g_cache.cache.cst;
 reg  [3:0] cst_d   = 4'd0;
 
 always @(posedge clk) begin

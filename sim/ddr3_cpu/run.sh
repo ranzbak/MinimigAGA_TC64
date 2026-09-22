@@ -166,6 +166,11 @@ MISLINES=${MISLINES:-16}
 CNTN=${CNTN:-64}
 
 if [ "$TURBOCHIP" = "0" ]; then VARIANT="${VARIANT}_chipbus"; fi
+# PIPELINED=1: the pipelined core (findings/ap040-pipelined/PLAN.md M5) --
+# TG68K's ap040_pipelined generic, the sources from PIPE_DIR (default the
+# sibling clone ../AP68040-pipelined) instead of lib/AP68040's.
+PIPE_DIR=${PIPE_DIR:-$(cd "$(dirname "$0")/../../.." && pwd)/AP68040-pipelined}
+if [ "${PIPELINED:-0}" = "1" ]; then VARIANT="${VARIANT}_pipe"; fi
 # RUNTAG=<word> gives a run its own directory and log, so legs that differ only
 # in environment switches (CPU_RATIO, CPU_PHASE, ...) do not overwrite each other.
 if [ -n "$RUNTAG" ]; then VARIANT="${VARIANT}_$RUNTAG"; fi
@@ -269,7 +274,15 @@ echo "sv work \"$D/ddr3_cpu_tb.sv\""                    >> $PRJ
 # ---- AP68040, when that is the core under test ----------------------------
 # SystemVerilog; ap040_defs.svh is on the include path passed to xelab below.
 # The RAM primitive is the project's, not the submodule's -- rtl/cpu040/dpram.v.
-if [ "$CPU" = "ap040" ]; then
+if [ "$CPU" = "ap040" ] && [ "${PIPELINED:-0}" = "1" ]; then
+    # the pipelined core, its wrapper and the adapters it lifted from lib/AP68040
+    PR=$PIPE_DIR/rtl
+    echo "sv work \"$PR/ap040_pipe_pkg.sv\""            >> $PRJ
+    for f in $PR/ap040_*.v $PR/compat/*.v; do
+        echo "sv work \"$f\""                           >> $PRJ
+    done
+    echo "verilog work \"$R/rtl/cpu040/dpram.v\""        >> $PRJ
+elif [ "$CPU" = "ap040" ]; then
     AP=$R/lib/AP68040/rtl
     for f in ap040_tg68k_compat ap040_core ap040_alu ap040_muldiv ap040_regfile \
              ap040_fpu ap040_mmu ap040_cache ap040_bus16_adapter \
@@ -307,6 +320,7 @@ EOF
 # The Micron model includes 2048Mb_ddr3_parameters.vh from its own directory.
 AP040_ELAB=""
 if [ "$CPU" = "ap040" ]; then AP040_ELAB="-i $R/lib/AP68040/rtl"; fi
+if [ "${PIPELINED:-0}" = "1" ]; then AP040_ELAB="-i $PIPE_DIR/rtl -i $PIPE_DIR/rtl/compat -d AP040_PIPELINED"; fi
 
 "$VIVADO_PATH/bin/xelab" -prj $PRJ -i "$LIB/tb/ddr3_core_xc7" $AP040_ELAB \
     -d SOC_SIM -d REALSDRAM -i $D ${NOCPU:+-d NOCPU} ${DMA_OVERLAP:+-d DMA_OVERLAP} ${P2CBLOCK:+-d P2CBLOCK=$P2CBLOCK} ${CPU_RATIO:+-d CPU_RATIO=$CPU_RATIO} ${CPU_PHASE:+-d CPU_PHASE=$CPU_PHASE} -debug typical -relax \
