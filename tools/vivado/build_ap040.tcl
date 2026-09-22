@@ -374,6 +374,27 @@ set pro_was [get_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED $impl]
 set_property STEPS.PHYS_OPT_DESIGN.IS_ENABLED true $impl
 set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED true $impl
 
+# IMPL_EFFORT=high in the environment raises the implementation effort for ONE
+# run and restores the previous directives afterwards, exactly like the two
+# switches above.  It is for the case where a build misses timing by a tenth of
+# a nanosecond on a path that is route-bound rather than structural -- not a
+# way to make a structurally failing design "pass"
+# (findings/ap040-pipelined/PLAN.md Q11).  The directives are the ones Xilinx
+# documents for each step; a step that rejects its name fails the build rather
+# than silently running the default.
+set eff_was {}
+if {[info exists ::env(IMPL_EFFORT)] && $::env(IMPL_EFFORT) eq "high"} {
+    foreach {st dirname} {PLACE_DESIGN ExtraTimingOpt
+                          PHYS_OPT_DESIGN AggressiveExplore
+                          ROUTE_DESIGN AggressiveExplore
+                          POST_ROUTE_PHYS_OPT_DESIGN AggressiveExplore} {
+        set prop STEPS.$st.ARGS.DIRECTIVE
+        dict set eff_was $st [get_property $prop $impl]
+        set_property $prop $dirname $impl
+    }
+    puts "build_ap040.tcl: IMPL_EFFORT=high -- place ExtraTimingOpt, phys_opt/route/post-route AggressiveExplore"
+}
+
 # RE-SYNTHESISE ONLY WHEN SOMETHING ACTUALLY CHANGED.  This was an
 # unconditional `reset_run synth_1`, so every build re-ran the longest stage
 # even when only a constraint file had changed (an XDC is read by
@@ -453,6 +474,8 @@ if {$pipe_gen ne ""} {
     foreach f [get_files -quiet -of_objects [get_filesets sources_1] $P/*] { set_property IS_ENABLED false $f }
     puts "build_ap040.tcl: lib/AP68040 re-enabled, pipelined sources disabled"
 }
+foreach {st was} $eff_was { set_property STEPS.$st.ARGS.DIRECTIVE $was $impl }
+if {[dict size $eff_was]} { puts "build_ap040.tcl: implementation directives restored" }
 set_property STEPS.PHYS_OPT_DESIGN.IS_ENABLED $ppo_was $impl
 set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED $pro_was $impl
 puts "build_ap040.tcl: generics cleared: '[get_property generic [get_filesets sources_1]]'"
