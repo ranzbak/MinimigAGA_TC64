@@ -34,6 +34,8 @@ module minimig_openaars_top #(
   // chip RAM visible to chipset DMA in time" (the D3 coherency defect,
   // findings/ap68040/sdd-d3/d3-snoop-coherency.md).
   parameter AP040_POST_STORES = 1,
+  // 1: the pipelined AP68040 in place of lib/AP68040's (PLAN.md M5)
+  parameter AP040_PIPELINED = 0,
   // AP68040 island clock divider: 30 = clk_114/3 (stage D3),
   // 40 = clk_114/4 (pre-D3 rate, D3 architecture otherwise intact).
   parameter CPU_CLK_DIVIDE = 30,
@@ -496,6 +498,7 @@ minimig_virtual_top
   .ap040_has_fpu(AP040_HAS_FPU),
   .ap040_enable_cache(AP040_ENABLE_CACHE),
   .ap040_post_stores(AP040_POST_STORES),
+  .ap040_pipelined(AP040_PIPELINED),
   .cpu_clk_divide(CPU_CLK_DIVIDE),
   .CPU040_DEBUG_ILA(CPU040_DEBUG_ILA),
   .DDR3_FASTRAM_ILA(DDR3_FASTRAM_ILA)

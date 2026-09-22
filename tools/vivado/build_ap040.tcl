@@ -321,9 +321,42 @@ if {$ila} {
     }
 }
 
+#-----------------------------------------------------------------------------
+# AP040_PIPE_DIR=<AP68040-pipelined checkout> in the environment builds the
+# pipelined core (findings/ap040-pipelined/PLAN.md M5, hardware gate 1):
+# TG68K's ap040_pipelined generic, the pipelined sources and its rtl/compat
+# (which carries lifted copies of lib/AP68040's cache and adapters under the
+# same module names -- so lib/AP68040's files are disabled for the run and
+# re-enabled afterwards), MMU and FPU reported absent.
+#-----------------------------------------------------------------------------
+set pipe_gen ""
+set pipe_off {}
+if {[info exists ::env(AP040_PIPE_DIR)] && $::env(AP040_PIPE_DIR) ne ""} {
+    set P [file normalize $::env(AP040_PIPE_DIR)]/rtl
+    foreach f [get_files -quiet -of_objects [get_filesets sources_1] $R/lib/AP68040/rtl/*.v] {
+        if {[get_property IS_ENABLED $f]} {
+            set_property IS_ENABLED false $f
+            lappend pipe_off $f
+        }
+    }
+    set pf [list $P/ap040_pipe_pkg.sv]
+    foreach f [glob $P/ap040_*.v] { lappend pf $f }
+    foreach f [glob $P/compat/*.v] { lappend pf $f }
+    foreach f $pf {
+        add_src $f
+        set_property file_type SystemVerilog [get_files -of_objects [get_filesets sources_1] $f]
+        set_property IS_ENABLED true [get_files -of_objects [get_filesets sources_1] $f]
+    }
+    set inc [get_property include_dirs [get_filesets sources_1]]
+    foreach d [list $P $P/compat] { if {[lsearch -exact $inc $d] < 0} { lappend inc $d } }
+    set_property include_dirs $inc [get_filesets sources_1]
+    set pipe_gen " AP040_PIPELINED=1 AP040_HAS_MMU=0 AP040_HAS_FPU=0"
+    puts "build_ap040.tcl: PIPELINED build from $P ([llength $pipe_off] lib/AP68040 files disabled)"
+}
+
 # The one functional difference from build.tcl: which kernel the wrapper
 # elaborates, and whether the fast-RAM ILA comes along for the ride.
-set_property generic "HAVEDDR3=1 DDR3_BIST_VIO=0 DDR3_FASTRAM_ILA=$ila CPU040_DEBUG_ILA=$ila AP040_POST_STORES=$post CPU_CLK_DIVIDE=$cpudiv" \
+set_property generic "HAVEDDR3=1 DDR3_BIST_VIO=0 DDR3_FASTRAM_ILA=$ila CPU040_DEBUG_ILA=$ila AP040_POST_STORES=$post CPU_CLK_DIVIDE=$cpudiv$pipe_gen" \
     [get_filesets sources_1]
 
 # The debug core adds a few thousand LUTs and flip-flops to clk_114, and with
@@ -413,6 +446,11 @@ foreach ext {bit ltx} {
 }
 
 set_property generic {} [get_filesets sources_1]
+foreach f $pipe_off { set_property IS_ENABLED true $f }
+if {$pipe_gen ne ""} {
+    foreach f [get_files -quiet -of_objects [get_filesets sources_1] $P/*] { set_property IS_ENABLED false $f }
+    puts "build_ap040.tcl: lib/AP68040 re-enabled, pipelined sources disabled"
+}
 set_property STEPS.PHYS_OPT_DESIGN.IS_ENABLED $ppo_was $impl
 set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED $pro_was $impl
 puts "build_ap040.tcl: generics cleared: '[get_property generic [get_filesets sources_1]]'"
