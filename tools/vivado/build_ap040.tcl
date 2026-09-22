@@ -350,7 +350,9 @@ if {[info exists ::env(AP040_PIPE_DIR)] && $::env(AP040_PIPE_DIR) ne ""} {
     set inc [get_property include_dirs [get_filesets sources_1]]
     foreach d [list $P $P/compat] { if {[lsearch -exact $inc $d] < 0} { lappend inc $d } }
     set_property include_dirs $inc [get_filesets sources_1]
-    set pipe_gen " AP040_PIPELINED=1 AP040_HAS_MMU=0 AP040_HAS_FPU=0"
+    # AP040_PIPE_MMU=1 in the environment: the lifted MMU on (plan M7, gate 2)
+    set pmmu [expr {[info exists ::env(AP040_PIPE_MMU)] && $::env(AP040_PIPE_MMU) eq "1" ? 1 : 0}]
+    set pipe_gen " AP040_PIPELINED=1 AP040_HAS_MMU=$pmmu AP040_HAS_FPU=0"
     puts "build_ap040.tcl: PIPELINED build from $P ([llength $pipe_off] lib/AP68040 files disabled)"
 }
 
