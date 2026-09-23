@@ -352,7 +352,14 @@ if {[info exists ::env(AP040_PIPE_DIR)] && $::env(AP040_PIPE_DIR) ne ""} {
     set_property include_dirs $inc [get_filesets sources_1]
     # AP040_PIPE_MMU=1 in the environment: the lifted MMU on (plan M7, gate 2)
     set pmmu [expr {[info exists ::env(AP040_PIPE_MMU)] && $::env(AP040_PIPE_MMU) eq "1" ? 1 : 0}]
-    set pipe_gen " AP040_PIPELINED=1 AP040_HAS_MMU=$pmmu AP040_HAS_FPU=0"
+    # AP040_PIPE_FPU=1: the lifted FPU on (plan M10.1 step 3, hardware gate 3).
+    # It defaults to 0 -- the LC040 configuration every image so far was built
+    # with -- because the FP instruction set is only partly sequenced: the
+    # control registers, FMOVEM, FSAVE/FRESTORE and the arithmetic exceptions
+    # are M10's remaining steps.  A 1 here is a measurement build, not a gate
+    # image.
+    set pfpu [expr {[info exists ::env(AP040_PIPE_FPU)] && $::env(AP040_PIPE_FPU) eq "1" ? 1 : 0}]
+    set pipe_gen " AP040_PIPELINED=1 AP040_HAS_MMU=$pmmu AP040_HAS_FPU=$pfpu"
     puts "build_ap040.tcl: PIPELINED build from $P ([llength $pipe_off] lib/AP68040 files disabled)"
 }
 
