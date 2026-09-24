@@ -1,0 +1,34 @@
+# stage_ap040_pipe_m9sd (sources ab95926), routed checkpoint, every failing setup path.
+# Produced with failing_paths.tcl.  All of them start at TG68K's registered
+# acknowledge and end on IF's clock-enable pins: this is the measurement that
+# got ab95926 reverted (PLAN.md M11.1 and the 2026-09-23 log row).
+
+routed checkpoint : /home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64-pipelined/project_1/project_1.runs/impl_1/minimig_openaars_top_routed.dcp
+failing setup paths: 500
+
+   slack  from clock       to clock          startpoint -> endpoint
+# --- endpoint histogram ---
+    372 g_ap040.g_pipe.ap040/core/u_if/q_reg/CE
+    100 g_ap040.g_pipe.ap040/core/u_if/fpc_b_reg/CE
+     28 g_ap040.g_pipe.ap040/core/u_if/q_reg/D
+# --- first 20 paths ---
+  -0.885  clk_114          clk_38            openaars_virtual_top/tg68k/x_ack_r_reg/C -> openaars_virtual_top/tg68k/g_ap040.g_pipe.ap040/core/u_if/q_reg[1][14]/D
+  -0.885  clk_114          clk_38            openaars_virtual_top/tg68k/x_ack_r_reg/C -> openaars_virtual_top/tg68k/g_ap040.g_pipe.ap040/core/u_if/q_reg[1][14]/D
+  -0.869  clk_114          clk_38            openaars_virtual_top/tg68k/x_ack_r_reg/C -> openaars_virtual_top/tg68k/g_ap040.g_pipe.ap040/core/u_if/q_reg[1][14]/D
+  -0.869  clk_114          clk_38            openaars_virtual_top/tg68k/x_ack_r_reg/C -> openaars_virtual_top/tg68k/g_ap040.g_pipe.ap040/core/u_if/q_reg[1][14]/D
+  -0.832  clk_114          clk_38            openaars_virtual_top/tg68k/x_ack_r_reg/C -> openaars_virtual_top/tg68k/g_ap040.g_pipe.ap040/core/u_if/q_reg[5][10]/CE
+  -0.832  clk_114          clk_38            openaars_virtual_top/tg68k/x_ack_r_reg/C -> openaars_virtual_top/tg68k/g_ap040.g_pipe.ap040/core/u_if/q_reg[5][10]/CE
+  -0.832  clk_114          clk_38            openaars_virtual_top/tg68k/x_ack_r_reg/C -> openaars_virtual_top/tg68k/g_ap040.g_pipe.ap040/core/u_if/q_reg[5][13]/CE
+  -0.832  clk_114          clk_38            openaars_virtual_top/tg68k/x_ack_r_reg/C -> openaars_virtual_top/tg68k/g_ap040.g_pipe.ap040/core/u_if/q_reg[5][13]/CE
+  -0.832  clk_114          clk_38            openaars_virtual_top/tg68k/x_ack_r_reg/C -> openaars_virtual_top/tg68k/g_ap040.g_pipe.ap040/core/u_if/q_reg[5][3]/CE
+  -0.832  clk_114          clk_38            openaars_virtual_top/tg68k/x_ack_r_reg/C -> openaars_virtual_top/tg68k/g_ap040.g_pipe.ap040/core/u_if/q_reg[5][3]/CE
+  -0.832  clk_114          clk_38            openaars_virtual_top/tg68k/x_ack_r_reg/C -> openaars_virtual_top/tg68k/g_ap040.g_pipe.ap040/core/u_if/q_reg[5][4]/CE
+  -0.832  clk_114          clk_38            openaars_virtual_top/tg68k/x_ack_r_reg/C -> openaars_virtual_top/tg68k/g_ap040.g_pipe.ap040/core/u_if/q_reg[5][4]/CE
+  -0.832  clk_114          clk_38            openaars_virtual_top/tg68k/x_ack_r_reg/C -> openaars_virtual_top/tg68k/g_ap040.g_pipe.ap040/core/u_if/q_reg[5][8]/CE
+  -0.832  clk_114          clk_38            openaars_virtual_top/tg68k/x_ack_r_reg/C -> openaars_virtual_top/tg68k/g_ap040.g_pipe.ap040/core/u_if/q_reg[5][8]/CE
+  -0.817  clk_114          clk_38            openaars_virtual_top/tg68k/x_ack_r_reg/C -> openaars_virtual_top/tg68k/g_ap040.g_pipe.ap040/core/u_if/q_reg[5][10]/CE
+  -0.817  clk_114          clk_38            openaars_virtual_top/tg68k/x_ack_r_reg/C -> openaars_virtual_top/tg68k/g_ap040.g_pipe.ap040/core/u_if/q_reg[5][10]/CE
+  -0.817  clk_114          clk_38            openaars_virtual_top/tg68k/x_ack_r_reg/C -> openaars_virtual_top/tg68k/g_ap040.g_pipe.ap040/core/u_if/q_reg[5][13]/CE
+  -0.817  clk_114          clk_38            openaars_virtual_top/tg68k/x_ack_r_reg/C -> openaars_virtual_top/tg68k/g_ap040.g_pipe.ap040/core/u_if/q_reg[5][13]/CE
+  -0.817  clk_114          clk_38            openaars_virtual_top/tg68k/x_ack_r_reg/C -> openaars_virtual_top/tg68k/g_ap040.g_pipe.ap040/core/u_if/q_reg[5][3]/CE
+  -0.817  clk_114          clk_38            openaars_virtual_top/tg68k/x_ack_r_reg/C -> openaars_virtual_top/tg68k/g_ap040.g_pipe.ap040/core/u_if/q_reg[5][3]/CE
