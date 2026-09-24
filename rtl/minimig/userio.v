@@ -142,6 +142,16 @@ reg    joy1enable;          //joystick 1 enable (mouse/joy switch)
 reg    joy2enable;          //joystick 2 enable when no osd
 wire  osd_enable;          // OSD display enable
 wire  key_disable;        // Amiga keyboard disable
+// Mouse buttons and the OSD (Paul, 2026-09-24): while the OSD has the input
+// the Amiga sees no mouse buttons -- clicks in the OSD used to reach the
+// Amiga too.  The buttons are levels, so forcing "released" while the OSD is
+// open cannot leave one stuck: after it closes the Amiga sees the real state.
+// The raw _mleft0/_mright0/_mthird0 stay for the input diagnostic.
+wire  _mleft0_g  = _mleft0  | key_disable;
+wire  _mright0_g = _mright0 | key_disable;
+wire  _mthird0_g = _mthird0 | key_disable;
+wire  _lmb_g     = _lmb     | key_disable;
+wire  _rmb_g     = _rmb     | key_disable;
 reg    [7:0] t_osd_ctrl;      //JB: osd control lines
 wire  test_load;          //load test value to mouse counter
 wire  [15:0] test_data;      //mouse counter test value
@@ -191,9 +201,9 @@ always @ (posedge clk) begin
       if(joy1enable & cd32pad & ~joy1_pin5) begin
         potcap[1] <= #1 cd32pad1_reg[7];
       end else begin
-        potcap[1] <= #1 _mright0 & _rmb & _djoy1[5] & ~(potreg[11] & ~potreg[10]);
+        potcap[1] <= #1 _mright0_g & _rmb_g & _djoy1[5] & ~(potreg[11] & ~potreg[10]);
       end
-      potcap[0] <= #1 _mthird0 & joy1_pin5;
+      potcap[0] <= #1 _mthird0_g & joy1_pin5;
     end
   end
 end
@@ -334,7 +344,7 @@ end
 // port 1 automatic mouse/joystick switch
 always @ (posedge clk) begin
   if (clk7_en) begin
-    if (!_mleft0 || reset)//when left mouse button pushed, switch to mouse (default)
+    if (!_mleft0_g || reset)//when left mouse button pushed, switch to mouse (default)
       joy1enable = 0;
     else if (!_sjoy1[4])//when joystick 1 fire pushed, switch to joystick
       joy1enable = 1;
@@ -428,7 +438,7 @@ end
 // mouse button stops working -- while the second button pin became the shift
 // clock and read permanently pressed.  Port 2 needs no such guard: it is the
 // joystick port.
-assign _fire0 = joy1enable && cd32pad && !cd32pad1_reg_load ? fire1_d : _sjoy1[4] & _mleft0 & _lmb;
+assign _fire0 = joy1enable && cd32pad && !cd32pad1_reg_load ? fire1_d : _sjoy1[4] & _mleft0_g & _lmb_g;
 assign _fire1 = cd32pad && !cd32pad2_reg_load ? fire2_d : _sjoy2[4] & _mleft1;
 
 //JB: some trainers writes to JOYTEST register to reset current mouse counter
@@ -452,7 +462,7 @@ userio_ps2mouse pm1
   .ps2mclk_i  (ps2mclk_i),
   .ps2mdat_o  (ps2mdat_o),
   .ps2mclk_o  (ps2mclk_o),
-  .mou_emu    (mou_emu),
+  .mou_emu    (6'b00_0000),   // keyboard mouse emulation removed (Paul, 2026-09-24)
   .sof        (sof),
   .zcount     (mouse0scr),
   .ycount     (mouse0dat[15:8]),
@@ -553,7 +563,7 @@ reg  [15:0] in_sticky = 16'h0000;
 wire        fire0_phantom = !_fire0 && _mleft0 && _lmb;
 wire        pot_phantom   = !potcap[1] && _mright0 && _rmb && !(potreg[11] && !potreg[10]) &&
                             !(joy1enable && cd32pad && !joy1_pin5);
-wire        fire0_lost    = _fire0 && !_mleft0;
+wire        fire0_lost    = _fire0 && !_mleft0_g;
 wire        joy_menu      = !joy2enable && (!_xjoy2[5] || (!_xjoy2[3] && !_xjoy2[2]));
 always @ (posedge clk) begin
   if (clk7_en) begin

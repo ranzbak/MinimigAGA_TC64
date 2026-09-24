@@ -93,14 +93,16 @@ ciaa_ps2keyboard  kbd1
   .keyboard_disabled(keyboard_disabled),
   .osd_ctrl(osd_ctrl_ps2),
   .osd_strobe(osd_ctrl_strobe_ps2),
-  ._lmb(_lmb),
-  ._rmb(_rmb),
+  ._lmb(),                  // keyboard mouse emulation removed (Paul,
+  ._rmb(),                  // 2026-09-24): "not very useful, I have a mouse"
   ._joy2(_joy2),
   .freeze(freeze_out),
-  .mou_emu(mou_emu),
+  .mou_emu(mou_emu),        // no longer used: userio ties it off
   .joy_emu(joy_emu)
 );
 
+assign _lmb = 1'b1;
+assign _rmb = 1'b1;
 assign freeze = hrtmon_en && freeze_out;
 
 // Which key events reach the Amiga while the OSD has the keyboard: see
