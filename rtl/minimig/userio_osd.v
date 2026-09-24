@@ -20,6 +20,8 @@ module userio_osd #(
   input varbeamen,
    input rtg_ena,
 	input	[7:0] osd_ctrl,		//keycode for OSD control (Amiga keyboard codes + additional keys coded as values > 80h)
+	input	[31:0] in_diag,		//input-path diagnostic: bytes 6-9 of OSD_CMD_VERSION (see userio.v)
+	output	reg in_diag_clr = 1'b0,	//one clk7 pulse after byte 9 was read: clear the sticky bits
 	input	_scs,				//SPI enable
 	input	sdi,		  		//SPI data in
 	output	sdo,	 			//SPI data out
@@ -622,25 +624,37 @@ assign host_adr  = mem_adr[23:0];
 // below lives here, so this is what knows whether it is there.  Bits 0-3 come
 // in from the top, which is what knows which CPU was built.
 localparam [7:0] CAPS_KEYQ = 8'h10;
+// Bit 6: bytes 6-9 of this reply are the input-path diagnostic (in_diag, see
+// userio.v) -- what the mouse, the joystick expander and the button lines
+// into CIA-A / POTGOR are doing, read by the firmware's Chipset menu.  Reading
+// byte 9 clears the sticky half (bytes 8 and 9).
+localparam [7:0] CAPS_INDIAG = 8'h40;
 
-reg  [2:0] ver_cnt = 3'h0;
+reg  [3:0] ver_cnt = 4'h0;
 always @ (posedge clk) begin
   if (clk7_en) begin
+    in_diag_clr <= #1 1'b0;
     if (rx && cmd)
-      ver_cnt <= #1 3'h0;
-    else if (rx && (ver_cnt != 3'h7))
-      ver_cnt <= #1 ver_cnt + 3'h1;
+      ver_cnt <= #1 4'h0;
+    else if (rx && (ver_cnt != 4'hf))
+      ver_cnt <= #1 ver_cnt + 4'h1;
+    if (rx && !cmd && spi_version_sel && (ver_cnt == 4'd9))
+      in_diag_clr <= #1 1'b1;
   end
 end
 
 reg  [8-1:0] rtl_ver;
 always @ (*) begin
   case (ver_cnt)
-    3'd0    : rtl_ver = BETA_FLAG;
-    3'd1    : rtl_ver = MAJOR_VER;
-    3'd2    : rtl_ver = MINOR_VER;
-    3'd4    : rtl_ver = 8'hA4;
-    3'd5    : rtl_ver = CORE_CAPS | CAPS_KEYQ;
+    4'd0    : rtl_ver = BETA_FLAG;
+    4'd1    : rtl_ver = MAJOR_VER;
+    4'd2    : rtl_ver = MINOR_VER;
+    4'd4    : rtl_ver = 8'hA4;
+    4'd5    : rtl_ver = CORE_CAPS | CAPS_KEYQ | CAPS_INDIAG;
+    4'd6    : rtl_ver = in_diag[7:0];
+    4'd7    : rtl_ver = in_diag[15:8];
+    4'd8    : rtl_ver = in_diag[23:16];
+    4'd9    : rtl_ver = in_diag[31:24];
     default : rtl_ver = MINION_VER;
   endcase
 end

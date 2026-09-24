@@ -532,9 +532,47 @@ assign _mthird1 = ~mouse1_btn[2];
 //--------------------------------------------------------------------------------------
 
 
+//--------------------------------------------------------------------------------------
+// Input-path diagnostic (2026-09-24, "mouse buttons dead with the OSD closed,
+// fine with it open", and "the OSD is open at every boot").  The only mouse-
+// button terms the OSD state changes are the ones from _joy1 (the MCP23S17
+// joystick expander), which key_disable masks; and joystick port 2 can raise
+// KEY_MENU by itself.  These bytes show which path is doing it, and are read
+// as bytes 6-9 of OSD_CMD_VERSION (the Chipset menu's spare line):
+//   6 live   {_fire0, potcap[1], _mleft0, _mright0, _lmb, _rmb, joy1enable, key_disable}
+//   7 live   {cd32pad, joy2enable, _joy1[5:0]}         raw JOYA, never masked
+//   8 sticky {fire0_phantom, pot_phantom, ~_joy1[5:0]}  "was low" since last read
+//   9 sticky {joy_menu, fire0_lost, ~_joy2[5:0]}
+// fire0_phantom: CIA-A sees the left button down while neither the PS/2 mouse
+// nor the keyboard emulation holds it; pot_phantom: the same for POTGOR's
+// right button (only while the OS has the pin as an input); fire0_lost: the
+// mouse holds the left button and CIA-A does not see it; joy_menu: the
+// joystick-2 path produced KEY_MENU.  Reading byte 9 clears all of 8 and 9.
+wire        in_diag_clr;
+reg  [15:0] in_sticky = 16'h0000;
+wire        fire0_phantom = !_fire0 && _mleft0 && _lmb;
+wire        pot_phantom   = !potcap[1] && _mright0 && _rmb && !(potreg[11] && !potreg[10]) &&
+                            !(joy1enable && cd32pad && !joy1_pin5);
+wire        fire0_lost    = _fire0 && !_mleft0;
+wire        joy_menu      = !joy2enable && (!_xjoy2[5] || (!_xjoy2[3] && !_xjoy2[2]));
+always @ (posedge clk) begin
+  if (clk7_en) begin
+    if (in_diag_clr)
+      in_sticky <= #1 16'h0000;
+    else
+      in_sticky <= #1 in_sticky | {joy_menu, fire0_lost, ~_joy2[5:0],
+                                   fire0_phantom, pot_phantom, ~_joy1[5:0]};
+  end
+end
+wire [31:0] in_diag = {in_sticky,
+                       cd32pad, joy2enable, _joy1[5:0],
+                       _fire0, potcap[1], _mleft0, _mright0, _lmb, _rmb, joy1enable, key_disable};
+
 //instantiate osd controller
 userio_osd #(.CORE_CAPS(CORE_CAPS)) osd1
 (
+  .in_diag          (in_diag),
+  .in_diag_clr      (in_diag_clr),
   .clk              (clk),
   .clk7_en          (clk7_en),
   .clk7n_en         (clk7n_en),

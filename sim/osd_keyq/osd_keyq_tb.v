@@ -33,6 +33,9 @@ module osd_keyq_tb;
   wire       sdo;
 
   integer errors = 0;
+  wire       diag_clr;
+  integer    diag_clrs = 0;
+  always @(posedge diag_clr) diag_clrs = diag_clrs + 1;   // one clk7-long pulse
 
   userio_osd #(.CORE_CAPS(CAPS)) dut (
     .clk(clk), .clk7_en(clk7_en), .clk7n_en(clk7n_en),
@@ -40,6 +43,7 @@ module osd_keyq_tb;
     .c1(1'b0), .c3(1'b0), .sol(1'b0), .sof(1'b0),
     .varbeamen(1'b0), .rtg_ena(1'b0),
     .osd_ctrl(osd_ctrl),
+    .in_diag(32'h9A785634), .in_diag_clr(diag_clr),
     ._scs(_scs), .sdi(sdi), .sdo(sdo), .sck(sck),
     .osd_blank(), .osd_pixel(),
     .osd_enable(), .key_disable(),
@@ -102,7 +106,7 @@ module osd_keyq_tb;
     end
   endtask
 
-  reg [7:0] b0, b1, b2, b3, b4, b5;
+  reg [7:0] b0, b1, b2, b3, b4, b5, b6, b7, b8, b9;
 
   initial begin
     $dumpfile("osd_keyq.vcd");
@@ -122,9 +126,23 @@ module osd_keyq_tb;
     spi_byte(8'hff, b3);
     spi_byte(8'hff, b4);
     spi_byte(8'hff, b5);
+    spi_byte(8'hff, b6);
+    spi_byte(8'hff, b7);
+    spi_byte(8'hff, b8);
+    spi_byte(8'hff, b9);
     spi_close;
     expect_byte("version byte 4 (magic)", b4, 8'hA4);
-    expect_byte("version byte 5 (caps)",  b5, CAPS | 8'h10);
+    // bit 4: the key queue; bit 6: bytes 6-9 are the input-path diagnostic
+    expect_byte("version byte 5 (caps)",  b5, CAPS | 8'h50);
+    expect_byte("version byte 6 (in_diag[7:0])",   b6, 8'h34);
+    expect_byte("version byte 7 (in_diag[15:8])",  b7, 8'h56);
+    expect_byte("version byte 8 (in_diag[23:16])", b8, 8'h78);
+    expect_byte("version byte 9 (in_diag[31:24])", b9, 8'h9A);
+    if (diag_clrs != 1) begin
+      errors = errors + 1;
+      $display("FAIL: reading byte 9 raised in_diag_clr %0d times, expected 1", diag_clrs);
+    end else
+      $display("  ok: reading byte 9 cleared the sticky diagnostic once");
 
     // ---- 2. an empty queue -------------------------------------------------
     $display("--- empty queue ---");
