@@ -109,3 +109,11 @@ findings/**/obj_*/
 findings/ap040-pipelined/tests/kick/patched*
 findings/ap040-pipelined/tests/kick/build_pipeboard-*
 findings/**/build_*.log
+findings/**/*.hdf
+findings/**/*.adf
+findings/**/*_trace.txt
+findings/**/*.log
+findings/**/*.pdf
+findings/**/*.PDF
+findings/ap040-pipelined/tests/cputest/gen/cputestgen
+findings/**/.tinfo/
