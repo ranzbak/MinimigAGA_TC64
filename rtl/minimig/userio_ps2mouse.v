@@ -308,7 +308,15 @@ module userio_ps2mouse
         // stream.  Before this, a mouse unplugged (or browning out) in the
         // middle of a packet left the machine waiting for a byte that never
         // came, with no way out but a core reset.
-        mtreset=0;
+        // DURING INIT the timer is held instead (!mcmd_done): after the 0xFF
+        // reset command the mouse ACKs and then runs its self-test, and the
+        // BAT reply (0xAA 0x00) that states 4-6 wait for comes 300-500 ms
+        // later.  Timing that out after ~9 ms threw the sequence out of step
+        // -- a command sent into the self-test is lost, the 200/100/80
+        // sample-rate knock is broken, and the wheel mode is never entered
+        // (sim, 2026-09-24: behavioural mouse, BAT 9-500 ms: wheel lost in
+        // every case before this, kept in every case after).
+        mtreset=!mcmd_done;
         if (mrready) begin
           // we got our second packet byte
           mpacket=2;
@@ -322,7 +330,7 @@ module userio_ps2mouse
 
       5 : begin
         // get third packet byte  (mid-packet: timer runs, see state 4)
-        mtreset=0;
+        mtreset=!mcmd_done;
         if (mrready) begin
           // we got our third packet byte
           mpacket=3;
@@ -336,7 +344,7 @@ module userio_ps2mouse
 
       6 : begin
         // get fourth packet byte  (mid-packet: timer runs, see state 4)
-        mtreset=0;
+        mtreset=!mcmd_done;
         if (mrready) begin
           // we got our fourth packet byte
           mpacket = (mcmd_cnt == 8) ? 5 : 4;
