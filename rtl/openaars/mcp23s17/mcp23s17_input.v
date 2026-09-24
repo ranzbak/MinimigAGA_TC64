@@ -114,10 +114,23 @@ initial begin
 end
 
 //// SPI Master ////
+// CLKS_PER_HALF_BIT sets WHERE MISO is sampled, not just the SCK rate.
+// SPI_Master samples on its leading-edge strobe, and MISO reaches it through
+// the two-flop synchroniser above, so the value it takes is the pin as it was
+// two clocks before SCK rises -- (CLKS_PER_HALF_BIT - 2) clocks after SCK fell.
+// The MCP23S17 drives SO from the falling edge and only guarantees it valid
+// tV later (tens of ns; the datasheet maximum is well past one clock).  At 3
+// that was ONE 28 MHz clock, ~35 ns minus the pad delays: a chip slower than
+// ~30 ns is read one bit late (bit n shows up at n-1, bit 7 twice), and one
+// near 30 ns reads either way at random.
+// sim (2026-09-24, behavioural MCP23S17, tV 0-120 ns, pad delay 3/12 ns):
+// at 3 every tV >= 30-45 ns gave shifted joystick bits; at 6 (4 clocks,
+// ~141 ns) every case read correctly.  SCK is 2.36 MHz, far inside the part's
+// 10 MHz, and a port is still re-read several thousand times a frame.
 SPI_Master
 #(
     .SPI_MODE(0),
-    .CLKS_PER_HALF_BIT(3)
+    .CLKS_PER_HALF_BIT(6)
 )
 joy_spi_master
 (
