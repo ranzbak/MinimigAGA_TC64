@@ -105,6 +105,7 @@ findings/**/snap-*/
 findings/ap040-pipelined/tests/cputest/data040/
 findings/ap040-pipelined/tests/cputest/gen/build/
 findings/**/fw-ba-sweep/*.bin
+findings/**/fw-fixes/*.bin
 findings/**/obj_*/
 findings/ap040-pipelined/tests/kick/patched*
 findings/ap040-pipelined/tests/kick/build_pipeboard-*

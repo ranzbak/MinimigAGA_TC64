@@ -1,0 +1,140 @@
+--- a/adv7511.c	2026-09-21 19:35:34.740285897 +0200
++++ b/adv7511.c	2026-09-24 20:13:58.247242785 +0200
+@@ -43,7 +43,7 @@
+     0x96, 0xC0, // Clear HPD + Monitor Sense interrupt flags
+     0xFA, 0x00, // Nbr of times to search for good phase
+     // Set the video clock delay
+-    0xBA, 0x00, // Configure clock delay -1.2ns
++    0xBA, 0xA0, // Configure clock delay +0.8ns (BAA0, validated on the board 2026-09-24)
+     // Audio I2S
+     0x01, 0x00, // N = 6144
+     0x02, 0x18, // N and CTS for 48kHz @ 74.25 MHz pixel clock
+--- a/fpga.c	2026-09-21 19:35:34.767286445 +0200
++++ b/fpga.c	2026-09-24 20:20:22.676430318 +0200
+@@ -199,6 +199,20 @@
+ // CORE_CAPS_* in fpga.h and userio_osd.v's rtl_ver.
+ unsigned char core_caps = 0;
+ 
++unsigned long ReadInputDiag(void)
++{
++	unsigned long v = 0;
++	int i;
++	EnableOsd();
++	SPI(OSD_CMD_VERSION);
++	for (i = 0; i < 6; i++)
++		SPI(0xff);
++	for (i = 0; i < 4; i++)
++		v |= ((unsigned long)(SPI(0xff) & 0xff)) << (8 * i);
++	DisableOsd();
++	return v;
++}
++
+ void fpga_init() {
+ 	unsigned long time = GetTimer(0);
+ 	char ver_beta,ver_major,ver_minor,ver_minion;
+--- a/fpga.h	2026-09-19 01:17:07.727073261 +0200
++++ b/fpga.h	2026-09-24 20:14:44.134309774 +0200
+@@ -28,6 +28,11 @@
+ #define CORE_CAPS_MMU        0x08
+ #define CORE_CAPS_KEYQ       0x10   // the OSD has a key-event queue (OSD_CMD_KEYQ)
+ #define CORE_CAPS_TEMP       0x20   // the XADC die-temperature register is decoded
++#define CORE_CAPS_INDIAG     0x40   // OSD_CMD_VERSION bytes 6-9: input-path diagnostic
++
++// DIAGNOSTIC BUILD (2026-09-24, mouse buttons / OSD at boot): bytes 6-9 of
++// OSD_CMD_VERSION, see userio.v.  Reading them clears the sticky half.
++unsigned long ReadInputDiag(void);
+ 
+ // True when the core has a 68040 that cannot be switched away from: the CPU
+ // menu line is then a statement of fact, not a choice.
+--- a/menu.c	2026-09-21 18:50:03.029510794 +0200
++++ b/menu.c	2026-09-24 20:20:22.603795259 +0200
+@@ -50,6 +50,24 @@
+ 
+ signed char errorpage;
+ unsigned char menustate = MENU_NONE1;
++
++// DIAGNOSTIC BUILD (2026-09-24): why did the OSD open the FIRST time after
++// boot?  src 'k' = a KEY_MENU event from the key queue, 'b' = the board's menu
++// button, 'e' = an error (code = ErrorMask); call = which HandleUI call since
++// boot (1 = the very first).  Shown on the Chipset menu's spare line.
++extern unsigned char osd_button_menu;
++static unsigned long diag_ui_calls = 0;
++static unsigned long diag_open_call = 0;
++static unsigned char diag_open_code = 0;
++static char diag_open_src = '-';
++static void diag_note_open(char src, unsigned char code)
++{
++    if (diag_open_src == '-') {
++        diag_open_src = src;
++        diag_open_code = code;
++        diag_open_call = diag_ui_calls;
++    }
++}
+ unsigned char parentstate;
+ unsigned char parentsub;
+ unsigned char menusub = 0;
+@@ -221,6 +239,8 @@
+     char volume_bar[17];
+ 
+     // get user control codes
++    diag_ui_calls++;
++    osd_button_menu = 0;
+     c = OsdGetCtrl();
+ 
+     // The core's key queue overflowed, so an event was dropped.  The flag is
+@@ -480,6 +500,7 @@
+             _showdebugmessages();
+         if (menu)
+         {
++            diag_note_open(osd_button_menu ? 'b' : 'k', c);
+             menustate = MENU_MAIN1;
+             menusub = 0;
+             OsdClear();
+@@ -1365,7 +1386,20 @@
+         strcpy(s, "     CD32Pad : ");
+         strcat(s, config_cd32pad_msg[(config.autofire >> 2) & 1]);
+         OsdWrite(5, s, menusub == 4, 0);
+-        OsdWrite(6, "", 0, 0);
++        // DIAGNOSTIC line: input-path bytes 6,7 (live) and 8,9 (sticky since
++        // the last time this page was drawn), then why the OSD first opened.
++        if (core_caps & CORE_CAPS_INDIAG) {
++            unsigned long d = ReadInputDiag();
++            sprintf(s, " %02x%02x %02x%02x %c%02x@%lu",
++                    (int)(d & 0xff), (int)((d >> 8) & 0xff),
++                    (int)((d >> 16) & 0xff), (int)((d >> 24) & 0xff),
++                    diag_open_src, diag_open_code, diag_open_call);
++            OsdWrite(6, s, 0, 0);
++        } else {
++            // an older core: only the first-open reason
++            sprintf(s, "   first open %c%02x@%lu", diag_open_src, diag_open_code, diag_open_call);
++            OsdWrite(6, s, 0, 0);
++        }
+ 
+         OsdWrite(7, STD_BACK, menusub == 5, 0);
+ 
+@@ -2588,6 +2622,7 @@
+         t >>= 1;
+         ++errorpage;
+     }
++    diag_note_open('e', ErrorMask);
+     menustate = MENU_ERROR;
+     OsdShow(DISABLE_KEYBOARD);
+     OsdColor(OSDCOLOR_WARNING);
+--- a/osd.c	2026-09-19 01:03:46.382282159 +0200
++++ b/osd.c	2026-09-24 20:14:44.138817683 +0200
+@@ -938,6 +938,7 @@
+ 
+ 
+ unsigned char osd_keyq_lost = 0;
++unsigned char osd_button_menu = 0;   // DIAG: the last KEY_MENU came from the board button
+ 
+ // Events the core has handed over but HandleUI has not been given yet.  It
+ // acts on one event per call, so they go out one at a time.  Fifteen is what
+@@ -1017,6 +1018,7 @@
+     {
+         c1 = KEY_MENU;
+         c  = KEY_MENU;
++        osd_button_menu = 1;
+         delay = GetTimer(-1);
+     }
+ 

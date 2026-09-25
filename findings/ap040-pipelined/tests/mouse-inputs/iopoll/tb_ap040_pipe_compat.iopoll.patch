@@ -1,0 +1,87 @@
+--- tb_ap040_pipe_compat.v	2026-09-24 13:54:54.104269639 +0200
++++ /tmp/claude-1000/-home-paul-work-fpga-Xilinx-artix7-MinimigAGA-TC64/404c36b5-4bc3-4b22-bf19-5149d5908dc9/scratchpad/iopoll/tb_ap040_pipe_compat.v	2026-09-24 19:26:56.082098833 +0200
+@@ -21,6 +21,9 @@
+ //--------------------------------------------------------------------------//
+ 
+ `timescale 1ns/1ps
++`ifndef IOPOLL_ALLOW
++`define IOPOLL_ALLOW 1'b0
++`endif
+ 
+ module tb_ap040_pipe_compat;
+ 
+@@ -256,7 +259,7 @@
+ (
+ 	.clk(clk),
+ 	.nreset(nreset),
+-	.cache_allow_all(1'b1),
++	.cache_allow_all(`IOPOLL_ALLOW),
+ 	.fill_ena_zorro(FILLCH != 0),
+ 	.fill_ena_chip(FILLCH != 0),
+ 	.fill_req(fill_req),
+@@ -265,7 +268,7 @@
+ 	.fill_ack(fill_ack),
+ 	.fill_err(1'b0),
+ 	.cache_snoop_stb(dma_snp), .cache_snoop_addr({16'd0, dma_a}),
+-	.cache_z2_ena(1'b0),
++	.cache_z2_ena(1'b1),
+ 	.cache_z3_base0(5'd0),
+ 	.cache_z3_ena0(1'b0),
+ 	.cache_z3_base1(4'd0),
+@@ -436,7 +439,37 @@
+ integer phase;
+ integer result;          // 0 running, 1 pass, 2 fail
+ 
+-assign data_in = (phase == 2 && lvl_hold) ? lvl_data : mem[addr_out[15:1]];
++// ---- IOPOLL: Minimig-shaped input registers (mouse-button bug, 2026-09-24) ----
++// $BFE001 (CIA-A PRA, odd byte of word $BFE000): bit 6 = /FIR0 (left button)
++// $DFF016 (POTGOR word): bit 10 = DATLY (right button)
++// Both change under the CPU's feet: a free-running toggler, plus a
++// handshake register at $DFF1E0 (word write: bit 0 -> PRA bit 6, bit 1 ->
++// POTGOR bit 10, bit 15 = freeze the free-running toggler).
++reg  [7:0]  io_pra = 8'hFF;
++reg  [15:0] io_pot = 16'hFFFF;
++reg         io_frz = 1'b1;
++integer     io_tick = 0;
++function [15:0] io_rd;
++	input [31:0] a;
++	begin
++		if (a[31:1] == (32'h00BFE000 >> 1))      io_rd = {8'hFF, io_pra};
++		else if (a[31:1] == (32'h00DFF016 >> 1)) io_rd = io_pot;
++		else                                      io_rd = mem[a[15:1]];
++	end
++endfunction
++always @(posedge clk) begin
++	if (nreset && mem_ready && busstate == 2'b11 && addr_out == 32'h00DFF1E0) begin
++		io_pra[6]  <= data_write[0];
++		io_pot[10] <= data_write[1];
++		io_frz     <= data_write[15];
++	end
++	else if (!io_frz) begin
++		io_tick <= io_tick + 1;
++		if (io_tick % 37 == 0) io_pra[6]  <= ~io_pra[6];
++		if (io_tick % 53 == 0) io_pot[10] <= ~io_pot[10];
++	end
++end
++assign data_in = (phase == 2 && lvl_hold) ? lvl_data : io_rd(addr_out);
+ reg [1023:0] prog_file;
+ reg [1023:0] dump_file;
+ 
+@@ -523,7 +556,7 @@
+ 			if (lat_cnt == 0) begin
+ 				mem_ready <= 1;
+ 				lvl_hold <= 1;
+-				lvl_data <= mem[addr_out[15:1]];
++				lvl_data <= io_rd(addr_out);
+ 				lat_cnt <= latency(phase, lat_idx);
+ 				lat_idx <= lat_idx + 1;
+ 			end
+@@ -855,7 +888,7 @@
+ 			end
+ 		end
+ 
+-		if (addr_out[31:16] != 0) begin
++		if (addr_out[31:16] != 0 && addr_out[31:16] != 16'h00BF && addr_out[31:16] != 16'h00DF) begin
+ 			errors = errors + 1;
+ 			$display("FAIL: access outside memory model at %h (pc=%h)", addr_out, dbg_pc);
+ 			result = 2;
