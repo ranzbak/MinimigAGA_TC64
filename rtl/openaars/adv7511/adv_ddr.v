@@ -1,10 +1,28 @@
 // ADV video out DDR
 // Paul Honig 2020
 //
-
+// 12-bit DDR input bus of the ADV7511: each pixel is sent as data[11:0] in
+// phase 0 (forwarded pixel clock high) and data[23:12] in phase 1.
 // When register 0x16 = 0 first byte in middle of positive
 // https://www.analog.com/media/en/technical-documentation/user-guides/ADV7511_Hardware_Users_Guide.pdf
 // Page 35
+//
+// Timing (1280x720@50Hz):
+//    { XVIDC_VM_1280x720_50_P, "1280x720@50Hz", XVIDC_FR_50HZ,
+//        {1280, 440, 40, 220, 1980, 1,
+//        720, 5, 5, 20, 750, 0, 0, 0, 0, 1} },
+//
+// PAD REGISTERS.  Every output is a pure one-clock copy of an internal
+// register (*_int), and drives the pin and nothing else, so each one can be
+// packed into its IOB (IOB=TRUE here and in adv7511_video.xdc).  A register
+// that holds its value (feedback through a fabric LUT), feeds internal logic,
+// or has an equivalent register merged into it cannot be packed.  Before
+// 2026-09-24 dv_clk / dv_de / dv_hsync / dv_vsync left from fabric registers
+// while dv_d left from IOBs, so the clock-to-data skew at the ADV7511 changed
+// with every build's placement -- scrambled colours (blue lost, red to white)
+// and then a lost HDMI signal once DE/sync went too.  The pixel clock leaves
+// one clk_out cycle after its internal register; data, syncs and DE leave
+// half a cycle after that (see CENTRE ALIGNMENT below).
 module adv_ddr #(
   // X axis
   parameter PX_TO_DE = 100,
@@ -15,172 +33,152 @@ module adv_ddr #(
   parameter ACT_720P = 720,
   parameter V_LINES_TOTAL = 806
 )(
-  // INPUT
   input clk_out, // DDR clock at 4xpixel clock
-  input clk_in, // Pixel clock
+  input clk_in,  // Pixel clock
   input reset,
 
-  // input de_in,                        // Used to generate DE
-  input vsync, hsync, //
-  input [23:0 ] data, // Pixel data in 24-bpp
+  input vsync, hsync,
+  input [23:0] data, // Pixel data in 24-bpp
 
-  // OUTPUT
-  output reg clk_pixel_out, // Output pixel clock after synchronization to clk_out
-  output reg de_out, // Data enable signal
-  output reg vsync_out, hsync_out,
-  output reg [11:0] data_out // DDR data stream out
+  (* IOB = "TRUE" *) output reg clk_pixel_out = 1'b0, // pixel clock, resynchronised to clk_out
+  (* IOB = "TRUE" *) output reg de_out = 1'b0,        // data enable
+  (* IOB = "TRUE" *) output reg vsync_out = 1'b0,
+  (* IOB = "TRUE" *) output reg hsync_out = 1'b0,
+  (* IOB = "TRUE" *) output reg [11:0] data_out = 12'd0 // DDR data stream
 );
 
-// The amount of pixels before the Data enabled is triggered
-//
-//    { XVIDC_VM_1280x720_50_P, "1280x720@50Hz", XVIDC_FR_50HZ,
-//        {1280, 440, 40, 220, 1980, 1,
-//        720, 5, 5, 20, 750, 0, 0, 0, 0, 1} },
+// Internal state; the outputs are copies of these
+reg        clk_pixel_int = 1'b0;
+reg        de_int        = 1'b0;
+reg        vsync_int     = 1'b0;
+reg        hsync_int     = 1'b0;
+reg [11:0] data_int      = 12'd0;
 
-// reg clk_pixel_, clk_pixel__;
+// CENTRE ALIGNMENT (2026-09-24).  With every output in an IOB, clock and data
+// leave edge-aligned, and the firmware's ADV7511 clock delay (0xBA = 0x00,
+// -1.2 ns, the most negative it offers) then samples 1.2 ns before each data
+// transition against a 1.0 ns hold requirement: ~0.2 ns of margin, which
+// drifted away as the board warmed up -- correct colours, then the HDMI
+// signal lost after a few minutes.  Data, syncs and DE therefore leave half a
+// clk_out cycle (3.37 ns) AFTER the forwarded pixel clock: the ADV7511's
+// sample point lands ~2.2 ns into each 6.7 ns word instead of 1.2 ns before
+// its end, and each half-pixel is still latched on the same clock edge as
+// before (no colour swap).  The *_v2 registers are the previous pad timing;
+// the pads are opposite-edge copies of them.
+reg        de_v2    = 1'b0;
+reg        vsync_v2 = 1'b0;
+reg        hsync_v2 = 1'b0;
+reg [11:0] data_v2  = 12'd0;
+
+always @(posedge clk_out)
+begin
+  clk_pixel_out <= clk_pixel_int;
+  vsync_v2      <= vsync_int;
+  hsync_v2      <= hsync_int;
+  data_v2       <= data_int;
+  de_out        <= de_v2;
+end
+
+always @(negedge clk_out)
+begin
+  de_v2     <= de_int;
+  vsync_out <= vsync_v2;
+  hsync_out <= hsync_v2;
+  data_out  <= data_v2;
+end
+
+// Synchronise the pixel-clock domain inputs to clk_out
 (* ASYNC_REG = "TRUE" *) reg [1:0] clk_pixel_s;
 (* ASYNC_REG = "TRUE" *) reg [2:0] vsync_s;
 (* ASYNC_REG = "TRUE" *) reg [2:0] hsync_s;
 (* ASYNC_REG = "TRUE" *) reg [23:0] data_s [1:0];
 
-// Set and reset Data enable
-reg set_de = 1'b0;
-reg reset_de = 1'b0;
-
-
-// Synchronize signal to clk_out
-wire [2:0] vsync_s_next = {vsync_s[1], vsync_s[0], vsync};
-wire [2:0] hsync_s_next = {hsync_s[1], hsync_s[0], hsync};
-wire [1:0] clk_pixel_s_next = {clk_pixel_s[0], clk_in};
-wire [23:0] data_s_next [1:0];
-
-initial begin
-  de_out <= 1'b0;
-end
-
 always @(posedge clk_out)
 begin
-  clk_pixel_s <= clk_pixel_s_next;
-  // de_in_s <= {de_in_s[0], de_in};
-  vsync_s <= vsync_s_next;
-  hsync_s <= hsync_s_next;
-  // Sync 2d array
-  data_s[0] <= data;
-  data_s[1] <= data_s[0];
+  clk_pixel_s <= {clk_pixel_s[0], clk_in};
+  vsync_s     <= {vsync_s[1:0], vsync};
+  hsync_s     <= {hsync_s[1:0], hsync};
+  data_s[0]   <= data;
+  data_s[1]   <= data_s[0];
 end
 
-// line counter
+// Line counter: DE is only allowed inside the 720 active lines
 reg [$clog2(V_LINES_TOTAL):0] v_counter = 0;
-reg                           v_active = 1'b0; // Active reagion 720p
+reg                           v_active  = 1'b0;
 
-// Make sure the DE lines are only active when data is displayed
 always @(posedge clk_out)
 begin
   v_active <= 1'b0;
 
-  if (hsync_s[2:1] == 2'b01)
-  begin
+  if (hsync_s[2:1] == 2'b01)   // hsync rising: next line
     v_counter <= v_counter + 1;
-  end
 
-  // On vsync reset line counter
-  if (vsync_s[2:1] == 2'b10)
-  begin
+  if (vsync_s[2:1] == 2'b10)   // vsync falling: first line
     v_counter <= 0;
-  end
 
-  // Only have the video DE active in the active reagon
   if ((v_counter > PY_TO_DE) && (v_counter <= (PY_TO_DE + ACT_720P)))
-  begin
     v_active <= 1'b1;
-  end
 
   if (reset)
   begin
     v_counter <= 0;
-    v_active <= 0;
+    v_active  <= 0;
   end
 end
 
-
-// Generate DDR signals
-// reg phase_count = 0;
+// DDR data, syncs, and the DE start/stop toggles
+reg set_de   = 1'b0;
+reg reset_de = 1'b0;
 reg [$clog2(PX_TOTAL):0] px_count = 0;
+
 always @(posedge clk_out)
 begin
   reset_de <= 1'b0;
-  data_out <= 0;
+  data_int <= 0;
   if (reset)
-  begin
-    // phase_count <= 0;
     px_count <= 0;
-  end
   else
   begin
-    // Next phase
-    // phase_count <= ~phase_count;
-
-    // Handle positive pixel clock edge
-    // if (!clk_pixel_s[2] && clk_pixel_s[1]) begin
-    //    phase_count <= 1'b0;
-    // end
-
-    // Do actions according to phases
-    if (clk_pixel_s[1] == 1'b1)
-    begin // Phase 0
-      // Output the lower (1st) part
-      if (de_out) begin
-        data_out <= data_s[1][11:0];
-      end
-      // Output vsync and hsync as well
-      vsync_out <= vsync_s[1];
-      hsync_out <= hsync_s[1];
-      // Generate data enable
+    if (clk_pixel_s[1])
+    begin // phase 0: low half, syncs, DE toggles
+      if (de_int)
+        data_int <= data_s[1][11:0];
+      vsync_int <= vsync_s[1];
+      hsync_int <= hsync_s[1];
       if ((px_count == PX_TO_DE) && v_active)
         set_de <= ~set_de;
       if (px_count == (PX_ACT_DE + PX_TO_DE))
         reset_de <= ~reset_de;
     end
     else
-    begin
-      // Output the high (2nd) part
-      if (de_out)
-      begin
-        data_out <= data_s[1][23:12];
-      end
-      // Handle pixel counter to Data enable
+    begin // phase 1: high half, pixel counter
+      if (de_int)
+        data_int <= data_s[1][23:12];
       px_count <= px_count + 1;
-      // Reset horizontal counter
       if (hsync_s[1])
         px_count <= 0;
     end
 
-    // Output synchronized pixel clock
-    clk_pixel_out <= clk_pixel_s[1];
+    clk_pixel_int <= clk_pixel_s[1];
   end
 end
 
-
-// 180 degrees later switch the data enable
-reg [1:0] r_neg_set_de = 0;
+// DE switches 180 degrees later, on the falling edge
+reg [1:0] r_neg_set_de   = 0;
 reg [1:0] r_neg_reset_de = 0;
+
 always @(negedge clk_out)
 begin
-
-  if (clk_pixel_out == 1'b1)
+  if (clk_pixel_int)
   begin
-    r_neg_set_de <= {r_neg_set_de[0], set_de};
+    r_neg_set_de   <= {r_neg_set_de[0], set_de};
     r_neg_reset_de <= {r_neg_reset_de[0], reset_de};
 
     if (r_neg_set_de[0] != r_neg_set_de[1])
-    begin
-      de_out <= 1'b1;
-    end
+      de_int <= 1'b1;
 
     if (r_neg_reset_de[0] != r_neg_reset_de[1])
-    begin
-      de_out <= 1'b0;
-    end
+      de_int <= 1'b0;
   end
 end
 
