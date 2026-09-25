@@ -3,10 +3,11 @@
 	url = https://github.com/TobiFlex/TG68K.C.git
 [submodule "EightThirtyTwo"]
 	path = EightThirtyTwo
-	url = git@github.com:ranzbak/EightThirtyTwo.git
+	url = https://github.com/ranzbak/EightThirtyTwo.git
 [submodule "lib/AP68040"]
 	path = lib/AP68040
-	url = git@github.com:apolkosnik/AP68040.git
+	url = https://github.com/ranzbak/AP68040-pipelined.git
+	branch = ap68040-reference
 [submodule "lib/AP68040-pipelined"]
 	path = lib/AP68040-pipelined
-	url = git@github.com:ranzbak/AP68040-pipelined.git
+	url = https://github.com/ranzbak/AP68040-pipelined.git
