@@ -175,6 +175,7 @@ module pal_to_ddr(
   wire        w_50_adv_de;
   // Switch wires 50 Hz
   wire        w_60_hd_hsync;
+  wire        w_hsync_early;   // adv_ddr's hsync at its old timing, for my60hzupsample
   wire        w_60_hd_vsync;
   wire [11:0] w_60_x;
   wire [11:0] w_60_y;
@@ -271,8 +272,9 @@ module pal_to_ddr(
     .o_hd_b(w_60_b),
     .o_hd_vsync(w_60_vsync),
     .o_frame_end(w_60_frame_end),
-    // HD sync pulse
-    .i_hd_hsync(o_hsync),
+    // HD sync pulse: adv_ddr's hsync at its pre-2026-09-24 timing, not the
+    // pad copy (o_hsync), which now leaves 1.5 clk_148 later -- see adv_ddr.v
+    .i_hd_hsync(w_hsync_early),
     .i_hd_vsync(w_60_hd_vsync),
     .i_hd_clk(w_50_adv_clk),
     // horizontal and vertical offsets
@@ -353,6 +355,7 @@ module pal_to_ddr(
     .de_out(o_de), // Data enable signal
     .vsync_out(o_vsync),
     .hsync_out(o_hsync),
-    .data_out(o_data) // DDR data stream out
+    .data_out(o_data), // DDR data stream out
+    .hsync_early(w_hsync_early)
   );
 endmodule

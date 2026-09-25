@@ -44,7 +44,13 @@ module adv_ddr #(
   (* IOB = "TRUE" *) output reg de_out = 1'b0,        // data enable
   (* IOB = "TRUE" *) output reg vsync_out = 1'b0,
   (* IOB = "TRUE" *) output reg hsync_out = 1'b0,
-  (* IOB = "TRUE" *) output reg [11:0] data_out = 12'd0 // DDR data stream
+  (* IOB = "TRUE" *) output reg [11:0] data_out = 12'd0, // DDR data stream
+  // hsync with the timing hsync_out had before the pads moved (2026-09-24): the
+  // 60 Hz upsampler (pal_to_ddr.sv, my60hzupsample .i_hd_hsync) samples it
+  // against the signal generator's clock edge, and the pad copy arrives 1.5
+  // clk_out later -- the RTG / 60 Hz picture lost and regained sync.  Internal
+  // use only; the pin keeps hsync_out.
+  output hsync_early
 );
 
 // Internal state; the outputs are copies of these
@@ -52,6 +58,7 @@ reg        clk_pixel_int = 1'b0;
 reg        de_int        = 1'b0;
 reg        vsync_int     = 1'b0;
 reg        hsync_int     = 1'b0;
+assign hsync_early = hsync_int;
 reg [11:0] data_int      = 12'd0;
 
 // CENTRE ALIGNMENT (2026-09-24).  With every output in an IOB, clock and data
