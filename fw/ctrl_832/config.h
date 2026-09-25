@@ -71,6 +71,11 @@ typedef struct
   hardfileTYPE  secondaryhardfile[2]; // hardfile entries for potential secondary IDE devices.
   audioTYPE     audio;
   videoPosTYPE  videopos;
+  // ADV7511 clock delay (register 0xBA bits 7:5) + 1, so 1..8 = -1.2 .. +1.6 ns
+  // in 0.4 ns steps.  0 = the firmware default.  This byte was the struct's
+  // tail padding, so sizeof(configTYPE) stays 212 and config files remain
+  // interchangeable with older firmware (theirs hold 0 here).
+  unsigned char hdmi_clkdelay;
 } configTYPE;
 
 extern fileTYPE file;	// Temporary file available for use by other modules, to avoid repeated memory usage.

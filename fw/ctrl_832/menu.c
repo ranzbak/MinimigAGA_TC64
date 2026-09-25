@@ -89,6 +89,7 @@ const char *config_turbo_msg[] = {"none", "CHIPRAM", "KICK", "BOTH"};
 const char *config_cd32pad_msg[] = {"OFF", "ON"};
 const char *config_volume_msg[] = {" ", " 1", " 2", " 3", " 4", " 5", " 6", " 7", " 8", " 9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31"};
 const char *config_videopos_msg[] = {"  0", "  8", " 16", " 24", " 32", " 48", " 56", " 64", " 72", " 80", " 88", " 96", "104", "112", "120", "128", "136", "144", "152", "160", "168", "176", "184", "192", "200", "208", "216", "224", "232", "240", "248", "256"};
+const char *config_hdmi_clkdelay_msg[] = {"-1.2", "-0.8", "-0.4", " 0.0", "+0.4", "+0.8", "+1.2", "+1.6"};
 
 char *config_autofire_msg[] = {"        AUTOFIRE OFF", "        AUTOFIRE FAST", "        AUTOFIRE MEDIUM", "        AUTOFIRE SLOW"};
 
@@ -99,7 +100,8 @@ enum HelpText_Message
     HELPTEXT_HARDFILE,
     HELPTEXT_CHIPSET,
     HELPTEXT_MEMORY,
-    HELPTEXT_VIDEO
+    HELPTEXT_VIDEO,
+    HELPTEXT_HDMI
 };
 const char *helptexts[] = {
     0,
@@ -112,6 +114,7 @@ const char *helptexts[] = {
     "                                Minimig can make use of up to 2 megabytes of Chip RAM, up to 1.5 megabytes of Slow RAM (A500 Trapdoor RAM), and up to 28 megabytes of true Fast RAM.  To use the HRTMon feature you will need an appropriate ROM file on the SD card.  To activate the monitor hold Ctrl and press the Pause key.",
 #endif
     "                                Minimig's video features include a blur filter, to simulate the poorer picture quality on older monitors, and also scanline generation to simulate the appearance of a screen with low vertical resolution.",
+    "                                The clock delay sets where the HDMI transmitter samples each pixel.  Too early or too late shows as sparkling colours, light yellows first.  Step through the values, note where the picture is clean, and settle in the middle of that range.  Save the configuration to keep it.",
     0};
 
 void SanityCheck();
@@ -1467,7 +1470,7 @@ void HandleUI(void)
         }
         else if (left)
         {
-            menustate = MENU_SETTINGS_VIDEO3;
+            menustate = MENU_SETTINGS_HDMI1;
             menusub = 0;
         }
         break;
@@ -2149,13 +2152,96 @@ void HandleUI(void)
         }
         else if (right)
         {
-            // menustate = MENU_SETTINGS_CHIPSET1;
-            menustate = MENU_SETTINGS_CHIPSET1;
+            menustate = MENU_SETTINGS_HDMI1;
             menusub = 0;
         }
         else if (left)
         {
             menustate = MENU_SETTINGS_VIDEO1;
+            menusub = 0;
+        }
+        break;
+
+        /******************************************************************/
+        /* HDMI settings menu: the ADV7511's video clock delay, i.e. where */
+        /* in the pixel the transmitter samples the FPGA's DDR data.       */
+        /* Colour sparkles (light yellows first) mean too close to an edge;*/
+        /* the best value is the middle of the range that looks clean.     */
+        /******************************************************************/
+    case MENU_SETTINGS_HDMI1:
+        OsdColor(OSDCOLOR_SUBMENU);
+        menumask = 0x07;
+        parentstate = menustate;
+        helptext = helptexts[HELPTEXT_HDMI];
+
+        OsdSetTitle("HDMI", OSD_ARROW_LEFT | OSD_ARROW_RIGHT);
+        OsdWrite(0, "", 0, 0);
+        OsdWrite(1, "   Clock delay +", menusub == 0, 0);
+        OsdWrite(2, "   Clock delay -", menusub == 1, 0);
+        OsdWrite(3, "", 0, 0);
+        {
+            char *p;
+            int i;
+            strcpy(s, "   ");
+            strcat(s, config_hdmi_clkdelay_msg[adv_clkdelay]);
+            strcat(s, " ns  [");
+            p = s + strlen(s);
+            for (i = 0; i < 8; i++)
+                *p++ = (i <= adv_clkdelay) ? '#' : '.';
+            *p++ = ']';
+            *p = 0;
+        }
+        OsdWrite(4, s, 0, 0);
+        // What the chip really holds: ff = no answer on the bus
+        {
+            static const char hex[] = "0123456789abcdef";
+            unsigned char rb = adv7511_read_clkdelay();
+            unsigned char wr = adv_clkdelay << 5;
+            strcpy(s, "   Chip 0xBA: xx  set: xx");
+            s[14] = hex[rb >> 4];
+            s[15] = hex[rb & 15];
+            s[23] = hex[wr >> 4];
+            s[24] = hex[wr & 15];
+        }
+        OsdWrite(5, s, 0, 0);
+        OsdWrite(6, "   Pick the clean range middle", 0, 0);
+        OsdWrite(7, STD_BACK, menusub == 2, 0);
+
+        menustate = MENU_SETTINGS_HDMI2;
+        break;
+
+    case MENU_SETTINGS_HDMI2:
+        if (select)
+        {
+            if (menusub == 0 || menusub == 1)
+            {
+                if (menusub == 0 && adv_clkdelay < 7)
+                    adv7511_set_clkdelay(adv_clkdelay + 1);
+                else if (menusub == 1 && adv_clkdelay > 0)
+                    adv7511_set_clkdelay(adv_clkdelay - 1);
+                config.hdmi_clkdelay = adv_clkdelay + 1;  // saved with the config
+                menustate = MENU_SETTINGS_HDMI1;
+            }
+            else if (menusub == 2)
+            {
+                menustate = MENU_MAIN2_1;
+                menusub = 4;
+            }
+        }
+
+        if (menu)
+        {
+            menustate = MENU_MAIN2_1;
+            menusub = 4;
+        }
+        else if (right)
+        {
+            menustate = MENU_SETTINGS_CHIPSET1;
+            menusub = 0;
+        }
+        else if (left)
+        {
+            menustate = MENU_SETTINGS_VIDEO3;
             menusub = 0;
         }
         break;

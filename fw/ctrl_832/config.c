@@ -10,6 +10,7 @@
 #include "firmware.h"
 #include "menu.h"
 #include "config.h"
+#include "adv7511.h"
 
 #include "hexdump.h"
 
@@ -431,6 +432,9 @@ int ApplyConfiguration(char reloadkickstart, char applydrives)
     ConfigFloppy(config.floppy.drives, config.floppy.speed);
     ConfigVideo(config.filter.hires, config.filter.lores, config.scanlines);
 	ConfigVideoPos(config.videopos.hpos, config.videopos.vpos);
+    // 0 (a config file from older firmware) or out of range: firmware default
+    adv7511_set_clkdelay((config.hdmi_clkdelay >= 1 && config.hdmi_clkdelay <= 8)
+                         ? config.hdmi_clkdelay - 1 : ADV_CLKDELAY_DEFAULT);
     ConfigMisc(config.misc);
     // Every other setting is pushed to the core here; this one was not, so the
     // autofire rate AND the CD32 pad setting were saved and reloaded faithfully

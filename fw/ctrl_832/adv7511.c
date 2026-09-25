@@ -43,7 +43,7 @@ unsigned char adv7511_init_main_vals[] = {
     0x96, 0xC0, // Clear HPD + Monitor Sense interrupt flags
     0xFA, 0x00, // Nbr of times to search for good phase
     // Set the video clock delay
-    0xBA, 0xA0, // Clock delay +0.8 ns: measured best with the IOB-packed, centre-aligned adv_ddr.v (sweep 2026-09-24: 0x00 artifacts, 0x60 fewer, 0xA0 clean)
+    0xBA, 0x00, // Clock delay -1.2 ns: the only glitch-free value with the IOB-packed, centre-aligned adv_ddr.v (OSD slider, 2026-09-25); the OSD HDMI page overrides it
     // Audio I2S
     0x01, 0x00, // N = 6144
     0x02, 0x18, // N and CTS for 48kHz @ 74.25 MHz pixel clock
@@ -216,12 +216,36 @@ int adv7511_poll(void)
     return reinit;
 }
 
+unsigned char adv_clkdelay = ADV_CLKDELAY_DEFAULT;
+
+static void adv_write_clkdelay(void)
+{
+    i2c_set_address(ADV_CTRL_ADDR);
+    i2c_write(0xBA);
+    i2c_write(adv_clkdelay << 5);
+    i2c_stop();
+    i2c_wait_not_busy();
+}
+
+void adv7511_set_clkdelay(unsigned char step)
+{
+    adv_clkdelay = step & 7;
+    adv_write_clkdelay();
+}
+
+unsigned char adv7511_read_clkdelay(void)
+{
+    return i2c_read_reg(ADV_CTRL_ADDR, 0xBA);
+}
+
 void adv7511_init(void)
 {
     i2c_set_divider(0x0020);
 
     // Configure Main registers
     adv_send_config(ADV_CTRL_ADDR, adv7511_init_main_vals);
+    // The table's 0xBA entry is the default; the OSD setting overrides it
+    adv_write_clkdelay();
     // Configure Packet memory
     adv_send_config(ADV_PACKET_ADDR, adv7511_init_packet_vals);
 
