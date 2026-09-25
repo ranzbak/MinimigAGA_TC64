@@ -66,7 +66,15 @@ entity TG68K is
 		-- compared against the base the OS assigned and how many are offset
 		-- into the board.  Must agree with the size the autoconfig ROM
 		-- advertises (rtl/minimig/minimig_autoconfig_rom.v).
-		z3ram3_size_log2 : integer := 24
+		z3ram3_size_log2 : integer := 24;
+		-- 1: with the AGA chipset, an aligned longword to chip RAM -- or a
+		-- longword READ of the Kickstart ROM with Turbo kick off -- is ONE 7 MHz
+		-- chipset cycle carrying both words, as on the A1200/A4000's 32-bit chip
+		-- bus.  Everything else (custom registers, CIAs, Gayle, slow RAM, bytes,
+		-- words, misaligned longwords) stays word/byte cycles, as on those
+		-- machines.  0: every longword is two word cycles, as before.
+		-- findings/chip32/plan.md.
+		chip32           : integer := 1
 	);
 	port(
 		clk             : in     std_logic;
@@ -211,6 +219,7 @@ ARCHITECTURE logic OF TG68K IS
 	SIGNAL addrtg68    : std_logic_vector(31 downto 0);
 	SIGNAL cpuaddr     : std_logic_vector(31 downto 0);
 	SIGNAL r_data      : std_logic_vector(15 downto 0);
+	SIGNAL r_data2     : std_logic_vector(15 downto 0);  -- word A+2 of a CHIP32 read
 	SIGNAL cpuIPL      : std_logic_vector(2 downto 0);
 	-- SIGNAL vpad             : std_logic;
 	SIGNAL waitm       : std_logic;
@@ -423,6 +432,17 @@ ARCHITECTURE logic OF TG68K IS
 	SIGNAL x_ddr      : std_logic;
 	SIGNAL x_akiko    : std_logic;
 	SIGNAL x_a16      : std_logic;
+	-- CHIP32 (findings/chip32/plan.md): an aligned longword to chip RAM, or a
+	-- longword read of the ROM, as ONE chipset cycle carrying both words.
+	-- chip32_d is the switch, registered where the Turbo switches are, so it
+	-- never changes under an access; c32_cyc marks the chipset cycle in
+	-- flight as one; c32_done is its completion level, as ak_done is Akiko's.
+	SIGNAL c32_en     : std_logic;
+	SIGNAL chip32_d   : std_logic := '0';
+	SIGNAL x_c32      : std_logic;
+	SIGNAL q_c32      : std_logic;
+	SIGNAL c32_cyc    : std_logic := '0';
+	SIGNAL c32_done   : std_logic := '0';
 	-- x_req as the clk_114 sequencers may see it; see where it is driven
 	SIGNAL x_fresh    : std_logic := '0';
 	SIGNAL q_req      : std_logic;
@@ -809,7 +829,18 @@ BEGIN
 	x_sdram <= sel_ram   AND NOT sel_nmi_vector;
 	x_ddr   <= sel_ddr   AND NOT sel_nmi_vector;
 	x_akiko <= sel_akiko AND NOT sel_nmi_vector;
-	x_a16   <= NOT (x_sdram OR x_ddr OR x_akiko);
+	-- CHIP32: what the AGA machines' 32-bit chip bus carries in one cycle --
+	-- an aligned longword to chip RAM, or an aligned longword read of the ROM
+	-- (sel_kick is read-only).  Only what the RAM routes did not already take,
+	-- i.e. Turbo chip/kick off.  Never the NMI vector: cart.v answers that one
+	-- word at a time by address bit 1, so a wide read would get its second word
+	-- from chip RAM.  Custom registers, CIAs, Gayle, slow RAM, bytes, words and
+	-- misaligned longwords all stay on the adapter.
+	x_c32   <= '1' WHEN chip32_d = '1' AND x_size = "10" AND x_addr(1 DOWNTO 0) = "00"
+	                    AND (sel_chip = '1' OR sel_kick = '1')
+	                    AND x_sdram = '0' AND x_ddr = '0' AND x_akiko = '0'
+	                    AND sel_nmi_vector = '0' ELSE '0';
+	x_a16   <= NOT (x_sdram OR x_ddr OR x_akiko OR x_c32);
 
 	-- x_req AS THE clk_114 SEQUENCERS SEE IT.  x_* is clk_38 and changes only
 	-- on a kernel edge K, the edge clkena_r was high into; cpu.xdc gives a
@@ -829,6 +860,8 @@ BEGIN
 	q_req   <= x_req AND NOT clkena_r AND NOT x_fresh;
 	q_sdram <= q_req AND x_sdram;
 	q_ddr   <= q_req AND x_ddr;
+	q_c32   <= q_req AND x_c32;
+	c32_en  <= '1' WHEN chip32 /= 0 ELSE '0';
 
 	ram_seq_sdram : entity work.ap040_ram_seq
 		PORT MAP(
@@ -1011,7 +1044,24 @@ BEGIN
 		END IF;
 	END PROCESS;
 
-	x_done <= rs_ack OR rd_ack OR ak_done;
+	x_done <= rs_ack OR rd_ack OR ak_done OR c32_done;
+
+	-- CHIP32's completion level: set when the chipset cycle it started is
+	-- answered (chipset_ready, the same moment the adapter's word cycle is),
+	-- held until the request drops -- which q_req guarantees on the edge the
+	-- kernel consumes it, exactly as for ak_done.
+	PROCESS(clk, reset)
+	BEGIN
+		IF reset = '0' THEN
+			c32_done <= '0';
+		ELSIF rising_edge(clk) THEN
+			IF q_c32 = '0' THEN
+				c32_done <= '0';
+			ELSIF chipset_ready = '1' AND c32_cyc = '1' THEN
+				c32_done <= '1';
+			END IF;
+		END IF;
+	END PROCESS;
 
 	-- This is the mapping to the SDRAM
 	-- map $00-$1F to $00-$1F (chipram), $A0-$FF to $20-$7F. All non-fastram goes into the first
@@ -1589,6 +1639,7 @@ BEGIN
 			IF (reset = '0' OR nResetOut_w = '0') THEN
 				turbochip_d   <= '0';
 				turbokick_d   <= '0';
+				chip32_d      <= '0';
 				turboslow_d   <= '0';
 				cacheline_clr <= '0';
 			ELSIF q_req = '0' AND clkena_r = '0' AND x_fresh = '0' AND state = "01" THEN    -- No mem access, so safe to switch chipram access mode
@@ -1599,6 +1650,7 @@ BEGIN
 				turbochip_d   <= turbochipram;
 				turbokick_d   <= turbokick;
 				turboslow_d   <= turbochipram OR aga;
+				chip32_d      <= aga AND c32_en;
 				cacheline_clr <= (turbochipram XOR turbochip_d);
 			END IF;
 		END IF;
@@ -1783,6 +1835,8 @@ BEGIN
 						x_rdata_r <= rs_rdata;
 					ELSIF rd_ack = '1' THEN
 						x_rdata_r <= rd_rdata;
+					ELSIF c32_done = '1' THEN
+						x_rdata_r <= r_data & r_data2;
 					ELSE
 						x_rdata_r <= ak_rsh;
 					END IF;
@@ -1894,6 +1948,7 @@ BEGIN
 			uds2     <= '1';
 			lds2     <= '1';
 			clkena_e <= '0';
+			c32_cyc  <= '0';
 		ELSIF rising_edge(clk) THEN
 			-- End the chipset cycle when the CPU has actually taken its
 			-- answer.  This used to live inside the ena7RDreg branch, where it
@@ -1924,13 +1979,13 @@ BEGIN
 			-- `S_state = "01"` (S_state is "00" there).
 			IF (chipset_ready = '1' OR chipset_done = '1') AND clkena = '1' THEN
 				S_state <= "00";
+				c32_cyc <= '0';
 			END IF;
 
-			IF S_state = "01" AND clkena_e = '1' THEN
-				uds2        <= uds_in;
-				lds2        <= lds_in;
-				data_write2 <= w_datatg68;
-			END IF;
+			-- (The TG68K's paired-word latch that sat here -- uds2/lds2 and
+			-- data_write2 taken in state "01" while clkena_e was still up -- was
+			-- dead since Stage E4a: clkena_e is always '0' in state "01".  It
+			-- is removed because data_write2 now carries CHIP32's second word.)
 
 			IF ena7WRreg = '1' THEN
 				CASE S_state IS
@@ -1948,6 +2003,23 @@ BEGIN
 							data_write <= w_datatg68;
 							addr       <= cpuaddr;
 							S_state <= "01";
+						ELSIF q_c32 = '1' AND c32_done = '0' AND cpu_bus_settled = '1' THEN
+							-- CHIP32: the whole longword in one cycle.  The
+							-- minimig side (bridge, gary, SRAM bridge,
+							-- sdram_ctrl) moves word A+2 in the same chip slot:
+							-- a write through data_write2 and uds2/lds2, a read
+							-- back through data_read2 (chip48).  sim/chip32.
+							uds         <= '0';
+							lds         <= '0';
+							uds2        <= '0';
+							lds2        <= '0';
+							as          <= '0';
+							rw          <= NOT x_we;
+							data_write  <= x_wdata(31 DOWNTO 16);
+							data_write2 <= x_wdata(15 DOWNTO 0);
+							addr        <= x_addr;
+							c32_cyc     <= '1';
+							S_state     <= "01";
 						END IF;
 					WHEN "01" =>
 						clkena_e <= '0';
@@ -1975,7 +2047,8 @@ BEGIN
 						uds2 <= '1';
 						lds2 <= '1';
 						IF clkena_e = '0' THEN
-							r_data <= data_read;
+							r_data  <= data_read;
+							r_data2 <= data_read2;
 						END IF;
 
 						clkena_e <= '1';

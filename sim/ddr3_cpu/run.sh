@@ -18,6 +18,8 @@
 #   ./run.sh --snoopmutant  the same with the wrapper's snoop hold reverted; MUST fail
 #   ./run.sh --gatemutant phase gate opening on enaWRreg (as first built); placement MUST fail
 #   ./run.sh --chipbus    turbochipram = 0, chip RAM over the 7 MHz chipset bus
+#   ./run.sh --c32mutant --chipbus  CHIP32 read data returns word 1 twice; MUST fail
+#   NOCHIP32=1 ./run.sh ...         the wrapper's chip32 generic = 0 (longwords as two word cycles)
 #
 # Stage E2 (decision D6): EVERY leg runs the real sdram_ctrl and SDRAM part
 # (real_sdram.vh); the behavioural SDRAM model is retired, so REALSDRAM is no
@@ -103,6 +105,12 @@ if [ "$1" = "--snoopmutant" ]; then IS_SNOOP=1; IS_SNOOPMUTANT=1; IS_MUTANT=1; s
 IS_GATEMUTANT=0
 if [ "$1" = "--gatemutant" ]; then IS_GATEMUTANT=1; IS_MUTANT=1; shift; set -- --ap040 "$@"; fi
 
+# --c32mutant: the CHIP32 read path answers with its first word twice
+# (TG68K.vhd `x_rdata_r <= r_data & r_data2;` -> `r_data & r_data`).  Use it
+# with --chipbus; the CHIP32PH phase must then fail with code 15.  Implies --ap040.
+IS_C32MUTANT=0
+if [ "$1" = "--c32mutant" ]; then IS_C32MUTANT=1; IS_MUTANT=1; shift; set -- --ap040 "$@"; fi
+
 # The CPU is the AP68040 (lib/AP68040) inside rtl/soc/TG68K.vhd.  Every leg says
 # so with --ap040 or a flag that implies it; the TG68K legs that ran without it
 # were removed in Stage E4a and are reachable at tag d3_stable.
@@ -122,6 +130,7 @@ if [ "$CPU" = "ap040" ]; then
     if [ "$IS_SNOOP" = "1" ];      then VARIANT=snoop_ap040;      fi
     if [ "$IS_SNOOPMUTANT" = "1" ]; then VARIANT=snoopmutant_ap040; fi
     if [ "$IS_GATEMUTANT" = "1" ]; then VARIANT=gatemutant_ap040; fi
+    if [ "$IS_C32MUTANT" = "1" ];  then VARIANT=c32mutant_ap040;  fi
 fi
 
 # Turbo chip RAM.  Default on, as the bench has always run.  --chipbus clears
@@ -166,6 +175,11 @@ MISLINES=${MISLINES:-16}
 CNTN=${CNTN:-64}
 
 if [ "$TURBOCHIP" = "0" ]; then VARIANT="${VARIANT}_chipbus"; fi
+if [ -n "$NOCHIP32" ]; then VARIANT="${VARIANT}_nochip32"; fi
+# CHIP32PH: the longword phase of the pattern program, only where chip RAM goes
+# over the chipset bus (findings/chip32/plan.md).
+C32PH=""
+if [ "$TURBOCHIP" = "0" ]; then C32PH="-DCHIP32PH=1"; fi
 # PIPELINED=1: the pipelined core (findings/ap040-pipelined/PLAN.md M5) --
 # TG68K's ap040_pipelined generic, the sources from PIPE_DIR (default the
 # sibling clone ../AP68040-pipelined) instead of lib/AP68040's.
@@ -191,7 +205,7 @@ if [ "$IS_MMU" = "1" ]; then
         -DCACRVAL="$CACRVAL"
 else
     BIN="$W/prog.bin" "$D/asm/build_68k_test.sh" \
-        -DPATBYTES=$PATBYTES -DMISLINES=$MISLINES -DCNTN=$CNTN -DCACRVAL="$CACRVAL" \
+        -DPATBYTES=$PATBYTES -DMISLINES=$MISLINES -DCNTN=$CNTN -DCACRVAL="$CACRVAL" $C32PH \
         ${P7LOOPS:+-DP7LOOPS=$P7LOOPS} ${P2CBLOCK:+-DP2CBLOCK=$P2CBLOCK}
 fi
 
@@ -240,6 +254,15 @@ elif [ "$IS_GATEMUTANT" = "1" ]; then
         "$R/rtl/soc/TG68K.vhd" > "$TG68K_SRC"
     if ! grep -q "unit_gate <= clkena_in AND NOT slower(0);" "$TG68K_SRC"; then
         echo "--gatemutant: the phase gate line moved; fix the sed in run.sh" >&2
+        exit 2
+    fi
+elif [ "$IS_C32MUTANT" = "1" ]; then
+    # Generated: the CHIP32 read data's second word replaced by the first.
+    TG68K_SRC="$W/TG68K_c32mutant.vhd"
+    sed "s|x_rdata_r <= r_data & r_data2;|x_rdata_r <= r_data \\& r_data;|" \
+        "$R/rtl/soc/TG68K.vhd" > "$TG68K_SRC"
+    if ! grep -q "x_rdata_r <= r_data & r_data;" "$TG68K_SRC"; then
+        echo "--c32mutant: the CHIP32 read-data line moved; fix the sed in run.sh" >&2
         exit 2
     fi
 elif [ "$IS_ACKMUTANT" = "1" ]; then
@@ -323,7 +346,7 @@ if [ "$CPU" = "ap040" ]; then AP040_ELAB="-i $R/lib/AP68040/rtl"; fi
 if [ "${PIPELINED:-0}" = "1" ]; then AP040_ELAB="-i $PIPE_DIR/rtl -i $PIPE_DIR/rtl/compat -d AP040_PIPELINED"; fi
 
 "$VIVADO_PATH/bin/xelab" -prj $PRJ -i "$LIB/tb/ddr3_core_xc7" $AP040_ELAB \
-    -d SOC_SIM -d REALSDRAM -i $D ${NOCPU:+-d NOCPU} ${DMA_OVERLAP:+-d DMA_OVERLAP} ${P2CBLOCK:+-d P2CBLOCK=$P2CBLOCK} ${CPU_RATIO:+-d CPU_RATIO=$CPU_RATIO} ${CPU_PHASE:+-d CPU_PHASE=$CPU_PHASE} -debug typical -relax \
+    -d SOC_SIM -d REALSDRAM -i $D ${NOCPU:+-d NOCPU} ${DMA_OVERLAP:+-d DMA_OVERLAP} ${P2CBLOCK:+-d P2CBLOCK=$P2CBLOCK} ${CPU_RATIO:+-d CPU_RATIO=$CPU_RATIO} ${CPU_PHASE:+-d CPU_PHASE=$CPU_PHASE} ${NOCHIP32:+-d NOCHIP32} -debug typical -relax \
     -L secureip -L unisims_ver -L unimacro_ver \
     ddr3_cpu_tb glbl -s cpu_sim
 
@@ -334,7 +357,7 @@ if [ "${PIPELINED:-0}" = "1" ]; then AP040_ELAB="-i $PIPE_DIR/rtl -i $PIPE_DIR/r
 
 cd "$D"
 echo
-grep -E "^(PASS|FAIL|INFO:|DDR3 CPU TB|       )" "xsim_run_$VARIANT.log" || true
+grep -E "^(PASS|FAIL|INFO:|DDR3 CPU TB|CHIP32|       )" "xsim_run_$VARIANT.log" || true
 
 if [ "$IS_MUTANT" = "1" ]; then
     # The mutant must NOT pass.  Test the SUMMARY line, not "DDR3 CPU TB: PASS":

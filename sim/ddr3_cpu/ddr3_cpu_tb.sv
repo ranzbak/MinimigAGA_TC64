@@ -789,10 +789,16 @@ wire        w_ena7WRreg = ena7WRreg;
 // The wrapper builds the AP68040 (its TG68K branch was removed in Stage E4a).
 // The core presents a TG68K-shaped port set, which is why the rest of this
 // bench did not have to change for it.
-`ifdef AP040_PIPELINED
-TG68K #(.cpu_clk_ratio(`CPU_RATIO), .ap040_pipelined(1)) tg68k (
+// NOCHIP32 builds the wrapper with chip32 = 0: every longword two word cycles.
+`ifdef NOCHIP32
+localparam integer CHIP32_GEN = 0;
 `else
-TG68K #(.cpu_clk_ratio(`CPU_RATIO)) tg68k (
+localparam integer CHIP32_GEN = 1;
+`endif
+`ifdef AP040_PIPELINED
+TG68K #(.cpu_clk_ratio(`CPU_RATIO), .ap040_pipelined(1), .chip32(CHIP32_GEN)) tg68k (
+`else
+TG68K #(.cpu_clk_ratio(`CPU_RATIO), .chip32(CHIP32_GEN)) tg68k (
 `endif
     .clk            (clk              ),
     .clk_cpu        (clk_cpu          ),
@@ -1136,6 +1142,36 @@ always @(posedge clk) begin
     if (!tg68_lds)  chipmem[cs_wa      ][ 7:0] <= tg68_dat_out [ 7:0];
     if (!tg68_uds2) chipmem[cs_wa + 16'd1][15:8] <= tg68_dat_out2[15:8];
     if (!tg68_lds2) chipmem[cs_wa + 16'd1][ 7:0] <= tg68_dat_out2[ 7:0];
+  end
+end
+
+//-----------------------------------------------------------------
+// CHIP32 monitor (findings/chip32/plan.md).  Counts every chipset-bus cycle
+// the wrapper starts.  A WIDE cycle (uds2/lds2 low) must be an aligned
+// longword with all four strobes low, in chip RAM or a ROM read -- never a
+// custom register, CIA, Gayle or any other 16-bit chip, and never the NMI
+// vector, which the Action Replay overlay answers one word at a time.
+//-----------------------------------------------------------------
+integer c32_wide = 0, c32_narrow = 0, c32_bad = 0;
+reg     c32_as_d = 1'b1;
+wire    c32_win  = (tg68_adr[31:21] == 11'd0) ||
+                   (tg68_adr[31:24] == 8'h00 && tg68_rw &&
+                    (tg68_adr[23:19] == 5'b11111 || tg68_adr[23:19] == 5'b11100));
+always @(posedge clk) begin
+  c32_as_d <= tg68_as;
+  if (tg68_rst && c32_as_d && !tg68_as) begin
+    if (!tg68_uds2 || !tg68_lds2) begin
+      c32_wide = c32_wide + 1;
+      if (tg68_adr[1:0] != 2'b00 || !c32_win ||
+          tg68_uds || tg68_lds || tg68_uds2 || tg68_lds2 ||
+          tg68_adr[31:2] == tg68k.NMI_addr[31:2]) begin
+        c32_bad = c32_bad + 1;
+        if (c32_bad <= 10)
+          $display("CHIP32 BAD wide cycle at %t: adr=%08x rw=%b uds/lds/uds2/lds2=%b%b%b%b",
+                   $time, tg68_adr, tg68_rw, tg68_uds, tg68_lds, tg68_uds2, tg68_lds2);
+      end
+    end else
+      c32_narrow = c32_narrow + 1;
   end
 end
 
@@ -1783,6 +1819,20 @@ initial begin : main
   end
 `endif
 `endif
+  $display("CHIP32: %0d wide chipset cycles, %0d narrow, %0d bad (chip32=%0d turbochip=%0d)",
+           c32_wide, c32_narrow, c32_bad, CHIP32_GEN, turbochipram);
+  if (c32_bad != 0) begin
+    nfail = nfail + 1;
+    $display("DDR3 CPU TB: FAIL  CHIP32: %0d wide cycles outside the rules", c32_bad);
+  end
+  if (CHIP32_GEN == 0 && c32_wide != 0) begin
+    nfail = nfail + 1;
+    $display("DDR3 CPU TB: FAIL  CHIP32: chip32 = 0 but %0d wide cycles", c32_wide);
+  end
+  if (CHIP32_GEN != 0 && !turbochipram && !mmutest && c32_wide < 32) begin
+    nfail = nfail + 1;
+    $display("DDR3 CPU TB: FAIL  CHIP32: chip RAM over the chipset bus but only %0d wide cycles", c32_wide);
+  end
   if (nfail == 0) $display("DDR3 CPU TB: 2 passed, 0 failed");
   else            $display("DDR3 CPU TB: %0d checks failed", nfail);
   $display("");
