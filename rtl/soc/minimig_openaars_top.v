@@ -39,6 +39,8 @@ module minimig_openaars_top #(
   // AP68040 island clock divider: 30 = clk_114/3 (stage D3),
   // 40 = clk_114/4 (pre-D3 rate, D3 architecture otherwise intact).
   parameter CPU_CLK_DIVIDE = 30,
+  // 32-bit CPU cycles on the chip bus (findings/chip32/plan.md); 0 = two word cycles
+  parameter CHIP32 = 1,
   // Bring-up only: ILA on the AP68040's fault outputs (build_ap040.tcl).
   parameter CPU040_DEBUG_ILA = 0,
   // Debug build only (tools/vivado/build_ila.tcl): put ila_fastram on the
@@ -500,6 +502,7 @@ minimig_virtual_top
   .ap040_post_stores(AP040_POST_STORES),
   .ap040_pipelined(AP040_PIPELINED),
   .cpu_clk_divide(CPU_CLK_DIVIDE),
+  .chip32(CHIP32),
   .CPU040_DEBUG_ILA(CPU040_DEBUG_ILA),
   .DDR3_FASTRAM_ILA(DDR3_FASTRAM_ILA)
 ) openaars_virtual_top (
