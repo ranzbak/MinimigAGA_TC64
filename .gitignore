@@ -117,3 +117,6 @@ findings/**/*.pdf
 findings/**/*.PDF
 findings/ap040-pipelined/tests/cputest/gen/cputestgen
 findings/**/.tinfo/
+
+# Vivado build logs next to the build dirs (build_<stage>.log)
+/build_*.log

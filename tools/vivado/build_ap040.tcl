@@ -328,11 +328,21 @@ if {$ila} {
 # (which carries lifted copies of lib/AP68040's cache and adapters under the
 # same module names -- so lib/AP68040's files are disabled for the run and
 # re-enabled afterwards), MMU and FPU reported absent.
+#
+# Without AP040_PIPE_DIR, the lib/AP68040-pipelined submodule is used when it
+# is checked out (branch 5.0-040-pipelined), so a fresh clone builds the
+# pipelined core.  AP040_PIPE_DIR=none builds the reference core instead.
 #-----------------------------------------------------------------------------
 set pipe_gen ""
 set pipe_off {}
+set pipe_dir ""
 if {[info exists ::env(AP040_PIPE_DIR)] && $::env(AP040_PIPE_DIR) ne ""} {
-    set P [file normalize $::env(AP040_PIPE_DIR)]/rtl
+    if {$::env(AP040_PIPE_DIR) ne "none"} { set pipe_dir $::env(AP040_PIPE_DIR) }
+} elseif {[file isdirectory $R/lib/AP68040-pipelined/rtl]} {
+    set pipe_dir $R/lib/AP68040-pipelined
+}
+if {$pipe_dir ne ""} {
+    set P [file normalize $pipe_dir]/rtl
     foreach f [get_files -quiet -of_objects [get_filesets sources_1] $R/lib/AP68040/rtl/*.v] {
         if {[get_property IS_ENABLED $f]} {
             set_property IS_ENABLED false $f
