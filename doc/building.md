@@ -50,28 +50,22 @@ env LD_LIBRARY_PATH=$HOME/lib/tinfo5 LC_ALL=C LANG=C \
 ## 2. Getting the source
 
 ```bash
-git clone -b 5.0-040-pipelined https://github.com/ranzbak/MinimigAGA_TC64.git
+git clone --recursive -b 5.0-040-pipelined https://github.com/ranzbak/MinimigAGA_TC64.git
 cd MinimigAGA_TC64
-git submodule update --init EightThirtyTwo lib/AP68040-pipelined
 ```
+
+In an existing clone, `git submodule update --init` does the same.
 
 | Submodule | What | Needed for |
 |---|---|---|
 | `lib/AP68040-pipelined` | the 68040 CPU core | the bitstream |
 | `EightThirtyTwo` | the OSD controller CPU and its C toolchain | the firmware |
+| `lib/AP68040` | the non-pipelined reference 68040 (branch `ap68040-reference` of the AP68040-pipelined repository) | `AP040_PIPE_DIR=none` builds and some benches |
 | `rtl/tg68k` | the TG68K CPU | only the older ports; not in this build's project |
-| `lib/AP68040` | the non-pipelined reference 68040 | only `AP040_PIPE_DIR=none` builds and some benches |
 
-Two catches, both checked on 2026-09-25:
-
-- The submodule URLs in `.gitmodules` use SSH (`git@github.com:...`), which
-  needs a GitHub SSH key. Without one, tell git to use HTTPS:
-  `git config --global url."https://github.com/".insteadOf git@github.com:`
-- **`lib/AP68040` doesn't check out.** Its recorded commit (530fc72, branch
-  `e2-fixes`) is not on github.com/apolkosnik/AP68040, so
-  `git clone --recursive` fails on it. That's why the command above skips it.
-  The default build disables that core's files, so it shouldn't need them;
-  whether Vivado accepts the missing files without an error is unverified.
+All submodule URLs are HTTPS (since commit 829167b), so no GitHub SSH key is
+needed. On 2026-09-25 each submodule's pinned commit was fetched from its
+GitHub URL; a complete `--recursive` clone was not run for this document.
 
 ## 3. Building the bitstream
 
