@@ -991,7 +991,15 @@ if (CPU040_DEBUG_ILA) begin : g_cpu040_ila
     .probe7 (tg68_ram_hs),     // 7  {ram req,we,ir,ack, ddr req,ack, busy} (E2)
     .probe8 (dbg_phist),       // 384 chip-RAM acknowledge phase histogram
     .probe9 (dbg_rtg),         // 32  {akiko_req, akiko_wr, state, cpuaddr[11:0], akiko_d}
-    .probe10({rtg_ena, rtg_16bit, rtg_clut, rtg_pixelwidth, rtg_baseaddr}) // 29
+    // (board bring-up 2026-09-23, black-screen investigation) probe10 is
+    // repurposed from the RTG group to the signals that say whether the CPU
+    // is even allowed to run: its reset from the 832/minimig side, its clock
+    // enable, the SDRAM controller's reset_out (which is what releases the
+    // 832) and DDR3's init_done.  Same width, so the ILA IP is unchanged.
+    //   [28]=tg68_rst  [27]=tg68_nrst_out  [26]=reset_out  [25]=DDR3_INIT_DONE
+    //   [24]=tg68_ena28 [23]=tg68_dtack     [22]=rtg_ena    [21:0]=rtg_baseaddr
+    .probe10({tg68_rst, tg68_nrst_out, reset_out, DDR3_INIT_DONE, tg68_ena28,
+              tg68_dtack, rtg_ena, rtg_baseaddr}) // 29
   );
 end
 endgenerate
