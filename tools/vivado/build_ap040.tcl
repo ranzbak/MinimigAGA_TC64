@@ -365,7 +365,11 @@ if {[info exists ::env(AP040_PIPE_DIR)] && $::env(AP040_PIPE_DIR) ne ""} {
 
 # The one functional difference from build.tcl: which kernel the wrapper
 # elaborates, and whether the fast-RAM ILA comes along for the ride.
-set_property generic "HAVEDDR3=1 DDR3_BIST_VIO=0 DDR3_FASTRAM_ILA=$ila CPU040_DEBUG_ILA=$ila AP040_POST_STORES=$post CPU_CLK_DIVIDE=$cpudiv$pipe_gen" \
+# FASTRAM_ILA=0 in the environment keeps the CPU ILA but drops the fast-RAM
+# one: with M14's cache copies in block RAM, both ILAs together need 279
+# RAMB18-equivalents of the 270 the device has (2026-09-24).
+set fila [expr {[info exists ::env(FASTRAM_ILA)] && $::env(FASTRAM_ILA) ne "" ? $::env(FASTRAM_ILA) : $ila}]
+set_property generic "HAVEDDR3=1 DDR3_BIST_VIO=0 DDR3_FASTRAM_ILA=$fila CPU040_DEBUG_ILA=$ila AP040_POST_STORES=$post CPU_CLK_DIVIDE=$cpudiv$pipe_gen" \
     [get_filesets sources_1]
 
 # The debug core adds a few thousand LUTs and flip-flops to clk_114, and with

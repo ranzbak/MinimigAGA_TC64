@@ -136,7 +136,10 @@ grab $ila ${pfx}_busy.csv "busy" 2
 # bus_ctl = {as, rw, uds, lds}, active low: a write cycle is as=0, rw=0.
 clear_all $ila
 set_property CONTROL.CAPTURE_MODE BASIC $ila
-set_property CONTROL.TRIGGER_POSITION 3072 $ila
+# Three quarters of the window is history, whatever depth the image was built
+# with (a fixed 3072 fails on a 1024-deep core: "trigger position must be a
+# value less than data depth").
+set_property CONTROL.TRIGGER_POSITION [expr {[get_property CONTROL.DATA_DEPTH $ila] * 3 / 4}] $ila
 set_property CAPTURE_COMPARE_VALUE {eq4'b0XXX} [pr $ila *bus_ctl*]
 set_property TRIGGER_COMPARE_VALUE {eq4'b00XX} [pr $ila *bus_ctl*]
 grab $ila ${pfx}_write.csv "write" 2
