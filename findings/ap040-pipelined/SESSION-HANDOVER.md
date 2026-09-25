@@ -195,6 +195,14 @@ differences; the 832 is not holding the CPU.
 
 ## Backlog (after the plan is finished; Paul, 2026-09-24: "not too many changes at once")
 
+- **Investigate apolkosnik's optimized pipelined 040 core (Paul, 2026-09-25)**:
+  https://github.com/apolkosnik/Minimig-AGA_MiSTer/tree/ap040-pipelined. We may want to borrow some of its
+  optimizations. First step: diff its core and wrapper against lib/AP68040-pipelined (9efe490) and our
+  rtl/soc/TG68K.vhd, list each optimization (what, where, measured gain if the branch states one), and rate each for
+  fit with our M14 split caches, the FPU, the 1:3 clk_38 island and the timing budget. Then give Paul the shortlist.
+  Adopt nothing unilaterally: memory `ap040-reference-integration` records that convergence with apolkosnik's branches
+  was DEFERRED, and our submodule is a hand overlay 1300+ lines away from upstream main.
+
 - **OPEN (Paul, 2026-09-25): the OSD is open at boot, also right after loading a new bitstream** (so not only after
   an Amiga reset). It was already reported 2026-09-24 and NOT resolved: the input-diagnostic agent ruled out
   RTL/firmware tree mismatch and found no RTL cause (the only KEY_MENU queued at configuration is the first queue
