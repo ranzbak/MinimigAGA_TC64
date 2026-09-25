@@ -211,6 +211,12 @@ void HandleUI(void)
     static hardfileTYPE t_hardfile[2]; // temporary copy of former hardfile configuration
     static int t_hdfdir[2];
     static char t_enable_ide; // temporary copy of former enable_ide flag.
+    // Memory menu: config.memory as it was when the menu was entered, so that
+    // leaving it after a change can offer the reset the change needs (the
+    // memory map and autoconfig only change at the next reset).
+    static unsigned char t_memory;
+    static char t_memory_valid = 0;
+    static unsigned char t_memory_next, t_memory_nextsub; // where the user was going
     static unsigned char ctrl = false;
     static unsigned char lalt = false;
     static unsigned char lshift = false;
@@ -465,6 +471,7 @@ void HandleUI(void)
     case MENU_NONE1:
         helptext = helptexts[HELPTEXT_NONE];
         menumask = 0;
+        t_memory_valid = 0;     // the OSD closed: the next Memory menu visit starts afresh
         if (DebugMode)
         {
             helptext = helptexts[HELPTEXT_NONE];
@@ -1469,6 +1476,10 @@ void HandleUI(void)
         /* memory settings menu                                           */
         /******************************************************************/
     case MENU_SETTINGS_MEMORY1:
+        if (!t_memory_valid) {       // entering the menu, not redrawing it
+            t_memory = config.memory;
+            t_memory_valid = 1;
+        }
         OsdColor(OSDCOLOR_SUBMENU);
         helptext = helptexts[HELPTEXT_MEMORY];
         menumask = 0x7f;
@@ -1576,6 +1587,56 @@ void HandleUI(void)
         {
             menustate = MENU_SETTINGS_CHIPSET1;
             menusub = 0;
+        }
+
+        // Leaving the menu (Exit, the menu key, or left/right to the next
+        // page): if the memory settings changed, ask for the reset they need
+        // first, then go where the user was going.  Choosing a Kickstart
+        // (SelectFile) is not leaving: it comes back here, and has its own
+        // "Reload Kickstart?" prompt.
+        if (menustate != MENU_SETTINGS_MEMORY1 && menustate != MENU_SETTINGS_MEMORY2
+                && !(select && menusub == 3)) {
+            t_memory_valid = 0;
+            if (config.memory != t_memory) {
+                t_memory_next = menustate;
+                t_memory_nextsub = menusub;
+                menustate = MENU_MEMORY_CHANGED1;
+                menusub = 0;
+            }
+        }
+        break;
+
+    // memory configuration has changed: offer the reset it needs, the same way
+    // the hardfile menu does (autoconfig and the memory map change at reset)
+    case MENU_MEMORY_CHANGED1:
+        helptext = helptexts[HELPTEXT_NONE];
+        OsdColor(OSDCOLOR_WARNING);
+        menumask = 0x03;
+        parentstate = menustate;
+        OsdSetTitle("Confirm", 0);
+
+        OsdWrite(0, "", 0, 0);
+        OsdWrite(1, "  Memory configuration changed,", 0, 0);
+        OsdWrite(2, "      this requires a reset.", 0, 0);
+        OsdWrite(3, "", 0, 0);
+        OsdWrite(4, "       Reset Minimig?", 0, 0);
+        OsdWrite(5, "", 0, 0);
+        OsdWrite(6, "             yes", menusub == 0, 0);
+        OsdWrite(7, "             no", menusub == 1, 0);
+
+        menustate = MENU_MEMORY_CHANGED2;
+        break;
+
+    case MENU_MEMORY_CHANGED2:
+        if (select && menusub == 0) // yes
+        {
+            OsdReset();
+            menustate = MENU_NONE1;
+        }
+        else if ((select && menusub == 1) || menu) // no: carry on where the user was going
+        {
+            menustate = t_memory_next;
+            menusub = t_memory_nextsub;
         }
         break;
 
