@@ -202,6 +202,17 @@ differences; the 832 is not holding the CPU.
   fit with our M14 split caches, the FPU, the 1:3 clk_38 island and the timing budget. Then give Paul the shortlist.
   Adopt nothing unilaterally: memory `ap040-reference-integration` records that convergence with apolkosnik's branches
   was DEFERRED, and our submodule is a hand overlay 1300+ lines away from upstream main.
+  **FPU/NetBSD fixes, first look 2026-09-25** (the original core author is Adam Polkosnik; his core repo
+  https://github.com/apolkosnik/AP68040 is cloned read-only at `../apolkosnik-AP68040`, main 8f72275). In our
+  pipelined core already: bc7b5f97 FSAVE/FRESTORE NULL frame ("NetBSD savectx panic"); a8a50ce packed FMOVE-to-memory
+  prepares the BUSY frame + FPIAR capture; most of 880b81c's FPU part (BUSY FRESTORE resume with CU_SAVEPC=$FE,
+  ETE14/ETE15 exponent rule). Not needed: AP040_FPU_REVISION ($40 frames, old NeXT only); c223322's FPU part (Altera MLAB
+  hold). OPEN, NetBSD-relevant: 880b81c's core/MMU part -- MOVEM operand faults set SSW.CM + stack the calculated EA
+  (RTE resumes from it), and failed table searches install nonresident ATC entries. Our pipelined core is a different
+  design, so re-implement, don't copy; his tests t_movem_restart.s, t_atcprobe.s, t_fpu_frames.s, t_fpu_resume.s are
+  the gate. Next step: hunk-by-hunk semantic audit of 880b81c against rtl/compat/ap040_fpu.v and the pipe core (text
+  differs, so patch --dry-run can't classify). Also: branch `40_w_Alans_patches` there = 38 commits of Alan
+  Steremberg's speedups (cache, prefetch, decode) -- the optimization candidates this item is about.
 
 - **OPEN (Paul, 2026-09-25): the OSD is open at boot, also right after loading a new bitstream** (so not only after
   an Amiga reset). It was already reported 2026-09-24 and NOT resolved: the input-diagnostic agent ruled out
