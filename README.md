@@ -1,10 +1,83 @@
-# Minimig AGA
+# Minimig AGA with a pipelined 68040, for OpenAARS
 
-This version of the Minimig AGA core is specific for the [OpenAARS](https://github.com/ranzbak/qmtech_minimig) board.
-The hardware design can be found at [https://github.com/ranzbak/qmtech_minimig](https://github.com/ranzbak/qmtech_minimig) the design is mode in KiCad 5 and is free to use.
-The intended FPGA core board is the 'Xilinx FPGA Artix7 development board XC7A100T DDR3', which can be obtained from Ebay or AliExpress.
+An Amiga in an FPGA: the Minimig AGA chipset with a pipelined MC68040 CPU
+(MMU and FPU included), for the [OpenAARS](https://github.com/ranzbak/qmtech_minimig)
+IO board version 5.0 with the QMTech "Xilinx FPGA Artix7 development board
+XC7A100T DDR3" core board. This is the `5.0-040-pipelined` branch.
 
-**Supported board.** Only the OpenAARS / QMTech XC7A100T build (`fpga/openaars`, `project_1`) is maintained. Since Stage E4a its CPU is the AP68040 (MC68040 with MMU and FPU) only. The other ports under `fpga/` (MiST, Chameleon v1/v2, DE0-Nano, DE10-Lite, virtual) share RTL with this build but no longer build from this branch; tag `d3_stable` is the last version that builds them, with the TG68K CPU.
+The IO board design is at
+[github.com/ranzbak/qmtech_minimig](https://github.com/ranzbak/qmtech_minimig).
+It's made in KiCad 5 and is free to use. The core board can be bought on eBay
+or AliExpress.
+
+**Only this board is built and maintained.** The other ports under `fpga/`
+(MiST, Chameleon v1/v2, DE0-Nano, DE10-Lite, virtual) share RTL with this
+build but don't build from this branch. Tag `d3_stable` is the last version
+that builds them, with the TG68K CPU.
+
+## What you get
+
+- **CPU:** a pipelined MC68040 at 37.8 MHz with MMU, FPU (the 68040's hardware
+  subset) and 4 KB instruction and data caches. The core is
+  [AP68040-pipelined](https://github.com/ranzbak/AP68040-pipelined).
+- **Chipset:** OCS, ECS or AGA, PAL or NTSC.
+- **Memory:** up to 2 MB chip RAM, 1.5 MB slow RAM, 8 MB Zorro II fast RAM,
+  and Zorro III fast RAM on the SDRAM and on the core board's DDR3.
+- **Video:** HDMI at 1280x720, 50 or 60 Hz, scaled from the Amiga picture,
+  plus a Picasso96 RTG screen.
+- **Sound:** Paula, a Toccata-compatible Zorro II sound card, floppy drive
+  sounds.
+- **Storage:** hard disk images (HDF) and floppy images (ADF) on a FAT32 SD card.
+- **Input:** PS/2 keyboard and mouse (scroll wheel supported), two joystick ports.
+- **Also:** a battery-backed real-time clock, HRTmon, an on-screen menu (OSD).
+
+Details and addresses: [doc/hardware.md](doc/hardware.md).
+
+## Status (September 2026)
+
+Experimental and still under test. Seen on the board so far:
+
+- Kickstart 3.1.4 boots to Workbench.
+- SysInfo reports about **0.83x** the speed of an A4000/040 at 25 MHz.
+- The WinUAE cputest 68040 disk ran for 2 hours without an error, Frontier:
+  Elite II ran all night, and AIBB's Beachball test (68020 code with the FPU)
+  completes.
+- **Open problem:** the AIBB FPU FLOPS test crashes.
+
+The 68040 has no hardware for some FPU instructions (sine, logarithms and so
+on). As on a real 68040, those need an FPU emulation library such as
+`68040.library`. See [doc/workbench-setup.md](doc/workbench-setup.md).
+
+## Quick start
+
+1. Get the bitstream onto the board: build it ([doc/building.md](doc/building.md)),
+   then load it over JTAG or write it to the board's flash with Vivado.
+2. Prepare a FAT32 SD card with the OSD firmware `832OSDAD.BIN` and a Kickstart
+   ROM: [doc/getting-started.md](doc/getting-started.md).
+3. Boot, press **F12** for the menu, pick a hard disk image or a floppy.
+4. For a Workbench with the FPU, MMU and RTG screen working:
+   [doc/workbench-setup.md](doc/workbench-setup.md).
+
+Something odd? Read [doc/troubleshooting.md](doc/troubleshooting.md) first:
+several symptoms have a simple cause, such as a board that needs a power cycle.
+
+## Documentation
+
+| Document | For | What's in it |
+|---|---|---|
+| [doc/getting-started.md](doc/getting-started.md) | users | SD card, first boot, OSD keys and menus |
+| [doc/workbench-setup.md](doc/workbench-setup.md) | users | Workbench HDF, 68040/FPU/MMU libraries, RTG, sound, clock, fast RAM |
+| [doc/troubleshooting.md](doc/troubleshooting.md) | users | symptom, cause, fix |
+| [doc/hardware.md](doc/hardware.md) | everyone | the emulated machine and its memory map |
+| [doc/building.md](doc/building.md) | developers | toolchains, bitstream and firmware builds, JTAG, flash |
+| [doc/simulation.md](doc/simulation.md) | developers | the test benches and how to run them |
+| [doc/build-program-test.md](doc/build-program-test.md) | developers | the detailed build, program and hardware-test runbook |
+
+## No warranty
+
+This is experimental hardware description and firmware, provided as is,
+without warranty of any kind. You use it at your own risk, including the risk
+to your hardware and your data. See the license below and [LICENSE](LICENSE).
 
 ### Foreword
 
@@ -13,70 +86,6 @@ The intended FPGA core board is the 'Xilinx FPGA Artix7 development board XC7A10
 [Amiga](http://en.wikipedia.org/wiki/Amiga_500) was an amazing personal computer, announced around 1984, which - at the time - far surpassed any other personal computer on the market, with advanced graphic & sound capabilities, not to mention its great OS with preemptive multitasking capabilities.
 
 This minimig variant has been upgraded with [AGA chipset](http://en.wikipedia.org/wiki/Amiga_Advanced_Graphics_Architecture) capabilites, which allows it to emulate the latest Amiga models ([Amiga 1200](http://en.wikipedia.org/wiki/Amiga_1200), [Amiga 4000](http://en.wikipedia.org/wiki/Amiga_4000) and (partially) [Amiga CD32](http://en.wikipedia.org/wiki/Amiga_CD32)). Ofcourse it also supports previous OCS/ECS Amigas like [Amiga 500](http://en.wikipedia.org/wiki/Amiga_500), [Amiga 600](http://en.wikipedia.org/wiki/Amiga_600) etc.
-
-## Core features supported
-
-- chipset variants : OCS, ECS, AGA
-- chipRAM : 0.5MB - 2.0MB
-- slowRAM : 0.0MB - 1.5MB
-- fastRAM : 0.0MB - 24MB
-- CPU core : 68000, 68010, 68020
-- kickstart : 1.2 - 3.1 (256kB, 512kB & 1MB kickstart ROMs currently supported)
-- HRTmon with custom registers mirror
-- floppy disks : 1-4 floppies (supports ADF floppy image format), with normal & turbo speeds
-- hard disks : 1-2 hard disk images (supports whole disk images, partition images, using whole SD card and using SD card partition)
-- video standard : PAL / NTSC
-- supports normal & scandoubled video output (15kHz / 30kHz) - can be used with a monitor or a TV with a HDMI cable
-- peripherals : real Amiga / C64 joysticks connected to C64 joystick ports, CDTV infra-red controllers, PS/2 keyboards,
-  PS/2 mice, real Amiga mouse
-- supports basic retargetable graphics (RTG) with a P96 driver
-- has an implementation of the Akiko chunky to planar converter
-- has an extra audio channel which can be used from the Amiga to play CD-quality WAV files, or used on some platforms to emulate floppy drive sounds.
-
-## Usage
-
-### Hardware
-
-To use this Minimig core, you will at the minimum need an SD/SDHC card, formatted with the FAT32 filesystem, a PS/2 keyboard and a compatible monitor / TV. Joysticks & mouse can be emulated on the keyboard. You will probably want to attach a set of speakers of headphones, a real Amiga or PS/2 mouse and a real Amiga joystick.
-
-### Software
-
-To use the core, you will also need a Kickstart ROM image file, which you can obtain by copying Kickstart ROM IC from your actual Amiga, or by buying an [Amiga Forever](http://www.amigaforever.com/) software pack. The Kickstart image should be placed on the root of the SD card with the name KICK.ROM. Minimig also supports the [AROS](http://aros.sourceforge.net/) kickstart ROM replacement.
-
-The Minimig can read any ADF floppy images you place on the SD card. I recommend at least Workbench 1.3 or 3.1 (AmigaOS), some of the Amigas great games (I recommend Ruff'n'Tumble) or some of the amazing demos from the vast Amiga demoscene (like State of the Art from Spaceballs).
-
-The minimig can also use HDF harddisk images, which can be created with [WinUAE](http://www.winuae.net/).
-
-### Recommended minimig config
-
-- for ECS games / demos : CPU = 68000, Turbo=NONE, Chipset=ECS, chipRAM=0.5MB, slowRAM=0.5MB, Kickstart 1.3
-- for AGA games / demos : CPU = 68020, Turbo=NONE, Chipset=AGA, chipRAM=2MB, slowRAM=0MB, fastRAM=24MB, Kickstart 3.1
-  For Workbench usage, you can try turning TURBO=BOTH for a little speed increase.
-
-### Controlling minimig
-
-Keyboard special keys:
-
-- F12 - OSD menu
-- F11 - start monitor (HRTmon) if HRTmon is enabled in OSD menu (otherwise F11 is the Amiga HELP key)
-- ScrollLock - toggle keyoard only / mouse / joystick 1 / joystick 2 emulation on the keyboard (direction keys + LCTRL)
-
-### RTG settings
-
-Because OpenAARS uses HDMI out and not VGA, the settings that will result in a flicker free image are limited.
-Make sure the Picasso96 tools are installed, and use the tool 'Picasso96Mode' in 'Workbench->Prefs' to input the settings.
-
-Here are the settings I found to work best on my display:
-| Resolution | Depth | Width | Height | Clock | il | ds | or | Framesize | BorderSize | pos | syncsize | syncpol | freq |
-| ---------- | ------- | ----- | ------ | ----- | --- | --- | ---- | --------- | ---------- | --- | -------- | ------- | ----- |
-| 1024x768 | HiColor | 1024 | 768 | 56.72 | | | hor | 1279 | 8 | 0 | 64 | | 44kHz |
-| | | | | | | | vert | 802 | 0 | 18 | 8 | | 55Hz |
-| 800x600 | HiColor | 800 | 600 | 56.72 | | | hor | 1280 | 24 | 96 | 64 | | 44Khz |
-| | | | | | | | vert | 768 | 0 | 0 | 6 | | 57Hz |
-| 832x480 | 256Col | 832 | 480 | 28.36 | | | hor | 1012 | 0 | 55 | 64 | | 28kHz |
-| | | | | | | | vert | 560 | 0 | 38 | 8 | | 50hz |
-| 720x480 | HiColor | 720 | 480 | 28.36 | | | hor | 940 | 0 | 72 | 64 | | 30kHz |
-| | | | | | | | vert | 588 | 0 | 98 | 8 | | 51hz |
 
 ## Links & more info
 
@@ -103,6 +112,20 @@ This project contains code written by:
 
 All code is copyright © 2005 - 2020 and the property of its respective authors.
 
+### The 68040 CPU core
+
+The CPU is [AP68040-pipelined](https://github.com/ranzbak/AP68040-pipelined)
+(the `lib/AP68040-pipelined` submodule), a fork of
+[AP68040](https://github.com/nonarkitten/AP68040):
+
+- **Adam Polkosnik** wrote AP68040, the original sequential 68040 core with its
+  MMU, FPU, caches and test benches, as part of
+  [Minimig-AGA_MiSTer](https://github.com/apolkosnik/Minimig-AGA_MiSTer).
+- **Renee Cousins (nonarkitten)** started the six-stage pipelined core.
+- **Paul Honig** completed the pipelined core (the full integer ISA,
+  exceptions, MMU, FPU, split read paths and timing closure) and its Minimig
+  integration.
+
 ## License
 
 This program is free software: you can redistribute it and/or modify
@@ -117,53 +140,6 @@ GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
 along with this program. If not, see <http://www.gnu.org/licenses/>.
-
-## Building minimig-mist from sources
-
-- checkout the source
-- cd into the project directory
-- Make sure vivado settings64.sh has been sourced into the shell `source <vivado home>/Vivado/2020.2/settings64.sh`
-- run 'rebuild.sh'
-- Open the project in Vivado, proceed with the build by pressing 'Generate bitstream'
-- wait until the status in the top right corner indicates that the build is finished
-- in 'PROGRAM AND DEBUG', unfold 'Open Hardware Manager'
-- click 'Open Target' (Make sure the FPGA is connected via the programmer at this point)
-- select 'auto connect'
-
-## Building firmware
-
-First build the compiler and patch it.
-Luckily there is a Makefile making the process simpler.
-
-```bash
-cd EightThirtyTwo
-make
-<Some output>
-cd ..
-```
-
-After that build the firmware itself.
-The build process yields a file called: 832OSDAD.BIN
-The 832OSDAD.BIN is copied to the micro sd card the Open AARS boots from.
-
-```bash
-cd fw/ctrl_832
-make
-cp 832OSDAD.bin <root of sd card>/832OSDAD.BIN
-```
-
-Files needed for the Open AARS to boot
-
-| name          | description                                                  |
-| ------------- | ------------------------------------------------------------ |
-| 832OSDAD.BIN  | Firmware responsible for the On screen display               |
-| kick.rom      | Default kickstart rom                                        |
-| hrtmon.rom\*  | Hardware monitor rom                                         |
-| rom.key\*\*   | If Amiga Forever rom files are used, this key file is needed |
-| minimig.art\* | Spining ball logo at boot time                               |
-| hardfile.hdf  | Harddisk image, can be created using UAE                     |
-
-'\*' = Optional, '\*\*' = Only needed when Amiga forever kickstart roms are used
 
 ## Sources
 
