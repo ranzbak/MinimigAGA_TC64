@@ -1153,25 +1153,44 @@ end
 // vector, which the Action Replay overlay answers one word at a time.
 //-----------------------------------------------------------------
 integer c32_wide = 0, c32_narrow = 0, c32_bad = 0;
+// CHIP32PH's narrow probes must reach the BUS: the misaligned longword at
+// C32BUF+2 ($8402) and the NMI vector ($7C).  A cache hit would answer them
+// without a chipset cycle and prove nothing, so each must be seen as a narrow
+// read cycle at least once.
+integer c32_mis_rd = 0, c32_nmi_rd = 0;
 reg     c32_as_d = 1'b1;
+// The wrapper's NMI vector address, through a local wire: a part-select taken
+// straight on the hierarchical VHDL signal compared as never-equal in xsim, so
+// both the NMI probe count and the NMI "bad" rule below saw nothing.
+wire [31:0] c32_nmi = tg68k.NMI_addr;
+// +C32TRACE: print every chipset cycle below $100 and at $8402 (the probes)
+reg     c32_trace = 1'b0;
+initial c32_trace = $test$plusargs("C32TRACE");
 wire    c32_win  = (tg68_adr[31:21] == 11'd0) ||
                    (tg68_adr[31:24] == 8'h00 && tg68_rw &&
                     (tg68_adr[23:19] == 5'b11111 || tg68_adr[23:19] == 5'b11100));
 always @(posedge clk) begin
   c32_as_d <= tg68_as;
   if (tg68_rst && c32_as_d && !tg68_as) begin
+    if (c32_trace && (tg68_adr[31:8] == 24'd0 || tg68_adr == 32'h0000_8402))
+      $display("C32TRACE %t adr=%08x rw=%b uds/lds/uds2/lds2=%b%b%b%b nmi=%08x match=%b",
+               $time, tg68_adr, tg68_rw, tg68_uds, tg68_lds, tg68_uds2, tg68_lds2, c32_nmi,
+               tg68_adr[31:2] == c32_nmi[31:2]);
     if (!tg68_uds2 || !tg68_lds2) begin
       c32_wide = c32_wide + 1;
       if (tg68_adr[1:0] != 2'b00 || !c32_win ||
           tg68_uds || tg68_lds || tg68_uds2 || tg68_lds2 ||
-          tg68_adr[31:2] == tg68k.NMI_addr[31:2]) begin
+          tg68_adr[31:2] == c32_nmi[31:2]) begin
         c32_bad = c32_bad + 1;
         if (c32_bad <= 10)
           $display("CHIP32 BAD wide cycle at %t: adr=%08x rw=%b uds/lds/uds2/lds2=%b%b%b%b",
                    $time, tg68_adr, tg68_rw, tg68_uds, tg68_lds, tg68_uds2, tg68_lds2);
       end
-    end else
+    end else begin
       c32_narrow = c32_narrow + 1;
+      if (tg68_rw && tg68_adr == 32'h0000_8402) c32_mis_rd = c32_mis_rd + 1;
+      if (tg68_rw && tg68_adr[31:2] == c32_nmi[31:2]) c32_nmi_rd = c32_nmi_rd + 1;
+    end
   end
 end
 
@@ -1828,6 +1847,12 @@ initial begin : main
   if (CHIP32_GEN == 0 && c32_wide != 0) begin
     nfail = nfail + 1;
     $display("DDR3 CPU TB: FAIL  CHIP32: chip32 = 0 but %0d wide cycles", c32_wide);
+  end
+  $display("CHIP32: narrow bus reads of the CHIP32PH probes: misaligned $8402 %0d, NMI vector %0d",
+           c32_mis_rd, c32_nmi_rd);
+  if (!turbochipram && !mmutest && (c32_mis_rd == 0 || c32_nmi_rd == 0)) begin
+    nfail = nfail + 1;
+    $display("DDR3 CPU TB: FAIL  CHIP32: a CHIP32PH narrow probe never reached the bus (cache hit?)");
   end
   if (CHIP32_GEN != 0 && !turbochipram && !mmutest && c32_wide < 32) begin
     nfail = nfail + 1;

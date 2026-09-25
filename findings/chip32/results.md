@@ -39,6 +39,14 @@ and DMA in the slot right after the CPU's (T5b) all correct.  CPU access period 
   program over the chip port before releasing the CPU; the intervals are identical.
 - --c32mutant --chipbus: mutant failed as required (garbled fetches, stall at phase 0).
 - --ap040 (Turbo chip on): 2 passed, 0 failed, 0 wide cycles.
+- Final-review fix I1: the CHIP32PH narrow probes (misaligned longword, NMI vector) were cache hits and never
+  reached the bus.  They now run with the data cache off, and the bench fails the run unless each is seen as a
+  narrow bus read.  RED (before the asm change): NMI probe 0 bus reads -> FAIL.  GREEN: misaligned 1, NMI 2,
+  2 passed.  The same trace found a bench hole: a part-select on the hierarchical VHDL NMI_addr compared as
+  never-equal in xsim, so the NMI "bad" rule could not fire; it now goes through a local wire.
+  Mutants (PREB1 copies of TG68K.vhd): x_c32 without the NMI term -> wide cycle at $7C, FAIL; without the
+  alignment term -> wide cycle at $8402, FAIL.  Pipelined core: 1031 wide / 122 narrow, 0 bad, probes 1/2,
+  2 passed.  NOCHIP32: 0 wide / 1809 narrow, probes 2/2, 2 passed.
 - --mmu --chipbus: DROPPED (plan Task 3 leg 6).  Stalls in phase 1 (the table build) with CHIP32 (3924 wide, 76 narrow,
   0 bad) and with NOCHIP32 (4197 narrow) alike, at the 120k-cycle MMU watchdog and also at 300k: over the chipset bus the
   phase outlasts both the watchdog and the 4 ms TIMEOUT.  Pre-existing, a bench limit, not this change.

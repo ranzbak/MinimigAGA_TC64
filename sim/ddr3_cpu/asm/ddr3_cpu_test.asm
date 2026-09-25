@@ -596,6 +596,18 @@ c32_r:    move.l    a0,d2
           bne       f_c32
           add.l     #$00010001,d4
           dbra      d1,c32_r
+; Data cache OFF for the probes below: with it on they are cache hits (or
+; aligned line-fill beats) and never put a narrow cycle on the bus, which is
+; exactly what they are here to check.  The bench fails the run if the
+; misaligned and NMI probes are not seen as narrow bus reads.
+          dc.w      $F478                ; CPUSHA DC
+          move.l    #CACRVAL&$7FFFFFFF,d1
+          movec     d1,cacr
+          move.l    #C32BUF+4,d2         ; aligned, uncached: one wide cycle
+          move.l    C32BUF+4,d3
+          move.l    #$C32B0001,d4
+          cmp.l     d4,d3
+          bne       f_c32
           move.l    #C32BUF,d2           ; high word of longword 0
           moveq     #0,d3
           move.w    C32BUF,d3
@@ -616,6 +628,8 @@ c32_r:    move.l    a0,d2
           move.l    $7C.w,d3             ; NMI vector (VBR = 0): must stay narrow
           move.l    #$00001234,$00DFF080 ; COP1LC: a 16-bit chip, two word cycles
           move.l    $00DFF004,d3         ; VPOSR+VHPOSR: two word cycles
+          move.l    #CACRVAL,d1          ; data cache back on
+          movec     d1,cacr
           endif
 
 ;-----------------------------------------------------------------------------
