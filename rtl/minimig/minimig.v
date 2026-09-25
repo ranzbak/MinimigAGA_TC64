@@ -1153,7 +1153,12 @@ minimig_autoconfig #(
   .sel(sel_autoconfig),
   .fastram_config(memory_config[5:4]),
   .ddr3_only(memory_config[7]),
-  .m68020(cpu_config[1]),
+  // The Zorro III boards (and the Toccata after them in the chain) are only
+  // offered to a 32-bit CPU.  The OSD's stored CPU field said so for TG68K; an
+  // AP68040 (CORE_CAPS[0]) always has 32 address bits, and its OSD cannot set
+  // that field (the CPU line is fixed), so a default config lost Zorro III,
+  // the DDR3 board and the Toccata (2026-09-25).
+  .m68020(cpu_config[1] | CORE_CAPS[0]),
   .ram_64meg(ram_64meg),
   .slowram_config(memory_config[3:2]),
   .board_configured(board_configured),
