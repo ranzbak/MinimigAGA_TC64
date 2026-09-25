@@ -311,6 +311,16 @@ differences; the 832 is not holding the CPU.
   SysInfo loop above ran ~0.8 us per word, far slower than one word per 280 ns slot, so the width
   may not be the current bottleneck. Step 2: the longword-per-slot path. Step 3: re-test the
   demos that break with turbo, with turbo off.
+  **STATUS 2026-09-25: built and green in sim, board A/B PENDING (Paul).** Branch `chip32` (off
+  5.0-040-pipelined, not pushed), plan findings/chip32/plan.md, numbers findings/chip32/results.md.
+  An aligned longword to chip RAM (and a ROM longword read, Turbo kick off) is one chipset cycle
+  moving both words in one chip slot; custom registers, CIAs, Gayle, slow RAM and all DMA stay
+  16-bit (checked against the A1200 R2 schematic). sim/chip32: one slot per access, 2083 checks, 0
+  errors; sim/ddr3_cpu --chipbus: 1.51x (reference core) / 1.71x (pipelined) over phases 1-7, 0 bad
+  wide cycles, NOCHIP32 bit-identical to the old wrapper. A/B images (MMU+FPU, no ILA):
+  build/stage_chip32_on (md5 2d4bfb4f...) and build/stage_chip32_off (dfbb4308...), both timing
+  clean bar the known 16 SDRAM endpoints. Board checklist: plan Task 5 (chipbw tool in
+  findings/chip32/tools/, SysInfo, cputest, the Turbo-breaking demos with Turbo off).
 - **OPEN, intermittent: SysInfo SPEED sometimes takes minutes (MHz / MFLOPS phase).** 2026-09-24
   (all boards): CPU found in STOP with no interrupt for ~2 min, then continued. 2026-09-25 on
   m14f_fpu_ila: one run with all boards finished normally; one MFLOPS phase was slow; with "DDR3
