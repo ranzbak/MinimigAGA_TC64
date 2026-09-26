@@ -1201,6 +1201,7 @@ end
 // the backdoor comparison below has nothing to check; its own phases are the
 // test.
 integer mmutest  = 0;
+integer fctest   = 0;   // +FCTEST: freecore_test.asm (findings/unfreeze/plan.md)
 integer trace_on = 0;
 integer TRMAX    = 200;
 integer tr_cpu   = 0;
@@ -1211,6 +1212,7 @@ reg     ddrack_d = 1'b0;
 
 initial begin
   mmutest  = $test$plusargs("MMUTEST");
+  fctest   = $test$plusargs("FCTEST");
   trace_on = $test$plusargs("TRACE");
   void'($value$plusargs("TRMAX=%d", TRMAX));
 end
@@ -1739,6 +1741,11 @@ initial begin : main
       32'd24 : final_report(24, "an invalid page descriptor did not fault");
       32'd25 : final_report(25, "a table branch into undecoded space did not fault (walker_berr)");
       32'd26 : final_report(26, "data wrong after translation was turned off again");
+      // findings/unfreeze/plan.md, freecore_test.asm
+      32'd30 : final_report(30, "adapter answer, then a DDR3 read: wrong value");
+      32'd31 : final_report(31, "DDR3 read, then an adapter answer: wrong value");
+      32'd32 : final_report(32, "chip-RAM word, then a DDR3 read: wrong value");
+      32'd33 : final_report(33, "DDR3 store, adapter access, DDR3 load: wrong value");
       32'd99 : final_report(99, "unexpected 68k exception (bus/address error, privilege violation, ...)");
       default: final_report(status, "unknown failure code");
     endcase
@@ -1748,9 +1755,9 @@ initial begin : main
   // Independent DRAM check.  Runs whatever the program said, so a FAIL run
   // still reports what did and did not reach the DRAM.
   //---------------------------------------------------------------
-  if (mmutest) begin
+  if (mmutest || fctest) begin
     $display("");
-    $display("INFO: MMU walker program -- no pattern in the DDR3 to check");
+    $display("INFO: MMU walker or free-core program -- no pattern in the DDR3 to check");
   end else begin
   $display("");
   $display("INFO: checking the DDR3 array through the Micron model backdoor");
@@ -1942,8 +1949,8 @@ initial begin : main
   // Judged on the pattern program with Turbo chip RAM only: --chipbus sends
   // chip RAM over the chipset bus and the MMU program barely touches it, so
   // those legs (REALSDRAM only since E2, D6) report placement without a verdict.
-  if (!turbochipram || mmutest)
-    $display("=== placement: not judged on this leg (%s) ===", mmutest ? "MMU program" : "Turbo chip RAM off");
+  if (!turbochipram || mmutest || fctest)
+    $display("=== placement: not judged on this leg (%s) ===", (mmutest || fctest) ? "MMU or free-core program" : "Turbo chip RAM off");
   else begin
   // Reads are reported only since Task 5b: a line-buffer hit skips the
   // placement gate, so read acknowledges are deliberately off any grid.
@@ -1969,11 +1976,11 @@ initial begin : main
   end
   $display("CHIP32: narrow bus reads of the CHIP32PH probes: misaligned $8402 %0d, NMI vector %0d",
            c32_mis_rd, c32_nmi_rd);
-  if (!turbochipram && !mmutest && (c32_mis_rd == 0 || c32_nmi_rd == 0)) begin
+  if (!turbochipram && !(mmutest || fctest) && (c32_mis_rd == 0 || c32_nmi_rd == 0)) begin
     nfail = nfail + 1;
     $display("DDR3 CPU TB: FAIL  CHIP32: a CHIP32PH narrow probe never reached the bus (cache hit?)");
   end
-  if (CHIP32_GEN != 0 && !turbochipram && !mmutest && c32_wide < 32) begin
+  if (CHIP32_GEN != 0 && !turbochipram && !(mmutest || fctest) && c32_wide < 32) begin
     nfail = nfail + 1;
     $display("DDR3 CPU TB: FAIL  CHIP32: chip RAM over the chipset bus but only %0d wide cycles", c32_wide);
   end

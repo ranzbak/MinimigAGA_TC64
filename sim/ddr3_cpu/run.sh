@@ -14,6 +14,7 @@
 #   ./run.sh --ackmutant  AP68040 with the router's completion pulse held; MUST fail
 #   ./run.sh --mmu        AP68040, the stage-B MMU walker program
 #   ./run.sh --mmumutant  the same with walker_ack tied low; MUST fail
+#   ./run.sh --fcprog     AP68040, freecore_test.asm (findings/unfreeze/plan.md)
 #   ./run.sh --snoop      AP68040 with chipset DMA write snoops driven
 #   ./run.sh --snoopmutant  the same with the wrapper's snoop hold reverted; MUST fail
 #   ./run.sh --gatemutant phase gate opening on enaWRreg (as first built); placement MUST fail
@@ -78,6 +79,10 @@ IS_MMU=0
 IS_MMUMUTANT=0
 if [ "$1" = "--mmu" ];       then IS_MMU=1;                  shift; set -- --ap040 "$@"; fi
 if [ "$1" = "--mmumutant" ]; then IS_MMU=1; IS_MMUMUTANT=1; IS_MUTANT=1; shift; set -- --ap040 "$@"; fi
+# --fcprog: asm/freecore_test.asm, adapter and router answers back to back,
+# caches off (findings/unfreeze/plan.md).  Implies --ap040.
+IS_FC=0
+if [ "$1" = "--fcprog" ];    then IS_FC=1;                   shift; set -- --ap040 "$@"; fi
 
 # --snoop: the chipset DMA write snoop, which nothing drove until stage D3.
 # The bench asserts snoop_stb for one clk cycle at a time, at chip RAM
@@ -127,6 +132,7 @@ if [ "$CPU" = "ap040" ]; then
     if [ "$IS_ACKMUTANT" = "1" ];  then VARIANT=ackmutant_ap040;  fi
     if [ "$IS_MMU" = "1" ];        then VARIANT=mmu_ap040;        fi
     if [ "$IS_MMUMUTANT" = "1" ];  then VARIANT=mmumutant_ap040;  fi
+    if [ "$IS_FC" = "1" ];         then VARIANT=fcprog_ap040;     fi
     if [ "$IS_SNOOP" = "1" ];      then VARIANT=snoop_ap040;      fi
     if [ "$IS_SNOOPMUTANT" = "1" ]; then VARIANT=snoopmutant_ap040; fi
     if [ "$IS_GATEMUTANT" = "1" ]; then VARIANT=gatemutant_ap040; fi
@@ -203,6 +209,8 @@ CACRVAL='$80008003'
 if [ "$IS_MMU" = "1" ]; then
     BIN="$W/prog.bin" SRC=mmu_walk_test.asm "$D/asm/build_68k_test.sh" \
         -DCACRVAL="$CACRVAL"
+elif [ "$IS_FC" = "1" ]; then
+    BIN="$W/prog.bin" SRC=freecore_test.asm "$D/asm/build_68k_test.sh"
 else
     BIN="$W/prog.bin" "$D/asm/build_68k_test.sh" \
         -DPATBYTES=$PATBYTES -DMISLINES=$MISLINES -DCNTN=$CNTN -DCACRVAL="$CACRVAL" $C32PH \
@@ -214,6 +222,7 @@ PLUS="+PATBYTES=$PATBYTES +MISLINES=$MISLINES +CNTN=$CNTN +TURBOCHIP=$TURBOCHIP"
 # has nothing to compare against and is skipped; the program's own phases are
 # the check.
 if [ "$IS_MMU" = "1" ]; then PLUS="$PLUS +MMUTEST"; fi
+if [ "$IS_FC" = "1" ]; then PLUS="$PLUS +FCTEST"; fi
 if [ "$IS_SNOOP" = "1" ]; then PLUS="$PLUS +SNOOP"; fi
 if [ -n "$TRACE" ]; then PLUS="$PLUS +TRACE +TRMAX=${TRMAX:-200}"; fi
 # XPLUS: extra +plusargs handed straight to xsim, e.g. XPLUS=+LBDBG for the
