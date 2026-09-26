@@ -188,8 +188,8 @@ set_multicycle_path -hold  -end 1 -from [get_clocks clk_38] -to [get_clocks clk_
 # address, which is combinational out of the MMU's ATC RAM, where it used to be
 # registered from the adapter's addr_out.  Its T+1 copy is never read:
 #   * x_addr changes only on a kernel edge K at which the 16-bit adapter is
-#     idle (the core cannot advance with an adapter access outstanding unless
-#     the adapter is between sub-cycles, and then the address is held);
+#     idle (x_addr is held while an adapter access is outstanding, sub-cycles
+#     included -- asserted in sim/ddr3_cpu as FC-1b, findings/unfreeze/);
 #   * the adapter cannot take the new access before K+3, so the decision at
 #     K+2 sees state = "01" and releases on the idle term whatever
 #     bus_ready16 says;

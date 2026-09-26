@@ -1376,6 +1376,7 @@ end
 `define FC_WACK  tg68k.pc_wk_ack
 `define FC_WBERR tg68k.pc_wk_berr
 integer fc1_errs = 0, fc2_errs = 0, fc2w_errs = 0, fc3_errs = 0, fc4_stale = 0, fc_takes = 0;
+integer fc1b_errs = 0;   // x_* moved while x_req was up and not yet answered (the strong invariant)
 
 // Every input is captured on the clk (clk_114) NEGEDGE.  clk_cpu's edges
 // coincide with clk edges, and clkena_r and x_ack_r change on the very clk
@@ -1386,6 +1387,7 @@ integer fc1_errs = 0, fc2_errs = 0, fc2w_errs = 0, fc3_errs = 0, fc4_stale = 0, 
 reg        sh_ce = 1'b0, sh_ack = 1'b0, sh_wack = 1'b0, sh_wberr = 1'b0;
 reg        sh_mreq = 1'b0, sh_wkreq = 1'b0, sh_ena = 1'b0;
 reg        sh_a16 = 1'b0, sh_bce = 1'b0, sh_wkgo = 1'b0;
+reg        sh_xack = 1'b0;
 reg [68:0] sh_x;
 always @(negedge clk) begin
   sh_ce    <= (`FC_CE    === 1'b1);
@@ -1395,6 +1397,7 @@ always @(negedge clk) begin
   sh_mreq  <= (tg68k.m_req  === 1'b1);
   sh_wkreq <= (tg68k.wk_req === 1'b1);
   sh_ena   <= (tg68k.clkena === 1'b1);
+  sh_xack  <= (tg68k.x_ack  === 1'b1);   // any answer, unqualified (adapter or router)
   sh_x     <= {tg68k.x_req, tg68k.x_we, tg68k.x_instr, tg68k.x_size,
                tg68k.x_addr, tg68k.x_wdata};
 `ifdef FREECORE
@@ -1408,6 +1411,7 @@ reg [68:0] fc_x_prev;
 reg        fc_x_prev_ena = 1'b0, fc_x_prev_v = 1'b0;
 reg        fc_take_prev = 1'b0, fc_wtake_prev = 1'b0;
 reg        fc_wkgo_prev = 1'b0;
+reg        fc_x_prev_req = 1'b0, fc_x_prev_done = 1'b0;
 wire fc_take  = sh_ce && sh_mreq  && sh_ack;
 wire fc_wtake = sh_ce && sh_wkreq && (sh_wack || sh_wberr);
 
@@ -1424,6 +1428,15 @@ always @(posedge clk_cpu) begin
         $display("FAIL: FC-1 x_* changed on a clk_cpu edge with clkena low (t = %t)", $time);
       fc1_errs = fc1_errs + 1;
     end
+    // FC-1b: an access admitted (x_req up at the previous edge) keeps every x_*
+    // bit until the edge that answers it (an answer seen with clkena high).
+    if (fc_x_prev_v && fc_x_prev_req && !fc_x_prev_done && (sh_x !== fc_x_prev)) begin
+      if (fc1b_errs < 8)
+        $display("FAIL: FC-1b x_* changed while an access was outstanding (t = %t)", $time);
+      fc1b_errs = fc1b_errs + 1;
+    end
+    fc_x_prev_req  <= sh_x[68];
+    fc_x_prev_done <= sh_xack && sh_ena;
     fc_x_prev     <= sh_x;
     fc_x_prev_ena <= sh_ena;
     fc_x_prev_v   <= 1'b1;
@@ -1444,7 +1457,9 @@ always @(posedge clk_cpu) begin
     if (fc_take) fc_takes = fc_takes + 1;
 `ifdef FREECORE
     // FC-3
-    if ((sh_ack && !sh_mreq) || (sh_wack && !sh_wkreq)) begin
+    // (walker_ack is not judged here: ap040_mmu drops walker_req for one clock after
+    // each take and ignores walker_ack there by design, ap040_mmu.v walker_req/walk_ack.)
+    if (sh_ack && !sh_mreq) begin
       if (fc3_errs < 8)
         $display("FAIL: FC-3 an acknowledge visible to the core with no request up (t = %t): %s, walker owned the mux on the previous edge: %0d",
                  $time, (sh_ack && !sh_mreq) ? "m_ack" : "walker_ack", fc_wkgo_prev);
@@ -1851,6 +1866,10 @@ initial begin : main
   end
   if (fc2_errs != 0 || fc2w_errs != 0) begin
     $display("DDR3 CPU TB: FAIL  acknowledges taken twice (FC-2): m_ack %0d, walker %0d", fc2_errs, fc2w_errs);
+    nfail = nfail + 1;
+  end
+  if (fc1b_errs != 0) begin
+    $display("DDR3 CPU TB: FAIL  %0d x_* changes while an access was outstanding (FC-1b)", fc1b_errs);
     nfail = nfail + 1;
   end
   if (fc3_errs != 0) begin

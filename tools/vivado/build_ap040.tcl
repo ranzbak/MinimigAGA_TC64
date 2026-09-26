@@ -369,9 +369,10 @@ if {$pipe_dir ne ""} {
     # are M10's remaining steps.  A 1 here is a measurement build, not a gate
     # image.
     set pfpu [expr {[info exists ::env(AP040_PIPE_FPU)] && $::env(AP040_PIPE_FPU) eq "1" ? 1 : 0}]
-    # FREE_CORE=1 in the environment: the pipelined core runs free of the bus
-    # wait (findings/unfreeze/plan.md); default 0.
-    set free_core [expr {[info exists ::env(FREE_CORE)] && $::env(FREE_CORE) eq "1" ? 1 : 0}]
+    # The pipelined core runs free of the bus wait (findings/unfreeze/): default
+    # since 2026-09-26 (board SysInfo 0.83x -> 1.00x).  FREE_CORE=0 in the
+    # environment builds the frozen core, for an A/B.
+    set free_core [expr {[info exists ::env(FREE_CORE)] && $::env(FREE_CORE) eq "0" ? 0 : 1}]
     set pipe_gen " AP040_PIPELINED=1 AP040_HAS_MMU=$pmmu AP040_HAS_FPU=$pfpu AP040_FREE_CORE=$free_core"
     puts "build_ap040.tcl: PIPELINED build from $P ([llength $pipe_off] lib/AP68040 files disabled), FREE_CORE=$free_core"
 }

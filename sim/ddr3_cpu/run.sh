@@ -184,7 +184,7 @@ CNTN=${CNTN:-64}
 
 if [ "$TURBOCHIP" = "0" ]; then VARIANT="${VARIANT}_chipbus"; fi
 if [ -n "$NOCHIP32" ]; then VARIANT="${VARIANT}_nochip32"; fi
-if [ -n "$FREECORE" ]; then VARIANT="${VARIANT}_free"; fi
+if [ "${FREECORE:-0}" = "1" ]; then VARIANT="${VARIANT}_free"; fi
 # FCMUTANT=ack|walk|data (with FREECORE=1): undo one of the free core's
 # qualifications in a copy of TG68K.vhd (findings/unfreeze/plan.md).  MUST fail.
 if [ -n "$FCMUTANT" ]; then
@@ -215,6 +215,9 @@ mkdir -p "$W"
 # are no line fills, which is why the fill counters read zero until this was
 # found.  So the program writes $80008003: DE and IE set.
 CACRVAL='$80008003'
+# MMU_CACR overrides it for the --mmu program, e.g. MMU_CACR=0: caches off, every
+# fetch and data access through the MMU's pass path (findings/unfreeze).
+if [ "$IS_MMU" = "1" ] && [ -n "$MMU_CACR" ]; then CACRVAL="$MMU_CACR"; fi
 
 if [ "$IS_MMU" = "1" ]; then
     BIN="$W/prog.bin" SRC=mmu_walk_test.asm "$D/asm/build_68k_test.sh" \
@@ -290,7 +293,7 @@ elif [ -n "$FCMUTANT" ]; then
     case "$FCMUTANT" in
       ack)  sed '/-- FC-ACK/s/a16_ack AND bce_q/a16_ack/' "$R/rtl/soc/TG68K.vhd" > "$TG68K_SRC" ;;
       data) sed "/-- FC-DATA/s/a16_take = '1'/a16_ack = '1'/" "$R/rtl/soc/TG68K.vhd" > "$TG68K_SRC" ;;
-      walk) sed '/-- FC-WALK/s/ AND NOT wk_taken//' "$R/rtl/soc/TG68K.vhd" > "$TG68K_SRC" ;;
+      walk) sed '/-- FC-WALK/s/ AND bce_q//' "$R/rtl/soc/TG68K.vhd" > "$TG68K_SRC" ;;
     esac
     if cmp -s "$R/rtl/soc/TG68K.vhd" "$TG68K_SRC"; then
         echo "FCMUTANT=$FCMUTANT: the sed changed nothing; fix run.sh" >&2; exit 2
@@ -376,7 +379,7 @@ if [ "$CPU" = "ap040" ]; then AP040_ELAB="-i $R/lib/AP68040/rtl"; fi
 if [ "${PIPELINED:-0}" = "1" ]; then AP040_ELAB="-i $PIPE_DIR/rtl -i $PIPE_DIR/rtl/compat -d AP040_PIPELINED"; fi
 
 "$VIVADO_PATH/bin/xelab" -prj $PRJ -i "$LIB/tb/ddr3_core_xc7" $AP040_ELAB \
-    -d SOC_SIM -d REALSDRAM -i $D ${NOCPU:+-d NOCPU} ${DMA_OVERLAP:+-d DMA_OVERLAP} ${P2CBLOCK:+-d P2CBLOCK=$P2CBLOCK} ${CPU_RATIO:+-d CPU_RATIO=$CPU_RATIO} ${CPU_PHASE:+-d CPU_PHASE=$CPU_PHASE} ${NOCHIP32:+-d NOCHIP32} ${FREECORE:+-d FREECORE} -debug typical -relax \
+    -d SOC_SIM -d REALSDRAM -i $D ${NOCPU:+-d NOCPU} ${DMA_OVERLAP:+-d DMA_OVERLAP} ${P2CBLOCK:+-d P2CBLOCK=$P2CBLOCK} ${CPU_RATIO:+-d CPU_RATIO=$CPU_RATIO} ${CPU_PHASE:+-d CPU_PHASE=$CPU_PHASE} ${NOCHIP32:+-d NOCHIP32} $( [ "${FREECORE:-0}" = "1" ] && echo -d FREECORE ) -debug typical -relax \
     -L secureip -L unisims_ver -L unimacro_ver \
     ddr3_cpu_tb glbl -s cpu_sim
 
