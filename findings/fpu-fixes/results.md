@@ -11,6 +11,7 @@ and our evaluation, [fpu-comparison-evaluation.md](../ap040-pipelined/fpu-compar
 | 2590de0 | **P1**: memory-indirect FP effective addresses execute. EA-fetch reads the pointer (once, also for stores) before the FPU phase |
 | 6da2d88 | **N1**: LC040 format $4 frame stacks the operand's address through a pointer |
 | b0f2311 | **P2**: FMOVE.P to Dn gives vector 55, format $3, EA 0. **P2b**: FMOVE.P to An gives the plain F-line |
+| fa74901 | Final review I1: FP stores to a PC-relative destination (`(d16,PC)`, `([bd,PC])`) take the F-line instead of storing. The memory-indirect form was opened by P1; `(d16,PC)` was older. Test: `fpureal_p2` cases 6-7 |
 
 D19 needed no RTL change (ruled format $3, 5513147).
 
@@ -52,6 +53,25 @@ Board results (Paul):
 - `stage_fpu_p1`: boots, SysInfo SPEED 1.00x. `amiga_sw/FPUFixTest`: the P1 cases 7/7 PASS.
   P2/P2b show the old 402C/202C/202C, as expected.
 - `stage_fpu_fixes`: boots to Workbench. FPUFixTest **10/10 PASS**.
+
+## Final review
+
+A fresh reviewer read the whole range and found:
+
+- **Critical:** none.
+- **Important:** one, I1 above. It is fixed test-first; the suite is 232/232 and the Kickstart
+  traces are unchanged.
+- **Minor, deferred:**
+  - An FP instruction's pointer read goes out while a released FP operation is still running.
+    An interrupt then waits for that operation (bounded), and a deferred FP exception would
+    re-read the pointer on restart.
+  - No tests yet for a pointer read that faults, for FRESTORE/FMOVEM through a pointer, or for
+    an interrupt pending while an instruction waits for its pointer. All of these are correct by
+    reading.
+
+**The board image `stage_fpu_fixes` predates I1.** A PC-relative FP store is a malformed
+encoding that no compiler emits, so the image is fine to keep testing. The next build carries
+the fix.
 
 ## Open
 
