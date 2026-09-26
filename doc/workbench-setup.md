@@ -155,6 +155,43 @@ the RTL and simulation, unverified on the board).
 
 Check what AmigaOS found with `ShowConfig` in a Shell, or with SysInfo.
 
+### Let programs use the DDR3 board first
+
+The DDR3 board has its own memory controller, so the CPU doesn't compete
+with the chipset for it the way it does on the SDRAM boards. Programs running
+from it are faster: SysInfo's SPEED test measured 0.83x an A4000/040 with
+all boards and 0.88x with the DDR3 board alone. By default AmigaOS doesn't
+prefer it, so [amiga_sw/DDR3First](../amiga_sw/DDR3First) raises its
+priority. It keeps every board configured, which RTG needs.
+
+1. Copy `amiga_sw/DDR3First/DDR3First` to `C:`. To rebuild it, run `make`
+   in that directory; it needs `vasmm68k_mot` and nothing else.
+2. In `S:Startup-Sequence`, add this line right after the `SetPatch` line:
+
+   ```text
+   C:DDR3First
+   ```
+
+   It prints nothing. It returns WARN (5) when there's no DDR3 board, for
+   example with FAST below Maximum, and the Startup-Sequence carries on.
+3. Reboot. SysInfo's memory list should show the 16 MB DDR3 board at
+   priority 10, above the other fast RAM, and SPEED should come out near
+   0.88x.
+
+Things to know:
+
+- It only affects memory allocated after it runs, so keep it early in the
+  Startup-Sequence.
+- RTG is not affected when FAST is at Maximum: the RTG driver asks for Zorro
+  II memory first (`MEMF_24BITDMA`), and the DDR3 board isn't that. If the
+  Zorro II board is too small, the driver falls back to any fast RAM, and
+  that would now be the DDR3 board, which the display can't read. So keep
+  FAST at Maximum (see section 3).
+- The board is found by its autoconfig IDs: manufacturer $1399, product $11,
+  serial 3.
+
+(Built and assembled; not yet run on the board.)
+
 ## 7. Extras
 
 - **Mouse wheel:** the core counts the PS/2 mouse's wheel in a Minimig
@@ -172,4 +209,5 @@ Check what AmigaOS found with `ShowConfig` in a Shell, or with SysInfo.
 - [ ] Picasso96 installed, `minimig.card` in `LIBS:Picasso96/`, monitor file `Minimig` with `BOARDTYPE=minimig`
 - [ ] `ENVARC:MMU-Configuration` has the `SetCacheMode 0x00b80000 ...` line
 - [ ] FAST = Maximum, Boards = all
+- [ ] `C:DDR3First` right after SetPatch in the Startup-Sequence
 - [ ] RTG judged after a cold start
