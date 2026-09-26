@@ -154,7 +154,7 @@ architecture behave_i2c_sender of i2c_sender is
     (addr => x"72", reg => x"96", val => x"c0"), -- Clear HPD + Monitor Sense flags
     (addr => x"72", reg => x"fa", val => x"00"), -- Nbr of times to search for good phase
     -- Set the video clock delay
-    (addr => x"72", reg => x"ba", val => x"00"), -- Configure clock delay -1.2ns
+    (addr => x"72", reg => x"ba", val => x"20"), -- Configure clock delay -0.8ns (0xBA[7:5] = 001)
     -- Audio I2S
     (addr => x"72", reg => x"01", val => x"00"), -- N = 6144
     (addr => x"72", reg => x"02", val => x"18"), -- N and CTS for 48kHz @ 74.25 MHz pixel clock
