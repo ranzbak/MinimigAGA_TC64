@@ -795,8 +795,14 @@ localparam integer CHIP32_GEN = 0;
 `else
 localparam integer CHIP32_GEN = 1;
 `endif
+// FREECORE builds the wrapper with ap040_free_core = 1 (findings/unfreeze/plan.md)
+`ifdef FREECORE
+localparam integer FREE_CORE_GEN = 1;
+`else
+localparam integer FREE_CORE_GEN = 0;
+`endif
 `ifdef AP040_PIPELINED
-TG68K #(.cpu_clk_ratio(`CPU_RATIO), .ap040_pipelined(1), .chip32(CHIP32_GEN)) tg68k (
+TG68K #(.cpu_clk_ratio(`CPU_RATIO), .ap040_pipelined(1), .chip32(CHIP32_GEN), .ap040_free_core(FREE_CORE_GEN)) tg68k (
 `else
 TG68K #(.cpu_clk_ratio(`CPU_RATIO), .chip32(CHIP32_GEN)) tg68k (
 `endif
@@ -1365,12 +1371,10 @@ end
 //             (bce_q low).  Zero means a stale level never met a waiting
 //             core in this leg, i.e. an ack mutant cannot be observed here.
 //-----------------------------------------------------------------
-`ifndef FC_CE
-`define FC_CE    tg68k.clkena
-`define FC_ACK   tg68k.m_ack
-`define FC_WACK  tg68k.wk_ack
-`define FC_WBERR tg68k.wk_berr
-`endif
+`define FC_CE    tg68k.pc_ce
+`define FC_ACK   tg68k.pc_ack
+`define FC_WACK  tg68k.pc_wk_ack
+`define FC_WBERR tg68k.pc_wk_berr
 integer fc1_errs = 0, fc2_errs = 0, fc2w_errs = 0, fc3_errs = 0, fc4_stale = 0, fc_takes = 0;
 
 // Every input is captured on the clk (clk_114) NEGEDGE.  clk_cpu's edges

@@ -21,6 +21,7 @@
 #   ./run.sh --chipbus    turbochipram = 0, chip RAM over the 7 MHz chipset bus
 #   ./run.sh --c32mutant --chipbus  CHIP32 read data returns word 1 twice; MUST fail
 #   NOCHIP32=1 ./run.sh ...         the wrapper's chip32 generic = 0 (longwords as two word cycles)
+#   FREECORE=1 ./run.sh ...         the wrapper's ap040_free_core = 1 (findings/unfreeze/plan.md)
 #
 # Stage E2 (decision D6): EVERY leg runs the real sdram_ctrl and SDRAM part
 # (real_sdram.vh); the behavioural SDRAM model is retired, so REALSDRAM is no
@@ -182,6 +183,7 @@ CNTN=${CNTN:-64}
 
 if [ "$TURBOCHIP" = "0" ]; then VARIANT="${VARIANT}_chipbus"; fi
 if [ -n "$NOCHIP32" ]; then VARIANT="${VARIANT}_nochip32"; fi
+if [ -n "$FREECORE" ]; then VARIANT="${VARIANT}_free"; fi
 # CHIP32PH: the longword phase of the pattern program, only where chip RAM goes
 # over the chipset bus (findings/chip32/plan.md).
 C32PH=""
@@ -355,7 +357,7 @@ if [ "$CPU" = "ap040" ]; then AP040_ELAB="-i $R/lib/AP68040/rtl"; fi
 if [ "${PIPELINED:-0}" = "1" ]; then AP040_ELAB="-i $PIPE_DIR/rtl -i $PIPE_DIR/rtl/compat -d AP040_PIPELINED"; fi
 
 "$VIVADO_PATH/bin/xelab" -prj $PRJ -i "$LIB/tb/ddr3_core_xc7" $AP040_ELAB \
-    -d SOC_SIM -d REALSDRAM -i $D ${NOCPU:+-d NOCPU} ${DMA_OVERLAP:+-d DMA_OVERLAP} ${P2CBLOCK:+-d P2CBLOCK=$P2CBLOCK} ${CPU_RATIO:+-d CPU_RATIO=$CPU_RATIO} ${CPU_PHASE:+-d CPU_PHASE=$CPU_PHASE} ${NOCHIP32:+-d NOCHIP32} -debug typical -relax \
+    -d SOC_SIM -d REALSDRAM -i $D ${NOCPU:+-d NOCPU} ${DMA_OVERLAP:+-d DMA_OVERLAP} ${P2CBLOCK:+-d P2CBLOCK=$P2CBLOCK} ${CPU_RATIO:+-d CPU_RATIO=$CPU_RATIO} ${CPU_PHASE:+-d CPU_PHASE=$CPU_PHASE} ${NOCHIP32:+-d NOCHIP32} ${FREECORE:+-d FREECORE} -debug typical -relax \
     -L secureip -L unisims_ver -L unimacro_ver \
     ddr3_cpu_tb glbl -s cpu_sim
 
