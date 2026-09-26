@@ -69,3 +69,25 @@ Board A/B: use the MMU+FPU pair (the board's current image, m14f_fpu, is MMU+FPU
 
 | image | Turbo chip | Turbo kick | MMU (68040.library) | chip rd.l | chip wr.l | chip rd.w | chip wr.w | rom rd.l |
 |---|---|---|---|---|---|---|---|---|
+| stage_chip32_off | None | off (Turbo None) | in use | 1672 | 1687 | 1565 | 1569 | 2308 |
+| stage_chip32_on | None | off (Turbo None) | in use | 3132 | 3129 | 1565 | 1565 | 4618 |
+| ON / OFF | | | | 1.87x | 1.85x | 1.00x | 1.00x | 2.00x |
+
+Board pass criterion (plan Task 5: rd.l/wr.l >= 1.6x, words unchanged, ROM up): MET.  Workbench boots on the ON image
+(one JTAG load hit the known 'missing built-in commands' peripheral-state boot error; a reload cleared it).
+
+### SysInfo 4.4 SPEED (Paul, 2026-09-25)
+
+| image | Turbo | MMU | caches | Dhrystones | vs A4000/040 | MIPS | MFLOPS | Chip Speed vs A600 |
+|---|---|---|---|---|---|---|---|---|
+| stage_chip32_off | None | 68040, in use | I/D on, burst on, copyback off | 15302 | 0.83 | 15.97 | 5.69 | 12.61 |
+| stage_chip32_on | None | 68040, in use | I/D on, burst on, copyback off | 15592 | 0.85 | 16.27 | 5.79 | 12.97 |
+
+With Turbo = None, SysInfo's 12.61x chip speed can only come from the core's data cache serving chip RAM
+(the D side caches chip RAM, snooped): SysInfo's chip figure measures the cache, not the chipset bus.
+chipbw (CacheClearU per test, 64 KB buffer > cache, interrupts off) is the A/B measure for the bus.
+
+### Demos (Paul, 2026-09-25)
+
+stage_chip32_on, Turbo None: "very demanding" demos run solid.  The goal of the backlog item -- Turbo chip off without
+losing the CPU's chip bandwidth -- holds on the board.
