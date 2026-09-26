@@ -84,6 +84,15 @@ The constant enable removes the core's clock-enable net (the clk_114 -> clk_38 e
 9,600) and the logic behind it. No separate `stage_unfreeze_off` was built. The off state is proven
 clock-identical to today in sim, so `stage_chip32_on` is the A/B baseline (ledger ruling).
 
-## Board (Paul): pending
+## Board (Paul)
 
 Loaded 2026-09-26 17:10 over JTAG: `build/stage_unfreeze_on`. Checklist: `hw-checklist.md`.
+
+| | `stage_chip32_on` (frozen) | `stage_unfreeze_on` (free) | change |
+|---|---|---|---|
+| SysInfo SPEED (vs A4000/040 25 MHz) | 0.83x | **1.00x** | **+20 %** |
+| SysInfo Dhrystones | 15,592 | **18,223** | **+16.9 %** |
+
+The board gained more than the sim loop predicted (about 0.95x). Real code carries more store traffic than
+SysInfo's register-heavy loop, and every store used to freeze the core. The remaining checklist items
+(cputest, OSD reset under load, demos, RTG, idle) are pending.

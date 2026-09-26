@@ -10,7 +10,7 @@ image's first boot; after a JTAG load with no HDMI, a power cycle is also the fi
 | # | check | stage_unfreeze_on | stage_chip32_on |
 |---|---|---|---|
 | 1 | cold boot to Workbench | | |
-| 2 | SysInfo SPEED, run 1 / 2 / 3 | | (0.83x before) |
+| 2 | SysInfo SPEED, run 1 / 2 / 3 | **1.00x, 18,223 Dhrystones** (Paul, 2026-09-26) | 0.83x, 15,592 Dhrystones |
 | 3 | cputest `ct040_01_B-01` | | |
 | 4 | OSD reset while SysInfo SPEED runs: back to Workbench? | | |
 | 5 | demanding demo set (Turbo off): solid? | | |
