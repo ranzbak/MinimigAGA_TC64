@@ -1344,6 +1344,111 @@ always @(posedge clk) begin
 end
 
 //-----------------------------------------------------------------
+// Free-core monitors (findings/unfreeze/plan.md).  All on clk_cpu edges
+// after reset.  FC_CE/FC_ACK/FC_WACK/FC_WBERR are what the CORE takes; until
+// Task 3 they are the shared names, afterwards TG68K's pc_* signals.
+//   fc1_errs  x_* changed on a clk_cpu edge where clkena was low.  cpu.xdc's
+//             clk_38 -> clk_114 multicycle and the q_req/x_fresh masks rest
+//             on "x_* changes only where clkena_r is high".  A free core must
+//             not break it; if this fires, the crossing derivation is void.
+//   fc2_errs  the core took m_ack on two consecutive clk_cpu edges.  No
+//             completion is that fast (q_req is masked for two clk_114 edges
+//             after every take), so two in a row is one answer taken twice.
+//   fc2w_errs the same for the walker's answer (walker_ack or walker_berr).
+//   fc3_errs  FREECORE only: an acknowledge visible to the core with no
+//             request of its own up (e.g. a stale adapter ack left over from
+//             a walker access).
+//   fc4_stale informational: clk_cpu edges where the adapter's mem_ack is
+//             high, the core's request is up, and the core must NOT take it
+//             (bce_q low).  Zero means a stale level never met a waiting
+//             core in this leg, i.e. an ack mutant cannot be observed here.
+//-----------------------------------------------------------------
+`ifndef FC_CE
+`define FC_CE    tg68k.clkena
+`define FC_ACK   tg68k.m_ack
+`define FC_WACK  tg68k.wk_ack
+`define FC_WBERR tg68k.wk_berr
+`endif
+integer fc1_errs = 0, fc2_errs = 0, fc2w_errs = 0, fc3_errs = 0, fc4_stale = 0, fc_takes = 0;
+
+// Every input is captured on the clk (clk_114) NEGEDGE.  clk_cpu's edges
+// coincide with clk edges, and clkena_r and x_ack_r change on the very clk
+// edge a clk_cpu edge lands on (TG68K.vhd: "clkena_r is high through
+// (T+2,T+3) and the kernel advances at T+3"), so reading them at posedge
+// clk_cpu is a scheduling race.  The last clk negedge before a clk_cpu edge
+// holds exactly what the kernel samples at that edge.
+reg        sh_ce = 1'b0, sh_ack = 1'b0, sh_wack = 1'b0, sh_wberr = 1'b0;
+reg        sh_mreq = 1'b0, sh_wkreq = 1'b0, sh_ena = 1'b0;
+reg        sh_a16 = 1'b0, sh_bce = 1'b0, sh_wkgo = 1'b0;
+reg [68:0] sh_x;
+always @(negedge clk) begin
+  sh_ce    <= (`FC_CE    === 1'b1);
+  sh_ack   <= (`FC_ACK   === 1'b1);
+  sh_wack  <= (`FC_WACK  === 1'b1);
+  sh_wberr <= (`FC_WBERR === 1'b1);
+  sh_mreq  <= (tg68k.m_req  === 1'b1);
+  sh_wkreq <= (tg68k.wk_req === 1'b1);
+  sh_ena   <= (tg68k.clkena === 1'b1);
+  sh_x     <= {tg68k.x_req, tg68k.x_we, tg68k.x_instr, tg68k.x_size,
+               tg68k.x_addr, tg68k.x_wdata};
+`ifdef FREECORE
+  sh_a16   <= (tg68k.a16_ack === 1'b1);
+  sh_bce   <= (tg68k.bce_q   === 1'b1);
+  sh_wkgo  <= (tg68k.wk_go   === 1'b1);
+`endif
+end
+
+reg [68:0] fc_x_prev;
+reg        fc_x_prev_ena = 1'b0, fc_x_prev_v = 1'b0;
+reg        fc_take_prev = 1'b0, fc_wtake_prev = 1'b0;
+wire fc_take  = sh_ce && sh_mreq  && sh_ack;
+wire fc_wtake = sh_ce && sh_wkreq && (sh_wack || sh_wberr);
+
+always @(posedge clk_cpu) begin
+  if (!tg68_rst) begin
+    fc_x_prev_v   <= 1'b0;
+    fc_take_prev  <= 1'b0;
+    fc_wtake_prev <= 1'b0;
+  end else begin
+    // FC-1: sh_x differs from the previous edge's sample, so x_* changed at
+    // the previous clk_cpu edge -- where the enable was fc_x_prev_ena.
+    if (fc_x_prev_v && (sh_x !== fc_x_prev) && !fc_x_prev_ena) begin
+      if (fc1_errs < 8)
+        $display("FAIL: FC-1 x_* changed on a clk_cpu edge with clkena low (t = %t)", $time);
+      fc1_errs = fc1_errs + 1;
+    end
+    fc_x_prev     <= sh_x;
+    fc_x_prev_ena <= sh_ena;
+    fc_x_prev_v   <= 1'b1;
+    // FC-2
+    if (fc_take && fc_take_prev) begin
+      if (fc2_errs < 8)
+        $display("FAIL: FC-2 m_ack taken on two consecutive clk_cpu edges (t = %t)", $time);
+      fc2_errs = fc2_errs + 1;
+    end
+    if (fc_wtake && fc_wtake_prev) begin
+      if (fc2w_errs < 8)
+        $display("FAIL: FC-2 walker answer taken on two consecutive clk_cpu edges (t = %t)", $time);
+      fc2w_errs = fc2w_errs + 1;
+    end
+    fc_take_prev  <= fc_take;
+    fc_wtake_prev <= fc_wtake;
+    if (fc_take) fc_takes = fc_takes + 1;
+`ifdef FREECORE
+    // FC-3
+    if ((sh_ack && !sh_mreq) || (sh_wack && !sh_wkreq)) begin
+      if (fc3_errs < 8)
+        $display("FAIL: FC-3 an acknowledge visible to the core with no request up (t = %t)", $time);
+      fc3_errs = fc3_errs + 1;
+    end
+    // FC-4
+    if (sh_a16 && !sh_bce && sh_mreq && !sh_wkgo)
+      fc4_stale = fc4_stale + 1;
+`endif
+  end
+end
+
+//-----------------------------------------------------------------
 // Speed accounting (Stage E2, report only -- nothing here is judged).
 //
 //   SDRAM units   clk cycles from ram_req rising to ram_ack rising, split by
@@ -1726,6 +1831,20 @@ initial begin : main
              ack_ena_errs);
     nfail = nfail + 1;
   end
+  if (fc1_errs != 0) begin
+    $display("DDR3 CPU TB: FAIL  %0d x_* changes on an edge with clkena low (FC-1: the crossing invariant)", fc1_errs);
+    nfail = nfail + 1;
+  end
+  if (fc2_errs != 0 || fc2w_errs != 0) begin
+    $display("DDR3 CPU TB: FAIL  acknowledges taken twice (FC-2): m_ack %0d, walker %0d", fc2_errs, fc2w_errs);
+    nfail = nfail + 1;
+  end
+  if (fc3_errs != 0) begin
+    $display("DDR3 CPU TB: FAIL  %0d acknowledges visible with no request (FC-3)", fc3_errs);
+    nfail = nfail + 1;
+  end
+  $display("INFO: free-core monitors: %0d m_ack takes seen; FC-4 stale adapter acks met by a waiting core: %0d",
+           fc_takes, fc4_stale);
 
   if (snoop_on) begin
     // Quiesce and drain -- see snoop_stop.  A snoop takes at most one clk edge
