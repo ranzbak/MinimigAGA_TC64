@@ -442,6 +442,7 @@ ARCHITECTURE logic OF TG68K IS
 	SIGNAL pc_rdata   : std_logic_vector(31 downto 0);
 	SIGNAL pc_wk_ack  : std_logic;
 	SIGNAL pc_wk_berr : std_logic;
+	SIGNAL wk_taken   : std_logic := '0';               -- the core took the walker's answer
 	-- the router's three destinations; x_sdram and x_ddr are both RAM
 	SIGNAL x_sdram    : std_logic;
 	SIGNAL x_ddr      : std_logic;
@@ -872,6 +873,12 @@ BEGIN
 	--
 	-- Neither mask can land inside an access: clkena_r is only high on a
 	-- completion, or while no request is outstanding.
+	--
+	-- With ap040_free_core = 1 the core is not frozen, so "x_* changes only on
+	-- a kernel edge where clkena_r is high" no longer follows from its enable;
+	-- it holds because the core changes m_* only where clkena_r is high (no
+	-- request outstanding, or its completion edge).  sim/ddr3_cpu asserts it
+	-- on every leg (FC-1, findings/unfreeze/plan.md).
 	q_req   <= x_req AND NOT clkena_r AND NOT x_fresh;
 	q_sdram <= q_req AND x_sdram;
 	q_ddr   <= q_req AND x_ddr;
@@ -1555,8 +1562,26 @@ BEGIN
 		pc_rdata   <= m_rdata   WHEN ap040_free_core = 0 ELSE
 		              a16_rdata WHEN a16_take = '1'  ELSE                      -- FC-DATA
 		              x_rdata_r;
-		pc_wk_ack  <= wk_ack  WHEN ap040_free_core = 0 ELSE wk_ack  AND bce_q;   -- FC-WALK
-		pc_wk_berr <= wk_berr WHEN ap040_free_core = 0 ELSE wk_berr AND bce_q;   -- FC-WALK
+		pc_wk_ack  <= wk_ack  WHEN ap040_free_core = 0 ELSE wk_ack  AND bce_q AND NOT wk_taken;   -- FC-WALK
+		pc_wk_berr <= wk_berr WHEN ap040_free_core = 0 ELSE wk_berr AND bce_q AND NOT wk_taken;   -- FC-WALK
+
+		-- The walker's answer stays up until the walker FSM, on a clkena edge,
+		-- ends the handshake (WK_DONE).  A free core has taken it long before:
+		-- wk_taken remembers that, masks the level from then on, and lets
+		-- WK_DONE end on it instead of waiting to see walker_req low (which a
+		-- free MMU may raise again before the walker's next enabled edge).
+		PROCESS(clk_cpu, reset)
+		BEGIN
+			IF reset = '0' THEN
+				wk_taken <= '0';
+			ELSIF rising_edge(clk_cpu) THEN
+				IF wk_ack = '0' AND wk_berr = '0' THEN
+					wk_taken <= '0';
+				ELSIF wk_req = '1' AND (pc_wk_ack = '1' OR pc_wk_berr = '1') THEN
+					wk_taken <= '1';
+				END IF;
+			END IF;
+		END PROCESS;
 
 		-- The 16-bit adapter, moved out of the compat top (Stage E2 Task 1).
 		-- Since Task 4b-2 it gets only what the router does not send to RAM
@@ -1637,7 +1662,12 @@ BEGIN
 							-- ap040_mmu drops walker_req when it has taken the
 							-- answer and inserts a request-low cycle before the
 							-- next descriptor, so this is the whole handshake.
-							IF wk_req = '0' THEN
+							--
+							-- ap040_free_core: the MMU runs every clk_cpu edge, so its
+							-- one request-low cycle can fall on an edge where clkena
+							-- is low and never be seen here; the handshake then also
+							-- ends on wk_taken (the core took this answer).
+							IF wk_req = '0' OR (ap040_free_core /= 0 AND wk_taken = '1') THEN
 								wk_ack  <= '0';
 								wk_berr <= '0';
 								wk_st   <= WK_IDLE;

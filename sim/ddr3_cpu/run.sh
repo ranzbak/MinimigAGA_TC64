@@ -22,6 +22,7 @@
 #   ./run.sh --c32mutant --chipbus  CHIP32 read data returns word 1 twice; MUST fail
 #   NOCHIP32=1 ./run.sh ...         the wrapper's chip32 generic = 0 (longwords as two word cycles)
 #   FREECORE=1 ./run.sh ...         the wrapper's ap040_free_core = 1 (findings/unfreeze/plan.md)
+#   FREECORE=1 FCMUTANT=ack|walk|data ./run.sh ...  one free-core qualification undone; MUST fail
 #
 # Stage E2 (decision D6): EVERY leg runs the real sdram_ctrl and SDRAM part
 # (real_sdram.vh); the behavioural SDRAM model is retired, so REALSDRAM is no
@@ -184,6 +185,13 @@ CNTN=${CNTN:-64}
 if [ "$TURBOCHIP" = "0" ]; then VARIANT="${VARIANT}_chipbus"; fi
 if [ -n "$NOCHIP32" ]; then VARIANT="${VARIANT}_nochip32"; fi
 if [ -n "$FREECORE" ]; then VARIANT="${VARIANT}_free"; fi
+# FCMUTANT=ack|walk|data (with FREECORE=1): undo one of the free core's
+# qualifications in a copy of TG68K.vhd (findings/unfreeze/plan.md).  MUST fail.
+if [ -n "$FCMUTANT" ]; then
+    [ "${FREECORE:-0}" = "1" ] || { echo "FCMUTANT needs FREECORE=1" >&2; exit 2; }
+    case "$FCMUTANT" in ack|walk|data) ;; *) echo "FCMUTANT: ack, walk or data" >&2; exit 2 ;; esac
+    IS_MUTANT=1; VARIANT="${VARIANT}_fcm_${FCMUTANT}"
+fi
 # CHIP32PH: the longword phase of the pattern program, only where chip RAM goes
 # over the chipset bus (findings/chip32/plan.md).
 C32PH=""
@@ -275,6 +283,17 @@ elif [ "$IS_C32MUTANT" = "1" ]; then
     if ! grep -q "x_rdata_r <= r_data & r_data;" "$TG68K_SRC"; then
         echo "--c32mutant: the CHIP32 read-data line moved; fix the sed in run.sh" >&2
         exit 2
+    fi
+elif [ -n "$FCMUTANT" ]; then
+    # Generated: one free-core qualification undone (marker comments FC-*).
+    TG68K_SRC="$W/TG68K_fcm_${FCMUTANT}.vhd"
+    case "$FCMUTANT" in
+      ack)  sed '/-- FC-ACK/s/a16_ack AND bce_q/a16_ack/' "$R/rtl/soc/TG68K.vhd" > "$TG68K_SRC" ;;
+      data) sed "/-- FC-DATA/s/a16_take = '1'/a16_ack = '1'/" "$R/rtl/soc/TG68K.vhd" > "$TG68K_SRC" ;;
+      walk) sed '/-- FC-WALK/s/ AND NOT wk_taken//' "$R/rtl/soc/TG68K.vhd" > "$TG68K_SRC" ;;
+    esac
+    if cmp -s "$R/rtl/soc/TG68K.vhd" "$TG68K_SRC"; then
+        echo "FCMUTANT=$FCMUTANT: the sed changed nothing; fix run.sh" >&2; exit 2
     fi
 elif [ "$IS_ACKMUTANT" = "1" ]; then
     # Generated: the completion pulse held.  One line; verify it matched.

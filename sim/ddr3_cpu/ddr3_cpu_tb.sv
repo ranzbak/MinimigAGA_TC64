@@ -1407,6 +1407,7 @@ end
 reg [68:0] fc_x_prev;
 reg        fc_x_prev_ena = 1'b0, fc_x_prev_v = 1'b0;
 reg        fc_take_prev = 1'b0, fc_wtake_prev = 1'b0;
+reg        fc_wkgo_prev = 1'b0;
 wire fc_take  = sh_ce && sh_mreq  && sh_ack;
 wire fc_wtake = sh_ce && sh_wkreq && (sh_wack || sh_wberr);
 
@@ -1439,12 +1440,14 @@ always @(posedge clk_cpu) begin
     end
     fc_take_prev  <= fc_take;
     fc_wtake_prev <= fc_wtake;
+    fc_wkgo_prev  <= sh_wkgo;
     if (fc_take) fc_takes = fc_takes + 1;
 `ifdef FREECORE
     // FC-3
     if ((sh_ack && !sh_mreq) || (sh_wack && !sh_wkreq)) begin
       if (fc3_errs < 8)
-        $display("FAIL: FC-3 an acknowledge visible to the core with no request up (t = %t)", $time);
+        $display("FAIL: FC-3 an acknowledge visible to the core with no request up (t = %t): %s, walker owned the mux on the previous edge: %0d",
+                 $time, (sh_ack && !sh_mreq) ? "m_ack" : "walker_ack", fc_wkgo_prev);
       fc3_errs = fc3_errs + 1;
     end
     // FC-4
