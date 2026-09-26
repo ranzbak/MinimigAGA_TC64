@@ -363,6 +363,13 @@ differences; the 832 is not holding the CPU.
 - Deferred board checks: display stability 10+ min on the v3 (centre-aligned) video image, Frontier
   Elite II past 6 min (cc65d93), AIBB Beachball in FPU mode (install 68040.library/FPSP first).
 
+- **CD-ROM ISO support (Paul, 2026-09-26):** emulate a CD-ROM drive for the Amiga from an ISO image on the SD
+  card, so CD-based software (CD32/CDTV titles, AmigaOS install CDs) can be mounted. Scope to map first: which
+  interface the Amiga sees (an ATAPI device on the Gayle IDE port, the route MiSTer's Minimig takes, so the stock
+  atapi/scsi.device + a CD filesystem work; vs. an SCSI.device-style virtual driver), how the 832 firmware serves
+  2048-byte sectors from the FAT image (the existing hardfile path in fw/ctrl_832 is the model), OSD image
+  selection, and whether CD audio (red book) is in or out of scope.
+
 ## How the work is organised
 
 - **Implementation agent** (Opus, background) does all RTL, tests, sims and
