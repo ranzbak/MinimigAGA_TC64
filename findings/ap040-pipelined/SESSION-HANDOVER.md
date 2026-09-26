@@ -202,6 +202,20 @@ differences; the 832 is not holding the CPU.
   fit with our M14 split caches, the FPU, the 1:3 clk_38 island and the timing budget. Then give Paul the shortlist.
   Adopt nothing unilaterally: memory `ap040-reference-integration` records that convergence with apolkosnik's branches
   was DEFERRED, and our submodule is a hand overlay 1300+ lines away from upstream main.
+  **SURVEY DONE 2026-09-26: `upstream-mister-optimizations.md`** (branch tip eefc5367; performance/timing/practical/
+  compatibility tables + shortlist; nothing adopted). Headline: our pipeline already matches or beats his per
+  instruction; the applicable wins are memory-side -- stop freezing the core during bus cycles (his F2 adapter-ack fix
+  is the exact bug that forced our ce_core re-gate) then a 4-entry store buffer (his dhry -14..-18 %), plus his
+  random-CE bench and portable test programs. Alan's 40_w_Alans_patches (sequential core) NOT yet surveyed.
+- **Free-running pipelined core: DONE 2026-09-26, `findings/unfreeze/` (plan, results, hw-checklist), branch
+  `unfreeze`.** TG68K.vhd generic `ap040_free_core` (build switch `FREE_CORE=1`): the core no longer freezes while
+  an m_* access is outstanding; the adapter's and walker's level acknowledges are one-shot (bce_q, wk_taken).
+  Sim SysInfo loop CPI 2.672 -> 2.300; **board SysInfo 0.83x -> 1.00x an A4000/040-25, Dhrystones 15,592 ->
+  18,223** (stage_unfreeze_on). Remaining board checks: cputest, OSD reset under load, demos, RTG, idle. Next in
+  line for speed: the store buffer (upstream survey P2; store-hold + slow reads = ~19 % of the loop).
+- **FPU follow-ups from Adam's review (doc/AP040_FPU_COMPARISON_20260926.md), evaluated in
+  `fpu-comparison-evaluation.md`:** P1+N1 memory-indirect FP EAs (M), P2b packed-store k-factor decode (S), P2
+  packed store to Dn -> vector 55 (S); D19 format $0 vs $3 ruling for Paul.
   **FPU/NetBSD fixes, first look 2026-09-25** (the original core author is Adam Polkosnik; his core repo
   https://github.com/apolkosnik/AP68040 is cloned read-only at `../apolkosnik-AP68040`, main 8f72275). In our
   pipelined core already: bc7b5f97 FSAVE/FRESTORE NULL frame ("NetBSD savectx panic"); a8a50ce packed FMOVE-to-memory
