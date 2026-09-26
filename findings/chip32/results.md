@@ -91,3 +91,17 @@ chipbw (CacheClearU per test, 64 KB buffer > cache, interrupts off) is the A/B m
 
 stage_chip32_on, Turbo None: "very demanding" demos run solid.  The goal of the backlog item -- Turbo chip off without
 losing the CPU's chip bandwidth -- holds on the board.
+
+### Not run
+
+cputest ct040_01_B-01 on the ON image: not run (Paul chose to merge on the board results above).
+
+### Deferred review minors (final whole-branch review, not fixed)
+
+- M1 chip32_d is also cleared on a CPU RESET (nResetOut_w), which could switch the route under an outstanding access; clear it only on reset='0'.
+- M2 no bench runs the real S_state against the real minimig + sdram_ctrl; sim/chip32's master is a transcription of TG68K.vhd, keep the two in step.
+- M3 --c32mutant dies at phase 0 (fetches) rather than on code 15; no write-side mutant yet.
+- M4 MMU walker descriptor writes over the c32 path never simulated (--mmu --chipbus does not fit the bench's watchdog/TIMEOUT).
+- M5 the tracked sim/ddr3_cpu/xsim_run_pass_ap040_chipbus.log predates CHIP32PH/CHIP32 lines.
+- M6 c32_done is registered, so a wide release can slip one kernel cycle vs the adapter.
+- M7 chip32 defaults to 1 in TG68K.vhd/minimig_virtual_top.v, so unbuilt tops get it too.
