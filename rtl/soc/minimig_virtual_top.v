@@ -37,6 +37,9 @@ module minimig_virtual_top #(
     // 1: the pipelined AP68040 (findings/ap040-pipelined/PLAN.md M5)
     parameter ap040_pipelined = 0,
     parameter cpu_clk_divide = 30,
+    // 1: an aligned longword to chip RAM is one chipset cycle, as on the AGA
+    // machines' 32-bit chip bus (TG68K.vhd generic chip32; findings/chip32/plan.md)
+    parameter chip32 = 1,
     // Bring-up only (tools/vivado/build_ap040.tcl): an ILA on the AP68040's
     // fault outputs, so an exception can be named instead of guessed at.
     parameter CPU040_DEBUG_ILA = 0,
@@ -655,7 +658,8 @@ TG68K #(
     .ap040_pipelined(ap040_pipelined),
     // The island's clock RATIO, which the phase marker needs; the MMCM
     // divider is clk_114's (10) times it.
-    .cpu_clk_ratio(cpu_clk_divide/10)
+    .cpu_clk_ratio(cpu_clk_divide/10),
+    .chip32(chip32)
 ) tg68k (
     .clk          (CLK_114          ),
     .clk_cpu      (CLK_38           ),

@@ -195,6 +195,25 @@ differences; the 832 is not holding the CPU.
 
 ## Backlog (after the plan is finished; Paul, 2026-09-24: "not too many changes at once")
 
+- **Investigate apolkosnik's optimized pipelined 040 core (Paul, 2026-09-25)**:
+  https://github.com/apolkosnik/Minimig-AGA_MiSTer/tree/ap040-pipelined. We may want to borrow some of its
+  optimizations. First step: diff its core and wrapper against lib/AP68040-pipelined (9efe490) and our
+  rtl/soc/TG68K.vhd, list each optimization (what, where, measured gain if the branch states one), and rate each for
+  fit with our M14 split caches, the FPU, the 1:3 clk_38 island and the timing budget. Then give Paul the shortlist.
+  Adopt nothing unilaterally: memory `ap040-reference-integration` records that convergence with apolkosnik's branches
+  was DEFERRED, and our submodule is a hand overlay 1300+ lines away from upstream main.
+  **FPU/NetBSD fixes, first look 2026-09-25** (the original core author is Adam Polkosnik; his core repo
+  https://github.com/apolkosnik/AP68040 is cloned read-only at `../apolkosnik-AP68040`, main 8f72275). In our
+  pipelined core already: bc7b5f97 FSAVE/FRESTORE NULL frame ("NetBSD savectx panic"); a8a50ce packed FMOVE-to-memory
+  prepares the BUSY frame + FPIAR capture; most of 880b81c's FPU part (BUSY FRESTORE resume with CU_SAVEPC=$FE,
+  ETE14/ETE15 exponent rule). Not needed: AP040_FPU_REVISION ($40 frames, old NeXT only); c223322's FPU part (Altera MLAB
+  hold). OPEN, NetBSD-relevant: 880b81c's core/MMU part -- MOVEM operand faults set SSW.CM + stack the calculated EA
+  (RTE resumes from it), and failed table searches install nonresident ATC entries. Our pipelined core is a different
+  design, so re-implement, don't copy; his tests t_movem_restart.s, t_atcprobe.s, t_fpu_frames.s, t_fpu_resume.s are
+  the gate. Next step: hunk-by-hunk semantic audit of 880b81c against rtl/compat/ap040_fpu.v and the pipe core (text
+  differs, so patch --dry-run can't classify). Also: branch `40_w_Alans_patches` there = 38 commits of Alan
+  Steremberg's speedups (cache, prefetch, decode) -- the optimization candidates this item is about.
+
 - **OPEN (Paul, 2026-09-25): the OSD is open at boot, also right after loading a new bitstream** (so not only after
   an Amiga reset). It was already reported 2026-09-24 and NOT resolved: the input-diagnostic agent ruled out
   RTL/firmware tree mismatch and found no RTL cause (the only KEY_MENU queued at configuration is the first queue
@@ -303,6 +322,18 @@ differences; the 832 is not holding the CPU.
   SysInfo loop above ran ~0.8 us per word, far slower than one word per 280 ns slot, so the width
   may not be the current bottleneck. Step 2: the longword-per-slot path. Step 3: re-test the
   demos that break with turbo, with turbo off.
+  **DONE 2026-09-26, merged into 5.0-040-pipelined (not pushed).** Board A/B (Turbo None, MMU on):
+  chip rd.l 1672 -> 3132 KB/s, wr.l 1687 -> 3129, words unchanged, ROM 2308 -> 4618; SysInfo 15302 ->
+  15592 Dhrystones; demanding demos solid with Turbo off. cputest ct040_01 NOT run on the ON image.
+  Was branch `chip32` (off 5.0-040-pipelined), plan findings/chip32/plan.md, numbers findings/chip32/results.md.
+  An aligned longword to chip RAM (and a ROM longword read, Turbo kick off) is one chipset cycle
+  moving both words in one chip slot; custom registers, CIAs, Gayle, slow RAM and all DMA stay
+  16-bit (checked against the A1200 R2 schematic). sim/chip32: one slot per access, 2083 checks, 0
+  errors; sim/ddr3_cpu --chipbus: 1.51x (reference core) / 1.71x (pipelined) over phases 1-7, 0 bad
+  wide cycles, NOCHIP32 bit-identical to the old wrapper. A/B images (MMU+FPU, no ILA):
+  build/stage_chip32_on (md5 2d4bfb4f...) and build/stage_chip32_off (dfbb4308...), both timing
+  clean bar the known 16 SDRAM endpoints. Follow-ups (Paul's call): release latency (plan
+  Follow-ups), the deferred review minors M1-M7 in findings/chip32/results.md's plan ledger notes.
 - **OPEN, intermittent: SysInfo SPEED sometimes takes minutes (MHz / MFLOPS phase).** 2026-09-24
   (all boards): CPU found in STOP with no interrupt for ~2 min, then continued. 2026-09-25 on
   m14f_fpu_ila: one run with all boards finished normally; one MFLOPS phase was slow; with "DDR3

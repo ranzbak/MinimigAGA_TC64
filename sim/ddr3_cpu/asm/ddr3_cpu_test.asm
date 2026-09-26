@@ -29,6 +29,9 @@
 ;  13  Exec List relocation left the list empty -- the AllocMem symptom
 ;  14  a cacheable read of an undecoded hole inside the Zorro III window did
 ;      not read back $FFFFFFFF
+;  15  CHIP32PH: aligned longword read-back from chip RAM wrong
+;  16  CHIP32PH: word read-back of a longword-written location wrong
+;  17  CHIP32PH: misaligned (A+2) longword read-back wrong
 ;  99  unexpected 68k exception (bus/address error, privilege violation, ...)
 ;
 ; Build with asm/build_68k_test.sh (vasmm68k_mot, -m68020 -Fbin).
@@ -567,6 +570,69 @@ p2cb_top: move.l    d0,(a4)+
           bne       f_und
 
 ;-----------------------------------------------------------------------------
+; CHIP32PH (run.sh sets it for --chipbus): longwords to chip RAM over the
+; chipset bus.  Aligned ones are one wide chipset cycle each (the bench's
+; CHIP32 monitor counts them); the misaligned one, the NMI vector and the two
+; custom-register longwords must stay word cycles (the monitor fails a wide
+; one).  The values are address-derived, so a swapped or stale word shows.
+; No phase marker, so the phase numbering does not shift; not defined,
+; nothing is assembled.  findings/chip32/plan.md.
+;-----------------------------------------------------------------------------
+          ifd       CHIP32PH
+C32BUF    equ CHIPSCR+$400
+          lea       C32BUF,a0
+          move.l    #$C32A0000,d0
+          moveq     #15,d1
+c32_w:    move.l    d0,(a0)+
+          add.l     #$00010001,d0
+          dbra      d1,c32_w
+          dc.w      $F478                ; CPUSHA DC: the reads below go to the bus
+          lea       C32BUF,a0
+          move.l    #$C32A0000,d4
+          moveq     #15,d1
+c32_r:    move.l    a0,d2
+          move.l    (a0)+,d3
+          cmp.l     d4,d3
+          bne       f_c32
+          add.l     #$00010001,d4
+          dbra      d1,c32_r
+; Data cache OFF for the probes below: with it on they are cache hits (or
+; aligned line-fill beats) and never put a narrow cycle on the bus, which is
+; exactly what they are here to check.  The bench fails the run if the
+; misaligned and NMI probes are not seen as narrow bus reads.
+          dc.w      $F478                ; CPUSHA DC
+          move.l    #CACRVAL&$7FFFFFFF,d1
+          movec     d1,cacr
+          move.l    #C32BUF+4,d2         ; aligned, uncached: one wide cycle
+          move.l    C32BUF+4,d3
+          move.l    #$C32B0001,d4
+          cmp.l     d4,d3
+          bne       f_c32
+          move.l    #C32BUF,d2           ; high word of longword 0
+          moveq     #0,d3
+          move.w    C32BUF,d3
+          move.l    #$0000C32A,d4
+          cmp.l     d4,d3
+          bne       f_c32w
+          move.l    #C32BUF+6,d2         ; low word of longword 1
+          moveq     #0,d3
+          move.w    C32BUF+6,d3
+          moveq     #1,d4
+          cmp.l     d4,d3
+          bne       f_c32w
+          move.l    #C32BUF+2,d2         ; straddles longwords 0 and 1
+          move.l    C32BUF+2,d3
+          move.l    #$0000C32B,d4
+          cmp.l     d4,d3
+          bne       f_c32m
+          move.l    $7C.w,d3             ; NMI vector (VBR = 0): must stay narrow
+          move.l    #$00001234,$00DFF080 ; COP1LC: a 16-bit chip, two word cycles
+          move.l    $00DFF004,d3         ; VPOSR+VHPOSR: two word cycles
+          move.l    #CACRVAL,d1          ; data cache back on
+          movec     d1,cacr
+          endif
+
+;-----------------------------------------------------------------------------
 ; Done
 ;-----------------------------------------------------------------------------
           moveq     #8,d7
@@ -595,6 +661,14 @@ f_cnt:    moveq     #8,d7
           bra       report
 f_cnt2:   moveq     #9,d7
           bra       report
+          ifd       CHIP32PH             ; so the program is unchanged without it
+f_c32:    moveq     #15,d7
+          bra       report
+f_c32w:   moveq     #16,d7
+          bra       report
+f_c32m:   moveq     #17,d7
+          bra       report
+          endif
 
 ; Phase 7.  The MOVEM.L handlers move the offending register into d3 last,
 ; because d3 is itself one of the four being checked.
