@@ -369,8 +369,15 @@ if {$pipe_dir ne ""} {
     # are M10's remaining steps.  A 1 here is a measurement build, not a gate
     # image.
     set pfpu [expr {[info exists ::env(AP040_PIPE_FPU)] && $::env(AP040_PIPE_FPU) eq "1" ? 1 : 0}]
-    set pipe_gen " AP040_PIPELINED=1 AP040_HAS_MMU=$pmmu AP040_HAS_FPU=$pfpu"
-    puts "build_ap040.tcl: PIPELINED build from $P ([llength $pipe_off] lib/AP68040 files disabled)"
+    # The pipelined core runs free of the bus wait (findings/unfreeze/): default
+    # since 2026-09-26 (board SysInfo 0.83x -> 1.00x).  FREE_CORE=0 in the
+    # environment builds the frozen core, for an A/B.
+    set free_core [expr {[info exists ::env(FREE_CORE)] && $::env(FREE_CORE) eq "0" ? 0 : 1}]
+    set pipe_gen " AP040_PIPELINED=1 AP040_HAS_MMU=$pmmu AP040_HAS_FPU=$pfpu AP040_FREE_CORE=$free_core"
+    puts "build_ap040.tcl: PIPELINED build from $P ([llength $pipe_off] lib/AP68040 files disabled), FREE_CORE=$free_core"
+}
+if {[info exists ::env(FREE_CORE)] && $::env(FREE_CORE) eq "1" && ![info exists free_core]} {
+    error "build_ap040.tcl: FREE_CORE=1 needs the pipelined core (AP040_PIPE_DIR is none)"
 }
 
 # The one functional difference from build.tcl: which kernel the wrapper

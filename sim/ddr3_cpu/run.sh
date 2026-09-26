@@ -14,12 +14,15 @@
 #   ./run.sh --ackmutant  AP68040 with the router's completion pulse held; MUST fail
 #   ./run.sh --mmu        AP68040, the stage-B MMU walker program
 #   ./run.sh --mmumutant  the same with walker_ack tied low; MUST fail
+#   ./run.sh --fcprog     AP68040, freecore_test.asm (findings/unfreeze/plan.md)
 #   ./run.sh --snoop      AP68040 with chipset DMA write snoops driven
 #   ./run.sh --snoopmutant  the same with the wrapper's snoop hold reverted; MUST fail
 #   ./run.sh --gatemutant phase gate opening on enaWRreg (as first built); placement MUST fail
 #   ./run.sh --chipbus    turbochipram = 0, chip RAM over the 7 MHz chipset bus
 #   ./run.sh --c32mutant --chipbus  CHIP32 read data returns word 1 twice; MUST fail
 #   NOCHIP32=1 ./run.sh ...         the wrapper's chip32 generic = 0 (longwords as two word cycles)
+#   FREECORE=1 ./run.sh ...         the wrapper's ap040_free_core = 1 (findings/unfreeze/plan.md)
+#   FREECORE=1 FCMUTANT=ack|walk|data ./run.sh ...  one free-core qualification undone; MUST fail
 #
 # Stage E2 (decision D6): EVERY leg runs the real sdram_ctrl and SDRAM part
 # (real_sdram.vh); the behavioural SDRAM model is retired, so REALSDRAM is no
@@ -78,6 +81,10 @@ IS_MMU=0
 IS_MMUMUTANT=0
 if [ "$1" = "--mmu" ];       then IS_MMU=1;                  shift; set -- --ap040 "$@"; fi
 if [ "$1" = "--mmumutant" ]; then IS_MMU=1; IS_MMUMUTANT=1; IS_MUTANT=1; shift; set -- --ap040 "$@"; fi
+# --fcprog: asm/freecore_test.asm, adapter and router answers back to back,
+# caches off (findings/unfreeze/plan.md).  Implies --ap040.
+IS_FC=0
+if [ "$1" = "--fcprog" ];    then IS_FC=1;                   shift; set -- --ap040 "$@"; fi
 
 # --snoop: the chipset DMA write snoop, which nothing drove until stage D3.
 # The bench asserts snoop_stb for one clk cycle at a time, at chip RAM
@@ -127,6 +134,7 @@ if [ "$CPU" = "ap040" ]; then
     if [ "$IS_ACKMUTANT" = "1" ];  then VARIANT=ackmutant_ap040;  fi
     if [ "$IS_MMU" = "1" ];        then VARIANT=mmu_ap040;        fi
     if [ "$IS_MMUMUTANT" = "1" ];  then VARIANT=mmumutant_ap040;  fi
+    if [ "$IS_FC" = "1" ];         then VARIANT=fcprog_ap040;     fi
     if [ "$IS_SNOOP" = "1" ];      then VARIANT=snoop_ap040;      fi
     if [ "$IS_SNOOPMUTANT" = "1" ]; then VARIANT=snoopmutant_ap040; fi
     if [ "$IS_GATEMUTANT" = "1" ]; then VARIANT=gatemutant_ap040; fi
@@ -176,6 +184,14 @@ CNTN=${CNTN:-64}
 
 if [ "$TURBOCHIP" = "0" ]; then VARIANT="${VARIANT}_chipbus"; fi
 if [ -n "$NOCHIP32" ]; then VARIANT="${VARIANT}_nochip32"; fi
+if [ "${FREECORE:-0}" = "1" ]; then VARIANT="${VARIANT}_free"; fi
+# FCMUTANT=ack|walk|data (with FREECORE=1): undo one of the free core's
+# qualifications in a copy of TG68K.vhd (findings/unfreeze/plan.md).  MUST fail.
+if [ -n "$FCMUTANT" ]; then
+    [ "${FREECORE:-0}" = "1" ] || { echo "FCMUTANT needs FREECORE=1" >&2; exit 2; }
+    case "$FCMUTANT" in ack|walk|data) ;; *) echo "FCMUTANT: ack, walk or data" >&2; exit 2 ;; esac
+    IS_MUTANT=1; VARIANT="${VARIANT}_fcm_${FCMUTANT}"
+fi
 # CHIP32PH: the longword phase of the pattern program, only where chip RAM goes
 # over the chipset bus (findings/chip32/plan.md).
 C32PH=""
@@ -199,10 +215,15 @@ mkdir -p "$W"
 # are no line fills, which is why the fill counters read zero until this was
 # found.  So the program writes $80008003: DE and IE set.
 CACRVAL='$80008003'
+# MMU_CACR overrides it for the --mmu program, e.g. MMU_CACR=0: caches off, every
+# fetch and data access through the MMU's pass path (findings/unfreeze).
+if [ "$IS_MMU" = "1" ] && [ -n "$MMU_CACR" ]; then CACRVAL="$MMU_CACR"; fi
 
 if [ "$IS_MMU" = "1" ]; then
     BIN="$W/prog.bin" SRC=mmu_walk_test.asm "$D/asm/build_68k_test.sh" \
         -DCACRVAL="$CACRVAL"
+elif [ "$IS_FC" = "1" ]; then
+    BIN="$W/prog.bin" SRC=freecore_test.asm "$D/asm/build_68k_test.sh"
 else
     BIN="$W/prog.bin" "$D/asm/build_68k_test.sh" \
         -DPATBYTES=$PATBYTES -DMISLINES=$MISLINES -DCNTN=$CNTN -DCACRVAL="$CACRVAL" $C32PH \
@@ -214,6 +235,7 @@ PLUS="+PATBYTES=$PATBYTES +MISLINES=$MISLINES +CNTN=$CNTN +TURBOCHIP=$TURBOCHIP"
 # has nothing to compare against and is skipped; the program's own phases are
 # the check.
 if [ "$IS_MMU" = "1" ]; then PLUS="$PLUS +MMUTEST"; fi
+if [ "$IS_FC" = "1" ]; then PLUS="$PLUS +FCTEST"; fi
 if [ "$IS_SNOOP" = "1" ]; then PLUS="$PLUS +SNOOP"; fi
 if [ -n "$TRACE" ]; then PLUS="$PLUS +TRACE +TRMAX=${TRMAX:-200}"; fi
 # XPLUS: extra +plusargs handed straight to xsim, e.g. XPLUS=+LBDBG for the
@@ -264,6 +286,17 @@ elif [ "$IS_C32MUTANT" = "1" ]; then
     if ! grep -q "x_rdata_r <= r_data & r_data;" "$TG68K_SRC"; then
         echo "--c32mutant: the CHIP32 read-data line moved; fix the sed in run.sh" >&2
         exit 2
+    fi
+elif [ -n "$FCMUTANT" ]; then
+    # Generated: one free-core qualification undone (marker comments FC-*).
+    TG68K_SRC="$W/TG68K_fcm_${FCMUTANT}.vhd"
+    case "$FCMUTANT" in
+      ack)  sed '/-- FC-ACK/s/a16_ack AND bce_q/a16_ack/' "$R/rtl/soc/TG68K.vhd" > "$TG68K_SRC" ;;
+      data) sed "/-- FC-DATA/s/a16_take = '1'/a16_ack = '1'/" "$R/rtl/soc/TG68K.vhd" > "$TG68K_SRC" ;;
+      walk) sed '/-- FC-WALK/s/ AND bce_q//' "$R/rtl/soc/TG68K.vhd" > "$TG68K_SRC" ;;
+    esac
+    if cmp -s "$R/rtl/soc/TG68K.vhd" "$TG68K_SRC"; then
+        echo "FCMUTANT=$FCMUTANT: the sed changed nothing; fix run.sh" >&2; exit 2
     fi
 elif [ "$IS_ACKMUTANT" = "1" ]; then
     # Generated: the completion pulse held.  One line; verify it matched.
@@ -346,7 +379,7 @@ if [ "$CPU" = "ap040" ]; then AP040_ELAB="-i $R/lib/AP68040/rtl"; fi
 if [ "${PIPELINED:-0}" = "1" ]; then AP040_ELAB="-i $PIPE_DIR/rtl -i $PIPE_DIR/rtl/compat -d AP040_PIPELINED"; fi
 
 "$VIVADO_PATH/bin/xelab" -prj $PRJ -i "$LIB/tb/ddr3_core_xc7" $AP040_ELAB \
-    -d SOC_SIM -d REALSDRAM -i $D ${NOCPU:+-d NOCPU} ${DMA_OVERLAP:+-d DMA_OVERLAP} ${P2CBLOCK:+-d P2CBLOCK=$P2CBLOCK} ${CPU_RATIO:+-d CPU_RATIO=$CPU_RATIO} ${CPU_PHASE:+-d CPU_PHASE=$CPU_PHASE} ${NOCHIP32:+-d NOCHIP32} -debug typical -relax \
+    -d SOC_SIM -d REALSDRAM -i $D ${NOCPU:+-d NOCPU} ${DMA_OVERLAP:+-d DMA_OVERLAP} ${P2CBLOCK:+-d P2CBLOCK=$P2CBLOCK} ${CPU_RATIO:+-d CPU_RATIO=$CPU_RATIO} ${CPU_PHASE:+-d CPU_PHASE=$CPU_PHASE} ${NOCHIP32:+-d NOCHIP32} $( [ "${FREECORE:-0}" = "1" ] && echo -d FREECORE ) -debug typical -relax \
     -L secureip -L unisims_ver -L unimacro_ver \
     ddr3_cpu_tb glbl -s cpu_sim
 

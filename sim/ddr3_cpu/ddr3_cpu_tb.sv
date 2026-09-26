@@ -795,8 +795,14 @@ localparam integer CHIP32_GEN = 0;
 `else
 localparam integer CHIP32_GEN = 1;
 `endif
+// FREECORE builds the wrapper with ap040_free_core = 1 (findings/unfreeze/plan.md)
+`ifdef FREECORE
+localparam integer FREE_CORE_GEN = 1;
+`else
+localparam integer FREE_CORE_GEN = 0;
+`endif
 `ifdef AP040_PIPELINED
-TG68K #(.cpu_clk_ratio(`CPU_RATIO), .ap040_pipelined(1), .chip32(CHIP32_GEN)) tg68k (
+TG68K #(.cpu_clk_ratio(`CPU_RATIO), .ap040_pipelined(1), .chip32(CHIP32_GEN), .ap040_free_core(FREE_CORE_GEN)) tg68k (
 `else
 TG68K #(.cpu_clk_ratio(`CPU_RATIO), .chip32(CHIP32_GEN)) tg68k (
 `endif
@@ -1201,6 +1207,7 @@ end
 // the backdoor comparison below has nothing to check; its own phases are the
 // test.
 integer mmutest  = 0;
+integer fctest   = 0;   // +FCTEST: freecore_test.asm (findings/unfreeze/plan.md)
 integer trace_on = 0;
 integer TRMAX    = 200;
 integer tr_cpu   = 0;
@@ -1211,6 +1218,7 @@ reg     ddrack_d = 1'b0;
 
 initial begin
   mmutest  = $test$plusargs("MMUTEST");
+  fctest   = $test$plusargs("FCTEST");
   trace_on = $test$plusargs("TRACE");
   void'($value$plusargs("TRMAX=%d", TRMAX));
 end
@@ -1340,6 +1348,127 @@ always @(posedge clk) begin
     if (ack_ena_errs < 8)
       $display("FAIL: x_ack_r without clkena_r (t = %t)", $time);
     ack_ena_errs = ack_ena_errs + 1;
+  end
+end
+
+//-----------------------------------------------------------------
+// Free-core monitors (findings/unfreeze/plan.md).  All on clk_cpu edges
+// after reset.  FC_CE/FC_ACK/FC_WACK/FC_WBERR are what the CORE takes; until
+// Task 3 they are the shared names, afterwards TG68K's pc_* signals.
+//   fc1_errs  x_* changed on a clk_cpu edge where clkena was low.  cpu.xdc's
+//             clk_38 -> clk_114 multicycle and the q_req/x_fresh masks rest
+//             on "x_* changes only where clkena_r is high".  A free core must
+//             not break it; if this fires, the crossing derivation is void.
+//   fc2_errs  the core took m_ack on two consecutive clk_cpu edges.  No
+//             completion is that fast (q_req is masked for two clk_114 edges
+//             after every take), so two in a row is one answer taken twice.
+//   fc2w_errs the same for the walker's answer (walker_ack or walker_berr).
+//   fc3_errs  FREECORE only: an acknowledge visible to the core with no
+//             request of its own up (e.g. a stale adapter ack left over from
+//             a walker access).
+//   fc4_stale informational: clk_cpu edges where the adapter's mem_ack is
+//             high, the core's request is up, and the core must NOT take it
+//             (bce_q low).  Zero means a stale level never met a waiting
+//             core in this leg, i.e. an ack mutant cannot be observed here.
+//-----------------------------------------------------------------
+`define FC_CE    tg68k.pc_ce
+`define FC_ACK   tg68k.pc_ack
+`define FC_WACK  tg68k.pc_wk_ack
+`define FC_WBERR tg68k.pc_wk_berr
+integer fc1_errs = 0, fc2_errs = 0, fc2w_errs = 0, fc3_errs = 0, fc4_stale = 0, fc_takes = 0;
+integer fc1b_errs = 0;   // x_* moved while x_req was up and not yet answered (the strong invariant)
+
+// Every input is captured on the clk (clk_114) NEGEDGE.  clk_cpu's edges
+// coincide with clk edges, and clkena_r and x_ack_r change on the very clk
+// edge a clk_cpu edge lands on (TG68K.vhd: "clkena_r is high through
+// (T+2,T+3) and the kernel advances at T+3"), so reading them at posedge
+// clk_cpu is a scheduling race.  The last clk negedge before a clk_cpu edge
+// holds exactly what the kernel samples at that edge.
+reg        sh_ce = 1'b0, sh_ack = 1'b0, sh_wack = 1'b0, sh_wberr = 1'b0;
+reg        sh_mreq = 1'b0, sh_wkreq = 1'b0, sh_ena = 1'b0;
+reg        sh_a16 = 1'b0, sh_bce = 1'b0, sh_wkgo = 1'b0;
+reg        sh_xack = 1'b0;
+reg [68:0] sh_x;
+always @(negedge clk) begin
+  sh_ce    <= (`FC_CE    === 1'b1);
+  sh_ack   <= (`FC_ACK   === 1'b1);
+  sh_wack  <= (`FC_WACK  === 1'b1);
+  sh_wberr <= (`FC_WBERR === 1'b1);
+  sh_mreq  <= (tg68k.m_req  === 1'b1);
+  sh_wkreq <= (tg68k.wk_req === 1'b1);
+  sh_ena   <= (tg68k.clkena === 1'b1);
+  sh_xack  <= (tg68k.x_ack  === 1'b1);   // any answer, unqualified (adapter or router)
+  sh_x     <= {tg68k.x_req, tg68k.x_we, tg68k.x_instr, tg68k.x_size,
+               tg68k.x_addr, tg68k.x_wdata};
+`ifdef FREECORE
+  sh_a16   <= (tg68k.a16_ack === 1'b1);
+  sh_bce   <= (tg68k.bce_q   === 1'b1);
+  sh_wkgo  <= (tg68k.wk_go   === 1'b1);
+`endif
+end
+
+reg [68:0] fc_x_prev;
+reg        fc_x_prev_ena = 1'b0, fc_x_prev_v = 1'b0;
+reg        fc_take_prev = 1'b0, fc_wtake_prev = 1'b0;
+reg        fc_wkgo_prev = 1'b0;
+reg        fc_x_prev_req = 1'b0, fc_x_prev_done = 1'b0;
+wire fc_take  = sh_ce && sh_mreq  && sh_ack;
+wire fc_wtake = sh_ce && sh_wkreq && (sh_wack || sh_wberr);
+
+always @(posedge clk_cpu) begin
+  if (!tg68_rst) begin
+    fc_x_prev_v   <= 1'b0;
+    fc_take_prev  <= 1'b0;
+    fc_wtake_prev <= 1'b0;
+  end else begin
+    // FC-1: sh_x differs from the previous edge's sample, so x_* changed at
+    // the previous clk_cpu edge -- where the enable was fc_x_prev_ena.
+    if (fc_x_prev_v && (sh_x !== fc_x_prev) && !fc_x_prev_ena) begin
+      if (fc1_errs < 8)
+        $display("FAIL: FC-1 x_* changed on a clk_cpu edge with clkena low (t = %t)", $time);
+      fc1_errs = fc1_errs + 1;
+    end
+    // FC-1b: an access admitted (x_req up at the previous edge) keeps every x_*
+    // bit until the edge that answers it (an answer seen with clkena high).
+    if (fc_x_prev_v && fc_x_prev_req && !fc_x_prev_done && (sh_x !== fc_x_prev)) begin
+      if (fc1b_errs < 8)
+        $display("FAIL: FC-1b x_* changed while an access was outstanding (t = %t)", $time);
+      fc1b_errs = fc1b_errs + 1;
+    end
+    fc_x_prev_req  <= sh_x[68];
+    fc_x_prev_done <= sh_xack && sh_ena;
+    fc_x_prev     <= sh_x;
+    fc_x_prev_ena <= sh_ena;
+    fc_x_prev_v   <= 1'b1;
+    // FC-2
+    if (fc_take && fc_take_prev) begin
+      if (fc2_errs < 8)
+        $display("FAIL: FC-2 m_ack taken on two consecutive clk_cpu edges (t = %t)", $time);
+      fc2_errs = fc2_errs + 1;
+    end
+    if (fc_wtake && fc_wtake_prev) begin
+      if (fc2w_errs < 8)
+        $display("FAIL: FC-2 walker answer taken on two consecutive clk_cpu edges (t = %t)", $time);
+      fc2w_errs = fc2w_errs + 1;
+    end
+    fc_take_prev  <= fc_take;
+    fc_wtake_prev <= fc_wtake;
+    fc_wkgo_prev  <= sh_wkgo;
+    if (fc_take) fc_takes = fc_takes + 1;
+`ifdef FREECORE
+    // FC-3
+    // (walker_ack is not judged here: ap040_mmu drops walker_req for one clock after
+    // each take and ignores walker_ack there by design, ap040_mmu.v walker_req/walk_ack.)
+    if (sh_ack && !sh_mreq) begin
+      if (fc3_errs < 8)
+        $display("FAIL: FC-3 an acknowledge visible to the core with no request up (t = %t): %s, walker owned the mux on the previous edge: %0d",
+                 $time, (sh_ack && !sh_mreq) ? "m_ack" : "walker_ack", fc_wkgo_prev);
+      fc3_errs = fc3_errs + 1;
+    end
+    // FC-4
+    if (sh_a16 && !sh_bce && sh_mreq && !sh_wkgo)
+      fc4_stale = fc4_stale + 1;
+`endif
   end
 end
 
@@ -1634,6 +1763,11 @@ initial begin : main
       32'd24 : final_report(24, "an invalid page descriptor did not fault");
       32'd25 : final_report(25, "a table branch into undecoded space did not fault (walker_berr)");
       32'd26 : final_report(26, "data wrong after translation was turned off again");
+      // findings/unfreeze/plan.md, freecore_test.asm
+      32'd30 : final_report(30, "adapter answer, then a DDR3 read: wrong value");
+      32'd31 : final_report(31, "DDR3 read, then an adapter answer: wrong value");
+      32'd32 : final_report(32, "chip-RAM word, then a DDR3 read: wrong value");
+      32'd33 : final_report(33, "DDR3 store, adapter access, DDR3 load: wrong value");
       32'd99 : final_report(99, "unexpected 68k exception (bus/address error, privilege violation, ...)");
       default: final_report(status, "unknown failure code");
     endcase
@@ -1643,9 +1777,9 @@ initial begin : main
   // Independent DRAM check.  Runs whatever the program said, so a FAIL run
   // still reports what did and did not reach the DRAM.
   //---------------------------------------------------------------
-  if (mmutest) begin
+  if (mmutest || fctest) begin
     $display("");
-    $display("INFO: MMU walker program -- no pattern in the DDR3 to check");
+    $display("INFO: MMU walker or free-core program -- no pattern in the DDR3 to check");
   end else begin
   $display("");
   $display("INFO: checking the DDR3 array through the Micron model backdoor");
@@ -1726,6 +1860,24 @@ initial begin : main
              ack_ena_errs);
     nfail = nfail + 1;
   end
+  if (fc1_errs != 0) begin
+    $display("DDR3 CPU TB: FAIL  %0d x_* changes on an edge with clkena low (FC-1: the crossing invariant)", fc1_errs);
+    nfail = nfail + 1;
+  end
+  if (fc2_errs != 0 || fc2w_errs != 0) begin
+    $display("DDR3 CPU TB: FAIL  acknowledges taken twice (FC-2): m_ack %0d, walker %0d", fc2_errs, fc2w_errs);
+    nfail = nfail + 1;
+  end
+  if (fc1b_errs != 0) begin
+    $display("DDR3 CPU TB: FAIL  %0d x_* changes while an access was outstanding (FC-1b)", fc1b_errs);
+    nfail = nfail + 1;
+  end
+  if (fc3_errs != 0) begin
+    $display("DDR3 CPU TB: FAIL  %0d acknowledges visible with no request (FC-3)", fc3_errs);
+    nfail = nfail + 1;
+  end
+  $display("INFO: free-core monitors: %0d m_ack takes seen; FC-4 stale adapter acks met by a waiting core: %0d",
+           fc_takes, fc4_stale);
 
   if (snoop_on) begin
     // Quiesce and drain -- see snoop_stop.  A snoop takes at most one clk edge
@@ -1823,8 +1975,8 @@ initial begin : main
   // Judged on the pattern program with Turbo chip RAM only: --chipbus sends
   // chip RAM over the chipset bus and the MMU program barely touches it, so
   // those legs (REALSDRAM only since E2, D6) report placement without a verdict.
-  if (!turbochipram || mmutest)
-    $display("=== placement: not judged on this leg (%s) ===", mmutest ? "MMU program" : "Turbo chip RAM off");
+  if (!turbochipram || mmutest || fctest)
+    $display("=== placement: not judged on this leg (%s) ===", (mmutest || fctest) ? "MMU or free-core program" : "Turbo chip RAM off");
   else begin
   // Reads are reported only since Task 5b: a line-buffer hit skips the
   // placement gate, so read acknowledges are deliberately off any grid.
@@ -1850,11 +2002,11 @@ initial begin : main
   end
   $display("CHIP32: narrow bus reads of the CHIP32PH probes: misaligned $8402 %0d, NMI vector %0d",
            c32_mis_rd, c32_nmi_rd);
-  if (!turbochipram && !mmutest && (c32_mis_rd == 0 || c32_nmi_rd == 0)) begin
+  if (!turbochipram && !(mmutest || fctest) && (c32_mis_rd == 0 || c32_nmi_rd == 0)) begin
     nfail = nfail + 1;
     $display("DDR3 CPU TB: FAIL  CHIP32: a CHIP32PH narrow probe never reached the bus (cache hit?)");
   end
-  if (CHIP32_GEN != 0 && !turbochipram && !mmutest && c32_wide < 32) begin
+  if (CHIP32_GEN != 0 && !turbochipram && !(mmutest || fctest) && c32_wide < 32) begin
     nfail = nfail + 1;
     $display("DDR3 CPU TB: FAIL  CHIP32: chip RAM over the chipset bus but only %0d wide cycles", c32_wide);
   end

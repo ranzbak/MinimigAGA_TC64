@@ -36,6 +36,8 @@ module minimig_virtual_top #(
     parameter ap040_post_stores = 1,
     // 1: the pipelined AP68040 (findings/ap040-pipelined/PLAN.md M5)
     parameter ap040_pipelined = 0,
+    // 1: the pipelined core runs free of the bus wait (findings/unfreeze/plan.md)
+    parameter ap040_free_core = 0,
     parameter cpu_clk_divide = 30,
     // 1: an aligned longword to chip RAM is one chipset cycle, as on the AGA
     // machines' 32-bit chip bus (TG68K.vhd generic chip32; findings/chip32/plan.md)
@@ -656,6 +658,7 @@ TG68K #(
     .ap040_enable_cache(ap040_enable_cache),
     .ap040_post_stores(ap040_post_stores),
     .ap040_pipelined(ap040_pipelined),
+    .ap040_free_core(ap040_free_core),
     // The island's clock RATIO, which the phase marker needs; the MMCM
     // divider is clk_114's (10) times it.
     .cpu_clk_ratio(cpu_clk_divide/10),

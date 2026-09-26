@@ -150,6 +150,11 @@ set tg68_mem    [get_cells -hier -filter "(NAME =~ openaars_virtual_top/sdram/* 
 #   (clkena_r) and T+1 (x_fresh), so the first edge that latches an access is
 #   T+2: settled at T+2 again.  The controllers themselves see only the
 #   sequencers' clk_114 registers.
+#   With ap040_free_core = 1 the core is not frozen, and "x_* changes only at
+#   T" no longer follows from the core's enable: it holds because the core
+#   changes m_* only where clkena_r is high (no request outstanding, or its
+#   completion edge).  sim/ddr3_cpu asserts it on every leg (FC-1,
+#   findings/unfreeze/plan.md).
 #
 #   And the 7 MHz chipset state machine, which is why rtl/soc/TG68K.vhd grew
 #   cpu_bus_settled in stage D3.  ena7WRreg lands on phase 14 of a sixteen
@@ -183,8 +188,8 @@ set_multicycle_path -hold  -end 1 -from [get_clocks clk_38] -to [get_clocks clk_
 # address, which is combinational out of the MMU's ATC RAM, where it used to be
 # registered from the adapter's addr_out.  Its T+1 copy is never read:
 #   * x_addr changes only on a kernel edge K at which the 16-bit adapter is
-#     idle (the core cannot advance with an adapter access outstanding unless
-#     the adapter is between sub-cycles, and then the address is held);
+#     idle (x_addr is held while an adapter access is outstanding, sub-cycles
+#     included -- asserted in sim/ddr3_cpu as FC-1b, findings/unfreeze/);
 #   * the adapter cannot take the new access before K+3, so the decision at
 #     K+2 sees state = "01" and releases on the idle term whatever
 #     bus_ready16 says;
@@ -223,7 +228,8 @@ set_multicycle_path -quiet -hold  0 -from $cpu_phase_src -to $cpu_phase_dst
 # exactly the requirement they meet today (nothing in this file ever relaxed a
 # path INTO the kernel, including the clkena net that fans out to 7,391 kernel
 # clock-enable pins).  The absence of a rule here is the derivation's answer,
-# not an omission.
+# not an omission.  (With ap040_free_core = 1 the pipelined core's enable is
+# constant and that net drives only the walker bridge and the adapter.)
 
 # Stage E2 deleted the one exception that used to follow here: a -setup -start
 # 2 from the clk_114 walker and line-fill routers into the island, valid only

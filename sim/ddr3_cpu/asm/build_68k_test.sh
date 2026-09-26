@@ -16,6 +16,6 @@ cd "$(dirname "$0")"
 BIN=${BIN:-ddr3_cpu_test.bin}
 SRC=${SRC:-ddr3_cpu_test.asm}
 CPUOPT=-m68020
-if [ "$SRC" = "mmu_walk_test.asm" ]; then CPUOPT=-m68040; fi
+if [ "$SRC" = "mmu_walk_test.asm" ] || [ "$SRC" = "freecore_test.asm" ]; then CPUOPT=-m68040; fi
 vasmm68k_mot $CPUOPT -Fbin -L "${BIN%.bin}.lst" -o "$BIN" "$@" "$SRC"
 ls -l "$BIN"

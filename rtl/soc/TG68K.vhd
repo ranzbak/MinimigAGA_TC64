@@ -53,6 +53,13 @@ entity TG68K is
 		-- ap040_pipe_tg68k_compat.v) in place of lib/AP68040's, behind the same
 		-- ports (findings/ap040-pipelined/PLAN.md M5).  0: the reference core.
 		ap040_pipelined    : integer := 0;
+		-- 1 (pipelined core only; findings/unfreeze/plan.md): the core runs on
+		-- every clk_cpu edge instead of being frozen while an m_* access is
+		-- outstanding.  The answers it takes from the clkena-gated side -- the
+		-- adapter's mem_ack and the walker's wk_ack/wk_berr, LEVELS that clear
+		-- only on the next clkena edge -- are qualified to one clock each.
+		-- 0: the core shares clkena, exactly as before.
+		ap040_free_core    : integer := 0;
 		-- clk / clk_cpu, the AP68040 island's clock ratio.  3 is stage D3 as
 		-- shipped (37.8125 MHz); 4 runs the same architecture at the pre-D3 CPU
 		-- rate.  THE PHASE MARKER BELOW DEPENDS ON THIS AND IS NOT RATIO-AGNOSTIC
@@ -427,6 +434,14 @@ ARCHITECTURE logic OF TG68K IS
 	SIGNAL x_wdata    : std_logic_vector(31 downto 0);
 	SIGNAL x_ack      : std_logic;                      -- clkena-shaped
 	SIGNAL x_rdata    : std_logic_vector(31 downto 0);
+	-- ap040_free_core: what the pipelined core sees (see the master mux)
+	SIGNAL bce_q      : std_logic := '0';               -- clkena one clk_cpu edge ago
+	SIGNAL a16_take   : std_logic;
+	SIGNAL pc_ce      : std_logic;
+	SIGNAL pc_ack     : std_logic;
+	SIGNAL pc_rdata   : std_logic_vector(31 downto 0);
+	SIGNAL pc_wk_ack  : std_logic;
+	SIGNAL pc_wk_berr : std_logic;
 	-- the router's three destinations; x_sdram and x_ddr are both RAM
 	SIGNAL x_sdram    : std_logic;
 	SIGNAL x_ddr      : std_logic;
@@ -857,6 +872,12 @@ BEGIN
 	--
 	-- Neither mask can land inside an access: clkena_r is only high on a
 	-- completion, or while no request is outstanding.
+	--
+	-- With ap040_free_core = 1 the core is not frozen, so "x_* changes only on
+	-- a kernel edge where clkena_r is high" no longer follows from its enable;
+	-- it holds because the core changes m_* only where clkena_r is high (no
+	-- request outstanding, or its completion edge).  sim/ddr3_cpu asserts it
+	-- on every leg (FC-1, findings/unfreeze/plan.md).
 	q_req   <= x_req AND NOT clkena_r AND NOT x_fresh;
 	q_sdram <= q_req AND x_sdram;
 	q_ddr   <= q_req AND x_ddr;
@@ -1390,7 +1411,7 @@ BEGIN
 					-- because that is the clock the controllers are on.
 					clk            => clk_cpu,
 					nreset         => reset,
-					clkena_in      => clkena,
+					clkena_in      => pc_ce,
 					-- unused with AP040_BUS16 => 0: the adapter below has data_in
 					data_in        => (others => '0'),
 					ipl            => cpuIPL,
@@ -1440,9 +1461,9 @@ BEGIN
 					walker_we      => wk_we,
 					walker_addr    => wk_addr,
 					walker_wdat    => wk_wdat,
-					walker_ack     => wk_ack,
+					walker_ack     => pc_wk_ack,
 					walker_data    => wk_data,
-					walker_berr    => wk_berr,
+					walker_berr    => pc_wk_berr,
 
 					-- Stage D's line-fill channel is OFF (E2 decision D4).  The
 					-- router that served it borrowed the bus on clk_114 and was one
@@ -1489,8 +1510,8 @@ BEGIN
 					m_addr            => m_addr,
 					m_wdata           => m_wdata,
 					m_fc              => m_fc,
-					m_ack             => m_ack,
-					m_rdata           => m_rdata
+					m_ack             => pc_ack,
+					m_rdata           => pc_rdata
 				);
 		END GENERATE;
 
@@ -1513,6 +1534,36 @@ BEGIN
 		x_rdata <= a16_rdata WHEN a16_ack = '1' ELSE x_rdata_r;
 		m_ack   <= x_ack AND NOT wk_go;
 		m_rdata <= x_rdata;
+
+		-- ap040_free_core (findings/unfreeze/plan.md).  a16_ack and wk_ack/
+		-- wk_berr are set and cleared only on clkena edges, so a level can
+		-- outlive the clk_cpu edge it was meant for.  A core that runs every
+		-- clk_cpu edge would take it again as the answer to the access it
+		-- started meanwhile -- the desync that made ap040_pipe_tg68k_compat.v
+		-- re-gate ce_core to clkena_in (its comment at :160).  bce_q is high in
+		-- the one clk_cpu cycle after an enabled edge, the only cycle in which
+		-- such a level is fresh.  x_ack_r is a one-clk pulse already.  The same
+		-- fix as apolkosnik's MiSTer wrapper, eefc5367.  The walker keeps the
+		-- unqualified x_ack/x_rdata: it runs on clkena and samples only there.
+		PROCESS(clk_cpu, reset)
+		BEGIN
+			IF reset = '0' THEN
+				bce_q <= '0';
+			ELSIF rising_edge(clk_cpu) THEN
+				bce_q <= clkena;
+			END IF;
+		END PROCESS;
+
+		a16_take   <= a16_ack AND bce_q;                                       -- FC-ACK
+		pc_ce      <= clkena WHEN ap040_free_core = 0 ELSE '1';
+		pc_ack     <= m_ack  WHEN ap040_free_core = 0 ELSE
+		              (a16_take OR x_ack_r) AND NOT wk_go;
+		pc_rdata   <= m_rdata   WHEN ap040_free_core = 0 ELSE
+		              a16_rdata WHEN a16_take = '1'  ELSE                      -- FC-DATA
+		              x_rdata_r;
+		pc_wk_ack  <= wk_ack  WHEN ap040_free_core = 0 ELSE wk_ack  AND bce_q;   -- FC-WALK
+		pc_wk_berr <= wk_berr WHEN ap040_free_core = 0 ELSE wk_berr AND bce_q;   -- FC-WALK
+
 
 		-- The 16-bit adapter, moved out of the compat top (Stage E2 Task 1).
 		-- Since Task 4b-2 it gets only what the router does not send to RAM
@@ -1846,6 +1897,10 @@ BEGIN
 	END PROCESS;
 
 	clkena <= clkena_r;
+
+	ASSERT ap040_free_core = 0 OR ap040_pipelined /= 0
+		REPORT "TG68K: ap040_free_core = 1 needs ap040_pipelined = 1 (the reference core samples only on clkena)"
+		SEVERITY failure;
 
 	-- The phase gate; see unit_gate's declaration.  Open for one clk cycle on
 	-- an enaWRreg phase once `slower` has drained, so every unit ap040_ram_seq
