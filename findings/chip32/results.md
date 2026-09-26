@@ -105,3 +105,10 @@ cputest ct040_01_B-01 on the ON image: not run (Paul chose to merge on the board
 - M5 the tracked sim/ddr3_cpu/xsim_run_pass_ap040_chipbus.log predates CHIP32PH/CHIP32 lines.
 - M6 c32_done is registered, so a wide release can slip one kernel cycle vs the adapter.
 - M7 chip32 defaults to 1 in TG68K.vhd/minimig_virtual_top.v, so unbuilt tops get it too.
+
+### xSysInfo 0.11.0 (Paul, 2026-09-26) -- independent cross-check, stage_chip32_on
+
+Chip 3.12 MB/s, Fast 15.96 MB/s, ROM 4.60 MB/s; CPU/FPU 68040 37.97 MHz, MMU in use; Dhrystones 14882
+(xSysInfo's own calibration: 0.45x A4000/040, 14.86x A600 -- not comparable with SysInfo 4.4's figures).
+Chip and ROM agree with chipbw (3132 / 4618 KB/s) within 1%.  xSysInfo's Chip/Fast/ROM MB/s line is a
+ready-made bus measurement for future A/B tests; take an OFF-image reading with it next time for the baseline.
