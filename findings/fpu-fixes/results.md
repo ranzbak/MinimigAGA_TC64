@@ -53,6 +53,9 @@ Board results (Paul):
 - `stage_fpu_p1`: boots, SysInfo SPEED 1.00x. `amiga_sw/FPUFixTest`: the P1 cases 7/7 PASS.
   P2/P2b show the old 402C/202C/202C, as expected.
 - `stage_fpu_fixes`: boots to Workbench. FPUFixTest **10/10 PASS**.
+- `stage_hdmi_rec` (md5 ca937d54..., all FPU fixes + I1 + the HDMI I2C change; clk_38 +0.048, clk_114
+  +0.570, clk_114→clk_38 +0.352, the 16 SDRAM endpoints -0.489): FPUFixTest **12/12 PASS**, including the two
+  I1 cases (PC-relative FP stores take the F-line, nothing written) (Paul, 2026-09-27).
 
 ## Final review
 
