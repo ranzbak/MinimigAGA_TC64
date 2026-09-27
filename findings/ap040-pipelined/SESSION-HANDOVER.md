@@ -277,6 +277,19 @@ differences; the 832 is not holding the CPU.
   ADV7511, which only a reset of the chip or nine SCL clocks clears; neither the RTL table nor the firmware does
   that bus recovery). The latest image was reloaded over JTAG from that good state to see whether it keeps the
   picture across the next monitor-off period.
+  **Schematic (doc/QMTECH_XC7A75T_100T_200T-CORE-BOARD-V01-20210109.pdf p.2):** core-board SW1 = PROG_B
+  (reconfigure from SPI flash), SW2 = IO_KEY_P4 (unused by our design). So the button that recovered the picture
+  booted the OLD flash image, which predates every HDMI change since 2026-09-19. A JTAG load and a PROG_B
+  reconfigure configure the FPGA the same way, and the ADV7511 sits on the carrier untouched by either, so the
+  difference is the image content. **Prime suspect: the 832 firmware's HPD/status gating** (a8f5174 "HDMI comes
+  back by itself", e4d8fce "a failed status read records the sink as gone"): if the ADV7511 wakes from a long
+  HPD-low in a state where the status read fails or shows no sink, the new firmware never re-writes the init
+  sequence, while the old flash firmware writes it unconditionally. Less likely: the RTL table/IOB timing
+  (2817521 onward), since the current image brings the picture up fine from a good state. **Next time it is
+  stuck:** JTAG-load the current image, then read the OSD Chipset line 0 HDMI status byte/history (079ba7c,
+  5d018bc) and, ideally, the 832 serial log (CP210x); that says whether the firmware thinks the sink is absent.
+  Candidate fix: Shift+'.' (and a slow periodic retry while no picture) writes the full init sequence
+  unconditionally, ignoring the status gate.
 
 - **The stuck right mouse button and the "missing built-in commands" boot error are RESOLVED as not-a-core-bug
   (2026-09-25).** Both vanished together after pulling the board power; Paul has seen the button issue on the 020 core
