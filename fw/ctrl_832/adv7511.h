@@ -16,7 +16,7 @@ int adv7511_poll(void);
 // Video clock delay, register 0xBA bits 7:5: step 0..7 = -1.2 .. +1.6 ns in
 // 0.4 ns steps (3 = 0 ns).  Kept here so every (re-)initialisation, including
 // the hot-plug one, applies it.  set_ writes the register at once.
-#define ADV_CLKDELAY_DEFAULT 0  // -1.2 ns: clean on the board (OSD slider, 2026-09-25), matches the RTL table
+#define ADV_CLKDELAY_DEFAULT 1  // -0.8 ns (Paul, 2026-09-27: -0.8 ns in any case), matches the RTL table (0xBA = 0x20)
 extern unsigned char adv_clkdelay;
 void adv7511_set_clkdelay(unsigned char step);
 // Register 0xBA as the chip holds it now.  The RTL's own I2C master

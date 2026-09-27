@@ -113,8 +113,19 @@ logic        data_in_ready;
 logic        data_in_last;
 
 logic [7:0]data_out;
-// logic       data_out_valid;
+logic        data_out_valid;
 logic        data_out_ready;
+// The command handshake (HDMI, 2026-09-27): a command is offered with
+// cmd_valid and TAKEN on the edge where cmd_valid and cmd_ready are both 1.
+// Each state used to assert cmd_valid and, in the same clock, drop it again
+// when cmd_ready was already 1 -- the later assignment won, so the core never
+// saw the command.  STOPs were lost that way (every write transaction stayed
+// open, and the next access's register pointer went out as DATA: the ADV7511
+// got stray register writes four times a second from the firmware's poll), and
+// a read issued while the core was still shifting the pointer byte was dropped
+// and returned a stale byte.  cmd_sent records that the core has taken it.
+logic        cmd_sent = 1'b0;
+wire         cmd_taken = cmd_valid_r & cmd_ready_r;
 // logic       data_out_last;
 
 //(* MARK_DEBUG="true", KEEP="true" *)
@@ -180,6 +191,9 @@ typedef enum i2c_enum_t {
 cmd_t cmd_flag;
 
 logic busy;
+// commands queued or in progress in this wrapper: the core's own busy is 0
+// until it has taken a command, so the firmware's wait-for-idle returned early
+logic cmd_pending;
 
 // CMD_RESET is an I2C BUS RECOVERY (HDMI: the display did not come back after a
 // night with the monitor off, and neither Shift + '.' nor the Minimig reset
@@ -256,6 +270,8 @@ logic _req;
 logic _wr;
 logic _busy;
 
+assign cmd_pending = (prod_write != con_write) || (state_reg != STATE_IDLE);
+
 always_comb begin
     // The status registere as shown on the mmio
     status_reg = {
@@ -265,7 +281,7 @@ always_comb begin
         {1{1'b0}},
         bus_active,         // 0x40
         missed_ack,         // 0x20
-        busy | rec_active,  // 0x10
+        busy | rec_active | cmd_pending,  // 0x10
         buf_read_full,      // 0x08
         buf_read_empty,     // 0x04
         buf_write_full,     // 0x02
@@ -430,6 +446,7 @@ always_ff @(posedge clk) begin
             // Idle wait for a command to come in
             STATE_IDLE: begin
                 cmd_valid_r <= 0;
+                cmd_sent <= 0;
                 data_in_valid <= 0;
                 data_out_ready <= 0;
                 cmd_read_r <= 0;
@@ -513,15 +530,18 @@ always_ff @(posedge clk) begin
             // (The core raises the repeated start by itself for a read while
             // the bus is active, so no explicit START is needed either.)
             STATE_READ: begin
-                cmd_valid_r <= 1;
                 cmd_read_r <= 1;
                 cmd_stop_r <= cmd_in[12];
+                cmd_valid_r <= !cmd_sent && !cmd_taken;
+                if (cmd_taken) cmd_sent <= 1;
                 data_out_ready <= 1;
 
-                if (data_out_ready == 1) begin
+                // the byte is there when the core says so, not a clock later
+                if (data_out_valid && data_out_ready) begin
                     r_cmd_done <= 1'b1;
 
                     cmd_valid_r <= 0;
+                    cmd_sent <= 0;
                     cmd_stop_r <= 0;
                     data_out_ready <= 0;
                     r_read_ready <= 1'b1;
@@ -536,13 +556,16 @@ always_ff @(posedge clk) begin
             // Write a byte
             // Start is implicit when bus is Idle
             STATE_WRITE: begin
-                cmd_valid_r <= 1;
                 cmd_write_r <= 1;
+                cmd_valid_r <= !cmd_sent && !cmd_taken;
+                if (cmd_taken) cmd_sent <= 1;
                 data_in_valid <= 1;
                 data_in <= cmd_in[7:0];
 
-                if (data_in_ready == 1) begin
+                if (data_in_valid && data_in_ready) begin
                     r_cmd_done <= 1'b1;
+                    data_in_valid <= 0;
+                    cmd_sent <= 0;
                     cmd_valid_r <= 0;
                     cmd_result_r <= 0;
                     r_write_ready <= 1'b1;
@@ -554,14 +577,17 @@ always_ff @(posedge clk) begin
             // When writing last byte set data_in_last(byte 12) high to end
             // transmission
             STATE_WRITE_MULTI: begin
-                cmd_valid_r <= 1;
                 cmd_write_multiple_r <= 1;
+                cmd_valid_r <= !cmd_sent && !cmd_taken;
+                if (cmd_taken) cmd_sent <= 1;
                 data_in_valid <= 1;
                 data_in <= cmd_in[7:0];
                 data_in_last <= cmd_in[12];
 
-                if (data_in_ready == 1) begin
+                if (data_in_valid && data_in_ready) begin
                     r_cmd_done <= 1'b1;
+                    data_in_valid <= 0;
+                    cmd_sent <= 0;
                     cmd_valid_r <= 0;
                     cmd_result_r <= 0;
                     r_write_ready <= 1'b1;
@@ -571,9 +597,9 @@ always_ff @(posedge clk) begin
             end
             // Trigger start
             STATE_START: begin
-                cmd_valid_r <= 1;
                 cmd_start_r <= 1;
-                if(cmd_ready_r == 1) begin
+                cmd_valid_r <= !cmd_taken;
+                if (cmd_taken) begin
                     // r_cmd_done <= 1'b1;
                     cmd_valid_r <= 0;
                     state_reg <= STATE_IDLE;
@@ -581,9 +607,9 @@ always_ff @(posedge clk) begin
             end
             // Trigger stop
             STATE_STOP: begin
-                cmd_valid_r <= 1;
                 cmd_stop_r <= 1;
-                if (cmd_ready_r == 1) begin
+                cmd_valid_r <= !cmd_taken;
+                if (cmd_taken) begin
                     r_cmd_done <= 1'b1;
                     cmd_valid_r <= 0;
                     state_reg <= STATE_IDLE;
@@ -613,6 +639,7 @@ always_ff @(posedge clk) begin
             // Reset, what else to say
             default: begin
                 // reset registes to I2C master
+                cmd_sent <= 0;
                 cmd_address <= 0;
                 cmd_start_r <= 0;
                 cmd_read_r <= 0;
@@ -649,7 +676,7 @@ i2c_master my_i2c_master(
 
     .data_out           ( data_out),
     // .data_out_valid     ( data_out_valid),
-    .data_out_valid     ( ),
+    .data_out_valid     ( data_out_valid),
     .data_out_ready     ( data_out_ready),
     // .data_out_last      ( data_out_last),
     .data_out_last      ( ),

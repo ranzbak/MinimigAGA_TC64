@@ -43,7 +43,7 @@ unsigned char adv7511_init_main_vals[] = {
     0x96, 0xC0, // Clear HPD + Monitor Sense interrupt flags
     0xFA, 0x00, // Nbr of times to search for good phase
     // Set the video clock delay
-    0xBA, 0x00, // Clock delay -1.2 ns: the only glitch-free value with the IOB-packed, centre-aligned adv_ddr.v (OSD slider, 2026-09-25); the OSD HDMI page overrides it
+    0xBA, 0x20, // Clock delay -0.8 ns (Paul, 2026-09-27), as the RTL table; the OSD HDMI page overrides it
     // Audio I2S
     0x01, 0x00, // N = 6144
     0x02, 0x18, // N and CTS for 48kHz @ 74.25 MHz pixel clock
