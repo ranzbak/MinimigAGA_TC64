@@ -299,6 +299,10 @@ differences; the 832 is not holding the CPU.
   timeout); on hot-plug also clear the RTL's intellimouse flag, so the 3/4-byte framing can't disagree with the mouse.
   (b) SD: at firmware start send CMD12 (stop transmission) before CMD0, so a transfer interrupted by a JTAG
   load is closed.
+  **Recurred 2026-09-27** ("Unknown command ... failed returncode 10" at boot of stage_fpu_fixes) after a
+  morning of several JTAG loads and a PROG_B boot of the flash image, no power cycle in between; a power cycle
+  cleared it again (flash image booted fine, then the JTAG load). Same pattern, so the hardening above is worth
+  doing: the symptom costs a power cycle every few JTAG loads.
 - **HDMI clock delay from the core, not the firmware table:** the core reports its ADV7511 0xBA value in the
   OSD version reply (capability bit + byte), and the firmware writes it, falling back to 0x00 on older images.
   Then the delay travels with the adv_ddr.v timing it belongs to.
