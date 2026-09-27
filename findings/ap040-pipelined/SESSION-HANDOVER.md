@@ -290,6 +290,14 @@ differences; the 832 is not holding the CPU.
   5d018bc) and, ideally, the 832 serial log (CP210x); that says whether the firmware thinks the sink is absent.
   Candidate fix: Shift+'.' (and a slow periodic retry while no picture) writes the full init sequence
   unconditionally, ignoring the status gate.
+  **Found and fixed (2026-09-27, branch hdmi-i2c-recovery):** the 832's I2C master (rtl/host/i2c_master_mmio.sv)
+  lost commands in its valid/ready handshake -- STOPs never went out and reads were dropped, so every access after
+  a write wrote its register pointer INTO the ADV7511 as data, four times a second from the hot-plug poll (the OSD
+  clock delay "reset" on the next cursor move; glitches at every delay). 454077f fixes the handshake
+  (sim/i2c_recovery/tb_i2c_fwseq.sv), b49d30b adds bus recovery and makes the RTL i2c_sender send once at reset,
+  886119d services the ADV7511 on its INT pin instead of polling. **Paul: with the polling stopped, RTG video is
+  stable again** (firmware 14:38 on stage_hdmi_i2c, where INT is not wired yet, so the firmware serviced the part
+  only once at start-up). The image with INT wired is stage_hdmi_int.
 
 - **The stuck right mouse button and the "missing built-in commands" boot error are RESOLVED as not-a-core-bug
   (2026-09-25).** Both vanished together after pulling the board power; Paul has seen the button issue on the 020 core
