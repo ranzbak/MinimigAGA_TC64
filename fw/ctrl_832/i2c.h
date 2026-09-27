@@ -38,6 +38,7 @@
 #define CMD_I2C_SET_ADDR 0x0b
 #define CMD_I2C_SET_SCL_L 0x0c
 #define CMD_I2C_SET_SCL_H 0x0d
+#define CMD_I2C_RESET 0x0f     // bus recovery: 9 SCL clocks + STOP
 
 #define CMD_I2C_LAST_BYTE 0x10
 
@@ -51,5 +52,7 @@ void i2c_stop();
 void i2c_write(unsigned char byte);
 void i2c_write_multi(unsigned char *byte, unsigned char size);
 unsigned char i2c_read_reg(unsigned char dev, unsigned char reg);
+void i2c_wait_not_busy();
+void i2c_bus_recover();
 
 #endif

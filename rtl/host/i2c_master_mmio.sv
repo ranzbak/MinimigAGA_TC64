@@ -180,6 +180,18 @@ typedef enum i2c_enum_t {
 cmd_t cmd_flag;
 
 logic busy;
+
+// CMD_RESET is an I2C BUS RECOVERY (HDMI: the display did not come back after a
+// night with the monitor off, and neither Shift + '.' nor the Minimig reset
+// recovered it -- only reloading the FPGA did).  A slave left mid-byte, e.g.
+// by two masters colliding on the shared ADV7511 bus, holds SDA low until it
+// is clocked out of its byte; no transfer can start until then.  The standard
+// recovery: nine SCL clocks with SDA released, then a STOP.  The inner master
+// is held in reset meanwhile and `busy` reads 1 until the sequence is done.
+logic        rec_active = 1'b0;
+logic  [4:0] rec_step   = 5'd0;
+logic [17:0] rec_cnt    = 18'd0;
+logic        m_scl_o, m_scl_t, m_sda_o, m_sda_t;
 // logic bus_control;
 logic bus_active;
 logic missed_ack;
@@ -253,7 +265,7 @@ always_comb begin
         {1{1'b0}},
         bus_active,         // 0x40
         missed_ack,         // 0x20
-        busy,               // 0x10
+        busy | rec_active,  // 0x10
         buf_read_full,      // 0x08
         buf_read_empty,     // 0x04
         buf_write_full,     // 0x02
@@ -436,8 +448,9 @@ always_ff @(posedge clk) begin
                     r_read_ready <= 0;
                     cmd_in <= 0;
                 end
-                // When unsent data is present
-                if(prod_write != con_write) begin
+                // When unsent data is present (and no bus recovery is running:
+                // the inner master is held in reset for it)
+                if(prod_write != con_write && !rec_active) begin
                     // Fetch data
                     cmd_in <= buf_write[con_write];
                     con_write <= con_write_next;
@@ -617,7 +630,7 @@ end
 // I2C Master
 i2c_master my_i2c_master(
     .clk(clk),
-    .rst(rst),
+    .rst(rst | rec_active),
 
     // Host interface
     .cmd_address        ( cmd_address),
@@ -643,11 +656,11 @@ i2c_master my_i2c_master(
 
     // I2C interface
     .scl_i (scl_i),
-    .scl_o (scl_o),
-    .scl_t (scl_t),
+    .scl_o (m_scl_o),
+    .scl_t (m_scl_t),
     .sda_i (sda_i),
-    .sda_o (sda_o),
-    .sda_t (sda_t),
+    .sda_o (m_sda_o),
+    .sda_t (m_sda_t),
 
     // Status
     .busy (busy),
@@ -660,5 +673,35 @@ i2c_master my_i2c_master(
     .prescale (i2c_prescale),
     .stop_on_idle (stop_on_idle)
 );
+
+// Bus recovery (CMD_RESET).  One step per half SCL period -- the inner master's
+// prescale is a quarter period, so 2 x prescale clocks (1024 if it is unset):
+//   steps  0-17  nine clocks: SCL low on even steps, released on odd; SDA released
+//   step  18     SCL low, SDA low (set up the STOP)
+//   step  19     SCL released, SDA low
+//   step  20     SDA released while SCL is high: STOP; then done
+wire [17:0] rec_half = (i2c_prescale == 16'd0) ? 18'd1024 : {1'b0, i2c_prescale, 1'b0};
+always_ff @(posedge clk) begin
+    if (rst) begin
+        rec_active <= 1'b0; rec_step <= 5'd0; rec_cnt <= 18'd0;
+    end else if (!rec_active) begin
+        if (state_reg == STATE_RESET) begin
+            rec_active <= 1'b1; rec_step <= 5'd0; rec_cnt <= rec_half;
+        end
+    end else if (rec_cnt != 18'd0) begin
+        rec_cnt <= rec_cnt - 18'd1;
+    end else begin
+        rec_cnt <= rec_half;
+        if (rec_step == 5'd20) rec_active <= 1'b0;
+        else                   rec_step <= rec_step + 5'd1;
+    end
+end
+wire rec_scl_low = (rec_step <= 5'd17) ? !rec_step[0] : (rec_step == 5'd18);
+wire rec_sda_low = (rec_step == 5'd18) || (rec_step == 5'd19);
+// open drain: _t = 0 drives the pin low
+assign scl_t = rec_active ? !rec_scl_low : m_scl_t;
+assign scl_o = rec_active ? 1'b0         : m_scl_o;
+assign sda_t = rec_active ? !rec_sda_low : m_sda_t;
+assign sda_o = rec_active ? 1'b0         : m_sda_o;
 
 endmodule

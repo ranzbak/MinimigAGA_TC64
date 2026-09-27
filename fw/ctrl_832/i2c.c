@@ -128,3 +128,18 @@ void i2c_wait_not_busy()
   while ((I2C(HW_I2C_STATUS) & STATUS_I2C_BUSY) && --guard)
     ;
 }
+
+// Clock a stuck slave free.  A slave left in the middle of a byte -- a
+// transfer cut short, or two masters colliding on the shared ADV7511 bus --
+// holds SDA low until it has been clocked out of that byte, and until then no
+// START can be made.  The master's CMD_RESET does the standard recovery: nine
+// SCL clocks with SDA released, then a STOP (rtl/host/i2c_master_mmio.sv).
+void i2c_bus_recover()
+{
+  unsigned int spin = 64;
+  I2C(HW_I2C_DATA) = CMD_I2C_RESET << 8 | 0xaaaa0000;
+  // the command is queued: let the master pick it up before waiting on busy
+  while (!(I2C(HW_I2C_STATUS) & STATUS_I2C_BUSY) && --spin)
+    ;
+  i2c_wait_not_busy();
+}

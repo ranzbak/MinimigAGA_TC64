@@ -40,6 +40,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "hexdump.h"
 #include "drivesounds.h"
 #include "adv7511.h"
+#include "i2c.h"
 
 #define OSDCOLOR_TOPLEVEL 0x01
 #define OSDCOLOR_SUBMENU 0x03
@@ -356,6 +357,9 @@ void HandleUI(void)
             // timer on every press.
             if (menustate == MENU_NONE2 || menustate == MENU_INFO)
                 InfoMessage("Refreshing ADV7511 config");
+            // free the bus first: a slave stuck mid-byte would swallow the
+            // whole init sequence (the display that stayed dark overnight)
+            i2c_bus_recover();
             adv7511_init();
         }
         break;

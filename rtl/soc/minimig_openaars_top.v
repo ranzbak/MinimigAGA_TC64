@@ -448,7 +448,13 @@ i2c_sender myi2c_sender (
   .rst(!reset_n),
   .resend(1'b0),
   .read_regs(1'b0),
-  .dv_int(dv_int),
+  // Not dv_int: the table goes out once, at reset, for the boot screen.  After
+  // that the 832 firmware owns the ADV7511 (its hot-plug poll, Shift + '.',
+  // the OSD HDMI page).  A re-send on every interrupt edge ran into the
+  // firmware's own transfers on this shared, unarbitrated bus (io_scl/io_sda
+  // below are a wired AND of both masters) -- and the firmware clears the
+  // interrupt flags four times a second, so the edges came with its traffic.
+  .dv_int(1'b0),
   .scl_i(dv_scl_i),
   .scl_t(dv_scl_t),
   .scl_o(dv_scl_o),

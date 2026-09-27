@@ -139,6 +139,7 @@ void adv_send_config(unsigned char i2c_addr, char *cfg_buf)
 // a low->high transition of HPD, so a monitor that is simply absent costs one
 // I2C read per call and nothing else.
 static unsigned char adv_hpd_was = 0;
+static unsigned char adv_noanswer = 0;   // consecutive failed status reads
 
 unsigned char adv7511_status(void)
 {
@@ -193,8 +194,18 @@ int adv7511_poll(void)
         // is nothing there.  The worst this can cause is one extra re-init
         // after a transient read failure, which is harmless.
         adv_hpd_was = 0;
+        // Eight failed reads in a row (two seconds) and the bus itself may be
+        // wedged -- a slave stuck mid-byte holding SDA low, which no transfer
+        // can get past.  Clock it free; the next good read with HPD high then
+        // re-initialises the part (adv_hpd_was is 0).
+        if (++adv_noanswer >= 8)
+        {
+            adv_noanswer = 0;
+            i2c_bus_recover();
+        }
         return 0;
     }
+    adv_noanswer = 0;
 
     hpd = (st & 0x40) ? 1 : 0;
 
