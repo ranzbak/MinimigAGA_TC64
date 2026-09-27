@@ -11,6 +11,9 @@
 ;   P2   FMOVE.P FPn,Dn is the unsupported data type: vector 55, format $3,
 ;        frame word $30DC.  Before the fix: $402C (static k) / $202C (dynamic).
 ;   P2b  FMOVE.P FPn,An is the plain F-line: frame word $002C.  Before: $202C.
+;   I1   an FP store to a PC-relative address -- (d16,PC), ([bd,PC]) -- is an
+;        illegal (not alterable) destination: the plain F-line, $002C, and
+;        nothing is written.  Before the fix it STORED (and read the pointer).
 ;
 ; The cases run in supervisor mode (exec Supervisor()) with VBR pointed at a
 ; private copy of the vector table whose F-line (11) and FP-unsupported-data-
@@ -32,7 +35,7 @@ _LVOVPrintf	equ	-954		; dos.library V36
 AttnFlags	equ	296		; UWORD
 AFF_ANYFPU	equ	$70		; 68881 | 68882 | FPU40
 
-NCASES		equ	10
+NCASES		equ	12
 RETURN_OK	equ	0
 RETURN_WARN	equ	5
 RETURN_FAIL	equ	20
@@ -249,10 +252,52 @@ c10:	move.l	sp,save_sp
 	dc.w	$F208,$7C10
 c10e:	move.l	trap_word,gotv+36
 
+;------------------------------------- I1 FMOVE.L FP0,(d16,PC): F-line, no store
+c11:	move.l	sp,save_sp
+	move.l	#c11e,resume
+	clr.l	trap_word
+	bsr	sent_fill
+	fmove.l	#1,fp0
+	dc.w	$F23A,$6000,(sent+8)-(c11x+2)	; target: the middle of sent
+c11x	equ	*-4				; PC base = the d16 word, c11x+2
+c11e:	bsr	sent_check			; d0 = trap word, bit 31 if written
+	move.l	d0,gotv+40
+
+;------------------------------------- I1 FMOVE.L FP0,([bd,PC]): F-line, no store
+c12:	move.l	sp,save_sp
+	move.l	#c12e,resume
+	clr.l	trap_word
+	bsr	sent_fill
+	fmove.l	#1,fp0
+	dc.w	$F23B,$6000,$0161,sentp-c12x	; the pointer at sentp -> sent
+c12x	equ	*-4				; PC base = the full extension word
+c12e:	bsr	sent_check
+	move.l	d0,gotv+44
+
 	move.l	old_vbr,d0
 	movec	d0,vbr
 	movem.l	(sp)+,d0-d7/a0-a6
 	rte
+
+; the I1 cases' target, 16 bytes in the code hunk (a PC-relative displacement
+; cannot reach another hunk); the store, if the core wrongly makes it, lands
+; inside it whatever the exact PC base
+sent_fill:
+	lea	sent,a0
+	moveq	#3,d1
+.f:	move.l	#$DEADBEEF,(a0)+
+	dbra	d1,.f
+	rts
+; d0 = the trap word, with bit 31 set if anything in sent was written
+sent_check:
+	move.l	trap_word,d0
+	lea	sent,a0
+	moveq	#3,d1
+.c:	cmp.l	#$DEADBEEF,(a0)+
+	beq.s	.n
+	bset	#31,d0
+.n:	dbra	d1,.c
+	rts
 
 ; Z clear when the case trapped
 trapped:
@@ -273,12 +318,16 @@ h_trap:
 	move.l	resume,a0
 	jmp	(a0)
 
+	cnop	0,4
+sent:	dcb.l	4,$DEADBEEF		; I1: must stay unwritten
+sentp:	dc.l	sent			; I1: must not be read (or written through)
+
 ;--------------------------------------------------------------- data
 	section	data,data
 
 dosname:	dc.b	"dos.library",0
 msg_nofpu:	dc.b	"FPUFixTest: no FPU on this image (LC040?) -- nothing to test.",10,0
-msg_head:	dc.b	"FPUFixTest -- pipelined 68040 FPU fixes (P1, P2, P2b)",10,0
+msg_head:	dc.b	"FPUFixTest -- pipelined 68040 FPU fixes (P1, P2, P2b, I1)",10,0
 fmt_line:	dc.b	"%-40s expect %08lx got %08lx  %s",10,0
 msg_allok:	dc.b	"All cases passed.",10,0
 msg_fails:	dc.b	"%ld case(s) FAILED.",10,0
@@ -294,9 +343,11 @@ n7:	dc.b	"P1  FMUL.W ([bd]) at an odd address",0
 n8:	dc.b	"P2  FMOVE.P FP0,D0{#0} (frame word)",0
 n9:	dc.b	"P2  FMOVE.P FP0,D0{D1} (frame word)",0
 n10:	dc.b	"P2b FMOVE.P FP0,A0{D1} (frame word)",0
+n11:	dc.b	"I1  FMOVE.L FP0,(d16,PC) (frame word)",0
+n12:	dc.b	"I1  FMOVE.L FP0,([bd,PC]) (frame word)",0
 	even
-names:	dc.l	n1,n2,n3,n4,n5,n6,n7,n8,n9,n10
-expv:	dc.l	2, 5, 5, $FF112233, 0, $41000000, 21, $30DC, $30DC, $002C
+names:	dc.l	n1,n2,n3,n4,n5,n6,n7,n8,n9,n10,n11,n12
+expv:	dc.l	2, 5, 5, $FF112233, 0, $41000000, 21, $30DC, $30DC, $002C, $002C, $002C
 
 ; the pointers the memory-indirect cases read
 p_five:	dc.l	five
