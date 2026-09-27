@@ -2208,7 +2208,12 @@ void HandleUI(void)
             s[24] = hex[wr & 15];
         }
         OsdWrite(5, s, 0, 0);
-        OsdWrite(6, "   Pick the clean range middle", 0, 0);
+        {
+            extern unsigned long adv_services;
+            extern unsigned char adv_int_now;
+            sprintf(s, "   INT %d  serviced %lu", adv_int_now, adv_services);
+        }
+        OsdWrite(6, s, 0, 0);
         OsdWrite(7, STD_BACK, menusub == 2, 0);
 
         menustate = MENU_SETTINGS_HDMI2;

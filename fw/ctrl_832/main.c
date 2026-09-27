@@ -67,6 +67,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 static unsigned long adv_timer = 0;
 static unsigned char adv_first = 1;   // service the ADV7511 once at start-up
+static unsigned char adv_int_was = 0; // INT level at the last check (edge detect)
+unsigned long adv_services = 0;       // OSD HDMI page: how often the part was serviced
+unsigned char adv_int_now = 0;        // OSD HDMI page: INT level at the last check
 
 const char version[] = MM_VERSTRING;
 
@@ -310,11 +313,24 @@ __geta4 int main(void)
 		// and only then does the 832 talk I2C to it -- read the status,
 		// re-initialise on HPD high, clear the flags (which drops INT).  At
 		// most every 250 ms while INT stays up; once at start-up.
-		if (CheckTimer(adv_timer) && (adv_first || adv7511_int_active()))
+		// On a RISING edge of INT only (2026-09-27): serviced on the level, a
+		// pin that stays high -- the wrong polarity, or a flag that will not
+		// clear -- had the 832 servicing the part every 250 ms, and the Amiga
+		// crashed a few seconds after Workbench (no SD icon, disk block
+		// errors: the 832 also serves the disks).  Edge-triggered, a stuck pin
+		// costs one service.
+		if (CheckTimer(adv_timer))
 		{
-			adv_first = 0;
+			unsigned char lvl = adv7511_int_active() ? 1 : 0;
 			adv_timer = GetTimer(250);
-			adv7511_poll();
+			adv_int_now = lvl;
+			if (adv_first || (lvl && !adv_int_was))
+			{
+				adv_first = 0;
+				adv_services++;
+				adv7511_poll();
+			}
+			adv_int_was = lvl;
 		}
 		if(ErrorMask)
 		{
