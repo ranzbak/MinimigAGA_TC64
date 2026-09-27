@@ -268,6 +268,15 @@ differences; the 832 is not holding the CPU.
   and whether the re-init runs and what the I2C writes return. Suspects: the ADV7511 entering power-down / losing
   its register state after a long HPD-low, and the firmware's re-init not restoring the power-up sequence (0x41
   power-down bit, 0xD6 HPD override) or the I2C master stuck (a bounded wait gives up silently).
+  **Update (Paul, 2026-09-27, image stage_fpu_fixes):** again after a night with the monitor off. Monitor on: no
+  picture; Shift+'.': none; the PCB (Amiga) reset: none; **a JTAG reload of the same image: none**; the board's
+  **FPGA reset button: picture back**. A JTAG reload re-runs the RTL's I2C register table and restarts the 832, so
+  whatever the reset button does that a reconfiguration does not is the lead. Check what that button drives: the
+  PROGRAM_B pin (reconfigure from the SPI flash, which holds an OLDER image with the older ADV7511 table), or a
+  board-level reset that also reaches the ADV7511 (its PD pin or its power), or a stuck I2C bus (SDA held low by the
+  ADV7511, which only a reset of the chip or nine SCL clocks clears; neither the RTL table nor the firmware does
+  that bus recovery). The latest image was reloaded over JTAG from that good state to see whether it keeps the
+  picture across the next monitor-off period.
 
 - **The stuck right mouse button and the "missing built-in commands" boot error are RESOLVED as not-a-core-bug
   (2026-09-25).** Both vanished together after pulling the board power; Paul has seen the button issue on the 020 core
