@@ -81,6 +81,7 @@ entity cfide is
         sda_i         : in  std_logic;
         sda_o         : out std_logic;
         sda_t         : out std_logic;
+        i2c_ext_int   : in  std_logic := '0';  -- the ADV7511's INT (status 0x400)
         -- Video scaler coordinates
         pos_data_q    : out std_logic_vector(15 downto 0);
         -- 28Mhz signals
@@ -540,7 +541,8 @@ begin
                 scl_t            => scl_t,
                 sda_i            => sda_i,
                 sda_o            => sda_o,
-                sda_t            => sda_t
+                sda_t            => sda_t,
+                ext_int          => i2c_ext_int
             );
 
     end generate;

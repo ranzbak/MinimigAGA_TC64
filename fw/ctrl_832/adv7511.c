@@ -219,8 +219,13 @@ int adv7511_poll(void)
 
     // clear both interrupt flags so the pin re-arms (writing 1 clears)
     i2c_set_address(ADV_CTRL_ADDR);
+    // Clear EVERY interrupt flag, not just HPD/Monitor Sense: the main loop
+    // services the part only while INT is high, and a flag left set (EDID
+    // ready, ...) would hold INT high and turn that back into a 4 Hz poll.
+    // 0x96 and 0x97 are both write-1-to-clear.
     i2c_write(0x96);
-    i2c_write(0xC0);
+    i2c_write(0xFF);
+    i2c_write(0xFF);
     i2c_stop();
     i2c_wait_not_busy();
 
@@ -262,4 +267,11 @@ void adv7511_init(void)
 
     // Done
     return;
+}
+
+// The ADV7511's INT pin, as the FPGA's I2C master reports it (status 0x400).
+// Reading it is a register read in the FPGA, not I2C traffic.
+int adv7511_int_active(void)
+{
+    return (I2C(HW_I2C_STATUS) & STATUS_I2C_EXT_INT) != 0;
 }

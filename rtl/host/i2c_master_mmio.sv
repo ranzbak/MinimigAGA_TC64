@@ -55,7 +55,12 @@ module i2c_master_mmio (
     output logic         scl_t,
     input  logic         sda_i,
     output logic         sda_o,
-    output logic         sda_t
+    output logic         sda_t,
+
+    // an interrupt line from a device on the bus (the ADV7511's INT, active
+    // high), readable in the status register so the firmware only has to
+    // talk I2C when the device asks for it
+    input  logic         ext_int
 );
 //////////////////////////////////////////////////////////////////////
 //
@@ -194,6 +199,9 @@ logic busy;
 // commands queued or in progress in this wrapper: the core's own busy is 0
 // until it has taken a command, so the firmware's wait-for-idle returned early
 logic cmd_pending;
+// ext_int into this clock domain
+logic [1:0] ext_int_sync = 2'b00;
+always_ff @(posedge clk) ext_int_sync <= {ext_int_sync[0], ext_int};
 
 // CMD_RESET is an I2C BUS RECOVERY (HDMI: the display did not come back after a
 // night with the monitor off, and neither Shift + '.' nor the Minimig reset
@@ -275,7 +283,8 @@ assign cmd_pending = (prod_write != con_write) || (state_reg != STATE_IDLE);
 always_comb begin
     // The status registere as shown on the mmio
     status_reg = {
-        6'b0,
+        5'b0,
+        ext_int_sync[1],    // 0x400 the device interrupt line
         missed_ack,
         stop_on_idle,
         {1{1'b0}},

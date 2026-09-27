@@ -23,7 +23,7 @@ i2c_master_mmio dut (
     .clk(clk), .rst(rst), .d(d), .q(q), .interrupt(),
     .addr(addr), .i2c_select(sel), .interrupt_select(1'b0), .req(req), .wr(wr),
     .scl_i(scl), .scl_o(scl_o), .scl_t(scl_t),
-    .sda_i(sda), .sda_o(sda_o), .sda_t(sda_t));
+    .sda_i(sda), .sda_o(sda_o), .sda_t(sda_t), .ext_int(1'b0));
 
 task mmio_write(input [15:0] v);
     @(posedge clk); d <= v; wr <= 1; sel <= 1; req <= 1;

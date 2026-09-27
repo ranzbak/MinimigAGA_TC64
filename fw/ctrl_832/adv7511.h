@@ -12,6 +12,7 @@ void adv7511_init();
 unsigned char adv7511_status(void);     // register 0x42: [6] HPD, [5] mon sense
 unsigned char adv7511_int_flags(void);  // register 0x96: [7] HPD, [6] mon sense
 int adv7511_poll(void);
+int adv7511_int_active(void);   // INT pin high: the part wants servicing
 
 // Video clock delay, register 0xBA bits 7:5: step 0..7 = -1.2 .. +1.6 ns in
 // 0.4 ns steps (3 = 0 ns).  Kept here so every (re-)initialisation, including

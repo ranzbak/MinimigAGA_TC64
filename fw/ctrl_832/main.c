@@ -66,6 +66,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "adv7511.h"
 
 static unsigned long adv_timer = 0;
+static unsigned char adv_first = 1;   // service the ADV7511 once at start-up
 
 const char version[] = MM_VERSTRING;
 
@@ -303,8 +304,15 @@ __geta4 int main(void)
 		// The first attempt at this (23:01) wedged the I2C bus and took the
 		// manual re-init down with it: a read command needs its STOP to ride
 		// on the command itself, and every wait here is now bounded.
-		if (CheckTimer(adv_timer))
+		// INTERRUPT-DRIVEN, not polled (Paul, 2026-09-27): the part raises INT
+		// on a hot-plug or monitor-sense change (the enables 0x94[7:6] survive
+		// the HPD reset), the FPGA shows the pin in the I2C status register,
+		// and only then does the 832 talk I2C to it -- read the status,
+		// re-initialise on HPD high, clear the flags (which drops INT).  At
+		// most every 250 ms while INT stays up; once at start-up.
+		if (CheckTimer(adv_timer) && (adv_first || adv7511_int_active()))
 		{
+			adv_first = 0;
 			adv_timer = GetTimer(250);
 			adv7511_poll();
 		}

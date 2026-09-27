@@ -22,7 +22,7 @@ i2c_master_mmio dut (
     .clk(clk), .rst(rst), .d(d), .q(q), .interrupt(),
     .addr(addr), .i2c_select(sel), .interrupt_select(1'b0), .req(req), .wr(wr),
     .scl_i(scl), .scl_o(scl_o), .scl_t(scl_t),
-    .sda_i(sda), .sda_o(sda_o), .sda_t(sda_t));
+    .sda_i(sda), .sda_o(sda_o), .sda_t(sda_t), .ext_int(1'b0));
 
 //------------------------------------------------------------ slave at 0x39
 logic [7:0] mem [0:255];

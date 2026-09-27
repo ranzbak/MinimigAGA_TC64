@@ -27,6 +27,7 @@
 #define STATUS_I2C_BUS_ACTIVE 0x0040
 #define STATUS_I2C_BUS_STOP_ON_IDLE 0x0180
 #define STATUS_I2C_BUS_MISSED_ACK 0x0200
+#define STATUS_I2C_EXT_INT 0x0400     // the ADV7511's INT pin (active high)
 
 // Commands (rtl/host/i2c_master_mmio.sv)
 #define CMD_I2C_READ 0x01

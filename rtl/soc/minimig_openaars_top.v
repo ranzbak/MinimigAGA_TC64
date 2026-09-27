@@ -586,6 +586,7 @@ minimig_virtual_top
   .SDA_I(sda_i),
   .SDA_O(sda_o),
   .SDA_T(sda_t),
+  .I2C_INT(dv_int),     // the 832 services the ADV7511 when it raises INT
   .RTC_CS(),
   .VPOS_DATA(vpos_data),
   .floppy_frd(),

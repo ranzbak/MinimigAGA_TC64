@@ -134,6 +134,7 @@ module minimig_virtual_top #(
     input                 SDA_I, // Clock in
     output                SDA_O, // Clock out
     output                SDA_T, // Clock tristate
+    input                 I2C_INT, // the ADV7511's INT, readable by the 832
 `endif
 
 // `ifdef MINIMIG_RTC_BUS
@@ -1368,6 +1369,7 @@ cfide #(
     .sda_i(SDA_I),
     .sda_o(SDA_O),
     .sda_t(SDA_T),
+    .i2c_ext_int(I2C_INT),
 `endif
 
 `ifdef MINIMIG_VPOS
