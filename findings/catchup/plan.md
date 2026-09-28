@@ -125,4 +125,9 @@ SysInfo loop, compat perf bench, profile 0 (8,076 clocks, CPI 2.383 before):
   | +MISPLIT | **26,559 (-31 %)** |
 
   Mutants mis_word, pre_no_wb, pre_no_ans and pre_lo_only are caught. The all-switches suite passes, apart from one checker bug (fixed, be119bc). `build/stage_cu3` (all five switches) has clk_38 at +0.068 ns.
+- **Dhrystone on the SoC bench** (`run_ddr3_dhry.sh`, FREECORE=1, 10 runs): the old core took 16,795 clocks (CPI 3.61, about 22,500 Dhrystones/s at 37.8 MHz, the board's scale). With all five switches it takes **11,663 (CPI 2.50, about 32,400/s: about 0.99 of an A4000/040)**. What is left:
+  - redirect refill: 25.6 %;
+  - EA-fetch -> EX transit: 17 %;
+  - store-hold: 16.6 %. The port is busy half the time with write-through stores at 4.5 clocks each, the case for write-combining or copyback;
+  - read wait: 12 %.
 - **Next.** The board test after step 2 (`build/stage_cu2`), then steps 3 and 4. Step 3 is probably a branch target buffer in IF, because pre-decoding IF's queue gains nothing over ID. Step 4 has the timing risk.

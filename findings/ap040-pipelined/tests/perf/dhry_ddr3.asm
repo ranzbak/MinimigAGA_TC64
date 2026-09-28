@@ -22,10 +22,15 @@ start:	move.l	#CACRV,d0
 	moveq	#0,d0
 	move.l	d0,MBOX
 	move.l	d0,MBOX+$10
-	lea	BASE,a1			; .bss and the rest: zero
-	move.w	#$3400/4-1,d1
+	lea	BASE,a1			; .bss and the rest: zero, 1K at a time,
+	moveq	#13-1,d2		; a phase (6, 7, 6, ...) after each: the
+	moveq	#6,d3			; loader runs from chip RAM and the
+.zc:	move.w	#256-1,d1		; bench's stall watchdog counts phases
 .z:	clr.l	(a1)+
 	dbra	d1,.z
+	move.l	d3,MBOX+$10
+	eori.l	#1,d3
+	dbra	d2,.zc
 	move.l	#4,MBOX+$10		; (a phase: the bench's stall watchdog counts them)
 	lea	blk,a0			; the program
 	lea	BASE,a1
