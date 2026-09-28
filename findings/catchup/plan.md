@@ -108,4 +108,21 @@ SysInfo loop, compat perf bench, profile 0 (8,076 clocks, CPI 2.383 before):
   - an RTS: 1.1, now ID's redirect;
   - a fast read: its 2-clock latency, for example `move.l 4(a0)` right after `lea` loses 3.0.
 - **Board, 2026-09-28** (`stage_cu2`: STORE_BUF=1 FWD=1 RAS=1, normal boot with the MMU on): SysInfo **1.25**, **23.96 MIPS**, against 1.00 and 19.03 on `stage_sb2`. That is +26 %, as the SoC bench predicted (-25 % clocks).
+- **Dhrystone** (xSysInfo's, `tb/perf/dhry`; board after step 2: 22,185 = 0.67 of an A4000/040's 32,809). Its profile differs from SysInfo's loop: CPI 4.2 on the old core. The causes:
+  - loads refused by ANY store in EX/WB;
+  - misaligned accesses bypassing the cache (68000-compiled: 2-aligned globals, a 62-byte stack frame);
+  - string-loop branches;
+  - store bandwidth: every store writes through.
+
+  Compat perf bench, 20 runs, profile 0:
+
+  | build | clocks |
+  |---|---:|
+  | old core | 38,493 |
+  | FWD+RAS | 35,220 |
+  | +PRECISE (store buffer stage 3) | 28,042 |
+  | +forwarding at any alignment | 27,802 |
+  | +MISPLIT | **26,559 (-31 %)** |
+
+  Mutants mis_word, pre_no_wb, pre_no_ans and pre_lo_only are caught. The all-switches suite passes, apart from one checker bug (fixed, be119bc). `build/stage_cu3` (all five switches) has clk_38 at +0.068 ns.
 - **Next.** The board test after step 2 (`build/stage_cu2`), then steps 3 and 4. Step 3 is probably a branch target buffer in IF, because pre-decoding IF's queue gains nothing over ID. Step 4 has the timing risk.

@@ -381,8 +381,11 @@ if {$pipe_dir ne ""} {
     # (findings/catchup/plan.md); default 0.
     set fwd [expr {[info exists ::env(FWD)] && $::env(FWD) ne "" ? $::env(FWD) : 0}]
     set ras [expr {[info exists ::env(RAS)] && $::env(RAS) ne "" ? $::env(RAS) : 0}]
-    set pipe_gen " AP040_PIPELINED=1 AP040_HAS_MMU=$pmmu AP040_HAS_FPU=$pfpu AP040_FREE_CORE=$free_core AP040_STORE_BUF=$store_buf AP040_FWD=$fwd AP040_RAS=$ras"
-    puts "build_ap040.tcl: PIPELINED build from $P ([llength $pipe_off] lib/AP68040 files disabled), FREE_CORE=$free_core STORE_BUF=$store_buf FWD=$fwd RAS=$ras"
+    # PRECISE=1 / MISPLIT=1: address-precise fast reads, misaligned split
+    set precise [expr {[info exists ::env(PRECISE)] && $::env(PRECISE) ne "" ? $::env(PRECISE) : 0}]
+    set misplit [expr {[info exists ::env(MISPLIT)] && $::env(MISPLIT) ne "" ? $::env(MISPLIT) : 0}]
+    set pipe_gen " AP040_PIPELINED=1 AP040_HAS_MMU=$pmmu AP040_HAS_FPU=$pfpu AP040_FREE_CORE=$free_core AP040_STORE_BUF=$store_buf AP040_FWD=$fwd AP040_RAS=$ras AP040_PRECISE=$precise AP040_MISPLIT=$misplit"
+    puts "build_ap040.tcl: PIPELINED build from $P ([llength $pipe_off] lib/AP68040 files disabled), FREE_CORE=$free_core STORE_BUF=$store_buf FWD=$fwd RAS=$ras PRECISE=$precise MISPLIT=$misplit"
 }
 if {[info exists ::env(FREE_CORE)] && $::env(FREE_CORE) eq "1" && ![info exists free_core]} {
     error "build_ap040.tcl: FREE_CORE=1 needs the pipelined core (AP040_PIPE_DIR is none)"

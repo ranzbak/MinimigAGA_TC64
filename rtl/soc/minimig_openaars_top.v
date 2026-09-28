@@ -43,6 +43,9 @@ module minimig_openaars_top #(
   // store-to-load forwarding and the return-address stack (findings/catchup/plan.md)
   parameter AP040_FWD = 0,
   parameter AP040_RAS = 0,
+  // address-precise fast reads and misaligned-transfer splitting (findings/catchup/plan.md)
+  parameter AP040_PRECISE = 0,
+  parameter AP040_MISPLIT = 0,
   // AP68040 island clock divider: 30 = clk_114/3 (stage D3),
   // 40 = clk_114/4 (pre-D3 rate, D3 architecture otherwise intact).
   parameter CPU_CLK_DIVIDE = 30,
@@ -518,6 +521,8 @@ minimig_virtual_top
   .ap040_store_buf(AP040_STORE_BUF),
   .ap040_fwd(AP040_FWD),
   .ap040_ras(AP040_RAS),
+  .ap040_precise(AP040_PRECISE),
+  .ap040_misplit(AP040_MISPLIT),
   .cpu_clk_divide(CPU_CLK_DIVIDE),
   .chip32(CHIP32),
   .CPU040_DEBUG_ILA(CPU040_DEBUG_ILA),
