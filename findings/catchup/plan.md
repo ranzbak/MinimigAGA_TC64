@@ -107,4 +107,5 @@ SysInfo loop, compat perf bench, profile 0 (8,076 clocks, CPI 2.383 before):
   - a taken BSR/BRA: 1.9-2.0;
   - an RTS: 1.1, now ID's redirect;
   - a fast read: its 2-clock latency, for example `move.l 4(a0)` right after `lea` loses 3.0.
+- **Board, 2026-09-28** (`stage_cu2`: STORE_BUF=1 FWD=1 RAS=1, normal boot with the MMU on): SysInfo **1.25**, **23.96 MIPS**, against 1.00 and 19.03 on `stage_sb2`. That is +26 %, as the SoC bench predicted (-25 % clocks).
 - **Next.** The board test after step 2 (`build/stage_cu2`), then steps 3 and 4. Step 3 is probably a branch target buffer in IF, because pre-decoding IF's queue gains nothing over ID. Step 4 has the timing risk.
