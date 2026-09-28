@@ -65,6 +65,10 @@ entity TG68K is
 		-- chip or fast RAM) into a 4-entry FIFO; 2 the same hardware never
 		-- posting (the A/B reference); 0 synchronous stores, as before.
 		ap040_store_buf    : integer := 0;
+		-- (pipelined core only; findings/catchup/plan.md) store-to-load
+		-- forwarding (1) and ID's return-address stack (1); 0: off.
+		ap040_fwd          : integer := 0;
+		ap040_ras          : integer := 0;
 		-- clk / clk_cpu, the AP68040 island's clock ratio.  3 is stage D3 as
 		-- shipped (37.8125 MHz); 4 runs the same architecture at the pre-D3 CPU
 		-- rate.  THE PHASE MARKER BELOW DEPENDS ON THIS AND IS NOT RATIO-AGNOSTIC
@@ -614,7 +618,9 @@ ARCHITECTURE logic OF TG68K IS
 			AP040_POST_STORES  : integer := 1;
 			AP040_FILL_CHANNEL : integer := 1;
 			AP040_BUS16        : integer := 1;
-			AP040_STORE_BUF    : integer := 0
+			AP040_STORE_BUF    : integer := 0;
+			AP040_FWD          : integer := 0;
+			AP040_RAS          : integer := 0
 		);
 		PORT(
 			clk               : in  std_logic;
@@ -1408,7 +1414,9 @@ BEGIN
 					AP040_FILL_CHANNEL => 0,
 					-- The 16-bit adapter is instantiated below, in this file.
 					AP040_BUS16        => 0,
-					AP040_STORE_BUF    => ap040_store_buf
+					AP040_STORE_BUF    => ap040_store_buf,
+					AP040_FWD          => ap040_fwd,
+					AP040_RAS          => ap040_ras
 				)
 				PORT MAP(
 					-- The CPU island's own 37.8125 MHz clock.  So are the master

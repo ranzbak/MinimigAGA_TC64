@@ -807,9 +807,15 @@ localparam integer STORE_BUF_GEN = `STOREBUF;
 `else
 localparam integer STORE_BUF_GEN = 0;
 `endif
+// FWDRAS builds it with store-to-load forwarding and the return-address stack (findings/catchup/plan.md)
+`ifdef FWDRAS
+localparam integer FWDRAS_GEN = 1;
+`else
+localparam integer FWDRAS_GEN = 0;
+`endif
 `ifdef AP040_PIPELINED
 TG68K #(.cpu_clk_ratio(`CPU_RATIO), .ap040_pipelined(1), .chip32(CHIP32_GEN), .ap040_free_core(FREE_CORE_GEN),
-        .ap040_store_buf(STORE_BUF_GEN)) tg68k (
+        .ap040_store_buf(STORE_BUF_GEN), .ap040_fwd(FWDRAS_GEN), .ap040_ras(FWDRAS_GEN)) tg68k (
 `else
 TG68K #(.cpu_clk_ratio(`CPU_RATIO), .chip32(CHIP32_GEN)) tg68k (
 `endif
