@@ -38,6 +38,8 @@ module minimig_openaars_top #(
   parameter AP040_PIPELINED = 0,
   // 1: the pipelined core runs free of the bus wait (findings/unfreeze/plan.md)
   parameter AP040_FREE_CORE = 0,
+  // the pipelined core's store buffer (findings/storebuf/plan.md; TG68K.vhd)
+  parameter AP040_STORE_BUF = 0,
   // AP68040 island clock divider: 30 = clk_114/3 (stage D3),
   // 40 = clk_114/4 (pre-D3 rate, D3 architecture otherwise intact).
   parameter CPU_CLK_DIVIDE = 30,
@@ -510,6 +512,7 @@ minimig_virtual_top
   .ap040_post_stores(AP040_POST_STORES),
   .ap040_pipelined(AP040_PIPELINED),
   .ap040_free_core(AP040_FREE_CORE),
+  .ap040_store_buf(AP040_STORE_BUF),
   .cpu_clk_divide(CPU_CLK_DIVIDE),
   .chip32(CHIP32),
   .CPU040_DEBUG_ILA(CPU040_DEBUG_ILA),

@@ -801,8 +801,15 @@ localparam integer FREE_CORE_GEN = 1;
 `else
 localparam integer FREE_CORE_GEN = 0;
 `endif
+// STOREBUF=<n> builds the pipelined core with that store buffer mode (findings/storebuf/plan.md)
+`ifdef STOREBUF
+localparam integer STORE_BUF_GEN = `STOREBUF;
+`else
+localparam integer STORE_BUF_GEN = 0;
+`endif
 `ifdef AP040_PIPELINED
-TG68K #(.cpu_clk_ratio(`CPU_RATIO), .ap040_pipelined(1), .chip32(CHIP32_GEN), .ap040_free_core(FREE_CORE_GEN)) tg68k (
+TG68K #(.cpu_clk_ratio(`CPU_RATIO), .ap040_pipelined(1), .chip32(CHIP32_GEN), .ap040_free_core(FREE_CORE_GEN),
+        .ap040_store_buf(STORE_BUF_GEN)) tg68k (
 `else
 TG68K #(.cpu_clk_ratio(`CPU_RATIO), .chip32(CHIP32_GEN)) tg68k (
 `endif
