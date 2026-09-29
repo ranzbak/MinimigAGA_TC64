@@ -130,4 +130,5 @@ SysInfo loop, compat perf bench, profile 0 (8,076 clocks, CPI 2.383 before):
   - EA-fetch -> EX transit: 17 %;
   - store-hold: 16.6 %. The port is busy half the time with write-through stores at 4.5 clocks each, the case for write-combining or copyback;
   - read wait: 12 %.
+- **Board, `stage_cu3`** (normal boot, MMU on): xSysInfo **28,570 Dhrystones, 0.87** (from 22,185 / 0.67). The simulation's 0.99 assumed posting. With the MMU on, stores stay synchronous: the SoC bench with STORE_BUF off and the other four switches on gives 13,057 clocks, about 28,950/s, within 1.5 % of the board, with store-hold at 34 %. The next step for this setup is **store buffer stage 4 (posting with the MMU on)**: 13,057 -> about 11,663 clocks, about 32,400 Dhrystones.
 - **Next.** The board test after step 2 (`build/stage_cu2`), then steps 3 and 4. Step 3 is probably a branch target buffer in IF, because pre-decoding IF's queue gains nothing over ID. Step 4 has the timing risk.
