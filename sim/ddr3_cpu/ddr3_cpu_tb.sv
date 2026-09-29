@@ -808,7 +808,18 @@ localparam integer STORE_BUF_GEN = `STOREBUF;
 localparam integer STORE_BUF_GEN = 0;
 `endif
 // FWDRAS builds it with store-to-load forwarding and the return-address stack (findings/catchup/plan.md)
-// PREMIS: address-precise fast reads and misaligned splitting as well
+// SBMMU: stores posted with translation on; MISPLIT: misaligned split (known-bad on the board)
+`ifdef SBMMU
+localparam integer SBMMU_GEN = 1;
+`else
+localparam integer SBMMU_GEN = 0;
+`endif
+`ifdef MISPLIT
+localparam integer MISPLIT_GEN = 1;
+`else
+localparam integer MISPLIT_GEN = 0;
+`endif
+// PREMIS: address-precise fast reads (PRECISE)
 `ifdef PREMIS
 localparam integer PREMIS_GEN = 1;
 `else
@@ -822,7 +833,7 @@ localparam integer FWDRAS_GEN = 0;
 `ifdef AP040_PIPELINED
 TG68K #(.cpu_clk_ratio(`CPU_RATIO), .ap040_pipelined(1), .chip32(CHIP32_GEN), .ap040_free_core(FREE_CORE_GEN),
         .ap040_store_buf(STORE_BUF_GEN), .ap040_fwd(FWDRAS_GEN), .ap040_ras(FWDRAS_GEN),
-        .ap040_precise(PREMIS_GEN), .ap040_misplit(PREMIS_GEN)) tg68k (
+        .ap040_precise(PREMIS_GEN), .ap040_misplit(MISPLIT_GEN), .ap040_sb_mmu(SBMMU_GEN)) tg68k (
 `else
 TG68K #(.cpu_clk_ratio(`CPU_RATIO), .chip32(CHIP32_GEN)) tg68k (
 `endif

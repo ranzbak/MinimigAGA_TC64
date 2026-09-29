@@ -73,6 +73,8 @@ entity TG68K is
 		-- misaligned transfers split into aligned pieces; 0: off.
 		ap040_precise      : integer := 0;
 		ap040_misplit      : integer := 0;
+		-- store buffer stage 4: stores posted with translation on too
+		ap040_sb_mmu       : integer := 0;
 		-- clk / clk_cpu, the AP68040 island's clock ratio.  3 is stage D3 as
 		-- shipped (37.8125 MHz); 4 runs the same architecture at the pre-D3 CPU
 		-- rate.  THE PHASE MARKER BELOW DEPENDS ON THIS AND IS NOT RATIO-AGNOSTIC
@@ -626,7 +628,8 @@ ARCHITECTURE logic OF TG68K IS
 			AP040_FWD          : integer := 0;
 			AP040_RAS          : integer := 0;
 			AP040_PRECISE      : integer := 0;
-			AP040_MISPLIT      : integer := 0
+			AP040_MISPLIT      : integer := 0;
+			AP040_SB_MMU       : integer := 0
 		);
 		PORT(
 			clk               : in  std_logic;
@@ -1424,7 +1427,8 @@ BEGIN
 					AP040_FWD          => ap040_fwd,
 					AP040_RAS          => ap040_ras,
 					AP040_PRECISE      => ap040_precise,
-					AP040_MISPLIT      => ap040_misplit
+					AP040_MISPLIT      => ap040_misplit,
+					AP040_SB_MMU       => ap040_sb_mmu
 				)
 				PORT MAP(
 					-- The CPU island's own 37.8125 MHz clock.  So are the master

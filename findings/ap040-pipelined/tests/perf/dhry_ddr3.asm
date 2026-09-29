@@ -38,6 +38,17 @@ start:	move.l	#CACRV,d0
 .c1:	move.w	(a0)+,(a1)+
 	dbra	d1,.c1
 	move.l	#5,MBOX+$10
+	ifd	MMUON
+	; translation on (TC.E), everything through DTT0/ITT0: base 0, mask $FF,
+	; E, either FC2, cacheable write-through -- the core's and the MMU's
+	; translation-on paths without page tables (68040.library uses tables)
+	move.l	#$00ffc000,d0
+	movec	d0,dtt0
+	movec	d0,itt0
+	pflusha
+	move.l	#$8000,d0
+	movec	d0,tc
+	endif
 	lea	BASE+$10000,sp		; the stack, in the same memory
 	jsr	BASE			; soc_main
 	move.l	#1,MBOX
