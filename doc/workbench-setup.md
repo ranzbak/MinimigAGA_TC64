@@ -81,6 +81,23 @@ Copy ENVARC:MMU-Configuration ENV:
 If `ENVARC:MMU-Configuration` already exists, add the line with an editor
 instead: the `Echo` above replaces the file. Then reboot.
 
+**Keep the RTG screen memory write-through.** The RTG display reads its
+picture straight from the Zorro II fast RAM (`$200000`-`$9FFFFF`), where the
+driver allocates it. A core with a copyback data cache (in development; the
+current images write through, so this line changes nothing yet) would hold
+the pixels the CPU draws in the cache, and the screen would show old ones.
+Mark the Zorro II board write-through by adding this line to
+`ENVARC:MMU-Configuration` with an editor:
+
+```
+SetCacheMode 0x00200000 0x00800000 Valid WriteThrough
+```
+
+Then copy the file to `ENV:` and reboot, as above. Programs mostly run from
+the DDR3 board (see [DDR3First](#let-programs-use-the-ddr3-board-first)), so
+this costs little. (The line's syntax follows MMULib's `MMU-Configuration`;
+not yet tried on the board.)
+
 **Screen modes.** The HDMI output limits which modes give a stable picture.
 These worked on Paul's display (enter them in Picasso96Mode):
 
@@ -208,6 +225,7 @@ Things to know:
 - [ ] MMULib's `68040.library` and `mmu.library` in `LIBS:`, SetPatch first in the Startup-Sequence
 - [ ] Picasso96 installed, `minimig.card` in `LIBS:Picasso96/`, monitor file `Minimig` with `BOARDTYPE=minimig`
 - [ ] `ENVARC:MMU-Configuration` has the `SetCacheMode 0x00b80000 ...` line
+- [ ] (copyback cores) `ENVARC:MMU-Configuration` has the `SetCacheMode 0x00200000 0x00800000 Valid WriteThrough` line
 - [ ] FAST = Maximum, Boards = all
 - [ ] `C:DDR3First` right after SetPatch in the Startup-Sequence
 - [ ] RTG judged after a cold start

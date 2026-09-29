@@ -25,6 +25,25 @@ Expected: store-hold from 34 % toward about 5 %, roughly **-15 to -25 %** clocks
 - **The instruction cache is not coherent with data stores.** Code written through a copyback page needs CPUSH, which AmigaOS's CacheClearU does.
 - **Bus snooping of a dirty line** is out of scope here. Alternate masters writing copyback memory need software support.
 
+## Finding (2026-09-29, before any RTL): the cache's invalidation is row-wide
+
+Every invalidate in ap040_cache.v zeroes a whole set (4 ways) through the tag RAM's port B in one clock:
+- a chipset DMA snoop (free-running);
+- a store that cannot merge (misaligned, line-crossing, inhibited);
+- a cache-inhibited hit;
+- a fill error.
+
+CINV/CPUSH have no scope or address from the core either: every one sweeps the whole cache. The header calls this over-invalidation safe, and for write-through it is. **With dirty lines it loses data.** Chip-RAM DMA snoops alone would clear dirty fast-RAM lines that share a set, and a CINVL would drop every dirty line.
+
+What copyback needs first:
+1. The data bank's valid bits in flip-flops (a copy, dv[], already exists for the data read path), so that a row clear keeps the dirty ways.
+2. The real CINV/CPUSH scope and address from the core: precise invalidation, and write-back for CPUSH.
+3. A store that cannot merge writes back a dirty line under it first.
+
+Only then the design below. Several days, with heavy verification (DMA snoop stress, every CINV/CPUSH scope, the fuzzer's copyback variant). Paul chooses: A full copyback, B store buffer stage 4 first (about 11 %, no cache redesign), C the store-path speedups.
+
+RTG: the framebuffer is AllocMem'd from Zorro II RAM (MEMF_24BITDMA). `doc/workbench-setup.md` now tells users to mark `$200000`-`$9FFFFF` write-through in `ENVARC:MMU-Configuration`.
+
 ## Design
 
 1. **MMU → cache: a copyback flag per access.** It is set when the cache mode is 01, from the TTR or the ATC, like today's `cache_inhibit`. With translation off and no TTR match the access stays write-through, exactly as now.
