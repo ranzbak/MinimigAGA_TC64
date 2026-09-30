@@ -388,8 +388,10 @@ if {$pipe_dir ne ""} {
     set sb_mmu [expr {[info exists ::env(SB_MMU)] && $::env(SB_MMU) ne "" ? $::env(SB_MMU) : 0}]
     # COPYBACK=1: the copyback data cache (CM = 01 pages, DDR3 board only)
     set copyback [expr {[info exists ::env(COPYBACK)] && $::env(COPYBACK) ne "" ? $::env(COPYBACK) : 0}]
-    set pipe_gen " AP040_PIPELINED=1 AP040_HAS_MMU=$pmmu AP040_HAS_FPU=$pfpu AP040_FREE_CORE=$free_core AP040_STORE_BUF=$store_buf AP040_FWD=$fwd AP040_RAS=$ras AP040_PRECISE=$precise AP040_MISPLIT=$misplit AP040_SB_MMU=$sb_mmu AP040_COPYBACK=$copyback"
-    puts "build_ap040.tcl: PIPELINED build from $P ([llength $pipe_off] lib/AP68040 files disabled), FREE_CORE=$free_core STORE_BUF=$store_buf FWD=$fwd RAS=$ras PRECISE=$precise MISPLIT=$misplit SB_MMU=$sb_mmu COPYBACK=$copyback"
+    # BTB=1: IF's branch target buffer
+    set btb [expr {[info exists ::env(BTB)] && $::env(BTB) ne "" ? $::env(BTB) : 0}]
+    set pipe_gen " AP040_PIPELINED=1 AP040_HAS_MMU=$pmmu AP040_HAS_FPU=$pfpu AP040_FREE_CORE=$free_core AP040_STORE_BUF=$store_buf AP040_FWD=$fwd AP040_RAS=$ras AP040_PRECISE=$precise AP040_MISPLIT=$misplit AP040_SB_MMU=$sb_mmu AP040_COPYBACK=$copyback AP040_BTB=$btb"
+    puts "build_ap040.tcl: PIPELINED build from $P ([llength $pipe_off] lib/AP68040 files disabled), FREE_CORE=$free_core STORE_BUF=$store_buf FWD=$fwd RAS=$ras PRECISE=$precise MISPLIT=$misplit SB_MMU=$sb_mmu COPYBACK=$copyback BTB=$btb"
 }
 if {[info exists ::env(FREE_CORE)] && $::env(FREE_CORE) eq "1" && ![info exists free_core]} {
     error "build_ap040.tcl: FREE_CORE=1 needs the pipelined core (AP040_PIPE_DIR is none)"

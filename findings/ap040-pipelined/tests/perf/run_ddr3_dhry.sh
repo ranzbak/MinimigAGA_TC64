@@ -38,7 +38,7 @@ for f in "$LIB/src_v/phy/xc7/ddr3_dfi_phy.v" "$LIB/tb/ddr3_core_xc7/ddr3.v" "$R/
   echo "verilog work \"$f\"" >> $PRJ; done
 printf 'run all\nquit\n' > run.tcl
 "$VIVADO_PATH/bin/xelab" -prj $PRJ -i "$LIB/tb/ddr3_core_xc7" -i "$PIPE_DIR/rtl" -i "$PIPE_DIR/rtl/compat" -i "$PIPE_DIR/tb/perf" \
-    -d AP040_PIPELINED -d SOC_SIM -d REALSDRAM $( [ "${FREECORE:-0}" = "1" ] && echo -d FREECORE ) $( [ -n "${STOREBUF:-}" ] && echo -d STOREBUF=$STOREBUF ) $( [ "${FWDRAS:-0}" = "1" ] && echo -d FWDRAS ) $( [ "${PREMIS:-0}" = "1" ] && echo -d PREMIS ) $( [ "${SBMMU:-0}" = "1" ] && echo -d SBMMU ) $( [ "${CBACK:-0}" = "1" ] && echo -d CBACK ) -i "$D" -debug typical -relax \
+    -d AP040_PIPELINED -d SOC_SIM -d REALSDRAM $( [ "${FREECORE:-0}" = "1" ] && echo -d FREECORE ) $( [ -n "${STOREBUF:-}" ] && echo -d STOREBUF=$STOREBUF ) $( [ "${FWDRAS:-0}" = "1" ] && echo -d FWDRAS ) $( [ "${PREMIS:-0}" = "1" ] && echo -d PREMIS ) $( [ "${SBMMU:-0}" = "1" ] && echo -d SBMMU ) $( [ "${CBACK:-0}" = "1" ] && echo -d CBACK ) $( [ "${BTB:-0}" = "1" ] && echo -d BTBF ) -i "$D" -debug typical -relax \
     -L secureip -L unisims_ver -L unimacro_ver ddr3_cpu_tb perf_probe_ddr3 glbl -s cpu_sim > elab.log 2>&1 || { tail -30 elab.log; exit 1; }
 "$VIVADO_PATH/bin/xsim" cpu_sim -t run.tcl -testplusarg "prog=$W/prog.bin" -testplusarg TURBOCHIP=1 -testplusarg MMUTEST \
     > xsim.log 2>&1 || true
