@@ -80,3 +80,11 @@ interrupt flags (0x96) several times a second.  xx != yy means the RTL overwrote
 HDMISLIDER2 with the default moved to **-1.2 ns (0xBA = 0x00)**: Paul stepped the
 slider on the board and -1.2 ns is the one glitch-free value (the light yellows
 sparkle at the others). Same value as the RTL table in i2c_sender.vhd.
+
+## 832OSDAD_SPI2.bin  (md5 5e398c71134627c9052f0abc7ca319d7, 2026-09-29)
+
+Diagnostic: current source with `SPI_fast()` at 0x2 instead of 0x1 (hardware.h),
+so the SD card runs at ~11 MHz (half period 5 x clk_114 = 44 ns) instead of
+~19 MHz (26 ns). Built to test whether SD read timing caused stage_cu6's disk
+corruption: it did not (findings/storebuf/results.md). Restore the normal
+832OSDAD.BIN after use.

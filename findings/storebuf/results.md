@@ -102,3 +102,29 @@ The slow reads are almost all a load right behind a store that is still in EX wh
 
 - The board A/B (build `stage_sb2`, STORE_BUF=1) against the current image: SysInfo, AIBB, FPUFixTest, AuditTest, and Workbench use.
 - Stage 3 (EX/WB compares) is where this loop's remaining read wait is. Paul decides after the board.
+
+## Stage 4 (SB_MMU): posting with translation on, 2026-09-29/30
+
+Core `catchup` a47b11f (+ the window below). With the MMU on, a store to a page a synchronous store has proved postable is posted: the core keeps 4 logical pages (with FC); the MMU latches its verdict (TTR or ATC hit, writable, M set, not cache-inhibited) with the physical address; the wrapper adds a RAM window on that physical address.
+
+**SoC Dhrystone, MMU on (MMUON=1, DTT0/ITT0), 10 runs:**
+
+| build | clocks/run | store-hold |
+|---|---:|---:|
+| cu4 switches (no SB_MMU) | 13,092 | 32.2 % |
+| + SB_MMU | 12,130 (-7.3 %) | 14.8 % |
+
+**Board, and the SDRAM finding.**
+
+| image | stage 4 window | result |
+|---|---|---|
+| `stage_cu6` | chip RAM, Zorro II, both Zorro III boards | **corrupt**: Workbench crashes 80000004, damaged icons, bad disk blocks, "wrong dir block" |
+| `stage_cu6` + 832 firmware SPI_fast 2 (SD at ~11 MHz) | as cu6 | **still corrupt**: SD read timing ruled out |
+| `stage_cu7` | none (SB_MMU = 0) | clean, xSysInfo 0.88 |
+| `stage_cu8` | **the DDR3 board only** | **clean**: HDF stable, demos stable, **xSysInfo 1.01, 33,287 Dhrystones** (cu4: 0.88, 28,938; +15 %), without DDR3First |
+
+- The core's stage 4 is right; posting into the SDRAM with translation on is what corrupts. Every simulation was clean: the full suite, the stage 4 mutants, 100+ differential fuzz seeds with SB_MMU (half with translation on) and 40 with random level-2 interrupts and a handler that stores to six pages (`GEN_IRQ=1`, more pages than the table holds).
+- Stage 4's window is therefore the DDR3 board only (`ap040_pipe_tg68k_compat.v`, `mem_postok`). With translation off (boot, before SetPatch) the window still includes the SDRAM; cu4 and cu7 boot clean with it, but nothing heavy runs there.
+- **Open: why posted stores into the SDRAM corrupt.** Leads: `sdram_ctrl` acknowledges a CPU write when it reaches the write buffer and nothing forwards it to a chipset read; `cpu_cache_new`'s line buffer is not snooped; the hardware-only chip RAM corruption that depended on the SDRAM phase an access completes on (memory: sdram-turbo-chip-coherency). Posting changes exactly that: CPU writes back to back and in the background. A bisect build posting to chip RAM only, or to the SDRAM fast RAM only, would split it.
+- Side finding: fuzz seed 21 with `GEN_IRQ=1` fails the compat bench's interrupt-latency bound (a qualified request not taken within 16 instruction starts) with and without SB_MMU: a run of loads defers the interrupt. Pre-existing, not a corruption.
+- SD timing, for the record: cfide samples MISO on the clk_114 edge that raises the SD clock, about 26 ns after the card's output edge at SPI_fast 1, over a false-pathed input (`sd_card.xdc`'s "/70 is the fastest it runs" is wrong: SPI_fast is /6). Marginal on paper, but not this bug.
