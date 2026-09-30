@@ -61,3 +61,12 @@ Direct-mapped, 16 entries (index `fa[4:1]`), in flops.
 
 - **Timing:** the lookup is on `fpc` (a register), and a 16-entry compare feeds the next `fpc`. The flops are 16 x ~64 bits.
 - **The queue's jump:** `qpc` and the SMC ranges are the parts that break silently; the overlapping-streams test and the SMC test aim at them.
+
+## Result, 2026-10-01: correct, but no gain on Dhrystone; not shipped
+
+- **Tests:** btb.s (ten cases) passes with and without the BTB on every bench; six mutants caught; full suite passes with BTB=1; with BTB=0 the 282 shared logs are identical; 40 differential fuzz seeds clean. Core 8f99f5b (branch `btb`).
+- **btb.s itself:** 9-21 % fewer clocks.
+- **SoC Dhrystone** (MMU on, stage 4, copyback): **11,101 -> 11,083 clocks per run (-0.2 %)**. ID redirects dropped from 987 to 583 and the redirect-to-retire clocks from 2,940 to 1,709, but almost none of that reached the total: those clocks overlapped with the back end's waits. The "26.5 % redirect-to-retire" bucket that motivated this plan counts clocks from a redirect to the next retire, not clocks the redirect alone costs.
+- **Board image `stage_btb1` (copyback + BTB) fails timing:** clk_38 -0.374 ns, 185 endpoints (worst: EA-fetch's `eaf_o[cls]` to the BCU's `mem_addr`, 46 levels). Not loaded.
+- **Decision:** the BTB stays in the core, `AP040_BTB` default 0; the board builds leave it off.
+- **What limits Dhrystone per clock:** the back end. EA-fetch -> EX transit 19.9 %, data-read wait 14.9 %, EA-fetch other 9.7 %, store-hold 6.5 %.
