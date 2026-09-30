@@ -207,7 +207,7 @@ Things to know:
 - The board is found by its autoconfig IDs: manufacturer $1399, product $11,
   serial 3.
 
-(Built and assembled; not yet run on the board.)
+(Checked on the board, 2026-09-30: with DDR3First, xSysInfo's Dhrystone went from 33,265 to 33,807, 1.03x an A4000/040.)
 
 ## 7. Extras
 

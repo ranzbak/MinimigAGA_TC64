@@ -1,7 +1,23 @@
 # Copyback data cache: plan
 
-Status: **draft for Paul's review** (2026-09-29). Paul: "Lets go and do 4 [copyback], as it is the biggest gain."
-Core branch to be: `copyback`, off `catchup` (be119bc and later).
+Status: **approved, in progress** (2026-09-30). Paul: "Lets go and do 4 [copyback], as it is the biggest gain", then "B first" (store buffer stage 4, done: board 1.01x / 33,287 Dhrystones) and "After that A"; 2026-09-30 "we can start with the Write back buffer solution".
+Core branch: `copyback`, off `catchup` c1d64cb (= AP68040-pipelined main).
+
+## Revision 2026-09-30 (after stage 4 on the board, and a full read of ap040_cache.v)
+
+These override the sections below where they differ.
+
+1. **Copyback window: the DDR3 board only.** Stage 4 showed that posted stores into the SDRAM (chip RAM, Zorro II, SDRAM Zorro III) corrupt data on the board while every simulation passes (findings/storebuf/results.md). Line write-backs into the SDRAM would be the same untested traffic. The wrapper allows copyback only when the MMU says CM=01 AND the physical address is in the DDR3 board's window (the `mem_postok` window). Nothing but the CPU writes the DDR3 board: no chipset DMA, so a dirty line there can never be overtaken by another master.
+2. **Stage 1 is the invalidation redesign, on its own, with no behaviour change.** Today the main lookup takes the valid bits from the tag RAM row (`tag_q[91:88]`), and every invalidate writes a zero row through port B: snoop (`snoop_wr`, by set index only, all four ways), `store_inv`, `ci_inv`, `fill_err_inv`. Stage 1 moves the data bank's valid bits to flip-flops (the `dv` copy of the fast read path already works this way), makes the main lookup use them, and turns every invalidate into a valid-bit clear that can be masked. With no dirty bit set anywhere yet, the mask is all ones and the behaviour is identical: the whole suite must pass unchanged, and the SoC Dhrystone must give the same clocks.
+3. **CINV and CPUSH, any scope, write back every dirty line of the data cache and then invalidate as today.** The core sends no scope or address (`cinv_req`, `cinv_ic`, `cinv_dc`), and a CINVL that dropped every dirty line would lose data. Writing back where the 68040 would discard is safe here: dirty lines exist only in the DDR3 window, which no other master writes, so memory never holds newer data than the line. Precise CPUSHL/CPUSHP/CINVL is a later performance step.
+4. **A store that cannot merge** (misaligned, line-crossing, or with DE clear) into a copyback page, and a cache-inhibited read that hits a dirty line, first write the dirty line(s) back, then proceed as today. One "push line" sequence (read the way's four longwords, write them to memory, clear dirty and valid) serves eviction, CPUSH/CINV, and these cases.
+5. **Snoops** keep clearing by set, but spare dirty ways (they can only be DDR3 lines, which DMA never writes). The MMU table walker's own writes are snoops too; the 68040 rule stands that page tables must not live in copyback pages (MMULib keeps them write-through).
+
+Stages, replacing the list below:
+- **S0 tests first.** Compat programs with DTT0 CM=01 over a work area (the bench's copyback window is the whole flat memory except $F1xx): store hits leave memory unchanged until a push; eviction writes back; CPUSHA/L/P and CINVA/L/P write back; a misaligned store over a dirty line; a CI read over a dirty line; MOVE16 through copyback; a snoop to the set of a dirty line keeps it; an I-fetch of code written through copyback after CPUSH; the fuzzer's copyback variant (CPUSHA before its dump). Every program must pass on today's write-through cache too (copyback is invisible to a program that pushes before it checks memory), except the ones that look at memory before a push, which are gated on the parameter.
+- **S1 invalidation redesign** (above, item 2). A/B identical.
+- **S2 copyback**, behind `AP040_COPYBACK` (default 0): the MMU's CM=01 flag to the cache, the wrapper's DDR3 window, dirty bits (flops, 64 x 4), store hit merges and sets dirty with no memory write, the push sequence, eviction write-back, CINV/CPUSH push-all, the non-mergeable-store and CI-read pushes, snoops spare dirty ways. SoC Dhrystone with copyback; board image; I/O tested before any benchmark.
+- **S3** precise CPUSHL/P, write-allocate on a store miss: each only if measured worth it.
 
 ## Why
 

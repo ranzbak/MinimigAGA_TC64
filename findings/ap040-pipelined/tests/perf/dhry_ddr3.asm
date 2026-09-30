@@ -42,8 +42,14 @@ start:	move.l	#CACRV,d0
 	; translation on (TC.E), everything through DTT0/ITT0: base 0, mask $FF,
 	; E, either FC2, cacheable write-through -- the core's and the MMU's
 	; translation-on paths without page tables (68040.library uses tables)
+	ifd	MMUCB
+	; (findings/copyback/plan.md) the data side copyback, CM = 01
+	move.l	#$00ffc020,d0
+	else
 	move.l	#$00ffc000,d0
+	endif
 	movec	d0,dtt0
+	move.l	#$00ffc000,d0
 	movec	d0,itt0
 	pflusha
 	move.l	#$8000,d0

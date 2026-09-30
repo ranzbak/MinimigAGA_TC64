@@ -46,6 +46,7 @@ module minimig_virtual_top #(
     parameter ap040_precise = 0,
     parameter ap040_misplit = 0,
     parameter ap040_sb_mmu = 0,
+    parameter ap040_copyback = 0,
     parameter cpu_clk_divide = 30,
     // 1: an aligned longword to chip RAM is one chipset cycle, as on the AGA
     // machines' 32-bit chip bus (TG68K.vhd generic chip32; findings/chip32/plan.md)
@@ -674,6 +675,7 @@ TG68K #(
     .ap040_precise(ap040_precise),
     .ap040_misplit(ap040_misplit),
     .ap040_sb_mmu(ap040_sb_mmu),
+    .ap040_copyback(ap040_copyback),
     // The island's clock RATIO, which the phase marker needs; the MMCM
     // divider is clk_114's (10) times it.
     .cpu_clk_ratio(cpu_clk_divide/10),
