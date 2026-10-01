@@ -19,6 +19,13 @@
 #                                       condition codes" (not "all"), which
 #                                       silently drops every Bcc/DBcc/Scc/TRAPcc
 #   enabled=1 (+ mode=) on the requested groups
+# FPU_UNIMP=1 adds fpu_unimplemented=1 to [cputest], which sets WinUAE's
+#             fpu_no_unimplemented = FALSE: the FPSP instructions and data
+#             types are then executed AS IF IN HARDWARE.  That is NOT a real
+#             68040 -- the default (fpu_no_unimplemented = true, "an FPU
+#             without the unimplemented instructions") is the real 040 that
+#             traps to the FPSP, and is what the board runs compare against.
+#             (Board run 3 used FPU_UNIMP=1 by mistake: tests/cputest/fpu_u.)
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 GROUPS_="${1:-BASIC}"
@@ -27,9 +34,9 @@ OUT="$(cd "${3:-$HERE/..}" && pwd)"
 GEN="$HERE/cputestgen"
 [ -x "$GEN" ] || { echo "build first: $HERE/build.sh" >&2; exit 1; }
 
-python3 - "$HERE/build/src/cputest/cputestgen.ini" "$OUT/cputestgen.ini" "$GROUPS_" "$MODE" <<'EOF'
+python3 - "$HERE/build/src/cputest/cputestgen.ini" "$OUT/cputestgen.ini" "$GROUPS_" "$MODE" "${FPU_UNIMP:-0}" <<'EOF'
 import re, sys
-src, dst, groups, mode = sys.argv[1:5]
+src, dst, groups, mode, unimp = sys.argv[1:6]
 want = {g.strip().upper() for g in groups.split(',') if g.strip()}
 s = open(src, newline='').read().replace('\r\n', '\n')
 parts = re.split(r'(?m)^(?=\[)', s)
@@ -41,6 +48,8 @@ for p in parts:
         p = re.sub(r'(?m)^;test_low_memory_start=.*$', 'test_low_memory_start=0x0000', p)
         p = re.sub(r'(?m)^;test_low_memory_end=.*$', 'test_low_memory_end=0x8000', p)
         p = re.sub(r'(?m)^feature_condition_codes=$', ';feature_condition_codes=', p)
+        if unimp == '1':
+            p = p.rstrip('\n') + '\nfpu_unimplemented=1\n\n'
     elif m and m.group(1):
         name = m.group(2).upper()
         cpu = re.search(r'(?m)^cpu=(.*)$', p)

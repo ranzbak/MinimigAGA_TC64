@@ -1,0 +1,12 @@
+ae/RTE
+oddirq/EXT.B
+oddirq/EXT.L
+oddirq/EXT.W
+oddirq/SWAP.W
+oddexc/CHK.L
+oddexc/CHK.W
+oddexc/DIVS.W
+oddexc/DIVSL.L
+oddexc/DIVU.W
+oddexc/DIVUL.L
+oddexc/TRAPV

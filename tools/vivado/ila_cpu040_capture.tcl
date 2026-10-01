@@ -1,7 +1,7 @@
 # Capture the AP68040's bus and fault state while the machine boots.
 #
 #   vivado -mode batch -source tools/vivado/ila_cpu040_capture.tcl \
-#          -tclargs <bitstream-dir> <out.csv> [minutes] [program] [fault|now]
+#          -tclargs <bitstream-dir> <out.csv> [minutes] [program] [fault|now|busy|serper]
 #
 # Needs a bitstream built with CPU040_DEBUG_ILA=1 (tools/vivado/build_ap040.tcl
 # with <ila> = 1), which puts ila_cpu040 on dbg_pc / tg68_adr / bus_ctl /
@@ -77,6 +77,12 @@ if {$mode eq "busy"} {
     set_property CONTROL.CAPTURE_MODE ALWAYS $ila
     set_property CONTROL.TRIGGER_POSITION 16 $ila
     set_property TRIGGER_COMPARE_VALUE {eq7'bxxxxxx1} [pr $ila *tg68_ram_hs*]
+} elseif {$mode eq "serper"} {
+    # findings/serial: a READ cycle on the chipset bus at $DFF032 (SERPER is
+    # write-only; Paula latches it on any cycle with that register address, so
+    # one read sets the serial port to ~112 baud).  as low, rw high.
+    set_property TRIGGER_COMPARE_VALUE {eq32'bXXXXXXXX110111111111000000110010} [pr $ila *tg68_adr*]
+    set_property TRIGGER_COMPARE_VALUE {eq4'b01XX} [pr $ila *bus_ctl*]
 } elseif {$mode eq "now"} {
     set_property CONTROL.CAPTURE_MODE ALWAYS $ila
     set_property CONTROL.TRIGGER_POSITION 0 $ila

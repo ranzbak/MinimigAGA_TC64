@@ -163,3 +163,18 @@ generated the whole integer set with no reports. Its output matches the
   the `cputest` executable.
 * FPU groups: generation works but is slow (see above) and has not been run
   to completion or audited.
+
+## Board run with a log file (adf/build_runlog.py)
+
+`python3.10 adf/build_runlog.py` copies `adf/cputest040_all.hdf` to
+`adf/cputest040_log.hdf` and adds the FPU groups that `fpu/<GROUP>/run.txt`
+reports as done (`gen/gen_corpus.sh <GROUP> "" fpu/<GROUP>`; FBASIC takes
+hours, FPACK/FINT/FILLG seconds). Boot the HDF: its startup-sequence (shell
+built-ins only, the HDF has no C:) runs cputest once per instruction and
+appends everything to `CT040ALL:cputest.log`. Each instruction first leaves a
+marker in `:st/`, so after a crash and reboot the run resumes behind it; the
+crashed instruction is the `=== g/i` line without a matching `=== end g/i`.
+Read the log back with
+`python3.10 -m amitools.tools.xdftool cputest040_log.hdf read cputest.log out.log`.
+(Built 2026-10-01 because the Amiga serial port runs at ~112 baud whatever
+Prefs says, on the AP040 images: a separate, open bug.)
