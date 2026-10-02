@@ -52,6 +52,8 @@ module minimig_openaars_top #(
   parameter AP040_COPYBACK = 0,
   // IF's branch target buffer (findings/btb/plan.md)
   parameter AP040_BTB = 0,
+  // late-operand load dispatch (findings/loadstore/plan.md step 1)
+  parameter AP040_LDX = 0,
   // AP68040 island clock divider: 30 = clk_114/3 (stage D3),
   // 40 = clk_114/4 (pre-D3 rate, D3 architecture otherwise intact).
   parameter CPU_CLK_DIVIDE = 30,
@@ -532,6 +534,7 @@ minimig_virtual_top
   .ap040_sb_mmu(AP040_SB_MMU),
   .ap040_copyback(AP040_COPYBACK),
   .ap040_btb(AP040_BTB),
+  .ap040_ldx(AP040_LDX),
   .cpu_clk_divide(CPU_CLK_DIVIDE),
   .chip32(CHIP32),
   .CPU040_DEBUG_ILA(CPU040_DEBUG_ILA),

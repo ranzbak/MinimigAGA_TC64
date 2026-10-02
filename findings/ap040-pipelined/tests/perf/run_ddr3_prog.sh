@@ -1,32 +1,33 @@
 #!/usr/bin/env bash
-# SysInfo SPEED loop on sim/ddr3_cpu (integration worktree), pipelined core,
+# A 68k test program on sim/ddr3_cpu (integration worktree), pipelined core,
 # with the perf probe.  ONE AT A TIME (sim-ddr3-cpu-bench-traps: concurrent
 # xsim runs corrupt each other), and a NEW tag every run (it refuses an
 # existing work directory rather than deleting it).
-#   ./run_ddr3_dhry.sh <tag>   (xSysInfo Dhrystone, tb/perf/dhry/dhry_soc.bin; same env as run_ddr3_perf.sh)
-# e.g. ./run_ddr3_perf.sh ddr3_idde '$41000000' '$80008000' 3
+#   ./run_ddr3_prog.sh <tag> <program.asm>   (same env as run_ddr3_dhry.sh: FREECORE,
+#   STOREBUF, FWDRAS, PREMIS, SBMMU, CBACK, BTB; the program sets its own MMU state)
+# e.g. CBACK=1 ./run_ddr3_prog.sh cbs1 cbstress_ddr3.asm
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
-TAG=$1; BASE=${2:-'$41000000'}; CACRV=${3:-'$80008000'}; NITER=${4:-3}
+TAG=$1; PROG=$(cd "$(dirname "$2")" && pwd)/$(basename "$2")
 INT=${INT:-/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64-pipelined}
 PIPE_DIR=${PIPE_DIR:-/home/paul/work/fpga/Xilinx/artix7/AP68040-pipelined}
-DHRYBIN=${DHRYBIN:-$PIPE_DIR/tb/perf/dhry/dhry_soc.bin}
 VIVADO_PATH=${VIVADO_PATH:-/opt/Xilinx/Vivado/2023.2}
 export LD_LIBRARY_PATH=${TINFO_SHIM:-/home/paul/lib/tinfo5}   # libtinfo.so.5 (vivado-lab-gotchas)
 D=$INT/sim/ddr3_cpu
 R=$INT
 LIB=$R/lib/core_ddr3_controller
 W=$D/run_perf_$TAG
-if [ -e "$W" ]; then echo "run_ddr3_perf.sh: $W exists; pick a new tag" >&2; exit 2; fi
+if [ -e "$W" ]; then echo "run_ddr3_prog.sh: $W exists; pick a new tag" >&2; exit 2; fi
 mkdir -p "$W"
-cp "$DHRYBIN" "$W/dhry_soc.bin"
-( cd "$W" && vasmm68k_mot -m68040 -Fbin -o prog.bin -DCACRV="$CACRV" $( [ "${MMUON:-0}" = "1" ] && echo -DMMUON=1 ) $( [ "${CBACK:-0}" = "1" ] && echo -DMMUCB=1 ) "$HERE/dhry_ddr3.asm" > asm.log )
+( cd "$W" && vasmm68k_mot -m68040 -Fbin -o prog.bin "$PROG" > asm.log )
 cd "$W"
 PRJ=project.prj; : > $PRJ
 for f in "$R/rtl/akiko/cornerturn.vhd" "$R/rtl/akiko/akiko.vhd" "$R/rtl/soc/ap040_ram_seq.vhd" "$R/rtl/soc/TG68K.vhd"; do
   echo "vhdl work \"$f\"" >> $PRJ; done
 for f in "$LIB/src_v/ddr3_dfi_seq.sv" "$LIB/src_v/ddr3_core.sv" "$D/ddr3_cpu_tb.sv" "$HERE/perf_probe_ddr3.sv"; do
   echo "sv work \"$f\"" >> $PRJ; done
+# PROBE=<file.sv> PROBE_TOP=<module>: an extra top, elaborated next to the bench
+[ -n "${PROBE:-}" ] && echo "sv work \"$PROBE\"" >> $PRJ
 PR=$PIPE_DIR/rtl
 echo "sv work \"$PR/ap040_pipe_pkg.sv\"" >> $PRJ
 for f in $PR/ap040_*.v $PR/compat/*.v; do echo "sv work \"$f\"" >> $PRJ; done
@@ -39,7 +40,7 @@ for f in "$LIB/src_v/phy/xc7/ddr3_dfi_phy.v" "$LIB/tb/ddr3_core_xc7/ddr3.v" "$R/
 printf 'run all\nquit\n' > run.tcl
 "$VIVADO_PATH/bin/xelab" -prj $PRJ -i "$LIB/tb/ddr3_core_xc7" -i "$PIPE_DIR/rtl" -i "$PIPE_DIR/rtl/compat" -i "$PIPE_DIR/tb/perf" \
     -d AP040_PIPELINED -d SOC_SIM -d REALSDRAM $( [ "${FREECORE:-0}" = "1" ] && echo -d FREECORE ) $( [ -n "${STOREBUF:-}" ] && echo -d STOREBUF=$STOREBUF ) $( [ "${FWDRAS:-0}" = "1" ] && echo -d FWDRAS ) $( [ "${PREMIS:-0}" = "1" ] && echo -d PREMIS ) $( [ "${SBMMU:-0}" = "1" ] && echo -d SBMMU ) $( [ "${CBACK:-0}" = "1" ] && echo -d CBACK ) $( [ "${BTB:-0}" = "1" ] && echo -d BTBF ) $( [ "${LDX:-0}" = "1" ] && echo -d LDXF ) -i "$D" -debug typical -relax \
-    -L secureip -L unisims_ver -L unimacro_ver ddr3_cpu_tb perf_probe_ddr3 glbl -s cpu_sim > elab.log 2>&1 || { tail -30 elab.log; exit 1; }
+    -L secureip -L unisims_ver -L unimacro_ver ddr3_cpu_tb perf_probe_ddr3 ${PROBE_TOP:-} glbl -s cpu_sim > elab.log 2>&1 || { tail -30 elab.log; exit 1; }
 "$VIVADO_PATH/bin/xsim" cpu_sim -t run.tcl -testplusarg "prog=$W/prog.bin" -testplusarg TURBOCHIP=1 -testplusarg MMUTEST \
     > xsim.log 2>&1 || true
 grep -E "^(PERF|INFO: program phase|PASS|FAIL|DDR3 CPU TB)" xsim.log || true
