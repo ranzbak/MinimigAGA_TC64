@@ -19,6 +19,16 @@ Stages, replacing the list below:
 - **S2 copyback**, behind `AP040_COPYBACK` (default 0): the MMU's CM=01 flag to the cache, the wrapper's DDR3 window, dirty bits (flops, 64 x 4), store hit merges and sets dirty with no memory write, the push sequence, eviction write-back, CINV/CPUSH push-all, the non-mergeable-store and CI-read pushes, snoops spare dirty ways. SoC Dhrystone with copyback; board image; I/O tested before any benchmark.
 - **S3** precise CPUSHL/P, write-allocate on a store miss: each only if measured worth it.
 
+## Finding 2026-10-02: the table walker did not see the data cache
+
+M68040UM 3.2.5: "The cache treats table search accesses that are not read-modify-write accesses as cachable/write-through but do not allocate in the cache for misses. Read-modify-write table search accesses (required to update some descriptor U-bit and M-bit combinations) are treated as noncachable and force a matching cache line to be pushed and invalidated." Motorola only *recommends* cache-inhibited tables (3.2.4); a real 040 stays coherent with tables in a copyback page. Design item 9 below assumed the opposite.
+
+The core's walker reads and writes memory over its own port. With a descriptor stored into a copyback page (dirty in the data cache), the next walk read the stale descriptor from memory, and its U/M update would later be overwritten by the line's push. `MuSetCacheMode <board> CopyBack` over a whole fast RAM board makes MMULib's tables copyback whenever they live on that board, which is how cb1/cb2 ran. Every simulation passed because no test had tables in a copyback page (t_cb_pipe keeps them CM=00 with U/M preset; cbwalk_ddr3 keeps them in chip RAM).
+
+Fix (core, AP040_COPYBACK only): before each descriptor transaction the walker raises walk_pend with the address on walker_addr and waits (walk_wait) while the descriptor's set holds a dirty way. The cache looks the line up (C_WLOOK, the set's tags) and pushes it if it is dirty there, only that line, as the 040 does. Then the walker goes. A CINV/CPUSH sweep and a walk no longer overlap at all: the sweep starts with no walk running, and sweep_busy holds new walks off while it runs. That removes the case of a sweep waiting for a walk that waits for a push.
+
+Tests: t_cbtab_pipe.s (flat bench, 5 cases: instruction-side walk, data-side walk, U-bit update, the walk past a CPUSHA, a dirty neighbour in the walker's set stays dirty); cbtab_ddr3.asm (SoC bench, the real TG68K master mux). amiga_sw/CBTest runs the copyback scenarios on the board and prints SRP/URP, which shows whether MMULib's tables are on the DDR3 board.
+
 ## Why
 
 On the board, xSysInfo shows **28,938 Dhrystones = 0.88** of an A4000/040 at 25 MHz. That is `stage_cu4`: store buffer, forwarding, return-address stack, precise fast reads, with the MMU on. The SoC bench matches the board within 1.5 %.
@@ -77,7 +87,7 @@ RTG: the framebuffer is AllocMem'd from Zorro II RAM (MEMF_24BITDMA). `doc/workb
    - Stores still go through the BCU. A copyback hit simply acknowledges in about 2 clocks instead of reaching memory.
    - With copyback, the MMU-on store buffer (stage 4) may no longer be needed; measure after this.
 8. **Snoop.** A chipset DMA write to a line that is dirty in the cache still invalidates the line, and the dirty data is lost. A sim-only counter flags it. On the Amiga, chip RAM is never copyback, since 68040.library maps it write-through or inhibited, and fast RAM has no DMA writers. See decision 2 for RTG.
-9. **The MMU's table walker reads memory directly.** Page tables in copyback pages would go stale; MMULib keeps its tables write-through, as the 68040 requires.
+9. **The MMU's table walker reads memory directly.** ~~Page tables in copyback pages would go stale; MMULib keeps its tables write-through, as the 68040 requires.~~ Wrong: the 68040 does not require it (finding 2026-10-02 above); the walker now has the line pushed first.
 
 ## Stages (each: full suite, the new programs, mutants, SoC Dhrystone with copyback, routed clk_38 timing near cu4's +0.258 ns)
 
