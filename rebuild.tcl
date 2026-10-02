@@ -1892,9 +1892,6 @@ set_property -name "library" -value "work" -objects $file_obj
 
 
 # Set 'autoconfig_add_snd' fileset file properties for local files
-set file "project_1/minimig_autoconfig_tb_behav.wcfg"
-set file_obj [get_files -of_objects [get_filesets autoconfig_add_snd] [list "*$file"]]
-set_property -name "library" -value "work" -objects $file_obj
 
 
 # Set 'autoconfig_add_snd' fileset properties
@@ -1995,9 +1992,6 @@ set_property -name "library" -value "work" -objects $file_obj
 
 
 # Set 'toccata_volume' fileset file properties for local files
-set file "project_1/minimig_autoconfig_drv_tb_behav.wcfg"
-set file_obj [get_files -of_objects [get_filesets toccata_volume] [list "*$file"]]
-set_property -name "library" -value "work" -objects $file_obj
 
 
 # Set 'toccata_volume' fileset properties
