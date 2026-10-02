@@ -27,6 +27,8 @@ for f in "$R/rtl/akiko/cornerturn.vhd" "$R/rtl/akiko/akiko.vhd" "$R/rtl/soc/ap04
   echo "vhdl work \"$f\"" >> $PRJ; done
 for f in "$LIB/src_v/ddr3_dfi_seq.sv" "$LIB/src_v/ddr3_core.sv" "$D/ddr3_cpu_tb.sv" "$HERE/perf_probe_ddr3.sv"; do
   echo "sv work \"$f\"" >> $PRJ; done
+# PROBE=<file.sv> PROBE_TOP=<module>: an extra top, elaborated next to the bench
+[ -n "${PROBE:-}" ] && echo "sv work \"$PROBE\"" >> $PRJ
 PR=$PIPE_DIR/rtl
 echo "sv work \"$PR/ap040_pipe_pkg.sv\"" >> $PRJ
 for f in $PR/ap040_*.v $PR/compat/*.v; do echo "sv work \"$f\"" >> $PRJ; done
@@ -39,7 +41,7 @@ for f in "$LIB/src_v/phy/xc7/ddr3_dfi_phy.v" "$LIB/tb/ddr3_core_xc7/ddr3.v" "$R/
 printf 'run all\nquit\n' > run.tcl
 "$VIVADO_PATH/bin/xelab" -prj $PRJ -i "$LIB/tb/ddr3_core_xc7" -i "$PIPE_DIR/rtl" -i "$PIPE_DIR/rtl/compat" -i "$PIPE_DIR/tb/perf" \
     -d AP040_PIPELINED -d SOC_SIM -d REALSDRAM $( [ "${FREECORE:-0}" = "1" ] && echo -d FREECORE ) $( [ -n "${STOREBUF:-}" ] && echo -d STOREBUF=$STOREBUF ) $( [ "${FWDRAS:-0}" = "1" ] && echo -d FWDRAS ) $( [ "${PREMIS:-0}" = "1" ] && echo -d PREMIS ) $( [ "${SBMMU:-0}" = "1" ] && echo -d SBMMU ) $( [ "${CBACK:-0}" = "1" ] && echo -d CBACK ) $( [ "${BTB:-0}" = "1" ] && echo -d BTBF ) $( [ "${LDX:-0}" = "1" ] && echo -d LDXF ) -i "$D" -debug typical -relax \
-    -L secureip -L unisims_ver -L unimacro_ver ddr3_cpu_tb perf_probe_ddr3 glbl -s cpu_sim > elab.log 2>&1 || { tail -30 elab.log; exit 1; }
+    -L secureip -L unisims_ver -L unimacro_ver ddr3_cpu_tb perf_probe_ddr3 ${PROBE_TOP:-} glbl -s cpu_sim > elab.log 2>&1 || { tail -30 elab.log; exit 1; }
 "$VIVADO_PATH/bin/xsim" cpu_sim -t run.tcl -testplusarg "prog=$W/prog.bin" -testplusarg TURBOCHIP=1 -testplusarg MMUTEST \
     > xsim.log 2>&1 || true
 grep -E "^(PERF|INFO: program phase|PASS|FAIL|DDR3 CPU TB)" xsim.log || true

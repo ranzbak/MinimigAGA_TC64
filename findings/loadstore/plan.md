@@ -407,3 +407,37 @@ memory dump identical with and without LDX, mutants (`scratchpad/ldxmut`). Resul
 
 Measured (compat profile 0, shipping switches): 27,802 -> 27,153 clocks (-2.3 %), enabled 23,472 -> 22,823
 (-2.8 %), data-read wait 4,401 -> 1,306; the ZL2 ceiling was 22,319. SoC: see the commit.
+
+## 11. Re-measurement 2026-10-02: where the clocks go after copyback (per instruction)
+
+Paul: copyback and LDX gave less than promised (board 1.02 -> 1.07; the copyback plan had said -15 to -25 %).
+The copyback estimate was made against stage_cu4 (synchronous stores with the MMU on); store buffer stage 4 had
+already taken most of that gain before copyback was built, and the estimate was never redone.  So: measure first.
+
+Tool: `findings/ap040-pipelined/tests/perf/insprobe_ddr3.sv` (a PROBE top for `run_ddr3_dhry.sh`) charges every clock
+of the perf window, in perf_probe.vh's buckets, to the next instruction to retire; `insprobe_report.py <run dir>`
+sums them per PC and per instruction with the ELF's function names.  Runs (SoC bench, FREECORE STOREBUF=1 FWDRAS
+PREMIS SBMMU MMUON, core b5cfdf4): `m1_wt` (write-through), `m1_cb5` (CBACK=1 = the board image stage_cb5),
+`m1_cb5ldx` (CBACK=1 LDX=1).
+
+| | clocks per Dhrystone run | vs the 68040's 762 |
+|---|---:|---:|
+| write-through (cu9 switches) | 1,210 | 1.59x |
+| copyback (stage_cb5) | 1,110 | 1.46x |
+| copyback + LDX | 1,044 | 1.37x |
+
+Where the 282 clocks per run of copyback + LDX go (measured; buckets overlap a little, the ZL lesson of section 4):
+
+| cause | clocks/run | evidence | fix | where |
+|---|---:|---|---|---|
+| forward branches guessed taken | ~80 | ID guesses EVERY Bcc taken (ap040_decode.v "guess taken"); 26.4 forward not-taken per run, the next instruction then costs 5.0 clocks instead of ~2 (strcmp's `bne.b` to its exit: `addq.l #1,a1` 5 clocks).  Forward taken: 4/run. | static backward-taken / forward-not-taken: ~-80 +12 = **~-68 (-6.5 %)** | core, ID, small |
+| slow reads (misaligned globals and stack longwords: m68k gcc aligns int to 2) | ~85 | 5 per run at ~19 clocks (`add.l $410030ea.l,d0` 23, `cmpi.b #$40,$410030dc.l` 18, `movea.l $14(a7),a0` 17); the cache refuses a misaligned read and sends it to DDR3.  The 68040 does two cache accesses (+1 clock). | step 3 (AP040_DFP_MIS) + step 2 (RDPASS): **~-80 (-8 %)** | core + cache read path |
+| store holds | ~59 | store misses write through (no write-allocate), e.g. `jsr (a4)` 21 clocks of which 19 store-hold | write-allocate (copyback S3) or the m_* write ack: ~-40 | cache / TG68K |
+| load-use and EA-fetch -> EX bubbles not yet covered | ~40 | `move.b (a1),d0` after `addq.l #1,a1` 3.0; EA-fetch -> EX transit | early cache read (from EA-calc) | core, timing risk |
+| multi-step (MOVEM, LINK/UNLK, JSR) | ~20 | MOVEM 10.8 clocks for 3 regs | - | the 68040 pays most of these |
+
+Not a loss: taken branches cost 2 clocks (1 + the refill bubble), as on the 68040 (2); a correctly guessed not-taken
+branch costs 1 (68040: 3).  strcpy's loop is 4 clocks per byte, the same as the 68040's.
+
+If every fix delivered its full bucket: 1,044 -> ~850 clocks per run, 1.12x the 68040's clocks (0.9 of a 68040 per
+clock).  Section 4's ZL run showed buckets do not add up fully; each step gets measured on its own.
