@@ -78,7 +78,7 @@
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/minimig/gayle_fifo.v"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/host/hostcache.v"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/openaars/adv7511/i2c_master.v"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/host/i2c_master_mmio.v"
+#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/host/i2c_master_mmio.sv"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/openaars/i2s_tx.v"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/openaars/mcp23s17/mcp23s17_input.v"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/minimig/minimig.v"
@@ -169,10 +169,10 @@
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/rom-hostcpu-test/memtest_orig_top_tb.vhd"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/rom-hostcpu-test/memtest_top_tb.v"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/openaars/adv7511/i2c_master.v"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/host/i2c_master_mmio.v"
+#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/host/i2c_master_mmio.sv"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/hostcpu-i2c-bridge/i2c_slave_tb.v"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/host/cfide.vhd"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/hostcpu-i2c-bridge/i2c_bridge_tb.v"
+#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/hostcpu-i2c-bridge/i2c_bridge_tb.sv"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/hostcpu-i2c-bridge/i2c_bridge_tb_behav.wcfg"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/soc/TG68K.vhd"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/sdram/dpram_inf_256x32.v"
@@ -284,7 +284,7 @@ proc checkRequiredFiles { origin_dir} {
  "[file normalize "$origin_dir/rtl/minimig/gayle_fifo.v"]"\
  "[file normalize "$origin_dir/rtl/host/hostcache.v"]"\
  "[file normalize "$origin_dir/rtl/openaars/adv7511/i2c_master.v"]"\
- "[file normalize "$origin_dir/rtl/host/i2c_master_mmio.v"]"\
+ "[file normalize "$origin_dir/rtl/host/i2c_master_mmio.sv"]"\
  "[file normalize "$origin_dir/rtl/openaars/i2s_tx.v"]"\
  "[file normalize "$origin_dir/rtl/openaars/mcp23s17/mcp23s17_input.v"]"\
  "[file normalize "$origin_dir/rtl/minimig/minimig.v"]"\
@@ -375,10 +375,10 @@ proc checkRequiredFiles { origin_dir} {
  "[file normalize "$origin_dir/sim/rom-hostcpu-test/memtest_orig_top_tb.vhd"]"\
  "[file normalize "$origin_dir/sim/rom-hostcpu-test/memtest_top_tb.v"]"\
  "[file normalize "$origin_dir/rtl/openaars/adv7511/i2c_master.v"]"\
- "[file normalize "$origin_dir/rtl/host/i2c_master_mmio.v"]"\
+ "[file normalize "$origin_dir/rtl/host/i2c_master_mmio.sv"]"\
  "[file normalize "$origin_dir/sim/hostcpu-i2c-bridge/i2c_slave_tb.v"]"\
  "[file normalize "$origin_dir/rtl/host/cfide.vhd"]"\
- "[file normalize "$origin_dir/sim/hostcpu-i2c-bridge/i2c_bridge_tb.v"]"\
+ "[file normalize "$origin_dir/sim/hostcpu-i2c-bridge/i2c_bridge_tb.sv"]"\
  "[file normalize "$origin_dir/sim/hostcpu-i2c-bridge/i2c_bridge_tb_behav.wcfg"]"\
  "[file normalize "$origin_dir/rtl/soc/TG68K.vhd"]"\
  "[file normalize "$origin_dir/rtl/sdram/dpram_inf_256x32.v"]"\
@@ -610,7 +610,7 @@ set files [list \
  [file normalize "${origin_dir}/rtl/minimig/gayle_fifo.v"] \
  [file normalize "${origin_dir}/rtl/host/hostcache.v"] \
  [file normalize "${origin_dir}/rtl/openaars/adv7511/i2c_master.v"] \
- [file normalize "${origin_dir}/rtl/host/i2c_master_mmio.v"] \
+ [file normalize "${origin_dir}/rtl/host/i2c_master_mmio.sv"] \
  [file normalize "${origin_dir}/rtl/openaars/i2s_tx.v"] \
  [file normalize "${origin_dir}/rtl/openaars/mcp23s17/mcp23s17_input.v"] \
  [file normalize "${origin_dir}/rtl/minimig/minimig.v"] \
@@ -933,9 +933,10 @@ set file [file normalize $file]
 set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
 set_property -name "library" -value "work" -objects $file_obj
 
-set file "$origin_dir/rtl/host/i2c_master_mmio.v"
+set file "$origin_dir/rtl/host/i2c_master_mmio.sv"
 set file [file normalize $file]
 set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
+set_property -name "file_type" -value "SystemVerilog" -objects $file_obj
 set_property -name "library" -value "work" -objects $file_obj
 
 set file "$origin_dir/rtl/openaars/i2s_tx.v"
@@ -1602,10 +1603,10 @@ if {[string equal [get_filesets -quiet hostcpu-i2c-bridge] ""]} {
 set obj [get_filesets hostcpu-i2c-bridge]
 set files [list \
  [file normalize "${origin_dir}/rtl/openaars/adv7511/i2c_master.v"] \
- [file normalize "${origin_dir}/rtl/host/i2c_master_mmio.v"] \
+ [file normalize "${origin_dir}/rtl/host/i2c_master_mmio.sv"] \
  [file normalize "${origin_dir}/sim/hostcpu-i2c-bridge/i2c_slave_tb.v"] \
  [file normalize "${origin_dir}/rtl/host/cfide.vhd"] \
- [file normalize "${origin_dir}/sim/hostcpu-i2c-bridge/i2c_bridge_tb.v"] \
+ [file normalize "${origin_dir}/sim/hostcpu-i2c-bridge/i2c_bridge_tb.sv"] \
  [file normalize "${origin_dir}/sim/hostcpu-i2c-bridge/i2c_bridge_tb_behav.wcfg"] \
 ]
 add_files -norecurse -fileset $obj $files
@@ -1616,7 +1617,7 @@ set file [file normalize $file]
 set file_obj [get_files -of_objects [get_filesets hostcpu-i2c-bridge] [list "*$file"]]
 set_property -name "library" -value "work" -objects $file_obj
 
-set file "$origin_dir/rtl/host/i2c_master_mmio.v"
+set file "$origin_dir/rtl/host/i2c_master_mmio.sv"
 set file [file normalize $file]
 set file_obj [get_files -of_objects [get_filesets hostcpu-i2c-bridge] [list "*$file"]]
 set_property -name "library" -value "work" -objects $file_obj
@@ -1632,9 +1633,10 @@ set file_obj [get_files -of_objects [get_filesets hostcpu-i2c-bridge] [list "*$f
 set_property -name "file_type" -value "VHDL" -objects $file_obj
 set_property -name "library" -value "work" -objects $file_obj
 
-set file "$origin_dir/sim/hostcpu-i2c-bridge/i2c_bridge_tb.v"
+set file "$origin_dir/sim/hostcpu-i2c-bridge/i2c_bridge_tb.sv"
 set file [file normalize $file]
 set file_obj [get_files -of_objects [get_filesets hostcpu-i2c-bridge] [list "*$file"]]
+set_property -name "file_type" -value "SystemVerilog" -objects $file_obj
 set_property -name "library" -value "work" -objects $file_obj
 
 set file "$origin_dir/sim/hostcpu-i2c-bridge/i2c_bridge_tb_behav.wcfg"
