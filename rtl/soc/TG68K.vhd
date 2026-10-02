@@ -81,6 +81,8 @@ entity TG68K is
 		ap040_btb          : integer := 0;
 		-- late-operand load dispatch (findings/loadstore/plan.md step 1)
 		ap040_ldx          : integer := 0;
+		-- forward conditional branches guessed not taken (findings/loadstore/plan.md section 11)
+		ap040_btfn         : integer := 0;
 		-- clk / clk_cpu, the AP68040 island's clock ratio.  3 is stage D3 as
 		-- shipped (37.8125 MHz); 4 runs the same architecture at the pre-D3 CPU
 		-- rate.  THE PHASE MARKER BELOW DEPENDS ON THIS AND IS NOT RATIO-AGNOSTIC
@@ -638,7 +640,8 @@ ARCHITECTURE logic OF TG68K IS
 			AP040_SB_MMU       : integer := 0;
 			AP040_COPYBACK     : integer := 0;
 			AP040_BTB          : integer := 0;
-			AP040_LDX          : integer := 0
+			AP040_LDX          : integer := 0;
+			AP040_BTFN         : integer := 0
 		);
 		PORT(
 			clk               : in  std_logic;
@@ -1440,7 +1443,8 @@ BEGIN
 					AP040_SB_MMU       => ap040_sb_mmu,
 					AP040_COPYBACK     => ap040_copyback,
 					AP040_BTB          => ap040_btb,
-					AP040_LDX          => ap040_ldx
+					AP040_LDX          => ap040_ldx,
+					AP040_BTFN         => ap040_btfn
 				)
 				PORT MAP(
 					-- The CPU island's own 37.8125 MHz clock.  So are the master

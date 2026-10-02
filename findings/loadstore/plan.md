@@ -441,3 +441,11 @@ branch costs 1 (68040: 3).  strcpy's loop is 4 clocks per byte, the same as the 
 
 If every fix delivered its full bucket: 1,044 -> ~850 clocks per run, 1.12x the 68040's clocks (0.9 of a 68040 per
 clock).  Section 4's ZL run showed buckets do not add up fully; each step gets measured on its own.
+
+### 11.1 BTFN (2026-10-02): measured, then on the board
+
+Core 3ec6ad1 (AP040_BTFN; build switch BTFN=1).  SoC Dhrystone with copyback: 11,101 -> 10,195 clocks
+(-8.2 %; the estimate above was -6.5 %); ID redirects 987 -> 683, EA-fetch corrections 286 -> 62.  Board
+(stage_cb6 = rc1 + BTFN): xSysInfo 1.07 -> **1.17**, 35,166 -> **38,580** Dhrystones (+9.7 %).  Stable with
+CopyBack off; the crashes seen on cb6 during disk activity came with CopyBack on the SDRAM Zorro III board (the
+coarse copyback window, findings/copyback), not from BTFN: the same disk work with CopyBack off held.
