@@ -113,6 +113,10 @@ add_src $R/rtl/sdram/cpu_enable_cadence.v
 add_src $R/rtl/soc/ap040_ram_seq.vhd
 # The XADC die-temperature reader, for the Chipset OSD menu's first line.
 add_src $R/rtl/soc/fpga_temp.v
+# The dual-port RAM the AP040 MMU's ATC and the caches instantiate (module
+# dpram); project_1 had it only as a hand-added source, so a fresh clone's
+# project did not.
+add_src $R/rtl/cpu040/dpram.v
 
 set ipdir $R/ip/ddr3
 file mkdir $ipdir
