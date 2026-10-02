@@ -1,7 +1,7 @@
 # Capture the AP68040's bus and fault state while the machine boots.
 #
 #   vivado -mode batch -source tools/vivado/ila_cpu040_capture.tcl \
-#          -tclargs <bitstream-dir> <out.csv> [minutes] [program] [fault|now|busy|serper]
+#          -tclargs <bitstream-dir> <out.csv> [minutes] [program] [fault|now|busy|serper|serperw|serperwall]
 #
 # Needs a bitstream built with CPU040_DEBUG_ILA=1 (tools/vivado/build_ap040.tcl
 # with <ila> = 1), which puts ila_cpu040 on dbg_pc / tg68_adr / bus_ctl /
@@ -83,6 +83,18 @@ if {$mode eq "busy"} {
     # one read sets the serial port to ~112 baud).  as low, rw high.
     set_property TRIGGER_COMPARE_VALUE {eq32'bXXXXXXXX110111111111000000110010} [pr $ila *tg68_adr*]
     set_property TRIGGER_COMPARE_VALUE {eq4'b01XX} [pr $ila *bus_ctl*]
+} elseif {$mode eq "serperw"} {
+    # ... and the WRITE: what value serial.device puts in SERPER, and the
+    # instructions in front of it.  as low, rw low.
+    set_property TRIGGER_COMPARE_VALUE {eq32'bXXXXXXXX110111111111000000110010} [pr $ila *tg68_adr*]
+    set_property TRIGGER_COMPARE_VALUE {eq4'b00XX} [pr $ila *bus_ctl*]
+} elseif {$mode eq "serperwall"} {
+    # the same write, but EVERY clock stored: the PC / opcode trail of the
+    # code that computes the value (it runs from fast RAM, so the bus-cycle
+    # qualified capture shows nothing of it)
+    set_property CONTROL.CAPTURE_MODE ALWAYS $ila
+    set_property TRIGGER_COMPARE_VALUE {eq32'bXXXXXXXX110111111111000000110010} [pr $ila *tg68_adr*]
+    set_property TRIGGER_COMPARE_VALUE {eq4'b00XX} [pr $ila *bus_ctl*]
 } elseif {$mode eq "now"} {
     set_property CONTROL.CAPTURE_MODE ALWAYS $ila
     set_property CONTROL.TRIGGER_POSITION 0 $ila

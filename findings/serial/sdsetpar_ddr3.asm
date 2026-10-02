@@ -6,6 +6,12 @@
 ; the real chipset does); serprobe_ddr3.sv shows whether this code makes one.
 ; The device base (a6) is in DDR3; 100(a6) points at a fake ExecBase whose
 ; PowerSupplyFrequency (531) is 50.  Three calls: 9600, 38400, 115200.
+; MMU=1 (vasm -DMMU=1, sdsetpar_mmu_ddr3.asm): translation on, data
+; transparent-translated COPYBACK (DTT0 $00FFC020, as MuSetCacheMode leaves
+; Z3 fast RAM on the board), instructions write-through: the board, under
+; Workbench, wrote $7B6D to SERPER for 38400 from exactly this code.
+; The three results also go to MBOX+4.. (what would go to $DFF032), and
+; MBOX = 2 when one is wrong.
 MBOX	equ	$1000
 DEV	equ	$41050000
 EXB	equ	$41060000
@@ -17,6 +23,17 @@ EXB	equ	$41060000
 	endr
 start:	moveq	#0,d0
 	move.l	d0,MBOX
+	ifd	MMU
+	move.l	#$80008000,d0
+	movec	d0,cacr
+	move.l	#$00ffc020,d0		; data: copyback
+	movec	d0,dtt0
+	move.l	#$00ffc000,d0		; instructions: write-through
+	movec	d0,itt0
+	pflusha
+	move.l	#$8000,d0
+	movec	d0,tc
+	endif
 	move.l	#1,MBOX+$10
 	lea	DEV,a6
 	lea	EXB,a0
@@ -27,15 +44,26 @@ start:	moveq	#0,d0
 	move.b	#0,474(a6)
 	move.l	#9600,452(a6)
 	bsr	setper
+	move.w	464(a6),MBOX+6
 	move.l	#2,MBOX+$10
 	move.l	#38400,452(a6)
 	bsr	setper
+	move.w	464(a6),MBOX+10
 	move.l	#3,MBOX+$10
 	move.l	#115200,452(a6)
 	bsr	setper
+	move.w	464(a6),MBOX+14
 	move.l	#4,MBOX+$10
+	cmp.w	#368,MBOX+6
+	bne.s	.bad
+	cmp.w	#92,MBOX+10
+	bne.s	.bad
+	cmp.w	#30,MBOX+14
+	bne.s	.bad
 	move.l	#1,MBOX
 .ok:	bra.s	.ok
+.bad:	move.l	#2,MBOX
+	bra.s	.bad
 except:	move.l	#99,MBOX
 .e:	bra.s	.e
 	cnop	0,16
