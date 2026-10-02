@@ -29,6 +29,10 @@ Fix (core, AP040_COPYBACK only): before each descriptor transaction the walker r
 
 Tests: t_cbtab_pipe.s (flat bench, 5 cases: instruction-side walk, data-side walk, U-bit update, the walk past a CPUSHA, a dirty neighbour in the walker's set stays dirty); cbtab_ddr3.asm (SoC bench, the real TG68K master mux). amiga_sw/CBTest runs the copyback scenarios on the board and prints SRP/URP, which shows whether MMULib's tables are on the DDR3 board.
 
+## Finding 2026-10-02: a keyboard reset loses dirty lines (backlog)
+
+On stage_cb5 with CopyBack on, Elysium crashed (PC $CCCCCCCC, Access Fault) on every WARM boot, CopyBack on or off, and ran correctly after a cold start (JTAG reload), CopyBack on included. Ctrl-Amiga-Amiga resets at once (rtl/minimig/ciaa_ps2keyboard.v kbdrst -> minimig.v mrst): no $78 reset warning, so keyboard.device's reset handlers never flush the caches, and dirty lines in fast RAM are lost; whatever survives a reset there (resident modules, MMULib's state) comes back stale. Not a CPU deviation: a 68040 keeps its cache over a reset (UM: "reset does not affect the tags, state information, and data"), but Kickstart 40.10 discards it at boot (CINVA BC at $F80C66), so a real 040 behind an instant reset loses the same data. Fix options (platform, backlog): hold any reset until the cache has pushed its dirty lines; or send the $78 reset warning as a real keyboard does. Until then, with CopyBack on: `Reboot` or a cold start, not Ctrl-Amiga-Amiga.
+
 ## Why
 
 On the board, xSysInfo shows **28,938 Dhrystones = 0.88** of an A4000/040 at 25 MHz. That is `stage_cu4`: store buffer, forwarding, return-address stack, precise fast reads, with the MMU on. The SoC bench matches the board within 1.5 %.
