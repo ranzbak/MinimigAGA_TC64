@@ -23,8 +23,6 @@
 # 2. The following source(s) files that were local or imported into the original project.
 #    (Please see the '$orig_proj_dir' and '$origin_dir' variable setting below at the start of the script)
 #
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/project_1/minimig_autoconfig_tb_behav.wcfg"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/project_1/minimig_autoconfig_drv_tb_behav.wcfg"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/project_1/project_1.srcs/utils_1/imports/synth_1/minimig_openaars_top.dcp"
 #
 # 3. The following remote source files that were added to the original project:-
@@ -139,7 +137,6 @@
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/soc/minimig_openaars_top.v"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/minimig/denise_hamgenerator_ram_mf.v"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/openaars/adv7511/frame_freq.v"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/minimig/minimig_version.vh"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/soc/minimig_defines.vh"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/openaars/sync_buttons.v"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/openaars/pcf2123/oki_pcf_buffer.sv"
@@ -193,10 +190,8 @@
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/sdram/dpram_inf_be_2048x16.v"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/tg68/TG68_fast.vhd"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/sdram/sdram_ctrl.v"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/minimig/minimig_version.vh"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/soc/minimig_defines.vh"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/tg68vswf68ksim/tg68kvswf68k_top_tb.v"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/tg68vswf68ksim/tg68kvswf68k_top_tb_behav-basic.wcfg"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/rtc_spi_clock/rtc_spi_clock_tb.sv"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/openaars/pcf2123/oki_pcf_buffer.sv"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/openaars/pcf2123/rtc_spi_clock.sv"
@@ -215,7 +210,6 @@
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/toccata/toccata_top_tb_behav.wcfg"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/openaars/toccata/toccata_capture.sv"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/toccata/toccata_drv_top_tb.sv"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/toccata/toccata_top_drv_tb_behav.wcfg"
 #
 #*****************************************************************************************
 
@@ -223,9 +217,6 @@
 proc checkRequiredFiles { origin_dir} {
   set status true
   set files [list \
- "[file normalize "$origin_dir/project_1/minimig_autoconfig_tb_behav.wcfg"]"\
- "[file normalize "$origin_dir/project_1/minimig_autoconfig_drv_tb_behav.wcfg"]"\
- "[file normalize "$origin_dir/project_1/project_1.srcs/utils_1/imports/synth_1/minimig_openaars_top.dcp"]"\
   ]
   foreach ifile $files {
     if { ![file isfile $ifile] } {
@@ -345,7 +336,6 @@ proc checkRequiredFiles { origin_dir} {
  "[file normalize "$origin_dir/rtl/soc/minimig_openaars_top.v"]"\
  "[file normalize "$origin_dir/rtl/minimig/denise_hamgenerator_ram_mf.v"]"\
  "[file normalize "$origin_dir/rtl/openaars/adv7511/frame_freq.v"]"\
- "[file normalize "$origin_dir/rtl/minimig/minimig_version.vh"]"\
  "[file normalize "$origin_dir/rtl/soc/minimig_defines.vh"]"\
  "[file normalize "$origin_dir/rtl/openaars/sync_buttons.v"]"\
  "[file normalize "$origin_dir/rtl/openaars/pcf2123/oki_pcf_buffer.sv"]"\
@@ -399,10 +389,8 @@ proc checkRequiredFiles { origin_dir} {
  "[file normalize "$origin_dir/rtl/sdram/dpram_inf_be_2048x16.v"]"\
  "[file normalize "$origin_dir/rtl/tg68/TG68_fast.vhd"]"\
  "[file normalize "$origin_dir/rtl/sdram/sdram_ctrl.v"]"\
- "[file normalize "$origin_dir/rtl/minimig/minimig_version.vh"]"\
  "[file normalize "$origin_dir/rtl/soc/minimig_defines.vh"]"\
  "[file normalize "$origin_dir/sim/tg68vswf68ksim/tg68kvswf68k_top_tb.v"]"\
- "[file normalize "$origin_dir/sim/tg68vswf68ksim/tg68kvswf68k_top_tb_behav-basic.wcfg"]"\
  "[file normalize "$origin_dir/sim/rtc_spi_clock/rtc_spi_clock_tb.sv"]"\
  "[file normalize "$origin_dir/rtl/openaars/pcf2123/oki_pcf_buffer.sv"]"\
  "[file normalize "$origin_dir/rtl/openaars/pcf2123/rtc_spi_clock.sv"]"\
@@ -421,7 +409,6 @@ proc checkRequiredFiles { origin_dir} {
  "[file normalize "$origin_dir/sim/toccata/toccata_top_tb_behav.wcfg"]"\
  "[file normalize "$origin_dir/rtl/openaars/toccata/toccata_capture.sv"]"\
  "[file normalize "$origin_dir/sim/toccata/toccata_drv_top_tb.sv"]"\
- "[file normalize "$origin_dir/sim/toccata/toccata_top_drv_tb_behav.wcfg"]"\
   ]
   foreach ifile $files {
     if { ![file isfile $ifile] } {
@@ -671,7 +658,6 @@ set files [list \
  [file normalize "${origin_dir}/rtl/soc/minimig_openaars_top.v"] \
  [file normalize "${origin_dir}/rtl/minimig/denise_hamgenerator_ram_mf.v"] \
  [file normalize "${origin_dir}/rtl/openaars/adv7511/frame_freq.v"] \
- [file normalize "${origin_dir}/rtl/minimig/minimig_version.vh"] \
  [file normalize "${origin_dir}/rtl/soc/minimig_defines.vh"] \
  [file normalize "${origin_dir}/rtl/openaars/sync_buttons.v"] \
  [file normalize "${origin_dir}/rtl/openaars/pcf2123/oki_pcf_buffer.sv"] \
@@ -1273,11 +1259,6 @@ set file [file normalize $file]
 set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
 set_property -name "library" -value "work" -objects $file_obj
 
-set file "$origin_dir/rtl/minimig/minimig_version.vh"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
-set_property -name "file_type" -value "Verilog Header" -objects $file_obj
-set_property -name "library" -value "work" -objects $file_obj
 
 set file "$origin_dir/rtl/soc/minimig_defines.vh"
 set file [file normalize $file]
@@ -1683,10 +1664,8 @@ set files [list \
  [file normalize "${origin_dir}/rtl/sdram/dpram_inf_be_2048x16.v"] \
  [file normalize "${origin_dir}/rtl/tg68/TG68_fast.vhd"] \
  [file normalize "${origin_dir}/rtl/sdram/sdram_ctrl.v"] \
- [file normalize "${origin_dir}/rtl/minimig/minimig_version.vh"] \
  [file normalize "${origin_dir}/rtl/soc/minimig_defines.vh"] \
  [file normalize "${origin_dir}/sim/tg68vswf68ksim/tg68kvswf68k_top_tb.v"] \
- [file normalize "${origin_dir}/sim/tg68vswf68ksim/tg68kvswf68k_top_tb_behav-basic.wcfg"] \
 ]
 add_files -norecurse -fileset $obj $files
 
@@ -1792,11 +1771,6 @@ set file [file normalize $file]
 set file_obj [get_files -of_objects [get_filesets tg68vswf68k30sim] [list "*$file"]]
 set_property -name "library" -value "work" -objects $file_obj
 
-set file "$origin_dir/rtl/minimig/minimig_version.vh"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets tg68vswf68k30sim] [list "*$file"]]
-set_property -name "file_type" -value "Verilog Header" -objects $file_obj
-set_property -name "library" -value "work" -objects $file_obj
 
 set file "$origin_dir/rtl/soc/minimig_defines.vh"
 set file [file normalize $file]
@@ -1809,10 +1783,6 @@ set file [file normalize $file]
 set file_obj [get_files -of_objects [get_filesets tg68vswf68k30sim] [list "*$file"]]
 set_property -name "library" -value "work" -objects $file_obj
 
-set file "$origin_dir/sim/tg68vswf68ksim/tg68kvswf68k_top_tb_behav-basic.wcfg"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets tg68vswf68k30sim] [list "*$file"]]
-set_property -name "library" -value "work" -objects $file_obj
 
 
 # Set 'tg68vswf68k30sim' fileset file properties for local files
@@ -1897,7 +1867,6 @@ add_files -norecurse -fileset $obj $files
 
 # Import local files from the original project
 set files [list \
- [file normalize "${origin_dir}/project_1/minimig_autoconfig_tb_behav.wcfg" ]\
 ]
 set imported_files ""
 foreach f $files {
@@ -1953,13 +1922,11 @@ set files [list \
  [file normalize "${origin_dir}/sim/toccata/toccata_top_tb_behav.wcfg"] \
  [file normalize "${origin_dir}/rtl/openaars/toccata/toccata_capture.sv"] \
  [file normalize "${origin_dir}/sim/toccata/toccata_drv_top_tb.sv"] \
- [file normalize "${origin_dir}/sim/toccata/toccata_top_drv_tb_behav.wcfg"] \
 ]
 add_files -norecurse -fileset $obj $files
 
 # Import local files from the original project
 set files [list \
- [file normalize "${origin_dir}/project_1/minimig_autoconfig_drv_tb_behav.wcfg" ]\
 ]
 set imported_files ""
 foreach f $files {
@@ -2025,10 +1992,6 @@ set file_obj [get_files -of_objects [get_filesets toccata_volume] [list "*$file"
 set_property -name "file_type" -value "SystemVerilog" -objects $file_obj
 set_property -name "library" -value "work" -objects $file_obj
 
-set file "$origin_dir/sim/toccata/toccata_top_drv_tb_behav.wcfg"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets toccata_volume] [list "*$file"]]
-set_property -name "library" -value "work" -objects $file_obj
 
 
 # Set 'toccata_volume' fileset file properties for local files
@@ -2046,23 +2009,14 @@ set_property -name "xsim.compile.xvlog.more_options" -value "-d MINIMIG_OPENAARS
 
 # Set 'utils_1' fileset object
 set obj [get_filesets utils_1]
-# Import local files from the original project
-set files [list \
- [file normalize "${origin_dir}/project_1/project_1.srcs/utils_1/imports/synth_1/minimig_openaars_top.dcp" ]\
-]
-set imported_files ""
-foreach f $files {
-  lappend imported_files [import_files -fileset utils_1 $f]
-}
+# (the incremental-synthesis checkpoint that was imported here is not in
+# git and not used: synth_1 has AutoIncrementalCheckpoint false)
 
 # Set 'utils_1' fileset file properties for remote files
 # None
 
 # Set 'utils_1' fileset file properties for local files
-set file "synth_1/minimig_openaars_top.dcp"
-set file_obj [get_files -of_objects [get_filesets utils_1] [list "*$file"]]
-set_property -name "library" -value "work" -objects $file_obj
-set_property -name "netlist_only" -value "0" -objects $file_obj
+# None
 
 
 # Set 'utils_1' fileset properties
