@@ -5,7 +5,7 @@ use ieee.numeric_std.all;
 entity soc_firmware is
 generic
 	(
-		maxAddrBitBRAM : integer := 15 -- Specify your actual ROM size to save LEs and unnecessary block RAM usage.
+		maxAddrBitBRAM : integer := 15; -- Specify your actual ROM size to save LEs and unnecessary block RAM usage.
         COL_WIDTH  : integer := 8;  -- Column width (8bit -> byte)
         NB_COL     : integer := 4  -- Number of columns in memory
 	);
