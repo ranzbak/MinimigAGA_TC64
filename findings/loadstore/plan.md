@@ -453,5 +453,5 @@ coarse copyback window, findings/copyback), not from BTFN: the same disk work wi
 ### 11.2 LDX on the board (2026-10-03)
 
 stage_r01ldx = release 0.1 (BTFN, write-through) + LDX=1: clk_38 +0.175 ns. Suite 323 pass with exactly these
-switches. Board: xSysInfo 1.10 -> **1.13**, 36,256 -> **37,316** Dhrystones (+2.9 %; the -4 % of section 10 was
+switches. SoC Dhrystone (BTFN, write-through): 11,054 -> 10,651 clocks (-3.6 %). Board: xSysInfo 1.10 -> **1.13**, 36,256 -> **37,316** Dhrystones (+2.9 %; the -4 % of section 10 was
 measured without BTFN -- the two partly remove the same bubbles). Heavy demos ran without a crash (Paul).

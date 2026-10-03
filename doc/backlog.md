@@ -91,14 +91,16 @@ Release 0.1 ships with these open (see doc/release-0.1.md).
   cache at boot (CINVA BC at $F80C66). Fix: hold any reset until the cache
   has pushed its dirty lines, or send the $78 warning. findings/copyback/plan.md.
 
-### Interrupt sometimes taken one instruction late (2026-10-03)
+### Interrupt deferred for 16+ instructions (2026-10-03, in progress)
 
 - The fuzzer with random interrupts (lib/AP68040-pipelined/tb/perf/fuzz,
   GEN_IRQ=1) reports "qualified level-2 request not taken at the next
   boundary" for seeds 5018 and 5081 with the board's store-buffer switches
   (with and without BTFN; the all-off reference passes), and 3007/3085 (the
-  reference too). Not a lost interrupt; a deviation from the 68040's
-  boundary rule. Use a relative FUZZ_DIR: the bench cuts paths at 128 chars.
+  reference too). The bench allows a qualified request to wait at most 16
+  instruction starts (measured legitimate worst case 6); these exceed it --
+  a deferral, possibly starvation in read-heavy code. Paul: match the real
+  68040's interrupt behaviour; RCA in progress. Use a relative FUZZ_DIR: the bench cuts paths at 128 chars.
 
 ### Serial port runs at about 112 baud (2026-10-01)
 
