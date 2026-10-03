@@ -49,6 +49,15 @@ Release 0.1 ships with these open (see doc/release-0.1.md).
   (size + CRC) and reload it up to N times; SD card recovery in spi_init
   (CMD12 and extra clocks with CS high before CMD0); a reset matrix (power,
   button, OSD reboot, Ctrl-Amiga-Amiga: what each one resets).
+- Also (2026-10-03, Paul): the board reset button must reset the OSD state
+  completely; today OSD state survives it, even though the firmware is
+  reloaded. Candidates: the firmware's variables (.bss/.data) live in SDRAM,
+  which a reset does not clear, and its startup code may not zero them; the
+  OSD/chipset configuration registers in the Minimig RTL may sit outside
+  the reset chain the button drives; or the state comes back from a
+  settings file on purpose. First step: list which settings survive and
+  check the firmware crt0 (is .bss zeroed?) and the reset inputs of the
+  userio/OSD registers.
 
 ### SD card gone after Ctrl-Amiga-Amiga (2026-10-02)
 
