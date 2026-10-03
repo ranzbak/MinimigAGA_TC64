@@ -22,6 +22,18 @@ Release 0.1 ships with these open (see doc/release-0.1.md).
   lines switching at once). RTG: watch the OSD HDMI page's INT count and
   status while sync is lost; compare with an image from before 2026-09-25.
 
+### Demo: TBL "Ocean Machine" shows garbage after a few effects (2026-10-03)
+
+- Symptom: after a few effects the screen shows garbage while the music
+  keeps playing (so the CPU and Paula's interrupts/DMA still run).
+- Not yet known: which image (release 0.1 / + LDX), CopyBack off, whether
+  stage_cu9 or an older image shows it, the exact effect where it breaks.
+- First step: the same on stage_cu9 and on an image without BTFN/LDX to
+  split CPU from chipset; garbage with the music going points at the
+  display side (copper list / bitplane pointers / chip RAM written by the
+  CPU or the blitter, e.g. a chip RAM coherency or blitter-wait issue)
+  rather than a crash.
+
 ### Video: static artifacts in the border after a resolution change (2026-10-03)
 
 - Symptom: after the screen mode changes, the border is not always cleared;
