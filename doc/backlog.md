@@ -9,6 +9,7 @@ Release 26.10.02 ships with these open (see doc/release-26.10.02.md).
 ## Stability and correctness
 
 ### HDMI: sync loss in RTG modes and in demos that flash a lot (2026-10-03)
+
 - Symptom: some RTG display modes that used to sync no longer do; demos with
   rapid full-screen flashes make the monitor lose sync.
 - Known: all HDMI changes on this line date from 2026-09-25..27 (ADV7511
@@ -22,6 +23,7 @@ Release 26.10.02 ships with these open (see doc/release-26.10.02.md).
   status while sync is lost; compare with an image from before 2026-09-25.
 
 ### Video: static artifacts in the border after a resolution change (2026-10-03)
+
 - Symptom: after the screen mode changes, the border is not always cleared;
   the artifacts are static and usually lines at regular intervals.
 - Hypothesis (Paul): a few lines of a line buffer are not cleared when the
@@ -33,6 +35,7 @@ Release 26.10.02 ships with these open (see doc/release-26.10.02.md).
   never written, so they keep whatever was there).
 
 ### Reset and boot: a corrupted 832 firmware survives the board reset (2026-10-02)
+
 - Symptom: after a half-loaded or corrupted 832 firmware, the reset button
   does not recover; the same firmware error repeats until a power cycle.
 - Known: the 832 "boot ROM" is a writable 8 KB block RAM at 0x0000-0x1FFF
@@ -48,6 +51,7 @@ Release 26.10.02 ships with these open (see doc/release-26.10.02.md).
   button, OSD reboot, Ctrl-Amiga-Amiga: what each one resets).
 
 ### SD card gone after Ctrl-Amiga-Amiga (2026-10-02)
+
 - Symptom: after a keyboard reset the SD card does not show up; an OSD menu
   reboot brings it back. Also with CopyBack off.
 - Known: Ctrl-Amiga-Amiga resets only the Amiga side, not the 832 or the SD
@@ -55,6 +59,7 @@ Release 26.10.02 ships with these open (see doc/release-26.10.02.md).
 - Part of the reset-and-boot work above.
 
 ### Copyback data cache unstable under disk load (2026-10-02)
+
 - Symptom: with CopyBack on (MuSetCacheMode on $40000000, which includes the
   DDR3 board that is used first), random 80000004/80000005 crashes while
   opening programs or directories; Elysium and xSysInfo ran.
@@ -65,12 +70,14 @@ Release 26.10.02 ships with these open (see doc/release-26.10.02.md).
   instead of a Guru), then the ILA. findings/copyback/plan.md.
 
 ### Keyboard reset loses dirty cache lines (2026-10-02)
+
 - Only matters with copyback. Ctrl-Amiga-Amiga resets at once, without the
   $78 reset warning, so the OS never flushes; Kickstart 40.10 discards the
   cache at boot (CINVA BC at $F80C66). Fix: hold any reset until the cache
   has pushed its dirty lines, or send the $78 warning. findings/copyback/plan.md.
 
 ### Interrupt sometimes taken one instruction late (2026-10-03)
+
 - The fuzzer with random interrupts (lib/AP68040-pipelined/tb/perf/fuzz,
   GEN_IRQ=1) reports "qualified level-2 request not taken at the next
   boundary" for seeds 5018 and 5081 with the board's store-buffer switches
@@ -79,14 +86,17 @@ Release 26.10.02 ships with these open (see doc/release-26.10.02.md).
   boundary rule. Use a relative FUZZ_DIR: the bench cuts paths at 128 chars.
 
 ### Serial port runs at about 112 baud (2026-10-01)
+
 - serial.device receives io_Baud = 112 for Prefs 38400/115200. Worked on the
   020 core up to 56k6. amiga_sw/SerTest2 is ready for the board.
   findings/serial/README.md.
 
 ### DDR3-only fast RAM shows 10 MB (2026-10-02)
+
 - With only the DDR3 board configured, AmigaOS sees 10 MB of 16 MB.
 
 ### Copyback window covers all of $4xxxxxxx (2026-10-02)
+
 - `cb_win` in ap040_pipe_tg68k_compat.v compares only address bits 31:28, so
   it includes the SDRAM Zorro III blocks, not just the DDR3 board. Only
   relevant once copyback is back.
@@ -94,7 +104,7 @@ Release 26.10.02 ships with these open (see doc/release-26.10.02.md).
 ## Performance (measured: findings/loadstore/plan.md section 11)
 
 | Step | Measured / estimated | State |
-|---|---|---|
+| --- | --- | --- |
 | Misaligned reads served from the cache (two hits instead of a DDR3 read) | ~85 clocks per Dhrystone run, ~8 % | plan step 3 |
 | LDX (late operand dispatch) on the board | -6 % in the SoC bench | built, verified, off by default |
 | Write-allocate / store coalescing | ~59 clocks per run | needs copyback |
