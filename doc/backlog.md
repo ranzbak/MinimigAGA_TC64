@@ -51,13 +51,19 @@ Release 0.1 ships with these open (see doc/release-0.1.md).
   button, OSD reboot, Ctrl-Amiga-Amiga: what each one resets).
 - Also (2026-10-03, Paul): the board reset button must reset the OSD state
   completely; today OSD state survives it, even though the firmware is
-  reloaded. Candidates: the firmware's variables (.bss/.data) live in SDRAM,
-  which a reset does not clear, and its startup code may not zero them; the
-  OSD/chipset configuration registers in the Minimig RTL may sit outside
-  the reset chain the button drives; or the state comes back from a
-  settings file on purpose. First step: list which settings survive and
-  check the firmware crt0 (is .bss zeroed?) and the reset inputs of the
-  userio/OSD registers.
+  reloaded. Not the firmware's RAM: its startup (EightThirtyTwo lib832
+  crt0.a, premain.S) zeroes .bss before main (checked in 832OSDAD.map) and
+  .data comes fresh from the file. So the state lives in hardware: the
+  OSD/chipset/memory configuration registers in the Minimig RTL outside the
+  reset chain the button drives (and the firmware may read them back at
+  start), or a settings file on purpose. First step: list which settings
+  survive; check the reset inputs of the userio/OSD registers.
+- Also: the firmware is linked with `-s_STACKTOP=0x2000` (fw/ctrl_832
+  Makefile), so its stack is the top of the writable 8 KB boot block RAM
+  and grows down toward the boot code (its first ~4.3 KB). A deep call path
+  or a large local buffer overwrites the boot code -- a concrete way to the
+  damaged boot ROM above. Write-protecting the boot code catches it; moving
+  the stack or bounding it is the fix.
 
 ### SD card gone after Ctrl-Amiga-Amiga (2026-10-02)
 
