@@ -4,7 +4,7 @@ Open issues and planned work that are known but not being worked on now.
 Newest at the top of each section. Each item: the symptom, what is known,
 and the first step. Details live in the findings documents named.
 
-Release 26.10.02 ships with these open (see doc/release-26.10.02.md).
+Release 0.1 ships with these open (see doc/release-0.1.md).
 
 ## Stability and correctness
 
