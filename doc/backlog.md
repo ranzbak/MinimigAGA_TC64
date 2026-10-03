@@ -22,17 +22,23 @@ Release 0.1 ships with these open (see doc/release-0.1.md).
   lines switching at once). RTG: watch the OSD HDMI page's INT count and
   status while sync is lost; compare with an image from before 2026-09-25.
 
-### Demo: TBL "Ocean Machine" shows garbage after a few effects (2026-10-03)
+### Demos: garbage in TBL "Ocean Machine" and the Roots2 rotozoomer (2026-10-03)
 
-- Symptom: after a few effects the screen shows garbage while the music
-  keeps playing (so the CPU and Paula's interrupts/DMA still run).
-- Not yet known: which image (release 0.1 / + LDX), CopyBack off, whether
-  stage_cu9 or an older image shows it, the exact effect where it breaks.
-- First step: the same on stage_cu9 and on an image without BTFN/LDX to
-  split CPU from chipset; garbage with the music going points at the
-  display side (copper list / bitplane pointers / chip RAM written by the
-  CPU or the blitter, e.g. a chip RAM coherency or blitter-wait issue)
-  rather than a crash.
+- Symptom: Ocean Machine shows garbage after a few effects while the music
+  keeps playing (CPU and Paula's interrupts/DMA still run); Roots2's
+  rotating and zooming pattern effect shows garbage too.
+- Paul: persistent, present since the chipset data bus went to 32 bits
+  (CHIP32: an aligned longword to chip RAM in one chipset cycle,
+  findings/chip32/plan.md); both demos ran many times without issue on the
+  020 Minimig. Ocean Machine targets high-performance machines, so a plain
+  CPU-speed timing assumption is unlikely; suspects are the display
+  pointers / copper list updates, the interrupt timing against them, or
+  the CPU's chip RAM writes on the 32-bit path (chunky-to-planar and
+  rotozoom effects write chip RAM with longwords; byte lanes, ordering
+  against DMA, or a write landing in the wrong chipset slot).
+- First step (cheap A/B): a build with CHIP32=0 (build_ap040.tcl env
+  CHIP32, default 1), same demos. Clean with CHIP32=0 -> the 32-bit chip
+  path; still garbage -> look at copper/pointer timing.
 
 ### Video: static artifacts in the border after a resolution change (2026-10-03)
 
