@@ -449,3 +449,9 @@ Core 3ec6ad1 (AP040_BTFN; build switch BTFN=1).  SoC Dhrystone with copyback: 11
 (stage_cb6 = rc1 + BTFN): xSysInfo 1.07 -> **1.17**, 35,166 -> **38,580** Dhrystones (+9.7 %).  Stable with
 CopyBack off; the crashes seen on cb6 during disk activity came with CopyBack on the SDRAM Zorro III board (the
 coarse copyback window, findings/copyback), not from BTFN: the same disk work with CopyBack off held.
+
+### 11.2 LDX on the board (2026-10-03)
+
+stage_r01ldx = release 0.1 (BTFN, write-through) + LDX=1: clk_38 +0.175 ns. Suite 323 pass with exactly these
+switches. Board: xSysInfo 1.10 -> **1.13**, 36,256 -> **37,316** Dhrystones (+2.9 %; the -4 % of section 10 was
+measured without BTFN -- the two partly remove the same bubbles). Heavy demos ran without a crash (Paul).
