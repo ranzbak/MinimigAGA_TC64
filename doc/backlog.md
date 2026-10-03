@@ -21,6 +21,17 @@ Release 26.10.02 ships with these open (see doc/release-26.10.02.md).
   lines switching at once). RTG: watch the OSD HDMI page's INT count and
   status while sync is lost; compare with an image from before 2026-09-25.
 
+### Video: static artifacts in the border after a resolution change (2026-10-03)
+- Symptom: after the screen mode changes, the border is not always cleared;
+  the artifacts are static and usually lines at regular intervals.
+- Hypothesis (Paul): a few lines of a line buffer are not cleared when the
+  mode changes -- the scandoubler's or the HDMI 60 Hz upsampler's buffer,
+  whose lines outside the new active area keep the old picture.
+- First step: note the interval of the lines and whether it follows the old
+  or the new mode; find which buffer (scandoubler / upsampler) holds lines
+  at that pitch and how it is cleared on a mode change (border lines are
+  never written, so they keep whatever was there).
+
 ### Reset and boot: a corrupted 832 firmware survives the board reset (2026-10-02)
 - Symptom: after a half-loaded or corrupted 832 firmware, the reset button
   does not recover; the same firmware error repeats until a power cycle.
