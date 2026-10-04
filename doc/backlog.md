@@ -150,6 +150,9 @@ Release 0.1 ships with these open (see doc/release-0.1.md).
 ## Verification
 
 - cputest: ae/RTE needs data from a real 68040 (stacked SR); FBASIC not
-  generated. findings/ap040-pipelined/tests/cputest/board/README.md.
+  generated. No real 68040 is available (only a 68060, whose exception
+  frames differ, so it cannot answer this). Stays open until someone with a
+  real 040 (EAB, the WinUAE cputest author) can run that one case; it is an
+  address error during an RTE, which no normal program does. findings/ap040-pipelined/tests/cputest/board/README.md.
 - Only fpga/openaars (QMTech XC7A100T) is built; the MiST, Chameleon and DE
   ports may not build from this tree.
