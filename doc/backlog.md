@@ -36,9 +36,13 @@ Release 0.1 ships with these open (see doc/release-0.1.md).
   the CPU's chip RAM writes on the 32-bit path (chunky-to-planar and
   rotozoom effects write chip RAM with longwords; byte lanes, ordering
   against DMA, or a write landing in the wrong chipset slot).
-- First step (cheap A/B): a build with CHIP32=0 (build_ap040.tcl env
-  CHIP32, default 1), same demos. Clean with CHIP32=0 -> the 32-bit chip
-  path; still garbage -> look at copper/pointer timing.
+- 2026-10-05: NOT CHIP32 -- stage_r01ldx_c16 (CHIP32=0) shows the same
+  corruption in Roots2. Still open after the interrupt fix too.
+- Next (cheap, on the board): `CPU NODATACACHE`, then `CPU NOINSTCACHE`,
+  then `CPU NOCACHE` before running Roots2. Data cache -> a chipset write
+  (blitter/copper) the snoop misses, CPU reads a stale chip RAM copy;
+  instruction cache -> generated code run without CacheClearU; neither ->
+  chipset timing (copper/blitter/interrupt vs display pointers).
 
 ### Video: static artifacts in the border after a resolution change (2026-10-03)
 
