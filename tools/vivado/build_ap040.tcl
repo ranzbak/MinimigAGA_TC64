@@ -398,8 +398,10 @@ if {$pipe_dir ne ""} {
     set ldx [expr {[info exists ::env(LDX)] && $::env(LDX) ne "" ? $::env(LDX) : 0}]
     # BTFN=1: forward conditional branches guessed not taken (findings/loadstore/plan.md section 11)
     set btfn [expr {[info exists ::env(BTFN)] && $::env(BTFN) ne "" ? $::env(BTFN) : 0}]
-    set pipe_gen " AP040_PIPELINED=1 AP040_HAS_MMU=$pmmu AP040_HAS_FPU=$pfpu AP040_FREE_CORE=$free_core AP040_STORE_BUF=$store_buf AP040_FWD=$fwd AP040_RAS=$ras AP040_PRECISE=$precise AP040_MISPLIT=$misplit AP040_SB_MMU=$sb_mmu AP040_COPYBACK=$copyback AP040_BTB=$btb AP040_LDX=$ldx AP040_BTFN=$btfn"
-    puts "build_ap040.tcl: PIPELINED build from $P ([llength $pipe_off] lib/AP68040 files disabled), FREE_CORE=$free_core STORE_BUF=$store_buf FWD=$fwd RAS=$ras PRECISE=$precise MISPLIT=$misplit SB_MMU=$sb_mmu COPYBACK=$copyback BTB=$btb LDX=$ldx BTFN=$btfn"
+    # DFP_MIS=1: misaligned accesses served from the data cache (findings/loadstore/plan.md step 3)
+    set dfp_mis [expr {[info exists ::env(DFP_MIS)] && $::env(DFP_MIS) ne "" ? $::env(DFP_MIS) : 0}]
+    set pipe_gen " AP040_PIPELINED=1 AP040_HAS_MMU=$pmmu AP040_HAS_FPU=$pfpu AP040_FREE_CORE=$free_core AP040_STORE_BUF=$store_buf AP040_FWD=$fwd AP040_RAS=$ras AP040_PRECISE=$precise AP040_MISPLIT=$misplit AP040_SB_MMU=$sb_mmu AP040_COPYBACK=$copyback AP040_BTB=$btb AP040_LDX=$ldx AP040_BTFN=$btfn AP040_DFP_MIS=$dfp_mis"
+    puts "build_ap040.tcl: PIPELINED build from $P ([llength $pipe_off] lib/AP68040 files disabled), FREE_CORE=$free_core STORE_BUF=$store_buf FWD=$fwd RAS=$ras PRECISE=$precise MISPLIT=$misplit SB_MMU=$sb_mmu COPYBACK=$copyback BTB=$btb LDX=$ldx BTFN=$btfn DFP_MIS=$dfp_mis"
 }
 if {[info exists ::env(FREE_CORE)] && $::env(FREE_CORE) eq "1" && ![info exists free_core]} {
     error "build_ap040.tcl: FREE_CORE=1 needs the pipelined core (AP040_PIPE_DIR is none)"

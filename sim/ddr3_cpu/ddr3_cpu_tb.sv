@@ -819,6 +819,11 @@ localparam integer BTFN_GEN = 1;
 `else
 localparam integer BTFN_GEN = 0;
 `endif
+`ifdef DFPMISF
+localparam integer DFPMIS_GEN = 1;
+`else
+localparam integer DFPMIS_GEN = 0;
+`endif
 `ifdef BTBF
 localparam integer BTB_GEN = 1;
 `else
@@ -853,7 +858,7 @@ localparam integer FWDRAS_GEN = 0;
 `ifdef AP040_PIPELINED
 TG68K #(.cpu_clk_ratio(`CPU_RATIO), .ap040_pipelined(1), .chip32(CHIP32_GEN), .ap040_free_core(FREE_CORE_GEN),
         .ap040_store_buf(STORE_BUF_GEN), .ap040_fwd(FWDRAS_GEN), .ap040_ras(FWDRAS_GEN),
-        .ap040_precise(PREMIS_GEN), .ap040_misplit(MISPLIT_GEN), .ap040_sb_mmu(SBMMU_GEN), .ap040_copyback(CBACK_GEN), .ap040_btb(BTB_GEN), .ap040_ldx(LDX_GEN), .ap040_btfn(BTFN_GEN)) tg68k (
+        .ap040_precise(PREMIS_GEN), .ap040_misplit(MISPLIT_GEN), .ap040_sb_mmu(SBMMU_GEN), .ap040_copyback(CBACK_GEN), .ap040_btb(BTB_GEN), .ap040_ldx(LDX_GEN), .ap040_btfn(BTFN_GEN), .ap040_dfp_mis(DFPMIS_GEN)) tg68k (
 `else
 TG68K #(.cpu_clk_ratio(`CPU_RATIO), .chip32(CHIP32_GEN)) tg68k (
 `endif

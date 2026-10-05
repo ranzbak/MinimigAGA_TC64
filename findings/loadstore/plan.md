@@ -455,3 +455,30 @@ coarse copyback window, findings/copyback), not from BTFN: the same disk work wi
 stage_r01ldx = release 0.1 (BTFN, write-through) + LDX=1: clk_38 +0.175 ns. Suite 323 pass with exactly these
 switches. SoC Dhrystone (BTFN, write-through): 11,054 -> 10,651 clocks (-3.6 %). Board: xSysInfo 1.10 -> **1.13**, 36,256 -> **37,316** Dhrystones (+2.9 %; the -4 % of section 10 was
 measured without BTFN -- the two partly remove the same bubbles). Heavy demos ran without a crash (Paul).
+
+## 12. Step 3 result: misaligned accesses from the data cache (2026-10-05)
+
+Done, as AP040_DFP_MIS (one switch; default 0): a misaligned read inside a
+4K page is served from the cache in two lookups, or fills its line(s); a
+misaligned store merges into every resident longword it touches instead of
+clearing rows; the memory-side transfer of a store stays the single
+misaligned m_* transfer, and cache-inhibited, I/O and page-crossing accesses
+are untouched (unlike MISPLIT).  Design: Fable report
+(implementation-report.md, session scratchpad); core main 90170ef
+(mis-cache merged as b75ec9e).
+
+- Core: suite 324/324 (DFP_MIS) and 328/328 (+ copyback); switch-off logs
+  identical to main; 22 of 26 mutants caught (three argued equivalent, one
+  informational); fuzz 100/100 + 40/40 with interrupts.
+- SoC (sim/ddr3_cpu): findings/ap040-pipelined/tests/perf/misstress_ddr3.asm
+  (random misaligned stores/reads in DDR3 and chip RAM against a byte-only
+  shadow, write-through and copyback) passes with and without the switch and
+  fails the c2_nomerge2 mutant (code 10).  Dhrystone with copyback: 9,534 ->
+  8,335 clocks per run (-12.6 %), CPI 2.047 -> 1.791.
+- Board: build/stage_r04mis (copyback + DFP_MIS): HDF, SD, Elysium and other
+  demos fine; xSysInfo 1.26 -> 1.44 (41,656 -> 47,413 Dhrystones).
+- Timing: the image needed rtl/soc/TG68K.vhd to register the cache's board
+  enables and DDR3 base on clk_cpu (180 clk_114/dll_28 -> clk_38 paths from
+  z3ram_ena and autoconfig board_base_addr[3] into the valid-bit enables);
+  with it clk_38 +0.270 ns.
+

@@ -41,8 +41,7 @@ Release 0.1 ships with these open (see doc/release-0.1.md).
 - 2026-10-05: NOT the CPU's arithmetic: the rotozoomer's own offset,
   modulo, zoom and palette code (DIVS.L, register-count shifts, ADDX.W
   rounding from X) gives the same 485 values on the pipelined core as a
-  Python 68k model (lib/AP68040-pipelined tb/pipe_asm/roto_math.s, not yet
-  committed).  The effect is chipset-heavy: FMODE=3, DDFSTRT $18, 6-bit
+  Python 68k model (lib/AP68040-pipelined tb/pipe_asm/roto_math.s).  The effect is chipset-heavy: FMODE=3, DDFSTRT $18, 6-bit
   BPLCON1 scroll and BPL1MOD/BPL2MOD written by the copper every line, 8
   planes.  Paul: stripes, colours right but in the wrong place; only this
   one rotozoomer in the demo.  Next: A/B with the four bitplane-path
@@ -161,7 +160,7 @@ Release 0.1 ships with these open (see doc/release-0.1.md).
 
 | Step | Measured / estimated | State |
 | --- | --- | --- |
-| Misaligned reads served from the cache (two hits instead of a DDR3 read) | ~85 clocks per Dhrystone run, ~8 % | plan step 3 |
+| Misaligned accesses served from the data cache (DFP_MIS + MIS) | SoC Dhrystone -12.6 %; board 1.26 -> 1.44 (41,656 -> 47,413) | DONE 2026-10-05, built with DFP_MIS=1 |
 | LDX (late operand dispatch) on the board | -6 % in the SoC bench | built, verified, off by default |
 | Write-allocate / store coalescing | ~59 clocks per run | needs copyback |
 | MOVEM one register per clock | ~20 clocks per run | not planned |

@@ -83,6 +83,8 @@ entity TG68K is
 		ap040_ldx          : integer := 0;
 		-- forward conditional branches guessed not taken (findings/loadstore/plan.md section 11)
 		ap040_btfn         : integer := 0;
+		-- misaligned accesses served from the data cache (findings/loadstore/plan.md step 3)
+		ap040_dfp_mis      : integer := 0;
 		-- clk / clk_cpu, the AP68040 island's clock ratio.  3 is stage D3 as
 		-- shipped (37.8125 MHz); 4 runs the same architecture at the pre-D3 CPU
 		-- rate.  THE PHASE MARKER BELOW DEPENDS ON THIS AND IS NOT RATIO-AGNOSTIC
@@ -374,6 +376,17 @@ ARCHITECTURE logic OF TG68K IS
 	SIGNAL z3ram_ena       : std_logic;
 	SIGNAL z3ram2_ena      : std_logic;
 	SIGNAL z3ram3_ena      : std_logic;
+	-- The board enables and the DDR3 board's base as the AP040 cache sees
+	-- them: registered on clk_cpu.  They come from clk (z*ram_ena) and from
+	-- the autoconfig registers (dll_28) and change only when autoconfig
+	-- configures a board, long before anything accesses it; unregistered,
+	-- they fed the cacheability decision (the MMU's cache-inhibit check, the
+	-- cache's valid-bit enables) in one clk period -- the stage_r04mis
+	-- violations, 180 endpoints from z3ram_ena and board_base_addr[3].
+	SIGNAL cz2_ena         : std_logic := '0';
+	SIGNAL cz3_ena0        : std_logic := '0';
+	SIGNAL cz3_base1       : std_logic_vector(3 downto 0) := (others => '0');
+	SIGNAL cz3_ena1        : std_logic := '0';
 	-- SIGNAL eth_base         : std_logic_vector(7 downto 0);
 	-- SIGNAL eth_cfgd         : std_logic;
 	SIGNAL sel_z2ram       : std_logic;
@@ -641,7 +654,8 @@ ARCHITECTURE logic OF TG68K IS
 			AP040_COPYBACK     : integer := 0;
 			AP040_BTB          : integer := 0;
 			AP040_LDX          : integer := 0;
-			AP040_BTFN         : integer := 0
+			AP040_BTFN         : integer := 0;
+			AP040_DFP_MIS      : integer := 0
 		);
 		PORT(
 			clk               : in  std_logic;
@@ -782,6 +796,16 @@ BEGIN
 			z3ram3_ena <= ziiiram3_active;
 
 			sel_undecoded_d <= sel_undecoded;
+		END IF;
+	END PROCESS;
+
+	PROCESS(clk_cpu)
+	BEGIN
+		IF rising_edge(clk_cpu) THEN
+			cz2_ena   <= z2ram_ena;
+			cz3_ena0  <= z3ram_ena;
+			cz3_base1 <= z3ram3_base(7 downto 4);
+			cz3_ena1  <= z3ram3_ena;
 		END IF;
 	END PROCESS;
 
@@ -1355,11 +1379,11 @@ BEGIN
 					cache_allow_all  => '0',
 					cache_snoop_stb  => snp_stb_held,
 					cache_snoop_addr => snp_addr_held,
-					cache_z2_ena     => z2ram_ena,
+					cache_z2_ena     => cz2_ena,
 					cache_z3_base0   => "01000",
-					cache_z3_ena0    => z3ram_ena,
-					cache_z3_base1   => z3ram3_base(7 downto 4),
-					cache_z3_ena1    => z3ram3_ena,
+					cache_z3_ena0    => cz3_ena0,
+					cache_z3_base1   => cz3_base1,
+					cache_z3_ena1    => cz3_ena1,
 
 					-- Stage B: the table walker rides this wrapper's own memory
 					-- path, one longword per descriptor through the master mux.
@@ -1444,7 +1468,8 @@ BEGIN
 					AP040_COPYBACK     => ap040_copyback,
 					AP040_BTB          => ap040_btb,
 					AP040_LDX          => ap040_ldx,
-					AP040_BTFN         => ap040_btfn
+					AP040_BTFN         => ap040_btfn,
+					AP040_DFP_MIS      => ap040_dfp_mis
 				)
 				PORT MAP(
 					-- The CPU island's own 37.8125 MHz clock.  So are the master
@@ -1490,11 +1515,11 @@ BEGIN
 					cache_allow_all  => '0',
 					cache_snoop_stb  => snp_stb_held,
 					cache_snoop_addr => snp_addr_held,
-					cache_z2_ena     => z2ram_ena,
+					cache_z2_ena     => cz2_ena,
 					cache_z3_base0   => "01000",
-					cache_z3_ena0    => z3ram_ena,
-					cache_z3_base1   => z3ram3_base(7 downto 4),
-					cache_z3_ena1    => z3ram3_ena,
+					cache_z3_ena0    => cz3_ena0,
+					cache_z3_base1   => cz3_base1,
+					cache_z3_ena1    => cz3_ena1,
 
 					-- Stage B: the table walker rides this wrapper's own memory
 					-- path, one longword per descriptor through the master mux.
