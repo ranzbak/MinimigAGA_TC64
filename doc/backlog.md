@@ -38,7 +38,17 @@ Release 0.1 ships with these open (see doc/release-0.1.md).
   against DMA, or a write landing in the wrong chipset slot).
 - 2026-10-05: NOT CHIP32 -- stage_r01ldx_c16 (CHIP32=0) shows the same
   corruption in Roots2. Still open after the interrupt fix too.
-- Next (cheap, on the board): `CPU NODATACACHE`, then `CPU NOINSTCACHE`,
+- 2026-10-05: NOT the CPU's arithmetic: the rotozoomer's own offset,
+  modulo, zoom and palette code (DIVS.L, register-count shifts, ADDX.W
+  rounding from X) gives the same 485 values on the pipelined core as a
+  Python 68k model (lib/AP68040-pipelined tb/pipe_asm/roto_math.s, not yet
+  committed).  The effect is chipset-heavy: FMODE=3, DDFSTRT $18, 6-bit
+  BPLCON1 scroll and BPL1MOD/BPL2MOD written by the copper every line, 8
+  planes.  Paul: stripes, colours right but in the wrong place; only this
+  one rotozoomer in the demo.  Next: A/B with the four bitplane-path
+  chipset commits since the 020 version reverted (eacfb4b, 1963b24,
+  009b4f0, d26e476), then STORE_BUF=0.
+- Earlier idea (cheap, on the board): `CPU NODATACACHE`, then `CPU NOINSTCACHE`,
   then `CPU NOCACHE` before running Roots2. Data cache -> a chipset write
   (blitter/copper) the snoop misses, CPU reads a stale chip RAM copy;
   instruction cache -> generated code run without CacheClearU; neither ->
@@ -95,16 +105,23 @@ Release 0.1 ships with these open (see doc/release-0.1.md).
   card; a card left mid-transfer ignores CMD0. Not yet checked on stage_cu9.
 - Part of the reset-and-boot work above.
 
-### Copyback data cache unstable under disk load (2026-10-02)
+### Copyback data cache unstable under disk load (2026-10-02) -- FIXED 2026-10-05
 
-- Symptom: with CopyBack on (MuSetCacheMode on $40000000, which includes the
-  DDR3 board that is used first), random 80000004/80000005 crashes while
-  opening programs or directories; Elysium and xSysInfo ran.
-- Known: fixed on the way: the table walker now sees the data cache (core
-  350b988, M68040UM 3.2.5), the snoop is registered (b5cfdf4). Still open.
-  The release is built with COPYBACK=0.
-- First step: amiga_sw/CBTest on the board (reports the first wrong address
-  instead of a Guru), then the ILA. findings/copyback/plan.md.
+- Symptom was: with CopyBack on, random 80000004/80000005 crashes while
+  opening programs or directories.
+- Cause: a chipset snoop (every chipset write to chip RAM, the blitter
+  included) landing in the very clock a copyback store merged into a clean
+  line of the same set: the store set the dirty bit in the edge the snoop
+  cleared the valid bit, the line went invalid-but-dirty, the next read
+  refilled the stale line and the store was lost.  Core ad7008f: the merge
+  also refuses on a snoop in its own clock (t_cbsnp_pipe.s, red before,
+  green after; suite 326/326 with and without copyback; fuzz with copyback
+  1-40 ok).
+- Board: build/stage_r03cb (COPYBACK=1 + the fix): demos and disk I/O
+  stable (Paul, 2026-10-05); xSysInfo 1.26 / 41,656 Dhrystones with
+  CopyBack on, against 1.13 / 37,324 without.
+- Still open around it: the keyboard reset below, and the copyback window
+  (bits 31:28, so the SDRAM Zorro III blocks too) further down.
 
 ### Keyboard reset loses dirty cache lines (2026-10-02)
 
