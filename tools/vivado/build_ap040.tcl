@@ -364,42 +364,42 @@ if {$pipe_dir ne ""} {
     set inc [get_property include_dirs [get_filesets sources_1]]
     foreach d [list $P $P/compat] { if {[lsearch -exact $inc $d] < 0} { lappend inc $d } }
     set_property include_dirs $inc [get_filesets sources_1]
-    # AP040_PIPE_MMU=1 in the environment: the lifted MMU on (plan M7, gate 2)
-    set pmmu [expr {[info exists ::env(AP040_PIPE_MMU)] && $::env(AP040_PIPE_MMU) eq "1" ? 1 : 0}]
-    # AP040_PIPE_FPU=1: the lifted FPU on (plan M10.1 step 3, hardware gate 3).
-    # It defaults to 0 -- the LC040 configuration every image so far was built
-    # with -- because the FP instruction set is only partly sequenced: the
-    # control registers, FMOVEM, FSAVE/FRESTORE and the arithmetic exceptions
-    # are M10's remaining steps.  A 1 here is a measurement build, not a gate
-    # image.
-    set pfpu [expr {[info exists ::env(AP040_PIPE_FPU)] && $::env(AP040_PIPE_FPU) eq "1" ? 1 : 0}]
+    # (2026-10-05) Every CPU switch below defaults to the configuration the
+    # board runs (build/stage_r04mis: copyback + misaligned from the cache,
+    # xSysInfo 1.44): the MMU, the FPU, STORE_BUF FWD RAS PRECISE SB_MMU
+    # COPYBACK LDX BTFN DFP_MIS on; BTB and MISPLIT off.  Each one can still be
+    # switched off from the environment (e.g. COPYBACK=0) for an A/B.
+    # AP040_PIPE_MMU: the lifted MMU (plan M7, gate 2); =0 leaves it out
+    set pmmu [expr {[info exists ::env(AP040_PIPE_MMU)] && $::env(AP040_PIPE_MMU) eq "0" ? 0 : 1}]
+    # AP040_PIPE_FPU: the lifted FPU (plan M10); every release image has it.
+    # =0 builds a 68LC040.
+    set pfpu [expr {[info exists ::env(AP040_PIPE_FPU)] && $::env(AP040_PIPE_FPU) eq "0" ? 0 : 1}]
     # The pipelined core runs free of the bus wait (findings/unfreeze/): default
     # since 2026-09-26 (board SysInfo 0.83x -> 1.00x).  FREE_CORE=0 in the
     # environment builds the frozen core, for an A/B.
     set free_core [expr {[info exists ::env(FREE_CORE)] && $::env(FREE_CORE) eq "0" ? 0 : 1}]
     # STORE_BUF=1|2 in the environment: the core's store buffer
     # (findings/storebuf/plan.md; 2 = the same hardware never posting).
-    # Default 0 until the board A/B has passed.
-    set store_buf [expr {[info exists ::env(STORE_BUF)] && $::env(STORE_BUF) ne "" ? $::env(STORE_BUF) : 0}]
+    set store_buf [expr {[info exists ::env(STORE_BUF)] && $::env(STORE_BUF) ne "" ? $::env(STORE_BUF) : 1}]
     # FWD=1 / RAS=1: store-to-load forwarding and ID's return-address stack
-    # (findings/catchup/plan.md); default 0.
-    set fwd [expr {[info exists ::env(FWD)] && $::env(FWD) ne "" ? $::env(FWD) : 0}]
-    set ras [expr {[info exists ::env(RAS)] && $::env(RAS) ne "" ? $::env(RAS) : 0}]
+    # (findings/catchup/plan.md).
+    set fwd [expr {[info exists ::env(FWD)] && $::env(FWD) ne "" ? $::env(FWD) : 1}]
+    set ras [expr {[info exists ::env(RAS)] && $::env(RAS) ne "" ? $::env(RAS) : 1}]
     # PRECISE=1 / MISPLIT=1: address-precise fast reads, misaligned split
-    set precise [expr {[info exists ::env(PRECISE)] && $::env(PRECISE) ne "" ? $::env(PRECISE) : 0}]
+    set precise [expr {[info exists ::env(PRECISE)] && $::env(PRECISE) ne "" ? $::env(PRECISE) : 1}]
     set misplit [expr {[info exists ::env(MISPLIT)] && $::env(MISPLIT) ne "" ? $::env(MISPLIT) : 0}]
     # SB_MMU=1: store buffer stage 4, stores posted with translation on
-    set sb_mmu [expr {[info exists ::env(SB_MMU)] && $::env(SB_MMU) ne "" ? $::env(SB_MMU) : 0}]
+    set sb_mmu [expr {[info exists ::env(SB_MMU)] && $::env(SB_MMU) ne "" ? $::env(SB_MMU) : 1}]
     # COPYBACK=1: the copyback data cache (CM = 01 pages, DDR3 board only)
-    set copyback [expr {[info exists ::env(COPYBACK)] && $::env(COPYBACK) ne "" ? $::env(COPYBACK) : 0}]
+    set copyback [expr {[info exists ::env(COPYBACK)] && $::env(COPYBACK) ne "" ? $::env(COPYBACK) : 1}]
     # BTB=1: IF's branch target buffer
     set btb [expr {[info exists ::env(BTB)] && $::env(BTB) ne "" ? $::env(BTB) : 0}]
     # LDX=1: late-operand load dispatch (findings/loadstore/plan.md step 1)
-    set ldx [expr {[info exists ::env(LDX)] && $::env(LDX) ne "" ? $::env(LDX) : 0}]
+    set ldx [expr {[info exists ::env(LDX)] && $::env(LDX) ne "" ? $::env(LDX) : 1}]
     # BTFN=1: forward conditional branches guessed not taken (findings/loadstore/plan.md section 11)
-    set btfn [expr {[info exists ::env(BTFN)] && $::env(BTFN) ne "" ? $::env(BTFN) : 0}]
+    set btfn [expr {[info exists ::env(BTFN)] && $::env(BTFN) ne "" ? $::env(BTFN) : 1}]
     # DFP_MIS=1: misaligned accesses served from the data cache (findings/loadstore/plan.md step 3)
-    set dfp_mis [expr {[info exists ::env(DFP_MIS)] && $::env(DFP_MIS) ne "" ? $::env(DFP_MIS) : 0}]
+    set dfp_mis [expr {[info exists ::env(DFP_MIS)] && $::env(DFP_MIS) ne "" ? $::env(DFP_MIS) : 1}]
     set pipe_gen " AP040_PIPELINED=1 AP040_HAS_MMU=$pmmu AP040_HAS_FPU=$pfpu AP040_FREE_CORE=$free_core AP040_STORE_BUF=$store_buf AP040_FWD=$fwd AP040_RAS=$ras AP040_PRECISE=$precise AP040_MISPLIT=$misplit AP040_SB_MMU=$sb_mmu AP040_COPYBACK=$copyback AP040_BTB=$btb AP040_LDX=$ldx AP040_BTFN=$btfn AP040_DFP_MIS=$dfp_mis"
     puts "build_ap040.tcl: PIPELINED build from $P ([llength $pipe_off] lib/AP68040 files disabled), FREE_CORE=$free_core STORE_BUF=$store_buf FWD=$fwd RAS=$ras PRECISE=$precise MISPLIT=$misplit SB_MMU=$sb_mmu COPYBACK=$copyback BTB=$btb LDX=$ldx BTFN=$btfn DFP_MIS=$dfp_mis"
 }
