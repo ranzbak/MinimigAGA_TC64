@@ -129,16 +129,13 @@ Release 0.1 ships with these open (see doc/release-0.1.md).
   cache at boot (CINVA BC at $F80C66). Fix: hold any reset until the cache
   has pushed its dirty lines, or send the $78 warning. findings/copyback/plan.md.
 
-### Interrupt deferred for 16+ instructions (2026-10-03, in progress)
+### Interrupt deferred for 16+ instructions (2026-10-03) -- FIXED 2026-10-03
 
-- The fuzzer with random interrupts (lib/AP68040-pipelined/tb/perf/fuzz,
-  GEN_IRQ=1) reports "qualified level-2 request not taken at the next
-  boundary" for seeds 5018 and 5081 with the board's store-buffer switches
-  (with and without BTFN; the all-off reference passes), and 3007/3085 (the
-  reference too). The bench allows a qualified request to wait at most 16
-  instruction starts (measured legitimate worst case 6); these exceed it --
-  a deferral, possibly starvation in read-heavy code. Paul: match the real
-  68040's interrupt behaviour; RCA in progress. Use a relative FUZZ_DIR: the bench cuts paths at 128 chars.
+- Was: the GEN_IRQ fuzzer saw a qualified request wait 16+ instruction
+  starts (seeds 5018, 5081, 3007, 3085).  Core 8ead239 (M9.I): an interrupt
+  is taken within one instruction boundary, as on the 68040; the board ran
+  stage_r02irq stable.  Use a relative FUZZ_DIR: the bench cuts paths at
+  128 chars.
 
 ### Serial port runs at about 112 baud (2026-10-01)
 
@@ -161,8 +158,8 @@ Release 0.1 ships with these open (see doc/release-0.1.md).
 | Step | Measured / estimated | State |
 | --- | --- | --- |
 | Misaligned accesses served from the data cache (DFP_MIS + MIS) | SoC Dhrystone -12.6 %; board 1.26 -> 1.44 (41,656 -> 47,413) | DONE 2026-10-05, built with DFP_MIS=1 |
-| LDX (late operand dispatch) on the board | -6 % in the SoC bench | built, verified, off by default |
-| Write-allocate / store coalescing | ~59 clocks per run | needs copyback |
+| LDX (late operand dispatch) on the board | board 1.10 -> 1.13 (36,256 -> 37,316) | DONE, on in the default build |
+| Write-allocate on a copyback store miss | ~59 clocks of store holds per run, est. -40 | design report in progress (2026-10-06) |
 | MOVEM one register per clock | ~20 clocks per run | not planned |
 | Timing margin: a Pblock for the CPU island | release has clk_38 +0.44 ns, earlier builds +0.05 | experiment build |
 | Higher CPU clock (clk_114 / 2 = 57 MHz) or dual issue | the two large levers; weeks of work | measure first |
