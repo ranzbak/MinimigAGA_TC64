@@ -33,12 +33,17 @@ that builds them, with the TG68K CPU.
 
 Details and addresses: [doc/hardware.md](doc/hardware.md).
 
-## Status (September 2026)
+## Status (October 2026)
 
 Experimental and still under test. Seen on the board so far:
 
 - Kickstart 3.1.4 boots to Workbench.
-- SysInfo reports about **0.83x** the speed of an A4000/040 at 25 MHz.
+- xSysInfo reports **1.44x** the speed of an A4000/040 at 25 MHz
+  (47,413 Dhrystones) with the DDR3 fast RAM set to CopyBack in the MMU
+  configuration; about 1.13x (37,324) with the data cache in write-through.
+- With CopyBack on, restart with the OSD's reboot or a power cycle, not
+  Ctrl-Amiga-Amiga: the keyboard reset does not yet write the cache back first
+  ([doc/backlog.md](doc/backlog.md)).
 - The WinUAE cputest 68040 disk ran for 2 hours without an error, Frontier:
   Elite II ran all night, and AIBB's Beachball test (68020 code with the FPU)
   completes.

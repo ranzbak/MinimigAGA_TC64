@@ -83,9 +83,9 @@ instead: the `Echo` above replaces the file. Then reboot.
 
 **Keep the RTG screen memory write-through.** The RTG display reads its
 picture straight from the Zorro II fast RAM (`$200000`-`$9FFFFF`), where the
-driver allocates it. A core with a copyback data cache (in development; the
-current images write through, so this line changes nothing yet) would hold
-the pixels the CPU draws in the cache, and the screen would show old ones.
+driver allocates it. The core has a copyback data cache (since October 2026,
+in the default build); in copyback it would hold the pixels the CPU draws in
+the cache, and the screen would show old ones.
 Mark the Zorro II board write-through by adding this line to
 `ENVARC:MMU-Configuration` with an editor:
 
