@@ -41,7 +41,9 @@ Experimental and still under test. Seen on the board so far:
 - xSysInfo reports **1.44x** the speed of an A4000/040 at 25 MHz
   (47,413 Dhrystones) with the DDR3 fast RAM set to CopyBack in the MMU
   configuration; 1.13x (37,324) before the copyback cache and the
-  misaligned-access work went in.
+  misaligned-access work went in. A prototype with write-allocate on top
+  (in development) reaches **1.50x (49,444)**, about 99 % of a real 68040
+  per clock.
 - With CopyBack on, restart with the OSD's reboot or a power cycle, not
   Ctrl-Amiga-Amiga: the keyboard reset does not yet write the cache back first
   ([doc/backlog.md](doc/backlog.md)).
