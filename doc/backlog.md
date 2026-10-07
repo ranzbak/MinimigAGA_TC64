@@ -53,7 +53,7 @@ Release 0.1 ships with these open (see doc/release-0.1.md).
   instruction cache -> generated code run without CacheClearU; neither ->
   chipset timing (copper/blitter/interrupt vs display pointers).
 
-### Video: static artifacts in the border after a resolution change (2026-10-03)
+### Video: static artifacts in the border after a resolution change (2026-10-03) -- FIXED in sim 2026-10-07 (b1fd278), board image build/stage_ab_border
 
 - Symptom: after the screen mode changes, the border is not always cleared;
   the artifacts are static and usually lines at regular intervals.
@@ -152,6 +152,37 @@ Release 0.1 ships with these open (see doc/release-0.1.md).
 - `cb_win` in ap040_pipe_tg68k_compat.v compares only address bits 31:28, so
   it includes the SDRAM Zorro III blocks, not just the DDR3 board. Only
   relevant once copyback is back.
+
+## Video scaler (HDMI upsampler, rtl/openaars/adv7511) -- improvements (2026-10-07)
+
+Found while fixing the border stripes (b1fd278, sim/hdmi_upsample). In the
+order suggested: 8, then 1 and 4, then 5 and 6.
+
+1. **Pixel-exact capture.** The write side samples on a clk_114 grid with a
+   coarsely quantised step (r_line_count[13:6] / (H_RES>>8)), not once per
+   Amiga pixel: unequal pixel widths, moire on fine patterns (the Workbench
+   background). Write one buffer word per Amiga pixel (the chipset's pixel
+   enable) and scale on the output side with a fixed step.
+2. **Even vertical scaling.** 288 lines onto 720 is ~2.5 HD lines per Amiga
+   line (2, 3, 2, 3): unequal line thickness. An integer mode (2x/3x with
+   borders) or vertical interpolation.
+3. **Interlace.** The long-frame logic is commented out; weave/bob from a
+   field buffer for laced modes.
+4. **50 -> 60 Hz.** The 60 Hz path converts with 8 lines of buffer, so lines
+   repeat or drop (judder, tearing). A frame buffer (DDR3/SDRAM), or 720p50
+   frame-locked to the Amiga for PAL.
+5. **31 kHz input.** Detect 15/31 kHz and size scale and buffer for it; with
+   short lines the write side can run past 2048 pixels and its addresses
+   wrap into the next buffer (r_wcnt saturates since b1fd278, the address
+   does not).
+6. **Automatic centring** from DIWSTRT/DIWSTOP instead of PAL_OFFSET_HZ,
+   `r_line_count > 300` and the manual OSD offsets.
+7. **Border in COLOR00** instead of black.
+8. **Bug: offset wiring.** pal_to_ddr.sv's my50hzupsample gets
+   `.i_hd_hoffset(i_voffset)` (the vertical OSD offset moves the picture
+   horizontally), and the PAL_HD_H_RES values (1685 / 1980) look swapped
+   against the instance names and the 50/60 Hz line lengths (1980 / 1650).
+9. Extras: 1080p (ADV7511 and the 148.5 MHz clock are there), scanlines.
 
 ## Performance (measured: findings/loadstore/plan.md section 11)
 
