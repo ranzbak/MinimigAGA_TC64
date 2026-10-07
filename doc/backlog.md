@@ -159,7 +159,8 @@ Release 0.1 ships with these open (see doc/release-0.1.md).
 | --- | --- | --- |
 | Misaligned accesses served from the data cache (DFP_MIS + MIS) | SoC Dhrystone -12.6 %; board 1.26 -> 1.44 (41,656 -> 47,413) | DONE 2026-10-05, built with DFP_MIS=1 |
 | LDX (late operand dispatch) on the board | board 1.10 -> 1.13 (36,256 -> 37,316) | DONE, on in the default build |
-| Write-allocate on a copyback store miss | ~59 clocks of store holds per run, est. -40 | design report in progress (2026-10-06) |
+| Write-allocate on a copyback store miss | compat Dhrystone -2.5 % (zero wait) to -6.4 % (wait states) | implementation in progress (2026-10-07); prototype image build/stage_ab_walloc |
+| Precise CPUSHL/CPUSHP and CINVL/CINVP | every line/page variant now sweeps all 64 rows like CPUSHA: with copyback one CPUSHL pushes every dirty line and empties the cache; hits OS cache flushes (LoadSeg, CacheClearE), not Dhrystone | next, after write-allocate (copyback plan S3) |
 | MOVEM one register per clock | ~20 clocks per run | not planned |
 | Timing margin: a Pblock for the CPU island | release has clk_38 +0.44 ns, earlier builds +0.05 | experiment build |
 | Higher CPU clock (clk_114 / 2 = 57 MHz) or dual issue | the two large levers; weeks of work | measure first |
