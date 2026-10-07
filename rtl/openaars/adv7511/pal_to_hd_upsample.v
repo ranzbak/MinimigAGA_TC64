@@ -238,6 +238,23 @@ begin
   end
 end
 
+// How far each line buffer was written (2026-10-07).  The buffers are never
+// cleared, and the read side reads a fixed stretch from a fixed offset, so
+// wherever the write side wrote less -- a shorter line, another screen mode,
+// the read offset reaching back into the previous buffer -- the buffer's old
+// contents reached the screen: static stripes in the border after a mode
+// change, one pattern per buffer (sim/hdmi_upsample).  r_wend[k] is the
+// highest offset the last line written into buffer k reached; a line's
+// pixels sit at offsets 1..r_wend (r_addra steps before it writes).  The
+// read side shows black outside that range.  r_wend is written ~4 lines
+// before buffer k is read, so the clk_114 -> clk_148 crossing sees a
+// settled value (wizard.xdc bounds the path).
+reg [2:0]  r_wslot = 3'b100;   // the buffer the current input line goes to
+reg [10:0] r_wcnt  = 11'd0;    // pixels written into it so far
+reg [10:0] r_wend [0:7];
+integer    k_wend;
+initial for (k_wend = 0; k_wend < 8; k_wend = k_wend + 1) r_wend[k_wend] = 11'd0;
+
 // Write input to buffer
 reg [3:0] s_next_buf = 0;
 reg [1:0] s_pal_hsync_in = 0;
@@ -276,11 +293,18 @@ begin
     r_addra <= r_addra+1;
     r_wea <= 1'b1;
     r_dina <= {i_pal_b, i_pal_g, i_pal_r};
+    if (r_wcnt != 11'h7FF)
+      r_wcnt <= r_wcnt + 1'b1;
   end
 
   // End of input line
   if (r_pal_hneg_in && ~i_pal_vsync)
   begin
+    // the line just ended went to r_wslot; the next goes to r_cur_write_buf
+    r_wend[r_wslot] <= r_wcnt;
+    r_wslot         <= r_cur_write_buf;
+    r_wcnt          <= 11'd0;
+
     // Invert signal to signal next buf
     s_next_buf[0] <= ~s_next_buf[0]; // Switch buffer
 
@@ -338,6 +362,14 @@ end
 // Sample PAL input stream
 reg         r_hd_clk_;
 reg [11:0]  r_h_pos = 12'b0;
+// the buffer this output line reads, and how far it was written (r_wend)
+reg [2:0]   r_rslot = 3'b000;
+reg [10:0]  r_rend  = 11'd0;
+// the word w_doutb holds belongs to r_addrb (one-clock BRAM read, and
+// r_addrb moves only every other clk_out): inside this line's buffer and
+// inside what the write side reached?
+wire        w_rd_valid = (r_addrb[13:11] == r_rslot) && (r_addrb[10:0] != 11'd0) &&
+                         (r_addrb[10:0] <= r_rend);
 always @(posedge clk_out)
 begin
   // Receive next buffer signal
@@ -355,9 +387,10 @@ begin
     if (r_h_pos > PAL_HD_H_FP && r_h_pos < (PAL_HD_H_RES-PAL_HD_H_FP))
     begin
       r_addrb <= r_addrb + 1;
-      r_hd_r <= w_doutb[0 +: 8];
-      r_hd_g <= w_doutb[8 +: 8];
-      r_hd_b <= w_doutb[16 +: 8];
+      // black (border) for a word this line's input did not write
+      r_hd_r <= w_rd_valid ? w_doutb[0 +: 8]  : 8'b0;
+      r_hd_g <= w_rd_valid ? w_doutb[8 +: 8]  : 8'b0;
+      r_hd_b <= w_rd_valid ? w_doutb[16 +: 8] : 8'b0;
     end
     else
     begin
@@ -385,6 +418,9 @@ begin
       end
     end
     r_h_pos <= 0; // Reset horizontal counter
+    // the buffer read this line (the case below), and its written extent
+    r_rslot <= r_cur_read_buf;
+    r_rend  <= r_wend[r_cur_read_buf];
     case (r_cur_read_buf)
       0:
         r_addrb <= 14'h0000 - (PAL_OFFSET_HZ + i_hd_hoffset);
