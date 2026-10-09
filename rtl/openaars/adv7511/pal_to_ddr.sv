@@ -22,7 +22,11 @@ module pal_to_ddr #(
   // CRT emulation tables (crt_post.v); design sources next to this file
   parameter CRT_WROM_FILE = "crt_wrom.mem",
   parameter CRT_LUT_FILE  = "crt_lut.mem",
-  parameter CRT_BLOOM_FILE = "crt_bloom.mem"
+  parameter CRT_BLOOM_FILE = "crt_bloom.mem",
+  // horizontal beam spot tables (crt_beamh.v)
+  parameter CRT_HDEC_FILE = "crt_hdec.mem",
+  parameter CRT_HENC_FILE = "crt_henc.mem",
+  parameter CRT_HK_FILE   = "crt_hk.mem"
 )(
   input clk_148,
   input clk_114,
@@ -41,10 +45,10 @@ module pal_to_ddr #(
   // RTG
   input       i_rtg_enable,
   // CRT emulation (CLK_28 domain): the OSD video config as userio_osd
-  // latches it, {bloom[1:0], mask[1:0], hr_filter[1:0], lr_filter[1:0],
-  // scanline[1:0]}, and Denise's BPLCON0 HIRES / SHRES for the per-line
-  // filter choice
-  input [9:0] i_crt_cfg,
+  // latches it, {beam[1:0], bloom[1:0], mask[1:0], hr_filter[1:0],
+  // lr_filter[1:0], scanline[1:0]}, and Denise's BPLCON0 HIRES / SHRES for
+  // the per-line filter choice
+  input [11:0] i_crt_cfg,
   input       i_pal_hires,
   input       i_pal_shres,
   // OUTPUT
@@ -218,7 +222,15 @@ module pal_to_ddr #(
   //               (3-px R G B stripes, 30 / 55 % gaps; 2-px magenta / green,
   //               40 %; the LUT divides each mode's mean light back out)
   //   Bloom       off / low / high -> crt_post i_bloom: bright pixels fill
-  //               their scanline gap (needs scanlines or the V filter)
+  //               their scanline gap (needs scanlines or the V filter); with
+  //               the beam on also crt_beamh's horizontal bloom
+  //   Beam width  off / sharp / medium / soft -> crt_beamh (2026-10-09): the
+  //               horizontal beam spot on the Amiga stream BEFORE the
+  //               upsamplers (clk_114), gaussian sigma 0.5 / 0.6 / 0.8
+  //               lowres pixels, the same on screen in every resolution.
+  //               It has its own synchronisers and frame latch in clk_114
+  //               and the same 15 kHz / no-RTG condition; off, the
+  //               upsamplers get the input unchanged.
   // The effects need 15 kHz input (one input line = 2.4 HD lines): minimig.v
   // turns amber's scandoubler off while any of them is selected
   // (MINIMIG_OPENAARS), and here they apply only while the last input frame
@@ -237,7 +249,7 @@ module pal_to_ddr #(
   wire        w_50_lhires, w_60_lhires;
   wire [7:0]  w_crt_r, w_crt_g, w_crt_b;
 
-  (* ASYNC_REG = "TRUE" *) reg [9:0] s_crt_cfg0 = 10'd0;
+  (* ASYNC_REG = "TRUE" *) reg [9:0] s_crt_cfg0 = 10'd0;   // crt_post's bits; the beam's: crt_beamh
   (* ASYNC_REG = "TRUE" *) reg [9:0] s_crt_cfg1 = 10'd0;
   (* ASYNC_REG = "TRUE" *) reg [1:0] s_crt_rtg  = 2'b00;
   (* ASYNC_REG = "TRUE" *) reg [2:0] s_crt_hs   = 3'b000;
@@ -246,7 +258,7 @@ module pal_to_ddr #(
   reg  [9:0] r_crt_lines = 10'd0;  // input lines in this frame
   wire       w_crt_fend  = r_50hz ? w_50_frame_end : w_60_frame_end;
   always @(posedge clk_148) begin
-    s_crt_cfg0 <= i_crt_cfg;
+    s_crt_cfg0 <= i_crt_cfg[9:0];
     s_crt_cfg1 <= s_crt_cfg0;
     s_crt_rtg  <= {s_crt_rtg[0], i_rtg_enable};
     s_crt_hs   <= {s_crt_hs[1:0], w_pal_hsync};
@@ -312,6 +324,26 @@ module pal_to_ddr #(
   );
   assign {w_crt_b, w_crt_g, w_crt_r} = w_crt_rgb;
 
+  // Horizontal beam spot on the Amiga stream, before both upsamplers.  Off
+  // (OSD Beam width off, 31 kHz, RTG): w_bh_* = the input, bit for bit.
+  wire [7:0] w_bh_r, w_bh_g, w_bh_b;
+  wire       w_bh_hs, w_bh_vs, w_bh_hires, w_bh_shres;
+  crt_beamh #(
+    .HAS_BLOOM(1),
+    .DEC_FILE(CRT_HDEC_FILE), .ENC_FILE(CRT_HENC_FILE), .K_FILE(CRT_HK_FILE)
+  ) my_beamh (
+    .clk(clk_114),
+    .i_r(w_pal_r), .i_g(w_pal_g), .i_b(w_pal_b),
+    .i_hs(w_pal_hsync), .i_vs(w_pal_vsync),
+    .i_hires(i_pal_hires), .i_shres(i_pal_shres),
+    .i_width(i_crt_cfg[11:10]),
+    .i_bloom(i_crt_cfg[9:8]),
+    .i_rtg(i_rtg_enable),
+    .o_r(w_bh_r), .o_g(w_bh_g), .o_b(w_bh_b),
+    .o_hs(w_bh_hs), .o_vs(w_bh_vs),
+    .o_hires(w_bh_hires), .o_shres(w_bh_shres)
+  );
+
   // Upscale the video signal using a line buffer
   // 'h80 -> 4cm -> right border
   // 'h00 -> 8cm -> right border
@@ -323,11 +355,11 @@ module pal_to_ddr #(
     .clk_out(clk_148),
     .reset(reset),
     // Pal input
-    .i_pal_hsync(w_pal_hsync),
-    .i_pal_vsync(w_pal_vsync),
-    .i_pal_r(w_pal_r),
-    .i_pal_g(w_pal_g),
-    .i_pal_b(w_pal_b),
+    .i_pal_hsync(w_bh_hs),
+    .i_pal_vsync(w_bh_vs),
+    .i_pal_r(w_bh_r),
+    .i_pal_g(w_bh_g),
+    .i_pal_b(w_bh_b),
     // HD upsampled output
     .o_hd_r(w_50_r),
     .o_hd_g(w_50_g),
@@ -344,8 +376,8 @@ module pal_to_ddr #(
     .i_hd_voffset(i_voffset),
     .i_rtg_enable(),
     // CRT
-    .i_pal_hires(i_pal_hires),
-    .i_pal_shres(i_pal_shres),
+    .i_pal_hires(w_bh_hires),
+    .i_pal_shres(w_bh_shres),
     .o_hd_next(w_50_next),
     .o_pix_stb(w_50_stb),
     .o_line_start(w_50_lstart),
@@ -392,11 +424,11 @@ module pal_to_ddr #(
     .clk_in(clk_114),
     .reset(reset),
     // Pal input
-    .i_pal_hsync(w_pal_hsync),
-    .i_pal_vsync(w_pal_vsync),
-    .i_pal_r(w_pal_r),
-    .i_pal_g(w_pal_g),
-    .i_pal_b(w_pal_b),
+    .i_pal_hsync(w_bh_hs),
+    .i_pal_vsync(w_bh_vs),
+    .i_pal_r(w_bh_r),
+    .i_pal_g(w_bh_g),
+    .i_pal_b(w_bh_b),
     // RTG
     .i_rtg_enable(i_rtg_enable),
     // HD upsampled output
@@ -413,8 +445,8 @@ module pal_to_ddr #(
     .i_hd_hoffset(i_hoffset),
     .i_hd_voffset(i_voffset[0]),
     // CRT
-    .i_pal_hires(i_pal_hires),
-    .i_pal_shres(i_pal_shres),
+    .i_pal_hires(w_bh_hires),
+    .i_pal_shres(w_bh_shres),
     .o_hd_next(w_60_next),
     .o_pix_stb(w_60_stb),
     .o_line_start(w_60_lstart),

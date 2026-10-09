@@ -121,6 +121,12 @@ add_src $R/rtl/openaars/adv7511/crt_post.v
 add_src $R/rtl/openaars/adv7511/crt_wrom.mem
 add_src $R/rtl/openaars/adv7511/crt_lut.mem
 add_src $R/rtl/openaars/adv7511/crt_bloom.mem
+# The horizontal beam spot before the upsamplers (crt_beamh.v, clk_114) and
+# its tables (decode, encode, kernels); off, the picture never reads them.
+add_src $R/rtl/openaars/adv7511/crt_beamh.v
+add_src $R/rtl/openaars/adv7511/crt_hdec.mem
+add_src $R/rtl/openaars/adv7511/crt_henc.mem
+add_src $R/rtl/openaars/adv7511/crt_hk.mem
 # The dual-port RAM the AP040 MMU's ATC and the caches instantiate (module
 # dpram); project_1 had it only as a hand-added source, so a fresh clone's
 # project did not.
