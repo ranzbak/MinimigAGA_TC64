@@ -113,6 +113,7 @@ module minimig_openaars_top #(
   output wire dr_we_n,
   // ADV7511 video chip
   output wire dv_clk,
+  output wire dv_clk_gnd,   // header pin 30, next to dv_clk (pin 29); held low
   // I2C interconnect ADV7511, MAX9850
   inout  wire io_sda,
   inout  wire io_scl,
@@ -319,6 +320,11 @@ assign sd_m_d3  = sd_cs;
 
 // HDMI CEC clock
 assign dv_cecclk  = clk_28;
+
+// Header pin 30 (FPGA L22) sits next to the ADV7511 pixel clock (pin 29) on
+// the 2.54 mm header and is a no-connect on the IO board.  Driven low it
+// gives the clock a return path one pin away instead of a floating stub.
+assign dv_clk_gnd = 1'b0;
 
 // Sync button input to lowest clock
 wire button_osd_n;

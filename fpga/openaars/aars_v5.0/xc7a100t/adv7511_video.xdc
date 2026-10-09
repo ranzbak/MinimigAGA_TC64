@@ -14,6 +14,9 @@ set_property -dict {PACKAGE_PIN Y23 IOSTANDARD LVTTL} [get_ports io_scl]
 # CLOCK AND ENABLE SIGNALS
 set_property -dict {PACKAGE_PIN M26 IOSTANDARD LVTTL SLEW FAST} [get_ports dv_de]
 set_property -dict {PACKAGE_PIN L23 IOSTANDARD LVTTL SLEW FAST} [get_ports dv_clk]
+# Header pin 30, the clock's neighbour on the core-board header (pin 29); not connected on the IO
+# board. Held low (strongest LVTTL drive) as a return path next to the clock.
+set_property -dict {PACKAGE_PIN L22 IOSTANDARD LVTTL DRIVE 24} [get_ports dv_clk_gnd]
 
 # SYNC SIGNALS
 set_property -dict {PACKAGE_PIN K22 IOSTANDARD LVTTL} [get_ports dv_hsync]
@@ -61,6 +64,7 @@ set_false_path -to [get_ports dv_cecclk]
 set dv_data [get_ports {dv_d[*] dv_de dv_hsync dv_vsync}]
 set_false_path -to $dv_data
 set_false_path -to [get_ports dv_clk]
+set_false_path -to [get_ports dv_clk_gnd]
 
 # Pack the output registers into the IOBs: the data/sync/DE flops and the forwarded pixel clock
 # all leave adv_ddr on the same clk_148 edge, and only from the IOB do they reach the pins with
