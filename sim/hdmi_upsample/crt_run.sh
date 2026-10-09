@@ -3,7 +3,9 @@
 # pal_to_hd_upsample.v, crt_post.v; study 2026-10-08, design 2026-10-09).
 #
 #   unit       crt_post alone: all controls 0 = input unchanged (8-pixel
-#              latency, all 256 values); [1 6 1]/8 and [1 2 1]/4 on a step
+#              latency, all 256 values), also with both tables all zero (a
+#              build that lost the .mem files keeps today's picture);
+#              [1 6 1]/8 and [1 2 1]/4 on a step
 #   ripple     two-line beam profiles in crt_wrom.mem: light per input line
 #              max/min <= 1.1 (flat field, 2.4 HD lines per input line)
 #   bypass15   OSD config 0, 15 kHz input: HDMI picture bit-identical to the
@@ -64,6 +66,8 @@ for l in "${legs[@]}"; do
 		echo "$u" | grep -q "bypass identity: 0 mismatches" && pass "unit bypass identity" || bad "unit bypass identity"
 		echo "$u" | grep -q "hblur=1 step: 0 0 0 31 223 255" && pass "unit [1 6 1]/8 step" || bad "unit [1 6 1]/8 step"
 		echo "$u" | grep -q "hblur=2 step: 0 0 0 63 191 255" && pass "unit [1 2 1]/4 step" || bad "unit [1 2 1]/4 step"
+		u=$(vvp -n build/tb_crt_post_unit_zero.vvp)
+		echo "$u" | grep -q "bypass identity: 0 mismatches" && pass "unit bypass identity with both tables zero" || bad "unit bypass identity with both tables zero"
 		;;
 	ripple)
 		r=$(python3 crt_check.py ripple ../../rtl/openaars/adv7511/crt_wrom.mem)

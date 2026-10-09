@@ -2,12 +2,15 @@
 // every line phase, prints w0/w1 and the output; and the bypass identity
 // (all controls 0: out == in, delayed) for all 256 values.
 `timescale 1ns/1ps
-module tb_crt_post_unit;
+module tb_crt_post_unit #(
+	parameter WROM = "../../rtl/openaars/adv7511/crt_wrom.mem",
+	parameter LUT  = "../../rtl/openaars/adv7511/crt_lut.mem"
+);
 reg clk = 0; always #3.367 clk = ~clk;
 reg stb = 0, ls = 0; reg [6:0] ph = 0; reg [23:0] cur = 0, nxt = 0;
 reg [1:0] scan = 0, hblur = 0, mask = 0, lutp = 0; reg vb = 0;
 wire [23:0] o;
-crt_post #(.WROM_FILE("../../rtl/openaars/adv7511/crt_wrom.mem"), .LUT_FILE("../../rtl/openaars/adv7511/crt_lut.mem")) dut (
+crt_post #(.WROM_FILE(WROM), .LUT_FILE(LUT)) dut (
 	.clk(clk), .i_stb(stb), .i_line_start(ls), .i_phase(ph), .i_cur(cur), .i_nxt(nxt),
 	.i_hz60(1'b0), .i_scan(scan), .i_vblend(vb), .i_hblur(hblur), .i_mask(mask), .i_lut(lutp),
 	.i_wwe(1'b0), .i_wwa(11'd0), .i_wwd(18'd0), .o_rgb(o));

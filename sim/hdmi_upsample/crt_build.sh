@@ -9,6 +9,11 @@ A=../../rtl/openaars/adv7511
 mkdir -p build
 [ -f build/amiga_frame.hex ] || (cd build && python3 ../crt_mkframe.py > /dev/null)
 iverilog -g2012 -o build/tb_crt_post_unit.vvp tb_crt_post_unit.v $A/crt_post.v
+# the same with both tables all zero: what a board build that failed to load
+# the .mem files would have -- everything off must still be the picture
+python3 -c "open('build/zero_wrom.mem','w').write('00000\\n'*2048); open('build/zero_lut.mem','w').write('00\\n'*4096)"
+iverilog -g2012 -o build/tb_crt_post_unit_zero.vvp -Ptb_crt_post_unit.WROM=\"build/zero_wrom.mem\" \
+	-Ptb_crt_post_unit.LUT=\"build/zero_lut.mem\" tb_crt_post_unit.v $A/crt_post.v
 # -Wno-BLKANDNBLK: signal_generator.sv mixes = and <= on two registers in
 # its reset branch only
 verilator --binary --timing -j 4 -Wno-fatal -Wno-lint -Wno-style -Wno-MULTIDRIVEN -Wno-BLKANDNBLK \

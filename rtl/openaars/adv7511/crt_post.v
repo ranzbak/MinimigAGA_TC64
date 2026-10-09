@@ -58,12 +58,16 @@ initial $readmemh(WROM_FILE, wrom);
 // apart so Vivado cannot fold w_q into the DSPs' B registers (that leaves an
 // asynchronous read, which only LUTRAM can do: 768 LUTs) and so the BRAM ->
 // DSP route gets a whole clock.  The weights are static per HD line.
+// With no vertical effect (scan 0, no blend) w_r is the table's bypass
+// entry {0, 256} without reading it, so the plain picture never depends on
+// the table having been loaded (a build that lost crt_wrom.mem keeps it).
 reg [17:0] w_q;
 (* keep = "true" *) reg [17:0] w_r;
+wire w_bypass = (i_scan == 2'd0) && !(HAS_VBLEND && i_vblend);
 always @(posedge clk) begin
   if (i_wwe) wrom[i_wwa] <= i_wwd;
   w_q <= wrom[{i_hz60, (HAS_VBLEND ? i_vblend : 1'b0), i_scan, i_phase}];
-  w_r <= w_q;
+  w_r <= w_bypass ? 18'd256 : w_q;
 end
 wire [8:0] w0 = w_r[8:0];
 wire [8:0] w1 = HAS_VBLEND ? w_r[17:9] : 9'd0;
@@ -141,10 +145,18 @@ generate for (ch = 0; ch < 3; ch = ch + 1) begin : g_lut
     wire [1:0] ms = HAS_MASK ? mstate(i_mask, col3, col2, CH) : 2'd0;
     reg [11:0] e_a = 0;
     reg [7:0]  e_q = 0, e_r = 0;
+    // page 0 without mask is the identity: take the value itself (e_b,
+    // aligned with e_a), not the table -- as for w_r above
+    reg [7:0]  e_b = 0;
+    reg        e_id = 1'b1;
     always @(posedge clk) begin
-      if (i_stb) e_a <= {i_lut, ms, d_out[ch]};
+      if (i_stb) begin
+        e_a  <= {i_lut, ms, d_out[ch]};
+        e_b  <= d_out[ch];
+        e_id <= (i_lut == 2'd0) && (ms == 2'd0);
+      end
       e_q <= lut[e_a];                 // block RAM read every clock
-      if (i_stb) e_r <= e_q;
+      if (i_stb) e_r <= e_id ? e_b : e_q;
     end
     assign e_out[ch] = e_r;
   end else begin : g_off
