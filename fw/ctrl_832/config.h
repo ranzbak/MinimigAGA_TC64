@@ -38,9 +38,16 @@ typedef struct
 
 typedef struct
 {
-  unsigned char hpos;
-  unsigned char vpos;
+  unsigned char hpos;	// signed HD pixels, positive right (-128..120, steps of 8)
+  unsigned char vpos;	// signed Amiga lines (64 us), positive down (-VPOS_MAX..VPOS_MAX, steps of VPOS_STEP)
 } videoPosTYPE;
+
+// Video Pos VPOS range and menu step.  Firmware before VPOS worked (it did
+// nothing in the HDMI core) stepped this byte by 8, unsigned; such a value
+// within the range now moves the picture that many lines in the direction
+// pressed (8 down, 248 = -8 up), anything further out loads as 0.
+#define VPOS_MAX  64
+#define VPOS_STEP 2
 
 typedef struct
 {

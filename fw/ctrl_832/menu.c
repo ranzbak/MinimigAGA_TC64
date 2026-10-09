@@ -92,7 +92,6 @@ const char *config_chipset_msg[] = {"OCS-A500", "OCS-A1000", "ECS", "---", "---"
 const char *config_turbo_msg[] = {"none", "CHIPRAM", "KICK", "BOTH"};
 const char *config_cd32pad_msg[] = {"OFF", "ON"};
 const char *config_volume_msg[] = {" ", " 1", " 2", " 3", " 4", " 5", " 6", " 7", " 8", " 9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31"};
-const char *config_videopos_msg[] = {"  0", "  8", " 16", " 24", " 32", " 40", " 48", " 56", " 64", " 72", " 80", " 88", " 96", "104", "112", "120", "128", "136", "144", "152", "160", "168", "176", "184", "192", "200", "208", "216", "224", "232", "240", "248"};
 const char *config_hdmi_clkdelay_msg[] = {"-1.2", "-0.8", "-0.4", " 0.0", "+0.4", "+0.8", "+1.2", "+1.6"};
 
 char *config_autofire_msg[] = {"        AUTOFIRE OFF", "        AUTOFIRE FAST", "        AUTOFIRE MEDIUM", "        AUTOFIRE SLOW"};
@@ -117,7 +116,7 @@ const char *helptexts[] = {
 #else
     "                                Minimig can make use of up to 2 megabytes of Chip RAM, up to 1.5 megabytes of Slow RAM (A500 Trapdoor RAM), and up to 28 megabytes of true Fast RAM.  To use the HRTMon feature you will need an appropriate ROM file on the SD card.  To activate the monitor hold Ctrl and press the Pause key.",
 #endif
-    "                                Minimig's video features include a blur filter, to simulate the poorer picture quality on older monitors, and also scanline generation to simulate the appearance of a screen with low vertical resolution.  On HDMI, CRT Mask adds a phosphor mask (grille: red, green and blue stripes; shadow: magenta and green) and Bloom lets bright pixels fill their scanline gaps; bloom needs scanlines or a vertical filter.  Beam width gives each pixel the soft spot of a CRT's beam, so dithered patterns blend as on a monitor; with it on, Bloom also widens the spot of bright pixels.",
+    "                                Minimig's video features include a blur filter, to simulate the poorer picture quality on older monitors, and also scanline generation to simulate the appearance of a screen with low vertical resolution.  On HDMI, CRT Mask adds a phosphor mask (grille: red, green and blue stripes; shadow: magenta and green) and Bloom lets bright pixels fill their scanline gaps; bloom needs scanlines or a vertical filter.  Beam width gives each pixel the soft spot of a CRT's beam, so dithered patterns blend as on a monitor; with it on, Bloom also widens the spot of bright pixels.  Video Pos moves the HDMI picture: Hpos in HD pixels (+ right), Vpos in Amiga lines (+ down).",
     "                                The clock delay sets where the HDMI transmitter samples each pixel.  Too early or too late shows as sparkling colours, light yellows first.  Step through the values, note where the picture is clean, and settle in the middle of that range.  Save the configuration to keep it.",
     0};
 
@@ -2129,10 +2128,11 @@ void HandleUI(void)
         helptext = helptexts[HELPTEXT_VIDEO];
 
         OsdSetTitle("Video Pos", OSD_ARROW_LEFT | OSD_ARROW_RIGHT);
-        /* Hpos is signed (HD pixels; negative moves the picture left) */
-        sprintf(s, " Hpos : %4d", (int)(signed char)config.videopos.hpos);
-        strcat(s, " | Vpos : ");
-        strcat(s, config_videopos_msg[config.videopos.vpos >> 3]);
+        /* Both signed: Hpos in HD pixels (negative moves the picture left),
+           Vpos in Amiga lines of 64 us (negative moves it up; one line is
+           2.4 HD lines at 50 Hz, 2.9 at 60 Hz) */
+        sprintf(s, " Hpos : %4d | Vpos : %4d", (int)(signed char)config.videopos.hpos,
+                (int)(signed char)config.videopos.vpos);
         OsdWrite(0, s, 0, 0);
         OsdWrite(1, " --- ", 0, 0);
         OsdWrite(2, "   HPOS +", menusub == 0, 0);
@@ -2162,15 +2162,18 @@ void HandleUI(void)
                 menustate = MENU_SETTINGS_VIDEO3;
                 ConfigVideoPos(config.videopos.hpos, config.videopos.vpos);
             }
+            /* Vpos: -VPOS_MAX..VPOS_MAX in steps of 2 lines, stopping at the ends */
             else if (menusub == 2)
             {
-                config.videopos.vpos = (config.videopos.vpos + 0x08);
+                if ((signed char)config.videopos.vpos < VPOS_MAX)
+                    config.videopos.vpos = (config.videopos.vpos + VPOS_STEP);
                 menustate = MENU_SETTINGS_VIDEO3;
                 ConfigVideoPos(config.videopos.hpos, config.videopos.vpos);
             }
             else if (menusub == 3)
             {
-                config.videopos.vpos = (config.videopos.vpos - 0x08);
+                if ((signed char)config.videopos.vpos > -VPOS_MAX)
+                    config.videopos.vpos = (config.videopos.vpos - VPOS_STEP);
                 menustate = MENU_SETTINGS_VIDEO3;
                 ConfigVideoPos(config.videopos.hpos, config.videopos.vpos);
             }
