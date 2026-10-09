@@ -244,9 +244,7 @@ module pal_to_ddr #(
 
   // The OSD Video Pos HPOS (signed HD pixels; static, written by the host
   // through VPOS_DATA): one 2-FF synchroniser into clk_148 for both
-  // upsamplers.  Feeding i_hoffset to both upsamplers directly made Vivado
-  // 2023.2 synthesis segfault (GXorGen::bestSoln in Cross Boundary and Area
-  // Optimization); with the register in between it synthesises.
+  // upsamplers.
   (* ASYNC_REG = "TRUE" *) reg [7:0] s_hoff0 = 8'd0;
   (* ASYNC_REG = "TRUE" *) reg [7:0] s_hoff1 = 8'd0;
   always @(posedge clk_148) begin

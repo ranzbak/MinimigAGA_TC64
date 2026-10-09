@@ -382,10 +382,7 @@ always @(posedge clk_out) begin
 end
 
 // where a line's read starts: the fixed offset plus the OSD's signed one,
-// registered (static; the OSD writes it from another clock domain).  Written
-// as one register and one subtract below: the same function as an 8-way case
-// of base - (offset + hoffset) made Vivado 2023.2 synthesis segfault
-// (GXorGen::bestSoln, Cross Boundary and Area Optimization).
+// registered (static), so each line starts at {buffer, 11'b0} - r_rd_off.
 reg  [13:0] r_rd_off = PAL_OFFSET_HZ;
 always @(posedge clk_out)
   r_rd_off <= PAL_OFFSET_HZ + {{6{i_hd_hoffset[7]}}, i_hd_hoffset};
