@@ -29,6 +29,8 @@
 #   osd        OSD config 0 -> dim during HD frame 3: frame 3 bit-identical,
 #              frame 4 changed, the latch moves once, at a frame end
 #   osdfx      the same for the new bits: 0 -> mask shadow + bloom high
+#   osdspi     userio_osd over SPI: the video command's optional second byte
+#              sets {bloom, mask}; one byte (an older firmware) leaves them 0
 #   mask       mask grille (3-px R G B), scanlines off: period 3 in the
 #              border, lit > dimmed, light within 3 % (LUT compensation)
 #   mask2      mask grille strong: the same
@@ -67,7 +69,7 @@ declare -A ARGS=(
 	[bloom_lo]="+cfg=101 +out=$I/bloom_lo"
 	[bloom_hv]="+cfg=23d +out=$I/bloom_hv"
 )
-ALL="unit ripple bypass15 bypass31 gate31 bypass60 rtg dim dim_hv lace split osd osdfx mask mask2 maskmg mask_dim bloom bloom_lo bloom_hv"
+ALL="unit osdspi ripple bypass15 bypass31 gate31 bypass60 rtg dim dim_hv lace split osd osdfx mask mask2 maskmg mask_dim bloom bloom_lo bloom_hv"
 legs=("$@"); [ ${#legs[@]} -eq 0 ] && legs=($ALL)
 # the bloom legs compare against the same picture without bloom
 want() { local x; for x in "${legs[@]}"; do [ "$x" = "$1" ] && return 0; done; return 1; }
@@ -101,6 +103,11 @@ for l in "${legs[@]}"; do
 			|| { bad "unit bloom"; echo "$u" | grep "^bloom gap"; }
 		u=$(vvp -n build/tb_crt_post_unit_zero.vvp)
 		echo "$u" | grep -q "bypass identity: 0 mismatches" && pass "unit bypass identity with both tables zero" || bad "unit bypass identity with both tables zero"
+		;;
+	osdspi)
+		u=$(vvp -n build/tb_osd_video.vvp)
+		echo "$u" | grep FAIL | sed 's/^/        /'
+		echo "$u" | grep -q "osd video: 0 errors" && pass "osdspi: second byte -> {bloom, mask}, one byte leaves them off" || bad "osdspi"
 		;;
 	ripple)
 		r=$(python3 crt_check.py ripple ../../rtl/openaars/adv7511/crt_wrom.mem)

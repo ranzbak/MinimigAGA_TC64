@@ -83,6 +83,7 @@ module userio #(
   output wire [  4-1:0] floppy_config,
   output wire [  2-1:0] scanline,
   output wire [  2-1:0] dither,
+  output wire [  4-1:0] crt_fx,             // HDMI CRT emulation {bloom, mask} (userio_osd.v)
   output wire [  3-1:0] ide_config0,
   output wire [  3-1:0] ide_config1,
   output wire [  4-1:0] cpu_config,
@@ -609,6 +610,7 @@ userio_osd #(.CORE_CAPS(CORE_CAPS)) osd1
   .floppy_config    (floppy_config),
   .scanline         (scanline),
   .dither           (dither),
+  .crt_fx           (crt_fx),
   .ide_config0      (ide_config0),
   .ide_config1      (ide_config1),
   .cpu_config       (cpu_config),

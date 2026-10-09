@@ -104,8 +104,8 @@ module minimig_virtual_top #(
     output wire           RTG_ENABLE, // True when RTG is enabled
 
     // HDMI CRT emulation (CLK_28 domain): OSD video config
-    // {hr_filter, lr_filter, scanline} and Denise BPLCON0 HIRES / SHRES
-    output wire [  6-1:0] CRT_CFG,
+    // {bloom, mask, hr_filter, lr_filter, scanline} and Denise BPLCON0 HIRES / SHRES
+    output wire [ 10-1:0] CRT_CFG,
     output wire           VID_HIRES,
     output wire           VID_SHRES,
 
