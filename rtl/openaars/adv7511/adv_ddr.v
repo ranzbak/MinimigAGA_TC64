@@ -26,9 +26,13 @@ module adv_ddr #(
 
   // OUTPUT (internal: the 60 Hz upsampler reads hsync_out, this module de_out
   // and clk_pixel_out)
-  output reg clk_pixel_out, // Output pixel clock after synchronization to clk_out
-  output reg de_out, // Data enable signal
-  output reg vsync_out, hsync_out,
+  // DONT_TOUCH: equal to their pad copies (same next state), and synthesis
+  // would otherwise merge one into the other -- a pad register that also
+  // feeds internal logic cannot be placed in the OLOGIC.
+  (* DONT_TOUCH = "TRUE" *) output reg clk_pixel_out, // Output pixel clock after synchronization to clk_out
+  (* DONT_TOUCH = "TRUE" *) output reg de_out, // Data enable signal
+  (* DONT_TOUCH = "TRUE" *) output reg vsync_out,
+  (* DONT_TOUCH = "TRUE" *) output reg hsync_out,
   output reg [11:0] data_out, // DDR data stream out
 
   // PADS (2026-10-10): one register per ADV7511 pin, a copy of the internal
@@ -38,7 +42,11 @@ module adv_ddr #(
   // these copies itself (*_reg_rep) to honour IOB=TRUE on registers that also
   // feed internal logic; the pins' timing is unchanged (measured on
   // stage_combo5_x0: dv_clk and dv_d within 0.04 ns at the pins).
-  // DONT_TOUCH keeps them from being merged back into the internal ones.
+  // DONT_TOUCH keeps them from being merged with the internal ones.  Each pad
+  // register loads the internal register's NEXT STATE (the *_n wires below):
+  // a register that holds its value is built with its own output fed back
+  // through a LUT, and that fabric load keeps it out of the OLOGIC (stage_padA,
+  // 2026-10-10: clock, DE and syncs landed in slices, the bus hold -2.4 ns).
   // Internal logic never reads them: on 2026-09-25 the pin hsync was also
   // the 60 Hz upsampler's hsync, so changing pin timing changed the picture.
   (* IOB = "TRUE", DONT_TOUCH = "TRUE" *) output reg pad_clk = 1'b0,
@@ -154,8 +162,6 @@ begin
       // Output vsync and hsync as well
       vsync_out <= vsync_s[1];
       hsync_out <= hsync_s[1];
-      pad_vsync <= vsync_s[1];
-      pad_hsync <= hsync_s[1];
       // Generate data enable
       if ((px_count == PX_TO_DE) && v_active)
         set_de <= ~set_de;
@@ -179,7 +185,6 @@ begin
 
     // Output synchronized pixel clock
     clk_pixel_out <= clk_pixel_s[1];
-    pad_clk       <= clk_pixel_s[1];
   end
 end
 
@@ -198,15 +203,31 @@ begin
     if (r_neg_set_de[0] != r_neg_set_de[1])
     begin
       de_out <= 1'b1;
-      pad_de <= 1'b1;
     end
 
     if (r_neg_reset_de[0] != r_neg_reset_de[1])
     begin
       de_out <= 1'b0;
-      pad_de <= 1'b0;
     end
   end
 end
+
+// Pad registers (see the port list): the internal registers' next states,
+// written out once more without feedback from the pad registers themselves.
+wire clk_pixel_n = reset ? clk_pixel_out : clk_pixel_s[1];
+wire hsync_n     = (!reset && clk_pixel_s[1]) ? hsync_s[1] : hsync_out;
+wire vsync_n     = (!reset && clk_pixel_s[1]) ? vsync_s[1] : vsync_out;
+always @(posedge clk_out)
+begin
+  pad_clk   <= clk_pixel_n;
+  pad_hsync <= hsync_n;
+  pad_vsync <= vsync_n;
+end
+// DE: the negedge block above; its reset event is written last there, so it wins
+wire de_set_ev = clk_pixel_out && (r_neg_set_de[0] != r_neg_set_de[1]);
+wire de_rst_ev = clk_pixel_out && (r_neg_reset_de[0] != r_neg_reset_de[1]);
+wire de_n      = de_rst_ev ? 1'b0 : de_set_ev ? 1'b1 : de_out;
+always @(negedge clk_out)
+  pad_de <= de_n;
 
 endmodule
