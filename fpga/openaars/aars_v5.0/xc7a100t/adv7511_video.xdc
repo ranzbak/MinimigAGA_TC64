@@ -19,8 +19,10 @@ set_property -dict {PACKAGE_PIN L23 IOSTANDARD LVTTL SLEW FAST} [get_ports dv_cl
 set_property -dict {PACKAGE_PIN L22 IOSTANDARD LVTTL DRIVE 24} [get_ports dv_clk_gnd]
 
 # SYNC SIGNALS
-set_property -dict {PACKAGE_PIN K22 IOSTANDARD LVTTL SLEW FAST} [get_ports dv_hsync]
-set_property -dict {PACKAGE_PIN K23 IOSTANDARD LVTTL SLEW FAST} [get_ports dv_vsync]
+# hsync / vsync stay at the default slew: with SLEW FAST they reach the pins before the clock
+# (stage_padA2: hold -0.52 ns); slow they arrive 0.78 ns after it, which the hold side needs.
+set_property -dict {PACKAGE_PIN K22 IOSTANDARD LVTTL} [get_ports dv_hsync]
+set_property -dict {PACKAGE_PIN K23 IOSTANDARD LVTTL} [get_ports dv_vsync]
 
 # 12-bit DDR data channel
 set_property -dict {PACKAGE_PIN T24 IOSTANDARD LVTTL SLEW FAST} [get_ports {dv_d[11]}]

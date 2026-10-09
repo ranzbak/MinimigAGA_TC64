@@ -84,7 +84,11 @@ reg        vseen = 1'b0;                  // lines counts a whole frame
 reg  [7:0] lcnt = 8'd0;
 reg        lpend = 1'b0;
 reg        on_n = 1'b0, lset = 1'b0;
-reg        r_on = 1'b0;
+// max_fanout: r_on selects every output bit of both upsamplers' input (the
+// mux at the end); as one register it was routed 8 ns across the chip to the
+// 60 Hz upsampler's line-buffer address (stage_padA2: clk_114 -0.007 ns).
+// Vivado copies it next to each load group; Quartus ignores the attribute.
+(* max_fanout = 8 *) reg r_on = 1'b0;
 reg  [1:0] r_width = 2'd0;
 reg  [1:0] r_bloom = 2'd0;
 wire       hs_rise = i_hs & ~hs_d;
