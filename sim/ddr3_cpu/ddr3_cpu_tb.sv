@@ -824,6 +824,11 @@ localparam integer DFPMIS_GEN = 1;
 `else
 localparam integer DFPMIS_GEN = 0;
 `endif
+`ifdef WALLOCF
+localparam integer WALLOC_GEN = 1;
+`else
+localparam integer WALLOC_GEN = 0;
+`endif
 `ifdef BTBF
 localparam integer BTB_GEN = 1;
 `else
@@ -858,7 +863,7 @@ localparam integer FWDRAS_GEN = 0;
 `ifdef AP040_PIPELINED
 TG68K #(.cpu_clk_ratio(`CPU_RATIO), .ap040_pipelined(1), .chip32(CHIP32_GEN), .ap040_free_core(FREE_CORE_GEN),
         .ap040_store_buf(STORE_BUF_GEN), .ap040_fwd(FWDRAS_GEN), .ap040_ras(FWDRAS_GEN),
-        .ap040_precise(PREMIS_GEN), .ap040_misplit(MISPLIT_GEN), .ap040_sb_mmu(SBMMU_GEN), .ap040_copyback(CBACK_GEN), .ap040_btb(BTB_GEN), .ap040_ldx(LDX_GEN), .ap040_btfn(BTFN_GEN), .ap040_dfp_mis(DFPMIS_GEN)) tg68k (
+        .ap040_precise(PREMIS_GEN), .ap040_misplit(MISPLIT_GEN), .ap040_sb_mmu(SBMMU_GEN), .ap040_copyback(CBACK_GEN), .ap040_btb(BTB_GEN), .ap040_ldx(LDX_GEN), .ap040_btfn(BTFN_GEN), .ap040_dfp_mis(DFPMIS_GEN), .ap040_walloc(WALLOC_GEN)) tg68k (
 `else
 TG68K #(.cpu_clk_ratio(`CPU_RATIO), .chip32(CHIP32_GEN)) tg68k (
 `endif
@@ -1642,7 +1647,16 @@ localparam integer STALL_PAT = 1_000_000;
 `else
 localparam integer STALL_PAT = 300_000;
 `endif
+// STALL_MMU_N overrides it for a program whose longest legitimate gap is
+// longer: xSysInfo's Dhrystone with write-allocate (WALLOC) spends ~1.07 ms
+// between loader phase 5 and soc_main's phase 1 (Dhry_Initialize clears
+// Arr_2_Glob, 10 KB: ~660 allocate fills plus victim pushes) -- run_ddr3_dhry.sh
+// STALLMMU=<cycles>
+`ifdef STALL_MMU_N
+localparam integer STALL_MMU = `STALL_MMU_N;
+`else
 localparam integer STALL_MMU = 120_000;
+`endif
 wire [31:0] stall_limit = mmutest ? STALL_MMU : STALL_PAT;
 
 always @(posedge clk) begin

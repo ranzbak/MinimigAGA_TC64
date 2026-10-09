@@ -111,7 +111,7 @@ timing and utilisation reports.
 
 **CPU switches.** Without any of them the build is the configuration the
 board runs (since 2026-10-05, build/stage_r04mis): MMU and FPU in, and
-`STORE_BUF FWD RAS PRECISE SB_MMU COPYBACK LDX BTFN DFP_MIS` all `1`;
+`STORE_BUF FWD RAS PRECISE SB_MMU COPYBACK LDX BTFN DFP_MIS WALLOC` all `1`;
 `BTB` and `MISPLIT` `0`. Set one to `0` (e.g. `COPYBACK=0`) for an A/B; the
 build log's `PIPELINED build from` line lists what the run used.
 
@@ -124,6 +124,7 @@ build log's `PIPELINED build from` line lists what the run used.
 | `COPYBACK` | 1 | the copyback data cache (CM = 01 pages on the DDR3 board) |
 | `LDX`, `BTFN` | 1 | late-operand load dispatch; forward branches guessed not taken |
 | `DFP_MIS` | 1 | misaligned accesses served from the data cache |
+| `WALLOC` | 1 | write-allocate: a copyback store miss fills its line (needs `COPYBACK`) |
 | `BTB`, `MISPLIT` | 0 | branch target buffer; misaligned split (both off: not board-proven) |
 
 Without `AP040_PIPE_DIR`, the script uses the `lib/AP68040-pipelined`
