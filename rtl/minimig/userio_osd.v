@@ -40,9 +40,10 @@ module userio_osd #(
 	output	reg [3:0] floppy_config = 0,
 	output	reg [1:0] scanline = 0,
   output  reg [1:0] dither = 0,
-  // HDMI CRT emulation {bloom[1:0], mask[1:0]}: the video config's second
-  // data byte.  A firmware that sends one byte leaves them 0 (off).
-  output  reg [3:0] crt_fx = 0,
+  // HDMI CRT emulation {beam[1:0], bloom[1:0], mask[1:0]}: the video
+  // config's second data byte.  A firmware that sends one byte leaves them
+  // 0 (off).
+  output  reg [5:0] crt_fx = 0,
   output    reg    [2:0] ide_config0 = 0,        //enable hard disk support
   output    reg    [2:0] ide_config1 = 0,        //enable hard disk support
   output  reg [3:0] cpu_config = 0,
@@ -423,7 +424,7 @@ end
 // 8'b0_001_0100 | XXXXKCTT || cpu config      | K - fast kickstart enable, C - CPU cache enable, TT - CPU type (00=68k, 01=68k10, 10=68k20)
 // 8'b0_010_0100 | XHFFSSCC || memory config   | H - HRTmon, FF - fast, SS - slow, CC - chip
 // 8'b0_011_0100 | DDHHLLSS || video config    | DD - dither, HH - hires interp. filter, LL - lowres interp. filter, SS - scanline mode
-//               | XXXXBBMM    (optional second byte) BB - HDMI bloom (0 off, 1 low, 2 high), MM - HDMI CRT mask (0 off, 1 grille, 2 grille strong, 3 shadow)
+//               | XXWWBBMM    (optional second byte) WW - HDMI beam width (0 off, 1 sharp, 2 medium, 3 soft), BB - HDMI bloom (0 off, 1 low, 2 high), MM - HDMI CRT mask (0 off, 1 grille, 2 grille strong, 3 shadow)
 // 8'b0_100_0100 | XXXXXFFS || floppy config   | FF - drive number, S - floppy speed
 // 8'b0_101_0100 | XXXXXSMC || harddisk config | S - enable slave HDD, M - enable master HDD, C - enable HDD controler
 // 8'b0_110_0100 | XXXXXCAA || joystick config | C - CD32pad mode, AA - autofire rate
@@ -443,7 +444,7 @@ always @ (posedge clk) begin
       if (spi_cpu_cfg_sel)      begin if (dat_cnt == 0) t_cpu_config <= #1 wrdat[3:0]; end
       if (spi_memory_cfg_sel)   begin if (dat_cnt == 0) t_memory_config <= #1 wrdat[7:0]; end
       if (spi_video_cfg_sel)    begin if (dat_cnt == 0) {dither, hr_filter, lr_filter, scanline} <= #1 wrdat[7:0];
-                                      if (dat_cnt == 1) crt_fx <= #1 wrdat[3:0]; end
+                                      if (dat_cnt == 1) crt_fx <= #1 wrdat[5:0]; end
       if (spi_floppy_cfg_sel)   begin if (dat_cnt == 0) floppy_config <= #1 wrdat[3:0]; end
       if (spi_harddisk0_cfg_sel)begin if (dat_cnt == 0) t_ide_config0 <= #1 wrdat[2:0]; end
       if (spi_harddisk1_cfg_sel)begin if (dat_cnt == 0) t_ide_config1 <= #1 wrdat[2:0]; end

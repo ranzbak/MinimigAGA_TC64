@@ -1,11 +1,11 @@
 // tb_osd_video.v -- userio_osd's video config command (OSD_CMD_VID, 0x34)
 // over SPI as the 832 firmware sends it: the first data byte
 // {dither, hr_filter, lr_filter, scanline}, the optional second byte
-// {bloom, mask} for the HDMI CRT emulation (crt_fx).
+// {beam, bloom, mask} for the HDMI CRT emulation (crt_fx, 6 bits).
 //   1. one data byte (an older firmware): filters and scanlines set, crt_fx
 //      stays 0 (mask and bloom off)
-//   2. two data bytes: crt_fx = the second byte's low nibble, the first byte
-//      as before
+//   2. two data bytes: crt_fx = the second byte's low 6 bits (bits 7:6
+//      ignored), the first byte as before
 //   3. a third byte in the same transfer does not change crt_fx
 //   4. another config command with two data bytes leaves the video config
 // Prints "osd video: N errors".
@@ -19,7 +19,7 @@ wire clk7_en = (ph == 2'd0), clk7n_en = (ph == 2'd2);
 reg _scs = 1'b1, sdi = 1'b0, sck = 1'b1;
 wire sdo;
 wire [1:0] lr, hr, scan, dith;
-wire [3:0] fx;
+wire [5:0] fx;
 userio_osd dut (
 	.clk(clk), .clk7_en(clk7_en), .clk7n_en(clk7n_en), .reset(1'b0),
 	.c1(1'b0), .c3(1'b0), .sol(1'b0), .sof(1'b0), .varbeamen(1'b0), .rtg_ena(1'b0),
@@ -67,6 +67,11 @@ initial begin
 	xfer(2, 8'h34, 8'h01, 8'h0B, 8'h00);                 // dim; 0x0B: bloom 2 (high), mask 3 (shadow)
 	check("2 bytes: {hr, lr, scan}", {hr, lr, scan}, 10'h01);
 	check("2 bytes: crt_fx", fx, 10'hB);
+	xfer(2, 8'h34, 8'h00, 8'hE6, 8'h00);                 // 0xE6: beam 2 (medium), bloom 1, mask 2; bits 7:6 not
+	check("2 bytes: crt_fx beam", fx, 10'h26);
+	xfer(2, 8'h34, 8'h01, 8'h1B, 8'h00);                 // beam 1 (sharp), bloom 2, mask 3
+	check("2 bytes: crt_fx beam sharp", fx, 10'h1B);
+	xfer(2, 8'h34, 8'h01, 8'h0B, 8'h00);
 	xfer(3, 8'h34, 8'h00, 8'h06, 8'h0F);                 // the third byte is not the second
 	check("3 bytes: crt_fx", fx, 10'h6);
 	check("3 bytes: {hr, lr, scan}", {hr, lr, scan}, 10'h0);
