@@ -439,6 +439,11 @@ module pal_to_ddr #(
   );
 
   // Upscale the video signal using a line buffer
+  // adv_ddr's internal hsync (hsync_out), which the 60 Hz upsampler has always
+  // sampled; the pin dv_hsync comes from its pad copy (pad_hsync), so the pin
+  // timing and this upsampler's input stay independent of each other.
+  wire w_adv_hsync;
+
   pal_to_hd_upsample #(
   .PAL_HD_H_RES(1980), // Total pixels in a line
   .PAL_OFFSET_HZ('h80 - CRT_LAT)
@@ -461,7 +466,7 @@ module pal_to_ddr #(
     .o_hd_vsync(w_60_vsync),
     .o_frame_end(w_60_frame_end),
     // HD sync pulse
-    .i_hd_hsync(o_hsync),
+    .i_hd_hsync(w_adv_hsync),
     .i_hd_vsync(w_60_hd_vsync),
     .i_hd_clk(w_50_adv_clk),
     // horizontal and vertical offsets
@@ -546,10 +551,17 @@ module pal_to_ddr #(
     .data({w_o_r, w_o_g, w_o_b}), // Pixel data in 24-bpp
 
     // OUTPUT
-    .clk_pixel_out(o_clk_pixel), // Output pixel clock after synchronization to clk_ddr
-    .de_out(o_de), // Data enable signal
-    .vsync_out(o_vsync),
-    .hsync_out(o_hsync),
-    .data_out(o_data) // DDR data stream out
+    // internal (60 Hz upsampler's hsync; the rest read inside adv_ddr only)
+    .clk_pixel_out(),
+    .de_out(),
+    .vsync_out(),
+    .hsync_out(w_adv_hsync),
+    .data_out(),
+    // the pins: pad registers in the IOBs
+    .pad_clk(o_clk_pixel), // Output pixel clock after synchronization to clk_ddr
+    .pad_de(o_de), // Data enable signal
+    .pad_vsync(o_vsync),
+    .pad_hsync(o_hsync),
+    .pad_data(o_data) // DDR data stream out
   );
 endmodule

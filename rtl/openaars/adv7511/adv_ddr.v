@@ -24,11 +24,28 @@ module adv_ddr #(
   input vsync, hsync, //
   input [23:0 ] data, // Pixel data in 24-bpp
 
-  // OUTPUT
+  // OUTPUT (internal: the 60 Hz upsampler reads hsync_out, this module de_out
+  // and clk_pixel_out)
   output reg clk_pixel_out, // Output pixel clock after synchronization to clk_out
   output reg de_out, // Data enable signal
   output reg vsync_out, hsync_out,
-  output reg [11:0] data_out // DDR data stream out
+  output reg [11:0] data_out, // DDR data stream out
+
+  // PADS (2026-10-10): one register per ADV7511 pin, a copy of the internal
+  // register above with the same D and the same clock edge, that drives the
+  // pin and nothing else -- so it sits in the pin's OLOGIC (IOB) and its
+  // clock-to-pin delay is the same in every build.  Until now Vivado made
+  // these copies itself (*_reg_rep) to honour IOB=TRUE on registers that also
+  // feed internal logic; the pins' timing is unchanged (measured on
+  // stage_combo5_x0: dv_clk and dv_d within 0.04 ns at the pins).
+  // DONT_TOUCH keeps them from being merged back into the internal ones.
+  // Internal logic never reads them: on 2026-09-25 the pin hsync was also
+  // the 60 Hz upsampler's hsync, so changing pin timing changed the picture.
+  (* IOB = "TRUE", DONT_TOUCH = "TRUE" *) output reg pad_clk = 1'b0,
+  (* IOB = "TRUE", DONT_TOUCH = "TRUE" *) output reg pad_de = 1'b0,
+  (* IOB = "TRUE", DONT_TOUCH = "TRUE" *) output reg pad_vsync = 1'b0,
+  (* IOB = "TRUE", DONT_TOUCH = "TRUE" *) output reg pad_hsync = 1'b0,
+  (* IOB = "TRUE", DONT_TOUCH = "TRUE" *) output reg [11:0] pad_data = 12'd0
 );
 
 // The amount of pixels before the Data enabled is triggered
@@ -110,6 +127,7 @@ always @(posedge clk_out)
 begin
   reset_de <= 1'b0;
   data_out <= 0;
+  pad_data <= 0;
   if (reset)
   begin
     // phase_count <= 0;
@@ -131,10 +149,13 @@ begin
       // Output the lower (1st) part
       if (de_out) begin
         data_out <= data_s[1][11:0];
+        pad_data <= data_s[1][11:0];
       end
       // Output vsync and hsync as well
       vsync_out <= vsync_s[1];
       hsync_out <= hsync_s[1];
+      pad_vsync <= vsync_s[1];
+      pad_hsync <= hsync_s[1];
       // Generate data enable
       if ((px_count == PX_TO_DE) && v_active)
         set_de <= ~set_de;
@@ -147,6 +168,7 @@ begin
       if (de_out)
       begin
         data_out <= data_s[1][23:12];
+        pad_data <= data_s[1][23:12];
       end
       // Handle pixel counter to Data enable
       px_count <= px_count + 1;
@@ -157,6 +179,7 @@ begin
 
     // Output synchronized pixel clock
     clk_pixel_out <= clk_pixel_s[1];
+    pad_clk       <= clk_pixel_s[1];
   end
 end
 
@@ -175,11 +198,13 @@ begin
     if (r_neg_set_de[0] != r_neg_set_de[1])
     begin
       de_out <= 1'b1;
+      pad_de <= 1'b1;
     end
 
     if (r_neg_reset_de[0] != r_neg_reset_de[1])
     begin
       de_out <= 1'b0;
+      pad_de <= 1'b0;
     end
   end
 end
