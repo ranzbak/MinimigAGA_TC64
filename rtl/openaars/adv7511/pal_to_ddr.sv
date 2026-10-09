@@ -244,12 +244,25 @@ module pal_to_ddr #(
 
   // The OSD Video Pos HPOS (signed HD pixels; static, written by the host
   // through VPOS_DATA): one 2-FF synchroniser into clk_148 for both
-  // upsamplers.
+  // upsamplers.  VPOS: the same into clk_114.
   (* ASYNC_REG = "TRUE" *) reg [7:0] s_hoff0 = 8'd0;
   (* ASYNC_REG = "TRUE" *) reg [7:0] s_hoff1 = 8'd0;
   always @(posedge clk_148) begin
     s_hoff0 <= i_hoffset;
     s_hoff1 <= s_hoff0;
+  end
+  // VPOS (signed 64 us steps, positive down): a 2-FF synchroniser into
+  // clk_114, where both upsamplers take it at each input hsync and decide
+  // where the HD raster restarts (pal_to_hd_upsample.v, "Video Pos VPOS");
+  // their clk_148 side only follows that decision.  The register is in
+  // CLK_28 (cfide), a phase-aligned sibling of clk_114 (wizard.xdc's
+  // multicycle paths time the crossing), but the value is static and the
+  // synchroniser costs nothing.
+  (* ASYNC_REG = "TRUE" *) reg [7:0] s_voff0 = 8'd0;
+  (* ASYNC_REG = "TRUE" *) reg [7:0] s_voff1 = 8'd0;
+  always @(posedge clk_114) begin
+    s_voff0 <= i_voffset;
+    s_voff1 <= s_voff0;
   end
 
   wire [23:0] w_50_next, w_60_next;
@@ -383,7 +396,7 @@ module pal_to_ddr #(
     .i_hd_clk(w_50_adv_clk),
     // horizontal and vertical offsets
     .i_hd_hoffset(s_hoff1),
-    .i_hd_voffset(i_voffset),
+    .i_hd_voffset(s_voff1),
     .i_rtg_enable(),
     // CRT
     .i_pal_hires(w_bh_hires),
@@ -453,7 +466,7 @@ module pal_to_ddr #(
     .i_hd_clk(w_50_adv_clk),
     // horizontal and vertical offsets
     .i_hd_hoffset(s_hoff1),
-    .i_hd_voffset(i_voffset[0]),
+    .i_hd_voffset(s_voff1),
     // CRT
     .i_pal_hires(w_bh_hires),
     .i_pal_shres(w_bh_shres),

@@ -32,14 +32,18 @@
 //   +split       a generated lowres/hires split screen instead of the picture
 //                (see below), with Denise's HIRES driven to match
 //   +rtg         i_rtg_enable = 1
-//   +hoff=N +voff=N   the OSD Video Pos offsets of the new path (8 bit; hoff
+//   +hoff=N +voff=N   the OSD Video Pos offsets of the new path (8 bit,
 //                signed, -128..127; default 0, the reference path keeps 0)
+//   +voff2=N +vofframe=F +voffline=L   change VPOS to voff2 during HD frame
+//                F, line L of the new path (the VPOS-change legs)
 //   +force60     both paths use the 60 Hz upsampler (r_50hz forced 0)
 //   +first=N +frames=M   compare (and dump) HD frames N .. N+M-1 (default 3, 1)
 //   +out=PREFIX  dump the new path's frames as PREFIX_<n>.hex (RRGGBB per
 //                line, raster order) and its line phases as PREFIX_phase.txt
 // Prints "frame N: D pixels differ" per compared frame, "lines N" (pixels
-// captured, non-black), the path (50/60), and every change of the
+// captured, non-black), the path (50/60), "hd frame N: L lines, V vsync"
+// for every HD frame of the new path (HD lines, and rising edges of the
+// selected signal generator's vsync in it), and every change of the
 // frame-latched config ("cfg latched ... at frame end: 1" when it happened
 // the clock after a frame end; "beam latched ..." for the beam filter's own
 // latch in clk_114, with the input line it happened in).
@@ -60,7 +64,7 @@ always #3.367  clk_148 = ~clk_148;   // 148.5 MHz
 integer frames = 1, first = 3, cfgframe = -1, cfgline = 0, cfg = 0, cfg2 = 0;
 reg lace = 0, dbl = 0, split = 0, rtg = 0, force60 = 0, dump = 0;
 integer srcdelay = 0;
-integer hoff = 0, voff = 0;
+integer hoff = 0, voff = 0, voff2 = 0, vofframe = -1, voffline = 0;
 reg [8*160-1:0] out;
 initial begin
 	if (!$value$plusargs("cfg=%h", cfg)) cfg = 0;
@@ -78,6 +82,9 @@ initial begin
 	if (!$value$plusargs("srcdelay=%d", srcdelay)) srcdelay = 0;
 	if (!$value$plusargs("hoff=%d", hoff)) hoff = 0;
 	if (!$value$plusargs("voff=%d", voff)) voff = 0;
+	if (!$value$plusargs("voff2=%d", voff2)) voff2 = 0;
+	if (!$value$plusargs("vofframe=%d", vofframe)) vofframe = -1;
+	if (!$value$plusargs("voffline=%d", voffline)) voffline = 0;
 end
 
 // the OSD config, as userio_osd holds it (CLK_28; changes asynchronously to clk_148)
@@ -279,8 +286,18 @@ end
 // ---- logs: line phase (new path), frame ends and the config latch ----
 integer fdp = 0;
 reg [8*200-1:0] fname;
+integer hdvs = 0, hdfno = 0;
+reg     vs_q = 0;
 always @(posedge clk_148) begin
-	if (n_frame) hdl = 0;
+	vs_q <= dut.w_hd_vsync;
+	if (dut.w_hd_vsync && !vs_q) hdvs = hdvs + 1;
+	if (n_frame) begin
+		// the frame that ends here: same numbering as "new frame N"
+		$display("hd frame %0d: %0d lines, %0d vsync", hdfno, hdl, hdvs);
+		hdfno = hdfno + 1;
+		hdvs = 0;
+		hdl = 0;
+	end
 	if (dut.w_m_lstart) begin
 		if (dump) begin
 			if (fdp == 0) begin $sformat(fname, "%0s_phase.txt", out); fdp = $fopen(fname, "w"); end
@@ -295,6 +312,24 @@ always @(posedge clk_148)
 		cfg_changed = 1;
 		#3.1 crt_cfg = cfg2[11:0];
 		$display("cfg change %03h -> %03h at %0t (frame %0d line %0d)", cfg[11:0], cfg2[11:0], $time, fno_n, hdl);
+	end
+// +vpdebug: the 50 Hz upsampler's HD raster restarts (Video Pos VPOS)
+wire vp_real = dut.my50hzupsample.w_vp_realf;
+wire vp_virt = dut.my50hzupsample.r_vp_fire;
+always @(posedge clk_114)
+	if ($test$plusargs("vpdebug") && (vp_real || vp_virt))
+		$display("vp %0s restart at input line %0d hpos %0d: cnt %0d cyc %0d n1 %0d n2 %0d p0 %0d p1 %0d tgt %0d ph %0d since %0d s %0d dbl %0d",
+		         vp_real ? "real" : "virtual", vcnt, hpos, dut.my50hzupsample.r_vp_cnt, dut.my50hzupsample.r_vp_cyc,
+		         dut.my50hzupsample.r_vp_n1, dut.my50hzupsample.r_vp_n2, dut.my50hzupsample.r_vp_p0,
+		         dut.my50hzupsample.r_vp_p1, dut.my50hzupsample.r_vp_tgt, dut.my50hzupsample.r_vp_ph,
+		         dut.my50hzupsample.r_vp_since, $signed(dut.my50hzupsample.r_vp_s), dut.my50hzupsample.r_vp_dbl);
+// the VPOS-change legs
+reg voff_changed = 0;
+always @(posedge clk_148)
+	if (vofframe >= 0 && !voff_changed && fno_n == vofframe && hdl == voffline) begin
+		voff_changed = 1;
+		#3.1 voff = voff2;
+		$display("voff change -> %0d at %0t (frame %0d line %0d)", voff2, $time, fno_n, hdl);
 	end
 reg [9:0] cfg_q = 10'd0;
 reg ck_fend = 0;

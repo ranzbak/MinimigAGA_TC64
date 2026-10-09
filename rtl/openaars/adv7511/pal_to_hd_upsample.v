@@ -56,8 +56,11 @@ module pal_to_hd_upsample #(
   input           i_hd_hsync,
   input           i_hd_vsync,
   input           i_hd_clk,
-  // Horizontal and Vertical offsets (OSD Video Pos).  i_hd_hoffset is
-  // signed: HD pixels, positive moves the picture right, negative left.
+  // Horizontal and Vertical offsets (OSD Video Pos), both signed.
+  // i_hd_hoffset (clk_out domain): HD pixels, positive moves the picture
+  // right, negative left.  i_hd_voffset (clk_in domain): 64 us steps (one
+  // 15 kHz input line), positive moves the picture down, negative up; see
+  // "Video Pos VPOS" below.
   input [7:0]     i_hd_hoffset,
   input [7:0]     i_hd_voffset,
   // CRT emulation.  Resolution of the input picture (Denise BPLCON0 HIRES and
@@ -177,9 +180,6 @@ bram_tdp #(
 reg         r_line_active = 1'b0;
 reg         r_act_active = 1'b0;
 reg [13:0]  r_line_count = 14'b0;
-reg         r_long_frame = 1'b0;
-reg [10:0]  r_v_count = 0;
-reg [10:0]  r_v_count_prev = 0;
 reg [5:0]   r_pix_clock_dev = 6'd0;
 reg [13:0]  r_pal_h_pos = 14'b0;
 reg [11:0]  v_div_var = 12'b0;
@@ -200,7 +200,6 @@ begin
   begin
     r_line_active   <= 1'b0; // Stop counter
     r_line_count    <= 0; // Reset counter
-    r_v_count       <= r_v_count + 1;
     v_div_var        = (r_line_count[13:6] / (PAL_HD_H_RES>>8)) - 1; // Shift numbers to make devider circuit faster
     r_pix_clock_dev <= v_div_var[5:0]; // Get the pixel clock relative to the system clock
   end
@@ -223,11 +222,13 @@ begin
   end
 end
 
-// Generate Frame end signal, to reset read loop
+// Generate Frame end signal, to reset read loop: the input vsync negedge,
+// or with VPOS the virtual one (w_vp_ev_o, below)
+wire w_vp_ev_o, w_vp_virt_o;
 always @(posedge clk_out)
 begin
   r_frame_end <= 1'b0;
-  if (r_pal_vneg)
+  if (w_vp_ev_o)
   begin
     r_frame_end <= 1'b1;
   end
@@ -282,6 +283,7 @@ reg [3:0] s_next_buf = 0;
 reg [1:0] s_pal_hsync_in = 0;
 reg       r_pal_vneg_in = 1'b0;
 reg [1:0] s_pal_vsync_in = 0;
+wire      w_vp_wr_reset;   // the write side's vsync reset (Video Pos VPOS, below)
 always @(posedge clk_in)
 begin
 
@@ -363,12 +365,167 @@ begin
     endcase
   end
 
-  // Handle Vsync negative edge
-  if (r_pal_vneg_in)
+  // Handle Vsync negative edge (or the virtual one, VPOS != 0)
+  if (w_vp_wr_reset)
   begin
     r_cur_write_buf <= 4;
   end
 end
+
+// ---------------------------------------------------------------------------
+// Video Pos VPOS (2026-10-09; bench sim/hdmi_upsample/crt_run.sh, legs vpos*)
+//
+// The HD raster restarts at the input's vsync negedge (r_frame_end ->
+// signal_generator i_frame_end, the genlock), and both sides of the line
+// buffer ring restart with it (write buffer 4, read buffer 0), so where the
+// picture sits vertically is when that restart happens.  VPOS s (signed,
+// clk_in, from pal_to_ddr's synchroniser) moves the restart -- a "virtual
+// vsync" -- by s x 64 us (s 15 kHz lines; at 31 kHz input 2s lines), the
+// picture by s x 2.40 HD lines at 50 Hz, s x 2.86 at 60 Hz (NTSC lines):
+//   s < 0 (up):   |s| lines after the real vsync negedge, at the same
+//                 clk_in offset from that line's hsync as the negedge had
+//                 from its own (r_vp_p0), so the field's half-line offset in
+//                 interlace is kept: the two fields still interleave;
+//   s > 0 (down): s lines BEFORE the next negedge, predicted from the field
+//                 two fields back (hsync count r_vp_n2, offset r_vp_p1) --
+//                 interlaced fields alternate 312 / 313 lines and the
+//                 negedge's half-line position, progressive repeats anyway.
+// Both resets move together, so the ring lag (four buffers) is unchanged;
+// input lines inside vsync still do not advance the writer.
+//
+// VPOS 0 is today's path, bit for bit: the real negedge resets the write
+// side here (r_pal_vneg_in) and the read side in clk_out (r_pal_vneg),
+// gated by r_vp_real, which is 1 throughout with VPOS 0 -- unless the last
+// restart was a virtual one (VPOS just set back to 0): then the rules below
+// apply until the next real one.  Other restarts (r_vp_fire) toggle
+// r_vp_tgl into clk_out.
+//
+// A VPOS change moves the restart, so one HD frame comes out longer or
+// shorter.  The HD vsync (signal_generator: HD lines 726..729) must still
+// come out in it, and a 50/60 Hz frame is only ~749 HD lines: no restart
+// is allowed less than N - M input lines after the last one (N: last
+// field's lines, M = VP_M (2 x at 31 kHz); PAL 307 lines = 737 HD lines,
+// NTSC 257 lines = 735), nor waits more than N + M.  A target that comes
+// too early is deferred to N - M, one that does not come is replaced at
+// N + M (both at the target's place in the line), and one less than N / 2
+// after the last restart belongs to the field already restarted and is
+// ignored.  So a change of up to M lines costs one HD frame of another
+// length, a larger one glides there M lines a frame, every frame complete
+// and a clean picture.  r_vp_real and every decision input are taken at
+// input hsyncs (r_vp_since counts them), never near a vsync edge, so
+// clk_out sees a settled r_vp_real when r_pal_vneg comes.  The first three
+// fields after power-up restart at the real negedge (nothing measured).
+// ---------------------------------------------------------------------------
+localparam signed [11:0] VP_M = 12'sd5;
+reg  [7:0]  r_vp_s     = 8'd0;     // VPOS, taken at each input hsync
+reg  [1:0]  r_vp_seen  = 2'd0;     // real vsync negedges seen (to 3)
+reg  [1:0]  r_vp_seenl = 2'd0;     // ... taken at each input hsync
+reg  [10:0] r_vp_cnt   = 11'd0;    // input hsyncs since the real negedge
+reg  [12:0] r_vp_cyc   = 13'h1FFF; // clk_in since the last input hsync
+reg  [10:0] r_vp_n1    = 11'd0;    // input hsyncs in the last field
+reg  [10:0] r_vp_n2    = 11'd0;    // ... in the one before
+reg  [12:0] r_vp_p0    = 13'd0;    // this field's negedge, clk_in after its line's hsync
+reg  [12:0] r_vp_p1    = 13'd0;    // ... the last field's
+reg  [10:0] r_vp_n     = 11'd0;    // r_vp_n1 taken at each input hsync
+reg         r_vp_dbl   = 1'b0;     // 31 kHz input (> 400 lines a field)
+reg  [10:0] r_vp_since = 11'h7FF;  // input hsyncs since the restart's line
+reg         r_vp_fline = 1'b0;     // a restart happened in this input line
+reg         r_vp_pend  = 1'b0;     // a restart deferred (frame too short)
+reg         r_vp_hsd   = 1'b0;     // the clock after an input hsync
+reg         r_vp_real  = 1'b1;     // the next restart is the real negedge
+reg         r_vp_vlast = 1'b0;     // the last restart was a virtual one
+reg  signed [11:0] r_vp_tgt = 12'sd0;  // target: input hsyncs since the negedge
+reg  [12:0] r_vp_ph    = 13'd0;    // ... and clk_in after that hsync
+reg         r_vp_lvl   = 1'b0;     // at or past the target
+reg         r_vp_fire  = 1'b0;     // a restart other than the real negedge
+reg         r_vp_tgl   = 1'b0;     // toggles with r_vp_fire, to clk_out
+reg  signed [11:0] r_vp_lo = 12'sd0, r_vp_hi = 12'sd0, r_vp_half = 12'sd0;
+
+wire signed [9:0]  w_vp_su   = r_vp_dbl ? {r_vp_s[7], r_vp_s, 1'b0} : {{2{r_vp_s[7]}}, r_vp_s};
+wire               w_vp_zero = (r_vp_s == 8'd0) || (r_vp_seenl != 2'd3);
+wire               w_vp_free = w_vp_zero && !r_vp_vlast;   // today's path, no rules
+wire signed [11:0] w_vp_g    = {1'b0, r_vp_since};
+wire               w_vp_ok   = w_vp_g >= r_vp_lo;                        // late enough
+wire               w_vp_wd   = (w_vp_g >= r_vp_hi) && (r_vp_seenl >= 2'd2) && !w_vp_free; // waited too long
+wire               w_vp_lvl  = ($signed({1'b0, r_vp_cnt}) > r_vp_tgt) ||
+                               ($signed({1'b0, r_vp_cnt}) == r_vp_tgt && r_vp_cyc >= r_vp_ph);
+// this field's target: the real negedge (VPOS 0), or the virtual one
+wire               w_vp_x    = w_vp_zero ? r_pal_vneg_in : (w_vp_lvl && !r_vp_lvl);
+wire               w_vp_realf = r_pal_vneg_in && r_vp_real;
+assign w_vp_wr_reset = w_vp_realf || r_vp_fire;
+
+always @(posedge clk_in) begin
+  // where the input is: hsyncs since the real negedge, clk_in since the hsync
+  r_vp_cyc <= (r_vp_cyc != 13'h1FFF) ? r_vp_cyc + 1'b1 : r_vp_cyc;
+  if (r_pal_hneg_in) begin
+    r_vp_cyc <= 13'd0;
+    if (r_vp_cnt != 11'h7FF) r_vp_cnt <= r_vp_cnt + 1'b1;
+  end
+  if (r_pal_vneg_in) begin
+    r_vp_cnt  <= 11'd0;
+    r_vp_n1   <= r_vp_cnt;
+    r_vp_n2   <= r_vp_n1;
+    r_vp_p0   <= r_vp_cyc;
+    r_vp_p1   <= r_vp_p0;
+    if (r_vp_seen != 2'd3) r_vp_seen <= r_vp_seen + 1'b1;
+  end
+
+  // the decision inputs, taken at each input hsync
+  r_vp_hsd <= r_pal_hneg_in;
+  if (r_pal_hneg_in) begin
+    r_vp_s     <= i_hd_voffset;
+    r_vp_seenl <= r_vp_seen;
+    r_vp_n     <= r_vp_n1;
+    r_vp_dbl   <= (r_vp_n1 > 11'd400);
+    r_vp_fline <= 1'b0;
+    r_vp_since <= r_vp_fline ? 11'd0 : (r_vp_since != 11'h7FF) ? r_vp_since + 1'b1 : r_vp_since;
+  end
+  // r_vp_since counts from the line after the restart's: a restart in the
+  // line where it reaches X is X + 1 lines after the last one
+  r_vp_lo   <= $signed({1'b0, r_vp_n}) - (r_vp_dbl ? 2 * VP_M + 1 : VP_M + 1);   // N - M - 1
+  r_vp_hi   <= $signed({1'b0, r_vp_n}) + (r_vp_dbl ? 2 * VP_M - 1 : VP_M - 1);   // N + M - 1
+  r_vp_half <= $signed({2'b0, r_vp_n[10:1]});
+  if (r_vp_hsd)
+    r_vp_real <= w_vp_free || (w_vp_zero && w_vp_ok && !w_vp_wd);
+
+  // the target
+  if (r_vp_s[7]) begin
+    r_vp_tgt <= -$signed({{2{w_vp_su[9]}}, w_vp_su});
+    r_vp_ph  <= r_vp_p0;
+  end else begin
+    r_vp_tgt <= $signed({1'b0, r_vp_n2}) - $signed({{2{w_vp_su[9]}}, w_vp_su});
+    r_vp_ph  <= r_vp_p1;
+  end
+  r_vp_lvl <= w_vp_lvl;
+
+  // restarts
+  r_vp_fire <= 1'b0;
+  // a deferred or replaced restart keeps the target's place in the line
+  // (r_vp_ph), so every frame sits a whole number of lines from it (and
+  // interlaced fields keep their half-line offset while gliding)
+  if (!r_vp_fline && !r_vp_fire && !w_vp_realf &&
+      ((w_vp_x && !w_vp_zero && w_vp_ok) ||
+       ((r_vp_pend && w_vp_ok || w_vp_wd) && r_vp_cyc >= r_vp_ph)))
+    r_vp_fire <= 1'b1;
+  if (w_vp_x && !w_vp_ok && w_vp_g >= r_vp_half && !w_vp_free)
+    r_vp_pend <= 1'b1;
+  if (w_vp_realf || r_vp_fire) begin
+    r_vp_pend  <= 1'b0;
+    r_vp_fline <= 1'b1;
+    r_vp_vlast <= r_vp_fire;
+  end
+  if (r_vp_fire) r_vp_tgl <= ~r_vp_tgl;
+end
+
+// clk_out: the real negedge while r_vp_real, or a toggle of r_vp_tgl
+(* ASYNC_REG = "TRUE" *) reg [1:0] s_vp_real_o = 2'b11;
+(* ASYNC_REG = "TRUE" *) reg [2:0] s_vp_tgl_o  = 3'b000;
+always @(posedge clk_out) begin
+  s_vp_real_o <= {s_vp_real_o[0], r_vp_real};
+  s_vp_tgl_o  <= {s_vp_tgl_o[1:0], r_vp_tgl};
+end
+assign w_vp_virt_o = (s_vp_tgl_o[2] != s_vp_tgl_o[1]);
+assign w_vp_ev_o   = (r_pal_vneg && s_vp_real_o[1]) || w_vp_virt_o;
 
 // edge trigger hd_hsync
 reg hd_hsync_posedge;
@@ -453,35 +610,19 @@ begin
   end
 
 
-  // posedge vsync
-  if (r_pal_vpos)
+  // Neg edge vsync (or the virtual one, VPOS != 0): the read side starts
+  // at buffer 0, four behind the write side (r_cur_write_buf <= 4)
+  if (w_vp_ev_o)
   begin
-    if(r_v_count > r_v_count_prev)
-    begin
-      r_long_frame <= 1'b0;
-    end
+    r_cur_read_buf  <= 0;
   end
-
-  // Neg edge vsync
-  if (r_pal_vneg)
-  begin
-    r_v_count_prev <= r_v_count;
-    r_v_count <= 0;
-    r_long_frame <= 1'b0;
-    // Reset the read and write buffer to start
-    // When the current frame is long the next frame needs to
-    // be moved down one line to overlap the interlaced video
-    if(r_long_frame)
-    begin
-      r_cur_read_buf  <= 0;
-      // r_cur_write_buf <= 4;
-    end
-    else
-    begin
-      r_cur_read_buf  <= 0;
-      // r_cur_write_buf <= 6;
-    end
-  end
+  // A virtual restart can follow an input line end closely (at 31 kHz the
+  // bench's comes 32 clk_in after one); that line's buffer toggle, still
+  // pending, would move the reader to buffer 1 at once and the picture
+  // one input line up.  The real negedge's line end lies inside vsync (no
+  // toggle), so only the virtual path drops it.
+  if (w_vp_virt_o)
+    r_next_buf <= 1'b0;
 end
 
 

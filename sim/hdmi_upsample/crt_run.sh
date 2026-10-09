@@ -65,6 +65,31 @@
 #              upsampler (against hpos060)
 #   hposv      VPOS 16, HPOS 0 (50 Hz): no horizontal move against hpos0
 #              (the 50 Hz path once took its horizontal offset from VPOS)
+#   vposp      OSD Video Pos VPOS +8 (signed, 64 us steps = one 15 kHz input
+#              line, positive down), 50 Hz: every non-black row is a row of
+#              hpos0's picture moved 8 x 2.40 = 19.2 HD lines down (row
+#              floor or ceil of y - 19.2), frames 6 and 7 identical, every
+#              frame >= 730 HD lines with one vsync; vposm -8 up; vposp60 /
+#              vposm60 the same on the 60 Hz upsampler (8 x 2.88 = 23.0 HD
+#              lines, against hpos060); vposdbl +8 at 31 kHz moves 19.2 HD
+#              lines too (against vposdbl0)
+#   vposlace   interlaced, VPOS +8 (vposlacem -8): the picture of each field
+#              is vposlace0's moved, and the two fields' line phases stay
+#              0.5 +- 0.02 input line apart
+#   vposchg    VPOS +8 -> +4 during HD frame 8: frames 9 and 10 at +4 and
+#              frame 9 = frame 10 below the top 20 HD lines (each frame's
+#              top four input lines show line buffers written before the
+#              restart: after a frame of another length, other ones), 10 =
+#              11, every frame >= 730 HD lines with one vsync, at most one
+#              frame of another length; vposchg0 0 -> +4 the same (the
+#              real-vsync path to the virtual one); vposchgz +4 -> 0 and
+#              vposchgzm -4 -> 0 back to the real path: frames 10 and 11
+#              bit-identical to the reference path
+#   vposglide  VPOS -8 -> +8 during HD frame 8 (more than one frame may
+#              shorten by): every frame a clean picture at one VPOS, the
+#              position moving monotonically to +8 at most 5 steps a frame,
+#              every frame >= 730 HD lines with one vsync, the last two
+#              frames = vposp's
 #   osdbeam    OSD config 0 -> beam medium during HD frame 3: frame 3
 #              bit-identical, frame 4 changed, the beam latch moves once,
 #              in the vertical blank (input lines 2..6)
@@ -94,6 +119,20 @@ declare -A ARGS=(
 	[hpos060]="+force60 +out=$I/hpos060"
 	[hposm60]="+force60 +hoff=-24 +out=$I/hposm60"
 	[hposp60]="+force60 +hoff=24 +out=$I/hposp60"
+	[vposp]="+voff=8 +first=6 +frames=2 +out=$I/vposp"
+	[vposm]="+voff=-8 +first=6 +frames=2 +out=$I/vposm"
+	[vposp60]="+force60 +voff=8 +first=6 +frames=2 +out=$I/vposp60"
+	[vposm60]="+force60 +voff=-8 +first=6 +frames=2 +out=$I/vposm60"
+	[vposdbl0]="+dbl +first=6 +out=$I/vposdbl0"
+	[vposdbl]="+dbl +voff=8 +first=6 +out=$I/vposdbl"
+	[vposlace0]="+lace +first=6 +frames=2 +out=$I/vposlace0"
+	[vposlace]="+lace +voff=8 +first=6 +frames=2 +out=$I/vposlace"
+	[vposlacem]="+lace +voff=-8 +first=6 +frames=2 +out=$I/vposlacem"
+	[vposchg]="+voff=8 +voff2=4 +vofframe=8 +voffline=300 +first=7 +frames=5 +out=$I/vposchg"
+	[vposchg0]="+voff2=4 +vofframe=8 +voffline=300 +first=7 +frames=5 +out=$I/vposchg0"
+	[vposchgz]="+voff=4 +voff2=0 +vofframe=8 +voffline=300 +first=7 +frames=5 +out=$I/vposchgz"
+	[vposchgzm]="+voff=-4 +voff2=0 +vofframe=8 +voffline=300 +first=7 +frames=5 +out=$I/vposchgzm"
+	[vposglide]="+voff=-8 +voff2=8 +vofframe=8 +voffline=300 +first=7 +frames=8 +out=$I/vposglide"
 	[osdbeam]="+cfg=000 +cfg2=800 +cfgframe=3 +cfgline=300 +frames=2"
 	[dim]="+cfg=01 +out=$I/dim"
 	[dim_hv]="+cfg=3d +out=$I/dim_hv"
@@ -115,7 +154,7 @@ for w in 1 2 3; do for b in 0 1 2; do
 	BEAMS="$BEAMS beam_w${w}b${b}"
 	ARGS[beam_w${w}b${b}]="$DITHER +cfg=$(printf %03x $(( (w << 10) | (b << 8) ))) +out=$I/beam_w${w}b${b} +sdump=$I/beam_w${w}b${b}.sd"
 done; done
-ALL="unit osdspi ripple bypass15 bypass31 gate31 bypass60 rtg beamfx15 beamfx31 beamfx60 dim dim_hv lace split osd osdfx osdbeam mask mask2 maskmg mask_dim bloom bloom_lo bloom_hv $BEAMS beamalign beammetric hposm hposp hposv hposm60 hposp60"
+ALL="unit osdspi ripple bypass15 bypass31 gate31 bypass60 rtg beamfx15 beamfx31 beamfx60 dim dim_hv lace split osd osdfx osdbeam mask mask2 maskmg mask_dim bloom bloom_lo bloom_hv $BEAMS beamalign beammetric hposm hposp hposv hposm60 hposp60 vposp vposm vposp60 vposm60 vposdbl vposlace vposlacem vposchg vposchg0 vposchgz vposchgzm vposglide"
 legs=("$@"); [ ${#legs[@]} -eq 0 ] && legs=($ALL)
 # the bloom legs compare against the same picture without bloom
 want() { local x; for x in "${legs[@]}"; do [ "$x" = "$1" ] && return 0; done; return 1; }
@@ -124,6 +163,11 @@ want bloom_hv && ! want dim_hv && legs+=(dim_hv)
 # the Video Pos legs compare against the picture at offset 0
 for x in hposm hposp hposv; do want $x && ! want hpos0 && legs+=(hpos0); done
 for x in hposm60 hposp60; do want $x && ! want hpos060 && legs+=(hpos060); done
+for x in vposp vposm vposchg vposchg0 vposchgz vposchgzm vposglide; do want $x && ! want hpos0 && legs+=(hpos0); done
+for x in vposp60 vposm60; do want $x && ! want hpos060 && legs+=(hpos060); done
+want vposdbl && ! want vposdbl0 && legs+=(vposdbl0)
+for x in vposlace vposlacem; do want $x && ! want vposlace0 && legs+=(vposlace0); done
+want vposglide && ! want vposp && legs+=(vposp)
 # beamalign and beammetric use the beam legs' pictures
 want beamalign && { want beam_w2b0 || legs+=(beam_w2b0); want beam_w3b2 || legs+=(beam_w3b2); }
 want beammetric && for x in beam_w1b0 beam_w2b0 beam_w3b0 beam_w1b1; do want $x || legs+=($x); done
@@ -148,6 +192,19 @@ fail=0
 pass() { echo "  pass  $1"; }
 bad()  { echo "  FAIL  $1"; fail=1; }
 diffs() { grep -E '^frame [0-9]+: [0-9]+ pixels differ' $I/$1.log; }
+# HD frames $2..$3 of leg $1: each >= 730 HD lines (past the HD vsync) with
+# exactly one vsync; prints the lengths, fails otherwise
+hdframes() {
+	awk -v a=$2 -v b=$3 '/^hd frame / { n = $3 + 0; if (n >= a && n <= b) {
+		l = $4 + 0; v = $6 + 0; s = s " " l; if (l < 730 || v != 1) bad = 1 } }
+		END { printf "HD lines per frame %d..%d:%s\n", a, b, s; exit bad }' $I/$1.log
+}
+# how many of HD frames $2..$3 of leg $1 differ in length (by more than one
+# HD line) from frame $2 - 1
+hdother() {
+	awk -v a=$2 -v b=$3 '/^hd frame / { n = $3 + 0; l = $4 + 0; if (n == a - 1) r = l;
+		if (n >= a && n <= b && (l > r + 1 || l < r - 1)) c++ } END { print c + 0 }' $I/$1.log
+}
 # the beam filter's bypass: no mismatch while off; $2 = 1: never on either
 beamoff() {
 	local m; m=$(grep '^beam bypass:' $I/$1.log)
@@ -184,6 +241,69 @@ for l in "${legs[@]}"; do
 		m=$(python3 crt_hpos.py rows $I/hpos0_3.hex $I/hposv_3.hex) && ok=1 || ok=0
 		echo "$m" | sed 's/^/        /'
 		[ $ok -eq 1 ] && pass "hposv: VPOS does not move the 50 Hz picture sideways" || bad "hposv"
+		;;
+	vposp|vposm|vposp60|vposm60|vposdbl)
+		n=8; [ ${l:4:1} = m ] && n=-8
+		r=hpos0; hz=50; [ ${l: -2} = 60 ] && { r=hpos060; hz=60; }
+		[ $l = vposdbl ] && r=vposdbl0
+		f=3; [ $l = vposdbl ] && f=6
+		m=$(python3 crt_vpos.py shift $I/${r}_$f.hex $I/${l}_6.hex $n $hz) && ok=1 || ok=0
+		echo "$m" | sed 's/^/        /'
+		[ $ok -eq 1 ] && pass "$l: VPOS $n moves the picture $n input lines" || bad "$l"
+		if [ $l != vposdbl ]; then
+			cmp -s $I/${l}_6.hex $I/${l}_7.hex && pass "$l: frames 6 and 7 identical" || bad "$l: frames 6 and 7 differ"
+		fi
+		m=$(hdframes $l 1 7) && pass "$l: $m" || bad "$l: $m"
+		;;
+	vposlace|vposlacem)
+		n=8; [ $l = vposlacem ] && n=-8
+		for f in 6 7; do
+			m=$(python3 crt_vpos.py shift $I/vposlace0_$f.hex $I/${l}_$f.hex $n 50) && ok=1 || ok=0
+			echo "$m" | sed 's/^/        /'
+			[ $ok -eq 1 ] && pass "$l: field $f is vposlace0's moved $n input lines" || bad "$l: field $f"
+		done
+		m=$(python3 crt_check.py lace $I/${l}_phase.txt 6 7)
+		echo "        $m"
+		echo "$m" | awk '{ v = $(NF-6) + 0; exit !(v >= 0.48 && v <= 0.52) }' \
+			&& pass "$l: phase 0.5 +- 0.02" || bad "$l: lace phase"
+		m=$(hdframes $l 1 7) && pass "$l: $m" || bad "$l: $m"
+		;;
+	vposchg|vposchg0|vposchgz|vposchgzm)
+		v=4; [ ${l:0:8} = vposchgz ] && v=0
+		grep '^voff change' $I/$l.log | sed 's/^/        /'
+		ok=1
+		for f in 9 10; do
+			m=$(python3 crt_vpos.py where $I/hpos0_3.hex $I/${l}_$f.hex 50 -10 10) || ok=0
+			echo "        frame $f: $m"; [ "$m" = "at $v" ] || ok=0
+		done
+		cmp -s $I/${l}_10.hex $I/${l}_11.hex || ok=0
+		python3 crt_vpos.py same $I/${l}_9.hex $I/${l}_10.hex 20 || ok=0
+		[ $ok -eq 1 ] && pass "$l: frames 9 and 10 at VPOS $v, 10 and 11 identical, 9 = 10 below the top 20 HD lines" || bad "$l: frames 9..11"
+		# back at VPOS 0: the real-vsync path again, bit-identical to the reference
+		if [ $v = 0 ]; then
+			d=$(grep -E '^frame (10|11): ' $I/$l.log | awk '{ print $3 }' | paste -sd' ')
+			[ "$d" = "0 0" ] && pass "$l: frames 10 and 11 bit-identical to the reference path" || bad "$l: frames 10, 11 differ from the reference ($d)"
+		fi
+		m=$(hdframes $l 1 11) && pass "$l: $m" || bad "$l: $m"
+		o=$(hdother $l 8 11)
+		[ "$o" -le 1 ] && pass "$l: $o frame(s) of another length" || bad "$l: $o frames of another length"
+		;;
+	vposglide)
+		grep '^voff change' $I/$l.log | sed 's/^/        /'
+		ok=1; prev=-99; ks=""
+		for f in 7 8 9 10 11 12 13; do
+			m=$(python3 crt_vpos.py where $I/hpos0_3.hex $I/${l}_$f.hex 50 -10 10) || ok=0
+			k=${m#at }; ks="$ks $m"
+			if [ "$m" = "at $k" ]; then
+				[ $f = 7 ] && [ "$k" != -8 ] && ok=0
+				[ $prev != -99 ] && { [ $k -lt $prev ] || [ $((k - prev)) -gt 5 ]; } && ok=0
+				prev=$k
+			else ok=0; fi
+		done
+		echo "        frames 7..13:$ks"
+		cmp -s $I/${l}_13.hex $I/vposp_6.hex && cmp -s $I/${l}_14.hex $I/vposp_6.hex || ok=0
+		[ $ok -eq 1 ] && pass "$l: each frame clean, -8 -> +8 monotonic, <= 5 a frame, frames 13, 14 = vposp's" || bad "$l"
+		m=$(hdframes $l 1 14) && pass "$l: $m" || bad "$l: $m"
 		;;
 	osdspi)
 		u=$(vvp -n build/tb_osd_video.vvp)

@@ -56,6 +56,10 @@ set_max_delay -datapath_only 8.815 -from [get_clocks clk_148] -to [get_clocks {d
 # then latched at the frame end), and the per-line resolution bit r_wres (clk_114) that
 # pal_to_hd_upsample.v reads lines later, like r_wend.  Denise's HIRES/SHRES reach the
 # upsampler's clk_114 register from dll_28, a phase-aligned sibling: timed, no synchroniser.
+# The OSD Video Pos (pal_to_ddr.sv, 2026-10-09): HPOS from the host register (dll_28) into a
+# 2-FF synchroniser in clk_148 (the first max_delay); VPOS into one in clk_114 (timed by the
+# dll_28 -> clk_114 multicycles above), and each upsampler's restart choice r_vp_real and
+# toggle r_vp_tgl (clk_114) into 2-FF synchronisers in clk_148 (the first max_delay).
 
 ###############################################################################
 # Placement
