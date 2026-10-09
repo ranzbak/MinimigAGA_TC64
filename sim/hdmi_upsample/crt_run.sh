@@ -59,6 +59,12 @@
 #              study's numbers), sharp between medium and the study's
 #              sigma-0.4 42.7; hires checkerboards <= 0.5 / 1.3 +- 0.5;
 #              every 50 % patch's mean within 1 code of the linear mix
+#   hposm      OSD Video Pos HPOS -24 (signed offset), 50 Hz: the picture
+#              is hpos0's moved 24 HD pixels left, pixel for pixel; hposp
+#              +24 moves it right; hposm60 / hposp60 the same on the 60 Hz
+#              upsampler (against hpos060)
+#   hposv      VPOS 16, HPOS 0 (50 Hz): no horizontal move against hpos0
+#              (the 50 Hz path once took its horizontal offset from VPOS)
 #   osdbeam    OSD config 0 -> beam medium during HD frame 3: frame 3
 #              bit-identical, frame 4 changed, the beam latch moves once,
 #              in the vertical blank (input lines 2..6)
@@ -81,6 +87,13 @@ declare -A ARGS=(
 	[beamfx15]="+cfg=3ff"
 	[beamfx31]="+dbl +cfg=3ff"
 	[beamfx60]="+force60 +cfg=3ff"
+	[hpos0]="+out=$I/hpos0"
+	[hposm]="+hoff=-24 +out=$I/hposm"
+	[hposp]="+hoff=24 +out=$I/hposp"
+	[hposv]="+voff=16 +out=$I/hposv"
+	[hpos060]="+force60 +out=$I/hpos060"
+	[hposm60]="+force60 +hoff=-24 +out=$I/hposm60"
+	[hposp60]="+force60 +hoff=24 +out=$I/hposp60"
 	[osdbeam]="+cfg=000 +cfg2=800 +cfgframe=3 +cfgline=300 +frames=2"
 	[dim]="+cfg=01 +out=$I/dim"
 	[dim_hv]="+cfg=3d +out=$I/dim_hv"
@@ -102,12 +115,15 @@ for w in 1 2 3; do for b in 0 1 2; do
 	BEAMS="$BEAMS beam_w${w}b${b}"
 	ARGS[beam_w${w}b${b}]="$DITHER +cfg=$(printf %03x $(( (w << 10) | (b << 8) ))) +out=$I/beam_w${w}b${b} +sdump=$I/beam_w${w}b${b}.sd"
 done; done
-ALL="unit osdspi ripple bypass15 bypass31 gate31 bypass60 rtg beamfx15 beamfx31 beamfx60 dim dim_hv lace split osd osdfx osdbeam mask mask2 maskmg mask_dim bloom bloom_lo bloom_hv $BEAMS beamalign beammetric"
+ALL="unit osdspi ripple bypass15 bypass31 gate31 bypass60 rtg beamfx15 beamfx31 beamfx60 dim dim_hv lace split osd osdfx osdbeam mask mask2 maskmg mask_dim bloom bloom_lo bloom_hv $BEAMS beamalign beammetric hposm hposp hposv hposm60 hposp60"
 legs=("$@"); [ ${#legs[@]} -eq 0 ] && legs=($ALL)
 # the bloom legs compare against the same picture without bloom
 want() { local x; for x in "${legs[@]}"; do [ "$x" = "$1" ] && return 0; done; return 1; }
 { want bloom || want bloom_lo; } && ! want dim && legs+=(dim)
 want bloom_hv && ! want dim_hv && legs+=(dim_hv)
+# the Video Pos legs compare against the picture at offset 0
+for x in hposm hposp hposv; do want $x && ! want hpos0 && legs+=(hpos0); done
+for x in hposm60 hposp60; do want $x && ! want hpos060 && legs+=(hpos060); done
 # beamalign and beammetric use the beam legs' pictures
 want beamalign && { want beam_w2b0 || legs+=(beam_w2b0); want beam_w3b2 || legs+=(beam_w3b2); }
 want beammetric && for x in beam_w1b0 beam_w2b0 beam_w3b0 beam_w1b1; do want $x || legs+=($x); done
@@ -156,6 +172,18 @@ for l in "${legs[@]}"; do
 			|| { bad "unit bloom"; echo "$u" | grep "^bloom gap"; }
 		u=$(vvp -n build/tb_crt_post_unit_zero.vvp)
 		echo "$u" | grep -q "bypass identity: 0 mismatches" && pass "unit bypass identity with both tables zero" || bad "unit bypass identity with both tables zero"
+		;;
+	hposm|hposp|hposm60|hposp60)
+		n=24; [ ${l:4:1} = m ] && n=-24
+		r=hpos0; [ ${l: -2} = 60 ] && r=hpos060
+		m=$(python3 crt_hpos.py shift $I/${r}_3.hex $I/${l}_3.hex $n) && ok=1 || ok=0
+		echo "$m" | sed 's/^/        /'
+		[ $ok -eq 1 ] && pass "$l: Video Pos HPOS $n moves the picture $n HD pixels" || bad "$l"
+		;;
+	hposv)
+		m=$(python3 crt_hpos.py rows $I/hpos0_3.hex $I/hposv_3.hex) && ok=1 || ok=0
+		echo "$m" | sed 's/^/        /'
+		[ $ok -eq 1 ] && pass "hposv: VPOS does not move the 50 Hz picture sideways" || bad "hposv"
 		;;
 	osdspi)
 		u=$(vvp -n build/tb_osd_video.vvp)

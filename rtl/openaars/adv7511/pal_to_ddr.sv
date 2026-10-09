@@ -372,7 +372,7 @@ module pal_to_ddr #(
     .i_hd_vsync(w_50_hd_vsync),
     .i_hd_clk(w_50_adv_clk),
     // horizontal and vertical offsets
-    .i_hd_hoffset(i_voffset),
+    .i_hd_hoffset(i_hoffset),
     .i_hd_voffset(i_voffset),
     .i_rtg_enable(),
     // CRT

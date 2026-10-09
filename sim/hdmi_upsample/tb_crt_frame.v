@@ -32,6 +32,8 @@
 //   +split       a generated lowres/hires split screen instead of the picture
 //                (see below), with Denise's HIRES driven to match
 //   +rtg         i_rtg_enable = 1
+//   +hoff=N +voff=N   the OSD Video Pos offsets of the new path (8 bit; hoff
+//                signed, -128..127; default 0, the reference path keeps 0)
 //   +force60     both paths use the 60 Hz upsampler (r_50hz forced 0)
 //   +first=N +frames=M   compare (and dump) HD frames N .. N+M-1 (default 3, 1)
 //   +out=PREFIX  dump the new path's frames as PREFIX_<n>.hex (RRGGBB per
@@ -58,6 +60,7 @@ always #3.367  clk_148 = ~clk_148;   // 148.5 MHz
 integer frames = 1, first = 3, cfgframe = -1, cfgline = 0, cfg = 0, cfg2 = 0;
 reg lace = 0, dbl = 0, split = 0, rtg = 0, force60 = 0, dump = 0;
 integer srcdelay = 0;
+integer hoff = 0, voff = 0;
 reg [8*160-1:0] out;
 initial begin
 	if (!$value$plusargs("cfg=%h", cfg)) cfg = 0;
@@ -73,6 +76,8 @@ initial begin
 	rtg     = $test$plusargs("rtg");
 	force60 = $test$plusargs("force60");
 	if (!$value$plusargs("srcdelay=%d", srcdelay)) srcdelay = 0;
+	if (!$value$plusargs("hoff=%d", hoff)) hoff = 0;
+	if (!$value$plusargs("voff=%d", voff)) voff = 0;
 end
 
 // the OSD config, as userio_osd holds it (CLK_28; changes asynchronously to clk_148)
@@ -177,7 +182,7 @@ pal_to_ddr #(.CRT_WROM_FILE("../../rtl/openaars/adv7511/crt_wrom.mem"),
 	.clk_148(clk_148), .clk_114(clk_114), .reset(reset), .vga_clk_pixel(1'b0),
 	.i_pal_hsync(pal_hs), .i_pal_vsync(pal_vs),
 	.i_pal_r(src_rgb[23:16]), .i_pal_g(src_rgb[15:8]), .i_pal_b(src_rgb[7:0]),
-	.i_hoffset(8'd0), .i_voffset(8'd0), .i_rtg_enable(rtg),
+	.i_hoffset(hoff[7:0]), .i_voffset(voff[7:0]), .i_rtg_enable(rtg),
 	.i_crt_cfg(crt_cfg), .i_pal_hires(src_hires), .i_pal_shres(1'b0),
 	.o_clk_pixel(n_clk), .o_de(n_de), .o_vsync(n_vs), .o_hsync(n_hs), .o_data(n_d)
 );
