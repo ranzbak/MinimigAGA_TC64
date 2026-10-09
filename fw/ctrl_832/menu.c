@@ -92,7 +92,7 @@ const char *config_chipset_msg[] = {"OCS-A500", "OCS-A1000", "ECS", "---", "---"
 const char *config_turbo_msg[] = {"none", "CHIPRAM", "KICK", "BOTH"};
 const char *config_cd32pad_msg[] = {"OFF", "ON"};
 const char *config_volume_msg[] = {" ", " 1", " 2", " 3", " 4", " 5", " 6", " 7", " 8", " 9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31"};
-const char *config_videopos_msg[] = {"  0", "  8", " 16", " 24", " 32", " 48", " 56", " 64", " 72", " 80", " 88", " 96", "104", "112", "120", "128", "136", "144", "152", "160", "168", "176", "184", "192", "200", "208", "216", "224", "232", "240", "248", "256"};
+const char *config_videopos_msg[] = {"  0", "  8", " 16", " 24", " 32", " 40", " 48", " 56", " 64", " 72", " 80", " 88", " 96", "104", "112", "120", "128", "136", "144", "152", "160", "168", "176", "184", "192", "200", "208", "216", "224", "232", "240", "248"};
 const char *config_hdmi_clkdelay_msg[] = {"-1.2", "-0.8", "-0.4", " 0.0", "+0.4", "+0.8", "+1.2", "+1.6"};
 
 char *config_autofire_msg[] = {"        AUTOFIRE OFF", "        AUTOFIRE FAST", "        AUTOFIRE MEDIUM", "        AUTOFIRE SLOW"};
@@ -2129,8 +2129,8 @@ void HandleUI(void)
         helptext = helptexts[HELPTEXT_VIDEO];
 
         OsdSetTitle("Video Pos", OSD_ARROW_LEFT | OSD_ARROW_RIGHT);
-        strcpy(s, " Hpos : ");
-        strcat(s, config_videopos_msg[config.videopos.hpos >> 3]);
+        /* Hpos is signed (HD pixels; negative moves the picture left) */
+        sprintf(s, " Hpos : %4d", (int)(signed char)config.videopos.hpos);
         strcat(s, " | Vpos : ");
         strcat(s, config_videopos_msg[config.videopos.vpos >> 3]);
         OsdWrite(0, s, 0, 0);
@@ -2150,13 +2150,15 @@ void HandleUI(void)
         {
             if (menusub == 0)
             {
-                config.videopos.hpos = (config.videopos.hpos + 0x08);
+                if ((signed char)config.videopos.hpos < 0x78)
+                    config.videopos.hpos = (config.videopos.hpos + 0x08);
                 menustate = MENU_SETTINGS_VIDEO3;
                 ConfigVideoPos(config.videopos.hpos, config.videopos.vpos);
             }
             else if (menusub == 1)
             {
-                config.videopos.hpos = (config.videopos.hpos - 0x08);
+                if ((signed char)config.videopos.hpos > -0x80)
+                    config.videopos.hpos = (config.videopos.hpos - 0x08);
                 menustate = MENU_SETTINGS_VIDEO3;
                 ConfigVideoPos(config.videopos.hpos, config.videopos.vpos);
             }
