@@ -502,7 +502,17 @@ if {[info exists ::env(IMPL_EFFORT)] && $::env(IMPL_EFFORT) eq "high"} {
 # then misbehaved on the board, while the same design built from scratch was
 # fine.  The result depends on the reference checkpoint, which is exactly what
 # a timing-critical design must not do.  Do not add it.
+#
+# NOT INCREMENTAL SYNTHESIS either.  project_1 had synth_1's auto-incremental
+# checkpoint on (Vivado's default for new projects): each synthesis started
+# from a copy of an earlier run's netlist.  On 2026-10-09 that crashed 2023.2
+# with signal 11 on every run after a small pal_to_ddr change, at a different
+# place each time (Mimic Skeleton from Reference, then GXorGen::bestSoln /
+# NGenJob::dumpJob in Cross Boundary and Area Optimization), depending on
+# which earlier run had left the reference.  Always synthesise from scratch.
 set synthrun [get_runs synth_1]
+set_property AUTO_INCREMENTAL_CHECKPOINT 0 $synthrun
+set_property INCREMENTAL_CHECKPOINT {} $synthrun
 set gen_now  [get_property generic [get_filesets sources_1]]
 set gen_file $R/project_1/.last_generics
 set gen_was  ""
