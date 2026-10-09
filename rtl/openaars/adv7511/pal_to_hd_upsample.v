@@ -579,14 +579,20 @@ always @(posedge clk_in) begin
   if (r_pal_hneg_in && ~i_pal_vsync) r_wres[r_wslot] <= r_res_line;
 end
 
-wire w_upd    = (r_hd_clk_ == 1'b1 && i_hd_clk == 1'b0 && ~i_hd_hsync);
+wire w_hdfall = (r_hd_clk_ == 1'b1 && i_hd_clk == 1'b0);   // the update clock, sync or not
+wire w_upd    = w_hdfall && ~i_hd_hsync;
 wire w_in_win = (r_h_pos > PAL_HD_H_FP && r_h_pos < (PAL_HD_H_RES-PAL_HD_H_FP));
 reg  [10:0] r_rend2 = 11'd0;   // written extent of the next buffer
 always @(posedge clk_out)
   if (hd_hsync_negedge) r_rend2 <= r_wend[r_cur_read_buf + 3'd1];
 wire w_rd_valid2 = (r_addrb[13:11] == r_rslot) && (r_addrb[10:0] != 11'd0) &&
                    (r_addrb[10:0] <= r_rend2);
-assign w_addrb = (CRT && w_upd) ? (r_addrb + 14'h0800) : r_addrb;
+// The second read goes out in every update clock, hsync or not: the
+// picture path never uses that clock's read, and leaving i_hd_hsync out
+// keeps the 60 Hz path's hsync (from adv_ddr, far away) off the line
+// buffer's address pins (1.4 ns OOC slack with it, 2026-10-09).  The
+// capture below is still qualified with w_upd.
+assign w_addrb = (CRT && w_hdfall) ? (r_addrb + 14'h0800) : r_addrb;
 
 reg        r_nxt_cap = 1'b0;   // w_doutb holds the next line's word this clock
 reg        r_nxt_ok  = 1'b0;   // ... and it is inside window and written extent
