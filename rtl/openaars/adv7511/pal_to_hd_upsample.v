@@ -95,7 +95,11 @@ reg         r_frame_end;
 // Buffer to hold 2 lines of data
 reg         r_wea;
 reg         r_ena;
-reg  [13:0] r_addra = 0;
+// (2026-10-09) The write address drives all 12 line-buffer BRAMs of its
+// instance; in stage_combo1 that was one register with 8.1 ns of pure
+// routing to a far BRAM (clk_114 -0.147 ns).  max_fanout lets Vivado copy
+// it next to each BRAM group (Quartus ignores the attribute).
+(* max_fanout = 4 *) reg  [13:0] r_addra = 0;
 reg  [23:0] r_dina;
 reg  [13:0] r_addrb = 0;
 wire [23:0] w_doutb;
