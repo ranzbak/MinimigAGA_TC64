@@ -439,7 +439,8 @@ int ApplyConfiguration(char reloadkickstart, char applydrives)
     // out of range (not written by this firmware): off
     if (config.crt_mask > 3) config.crt_mask = 0;
     if (config.crt_bloom > 2) config.crt_bloom = 0;
-    ConfigVideo(config.filter.hires, config.filter.lores, config.scanlines, config.crt_mask, config.crt_bloom);
+    if (config.crt_beam > 3) config.crt_beam = 0;
+    ConfigVideo(config.filter.hires, config.filter.lores, config.scanlines, config.crt_mask, config.crt_bloom, config.crt_beam);
 	ConfigVideoPos(config.videopos.hpos, config.videopos.vpos);
     // 0 (a config file from older firmware) or out of range: firmware default
     adv7511_set_clkdelay((config.hdmi_clkdelay >= 1 && config.hdmi_clkdelay <= 8)

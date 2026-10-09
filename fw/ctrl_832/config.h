@@ -62,7 +62,11 @@ typedef struct
 	unsigned char autofire;
   kickstartTYPE extrom;		// Added in V2 config
 	unsigned char drivesounds;	// Added in V3 config
-	unsigned char pad1;
+	// HDMI horizontal beam spot (rtl/openaars/adv7511/crt_beamh.v): the
+	// Video page's "Beam width" (0 off, 1 sharp, 2 medium, 3 soft).  This
+	// was pad1, which nothing ever wrote: older config files hold 0 here
+	// (off), the struct stays 212 bytes and older firmware ignores it.
+	unsigned char crt_beam;
 	// HDMI CRT emulation (rtl/openaars/adv7511/crt_post.v): the Video page's
 	// "CRT Mask" (0 off, 1 grille, 2 grille strong, 3 shadow) and "Bloom"
 	// (0 off, 1 low, 2 high).  These were pad2 and pad3, which nothing ever
