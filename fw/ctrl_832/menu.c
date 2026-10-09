@@ -82,6 +82,8 @@ const char *config_memory_chip_msg[] = {"0.5 MB", "1.0 MB", "1.5 MB", "2.0 MB"};
 const char *config_memory_slow_msg[] = {"none  ", "0.5 MB", "1.0 MB", "1.5 MB"};
 const char *config_on_off_msg[] = {"off", "on "};
 const char *config_scanlines_msg[] = {"off", "dim", "black"};
+const char *config_crt_mask_msg[] = {"off", "grille", "grille+", "shadow"};
+const char *config_crt_bloom_msg[] = {"off", "low", "high"};
 const char *config_memory_fast_msg[] = {"none  ", "2.0 MB", "4.0 MB", "Maximum"};
 const char *config_cpu_msg[] = {"68000 ", "68010", "-", "020 alpha"};
 const char *config_hdf_msg[] = {"Disabled", "Hardfile (disk img)", "MMC/SD card", "MMC/SD partition 1", "MMC/SD partition 2", "MMC/SD partition 3", "MMC/SD partition 4"};
@@ -114,7 +116,7 @@ const char *helptexts[] = {
 #else
     "                                Minimig can make use of up to 2 megabytes of Chip RAM, up to 1.5 megabytes of Slow RAM (A500 Trapdoor RAM), and up to 28 megabytes of true Fast RAM.  To use the HRTMon feature you will need an appropriate ROM file on the SD card.  To activate the monitor hold Ctrl and press the Pause key.",
 #endif
-    "                                Minimig's video features include a blur filter, to simulate the poorer picture quality on older monitors, and also scanline generation to simulate the appearance of a screen with low vertical resolution.",
+    "                                Minimig's video features include a blur filter, to simulate the poorer picture quality on older monitors, and also scanline generation to simulate the appearance of a screen with low vertical resolution.  On HDMI, CRT Mask adds a phosphor mask (grille: red, green and blue stripes; shadow: magenta and green) and Bloom lets bright pixels fill their scanline gaps; bloom needs scanlines or a vertical filter.",
     "                                The clock delay sets where the HDMI transmitter samples each pixel.  Too early or too late shows as sparkling colours, light yellows first.  Step through the values, note where the picture is clean, and settle in the middle of that range.  Save the configuration to keep it.",
     0};
 
@@ -1999,27 +2001,34 @@ void HandleUI(void)
         /******************************************************************/
     case MENU_SETTINGS_VIDEO1:
         OsdColor(OSDCOLOR_SUBMENU);
-        menumask = 0x1f;
+        menumask = 0x7f;
         parentstate = menustate;
         helptext = helptexts[HELPTEXT_VIDEO];
+        // config files from older firmware hold 0 here; anything else: off
+        if (config.crt_mask > 3) config.crt_mask = 0;
+        if (config.crt_bloom > 2) config.crt_bloom = 0;
 
         OsdSetTitle("Video", OSD_ARROW_LEFT | OSD_ARROW_RIGHT);
-        OsdWrite(0, "", 0, 0);
         strcpy(s, "   Lores Filter : ");
         strcat(s, config_filter_msg[config.filter.lores & 0x03]);
-        OsdWrite(1, s, menusub == 0, 0);
+        OsdWrite(0, s, menusub == 0, 0);
         strcpy(s, "   Hires Filter : ");
         strcat(s, config_filter_msg[config.filter.hires & 0x03]);
-        OsdWrite(2, s, menusub == 1, 0);
-        OsdWrite(3, "   Scanlines", 0, 0);
-        strcpy(s, "     Normal     : ");
+        OsdWrite(1, s, menusub == 1, 0);
+        strcpy(s, "   Scanlines    : ");
         strcat(s, config_scanlines_msg[config.scanlines & 3]);
-        OsdWrite(4, s, menusub == 2, 0);
-        strcpy(s, "     Interlaced : ");
+        OsdWrite(2, s, menusub == 2, 0);
+        strcpy(s, "    (laced)     : ");
         strcat(s, config_scanlines_msg[(config.scanlines & 0xc) >> 2]);
-        OsdWrite(5, s, menusub == 3, 0);
+        OsdWrite(3, s, menusub == 3, 0);
+        strcpy(s, "   CRT Mask     : ");
+        strcat(s, config_crt_mask_msg[config.crt_mask & 3]);
+        OsdWrite(4, s, menusub == 4, 0);
+        strcpy(s, "   Bloom        : ");
+        strcat(s, config_crt_bloom_msg[config.crt_bloom]);
+        OsdWrite(5, s, menusub == 5, 0);
         OsdWrite(6, "", 0, 0);
-        OsdWrite(7, STD_BACK, menusub == 4, 0);
+        OsdWrite(7, STD_BACK, menusub == 6, 0);
 
         menustate = MENU_SETTINGS_VIDEO2;
         break;
@@ -2032,14 +2041,14 @@ void HandleUI(void)
                 config.filter.lores++;
                 config.filter.lores &= 0x03;
                 menustate = MENU_SETTINGS_VIDEO1;
-                ConfigVideo(config.filter.hires, config.filter.lores, config.scanlines);
+                ConfigVideo(config.filter.hires, config.filter.lores, config.scanlines, config.crt_mask, config.crt_bloom);
             }
             else if (menusub == 1)
             {
                 config.filter.hires++;
                 config.filter.hires &= 0x03;
                 menustate = MENU_SETTINGS_VIDEO1;
-                ConfigVideo(config.filter.hires, config.filter.lores, config.scanlines);
+                ConfigVideo(config.filter.hires, config.filter.lores, config.scanlines, config.crt_mask, config.crt_bloom);
                 //                ConfigFilter(config.filter.lores, config.filter.hires);
             }
             else if (menusub == 2)
@@ -2049,7 +2058,7 @@ void HandleUI(void)
                     tmp = 0;
                 config.scanlines = (config.scanlines & 0xfc) | (tmp & 3);
                 menustate = MENU_SETTINGS_VIDEO1;
-                ConfigVideo(config.filter.hires, config.filter.lores, config.scanlines);
+                ConfigVideo(config.filter.hires, config.filter.lores, config.scanlines, config.crt_mask, config.crt_bloom);
                 //                ConfigScanlines(config.scanlines);
             }
             else if (menusub == 3)
@@ -2059,11 +2068,23 @@ void HandleUI(void)
                     tmp = 0;
                 config.scanlines = (config.scanlines & 0xf3) | (tmp & 0xc);
                 menustate = MENU_SETTINGS_VIDEO1;
-                ConfigVideo(config.filter.hires, config.filter.lores, config.scanlines);
+                ConfigVideo(config.filter.hires, config.filter.lores, config.scanlines, config.crt_mask, config.crt_bloom);
                 //                ConfigScanlines(config.scanlines);
             }
 
             else if (menusub == 4)
+            {
+                config.crt_mask = (config.crt_mask + 1) & 3;
+                menustate = MENU_SETTINGS_VIDEO1;
+                ConfigVideo(config.filter.hires, config.filter.lores, config.scanlines, config.crt_mask, config.crt_bloom);
+            }
+            else if (menusub == 5)
+            {
+                config.crt_bloom = (config.crt_bloom >= 2) ? 0 : config.crt_bloom + 1;
+                menustate = MENU_SETTINGS_VIDEO1;
+                ConfigVideo(config.filter.hires, config.filter.lores, config.scanlines, config.crt_mask, config.crt_bloom);
+            }
+            else if (menusub == 6)
             {
                 menustate = MENU_MAIN2_1;
                 menusub = 4;

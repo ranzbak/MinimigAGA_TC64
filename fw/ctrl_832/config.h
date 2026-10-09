@@ -63,8 +63,14 @@ typedef struct
   kickstartTYPE extrom;		// Added in V2 config
 	unsigned char drivesounds;	// Added in V3 config
 	unsigned char pad1;
-	unsigned char pad2;
-	unsigned char pad3;
+	// HDMI CRT emulation (rtl/openaars/adv7511/crt_post.v): the Video page's
+	// "CRT Mask" (0 off, 1 grille, 2 grille strong, 3 shadow) and "Bloom"
+	// (0 off, 1 low, 2 high).  These were pad2 and pad3, which nothing ever
+	// wrote: config files from older firmware hold 0 here (both off), the
+	// struct stays 212 bytes (config.c checks it) and older firmware simply
+	// ignores the two bytes.
+	unsigned char crt_mask;
+	unsigned char crt_bloom;
 	unsigned long kickdir;	// Directory of kick file.
 	unsigned long extromdir;	// Directory of ext rom file.
 	unsigned long hdfdir[4]; // Directory for HDF files.  Space for expansion to four devices.

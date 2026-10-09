@@ -844,12 +844,15 @@ void OsdReconfig()
 }
 
 
-void ConfigVideo(unsigned char hires, unsigned char lores, unsigned char scanlines)
+// The second data byte is the HDMI CRT emulation's {bloom, mask}
+// (rtl/minimig/userio_osd.v); a core without it ignores the byte.
+void ConfigVideo(unsigned char hires, unsigned char lores, unsigned char scanlines, unsigned char crt_mask, unsigned char crt_bloom)
 {
     EnableOsd();
     //SPI(OSDCMDCFGFLT | ((hires & 0x03) << 2) | (lores & 0x03));
     SPI(OSD_CMD_VID);
     SPI(((hires & 0x03) << 4) | ((lores & 0x03)<<2) | (scanlines & 0x03));
+    SPI(((crt_bloom & 0x03) << 2) | (crt_mask & 0x03));
     DisableOsd();
 }
 

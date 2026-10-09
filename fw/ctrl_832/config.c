@@ -252,6 +252,12 @@ unsigned char ConfigurationExists(char *filename)
 
 static const char config_id[] = "MNMGCFGA"; /* New signature for AGA core */
 
+// Config files are read and written as sizeof(configTYPE) bytes and older
+// firmware expects 212 (there is no tail padding left: hdmi_clkdelay took
+// it).  If the struct ever grows, this array's size is -1: vbcc832 then
+// warns "warning 61 ... array of size <=0" (other compilers stop).
+typedef char config_size_is_212[(sizeof(configTYPE) == 212) ? 1 : -1];
+
 unsigned char LoadConfiguration(char *filename)
 {
 	int updatekickstart=0;
@@ -430,7 +436,10 @@ int ApplyConfiguration(char reloadkickstart, char applydrives)
     ConfigMemory(config.memory);
     ConfigChipset(config.chipset);
     ConfigFloppy(config.floppy.drives, config.floppy.speed);
-    ConfigVideo(config.filter.hires, config.filter.lores, config.scanlines);
+    // out of range (not written by this firmware): off
+    if (config.crt_mask > 3) config.crt_mask = 0;
+    if (config.crt_bloom > 2) config.crt_bloom = 0;
+    ConfigVideo(config.filter.hires, config.filter.lores, config.scanlines, config.crt_mask, config.crt_bloom);
 	ConfigVideoPos(config.videopos.hpos, config.videopos.vpos);
     // 0 (a config file from older firmware) or out of range: firmware default
     adv7511_set_clkdelay((config.hdmi_clkdelay >= 1 && config.hdmi_clkdelay <= 8)
