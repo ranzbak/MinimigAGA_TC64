@@ -287,6 +287,9 @@ proc checkRequiredFiles { origin_dir} {
  "[file normalize "$origin_dir/rtl/minimig/minimig_syscontrol.v"]"\
  "[file normalize "$origin_dir/rtl/soc/minimig_virtual_top.v"]"\
  "[file normalize "$origin_dir/rtl/openaars/adv7511/pal_to_hd_upsample.v"]"\
+ "[file normalize "$origin_dir/rtl/openaars/adv7511/crt_post.v"]"\
+ "[file normalize "$origin_dir/rtl/openaars/adv7511/crt_wrom.mem"]"\
+ "[file normalize "$origin_dir/rtl/openaars/adv7511/crt_lut.mem"]"\
  "[file normalize "$origin_dir/rtl/minimig/paula.v"]"\
  "[file normalize "$origin_dir/rtl/minimig/paula_audio.v"]"\
  "[file normalize "$origin_dir/rtl/minimig/paula_audio_channel.v"]"\
@@ -609,6 +612,9 @@ set files [list \
  [file normalize "${origin_dir}/rtl/minimig/minimig_syscontrol.v"] \
  [file normalize "${origin_dir}/rtl/soc/minimig_virtual_top.v"] \
  [file normalize "${origin_dir}/rtl/openaars/adv7511/pal_to_hd_upsample.v"] \
+ [file normalize "${origin_dir}/rtl/openaars/adv7511/crt_post.v"] \
+ [file normalize "${origin_dir}/rtl/openaars/adv7511/crt_wrom.mem"] \
+ [file normalize "${origin_dir}/rtl/openaars/adv7511/crt_lut.mem"] \
  [file normalize "${origin_dir}/rtl/minimig/paula.v"] \
  [file normalize "${origin_dir}/rtl/minimig/paula_audio.v"] \
  [file normalize "${origin_dir}/rtl/minimig/paula_audio_channel.v"] \

@@ -51,6 +51,11 @@ set_multicycle_path -hold  0 -from [get_cells -quiet {openaars_virtual_top/tg68k
 # do not mask them (a false path would let placement stretch them arbitrarily).
 set_max_delay -datapath_only 6.734 -from [get_clocks {dll_28 clk_114 clk_sd_114}] -to [get_clocks clk_148]
 set_max_delay -datapath_only 8.815 -from [get_clocks clk_148] -to [get_clocks {dll_28 clk_114 clk_sd_114}]
+# These two also bound the HDMI CRT emulation's crossings (pal_to_ddr.sv, 2026-10-09): the
+# static OSD video config from userio_osd (dll_28) into its 2-FF synchronisers (ASYNC_REG,
+# then latched at the frame end), and the per-line resolution bit r_wres (clk_114) that
+# pal_to_hd_upsample.v reads lines later, like r_wend.  Denise's HIRES/SHRES reach the
+# upsampler's clk_114 register from dll_28, a phase-aligned sibling: timed, no synchroniser.
 
 ###############################################################################
 # Placement

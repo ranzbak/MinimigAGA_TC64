@@ -18,7 +18,11 @@
 // Additional Comments:
 //
 //////////////////////////////////////////////////////////////////////////////////
-module pal_to_ddr(
+module pal_to_ddr #(
+  // CRT emulation tables (crt_post.v); design sources next to this file
+  parameter CRT_WROM_FILE = "crt_wrom.mem",
+  parameter CRT_LUT_FILE  = "crt_lut.mem"
+)(
   input clk_148,
   input clk_114,
   input reset,
@@ -35,6 +39,12 @@ module pal_to_ddr(
   input [7:0] i_voffset,
   // RTG
   input       i_rtg_enable,
+  // CRT emulation (CLK_28 domain): the OSD video config as userio_osd
+  // latches it, {hr_filter[1:0], lr_filter[1:0], scanline[1:0]}, and
+  // Denise's BPLCON0 HIRES / SHRES for the per-line filter choice
+  input [5:0] i_crt_cfg,
+  input       i_pal_hires,
+  input       i_pal_shres,
   // OUTPUT
   output o_clk_pixel, // Output pixel clock after synchronization to clk_ddr
   output o_de, // Data enable signal
@@ -188,12 +198,115 @@ module pal_to_ddr(
   wire        w_60_frame_end;
   wire        w_60_adv_de;
 
+  // -------------------------------------------------------------------------
+  // CRT emulation (2026-10-09).  One crt_post after a 50/60 Hz select of the
+  // two upsamplers' streams; its output feeds both signal generators (only
+  // the selected one is shown).  crt_post delays the stream by CRT_LAT
+  // pixels, and both upsamplers read CRT_LAT pixels earlier (PAL_OFFSET_HZ),
+  // so with every effect off the picture is bit-identical to the design
+  // without it (sim/hdmi_upsample/crt_run.sh, bypass legs).
+  //
+  // OSD mapping (the existing items, no firmware change):
+  //   Scanlines   off / dim / black -> beam profile 0 / 2 / 3 and the
+  //               brightness LUT page of the same number (page 0 = identity)
+  //   Lores/Hires Filter, per input line by its resolution (lowres: the
+  //   Lores item, hires and superhires: the Hires item):
+  //     bit 0 (H) -> horizontal blur, [1 2 1]/4 lowres, [1 6 1]/8 hires
+  //     bit 1 (V) -> two-line beam (with scanlines off: linear blend)
+  // The effects need 15 kHz input (one input line = 2.4 HD lines): minimig.v
+  // turns amber's scandoubler off while any of them is selected
+  // (MINIMIG_OPENAARS), and here they apply only while the last input frame
+  // had fewer than 400 lines and RTG is off -- otherwise today's picture.
+  // The OSD bits are static: 2-FF synchronisers into clk_148, then a latch
+  // at the frame end, so a change applies from the next frame on.  The
+  // crossings are bounded by wizard.xdc (set_max_delay -datapath_only from
+  // dll_28/clk_114 to clk_148).
+  // -------------------------------------------------------------------------
+  localparam CRT_LAT = 8;   // crt_post pipeline, HD pixels
+
+  wire [23:0] w_50_next, w_60_next;
+  wire        w_50_stb, w_60_stb;
+  wire        w_50_lstart, w_60_lstart;
+  wire [6:0]  w_50_phase, w_60_phase;
+  wire        w_50_lhires, w_60_lhires;
+  wire [7:0]  w_crt_r, w_crt_g, w_crt_b;
+
+  (* ASYNC_REG = "TRUE" *) reg [5:0] s_crt_cfg0 = 6'd0;
+  (* ASYNC_REG = "TRUE" *) reg [5:0] s_crt_cfg1 = 6'd0;
+  (* ASYNC_REG = "TRUE" *) reg [1:0] s_crt_rtg  = 2'b00;
+  (* ASYNC_REG = "TRUE" *) reg [2:0] s_crt_hs   = 3'b000;
+  reg  [5:0] r_crt_cfg   = 6'd0;   // frame-latched OSD bits
+  reg        r_crt_ok    = 1'b0;   // last frame: 15 kHz and no RTG
+  reg  [9:0] r_crt_lines = 10'd0;  // input lines in this frame
+  wire       w_crt_fend  = r_50hz ? w_50_frame_end : w_60_frame_end;
+  always @(posedge clk_148) begin
+    s_crt_cfg0 <= i_crt_cfg;
+    s_crt_cfg1 <= s_crt_cfg0;
+    s_crt_rtg  <= {s_crt_rtg[0], i_rtg_enable};
+    s_crt_hs   <= {s_crt_hs[1:0], w_pal_hsync};
+    if (s_crt_hs[2:1] == 2'b01 && r_crt_lines != 10'h3FF)
+      r_crt_lines <= r_crt_lines + 1'b1;
+    if (w_crt_fend) begin
+      r_crt_cfg   <= s_crt_cfg1;
+      r_crt_ok    <= (r_crt_lines < 10'd400) && !s_crt_rtg[1];
+      r_crt_lines <= 10'd0;
+    end
+  end
+
+  // the selected upsampler's stream
+  wire [23:0] w_m_cur    = r_50hz ? {w_50_b, w_50_g, w_50_r} : {w_60_b, w_60_g, w_60_r};
+  wire [23:0] w_m_nxt    = r_50hz ? w_50_next   : w_60_next;
+  wire        w_m_stb    = r_50hz ? w_50_stb    : w_60_stb;
+  wire        w_m_lstart = r_50hz ? w_50_lstart : w_60_lstart;
+  wire [6:0]  w_m_phase  = r_50hz ? w_50_phase  : w_60_phase;
+  wire        w_m_lhires = r_50hz ? w_50_lhires : w_60_lhires;
+
+  // controls: static per frame (OSD) and per HD line (resolution, latched
+  // by the upsampler at the HD hsync); registered, they change in hblank
+  wire [1:0] w_crt_filt = w_m_lhires ? r_crt_cfg[5:4] : r_crt_cfg[3:2];
+  wire [1:0] w_crt_scan = (r_crt_cfg[1:0] == 2'd0) ? 2'd0 :
+                          (r_crt_cfg[1:0] == 2'd1) ? 2'd2 : 2'd3;
+  reg  [1:0] r_ctl_scan  = 2'd0;
+  reg        r_ctl_vb    = 1'b0;
+  reg  [1:0] r_ctl_hblur = 2'd0;
+  reg        r_ctl_hz60  = 1'b0;
+  always @(posedge clk_148) begin
+    r_ctl_scan  <= r_crt_ok ? w_crt_scan : 2'd0;
+    r_ctl_vb    <= r_crt_ok & w_crt_filt[1];
+    r_ctl_hblur <= (r_crt_ok & w_crt_filt[0]) ? (w_m_lhires ? 2'd1 : 2'd2) : 2'd0;
+    r_ctl_hz60  <= ~r_50hz;
+  end
+
+  wire [23:0] w_crt_rgb;
+  crt_post #(
+    .HAS_VBLEND(1), .HAS_HBLUR(1), .HAS_MASK(0), .HAS_LUT(1),
+    .WROM_FILE(CRT_WROM_FILE), .LUT_FILE(CRT_LUT_FILE)
+  ) my_crt_post (
+    .clk(clk_148),
+    .i_stb(w_m_stb),
+    .i_line_start(w_m_lstart),
+    .i_phase(w_m_phase),
+    .i_cur(w_m_cur),
+    .i_nxt(w_m_nxt),
+    .i_hz60(r_ctl_hz60),
+    .i_scan(r_ctl_scan),
+    .i_vblend(r_ctl_vb),
+    .i_hblur(r_ctl_hblur),
+    .i_mask(2'd0),
+    .i_lut(r_ctl_scan),       // the LUT page that goes with the beam profile
+    .i_wwe(1'b0),
+    .i_wwa(11'd0),
+    .i_wwd(18'd0),
+    .o_rgb(w_crt_rgb)
+  );
+  assign {w_crt_b, w_crt_g, w_crt_r} = w_crt_rgb;
+
   // Upscale the video signal using a line buffer
   // 'h80 -> 4cm -> right border
   // 'h00 -> 8cm -> right border
   pal_to_hd_upsample #(
   .PAL_HD_H_RES(1685),
-  .PAL_OFFSET_HZ('hd0)
+  .PAL_OFFSET_HZ('hd0 - CRT_LAT)
   ) my50hzupsample(
     .clk_in(clk_114),
     .clk_out(clk_148),
@@ -218,7 +331,15 @@ module pal_to_ddr(
     // horizontal and vertical offsets
     .i_hd_hoffset(i_voffset),
     .i_hd_voffset(i_voffset),
-    .i_rtg_enable()
+    .i_rtg_enable(),
+    // CRT
+    .i_pal_hires(i_pal_hires),
+    .i_pal_shres(i_pal_shres),
+    .o_hd_next(w_50_next),
+    .o_pix_stb(w_50_stb),
+    .o_line_start(w_50_lstart),
+    .o_line_phase(w_50_phase),
+    .o_line_hires(w_50_lhires)
   );
 
   // Generate the 720p Hsync and Vsync signals
@@ -235,9 +356,9 @@ module pal_to_ddr(
     .clk(clk_148),
     .reset(reset),
     .i_frame_end(w_50_frame_end),
-    .i_r(w_50_r),
-    .i_g(w_50_g),
-    .i_b(w_50_b),
+    .i_r(w_crt_r),
+    .i_g(w_crt_g),
+    .i_b(w_crt_b),
     // Output signals
     .o_x(w_50_x),
     .o_y(w_50_y),
@@ -253,7 +374,8 @@ module pal_to_ddr(
 
   // Upscale the video signal using a line buffer
   pal_to_hd_upsample #(
-  .PAL_HD_H_RES(1980) // Total pixels in a line
+  .PAL_HD_H_RES(1980), // Total pixels in a line
+  .PAL_OFFSET_HZ('h80 - CRT_LAT)
   ) my60hzupsample (
     .clk_out(clk_148),
     .clk_in(clk_114),
@@ -279,7 +401,15 @@ module pal_to_ddr(
     .i_hd_clk(w_50_adv_clk),
     // horizontal and vertical offsets
     .i_hd_hoffset(i_hoffset),
-    .i_hd_voffset(i_voffset[0])
+    .i_hd_voffset(i_voffset[0]),
+    // CRT
+    .i_pal_hires(i_pal_hires),
+    .i_pal_shres(i_pal_shres),
+    .o_hd_next(w_60_next),
+    .o_pix_stb(w_60_stb),
+    .o_line_start(w_60_lstart),
+    .o_line_phase(w_60_phase),
+    .o_line_hires(w_60_lhires)
   );
 
   // Generate the 720p Hsync and Vsync signals
@@ -296,9 +426,9 @@ module pal_to_ddr(
     .clk(clk_148),
     .reset(reset),
     .i_frame_end(w_60_frame_end),
-    .i_r(w_60_r),
-    .i_g(w_60_g),
-    .i_b(w_60_b),
+    .i_r(w_crt_r),
+    .i_g(w_crt_g),
+    .i_b(w_crt_b),
     // Output signals
     .o_x(w_60_x),
     .o_y(w_60_y),

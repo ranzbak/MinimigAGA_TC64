@@ -502,6 +502,10 @@ pal_to_ddr my_pal_to_ddr (
   .i_voffset(voffset),
   // RTG
   .i_rtg_enable(rtg_ena),
+  // CRT emulation: off until the Minimig side drives it
+  .i_crt_cfg(6'd0),
+  .i_pal_hires(1'b0),
+  .i_pal_shres(1'b0),
   //.i_pal_cs(vga_cs),
   // Output HDMI
   .o_clk_pixel(dv_clk),

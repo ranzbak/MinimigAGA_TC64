@@ -27,7 +27,12 @@ module pal_to_hd_upsample #(
   parameter PAL_OFFSET_HZ = 'h80,
   parameter PAL_OFFSET_VT = 0,
   parameter PAL_HD_H_RES  = 1980,
-  parameter PAL_HD_H_FP   = 50
+  parameter PAL_HD_H_FP   = 50,
+  // CRT emulation (2026-10-09, crt_post.v): 1 adds the next-line read for the
+  // two-line beam on port B (in the clk_out cycle the picture path leaves
+  // idle), the line phase and the per-line resolution.  The picture on
+  // o_hd_r/g/b is the same either way.
+  parameter CRT           = 1
 )(
   input           clk_out,
   input           clk_in,
@@ -53,7 +58,18 @@ module pal_to_hd_upsample #(
   input           i_hd_clk,
   // Horizontal and Vertical offsets
   input [7:0]     i_hd_hoffset,
-  input [7:0]     i_hd_voffset
+  input [7:0]     i_hd_voffset,
+  // CRT emulation.  Resolution of the input picture (Denise BPLCON0 HIRES and
+  // SHRES, CLK_28 = dll_28, a phase-aligned sibling of clk_in: timed, no
+  // synchroniser needed), sampled once per input line.
+  input           i_pal_hires,
+  input           i_pal_shres,
+  // CRT outputs, clk_out domain
+  output [23:0]   o_hd_next,     // {b,g,r} of the NEXT input line, same x
+  output          o_pix_stb,     // o_hd_* and o_hd_next hold a new pixel this clock
+  output          o_line_start,  // one clock at the start of each HD line
+  output [6:0]    o_line_phase,  // time from this HD line's buffer toggle, /128 clk_out
+  output          o_line_hires   // the input line this HD line shows was hires or superhires
 );
 
 // PAL TV signal
@@ -83,6 +99,7 @@ reg  [13:0] r_addra = 0;
 reg  [23:0] r_dina;
 reg  [13:0] r_addrb = 0;
 wire [23:0] w_doutb;
+wire [13:0] w_addrb;   // port B address: r_addrb, or the next line's word (CRT)
 
 // Detect edges in Vsync and Hsync
 reg r_pal_hpos;
@@ -142,7 +159,7 @@ bram_tdp #(
   .a_din(r_dina), // input wire [23 : 0] dina
   .a_dout(),
   .b_clk(clk_out), // input wire clkb
-  .b_addr(r_addrb), // input wire [11 : 0] addrb
+  .b_addr(w_addrb), // r_addrb, or the next line's word in the update clock (CRT)
   .b_din(),
   .b_dout(w_doutb), // output wire [23 : 0] doutb
   .b_wr()
@@ -527,6 +544,84 @@ begin
     r_del_vsync <= 1'b0;
   end
 end
+
+// ---------------------------------------------------------------------------
+// CRT emulation (2026-10-09; study and bench: sim/hdmi_upsample/crt_*)
+//
+// 1. Next-line read for the two-line beam.  r_addrb moves every other
+//    clk_out (one HD pixel = two clk_out); the read in the update clock
+//    (w_upd) is never used by the picture path (its data arrives after
+//    r_addrb has moved), so it fetches the same x from the NEXT buffer
+//    (+0x800 wraps 7 -> 0 like the ring).  Captured one clock later into
+//    r_hd_next; black where the next buffer was not written (r_wend).
+// 2. Line phase.  The vertical position of an HD line inside the input
+//    line it shows, measured in time: r_c_new counts clk_out since the
+//    latest buffer toggle (the write side finished a line), r_c_old since
+//    the one before.  The read side switches buffers at the HD hsync after a
+//    toggle, so an HD line whose hsync sees r_next_buf (toggle pending) still
+//    shows the older buffer -> r_c_old, else r_c_new.  Range T_hd .. T_hd +
+//    T_line (PAL 50: 3960 .. 13464 clk_out).  Interlaced long fields end
+//    vsync half a line later; the HD frame restarts there, so every HD
+//    line's phase moves by ~0.5 input line in those fields by itself, and
+//    the two fields' scanlines interleave.
+// 3. Resolution per input line: HIRES|SHRES sampled 512 pixels into the
+//    line (mid-screen, past any hblank), stored next to r_wend.
+// ---------------------------------------------------------------------------
+reg  [1:0]  r_res_s    = 2'b00;
+reg         r_res_line = 1'b0;
+reg         r_wres [0:7];
+integer     k_wres;
+initial for (k_wres = 0; k_wres < 8; k_wres = k_wres + 1) r_wres[k_wres] = 1'b0;
+always @(posedge clk_in) begin
+  r_res_s <= {i_pal_shres, i_pal_hires};
+  if (r_wcnt == 11'd512) r_res_line <= |r_res_s;
+  // same moment and slot as r_wend (end of the input line)
+  if (r_pal_hneg_in && ~i_pal_vsync) r_wres[r_wslot] <= r_res_line;
+end
+
+wire w_upd    = (r_hd_clk_ == 1'b1 && i_hd_clk == 1'b0 && ~i_hd_hsync);
+wire w_in_win = (r_h_pos > PAL_HD_H_FP && r_h_pos < (PAL_HD_H_RES-PAL_HD_H_FP));
+reg  [10:0] r_rend2 = 11'd0;   // written extent of the next buffer
+always @(posedge clk_out)
+  if (hd_hsync_negedge) r_rend2 <= r_wend[r_cur_read_buf + 3'd1];
+wire w_rd_valid2 = (r_addrb[13:11] == r_rslot) && (r_addrb[10:0] != 11'd0) &&
+                   (r_addrb[10:0] <= r_rend2);
+assign w_addrb = (CRT && w_upd) ? (r_addrb + 14'h0800) : r_addrb;
+
+reg        r_nxt_cap = 1'b0;   // w_doutb holds the next line's word this clock
+reg        r_nxt_ok  = 1'b0;   // ... and it is inside window and written extent
+reg [23:0] r_hd_next = 24'd0;
+always @(posedge clk_out) begin
+  r_nxt_cap <= CRT && w_upd;
+  r_nxt_ok  <= w_in_win && w_rd_valid2;
+  if (r_nxt_cap) r_hd_next <= r_nxt_ok ? w_doutb : 24'd0;
+end
+// in the update clock both r_hd_* (this line) and r_hd_next hold the pixel
+// made one update earlier; crt_post samples them here
+assign o_pix_stb = w_upd;
+assign o_hd_next = CRT ? r_hd_next : 24'd0;
+
+wire       w_toggle = (s_next_buf[3] != s_next_buf[2]);
+reg [13:0] r_c_new = 14'h3FFF, r_c_old = 14'h3FFF, r_lphase = 14'd0;
+reg        r_line_start = 1'b0;
+reg        r_lres = 1'b0;
+always @(posedge clk_out) begin
+  if (w_toggle) begin
+    r_c_old <= (r_c_new == 14'h3FFF) ? r_c_new : r_c_new + 1'b1;
+    r_c_new <= 14'd0;
+  end else begin
+    if (r_c_new != 14'h3FFF) r_c_new <= r_c_new + 1'b1;
+    if (r_c_old != 14'h3FFF) r_c_old <= r_c_old + 1'b1;
+  end
+  r_line_start <= hd_hsync_negedge;
+  if (hd_hsync_negedge) begin
+    r_lphase <= r_next_buf ? r_c_old : r_c_new;
+    r_lres   <= r_wres[r_cur_read_buf];   // the buffer this line reads (r_rslot)
+  end
+end
+assign o_line_phase = r_lphase[13:7];
+assign o_line_start = r_line_start;
+assign o_line_hires = CRT ? r_lres : 1'b0;
 
 // output assignments
 assign o_hd_r = r_hd_r;

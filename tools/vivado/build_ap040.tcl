@@ -113,6 +113,12 @@ add_src $R/rtl/sdram/cpu_enable_cadence.v
 add_src $R/rtl/soc/ap040_ram_seq.vhd
 # The XADC die-temperature reader, for the Chipset OSD menu's first line.
 add_src $R/rtl/soc/fpga_temp.v
+# HDMI CRT emulation (2026-10-09): the post stage pal_to_ddr.sv instantiates,
+# and its two tables ($readmemh by name: as memory files of the project,
+# synthesis finds them).
+add_src $R/rtl/openaars/adv7511/crt_post.v
+add_src $R/rtl/openaars/adv7511/crt_wrom.mem
+add_src $R/rtl/openaars/adv7511/crt_lut.mem
 # The dual-port RAM the AP040 MMU's ATC and the caches instantiate (module
 # dpram); project_1 had it only as a hand-added source, so a fresh clone's
 # project did not.
