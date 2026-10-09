@@ -381,8 +381,14 @@ always @(posedge clk_out) begin
   if (s_hd_hsync[1:0] == 2'b01) hd_hsync_posedge <= 1'b1;
 end
 
-// where a line's read starts: the fixed offset plus the OSD's signed one
-wire [13:0] w_rd_off = PAL_OFFSET_HZ + {{6{i_hd_hoffset[7]}}, i_hd_hoffset};
+// where a line's read starts: the fixed offset plus the OSD's signed one,
+// registered (static; the OSD writes it from another clock domain).  Written
+// as one register and one subtract below: the same function as an 8-way case
+// of base - (offset + hoffset) made Vivado 2023.2 synthesis segfault
+// (GXorGen::bestSoln, Cross Boundary and Area Optimization).
+reg  [13:0] r_rd_off = PAL_OFFSET_HZ;
+always @(posedge clk_out)
+  r_rd_off <= PAL_OFFSET_HZ + {{6{i_hd_hoffset[7]}}, i_hd_hoffset};
 
 // Sample PAL input stream
 reg         r_hd_clk_;
@@ -443,27 +449,10 @@ begin
       end
     end
     r_h_pos <= 0; // Reset horizontal counter
-    // the buffer read this line (the case below), and its written extent
+    // the buffer read this line (r_addrb below), and its written extent
     r_rslot <= r_cur_read_buf;
     r_rend  <= r_wend[r_cur_read_buf];
-    case (r_cur_read_buf)
-      0:
-        r_addrb <= 14'h0000 - w_rd_off;
-      1:
-        r_addrb <= 14'h0800 - w_rd_off;
-      2:
-        r_addrb <= 14'h1000 - w_rd_off;
-      3:
-        r_addrb <= 14'h1800 - w_rd_off;
-      4:
-        r_addrb <= 14'h2000 - w_rd_off;
-      5:
-        r_addrb <= 14'h2800 - w_rd_off;
-      6:
-        r_addrb <= 14'h3000 - w_rd_off;
-      7:
-        r_addrb <= 14'h3800 - w_rd_off;
-    endcase
+    r_addrb <= {r_cur_read_buf, 11'b0} - r_rd_off;
   end
 
 

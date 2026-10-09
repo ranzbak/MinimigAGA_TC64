@@ -242,6 +242,18 @@ module pal_to_ddr #(
   // -------------------------------------------------------------------------
   localparam CRT_LAT = 9;   // crt_post pipeline, HD pixels
 
+  // The OSD Video Pos HPOS (signed HD pixels; static, written by the host
+  // through VPOS_DATA): one 2-FF synchroniser into clk_148 for both
+  // upsamplers.  Feeding i_hoffset to both upsamplers directly made Vivado
+  // 2023.2 synthesis segfault (GXorGen::bestSoln in Cross Boundary and Area
+  // Optimization); with the register in between it synthesises.
+  (* ASYNC_REG = "TRUE" *) reg [7:0] s_hoff0 = 8'd0;
+  (* ASYNC_REG = "TRUE" *) reg [7:0] s_hoff1 = 8'd0;
+  always @(posedge clk_148) begin
+    s_hoff0 <= i_hoffset;
+    s_hoff1 <= s_hoff0;
+  end
+
   wire [23:0] w_50_next, w_60_next;
   wire        w_50_stb, w_60_stb;
   wire        w_50_lstart, w_60_lstart;
@@ -372,7 +384,7 @@ module pal_to_ddr #(
     .i_hd_vsync(w_50_hd_vsync),
     .i_hd_clk(w_50_adv_clk),
     // horizontal and vertical offsets
-    .i_hd_hoffset(i_hoffset),
+    .i_hd_hoffset(s_hoff1),
     .i_hd_voffset(i_voffset),
     .i_rtg_enable(),
     // CRT
@@ -442,7 +454,7 @@ module pal_to_ddr #(
     .i_hd_vsync(w_60_hd_vsync),
     .i_hd_clk(w_50_adv_clk),
     // horizontal and vertical offsets
-    .i_hd_hoffset(i_hoffset),
+    .i_hd_hoffset(s_hoff1),
     .i_hd_voffset(i_voffset[0]),
     // CRT
     .i_pal_hires(w_bh_hires),
