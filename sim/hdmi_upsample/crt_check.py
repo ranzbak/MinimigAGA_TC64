@@ -22,6 +22,20 @@ crt_check.py split X.hex
     the one for its input line: green stripes lowres, red stripes hires,
     blue C8 (switched to hires before the mid-line sample) hires, blue 64
     (switched after it) lowres.
+crt_check.py mask X.hex PERIOD
+    Phosphor mask, scanlines off: in the left border (COLOR00 $05A, x
+    120..200, HD rows 70..710) green and blue each repeat with PERIOD HD
+    pixels and no shorter period, lit columns at least 1.15x the dimmed
+    ones (linear), green and blue lit in different columns, and the mean
+    light of each within 3 % of the source (the LUT's compensation).
+crt_check.py bloom X.hex REF.hex [MAXRATIO [BORDER]]
+    Bloom against the same picture without it: on the white colour bar
+    (x 240..345, HD rows 104..172) the scanline modulation (linear light,
+    (max - min) / mean over rows) is at most MAXRATIO (default 0.5) of
+    REF's; the dark grey ramp steps (x 300..420, rows 182..206, values
+    below the bloom threshold) are bit-identical to REF; the blue border
+    ($A blue, 0.38 light: bloom high lifts it a little) changes by less
+    than BORDER (default 0.03) in light.
 """
 import sys, math, collections, statistics
 import numpy as np
@@ -109,6 +123,36 @@ def split(fn):
     print('split: rows checked %s, wrong %d' % (dict(seen), bad))
     return bad == 0 and all(seen[k] > 0 for k in ('lowres', 'hires', 'switch-early', 'switch-late'))
 
+def mask(fn, period):
+    a = load(fn).astype(float)
+    ok = True
+    lit = {}
+    for ch, name, src in ((1, 'green', 0x55), (2, 'blue', 0xAA)):
+        L = ((a[70:710, 120:200, ch] / 255) ** 2.4).mean(0)      # column profile
+        rows = (a[70:710, 120:200, ch] != a[70:710, 120:200, ch][0:1]).any(1).sum()
+        def same(p): return np.abs(L[p:] - L[:-p]).max() <= 0.002 * L.max() + 1e-9
+        per = next((p for p in range(1, 7) if same(p)), 0)
+        hi, lo = L.max(), L.min()
+        light = L.mean() / (src / 255) ** 2.4
+        lit[name] = int(np.argmax(L[:per])) if per else -1
+        print('mask %s: period %d, lit/dim %.3f, light %.4f, rows unlike row 0: %d' % (name, per, hi / max(lo, 1e-9), light, rows))
+        ok &= (per == period) and hi / max(lo, 1e-9) >= 1.15 and abs(light - 1) <= 0.03 and rows == 0
+    print('mask: lit column green %d, blue %d' % (lit['green'], lit['blue']))
+    return ok and lit['green'] != lit['blue']
+
+def bloom(fn, ref, maxratio=0.5, border=0.03):
+    a, r = load(fn).astype(float), load(ref).astype(float)
+    def mod(x):
+        p = ((x[104:172, 240:345] / 255) ** 2.4).mean((1, 2))
+        return (p.max() - p.min()) / p.mean()
+    ma, mr = mod(a), mod(r)
+    dark = (a[182:206, 300:420] != r[182:206, 300:420]).any(-1).sum()
+    lb = lambda x: ((x[70:710, 120:200, 2] / 255) ** 2.4).mean()
+    bl = lb(a) / lb(r)
+    print('bloom: white bar modulation %.4f (without %.4f, ratio %.3f), dark ramp pixels changed %d, border light x%.4f'
+          % (ma, mr, ma / mr, dark, bl))
+    return ma <= maxratio * mr and dark == 0 and abs(bl - 1) < border
+
 if __name__ == '__main__':
     cmd = sys.argv[1]
     if cmd == 'flat':
@@ -119,3 +163,7 @@ if __name__ == '__main__':
         lace(sys.argv[2], int(sys.argv[3]), int(sys.argv[4]))
     elif cmd == 'split':
         sys.exit(0 if split(sys.argv[2]) else 1)
+    elif cmd == 'mask':
+        sys.exit(0 if mask(sys.argv[2], int(sys.argv[3])) else 1)
+    elif cmd == 'bloom':
+        sys.exit(0 if bloom(sys.argv[2], sys.argv[3], *map(float, sys.argv[4:6])) else 1)

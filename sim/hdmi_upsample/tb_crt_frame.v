@@ -13,7 +13,8 @@
 // high and two clk_114 after RGB, as pal_to_ddr gets them.
 //
 // plusargs
-//   +cfg=H       OSD video config {hr_filter, lr_filter, scanline}, hex (default 0)
+//   +cfg=H       OSD video config {bloom, mask, hr_filter, lr_filter, scanline},
+//                10 bits, hex (default 0)
 //   +cfg2=H +cfgframe=N +cfgline=L   change the config to cfg2 during HD
 //                frame N, line L of the new path (the OSD-change leg; 3.1 ns
 //                after that line's start, off the clk_148 grid)
@@ -63,9 +64,9 @@ initial begin
 end
 
 // the OSD config, as userio_osd holds it (CLK_28; changes asynchronously to clk_148)
-reg [5:0] crt_cfg = 6'd0;
+reg [9:0] crt_cfg = 10'd0;
 reg       cfg_changed = 0;
-initial #1 crt_cfg = cfg[5:0];
+initial #1 crt_cfg = cfg[9:0];
 
 
 // ---- Amiga source ----
@@ -135,7 +136,8 @@ wire pal_hs = hs_d[1], pal_vs = vs_d[1];
 wire n_clk, n_de, n_vs, n_hs, r_clk, r_de, r_vs, r_hs;
 wire [11:0] n_d, r_d;
 pal_to_ddr #(.CRT_WROM_FILE("../../rtl/openaars/adv7511/crt_wrom.mem"),
-             .CRT_LUT_FILE("../../rtl/openaars/adv7511/crt_lut.mem")) dut (
+             .CRT_LUT_FILE("../../rtl/openaars/adv7511/crt_lut.mem"),
+             .CRT_BLOOM_FILE("../../rtl/openaars/adv7511/crt_bloom.mem")) dut (
 	.clk_148(clk_148), .clk_114(clk_114), .reset(reset), .vga_clk_pixel(1'b0),
 	.i_pal_hsync(pal_hs), .i_pal_vsync(pal_vs),
 	.i_pal_r(rgb[23:16]), .i_pal_g(rgb[15:8]), .i_pal_b(rgb[7:0]),
@@ -251,16 +253,16 @@ end
 always @(posedge clk_148)
 	if (cfgframe >= 0 && !cfg_changed && fno_n == cfgframe && hdl == cfgline) begin
 		cfg_changed = 1;
-		#3.1 crt_cfg = cfg2[5:0];
-		$display("cfg change %02h -> %02h at %0t (frame %0d line %0d)", cfg[5:0], cfg2[5:0], $time, fno_n, hdl);
+		#3.1 crt_cfg = cfg2[9:0];
+		$display("cfg change %03h -> %03h at %0t (frame %0d line %0d)", cfg[9:0], cfg2[9:0], $time, fno_n, hdl);
 	end
-reg [5:0] cfg_q = 6'd0;
+reg [9:0] cfg_q = 10'd0;
 reg ck_fend = 0;
 always @(posedge clk_148) begin
 	cfg_q <= dut.r_crt_cfg;
 	if (cfgframe >= 0 && dut.w_crt_fend) $display("frame end at %0t (frame no %0d)", $time, fno_n);
 	if (dut.r_crt_cfg != cfg_q)
-		$display("cfg latched %02h -> %02h at %0t, at frame end: %0d", cfg_q, dut.r_crt_cfg, $time, ck_fend);
+		$display("cfg latched %03h -> %03h at %0t, at frame end: %0d", cfg_q, dut.r_crt_cfg, $time, ck_fend);
 end
 always @(posedge clk_148) ck_fend <= dut.w_crt_fend;   // the latch takes effect the clock after w_crt_fend
 

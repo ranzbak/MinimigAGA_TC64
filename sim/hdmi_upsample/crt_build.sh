@@ -11,9 +11,10 @@ mkdir -p build
 iverilog -g2012 -o build/tb_crt_post_unit.vvp tb_crt_post_unit.v $A/crt_post.v
 # the same with both tables all zero: what a board build that failed to load
 # the .mem files would have -- everything off must still be the picture
-python3 -c "open('build/zero_wrom.mem','w').write('00000\\n'*2048); open('build/zero_lut.mem','w').write('00\\n'*4096)"
+python3 -c "open('build/zero_wrom.mem','w').write('00000\\n'*2048); open('build/zero_lut.mem','w').write('00\\n'*8192); open('build/zero_bloom.mem','w').write('00\\n'*8192)"
 iverilog -g2012 -o build/tb_crt_post_unit_zero.vvp -Ptb_crt_post_unit.WROM=\"build/zero_wrom.mem\" \
-	-Ptb_crt_post_unit.LUT=\"build/zero_lut.mem\" tb_crt_post_unit.v $A/crt_post.v
+	-Ptb_crt_post_unit.LUT=\"build/zero_lut.mem\" -Ptb_crt_post_unit.BLM=\"build/zero_bloom.mem\" \
+	tb_crt_post_unit.v $A/crt_post.v
 # -Wno-BLKANDNBLK: signal_generator.sv mixes = and <= on two registers in
 # its reset branch only
 verilator --binary --timing -j 4 -Wno-fatal -Wno-lint -Wno-style -Wno-MULTIDRIVEN -Wno-BLKANDNBLK \

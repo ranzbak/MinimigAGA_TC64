@@ -21,7 +21,8 @@
 module pal_to_ddr #(
   // CRT emulation tables (crt_post.v); design sources next to this file
   parameter CRT_WROM_FILE = "crt_wrom.mem",
-  parameter CRT_LUT_FILE  = "crt_lut.mem"
+  parameter CRT_LUT_FILE  = "crt_lut.mem",
+  parameter CRT_BLOOM_FILE = "crt_bloom.mem"
 )(
   input clk_148,
   input clk_114,
@@ -40,9 +41,10 @@ module pal_to_ddr #(
   // RTG
   input       i_rtg_enable,
   // CRT emulation (CLK_28 domain): the OSD video config as userio_osd
-  // latches it, {hr_filter[1:0], lr_filter[1:0], scanline[1:0]}, and
-  // Denise's BPLCON0 HIRES / SHRES for the per-line filter choice
-  input [5:0] i_crt_cfg,
+  // latches it, {bloom[1:0], mask[1:0], hr_filter[1:0], lr_filter[1:0],
+  // scanline[1:0]}, and Denise's BPLCON0 HIRES / SHRES for the per-line
+  // filter choice
+  input [9:0] i_crt_cfg,
   input       i_pal_hires,
   input       i_pal_shres,
   // OUTPUT
@@ -205,13 +207,18 @@ module pal_to_ddr #(
   // so with every effect off the picture is bit-identical to the design
   // without it (sim/hdmi_upsample/crt_run.sh, bypass legs).
   //
-  // OSD mapping (the existing items, no firmware change):
+  // OSD mapping (the Video page):
   //   Scanlines   off / dim / black -> beam profile 0 / 2 / 3 and the
   //               brightness LUT page of the same number (page 0 = identity)
   //   Lores/Hires Filter, per input line by its resolution (lowres: the
   //   Lores item, hires and superhires: the Hires item):
   //     bit 0 (H) -> horizontal blur, [1 2 1]/4 lowres, [1 6 1]/8 hires
   //     bit 1 (V) -> two-line beam (with scanlines off: linear blend)
+  //   CRT mask    off / grille / grille strong / shadow -> crt_post i_mask
+  //               (3-px R G B stripes, 30 / 55 % gaps; 2-px magenta / green,
+  //               40 %; the LUT divides each mode's mean light back out)
+  //   Bloom       off / low / high -> crt_post i_bloom: bright pixels fill
+  //               their scanline gap (needs scanlines or the V filter)
   // The effects need 15 kHz input (one input line = 2.4 HD lines): minimig.v
   // turns amber's scandoubler off while any of them is selected
   // (MINIMIG_OPENAARS), and here they apply only while the last input frame
@@ -221,7 +228,7 @@ module pal_to_ddr #(
   // crossings are bounded by wizard.xdc (set_max_delay -datapath_only from
   // dll_28/clk_114 to clk_148).
   // -------------------------------------------------------------------------
-  localparam CRT_LAT = 8;   // crt_post pipeline, HD pixels
+  localparam CRT_LAT = 9;   // crt_post pipeline, HD pixels
 
   wire [23:0] w_50_next, w_60_next;
   wire        w_50_stb, w_60_stb;
@@ -230,11 +237,11 @@ module pal_to_ddr #(
   wire        w_50_lhires, w_60_lhires;
   wire [7:0]  w_crt_r, w_crt_g, w_crt_b;
 
-  (* ASYNC_REG = "TRUE" *) reg [5:0] s_crt_cfg0 = 6'd0;
-  (* ASYNC_REG = "TRUE" *) reg [5:0] s_crt_cfg1 = 6'd0;
+  (* ASYNC_REG = "TRUE" *) reg [9:0] s_crt_cfg0 = 10'd0;
+  (* ASYNC_REG = "TRUE" *) reg [9:0] s_crt_cfg1 = 10'd0;
   (* ASYNC_REG = "TRUE" *) reg [1:0] s_crt_rtg  = 2'b00;
   (* ASYNC_REG = "TRUE" *) reg [2:0] s_crt_hs   = 3'b000;
-  reg  [5:0] r_crt_cfg   = 6'd0;   // frame-latched OSD bits
+  reg  [9:0] r_crt_cfg   = 10'd0;  // frame-latched OSD bits
   reg        r_crt_ok    = 1'b0;   // last frame: 15 kHz and no RTG
   reg  [9:0] r_crt_lines = 10'd0;  // input lines in this frame
   wire       w_crt_fend  = r_50hz ? w_50_frame_end : w_60_frame_end;
@@ -268,18 +275,22 @@ module pal_to_ddr #(
   reg  [1:0] r_ctl_scan  = 2'd0;
   reg        r_ctl_vb    = 1'b0;
   reg  [1:0] r_ctl_hblur = 2'd0;
+  reg  [1:0] r_ctl_mask  = 2'd0;
+  reg  [1:0] r_ctl_bloom = 2'd0;
   reg        r_ctl_hz60  = 1'b0;
   always @(posedge clk_148) begin
     r_ctl_scan  <= r_crt_ok ? w_crt_scan : 2'd0;
     r_ctl_vb    <= r_crt_ok & w_crt_filt[1];
     r_ctl_hblur <= (r_crt_ok & w_crt_filt[0]) ? (w_m_lhires ? 2'd1 : 2'd2) : 2'd0;
+    r_ctl_mask  <= r_crt_ok ? r_crt_cfg[7:6] : 2'd0;
+    r_ctl_bloom <= r_crt_ok ? r_crt_cfg[9:8] : 2'd0;
     r_ctl_hz60  <= ~r_50hz;
   end
 
   wire [23:0] w_crt_rgb;
   crt_post #(
-    .HAS_VBLEND(1), .HAS_HBLUR(1), .HAS_MASK(0), .HAS_LUT(1),
-    .WROM_FILE(CRT_WROM_FILE), .LUT_FILE(CRT_LUT_FILE)
+    .HAS_VBLEND(1), .HAS_HBLUR(1), .HAS_MASK(1), .HAS_BLOOM(1), .HAS_LUT(1),
+    .WROM_FILE(CRT_WROM_FILE), .LUT_FILE(CRT_LUT_FILE), .BLOOM_FILE(CRT_BLOOM_FILE)
   ) my_crt_post (
     .clk(clk_148),
     .i_stb(w_m_stb),
@@ -291,7 +302,8 @@ module pal_to_ddr #(
     .i_scan(r_ctl_scan),
     .i_vblend(r_ctl_vb),
     .i_hblur(r_ctl_hblur),
-    .i_mask(2'd0),
+    .i_mask(r_ctl_mask),
+    .i_bloom(r_ctl_bloom),
     .i_lut(r_ctl_scan),       // the LUT page that goes with the beam profile
     .i_wwe(1'b0),
     .i_wwa(11'd0),
