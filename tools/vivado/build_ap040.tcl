@@ -408,8 +408,10 @@ if {$pipe_dir ne ""} {
     set dfp_mis [expr {[info exists ::env(DFP_MIS)] && $::env(DFP_MIS) ne "" ? $::env(DFP_MIS) : 1}]
     # WALLOC=1: write-allocate on a copyback store miss (copyback plan S3; board 1.50 / 49,444)
     set walloc [expr {[info exists ::env(WALLOC)] && $::env(WALLOC) ne "" ? $::env(WALLOC) : 1}]
-    set pipe_gen " AP040_PIPELINED=1 AP040_HAS_MMU=$pmmu AP040_HAS_FPU=$pfpu AP040_FREE_CORE=$free_core AP040_STORE_BUF=$store_buf AP040_FWD=$fwd AP040_RAS=$ras AP040_PRECISE=$precise AP040_MISPLIT=$misplit AP040_SB_MMU=$sb_mmu AP040_COPYBACK=$copyback AP040_BTB=$btb AP040_LDX=$ldx AP040_BTFN=$btfn AP040_DFP_MIS=$dfp_mis AP040_WALLOC=$walloc"
-    puts "build_ap040.tcl: PIPELINED build from $P ([llength $pipe_off] lib/AP68040 files disabled), FREE_CORE=$free_core STORE_BUF=$store_buf FWD=$fwd RAS=$ras PRECISE=$precise MISPLIT=$misplit SB_MMU=$sb_mmu COPYBACK=$copyback BTB=$btb LDX=$ldx BTFN=$btfn DFP_MIS=$dfp_mis WALLOC=$walloc"
+    # XC7=1: Artix-7 resource mapping in the core (cache tables in distributed RAM, -3.3k LUTs)
+    set xc7 [expr {[info exists ::env(XC7)] && $::env(XC7) ne "" ? $::env(XC7) : 1}]
+    set pipe_gen " AP040_PIPELINED=1 AP040_HAS_MMU=$pmmu AP040_HAS_FPU=$pfpu AP040_FREE_CORE=$free_core AP040_STORE_BUF=$store_buf AP040_FWD=$fwd AP040_RAS=$ras AP040_PRECISE=$precise AP040_MISPLIT=$misplit AP040_SB_MMU=$sb_mmu AP040_COPYBACK=$copyback AP040_BTB=$btb AP040_LDX=$ldx AP040_BTFN=$btfn AP040_DFP_MIS=$dfp_mis AP040_WALLOC=$walloc AP040_XC7=$xc7"
+    puts "build_ap040.tcl: PIPELINED build from $P ([llength $pipe_off] lib/AP68040 files disabled), FREE_CORE=$free_core STORE_BUF=$store_buf FWD=$fwd RAS=$ras PRECISE=$precise MISPLIT=$misplit SB_MMU=$sb_mmu COPYBACK=$copyback BTB=$btb LDX=$ldx BTFN=$btfn DFP_MIS=$dfp_mis WALLOC=$walloc XC7=$xc7"
 } else {
     # (2026-10-06) The reference core: lib/AP68040's files on, the pipelined
     # core's off.  A pipelined run that dies before its clean-up (a Vivado

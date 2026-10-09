@@ -60,6 +60,8 @@ module minimig_openaars_top #(
   parameter AP040_DFP_MIS = 0,
   // write-allocate on a copyback store miss (copyback plan S3)
   parameter AP040_WALLOC = 0,
+  // Artix-7 resource mapping in the CPU (distributed RAM for the cache tables)
+  parameter AP040_XC7 = 0,
   // AP68040 island clock divider: 30 = clk_114/3 (stage D3),
   // 40 = clk_114/4 (pre-D3 rate, D3 architecture otherwise intact).
   parameter CPU_CLK_DIVIDE = 30,
@@ -551,6 +553,7 @@ minimig_virtual_top
   .ap040_btfn(AP040_BTFN),
   .ap040_dfp_mis(AP040_DFP_MIS),
   .ap040_walloc(AP040_WALLOC),
+  .ap040_xc7(AP040_XC7),
   .cpu_clk_divide(CPU_CLK_DIVIDE),
   .chip32(CHIP32),
   .CPU040_DEBUG_ILA(CPU040_DEBUG_ILA),

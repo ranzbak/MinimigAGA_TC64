@@ -87,6 +87,8 @@ entity TG68K is
 		ap040_dfp_mis      : integer := 0;
 		-- write-allocate on a copyback store miss (copyback plan S3)
 		ap040_walloc       : integer := 0;
+		-- Artix-7 resource mapping (cache tables in distributed RAM); 0 = vendor-neutral
+		ap040_xc7          : integer := 0;
 		-- clk / clk_cpu, the AP68040 island's clock ratio.  3 is stage D3 as
 		-- shipped (37.8125 MHz); 4 runs the same architecture at the pre-D3 CPU
 		-- rate.  THE PHASE MARKER BELOW DEPENDS ON THIS AND IS NOT RATIO-AGNOSTIC
@@ -658,7 +660,8 @@ ARCHITECTURE logic OF TG68K IS
 			AP040_LDX          : integer := 0;
 			AP040_BTFN         : integer := 0;
 			AP040_DFP_MIS      : integer := 0;
-			AP040_WALLOC       : integer := 0
+			AP040_WALLOC       : integer := 0;
+			AP040_XC7          : integer := 0
 		);
 		PORT(
 			clk               : in  std_logic;
@@ -1473,7 +1476,8 @@ BEGIN
 					AP040_LDX          => ap040_ldx,
 					AP040_BTFN         => ap040_btfn,
 					AP040_DFP_MIS      => ap040_dfp_mis,
-					AP040_WALLOC       => ap040_walloc
+					AP040_WALLOC       => ap040_walloc,
+					AP040_XC7          => ap040_xc7
 				)
 				PORT MAP(
 					-- The CPU island's own 37.8125 MHz clock.  So are the master
