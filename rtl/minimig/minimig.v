@@ -283,6 +283,9 @@ module minimig #(
   output  hd_frd,
   output  hblank_out,
   output  vblank_out,
+  output  [5:0] crt_cfg, // OSD video config {hr_filter, lr_filter, scanline} for the HDMI CRT emulation
+  output  vid_hires,     // Denise BPLCON0 HIRES / SHRES (HDMI CRT emulation, per-line filter choice)
+  output  vid_shres,
   output  osd_blank_out, // Let the toplevel dither module handle drawing the OSD.
   output  osd_pixel_out,
   output  rtg_ena,
@@ -439,6 +442,24 @@ wire  [1:0] hr_filter; //hires interpolation filter mode: bit 0 - horizontal, bi
 wire  [1:0] scanline; //scanline effect configuration
 wire  [1:0] dither; // video output dither
 wire  hires; //hires signal from Denise for interpolation filter enable in Amber
+wire  shres; //superhires signal from Denise (HDMI CRT emulation)
+
+// HDMI CRT emulation (rtl/openaars/adv7511/pal_to_ddr.sv, crt_post.v): the
+// OSD's scanline and filter items drive it.  It needs the 15 kHz picture, so
+// on openaars amber's scandoubler is off while any of them is selected (the
+// firmware's scandoubler setting stays as it is), and amber's own scanlines
+// are tied off so no effect applies twice.  Amber's filters only work on the
+// scandoubled picture, so they never apply while the CRT effects do.
+assign crt_cfg   = {hr_filter, lr_filter, scanline};
+assign vid_hires = hires;
+assign vid_shres = shres;
+`ifdef MINIMIG_OPENAARS
+wire  crt_any = |{hr_filter, lr_filter, scanline};
+wire  [1:0] amber_scanline = 2'b00;
+`else
+wire  crt_any = 1'b0;
+wire  [1:0] amber_scanline = scanline;
+`endif
 //wire  aron;         //Action Replay is enabled
 wire  cpu_speed; //requests CPU to switch speed mode
 wire  turbo; //CPU is working in turbo mode
@@ -783,18 +804,19 @@ denise DENISE1
   .a1k(chipset_config[2]),
   .ecs(|chipset_config[4:3]),
   .aga(chipset_config[4]),
-  .hires(hires)
+  .hires(hires),
+  .shres_out(shres)
 );
 
 //instantiate Amber
 amber AMBER1
 (
   .clk(clk),
-  .dblscan(_15khz && !varbeamen),
+  .dblscan(_15khz && !varbeamen && !crt_any),
   .varbeamen(varbeamen),
   .lr_filter(lr_filter),
   .hr_filter(hr_filter),
-  .scanline(scanline),
+  .scanline(amber_scanline),
   .dither(dither),
   .htotal(htotal),
   .hires(hires),

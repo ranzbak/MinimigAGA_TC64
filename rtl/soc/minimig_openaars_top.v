@@ -221,6 +221,9 @@ wire [7:0]  voffset;
 
 // RTG
 wire        rtg_ena;
+wire [5:0]  crt_cfg;     // HDMI CRT emulation: OSD video config (CLK_28)
+wire        vid_hires;   // Denise BPLCON0 HIRES (CLK_28)
+wire        vid_shres;   // Denise BPLCON0 SHRES (CLK_28)
 
 // Audio
 wire [15:0] audio_l;
@@ -502,10 +505,10 @@ pal_to_ddr my_pal_to_ddr (
   .i_voffset(voffset),
   // RTG
   .i_rtg_enable(rtg_ena),
-  // CRT emulation: off until the Minimig side drives it
-  .i_crt_cfg(6'd0),
-  .i_pal_hires(1'b0),
-  .i_pal_shres(1'b0),
+  // CRT emulation: OSD video config and Denise resolution (CLK_28 domain)
+  .i_crt_cfg(crt_cfg),
+  .i_pal_hires(vid_hires),
+  .i_pal_shres(vid_shres),
   //.i_pal_cs(vga_cs),
   // Output HDMI
   .o_clk_pixel(dv_clk),
@@ -573,6 +576,9 @@ minimig_virtual_top
   .VGA_G(vga_g),
   .VGA_B(vga_b),
   .RTG_ENABLE(rtg_ena),
+  .CRT_CFG(crt_cfg),
+  .VID_HIRES(vid_hires),
+  .VID_SHRES(vid_shres),
   .SDRAM_DQ(dr_d),
   .SDRAM_A(dr_a),
   .SDRAM_DQML(dr_dqm[0]),

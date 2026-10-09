@@ -47,7 +47,8 @@ module denise (
   input  wire           a1k,            // control EHB chipset feature
   input  wire           ecs,            // enables ECS chipset features
   input  wire           aga,            // enables AGA features
-  output wire           hires           // hires
+  output wire           hires,          // hires
+  output wire           shres_out       // superhires (ECS/AGA), for the HDMI CRT filter choice
 );
 
 
@@ -153,6 +154,7 @@ assign color    = bplcon0[9];
 assign gaud     = bplcon0[8];
 assign uhres    = bplcon0[7];
 assign shres    = bplcon0[6];
+assign shres_out = shres & ecs;
 assign bypass   = bplcon0[5];
 assign lpen     = bplcon0[3];
 assign lace     = bplcon0[2];

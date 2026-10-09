@@ -101,6 +101,12 @@ module minimig_virtual_top #(
     // RTG
     output wire           RTG_ENABLE, // True when RTG is enabled
 
+    // HDMI CRT emulation (CLK_28 domain): OSD video config
+    // {hr_filter, lr_filter, scanline} and Denise BPLCON0 HIRES / SHRES
+    output wire [  6-1:0] CRT_CFG,
+    output wire           VID_HIRES,
+    output wire           VID_SHRES,
+
     // SDRAM
     inout  wire [ 16-1:0] SDRAM_DQ, // SDRAM Data bus 16 Bits
     output wire [ 13-1:0] SDRAM_A, // SDRAM Address bus 13 Bits
@@ -1289,6 +1295,9 @@ minimig #(
     .hd_frd       (hd_frd           ), // hd fifo reading
     .hblank_out   (hblank_out       ),
     .vblank_out   (vblank_out       ),
+    .crt_cfg      (CRT_CFG          ), // HDMI CRT emulation: OSD video config
+    .vid_hires    (VID_HIRES        ), // HDMI CRT emulation: Denise HIRES
+    .vid_shres    (VID_SHRES        ), // HDMI CRT emulation: Denise SHRES
     .osd_blank_out(osd_window       ), // Let the toplevel dither module handle drawing the OSD.
     .osd_pixel_out(osd_pixel        ),
     .rtg_ena      (rtg_ena_mm       ),
