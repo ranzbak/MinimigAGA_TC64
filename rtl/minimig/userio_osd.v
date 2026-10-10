@@ -46,7 +46,7 @@ module userio_osd #(
   output  reg [5:0] crt_fx = 0,
   output    reg    [2:0] ide_config0 = 0,        //enable hard disk support
   output    reg    [2:0] ide_config1 = 0,        //enable hard disk support
-  output  reg [3:0] cpu_config = 0,
+  output  reg [4:0] cpu_config = 0,   // [4] Chip slots Fast (findings/fastslot)
   output  reg [1:0] autofire_config = 0,
   output  reg       cd32pad = 0,
 	output	reg usrrst=1'b0,
@@ -84,7 +84,7 @@ wire  [9:0] verbeam_osdclk;
 reg   [8-1:0] t_memory_config = 8'b0_0_00_01_01;
 reg   [2:0] t_ide_config0 = 0;
 reg   [2:0] t_ide_config1 = 0;
-reg   [3:0] t_cpu_config = 0;
+reg   [4:0] t_cpu_config = 0;
 reg   [4:0] t_chipset_config = 0;
 
 
@@ -111,7 +111,7 @@ always @(posedge clk)
 
 always @(posedge clk) begin
   if (clk7_en) begin
-    cpu_config[3:2] <= t_cpu_config[3:2];
+    cpu_config[4:2] <= t_cpu_config[4:2];   // Turbo and Chip slots: live, like Turbo always was
     memory_config[6] <= #1 t_memory_config[6];
   end
 end
@@ -441,7 +441,7 @@ always @ (posedge clk) begin
   //    if (spi_clock_ctrl_sel)   begin if (dat_cnt == 0) end
       if (spi_osd_ctrl_sel)     begin if (dat_cnt == 0) {key_disable, osd_enable} <= #1 wrdat[1:0]; end
       if (spi_chip_cfg_sel)     begin if (dat_cnt == 0) t_chipset_config <= #1 wrdat[4:0]; end
-      if (spi_cpu_cfg_sel)      begin if (dat_cnt == 0) t_cpu_config <= #1 wrdat[3:0]; end
+      if (spi_cpu_cfg_sel)      begin if (dat_cnt == 0) t_cpu_config <= #1 wrdat[4:0]; end
       if (spi_memory_cfg_sel)   begin if (dat_cnt == 0) t_memory_config <= #1 wrdat[7:0]; end
       if (spi_video_cfg_sel)    begin if (dat_cnt == 0) {dither, hr_filter, lr_filter, scanline} <= #1 wrdat[7:0];
                                       if (dat_cnt == 1) crt_fx <= #1 wrdat[5:0]; end

@@ -22,6 +22,7 @@
 #   ./run.sh --c32mutant --chipbus  CHIP32 read data returns word 1 twice; MUST fail
 #   NOCHIP32=1 ./run.sh ...         the wrapper's chip32 generic = 0 (longwords as two word cycles)
 #   FREECORE=1 ./run.sh ...         the wrapper's ap040_free_core = 1 (findings/unfreeze/plan.md)
+#   FASTCHIP=1 ./run.sh --ap040 --chipbus   Chip slots "Fast" (findings/fastslot)
 #   FREECORE=1 FCMUTANT=ack|walk|data ./run.sh ...  one free-core qualification undone; MUST fail
 #
 # Stage E2 (decision D6): EVERY leg runs the real sdram_ctrl and SDRAM part
@@ -185,6 +186,9 @@ CNTN=${CNTN:-64}
 if [ "$TURBOCHIP" = "0" ]; then VARIANT="${VARIANT}_chipbus"; fi
 if [ -n "$NOCHIP32" ]; then VARIANT="${VARIANT}_nochip32"; fi
 if [ "${FREECORE:-0}" = "1" ]; then VARIANT="${VARIANT}_free"; fi
+# FASTCHIP=1: the wrapper's Chip slots "Fast" mode (findings/fastslot); the
+# bench fails the leg unless chipset cycles complete in <= 40 clk on average.
+if [ "${FASTCHIP:-0}" = "1" ]; then VARIANT="${VARIANT}_fast"; fi
 # FCMUTANT=ack|walk|data (with FREECORE=1): undo one of the free core's
 # qualifications in a copy of TG68K.vhd (findings/unfreeze/plan.md).  MUST fail.
 if [ -n "$FCMUTANT" ]; then
@@ -237,6 +241,7 @@ PLUS="+PATBYTES=$PATBYTES +MISLINES=$MISLINES +CNTN=$CNTN +TURBOCHIP=$TURBOCHIP"
 if [ "$IS_MMU" = "1" ]; then PLUS="$PLUS +MMUTEST"; fi
 if [ "$IS_FC" = "1" ]; then PLUS="$PLUS +FCTEST"; fi
 if [ "$IS_SNOOP" = "1" ]; then PLUS="$PLUS +SNOOP"; fi
+if [ "${FASTCHIP:-0}" = "1" ]; then PLUS="$PLUS +FASTCHIP"; fi
 if [ -n "$TRACE" ]; then PLUS="$PLUS +TRACE +TRMAX=${TRMAX:-200}"; fi
 # XPLUS: extra +plusargs handed straight to xsim, e.g. XPLUS=+LBDBG for the
 # SDRAM-port line-buffer trace.

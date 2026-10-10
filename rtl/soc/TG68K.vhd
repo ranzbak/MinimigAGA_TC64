@@ -215,6 +215,12 @@ entity TG68K is
 		aga             : in     std_logic;
 		turbochipram    : in     std_logic;
 		turbokick       : in     std_logic;
+		-- Chip slots "Fast" (OSD; cpu_config bit 4, findings/fastslot): a chipset
+		-- cycle ends on the ena7WRreg that closes its chip slot instead of a
+		-- round and a half later, so the CPU can take the authentic AGA rate of
+		-- one chip cycle in two CCKs.  '0' (the default, and the hardware reset
+		-- state) is the 7 MHz machine exactly as before.
+		fastchip        : in     std_logic                     := '0';
 		cache_inhibit   : out    std_logic;
 		cacheline_clr   : out    std_logic;
 		--    ovr           : in      std_logic;
@@ -299,6 +305,15 @@ ARCHITECTURE logic OF TG68K IS
 	SIGNAL turbochip_d : std_logic := '0';
 	SIGNAL turbokick_d : std_logic := '0';
 	SIGNAL turboslow_d : std_logic := '0';
+	-- Chip slots Fast (findings/fastslot); see the fastchip port.  fastchip_d
+	-- is the switch, registered where the Turbo switches are so it never
+	-- changes under an access.  fast_cyc marks a chipset cycle that has ended
+	-- its slot the Fast way and is waiting for the CPU to take the answer;
+	-- fast_p1 -> fast_ready is that answer, two clk after the capture.
+	SIGNAL fastchip_d  : std_logic := '0';
+	SIGNAL fast_cyc    : std_logic := '0';
+	SIGNAL fast_p1     : std_logic := '0';
+	SIGNAL fast_ready  : std_logic := '0';
 	SIGNAL slower      : std_logic_vector(3 downto 0);
 	-- The acknowledge-phase histogram behind dbg_phist.  Stage D3 corrupts at
 	-- clock ratios coprime with the 16-phase SDRAM round (3, 5) and is clean at
@@ -1766,6 +1781,7 @@ BEGIN
 			IF (reset = '0' OR nResetOut_w = '0') THEN
 				turbochip_d   <= '0';
 				turbokick_d   <= '0';
+				fastchip_d    <= '0';
 				chip32_d      <= '0';
 				turboslow_d   <= '0';
 				cacheline_clr <= '0';
@@ -1776,6 +1792,7 @@ BEGIN
 				-- where x_req and state are not settled; see q_req.)
 				turbochip_d   <= turbochipram;
 				turbokick_d   <= turbokick;
+				fastchip_d    <= fastchip;
 				turboslow_d   <= turbochipram OR aga;
 				chip32_d      <= aga AND c32_en;
 				cacheline_clr <= (turbochipram XOR turbochip_d);
@@ -1861,7 +1878,13 @@ BEGIN
 	-- no partial sum of those gaps spans the eight phases from 6 to 14.  So
 	-- the pulse is caught here and held until the CPU's next enable, at most
 	-- three cycles later, which is invisible next to a 140 ns chipset cycle.
-	chipset_ready <= '1' WHEN (ena7RDreg = '1' AND clkena_e = '1') ELSE '0';
+	--
+	-- Chip slots Fast adds fast_ready: the cycle's answer two clk after the
+	-- ena7WRreg that ended its slot (see the S_state process).  Two, not one,
+	-- because datatg68_c -- what the adapter's datatg68_r takes on the grant --
+	-- is one more register behind r_data, and the grant can land on the very
+	-- first edge chipset_ready is high.
+	chipset_ready <= '1' WHEN (ena7RDreg = '1' AND clkena_e = '1') OR fast_ready = '1' ELSE '0';
 
 	PROCESS(clk, reset)
 	BEGIN
@@ -2080,7 +2103,12 @@ BEGIN
 			lds2     <= '1';
 			clkena_e <= '0';
 			c32_cyc  <= '0';
+			fast_cyc   <= '0';
+			fast_p1    <= '0';
+			fast_ready <= '0';
 		ELSIF rising_edge(clk) THEN
+			fast_p1    <= '0';
+			fast_ready <= fast_p1;
 			-- End the chipset cycle when the CPU has actually taken its
 			-- answer.  This used to live inside the ena7RDreg branch, where it
 			-- worked only because clkena could only ever be high on the same
@@ -2109,8 +2137,9 @@ BEGIN
 			-- `ena7RDreg AND clkena_e` (ena7RDreg is low there) and
 			-- `S_state = "01"` (S_state is "00" there).
 			IF (chipset_ready = '1' OR chipset_done = '1') AND clkena = '1' THEN
-				S_state <= "00";
-				c32_cyc <= '0';
+				S_state  <= "00";
+				c32_cyc  <= '0';
+				fast_cyc <= '0';
 			END IF;
 
 			-- (The TG68K's paired-word latch that sat here -- uds2/lds2 and
@@ -2156,7 +2185,34 @@ BEGIN
 						clkena_e <= '0';
 						S_state  <= "10";
 					WHEN "10" =>
-						IF waitm = '0' OR (vma = '0' AND sync_state = sync9) THEN
+						IF waitm = '0' AND fastchip_d = '1' THEN
+							-- CHIP SLOTS FAST (findings/fastslot).  waitm was
+							-- sampled on this round's ena7RDreg (phase 6), so
+							-- the bridge raised dtack in the cck-high round
+							-- before (it does so at phase 8, after that round's
+							-- ena7RDreg), and THIS round is the cck-low one that
+							-- holds the CPU's chip slot: sdram_ctrl took the
+							-- strobes at phase 1 and the bridge latched the read
+							-- data at phase 12.  So end the cycle here, on the
+							-- ena7WRreg that closes the slot -- strobes up, data
+							-- captured -- instead of a round and a half later.
+							-- The bridge's grant rule (a CCK whose DMA half is
+							-- free) is untouched, and the next launch still
+							-- waits for an ena7WRreg in state "00", so the CPU
+							-- gets at most every other CCK: the AGA chip bus
+							-- rate.  sim/chip32 (+fast) is the transcription.
+							as       <= '1';
+							rw       <= '1';
+							uds      <= '1';
+							lds      <= '1';
+							uds2     <= '1';
+							lds2     <= '1';
+							r_data   <= data_read;
+							r_data2  <= data_read2;
+							fast_cyc <= '1';
+							fast_p1  <= '1';
+							S_state  <= "11";
+						ELSIF waitm = '0' OR (vma = '0' AND sync_state = sync9) THEN
 							S_state <= "11";
 						END IF;
 					WHEN "11" =>
@@ -2171,18 +2227,22 @@ BEGIN
 						cpuIPL <= IPL;
 						waitm  <= dtack;
 					WHEN "11" =>
-						as   <= '1';
-						rw   <= '1';
-						uds  <= '1';
-						lds  <= '1';
-						uds2 <= '1';
-						lds2 <= '1';
-						IF clkena_e = '0' THEN
-							r_data  <= data_read;
-							r_data2 <= data_read2;
-						END IF;
+						-- (A Fast cycle has done all of this already and is
+						-- only waiting for the CPU; fast_ready answers it.)
+						IF fast_cyc = '0' THEN
+							as   <= '1';
+							rw   <= '1';
+							uds  <= '1';
+							lds  <= '1';
+							uds2 <= '1';
+							lds2 <= '1';
+							IF clkena_e = '0' THEN
+								r_data  <= data_read;
+								r_data2 <= data_read2;
+							END IF;
 
-						clkena_e <= '1';
+							clkena_e <= '1';
+						END IF;
 					WHEN OTHERS => null;
 				END CASE;
 			END IF;

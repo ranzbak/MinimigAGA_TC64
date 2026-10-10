@@ -263,6 +263,7 @@ module minimig #(
   output  [7:0] z3ram3_base, // A31-A24 the OS gave the third ZIII RAM board
   output  turbochipram,
   output  turbokick,
+  output  fastchip,           // Chip slots Fast: the CPU wrapper ends a chipset cycle with its slot (findings/fastslot)
   output  [1:0] slow_config,
   output  aga,
   output  init_b, // vertical sync for MCU (sync OSD update)
@@ -689,10 +690,11 @@ wire  [3:0] userio_floppy_config; //floppy drives configuration (drive number an
 wire  [4:0] userio_chipset_config; //chipset features selection
 wire  [2:0] userio_ide_config0; //HDD & HDC config: bit #0 enables Gayle, bit #1 enables Master drive, bit #2 enables Slave drive
 wire  [2:0] userio_ide_config1; //HDD & HDC config: bit #0 enables Gayle, bit #1 enables Master drive, bit #2 enables Slave drive
-wire  [3:0] userio_cpu_config;
-reg   [3:0] cpu_config_reg;
+wire  [4:0] userio_cpu_config;
+reg   [4:0] cpu_config_reg;
 
-assign cpu_config = cpu_config_reg;
+assign cpu_config = cpu_config_reg[3:0];
+assign fastchip   = cpu_config_reg[4];
 
 always @(posedge clk) begin
   memory_config <= userio_memory_config;

@@ -34,6 +34,7 @@ for mode in $MODES; do
 
 	iverilog -g2005 -o "$run/sim.vvp" $defs \
 		-I "$ROOT/rtl/minimig" \
+		-I "$ROOT/fpga/openaars" \
 		-D MINIMIG_XILINX \
 		-s osd_keyq_tb \
 		"$HERE/osd_keyq_tb.v" \

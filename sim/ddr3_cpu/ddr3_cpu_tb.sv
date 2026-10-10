@@ -150,6 +150,10 @@ localparam [31:0] MBOX     = 32'h0000_1000;   // in the bench chip RAM
 //   +TURBOCHIP=1   default, as before
 reg turbochipram = 1'b1;
 initial void'($value$plusargs("TURBOCHIP=%b", turbochipram));
+// +FASTCHIP: the wrapper's Chip slots "Fast" mode (TG68K.vhd fastchip,
+// findings/fastslot).  run.sh FASTCHIP=1 sets it.
+reg fastchip = 1'b0;
+initial fastchip = $test$plusargs("FASTCHIP");
 
 // MemHeader values
 localparam [31:0] MH_NAME  = 32'h4100_0100;
@@ -934,6 +938,7 @@ TG68K #(.cpu_clk_ratio(`CPU_RATIO), .chip32(CHIP32_GEN)) tg68k (
     .slow_config    (2'b00            ),
     .aga            (1'b1             ),
     .turbochipram   (turbochipram     ),
+    .fastchip       (fastchip         ),
     .turbokick      (1'b0             ),
     .cache_inhibit  (cache_inhibit    ),
     .cacheline_clr  (cacheline_clr    ),
@@ -1260,6 +1265,78 @@ always @(posedge clk) begin
     end
   end
 end
+
+
+//-----------------------------------------------------------------
+// CHIPBUS cadence monitor (findings/fastslot).  Print-only: per chipset-bus
+// cycle, clk cycles from launch (as falling) to the next launch, from launch
+// to the CPU's release (chipset_done rising), and from that release to the
+// wrapper holding its NEXT launch-eligible request (the S_state "00"
+// conditions: a chipset cycle or a CHIP32 longword, cpu_bus_settled).  The
+// last number is the CPU-side latency the 7 MHz machine has to absorb, and
+// what sim/chip32's +lat models.
+//-----------------------------------------------------------------
+wire       cb_done    = (tg68k.chipset_done === 1'b1);
+wire [1:0] cb_state   = tg68k.state;
+wire       cb_elig    = (tg68k.cpu_bus_settled === 1'b1) &&
+                        (((tg68k.chipset_cycle === 1'b1) && cb_state != 2'b01) ||
+                         ((tg68k.q_c32 === 1'b1) && (tg68k.c32_done !== 1'b1)));
+reg        cb_done_d  = 1'b0;
+reg        cb_as_d    = 1'b1;
+reg        cb_wait    = 1'b0;     // released, next request not yet eligible
+integer    cb_n = 0, cb_rel_n = 0;
+longint    cb_t = 0, cb_t_launch = -1, cb_t_rel = 0;
+longint    cb_per_sum = 0, cb_l2r_sum = 0, cb_r2e_sum = 0;
+integer    cb_per_n = 0, cb_r2e_n = 0;
+integer    cb_r2e_hist [0:16];    // 0..15 clk, 16 = 16 or more
+integer    cb_per_hist [0:8];     // launch period in 16-clk rounds: 0..7, 8 = 8 or more
+integer    cbi;
+initial begin
+  for (cbi = 0; cbi <= 16; cbi = cbi + 1) cb_r2e_hist[cbi] = 0;
+  for (cbi = 0; cbi <= 8;  cbi = cbi + 1) cb_per_hist[cbi] = 0;
+end
+always @(posedge clk) begin
+  cb_t      <= cb_t + 1;
+  cb_as_d   <= tg68_as;
+  cb_done_d <= cb_done;
+  if (tg68_rst && cb_as_d && !tg68_as) begin           // launch
+    if (cb_t_launch >= 0) begin
+      cb_per_sum = cb_per_sum + (cb_t - cb_t_launch);
+      cb_per_n   = cb_per_n + 1;
+      cb_per_hist[((cb_t - cb_t_launch) / 16) > 8 ? 8 : ((cb_t - cb_t_launch) / 16)] =
+        cb_per_hist[((cb_t - cb_t_launch) / 16) > 8 ? 8 : ((cb_t - cb_t_launch) / 16)] + 1;
+    end
+    cb_t_launch <= cb_t;
+    cb_n = cb_n + 1;
+  end
+  if (tg68_rst && cb_done && !cb_done_d) begin         // release
+    cb_l2r_sum = cb_l2r_sum + (cb_t - cb_t_launch);
+    cb_rel_n   = cb_rel_n + 1;
+    cb_t_rel  <= cb_t;
+    cb_wait   <= 1'b1;
+  end else if (cb_wait && cb_elig) begin
+    cb_r2e_sum = cb_r2e_sum + (cb_t - cb_t_rel);
+    cb_r2e_n   = cb_r2e_n + 1;
+    cb_r2e_hist[(cb_t - cb_t_rel) > 16 ? 16 : (cb_t - cb_t_rel)] =
+      cb_r2e_hist[(cb_t - cb_t_rel) > 16 ? 16 : (cb_t - cb_t_rel)] + 1;
+    cb_wait   <= 1'b0;
+  end
+end
+task cb_report;
+  begin
+    $display("CHIPBUS cadence: %0d chipset cycles; launch->launch avg %0d.%02d clk (%0d), launch->release avg %0d.%02d clk, release->next request avg %0d.%02d clk (%0d)",
+             cb_n,
+             cb_per_n ? cb_per_sum / cb_per_n : 0, cb_per_n ? (cb_per_sum * 100 / cb_per_n) % 100 : 0, cb_per_n,
+             cb_rel_n ? cb_l2r_sum / cb_rel_n : 0, cb_rel_n ? (cb_l2r_sum * 100 / cb_rel_n) % 100 : 0,
+             cb_r2e_n ? cb_r2e_sum / cb_r2e_n : 0, cb_r2e_n ? (cb_r2e_sum * 100 / cb_r2e_n) % 100 : 0, cb_r2e_n);
+    $write("CHIPBUS release->next request histogram (clk 0..15,16+):");
+    for (cbi = 0; cbi <= 16; cbi = cbi + 1) $write(" %0d", cb_r2e_hist[cbi]);
+    $display("");
+    $write("CHIPBUS launch period histogram (rounds of 16 clk, 0..7,8+):");
+    for (cbi = 0; cbi <= 8; cbi = cbi + 1) $write(" %0d", cb_per_hist[cbi]);
+    $display("");
+  end
+endtask
 
 //-----------------------------------------------------------------
 // Optional trace of the DDR3 port (+TRACE, first +TRMAX events of each kind)
@@ -2060,6 +2137,17 @@ initial begin : main
   end
 `endif
 `endif
+  cb_report;
+  // Fast chip slots: with this bench's chipset (dtack always low, no CCK) a
+  // chipset cycle is launch, two ena7WRreg later the end of the slot, and the
+  // release 2-3 clk after that: ~35 clk, against ~56 for the Standard machine.
+  if (fastchip && !turbochipram && !(mmutest || fctest)) begin
+    if (cb_rel_n < 32 || cb_l2r_sum > 40 * cb_rel_n) begin
+      nfail = nfail + 1;
+      $display("DDR3 CPU TB: FAIL  FASTCHIP: launch->release averages %0d clk over %0d chipset cycles (want <= 40)",
+               cb_rel_n ? cb_l2r_sum / cb_rel_n : 0, cb_rel_n);
+    end
+  end
   $display("CHIP32: %0d wide chipset cycles, %0d narrow, %0d bad (chip32=%0d turbochip=%0d)",
            c32_wide, c32_narrow, c32_bad, CHIP32_GEN, turbochipram);
   if (c32_bad != 0) begin

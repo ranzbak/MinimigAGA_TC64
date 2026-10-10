@@ -267,6 +267,7 @@ wire [383:0]   dbg_phist;
 wire [31:0]    dbg_rtg;
 wire           turbochipram;
 wire           turbokick;
+wire           fastchip;
 wire [1:0]     slow_config;
 wire           aga;
 wire           cache_inhibit;
@@ -743,6 +744,7 @@ TG68K #(
     .ddr_ready    (tg68_ddrready    ),
     .turbochipram (turbochipram     ),
     .turbokick    (turbokick        ),
+    .fastchip     (fastchip         ),
     .slow_config  (slow_config      ),
     .aga          (aga              ),
     .cache_inhibit(cache_inhibit    ),
@@ -1279,6 +1281,7 @@ minimig #(
     .z3ram3_base  (z3ram3_base      ), // -> TG68K, which decodes board 3 against it
     .turbochipram (turbochipram     ), // turbo chipRAM
     .turbokick    (turbokick        ), // turbo kickstart
+    .fastchip     (fastchip         ), // Chip slots Fast (findings/fastslot)
     .slow_config  (slow_config      ),
     .aga          (aga              ),
     .init_b       (                 ), // vertical sync for MCU (sync OSD update)

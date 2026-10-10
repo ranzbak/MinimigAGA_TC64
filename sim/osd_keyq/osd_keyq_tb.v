@@ -33,6 +33,7 @@ module osd_keyq_tb;
   wire       sdo;
 
   integer errors = 0;
+  wire [4:0] cpu_cfg;              // [4] Chip slots Fast (findings/fastslot)
   wire       diag_clr;
   integer    diag_clrs = 0;
   always @(posedge diag_clr) diag_clrs = diag_clrs + 1;   // one clk7-long pulse
@@ -51,7 +52,7 @@ module osd_keyq_tb;
     .memory_config(), .chipset_config(), .floppy_config(),
     .scanline(), .dither(),
     .ide_config0(), .ide_config1(),
-    .cpu_config(), .autofire_config(), .cd32pad(),
+    .cpu_config(cpu_cfg), .autofire_config(), .cd32pad(),
     .usrrst(), .cpurst(), .cpuhlt(),
     .fifo_full(),
     .host_cs(), .host_adr(), .host_we(), .host_bs(), .host_wdat(),
@@ -216,6 +217,29 @@ module osd_keyq_tb;
     spi_byte(8'hff, b0);
     spi_close;
     expect_byte("level", b0, 8'h4c);
+
+    // ---- 7. OSD_CMD_CPU: Chip slots in bit 4 --------------------------------
+    // The firmware sends config.cpu & 0x1f: [1:0] CPU (taken only in reset,
+    // which this bench never asserts), [3:2] Turbo and [4] Chip slots Fast,
+    // both live.  An old firmware sends & 0x0f, so bit 4 arrives clear and the
+    // core stays Standard -- the behaviour an old config was saved with.
+    $display("--- OSD_CMD_CPU ---");
+    expect_byte("cpu_cfg at power-up", {3'b000, cpu_cfg}, 8'h00);
+    spi_open(8'h14);
+    spi_byte(8'h1d, b0);           // CPU 1, Turbo BOTH, Chip slots Fast
+    spi_close;
+    #2000;
+    expect_byte("cpu_cfg[4:2] after 0x1d", {5'b00000, cpu_cfg[4:2]}, 8'h07);
+    spi_open(8'h14);
+    spi_byte(8'h0d, b0);           // the same from an old firmware (& 0x0f)
+    spi_close;
+    #2000;
+    expect_byte("cpu_cfg[4:2] after 0x0d", {5'b00000, cpu_cfg[4:2]}, 8'h03);
+    spi_open(8'h14);
+    spi_byte(8'h10, b0);           // Chip slots Fast alone
+    spi_close;
+    #2000;
+    expect_byte("cpu_cfg[4:2] after 0x10", {5'b00000, cpu_cfg[4:2]}, 8'h04);
 
     if (errors == 0)
       $display("\n=== PASS: 0 failures ===");
