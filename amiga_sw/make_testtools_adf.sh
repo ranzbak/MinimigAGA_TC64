@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# TestTools.adf: IrqLat (+ IrqLatMatrix), ChipCoh and AdvPat with their
+# TestTools.adf: IrqLat (+ IrqLatMatrix), ChipCoh, AdvPat and SerRx with their
 # READMEs, for copying onto the board's HDF/SD card.  Rebuild the tools first
 # (make in each directory).  xdftool comes from amitools (python3.10 here).
 set -eu
@@ -10,5 +10,6 @@ xdf TestTools.adf create + format TestTools ffs \
   + write IrqLat/IrqLat IrqLat + write IrqLat/IrqLatMatrix IrqLatMatrix \
   + write IrqLat/README.md IrqLat.readme \
   + write ChipCoh/ChipCoh ChipCoh + write ChipCoh/README.md ChipCoh.readme \
-  + write AdvPat/AdvPat AdvPat + write AdvPat/README.md AdvPat.readme
+  + write AdvPat/AdvPat AdvPat + write AdvPat/README.md AdvPat.readme \
+  + write SerRx/SerRx SerRx + write SerRx/README.md SerRx.readme
 xdf TestTools.adf list
