@@ -137,11 +137,22 @@ Release 0.1 ships with these open (see doc/release-0.1.md).
   stage_r02irq stable.  Use a relative FUZZ_DIR: the bench cuts paths at
   128 chars.
 
-### Serial port runs at about 112 baud (2026-10-01)
+### Serial port runs at about 112 baud (2026-10-01) -- GONE on stage_dly12 (2026-10-10); 115200 overruns = OS limit
 
-- serial.device receives io_Baud = 112 for Prefs 38400/115200. Worked on the
-  020 core up to 56k6. amiga_sw/SerTest2 is ready for the board.
-  findings/serial/README.md.
+- Was: serial.device sent at ~112 baud (a spurious read of $DFF032 rewrote
+  SERPER, findings/serial/README.md).  On stage_dly12 (core main 0a07062)
+  both directions run at the set rate.
+- Measured with amiga_sw/SerRx + sertx.py (4096-byte 0..255 pattern, full
+  line speed, no handshake): 38400 PERFECT, 57600 PERFECT; ZMODEM both ways
+  at 38400 and 57600 without retries.
+- 115200: 6 of 4096 bytes lost in 2 gaps of 3 bytes, SerErr_LineErr
+  (Paula's hardware overrun), NO bit errors -- the RBF interrupt (level 5)
+  was serviced ~260-350 us late twice in 0.36 s under the running OS.
+  The 020 core does the same (Paul, 2026-10-10), so it is Commodore
+  serial.device + Paula's 1-byte buffer, not the 040.  Use 57600, or a
+  faster serial driver, for 115200.
+- Earlier "ZMODEM fails at 57600" was NComm's state; NComm's terminal
+  also shows 8-bit characters with bit 7 cleared (display only).
 
 ### DDR3-only fast RAM shows 10 MB (2026-10-02)
 
