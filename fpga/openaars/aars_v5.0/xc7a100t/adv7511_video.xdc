@@ -65,13 +65,15 @@ set_false_path -to [get_ports dv_cecclk]
 # +1.6 ns, 0.4 ns steps; the same on both edges while 0xD0[7] = 0).  The ADV7511 needs the data
 # stable from (d - tVSU) to (d + tVHLD) around each dv_clk edge at its pin, d = the 0xBA delay.
 # dv_adv_delay MUST match what the firmware writes (fw/ctrl_832/adv7511.h ADV_CLKDELAY_DEFAULT,
-# -0.8 ns; the OSD HDMI page can change it at run time -- these numbers then no longer hold).
+# -1.2 ns since 2026-10-10, and the RTL table in i2c_sender.vhd; the OSD HDMI page can change it at
+# run time -- these numbers then no longer hold).  At -0.8 ns the data hold was -0.25 ns and the
+# board showed blue noise on dark greys (stage_padA3); -1.2 ns, the most negative step, cured it.
 # Board skew: the IO board's traces give the clock the shortest (17.2 mm) and the data 17.6 - 27.0
 # mm, syncs 32 - 34 mm (about 6 ps/mm); the core board's lengths are unknown.  dv_board_skew is
 # allowed in both directions.
 set dv_tsu        1.0
 set dv_th         0.7
-set dv_adv_delay -0.8
+set dv_adv_delay -1.2
 set dv_board_skew 0.1
 
 # The forwarded clock: clk_148 / 2 out of pad_clk_reg, then the pin itself, so the clock's own
