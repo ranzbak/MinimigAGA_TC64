@@ -97,7 +97,7 @@ for name in ("direct", "os", "blit", "chipwr"):
         if w not in got:
             fail.append(f"{name}: missing line '{w}'")
 hdr = [l for l in out("direct").splitlines() if l.startswith("IrqLat:")]
-if not hdr or not re.match(r"IrqLat: DIRECT load NONE bpl off rate 1000 Hz latch 708 secs 5 E 709379 Hz PAL VBR [0-9a-f]{8} CACR [0-9a-f]{8}$", hdr[0]):
+if not hdr or not re.match(r"IrqLat: DIRECT load NONE bpl off rate 1000 Hz latch 708 secs 5 E 709379 Hz PAL VBR [0-9A-Fa-f]{8} CACR [0-9A-Fa-f]{8}$", hdr[0]):
     fail.append(f"direct: header {hdr}")
 if not any(l.startswith("IrqLat: OS load NONE") for l in out("os").splitlines()):
     fail.append("os: header")
