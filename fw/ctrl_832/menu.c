@@ -90,6 +90,12 @@ const char *config_cpu_msg[] = {"68000 ", "68010", "-", "020 alpha"};
 const char *config_hdf_msg[] = {"Disabled", "Hardfile (disk img)", "MMC/SD card", "MMC/SD partition 1", "MMC/SD partition 2", "MMC/SD partition 3", "MMC/SD partition 4"};
 const char *config_chipset_msg[] = {"OCS-A500", "OCS-A1000", "ECS", "---", "---", "---", "AGA", "---"};
 const char *config_turbo_msg[] = {"none", "CHIPRAM", "KICK", "BOTH"};
+// Chip slots, config.cpu bit 4 (CONFIG_CPU_FASTCHIP): how the CPU's chipset
+// cycles fit the chip bus when Turbo CHIPRAM is off.  Standard is the 7 MHz
+// machine as it always was; Fast ends each cycle with its chip slot, so the
+// CPU can take the authentic AGA rate of one chip cycle in two CCKs.  DMA
+// keeps every slot it had in both.  Old configs have the bit clear: Standard.
+const char *config_chipslots_msg[] = {"Standard", "Fast"};
 const char *config_cd32pad_msg[] = {"OFF", "ON"};
 const char *config_volume_msg[] = {" ", " 1", " 2", " 3", " 4", " 5", " 6", " 7", " 8", " 9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31"};
 const char *config_hdmi_clkdelay_msg[] = {"-1.2", "-0.8", "-0.4", " 0.0", "+0.4", "+0.8", "+1.2", "+1.6"};
@@ -110,7 +116,7 @@ const char *helptexts[] = {
     0,
     "                                Welcome to Minimig!  Use the cursor keys to navigate the menus.  Use space bar or enter to select an item.  Press Esc or F12 to exit the menus.  Mouse emulation on the numeric keypad can be toggled with the numlock key, while pressing Ctrl-Alt-0 (numeric keypad) toggles autofire mode.",
     "                                Minimig can emulate an A600 IDE harddisk interface.  The emulation can make use of Minimig-style hardfiles (complete disk images) or UAE-style hardfiles (filesystem images with no partition table).  It is also possible to use either the entire SD card or an individual partition as an emulated harddisk.",
-    "                                Minimig's processor core can emulate a 68000 or 68020 processor.  Access to both Chip RAM and Kickstart ROM can be sped up with the Turbo function.  The emulated chipset can be either A500 or A1000 OCS, ECS or AGA.",
+    "                                Minimig's processor core can emulate a 68000 or 68020 processor.  Access to both Chip RAM and Kickstart ROM can be sped up with the Turbo function.  Chip slots Fast lets the CPU use every chip bus slot an AGA machine gives it (one in two colour clocks) without touching DMA timing; Turbo CHIPRAM bypasses the chip bus altogether.  The emulated chipset can be either A500 or A1000 OCS, ECS or AGA.",
 #ifdef ACTIONREPLAY_BROKEN
     "                                Minimig can make use of up to 2 megabytes of Chip RAM, up to 1.5 megabytes of Slow RAM (A500 Trapdoor RAM), and up to 28 megabytes of true Fast RAM.",
 #else
@@ -1315,7 +1321,7 @@ void HandleUI(void)
         // says what the machine is -- but it is not a choice, so it is not
         // selectable and the cursor never lands on it.  On every other core
         // core_caps is 0 and this is the menu exactly as it was.
-        menumask = CORE_CPU_FIXED_040() ? 0x3e : 0x3f;
+        menumask = CORE_CPU_FIXED_040() ? 0x7e : 0x7f;
         if (CORE_CPU_FIXED_040() && menusub == 0)
             menusub = 1;
         OsdSetTitle("Chipset", OSD_ARROW_LEFT | OSD_ARROW_RIGHT);
@@ -1381,16 +1387,18 @@ void HandleUI(void)
         strcpy(s, "     CD32Pad : ");
         strcat(s, config_cd32pad_msg[(config.autofire >> 2) & 1]);
         OsdWrite(5, s, menusub == 4, 0);
-        OsdWrite(6, "", 0, 0);
+        strcpy(s, "  Chip slots : ");
+        strcat(s, config_chipslots_msg[(config.cpu & CONFIG_CPU_FASTCHIP) ? 1 : 0]);
+        OsdWrite(6, s, menusub == 5, 0);
 
-        OsdWrite(7, STD_BACK, menusub == 5, 0);
+        OsdWrite(7, STD_BACK, menusub == 6, 0);
 
         menustate = MENU_SETTINGS_CHIPSET2;
         break;
 
     case MENU_SETTINGS_CHIPSET2:
 
-        if (down && menusub < 5)
+        if (down && menusub < 6)
         {
             menusub++;
             menustate = MENU_SETTINGS_CHIPSET1;
@@ -1420,7 +1428,7 @@ void HandleUI(void)
                 int _config_turbo = (config.cpu >> 2) & 0x3;
                 menustate = MENU_SETTINGS_CHIPSET1;
                 _config_turbo += 1;
-                config.cpu = (config.cpu & 0x3) | ((_config_turbo & 0x3) << 2);
+                config.cpu = (config.cpu & ~0x0c) | ((_config_turbo & 0x3) << 2);  // keeps Chip slots
                 ConfigCPU(config.cpu);
             }
             else if (menusub == 2)
@@ -1458,6 +1466,12 @@ void HandleUI(void)
                 ConfigAutofire(config.autofire);
             }
             else if (menusub == 5)
+            {
+                config.cpu ^= CONFIG_CPU_FASTCHIP;
+                menustate = MENU_SETTINGS_CHIPSET1;
+                ConfigCPU(config.cpu);
+            }
+            else if (menusub == 6)
             {
                 menustate = MENU_MAIN2_1;
                 menusub = 2;

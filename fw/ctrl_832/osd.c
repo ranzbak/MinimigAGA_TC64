@@ -887,7 +887,7 @@ void ConfigCPU(unsigned char cpu)
     EnableOsd();
     //SPI(OSDCMDCFGCPU | (cpu & 0x03));					//CPU
     SPI(OSD_CMD_CPU);
-    SPI(cpu & 0x0f);
+    SPI(cpu & 0x1f);    // [1:0] CPU, [3:2] Turbo, [4] Chip slots Fast (userio_osd.v)
     DisableOsd();
 }
 

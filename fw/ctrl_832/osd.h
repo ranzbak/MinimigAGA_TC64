@@ -89,6 +89,9 @@
 #define KEY_KP0 0x0F
 
 #define CONFIG_TURBO 1
+// config.cpu bit 4: Chip slots Fast (cpu_config[4] in userio_osd.v).  Old
+// configs have it clear, which is Standard -- the behaviour they were saved with.
+#define CONFIG_CPU_FASTCHIP 0x10
 #define CONFIG_NTSC 2
 #define CONFIG_A1000 4
 #define CONFIG_ECS 8
