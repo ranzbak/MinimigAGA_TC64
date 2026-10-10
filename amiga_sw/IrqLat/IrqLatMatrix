@@ -1,0 +1,26 @@
+.key LOG/A,LABEL
+.bra {
+.ket }
+; IrqLatMatrix -- every IrqLat load for one image and one Turbo chip setting,
+; appended to LOG.  CD to the directory with IrqLat first.  About 2 minutes.
+;   Execute IrqLatMatrix SD0:irqlat.log "040 r04 turbo off"
+; Do not touch the mouse while it runs (the left button ends a run early).
+FailAt 21
+Echo >>{LOG} "=== {LABEL}"
+IrqLat >>{LOG} NONE
+IrqLat >>{LOG} CHIPWR
+IrqLat >>{LOG} CHIPRD
+IrqLat >>{LOG} CHIPCPY
+IrqLat >>{LOG} FASTWR
+IrqLat >>{LOG} BLIT
+IrqLat >>{LOG} BLIT NASTY
+IrqLat >>{LOG} FPU
+IrqLat >>{LOG} NONE BPL
+IrqLat >>{LOG} CHIPWR BPL
+IrqLat >>{LOG} CHIPCPY BPL
+IrqLat >>{LOG} BLIT BPL
+IrqLat >>{LOG} CHIPWR BPL FMODE=0
+IrqLat >>{LOG} NONE OS
+IrqLat >>{LOG} CHIPWR OS
+IrqLat >>{LOG} CHIPWR BPL OS
+Echo "IrqLatMatrix: done, results appended to {LOG}"
