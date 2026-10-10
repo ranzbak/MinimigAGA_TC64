@@ -27,7 +27,7 @@ vasmm68k_mot $F -DVAMOS=1 -DFAULT=1 -o "$TMP/ChipCohF" ChipCoh.asm || { echo "te
 
 run() {   # run <name> <cpu> <binary> <args...>
   local name=$1 cpu=$2 bin=$3; shift 3
-  (cd "$TMP" && timeout 300 python3.10 -c "from amitools.tools.vamos import main; import sys; sys.argv=['vamos','-C',sys.argv[1],sys.argv[2]]+sys.argv[3:]; sys.exit(main())" "$cpu" "$bin" "$@" >"$name.out" 2>&1; echo $? >"$name.rc")
+  (cd "$TMP" && timeout 300 python3.10 -c "from amitools.tools.vamos import main; import sys; sys.argv=['vamos','--vols-base-dir','vols','-C',sys.argv[1],sys.argv[2]]+sys.argv[3:]; sys.exit(main())" "$cpu" "$bin" "$@" >"$name.out" 2>&1; echo $? >"$name.rc")
 }
 run all 68040 ChipCoh
 run few 68040 ChipCoh ROUNDS=3 ONLY=DCOFF

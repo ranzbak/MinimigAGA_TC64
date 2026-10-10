@@ -25,7 +25,7 @@ vasmm68k_mot -quiet -m68040 -Fhunkexe -kick1hunks -nosym -DVAMOS=1 -o "$TMP/IrqL
 
 run() {   # run <name> <args...>: output in $TMP/<name>.out, rc in $TMP/<name>.rc
   local name=$1; shift
-  (cd "$TMP" && timeout 120 python3.10 -c "from amitools.tools.vamos import main; import sys; sys.argv=['vamos','-C','68040','IrqLat']+sys.argv[1:]; sys.exit(main())" "$@" >"$name.out" 2>&1; echo $? >"$name.rc")
+  (cd "$TMP" && timeout 120 python3.10 -c "from amitools.tools.vamos import main; import sys; sys.argv=['vamos','--vols-base-dir','vols','-C','68040','IrqLat']+sys.argv[1:]; sys.exit(main())" "$@" >"$name.out" 2>&1; echo $? >"$name.rc")
 }
 run direct
 run os OS

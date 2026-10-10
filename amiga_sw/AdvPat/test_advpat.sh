@@ -23,7 +23,7 @@ trap 'rm -rf "$TMP"' EXIT
 vasmm68k_mot -quiet -m68040 -Fhunkexe -kick1hunks -nosym -DVAMOS=1 -o "$TMP/AdvPat" AdvPat.asm || { echo "test_advpat: FAIL (assembly)"; exit 1; }
 run() {   # run <name> <args...>
   local name=$1; shift
-  (cd "$TMP" && timeout 300 python3.10 -c "from amitools.tools.vamos import main; import sys; sys.argv=['vamos','-C','68040','AdvPat']+sys.argv[1:]; sys.exit(main())" "$@" >"$name.out" 2>&1; echo $? >"$name.rc")
+  (cd "$TMP" && timeout 300 python3.10 -c "from amitools.tools.vamos import main; import sys; sys.argv=['vamos','--vols-base-dir','vols','-C','68040','AdvPat']+sys.argv[1:]; sys.exit(main())" "$@" >"$name.out" 2>&1; echo $? >"$name.rc")
 }
 run list LIST
 for p in $(seq 0 23); do run dump$p DUMP=$p; done
