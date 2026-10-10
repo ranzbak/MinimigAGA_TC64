@@ -216,3 +216,24 @@ order suggested: 8, then 1 and 4, then 5 and 6.
   address error during an RTE, which no normal program does. findings/ap040-pipelined/tests/cputest/board/README.md.
 - Only fpga/openaars (QMTech XC7A100T) is built; the MiST, Chameleon and DE
   ports may not build from this tree.
+
+## Could have (not urgent)
+
+### 8 MB chip RAM, emulator-style (study 2026-10-11)
+
+- WinUAE offers 4/8 MB chip: chip RAM continues from $000000 to $3FFFFF /
+  $7FFFFF (over the bottom of the Zorro II space), every DMA pointer keeps its
+  full high word and one mask (chip size - 1) applies to all DMA; ECS/AGA
+  only.  Costs there: Z2 fast RAM <= 256 KB, no Z2 RTG board, and its own
+  boot ROM patches exec's chip MemHeader (stock Kickstart never adds chip
+  above 2 MB).  No real Amiga had it (Alice / Super Agnus address 2 MB; the
+  A4000's 8 MB jumper was for AAA); no released software found that needs it.
+- Here: the CPU path already maps $200000-$7FFFFF to SDRAM bank 1; needed:
+  Agnus DMA pointers 21 -> 23 bits (all six engines, masked unless enabled),
+  gary decode (and drop sel_bank_1's $FFFF reads), bank mapper / SRAM bridge,
+  sdram_ctrl (chip slot in bank 1, bank 1 reserved for slot 1, the 040 snoop
+  address split from the SDRAM address), autoconfig without the Z2 board, an
+  OSD option (AGA only, off by default), and a small Amiga tool that adds the
+  memory (AddMemList or extending the chip MemHeader).  About a week incl.
+  benches; do it only after the "every free slot" chip access is stable on
+  the board, and only if a program needs it.
