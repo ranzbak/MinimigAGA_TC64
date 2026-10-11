@@ -137,7 +137,7 @@ Release 0.1 ships with these open (see doc/release-0.1.md).
   stage_r02irq stable.  Use a relative FUZZ_DIR: the bench cuts paths at
   128 chars.
 
-### Serial port runs at about 112 baud (2026-10-01) -- GONE on stage_dly12 (2026-10-10); 115200 overruns = OS limit
+### Serial port runs at about 112 baud (2026-10-01) -- CLOSED 2026-10-11: 112 baud gone; 57600 is the maximum, as on a real Amiga
 
 - Was: serial.device sent at ~112 baud (a spurious read of $DFF032 rewrote
   SERPER, findings/serial/README.md).  On stage_dly12 (core main 0a07062)
@@ -153,6 +153,13 @@ Release 0.1 ships with these open (see doc/release-0.1.md).
   faster serial driver, for 115200.
 - Earlier "ZMODEM fails at 57600" was NComm's state; NComm's terminal
   also shows 8-bit characters with bit 7 cleared (display only).
+- 2026-10-11 (stage_fastslot): with Chip slots Fast and Turbo chip off,
+  SerRx at 115200 is PERFECT; a full ADF over ZMODEM (NComm saving to the
+  hard disk) at 115200 still needs 149 resends (84 % extra; NComm priority
+  10 makes no difference, Turbo chip neither), at 57600 one resend in 901 KB.
+  Paul: 57600 is the maximum, documented in README.md like on a real Amiga.
+  A buffered UART (Paula FIFO option, or a 16C550 clockport card) is under
+  "Could have".
 
 ### DDR3-only fast RAM shows 10 MB (2026-10-02)
 
@@ -218,6 +225,16 @@ order suggested: 8, then 1 and 4, then 5 and 6.
   ports may not build from this tree.
 
 ## Could have (not urgent)
+
+### Serial at 115200 under load (2026-10-11)
+
+- Paula's one-byte buffer loses bytes at 115200 when an interrupt is held
+  off for more than 87 us (disk writes).  Real Amigas used buffered serial
+  hardware.  Options: a 16-byte receive FIFO in paula_uart.v behind an OSD
+  option (transparent to serial.device, not authentic), or a 16C550/16C650
+  UART at the clockport address (Silversurfer-like, its own Aminet driver,
+  authentic; needs a free pin pair or sharing the 832 debug UART).  Tests:
+  amiga_sw/SerRx + sertx.py, a ZMODEM ADF transfer to disk.
 
 ### 8 MB chip RAM, emulator-style (study 2026-10-11)
 

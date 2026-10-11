@@ -51,6 +51,14 @@ Experimental and still under test. Seen on the board so far:
   Elite II ran all night, and AIBB's Beachball test (68020 code with the FPU)
   completes.
 - **Open problem:** the AIBB FPU FLOPS test crashes.
+- **Serial port: 57600 baud is the practical maximum**, as on a real Amiga.
+  Paula has a one-byte receive buffer, so at 115200 the CPU must read every
+  byte within 87 us; under load (disk writes, heavy chipset DMA) it sometimes
+  cannot, and bytes are lost (ZMODEM recovers, but slowly). 57600 is clean:
+  a full ADF over ZMODEM with one retry. Real Amigas had the same limit and
+  used buffered serial hardware (A2232, GVP IO Extender, Silversurfer) for
+  115200. Chip slots Fast (OSD, Chipset page) makes short bursts at 115200
+  clean, but not a transfer to disk.
 
 The 68040 has no hardware for some FPU instructions (sine, logarithms and so
 on). As on a real 68040, those need an FPU emulation library such as
