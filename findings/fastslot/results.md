@@ -133,3 +133,8 @@ it is not on the chip bus at all.
   bridge/sdram_ctrl; mut_early shows an end one round early is caught.
 - sim/chip32's master is a transcription of S_state (deferred chip32 review item M2 still holds); sim/ddr3_cpu runs the
   real wrapper but its chipset always acks.
+
+## Board (build/stage_fastslot, 2026-10-11, Paul)
+
+xSysInfo chip RAM, Turbo chip off: Chip slots Standard 3.1 MB/s, Fast 4.4 MB/s (1.42x; the benches
+predicted 1.40-1.51x).  Turbo chip on stays at 16.9 MB/s.
