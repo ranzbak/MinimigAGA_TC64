@@ -775,3 +775,25 @@ Decisions for Paul:
   is "boot from HDF/ADF, mount the CD" enough?
 - D7 Name strings: INQUIRY vendor/product "MINIMIG " / "CD-ROM ISO", IDENTIFY
   model with the ISO name (as hardfiles show their file name)?
+
+## 12. Paul's decisions (2026-10-12)
+
+- D1: the CD-ROM goes on the **secondary IDE port** (port 2, master) by
+  default.  Consequence: on the Amiga, AtapiMagic (3.1.4/3.2) or IDEfix97
+  (3.1) is required, and the CD is not bootable (accepted, D6).  Phase 1
+  bring-up may still use primary slave for the first light, but the shipped
+  default and the board acceptance target the secondary port; phase 2.1
+  (secondary port + AtapiMagic) moves into phase 1.
+- D2: keep ONE Gayle if it is sufficient; a second Gayle instance is
+  acceptable if the FPGA budget allows (it does: ~+190 LUTs, +2 BRAM36).
+  With the HDF on port 1 and the CD on port 2 (D1) risk R1 is the normal
+  case, not a corner case: phase 1 must include the interleave test (HDF
+  copy while reading the CD) and switch to the second instance if it fails.
+- D3: one CD drive.
+- D4: no separate "Port: on/off" line; port 2 is on exactly when one of its
+  slots is enabled (the plan's stored form).  Proposed to Paul, not yet
+  confirmed.
+- D5: OSD eject is **refused** while the Amiga has locked the tray (PREVENT
+  MEDIUM REMOVAL); the OSD shows the lock.
+- D6: no CD boot; drop phase 2.3 (custom ROM with resident CDFileSystem).
+- D7: IDENTIFY model string and INQUIRY product carry the ISO name.
