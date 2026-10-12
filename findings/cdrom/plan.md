@@ -1,6 +1,7 @@
 # CD-ROM drive from an ISO on the SD card -- implementation plan
 
-Status: plan complete, decisions closed (2026-10-12), nothing implemented.
+Status: decisions closed (2026-10-12); phase 0 implemented on branch `cdrom`
+(section 12), phases 1-4 open.
 Research by a Fable agent against superproject 3987715 (5.0-040-pipelined);
 reconciled with Paul's decisions D1-D7 (section 11) and a second read of
 rtl/minimig/gayle.v the same day, which changed the Gayle design from one
@@ -740,3 +741,128 @@ Risks:
 - Former R1 (interleaving on shared registers) and R3 ($DA3018 aliasing)
   are removed by R-A; bench cases 1.1 (g)/(h) and acceptance 1.8 guard
   them.
+
+## 12. Implementation notes
+
+### 12.1 Phase 0 (2026-10-12)
+
+What exists: `fw/ctrl_832/atapi.c/.h` (command layer, pure C),
+`fw/ctrl_832/cdrom.c/.h` (glue skeleton, linked, called by nothing),
+`fw/ctrl_832/test/atapi_test.c` + `Makefile`.  `make -C fw/ctrl_832/test`
+builds with host gcc (`-DHOSTTEST`, ASan/UBSan) and runs 18 cases; the
+ISO-backed case reads `~/work/amiga/AmigaOS3.9.iso` (override `ISO=`) and is
+skipped without it.  RED first: the test did not compile without atapi.h,
+then did not link with only the header.  Eleven hand mutants of atapi.c
+(MSF without the pregap, ATA string byte order, UA not one-shot, lock
+ignored by START STOP / OSD eject, reset keeping the lock, overflowing range
+check, no truncation, GESN not exempt / not one-shot, MODE SENSE length) all
+fail it.
+
+Size: 832l drops unreferenced sections, so the phase 0 image is
+byte-identical to 8208e2b (built both with one frozen version.h).  The
+< 20 KB check was done on a measurement-only build (not committed) that
+referenced the CD entry points from main.c: text +4,150, rodata +56, data
+0, BSS +6,540 (atapi_buf 2 KB, cdromTYPE 4.4 KB) -- 10.7 KB in all
+(atapi.o 3,645 text, cdrom.o 494).
+Phase 1's map shows the real figure once hdd.c calls CD_HandleCommand.
+
+### 12.2 Rulings
+
+- Ruling: the glue's global is `cdrom`, not `cd` -- main.c:245 already
+  defines `struct cdimage cd` (bincue leftover) and 832l linked two `_cd`
+  symbols without a word -- cost if wrong: none; section 8's
+  `HardFileSeek(&cd, ...)` reads `HardFileSeek(&cdrom.hdf, ...)`.
+- Ruling: `CD_Insert(name, long_name, dir)` instead of `CD_Insert(name, dir)`
+  -- the 8-character short name opens the file, the long name feeds
+  IDENTIFY/INQUIRY (D7) and FileOpen does not fill `long_name` -- cost if
+  wrong: one argument.
+- Ruling: the lock policy lives in atapi.c: `atapi_eject()` and
+  `atapi_insert()` return `ATAPI_LOCKED` while locked; `CD_Eject`/`CD_Insert`
+  only wrap them (so D5 is host-tested) -- cost if wrong: none.
+- Ruling: `atapi_identify(uint16_t id[256], unit)` fills word VALUES with
+  ATA strings first character in bits 15:8, as IdentifyDevice() does; the
+  glue sends each word low byte first like ATA_IdentifyDevice().  SCSI
+  responses are byte streams sent in buffer order, as hdd.c sends
+  sector_buffer and as the direct SD path delivers file bytes (MiSTer's
+  pkt_send uses one lane order for both too) -- cost if wrong: swapped
+  strings or data, visible at the first INQUIRY on the board.
+- Ruling: `atapi_packet`'s `limit` is accepted but unused; DRQ block
+  splitting is the glue's job -- cost if wrong: none.
+- Ruling: `atapi_result.ejected` added -- an Amiga-side START STOP eject must
+  tell the glue to drop the file -- cost if wrong: none.
+- Ruling: check order = exempt commands, then a pending UNIT ATTENTION, then
+  the no-disc rule, then the opcode.  So after a reset with no disc: 06/29/00
+  once, then 02/3A/00 (SPC reports UA first); an unknown opcode with no disc
+  gets 02/3A/00 (as MiSTer), with a disc 05/20/00 -- cost if wrong: a driver
+  that probes an empty drive sees one extra CHECK.
+- Ruling: sense = the last command's (GOOD clears it).  REQUEST SENSE with
+  nothing stored reports a pending UA (and clears it), else 02/3A/00 with no
+  disc (MiSTer load_state 3), else NO SENSE -- cost if wrong: a driver that
+  polls REQUEST SENSE on an empty drive sees NOT READY, which is the truth.
+- Ruling: an eject leaves a pending UA in place (06/28/00 then 02/3A/00) --
+  cost if wrong: one extra CHECK after a very fast insert+eject.
+- Ruling: READ TOC keeps the full TOC data length when the allocation
+  length cuts the transfer (MMC).  MiSTer instead shortens the TOC and the
+  length field, for OAKCDROM.SYS (DOS) -- cost if wrong: an Amiga driver
+  with the same bug rejects the TOC; the CDB log (1.6) would show a short
+  allocation length.
+- Ruling: READ TOC format from CDB byte 9 bits 7:6 when byte 2 bits 3:0 are
+  0 (SFF-8020 drivers); starting track 0/1 = both entries, 0xAA = lead-out
+  only, anything else 05/24/00 -- cost if wrong: none for format 0.
+- Ruling: READ TRACK INFORMATION returns 28 bytes (length 26) with the track
+  size at bytes 24-27, not the 24 bytes of 7.2 (MiSTer's 24-byte answer
+  carries length 20 and a mangled start address) -- cost if wrong: 4 bytes
+  more for a driver that asks for more than 24.
+- Ruling: GET EVENT STATUS: non-polled requests 05/24/00; a request without
+  the media class gets the 4-byte NEA header; the event is consumed only
+  when the descriptor was transferred (allocation length > 4) -- cost if
+  wrong: none.  Note: MiSTer does not implement 0x4A at all (it answers
+  05/20/00), so "debugged against Amiga drivers" does not cover it.
+- Ruling: GET CONFIGURATION with a starting feature other than 0 returns
+  the 8-byte header only (MMC), not MiSTer's 05/24/00; current profile
+  0x0008 even with no disc, as 7.2 says (MMC would say 0) -- cost if wrong:
+  none seen.
+- Ruling: INQUIRY allocation length = CDB byte 4 only (SPC-2, MiSTer); EVPD
+  -> 05/24/00.  Name bytes outside 0x20..0x7E become '_' (INQUIRY and
+  IDENTIFY); a disc with an empty name reports "CD-ROM" -- cost if wrong:
+  none.
+- Ruling: MODE SENSE ignores page control (current values for every PC),
+  medium type 0 (as MiSTer), no block descriptors; page 2A reports tray,
+  eject, lock and the lock state, 706 KB/s (4x), 64 KB buffer; MODE
+  SELECT(6) (0x15) is not in 7.2 and gets 05/20/00 -- cost if wrong: a
+  driver that saves pages sees 05/20/00 on 0x15.
+- Ruling: READ SUB-CHANNEL: SubQ=0 header only; format 1 the position at
+  the start of track 1; formats 2/3 20 bytes with the valid bits clear;
+  others 05/24/00 -- cost if wrong: none until phase 3.
+- Ruling: READ(10)/(12) with count 0 is GOOD without a range check; the
+  range check cannot overflow (`count > sectors - lba`) -- cost if wrong:
+  none.
+- Ruling: capacity = file size / 2048 (a partial last sector is ignored).
+  AmigaOS3.9.iso's PVD says 245,383 blocks, the file has 245,535 sectors;
+  READ CAPACITY / TOC report the file -- cost if wrong: none, the extra
+  sectors are padding.
+- Ruling: `CD_Insert` ejects first; if the new file then fails to open the
+  drive is left empty (REMOVED event) and `CD_NOFILE` is returned -- cost if
+  wrong: the OSD shows an empty drive instead of the old disc.
+- Ruling: `CD_HandleCommand` is an abort stub (error 0x04, END|IRQ|ERR)
+  until 1.4 -- not called in phase 0.
+- Ruling: hdd.h got an include guard (cdrom.h includes it; vbcc warned
+  "redeclaration of typedef hdfTYPE") -- no code change.
+- Ruling: the host test builds with `-Wno-unused-parameter`; vbcc warns
+  "statement has no effect" on `(void)x;`, so the firmware sources do not
+  use that idiom -- cost if wrong: none.
+
+### 12.3 Open for phase 1
+
+- `hardfileTYPE.long_name` is 16 bytes: the power-on disc (CD_Open from the
+  config) can give IDENTIFY only 16 characters of its name, an OSD insert
+  the full long name (D7 says 40).  Cosmetic; accept or keep the long name
+  elsewhere.
+- 7.1 sets the error register to `(sense key << 4) | 0x04` (ABRT) on every
+  CHECK; MiSTer sets `sense key << 4` only (plus MC for a UA).  Decide in
+  1.4; `atapi_result` carries the sense.
+- 832l accepts duplicate global symbols silently -- check every new global
+  in phase 1 against `grep -n " _<name>$" 832OSDAD.map`.
+- MiSTer handles neither 0x4A (GESN) nor 0x1A (MODE SENSE(6); its "case
+  0x03 // mode sense" is REQUEST SENSE), so those answers are unproven on
+  Amiga drivers; the CDB log (1.6) should be read with that in mind.
