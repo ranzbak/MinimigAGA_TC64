@@ -1,100 +1,87 @@
 # CD-ROM drive from an ISO on the SD card -- implementation plan
 
-Status: plan only, nothing implemented (2026-10-12).  Written against commit
-3987715 (superproject 5.0-040-pipelined), the backlog sketch in
-doc/backlog.md "CD-ROM drive from an ISO on the SD card", the local RTL and
-firmware, MiSTer's Main_MiSTer `ide.cpp`/`ide_cdrom.cpp` and Minimig-AGA_MiSTer
-`rtl/ide.v`, WinUAE `ide.cpp`/`gayle.cpp`/`blkdev.cpp`, and the OS 3.1.4.1 /
-3.2.2 / 3.2.3 release notes and ROM images under ~/work/amiga.  Every claim
-below that I could check is marked with where; anything I could not check is
-marked UNVERIFIED.
+Status: plan complete, decisions closed (2026-10-12), nothing implemented.
+Research by a Fable agent against superproject 3987715 (5.0-040-pipelined);
+reconciled with Paul's decisions D1-D7 (section 11) and a second read of
+rtl/minimig/gayle.v the same day, which changed the Gayle design from one
+shared register file to one instance per IDE port (section 7.3, ruling R-A).
 
-Reference copies used (session scratch, will vanish; re-clone if needed):
+Sources: the local RTL and firmware; MiSTer's Main_MiSTer `ide.cpp` /
+`ide_cdrom.cpp` and Minimig-AGA_MiSTer `rtl/ide.v`; WinUAE `ide.cpp` /
+`gayle.cpp` / `blkdev.cpp`; the OS 3.1.4.1 / 3.2.2 / 3.2.3 release notes and
+ROM images under ~/work/amiga.  Claims I could check say where; anything not
+checked is marked UNVERIFIED.
+
+Reference copies (re-clone when needed):
 `git clone --depth 1 https://github.com/MiSTer-devel/Main_MiSTer`
 (ide.cpp, ide_cdrom.cpp, ide.h), `https://github.com/MiSTer-devel/Minimig-AGA_MiSTer`
 (rtl/gayle.v, rtl/ide.v, README.md), `https://github.com/tonioni/WinUAE`
 (ide.cpp, gayle.cpp, blkdev.cpp).
 
-## 0. Answers in one screen
+## 0. Summary
 
-1. **Menu**: put the CD-ROM in the existing Harddisks menu as a slot type
-   ("CD-ROM (ISO)" is one more value of a slot's type, next to Hardfile and
-   SD card), with the two secondary-channel slots on a second Harddisks page,
-   plus one quick "CD-ROM: <name>" line on the main page for insert/eject
-   without a reset.  Not a separate CD-ROM menu: the slot type is what decides
-   the IDE position Paul wants to choose, and the config already has room for
-   exactly four slots.  Screens in section 5.
-2. **Bus**: a real "own IDE bus" that stock Amiga software sees does not exist
-   on an A1200-class machine.  What exists, and what the RTL half-implements
-   already, is the Gayle **IDE splitter/doubler** scheme: the second chip
-   select ($DA1xxx/$DA3xxx) is a second IDE port with its own master/slave.
-   MiSTer and WinUAE emulate exactly this.  Its catch: the stock scsi.device
-   (3.1, 3.1.4 and 3.2) only drives the first port; the second port needs
-   AtapiMagic (Hyperion, free, 3.1.4/3.2) or IDEfix97 (shareware) on the Amiga
-   side, and nothing can boot from it.  Recommendation: implement the CD as a
-   type any of the four slots can take (primary/secondary x master/slave), use
-   **primary slave** for the first bring-up (works with a stock 3.2 ROM and no
-   Amiga software), and let Paul set **secondary master** once AtapiMagic is
-   installed.  A4000 IDE or a Zorro ATAPI board: rejected (section 2).
-3. **Boot from CD**: not with any stock A1200 ROM.  KS 3.1 (40.68) has no
-   ATAPI in scsi.device at all; KS 3.1.4 and 3.2 have ATAPI in scsi.device
-   (3.2 verified by the "NuATAPIismajik" string in A1200.47.111/47.115) but no
-   CDFileSystem in ROM (verified: no such string in the 3.2 ROMs), so the boot
-   strap has nothing to mount the CD with.  Booting becomes possible only with
-   a custom Kickstart that includes CDFileSystem 48.52+ (OS 3.2.2 added a ROM
-   tag for it, "your mileage may vary"), which Minimig can load because it
-   takes any 512 KB / 1 MB ROM image.  CD32 boot is a separate, later project
-   (Akiko).  Details in section 3.
-4. **Amiga software**: table in section 4.  Short form: KS 3.2 ROM + the
-   Install3.2 disk's L:CDFileSystem + Storage/DOSDrivers/CD0 (unit number set
-   to the slot) and nothing else, if the CD is on the primary channel; add
-   AtapiMagic for the secondary channel; KS 3.1 needs IDEfix97 (atapi.device
-   + CacheCDFS) or AmiCDFS/AsimCDFS on top of a third-party atapi.device.
-5. **Fit**: yes.  Gayle today is ~190 LUTs / 59 FFs / 2 BRAM36 by a yosys
-   synth_xilinx estimate (section 6); the ATAPI additions are ~60-120 LUTs and
-   no BRAM in the single-register-file design, ~200 LUTs + 2 BRAM if the
-   secondary channel later gets its own register file and FIFO.  Design is at
-   84.25 % LUTs, 60 % BRAM; margins hold.  Timing: Gayle runs on clk_28 with
-   clk7_en, nothing new is on the tight clk_114/clk_148 paths.  Firmware:
-   the 832 runs from SDRAM, not BRAM; the image is 82 KB code+data, BSS ends at
-   0x1d72c, and the next fixed user is the audio buffer at 0x70000, so about
-   330 KB headroom; ATAPI + OSD code is 8-15 KB.  No budget problem.
+- **What the user gets**: an emulated ATAPI CD-ROM drive.  The OSD picks an
+  ISO file from the SD card into it; discs can be swapped without a reset.
+  One CD drive (D3).
+- **Where it sits**: by default on the **secondary IDE port, master** (D1).
+  The CD is a slot type, so it can also be put on the primary port (master or
+  slave) -- useful with a stock 3.1.4/3.2 ROM and no extra Amiga software.
+- **Amiga side**: secondary port = AtapiMagic (3.1.4/3.2, free) or IDEfix97
+  (3.1, shareware) + a CD filesystem; primary port with a 3.1.4/3.2 ROM =
+  nothing extra but L:CDFileSystem and a CD0 mount file.  Table in section 4.
+- **Booting from the CD**: no, with any setup that uses stock ROMs; accepted
+  (D6).  Section 3.
+- **Menu**: the CD is one more type in the existing Harddisks menu; port 1 on
+  page 1, port 2 on a new page 2; a "CD-ROM:" line on the main page for
+  insert/eject.  Port 2 is on whenever one of its slots is configured (D4).
+  Eject is refused while the Amiga has locked the drive (D5).  Section 5.
+- **RTL**: Gayle becomes two port instances (one register file, status
+  logic and 8 KB FIFO each) behind the shared Gayle registers, plus an ATAPI
+  packet mode (programmable transfer length instead of fixed 512-byte
+  blocks).  Section 7.3.
+- **Fit**: about +330-430 LUTs and +2 BRAM36 against ~10,000 free LUTs and 54
+  free BRAM36; all of it on the 28 MHz / clk7_en domain.  Firmware +15-20 KB
+  of ~330 KB headroom.  Section 6.
 
 ## 1. What exists today (verified)
 
-### 1.1 Gayle RTL -- rtl/minimig/gayle.v, gayle_fifo.v
+### 1.1 Gayle RTL -- rtl/minimig/gayle.v (418 lines), gayle_fifo.v (74)
 
-- One task-file register file `tfr[7:0]` (8 x 8 bit) and ONE 4096-word FIFO
-  (8 KB, `gayle_fifo.v`) shared by both channels and both devices.  The
-  firmware writes/reads the tfr via SPI (`hdd_addr`, `hdd_wr`), the host via
-  $DA0xxx/$DA2xxx (`address_in[4:2]` = register).
-- Secondary channel = address bit 12 (`sel_tfr` accepts `address_in[12]` only
-  when `|hdd1_ena`, gayle.v:180).  `dev <= {address_in[12], data_in[12]}` on a
-  drive/head write (gayle.v:260).  Status reads return 0x00 for a device whose
-  enable bit is clear (gayle.v:400), otherwise the single shared status.  This
-  is the IDE-splitter mapping, identical to MiSTer (`port_num = addr[12]`,
-  "0xda3018 Control (not used because of 4xIDE)") and to WinUAE
-  (`IDE_SECONDARY` in `get_gayle_ide_reg`, `ide_splitter` set when drives 2/3
-  exist).
-- The firmware receives `dev[1]` (channel) in bit 8 of every tfr read
-  (`hdd_data_in = {7'h0, dev[1], tfr_out}`, gayle.v:243) -- and hdd.c
-  discards that byte (`SPI(0); tfr[i] = SPI(0);`, hdd.c:589-590).  Bits 15:9
-  of that word are free: the natural place for new flags.
-- Data phases are hard-wired to 512-byte blocks: `fifo_full` means >= 512
-  bytes (gayle_fifo.v:66), `last_in/last_out` fire every 256 words, the
-  `sector_count` down-counter clears `busy` when it hits 1 (gayle.v:299),
-  `drq = fifo_full & pio_in | ~fifo_full & pio_out & sector_count != 0`
-  (gayle.v:358), and the firmware only learns of host-written data when the
-  FIFO is full (`hdd_dat_req = fifo_full & pio_out`).  **None of this works for
-  ATAPI**: the 12-byte command packet (6 words out), REQUEST SENSE (18 bytes
-  in), INQUIRY (36), READ CAPACITY (8), READ TOC (12-20) never fill 512
-  bytes.  RTL changes are required (section 7.3).
-- No device control register (SRST/nIEN) -- $DA3018 would decode as the
-  secondary channel's drive/head register when hdd1_ena is set.  Same in
-  MiSTer; splitter-aware drivers do not use it.  Noted as a quirk.
-- `tfr` is not cleared on reset; the firmware's `ATA_Diagnostic` writes
-  error=1 and zeros, not even the ATA signature (hdd.c:314).  Works with
-  scsi.device 3.1 today.
+- One task-file register file `tfr[7:0]` (8 x 8 bit), one status machine
+  (`busy`, `pio_in`, `pio_out`, `error`, `sector_count`) and ONE 4096-word
+  FIFO (8 KB, `gayle_fifo.v`), shared by both ports and all four devices.
+  The firmware writes/reads the tfr via SPI (`hdd_addr`, `hdd_wr`), the host
+  via $DA0xxx/$DA2xxx (`address_in[4:2]` = register).
+- Second port = address bit 12: `sel_tfr` accepts `address_in[12]` only when
+  `|hdd1_ena` (gayle.v:180).  A drive/head write sets
+  `dev <= {address_in[12], data_in[12]}` (gayle.v:260).  Status reads return
+  0x00 for a device whose enable bit is clear (gayle.v:400).  This is the
+  IDE-splitter mapping, as in MiSTer (`port_num = addr[12]`) and WinUAE
+  (`IDE_SECONDARY`, `ide_splitter`).
+- The A1200's own device-control register is at $DA3018 (comment
+  gayle.v:73), i.e. address bit 12 set, register 6.  Today it is not decoded
+  (hdd1_ena is never set).  **With port 2 enabled, $DA3018 is port 2's
+  drive/head register**: in the shared design a write there overwrites the
+  shared `tfr[6]` (port 1's LBA bits 27:24, DEV and LBA-mode bits) and flips
+  `dev` to port 2.  On a real splitter each port has its own registers, so
+  the same write only reaches port 2's drive.  -> ruling R-A, section 7.3.
+- `hdd_cmd_req = bsy` (gayle.v:368, `bsy = busy & ~drq`) is both "new
+  command" and, inside the firmware's ATA read loop, "FIFO drained, send the
+  next block" (hdd.c:402 `while (!(GetFPGAStatus() & CMD_IDECMD))`).  A
+  pending command on the other port would satisfy that wait -> another
+  reason for per-port request bits.
+- The firmware receives `dev[1]` in bit 8 of every tfr read
+  (`hdd_data_in = {7'h0, dev[1], tfr_out}`, gayle.v:243) and discards that
+  byte (`SPI(0); tfr[i] = SPI(0);`, hdd.c:589-590).  Bits 15:9 are free.
+- Data phases are hard-wired to 512-byte blocks: `fifo_full` = >= 512 bytes
+  (gayle_fifo.v:66), `last_in/last_out` every 256 words, `sector_count`
+  clears `busy` at 1 (gayle.v:299), `drq = fifo_full & pio_in | ~fifo_full &
+  pio_out & sector_count != 0` (gayle.v:358), `hdd_dat_req = fifo_full &
+  pio_out`.  **ATAPI cannot work on this**: a 12-byte command packet (6
+  words out), REQUEST SENSE (18 bytes in), INQUIRY (36), READ CAPACITY (8),
+  READ TOC (12-20) never fill 512 bytes.
+- `tfr` is not cleared on reset; `ATA_Diagnostic` writes error=1 and zeros,
+  not the ATA signature (hdd.c:314).  Works with scsi.device 3.1 today.
 - `nrdy = pio_in & sel_fifo & fifo_empty` (gayle.v:397) stalls the 68k on an
   empty FIFO -- usable for streaming.
 - IRQ: `intreq` on the rising edge of drq after a status write with bit 4
@@ -103,205 +90,158 @@ Reference copies used (session scratch, will vanish; re-clone if needed):
 
 ### 1.2 Firmware -- fw/ctrl_832/hdd.c, paula_floppy.v SPI protocol
 
-- `HandleHDD` (hdd.c:567) runs on `CMD_IDECMD` (bit 2 of status byte 0,
-  `paula_floppy.v:394`), reads 8 tfr registers with CMD_IDE_REGS_RD (0x80),
+- `HandleHDD` (hdd.c:567) runs on `CMD_IDECMD` (bit 2 of status word 0,
+  paula_floppy.v:394), reads 8 tfr registers with CMD_IDE_REGS_RD (0x80),
   takes `unit = tfr[6] & 0x10` (master/slave only), dispatches ATA commands
   0x10 0x90 0xEC 0x91 0xC6 0x20 0xC4 0x30 0xC5, anything else -> ABRT.
-- SPI commands to the HDD block are the top nibble of the first SPI word in
-  paula_floppy.v:736-739: 1000 regs read, 1001 regs write, 1010 data write,
-  1011 data read, 1111 status write (hdd.c WriteStatus bits: 0x80 END, 0x10
-  IRQ, 0x08 pio-in, 0x04 pio-out, 0x01 ERR).  Nibbles 1100/1101/1110 are
-  unused -> room for one new IDE command.
+  `hdfTYPE hdf[2]` (hdd.c:42).  The read and write loops block inside
+  HandleHDD until the command completes.
+- SPI commands to the HDD block: top nibble of the first SPI word
+  (paula_floppy.v:736-739): 1000 regs read, 1001 regs write, 1010 data
+  write, 1011 data read, 1111 status write (WriteStatus bits: 0x80 END, 0x10
+  IRQ, 0x08 pio-in, 0x04 pio-out, 0x01 ERR).  Bits 11:0 of that first word
+  are unused; nibbles 1100/1101/1110 are free.
+- Status word 0 is fully used: `{sel[1:0], drives[1:0], hdd_dat_req,
+  hdd_cmd_req, trackwr, trackrd, track[7:0]}` (paula_floppy.v:394).
 - Direct SD-to-FPGA streaming: `FileReadEx(file, NULL, n)` ->
   `MMC_ReadMultiple(lba, 0, n)` asserts the second chip select so the SD
   data goes straight into the Gayle FIFO (`hdd_data_wr = ... || (scs2 &&
-  rx_flag)`, paula_floppy.v:343).  A 2048-byte CD sector is four such
-  blocks: `HardFileSeek(&cd, lba*4); FileReadEx(&cd.file, 0, 4)`.
+  rx_flag)`, paula_floppy.v:343).  A 2048-byte CD sector is four blocks:
+  `HardFileSeek(&cd, lba*4); FileReadEx(&cd.file, 0, 4)`.
 - `hdfTYPE` carries a 1024-entry cluster index (4 KB) built once per file;
-  for a 700 MB ISO `index_size` becomes 20 (1 MB granularity, 700 entries) --
-  reusable as is for the ISO.
-- `ConfigIDE` (osd.c:920) sends only OSD_CMD_HDD (0x54 = SPI address
-  0_101_01) for `ide_config0`; `ide_config1` (SPI address 0_101_10, i.e.
-  command byte 0x58) is never written, so the secondary channel is dormant.
-  `userio_osd.v:449-450` takes `wrdat[2:0]` for each.
-- Reset detection: the firmware never learns of an Amiga-initiated reset
-  (keyboard reset); HandleFpga only polls floppy/IDE requests.
+  for a 700 MB ISO the index granularity becomes 1 MB -- reusable as is.
+- `ConfigIDE(gayle, master, slave)` (osd.c:920) sends OSD_CMD_HDD (0x54) with
+  3 bits for `ide_config0`; `ide_config1` (command byte 0x58) is never
+  written, so port 2 is dormant.  userio_osd.v:449-450 take `wrdat[2:0]`
+  into `t_ide_config0/1`, which reach `ide_config0/1` only while reset is
+  active (userio_osd.v:96-102) -- IDE configuration applies at reset.
+- The firmware never learns of an Amiga-initiated (keyboard) reset.
 
 ### 1.3 Config and OSD
 
 - `configTYPE` (config.h) is 212 bytes, checked at compile time
-  (`config_size_is_212`, config.c:259).  `hardfile[2]` = primary M/S;
-  `secondaryhardfile[2]` reserved and unused except being zeroed for
-  configs older than CONFIG_VERSION_ROMPATH (config.c:300-315);
-  `hdfdir[4]` already has four directory slots.  `hardfileTYPE` = enabled,
-  present, name[8], long_name[16] (26 bytes).
-- OSD is 8 lines x 32 characters (`framebuffer[8][256]`, 8 px per char,
-  `OsdWriteOffset` line limit OSDLINELEN=256; the title is a separate
-  vertical strip).  Line 7 loses 22 px when the right arrow is shown.
+  (config.c:259); `CONFIG_VERSION 4`.  A config with a version above the
+  firmware's is rejected ("Wrong configuration file format!", config.c:321)
+  -> no version bump in this work (older firmware must still load new
+  configs).  `hardfile[2]` = port 1 master/slave; `secondaryhardfile[2]`
+  reserved, only zeroed for configs older than version 3 (config.c:302-315);
+  `hdfdir[4]` has four directory slots.  `hardfileTYPE` = enabled, present,
+  name[8], long_name[16] (26 bytes).  Defaults: `memset(&config, 0)` plus
+  fields (config.c:334-345).
+- OSD: 8 lines x 32 characters; the title is a separate vertical strip; line
+  7 loses 22 px when the right arrow is shown.
 - Main page (menu.c:515-565): lines 0-3 floppies, 4 "Floppy disk settings",
   5 "Hard disk settings", **6 empty**, 7 exit.  Harddisks page
-  (menu.c:1674-1740) uses all 8 lines: IDE on/off, Master type, Master file,
-  Slave type, Slave file, Sounds, blank, back.  Changes apply after a reset
-  via MENU_HARDFILE_EXIT/CHANGED (menu.c:1888-1966).
+  (menu.c:1674-1740): IDE on/off, Master type, Master file, Slave type, Slave
+  file, Sounds, blank, back.  Changes apply after a reset via
+  MENU_HARDFILE_EXIT/CHANGED (menu.c:1888-1966).
 - `SelectFile(ext, SCAN_DIR|SCAN_LFN, okstate, cancelstate)` (menu.c:160)
-  compares one 3-letter extension; `ScanDirectory` (fat.c:858) matches
-  exactly one extension or '*'.  MAXDIRENTRIES = 8 (one OSD page).
+  compares one 3-letter extension; `ScanDirectory` (fat.c:858) matches one
+  extension or '*'.
 - `config_hdf_msg[]` (menu.c:90) has 7 entries indexed by
-  `enabled & HDF_TYPEMASK`; a new type value 7 must extend it, and an OLD
-  firmware shown a config with 7 in `hardfile[]` would read past the array
-  (display garbage only; OpenHardfile's switch ignores unknown types).
+  `enabled & HDF_TYPEMASK`; an OLD firmware shown type 7 in `hardfile[]`
+  reads past the array (display garbage only; OpenHardfile ignores unknown
+  types).
 
-### 1.4 The 2020 leftovers (AMR)
+### 1.4 The 2020 leftovers (Alastair Robinson)
 
-- `bincue.c` (189 lines): a CUE parser with a hard-coded test cue string and
-  `cdimage`/track structures; `main.c:284` call commented out.  Parser logic
-  is reusable for Phase 3 (BIN/CUE); it needs a file-backed line reader and
-  removal of the embedded cue.  Not needed for ISO.
+- `bincue.c` (189 lines): CUE parser with a hard-coded test cue;
+  `main.c:284` call commented out.  Reusable for phase 3 (BIN/CUE) after a
+  file-backed line reader replaces the embedded cue.  Not needed for ISO.
 - `audiotrack.c` (167 lines): red-book playback through the host audio
-  buffer (`AUDIO_BUFFER` 0x70000, 32 KB, `AUDIO` register).  Reusable for
-  Phase 3 CD audio (PLAY AUDIO MSF/10, PAUSE/RESUME) -- the mechanism (fill
-  the buffer the hardware is not playing) is right.
-- `akiko.c` + `rtl/minimig/akiko.v` (77 lines) + `rtl/akiko/akiko.vhd`
-  (221 lines): register logging stub and a corner-turn (chunky-to-planar)
-  unit.  Phase 4 only (CD32).  Nothing in them touches IDE.
+  buffer (`AUDIO_BUFFER` 0x70000, 32 KB).  Reusable for phase 3 CD audio.
+- `akiko.c` + `rtl/minimig/akiko.v` + `rtl/akiko/akiko.vhd`: register
+  logging stub and the chunky-to-planar unit.  Phase 4 (CD32) only.
 
 ### 1.5 Resources and timing (build/stage_postchip)
 
-- utilization.rpt: Slice LUTs 53,417 / 63,400 (84.25 %), registers 26,112
-  (20.59 %), BRAM 81 / 135 tiles (60 %), DSP 44 / 240.  No hierarchical
-  report in that build directory.
-- timing_summary.rpt: clk_114 WNS +0.134, clk_148 +0.063, clk_38 +0.217,
-  clk_ddr100 +1.354; the one failing group is clk_gen_sdram -> clk_114
-  (-0.474, 16 endpoints), pre-existing and unrelated to Gayle.  Gayle sits on
-  the 28 MHz domain with clk7_en.
-- yosys `synth_xilinx -family xc7` on gayle.v + gayle_fifo.v (scratch, not a
-  Vivado run): gayle 147 LUT (31 LUT2, 63 LUT3, 8 LUT4, 11 LUT5, 34 LUT6) +
-  7 MUXF7 + 32 FDRE + 2 CARRY4; gayle_fifo 44 LUT + 27 FDRE + 8 CARRY4 +
-  2 RAMB36E1.  Total ~190 LUTs, 59 FFs, 2 BRAM36 tiles.  Vivado numbers will
-  differ a little, the order of magnitude is what matters here.
-- Firmware memory: boot ROM 8 KB BRAM (`832_bridge.vhd` maxAddrBitBRAM=12),
-  `832OSDAD.bin` loaded by the boot loader at host 0x2000 **in SDRAM** (host
-  window `zmAddr = {... ~hostAddr[22], ~hostAddr[21], hostAddr[20],
-  ~hostAddr[19], ...}`, sdram_ctrl.v:287).  Map: text/data 0x2000-0x15f5a
-  (82 KB; hdd.o 0x83f8-0x9cfd = 6.4 KB, menu.o 0xa0f6-0x11052 = 28 KB),
-  BSS 0x15f5c-0x1d72c (hdd.o BSS 9.6 KB = two hdfTYPE + id buffer).  Next
-  fixed address above BSS: `AUDIO_BUFFER` 0x70000 (hardware.h:33).  The boot
-  loader's `LoadFile` has no size limit other than that.  Stack lives in
-  the 8 KB BRAM (`-s_STACKTOP=0x2000`); keep new buffers static, not on the
-  stack.
+- Slice LUTs 53,417 / 63,400 (84.25 %), registers 26,112 (20.59 %), BRAM 81
+  / 135 tiles (60 %), DSP 44 / 240.
+- WNS: clk_114 +0.134, clk_148 +0.063, clk_38 +0.217, clk_ddr100 +1.354; the
+  known clk_gen_sdram -> clk_114 group (-0.474, 16 endpoints) is unrelated.
+  Gayle runs on the 28 MHz domain with clk7_en.
+- yosys `synth_xilinx -family xc7` estimate (not Vivado): gayle 147 LUT, 32
+  FF; gayle_fifo 44 LUT, 27 FF, 2 RAMB36E1.  Total ~190 LUTs, 59 FFs, 2 BRAM36.
+- Firmware: boot ROM 8 KB BRAM loads `832OSDAD.bin` to host 0x2000 in SDRAM.
+  Map: text/data 0x2000-0x15f5a (82 KB), BSS to 0x1d72c (hdd.o BSS 9.6 KB);
+  next fixed user `AUDIO_BUFFER` 0x70000 -> ~330 KB headroom.  Stack in the
+  8 KB BRAM: new buffers static, not on the stack.
 
-### 1.6 Amiga side (what the ROMs and notes say)
+### 1.6 Amiga side (ROMs and notes)
 
-- `~/work/amiga/Update3.2.3/ROMs/A1200.47.115.rom` and 47.111: contain
-  `scsi.device` and `NuATAPIismajik` (ATAPI code present), **no**
-  `CDFileSystem` string.  `Kickstart-v3.1-rev-40.68-A1200.rom`: scsi.device,
-  no ATAPI string.  The 3.1.4 "to_burn" hi/lo halves did not yield strings
-  with simple interleaving (probably EPROM-swapped); 3.1.4 ATAPI support is
-  therefore UNVERIFIED locally, but the 3.1.4.1 scsi.device notes (45.4,
-  "SCSI_INQUIRY should now return the correct drive type ... for compact
-  flash and atapi devices") show ATAPI handling existed in 45.x.
-- OS 3.2.2/3.2.3 `ReleaseNotes/L/CDFS-RelNotes`: 48.44 "preparations for
-  making it possible to use ISO image files instead of mass storage devices";
-  48.49 "ReMount() no longer expects the mass storage device driver to
-  support TD_CHANGESTATE"; 48.52 "Added a ROM tag which should allow for
-  making the file system resident and possibly boot with it.  Your mileage
-  may vary."; 48.x "Revived the missing WaitIO() calls ... might be just what
-  makes the difference ... for other devices, e.g. those which emulate a
-  CD-ROM drive using a disk file".
-- 3.1.4 Storage disk ships `Storage/DOSDrivers/CD0` (40.7) with
-  `FileSystem = L:CDFileSystem`, device/unit via tooltypes.  The 3.2 install
-  floppy ships L/CDFileSystem and Storage/DOSDrivers/CD0 (AmigaSetup notes).
-- MiSTer Minimig README "IDE and CDROM": "By default up to 2 IDE devices are
-  supported.  For Secondary Master/Slave devices, you have to install either
-  IDEFix97 (shareware, WB3.1/3.9) or AtapiMagic (freeware, WB 3.1.4/3.2).
-  Removable/CD mode allows to hot swap CDs.  Currently audio portion of CD
-  isn't implemented (although playback commands should be accepted)."
-- AtapiMagic 47.1 (aminet driver/media, Hyperion copyright, free download,
-  LIBS:modules, "OS 3.1.4 or better", tested 3.1.4 and 3.2, alpha): gives
+- A1200 ROMs 47.111 / 47.115 (3.2.2 / 3.2.3): `scsi.device` and the ATAPI
+  string `NuATAPIismajik`; **no** `CDFileSystem`.  KS 3.1 40.68: no ATAPI.
+  3.1.4 ATAPI: UNVERIFIED locally (the split EPROM halves gave no strings),
+  inferred from the 3.1.4.1 scsi.device notes (45.4 "... compact flash and
+  atapi devices").
+- CDFileSystem release notes 3.2.2/3.2.3: 48.44 prepares ISO-file use,
+  48.49 no longer needs TD_CHANGESTATE for ReMount(), 48.52 adds a ROM tag
+  ("possibly boot with it.  Your mileage may vary").
+- `Storage/DOSDrivers/CD0` (40.7) ships with 3.1.4; L:CDFileSystem and CD0
+  on the 3.2 install floppy.
+- MiSTer Minimig README: "For Secondary Master/Slave devices, you have to
+  install either IDEFix97 (shareware, WB3.1/3.9) or AtapiMagic (freeware, WB
+  3.1.4/3.2)."
+- AtapiMagic 47.1 (Aminet driver/media, Hyperion, free, alpha, OS 3.1.4+):
   "4 IDE interfaces without the need of any third party software".
-- IDEfix97 3.5 (aminet, shareware with nag requesters): atapi.device, or the
-  same units through scsi.device when IDEfix runs; 4-drive adapter support;
-  CacheCDFS included; "MountCD" for booting from CD (separate, beta).
-- Hyperion forum thread (A1200 + 4xEIDE splitter, ROM 3.1.4): the second
-  channel of a splitter "is not supported by the built-in scsi.device", the
-  interface's driver is needed.  Consistent with MiSTer's note.
+- IDEfix97 3.5 (Aminet, shareware with nag requesters): atapi.device, 4-drive
+  adapters, CacheCDFS.
 - Test images: `~/work/amiga/AmigaOS3.9.iso` (245,535 sectors) and
-  `ClassicInstallCD-53.71.iso` (275,806 sectors) are both plain 2048-byte
-  ISO 9660 images (PVD "CD001" at byte 32769, size % 2048 == 0).
-  Kickstarts on disk: 3.1 40.68 A1200 (kickstart/), 3.1.4 46.143 A1200
-  (Update3.1/ROMs/to_burn, split), 3.2.2 47.111 and 3.2.3 47.115 A1200
-  (.rom, usable directly).  OS 3.1.4 and 3.2.x floppy ADFs are present.
+  `ClassicInstallCD-53.71.iso` (275,806 sectors), both plain 2048-byte ISO
+  9660 (PVD "CD001" at byte 32769).  ROMs: 3.1 40.68, 3.1.4 46.143 (split),
+  3.2.2 47.111, 3.2.3 47.115 (.rom).  OS 3.1.4 / 3.2 ADFs present.
 
-## 2. Question 2: which IDE bus
+## 2. Which IDE bus
 
-### 2.1 Options
+| Option | Amiga sees | Driver support | Verdict |
+|---|---|---|---|
+| Gayle port 2 (IDE splitter, $DA1xxx/$DA3xxx) | a second IDE port with master/slave = scsi.device units 2/3 with a 4-way driver | AtapiMagic (3.1.4/3.2), IDEfix97 (2.04+); stock scsi.device: no; boot: no | **Default for the CD (D1)** |
+| Gayle port 1 (master or slave) | units 0/1 | stock 3.1.4/3.2 scsi.device; 3.1 needs IDEfix97 | **Supported** (same code, other slot) |
+| A4000-style IDE at $DD2000 | only with an A4000 ROM; still one port | breaks A1200 behaviour | Rejected |
+| Zorro IDE/ATAPI board (Buddha, lide.device) | new autoconfig board with its own driver ROM | boot capable, but needs a third-party ROM image | Rejected (boot not wanted, D6) |
 
-| Option | Amiga side sees | Driver support | RTL cost | Verdict |
-|---|---|---|---|---|
-| (a1) Gayle second port = IDE splitter ($DA1xxx/$DA3xxx, `address_in[12]`) | a second IDE port with its own master/slave, units 2/3 of scsi.device once a 4-way driver is loaded | AtapiMagic (3.1.4/3.2), IDEfix97 (2.04+); stock scsi.device: no; boot: no | RTL already decodes it; firmware must honour `dev[1]`; shared tfr/FIFO stays (see risk R1) or +~190 LUT +2 BRAM for a second instance | **Implement** (it is what Paul calls "own bus" in practice) |
-| (a2) A4000-style IDE at $DD2000 | only if the ROM is an A4000 ROM; scsi.device picks A1200 vs A4000 by Gayle/A4000 detection (3.2 notes: ReadGayle()) | would need the A4000 ROM and an A4000 Gayle identity; breaks A1200 behaviour | new decoder + mux, ~same as Gayle | Reject: it is still ONE port (the A4000 IDE is one channel), gains nothing |
-| (a3) Zorro IDE/ATAPI board with autoconfig (Buddha, lide.device) | a new autoconfig board whose driver ROM must be supplied (Buddha flash ROM or lide.device open-source ROM) | its own driver, boot capable | autoconfig entry + register block + ROM image loader (~300-500 LUT + ROM BRAM or SDRAM mapping) + licensing of the driver ROM | Reject for now; the only route with boot from a third-party ROM; revisit if boot from CD matters more than the stock-ROM path |
-| (b) a device on Gayle's existing channel (primary master or slave) | unit 0/1 of scsi.device | stock 3.1.4/3.2 scsi.device (ATAPI built in); 3.1 needs IDEfix97/atapi.device | the same ATAPI RTL changes as (a1) | **Implement** -- it is the same code with `dev[1]=0` |
+A separate "own IDE bus" that stock software drives does not exist on an
+A1200-class machine; Gayle's second port is the closest real equivalent and
+is what MiSTer and WinUAE offer.
 
-### 2.2 Recommendation
+## 3. Booting from the CD
 
-Slot-agnostic: the CD is a type a slot can take; the four slots are
-primary M/S (`hardfile[0..1]`) and secondary M/S (`secondaryhardfile[0..1]`).
-First bring-up as primary slave with the 3.2 ROM (no Amiga software needed).
-Default for a saved config: whatever the user picked; the OSD help text says
-"secondary port needs AtapiMagic/IDEfix".  Keep the single register file and
-FIFO in phase 1 (risk R1 below); the second-instance Gayle is phase 2b if R1
-bites.
-
-## 3. Question 3: booting from the CD
-
-| Setup | Boots from CD? | Why / what to do |
+| Setup | Boots? | Why |
 |---|---|---|
-| KS 1.3 / 2.0x / 3.0 / 3.1 (40.68) A1200 ROM | No | scsi.device has no ATAPI, no CDFS in ROM.  Boot from HDF/ADF, load IDEfix97 (atapi.device + CacheCDFS) or another atapi.device + AmiCDFS, then CD0: appears. |
-| KS 3.1.4 / 3.2 (46.143 / 47.111 / 47.115) stock ROM, CD on primary | No | scsi.device sees the ATAPI unit (3.2 verified, 3.1.4 UNVERIFIED locally), but CDFileSystem is on disk (L:), not in ROM, so strap cannot mount it.  Boot the Install3.2 floppy (ADF) or an HDF; CD0 mounts with L:CDFileSystem. |
-| KS 3.1.4 / 3.2, CD on secondary port | No | as above plus the port itself is invisible to the ROM. |
-| Custom 3.2.2+ ROM with CDFileSystem 48.52+ resident (ROM tag), CD on primary | Possibly | Hyperion: "possibly boot with it.  Your mileage may vary."  Minimig loads any 512 KB / 1 MB ROM (config.c:90-128), so a 1 MB custom ROM has room.  UNVERIFIED; test item in phase 2. |
-| OS 3.9 CD with a 3.1 ROM | No | 3.9 CD boots only on machines with CD-boot firmware; the normal route is the Emergency Disk made from the CD.  Our ISO still serves as a data CD to install from. |
-| CD32 ROM (40.60) + Akiko emulation | Later | CD32 boots from its own CD controller, not IDE.  Phase 4. |
-| OS 4.1 Classic ISO | n/a | needs OS4 hardware; useful only as a second test image for swaps. |
+| KS 1.3-3.1 (40.68) | No | no ATAPI, no CDFS in ROM.  Boot HDF/ADF, load IDEfix97 or another atapi.device. |
+| KS 3.1.4 / 3.2, CD on port 1 | No | scsi.device sees the drive (3.2 verified), but CDFileSystem is on disk, not in ROM. |
+| KS 3.1.4 / 3.2, CD on port 2 (default) | No | the ROM does not even see port 2. |
+| Custom 3.2.2+ ROM with resident CDFileSystem 48.52+ | Possibly (UNVERIFIED) | not pursued (D6). |
+| OS 3.9 CD on a 3.1 ROM | No | 3.9 uses an Emergency Disk; the ISO works as an install source. |
+| CD32 | Later | Akiko, not IDE; phase 4. |
 
-Practical consequence: "boot from CD" is not a phase-1 goal; the plan makes
-the CD mountable from Workbench first.
+The user boots from an HDF or ADF and mounts the CD from there.
 
-## 4. Question 4: Amiga software per Kickstart/OS
+## 4. Amiga software per Kickstart/OS
 
-| Kickstart / OS | Device driver for the ATAPI CD | CD filesystem | Mount entry | Free? |
+| Kickstart / OS | Device driver | CD filesystem | Mount entry | Cost |
 |---|---|---|---|---|
-| 1.3 / 2.0x (no IDE in ROM except A600 2.05) | IDEfix97 atapi.device (needs 2.04+) | CacheCDFS (in IDEfix97) | DEVS:DOSDrivers/CD0 from IDEfix installer | shareware (nag) |
-| 3.0 / 3.1 (A1200 39.106 / 40.68) | IDEfix97 atapi.device, or an "A1200 Atapi" cd.device package (Aminet driver/media) | CacheCDFS, AmiCDFS 2.40 (Aminet disk/cdrom/amicdfs240, free), AsimCDFS (commercial), OS 3.1's own L:CDFileSystem 40.x works on top of a working device | CD0 with Device=atapi.device Unit=<n> | IDEfix shareware; AmiCDFS free |
-| 3.5 / 3.9 on a 3.1 ROM | OS 3.5/3.9 ship a ROM-update scsi.device with ATAPI and a licensed CacheCDFS (UNVERIFIED here, from the 3.9 package description); otherwise IDEfix97 | CacheCDFS (bundled) | Storage/DOSDrivers/CD0 | included |
-| 3.1.4 ROM | ROM scsi.device (ATAPI; unit 1 = primary slave) | L:CDFileSystem 45.x (Storage3_1_4.adf, verified CD0 40.7 mount file) | copy Storage/DOSDrivers/CD0 to DEVS:, set Device=scsi.device Unit=1 (or 0/2/3) in the icon tooltypes | included in 3.1.4 |
-| 3.2 ROM (47.111/47.115) | ROM scsi.device (ATAPI verified) | L:CDFileSystem 47/48.x from Install3.2 | same CD0 mount file | included in 3.2 |
-| 3.1.4 / 3.2 with the CD on the **secondary** port | AtapiMagic 47.1 in LIBS:modules + startup line (Hyperion, free download, alpha) or IDEfix97 | as above | Unit=2 (secondary master) / 3 | AtapiMagic free, redistribution forbidden |
+| 3.1.4 / 3.2, CD on port 2 (default) | AtapiMagic 47.1 (LIBS:modules + startup line), or IDEfix97 | L:CDFileSystem from 3.1.4/3.2 | DEVS:DOSDrivers/CD0, Device=scsi.device, Unit=2 (port 2 master) | AtapiMagic free (no redistribution) |
+| 3.1.4 / 3.2, CD on port 1 | ROM scsi.device | L:CDFileSystem | CD0, Unit=1 (port 1 slave) or 0 | included |
+| 3.0 / 3.1 | IDEfix97 atapi.device, or another A1200 atapi.device (Aminet driver/media) | CacheCDFS (IDEfix97), AmiCDFS 2.40 (free), AsimCDFS (commercial) | CD0, Device=atapi.device | IDEfix97 shareware; AmiCDFS free |
+| 3.5 / 3.9 on a 3.1 ROM | the 3.5/3.9 ROM-update scsi.device + bundled CacheCDFS (UNVERIFIED), or IDEfix97 | CacheCDFS | Storage/DOSDrivers/CD0 | included |
 
-Unit numbering convention (scsi.device): 0 primary master, 1 primary slave,
-2 secondary master, 3 secondary slave -- with a 4-way driver loaded.
+Unit numbers with a 4-way driver: 0 port 1 master, 1 port 1 slave, 2 port 2
+master, 3 port 2 slave.  A short how-to with exactly these lines goes into
+doc/ (task 1.10).
 
-## 5. Question 1: OSD design
+## 5. OSD design
 
-### 5.1 The two structures compared
+### 5.1 Structure
 
-| | A. slot type in the Harddisks menu | B. separate CD-ROM menu |
-|---|---|---|
-| expresses the IDE position (Q2b requirement) | directly: the slot IS the position | needs its own "Port/Device" selector and must then grey out the HDF slot it takes |
-| config storage | the slot's `hardfileTYPE.enabled = HDF_CDROM`, no new fields | needs a new CD entry + a position byte; the only free bytes are the `secondaryhardfile` ones anyway |
-| conflicts (HDF and CD in the same slot) | impossible by construction | must be checked and reported |
-| insert/eject without reset | main-page quick line (needed in both) | the CD menu itself |
-| code size | small: the type cycle grows by one value, the file selector gets "ISO" | a new page pair + state machine, ~2-3 KB more |
-| discoverability | CD hides behind "Hard disk settings" | obvious entry |
+The CD-ROM is a slot type in the existing Harddisks menu (not a separate CD
+menu): the slot is the IDE position, config storage needs no new fields, and
+"HDF and CD in the same slot" cannot happen.  A main-page line gives quick
+access for inserting and ejecting discs.
 
-Recommendation: A, with the main-page quick line for discoverability and
-hot swapping.  B's one advantage (finding it) is covered by the main-page
-line.
+### 5.2 Screens (32 columns, 8 lines)
 
-### 5.2 Screens (32 columns, 8 lines; `>` marks the cursor; `*` stippled)
-
-Main page (menu.c MENU_MAIN1), line 6 was empty:
+Main page (MENU_MAIN1), line 6 was empty:
 
 ```
  df0: Workbench3.2.adf
@@ -310,492 +250,493 @@ Main page (menu.c MENU_MAIN1), line 6 was empty:
  df3: KP +/- to add/remove drives
  Floppy disk settings  >
  Hard disk settings    >
- CD-ROM: AmigaOS3.9.iso        (line 6, new; stippled if no CD slot)
+ CD-ROM: AmigaOS3.9.iso
              exit
 ```
 
-- Select on line 6 with a disc inserted = eject (UNIT ATTENTION to the
-  Amiga, line shows "* no disc *"); without a disc = file selector for ISO.
-  Backspace ("eject all floppies" today) is left alone.
-- If no slot is of type CD-ROM, line 6 reads "CD-ROM: not configured" and is
-  not selectable (menumask bit 6 clear; exit stays on line 7 / menusub 6
-  renumbering: make the CD line menusub 6 and exit menusub 7 -- adjust the
-  menumask (today 0x70 + drives) and the `menusub > drives` fall-through in
-  MENU_FILE_SELECTED).
+Line 6 states:
 
-Harddisks page 1 (MENU_SETTINGS_HARDFILE1, title "Harddisks", right arrow):
+| State | Line 6 text | Select does |
+|---|---|---|
+| no slot of type CD-ROM | `CD-ROM: not configured` (stippled, not selectable) | -- |
+| CD slot, no disc | `CD-ROM: * no disc *` | opens the ISO file selector; OK = insert |
+| disc in, not locked | `CD-ROM: <iso long name>` | eject |
+| disc in, locked by the Amiga | `CD-ROM: <name>` with a lock mark at column 31 | nothing; the line shows `CD-ROM: locked by the Amiga` for 2 s (D5) |
+
+Menu bookkeeping: the CD line is menusub 6 and exit becomes menusub 7;
+adjust the main-page menumask (today 0x70 + drives) and the
+`menusub > drives` fall-through in MENU_FILE_SELECTED; Backspace ("eject all
+floppies") does not touch the CD.
+
+Harddisks page 1 (MENU_SETTINGS_HARDFILE1, title "Harddisks", right arrow
+to page 2):
 
 ```
     IDE : on
  Master : Hardfile (disk img)
               Workbench.hdf
-  Slave : CD-ROM (ISO)
-              AmigaOS3.9.iso
+  Slave : Disabled
+
  Sounds : on
-                            
+
             back            >
 ```
 
 Harddisks page 2 (new MENU_SETTINGS_HARDFILE3/4, title "IDE port 2", left
-arrow), reached with Right from page 1:
+arrow back to page 1):
 
 ```
-   Port : on               (ide_config1 bit 0; off = no decode at $DA1xxx)
  Master : CD-ROM (ISO)
-              Settlers2.iso
+              AmigaOS3.9.iso
   Slave : Disabled
-                            
- Needs AtapiMagic/IDEfix on
- the Amiga (not bootable)   
+
+ Port 2 needs AtapiMagic or
+ IDEfix97 on the Amiga.
+ Not bootable.
 <           back
 ```
 
-- The type line cycles: Disabled -> Hardfile (disk img) -> Hardfile
-  (filesys) -> MMC/SD card -> partitions -> **CD-ROM (ISO)** -> Disabled.
-  (`t_hardfile[n].enabled` cycle in MENU_SETTINGS_HARDFILE2 menusub 1/3; add
-  `HDF_CDROM = 7` to the modulo and `config_hdf_msg[7] = "CD-ROM (ISO)"`.)
-- The file line opens `SelectFile("ISO", ...)` when the type is CD-ROM and
-  `SelectFile("HDF", ...)` otherwise; `MENU_HARDFILE_SELECTED` branches on the
-  type: for CD it stores name/long_name/dir and skips `GetHDFFileType`.
-- Leaving page 1 or 2 goes through the existing MENU_HARDFILE_EXIT compare;
-  changing a slot TYPE or a hardfile still asks for the reset (the Amiga must
-  re-probe the bus).  Changing only the ISO of an existing CD slot does not
-  (that is a media change) -- MENU_HARDFILE_EXIT must compare `enabled` and
-  `name` separately for CD slots.
-- Two CD slots are allowed by the data model; phase 1 firmware supports one
-  CD unit (`cdTYPE cd[1]`), the menu refuses a second ("one CD-ROM in this
-  version") -- decision D3.
+Rules:
 
-Key handling: as the existing pages (up/down move within menumask, select,
-menu = back, left/right page change).  The ISO file selector is the stock
-MENU_FILE_SELECT1/2 (long names scroll via ScrollLongName).
+- `IDE : off` switches both ports off.  Port 2 has no on/off line (D4): it
+  is on exactly when IDE is on and at least one of its slots is not
+  Disabled.  A configured CD slot counts as enabled with or without a disc,
+  so ejecting never makes the drive disappear from the bus.
+- The type line cycles Disabled -> Hardfile (disk img) -> Hardfile (filesys)
+  -> MMC/SD card -> partitions 1-4 -> **CD-ROM (ISO)** -> Disabled, on both
+  pages.  `HDF_CDROM = 7`, `config_hdf_msg[7] = "CD-ROM (ISO)"`.  The cycle
+  skips CD-ROM when another slot already is one (one CD drive, D3).
+- The file line opens `SelectFile("ISO", ...)` for a CD slot and
+  `SelectFile("HDF", ...)` otherwise.  `MENU_HARDFILE_SELECTED` stores
+  name/long_name/hdfdir for a CD slot and skips `GetHDFFileType`.  For a CD
+  slot, choosing a file while a disc is in is a swap: refused while locked
+  (D5), otherwise eject + insert, no reset.
+- Leaving a page goes through MENU_HARDFILE_EXIT: a changed slot TYPE or a
+  changed hardfile asks for the reset as today (the Amiga must re-probe the
+  bus); a changed ISO in an unchanged CD slot does not (it is a media
+  change).  MENU_HARDFILE_EXIT compares `enabled` and `name` separately for
+  CD slots.
+- Long ISO names: the slot page and line 6 show the first characters that
+  fit; the file selector scrolls the full name (ScrollLongName).
+- Help text for the CD type: "CD-ROM drive.  Insert an ISO image from the
+  SD card.  On IDE port 2 the Amiga needs AtapiMagic (3.1.4/3.2) or IDEfix97
+  (3.1).  The Amiga cannot boot from it."
+
+Keys: as the existing pages (up/down, select, menu = back, left/right page).
 
 ### 5.3 Config storage
 
-- `hardfile[0..1]` and `secondaryhardfile[0..1]` (both `hardfileTYPE`) as
-  the four slots; `hdfdir[0..3]` the four directories.  New type value
-  `HDF_CDROM = 7` in `enabled` (fits HDF_TYPEMASK 15; HDF_SYNTHRDB bit
-  unused for it).  212 bytes unchanged.  Config version stays 4 (older
-  firmware: secondary slots ignored; a CD in a primary slot shows a garbage
-  type string there -- acceptable, note in the release notes).
-- Boot-time state: `cd[0].slot` (0-3), `cd[0].inserted`, the open
-  `fileTYPE` + index.  Insert/eject at run time changes only RAM; the saved
-  config keeps the ISO name as the "disc in the drive at power-on".
-- `enable_ide` stays the primary port switch; secondary port on/off =
-  `secondaryhardfile[0].enabled || secondaryhardfile[1].enabled` (no new
-  byte), or use `secondaryhardfile[1].present` as a flag -- decision D4.
+- Slots: `hardfile[0..1]` (port 1 master/slave) and `secondaryhardfile[0..1]`
+  (port 2 master/slave), directories in `hdfdir[0..3]`.  A CD slot:
+  `enabled = HDF_CDROM`, `name`/`long_name` = the ISO in the drive at power
+  on (empty = no disc), `present` = that file was found.  212 bytes, config
+  version stays 4.
+- Default (D1): a fresh config (no file / loading failed, config.c:334) gets
+  `secondaryhardfile[0].enabled = HDF_CDROM` with no disc.  Existing config
+  files keep their slots (all zero on port 2 today): without a version bump
+  there is no way to tell "never configured" from "switched off", and a bump
+  would make older firmware reject the file.  Paul's own config: set port 2
+  master to CD-ROM once in the OSD.
+- Insert/eject at run time changes the RAM copy only; it is saved with the
+  rest of the config when the user saves, so the disc in the drive at save
+  time is the power-on disc.
 
-## 6. Question 5: does it fit
+## 6. Does it fit
 
-- RTL (section 7.3): a 13-bit transfer-length register, two 13-bit
-  word counters (or one counter compared against the length; the FIFO
-  pointers already exist -- reuse `inptr`/`outptr` difference), a packet-mode
-  flag, three sticky flags, a signature mux on four tfr reads, ~10 extra
-  decode terms: estimate 60-120 LUTs, 30-45 FFs, 0 BRAM.  Against 10,000 free
-  LUTs that is noise; the Gayle logic is on the 28 MHz / clk7_en domain, so
-  no pressure on the +0.06 ns clk_148 paths.  A second Gayle register file +
-  FIFO (phase 2b, only if R1 forces it): +~190 LUTs, +2 BRAM36 (54 free).
-- Firmware: atapi.c ~4-6 KB of 832 code, cdrom.c glue ~2 KB, OSD additions
-  ~2-3 KB, response buffer 2 KB static + one `hdfTYPE`-like index (4 KB)
-  for the ISO: ~15 KB of the ~330 KB headroom (BSS end 0x1d72c, audio
-  buffer at 0x70000).  The 82 KB image grows to ~95 KB; the boot loader has
-  no limit below the audio buffer.
+- RTL: second port instance (register file, status machine, FIFO) ~+190
+  LUTs, +59 FFs, +2 BRAM36; ATAPI packet mode per instance (13-bit length,
+  counters reused from the FIFO pointers, flags, signature mux) ~60-120 LUTs
+  each; port select, request mux and the 5-bit ide_config ~20 LUTs.  Total
+  about +330-430 LUTs (53,417 -> ~53,850, 85 %), +2 BRAM36 (81 -> 83 of 135).
+  Everything is on the 28 MHz / clk7_en domain, away from the clk_148 /
+  clk_114 paths with the small margins.  A build is still needed to confirm
+  timing (place-and-route moves things), but the logic is small and slow.
+- Firmware: atapi.c ~4-6 KB, cdrom.c ~2-3 KB, port-aware hdd.c ~1 KB, OSD
+  ~3 KB, two more hdfTYPE (4 KB index each, port 2 hardfiles) + 2 KB
+  response buffer + CD index 4 KB: ~20 KB of the ~330 KB headroom.
 - Config: no growth.
+- Vendor neutrality: plain Verilog registers, comparators and the existing
+  inferred FIFO RAM; the Intel ports compile it (they lack the firmware
+  support only if their firmware is not updated).
 
-## 7. Device protocol
+## 7. Device protocol and design
 
-### 7.1 ATA-level behaviour of the CD unit (what hdd.c must do)
+### 7.1 ATA-level behaviour of the CD unit
 
 - Signature after reset / EXECUTE DEVICE DIAGNOSTIC (0x90) / DEVICE RESET
   (0x08): sector count 1, sector number 1, cyl low 0x14, cyl high 0xEB,
-  error 0x01, status without BSY/DRQ (WinUAE `set_signature`; MiSTer
-  `cylinder = 0xEB14`).  For an ATA unit the signature is 1,1,0,0 (fix
+  error 0x01, status without BSY/DRQ.  ATA units: 1,1,0,0 (fix
   `ATA_Diagnostic`, which writes 0,0 today).
 - IDENTIFY DEVICE (0xEC) on the CD unit: abort (ERR, error 0x04) and reload
-  the signature registers -- this is how a host that tried ATA learns to
-  send 0xA1 (MiSTer `case 0xEC`, WinUAE unknown-ATAPI-command path).
-- IDENTIFY PACKET DEVICE (0xA1): 512 bytes.  Word 0 = 0x8580 (ATAPI, CD-ROM
-  device type 5, removable, 12-byte packet, DRQ within 3 ms; WinUAE uses
-  0x85C0 = 50 us DRQ -- either).  Words 10-19 serial "MINIMIGCD0 ...",
-  23-26 firmware ".100", 27-46 model "Minimig CD-ROM <isoname>" (byte-swapped
-  pairs as in `IdentifyDevice`), word 49 = 0x0200 (LBA), word 53 = 0x0007,
-  words 62-64 = 0 (no DMA), word 80 = 0x007E, word 82 = 0x4014 (NOP, PACKET
-  and removable features, WinUAE), 83 = 0x7000, 84-87 = 0x4000, rest 0.
-  Completion: DRQ block of 256 words, then status END|IRQ.
-- SET FEATURES (0xEF) subcommand 0x03 (transfer mode): accept, no data.
-  NOP (0x00): abort with ERR (both references).  Everything else: abort.
-- PACKET (0xA0): if features bit 0 (DMA) is set -> abort.  Byte-count limit
-  = cyl high:low (0 and 0xFFFF -> treat as 0xFFFE).  Device: interrupt
-  reason (sector count register) = 0x01 (CoD), DRQ=1, BSY=0, no IRQ (MiSTer
-  comments out the IRQ here; WinUAE `atapi_packet` sets DRQ without IRQ).
-  Host writes 6 words.  Then per the SCSI command:
-  - data-in: for each DRQ block: byte count regs = bytes in this block,
-    interrupt reason = 0x02 (IO), DRQ=1, IRQ.  Block size = min(remaining,
-    limit, 8 KB FIFO).  After the last block: interrupt reason 0x03
-    (IO|CoD), DRQ=0, DRDY=1, IRQ, ERR per status.
+  the signature -- how a host that tried ATA learns to send 0xA1.
+- IDENTIFY PACKET DEVICE (0xA1), 512 bytes: word 0 = 0x8580 (ATAPI, CD-ROM
+  type 5, removable, 12-byte packets); words 10-19 serial "MINIMIGCD0";
+  23-26 firmware "1.00"; **27-46 model = the ISO long name, space padded to
+  40 characters, "CD-ROM (empty)" without a disc (D7)** (byte-swapped pairs
+  as in `IdentifyDevice`); word 49 = 0x0200 (LBA); 53 = 0x0007; 62-64 = 0
+  (no DMA); 80 = 0x007E; 82 = 0x4014; 83 = 0x7000; 84-87 = 0x4000; rest 0.
+  One DRQ block of 256 words, then END|IRQ.
+- SET FEATURES (0xEF) subcommand 0x03: accept.  NOP and everything else:
+  abort.
+- PACKET (0xA0): features bit 0 (DMA) set -> abort.  Byte-count limit =
+  cyl high:low (0 or 0xFFFF -> 0xFFFE).  Device: interrupt reason (sector
+  count register) = 0x01 (CoD), DRQ=1, BSY=0, no IRQ.  Host writes 6 words.
+  Then:
+  - data-in: per DRQ block: byte count = bytes in this block, interrupt
+    reason 0x02 (IO), DRQ=1, IRQ.  Block size = min(remaining, limit, 8 KB).
+    After the last block: interrupt reason 0x03 (IO|CoD), DRQ=0, DRDY=1,
+    IRQ, ERR per status.
   - data-out (MODE SELECT): interrupt reason 0x00, byte count = length,
     DRQ=1, IRQ; receive; complete as above.
   - no data: complete directly.
-  - error: ERR, error register = (sense key << 4) | 0x04 (ABRT), interrupt
-    reason 0x03, IRQ; the sense is kept for the next REQUEST SENSE.
-- Status register: keep DRDY as today (`drdy = ~(bsy|drq)`).  WinUAE and
-  MiSTer clear DRDY on an ATAPI unit until its first ATAPI command; neither
-  Amiga driver is known to require it (UNVERIFIED).  If a driver mis-detects
-  the unit as ATA, add an RTL `atapi_drdy_mask` (risk R4).
+  - error: ERR, error register = (sense key << 4) | 0x04, interrupt reason
+    0x03, IRQ; the sense is kept for REQUEST SENSE.
+- Status: DRDY as today (`drdy = ~(bsy|drq)`).  WinUAE and MiSTer clear DRDY
+  on an ATAPI unit until its first ATAPI command; whether an Amiga driver
+  needs that is UNVERIFIED (risk R4).
 
 ### 7.2 SCSI command subset (12-byte CDB), phase 1
 
-Sources: MiSTer `cdrom_handle_pkt` (its list was debugged against OS 3.2
-CDFileSystem, AtapiMagic and IDEfix), WinUAE `scsi_cd_emulate` (complete),
-MMC-3/SPC-2 for formats.  Which commands each Amiga driver actually issues
-is UNVERIFIED by capture; phase 1 logs every CDB on the serial console (see
-task 1.4) so the subset can be trimmed or extended from evidence.
+Sources: MiSTer `cdrom_handle_pkt` (debugged against OS 3.2 CDFileSystem,
+AtapiMagic and IDEfix), WinUAE `scsi_cd_emulate`, MMC-3/SPC-2.  What each
+Amiga driver really sends is UNVERIFIED; phase 1 logs every CDB on the
+serial console (task 1.6) to confirm the table from evidence.
 
 | CDB | Name | Phase 1 behaviour |
 |---|---|---|
-| 00 | TEST UNIT READY | GOOD if a disc is inserted and no pending UNIT ATTENTION; else CHECK CONDITION (sense 02/3A/00 no medium, or 06/28/00 medium changed) |
-| 03 | REQUEST SENSE | 18 bytes, response code 0x70, sense key/ASC/ASCQ of the last error; clears UNIT ATTENTION.  Exempt from the "no disc" check |
-| 12 | INQUIRY | 36 bytes: 05 80 00 21 (ANSI 2, response format 2) 1F, vendor "MINIMIG ", product "CD-ROM ISO      ", rev "1.00"; truncated to allocation length.  Exempt |
-| 1A | MODE SENSE(6) | same pages as 5A with the 4-byte header (WinUAE supports; cheap) |
-| 1B | START STOP UNIT | GOOD; LoEj=1 Start=0 (eject) -> mark "no disc" + tell the OSD; Start=1 -> GOOD |
-| 1E | PREVENT ALLOW MEDIUM REMOVAL | GOOD, remember the lock bit (OSD eject refused while locked? decision D5) |
-| 25 | READ CAPACITY | 8 bytes: last LBA (sectors-1) and block length 2048 |
-| 28 | READ(10) | LBA + 16-bit count -> ISO sectors; count 0 = GOOD with no data |
+| 00 | TEST UNIT READY | GOOD if a disc is in and no UNIT ATTENTION is pending; else CHECK CONDITION (02/3A/00 no medium, 06/28/00 medium changed) |
+| 03 | REQUEST SENSE | 18 bytes, response code 0x70, last sense; clears UNIT ATTENTION.  Exempt from the no-disc rule |
+| 12 | INQUIRY | 36 bytes: 05 80 00 21 1F, vendor "MINIMIG ", **product = first 16 characters of the ISO long name, space padded, "CD-ROM (empty)" without a disc (D7)**, revision "1.00"; truncated to the allocation length.  Exempt |
+| 1A | MODE SENSE(6) | as 5A with the 4-byte header |
+| 1B | START STOP UNIT | LoEj=1 Start=0 (Amiga-side eject): if locked -> CHECK CONDITION 05/53/02 (medium removal prevented); else eject as the OSD does.  Start=1: GOOD |
+| 1E | PREVENT ALLOW MEDIUM REMOVAL | GOOD; store the lock bit (blocks OSD eject/swap, D5) |
+| 25 | READ CAPACITY | 8 bytes: last LBA, block length 2048 |
+| 28 | READ(10) | LBA + 16-bit count; count 0 = GOOD, no data; beyond the end -> 05/21/00 |
 | 2B | SEEK(10) | GOOD |
 | 35 | SYNCHRONIZE CACHE | GOOD |
-| 42 | READ SUB-CHANNEL | minimal: header + "no audio status" (0x15); needed by some CD tools; MiSTer implements |
-| 43 | READ TOC | format 0 (one data track 1 at LBA 0 + lead-out at sector count, control 0x14, MSF or LBA per bit 1 of byte 1, honour starting track and allocation length); format 1 (session info); other formats -> ILLEGAL REQUEST |
-| 46 | GET CONFIGURATION | 16 bytes, current profile 0x0008 CD-ROM (MiSTer `get_conf`); exempt |
-| 4A | GET EVENT STATUS NOTIFICATION | polled, media class: 8 bytes, event code 2 (new media) once after an insert, 3 (removed) once after an eject, else 0; exempt.  (OS 3.2 CDFS uses TD_CHANGESTATE polling through scsi.device, which maps to TEST UNIT READY -- UNVERIFIED which path; implement both) |
-| 51 | READ DISC INFORMATION | 34 bytes, one session, one track (MiSTer `disc_info`) |
-| 52 | READ TRACK INFORMATION | 24 bytes for track 1 (MiSTer `track_info`) |
-| 55 | MODE SELECT(10) | accept the data-out phase, ignore the content (only page 0x0E volume matters later) |
-| 5A | MODE SENSE(10) | 8-byte header + pages 01 (error recovery), 0E (audio control, volumes 0xFF), 2A (capabilities: CD-R/RW read, no audio play bit in phase 1? MiSTer sets 0x71 incl. audio play; set audio play=0 until phase 3), 3F = all; unknown page -> 6-byte dummy page (MiSTer) or ILLEGAL REQUEST (WinUAE) -- choose ILLEGAL REQUEST (sense 05/24/00) |
+| 42 | READ SUB-CHANNEL | header + audio status 0x15 (none) |
+| 43 | READ TOC | format 0 (track 1 data at LBA 0 + lead-out, control 0x14, MSF or LBA per byte 1 bit 1, starting track, allocation length); format 1 (session info); others -> 05/24/00 |
+| 46 | GET CONFIGURATION | 16 bytes, current profile 0x0008.  Exempt |
+| 4A | GET EVENT STATUS NOTIFICATION | polled, media class, 8 bytes: event 2 (new media) once after an insert, 3 (removed) once after an eject, else 0.  Exempt |
+| 51 | READ DISC INFORMATION | 34 bytes, one session, one track |
+| 52 | READ TRACK INFORMATION | 24 bytes for track 1 |
+| 55 | MODE SELECT(10) | accept the data, ignore it |
+| 5A | MODE SENSE(10) | 8-byte header + pages 01, 0E (volumes 0xFF), 2A (CD-ROM read; audio-play bit 0 until phase 3), 3F = all; unknown page -> 05/24/00 |
 | A8 | READ(12) | as READ(10) with a 32-bit count |
-| 45 47 4B 4E BC | PLAY AUDIO (10)/MSF, PAUSE/RESUME, STOP PLAY/SCAN, PLAY CD | GOOD, no action (MiSTer accepts them; makes players not fail) |
-| BE B9 D8 D9 | READ CD / READ CD MSF / READ CD-DA | ILLEGAL REQUEST (05/20/00) in phase 1; phase 3 with BIN/CUE |
-| other | | ILLEGAL REQUEST 05/20/00 (illegal opcode); invalid field -> 05/24/00 |
+| 45 47 4B 4E BC | PLAY AUDIO / PAUSE / RESUME / STOP / PLAY CD | GOOD, no action |
+| BE B9 D8 D9 | READ CD and variants | 05/20/00 (phase 3) |
+| other | | 05/20/00; invalid field 05/24/00 |
 
-"No disc" rule (MMC-5 4.1.6.1, MiSTer): with no disc, every command except
+No-disc rule (MMC-5 4.1.6.1, MiSTer): with no disc every command except
 INQUIRY, REQUEST SENSE, GET CONFIGURATION and GET EVENT STATUS NOTIFICATION
-returns CHECK CONDITION with sense 02/3A/00.  After an insert, the first
-non-exempt command gets 06/28/00 (UNIT ATTENTION, medium may have changed)
-once (MiSTer `mcr_flag`, WinUAE `mediawaschanged`).  MiSTer additionally
-walks a "becoming ready" countdown (02/04/01 then 02/28/00) after an insert;
-copy it only if a driver turns out to need it.
+returns CHECK CONDITION 02/3A/00.  After an insert the first non-exempt
+command gets 06/28/00 once.  After an Amiga reset the first non-exempt
+command gets 06/29/00 once and the lock is cleared (a real drive forgets
+PREVENT on reset).  MiSTer's "becoming ready" countdown (02/04/01) only if a
+driver turns out to need it.
 
-### 7.3 Gayle RTL changes (rtl/minimig/gayle.v, paula_floppy.v) -- vendor neutral
+### 7.3 Gayle RTL changes -- vendor neutral
 
-Goal: keep the ATA path bit-identical when the new mode is off; add a
-"packet mode" with a programmable transfer length.  Modelled on the
-length/`io_done`/`request` scheme of MiSTer's ide.v, but as a small patch
-to the existing Gayle instead of a port (ide.v needs a 32-bit host path,
-two dual-port RAMs per channel and a different SPI management protocol;
-porting it would mean rewriting hdd.c's transport and userio for no gain
-in phase 1).
+**Ruling R-A (2026-10-12, under D2): one port instance per IDE port, from
+phase 1.**  D2 says one Gayle if it is sufficient.  With the CD on port 2
+by default (D1), port 2 is on for every user, and the shared design is not
+sufficient:
 
-1. New SPI command `CMD_IDE_XFER_WR = 0xC0` (top nibble 1100, free): one
-   16-bit payload word = `{pkt_mode, 2'b0, xfer_words[12:0]}`.  Decoded in
-   paula_floppy.v next to cmd_hdd_wr (one more `cmd_hdd_xfer` reg and a
-   `hdd_xfer_wr` strobe at `rx_cnt==1`); new port on gayle.  Writing it
-   resets the FIFO pointers (phase start) and loads the length.  `pkt_mode`
-   clears on `sel_command` (new host command) and on reset.
-2. In packet mode (`pkt_mode=1`):
+1. $DA3018 (the A1200 device-control address) is port 2's drive/head
+   register; any device-control write corrupts port 1's shared `tfr[6]` and
+   `dev` (section 1.1).
+2. While the CD on port 2 is busy, a host write to port 1's command
+   register is dropped (`tfr_we = busy ? hdd_wr : ...`) -- the driver times
+   out on its hard disk.
+3. `hdd_cmd_req = bsy` is shared; port 2's pending command would release
+   port 1's ATA read loop early (data corruption).
+
+Separate instances fix all three by construction and behave like a real
+splitter.  Cost +~190 LUTs, +2 BRAM36 (section 6), which D2 accepts.
+
+Changes:
+
+1. Split gayle.v into `gayle.v` (address decode, Gayle ID, CS, CFG, INTENA,
+   INTREQ, data_out mux) and `gayle_port.v` (one port: tfr, `dev` bit,
+   busy/pio_in/pio_out/error, sector_count, the FIFO, packet mode).  Two
+   instances, `port 0` selected by `address_in[12]==0`, `port 1` by
+   `address_in[12]==1 && |hdd1_ena`.  Port 0 with packet mode off must be
+   bit-identical in behaviour to today's Gayle (bench case a).  A parameter
+   `IDE_PORTS` (default 2) lets small targets keep one instance.
+2. INTREQ: set by either port's existing set conditions (OR), cleared by the
+   CPU as today.  `irq = intreq & intena` unchanged.
+3. Firmware port select: bit 8 of the first word of every HDD SPI command
+   (1000/1001/1010/1011/1111 and the new 1100) selects the port;
+   paula_floppy.v latches it as `hdd_port` with the command and passes it to
+   gayle, which routes `hdd_wr`, `hdd_addr`, `hdd_data_*`, `hdd_status_wr`
+   and `hdd_data_in` to/from that instance.  The SD direct-transfer path
+   (`scs2`) writes into the instance of `hdd_port`.
+4. Request bits (status word 0 stays as is):
+   `hdd_cmd_req = bsy[hdd_port] | (bsy[~hdd_port] & ~busy[hdd_port])` --
+   while the firmware serves a command on one port, only that port's `bsy`
+   is visible (the ATA loops keep working); when it is idle, either port's
+   new command raises CMD_IDECMD.  `hdd_dat_req = dat_req[hdd_port]`.
+   Flags in `hdd_data_in[15:8]` of every tfr read (any port): bit 8 port of
+   this read, bit 9 `xfer_done`, bit 10 `dev_wr` (host wrote drive/head
+   since the last firmware read; sticky), bit 11 `rst_seen` (Gayle reset
+   since the last read; sticky), bit 12 `pkt_mode`, bit 13 `bsy[0]`, bit 14
+   `bsy[1]`.  Sticky bits clear when the firmware reads register 7 of that
+   port.
+5. New SPI command `CMD_IDE_XFER_WR` = top nibble 1100 (0xC0 | port bit):
+   one payload word `{pkt_mode, 2'b0, xfer_words[12:0]}`.  Decoded in
+   paula_floppy.v next to cmd_hdd_wr (`hdd_xfer_wr` strobe at rx_cnt==1).
+   Writing it resets that port's FIFO pointers and loads the length.
+   `pkt_mode` clears on a host command write and on reset.
+6. Packet mode (`pkt_mode=1`) in gayle_port:
    - `drq = pio_in ? (fifo_full | words_in == xfer_words) & ~fifo_empty
-     : pio_out & (words_in < xfer_words)` -- short responses get DRQ once
-     complete, long ones stream in 512-byte steps as ATA does, `nrdy`
-     covers the tail.  `words_in`/`words_out` are the existing FIFO
-     pointers (`inptr`/`outptr` exported, or two new 13-bit counters).
-   - No `sector_count` decrement, no automatic `busy` clear
-     (`sector_count_dec_in/out` gated by `~pkt_mode`).
-   - Transfer end (`words_out == xfer_words` for pio in, `words_in ==
-     xfer_words` for pio out): `drq` drops, `busy <= 1` (BSY visible to the
-     host between phases, as ATAPI allows), `pio_in/pio_out <= 0`, sticky
-     `xfer_done <= 1`.  For pio out also `hdd_dat_req = pkt_mode ? xfer_done
-     : fifo_full & pio_out` so the firmware's existing `CMD_IDEDAT` poll
-     fires for a 6-word packet.
-   - `intreq`: set on any status write with bit 4 in packet mode (both
-     directions, independent of the drq edge), in addition to the existing
-     paths.  Clearing stays as is.
-3. Flags readable by the firmware in the high byte of every tfr read
-   (`hdd_data_in[15:8]`, today `{7'h0, dev[1]}`): bit 8 `dev[1]`, bit 9
-   `xfer_done`, bit 10 `dev_wr` (sticky: host wrote drive/head since the
-   last firmware tfr read), bit 11 `rst_seen` (sticky: Gayle reset since the
-   last read), bit 12 `pkt_mode`.  Sticky bits clear when the firmware
-   reads register 7 (last of the 8-register read).
-4. Signature mux: new config input `ide_atapi[3:0]` (one bit per slot,
-   from `ide_config0/1` extended to 5 bits: `userio_osd.v:449-450` take
-   `wrdat[4:0]`; `ConfigIDE` sends them).  New reg `sig_mode`, set on reset
-   and by a status write with a new bit 5 ("signature"), cleared when the
-   host writes the command register.  While `sig_mode`, host reads of tfr
-   2..5 return the constant signature for the selected device
-   (`ide_atapi[dev]` ? 1,1,0x14,0xEB : 1,1,0,0) and register 1 returns 0x01.
-   This removes the race of a firmware-written signature when the host
-   switches devices (one shared register file).  Cost ~20 LUTs.  Firmware
-   still writes the signature after 0x90/0x08/0xEC for the WriteTaskFile
-   path (harmless redundancy).
-5. `hdd1_ena` gating of `sel_tfr` stays; `ConfigIDE` must now send
-   `ide_config1` (SPI address 0_101_10 = command byte 0x58, name it
-   `OSD_CMD_HDD1`).  Verify the `wrdat[7:2]` decode in userio_osd.v:330
-   maps 0x58 to SPI_HARDDISK1_CFG_ADR before relying on it.
-6. Everything above is plain Verilog registers and comparators, no
-   primitives; the Intel ports compile it unchanged (they will simply not
-   have the firmware).
+     : pio_out & (words_in < xfer_words)` -- short transfers get DRQ when
+     complete, long ones stream in 512-byte steps, `nrdy` covers the tail.
+   - No `sector_count` decrement, no automatic `busy` clear.
+   - Transfer end (`words_out == xfer_words` pio in, `words_in ==
+     xfer_words` pio out): drq drops, `busy` stays set (BSY between phases,
+     allowed by ATAPI), `pio_in/pio_out <= 0`, sticky `xfer_done <= 1`; for
+     pio out `hdd_dat_req = xfer_done`.
+   - `intreq` set on every status write with bit 4 in packet mode.
+7. Signature mux: `ide_config0/1` widen from 3 to 5 bits (bit 0 port on,
+   bits 2:1 master/slave present, **bits 4:3 master/slave is ATAPI**);
+   userio_osd.v:449-450 take `wrdat[4:0]`, `t_ide_config0/1` widen.  Per
+   port `sig_mode`, set on reset and by a status write with new bit 5,
+   cleared by a host command write; while set, host reads of tfr 1..5
+   return 1 / 1,1,0x14,0xEB (ATAPI device) or 1 / 1,1,0,0 (ATA) for the
+   selected device.  Removes the race between a firmware-written signature
+   and the host switching devices.
+8. `ConfigIDE(port, on, master, slave, atapi_bits)` sends OSD_CMD_HDD (0x54)
+   for port 1 and new `OSD_CMD_HDD1` (0x58) for port 2.  Check in
+   userio_osd.v that 0x58 decodes to `spi_harddisk1_cfg_sel` before relying
+   on it.  Port 2's `ide_config1[0]` = IDE on && (secondary master or slave
+   enabled) (D4).
 
-Not in phase 1: a second register file + FIFO for the secondary channel
-(phase 2b), the device control register, DRDY masking.
+Not planned: the device-control register (SRST/nIEN; a real splitter loses
+it too), DMA, DRDY masking (only if R4 shows up).
 
 ### 7.4 Firmware structure
 
 - `fw/ctrl_832/atapi.c/.h` (new, pure C, no hardware access): `struct
-  atapi_unit` (sense triple, unit-attention flag, lock, event pending,
-  media present, `sectors`), `atapi_identify(buf, name)`,
-  `int atapi_packet(struct atapi_unit*, const uint8_t cdb[12], uint16_t
-  limit, struct atapi_result*)` returning one of: RESPONSE (bytes in a
-  2 KB static buffer), READ (lba, count), RECEIVE (length, for MODE SELECT),
-  DONE, CHECK (sense).  Builds for the 832 and for the host with gcc
-  (`-DHOSTTEST`).
-- `fw/ctrl_832/cdrom.c/.h` (new, board glue): the CD unit state
-  (`fileTYPE` + index like hdfTYPE, slot, inserted), `CD_Open(slot)`,
-  `CD_Insert(name, dir)`, `CD_Eject()`, and the Gayle-level driver:
-  `CD_HandleCommand(tfr)` for 0xA0/0xA1/0xEC/0x90/0x08/0xEF/else using
-  `WriteTaskFile`, `WriteStatus`, new `WriteXfer(words, pkt)`, the data-in
-  loop (fill FIFO with CMD_IDE_DATA_WR for responses, `FileReadEx(&cd.file,
-  0, 4*n)` direct transfer for sectors, wait `xfer_done`, next block), the
-  data-out receive (poll `CMD_IDEDAT`, CMD_IDE_DATA_RD of `words` words).
-- `hdd.c`: `HandleHDD` reads the high byte of the tfr read (channel +
-  flags), computes `slot = dev1<<1 | (tfr[6]>>4 & 1)`, dispatches to the ATA
-  path (`hdf[]`, now 4 entries or a slot->hdf map) or `CD_HandleCommand`;
-  `ATA_Diagnostic` writes the proper signature; `OpenHardfile(slot)` for
-  the two new slots; `rst_seen` -> re-arm signature / UNIT ATTENTION.
-- `config.c ApplyConfiguration`: open slots 2/3, `ConfigIDE(enable_ide,
-  present bits, atapi bits, port2 enable)`.
-- `menu.c`: section 5.  `fat.c`: no change for "ISO" (one extension);
-  phase 3 adds a small extension-list match for "ISO"+"CUE".
-- `osd.h/fpga.h/hdd.h`: new command codes and `HDF_CDROM`.
+  atapi_unit` (sense, unit attention, lock, pending event, media present,
+  `sectors`, name), `atapi_identify(buf, unit)`, `int atapi_packet(struct
+  atapi_unit*, const uint8_t cdb[12], uint16_t limit, struct
+  atapi_result*)` -> RESPONSE (bytes in a 2 KB static buffer), READ (lba,
+  count), RECEIVE (length), DONE, CHECK (sense).  Builds for the 832 and for
+  the host with gcc (`-DHOSTTEST`).
+- `fw/ctrl_832/cdrom.c/.h` (new, board glue): the CD state (`fileTYPE` +
+  cluster index, slot, inserted, locked), `CD_Open(slot)`,
+  `CD_Insert(name, dir)`, `CD_Eject()` (refuses while locked, returns a
+  status the OSD shows), `CD_HandleCommand(port, tfr)` for
+  0xA0/0xA1/0xEC/0x90/0x08/0xEF/else using `WriteTaskFile`, `WriteStatus`,
+  new `WriteXfer(port, words, pkt)`: response data with CMD_IDE_DATA_WR,
+  sectors with `FileReadEx(&cd.file, 0, 4*n)` direct transfer, wait for
+  `xfer_done`, next block; data-out via CMD_IDEDAT + CMD_IDE_DATA_RD.
+- `hdd.c`: every SPI HDD command carries the port bit (`hdd_port` global set
+  per command).  `HandleHDD`: read the registers of port 0; if the flags say
+  `bsy[0]` is clear and `bsy[1]` set, read port 1's instead.  `slot = port<<1
+  | (tfr[6]>>4 & 1)`; dispatch to the ATA path (`hdf[4]`, one per slot) or
+  `CD_HandleCommand`.  `ATA_Diagnostic` writes the proper signature;
+  `rst_seen` re-arms UNIT ATTENTION (06/29/00) and clears the lock.
+- `config.c ApplyConfiguration`: open all four slots, `ConfigIDE` for both
+  ports with the ATAPI bits; the D1 default in the defaults block.
+- `menu.c`: section 5.  `fat.c`: no change for "ISO".
+- `osd.h/fpga.h/hdd.h`: `OSD_CMD_HDD1`, `CMD_IDE_XFER_WR`, `HDF_CDROM`.
 
 ## 8. Data path and performance
 
-- ISO sector n = file bytes n*2048 = FAT sectors 4n..4n+3 of the ISO file:
-  `HardFileSeek(&cd, 4*lba)` then `FileReadEx(&cd.file, 0, 4*count)`
-  streams straight from the SD card into the Gayle FIFO (direct mode), no
-  copy through the 832.  Cluster crossings are handled inside FileReadEx.
-  The cluster index (`BuildHardfileIndex`) costs one FAT walk at open
-  (hardfiles report "indexed in N ms" -- a 700 MB ISO is in the same range
-  as a 700 MB HDF).
-- Block size per DRQ: min(host limit, 8 KB) = up to 4 CD sectors per DRQ
-  block; a 64 KB read (OS 3.2 CDFS keeps HD_SCSICMD transfers <= 64 KB per
-  its notes) is 8 blocks with one IRQ each.
-- Throughput estimate (no measurement possible before implementation): the
-  SD SPI ceiling is ~2 MB/s raw (findings/sdio plan: 18.9 MHz bit clock,
-  `SPI_fast`), the hardfile path achieves a fraction of that today
-  (UNVERIFIED: no board number for HDF reads is in findings/; Jakub's 2010
-  comment says 400-520 KB/s with a 28 MHz 68k, the 040 and faster SPI will
-  be higher).  With the firmware serialising "fill 8 KB, then host drains"
-  and the 832 loop latency per block (~50-100 us), expect 0.6-1.2 MB/s,
-  i.e. 4-8x CD speed; streaming (DRQ on the first 512 bytes, `nrdy` for
-  gaps) overlaps the two and should approach the SD ceiling.  Phase 1 ships
-  fill-then-drain; the streaming `drq` term is in the RTL from the start
-  (section 7.3 item 2) so the switch is firmware-only.
-- Measure in acceptance: copy a 100 MB file from CD0: to RAM: with a
-  stopwatch / `c:copy` timing; compare md5 (3.2 has C:MD5Sum per the 3.2.2
-  notes) against the host.
+- ISO sector n = file bytes n*2048 = FAT sectors 4n..4n+3:
+  `HardFileSeek(&cd, 4*lba)` + `FileReadEx(&cd.file, 0, 4*count)` streams
+  from the SD card into the port's FIFO, no copy through the 832.  The
+  cluster index costs one FAT walk at insert (as a hardfile open).
+- Block size per DRQ: min(host limit, 8 KB) = up to 4 CD sectors.
+- Estimate (unmeasured): SD SPI ceiling ~2 MB/s; fill-then-drain with the
+  832 loop latency per block gives ~0.6-1.2 MB/s (4-8x CD speed).  The
+  streaming `drq` term is in the RTL from the start, so overlapping fill and
+  drain later is firmware only (task 2.1).
+- Acceptance measures a 100 MB copy from CD0: to RAM: (time + MD5).
 
-## 9. Media change and eject without reset
+## 9. Media change, eject and lock
 
-- OSD eject (main-page line 6 or the slot page): `CD_Eject()` closes the
-  file, `media=0`, `event=REMOVED`; the next non-exempt command gets 02/3A/00;
-  TEST UNIT READY fails -> CDFileSystem sees "no disc" through
-  TD_CHANGESTATE polling (scsi.device polls the unit periodically,
-  TD_ADDCHANGEINT per the 3.2 scsi notes 47.3).
-- OSD insert: `CD_Insert()` opens the ISO, builds the index, `media=1`,
-  `unit_attention=1`, `event=NEW_MEDIA`; the first non-exempt command returns
-  06/28/00 once, then normal; GET EVENT STATUS reports NewMedia once.
-  CDFileSystem re-reads the TOC/PVD and mounts the new volume.
-- Swap = eject + insert (two OSD actions, or one "select ISO while
-  inserted" that does both).
-- START STOP UNIT with LoEj (Amiga-side `Eject` command, 3.2 has one):
-  behaves like OSD eject; the OSD line updates on the next redraw.
-- PREVENT MEDIUM REMOVAL lock: honour it only in the sense that the OSD
-  shows a padlock; the OSD still ejects (a user with the OSD is the hand
-  on the tray) -- decision D5.
-- Amiga reset (`rst_seen`): keep the disc, re-arm `sig_mode`, set UNIT
-  ATTENTION (a real drive reports 06/29/00 power-on/reset).
+- OSD eject (main-page line 6, or a new ISO on the slot page): if the Amiga
+  has locked the drive (PREVENT MEDIUM REMOVAL), **refused** (D5): the OSD
+  shows "locked by the Amiga", nothing changes.  Otherwise `CD_Eject()`
+  closes the file, media=0, event=REMOVED; the next non-exempt command gets
+  02/3A/00 and CDFileSystem sees the disc gone.
+- OSD insert: `CD_Insert()` opens the ISO, builds the index, media=1, UNIT
+  ATTENTION, event=NEW_MEDIA; the first non-exempt command returns 06/28/00
+  once; CDFileSystem rereads the volume.  IDENTIFY/INQUIRY now report the
+  new name (D7; drivers read them at probe time, so this is cosmetic).
+- Swap = eject + insert in one action.
+- Amiga-side eject (START STOP UNIT LoEj): same rules as the OSD, including
+  the lock.
+- The lock is cleared by ALLOW MEDIUM REMOVAL and by any Amiga reset
+  (`rst_seen`) -- a crashed program cannot keep the drive locked past a
+  reset.
+- Amiga reset: the disc stays in; `sig_mode` re-armed; 06/29/00 once.
 
 ## 10. Phased tasks
 
-Each task: files, test, board check.  Builds of bitstreams are Paul's call
-(do not start one unattended; see memory "No unattended across limits").
+Order: each task's test is written first and must fail before the change
+(named mutant where the test is a bench).  Bitstream builds are Paul's call
+and are not started unattended.  Board steps are done with Paul.
 
-### Phase 0 -- scaffolding and the host test (no RTL, no board)
+### Phase 0 -- the ATAPI layer on the host (no RTL, no board)
 
-- 0.1 `fw/ctrl_832/atapi.c/.h` with `atapi_identify`, `atapi_packet` for
-  the section 7.2 table, sense/unit-attention/event state, TOC builder.
-  Test: `fw/ctrl_832/test/atapi_test.c` built with the host gcc
-  (`make -C fw/ctrl_832/test`), feeds CDBs and asserts response bytes
-  (INQUIRY layout, READ TOC format 0 LBA and MSF for a 245,535-sector
-  image incl. the lead-out at MSF 54:35:60 (LBA 245,535 + 150 frames), READ CAPACITY,
-  MODE SENSE page lengths, allocation-length truncation, the no-disc rule,
-  the one-shot UNIT ATTENTION, GET EVENT STATUS one-shot, invalid opcode ->
-  05/20/00, READ(10) count 0, READ beyond end -> 05/21/00).  Sector reads
-  go through a callback that the test backs with
-  `~/work/amiga/AmigaOS3.9.iso` (compare the PVD at sector 16).
-- 0.2 `fw/ctrl_832/cdrom.c/.h` compiled for the 832 but not yet called;
-  `make -C fw/ctrl_832` still builds (vbcc832 toolchain at
-  `EightThirtyTwo/`).  Check the map: growth < 20 KB.
+- 0.1 `fw/ctrl_832/test/atapi_test.c` + `Makefile` (host gcc), written
+  first, against the `atapi.h` interface of section 7.4.  Cases: INQUIRY
+  layout with the ISO name in the product field and "CD-ROM (empty)"
+  without a disc; IDENTIFY PACKET words 0/49/82 and the model string; READ
+  TOC format 0 in LBA and MSF for the 245,535-sector image incl. the
+  lead-out at 54:35:60 (LBA + 150 frames); format 1; READ CAPACITY; MODE
+  SENSE(6/10) page lengths and 3F; allocation-length truncation; the no-disc
+  rule and its exemptions; the one-shot UNIT ATTENTION after insert
+  (06/28/00) and after reset (06/29/00); GET EVENT STATUS one-shot; PREVENT
+  then START STOP eject -> 05/53/02 and `CD_Eject` refused; ALLOW then eject
+  works; reset clears the lock; invalid opcode 05/20/00; READ(10) count 0;
+  READ beyond the end 05/21/00.  Sector reads through a callback backed by
+  `~/work/amiga/AmigaOS3.9.iso` (PVD "CD001" at sector 16).
+  Expected first run: does not compile (no atapi.c).
+- 0.2 `fw/ctrl_832/atapi.c/.h` until 0.1 passes.
+- 0.3 `fw/ctrl_832/cdrom.c/.h` compiled into the 832 image, not yet called;
+  `make -C fw/ctrl_832` builds; the map shows < 20 KB growth.
 
-### Phase 1 -- RTL packet mode + ISO data on the primary channel
+### Phase 1 -- two-port Gayle with packet mode, CD on port 2, OSD
 
-- 1.1 gayle.v / paula_floppy.v / minimig.v / userio_osd.v / userio.v per
-  section 7.3 (xfer command, packet mode, flags, signature mux, 5-bit
-  ide_config).  Keep every ATA-path expression unchanged when
-  `pkt_mode=0` (diff-review for that).
-- 1.2 New bench `sim/gayle/gayle_tb.v` + `run.sh` (iverilog, modelled on
-  sim/osd_keyq/run.sh): instantiate gayle + gayle_fifo, drive the 68k side
-  (sel_ide, address, rd/hwr/lwr, clk7_en) and the SPI side (hdd_* ports
-  directly, no paula_floppy).  Cases: (a) ATA READ SECTORS of 2 sectors
-  behaves exactly as before (golden VCD/compare of status sequence);
-  (b) PACKET: host writes 0xA0, firmware side writes xfer=6/pkt, status
-  pio-out -> drq high, host writes 6 words -> drq low, `hdd_dat_req`,
-  `xfer_done` flag; (c) data-in 18 bytes (9 words): firmware fills 9 words,
-  status pio-in|IRQ -> drq + intreq only after all 9 words, host reads 9
-  words -> drq low, BSY, xfer_done; (d) data-in 1024 words streams: drq
-  after 256 words, `nrdy` asserted when the host outruns the writer;
-  (e) signature mux: after reset tfr 2..5 read 1,1,0x14,0xEB for an
-  ATAPI slot and 1,1,0,0 for an ATA slot, and the real tfr after a command
-  write; (f) `dev_wr`/`rst_seen` sticky flags clear on reading register 7.
-  Mutant mode: packet mode forced off must fail (b)-(d).
-- 1.3 Firmware: hdd.c dispatch by slot, `CD_HandleCommand`, `WriteXfer`,
-  signature in `ATA_Diagnostic`, `ConfigIDE` with atapi bits, `OpenHardfile`
-  for a CD slot (type HDF_CDROM -> `CD_Open`).  Serial log of every ATA
-  command on a CD unit and every CDB (one line each, `DebugMode` gated),
-  used in 1.5 to prune the table.
-- 1.4 OSD: `HDF_CDROM` type in the slot cycle (primary slots only in this
-  phase), ISO file selector, main-page line 6 insert/eject, help text.
-- 1.5 Board acceptance (QMTech, 3.2.3 ROM 47.115, Install3.2 ADF or an HDF
-  with 3.2 installed, CD slot = primary slave):
-  - scsi.device sees unit 1: `HDToolBox` or `C:ScsiQuery`/`SysInfo` lists
-    "MINIMIG CD-ROM ISO"; no hang at boot with and without a disc.
-  - Copy Storage/DOSDrivers/CD0 to DEVS: with Unit=1; `AmigaOS3.9.iso`
-    mounts as CD0:, `dir CD0:` lists the OS 3.9 CD, `Info` shows the size.
-  - Copy a 100 MB file to RAM:, `MD5Sum` matches the host's md5sum; note the
-    time (section 8).
-  - Eject from the OSD: CD0: shows "no disk"; insert `ClassicInstallCD`:
-    new volume appears without reset; swap back.
-  - Reset (Ctrl-A-A) with the disc in: still mounted afterwards.
-  - Regression: an HDF on the primary master boots and `DiskSpeed`/copy
-    results are unchanged (ATA path untouched).
-  - KS 3.1 (40.68) + IDEfix97 demo from Aminet: `atapi.device` finds the
-    unit; CacheCDFS mounts it (confirms a second driver's command set).
+- 1.1 Bench first: `sim/gayle/gayle_tb.v` + `run.sh` (iverilog, modelled on
+  sim/osd_keyq/run.sh), driving the 68k side (sel_ide, address, rd/hwr/lwr,
+  clk7_en) and the SPI side (hdd_* ports and the port bit directly).  Cases:
+  (a) port 0 ATA READ SECTORS of 2 sectors: the status/drq/irq sequence
+  matches a golden trace recorded from today's gayle.v before the change;
+  (b) PACKET on port 1: host 0xA0, firmware xfer=6/pkt, pio-out -> drq,
+  6 words -> drq low, `hdd_dat_req`, `xfer_done`;
+  (c) data-in 18 bytes on port 1: drq + intreq only after 9 words, host
+  reads 9 -> drq low, BSY, xfer_done;
+  (d) data-in 1024 words: drq after 256 words, `nrdy` when the host
+  outruns the writer;
+  (e) signature mux per port and device;
+  (f) sticky `dev_wr` / `rst_seen` clear on reading register 7;
+  (g) a write to $DA3018 with port 2 on leaves port 0's tfr[6] and device
+  select unchanged;
+  (h) port 0 command written while port 1 is busy: accepted, port 0 shows
+  BSY, `hdd_cmd_req` follows the rule of 7.3 item 4 in both orders;
+  (i) port 1 disabled (`hdd1_ena=0`): $DA1xxx/$DA3xxx not decoded.
+  Mutants: packet mode forced off fails (b)-(d); shared register file
+  (port select ignored) fails (g)-(h).
+  Expected first run: (b)-(i) fail against today's gayle.v.
+- 1.2 RTL per section 7.3 (gayle.v split + gayle_port.v, paula_floppy.v
+  port bit and 1100 command, userio_osd.v 5-bit ide_config, minimig.v
+  wiring) until 1.1 passes; diff-review that port 0's ATA expressions are
+  unchanged with packet mode off.  Intel project files list gayle_port.v.
+- 1.3 Firmware: port bit in all HDD SPI commands, `HandleHDD` port
+  selection, `hdf[4]`, `ATA_Diagnostic` signature, `ConfigIDE` for both
+  ports.  Board regression first (HDF on port 1 master boots, copy speed
+  unchanged) before any CD code is called.
+- 1.4 Firmware: `CD_HandleCommand`, `WriteXfer`, `CD_Open/Insert/Eject`,
+  reset handling.
+- 1.5 OSD: section 5 (CD type on both pages, page 2, main-page line 6 with
+  the lock state, one-CD rule, swap without reset, D1 default for fresh
+  configs, help text).
+- 1.6 Serial log (DebugMode gated): every ATA command on a CD unit and every
+  CDB, one line each.
+- 1.7 Build (Paul's go), timing summary checked against section 6.
+- 1.8 Board acceptance, port 2 (the default), 3.2.3 ROM 47.115, 3.2 on an
+  HDF on port 1 master:
+  - without AtapiMagic: boots normally, HDF works, no hang (port 2 is
+    invisible to the ROM; $DA3018 writes are harmless -- case g on the
+    board).
+  - AtapiMagic 47.1 installed: unit 2 found, name = ISO name; CD0 with
+    Unit=2 mounts AmigaOS3.9.iso; `dir CD0:`, `Info`.
+  - 100 MB file from CD0: to RAM:, MD5 matches the host, time noted.
+  - Interleave: copy a large file HDF -> RAM: while copying from CD0: in a
+    second shell; both MD5s match (proves R-A on the board).
+  - OSD eject -> CD0: shows no disc; insert ClassicInstallCD -> new volume
+    without reset; swap back.
+  - Lock: a program that sends PREVENT (or the 3.2 `Eject`/lock path, if
+    available -- else a small test tool) -> OSD eject refused with the
+    message; after ALLOW or a reset it works.
+  - Ctrl-A-A reset with the disc in: CD still mounts afterwards.
+  - Serial CDB log reviewed; section 7.2 trimmed or extended from it.
+- 1.9 Board acceptance, other setups: CD on port 1 slave with the stock 3.2
+  ROM (no AtapiMagic) mounts with Unit=1; KS 3.1 40.68 + IDEfix97 finds the
+  drive on port 2 and CacheCDFS mounts it; an HDF on port 2 slave with
+  AtapiMagic (slot-agnostic check).
+- 1.10 doc: a user how-to (OSD steps, AtapiMagic/IDEfix97 install, the CD0
+  mount entry per table 4, "not bootable"), README feature list, backlog
+  item closed.
 
-### Phase 2 -- secondary port and polish
+### Phase 2 -- polish
 
-- 2.1 OSD page 2 (IDE port 2), slots 2/3, `OSD_CMD_HDD1`, `ide_config1`,
-  `hdd1_ena`; firmware `dev[1]` honoured; CD on secondary master.
-  Board: AtapiMagic 47.1 on 3.2 -> unit 2 mounts; without AtapiMagic the
-  port is invisible and nothing hangs.  HDF on primary + CD on secondary:
-  copy test while the HD is busy (R1 probe).
-- 2.2 Streaming `drq` in the firmware (DRQ as soon as the first 512 bytes
-  are in), measure the gain.
-- 2.3 Custom-ROM boot experiment: build a 1 MB 3.2.2 ROM with CDFileSystem
-  48.52+ resident (Hyperion's ROM tools or Remus; UNVERIFIED tooling), CD on
-  primary, see if strap boots the OS 3.2 CD / a bootable ISO.  Outcome
-  decides whether "boot from CD" stays a documented limitation.
-- 2.4 Phase 2b, only if R1 shows up: second register file + FIFO for the
-  secondary channel (duplicate the gayle core per channel, mux by
-  `address_in[12]`, firmware reads both request bits).
+- 2.1 Streaming in the firmware (DRQ as soon as the first 512 bytes are in,
+  `nrdy` covers gaps); measure the gain against 1.8.
+- 2.2 Only if R4 shows up: DRDY mask for ATAPI units.
 
 ### Phase 3 -- BIN/CUE and CD audio (rough size)
 
-- CUE parser from bincue.c (file-backed), 2352-byte tracks: READ(10) must
-  skip the 16/24-byte headers, so sector data goes through `sector_buffer`
-  (4 x 512 + offset handling) instead of direct transfer -- slower; or add
-  a "skip N bytes" option to the direct path (RTL: a byte counter that
-  drops the first 16 bytes of each 2352 block; cheap but another RTL
-  change).  READ CD (BE) for raw reads, READ TOC with audio tracks (control
-  0x10), PLAY AUDIO MSF/10, PAUSE/RESUME, READ SUB-CHANNEL with position,
-  MODE SELECT page 0E volume.  Audio through audiotrack.c into the 32 KB
-  host audio buffer (shared with drive sounds -- arbitration needed).
-  Firmware ~6-8 KB, RTL 0-30 LUTs.  Extension list "ISO"/"CUE" in
-  ScanDirectory.  Size: about the same as phase 1 again.
+- CUE parser from bincue.c (file-backed); 2352-byte tracks need the 16-byte
+  header skipped (via `sector_buffer`, or an RTL skip counter in the direct
+  path).  READ CD (BE), READ TOC with audio tracks, PLAY AUDIO MSF/10,
+  PAUSE/RESUME, READ SUB-CHANNEL with position, MODE SELECT page 0E volume.
+  Audio through audiotrack.c into the 32 KB host audio buffer (shared with
+  drive sounds -- arbitration needed).  ScanDirectory gets an extension
+  list ("ISO"+"CUE").  Firmware ~6-8 KB, RTL 0-30 LUTs; about the size of
+  phase 1 again.
 
 ### Phase 4 -- CD32 (Akiko)
 
-- Akiko CD controller registers at $B80000, CD32 ROM 40.60 + extended ROM,
-  its own command protocol (MiSTer `akiko_cd32.cpp`, 1634 lines, is the
-  reference), chunky-to-planar is already in rtl/akiko.  Independent of
-  IDE; shares cdrom.c/atapi.c's image layer.  Size: larger than phases 1-3
-  together; not estimated further here.
+- Akiko CD controller at $B80000, CD32 ROM 40.60 + extended ROM, its own
+  command protocol (MiSTer `akiko_cd32.cpp`, 1634 lines).  Independent of
+  IDE; shares atapi.c/cdrom.c's image layer.  Larger than phases 1-3
+  together; not estimated further.
 
-## 11. Risks and open decisions
+## 11. Decisions and risks
+
+Paul's decisions (2026-10-12):
+
+- D1: the CD-ROM's default place is **port 2 master**.  Amiga side needs
+  AtapiMagic (3.1.4/3.2) or IDEfix97 (3.1); not bootable (accepted, D6).
+  The CD stays a slot type, so port 1 remains possible.
+- D2: one Gayle if sufficient, two if needed and the FPGA allows.  Applied
+  as ruling R-A: two port instances (section 7.3; fits, section 6).
+- D3: one CD drive.
+- D4: no port-2 on/off line; port 2 is on when one of its slots is
+  configured.  A CD slot counts with or without a disc.
+- D5: OSD eject (and swap) is refused while the Amiga has locked the drive.
+- D6: no CD boot; the custom-ROM experiment is dropped.
+- D7: IDENTIFY model and INQUIRY product carry the ISO name.
+
+Rulings made while reconciling (for Paul to overrule):
+
+- R-A: two port instances from phase 1 (section 7.3).  If wrong: ~190 LUTs
+  and 2 BRAM36 spent that a single instance would have saved.
+- R-B: the D1 default applies to fresh configs only; existing config files
+  keep port 2 empty until the user sets it (no config version bump, so
+  older firmware still loads new configs).  If wrong: Paul sets the slot
+  once in the OSD.
+- R-C: INQUIRY vendor stays "MINIMIG "; the product field is the first 16
+  characters of the ISO name; an empty drive reports "CD-ROM (empty)".
+- R-D: the lock is cleared by an Amiga reset, as on a real drive.
+- R-E: HDFs are also allowed in port 2 slots (the type cycle is the same on
+  both pages; costs two more hdfTYPE in BSS).
 
 Risks:
 
-- R1 **Shared register file and FIFO across two channels.** A 4-way driver
-  may interleave a command on the HD (port 1) while a CD command (port 2)
-  is between phases.  With one tfr/FIFO the two corrupt each other.  Real
-  drivers serialise per IORequest but scsi.device is one task serving all
-  units (UNVERIFIED whether it waits for completion before touching the
-  other port).  MiSTer avoids it with two `ide` instances.  Mitigation:
-  phase 2.1 test; fallback 2.4.
-- R2 **Command subset mismatch.** No capture of what OS 3.2 CDFileSystem /
-  scsi.device / AtapiMagic / IDEfix send.  Mitigation: serial CDB log in
-  phase 1, ILLEGAL REQUEST for everything unknown (drivers survive that).
-- R3 **$DA3018 device control register** decodes as the secondary channel's
-  drive/head register when `hdd1_ena` is set.  MiSTer has the same mapping
-  and works with 3.1.4/3.2; watch for `dev` flips in the log.
-- R4 **DRDY always set** on the ATAPI unit (WinUAE/MiSTer clear it until the
-  first ATAPI command).  If scsi.device treats the unit as ATA, add the mask
-  bit in RTL.
-- R5 **Timing of the 832 loop between phases.** The host sees BSY while the
-  firmware prepares the next block; CDFileSystem timeouts are seconds, fine,
-  but the floppy emulation shares the loop -- heavy floppy + CD use at once
-  may stutter (as HDF + floppy does today).
-- R6 **Older firmware** seeing `enabled=7` in a primary slot displays
-  garbage in the Harddisks menu (array overrun on `config_hdf_msg`).  Harmless
-  if the CD is in a secondary slot; document.
-- R7 **3.1.4 ATAPI support** inferred from 3.1.4.1 notes and 3.2 strings, not
-  verified against a 3.1.4 ROM here.
-
-Decisions for Paul:
-
-- D1 Default slot for the CD in a fresh config: none (user picks), or
-  primary slave?  Plan assumes "none".
-- D2 Accept the shared-register-file design for phase 1 (R1) and defer the
-  second Gayle instance?  Plan assumes yes.
-- D3 One CD unit in phase 1 (menu refuses a second CD slot)?  Plan assumes
-  yes; two units cost one more state struct and index (4 KB) each.
-- D4 Secondary port on/off switch: derived from the slot types (no extra
-  byte) or an explicit "Port: on/off" line?  Plan draws the explicit line
-  but stores it as "any secondary slot enabled".
-- D5 OSD eject while the Amiga has locked the tray (PREVENT MEDIUM
-  REMOVAL): obey (refuse) or override?  Plan assumes override with a
-  padlock shown.
-- D6 Phase 2.3 (custom ROM with resident CDFileSystem) -- worth the time, or
-  is "boot from HDF/ADF, mount the CD" enough?
-- D7 Name strings: INQUIRY vendor/product "MINIMIG " / "CD-ROM ISO", IDENTIFY
-  model with the ISO name (as hardfiles show their file name)?
-
-## 12. Paul's decisions (2026-10-12)
-
-- D1: the CD-ROM goes on the **secondary IDE port** (port 2, master) by
-  default.  Consequence: on the Amiga, AtapiMagic (3.1.4/3.2) or IDEfix97
-  (3.1) is required, and the CD is not bootable (accepted, D6).  Phase 1
-  bring-up may still use primary slave for the first light, but the shipped
-  default and the board acceptance target the secondary port; phase 2.1
-  (secondary port + AtapiMagic) moves into phase 1.
-- D2: keep ONE Gayle if it is sufficient; a second Gayle instance is
-  acceptable if the FPGA budget allows (it does: ~+190 LUTs, +2 BRAM36).
-  With the HDF on port 1 and the CD on port 2 (D1) risk R1 is the normal
-  case, not a corner case: phase 1 must include the interleave test (HDF
-  copy while reading the CD) and switch to the second instance if it fails.
-- D3: one CD drive.
-- D4: no separate "Port: on/off" line; port 2 is on exactly when one of its
-  slots is enabled (the plan's stored form).  Confirmed by Paul 2026-10-12.
-  "Enabled" = the CD drive is configured, with or without a disc: an
-  ejected or empty drive stays on the bus, so ejecting from the OSD does
-  not make the drive vanish under CDFileSystem.
-- D5: OSD eject is **refused** while the Amiga has locked the tray (PREVENT
-  MEDIUM REMOVAL); the OSD shows the lock.
-- D6: no CD boot; drop phase 2.3 (custom ROM with resident CDFileSystem).
-- D7: IDENTIFY model string and INQUIRY product carry the ISO name.
+- R2 **Command subset mismatch** -- no capture yet of what OS 3.2
+  CDFileSystem / scsi.device / AtapiMagic / IDEfix send.  Mitigation: the
+  serial CDB log (1.6), ILLEGAL REQUEST for anything unknown.
+- R4 **DRDY always set** on the ATAPI unit; if a driver mistakes it for ATA,
+  add the mask (2.2).
+- R5 **832 loop timing** -- the firmware serves one command at a time and
+  blocks in its data loops (as the ATA path does today); a port 0 command
+  waits (BSY) while a CD transfer runs.  Drivers wait seconds; heavy floppy
+  and CD use at once may stutter, as HDF + floppy can today.
+- R6 **Older firmware** shows a garbage type string for a CD in a port 1
+  slot (array overrun on `config_hdf_msg`); harmless for the default port 2
+  slot.  Release note.
+- R7 **3.1.4 ATAPI** inferred, not verified on a 3.1.4 ROM here (only
+  matters for a CD on port 1 with 3.1.4).
+- R8 **AtapiMagic is alpha** (Hyperion); if it misbehaves with the
+  emulation, IDEfix97 is the fallback and the serial log shows the
+  difference.
+- Former R1 (interleaving on shared registers) and R3 ($DA3018 aliasing)
+  are removed by R-A; bench cases 1.1 (g)/(h) and acceptance 1.8 guard
+  them.
