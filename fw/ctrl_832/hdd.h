@@ -71,6 +71,8 @@ void WriteStatus(unsigned int status);
 void WriteXfer(unsigned int words, int pkt);
 unsigned char ReadTaskFile(int port, unsigned char *tfr);
 unsigned char ReadIDEFlags(int port);
+void WriteIDEData(const unsigned char *buf, unsigned int bytes);
+void ReadIDEData(unsigned char *buf, unsigned int bytes);
 void HandleHDD(unsigned int c1, unsigned int c2);
 void GetHardfileGeometry(hdfTYPE *hdf);
 void BuildHardfileIndex(hdfTYPE *hdf);

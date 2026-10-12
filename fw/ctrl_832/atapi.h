@@ -87,6 +87,10 @@ int atapi_eject(struct atapi_unit *u);
 
 int atapi_locked(const struct atapi_unit *u);
 
+/* The glue's own errors (an SD read error, a host that gave up): the sense
+   REQUEST SENSE reports for the command that failed. */
+void atapi_set_sense(struct atapi_unit *u, uint8_t key, uint8_t asc, uint8_t ascq);
+
 /* IDENTIFY PACKET DEVICE (0xA1): 256 words. */
 void atapi_identify(uint16_t *id, const struct atapi_unit *u);
 

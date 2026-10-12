@@ -405,6 +405,26 @@ void ConfigIDEPorts(void)
 	}
 }
 
+// The CD-ROM drive: the first slot of type CD-ROM (one drive, D3), with
+// the ISO its config names; none while IDE is off or on a one-port core.
+void ApplyCDROM(void)
+{
+	int slot, cd = -1;
+	for (slot = 0; slot < HDD_SLOTS && cd < 0; slot++)
+		if (SlotConfig(slot)->enabled == HDF_CDROM)
+			cd = slot;
+	if (!config.enable_ide || !(core_caps & CORE_CAPS_IDE2))
+		cd = -1;
+	if (CD_Open(cd) != CD_OK)
+		BootPrint("CD-ROM: ISO not found, drive empty");
+	else if (cd >= 0)
+	{
+		sprintf(s, "CD-ROM: IDE port %d %s, %s", (cd >> 1) + 1, (cd & 1) ? "slave" : "master",
+			cdrom.unit.media ? cdrom.unit.name : "no disc");
+		BootPrint(s);
+	}
+}
+
 int ApplyConfiguration(char reloadkickstart, char applydrives)
 {
 	int rstval=0;
@@ -486,6 +506,7 @@ int ApplyConfiguration(char reloadkickstart, char applydrives)
 				}
 			}
 		}
+		ApplyCDROM();
 		ConfigIDEPorts();
 	}
 

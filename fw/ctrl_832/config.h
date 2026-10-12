@@ -134,4 +134,6 @@ hardfileTYPE *SlotConfig(int slot);
 // Send both IDE ports' configuration (on, master/slave present, ATAPI) to the
 // core, from config and the CD-ROM state.  Takes effect at the next reset.
 void ConfigIDEPorts(void);
+// Open the CD-ROM drive of the config (CD_Open), or none.
+void ApplyCDROM(void);
 

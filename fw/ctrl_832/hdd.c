@@ -314,16 +314,8 @@ void WriteXfer(unsigned int words, int pkt)
     DisableFpga();
 }
 
-// The flags of a task file register read; an Amiga reset is passed on to
-// the CD-ROM if it sits on that port (the read clears rst_seen).
-static unsigned char TaskFileFlags(int port, unsigned char flags)
-{
-    if ((flags & IDEF_RST_SEEN) && CD_SLOT() >= 0 && (CD_SLOT() >> 1) == port)
-        CD_Reset();
-    return flags;
-}
-
-// Read the 8 task file registers of a port; returns the flags.
+// Read the 8 task file registers of a port; returns the flags.  The read
+// clears the sticky ones (rst_seen, dev_wr): pass them on (CD_Flags).
 unsigned char ReadTaskFile(int port, unsigned char *tfr)
 {
     int i;
@@ -341,7 +333,7 @@ unsigned char ReadTaskFile(int port, unsigned char *tfr)
         tfr[i] = SPI(0);
     }
     DisableFpga();
-    return TaskFileFlags(port, flags);
+    return flags;
 }
 
 // Only the flags (registers 0 and 1): the packet-mode wait loops.
@@ -360,7 +352,47 @@ unsigned char ReadIDEFlags(int port)
     flags = SPI(0);
     SPI(0);
     DisableFpga();
-    return TaskFileFlags(port, flags);
+    return flags;
+}
+
+// Data into the FIFO of ide_port (pio in), bytes in buffer order; an odd
+// count is padded to a whole word.
+void WriteIDEData(const unsigned char *buf, unsigned int bytes)
+{
+    unsigned int i;
+    EnableFpga();
+    SPI(CMD_IDE_DATA_WR | ide_port);
+    SPI(0x00);
+    SPI(0x00);
+    SPI(0x00);
+    SPI(0x00);
+    SPI(0x00);
+    for (i = 0; i < bytes; i++)
+        SPI(buf[i]);
+    if (bytes & 1)
+        SPI(0x00);
+    DisableFpga();
+}
+
+// Data out of the FIFO of ide_port (pio out); buf 0 discards it.
+void ReadIDEData(unsigned char *buf, unsigned int bytes)
+{
+    unsigned int i;
+    unsigned char c;
+    EnableFpga();
+    SPI(CMD_IDE_DATA_RD | ide_port);
+    SPI(0x00);
+    SPI(0x00);
+    SPI(0x00);
+    SPI(0x00);
+    SPI(0x00);
+    for (i = 0; i < ((bytes + 1) & ~1u); i++)
+    {
+        c = SPI(0xFF);
+        if (buf && i < bytes)
+            buf[i] = c;
+    }
+    DisableFpga();
 }
 
 static unsigned short id[256];
@@ -655,10 +687,11 @@ void HandleHDD(unsigned int c1, unsigned int c2)
         // with one port answers 0 there, and port 1 it is).
         ide_port = 0;
         flags = ReadTaskFile(0, tfr);
+        CD_Flags(0, flags);
         if ((flags & (IDEF_BSY0 | IDEF_BSY1)) == IDEF_BSY1)
         {
             ide_port = 1;
-            ReadTaskFile(1, tfr);
+            CD_Flags(1, ReadTaskFile(1, tfr));
         }
 
         unit = (ide_port << 1) | (tfr[6] & 0x10 ? 1 : 0); // slot: port, master/slave

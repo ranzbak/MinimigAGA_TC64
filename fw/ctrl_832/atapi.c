@@ -171,6 +171,11 @@ int atapi_locked(const struct atapi_unit *u)
 	return u->locked;
 }
 
+void atapi_set_sense(struct atapi_unit *u, uint8_t key, uint8_t asc, uint8_t ascq)
+{
+	set_sense(u, key, asc, ascq);
+}
+
 void atapi_identify(uint16_t *id, const struct atapi_unit *u)
 {
 	int i;

@@ -47,6 +47,13 @@ int CD_Eject(void);
 /* Amiga reset seen (Gayle rst_seen): lock cleared, UNIT ATTENTION 06/29/00. */
 void CD_Reset(void);
 
+/* The Amiga holds the lock (PREVENT MEDIUM REMOVAL); looks for a reset first. */
+int CD_Locked(void);
+
+/* The flags of a task file register read of port: an rst_seen on the CD's
+   port resets the unit (CD_Reset). */
+void CD_Flags(int port, unsigned char flags);
+
 /* A command for the CD unit; tfr = the 8 task file registers. */
 void CD_HandleCommand(int port, unsigned char *tfr);
 
