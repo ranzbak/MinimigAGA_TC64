@@ -353,6 +353,9 @@ unsigned char LoadConfiguration(char *filename)
 		strncpy(config.hardfile[1].name, "HARDFILE", sizeof(config.hardfile[1].name));
 		config.hardfile[1].long_name[0]=0;
 		config.hardfile[1].enabled = 2;	// Default is access to entire SD card
+		// The CD-ROM drive's default place: IDE port 2 master, no disc (D1).
+		// Fresh configs only: an existing file keeps its port 2 slots (R-B).
+		config.secondaryhardfile[0].enabled = HDF_CDROM;
 		config.audio.volume = 15; // Average volume
 		updatekickstart=true;
 		config.videopos.hpos=0;

@@ -79,6 +79,9 @@ enum MENU
     MENU_ERROR,
     MENU_ERROR2,
     MENU_INFO,
+    MENU_SETTINGS_HARDFILE3, // IDE port 2 (findings/cdrom/plan.md 5.2)
+    MENU_SETTINGS_HARDFILE4,
+    MENU_CDROM_SELECTED,     // an ISO chosen from the main page's CD-ROM line
 };
 
 // UI strings, used by boot messages
