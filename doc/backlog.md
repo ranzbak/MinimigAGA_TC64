@@ -224,6 +224,65 @@ order suggested: 8, then 1 and 4, then 5 and 6.
 - Only fpga/openaars (QMTech XC7A100T) is built; the MiST, Chameleon and DE
   ports may not build from this tree.
 
+## Features (planned)
+
+### CD-ROM drive from an ISO on the SD card (Paul, 2026-09-26; OSD part 2026-10-12)
+
+- Goal: an emulated CD-ROM on the Amiga's IDE port that reads an ISO image
+  from the SD card, so CD software (AmigaOS install CDs, CD32/CDTV titles
+  run from Workbench) can be mounted.  Paul: the user picks the ISO in the
+  OSD, like an ADF or a hardfile.
+- What exists (2026-10-12): nothing ATAPI.  The IDE emulation is ATA only
+  (Gayle in rtl/minimig/gayle.v, commands served by fw/ctrl_832/hdd.c).
+  Gayle already has a secondary channel (hdd1_ena from ide_config1), and the
+  config struct already reserves `secondaryhardfile[2]` (config.h; only
+  cleared in config.c, never used) -- room for a CD entry without growing
+  the 212-byte config file.  Left over from AMR's 2020 CD32 start: a BIN/CUE
+  parser (bincue.c, hardcoded test cue), CD audio-track playback through the
+  audio buffer (audiotrack.c; the calls in main.c are commented out) and an
+  Akiko stub (akiko.c, rtl/akiko: only logs register accesses).  Usable for
+  a later CUE/audio step; not needed for plain ISO.
+- Device: ATAPI CD-ROM, the route MiSTer's Minimig takes, so the stock
+  scsi.device (OS 3.1.4+/3.2) or atapi.device plus a CD filesystem
+  (e.g. OS 3.2 CDFileSystem, CacheCDFS) work unchanged.  Firmware:
+  signature 0x14/0xEB on reset/EXECUTE DEVICE DIAGNOSTIC, IDENTIFY PACKET
+  DEVICE (0xA1), PACKET (0xA0) with the 12-byte command block, and the SCSI
+  commands TEST UNIT READY, REQUEST SENSE, INQUIRY, READ CAPACITY, READ(10),
+  READ(12), READ TOC, MODE SENSE(10), START STOP UNIT, PREVENT/ALLOW MEDIUM
+  REMOVAL, GET EVENT STATUS NOTIFICATION (media change).  ISO = 2048-byte
+  sectors, so READ(10) LBA n = ISO bytes n*2048, served with the existing
+  hardfile FAT cluster-chain code (4 SD sectors per CD sector).  RTL: check
+  that Gayle passes the byte-count registers (cylinder low/high) and the
+  interrupt-reason register (sector count) for packet transfers; probably
+  no other RTL change.
+- OSD (firmware, fw/ctrl_832/menu.c):
+  - "Harddisks" page: a line for the secondary channel master,
+    "CD-ROM : <name> / Disabled", selectable when IDE is enabled.
+  - Selecting it opens the file selector with the ISO extension
+    (SelectFile("ISO", SCAN_DIR | SCAN_LFN, MENU_ISO_SELECTED, ...)).  The
+    directory filter (fat.c ScanDirectory, one 3-letter extension) needs a
+    list ("ISOCUE") only when CUE/BIN follows.
+  - Store the choice in secondaryhardfile[0] with a new type HDF_CDROM
+    (enabled, present, 8.3 name, 16-char long name); config file stays 212
+    bytes, older firmware sees it as disabled.
+  - Swapping or ejecting the ISO WITHOUT a reset (unlike hardfiles, which
+    apply at reset): an "Eject / Insert" line; the firmware reports
+    UNIT ATTENTION / media change to the next command so the CD filesystem
+    rereads the disc.  Also a quick "CD" entry next to the floppy slots on
+    the main page, so swapping game discs needs no submenu.
+  - Long filenames: ISO names are often longer than 16 characters; show the
+    first 16 in the menu and the full name in the selector (as ADFs).
+- Out of scope for step 1: CD audio (red book), BIN/CUE with audio tracks,
+  CD32 (Akiko CD controller, CD32 boot).  Step 2 candidates, building on
+  bincue.c/audiotrack.c.
+- Tests: a host-side unit test of the packet decoder (hdd.c built for x86),
+  then on the board with OS 3.2 (scsi.device sees the ATAPI unit; mount an
+  AmigaOS 3.2 ISO, copy a big file, compare its checksum), media swap with
+  a second ISO.
+- First step: read MiSTer Minimig's ATAPI code (Main_MiSTer
+  support/minimig/) for the command subset Amiga drivers really issue; then
+  the hdd.c packet path, then the OSD.
+
 ## Could have (not urgent)
 
 ### Serial at 115200 under load (2026-10-11)
