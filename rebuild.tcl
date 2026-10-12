@@ -74,6 +74,7 @@
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/minimig/gary.v"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/minimig/gayle.v"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/minimig/gayle_fifo.v"
+#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/minimig/gayle_port.v"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/host/hostcache.v"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/openaars/adv7511/i2c_master.v"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/host/i2c_master_mmio.sv"
@@ -273,6 +274,7 @@ proc checkRequiredFiles { origin_dir} {
  "[file normalize "$origin_dir/rtl/minimig/gary.v"]"\
  "[file normalize "$origin_dir/rtl/minimig/gayle.v"]"\
  "[file normalize "$origin_dir/rtl/minimig/gayle_fifo.v"]"\
+ "[file normalize "$origin_dir/rtl/minimig/gayle_port.v"]"\
  "[file normalize "$origin_dir/rtl/host/hostcache.v"]"\
  "[file normalize "$origin_dir/rtl/openaars/adv7511/i2c_master.v"]"\
  "[file normalize "$origin_dir/rtl/host/i2c_master_mmio.sv"]"\
@@ -606,6 +608,7 @@ set files [list \
  [file normalize "${origin_dir}/rtl/minimig/gary.v"] \
  [file normalize "${origin_dir}/rtl/minimig/gayle.v"] \
  [file normalize "${origin_dir}/rtl/minimig/gayle_fifo.v"] \
+ [file normalize "${origin_dir}/rtl/minimig/gayle_port.v"] \
  [file normalize "${origin_dir}/rtl/host/hostcache.v"] \
  [file normalize "${origin_dir}/rtl/openaars/adv7511/i2c_master.v"] \
  [file normalize "${origin_dir}/rtl/host/i2c_master_mmio.sv"] \
@@ -927,6 +930,11 @@ set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
 set_property -name "library" -value "work" -objects $file_obj
 
 set file "$origin_dir/rtl/minimig/gayle_fifo.v"
+set file [file normalize $file]
+set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
+set_property -name "library" -value "work" -objects $file_obj
+
+set file "$origin_dir/rtl/minimig/gayle_port.v"
 set file [file normalize $file]
 set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
 set_property -name "library" -value "work" -objects $file_obj

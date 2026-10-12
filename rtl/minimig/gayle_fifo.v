@@ -10,7 +10,9 @@ module gayle_fifo
 	output	full,					// fifo is full
 	output	empty,					// fifo is empty
 	output	last_out,				// the last word of a sector is being read
-	output	last_in					// the last word of a sector is being written
+	output	last_in,				// the last word of a sector is being written
+	output	[12:0] in_ptr,			// words written since the reset (ATAPI packet mode, gayle_port.v)
+	output	[12:0] out_ptr			// words read since the reset
 );
 
 // local signals and registers
@@ -68,6 +70,9 @@ assign full = inptr[12:8]!=outptr[12:8] ? 1'b1 : 1'b0;
 
 assign last_out = outptr[7:0] == 8'hFF ? 1'b1 : 1'b0;
 assign last_in  = inptr [7:0] == 8'hFF ? 1'b1 : 1'b0;
+
+assign in_ptr  = inptr;
+assign out_ptr = outptr;
 
 
 endmodule

@@ -120,6 +120,9 @@ module paula
 	output	hdd_status_wr, // drive status write enable
 	output	hdd_data_wr, // data port write enable
 	output	hdd_data_rd, // data port read enable
+	output	hdd_port, // IDE port of the current HDD command
+	output	hdd_xfer_wr, // packet-mode transfer length write (CMD_IDE_XFER_WR)
+	output	hdd_regs_rd, // task file read command (CMD_IDE_REGS_RD)
 	// fifo / track display
 	output  [7:0]trackdisp,
 	output  [13:0]secdisp,
@@ -294,6 +297,9 @@ module paula
 		.hdd_status_wr(hdd_status_wr),
 		.hdd_data_wr(hdd_data_wr),
 		.hdd_data_rd(hdd_data_rd),
+		.hdd_port(hdd_port),
+		.hdd_xfer_wr(hdd_xfer_wr),
+		.hdd_regs_rd(hdd_regs_rd),
 		// fifo / track display
 		.trackdisp(trackdisp),
 		.secdisp(secdisp),

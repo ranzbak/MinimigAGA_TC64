@@ -81,6 +81,9 @@ add_src $R/rtl/ddr3/ddr3_cdc.v
 # KEEP IN SYNC WITH tools/vivado/build.tcl: project_1.xpr predates the file,
 # and a source that is not in sources_1 is simply not compiled.
 add_src $R/rtl/sdram/cpu_enable_cadence.v
+# The second Gayle IDE port (findings/cdrom/plan.md 7.3): gayle.v instantiates
+# gayle_port.v once per port; project_1.xpr predates the file.
+add_src $R/rtl/minimig/gayle_port.v
 
 #-----------------------------------------------------------------------------
 # vio_ddr3: the bring-up VIO for the BIST and the PHY tap sweep

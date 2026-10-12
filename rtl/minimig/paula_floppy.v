@@ -114,6 +114,9 @@ module paula_floppy
 	output	hdd_status_wr, //status register write strobe (MCU->HDD)
 	output	hdd_data_wr, //data write strobe
 	output	hdd_data_rd, //data read strobe
+	output	hdd_port, //IDE port of the current HDD command (bit 8 of its first word)
+	output	hdd_xfer_wr, //CMD_IDE_XFER_WR payload strobe (ATAPI packet mode)
+	output	hdd_regs_rd, //CMD_IDE_REGS_RD command word strobe
 	// fifo / track display
 	output  [7:0]trackdisp,
 	output  [13:0]secdisp,
@@ -182,6 +185,8 @@ module paula_floppy
 	reg		cmd_hdd_wr; //SPI host writes task file registers
 	reg		cmd_hdd_data_wr; //SPI host writes data to HDD buffer
 	reg		cmd_hdd_data_rd; //SPI host reads data from HDD buffer
+	reg		cmd_hdd_xfer_wr; //SPI host sets a packet-mode transfer length
+	reg		hdd_port_r = 1'b0; //IDE port of the last HDD command
 
 	//-----------------------------------------------------------------------------------------------//
 	// JB: SPI interface
@@ -346,6 +351,20 @@ module paula_floppy
 	// workaround: always send more than one command word
 	assign hdd_data_rd = cmd_hdd_data_rd && tx_flag && tx_cnt==2'd3 ? 1'b1 : 1'b0;
 	assign hdd_data_out = rx_data[15:0];
+
+	// Two IDE ports (findings/cdrom/plan.md 7.3): bit 8 of the first word of
+	// every HDD command (1000/1001/1010/1011/1100/1111) selects the port.  It
+	// is latched with the command; the status write (1111) acts on that same
+	// word, so the word's own bit is passed through while it is decoded.
+	// 1100 = CMD_IDE_XFER_WR: one payload word {pkt_mode, 2'b0, words[12:0]}.
+	wire hdd_cmd_word = rx_flag && rx_cnt==2'd0 &&
+		(rx_data[15:14]==2'b10 || rx_data[15:12]==4'b1100 || rx_data[15:12]==4'b1111);
+	always @(posedge clk)
+		if (clk7_en && hdd_cmd_word)
+			hdd_port_r <= rx_data[8];
+	assign hdd_port = hdd_cmd_word ? rx_data[8] : hdd_port_r;
+	assign hdd_xfer_wr = cmd_hdd_xfer_wr && rx_flag && rx_cnt==2'd1 ? 1'b1 : 1'b0;
+	assign hdd_regs_rd = rx_data[15:12]==4'b1000 && rx_flag && rx_cnt==2'd0 ? 1'b1 : 1'b0;
 
 	always @(posedge sck or negedge scs1)
 	if (~scs1)
@@ -731,12 +750,14 @@ module paula_floppy
 				cmd_hdd_wr <= 0;
 				cmd_hdd_data_wr <= 0;
 				cmd_hdd_data_rd <= 0;
+				cmd_hdd_xfer_wr <= 0;
 			end else if (rx_flag && rx_cnt==0) begin
 				cmd_fdd <= rx_data[15:13]==3'b000 ? 1'b1 : 1'b0;
 				cmd_hdd_rd <= rx_data[15:12]==4'b1000 ? 1'b1 : 1'b0;
 				cmd_hdd_wr <= rx_data[15:12]==4'b1001 ? 1'b1 : 1'b0;
 				cmd_hdd_data_wr <= rx_data[15:12]==4'b1010 ? 1'b1 : 1'b0;
 				cmd_hdd_data_rd <= rx_data[15:12]==4'b1011 ? 1'b1 : 1'b0;
+				cmd_hdd_xfer_wr <= rx_data[15:12]==4'b1100 ? 1'b1 : 1'b0;
 			end
 		end
 	end
