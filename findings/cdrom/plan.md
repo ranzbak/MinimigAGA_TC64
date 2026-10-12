@@ -791,8 +791,10 @@ Decisions for Paul:
   copy while reading the CD) and switch to the second instance if it fails.
 - D3: one CD drive.
 - D4: no separate "Port: on/off" line; port 2 is on exactly when one of its
-  slots is enabled (the plan's stored form).  Proposed to Paul, not yet
-  confirmed.
+  slots is enabled (the plan's stored form).  Confirmed by Paul 2026-10-12.
+  "Enabled" = the CD drive is configured, with or without a disc: an
+  ejected or empty drive stays on the bus, so ejecting from the OSD does
+  not make the drive vanish under CDFileSystem.
 - D5: OSD eject is **refused** while the Amiga has locked the tray (PREVENT
   MEDIUM REMOVAL); the OSD shows the lock.
 - D6: no CD boot; drop phase 2.3 (custom ROM with resident CDFileSystem).
