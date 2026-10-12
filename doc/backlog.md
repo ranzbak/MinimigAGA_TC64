@@ -232,7 +232,8 @@ Release 0.1 ships with these open (see doc/release-0.1.md).
   sits in dirty data-cache lines is not in SDRAM yet, so the screen shows
   stale pixels until the line is pushed.  It only bites where the MMU page
   is also marked copyback (c_cb needs mm_cb too); whether P96/MMULib map
-  the framebuffer that way is UNVERIFIED.
+  the framebuffer that way is UNVERIFIED.  Paul, 2026-10-12: no RTG display
+  problems on the current build -- latent, low priority.
 - Fix (small): compare the DDR3 board's real base and size (more address
   bits) instead of a 256 MB window.
 
