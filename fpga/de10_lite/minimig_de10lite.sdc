@@ -18,7 +18,7 @@ derive_pll_clocks
 # generated clocks
 
 create_generated_clock -name clk_sdram -source [get_pins {virtual_top|amiga_clk|amiga_clk_i|altpll_component|auto_generated|pll1|clk[0]}] [get_ports {DRAM_CLK}]
-create_generated_clock -name spiclk -source [get_pins {virtual_top|amiga_clk|amiga_clk_i|altpll_component|auto_generated|pll1|clk[2]}] -divide_by 2 [get_registers {minimig_virtual_top:virtual_top|cfide:mycfide|sck}]
+create_generated_clock -name spiclk -source [get_pins {virtual_top|amiga_clk|amiga_clk_i|altpll_component|auto_generated|pll1|clk[2]}] -divide_by 2 [get_registers {minimig_virtual_top:virtual_top|cfide:mycfide|sck_pin}]
 
 # name SDRAM ports
 set sdram_outputs [get_ports {DRAM_ADDR[*] DRAM_LDQM DRAM_UDQM DRAM_WE_N DRAM_CAS_N DRAM_RAS_N DRAM_CS_N DRAM_BA[*] DRAM_CKE}]
