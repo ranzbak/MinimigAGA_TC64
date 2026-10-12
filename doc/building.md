@@ -112,7 +112,7 @@ timing and utilisation reports.
 **CPU switches.** Without any of them the build is the configuration the
 board runs (since 2026-10-05, build/stage_r04mis): MMU and FPU in, and
 `STORE_BUF FWD RAS PRECISE SB_MMU COPYBACK LDX BTFN DFP_MIS WALLOC` all `1`;
-`BTB` and `MISPLIT` `0`. Set one to `0` (e.g. `COPYBACK=0`) for an A/B; the
+`BTB`, `MISPLIT`, `POST_CHIP` and `POST_CI` `0`. Set one to `0` (e.g. `COPYBACK=0`) for an A/B; the
 build log's `PIPELINED build from` line lists what the run used.
 
 | Variable | Default | Effect |
@@ -126,6 +126,7 @@ build log's `PIPELINED build from` line lists what the run used.
 | `DFP_MIS` | 1 | misaligned accesses served from the data cache |
 | `WALLOC` | 1 | write-allocate: a copyback store miss fills its line (needs `COPYBACK`) |
 | `BTB`, `MISPLIT` | 0 | branch target buffer; misaligned split (both off: not board-proven) |
+| `POST_CHIP`, `POST_CI` | 0 | with the MMU on, stores to chip RAM (`POST_CHIP=1`) and to cache-inhibited pages (`POST_CI=1`: CM = 11 -- MuFastChip, a demo's DTT0 = $0000C060; `2`: CM = 10 as well) posted too (findings/postchip; not board-proven) |
 
 Without `AP040_PIPE_DIR`, the script uses the `lib/AP68040-pipelined`
 submodule. It sets its options on the project for the one run and clears them

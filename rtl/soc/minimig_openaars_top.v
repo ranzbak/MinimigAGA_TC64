@@ -62,6 +62,10 @@ module minimig_openaars_top #(
   parameter AP040_WALLOC = 0,
   // Artix-7 resource mapping in the CPU (distributed RAM for the cache tables)
   parameter AP040_XC7 = 0,
+  // with the MMU on, stores to chip RAM (POST_CHIP = 1) and to cache-inhibited
+  // pages (POST_CI: 1 CM = 11, 2 CM = 10 too) posted as well (findings/postchip)
+  parameter AP040_POST_CHIP = 0,
+  parameter AP040_POST_CI = 0,
   // AP68040 island clock divider: 30 = clk_114/3 (stage D3),
   // 40 = clk_114/4 (pre-D3 rate, D3 architecture otherwise intact).
   parameter CPU_CLK_DIVIDE = 30,
@@ -560,6 +564,8 @@ minimig_virtual_top
   .ap040_dfp_mis(AP040_DFP_MIS),
   .ap040_walloc(AP040_WALLOC),
   .ap040_xc7(AP040_XC7),
+  .ap040_post_chip(AP040_POST_CHIP),
+  .ap040_post_ci(AP040_POST_CI),
   .cpu_clk_divide(CPU_CLK_DIVIDE),
   .chip32(CHIP32),
   .CPU040_DEBUG_ILA(CPU040_DEBUG_ILA),
