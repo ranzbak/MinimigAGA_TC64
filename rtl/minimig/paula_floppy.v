@@ -257,6 +257,19 @@ module paula_floppy
 	if (spi_bit_15)
 		rx_data <= {spi_sdi_reg[15:1],sdin};
 
+	// Which channel the word in rx_data came in on, latched with it.  The word
+	// is handed to gayle up to two clk7 cycles after its last bit (rx_flag goes
+	// through a two-stage synchroniser), and a host that deselects the direct
+	// channel quickly after a direct transfer -- the 832 does DisableDMode()
+	// right after the transfer ends -- used to drop scs2 before that, so the
+	// last word of the sector was never written (hdd_data_wr below used the
+	// live chip select).  Sampled on sck: chip selects only change while sck
+	// is idle.
+	reg rx_direct = 1'b0;
+	always @(posedge sck)
+	if (spi_bit_15)
+		rx_direct <= scs2;
+
 		// rx_flag is synchronous with clk and is set after receiving the last bit of a word
 	assign spi_rx_flag_clr = rx_flag | reset;
 	always @(posedge sck or posedge spi_rx_flag_clr)
@@ -340,7 +353,7 @@ module paula_floppy
 	//HDD interface			
 	assign hdd_addr = cmd_hdd_rd ? tx_data_cnt : cmd_hdd_wr ? rx_data_cnt : 1'b0;
 	assign hdd_wr = cmd_hdd_wr && rx_flag && rx_cnt==2'd3 ? 1'b1 : 1'b0;
-	assign hdd_data_wr = (cmd_hdd_data_wr && rx_flag && rx_cnt==2'd3) || (scs2 && rx_flag) ? 1'b1 : 1'b0; //there is a possibility that SCS2 is inactive before rx_flag is generated, depends on how fast the CS2 is deaserted after sending the last data bit
+	assign hdd_data_wr = (cmd_hdd_data_wr && rx_flag && rx_cnt==2'd3) || (rx_direct && rx_flag) ? 1'b1 : 1'b0; //direct transfer word: rx_direct, not the live SCS2, which the host may already have released (see rx_direct)
 	assign hdd_status_wr = rx_data[15:12]==4'b1111 && rx_flag && rx_cnt==2'd0 ? 1'b1 : 1'b0;
 	// problem: spi_cmd1 doesn't deactivate after rising _CS line: direct transfers will be treated as command words,
 	// workaround: always send more than one command word
