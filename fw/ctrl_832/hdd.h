@@ -1,3 +1,6 @@
+#ifndef HDD_H
+#define HDD_H
+
 #define CMD_IDECMD 0x04
 #define CMD_IDEDAT 0x08
 
@@ -69,3 +72,4 @@ extern char debugmsg2[40];
 
 extern hdfTYPE hdf[2];
 
+#endif
