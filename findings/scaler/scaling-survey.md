@@ -670,3 +670,11 @@ image viewer), for both the static picture and the scroll strips.
 - Whether 720p sinks would accept a non-CEA line rate (an alternative to
   the blanking rule) was not explored. The blanking rule avoids the
   question.
+
+## Paul's review of the PNGs (2026-10-13)
+
+- Sharp-bilinear with a 0.5 output-pixel ramp "looks pretty close" (Paul, judged
+  by eye on the comparison sheets, scratchpad scaler_png/out).  Known cost from
+  the model: line light varies ~1.4 (max/min, linear light) while scrolling,
+  against ~1.005 for exact area weighting.  Since the method is only the
+  weight table, the ramp can be an OSD setting (nearest .. 0.5 .. area).
