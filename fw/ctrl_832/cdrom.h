@@ -23,10 +23,14 @@ typedef struct
 {
 	hdfTYPE           hdf;	/* the ISO: file + cluster index; sector n = HardFileSeek(&hdf, 4*n) */
 	struct atapi_unit unit;
-	int               slot;	/* IDE slot (port << 1 | slave), -1 = no CD drive */
+	int               slot;	/* IDE slot (port << 1 | slave), valid while active */
+	unsigned char     active;	/* a CD drive is configured (BSS zero: none) */
 } cdromTYPE;
 
 extern cdromTYPE cdrom;	/* not "cd": main.c has a struct cdimage cd (bincue) */
+
+/* The CD drive's IDE slot, -1 when there is none. */
+#define CD_SLOT() (cdrom.active ? cdrom.slot : -1)
 
 /* Make slot the CD drive and insert the ISO configured for it, if any.
    slot -1: no CD drive.  Returns CD_OK or CD_NOFILE. */

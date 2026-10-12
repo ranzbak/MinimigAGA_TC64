@@ -924,12 +924,15 @@ void ConfigScanlines(unsigned char scanlines)
 }
 
 
-void ConfigIDE(unsigned char gayle, unsigned char master, unsigned char slave)
+// One IDE port's configuration, applied by the core at the next reset:
+// {slave ATAPI, master ATAPI, slave present, master present, port on}.
+// Port 1 (0) is OSD_CMD_HDD, port 2 (1) OSD_CMD_HDD1.
+void ConfigIDE(unsigned char port, unsigned char on, unsigned char master, unsigned char slave, unsigned char atapi)
 {
     EnableOsd();
     //SPI(OSDCMDCFGIDE | (slave ? 4 : 0) | (master ? 2 : 0) | (gayle ? 1 : 0));
-    SPI(OSD_CMD_HDD);
-    SPI((slave ? 4 : 0) | (master ? 2 : 0) | (gayle ? 1 : 0));
+    SPI(port ? OSD_CMD_HDD1 : OSD_CMD_HDD);
+    SPI(((atapi & 3) << 3) | (slave ? 4 : 0) | (master ? 2 : 0) | (on ? 1 : 0));
     DisableOsd();
 }
 

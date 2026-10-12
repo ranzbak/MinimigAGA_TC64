@@ -17,22 +17,17 @@ cdromTYPE cdrom;
 
 static char cd_filename[12];
 
-/* The configured entry of an IDE slot: port 1 = hardfile[], port 2 = secondaryhardfile[]. */
-static hardfileTYPE *slot_config(int slot)
-{
-	return slot < 2 ? &config.hardfile[slot & 1] : &config.secondaryhardfile[slot & 1];
-}
-
 int CD_Open(int slot)
 {
 	hardfileTYPE *hf;
 
 	cdrom.hdf.type = HDF_DISABLED;
 	cdrom.slot = slot;
+	cdrom.active = slot >= 0 && slot < HDD_SLOTS;
 	atapi_init(&cdrom.unit);
-	if (slot < 0 || slot > 3)
+	if (!cdrom.active)
 		return CD_OK;
-	hf = slot_config(slot);
+	hf = SlotConfig(slot);
 	hf->present = 0;
 	if (!hf->name[0])
 		return CD_OK;	/* CD slot, no disc */

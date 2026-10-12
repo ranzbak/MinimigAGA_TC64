@@ -7,6 +7,7 @@
 #include "fpga.h"
 #include "fdd.h"
 #include "hdd.h"
+#include "cdrom.h"
 #include "firmware.h"
 #include "menu.h"
 #include "config.h"
@@ -365,6 +366,45 @@ unsigned char LoadConfiguration(char *filename)
 }
 
 
+hardfileTYPE *SlotConfig(int slot)
+{
+	return (slot & 2) ? &config.secondaryhardfile[slot & 1] : &config.hardfile[slot & 1];
+}
+
+// Port 1 is on with IDE; port 2 only on a core with two ports, and only when
+// one of its slots is configured (D4: a CD slot counts with or without a
+// disc, a hardfile slot whether or not its file was found).  A device is
+// present when its hardfile opened, or when it is the CD drive.
+void ConfigIDEPorts(void)
+{
+	int port, dev, slot;
+	for (port = 0; port < 2; port++)
+	{
+		unsigned char on, present = 0, atapi = 0;
+		for (dev = 0; dev < 2; dev++)
+		{
+			hardfileTYPE *hf;
+			slot = (port << 1) | dev;
+			hf = SlotConfig(slot);
+			if (slot == CD_SLOT())
+			{
+				present |= 1 << dev;
+				atapi |= 1 << dev;
+			}
+			else if (hf->enabled && hf->enabled != HDF_CDROM && hf->present)
+				present |= 1 << dev;
+		}
+		if (port == 0)
+			on = config.enable_ide;
+		else
+			on = config.enable_ide && (core_caps & CORE_CAPS_IDE2)
+				&& (config.secondaryhardfile[0].enabled || config.secondaryhardfile[1].enabled);
+		if (!on && port)
+			present = atapi = 0;
+		ConfigIDE(port, on, present & 1, present & 2, atapi);
+	}
+}
+
 int ApplyConfiguration(char reloadkickstart, char applydrives)
 {
 	int rstval=0;
@@ -428,8 +468,25 @@ int ApplyConfiguration(char reloadkickstart, char applydrives)
 			sprintf(s, "Offset: %ld", hdf[1].offset);
 			BootPrint(s);
 		}
-		ConfigIDE(config.enable_ide, config.hardfile[0].present && config.hardfile[0].enabled,
-			config.hardfile[1].present && config.hardfile[1].enabled);
+		// IDE port 2 (two-port Gayle only): hardfiles in its slots (R-E)
+		{
+			int slot;
+			for (slot = 2; slot < HDD_SLOTS; slot++)
+			{
+				if (!(core_caps & CORE_CAPS_IDE2))
+				{
+					hdf[slot].type = HDF_DISABLED;
+					SlotConfig(slot)->present = 0;
+				}
+				else if (OpenHardfile(slot))
+				{
+					sprintf(s, "\nIDE port 2 %s: type %d, %u.%u.%u", (slot & 1) ? "slave" : "master",
+						hdf[slot].type, hdf[slot].cylinders, hdf[slot].heads, hdf[slot].sectors);
+					BootPrint(s);
+				}
+			}
+		}
+		ConfigIDEPorts();
 	}
 
     ConfigCPU(config.cpu);

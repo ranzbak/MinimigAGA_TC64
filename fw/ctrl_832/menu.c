@@ -1949,8 +1949,7 @@ void HandleUI(void)
                 if (upd1)
                     OpenHardfile(1);
 
-                ConfigIDE(config.enable_ide, config.hardfile[0].present && config.hardfile[0].enabled,
-                          config.hardfile[1].present && config.hardfile[1].enabled);
+                ConfigIDEPorts();
                 OsdReset();
 
                 menustate = MENU_NONE1;

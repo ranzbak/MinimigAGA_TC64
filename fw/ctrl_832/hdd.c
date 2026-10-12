@@ -34,12 +34,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "fpga.h"
 #include "config.h"
 #include "drivesounds.h"
+#include "cdrom.h"
 
 #include <stdio.h>
 #include <string.h>
 
-// hardfile structure
-hdfTYPE hdf[2];
+// hardfile structure, one per IDE slot (port << 1 | slave)
+hdfTYPE hdf[HDD_SLOTS];
+
+// IDE port of the HDD SPI commands below (bit 0 of every command byte)
+unsigned char ide_port;
 
 char debugmsg[40];
 char debugmsg2[40];
@@ -162,6 +166,7 @@ static void FakeRDB(int unit,int block)
 void IdentifyDevice(unsigned short *pBuffer, int unit)
 { // builds Identify Device struct
     char *p;
+    hardfileTYPE *hf;
 	int i, x;
     unsigned long total_sectors = hdf[unit].cylinders * hdf[unit].heads * hdf[unit].sectors;
 
@@ -191,14 +196,15 @@ void IdentifyDevice(unsigned short *pBuffer, int unit)
 			{
 				memcpy(p, "YAQUBE                                  ", 40); // model name - byte swapped
 				p += 8;
-				if (config.hardfile[unit].long_name[0])
+				hf = SlotConfig(unit);
+				if (hf->long_name[0])
 				{
-					for (i = 0; (x = config.hardfile[unit].long_name[i]) && i < 16; i++) // copy file name as model name
+					for (i = 0; i < 16 && (x = hf->long_name[i]); i++) // copy file name as model name
 						p[i] = x;
 				}
 				else
 				{
-					memcpy(p, config.hardfile[unit].name, 8); // copy file name as model name
+					memcpy(p, hf->name, 8); // copy file name as model name
 				}
 			}
 		//    SwapBytes((char*)&pBuffer[27], 40); //not for 68000
@@ -250,7 +256,7 @@ void WriteTaskFile(int error,int sector_count,int sector_number,int cylinder_low
 {
     EnableFpga();
 
-    SPI(CMD_IDE_REGS_WR); // write task file registers command
+    SPI(CMD_IDE_REGS_WR | ide_port); // write task file registers command
     SPI(0x00);
     SPI(0x00); // dummy
     SPI(0x00);
@@ -282,7 +288,7 @@ void WriteStatus(unsigned int status)
 {
     EnableFpga();
 
-    SPI(CMD_IDE_STATUS_WR);
+    SPI(CMD_IDE_STATUS_WR | ide_port);
     SPI(status);
     SPI(0x00);
     SPI(0x00);
@@ -290,6 +296,71 @@ void WriteStatus(unsigned int status)
     SPI(0x00);
 
     DisableFpga();
+}
+
+// Packet-mode data phase (two-port Gayle): reset the port's FIFO, set the
+// transfer length in words and packet mode; a WriteStatus then sets the
+// direction.  Three words, so the direct SD transfer that may follow does
+// not find a half-decoded command (see paula_floppy.v).
+void WriteXfer(unsigned int words, int pkt)
+{
+    EnableFpga();
+    SPI(CMD_IDE_XFER_WR | ide_port);
+    SPI(0x00);
+    SPI((pkt ? 0x80 : 0x00) | ((words >> 8) & 0x1f));
+    SPI(words & 0xff);
+    SPI(0x00);
+    SPI(0x00);
+    DisableFpga();
+}
+
+// The flags of a task file register read; an Amiga reset is passed on to
+// the CD-ROM if it sits on that port (the read clears rst_seen).
+static unsigned char TaskFileFlags(int port, unsigned char flags)
+{
+    if ((flags & IDEF_RST_SEEN) && CD_SLOT() >= 0 && (CD_SLOT() >> 1) == port)
+        CD_Reset();
+    return flags;
+}
+
+// Read the 8 task file registers of a port; returns the flags.
+unsigned char ReadTaskFile(int port, unsigned char *tfr)
+{
+    int i;
+    unsigned char flags = 0;
+    EnableFpga();
+    SPI(CMD_IDE_REGS_RD | port); // read task file registers
+    SPI(0x00);
+    SPI(0x00);
+    SPI(0x00);
+    SPI(0x00);
+    SPI(0x00);
+    for (i = 0; i < 8; i++)
+    {
+        flags = SPI(0);
+        tfr[i] = SPI(0);
+    }
+    DisableFpga();
+    return TaskFileFlags(port, flags);
+}
+
+// Only the flags (registers 0 and 1): the packet-mode wait loops.
+unsigned char ReadIDEFlags(int port)
+{
+    unsigned char flags;
+    EnableFpga();
+    SPI(CMD_IDE_REGS_RD | port);
+    SPI(0x00);
+    SPI(0x00);
+    SPI(0x00);
+    SPI(0x00);
+    SPI(0x00);
+    SPI(0x00);
+    SPI(0x00);
+    flags = SPI(0);
+    SPI(0);
+    DisableFpga();
+    return TaskFileFlags(port, flags);
 }
 
 static unsigned short id[256];
@@ -309,10 +380,12 @@ static inline void ATA_Recalibrate(unsigned char* tfr, int unit)
 // ATA_Diagnostic()
 static inline void ATA_Diagnostic(unsigned char* tfr)
 {
-	// Execute Drive Diagnostic (0x90)
+	// Execute Drive Diagnostic (0x90): the ATA signature (error 01, count 1,
+	// sector 1, cylinder 0).  IDE_STATUS_SIG makes the two-port Gayle show
+	// each device's own signature (ATAPI for a CD on the same port).
 	DEBUG1("IDE: Drive Diagnostic");
-	WriteTaskFile(1, 0, 0, 0, 0, 0);
-	WriteStatus(IDE_STATUS_END | IDE_STATUS_IRQ);
+	WriteTaskFile(1, 1, 1, 0, 0, 0);
+	WriteStatus(IDE_STATUS_END | IDE_STATUS_IRQ | IDE_STATUS_SIG);
 }
 
 
@@ -326,7 +399,7 @@ void ATA_IdentifyDevice(unsigned char* tfr, int unit, unsigned short* id)
   WriteTaskFile(0, tfr[2], tfr[3], tfr[4], tfr[5], tfr[6]);
   WriteStatus(IDE_STATUS_RDY); // pio in (class 1) command type
   EnableFpga();
-  SPI(CMD_IDE_DATA_WR); // write data command
+  SPI(CMD_IDE_DATA_WR | ide_port); // write data command
   SPI(0x00);
   SPI(0x00);
   SPI(0x00);
@@ -422,7 +495,7 @@ void ATA_ReadSectors(unsigned char* tfr, int sector, int cylinder, int head, int
 						else
 							FakeRDB(unit,lba);
 						EnableFpga();
-						SPI(CMD_IDE_DATA_WR); // write data command
+						SPI(CMD_IDE_DATA_WR | ide_port); // write data command
 						SPI(0x00); SPI(0x00); SPI(0x00); SPI(0x00); SPI(0x00);
 						for (i = 0; i < 512; i++)
 						{
@@ -513,7 +586,7 @@ void ATA_WriteSectors(unsigned char* tfr, int sector, int cylinder, int head, in
 		{
 			while (!(GetFPGAStatus() & CMD_IDEDAT)); // wait for full write buffer
 			EnableFpga();
-			SPI(CMD_IDE_DATA_RD); // read data command
+			SPI(CMD_IDE_DATA_RD | ide_port); // read data command
 			SPI(0x00); SPI(0x00); SPI(0x00); SPI(0x00); SPI(0x00);
 			for (i = 0; i < 512; i++)
 			sector_buffer[i] = SPI(0xFF);
@@ -576,22 +649,25 @@ void HandleHDD(unsigned int c1, unsigned int c2)
 
     if (c1 & CMD_IDECMD)
     {
+        unsigned char flags;
         DISKLED_ON;
-        EnableFpga();
-        SPI(CMD_IDE_REGS_RD); // read task file registers
-        SPI(0x00);
-        SPI(0x00);
-        SPI(0x00);
-        SPI(0x00);
-        SPI(0x00);
-        for (i = 0; i < 8; i++)
+        // Port 1 first; its flags say whether port 2 has the command (a core
+        // with one port answers 0 there, and port 1 it is).
+        ide_port = 0;
+        flags = ReadTaskFile(0, tfr);
+        if ((flags & (IDEF_BSY0 | IDEF_BSY1)) == IDEF_BSY1)
         {
-            SPI(0);
-            tfr[i] = SPI(0);
+            ide_port = 1;
+            ReadTaskFile(1, tfr);
         }
-        DisableFpga();
 
-        unit = tfr[6] & 0x10 ? 1 : 0; // master/slave selection
+        unit = (ide_port << 1) | (tfr[6] & 0x10 ? 1 : 0); // slot: port, master/slave
+        if (unit == CD_SLOT())
+        {
+            CD_HandleCommand(ide_port, tfr);
+            DISKLED_OFF;
+            return;
+        }
 		if (hdf[unit].type==HDF_DISABLED) {
 		  WriteStatus(IDE_STATUS_END | IDE_STATUS_IRQ | IDE_STATUS_ERR);
           DISKLED_OFF;
@@ -770,13 +846,15 @@ unsigned char HardFileSeek(hdfTYPE *pHDF, unsigned long lba)
 unsigned char OpenHardfile(unsigned int unit)
 {
     unsigned long time;
+    hardfileTYPE *hf = SlotConfig(unit);
 
-	switch(config.hardfile[unit].enabled)
+	hdf[unit].type = HDF_DISABLED;	// until opened: a stale type would serve the old file
+	switch(hf->enabled)
 	{
 		case HDF_FILE | HDF_SYNTHRDB:
 		case HDF_FILE:
-			hdf[unit].type=config.hardfile[unit].enabled;
-			strncpy(filename, config.hardfile[unit].name, 8);
+			hdf[unit].type=hf->enabled;
+			strncpy(filename, hf->name, 8);
 			strcpy(&filename[8], "HDF");
 
 			if (filename[0])
@@ -799,25 +877,25 @@ unsigned char OpenHardfile(unsigned int unit)
 						time = GetTimer(0) - time;
 						printf("Hardfile indexed in %lu ms\r", time >> 16);
 
-						if(config.hardfile[unit].enabled & HDF_SYNTHRDB)
+						if(hf->enabled & HDF_SYNTHRDB)
 							hdf[unit].offset=-(hdf[unit].heads*hdf[unit].sectors);
 						else
 							hdf[unit].offset=0;		
 
-						config.hardfile[unit].present = 1;
+						hf->present = 1;
 						return 1;
 					}
 				}
 				else
 				{
-					config.hardfile[unit].present = 0;
+					hf->present = 0;
 					SetError(ERROR_HDD,"Bad hardfile directory",config.hdfdir[unit],0);
 				}
 			}
 			break;
 		case HDF_CARD:
 			hdf[unit].type=HDF_CARD;
-		    config.hardfile[unit].present = 1;
+		    hf->present = 1;
 			hdf[unit].file.size=0;
 			hdf[unit].offset=0;
 		    GetHardfileGeometry(&hdf[unit]);
@@ -827,16 +905,16 @@ unsigned char OpenHardfile(unsigned int unit)
 		case HDF_CARDPART1:
 		case HDF_CARDPART2:
 		case HDF_CARDPART3:
-			hdf[unit].type=config.hardfile[unit].enabled;
+			hdf[unit].type=hf->enabled;
 			hdf[unit].partition=hdf[unit].type-HDF_CARDPART0;
-		    config.hardfile[unit].present = 1;
+		    hf->present = 1;
 			hdf[unit].file.size=0;
 			hdf[unit].offset=partitions[hdf[unit].partition].startlba;
 		    GetHardfileGeometry(&hdf[unit]);
 			return 1;
 			break;
 	}
-    config.hardfile[unit].present = 0;
+    hf->present = 0;
     return 0;
 }
 
