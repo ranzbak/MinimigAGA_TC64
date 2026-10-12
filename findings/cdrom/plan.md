@@ -1,7 +1,7 @@
 # CD-ROM drive from an ISO on the SD card -- implementation plan
 
-Status: decisions closed (2026-10-12); phase 0 implemented on branch `cdrom`
-(section 12), phases 1-4 open.
+Status: decisions closed (2026-10-12); phase 0 and phase 1 tasks 1.1-1.6
+implemented on branch `cdrom` (section 12); 1.7 (build) onwards open.
 Research by a Fable agent against superproject 3987715 (5.0-040-pipelined);
 reconciled with Paul's decisions D1-D7 (section 11) and a second read of
 rtl/minimig/gayle.v the same day, which changed the Gayle design from one
@@ -854,6 +854,9 @@ Phase 1's map shows the real figure once hdd.c calls CD_HandleCommand.
 
 ### 12.3 Open for phase 1
 
+(The long-name and error-register points are settled in 12.5; the
+duplicate-symbol check was done, 12.4.)
+
 - `hardfileTYPE.long_name` is 16 bytes: the power-on disc (CD_Open from the
   config) can give IDENTIFY only 16 characters of its name, an OSD insert
   the full long name (D7 says 40).  Cosmetic; accept or keep the long name
@@ -866,3 +869,137 @@ Phase 1's map shows the real figure once hdd.c calls CD_HandleCommand.
 - MiSTer handles neither 0x4A (GESN) nor 0x1A (MODE SENSE(6); its "case
   0x03 // mode sense" is REQUEST SENSE), so those answers are unproven on
   Amiga drivers; the CDB log (1.6) should be read with that in mind.
+
+### 12.4 Phase 1, tasks 1.1-1.6 (2026-10-12)
+
+Commits on `cdrom`: 168f71d (RTL + bench, 1.1/1.2), bc7d5f6 (firmware port
+plumbing, 1.3), 11b2f94 (CD glue + serial log, 1.4/1.6), 7aaef6d (OSD, 1.5).
+
+- RTL: `gayle.v` keeps the shared Gayle registers and instantiates
+  `gayle_port.v` per port (`IDE_PORTS`, default 2); `gayle_fifo.v` exports
+  its pointers; `paula_floppy.v` latches the port bit (bit 8 of every HDD
+  command's first word, passed through on the decoded word itself so the
+  status write acts on its own port), decodes 1100 (`hdd_xfer_wr` at
+  rx_cnt 1) and strobes `hdd_regs_rd` on the 1000 command word;
+  `ide_config0/1` are 5 bits from userio_osd.v to gayle; minimig.v sets
+  CORE_CAPS bit 7.  gayle_port.v is in minimig.qip, rebuild.tcl,
+  .hdl_checker.config and the five tracked tools/vivado/build*.tcl (the
+  untracked build_no_ddr3_clean.tcl in the main checkout needs the same
+  `add_src $R/rtl/minimig/gayle_port.v`).
+- Bench `sim/gayle/run.sh` (iverilog), cases (a)-(i) as task 1.1.  (a)'s
+  trace (838 lines: irq/nrdy/cmd_req/dat_req changes and every value read)
+  was recorded from 8208e2b's gayle.v (`./run.sh golden`) and matches
+  bit for bit.  `./run.sh old`: (a) passes, (b)-(i) all fail.  Teeth:
+  `mut_nopkt` fails (b)(c)(d)(h), `mut_shared` fails (b)(e)(f)(g)(h)(i).
+  (i) as first written passed on the old Gayle too (its decode already
+  gated $DA1xxx/$DA3xxx with hdd1_ena); it now also checks that firmware
+  writes for port 2 do not reach port 1, which the old Gayle fails.
+  sim/osd_keyq gained the 5-bit OSD_CMD_HDD/HDD1 check (fails on the
+  3-bit userio_osd.v); sim/hdmi_upsample osdspi still passes.
+- yosys synth_xilinx estimate: gayle 191 -> 557 LUT (+8 RAM32M for the
+  task files), 59 -> 148 FF, 2 -> 4 RAMB36 -- inside section 6's +330-430.
+  Vivado numbers come with 1.7.
+- Firmware: host test `fw/ctrl_832/test/cdrom_test.c` (20 cases) links
+  the real cdrom.c/atapi.c against a model of the Gayle port in packet
+  mode and an ATAPI host that checks every phase; RED first (1 of 20
+  against the phase 0 stub); 11 of 12 hand mutants of cdrom.c fail it
+  (the 12th, ignoring rst_seen in the wait loop, is equivalent: a reset
+  also clears packet mode).
+- Size vs phase 0 (64,092 / 15,750 / 3,460 / 30,672): text 73,751,
+  rodata 16,561, data 3,465, bss 46,652; .bin 93,797 bytes; image end
+  0x18e65, bss end 0x244a4 (AUDIO_BUFFER 0x70000).  No duplicate globals
+  in the map (only the linker's `_STACKTOP`, as before).
+
+### 12.5 Rulings, phase 1
+
+- Ruling: the sticky flags (dev_wr, rst_seen) are captured and cleared by
+  the CMD_IDE_REGS_RD command word of that port (new `hdd_regs_rd`
+  strobe), not when register 7 is read -- an event during a read then
+  shows in the next read instead of falling between the reg-7 word and
+  the clear -- cost if wrong: none; one more paula_floppy output.
+- Ruling: xfer_done is not read-to-clear; it holds until the next
+  CMD_IDE_XFER_WR, host command or reset -- the firmware polls it and
+  hdd_dat_req follows it -- cost if wrong: none.
+- Ruling: packet-mode interrupts -- a pio-in data phase interrupts on the
+  DRQ edge (the ATA block_mark logic: the pio-in status write arms it), not
+  on the status write as 7.3 item 6 said; a status write with IRQ and
+  without pio in (data-out start, status phase) interrupts at once -- the
+  host never sees the interrupt before the data (bench c) -- cost if
+  wrong: none seen.
+- Ruling: at the end of a pio-out transfer pio_out stays set (only pio in
+  ends) so the firmware can drain the FIFO (`fifo_rd` follows pio_out);
+  CMD_IDE_XFER_WR clears both directions -- cost if wrong: none.
+- Ruling: in packet mode the host's task-file reads use the bus address
+  while busy (the one-port Gayle returned tfr[hdd_addr] to a host reading
+  during BSY, which an ATA host never does, but an ATAPI host reads the
+  interrupt reason and byte count then); the firmware's reads use hdd_addr
+  busy or not (it reads idle ports for the flags) -- port 1 ATA unchanged
+  (golden trace) -- cost if wrong: none.
+- Ruling: the signature mux ends per register: a host write to register
+  1-5 ends it for that register only, a command for all -- drivers probe
+  a drive after reset by writing the count/sector registers and reading
+  them back -- cost if wrong: none.
+- Ruling: `IDE_PORTS = 1` does not decode $DA1xxx/$DA3xxx at all (the old
+  Gayle mapped them onto port 1's registers) -- nothing ever enabled port
+  2 before -- cost if wrong: a one-port target loses a port 2 that never
+  worked.
+- Ruling: CORE_CAPS bit 7 = two-port Gayle with packet mode; without it the
+  firmware keeps port 2 off and offers no CD-ROM -- new firmware on an old
+  core would otherwise put port 2 on port 1's registers -- cost if wrong:
+  one capability bit.
+- Ruling (12.3): PACKET error register = sense key << 4, plus ABRT only for
+  ILLEGAL REQUEST (05) and ABORTED COMMAND (0B); no MCR -- ATA/ATAPI-4: ABRT
+  for an aborted command or an invalid command/parameter; NOT READY, UNIT
+  ATTENTION and MEDIUM ERROR are neither; MiSTer (debugged against Amiga
+  drivers) sets no ABRT at all -- cost if wrong: a driver that keys on ABRT
+  alone misses 02/06/03 errors, but drivers read the sense after ERR.
+- Ruling (12.3): the 16-byte config long name is accepted -- the power-on
+  disc reports at most 16 characters of its name, an OSD insert the full
+  name (40 for IDENTIFY, 16 for INQUIRY) -- cost: cosmetic.
+- Ruling: DEVICE RESET (08) writes the signature (status bit 5) without an
+  interrupt and leaves lock and UNIT ATTENTION alone (as MiSTer); IDENTIFY
+  DEVICE (EC) writes the signature into the registers itself, so the error
+  register keeps ABRT (the mux would show 01) -- cost if wrong: a driver
+  expecting 06/29 after DEVICE RESET does not get one.
+- Ruling: READ data-in blocks are min(limit, 8 KB) rounded down to 512
+  bytes (the direct SD transfer moves 512-byte FAT sectors); a limit below
+  512 still gets 512-byte blocks -- cost if wrong: a driver with such a
+  limit gets more per DRQ than it asked for.
+- Ruling: each phase waits at most 10 s for the host, then the transfer is
+  dropped and the command ends with ABORTED COMMAND 0B/00/00 (error B4) --
+  the 832 must not hang the OSD on a dead driver -- cost if wrong: none.
+- Ruling: an SD read error during a READ drops the transfer (FIFO reset,
+  no DRQ, no stall) and ends with MEDIUM ERROR 03/11/00 (error 30) -- the
+  host may read garbage words of that block; the status says so.
+- Ruling: an Amiga reset (rst_seen) or a command written over a running
+  one (packet mode gone) ends the CD command without a status -- the Gayle
+  reset already cleared BSY -- cost if wrong: none.
+- Ruling: rst_seen is acted on wherever a register read sees it
+  (HandleHDD, the wait loops, and CD_Locked, which reads the CD port's flags
+  while the drive is locked) -- the OSD eject works right after an Amiga
+  reset without waiting for a CD command (R-D) -- cost if wrong: none.
+- Ruling: `cdromTYPE.active` marks a configured drive (BSS zero = none; slot
+  0 is a real slot), read through CD_SLOT() -- cost if wrong: none.
+- Ruling: an Amiga-side eject clears the slot's config name as the OSD
+  eject does (5.3: the RAM config names the disc in the drive) -- cost if
+  wrong: none.
+- Ruling: cycling a slot to CD-ROM clears its name (an HDF name is not a
+  disc); a disc chosen for a CD slot that is not live yet (pending reset,
+  IDE off) is stored without a reset prompt -- cost if wrong: none.
+- Ruling: the CD drive is live only with IDE on and a two-port core; main
+  page line 6 says "not configured" otherwise, also for a CD slot that only
+  becomes live at the next reset -- cost: a slightly misleading word until
+  the reset.
+- Ruling: page 2 shows a disabled slot's file line stippled, as page 1
+  does, so the plan's blank line 3 is the slave's file line; the note is on
+  lines 4-6 -- cost: none.
+- Ruling: OpenHardfile marks a slot disabled until it opens (before, a
+  failed open kept the previous type and file size and could serve the
+  previous file) -- cost if wrong: none; an absent device is already off in
+  ide_config.
+- Note on 12.2's byte-order ruling: MiSTer's rtl/gayle.v swaps the lanes
+  between the 68k and its ide.v (`io_writedata = {data_in[7:0],
+  data_in[15:8]}`), so in MiSTer too file byte 0 and CDB byte 0 sit at the
+  68k's even address -- the same lane order as this Gayle's FIFO.  The
+  first INQUIRY on the board is still the proof.
+
