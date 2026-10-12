@@ -89,6 +89,9 @@ the cost of the OS dispatch.
   `missed` = expected - taken: interrupts that arrived while the previous one
   was still pending and merged with it (latency beyond one period), or never
   came. A count off by one at the start or end of the run is not a miss.
+  Images before the CIA TOD fix (sim/cia_tod) lose TOD counts whenever the
+  CPU writes anywhere at the moment of the count, so under a chip write load
+  `expected` there comes out far too low (264 for 1001 taken).
 - `latency`: from the request to the handler's sample. For the timer the
   sample is the **second** CIA access of the handler (the low byte), so it
   includes one CIA access; subtract about a third of the `read` figure for
@@ -97,7 +100,11 @@ the cost of the OS dispatch.
   other and with `NONE`, not with zero.
 - `read`: what the handler's own reads cost. Three back-to-back CIA accesses
   should be three E-clock periods, 4.23 us, on any Amiga; the beam reads are
-  custom-register reads and get slower when the chip bus is busy.
+  custom-register reads and get slower when the chip bus is busy. Agnus counts
+  the line up at H 2, so VHPOSR at H 0 and 1 still shows the previous line's
+  V (WinUAE `vhpos_adj`); both beam samples are taken as one line on there.
+  (Versions before that counted a pair across a line start one line short:
+  negative, printed as ~67,000 us.)
 - `hist`: how many samples fell below 1, 2, 4 ... 1024 us. `worst`: the five
   largest, with the sample number (`#n`: the timer's nth interrupt is n ms into
   a 1000 Hz run).

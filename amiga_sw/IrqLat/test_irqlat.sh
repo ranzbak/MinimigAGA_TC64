@@ -58,15 +58,19 @@ for s in cia_raw:
     if rd < 0: rd += L + 1
     cia.append((ns_t(el), ns_t(rd)))
 cop_raw = [(0x3014,0xA300,0x3016), (0x7220,0xA300,0x7222), (0x0530,0xA300,0x0532),
-           (0x1000,0xA301,0x1003), (0xB010,0xA300,0xB101)]
+           (0x1002,0xA301,0x1005), (0xB010,0xA300,0xB102),
+           (0x7000,0xA300,0x7001), (0x33E1,0xA300,0x3300), (0xFF01,0xA301,0x0005)]
 REQ = [0x30, 0x70, 0xB0, 0xF0]; FRAME = 313 * 227
+def vline(vh):   # VHPOSR's V, one line on at H 0/1 (Agnus counts V up at H 2)
+    return (vh >> 8) + (1 if (vh & 0xFF) <= 1 else 0)
 cop = []
 for h1, v, h2 in cop_raw:
-    line = ((v & 1) << 8) | (h1 >> 8); pos = line * 227 + (h1 & 0xFF)
+    line = ((v & 1) << 8) | vline(h1); pos = line * 227 + (h1 & 0xFF)
     rs = [r * 227 + 0x10 for r in REQ if r * 227 + 0x10 <= pos]
     lat = pos - rs[-1] if rs else pos + FRAME - (REQ[-1] * 227 + 0x10)
-    dl = ((h2 >> 8) - (h1 >> 8)) & 0xFF
+    dl = (vline(h2) - vline(h1)) & 0xFF
     rd = dl * 227 + (h2 & 0xFF) - (h1 & 0xFF)
+    assert 0 <= rd < 256 * 227, rd
     cop.append((ns_c(lat), ns_c(rd)))
 def us(n): return f"{n // 1000}.{(n % 1000) // 10:02d}"
 def block(title, s, taken, exp, readname):
@@ -86,7 +90,7 @@ def block(title, s, taken, exp, readname):
     return lines
 cia_exp = (110 * 227 // 5) // (L + 1)
 want = block("CIA-B timer A (level 6)", cia, 6, cia_exp, "3 CIA reads") + \
-       block("Copper (level 3)", cop, 5, 2 * 4, "2 beam reads")
+       block("Copper (level 3)", cop, len(cop), 2 * 4, "2 beam reads")
 
 # ---- the report ----
 for name in ("direct", "os", "blit", "chipwr"):
@@ -162,7 +166,7 @@ with open(log, "w") as f:
 tab = subprocess.run([sys.executable, "irqlat_table.py", log], capture_output=True, text=True).stdout.splitlines()
 cmax = us(max(a for a, _ in cia)); kmax = us(max(a for a, _ in cop))
 rows = [r for r in tab if r.startswith("| test set |")]
-if len(rows) != 2 or f"| {cmax} | 1 |" not in rows[0] or f"| {kmax} | 3 |" not in rows[0] \
+if len(rows) != 2 or f"| {cmax} | 1 |" not in rows[0] or f"| {kmax} | {max(0, 2 * 4 - len(cop))} |" not in rows[0] \
         or "| BLIT BPL F0 NASTY |" not in rows[1]:
     fail.append(f"irqlat_table.py: {tab}")
 for f in fail: print("FAIL:", f)
