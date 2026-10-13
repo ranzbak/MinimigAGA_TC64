@@ -210,3 +210,27 @@ linear light), crt_run.sh and run.sh as before.
   = 4x crops side by side.  The RTL renders sit one HD row lower than the
   study's (ruling above) and use today's horizontal capture, not the
   study's 1.6x area.
+- Ruling (step 6): the Scaling setting lives in bits 5:4 of
+  config.scanlines -- bits 1:0 are Scanlines, bits 3:2 the old "(laced)"
+  item; older firmware never wrote 5:4 (memset 0), preserved them in its
+  menu (masks 0xfc / 0xf3) and sent only bits 1:0 to the core, so old config
+  files load as 0; the other candidates (crt_mask / crt_bloom / crt_beam
+  upper bits) are range-checked by older firmware, which would reset the
+  mask / bloom / beam on a downgrade.  Encoding 0 Sharp, 1 Area, 2 Line rate
+  (3 loads as Sharp), so fresh and old configs get Sharp; the core's code
+  differs (0 line rate, 1 sharp, 2 area: an older firmware sending one or two
+  bytes keeps today's picture) and ConfigVideo maps.  212 bytes,
+  CONFIG_VERSION 4 -- cost if wrong: none for the struct; a config file
+  saved with "(laced)" set keeps those bits, unused.
+- Ruling (step 6): "Scaling" replaces the Video page's "(laced)" line
+  (the page has 8 lines, all used) -- that item's bits never reached any
+  core here (ConfigVideo sends scanlines & 3) -- cost if wrong: an item
+  that did nothing is gone.
+- Ruling (step 6): the core gets Scaling as bits 7:6 of the OSD video
+  command's second byte (userio_osd crt_fx 6 -> 8 bits, crt_cfg 12 -> 14
+  bits through minimig.v / minimig_virtual_top to pal_to_ddr), and on
+  openaars a Scaling other than line rate turns amber's scandoubler off
+  like the CRT items (minimig.v crt_any) -- the exact-ratio modes need the
+  15 kHz picture.  With Sharp the default, the HDMI path gets 15 kHz by
+  default -- cost if wrong: the scandoubled VGA picture (if anything still
+  uses it) is off unless Scaling is Line rate and the CRT items are off.

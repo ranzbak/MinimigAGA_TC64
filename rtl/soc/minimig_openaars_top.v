@@ -226,7 +226,7 @@ wire [7:0]  voffset;
 
 // RTG
 wire        rtg_ena;
-wire [11:0] crt_cfg;     // HDMI CRT emulation: OSD video config (CLK_28)
+wire [13:0] crt_cfg;     // HDMI CRT emulation and scaler: OSD video config (CLK_28)
 wire        vid_hires;   // Denise BPLCON0 HIRES (CLK_28)
 wire        vid_shres;   // Denise BPLCON0 SHRES (CLK_28)
 
@@ -516,7 +516,7 @@ pal_to_ddr my_pal_to_ddr (
   // RTG
   .i_rtg_enable(rtg_ena),
   // CRT emulation: OSD video config and Denise resolution (CLK_28 domain)
-  .i_crt_cfg({2'b00, crt_cfg}),   // Scaling (bits 13:12) not wired yet: line rate
+  .i_crt_cfg(crt_cfg),
   .i_pal_hires(vid_hires),
   .i_pal_shres(vid_shres),
   //.i_pal_cs(vga_cs),

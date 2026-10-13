@@ -40,10 +40,10 @@ module userio_osd #(
 	output	reg [3:0] floppy_config = 0,
 	output	reg [1:0] scanline = 0,
   output  reg [1:0] dither = 0,
-  // HDMI CRT emulation {beam[1:0], bloom[1:0], mask[1:0]}: the video
-  // config's second data byte.  A firmware that sends one byte leaves them
-  // 0 (off).
-  output  reg [5:0] crt_fx = 0,
+  // HDMI CRT emulation {scaling[1:0], beam[1:0], bloom[1:0], mask[1:0]}:
+  // the video config's second data byte.  A firmware that sends one byte
+  // leaves them 0 (off; scaling 0 = line rate, the picture of before).
+  output  reg [7:0] crt_fx = 0,
   output    reg    [2:0] ide_config0 = 0,        //enable hard disk support
   output    reg    [2:0] ide_config1 = 0,        //enable hard disk support
   output  reg [4:0] cpu_config = 0,   // [4] Chip slots Fast (findings/fastslot)
@@ -444,7 +444,7 @@ always @ (posedge clk) begin
       if (spi_cpu_cfg_sel)      begin if (dat_cnt == 0) t_cpu_config <= #1 wrdat[4:0]; end
       if (spi_memory_cfg_sel)   begin if (dat_cnt == 0) t_memory_config <= #1 wrdat[7:0]; end
       if (spi_video_cfg_sel)    begin if (dat_cnt == 0) {dither, hr_filter, lr_filter, scanline} <= #1 wrdat[7:0];
-                                      if (dat_cnt == 1) crt_fx <= #1 wrdat[5:0]; end
+                                      if (dat_cnt == 1) crt_fx <= #1 wrdat[7:0]; end
       if (spi_floppy_cfg_sel)   begin if (dat_cnt == 0) floppy_config <= #1 wrdat[3:0]; end
       if (spi_harddisk0_cfg_sel)begin if (dat_cnt == 0) t_ide_config0 <= #1 wrdat[2:0]; end
       if (spi_harddisk1_cfg_sel)begin if (dat_cnt == 0) t_ide_config1 <= #1 wrdat[2:0]; end

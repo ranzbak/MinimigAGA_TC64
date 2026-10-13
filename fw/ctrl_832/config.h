@@ -49,6 +49,21 @@ typedef struct
 #define VPOS_MAX  64
 #define VPOS_STEP 2
 
+// HDMI Scaling (rtl/openaars/adv7511, findings/scaler/plan.md): the Video
+// page's "Scaling", bits 5:4 of config.scanlines.  Sharp and Area scale the
+// 15 kHz picture by exactly 2.5x (PAL 288 -> 720 lines) / 3x (NTSC 240 ->
+// 720) in linear light; Line rate is the picture of before (~2.4x / 2.9x,
+// one input line per 2 or 3 HD lines).  Sharp is 0: fresh configs (memset 0)
+// and config files from older firmware -- which never wrote these bits,
+// kept them through their menu and sent only bits 1:0 -- get it.  The
+// struct stays 212 bytes, CONFIG_VERSION 4.  3 loads as Sharp.
+#define SCALING_SHIFT 4
+#define SCALING_MASK  (3 << SCALING_SHIFT)
+#define SCALING_SHARP 0
+#define SCALING_AREA  1
+#define SCALING_LINE  2
+#define CONFIG_SCALING(scanlines) (((scanlines) & SCALING_MASK) >> SCALING_SHIFT)
+
 typedef struct
 {
   char          id[8];
@@ -60,6 +75,10 @@ typedef struct
   floppyTYPE    floppy;
   unsigned char disable_ar3;
   unsigned char enable_ide;
+  // bits 1:0 the Video page's Scanlines (0 off, 1 dim, 2 black); bits 3:2
+  // its old "(laced)" item, which no core here ever got (ConfigVideo sends
+  // bits 1:0 only) and which left the menu for Scaling -- the bits stay as
+  // they were; bits 5:4 the HDMI Scaling (SCALING_* below)
   unsigned char scanlines;
 	unsigned char misc; // Contains extra settings, such as scandoubler
   hardfileTYPE  hardfile[2];
