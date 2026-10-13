@@ -61,7 +61,7 @@ pal_to_hd_upsample #(.PAL_HD_H_RES(1980), .PAL_HD_H_RES60(1685)) dut (
 	.clk_out(clk_148), .clk_in(clk_114), .reset(reset),
 	.i_pal_hsync(pal_hs), .i_pal_vsync(pal_vs),
 	.i_pal_r(pic_now[7:0]), .i_pal_g(pic_now[15:8]), .i_pal_b(pic_now[23:16]),
-	.i_rtg_enable(1'b0), .i_hz60(1'b0),
+	.i_rtg_enable(1'b0), .i_hz60(1'b0), .i_ring16(1'b0),
 	.o_hd_r(up_r), .o_hd_g(up_g), .o_hd_b(up_b), .o_hd_vsync(), .o_frame_end(frame_end),
 	.i_hd_hsync(hd_hs), .i_hd_vsync(hd_vs), .i_hd_clk(hd_clk),
 	.i_hd_hoffset(hoff[7:0]), .i_hd_voffset(8'd0)
@@ -69,7 +69,7 @@ pal_to_hd_upsample #(.PAL_HD_H_RES(1980), .PAL_HD_H_RES60(1685)) dut (
 
 // stale content: every buffer word is the marker
 integer i;
-initial for (i = 0; i < 16384; i = i + 1) dut.upsample_blk_ram.mem[i] = MARK;
+initial for (i = 0; i < 32768; i = i + 1) dut.upsample_blk_ram.mem[i] = MARK;
 
 // count the pixels that reach the HDMI encoder (signal_generator's output
 // while its data enable is high), once per HD pixel clock

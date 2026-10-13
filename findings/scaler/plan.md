@@ -90,3 +90,42 @@ evenly spaced).
   ring; with 16 lines its drop/repeat pattern changes -- gate in step 3.
 - Linear light makes dark text on light backgrounds look thinner (survey
   observation); the OSD choice covers it.
+
+## Implementation notes
+
+Steps 1-6 on branch `scaler` (2026-10-13).  Benches: sim/hdmi_upsample
+golden.sh (the golden frames, step 1), scaler_run.sh (ring, stepping,
+linear light), crt_run.sh and run.sh as before.
+
+- Ruling: golden.sh compares the output pins per input field ("fsig") as
+  well as per vsync ("sig"), and skips "sig" in the PAL -> NTSC -> PAL legs
+  -- the two-chain design put out one vsync more in its 50 -> 60 Hz splice,
+  which renumbers every later vsync-to-vsync window although the pins are
+  the same -- cost if wrong: none for the steady legs (both kept); in the
+  mode legs a pin difference that does not move by a whole field window
+  would still show in fsig.
+- Ruling: the line-rate mode keeps to buffers 0..7 of the 16-line ring, with
+  its addresses wrapping in 14 bits (i_ring16 = 0), instead of using all 16
+  -- the input lines inside vsync do not advance the write side and their
+  samples run on through the next buffers (8-line ring: 7 -> 0 -> 1 -> 2),
+  which the top HD lines of the next frame show; on 16 buffers those land
+  in 8..10 and HD rows 0..6 show older border lines instead (golden.sh
+  check, plan-literal 16-buffer ring: the "pic" records of 8 of 8 legs
+  differ, the pin records do not -- see the next note) -- cost if wrong:
+  none in resources (the same 16-buffer RAM, a 2:1 choice of wrap width).
+- Finding (no change made): the HDMI pins do not show the signal
+  generator's 720 active rows 0..719 but rows 15..734 -- adv_ddr makes its
+  own DE from the vsync the upsampler delays by Y_TRANS = 10 HD lines
+  (o_hd_vsync) plus PY_TO_DE = 5, and the ADV7511 takes the DE pin (reg
+  0x17 bit 0 = 0).  Bench (tb_crt_frame, the generator's counters when
+  o_de rises): pin line 0 starts at vt_count 15, line 719 at 734, at 50 and
+  60 Hz alike; horizontally at hz_count 762 / 432 against the generator's
+  first active pixel 701 / 371 (61 pixels, which today's read offsets may
+  already absorb).  So the top 15 rows of every picture never reach the
+  screen and the bottom 15 HD lines are always black (rows 0..6 differing
+  does not change the pin signature, see the ring ruling).  It matters for
+  the exact 2.5x / 3x picture, which fills rows 0..719: on the board its top
+  15 rows (6 PAL / 5 NTSC source lines) are cut and the bottom 15 lines are
+  black.  Fixing it moves every mode's picture 15 lines on screen, so it is
+  Paul's call (aligning adv_ddr's vertical DE with the generator's, e.g.
+  PY_TO_DE or Y_TRANS, is a few lines).

@@ -350,6 +350,9 @@ module pal_to_ddr #(
   // from its pad copy (pad_hsync), so the pin timing and this input stay
   // independent of each other.  The 50 Hz rate takes the generator's own.
   wire w_adv_hsync;
+  // the line-buffer ring: 8 buffers, as before, in the line-rate mode
+  // (the only one so far); the bench forces it to 16 (tb_crt_frame +ring16)
+  reg  r_ring16 = 1'b0;
   pal_to_hd_upsample #(
   .PAL_HD_H_RES(1685),
   .PAL_HD_H_RES60(1980), // Total pixels in a line
@@ -368,6 +371,7 @@ module pal_to_ddr #(
     // RTG: the undelayed HD vsync, at 60 Hz only (as before)
     .i_rtg_enable(w_hz60 & i_rtg_enable),
     .i_hz60(w_hz60),
+    .i_ring16(r_ring16),
     // HD upsampled output
     .o_hd_r(w_up_r),
     .o_hd_g(w_up_g),

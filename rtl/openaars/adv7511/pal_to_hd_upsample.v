@@ -55,6 +55,10 @@ module pal_to_hd_upsample #(
   input           i_rtg_enable,
   // 60 Hz HD timing (clk_out domain, static between mode changes)
   input           i_hz60,
+  // The 16-line ring (findings/scaler/plan.md step 3; clk_out domain,
+  // static): 1 uses all 16 line buffers, 0 the first 8 only, exactly as
+  // the 8-line ring before it -- see "Line-buffer ring" below.
+  input           i_ring16,
   // HD upsampled output
   output [7:0]    o_hd_r,
   output [7:0]    o_hd_g,
@@ -97,8 +101,8 @@ reg [7:0]   r_hd_r;
 reg [7:0]   r_hd_g;
 reg [7:0]   r_hd_b;
 
-reg   [2:0] r_cur_read_buf  = 3'b000; // Number of the current read buffer
-reg   [2:0] r_cur_write_buf = 3'b100; // Number of the current write buffer
+reg   [3:0] r_cur_read_buf  = 4'b0000; // Number of the current read buffer
+reg   [3:0] r_cur_write_buf = 4'b0100; // Number of the current write buffer
 reg         r_next_buf      = 1'b0; // signal when to swap buffer
 
 (* ASYNC_REG = "TRUE" *) reg   [1:0] s_hd_hsync;
@@ -113,11 +117,11 @@ reg         r_ena;
 // instance; in stage_combo1 that was one register with 8.1 ns of pure
 // routing to a far BRAM (clk_114 -0.147 ns).  max_fanout lets Vivado copy
 // it next to each BRAM group (Quartus ignores the attribute).
-(* max_fanout = 4 *) reg  [13:0] r_addra = 0;
+(* max_fanout = 4 *) reg  [14:0] r_addra = 0;
 reg  [23:0] r_dina;
-reg  [13:0] r_addrb = 0;
+reg  [14:0] r_addrb = 0;
 wire [23:0] w_doutb;
-wire [13:0] w_addrb;   // port B address: r_addrb, or the next line's word (CRT)
+wire [14:0] w_addrb;   // port B address: r_addrb, or the next line's word (CRT)
 
 // Detect edges in Vsync and Hsync
 reg r_pal_hpos;
@@ -166,10 +170,27 @@ begin
   end
 end
 
-// Line buffer
+// ---------------------------------------------------------------------------
+// Line-buffer ring (2026-10-13, findings/scaler/plan.md step 3): 16 buffers
+// of 2048 words (ADDR 15, one ring where the two-chain design had two of
+// 8).  Buffer k is addresses {k, 11'b0} ..; the pointers are 4 bits.
+// i_ring16 = 0 (the line-rate mode) keeps to buffers 0..7 and wraps every
+// address in 14 bits, so it is the 8-line ring of before bit for bit:
+// besides the pointers that matters for the lines inside vsync, which do
+// not advance the write side -- their samples run on past the end of the
+// buffer, through the next ones (8 ring: 7 -> 0 -> 1 -> 2), and the top
+// lines of the next HD frame show those buffers.  With 16 buffers they
+// would land in 8..10 and the top of the frame would show other, older
+// lines (the golden frames differ there).  i_ring16 = 1 is the exact-ratio
+// modes' ring (step 4).
+// ---------------------------------------------------------------------------
+(* ASYNC_REG = "TRUE" *) reg [1:0] s_r16_in = 2'b00;
+always @(posedge clk_in) s_r16_in <= {s_r16_in[0], i_ring16};
+wire w_r16_in = s_r16_in[1];       // clk_in
+wire w_r16_o  = i_ring16;          // clk_out
 bram_tdp #(
   .DATA(24),
-  .ADDR(14)
+  .ADDR(15)
 ) upsample_blk_ram (
   .a_clk(clk_in), // input wire clka
   .a_wr(r_wea), // input wire [0 : 0] wea
@@ -287,11 +308,11 @@ end
 // read side shows black outside that range.  r_wend is written ~4 lines
 // before buffer k is read, so the clk_114 -> clk_148 crossing sees a
 // settled value (wizard.xdc bounds the path).
-reg [2:0]  r_wslot = 3'b100;   // the buffer the current input line goes to
+reg [3:0]  r_wslot = 4'b0100;  // the buffer the current input line goes to
 reg [10:0] r_wcnt  = 11'd0;    // pixels written into it so far
-reg [10:0] r_wend [0:7];
+reg [10:0] r_wend [0:15];
 integer    k_wend;
-initial for (k_wend = 0; k_wend < 8; k_wend = k_wend + 1) r_wend[k_wend] = 11'd0;
+initial for (k_wend = 0; k_wend < 16; k_wend = k_wend + 1) r_wend[k_wend] = 11'd0;
 
 // Write input to buffer
 reg [3:0] s_next_buf = 0;
@@ -329,7 +350,7 @@ begin
   // Write to dual port ram
   if (r_pix_en && ~i_pal_hsync)
   begin
-    r_addra <= r_addra+1;
+    r_addra <= w_r16_in ? r_addra + 1'b1 : {1'b0, r_addra[13:0] + 14'd1};
     r_wea <= 1'b1;
     r_dina <= {i_pal_b, i_pal_g, i_pal_r};
     if (r_wcnt != 11'h7FF)
@@ -347,37 +368,14 @@ begin
     // Invert signal to signal next buf
     s_next_buf[0] <= ~s_next_buf[0]; // Switch buffer
 
-    // Switch to next write buffer
-    if (r_cur_write_buf != 3'b111)
-    begin
-      r_cur_write_buf <= (r_cur_write_buf + 1);
-    end
+    // Switch to next write buffer (ring of 16, or of 8: i_ring16)
+    if (r_cur_write_buf != (w_r16_in ? 4'd15 : 4'd7))
+      r_cur_write_buf <= r_cur_write_buf + 1'b1;
     else
-    begin
-      r_cur_write_buf <= 0;
-    end
+      r_cur_write_buf <= 4'd0;
 
     // Switch the current write buffer
-    case (r_cur_write_buf)
-      0:
-        r_addra <= 14'h0000;
-      1:
-        r_addra <= 14'h0800;
-      2:
-        r_addra <= 14'h1000;
-      3:
-        r_addra <= 14'h1800;
-      4:
-        r_addra <= 14'H2000;
-      5:
-        r_addra <= 14'H2800;
-      6:
-        r_addra <= 14'H3000;
-      7:
-        r_addra <= 14'H3800;
-      default:
-        r_addra <= 14'h0000;
-    endcase
+    r_addra <= {r_cur_write_buf, 11'b0};
   end
 
   // Handle Vsync negative edge (or the virtual one, VPOS != 0)
@@ -567,12 +565,12 @@ end
 reg         r_hd_clk_;
 reg [11:0]  r_h_pos = 12'b0;
 // the buffer this output line reads, and how far it was written (r_wend)
-reg [2:0]   r_rslot = 3'b000;
+reg [3:0]   r_rslot = 4'b0000;
 reg [10:0]  r_rend  = 11'd0;
 // the word w_doutb holds belongs to r_addrb (one-clock BRAM read, and
 // r_addrb moves only every other clk_out): inside this line's buffer and
 // inside what the write side reached?
-wire        w_rd_valid = (r_addrb[13:11] == r_rslot) && (r_addrb[10:0] != 11'd0) &&
+wire        w_rd_valid = (r_addrb[14:11] == r_rslot) && (r_addrb[10:0] != 11'd0) &&
                          (r_addrb[10:0] <= r_rend);
 always @(posedge clk_out)
 begin
@@ -590,7 +588,7 @@ begin
     r_h_pos <= r_h_pos + 1;
     if (r_h_pos > PAL_HD_H_FP && r_h_pos < r_win_end)
     begin
-      r_addrb <= r_addrb + 1;
+      r_addrb <= w_r16_o ? r_addrb + 1'b1 : {1'b0, r_addrb[13:0] + 14'd1};
       // black (border) for a word this line's input did not write
       r_hd_r <= w_rd_valid ? w_doutb[0 +: 8]  : 8'b0;
       r_hd_g <= w_rd_valid ? w_doutb[8 +: 8]  : 8'b0;
@@ -612,20 +610,17 @@ begin
     begin
       r_next_buf <= 1'b0;
 
-      if (r_cur_read_buf != 3'b111)
-      begin
-        r_cur_read_buf <= r_cur_read_buf + 1;
-      end
+      if (r_cur_read_buf != (w_r16_o ? 4'd15 : 4'd7))
+        r_cur_read_buf <= r_cur_read_buf + 1'b1;
       else
-      begin
-        r_cur_read_buf <= 0;
-      end
+        r_cur_read_buf <= 4'd0;
     end
     r_h_pos <= 0; // Reset horizontal counter
     // the buffer read this line (r_addrb below), and its written extent
     r_rslot <= r_cur_read_buf;
     r_rend  <= r_wend[r_cur_read_buf];
-    r_addrb <= {r_cur_read_buf, 11'b0} - r_rd_off;
+    r_addrb <= w_r16_o ? {r_cur_read_buf, 11'b0} - {1'b0, r_rd_off}
+                       : {1'b0, {r_cur_read_buf[2:0], 11'b0} - r_rd_off};
   end
 
 
@@ -706,7 +701,7 @@ end
 //    clk_out (one HD pixel = two clk_out); the read in the update clock
 //    (w_upd) is never used by the picture path (its data arrives after
 //    r_addrb has moved), so it fetches the same x from the NEXT buffer
-//    (+0x800 wraps 7 -> 0 like the ring).  Captured one clock later into
+//    (+0x800 wraps 15 -> 0, or 7 -> 0, like the ring).  Captured one clock later into
 //    r_hd_next; black where the next buffer was not written (r_wend).
 // 2. Line phase.  The vertical position of an HD line inside the input
 //    line it shows, measured in time: r_c_new counts clk_out since the
@@ -723,9 +718,9 @@ end
 // ---------------------------------------------------------------------------
 reg  [1:0]  r_res_s    = 2'b00;
 reg         r_res_line = 1'b0;
-reg         r_wres [0:7];
+reg         r_wres [0:15];
 integer     k_wres;
-initial for (k_wres = 0; k_wres < 8; k_wres = k_wres + 1) r_wres[k_wres] = 1'b0;
+initial for (k_wres = 0; k_wres < 16; k_wres = k_wres + 1) r_wres[k_wres] = 1'b0;
 always @(posedge clk_in) begin
   r_res_s <= {i_pal_shres, i_pal_hires};
   if (r_wcnt == 11'd512) r_res_line <= |r_res_s;
@@ -738,15 +733,15 @@ wire w_upd    = w_hdfall && ~i_hd_hsync;
 wire w_in_win = (r_h_pos > PAL_HD_H_FP && r_h_pos < r_win_end);
 reg  [10:0] r_rend2 = 11'd0;   // written extent of the next buffer
 always @(posedge clk_out)
-  if (hd_hsync_negedge) r_rend2 <= r_wend[r_cur_read_buf + 3'd1];
-wire w_rd_valid2 = (r_addrb[13:11] == r_rslot) && (r_addrb[10:0] != 11'd0) &&
+  if (hd_hsync_negedge) r_rend2 <= r_wend[w_r16_o ? r_cur_read_buf + 4'd1 : {1'b0, r_cur_read_buf[2:0] + 3'd1}];
+wire w_rd_valid2 = (r_addrb[14:11] == r_rslot) && (r_addrb[10:0] != 11'd0) &&
                    (r_addrb[10:0] <= r_rend2);
 // The second read goes out in every update clock, hsync or not: the
 // picture path never uses that clock's read, and leaving i_hd_hsync out
 // keeps the 60 Hz path's hsync (from adv_ddr, far away) off the line
 // buffer's address pins (1.4 ns OOC slack with it, 2026-10-09).  The
 // capture below is still qualified with w_upd.
-assign w_addrb = (CRT && w_hdfall) ? (r_addrb + 14'h0800) : r_addrb;
+assign w_addrb = (CRT && w_hdfall) ? (w_r16_o ? r_addrb + 15'h0800 : {1'b0, r_addrb[13:0] + 14'h0800}) : r_addrb;
 
 reg        r_nxt_cap = 1'b0;   // w_doutb holds the next line's word this clock
 reg        r_nxt_ok  = 1'b0;   // ... and it is inside window and written extent

@@ -37,6 +37,7 @@
 //   +voff2=N +vofframe=F +voffline=L   change VPOS to voff2 during HD frame
 //                F, line L of the new path (the VPOS-change legs)
 //   +force60     both paths use the 60 Hz upsampler (r_50hz forced 0)
+//   +ring16      the line-rate mode on all 16 line buffers (see "ring")
 //   +ntsc        NTSC input: 262-line fields (263 long with +lace), the
 //                picture's lines 0..261; the line stays 227 CCK as Agnus
 //                makes it here (agnus_beamcounter.v: no long lines), vsync
@@ -240,8 +241,8 @@ initial begin
 end
 
 // the line buffers start black (a real BRAM powers up 0 too)
+initial for (i = 0; i < 32768; i = i + 1) dut.myupsample.upsample_blk_ram.mem[i] = 0;
 initial for (i = 0; i < 16384; i = i + 1) begin
-	dut.myupsample.upsample_blk_ram.mem[i] = 0;
 	ref0.my50hzupsample.upsample_blk_ram.mem[i] = 0;
 	ref0.my60hzupsample.upsample_blk_ram.mem[i] = 0;
 end
@@ -446,6 +447,99 @@ always @(posedge clk_114) if (sdf != 0) begin
 	else if (sd_state == 1 && vcnt == 0 && hcnt == 0) begin sd_state = 2; $fclose(sdf); end
 	if (sd_state == 1 && dut.my_beamh.o_stb)
 		$fwrite(sdf, "%0d %0d %06x\n", vcnt, hcnt[12:2], dut.my_beamh.f_rgb);
+end
+
+// ---- the line-buffer ring (findings/scaler/plan.md step 3) ----
+// Bench-side bookkeeping of what the upsampler's write side puts where:
+// every time it starts a new input line (its buffer toggle), the slot the
+// line goes to gets the line's number (lines started since power-up) and
+// its source line.  Per HD line the read side's two slots (o_hd_*:
+// r_rslot; o_hd_next: the one after it) are looked up, and while the HD
+// line is active (DE) every clk_148 checks
+//   rd-wr        neither slot is the one the write side is writing
+//                (r_addra's slot, while it writes): the reader never reads
+//                a line slot the writer is writing
+//   overwritten  neither slot got a new line since the HD line started
+// and, in the exact-ratio mode (step 4), per HD line
+//   wrongline    the cur slot holds the line the stepping asks for: the
+//                restart's first line + floor(y)
+// All three over the active HD lines whose cur line is of this frame --
+// line-rate mode: from the frame's first line on (the top HD lines show
+// buffers written before the restart, by design; at NTSC and 31 kHz the
+// write side's vsync lines are still running on through those buffers
+// then -- today's behaviour, in the golden frames -- "top" counts those
+// reads); exact-ratio mode: a >= 0.  Printed per HD frame: "ring N: L
+// lines, lag A..B, rd-wr R, overwritten O, wrongline W, ratio X (top T)",
+// lag = the line being written minus the cur line.
+integer rg_line [0:15];            // number of the line in each slot
+integer rg_gl = 0;                 // lines started so far
+integer rg_first = 0;              // the first line after the last write-side restart
+reg     rg_tq = 1'b0;
+reg     rg_wpend = 1'b0;
+initial for (i = 0; i < 16; i = i + 1) rg_line[i] = -1000;
+always @(posedge clk_114) begin
+	if (dut.myupsample.w_vp_wr_reset) rg_wpend = 1'b1;
+	// the toggle flipped at the last edge: r_wslot names the new line's slot
+	if (dut.myupsample.s_next_buf[0] != rg_tq) begin
+		rg_line[dut.myupsample.r_wslot] = rg_gl;
+		if (rg_wpend) begin rg_first = rg_gl; rg_wpend = 1'b0; end
+		rg_gl = rg_gl + 1;
+	end
+	rg_tq <= dut.myupsample.s_next_buf[0];
+end
+wire       rg_ratio = 1'b0;   // the exact-ratio mode comes with step 4
+wire       rg_r16   = dut.myupsample.w_r16_o;
+reg  [3:0] rg_cs = 0, rg_ns = 0;
+integer    rg_cl = 0, rg_nl = 0, rg_a = 0;
+reg        rg_act = 1'b0, rg_cnt = 1'b0;
+integer    rg_rw = 0, rg_rwt = 0, rg_ow = 0, rg_wl = 0, rg_lmin = 99, rg_lmax = -99, rg_lines = 0, rg_lag;
+always @(posedge clk_148) begin
+	if (dut.myupsample.r_line_start) begin
+		// r_rslot moved at the last edge
+		rg_cs = dut.myupsample.r_rslot;
+		rg_ns = (rg_r16 || rg_ratio) ? rg_cs + 4'd1 : {1'b0, rg_cs[2:0] + 3'd1};
+		rg_cl = rg_line[rg_cs]; rg_nl = rg_line[rg_ns];
+		rg_a  = 0;
+		rg_act = 1'b0;
+		rg_cnt = rg_ratio ? (rg_a >= 0) : (!rg_wpend && rg_cl >= rg_first);
+		if (rg_ratio && rg_a >= 0 && rg_cl != rg_first + rg_a) begin
+			rg_wl = rg_wl + 1;
+			if (rg_wl <= 5) $display("ring wrongline: frame %0d line %0d a %0d holds line %0d (first %0d)", fno_n, hdl, rg_a, rg_cl, rg_first);
+		end
+	end
+	if (n_dee) begin
+		if (!rg_act) begin
+			rg_act = 1'b1;
+			if (rg_cnt) begin
+				rg_lines = rg_lines + 1;
+				rg_lag = (rg_gl - 1) - rg_cl;
+				if (rg_lag < rg_lmin) rg_lmin = rg_lag;
+				if (rg_lag > rg_lmax) rg_lmax = rg_lag;
+				if ($test$plusargs("ringdbg") && rg_lag > 4) $display("ringdbg frame %0d line %0d lag %0d cl %0d first %0d gl %0d vcnt %0d", fno_n, hdl, rg_lag, rg_cl, rg_first, rg_gl, vcnt);
+			end
+		end
+		if (dut.myupsample.r_wea && (dut.myupsample.r_addra[14:11] == rg_cs || dut.myupsample.r_addra[14:11] == rg_ns)) begin
+			if (rg_cnt) begin
+				rg_rw = rg_rw + 1;
+				if (rg_rw <= 5) $display("ring rd-wr: frame %0d line %0d slots %0d/%0d written", fno_n, hdl, rg_cs, rg_ns);
+			end else rg_rwt = rg_rwt + 1;
+		end
+		if (rg_cnt && (rg_line[rg_cs] != rg_cl || rg_line[rg_ns] != rg_nl)) begin
+			rg_ow = rg_ow + 1;
+			if (rg_ow <= 5) $display("ring overwritten: frame %0d line %0d", fno_n, hdl);
+		end
+	end
+	if (n_frame) begin
+		$display("ring %0d: %0d lines, lag %0d..%0d, rd-wr %0d, overwritten %0d, wrongline %0d, ratio %0d (top %0d)",
+		         fno_n, rg_lines, rg_lmin, rg_lmax, rg_rw, rg_ow, rg_wl, rg_ratio, rg_rwt);
+		rg_lines = 0; rg_lmin = 99; rg_lmax = -99; rg_rw = 0; rg_rwt = 0; rg_ow = 0; rg_wl = 0;
+	end
+end
+// +ring16: the line-rate mode on all 16 buffers (the ring's pointer
+// arithmetic; pal_to_ddr uses 16 only in the exact-ratio modes)
+initial begin
+	#1;
+	if ($test$plusargs("ring16")) force dut.r_ring16 = 1'b1;
 end
 
 initial begin
