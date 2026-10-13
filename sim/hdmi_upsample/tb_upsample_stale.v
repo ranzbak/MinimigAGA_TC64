@@ -51,17 +51,17 @@ signal_generator #(
 	.PAL_HZ_ACT_PIX(1280), .PAL_HZ_FRONT_PORCH(110), .PAL_HZ_SYNC_WIDTH(40), .PAL_HZ_BACK_PORCH(220),
 	.PAL_VT_ACT_LN(720), .PAL_VT_FRONT_PORCH(5), .PAL_VT_SYNC_WIDTH(5), .PAL_VT_BACK_PORCH(20)
 ) gen (
-	.clk(clk_148), .reset(reset), .i_frame_end(frame_end),
+	.clk(clk_148), .reset(reset), .i_hz60(1'b0), .i_frame_end(frame_end),
 	.i_r(up_r), .i_g(up_g), .i_b(up_b),
 	.o_x(), .o_y(), .o_r(vis_r), .o_g(vis_g), .o_b(vis_b),
 	.o_adv_clk(hd_clk), .o_hsync(hd_hs), .o_vsync(hd_vs), .o_adv_de(hd_de), .o_frame()
 );
 
-pal_to_hd_upsample #(.PAL_HD_H_RES(1980)) dut (
+pal_to_hd_upsample #(.PAL_HD_H_RES(1980), .PAL_HD_H_RES60(1685)) dut (
 	.clk_out(clk_148), .clk_in(clk_114), .reset(reset),
 	.i_pal_hsync(pal_hs), .i_pal_vsync(pal_vs),
 	.i_pal_r(pic_now[7:0]), .i_pal_g(pic_now[15:8]), .i_pal_b(pic_now[23:16]),
-	.i_rtg_enable(1'b0),
+	.i_rtg_enable(1'b0), .i_hz60(1'b0),
 	.o_hd_r(up_r), .o_hd_g(up_g), .o_hd_b(up_b), .o_hd_vsync(), .o_frame_end(frame_end),
 	.i_hd_hsync(hd_hs), .i_hd_vsync(hd_vs), .i_hd_clk(hd_clk),
 	.i_hd_hoffset(hoff[7:0]), .i_hd_voffset(8'd0)

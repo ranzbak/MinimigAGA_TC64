@@ -23,10 +23,18 @@
 // NTSC 752*525*60Hz = 23688000 Hz
 // PAL  752*625*50Hz = 23500000 Hz
 
+// One instance serves both HD rates (findings/scaler/plan.md step 2,
+// 2026-10-13): i_hz60 selects the 60 Hz values of the write side's sample
+// step (H_RES), the read window and the read offset at run time; before,
+// pal_to_ddr ran a 50 Hz and a 60 Hz instance side by side on the same
+// input and picked one.  H_RES keeps the old, odd values (1685 / 1980,
+// backlog item 8): changing them changes the picture.
 module pal_to_hd_upsample #(
-  parameter PAL_OFFSET_HZ = 'h80,
+  parameter PAL_OFFSET_HZ = 'h80,     // read offset, 50 Hz (i_hz60 = 0)
+  parameter PAL_OFFSET_HZ60 = 'h80,   // ... 60 Hz
   parameter PAL_OFFSET_VT = 0,
-  parameter PAL_HD_H_RES  = 1980,
+  parameter PAL_HD_H_RES  = 1980,     // sample step and read window, 50 Hz
+  parameter PAL_HD_H_RES60 = 1980,    // ... 60 Hz
   parameter PAL_HD_H_FP   = 50,
   // CRT emulation (2026-10-09, crt_post.v): 1 adds the next-line read for the
   // two-line beam on port B (in the clk_out cycle the picture path leaves
@@ -45,6 +53,8 @@ module pal_to_hd_upsample #(
   input  [7:0]    i_pal_b,
   // RTG
   input           i_rtg_enable,
+  // 60 Hz HD timing (clk_out domain, static between mode changes)
+  input           i_hz60,
   // HD upsampled output
   output [7:0]    o_hd_r,
   output [7:0]    o_hd_g,
@@ -185,6 +195,11 @@ reg [13:0]  r_pal_h_pos = 14'b0;
 reg [11:0]  v_div_var = 12'b0;
 reg         r_pal_hpos_in = 1'b0;
 reg         r_pal_hneg_in = 1'b0;
+// i_hz60 into clk_in: it only picks the divisor below, read at input line ends
+(* ASYNC_REG = "TRUE" *) reg [1:0] s_hz60_in = 2'b00;
+always @(posedge clk_in) s_hz60_in <= {s_hz60_in[0], i_hz60};
+wire [7:0]  w_div_50 = r_line_count[13:6] / (PAL_HD_H_RES>>8);
+wire [7:0]  w_div_60 = r_line_count[13:6] / (PAL_HD_H_RES60>>8);
 always @(posedge clk_in)
 begin
   // start of the horizontal line
@@ -200,7 +215,7 @@ begin
   begin
     r_line_active   <= 1'b0; // Stop counter
     r_line_count    <= 0; // Reset counter
-    v_div_var        = (r_line_count[13:6] / (PAL_HD_H_RES>>8)) - 1; // Shift numbers to make devider circuit faster
+    v_div_var        = (s_hz60_in[1] ? w_div_60 : w_div_50) - 1; // Shift numbers to make devider circuit faster
     r_pix_clock_dev <= v_div_var[5:0]; // Get the pixel clock relative to the system clock
   end
 
@@ -541,8 +556,12 @@ end
 // where a line's read starts: the fixed offset plus the OSD's signed one,
 // registered (static), so each line starts at {buffer, 11'b0} - r_rd_off.
 reg  [13:0] r_rd_off = PAL_OFFSET_HZ;
-always @(posedge clk_out)
-  r_rd_off <= PAL_OFFSET_HZ + {{6{i_hd_hoffset[7]}}, i_hd_hoffset};
+// the read window's end (H_RES - FP), registered like r_rd_off
+reg  [11:0] r_win_end = PAL_HD_H_RES - PAL_HD_H_FP;
+always @(posedge clk_out) begin
+  r_rd_off  <= (i_hz60 ? PAL_OFFSET_HZ60 : PAL_OFFSET_HZ) + {{6{i_hd_hoffset[7]}}, i_hd_hoffset};
+  r_win_end <= i_hz60 ? PAL_HD_H_RES60 - PAL_HD_H_FP : PAL_HD_H_RES - PAL_HD_H_FP;
+end
 
 // Sample PAL input stream
 reg         r_hd_clk_;
@@ -569,7 +588,7 @@ begin
   if (r_hd_clk_ == 1'b1 && i_hd_clk == 1'b0 && ~i_hd_hsync)
   begin
     r_h_pos <= r_h_pos + 1;
-    if (r_h_pos > PAL_HD_H_FP && r_h_pos < (PAL_HD_H_RES-PAL_HD_H_FP))
+    if (r_h_pos > PAL_HD_H_FP && r_h_pos < r_win_end)
     begin
       r_addrb <= r_addrb + 1;
       // black (border) for a word this line's input did not write
@@ -716,7 +735,7 @@ end
 
 wire w_hdfall = (r_hd_clk_ == 1'b1 && i_hd_clk == 1'b0);   // the update clock, sync or not
 wire w_upd    = w_hdfall && ~i_hd_hsync;
-wire w_in_win = (r_h_pos > PAL_HD_H_FP && r_h_pos < (PAL_HD_H_RES-PAL_HD_H_FP));
+wire w_in_win = (r_h_pos > PAL_HD_H_FP && r_h_pos < r_win_end);
 reg  [10:0] r_rend2 = 11'd0;   // written extent of the next buffer
 always @(posedge clk_out)
   if (hd_hsync_negedge) r_rend2 <= r_wend[r_cur_read_buf + 3'd1];

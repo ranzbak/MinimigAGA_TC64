@@ -239,10 +239,9 @@ initial begin
 	end
 end
 
-// both line buffers start black (a real BRAM powers up 0 too)
+// the line buffers start black (a real BRAM powers up 0 too)
 initial for (i = 0; i < 16384; i = i + 1) begin
-	dut.my50hzupsample.upsample_blk_ram.mem[i] = 0;
-	dut.my60hzupsample.upsample_blk_ram.mem[i] = 0;
+	dut.myupsample.upsample_blk_ram.mem[i] = 0;
 	ref0.my50hzupsample.upsample_blk_ram.mem[i] = 0;
 	ref0.my60hzupsample.upsample_blk_ram.mem[i] = 0;
 end
@@ -250,8 +249,8 @@ end
 // ---- capture: what adv_ddr gets ----
 wire        n_sel = dut.r_50hz;
 wire        n_hdclk = dut.w_adv_clk;
-wire        n_dee   = n_sel ? dut.w_50_adv_de : dut.w_60_adv_de;
-wire        n_frame = n_sel ? dut.hd_50hz_gen.r_frame : dut.hd_60hz_gen.r_frame;
+wire        n_dee   = dut.w_adv_de;
+wire        n_frame = dut.hd_gen.r_frame;
 wire [23:0] n_px    = {dut.w_o_r, dut.w_o_g, dut.w_o_b};
 wire        r_sel = ref0.r_50hz;
 wire        r_hdclk = ref0.w_adv_clk;
@@ -379,15 +378,15 @@ always @(posedge clk_148)
 		$display("cfg change %03h -> %03h at %0t (frame %0d line %0d)", cfg[11:0], cfg2[11:0], $time, fno_n, hdl);
 	end
 // +vpdebug: the 50 Hz upsampler's HD raster restarts (Video Pos VPOS)
-wire vp_real = dut.my50hzupsample.w_vp_realf;
-wire vp_virt = dut.my50hzupsample.r_vp_fire;
+wire vp_real = dut.myupsample.w_vp_realf;
+wire vp_virt = dut.myupsample.r_vp_fire;
 always @(posedge clk_114)
 	if ($test$plusargs("vpdebug") && (vp_real || vp_virt))
 		$display("vp %0s restart at input line %0d hpos %0d: cnt %0d cyc %0d n1 %0d n2 %0d p0 %0d p1 %0d tgt %0d ph %0d since %0d s %0d dbl %0d",
-		         vp_real ? "real" : "virtual", vcnt, hpos, dut.my50hzupsample.r_vp_cnt, dut.my50hzupsample.r_vp_cyc,
-		         dut.my50hzupsample.r_vp_n1, dut.my50hzupsample.r_vp_n2, dut.my50hzupsample.r_vp_p0,
-		         dut.my50hzupsample.r_vp_p1, dut.my50hzupsample.r_vp_tgt, dut.my50hzupsample.r_vp_ph,
-		         dut.my50hzupsample.r_vp_since, $signed(dut.my50hzupsample.r_vp_s), dut.my50hzupsample.r_vp_dbl);
+		         vp_real ? "real" : "virtual", vcnt, hpos, dut.myupsample.r_vp_cnt, dut.myupsample.r_vp_cyc,
+		         dut.myupsample.r_vp_n1, dut.myupsample.r_vp_n2, dut.myupsample.r_vp_p0,
+		         dut.myupsample.r_vp_p1, dut.myupsample.r_vp_tgt, dut.myupsample.r_vp_ph,
+		         dut.myupsample.r_vp_since, $signed(dut.myupsample.r_vp_s), dut.myupsample.r_vp_dbl);
 // the VPOS-change legs
 reg voff_changed = 0;
 always @(posedge clk_148)
@@ -409,7 +408,7 @@ always @(posedge clk_148) ck_fend <= dut.w_crt_fend;   // the latch takes effect
 // where the upsampler takes the line's resolution sample (hpos), once
 integer shown = 0;
 always @(posedge clk_114)
-	if (shown == 0 && dut.my50hzupsample.r_wcnt == 11'd512 && vcnt == 9'd100 && !dbl) begin
+	if (shown == 0 && dut.myupsample.r_wcnt == 11'd512 && vcnt == 9'd100 && !dbl) begin
 		$display("resolution sample at hpos %0d (line %0d)", hpos, vcnt);
 		shown = 1;
 	end
