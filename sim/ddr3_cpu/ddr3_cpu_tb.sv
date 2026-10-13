@@ -845,6 +845,12 @@ localparam integer POSTCI_GEN = `POSTCI;
 `else
 localparam integer POSTCI_GEN = 0;
 `endif
+// CWFF: critical-word-first data-cache line fills with early restart (AP040_CWF)
+`ifdef CWFF
+localparam integer CWF_GEN = 1;
+`else
+localparam integer CWF_GEN = 0;
+`endif
 `ifdef BTBF
 localparam integer BTB_GEN = 1;
 `else
@@ -879,7 +885,7 @@ localparam integer FWDRAS_GEN = 0;
 `ifdef AP040_PIPELINED
 TG68K #(.cpu_clk_ratio(`CPU_RATIO), .ap040_pipelined(1), .chip32(CHIP32_GEN), .ap040_free_core(FREE_CORE_GEN),
         .ap040_store_buf(STORE_BUF_GEN), .ap040_fwd(FWDRAS_GEN), .ap040_ras(FWDRAS_GEN),
-        .ap040_precise(PREMIS_GEN), .ap040_misplit(MISPLIT_GEN), .ap040_sb_mmu(SBMMU_GEN), .ap040_copyback(CBACK_GEN), .ap040_btb(BTB_GEN), .ap040_ldx(LDX_GEN), .ap040_btfn(BTFN_GEN), .ap040_dfp_mis(DFPMIS_GEN), .ap040_walloc(WALLOC_GEN), .ap040_post_chip(POSTCHIP_GEN), .ap040_post_ci(POSTCI_GEN)) tg68k (
+        .ap040_precise(PREMIS_GEN), .ap040_misplit(MISPLIT_GEN), .ap040_sb_mmu(SBMMU_GEN), .ap040_copyback(CBACK_GEN), .ap040_btb(BTB_GEN), .ap040_ldx(LDX_GEN), .ap040_btfn(BTFN_GEN), .ap040_dfp_mis(DFPMIS_GEN), .ap040_walloc(WALLOC_GEN), .ap040_post_chip(POSTCHIP_GEN), .ap040_post_ci(POSTCI_GEN), .ap040_cwf(CWF_GEN)) tg68k (
 `else
 TG68K #(.cpu_clk_ratio(`CPU_RATIO), .chip32(CHIP32_GEN)) tg68k (
 `endif

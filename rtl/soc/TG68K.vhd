@@ -98,6 +98,12 @@ entity TG68K is
 		-- changes.
 		ap040_post_chip    : integer := 0;
 		ap040_post_ci      : integer := 0;
+		-- (pipelined core only) critical-word-first data-cache line fills
+		-- with early restart (M68040UM 4.6.1): a read miss fetches the
+		-- longword it needs first, the core goes on when that beat arrives
+		-- and the line finishes in the background.  The fills run on the
+		-- master port (AP040_FILL_CHANNEL => 0 below), where this applies.
+		ap040_cwf          : integer := 0;
 		-- clk / clk_cpu, the AP68040 island's clock ratio.  3 is stage D3 as
 		-- shipped (37.8125 MHz); 4 runs the same architecture at the pre-D3 CPU
 		-- rate.  THE PHASE MARKER BELOW DEPENDS ON THIS AND IS NOT RATIO-AGNOSTIC
@@ -687,7 +693,8 @@ ARCHITECTURE logic OF TG68K IS
 			AP040_WALLOC       : integer := 0;
 			AP040_XC7          : integer := 0;
 			AP040_POST_CHIP    : integer := 0;
-			AP040_POST_CI      : integer := 0
+			AP040_POST_CI      : integer := 0;
+			AP040_CWF          : integer := 0
 		);
 		PORT(
 			clk               : in  std_logic;
@@ -1505,7 +1512,8 @@ BEGIN
 					AP040_WALLOC       => ap040_walloc,
 					AP040_XC7          => ap040_xc7,
 					AP040_POST_CHIP    => ap040_post_chip,
-					AP040_POST_CI      => ap040_post_ci
+					AP040_POST_CI      => ap040_post_ci,
+					AP040_CWF          => ap040_cwf
 				)
 				PORT MAP(
 					-- The CPU island's own 37.8125 MHz clock.  So are the master

@@ -24,7 +24,7 @@
 #   FREECORE=1 ./run.sh ...         the wrapper's ap040_free_core = 1 (findings/unfreeze/plan.md)
 #   FASTCHIP=1 ./run.sh --ap040 --chipbus   Chip slots "Fast" (findings/fastslot)
 #   FREECORE=1 FCMUTANT=ack|walk|data ./run.sh ...  one free-core qualification undone; MUST fail
-#   XDEFS="-d STOREBUF=1 -d SBMMU -d POSTCHIP=1 -d POSTCI=1 ..." ./run.sh ...  extra xelab defines (core switches;
+#   XDEFS="-d STOREBUF=1 -d SBMMU -d POSTCHIP=1 -d POSTCI=1 -d CWFF ..." ./run.sh ...  extra xelab defines (core switches;
 #                                   see the localparams in ddr3_cpu_tb.sv); give such a run a RUNTAG
 #
 # Stage E2 (decision D6): EVERY leg runs the real sdram_ctrl and SDRAM part
