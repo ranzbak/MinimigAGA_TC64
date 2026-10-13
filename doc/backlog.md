@@ -274,6 +274,14 @@ order suggested: 8, then 1 and 4, then 5 and 6.
 6. **Automatic centring** from DIWSTRT/DIWSTOP instead of PAL_OFFSET_HZ,
    `r_line_count > 300` and the manual OSD offsets.
 7. **Border in COLOR00** instead of black.
+7a. **OSD through the CRT filters** (Paul, 2026-10-13: the OSD does not bypass
+   them).  The OSD is mixed in amber (28 MHz) before crt_beamh, the line ring
+   and crt_post, so beam spot, scanlines, bloom and mask all apply to it.
+   Option: carry a per-pixel OSD flag next to RGB (amber already has
+   osd_blank / the OSD window) through crt_beamh and the ring (24 -> 25 bits,
+   about +1 RAMB36 per 12) and let OSD pixels take the unfiltered path
+   (nearest vertically, no beam/bloom/mask) at the end of crt_post.  Bigger
+   option: render the OSD natively at 720p after crt_post.
 8. **Bug: offset wiring.** pal_to_ddr.sv's my50hzupsample gets
    `.i_hd_hoffset(i_voffset)` (the vertical OSD offset moves the picture
    horizontally), and the PAL_HD_H_RES values (1685 / 1980) look swapped
