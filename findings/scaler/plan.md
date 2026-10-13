@@ -23,6 +23,9 @@ evenly spaced).
   (2.401x / 2.882x, nearest) stays selectable as a fallback.
 - CRT scanlines on: the two-line Gaussian beam at the fractional position, in
   linear light ("CRT new" in the sheets).
+  **Approved by Paul 2026-10-13** after viewing the model render
+  scaler_png/out/full/pal_2p5_crt_lin2_L.png ("looks very good, I approve"):
+  this is the target for the RTL with CRT scanlines on.
 - RTG: unchanged in this plan (it keeps today's line-rate path).  A per-mode
   lag check and RTG scaling come later (survey section on RTG).
 - Horizontal: unchanged in this plan (backlog video scaler item 1).
