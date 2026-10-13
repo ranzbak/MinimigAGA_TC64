@@ -54,7 +54,11 @@ module pal_to_hd_upsample #(
   parameter signed [7:0]  RATIO_VB60 = -8'sd18,
   // clk_out per input line, as 2^24 / T_line: T = 7264 clk_in (227 CCK,
   // PAL and NTSC alike on this core) = 9509.3 clk_out
-  parameter [23:0] RATIO_TPH = 24'd1764
+  parameter [23:0] RATIO_TPH = 24'd1764,
+  // the exact-ratio mode's read offset is this many HD pixels smaller
+  // (crt_post's linear-light path is that much longer than its gamma path:
+  // the picture then sits where the line-rate one does)
+  parameter RATIO_RDX = 0
 )(
   input           clk_out,
   input           clk_in,
@@ -586,7 +590,8 @@ reg  [13:0] r_rd_off = PAL_OFFSET_HZ;
 // the read window's end (H_RES - FP), registered like r_rd_off
 reg  [11:0] r_win_end = PAL_HD_H_RES - PAL_HD_H_FP;
 always @(posedge clk_out) begin
-  r_rd_off  <= (i_hz60 ? PAL_OFFSET_HZ60 : PAL_OFFSET_HZ) + {{6{i_hd_hoffset[7]}}, i_hd_hoffset};
+  r_rd_off  <= (i_hz60 ? PAL_OFFSET_HZ60 : PAL_OFFSET_HZ) + {{6{i_hd_hoffset[7]}}, i_hd_hoffset}
+               - (i_ratio ? RATIO_RDX : 0);
   r_win_end <= i_hz60 ? PAL_HD_H_RES60 - PAL_HD_H_FP : PAL_HD_H_RES - PAL_HD_H_FP;
 end
 

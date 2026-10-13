@@ -15,11 +15,13 @@ mkdir -p build
 # the scaler's test frames (scaler_run.sh: the study's native frame, PAL and NTSC)
 [ -f build/scaler_pal.hex ] || python3 scaler/mkframes.py build > /dev/null
 iverilog -g2012 -o build/tb_crt_post_unit.vvp tb_crt_post_unit.v $A/crt_post.v
-# the same with both tables all zero: what a board build that failed to load
+# the same with all tables zero: what a board build that failed to load
 # the .mem files would have -- everything off must still be the picture
-python3 -c "open('build/zero_wrom.mem','w').write('00000\\n'*2048); open('build/zero_lut.mem','w').write('00\\n'*8192); open('build/zero_bloom.mem','w').write('00\\n'*8192)"
+python3 -c "open('build/zero_wrom.mem','w').write('00000\\n'*2048); open('build/zero_lut.mem','w').write('00\\n'*8192); open('build/zero_bloom.mem','w').write('00\\n'*8192); open('build/zero_sdec.mem','w').write('00000\\n'*256); open('build/zero_senc.mem','w').write('00\\n'*4096); open('build/zero_swrom.mem','w').write('000000000\\n'*2048)"
 iverilog -g2012 -o build/tb_crt_post_unit_zero.vvp -Ptb_crt_post_unit.WROM=\"build/zero_wrom.mem\" \
 	-Ptb_crt_post_unit.LUT=\"build/zero_lut.mem\" -Ptb_crt_post_unit.BLM=\"build/zero_bloom.mem\" \
+	-Ptb_crt_post_unit.SDEC=\"build/zero_sdec.mem\" -Ptb_crt_post_unit.SENC=\"build/zero_senc.mem\" \
+	-Ptb_crt_post_unit.SWROM=\"build/zero_swrom.mem\" \
 	tb_crt_post_unit.v $A/crt_post.v
 # the OSD video command over SPI (userio_osd.v: the second byte, mask and bloom)
 iverilog -g2005 -I ../../fpga/openaars -I ../../rtl/minimig -DMINIMIG_XILINX -o build/tb_osd_video.vvp \

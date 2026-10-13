@@ -151,11 +151,62 @@ linear light), crt_run.sh and run.sh as before.
   number since the restart -- otherwise the 3-4 vsync lines in the window
   (VPOS) would shrink the lag by as many lines, more than the ring's slack
   -- cost if wrong: none (the line-rate mode keeps the old rule).
-- Ruling (step 4): the geometry is the study model's (render_all.py, offv 0):
-  HD row 0's centre at source line 24.2 (PAL, window lines 24..311 at 2.5x)
-  and 22.1667 (NTSC, 22..261 at 3x).  The input lines before the restart's
-  first one are black (a < 0): PAL rows 0..5 (lines 24, 25: Agnus' vertical
-  blank anyway), NTSC rows 0..6 (lines 22, 23: overscan) -- the lag forbids
-  an earlier restart (PAL margins 0.49 / 0.61 line, NTSC 0.28 / 2.92) --
-  cost if wrong: NTSC overscan's top two lines are lost; all of these rows
-  are among the 15 the pins do not show today (Finding above).
+- Ruling (step 4, corrected in step 5): the geometry is the study model's
+  (render_all.py, offv 0) one HD row lower: HD row 0's centre at source
+  line 23.8 (PAL; the model's 24.2) and 21.8333 (NTSC; 22.1667) -- the
+  same line phases (the 5-row cycle 0.3 0.7 0.1 0.5 0.9 at 2.5x, which puts
+  the sharp kernel's mixed row on its ramp's middle), and the model's
+  exact geometry would leave the ring 0.09 line of slack (0.01 interlaced)
+  against 0.49 / 0.61 now (NTSC 0.28 / 2.92).  (Step 4's bench numbered the
+  HD rows one off -- tb line count = row, not row + 1 -- and reported 24.2 /
+  22.1667 for this same RTL; the step 5 bench found it.)  The input lines
+  before the restart's first one are black (a < 0): PAL rows 0..6 (lines
+  24, 25: Agnus' vertical blank anyway), NTSC rows 0..7 (lines 22, 23:
+  overscan) -- the lag forbids an earlier restart -- cost if wrong: the RTL
+  picture is the model's moved down one HD row (its last row cut), NTSC
+  overscan's top two lines are lost; all of these top rows are among the
+  15 the pins do not show today (Finding above).
+- Ruling (step 5): linear light 18 bits (code 1 decodes to 1, not 0),
+  weights 15 bits (32768 = 1.0), the encode a 4096-entry piecewise table
+  (exact below 2048, buckets of 128 above), per channel -- the plan's
+  "e.g. 12" bits and the first cut's 9-bit weights left errors of up to 7
+  and 14 codes against the model (dark codes decoding to 0; the beam's far
+  tail, 5.8e-4 at gap 0.80, rounding to 0); this chain is within +-1 code of
+  the float model for every code pair, phase and kernel of both tables
+  (scl_mkroms.py check, exhaustive) -- cost if wrong: BRAM: SDEC 3 RAMB18,
+  SENC 3 RAMB36, SWROM 2048 x 36 = 2 RAMB36 (6.5 RAMB36 in all, the plan
+  said 2-6).
+- Ruling (step 5): with scanlines on, the beam's page gain and soft clip
+  stay in crt_post's LUT stage (crt_lut.mem pages 2 / 3, as for the line-rate
+  beam) after the linear path's 8-bit encode, instead of an encode page per
+  scanline level -- the double rounding stays within +-1 (exhaustive
+  check above) and the mask / bloom stages work unchanged -- cost if wrong:
+  none found.
+- Ruling (step 5): the linear path has its own 6 multipliers (18 x 16 bit)
+  next to the gamma path's, not the same DSPs with muxed operands -- the
+  gamma (line-rate) path stays bit-identical by construction and no mux sits
+  in front of a DSP on clk_148 -- cost if wrong: 6 DSP48 (the plan expected
+  0 new).
+- Ruling (step 5): the linear path is 3 pixels longer than the gamma path;
+  instead of delaying the gamma path to match (CRT_LAT 9 -> 12, the read
+  offsets following), the upsampler reads 3 pixels earlier in the
+  exact-ratio modes only (RATIO_RDX) -- with CRT_LAT 12 the line-rate
+  picture moved in HD row 0 of the NTSC legs (2 pixels; a stale top row
+  read while the vsync lines' samples still run through its buffer: a
+  read/write race that the earlier read shifts; the pins were identical,
+  row 0 is not on them) -- cost if wrong: none (a 2:1 choice in the
+  registered read offset).
+
+- Step 5 results (scaler_run.sh lin*, HD frame 8 of the study's frame,
+  every pixel and channel): the RTL against scaler/scale.py on the RTL's own
+  line-buffer rows at the RTL's phases -- PAL 2.5x sharp 98.5 % equal / 1.5
+  % off by 1, area 99.7 / 0.3, scanlines dim 87.5 / 12.5, black 88.8 / 11.2;
+  NTSC 3x sharp 100 / 0, area 99.9 / 0.1, dim 89.4 / 10.6; nothing off by
+  more than 1.  PNGs in findings/scaler/bench_png (scaler_run.sh writes
+  them to build/scaler/png): rtl_lin_* = the bench's HDMI picture,
+  model_lin_* = the model on the RTL's rows (the +-1 gate), study_* = the
+  study's renders of the same frame (study_pal_2p5_crt_lin2_L.png is
+  bit-identical to the picture Paul approved, scaler_png/out/full), sheet_*
+  = 4x crops side by side.  The RTL renders sit one HD row lower than the
+  study's (ruling above) and use today's horizontal capture, not the
+  study's 1.6x area.

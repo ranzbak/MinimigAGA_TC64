@@ -217,7 +217,10 @@ pal_to_ddr #(.CRT_WROM_FILE("../../rtl/openaars/adv7511/crt_wrom.mem"),
              .CRT_BLOOM_FILE("../../rtl/openaars/adv7511/crt_bloom.mem"),
              .CRT_HDEC_FILE("../../rtl/openaars/adv7511/crt_hdec.mem"),
              .CRT_HENC_FILE("../../rtl/openaars/adv7511/crt_henc.mem"),
-             .CRT_HK_FILE("../../rtl/openaars/adv7511/crt_hk.mem")) dut (
+             .CRT_HK_FILE("../../rtl/openaars/adv7511/crt_hk.mem"),
+             .CRT_SDEC_FILE("../../rtl/openaars/adv7511/crt_sdec.mem"),
+             .CRT_SENC_FILE("../../rtl/openaars/adv7511/crt_senc.mem"),
+             .CRT_SWROM_FILE("../../rtl/openaars/adv7511/crt_swrom.mem")) dut (
 	.clk_148(clk_148), .clk_114(clk_114), .reset(reset), .vga_clk_pixel(1'b0),
 	.i_pal_hsync(pal_hs), .i_pal_vsync(pal_vs),
 	.i_pal_r(src_rgb[23:16]), .i_pal_g(src_rgb[15:8]), .i_pal_b(src_rgb[7:0]),

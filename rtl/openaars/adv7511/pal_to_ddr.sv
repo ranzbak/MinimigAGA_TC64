@@ -26,7 +26,11 @@ module pal_to_ddr #(
   // horizontal beam spot tables (crt_beamh.v)
   parameter CRT_HDEC_FILE = "crt_hdec.mem",
   parameter CRT_HENC_FILE = "crt_henc.mem",
-  parameter CRT_HK_FILE   = "crt_hk.mem"
+  parameter CRT_HK_FILE   = "crt_hk.mem",
+  // the scaler's linear-light tables (crt_post.v; sim/hdmi_upsample/scl_mkroms.py)
+  parameter CRT_SDEC_FILE  = "crt_sdec.mem",
+  parameter CRT_SENC_FILE  = "crt_senc.mem",
+  parameter CRT_SWROM_FILE = "crt_swrom.mem"
 )(
   input clk_148,
   input clk_114,
@@ -222,6 +226,7 @@ module pal_to_ddr #(
   // dll_28/clk_114 to clk_148).
   // -------------------------------------------------------------------------
   localparam CRT_LAT = 9;   // crt_post pipeline, HD pixels
+  localparam LIN_LAT = 3;   // ... its linear-light path's extra (the exact-ratio modes)
 
   // The OSD Video Pos HPOS (signed HD pixels; static, written by the host
   // through VPOS_DATA): one 2-FF synchroniser into clk_148.  VPOS: the
@@ -279,12 +284,15 @@ module pal_to_ddr #(
   // the upsampler's stream
   wire [23:0] w_m_cur    = {w_up_b, w_up_g, w_up_r};
 
-  // Exact-ratio scaling (findings/scaler/plan.md step 4): the frame-latched
-  // Scaling item, under the CRT effects' condition (the last frame had
-  // fewer than 400 lines, RTG off) -- otherwise the line-rate picture.  It
-  // switches the upsampler to the 16-line ring and the exact 2.5x / 3x
-  // stepping; until the linear-light blend (step 5) crt_post's vertical
-  // effects are off then and the picture is line a = floor(y).
+  // Exact-ratio scaling (findings/scaler/plan.md steps 4, 5): the
+  // frame-latched Scaling item, under the CRT effects' condition (the last
+  // frame had fewer than 400 lines, RTG off) -- otherwise the line-rate
+  // picture.  It switches the upsampler to the 16-line ring and the exact
+  // 2.5x / 3x stepping, and crt_post to its linear-light blend of the two
+  // lines at the HD line's phase: the Scaling kernel (sharp-bilinear 0.5 or
+  // area) with scanlines off, the two-line beam in linear light (gap 0.60
+  // dim / 0.80 black) with them on.  The V filter bit has no say there (the
+  // kernel decides); the H filter, mask and bloom work as before.
   reg        r_ratio = 1'b0;
   always @(posedge clk_148)
     r_ratio <= r_crt_ok && (r_crt_cfg[11:10] != 2'd0);
@@ -300,8 +308,11 @@ module pal_to_ddr #(
   reg  [1:0] r_ctl_mask  = 2'd0;
   reg  [1:0] r_ctl_bloom = 2'd0;
   reg        r_ctl_hz60  = 1'b0;
+  reg  [1:0] r_ctl_kern  = 2'd0;   // the exact-ratio modes' kernel: sharp, area, beam dim, beam black
   always @(posedge clk_148) begin
-    r_ctl_scan  <= (r_crt_ok && !r_ratio) ? w_crt_scan : 2'd0;
+    r_ctl_scan  <= r_crt_ok ? w_crt_scan : 2'd0;
+    r_ctl_kern  <= (w_crt_scan == 2'd0) ? {1'b0, r_crt_cfg[11:10] == 2'd2} :
+                   (w_crt_scan == 2'd3) ? 2'd3 : 2'd2;
     r_ctl_vb    <= r_crt_ok & !r_ratio & w_crt_filt[1];
     r_ctl_hblur <= (r_crt_ok & w_crt_filt[0]) ? (w_m_lhires ? 2'd1 : 2'd2) : 2'd0;
     r_ctl_mask  <= r_crt_ok ? r_crt_cfg[7:6] : 2'd0;
@@ -312,7 +323,8 @@ module pal_to_ddr #(
   wire [23:0] w_crt_rgb;
   crt_post #(
     .HAS_VBLEND(1), .HAS_HBLUR(1), .HAS_MASK(1), .HAS_BLOOM(1), .HAS_LUT(1),
-    .WROM_FILE(CRT_WROM_FILE), .LUT_FILE(CRT_LUT_FILE), .BLOOM_FILE(CRT_BLOOM_FILE)
+    .WROM_FILE(CRT_WROM_FILE), .LUT_FILE(CRT_LUT_FILE), .BLOOM_FILE(CRT_BLOOM_FILE),
+    .HAS_LIN(1), .SDEC_FILE(CRT_SDEC_FILE), .SENC_FILE(CRT_SENC_FILE), .SWROM_FILE(CRT_SWROM_FILE)
   ) my_crt_post (
     .clk(clk_148),
     .i_stb(w_m_stb),
@@ -327,6 +339,9 @@ module pal_to_ddr #(
     .i_mask(r_ctl_mask),
     .i_bloom(r_ctl_bloom),
     .i_lut(r_ctl_scan),       // the LUT page that goes with the beam profile
+    .i_lin(r_ratio),
+    .i_kern(r_ctl_kern),
+    .i_vphase(w_m_vphase),    // static per HD line, like w_m_phase
     .i_wwe(1'b0),
     .i_wwa(11'd0),
     .i_wwd(18'd0),
@@ -371,7 +386,8 @@ module pal_to_ddr #(
   .PAL_HD_H_RES(1685),
   .PAL_HD_H_RES60(1980), // Total pixels in a line
   .PAL_OFFSET_HZ('hd0 - CRT_LAT),
-  .PAL_OFFSET_HZ60('h80 - CRT_LAT)
+  .PAL_OFFSET_HZ60('h80 - CRT_LAT),
+  .RATIO_RDX(LIN_LAT)
   ) myupsample (
     .clk_in(clk_114),
     .clk_out(clk_148),

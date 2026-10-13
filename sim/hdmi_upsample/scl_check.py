@@ -20,13 +20,23 @@
       from the first row with a >= 0) is Y0 +- TOL (default 0.002), modulo
       the field (312 / 262 lines: with VPOS the window may start in the
       field before).
+  scl_check.py lin UNITLOG
+      tb_crt_post_unit's "lin" lines (the linear-light blend, every kernel
+      of both tables, 16 phases, 6 value pairs each): the output equals
+      scl_mkroms.py's bit-exact model (decode, weights, rounding, encode)
+      in all three channels.
   scl_check.py rows REF.hex REFPHASE X.hex XPHASE FRAME
       the exact-ratio picture (crt_post's vertical effects off: each HD row
       shows line a = floor(y)) against a line-rate picture of the same
       source: every HD row of X with a >= 0 equals a row of REF that shows
       the same source line (tb phase file: cur vcnt), rows with a < 0 are
       black.  So the ring hands over the line the stepping asks for, and
-      the write side samples it as in the line-rate mode.  (Reference rows:
+      the write side samples it as in the line-rate mode.  With the
+      linear-light blend (step 5) only the rows whose weight is 1.0 on line a
+      (Scaling sharp: 2 of every 5 at 2.5x) are compared: they also show
+      that the exact-ratio picture sits where the line-rate one does
+      sideways (the linear path's 3 extra pixels taken back), and that
+      decode -> encode returns every code.  (Reference rows:
       the line-rate picture's rows 10..718; source lines it does not show
       are counted, not checked.)
 """
@@ -40,8 +50,8 @@ def phases(fn, frame):
     for l in open(fn):
         f = l.split()
         if int(f[0]) == frame:
-            # f h phase hires vphase ratio y cur next; h counts line starts
-            out[int(f[1]) - 1] = [int(x) for x in f[2:]]
+            # f h phase hires vphase ratio y cur next; h: the HD row (line starts so far)
+            out[int(f[1])] = [int(x) for x in f[2:]]   # the tb's line count is the HD row
     return out
 
 def geom(fn, frame, hz, y0w, tol=0.002):
@@ -66,7 +76,7 @@ def load(fn):
     a = np.array([int(l, 16) for l in open(fn)], dtype=np.uint32)
     return a.reshape(720, 1280)
 
-def rows(ref, refph, x, xph, frame):
+def rows(ref, refph, x, xph, frame, hz=50):
     R, X = load(ref), load(x)
     pr, px = phases(refph, frame), phases(xph, frame)
     byline = {}
@@ -76,20 +86,31 @@ def rows(ref, refph, x, xph, frame):
     for j in range(10, 719):
         if j in pr:
             byline.setdefault(pr[j][5], set()).add(R[j].tobytes())
-    bad = black = ok = nolook = 0
+    bad = black = ok = nolook = blended = 0
     for j in range(720):
         if j not in px: continue
         a = px[j][4] >> 20
+        if a == -1 and px[j][3] == 1:
+            import scl_mkroms as RM
+            if RM.qweights(0 if hz == 50 else 1, 0, px[j][2])[1] != 0:
+                blended += 1; continue       # black blended with the window's first line
         if a < 0:
             black += 1
             if X[j].any(): bad += 1
             continue
+        if px[j][3] == 1:
+            # the linear-light blend (step 5): only rows that take the cur
+            # line alone (sharp: weight 1.0 on line a) are the line-rate row
+            import scl_mkroms as RM
+            q0, q1 = RM.qweights(0 if hz == 50 else 1, 0, px[j][2])
+            if q1 != 0:
+                blended += 1; continue
         want = byline.get(px[j][5])
         if want is None: nolook += 1; continue
         if X[j].tobytes() in want: ok += 1
         else: bad += 1
-    print('frame %d: %d rows = the line-rate rows of their source line, %d black (a < 0), %d wrong, %d without a reference row' % (frame, ok, black, bad, nolook))
-    return bad == 0 and ok > 600
+    print('frame %d: %d rows = the line-rate rows of their source line, %d black (a < 0), %d wrong, %d without a reference row, %d blended (not compared)' % (frame, ok, black, bad, nolook, blended))
+    return bad == 0 and ok > 250
 
 def ring(log, frm, lo=2, hi=15, timed=True):
     rows = []
@@ -110,7 +131,25 @@ def ring(log, frm, lo=2, hi=15, timed=True):
           % (rows[0][0], rows[-1][0], lines, lmin, lmax, lo, hi, fmin, fmax, rw, ow, wl, ratio, top))
     return ok
 
+def lin(log):
+    import scl_mkroms as R
+    n = bad = 0
+    for l in open(log):
+        f = l.split()
+        if f[:1] != ['lin']: continue
+        k, ph, c0, c1, o, same = map(int, f[1:])
+        q0, q1 = R.qweights(k >> 2, k & 3, ph)
+        want = int(R.rtl_blend(c0, c1, q0, q1))
+        n += 1
+        if o != want or not same:
+            bad += 1
+            if bad <= 5: print('kernel %d phase %d: %d %d -> %d, model %d' % (k, ph, c0, c1, o, want))
+    print('linear blend: %d of %d outputs = the bit-exact model' % (n - bad, n))
+    return n >= 700 and bad == 0
+
 if __name__ == '__main__':
+    if sys.argv[1] == 'lin':
+        sys.exit(0 if lin(sys.argv[2]) else 1)
     if sys.argv[1] == 'geom':
         a = sys.argv[2:]
         sys.exit(0 if geom(a[0], int(a[1]), int(a[2]), float(a[3]), *(float(x) for x in a[4:5])) else 1)
