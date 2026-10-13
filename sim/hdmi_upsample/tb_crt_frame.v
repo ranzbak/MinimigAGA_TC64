@@ -37,10 +37,25 @@
 //   +voff2=N +vofframe=F +voffline=L   change VPOS to voff2 during HD frame
 //                F, line L of the new path (the VPOS-change legs)
 //   +force60     both paths use the 60 Hz upsampler (r_50hz forced 0)
+//   +ntsc        NTSC input: 262-line fields (263 long with +lace), the
+//                picture's lines 0..261; the line stays 227 CCK as Agnus
+//                makes it here (agnus_beamcounter.v: no long lines), vsync
+//                lines 2..5 as in PAL.  frame_freq then picks the 60 Hz path
+//   +swfrom=F +swto=G   input fields F..G-1 NTSC, the others PAL (the
+//                mode-switch leg, golden.sh: PAL -> NTSC -> PAL); a field
+//                is one vcnt wrap, the first (partial) one is field 0
 //   +first=N +frames=M   compare (and dump) HD frames N .. N+M-1 (default 3, 1)
 //   +out=PREFIX  dump the new path's frames as PREFIX_<n>.hex (RRGGBB per
 //                line, raster order) and its line phases as PREFIX_phase.txt
-// Prints "frame N: D pixels differ" per compared frame, "lines N" (pixels
+// Prints "frame N: D pixels differ" per compared frame, "pic N: H P" for
+// EVERY HD frame of the new path (a 64-bit FNV-1a hash of its captured
+// pixels in raster order, and their count), "sig N: H C" for every HD frame
+// at the pins (pal_to_ddr's outputs o_clk_pixel, o_de, o_vsync, o_hsync,
+// o_data folded in at both clk_148 edges, from one rising edge of o_vsync
+// to the next; C = clk_148 cycles), "fsig N" the same per input field N
+// -- golden.sh compares them against the frames of the RTL before the
+// scaler work (3987b84) -- "path N -> M at frame F field G" when the new
+// path's 50/60 Hz choice moves, "lines N" (pixels
 // captured, non-black), the path (50/60), "hd frame N: L lines, V vsync"
 // for every HD frame of the new path (HD lines, and rising edges of the
 // selected signal generator's vsync in it), and every change of the
@@ -65,6 +80,8 @@ integer frames = 1, first = 3, cfgframe = -1, cfgline = 0, cfg = 0, cfg2 = 0;
 reg lace = 0, dbl = 0, split = 0, rtg = 0, force60 = 0, dump = 0;
 integer srcdelay = 0;
 integer hoff = 0, voff = 0, voff2 = 0, vofframe = -1, voffline = 0;
+integer ntscfrom = -1, ntscto = -1;
+reg ntsc = 0;
 reg [8*160-1:0] out;
 initial begin
 	if (!$value$plusargs("cfg=%h", cfg)) cfg = 0;
@@ -85,6 +102,9 @@ initial begin
 	if (!$value$plusargs("voff2=%d", voff2)) voff2 = 0;
 	if (!$value$plusargs("vofframe=%d", vofframe)) vofframe = -1;
 	if (!$value$plusargs("voffline=%d", voffline)) voffline = 0;
+	ntsc = $test$plusargs("ntsc");
+	if (!$value$plusargs("swfrom=%d", ntscfrom)) ntscfrom = -1;
+	if (!$value$plusargs("swto=%d", ntscto)) ntscto = -1;
 end
 
 // the OSD config, as userio_osd holds it (CLK_28; changes asynchronously to clk_148)
@@ -109,6 +129,10 @@ end
 reg [12:0] hcnt = 0;       // clk_114 in the line, 0..7263
 reg [8:0]  vcnt = 300;     // start just before a vsync
 reg        long_field = 0; // this field is the long one (lace)
+integer    field_no = 0;   // vcnt wraps so far
+reg        ntsc_f = 0;     // this field is an NTSC one
+initial #1 ntsc_f = ntsc || (ntscfrom == 0);
+wire [8:0] vlast = ntsc_f ? (long_field ? 9'd262 : 9'd261) : (long_field ? 9'd312 : 9'd311);
 wire [8:0] hpos = hcnt[12:4];
 wire [12:0] h2 = (hcnt >= 13'd3632) ? hcnt - 13'd3632 : hcnt;   // +dbl: position in the half line
 wire [8:0]  h2pos = h2[12:4];
@@ -138,9 +162,11 @@ endfunction
 always @(posedge clk_114) begin
 	if (hcnt == 13'd7263) begin
 		hcnt <= 0;
-		if (vcnt == (long_field ? 9'd312 : 9'd311)) begin
+		if (vcnt == vlast) begin
 			vcnt <= 0;
 			long_field <= lace ? ~long_field : 1'b0;
+			field_no = field_no + 1;
+			ntsc_f <= ntsc || (field_no >= ntscfrom && field_no < ntscto);
 		end else vcnt <= vcnt + 1'b1;
 	end else hcnt <= hcnt + 1'b1;
 	if (dbl) hs <= (h2pos >= 18 && h2pos < 35);
@@ -249,9 +275,17 @@ task dump_n(input integer n);
 	end
 endtask
 
+// pixel hash per HD frame (all frames), FNV-1a 64
+localparam [63:0] FNV0 = 64'hcbf29ce484222325, FNVP = 64'h00000100000001b3;
+reg [63:0] ph_n = FNV0;
+reg        sel_q = 1'b1;
 always @(posedge clk_148) begin
 	ck_n <= n_hdclk;
+	sel_q <= n_sel;
+	if (n_sel != sel_q) $display("path %0d -> %0d at frame %0d field %0d", sel_q ? 50 : 60, n_sel ? 50 : 60, fno_n, field_no);
 	if (n_frame) begin
+		$display("pic %0d: %016h %0d", fno_n, ph_n, px_n);
+		ph_n = FNV0;
 		if (fno_n >= first && fno_n < first + frames) begin
 			$display("new frame %0d: %0d pixels, %0d non-black, path %0d Hz", fno_n, px_n, lit_n, n_sel ? 50 : 60);
 			if (dump) dump_n(fno_n);
@@ -259,11 +293,42 @@ always @(posedge clk_148) begin
 		end
 		fno_n = fno_n + 1; px_n = 0; lit_n = 0;
 	end else if (ck_n && !n_hdclk && n_dee) begin
+		ph_n = (ph_n ^ {40'd0, n_px}) * FNVP;
 		if (px_n < 1280*720) fb_n[px_n] = n_px;
 		if (n_px != 24'd0) lit_n = lit_n + 1;
 		px_n = px_n + 1;
 	end
 end
+// the pins, both clk_148 edges, from one o_vsync rising edge to the next
+reg [63:0] sg_h = FNV0;
+integer    sg_n = 0, sg_c = 0;
+reg        sg_vs = 1'b0;
+wire [15:0] pins = {n_clk, n_de, n_vs, n_hs, n_d};
+always @(posedge clk_148) begin
+	sg_vs <= n_vs;
+	if (n_vs && !sg_vs) begin
+		$display("sig %0d: %016h %0d", sg_n, sg_h, sg_c);
+		sg_n = sg_n + 1; sg_h = FNV0; sg_c = 0;
+	end
+	sg_h = (sg_h ^ {48'd0, pins}) * FNVP;
+	sg_c = sg_c + 1;
+end
+always @(negedge clk_148) sg_h = (sg_h ^ {47'd0, 1'b1, pins}) * FNVP;
+// the same per INPUT field ("fsig N": field N of the Amiga side, from its
+// first clk_148 to its last): windows at fixed times, so a design that
+// puts out one vsync more or less (the two-chain design's splice at a
+// 50/60 Hz switch) does not renumber the later ones
+reg [63:0] fs_h = FNV0;
+integer    fs_n = 0, fs_c = 0;
+always @(posedge clk_148) begin
+	if (field_no != fs_n) begin
+		$display("fsig %0d: %016h %0d", fs_n, fs_h, fs_c);
+		fs_n = field_no; fs_h = FNV0; fs_c = 0;
+	end
+	fs_h = (fs_h ^ {48'd0, pins}) * FNVP;
+	fs_c = fs_c + 1;
+end
+always @(negedge clk_148) fs_h = (fs_h ^ {47'd0, 1'b1, pins}) * FNVP;
 integer diff, kd;
 always @(posedge clk_148) begin
 	ck_r <= r_hdclk;
