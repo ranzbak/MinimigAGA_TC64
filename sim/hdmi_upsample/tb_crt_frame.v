@@ -13,8 +13,9 @@
 // high and two clk_114 after RGB, as pal_to_ddr gets them.
 //
 // plusargs
-//   +cfg=H       OSD video config {beam, bloom, mask, hr_filter, lr_filter,
-//                scanline}, 12 bits, hex (default 0)
+//   +cfg=H       OSD video config {scaling, beam, bloom, mask, hr_filter,
+//                lr_filter, scanline}, 14 bits, hex (default 0; scaling,
+//                bits 13:12: 0 line rate, 1 sharp, 2 area)
 //   +frame=F     the Amiga picture from F instead of build/amiga_frame.hex
 //                (312 x 1816 words, crt_mkdither.py's format)
 //   +hires=F     Denise's HIRES per line from F (312 words 0/1; default 0)
@@ -47,7 +48,10 @@
 //                is one vcnt wrap, the first (partial) one is field 0
 //   +first=N +frames=M   compare (and dump) HD frames N .. N+M-1 (default 3, 1)
 //   +out=PREFIX  dump the new path's frames as PREFIX_<n>.hex (RRGGBB per
-//                line, raster order) and its line phases as PREFIX_phase.txt
+//                line, raster order) and its line phases as PREFIX_phase.txt:
+//                per HD line "frame line phase hires vphase ratio y cur next"
+//                (y: the exact-ratio stepping's position, 1/2^20 line; cur,
+//                next: the source lines (vcnt) in the two buffers read)
 // Prints "frame N: D pixels differ" per compared frame, "pic N: H P" for
 // EVERY HD frame of the new path (a 64-bit FNV-1a hash of its captured
 // pixels in raster order, and their count), "sig N: H C" for every HD frame
@@ -56,7 +60,8 @@
 // to the next; C = clk_148 cycles), "fsig N" the same per input field N
 // -- golden.sh compares them against the frames of the RTL before the
 // scaler work (3987b84) -- "path N -> M at frame F field G" when the new
-// path's 50/60 Hz choice moves, "lines N" (pixels
+// path's 50/60 Hz choice moves, "lf N L" when HD frame N starts (L: in a
+// long field), "lines N" (pixels
 // captured, non-black), the path (50/60), "hd frame N: L lines, V vsync"
 // for every HD frame of the new path (HD lines, and rising edges of the
 // selected signal generator's vsync in it), and every change of the
@@ -109,9 +114,9 @@ initial begin
 end
 
 // the OSD config, as userio_osd holds it (CLK_28; changes asynchronously to clk_148)
-reg [11:0] crt_cfg = 12'd0;
+reg [13:0] crt_cfg = 14'd0;
 reg        cfg_changed = 0;
-initial #1 crt_cfg = cfg[11:0];
+initial #1 crt_cfg = cfg[13:0];
 
 
 // ---- Amiga source ----
@@ -292,6 +297,7 @@ always @(posedge clk_148) begin
 			done_n = done_n + 1;
 		end
 		fno_n = fno_n + 1; px_n = 0; lit_n = 0;
+		$display("lf %0d %0d", fno_n, long_field);   // the HD frame starting: long field?
 	end else if (ck_n && !n_hdclk && n_dee) begin
 		ph_n = (ph_n ^ {40'd0, n_px}) * FNVP;
 		if (px_n < 1280*720) fb_n[px_n] = n_px;
@@ -366,7 +372,9 @@ always @(posedge clk_148) begin
 	if (dut.w_m_lstart) begin
 		if (dump) begin
 			if (fdp == 0) begin $sformat(fname, "%0s_phase.txt", out); fdp = $fopen(fname, "w"); end
-			$fwrite(fdp, "%0d %0d %0d %0d\n", fno_n, hdl, dut.w_m_phase, dut.w_m_lhires);
+			$fwrite(fdp, "%0d %0d %0d %0d %0d %0d %0d %0d %0d\n", fno_n, hdl, dut.w_m_phase, dut.w_m_lhires,
+			        dut.w_m_vphase, dut.r_ratio, $signed(dut.myupsample.r_yl), rg_vc[dut.myupsample.r_rslot],
+			        rg_vc[dut.myupsample.w_r16_o ? dut.myupsample.r_rslot + 4'd1 : {1'b0, dut.myupsample.r_rslot[2:0] + 3'd1}]);
 		end
 		hdl = hdl + 1;
 	end
@@ -375,7 +383,7 @@ end
 always @(posedge clk_148)
 	if (cfgframe >= 0 && !cfg_changed && fno_n == cfgframe && hdl == cfgline) begin
 		cfg_changed = 1;
-		#3.1 crt_cfg = cfg2[11:0];
+		#3.1 crt_cfg = cfg2[13:0];
 		$display("cfg change %03h -> %03h at %0t (frame %0d line %0d)", cfg[11:0], cfg2[11:0], $time, fno_n, hdl);
 	end
 // +vpdebug: the 50 Hz upsampler's HD raster restarts (Video Pos VPOS)
@@ -396,7 +404,7 @@ always @(posedge clk_148)
 		#3.1 voff = voff2;
 		$display("voff change -> %0d at %0t (frame %0d line %0d)", voff2, $time, fno_n, hdl);
 	end
-reg [9:0] cfg_q = 10'd0;
+reg [11:0] cfg_q = 12'd0;
 reg ck_fend = 0;
 always @(posedge clk_148) begin
 	cfg_q <= dut.r_crt_cfg;
@@ -469,29 +477,38 @@ end
 // write side's vsync lines are still running on through those buffers
 // then -- today's behaviour, in the golden frames -- "top" counts those
 // reads); exact-ratio mode: a >= 0.  Printed per HD frame: "ring N: L
-// lines, lag A..B, rd-wr R, overwritten O, wrongline W, ratio X (top T)",
-// lag = the line being written minus the cur line.
+// lines, lag A..B, rd-wr R, overwritten O, wrongline W, ratio X (top T),
+// time lag C..D", lag = the line being written minus the cur line at the
+// line's first read, time lag the same in lines of time (the write side's
+// position inside its line counted) at the first read (C, >= 2: the next
+// line is complete) and at the last (D, < 16: cur not yet overwritten).
 integer rg_line [0:15];            // number of the line in each slot
+integer rg_vc [0:15];              // and its source line (vcnt)
 integer rg_gl = 0;                 // lines started so far
 integer rg_first = 0;              // the first line after the last write-side restart
 reg     rg_tq = 1'b0;
+realtime rg_tt = 0, rg_tl = 64000;   // the last toggle's time, the line time (ns)
 reg     rg_wpend = 1'b0;
-initial for (i = 0; i < 16; i = i + 1) rg_line[i] = -1000;
+initial for (i = 0; i < 16; i = i + 1) begin rg_line[i] = -1000; rg_vc[i] = -1; end
 always @(posedge clk_114) begin
 	if (dut.myupsample.w_vp_wr_reset) rg_wpend = 1'b1;
 	// the toggle flipped at the last edge: r_wslot names the new line's slot
 	if (dut.myupsample.s_next_buf[0] != rg_tq) begin
+		if ($realtime - rg_tt > 60000 && $realtime - rg_tt < 68000) rg_tl = $realtime - rg_tt;
+		rg_tt = $realtime;
 		rg_line[dut.myupsample.r_wslot] = rg_gl;
+		rg_vc[dut.myupsample.r_wslot] = vcnt;
 		if (rg_wpend) begin rg_first = rg_gl; rg_wpend = 1'b0; end
 		rg_gl = rg_gl + 1;
 	end
 	rg_tq <= dut.myupsample.s_next_buf[0];
 end
-wire       rg_ratio = 1'b0;   // the exact-ratio mode comes with step 4
+wire       rg_ratio = dut.myupsample.w_rat_o;
 wire       rg_r16   = dut.myupsample.w_r16_o;
 reg  [3:0] rg_cs = 0, rg_ns = 0;
 integer    rg_cl = 0, rg_nl = 0, rg_a = 0;
 reg        rg_act = 1'b0, rg_cnt = 1'b0;
+real       rg_f, rg_fmin = 99, rg_fmax = -99, rg_flast = 0;   // the lag in time, at the line's first and last read
 integer    rg_rw = 0, rg_rwt = 0, rg_ow = 0, rg_wl = 0, rg_lmin = 99, rg_lmax = -99, rg_lines = 0, rg_lag;
 always @(posedge clk_148) begin
 	if (dut.myupsample.r_line_start) begin
@@ -499,10 +516,10 @@ always @(posedge clk_148) begin
 		rg_cs = dut.myupsample.r_rslot;
 		rg_ns = (rg_r16 || rg_ratio) ? rg_cs + 4'd1 : {1'b0, rg_cs[2:0] + 3'd1};
 		rg_cl = rg_line[rg_cs]; rg_nl = rg_line[rg_ns];
-		rg_a  = 0;
+		rg_a  = $signed(dut.myupsample.r_yl[29:20]);
 		rg_act = 1'b0;
 		rg_cnt = rg_ratio ? (rg_a >= 0) : (!rg_wpend && rg_cl >= rg_first);
-		if (rg_ratio && rg_a >= 0 && rg_cl != rg_first + rg_a) begin
+		if (rg_ratio && rg_a >= 0 && hdl < 720 && rg_cl != rg_first + rg_a) begin
 			rg_wl = rg_wl + 1;
 			if (rg_wl <= 5) $display("ring wrongline: frame %0d line %0d a %0d holds line %0d (first %0d)", fno_n, hdl, rg_a, rg_cl, rg_first);
 		end
@@ -515,6 +532,8 @@ always @(posedge clk_148) begin
 				rg_lag = (rg_gl - 1) - rg_cl;
 				if (rg_lag < rg_lmin) rg_lmin = rg_lag;
 				if (rg_lag > rg_lmax) rg_lmax = rg_lag;
+				rg_f = (rg_gl - 1) + ($realtime - rg_tt) / rg_tl - rg_cl;
+				if (rg_f < rg_fmin) rg_fmin = rg_f;
 				if ($test$plusargs("ringdbg") && rg_lag > 4) $display("ringdbg frame %0d line %0d lag %0d cl %0d first %0d gl %0d vcnt %0d", fno_n, hdl, rg_lag, rg_cl, rg_first, rg_gl, vcnt);
 			end
 		end
@@ -524,15 +543,19 @@ always @(posedge clk_148) begin
 				if (rg_rw <= 5) $display("ring rd-wr: frame %0d line %0d slots %0d/%0d written", fno_n, hdl, rg_cs, rg_ns);
 			end else rg_rwt = rg_rwt + 1;
 		end
+		if (rg_cnt) begin
+			rg_f = (rg_gl - 1) + ($realtime - rg_tt) / rg_tl - rg_cl;
+			if (rg_f > rg_fmax) rg_fmax = rg_f;
+		end
 		if (rg_cnt && (rg_line[rg_cs] != rg_cl || rg_line[rg_ns] != rg_nl)) begin
 			rg_ow = rg_ow + 1;
 			if (rg_ow <= 5) $display("ring overwritten: frame %0d line %0d", fno_n, hdl);
 		end
 	end
 	if (n_frame) begin
-		$display("ring %0d: %0d lines, lag %0d..%0d, rd-wr %0d, overwritten %0d, wrongline %0d, ratio %0d (top %0d)",
-		         fno_n, rg_lines, rg_lmin, rg_lmax, rg_rw, rg_ow, rg_wl, rg_ratio, rg_rwt);
-		rg_lines = 0; rg_lmin = 99; rg_lmax = -99; rg_rw = 0; rg_rwt = 0; rg_ow = 0; rg_wl = 0;
+		$display("ring %0d: %0d lines, lag %0d..%0d, rd-wr %0d, overwritten %0d, wrongline %0d, ratio %0d (top %0d), time lag %0.3f..%0.3f",
+		         fno_n, rg_lines, rg_lmin, rg_lmax, rg_rw, rg_ow, rg_wl, rg_ratio, rg_rwt, rg_fmin, rg_fmax);
+		rg_lines = 0; rg_lmin = 99; rg_lmax = -99; rg_rw = 0; rg_rwt = 0; rg_ow = 0; rg_wl = 0; rg_fmin = 99; rg_fmax = -99;
 	end
 end
 // +ring16: the line-rate mode on all 16 buffers (the ring's pointer

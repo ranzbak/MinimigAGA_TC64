@@ -129,3 +129,33 @@ linear light), crt_run.sh and run.sh as before.
   black.  Fixing it moves every mode's picture 15 lines on screen, so it is
   Paul's call (aligning adv_ddr's vertical DE with the generator's, e.g.
   PY_TO_DE or Y_TRANS, is a few lines).
+- Ruling (step 4): the exact-ratio picture is time-locked like the line-rate
+  one -- the HD frame still restarts at the (VPOS-moved) input vsync and y
+  starts there -- and the window is centred by moving that restart: the
+  Scaling modes add RATIO_VB = -20 (PAL) / -18 (NTSC) input lines to VPOS
+  -- the reader can only show lines completed ~2.5 lines before the HD
+  line, so the window cannot be moved by y alone -- cost if wrong: a mode
+  change glides there at VPOS's 5 lines a frame (4 frames), like a VPOS
+  change.
+- Ruling (step 4): y starts at YB - p, p the time from the restart to the
+  first new input line, measured in lines (r_tph), instead of a fixed
+  start -- the restart sits half a line apart in long and short fields and
+  anywhere in the line with VPOS; with p the lag is the same in every field
+  (bench: 2.41..15.48 lines interlaced, 2.49..15.39 progressive, against
+  2..16 allowed) and the long field's lines land half a line above the
+  short field's (row 0 at source 24.7 against 24.2), as on a CRT -- cost if
+  wrong: none seen in the bench; a source whose line length is not 227 CCK
+  would scale p by the wrong T (RATIO_TPH), a small error.
+- Ruling (step 4): in the exact-ratio modes the write side starts a new
+  buffer on every input line, vsync lines too, so a line's buffer is its
+  number since the restart -- otherwise the 3-4 vsync lines in the window
+  (VPOS) would shrink the lag by as many lines, more than the ring's slack
+  -- cost if wrong: none (the line-rate mode keeps the old rule).
+- Ruling (step 4): the geometry is the study model's (render_all.py, offv 0):
+  HD row 0's centre at source line 24.2 (PAL, window lines 24..311 at 2.5x)
+  and 22.1667 (NTSC, 22..261 at 3x).  The input lines before the restart's
+  first one are black (a < 0): PAL rows 0..5 (lines 24, 25: Agnus' vertical
+  blank anyway), NTSC rows 0..6 (lines 22, 23: overscan) -- the lag forbids
+  an earlier restart (PAL margins 0.49 / 0.61 line, NTSC 0.28 / 2.92) --
+  cost if wrong: NTSC overscan's top two lines are lost; all of these rows
+  are among the 15 the pins do not show today (Finding above).

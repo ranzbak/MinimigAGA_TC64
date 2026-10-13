@@ -45,10 +45,12 @@ module pal_to_ddr #(
   // RTG
   input       i_rtg_enable,
   // CRT emulation (CLK_28 domain): the OSD video config as userio_osd
-  // latches it, {beam[1:0], bloom[1:0], mask[1:0], hr_filter[1:0],
-  // lr_filter[1:0], scanline[1:0]}, and Denise's BPLCON0 HIRES / SHRES for
-  // the per-line filter choice
-  input [11:0] i_crt_cfg,
+  // latches it, {scaling[1:0], beam[1:0], bloom[1:0], mask[1:0],
+  // hr_filter[1:0], lr_filter[1:0], scanline[1:0]}, and Denise's BPLCON0
+  // HIRES / SHRES for the per-line filter choice.  scaling (2026-10-13,
+  // findings/scaler/plan.md): 0 line rate (the picture of before), 1 sharp,
+  // 2 area (3 as 1): exact 2.5x (PAL) / 3x (NTSC) vertical scaling
+  input [13:0] i_crt_cfg,
   input       i_pal_hires,
   input       i_pal_shres,
   // OUTPUT
@@ -252,16 +254,16 @@ module pal_to_ddr #(
   wire        w_m_lhires;
   wire [7:0]  w_crt_r, w_crt_g, w_crt_b;
 
-  (* ASYNC_REG = "TRUE" *) reg [9:0] s_crt_cfg0 = 10'd0;   // crt_post's bits; the beam's: crt_beamh
-  (* ASYNC_REG = "TRUE" *) reg [9:0] s_crt_cfg1 = 10'd0;
+  (* ASYNC_REG = "TRUE" *) reg [11:0] s_crt_cfg0 = 12'd0;  // {scaling, crt_post's bits}; the beam's: crt_beamh
+  (* ASYNC_REG = "TRUE" *) reg [11:0] s_crt_cfg1 = 12'd0;
   (* ASYNC_REG = "TRUE" *) reg [1:0] s_crt_rtg  = 2'b00;
   (* ASYNC_REG = "TRUE" *) reg [2:0] s_crt_hs   = 3'b000;
-  reg  [9:0] r_crt_cfg   = 10'd0;  // frame-latched OSD bits
+  reg  [11:0] r_crt_cfg  = 12'd0;  // frame-latched OSD bits
   reg        r_crt_ok    = 1'b0;   // last frame: 15 kHz and no RTG
   reg  [9:0] r_crt_lines = 10'd0;  // input lines in this frame
   wire       w_crt_fend  = w_frame_end;
   always @(posedge clk_148) begin
-    s_crt_cfg0 <= i_crt_cfg[9:0];
+    s_crt_cfg0 <= {i_crt_cfg[13:12], i_crt_cfg[9:0]};
     s_crt_cfg1 <= s_crt_cfg0;
     s_crt_rtg  <= {s_crt_rtg[0], i_rtg_enable};
     s_crt_hs   <= {s_crt_hs[1:0], w_pal_hsync};
@@ -277,6 +279,16 @@ module pal_to_ddr #(
   // the upsampler's stream
   wire [23:0] w_m_cur    = {w_up_b, w_up_g, w_up_r};
 
+  // Exact-ratio scaling (findings/scaler/plan.md step 4): the frame-latched
+  // Scaling item, under the CRT effects' condition (the last frame had
+  // fewer than 400 lines, RTG off) -- otherwise the line-rate picture.  It
+  // switches the upsampler to the 16-line ring and the exact 2.5x / 3x
+  // stepping; until the linear-light blend (step 5) crt_post's vertical
+  // effects are off then and the picture is line a = floor(y).
+  reg        r_ratio = 1'b0;
+  always @(posedge clk_148)
+    r_ratio <= r_crt_ok && (r_crt_cfg[11:10] != 2'd0);
+
   // controls: static per frame (OSD) and per HD line (resolution, latched
   // by the upsampler at the HD hsync); registered, they change in hblank
   wire [1:0] w_crt_filt = w_m_lhires ? r_crt_cfg[5:4] : r_crt_cfg[3:2];
@@ -289,8 +301,8 @@ module pal_to_ddr #(
   reg  [1:0] r_ctl_bloom = 2'd0;
   reg        r_ctl_hz60  = 1'b0;
   always @(posedge clk_148) begin
-    r_ctl_scan  <= r_crt_ok ? w_crt_scan : 2'd0;
-    r_ctl_vb    <= r_crt_ok & w_crt_filt[1];
+    r_ctl_scan  <= (r_crt_ok && !r_ratio) ? w_crt_scan : 2'd0;
+    r_ctl_vb    <= r_crt_ok & !r_ratio & w_crt_filt[1];
     r_ctl_hblur <= (r_crt_ok & w_crt_filt[0]) ? (w_m_lhires ? 2'd1 : 2'd2) : 2'd0;
     r_ctl_mask  <= r_crt_ok ? r_crt_cfg[7:6] : 2'd0;
     r_ctl_bloom <= r_crt_ok ? r_crt_cfg[9:8] : 2'd0;
@@ -350,9 +362,11 @@ module pal_to_ddr #(
   // from its pad copy (pad_hsync), so the pin timing and this input stay
   // independent of each other.  The 50 Hz rate takes the generator's own.
   wire w_adv_hsync;
-  // the line-buffer ring: 8 buffers, as before, in the line-rate mode
-  // (the only one so far); the bench forces it to 16 (tb_crt_frame +ring16)
+  // the line-buffer ring: 8 buffers, as before, in the line-rate mode, 16
+  // in the exact-ratio modes; the bench forces 16 in the line-rate mode
+  // too (tb_crt_frame +ring16)
   reg  r_ring16 = 1'b0;
+  wire [7:0] w_m_vphase;
   pal_to_hd_upsample #(
   .PAL_HD_H_RES(1685),
   .PAL_HD_H_RES60(1980), // Total pixels in a line
@@ -371,7 +385,8 @@ module pal_to_ddr #(
     // RTG: the undelayed HD vsync, at 60 Hz only (as before)
     .i_rtg_enable(w_hz60 & i_rtg_enable),
     .i_hz60(w_hz60),
-    .i_ring16(r_ring16),
+    .i_ring16(r_ring16 | r_ratio),
+    .i_ratio(r_ratio),
     // HD upsampled output
     .o_hd_r(w_up_r),
     .o_hd_g(w_up_g),
@@ -392,7 +407,8 @@ module pal_to_ddr #(
     .o_pix_stb(w_m_stb),
     .o_line_start(w_m_lstart),
     .o_line_phase(w_m_phase),
-    .o_line_hires(w_m_lhires)
+    .o_line_hires(w_m_lhires),
+    .o_vphase(w_m_vphase)
   );
 
   // Generate the 720p Hsync and Vsync signals (720p50 / 720p60 by w_hz60)
