@@ -259,6 +259,9 @@ order suggested: 8, then 1 and 4, then 5 and 6.
    (current + next); with CRT scanlines on, the beam profile should take the
    same fractional position so the scanlines are even too.  Simulate to PNG
    first, as for the CRT filter.
+   **2026-10-13 decided (findings/scaler/plan.md):** one switchable 50/60 Hz
+   chain, a 16-line ring, exact 2.5x / 3x vertical in linear light (sharp-
+   bilinear 0.5 default, area selectable), no frame buffer.  In progress.
 3. **Interlace.** The long-frame logic is commented out; weave/bob from a
    field buffer for laced modes.
 4. **50 -> 60 Hz.** The 60 Hz path converts with 8 lines of buffer, so lines
