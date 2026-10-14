@@ -230,3 +230,9 @@ void Reconfigure()
 
 
 
+
+unsigned char SPI_reply(void)
+{
+	SPIN; SPIN; SPIN; SPIN;
+	return SPI(0xff);
+}
