@@ -261,7 +261,9 @@ order suggested: 8, then 1 and 4, then 5 and 6.
    first, as for the CRT filter.
    **2026-10-13 decided (findings/scaler/plan.md):** one switchable 50/60 Hz
    chain, a 16-line ring, exact 2.5x / 3x vertical in linear light (sharp-
-   bilinear 0.5 default, area selectable), no frame buffer.  In progress.
+   bilinear 0.5 default, area selectable), no frame buffer.  Branch `scaler`
+   (62ec137); **on the board 2026-10-14 (build/stage_scaler, md5 5d05c3c6):
+   Paul: working, looks good.**  Not yet merged into 5.0-040-pipelined.
 3. **Interlace.** The long-frame logic is commented out; weave/bob from a
    field buffer for laced modes.
 4. **50 -> 60 Hz.** The 60 Hz path converts with 8 lines of buffer, so lines
@@ -273,6 +275,14 @@ order suggested: 8, then 1 and 4, then 5 and 6.
    does not).
 6. **Automatic centring** from DIWSTRT/DIWSTOP instead of PAL_OFFSET_HZ,
    `r_line_count > 300` and the manual OSD offsets.
+   **Horizontal centring (Paul, 2026-10-14, after the scaler test):** the
+   active video area should sit in the horizontal centre of the 1280-pixel
+   screen.  Today the position comes from fixed read offsets
+   (PAL_OFFSET_HZ 'hd0 / 'h80 minus CRT_LAT per 50/60 Hz path, now chosen at
+   run time in the one chain) plus the OSD Hpos, so it differs per mode and
+   resolution.  Centre on the measured active area instead (first/last
+   non-border pixel, or DIWSTRT/DIWSTOP), so every mode lands in the middle
+   and Hpos becomes a fine-tune around zero.
 7. **Border in COLOR00** instead of black.
 7a. **OSD through the CRT filters** (Paul, 2026-10-13: the OSD does not bypass
    them).  The OSD is mixed in amber (28 MHz) before crt_beamh, the line ring
