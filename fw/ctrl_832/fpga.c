@@ -208,16 +208,16 @@ void fpga_init() {
 
 	EnableOsd();
 	SPI(OSD_CMD_VERSION);
-	ver_beta   = SPI(0xff);
-	ver_major  = SPI(0xff);
-	ver_minor  = SPI(0xff);
-	ver_minion = SPI(0xff);
+	ver_beta   = SPI_reply();
+	ver_major  = SPI_reply();
+	ver_minor  = SPI_reply();
+	ver_minion = SPI_reply();
 	// Two more bytes, which an older core does not have: it answers
 	// MINION_VER to both, so the magic byte is what says the second one means
 	// anything.  Without this check a 68000 core would look like whatever its
 	// minion version happens to spell.
-	ver_magic  = SPI(0xff);
-	ver_caps   = SPI(0xff);
+	ver_magic  = SPI_reply();
+	ver_caps   = SPI_reply();
 	DisableOsd();
 	core_caps = (ver_magic == (char)0xA4) ? ver_caps : 0;
 	SPIN; SPIN; SPIN; SPIN;

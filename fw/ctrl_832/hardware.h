@@ -70,6 +70,13 @@
 //#define SPI(x) (*(volatile unsigned short *)0xDEE010,*(volatile unsigned char *)0xda4000=x,*(volatile unsigned char *)0xda4000)
 
 #define SPI(x) (HW_SPI(HW_SPI_DATA)=x,HW_SPI(HW_SPI_DATA))
+// A reply byte from the OSD (userio_osd.v loads it on its clk7_en grid, after
+// the previous byte): read back-to-back, the 832 can catch the PREVIOUS byte.
+// Measured on the board 2026-10-14 (stage_scaler): the version reply read
+// with SPI(0xff) gave 00 01 0A 0A A4 A4, with four SPINs before each byte
+// 01 1A 0A 02 A4 7D every time -- the stale magic byte is what brought the
+// 68020 CPU menu back on a 68040 core.
+unsigned char SPI_reply(void);
 #define RDSPI  HW_SPI(HW_SPI_DATA)
 
 // A 16-bit register for platform-specific config.

@@ -995,10 +995,10 @@ static unsigned char OsdNextEvent(unsigned char level)
         kq_tail = 0;
         EnableOsd();
         SPI(OSD_CMD_KEYQ);
-        st = SPI(0xff);             // {overflow, 0, 0, 0, count[3:0]}
+        st = SPI_reply();           // {overflow, 0, 0, 0, count[3:0]}
         n = st & 0x0f;
         for (i = 0; i < n; i++)
-            kq_buf[i] = SPI(0xff);
+            kq_buf[i] = SPI_reply();
         DisableOsd();
         kq_tail = n;
         if (st & 0x80)
