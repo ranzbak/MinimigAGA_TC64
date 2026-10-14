@@ -42,6 +42,7 @@ This is the Minimig OSD (on-screen-display) handler.
 #include "charrom.h"
 #include "logo.h"
 #include "audio.h"
+#include "config.h"   // CONFIG_SCALING (ConfigVideo)
 
 #include "string.h"
 
@@ -844,16 +845,22 @@ void OsdReconfig()
 }
 
 
-// The second data byte is the HDMI CRT emulation's {beam, bloom, mask}
-// (rtl/minimig/userio_osd.v); a core without it ignores the byte, an older
-// core the beam bits.
+// The second data byte is the HDMI CRT emulation's {scaling, beam, bloom,
+// mask} (rtl/minimig/userio_osd.v); a core without it ignores the byte, an
+// older core the beam or scaling bits.  The core's scaling code: 0 line
+// rate, 1 sharp, 2 area (0 = the picture of before, for older firmware);
+// config.scanlines bits 5:4 hold SCALING_* (config.h), Sharp = 0.
 void ConfigVideo(unsigned char hires, unsigned char lores, unsigned char scanlines, unsigned char crt_mask, unsigned char crt_bloom, unsigned char crt_beam)
 {
     EnableOsd();
     //SPI(OSDCMDCFGFLT | ((hires & 0x03) << 2) | (lores & 0x03));
     SPI(OSD_CMD_VID);
     SPI(((hires & 0x03) << 4) | ((lores & 0x03)<<2) | (scanlines & 0x03));
-    SPI(((crt_beam & 0x03) << 4) | ((crt_bloom & 0x03) << 2) | (crt_mask & 0x03));
+    {
+        unsigned char sc = CONFIG_SCALING(scanlines);
+        unsigned char hw = (sc == SCALING_LINE) ? 0 : (sc == SCALING_AREA) ? 2 : 1;
+        SPI((hw << 6) | ((crt_beam & 0x03) << 4) | ((crt_bloom & 0x03) << 2) | (crt_mask & 0x03));
+    }
     DisableOsd();
 }
 

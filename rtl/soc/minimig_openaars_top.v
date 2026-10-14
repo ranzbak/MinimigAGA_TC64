@@ -226,7 +226,7 @@ wire [7:0]  voffset;
 
 // RTG
 wire        rtg_ena;
-wire [11:0] crt_cfg;     // HDMI CRT emulation: OSD video config (CLK_28)
+wire [13:0] crt_cfg;     // HDMI CRT emulation and scaler: OSD video config (CLK_28)
 wire        vid_hires;   // Denise BPLCON0 HIRES (CLK_28)
 wire        vid_shres;   // Denise BPLCON0 SHRES (CLK_28)
 

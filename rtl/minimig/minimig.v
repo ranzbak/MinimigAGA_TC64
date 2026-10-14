@@ -284,7 +284,7 @@ module minimig #(
   output  hd_frd,
   output  hblank_out,
   output  vblank_out,
-  output  [11:0] crt_cfg, // OSD video config {beam, bloom, mask, hr_filter, lr_filter, scanline} for the HDMI CRT emulation
+  output  [13:0] crt_cfg, // OSD video config {scaling, beam, bloom, mask, hr_filter, lr_filter, scanline} for the HDMI CRT emulation and scaler
   output  vid_hires,     // Denise BPLCON0 HIRES / SHRES (HDMI CRT emulation, per-line filter choice)
   output  vid_shres,
   output  osd_blank_out, // Let the toplevel dither module handle drawing the OSD.
@@ -442,12 +442,14 @@ wire  [1:0] lr_filter; //lowres interpolation filter mode: bit 0 - horizontal, b
 wire  [1:0] hr_filter; //hires interpolation filter mode: bit 0 - horizontal, bit 1 - vertical
 wire  [1:0] scanline; //scanline effect configuration
 wire  [1:0] dither; // video output dither
-wire  [5:0] crt_fx; // HDMI CRT emulation {beam, bloom, mask}
+wire  [7:0] crt_fx; // HDMI CRT emulation {scaling, beam, bloom, mask}
 wire  hires; //hires signal from Denise for interpolation filter enable in Amber
 wire  shres; //superhires signal from Denise (HDMI CRT emulation)
 
 // HDMI CRT emulation (rtl/openaars/adv7511/pal_to_ddr.sv, crt_post.v): the
-// OSD's scanline, filter, mask, bloom and beam width items drive it.  It needs the 15 kHz picture, so
+// OSD's scanline, filter, mask, bloom and beam width items drive it, and the
+// HDMI Scaling item (sharp / area: exact 2.5x / 3x; findings/scaler/plan.md).
+// They need the 15 kHz picture, so
 // on openaars amber's scandoubler is off while any of them is selected (the
 // firmware's scandoubler setting stays as it is), and amber's own scanlines
 // are tied off so no effect applies twice.  Amber's filters only work on the

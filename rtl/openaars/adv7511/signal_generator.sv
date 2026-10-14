@@ -28,7 +28,8 @@ module signal_generator
 #(
     // Horizontal parameters
     parameter PAL_HZ_ACT_PIX = 1280,
-    parameter PAL_HZ_FRONT_PORCH = 440,
+    parameter PAL_HZ_FRONT_PORCH = 440,     // i_hz60 = 0 (720p50)
+    parameter PAL_HZ_FRONT_PORCH60 = 110,   // i_hz60 = 1 (720p60)
     parameter PAL_HZ_SYNC_WIDTH = 40,
     parameter PAL_HZ_BACK_PORCH = 220,
     // Vertical parameters
@@ -39,6 +40,10 @@ module signal_generator
 )(
     input clk,
     input reset,
+    // 720p60 line (front porch PAL_HZ_FRONT_PORCH60) instead of 720p50 --
+    // the only difference between the two (findings/scaler/plan.md step 2:
+    // one generator for both, switched at run time)
+    input i_hz60,
     // Input RGB
     input [7:0] i_r,
     input [7:0] i_g,
@@ -61,6 +66,7 @@ module signal_generator
 
 // Horizontal timing 720p 50Hz @ 50MHz clock
 localparam PAL_HZ_TOTAL = PAL_HZ_ACT_PIX + PAL_HZ_FRONT_PORCH + PAL_HZ_SYNC_WIDTH + PAL_HZ_BACK_PORCH; // Total 1360 pixels
+localparam PAL_HZ_TOTAL60 = PAL_HZ_ACT_PIX + PAL_HZ_FRONT_PORCH60 + PAL_HZ_SYNC_WIDTH + PAL_HZ_BACK_PORCH;
 localparam PAL_VT_TOTAL = PAL_VT_ACT_LN + PAL_VT_FRONT_PORCH + PAL_VT_SYNC_WIDTH + PAL_VT_BACK_PORCH; // Total 739 pixels
 
 // Horizontal timing 720p 60Hz @ 74.5MHz clock
@@ -92,11 +98,24 @@ assign o_adv_clk = r_clock_dev;
 // assign o_adv_de = r_vid_enable;:
 
 
+// the line's constants for the selected rate, registered (static)
+localparam HW = $clog2(PAL_HZ_TOTAL > PAL_HZ_TOTAL60 ? PAL_HZ_TOTAL : PAL_HZ_TOTAL60) + 1;
+reg [HW-1:0] c_total = PAL_HZ_TOTAL;                       // last hz_count of a line
+reg [HW-1:0] c_act   = PAL_HZ_TOTAL - PAL_HZ_ACT_PIX;      // active from hz_count > c_act
+reg [HW-1:0] c_fp    = PAL_HZ_FRONT_PORCH;                 // hsync from here ...
+reg [HW-1:0] c_fps   = PAL_HZ_FRONT_PORCH + PAL_HZ_SYNC_WIDTH;   // ... to here
+always @(posedge clk) begin
+    c_total <= i_hz60 ? PAL_HZ_TOTAL60 : PAL_HZ_TOTAL;
+    c_act   <= i_hz60 ? PAL_HZ_TOTAL60 - PAL_HZ_ACT_PIX : PAL_HZ_TOTAL - PAL_HZ_ACT_PIX;
+    c_fp    <= i_hz60 ? PAL_HZ_FRONT_PORCH60 : PAL_HZ_FRONT_PORCH;
+    c_fps   <= i_hz60 ? PAL_HZ_FRONT_PORCH60 + PAL_HZ_SYNC_WIDTH : PAL_HZ_FRONT_PORCH + PAL_HZ_SYNC_WIDTH;
+end
+
 // Video position counters
-reg [$clog2(PAL_HZ_TOTAL):0] hz_count = 0;
+reg [HW-1:0] hz_count = 0;
 reg [$clog2(PAL_VT_TOTAL):0] vt_count = 0;
-reg [$clog2(PAL_HZ_TOTAL):0] r_x = 0;
-reg [$clog2(PAL_HZ_TOTAL):0] r_y = 0;
+reg [HW-1:0] r_x = 0;
+reg [HW-1:0] r_y = 0;
 assign o_x = r_x;
 assign o_y = r_y;
 
@@ -166,7 +185,7 @@ always @(posedge clk) begin
             // Next position
             hz_count <= hz_count + 1;
             // When reaching the end of the line
-            if(hz_count == PAL_HZ_TOTAL) begin
+            if(hz_count == c_total) begin
                 hz_count <= 0;
                 vt_count_enable = 1'b1;
             end
@@ -203,14 +222,14 @@ always @(posedge clk) begin
         // Set Horizontal active region
         hz_region_act <= 1'b0;
         r_x <= 0;
-        if (hz_count > (PAL_HZ_TOTAL - PAL_HZ_ACT_PIX) & (vt_count < PAL_VT_ACT_LN)) begin
+        if (hz_count > c_act & (vt_count < PAL_VT_ACT_LN)) begin
             hz_region_act <= 1'b1;
-            r_x <= hz_count - (PAL_HZ_FRONT_PORCH + PAL_HZ_SYNC_WIDTH + PAL_HZ_BACK_PORCH);
+            r_x <= hz_count - c_act;
         end
 
         // Sync
         r_hsync <= !SYNC_POL;
-        if (hz_count >= PAL_HZ_FRONT_PORCH & hz_count < (PAL_HZ_FRONT_PORCH + PAL_HZ_SYNC_WIDTH)) begin
+        if (hz_count >= c_fp & hz_count < c_fps) begin
             // Horizontal sync
             r_hsync <= SYNC_POL;
             // Vertical sync

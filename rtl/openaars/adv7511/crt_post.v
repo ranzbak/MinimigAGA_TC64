@@ -24,6 +24,23 @@
 //            compensation and the mask's dimming (each mode's mean light
 //            divided back out) in one block-RAM read
 //
+// Linear light (2026-10-13, findings/scaler/plan.md step 5): with i_lin
+// (the exact-ratio modes) stages B/C are replaced by the same blend in
+// LINEAR light -- per channel
+//   L1  decode  SDEC[cur], SDEC[nxt]: 8-bit code -> 18-bit linear (2.4)
+//   L2  multiply by the line's linear weights lw0 / lw1 (32768 = 1.0) from
+//       SWROM {hz60, kernel, phase}, + 16384 (rounding)
+//   L3  y = (sum) >> 15, saturated to 18 bits
+//   L4  encode index: y < 2048 ? y : 2032 + (y >> 7)
+//   L5  SENC[index] -> 8-bit code
+// kernel (i_kern): 0 sharp-bilinear 0.5, 1 area, 2 / 3 the two-line beam
+// for scanlines dim / black; phase (i_vphase): the HD line's centre below
+// the cur line's, 1/256 line.  The linear path is 3 pixels longer (12 in
+// all): with i_lin the upsampler reads 3 pixels earlier (pal_to_ddr,
+// LIN_LAT), so the gamma path -- and with it the line-rate picture -- keeps
+// its 9 pixels, bit for bit.  The bloom stage takes its gap measure from
+// SWROM's wq in this mode.  Tables: scl_mkroms.py.
+//
 // WROM entry: {w1[8:0], w0[8:0]}, weights 0..256 (256 = 1.0).
 // LUT entry : 8 bits.  BTAB entry: 8 bits.  All three made by
 // sim/hdmi_upsample/crt_mkroms.py; the files (crt_wrom.mem, crt_lut.mem,
@@ -36,7 +53,11 @@ module crt_post #(
   parameter HAS_LUT    = 1,
   parameter WROM_FILE  = "crt_wrom.mem",
   parameter LUT_FILE   = "crt_lut.mem",
-  parameter BLOOM_FILE = "crt_bloom.mem"
+  parameter BLOOM_FILE = "crt_bloom.mem",
+  parameter HAS_LIN    = 1,          // the linear-light path (6 more DSP48; tables 3 RAMB18 + 5 RAMB36)
+  parameter SDEC_FILE  = "crt_sdec.mem",
+  parameter SENC_FILE  = "crt_senc.mem",
+  parameter SWROM_FILE = "crt_swrom.mem"
 )(
   input             clk,
   input             i_stb,          // new pixel on i_cur / i_nxt this clock
@@ -53,6 +74,10 @@ module crt_post #(
                                     // 3 shadow (magenta / green, 2 px)
   input      [1:0]  i_bloom,        // 0 off, 1 low, 2/3 high (needs a vertical effect)
   input      [1:0]  i_lut,          // LUT page: 0 identity, 1..3 compensation
+  // linear-light vertical blend (exact-ratio modes; static per HD line)
+  input             i_lin,
+  input      [1:0]  i_kern,         // 0 sharp, 1 area, 2 beam dim, 3 beam black
+  input      [7:0]  i_vphase,       // the line's phase, 1/256 line
   // WROM write port (firmware-tunable beam profiles; tie off for a ROM).
   // Being writable also makes Vivado put it in block RAM: as a pure ROM it
   // goes to ~240 LUTs whatever rom_style says.
@@ -90,6 +115,23 @@ always @(posedge clk) if (i_stb) begin
   a_nxt <= HAS_VBLEND ? i_nxt : 24'd0;
 end
 
+// ---- linear weights table, block RAM 2048 x 36 -----------------------------------
+// address {hz60, kernel, phase}, entry {wq[3:0], lw1[15:0], lw0[15:0]}; static
+// per HD line like w_r (two registers, the second kept apart from the DSPs)
+(* ram_style = "block" *) reg [35:0] swrom [0:2047];
+initial if (HAS_LIN) $readmemh(SWROM_FILE, swrom);
+reg [35:0] s_q = 0;
+(* keep = "true" *) reg [35:0] s_r = 0;
+reg        r_lin = 1'b0;
+always @(posedge clk) begin
+  s_q   <= swrom[{i_hz60, i_kern, i_vphase}];
+  s_r   <= s_q;
+  r_lin <= HAS_LIN && i_lin;
+end
+wire [15:0] lw0 = s_r[15:0];
+wire [15:0] lw1 = s_r[31:16];
+wire [3:0]  lwq = s_r[35:32];
+
 // ---- B/C: vertical beam, per channel ------------------------------------------
 wire [7:0] c_v [0:2];
 genvar ch;
@@ -103,7 +145,40 @@ generate for (ch = 0; ch < 3; ch = ch + 1) begin : g_v
     b_m1 <= HAS_VBLEND ? a_nxt[8*ch +: 8] * w1 : 17'd0;
     c_r  <= (sum[17:16] != 2'b00) ? 8'hFF : sum[15:8];
   end
-  assign c_v[ch] = c_r;
+  if (HAS_LIN) begin : g_lin
+    // L1: decode, a block RAM read every clock (a_* move on i_stb), taken
+    // at the next i_stb
+    (* ram_style = "block" *) reg [17:0] sdec [0:255];
+    initial $readmemh(SDEC_FILE, sdec);
+    reg [17:0] l_qc = 0, l_qn = 0, l_c = 0, l_n = 0;
+    // L2, L3: the weighted sum
+    (* use_dsp = "yes" *) reg [33:0] l_m0 = 0;
+    (* use_dsp = "yes" *) reg [33:0] l_m1 = 0;
+    reg [17:0] l_y = 0;
+    wire [34:0] l_sum = {1'b0, l_m0} + {1'b0, l_m1};
+    // L4, L5: encode
+    reg [11:0] l_i = 0;
+    (* ram_style = "block" *) reg [7:0] senc [0:4095];
+    initial $readmemh(SENC_FILE, senc);
+    reg [7:0]  l_eq = 0, l_e = 0;
+    always @(posedge clk) begin
+      l_qc <= sdec[a_cur[8*ch +: 8]];
+      l_qn <= sdec[a_nxt[8*ch +: 8]];
+      l_eq <= senc[l_i];
+      if (i_stb) begin
+        l_c  <= l_qc;
+        l_n  <= l_qn;
+        l_m0 <= l_c * lw0 + 34'd16384;
+        l_m1 <= l_n * lw1;
+        l_y  <= (l_sum[34:33] != 2'b00) ? 18'h3FFFF : l_sum[32:15];
+        l_i  <= (l_y[17:11] == 7'd0) ? {1'b0, l_y[10:0]} : 12'd2032 + {1'b0, l_y[17:7]};
+        l_e  <= l_eq;
+      end
+    end
+    assign c_v[ch] = r_lin ? l_e : c_r;
+  end else begin : g_nolin
+    assign c_v[ch] = c_r;
+  end
 end endgenerate
 
 // ---- F: bloom ------------------------------------------------------------------------
@@ -114,8 +189,8 @@ wire [9:0] w_sum = {1'b0, w0} + {1'b0, w1};
 reg  [3:0] f_wq = 4'd15;
 reg        f_en = 1'b0;
 always @(posedge clk) begin
-  f_wq <= (w_sum < 10'd128) ? 4'd0 : (w_sum >= 10'd248) ? 4'd15 : w_sum[6:3];
-  f_en <= HAS_BLOOM && (i_bloom != 2'd0) && !w_bypass;
+  f_wq <= r_lin ? lwq : (w_sum < 10'd128) ? 4'd0 : (w_sum >= 10'd248) ? 4'd15 : w_sum[6:3];
+  f_en <= HAS_BLOOM && (i_bloom != 2'd0) && (r_lin || !w_bypass);
 end
 wire [7:0] f_v [0:2];
 generate for (ch = 0; ch < 3; ch = ch + 1) begin : g_f

@@ -440,6 +440,8 @@ int ApplyConfiguration(char reloadkickstart, char applydrives)
     if (config.crt_mask > 3) config.crt_mask = 0;
     if (config.crt_bloom > 2) config.crt_bloom = 0;
     if (config.crt_beam > 3) config.crt_beam = 0;
+    // Scaling 3 (not written by this firmware): Sharp
+    if (CONFIG_SCALING(config.scanlines) == 3) config.scanlines &= ~SCALING_MASK;
     // VPOS outside the menu's range (a config file from firmware that stepped
     // it by 8 up to 248, when it did nothing): 0
     if ((signed char)config.videopos.vpos > VPOS_MAX || (signed char)config.videopos.vpos < -VPOS_MAX)

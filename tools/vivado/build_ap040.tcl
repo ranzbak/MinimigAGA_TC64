@@ -127,6 +127,10 @@ add_src $R/rtl/openaars/adv7511/crt_beamh.v
 add_src $R/rtl/openaars/adv7511/crt_hdec.mem
 add_src $R/rtl/openaars/adv7511/crt_henc.mem
 add_src $R/rtl/openaars/adv7511/crt_hk.mem
+# the scaler's linear-light tables (crt_post.v, 2026-10-13; sim/hdmi_upsample/scl_mkroms.py)
+add_src $R/rtl/openaars/adv7511/crt_sdec.mem
+add_src $R/rtl/openaars/adv7511/crt_senc.mem
+add_src $R/rtl/openaars/adv7511/crt_swrom.mem
 # The dual-port RAM the AP040 MMU's ATC and the caches instantiate (module
 # dpram); project_1 had it only as a hand-added source, so a fresh clone's
 # project did not.

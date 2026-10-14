@@ -82,6 +82,7 @@ const char *config_memory_chip_msg[] = {"0.5 MB", "1.0 MB", "1.5 MB", "2.0 MB"};
 const char *config_memory_slow_msg[] = {"none  ", "0.5 MB", "1.0 MB", "1.5 MB"};
 const char *config_on_off_msg[] = {"off", "on "};
 const char *config_scanlines_msg[] = {"off", "dim", "black"};
+const char *config_scaling_msg[] = {"sharp", "area", "line rate", "sharp"};   // SCALING_*
 const char *config_crt_mask_msg[] = {"off", "grille", "grille+", "shadow"};
 const char *config_crt_bloom_msg[] = {"off", "low", "high"};
 const char *config_crt_beam_msg[] = {"off", "sharp", "medium", "soft"};
@@ -122,7 +123,7 @@ const char *helptexts[] = {
 #else
     "                                Minimig can make use of up to 2 megabytes of Chip RAM, up to 1.5 megabytes of Slow RAM (A500 Trapdoor RAM), and up to 28 megabytes of true Fast RAM.  To use the HRTMon feature you will need an appropriate ROM file on the SD card.  To activate the monitor hold Ctrl and press the Pause key.",
 #endif
-    "                                Minimig's video features include a blur filter, to simulate the poorer picture quality on older monitors, and also scanline generation to simulate the appearance of a screen with low vertical resolution.  On HDMI, CRT Mask adds a phosphor mask (grille: red, green and blue stripes; shadow: magenta and green) and Bloom lets bright pixels fill their scanline gaps; bloom needs scanlines or a vertical filter.  Beam width gives each pixel the soft spot of a CRT's beam, so dithered patterns blend as on a monitor; with it on, Bloom also widens the spot of bright pixels.  Video Pos moves the HDMI picture: Hpos in HD pixels (+ right), Vpos in Amiga lines (+ down).",
+    "                                Minimig's video features include a blur filter, to simulate the poorer picture quality on older monitors, and also scanline generation to simulate the appearance of a screen with low vertical resolution.  On HDMI, CRT Mask adds a phosphor mask (grille: red, green and blue stripes; shadow: magenta and green) and Bloom lets bright pixels fill their scanline gaps; bloom needs scanlines or a vertical filter.  Beam width gives each pixel the soft spot of a CRT's beam, so dithered patterns blend as on a monitor; with it on, Bloom also widens the spot of bright pixels.  Video Pos moves the HDMI picture: Hpos in HD pixels (+ right), Vpos in Amiga lines (+ down).  Scaling (HDMI): Sharp and Area scale the picture exactly 2.5 times (PAL) or 3 times (NTSC) vertically, every line the same height; Sharp keeps edges crisp, Area is the most even.  Line rate is the older, slightly smaller picture.  Sharp and Area need the 15 kHz picture: the core turns the scandoubler off for them.",
     "                                The clock delay sets where the HDMI transmitter samples each pixel.  Too early or too late shows as sparkling colours, light yellows first.  Step through the values, note where the picture is clean, and settle in the middle of that range.  Save the configuration to keep it.",
     0};
 
@@ -2033,8 +2034,8 @@ void HandleUI(void)
         strcpy(s, "   Scanlines    : ");
         strcat(s, config_scanlines_msg[config.scanlines & 3]);
         OsdWrite(2, s, menusub == 2, 0);
-        strcpy(s, "    (laced)     : ");
-        strcat(s, config_scanlines_msg[(config.scanlines & 0xc) >> 2]);
+        strcpy(s, "   Scaling      : ");
+        strcat(s, config_scaling_msg[CONFIG_SCALING(config.scanlines)]);
         OsdWrite(3, s, menusub == 3, 0);
         strcpy(s, "   CRT Mask     : ");
         strcat(s, config_crt_mask_msg[config.crt_mask & 3]);
@@ -2080,13 +2081,12 @@ void HandleUI(void)
             }
             else if (menusub == 3)
             {
-                short tmp = config.scanlines + 4;
-                if ((tmp & 0xc) == 0xc)
-                    tmp = 0;
-                config.scanlines = (config.scanlines & 0xf3) | (tmp & 0xc);
+                // Scaling: line rate -> sharp -> area -> line rate
+                unsigned char sc = CONFIG_SCALING(config.scanlines);
+                sc = (sc == SCALING_LINE) ? SCALING_SHARP : (sc == SCALING_SHARP) ? SCALING_AREA : SCALING_LINE;
+                config.scanlines = (config.scanlines & ~SCALING_MASK) | (sc << SCALING_SHIFT);
                 menustate = MENU_SETTINGS_VIDEO1;
                 ConfigVideo(config.filter.hires, config.filter.lores, config.scanlines, config.crt_mask, config.crt_bloom, config.crt_beam);
-                //                ConfigScanlines(config.scanlines);
             }
 
             else if (menusub == 4)
