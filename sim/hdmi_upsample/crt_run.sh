@@ -34,8 +34,8 @@
 #              frame 4 changed, the latch moves once, at a frame end
 #   osdfx      the same for the new bits: 0 -> mask shadow + bloom high
 #   osdspi     userio_osd over SPI: the video command's optional second byte
-#              sets {beam, bloom, mask}; one byte (an older firmware) leaves
-#              them 0
+#              sets {scaling, beam, bloom, mask}; one byte (an older
+#              firmware) leaves them 0
 #   mask       mask grille (3-px R G B), scanlines off: period 3 in the
 #              border, lit > dimmed, light within 3 % (LUT compensation)
 #   mask2      mask grille strong: the same
@@ -308,7 +308,7 @@ for l in "${legs[@]}"; do
 	osdspi)
 		u=$(vvp -n build/tb_osd_video.vvp)
 		echo "$u" | grep FAIL | sed 's/^/        /'
-		echo "$u" | grep -q "osd video: 0 errors" && pass "osdspi: second byte -> {beam, bloom, mask}, one byte leaves them off" || bad "osdspi"
+		echo "$u" | grep -q "osd video: 0 errors" && pass "osdspi: second byte -> {scaling, beam, bloom, mask}, one byte leaves them off" || bad "osdspi"
 		;;
 	ripple)
 		r=$(python3 crt_check.py ripple ../../rtl/openaars/adv7511/crt_wrom.mem)

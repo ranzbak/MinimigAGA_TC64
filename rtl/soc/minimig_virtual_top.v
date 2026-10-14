@@ -108,7 +108,7 @@ module minimig_virtual_top #(
 
     // HDMI CRT emulation (CLK_28 domain): OSD video config
     // {beam, bloom, mask, hr_filter, lr_filter, scanline} and Denise BPLCON0 HIRES / SHRES
-    output wire [ 12-1:0] CRT_CFG,
+    output wire [ 14-1:0] CRT_CFG,
     output wire           VID_HIRES,
     output wire           VID_SHRES,
 

@@ -13,8 +13,9 @@
 // high and two clk_114 after RGB, as pal_to_ddr gets them.
 //
 // plusargs
-//   +cfg=H       OSD video config {beam, bloom, mask, hr_filter, lr_filter,
-//                scanline}, 12 bits, hex (default 0)
+//   +cfg=H       OSD video config {scaling, beam, bloom, mask, hr_filter,
+//                lr_filter, scanline}, 14 bits, hex (default 0; scaling,
+//                bits 13:12: 0 line rate, 1 sharp, 2 area)
 //   +frame=F     the Amiga picture from F instead of build/amiga_frame.hex
 //                (312 x 1816 words, crt_mkdither.py's format)
 //   +hires=F     Denise's HIRES per line from F (312 words 0/1; default 0)
@@ -37,10 +38,30 @@
 //   +voff2=N +vofframe=F +voffline=L   change VPOS to voff2 during HD frame
 //                F, line L of the new path (the VPOS-change legs)
 //   +force60     both paths use the 60 Hz upsampler (r_50hz forced 0)
+//   +ring16      the line-rate mode on all 16 line buffers (see "ring")
+//   +ntsc        NTSC input: 262-line fields (263 long with +lace), the
+//                picture's lines 0..261; the line stays 227 CCK as Agnus
+//                makes it here (agnus_beamcounter.v: no long lines), vsync
+//                lines 2..5 as in PAL.  frame_freq then picks the 60 Hz path
+//   +swfrom=F +swto=G   input fields F..G-1 NTSC, the others PAL (the
+//                mode-switch leg, golden.sh: PAL -> NTSC -> PAL); a field
+//                is one vcnt wrap, the first (partial) one is field 0
 //   +first=N +frames=M   compare (and dump) HD frames N .. N+M-1 (default 3, 1)
 //   +out=PREFIX  dump the new path's frames as PREFIX_<n>.hex (RRGGBB per
-//                line, raster order) and its line phases as PREFIX_phase.txt
-// Prints "frame N: D pixels differ" per compared frame, "lines N" (pixels
+//                line, raster order) and its line phases as PREFIX_phase.txt:
+//                per HD line "frame line phase hires vphase ratio y cur next"
+//                (y: the exact-ratio stepping's position, 1/2^20 line; cur,
+//                next: the source lines (vcnt) in the two buffers read)
+// Prints "frame N: D pixels differ" per compared frame, "pic N: H P" for
+// EVERY HD frame of the new path (a 64-bit FNV-1a hash of its captured
+// pixels in raster order, and their count), "sig N: H C" for every HD frame
+// at the pins (pal_to_ddr's outputs o_clk_pixel, o_de, o_vsync, o_hsync,
+// o_data folded in at both clk_148 edges, from one rising edge of o_vsync
+// to the next; C = clk_148 cycles), "fsig N" the same per input field N
+// -- golden.sh compares them against the frames of the RTL before the
+// scaler work (3987b84) -- "path N -> M at frame F field G" when the new
+// path's 50/60 Hz choice moves, "lf N L" when HD frame N starts (L: in a
+// long field), "lines N" (pixels
 // captured, non-black), the path (50/60), "hd frame N: L lines, V vsync"
 // for every HD frame of the new path (HD lines, and rising edges of the
 // selected signal generator's vsync in it), and every change of the
@@ -65,6 +86,8 @@ integer frames = 1, first = 3, cfgframe = -1, cfgline = 0, cfg = 0, cfg2 = 0;
 reg lace = 0, dbl = 0, split = 0, rtg = 0, force60 = 0, dump = 0;
 integer srcdelay = 0;
 integer hoff = 0, voff = 0, voff2 = 0, vofframe = -1, voffline = 0;
+integer ntscfrom = -1, ntscto = -1;
+reg ntsc = 0;
 reg [8*160-1:0] out;
 initial begin
 	if (!$value$plusargs("cfg=%h", cfg)) cfg = 0;
@@ -85,12 +108,15 @@ initial begin
 	if (!$value$plusargs("voff2=%d", voff2)) voff2 = 0;
 	if (!$value$plusargs("vofframe=%d", vofframe)) vofframe = -1;
 	if (!$value$plusargs("voffline=%d", voffline)) voffline = 0;
+	ntsc = $test$plusargs("ntsc");
+	if (!$value$plusargs("swfrom=%d", ntscfrom)) ntscfrom = -1;
+	if (!$value$plusargs("swto=%d", ntscto)) ntscto = -1;
 end
 
 // the OSD config, as userio_osd holds it (CLK_28; changes asynchronously to clk_148)
-reg [11:0] crt_cfg = 12'd0;
+reg [13:0] crt_cfg = 14'd0;
 reg        cfg_changed = 0;
-initial #1 crt_cfg = cfg[11:0];
+initial #1 crt_cfg = cfg[13:0];
 
 
 // ---- Amiga source ----
@@ -109,6 +135,10 @@ end
 reg [12:0] hcnt = 0;       // clk_114 in the line, 0..7263
 reg [8:0]  vcnt = 300;     // start just before a vsync
 reg        long_field = 0; // this field is the long one (lace)
+integer    field_no = 0;   // vcnt wraps so far
+reg        ntsc_f = 0;     // this field is an NTSC one
+initial #1 ntsc_f = ntsc || (ntscfrom == 0);
+wire [8:0] vlast = ntsc_f ? (long_field ? 9'd262 : 9'd261) : (long_field ? 9'd312 : 9'd311);
 wire [8:0] hpos = hcnt[12:4];
 wire [12:0] h2 = (hcnt >= 13'd3632) ? hcnt - 13'd3632 : hcnt;   // +dbl: position in the half line
 wire [8:0]  h2pos = h2[12:4];
@@ -138,9 +168,11 @@ endfunction
 always @(posedge clk_114) begin
 	if (hcnt == 13'd7263) begin
 		hcnt <= 0;
-		if (vcnt == (long_field ? 9'd312 : 9'd311)) begin
+		if (vcnt == vlast) begin
 			vcnt <= 0;
 			long_field <= lace ? ~long_field : 1'b0;
+			field_no = field_no + 1;
+			ntsc_f <= ntsc || (field_no >= ntscfrom && field_no < ntscto);
 		end else vcnt <= vcnt + 1'b1;
 	end else hcnt <= hcnt + 1'b1;
 	if (dbl) hs <= (h2pos >= 18 && h2pos < 35);
@@ -185,7 +217,10 @@ pal_to_ddr #(.CRT_WROM_FILE("../../rtl/openaars/adv7511/crt_wrom.mem"),
              .CRT_BLOOM_FILE("../../rtl/openaars/adv7511/crt_bloom.mem"),
              .CRT_HDEC_FILE("../../rtl/openaars/adv7511/crt_hdec.mem"),
              .CRT_HENC_FILE("../../rtl/openaars/adv7511/crt_henc.mem"),
-             .CRT_HK_FILE("../../rtl/openaars/adv7511/crt_hk.mem")) dut (
+             .CRT_HK_FILE("../../rtl/openaars/adv7511/crt_hk.mem"),
+             .CRT_SDEC_FILE("../../rtl/openaars/adv7511/crt_sdec.mem"),
+             .CRT_SENC_FILE("../../rtl/openaars/adv7511/crt_senc.mem"),
+             .CRT_SWROM_FILE("../../rtl/openaars/adv7511/crt_swrom.mem")) dut (
 	.clk_148(clk_148), .clk_114(clk_114), .reset(reset), .vga_clk_pixel(1'b0),
 	.i_pal_hsync(pal_hs), .i_pal_vsync(pal_vs),
 	.i_pal_r(src_rgb[23:16]), .i_pal_g(src_rgb[15:8]), .i_pal_b(src_rgb[7:0]),
@@ -213,10 +248,9 @@ initial begin
 	end
 end
 
-// both line buffers start black (a real BRAM powers up 0 too)
+// the line buffers start black (a real BRAM powers up 0 too)
+initial for (i = 0; i < 32768; i = i + 1) dut.myupsample.upsample_blk_ram.mem[i] = 0;
 initial for (i = 0; i < 16384; i = i + 1) begin
-	dut.my50hzupsample.upsample_blk_ram.mem[i] = 0;
-	dut.my60hzupsample.upsample_blk_ram.mem[i] = 0;
 	ref0.my50hzupsample.upsample_blk_ram.mem[i] = 0;
 	ref0.my60hzupsample.upsample_blk_ram.mem[i] = 0;
 end
@@ -224,8 +258,8 @@ end
 // ---- capture: what adv_ddr gets ----
 wire        n_sel = dut.r_50hz;
 wire        n_hdclk = dut.w_adv_clk;
-wire        n_dee   = n_sel ? dut.w_50_adv_de : dut.w_60_adv_de;
-wire        n_frame = n_sel ? dut.hd_50hz_gen.r_frame : dut.hd_60hz_gen.r_frame;
+wire        n_dee   = dut.w_adv_de;
+wire        n_frame = dut.hd_gen.r_frame;
 wire [23:0] n_px    = {dut.w_o_r, dut.w_o_g, dut.w_o_b};
 wire        r_sel = ref0.r_50hz;
 wire        r_hdclk = ref0.w_adv_clk;
@@ -249,21 +283,61 @@ task dump_n(input integer n);
 	end
 endtask
 
+// pixel hash per HD frame (all frames), FNV-1a 64
+localparam [63:0] FNV0 = 64'hcbf29ce484222325, FNVP = 64'h00000100000001b3;
+reg [63:0] ph_n = FNV0;
+reg        sel_q = 1'b1;
 always @(posedge clk_148) begin
 	ck_n <= n_hdclk;
+	sel_q <= n_sel;
+	if (n_sel != sel_q) $display("path %0d -> %0d at frame %0d field %0d", sel_q ? 50 : 60, n_sel ? 50 : 60, fno_n, field_no);
 	if (n_frame) begin
+		$display("pic %0d: %016h %0d", fno_n, ph_n, px_n);
+		ph_n = FNV0;
 		if (fno_n >= first && fno_n < first + frames) begin
 			$display("new frame %0d: %0d pixels, %0d non-black, path %0d Hz", fno_n, px_n, lit_n, n_sel ? 50 : 60);
 			if (dump) dump_n(fno_n);
 			done_n = done_n + 1;
 		end
 		fno_n = fno_n + 1; px_n = 0; lit_n = 0;
+		$display("lf %0d %0d", fno_n, long_field);   // the HD frame starting: long field?
 	end else if (ck_n && !n_hdclk && n_dee) begin
+		ph_n = (ph_n ^ {40'd0, n_px}) * FNVP;
 		if (px_n < 1280*720) fb_n[px_n] = n_px;
 		if (n_px != 24'd0) lit_n = lit_n + 1;
 		px_n = px_n + 1;
 	end
 end
+// the pins, both clk_148 edges, from one o_vsync rising edge to the next
+reg [63:0] sg_h = FNV0;
+integer    sg_n = 0, sg_c = 0;
+reg        sg_vs = 1'b0;
+wire [15:0] pins = {n_clk, n_de, n_vs, n_hs, n_d};
+always @(posedge clk_148) begin
+	sg_vs <= n_vs;
+	if (n_vs && !sg_vs) begin
+		$display("sig %0d: %016h %0d", sg_n, sg_h, sg_c);
+		sg_n = sg_n + 1; sg_h = FNV0; sg_c = 0;
+	end
+	sg_h = (sg_h ^ {48'd0, pins}) * FNVP;
+	sg_c = sg_c + 1;
+end
+always @(negedge clk_148) sg_h = (sg_h ^ {47'd0, 1'b1, pins}) * FNVP;
+// the same per INPUT field ("fsig N": field N of the Amiga side, from its
+// first clk_148 to its last): windows at fixed times, so a design that
+// puts out one vsync more or less (the two-chain design's splice at a
+// 50/60 Hz switch) does not renumber the later ones
+reg [63:0] fs_h = FNV0;
+integer    fs_n = 0, fs_c = 0;
+always @(posedge clk_148) begin
+	if (field_no != fs_n) begin
+		$display("fsig %0d: %016h %0d", fs_n, fs_h, fs_c);
+		fs_n = field_no; fs_h = FNV0; fs_c = 0;
+	end
+	fs_h = (fs_h ^ {48'd0, pins}) * FNVP;
+	fs_c = fs_c + 1;
+end
+always @(negedge clk_148) fs_h = (fs_h ^ {47'd0, 1'b1, pins}) * FNVP;
 integer diff, kd;
 always @(posedge clk_148) begin
 	ck_r <= r_hdclk;
@@ -301,7 +375,9 @@ always @(posedge clk_148) begin
 	if (dut.w_m_lstart) begin
 		if (dump) begin
 			if (fdp == 0) begin $sformat(fname, "%0s_phase.txt", out); fdp = $fopen(fname, "w"); end
-			$fwrite(fdp, "%0d %0d %0d %0d\n", fno_n, hdl, dut.w_m_phase, dut.w_m_lhires);
+			$fwrite(fdp, "%0d %0d %0d %0d %0d %0d %0d %0d %0d\n", fno_n, hdl, dut.w_m_phase, dut.w_m_lhires,
+			        dut.w_m_vphase, dut.r_ratio, $signed(dut.myupsample.r_yl), rg_vc[dut.myupsample.r_rslot],
+			        rg_vc[dut.myupsample.w_r16_o ? dut.myupsample.r_rslot + 4'd1 : {1'b0, dut.myupsample.r_rslot[2:0] + 3'd1}]);
 		end
 		hdl = hdl + 1;
 	end
@@ -310,19 +386,19 @@ end
 always @(posedge clk_148)
 	if (cfgframe >= 0 && !cfg_changed && fno_n == cfgframe && hdl == cfgline) begin
 		cfg_changed = 1;
-		#3.1 crt_cfg = cfg2[11:0];
+		#3.1 crt_cfg = cfg2[13:0];
 		$display("cfg change %03h -> %03h at %0t (frame %0d line %0d)", cfg[11:0], cfg2[11:0], $time, fno_n, hdl);
 	end
 // +vpdebug: the 50 Hz upsampler's HD raster restarts (Video Pos VPOS)
-wire vp_real = dut.my50hzupsample.w_vp_realf;
-wire vp_virt = dut.my50hzupsample.r_vp_fire;
+wire vp_real = dut.myupsample.w_vp_realf;
+wire vp_virt = dut.myupsample.r_vp_fire;
 always @(posedge clk_114)
 	if ($test$plusargs("vpdebug") && (vp_real || vp_virt))
 		$display("vp %0s restart at input line %0d hpos %0d: cnt %0d cyc %0d n1 %0d n2 %0d p0 %0d p1 %0d tgt %0d ph %0d since %0d s %0d dbl %0d",
-		         vp_real ? "real" : "virtual", vcnt, hpos, dut.my50hzupsample.r_vp_cnt, dut.my50hzupsample.r_vp_cyc,
-		         dut.my50hzupsample.r_vp_n1, dut.my50hzupsample.r_vp_n2, dut.my50hzupsample.r_vp_p0,
-		         dut.my50hzupsample.r_vp_p1, dut.my50hzupsample.r_vp_tgt, dut.my50hzupsample.r_vp_ph,
-		         dut.my50hzupsample.r_vp_since, $signed(dut.my50hzupsample.r_vp_s), dut.my50hzupsample.r_vp_dbl);
+		         vp_real ? "real" : "virtual", vcnt, hpos, dut.myupsample.r_vp_cnt, dut.myupsample.r_vp_cyc,
+		         dut.myupsample.r_vp_n1, dut.myupsample.r_vp_n2, dut.myupsample.r_vp_p0,
+		         dut.myupsample.r_vp_p1, dut.myupsample.r_vp_tgt, dut.myupsample.r_vp_ph,
+		         dut.myupsample.r_vp_since, $signed(dut.myupsample.r_vp_s), dut.myupsample.r_vp_dbl);
 // the VPOS-change legs
 reg voff_changed = 0;
 always @(posedge clk_148)
@@ -331,7 +407,7 @@ always @(posedge clk_148)
 		#3.1 voff = voff2;
 		$display("voff change -> %0d at %0t (frame %0d line %0d)", voff2, $time, fno_n, hdl);
 	end
-reg [9:0] cfg_q = 10'd0;
+reg [11:0] cfg_q = 12'd0;
 reg ck_fend = 0;
 always @(posedge clk_148) begin
 	cfg_q <= dut.r_crt_cfg;
@@ -344,7 +420,7 @@ always @(posedge clk_148) ck_fend <= dut.w_crt_fend;   // the latch takes effect
 // where the upsampler takes the line's resolution sample (hpos), once
 integer shown = 0;
 always @(posedge clk_114)
-	if (shown == 0 && dut.my50hzupsample.r_wcnt == 11'd512 && vcnt == 9'd100 && !dbl) begin
+	if (shown == 0 && dut.myupsample.r_wcnt == 11'd512 && vcnt == 9'd100 && !dbl) begin
 		$display("resolution sample at hpos %0d (line %0d)", hpos, vcnt);
 		shown = 1;
 	end
@@ -382,6 +458,114 @@ always @(posedge clk_114) if (sdf != 0) begin
 	else if (sd_state == 1 && vcnt == 0 && hcnt == 0) begin sd_state = 2; $fclose(sdf); end
 	if (sd_state == 1 && dut.my_beamh.o_stb)
 		$fwrite(sdf, "%0d %0d %06x\n", vcnt, hcnt[12:2], dut.my_beamh.f_rgb);
+end
+
+// ---- the line-buffer ring (findings/scaler/plan.md step 3) ----
+// Bench-side bookkeeping of what the upsampler's write side puts where:
+// every time it starts a new input line (its buffer toggle), the slot the
+// line goes to gets the line's number (lines started since power-up) and
+// its source line.  Per HD line the read side's two slots (o_hd_*:
+// r_rslot; o_hd_next: the one after it) are looked up, and while the HD
+// line is active (DE) every clk_148 checks
+//   rd-wr        neither slot is the one the write side is writing
+//                (r_addra's slot, while it writes): the reader never reads
+//                a line slot the writer is writing
+//   overwritten  neither slot got a new line since the HD line started
+// and, in the exact-ratio mode (step 4), per HD line
+//   wrongline    the cur slot holds the line the stepping asks for: the
+//                restart's first line + floor(y)
+// All three over the active HD lines whose cur line is of this frame --
+// line-rate mode: from the frame's first line on (the top HD lines show
+// buffers written before the restart, by design; at NTSC and 31 kHz the
+// write side's vsync lines are still running on through those buffers
+// then -- today's behaviour, in the golden frames -- "top" counts those
+// reads); exact-ratio mode: a >= 0.  Printed per HD frame: "ring N: L
+// lines, lag A..B, rd-wr R, overwritten O, wrongline W, ratio X (top T),
+// time lag C..D", lag = the line being written minus the cur line at the
+// line's first read, time lag the same in lines of time (the write side's
+// position inside its line counted) at the first read (C, >= 2: the next
+// line is complete) and at the last (D, < 16: cur not yet overwritten).
+integer rg_line [0:15];            // number of the line in each slot
+integer rg_vc [0:15];              // and its source line (vcnt)
+integer rg_gl = 0;                 // lines started so far
+integer rg_first = 0;              // the first line after the last write-side restart
+reg     rg_tq = 1'b0;
+realtime rg_tt = 0, rg_tl = 64000;   // the last toggle's time, the line time (ns)
+reg     rg_wpend = 1'b0;
+initial for (i = 0; i < 16; i = i + 1) begin rg_line[i] = -1000; rg_vc[i] = -1; end
+always @(posedge clk_114) begin
+	if (dut.myupsample.w_vp_wr_reset) rg_wpend = 1'b1;
+	// the toggle flipped at the last edge: r_wslot names the new line's slot
+	if (dut.myupsample.s_next_buf[0] != rg_tq) begin
+		if ($realtime - rg_tt > 60000 && $realtime - rg_tt < 68000) rg_tl = $realtime - rg_tt;
+		rg_tt = $realtime;
+		rg_line[dut.myupsample.r_wslot] = rg_gl;
+		rg_vc[dut.myupsample.r_wslot] = vcnt;
+		if (rg_wpend) begin rg_first = rg_gl; rg_wpend = 1'b0; end
+		rg_gl = rg_gl + 1;
+	end
+	rg_tq <= dut.myupsample.s_next_buf[0];
+end
+wire       rg_ratio = dut.myupsample.w_rat_o;
+wire       rg_r16   = dut.myupsample.w_r16_o;
+reg  [3:0] rg_cs = 0, rg_ns = 0;
+integer    rg_cl = 0, rg_nl = 0, rg_a = 0;
+reg        rg_act = 1'b0, rg_cnt = 1'b0;
+real       rg_f, rg_fmin = 99, rg_fmax = -99, rg_flast = 0;   // the lag in time, at the line's first and last read
+integer    rg_rw = 0, rg_rwt = 0, rg_ow = 0, rg_wl = 0, rg_lmin = 99, rg_lmax = -99, rg_lines = 0, rg_lag;
+always @(posedge clk_148) begin
+	if (dut.myupsample.r_line_start) begin
+		// r_rslot moved at the last edge
+		rg_cs = dut.myupsample.r_rslot;
+		rg_ns = (rg_r16 || rg_ratio) ? rg_cs + 4'd1 : {1'b0, rg_cs[2:0] + 3'd1};
+		rg_cl = rg_line[rg_cs]; rg_nl = rg_line[rg_ns];
+		rg_a  = $signed(dut.myupsample.r_yl[29:20]);
+		rg_act = 1'b0;
+		rg_cnt = rg_ratio ? (rg_a >= 0) : (!rg_wpend && rg_cl >= rg_first);
+		if (rg_ratio && rg_a >= 0 && hdl < 720 && rg_cl != rg_first + rg_a) begin
+			rg_wl = rg_wl + 1;
+			if (rg_wl <= 5) $display("ring wrongline: frame %0d line %0d a %0d holds line %0d (first %0d)", fno_n, hdl, rg_a, rg_cl, rg_first);
+		end
+	end
+	if (n_dee) begin
+		if (!rg_act) begin
+			rg_act = 1'b1;
+			if (rg_cnt) begin
+				rg_lines = rg_lines + 1;
+				rg_lag = (rg_gl - 1) - rg_cl;
+				if (rg_lag < rg_lmin) rg_lmin = rg_lag;
+				if (rg_lag > rg_lmax) rg_lmax = rg_lag;
+				rg_f = (rg_gl - 1) + ($realtime - rg_tt) / rg_tl - rg_cl;
+				if (rg_f < rg_fmin) rg_fmin = rg_f;
+				if ($test$plusargs("ringdbg") && rg_lag > 4) $display("ringdbg frame %0d line %0d lag %0d cl %0d first %0d gl %0d vcnt %0d", fno_n, hdl, rg_lag, rg_cl, rg_first, rg_gl, vcnt);
+			end
+		end
+		if (dut.myupsample.r_wea && (dut.myupsample.r_addra[14:11] == rg_cs || dut.myupsample.r_addra[14:11] == rg_ns)) begin
+			if (rg_cnt) begin
+				rg_rw = rg_rw + 1;
+				if (rg_rw <= 5) $display("ring rd-wr: frame %0d line %0d slots %0d/%0d written", fno_n, hdl, rg_cs, rg_ns);
+			end else rg_rwt = rg_rwt + 1;
+		end
+		if (rg_cnt) begin
+			rg_f = (rg_gl - 1) + ($realtime - rg_tt) / rg_tl - rg_cl;
+			if (rg_f > rg_fmax) rg_fmax = rg_f;
+		end
+		if (rg_cnt && (rg_line[rg_cs] != rg_cl || rg_line[rg_ns] != rg_nl)) begin
+			rg_ow = rg_ow + 1;
+			if (rg_ow <= 5) $display("ring overwritten: frame %0d line %0d", fno_n, hdl);
+		end
+	end
+	if (n_frame) begin
+		$display("ring %0d: %0d lines, lag %0d..%0d, rd-wr %0d, overwritten %0d, wrongline %0d, ratio %0d (top %0d), time lag %0.3f..%0.3f",
+		         fno_n, rg_lines, rg_lmin, rg_lmax, rg_rw, rg_ow, rg_wl, rg_ratio, rg_rwt, rg_fmin, rg_fmax);
+		rg_lines = 0; rg_lmin = 99; rg_lmax = -99; rg_rw = 0; rg_rwt = 0; rg_ow = 0; rg_wl = 0; rg_fmin = 99; rg_fmax = -99;
+	end
+end
+// +ring16: the line-rate mode on all 16 buffers (the ring's pointer
+// arithmetic; pal_to_ddr uses 16 only in the exact-ratio modes)
+initial begin
+	#1;
+	if ($test$plusargs("ring16")) force dut.r_ring16 = 1'b1;
 end
 
 initial begin

@@ -26,7 +26,11 @@ module pal_to_ddr #(
   // horizontal beam spot tables (crt_beamh.v)
   parameter CRT_HDEC_FILE = "crt_hdec.mem",
   parameter CRT_HENC_FILE = "crt_henc.mem",
-  parameter CRT_HK_FILE   = "crt_hk.mem"
+  parameter CRT_HK_FILE   = "crt_hk.mem",
+  // the scaler's linear-light tables (crt_post.v; sim/hdmi_upsample/scl_mkroms.py)
+  parameter CRT_SDEC_FILE  = "crt_sdec.mem",
+  parameter CRT_SENC_FILE  = "crt_senc.mem",
+  parameter CRT_SWROM_FILE = "crt_swrom.mem"
 )(
   input clk_148,
   input clk_114,
@@ -45,10 +49,12 @@ module pal_to_ddr #(
   // RTG
   input       i_rtg_enable,
   // CRT emulation (CLK_28 domain): the OSD video config as userio_osd
-  // latches it, {beam[1:0], bloom[1:0], mask[1:0], hr_filter[1:0],
-  // lr_filter[1:0], scanline[1:0]}, and Denise's BPLCON0 HIRES / SHRES for
-  // the per-line filter choice
-  input [11:0] i_crt_cfg,
+  // latches it, {scaling[1:0], beam[1:0], bloom[1:0], mask[1:0],
+  // hr_filter[1:0], lr_filter[1:0], scanline[1:0]}, and Denise's BPLCON0
+  // HIRES / SHRES for the per-line filter choice.  scaling (2026-10-13,
+  // findings/scaler/plan.md): 0 line rate (the picture of before), 1 sharp,
+  // 2 area (3 as 1): exact 2.5x (PAL) / 3x (NTSC) vertical scaling
+  input [13:0] i_crt_cfg,
   input       i_pal_hires,
   input       i_pal_shres,
   // OUTPUT
@@ -73,16 +79,10 @@ module pal_to_ddr #(
   wire w_adv_de;
   wire w_adv_clk;
 
-  // RGB signal in 720p@50Hz before DDR
+  // RGB signal in 720p before DDR
   wire [7:0] w_o_r;
   wire [7:0] w_o_g;
   wire [7:0] w_o_b;
-  wire [7:0] w_50_o_r;
-  wire [7:0] w_50_o_g;
-  wire [7:0] w_50_o_b;
-  wire [7:0] w_60_o_r;
-  wire [7:0] w_60_o_g;
-  wire [7:0] w_60_o_b;
 
   (* ASYNC_REG = "TRUE" *) reg [2:0] s_pal_hsync;
   wire       w_pal_hsync;
@@ -176,38 +176,23 @@ module pal_to_ddr #(
     end
   end
 
-  // Switch wires 50 Hz
-  wire        w_50_hd_vsync;
-  wire        w_50_hd_hsync;
-  wire [11:0] w_50_x;
-  wire [11:0] w_50_y;
-  wire [7:0]  w_50_r;
-  wire [7:0]  w_50_g;
-  wire [7:0]  w_50_b;
-  wire        w_50_adv_clk;
-  wire        w_50_hsync;
-  wire        w_50_vsync;
-  wire        w_50_frame_end;
-  wire        w_50_adv_de;
-  // Switch wires 50 Hz
-  wire        w_60_hd_hsync;
-  wire        w_60_hd_vsync;
-  wire [11:0] w_60_x;
-  wire [11:0] w_60_y;
-  wire [7:0]  w_60_r;
-  wire [7:0]  w_60_g;
-  wire [7:0]  w_60_b;
-  wire        w_60_adv_clk;
-  wire        w_60_hsync;
-  wire        w_60_vsync;
-  wire        w_60_frame_end;
-  wire        w_60_adv_de;
+  // One upsampler and one 720p signal generator for both rates
+  // (findings/scaler/plan.md step 2, 2026-10-13), switched by r_50hz.  Up
+  // to then a 50 Hz and a 60 Hz chain both ran on the same input, each with
+  // its own line-buffer ring, and r_50hz picked the outputs; they differed
+  // only in the generator's front porch (440 / 110), the upsampler's sample
+  // step and read window (H_RES 1685 / 1980), its read offset ('hd0 / 'h80
+  // minus CRT_LAT), its HD hsync (its own generator's / adv_ddr's
+  // hsync_out) and RTG's undelayed vsync (60 Hz only).  The one chain takes
+  // all of these by r_50hz.  A rate change refills the ring (one frame).
+  wire        w_frame_end;
+  wire        w_hd_gen_hsync;
+  wire        w_hz60 = ~r_50hz;
 
   // -------------------------------------------------------------------------
-  // CRT emulation (2026-10-09).  One crt_post after a 50/60 Hz select of the
-  // two upsamplers' streams; its output feeds both signal generators (only
-  // the selected one is shown).  crt_post delays the stream by CRT_LAT
-  // pixels, and both upsamplers read CRT_LAT pixels earlier (PAL_OFFSET_HZ),
+  // CRT emulation (2026-10-09).  One crt_post on the upsampler's stream;
+  // its output feeds the signal generator.  crt_post delays the stream by
+  // CRT_LAT pixels, and the upsampler reads CRT_LAT pixels earlier (PAL_OFFSET_HZ),
   // so with every effect off the picture is bit-identical to the design
   // without it (sim/hdmi_upsample/crt_run.sh, bypass legs).
   //
@@ -241,10 +226,11 @@ module pal_to_ddr #(
   // dll_28/clk_114 to clk_148).
   // -------------------------------------------------------------------------
   localparam CRT_LAT = 9;   // crt_post pipeline, HD pixels
+  localparam LIN_LAT = 3;   // ... its linear-light path's extra (the exact-ratio modes)
 
   // The OSD Video Pos HPOS (signed HD pixels; static, written by the host
-  // through VPOS_DATA): one 2-FF synchroniser into clk_148 for both
-  // upsamplers.  VPOS: the same into clk_114.
+  // through VPOS_DATA): one 2-FF synchroniser into clk_148.  VPOS: the
+  // same into clk_114.
   (* ASYNC_REG = "TRUE" *) reg [7:0] s_hoff0 = 8'd0;
   (* ASYNC_REG = "TRUE" *) reg [7:0] s_hoff1 = 8'd0;
   always @(posedge clk_148) begin
@@ -252,9 +238,9 @@ module pal_to_ddr #(
     s_hoff1 <= s_hoff0;
   end
   // VPOS (signed 64 us steps, positive down): a 2-FF synchroniser into
-  // clk_114, where both upsamplers take it at each input hsync and decide
+  // clk_114, where the upsampler takes it at each input hsync and decides
   // where the HD raster restarts (pal_to_hd_upsample.v, "Video Pos VPOS");
-  // their clk_148 side only follows that decision.  The register is in
+  // its clk_148 side only follows that decision.  The register is in
   // CLK_28 (cfide), a phase-aligned sibling of clk_114 (wizard.xdc's
   // multicycle paths time the crossing), but the value is static and the
   // synchroniser costs nothing.
@@ -265,23 +251,24 @@ module pal_to_ddr #(
     s_voff1 <= s_voff0;
   end
 
-  wire [23:0] w_50_next, w_60_next;
-  wire        w_50_stb, w_60_stb;
-  wire        w_50_lstart, w_60_lstart;
-  wire [6:0]  w_50_phase, w_60_phase;
-  wire        w_50_lhires, w_60_lhires;
+  wire [7:0]  w_up_r, w_up_g, w_up_b;
+  wire [23:0] w_m_nxt;
+  wire        w_m_stb;
+  wire        w_m_lstart;
+  wire [6:0]  w_m_phase;
+  wire        w_m_lhires;
   wire [7:0]  w_crt_r, w_crt_g, w_crt_b;
 
-  (* ASYNC_REG = "TRUE" *) reg [9:0] s_crt_cfg0 = 10'd0;   // crt_post's bits; the beam's: crt_beamh
-  (* ASYNC_REG = "TRUE" *) reg [9:0] s_crt_cfg1 = 10'd0;
+  (* ASYNC_REG = "TRUE" *) reg [11:0] s_crt_cfg0 = 12'd0;  // {scaling, crt_post's bits}; the beam's: crt_beamh
+  (* ASYNC_REG = "TRUE" *) reg [11:0] s_crt_cfg1 = 12'd0;
   (* ASYNC_REG = "TRUE" *) reg [1:0] s_crt_rtg  = 2'b00;
   (* ASYNC_REG = "TRUE" *) reg [2:0] s_crt_hs   = 3'b000;
-  reg  [9:0] r_crt_cfg   = 10'd0;  // frame-latched OSD bits
+  reg  [11:0] r_crt_cfg  = 12'd0;  // frame-latched OSD bits
   reg        r_crt_ok    = 1'b0;   // last frame: 15 kHz and no RTG
   reg  [9:0] r_crt_lines = 10'd0;  // input lines in this frame
-  wire       w_crt_fend  = r_50hz ? w_50_frame_end : w_60_frame_end;
+  wire       w_crt_fend  = w_frame_end;
   always @(posedge clk_148) begin
-    s_crt_cfg0 <= i_crt_cfg[9:0];
+    s_crt_cfg0 <= {i_crt_cfg[13:12], i_crt_cfg[9:0]};
     s_crt_cfg1 <= s_crt_cfg0;
     s_crt_rtg  <= {s_crt_rtg[0], i_rtg_enable};
     s_crt_hs   <= {s_crt_hs[1:0], w_pal_hsync};
@@ -294,13 +281,21 @@ module pal_to_ddr #(
     end
   end
 
-  // the selected upsampler's stream
-  wire [23:0] w_m_cur    = r_50hz ? {w_50_b, w_50_g, w_50_r} : {w_60_b, w_60_g, w_60_r};
-  wire [23:0] w_m_nxt    = r_50hz ? w_50_next   : w_60_next;
-  wire        w_m_stb    = r_50hz ? w_50_stb    : w_60_stb;
-  wire        w_m_lstart = r_50hz ? w_50_lstart : w_60_lstart;
-  wire [6:0]  w_m_phase  = r_50hz ? w_50_phase  : w_60_phase;
-  wire        w_m_lhires = r_50hz ? w_50_lhires : w_60_lhires;
+  // the upsampler's stream
+  wire [23:0] w_m_cur    = {w_up_b, w_up_g, w_up_r};
+
+  // Exact-ratio scaling (findings/scaler/plan.md steps 4, 5): the
+  // frame-latched Scaling item, under the CRT effects' condition (the last
+  // frame had fewer than 400 lines, RTG off) -- otherwise the line-rate
+  // picture.  It switches the upsampler to the 16-line ring and the exact
+  // 2.5x / 3x stepping, and crt_post to its linear-light blend of the two
+  // lines at the HD line's phase: the Scaling kernel (sharp-bilinear 0.5 or
+  // area) with scanlines off, the two-line beam in linear light (gap 0.60
+  // dim / 0.80 black) with them on.  The V filter bit has no say there (the
+  // kernel decides); the H filter, mask and bloom work as before.
+  reg        r_ratio = 1'b0;
+  always @(posedge clk_148)
+    r_ratio <= r_crt_ok && (r_crt_cfg[11:10] != 2'd0);
 
   // controls: static per frame (OSD) and per HD line (resolution, latched
   // by the upsampler at the HD hsync); registered, they change in hblank
@@ -313,9 +308,12 @@ module pal_to_ddr #(
   reg  [1:0] r_ctl_mask  = 2'd0;
   reg  [1:0] r_ctl_bloom = 2'd0;
   reg        r_ctl_hz60  = 1'b0;
+  reg  [1:0] r_ctl_kern  = 2'd0;   // the exact-ratio modes' kernel: sharp, area, beam dim, beam black
   always @(posedge clk_148) begin
     r_ctl_scan  <= r_crt_ok ? w_crt_scan : 2'd0;
-    r_ctl_vb    <= r_crt_ok & w_crt_filt[1];
+    r_ctl_kern  <= (w_crt_scan == 2'd0) ? {1'b0, r_crt_cfg[11:10] == 2'd2} :
+                   (w_crt_scan == 2'd3) ? 2'd3 : 2'd2;
+    r_ctl_vb    <= r_crt_ok & !r_ratio & w_crt_filt[1];
     r_ctl_hblur <= (r_crt_ok & w_crt_filt[0]) ? (w_m_lhires ? 2'd1 : 2'd2) : 2'd0;
     r_ctl_mask  <= r_crt_ok ? r_crt_cfg[7:6] : 2'd0;
     r_ctl_bloom <= r_crt_ok ? r_crt_cfg[9:8] : 2'd0;
@@ -325,7 +323,8 @@ module pal_to_ddr #(
   wire [23:0] w_crt_rgb;
   crt_post #(
     .HAS_VBLEND(1), .HAS_HBLUR(1), .HAS_MASK(1), .HAS_BLOOM(1), .HAS_LUT(1),
-    .WROM_FILE(CRT_WROM_FILE), .LUT_FILE(CRT_LUT_FILE), .BLOOM_FILE(CRT_BLOOM_FILE)
+    .WROM_FILE(CRT_WROM_FILE), .LUT_FILE(CRT_LUT_FILE), .BLOOM_FILE(CRT_BLOOM_FILE),
+    .HAS_LIN(1), .SDEC_FILE(CRT_SDEC_FILE), .SENC_FILE(CRT_SENC_FILE), .SWROM_FILE(CRT_SWROM_FILE)
   ) my_crt_post (
     .clk(clk_148),
     .i_stb(w_m_stb),
@@ -340,6 +339,9 @@ module pal_to_ddr #(
     .i_mask(r_ctl_mask),
     .i_bloom(r_ctl_bloom),
     .i_lut(r_ctl_scan),       // the LUT page that goes with the beam profile
+    .i_lin(r_ratio),
+    .i_kern(r_ctl_kern),
+    .i_vphase(w_m_vphase),    // static per HD line, like w_m_phase
     .i_wwe(1'b0),
     .i_wwa(11'd0),
     .i_wwd(18'd0),
@@ -347,7 +349,7 @@ module pal_to_ddr #(
   );
   assign {w_crt_b, w_crt_g, w_crt_r} = w_crt_rgb;
 
-  // Horizontal beam spot on the Amiga stream, before both upsamplers.  Off
+  // Horizontal beam spot on the Amiga stream, before the upsampler.  Off
   // (OSD Beam width off, 31 kHz, RTG): w_bh_* = the input, bit for bit.
   wire [7:0] w_bh_r, w_bh_g, w_bh_b;
   wire       w_bh_hs, w_bh_vs, w_bh_hires, w_bh_shres;
@@ -370,10 +372,23 @@ module pal_to_ddr #(
   // Upscale the video signal using a line buffer
   // 'h80 -> 4cm -> right border
   // 'h00 -> 8cm -> right border
+  // The 60 Hz rate samples the HD hsync from adv_ddr's internal copy
+  // (hsync_out), as the 60 Hz upsampler always did; the pin dv_hsync comes
+  // from its pad copy (pad_hsync), so the pin timing and this input stay
+  // independent of each other.  The 50 Hz rate takes the generator's own.
+  wire w_adv_hsync;
+  // the line-buffer ring: 8 buffers, as before, in the line-rate mode, 16
+  // in the exact-ratio modes; the bench forces 16 in the line-rate mode
+  // too (tb_crt_frame +ring16)
+  reg  r_ring16 = 1'b0;
+  wire [7:0] w_m_vphase;
   pal_to_hd_upsample #(
   .PAL_HD_H_RES(1685),
-  .PAL_OFFSET_HZ('hd0 - CRT_LAT)
-  ) my50hzupsample(
+  .PAL_HD_H_RES60(1980), // Total pixels in a line
+  .PAL_OFFSET_HZ('hd0 - CRT_LAT),
+  .PAL_OFFSET_HZ60('h80 - CRT_LAT),
+  .RATIO_RDX(LIN_LAT)
+  ) myupsample (
     .clk_in(clk_114),
     .clk_out(clk_148),
     .reset(reset),
@@ -383,151 +398,67 @@ module pal_to_ddr #(
     .i_pal_r(w_bh_r),
     .i_pal_g(w_bh_g),
     .i_pal_b(w_bh_b),
+    // RTG: the undelayed HD vsync, at 60 Hz only (as before)
+    .i_rtg_enable(w_hz60 & i_rtg_enable),
+    .i_hz60(w_hz60),
+    .i_ring16(r_ring16 | r_ratio),
+    .i_ratio(r_ratio),
     // HD upsampled output
-    .o_hd_r(w_50_r),
-    .o_hd_g(w_50_g),
-    .o_hd_b(w_50_b),
-    .o_hd_vsync(w_50_vsync),
-    //.o_vblank_width(w_50_vblank_width),
-    .o_frame_end(w_50_frame_end),
+    .o_hd_r(w_up_r),
+    .o_hd_g(w_up_g),
+    .o_hd_b(w_up_b),
+    .o_hd_vsync(w_vsync),
+    .o_frame_end(w_frame_end),
     // HD sync pulse
-    .i_hd_hsync(w_50_hd_hsync),
-    .i_hd_vsync(w_50_hd_vsync),
-    .i_hd_clk(w_50_adv_clk),
+    .i_hd_hsync(r_50hz ? w_hd_gen_hsync : w_adv_hsync),
+    .i_hd_vsync(w_hd_vsync),
+    .i_hd_clk(w_adv_clk),
     // horizontal and vertical offsets
     .i_hd_hoffset(s_hoff1),
     .i_hd_voffset(s_voff1),
-    .i_rtg_enable(),
     // CRT
     .i_pal_hires(w_bh_hires),
     .i_pal_shres(w_bh_shres),
-    .o_hd_next(w_50_next),
-    .o_pix_stb(w_50_stb),
-    .o_line_start(w_50_lstart),
-    .o_line_phase(w_50_phase),
-    .o_line_hires(w_50_lhires)
+    .o_hd_next(w_m_nxt),
+    .o_pix_stb(w_m_stb),
+    .o_line_start(w_m_lstart),
+    .o_line_phase(w_m_phase),
+    .o_line_hires(w_m_lhires),
+    .o_vphase(w_m_vphase)
   );
 
-  // Generate the 720p Hsync and Vsync signals
+  // Generate the 720p Hsync and Vsync signals (720p50 / 720p60 by w_hz60)
   signal_generator #(
   .PAL_HZ_ACT_PIX(1280),
   .PAL_HZ_FRONT_PORCH(440),
+  .PAL_HZ_FRONT_PORCH60(110),
   .PAL_HZ_SYNC_WIDTH(40),
   .PAL_HZ_BACK_PORCH(220),
   .PAL_VT_ACT_LN(720),
   .PAL_VT_FRONT_PORCH(5),
   .PAL_VT_SYNC_WIDTH(5),
   .PAL_VT_BACK_PORCH(20)
-  ) hd_50hz_gen(
+  ) hd_gen (
     .clk(clk_148),
     .reset(reset),
-    .i_frame_end(w_50_frame_end),
+    .i_hz60(w_hz60),
+    .i_frame_end(w_frame_end),
     .i_r(w_crt_r),
     .i_g(w_crt_g),
     .i_b(w_crt_b),
     // Output signals
-    .o_x(w_50_x),
-    .o_y(w_50_y),
-    .o_r(w_50_o_r),
-    .o_g(w_50_o_g),
-    .o_b(w_50_o_b),
-    .o_adv_clk(w_50_adv_clk),
-    .o_hsync(w_50_hd_hsync),
-    .o_vsync(w_50_hd_vsync),
-    .o_adv_de(w_50_adv_de),
+    .o_x(),
+    .o_y(),
+    .o_r(w_o_r),
+    .o_g(w_o_g),
+    .o_b(w_o_b),
+    .o_adv_clk(w_adv_clk),
+    .o_hsync(w_hd_gen_hsync),
+    .o_vsync(w_hd_vsync),
+    .o_adv_de(w_adv_de),
     .o_frame()
   );
-
-  // Upscale the video signal using a line buffer
-  // adv_ddr's internal hsync (hsync_out), which the 60 Hz upsampler has always
-  // sampled; the pin dv_hsync comes from its pad copy (pad_hsync), so the pin
-  // timing and this upsampler's input stay independent of each other.
-  wire w_adv_hsync;
-
-  pal_to_hd_upsample #(
-  .PAL_HD_H_RES(1980), // Total pixels in a line
-  .PAL_OFFSET_HZ('h80 - CRT_LAT)
-  ) my60hzupsample (
-    .clk_out(clk_148),
-    .clk_in(clk_114),
-    .reset(reset),
-    // Pal input
-    .i_pal_hsync(w_bh_hs),
-    .i_pal_vsync(w_bh_vs),
-    .i_pal_r(w_bh_r),
-    .i_pal_g(w_bh_g),
-    .i_pal_b(w_bh_b),
-    // RTG
-    .i_rtg_enable(i_rtg_enable),
-    // HD upsampled output
-    .o_hd_r(w_60_r),
-    .o_hd_g(w_60_g),
-    .o_hd_b(w_60_b),
-    .o_hd_vsync(w_60_vsync),
-    .o_frame_end(w_60_frame_end),
-    // HD sync pulse
-    .i_hd_hsync(w_adv_hsync),
-    .i_hd_vsync(w_60_hd_vsync),
-    .i_hd_clk(w_50_adv_clk),
-    // horizontal and vertical offsets
-    .i_hd_hoffset(s_hoff1),
-    .i_hd_voffset(s_voff1),
-    // CRT
-    .i_pal_hires(w_bh_hires),
-    .i_pal_shres(w_bh_shres),
-    .o_hd_next(w_60_next),
-    .o_pix_stb(w_60_stb),
-    .o_line_start(w_60_lstart),
-    .o_line_phase(w_60_phase),
-    .o_line_hires(w_60_lhires)
-  );
-
-  // Generate the 720p Hsync and Vsync signals
-  signal_generator #(
-  .PAL_HZ_ACT_PIX(1280),
-  .PAL_HZ_FRONT_PORCH(110),
-  .PAL_HZ_SYNC_WIDTH(40),
-  .PAL_HZ_BACK_PORCH(220),
-  .PAL_VT_ACT_LN(720),
-  .PAL_VT_FRONT_PORCH(5),
-  .PAL_VT_SYNC_WIDTH(5),
-  .PAL_VT_BACK_PORCH(20)
-  ) hd_60hz_gen (
-    .clk(clk_148),
-    .reset(reset),
-    .i_frame_end(w_60_frame_end),
-    .i_r(w_crt_r),
-    .i_g(w_crt_g),
-    .i_b(w_crt_b),
-    // Output signals
-    .o_x(w_60_x),
-    .o_y(w_60_y),
-    .o_r(w_60_o_r),
-    .o_g(w_60_o_g),
-    .o_b(w_60_o_b),
-    .o_adv_clk(w_60_adv_clk),
-    .o_hsync(w_60_hd_hsync),
-    .o_vsync(w_60_hd_vsync),
-    .o_adv_de(w_60_adv_de),
-    .o_frame()
-  );
-
-
-  // Switch between 50 and 60 Hz video conversion
-  assign w_adv_clk  =
-  (r_50hz ? w_50_adv_clk : w_60_adv_clk);
-  assign w_hd_vsync =
-  (r_50hz ? w_50_hd_vsync : w_60_hd_vsync);
-  assign w_hd_hsync =
-  (r_50hz ? w_50_hd_hsync : w_60_hd_hsync);
-  assign w_vsync   =
-  (r_50hz ? w_50_vsync : w_60_vsync);
-  assign w_o_r     =
-  (r_50hz ? w_50_o_r : w_60_o_r);
-  assign w_o_g     =
-  (r_50hz ? w_50_o_g : w_60_o_g);
-  assign w_o_b     =
-  (r_50hz ? w_50_o_b : w_60_o_b);
+  assign w_hd_hsync = w_hd_gen_hsync;
 
   // ADV DDR output
   adv_ddr #(
