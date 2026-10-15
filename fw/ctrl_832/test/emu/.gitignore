@@ -1,0 +1,7 @@
+# built by make (see Makefile)
+*.asm
+*.o
+atapi_emu
+atapi_emu.log
+832e_ldt
+emusrc/
