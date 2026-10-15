@@ -214,7 +214,14 @@ always @(posedge clk_in) s_r16_in <= {s_r16_in[0], i_ring16};
 wire w_r16_in = s_r16_in[1];       // clk_in
 (* ASYNC_REG = "TRUE" *) reg [1:0] s_rat_in = 2'b00;
 always @(posedge clk_in) s_rat_in <= {s_rat_in[0], i_ratio};
-wire w_rat_in = s_rat_in[1];       // clk_in
+// (2026-10-15) A plain copy after the synchroniser: the line-end reload of
+// r_addra depends on it, so it reaches every copy of r_addra next to every
+// BRAM (stage_cdscaler2: s_rat_in[1] 264 loads, clk_114 -0.202 ns), and
+// Vivado does not replicate an ASYNC_REG flop.  One clk_in more on a bit
+// that only changes with the OSD setting.
+(* max_fanout = 16 *) reg r_rat_in = 1'b0;
+always @(posedge clk_in) r_rat_in <= s_rat_in[1];
+wire w_rat_in = r_rat_in;          // clk_in
 wire w_r16_o  = i_ring16;          // clk_out
 bram_tdp #(
   .DATA(24),
