@@ -378,7 +378,12 @@ begin
   // Write to dual port ram
   if (r_pix_en && ~i_pal_hsync)
   begin
-    r_addra <= w_r16_in ? r_addra + 1'b1 : {1'b0, r_addra[13:0] + 14'd1};
+    // (2026-10-15) Bits 13:0 count the same in both rings; only bit 14
+    // (the ring of 16's carry) depends on w_r16_in.  Written as a mux of
+    // two 15-bit sums, the synchroniser flop fed every copy of r_addra next
+    // to every BRAM (stage_cdscaler clk_114 -0.403 ns, 23 endpoints, 8.3 ns
+    // of routing from s_r16_in[1]).
+    r_addra <= {w_r16_in & (r_addra[14] ^ &r_addra[13:0]), r_addra[13:0] + 14'd1};
     r_wea <= 1'b1;
     r_dina <= {i_pal_b, i_pal_g, i_pal_r};
     if (r_wcnt != 11'h7FF)
