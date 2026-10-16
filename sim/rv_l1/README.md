@@ -14,6 +14,7 @@ seconds and needs no Vivado.
 | `run.sh` | Builds the simulator, runs one program or the whole matrix |
 | `Makefile` | Builds the test programs into `build/<prog>.hex` |
 | `sw/crt0_l1.S`, `sw/l1.ld`, `sw/l1.h` | Start-up code, linker script, MMIO header |
+| `sw/boot_fw.S` | Boot ROM stand-in for programs linked as firmware (`irq_sig`, `irq_c`, `exc`) |
 | `tests/` | Test programs (`.S` or `.c`) and expected memory dumps (`.mem`) |
 | `prog/Makefile`, `sw/syscalls.c`, `sw/l1_newlib.ld` | Firmware-unit programs (newlib-nano) and their runtime, see "Firmware units" |
 
@@ -52,7 +53,9 @@ bash sim/rv_l1/run.sh all          # gates + full matrix + teeth, ~1 min on 8 co
 * **matrix**: every program x `WS` {0, 3, 8} x `ROMWS` {0, 1} x `EXTRA_WS`
   {0, 3} must print `=== PASS`, and match `tests/<prog>.mem` if that exists;
 * **teeth**: `fencei_nofencei` (fencei without `fence.i`) over the same
-  matrix must print `=== FAIL 1` (the stale I$ line);
+  matrix must print `=== FAIL 1` (the stale I$ line); `irq_sig_mut`
+  (`irq_sig` with `fw/ctrl_rv/arch/trap.S` minus the restore of t3) must
+  print `=== FAIL 11c`;
 * **debug variant**: every program once with `DEBUG=2` (`VexOsd_DMJ`);
 * no run may print `=== BUS VIOLATION`.
 
@@ -62,6 +65,17 @@ EXTRA_WS=0 DEBUG=0`):
 ```sh
 bash sim/rv_l1/run.sh lanes
 WS=8 ROMWS=0 EXTRA_WS=3 bash sim/rv_l1/run.sh refill fencei
+```
+
+The interrupt and trap set (`fw/ctrl_rv/arch`): `irq`, `irq_sig`, `irq_c`
+and `exc` at `WS` 0, 3 and 8 (`ROMWS`, `EXTRA_WS`, `DEBUG` from the
+environment, defaults 1/0/0) plus `irq_sig_mut` once at `WS=3` (expected
+`=== FAIL 11c`); ends `=== IRQ PASS (13 runs)` or `=== IRQ FAILED`, summary in
+`run_${RUNTAG:-wt}/irq.txt`. (The name `irq` is this set; the `irq` program
+alone runs in it.)
+
+```sh
+bash sim/rv_l1/run.sh irq
 ```
 
 Outputs go to `sim/rv_l1/run_${RUNTAG:-wt}/` (one log per run, named
@@ -132,6 +146,14 @@ Decoded on `addr[7:2]`. Offsets for `x0`-relative access are in `sw/l1.h`
 | `0x2000` | `.text.entry`, `.text`, `.rodata`, `.data`, `.bss` |
 | `0x4000` | `.at4000`: fixed data (lanes) |
 
+Programs linked as firmware (`FWPROGS` in the `Makefile`: `irq_sig`,
+`irq_c`, `exc`, `irq_sig_mut`) use `fw/ctrl_rv/arch` instead (its `crt0.S`,
+`trap.S`, `trap.c`, `irq.c`, linked with its `firmware.ld`: `_start` at
+0x2000, stack top 0x2000 in the ROM region). The image is `sw/boot_fw.S`
+padded to 0x2000 bytes (reset: clear x1-x31, jump to 0x2000; trap at 0x20 as
+above until crt0 sets `mtvec`), then the firmware binary. `main` ends the
+run itself (`l1_done`): the firmware crt0 spins when `main` returns.
+
 ## Tests
 
 | Program | Checks |
@@ -141,13 +163,18 @@ Decoded on `addr[7:2]`. Offsets for `x0`-relative access are in `sw/l1.h`
 | `fencei` | code copied to 0x6000 by stores, run, overwritten, `fence.i`, run again = new code |
 | `fencei_nofencei` | same without `fence.i`: must end `=== FAIL 1` (teeth) |
 | `irq` | INTERRUPT disabled: no trap; enabled: one trap, `mcause` = `0x8000000B`, the handler's access clears the line |
+| `irq_sig` | firmware trap entry keeps every register: x1, x3-x30 patterns, 50 events at pseudo-random distances, C handler (`tests/irq_sig_h.c`) trashes the caller-saved registers; linked `--no-relax` (gp holds a pattern) |
+| `irq_c` | `fw/ctrl_rv/arch/irq.h` API: constructors, MIE/MEIE from crt0, default handler, `SetIntHandler`, `DisableInterrupts` loses events, `irq_save`/`irq_restore` nesting, handler switch while events arrive |
+| `exc` | illegal instruction, misaligned `lw`, misaligned `sh` through `rv_trap` to an `rv_exception` override: mcause 2/4/6, mepc, mtval, resume after the instruction |
+| `irq_sig_mut` | teeth: `irq_sig` with `trap.S` minus `lw t3`: must end `=== FAIL 11c` |
 
 ## Adding a program
 
 1. Write `tests/<name>.S` (entry `main` in `.section .text.entry`) or
    `tests/<name>.c` (`int main(void)`); `#include "l1.h"`. Return 0 for pass,
    a nonzero code for each failing check.
-2. Add `<name>` to `PROGS` in the `Makefile` and to `PROGS` in `run.sh` (or
+2. Add `<name>` to `PROGS` in the `Makefile` (or to `FWPROGS` with a link
+   rule, for a program linked as firmware) and to `PROGS` in `run.sh` (or
    to `TEETH` with an `expect_of` entry if it must fail).
 3. Optional: `tests/<name>.mem` with lines `<byte address> <BE word>` (hex,
    consecutive words); `run.sh` dumps that range after DONE and compares.

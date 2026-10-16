@@ -5,6 +5,7 @@
 #   bash sim/rv_l1/run.sh all          # full matrix + teeth + gates
 #   bash sim/rv_l1/run.sh lanes        # one program; WS, ROMWS, EXTRA_WS,
 #   WS=8 ROMWS=0 EXTRA_WS=3 bash sim/rv_l1/run.sh refill   # DEBUG from env
+#   bash sim/rv_l1/run.sh irq          # interrupt/trap set (below)
 #
 # Outputs: sim/rv_l1/run_${RUNTAG:-wt}/ (vvp images, one log per run,
 # results.txt).  JOBS= parallel vvp runs (default nproc).
@@ -15,9 +16,15 @@
 #   gate 2  DEBUG=1 fails elaboration (no rv_bscane2 until Task 14)
 #   matrix  every program in PROGS x WS {0,3,8} x ROMWS {0,1} x EXTRA_WS {0,3}
 #           must print "=== PASS" (and match tests/<prog>.mem if present)
-#   teeth   fencei_nofencei over the same matrix must print "=== FAIL 1"
+#   teeth   fencei_nofencei over the same matrix must print "=== FAIL 1",
+#           irq_sig_mut "=== FAIL 11c"
 #   debug   every program once with DEBUG=2 (WS=3 ROMWS=1)
 #   no run may print "=== BUS VIOLATION"
+#
+# "irq" = irq irq_sig irq_c exc x WS {0,3,8} (ROMWS, EXTRA_WS, DEBUG from env,
+#   default 1/0/0) must PASS, and irq_sig_mut (fw/ctrl_rv/arch/trap.S without
+#   the restore of t3) once at WS=3 must end "=== FAIL 11c" (x28 changed);
+#   ends "=== IRQ PASS" or "=== IRQ FAILED"
 #
 #   make -C sim/rv_l1/prog             # build the firmware units first
 #   bash sim/rv_l1/run.sh units        # atapi_emu cue_emu cdaudio_emu (WS=3
@@ -34,9 +41,10 @@ JOBS=${JOBS:-$(nproc)}
 run=$here/run_${RUNTAG:-wt}
 build=$here/build
 
-PROGS="lanes refill fencei irq"
+PROGS="lanes refill fencei irq irq_sig irq_c exc"
+IRQPROGS="irq irq_sig irq_c exc"
 UNITS="atapi_emu cue_emu cdaudio_emu"
-TEETH="fencei_nofencei"
+TEETH="fencei_nofencei irq_sig_mut"
 
 CORES="$top/rtl/host/vexriscv/VexOsd.v $top/rtl/host/vexriscv/VexOsd_DMT.v $top/rtl/host/vexriscv/VexOsd_DMJ.v"
 RTL="$top/rtl/host/rv_hostcpu.v $CORES"
@@ -46,6 +54,7 @@ BENCH="$here/tb_rv_l1.v $here/mem_model.v $here/bus_checker.v"
 expect_of() {
   case "$1" in
     fencei_nofencei) echo "fail:1" ;;
+    irq_sig_mut)     echo "fail:11c" ;;
     *)               echo "pass" ;;
   esac
 }
@@ -160,6 +169,20 @@ case "${1:-}" in
     if [ $rc -eq 0 ]; then echo "=== UNITS PASS"; else echo "=== UNITS FAILED"; fi
     exit $rc
     ;;
+  irq)
+    x=${EXTRA_WS:-0}; dbg=${DEBUG:-0}; r=${ROMWS:-1}
+    rm -f "$run/tb_x${x}_d${dbg}.vvp"
+    compile "$x" "$dbg" || exit 1
+    {
+      for p in $IRQPROGS; do for ws in 0 3 8; do echo "$p $ws $r $x $dbg"; done; done
+      echo "irq_sig_mut 3 $r $x $dbg"
+    } | xargs -P "$JOBS" -L1 bash "$0" __one | sort > "$run/irq.txt"
+    cat "$run/irq.txt"
+    n=$(grep -c '^PASS' "$run/irq.txt")
+    if grep -q '^FAIL' "$run/irq.txt" || [ "$n" -ne 13 ]; then echo "=== IRQ FAILED"; exit 1; fi
+    echo "=== IRQ PASS ($n runs)"
+    exit 0
+    ;;
   all)
     rm -f "$run"/*.vvp "$run"/*.log "$run/results.txt"
     fail=0
@@ -184,7 +207,7 @@ case "${1:-}" in
     exit $fail
     ;;
   ""|-h|--help)
-    sed -n '2,25p' "$0"; exit 0 ;;
+    sed -n '2,33p' "$0"; exit 0 ;;
   *)
     x=${EXTRA_WS:-0}; dbg=${DEBUG:-0}
     rm -f "$run/tb_x${x}_d${dbg}.vvp"

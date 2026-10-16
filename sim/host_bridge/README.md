@@ -4,9 +4,10 @@ The L2 bench runs small RISC-V programs from the boot BRAM on the real host
 side of the core. The bridge is `EightThirtyTwo_Bridge` with
 `cpu_riscv => true`: it holds `rv_hostcpu` + `VexOsd`, `OSDBoot_rv_ROM` (the
 test program) and `hostcache.v`. Behind it are the real `cfide` and an SDRAM
-model of the host port. It checks four things at the bridge's bus: the byte
+model of the host port. It checks five things at the bridge's bus: the byte
 lanes, the cfide register offsets, back-to-back hw accesses (the four-phase
-handshake) and the SPI busy wait.
+handshake), the SPI busy wait and cfide's interrupt through the firmware trap
+entry.
 
 The L1 bench (`sim/rv_l1`, iverilog) tests `rv_hostcpu` against an abstract
 memory. This bench uses Vivado's xsim because `cfide` and the bridge are VHDL.
@@ -19,7 +20,8 @@ memory. This bench uses Vivado's xsim because `cfide` and the bridge are VHDL.
 | `Makefile` | Test programs -> `<B>/<test>/OSDBoot_rv_ROM.vhd` (romgen, as `fw/ctrl_boot_832`) |
 | `sw/crt0_rom.S`, `sw/rom.ld` | Start-up (reset at 0x0, trap at 0x20, `sp` = 0x2000, `.bss`, `main`, PASS/FAIL on the UART, DONE) and the 8 KB BRAM layout |
 | `sw/hb.h`, `sw/check.h` | cfide register offsets, `CHECK` / `STAMP` macros |
-| `sw/t_*.S`, `sw/t_lanes.sdram.hex` | The four tests; the SDRAM preload of `t_lanes` |
+| `sw/t_*.S`, `sw/t_*.c`, `sw/t_lanes.sdram.hex` | The five tests; the SDRAM preload of `t_lanes` |
+| `sw/reset_fw.S` | Reset, trap at 0x20 and register clear for tests that start through `fw/ctrl_rv/arch/crt0.S` (`t_irq`) |
 | `stub/` | Task 6's elaboration check of the bridge's RISC-V branch (`stub/elab.sh`) |
 
 ## Prerequisites
@@ -57,11 +59,11 @@ Run only one xsim at a time.
 From the repository root:
 
 ```sh
-bash sim/host_bridge/run.sh all       # 4 tests x SLAT {2,8,20} x SJIT {0,8}: 24 runs, ~6 min
+bash sim/host_bridge/run.sh all       # 5 tests x SLAT {2,8,20} x SJIT {0,8}: 30 runs, ~8 min
 bash sim/host_bridge/run.sh mutant    # the four-phase handshake's teeth, ~2 min
 ```
 
-`all` ends with `=== ALL PASS (24 runs)` (exit 0) or `=== SOME FAILED`
+`all` ends with `=== ALL PASS (30 runs)` (exit 0) or `=== SOME FAILED`
 (exit 1). `mutant` ends with `=== MUTANT CAUGHT ...` (exit 0) or
 `=== MUTANT SURVIVED or CONTROL FAILED` (exit 1).
 
@@ -111,6 +113,8 @@ make -C sim/host_bridge B=/tmp/hb       # elsewhere
   - Writes happen at the ack.
   - It checks that addr, wr, q and sel do not change between accept and ack
     (`=== BUS VIOLATION`).
+- **vbl_int**: cfide's VBL interrupt input, 0 except in `t_irq` (pulses
+  from checkpoint 1, see the test table).
 - **SPI slave**: active while `sd_cs[1]` is low.
   - It samples `sd_do` on the rising edge of `sd_clk` and drives MISO from
     the falling edge.
@@ -177,7 +181,8 @@ is not the reference for lanes; `sdram_ctrl.v` is.
 ## Tests and expectations
 
 Every test prints `PASS` or `FAIL` on the cfide UART and writes its exit code
-to DONE. The exit code is 0, or the number of the first failing `CHECK`. An
+to DONE (`sw/crt0_rom.S` does it when `main` returns; `t_irq`, started
+through the firmware's `crt0.S`, does it in `main`). The exit code is 0, or the number of the first failing `CHECK`. An
 unexpected trap writes `0x8000 | mcause`.
 
 | Test | Program | Bench checks (`+TEST=`) |
@@ -185,6 +190,7 @@ unexpected trap writes `0x8000 | mcause`.
 | `t_lanes` | Loads of every width and alignment from SDRAM 0x4000 (preloaded bytes `11 22 .. 88`) and from `.rodata` in the boot BRAM. Stores of every width and alignment to SDRAM 0x3000.. and to BRAM 0x1800.., read back through the CPU; the SDRAM reads miss hostcache, because a write invalidates the line. | At the end, the SDRAM model's halfwords 0x3000..0x301F: `7856 34AB 01FF FFFF FF02 FFFF FFFF 03FF EFBE 0000 0000 FECA BBAA 9988 1122 3344`. |
 | `t_hwoff` | PLATFORM read = `0x0003` (halfword, byte and word); AUDIO read = `0x0001`. TIMER read twice: it advances by exactly 1. SPI: CS `0x02`, DATA `0x5A`, DATA read = `0xA5`, CS `0x03`. | STAMP 1/2: `scandoubler` 0/1 after PLATFORM writes 0/1. STAMP 3/4/5: `{audio_clear, audio_ena}` = 01/10/00. STAMP 6: `sd_cs = 0xFC`. STAMP 7: the slave got exactly one byte, `0x5A`. STAMP 8: `sd_cs = 0xFF`. |
 | `t_b2b` | 64 `sh` to PLATFORM (1, 0, 1, ...), 64 `sh` to AUDIO, then 32 `sb` to SPI CS (0x02, 0x03, ...). Each block is straight-line code and runs twice; the first call fills the I-cache, so the measured call has no line refill between the stores. Then it reads PLATFORM and AUDIO back; neither register reads back the written value. | 64 `scandoubler` toggles, ending at 0; 64 `audio_ena` toggles, ending at 0; 32 `sd_cs` changes `FC FF FC ...`. Each block prints its request gap. No stale ack. |
+| `t_irq` | Started through `fw/ctrl_rv/arch` (`sw/reset_fw.S`, then `crt0.S`, `trap_entry`, `rv_trap`; linked with `sw/rom.ld`). `SetIntHandler`, `EnableInterrupts`, STAMP 1, then waits for 20 handler calls (the handler counts and clears with `GetInterrupts()`), at most 100 TIMER steps; still 20 six TIMER steps later. | STAMP 1: start 20 `vbl_int` pulses, one `clk_28` cycle each, 2000 `clk_114` apart. STAMP 2: all 20 were sent. |
 | `t_spibusy` | `SPI_slow()` (SPEED `0xEF`, about 7700 `clk_114` per byte), CS `0x02`, 8 straight-line `sb` to SPI DATA (`01 80 55 AA FF 00 3C C3`), then a DATA read (`0x1C`, the 8th MISO byte), then CS `0x03`. | The slave got the 8 bytes in order. At least 7 DATA writes found `SD_busy` high. No DATA write completed without cfide accepting it. |
 
 ## Simulation fixes (run copies only)

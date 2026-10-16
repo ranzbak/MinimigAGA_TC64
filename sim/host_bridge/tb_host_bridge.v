@@ -25,6 +25,8 @@
 //   X on the bus no X in read data the bridge returns or in written bytes
 //   the SDRAM model's bus-contract checks
 // Test-specific checks (+TEST=<name>): see checkpoint() and final_checks().
+// t_irq: checkpoint 1 starts 20 vbl_int pulses into cfide (one clk_28 cycle
+// each, 2000 clk_114 apart); checkpoint 2 checks that all 20 were sent.
 //
 // Plusargs: +TEST=<name> +SLAT=<n> +SJIT=<n> +SEED=<n> +SDRAM_HEX=<file>
 //           +TIMEOUT=<clk_114 cycles> (default 3000000) +VERBOSE=1 (hw log),
@@ -81,6 +83,7 @@ module tb_host_bridge #(
   wire [7:0] sd_cs;
   wire       sd_clk, sd_do, miso;
   wire       scandoubler, audio_ena, audio_clear;
+  reg        vbl_int = 1'b0;     // t_irq: pulses from checkpoint 1
 
   cfide #(
     .spimux(1'b0), .havespirtc(1'b0), .havei2c(1'b0), .havevpos(1'b0)
@@ -92,7 +95,7 @@ module tb_host_bridge #(
     .debugTxD(), .debugRxD(1'b1), .menu_button(1'b1),
     .xadc_temp(16'h0000),
     .scandoubler(scandoubler), .audio_ena(audio_ena), .audio_clear(audio_clear),
-    .audio_buf(1'b1), .audio_amiga(1'b0), .vbl_int(1'b0), .interrupt(cfide_int),
+    .audio_buf(1'b1), .audio_amiga(1'b0), .vbl_int(vbl_int), .interrupt(cfide_int),
     .c64_keys(64'hFFFFFFFFFFFFFFFF), .amiga_key(), .amiga_key_stb(),
     .amiga_addr(8'h00), .amiga_d(16'h0000), .amiga_q(),
     .amiga_req(1'b0), .amiga_wr(1'b0), .amiga_ack(),
@@ -299,6 +302,25 @@ module tb_host_bridge #(
     end
   endtask
 
+  // t_irq pulse generator: vbl_int high for one clk_28 cycle (set after a
+  // clk_28 edge, cleared after the next: exactly one edge of cfide sees it),
+  // NPULSE times, PULSE_GAP clk_114 cycles apart.
+  localparam NPULSE = 20, PULSE_GAP = 2000;
+  integer pulses_sent = 0;
+  event   pulses_go;
+  always @(pulses_go) begin : pulser
+    integer k;
+    for (k = 0; k < NPULSE; k = k + 1) begin
+      repeat (PULSE_GAP) @(posedge clk114);
+      @(posedge clk28);
+      vbl_int <= 1'b1;
+      @(posedge clk28);
+      vbl_int <= 1'b0;
+      pulses_sent = pulses_sent + 1;
+      if (verbose) $display("%0d vbl_int pulse %0d", cyc, pulses_sent);
+    end
+  end
+
   task checkpoint(input [31:0] v);
     integer k;
     begin
@@ -351,6 +373,15 @@ module tb_host_bridge #(
                b2b_on = 0;
              end
           default: bench_error("t_b2b: unknown checkpoint");
+        endcase
+      end else if (test == "t_irq") begin
+        case (v)
+          1: -> pulses_go;
+          2: begin
+               $display("t_irq: %0d vbl_int pulses sent", pulses_sent);
+               expect_pin("vbl_int pulses sent", pulses_sent, NPULSE);
+             end
+          default: bench_error("t_irq: unknown checkpoint");
         endcase
       end else if (test == "t_spibusy") begin
         case (v)

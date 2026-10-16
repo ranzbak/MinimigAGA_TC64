@@ -1,7 +1,10 @@
 /* L2 host-bridge test ROM: everything in the 8 KB boot BRAM 0x0-0x1FFF.
  *   0x0000  reset vector          (.text.reset)
  *   0x0020  trap entry            (.text.trap, mtvec reset value)
- *   ....    crt0, text, rodata, data, bss
+ *   ....    crt0, text, rodata, init_array, data, bss
+ *           (init_array and the symbols __init_array_start/_end for tests
+ *           linked with the firmware start-up fw/ctrl_rv/arch/crt0.S, see
+ *           sw/reset_fw.S; no __global_pointer$, so no gp-relative code)
  *   0x1800  .scratch: 256 bytes the tests store into (t_lanes); NOLOAD
  *   stack: 0x2000 down to the end of .scratch
  * The linker refuses overlapping sections, so a program that grows into
@@ -21,6 +24,13 @@ SECTIONS
     .trap  0x0020 : { KEEP(*(.text.trap)) . = ALIGN(4); } > BRAM
     .text         : { KEEP(*(.text.crt0)) *(.text) *(.text.*) . = ALIGN(4); } > BRAM
     .rodata       : { . = ALIGN(4); *(.rodata) *(.rodata.*) *(.srodata) *(.srodata.*) . = ALIGN(4); } > BRAM
+    .init_array   : {
+        . = ALIGN(4);
+        __init_array_start = .;
+        KEEP(*(SORT_BY_INIT_PRIORITY(.init_array.*)))
+        KEEP(*(.init_array))
+        __init_array_end = .;
+    } > BRAM
     .data         : { . = ALIGN(4); *(.data) *(.data.*) *(.sdata) *(.sdata.*) . = ALIGN(4); } > BRAM
     .bss (NOLOAD) : {
         . = ALIGN(4);
