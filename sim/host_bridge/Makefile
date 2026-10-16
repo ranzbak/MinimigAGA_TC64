@@ -6,6 +6,8 @@
 #   make -C sim/host_bridge                 # into sim/host_bridge/build
 #   make -C sim/host_bridge B=<dir>         # run.sh: into its run directory
 # A test is sw/<name>.S or sw/<name>.c; add its name to TESTS.
+# dhry is a 2-instruction ROM that jumps to 0x2000 (no crt0_rom.S); the firmware
+# comes from fw/dhrystone_rv through +SDRAM_HEX (run.sh dhry).
 # FWTESTS (C) start through the firmware start-up instead of sw/crt0_rom.S:
 # sw/reset_fw.S (reset, trap 0x20, register clear) + fw/ctrl_rv/arch (crt0,
 # trap entry, irq API), still linked with sw/rom.ld.
@@ -13,7 +15,7 @@ TOP := $(abspath $(CURDIR)/../..)
 include $(TOP)/tools/riscv/toolchain.mk
 
 B       ?= build
-TESTS   ?= t_lanes t_hwoff t_b2b t_spibusy t_irq
+TESTS   ?= t_lanes t_hwoff t_b2b t_spibusy t_irq dhry
 FWTESTS := t_irq
 ARCH    := $(TOP)/fw/ctrl_rv/arch
 ROMGEN  := $(TOP)/fw/romgen/romgen
@@ -72,6 +74,9 @@ $(B)/arch/%.o: $(ARCH)/%.c $(ARCH)/irq.h $(ARCH)/csr.h
 
 $(FWTESTS:%=$(B)/%/prog.elf): $(B)/%/prog.elf: $(B)/reset_fw.o $(ARCH_OBJS) $(B)/%/prog.o sw/rom.ld
 	$(RV_CC) $(LDFLAGS) -o $@ $(B)/reset_fw.o $(ARCH_OBJS) $(B)/$*/prog.o $(RV_LIBS_FW)
+
+$(B)/dhry/prog.elf: $(B)/dhry/prog.o sw/rom.ld
+	$(RV_CC) $(LDFLAGS) -o $@ $(B)/dhry/prog.o $(RV_LIBS_FW)
 
 $(B)/%/prog.bin: $(B)/%/prog.elf
 	$(RV_OBJCOPY) -O binary $< $@

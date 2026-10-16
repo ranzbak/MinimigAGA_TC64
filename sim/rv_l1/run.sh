@@ -31,6 +31,13 @@
 #                                      # ROMWS=1 by default); verdict as the emu
 #                                      # Makefile: no line "FAIL...", a line
 #                                      # exactly "PASS", bench "=== PASS"
+#
+#   make -C fw/dhrystone_rv            # build the Dhrystone images first
+#   bash sim/rv_l1/run.sh dhry         # fw/dhrystone_rv -O2 and -Os, WS=3 ROMWS=1
+#                                      # (WS, ROMWS, EXTRA_WS, DEBUG from env); each
+#                                      # must PASS with no "should be" line, "Result
+#                                      # checks" wrong = 0; the cycles between the
+#                                      # TIME 1 and TIME 2 stamps are the result
 set -u
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -183,6 +190,26 @@ case "${1:-}" in
     echo "=== IRQ PASS ($n runs)"
     exit 0
     ;;
+  dhry)
+    # Dhrystone (fw/dhrystone_rv): own result checks + the TIME 1..2 cycles
+    x=${EXTRA_WS:-0}; dbg=${DEBUG:-0}
+    rm -f "$run/tb_x${x}_d${dbg}.vvp"
+    compile "$x" "$dbg" || exit 1
+    make -s -C "$top/fw/dhrystone_rv" l1_O2.hex l1_Os.hex || exit 1
+    rc=0
+    for o in O2 Os; do
+      cp "$top/fw/dhrystone_rv/l1_$o.hex" "$build/dhry_$o.hex" || exit 1
+      one "dhry_$o" "${WS:-3}" "${ROMWS:-1}" "$x" "$dbg" || rc=1
+      log=$run/dhry_${o}_ws${WS:-3}_r${ROMWS:-1}_x${x}_d${dbg}.log
+      if grep -q 'should be' "$log"; then echo "FAIL dhry_$o: result check mismatch"; grep 'should be' "$log"; rc=1; fi
+      grep -q '^Result checks: [0-9]* compared, 0 wrong' "$log" || { echo "FAIL dhry_$o: no 'Result checks ... 0 wrong' line"; rc=1; }
+      t1=$(sed -n 's/^=== TIME 1 cycle //p' "$log"); t2=$(sed -n 's/^=== TIME 2 cycle //p' "$log")
+      if [ -n "$t1" ] && [ -n "$t2" ]; then
+        echo "dhry_$o: $((t2 - t1)) cycles per 100 runs (WS=${WS:-3} ROMWS=${ROMWS:-1} EXTRA_WS=$x)"
+      else echo "FAIL dhry_$o: TIME stamps missing"; rc=1; fi
+    done
+    exit $rc
+    ;;
   all)
     rm -f "$run"/*.vvp "$run"/*.log "$run/results.txt"
     fail=0
@@ -207,7 +234,7 @@ case "${1:-}" in
     exit $fail
     ;;
   ""|-h|--help)
-    sed -n '2,33p' "$0"; exit 0 ;;
+    sed -n '2,40p' "$0"; exit 0 ;;
   *)
     x=${EXTRA_WS:-0}; dbg=${DEBUG:-0}
     rm -f "$run/tb_x${x}_d${dbg}.vvp"

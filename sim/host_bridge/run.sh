@@ -168,6 +168,7 @@ one() {
 	local snap=$1 t=$2 s=$3 j=$4 exp=$5 label=$6
 	local log="$run/${snap}_s${s}_j${j}.log" hex=""
 	[ -f "$HERE/sw/$t.sdram.hex" ] && hex="-testplusarg SDRAM_HEX=$HERE/sw/$t.sdram.hex"
+	[ -n "${SDRAM_HEX_FILE:-}" ] && hex="-testplusarg SDRAM_HEX=$SDRAM_HEX_FILE"
 	# shellcheck disable=SC2046,SC2086
 	"$VIVADO_PATH/bin/xsim" "$snap" -R --onfinish quit -testplusarg "TEST=$t" \
 		-testplusarg "SLAT=$s" -testplusarg "SJIT=$j" -testplusarg "SEED=${SEED:-1}" $hex \
@@ -265,6 +266,27 @@ case "${1:-}" in
 		} | tee "$run/results.txt"
 		if grep -q '^BAD' "$run/results.txt"; then echo "=== MUTANT SURVIVED or CONTROL FAILED"; exit 1; fi
 		echo "=== MUTANT CAUGHT ($(grep -c '^ok.*gate' "$run/results.txt") gate runs FAIL, $(grep -c '^ok.*control' "$run/results.txt") control runs PASS)"
+		;;
+	dhry)
+		opt=${DHRY_OPT:-O2}
+		make -s -C "$ROOT/fw/dhrystone_rv" "l2_$opt.hex" || die "make fw/dhrystone_rv l2_$opt.hex"
+		export SDRAM_HEX_FILE="$ROOT/fw/dhrystone_rv/l2_$opt.hex"
+		XARGS="${XARGS:-} +TIMEOUT=${DHRY_TIMEOUT:-40000000}"
+		setup
+		variant 832_bridge.vhd rv_hostcpu.v
+		snapshot dhry "tb_dhry_x$XW"
+		rc=0
+		one "tb_dhry_x$XW" dhry "${SLAT:-8}" "${SJIT:-0}" PASS "" || rc=1
+		log="$run/tb_dhry_x${XW}_s${SLAT:-8}_j${SJIT:-0}.log"
+		grep -E '^UART: ' "$log"
+		if grep -q 'should be' "$log"; then echo "BAD  Dhrystone result check mismatch"; rc=1; fi
+		grep -q '^UART: Result checks: [0-9]* compared, 0 wrong' "$log" || { echo "BAD  no 'Result checks ... 0 wrong' line"; rc=1; }
+		t1=$(sed -n 's/^=== TIME 1 cycle //p' "$log"); t2=$(sed -n 's/^=== TIME 2 cycle //p' "$log")
+		if [ -n "$t1" ] && [ -n "$t2" ]; then
+			echo "dhry_$opt L2: $((t2 - t1)) cycles per 100 runs (SLAT=${SLAT:-8} SJIT=${SJIT:-0} EXTRA_WS=$XW)"
+		else echo "BAD  TIME stamps missing"; rc=1; fi
+		grep -E '^=== (HW accesses)' "$log"
+		exit $rc
 		;;
 	*)
 		setup
