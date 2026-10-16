@@ -393,9 +393,21 @@ void cda_port_claim(void)
 }
 #endif
 
+/* Set while CD_HandleCommand runs: cd_wait reads the port's flags itself
+   right after its poll and must see an rst_seen there (the command ends). */
+static int cd_in_command;
+
 void CD_AudioPoll(void)
 {
 	uint32_t n;
+	/* An Amiga reset with no port-2 command after it (a floppy game, no
+	   atapi.device) would leave the music playing: outside a CD command the
+	   poll reads the CD port's flags, and CD_Flags stops the player on
+	   rst_seen (13.7).  Reading the flags consumes nothing else. */
+	if (!cd_in_command && cdrom.active && cda_busy()) {
+		int port = cdrom.slot >> 1;
+		CD_Flags(port, ReadIDEFlags(port));
+	}
 	cda_poll();
 	n = cda_underruns();
 	if (n != cd_underruns) {
@@ -760,6 +772,7 @@ static void cd_identify(unsigned char *tfr)
 
 void CD_HandleCommand(int port, unsigned char *tfr)
 {
+	cd_in_command = 1;
 	if (DebugMode)
 		printf("CD%d ATA %02X fe %02X sc %02X bc %02X%02X dh %02X\r\n",
 		       port + 1, tfr[7], tfr[1], tfr[2], tfr[5], tfr[4], tfr[6]);
@@ -793,4 +806,5 @@ void CD_HandleCommand(int port, unsigned char *tfr)
 		cd_abort(tfr);
 		break;
 	}
+	cd_in_command = 0;
 }

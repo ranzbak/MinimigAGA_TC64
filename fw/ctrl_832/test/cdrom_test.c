@@ -1313,6 +1313,21 @@ static void t_volume_select(void)
 	end();
 }
 
+/* Review fix (2026-10-16): an Amiga reset while the music plays and no
+   port-2 command follows (a floppy game, a system without atapi.device)
+   must stop the player at the next main-loop poll (13.7 "reset: stop"). */
+static void t_reset_idle(void)
+{
+	begin("Amiga reset while playing, no command after it: the main-loop poll stops the music");
+	playing_mixed();
+	EXPECT(cda_status() == CDA_PLAYING, "player: %02X", (unsigned)cda_status());
+	g.rst_pending = 1;	/* Ctrl-A-A: the CD port's rst_seen, nothing else */
+	CD_AudioPoll();
+	EXPECT(cda_status() == CDA_IDLE && !audio_ena, "after reset: player %02X ena %d",
+	       (unsigned)cda_status(), audio_ena);
+	end();
+}
+
 static void t_playing_track(void)
 {
 	uint8_t c[12];
@@ -1366,6 +1381,7 @@ int main(void)
 	t_play();
 	t_play_refused();
 	t_play_stops();
+	t_reset_idle();
 	t_read_cd();
 	t_volume_select();
 	t_playing_track();
