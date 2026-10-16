@@ -948,6 +948,11 @@ unsigned char OpenHardfile(unsigned int unit)
 		    GetHardfileGeometry(&hdf[unit]);
 			return 1;
 			break;
+		case HDF_CDROM:
+			// The CD drive's slot: cdrom.c's CD_Open opens it (ApplyCDROM, after
+			// this loop) and reads present as the ISO / CUE marker of the name;
+			// clearing it here turned a CUE in the config into NAME.ISO.
+			return 0;
 	}
     hf->present = 0;
     return 0;
