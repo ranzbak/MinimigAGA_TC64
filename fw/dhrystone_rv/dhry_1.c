@@ -239,6 +239,11 @@ int main ()
 
 Check_Count = 0;
 Check_Errors = 0;
+#ifdef DHRY_CHECK_TEETH
+/* teeth for the result checks (sim/rv_l1/run.sh dhry): one wrong value must
+   give one "should be" line, "1 wrong" and a nonzero exit code */
+Int_Glob = 6;
+#endif
 printf("Checking results...\n");
 
 checkparam("Int_Glob",Int_Glob,5);

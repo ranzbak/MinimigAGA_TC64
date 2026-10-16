@@ -13,7 +13,11 @@
 #define L1_IRQAT_ADDR   0xFFFFFF08  /* W: interrupt event <value> cycles from now   */
 #define L1_SCRATCH_ADDR 0xFFFFFF0C  /* R/W: 16-bit scratch register (sel honoured)  */
 #define L1_INTR_ADDR    0xFFFFFFA0  /* W bit 0 = enable; any access clears pending  */
-#define L1_UART_ADDR    0xFFFFFFF0  /* W: character out; R: 0x0100 (TX ready)       */
+#define L1_UART_ADDR    0xFFFFFFF0  /* W: character out.  Never read it: cfide never
+                                       acks a UART read (the CPU would hang), and the
+                                       model fails the run ("=== FAIL uart read").
+                                       There is no TX-ready bit; cfide holds a write
+                                       until the transmitter takes it. */
 
 #define L1_TIME_OFS     (-256)
 #define L1_DONE_OFS     (-252)

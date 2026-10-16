@@ -233,7 +233,9 @@ module tb_host_bridge #(
   wire [31:0] hwa      = {hostaddr, 2'b00};
   wire        spi_data = hostaddr[23] && hostaddr[7:4] == 4'hE && hostaddr[3:2] == 2'b00;
 
-  // stale ack: no clk_28 edge saw this request's hw_req
+  // stale ack: no clk_28 edge saw this request's hw_req.  Re-armed when
+  // hw_req rises and when an access completes (below), so a request that
+  // follows a completed one with hw_req still high is checked as well.
   reg c28_seen = 1'b0;
   always @(posedge hw_req) c28_seen = 1'b0;
   always @(posedge clk28) if (hw_req === 1'b1) c28_seen = 1'b1;
@@ -253,7 +255,9 @@ module tb_host_bridge #(
   reg [31:0] done_code = 32'h0;
 
   // X on the CPU bus: read data the bridge returns (cpu_d, read
-  // hierarchically) in its ack cycle, write data on the lanes sel enables.
+  // hierarchically) in its ack cycle, write data on the lanes sel enables
+  // (SDRAM/BRAM, addr[23] = 0) or on the 16 bits cfide takes (addr[23] = 1:
+  // no byte swap, cfide's d = q[15:0] whatever sel says).
   // The core treats an X branch condition as "not taken", so a CHECK
   // against X data would pass: the bench fails the run instead.
   integer n_x = 0;
@@ -264,7 +268,8 @@ module tb_host_bridge #(
   wire [31:0] cpu_q = hostcpu.cpu_q;
   wire [3:0]  cpu_sel = hostcpu.cpu_sel;
   wire [31:2] cpu_addr = hostcpu.cpu_addr;
-  wire [31:0] cpu_wmask = {{8{cpu_sel[0]}}, {8{cpu_sel[1]}}, {8{cpu_sel[2]}}, {8{cpu_sel[3]}}};
+  wire [31:0] cpu_wmask = cpu_addr[23] ? 32'h0000FFFF :
+                          {{8{cpu_sel[0]}}, {8{cpu_sel[1]}}, {8{cpu_sel[2]}}, {8{cpu_sel[3]}}};
   wire [31:0] cpu_rmask = cpu_addr[23] ? 32'h0000FFFF : 32'hFFFFFFFF;
   always @(posedge clk114) if (cpu_reset_n && cpu_ack === 1'b1) begin
     if (!cpu_wr && ^(cpu_d & cpu_rmask) === 1'bx || cpu_wr && ^(cpu_q & cpu_wmask) === 1'bx) begin
@@ -324,6 +329,7 @@ module tb_host_bridge #(
                    cyc, host_we ? "write" : "read", hwa);
         errors = errors + 1;
       end
+      c28_seen = 1'b0;     // re-arm for the next request
       if (host_we && spi_data && !spi_acc) begin
         $display("BENCH ERROR at cycle %0d: SPI DATA write %h completed, cfide did not accept it (SD_busy high)",
                  cyc, hostWR[7:0]);

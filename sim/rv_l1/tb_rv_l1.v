@@ -8,7 +8,10 @@
 //           +DUMP_ADDR=<hex byte address> +DUMP_N=<words>  (dump after DONE)
 //           +VCD=<file>
 // Results: "=== PASS" (DONE 0), "=== FAIL <code>" (DONE code, hex),
-//          "=== FAIL bus violation", "=== FAIL bad address", "=== TIMEOUT".
+//          "=== FAIL bus violation", "=== FAIL bad address",
+//          "=== FAIL uart read" (a read of 0xFFFFFFF0: cfide never acks it),
+//          "=== TIMEOUT"; the memory model ends the run at time 0 with
+//          "=== FAIL ..." when +HEX cannot be read.
 module tb_rv_l1;
   parameter EXTRA_WS = 0;
   parameter DEBUG    = 0;
@@ -23,7 +26,7 @@ module tb_rv_l1;
   wire [31:2] addr;
   wire [31:0] q, d;
   wire [3:0]  sel;
-  wire        wr, req, ack, irq, done, bad_addr, violation, jtag_tdo;
+  wire        wr, req, ack, irq, done, bad_addr, uart_rd, violation, jtag_tdo;
   wire [15:0] done_code;
   wire        jtck, jtms, jtdi;
 
@@ -45,7 +48,7 @@ module tb_rv_l1;
   mem_model mem (
     .clk(clk), .rst(rst), .addr(addr), .q(q), .sel(sel), .wr(wr), .req(req),
     .ack(ack), .d(d), .irq(irq), .done(done), .done_code(done_code),
-    .bad_addr(bad_addr));
+    .bad_addr(bad_addr), .uart_rd(uart_rd));
 
   bus_checker chk (
     .clk(clk), .rst(rst), .req(req), .ack(ack), .wr(wr), .addr(addr), .q(q),
@@ -53,7 +56,7 @@ module tb_rv_l1;
 
   integer    timeout, dump_n, k;
   reg [31:0] dump_addr;
-  reg [1023:0] vcdfile;
+  reg [8*1024-1:0] vcdfile;
   reg [63:0] cycles;
 
   initial begin
@@ -91,6 +94,9 @@ module tb_rv_l1;
         finish_run;
       end else if (bad_addr) begin
         $display("=== FAIL bad address");
+        finish_run;
+      end else if (uart_rd) begin
+        $display("=== FAIL uart read");
         finish_run;
       end else if (done) begin
         for (k = 0; k < dump_n; k = k + 1)

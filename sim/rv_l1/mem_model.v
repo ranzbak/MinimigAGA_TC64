@@ -2,9 +2,11 @@
 //
 // Memory: 1 MB of big-endian words (byte A+0 in bits 31:24: the lane
 // rule's memory side, as rtl/sdram/sdram_ctrl.v), 0x00000000-0x000FFFFF,
-// loaded by $readmemh from +HEX=<file> (one BE word per line, file byte i
-// in lane i = the romgen order); everything else 0.  sel[i] writes byte A+i,
-// i.e. bits 31-8i:24-8i.
+// loaded from +HEX=<file> (one BE hex word per line, file byte i in lane i =
+// the romgen order, no "@" addresses), word 0 first; everything else 0.  A
+// missing or unreadable file, or one larger than 1 MB, ends the run at time 0
+// with "=== FAIL" (no silent all-zero memory).  sel[i] writes byte A+i, i.e.
+// bits 31-8i:24-8i.
 //
 // Latency (cycles from the accepting cycle to the ack cycle):
 //   addr < 0x2000 (ROM region)  1 + ROMWS   (+ROMWS=, default 1)
@@ -22,7 +24,11 @@
 //   0xFFFFFF0C SCRATCH  R/W sel[0] -> bits 7:0, sel[1] -> bits 15:8
 //   0xFFFFFFA0 INTR     W   bit 0 = enable; any access clears pending;
 //                           an event sets pending if enabled (cfide-like)
-//   0xFFFFFFF0 UART     W   character out ($write); R = 0x0100 (TX ready)
+//   0xFFFFFFF0 UART     W   character out ($write).  A read fails the run
+//                           (uart_rd): cfide never acks a UART read, so on
+//                           the real bus the CPU would hang; there is no
+//                           TX-ready bit (cfide holds a write until the
+//                           transmitter takes it).
 // irq = pending.  Any memory access at or above 1 MB with addr[23] = 0
 // prints "=== BAD ADDRESS" and raises bad_addr.
 module mem_model (
@@ -38,19 +44,44 @@ module mem_model (
   output wire        irq,
   output reg         done,
   output reg  [15:0] done_code,
-  output reg         bad_addr
+  output reg         bad_addr,
+  output reg         uart_rd
 );
   localparam MEMWORDS = 262144;          // 1 MB
   reg [31:0] mem [0:MEMWORDS-1];
 
-  integer ws, romws, i;
-  reg [1023:0] hexfile;
+  integer ws, romws, i, fd, rc, eof;
+  reg [8*1024-1:0] hexfile;          // +HEX path, up to 1024 characters
+  reg [31:0] w;
   initial begin
     if (!$value$plusargs("WS=%d", ws))       ws = 3;
     if (!$value$plusargs("ROMWS=%d", romws)) romws = 1;
     for (i = 0; i < MEMWORDS; i = i + 1) mem[i] = 32'h0;
-    if ($value$plusargs("HEX=%s", hexfile)) $readmemh(hexfile, mem);
-    else $display("=== WARNING no +HEX=<file>, memory is all zero");
+    if ($value$plusargs("HEX=%s", hexfile)) begin : load
+      fd = $fopen(hexfile, "r");
+      if (fd == 0) begin
+        $display("=== FAIL cannot open +HEX=%0s", hexfile);
+        $finish;
+        disable load;
+      end
+      // word by word: $readmemh would warn on every image shorter than 1 MB
+      i = 0;
+      rc = $fscanf(fd, "%h", w);
+      while (rc == 1 && i < MEMWORDS) begin
+        mem[i] = w;
+        i = i + 1;
+        rc = $fscanf(fd, "%h", w);
+      end
+      eof = $feof(fd);
+      $fclose(fd);
+      if (rc == 1 || !eof) begin
+        $display("=== FAIL +HEX=%0s: %0s after word %0d", hexfile,
+                 rc == 1 ? "more than 1 MB" : "not a hex word", i);
+        $finish;
+        disable load;
+      end
+      $display("=== MEMLOAD %0d words from %0s", i, hexfile);
+    end else $display("=== WARNING no +HEX=<file>, memory is all zero");
     $display("=== MEMCFG WS=%0d ROMWS=%0d", ws, romws);
   end
 
@@ -102,7 +133,10 @@ module mem_model (
         end else begin
           case (r)
             8'h0C:   d <= {16'h0, scratch};
-            8'hF0:   d <= 32'h0000_0100;
+            8'hF0:   begin
+                       $display("=== UART READ at cycle %0d: cfide never acks a read of 0xFFFFFFF0, the CPU would hang", cycle);
+                       uart_rd <= 1'b1;
+                     end
             default: d <= 32'h0;
           endcase
         end
@@ -125,7 +159,7 @@ module mem_model (
   always @(posedge clk) begin
     if (rst) begin
       ack <= 1'b0; d <= 32'h0; busy <= 1'b0; cnt <= 0; cycle <= 64'd0;
-      done <= 1'b0; done_code <= 16'h0; bad_addr <= 1'b0;
+      done <= 1'b0; done_code <= 16'h0; bad_addr <= 1'b0; uart_rd <= 1'b0;
       scratch <= 16'h0; intr_ena <= 1'b0; pending <= 1'b0; irq_cnt <= 0;
     end else begin
       cycle <= cycle + 64'd1;

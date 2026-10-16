@@ -40,7 +40,7 @@ module dm_smoke;
   reg  [31:0] target;     // x11 written by the debugger: DM_CNT at DONE
   integer     idle, busy_retries, drop_cycles;   // drop_cycles: rising edges of drop
   reg  [63:0] r;
-  reg  [31:0] v, x10a, x10b, x10c, x12, cnt;
+  reg  [31:0] v, dmctl, x10a, x10b, x10c, x12, cnt;
   integer     i;
 
   initial begin complete = 1'b0; target = 32'hFFFF_FFFF; busy_retries = 0; drop_cycles = 0; end
@@ -206,11 +206,12 @@ module dm_smoke;
       if (i > 20) fail_dm("dmcontrol.dmactive reads 0", v);
       dmi_rd(DMCONTROL, v);
     end
+    dmctl = v;
     dmi_rd(DMSTATUS, v);
     if (v[3:0] != 4'd2) fail_dm("dmstatus.version != 2", v);
     if (!v[7])          fail_dm("dmstatus.authenticated = 0", v);
     if (!v[11])         fail_dm("dmstatus.allrunning = 0", v);
-    $display("=== DM 3 dmcontrol %08x dmstatus %08x", 32'h1, v);
+    $display("=== DM 3 dmcontrol %08x dmstatus %08x", dmctl, v);
     // havereset is set from the power-on reset: acknowledge it, so step 8
     // sees the one ndmreset causes
     dmi_wr(DMCONTROL, DMACTIVE | ACKHAVERESET);

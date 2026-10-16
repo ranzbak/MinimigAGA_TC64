@@ -60,7 +60,8 @@ bash sim/rv_l1/run.sh all          # gates + full matrix + teeth, ~1 min on 8 co
 * **teeth**: `fencei_nofencei` (fencei without `fence.i`) over the same
   matrix must print `=== FAIL 1` (the stale I$ line); `irq_sig_mut`
   (`irq_sig` with `fw/ctrl_rv/arch/trap.S` minus the restore of t3) must
-  print `=== FAIL 11c`;
+  print `=== FAIL 11c`; `uart_read` (a read of the cfide UART register) once
+  at `WS=3 ROMWS=1` must print `=== FAIL uart read`;
 * **debug variant**: every program once with `DEBUG=2` (`VexOsd_DMJ`);
 * **dm**: `dm_smoke` (below) at `WS` {0, 3, 8} x `EXTRA_WS` {0, 3};
 * no run may print `=== BUS VIOLATION`.
@@ -140,7 +141,9 @@ vvp -N /tmp/l1.vvp +HEX=build/lanes.hex +WS=3 +ROMWS=1 +VCD=/tmp/lanes.vcd
 ## Bench
 
 * **Plusargs**: `+HEX=<file>` (one 32-bit BE word per line, file byte i in
-  lane i: the romgen order), `+WS=` (default 3), `+ROMWS=` (default 1),
+  lane i: the romgen order; the path may be up to 1024 characters; a file
+  that cannot be opened or read ends the run at once with `=== FAIL ...`),
+  `+WS=` (default 3), `+ROMWS=` (default 1),
   `+TIMEOUT=<cycles>` (default 20 M), `+DUMP_ADDR=<hex> +DUMP_N=<words>`
   (print `=== MEM <addr> <word>` after DONE), `+VCD=<file>`.
 * **Parameters** (`iverilog -P tb_rv_l1.<name>=<n>`): `EXTRA_WS` (idle
@@ -151,7 +154,8 @@ vvp -N /tmp/l1.vvp +HEX=build/lanes.hex +WS=3 +ROMWS=1 +VCD=/tmp/lanes.vcd
   `iverilog -g2012 -DDM_SMOKE -s tb_rv_l1 -P tb_rv_l1.DEBUG=2 -o /tmp/dm.vvp tb_rv_l1.v mem_model.v bus_checker.v jtag_bfm.v tests/dm_smoke.v ../../rtl/host/rv_hostcpu.v ../../rtl/host/vexriscv/VexOsd*.v`
   and `vvp -N /tmp/dm.vvp +HEX=build/dm_smoke.hex`.
 * **Results**: `=== PASS` (DONE 0), `=== FAIL <code>` (DONE code in hex),
-  `=== FAIL bus violation`, `=== FAIL bad address`, `=== TIMEOUT`; every run
+  `=== FAIL bus violation`, `=== FAIL bad address`, `=== FAIL uart read`,
+  `=== TIMEOUT`; every run
   also prints `=== STATS` (I$ line refills, dBus reads/writes, busy cycles)
   and `=== CYCLES`.
 * **Clock**: 8.8154 ns (`clk_114`).
@@ -183,7 +187,7 @@ Decoded on `addr[7:2]`. Offsets for `x0`-relative access are in `sw/l1.h`
 | `0xFFFFFF08` | IRQ_AT | W: interrupt event `<value>` cycles later (one timer) |
 | `0xFFFFFF0C` | SCRATCH | R/W 16-bit; `sel[0]` writes bits 7:0, `sel[1]` bits 15:8 |
 | `0xFFFFFFA0` | INTERRUPT | W bit 0 = enable; any access clears pending; an event sets pending if enabled (cfide-like); `irq_ext` = pending |
-| `0xFFFFFFF0` | UART | W: character out (`$write`); R: `0x0100` (TX ready) |
+| `0xFFFFFFF0` | UART | W: character out (`$write`). A read fails the run (`=== FAIL uart read`): cfide never acks a UART read, so on the real bus the CPU would hang. There is no TX-ready bit; cfide holds a write until the transmitter takes it, so firmware never polls. |
 
 ### Program layout (`sw/l1.ld`, `sw/crt0_l1.S`)
 
@@ -209,14 +213,15 @@ run itself (`l1_done`): the firmware crt0 spins when `main` returns.
 | Program | Checks |
 |---|---|
 | `lanes` | loads of every width/alignment from BE words `0x11223344 0x55667788` at 0x4000; stores of every width/alignment at 0x5000.., reloaded and dumped (`tests/lanes.mem`); hw window SCRATCH unswapped, unmapped = 0 |
-| `refill` | 24 functions, 5.9 KB, called in address order and in 4 KB conflict pairs, from SDRAM and from the ROM region (0x100); sum vs. a compile-time constant |
+| `refill` | 24 functions of 244 bytes on a 256-byte stride (6 KB), called in address order and in conflict pairs k, k + 16 exactly 4 KB apart (all eight I$ lines collide), from SDRAM and from the ROM region (0x100); sum vs. a compile-time constant |
 | `fencei` | code copied to 0x6000 by stores, run, overwritten, `fence.i`, run again = new code |
 | `fencei_nofencei` | same without `fence.i`: must end `=== FAIL 1` (teeth) |
 | `irq` | INTERRUPT disabled: no trap; enabled: one trap, `mcause` = `0x8000000B`, the handler's access clears the line |
-| `irq_sig` | firmware trap entry keeps every register: x1, x3-x30 patterns, 50 events at pseudo-random distances, C handler (`tests/irq_sig_h.c`) trashes the caller-saved registers; linked `--no-relax` (gp holds a pattern) |
+| `irq_sig` | firmware trap entry keeps every register: x1, x3-x31 patterns (x31 and x30 take turns as the check's scratch), 50 events at pseudo-random distances, C handler (`tests/irq_sig_h.c`) trashes the caller-saved registers; linked `--no-relax` (gp holds a pattern) |
 | `irq_c` | `fw/ctrl_rv/arch/irq.h` API: constructors, MIE/MEIE from crt0, default handler, `SetIntHandler`, `DisableInterrupts` loses events, `irq_save`/`irq_restore` nesting, handler switch while events arrive |
 | `exc` | illegal instruction, misaligned `lw`, misaligned `sh` through `rv_trap` to an `rv_exception` override: mcause 2/4/6, mepc, mtval, resume after the instruction |
 | `irq_sig_mut` | teeth: `irq_sig` with `trap.S` minus `lw t3`: must end `=== FAIL 11c` |
+| `uart_read` | teeth for the model: one `lhu` of the UART register; must end `=== FAIL uart read` (in `all` once, `WS=3 ROMWS=1`) |
 | `dm_smoke` | the program of the debug smoke test (`DEBUG=2`, `-DDM_SMOKE`, `run.sh dm_smoke`): boot count at 0x4004 in `x12`, counter `x10` stored to 0x4000, ends when `x10` equals `x11`, which only the debugger sets (alone it runs into TIMEOUT) |
 
 ## Adding a program
@@ -264,6 +269,7 @@ Recorded cycles (WS=3 ROMWS=1 EXTRA_WS=0 DEBUG=0, 2026-10-16, all `PASS`):
 | `atapi_emu` | 954,062 | ~2.5 min |
 | `cdaudio_emu` | 19,059,807 | ~50 min |
 
-`cdaudio_emu` fills the 64 KB ring byte by byte several times and lands just
-under the bench's default 20 M-cycle timeout (`+TIMEOUT=`): a slower memory
+`cdaudio_emu` fills the 64 KB ring byte by byte several times and needs about
+19.1 M cycles: `units` passes `+TIMEOUT=40000000` (`TIMEOUT=` from the
+environment overrides it; the bench's own default stays 20 M). A slower memory
 setting (`WS=8`) needs it raised: `TIMEOUT=60000000 WS=8 bash sim/rv_l1/run.sh units`.

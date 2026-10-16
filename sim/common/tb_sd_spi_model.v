@@ -19,7 +19,7 @@ module tb_sd_spi_model;
     reg [7:0] r1;                       // last R1
     reg [7:0] sec [0:511];
     reg [7:0] expd [0:4095];
-    reg [8*256-1:0] hexname;
+    reg [8*1024-1:0] hexname;
     integer i, j, fat_ok;
 
     // ---- SPI master, mode 0, MSB first ----

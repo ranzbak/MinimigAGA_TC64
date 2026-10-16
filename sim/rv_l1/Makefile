@@ -11,7 +11,7 @@ include $(TOP)/tools/riscv/toolchain.mk
 
 B       := build
 ARCH    := $(TOP)/fw/ctrl_rv/arch
-PROGS   := lanes refill fencei fencei_nofencei irq dm_smoke
+PROGS   := lanes refill fencei fencei_nofencei irq dm_smoke uart_read
 FWPROGS := irq_sig irq_c exc irq_sig_mut
 
 CFLAGS  = $(RV_ARCH) -O2 -g -ffreestanding -fno-builtin -funsigned-char \

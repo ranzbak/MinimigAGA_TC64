@@ -1,12 +1,13 @@
 /* refill: I$ line refills under direct-mapped conflicts.
  *
- * 24 functions of ~246 bytes (5.9 KB, more than the 4 KB direct-mapped I$),
- * once in .text (SDRAM region, latency WS) and once in .text.rom (0x100,
- * ROM region, latency ROMWS).  Each body is 40 pairs of a 4-byte and a
- * 2-byte addi, so 4-byte instructions straddle words and 32-byte lines.
- * Every round calls each function twice: in address order, then
- * ping-ponging between functions 4 KB apart (same I$ index).  A wrong word
- * in any refill changes the sum.
+ * 24 functions of 244 bytes, each aligned to 256 bytes (6 KB, more than the
+ * 4 KB direct-mapped I$), once in .text (SDRAM region, latency WS) and once
+ * in .text.rom (0x100, ROM region, latency ROMWS).  Each body is 40 pairs of
+ * a 4-byte and a 2-byte addi, so 4-byte instructions straddle words and
+ * 32-byte lines.  Every round calls each function twice: in address order,
+ * then ping-ponging between functions k and k + 16, exactly 4 KB apart: all
+ * eight I$ lines of one evict the other's.  A wrong word in any refill
+ * changes the sum.
  * Exit code: 0 = pass, 1 = SDRAM set wrong, 2 = ROM set wrong. */
 #include "l1.h"
 
@@ -17,7 +18,8 @@
 #define FVAL(k) ((k) + 40 * (((k) + 100) + ((k) + 1)))
 
 #define FDEF(pfx, sec, k)                                                  \
-    __attribute__((noinline, section(sec))) static int pfx##k(void)        \
+    __attribute__((noinline, aligned(256), section(sec)))                  \
+    static int pfx##k(void)                                                \
     {                                                                      \
         int v = (k);                                                       \
         __asm__ volatile(".rept 40\n\t"                                    \
@@ -49,7 +51,8 @@ typedef int (*fn_t)(void);
 static fn_t const tab_sdram[NFUNC] = FTAB(fs_);
 static fn_t const tab_rom[NFUNC]   = FTAB(fr_);
 
-/* address order, then the 4 KB conflict pairs (k, k + 16) back to back */
+/* address order, then the 4 KB conflict pairs (k, k + 16) back to back
+ * (256-byte stride: function k + 16 is 4096 bytes after function k) */
 static const unsigned char order[2 * NFUNC] = {
     0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
     12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
@@ -75,6 +78,8 @@ static int run(fn_t const *tab)
             sum += tab[order[i]]();
     return sum;
 }
+
+_Static_assert(NFUNC * 256 <= 0x2000 - 0x100, ".text.rom fits below 0x2000");
 
 int main(void)
 {

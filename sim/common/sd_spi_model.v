@@ -2,7 +2,10 @@
 // SD card, SPI mode 0, SDHC (block addressing) -- simulation model.
 // Verilog-2005 only; runs in iverilog and xsim.  See tools/sim/README.md.
 //
-// Plusargs: +SD_IMG=<raw image>   loaded at time 0 (rest of the card = 0)
+// Plusargs: +SD_IMG=<raw image>   loaded at time 0 (rest of the card = 0); a
+//                                 file that cannot be opened ends the run
+//                                 at once ("=== FAIL ..."); paths up to
+//                                 1024 characters
 //           +SD_SAVE=<file>       written by the task save_image (the bench
 //                                 calls it before $finish)
 //           +SD_TOKEN_DLY=<n>     0xFF bytes before every data token (4)
@@ -23,7 +26,7 @@ module sd_spi_model #(parameter IMG_SECTORS = 65536)
     reg [7:0] wbuf [0:511];
 
     integer tok_dly, busy_n, ncr, init_polls, log_on;
-    reg [1023:0] imgname, savename;
+    reg [8*1024-1:0] imgname, savename;   // plusarg paths, up to 1024 characters
     integer fd, k, nread;
 
     // SPI shifter
@@ -56,8 +59,10 @@ module sd_spi_model #(parameter IMG_SECTORS = 65536)
         nread = 0;
         if ($value$plusargs("SD_IMG=%s", imgname)) begin
             fd = $fopen(imgname, "rb");
-            if (fd == 0) $display("SD: cannot open image %0s", imgname);
-            else begin
+            if (fd == 0) begin
+                $display("=== FAIL SD: cannot open image +SD_IMG=%0s", imgname);
+                $finish;
+            end else begin
                 nread = $fread(mem, fd);
                 $fclose(fd);
                 $display("SD: image %0s loaded (%0d bytes)", imgname, nread);
@@ -75,9 +80,14 @@ module sd_spi_model #(parameter IMG_SECTORS = 65536)
         begin
             if ($value$plusargs("SD_SAVE=%s", savename)) begin
                 f = $fopen(savename, "wb");
-                for (n = 0; n < MEMSZ; n = n + 1) $fwrite(f, "%c", mem[n]);
-                $fclose(f);
-                $display("SD: image saved to %0s", savename);
+                if (f == 0) begin
+                    $display("=== FAIL SD: cannot write +SD_SAVE=%0s", savename);
+                    $finish;
+                end else begin
+                    for (n = 0; n < MEMSZ; n = n + 1) $fwrite(f, "%c", mem[n]);
+                    $fclose(f);
+                    $display("SD: image saved to %0s", savename);
+                end
             end
         end
     endtask

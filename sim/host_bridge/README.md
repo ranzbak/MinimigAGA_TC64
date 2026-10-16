@@ -19,12 +19,13 @@ memory. This bench uses Vivado's xsim because `cfide` and the bridge are VHDL.
 |---|---|
 | `tb_host_bridge.v` | Top: bridge + cfide + SDRAM model + SPI slave (or, `-d SDCARD`, the SD card model), bus snoop, checks, verdict |
 | `sdram_host_model.v` | 8 MB halfword SDRAM behind hostcache: latency, burst order, `sdram_ctrl` lanes, preload |
-| `run.sh` | Copies the RTL, applies the simulation fixes, builds the ROMs, compiles, runs |
-| `Makefile` | Test programs -> `<B>/<test>/OSDBoot_rv_ROM.vhd` (romgen, as `fw/ctrl_boot_832`) |
-| `sw/crt0_rom.S`, `sw/rom.ld` | Start-up (reset at 0x0, trap at 0x20, `sp` = 0x2000, `.bss`, `main`, PASS/FAIL on the UART, DONE) and the 8 KB BRAM layout |
+| `run.sh` | Copies the RTL, applies the two simulation fixes, builds the ROMs, compiles, runs |
+| `Makefile` | Test programs -> `<B>/<test>/OSDBoot_rv_ROM.vhd` (romgen with the `fw/ctrl_boot_rv` ROM template, as the boot ROM) |
+| `sw/crt0_rom.S`, `sw/rom.ld` | Start-up (reset at 0x0, trap at 0x20, clear x1-x31, `sp` = 0x2000, `.bss`, `main`, PASS/FAIL on the UART, DONE) and the 8 KB BRAM layout |
 | `sw/hb.h`, `sw/check.h` | cfide register offsets, `CHECK` / `STAMP` macros |
 | `sw/t_*.S`, `sw/t_*.c`, `sw/t_lanes.sdram.hex` | The five tests; the SDRAM preload of `t_lanes` |
 | `sw/reset_fw.S` | Reset, trap at 0x20 and register clear for tests that start through `fw/ctrl_rv/arch/crt0.S` (`t_irq`) |
+| `sw/dhry.S` | `dhry`: boot-ROM stand-in for `fw/dhrystone_rv` (clear x1-x31, jump to 0x2000; the firmware is preloaded with `+SDRAM_HEX`) |
 | `stub/` | Elaboration check of the bridge's RISC-V branch: `stub/elab.sh` (`rv_debug` 0 and 2, neutral sources only), `stub/elab.sh dmt` (`rv_debug` 1: `VexOsd_DMT` + `rtl/host/xilinx/rv_bscane2.v`, BSCANE2/BUFG from `unisims_ver`), `stub/elab.sh all` |
 | `boot/fwtest.c`, `boot/fwfill.S` | Boot runs: the test firmware `RV32OSDA.BIN` (on `fw/ctrl_rv/arch`, `firmware.ld`) |
 | `boot/Makefile` | `RV32OSDA.BIN` (padded to 2560 bytes), `img.txt`, the card images `card.img` and `card_nofile.img` (`tools/sim/mkcard.sh`) |
@@ -68,7 +69,7 @@ From the repository root:
 
 ```sh
 bash sim/host_bridge/run.sh all       # 5 tests x SLAT {2,8,20} x SJIT {0,8}: 30 runs, ~8 min
-bash sim/host_bridge/run.sh mutant    # the four-phase handshake's teeth, ~2 min
+bash sim/host_bridge/run.sh mutant    # the four-phase handshake's teeth, 34 runs
 ```
 
 `all` ends with `=== ALL PASS (30 runs)` (exit 0) or `=== SOME FAILED`
@@ -122,7 +123,7 @@ git status --short fw/ctrl_boot_rv
 # 2. the test firmware and the card images, into sim/host_bridge/boot/build
 #    (run.sh builds its own copy into run_*/boot)
 make -C sim/host_bridge/boot
-# 3. the two runs, one after the other (about 70 s and 150 s)
+# 3. the two runs, one after the other (about 90 s and 190 s of xsim)
 RUNTAG=boot bash sim/host_bridge/run.sh boot
 RUNTAG=bootn bash sim/host_bridge/run.sh boot_nofile
 ```
@@ -130,28 +131,28 @@ RUNTAG=bootn bash sim/host_bridge/run.sh boot_nofile
 Expected end of `boot`:
 
 ```
-boot ROM: fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd unmodified (= git HEAD), sha256 3431665a20ffdd3c
-=== BOOT first read of 0x2000 at cycle 12397205, irefill 93 dread 5338 dwrite 7779 so far
-=== HW accesses 11698, stale acks 0, X 0, SDRAM reads 191 writes 683, main done 79341, cycles 13137477
-=== STATS irefill 118 dread 7954 dwrite 8326 busy_cycles 12931846 (rv_hostcpu, whole run)
+boot ROM: fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd unmodified (= git HEAD), sha256 7fc4ae53fed88cb3
+=== BOOT first read of 0x2000 at cycle 12392735, irefill 95 dread 5338 dwrite 7779 so far
+=== HW accesses 11714, stale acks 0, X 0, SDRAM reads 191 writes 683, main done 79381, cycles 13134513
+=== STATS irefill 120 dread 7986 dwrite 8326 busy_cycles 12931583 (rv_hostcpu, whole run)
 === SD card: 1 ErrorCode calls, last 0fff
 ok   log = expect.txt (14 lines)
 ok   bench verdict: === PASS
-xsim wall time 69 s
+xsim wall time 92 s
 === boot PASS
 ```
 
 Expected end of `boot_nofile`:
 
 ```
-boot ROM: fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd unmodified (= git HEAD), sha256 3431665a20ffdd3c
+boot ROM: fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd unmodified (= git HEAD), sha256 7fc4ae53fed88cb3
 === cycle limit 27000000 reached, no DONE
-=== HW accesses 38280, stale acks 0, X 0, SDRAM reads 0 writes 22, main done 79341, cycles 27000177
-=== STATS irefill 101 dread 20557 dwrite 26396 busy_cycles 26352881 (rv_hostcpu, whole run)
+=== HW accesses 38280, stale acks 0, X 0, SDRAM reads 0 writes 22, main done 79381, cycles 27000177
+=== STATS irefill 102 dread 20557 dwrite 26396 busy_cycles 26364108 (rv_hostcpu, whole run)
 === SD card: 2 ErrorCode calls, last 00f0
 ok   log = expect_nofile.txt (45 lines)
 ok   bench verdict: === PASS
-xsim wall time 147 s
+xsim wall time 192 s
 === boot_nofile PASS
 ```
 
@@ -230,30 +231,33 @@ What it proves:
   clusters) as loaded; `img.txt` is the same sum over the file. A run with a
   card that has one bit flipped at file offset 0x880 (third cluster) fails
   with only that line different (`IMG 00000900 F8431F19`), recorded
-  2026-10-16. Use `BOOT_CARD=<image>` for such a run; the path must be at
-  most 128 characters (the model's `+SD_IMG` buffer; `run.sh` refuses a
-  longer one).
+  2026-10-16. Use `BOOT_CARD=<image>` for such a run; the path may be up to
+  1024 characters (the model's `+SD_IMG` buffer; `run.sh` refuses a longer
+  one, and the model ends the run with `=== FAIL` if it cannot open the
+  file).
 - **The file name**: `card.img` has the decoy `832OSDAD.BIN` first in the
   directory; `card_nofile.img` has `832OSDAD.BIN` and the real firmware
   under the near-miss name `RV32OSDB.BIN`. The ROM loads neither.
 
-### Measured (2026-10-16, SLAT=8 SJIT=0)
+### Measured (2026-10-17, SLAT=8 SJIT=0, boot ROM with the x1-x31 clear)
 
 | | `boot` | `boot_nofile` |
 |---|---|---|
-| SD init (`SPI_slow`, SPEED `0xEF`: 7664 `clk_114` per byte; five `spi_spin()` of 200 bytes = 7.7 M) | from cycle 79,187 (`ErrorCode(0xfff)`) to 9,145,941 (`Hunting for partition`): 9.07 M | the same |
+| SD init (`SPI_slow`, SPEED `0xEF`: 7664 `clk_114` per byte; five `spi_spin()` of 200 bytes = 7.7 M) | from cycle 79,255 (`ErrorCode(0xfff)`) to 9,145,941 (`Hunting for partition`): 9.07 M | the same |
 | one sector read at `SPI_fast` (SPEED 7) | about 140 k cycles | |
-| jump to 0x2000 (first CPU read there) | cycle 12,397,205 (109 ms at 113.44 MHz) | (no jump) |
-| `ErrorCode(0x0f0)` | | cycle 26,037,903 (32 root directory sectors read and printed) |
-| end | DONE at 13,137,477 | cycle limit 27,000,000 |
-| I$ refills (`RV_HOSTCPU_STATS`) | 93 up to the jump, 118 in all | 101 |
-| xsim wall time | 69 s | 147 s |
+| jump to 0x2000 (first CPU read there) | cycle 12,392,735 (109 ms at 113.44 MHz) | (no jump) |
+| `ErrorCode(0x0f0)` | | cycle 26,036,915 (32 root directory sectors read and printed) |
+| end | DONE at 13,134,513 | cycle limit 27,000,000 |
+| I$ refills (`RV_HOSTCPU_STATS`) | 95 up to the jump, 120 in all | 102 |
+| xsim wall time | 92 s | 192 s |
 
 The UART costs about 9,900 `clk_114` per character (115200 baud from
 `clk_28`): the boot ROM's 307 characters are about 3.0 M of the 12.4 M. The
 bench snoops UART writes at the bridge, and cfide holds a UART write until
-the transmitter takes it, so no character is lost although the ROM's
-TX-ready wait is commented out.
+the transmitter takes it, so no character is lost and no TX-ready poll is
+needed. There is no TX-ready bit to poll: cfide never acks a UART read (its
+support state machine serves UART writes only), so a read of `0xFFFFFFF0`
+would hang the CPU.
 
 ## Bench
 
@@ -292,13 +296,15 @@ TX-ready wait is commented out.
   - cfide acks TIME and DONE as unmapped registers.
 - **Checks in every run**. Each failed check prints a `BENCH ERROR` line.
   - **Stale ack**: a hw access completed although no `clk_28` edge saw its
-    `hw_req`.
+    `hw_req` (re-armed when `hw_req` rises and when an access completes).
   - **SPI accept**: a write to SPI DATA completed although cfide never
     accepted it. Accepted means a `clk_114` edge with req, wr, SPI DATA and
     `SD_busy = 0`; `SD_busy` is read hierarchically from cfide.
   - **X on the bus**: X in the read data the bridge returns, or in a byte that
-    is written. The core treats an X branch condition as not taken, so a CPU
-    check against X data would pass.
+    is written (the bytes `sel` enables for SDRAM/BRAM; for a hw access the
+    16 bits `q[15:0]` that cfide takes, whatever `sel` says). The core
+    treats an X branch condition as not taken, so a CPU check against X data
+    would pass.
   - The SDRAM model's bus checks.
 - **Verdict**: `=== PASS` when DONE = 0 and no bench error was seen, else
   `=== FAIL code <c>, bench errors <n>` or `=== FAIL timeout`. The line before
@@ -315,7 +321,7 @@ TX-ready wait is commented out.
 | `+SLAT=<n>` | 8 | SDRAM latency, `clk_114` cycles |
 | `+SJIT=<n>` | 0 | plus a random 0..n per access |
 | `+SEED=<n>` | 1 | `$urandom` seed (jitter) |
-| `+SDRAM_HEX=<file>` | none | preload, `$readmemh` of BE 32-bit words, `@` = word address; first 1 MB (`run.sh` passes `sw/<test>.sdram.hex` if it exists) |
+| `+SDRAM_HEX=<file>` | none | preload, `$readmemh` of BE 32-bit words, `@` = word address; first 1 MB (`run.sh` passes `sw/<test>.sdram.hex` if it exists); path up to 1024 characters, a file that cannot be opened ends the run with `=== FAIL` |
 | `+TIMEOUT=<n>` | 3000000 | `clk_114` cycles until `=== FAIL timeout` |
 | `+VERBOSE=1` / `2` | 0 | log hw accesses and SPI bytes / also every change of the bus address |
 | `+SD_IMG=<file>` | none | card image of the SD model (bench compiled with `-d SDCARD`); the model's other plusargs (`+SD_NCR`, `+SD_INIT_POLLS`, `+SD_LOG=1`, ...) are in `sim/common/sd_spi_model.v`. The `=== BOOT` / `=== STATS` counters need `-d RV_HOSTCPU_STATS` on both `rv_hostcpu.v` and the bench (hierarchical `hostcpu.genrv.myrv.st_*`); without it the bench leaves them out. `run.sh boot` sets both. |
@@ -362,34 +368,29 @@ unexpected trap writes `0x8000 | mcause`.
 
 ## Simulation fixes (run copies only)
 
-`run.sh` copies the RTL into `run_*/src` and changes only those copies:
+`run.sh` copies the RTL into `run_*/src` and changes only those copies. These
+are the only run-copy patches in force; everything else (cfide, the bridge,
+`rv_hostcpu`, `VexOsd`, the boot ROM) is simulated as committed:
 
 - `hostcache.v`: `ack <= #1 1'b0` becomes `ack <= 1'b0`, as in
   `host832/run.sh`. With the delay, the ack is a 1 ns glitch that the bridge
   never sees.
-- `cfide.vhd`: `timecnt` and `clkgen` get an initial value of 0. They have
-  no reset; on the FPGA they power up at 0. In simulation they stay `'U'`, so
-  TIMER never counts and the UART never shifts: `txbusy` stays high after the
-  first character and the second UART write never gets an ack.
 - `hostcache.v` and `dpram_inf_generic.v`: a `` `timescale `` line is added,
   to avoid an xelab warning.
-- `VexOsd.v` (**temporary**: goes away once `fw/ctrl_boot_rv/crt0.S`
-  clears x1-x31, which is planned): the register file starts at 0, as on
-  the FPGA (distributed RAM or BRAM without an INIT powers up at 0). In
-  simulation it starts X. The committed boot ROM clears no registers, so its function prologues
-  store X (the callee-saved registers) to the stack, and the bench's X check
-  fails the boot run (226 X writes before this fix). The test programs clear
-  x1-x31 themselves (`sw/crt0_rom.S`, `sw/reset_fw.S`).
-- `OSDBoot_rv_ROM.vhd` of the test programs only (they are built from the
-  `fw/ctrl_boot_832` template): port B's write is removed in `*_sim.vhd`. The
-  boot runs compile the committed `fw/ctrl_boot_rv` ROM directly, and a ROM
-  built from that template (a shared variable) is compiled as it is. The
-  832 template writes the one signal `ram` from two processes.
-  In VHDL each process has a driver for all of `ram`, and port B's driver
-  keeps the initial image, so every port-A write that changes a bit resolves
-  to `'X'`. Synthesis infers a true dual-port BRAM. The bridge leaves port B
-  unused (`we2 = '0'`). Without this fix the stack, `.data` and the BRAM part
-  of `t_lanes` read X; the bench's X check catches that.
+
+Earlier patches that are gone (2026-10-16):
+
+- `cfide.vhd` `timecnt` / `clkgen`: they have no reset, and in simulation
+  stayed `'U'` (TIMER never counted, the UART never shifted). The RTL now
+  declares both with the initial value 0, the FPGA's power-up value.
+- `VexOsd.v` register file (it starts X in simulation): every program clears
+  x1-x31 at reset instead: `fw/ctrl_boot_rv/crt0.S` (the committed boot ROM),
+  `sw/crt0_rom.S`, `sw/reset_fw.S`, `sw/dhry.S`.
+- Port B of the test ROMs: they were built from the `fw/ctrl_boot_832`
+  template, whose RAM signal has a driver in each port's process (every
+  port-A write resolved to X). They now use the `fw/ctrl_boot_rv` template
+  (a shared variable), as the boot ROM does; `run.sh` refuses a ROM built
+  from another template.
 
 ## Why the mutant needs the fast master
 
@@ -397,9 +398,16 @@ unexpected trap writes `0x8000 | mcause`.
 
 | Leg | Bridge | Master | Expected |
 |---|---|---|---|
-| gate | mutant: the `-- 4PHASE` line becomes `state <= waiting;` (two-phase) | fast master | every run `=== FAIL` (stale acks, lost writes) |
-| control | real (four-phase) | fast master | every run `=== PASS` |
-| info | mutant | real `rv_hostcpu` | printed only; passes today |
+| gate | mutant: the `-- 4PHASE` line becomes `state <= waiting;` (two-phase) | fast master, `EXTRA_WS=0` | every run `=== FAIL` (stale acks, lost writes) |
+| control | real (four-phase) | fast master, `EXTRA_WS` 0, 1, 2 and 3 | every run `=== PASS` (24 runs) |
+| info | mutant | real `rv_hostcpu` (`EXTRA_WS=0`); fast master with `EXTRA_WS` 1, 2, 3 | printed only, one run each |
+
+`EXTRA_WS` delays every request by 0..3 `clk_114` cycles, so the control leg
+starts the next hw request at each of the four `clk_114` phases of `clk_28`:
+the four-phase bridge must take no stale ack at any of them. With
+`EXTRA_WS` 1..3 even the fast master's request rises at or after the next
+`clk_28` edge, so the mutant is expected to survive there; that is why those
+runs are info only.
 
 cfide's `ack` is a `clk_28` register. After the bridge drops `hw_req`, the
 ack stays high until the next `clk_28` edge, which is up to 4 `clk_114`

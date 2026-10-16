@@ -3,6 +3,8 @@
 #   make l1_O2.hex             L1 bench image: boot stand-in (0x0..0x1FFF) + firmware at 0x2000
 #   make l2_O2.hex             L2 SDRAM preload (firmware only, "@800" = byte 0x2000)
 #   make RV32OSDA.BIN          board image (-O2, 200000 runs), copy to the SD card
+#   make build/l1_O2_teeth.hex L1 image with -DDHRY_CHECK_TEETH: one result check
+#                              must fail (sim/rv_l1/run.sh dhry)
 # Linked with fw/ctrl_rv/arch (crt0, trap entry, irq API) and its firmware.ld.
 TOP := $(abspath $(CURDIR)/../..)
 include $(TOP)/tools/riscv/toolchain.mk
@@ -39,6 +41,7 @@ $(eval $(call IMAGE,O2,-DL1,l1))
 $(eval $(call IMAGE,Os,-DL1,l1))
 $(eval $(call IMAGE,O2,,board))
 $(eval $(call IMAGE,Os,,board))
+$(eval $(call IMAGE,O2,-DL1 -DDHRY_CHECK_TEETH,teeth))
 
 $(B)/arch:
 	mkdir -p $@
@@ -64,6 +67,8 @@ $(BOOTFW):
 l1_O2.hex: $(B)/O2_l1/fw.bin $(BOOTFW)
 	cat $(BOOTFW) $< | $(call HEXCMD,-) > $@
 l1_Os.hex: $(B)/Os_l1/fw.bin $(BOOTFW)
+	cat $(BOOTFW) $< | $(call HEXCMD,-) > $@
+$(B)/l1_O2_teeth.hex: $(B)/O2_teeth/fw.bin $(BOOTFW)
 	cat $(BOOTFW) $< | $(call HEXCMD,-) > $@
 # L2: the SDRAM model preloads +SDRAM_HEX at word address 0x800 (byte 0x2000)
 l2_O2.hex: $(B)/O2_l1/fw.bin

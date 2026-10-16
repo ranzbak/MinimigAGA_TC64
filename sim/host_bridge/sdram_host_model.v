@@ -22,7 +22,8 @@
 //
 // Preload: +SDRAM_HEX=<file>, $readmemh of big-endian 32-bit words, "@"
 // addresses in words (byte address / 4), the first 1 MB (PRE_WORDS).  The
-// rest of memory starts at 0.
+// rest of memory starts at 0.  The path may be up to 1024 characters; a file
+// that cannot be opened ends the run at time 0 with "=== FAIL ...".
 //
 // Simulation only.
 `timescale 1ns/1ps
@@ -46,8 +47,8 @@ module sdram_host_model #(
   reg [31:0] pre [0:PRE_WORDS - 1];
 
   integer slat = 8, sjit = 0, seed = 1;
-  integer i;
-  reg [1023:0] hexfile;
+  integer i, fd;
+  reg [8*1024-1:0] hexfile;          // +SDRAM_HEX path, up to 1024 characters
 
   integer    errors = 0;            // bus contract violations seen
   integer    n_rd = 0, n_wr = 0;
@@ -58,7 +59,14 @@ module sdram_host_model #(
     if (!$value$plusargs("SEED=%d", seed)) seed = 1;
     i = $urandom(seed);
     for (i = 0; i < (1 << HW); i = i + 1) mem[i] = 16'h0000;
-    if ($value$plusargs("SDRAM_HEX=%s", hexfile)) begin
+    if ($value$plusargs("SDRAM_HEX=%s", hexfile)) begin : preload
+      fd = $fopen(hexfile, "r");
+      if (fd == 0) begin
+        $display("=== FAIL cannot open +SDRAM_HEX=%0s", hexfile);
+        $finish;
+        disable preload;
+      end
+      $fclose(fd);
       for (i = 0; i < PRE_WORDS; i = i + 1) pre[i] = 32'hxxxxxxxx;
       $readmemh(hexfile, pre);
       for (i = 0; i < PRE_WORDS; i = i + 1)

@@ -5,10 +5,11 @@
 #include <stddef.h>
 #include "hw.h"
 
-/* No TX-ready poll: rtl/host/cfide.vhd has no such bit.  A 16-bit read of
-   0xFFFFFFF0 returns the SPI data register (IOdata <= sd_in), so a poll on bit
-   8 would spin forever; a write is held (no ack) until the transmitter is free,
-   so no character is lost (sim/host_bridge/README.md, "The UART costs ..."). */
+/* No TX-ready poll: rtl/host/cfide.vhd has no such bit, and it never acks a
+   read of 0xFFFFFFF0 (its support state machine serves UART writes only), so a
+   poll would hang the CPU on its first read.  A write is held (no ack) until
+   the transmitter is free, so no character is lost (sim/host_bridge/README.md,
+   "The UART costs ..."). */
 static void hw_putc(int c)
 {
     *(volatile unsigned char *)HW_UART_ADDR = (unsigned char)c;

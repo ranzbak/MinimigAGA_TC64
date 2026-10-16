@@ -1,5 +1,6 @@
 -- Elaboration check: EightThirtyTwo_Bridge with cpu_riscv => true, built
--- without any EightThirtyTwo source (elab.sh).  RV_DEBUG via -generic_top.
+-- without any EightThirtyTwo source (elab.sh).  RV_DEBUG via -generic_top
+-- (0 and 2) or the wrapper tb_elab_rv1 below (1).
 library ieee;
 use ieee.std_logic_1164.all;
 entity tb_elab_rv is
@@ -16,4 +17,15 @@ begin
 		port map (clk => clk, nReset => nreset, addr => open, q => open, sel => open, wr => wr,
 			ram_req => ram_req, ram_ack => ram_ack, ram_d => ram_d,
 			hw_req => hw_req, hw_ack => hw_ack, hw_d => hw_d, interrupt => '0', rv_jtag_tdo => tdo);
+end architecture;
+
+-- rv_debug = 1 top for elab.sh dmt: it is elaborated together with glbl, and
+-- a -generic_top would be offered to glbl too (VRFC 10-3532 warning).
+library ieee;
+use ieee.std_logic_1164.all;
+entity tb_elab_rv1 is
+end entity;
+architecture tb of tb_elab_rv1 is
+begin
+	top : entity work.tb_elab_rv generic map (RV_DEBUG => 1);
 end architecture;

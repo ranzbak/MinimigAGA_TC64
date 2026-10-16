@@ -38,7 +38,8 @@ esac
 X xvhdl "$HERE/OSDBoot_rv_ROM_stub.vhd" "$ROOT/rtl/host/832_bridge.vhd" "$HERE/tb_elab_rv.vhd"
 for dbg in $dbgs; do
 	if [ "$dbg" = 1 ]; then
-		X xelab -debug off -L unisims_ver -generic_top "RV_DEBUG=1" tb_elab_rv work.glbl -s tb_rv1
+		# tb_elab_rv1 = tb_elab_rv with RV_DEBUG => 1 (no -generic_top: glbl would get it too)
+		X xelab -debug off -L unisims_ver tb_elab_rv1 work.glbl -s tb_rv1
 		# the primitives must come from unisims_ver, the core must be the DMT one
 		for m in unisims_ver.BSCANE2 unisims_ver.BUFG work.rv_bscane2 work.VexOsd_DMT 'work.rv_hostcpu(DEBUG=1'; do
 			grep -qF "Compiling module $m" compile.log || { echo "FAILED: $m not in the elaborated design"; exit 1; }

@@ -23,7 +23,8 @@
 #   matrix  every program in PROGS x WS {0,3,8} x ROMWS {0,1} x EXTRA_WS {0,3}
 #           must print "=== PASS" (and match tests/<prog>.mem if present)
 #   teeth   fencei_nofencei over the same matrix must print "=== FAIL 1",
-#           irq_sig_mut "=== FAIL 11c"
+#           irq_sig_mut "=== FAIL 11c"; uart_read (a read of the cfide UART,
+#           which cfide never acks) once at WS=3 ROMWS=1 "=== FAIL uart read"
 #   debug   every program once with DEBUG=2 (WS=3 ROMWS=1)
 #   dm      dm_smoke (DEBUG=2, -DDM_SMOKE) x WS {0,3,8} x EXTRA_WS {0,3}, ROMWS=1
 #   no run may print "=== BUS VIOLATION"
@@ -43,14 +44,19 @@
 #   bash sim/rv_l1/run.sh units        # atapi_emu cue_emu cdaudio_emu (WS=3
 #                                      # ROMWS=1 by default); verdict as the emu
 #                                      # Makefile: no line "FAIL...", a line
-#                                      # exactly "PASS", bench "=== PASS"
+#                                      # exactly "PASS", bench "=== PASS";
+#                                      # TIMEOUT default 40000000 (cdaudio_emu
+#                                      # needs about 19.1 M cycles)
 #
 #   make -C fw/dhrystone_rv            # build the Dhrystone images first
 #   bash sim/rv_l1/run.sh dhry         # fw/dhrystone_rv -O2 and -Os, WS=3 ROMWS=1
 #                                      # (WS, ROMWS, EXTRA_WS, DEBUG from env); each
 #                                      # must PASS with no "should be" line, "Result
 #                                      # checks" wrong = 0; the cycles between the
-#                                      # TIME 1 and TIME 2 stamps are the result
+#                                      # TIME 1 and TIME 2 stamps are the result;
+#                                      # then dhry_teeth (-DDHRY_CHECK_TEETH, one
+#                                      # value wrong) must end "=== FAIL 1" with
+#                                      # one "should be" line and "1 wrong"
 set -u
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -77,6 +83,8 @@ expect_of() {
   case "$1" in
     fencei_nofencei) echo "fail:1" ;;
     irq_sig_mut)     echo "fail:11c" ;;
+    uart_read)       echo "fail:uart read" ;;
+    dhry_teeth)      echo "fail:1" ;;
     *)               echo "pass" ;;
   esac
 }
@@ -150,7 +158,7 @@ unit() {
   if [ ! -f "$build/$prog.hex" ]; then
     echo "FAIL $tag: $build/$prog.hex missing (make -C sim/rv_l1/prog)"; return 1
   fi
-  "$VVP" -N "$vvp" +HEX="$build/$prog.hex" +WS="$ws" +ROMWS="$romws" +TIMEOUT="${TIMEOUT:-20000000}" > "$log" 2>&1
+  "$VVP" -N "$vvp" +HEX="$build/$prog.hex" +WS="$ws" +ROMWS="$romws" +TIMEOUT="${TIMEOUT:-40000000}" > "$log" 2>&1
   local cyc; cyc=$(sed -n 's/^=== CYCLES //p' "$log")
   local res; res=$(grep -m1 -E '^=== (PASS|FAIL|TIMEOUT)' "$log" | sed 's/^=== //')
   if [ "$res" = PASS ] && ! grep -q '^FAIL' "$log" && grep -qx PASS "$log" \
@@ -254,7 +262,7 @@ case "${1:-}" in
     x=${EXTRA_WS:-0}; dbg=${DEBUG:-0}
     rm -f "$run/tb_x${x}_d${dbg}.vvp"
     compile "$x" "$dbg" || exit 1
-    make -s -C "$top/fw/dhrystone_rv" l1_O2.hex l1_Os.hex || exit 1
+    make -s -C "$top/fw/dhrystone_rv" l1_O2.hex l1_Os.hex build/l1_O2_teeth.hex || exit 1
     rc=0
     for o in O2 Os; do
       cp "$top/fw/dhrystone_rv/l1_$o.hex" "$build/dhry_$o.hex" || exit 1
@@ -267,6 +275,13 @@ case "${1:-}" in
         echo "dhry_$o: $((t2 - t1)) cycles per 100 runs (WS=${WS:-3} ROMWS=${ROMWS:-1} EXTRA_WS=$x)"
       else echo "FAIL dhry_$o: TIME stamps missing"; rc=1; fi
     done
+    # teeth: -DDHRY_CHECK_TEETH sets one value wrong; the checks must catch it
+    cp "$top/fw/dhrystone_rv/build/l1_O2_teeth.hex" "$build/dhry_teeth.hex" || exit 1
+    one dhry_teeth "${WS:-3}" "${ROMWS:-1}" "$x" "$dbg" || rc=1
+    log=$run/dhry_teeth_ws${WS:-3}_r${ROMWS:-1}_x${x}_d${dbg}.log
+    if grep -q '^Error Int_Glob is 6 but should be 5' "$log" && grep -q '^Result checks: [0-9]* compared, 1 wrong' "$log"; then
+      echo "PASS dhry_teeth: the result checks caught the wrong value"
+    else echo "FAIL dhry_teeth: no 'should be' line or not '1 wrong' ($log)"; rc=1; fi
     exit $rc
     ;;
   all)
@@ -285,6 +300,7 @@ case "${1:-}" in
         done; done; done
       done
       for p in $PROGS; do echo "$p 3 1 0 2"; done
+      echo "uart_read 3 1 0 0"
       for p in $DMPROGS; do for ws in 0 3 8; do for x in 0 3; do echo "$p $ws 1 $x 2"; done; done; done
     } | xargs -P "$JOBS" -L1 bash "$0" __one | sort > "$run/results.txt"
     cat "$run/results.txt"
@@ -296,7 +312,7 @@ case "${1:-}" in
     exit $fail
     ;;
   ""|-h|--help)
-    sed -n '2,52p' "$0"; exit 0 ;;
+    sed -n '2,/^set -u$/{/^set -u$/!p}' "$0"; exit 0 ;;
   *)
     x=${EXTRA_WS:-0}; dbg=${DEBUG:-0}
     rm -f "$run/tb_x${x}_d${dbg}.vvp" "$run/tb_x${x}_d${dbg}_dm.vvp"

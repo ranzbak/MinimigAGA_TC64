@@ -1,13 +1,14 @@
 # L2 host-bridge bench test ROMs: each test program becomes
 # $(B)/<test>/OSDBoot_rv_ROM.vhd (the boot BRAM image, entity OSDBoot_rv_ROM),
-# built as fw/ctrl_boot_832/Makefile builds its ROM: romgen between
-# rom_prologue.vhd and rom_epilogue.vhd, soc_firmware renamed.  The .elf,
-# .bin, .lst and .map land next to it.
+# built as fw/ctrl_boot_rv/Makefile builds the boot ROM, from its template:
+# romgen between rom_prologue.vhd and rom_epilogue.vhd (the shared-variable
+# RAM, which simulates without X), soc_firmware renamed.  The .elf, .bin,
+# .lst and .map land next to it.
 #   make -C sim/host_bridge                 # into sim/host_bridge/build
 #   make -C sim/host_bridge B=<dir>         # run.sh: into its run directory
 # A test is sw/<name>.S or sw/<name>.c; add its name to TESTS.
-# dhry is a 2-instruction ROM that jumps to 0x2000 (no crt0_rom.S); the firmware
-# comes from fw/dhrystone_rv through +SDRAM_HEX (run.sh dhry).
+# dhry is a ROM that clears x1-x31 and jumps to 0x2000 (no crt0_rom.S); the
+# firmware comes from fw/dhrystone_rv through +SDRAM_HEX (run.sh dhry).
 # FWTESTS (C) start through the firmware start-up instead of sw/crt0_rom.S:
 # sw/reset_fw.S (reset, trap 0x20, register clear) + fw/ctrl_rv/arch (crt0,
 # trap entry, irq API), still linked with sw/rom.ld.
@@ -19,7 +20,7 @@ TESTS   ?= t_lanes t_hwoff t_b2b t_spibusy t_irq dhry
 FWTESTS := t_irq
 ARCH    := $(TOP)/fw/ctrl_rv/arch
 ROMGEN  := $(TOP)/fw/romgen/romgen
-ROMDIR  := $(TOP)/fw/ctrl_boot_832
+ROMDIR  := $(TOP)/fw/ctrl_boot_rv
 
 CFLAGS  = $(RV_CFLAGS_FW) -g -Wall -Wextra -Isw -I$(ARCH)
 ASFLAGS = $(RV_ARCH) -g -Isw

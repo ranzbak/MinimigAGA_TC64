@@ -1,10 +1,14 @@
 /* irq_sig: the firmware trap entry (fw/ctrl_rv/arch/trap.S) keeps every
  * register of the interrupted code.
  *
- * x1 and x3..x30 hold distinct patterns PAT(n); x31 is the loop's only
- * scratch register (each check loads PAT(n) into it, so a trap between that
- * load and the compare that changes x31 fails the check too).  sp is the
- * stack.  Each loop iteration checks all of them and the event count.
+ * x1 and x3..x31 hold distinct patterns PAT(n); sp is the stack.  Each loop
+ * iteration checks them in two halves: first x1, x3..x30 with x31 as the
+ * scratch register, then x31 holds PAT(31) and x1, x3..x29, x31 are checked
+ * with x30 as the scratch; then x30 holds PAT(30) again and x31 is the scratch
+ * of the event count.  So every register, x31 (t6) included, holds its
+ * pattern while traps arrive for part of the loop, and a trap between a
+ * check's load of PAT(n) into the scratch and its compare fails the check
+ * too if it changes the scratch.
  * 50 interrupt events arrive at pseudo-random distances: main arms the first
  * one, the C handler (tests/irq_sig_h.c, installed with SetIntHandler) counts,
  * clears the line with GetInterrupts(), arms the next one with IRQ_AT 20..275
@@ -13,7 +17,7 @@
  * loop runs AFTER more iterations: the count must stay 50.
  * Linked with --no-relax so that no C code addresses through gp, which holds
  * a pattern here like the others.
- * Exit code: 0 = pass, 0x100 + n = register xn changed, 2 = fewer than 50
+ * Exit code: 0 = pass, 0x100 + n = register xn changed (0x101..0x11f), 2 = fewer than 50
  * events within ITER_MAX iterations, 3 = more than 50 events. */
 #include "l1.h"
 
@@ -22,10 +26,11 @@
 #define ITER_MAX 200000
 #define AFTER    64
 
-    /* CHK r: register x<r> still holds PAT(r), else exit 0x100 + r */
-    .macro CHK r
-    li      x31, PAT(\r)
-    beq     x\r, x31, 1f
+    /* CHK r, s: register x<r> still holds PAT(r) (x<s> is the scratch),
+       else exit 0x100 + r */
+    .macro CHK r, s
+    li      x\s, PAT(\r)
+    beq     x\r, x\s, 1f
     li      x31, 0x100 + \r
     j       fail
 1:
@@ -51,8 +56,13 @@ main:
 
 loop:
     .irp r, 1,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30
-    CHK     \r
+    CHK     \r, 31
     .endr
+    li      x31, PAT(31)            /* second half: x31 holds a pattern */
+    .irp r, 1,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,31
+    CHK     \r, 30
+    .endr
+    li      x30, PAT(30)            /* x31 is the scratch again */
     lw      x31, sig_count
     addi    x31, x31, -NEV
     beqz    x31, 5f

@@ -24,10 +24,14 @@
 # line in <run>/boot/img.txt) or boot/expect_nofile.txt line for line, and
 # the bench verdict must be "=== PASS".  Results in <run>/results.txt.
 #
-# mutant: t_b2b over the SLAT/SJIT matrix in three legs.
-#   gate     mutant bridge + fast master   every run must FAIL
-#   control  real bridge   + fast master   every run must PASS
-#   info     mutant bridge + real rv_hostcpu, one run, result printed only
+# mutant: t_b2b over the SLAT/SJIT matrix in three legs (EXTRA_WS from the
+# environment is ignored, the legs set it):
+#   gate     mutant bridge + fast master, EXTRA_WS=0      every run must FAIL
+#   control  real bridge   + fast master, EXTRA_WS=0..3   every run must PASS
+#            (the sweep moves the next request through all four clk_114
+#            phases of clk_28: the four-phase handshake holds at each)
+#   info     mutant bridge + real rv_hostcpu (EXTRA_WS=0) and mutant bridge
+#            + fast master (EXTRA_WS=1..3), one run each, printed only
 # mutant bridge: 832_bridge.vhd's "-- 4PHASE" line becomes "state <= waiting;"
 # (two-phase: the next hw request may start while cfide's ack is still high).
 # fast master: rv_hostcpu.v accepts the core's next dBus command in the ack
@@ -41,33 +45,14 @@
 # Steps: copy the RTL into the run directory (src/), apply the simulation
 # fixes below, build the test ROMs there (make B=<run>/build), compile, then
 # per test compile its ROM and elaborate a snapshot; xsim runs one at a time.
-# Simulation fixes on the copies (never on rtl/):
+# Simulation fixes on the copies (never on rtl/); there are no others, the
+# DUT is otherwise the RTL as committed:
 #   hostcache.v  "ack <= #1 1'b0" -> "ack <= 1'b0" (as host832/run.sh: the
 #                delayed default makes the ack a 1 ns glitch in simulation)
-#   cfide.vhd    timecnt and clkgen start at 0.  Neither has a reset; an FPGA
-#                register powers up at 0, in simulation they stay 'U': TIMER
-#                never counts and the UART never shifts (txbusy stays high
-#                after the first character, the second write never acks)
 #   hostcache.v, dpram_inf_generic.v: a `timescale line (xelab warning)
-#   VexOsd.v     TEMPORARY, until fw/ctrl_boot_rv/crt0.S clears x1-x31
-#                (planned): the register file starts at 0, as the FPGA's
-#                (distributed RAM / BRAM without INIT powers up at 0).  In
-#                simulation it starts X; the committed boot ROM clears no
-#                registers, so its function prologues store X (callee-saved
-#                registers) to the stack and the bench's X check fails.
-#                The test programs clear x1-x31 themselves (sw/crt0_rom.S,
-#                sw/reset_fw.S).
-#   OSDBoot_rv_ROM.vhd of the test programs (built from the
-#                fw/ctrl_boot_832 template; per test, *_sim.vhd next to it):
-#                port B's write is removed.  Ports A and B are two processes
-#                assigning the one signal "ram"; each has a driver for all of
-#                it, port B's holding the initial image, so every port-A
-#                write that changes a bit resolves to 'X' (stack, .data,
-#                t_lanes 0x1800).  Synthesis infers a true dual-port BRAM;
-#                port B is unused (we2 = '0') in the bridge.  A ROM built
-#                from the fw/ctrl_boot_rv template (a shared variable, no
-#                such problem) is compiled as it is; the boot runs compile
-#                the committed one directly.
+# The test ROMs use the fw/ctrl_boot_rv ROM template, as the committed boot
+# ROM does; every program clears x1-x31 at reset (the simulated register
+# file starts as X), as fw/ctrl_boot_rv/crt0.S does.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
@@ -95,14 +80,7 @@ setup() {
 	done
 	sed -i "s/ack <= #1 1'b0;/ack <= 1'b0;/" src/hostcache.v
 	grep -q "ack <= #1" src/hostcache.v && die "hostcache #1 fix not applied"
-	for sig in timecnt clkgen; do
-		sed -i "s/^\( *signal $sig *: *std_logic_vector([0-9]* downto 0)\);/\1 := (others => '0');/" src/cfide.vhd
-		grep -q "signal $sig .*:= (others => '0');" src/cfide.vhd || die "cfide $sig init not applied"
-	done
 	sed -i '1i `timescale 1ns/1ps' src/hostcache.v src/dpram_inf_generic.v
-	[ "$(grep -c '^  reg \[31:0\] RegFilePlugin_regFile \[0:31\]' src/VexOsd.v)" = 1 ] || die "VexOsd.v: register file declaration not found"
-	sed -i 's|^\(  reg \[31:0\] RegFilePlugin_regFile \[0:31\].*\)$|\1\n  integer rf_init_i;  // run.sh: power-up 0, as on the FPGA\n  initial for (rf_init_i = 0; rf_init_i < 32; rf_init_i = rf_init_i + 1) RegFilePlugin_regFile[rf_init_i] = 32'"'"'h0;|' src/VexOsd.v
-	grep -q 'run.sh: power-up 0' src/VexOsd.v || die "VexOsd.v register file init not applied"
 
 	# mutant bridge
 	[ "$(grep -c -- '-- 4PHASE' src/832_bridge.vhd)" = 1 ] || die "832_bridge.vhd: not exactly one -- 4PHASE line"
@@ -148,18 +126,14 @@ variant() {
 	X xvhdl "src/$1"
 }
 
-# snapshot <test> <name>: compile the test's ROM, elaborate snapshot <name>
+# snapshot <test> <name>: compile the test's ROM as built, elaborate snapshot
+# <name> with EXTRA_WS=$XW
 snapshot() {
 	local t=$1
-	local rom="$run/build/$t/OSDBoot_rv_ROM.vhd" simrom="$run/build/$t/OSDBoot_rv_ROM_sim.vhd"
+	local rom="$run/build/$t/OSDBoot_rv_ROM.vhd"
 	[ -f "$rom" ] || die "no ROM for $t (sw/$t.S or .c, TESTS in Makefile)"
-	if grep -q '^shared variable ram' "$rom"; then
-		cp "$rom" "$simrom"       # fw/ctrl_boot_rv template: no fix needed
-	else
-		sed 's/^\( *\)ram(to_integer(unsigned(addr2))).*<= d2.*;/\1null; -- run.sh: port B write removed for simulation/' "$rom" > "$simrom"
-		[ "$(grep -c 'port B write removed' "$simrom")" = 1 ] || die "$t: ROM port B fix not applied"
-	fi
-	X xvhdl "$simrom"
+	grep -q '^shared variable ram' "$rom" || die "$t: ROM not built from the fw/ctrl_boot_rv template"
+	X xvhdl "$rom"
 	X xelab -debug off -generic_top "EXTRA_WS=$XW" tb_host_bridge -s "$2"
 }
 
@@ -197,7 +171,7 @@ boot() {
 	local card="$run/boot/card.img" to=40000000
 	[ "$t" = boot_nofile ] && { card="$run/boot/card_nofile.img"; to=27000000; }
 	card=${BOOT_CARD:-$card}
-	[ ${#card} -le 128 ] || die "card image path longer than 128 characters (sd_spi_model's +SD_IMG buffer): $card"
+	[ ${#card} -le 1024 ] || die "card image path longer than 1024 characters (sd_spi_model's +SD_IMG buffer): $card"
 	exp="$HERE/boot/expect.txt"
 	[ "$t" = boot_nofile ] && exp="$HERE/boot/expect_nofile.txt"
 	make -s -C "$HERE/boot" B="$run/boot" > make_boot.log 2>&1 || { tail -20 make_boot.log; die "make boot firmware/cards (make_boot.log)"; }
@@ -254,15 +228,20 @@ case "${1:-}" in
 		setup
 		echo "mutant bridge: $(grep -- '-- 4PHASE' src/832_bridge_mutant.vhd | sed 's/^ *//')"
 		variant 832_bridge_mutant.vhd rv_hostcpu_fast.v
-		snapshot t_b2b "tb_t_b2b_mutfast_x$XW"
+		for XW in 0 1 2 3; do snapshot t_b2b "tb_t_b2b_mutfast_x$XW"; done
 		variant 832_bridge.vhd rv_hostcpu_fast.v
-		snapshot t_b2b "tb_t_b2b_fast_x$XW"
+		for XW in 0 1 2 3; do snapshot t_b2b "tb_t_b2b_fast_x$XW"; done
 		variant 832_bridge_mutant.vhd rv_hostcpu.v
-		snapshot t_b2b "tb_t_b2b_mut_x$XW"
+		XW=0; snapshot t_b2b "tb_t_b2b_mut_x$XW"
 		{
-			matrix "tb_t_b2b_mutfast_x$XW" t_b2b FAIL "gate    mutant bridge + fast master: "
-			matrix "tb_t_b2b_fast_x$XW" t_b2b PASS "control real bridge + fast master:   "
-			one "tb_t_b2b_mut_x$XW" t_b2b 8 0 ANY "info    mutant bridge + rv_hostcpu:  "
+			XW=0; matrix "tb_t_b2b_mutfast_x$XW" t_b2b FAIL "gate    mutant bridge + fast master: "
+			for XW in 0 1 2 3; do
+				matrix "tb_t_b2b_fast_x$XW" t_b2b PASS "control real bridge + fast master:   "
+			done
+			XW=0; one "tb_t_b2b_mut_x$XW" t_b2b 8 0 ANY "info    mutant bridge + rv_hostcpu:  "
+			for XW in 1 2 3; do
+				one "tb_t_b2b_mutfast_x$XW" t_b2b 8 0 ANY "info    mutant bridge + fast master: "
+			done
 		} | tee "$run/results.txt"
 		if grep -q '^BAD' "$run/results.txt"; then echo "=== MUTANT SURVIVED or CONTROL FAILED"; exit 1; fi
 		echo "=== MUTANT CAUGHT ($(grep -c '^ok.*gate' "$run/results.txt") gate runs FAIL, $(grep -c '^ok.*control' "$run/results.txt") control runs PASS)"

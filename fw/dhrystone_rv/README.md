@@ -16,10 +16,15 @@ is untouched.  Changes to the copies (`dhry_1.c` only; diff it against the 832 f
 - the result checks (`checkparam`, `checksparam`) count what they compare and
   what is wrong ("Result checks: 21 compared, 0 wrong"); a mismatch prints the
   usual `Error <name> is <x> but should be <y>`; `main` returns non-zero and the
-  simulation build writes DONE (0xFFFFFF04) with that.
+  simulation build writes DONE (0xFFFFFF04) with that;
+- `-DDHRY_CHECK_TEETH` (`make build/l1_O2_teeth.hex`, never in a real build)
+  sets `Int_Glob` wrong before the checks: `sim/rv_l1/run.sh dhry` runs it and
+  requires the "should be" line, "1 wrong" and `=== FAIL 1`, so the check path
+  is shown to fail.
 
 `hw.c` has the cfide UART (0xFFFFFFF0, byte writes without a TX-ready poll:
-cfide has no TX-ready bit, it holds the write until the transmitter is free), the TIMER (0xFFFFFFD0; one count = 256 x 643 clk_28 = 5.804 ms),
+cfide has no TX-ready bit, it holds the write until the transmitter is free,
+and it never acks a UART read, which would hang the CPU), the TIMER (0xFFFFFFD0; one count = 256 x 643 clk_28 = 5.804 ms),
 `printf` (`%d %i %u %x %c %s`) and `strcpy`, `strcmp`, `memcpy`, `memset`
 (byte loops, built with the benchmark's -O level, so they are part of the
 number).
@@ -53,7 +58,8 @@ RISC-V boot ROM loads.
     SLAT=20 SJIT=8 DHRY_OPT=Os RUNTAG=t13b bash sim/host_bridge/run.sh dhry
 
 Both print the cycles per 100 runs (between TIME 1 and TIME 2) and fail on any
-"should be" line, a nonzero "wrong" count, or a bench failure.
+"should be" line, a nonzero "wrong" count, or a bench failure.  The L1 run also
+runs the `-DDHRY_CHECK_TEETH` image once, which must fail its checks.
 DMIPS/MHz = 1e8 / (cycles per 100 runs x 1757).  Results: `findings/osd-riscv/dhrystone-rv.md`.
 The L2 run takes minutes: the UART prints at 115200 baud.
 
