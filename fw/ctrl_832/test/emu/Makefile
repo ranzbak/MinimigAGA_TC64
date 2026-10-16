@@ -1,5 +1,5 @@
 # Firmware units built by vbcc832 and run in 832e, the EightThirtyTwo
-# emulator: atapi_emu (atapi.c), cue_emu (cue.c).  Little-endian: 832e's
+# emulator: atapi_emu (atapi.c), cue_emu (cue.c), cdaudio_emu (cdaudio.c).  Little-endian: 832e's
 # big-endian mode mixes swapped (stmpdec) and raw (stbinc) byte writes; the
 # size bug these tests are for shows either way (a 32-bit store clobbers
 # the bytes after a uint8_t).  Exit status 0 = every program printed PASS.
@@ -22,8 +22,8 @@ LIBDIR  = $(832DIR)/lib832
 # the firmware's code generator options (fw/ctrl_832/Makefile)
 CFLAGS  = -+ -c99 -O=1343 -unsigned-char -D__geta4= -DNULL=0 -I../.. -I$(832DIR)/include/ -I$(LIBDIR)
 
-PROGS    = atapi_emu cue_emu
-UNIT_ASM = atapi.asm cue.asm
+PROGS    = atapi_emu cue_emu cdaudio_emu
+UNIT_ASM = atapi.asm cue.asm cdaudio.asm
 TEST_ASM = $(PROGS:=.asm)
 
 all: run
@@ -38,6 +38,8 @@ atapi.asm: ../../atapi.h ../../cue.h
 cue.asm: ../../cue.h
 atapi_emu.asm: ../../atapi.h ../../cue.h
 cue_emu.asm: ../../cue.h
+cdaudio.asm: ../../cdaudio.h ../../cue.h
+cdaudio_emu.asm: ../../cdaudio.h ../../cue.h
 
 %.o: %.asm
 	$(AS) -o $@ $<
@@ -57,9 +59,13 @@ atapi_emu: atapi_emu.o atapi.o cue.o
 cue_emu: cue_emu.o cue.o
 	$(LD) -o $@ $(LIBDIR)/crt0.a $(LIBDIR)/lib832.a $^
 
+cdaudio_emu: cdaudio_emu.o cdaudio.o cue.o
+	$(LD) -o $@ $(LIBDIR)/crt0.a $(LIBDIR)/lib832.a $^
+
 run: $(PROGS) 832e_fix
 	timeout 60 $(EMU) atapi_emu | tee atapi_emu.log; ! grep -q "^FAIL" atapi_emu.log && grep -qx PASS atapi_emu.log
 	timeout 60 $(EMU) cue_emu | tee cue_emu.log; ! grep -q "^FAIL" cue_emu.log && grep -qx PASS cue_emu.log
+	timeout 60 $(EMU) cdaudio_emu | tee cdaudio_emu.log; ! grep -q "^FAIL" cdaudio_emu.log && grep -qx PASS cdaudio_emu.log
 
 clean:
 	rm -rf *.asm *.o $(PROGS) *.log 832e_fix emusrc
