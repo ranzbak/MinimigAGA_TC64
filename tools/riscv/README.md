@@ -21,11 +21,16 @@ All commands run from the repository root.
 ### Option A: fetch-xpack.sh (default, hash-pinned)
 
     bash tools/riscv/fetch-xpack.sh            # installs to $HOME/opt
-    bash tools/riscv/fetch-xpack.sh /some/dir  # or another destination
 
 Downloads about 413 MB, verifies the sha256 (exit 2 and nothing installed on a
 mismatch), unpacks, and refuses to overwrite an existing directory. The default
 `RV_GCC_DIR` matches this location, so no further setup is needed.
+
+Another destination needs `RV_GCC_DIR` set to the unpacked directory (in
+every shell that builds, e.g. in `~/.profile`):
+
+    bash tools/riscv/fetch-xpack.sh /some/dir
+    export RV_GCC_DIR=/some/dir/xpack-riscv-none-elf-gcc-15.2.0-1
 
 ### Option B: xpm global install (alternative)
 
@@ -47,7 +52,9 @@ multilib, so `check-toolchain.sh` fails check 1a (see Results).
 
 ## 3. Verify
 
-    bash tools/riscv/check-toolchain.sh        # exit 0 = OK
+    bash tools/riscv/check-toolchain.sh        # xPack: exit 0 = OK
+    # Ubuntu fallback (option C): exits 1 by design, check 1a fails (no rv32imc
+    # multilib); every other check must say OK (see Results)
     RV_GCC_DIR=/usr RV_PREFIX=riscv64-unknown-elf- bash tools/riscv/check-toolchain.sh
 
 Expected output with the xPack toolchain:
@@ -63,6 +70,9 @@ Expected output with the xPack toolchain:
 
 ## 4. Use from a Makefile
 
+    # TOP = the repository root, relative to this Makefile's directory
+    # (here a Makefile two levels down, e.g. fw/<project>/Makefile)
+    TOP := $(abspath $(CURDIR)/../..)
     include $(TOP)/tools/riscv/toolchain.mk
 
     prog.elf: prog.c

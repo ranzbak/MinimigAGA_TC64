@@ -111,7 +111,9 @@ reference; hardware offloads come afterwards, one bisectable step at a time.
 - Boot ROM: 4,333 B, bss end 0x1354, stack 0x240, `prg_start=0x2000`,
   `OSDNAME="832OSDADBIN"`; `romgen` -> VHDL table between
   `rom_prologue/epilogue.vhd` (file byte i in BE lane i). Its `putchar`
-  does not wait for TX ready.
+  does not wait for TX ready, and need not: cfide holds a UART write until
+  the transmitter is free. There is no TX-ready bit, and cfide never acks a
+  UART read (it would hang the CPU), so no firmware may read `0xFFFFFFF0`.
 - Interrupts: lib832 `start.S` dispatches through `_InterruptVector` at byte
   13 of the ROM, patched by `SetIntHandler()`; `inthandler()` reads
   `GetInterrupts()` (which clears the cfide line), runs `akiko_inthandler()`

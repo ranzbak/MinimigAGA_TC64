@@ -36,25 +36,32 @@ Every Makefile includes `tools/riscv/toolchain.mk`, which gives `RV_CC`,
 
 Assemble `crt0.S` and `trap.S`, compile `trap.c` and `irq.c` with the
 firmware flags, link everything with `firmware.ld` and without the C
-library's start files. In a Makefile (`TOP` = the repository root):
+library's start files. In a Makefile (here one two levels below the
+repository root, e.g. `fw/<project>/Makefile`; `OBJS` = your own objects):
 
 ```make
+TOP     := $(abspath $(CURDIR)/../..)
 include $(TOP)/tools/riscv/toolchain.mk
 ARCH    := $(TOP)/fw/ctrl_rv/arch
 CFLAGS  := $(RV_CFLAGS_FW) -I$(ARCH)
 
-build/crt0.o:       $(ARCH)/crt0.S ; $(RV_CC) $(RV_ARCH) -c -o $@ $<
-build/trap_entry.o: $(ARCH)/trap.S ; $(RV_CC) $(RV_ARCH) -c -o $@ $<
-build/trap.o:       $(ARCH)/trap.c ; $(RV_CC) $(CFLAGS) -c -o $@ $<
-build/irq.o:        $(ARCH)/irq.c  ; $(RV_CC) $(CFLAGS) -c -o $@ $<
+build:
+	mkdir -p build
+build/crt0.o:       $(ARCH)/crt0.S | build ; $(RV_CC) $(RV_ARCH) -c -o $@ $<
+build/trap_entry.o: $(ARCH)/trap.S | build ; $(RV_CC) $(RV_ARCH) -c -o $@ $<
+build/trap.o:       $(ARCH)/trap.c | build ; $(RV_CC) $(CFLAGS) -c -o $@ $<
+build/irq.o:        $(ARCH)/irq.c  | build ; $(RV_CC) $(CFLAGS) -c -o $@ $<
 
 firmware.elf: build/crt0.o build/trap_entry.o build/trap.o build/irq.o $(OBJS)
-	$(RV_CC) $(RV_LDFLAGS_FW) -nostartfiles -T $(ARCH)/firmware.ld -o $@ $^ $(RV_LIBS_FW)
+	$(RV_CC) $(RV_LDFLAGS_FW) -nostartfiles -T $(ARCH)/firmware.ld \
+	  -Wl,--no-warn-rwx-segments -o $@ $^ $(RV_LIBS_FW)
 RV32OSDA.BIN: firmware.elf
 	$(RV_OBJCOPY) -O binary $< $@
 ```
 
-(`trap.S` and `trap.c` need different object names.) The boot ROM
+(`trap.S` and `trap.c` need different object names. `--no-warn-rwx-segments`:
+`firmware.ld` puts code and data in one RWX load segment, the whole image is
+loaded into RAM; without it binutils 2.45 warns on every link.) The boot ROM
 (`fw/ctrl_boot_rv`) loads `RV32OSDA.BIN` to 0x2000 and jumps there.
 
 ### Memory layout (`firmware.ld`)

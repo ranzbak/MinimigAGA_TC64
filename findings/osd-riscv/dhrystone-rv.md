@@ -63,14 +63,19 @@ run scripts fail on either (`sim/rv_l1/run.sh dhry`, `sim/host_bridge/run.sh dhr
 
 ## Differences from the brief
 
-- **No TX-ready poll.**  The brief and the Global Constraints name bit 8 of a
-  16-bit read at 0xFFFFFFF0 as TX ready.  `rtl/host/cfide.vhd` has no such bit:
-  `IOdata <= sd_in`, the SPI data register, is what the read returns.  The L1
-  model returns 0x0100 (so a poll works in L1); the L2 run with a poll hung in
-  the first character (SDRAM-resident firmware, 40 M cycles, 2 hw accesses).
+- **No TX-ready poll.**  The brief and the Global Constraints named bit 8 of a
+  16-bit read at 0xFFFFFFF0 as TX ready.  `rtl/host/cfide.vhd` has no such bit,
+  and a UART read is never acked at all: cfide acks an rs232/SPI access only
+  with `IOcpuena`, and its support state machine sets `IOcpuena` for the UART
+  only on a write, so a read leaves the bridge waiting for an ack that never
+  comes and the CPU deadlocks.  (This text first said the read returns the SPI
+  data register; that was wrong, corrected after the final review.)  The L1
+  model used to return 0x0100 (so a poll worked in L1); the L2 run with a
+  poll hung in the first character (SDRAM-resident firmware, 40 M cycles, 2 hw
+  accesses).  The L1 model now fails any UART read (`=== FAIL uart read`, test
+  `uart_read`), and the Global Constraints and the plan are corrected.
   `hw.c` writes the byte without polling: cfide does not ack a UART write while
-  `txbusy`, so no character is lost (as the 832 firmware).  Keep this in mind
-  for the plan's "TX-ready" wording.
+  `txbusy`, so no character is lost (as the 832 firmware).
 - TIMER: `timecnt[23:8]` counts every `aud_tick` (643 clk_28 = 44.1 kHz), so
   one count is 256 x 643 / 28.359375 MHz = 5.804 ms.  The 832 Dhrystone's
   `2 * TIMER` as "milliseconds" does not match that; `hw_ms()` uses 5.804 ms.

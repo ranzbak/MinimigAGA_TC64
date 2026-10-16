@@ -1345,7 +1345,7 @@ EightThirtyTwo_Bridge #( debug ? 1'b1 : 1'b0) hostcpu
     .ram_req(host_ramreq), // Ram request (To SDRAM when ram request)
     .ram_ack(host_ramack), // Ram acknowledge (clkena_in)
 
-    .interrupt(host_interrupt) // TODO find out
+    .interrupt(host_interrupt)
 );
 
 

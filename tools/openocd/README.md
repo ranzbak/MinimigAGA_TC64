@@ -20,8 +20,10 @@ for syntax (OpenOCD's dummy adapter) and the Debug Module only in simulation
 
 ## The cable: the board's Platform Cable USB II does not work
 
-The board is programmed with a **Xilinx Platform Cable USB II** (USB ID
-`03fd:0008`, shown as `03fd:000f` by some firmware loads). **OpenOCD 0.12.0
+The board is programmed with a **Xilinx Platform Cable USB II**. On this
+machine `lsusb` shows it as **`03fd:000f`** (observed 2026-10-16, with its
+firmware loaded); other documents give `03fd:0008`, which was not observed
+here. Check yours with `lsusb | grep 03fd`. **OpenOCD 0.12.0
 (the Ubuntu 24.04 package installed here) has no driver for it**:
 `openocd -c "adapter list" -c shutdown` lists parport, dummy, ftdi,
 usb_blaster, esp_usb_jtag, ft232r, ..., jlink, cmsis-dap, xds110, st-link,
@@ -117,7 +119,7 @@ Then, for example:
 (gdb) monitor halt
 (gdb) info registers pc
 (gdb) break main
-(gdb) monitor reset halt      # ndmreset: CPU restarts at 0x0, halted
+(gdb) monitor reset halt      # ndmreset: CPU restarts at 0x0, halted (unverified, see notes)
 (gdb) load                    # writes the ELF's sections (firmware from 0x2000)
 (gdb) continue
 ```
@@ -127,10 +129,14 @@ Notes:
 * The CPU has a 4 KB instruction cache and no data cache. OpenOCD issues
   `fence.i` when it resumes after writing memory, so `load` and software
   breakpoints are seen by the core.
-* `monitor reset halt` uses `dmcontrol.ndmreset` (no SRST line is
-  configured): in `rv_hostcpu` that is the CPU reset only (the boot ROM runs
-  again from 0x0, the Debug Module keeps its state); the Amiga side is not
-  reset. The L1 smoke test checks ndmreset this way.
+* `monitor reset halt` is **unverified until the debug lab stage (plan
+  5.4)**: no OpenOCD session has run against the core yet. What is known:
+  with no SRST line configured, OpenOCD resets through
+  `dmcontrol.ndmreset`, and in `rv_hostcpu` that is the CPU reset only (the
+  boot ROM runs again from 0x0, the Debug Module keeps its state; the Amiga
+  side is not reset). The L1 smoke test (`sim/rv_l1/run.sh dm_smoke`)
+  checks that ndmreset sequence with a simulated JTAG master, not OpenOCD's
+  own reset-halt handshake (haltreq held across the reset).
 * Memory map for GDB: boot ROM BRAM `0x0-0x1FFF` (writable), SDRAM from
   `0x2000`, hardware registers at `0xFFFFFF00-0xFFFFFFFF` (16-bit, avoid
   reading them from GDB: some reads have side effects, e.g. the interrupt
