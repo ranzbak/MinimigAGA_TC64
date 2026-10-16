@@ -8,7 +8,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../../.." && pwd)
 VIVADO_PATH=${VIVADO_PATH:-/opt/Xilinx/Vivado/2023.2}
 export LC_ALL=C LANG=C
-export LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-$HOME/lib/tinfo5}
+export LD_LIBRARY_PATH="$HOME/lib/tinfo5${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 run="$HERE/run_${RUNTAG:-wt}"
 rm -rf "$run"; mkdir -p "$run"

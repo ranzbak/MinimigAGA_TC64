@@ -1,0 +1,58 @@
+# L2 host-bridge bench test ROMs: each test program becomes
+# $(B)/<test>/OSDBoot_rv_ROM.vhd (the boot BRAM image, entity OSDBoot_rv_ROM),
+# built as fw/ctrl_boot_832/Makefile builds its ROM: romgen between
+# rom_prologue.vhd and rom_epilogue.vhd, soc_firmware renamed.  The .elf,
+# .bin, .lst and .map land next to it.
+#   make -C sim/host_bridge                 # into sim/host_bridge/build
+#   make -C sim/host_bridge B=<dir>         # run.sh: into its run directory
+# A test is sw/<name>.S or sw/<name>.c; add its name to TESTS.
+TOP := $(abspath $(CURDIR)/../..)
+include $(TOP)/tools/riscv/toolchain.mk
+
+B       ?= build
+TESTS   ?= t_lanes t_hwoff t_b2b t_spibusy
+ROMGEN  := $(TOP)/fw/romgen/romgen
+ROMDIR  := $(TOP)/fw/ctrl_boot_832
+
+CFLAGS  = $(RV_CFLAGS_FW) -g -Wall -Wextra -Isw
+ASFLAGS = $(RV_ARCH) -g -Isw
+LDFLAGS = $(RV_LDFLAGS_FW) -nostartfiles -T sw/rom.ld -Wl,--no-warn-rwx-segments \
+          -Wl,-Map,$(@:.elf=.map)
+
+.PHONY: all clean
+all: $(TESTS:%=$(B)/%/OSDBoot_rv_ROM.vhd) $(TESTS:%=$(B)/%/prog.lst)
+
+$(B)/%/OSDBoot_rv_ROM.vhd: $(B)/%/prog.bin $(ROMGEN) $(ROMDIR)/rom_prologue.vhd $(ROMDIR)/rom_epilogue.vhd
+	sed 's/soc_firmware/OSDBoot_rv_ROM/' < $(ROMDIR)/rom_prologue.vhd > $@.tmp
+	$(ROMGEN) $< >> $@.tmp
+	cat $(ROMDIR)/rom_epilogue.vhd >> $@.tmp
+	mv $@.tmp $@
+
+$(ROMGEN): $(TOP)/fw/romgen/romgen.c
+	$(MAKE) -C $(TOP)/fw/romgen romgen
+
+$(B)/crt0_rom.o: sw/crt0_rom.S sw/hb.h
+	@mkdir -p $(@D)
+	$(RV_CC) $(ASFLAGS) -c -o $@ $<
+
+$(B)/%/prog.o: sw/%.S sw/hb.h sw/check.h
+	@mkdir -p $(@D)
+	$(RV_CC) $(ASFLAGS) -c -o $@ $<
+
+$(B)/%/prog.o: sw/%.c sw/hb.h
+	@mkdir -p $(@D)
+	$(RV_CC) $(CFLAGS) -c -o $@ $<
+
+$(B)/%/prog.elf: $(B)/crt0_rom.o $(B)/%/prog.o sw/rom.ld
+	$(RV_CC) $(LDFLAGS) -o $@ $(B)/crt0_rom.o $(B)/$*/prog.o $(RV_LIBS_FW)
+
+$(B)/%/prog.bin: $(B)/%/prog.elf
+	$(RV_OBJCOPY) -O binary $< $@
+
+$(B)/%/prog.lst: $(B)/%/prog.elf
+	$(RV_OBJDUMP) -d -h $< > $@
+
+.PRECIOUS: $(B)/%/prog.o $(B)/%/prog.elf $(B)/%/prog.bin
+
+clean:
+	rm -rf $(B)
