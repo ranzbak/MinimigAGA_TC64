@@ -840,8 +840,14 @@ Plus the stress protocol 7.4.
    (b) standard ISA + standard machine-mode trap/IRQ CSRs, supported by
    upstream GCC and LLVM without patches. picorv32 fails (a). Survey and
    out-of-context measurement in `findings/osd-riscv/tiny-cores.md`.
-2. **ISA: RV32IM, no compressed instructions.** Memory is not the limit.
-   Firmware ~105-115 KB in SDRAM.
+2. **ISA: RV32IMC preferred, RV32IM acceptable.** Paul (revised the same
+   day): memory is not the limit, but take compressed instructions if
+   leaving them out means toolchain/library trouble. Finding: with a proper
+   toolchain it does not (Ubuntu 13.2 and xPack ship rv32im multilibs);
+   only the `~/bin` 14.2 badge build forces C. C is still favoured where the
+   core supports it cheaply: ~25-30 % smaller code (boot ROM safely in 8 KB),
+   fewer bytes over the uncached fetch path, any stock rv32imac toolchain and
+   library works. Cost (~+100 LUT, Fmax) measured per core in Phase 0.
 3. **Boot ROM: 8 KB preferred**, 16 KB only if the RV32IM boot ROM needs it.
 4. **Config file: drop the big-endian format.** The RISC-V firmware
    reads/writes a native little-endian layout; a host command-line tool
