@@ -28,10 +28,28 @@ module cia_timerd
   reg    count_del;        // delayed count signal for interrupt requesting
 
 // timer D output latch control
+//
+// Reading TODHI freezes all three bytes until the TODLO read is OVER: the LO
+// read itself still returns the frozen byte.  Releasing at the start of the
+// LO read let the rest of that read follow the live count, so a tick inside a
+// LO read stretched by the bus returned the new low byte under the old high
+// ones -- $0001FF read as $000100 (sim/cia_tod test 5).
+reg tlo_rd_d; // TODLO read in the previous clk7 cycle
+always @(posedge clk)
+  if (clk7_en)
+    tlo_rd_d <= tlo & ~wr;
+
+`ifdef CIA_TOD_LATCH_MUTANT
+wire lo_rd_end = 1'b0;
+`else
+wire lo_rd_end = tlo_rd_d & ~(tlo & ~wr); // the TODLO read has just ended
+`endif
+
 always @(posedge clk)
   if (clk7_en) begin
     if (reset)
       latch_ena <= 1'd1;
+`ifdef CIA_TOD_LATCH_MUTANT
     else if (!wr)
     begin
       if (thi && !crb7) // if MSB read and ALARM is not selected, hold data for subsequent reads
@@ -39,11 +57,19 @@ always @(posedge clk)
       else if (tlo) // if LSB read, update data every clock
         latch_ena <= 1'd1;
     end
+`else
+    else if (thi && !wr && !crb7) // MSB read, ALARM not selected: hold data for subsequent reads
+      latch_ena <= 1'd0;
+    else if (lo_rd_end) // LSB read just ended: follow the count again
+      latch_ena <= 1'd1;
+`endif
   end
 
+// (also on the release itself, so a TODHI read that began right then latches
+// the current count rather than keeping the old one)
 always @(posedge clk)
   if (clk7_en) begin
-    if (latch_ena)
+    if (latch_ena || lo_rd_end)
       tod_latch[23:0] <= tod[23:0];
   end
 
@@ -86,7 +112,16 @@ always @(posedge clk)
     begin
       tod[23:0] <= 24'd0;
     end
+`ifdef CIA_TOD_WRGATE_MUTANT
     else if (wr && !crb7) // crb7==0 enables writing to TOD counter
+`else
+    // Only a write to a TOD register may take the place of a count.  `wr` is
+    // the CPU's write strobe for ANY address (minimig.v: cpu_lwr|cpu_hwr);
+    // testing it alone dropped every count that met a CPU write anywhere --
+    // under a chip RAM write load three VSYNCs in four (IrqLat, the Cure
+    // meter; sim/cia_tod test 3).
+    else if (wr && !crb7 && (tlo || tme || thi)) // crb7==0 enables writing to TOD counter
+`endif
     begin
       if (tlo)
         tod[7:0] <= data_in[7:0];

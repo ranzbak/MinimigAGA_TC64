@@ -470,8 +470,8 @@ wire  turbo; //CPU is working in turbo mode
 reg   [8-1:0] memory_config; //memory configuration; bit 7 = fast RAM on the DDR3 board only
 reg   [3:0] floppy_config; //floppy drives configuration (drive number and speed)
 reg   [4:0] chipset_config; //chipset features selection
-reg   [2:0] ide_config0; //HDD & HDC config: bit #0 enables Gayle primary channel, bit #1 enables Master drive, bit #2 enables Slave drive
-reg   [2:0] ide_config1; //HDD & HDC config: bit #0 enables Gayle secondary chnnl, bit #1 enables Master drive, bit #2 enables Slave drive
+reg   [4:0] ide_config0; //HDD & HDC config: bit #0 enables Gayle primary channel, bit #1 enables Master drive, bit #2 enables Slave drive, bits #3/#4 Master/Slave is ATAPI
+reg   [4:0] ide_config1; //HDD & HDC config: bit #0 enables Gayle secondary chnnl, bit #1 enables Master drive, bit #2 enables Slave drive, bits #3/#4 Master/Slave is ATAPI
 
 
 //gayle stuff
@@ -489,6 +489,9 @@ wire  hdd_wr; //register write strobe
 wire  hdd_status_wr; //status register write strobe
 wire  hdd_data_wr; //data port write strobe
 wire  hdd_data_rd; //data port read strobe
+wire  hdd_port; //IDE port of the firmware's current HDD command
+wire  hdd_xfer_wr; //packet-mode transfer length write strobe
+wire  hdd_regs_rd; //task file read command strobe
 
 wire  [7:0] bank; //memory bank select
 
@@ -679,6 +682,9 @@ paula PAULA1
   .hdd_status_wr(hdd_status_wr),
   .hdd_data_wr(hdd_data_wr),
   .hdd_data_rd(hdd_data_rd),
+  .hdd_port(hdd_port),
+  .hdd_xfer_wr(hdd_xfer_wr),
+  .hdd_regs_rd(hdd_regs_rd),
   // fifo / track display
   .trackdisp(trackdisp),
   .secdisp(secdisp),
@@ -690,8 +696,8 @@ paula PAULA1
 wire  [8-1:0] userio_memory_config; //memory configuration
 wire  [3:0] userio_floppy_config; //floppy drives configuration (drive number and speed)
 wire  [4:0] userio_chipset_config; //chipset features selection
-wire  [2:0] userio_ide_config0; //HDD & HDC config: bit #0 enables Gayle, bit #1 enables Master drive, bit #2 enables Slave drive
-wire  [2:0] userio_ide_config1; //HDD & HDC config: bit #0 enables Gayle, bit #1 enables Master drive, bit #2 enables Slave drive
+wire  [4:0] userio_ide_config0; //HDD & HDC config: bit #0 enables Gayle, bit #1 enables Master drive, bit #2 enables Slave drive, bits #3/#4 ATAPI
+wire  [4:0] userio_ide_config1; //HDD & HDC config: bit #0 enables Gayle, bit #1 enables Master drive, bit #2 enables Slave drive, bits #3/#4 ATAPI
 wire  [4:0] userio_cpu_config;
 reg   [4:0] cpu_config_reg;
 
@@ -707,8 +713,14 @@ always @(posedge clk) begin
   cpu_config_reg <= userio_cpu_config;
 end
 
+// CORE_CAPS bit 7: the Gayle has two IDE ports with ATAPI packet mode
+// (gayle.v IDE_PORTS = 2, findings/cdrom/plan.md 7.3).  The firmware enables
+// IDE port 2 and CD-ROM units only when it is set: on a one-port Gayle its
+// port bit is ignored and port 2 would share port 1's registers.
+localparam [7:0] CAPS_IDE2 = 8'h80;
+
 //instantiate user IO
-userio #(.CORE_CAPS(CORE_CAPS)) USERIO1
+userio #(.CORE_CAPS(CORE_CAPS | CAPS_IDE2)) USERIO1
 (
   .clk(clk),
   .clk7_en(clk7_en),
@@ -1120,7 +1132,7 @@ gary GARY1
   .toccata_base_addr(toccata_base_addr)
 );
 
-gayle GAYLE1
+gayle #(.IDE_PORTS(2)) GAYLE1
 (
   .clk(clk),
   .clk7_en(clk7_en),
@@ -1137,6 +1149,8 @@ gayle GAYLE1
   .nrdy(gayle_nrdy),
   .hdd0_ena(ide_config0[2:1]),
   .hdd1_ena(ide_config1[2:1]),
+  .hdd0_atapi(ide_config0[4:3]),
+  .hdd1_atapi(ide_config1[4:3]),
 
   .hdd_cmd_req(hdd_cmd_req),
   .hdd_dat_req(hdd_dat_req),
@@ -1147,6 +1161,9 @@ gayle GAYLE1
   .hdd_status_wr(hdd_status_wr),
   .hdd_data_wr(hdd_data_wr),
   .hdd_data_rd(hdd_data_rd),
+  .hdd_port(hdd_port),
+  .hdd_xfer_wr(hdd_xfer_wr),
+  .hdd_regs_rd(hdd_regs_rd),
   .hd_fwr(hd_fwr),
   .hd_frd(hd_frd)
 );

@@ -6,6 +6,9 @@
 #   ./run_ddr3_prog.sh <tag> <program.asm>   (same env as run_ddr3_dhry.sh: FREECORE,
 #   STOREBUF, FWDRAS, PREMIS, SBMMU, CBACK, BTB; the program sets its own MMU state)
 # e.g. CBACK=1 ./run_ddr3_prog.sh cbs1 cbstress_ddr3.asm
+# TURBOCHIP=0: chip RAM over the chipset bus (Turbo chip off; default 1), FASTCHIP=1: Chip slots
+# Fast, POSTCHIP=1 / POSTCI=<n>: the core's AP040_POST_CHIP / AP040_POST_CI, CWF=1: AP040_CWF,
+# ASMDEFS="-DNAME=v ...": assembler defines
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 TAG=$1; PROG=$(cd "$(dirname "$2")" && pwd)/$(basename "$2")
@@ -19,7 +22,7 @@ LIB=$R/lib/core_ddr3_controller
 W=$D/run_perf_$TAG
 if [ -e "$W" ]; then echo "run_ddr3_prog.sh: $W exists; pick a new tag" >&2; exit 2; fi
 mkdir -p "$W"
-( cd "$W" && vasmm68k_mot -m68040 -Fbin -o prog.bin "$PROG" > asm.log )
+( cd "$W" && vasmm68k_mot -m68040 -Fbin -o prog.bin ${ASMDEFS:-} "$PROG" > asm.log )
 cd "$W"
 PRJ=project.prj; : > $PRJ
 for f in "$R/rtl/akiko/cornerturn.vhd" "$R/rtl/akiko/akiko.vhd" "$R/rtl/soc/ap040_ram_seq.vhd" "$R/rtl/soc/TG68K.vhd"; do
@@ -39,8 +42,9 @@ for f in "$LIB/src_v/phy/xc7/ddr3_dfi_phy.v" "$LIB/tb/ddr3_core_xc7/ddr3.v" "$R/
   echo "verilog work \"$f\"" >> $PRJ; done
 printf 'run all\nquit\n' > run.tcl
 "$VIVADO_PATH/bin/xelab" -prj $PRJ -i "$LIB/tb/ddr3_core_xc7" -i "$PIPE_DIR/rtl" -i "$PIPE_DIR/rtl/compat" -i "$PIPE_DIR/tb/perf" \
-    -d AP040_PIPELINED -d SOC_SIM -d REALSDRAM $( [ "${FREECORE:-0}" = "1" ] && echo -d FREECORE ) $( [ -n "${STOREBUF:-}" ] && echo -d STOREBUF=$STOREBUF ) $( [ "${FWDRAS:-0}" = "1" ] && echo -d FWDRAS ) $( [ "${PREMIS:-0}" = "1" ] && echo -d PREMIS ) $( [ "${SBMMU:-0}" = "1" ] && echo -d SBMMU ) $( [ "${CBACK:-0}" = "1" ] && echo -d CBACK ) $( [ "${BTB:-0}" = "1" ] && echo -d BTBF ) $( [ "${LDX:-0}" = "1" ] && echo -d LDXF ) $( [ "${BTFN:-0}" = "1" ] && echo -d BTFNF ) $( [ "${DFPMIS:-0}" = "1" ] && echo -d DFPMISF ) $( [ "${WALLOC:-0}" = "1" ] && echo -d WALLOCF ) -i "$D" -debug typical -relax \
+    -d AP040_PIPELINED -d SOC_SIM -d REALSDRAM $( [ "${FREECORE:-0}" = "1" ] && echo -d FREECORE ) $( [ -n "${STOREBUF:-}" ] && echo -d STOREBUF=$STOREBUF ) $( [ "${FWDRAS:-0}" = "1" ] && echo -d FWDRAS ) $( [ "${PREMIS:-0}" = "1" ] && echo -d PREMIS ) $( [ "${SBMMU:-0}" = "1" ] && echo -d SBMMU ) $( [ "${CBACK:-0}" = "1" ] && echo -d CBACK ) $( [ "${BTB:-0}" = "1" ] && echo -d BTBF ) $( [ "${LDX:-0}" = "1" ] && echo -d LDXF ) $( [ "${BTFN:-0}" = "1" ] && echo -d BTFNF ) $( [ "${DFPMIS:-0}" = "1" ] && echo -d DFPMISF ) $( [ "${WALLOC:-0}" = "1" ] && echo -d WALLOCF ) $( [ -n "${POSTCHIP:-}" ] && echo -d POSTCHIP=$POSTCHIP ) $( [ -n "${POSTCI:-}" ] && echo -d POSTCI=$POSTCI ) $( [ "${CWF:-0}" = "1" ] && echo -d CWFF ) -i "$D" -debug typical -relax \
     -L secureip -L unisims_ver -L unimacro_ver ddr3_cpu_tb perf_probe_ddr3 ${PROBE_TOP:-} glbl -s cpu_sim > elab.log 2>&1 || { tail -30 elab.log; exit 1; }
-"$VIVADO_PATH/bin/xsim" cpu_sim -t run.tcl -testplusarg "prog=$W/prog.bin" -testplusarg TURBOCHIP=1 -testplusarg MMUTEST \
+"$VIVADO_PATH/bin/xsim" cpu_sim -t run.tcl -testplusarg "prog=$W/prog.bin" -testplusarg TURBOCHIP=${TURBOCHIP:-1} -testplusarg MMUTEST \
+    $( [ "${FASTCHIP:-0}" = "1" ] && echo -testplusarg FASTCHIP ) \
     > xsim.log 2>&1 || true
-grep -E "^(PERF|INFO: program phase|PASS|FAIL|DDR3 CPU TB)" xsim.log || true
+grep -E "^(PERF|INFO: program phase|PASS|FAIL|DDR3 CPU TB|CHIPBUS)" xsim.log || true

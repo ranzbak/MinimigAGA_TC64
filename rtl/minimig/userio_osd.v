@@ -44,8 +44,8 @@ module userio_osd #(
   // the video config's second data byte.  A firmware that sends one byte
   // leaves them 0 (off; scaling 0 = line rate, the picture of before).
   output  reg [7:0] crt_fx = 0,
-  output    reg    [2:0] ide_config0 = 0,        //enable hard disk support
-  output    reg    [2:0] ide_config1 = 0,        //enable hard disk support
+  output    reg    [4:0] ide_config0 = 0,        //IDE port 1: {slave ATAPI, master ATAPI, slave, master, port on}
+  output    reg    [4:0] ide_config1 = 0,        //IDE port 2: same layout (command 0x58)
   output  reg [4:0] cpu_config = 0,   // [4] Chip slots Fast (findings/fastslot)
   output  reg [1:0] autofire_config = 0,
   output  reg       cd32pad = 0,
@@ -82,8 +82,8 @@ reg		vena;
 wire  [9:0] verbeam_osdclk;
 
 reg   [8-1:0] t_memory_config = 8'b0_0_00_01_01;
-reg   [2:0] t_ide_config0 = 0;
-reg   [2:0] t_ide_config1 = 0;
+reg   [4:0] t_ide_config0 = 0;
+reg   [4:0] t_ide_config1 = 0;
 reg   [4:0] t_cpu_config = 0;
 reg   [4:0] t_chipset_config = 0;
 
@@ -290,7 +290,8 @@ assign spi_invalidate = ~vld && vld_d;
 // 8'b0_010_0100 | XXFFSSCC || memory config   | FF - fast, CC - chip, SS - slow
 // 8'b0_011_0100 | XXHHLLSS || video config    | HH - hires interp. filter, LL - lowres interp. filter, SS - scanline mode
 // 8'b0_100_0100 | XXXXXFFS || floppy config   | FF - drive number, S - floppy speed
-// 8'b0_101_0100 | XXXXXSMC || harddisk config | S - enable slave HDD, M - enable master HDD, C - enable HDD controler
+// 8'b0_101_0100 | XXXBASMC || harddisk config | B/A - slave/master is ATAPI, S - enable slave HDD, M - enable master HDD, C - enable HDD controler
+// 8'b0_101_1000 | XXXBASMC || harddisk config, IDE port 2 (same layout)
 // 8'b0_110_0100 | XXXXXXAA || joystick config | AA - autofire rate
 // 8'b0_000_1100 | XXXXXAAA_AAAAAAAA B,B,... || write OSD buffer, AAAAAAAAAAA - 11bit OSD buffer address, B - variable number of bytes
 // 8'b0_001_1100 | A_A_A_A B,B,... || write system memory, A - 32 bit memory address, B - variable number of bytes
@@ -446,8 +447,8 @@ always @ (posedge clk) begin
       if (spi_video_cfg_sel)    begin if (dat_cnt == 0) {dither, hr_filter, lr_filter, scanline} <= #1 wrdat[7:0];
                                       if (dat_cnt == 1) crt_fx <= #1 wrdat[7:0]; end
       if (spi_floppy_cfg_sel)   begin if (dat_cnt == 0) floppy_config <= #1 wrdat[3:0]; end
-      if (spi_harddisk0_cfg_sel)begin if (dat_cnt == 0) t_ide_config0 <= #1 wrdat[2:0]; end
-      if (spi_harddisk1_cfg_sel)begin if (dat_cnt == 0) t_ide_config1 <= #1 wrdat[2:0]; end
+      if (spi_harddisk0_cfg_sel)begin if (dat_cnt == 0) t_ide_config0 <= #1 wrdat[4:0]; end
+      if (spi_harddisk1_cfg_sel)begin if (dat_cnt == 0) t_ide_config1 <= #1 wrdat[4:0]; end
       if (spi_joystick_cfg_sel) begin if (dat_cnt == 0) {cd32pad, autofire_config} <= #1 wrdat[2:0]; end
       //if (spi_joystick_cfg_sel) begin if (dat_cnt == 0) {autofire_config} <= #1 wrdat[1:0]; end
   //    if (spi_osd_buffer_sel)   begin if (dat_cnt == 3) highlight <= #1 wrdat[3:0]; end
@@ -628,7 +629,8 @@ assign host_adr  = mem_adr[23:0];
 // alone and simply keeps counting.
 // Bit 4 of the capability byte is this module's own to answer: the key queue
 // below lives here, so this is what knows whether it is there.  Bits 0-3 come
-// in from the top, which is what knows which CPU was built.
+// in from the top, which is what knows which CPU was built.  Bit 7 comes from
+// minimig.v: the Gayle has two IDE ports with ATAPI packet mode.
 localparam [7:0] CAPS_KEYQ = 8'h10;
 // Bit 6: bytes 6-9 of this reply are the input-path diagnostic (in_diag, see
 // userio.v) -- what the mouse, the joystick expander and the button lines

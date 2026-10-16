@@ -84,8 +84,8 @@ module userio #(
   output wire [  2-1:0] scanline,
   output wire [  2-1:0] dither,
   output wire [  8-1:0] crt_fx,             // HDMI CRT emulation {scaling, beam, bloom, mask} (userio_osd.v)
-  output wire [  3-1:0] ide_config0,
-  output wire [  3-1:0] ide_config1,
+  output wire [  5-1:0] ide_config0,
+  output wire [  5-1:0] ide_config1,
   output wire [  5-1:0] cpu_config,         // [4] Chip slots Fast (findings/fastslot)
   output                usrrst,             // user reset from osd module
   output                cpurst,

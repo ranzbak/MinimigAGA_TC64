@@ -34,13 +34,15 @@ module osd_keyq_tb;
 
   integer errors = 0;
   wire [4:0] cpu_cfg;              // [4] Chip slots Fast (findings/fastslot)
+  wire [4:0] ide_cfg0, ide_cfg1;   // IDE port 1 / 2 config (findings/cdrom/plan.md 7.3)
+  reg        osd_reset = 1'b0;
   wire       diag_clr;
   integer    diag_clrs = 0;
   always @(posedge diag_clr) diag_clrs = diag_clrs + 1;   // one clk7-long pulse
 
   userio_osd #(.CORE_CAPS(CAPS)) dut (
     .clk(clk), .clk7_en(clk7_en), .clk7n_en(clk7n_en),
-    .reset(1'b0),
+    .reset(osd_reset),
     .c1(1'b0), .c3(1'b0), .sol(1'b0), .sof(1'b0),
     .varbeamen(1'b0), .rtg_ena(1'b0),
     .osd_ctrl(osd_ctrl),
@@ -51,7 +53,7 @@ module osd_keyq_tb;
     .lr_filter(), .hr_filter(),
     .memory_config(), .chipset_config(), .floppy_config(),
     .scanline(), .dither(),
-    .ide_config0(), .ide_config1(),
+    .ide_config0(ide_cfg0), .ide_config1(ide_cfg1),
     .cpu_config(cpu_cfg), .autofire_config(), .cd32pad(),
     .usrrst(), .cpurst(), .cpuhlt(),
     .fifo_full(),
@@ -240,6 +242,22 @@ module osd_keyq_tb;
     spi_close;
     #2000;
     expect_byte("cpu_cfg[4:2] after 0x10", {5'b00000, cpu_cfg[4:2]}, 8'h04);
+
+    // ---- 8. OSD_CMD_HDD / OSD_CMD_HDD1: five bits per IDE port ---------------
+    // {slave ATAPI, master ATAPI, slave, master, port on}; 0x54 is port 1,
+    // 0x58 port 2.  Both are taken only while the Amiga is in reset.
+    $display("--- OSD_CMD_HDD / HDD1 ---");
+    spi_open(8'h54);
+    spi_byte(8'h17, b0);           // port 1: on, master + slave, slave ATAPI
+    spi_close;
+    spi_open(8'h58);
+    spi_byte(8'h0b, b0);           // port 2: on, master, master ATAPI
+    spi_close;
+    #2000;
+    expect_byte("ide_config0 before reset", {3'b000, ide_cfg0}, 8'h00);
+    osd_reset = 1'b1;  #2000;  osd_reset = 1'b0;  #2000;
+    expect_byte("ide_config0 (0x54)", {3'b000, ide_cfg0}, 8'h17);
+    expect_byte("ide_config1 (0x58)", {3'b000, ide_cfg1}, 8'h0b);
 
     if (errors == 0)
       $display("\n=== PASS: 0 failures ===");

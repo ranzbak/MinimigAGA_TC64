@@ -109,6 +109,9 @@ add_src $R/rtl/ddr3/ddr3_cdc.v
 # project_1.xpr predates the file,
 # and a source that is not in sources_1 is simply not compiled.
 add_src $R/rtl/sdram/cpu_enable_cadence.v
+# The second Gayle IDE port (findings/cdrom/plan.md 7.3): gayle.v instantiates
+# gayle_port.v once per port; project_1.xpr predates the file.
+add_src $R/rtl/minimig/gayle_port.v
 # Stage E2: the unit splitter TG68K.vhd instantiates for both RAM ports.
 add_src $R/rtl/soc/ap040_ram_seq.vhd
 # The XADC die-temperature reader, for the Chipset OSD menu's first line.
@@ -385,7 +388,7 @@ if {$pipe_dir ne ""} {
     # (2026-10-05) Every CPU switch below defaults to the configuration the
     # board runs (build/stage_r04mis: copyback + misaligned from the cache,
     # xSysInfo 1.44): the MMU, the FPU, STORE_BUF FWD RAS PRECISE SB_MMU
-    # COPYBACK LDX BTFN DFP_MIS WALLOC on; BTB, MISPLIT and XC7 off.  Each one can still be
+    # COPYBACK LDX BTFN DFP_MIS WALLOC on; BTB, MISPLIT, XC7, POST_CHIP, POST_CI and CWF off.  Each one can still be
     # switched off from the environment (e.g. COPYBACK=0) for an A/B.
     # AP040_PIPE_MMU: the lifted MMU (plan M7, gate 2); =0 leaves it out
     set pmmu [expr {[info exists ::env(AP040_PIPE_MMU)] && $::env(AP040_PIPE_MMU) eq "0" ? 0 : 1}]
@@ -425,8 +428,18 @@ if {$pipe_dir ne ""} {
     # #80000004/#80000005 while the same build with XC7=0 runs; every simulation passes
     # with it on, the cause is open.
     set xc7 [expr {[info exists ::env(XC7)] && $::env(XC7) ne "" ? $::env(XC7) : 0}]
-    set pipe_gen " AP040_PIPELINED=1 AP040_HAS_MMU=$pmmu AP040_HAS_FPU=$pfpu AP040_FREE_CORE=$free_core AP040_STORE_BUF=$store_buf AP040_FWD=$fwd AP040_RAS=$ras AP040_PRECISE=$precise AP040_MISPLIT=$misplit AP040_SB_MMU=$sb_mmu AP040_COPYBACK=$copyback AP040_BTB=$btb AP040_LDX=$ldx AP040_BTFN=$btfn AP040_DFP_MIS=$dfp_mis AP040_WALLOC=$walloc AP040_XC7=$xc7"
-    puts "build_ap040.tcl: PIPELINED build from $P ([llength $pipe_off] lib/AP68040 files disabled), FREE_CORE=$free_core STORE_BUF=$store_buf FWD=$fwd RAS=$ras PRECISE=$precise MISPLIT=$misplit SB_MMU=$sb_mmu COPYBACK=$copyback BTB=$btb LDX=$ldx BTFN=$btfn DFP_MIS=$dfp_mis WALLOC=$walloc XC7=$xc7"
+    # POST_CHIP=1: with the MMU on, stores to chip RAM are posted too; POST_CI=1|2:
+    # stores to cache-inhibited pages are (1 noncachable nonserialized, CM = 11:
+    # MuFastChip, a demo's DTT0 = $0000C060; 2 serialized ones, CM = 10, as well).
+    # findings/postchip.  Both default 0 until the board says otherwise.
+    set post_chip [expr {[info exists ::env(POST_CHIP)] && $::env(POST_CHIP) ne "" ? $::env(POST_CHIP) : 0}]
+    set post_ci [expr {[info exists ::env(POST_CI)] && $::env(POST_CI) ne "" ? $::env(POST_CI) : 0}]
+    # CWF=1: critical-word-first data-cache line fills with early restart (the core
+    # goes on when the missed longword arrives, the line finishes in the background;
+    # M68040UM 4.6.1).  Default 0 until the board says otherwise.
+    set cwf [expr {[info exists ::env(CWF)] && $::env(CWF) ne "" ? $::env(CWF) : 0}]
+    set pipe_gen " AP040_PIPELINED=1 AP040_HAS_MMU=$pmmu AP040_HAS_FPU=$pfpu AP040_FREE_CORE=$free_core AP040_STORE_BUF=$store_buf AP040_FWD=$fwd AP040_RAS=$ras AP040_PRECISE=$precise AP040_MISPLIT=$misplit AP040_SB_MMU=$sb_mmu AP040_COPYBACK=$copyback AP040_BTB=$btb AP040_LDX=$ldx AP040_BTFN=$btfn AP040_DFP_MIS=$dfp_mis AP040_WALLOC=$walloc AP040_XC7=$xc7 AP040_POST_CHIP=$post_chip AP040_POST_CI=$post_ci AP040_CWF=$cwf"
+    puts "build_ap040.tcl: PIPELINED build from $P ([llength $pipe_off] lib/AP68040 files disabled), FREE_CORE=$free_core STORE_BUF=$store_buf FWD=$fwd RAS=$ras PRECISE=$precise MISPLIT=$misplit SB_MMU=$sb_mmu COPYBACK=$copyback BTB=$btb LDX=$ldx BTFN=$btfn DFP_MIS=$dfp_mis WALLOC=$walloc XC7=$xc7 POST_CHIP=$post_chip POST_CI=$post_ci CWF=$cwf"
 } else {
     # (2026-10-06) The reference core: lib/AP68040's files on, the pipelined
     # core's off.  A pipelined run that dies before its clean-up (a Vivado

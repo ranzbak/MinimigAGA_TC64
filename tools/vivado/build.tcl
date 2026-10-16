@@ -99,6 +99,9 @@ add_src $R/rtl/ddr3/ddr3_cdc.v
 # alone, being stale by existing practice.
 #-----------------------------------------------------------------------------
 add_src $R/rtl/sdram/cpu_enable_cadence.v
+# The second Gayle IDE port (findings/cdrom/plan.md 7.3): gayle.v instantiates
+# gayle_port.v once per port; project_1.xpr predates the file.
+add_src $R/rtl/minimig/gayle_port.v
 
 #-----------------------------------------------------------------------------
 # AP68040 (lib/AP68040, submodule pinned at 0e76761): an MC68040 with MMU, FPU

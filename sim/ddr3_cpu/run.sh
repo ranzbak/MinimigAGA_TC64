@@ -24,6 +24,8 @@
 #   FREECORE=1 ./run.sh ...         the wrapper's ap040_free_core = 1 (findings/unfreeze/plan.md)
 #   FASTCHIP=1 ./run.sh --ap040 --chipbus   Chip slots "Fast" (findings/fastslot)
 #   FREECORE=1 FCMUTANT=ack|walk|data ./run.sh ...  one free-core qualification undone; MUST fail
+#   XDEFS="-d STOREBUF=1 -d SBMMU -d POSTCHIP=1 -d POSTCI=1 -d CWFF ..." ./run.sh ...  extra xelab defines (core switches;
+#                                   see the localparams in ddr3_cpu_tb.sv); give such a run a RUNTAG
 #
 # Stage E2 (decision D6): EVERY leg runs the real sdram_ctrl and SDRAM part
 # (real_sdram.vh); the behavioural SDRAM model is retired, so REALSDRAM is no
@@ -384,7 +386,7 @@ if [ "$CPU" = "ap040" ]; then AP040_ELAB="-i $R/lib/AP68040/rtl"; fi
 if [ "${PIPELINED:-0}" = "1" ]; then AP040_ELAB="-i $PIPE_DIR/rtl -i $PIPE_DIR/rtl/compat -d AP040_PIPELINED"; fi
 
 "$VIVADO_PATH/bin/xelab" -prj $PRJ -i "$LIB/tb/ddr3_core_xc7" $AP040_ELAB \
-    -d SOC_SIM -d REALSDRAM -i $D ${NOCPU:+-d NOCPU} ${DMA_OVERLAP:+-d DMA_OVERLAP} ${P2CBLOCK:+-d P2CBLOCK=$P2CBLOCK} ${CPU_RATIO:+-d CPU_RATIO=$CPU_RATIO} ${CPU_PHASE:+-d CPU_PHASE=$CPU_PHASE} ${NOCHIP32:+-d NOCHIP32} $( [ "${FREECORE:-0}" = "1" ] && echo -d FREECORE ) -debug typical -relax \
+    -d SOC_SIM -d REALSDRAM -i $D ${NOCPU:+-d NOCPU} ${DMA_OVERLAP:+-d DMA_OVERLAP} ${P2CBLOCK:+-d P2CBLOCK=$P2CBLOCK} ${CPU_RATIO:+-d CPU_RATIO=$CPU_RATIO} ${CPU_PHASE:+-d CPU_PHASE=$CPU_PHASE} ${NOCHIP32:+-d NOCHIP32} $( [ "${FREECORE:-0}" = "1" ] && echo -d FREECORE ) ${XDEFS:-} -debug typical -relax \
     -L secureip -L unisims_ver -L unimacro_ver \
     ddr3_cpu_tb glbl -s cpu_sim
 

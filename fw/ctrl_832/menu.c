@@ -41,6 +41,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "drivesounds.h"
 #include "adv7511.h"
 #include "i2c.h"
+#include "cdrom.h"
 
 #define OSDCOLOR_TOPLEVEL 0x01
 #define OSDCOLOR_SUBMENU 0x03
@@ -88,7 +89,7 @@ const char *config_crt_bloom_msg[] = {"off", "low", "high"};
 const char *config_crt_beam_msg[] = {"off", "sharp", "medium", "soft"};
 const char *config_memory_fast_msg[] = {"none  ", "2.0 MB", "4.0 MB", "Maximum"};
 const char *config_cpu_msg[] = {"68000 ", "68010", "-", "020 alpha"};
-const char *config_hdf_msg[] = {"Disabled", "Hardfile (disk img)", "MMC/SD card", "MMC/SD partition 1", "MMC/SD partition 2", "MMC/SD partition 3", "MMC/SD partition 4"};
+const char *config_hdf_msg[] = {"Disabled", "Hardfile (disk img)", "MMC/SD card", "MMC/SD partition 1", "MMC/SD partition 2", "MMC/SD partition 3", "MMC/SD partition 4", "CD-ROM (ISO)"};
 const char *config_chipset_msg[] = {"OCS-A500", "OCS-A1000", "ECS", "---", "---", "---", "AGA", "---"};
 const char *config_turbo_msg[] = {"none", "CHIPRAM", "KICK", "BOTH"};
 // Chip slots, config.cpu bit 4 (CONFIG_CPU_FASTCHIP): how the CPU's chipset
@@ -111,7 +112,8 @@ enum HelpText_Message
     HELPTEXT_CHIPSET,
     HELPTEXT_MEMORY,
     HELPTEXT_VIDEO,
-    HELPTEXT_HDMI
+    HELPTEXT_HDMI,
+    HELPTEXT_CDROM
 };
 const char *helptexts[] = {
     0,
@@ -125,6 +127,7 @@ const char *helptexts[] = {
 #endif
     "                                Minimig's video features include a blur filter, to simulate the poorer picture quality on older monitors, and also scanline generation to simulate the appearance of a screen with low vertical resolution.  On HDMI, CRT Mask adds a phosphor mask (grille: red, green and blue stripes; shadow: magenta and green) and Bloom lets bright pixels fill their scanline gaps; bloom needs scanlines or a vertical filter.  Beam width gives each pixel the soft spot of a CRT's beam, so dithered patterns blend as on a monitor; with it on, Bloom also widens the spot of bright pixels.  Video Pos moves the HDMI picture: Hpos in HD pixels (+ right), Vpos in Amiga lines (+ down).  Scaling (HDMI): Sharp and Area scale the picture exactly 2.5 times (PAL) or 3 times (NTSC) vertically, every line the same height; Sharp keeps edges crisp, Area is the most even.  Line rate is the older, slightly smaller picture.  Sharp and Area need the 15 kHz picture: the core turns the scandoubler off for them.",
     "                                The clock delay sets where the HDMI transmitter samples each pixel.  Too early or too late shows as sparkling colours, light yellows first.  Step through the values, note where the picture is clean, and settle in the middle of that range.  Save the configuration to keep it.",
+    "                                CD-ROM drive.  Insert an ISO image or a CUE sheet (BIN, or ISO + WAV tracks) from the SD card.  On IDE port 2 the Amiga needs AtapiMagic (3.1.4/3.2) or IDEfix97 (3.1).  The Amiga cannot boot from it.",
     0};
 
 void SanityCheck();
@@ -162,7 +165,7 @@ void SelectFile(char *pFileExt, unsigned char Options, unsigned char MenuSelect,
 {
     // this function displays file selection menu
 
-    if (strncmp(pFileExt, fs_pFileExt, 3) != 0) // check desired file extension
+    if (!fs_pFileExt || strcmp(pFileExt, fs_pFileExt) != 0) // check desired file extension(s)
     {                                           // if different from the current one go to the root directory and init entry buffer
         ChangeDirectory(DIRECTORY_ROOT);
         ScanDirectory(SCAN_INIT, pFileExt, Options);
@@ -217,12 +220,186 @@ void HideSplash()
     OsdHide();
 }
 
+/******************************************************************/
+/* IDE slots on the Harddisks pages (findings/cdrom/plan.md 5)      */
+/******************************************************************/
+
+// The four IDE slots as edited on the Harddisks pages (slot = port << 1 |
+// slave), applied on leaving them.  A disc change in the live CD drive is
+// applied at once (no reset) and copied here.
+static hardfileTYPE t_hardfile[HDD_SLOTS];
+static unsigned long t_hdfdir[HDD_SLOTS];
+static int hdf_select_slot;	// the slot whose file selector is open
+
+// A message in place of a CD line, for 4 s: "locked by the Amiga" (D5),
+// or why an insert was refused (13.1: the cause, at most 23 characters).
+#define CD_MSG_DELAY 4000
+static unsigned long cd_msg_timer;
+static char cd_msg_on;
+static const char *cd_msg_text;
+static int cd_shown_track;	// the track in the main page's play mark, 0 = none
+
+static void cd_show_msg(const char *text)
+{
+    cd_msg_text = text;
+    cd_msg_on = 1;
+    cd_msg_timer = GetTimer(CD_MSG_DELAY);
+}
+
+static void cd_locked_msg(void)
+{
+    cd_show_msg("locked by the Amiga");
+}
+
+// The OSD's answer to CD_Insert: nothing when the disc went in.
+static void cd_insert_msg(int r)
+{
+    if (r == CD_LOCKED)
+        cd_locked_msg();
+    else if (r == CD_BADCUE)
+        cd_show_msg(CD_Message());
+    else if (r == CD_NOFILE)
+        cd_show_msg("file not found");
+}
+
+// The message is over: redraw.
+static int cd_msg_expired(void)
+{
+    if (cd_msg_on && CheckTimer(cd_msg_timer))
+    {
+        cd_msg_on = 0;
+        return 1;
+    }
+    return 0;
+}
+
+static const char *hdf_type_name(unsigned char enabled)
+{
+    if (enabled == (HDF_FILE | HDF_SYNTHRDB))
+        return "Hardfile (filesys)";
+    if ((enabled & HDF_TYPEMASK) > HDF_CDROM)
+        return "---";
+    return config_hdf_msg[enabled & HDF_TYPEMASK];
+}
+
+// The type cycle: Disabled, Hardfile (disk img), Hardfile (filesys), MMC/SD
+// card, its partitions, CD-ROM (ISO), Disabled.  CD-ROM only on a core with
+// two IDE ports, and not while another slot is the CD drive (one drive, D3).
+static void hdf_next_type(int slot)
+{
+    hardfileTYPE *t = &t_hardfile[slot];
+    unsigned char e = t->enabled;
+    int i, cd_elsewhere = 0;
+    for (i = 0; i < HDD_SLOTS; i++)
+        if (i != slot && t_hardfile[i].enabled == HDF_CDROM)
+            cd_elsewhere = 1;
+    if (e == HDF_FILE)
+        e = HDF_FILE | HDF_SYNTHRDB;
+    else if (e == (HDF_FILE | HDF_SYNTHRDB))
+        e = HDF_CARD;
+    else if (e == HDF_CDROM)
+        e = HDF_DISABLED;
+    else
+    {
+        e += 1;
+        if (e >= HDF_CARDPART0 + partitioncount)
+            e = (!cd_elsewhere && (core_caps & CORE_CAPS_IDE2)) ? HDF_CDROM : HDF_DISABLED;
+    }
+    if (e == HDF_CDROM)
+    {   // a CD slot starts empty: an HDF name is not a disc
+        memset(t->name, 0, sizeof(t->name));
+        memset(t->long_name, 0, sizeof(t->long_name));
+        t->present = 0;
+    }
+    t->enabled = e;
+}
+
+// The CD slot is the live drive: same slot, same type as in use.
+static int cd_live(int slot)
+{
+    return slot == CD_SLOT() && SlotConfig(slot)->enabled == HDF_CDROM && t_hardfile[slot].enabled == HDF_CDROM;
+}
+
+// A slot's two lines: its type at row, its file at row + 1 (menusub ==
+// row on both pages).  Returns their menumask bits.
+static unsigned char hdf_slot_lines(int slot, int row, const char *label, char ide_on)
+{
+    hardfileTYPE *t = &t_hardfile[slot];
+    unsigned char mask = 0;
+    char enable;
+
+    strcpy(s, label);
+    strcat(s, hdf_type_name(t->enabled));
+    OsdWrite(row, s, ide_on ? (menusub == row) : 0, ide_on == 0);
+    if (ide_on)
+        mask |= 1 << row;
+
+    if (t->enabled == HDF_CDROM && cd_msg_on && cd_live(slot))
+    {
+        strcpy(s, "       ");
+        strcat(s, cd_msg_text);
+    }
+    else if (t->enabled == HDF_CDROM && !t->name[0])
+        strcpy(s, "              * no disc *");
+    else if (t->present)
+    {
+        strcpy(s, "                                ");
+        if (t->long_name[0])
+            strncpy(&s[14], t->long_name, sizeof(t->long_name));
+        else
+            strncpy(&s[14], t->name, sizeof(t->name));
+    }
+    else
+        strcpy(s, "       ** file not found **");
+
+    enable = ide_on && ((t->enabled & HDF_TYPEMASK) == HDF_FILE || t->enabled == HDF_CDROM);
+    if (enable)
+        mask |= 1 << (row + 1);
+    OsdWrite(row + 1, s, enable ? (menusub == row + 1) : 0, enable == 0);
+    return mask;
+}
+
+static unsigned char hdf_page(int slot)
+{
+    return slot < 2 ? MENU_SETTINGS_HARDFILE1 : MENU_SETTINGS_HARDFILE3;
+}
+
+static void hdf_select(int slot)
+{
+    hdf_select_slot = slot;
+    SelectFile(t_hardfile[slot].enabled == HDF_CDROM ? "ISOCUE" : "HDF", SCAN_DIR | SCAN_LFN, MENU_HARDFILE_SELECTED, hdf_page(slot));
+}
+
+// The help text for a Harddisks page: the CD's when the cursor is on a CD slot.
+static const char *hdf_help(int slot)
+{
+    return (slot >= 0 && t_hardfile[slot].enabled == HDF_CDROM) ? helptexts[HELPTEXT_CDROM] : helptexts[HELPTEXT_HARDFILE];
+}
+
+// Does leaving the Harddisks pages need a reset?  A changed slot type or
+// hardfile does (the Amiga must probe the bus again); a new disc in a CD
+// slot does not -- it is a media change, applied at once in the live
+// drive, and only remembered for a CD slot that is not live yet.
+static int hdf_needs_reset(char ide_on)
+{
+    int slot;
+    if (ide_on != config.enable_ide)
+        return 1;
+    for (slot = 0; slot < HDD_SLOTS; slot++)
+    {
+        hardfileTYPE *c = SlotConfig(slot);
+        if (t_hardfile[slot].enabled != c->enabled)
+            return 1;
+        if (c->enabled != HDF_CDROM && memcmp(c, &t_hardfile[slot], sizeof(*c)) != 0)
+            return 1;
+    }
+    return 0;
+}
+
 void HandleUI(void)
 {
     unsigned char i, c, up, down, select, menu, right, left, plus, minus;
     unsigned long len;
-    static hardfileTYPE t_hardfile[2]; // temporary copy of former hardfile configuration
-    static int t_hdfdir[2];
     static char t_enable_ide; // temporary copy of former enable_ide flag.
     // Memory menu: config.memory as it was when the menu was entered, so that
     // leaving it after a change can offer the reset the change needs (the
@@ -515,9 +692,9 @@ void HandleUI(void)
         /******************************************************************/
     case MENU_MAIN1:
         OsdColor(OSDCOLOR_TOPLEVEL);
-        menumask = 0x70; // b01110000 Floppy turbo, Harddisk options & Exit.
+        menumask = 0xb0; // b10110000 Floppy turbo, Harddisk options & Exit; the CD-ROM line below.
         OsdSetTitle("Minimig", OSD_ARROW_RIGHT);
-        helptext = helptexts[HELPTEXT_MAIN];
+        helptext = helptexts[menusub == 6 ? HELPTEXT_CDROM : HELPTEXT_MAIN];
 
         // floppy drive info
         // We display a line for each drive that's active
@@ -559,14 +736,50 @@ void HandleUI(void)
         }
         OsdWrite(4, " Floppy disk settings \x16", menusub == 4, 0);
         OsdWrite(5, " Hard disk settings \x16", menusub == 5, 0);
-        OsdWrite(6, "", 0, 0);
-        OsdWrite(7, STD_EXIT, menusub == 6, 0);
+        // The CD-ROM drive (5.2): insert, eject, or why not.
+        if (CD_SLOT() < 0)
+            OsdWrite(6, " CD-ROM: not configured", 0, 1);
+        else
+        {
+            menumask |= 0x40;
+            cd_shown_track = CD_PlayingTrack();
+            if (cd_msg_on)
+                sprintf(s, " CD-ROM: %s", cd_msg_text);
+            else if (!cdrom.unit.media)
+                strcpy(s, " CD-ROM: * no disc *");
+            else
+            {   // the name, the play mark (note + track) at columns 27-29, the
+                // lock mark at column 31.  strncat: lib832's printf has no
+                // precision (it printed "21s" here).
+                char locked = CD_Locked();
+                strcpy(s, " CD-ROM: ");
+                strncat(s, cdrom.unit.name, cd_shown_track ? 17 : 21);
+                if (cd_shown_track || locked)
+                {
+                    len = strlen(s);
+                    while (len < 31)
+                        s[len++] = ' ';
+                    s[31] = locked ? 0x17 : ' ';
+                    s[32] = 0;
+                }
+                if (cd_shown_track)
+                {
+                    s[27] = 0x19; // note (charrom.h)
+                    s[28] = (char)('0' + cd_shown_track / 10);
+                    s[29] = (char)('0' + cd_shown_track % 10);
+                }
+            }
+            OsdWrite(6, s, menusub == 6, 0);
+        }
+        OsdWrite(7, STD_EXIT, menusub == 7, 0);
 
         menustate = MENU_MAIN2;
         parentstate = MENU_MAIN1;
         break;
 
     case MENU_MAIN2:
+        if (cd_msg_expired() || (CD_SLOT() >= 0 && CD_PlayingTrack() != cd_shown_track))
+            menustate = MENU_MAIN1; // a message ended, or the play mark changed
         if (menu)
             menustate = MENU_NONE1;
         else if (plus && (config.floppy.drives < 3))
@@ -605,15 +818,27 @@ void HandleUI(void)
             }
             else if (menusub == 5) // Go to harddrives page.
             {
-                t_hardfile[0] = config.hardfile[0];
-                t_hardfile[1] = config.hardfile[1];
+                for (i = 0; i < HDD_SLOTS; i++)
+                {
+                    t_hardfile[i] = *SlotConfig(i);
+                    t_hdfdir[i] = config.hdfdir[i];
+                }
                 t_enable_ide = config.enable_ide;
-                t_hdfdir[0] = config.hdfdir[0];
-                t_hdfdir[1] = config.hdfdir[1];
                 menustate = MENU_SETTINGS_HARDFILE1;
                 menusub = 0;
             }
-            else if (menusub == 6)
+            else if (menusub == 6) // CD-ROM: insert or eject
+            {
+                if (!cdrom.unit.media)
+                    SelectFile("ISOCUE", SCAN_DIR | SCAN_LFN, MENU_CDROM_SELECTED, MENU_MAIN1);
+                else
+                {
+                    if (CD_Eject() == CD_LOCKED) // refused while the Amiga holds the lock (D5)
+                        cd_locked_msg();
+                    menustate = MENU_MAIN1;
+                }
+            }
+            else if (menusub == 7)
                 menustate = MENU_NONE1;
         }
         else if (c == KEY_BACK) // eject all floppies
@@ -692,8 +917,14 @@ void HandleUI(void)
         menustate = MENU_MAIN1;
         menusub++;
         if (menusub > drives)
-            menusub = 6;
+            menusub = 7;
 
+        break;
+
+    case MENU_CDROM_SELECTED: // an ISO or CUE for the CD-ROM drive, from the main page
+        cd_insert_msg(CD_Insert(file.name, file.long_name[0] ? file.long_name : 0, CurrentDirectory()));
+        menustate = MENU_MAIN1;
+        menusub = 6;
         break;
 
         /******************************************************************/
@@ -1674,73 +1905,39 @@ void HandleUI(void)
 
     case MENU_SETTINGS_HARDFILE1:
         OsdColor(OSDCOLOR_SUBMENU);
-        helptext = helptexts[HELPTEXT_HARDFILE];
-        OsdSetTitle("Harddisks", 0);
+        helptext = hdf_help((menusub >= 1 && menusub <= 4) ? (menusub - 1) >> 1 : -1);
+        // page 2 (IDE port 2) only on a core that has it
+        OsdSetTitle("Harddisks", (core_caps & CORE_CAPS_IDE2) ? OSD_ARROW_RIGHT : 0);
 
         parentstate = menustate;
-        menumask = 0x41; // b01000001 - On/off & exit enabled by default...
-        if (t_enable_ide)
-            menumask |= 0x2a; // b00101010 - HD0 and HD1 type + sounds
+        menumask = 0x81; // b10000001 - On/off & exit enabled by default...
+        if (core_caps & CORE_CAPS_IDE2)
+            menumask |= 0x40; // the IDE port 2 line (12.6: the title arrow alone was not found)
         strcpy(s, "    IDE : ");
         strcat(s, t_enable_ide ? "on " : "off");
         OsdWrite(0, s, menusub == 0, 0);
 
-        strcpy(s, " Master : ");
-        if (t_hardfile[0].enabled == (HDF_FILE | HDF_SYNTHRDB))
-            strcat(s, "Hardfile (filesys)");
-        else
-            strcat(s, config_hdf_msg[t_hardfile[0].enabled & HDF_TYPEMASK]);
-        OsdWrite(1, s, t_enable_ide ? (menusub == 1) : 0, t_enable_ide == 0);
+        menumask |= hdf_slot_lines(0, 1, " Master : ", t_enable_ide);
+        menumask |= hdf_slot_lines(1, 3, "  Slave : ", t_enable_ide);
 
-        if (t_hardfile[0].present)
-        {
-            strcpy(s, "                                ");
-            if (t_hardfile[0].long_name[0])
-                strncpy(&s[14], t_hardfile[0].long_name, sizeof(t_hardfile[0].long_name));
-            else
-                strncpy(&s[14], t_hardfile[0].name, sizeof(t_hardfile[0].name));
-        }
-        else
-            strcpy(s, "       ** file not found **");
-
-        enable = t_enable_ide && ((t_hardfile[0].enabled & HDF_TYPEMASK) == HDF_FILE);
-        if (enable)
-            menumask |= 0x04; // Make hardfile selectable
-        OsdWrite(2, s, enable ? (menusub == 2) : 0, enable == 0);
-
-        strcpy(s, "  Slave : ");
-        if (t_hardfile[1].enabled == (HDF_FILE | HDF_SYNTHRDB))
-            strcat(s, "Hardfile (filesys)");
-        else
-            strcat(s, config_hdf_msg[t_hardfile[1].enabled & HDF_TYPEMASK]);
-        OsdWrite(3, s, t_enable_ide ? (menusub == 3) : 0, t_enable_ide == 0);
-        if (t_hardfile[1].present)
-        {
-            strcpy(s, "                                ");
-            if (t_hardfile[1].long_name[0])
-                strncpy(&s[14], t_hardfile[1].long_name, sizeof(t_hardfile[0].long_name));
-            else
-                strncpy(&s[14], t_hardfile[1].name, sizeof(t_hardfile[0].name));
-        }
-        else
-            strcpy(s, "       ** file not found **");
-
-        enable = t_enable_ide && ((t_hardfile[1].enabled & HDF_TYPEMASK) == HDF_FILE);
-        if (enable)
-            menumask |= 0x10; // Make hardfile selectable
-        OsdWrite(4, s, enable ? (menusub == 4) : 0, enable == 0);
-
+        if (t_enable_ide)
+            menumask |= 0x20; // sounds
         strcpy(s, " Sounds : ");
         strcat(s, config.drivesounds & DRIVESOUNDS_HDD ? "on " : "off");
         OsdWrite(5, s, menusub == 5, t_enable_ide == 0);
-        OsdWrite(6, "", 0, 0);
-        OsdWrite(7, STD_BACK, menusub == 6, 0);
+        if (core_caps & CORE_CAPS_IDE2)
+            OsdWrite(6, " IDE port 2 \x16", menusub == 6, 0);
+        else
+            OsdWrite(6, "", 0, 0);
+        OsdWrite(7, STD_BACK, menusub == 7, 0);
 
         menustate = MENU_SETTINGS_HARDFILE2;
 
         break;
 
     case MENU_SETTINGS_HARDFILE2:
+        if (cd_msg_expired())
+            menustate = MENU_SETTINGS_HARDFILE1;
         if (select)
         {
             if (menusub == 0)
@@ -1748,49 +1945,14 @@ void HandleUI(void)
                 t_enable_ide = (t_enable_ide == 0);
                 menustate = MENU_SETTINGS_HARDFILE1;
             }
-            if (menusub == 1)
+            else if (menusub == 1 || menusub == 3) // master / slave type
             {
-                if (t_hardfile[0].enabled == HDF_FILE)
-                {
-                    t_hardfile[0].enabled |= HDF_SYNTHRDB;
-                }
-                else if (t_hardfile[0].enabled == (HDF_FILE | HDF_SYNTHRDB))
-                {
-                    t_hardfile[0].enabled &= ~HDF_SYNTHRDB;
-                    t_hardfile[0].enabled += 1;
-                }
-                else
-                {
-                    t_hardfile[0].enabled += 1;
-                    t_hardfile[0].enabled %= HDF_CARDPART0 + partitioncount;
-                }
+                hdf_next_type((menusub - 1) >> 1);
                 menustate = MENU_SETTINGS_HARDFILE1;
             }
-            else if (menusub == 2)
+            else if (menusub == 2 || menusub == 4) // master / slave file
             {
-                SelectFile("HDF", SCAN_DIR | SCAN_LFN, MENU_HARDFILE_SELECTED, MENU_SETTINGS_HARDFILE1);
-            }
-            else if (menusub == 3)
-            {
-                if (t_hardfile[1].enabled == HDF_FILE)
-                {
-                    t_hardfile[1].enabled |= HDF_SYNTHRDB;
-                }
-                else if (t_hardfile[1].enabled == (HDF_FILE | HDF_SYNTHRDB))
-                {
-                    t_hardfile[1].enabled &= ~HDF_SYNTHRDB;
-                    t_hardfile[1].enabled += 1;
-                }
-                else
-                {
-                    t_hardfile[1].enabled += 1;
-                    t_hardfile[1].enabled %= HDF_CARDPART0 + partitioncount;
-                }
-                menustate = MENU_SETTINGS_HARDFILE1;
-            }
-            else if (menusub == 4)
-            {
-                SelectFile("HDF", SCAN_DIR | SCAN_LFN, MENU_HARDFILE_SELECTED, MENU_SETTINGS_HARDFILE1);
+                hdf_select((menusub - 1) >> 1);
             }
             else if (menusub == 5)
             {
@@ -1801,10 +1963,20 @@ void HandleUI(void)
                     drivesounds_disable(DRIVESOUNDS_HDD);
                 menustate = MENU_SETTINGS_HARDFILE1;
             }
-            else if (menusub == 6) // return to previous menu
+            else if (menusub == 6) // IDE port 2 (the line is only there on a two-port core)
+            {
+                menustate = MENU_SETTINGS_HARDFILE3;
+                menusub = 0;
+            }
+            else if (menusub == 7) // return to previous menu
             {
                 menustate = MENU_HARDFILE_EXIT;
             }
+        }
+        else if (right && (core_caps & CORE_CAPS_IDE2))
+        {
+            menustate = MENU_SETTINGS_HARDFILE3;
+            menusub = 0;
         }
 
         if (menu) // return to previous menu
@@ -1814,86 +1986,120 @@ void HandleUI(void)
         break;
 
         /******************************************************************/
+        /* IDE port 2: no on/off line, it is on when a slot is set (D4)   */
+        /******************************************************************/
+    case MENU_SETTINGS_HARDFILE3:
+        OsdColor(OSDCOLOR_SUBMENU);
+        helptext = hdf_help(menusub <= 3 ? 2 + (menusub >> 1) : -1);
+        OsdSetTitle("IDE port 2", OSD_ARROW_LEFT);
+
+        parentstate = menustate;
+        menumask = 0x10; // back
+        menumask |= hdf_slot_lines(2, 0, " Master : ", t_enable_ide);
+        menumask |= hdf_slot_lines(3, 2, "  Slave : ", t_enable_ide);
+        OsdWrite(4, " Port 2 needs AtapiMagic or", 0, 0);
+        OsdWrite(5, " IDEfix97 on the Amiga.", 0, 0);
+        OsdWrite(6, " Not bootable.", 0, 0);
+        OsdWrite(7, STD_BACK, menusub == 4, 0);
+
+        menustate = MENU_SETTINGS_HARDFILE4;
+        break;
+
+    case MENU_SETTINGS_HARDFILE4:
+        if (cd_msg_expired())
+            menustate = MENU_SETTINGS_HARDFILE3;
+        if (select)
+        {
+            if (menusub == 0 || menusub == 2) // master / slave type
+            {
+                hdf_next_type(2 + (menusub >> 1));
+                menustate = MENU_SETTINGS_HARDFILE3;
+            }
+            else if (menusub == 1 || menusub == 3) // master / slave file
+                hdf_select(2 + (menusub >> 1));
+            else if (menusub == 4)
+                menustate = MENU_HARDFILE_EXIT;
+        }
+        else if (left)
+        {
+            menustate = MENU_SETTINGS_HARDFILE1;
+            menusub = 0;
+        }
+        if (menu)
+            menustate = MENU_HARDFILE_EXIT;
+        break;
+
+        /******************************************************************/
         /* hardfile selected menu                                         */
         /******************************************************************/
     case MENU_HARDFILE_SELECTED:
-        if (menusub == 2) // master drive selected
+    {
+        int slot = hdf_select_slot;
+        hardfileTYPE *t = &t_hardfile[slot];
+        menustate = hdf_page(slot);
+        if (t->enabled == HDF_CDROM)
         {
-            // Read RDB from selected drive and determine type...
-            memcpy((void *)t_hardfile[0].name, (void *)file.name, sizeof(t_hardfile[0].name));
-            memcpy((void *)t_hardfile[0].long_name, (void *)file.long_name, sizeof(t_hardfile[0].long_name));
-            t_hdfdir[0] = CurrentDirectory();
-            switch (GetHDFFileType(file.name))
-            {
-            case HDF_FILETYPE_RDB:
-                t_hardfile[0].enabled = HDF_FILE;
-                t_hardfile[0].present = 1;
-                menustate = MENU_SETTINGS_HARDFILE1;
-                break;
-            case HDF_FILETYPE_DOS:
-                t_hardfile[0].enabled = HDF_FILE | HDF_SYNTHRDB;
-                t_hardfile[0].present = 1;
-                menustate = MENU_SETTINGS_HARDFILE1;
-                break;
-            case HDF_FILETYPE_UNKNOWN:
-                t_hardfile[0].present = 1;
-                if (t_hardfile[0].enabled == HDF_FILE) // Warn if we can't detect the type
-                    menustate = MENU_SYNTHRDB1;
-                else
-                    menustate = MENU_SYNTHRDB2_1;
-                menusub = 0;
-                break;
-            case HDF_FILETYPE_NOTFOUND:
-            default:
-                t_hardfile[0].present = 0;
-                menustate = MENU_SETTINGS_HARDFILE1;
-                break;
+            if (cd_live(slot))
+            {   // a disc change in the live drive: now, no reset (refused while locked, D5)
+                cd_insert_msg(CD_Insert(file.name, file.long_name[0] ? file.long_name : 0, CurrentDirectory()));
+                *t = *SlotConfig(slot);
+                t_hdfdir[slot] = config.hdfdir[slot];
             }
+            else
+            {   // the disc for a CD slot that is not live yet
+                memcpy((void *)t->name, (void *)file.name, sizeof(t->name));
+                memcpy((void *)t->long_name, (void *)file.long_name, sizeof(t->long_name));
+                t->present = CD_PRESENT(file.name); // ISO or CUE: the config's name has no extension
+                t_hdfdir[slot] = CurrentDirectory();
+            }
+            break;
         }
-
-        if (menusub == 4) // slave drive selected
+        // Read RDB from selected drive and determine type...
+        memcpy((void *)t->name, (void *)file.name, sizeof(t->name));
+        memcpy((void *)t->long_name, (void *)file.long_name, sizeof(t->long_name));
+        t_hdfdir[slot] = CurrentDirectory();
+        switch (GetHDFFileType(file.name))
         {
-            memcpy((void *)t_hardfile[1].name, (void *)file.name, sizeof(t_hardfile[1].name));
-            memcpy((void *)t_hardfile[1].long_name, (void *)file.long_name, sizeof(t_hardfile[1].long_name));
-            t_hdfdir[1] = CurrentDirectory();
-            switch (GetHDFFileType(file.name))
-            {
-            case HDF_FILETYPE_RDB:
-                t_hardfile[1].enabled = HDF_FILE;
-                t_hardfile[1].present = 1;
-                menustate = MENU_SETTINGS_HARDFILE1;
-                break;
-            case HDF_FILETYPE_DOS:
-                t_hardfile[1].enabled = HDF_FILE | HDF_SYNTHRDB;
-                t_hardfile[1].present = 1;
-                menustate = MENU_SETTINGS_HARDFILE1;
-                break;
-            case HDF_FILETYPE_UNKNOWN:
-                t_hardfile[1].present = 1;
-                if (t_hardfile[1].enabled == HDF_FILE) // Warn if we can't detect the type...
-                    menustate = MENU_SYNTHRDB1;
-                else
-                    menustate = MENU_SYNTHRDB2_1;
-                menusub = 0;
-                break;
-            case HDF_FILETYPE_NOTFOUND:
-            default:
-                t_hardfile[1].present = 0;
-                menustate = MENU_SETTINGS_HARDFILE1;
-                break;
-            }
+        case HDF_FILETYPE_RDB:
+            t->enabled = HDF_FILE;
+            t->present = 1;
+            break;
+        case HDF_FILETYPE_DOS:
+            t->enabled = HDF_FILE | HDF_SYNTHRDB;
+            t->present = 1;
+            break;
+        case HDF_FILETYPE_UNKNOWN:
+            t->present = 1;
+            if (t->enabled == HDF_FILE) // Warn if we can't detect the type
+                menustate = MENU_SYNTHRDB1;
+            else
+                menustate = MENU_SYNTHRDB2_1;
+            menusub = 0;
+            break;
+        case HDF_FILETYPE_NOTFOUND:
+        default:
+            t->present = 0;
+            break;
         }
         break;
+    }
 
         // check if hardfile configuration has changed
     case MENU_HARDFILE_EXIT:
-        if ((memcmp(config.hardfile, t_hardfile, sizeof(t_hardfile)) != 0) || (t_enable_ide != config.enable_ide))
+        if (hdf_needs_reset(t_enable_ide))
         {
             menustate = MENU_HARDFILE_CHANGED1;
             menusub = 1;
         }
         else
         {
+            // only discs of CD slots differ: remember them, no reset
+            for (i = 0; i < HDD_SLOTS; i++)
+                if (t_hardfile[i].enabled == HDF_CDROM && !cd_live(i))
+                {
+                    *SlotConfig(i) = t_hardfile[i];
+                    config.hdfdir[i] = t_hdfdir[i];
+                }
             menustate = MENU_MAIN1;
             menusub = 5;
         }
@@ -1925,32 +2131,25 @@ void HandleUI(void)
         {
             if (menusub == 0) // yes
             {
-                int upd0 = 0, upd1 = 0;
-                if (config.enable_ide != t_enable_ide)
+                unsigned char upd[HDD_SLOTS];
+                for (i = 0; i < HDD_SLOTS; i++)
                 {
-                    upd0 = t_hardfile[0].enabled;
-                    upd1 = t_hardfile[1].enabled;
+                    hardfileTYPE *c = SlotConfig(i);
+                    upd[i] = (config.enable_ide != t_enable_ide && t_hardfile[i].enabled)
+                          || c->enabled != t_hardfile[i].enabled
+                          || strncmp(c->name, t_hardfile[i].name, sizeof(c->name)) != 0;
+                    *c = t_hardfile[i];                  // apply new configuration
+                    config.hdfdir[i] = t_hdfdir[i];
                 }
-                if ((config.hardfile[0].enabled != t_hardfile[0].enabled) || (strncmp(config.hardfile[0].name, t_hardfile[0].name, sizeof(t_hardfile[0].name)) != 0))
-                    upd0 = 1;
-                if ((config.hardfile[1].enabled != t_hardfile[1].enabled) || (strncmp(config.hardfile[1].name, t_hardfile[1].name, sizeof(t_hardfile[1].name)) != 0))
-                    upd1 = 1;
-
-                memcpy(config.hardfile, t_hardfile, sizeof(t_hardfile)); // apply new configuration
-                config.enable_ide = t_enable_ide;                        // Apply new IDE on/off
-                config.hdfdir[0] = t_hdfdir[0];
-                config.hdfdir[1] = t_hdfdir[1];
+                config.enable_ide = t_enable_ide;        // Apply new IDE on/off
 
                 // FIXME - waiting for user-confirmation increases the window of opportunity for file corruption!
 
-                if (upd0)
-                    OpenHardfile(0);
-
-                if (upd1)
-                    OpenHardfile(1);
-
-                ConfigIDE(config.enable_ide, config.hardfile[0].present && config.hardfile[0].enabled,
-                          config.hardfile[1].present && config.hardfile[1].enabled);
+                for (i = 0; i < HDD_SLOTS; i++)
+                    if (upd[i] && (i < 2 || (core_caps & CORE_CAPS_IDE2)))
+                        OpenHardfile(i);
+                ApplyCDROM();       // the CD drive's slot and disc
+                ConfigIDEPorts();
                 OsdReset();
 
                 menustate = MENU_NONE1;
@@ -2007,7 +2206,7 @@ void HandleUI(void)
         if (select || menu)
         {
             if (menusub == 0) // OK
-                menustate = MENU_SETTINGS_HARDFILE1;
+                menustate = hdf_page(hdf_select_slot);
         }
         break;
 

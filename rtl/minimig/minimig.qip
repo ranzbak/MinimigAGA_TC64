@@ -29,6 +29,7 @@ set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) cia_tim
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) cia_int.v]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) gayle.v]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) gayle_fifo.v]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) gayle_port.v]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) gary.v]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) amber.v]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) userio.v]

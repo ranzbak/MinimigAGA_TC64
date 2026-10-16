@@ -7,6 +7,7 @@
 #include "fpga.h"
 #include "fdd.h"
 #include "hdd.h"
+#include "cdrom.h"
 #include "firmware.h"
 #include "menu.h"
 #include "config.h"
@@ -352,6 +353,9 @@ unsigned char LoadConfiguration(char *filename)
 		strncpy(config.hardfile[1].name, "HARDFILE", sizeof(config.hardfile[1].name));
 		config.hardfile[1].long_name[0]=0;
 		config.hardfile[1].enabled = 2;	// Default is access to entire SD card
+		// The CD-ROM drive's default place: IDE port 2 master, no disc (D1).
+		// Fresh configs only: an existing file keeps its port 2 slots (R-B).
+		config.secondaryhardfile[0].enabled = HDF_CDROM;
 		config.audio.volume = 15; // Average volume
 		updatekickstart=true;
 		config.videopos.hpos=0;
@@ -364,6 +368,65 @@ unsigned char LoadConfiguration(char *filename)
     return(result);
 }
 
+
+hardfileTYPE *SlotConfig(int slot)
+{
+	return (slot & 2) ? &config.secondaryhardfile[slot & 1] : &config.hardfile[slot & 1];
+}
+
+// Port 1 is on with IDE; port 2 only on a core with two ports, and only when
+// one of its slots is configured (D4: a CD slot counts with or without a
+// disc, a hardfile slot whether or not its file was found).  A device is
+// present when its hardfile opened, or when it is the CD drive.
+void ConfigIDEPorts(void)
+{
+	int port, dev, slot;
+	for (port = 0; port < 2; port++)
+	{
+		unsigned char on, present = 0, atapi = 0;
+		for (dev = 0; dev < 2; dev++)
+		{
+			hardfileTYPE *hf;
+			slot = (port << 1) | dev;
+			hf = SlotConfig(slot);
+			if (slot == CD_SLOT())
+			{
+				present |= 1 << dev;
+				atapi |= 1 << dev;
+			}
+			else if (hf->enabled && hf->enabled != HDF_CDROM && hf->present)
+				present |= 1 << dev;
+		}
+		if (port == 0)
+			on = config.enable_ide;
+		else
+			on = config.enable_ide && (core_caps & CORE_CAPS_IDE2)
+				&& (config.secondaryhardfile[0].enabled || config.secondaryhardfile[1].enabled);
+		if (!on && port)
+			present = atapi = 0;
+		ConfigIDE(port, on, present & 1, present & 2, atapi);
+	}
+}
+
+// The CD-ROM drive: the first slot of type CD-ROM (one drive, D3), with
+// the ISO its config names; none while IDE is off or on a one-port core.
+void ApplyCDROM(void)
+{
+	int slot, cd = -1;
+	for (slot = 0; slot < HDD_SLOTS && cd < 0; slot++)
+		if (SlotConfig(slot)->enabled == HDF_CDROM)
+			cd = slot;
+	if (!config.enable_ide || !(core_caps & CORE_CAPS_IDE2))
+		cd = -1;
+	if (CD_Open(cd) != CD_OK)
+		BootPrint("CD-ROM: ISO not found, drive empty");
+	else if (cd >= 0)
+	{
+		sprintf(s, "CD-ROM: IDE port %d %s, %s", (cd >> 1) + 1, (cd & 1) ? "slave" : "master",
+			cdrom.unit.media ? cdrom.unit.name : "no disc");
+		BootPrint(s);
+	}
+}
 
 int ApplyConfiguration(char reloadkickstart, char applydrives)
 {
@@ -428,8 +491,26 @@ int ApplyConfiguration(char reloadkickstart, char applydrives)
 			sprintf(s, "Offset: %ld", hdf[1].offset);
 			BootPrint(s);
 		}
-		ConfigIDE(config.enable_ide, config.hardfile[0].present && config.hardfile[0].enabled,
-			config.hardfile[1].present && config.hardfile[1].enabled);
+		// IDE port 2 (two-port Gayle only): hardfiles in its slots (R-E)
+		{
+			int slot;
+			for (slot = 2; slot < HDD_SLOTS; slot++)
+			{
+				if (!(core_caps & CORE_CAPS_IDE2))
+				{
+					hdf[slot].type = HDF_DISABLED;
+					SlotConfig(slot)->present = 0;
+				}
+				else if (OpenHardfile(slot))
+				{
+					sprintf(s, "\nIDE port 2 %s: type %d, %u.%u.%u", (slot & 1) ? "slave" : "master",
+						hdf[slot].type, hdf[slot].cylinders, hdf[slot].heads, hdf[slot].sectors);
+					BootPrint(s);
+				}
+			}
+		}
+		ApplyCDROM();
+		ConfigIDEPorts();
 	}
 
     ConfigCPU(config.cpu);

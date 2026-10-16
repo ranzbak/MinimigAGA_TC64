@@ -660,7 +660,10 @@ conv_cop:
 	lsl.w	#8,d1
 	move.l	d0,d3
 	lsr.w	#8,d3
-	or.w	d1,d3			; line
+	cmp.b	#1,d0			; H 0 and 1 still show the previous line's V
+	bhi.s	.v1			; (Agnus counts V up at H 2; WinUAE vhpos_adj)
+	addq.w	#1,d3			; so the sample is one line on ($FF+1 = $100,
+.v1:	or.w	d1,d3			; line		;  whatever V8 says)
 	mulu.w	#227,d3
 	moveq	#0,d1
 	move.b	d0,d1
@@ -676,9 +679,15 @@ conv_cop:
 	lsr.l	#6,d3
 	move.l	d2,d4			; read cost: second VHPOSR - first
 	lsr.w	#8,d4
-	move.l	d0,d6
+	cmp.b	#1,d2			; H 0/1: one line on, as above (without
+	bhi.s	.v2			; this a pair across the line start came out
+	addq.w	#1,d4			; one line short: negative, 67,000 us)
+.v2:	move.l	d0,d6
 	lsr.w	#8,d6
-	sub.w	d6,d4
+	cmp.b	#1,d0
+	bhi.s	.v3
+	addq.w	#1,d6
+.v3:	sub.w	d6,d4
 	and.l	#$ff,d4
 	mulu.w	#227,d4
 	moveq	#0,d6
@@ -1284,10 +1293,10 @@ fake:	lea	fake_cia(pc),a0
 	move.l	#6,cia_n
 	lea	fake_cop(pc),a0
 	move.l	copbuf,a1
-	moveq	#5*2-1,d0
+	moveq	#8*2-1,d0
 .p:	move.l	(a0)+,(a1)+
 	dbf	d0,.p
-	move.l	#5,cop_n
+	move.l	#8,cop_n
 	move.l	#110,lines
 	move.l	#2,frames
 	rts
@@ -1302,8 +1311,11 @@ fake_cop:
 	dc.w	$3014,$a300,$3016,0
 	dc.w	$7220,$a300,$7222,0
 	dc.w	$0530,$a300,$0532,0
-	dc.w	$1000,$a301,$1003,0
-	dc.w	$b010,$a300,$b101,0
+	dc.w	$1002,$a301,$1005,0
+	dc.w	$b010,$a300,$b102,0
+	dc.w	$7000,$a300,$7001,0	; H 0: line $71, not $70
+	dc.w	$33e1,$a300,$3300,0	; second read at H 0 of line $34
+	dc.w	$ff01,$a301,$0005,0	; H 1 on line $FF: line $100, V8 already 1
 	endc
 
 ;---------------------------------------------------------------- data

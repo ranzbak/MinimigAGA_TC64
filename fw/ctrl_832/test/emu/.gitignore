@@ -1,0 +1,7 @@
+# built by make (see Makefile)
+*.asm
+*.o
+*_emu
+*_emu.log
+832e_fix
+emusrc/

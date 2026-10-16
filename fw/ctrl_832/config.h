@@ -128,3 +128,12 @@ unsigned char SaveConfiguration(char *filename);	// Can supply NULL to use filen
 unsigned char ConfigurationExists(char *filename);
 int ApplyConfiguration(char reloadkickstart,char applydrives);
 
+// IDE slot (port << 1 | slave) -> its config entry: 0/1 hardfile[], 2/3
+// secondaryhardfile[] (IDE port 2).  Its directory is hdfdir[slot].
+hardfileTYPE *SlotConfig(int slot);
+// Send both IDE ports' configuration (on, master/slave present, ATAPI) to the
+// core, from config and the CD-ROM state.  Takes effect at the next reset.
+void ConfigIDEPorts(void);
+// Open the CD-ROM drive of the config (CD_Open), or none.
+void ApplyCDROM(void);
+

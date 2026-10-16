@@ -6,6 +6,7 @@
 #include "rafile.h"
 
 #include "drivesounds.h"
+#include "cdaudio.h"
 
 extern char _bss_end__;
 
@@ -53,8 +54,17 @@ void drivesounds_enable(int type)
 void drivesounds_disable(int type)
 {
 	drivesounds.enabled&=~type;
-	if(!drivesounds.enabled)
+	if(!drivesounds.enabled && !cda_busy())	/* not the CD audio player's stream */
 		audio_stop();
+}
+
+/* The CD audio player takes the ring (findings/cdrom/plan.md 13.1): drop
+   what was playing and queued, without touching the AUDIO register. */
+void drivesounds_yield()
+{
+	drivesounds.active=0;
+	drivesounds.playing=0;
+	drivesounds.out=drivesounds.in;
 }
 
 
@@ -345,6 +355,11 @@ int pickstep(int maxactive,enum DriveSound_Type type)
 int drivesounds_fill()
 {
 	struct dsevent *dse;
+	if(cda_busy())	/* CD audio playing or paused: the drive sounds are silent (13.1) */
+	{
+		drivesounds.out=drivesounds.in;
+		return(0);
+	}
 	if(drivesounds.enabled && drivesounds.active)
 	{
 		while(dse=drivesounds_nextevent())

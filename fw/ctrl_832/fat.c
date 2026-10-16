@@ -680,6 +680,22 @@ int CompareDirEntries(DIRENTRY *pDirEntry1, char *pLFN1, DIRENTRY *pDirEntry2, c
     return(rc);
 }
 
+// extension: "*", or one or more 3-character extensions in a row ("ISOCUE").
+static int ExtensionMatch(const unsigned char *ext, const char *list)
+{
+    int i = 0;
+    if (list[0] == '*')
+        return 1;
+    for (;;)
+    {
+        if (!list[i] || !list[i + 1] || !list[i + 2])
+            return 0;
+        if (ext[0] == list[i] && ext[1] == list[i + 1] && ext[2] == list[i + 2])
+            return 1;
+        i += 3;
+    }
+}
+
 char ScanDirectory(unsigned long mode, char *extension, unsigned char options)
 {
     DIRENTRY *pEntry = NULL;            // pointer to current entry in sector buffer
@@ -855,7 +871,7 @@ char ScanDirectory(unsigned long mode, char *extension, unsigned char options)
 					 // if not VOLUME label (also filter current directory entry)
                     if (!(pEntry->Attributes & (ATTR_VOLUME | ATTR_HIDDEN)) && (pEntry->Name[0] != '.' || pEntry->Name[1] != ' '))
                     {
-                        if ((extension[0] == '*') || (strncmp((const char*)&pEntry->Name[8], extension, 3) == 0)
+                        if (ExtensionMatch(&pEntry->Name[8], extension)
 								 || (options & SCAN_DIR && pEntry->Attributes & ATTR_DIRECTORY))
                         {
                             if (mode == SCAN_INIT)
