@@ -452,10 +452,7 @@ LUT** (+1.2 % of the device), FF roughly unchanged, BRAM +1.5 tiles
 (88.5 -> ~90 of 135). Debug builds add ~470 LUT / 844 FF more and are not
 expected to fit timing as easily at 98 % slices -- they are lab images.
 
-Timing: +1.10 ns WNS at 8.815 ns for the core with registered I/O; the CPU
-block registers its bus outputs, and the bridge registers both sides as
-today. The risk is clk_114 congestion at 98 % slices with ~+700 LUT. Phase 1
-re-measures OOC in Vivado 2023.2 with the whole `hostcpu`; Phase 5.2 is the
+Measured (2026-10-16, Task 8, Vivado 2023.2, whole `hostcpu` OOC at 8.815 ns, `findings/osd-riscv/ooc-2023.2.md`): the 832 reference row gives 871 LUT / 974 FF / 3 RAMB36 / 4 DSP, WNS +2.25 ns (stage figure 912 / 944, -4.5 %, so the flow is trusted); the RISC-V `hostcpu` (`rv_debug = 0`) gives **1,532 LUT / 1,252 FF / 4 RAMB36 + 3 RAMB18 (5.5 tiles) / 4 DSP, WNS +1.68 ns**, i.e. **+661 LUT, +278 FF, +2.5 BRAM tiles** vs the 832 (core 1,400 LUT, CPU block 50, hostcache 65, boot ROM glue 18); the debug build `rv_debug = 2` is 2,018 LUT / 1,977 FF, WNS +0.87 ns. Worst paths are the core's register-file BRAM address inputs; the `dBus_cmd_valid`-dependent paths in `rv_hostcpu` have +3.3 ns (output-register CE) and +3.9 ns slack and are not critical. The remaining risk is clk_114 congestion at 98 % slices, which an OOC run cannot show; Phase 5.2 is the recovery step.
 recovery step.
 
 Code size (measured 2026-10-16, riscv32 gcc 14.2 `-Os`): 26 of 31 firmware

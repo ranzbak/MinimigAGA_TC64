@@ -59,3 +59,23 @@ the WNS reported is the `clk` group only; the `tck` slack is in `timing.rpt`.
 Gates used for the OSD host CPU (8.815 ns): `VexOsd` <= 1450 LUT and
 WNS >= +1.0 ns; `VexOsd_DMT` and `VexOsd_DMJ` <= 1950 LUT and WNS >= +0.9 ns.
 Results: `findings/osd-riscv/ooc-2023.2.md`.
+
+## Whole `hostcpu` (EightThirtyTwo_Bridge) -- `go_bridge.sh`
+
+OOC synthesis + implementation of the complete `EightThirtyTwo_Bridge` (CPU, bridge,
+hostcache, boot ROM) at 8.815 ns, three runs: `832` (reference, EightThirtyTwo),
+`rv0` (VexOsd, no debug), `rv2` (VexOsd_DMJ, pin TAP). Results in `runs/bridge_<mode>/`
+(`summary.txt`, `util.rpt`, `util_hier.rpt`, `crit.rpt` top-5 paths, `routed.dcp`);
+the `summary.txt` line also lists how many `*hw_req_reg*` / `*wr_reg*` cells exist.
+
+```
+# once: the RV boot ROM image (any 8 KB image; default path used by run_bridge.tcl)
+make -C sim/host_bridge TESTS=t_lanes
+cd tools/vivado/ooc_hostcpu
+./go_bridge.sh 832 && ./go_bridge.sh rv0 & ./go_bridge.sh rv2 & wait
+./go_bridge.sh rv0 8.5          # optional second argument: clock period in ns
+RVROM=/path/OSDBoot_rv_ROM.vhd E832=/path/to/EightThirtyTwo/RTL ./go_bridge.sh rv0
+```
+
+Totals are in `util.rpt` (the top is the whole hostcpu, not just the core). Measured
+numbers: `findings/osd-riscv/ooc-2023.2.md`. `rv_debug=1` (BSCANE2) is not supported yet.
