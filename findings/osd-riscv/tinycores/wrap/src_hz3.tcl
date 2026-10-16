@@ -1,0 +1,4 @@
+set h /tmp/claude-1000/-home-paul-work-fpga-Xilinx-artix7-MinimigAGA-TC64/3b5e887b-e330-40a2-82fb-18928449948e/scratchpad/tinycores/src/Hazard3/hdl
+foreach f {hazard3_core hazard3_cpu_1port arith/hazard3_alu arith/hazard3_branchcmp arith/hazard3_mul_fast arith/hazard3_muldiv_seq arith/hazard3_onehot_encode arith/hazard3_onehot_priority arith/hazard3_onehot_priority_dynamic arith/hazard3_priority_encode arith/hazard3_shift_barrel hazard3_csr hazard3_decode hazard3_frontend hazard3_instr_decompress hazard3_irq_ctrl hazard3_pmp hazard3_power_ctrl hazard3_regfile_1w2r hazard3_triggers debug/dm/hazard3_dm debug/dtm/hazard3_jtag_dtm debug/dtm/hazard3_jtag_dtm_core debug/cdc/hazard3_apb_async_bridge debug/cdc/hazard3_reset_sync debug/cdc/hazard3_sync_1bit} { read_verilog $h/$f.v }
+read_verilog [file dirname [info script]]/whz3.v
+set_property include_dirs [list $h $h/arith] [current_fileset]
