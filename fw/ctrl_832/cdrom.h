@@ -74,4 +74,8 @@ void CD_HandleCommand(int port, unsigned char *tfr);
    or write.  Prints "CDA: underrun n" in DebugMode. */
 void CD_AudioPoll(void);
 
+/* The track the player is in (playing or paused), 0 when it is not: the
+   OSD's play mark (13.8 step 3c). */
+int CD_PlayingTrack(void);
+
 #endif

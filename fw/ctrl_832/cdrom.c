@@ -405,6 +405,14 @@ void CD_AudioPoll(void)
 	}
 }
 
+int CD_PlayingTrack(void)
+{
+	struct cue_loc l;
+	if (!cda_busy() || !cdrom.unit.media || !cue_locate(&cd_disc, cda_position(), &l))
+		return 0;
+	return cd_disc.track[l.track].number;
+}
+
 static void cd_audio_request(const struct atapi_result *r)
 {
 	switch (r->audio) {

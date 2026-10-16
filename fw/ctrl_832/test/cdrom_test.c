@@ -1313,6 +1313,25 @@ static void t_volume_select(void)
 	end();
 }
 
+static void t_playing_track(void)
+{
+	uint8_t c[12];
+	begin("CD_PlayingTrack: the track while playing or paused, 0 otherwise (the OSD's play mark)");
+	EXPECT(insert_disc("MIXED   CUE", "Mixed") == CD_OK, "insert refused: '%s'", CD_Message());
+	EXPECT(CD_PlayingTrack() == 0, "track %d before any play", CD_PlayingTrack());
+	play10(c, 214, 10);
+	packet(c, 0xFFFE);
+	EXPECT(CD_PlayingTrack() == 2, "playing: track %d", CD_PlayingTrack());
+	memset(c, 0, 12);
+	c[0] = 0x4B;	/* PAUSE */
+	packet(c, 0xFFFE);
+	EXPECT(CD_PlayingTrack() == 2, "paused: track %d", CD_PlayingTrack());
+	c[0] = 0x4E;	/* STOP */
+	packet(c, 0xFFFE);
+	EXPECT(CD_PlayingTrack() == 0, "stopped: track %d", CD_PlayingTrack());
+	end();
+}
+
 int main(void)
 {
 	make_wav_header(wav_header, WAV_SECTORS * 2352, 2);
@@ -1349,6 +1368,7 @@ int main(void)
 	t_play_stops();
 	t_read_cd();
 	t_volume_select();
+	t_playing_track();
 
 	printf("\n%d cases: %d passed, %d failed (%d failed checks)\n",
 	       cases_run, cases_passed, cases_run - cases_passed, total_fails);

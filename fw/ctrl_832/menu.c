@@ -237,6 +237,7 @@ static int hdf_select_slot;	// the slot whose file selector is open
 static unsigned long cd_msg_timer;
 static char cd_msg_on;
 static const char *cd_msg_text;
+static int cd_shown_track;	// the track in the main page's play mark, 0 = none
 
 static void cd_show_msg(const char *text)
 {
@@ -741,22 +742,31 @@ void HandleUI(void)
         else
         {
             menumask |= 0x40;
+            cd_shown_track = CD_PlayingTrack();
             if (cd_msg_on)
                 sprintf(s, " CD-ROM: %s", cd_msg_text);
             else if (!cdrom.unit.media)
                 strcpy(s, " CD-ROM: * no disc *");
             else
-            {
-                // strncat: lib832's printf has no precision (it printed "21s" here)
+            {   // the name, the play mark (note + track) at columns 27-29, the
+                // lock mark at column 31.  strncat: lib832's printf has no
+                // precision (it printed "21s" here).
+                char locked = CD_Locked();
                 strcpy(s, " CD-ROM: ");
-                strncat(s, cdrom.unit.name, 21);
-                if (CD_Locked())
-                {   // the lock mark at column 31
+                strncat(s, cdrom.unit.name, cd_shown_track ? 17 : 21);
+                if (cd_shown_track || locked)
+                {
                     len = strlen(s);
                     while (len < 31)
                         s[len++] = ' ';
-                    s[31] = 0x17;
+                    s[31] = locked ? 0x17 : ' ';
                     s[32] = 0;
+                }
+                if (cd_shown_track)
+                {
+                    s[27] = 0x19; // note (charrom.h)
+                    s[28] = (char)('0' + cd_shown_track / 10);
+                    s[29] = (char)('0' + cd_shown_track % 10);
                 }
             }
             OsdWrite(6, s, menusub == 6, 0);
@@ -768,8 +778,8 @@ void HandleUI(void)
         break;
 
     case MENU_MAIN2:
-        if (cd_msg_expired())
-            menustate = MENU_MAIN1;
+        if (cd_msg_expired() || (CD_SLOT() >= 0 && CD_PlayingTrack() != cd_shown_track))
+            menustate = MENU_MAIN1; // a message ended, or the play mark changed
         if (menu)
             menustate = MENU_NONE1;
         else if (plus && (config.floppy.drives < 3))
@@ -1900,7 +1910,9 @@ void HandleUI(void)
         OsdSetTitle("Harddisks", (core_caps & CORE_CAPS_IDE2) ? OSD_ARROW_RIGHT : 0);
 
         parentstate = menustate;
-        menumask = 0x41; // b01000001 - On/off & exit enabled by default...
+        menumask = 0x81; // b10000001 - On/off & exit enabled by default...
+        if (core_caps & CORE_CAPS_IDE2)
+            menumask |= 0x40; // the IDE port 2 line (12.6: the title arrow alone was not found)
         strcpy(s, "    IDE : ");
         strcat(s, t_enable_ide ? "on " : "off");
         OsdWrite(0, s, menusub == 0, 0);
@@ -1913,8 +1925,11 @@ void HandleUI(void)
         strcpy(s, " Sounds : ");
         strcat(s, config.drivesounds & DRIVESOUNDS_HDD ? "on " : "off");
         OsdWrite(5, s, menusub == 5, t_enable_ide == 0);
-        OsdWrite(6, "", 0, 0);
-        OsdWrite(7, STD_BACK, menusub == 6, 0);
+        if (core_caps & CORE_CAPS_IDE2)
+            OsdWrite(6, " IDE port 2 \x16", menusub == 6, 0);
+        else
+            OsdWrite(6, "", 0, 0);
+        OsdWrite(7, STD_BACK, menusub == 7, 0);
 
         menustate = MENU_SETTINGS_HARDFILE2;
 
@@ -1948,7 +1963,12 @@ void HandleUI(void)
                     drivesounds_disable(DRIVESOUNDS_HDD);
                 menustate = MENU_SETTINGS_HARDFILE1;
             }
-            else if (menusub == 6) // return to previous menu
+            else if (menusub == 6) // IDE port 2 (the line is only there on a two-port core)
+            {
+                menustate = MENU_SETTINGS_HARDFILE3;
+                menusub = 0;
+            }
+            else if (menusub == 7) // return to previous menu
             {
                 menustate = MENU_HARDFILE_EXIT;
             }
