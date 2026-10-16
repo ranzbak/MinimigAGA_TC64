@@ -295,6 +295,8 @@ the rv32im libgcc. Second choice `/home/paul/bin/riscv32-unknown-elf-gcc`
 
 ### 3.6 Debug bridge
 
+*Superseded by decision 12.6: on-chip debug (RISC-V External Debug spec) is a core selection criterion.*
+
 Dropped for the RISC-V path (production builds already have `debug=0`;
 picorv32 has no debug module; the transports are vendor-specific on both
 vendors). Replacements: UART `DebugMode`, the benches, and -- if ever --
@@ -808,6 +810,8 @@ Plus the stress protocol 7.4.
 
 ## 11. Open decisions for Paul (recommendation in bold)
 
+*Answered 2026-10-16 -- see section 12, which overrides this list.*
+
 1. Core: **picorv32 now, Hazard3 measured in Phase 0 and kept as a drop-in**;
    switch only if 2.3's rule is not met with the bridge-side improvements.
 2. ISA: **RV32IMC if Phase 0 shows <= +150 LUT and no WNS loss**, else RV32IM.
@@ -828,3 +832,45 @@ Plus the stress protocol 7.4.
    flag), P2 timer, P4 I2C, P3 UART; P5 SPI FIFO only on 2.3/7.1 evidence;
    P6/P7 only on Phase 7/8 measurements.** Alternative: P5 first if the ring
    fill number in 2.3 is already poor on the 832.
+
+## 12. Decisions (Paul, 2026-10-16)
+
+1. **Core:** open. New hard gates before size/speed: (a) the core is
+   actively maintained (not archived; commits/releases in ~12 months),
+   (b) standard ISA + standard machine-mode trap/IRQ CSRs, supported by
+   upstream GCC and LLVM without patches. picorv32 fails (a). Survey and
+   out-of-context measurement in `findings/osd-riscv/tiny-cores.md`.
+2. **ISA: RV32IM, no compressed instructions.** Memory is not the limit.
+   Firmware ~105-115 KB in SDRAM.
+3. **Boot ROM: 8 KB preferred**, 16 KB only if the RV32IM boot ROM needs it.
+4. **Config file: drop the big-endian format.** The RISC-V firmware
+   reads/writes a native little-endian layout; a host command-line tool
+   converts old (832, big-endian) config files to the new format. Task added
+   to Phase 3 (Sonnet; gate: round-trip test on every config file in the
+   repo/SD image, field-by-field compare).
+5. **spicdc board check on the 832 build first** (merged at 49b1868):
+   `report_clocks` shows `spi_sck`, HDF copy + checksum, ADF read/write --
+   part of the acceptance of the 832 A/B reference bitstream.
+6. **Debug: needed** ("debugging firmware is likely in our future"). The
+   chosen core should implement the RISC-V External Debug spec (Debug
+   Module + JTAG DTM; OpenOCD + GDB). Transport options, to be decided with
+   the core: dedicated JTAG pins on a header with an FTDI adapter
+   (vendor-neutral), or a BSCANE2 tunnel through the Xilinx cable (Artix-only
+   switch, default off per the vendor-neutral rule). Debug Module LUT cost is
+   measured in Phase 0; it may sit behind a generic so production images can
+   leave it out.
+7. **Firmware: a new RISC-V dedicated tree** (e.g. `fw/ctrl_rv`), not a
+   `Makefile.rv32` inside `fw/ctrl_832`. The 832 tree stays untouched as
+   the A/B reference until Phase 9. Same for the boot ROM (e.g.
+   `fw/ctrl_boot_rv`).
+8. **Toolchain: the most up-to-date one.** Findings 2026-10-16:
+   `~/bin/riscv32-unknown-elf-gcc` 14.2 is a CH32V badge build, rv32imac
+   only, no multilibs -- its libgcc contains compressed instructions, so it
+   cannot target an RV32IM core. Ubuntu `riscv64-unknown-elf-gcc` 13.2 has an
+   `rv32im/ilp32` multilib and picolibc 1.8.6 but is older. Phase 2 takes the
+   newest upstream GCC with an rv32im multilib: a pinned xPack
+   `riscv-none-elf-gcc` release (or a riscv-gnu-toolchain build with
+   `--with-multilib-generator`), recorded in the build scripts; Ubuntu 13.2 as
+   fallback. Also check Clang/LLVM builds the tree (gate 1b).
+9. **Peripheral order:** deferred -- Paul wants it again once the
+   dependencies between stages are worked out (re-ask after Phase 0-2).
