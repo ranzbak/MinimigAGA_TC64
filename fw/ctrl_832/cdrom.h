@@ -2,14 +2,12 @@
 #define CDROM_H
 
 /*
- * CD-ROM board glue (findings/cdrom/plan.md 7.4): the ISO file behind the
- * ATAPI unit of atapi.c, and the Gayle side of the commands.
- *
- * Phase 0: compiled and linked, not called from anywhere.
- * CD_HandleCommand is a stub until task 1.4 (it needs the two-port Gayle
- * with packet mode of phase 1).
+ * CD-ROM board glue (findings/cdrom/plan.md 7.4, 13.5): the disc behind the
+ * ATAPI unit of atapi.c -- an ISO, or a CUE sheet with its BIN / ISO / WAV
+ * files -- and the Gayle side of the commands.
  */
 
+#include <string.h>
 #include "fat.h"
 #include "hdd.h"
 #include "atapi.h"
@@ -18,16 +16,24 @@
 #define CD_OK      ATAPI_OK
 #define CD_LOCKED  ATAPI_LOCKED	/* the Amiga locked the drive (D5) */
 #define CD_NOFILE  2		/* bad directory or file not found */
+#define CD_BADCUE  3		/* the CUE sheet was refused: CD_Message() says why */
+
+/* hardfileTYPE.present of the CD slot: which disc the 8-character config
+   name is (the config has no room for the extension, phase3-plan.md spec
+   issue 1).  0 = no disc. */
+#define CD_PRESENT_ISO 1
+#define CD_PRESENT_CUE 2
+#define CD_PRESENT(name83) (memcmp((name83) + 8, "CUE", 3) == 0 ? CD_PRESENT_CUE : CD_PRESENT_ISO)
 
 typedef struct
 {
-	hdfTYPE           hdf;	/* the ISO: file + cluster index; sector n = HardFileSeek(&hdf, 4*n) */
+	hdfTYPE           hdf;	/* the disc file being read (a CUE's data track's file): file + cluster index */
 	struct atapi_unit unit;
 	int               slot;	/* IDE slot (port << 1 | slave), valid while active */
 	unsigned char     active;	/* a CD drive is configured (BSS zero: none) */
 } cdromTYPE;
 
-extern cdromTYPE cdrom;	/* not "cd": main.c has a struct cdimage cd (bincue) */
+extern cdromTYPE cdrom;
 
 /* The CD drive's IDE slot, -1 when there is none. */
 #define CD_SLOT() (cdrom.active ? cdrom.slot : -1)
@@ -36,10 +42,16 @@ extern cdromTYPE cdrom;	/* not "cd": main.c has a struct cdimage cd (bincue) */
    slot -1: no CD drive.  Returns CD_OK or CD_NOFILE. */
 int CD_Open(int slot);
 
-/* OSD insert or swap.  name: 8-character short name without extension, as
-   in hardfileTYPE; long_name: the ISO's long name (IDENTIFY / INQUIRY, D7),
-   may be NULL.  Refused with CD_LOCKED while the Amiga holds the lock. */
+/* OSD insert or swap.  name: the 8.3 name as in fileTYPE.name (11
+   characters, no dot): "xxxxxxxxISO" or "xxxxxxxxCUE"; long_name: the long
+   name without extension (IDENTIFY / INQUIRY, D7), may be NULL.  Refused
+   with CD_LOCKED while the Amiga holds the lock; CD_NOFILE when the ISO /
+   CUE is not there; CD_BADCUE when the CUE or one of its files is refused
+   (CD_Message()).  The drive is empty after any refusal but CD_LOCKED. */
 int CD_Insert(const char *name, const char *long_name, unsigned long dir);
+
+/* Why the last CD_Insert was refused, at most 23 characters ("" if it was not). */
+const char *CD_Message(void);
 
 /* OSD eject.  CD_LOCKED while the Amiga holds the lock, nothing changes. */
 int CD_Eject(void);

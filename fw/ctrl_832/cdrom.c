@@ -1,7 +1,9 @@
 /*
- * CD-ROM board glue -- see cdrom.h and findings/cdrom/plan.md 7.1, 7.4, 9.
+ * CD-ROM board glue -- see cdrom.h and findings/cdrom/plan.md 7.1, 7.4, 9, 13.5.
  *
  * The ATAPI unit of atapi.c on one IDE slot of the two-port Gayle.  The
+ * disc is a model (cue.h): an ISO is one DATA2048 track, a CUE sheet is
+ * parsed at insert and each of its FILEs looked up in the CUE's directory.  The
  * Gayle port runs in packet mode (gayle_port.v): each data phase is set up
  * with WriteXfer (length in words), the task file (interrupt reason, byte
  * count) and a status write for the direction; the port raises DRQ and the
@@ -29,13 +31,26 @@
 #include "fat.h"
 #include "hdd.h"
 #include "config.h"
+#include "errors.h"
+#include "rafile.h"
 #include "atapi.h"
+#include "cue.h"
 #include "cdrom.h"
+
+/* fat.c's directory state: lookups in the disc's directory put it back, so
+   the OSD file browser does not move (or lose its ".." position). */
+extern unsigned long iCurrentDirectory, iPreviousDirectory;
 
 cdromTYPE cdrom;
 
-static struct cd_disc cd_disc;		/* the disc in the drive (an ISO: one track) */
-static char cd_filename[12];
+static struct cd_disc cd_disc;		/* the disc in the drive */
+static struct cue_parser cd_cue;	/* 2.5 KB: static, the 832 stack is small */
+static RAFile cd_cuefile;		/* the CUE text */
+static RAFile cd_lookup;		/* each FILE of the CUE: its size, a WAV's header */
+static unsigned long cd_dir;		/* the directory of the disc's files */
+static int cd_data_file = -1;		/* the disc file open in cdrom.hdf, -1 = none */
+static unsigned char cd_block[512];	/* one FAT sector: the raw-sector paths */
+static char cd_msg[24];			/* why the last insert was refused */
 static unsigned short cd_id[256];	/* IDENTIFY PACKET DEVICE words */
 static unsigned char cd_cdb[12];
 
@@ -57,9 +72,9 @@ static void cd_config(const char *name, const char *long_name, unsigned long dir
 	hf = SlotConfig(cdrom.slot);
 	memset(hf->name, 0, sizeof(hf->name));
 	memset(hf->long_name, 0, sizeof(hf->long_name));
-	hf->present = name ? 1 : 0;
+	hf->present = name ? CD_PRESENT(name) : 0;
 	if (name) {
-		memcpy(hf->name, name, sizeof(hf->name));
+		memcpy(hf->name, name, sizeof(hf->name));	/* 8 characters: the extension is in present */
 		if (long_name)
 			strncpy(hf->long_name, long_name, sizeof(hf->long_name));
 		config.hdfdir[cdrom.slot] = dir;
@@ -71,37 +86,174 @@ static void cd_config(const char *name, const char *long_name, unsigned long dir
 int CD_Open(int slot)
 {
 	hardfileTYPE *hf;
-	char name[9];
+	char name[12];
 	char long_name[sizeof(hf->long_name) + 1];
 
 	cdrom.hdf.type = HDF_DISABLED;
+	cd_data_file = -1;
 	cdrom.slot = slot;
 	cdrom.active = slot >= 0 && slot < HDD_SLOTS;
 	atapi_init(&cdrom.unit);
 	if (!cdrom.active)
 		return CD_OK;
 	hf = SlotConfig(slot);
+	/* config names are fixed-width, not always terminated; present says
+	   whether the 8 characters name an ISO or a CUE */
+	memcpy(name, hf->name, 8);
+	memcpy(name + 8, hf->present == CD_PRESENT_CUE ? "CUE" : "ISO", 3);
+	name[11] = 0;
 	hf->present = 0;
 	if (!hf->name[0])
 		return CD_OK;	/* CD slot, no disc */
-	/* config names are fixed-width, not always terminated */
-	memcpy(name, hf->name, 8);
-	name[8] = 0;
 	memcpy(long_name, hf->long_name, sizeof(hf->long_name));
 	long_name[sizeof(hf->long_name)] = 0;
 	return CD_Insert(name, long_name[0] ? long_name : 0, config.hdfdir[slot]);
 }
 
+/* ---- the disc's files ---- */
+
+/* RAOpen in the disc's directory, leaving fat.c's directory state alone.
+   A failed lookup is the insert's refusal, not a filesystem error for the
+   OSD's error page. */
+static int cd_raopen(RAFile *f, const char *name)
+{
+	unsigned long cur = iCurrentDirectory, prev = iPreviousDirectory;
+	int ok;
+	ChangeDirectory(cd_dir);
+	ok = RAOpen(f, name);
+	iCurrentDirectory = cur;
+	iPreviousDirectory = prev;
+	if (!ok)
+		ClearError(ERROR_FILESYSTEM);
+	return ok;
+}
+
+/* name as an 8.3 directory name ("game.bin" -> "GAME    BIN"), 0 when it
+   is not one (a long name).  An 8.3 name written in lower case has no long
+   name entry on a FAT card (Linux, Windows), so FileOpen's long-name match
+   cannot find it.  Loops in the "for (;;) / break" form (cue.c). */
+static int cd_name83(const char *name, char *out)
+{
+	int i = 0, n = 0, dot = 0;
+	memset(out, ' ', 11);
+	out[11] = 0;
+	for (;;) {
+		char c = name[i];
+		if (!c)
+			break;
+		if (c == '.') {
+			if (dot || i == 0)
+				return 0;
+			dot = 1;
+			n = 8;
+		} else {
+			if (c >= 'a' && c <= 'z')
+				c = (char)(c - 32);
+			if (!((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '~' ||
+			      c == '!' || c == '#' || c == '$' || c == '%' || c == '&' || c == '(' || c == ')'))
+				return 0;
+			if (n == (dot ? 11 : 8))
+				return 0;
+			out[n++] = c;
+		}
+		i++;
+	}
+	return i > 0;
+}
+
+/* cue_wav's reader: the WAV opened in cd_lookup. */
+static int32_t cd_lookup_read(void *ctx, uint32_t offset, uint8_t *dst, uint32_t len)
+{
+	if (!RASeek(&cd_lookup, offset, SEEK_SET))
+		return 0;
+	return RARead(&cd_lookup, dst, len) ? 1 : 0;
+}
+
+/* The parser's FILE callback: find the file by its 8.3 or long name,
+   keep the 8.3 name, read a WAV's header. */
+static int32_t cd_cue_open(void *ctx, const char *name, struct cd_file *f)
+{
+	char n83[12];
+	int ok = 0;
+	if (cd_name83(name, n83))
+		ok = cd_raopen(&cd_lookup, n83);
+	if (!ok)
+		ok = cd_raopen(&cd_lookup, name);	/* FileOpen: long-name match */
+	if (!ok)
+		return CUE_E_NOFILE;
+	memcpy(f->shortname, cd_lookup.file.name, 11);
+	f->shortname[11] = 0;
+	if (!f->wave) {
+		f->data_offset = 0;
+		f->data_bytes = cd_lookup.size;
+		return CUE_OK;
+	}
+	return cue_wav(cd_lookup_read, 0, cd_lookup.size, f);
+}
+
+/* Parse the CUE opened in cd_cuefile into cd_disc. */
+static int32_t cd_parse_cue(void)
+{
+	unsigned long left = cd_cuefile.size;
+	cue_begin(&cd_cue, &cd_disc, cd_cue_open, 0);
+	while (left && cd_cue.error == CUE_OK) {
+		unsigned long n = left < sizeof(cd_block) ? left : sizeof(cd_block);
+		if (!RARead(&cd_cuefile, cd_block, n)) {
+			cd_cue.error = CUE_E_READ;
+			cd_cue.error_line = 0;
+			return CUE_E_READ;
+		}
+		cue_feed(&cd_cue, (const char *)cd_block, n);
+		left -= n;
+	}
+	return cue_end(&cd_cue);
+}
+
+/* Disc file f in cdrom.hdf (the data file): reopened with a fresh cluster
+   index when another file is wanted. */
+static int cd_data_open(int f)
+{
+	unsigned long cur, prev;
+	int ok;
+	if (cd_data_file == f && cdrom.hdf.type == HDF_FILE)
+		return 1;
+	cdrom.hdf.type = HDF_DISABLED;
+	cd_data_file = -1;
+	cur = iCurrentDirectory;
+	prev = iPreviousDirectory;
+	ChangeDirectory(cd_dir);
+	ok = FileOpen(&cdrom.hdf.file, cd_disc.file[f].shortname);
+	iCurrentDirectory = cur;
+	iPreviousDirectory = prev;
+	if (!ok) {
+		ClearError(ERROR_FILESYSTEM);
+		return 0;
+	}
+	cdrom.hdf.type = HDF_FILE;
+	cdrom.hdf.offset = 0;
+	BuildHardfileIndex(&cdrom.hdf);
+	cd_data_file = f;
+	return 1;
+}
+
+const char *CD_Message(void)
+{
+	return cd_msg;
+}
+
 int CD_Insert(const char *name, const char *long_name, unsigned long dir)
 {
-	char shortname[9];
+	char shortname[12];
+	char base[9];		/* the drive's name without a long name: 8 characters */
 	char longname[ATAPI_NAME_LEN + 1];
 
 	if (!cdrom.active)
 		return CD_NOFILE;
 	/* copies first: name may be the config entry CD_Eject clears */
-	memcpy(shortname, name, 8);
-	shortname[8] = 0;
+	memcpy(shortname, name, 11);
+	shortname[11] = 0;
+	memcpy(base, name, 8);
+	base[8] = 0;
 	if (long_name) {
 		strncpy(longname, long_name, ATAPI_NAME_LEN);
 		longname[ATAPI_NAME_LEN] = 0;
@@ -109,23 +261,32 @@ int CD_Insert(const char *name, const char *long_name, unsigned long dir)
 	if (CD_Eject() != CD_OK)
 		return CD_LOCKED;
 
-	memcpy(cd_filename, shortname, 8);
-	strcpy(&cd_filename[8], "ISO");
+	cd_msg[0] = 0;
 	if (!ValidateDirectory(dir))
 		return CD_NOFILE;
-	ChangeDirectory(dir);
-	if (!FileOpen(&cdrom.hdf.file, cd_filename))
+	cd_dir = dir;
+	if (memcmp(shortname + 8, "CUE", 3) == 0) {
+		if (!cd_raopen(&cd_cuefile, shortname))
+			return CD_NOFILE;
+		if (cd_parse_cue() != CUE_OK) {
+			cue_message(&cd_cue, cd_msg);
+			if (DebugMode)
+				printf("CD: %s refused: %s\r\n", shortname, cd_msg);
+			return CD_BADCUE;
+		}
+	} else {
+		if (!cd_raopen(&cd_lookup, shortname))
+			return CD_NOFILE;
+		cue_single(&cd_disc, shortname, cd_lookup.size);
+	}
+	if (!cd_data_open(cd_disc.track[0].file))
 		return CD_NOFILE;
 
-	cdrom.hdf.type = HDF_FILE;
-	cdrom.hdf.offset = 0;
-	BuildHardfileIndex(&cdrom.hdf);
-
-	cue_single(&cd_disc, cd_filename, cdrom.hdf.file.size);
-	atapi_insert(&cdrom.unit, &cd_disc, long_name ? longname : shortname);
+	atapi_insert(&cdrom.unit, &cd_disc, long_name ? longname : base);
 	cd_config(shortname, long_name ? longname : 0, dir);
 	if (DebugMode)
-		printf("CD: insert %s (%s), %lu sectors\r\n", cd_filename, cdrom.unit.name, (unsigned long)cdrom.unit.sectors);
+		printf("CD: insert %s (%s), %d tracks, %d sectors\r\n", shortname, cdrom.unit.name,
+		       (int)cd_disc.tracks, (int)cd_disc.leadout);
 	return CD_OK;
 }
 
@@ -133,6 +294,7 @@ int CD_Insert(const char *name, const char *long_name, unsigned long dir)
 static void cd_drop_file(void)
 {
 	cdrom.hdf.type = HDF_DISABLED;	/* FAT files need no close */
+	cd_data_file = -1;
 	cd_config(0, 0, 0);
 }
 
@@ -240,9 +402,19 @@ static int cd_send_buffer(int port, unsigned char *tfr, const unsigned char *buf
 	return CD_DONE;
 }
 
-/* Data in from the ISO: SD card -> FIFO, 512-byte FAT sectors, four per CD
-   sector, blocks of at most the limit and 8 KB. */
-static int cd_send_sectors(int port, unsigned char *tfr, unsigned long lba, unsigned long count, unsigned int limit)
+/* MEDIUM ERROR 03/11/00 for a read that failed on the SD card. */
+static int cd_read_error(unsigned long block)
+{
+	if (DebugMode)
+		printf("CD: SD read error at %d\r\n", (int)block);
+	WriteXfer(0, 1);	/* drop the transfer: no DRQ, no stall */
+	atapi_set_sense(&cdrom.unit, 0x03, 0x11, 0x00);
+	return CD_FAILED;
+}
+
+/* Data in from a DATA2048 file: SD card -> FIFO, 512-byte FAT sectors from
+   block on, four per CD sector, blocks of at most the limit and 8 KB. */
+static int cd_send_sectors(int port, unsigned char *tfr, unsigned long block, unsigned long count, unsigned int limit)
 {
 	unsigned long left = count * 4;
 	unsigned int per = limit >> 9;
@@ -251,20 +423,88 @@ static int cd_send_sectors(int port, unsigned char *tfr, unsigned long lba, unsi
 		per = CD_FIFO_512;
 	if (!per)
 		per = 1;	/* a limit below 512 bytes: blocks of 512 anyway */
-	HardFileSeek(&cdrom.hdf, lba * 4);
+	HardFileSeek(&cdrom.hdf, block);
 	while (left) {
 		unsigned int n = left < per ? (unsigned int)left : per;
 		cd_phase(tfr, n << 9, 0x02, IDE_STATUS_RDY);
-		if (!FileReadEx(&cdrom.hdf.file, 0, n)) {
-			if (DebugMode)
-				printf("CD: SD read error at %lu\r\n", lba * 4 + count * 4 - left);
-			WriteXfer(0, 1);
-			atapi_set_sense(&cdrom.unit, 0x03, 0x11, 0x00);
-			return CD_FAILED;
-		}
+		if (!FileReadEx(&cdrom.hdf.file, 0, n))
+			return cd_read_error(block + count * 4 - left);
 		if ((r = cd_wait(port)) != CD_DONE)
 			return r;
 		left -= n;
+	}
+	return CD_DONE;
+}
+
+/* len bytes at byte offset off of the data file into dst, through cd_block. */
+static int cd_file_read(unsigned long off, unsigned char *dst, unsigned long len)
+{
+	unsigned long done = 0;
+	while (done < len) {
+		unsigned long in = (off + done) & 511, n = 512 - in;
+		if (n > len - done)
+			n = len - done;
+		if (!HardFileSeek(&cdrom.hdf, (off + done) >> 9) || !FileRead(&cdrom.hdf.file, cd_block))
+			return 0;
+		memcpy(dst + done, cd_block + in, n);
+		done += n;
+	}
+	return 1;
+}
+
+/* Data in of count sectors from a DATA2352 file at byte offset off: the
+   2048 user bytes of each (from byte 16), one sector per DRQ block (split
+   by the limit). */
+static int cd_send_raw(int port, unsigned char *tfr, unsigned long off, unsigned long count, unsigned int limit)
+{
+	int r;
+	while (count) {
+		if (!cd_file_read(off + 16, atapi_buf, ATAPI_SECTOR_SIZE))
+			return cd_read_error(off >> 9);
+		if ((r = cd_send_buffer(port, tfr, atapi_buf, ATAPI_SECTOR_SIZE, limit)) != CD_DONE)
+			return r;
+		off += 2352;
+		count--;
+	}
+	return CD_DONE;
+}
+
+/* Data in of count sectors of zeros: a data track's PREGAP / POSTGAP. */
+static int cd_send_zero(int port, unsigned char *tfr, unsigned long count, unsigned int limit)
+{
+	int r;
+	memset(atapi_buf, 0, ATAPI_SECTOR_SIZE);
+	while (count) {
+		if ((r = cd_send_buffer(port, tfr, atapi_buf, ATAPI_SECTOR_SIZE, limit)) != CD_DONE)
+			return r;
+		count--;
+	}
+	return CD_DONE;
+}
+
+/* READ(10)/(12): lba .. lba + count - 1, split where the track, its file
+   or its sector size changes (atapi.c has refused audio sectors). */
+static int cd_read(int port, unsigned char *tfr, unsigned long lba, unsigned long count, unsigned int limit)
+{
+	struct cue_loc l;
+	int r;
+	while (count) {
+		unsigned long n;
+		if (!cue_locate(&cd_disc, lba, &l))
+			return cd_read_error(lba);
+		n = l.run < count ? l.run : count;
+		if (l.silent)
+			r = cd_send_zero(port, tfr, n, limit);
+		else if (!cd_data_open(l.file))
+			r = cd_read_error(lba);
+		else if (cd_disc.track[l.track].type == CD_DATA2048)
+			r = cd_send_sectors(port, tfr, l.offset >> 9, n, limit);
+		else
+			r = cd_send_raw(port, tfr, l.offset, n, limit);
+		if (r != CD_DONE)
+			return r;
+		lba += n;
+		count -= n;
 	}
 	return CD_DONE;
 }
@@ -341,7 +581,7 @@ static void cd_packet(int port, unsigned char *tfr)
 		done = cd_send_buffer(port, tfr, atapi_buf, r.length, limit);
 		break;
 	case ATAPI_READ:
-		done = cd_send_sectors(port, tfr, r.lba, r.count, limit);
+		done = cd_read(port, tfr, r.lba, r.count, limit);
 		break;
 	case ATAPI_RECEIVE:
 		done = cd_receive(port, tfr, r.length, limit);

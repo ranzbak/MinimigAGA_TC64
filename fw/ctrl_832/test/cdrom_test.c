@@ -19,8 +19,10 @@
  *   status         reason 3 (IO|CoD), END + IRQ, ERR and the error
  *                  register from the sense
  *
- * The ISO is synthetic: byte i of sector n is (n * 7 + i) & 0xff, with
- * the sector number in its first four bytes.
+ * The SD card is a table of fake files (fake_dir): the ISO is synthetic,
+ * byte i of sector n is (n * 7 + i) & 0xff with the sector number in its
+ * first four bytes; a BIN carries the same user data in raw 2352-byte
+ * MODE1 sectors, then audio; CUE sheets are text (phase 3, task 4).
  */
 
 #include <stdio.h>
@@ -33,7 +35,10 @@
 #include "hdd.h"
 #include "config.h"
 #include "fpga.h"
+#include "errors.h"
+#include "rafile.h"
 #include "atapi.h"
+#include "cue.h"
 #include "cdrom.h"
 
 /* ---- bookkeeping ---- */
@@ -86,14 +91,17 @@ static unsigned long now_ms;
 unsigned long GetTimer(unsigned long offset) { return (now_ms + offset) << 16; }
 unsigned long CheckTimer(unsigned long t) { return ((t - (now_ms << 16)) & 0x80000000) ? 1 : 0; }
 
-/* ---- the ISO and the FAT fakes ---- */
+/* ---- the SD card: fake files and the FAT fakes ---- */
 
 #define ISO_SECTORS 64
+#define BIN_SECTORS 40		/* Game.bin: 20 MODE1/2352 data sectors, then audio */
+#define WAV_SECTORS 10
 static char iso_name[12] = "TESTDISCISO";	/* 8.3 without the dot */
 static unsigned long iso_dir = 0x1234;
-static unsigned long file_pos512;		/* HardFileSeek / FileReadEx position */
 static int fail_read_at = -1;			/* FileReadEx fails on this call */
 static int reads;
+unsigned long iCurrentDirectory, iPreviousDirectory;
+static int clear_errors;			/* ClearError(ERROR_FILESYSTEM) calls */
 
 static uint8_t iso_byte(unsigned long pos)
 {
@@ -103,25 +111,195 @@ static uint8_t iso_byte(unsigned long pos)
 	return (uint8_t)(n * 7 + i);
 }
 
-int ValidateDirectory(unsigned long directory) { return directory == iso_dir || directory == 0; }
-void ChangeDirectory(unsigned long iStartCluster) { (void)iStartCluster; }
+/* Raw sectors: 0..19 MODE1 (16-byte header, the ISO's user data for that
+   sector number, 288 bytes of EDC/ECC 0xEE), 20.. audio bytes. */
+static uint8_t bin_byte(unsigned long pos)
+{
+	unsigned long n = pos / 2352, i = pos % 2352;
+	if (n >= 20)
+		return (uint8_t)(pos * 3 + 1);
+	if (i < 16)
+		return (uint8_t)((i >= 1 && i <= 10) ? 0xFF : (i == 15 ? 0x01 : 0x00));
+	if (i < 16 + 2048)
+		return iso_byte(n * ATAPI_SECTOR_SIZE + i - 16);
+	return 0xEE;
+}
 
+/* WAV files: a 44-byte header (PCM, channels x 44100 x 16), then samples. */
+static uint8_t wav_header[44], mono_header[44];
+
+static void make_wav_header(uint8_t *h, uint32_t data_bytes, uint16_t channels)
+{
+	static const uint8_t fmt[16] = { 1, 0, 2, 0, 0x44, 0xAC, 0, 0, 0x10, 0xB1, 2, 0, 4, 0, 16, 0 };
+	uint32_t riff = data_bytes + 36;
+	int i;
+	memcpy(h, "RIFF", 4);
+	for (i = 0; i < 4; i++) {
+		h[4 + i] = (uint8_t)(riff >> (8 * i));
+		h[40 + i] = (uint8_t)(data_bytes >> (8 * i));
+	}
+	memcpy(h + 8, "WAVEfmt ", 8);
+	h[16] = 16;
+	h[17] = h[18] = h[19] = 0;
+	memcpy(h + 20, fmt, 16);
+	h[22] = (uint8_t)channels;
+	memcpy(h + 36, "data", 4);
+}
+
+static uint8_t wav_byte(unsigned long pos)
+{
+	return pos < 44 ? wav_header[pos] : (uint8_t)((pos - 44) * 5);
+}
+
+static uint8_t mono_byte(unsigned long pos)
+{
+	return pos < 44 ? mono_header[pos] : 0;
+}
+
+static const char game_cue[] =
+	"FILE \"Game.bin\" BINARY\r\n"
+	"  TRACK 01 MODE1/2352\r\n"
+	"    INDEX 01 00:00:00\r\n"
+	"  TRACK 02 AUDIO\r\n"
+	"    INDEX 00 00:00:20\r\n"
+	"    INDEX 01 00:00:22\r\n";
+static const char mixed_cue[] =
+	"FILE \"Mixed (Track 1).iso\" BINARY\n"
+	"  TRACK 01 MODE1/2048\n"
+	"    INDEX 01 00:00:00\n"
+	"FILE \"Mixed (Track 2).wav\" WAVE\n"
+	"  TRACK 02 AUDIO\n"
+	"    PREGAP 00:02:00\n"
+	"    INDEX 01 00:00:00\n";
+static const char twodata_cue[] =	/* a data read crosses a POSTGAP into another file */
+	"FILE \"Mixed (Track 1).iso\" BINARY\n"
+	"  TRACK 01 MODE1/2048\n"
+	"    INDEX 01 00:00:00\n"
+	"    POSTGAP 00:00:02\n"
+	"FILE \"Game.bin\" BINARY\n"
+	"  TRACK 02 MODE1/2352\n"
+	"    INDEX 01 00:00:00\n";
+static const char lower_cue[] = "FILE \"lower.bin\" BINARY\n TRACK 01 MODE1/2352\n INDEX 01 00:00:00\n";
+static const char broken_cue[] = "FILE \"Nothere.wav\" WAVE\n TRACK 01 AUDIO\n INDEX 01 00:00:00\n";
+static const char badcmd_cue[] = "FILE \"Game.bin\" BINARY\n TRACK 01 MODE1/2352\n INDEX 01 00:00:00\nBOGUS 1\n";
+static const char mono_cue[] = "FILE \"Mono.wav\" WAVE\n TRACK 01 AUDIO\n INDEX 01 00:00:00\n";
+
+struct fake_file {
+	const char *short11;		/* 8.3 without the dot */
+	const char *long_name;		/* LFN, 0 = none (an 8.3 name written in lower case) */
+	unsigned long size;		/* ignored for text files */
+	uint8_t (*byte)(unsigned long pos);
+	const char *text;		/* a CUE sheet */
+};
+
+static const struct fake_file fake_dir[] = {
+	{ "TESTDISCISO", "Test Disc.iso", ISO_SECTORS * ATAPI_SECTOR_SIZE, iso_byte, 0 },
+	{ "GAME    CUE", "Game.cue", 0, 0, game_cue },
+	{ "GAME    BIN", "Game.bin", BIN_SECTORS * 2352, bin_byte, 0 },
+	{ "MIXED   CUE", "Mixed.cue", 0, 0, mixed_cue },
+	{ "MIXED~1 ISO", "Mixed (Track 1).iso", ISO_SECTORS * ATAPI_SECTOR_SIZE, iso_byte, 0 },
+	{ "MIXED~2 WAV", "Mixed (Track 2).wav", 44 + WAV_SECTORS * 2352, wav_byte, 0 },
+	{ "TWODATA CUE", "Twodata.cue", 0, 0, twodata_cue },
+	{ "LOWER   CUE", 0, 0, 0, lower_cue },
+	{ "LOWER   BIN", 0, 4 * 2352, bin_byte, 0 },
+	{ "BROKEN  CUE", "Broken.cue", 0, 0, broken_cue },
+	{ "BADCMD  CUE", "Badcmd.cue", 0, 0, badcmd_cue },
+	{ "MONOCUE CUE", "Monocue.cue", 0, 0, mono_cue },
+	{ "MONO    WAV", "Mono.wav", 44 + 2352, mono_byte, 0 },
+	{ 0, 0, 0, 0, 0 }
+};
+
+static unsigned long fake_size(const struct fake_file *f)
+{
+	return f->text ? strlen(f->text) : f->size;
+}
+
+/* fileTYPE.start_cluster = index + 1 of the fake file (0 = none). */
+static const struct fake_file *fake_of(const fileTYPE *file)
+{
+	return file->start_cluster ? &fake_dir[file->start_cluster - 1] : 0;
+}
+
+static uint8_t fake_byte(const struct fake_file *f, unsigned long pos)
+{
+	if (pos >= fake_size(f))
+		return 0;
+	return f->text ? (uint8_t)f->text[pos] : f->byte(pos);
+}
+
+static void fake_read(const fileTYPE *file, unsigned long pos, uint8_t *dst, unsigned long len)
+{
+	const struct fake_file *f = fake_of(file);
+	unsigned long i;
+	for (i = 0; i < len; i++)
+		dst[i] = f ? fake_byte(f, pos + i) : 0;
+}
+
+int ValidateDirectory(unsigned long directory) { return directory == iso_dir || directory == 0; }
+
+void ChangeDirectory(unsigned long iStartCluster)
+{
+	iPreviousDirectory = iCurrentDirectory;
+	iCurrentDirectory = iStartCluster;
+}
+
+void ClearError(int category)
+{
+	if (category == ERROR_FILESYSTEM)
+		clear_errors++;
+}
+
+/* As fat.c: a long name matches on its first strlen(name) characters, the
+   8.3 name on 11. */
 unsigned char FileOpen(fileTYPE *file, const char *name)
 {
-	if (memcmp(name, iso_name, 11) != 0)
-		return 0;
-	memcpy(file->name, name, 11);
-	file->size = ISO_SECTORS * ATAPI_SECTOR_SIZE;
-	file->sector = 0;
-	return 1;
+	int i;
+	EXPECT(iCurrentDirectory == iso_dir, "FileOpen(%s) outside the disc's directory (%lx)", name, iCurrentDirectory);
+	memset(file, 0, sizeof(*file));
+	for (i = 0; fake_dir[i].short11; i++) {
+		const struct fake_file *f = &fake_dir[i];
+		if ((f->long_name && strncmp(f->long_name, name, strlen(name)) == 0) || strncmp(f->short11, name, 11) == 0) {
+			memcpy(file->name, f->short11, 11);
+			file->size = fake_size(f);
+			file->start_cluster = (unsigned long)i + 1;
+			return 1;
+		}
+	}
+	return 0;
 }
 
 void BuildHardfileIndex(hdfTYPE *h) { (void)h; }
 
 unsigned char HardFileSeek(hdfTYPE *h, unsigned long lba)
 {
-	(void)h;
-	file_pos512 = lba;
+	h->file.sector = lba;
+	return 1;
+}
+
+unsigned char FileRead(fileTYPE *file, unsigned char *pBuffer)
+{
+	fake_read(file, file->sector * 512, pBuffer, 512);
+	return 1;
+}
+
+int RAOpen(RAFile *f, const char *name)
+{
+	int ok = FileOpen(&f->file, name);
+	f->size = f->file.size;
+	f->ptr = 0;
+	return ok;
+}
+
+int RASeek(RAFile *f, unsigned long offset, unsigned long origin)
+{
+	f->ptr = origin == SEEK_CUR ? f->ptr + offset : offset;
+	return 1;
+}
+
+int RARead(RAFile *f, unsigned char *pBuffer, unsigned long bytes)
+{
+	fake_read(&f->file, f->ptr, pBuffer, bytes);
+	f->ptr += bytes;
 	return 1;
 }
 
@@ -343,15 +521,16 @@ void ReadIDEData(unsigned char *buf, unsigned int bytes)
 
 unsigned char FileReadEx(fileTYPE *file, unsigned char *pBuffer, unsigned long nSize)
 {
+	const struct fake_file *f = fake_of(file);
 	unsigned long i;
-	(void)file;
 	if (reads++ == fail_read_at)
 		return 0;
 	EXPECT(pBuffer == 0, "FileReadEx into a buffer, not the direct transfer");
 	EXPECT(g.pio_in, "direct transfer without pio in");
+	EXPECT(f && f->byte == iso_byte, "direct transfer from %s, not a 2048-byte-sector file", f ? f->short11 : "nothing");
 	for (i = 0; i < nSize * 512 && g.fifo_len < sizeof(g.fifo); i++)
-		g.fifo[g.fifo_len++] = iso_byte(file_pos512 * 512 + i);
-	file_pos512 += nSize;
+		g.fifo[g.fifo_len++] = f ? fake_byte(f, file->sector * 512 + i) : 0;
+	file->sector += nSize;
 	return 1;
 }
 
@@ -782,8 +961,166 @@ static void t_reset_flag(void)
 	end();
 }
 
+/* ---- phase 3: CUE sheets ---- */
+
+/* An empty drive, then this disc from the fake card; its UNIT ATTENTION
+   consumed when it went in. */
+static int insert_disc(const char *name11, const char *long_name)
+{
+	uint8_t c[12];
+	int r;
+	fresh_drive(0);
+	r = CD_Insert(name11, long_name, iso_dir);
+	if (r == CD_OK) {
+		cdb6(c, 0x00, 0);
+		packet(c, 0xFFFE);
+		host_reset_model();
+	}
+	return r;
+}
+
+static void t_cue_bincue(void)
+{
+	uint8_t c[12];
+	begin("CUE + BIN (MODE1/2352, audio): user data from byte 16, a block per sector; audio 05/64/00");
+	EXPECT(insert_disc("GAME    CUE", "Game") == CD_OK, "insert refused: '%s'", CD_Message());
+	EXPECT(cdrom.unit.media && cdrom.unit.sectors == BIN_SECTORS, "sectors %u", (unsigned)cdrom.unit.sectors);
+	EXPECT(strcmp(cdrom.unit.name, "Game") == 0, "name '%s'", cdrom.unit.name);
+	EXPECT(memcmp(config.secondaryhardfile[0].name, "GAME    ", 8) == 0 &&
+	       config.secondaryhardfile[0].present == CD_PRESENT_CUE, "config: '%.8s' present %u",
+	       config.secondaryhardfile[0].name, config.secondaryhardfile[0].present);
+	EXPECT(memcmp(cdrom.hdf.file.name, "GAME    BIN", 11) == 0, "data file '%.11s'", cdrom.hdf.file.name);
+	read10(c, 0, 3);
+	packet(c, 0xFFFE);
+	EXPECT(h.phase_errors == 0, "phase errors");
+	EXPECT(h.blocks == 3 && h.block_bytes[0] == 2048 && h.block_bytes[2] == 2048, "blocks %d", h.blocks);
+	EXPECT(h.in_len == 3 * 2048 && iso_matches(0, 3 * 2048), "user data of sectors 0-2");
+	EXPECT(good_end(), "status phase");
+	read10(c, 18, 2);
+	packet(c, 0xFFFE);
+	EXPECT(h.in_len == 2 * 2048 && iso_matches(18, 2 * 2048) && good_end(), "sectors 18-19");
+	read10(c, 5, 1);
+	packet(c, 0x0400);
+	EXPECT(h.phase_errors == 0 && h.blocks == 2 && h.block_bytes[1] == 1024 && iso_matches(5, 2048) && good_end(),
+	       "a 1 KB limit: blocks %d", h.blocks);
+	read10(c, 19, 2);	/* sector 20 is track 2's INDEX 00 */
+	packet(c, 0xFFFE);
+	EXPECT(h.blocks == 0 && check_end(0x54), "into the audio track: blocks %d error %02X", h.blocks, g.reg[1]);
+	end();
+}
+
+static void t_cue_mixed(void)
+{
+	static const uint8_t toc[28] = {
+		0x00, 0x1A, 0x01, 0x02,
+		0x00, 0x14, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x10, 0x02, 0x00, 0x00, 0x00, 0x00, 214,
+		0x00, 0x10, 0xAA, 0x00, 0x00, 0x00, 0x00, 224
+	};
+	uint8_t c[12];
+	begin("CUE + ISO + WAV by long name: ISO sectors on the direct path, TOC with the audio track");
+	EXPECT(insert_disc("MIXED   CUE", "Mixed") == CD_OK, "insert refused: '%s'", CD_Message());
+	EXPECT(cdrom.unit.sectors == ISO_SECTORS + 150 + WAV_SECTORS, "sectors %u", (unsigned)cdrom.unit.sectors);
+	read10(c, 60, 4);
+	packet(c, 0xFFFE);
+	EXPECT(h.phase_errors == 0 && h.blocks == 1 && h.block_bytes[0] == 8192, "blocks %d first %u", h.blocks, h.block_bytes[0]);
+	EXPECT(h.in_len == 8192 && iso_matches(60, 8192) && good_end(), "sectors 60-63");
+	memset(c, 0, 12);
+	c[0] = 0x43;
+	c[7] = 0x00;
+	c[8] = 0xFF;
+	packet(c, 0xFFFE);
+	EXPECT(h.in_len == 28 && memcmp(h.in, toc, 28) == 0 && good_end(), "TOC: %u bytes, track 2 %02X/%u",
+	       h.in_len, h.in[13], h.in[19]);
+	read10(c, 64, 1);	/* track 2's PREGAP */
+	packet(c, 0xFFFE);
+	EXPECT(check_end(0x54), "audio gap read: error %02X", g.reg[1]);
+	end();
+}
+
+static void t_cue_split(void)
+{
+	uint8_t c[12];
+	unsigned i;
+	int zeros = 1, raw = 1;
+	begin("a READ across a POSTGAP into another file: ISO direct, zeros, BIN user data; the data file follows");
+	EXPECT(insert_disc("TWODATA CUE", "Two") == CD_OK, "insert refused: '%s'", CD_Message());
+	EXPECT(cdrom.unit.sectors == ISO_SECTORS + 2 + BIN_SECTORS, "sectors %u", (unsigned)cdrom.unit.sectors);
+	read10(c, 62, 6);
+	packet(c, 0xFFFE);
+	EXPECT(h.phase_errors == 0, "phase errors");
+	EXPECT(h.blocks == 5 && h.block_bytes[0] == 4096 && h.block_bytes[1] == 2048 && h.block_bytes[4] == 2048,
+	       "blocks %d: %u %u", h.blocks, h.block_bytes[0], h.block_bytes[1]);
+	EXPECT(h.in_len == 6 * 2048 && iso_matches(62, 4096), "ISO sectors 62-63");
+	for (i = 0; i < 4096; i++) {
+		if (h.in[4096 + i])
+			zeros = 0;
+		if (h.in[8192 + i] != iso_byte(i))
+			raw = 0;
+	}
+	EXPECT(zeros, "POSTGAP sectors not zero");
+	EXPECT(raw, "BIN sectors 0-1 user data");
+	EXPECT(good_end(), "status phase");
+	EXPECT(memcmp(cdrom.hdf.file.name, "GAME    BIN", 11) == 0, "data file '%.11s'", cdrom.hdf.file.name);
+	read10(c, 1, 1);
+	packet(c, 0xFFFE);
+	EXPECT(memcmp(cdrom.hdf.file.name, "MIXED~1 ISO", 11) == 0 && iso_matches(1, 2048) && good_end(),
+	       "back to the ISO: '%.11s'", cdrom.hdf.file.name);
+	end();
+}
+
+static void t_cue_names(void)
+{
+	begin("CUE FILE names: an 8.3 name in lower case (no long name entry) is found");
+	EXPECT(insert_disc("LOWER   CUE", 0) == CD_OK, "insert refused: '%s'", CD_Message());
+	EXPECT(cdrom.unit.sectors == 4, "sectors %u", (unsigned)cdrom.unit.sectors);
+	EXPECT(strcmp(cdrom.unit.name, "LOWER   ") == 0, "name '%s'", cdrom.unit.name);
+	EXPECT(memcmp(cdrom.hdf.file.name, "LOWER   BIN", 11) == 0, "data file '%.11s'", cdrom.hdf.file.name);
+	end();
+}
+
+static void t_cue_refusals(void)
+{
+	begin("refused CUEs: the cause for the OSD, an empty drive, no config, the OSD's directory untouched");
+	clear_errors = 0;
+	iCurrentDirectory = 0x777;
+	iPreviousDirectory = 0x666;
+	EXPECT(insert_disc("BROKEN  CUE", "Broken") == CD_BADCUE, "a missing FILE accepted");
+	EXPECT(strcmp(CD_Message(), "line 1: file missing") == 0, "message '%s'", CD_Message());
+	EXPECT(!cdrom.unit.media && cdrom.hdf.type == HDF_DISABLED, "half a disc in the drive");
+	EXPECT(config.secondaryhardfile[0].name[0] == 0 && !config.secondaryhardfile[0].present, "config names the refused disc");
+	EXPECT(clear_errors > 0, "the failed lookup left a filesystem error for the OSD");
+	EXPECT(iCurrentDirectory == 0x777 && iPreviousDirectory == 0x666, "directory state %lx %lx",
+	       iCurrentDirectory, iPreviousDirectory);
+	EXPECT(insert_disc("BADCMD  CUE", "Badcmd") == CD_BADCUE && strcmp(CD_Message(), "line 4: unknown cmd") == 0,
+	       "unknown command: '%s'", CD_Message());
+	EXPECT(insert_disc("MONOCUE CUE", "Mono") == CD_BADCUE && strcmp(CD_Message(), "line 1: WAV format") == 0,
+	       "mono WAV: '%s'", CD_Message());
+	EXPECT(insert_disc("NOSUCH  CUE", "Nope") == CD_NOFILE && CD_Message()[0] == 0, "missing CUE: '%s'", CD_Message());
+	EXPECT(insert_disc("GAME    CUE", "Game") == CD_OK && CD_Message()[0] == 0, "a good CUE after: '%s'", CD_Message());
+	end();
+}
+
+static void t_cue_config(void)
+{
+	begin("CD_Open from the config: present = CD_PRESENT_CUE opens NAME.CUE");
+	memset(&config, 0, sizeof(config));
+	config.secondaryhardfile[0].enabled = HDF_CDROM;
+	memcpy(config.secondaryhardfile[0].name, "GAME    ", 8);
+	strcpy(config.secondaryhardfile[0].long_name, "Game");
+	config.secondaryhardfile[0].present = CD_PRESENT_CUE;
+	config.hdfdir[2] = iso_dir;
+	EXPECT(CD_Open(2) == CD_OK, "CD_Open refused: '%s'", CD_Message());
+	EXPECT(cdrom.unit.media && cdrom.unit.sectors == BIN_SECTORS, "sectors %u", (unsigned)cdrom.unit.sectors);
+	EXPECT(config.secondaryhardfile[0].present == CD_PRESENT_CUE, "present %u", config.secondaryhardfile[0].present);
+	end();
+}
+
 int main(void)
 {
+	make_wav_header(wav_header, WAV_SECTORS * 2352, 2);
+	make_wav_header(mono_header, 2352, 1);
+
 	t_open();
 	t_inquiry();
 	t_limit_split();
@@ -804,6 +1141,12 @@ int main(void)
 	t_timeout();
 	t_read_error();
 	t_reset_flag();
+	t_cue_bincue();
+	t_cue_mixed();
+	t_cue_split();
+	t_cue_names();
+	t_cue_refusals();
+	t_cue_config();
 
 	printf("\n%d cases: %d passed, %d failed (%d failed checks)\n",
 	       cases_run, cases_passed, cases_run - cases_passed, total_fails);
