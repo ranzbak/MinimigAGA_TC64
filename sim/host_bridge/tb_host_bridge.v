@@ -3,7 +3,8 @@
 //   EightThirtyTwo_Bridge (cpu_riscv, rv_hostcpu + VexOsd, OSDBoot_rv_ROM =
 //   the test program, hostcache.v)  ->  cfide (generics as host832)
 //                                   ->  sdram_host_model (lanes of sdram_ctrl)
-//   + an SPI byte-capture slave on sd_cs[1] / sd_clk / sd_do
+//   + an SPI byte-capture slave on sd_cs[1] / sd_clk / sd_do, or, compiled
+//     with -d SDCARD, the SD card model (sim/common/sd_spi_model.v) there
 //
 // Clocks as sim/spi_cdc/host832/tb_832_dmode.v: clk_114 T114 = 8.8154 ns,
 // clk_28 = clk_114 / 4, its edges 0.3 ns after a clk_114 edge.  cfide's
@@ -28,7 +29,22 @@
 // t_irq: checkpoint 1 starts 20 vbl_int pulses into cfide (one clk_28 cycle
 // each, 2000 clk_114 apart); checkpoint 2 checks that all 20 were sent.
 //
+// SDCARD (boot runs, +TEST=boot / boot_nofile; the ROM is the committed boot
+// ROM fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd): sd_spi_model on sd_cs[1] with
+// +SD_IMG=<8 MB card image>, MISO from the model.  Also:
+//   ERRORCODE: hhll  printed when the boot ROM's ErrorCode() releases the
+//                    chipset: the OSD bytes 08 00 under sd_cs[5]; hhll =
+//                    the SDRAM halfword at 0x10000A (upload[10], upload[11])
+//   === BOOT         the first CPU read of 0x2000 (the jump to the loaded
+//                    firmware): cycle and the rv_hostcpu counters so far
+//   === STATS        rv_hostcpu's counters at the end (RV_HOSTCPU_STATS)
+//   boot:        checkpoints 1 / 2 as t_irq; verdict as every test (DONE)
+//   boot_nofile: the run must end at +TIMEOUT without DONE; "=== PASS" if
+//                no DONE, no bench error and the last ErrorCode is 00F0
+// A UART carriage return is printed as the two characters \r.
+//
 // Plusargs: +TEST=<name> +SLAT=<n> +SJIT=<n> +SEED=<n> +SDRAM_HEX=<file>
+//           +SD_IMG=<file> and the model's +SD_* (SDCARD only)
 //           +TIMEOUT=<clk_114 cycles> (default 3000000) +VERBOSE=1 (hw log),
 //           +VERBOSE=2 (also every change of the bus address)
 // Parameter: EXTRA_WS (xelab -generic_top EXTRA_WS=<n>), the bridge's
@@ -112,6 +128,7 @@ module tb_host_bridge #(
   always @(posedge clk114) cyc <= cyc + 1;
   reg [8*16-1:0] test;
   integer verbose = 0, timeout = 3000000;
+  reg     is_boot = 1'b0;          // +TEST=boot or boot_nofile
 
   task bench_error(input [8*120-1:0] msg);
     begin
@@ -129,7 +146,17 @@ module tb_host_bridge #(
   integer    mosi_n = 0, miso_n = 0, spi_bit = 0;
   reg  [7:0] mosi_sr = 8'h00, miso_cur = 8'hFF;
   reg        miso_r = 1'b1;
+`ifdef SDCARD
+  // The 8 MB card of tools/sim/mkcard.sh: IMG_SECTORS = 16384 (the model's
+  // default 65536 costs about a minute and 0.5 GB in the simulator).
+  wire       card_miso;
+  sd_spi_model #(.IMG_SECTORS(16384)) card (
+    .cs_n(sd_cs[1]), .sck(sd_clk), .mosi(sd_do), .miso(card_miso)
+  );
+  assign miso = card_miso;
+`else
   assign miso = miso_r;
+`endif
 
   function [7:0] miso_script(input integer n);
     miso_script = 8'hA5 + 8'h11 * n[7:0];
@@ -164,6 +191,33 @@ module tb_host_bridge #(
     cs_log[cs_n & 255] = sd_cs;
     cs_n = cs_n + 1;
   end
+
+`ifdef SDCARD
+  // ErrorCode(): OSD command bytes under sd_cs[5]; "08 00" (OSD_CMD_RST,
+  // release) ends every ErrorCode() call and nothing else in the boot ROM
+  integer   osd_n = 0, osd_bit = 0;
+  reg [7:0] osd_sr = 8'h00, osd_b0 = 8'h00, osd_b1 = 8'h00;
+  reg [15:0] errcode = 16'hFFFF;   // last reported
+  integer   n_errcode = 0;
+  always @(negedge sd_cs[5]) begin osd_n = 0; osd_bit = 0; end
+  always @(posedge sd_clk) if (n_reset && sd_cs[5] === 1'b0) begin
+    osd_sr = {osd_sr[6:0], sd_do};
+    osd_bit = osd_bit + 1;
+    if (osd_bit == 8) begin
+      if (osd_n == 0) osd_b0 = osd_sr;
+      if (osd_n == 1) osd_b1 = osd_sr;
+      osd_n = osd_n + 1;
+      osd_bit = 0;
+    end
+  end
+  always @(posedge sd_cs[5]) if (n_reset && cpu_reset_n && osd_n == 2 && osd_b0 == 8'h08 && osd_b1 == 8'h00) begin
+    errcode = ram.hw_at(32'h0010000A);
+    n_errcode = n_errcode + 1;
+    $display("ERRORCODE: %h", errcode);
+    $display("=== ErrorCode at cycle %0d", cyc);
+  end
+
+`endif
 
   // pin toggles
   integer sd_tog = 0, ae_tog = 0;
@@ -218,6 +272,17 @@ module tb_host_bridge #(
     end
   end
 
+`ifdef SDCARD
+  // the jump to the loaded firmware: the first CPU read of 0x2000
+  reg boot_seen = 1'b0;
+  always @(posedge clk114) if (cpu_reset_n && !boot_seen && cpu_req === 1'b1 && cpu_wr === 1'b0 &&
+                               {cpu_addr, 2'b00} == 32'h00002000) begin
+    boot_seen = 1'b1;
+    $display("=== BOOT first read of 0x2000 at cycle %0d, irefill %0d dread %0d dwrite %0d so far", cyc,
+             hostcpu.genrv.myrv.st_irefill, hostcpu.genrv.myrv.st_dread, hostcpu.genrv.myrv.st_dwrite);
+  end
+`endif
+
   // VERBOSE=2: every change of the bridge's (registered) CPU address/write
   reg [31:2] addr_d = 30'h0;
   reg        we_d = 1'b0;
@@ -258,11 +323,15 @@ module tb_host_bridge #(
       end
       if (host_we && hwa == 32'hFFFFFFF0) begin
         if (uart_first < 0) uart_first = cyc;
-        if (hostWR[7:0] == 8'h0a || uart_n == 128) begin
+        if (hostWR[7:0] == 8'h0a || uart_n >= 127) begin
           uart_print;
           uart_n = 0;
         end
-        if (hostWR[7:0] != 8'h0a) begin
+        if (hostWR[7:0] == 8'h0d) begin     // printed as \r
+          uart_line[uart_n] = "\\";
+          uart_line[uart_n + 1] = "r";
+          uart_n = uart_n + 2;
+        end else if (hostWR[7:0] != 8'h0a) begin
           uart_line[uart_n] = hostWR[7:0];
           uart_n = uart_n + 1;
         end
@@ -282,6 +351,7 @@ module tb_host_bridge #(
       s = 0;
       for (k = 0; k < uart_n; k = k + 1) s = {s[8*127-1:0], uart_line[k]};
       $display("UART: %0s", s);
+      if (is_boot) $display("=== UART line at cycle %0d", cyc);
     end
   endtask
 
@@ -374,14 +444,14 @@ module tb_host_bridge #(
              end
           default: bench_error("t_b2b: unknown checkpoint");
         endcase
-      end else if (test == "t_irq") begin
+      end else if (test == "t_irq" || test == "boot") begin
         case (v)
           1: -> pulses_go;
           2: begin
                $display("t_irq: %0d vbl_int pulses sent", pulses_sent);
                expect_pin("vbl_int pulses sent", pulses_sent, NPULSE);
              end
-          default: bench_error("t_irq: unknown checkpoint");
+          default: bench_error("t_irq/boot: unknown checkpoint");
         endcase
       end else if (test == "t_spibusy") begin
         case (v)
@@ -436,6 +506,7 @@ module tb_host_bridge #(
     if (!$value$plusargs("TEST=%s", test)) test = "none";
     if (!$value$plusargs("VERBOSE=%d", verbose)) verbose = 0;
     if (!$value$plusargs("TIMEOUT=%d", timeout)) timeout = 3000000;
+    is_boot = test == "boot" || test == "boot_nofile";
     #1;
     $display("host-bridge bench: TEST=%0s SLAT=%0d SJIT=%0d EXTRA_WS=%0d", test, ram.slat, ram.sjit, EXTRA_WS);
     repeat (20) @(posedge clk114);
@@ -451,7 +522,8 @@ module tb_host_bridge #(
       end
       begin
         repeat (timeout) @(posedge clk114);
-        bench_error("timeout, no DONE write");
+        if (test == "boot_nofile") $display("=== cycle limit %0d reached, no DONE", timeout);
+        else bench_error("timeout, no DONE write");
         disable run;
       end
     join
@@ -460,6 +532,17 @@ module tb_host_bridge #(
     errors = errors + ram.errors;
     $display("=== HW accesses %0d, stale acks %0d, X %0d, SDRAM reads %0d writes %0d, main done %0d, cycles %0d",
              n_hw, n_stale, n_x, ram.n_rd, ram.n_wr, uart_first, cyc);
+`ifdef SDCARD
+    $display("=== STATS irefill %0d dread %0d dwrite %0d busy_cycles %0d (rv_hostcpu, whole run)",
+             hostcpu.genrv.myrv.st_irefill, hostcpu.genrv.myrv.st_dread,
+             hostcpu.genrv.myrv.st_dwrite, hostcpu.genrv.myrv.st_busy);
+    $display("=== SD card: %0d ErrorCode calls, last %h", n_errcode, errcode);
+    if (test == "boot_nofile") begin
+      if (!done && errors == 0 && n_errcode > 0 && errcode == 16'h00F0) $display("=== PASS");
+      else $display("=== FAIL boot_nofile: DONE %0d, bench errors %0d, last ErrorCode %h", done, errors, errcode);
+      $finish;
+    end
+`endif
     if (done && done_code == 0 && errors == 0) $display("=== PASS");
     else if (!done) $display("=== FAIL timeout (bench errors %0d)", errors);
     else $display("=== FAIL code %0d, bench errors %0d", done_code, errors);

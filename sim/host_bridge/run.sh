@@ -6,10 +6,23 @@
 #   bash sim/host_bridge/run.sh mutant       # the four-phase handshake's teeth (below)
 #   bash sim/host_bridge/run.sh t_lanes ...  # named tests at SLAT/SJIT from env
 #   SLAT=20 SJIT=8 EXTRA_WS=3 bash sim/host_bridge/run.sh t_b2b
+#   bash sim/host_bridge/run.sh boot         # committed boot ROM loads RV32OSDA.BIN
+#   bash sim/host_bridge/run.sh boot_nofile  # card without it: error path
 #
 # Environment: RUNTAG (run directory run_${RUNTAG:-wt}), SLAT (8), SJIT (0),
 # EXTRA_WS (0, the bridge's rv_extra_ws), SEED (1), XARGS (extra plusargs,
-# e.g. "+VERBOSE=1"), VIVADO_PATH.
+# e.g. "+VERBOSE=1"), VIVADO_PATH; boot runs also BOOT_TIMEOUT (clk_114
+# cycles; boot 40000000, boot_nofile 27000000: the cycle limit that ends it,
+# 0.76 M cycles after the retry's "Initializing SD card" line) and
+# BOOT_CARD (another card image, e.g. a corrupted copy).
+#
+# boot / boot_nofile: the committed fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd,
+# compiled unmodified (VHDL-93), boots from the SD card model (bench compiled
+# with -d SDCARD, rv_hostcpu with -d RV_HOSTCPU_STATS).  sim/host_bridge/boot
+# builds RV32OSDA.BIN and the card images into <run>/boot.  The run's
+# "UART:" and "ERRORCODE:" lines must equal boot/expect.txt (@IMG@ = the
+# line in <run>/boot/img.txt) or boot/expect_nofile.txt line for line, and
+# the bench verdict must be "=== PASS".  Results in <run>/results.txt.
 #
 # mutant: t_b2b over the SLAT/SJIT matrix in three legs.
 #   gate     mutant bridge + fast master   every run must FAIL
@@ -36,13 +49,23 @@
 #                never counts and the UART never shifts (txbusy stays high
 #                after the first character, the second write never acks)
 #   hostcache.v, dpram_inf_generic.v: a `timescale line (xelab warning)
-#   OSDBoot_rv_ROM.vhd (per test, *_sim.vhd next to it): port B's write is
-#                removed.  Ports A and B are two processes assigning the one
-#                signal "ram"; each has a driver for all of it, port B's
-#                holding the initial image, so every port-A write that
-#                changes a bit resolves to 'X' (stack, .data, t_lanes 0x1800).
-#                Synthesis infers a true dual-port BRAM; port B is unused
-#                (we2 = '0') in the bridge.
+#   VexOsd.v     the register file starts at 0, as the FPGA's (distributed
+#                RAM / BRAM without INIT powers up at 0).  In simulation it
+#                starts X; the committed boot ROM clears no registers, so its
+#                function prologues store X (callee-saved registers) to the
+#                stack and the bench's X check fails.  The test programs
+#                clear x1-x31 themselves (sw/crt0_rom.S, sw/reset_fw.S).
+#   OSDBoot_rv_ROM.vhd of the test programs (built from the
+#                fw/ctrl_boot_832 template; per test, *_sim.vhd next to it):
+#                port B's write is removed.  Ports A and B are two processes
+#                assigning the one signal "ram"; each has a driver for all of
+#                it, port B's holding the initial image, so every port-A
+#                write that changes a bit resolves to 'X' (stack, .data,
+#                t_lanes 0x1800).  Synthesis infers a true dual-port BRAM;
+#                port B is unused (we2 = '0') in the bridge.  A ROM built
+#                from the fw/ctrl_boot_rv template (a shared variable, no
+#                such problem) is compiled as it is; the boot runs compile
+#                the committed one directly.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
@@ -75,6 +98,9 @@ setup() {
 		grep -q "signal $sig .*:= (others => '0');" src/cfide.vhd || die "cfide $sig init not applied"
 	done
 	sed -i '1i `timescale 1ns/1ps' src/hostcache.v src/dpram_inf_generic.v
+	[ "$(grep -c '^  reg \[31:0\] RegFilePlugin_regFile \[0:31\]' src/VexOsd.v)" = 1 ] || die "VexOsd.v: register file declaration not found"
+	sed -i 's|^\(  reg \[31:0\] RegFilePlugin_regFile \[0:31\].*\)$|\1\n  integer rf_init_i;  // run.sh: power-up 0, as on the FPGA\n  initial for (rf_init_i = 0; rf_init_i < 32; rf_init_i = rf_init_i + 1) RegFilePlugin_regFile[rf_init_i] = 32'"'"'h0;|' src/VexOsd.v
+	grep -q 'run.sh: power-up 0' src/VexOsd.v || die "VexOsd.v register file init not applied"
 
 	# mutant bridge
 	[ "$(grep -c -- '-- 4PHASE' src/832_bridge.vhd)" = 1 ] || die "832_bridge.vhd: not exactly one -- 4PHASE line"
@@ -125,8 +151,12 @@ snapshot() {
 	local t=$1
 	local rom="$run/build/$t/OSDBoot_rv_ROM.vhd" simrom="$run/build/$t/OSDBoot_rv_ROM_sim.vhd"
 	[ -f "$rom" ] || die "no ROM for $t (sw/$t.S or .c, TESTS in Makefile)"
-	sed 's/^\( *\)ram(to_integer(unsigned(addr2))).*<= d2.*;/\1null; -- run.sh: port B write removed for simulation/' "$rom" > "$simrom"
-	[ "$(grep -c 'port B write removed' "$simrom")" = 1 ] || die "$t: ROM port B fix not applied"
+	if grep -q '^shared variable ram' "$rom"; then
+		cp "$rom" "$simrom"       # fw/ctrl_boot_rv template: no fix needed
+	else
+		sed 's/^\( *\)ram(to_integer(unsigned(addr2))).*<= d2.*;/\1null; -- run.sh: port B write removed for simulation/' "$rom" > "$simrom"
+		[ "$(grep -c 'port B write removed' "$simrom")" = 1 ] || die "$t: ROM port B fix not applied"
+	fi
 	X xvhdl "$simrom"
 	X xelab -debug off -generic_top "EXTRA_WS=$XW" tb_host_bridge -s "$2"
 }
@@ -157,8 +187,58 @@ matrix() {   # matrix <snapshot> <test> <expect> <label>
 	return $rc
 }
 
+# boot <boot|boot_nofile>: the committed boot ROM from the SD card model
+boot() {
+	local t=$1 rom="fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd" exp st
+	local log="$run/tb_${t}_x${XW}_s${SLAT:-8}_j${SJIT:-0}.log"
+	local card="$run/boot/card.img" to=40000000
+	[ "$t" = boot_nofile ] && { card="$run/boot/card_nofile.img"; to=27000000; }
+	card=${BOOT_CARD:-$card}
+	[ ${#card} -le 128 ] || die "card image path longer than 128 characters (sd_spi_model's +SD_IMG buffer): $card"
+	exp="$HERE/boot/expect.txt"
+	[ "$t" = boot_nofile ] && exp="$HERE/boot/expect_nofile.txt"
+	make -s -C "$HERE/boot" B="$run/boot" > make_boot.log 2>&1 || { tail -20 make_boot.log; die "make boot firmware/cards (make_boot.log)"; }
+	# the gate is the committed ROM: a modified one still runs, but the run fails
+	if git -C "$ROOT" diff --quiet HEAD -- "$rom"; then st="unmodified (= git HEAD)"; else st="BAD  MODIFIED against git HEAD"; fi
+	echo "boot ROM: $rom $st, sha256 $(sha256sum "$ROOT/$rom" | cut -c1-16)" | tee "$run/results.txt"
+	X xvlog -d RV_HOSTCPU_STATS src/rv_hostcpu.v
+	X xvhdl src/832_bridge.vhd
+	X xvlog -d SDCARD "$ROOT/sim/common/sd_spi_model.v" "$HERE/tb_host_bridge.v"
+	X xvhdl "$ROOT/$rom"
+	X xelab -debug off -generic_top "EXTRA_WS=$XW" tb_host_bridge -s "tb_${t}_x$XW"
+	local t0=$SECONDS
+	# shellcheck disable=SC2046,SC2086
+	"$VIVADO_PATH/bin/xsim" "tb_${t}_x$XW" -R --onfinish quit -testplusarg "TEST=$t" \
+		-testplusarg "SLAT=${SLAT:-8}" -testplusarg "SJIT=${SJIT:-0}" -testplusarg "SEED=${SEED:-1}" \
+		-testplusarg "SD_IMG=$card" -testplusarg "TIMEOUT=${BOOT_TIMEOUT:-$to}" \
+		$(for x in ${XARGS:-}; do echo -testplusarg "${x#+}"; done) > "$log" 2>&1
+	local secs=$((SECONDS - t0))
+	sed "s/@IMG@/$(cat "$run/boot/img.txt")/" "$exp" > "$run/$t.expect"
+	grep -E '^(UART|ERRORCODE): ' "$log" > "$run/$t.got"
+	{
+		grep -E '^=== (BOOT|STATS|HW accesses|cycle limit|SD card)' "$log"
+		if diff -u "$run/$t.expect" "$run/$t.got" > "$run/$t.diff"; then
+			echo "ok   log = $(basename "$exp") ($(wc -l < "$run/$t.got") lines)"
+		else
+			echo "BAD  log differs from $(basename "$exp"): $run/$t.diff"
+		fi
+		grep -q '^SD: image .* loaded' "$log" || echo "BAD  the SD model did not load $card"
+		grep -qE '^UART: .*(TRAP|EXC)' "$log" && echo "BAD  TRAP/EXC on the UART"
+		if grep -q '^=== PASS' "$log"; then echo "ok   bench verdict: === PASS"
+		else echo "BAD  bench verdict: $(grep -m1 -E '^=== (PASS|FAIL)' "$log" || echo none) ($log)"; fi
+		echo "xsim wall time ${secs} s"
+	} | tee -a "$run/results.txt"
+	if grep -q 'BAD' "$run/results.txt"; then echo "=== $t FAILED"; return 1; fi
+	echo "=== $t PASS"
+}
+
 case "${1:-}" in
-	""|-h|--help) sed -n '2,46p' "$0"; exit 0 ;;
+	""|-h|--help) sed -n '2,/^set -u$/{/^set -u$/!p}' "$0"; exit 0 ;;
+	boot|boot_nofile)
+		setup
+		boot "$1"
+		exit $?
+		;;
 	all)
 		setup
 		variant 832_bridge.vhd rv_hostcpu.v

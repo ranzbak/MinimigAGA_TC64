@@ -7,14 +7,17 @@ test program) and `hostcache.v`. Behind it are the real `cfide` and an SDRAM
 model of the host port. It checks five things at the bridge's bus: the byte
 lanes, the cfide register offsets, back-to-back hw accesses (the four-phase
 handshake), the SPI busy wait and cfide's interrupt through the firmware trap
-entry.
+entry. The boot runs (`run.sh boot`, `boot_nofile`) put the committed boot
+ROM `fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd` in the bridge and an SD card model
+on `sd_cs[1]`: the ROM loads `RV32OSDA.BIN` from a FAT16 card image and runs
+it (see [Boot](#boot)).
 
 The L1 bench (`sim/rv_l1`, iverilog) tests `rv_hostcpu` against an abstract
 memory. This bench uses Vivado's xsim because `cfide` and the bridge are VHDL.
 
 | File | What it is |
 |---|---|
-| `tb_host_bridge.v` | Top: bridge + cfide + SDRAM model + SPI slave, bus snoop, checks, verdict |
+| `tb_host_bridge.v` | Top: bridge + cfide + SDRAM model + SPI slave (or, `-d SDCARD`, the SD card model), bus snoop, checks, verdict |
 | `sdram_host_model.v` | 8 MB halfword SDRAM behind hostcache: latency, burst order, `sdram_ctrl` lanes, preload |
 | `run.sh` | Copies the RTL, applies the simulation fixes, builds the ROMs, compiles, runs |
 | `Makefile` | Test programs -> `<B>/<test>/OSDBoot_rv_ROM.vhd` (romgen, as `fw/ctrl_boot_832`) |
@@ -23,6 +26,9 @@ memory. This bench uses Vivado's xsim because `cfide` and the bridge are VHDL.
 | `sw/t_*.S`, `sw/t_*.c`, `sw/t_lanes.sdram.hex` | The five tests; the SDRAM preload of `t_lanes` |
 | `sw/reset_fw.S` | Reset, trap at 0x20 and register clear for tests that start through `fw/ctrl_rv/arch/crt0.S` (`t_irq`) |
 | `stub/` | Task 6's elaboration check of the bridge's RISC-V branch (`stub/elab.sh`) |
+| `boot/fwtest.c`, `boot/fwfill.S` | Boot runs: the test firmware `RV32OSDA.BIN` (on `fw/ctrl_rv/arch`, `firmware.ld`) |
+| `boot/Makefile` | `RV32OSDA.BIN` (padded to 2560 bytes), `img.txt`, the card images `card.img` and `card_nofile.img` (`tools/sim/mkcard.sh`) |
+| `boot/expect.txt`, `boot/expect_nofile.txt` | The expected `UART:` / `ERRORCODE:` lines of `boot` and `boot_nofile` |
 
 ## Prerequisites
 
@@ -51,6 +57,8 @@ memory. This bench uses Vivado's xsim because `cfide` and the bridge are VHDL.
    `run.sh` puts `$HOME/lib/tinfo5` first on `LD_LIBRARY_PATH` and sets
    `LC_ALL=C`.
 3. GNU make, bash, gcc (to build `fw/romgen/romgen`), python3, sed.
+4. Boot runs only: `mtools`, `dosfstools` and `fdisk` for
+   `tools/sim/mkcard.sh` (see [`tools/sim/README.md`](../../tools/sim/README.md)).
 
 Run only one xsim at a time.
 
@@ -94,6 +102,152 @@ make -C sim/host_bridge                 # -> sim/host_bridge/build/<test>/OSDBoo
 make -C sim/host_bridge B=/tmp/hb       # elsewhere
 ```
 
+## Boot
+
+`run.sh boot` is the end-to-end boot in L2: the committed boot ROM
+`fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd` (compiled as it is, VHDL-93, not a run
+copy) initialises the SD card model at the slow SPI clock, reads the MBR,
+the boot sector and the root directory of an 8 MB FAT16 card image, loads
+`RV32OSDA.BIN` to 0x2000 through dBus + hostcache, runs `fence.i` and jumps
+there. The firmware (`boot/fwtest.c` on `fw/ctrl_rv/arch`) prints `FW OK`,
+the `PAT` and `IMG` lines and runs the `t_irq` check with cfide's `vbl_int`.
+`run.sh boot_nofile` boots a card without `RV32OSDA.BIN`: the error path.
+
+From the repository root:
+
+```sh
+# 1. the boot ROM (committed; a rebuild gives the same file, git shows no change)
+make -C fw/ctrl_boot_rv
+git status --short fw/ctrl_boot_rv
+# 2. the test firmware and the card images, into sim/host_bridge/boot/build
+#    (run.sh builds its own copy into run_*/boot)
+make -C sim/host_bridge/boot
+# 3. the two runs, one after the other (about 70 s and 150 s)
+RUNTAG=t12 bash sim/host_bridge/run.sh boot
+RUNTAG=t12n bash sim/host_bridge/run.sh boot_nofile
+```
+
+Expected end of `boot`:
+
+```
+boot ROM: fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd unmodified (= git HEAD), sha256 3431665a20ffdd3c
+=== BOOT first read of 0x2000 at cycle 12397205, irefill 93 dread 5338 dwrite 7779 so far
+=== HW accesses 11698, stale acks 0, X 0, SDRAM reads 191 writes 683, main done 79341, cycles 13137477
+=== STATS irefill 118 dread 7954 dwrite 8326 busy_cycles 12931846 (rv_hostcpu, whole run)
+=== SD card: 1 ErrorCode calls, last 0fff
+ok   log = expect.txt (14 lines)
+ok   bench verdict: === PASS
+xsim wall time 69 s
+=== boot PASS
+```
+
+Expected end of `boot_nofile`:
+
+```
+boot ROM: fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd unmodified (= git HEAD), sha256 3431665a20ffdd3c
+=== cycle limit 27000000 reached, no DONE
+=== HW accesses 38280, stale acks 0, X 0, SDRAM reads 0 writes 22, main done 79341, cycles 27000177
+=== STATS irefill 101 dread 20557 dwrite 26396 busy_cycles 26352881 (rv_hostcpu, whole run)
+=== SD card: 2 ErrorCode calls, last 00f0
+ok   log = expect_nofile.txt (45 lines)
+ok   bench verdict: === PASS
+xsim wall time 147 s
+=== boot_nofile PASS
+```
+
+The exit code is 0 on PASS, 1 otherwise. Each run leaves in
+`run_<RUNTAG>/`: `results.txt`, the log `tb_boot_x0_s8_j0.log`
+(`tb_boot_nofile_...` for the other), `boot.expect` / `boot.got` /
+`boot.diff`, and `boot/` (firmware, `img.txt`, card images). The sha256
+prefix changes with the committed ROM; the cycle numbers change with the
+RTL, the ROM and the firmware.
+
+The gate (`run.sh`): every `UART:` and `ERRORCODE:` line of the log equals
+`boot/expect.txt` (or `boot/expect_nofile.txt`) line for line, `@IMG@`
+replaced by `<run>/boot/img.txt`; no `TRAP`/`EXC` on the UART; the SD model
+loaded the image; the bench verdict is `=== PASS` (`boot`: DONE = 0, no bench
+error; `boot_nofile`: no DONE before the cycle limit, no bench error, last
+ErrorCode `00f0`).
+
+### What the log shows
+
+```
+ERRORCODE: 0fff
+UART: Initializing SD card
+UART: 0101cmd_CMD8 response: 1
+UART: 01010101010000Hunting for partition
+UART: Reading MBR
+UART: 00Partitioncount 1
+UART: Reading boot sector 2048
+UART: 00Read boot sector from first partition
+UART: Hunting for filesystem
+UART: Reading directory sector 2106
+UART: 00file "RV32OSDABIN" found\r000000000000FW OK
+UART: PAT 00112233445566778899AABBCCDDEEFF
+UART: IMG 00000900 F8431F18
+UART: IRQ 20
+```
+
+- `ERRORCODE: hhll` is the bench's, not the UART's: printed when the ROM's
+  `ErrorCode()` releases the chipset (OSD bytes `08 00` under `sd_cs[5]`);
+  `hhll` is the SDRAM halfword at 0x10000A that the 68k boot code would
+  show. `0fff` = "booting"; `boot_nofile` adds `00f0` after
+  `Can't load firmware` (partition found, file not).
+- The pairs of digits are the R1 response of every SD command (the ROM's
+  `cmd_write` prints them): `01` CMD0, `01` CMD8; then CMD55/ACMD41 three
+  times (`01 01`, `01 01`, `01 00`: the model answers "idle" twice,
+  `+SD_INIT_POLLS=2`) and CMD58 `00`; one `00` per sector read (CMD17).
+- After `found\r` (the ROM's `printf` ends that line with a carriage return,
+  which the bench prints as `\r`): six reads, the five sectors of
+  `RV32OSDA.BIN` and one FAT sector (the file starts at cluster 4 behind the
+  decoy `832OSDAD.BIN`; clusters are 2 sectors, so the ROM follows the
+  chain twice). The Makefile pads the image to 2560 bytes so that this
+  count does not move with the code size.
+- `Reading directory sector 2106` and the layout depend on `mkfs.fat`
+  (dosfstools 4.2 here: 2 reserved sectors, two FATs of 28 sectors, 32 root
+  directory sectors). Another version can move these numbers.
+
+What it proves:
+
+- **fence.i**: the firmware is written into SDRAM through the data side
+  (dBus + hostcache) and then fetched through the I-cache; `FW OK` is
+  printed from that code. The ROM runs `fence.i` before the jump.
+- **`spi.c` `be32()`**: `SPI_PUMP()` assembles 4 card bytes big-endian and
+  the ROM stores `be32()` of it, so the bytes land in file order on the
+  little-endian CPU. If the order were wrong, the instructions at 0x2000
+  would be byte-swapped and nothing would print; explicitly, `PAT` prints
+  `fw_pattern[]` byte by byte in file order and the firmware fails with exit
+  code 1 if the word view is not little-endian (`0x33221100`, ...).
+- **The whole image**: `IMG <len> <sum>` is the word sum of `.text` +
+  `.rodata` (0x2000 .. `__init_array_start`, 0x900 bytes over all three
+  clusters) as loaded; `img.txt` is the same sum over the file. A run with a
+  card that has one bit flipped at file offset 0x880 (third cluster) fails
+  with only that line different (`IMG 00000900 F8431F19`), recorded
+  2026-10-16. Use `BOOT_CARD=<image>` for such a run; the path must be at
+  most 128 characters (the model's `+SD_IMG` buffer; `run.sh` refuses a
+  longer one).
+- **The file name**: `card.img` has the decoy `832OSDAD.BIN` first in the
+  directory; `card_nofile.img` has `832OSDAD.BIN` and the real firmware
+  under the near-miss name `RV32OSDB.BIN`. The ROM loads neither.
+
+### Measured (2026-10-16, SLAT=8 SJIT=0)
+
+| | `boot` | `boot_nofile` |
+|---|---|---|
+| SD init (`SPI_slow`, SPEED `0xEF`: 7664 `clk_114` per byte; five `spi_spin()` of 200 bytes = 7.7 M) | from cycle 79,187 (`ErrorCode(0xfff)`) to 9,145,941 (`Hunting for partition`): 9.07 M | the same |
+| one sector read at `SPI_fast` (SPEED 7) | about 140 k cycles | |
+| jump to 0x2000 (first CPU read there) | cycle 12,397,205 (109 ms at 113.44 MHz) | (no jump) |
+| `ErrorCode(0x0f0)` | | cycle 26,037,903 (32 root directory sectors read and printed) |
+| end | DONE at 13,137,477 | cycle limit 27,000,000 |
+| I$ refills (`RV_HOSTCPU_STATS`) | 93 up to the jump, 118 in all | 101 |
+| xsim wall time | 69 s | 147 s |
+
+The UART costs about 9,900 `clk_114` per character (115200 baud from
+`clk_28`): the boot ROM's 307 characters are about 3.0 M of the 12.4 M. The
+bench snoops UART writes at the bridge, and cfide holds a UART write until
+the transmitter takes it, so no character is lost although the ROM's
+TX-ready wait is commented out.
+
 ## Bench
 
 - **Clocks**: as `sim/spi_cdc/host832/tb_832_dmode.v`. `clk_114` has
@@ -115,7 +269,10 @@ make -C sim/host_bridge B=/tmp/hb       # elsewhere
     (`=== BUS VIOLATION`).
 - **vbl_int**: cfide's VBL interrupt input, 0 except in `t_irq` (pulses
   from checkpoint 1, see the test table).
-- **SPI slave**: active while `sd_cs[1]` is low.
+- **SPI slave**: active while `sd_cs[1]` is low. In the boot runs (bench
+  compiled with `-d SDCARD`) the SD card model `sim/common/sd_spi_model.v`
+  (`IMG_SECTORS = 16384`, the 8 MB card) drives MISO instead; the slave
+  still logs the bytes.
   - It samples `sd_do` on the rising edge of `sd_clk` and drives MISO from
     the falling edge.
   - Its MISO script is byte n = `0xA5 + 0x11 * n`.
@@ -154,6 +311,7 @@ make -C sim/host_bridge B=/tmp/hb       # elsewhere
 | `+SDRAM_HEX=<file>` | none | preload, `$readmemh` of BE 32-bit words, `@` = word address; first 1 MB (`run.sh` passes `sw/<test>.sdram.hex` if it exists) |
 | `+TIMEOUT=<n>` | 3000000 | `clk_114` cycles until `=== FAIL timeout` |
 | `+VERBOSE=1` / `2` | 0 | log hw accesses and SPI bytes / also every change of the bus address |
+| `+SD_IMG=<file>` | none | card image of the SD model (bench compiled with `-d SDCARD`); the model's other plusargs (`+SD_NCR`, `+SD_INIT_POLLS`, `+SD_LOG=1`, ...) are in `sim/common/sd_spi_model.v` |
 
 The bench parameter `EXTRA_WS` is the bridge's `rv_extra_ws`: idle cycles
 before every RISC-V request. It is set with `xelab -generic_top EXTRA_WS=<n>`,
@@ -192,6 +350,8 @@ unexpected trap writes `0x8000 | mcause`.
 | `t_b2b` | 64 `sh` to PLATFORM (1, 0, 1, ...), 64 `sh` to AUDIO, then 32 `sb` to SPI CS (0x02, 0x03, ...). Each block is straight-line code and runs twice; the first call fills the I-cache, so the measured call has no line refill between the stores. Then it reads PLATFORM and AUDIO back; neither register reads back the written value. | 64 `scandoubler` toggles, ending at 0; 64 `audio_ena` toggles, ending at 0; 32 `sd_cs` changes `FC FF FC ...`. Each block prints its request gap. No stale ack. |
 | `t_irq` | Started through `fw/ctrl_rv/arch` (`sw/reset_fw.S`, then `crt0.S`, `trap_entry`, `rv_trap`; linked with `sw/rom.ld`). `SetIntHandler`, `EnableInterrupts`, STAMP 1, then waits for 20 handler calls (the handler counts and clears with `GetInterrupts()`), at most 100 TIMER steps; still 20 six TIMER steps later. | STAMP 1: start 20 `vbl_int` pulses, one `clk_28` cycle each, 2000 `clk_114` apart. STAMP 2: all 20 were sent. |
 | `t_spibusy` | `SPI_slow()` (SPEED `0xEF`, about 7700 `clk_114` per byte), CS `0x02`, 8 straight-line `sb` to SPI DATA (`01 80 55 AA FF 00 3C C3`), then a DATA read (`0x1C`, the 8th MISO byte), then CS `0x03`. | The slave got the 8 bytes in order. At least 7 DATA writes found `SD_busy` high. No DATA write completed without cfide accepting it. |
+| `boot` | The committed boot ROM loads `RV32OSDA.BIN` (`boot/fwtest.c`) from `card.img`; the firmware prints `FW OK`, `PAT`, `IMG`, runs the `t_irq` check, prints `IRQ 20`, writes DONE. Not in `all`; see [Boot](#boot). | STAMP 1/2 as `t_irq`; `ERRORCODE:` lines; `=== BOOT`, `=== STATS`. |
+| `boot_nofile` | The same ROM with `card_nofile.img`: `Can't load firmware`, `ErrorCode(0x0f0)`, retry. Not in `all`. | No DONE before the cycle limit; last ErrorCode `00f0`. |
 
 ## Simulation fixes (run copies only)
 
@@ -206,8 +366,17 @@ unexpected trap writes `0x8000 | mcause`.
   first character and the second UART write never gets an ack.
 - `hostcache.v` and `dpram_inf_generic.v`: a `` `timescale `` line is added,
   to avoid an xelab warning.
-- `OSDBoot_rv_ROM.vhd`: port B's write is removed in `*_sim.vhd`. The
-  prologue/epilogue template writes the one signal `ram` from two processes.
+- `VexOsd.v`: the register file starts at 0, as on the FPGA (distributed
+  RAM or BRAM without an INIT powers up at 0). In simulation it starts X.
+  The committed boot ROM clears no registers, so its function prologues
+  store X (the callee-saved registers) to the stack, and the bench's X check
+  fails the boot run (226 X writes before this fix). The test programs clear
+  x1-x31 themselves (`sw/crt0_rom.S`, `sw/reset_fw.S`).
+- `OSDBoot_rv_ROM.vhd` of the test programs only (they are built from the
+  `fw/ctrl_boot_832` template): port B's write is removed in `*_sim.vhd`. The
+  boot runs compile the committed `fw/ctrl_boot_rv` ROM directly, and a ROM
+  built from that template (a shared variable) is compiled as it is. The
+  832 template writes the one signal `ram` from two processes.
   In VHDL each process has a driver for all of `ram`, and port B's driver
   keeps the initial image, so every port-A write that changes a bit resolves
   to `'X'`. Synthesis infers a true dual-port BRAM. The bridge leaves port B
