@@ -103,7 +103,6 @@ void cvx(int val,char *buf)
 
 int main(int argc,char **argv)
 {
-	int i;
 	int err=0;
 	SPI_slow();
 
@@ -140,13 +139,8 @@ int main(int argc,char **argv)
 			if(FindDrive())
 			{
 				err=0x0f0;
-				int romsize;
-				int *checksums;
-				if(romsize=LoadFile(OSDNAME,(unsigned char *)prg_start))
+				if(LoadFile(OSDNAME,(unsigned char *)prg_start))
 				{
-					int error=0;
-					char *sector=(char *)prg_start;
-					int offset=0;
 					err=0x0ff;
 					_boot();
 				}

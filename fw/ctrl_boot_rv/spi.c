@@ -226,7 +226,6 @@ int is_sdhc()
 int spi_init()
 {
 	int i;
-	int r;
 	SDHCtype=1;
 	SPI_slow();
 	i=8;
@@ -316,7 +315,7 @@ int sd_read_sector(unsigned long lba,unsigned char *buf)
 
 			for(j=0;j<128;++j)
 			{
-				int t,v;
+				int t;
 
 				t=SPI_PUMP();
 				*(unsigned int *)buf=be32(t);	/* SPI_PUMP assembles the 4 bytes big-endian: keep the byte order in memory */

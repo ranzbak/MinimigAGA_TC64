@@ -4,7 +4,6 @@ char putchar(char c);
 void hexdump(unsigned char *p,unsigned int l)
 {
 	unsigned int *p2=(unsigned int *)p;
-	int cursor=0;
 	l=(l/4);
 	while(l--)
 	{

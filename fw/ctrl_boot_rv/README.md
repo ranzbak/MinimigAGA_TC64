@@ -50,6 +50,12 @@ which is the memory lane rule the bridge undoes with its byte swap) +
 `rom_epilogue.vhd`. Same entity name, generics and ports as `OSDBoot_832_ROM`.
 Both generated files are committed; rebuilding gives byte-identical output.
 
+Compile `OSDBoot_rv_ROM.vhd` as **plain VHDL (VHDL-93)**, not VHDL-2008: the
+RAM is a non-protected shared variable (below), which VHDL-93 allows and
+VHDL-2008 rejects (2008 requires a protected type). Vivado and xsim (`xvhdl`
+without `-2008`) and Quartus (default VHDL 1993) compile it as 93 unless told
+otherwise; do not add it to a project as a "VHDL 2008" file.
+
 `rom_prologue.vhd` / `rom_epilogue.vhd` are copies of the 832 template with one
 change: the 832 template keeps the RAM in a *signal* written by two processes
 (one per port), which makes every write resolve to `X` in simulation. Here the
@@ -66,14 +72,20 @@ both ports, fails on any X or wrong lane).
 
 - `crt0.S`: `0x00 j _start`, `0x20 boot_trap` (mtvec; resets `sp`, prints
   `TRAP <mcause> <mepc> <mtval>` on the UART through `boot_trap_c`, then
-  `ErrorCode(0xf0f)` and parks), `_start` (sp = `0x2000`, gp, mtvec, clear
-  `.bss`, `main`).
+  `ErrorCode(0xf0f)` and parks), `_start` (clear x1-x31, sp = `0x2000`, gp,
+  mtvec, clear `.bss`, `main`). The register clear gives the firmware defined
+  registers after a soft reset as well, and keeps X off the bus in simulation:
+  the simulated register file starts as X, and a function prologue that saves
+  an unused callee-saved register would store it (the L2 bench fails on X).
 - `boot.ld`: everything in `0x0-0x1FFF`, `.data` in place (the BRAM is
   initialised RAM), `ASSERT(_end <= 0x1C00)` keeps at least 1 KB of stack,
   `ASSERT(boot_trap == 0x20)`.
 - Hardware windows (value at offset 0 of each 16-byte window): SPI data / CS /
   speed at `0xFFFFFFE0 / E4 / E8`, UART at `0xFFFFFFF0`, platform at
-  `0xFFFFFFC0`.
+  `0xFFFFFFC0`. The UART is write-only: cfide acks a write only once the
+  transmitter is free (so `putchar` needs no ready poll), and never acks a
+  read, which would hang the CPU. There is no TX-ready bit; never read
+  `0xFFFFFFF0`.
 - Changes against the 832 sources: `spi.h`/`uart.h` addresses; `OSDNAME`
   `RV32OSDABIN`; on-disk little-endian fields through `le16/le32` (`swap.h`);
   the MBR partition start (offset 454, misaligned) read bytewise; `minfat.h`
@@ -89,11 +101,11 @@ both ports, fails on any X or wrong lane).
 
 | build | text | data | bss | text+data+bss |
 |---|---|---|---|---|
-| rv32imc (`OSDBoot_rv.bin` = 3520 bytes) | 3496 | 24 | 580 | 4100 |
-| rv32im (`make im`, not committed) | 4848 | 24 | 580 | 5452 |
+| rv32imc (`OSDBoot_rv.bin` = 3580 bytes) | 3556 | 24 | 580 | 4160 |
+| rv32im (`make im`, not committed) | 4972 | 24 | 580 | 5576 |
 
-Gate: text+data+bss at most 6 KB; stack room: `_end = 0x1004` of the `0x1C00`
-limit.
+Gate: text+data+bss at most 6 KB; stack room: `_end = 0x1040` of the `0x1C00`
+limit. (The x1-x31 clear in `crt0.S` added 60 bytes over the first build.)
 
 ## Host test
 
