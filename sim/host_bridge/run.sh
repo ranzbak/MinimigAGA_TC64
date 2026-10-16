@@ -18,7 +18,7 @@
 #
 # boot / boot_nofile: the committed fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd,
 # compiled unmodified (VHDL-93), boots from the SD card model (bench compiled
-# with -d SDCARD, rv_hostcpu with -d RV_HOSTCPU_STATS).  sim/host_bridge/boot
+# with -d SDCARD -d RV_HOSTCPU_STATS, rv_hostcpu with -d RV_HOSTCPU_STATS).  sim/host_bridge/boot
 # builds RV32OSDA.BIN and the card images into <run>/boot.  The run's
 # "UART:" and "ERRORCODE:" lines must equal boot/expect.txt (@IMG@ = the
 # line in <run>/boot/img.txt) or boot/expect_nofile.txt line for line, and
@@ -49,12 +49,14 @@
 #                never counts and the UART never shifts (txbusy stays high
 #                after the first character, the second write never acks)
 #   hostcache.v, dpram_inf_generic.v: a `timescale line (xelab warning)
-#   VexOsd.v     the register file starts at 0, as the FPGA's (distributed
-#                RAM / BRAM without INIT powers up at 0).  In simulation it
-#                starts X; the committed boot ROM clears no registers, so its
-#                function prologues store X (callee-saved registers) to the
-#                stack and the bench's X check fails.  The test programs
-#                clear x1-x31 themselves (sw/crt0_rom.S, sw/reset_fw.S).
+#   VexOsd.v     TEMPORARY, until fw/ctrl_boot_rv/crt0.S clears x1-x31
+#                (planned): the register file starts at 0, as the FPGA's
+#                (distributed RAM / BRAM without INIT powers up at 0).  In
+#                simulation it starts X; the committed boot ROM clears no
+#                registers, so its function prologues store X (callee-saved
+#                registers) to the stack and the bench's X check fails.
+#                The test programs clear x1-x31 themselves (sw/crt0_rom.S,
+#                sw/reset_fw.S).
 #   OSDBoot_rv_ROM.vhd of the test programs (built from the
 #                fw/ctrl_boot_832 template; per test, *_sim.vhd next to it):
 #                port B's write is removed.  Ports A and B are two processes
@@ -203,7 +205,7 @@ boot() {
 	echo "boot ROM: $rom $st, sha256 $(sha256sum "$ROOT/$rom" | cut -c1-16)" | tee "$run/results.txt"
 	X xvlog -d RV_HOSTCPU_STATS src/rv_hostcpu.v
 	X xvhdl src/832_bridge.vhd
-	X xvlog -d SDCARD "$ROOT/sim/common/sd_spi_model.v" "$HERE/tb_host_bridge.v"
+	X xvlog -d SDCARD -d RV_HOSTCPU_STATS "$ROOT/sim/common/sd_spi_model.v" "$HERE/tb_host_bridge.v"
 	X xvhdl "$ROOT/$rom"
 	X xelab -debug off -generic_top "EXTRA_WS=$XW" tb_host_bridge -s "tb_${t}_x$XW"
 	local t0=$SECONDS

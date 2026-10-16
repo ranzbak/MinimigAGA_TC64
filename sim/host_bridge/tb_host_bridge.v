@@ -37,7 +37,11 @@
 //                    the SDRAM halfword at 0x10000A (upload[10], upload[11])
 //   === BOOT         the first CPU read of 0x2000 (the jump to the loaded
 //                    firmware): cycle and the rv_hostcpu counters so far
-//   === STATS        rv_hostcpu's counters at the end (RV_HOSTCPU_STATS)
+//   === STATS        rv_hostcpu's counters at the end
+// The counters need rv_hostcpu.v compiled with -d RV_HOSTCPU_STATS and this
+// bench with -d RV_HOSTCPU_STATS too (hierarchical references to
+// hostcpu.genrv.myrv.st_*); without it they are left out (run.sh boot sets
+// both).
 //   boot:        checkpoints 1 / 2 as t_irq; verdict as every test (DONE)
 //   boot_nofile: the run must end at +TIMEOUT without DONE; "=== PASS" if
 //                no DONE, no bench error and the last ErrorCode is 00F0
@@ -278,8 +282,12 @@ module tb_host_bridge #(
   always @(posedge clk114) if (cpu_reset_n && !boot_seen && cpu_req === 1'b1 && cpu_wr === 1'b0 &&
                                {cpu_addr, 2'b00} == 32'h00002000) begin
     boot_seen = 1'b1;
+`ifdef RV_HOSTCPU_STATS
     $display("=== BOOT first read of 0x2000 at cycle %0d, irefill %0d dread %0d dwrite %0d so far", cyc,
              hostcpu.genrv.myrv.st_irefill, hostcpu.genrv.myrv.st_dread, hostcpu.genrv.myrv.st_dwrite);
+`else
+    $display("=== BOOT first read of 0x2000 at cycle %0d", cyc);
+`endif
   end
 `endif
 
@@ -533,9 +541,11 @@ module tb_host_bridge #(
     $display("=== HW accesses %0d, stale acks %0d, X %0d, SDRAM reads %0d writes %0d, main done %0d, cycles %0d",
              n_hw, n_stale, n_x, ram.n_rd, ram.n_wr, uart_first, cyc);
 `ifdef SDCARD
+`ifdef RV_HOSTCPU_STATS
     $display("=== STATS irefill %0d dread %0d dwrite %0d busy_cycles %0d (rv_hostcpu, whole run)",
              hostcpu.genrv.myrv.st_irefill, hostcpu.genrv.myrv.st_dread,
              hostcpu.genrv.myrv.st_dwrite, hostcpu.genrv.myrv.st_busy);
+`endif
     $display("=== SD card: %0d ErrorCode calls, last %h", n_errcode, errcode);
     if (test == "boot_nofile") begin
       if (!done && errors == 0 && n_errcode > 0 && errcode == 16'h00F0) $display("=== PASS");

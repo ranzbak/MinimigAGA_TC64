@@ -123,8 +123,8 @@ git status --short fw/ctrl_boot_rv
 #    (run.sh builds its own copy into run_*/boot)
 make -C sim/host_bridge/boot
 # 3. the two runs, one after the other (about 70 s and 150 s)
-RUNTAG=t12 bash sim/host_bridge/run.sh boot
-RUNTAG=t12n bash sim/host_bridge/run.sh boot_nofile
+RUNTAG=boot bash sim/host_bridge/run.sh boot
+RUNTAG=bootn bash sim/host_bridge/run.sh boot_nofile
 ```
 
 Expected end of `boot`:
@@ -209,9 +209,16 @@ UART: IRQ 20
 
 What it proves:
 
-- **fence.i**: the firmware is written into SDRAM through the data side
-  (dBus + hostcache) and then fetched through the I-cache; `FW OK` is
-  printed from that code. The ROM runs `fence.i` before the jump.
+- **Load, then execute, on the real bus**: the first proof on the real
+  bus of the path dBus write -> hostcache -> SDRAM -> iBus refill. The ROM
+  writes the image into SDRAM through the data side, runs `fence.i` and
+  jumps; `FW OK` is printed by that code, fetched by I-cache refills. This
+  does **not** exercise `fence.i`'s invalidation: the I-cache never held a
+  line of the image region before the jump (`=== BOOT` is the first bus
+  read of 0x2000 at all, and the ROM reads nothing back), so the run would
+  pass without the `fence.i`. The invalidation itself is proven in L1 by
+  `sim/rv_l1`'s `fencei` test, whose `-DNO_FENCEI` variant
+  (`fencei_nofencei`) must FAIL.
 - **`spi.c` `be32()`**: `SPI_PUMP()` assembles 4 card bytes big-endian and
   the ROM stores `be32()` of it, so the bytes land in file order on the
   little-endian CPU. If the order were wrong, the instructions at 0x2000
@@ -311,7 +318,7 @@ TX-ready wait is commented out.
 | `+SDRAM_HEX=<file>` | none | preload, `$readmemh` of BE 32-bit words, `@` = word address; first 1 MB (`run.sh` passes `sw/<test>.sdram.hex` if it exists) |
 | `+TIMEOUT=<n>` | 3000000 | `clk_114` cycles until `=== FAIL timeout` |
 | `+VERBOSE=1` / `2` | 0 | log hw accesses and SPI bytes / also every change of the bus address |
-| `+SD_IMG=<file>` | none | card image of the SD model (bench compiled with `-d SDCARD`); the model's other plusargs (`+SD_NCR`, `+SD_INIT_POLLS`, `+SD_LOG=1`, ...) are in `sim/common/sd_spi_model.v` |
+| `+SD_IMG=<file>` | none | card image of the SD model (bench compiled with `-d SDCARD`); the model's other plusargs (`+SD_NCR`, `+SD_INIT_POLLS`, `+SD_LOG=1`, ...) are in `sim/common/sd_spi_model.v`. The `=== BOOT` / `=== STATS` counters need `-d RV_HOSTCPU_STATS` on both `rv_hostcpu.v` and the bench (hierarchical `hostcpu.genrv.myrv.st_*`); without it the bench leaves them out. `run.sh boot` sets both. |
 
 The bench parameter `EXTRA_WS` is the bridge's `rv_extra_ws`: idle cycles
 before every RISC-V request. It is set with `xelab -generic_top EXTRA_WS=<n>`,
@@ -366,9 +373,10 @@ unexpected trap writes `0x8000 | mcause`.
   first character and the second UART write never gets an ack.
 - `hostcache.v` and `dpram_inf_generic.v`: a `` `timescale `` line is added,
   to avoid an xelab warning.
-- `VexOsd.v`: the register file starts at 0, as on the FPGA (distributed
-  RAM or BRAM without an INIT powers up at 0). In simulation it starts X.
-  The committed boot ROM clears no registers, so its function prologues
+- `VexOsd.v` (**temporary**: goes away once `fw/ctrl_boot_rv/crt0.S`
+  clears x1-x31, which is planned): the register file starts at 0, as on
+  the FPGA (distributed RAM or BRAM without an INIT powers up at 0). In
+  simulation it starts X. The committed boot ROM clears no registers, so its function prologues
   store X (the callee-saved registers) to the stack, and the bench's X check
   fails the boot run (226 X writes before this fix). The test programs clear
   x1-x31 themselves (`sw/crt0_rom.S`, `sw/reset_fw.S`).
