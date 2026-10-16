@@ -27,10 +27,14 @@
 // EXTRA_WS (bench only, default 0 = no logic): idle cycles before every
 // request (the "slower CPU" stress knob).
 //
-// DEBUG: 0 = VexOsd (no debug); 1 = VexOsd_DMT + rv_bscane2 (Artix only,
-// Task 14 -- until then DEBUG = 1 fails elaboration on the missing module
-// rv_hostcpu_DEBUG1_needs_rv_bscane2_Task14); 2 = VexOsd_DMJ, own TAP on
-// the jtag_* ports.  Any other value fails elaboration likewise.
+// DEBUG: 0 = VexOsd (no debug); 1 = VexOsd_DMT, DTM tunnelled through the
+// FPGA's own JTAG chain via rv_bscane2 (rtl/host/xilinx/rv_bscane2.v,
+// BSCANE2 USER4: the only vendor primitive, Xilinx 7-series only; the
+// jtag_* ports are unused); 2 = VexOsd_DMJ, own TAP on the jtag_* ports.
+// rv_bscane2 is referenced only inside the DEBUG = 1 generate branch, so a
+// build with DEBUG = 0 or 2 never needs its file (Quartus builds keep
+// DEBUG = 0 or 2: host.qip does not list rv_bscane2.v).  Any other value
+// fails elaboration on the missing module rv_hostcpu_DEBUG_must_be_0_1_or_2.
 //
 // Reset: reset_n is asserted asynchronously and released through a 2-FF
 // synchroniser.  The core reset is a register: rst | ndmreset (the debug
@@ -41,7 +45,7 @@
 // Simulation only (`ifdef RV_HOSTCPU_STATS): I$ refill and dBus counters,
 // printed by the task stats_report (the bench calls it at the end).
 module rv_hostcpu #(
-  parameter DEBUG    = 0,  // 0 VexOsd, 1 VexOsd_DMT + rv_bscane2 (Task 14), 2 VexOsd_DMJ
+  parameter DEBUG    = 0,  // 0 VexOsd, 1 VexOsd_DMT + rv_bscane2 (Xilinx), 2 VexOsd_DMJ
   parameter EXTRA_WS = 0   // bench only: idle cycles before every request
 ) (
   input  wire        clk,
@@ -57,7 +61,7 @@ module rv_hostcpu #(
   input  wire        irq_timer,  // 0 until Phase 8
   input  wire        irq_soft,   // 0
   input  wire        jtag_tck, input wire jtag_tms, input wire jtag_tdi,
-  output wire        jtag_tdo    // DEBUG=2 only; 0 otherwise
+  output wire        jtag_tdo    // DEBUG=2 only; 0 otherwise (DEBUG=1: inputs unused)
 );
 
   function [31:0] swap32(input [31:0] w);
@@ -161,9 +165,54 @@ module rv_hostcpu #(
         .clk                      (clk),
         .debugReset               (rst));
     end else if (DEBUG == 1) begin : g_core
-      // Task 14 replaces this with VexOsd_DMT + rv_bscane2.  Until then the
-      // missing module makes DEBUG = 1 fail elaboration with this name.
-      rv_hostcpu_DEBUG1_needs_rv_bscane2_Task14 u_unsupported ();
+      // BSCANE2 USER4 -> jtagInstruction_* as SpinalHDL
+      // BSCANE2.toJtagTapInstructionCtrl (rtl/host/vexriscv/README.md);
+      // the DTM runs on the BSCANE2 TCK (global buffer inside rv_bscane2).
+      wire bs_tck, bs_tdi, bs_sel, bs_capture, bs_shift, bs_update, bs_reset, bs_tdo;
+      rv_bscane2 u_bscan (
+        .tck     (bs_tck),
+        .tdi     (bs_tdi),
+        .sel     (bs_sel),
+        .capture (bs_capture),
+        .shift   (bs_shift),
+        .update  (bs_update),
+        .reset   (bs_reset),
+        .tdo     (bs_tdo));
+      VexOsd_DMT u_core (
+        .timerInterrupt           (irq_timer),
+        .externalInterrupt        (irq_ext_r),
+        .softwareInterrupt        (irq_soft),
+        .jtagInstruction_tdi      (bs_tdi),
+        .jtagInstruction_enable   (bs_sel),
+        .jtagInstruction_capture  (bs_capture),
+        .jtagInstruction_shift    (bs_shift),
+        .jtagInstruction_update   (bs_update),
+        .jtagInstruction_reset    (bs_reset),
+        .jtagInstruction_tdo      (bs_tdo),
+        .ndmreset                 (ndmreset),
+        .iBus_cmd_valid           (iBus_cmd_valid),
+        .iBus_cmd_ready           (iBus_cmd_ready),
+        .iBus_cmd_payload_address (iBus_cmd_payload_address),
+        .iBus_cmd_payload_size    (iBus_cmd_payload_size),
+        .iBus_rsp_valid           (rsp_i),
+        .iBus_rsp_payload_data    (rsp_data),
+        .iBus_rsp_payload_error   (1'b0),
+        .dBus_cmd_valid           (dBus_cmd_valid),
+        .dBus_cmd_ready           (dBus_cmd_ready),
+        .dBus_cmd_payload_wr      (dBus_cmd_payload_wr),
+        .dBus_cmd_payload_mask    (dBus_cmd_payload_mask),
+        .dBus_cmd_payload_address (dBus_cmd_payload_address),
+        .dBus_cmd_payload_data    (dBus_cmd_payload_data),
+        .dBus_cmd_payload_size    (dBus_cmd_payload_size),
+        .dBus_rsp_ready           (rsp_d),
+        .dBus_rsp_error           (1'b0),
+        .dBus_rsp_data            (rsp_data),
+        .reset                    (core_rst),
+        .stoptime                 (),
+        .clk                      (clk),
+        .debugReset               (rst),
+        .jtag_tck                 (bs_tck));
+      assign jtag_tdo = 1'b0;
     end else begin : g_core
       rv_hostcpu_DEBUG_must_be_0_1_or_2 u_unsupported ();
     end

@@ -184,12 +184,25 @@ input         debugReset
   In `VexOsd_DMT` the DTM logic runs on `jtag_tck` (rising edge); clock
   domain crossing to `clk` is inside the core.
 
-### BSCANE2 to `jtagInstruction` (Task 14, `rtl/host/xilinx/rv_bscane2.v`)
+### BSCANE2 to `jtagInstruction` (`rtl/host/xilinx/rv_bscane2.v`, `rv_debug = 1`)
 
 `BSCANE2 #(.JTAG_CHAIN(4))` (USER4, as the VexRiscv README requires;
 `DISABLE_JTAG = "FALSE"`), connected to `VexOsd_DMT` as SpinalHDL
-`spinal.lib.blackbox.xilinx.s7.BSCANE2.toJtagTapInstructionCtrl` does
-(checked against SpinalHDL v1.13.0 `lib/.../blackbox/xilinx/s7/Config.scala`):
+`spinal.lib.blackbox.xilinx.s7.BSCANE2.toJtagTapInstructionCtrl` does.
+Verified (Task 14) against the SpinalHDL **v1.13.0** source:
+`spinalhdl-lib_2.12-1.13.0-sources.jar` from Maven Central (sha1
+`207591296d5e1c6dc0fc5825efab94bcf0ec0e89`, equal to the published `.sha1`;
+the sbt/coursier cache holds only the class jar),
+`spinal/lib/blackbox/xilinx/s7/Config.scala`, `case class BSCANE2(userId)`,
+`def toJtagTapInstructionCtrl()`: `i.tdi <> TDI`, `i.enable <> SEL`,
+`i.capture <> CAPTURE`, `i.shift <> SHIFT`, `i.update <> UPDATE`,
+`i.reset <> RESET`, `i.tdo <> TDO`; generics `DISABLE_JTAG = "FALSE"`,
+`JTAG_CHAIN = userId`. The tunnel logic (`spinal/lib/cpu/riscv/debug/JtagTunnel.scala`)
+qualifies `capture`/`shift`/`update` with `enable` itself, which matters
+because the 7-series BSCANE2 drives CAPTURE/SHIFT/UPDATE for every USER
+chain (unisims `BSCANE2.v`: `assign SHIFT = glbl.JTAG_SHIFT_GLBL`).
+`rv_bscane2` also puts a `BUFG` on TCK, as SpinalHDL's
+`Bscane2BmbMaster` does (`ClockDomain(BUFG.on(bscane2.TCK))`):
 
 | `VexOsd_DMT` port | BSCANE2 pin |
 |---|---|
@@ -200,7 +213,16 @@ input         debugReset
 | `jtagInstruction_update` | `UPDATE` |
 | `jtagInstruction_reset` | `RESET` |
 | `jtagInstruction_tdo` | drives `TDO` |
-| `jtag_tck` | `TCK` (VexRiscv README: `jtagCd = ClockDomain(clock = xilJtag.TCK)`) |
+| `jtag_tck` | `TCK` through a `BUFG` (VexRiscv README: `jtagCd = ClockDomain(clock = xilJtag.TCK)`) |
+
+`rv_hostcpu` instantiates `rv_bscane2` only in its `DEBUG = 1` generate
+branch, and `rtl/host/host.qip` does not list `rv_bscane2.v`: **Quartus
+builds must keep `rv_debug = 0` or `2`** (with 1 the module is missing; the
+primitive does not exist there anyway). Vivado scripts that build
+`rv_debug = 1` read `rv_bscane2.v` and constrain its TCK as a clock of its
+own (`create_clock -period 50` on `*u_bscan/u_bscane2/TCK`, asynchronous to
+`clk`; `tools/vivado/ooc_hostcpu/run_bridge.tcl` mode `rv1`). OpenOCD
+configs: `tools/openocd/`.
 
 ## Regenerating on a fresh machine
 

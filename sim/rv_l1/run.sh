@@ -6,6 +6,7 @@
 #   bash sim/rv_l1/run.sh lanes        # one program; WS, ROMWS, EXTRA_WS,
 #   WS=8 ROMWS=0 EXTRA_WS=3 bash sim/rv_l1/run.sh refill   # DEBUG from env
 #   bash sim/rv_l1/run.sh irq          # interrupt/trap set (below)
+#   bash sim/rv_l1/run.sh dm_smoke     # debug smoke test over the pin TAP (below)
 #
 # Outputs: sim/rv_l1/run_${RUNTAG:-wt}/ (vvp images, one log per run,
 # results.txt).  JOBS= parallel vvp runs (default nproc).
@@ -13,18 +14,30 @@
 # "all" =
 #   gate 1  rv_hostcpu.v (+ cores) parses and elaborates with iverilog -g2005
 #           (DEBUG 0 and 2)
-#   gate 2  DEBUG=1 fails elaboration (no rv_bscane2 until Task 14)
+#   gate 2  DEBUG=1 without rtl/host/xilinx/rv_bscane2.v fails elaboration on
+#           rv_bscane2 only, and with it on BSCANE2 + BUFG only (no unisims
+#           here; sim/host_bridge/stub/elab.sh dmt elaborates it in xsim)
+#   gate 3  DEBUG=3 fails elaboration (rv_hostcpu_DEBUG_must_be_0_1_or_2)
+#   gate 4  vendor-neutral: no BSCANE2/BUFG* instance in rtl/host except
+#           rtl/host/xilinx/rv_bscane2.v; rtl/host/host.qip does not name it
 #   matrix  every program in PROGS x WS {0,3,8} x ROMWS {0,1} x EXTRA_WS {0,3}
 #           must print "=== PASS" (and match tests/<prog>.mem if present)
 #   teeth   fencei_nofencei over the same matrix must print "=== FAIL 1",
 #           irq_sig_mut "=== FAIL 11c"
 #   debug   every program once with DEBUG=2 (WS=3 ROMWS=1)
+#   dm      dm_smoke (DEBUG=2, -DDM_SMOKE) x WS {0,3,8} x EXTRA_WS {0,3}, ROMWS=1
 #   no run may print "=== BUS VIOLATION"
 #
 # "irq" = irq irq_sig irq_c exc x WS {0,3,8} (ROMWS, EXTRA_WS, DEBUG from env,
 #   default 1/0/0) must PASS, and irq_sig_mut (fw/ctrl_rv/arch/trap.S without
 #   the restore of t3) once at WS=3 must end "=== FAIL 11c" (x28 changed);
 #   ends "=== IRQ PASS" or "=== IRQ FAILED"
+#
+# "dm_smoke" = tests/dm_smoke.v (JTAG BFM jtag_bfm.v on the VexOsd_DMJ pin
+#   TAP: IDCODE, dtmcs, dmactive, halt, abstract register read/write,
+#   resume, ndmreset) with program tests/dm_smoke.S, DEBUG=2, x WS {0,3,8} x
+#   EXTRA_WS {0,3} (ROMWS from env, default 1); each run must end "=== PASS";
+#   ends "=== DM_SMOKE PASS (6 runs)" or "=== DM_SMOKE FAILED"
 #
 #   make -C sim/rv_l1/prog             # build the firmware units first
 #   bash sim/rv_l1/run.sh units        # atapi_emu cue_emu cdaudio_emu (WS=3
@@ -52,10 +65,12 @@ PROGS="lanes refill fencei irq irq_sig irq_c exc"
 IRQPROGS="irq irq_sig irq_c exc"
 UNITS="atapi_emu cue_emu cdaudio_emu"
 TEETH="fencei_nofencei irq_sig_mut"
+DMPROGS="dm_smoke"   # need the -DDM_SMOKE bench (BFM + tests/dm_smoke.v), DEBUG=2
 
 CORES="$top/rtl/host/vexriscv/VexOsd.v $top/rtl/host/vexriscv/VexOsd_DMT.v $top/rtl/host/vexriscv/VexOsd_DMJ.v"
 RTL="$top/rtl/host/rv_hostcpu.v $CORES"
 BENCH="$here/tb_rv_l1.v $here/mem_model.v $here/bus_checker.v"
+BENCH_DM="$BENCH $here/jtag_bfm.v $here/tests/dm_smoke.v"
 
 # expected outcome of a program: "pass" or "fail:<code>"
 expect_of() {
@@ -66,18 +81,24 @@ expect_of() {
   esac
 }
 
-# compile <extra_ws> <debug> -> $run/tb_x<n>_d<n>.vvp
+# compile <extra_ws> <debug> [dm] -> $run/tb_x<n>_d<n>[_dm].vvp
+# (dm: the -DDM_SMOKE bench with the JTAG BFM and tests/dm_smoke.v)
 compile() {
-  local x=$1 dbg=$2 out=$run/tb_x$1_d$2.vvp
+  local x=$1 dbg=$2 dm=${3:-} out=$run/tb_x$1_d$2${3:+_dm}.vvp
+  local tag=x${x}_d${dbg}${dm:+_dm} src=$BENCH def=""
+  [ -n "$dm" ] && { src=$BENCH_DM; def=-DDM_SMOKE; }
   [ -f "$out" ] && return 0
-  if ! "$IVERILOG" -g2012 -DRV_HOSTCPU_STATS -s tb_rv_l1 \
+  # shellcheck disable=SC2086
+  if ! "$IVERILOG" -g2012 -DRV_HOSTCPU_STATS $def -s tb_rv_l1 \
        -P tb_rv_l1.EXTRA_WS="$x" -P tb_rv_l1.DEBUG="$dbg" \
-       -o "$out" $BENCH $RTL > "$run/compile_x${x}_d${dbg}.log" 2>&1; then
-    echo "COMPILE FAILED EXTRA_WS=$x DEBUG=$dbg (see $run/compile_x${x}_d${dbg}.log)"
-    sed -n '1,20p' "$run/compile_x${x}_d${dbg}.log"
+       -o "$out" $src $RTL > "$run/compile_$tag.log" 2>&1; then
+    echo "COMPILE FAILED EXTRA_WS=$x DEBUG=$dbg ${dm:+DM_SMOKE }(see $run/compile_$tag.log)"
+    sed -n '1,20p' "$run/compile_$tag.log"
     return 1
   fi
 }
+
+is_dm() { case " $DMPROGS " in *" $1 "*) return 0 ;; esac; return 1; }
 
 # one <prog> <ws> <romws> <extra_ws> <debug>: prints one result line
 one() {
@@ -85,6 +106,7 @@ one() {
   local tag="$prog ws=$ws romws=$romws x=$x d=$dbg"
   local log=$run/${prog}_ws${ws}_r${romws}_x${x}_d${dbg}.log
   local vvp=$run/tb_x${x}_d${dbg}.vvp
+  is_dm "$prog" && vvp=$run/tb_x${x}_d${dbg}_dm.vvp
   local exp; exp=$(expect_of "$prog")
   local memf=$here/tests/$prog.mem args=""
   if [ ! -f "$build/$prog.hex" ]; then
@@ -149,13 +171,37 @@ gates() {
       echo "FAIL gate iverilog -g2005 rv_hostcpu DEBUG=$dbg ($run/g2005_d$dbg.log)"; ok=1
     fi
   done
-  if "$IVERILOG" -g2012 -s rv_hostcpu -P rv_hostcpu.DEBUG=1 -o "$run/debug1.vvp" $RTL \
-       > "$run/debug1.log" 2>&1; then
-    echo "FAIL gate DEBUG=1 elaborated (must fail until rv_bscane2, Task 14)"; ok=1
-  elif grep -q 'rv_hostcpu_DEBUG1_needs_rv_bscane2_Task14' "$run/debug1.log"; then
-    echo "PASS gate DEBUG=1 fails elaboration (rv_hostcpu_DEBUG1_needs_rv_bscane2_Task14)"
+  # DEBUG=1: the only module it needs beyond the neutral files is rv_bscane2,
+  # and rv_bscane2 needs only BSCANE2 and BUFG (unisims; not in iverilog)
+  "$IVERILOG" -g2012 -s rv_hostcpu -P rv_hostcpu.DEBUG=1 -o "$run/debug1.vvp" $RTL \
+    > "$run/debug1.log" 2>&1
+  local miss; miss=$(sed -n 's/^[[:space:]]*\([A-Za-z0-9_]*\) referenced .*/\1/p' "$run/debug1.log" | LC_ALL=C sort | tr '\n' ' ')
+  if [ "$miss" = "rv_bscane2 " ]; then
+    echo "PASS gate DEBUG=1 without rv_bscane2.v: missing only rv_bscane2"
   else
-    echo "FAIL gate DEBUG=1 failed for another reason ($run/debug1.log)"; ok=1
+    echo "FAIL gate DEBUG=1 without rv_bscane2.v: missing '$miss' ($run/debug1.log)"; ok=1
+  fi
+  "$IVERILOG" -g2012 -s rv_hostcpu -P rv_hostcpu.DEBUG=1 -o "$run/debug1b.vvp" $RTL \
+    "$top/rtl/host/xilinx/rv_bscane2.v" > "$run/debug1b.log" 2>&1
+  miss=$(sed -n 's/^[[:space:]]*\([A-Za-z0-9_]*\) referenced .*/\1/p' "$run/debug1b.log" | LC_ALL=C sort | tr '\n' ' ')
+  if [ "$miss" = "BSCANE2 BUFG " ]; then
+    echo "PASS gate DEBUG=1 with rv_bscane2.v: missing only BSCANE2 BUFG (unisims)"
+  else
+    echo "FAIL gate DEBUG=1 with rv_bscane2.v: missing '$miss' ($run/debug1b.log)"; ok=1
+  fi
+  if "$IVERILOG" -g2012 -s rv_hostcpu -P rv_hostcpu.DEBUG=3 -o "$run/debug3.vvp" $RTL \
+       > "$run/debug3.log" 2>&1; then
+    echo "FAIL gate DEBUG=3 elaborated"; ok=1
+  elif grep -q 'rv_hostcpu_DEBUG_must_be_0_1_or_2' "$run/debug3.log"; then
+    echo "PASS gate DEBUG=3 fails elaboration (rv_hostcpu_DEBUG_must_be_0_1_or_2)"
+  else
+    echo "FAIL gate DEBUG=3 failed for another reason ($run/debug3.log)"; ok=1
+  fi
+  local vend; vend=$(grep -rlE '^[[:space:]]*(BSCANE2|BUFG[A-Z0-9_]*)\b' "$top/rtl/host" | sed "s|^$top/||" | LC_ALL=C sort | tr '\n' ' ')
+  if [ "$vend" = "rtl/host/xilinx/rv_bscane2.v " ] && ! grep -q rv_bscane2 "$top/rtl/host/host.qip"; then
+    echo "PASS gate vendor primitives in rtl/host only in rtl/host/xilinx/rv_bscane2.v, not in host.qip"
+  else
+    echo "FAIL gate vendor primitives in rtl/host: '$vend' (or rv_bscane2 in host.qip)"; ok=1
   fi
   return $ok
 }
@@ -190,6 +236,19 @@ case "${1:-}" in
     echo "=== IRQ PASS ($n runs)"
     exit 0
     ;;
+  dm_smoke)
+    r=${ROMWS:-1}
+    rm -f "$run"/tb_x0_d2_dm.vvp "$run"/tb_x3_d2_dm.vvp
+    compile 0 2 dm || exit 1
+    compile 3 2 dm || exit 1
+    for p in $DMPROGS; do for ws in 0 3 8; do for x in 0 3; do echo "$p $ws $r $x 2"; done; done; done \
+      | xargs -P "$JOBS" -L1 bash "$0" __one | sort > "$run/dm_smoke.txt"
+    cat "$run/dm_smoke.txt"
+    n=$(grep -c '^PASS' "$run/dm_smoke.txt")
+    if grep -q '^FAIL' "$run/dm_smoke.txt" || [ "$n" -ne 6 ]; then echo "=== DM_SMOKE FAILED"; exit 1; fi
+    echo "=== DM_SMOKE PASS ($n runs)"
+    exit 0
+    ;;
   dhry)
     # Dhrystone (fw/dhrystone_rv): own result checks + the TIME 1..2 cycles
     x=${EXTRA_WS:-0}; dbg=${DEBUG:-0}
@@ -217,6 +276,8 @@ case "${1:-}" in
     grep -q '^FAIL' "$run/gates.txt" && fail=1
     for x in 0 3; do compile "$x" 0 || fail=1; done
     compile 0 2 || fail=1
+    compile 0 2 dm || fail=1
+    compile 3 2 dm || fail=1
     {
       for p in $PROGS $TEETH; do
         for ws in 0 3 8; do for r in 0 1; do for x in 0 3; do
@@ -224,6 +285,7 @@ case "${1:-}" in
         done; done; done
       done
       for p in $PROGS; do echo "$p 3 1 0 2"; done
+      for p in $DMPROGS; do for ws in 0 3 8; do for x in 0 3; do echo "$p $ws 1 $x 2"; done; done; done
     } | xargs -P "$JOBS" -L1 bash "$0" __one | sort > "$run/results.txt"
     cat "$run/results.txt"
     n=$(grep -c . "$run/results.txt"); np=$(grep -c '^PASS' "$run/results.txt")
@@ -234,11 +296,17 @@ case "${1:-}" in
     exit $fail
     ;;
   ""|-h|--help)
-    sed -n '2,40p' "$0"; exit 0 ;;
+    sed -n '2,52p' "$0"; exit 0 ;;
   *)
     x=${EXTRA_WS:-0}; dbg=${DEBUG:-0}
-    rm -f "$run/tb_x${x}_d${dbg}.vvp"
+    rm -f "$run/tb_x${x}_d${dbg}.vvp" "$run/tb_x${x}_d${dbg}_dm.vvp"
     compile "$x" "$dbg" || exit 1
+    for p in "$@"; do
+      if is_dm "$p"; then
+        [ "$dbg" = 2 ] || { echo "FAIL $p needs DEBUG=2"; exit 1; }
+        compile "$x" "$dbg" dm || exit 1
+      fi
+    done
     rc=0
     for p in "$@"; do
       one "$p" "${WS:-3}" "${ROMWS:-1}" "$x" "$dbg" || rc=1

@@ -11,11 +11,12 @@ seconds and needs no Vivado.
 | `tb_rv_l1.v` | Top: `rv_hostcpu` + `mem_model` + `bus_checker`, plusargs, end of run |
 | `mem_model.v` | 1 MB BE memory, latency per region, sim MMIO, interrupt register |
 | `bus_checker.v` | Bus contract assertions (`=== BUS VIOLATION ...`) |
+| `jtag_bfm.v` | JTAG master BFM (`jtag_reset`, `jtag_idle`, `jtag_ir`, `jtag_dr`), TCK 50 ns, for `dm_smoke` |
 | `run.sh` | Builds the simulator, runs one program or the whole matrix |
 | `Makefile` | Builds the test programs into `build/<prog>.hex` |
 | `sw/crt0_l1.S`, `sw/l1.ld`, `sw/l1.h` | Start-up code, linker script, MMIO header |
 | `sw/boot_fw.S` | Boot ROM stand-in for programs linked as firmware (`irq_sig`, `irq_c`, `exc`) |
-| `tests/` | Test programs (`.S` or `.c`) and expected memory dumps (`.mem`) |
+| `tests/` | Test programs (`.S` or `.c`) and expected memory dumps (`.mem`); `tests/dm_smoke.v` is the debug smoke test sequence |
 | `prog/Makefile`, `sw/syscalls.c`, `sw/l1_newlib.ld` | Firmware-unit programs (newlib-nano) and their runtime, see "Firmware units" |
 
 ## Prerequisites
@@ -49,7 +50,11 @@ bash sim/rv_l1/run.sh all          # gates + full matrix + teeth, ~1 min on 8 co
 
 * **gates**: `rv_hostcpu.v` with the cores parses and elaborates with
   `iverilog -g2005` (the Verilog-2005 subset Quartus needs) for `DEBUG` 0 and
-  2; `DEBUG=1` must fail elaboration (no `rv_bscane2` until Task 14);
+  2; `DEBUG=1` without `rtl/host/xilinx/rv_bscane2.v` misses only
+  `rv_bscane2`, and with it only `BSCANE2` and `BUFG` (unisims; the xsim
+  elaboration with `unisims_ver` is `sim/host_bridge/stub/elab.sh dmt`);
+  `DEBUG=3` fails elaboration; no `BSCANE2`/`BUFG*` instance in `rtl/host`
+  outside `rv_bscane2.v`, and `rtl/host/host.qip` does not name it;
 * **matrix**: every program x `WS` {0, 3, 8} x `ROMWS` {0, 1} x `EXTRA_WS`
   {0, 3} must print `=== PASS`, and match `tests/<prog>.mem` if that exists;
 * **teeth**: `fencei_nofencei` (fencei without `fence.i`) over the same
@@ -57,6 +62,7 @@ bash sim/rv_l1/run.sh all          # gates + full matrix + teeth, ~1 min on 8 co
   (`irq_sig` with `fw/ctrl_rv/arch/trap.S` minus the restore of t3) must
   print `=== FAIL 11c`;
 * **debug variant**: every program once with `DEBUG=2` (`VexOsd_DMJ`);
+* **dm**: `dm_smoke` (below) at `WS` {0, 3, 8} x `EXTRA_WS` {0, 3};
 * no run may print `=== BUS VIOLATION`.
 
 One program, settings from the environment (defaults `WS=3 ROMWS=1
@@ -77,6 +83,45 @@ alone runs in it.)
 ```sh
 bash sim/rv_l1/run.sh irq
 ```
+
+The debug smoke test: `tests/dm_smoke.v` drives the `VexOsd_DMJ` pin TAP
+(`DEBUG=2`) through `jtag_bfm.v` (TCK 50 ns, asynchronous to the CPU clock)
+while `tests/dm_smoke.S` counts in a loop; at `WS` 0, 3, 8 x `EXTRA_WS` 0, 3
+(`ROMWS` from the environment, default 1); ends `=== DM_SMOKE PASS (6 runs)`
+or `=== DM_SMOKE FAILED`, summary in `run_${RUNTAG:-wt}/dm_smoke.txt`. (The
+name `dm_smoke` is this set; one setting by hand: `-DDM_SMOKE` under "Bench".)
+
+```sh
+bash sim/rv_l1/run.sh dm_smoke
+```
+
+Steps, each checked (a failed check ends the run with `=== FAIL dm <what>`):
+
+1. IDCODE after Test-Logic-Reset and with IR `0x01` = `0x10002FFF`;
+2. `dtmcs` (IR `0x10`): version 1, abits 7 (its `idle` hint is used between
+   DMI scans);
+3. `dmcontrol.dmactive = 1` (read back); `dmstatus`: version 2 (debug spec
+   0.13), authenticated, allrunning; `ackhavereset` clears the power-on
+   havereset;
+4. `haltreq` -> `dmstatus.allhalted`;
+5. abstract command (access register, 32 bit) read of `x10` (regno
+   `0x100A`) = the loop counter the program stores at 0x4000 (or that + 1,
+   if halted between the `addi` and the `sw`); `x12` = boot count 1;
+6. 2000 cycles later `x10` and the memory word are unchanged;
+7. `resumereq` -> allresumeack + allrunning; halted again, `x10` grew;
+8. `dmcontrol.ndmreset` set: `rv_hostcpu`'s `core_rst` is 1; cleared:
+   `core_rst` 0, all/anyhavereset set (then acknowledged), the program
+   restarted from 0x0 (`x12` = boot count 2, memory word 0x4004 = 2); the
+   log says whether the reset hit a bus transaction (`drop`);
+9. abstract command write `x11` = `x10` + 1000 (read back), resume: the
+   program runs 1000 more iterations to `x10 == x11` and DONE 0. The bench
+   accepts DONE only after the whole sequence and with the counter word =
+   that target.
+
+DMI accesses (IR `0x11`, 41 bits `{addr[6:0], data[31:0], op[1:0]}`) are a
+request scan, `idle` TCKs in Run-Test/Idle and a nop scan that returns the
+status (0 ok, 2 failed: the run fails, 3 busy: `dtmcs.dmireset`, idle + 4,
+retry; the log prints the retry count, 0 so far).
 
 Outputs go to `sim/rv_l1/run_${RUNTAG:-wt}/` (one log per run, named
 `<prog>_ws<WS>_r<ROMWS>_x<EXTRA_WS>_d<DEBUG>.log`, plus `results.txt`); use a
@@ -100,6 +145,11 @@ vvp -N /tmp/l1.vvp +HEX=build/lanes.hex +WS=3 +ROMWS=1 +VCD=/tmp/lanes.vcd
   (print `=== MEM <addr> <word>` after DONE), `+VCD=<file>`.
 * **Parameters** (`iverilog -P tb_rv_l1.<name>=<n>`): `EXTRA_WS` (idle
   cycles before every request), `DEBUG` (0 or 2).
+* **`-DDM_SMOKE`** (with `DEBUG=2`, plus `jtag_bfm.v tests/dm_smoke.v`): the
+  BFM drives the `jtag_*` pins and `dm_smoke` runs its sequence; without it
+  the pins are tied idle (TCK 0, TMS 1). By hand:
+  `iverilog -g2012 -DDM_SMOKE -s tb_rv_l1 -P tb_rv_l1.DEBUG=2 -o /tmp/dm.vvp tb_rv_l1.v mem_model.v bus_checker.v jtag_bfm.v tests/dm_smoke.v ../../rtl/host/rv_hostcpu.v ../../rtl/host/vexriscv/VexOsd*.v`
+  and `vvp -N /tmp/dm.vvp +HEX=build/dm_smoke.hex`.
 * **Results**: `=== PASS` (DONE 0), `=== FAIL <code>` (DONE code in hex),
   `=== FAIL bus violation`, `=== FAIL bad address`, `=== TIMEOUT`; every run
   also prints `=== STATS` (I$ line refills, dBus reads/writes, busy cycles)
@@ -167,6 +217,7 @@ run itself (`l1_done`): the firmware crt0 spins when `main` returns.
 | `irq_c` | `fw/ctrl_rv/arch/irq.h` API: constructors, MIE/MEIE from crt0, default handler, `SetIntHandler`, `DisableInterrupts` loses events, `irq_save`/`irq_restore` nesting, handler switch while events arrive |
 | `exc` | illegal instruction, misaligned `lw`, misaligned `sh` through `rv_trap` to an `rv_exception` override: mcause 2/4/6, mepc, mtval, resume after the instruction |
 | `irq_sig_mut` | teeth: `irq_sig` with `trap.S` minus `lw t3`: must end `=== FAIL 11c` |
+| `dm_smoke` | the program of the debug smoke test (`DEBUG=2`, `-DDM_SMOKE`, `run.sh dm_smoke`): boot count at 0x4004 in `x12`, counter `x10` stored to 0x4000, ends when `x10` equals `x11`, which only the debugger sets (alone it runs into TIMEOUT) |
 
 ## Adding a program
 
@@ -175,7 +226,8 @@ run itself (`l1_done`): the firmware crt0 spins when `main` returns.
    a nonzero code for each failing check.
 2. Add `<name>` to `PROGS` in the `Makefile` (or to `FWPROGS` with a link
    rule, for a program linked as firmware) and to `PROGS` in `run.sh` (or
-   to `TEETH` with an `expect_of` entry if it must fail).
+   to `TEETH` with an `expect_of` entry if it must fail, or to `DMPROGS` if
+   it needs the `-DDM_SMOKE` bench).
 3. Optional: `tests/<name>.mem` with lines `<byte address> <BE word>` (hex,
    consecutive words); `run.sh` dumps that range after DONE and compares.
 4. `make -C sim/rv_l1 tests && bash sim/rv_l1/run.sh <name>`, then `all`.

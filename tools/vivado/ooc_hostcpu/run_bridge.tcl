@@ -1,4 +1,4 @@
-# usage: vivado -mode batch -source run_bridge.tcl -tclargs <outdir> <832|rv0|rv2> <period_ns>
+# usage: vivado -mode batch -source run_bridge.tcl -tclargs <outdir> <832|rv0|rv1|rv2> <period_ns>
 # OOC synthesis + implementation of the whole EightThirtyTwo_Bridge (= hostcpu: CPU, bridge, hostcache, boot ROM).
 # env: E832 (EightThirtyTwo RTL dir), RVROM (OSDBoot_rv_ROM.vhd for rv runs; default sim/host_bridge t_lanes ROM built by make)
 set outdir [file normalize [lindex $argv 0]]; set mode [lindex $argv 1]; set period [lindex $argv 2]
@@ -11,8 +11,9 @@ set_part xc7a100tfgg676-2
 switch $mode {
   832 { set gens {-generic cpu_riscv=false -generic rv_debug=0} }
   rv0 { set gens {-generic cpu_riscv=true -generic rv_debug=0} }
+  rv1 { set gens {-generic cpu_riscv=true -generic rv_debug=1} }
   rv2 { set gens {-generic cpu_riscv=true -generic rv_debug=2} }
-  default { error "mode must be 832, rv0 or rv2" }
+  default { error "mode must be 832, rv0, rv1 or rv2" }
 }
 read_verilog $repo/rtl/host/hostcache.v
 read_verilog $repo/rtl/sdram/dpram_inf_generic.v
@@ -29,12 +30,23 @@ if {$mode eq "832"} {
   read_verilog $repo/rtl/host/rv_hostcpu.v
   read_verilog $repo/rtl/host/vexriscv/VexOsd.v
   if {$mode eq "rv2"} { read_verilog $repo/rtl/host/vexriscv/VexOsd_DMJ.v }
+  if {$mode eq "rv1"} {
+    read_verilog $repo/rtl/host/vexriscv/VexOsd_DMT.v
+    read_verilog $repo/rtl/host/xilinx/rv_bscane2.v
+  }
 }
 read_vhdl $repo/rtl/host/832_bridge.vhd
 synth_design -top EightThirtyTwo_Bridge -part xc7a100tfgg676-2 -mode out_of_context -flatten_hierarchy rebuilt {*}$gens
 create_clock -name clk -period $period [get_ports clk]
 if {$mode eq "rv2"} {
   create_clock -name tck -period 50.0 [get_ports rv_jtag_tck]
+  set_clock_groups -asynchronous -group clk -group tck
+}
+if {$mode eq "rv1"} {
+  # the BSCANE2 TCK output (USER4 tunnel), as a board build would constrain it
+  set bs [get_cells -hier -filter {REF_NAME == BSCANE2}]
+  puts "BSCANE2 cells: [llength $bs] : $bs"
+  create_clock -name tck -period 50.0 [get_pins $bs/TCK]
   set_clock_groups -asynchronous -group clk -group tck
 }
 report_utilization -hierarchical -hierarchical_depth 3 -file $outdir/util_synth_hier.rpt

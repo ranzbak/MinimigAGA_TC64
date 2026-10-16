@@ -1,6 +1,9 @@
 `timescale 1ns/1ps
 // L1 bench: rv_hostcpu + BE memory model + bus contract checker.
 // Parameters (iverilog -P tb_rv_l1.<name>=<n>): EXTRA_WS, DEBUG (0 or 2).
+// -DDM_SMOKE (DEBUG=2, + jtag_bfm.v tests/dm_smoke.v): the JTAG BFM drives
+// the pin TAP and dm_smoke runs the debug sequence; DONE passes only after
+// the whole sequence with the memory word DM_CNT = the debugger's target.
 // Plusargs: +HEX=<file> +WS=<n> +ROMWS=<n> +TIMEOUT=<cycles, default 20M>
 //           +DUMP_ADDR=<hex byte address> +DUMP_N=<words>  (dump after DONE)
 //           +VCD=<file>
@@ -22,12 +25,22 @@ module tb_rv_l1;
   wire [3:0]  sel;
   wire        wr, req, ack, irq, done, bad_addr, violation, jtag_tdo;
   wire [15:0] done_code;
+  wire        jtck, jtms, jtdi;
+
+`ifdef DM_SMOKE
+  jtag_bfm bfm (.tck(jtck), .tms(jtms), .tdi(jtdi), .tdo(jtag_tdo));
+  dm_smoke dm ();
+`else
+  assign jtck = 1'b0;
+  assign jtms = 1'b1;
+  assign jtdi = 1'b0;
+`endif
 
   rv_hostcpu #(.DEBUG(DEBUG), .EXTRA_WS(EXTRA_WS)) dut (
     .clk(clk), .reset_n(reset_n),
     .addr(addr), .q(q), .sel(sel), .wr(wr), .req(req), .ack(ack), .d(d),
     .irq_ext(irq), .irq_timer(1'b0), .irq_soft(1'b0),
-    .jtag_tck(1'b0), .jtag_tms(1'b1), .jtag_tdi(1'b0), .jtag_tdo(jtag_tdo));
+    .jtag_tck(jtck), .jtag_tms(jtms), .jtag_tdi(jtdi), .jtag_tdo(jtag_tdo));
 
   mem_model mem (
     .clk(clk), .rst(rst), .addr(addr), .q(q), .sel(sel), .wr(wr), .req(req),
@@ -82,6 +95,13 @@ module tb_rv_l1;
       end else if (done) begin
         for (k = 0; k < dump_n; k = k + 1)
           $display("=== MEM %08x %08x", dump_addr + 4 * k, mem.mem[(dump_addr >> 2) + k]);
+`ifdef DM_SMOKE
+        if (done_code == 16'h0 && !dm.complete)
+          $display("=== FAIL dm DONE before the debug sequence completed");
+        else if (done_code == 16'h0 && dm.memval(32'h4000 >> 2) != dm.target)
+          $display("=== FAIL dm DM_CNT %0d at DONE, expected %0d", dm.memval(32'h4000 >> 2), dm.target);
+        else
+`endif
         if (done_code == 16'h0) $display("=== PASS");
         else                    $display("=== FAIL %0x", done_code);
         finish_run;

@@ -25,7 +25,7 @@ memory. This bench uses Vivado's xsim because `cfide` and the bridge are VHDL.
 | `sw/hb.h`, `sw/check.h` | cfide register offsets, `CHECK` / `STAMP` macros |
 | `sw/t_*.S`, `sw/t_*.c`, `sw/t_lanes.sdram.hex` | The five tests; the SDRAM preload of `t_lanes` |
 | `sw/reset_fw.S` | Reset, trap at 0x20 and register clear for tests that start through `fw/ctrl_rv/arch/crt0.S` (`t_irq`) |
-| `stub/` | Task 6's elaboration check of the bridge's RISC-V branch (`stub/elab.sh`) |
+| `stub/` | Elaboration check of the bridge's RISC-V branch: `stub/elab.sh` (`rv_debug` 0 and 2, neutral sources only), `stub/elab.sh dmt` (`rv_debug` 1: `VexOsd_DMT` + `rtl/host/xilinx/rv_bscane2.v`, BSCANE2/BUFG from `unisims_ver`), `stub/elab.sh all` |
 | `boot/fwtest.c`, `boot/fwfill.S` | Boot runs: the test firmware `RV32OSDA.BIN` (on `fw/ctrl_rv/arch`, `firmware.ld`) |
 | `boot/Makefile` | `RV32OSDA.BIN` (padded to 2560 bytes), `img.txt`, the card images `card.img` and `card_nofile.img` (`tools/sim/mkcard.sh`) |
 | `boot/expect.txt`, `boot/expect_nofile.txt` | The expected `UART:` / `ERRORCODE:` lines of `boot` and `boot_nofile` |
