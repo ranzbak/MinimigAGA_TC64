@@ -1,0 +1,12 @@
+vexriscv_repo=https://github.com/SpinalHDL/VexRiscv
+vexriscv_commit=baf7dc82f855eddaf5b0a20a6802c526f127e38a
+vexriscv_commit_date=2026-09-24
+spinalhdl=1.13.0
+scala=2.12.18
+sbt_project=1.6.0
+sbt_launcher=1.10.1
+jdk=/usr/lib/jvm/java-17-openjdk-amd64 (OpenJDK 17.0.20.1, Ubuntu openjdk-17-jdk-headless)
+generator=rtl/host/vexriscv/GenOsd.scala (object vexriscv.demo.GenOsd)
+sha256_VexOsd.v=503dbc1fc0ac254f999157610ccf67374fc966c1493a680c69a2df845199219b
+sha256_VexOsd_DMT.v=e755ef12022c2fa90cfbe78f54cd59eafae4f10ffba72cfacbfebdcea0f498e9
+sha256_VexOsd_DMJ.v=a592145f88d64bad961d3182890aed02f7f3c29b9151822a3d113f4420c8bc90
