@@ -53,7 +53,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "firmware.h"
 #include "menu.h"
 #include "config.h"
-#include "bincue.h"
 #include "c64keys.h"
 #include "akiko.h"
 #include "interrupts.h"
@@ -242,8 +241,6 @@ int ColdBoot()
 	return(result);
 }
 
-struct cdimage cd;
-
 void setstack();
 #ifdef __GNUC__
 void c_entry(void)
@@ -281,9 +278,6 @@ __geta4 int main(void)
 	if(!ColdBoot())
 		BootPrintEx("ROM loading failed");
 
-//	cd_setcuefile(&cd,"EXODUS_THELASTWAR.CUE");
-//	cd_playaudio(&cd,4);
-
     adv_timer = GetTimer(250);
     while(1)
     {
@@ -294,7 +288,6 @@ __geta4 int main(void)
 		if(rtc)
 			HandleRTC();
 
-//		cd_continueaudio(&cd);
         HandleFpga();
         HandleUI();
 		// The HDMI transmitter forgets its configuration when the monitor goes

@@ -127,7 +127,7 @@ const char *helptexts[] = {
 #endif
     "                                Minimig's video features include a blur filter, to simulate the poorer picture quality on older monitors, and also scanline generation to simulate the appearance of a screen with low vertical resolution.  On HDMI, CRT Mask adds a phosphor mask (grille: red, green and blue stripes; shadow: magenta and green) and Bloom lets bright pixels fill their scanline gaps; bloom needs scanlines or a vertical filter.  Beam width gives each pixel the soft spot of a CRT's beam, so dithered patterns blend as on a monitor; with it on, Bloom also widens the spot of bright pixels.  Video Pos moves the HDMI picture: Hpos in HD pixels (+ right), Vpos in Amiga lines (+ down).  Scaling (HDMI): Sharp and Area scale the picture exactly 2.5 times (PAL) or 3 times (NTSC) vertically, every line the same height; Sharp keeps edges crisp, Area is the most even.  Line rate is the older, slightly smaller picture.  Sharp and Area need the 15 kHz picture: the core turns the scandoubler off for them.",
     "                                The clock delay sets where the HDMI transmitter samples each pixel.  Too early or too late shows as sparkling colours, light yellows first.  Step through the values, note where the picture is clean, and settle in the middle of that range.  Save the configuration to keep it.",
-    "                                CD-ROM drive.  Insert an ISO image from the SD card.  On IDE port 2 the Amiga needs AtapiMagic (3.1.4/3.2) or IDEfix97 (3.1).  The Amiga cannot boot from it.",
+    "                                CD-ROM drive.  Insert an ISO image or a CUE sheet (BIN, or ISO + WAV tracks) from the SD card.  On IDE port 2 the Amiga needs AtapiMagic (3.1.4/3.2) or IDEfix97 (3.1).  The Amiga cannot boot from it.",
     0};
 
 void SanityCheck();
@@ -165,7 +165,7 @@ void SelectFile(char *pFileExt, unsigned char Options, unsigned char MenuSelect,
 {
     // this function displays file selection menu
 
-    if (strncmp(pFileExt, fs_pFileExt, 3) != 0) // check desired file extension
+    if (!fs_pFileExt || strcmp(pFileExt, fs_pFileExt) != 0) // check desired file extension(s)
     {                                           // if different from the current one go to the root directory and init entry buffer
         ChangeDirectory(DIRECTORY_ROOT);
         ScanDirectory(SCAN_INIT, pFileExt, Options);
@@ -231,15 +231,34 @@ static hardfileTYPE t_hardfile[HDD_SLOTS];
 static unsigned long t_hdfdir[HDD_SLOTS];
 static int hdf_select_slot;	// the slot whose file selector is open
 
-// "locked by the Amiga" in place of a CD line, for 2 s (D5)
-#define CD_MSG_DELAY 2000
+// A message in place of a CD line, for 4 s: "locked by the Amiga" (D5),
+// or why an insert was refused (13.1: the cause, at most 23 characters).
+#define CD_MSG_DELAY 4000
 static unsigned long cd_msg_timer;
 static char cd_msg_on;
+static const char *cd_msg_text;
+
+static void cd_show_msg(const char *text)
+{
+    cd_msg_text = text;
+    cd_msg_on = 1;
+    cd_msg_timer = GetTimer(CD_MSG_DELAY);
+}
 
 static void cd_locked_msg(void)
 {
-    cd_msg_on = 1;
-    cd_msg_timer = GetTimer(CD_MSG_DELAY);
+    cd_show_msg("locked by the Amiga");
+}
+
+// The OSD's answer to CD_Insert: nothing when the disc went in.
+static void cd_insert_msg(int r)
+{
+    if (r == CD_LOCKED)
+        cd_locked_msg();
+    else if (r == CD_BADCUE)
+        cd_show_msg(CD_Message());
+    else if (r == CD_NOFILE)
+        cd_show_msg("file not found");
 }
 
 // The message is over: redraw.
@@ -315,7 +334,10 @@ static unsigned char hdf_slot_lines(int slot, int row, const char *label, char i
         mask |= 1 << row;
 
     if (t->enabled == HDF_CDROM && cd_msg_on && cd_live(slot))
-        strcpy(s, "       locked by the Amiga");
+    {
+        strcpy(s, "       ");
+        strcat(s, cd_msg_text);
+    }
     else if (t->enabled == HDF_CDROM && !t->name[0])
         strcpy(s, "              * no disc *");
     else if (t->present)
@@ -344,7 +366,7 @@ static unsigned char hdf_page(int slot)
 static void hdf_select(int slot)
 {
     hdf_select_slot = slot;
-    SelectFile(t_hardfile[slot].enabled == HDF_CDROM ? "ISO" : "HDF", SCAN_DIR | SCAN_LFN, MENU_HARDFILE_SELECTED, hdf_page(slot));
+    SelectFile(t_hardfile[slot].enabled == HDF_CDROM ? "ISOCUE" : "HDF", SCAN_DIR | SCAN_LFN, MENU_HARDFILE_SELECTED, hdf_page(slot));
 }
 
 // The help text for a Harddisks page: the CD's when the cursor is on a CD slot.
@@ -720,12 +742,14 @@ void HandleUI(void)
         {
             menumask |= 0x40;
             if (cd_msg_on)
-                strcpy(s, " CD-ROM: locked by the Amiga");
+                sprintf(s, " CD-ROM: %s", cd_msg_text);
             else if (!cdrom.unit.media)
                 strcpy(s, " CD-ROM: * no disc *");
             else
             {
-                sprintf(s, " CD-ROM: %.21s", cdrom.unit.name);
+                // strncat: lib832's printf has no precision (it printed "21s" here)
+                strcpy(s, " CD-ROM: ");
+                strncat(s, cdrom.unit.name, 21);
                 if (CD_Locked())
                 {   // the lock mark at column 31
                     len = strlen(s);
@@ -796,7 +820,7 @@ void HandleUI(void)
             else if (menusub == 6) // CD-ROM: insert or eject
             {
                 if (!cdrom.unit.media)
-                    SelectFile("ISO", SCAN_DIR | SCAN_LFN, MENU_CDROM_SELECTED, MENU_MAIN1);
+                    SelectFile("ISOCUE", SCAN_DIR | SCAN_LFN, MENU_CDROM_SELECTED, MENU_MAIN1);
                 else
                 {
                     if (CD_Eject() == CD_LOCKED) // refused while the Amiga holds the lock (D5)
@@ -887,9 +911,8 @@ void HandleUI(void)
 
         break;
 
-    case MENU_CDROM_SELECTED: // an ISO for the CD-ROM drive, from the main page
-        if (CD_Insert(file.name, file.long_name[0] ? file.long_name : 0, CurrentDirectory()) == CD_LOCKED)
-            cd_locked_msg();
+    case MENU_CDROM_SELECTED: // an ISO or CUE for the CD-ROM drive, from the main page
+        cd_insert_msg(CD_Insert(file.name, file.long_name[0] ? file.long_name : 0, CurrentDirectory()));
         menustate = MENU_MAIN1;
         menusub = 6;
         break;
@@ -1998,8 +2021,7 @@ void HandleUI(void)
         {
             if (cd_live(slot))
             {   // a disc change in the live drive: now, no reset (refused while locked, D5)
-                if (CD_Insert(file.name, file.long_name[0] ? file.long_name : 0, CurrentDirectory()) == CD_LOCKED)
-                    cd_locked_msg();
+                cd_insert_msg(CD_Insert(file.name, file.long_name[0] ? file.long_name : 0, CurrentDirectory()));
                 *t = *SlotConfig(slot);
                 t_hdfdir[slot] = config.hdfdir[slot];
             }
@@ -2007,7 +2029,7 @@ void HandleUI(void)
             {   // the disc for a CD slot that is not live yet
                 memcpy((void *)t->name, (void *)file.name, sizeof(t->name));
                 memcpy((void *)t->long_name, (void *)file.long_name, sizeof(t->long_name));
-                t->present = 1;
+                t->present = CD_PRESENT(file.name); // ISO or CUE: the config's name has no extension
                 t_hdfdir[slot] = CurrentDirectory();
             }
             break;
