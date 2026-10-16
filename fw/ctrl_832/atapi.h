@@ -23,7 +23,7 @@
 #include "cue.h"
 
 #define ATAPI_SECTOR_SIZE 2048
-#define ATAPI_BUF_SIZE    2048
+#define ATAPI_BUF_SIZE    2352	/* a raw CD-DA sector (READ CD) */
 #define ATAPI_NAME_LEN    40	/* IDENTIFY model field */
 
 /* atapi_packet() result kinds */
@@ -33,6 +33,7 @@
 #define ATAPI_RECEIVE  3	/* data out: accept length bytes, then GOOD */
 #define ATAPI_CHECK    4	/* CHECK CONDITION, sense in the result and the unit */
 #define ATAPI_PLAY     5	/* GOOD, no data phase, a request for the player in r->audio */
+#define ATAPI_READ_CD  6	/* data in: count sectors from lba, 2048 bytes of a data sector, 2352 of an audio one */
 
 /* atapi_result.audio: what the glue asks of the player (cdaudio.c); 0 = nothing.
    ATAPI_PLAY carries one; START STOP UNIT (stop, eject) carries STOP with
@@ -72,6 +73,7 @@ struct atapi_unit
 	int32_t  audio_status;	/* the player's, ATAPI_AUDIO_PLAYING .. NONE (atapi_audio_status) */
 	uint32_t audio_lba;	/* the player's position */
 	int32_t  audio_seen;	/* COMPLETED / ERROR already reported by READ SUB-CHANNEL, 0 = not */
+	uint8_t  volume[2];	/* MODE SELECT page 0E: left, right, 0..255 */
 	char     name[ATAPI_NAME_LEN + 1];	/* ISO / CUE long name, printable ASCII */
 };
 
@@ -131,5 +133,10 @@ void atapi_identify(uint16_t *id, const struct atapi_unit *u);
    registers); it does not change the result, the glue splits data phases
    into DRQ blocks with it.  Returns r->kind. */
 int atapi_packet(struct atapi_unit *u, const uint8_t *cdb, uint16_t limit, struct atapi_result *r);
+
+/* The data of a MODE SELECT(6)/(10) that ended in ATAPI_RECEIVE: len bytes
+   (header, block descriptors, pages).  Page 0E sets the volume; other
+   pages are ignored. */
+void atapi_mode_select(struct atapi_unit *u, const uint8_t *cdb, const uint8_t *data, uint32_t len);
 
 #endif

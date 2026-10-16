@@ -63,7 +63,8 @@ static uint8_t adr_ctrl(const struct cd_track *t)
 }
 
 /* Does [lba, lba + count) touch an audio track (audio = 1) or a data track
-   (audio = 0), gaps included?  The range is inside the disc. */
+   (audio = 0), gaps included?  The
+   range is inside the disc. */
 static int touches(const struct cd_disc *d, uint32_t lba, uint32_t count, int audio)
 {
 	struct cue_loc l;
@@ -152,6 +153,8 @@ void atapi_init(struct atapi_unit *u)
 {
 	memset(u, 0, sizeof(*u));
 	u->audio_status = ATAPI_AUDIO_NONE;
+	u->volume[0] = 0xFF;
+	u->volume[1] = 0xFF;
 }
 
 void atapi_audio_status(struct atapi_unit *u, int32_t status, uint32_t lba)
@@ -286,10 +289,10 @@ static uint8_t *mode_page(uint8_t *p, uint8_t code, const struct atapi_unit *u)
 		p[0] = 0x0E;
 		p[1] = 0x0E;
 		p[2] = 0x04;	/* IMMED */
-		p[8] = 0x01;	/* port 0: channel 0, full volume */
-		p[9] = 0xFF;
-		p[10] = 0x02;	/* port 1: channel 1, full volume */
-		p[11] = 0xFF;
+		p[8] = 0x01;	/* port 0: channel 0 */
+		p[9] = u->volume[0];
+		p[10] = 0x02;	/* port 1: channel 1 */
+		p[11] = u->volume[1];
 		return p + 16;
 	case 0x2A:		/* capabilities: CD-ROM read, audio play (13.6) */
 		p[0] = 0x2A;
@@ -627,6 +630,30 @@ static int play_track(struct atapi_unit *u, const uint8_t *cdb, struct atapi_res
 	return play(u, r, start, end);
 }
 
+/* READ CD (BE): user data of data sectors (2048 bytes), CD-DA of audio
+   sectors (2352); no sync, headers, EDC/ECC, C2 or subchannel (13.6).
+   Expected sector type (byte 1 bits 4:2): 0 any, 1 CD-DA, 2 Mode 1; the
+   Mode 2 types match no track here. */
+static int read_cd(struct atapi_unit *u, const uint8_t *cdb, struct atapi_result *r)
+{
+	uint32_t lba = get32(cdb + 2);
+	uint32_t count = ((uint32_t)cdb[6] << 16) | ((uint32_t)cdb[7] << 8) | cdb[8];
+	uint8_t type = (cdb[1] >> 2) & 0x07;
+	if (cdb[9] != 0x10 || (cdb[10] & 0x07) || type > 5)
+		return ILLEGAL_FIELD(u, r);
+	if (!count)
+		return good(u, r);
+	if (lba >= u->sectors || count > u->sectors - lba)
+		return check(u, r, 0x05, 0x21, 0x00);
+	if (type > 2 || (type == 1 && touches(u->disc, lba, count, 0)) || (type == 2 && touches(u->disc, lba, count, 1)))
+		return check(u, r, 0x05, 0x64, 0x00);
+	set_sense(u, 0, 0, 0);
+	r->lba = lba;
+	r->count = count;
+	r->kind = ATAPI_READ_CD;
+	return ATAPI_READ_CD;
+}
+
 /* PAUSE/RESUME 4B, STOP PLAY/SCAN 4E: a request for the player. */
 static int audio_request(struct atapi_unit *u, struct atapi_result *r, int32_t what)
 {
@@ -702,14 +729,35 @@ int atapi_packet(struct atapi_unit *u, const uint8_t *cdb, uint16_t limit, struc
 		return disc_information(u, cdb, r);
 	case 0x52:
 		return track_information(u, cdb, r);
-	case 0x55:	/* MODE SELECT(10): take the data, ignore it */
-		r->length = (uint16_t)get16(cdb + 7);
+	case 0x15:	/* MODE SELECT(6) */
+	case 0x55:	/* MODE SELECT(10): the data go to atapi_mode_select */
+		r->length = (uint16_t)(op == 0x15 ? cdb[4] : get16(cdb + 7));
 		if (!r->length)
 			return good(u, r);
 		set_sense(u, 0, 0, 0);
 		r->kind = ATAPI_RECEIVE;
 		return ATAPI_RECEIVE;
+	case 0xBE:
+		return read_cd(u, cdb, r);
 	}
-	/* READ CD (BE B9 D8 D9) lands here until phase 3 */
+	/* READ CD MSF (B9) and the vendor variants (D8 D9) land here */
 	return check(u, r, 0x05, 0x20, 0x00);
+}
+
+void atapi_mode_select(struct atapi_unit *u, const uint8_t *cdb, const uint8_t *data, uint32_t len)
+{
+	int six = cdb[0] == 0x15;
+	uint32_t p = six ? 4 : 8;	/* the parameter header */
+	if (len < p)
+		return;
+	p += six ? data[3] : get16(data + 6);	/* block descriptors */
+	while (p + 2 <= len) {
+		uint8_t code = data[p] & 0x3F;
+		uint32_t plen = data[p + 1];
+		if (code == 0x0E && plen >= 10 && p + 12 <= len) {	/* CD audio control */
+			u->volume[0] = data[p + 9];	/* port 0 = left; the mapping is fixed */
+			u->volume[1] = data[p + 11];	/* port 1 = right */
+		}
+		p += 2 + plen;
+	}
 }

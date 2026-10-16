@@ -1252,6 +1252,67 @@ static void t_play_stops(void)
 	end();
 }
 
+/* ---- phase 3: READ CD, MODE SELECT volume ---- */
+
+static void t_read_cd(void)
+{
+	uint8_t c[12];
+	unsigned i;
+	int gap = 1, cdda = 1;
+	begin("READ CD: silent gap and WAV sectors as 2352-byte CD-DA, ISO sectors as 2048 user bytes");
+	EXPECT(insert_disc("MIXED   CUE", "Mixed") == CD_OK, "insert refused: '%s'", CD_Message());
+	memset(c, 0, 12);
+	c[0] = 0xBE;
+	c[4] = 0x00; c[5] = 212;	/* LBA 212: two PREGAP sectors, then track 2 */
+	c[8] = 4;
+	c[9] = 0x10;
+	packet(c, 0xFFFE);
+	EXPECT(h.phase_errors == 0 && h.blocks == 4 && h.block_bytes[0] == 2352 && h.block_bytes[3] == 2352,
+	       "blocks %d first %u", h.blocks, h.block_bytes[0]);
+	for (i = 0; i < 2 * 2352; i++) {
+		if (h.in[i])
+			gap = 0;
+		if (h.in[2 * 2352 + i] != wav_byte(44 + i))
+			cdda = 0;
+	}
+	EXPECT(h.in_len == 4 * 2352 && gap && cdda, "data: gap %d cdda %d", gap, cdda);
+	EXPECT(good_end(), "status phase");
+	c[5] = 62;	/* ISO sectors 62-63 */
+	c[8] = 2;
+	packet(c, 0xFFFE);
+	EXPECT(h.blocks == 1 && h.in_len == 4096 && iso_matches(62, 4096) && good_end(), "ISO through READ CD: blocks %d",
+	       h.blocks);
+	end();
+}
+
+static void t_volume_select(void)
+{
+	static const uint8_t mute[24] = {
+		0, 0, 0, 0, 0, 0, 0, 0,
+		0x0E, 0x0E, 0x04, 0, 0, 0, 0, 0, 0x01, 0x00, 0x02, 0x00, 0, 0, 0, 0
+	};
+	uint8_t c[12];
+	unsigned i;
+	int quiet = 1;
+	begin("MODE SELECT page 0E through the glue: the volume reaches the player (0 = silence)");
+	EXPECT(insert_disc("MIXED   CUE", "Mixed") == CD_OK, "insert refused: '%s'", CD_Message());
+	memset(c, 0, 12);
+	c[0] = 0x55;
+	c[8] = 24;
+	memcpy(h.out, mute, 24);
+	h.out_len = 24;
+	packet(c, 0xFFFE);
+	EXPECT(good_end() && cdrom.unit.volume[0] == 0 && cdrom.unit.volume[1] == 0, "volume %02X %02X",
+	       cdrom.unit.volume[0], cdrom.unit.volume[1]);
+	play10(c, 214, 10);
+	packet(c, 0xFFFE);
+	for (i = 0; i < 0x8000; i++)
+		if (ring[i])
+			quiet = 0;
+	EXPECT(cda_status() == CDA_PLAYING && quiet, "muted play: status %02X, ring silent %d", (unsigned)cda_status(), quiet);
+	end();
+}
+
 int main(void)
 {
 	make_wav_header(wav_header, WAV_SECTORS * 2352, 2);
@@ -1286,6 +1347,8 @@ int main(void)
 	t_play();
 	t_play_refused();
 	t_play_stops();
+	t_read_cd();
+	t_volume_select();
 
 	printf("\n%d cases: %d passed, %d failed (%d failed checks)\n",
 	       cases_run, cases_passed, cases_run - cases_passed, total_fails);

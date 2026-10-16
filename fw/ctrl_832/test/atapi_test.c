@@ -795,10 +795,10 @@ static void t_reset_unlocks(void)
 
 static void t_invalid(void)
 {
-	static const uint8_t ops[] = { 0xFF, 0x15, 0xBE, 0xB9, 0xD8, 0xD9, 0x04 };
+	static const uint8_t ops[] = { 0xFF, 0xB9, 0xD8, 0xD9, 0x04 };	/* BE and 15: phase 3 */
 	uint8_t c[12];
 	unsigned i;
-	begin("invalid opcodes and READ CD: 05/20/00");
+	begin("invalid opcodes, READ CD MSF and vendor reads: 05/20/00");
 	ready_unit(OS39_SECTORS, OS39_NAME);
 	for (i = 0; i < sizeof(ops); i++) {
 		cdb0(c, ops[i]);
@@ -1184,6 +1184,89 @@ static void t_audio_caps(void)
 	end();
 }
 
+static void read_cd(uint8_t *c, uint8_t type, uint32_t lba, uint32_t count, uint8_t flags, uint8_t sub)
+{
+	cdb0(c, 0xBE);
+	c[1] = (uint8_t)(type << 2);
+	put_be32(c + 2, lba);
+	c[6] = (uint8_t)(count >> 16);
+	c[7] = (uint8_t)(count >> 8);
+	c[8] = (uint8_t)count;
+	c[9] = flags;
+	c[10] = sub;
+}
+
+static void t_read_cd(void)
+{
+	uint8_t c[12];
+	begin("READ CD: user data / CD-DA only, expected sector type checked, other selections 05/24/00");
+	ready_disc(pinball(), "Pinball Fantasies");
+	read_cd(c, 0, 2358, 2, 0x10, 0);
+	EXPECT(run(c) == ATAPI_READ_CD && R.lba == 2358 && R.count == 2, "CD-DA: kind %d lba %u count %u", R.kind, R.lba, R.count);
+	read_cd(c, 0, 2200, 200, 0x10, 0);	/* data and audio in one transfer */
+	EXPECT(run(c) == ATAPI_READ_CD && R.count == 200, "mixed: kind %d", R.kind);
+	read_cd(c, 1, 20000, 10, 0x10, 0);
+	EXPECT(run(c) == ATAPI_READ_CD, "type CD-DA on audio: kind %d", R.kind);
+	read_cd(c, 1, 2200, 10, 0x10, 0);
+	expect_check(__LINE__, c, 0x05, 0x64, 0x00);	/* CD-DA expected, data found */
+	read_cd(c, 2, 2200, 8, 0x10, 0);
+	EXPECT(run(c) == ATAPI_READ_CD, "type Mode 1 on data: kind %d", R.kind);
+	read_cd(c, 2, 2200, 9, 0x10, 0);
+	expect_check(__LINE__, c, 0x05, 0x64, 0x00);	/* Mode 1 expected, audio found */
+	read_cd(c, 4, 16, 1, 0x10, 0);
+	expect_check(__LINE__, c, 0x05, 0x64, 0x00);	/* Mode 2 form 1: no such track */
+	read_cd(c, 6, 16, 1, 0x10, 0);
+	expect_check(__LINE__, c, 0x05, 0x24, 0x00);
+	read_cd(c, 0, 2358, 1, 0xF8, 0);	/* sync + headers + user data + EDC */
+	expect_check(__LINE__, c, 0x05, 0x24, 0x00);
+	read_cd(c, 0, 2358, 1, 0x10, 0x01);	/* raw subchannel */
+	expect_check(__LINE__, c, 0x05, 0x24, 0x00);
+	read_cd(c, 0, 2358, 1, 0x00, 0);
+	expect_check(__LINE__, c, 0x05, 0x24, 0x00);
+	read_cd(c, 0, 2358, 0, 0x10, 0);
+	expect_good(__LINE__, c);
+	read_cd(c, 0, 41657, 2, 0x10, 0);
+	expect_check(__LINE__, c, 0x05, 0x21, 0x00);
+	end();
+}
+
+static void t_volume(void)
+{
+	/* MODE SELECT(10): 8-byte header, no block descriptor, page 0E */
+	static const uint8_t sel10[24] = {
+		0, 0, 0, 0, 0, 0, 0, 0,
+		0x0E, 0x0E, 0x04, 0, 0, 0, 0, 0, 0x01, 0x80, 0x02, 0x40, 0, 0, 0, 0
+	};
+	/* MODE SELECT(6): 4-byte header, an 8-byte block descriptor, page 01, page 0E */
+	static const uint8_t sel6[36] = {
+		0, 0, 0, 8,  0, 0, 0, 0, 0, 0, 0x08, 0,
+		0x01, 0x06, 0, 3, 0, 0, 0, 0,
+		0x0E, 0x0E, 0x04, 0, 0, 0, 0, 0, 0x01, 0x20, 0x02, 0x00, 0, 0, 0, 0
+	};
+	uint8_t c[12];
+	begin("MODE SELECT page 0E: per-channel volume, reported by MODE SENSE 0E");
+	ready_disc(pinball(), "Pinball Fantasies");
+	cdb0(c, 0x55);
+	c[8] = 24;
+	EXPECT(run(c) == ATAPI_RECEIVE && R.length == 24, "MODE SELECT(10): kind %d length %u", R.kind, R.length);
+	atapi_mode_select(&U, c, sel10, 24);
+	EXPECT(U.volume[0] == 0x80 && U.volume[1] == 0x40, "volume %02X %02X", U.volume[0], U.volume[1]);
+	mode_sense10(c, 0x0E, 0xFFFF);
+	expect_response(__LINE__, c, 24);
+	EXPECT(atapi_buf[8 + 9] == 0x80 && atapi_buf[8 + 11] == 0x40, "MODE SENSE 0E volumes %02X %02X",
+	       atapi_buf[8 + 9], atapi_buf[8 + 11]);
+	cdb0(c, 0x15);
+	c[4] = 36;
+	EXPECT(run(c) == ATAPI_RECEIVE && R.length == 36, "MODE SELECT(6): kind %d length %u", R.kind, R.length);
+	atapi_mode_select(&U, c, sel6, 36);
+	EXPECT(U.volume[0] == 0x20 && U.volume[1] == 0x00, "volume %02X %02X", U.volume[0], U.volume[1]);
+	atapi_mode_select(&U, c, sel6, 30);	/* cut inside page 0E: ignored */
+	EXPECT(U.volume[0] == 0x20, "a short page applied");
+	atapi_init(&U);
+	EXPECT(U.volume[0] == 0xFF && U.volume[1] == 0xFF, "power-on volume %02X %02X", U.volume[0], U.volume[1]);
+	end();
+}
+
 static void t_iso_read(const char *path)
 {
 	uint8_t c[12];
@@ -1276,6 +1359,8 @@ int main(int argc, char **argv)
 	t_play();
 	t_subchannel();
 	t_audio_caps();
+	t_read_cd();
+	t_volume();
 	t_iso_read(path);
 
 	if (iso_fd >= 0)

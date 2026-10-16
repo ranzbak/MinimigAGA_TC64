@@ -575,8 +575,35 @@ static int cd_send_zero(int port, unsigned char *tfr, unsigned long count, unsig
 	return CD_DONE;
 }
 
-/* READ(10)/(12): lba .. lba + count - 1, split where the track, its file
-   or its sector size changes (atapi.c has refused audio sectors). */
+/* Data in of count audio sectors as CD-DA (READ CD): 2352 bytes each from
+   the file, silence for a silent gap and past the end of a WAV's data. */
+static int cd_send_cdda(int port, unsigned char *tfr, const struct cue_loc *l, unsigned long count, unsigned int limit)
+{
+	unsigned long off = l->offset;
+	int r;
+	while (count) {
+		unsigned long have = 0;
+		if (!l->silent) {
+			const struct cd_file *f = &cd_disc.file[l->file];
+			unsigned long end = f->data_offset + f->data_bytes;
+			have = off < end ? end - off : 0;
+			if (have > 2352)
+				have = 2352;
+			if (have && (!cd_data_open(l->file) || !cd_file_read(off, atapi_buf, have)))
+				return cd_read_error(off >> 9);
+		}
+		memset(atapi_buf + have, 0, 2352 - have);
+		if ((r = cd_send_buffer(port, tfr, atapi_buf, 2352, limit)) != CD_DONE)
+			return r;
+		off += 2352;
+		count--;
+	}
+	return CD_DONE;
+}
+
+/* READ(10)/(12) and READ CD: lba .. lba + count - 1, split where the track,
+   its file or its sector size changes.  Audio sectors only come with READ
+   CD (atapi.c refuses them for READ(10)/(12)): CD-DA. */
 static int cd_read(int port, unsigned char *tfr, unsigned long lba, unsigned long count, unsigned int limit)
 {
 	struct cue_loc l;
@@ -586,7 +613,9 @@ static int cd_read(int port, unsigned char *tfr, unsigned long lba, unsigned lon
 		if (!cue_locate(&cd_disc, lba, &l))
 			return cd_read_error(lba);
 		n = l.run < count ? l.run : count;
-		if (l.silent)
+		if (cd_disc.track[l.track].type == CD_AUDIO)
+			r = cd_send_cdda(port, tfr, &l, n, limit);
+		else if (l.silent)
 			r = cd_send_zero(port, tfr, n, limit);
 		else if (!cd_data_open(l.file))
 			r = cd_read_error(lba);
@@ -602,20 +631,30 @@ static int cd_read(int port, unsigned char *tfr, unsigned long lba, unsigned lon
 	return CD_DONE;
 }
 
-/* Data out (MODE SELECT): taken and dropped, in blocks of at most the limit. */
+/* Data out (MODE SELECT), in blocks of at most the limit: what fits goes to
+   atapi_buf for atapi_mode_select (page 0E: the volume), the rest is
+   dropped. */
 static int cd_receive(int port, unsigned char *tfr, unsigned int len, unsigned int limit)
 {
+	unsigned int got = 0, kept = 0;
 	int r;
 	if (limit > CD_FIFO_512 * 512)
 		limit = CD_FIFO_512 * 512;
-	while (len) {
-		unsigned int n = len < limit ? len : limit;
+	while (got < len) {
+		unsigned int n = len - got < limit ? len - got : limit;
 		cd_phase(tfr, n, 0x00, IDE_STATUS_REQ | IDE_STATUS_IRQ);
 		if ((r = cd_wait(port)) != CD_DONE)
 			return r;
-		ReadIDEData(0, n);
-		len -= n;
+		if (kept == got && got + n <= ATAPI_BUF_SIZE) {
+			ReadIDEData(atapi_buf + got, n);
+			kept += n;
+		} else {
+			ReadIDEData(0, n);
+		}
+		got += n;
 	}
+	atapi_mode_select(&cdrom.unit, cd_cdb, atapi_buf, kept);
+	cda_volume(cdrom.unit.volume[0], cdrom.unit.volume[1]);
 	return CD_DONE;
 }
 
@@ -628,6 +667,7 @@ static void cd_log_cdb(int port, const struct atapi_result *r)
 	switch (r->kind) {
 	case ATAPI_RESPONSE: printf(" > %u bytes", (unsigned)r->length); break;
 	case ATAPI_READ:     printf(" > read %lu+%lu", (unsigned long)r->lba, (unsigned long)r->count); break;
+	case ATAPI_READ_CD:  printf(" > read cd %d+%d", (int)r->lba, (int)r->count); break;
 	case ATAPI_RECEIVE:  printf(" < %u bytes", (unsigned)r->length); break;
 	case ATAPI_CHECK:    printf(" CHECK %02X/%02X/%02X", r->sense_key, r->asc, r->ascq); break;
 	case ATAPI_PLAY:     printf(" > audio %d", (int)r->audio); break;
@@ -678,6 +718,9 @@ static void cd_packet(int port, unsigned char *tfr)
 		done = cd_send_buffer(port, tfr, atapi_buf, r.length, limit);
 		break;
 	case ATAPI_READ:
+		done = cd_read(port, tfr, r.lba, r.count, limit);
+		break;
+	case ATAPI_READ_CD:
 		done = cd_read(port, tfr, r.lba, r.count, limit);
 		break;
 	case ATAPI_RECEIVE:

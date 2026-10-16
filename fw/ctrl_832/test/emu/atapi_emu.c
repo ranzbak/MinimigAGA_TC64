@@ -213,6 +213,49 @@ int main(int argc, char **argv)
 	atapi_audio_status(&unit, ATAPI_AUDIO_COMPLETED, 2457);
 	expect("status reported once", unit.audio_status, ATAPI_AUDIO_NONE);
 
+	/* READ CD of 2 audio sectors, user data / CD-DA */
+	memset(cdb, 0, sizeof(cdb));
+	cdb[0] = 0xBE;
+	cdb[4] = 0x09;
+	cdb[5] = 0x36;
+	cdb[8] = 2;
+	cdb[9] = 0x10;
+	k = atapi_packet(&unit, cdb, 0xFFFE, &res);
+	expect("READ CD return", k, ATAPI_READ_CD);
+	expect("READ CD kind", res.kind, ATAPI_READ_CD);
+	expect("READ CD lba", res.lba, 2358);
+	expect("READ CD count", res.count, 2);
+	cdb[9] = 0xF8;
+	k = atapi_packet(&unit, cdb, 0xFFFE, &res);
+	expect("READ CD 0xF8 kind", res.kind, ATAPI_CHECK);
+	expect("READ CD 0xF8 asc", res.asc, 0x24);
+
+	/* MODE SELECT(10) page 0E, then MODE SENSE 0E */
+	{
+		static const uint8_t sel[24] = {
+			0, 0, 0, 0, 0, 0, 0, 0,
+			0x0E, 0x0E, 0x04, 0, 0, 0, 0, 0, 0x01, 0x80, 0x02, 0x40, 0, 0, 0, 0
+		};
+		memset(cdb, 0, sizeof(cdb));
+		cdb[0] = 0x55;
+		cdb[8] = 24;
+		k = atapi_packet(&unit, cdb, 0xFFFE, &res);
+		expect("MODE SELECT kind", res.kind, ATAPI_RECEIVE);
+		expect("MODE SELECT length", res.length, 24);
+		atapi_mode_select(&unit, cdb, sel, 24);
+		expect("volume left", unit.volume[0], 0x80);
+		expect("volume right", unit.volume[1], 0x40);
+		expect("audio_seen after the volume", unit.audio_seen, ATAPI_AUDIO_COMPLETED);
+		memset(cdb, 0, sizeof(cdb));
+		cdb[0] = 0x5A;
+		cdb[2] = 0x0E;
+		cdb[8] = 0xFF;
+		k = atapi_packet(&unit, cdb, 0xFFFE, &res);
+		expect("MODE SENSE 0E length", res.length, 24);
+		expect("MODE SENSE 0E left", atapi_buf[17], 0x80);
+		expect("MODE SENSE 0E right", atapi_buf[19], 0x40);
+	}
+
 	if (fails)
 		printf("FAIL %d\n", fails);
 	else
