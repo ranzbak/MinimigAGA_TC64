@@ -79,6 +79,9 @@ struct cd_disc {
    f->data_bytes.  Return CUE_OK, CUE_E_NOFILE or CUE_E_WAV. */
 typedef int32_t (*cue_open_fn)(void *ctx, const char *name, struct cd_file *f);
 
+/* Read len bytes at offset of a file into dst: 1 = all read, 0 = not. */
+typedef int32_t (*cue_read_fn)(void *ctx, uint32_t offset, uint8_t *dst, uint32_t len);
+
 struct cue_parser {
 	struct cd_disc *disc;
 	cue_open_fn     open;
@@ -113,6 +116,11 @@ void cue_message(const struct cue_parser *p, char *buf);
 
 /* An ISO: one DATA2048 track over the whole file (bytes / 2048 sectors). */
 void cue_single(struct cd_disc *d, const char *shortname, uint32_t bytes);
+
+/* WAV header (13.4): walk the RIFF chunks to "fmt " (PCM, 2 channels,
+   44100, 16 bits, block align 4) and "data"; fill f->data_offset and
+   f->data_bytes (clipped to the file).  CUE_OK or CUE_E_WAV. */
+int32_t cue_wav(cue_read_fn read, void *ctx, uint32_t size, struct cd_file *f);
 
 /* Where disc sector lba lives. */
 struct cue_loc {

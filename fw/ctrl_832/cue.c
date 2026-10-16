@@ -437,6 +437,55 @@ void cue_single(struct cd_disc *d, const char *shortname, uint32_t bytes)
 	d->leadout = bytes / 2048;
 }
 
+static uint32_t le16(const uint8_t *b)
+{
+	return (uint32_t)b[0] | ((uint32_t)b[1] << 8);
+}
+
+static uint32_t le32(const uint8_t *b)
+{
+	return le16(b) | (le16(b + 2) << 16);
+}
+
+static int32_t id4(const uint8_t *b, const char *id)
+{
+	return b[0] == (uint8_t)id[0] && b[1] == (uint8_t)id[1] && b[2] == (uint8_t)id[2] && b[3] == (uint8_t)id[3];
+}
+
+int32_t cue_wav(cue_read_fn read, void *ctx, uint32_t size, struct cd_file *f)
+{
+	uint8_t h[16];
+	uint32_t pos = 12, len;
+	int32_t fmt = 0;
+	if (size < 12 || !read(ctx, 0, h, 12) || !id4(h, "RIFF") || !id4(h + 8, "WAVE"))
+		return CUE_E_WAV;
+	while (size - pos >= 8) {
+		if (!read(ctx, pos, h, 8))
+			return CUE_E_WAV;
+		len = le32(h + 4);
+		if (id4(h, "fmt ")) {
+			if (len < 16 || size - pos - 8 < 16 || !read(ctx, pos + 8, h, 16))
+				return CUE_E_WAV;
+			if (le16(h) != 1 || le16(h + 2) != 2 || le32(h + 4) != 44100 ||
+			    le16(h + 12) != 4 || le16(h + 14) != 16)
+				return CUE_E_WAV;
+			fmt = 1;
+		} else if (id4(h, "data")) {
+			if (!fmt)
+				return CUE_E_WAV;
+			f->data_offset = pos + 8;
+			f->data_bytes = len < size - pos - 8 ? len : size - pos - 8;
+			return CUE_OK;
+		}
+		if (len > size - pos - 8)
+			break;
+		pos += 8 + len + (len & 1);
+		if (pos > size)
+			break;
+	}
+	return CUE_E_WAV;
+}
+
 int32_t cue_locate(const struct cd_disc *d, uint32_t lba, struct cue_loc *loc)
 {
 	int32_t i;

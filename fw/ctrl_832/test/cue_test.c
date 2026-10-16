@@ -423,6 +423,99 @@ static void t_single(void)
 	end();
 }
 
+/* ---- WAV headers ---- */
+
+static uint8_t wav[512];
+static uint32_t wav_size;
+
+static int32_t mem_read(void *ctx, uint32_t offset, uint8_t *dst, uint32_t len)
+{
+	(void)ctx;
+	if (offset > wav_size || len > wav_size - offset)
+		return 0;
+	memcpy(dst, wav + offset, len);
+	return 1;
+}
+
+static void put_le(uint8_t *p, uint32_t v, int n)
+{
+	int i;
+	for (i = 0; i < n; i++)
+		p[i] = (uint8_t)(v >> (8 * i));
+}
+
+/* A WAV: RIFF header, optional LIST chunk (odd size, padded), fmt, data. */
+static void make_wav(uint16_t format, uint16_t channels, uint32_t rate, uint16_t bits, uint32_t data_len, int list, int data_first)
+{
+	uint32_t p = 12;
+	memset(wav, 0, sizeof(wav));
+	memcpy(wav, "RIFF", 4);
+	memcpy(wav + 8, "WAVE", 4);
+	if (list) {
+		memcpy(wav + p, "LIST", 4);
+		put_le(wav + p + 4, 5, 4);
+		p += 8 + 6;	/* 5 bytes + pad */
+	}
+	if (data_first) {
+		memcpy(wav + p, "data", 4);
+		put_le(wav + p + 4, 8, 4);
+		p += 16;
+	}
+	memcpy(wav + p, "fmt ", 4);
+	put_le(wav + p + 4, 16, 4);
+	put_le(wav + p + 8, format, 2);
+	put_le(wav + p + 10, channels, 2);
+	put_le(wav + p + 12, rate, 4);
+	put_le(wav + p + 16, rate * channels * bits / 8, 4);
+	put_le(wav + p + 20, channels * bits / 8, 2);
+	put_le(wav + p + 22, bits, 2);
+	p += 24;
+	if (!data_first) {
+		memcpy(wav + p, "data", 4);
+		put_le(wav + p + 4, data_len, 4);
+		p += 8;
+	}
+	wav_size = p + 200;	/* 200 bytes of samples follow */
+	put_le(wav + 4, wav_size - 8, 4);
+}
+
+static void t_wav(void)
+{
+	struct cd_file f;
+	begin("cue_wav: RIFF chunk walk; PCM 44.1 kHz 16-bit stereo only");
+	make_wav(1, 2, 44100, 16, 200, 0, 0);
+	memset(&f, 0, sizeof(f));
+	EXPECT(cue_wav(mem_read, 0, wav_size, &f) == CUE_OK && f.data_offset == 44 && f.data_bytes == 200,
+	       "plain: offset %u bytes %u", f.data_offset, f.data_bytes);
+	make_wav(1, 2, 44100, 16, 200, 1, 0);
+	EXPECT(cue_wav(mem_read, 0, wav_size, &f) == CUE_OK && f.data_offset == 44 + 14 && f.data_bytes == 200,
+	       "LIST first (odd size, padded): offset %u", f.data_offset);
+	make_wav(1, 2, 44100, 16, 0x7FFFFFF0u, 0, 0);
+	EXPECT(cue_wav(mem_read, 0, wav_size, &f) == CUE_OK && f.data_bytes == 200,
+	       "data length past the end of the file: clipped to %u", f.data_bytes);
+	make_wav(1, 1, 44100, 16, 200, 0, 0);
+	EXPECT(cue_wav(mem_read, 0, wav_size, &f) == CUE_E_WAV, "mono accepted");
+	make_wav(1, 2, 48000, 16, 200, 0, 0);
+	EXPECT(cue_wav(mem_read, 0, wav_size, &f) == CUE_E_WAV, "48 kHz accepted");
+	make_wav(1, 2, 44100, 8, 200, 0, 0);
+	EXPECT(cue_wav(mem_read, 0, wav_size, &f) == CUE_E_WAV, "8-bit accepted");
+	make_wav(3, 2, 44100, 16, 200, 0, 0);
+	EXPECT(cue_wav(mem_read, 0, wav_size, &f) == CUE_E_WAV, "format 3 (float) accepted");
+	make_wav(0xFFFE, 2, 44100, 16, 200, 0, 0);
+	EXPECT(cue_wav(mem_read, 0, wav_size, &f) == CUE_E_WAV, "extensible accepted");
+	make_wav(1, 2, 44100, 16, 200, 0, 1);
+	EXPECT(cue_wav(mem_read, 0, wav_size, &f) == CUE_E_WAV, "data before fmt accepted");
+	make_wav(1, 2, 44100, 16, 200, 0, 0);
+	memcpy(wav, "RIFX", 4);
+	EXPECT(cue_wav(mem_read, 0, wav_size, &f) == CUE_E_WAV, "not RIFF accepted");
+	make_wav(1, 2, 44100, 16, 200, 0, 0);
+	memcpy(wav + 36, "junk", 4);	/* no data chunk: the walk runs off the end */
+	put_le(wav + 40, 0xFFFFFFF0u, 4);
+	EXPECT(cue_wav(mem_read, 0, wav_size, &f) == CUE_E_WAV, "no data chunk accepted");
+	EXPECT(cue_wav(mem_read, 0, 8, &f) == CUE_E_WAV, "8-byte file accepted");
+	end();
+}
+
 int main(void)
 {
 	t_reference();
@@ -435,6 +528,7 @@ int main(void)
 	t_refusals();
 	t_message();
 	t_single();
+	t_wav();
 
 	printf("\n%d cases: %d passed, %d failed (%d failed checks)\n",
 	       cases_run, cases_passed, cases_run - cases_passed, total_fails);
