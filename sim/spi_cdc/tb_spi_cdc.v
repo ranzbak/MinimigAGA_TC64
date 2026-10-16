@@ -1,0 +1,471 @@
+// The SPI path between the 832 controller and the Minimig SPI slaves, driven
+// the way the firmware drives it, at the speed it drives it.
+//
+//   832 bus model --> cfide.vhd (the SPI master: sck is a clk_114 register)
+//                       |  SPI_SCK / SPI_DI / SPI_CS[7:0]
+//                       v
+//                     paula_floppy (HDF sector data, both directions)
+//                     userio_osd   (OSD commands and replies)
+//                     SD card model (direct mode: card -> paula, 4096 bits)
+//
+// The slaves are clocked by sck, the Minimig logic around them by clk_28.
+// In hardware sck reaches the slaves through fabric routing some ns after
+// the clk_114 edge that toggled it, and where a clk_28 edge lands relative to
+// that is a per-build accident.  The bench models it with two delays:
+//
+//   +SCKDLY=<ns>  sck at the slaves, after the cfide register (clock insertion)
+//   +C28DLY=<ns>  clk_28 after the clk_114 edge it is derived from
+//
+// so a crossing that only works for one ordering of the two edges shows up as
+// a failure for some (SCKDLY, C28DLY) pair.
+//
+// The 832 side is modelled by its bus latency: +GAP=<n> is the number of
+// clk_114 cycles between one access's ack and the next access's request
+// (instruction fetch, cache, bridge -- everything the 832 does in between).
+// Each sector is run for every gap in the GAPS list with a random extra
+// 0..3 cycles per access and a random start phase, so the sck edges move
+// against clk_28 / clk7_en from sector to sector.
+//
+// Checks, per sector:
+//   wr     CMD_IDE_DATA_WR + 512 bytes (hdd.c, FakeRDB / buffered read):
+//          the 256 words the gayle model received equal what was sent
+//   rd     CMD_IDE_DATA_RD + 512 bytes read (hdd.c, HDF write): the bytes the
+//          832 read equal the gayle model's buffer
+//   direct MMC_ReadMultiple's direct mode (mmc.c): EnableDMode, SPI(0xFF)
+//          (4096 clocks), RDSPI, DisableDMode -- the 256 words the gayle
+//          model received equal the card's sector
+//   osd    OSD_CMD_VERSION + 10 reply bytes: equal a reference read done
+//          with a slow host
+//
+// Result lines:  "GAP <g> <test> fail <n>/<m>" and a final "=== PASS"/"=== FAIL".
+//
+// +SPEED=<n> sets the SPI speed register (firmware SPI_fast() = 1).
+// +OSD_MIN_GAP=<n>: gaps below this are reported for osd but not counted as
+// a failure (default 40, the OSD reply latency -- see the comment at the
+// plusarg).  +TESTS=<mask>, +GAPMAX=<n>, +DEBUG=1 narrow a run down.
+
+`timescale 1ns/1ps
+
+module tb_spi_cdc;
+
+  // ---------------------------------------------------------------- params
+  real    T114    = 8.8154;          // 113.4375 MHz
+  real    sckdly  = 1.5;
+  real    c28dly  = 0.3;
+  integer speed   = 1;
+  integer seed    = 1;
+  integer reps    = 3;
+  integer osd_min_gap = 0;
+  integer tests_mask = 15;           // 1 wr, 2 rd, 4 direct, 8 osd
+  integer gapmax = 1000;
+  integer debug = 0;
+
+  // ---------------------------------------------------------------- clocks
+  reg clk114 = 1'b0;
+  always #(T114/2.0) clk114 = ~clk114;
+
+  reg [1:0] div = 2'd0;
+  reg clk28 = 1'b0;
+  always @(posedge clk114) begin
+    div <= div + 2'd1;
+    if (div == 2'd0) clk28 <= #(c28dly) 1'b1;
+    if (div == 2'd2) clk28 <= #(c28dly) 1'b0;
+  end
+
+  // clk7_en / clk7n_en exactly as rtl/clock/amiga_clk.v makes them
+  reg [1:0] clk7_cnt = 2'b10;
+  reg clk7_en = 1'b1, clk7n_en = 1'b1;
+  always @(posedge clk28) begin
+    clk7_cnt <= clk7_cnt + 2'b01;
+    clk7_en  <= #1 (clk7_cnt == 2'b00);
+    clk7n_en <= #1 (clk7_cnt == 2'b10);
+  end
+
+  reg n_reset = 1'b0;
+  reg mm_reset = 1'b1;
+
+  // ---------------------------------------------------------------- cfide
+  reg  [31:2] addr = 30'd0;
+  reg  [15:0] d    = 16'd0;
+  reg         req  = 1'b0;
+  reg         wr   = 1'b0;
+  wire [15:0] q;
+  wire        ack;
+
+  wire [7:0]  spi_cs;
+  wire        spi_sck;      // cfide sd_clk (= NOT its sck register)
+  wire        spi_di;       // MOSI
+  wire        spi_do;       // MISO from the Minimig slaves
+  wire        sd_miso;      // the card's DO pin
+
+  cfide #(
+    .spimux(1'b0), .havespirtc(1'b0), .havei2c(1'b0), .havevpos(1'b0)
+  ) mycfide (
+    .sysclk(clk114), .n_reset(n_reset),
+    .addr(addr), .d(d), .q(q), .req(req), .wr(wr), .ack(ack),
+    .sd_di(spi_do), .sd_cs(spi_cs), .sd_clk(spi_sck), .sd_do(spi_di),
+    .sd_dimm(sd_miso), .sd_ack(1'b1),
+    .debugTxD(), .debugRxD(1'b1), .menu_button(1'b1),
+    .xadc_temp(16'h0000),
+    .scandoubler(), .audio_ena(), .audio_clear(),
+    .audio_buf(1'b0), .audio_amiga(1'b0), .vbl_int(1'b0), .interrupt(),
+    .c64_keys(64'hFFFFFFFFFFFFFFFF), .amiga_key(), .amiga_key_stb(),
+    .amiga_addr(8'h00), .amiga_d(16'h0000), .amiga_q(),
+    .amiga_req(1'b0), .amiga_wr(1'b0), .amiga_ack(),
+    .rtc_q(),
+    .scl_i(1'b1), .scl_o(), .scl_t(), .sda_i(1'b1), .sda_o(), .sda_t(),
+    .i2c_ext_int(1'b0),
+    .pos_data_q(),
+    .clk_28(clk28), .tick_in(1'b0)
+  );
+
+  // sck as the slaves see it: the cfide register plus clock routing
+  reg sck_slv = 1'b1;
+  always @(spi_sck) sck_slv <= #(sckdly) spi_sck;
+
+  // minimig_virtual_top: _scs = {SPI_CS[6], SPI_CS[5], SPI_CS[4]}
+  wire paula_sdo, user_sdo;
+  assign spi_do = paula_sdo | user_sdo;
+
+  // ---------------------------------------------------------------- paula_floppy
+  wire [15:0] hdd_data_out;
+  wire [15:0] hdd_data_in;
+  wire        hdd_data_wr, hdd_data_rd, hdd_wr, hdd_status_wr;
+  wire [2:0]  hdd_addr;
+
+  paula_floppy pf1 (
+    .clk(clk28), .clk7_en(clk7_en), .clk7n_en(clk7n_en),
+    .reset(mm_reset), .ntsc(1'b0), .sof(1'b0), .enable(1'b0),
+    .reg_address_in(8'h00), .data_in(16'h0000), .data_out(),
+    .dmal(), .dmas(),
+    ._step(1'b1), .direc(1'b0), ._sel(4'hF), .side(1'b0), ._motor(1'b1),
+    ._track0(), ._change(), ._ready(), ._wprot(), .index(),
+    .blckint(), .syncint(), .wordsync(1'b0),
+    ._scs(spi_cs[4]), .sdi(spi_di), .sdo(paula_sdo), .sck(sck_slv),
+    .disk_led(), .floppy_drives(2'b00),
+    .direct_scs(~spi_cs[6]), .direct_sdi(sd_miso),
+    .hdd_cmd_req(1'b0), .hdd_dat_req(1'b0),
+    .hdd_addr(hdd_addr), .hdd_data_out(hdd_data_out), .hdd_data_in(hdd_data_in),
+    .hdd_wr(hdd_wr), .hdd_status_wr(hdd_status_wr),
+    .hdd_data_wr(hdd_data_wr), .hdd_data_rd(hdd_data_rd),
+    .trackdisp(), .secdisp(), .floppy_fwr(), .floppy_frd()
+  );
+
+  // ---------------------------------------------------------------- gayle model
+  // The sector FIFO side of gayle.v / gayle_fifo.v: words are written and the
+  // read pointer advanced on clk7_en, data_out is registered from the OLD
+  // read pointer, exactly as gayle_fifo does it.
+  reg [15:0] g_rx [0:1023];
+  integer    g_rx_n = 0;
+  reg [15:0] g_tx [0:1023];
+  integer    g_tx_ptr = 0;
+  reg [15:0] g_tx_out = 16'h0000;
+  assign hdd_data_in = g_tx_out;
+  always @(posedge clk28) if (clk7_en) begin
+    if (hdd_data_wr) begin
+      g_rx[g_rx_n & 1023] <= hdd_data_out;
+      g_rx_n <= g_rx_n + 1;
+    end
+    g_tx_out <= g_tx[g_tx_ptr & 1023];
+    if (hdd_data_rd) g_tx_ptr <= g_tx_ptr + 1;
+  end
+
+  // ---------------------------------------------------------------- userio_osd
+  userio_osd #(.CORE_CAPS(8'h0d)) osd1 (
+    .clk(clk28), .clk7_en(clk7_en), .clk7n_en(clk7n_en),
+    .reset(mm_reset),
+    .c1(1'b0), .c3(1'b0), .sol(1'b0), .sof(1'b0),
+    .varbeamen(1'b0), .rtg_ena(1'b0),
+    .osd_ctrl(8'h00),
+    .in_diag(32'h9A785634), .in_diag_clr(),
+    ._scs(spi_cs[5]), .sdi(spi_di), .sdo(user_sdo), .sck(sck_slv),
+    .osd_blank(), .osd_pixel(),
+    .osd_enable(), .key_disable(),
+    .lr_filter(), .hr_filter(),
+    .memory_config(), .chipset_config(), .floppy_config(),
+    .scanline(), .dither(),
+    .ide_config0(), .ide_config1(),
+    .cpu_config(), .autofire_config(), .cd32pad(),
+    .usrrst(), .cpurst(), .cpuhlt(),
+    .fifo_full(),
+    .host_cs(), .host_adr(), .host_we(), .host_bs(), .host_wdat(),
+    .host_rdat(16'h0000), .host_ack(1'b0)
+  );
+
+  // ---------------------------------------------------------------- SD card
+  // SPI mode 3 as cfide clocks it: the card changes DO after a falling edge
+  // of its CLK pin and the host samples on the rising one.  Pin path: sck
+  // routing + OBUF out, card output delay, IBUF back.
+  real    card_dly = 12.0;
+  reg     card_stream = 1'b0;
+  reg [7:0] card_sec [0:513];       // 512 data bytes + 2 CRC bytes
+  integer card_bit = 0;
+  reg     card_do = 1'b1;
+  assign  sd_miso = card_do;
+  always @(negedge spi_sck) begin
+    if (card_stream && !spi_cs[1]) begin
+      card_do <= #(sckdly + card_dly)
+        ((card_bit < 514*8) ? card_sec[card_bit >> 3][7 - (card_bit & 7)] : 1'b1);
+      card_bit = card_bit + 1;
+    end
+  end
+
+  // ---------------------------------------------------------------- 832 bus model
+  // 832_bridge.vhd: hw_req rises at a clk edge, stays up until hw_ack is seen
+  // at a clk edge, and drops at that edge.  The CPU then takes `gap' cycles
+  // before the next request.
+  integer gap = 8;
+  integer jitter;
+  localparam [31:0] HW_SPI = 32'h0fffffe0;
+
+  task bus(input [31:0] a, input w, input [7:0] data, output [7:0] rd);
+    begin
+      @(posedge clk114);
+      addr <= a[31:2];
+      d    <= {data, data};
+      wr   <= w;
+      req  <= 1'b1;
+      @(posedge clk114);
+      while (!ack) @(posedge clk114);
+      rd = q[7:0];
+      req <= 1'b0;
+      wr  <= 1'b0;
+      jitter = $urandom % 4;
+      repeat (gap + jitter) @(posedge clk114);
+    end
+  endtask
+
+  reg [7:0] dummy;
+  task cs_w(input [7:0] v);      begin bus(HW_SPI + 7, 1'b1, v, dummy); end endtask
+  task spd_w(input [7:0] v);     begin bus(HW_SPI + 11, 1'b1, v, dummy); end endtask
+  task spi_w(input [7:0] v);     begin bus(HW_SPI + 3, 1'b1, v, dummy); end endtask
+  task spi_r(output [7:0] v);    begin bus(HW_SPI + 3, 1'b0, 8'h00, v); end endtask
+  // SPI(x): write, then read back (the read waits for the transfer to end)
+  task spi(input [7:0] tx, output [7:0] rx); begin spi_w(tx); spi_r(rx); end endtask
+
+  task settle; begin repeat (400) @(posedge clk114); end endtask   // ~3.5 us
+
+  task rnd_phase; begin repeat ($urandom % 16) @(posedge clk114); end endtask
+
+  // ---------------------------------------------------------------- tests
+  reg [7:0] buf8 [0:511];
+  reg [7:0] rb;
+  integer i, errs, t_fail, t_runs;
+
+  // GetFPGAStatus(): six bytes, so the slave's word counter ends at 2 and the
+  // direct-mode words that follow are not decoded as command words.
+  task fpga_status;
+    integer k;
+    begin
+      cs_w(8'h10);
+      for (k = 0; k < 6; k = k + 1) spi(8'h00, rb);
+      cs_w(8'h11);
+    end
+  endtask
+
+  task t_wr(output integer bad);
+    integer k, n0;
+    begin
+      for (k = 0; k < 512; k = k + 1) buf8[k] = $urandom;
+      rnd_phase;
+      n0 = g_rx_n;
+      cs_w(8'h10);
+      spi(8'hA0, rb);
+      for (k = 0; k < 5; k = k + 1) spi(8'h00, rb);
+      for (k = 0; k < 512; k = k + 1) spi(buf8[k], rb);
+      cs_w(8'h11);
+      settle;
+      bad = 0;
+      if (g_rx_n - n0 != 256) begin
+        $display("  wr: %0d words received, want 256", g_rx_n - n0);
+        bad = 1;
+      end
+      for (k = 0; k < 256 && !bad; k = k + 1)
+        if (g_rx[(n0 + k) & 1023] !== {buf8[2*k], buf8[2*k+1]}) begin
+          $display("  wr: word %0d = %h, want %h", k, g_rx[(n0 + k) & 1023], {buf8[2*k], buf8[2*k+1]});
+          bad = 1;
+        end
+    end
+  endtask
+
+  task t_rd(output integer bad);
+    integer k;
+    reg [7:0] got [0:511];
+    begin
+      for (k = 0; k < 1024; k = k + 1) g_tx[k] = $urandom;
+      @(posedge clk28); g_tx_ptr = 0;
+      repeat (16) @(posedge clk28);
+      rnd_phase;
+      cs_w(8'h10);
+      spi(8'hB0, rb);
+      for (k = 0; k < 5; k = k + 1) spi(8'h00, rb);
+      for (k = 0; k < 512; k = k + 1) spi(8'hFF, got[k]);
+      cs_w(8'h11);
+      settle;
+      bad = 0;
+      for (k = 0; k < 256 && !bad; k = k + 1)
+        if ({got[2*k], got[2*k+1]} !== g_tx[k]) begin
+          $display("  rd: word %0d = %h, want %h", k, {got[2*k], got[2*k+1]}, g_tx[k]);
+          bad = 1;
+        end
+    end
+  endtask
+
+  task t_direct(output integer bad);
+    integer k, n0;
+    begin
+      for (k = 0; k < 514; k = k + 1) card_sec[k] = $urandom;
+      fpga_status;
+      rnd_phase;
+      cs_w(8'h02);                 // EnableCard (CMD18 + data token not modelled)
+      n0 = g_rx_n;
+      card_bit = 0;
+      card_stream = 1'b1;
+      // As the shipped firmware compiles it (832OSDAD.bin, MMC_Read*):
+      //   li 0x40; byt; st r4      EnableDMode()
+      //   mt r5;   byt; st r3      SPI(0xFF) -- vbcc drops its read-back
+      //   byt; ld r3               i = RDSPI: stalls until the 4096 bits are done
+      //   mr r0; li 8; addt r6; stmpdec r0     i to the stack (an SDRAM write)
+      //   li 1; li 1; byt; st r4   DisableDMode()
+      // so the chip select drops `gap' cycles after the RDSPI ack.
+      cs_w(8'h40);                 // EnableDMode
+      spi_w(8'hFF);                // dummy write for 4096 clocks
+      spi_r(rb);                   // i = RDSPI
+      cs_w(8'h41);                 // DisableDMode
+      spi(8'hFF, rb);              // CRC lo
+      spi(8'hFF, rb);              // CRC hi
+      cs_w(8'h03);                 // DisableCard
+      card_stream = 1'b0;
+      settle;
+      bad = 0;
+      if (g_rx_n - n0 != 256) begin
+        $display("  direct: %0d words received, want 256", g_rx_n - n0);
+        bad = 1;
+      end
+      for (k = 0; k < 256 && !bad; k = k + 1)
+        if (g_rx[(n0 + k) & 1023] !== {card_sec[2*k], card_sec[2*k+1]}) begin
+          $display("  direct: word %0d = %h, want %h", k, g_rx[(n0 + k) & 1023], {card_sec[2*k], card_sec[2*k+1]});
+          bad = 1;
+        end
+    end
+  endtask
+
+  reg [7:0] osd_ref [0:9];
+  task osd_version(output integer bad, input integer keep_ref);
+    integer k;
+    reg [7:0] got [0:9];
+    begin
+      rnd_phase;
+      cs_w(8'h20);
+      spi(8'h88, rb);
+      for (k = 0; k < 10; k = k + 1) spi(8'hFF, got[k]);
+      cs_w(8'h21);
+      settle;
+      bad = 0;
+      for (k = 0; k < 10; k = k + 1) begin
+        if (keep_ref) osd_ref[k] = got[k];
+        else if (got[k] !== osd_ref[k] && !bad) begin
+          $display("  osd: byte %0d = %h, want %h", k, got[k], osd_ref[k]);
+          bad = 1;
+        end
+      end
+    end
+  endtask
+
+  // ---------------------------------------------------------------- debug trace
+  always @(negedge sck_slv) if (debug && !spi_cs[4] && pf1.spi_bit_cnt == 4'd0)
+    $display("%t LOAD word: tx_cnt=%0d data=%h g_tx_out=%h ptr=%0d", $time, pf1.spi_tx_cnt, pf1.spi_tx_data, g_tx_out, g_tx_ptr);
+  always @(posedge clk28) if (debug && clk7_en && hdd_data_rd)
+    $display("%t POP ptr=%0d", $time, g_tx_ptr);
+  always @(posedge clk114) if (debug && req && ack && !wr && addr[3:2] == 2'b00)
+    $display("%t READ %h", $time, q[7:0]);
+  always @(posedge clk114) if (debug && req && wr && addr[3:2] == 2'b00 && !mycfide.SD_busy)
+    $display("%t WRITE %h", $time, d[7:0]);
+
+  // ---------------------------------------------------------------- main
+  integer gaps [0:63];
+  integer ngaps = 16;
+  integer sweep = 0;
+  integer g, r, bad, total_fail, osd_fail_low;
+  integer f_wr, f_rd, f_dir, f_osd;
+
+  initial begin
+    if (!$value$plusargs("SCKDLY=%f", sckdly)) sckdly = 1.5;
+    if (!$value$plusargs("C28DLY=%f", c28dly)) c28dly = 0.3;
+    if (!$value$plusargs("SPEED=%d", speed)) speed = 1;
+    if (!$value$plusargs("SEED=%d", seed)) seed = 1;
+    if (!$value$plusargs("REPS=%d", reps)) reps = 3;
+    // The OSD reply needs a slow host: userio_osd loads a reply byte on the
+    // first sck edge of that byte, and the byte counter it comes from only
+    // moves when the previous byte's rx has been through the clk7 synchroniser
+    // and the clk7 logic (up to ~350 ns after its last bit).  A host that
+    // starts the next byte sooner gets a stale reply.  The 832 is slow enough
+    // (fpga_init's version read sees the 0xA4 magic on the board), so the
+    // bench reports osd below 40 cycles but does not fail on it.
+    if (!$value$plusargs("OSD_MIN_GAP=%d", osd_min_gap)) osd_min_gap = 40;
+    if (!$value$plusargs("TESTS=%d", tests_mask)) tests_mask = 15;
+    if (!$value$plusargs("GAPMAX=%d", gapmax)) gapmax = 1000;
+    if (!$value$plusargs("DEBUG=%d", debug)) debug = 0;
+    dummy = $urandom(seed);
+
+    // From 2: 832_bridge.vhd cannot raise the next hw_req less than two
+    // cycles after it saw hw_ack (cpu_ack, then the waiting state).  Faster
+    // than that the bus model would take cfide's previous ack, which is a
+    // clk_28 register and stays up until the next clk_28 edge, for the new
+    // request -- a host-bus matter, not the SPI one.
+    gaps[0] = 2;  gaps[1] = 3;  gaps[2] = 4;  gaps[3] = 5;
+    gaps[4] = 6;  gaps[5] = 8;  gaps[6] = 10; gaps[7] = 12;
+    gaps[8] = 16; gaps[9] = 20; gaps[10] = 24; gaps[11] = 28;
+    gaps[12] = 32; gaps[13] = 40; gaps[14] = 48; gaps[15] = 64;
+    // +SWEEP=1: every even gap from 2 to 80, for the direct-mode threshold
+    if ($value$plusargs("SWEEP=%d", sweep) && sweep) begin
+      ngaps = 40;
+      for (g = 0; g < 40; g = g + 1) gaps[g] = 2 + 2*g;
+    end
+
+    $display("SPI CDC bench: SCKDLY=%0.2f ns C28DLY=%0.2f ns SPEED=%0d SEED=%0d REPS=%0d",
+             sckdly, c28dly, speed, seed, reps);
+
+    repeat (20) @(posedge clk114);
+    n_reset = 1'b1;
+    repeat (40) @(posedge clk28);
+    mm_reset = 1'b0;
+    repeat (40) @(posedge clk28);
+
+    gap = 100;
+    spd_w(speed);
+    // the slaves' first transaction after reset
+    fpga_status;
+    osd_version(bad, 1);            // reference reply, slow host
+    $display("OSD reference: %h %h %h %h %h %h %h %h %h %h",
+             osd_ref[0], osd_ref[1], osd_ref[2], osd_ref[3], osd_ref[4],
+             osd_ref[5], osd_ref[6], osd_ref[7], osd_ref[8], osd_ref[9]);
+
+    total_fail = 0;
+    osd_fail_low = 0;
+    for (g = 0; g < ngaps && gaps[g] <= gapmax; g = g + 1) begin
+      gap = gaps[g];
+      f_wr = 0; f_rd = 0; f_dir = 0; f_osd = 0;
+      for (r = 0; r < reps; r = r + 1) begin
+        if (tests_mask & 1) begin t_wr(bad);     f_wr  = f_wr + bad; end
+        if (tests_mask & 2) begin t_rd(bad);     f_rd  = f_rd + bad; end
+        if (tests_mask & 4) begin t_direct(bad); f_dir = f_dir + bad; end
+        if (tests_mask & 8) begin osd_version(bad, 0); f_osd = f_osd + bad; end
+      end
+      $display("GAP %0d wr fail %0d/%0d", gap, f_wr, reps);
+      $display("GAP %0d rd fail %0d/%0d", gap, f_rd, reps);
+      $display("GAP %0d direct fail %0d/%0d", gap, f_dir, reps);
+      $display("GAP %0d osd fail %0d/%0d", gap, f_osd, reps);
+      total_fail = total_fail + f_wr + f_rd + f_dir;
+      if (gap >= osd_min_gap) total_fail = total_fail + f_osd;
+      else osd_fail_low = osd_fail_low + f_osd;
+    end
+
+    if (osd_fail_low)
+      $display("NOTE: %0d osd failures below OSD_MIN_GAP=%0d (not counted)", osd_fail_low, osd_min_gap);
+    if (total_fail == 0) $display("=== PASS");
+    else                 $display("=== FAIL (%0d failing sectors)", total_fail);
+    $finish;
+  end
+
+endmodule

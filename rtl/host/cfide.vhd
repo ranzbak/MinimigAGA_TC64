@@ -117,6 +117,20 @@ architecture rtl of cfide is
     signal sd_di_in    : std_logic;
     signal shiftcnt    : std_logic_vector(13 downto 0);
     signal sck         : std_logic;
+    -- The SPI clock as it leaves cfide: the same value as sck, in a register of
+    -- its own.  sck is read by the shift logic below as DATA; the pin is the
+    -- clock of every SPI slave in the Minimig (paula_floppy, userio_osd_spi).
+    -- With one register doing both, a clock defined on that register's output
+    -- (fpga/openaars/.../sd_card.xdc) also became the launch clock of this
+    -- process's own sck -> sck/shiftcnt/sd_out/sd_in_shift paths, and those
+    -- single-cycle sysclk paths went untimed with the SPI clock's crossings.
+    -- Keep the two apart; the attributes stop synthesis from merging them
+    -- back (dont_touch for Vivado, preserve for Quartus; each ignores the other).
+    signal sck_pin     : std_logic;
+    attribute dont_touch : string;
+    attribute dont_touch of sck_pin : signal is "true";
+    attribute preserve : boolean;
+    attribute preserve of sck_pin : signal is true;
     signal scs         : std_logic_vector(7 downto 0);
     --signal dscs       : std_logic;
     signal SD_busy     : std_logic;
@@ -376,7 +390,7 @@ begin
     -- SPI-Interface
     -----------------------------------------------------------------
     sd_cs   <= NOT scs;
-    sd_clk  <= NOT sck;
+    sd_clk  <= NOT sck_pin;
     sd_do   <= sd_out(15);
     SD_busy <= shiftcnt(13);
 
@@ -392,6 +406,7 @@ begin
             spi_div   <= (OTHERS => '0');
             scs       <= (OTHERS => '0');
             sck       <= '0';
+            sck_pin   <= '0';
             spi_speed <= "00000000";
             -- dscs      <= '0';
             spi_wait  <= '0';
@@ -450,6 +465,7 @@ begin
                             sd_out(15 downto 8) <= d(7 downto 0);
                         END IF;
                         sck <= '1';
+                        sck_pin <= '1';
                     when others =>
                         null;
                 end case;
@@ -469,11 +485,13 @@ begin
                         IF sck = '0' THEN
                             IF shiftcnt(12 downto 0) /= "0000000000000" THEN
                                 sck <= '1';
+                                sck_pin <= '1';
                             END IF;
                             shiftcnt <= shiftcnt - 1;
                             sd_out   <= sd_out(14 downto 0) & '1';
                         ELSE
                             sck         <= '0';
+                            sck_pin     <= '0';
                             sd_in_shift <= sd_in_shift(14 downto 0) & sd_di_in;
                         END IF;
                     END IF;

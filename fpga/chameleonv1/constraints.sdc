@@ -16,7 +16,7 @@ set clk_28    "virtual_top|amiga_clk|amiga_clk_i|altpll_component|auto_generated
 
 # generated clocks
 create_generated_clock -name clk_sdram -source [get_pins {virtual_top|amiga_clk|amiga_clk_i|altpll_component|auto_generated|pll1|clk[0]}] [get_ports {sd_clk}]
-create_generated_clock -name clk_spi -source [get_pins $clk_114] -divide_by 4 [get_nets {minimig_virtual_top:virtual_top|cfide:mycfide|sck}]
+create_generated_clock -name clk_spi -source [get_pins $clk_114] -divide_by 4 [get_nets {minimig_virtual_top:virtual_top|cfide:mycfide|sck_pin}]
 
 
 # name SDRAM ports
