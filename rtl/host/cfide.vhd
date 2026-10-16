@@ -94,7 +94,9 @@ end cfide;
 architecture rtl of cfide is
 
     signal shift           : std_logic_vector(9 downto 0);
-    signal clkgen          : std_logic_vector(9 downto 0);
+    -- clkgen and timecnt have no reset: the explicit 0 is the FPGA power-up value
+    -- (Xilinx and Intel honour VHDL signal initial values) and lets simulation count
+    signal clkgen          : std_logic_vector(9 downto 0) := (others => '0');
     signal shiftout        : std_logic;
     signal txbusy          : std_logic;
     signal uart_ld         : std_logic;
@@ -139,7 +141,7 @@ architecture rtl of cfide is
     signal spi_wait    : std_logic;
     signal spi_wait_d  : std_logic;
 
-    signal timecnt : std_logic_vector(23 downto 0);
+    signal timecnt : std_logic_vector(23 downto 0) := (others => '0'); -- no reset, see clkgen
 
     signal rs232_select : std_logic;
     --signal rs232data : std_logic_vector(15 downto 0);
