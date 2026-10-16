@@ -566,7 +566,7 @@ static void t_mode_sense(void)
 	expect_response(__LINE__, c, 28);
 	EXPECT(be16(atapi_buf) == 26, "mode data length %u", be16(atapi_buf));
 	EXPECT(atapi_buf[8] == 0x2A && atapi_buf[9] == 0x12, "page 2A header %02X %02X", atapi_buf[8], atapi_buf[9]);
-	EXPECT((atapi_buf[8 + 4] & 0x01) == 0, "audio play claimed before phase 3");
+	EXPECT((atapi_buf[8 + 4] & 0x01) != 0, "audio play not advertised (13.6)");
 	EXPECT((atapi_buf[8 + 6] & 0x02) == 0, "lock state set while unlocked");
 
 	mode_sense10(c, 0x3F, 0xFFFF);
@@ -625,8 +625,10 @@ static void t_no_disc(void)
 	expect_response(__LINE__, c, 36);
 	cdb0(c, 0x46);
 	c[8] = 0xFF;
-	expect_response(__LINE__, c, 16);
+	expect_response(__LINE__, c, 24);	/* profile list + feature 0103h */
 	EXPECT(be16(atapi_buf + 6) == 0x0008, "current profile %04X", be16(atapi_buf + 6));
+	EXPECT(be16(atapi_buf + 16) == 0x0103 && atapi_buf[18] == 0x00, "feature %04X flags %02X with no disc",
+	       be16(atapi_buf + 16), atapi_buf[18]);
 	gesn(c, 1, 0x10, 8);
 	expect_response(__LINE__, c, 8);
 	EXPECT(atapi_buf[5] == 0x00, "media status %02X with no disc", atapi_buf[5]);
@@ -839,9 +841,9 @@ static void t_read(void)
 static void t_misc(void)
 {
 	uint8_t c[12];
-	static const uint8_t nodata[] = { 0x2B, 0x35, 0x45, 0x47, 0x4B, 0x4E, 0xBC };
+	static const uint8_t nodata[] = { 0x2B, 0x35, 0x45, 0x47, 0xBC };	/* 45 / 47 of length 0 */
 	unsigned i;
-	begin("SEEK, SYNC CACHE, audio no-ops, MODE SELECT, sub-channel, disc/track info");
+	begin("SEEK, SYNC CACHE, empty plays, MODE SELECT, sub-channel, disc/track info");
 	ready_unit(OS39_SECTORS, OS39_NAME);
 	for (i = 0; i < sizeof(nodata); i++) {
 		cdb0(c, nodata[i]);
@@ -990,6 +992,198 @@ static void t_read_audio(void)
 	end();
 }
 
+/* The command must end in ATAPI_PLAY (or DONE for kind) with this request. */
+static void expect_play(int line, const uint8_t *c, int kind, int32_t audio, uint32_t lba, uint32_t count)
+{
+	int k = run(c);
+	if (k != kind || R.audio != audio || (audio == ATAPI_AUDIO_PLAY && (R.lba != lba || R.count != count))) {
+		case_fails++;
+		printf("  FAIL %s (line %d): CDB %02X kind %d audio %d lba %u count %u (sense %02X/%02X/%02X),"
+		       " want kind %d audio %d lba %u count %u\n", case_name, line, c[0], k, R.audio, R.lba, R.count,
+		       R.sense_key, R.asc, R.ascq, kind, audio, lba, count);
+	}
+}
+
+static void play10(uint8_t *c, uint32_t lba, uint16_t len)
+{
+	cdb0(c, 0x45);
+	put_be32(c + 2, lba);
+	c[7] = (uint8_t)(len >> 8);
+	c[8] = (uint8_t)len;
+}
+
+static void play_msf(uint8_t *c, uint8_t m0, uint8_t s0, uint8_t f0, uint8_t m1, uint8_t s1, uint8_t f1)
+{
+	cdb0(c, 0x47);
+	c[3] = m0; c[4] = s0; c[5] = f0;
+	c[6] = m1; c[7] = s1; c[8] = f1;
+}
+
+static void play_ti(uint8_t *c, uint8_t st, uint8_t si, uint8_t et, uint8_t ei)
+{
+	cdb0(c, 0x48);
+	c[4] = st; c[5] = si;
+	c[7] = et; c[8] = ei;
+}
+
+static void t_play(void)
+{
+	uint8_t c[12];
+	begin("PLAY AUDIO 45/A5/47/48, PAUSE/RESUME, STOP, START STOP: play requests for the glue");
+	ready_disc(pinball(), "Pinball Fantasies");
+	play10(c, 2358, 100);
+	expect_play(__LINE__, c, ATAPI_PLAY, ATAPI_AUDIO_PLAY, 2358, 100);
+	play10(c, 2208, 10);	/* track 2's silent PREGAP is audio track 2 */
+	expect_play(__LINE__, c, ATAPI_PLAY, ATAPI_AUDIO_PLAY, 2208, 10);
+	play10(c, 2358, 0);
+	expect_play(__LINE__, c, ATAPI_DONE, 0, 0, 0);
+	play10(c, 0, 10);
+	expect_check(__LINE__, c, 0x05, 0x64, 0x00);	/* starts in the data track */
+	play10(c, 41650, 10);
+	expect_check(__LINE__, c, 0x05, 0x21, 0x00);
+	cdb0(c, 0xA5);
+	put_be32(c + 2, 20283);
+	put_be32(c + 6, 21375);
+	expect_play(__LINE__, c, ATAPI_PLAY, ATAPI_AUDIO_PLAY, 20283, 21375);
+
+	play_msf(c, 0, 33, 33, 4, 32, 33);	/* 2358 .. 20283 */
+	expect_play(__LINE__, c, ATAPI_PLAY, ATAPI_AUDIO_PLAY, 2358, 17925);
+	play_msf(c, 0, 33, 33, 0, 33, 33);
+	expect_play(__LINE__, c, ATAPI_DONE, 0, 0, 0);
+	play_msf(c, 4, 32, 33, 0, 33, 33);
+	expect_check(__LINE__, c, 0x05, 0x24, 0x00);
+	play_msf(c, 0, 0, 0, 0, 2, 10);	/* the lead-in counts as LBA 0: data */
+	expect_check(__LINE__, c, 0x05, 0x64, 0x00);
+
+	play_ti(c, 2, 1, 2, 1);
+	expect_play(__LINE__, c, ATAPI_PLAY, ATAPI_AUDIO_PLAY, 2358, 17775);	/* to track 3's INDEX 00 */
+	play_ti(c, 2, 0, 3, 1);
+	expect_play(__LINE__, c, ATAPI_PLAY, ATAPI_AUDIO_PLAY, 2208, 41658 - 2208);
+	play_ti(c, 3, 1, 99, 1);
+	expect_play(__LINE__, c, ATAPI_PLAY, ATAPI_AUDIO_PLAY, 20283, 21375);
+	play_ti(c, 3, 0, 3, 0);
+	expect_play(__LINE__, c, ATAPI_PLAY, ATAPI_AUDIO_PLAY, 20133, 150);
+	play_ti(c, 1, 1, 1, 1);
+	expect_check(__LINE__, c, 0x05, 0x64, 0x00);
+	play_ti(c, 4, 1, 4, 1);
+	expect_check(__LINE__, c, 0x05, 0x24, 0x00);
+	play_ti(c, 3, 1, 2, 1);
+	expect_check(__LINE__, c, 0x05, 0x24, 0x00);
+
+	cdb0(c, 0x4B);
+	expect_play(__LINE__, c, ATAPI_PLAY, ATAPI_AUDIO_PAUSE, 0, 0);
+	c[8] = 0x01;
+	expect_play(__LINE__, c, ATAPI_PLAY, ATAPI_AUDIO_RESUME, 0, 0);
+	cdb0(c, 0x4E);
+	expect_play(__LINE__, c, ATAPI_PLAY, ATAPI_AUDIO_STOP, 0, 0);
+	start_stop(c, 0, 1);
+	expect_play(__LINE__, c, ATAPI_DONE, 0, 0, 0);
+	start_stop(c, 0, 0);
+	expect_play(__LINE__, c, ATAPI_DONE, ATAPI_AUDIO_STOP, 0, 0);
+	start_stop(c, 1, 0);
+	expect_play(__LINE__, c, ATAPI_DONE, ATAPI_AUDIO_STOP, 0, 0);
+	EXPECT(R.ejected == 1 && !U.media, "eject: ejected %d media %d", R.ejected, U.media);
+	end();
+}
+
+static void subq(uint8_t *c, int msf)
+{
+	cdb0(c, 0x42);
+	c[1] = msf ? 0x02 : 0x00;
+	c[2] = 0x40;
+	c[3] = 0x01;
+	c[8] = 0xFF;
+}
+
+static void t_subchannel(void)
+{
+	static const uint8_t playing[16] = {
+		0x00, 0x11, 0x00, 0x0C, 0x01, 0x10, 0x02, 0x01,
+		0x00, 0x00, 0x09, 0x60, 0x00, 0x00, 0x00, 0x2A	/* LBA 2400, relative 42 */
+	};
+	static const uint8_t playing_msf[16] = {
+		0x00, 0x11, 0x00, 0x0C, 0x01, 0x10, 0x02, 0x01,
+		0x00, 0, 34, 0, 0x00, 0, 0, 42			/* 00:34:00, relative 00:00:42 */
+	};
+	static const uint8_t gap[16] = {
+		0x00, 0x12, 0x00, 0x0C, 0x01, 0x10, 0x02, 0x00,
+		0x00, 0x00, 0x08, 0xFC, 0xFF, 0xFF, 0xFF, 0xC6	/* LBA 2300, index 0, relative -58 */
+	};
+	uint8_t c[12];
+	begin("READ SUB-CHANNEL: the player's status and position; 13/14 once, then 15");
+	ready_disc(pinball(), "Pinball Fantasies");
+	subq(c, 0);
+	expect_response(__LINE__, c, 16);
+	EXPECT(atapi_buf[1] == 0x15 && atapi_buf[6] == 1 && atapi_buf[5] == 0x14, "idle: status %02X track %u",
+	       atapi_buf[1], atapi_buf[6]);
+	atapi_audio_status(&U, ATAPI_AUDIO_PLAYING, 2400);
+	expect_response(__LINE__, c, 16);
+	expect_bytes(__LINE__, playing, 0, 16);
+	subq(c, 1);
+	expect_response(__LINE__, c, 16);
+	expect_bytes(__LINE__, playing_msf, 0, 16);
+	atapi_audio_status(&U, ATAPI_AUDIO_PAUSED, 2300);
+	subq(c, 0);
+	expect_response(__LINE__, c, 16);
+	expect_bytes(__LINE__, gap, 0, 16);
+	subq(c, 1);
+	expect_response(__LINE__, c, 16);
+	EXPECT(atapi_buf[13] == 0 && atapi_buf[14] == 0 && atapi_buf[15] == 58, "gap relative MSF %u:%u:%u",
+	       atapi_buf[13], atapi_buf[14], atapi_buf[15]);
+
+	atapi_audio_status(&U, ATAPI_AUDIO_COMPLETED, 41657);
+	subq(c, 0);
+	expect_response(__LINE__, c, 16);
+	EXPECT(atapi_buf[1] == 0x13 && atapi_buf[6] == 3, "completed: %02X track %u", atapi_buf[1], atapi_buf[6]);
+	atapi_audio_status(&U, ATAPI_AUDIO_COMPLETED, 41657);
+	cdb0(c, 0x42);	/* header only (SubQ 0) */
+	c[8] = 0xFF;
+	expect_response(__LINE__, c, 4);
+	EXPECT(atapi_buf[1] == 0x15, "completed reported twice: %02X", atapi_buf[1]);
+	play10(c, 2358, 10);	/* a new play: its end is news again */
+	run(c);
+	atapi_audio_status(&U, ATAPI_AUDIO_COMPLETED, 2367);
+	subq(c, 0);
+	expect_response(__LINE__, c, 16);
+	EXPECT(atapi_buf[1] == 0x13, "the next completion: %02X", atapi_buf[1]);
+	atapi_audio_status(&U, ATAPI_AUDIO_ERROR, 2367);
+	expect_response(__LINE__, c, 16);
+	EXPECT(atapi_buf[1] == 0x14, "error: %02X", atapi_buf[1]);
+	atapi_audio_status(&U, ATAPI_AUDIO_ERROR, 2367);
+	expect_response(__LINE__, c, 16);
+	EXPECT(atapi_buf[1] == 0x15, "error reported twice: %02X", atapi_buf[1]);
+	end();
+}
+
+static void t_audio_caps(void)
+{
+	uint8_t c[12];
+	begin("audio advertised: MODE SENSE 2A byte 4 bit 0, GET CONFIGURATION feature 0103h");
+	ready_disc(pinball(), "Pinball Fantasies");
+	mode_sense10(c, 0x2A, 0xFFFF);
+	expect_response(__LINE__, c, 28);
+	EXPECT(atapi_buf[8 + 4] & 0x01, "page 2A byte 4 = %02X", atapi_buf[8 + 4]);
+	cdb0(c, 0x46);
+	c[8] = 0xFF;
+	expect_response(__LINE__, c, 24);
+	EXPECT(be32(atapi_buf) == 20 && be16(atapi_buf + 8) == 0x0000 && be16(atapi_buf + 16) == 0x0103 &&
+	       atapi_buf[18] == 0x01 && atapi_buf[19] == 4 && atapi_buf[20] == 0x03 && be16(atapi_buf + 22) == 256,
+	       "features %04X %04X flags %02X", be16(atapi_buf + 8), be16(atapi_buf + 16), atapi_buf[18]);
+	cdb0(c, 0x46);
+	c[1] = 0x02;	/* RT 2: that feature alone */
+	c[2] = 0x01;
+	c[3] = 0x03;
+	c[8] = 0xFF;
+	expect_response(__LINE__, c, 16);
+	EXPECT(be16(atapi_buf + 8) == 0x0103, "feature %04X", be16(atapi_buf + 8));
+	cdb0(c, 0x46);
+	c[2] = 0x01;
+	c[3] = 0x04;
+	c[8] = 0xFF;
+	expect_response(__LINE__, c, 8);
+	end();
+}
+
 static void t_iso_read(const char *path)
 {
 	uint8_t c[12];
@@ -1079,6 +1273,9 @@ int main(int argc, char **argv)
 	t_toc_tracks();
 	t_tracks_info();
 	t_read_audio();
+	t_play();
+	t_subchannel();
+	t_audio_caps();
 	t_iso_read(path);
 
 	if (iso_fd >= 0)

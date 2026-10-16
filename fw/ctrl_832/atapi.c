@@ -151,6 +151,19 @@ static int respond(struct atapi_unit *u, struct atapi_result *r, uint32_t full, 
 void atapi_init(struct atapi_unit *u)
 {
 	memset(u, 0, sizeof(*u));
+	u->audio_status = ATAPI_AUDIO_NONE;
+}
+
+void atapi_audio_status(struct atapi_unit *u, int32_t status, uint32_t lba)
+{
+	if (status == ATAPI_AUDIO_COMPLETED || status == ATAPI_AUDIO_ERROR) {
+		if (u->audio_seen == status)
+			status = ATAPI_AUDIO_NONE;	/* reported once already */
+	} else {
+		u->audio_seen = 0;
+	}
+	u->audio_status = status;
+	u->audio_lba = lba;
 }
 
 void atapi_reset(struct atapi_unit *u)
@@ -278,9 +291,10 @@ static uint8_t *mode_page(uint8_t *p, uint8_t code, const struct atapi_unit *u)
 		p[10] = 0x02;	/* port 1: channel 1, full volume */
 		p[11] = 0xFF;
 		return p + 16;
-	case 0x2A:		/* capabilities: CD-ROM read, no audio play until phase 3 */
+	case 0x2A:		/* capabilities: CD-ROM read, audio play (13.6) */
 		p[0] = 0x2A;
 		p[1] = 0x12;
+		p[4] = 0x01;	/* audio play */
 		p[6] = (uint8_t)(0x29 | (u->locked ? 0x02 : 0));	/* tray, eject, lock (+ state) */
 		put16(p + 8, 706);	/* max read speed, KB/s (4x) */
 		put16(p + 10, 256);	/* volume levels */
@@ -366,20 +380,44 @@ static int read_toc(struct atapi_unit *u, const uint8_t *cdb, struct atapi_resul
 	return respond(u, r, (uint32_t)(p - b), get16(cdb + 7));
 }
 
+/* Relative address in a track: LBA (negative in the gap before INDEX 01),
+   or MSF counting away from INDEX 01 without the 150-frame offset. */
+static void put_rel(uint8_t *p, int32_t rel, int msf)
+{
+	if (msf) {
+		uint32_t a = (uint32_t)(rel < 0 ? -rel : rel);
+		p[0] = 0;
+		p[1] = (uint8_t)(a / (75 * 60));
+		p[2] = (uint8_t)((a / 75) % 60);
+		p[3] = (uint8_t)(a % 75);
+	} else {
+		put32(p, (uint32_t)rel);
+	}
+}
+
 static int read_subchannel(struct atapi_unit *u, const uint8_t *cdb, struct atapi_result *r)
 {
+	const struct cd_disc *d = u->disc;
 	uint8_t *b = atapi_buf;
 	uint32_t n = 0;
-	b[1] = 0x15;		/* audio status: none */
+	int32_t status = u->audio_status;
+	b[1] = (uint8_t)status;	/* audio status: the player's */
 	if (cdb[2] & 0x40) {	/* SubQ */
 		uint8_t format = cdb[3];
 		b[4] = format;
-		if (format == 1) {	/* current position: start of track 1 */
-			b[5] = ADR_CTRL_DATA;
-			b[6] = 1;
-			b[7] = 1;
-			put_addr(b + 8, 0, cdb[1] & 0x02);
-			n = 12;	/* relative address 0 in either format */
+		if (format == 1) {	/* current position: where the player is */
+			const struct cd_track *t;
+			struct cue_loc l;
+			uint32_t lba = u->audio_lba < u->sectors ? u->audio_lba : 0;
+			int msf = cdb[1] & 0x02;
+			cue_locate(d, lba, &l);
+			t = &d->track[l.track];
+			b[5] = adr_ctrl(t);
+			b[6] = t->number;
+			b[7] = (uint8_t)l.index;
+			put_addr(b + 8, lba, msf);
+			put_rel(b + 12, (int32_t)lba - (int32_t)t->lba, msf);
+			n = 12;
 		} else if (format == 2 || format == 3) {	/* MCN / ISRC: not valid */
 			if (format == 3)
 				b[6] = cdb[6];
@@ -388,6 +426,8 @@ static int read_subchannel(struct atapi_unit *u, const uint8_t *cdb, struct atap
 			return ILLEGAL_FIELD(u, r);
 		}
 	}
+	if (status == ATAPI_AUDIO_COMPLETED || status == ATAPI_AUDIO_ERROR)
+		u->audio_seen = status;	/* then NONE (atapi_audio_status) */
 	put16(b + 2, n);
 	return respond(u, r, 4 + n, get16(cdb + 7));
 }
@@ -395,17 +435,27 @@ static int read_subchannel(struct atapi_unit *u, const uint8_t *cdb, struct atap
 static int get_configuration(struct atapi_unit *u, const uint8_t *cdb, struct atapi_result *r)
 {
 	uint8_t *b = atapi_buf;
-	uint32_t total = 8;
+	uint8_t *p = b + 8;
+	uint32_t start = get16(cdb + 2);
+	int only = (cdb[1] & 0x03) == 0x02;	/* RT 2: the starting feature alone */
 	put16(b + 6, 0x0008);	/* current profile: CD-ROM */
-	if (get16(cdb + 2) == 0) {	/* starting feature 0: the profile list */
-		b[10] = 0x03;	/* persistent, current */
-		b[11] = 4;
-		put16(b + 12, 0x0008);
-		b[14] = 0x01;	/* current */
-		total = 16;
+	if (start == 0) {	/* the profile list */
+		p[2] = 0x03;	/* persistent, current */
+		p[3] = 4;
+		put16(p + 4, 0x0008);
+		p[6] = 0x01;	/* current */
+		p += 8;
 	}
-	put32(b, total - 4);
-	return respond(u, r, total, get16(cdb + 7));
+	if (only ? start == 0x0103 : start <= 0x0103) {	/* CD audio external play */
+		put16(p, 0x0103);
+		p[2] = u->media ? 0x01 : 0x00;	/* current with a disc in */
+		p[3] = 4;
+		p[4] = 0x03;	/* separate channel mute, separate volume */
+		put16(p + 6, 256);	/* volume levels */
+		p += 8;
+	}
+	put32(b, (uint32_t)(p - b) - 4);
+	return respond(u, r, (uint32_t)(p - b), get16(cdb + 7));
 }
 
 static int event_status(struct atapi_unit *u, const uint8_t *cdb, struct atapi_result *r)
@@ -498,7 +548,92 @@ static int start_stop(struct atapi_unit *u, const uint8_t *cdb, struct atapi_res
 			return check(u, r, 0x05, 0x53, 0x02);
 		r->ejected = 1;
 	}
+	if (!(cdb[4] & 0x01))	/* stop or eject: playback ends */
+		r->audio = ATAPI_AUDIO_STOP;
 	return good(u, r);
+}
+
+/* ---- audio (13.6) ---- */
+
+/* A play request for sectors start .. end - 1 (end > start). */
+static int play(struct atapi_unit *u, struct atapi_result *r, uint32_t start, uint32_t end)
+{
+	const struct cd_disc *d = u->disc;
+	struct cue_loc l;
+	if (start >= u->sectors || end > u->sectors)
+		return check(u, r, 0x05, 0x21, 0x00);
+	cue_locate(d, start, &l);
+	if (d->track[l.track].type != CD_AUDIO)	/* starts in a data track */
+		return check(u, r, 0x05, 0x64, 0x00);
+	set_sense(u, 0, 0, 0);
+	u->audio_seen = 0;
+	r->audio = ATAPI_AUDIO_PLAY;
+	r->lba = start;
+	r->count = end - start;
+	r->kind = ATAPI_PLAY;
+	return ATAPI_PLAY;
+}
+
+/* PLAY AUDIO(10) 45 / (12) A5: LBA + length; length 0 does nothing. */
+static int play_lba(struct atapi_unit *u, const uint8_t *cdb, struct atapi_result *r)
+{
+	uint32_t lba = get32(cdb + 2);
+	uint32_t len = cdb[0] == 0x45 ? get16(cdb + 7) : get32(cdb + 6);
+	if (!len)
+		return good(u, r);
+	if (lba >= u->sectors || len > u->sectors - lba)
+		return check(u, r, 0x05, 0x21, 0x00);
+	return play(u, r, lba, lba + len);
+}
+
+/* MSF -> LBA; addresses in the first 2 seconds (the lead-in pregap) are LBA 0. */
+static uint32_t msf_lba(const uint8_t *p)
+{
+	uint32_t f = ((uint32_t)p[0] * 60 + p[1]) * 75 + p[2];
+	return f < 150 ? 0 : f - 150;
+}
+
+/* PLAY AUDIO MSF 47: start MSF (3-5) .. end MSF (6-8). */
+static int play_msf(struct atapi_unit *u, const uint8_t *cdb, struct atapi_result *r)
+{
+	uint32_t start = msf_lba(cdb + 3), end = msf_lba(cdb + 6);
+	if (start == end)
+		return good(u, r);
+	if (start > end)
+		return ILLEGAL_FIELD(u, r);
+	return play(u, r, start, end);
+}
+
+/* PLAY AUDIO TRACK/INDEX 48: from track cdb[4] index cdb[5] through track
+   cdb[7] index cdb[8].  Index 0 = the gap before INDEX 01; 1 and up = the
+   track (there are no higher indexes); an end track past the last plays
+   to the end of the disc. */
+static int play_track(struct atapi_unit *u, const uint8_t *cdb, struct atapi_result *r)
+{
+	const struct cd_disc *d = u->disc;
+	int32_t st = cdb[4], et = cdb[7];
+	uint32_t start, end;
+	if (st < 1 || st > d->tracks || et < st)
+		return ILLEGAL_FIELD(u, r);
+	if (et > d->tracks)
+		et = d->tracks;
+	start = cdb[5] ? d->track[st - 1].lba : d->track[st - 1].pregap_lba;
+	if (!cdb[8])
+		end = d->track[et - 1].lba;
+	else
+		end = et < d->tracks ? d->track[et].pregap_lba : d->leadout;
+	if (end <= start)
+		return ILLEGAL_FIELD(u, r);
+	return play(u, r, start, end);
+}
+
+/* PAUSE/RESUME 4B, STOP PLAY/SCAN 4E: a request for the player. */
+static int audio_request(struct atapi_unit *u, struct atapi_result *r, int32_t what)
+{
+	set_sense(u, 0, 0, 0);
+	r->audio = what;
+	r->kind = ATAPI_PLAY;
+	return ATAPI_PLAY;
 }
 
 int atapi_packet(struct atapi_unit *u, const uint8_t *cdb, uint16_t limit, struct atapi_result *r)
@@ -531,12 +666,19 @@ int atapi_packet(struct atapi_unit *u, const uint8_t *cdb, uint16_t limit, struc
 	case 0x00:	/* TEST UNIT READY */
 	case 0x2B:	/* SEEK(10) */
 	case 0x35:	/* SYNCHRONIZE CACHE */
-	case 0x45:	/* PLAY AUDIO(10)    -- phase 3 */
-	case 0x47:	/* PLAY AUDIO MSF    -- phase 3 */
-	case 0x4B:	/* PAUSE / RESUME    -- phase 3 */
-	case 0x4E:	/* STOP PLAY / SCAN  -- phase 3 */
-	case 0xBC:	/* PLAY CD           -- phase 3 */
+	case 0xBC:	/* PLAY CD: not in 13.6 */
 		return good(u, r);
+	case 0x45:	/* PLAY AUDIO(10) */
+	case 0xA5:	/* PLAY AUDIO(12) */
+		return play_lba(u, cdb, r);
+	case 0x47:
+		return play_msf(u, cdb, r);
+	case 0x48:
+		return play_track(u, cdb, r);
+	case 0x4B:	/* PAUSE / RESUME: byte 8 bit 0 */
+		return audio_request(u, r, (cdb[8] & 0x01) ? ATAPI_AUDIO_RESUME : ATAPI_AUDIO_PAUSE);
+	case 0x4E:	/* STOP PLAY / SCAN */
+		return audio_request(u, r, ATAPI_AUDIO_STOP);
 	case 0x1A:
 	case 0x5A:
 		return mode_sense(u, cdb, r);

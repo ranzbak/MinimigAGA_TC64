@@ -32,6 +32,22 @@
 #define ATAPI_READ     2	/* data in: count sectors from lba */
 #define ATAPI_RECEIVE  3	/* data out: accept length bytes, then GOOD */
 #define ATAPI_CHECK    4	/* CHECK CONDITION, sense in the result and the unit */
+#define ATAPI_PLAY     5	/* GOOD, no data phase, a request for the player in r->audio */
+
+/* atapi_result.audio: what the glue asks of the player (cdaudio.c); 0 = nothing.
+   ATAPI_PLAY carries one; START STOP UNIT (stop, eject) carries STOP with
+   kind ATAPI_DONE. */
+#define ATAPI_AUDIO_PLAY   1	/* play r->count sectors from r->lba */
+#define ATAPI_AUDIO_PAUSE  2
+#define ATAPI_AUDIO_RESUME 3
+#define ATAPI_AUDIO_STOP   4
+
+/* READ SUB-CHANNEL audio status (cdaudio.h CDA_*) */
+#define ATAPI_AUDIO_PLAYING   0x11
+#define ATAPI_AUDIO_PAUSED    0x12
+#define ATAPI_AUDIO_COMPLETED 0x13
+#define ATAPI_AUDIO_ERROR     0x14
+#define ATAPI_AUDIO_NONE      0x15
 
 /* atapi_eject() / atapi_insert() status */
 #define ATAPI_OK       0
@@ -53,6 +69,9 @@ struct atapi_unit
 	uint8_t  ascq;
 	uint32_t sectors;	/* disc size in sectors: the lead-out LBA */
 	const struct cd_disc *disc;	/* the disc in the drive (cue.h), 0 = none */
+	int32_t  audio_status;	/* the player's, ATAPI_AUDIO_PLAYING .. NONE (atapi_audio_status) */
+	uint32_t audio_lba;	/* the player's position */
+	int32_t  audio_seen;	/* COMPLETED / ERROR already reported by READ SUB-CHANNEL, 0 = not */
 	char     name[ATAPI_NAME_LEN + 1];	/* ISO / CUE long name, printable ASCII */
 };
 
@@ -62,14 +81,15 @@ struct atapi_result
 	   32-bit store whatever the field's type, and with a uint8_t kind the
 	   big-endian 832 wrote 0 into it and X over the next three bytes (every
 	   packet ended as GOOD without data; test/emu/atapi_emu.c). */
-	int32_t  kind;		/* ATAPI_DONE .. ATAPI_CHECK, also the return value */
+	int32_t  kind;		/* ATAPI_DONE .. ATAPI_PLAY, also the return value */
 	uint8_t  ejected;	/* START STOP UNIT ejected the disc: close the file */
 	uint8_t  sense_key;	/* ATAPI_CHECK: error register = sense_key << 4 */
 	uint8_t  asc;
 	uint8_t  ascq;
 	uint16_t length;	/* RESPONSE: bytes in atapi_buf (allocation length applied); RECEIVE: bytes */
-	uint32_t lba;		/* READ */
-	uint32_t count;		/* READ: sectors, never 0 */
+	uint32_t lba;		/* READ, ATAPI_AUDIO_PLAY */
+	uint32_t count;		/* READ, ATAPI_AUDIO_PLAY: sectors, never 0 */
+	int32_t  audio;		/* ATAPI_AUDIO_*: a request for the player, 0 = none */
 };
 
 /* Response buffer shared by all units (one command at a time). */
@@ -98,6 +118,11 @@ int atapi_locked(const struct atapi_unit *u);
 /* The glue's own errors (an SD read error, a host that gave up): the sense
    REQUEST SENSE reports for the command that failed. */
 void atapi_set_sense(struct atapi_unit *u, uint8_t key, uint8_t asc, uint8_t ascq);
+
+/* The player's state for READ SUB-CHANNEL, given by the glue before each
+   packet: status ATAPI_AUDIO_PLAYING .. NONE, lba its position.  COMPLETED
+   and ERROR are reported once, then NONE (13.6). */
+void atapi_audio_status(struct atapi_unit *u, int32_t status, uint32_t lba);
 
 /* IDENTIFY PACKET DEVICE (0xA1): 256 words. */
 void atapi_identify(uint16_t *id, const struct atapi_unit *u);

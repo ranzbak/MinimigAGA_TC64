@@ -171,6 +171,48 @@ int main(int argc, char **argv)
 	expect("READ data lba", res.lba, 2200);
 	expect("READ data count", res.count, 8);
 
+	/* PLAY AUDIO(10) 2358 + 100: a play request (int32 kind and audio) */
+	memset(cdb, 0, sizeof(cdb));
+	cdb[0] = 0x45;
+	cdb[4] = 0x09;
+	cdb[5] = 0x36;
+	cdb[8] = 100;
+	k = atapi_packet(&unit, cdb, 0xFFFE, &res);
+	expect("PLAY return", k, ATAPI_PLAY);
+	expect("PLAY kind", res.kind, ATAPI_PLAY);
+	expect("PLAY audio", res.audio, ATAPI_AUDIO_PLAY);
+	expect("PLAY lba", res.lba, 2358);
+	expect("PLAY count", res.count, 100);
+	expect("PLAY seen", unit.audio_seen, 0);
+	/* PAUSE */
+	memset(cdb, 0, sizeof(cdb));
+	cdb[0] = 0x4B;
+	k = atapi_packet(&unit, cdb, 0xFFFE, &res);
+	expect("PAUSE kind", res.kind, ATAPI_PLAY);
+	expect("PAUSE audio", res.audio, ATAPI_AUDIO_PAUSE);
+	/* START STOP UNIT stop: DONE with a stop request */
+	k = packet(0x1B, 0, 0x00, 0);
+	expect("STOP UNIT kind", res.kind, ATAPI_DONE);
+	expect("STOP UNIT audio", res.audio, ATAPI_AUDIO_STOP);
+	expect("STOP UNIT ejected", res.ejected, 0);
+	/* SUB-CHANNEL: completed once, then none */
+	atapi_audio_status(&unit, ATAPI_AUDIO_COMPLETED, 2457);
+	expect("status after set", unit.audio_status, ATAPI_AUDIO_COMPLETED);
+	expect("lba after set", unit.audio_lba, 2457);
+	memset(cdb, 0, sizeof(cdb));
+	cdb[0] = 0x42;
+	cdb[2] = 0x40;
+	cdb[3] = 0x01;
+	cdb[8] = 16;
+	k = atapi_packet(&unit, cdb, 0xFFFE, &res);
+	expect("SUB-CHANNEL length", res.length, 16);
+	expect("SUB-CHANNEL status", atapi_buf[1], 0x13);
+	expect("SUB-CHANNEL track", atapi_buf[6], 2);
+	expect("SUB-CHANNEL relative", be32(atapi_buf + 12), 99);
+	expect("seen after report", unit.audio_seen, ATAPI_AUDIO_COMPLETED);
+	atapi_audio_status(&unit, ATAPI_AUDIO_COMPLETED, 2457);
+	expect("status reported once", unit.audio_status, ATAPI_AUDIO_NONE);
+
 	if (fails)
 		printf("FAIL %d\n", fails);
 	else
