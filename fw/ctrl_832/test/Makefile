@@ -13,14 +13,14 @@ ISO     ?= $(HOME)/work/amiga/AmigaOS3.9.iso
 
 all: run
 
-atapi_test: atapi_test.c ../atapi.c ../atapi.h
-	$(HOSTCC) $(CFLAGS) -o $@ atapi_test.c ../atapi.c
+atapi_test: atapi_test.c ../atapi.c ../atapi.h ../cue.c ../cue.h
+	$(HOSTCC) $(CFLAGS) -o $@ atapi_test.c ../atapi.c ../cue.c
 
 cue_test: cue_test.c ../cue.c ../cue.h
 	$(HOSTCC) $(CFLAGS) -o $@ cue_test.c ../cue.c
 
-cdrom_test: cdrom_test.c ../cdrom.c ../cdrom.h ../atapi.c ../atapi.h ../hdd.h
-	$(HOSTCC) $(CFLAGS) -o $@ cdrom_test.c ../cdrom.c ../atapi.c
+cdrom_test: cdrom_test.c ../cdrom.c ../cdrom.h ../atapi.c ../atapi.h ../cue.c ../cue.h ../hdd.h
+	$(HOSTCC) $(CFLAGS) -o $@ cdrom_test.c ../cdrom.c ../atapi.c ../cue.c
 
 run: cue_test atapi_test cdrom_test
 	./cue_test

@@ -28,6 +28,33 @@ static void expect(const char *what, unsigned int got, unsigned int want)
 static struct atapi_unit unit;
 static struct atapi_result res;
 static uint8_t cdb[12];
+static struct cd_disc iso, pinball;
+
+/* The reference disc (13.9) as cue.c lays it out (cue_emu checks that). */
+static void make_pinball(void)
+{
+	struct cd_track *t = pinball.track;
+	pinball.tracks = 3;
+	pinball.files = 3;
+	pinball.leadout = 41658;
+	t[0].number = 1; t[0].type = CD_DATA2048; t[0].file = 0; t[0].file_offset = 0;
+	t[0].lba = 0; t[0].sectors = 2208; t[0].pregap_lba = 0; t[0].pregap_silent = 0;
+	t[1].number = 2; t[1].type = CD_AUDIO; t[1].file = 1; t[1].file_offset = 44;
+	t[1].lba = 2358; t[1].sectors = 17775; t[1].pregap_lba = 2208; t[1].pregap_silent = 1;
+	t[2].number = 3; t[2].type = CD_AUDIO; t[2].file = 2; t[2].file_offset = 44 + 150 * 2352;
+	t[2].lba = 20283; t[2].sectors = 21375; t[2].pregap_lba = 20133; t[2].pregap_silent = 0;
+	pinball.file[1].wave = 1;
+	pinball.file[1].data_offset = 44;
+	pinball.file[1].data_bytes = 41806800;
+	pinball.file[2].wave = 1;
+	pinball.file[2].data_offset = 44;
+	pinball.file[2].data_bytes = 50626800;
+}
+
+static unsigned int be32(const uint8_t *p)
+{
+	return ((unsigned int)p[0] << 24) | ((unsigned int)p[1] << 16) | ((unsigned int)p[2] << 8) | p[3];
+}
 
 static int packet(uint8_t op, uint8_t b2, uint8_t b4, uint8_t b8)
 {
@@ -67,7 +94,9 @@ int main(int argc, char **argv)
 	expect("TUR no disc ascq", res.ascq, 0x00);
 
 	/* a disc of 2208 sectors (the Pinball Fantasies data track) */
-	expect("insert", atapi_insert(&unit, 2208, "Pinball Fantasies"), ATAPI_OK);
+	cue_single(&iso, "PINBALL ISO", 2208 * 2048);
+	expect("insert", atapi_insert(&unit, &iso, "Pinball Fantasies"), ATAPI_OK);
+	expect("insert sectors", unit.sectors, 2208);
 	k = packet(0x00, 0, 0, 0);	/* the insert's UNIT ATTENTION */
 	expect("TUR after insert kind", res.kind, ATAPI_CHECK);
 	expect("TUR after insert sense key", res.sense_key, 0x06);
@@ -102,6 +131,45 @@ int main(int argc, char **argv)
 	k = packet(0x1B, 0, 0x02, 0);
 	expect("eject kind", res.kind, ATAPI_DONE);
 	expect("eject ejected", res.ejected, 1);
+
+	/* the reference disc: TOC of 3 tracks, audio sectors are not READ data */
+	make_pinball();
+	expect("insert pinball", atapi_insert(&unit, &pinball, "Pinball Fantasies"), ATAPI_OK);
+	expect("pinball sectors", unit.sectors, 41658);
+	packet(0x00, 0, 0, 0);	/* UNIT ATTENTION */
+	memset(cdb, 0, sizeof(cdb));
+	cdb[0] = 0x43;
+	cdb[7] = 0xFF;
+	cdb[8] = 0xFF;
+	k = atapi_packet(&unit, cdb, 0xFFFE, &res);
+	expect("TOC kind", res.kind, ATAPI_RESPONSE);
+	expect("TOC length", res.length, 36);
+	expect("TOC data length", (atapi_buf[0] << 8) | atapi_buf[1], 34);
+	expect("TOC last track", atapi_buf[3], 3);
+	expect("TOC track 1 control", atapi_buf[5], 0x14);
+	expect("TOC track 2 control", atapi_buf[13], 0x10);
+	expect("TOC track 2 number", atapi_buf[14], 2);
+	expect("TOC track 2 LBA", be32(atapi_buf + 16), 2358);
+	expect("TOC track 3 LBA", be32(atapi_buf + 24), 20283);
+	expect("TOC lead-out number", atapi_buf[30], 0xAA);
+	expect("TOC lead-out LBA", be32(atapi_buf + 32), 41658);
+	memset(cdb, 0, sizeof(cdb));
+	cdb[0] = 0x28;
+	cdb[4] = 0x09;	/* LBA 2358 = 0x936 */
+	cdb[5] = 0x36;
+	cdb[8] = 1;
+	k = atapi_packet(&unit, cdb, 0xFFFE, &res);
+	expect("READ audio return", k, ATAPI_CHECK);
+	expect("READ audio kind", res.kind, ATAPI_CHECK);
+	expect("READ audio sense key", res.sense_key, 0x05);
+	expect("READ audio asc", res.asc, 0x64);
+	cdb[4] = 0x08;	/* LBA 2200 = 0x898, 8 sectors: the end of the data track */
+	cdb[5] = 0x98;
+	cdb[8] = 8;
+	k = atapi_packet(&unit, cdb, 0xFFFE, &res);
+	expect("READ data kind", res.kind, ATAPI_READ);
+	expect("READ data lba", res.lba, 2200);
+	expect("READ data count", res.count, 8);
 
 	if (fails)
 		printf("FAIL %d\n", fails);

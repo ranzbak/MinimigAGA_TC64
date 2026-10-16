@@ -34,6 +34,7 @@
 
 cdromTYPE cdrom;
 
+static struct cd_disc cd_disc;		/* the disc in the drive (an ISO: one track) */
 static char cd_filename[12];
 static unsigned short cd_id[256];	/* IDENTIFY PACKET DEVICE words */
 static unsigned char cd_cdb[12];
@@ -120,7 +121,8 @@ int CD_Insert(const char *name, const char *long_name, unsigned long dir)
 	cdrom.hdf.offset = 0;
 	BuildHardfileIndex(&cdrom.hdf);
 
-	atapi_insert(&cdrom.unit, cdrom.hdf.file.size / ATAPI_SECTOR_SIZE, long_name ? longname : shortname);
+	cue_single(&cd_disc, cd_filename, cdrom.hdf.file.size);
+	atapi_insert(&cdrom.unit, &cd_disc, long_name ? longname : shortname);
 	cd_config(shortname, long_name ? longname : 0, dir);
 	if (DebugMode)
 		printf("CD: insert %s (%s), %lu sectors\r\n", cd_filename, cdrom.unit.name, (unsigned long)cdrom.unit.sectors);

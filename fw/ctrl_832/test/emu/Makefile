@@ -34,9 +34,9 @@ $(UNIT_ASM): %.asm: ../../%.c
 $(TEST_ASM): %.asm: %.c
 	$(CC) $(CFLAGS) -o=$@ $<
 
-atapi.asm: ../../atapi.h
+atapi.asm: ../../atapi.h ../../cue.h
 cue.asm: ../../cue.h
-atapi_emu.asm: ../../atapi.h
+atapi_emu.asm: ../../atapi.h ../../cue.h
 cue_emu.asm: ../../cue.h
 
 %.o: %.asm
@@ -51,7 +51,7 @@ cue_emu.asm: ../../cue.h
 	$(MAKE) -C emusrc
 	cp emusrc/832e $@
 
-atapi_emu: atapi_emu.o atapi.o
+atapi_emu: atapi_emu.o atapi.o cue.o
 	$(LD) -o $@ $(LIBDIR)/crt0.a $(LIBDIR)/lib832.a $^
 
 cue_emu: cue_emu.o cue.o

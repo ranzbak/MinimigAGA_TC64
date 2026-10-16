@@ -13,8 +13,9 @@ uint8_t atapi_buf[ATAPI_BUF_SIZE];
 /* Every response here fits in this many bytes (MODE SENSE(10) 3F: 52). */
 #define RESP_MAX 64
 
-#define LEADOUT_TRACK 0xAA
-#define ADR_CTRL_DATA 0x14	/* ADR 1 (position), control 4 (data track) */
+#define LEADOUT_TRACK  0xAA
+#define ADR_CTRL_DATA  0x14	/* ADR 1 (position), control 4 (data track) */
+#define ADR_CTRL_AUDIO 0x10	/* ADR 1, control 0 (2-channel audio, no pre-emphasis) */
 
 static const char empty_name[] = "CD-ROM (empty)";
 
@@ -54,6 +55,29 @@ static void put_addr(uint8_t *p, uint32_t lba, int msf)
 	} else {
 		put32(p, lba);
 	}
+}
+
+static uint8_t adr_ctrl(const struct cd_track *t)
+{
+	return t->type == CD_AUDIO ? ADR_CTRL_AUDIO : ADR_CTRL_DATA;
+}
+
+/* Does [lba, lba + count) touch an audio track (audio = 1) or a data track
+   (audio = 0), gaps included?  The range is inside the disc. */
+static int touches(const struct cd_disc *d, uint32_t lba, uint32_t count, int audio)
+{
+	struct cue_loc l;
+	while (count) {
+		uint32_t n;
+		if (!cue_locate(d, lba, &l))
+			return 0;
+		if ((d->track[l.track].type == CD_AUDIO) == audio)
+			return 1;
+		n = l.run < count ? l.run : count;
+		lba += n;
+		count -= n;
+	}
+	return 0;
 }
 
 static const char *disc_name(const struct atapi_unit *u)
@@ -136,7 +160,7 @@ void atapi_reset(struct atapi_unit *u)
 	set_sense(u, 0, 0, 0);
 }
 
-int atapi_insert(struct atapi_unit *u, uint32_t sectors, const char *name)
+int atapi_insert(struct atapi_unit *u, const struct cd_disc *disc, const char *name)
 {
 	unsigned i;
 	if (u->media && u->locked)
@@ -146,7 +170,8 @@ int atapi_insert(struct atapi_unit *u, uint32_t sectors, const char *name)
 		u->name[i] = (c < 0x20 || c > 0x7E) ? '_' : (char)c;
 	}
 	u->name[i] = 0;
-	u->sectors = sectors;
+	u->disc = disc;
+	u->sectors = disc->leadout;
 	u->media = 1;
 	u->ua_asc = 0x28;
 	u->event = ATAPI_EVENT_NEW_MEDIA;
@@ -160,6 +185,7 @@ int atapi_eject(struct atapi_unit *u)
 	if (u->media) {
 		u->media = 0;
 		u->sectors = 0;
+		u->disc = 0;
 		u->name[0] = 0;
 		u->event = ATAPI_EVENT_REMOVED;
 	}
@@ -292,36 +318,46 @@ static int mode_sense(struct atapi_unit *u, const uint8_t *cdb, struct atapi_res
 	return respond(u, r, total, get16(cdb + 7));
 }
 
-static void toc_entry(uint8_t *p, uint8_t track, uint32_t lba, int msf)
+static void toc_entry(uint8_t *p, uint8_t ctrl, uint8_t track, uint32_t lba, int msf)
 {
-	p[1] = ADR_CTRL_DATA;
+	p[1] = ctrl;
 	p[2] = track;
 	put_addr(p + 4, lba, msf);
 }
 
 static int read_toc(struct atapi_unit *u, const uint8_t *cdb, struct atapi_result *r)
 {
+	const struct cd_disc *d = u->disc;
 	uint8_t *b = atapi_buf;
 	uint8_t *p = b + 4;
 	int msf = cdb[1] & 0x02;
 	uint8_t format = cdb[2] & 0x0F;
 	uint8_t track = cdb[6];
+	int32_t i, first;
 
+	memset(b, 0, 4 + 8 * (CD_MAX_TRACKS + 1));	/* 99 tracks + lead-out: 804 bytes */
 	if (!format)
 		format = cdb[9] >> 6;	/* SFF-8020 drivers put the format here */
 	b[2] = 1;	/* first track / session */
-	b[3] = 1;	/* last track / session */
+	b[3] = 1;	/* last session */
 	if (format == 0) {
-		if (track <= 1) {
-			toc_entry(p, 1, 0, msf);
-			p += 8;
-		} else if (track != LEADOUT_TRACK) {
+		b[3] = (uint8_t)d->tracks;	/* last track */
+		if (track == LEADOUT_TRACK)
+			first = d->tracks;	/* the lead-out only */
+		else if (track <= 1)
+			first = 0;
+		else if (track <= d->tracks)
+			first = track - 1;
+		else
 			return ILLEGAL_FIELD(u, r);
+		for (i = first; i < d->tracks; i++) {
+			toc_entry(p, adr_ctrl(&d->track[i]), d->track[i].number, d->track[i].lba, msf);
+			p += 8;
 		}
-		toc_entry(p, LEADOUT_TRACK, u->sectors, msf);
+		toc_entry(p, adr_ctrl(&d->track[d->tracks - 1]), LEADOUT_TRACK, d->leadout, msf);
 		p += 8;
 	} else if (format == 1) {
-		toc_entry(p, 1, 0, msf);	/* first track of the last session */
+		toc_entry(p, adr_ctrl(&d->track[0]), 1, d->track[0].lba, msf);	/* first track of the last session */
 		p += 8;
 	} else {
 		return ILLEGAL_FIELD(u, r);
@@ -403,7 +439,7 @@ static int disc_information(struct atapi_unit *u, const uint8_t *cdb, struct ata
 	b[3] = 1;		/* first track */
 	b[4] = 1;		/* sessions */
 	b[5] = 1;		/* first track in last session */
-	b[6] = 1;		/* last track in last session */
+	b[6] = (uint8_t)u->disc->tracks;	/* last track in last session */
 	b[7] = 0x20;		/* unrestricted use */
 	memset(b + 16, 0xFF, 8);	/* lead-in / last lead-out start: complete disc */
 	return respond(u, r, 34, get16(cdb + 7));
@@ -411,17 +447,30 @@ static int disc_information(struct atapi_unit *u, const uint8_t *cdb, struct ata
 
 static int track_information(struct atapi_unit *u, const uint8_t *cdb, struct atapi_result *r)
 {
+	const struct cd_disc *d = u->disc;
+	const struct cd_track *t;
 	uint8_t *b = atapi_buf;
-	uint32_t n = get32(cdb + 2);
+	uint32_t n = get32(cdb + 2), end;
 	uint8_t type = cdb[1] & 0x03;
-	if (!((type == 0 && n < u->sectors) || (type != 0 && n == 1)))
+	struct cue_loc l;
+	int32_t i;
+	if (type == 0 && cue_locate(d, n, &l))
+		i = l.track;				/* the track holding LBA n */
+	else if (type == 1 && n >= 1 && n <= (uint32_t)d->tracks)
+		i = (int32_t)n - 1;			/* track n */
+	else if (type == 2 && n == 1)
+		i = 0;					/* session 1: its first track */
+	else
 		return ILLEGAL_FIELD(u, r);
+	t = &d->track[i];
+	end = i + 1 < d->tracks ? d->track[i + 1].lba : d->leadout;
 	put16(b, 28 - 2);
-	b[2] = 1;		/* track */
+	b[2] = t->number;	/* track */
 	b[3] = 1;		/* session */
-	b[5] = 0x04;		/* track mode: data */
-	b[6] = 0x01;		/* data mode 1 */
-	put32(b + 24, u->sectors);	/* track size; start (8..11) is 0 */
+	b[5] = t->type == CD_AUDIO ? 0x00 : 0x04;	/* track mode: the control nibble */
+	b[6] = t->type == CD_AUDIO ? 0x0F : 0x01;	/* data mode: unknown (audio) / mode 1 */
+	put32(b + 8, t->lba);	/* track start */
+	put32(b + 24, end - t->lba);	/* track size */
 	return respond(u, r, 28, get16(cdb + 7));
 }
 
@@ -433,6 +482,8 @@ static int read_sectors(struct atapi_unit *u, const uint8_t *cdb, struct atapi_r
 		return good(u, r);
 	if (lba >= u->sectors || count > u->sectors - lba)
 		return check(u, r, 0x05, 0x21, 0x00);
+	if (touches(u->disc, lba, count, 1))	/* audio sectors are not READ(10) data */
+		return check(u, r, 0x05, 0x64, 0x00);
 	set_sense(u, 0, 0, 0);
 	r->lba = lba;
 	r->count = count;

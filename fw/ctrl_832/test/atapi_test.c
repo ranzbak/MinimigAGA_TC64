@@ -85,6 +85,56 @@ static int iso_read(uint32_t lba, uint32_t count, uint8_t *dst)
 static struct atapi_unit U;
 static struct atapi_result R;
 
+/* An ISO of this many sectors as the disc model cdrom.c builds (cue_single).
+   One model at a time: a later call changes the disc U points to. */
+static struct cd_disc D;
+
+static const struct cd_disc *iso(uint32_t sectors)
+{
+	cue_single(&D, "TESTDISCISO", sectors * ATAPI_SECTOR_SIZE);
+	return &D;
+}
+
+/* A second disc, for swaps: the refused one must not touch the disc in. */
+static struct cd_disc D2;
+
+static const struct cd_disc *iso_other(uint32_t sectors)
+{
+	cue_single(&D2, "OTHERDSCISO", sectors * ATAPI_SECTOR_SIZE);
+	return &D2;
+}
+
+/* The reference disc (findings/cdrom/plan.md 13.9) through the CUE parser:
+   track 1 data LBA 0, track 2 audio 2358 (silent PREGAP from 2208), track
+   3 audio 20283 (INDEX 00 at 20133), lead-out 41658. */
+static int32_t pinball_open(void *ctx, const char *name, struct cd_file *f)
+{
+	static const uint32_t bytes[3] = { 4521984, 41806800, 50626800 };
+	int i = name[0] - '1';
+	(void)ctx;
+	if (i < 0 || i > 2)
+		return CUE_E_NOFILE;
+	memcpy(f->shortname, "PINBALL1ISO", 12);
+	f->shortname[6] = name[0];
+	f->data_offset = f->wave ? 44 : 0;
+	f->data_bytes = bytes[i];
+	return CUE_OK;
+}
+
+static const struct cd_disc *pinball(void)
+{
+	static const char cue[] =
+		"FILE \"1.iso\" BINARY\n TRACK 01 MODE1/2048\n INDEX 01 00:00:00\n"
+		"FILE \"2.wav\" WAVE\n TRACK 02 AUDIO\n PREGAP 00:02:00\n INDEX 01 00:00:00\n"
+		"FILE \"3.wav\" WAVE\n TRACK 03 AUDIO\n INDEX 00 00:00:00\n INDEX 01 00:02:00\n";
+	static struct cue_parser p;
+	cue_begin(&p, &D, pinball_open, 0);
+	cue_feed(&p, cue, sizeof(cue) - 1);
+	if (cue_end(&p) != CUE_OK)
+		printf("  note: the reference CUE did not parse (error %d line %d)\n", p.error, p.error_line);
+	return &D;
+}
+
 static int run(const uint8_t *cdb)
 {
 	int k;
@@ -185,15 +235,21 @@ static void expect_bytes(int line, const uint8_t *want, unsigned off, unsigned l
 	}
 }
 
-/* Fresh unit with the OS 3.9 image in and its insert UNIT ATTENTION consumed. */
-static void ready_unit(uint32_t sectors, const char *name)
+/* Fresh unit with a disc in and its insert UNIT ATTENTION consumed. */
+static void ready_disc(const struct cd_disc *d, const char *name)
 {
 	uint8_t c[12];
 	atapi_init(&U);
-	atapi_insert(&U, sectors, name);
+	atapi_insert(&U, d, name);
 	cdb0(c, 0x00);
 	run(c);	/* 06/28/00 */
 	run(c);	/* GOOD */
+}
+
+/* Fresh unit with an ISO of this many sectors in (the OS 3.9 image). */
+static void ready_unit(uint32_t sectors, const char *name)
+{
+	ready_disc(iso(sectors), name);
 }
 
 static void tur(uint8_t *c) { cdb0(c, 0x00); }
@@ -282,13 +338,13 @@ static void t_inquiry_name(void)
 
 	/* longer names: first 16 characters */
 	atapi_init(&U);
-	atapi_insert(&U, 275806, "ClassicInstallCD-53.71.iso");
+	atapi_insert(&U, iso(275806), "ClassicInstallCD-53.71.iso");
 	expect_response(__LINE__, c, 36);
 	expect_bytes(__LINE__, (const uint8_t *)"ClassicInstallCD", 16, 16);
 
 	/* characters outside printable ASCII never reach the host */
 	atapi_init(&U);
-	atapi_insert(&U, 100, "a\tb\x80\x7f");
+	atapi_insert(&U, iso(100), "a\tb\x80\x7f");
 	expect_response(__LINE__, c, 36);
 	{
 		int i, ok = 1;
@@ -312,7 +368,7 @@ static void t_inquiry_empty(void)
 	expect_bytes(__LINE__, (const uint8_t *)"CD-ROM (empty)  ", 16, 16);
 
 	/* after an eject too */
-	atapi_insert(&U, OS39_SECTORS, OS39_NAME);
+	atapi_insert(&U, iso(OS39_SECTORS), OS39_NAME);
 	EXPECT(atapi_eject(&U) == ATAPI_OK, "eject refused");
 	expect_response(__LINE__, c, 36);
 	expect_bytes(__LINE__, (const uint8_t *)"CD-ROM (empty)  ", 16, 16);
@@ -377,7 +433,7 @@ static void t_identify_packet(void)
 	int i, nonzero = 0;
 	begin("IDENTIFY PACKET DEVICE: words 0/49/82 and the model string");
 	atapi_init(&U);
-	atapi_insert(&U, OS39_SECTORS, OS39_NAME);
+	atapi_insert(&U, iso(OS39_SECTORS), OS39_NAME);
 	memset(id, 0xEE, sizeof(id));
 	atapi_identify(id, &U);
 	EXPECT(id[0] == 0x8580, "word 0 = %04X", id[0]);
@@ -404,7 +460,7 @@ static void t_identify_packet(void)
 	expect_ata_string(__LINE__, id, 27, "CD-ROM (empty)", 40);
 
 	/* 40-character limit */
-	atapi_insert(&U, 100, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz.iso");
+	atapi_insert(&U, iso(100), "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz.iso");
 	atapi_identify(id, &U);
 	expect_ata_string(__LINE__, id, 27, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmn", 40);
 	EXPECT(id[47] == 0, "word 47 = %04X (model overran)", id[47]);
@@ -586,7 +642,7 @@ static void t_ua_insert(void)
 	uint8_t c[12];
 	begin("insert: one-shot UNIT ATTENTION 06/28/00, exempt commands keep it pending");
 	atapi_init(&U);
-	atapi_insert(&U, OS39_SECTORS, OS39_NAME);
+	atapi_insert(&U, iso(OS39_SECTORS), OS39_NAME);
 	inquiry(c, 36);
 	expect_response(__LINE__, c, 36);
 	gesn(c, 1, 0x10, 8);
@@ -599,14 +655,14 @@ static void t_ua_insert(void)
 
 	/* REQUEST SENSE as the first command reports the pending UA and clears it */
 	atapi_init(&U);
-	atapi_insert(&U, OS39_SECTORS, OS39_NAME);
+	atapi_insert(&U, iso(OS39_SECTORS), OS39_NAME);
 	expect_sense(__LINE__, 0x06, 0x28, 0x00);
 	tur(c);
 	expect_good(__LINE__, c);
 
 	/* any non-exempt command takes the UA, not only TEST UNIT READY */
 	atapi_init(&U);
-	atapi_insert(&U, OS39_SECTORS, OS39_NAME);
+	atapi_insert(&U, iso(OS39_SECTORS), OS39_NAME);
 	read10(c, 16, 1);
 	expect_check(__LINE__, c, 0x06, 0x28, 0x00);
 	EXPECT(run(c) == ATAPI_READ, "READ after the UA: kind %d", R.kind);
@@ -642,7 +698,7 @@ static void t_gesn(void)
 	static const uint8_t no_class[4]  = { 0x00, 0x02, 0x80, 0x10 };
 	begin("GET EVENT STATUS NOTIFICATION: new media / removed, one-shot");
 	atapi_init(&U);
-	atapi_insert(&U, OS39_SECTORS, OS39_NAME);
+	atapi_insert(&U, iso(OS39_SECTORS), OS39_NAME);
 	gesn(c, 1, 0x10, 8);
 	expect_response(__LINE__, c, 8);
 	expect_bytes(__LINE__, new_media, 0, 8);
@@ -674,7 +730,7 @@ static void t_lock_eject(void)
 	EXPECT(U.media, "disc gone after a refused eject");
 	EXPECT(atapi_eject(&U) == ATAPI_LOCKED, "OSD eject not refused while locked");
 	EXPECT(U.media, "disc gone after a refused OSD eject");
-	EXPECT(atapi_insert(&U, 275806, "ClassicInstallCD-53.71.iso") == ATAPI_LOCKED,
+	EXPECT(atapi_insert(&U, iso_other(275806), "ClassicInstallCD-53.71.iso") == ATAPI_LOCKED,
 	       "swap not refused while locked");
 	inquiry(c, 36);
 	expect_response(__LINE__, c, 36);
@@ -713,7 +769,7 @@ static void t_lock_eject(void)
 	EXPECT(U.media, "disc gone after start/stop/load");
 
 	/* swap while unlocked: new disc in, UNIT ATTENTION again */
-	EXPECT(atapi_insert(&U, 275806, "ClassicInstallCD-53.71.iso") == ATAPI_OK, "swap refused");
+	EXPECT(atapi_insert(&U, iso_other(275806), "ClassicInstallCD-53.71.iso") == ATAPI_OK, "swap refused");
 	tur(c);
 	expect_check(__LINE__, c, 0x06, 0x28, 0x00);
 	cdb0(c, 0x25);
@@ -826,6 +882,114 @@ static void t_misc(void)
 	end();
 }
 
+static void t_toc_tracks(void)
+{
+	/* LBA: 2358 = 0x936, 20283 = 0x4F3B, 41658 = 0xA2BA */
+	static const uint8_t lba[36] = {
+		0x00, 0x22, 0x01, 0x03,
+		0x00, 0x14, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x10, 0x02, 0x00, 0x00, 0x00, 0x09, 0x36,
+		0x00, 0x10, 0x03, 0x00, 0x00, 0x00, 0x4F, 0x3B,
+		0x00, 0x10, 0xAA, 0x00, 0x00, 0x00, 0xA2, 0xBA
+	};
+	/* MSF = LBA + 150 frames: 00:33:33, 04:32:33, 09:17:33 */
+	static const uint8_t msf[36] = {
+		0x00, 0x22, 0x01, 0x03,
+		0x00, 0x14, 0x01, 0x00, 0x00, 0, 2, 0,
+		0x00, 0x10, 0x02, 0x00, 0x00, 0, 33, 33,
+		0x00, 0x10, 0x03, 0x00, 0x00, 4, 32, 33,
+		0x00, 0x10, 0xAA, 0x00, 0x00, 9, 17, 33
+	};
+	static const uint8_t from3[20] = {
+		0x00, 0x12, 0x01, 0x03,
+		0x00, 0x10, 0x03, 0x00, 0x00, 0x00, 0x4F, 0x3B,
+		0x00, 0x10, 0xAA, 0x00, 0x00, 0x00, 0xA2, 0xBA
+	};
+	static const uint8_t session[12] = {
+		0x00, 0x0A, 0x01, 0x01, 0x00, 0x14, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00
+	};
+	uint8_t c[12];
+	begin("READ TOC of the reference disc: 3 tracks, audio control 0x10, starting track, lead-out");
+	ready_disc(pinball(), "Pinball Fantasies");
+	toc(c, 0, 0, 0, 0xFFFF);
+	expect_response(__LINE__, c, 36);
+	expect_bytes(__LINE__, lba, 0, 36);
+	toc(c, 1, 0, 1, 0xFFFF);
+	expect_response(__LINE__, c, 36);
+	expect_bytes(__LINE__, msf, 0, 36);
+	toc(c, 0, 0, 3, 0xFFFF);
+	expect_response(__LINE__, c, 20);
+	expect_bytes(__LINE__, from3, 0, 20);
+	toc(c, 0, 0, 0xAA, 0xFFFF);
+	expect_response(__LINE__, c, 12);
+	expect_bytes(__LINE__, from3 + 12, 4, 8);
+	toc(c, 0, 0, 4, 0xFFFF);
+	expect_check(__LINE__, c, 0x05, 0x24, 0x00);
+	toc(c, 0, 1, 0, 0xFFFF);
+	expect_response(__LINE__, c, 12);
+	expect_bytes(__LINE__, session, 0, 12);
+	toc(c, 0, 0, 0, 12);	/* allocation length cuts, the length field stays (12.2) */
+	expect_response(__LINE__, c, 12);
+	EXPECT(be16(atapi_buf) == 34, "TOC length %u", be16(atapi_buf));
+	end();
+}
+
+static void t_tracks_info(void)
+{
+	static const uint8_t cap[8] = { 0x00, 0x00, 0xA2, 0xB9, 0x00, 0x00, 0x08, 0x00 };
+	uint8_t c[12];
+	begin("reference disc: READ CAPACITY to the lead-out, DISC / TRACK INFORMATION per track");
+	ready_disc(pinball(), "Pinball Fantasies");
+	cdb0(c, 0x25);
+	expect_response(__LINE__, c, 8);
+	expect_bytes(__LINE__, cap, 0, 8);
+	cdb0(c, 0x51);
+	c[8] = 0xFF;
+	expect_response(__LINE__, c, 34);
+	EXPECT(atapi_buf[3] == 1 && atapi_buf[5] == 1 && atapi_buf[6] == 3, "disc info first %u last %u",
+	       atapi_buf[5], atapi_buf[6]);
+	cdb0(c, 0x52);
+	c[1] = 0x01;
+	c[5] = 0x02;
+	c[8] = 0xFF;
+	expect_response(__LINE__, c, 28);
+	EXPECT(atapi_buf[2] == 2 && atapi_buf[5] == 0x00 && be32(atapi_buf + 8) == 2358 && be32(atapi_buf + 24) == 17925,
+	       "track 2: number %u mode %02X start %u size %u", atapi_buf[2], atapi_buf[5], be32(atapi_buf + 8),
+	       be32(atapi_buf + 24));
+	cdb0(c, 0x52);
+	put_be32(c + 2, 30000);	/* type 0: the track holding LBA 30000 */
+	c[8] = 0xFF;
+	expect_response(__LINE__, c, 28);
+	EXPECT(atapi_buf[2] == 3 && be32(atapi_buf + 8) == 20283 && be32(atapi_buf + 24) == 21375,
+	       "LBA 30000: track %u start %u size %u", atapi_buf[2], be32(atapi_buf + 8), be32(atapi_buf + 24));
+	cdb0(c, 0x52);
+	c[1] = 0x01;
+	c[5] = 0x04;
+	c[8] = 0xFF;
+	expect_check(__LINE__, c, 0x05, 0x24, 0x00);
+	end();
+}
+
+static void t_read_audio(void)
+{
+	uint8_t c[12];
+	begin("READ(10)/(12) of audio sectors (or their gap): 05/64/00; data up to the boundary reads");
+	ready_disc(pinball(), "Pinball Fantasies");
+	read10(c, 2200, 8);	/* the last 8 data sectors */
+	EXPECT(run(c) == ATAPI_READ && R.lba == 2200 && R.count == 8, "kind %d lba %u count %u", R.kind, R.lba, R.count);
+	read10(c, 2200, 9);	/* one into track 2's PREGAP */
+	expect_check(__LINE__, c, 0x05, 0x64, 0x00);
+	read10(c, 2208, 1);
+	expect_check(__LINE__, c, 0x05, 0x64, 0x00);
+	read10(c, 2358, 1);
+	expect_check(__LINE__, c, 0x05, 0x64, 0x00);
+	read12(c, 30000, 2);
+	expect_check(__LINE__, c, 0x05, 0x64, 0x00);
+	read10(c, 41657, 2);	/* past the lead-out: the range check comes first */
+	expect_check(__LINE__, c, 0x05, 0x21, 0x00);
+	end();
+}
+
 static void t_iso_read(const char *path)
 {
 	uint8_t c[12];
@@ -912,6 +1076,9 @@ int main(int argc, char **argv)
 	t_invalid();
 	t_read();
 	t_misc();
+	t_toc_tracks();
+	t_tracks_info();
+	t_read_audio();
 	t_iso_read(path);
 
 	if (iso_fd >= 0)

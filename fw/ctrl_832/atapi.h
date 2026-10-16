@@ -20,6 +20,7 @@
  */
 
 #include <stdint.h>
+#include "cue.h"
 
 #define ATAPI_SECTOR_SIZE 2048
 #define ATAPI_BUF_SIZE    2048
@@ -50,8 +51,9 @@ struct atapi_unit
 	uint8_t  sense_key;	/* sense of the last command, for REQUEST SENSE */
 	uint8_t  asc;
 	uint8_t  ascq;
-	uint32_t sectors;	/* disc size in 2048-byte sectors */
-	char     name[ATAPI_NAME_LEN + 1];	/* ISO long name, printable ASCII */
+	uint32_t sectors;	/* disc size in sectors: the lead-out LBA */
+	const struct cd_disc *disc;	/* the disc in the drive (cue.h), 0 = none */
+	char     name[ATAPI_NAME_LEN + 1];	/* ISO / CUE long name, printable ASCII */
 };
 
 struct atapi_result
@@ -81,8 +83,10 @@ void atapi_reset(struct atapi_unit *u);
 
 /* Put a disc in (OSD insert or swap).  Refused with ATAPI_LOCKED when a disc
    is in and locked; otherwise any disc in is replaced, UNIT ATTENTION
-   06/28/00 and a NEW_MEDIA event are armed.  name: the ISO long name. */
-int atapi_insert(struct atapi_unit *u, uint32_t sectors, const char *name);
+   06/28/00 and a NEW_MEDIA event are armed.  disc: the disc model (an ISO
+   is one DATA2048 track, cue_single), kept by pointer until the eject;
+   name: the ISO / CUE long name. */
+int atapi_insert(struct atapi_unit *u, const struct cd_disc *disc, const char *name);
 
 /* Take the disc out (OSD eject).  ATAPI_LOCKED while locked, nothing changes;
    otherwise ATAPI_OK and, if a disc was in, a REMOVED event is armed.
