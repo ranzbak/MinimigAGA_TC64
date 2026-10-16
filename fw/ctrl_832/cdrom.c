@@ -35,7 +35,11 @@
 #include "rafile.h"
 #include "atapi.h"
 #include "cue.h"
+#include "cdaudio.h"
 #include "cdrom.h"
+#ifndef HOSTTEST
+#include "drivesounds.h"
+#endif
 
 /* fat.c's directory state: lookups in the disc's directory put it back, so
    the OSD file browser does not move (or lose its ".." position). */
@@ -43,6 +47,9 @@ extern unsigned long iCurrentDirectory, iPreviousDirectory;
 
 cdromTYPE cdrom;
 
+static hdfTYPE cd_audio;		/* the disc file being played (13.5: the second open file) */
+static int cd_audio_file = -1;		/* its index in cd_disc.file[], -1 = none */
+static uint32_t cd_underruns;		/* cda_underruns() at the last report */
 static struct cd_disc cd_disc;		/* the disc in the drive */
 static struct cue_parser cd_cue;	/* 2.5 KB: static, the 832 stack is small */
 static RAFile cd_cuefile;		/* the CUE text */
@@ -89,6 +96,10 @@ int CD_Open(int slot)
 	char name[12];
 	char long_name[sizeof(hf->long_name) + 1];
 
+	cda_stop();
+	cda_init();
+	cd_audio.type = HDF_DISABLED;
+	cd_audio_file = -1;
 	cdrom.hdf.type = HDF_DISABLED;
 	cd_data_file = -1;
 	cdrom.slot = slot;
@@ -209,31 +220,37 @@ static int32_t cd_parse_cue(void)
 	return cue_end(&cd_cue);
 }
 
-/* Disc file f in cdrom.hdf (the data file): reopened with a fresh cluster
-   index when another file is wanted. */
-static int cd_data_open(int f)
+/* Disc file f in h -- cdrom.hdf for reads, cd_audio for the player (13.5:
+   two open files) -- opened in the disc's directory with a fresh cluster
+   index when h holds another file; *open says which file h holds. */
+static int cd_hdf_open(hdfTYPE *h, int *open, int f)
 {
 	unsigned long cur, prev;
 	int ok;
-	if (cd_data_file == f && cdrom.hdf.type == HDF_FILE)
+	if (*open == f && h->type == HDF_FILE)
 		return 1;
-	cdrom.hdf.type = HDF_DISABLED;
-	cd_data_file = -1;
+	h->type = HDF_DISABLED;
+	*open = -1;
 	cur = iCurrentDirectory;
 	prev = iPreviousDirectory;
 	ChangeDirectory(cd_dir);
-	ok = FileOpen(&cdrom.hdf.file, cd_disc.file[f].shortname);
+	ok = FileOpen(&h->file, cd_disc.file[f].shortname);
 	iCurrentDirectory = cur;
 	iPreviousDirectory = prev;
 	if (!ok) {
 		ClearError(ERROR_FILESYSTEM);
 		return 0;
 	}
-	cdrom.hdf.type = HDF_FILE;
-	cdrom.hdf.offset = 0;
-	BuildHardfileIndex(&cdrom.hdf);
-	cd_data_file = f;
+	h->type = HDF_FILE;
+	h->offset = 0;
+	BuildHardfileIndex(h);
+	*open = f;
 	return 1;
+}
+
+static int cd_data_open(int f)
+{
+	return cd_hdf_open(&cdrom.hdf, &cd_data_file, f);
 }
 
 const char *CD_Message(void)
@@ -290,9 +307,13 @@ int CD_Insert(const char *name, const char *long_name, unsigned long dir)
 	return CD_OK;
 }
 
-/* The disc is out (OSD or Amiga eject): close the file, forget the name. */
+/* The disc is out (OSD or Amiga eject, or a new disc): the music stops,
+   the files close, the name is forgotten. */
 static void cd_drop_file(void)
 {
+	cda_stop();
+	cd_audio.type = HDF_DISABLED;
+	cd_audio_file = -1;
 	cdrom.hdf.type = HDF_DISABLED;	/* FAT files need no close */
 	cd_data_file = -1;
 	cd_config(0, 0, 0);
@@ -311,6 +332,7 @@ void CD_Reset(void)
 {
 	if (DebugMode)
 		printf("CD: Amiga reset\r\n");
+	cda_stop();	/* 13.7: a reset stops the music */
 	atapi_reset(&cdrom.unit);
 }
 
@@ -330,6 +352,75 @@ int CD_Locked(void)
 		CD_Flags(cdrom.slot >> 1, ReadIDEFlags(cdrom.slot >> 1));
 	}
 	return atapi_locked(&cdrom.unit);
+}
+
+/* ---- CD audio (13.5, 13.7): the player's port and its requests ---- */
+
+/* The player reads through the second open file. */
+int32_t cda_port_read(int32_t file, uint32_t block, uint8_t *dst)
+{
+	if (!cd_hdf_open(&cd_audio, &cd_audio_file, file))
+		return 0;
+	if (!HardFileSeek(&cd_audio, block))
+		return 0;
+	return FileRead(&cd_audio.file, dst) ? 1 : 0;
+}
+
+#ifndef HOSTTEST
+uint32_t cda_port_audio(void)
+{
+	return AUDIO;
+}
+
+void cda_port_control(uint32_t v)
+{
+	AUDIO = (unsigned char)v;
+}
+
+uint32_t cda_port_timer(void)
+{
+	return TIMER;
+}
+
+uint8_t *cda_port_ring(void)
+{
+	return (uint8_t *)AUDIO_BUFFER;
+}
+
+void cda_port_claim(void)
+{
+	drivesounds_yield();	/* 13.1: CD audio wins the buffer */
+}
+#endif
+
+void CD_AudioPoll(void)
+{
+	uint32_t n;
+	cda_poll();
+	n = cda_underruns();
+	if (n != cd_underruns) {
+		cd_underruns = n;
+		if (DebugMode)
+			printf("CDA: underrun %d\r\n", (int)n);
+	}
+}
+
+static void cd_audio_request(const struct atapi_result *r)
+{
+	switch (r->audio) {
+	case ATAPI_AUDIO_PLAY:
+		cda_play(&cd_disc, r->lba, r->lba + r->count);
+		break;
+	case ATAPI_AUDIO_PAUSE:
+		cda_pause();
+		break;
+	case ATAPI_AUDIO_RESUME:
+		cda_resume();
+		break;
+	case ATAPI_AUDIO_STOP:
+		cda_stop();
+		break;
+	}
 }
 
 /* ---- the Gayle side ---- */
@@ -360,6 +451,7 @@ static int cd_wait(int port)
 	unsigned long timeout = GetTimer(CD_TIMEOUT);
 	unsigned char flags;
 	for (;;) {
+		CD_AudioPoll();	/* no SD transfer in flight here (13.5) */
 		flags = ReadIDEFlags(port);
 		CD_Flags(port, flags);
 		if (flags & IDEF_RST_SEEN)
@@ -426,6 +518,7 @@ static int cd_send_sectors(int port, unsigned char *tfr, unsigned long block, un
 	HardFileSeek(&cdrom.hdf, block);
 	while (left) {
 		unsigned int n = left < per ? (unsigned int)left : per;
+		CD_AudioPoll();	/* between blocks, never inside FileReadEx (13.5) */
 		cd_phase(tfr, n << 9, 0x02, IDE_STATUS_RDY);
 		if (!FileReadEx(&cdrom.hdf.file, 0, n))
 			return cd_read_error(block + count * 4 - left);
@@ -537,6 +630,7 @@ static void cd_log_cdb(int port, const struct atapi_result *r)
 	case ATAPI_READ:     printf(" > read %lu+%lu", (unsigned long)r->lba, (unsigned long)r->count); break;
 	case ATAPI_RECEIVE:  printf(" < %u bytes", (unsigned)r->length); break;
 	case ATAPI_CHECK:    printf(" CHECK %02X/%02X/%02X", r->sense_key, r->asc, r->ascq); break;
+	case ATAPI_PLAY:     printf(" > audio %d", (int)r->audio); break;
 	default:             printf(" GOOD"); break;
 	}
 	printf("\r\n");
@@ -570,11 +664,14 @@ static void cd_packet(int port, unsigned char *tfr)
 	}
 	ReadIDEData(cd_cdb, 12);
 
+	atapi_audio_status(&cdrom.unit, cda_status(), cda_position());
 	atapi_packet(&cdrom.unit, cd_cdb, (uint16_t)limit, &r);
 	if (DebugMode)
 		cd_log_cdb(port, &r);
 	if (r.ejected)
 		cd_drop_file();
+	else if (r.audio)
+		cd_audio_request(&r);
 
 	switch (r.kind) {
 	case ATAPI_RESPONSE:

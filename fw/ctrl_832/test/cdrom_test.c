@@ -39,6 +39,7 @@
 #include "rafile.h"
 #include "atapi.h"
 #include "cue.h"
+#include "cdaudio.h"
 #include "cdrom.h"
 
 /* ---- bookkeeping ---- */
@@ -276,11 +277,43 @@ unsigned char HardFileSeek(hdfTYPE *h, unsigned long lba)
 	return 1;
 }
 
+static int file_reads[16];	/* FileRead calls per fake_dir entry */
+
 unsigned char FileRead(fileTYPE *file, unsigned char *pBuffer)
 {
+	if (file->start_cluster && file->start_cluster <= 16)
+		file_reads[file->start_cluster - 1]++;
 	fake_read(file, file->sector * 512, pBuffer, 512);
 	return 1;
 }
+
+/* ---- the audio hardware for the player (cdaudio.c through cdrom.c) ----
+   44 frames per ms of now_ms; the play pointer runs while ENA is set. */
+
+static uint8_t ring[0x10000];
+static unsigned long ena_ms;
+static int audio_ena, audio_claims;
+static uint32_t audio_last;
+
+static uint32_t frames_now(void) { return (uint32_t)(now_ms * 44); }
+
+uint32_t cda_port_audio(void)
+{
+	uint32_t p = audio_ena ? (uint32_t)((now_ms - ena_ms) * 44) & 16383 : 0;
+	return p >= 8192 ? CDA_REG_HALF : 0;
+}
+
+void cda_port_control(uint32_t v)
+{
+	audio_last = v;
+	audio_ena = (v & CDA_ENA) ? 1 : 0;
+	if (audio_ena)
+		ena_ms = now_ms;
+}
+
+uint32_t cda_port_timer(void) { return (frames_now() >> 8) & 0xFFFF; }
+uint8_t *cda_port_ring(void) { return ring; }
+void cda_port_claim(void) { audio_claims++; }
 
 int RAOpen(RAFile *f, const char *name)
 {
@@ -1116,6 +1149,109 @@ static void t_cue_config(void)
 	end();
 }
 
+/* ---- phase 3: CD audio through the glue ---- */
+
+#define WAV_FILE 5	/* "MIXED~2 WAV" in fake_dir */
+#define ISO2_FILE 4	/* "MIXED~1 ISO" */
+
+static void play10(uint8_t *c, uint32_t lba, uint16_t len)
+{
+	memset(c, 0, 12);
+	c[0] = 0x45;
+	c[2] = (uint8_t)(lba >> 24); c[3] = (uint8_t)(lba >> 16); c[4] = (uint8_t)(lba >> 8); c[5] = (uint8_t)lba;
+	c[7] = (uint8_t)(len >> 8); c[8] = (uint8_t)len;
+}
+
+/* The mixed disc in, track 2 (LBA 214, 10 sectors of WAV) playing. */
+static void playing_mixed(void)
+{
+	uint8_t c[12];
+	EXPECT(insert_disc("MIXED   CUE", "Mixed") == CD_OK, "insert refused: '%s'", CD_Message());
+	memset(file_reads, 0, sizeof(file_reads));
+	audio_claims = 0;
+	play10(c, 214, 10);
+	packet(c, 0xFFFE);
+}
+
+static void t_play(void)
+{
+	uint8_t c[12];
+	int wav_reads;
+	begin("PLAY AUDIO: GOOD, the player runs from the WAV (second file); READ SUB-CHANNEL sees it");
+	playing_mixed();
+	EXPECT(good_end(), "status: %02X error %02X", g.end_status, g.reg[1]);
+	EXPECT(cda_status() == CDA_PLAYING && audio_claims == 1 && audio_ena, "player: status %02X claims %d ena %d",
+	       (unsigned)cda_status(), audio_claims, audio_ena);
+	EXPECT(file_reads[WAV_FILE] > 0, "nothing read from the WAV");
+	EXPECT(memcmp(cdrom.hdf.file.name, "MIXED~1 ISO", 11) == 0, "the data file moved to '%.11s'", cdrom.hdf.file.name);
+	memset(c, 0, 12);
+	c[0] = 0x42;
+	c[2] = 0x40;
+	c[3] = 0x01;
+	c[8] = 16;
+	packet(c, 0xFFFE);
+	EXPECT(h.in_len == 16 && h.in[1] == 0x11 && h.in[5] == 0x10 && h.in[6] == 2 && good_end(),
+	       "sub-channel: status %02X control %02X track %u", h.in[1], h.in[5], h.in[6]);
+	wav_reads = file_reads[WAV_FILE];
+	read10(c, 0, 8);	/* data while the music plays: cd_wait polls the player */
+	packet(c, 0x0800);
+	EXPECT(h.in_len == 8 * 2048 && iso_matches(0, 8 * 2048) && good_end(), "data read while playing");
+	EXPECT(file_reads[WAV_FILE] >= wav_reads, "WAV reads went backwards");
+	EXPECT(cda_status() == CDA_PLAYING || cda_status() == CDA_COMPLETED, "player: %02X", (unsigned)cda_status());
+	end();
+}
+
+static void t_play_refused(void)
+{
+	uint8_t c[12];
+	begin("PLAY AUDIO of a data track: CHECK 05/64/00, the player stays idle");
+	EXPECT(insert_disc("MIXED   CUE", "Mixed") == CD_OK, "insert refused: '%s'", CD_Message());
+	audio_claims = 0;
+	play10(c, 10, 10);
+	packet(c, 0xFFFE);
+	EXPECT(check_end(0x54), "status %02X error %02X", g.end_status, g.reg[1]);
+	EXPECT(cda_status() == CDA_IDLE && audio_claims == 0, "player %02X claims %d", (unsigned)cda_status(), audio_claims);
+	end();
+}
+
+static void t_play_stops(void)
+{
+	uint8_t c[12];
+	begin("the music stops on STOP PLAY, START STOP stop, eject, Amiga reset, a new disc");
+	playing_mixed();
+	memset(c, 0, 12);
+	c[0] = 0x4E;
+	packet(c, 0xFFFE);
+	EXPECT(good_end() && cda_status() == CDA_IDLE && !audio_ena && audio_last == CDA_CLEAR, "STOP PLAY: %02X",
+	       (unsigned)cda_status());
+
+	playing_mixed();
+	memset(c, 0, 12);
+	c[0] = 0x4B;	/* PAUSE */
+	packet(c, 0xFFFE);
+	EXPECT(good_end() && cda_status() == CDA_PAUSED && !audio_ena, "PAUSE: %02X", (unsigned)cda_status());
+	c[8] = 0x01;	/* RESUME */
+	packet(c, 0xFFFE);
+	EXPECT(good_end() && cda_status() == CDA_PLAYING && audio_ena, "RESUME: %02X", (unsigned)cda_status());
+	cdb6(c, 0x1B, 0x00);	/* START STOP UNIT: stop */
+	packet(c, 0xFFFE);
+	EXPECT(good_end() && cda_status() == CDA_IDLE && cdrom.unit.media, "START STOP stop: %02X", (unsigned)cda_status());
+
+	playing_mixed();
+	cdb6(c, 0x1B, 0x02);	/* eject */
+	packet(c, 0xFFFE);
+	EXPECT(good_end() && cda_status() == CDA_IDLE && !cdrom.unit.media, "eject: %02X", (unsigned)cda_status());
+
+	playing_mixed();
+	CD_Flags(1, IDEF_RST_SEEN);
+	EXPECT(cda_status() == CDA_IDLE, "Amiga reset: %02X", (unsigned)cda_status());
+
+	playing_mixed();
+	EXPECT(CD_Insert("GAME    CUE", "Game", iso_dir) == CD_OK && cda_status() == CDA_IDLE, "new disc: %02X",
+	       (unsigned)cda_status());
+	end();
+}
+
 int main(void)
 {
 	make_wav_header(wav_header, WAV_SECTORS * 2352, 2);
@@ -1147,6 +1283,9 @@ int main(void)
 	t_cue_names();
 	t_cue_refusals();
 	t_cue_config();
+	t_play();
+	t_play_refused();
+	t_play_stops();
 
 	printf("\n%d cases: %d passed, %d failed (%d failed checks)\n",
 	       cases_run, cases_passed, cases_run - cases_passed, total_fails);

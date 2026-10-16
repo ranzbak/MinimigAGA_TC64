@@ -504,7 +504,8 @@ void ATA_ReadSectors(unsigned char* tfr, int sector, int cylinder, int head, int
 			block_count = hdf[unit].sectors_per_block;
 
 		WriteStatus(IDE_STATUS_RDY); // pio in (class 1) command type
-		while (!(GetFPGAStatus() & CMD_IDECMD)); // wait for empty sector buffer
+		while (!(GetFPGAStatus() & CMD_IDECMD)) // wait for empty sector buffer
+			CD_AudioPoll(); // CD audio refill between blocks (findings/cdrom/plan.md 13.5)
 
 		switch(hdf[unit].type)
 		{
@@ -616,7 +617,8 @@ void ATA_WriteSectors(unsigned char* tfr, int sector, int cylinder, int head, in
 
 		while(block_count--)
 		{
-			while (!(GetFPGAStatus() & CMD_IDEDAT)); // wait for full write buffer
+			while (!(GetFPGAStatus() & CMD_IDEDAT)) // wait for full write buffer
+				CD_AudioPoll(); // CD audio refill between blocks (13.5)
 			EnableFpga();
 			SPI(CMD_IDE_DATA_RD | ide_port); // read data command
 			SPI(0x00); SPI(0x00); SPI(0x00); SPI(0x00); SPI(0x00);

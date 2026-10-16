@@ -34,6 +34,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "config.h"
 
 #include "drivesounds.h"
+#include "cdrom.h"
 
 #include <stdio.h>
 
@@ -222,6 +223,7 @@ void ReadTrack(adfTYPE *drive)
 
     while (1)
     {
+        CD_AudioPoll(); // CD audio refill between sectors (findings/cdrom/plan.md 13.5)
         FileRead(&file, sector_buffer);
 
         EnableFpga();

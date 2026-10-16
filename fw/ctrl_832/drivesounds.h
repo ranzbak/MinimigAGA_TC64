@@ -17,6 +17,7 @@ void drivesounds_on();
 void drivesounds_off();
 void drivesounds_queueevent(enum DriveSound_Type type);
 void drivesounds_stop();
+void drivesounds_yield();	/* the CD audio player takes the ring */
 void drivesounds_start();
 int drivesounds_fill();
 int drivesounds_init(const char *filename);

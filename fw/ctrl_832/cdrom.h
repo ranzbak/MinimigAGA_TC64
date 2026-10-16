@@ -69,4 +69,9 @@ void CD_Flags(int port, unsigned char flags);
 /* A command for the CD unit; tfr = the 8 task file registers. */
 void CD_HandleCommand(int port, unsigned char *tfr);
 
+/* CD audio refill (13.1, 13.5): call from the main loop and between the
+   blocks of every SD transfer loop, never inside an SD multi-block read
+   or write.  Prints "CDA: underrun n" in DebugMode. */
+void CD_AudioPoll(void);
+
 #endif

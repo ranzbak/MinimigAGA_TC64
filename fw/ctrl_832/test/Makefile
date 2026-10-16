@@ -23,8 +23,8 @@ cue_test: cue_test.c ../cue.c ../cue.h
 cdaudio_test: cdaudio_test.c ../cdaudio.c ../cdaudio.h ../cue.c ../cue.h
 	$(HOSTCC) $(CFLAGS) -o $@ cdaudio_test.c ../cdaudio.c ../cue.c
 
-cdrom_test: cdrom_test.c ../cdrom.c ../cdrom.h ../atapi.c ../atapi.h ../cue.c ../cue.h ../hdd.h
-	$(HOSTCC) $(CFLAGS) -o $@ cdrom_test.c ../cdrom.c ../atapi.c ../cue.c
+cdrom_test: cdrom_test.c ../cdrom.c ../cdrom.h ../atapi.c ../atapi.h ../cue.c ../cue.h ../cdaudio.c ../cdaudio.h ../hdd.h
+	$(HOSTCC) $(CFLAGS) -o $@ cdrom_test.c ../cdrom.c ../atapi.c ../cue.c ../cdaudio.c
 
 run: cue_test cdaudio_test atapi_test cdrom_test
 	./cue_test
