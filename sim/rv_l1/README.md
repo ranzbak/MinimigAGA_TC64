@@ -15,6 +15,7 @@ seconds and needs no Vivado.
 | `Makefile` | Builds the test programs into `build/<prog>.hex` |
 | `sw/crt0_l1.S`, `sw/l1.ld`, `sw/l1.h` | Start-up code, linker script, MMIO header |
 | `tests/` | Test programs (`.S` or `.c`) and expected memory dumps (`.mem`) |
+| `prog/Makefile`, `sw/syscalls.c`, `sw/l1_newlib.ld` | Firmware-unit programs (newlib-nano) and their runtime, see "Firmware units" |
 
 ## Prerequisites
 
@@ -151,3 +152,39 @@ Decoded on `addr[7:2]`. Offsets for `x0`-relative access are in `sw/l1.h`
 3. Optional: `tests/<name>.mem` with lines `<byte address> <BE word>` (hex,
    consecutive words); `run.sh` dumps that range after DONE and compares.
 4. `make -C sim/rv_l1 tests && bash sim/rv_l1/run.sh <name>`, then `all`.
+
+## Firmware units (`units` target)
+
+`atapi_emu`, `cue_emu` and `cdaudio_emu` are the CD-ROM unit programs of
+`fw/ctrl_832/test/emu` (they print `ok ...` lines and end with `PASS` or
+`FAIL n`), built with the RISC-V gcc and newlib-nano and run on the L1 bench.
+`printf` goes through `sw/syscalls.c` (`_write` = UART byte stores, `_sbrk` =
+heap from `_end` to 0xE0000, `_exit` = DONE); `sw/l1_newlib.ld` puts the code
+at 0x2000 and the stack top at 0xF0000. `main` returns the failure count.
+
+```sh
+make -C sim/rv_l1/prog FWDIR=../../../fw/ctrl_832   # build/<prog>.hex (FWDIR default as shown;
+                                                    # fw/ctrl_rv in Phase 3)
+bash sim/rv_l1/run.sh units                         # WS=3 ROMWS=1 EXTRA_WS=0 DEBUG=0
+WS=8 bash sim/rv_l1/run.sh units                    # other settings from the environment
+```
+
+A unit passes when the bench prints `=== PASS`, no output line starts with
+`FAIL`, a line is exactly `PASS` and there is no bus violation (the verdict
+of `fw/ctrl_832/test/emu/Makefile`). `units` ends with `=== UNITS PASS` or
+`=== UNITS FAILED`; logs (the programs' own output plus `=== CYCLES`) are
+`run_${RUNTAG:-wt}/<prog>_ws3_r1_x0_d0.log`, the summary
+`run_${RUNTAG:-wt}/units.txt`. The runs are slow (about 1.5-3 minutes per
+million cycles of simulated time on this machine): `units` is not part of `all`.
+
+Recorded cycles (WS=3 ROMWS=1 EXTRA_WS=0 DEBUG=0, 2026-10-16, all `PASS`):
+
+| Program | Cycles | Wall time (vvp) |
+|---|---|---|
+| `cue_emu` | 764,056 | ~2 min |
+| `atapi_emu` | 954,062 | ~2.5 min |
+| `cdaudio_emu` | 19,059,807 | ~50 min |
+
+`cdaudio_emu` fills the 64 KB ring byte by byte several times and lands just
+under the bench's default 20 M-cycle timeout (`+TIMEOUT=`): a slower memory
+setting (`WS=8`) needs it raised: `TIMEOUT=60000000 WS=8 bash sim/rv_l1/run.sh units`.

@@ -18,6 +18,12 @@
 #   teeth   fencei_nofencei over the same matrix must print "=== FAIL 1"
 #   debug   every program once with DEBUG=2 (WS=3 ROMWS=1)
 #   no run may print "=== BUS VIOLATION"
+#
+#   make -C sim/rv_l1/prog             # build the firmware units first
+#   bash sim/rv_l1/run.sh units        # atapi_emu cue_emu cdaudio_emu (WS=3
+#                                      # ROMWS=1 by default); verdict as the emu
+#                                      # Makefile: no line "FAIL...", a line
+#                                      # exactly "PASS", bench "=== PASS"
 set -u
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -29,6 +35,7 @@ run=$here/run_${RUNTAG:-wt}
 build=$here/build
 
 PROGS="lanes refill fencei irq"
+UNITS="atapi_emu cue_emu cdaudio_emu"
 TEETH="fencei_nofencei"
 
 CORES="$top/rtl/host/vexriscv/VexOsd.v $top/rtl/host/vexriscv/VexOsd_DMT.v $top/rtl/host/vexriscv/VexOsd_DMJ.v"
@@ -94,6 +101,28 @@ one() {
   return 1
 }
 
+# unit <prog> <ws> <romws> <extra_ws> <debug>: a firmware unit (prog/Makefile).
+# Passes when the bench says PASS, no output line starts with FAIL, a line is
+# exactly PASS (the verdict grep of fw/ctrl_832/test/emu/Makefile).
+unit() {
+  local prog=$1 ws=$2 romws=$3 x=$4 dbg=$5
+  local tag="$prog ws=$ws romws=$romws x=$x d=$dbg"
+  local log=$run/${prog}_ws${ws}_r${romws}_x${x}_d${dbg}.log
+  local vvp=$run/tb_x${x}_d${dbg}.vvp
+  if [ ! -f "$build/$prog.hex" ]; then
+    echo "FAIL $tag: $build/$prog.hex missing (make -C sim/rv_l1/prog)"; return 1
+  fi
+  "$VVP" -N "$vvp" +HEX="$build/$prog.hex" +WS="$ws" +ROMWS="$romws" +TIMEOUT="${TIMEOUT:-20000000}" > "$log" 2>&1
+  local cyc; cyc=$(sed -n 's/^=== CYCLES //p' "$log")
+  local res; res=$(grep -m1 -E '^=== (PASS|FAIL|TIMEOUT)' "$log" | sed 's/^=== //')
+  if [ "$res" = PASS ] && ! grep -q '^FAIL' "$log" && grep -qx PASS "$log" \
+     && ! grep -q 'BUS VIOLATION' "$log"; then
+    echo "PASS $tag cycles=$cyc"; return 0
+  fi
+  echo "FAIL $tag: bench '${res:-nothing}' ($log)"
+  return 1
+}
+
 gates() {
   local ok=0
   for dbg in 0 2; do
@@ -119,6 +148,18 @@ mkdir -p "$run"
 
 case "${1:-}" in
   __one) shift; one "$@" ;;
+  units)
+    x=${EXTRA_WS:-0}; dbg=${DEBUG:-0}
+    rm -f "$run/tb_x${x}_d${dbg}.vvp"
+    compile "$x" "$dbg" || exit 1
+    rc=0
+    for p in $UNITS; do
+      unit "$p" "${WS:-3}" "${ROMWS:-1}" "$x" "$dbg" || rc=1
+    done | tee "$run/units.txt"
+    grep -q '^FAIL' "$run/units.txt" && rc=1
+    if [ $rc -eq 0 ]; then echo "=== UNITS PASS"; else echo "=== UNITS FAILED"; fi
+    exit $rc
+    ;;
   all)
     rm -f "$run"/*.vvp "$run"/*.log "$run/results.txt"
     fail=0
