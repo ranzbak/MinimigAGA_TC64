@@ -121,3 +121,6 @@ findings/**/.tinfo/
 
 # Vivado build logs next to the build dirs (build_<stage>.log)
 /build_*.log
+
+# OOC run outputs of tools/vivado/ooc_hostcpu
+tools/vivado/ooc_hostcpu/runs/
