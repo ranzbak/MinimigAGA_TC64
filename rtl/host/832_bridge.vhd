@@ -1,4 +1,13 @@
 -- Bridge to interface 32-bit CPU to 16-bit host CPU  bus
+--
+-- The host CPU is the EightThirtyTwo (cpu_riscv = false, default) or the
+-- VexRiscv in rv_hostcpu.v (cpu_riscv = true).  Both are bound through
+-- component declarations, so a compile without the other CPU's sources
+-- elaborates.  Both drive the same 832 req/ack bus (cpu_*).
+--
+-- hw accesses use a four-phase handshake: cfide's ack is a clk_28 register,
+-- it stays high up to four clk_114 cycles after hw_req drops.  hw_release
+-- waits for it to fall, so the next hw request never sees the old ack.
 
 library ieee;
 use ieee.std_logic_1164.all;
@@ -7,7 +16,10 @@ use ieee.numeric_std.all;
 
 entity EightThirtyTwo_Bridge is
    generic (
-      debug : boolean := false
+      debug : boolean := false;        -- 832 only: JTAG debug bridge
+      cpu_riscv : boolean := false;    -- false: EightThirtyTwo, true: rv_hostcpu
+      rv_debug : natural := 0;         -- 0 none, 1 BSCANE2 tunnel (Artix only), 2 pin TAP
+      rv_extra_ws : natural := 0       -- bench only: idle cycles before every RV request
    );
    port(
       clk             : in std_logic;
@@ -24,13 +36,19 @@ entity EightThirtyTwo_Bridge is
       hw_req            : out std_logic;
       hw_ack            : in std_logic;
       hw_d              : in std_logic_vector(15 downto 0);
-      interrupt         : in std_logic
+      interrupt         : in std_logic;
+
+      -- RISC-V debug TAP (rv_debug = 2); rv_jtag_tdo = '0' otherwise
+      rv_jtag_tck       : in std_logic := '0';
+      rv_jtag_tms       : in std_logic := '0';
+      rv_jtag_tdi       : in std_logic := '0';
+      rv_jtag_tdo       : out std_logic
    );
 end EightThirtyTwo_Bridge;
 
 architecture rtl of EightThirtyTwo_Bridge is
 
-   type bridgestates is (waiting,ram,hw,rom);
+   type bridgestates is (waiting,ram,hw,hw_release,rom);
    signal state : bridgestates;
 
    signal cpu_req : std_logic;
@@ -82,10 +100,124 @@ architecture rtl of EightThirtyTwo_Bridge is
       );
    end component;
 
+   component eightthirtytwo_cpu
+      generic (
+         littleendian : boolean := true;
+         storealign : boolean := true;
+         interrupts : boolean := true;
+         multiplier : boolean := true;
+         prefetch : boolean := true;
+         dualthread : boolean := true;
+         interruptthread : integer := 1;
+         forwarding : boolean := true;
+         debug : boolean := false
+      );
+      port (
+         clk : in std_logic;
+         reset_n : in std_logic;
+         interrupt : in std_logic := '0';
+         addr : out std_logic_vector(31 downto 2);
+         d : in std_logic_vector(31 downto 0);
+         q : out std_logic_vector(31 downto 0);
+         wr : out std_logic;
+         req : out std_logic;
+         ack : in std_logic;
+         bytesel : out std_logic_vector(3 downto 0);
+         debug_d : in std_logic_vector(31 downto 0) := X"00000000";
+         debug_q : out std_logic_vector(31 downto 0);
+         debug_req : out std_logic;
+         debug_wr : out std_logic;
+         debug_ack : in std_logic := '0'
+      );
+   end component;
+
+   component debug_bridge_jtag
+      port (
+         clk : in std_logic;
+         reset_n : in std_logic;
+         d : in std_logic_vector(31 downto 0);
+         q : out std_logic_vector(31 downto 0);
+         req : in std_logic;
+         wr : in std_logic;
+         ack : buffer std_logic
+      );
+   end component;
+
+   component OSDBoot_832_ROM
+      generic (
+         maxAddrBitBRAM : integer := 15;
+         COL_WIDTH : integer := 8;
+         NB_COL : integer := 4
+      );
+      port (
+         clk : in std_logic;
+         reset_n : in std_logic := '1';
+         addr : in std_logic_vector(maxAddrBitBRAM-2 downto 0);
+         q : out std_logic_vector(31 downto 0);
+         d : in std_logic_vector(31 downto 0) := X"00000000";
+         we : in std_logic := '0';
+         bytesel : in std_logic_vector(3 downto 0) := "1111";
+         addr2 : in std_logic_vector(maxAddrBitBRAM-2 downto 0) := (others=>'0');
+         q2 : out std_logic_vector(31 downto 0);
+         d2 : in std_logic_vector(31 downto 0) := X"00000000";
+         we2 : in std_logic := '0';
+         bytesel2 : in std_logic_vector(3 downto 0) := "1111"
+      );
+   end component;
+
+   component OSDBoot_rv_ROM
+      generic (
+         maxAddrBitBRAM : integer := 15;
+         COL_WIDTH : integer := 8;
+         NB_COL : integer := 4
+      );
+      port (
+         clk : in std_logic;
+         reset_n : in std_logic := '1';
+         addr : in std_logic_vector(maxAddrBitBRAM-2 downto 0);
+         q : out std_logic_vector(31 downto 0);
+         d : in std_logic_vector(31 downto 0) := X"00000000";
+         we : in std_logic := '0';
+         bytesel : in std_logic_vector(3 downto 0) := "1111";
+         addr2 : in std_logic_vector(maxAddrBitBRAM-2 downto 0) := (others=>'0');
+         q2 : out std_logic_vector(31 downto 0);
+         d2 : in std_logic_vector(31 downto 0) := X"00000000";
+         we2 : in std_logic := '0';
+         bytesel2 : in std_logic_vector(3 downto 0) := "1111"
+      );
+   end component;
+
+   component rv_hostcpu
+      generic (
+         DEBUG : integer := 0;
+         EXTRA_WS : integer := 0
+      );
+      port (
+         clk : in std_logic;
+         reset_n : in std_logic;
+         addr : out std_logic_vector(31 downto 2);
+         q : out std_logic_vector(31 downto 0);
+         sel : out std_logic_vector(3 downto 0);
+         wr : out std_logic;
+         req : out std_logic;
+         ack : in std_logic;
+         d : in std_logic_vector(31 downto 0);
+         irq_ext : in std_logic;
+         irq_timer : in std_logic;
+         irq_soft : in std_logic;
+         jtag_tck : in std_logic;
+         jtag_tms : in std_logic;
+         jtag_tdi : in std_logic;
+         jtag_tdo : out std_logic
+      );
+   end component;
+
 begin
 
+gen832:
+if not cpu_riscv generate
 
-   my832 : entity work.eightthirtytwo_cpu
+   my832 : component eightthirtytwo_cpu
       generic map (
          littleendian => false,
          interrupts => true,
@@ -115,7 +247,7 @@ begin
 
    gendebugbridge:
    if debug=true generate
-      debugbridge : entity work.debug_bridge_jtag
+      debugbridge : component debug_bridge_jtag
          port map(
             clk => clk,
             reset_n => nReset,
@@ -128,7 +260,7 @@ begin
    end generate;
 
 
-   bootrom: entity work.OSDBoot_832_ROM
+   bootrom: component OSDBoot_832_ROM
       generic map
       (
          maxAddrBitBRAM => 12
@@ -143,6 +275,55 @@ begin
          q     => rom_d,
          q2    => open
       );
+
+   rv_jtag_tdo <= '0';
+
+end generate;
+
+genrv:
+if cpu_riscv generate
+
+   myrv : component rv_hostcpu
+      generic map (
+         DEBUG => rv_debug,
+         EXTRA_WS => rv_extra_ws
+      )
+      port map (
+         clk => clk,
+         reset_n => nReset,
+         addr => cpu_addr,
+         q => cpu_q,
+         sel => cpu_sel,
+         wr => cpu_wr,
+         req => cpu_req,
+         ack => cpu_ack,
+         d => cpu_d,
+         irq_ext => interrupt,
+         irq_timer => '0',
+         irq_soft => '0',
+         jtag_tck => rv_jtag_tck,
+         jtag_tms => rv_jtag_tms,
+         jtag_tdi => rv_jtag_tdi,
+         jtag_tdo => rv_jtag_tdo
+      );
+
+   bootrom: component OSDBoot_rv_ROM
+      generic map
+      (
+         maxAddrBitBRAM => 12
+      )
+      PORT MAP
+      (
+         addr => cpu_addr(12 downto 2),
+         clk   => clk,
+         d  => cpu_q,
+         we => rom_wr,
+         bytesel => cpu_sel,
+         q     => rom_d,
+         q2    => open
+      );
+
+end generate;
 
    rom_select <= '1' when cpu_addr(23 downto 13)=X"00"&"000" ELSE '0';
 
@@ -203,6 +384,13 @@ begin
                   wr<='0';
                   hw_req<='0';
                   cpu_ack<='1';
+                  state <= hw_release; -- 4PHASE
+               end if;
+
+            when hw_release =>
+               -- cfide's ack (clk_28) lags hw_req; a new hw request may only
+               -- start once it has fallen.
+               if hw_ack='0' then
                   state<=waiting;
                end if;
 
