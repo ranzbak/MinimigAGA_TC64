@@ -671,16 +671,11 @@ and are not started unattended.  Board steps are done with Paul.
   `nrdy` covers gaps); measure the gain against 1.8.
 - 2.2 Only if R4 shows up: DRDY mask for ATAPI units.
 
-### Phase 3 -- BIN/CUE and CD audio (rough size)
+### Phase 3 -- CUE sheets and CD audio
 
-- CUE parser from bincue.c (file-backed); 2352-byte tracks need the 16-byte
-  header skipped (via `sector_buffer`, or an RTL skip counter in the direct
-  path).  READ CD (BE), READ TOC with audio tracks, PLAY AUDIO MSF/10,
-  PAUSE/RESUME, READ SUB-CHANNEL with position, MODE SELECT page 0E volume.
-  Audio through audiotrack.c into the 32 KB host audio buffer (shared with
-  drive sounds -- arbitration needed).  ScanDirectory gets an extension
-  list ("ISO"+"CUE").  Firmware ~6-8 KB, RTL 0-30 LUTs; about the size of
-  phase 1 again.
+Designed 2026-10-16 with Paul: section 13 (replaces the earlier sketch).
+Steps 3a (CUE, files, TOC, data), 3b (player), 3c (READ CD, volume, OSD);
+firmware only, no bitstream.
 
 ### Phase 4 -- CD32 (Akiko)
 
@@ -1003,3 +998,227 @@ plumbing, 1.3), 11b2f94 (CD glue + serial log, 1.4/1.6), 7aaef6d (OSD, 1.5).
   68k's even address -- the same lane order as this Gayle's FIFO.  The
   first INQUIRY on the board is still the proof.
 
+### 12.6 Board result, ISO drive (2026-10-15/16)
+
+- stage_cdscaler2 + firmware with 936438e: IDEfix97 (KS 3.1.4) finds unit 2
+  (port 2 master) as MINIMIG/<ISO name>; CD0 = `Device=atapi.device`,
+  `Unit=2`, `L:CDFileSystem`; Pinball Dreams booted from the ISO.
+- Before 936438e every packet ended GOOD without data: vbcc832 compiled
+  `r->kind = X; return X;` as a 32-bit store into the uint8_t `kind`
+  (big-endian: kind = 0).  FindDevice showed "UNKNOWN (No SCSI Inquire)" and
+  IDEfix mounted the unit as DF4:/PC4: (floppy file systems).  Fixed with an
+  int32_t kind; `test/emu` runs atapi.c compiled by vbcc832 in 832e.
+- The CD log (`CDn ATA/CDB`) prints only in DebugMode (Ctrl+LAlt+OSD key).
+- The IDE port 2 page is hard to find (only a title arrow): a visible line
+  goes into 3c.
+
+## 13. Phase 3 design -- CUE sheets and CD audio (2026-10-16)
+
+Agreed with Paul section by section on 2026-10-16, after the ISO drive worked
+on the board (12.6).  Firmware only: no RTL change, no bitstream; every step
+is tested by swapping the SD card.
+
+### 13.1 Scope and decisions
+
+- **Both CUE layouts** (Paul): ISO + one WAV per audio track (TOSEC sets, the
+  reference case is `Pinball Fantasies (1993)(21st Century Entertainment)[!].cue`,
+  13.9), and the single-file BIN/CUE (raw 2352-byte sectors, data and audio
+  in one `.bin`).
+- **CD audio wins the audio buffer** (Paul): while a track plays or is paused,
+  the drive sounds are silent; they return when playback stops.  When the
+  Amiga owns the stream (`AUDIOF_AMIGA`, Akiko/AHI) CD audio yields the same
+  way the drive sounds do (my ruling).
+- **Refill by cooperative polling** (Paul, option 1 of 3): `CD_AudioPoll()` in
+  the main loop and between blocks of the CD, hard-disk and floppy transfer
+  loops; never inside an SD multi-block operation.  Rejected: a second 832
+  thread (FAT layer, FAT sector cache and SPI are not reentrant) and an RTL
+  timer interrupt (bitstream change, same reentrancy problem).
+- Unsupported CUE content (MODE2, CDG, several sessions, files that are not
+  found, WAV that is not PCM 44.1 kHz 16-bit stereo) refuses the insert with
+  an OSD message naming the cause; no half-mounted disc.
+- `bincue.c` (1.4) is replaced, not repaired: it is unused, handles one FILE,
+  hard-codes track 3 (`cd_findtrack`), ignores PREGAP / INDEX 00.
+  `audiotrack.c` is replaced by `cdaudio.c`; both leave the Makefile and
+  main.c's unused `struct cdimage cd` (2.4 KB .bss) goes in 3a/3b (its tail padding writes past a
+  negative `remain`, its WAV check compares 5 bytes against `"data "`).
+
+### 13.2 The audio hardware (verified 2026-10-16)
+
+- 64 KB ring in shared SDRAM at 832 address `AUDIO_BUFFER` 0x70000 (SDRAM
+  0x6f0000, Amiga $EF0000), two 32 KB halves; `AUDIO` register 0x0fffffb3:
+  write bit 0 ENA, bit 1 CLEAR (CLEAR resets the play pointer); read bit 0 =
+  the half being played, bit 1 = `AUDIOF_AMIGA` (rtl/host/cfide.vhd,
+  rtl/soc/minimig_virtual_top.v:581-626).
+- Fixed 44.1 kHz (`aud_tick` = CLK_28/643), interleaved stereo, 16-bit
+  little-endian -- exactly red book: WAV data and BIN audio are copied
+  without byte swapping.  One half = 8192 frames = 186 ms.
+- `TIMER` (0x0fffffd2) counts `aud_tick`/256 in lockstep with playback:
+  1 unit = 256 frames; a CD sector is 588 frames.
+- Mixed with Paula in AudioMix (clipping).  No interrupt to the 832.
+- The drive sounds (drivesounds.c) write the same ring and stop the stream
+  after a buffer of silence; their samples load just below 0x70000.
+
+### 13.3 Units
+
+| Unit | Job | SD / hardware access | Tested by |
+|---|---|---|---|
+| `cue.c` (new) | CUE text -> disc model; LBA layout | none | host |
+| `atapi.c` | commands from the disc model; PLAY returns a play request | none | host + emu |
+| `cdaudio.c` (new) | the player: state, refill, position, volume | through a small port interface (read file bytes, AUDIO/TIMER registers, buffer) | host (buffer model) + emu |
+| `cdrom.c` | insert (ISO/CUE), files, READ data paths, glue | yes | host (cdrom_test model) |
+| `drivesounds.c` | stays out while `cdaudio` owns the buffer | -- | board |
+| `menu.c`, `fat.c` | picker with ISO+CUE, play indicator, IDE port 2 line | -- | board |
+
+### 13.4 Disc model and CUE parser (`cue.c`)
+
+```
+struct cd_track {            /* one per TRACK, up to 99 */
+    uint8_t  number;
+    uint8_t  type;           /* CD_DATA2048, CD_DATA2352, CD_AUDIO */
+    uint8_t  file;           /* index into files[] */
+    uint32_t file_offset;    /* bytes into the file where INDEX 01 starts */
+    uint32_t lba;            /* disc address of INDEX 01 */
+    uint32_t sectors;        /* to the next track's INDEX 01 / end of file */
+    uint32_t pregap_lba;     /* first sector of its gap (INDEX 00 or PREGAP), == lba if none */
+    uint8_t  pregap_silent;  /* gap not in the file (PREGAP) */
+};
+struct cd_file { char shortname[12]; uint8_t wave; uint32_t data_offset, data_bytes; };
+```
+
+- Accepted: `FILE "..." BINARY|WAVE` (any number up to 99), `TRACK nn
+  MODE1/2048|MODE1/2352|AUDIO`, `INDEX 00/01 mm:ss:ff`, `PREGAP`, `POSTGAP`;
+  CRLF or LF, quoted or bare names; ignored: `CATALOG`, `REM`, `TITLE`,
+  `PERFORMER`, `SONGWRITER`, `FLAGS`, `ISRC`, `CDTEXTFILE`.
+- Layout: track 1 INDEX 01 at LBA 0; each track continues where the previous
+  file's (or the same file's) sectors end, plus PREGAP and POSTGAP sectors,
+  which occupy disc addresses but no file bytes.  INDEX 00 gaps are in the
+  file.  Lead-out = end of the last track.
+- WAV: at insert the RIFF chunks are walked to `fmt ` (PCM, 2 channels,
+  44100, 16 bits, block align 4) and `data` -> `data_offset`, `data_bytes`;
+  no fixed 44-byte header.  Sectors = data_bytes / 2352 (a partial last
+  sector is padded with silence).
+- Sector sizes: DATA2048 = 2048 bytes of file per sector, DATA2352 and AUDIO
+  = 2352.
+- Reference layout (13.9): track 1 DATA2048 LBA 0, 2208 sectors; track 2
+  AUDIO, PREGAP 150 silent -> INDEX 01 at LBA 2358, 17775 sectors; track 3
+  AUDIO, INDEX 00 at file 0 / INDEX 01 at file 2:00 -> pregap 150 in the file:
+  INDEX 00 at LBA 20133 (2358 + 17775), INDEX 01 at LBA 20283, 21375 sectors
+  (21525 - 150); lead-out at LBA 41658.
+- A parse error names the line; an unknown command is an error, not ignored
+  (a CUE we misread is worse than one we refuse).
+
+### 13.5 Files and data reads (`cdrom.c`)
+
+- Picker: `.ISO` and `.CUE` (`ScanDirectory` with an extension list).  An ISO
+  becomes a one-track DATA2048 model, so everything after insert has one path.
+- CUE insert: the CUE is read line by line (RARead), parsed, then every FILE
+  is looked up by long name in the CUE's directory (`FileOpen` long-name
+  match) and its 8.3 name kept, WAV headers read.  Any missing file refuses
+  the insert.  The drive name (IDENTIFY model, INQUIRY product) is the CUE's
+  long name.  Config keeps the CUE like the ISO (short name + extension now
+  kept; `CD_Insert` no longer forces "ISO").
+- At most two files open: the data file (track being read, `hdfTYPE` with its
+  1024-entry cluster index) and the audio file (track being played, reopened
+  with a fresh index on each track change).
+- READ(10)/(12): LBA -> track -> file + offset.  DATA2048: today's multi-block
+  path (`FileReadEx` into the IDE FIFO).  DATA2352: per sector through a
+  buffer, the 2048 user bytes from offset 16 sent.  A read crossing a track
+  boundary is split; a read of an AUDIO sector -> CHECK 05/64/00.
+- `CD_AudioPoll()` is called between blocks in `cd_send_sectors`,
+  `cd_wait`, the HDD read/write loops (`ATA_ReadSectors`/`ATA_WriteSectors`)
+  and the floppy track transfer.
+
+### 13.6 ATAPI commands (`atapi.c`)
+
+| Op | Command | Behaviour |
+|---|---|---|
+| 43 | READ TOC fmt 0/1 | all tracks: control 0x14 data / 0x10 audio, LBA or MSF; lead-out from the model |
+| 45 A5 47 | PLAY AUDIO(10)/(12)/MSF | play request (start, end); may cross tracks; silent gaps play as silence; start in a DATA track -> CHECK 05/64/00; length 0 = no-op GOOD |
+| 48 | PLAY AUDIO TRACK/INDEX | track A index x .. track B index y (older Amiga players) |
+| 4B | PAUSE/RESUME | keeps the position |
+| 4E | STOP PLAY/SCAN | stops |
+| 1B | START STOP UNIT | stop or eject also ends playback |
+| 42 | READ SUB-CHANNEL fmt 1 | audio status 11 playing / 12 paused / 13 completed / 14 error / 15 none (13/14 reported once, then 15), track, index, absolute and relative address |
+| 1A 5A / 15 55 | MODE SENSE / SELECT page 0E | per-channel volume 0..255, port mapping fixed |
+| 2A page, 46 | capabilities / GET CONFIGURATION | audio play advertised (2A byte 4 bit 0; feature 0103h CD audio) |
+| BE | READ CD | user data (2048) for data sectors, CDDA 2352 for audio sectors; no subchannel, no headers; other selections -> CHECK 05/24/00 |
+
+`atapi.c` stays free of SD and hardware access: PLAY commands return
+`ATAPI_PLAY` with a play request in the result; the player reports its
+position back through `atapi_audio_status()` for SUB-CHANNEL.  Every new
+struct field that the 832 build writes gets the emu test (vbcc832 traps:
+uint8_t fields set with "X = c; return c;").
+
+### 13.7 The player (`cdaudio.c`)
+
+- States idle / playing / paused / completed / error.
+- Start: CLEAR, fill both halves, ENA.  ~60-100 ms SD reading before sound.
+- `CD_AudioPoll()`: if `AUDIO & 1` changed since the last fill, fill the other
+  32 KB from the stream cursor.  The stream is a byte stream over the play
+  range: file bytes through a 512-byte block buffer (WAV data and BIN audio
+  are not block aligned), silence for silent gaps, the next track's file
+  opened at a boundary.  32 KB is not a whole number of sectors (13.9); the
+  cursor does not care.
+- End of range: silence, then `completed` once the last real sample has
+  played (by TIMER), then the buffer goes back to the drive sounds.
+- Position for SUB-CHANNEL from TIMER: start LBA + frames played / 588
+  (accurate to 256 frames, 6 ms), not from the read-ahead cursor.
+- Volume: straight copy at 255/255; otherwise each sample scaled by
+  vol/256 (832 mul); 0 = silence.
+- Late refill: when the half changed twice since the last fill (TIMER says
+  more than one half went by), the stale half is filled with silence, the
+  cursor resynchronised to the played position, and `CDA: underrun` printed
+  (DebugMode).
+- `AUDIOF_AMIGA` set: no writes, the position advances by TIMER.
+- Pause: ENA off, position kept; resume refills from the position.
+- Eject / reset (rst_seen) / disc change: stop.
+
+### 13.8 Steps, tests first
+
+- **3a -- CUE, files, TOC, data.**  Host: `cue_test` with the reference CUE
+  (13.9), a generated BIN/CUE (data + 2 audio tracks), PREGAP/POSTGAP/INDEX 00
+  cases, every refusal; TOC fmt 0/1 from the model; READ split at a track
+  boundary; CHECK 05/64/00 on audio.  Emu: `cue.c` + new structs.  Board:
+  Pinball Fantasies (ISO+WAV) and one BIN/CUE game boot; the TOC lists the
+  audio tracks (a CD player program shows them); music silent.
+- **3b -- the player.**  Host: player against a model of the ring (half flips
+  every N polls), track crossing, silent gap, end of range, underrun,
+  pause/resume, eject while playing, SUB-CHANNEL position, AUDIOF_AMIGA.
+  Board: Pinball Fantasies music; a CD player program (track skip, time,
+  pause); `CDA: underrun` count during a large hard-disk copy while music
+  plays; drive sounds back after stop; eject while playing.
+- **3c -- READ CD, volume, OSD.**  READ CD both selections; page 0E volume;
+  OSD play indicator (`<note>NN`) on the CD line; a visible "IDE port 2 >"
+  line on the Harddisks page (12.6).
+
+### 13.9 Reference disc
+
+`/media/paul/AARSDISK7/iso/Pinball Fantasies/` (Paul's TOSEC set):
+
+```
+CATALOG 5012635300313
+FILE "...(Track 1 of 3)[!].iso" BINARY   TRACK 01 MODE1/2048  INDEX 01 00:00:00
+FILE "...(Track 2 of 3)[!].wav" WAVE     TRACK 02 AUDIO       PREGAP 00:02:00  INDEX 01 00:00:00
+FILE "...(Track 3 of 3)[!].wav" WAVE     TRACK 03 AUDIO       INDEX 00 00:00:00  INDEX 01 00:02:00
+```
+
+ISO 4,521,984 bytes (2208 sectors); WAVs PCM 44100/16/2, `data` at byte 44,
+41,806,800 bytes (17,775 sectors) and 50,626,800 bytes (21,525 sectors).
+CRLF line endings.  Expected layout in 13.4.
+
+### 13.10 Memory
+
+`.bss` ends at 0x24698 (cdrom 936438e); the drive-sound samples load below
+`AUDIO_BUFFER` 0x70000 into what is left (~300 KB).  Phase 3 adds roughly
+8-10 KB code and ~3 KB model (99 tracks x ~24 B + 99 files x ~24 B) and a
+512-byte block buffer; the sample space shrinks accordingly, nothing else.
+
+### 13.11 Risks
+
+- SD bandwidth: CD audio takes 176 KB/s of an estimated 0.6-1.2 MB/s; hard
+  disk throughput drops by that while music plays (only then).
+- Long transfers without a poll point would underrun: every SD transfer loop
+  gets the hook (13.5); the board test counts underruns.
+- The one FAT sector cache is shared by the audio file and the hard disk:
+  extra FAT reads, not errors.
+- vbcc832 codegen (12.6): new structs go through the emu test.
