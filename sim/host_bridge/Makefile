@@ -16,8 +16,8 @@ TOP := $(abspath $(CURDIR)/../..)
 include $(TOP)/tools/riscv/toolchain.mk
 
 B       ?= build
-TESTS   ?= t_lanes t_hwoff t_b2b t_spibusy t_irq t_irqctl dhry
-FWTESTS := t_irq t_irqctl
+TESTS   ?= t_lanes t_hwoff t_b2b t_spibusy t_irq t_irqctl t_irqapi dhry
+FWTESTS := t_irq t_irqctl t_irqapi
 ARCH    := $(TOP)/fw/ctrl_rv/arch
 ROMGEN  := $(TOP)/fw/romgen/romgen
 ROMDIR  := $(TOP)/fw/ctrl_boot_rv

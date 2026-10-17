@@ -10,7 +10,7 @@ and the linker script.
 | `crt0.S` | `_start` (section `.text.start`, the first byte at 0x2000): gp, sp, clear `.bss`, `mtvec = trap_entry`, constructors, `mie.MEIE`, `mstatus.MIE`, `main`, then spin |
 | `trap.S` | `trap_entry` (mtvec, direct mode): saves ra, t0-t6, a0-a7 (64 bytes), calls `rv_trap(mcause, mepc, mtval)`, restores, `mret` |
 | `trap.c` | `rv_trap`: mcause `0x8000000B` calls `(*_InterruptVector)()`, anything else calls `rv_exception`; weak `rv_exception` (prints `EXC mcause=.. mepc=.. mtval=..`, spins) and weak `rv_putc` (cfide UART) |
-| `irq.h`, `irq.c` | `SetIntHandler`, `GetInterrupts`, `EnableInterrupts`, `DisableInterrupts`, `irq_save` / `irq_restore`, `_InterruptVector`, the default handler |
+| `irq.h`, `irq.c` | `SetIntHandler`, `GetInterrupts`, `EnableInterrupts`, `DisableInterrupts`, `irq_save` / `irq_restore`, `_InterruptVector`, the default handler; the interrupt controller API `IrqInstall`, `IrqSetHandler`, `IrqSetMode`, `IrqEnable`, `IrqDisable`, `IrqRaw` |
 | `csr.h` | `csr_read` / `csr_write` / `csr_set` / `csr_clear`, `mstatus` / `mie` / `mcause` constants |
 | `firmware.ld` | the firmware image: 0x2000 up to below 0x70000, stack top 0x2000 |
 
@@ -138,6 +138,77 @@ irq_restore(s);                 /* MIE back on only if it was on at irq_save */
   register disabled. Nothing reaches a handler until `EnableInterrupts()`.
 * `irq_save()` / `irq_restore()` nest; they mask only the CPU, the INTERRUPT
   register keeps its line pending until the next access.
+
+## Interrupt controller API (`irq.h`)
+
+cfide's interrupt controller (`0xFFFFFF30..3C`, 16-bit registers, 16 sources)
+sits beside the legacy INTERRUPT register and drives the same CPU line. With
+`MASK = 0` (reset) it does nothing. The legacy API above stays as it is and
+is the path as long as `IrqInstall()` was not called.
+
+| Register | Address | Access |
+|---|---|---|
+| `HW_IRQ_PENDING` | `0xFFFFFF30` | read: PENDING and MASK; clears the EDGE bits it returns (once per access) |
+| `HW_IRQ_MASK` | `0xFFFFFF34` | read/write, reset 0 |
+| `HW_IRQ_RAW` | `0xFFFFFF38` | read: synchronised source levels, no side effect |
+| `HW_IRQ_MODE` | `0xFFFFFF3C` | read/write, reset 0: bit set = LEVEL, clear = EDGE |
+
+| Bit | Name | Source | Mode |
+|---|---|---|---|
+| 0 | `IRQ_VBLANK` | vertical blank | EDGE |
+| 1 | `IRQ_I2C` | I2C master transfer event | LEVEL; the handler must access `0xFFFFFFA0` (`GetInterrupts()`), the only thing that clears it |
+| 2 | `IRQ_AKIKO` | Akiko request | EDGE |
+| 3 | `IRQ_ADV7511` | ADV7511 INT pin | LEVEL |
+| 4..15 | | spare (`irq_src`: IDE, floppy, later) | as the device needs |
+
+```c
+#include "irq.h"
+
+static void vbl(void)   { /* once per frame */ }
+static void adv(void)
+{
+    /* read the ADV7511 interrupt status over I2C and clear it there: the
+       pin (and with it this interrupt) stays up until then */
+}
+
+IrqSetHandler(IRQ_VBLANK, vbl);          /* EDGE is the reset mode */
+IrqSetHandler(IRQ_ADV7511, adv);
+IrqSetMode(IRQ_ADV7511, 1);              /* LEVEL: set the mode before the enable */
+IrqInstall();                            /* dispatcher; disables the legacy register */
+IrqEnable(IRQ_VBLANK);
+IrqEnable(IRQ_ADV7511);
+/* ... */
+IrqDisable(IRQ_ADV7511);                 /* a masked EDGE event stays pending */
+uint32_t levels = IrqRaw();              /* source levels, no side effect */
+```
+
+* `IrqSetHandler(bit, h)`: handler for one bit (table of 16; NULL = the
+  event is consumed and ignored). `IrqSetMode(bit, level)`: 1 = LEVEL,
+  0 = EDGE. `IrqEnable(bit)` / `IrqDisable(bit)`: set / clear one MASK bit.
+  Each of the three read-modify-writes runs inside `irq_save` /
+  `irq_restore`. Bits above 15 are ignored.
+* `IrqInstall()` installs the dispatcher with `SetIntHandler`, so the legacy
+  INTERRUPT register is then disabled (an `IRQ_I2C` handler only accesses it
+  to clear the I2C source). The dispatcher loops: read `HW_IRQ_PENDING`
+  (already masked by the hardware), call the handler of every set bit in
+  bit order (bit 0 first), read again, stop when a read returns 0. A later
+  `SetIntHandler()` replaces the dispatcher (the legacy path again).
+* Pulse sources (vblank, Akiko) stay EDGE: one event per rising edge, the
+  PENDING read clears it. Level sources (`IRQ_ADV7511`, `IRQ_I2C`, IDE
+  requests) are configured LEVEL: the PENDING bit follows the source, a read
+  does not clear it and the CPU line stays asserted until the device is
+  serviced, so no `IrqRaw()` re-check is needed. The handler of a LEVEL
+  source must make the source go away (clear it in the device, or
+  `IrqDisable` the bit).
+* A LEVEL handler can be called once more right after its line dropped (the
+  controller sees the line through a synchroniser): it must tolerate a call
+  with nothing left to do.
+* An EDGE event for a masked bit stays pending and is delivered once on
+  `IrqEnable`. Reading `HW_IRQ_PENDING` yourself (a debugger) consumes the
+  pending EDGE bits.
+* `IrqSetMode` on a bit with an unread event or a high line follows the
+  rule in `rtl/host/cfide.vhd`; set the mode before enabling the bit.
+* Never read the UART at `0xFFFFFFF0` (cfide does not ack it; bus deadlock).
 
 ## Tests
 

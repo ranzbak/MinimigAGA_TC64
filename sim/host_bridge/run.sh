@@ -73,7 +73,7 @@ VIVADO_PATH=${VIVADO_PATH:-/opt/Xilinx/Vivado/2023.2}
 export LC_ALL=C LANG=C
 export LD_LIBRARY_PATH="$HOME/lib/tinfo5${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-TESTS="t_lanes t_hwoff t_b2b t_spibusy t_irq t_irqctl"
+TESTS="t_lanes t_hwoff t_b2b t_spibusy t_irq t_irqctl t_irqapi"
 MATRIX="2,0 8,0 20,0 2,8 8,8 20,8"
 XW=${EXTRA_WS:-0}
 run="$HERE/run_${RUNTAG:-wt}"

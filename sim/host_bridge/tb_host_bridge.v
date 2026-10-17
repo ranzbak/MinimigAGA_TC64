@@ -600,7 +600,7 @@ module tb_host_bridge #(
              ic_end = 1;
              $display("t_irqctl: %0d vbl_int pulses, %0d test 4 iterations", ic_vbl, t4_iter);
              expect_pin("t_irqctl vbl_int pulses", ic_vbl, IC_PULSES);
-             expect_pin("t_irqctl test 4 iterations", t4_iter, T4_ITER);
+             if (test == "t_irqctl") expect_pin("t_irqctl test 4 iterations", t4_iter, T4_ITER);
              if (ic_busy) bench_error("t_irqctl: a pulse still running at the end");
            end
         default: bench_error("t_irqctl: unknown checkpoint");
@@ -670,7 +670,7 @@ module tb_host_bridge #(
              end
           default: bench_error("t_irq/boot: unknown checkpoint");
         endcase
-      end else if (test == "t_irqctl") begin
+      end else if (test == "t_irqctl" || test == "t_irqapi") begin
         t_irqctl_checkpoint(v);
       end else if (test == "t_spibusy") begin
         case (v)
@@ -717,7 +717,7 @@ module tb_host_bridge #(
         end
         $display("t_lanes: SDRAM halfwords 0x3000..0x301F checked");
       end
-      if (test == "t_irqctl" && !ic_end) bench_error("t_irqctl: no STAMP 99 (the program stopped early)");
+      if ((test == "t_irqctl" || test == "t_irqapi") && !ic_end) bench_error("t_irqctl: no STAMP 99 (the program stopped early)");
     end
   endtask
 

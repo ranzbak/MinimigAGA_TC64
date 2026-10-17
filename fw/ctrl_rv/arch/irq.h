@@ -23,6 +23,22 @@
 #define HW_INTERRUPT(x)    (*(volatile unsigned int *)(INTERRUPTBASE + (x)))
 #define REG_INTERRUPT_CTRL 0x0
 
+/* interrupt controller (cfide, 16-bit registers, see "Interrupt controller
+   API" in README.md) */
+#define IRQCTLBASE         0xFFFFFF30
+#define HW_IRQ_PENDING     (*(volatile unsigned int *)(IRQCTLBASE + 0x0))
+#define HW_IRQ_MASK        (*(volatile unsigned int *)(IRQCTLBASE + 0x4))
+#define HW_IRQ_RAW         (*(volatile unsigned int *)(IRQCTLBASE + 0x8))
+#define HW_IRQ_MODE        (*(volatile unsigned int *)(IRQCTLBASE + 0xC))
+
+/* source bits */
+#define IRQ_VBLANK         0   /* vertical blank, EDGE */
+#define IRQ_I2C            1   /* I2C master transfer event; the handler must
+                                  access 0xFFFFFFA0 (GetInterrupts()) to clear it */
+#define IRQ_AKIKO          2   /* Akiko request, EDGE */
+#define IRQ_ADV7511        3   /* ADV7511 INT pin, LEVEL */
+/* 4..15: spare (cfide's irq_src port) */
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -39,6 +55,26 @@ int GetInterrupts(void);
 /* HW_INTERRUPT = 1 / 0 (also clear the line) */
 void EnableInterrupts(void);
 void DisableInterrupts(void);
+
+/* ---- interrupt controller: per-source handlers, edge/level mode, mask.
+ * IrqInstall() installs the dispatcher with SetIntHandler (which disables the
+ * legacy INTERRUPT register).  The dispatcher reads IRQ_PENDING (already
+ * masked by the hardware; the read clears the EDGE bits it returns), calls
+ * the handler of each set bit in bit order (bit 0 first) and repeats until a
+ * read returns 0.  Configure level sources (IRQ_ADV7511, IDE requests, the
+ * I2C flag) with IrqSetMode(bit, 1) and pulse sources (vblank, Akiko) EDGE:
+ * a LEVEL source keeps the CPU interrupt up until the device is serviced, so
+ * no IrqRaw() re-check is needed.  A LEVEL handler may be called once more
+ * right after its line dropped (synchroniser latency); handlers must tolerate
+ * it.  The handler of IRQ_I2C must access 0xFFFFFFA0 to clear its source.
+ * SetIntHandler()/EnableInterrupts() stay the legacy path when IrqInstall()
+ * was not called.  Bits >= 16 are ignored; a NULL handler just consumes. */
+void IrqSetHandler(unsigned bit, void (*handler)(void));
+void IrqSetMode(unsigned bit, int level);   /* level != 0: LEVEL, else EDGE */
+void IrqEnable(unsigned bit);               /* MASK |= 1 << bit */
+void IrqDisable(unsigned bit);              /* MASK &= ~(1 << bit) */
+uint32_t IrqRaw(void);                      /* synchronised source levels */
+void IrqInstall(void);
 
 /* CPU-side critical section: mstatus.MIE off, returns the old mstatus.
    Nests: irq_restore() sets MIE again only if it was set at irq_save(). */

@@ -38,3 +38,72 @@ void DisableInterrupts(void)
 {
     HW_INTERRUPT(REG_INTERRUPT_CTRL) = 0;
 }
+
+/* ---- interrupt controller (cfide 0xFFFFFF30..3C) */
+#define NIRQ 16
+
+static void (*irq_handlers[NIRQ])(void);
+
+void IrqSetHandler(unsigned bit, void (*handler)(void))
+{
+    if (bit < NIRQ)
+        irq_handlers[bit] = handler;
+}
+
+void IrqSetMode(unsigned bit, int level)
+{
+    uint32_t s;
+
+    if (bit >= NIRQ)
+        return;
+    s = irq_save();
+    if (level)
+        HW_IRQ_MODE = HW_IRQ_MODE | (1u << bit);
+    else
+        HW_IRQ_MODE = HW_IRQ_MODE & ~(1u << bit);
+    irq_restore(s);
+}
+
+void IrqEnable(unsigned bit)
+{
+    uint32_t s;
+
+    if (bit >= NIRQ)
+        return;
+    s = irq_save();
+    HW_IRQ_MASK = HW_IRQ_MASK | (1u << bit);
+    irq_restore(s);
+}
+
+void IrqDisable(unsigned bit)
+{
+    uint32_t s;
+
+    if (bit >= NIRQ)
+        return;
+    s = irq_save();
+    HW_IRQ_MASK = HW_IRQ_MASK & ~(1u << bit);
+    irq_restore(s);
+}
+
+uint32_t IrqRaw(void)
+{
+    return HW_IRQ_RAW;
+}
+
+static void irq_dispatch(void)
+{
+    uint32_t p;
+    unsigned b;
+
+    while ((p = HW_IRQ_PENDING) != 0) {
+        for (b = 0; b < NIRQ; b++)
+            if ((p & (1u << b)) && irq_handlers[b])
+                irq_handlers[b]();
+    }
+}
+
+void IrqInstall(void)
+{
+    SetIntHandler(irq_dispatch);
+}
