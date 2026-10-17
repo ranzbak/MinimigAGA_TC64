@@ -102,8 +102,12 @@ export LD_LIBRARY_PATH="$HOME/lib/tinfo5${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 # GHDL: cfide.vhd needs the Synopsys packages with explicit operator
 # visibility (plain -fsynopsys makes its "=" ambiguous)
 GHDLFLAGS="--std=93c --ieee=synopsys -fexplicit"
-# cfide's generics, as the bench's xsim instance (tb_host_bridge.v)
-CFIDE_GENERICS="-gspimux=false -ghavespirtc=false -ghavei2c=false -ghavevpos=false"
+# cfide's generics for the conversion: derived from the bench's xsim instance
+# (tb_host_bridge.v, "cfide #( ... ) mycfide"), see cfide_generics below
+CFIDE_GENERICS=""
+# the real Verilog of verilator/blackbox.vhd's i2c_master_mmio, linked when the
+# converted cfide instantiates it (havei2c = true)
+I2C_V="$ROOT/rtl/host/i2c_master_mmio.sv $ROOT/rtl/openaars/adv7511/i2c_master.v"
 VB=832_bridge.vhd VR=rv_hostcpu.v VC=cfide.vhd   # Verilator: the current variant
 
 TESTS="t_lanes t_hwoff t_b2b t_spibusy t_irq t_irqctl t_irqapi"
@@ -113,6 +117,24 @@ run="$HERE/run_${RUNTAG:-wt}"
 
 die() { echo "FAILED: $*"; exit 1; }
 X() { "$VIVADO_PATH/bin/$@" >> "$run/compile.log" 2>&1 || { echo "FAILED: $*"; tail -20 "$run/compile.log"; exit 1; }; }
+
+# cfide_generics: CFIDE_GENERICS (-g<name>=true|false) from the bench's
+# instance, one per generic of the cfide entity; dies if the bench misses one
+# or sets one cfide does not have, so the two simulators build the same cfide
+cfide_generics() {
+	local names tbg n
+	names=$(sed -n '/^entity cfide is$/,/^ *port($/s/^ *\([a-z0-9_]*\) *: *in boolean.*/\1/p' "$ROOT/rtl/host/cfide.vhd")
+	tbg=$(sed -n '/^  cfide #($/,/^  ) mycfide ($/p' "$HERE/tb_host_bridge.v" | grep -o "\.[a-z0-9_]*(1'b[01])" \
+		| sed "s/^\.\([a-z0-9_]*\)(1'b0)$/-g\1=false/; s/^\.\([a-z0-9_]*\)(1'b1)$/-g\1=true/")
+	[ -n "$names" ] || die "no boolean generics found in rtl/host/cfide.vhd's entity"
+	for n in $names; do
+		echo "$tbg" | grep -qx -- "-g$n=\(true\|false\)" || die "tb_host_bridge.v: the cfide instance does not set generic $n"
+	done
+	[ "$(echo "$tbg" | wc -l)" = "$(echo "$names" | wc -w)" ] \
+		|| die "tb_host_bridge.v: the cfide instance sets other generics than cfide.vhd has ($(echo $names))"
+	CFIDE_GENERICS=$(echo $tbg)
+}
+cfide_generics
 
 # setup: run directory, RTL copies with the simulation fixes, the mutant
 # bridge and fast-master variants, test ROMs
@@ -204,7 +226,8 @@ cfide_variant() {
 # src/$VC) with that ROM -> <dir>/bridge.v (EightThirtyTwo_Bridge, the ROM
 # inside, rv_hostcpu and hostcache as instances of the Verilog modules) and
 # <dir>/cfide.v.  The entities of verilator/blackbox.vhd come out as empty
-# modules: they are deleted (Verilator links the real Verilog).
+# modules: they are deleted (and checked gone), Verilator links the real
+# Verilog (vbuild).
 convert() {
 	local d=$1 rom=$2 bb
 	rm -rf "$d"; mkdir -p "$d" || die "mkdir $d"
@@ -223,6 +246,9 @@ convert() {
 		|| { cat "$d/romcheck.log"; die "converted ROM contents ($rom)"; }
 	for bb in $(sed -n 's/^entity \([a-z0-9_]*\) is$/\1/p' "$HERE/verilator/blackbox.vhd"); do
 		sed -i "/^module $bb\$/,/^endmodule\$/d" "$d/bridge.v" "$d/cfide.v"
+		# the delete must have worked: a stub left in would shadow the real module
+		grep -qE "^ *module +$bb\b" "$d/bridge.v" "$d/cfide.v" \
+			&& die "black-box module $bb still in $d/bridge.v or cfide.v after the delete (GHDL output format?)"
 	done
 	sed -i '1i `timescale 1ns/1ps' "$d/bridge.v" "$d/cfide.v"
 }
@@ -232,10 +258,12 @@ convert() {
 # Warnings are fatal (waivers in verilator/l2.vlt); X constants and
 # uninitialised variables are 0.  C++ with -O2, through ccache if present.
 vbuild() {
-	local name=$1 rom=$2 sd=""; shift 2
+	local name=$1 rom=$2 sd="" i2c=""; shift 2
 	local d="$run/ghdl_$name"
 	case " $* " in *" -DSDCARD "*) sd="$ROOT/sim/common/sd_spi_model.v" ;; esac
 	convert "$d" "$rom"
+	# havei2c = true: cfide.v instantiates i2c_master_mmio, link the real one
+	grep -qE '^ *i2c_master_mmio +[a-z0-9_]+ *\(' "$d/cfide.v" && i2c=$I2C_V
 	rm -rf "$run/vl_$name"
 	# shellcheck disable=SC2086
 	OBJCACHE=${OBJCACHE-$(command -v ccache)} "$VERILATOR" --binary --timing -j "$JOBS" \
@@ -243,7 +271,7 @@ vbuild() {
 		-DHB_GHDL "$@" --top-module tb_host_bridge -GEXTRA_WS="$XW" \
 		--Mdir "$run/vl_$name" -o Vtb_host_bridge "$HERE/verilator/l2.vlt" \
 		"$d/bridge.v" "$d/cfide.v" "src/$VR" src/VexOsd.v src/hostcache.v src/dpram_inf_generic.v \
-		"$HERE/sdram_host_model.v" $sd "$HERE/tb_host_bridge.v" > "$run/compile_$name.log" 2>&1
+		"$HERE/sdram_host_model.v" $sd $i2c "$HERE/tb_host_bridge.v" > "$run/compile_$name.log" 2>&1
 	if [ ! -x "$run/vl_$name/Vtb_host_bridge" ]; then
 		grep -m20 -E '^%(Error|Warning)' "$run/compile_$name.log" || tail -20 "$run/compile_$name.log"
 		die "verilator $name ($run/compile_$name.log)"
@@ -355,9 +383,12 @@ boot() {
 
 # norm <log>: a run log without the simulators' own lines (xsim's banner,
 # script echo, "$finish called at", exit, memory usage; Verilator's
-# "- ...: Verilog $finish") and without empty lines; run directories as run_*
+# "- ...: Verilog $finish") and without empty lines; run directories as run_*.
+# Also without i2c_master_mmio.sv's $monitor lines ("r_cmd_done=", havei2c =
+# true only): xsim prints the first one, Verilator repeats it at every
+# evaluation.
 norm() {
-	grep -vE '^(\*\*\*\*\*\* xsim v|  \*\*\*\* |    \*\* |source xsim\.dir/|# xsim |Time resolution is |run -all$|exit [0-9]+$|INFO: \[Common 17-206\] Exiting xsim|INFO: xsimkernel Simulation Memory Usage|\$finish called at time |- .*: Verilog \$finish$|$)' "$1" \
+	grep -vE '^(r_cmd_done=|\*\*\*\*\*\* xsim v|  \*\*\*\* |    \*\* |source xsim\.dir/|# xsim |Time resolution is |run -all$|exit [0-9]+$|INFO: \[Common 17-206\] Exiting xsim|INFO: xsimkernel Simulation Memory Usage|\$finish called at time |- .*: Verilog \$finish$|$)' "$1" \
 		| sed 's|/run_[^/]*/|/run_*/|g'
 }
 

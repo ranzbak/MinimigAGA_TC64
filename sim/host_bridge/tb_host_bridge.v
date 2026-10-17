@@ -130,6 +130,9 @@ module tb_host_bridge #(
   reg        i2c_ext_int = 1'b0; // t_irqctl: controller source 3 (ADV7511 INT)
   reg [15:4] irq_src = 12'h0;    // t_irqctl: controller sources 4..15
 
+  // The generics below are the only copy: run.sh (cfide_generics) reads them
+  // from this "cfide #( ... ) mycfide (" block for the GHDL conversion and
+  // stops if they are not exactly the boolean generics of the cfide entity.
 `ifdef HB_GHDL
   cfide mycfide (     // converted with the generics below
 `else

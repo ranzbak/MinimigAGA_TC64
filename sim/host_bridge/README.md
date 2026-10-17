@@ -171,7 +171,9 @@ bash sim/host_bridge/run.sh compare xall vall
 
 `compare` diffs every `tb_*.log` of the two directories after removing the
 simulators' own lines (xsim's banner, `$finish called at`, `exit`;
-Verilator's `Verilog $finish`) and with `run_<tag>/` paths as `run_*/`.
+Verilator's `Verilog $finish`; with `havei2c = true` the `r_cmd_done=`
+lines of `i2c_master_mmio.sv`'s `$monitor`, which xsim prints once and
+Verilator at every evaluation) and with `run_<tag>/` paths as `run_*/`.
 Everything else must be identical: verdict, `main done`, `cycles`, the
 `=== TIME` checkpoints, `=== BOOT` / `=== STATS` counters, every `UART:` line,
 the `t_irqctl` test 4 iteration lines. It prints `SAME` / `DIFF` / `ONLY`
@@ -180,36 +182,51 @@ per log and `=== COMPARE n logs: ...`, and exits 1 on any difference.
 ### What run.sh does (the conversion step)
 
 Per snapshot (one per test, per bridge / cfide / master variant and
-`EXTRA_WS`; `<run>` = `sim/host_bridge/run_<RUNTAG>`):
+`EXTRA_WS`), in the run directory `sim/host_bridge/run_<RUNTAG>`. The
+`t_lanes` snapshot by hand, from the worktree root (bash or zsh; the first
+line makes the run directory with its RTL copies in `src/` and the test
+ROMs in `build/`, the rest repeats its conversion in `ghdl_manual/` and
+`vl_manual/`):
 
 ```sh
-cd <run>      # src/ holds the run copies (mutants: src/832_bridge_mutant.vhd, src/cfide_irqmut_<m>.vhd)
-d=ghdl_tb_t_lanes_x0
-F="--std=93c --ieee=synopsys -fexplicit"
-ghdl -a $F --workdir=$d ../verilator/blackbox.vhd src/cfide.vhd src/832_bridge.vhd build/t_lanes/OSDBoot_rv_ROM.vhd
-ghdl --synth $F --workdir=$d -gcpu_riscv=true -grv_extra_ws=0 --out=verilog EightThirtyTwo_Bridge > $d/bridge.v
-ghdl --synth $F --workdir=$d -gspimux=false -ghavespirtc=false -ghavei2c=false -ghavevpos=false \
+SIM=verilator RUNTAG=manual bash sim/host_bridge/run.sh t_lanes
+cd sim/host_bridge/run_manual
+d=ghdl_manual
+F=(--std=93c --ieee=synopsys -fexplicit)
+mkdir -p $d
+ghdl -a "${F[@]}" --workdir=$d ../verilator/blackbox.vhd src/cfide.vhd src/832_bridge.vhd build/t_lanes/OSDBoot_rv_ROM.vhd
+ghdl --synth "${F[@]}" --workdir=$d -gcpu_riscv=true -grv_extra_ws=0 --out=verilog EightThirtyTwo_Bridge > $d/bridge.v
+ghdl --synth "${F[@]}" --workdir=$d -gspimux=false -ghavespirtc=false -ghavei2c=false -ghavevpos=false \
      --out=verilog cfide > $d/cfide.v
 python3 ../verilator/romcheck.py build/t_lanes/OSDBoot_rv_ROM.vhd $d/bridge.v
 sed -i '1i `timescale 1ns/1ps' $d/bridge.v $d/cfide.v
 verilator --binary --timing --x-assign 0 --x-initial 0 -DHB_GHDL --top-module tb_host_bridge \
-     -GEXTRA_WS=0 --Mdir vl_tb_t_lanes_x0 -o Vtb_host_bridge ../verilator/l2.vlt \
+     -GEXTRA_WS=0 --Mdir vl_manual -o Vtb_host_bridge ../verilator/l2.vlt \
      $d/bridge.v $d/cfide.v src/rv_hostcpu.v src/VexOsd.v src/hostcache.v src/dpram_inf_generic.v \
      ../sdram_host_model.v ../tb_host_bridge.v
-vl_tb_t_lanes_x0/Vtb_host_bridge +TEST=t_lanes +SLAT=8 +SJIT=0 +SEED=1 +SDRAM_HEX=../sw/t_lanes.sdram.hex
+vl_manual/Vtb_host_bridge +TEST=t_lanes +SLAT=8 +SJIT=0 +SEED=1 +SDRAM_HEX=../sw/t_lanes.sdram.hex | grep '^==='
+cd ../../..
 ```
 
-This is the `t_lanes` snapshot; it ends with `=== PASS`. `run.sh` also
-requires the RAM note in GHDL's output, deletes the black-box modules from
-it, and builds the C++ with `-O2` through ccache.
+The ghdl steps print GHDL's synthesis notes; the run ends with `=== PASS`
+and `=== DONE` lines equal to those of `tb_t_lanes_x0_s8_j0.log` in the same
+directory. The `verilator` step builds without ccache and `-O2`, about a
+minute. Write the flags as an array, as here, or inline: zsh does not split
+`$F`. `run.sh` also requires the RAM note in GHDL's output, deletes the
+black-box modules from it (and stops if one is left), links the real
+Verilog when cfide instantiates one, and builds the C++ with `-O2` through
+ccache.
 
 - **Flags**: `--std=93c --ieee=synopsys -fexplicit`. cfide.vhd uses
   `std_logic_unsigned`; with plain `-fsynopsys` its `=` is ambiguous.
 - **Generics are fixed at the conversion**: the bridge gets `cpu_riscv` and
-  `rv_extra_ws` = `EXTRA_WS` with `-g`, cfide the bench's four generics. The
-  converted modules have no parameters; the bench, compiled with
-  `-DHB_GHDL`, instantiates them without, and checks that the converted
-  bridge's `rv_hostcpu` has its `EXTRA_WS`.
+  `rv_extra_ws` = `EXTRA_WS` with `-g`, cfide the bench's four generics.
+  `run.sh` reads those from the bench's xsim instance (`cfide #(...)
+  mycfide` in `tb_host_bridge.v`) and stops if it does not set exactly the
+  boolean generics of the `cfide` entity, so the two simulators build the
+  same cfide. The converted modules have no parameters; the bench, compiled
+  with `-DHB_GHDL`, instantiates them without, and checks that the
+  converted bridge's `rv_hostcpu` has its `EXTRA_WS`.
 - **Names**: GHDL writes identifiers in lower case and folds a generate
   label into the instance name. The bench's hierarchical references go
   through `HB_RV` (`hostcpu.genrv.myrv` / `hostcpu.genrv_myrv`) and
@@ -222,11 +239,17 @@ it, and builds the C++ with `-O2` through ccache.
   so it is converted with the bridge. cfide instantiates `i2c_master_mmio`
   (SystemVerilog) as `entity work.i2c_master_mmio`, which needs an analysed
   entity: `verilator/blackbox.vhd` declares it, GHDL turns it into an empty
-  module, and `run.sh` deletes that module so that Verilator would link the
-  real one. This bench builds cfide with `havei2c = false`, so the instance
-  is not there at all; the path was checked once with `havei2c = true`
-  (the stub module is deleted, Verilator lints cfide with
-  `rtl/host/i2c_master_mmio.sv`). No file under `rtl/` is changed.
+  module, and `run.sh` deletes that module (and stops if it is still
+  there afterwards). When the converted cfide instantiates
+  `i2c_master_mmio` (`havei2c = true`), `run.sh` links the real
+  `rtl/host/i2c_master_mmio.sv` and `rtl/openaars/adv7511/i2c_master.v`
+  (their two lint waivers are in `verilator/l2.vlt`). This bench builds
+  cfide with `havei2c = false`, so the instance is not there at all. The
+  `havei2c = true` path: set `.havei2c(1'b1)` in the bench's cfide
+  instance (in a scratch copy) and run the same tests under both
+  simulators; on 2026-10-17 `t_lanes t_hwoff t_irqctl t_irqapi` passed
+  under both and `compare` found them the same (4 SAME). No file under `rtl/` is
+  changed.
 - **The ROM**: the shared-variable RAM of the `fw/ctrl_boot_rv` template is
   inferred as memory (`run.sh` requires GHDL's `found RAM "ram", width: 32
   bits, depth: 2048` note) and comes out as four 8-bit lane memories with

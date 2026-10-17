@@ -16,6 +16,11 @@
 // 7    SD card model: miso is written from the sck and the cs_n edge blocks
 //      (a model, not synthesisable logic; Verilator simulates it in event
 //      order like any simulator, the warning is about synthesis/speed)
+// 8-9  only with cfide's havei2c = true (run.sh links the real I2C master):
+//      rtl/openaars/adv7511/i2c_master.v widens the 16-bit prescale into its
+//      17-bit counter (correct), and rtl/host/i2c_master_mmio.sv gives
+//      status_reg a declaration initialiser as well as its always_comb
+//      (the always_comb is the only driver after time 0)
 `verilator_config
 lint_off -rule WIDTHTRUNC  -file "*/VexOsd*.v"
 lint_off -rule WIDTHEXPAND -file "*/VexOsd*.v"
@@ -26,3 +31,5 @@ lint_off -rule WIDTHEXPAND -file "*sdram_host_model.v"
 lint_off -rule WIDTHTRUNC  -file "*sdram_host_model.v"
 lint_off -rule WIDTHTRUNC  -file "*sd_spi_model.v"
 lint_off -rule MULTIDRIVEN -file "*sd_spi_model.v"
+lint_off -rule WIDTHEXPAND -file "*/i2c_master.v" -match "*VARREF 'prescale'*"
+lint_off -rule MULTIDRIVEN -file "*/i2c_master_mmio.sv" -match "*'status_reg'*"
