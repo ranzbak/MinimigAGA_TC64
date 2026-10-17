@@ -173,6 +173,7 @@ architecture rtl of cfide is
 
     -- Interrupt controller (0x3x window)
     signal int_legacy  : std_logic;                      -- the 0xa0 flag
+    signal int_legacy_nx : std_logic;                    -- ... its next state
     signal irq_in      : std_logic_vector(15 downto 0);  -- the sources
     signal irq_sync1   : std_logic_vector(15 downto 0);
     signal irq_sync2   : std_logic_vector(15 downto 0);  -- synchronised = IRQ_RAW
@@ -188,6 +189,20 @@ architecture rtl of cfide is
     signal irq_seen    : std_logic;                      -- req one clk_28 cycle ago
     signal irq_acc     : std_logic;                      -- first cycle of a 0x3x access
     signal irq_rd      : std_logic;                      -- ... and it reads IRQ_PENDING
+    -- next-state values of the registers (loaded at the next clk_28 edge)
+    signal irq_pend_nx : std_logic_vector(15 downto 0);
+    signal irq_mask_nx : std_logic_vector(15 downto 0);
+    signal irq_mode_nx : std_logic_vector(15 downto 0);
+    signal irq_eff_nx  : std_logic_vector(15 downto 0);  -- irq_eff after that edge
+    signal int_nx      : std_logic;
+    signal int_out     : std_logic;                      -- the interrupt output register
+
+    -- PENDING as the CPU sees it: per bit the level (MODE 1, LEVEL) or the
+    -- EDGE latch (MODE 0).  One function for the current and the next state.
+    function irq_mux(lvl, pend, mode : std_logic_vector) return std_logic_vector is
+    begin
+        return (lvl and mode) or (pend and not mode); -- IRQ MODE MUX
+    end function;
 
 -- attribute MARK_DEBUG : string;
 -- attribute MARK_DEBUG of pos_data_q : signal is "TRUE";
@@ -331,7 +346,14 @@ begin
     end process;
 
     -- Interrupt handling at 0fffffa0 (legacy, the 832 firmware's)
-    -- Any access to this range will clear the interrupt flag;
+    -- Any access to this range will clear the interrupt flag; a source event
+    -- sets it to interrupt_ena.  The access wins over an event in its cycle.
+    -- int_legacy_nx is the flag's next state, also used for the interrupt
+    -- output register (see the controller below).
+
+    int_legacy_nx <= '0' when interrupt_select = '1' and req = '1' else
+                     interrupt_ena when vbl_int = '1' or i2c_int = '1' or (amiga_req = '1' and amiga_req_d = '0') else
+                     int_legacy;
 
     process(clk_28, n_reset)
     begin
@@ -340,11 +362,8 @@ begin
             interrupt_ena <= '0';
         elsif rising_edge(clk_28) then
             amiga_req_d <= amiga_req;
-            if vbl_int = '1' or i2c_int = '1' or (amiga_req = '1' and amiga_req_d = '0') then
-                int_legacy <= interrupt_ena;
-            end if;
+            int_legacy  <= int_legacy_nx;
             if interrupt_select = '1' and req = '1' then
-                int_legacy <= '0';
                 if wr = '1' then
                     interrupt_ena <= d(0);
                 end if;
@@ -363,7 +382,8 @@ begin
     --   0  vbl_int      vertical blank (pulse)
     --   1  i2c_int      the I2C master's transfer event (i2c_master_mmio
     --                   r_interrupt): set by its transfer events, cleared only
-    --                   by an access to the legacy 0fffffa0 window
+    --                   by a read of the legacy 0fffffa0 window
+    --                   (i2c_master_mmio.sv: interrupt_select and not wr)
     --   2  amiga_req    Akiko request (pulse per request)
     --   3  i2c_ext_int  the ADV7511's INT pin (I2C status bit 0x400 shows it
     --                   too).  Active high as the part is set up: no polarity
@@ -385,9 +405,13 @@ begin
     -- follows the line), and LEVEL -> EDGE starts the bit clear: it needs a new
     -- rising edge, i.e. the line must drop and rise again.  An edge set in the
     -- clk_28 cycle of the MODE write that switches to EDGE is discarded too.
-    -- interrupt = the legacy flag OR (PENDING and MASK) /= 0.  MASK and MODE
-    -- reset to 0, so firmware that never writes MASK (the 832's) sees the
-    -- legacy behaviour unchanged.
+    -- interrupt = the legacy flag OR (PENDING and MASK) /= 0, in every clk_28
+    -- cycle.  It is a register of its own (int_out), loaded from the
+    -- next-state values of the flag, PENDING, MASK and MODE: the same value
+    -- in the same cycle as that OR of the registers, with no logic between
+    -- the register and the CPU (the 832 uses interrupt unregistered).  MASK
+    -- and MODE reset to 0, so firmware that never writes MASK (the 832's)
+    -- sees the legacy flag cycle for cycle.
     -- Once per access: irq_seen = req one cycle ago, so irq_acc is the first
     -- clk_28 cycle of an access; the read value is latched into irq_q and the
     -- returned bits are cleared there and at no later cycle of the access.
@@ -396,7 +420,7 @@ begin
     -- after ack, and hw_release waits for ack to fall), so a multi-edge access
     -- never happens and the guard is untested.
     -- Firmware rule: put level sources (bit 3 ADV7511 INT, IDE requests; bit 1
-    -- the I2C transfer flag, whose handler must access 0fffffa0 to clear it)
+    -- the I2C transfer flag, whose handler must read 0fffffa0 to clear it)
     -- in LEVEL mode: the interrupt stays asserted until the device is
     -- serviced, so no IRQ_RAW re-check is needed.  Pulse sources (vblank,
     -- Akiko) stay EDGE.  A LEVEL source the handler cannot service in
@@ -412,11 +436,18 @@ begin
 
     irq_in   <= irq_src & i2c_ext_int & amiga_req & i2c_int & vbl_int;
     irq_edge <= irq_sync2 and not irq_prev;
-    irq_eff  <= (irq_sync2 and irq_mode) or (irq_pend and not irq_mode); -- IRQ MODE MUX
+    irq_eff  <= irq_mux(irq_sync2, irq_pend, irq_mode);
     irq_ret  <= irq_eff and irq_mask;
     irq_acc  <= '1' when irqctl_select = '1' and req = '1' and irq_seen = '0' else '0';
     irq_rd   <= '1' when irq_acc = '1' and wr = '0' and addr(3 downto 2) = "00" else '0';
     irq_clr  <= (irq_ret and not irq_mode) when irq_rd = '1' else (others => '0');
+
+    -- next state
+    irq_pend_nx <= ((irq_pend and not irq_clr) or irq_edge) and not irq_mode; -- IRQ SET WINS
+    irq_mask_nx <= d when irq_acc = '1' and wr = '1' and addr(3 downto 2) = "01" else irq_mask;
+    irq_mode_nx <= d when irq_acc = '1' and wr = '1' and addr(3 downto 2) = "11" else irq_mode;
+    irq_eff_nx  <= irq_mux(irq_sync1, irq_pend_nx, irq_mode_nx);
+    int_nx      <= '1' when int_legacy_nx = '1' or (irq_eff_nx and irq_mask_nx) /= X"0000" else '0';
 
     process(clk_28, n_reset)
     begin
@@ -429,12 +460,16 @@ begin
             irq_mode  <= (others => '0');
             irq_q     <= (others => '0');
             irq_seen  <= '0';
+            int_out   <= '0';
         elsif rising_edge(clk_28) then
             irq_sync1 <= irq_in;
             irq_sync2 <= irq_sync1;
             irq_prev  <= irq_sync2;
             irq_seen  <= req;
-            irq_pend  <= ((irq_pend and not irq_clr) or irq_edge) and not irq_mode; -- IRQ SET WINS
+            irq_pend  <= irq_pend_nx;
+            irq_mask  <= irq_mask_nx;
+            irq_mode  <= irq_mode_nx;
+            int_out   <= int_nx;
             if irq_acc = '1' then
                 case addr(3 downto 2) is
                     when "00" =>
@@ -446,19 +481,11 @@ begin
                     when others =>
                         irq_q <= irq_mode;
                 end case;
-                if wr = '1' then
-                    if addr(3 downto 2) = "01" then
-                        irq_mask <= d;
-                    end if;
-                    if addr(3 downto 2) = "11" then
-                        irq_mode <= d;
-                    end if;
-                end if;
             end if;
         end if;
     end process;
 
-    interrupt <= '1' when int_legacy = '1' or irq_ret /= X"0000" else '0';
+    interrupt <= int_out;
 
     ---------------------------------
     -- Platform specific registers --

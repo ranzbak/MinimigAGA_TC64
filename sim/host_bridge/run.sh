@@ -145,12 +145,12 @@ def mutant(tag, marker, new):
     open(sys.argv[1].replace(".vhd", "_irqmut_%s.vhd" % tag), "w").write(
         s.replace(lines[0], ind + new + " -- IRQ MUTANT " + tag))
 mutant("a", "-- IRQ SET WINS",
-       "if irq_rd = '1' then irq_pend <= (others => '0'); "
-       "else irq_pend <= (irq_pend or irq_edge) and not irq_mode; end if;")
+       "irq_pend_nx <= (others => '0') when irq_rd = '1' "
+       "else (irq_pend or irq_edge) and not irq_mode;")
 mutant("b", "-- IRQ SET WINS",
-       "if irq_rd = '1' then irq_pend <= irq_pend and not irq_clr and not irq_mode; "
-       "else irq_pend <= (irq_pend or irq_edge) and not irq_mode; end if;")
-mutant("c", "-- IRQ MODE MUX", "irq_eff  <= irq_pend;")
+       "irq_pend_nx <= (irq_pend and not irq_clr and not irq_mode) when irq_rd = '1' "
+       "else (irq_pend or irq_edge) and not irq_mode;")
+mutant("c", "-- IRQ MODE MUX", "return pend;")
 EOF
 
 	# fast master: dBus command accepted in the ack cycle (see the header)
