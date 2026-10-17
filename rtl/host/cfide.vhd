@@ -64,10 +64,10 @@ entity cfide is
         audio_amiga   : in  std_logic;
         vbl_int       : in  std_logic;
         interrupt     : out std_logic;
-        -- Interrupt controller sources 3..15 (0x3x window, see below); bits 0..2
-        -- are vbl_int, the I2C interrupt and amiga_req.  Defaulted: a top that
-        -- has no such source leaves the port open.
-        irq_src       : in  std_logic_vector(15 downto 3) := (others => '0');
+        -- Interrupt controller sources 4..15 (0x3x window, see below); bits 0..3
+        -- are vbl_int, the I2C transfer event, amiga_req and i2c_ext_int.
+        -- Defaulted: a top that has no such source leaves the port open.
+        irq_src       : in  std_logic_vector(15 downto 4) := (others => '0');
         c64_keys      : in  std_logic_vector(63 downto 0) := X"FFFFFFFFFFFFFFFF";
         amiga_key     : out std_logic_vector(7 downto 0);
         amiga_key_stb : out std_logic;
@@ -249,7 +249,7 @@ begin
     rtc_select       <= '1' when addr(23) = '1' and addr(7 downto 4) = X"7" else '0';
     i2c_select       <= '1' when addr(23) = '1' and addr(7 downto 4) = X"6" else '0';
     videoscl_select  <= '1' when addr(23) = '1' and addr(7 downto 4) = X"5" else '0';
-    -- FPGA die temperature at 0fffff40; X"4" was the one free window left.
+    -- FPGA die temperature at 0fffff40.
     xadc_select      <= '1' when addr(23) = '1' and addr(7 downto 4) = X"4" else '0';
     -- Interrupt controller at 0fffff30
     irqctl_select    <= '1' when addr(23) = '1' and addr(7 downto 4) = X"3" else '0';
@@ -359,9 +359,21 @@ begin
     --   10 IRQ_RAW      R: the synchronised source levels, no side effect.
     --                   W: no effect.
     --   11 IRQ_MODE     R/W, reset 0; per bit 0 = EDGE, 1 = LEVEL
-    -- Sources: bit 0 vbl_int, 1 the I2C interrupt (i2c_master_mmio), 2 amiga_req,
-    -- 3..15 irq_src.  Every bit is the same logic: a 2-FF synchroniser into
-    -- clk_28, then
+    -- Sources:
+    --   0  vbl_int      vertical blank (pulse)
+    --   1  i2c_int      the I2C master's transfer event (i2c_master_mmio
+    --                   r_interrupt): set by its transfer events, cleared only
+    --                   by an access to the legacy 0fffffa0 window
+    --   2  amiga_req    Akiko request (pulse per request)
+    --   3  i2c_ext_int  the ADV7511's INT pin (I2C status bit 0x400 shows it
+    --                   too).  Active high as the part is set up: no polarity
+    --                   register is written (fw/ctrl_832/adv7511.c), clearing
+    --                   its interrupt flags takes the pin low (ADV7511
+    --                   Programming Guide, CEC and interrupt sections), and
+    --                   i2c_master_mmio and the 832 firmware use it active
+    --                   high.  So no inversion here.  Meant for LEVEL mode.
+    --   4..15 irq_src   spare (IDE, floppy, ...)
+    -- Every bit is the same logic: a 2-FF synchroniser into clk_28, then
     --   EDGE  (MODE bit 0): a rising edge of the synchronised level sets the
     --         bit; an IRQ_PENDING read that returns it clears it.  An edge in
     --         the cycle of that clear wins: the bit stays set.  An event of a
@@ -376,20 +388,29 @@ begin
     -- interrupt = the legacy flag OR (PENDING and MASK) /= 0.  MASK and MODE
     -- reset to 0, so firmware that never writes MASK (the 832's) sees the
     -- legacy behaviour unchanged.
-    -- A hw access holds req for one clk_28 edge or more (the bridge drops req
-    -- only after it saw ack); irq_seen = req one cycle ago, so irq_acc is the
-    -- first cycle of the access: the read value is latched into irq_q and the
+    -- Once per access: irq_seen = req one cycle ago, so irq_acc is the first
+    -- clk_28 cycle of an access; the read value is latched into irq_q and the
     -- returned bits are cleared there and at no later cycle of the access.
-    -- Firmware rule: a source that may stay high (ADV7511 INT, IDE request) in
-    -- EDGE mode raises one event per rising edge: after handling, read IRQ_RAW
-    -- and handle again while the level is still high; on unmasking such a bit,
-    -- check IRQ_RAW once.  A debugger reading IRQ_PENDING consumes events.
+    -- The guard is defensive: with the current bridge every hw access is seen
+    -- by exactly one clk_28 edge (the bridge drops req in the clk_114 cycle
+    -- after ack, and hw_release waits for ack to fall), so a multi-edge access
+    -- never happens and the guard is untested.
+    -- Firmware rule: put level sources (bit 3 ADV7511 INT, IDE requests; bit 1
+    -- the I2C transfer flag, whose handler must access 0fffffa0 to clear it)
+    -- in LEVEL mode: the interrupt stays asserted until the device is
+    -- serviced, so no IRQ_RAW re-check is needed.  Pulse sources (vblank,
+    -- Akiko) stay EDGE.  A LEVEL source the handler cannot service in
+    -- interrupt context can be masked off until it is serviced.  The 2-FF
+    -- synchroniser delays a LEVEL bit's fall by up to 3 clk_28 cycles after
+    -- the device drops its line: a handler that returns at once may be
+    -- called one extra time and must tolerate that.  A debugger reading
+    -- IRQ_PENDING consumes pending EDGE bits.
 
     no_i2c : if not havei2c generate
         i2c_int <= '0';
     end generate;
 
-    irq_in   <= irq_src & amiga_req & i2c_int & vbl_int;
+    irq_in   <= irq_src & i2c_ext_int & amiga_req & i2c_int & vbl_int;
     irq_edge <= irq_sync2 and not irq_prev;
     irq_eff  <= (irq_sync2 and irq_mode) or (irq_pend and not irq_mode); -- IRQ MODE MUX
     irq_ret  <= irq_eff and irq_mask;

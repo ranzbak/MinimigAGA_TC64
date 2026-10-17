@@ -29,7 +29,7 @@
 // t_irq: checkpoint 1 starts 20 vbl_int pulses into cfide (one clk_28 cycle
 // each, 2000 clk_114 apart); checkpoint 2 checks that all 20 were sent.
 // t_irqctl: the interrupt controller (cfide 0xFFFFFF30..3C); the bench drives
-// vbl_int, amiga_req and irq_src[15:3] per checkpoint (table at the
+// vbl_int, amiga_req, i2c_ext_int and irq_src[15:4] per checkpoint (table at the
 // t_irqctl block below) and checks test 4 ("set wins") itself.
 //
 // SDCARD (boot runs, +TEST=boot / boot_nofile; the ROM is the committed boot
@@ -108,7 +108,8 @@ module tb_host_bridge #(
   wire       scandoubler, audio_ena, audio_clear;
   reg        vbl_int = 1'b0;     // t_irq: pulses from checkpoint 1
   reg        amiga_req = 1'b0;   // t_irqctl: controller source 2
-  reg [15:3] irq_src = 13'h0;    // t_irqctl: controller sources 3..15
+  reg        i2c_ext_int = 1'b0; // t_irqctl: controller source 3 (ADV7511 INT)
+  reg [15:4] irq_src = 12'h0;    // t_irqctl: controller sources 4..15
 
   cfide #(
     .spimux(1'b0), .havespirtc(1'b0), .havei2c(1'b0), .havevpos(1'b0)
@@ -127,7 +128,7 @@ module tb_host_bridge #(
     .amiga_req(amiga_req), .amiga_wr(1'b0), .amiga_ack(),
     .rtc_q(),
     .scl_i(1'b1), .scl_o(), .scl_t(), .sda_i(1'b1), .sda_o(), .sda_t(),
-    .i2c_ext_int(1'b0),
+    .i2c_ext_int(i2c_ext_int),
     .pos_data_q(),
     .clk_28(clk28), .tick_in(1'b1)
   );
@@ -424,6 +425,7 @@ module tb_host_bridge #(
   //   60 / 61  irq_src[8] high / low (held)  90 / 91  irq_src[9] high / low
   //   92 / 93  cfide's interrupt output must be 1 / 0
   //   100 / 101  irq_src[10] high / low      102  irq_src[10] pulse
+  //   120 / 121  i2c_ext_int (source 3) high / low
   //   99  end: every action was taken
   // Test 4 ("set wins"): a bit returned by an IRQ_PENDING read whose source
   // rises again in the clk_28 cycle of that read's clear stays pending.  Per
@@ -592,6 +594,8 @@ module tb_host_bridge #(
         93:  expect_pin("cfide interrupt", cfide_int, 1'b0);
         100: irq_src[10] <= 1'b1;
         101: irq_src[10] <= 1'b0;
+        120: i2c_ext_int <= 1'b1;
+        121: i2c_ext_int <= 1'b0;
         99: begin
              ic_end = 1;
              $display("t_irqctl: %0d vbl_int pulses, %0d test 4 iterations", ic_vbl, t4_iter);

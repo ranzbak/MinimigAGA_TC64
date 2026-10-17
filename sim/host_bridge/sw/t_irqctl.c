@@ -1,6 +1,7 @@
 /* t_irqctl: cfide's interrupt controller (0xFFFFFF30..3C) through the bridge
  * and the firmware trap entry (fw/ctrl_rv/arch), real cfide.  The bench
- * drives vbl_int (bit 0), amiga_req (bit 2) and irq_src[15:3] on the
+ * drives vbl_int (bit 0), amiga_req (bit 2), i2c_ext_int (bit 3, the
+ * ADV7511 INT pin) and irq_src[15:4] on the
  * checkpoints (STAMP n) listed in tb_host_bridge.v's t_irqctl block.
  *   1  reset values MASK = PENDING = RAW = MODE = 0 (PENDING also with MASK
  *      = 0xFFFF); legacy 0xFFFFFFA0 enable + one vblank pulse = one interrupt
@@ -20,6 +21,9 @@
  *  10  bit 10 EDGE -> LEVEL -> EDGE with its line high, and EDGE -> LEVEL
  *      with an unread event and the line low (rule in rtl/host/cfide.vhd)
  *  11  MODE and MASK read back
+ *  12  bit 3 (ADV7511 INT pin): EDGE, the line held high gives one
+ *      interrupt; LEVEL, PENDING returns it on every read and the line stays
+ *      up until the pin drops
  * (8, the mutants, is run.sh irqmut.)  Exit code: 0 = pass, else 100 * test
  * + the number of the failing check. */
 #include <stdint.h>
@@ -355,6 +359,49 @@ static int test11(void)
     return 0;
 }
 
+static int test12(void)
+{
+    uint32_t s;
+    unsigned base = n_irq;
+
+    /* EDGE: one event for the pin held high */
+    hmode = M_CTL;
+    MASK = 0x0008;
+    STAMP(120);                 /* i2c_ext_int high, held */
+    wait_irq(base + 1, 4);
+    CHECK(n_irq == base + 1, 1201);
+    CHECK(log1[base] == 0x0008, 1202);
+    CHECK(log2[base] == 0, 1203);
+    wait_steps(4);
+    CHECK(n_irq == base + 1, 1204);
+    CHECK(RAW == 0x0008, 1205);
+    STAMP(121);                 /* low */
+    wait_steps(2);
+    CHECK(RAW == 0, 1206);
+    MASK = 0;
+
+    /* LEVEL: asserted while the pin is high, not cleared by reads */
+    s = irq_save();
+    MODE = 0x0008;
+    MASK = 0x0008;
+    CHECK(PENDING == 0, 1207);
+    STAMP(120);
+    wait_steps(2);
+    CHECK(PENDING == 0x0008, 1208);
+    CHECK(PENDING == 0x0008, 1209);
+    CHECK(MEIP(), 1210);
+    STAMP(92);                  /* bench: interrupt output 1 */
+    STAMP(121);
+    wait_steps(2);
+    CHECK(PENDING == 0, 1211);
+    CHECK(!MEIP(), 1212);
+    STAMP(93);                  /* bench: interrupt output 0 */
+    MASK = 0;
+    MODE = 0;
+    irq_restore(s);
+    return 0;
+}
+
 static int run(void)
 {
     int rc;
@@ -369,6 +416,7 @@ static int run(void)
     if ((rc = test9()) != 0) return rc;
     if ((rc = test10()) != 0) return rc;
     if ((rc = test11()) != 0) return rc;
+    if ((rc = test12()) != 0) return rc;
     STAMP(99);
     return 0;
 }

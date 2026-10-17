@@ -284,10 +284,11 @@ would hang the CPU.
     (`=== BUS VIOLATION`).
 - **vbl_int**: cfide's VBL interrupt input, 0 except in `t_irq` (pulses
   from checkpoint 1, see the test table) and `t_irqctl`.
-- **amiga_req**, **irq_src[15:3]**: interrupt controller sources 2 and
-  3..15, 0 except in `t_irqctl` (pulses and held levels per checkpoint, see
-  [Interrupt controller](#interrupt-controller)). cfide's I2C interrupt
-  (source 1) is 0: the bench builds cfide with `havei2c` false.
+- **amiga_req**, **i2c_ext_int**, **irq_src[15:4]**: interrupt controller
+  sources 2, 3 and 4..15, 0 except in `t_irqctl` (pulses and held levels per
+  checkpoint, see [Interrupt controller](#interrupt-controller)). cfide's
+  I2C transfer event (source 1) is 0: the bench builds cfide with `havei2c`
+  false.
 - **SPI slave**: active while `sd_cs[1]` is low. In the boot runs (bench
   compiled with `-d SDCARD`) the SD card model `sim/common/sd_spi_model.v`
   (`IMG_SECTORS = 16384`, the 8 MB card) drives MISO instead; the slave
@@ -370,7 +371,7 @@ unexpected trap writes `0x8000 | mcause`.
 | `t_hwoff` | PLATFORM read = `0x0003` (halfword, byte and word); AUDIO read = `0x0001`. TIMER read twice: it advances by exactly 1. SPI: CS `0x02`, DATA `0x5A`, DATA read = `0xA5`, CS `0x03`. | STAMP 1/2: `scandoubler` 0/1 after PLATFORM writes 0/1. STAMP 3/4/5: `{audio_clear, audio_ena}` = 01/10/00. STAMP 6: `sd_cs = 0xFC`. STAMP 7: the slave got exactly one byte, `0x5A`. STAMP 8: `sd_cs = 0xFF`. |
 | `t_b2b` | 64 `sh` to PLATFORM (1, 0, 1, ...), 64 `sh` to AUDIO, then 32 `sb` to SPI CS (0x02, 0x03, ...). Each block is straight-line code and runs twice; the first call fills the I-cache, so the measured call has no line refill between the stores. Then it reads PLATFORM and AUDIO back; neither register reads back the written value. | 64 `scandoubler` toggles, ending at 0; 64 `audio_ena` toggles, ending at 0; 32 `sd_cs` changes `FC FF FC ...`. Each block prints its request gap. No stale ack. |
 | `t_irq` | Started through `fw/ctrl_rv/arch` (`sw/reset_fw.S`, then `crt0.S`, `trap_entry`, `rv_trap`; linked with `sw/rom.ld`). `SetIntHandler`, `EnableInterrupts`, STAMP 1, then waits for 20 handler calls (the handler counts and clears with `GetInterrupts()`), at most 100 TIMER steps; still 20 six TIMER steps later. | STAMP 1: start 20 `vbl_int` pulses, one `clk_28` cycle each, 2000 `clk_114` apart. STAMP 2: all 20 were sent. |
-| `t_irqctl` | Started as `t_irq`. The interrupt controller, tests 1..7 and 9..11 of [Interrupt controller](#interrupt-controller): reset values, the legacy 0xFFFFFFA0 path, one event per edge, masking, "set wins", level sources, LEVEL mode, mode switching, read-back. Exit code 100 * test + check. | The STAMP commands of the table there (pulses, held levels, the interrupt output); test 4 is checked by the bench. |
+| `t_irqctl` | Started as `t_irq`. The interrupt controller, tests 1..7 and 9..12 of [Interrupt controller](#interrupt-controller): reset values, the legacy 0xFFFFFFA0 path, one event per edge, masking, "set wins", level sources, LEVEL mode, mode switching, read-back, the ADV7511 INT pin. Exit code 100 * test + check. | The STAMP commands of the table there (pulses, held levels, the interrupt output); test 4 is checked by the bench. |
 | `t_spibusy` | `SPI_slow()` (SPEED `0xEF`, about 7700 `clk_114` per byte), CS `0x02`, 8 straight-line `sb` to SPI DATA (`01 80 55 AA FF 00 3C C3`), then a DATA read (`0x1C`, the 8th MISO byte), then CS `0x03`. | The slave got the 8 bytes in order. At least 7 DATA writes found `SD_busy` high. No DATA write completed without cfide accepting it. |
 | `boot` | The committed boot ROM loads `RV32OSDA.BIN` (`boot/fwtest.c`) from `card.img`; the firmware prints `FW OK`, `PAT`, `IMG`, runs the `t_irq` check, prints `IRQ 20`, writes DONE. Not in `all`; see [Boot](#boot). | STAMP 1/2 as `t_irq`; `ERRORCODE:` lines; `=== BOOT`, `=== STATS`. |
 | `boot_nofile` | The same ROM with `card_nofile.img`: `Can't load firmware`, `ErrorCode(0x0f0)`, retry. Not in `all`. | No DONE before the cycle limit; last ErrorCode `00f0`. |
@@ -387,8 +388,17 @@ INTERRUPT register) at `0xFFFFFF30..3C`, 16-bit registers on `clk_28`:
 | `0xFFFFFF38` | `IRQ_RAW` | the synchronised source levels, no side effect | no effect |
 | `0xFFFFFF3C` | `IRQ_MODE` | MODE | MODE (reset 0); per bit 0 = EDGE, 1 = LEVEL |
 
-Sources: bit 0 `vbl_int`, 1 the I2C interrupt, 2 `amiga_req`, 3..15 the new
-port `irq_src` (default 0). Each bit has a 2-FF synchroniser into `clk_28`.
+Sources:
+
+| Bit | cfide signal | What |
+|---|---|---|
+| 0 | `vbl_int` | vertical blank (pulse) |
+| 1 | `i2c_int` | the I2C master's transfer event (`i2c_master_mmio` `r_interrupt`): set by its transfer events, cleared only by an access to the legacy `0xFFFFFFA0` window |
+| 2 | `amiga_req` | Akiko request (pulse per request) |
+| 3 | `i2c_ext_int` | the ADV7511's INT pin (also I2C status bit 0x400). Active high as the part is set up: `fw/ctrl_832/adv7511.c` writes no polarity register, clearing the part's interrupt flags takes the pin low (ADV7511 Programming Guide), and `i2c_master_mmio` and the 832 firmware use it active high; no inversion. Meant for LEVEL mode |
+| 4..15 | `irq_src` | spare, new port (default 0), for IDE / floppy later |
+
+Each bit has a 2-FF synchroniser into `clk_28`.
 In EDGE mode a rising edge sets the bit and a read that returns it clears
 it; an edge in the clear cycle wins. In LEVEL mode the bit is the
 synchronised level, and a read does not clear it. The bit's EDGE latch is
@@ -398,7 +408,8 @@ unread event. cfide's `interrupt` is the legacy flag OR (PENDING and MASK)
 /= 0. With MASK = MODE = 0 (reset) the legacy register `0xFFFFFFA0` behaves
 exactly as before. `irq_seen` (req one `clk_28` cycle earlier) marks the
 first cycle of an access: the read value is latched there and the bits are
-cleared there only.
+cleared there only. That guard is defensive and untested: with the current
+bridge every hw access is seen by exactly one `clk_28` edge.
 
 `t_irqctl` (`sw/t_irqctl.c`, the bench's `t_irqctl` block) runs these tests
 in order; the bench acts on the program's STAMPs:
@@ -415,6 +426,7 @@ in order; the bench acts on the program's STAMPs:
 | 9 | MODE = MASK = bit 9 (LEVEL), line high: PENDING returns 0x0200 on four reads, `mip.MEIP` stays 1; then taken as an interrupt (the handler reads 0x0200 twice and masks it off); line low: PENDING 0, `mip.MEIP` 0. | 90 / 91: `irq_src[9]` high / low; 92 / 93: cfide's `interrupt` must be 1 / 0 |
 | 10 | Bit 10, line high: EDGE gives one event; -> LEVEL: PENDING follows the line (0x0400 twice); -> EDGE: 0, also later; low and high: a new event. An unread EDGE event, line low, -> LEVEL: 0; -> EDGE: 0. | 100 / 101: `irq_src[10]` high / low; 102: pulse |
 | 11 | MODE 0xA5C3 and 0x5A3C, MASK 0x5A3C and 0 read back. | |
+| 12 | Bit 3, the ADV7511 INT pin. EDGE, MASK = bit 3, pin held high: one interrupt (0x0008, then 0), none more, RAW = 0x0008; pin low: RAW 0. LEVEL, interrupts off: PENDING 0x0008 on two reads, `mip.MEIP` 1; pin low: PENDING 0, `mip.MEIP` 0. | 120 / 121: `i2c_ext_int` high / low; 92 / 93 as test 9 |
 | | end | 99: every action was taken (10 vblank pulses, 25 test 4 iterations) |
 
 Test 4 in detail: the first pulse sets bit 6 before r1, so r1 returns and
@@ -470,11 +482,17 @@ RUNTAG=irqctl3 EXTRA_WS=3 bash sim/host_bridge/run.sh t_irqctl     # EXTRA_WS=3
 RUNTAG=irqmut bash sim/host_bridge/run.sh irqmut
 ```
 
-Firmware rule: a source that may stay high (ADV7511 INT, IDE request) in
-EDGE mode gives one event per rising edge. After handling it, read IRQ_RAW and
-handle again while the level is still high; on unmasking such a bit, check
-IRQ_RAW once (or put the bit in LEVEL mode and mask it off until the device
-is serviced). A debugger that reads IRQ_PENDING consumes the events.
+Firmware rule: put level sources (bit 3 ADV7511 INT, IDE requests; bit 1
+the I2C transfer flag, whose handler must access `0xFFFFFFA0` to clear it)
+in LEVEL mode. The interrupt then stays asserted until the device is
+serviced, so no IRQ_RAW re-check is needed. Pulse sources (vblank, Akiko)
+stay EDGE. A debugger that reads IRQ_PENDING consumes pending EDGE bits.
+
+- A LEVEL source that the handler cannot service in interrupt context can be
+  masked off until it is serviced (test 9 does this).
+- The 2-FF synchroniser delays a LEVEL bit's fall by up to 3 `clk_28` cycles
+  after the device drops its line. A handler that returns at once may be
+  called one extra time with the bit still set, and must tolerate that.
 
 ## Simulation fixes (run copies only)
 
