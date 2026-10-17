@@ -260,7 +260,7 @@ void BootPrintEx(char * str)
   if(!bootscreen_adr)
     BootHome();
 
-  printf(str);
+  printf("%s", str);
   printf("\n");
   
   len = strlen(str);

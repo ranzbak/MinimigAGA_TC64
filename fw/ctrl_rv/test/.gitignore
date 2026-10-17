@@ -4,3 +4,15 @@ cue_test
 cdaudio_test
 openhf_test
 openhf.inc
+/lib_test
+/lib_test_32
+/fmt_glibc_64
+/fmt_glibc_32
+/fmt_832
+/*.o
+/fmt_832.txt
+/fmt_glibc_64.txt
+/fmt_glibc_32.txt
+/fmt_diff.txt
+/fmt.ok
+/mut/

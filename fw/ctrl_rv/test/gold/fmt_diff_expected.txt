@@ -1,0 +1,413 @@
+case 22 S SIGNUART: '   INT %d  serviced %lu' I(-1), UL(0xABCDEF) | 832 buf='   INT 1  serviced 11259375' side='-' | rv buf='   INT -1  serviced 11259375' side=''
+case 23 S SIGNUART: '   INT %d  serviced %lu' I(-12), UL(2147483647) | 832 buf='   INT 12  serviced 2147483647' side='-' | rv buf='   INT -12  serviced 2147483647' side=''
+case 26 S SIGNUART: '   INT %d  serviced %lu' I(INT32_MIN), UL(0) | 832 buf='   INT 2147483648  serviced 0' side='-' | rv buf='   INT -2147483648  serviced 0' side=''
+case 27 P ZERO: '  %dC %04X HDMI %08lX' I(0), U(0), UL(0) | 832 out='  0C 0 HDMI 0' | rv out='  0C 0000 HDMI 00000000'
+case 27 S ZERO: '  %dC %04X HDMI %08lX' I(0), U(0), UL(0) | 832 buf='  0C 0 HDMI 0' | rv buf='  0C 0000 HDMI 00000000'
+case 29 S SIGNUART: '  %dC %04X HDMI %08lX' I(-1), U(0xA), UL(0xABCDEF) | 832 buf='  1C 000A HDMI 00ABCDEF' side='-' | rv buf='  -1C 000A HDMI 00ABCDEF' side=''
+case 30 S SIGNUART: '  %dC %04X HDMI %08lX' I(-12), U(0xAB), UL(2147483647) | 832 buf='  12C 00AB HDMI 7FFFFFFF' side='-' | rv buf='  -12C 00AB HDMI 7FFFFFFF' side=''
+case 33 P ZERO: '  %dC %04X HDMI %08lX' I(INT32_MIN), U(0x7FFFFFFF), UL(0) | 832 out='  -2147483648C 7FFFFFFF HDMI 0' | rv out='  -2147483648C 7FFFFFFF HDMI 00000000'
+case 33 S ZERO+SIGNUART: '  %dC %04X HDMI %08lX' I(INT32_MIN), U(0x7FFFFFFF), UL(0) | 832 buf='  2147483648C 7FFFFFFF HDMI 0' side='-' | rv buf='  -2147483648C 7FFFFFFF HDMI 00000000' side=''
+case 38 S SIGNUART: '  Size: %ld\n' L(-1) | 832 buf='  Size: 1\n' side='-' | rv buf='  Size: -1\n' side=''
+case 41 S SIGNUART: '  Size: %ld\n' L(INT32_MIN) | 832 buf='  Size: 2147483648\n' side='-' | rv buf='  Size: -2147483648\n' side=''
+case 44 S SIGNUART: '  Start: %ld' L(-1) | 832 buf='  Start: 1' side='-' | rv buf='  Start: -1' side=''
+case 47 S SIGNUART: '  Start: %ld' L(INT32_MIN) | 832 buf='  Start: 2147483648' side='-' | rv buf='  Start: -2147483648' side=''
+case 48 P ZERO: ' %02X' U(0) | 832 out=' 0' | rv out=' 00'
+case 48 S ZERO: ' %02X' U(0) | 832 buf=' 0' | rv buf=' 00'
+case 92 S SIGNUART: ' > audio %d' I(-1) | 832 buf=' > audio 1' side='-' | rv buf=' > audio -1' side=''
+case 93 S SIGNUART: ' > audio %d' I(-12) | 832 buf=' > audio 12' side='-' | rv buf=' > audio -12' side=''
+case 96 S SIGNUART: ' > audio %d' I(INT32_MIN) | 832 buf=' > audio 2147483648' side='-' | rv buf=' > audio -2147483648' side=''
+case 105 S SIGNUART: ' > read cd %d+%d' I(-1), I(-1) | 832 buf=' > read cd 1+1' side='--' | rv buf=' > read cd -1+-1' side=''
+case 106 S SIGNUART: ' > read cd %d+%d' I(-12), I(-12) | 832 buf=' > read cd 12+12' side='--' | rv buf=' > read cd -12+-12' side=''
+case 109 S SIGNUART: ' > read cd %d+%d' I(INT32_MIN), I(INT32_MIN) | 832 buf=' > read cd 2147483648+2147483648' side='--' | rv buf=' > read cd -2147483648+-2147483648' side=''
+case 114 P ZERO: ' CHECK %02X/%02X/%02X' U(0), U(0), U(0) | 832 out=' CHECK 0/0/0' | rv out=' CHECK 00/00/00'
+case 114 S ZERO: ' CHECK %02X/%02X/%02X' U(0), U(0), U(0) | 832 buf=' CHECK 0/0/0' | rv buf=' CHECK 00/00/00'
+case 133 S SIGNUART: ' Floppy drives : %d' I(-1) | 832 buf=' Floppy drives : 1' side='-' | rv buf=' Floppy drives : -1' side=''
+case 134 S SIGNUART: ' Floppy drives : %d' I(-12) | 832 buf=' Floppy drives : 12' side='-' | rv buf=' Floppy drives : -12' side=''
+case 137 S SIGNUART: ' Floppy drives : %d' I(INT32_MIN) | 832 buf=' Floppy drives : 2147483648' side='-' | rv buf=' Floppy drives : -2147483648' side=''
+case 138 P ZERO: ' Hpos : %4d | Vpos : %4d' I(0), I(0) | 832 out=' Hpos : 0 | Vpos : 0' | rv out=' Hpos :    0 | Vpos :    0'
+case 138 S ZERO: ' Hpos : %4d | Vpos : %4d' I(0), I(0) | 832 buf=' Hpos : 0 | Vpos : 0' | rv buf=' Hpos :    0 | Vpos :    0'
+case 140 P SIGNW: ' Hpos : %4d | Vpos : %4d' I(-1), I(-1) | 832 out=' Hpos : -   1 | Vpos : -   1' | rv out=' Hpos :   -1 | Vpos :   -1'
+case 140 S SIGNW+SIGNUART: ' Hpos : %4d | Vpos : %4d' I(-1), I(-1) | 832 buf=' Hpos :    1 | Vpos :    1' side='--' | rv buf=' Hpos :   -1 | Vpos :   -1' side=''
+case 141 P SIGNW: ' Hpos : %4d | Vpos : %4d' I(-12), I(-12) | 832 out=' Hpos : -  12 | Vpos : -  12' | rv out=' Hpos :  -12 | Vpos :  -12'
+case 141 S SIGNW+SIGNUART: ' Hpos : %4d | Vpos : %4d' I(-12), I(-12) | 832 buf=' Hpos :   12 | Vpos :   12' side='--' | rv buf=' Hpos :  -12 | Vpos :  -12' side=''
+case 144 S SIGNUART: ' Hpos : %4d | Vpos : %4d' I(INT32_MIN), I(INT32_MIN) | 832 buf=' Hpos : 2147483648 | Vpos : 2147483648' side='--' | rv buf=' Hpos : -2147483648 | Vpos : -2147483648' side=''
+case 147 S SIGNUART: '##End result : %d' I(-1) | 832 buf='##End result : 1' side='-' | rv buf='##End result : -1' side=''
+case 148 S SIGNUART: '##End result : %d' I(-12) | 832 buf='##End result : 12' side='-' | rv buf='##End result : -12' side=''
+case 151 S SIGNUART: '##End result : %d' I(INT32_MIN) | 832 buf='##End result : 2147483648' side='-' | rv buf='##End result : -2147483648' side=''
+case 152 P PREC: 'Inserting floppy: "%.11s"\r' "" | 832 out='Inserting floppy: "11s"\r' | rv out='Inserting floppy: ""\r'
+case 152 S PREC: 'Inserting floppy: "%.11s"\r' "" | 832 buf='Inserting floppy: "11s"\r' | rv buf='Inserting floppy: ""\r'
+case 153 P PREC: 'Inserting floppy: "%.11s"\r' "ab" | 832 out='Inserting floppy: "11s"\r' | rv out='Inserting floppy: "ab"\r'
+case 153 S PREC: 'Inserting floppy: "%.11s"\r' "ab" | 832 buf='Inserting floppy: "11s"\r' | rv buf='Inserting floppy: "ab"\r'
+case 154 P PREC: 'Inserting floppy: "%.11s"\r' S11 | 832 out='Inserting floppy: "11s"\r' | rv out='Inserting floppy: "ABCDEFGHIJK"\r'
+case 154 S PREC: 'Inserting floppy: "%.11s"\r' S11 | 832 buf='Inserting floppy: "11s"\r' | rv buf='Inserting floppy: "ABCDEFGHIJK"\r'
+case 155 P PREC: 'Inserting floppy: "%.11s"\r' S11_PLUS | 832 out='Inserting floppy: "11s"\r' | rv out='Inserting floppy: "ABCDEFGHIJK"\r'
+case 155 S PREC: 'Inserting floppy: "%.11s"\r' S11_PLUS | 832 buf='Inserting floppy: "11s"\r' | rv buf='Inserting floppy: "ABCDEFGHIJK"\r'
+case 156 P PREC: 'file: "%.8s.%.3s"\r' "", "" | 832 out='file: "8s.3s"\r' | rv out='file: "."\r'
+case 156 S PREC: 'file: "%.8s.%.3s"\r' "", "" | 832 buf='file: "8s.3s"\r' | rv buf='file: "."\r'
+case 157 P PREC: 'file: "%.8s.%.3s"\r' "ab", "ab" | 832 out='file: "8s.3s"\r' | rv out='file: "ab.ab"\r'
+case 157 S PREC: 'file: "%.8s.%.3s"\r' "ab", "ab" | 832 buf='file: "8s.3s"\r' | rv buf='file: "ab.ab"\r'
+case 158 P PREC: 'file: "%.8s.%.3s"\r' S8, S3 | 832 out='file: "8s.3s"\r' | rv out='file: "ABCDEFGH.EXT"\r'
+case 158 S PREC: 'file: "%.8s.%.3s"\r' S8, S3 | 832 buf='file: "8s.3s"\r' | rv buf='file: "ABCDEFGH.EXT"\r'
+case 159 P PREC: 'file: "%.8s.%.3s"\r' S8_PLUS, S3_PLUS | 832 out='file: "8s.3s"\r' | rv out='file: "ABCDEFGH.EXT"\r'
+case 159 S PREC: 'file: "%.8s.%.3s"\r' S8_PLUS, S3_PLUS | 832 buf='file: "8s.3s"\r' | rv buf='file: "ABCDEFGH.EXT"\r'
+case 160 P ZERO: '%02X.' U(0) | 832 out='0.' | rv out='00.'
+case 160 S ZERO: '%02X.' U(0) | 832 buf='0.' | rv buf='00.'
+case 169 P ZERO: '%02X\r' U(0) | 832 out='0\r' | rv out='00\r'
+case 169 S ZERO: '%02X\r' U(0) | 832 buf='0\r' | rv buf='00\r'
+case 187 P ZERO: '%X:%04X' U(0), U(0) | 832 out='0:0' | rv out='0:0000'
+case 187 S ZERO: '%X:%04X' U(0), U(0) | 832 buf='0:0' | rv buf='0:0000'
+case 210 S SIGNUART: 'Found directory "%s" at %ld \r' "Kickstart 3.1", L(-1) | 832 buf='Found directory "Kickstart 3.1" at 1 \r' side='-' | rv buf='Found directory "Kickstart 3.1" at -1 \r' side=''
+case 213 S SIGNUART: 'Found directory "%s" at %ld \r' "A", L(INT32_MIN) | 832 buf='Found directory "A" at 2147483648 \r' side='-' | rv buf='Found directory "A" at -2147483648 \r' side=''
+case 222 P ZERO: '(%u)[%04X]:' U(0), U(0) | 832 out='(0)[0]:' | rv out='(0)[0000]:'
+case 222 S ZERO: '(%u)[%04X]:' U(0), U(0) | 832 buf='(0)[0]:' | rv buf='(0)[0000]:'
+case 247 S SIGNUART: ', C: %d, H: %d, S: %d, count: %d\r' I(-1), I(-1), I(-1), I(-1) | 832 buf=', C: 1, H: 1, S: 1, count: 1\r' side='----' | rv buf=', C: -1, H: -1, S: -1, count: -1\r' side=''
+case 248 S SIGNUART: ', C: %d, H: %d, S: %d, count: %d\r' I(-12), I(-12), I(-12), I(-12) | 832 buf=', C: 12, H: 12, S: 12, count: 12\r' side='----' | rv buf=', C: -12, H: -12, S: -12, count: -12\r' side=''
+case 251 S SIGNUART: ', C: %d, H: %d, S: %d, count: %d\r' I(INT32_MIN), I(INT32_MIN), I(INT32_MIN), I(INT32_MIN) | 832 buf=', C: 2147483648, H: 2147483648, S: 2147483648, count: 2147483648\r' side='----' | rv buf=', C: -2147483648, H: -2147483648, S: -2147483648, count: -2147483648\r' side=''
+case 272 S SIGNUART: 'Audio file - length %d\n' I(-1) | 832 buf='Audio file - length 1\n' side='-' | rv buf='Audio file - length -1\n' side=''
+case 273 S SIGNUART: 'Audio file - length %d\n' I(-12) | 832 buf='Audio file - length 12\n' side='-' | rv buf='Audio file - length -12\n' side=''
+case 276 S SIGNUART: 'Audio file - length %d\n' I(INT32_MIN) | 832 buf='Audio file - length 2147483648\n' side='-' | rv buf='Audio file - length -2147483648\n' side=''
+case 279 S SIGNUART: 'Boot file size: %ld' L(-1) | 832 buf='Boot file size: 1' side='-' | rv buf='Boot file size: -1' side=''
+case 282 S SIGNUART: 'Boot file size: %ld' L(INT32_MIN) | 832 buf='Boot file size: 2147483648' side='-' | rv buf='Boot file size: -2147483648' side=''
+case 283 P ZERO: 'CD%d ATA %02X fe %02X sc %02X bc %02X%02X dh %02X\r\n' I(0), U(0), U(0), U(0), U(0), U(0), U(0) | 832 out='CD0 ATA 0 fe 0 sc 0 bc 00 dh 0\r\n' | rv out='CD0 ATA 00 fe 00 sc 00 bc 0000 dh 00\r\n'
+case 283 S ZERO: 'CD%d ATA %02X fe %02X sc %02X bc %02X%02X dh %02X\r\n' I(0), U(0), U(0), U(0), U(0), U(0), U(0) | 832 buf='CD0 ATA 0 fe 0 sc 0 bc 00 dh 0\r\n' | rv buf='CD0 ATA 00 fe 00 sc 00 bc 0000 dh 00\r\n'
+case 285 S SIGNUART: 'CD%d ATA %02X fe %02X sc %02X bc %02X%02X dh %02X\r\n' I(-1), U(0xA), U(0xA), U(0xA), U(0xA), U(0xA), U(0xA) | 832 buf='CD1 ATA 0A fe 0A sc 0A bc 0A0A dh 0A\r\n' side='-' | rv buf='CD-1 ATA 0A fe 0A sc 0A bc 0A0A dh 0A\r\n' side=''
+case 286 S SIGNUART: 'CD%d ATA %02X fe %02X sc %02X bc %02X%02X dh %02X\r\n' I(-12), U(0xAB), U(0xAB), U(0xAB), U(0xAB), U(0xAB), U(0xAB) | 832 buf='CD12 ATA AB fe AB sc AB bc ABAB dh AB\r\n' side='-' | rv buf='CD-12 ATA AB fe AB sc AB bc ABAB dh AB\r\n' side=''
+case 289 S SIGNUART: 'CD%d ATA %02X fe %02X sc %02X bc %02X%02X dh %02X\r\n' I(INT32_MIN), U(0x7FFFFFFF), U(0x7FFFFFFF), U(0x7FFFFFFF), U(0x7FFFFFFF), U(0x7FFFFFFF), U(0x7FFFFFFF) | 832 buf='CD2147483648 ATA 7FFFFFFF fe 7FFFFFFF sc 7FFFFFFF bc 7FFFFFFF7FFFFFFF dh 7FFFFFFF\r\n' side='-' | rv buf='CD-2147483648 ATA 7FFFFFFF fe 7FFFFFFF sc 7FFFFFFF bc 7FFFFFFF7FFFFFFF dh 7FFFFFFF\r\n' side=''
+case 294 S SIGNUART: 'CD%d CDB' I(-1) | 832 buf='CD1 CDB' side='-' | rv buf='CD-1 CDB' side=''
+case 295 S SIGNUART: 'CD%d CDB' I(-12) | 832 buf='CD12 CDB' side='-' | rv buf='CD-12 CDB' side=''
+case 298 S SIGNUART: 'CD%d CDB' I(INT32_MIN) | 832 buf='CD2147483648 CDB' side='-' | rv buf='CD-2147483648 CDB' side=''
+case 301 S SIGNUART: 'CD-ROM: IDE port %d %s, %s' I(-1), "Kickstart 3.1", "Kickstart 3.1" | 832 buf='CD-ROM: IDE port 1 Kickstart 3.1, Kickstart 3.1' side='-' | rv buf='CD-ROM: IDE port -1 Kickstart 3.1, Kickstart 3.1' side=''
+case 302 S SIGNUART: 'CD-ROM: IDE port %d %s, %s' I(-12), S40, S40 | 832 buf='CD-ROM: IDE port 12 ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!?#$, ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!?#$' side='-' | rv buf='CD-ROM: IDE port -12 ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!?#$, ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!?#$' side=''
+case 305 S SIGNUART: 'CD-ROM: IDE port %d %s, %s' I(INT32_MIN), "Kickstart 3.1", "Kickstart 3.1" | 832 buf='CD-ROM: IDE port 2147483648 Kickstart 3.1, Kickstart 3.1' side='-' | rv buf='CD-ROM: IDE port -2147483648 Kickstart 3.1, Kickstart 3.1' side=''
+case 312 S SIGNUART: 'CD: SD read error at %d\r\n' I(-1) | 832 buf='CD: SD read error at 1\r\n' side='-' | rv buf='CD: SD read error at -1\r\n' side=''
+case 313 S SIGNUART: 'CD: SD read error at %d\r\n' I(-12) | 832 buf='CD: SD read error at 12\r\n' side='-' | rv buf='CD: SD read error at -12\r\n' side=''
+case 316 S SIGNUART: 'CD: SD read error at %d\r\n' I(INT32_MIN) | 832 buf='CD: SD read error at 2147483648\r\n' side='-' | rv buf='CD: SD read error at -2147483648\r\n' side=''
+case 319 S SIGNUART: 'CD: insert %s (%s), %d tracks, %d sectors\r\n' "Kickstart 3.1", "Kickstart 3.1", I(-1), I(-1) | 832 buf='CD: insert Kickstart 3.1 (Kickstart 3.1), 1 tracks, 1 sectors\r\n' side='--' | rv buf='CD: insert Kickstart 3.1 (Kickstart 3.1), -1 tracks, -1 sectors\r\n' side=''
+case 320 S SIGNUART: 'CD: insert %s (%s), %d tracks, %d sectors\r\n' S11, S40, I(-12), I(-12) | 832 buf='CD: insert ABCDEFGHIJK (ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!?#$), 12 tracks, 12 sectors\r\n' side='--' | rv buf='CD: insert ABCDEFGHIJK (ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!?#$), -12 tracks, -12 sectors\r\n' side=''
+case 323 S SIGNUART: 'CD: insert %s (%s), %d tracks, %d sectors\r\n' "Kickstart 3.1", "Kickstart 3.1", I(INT32_MIN), I(INT32_MIN) | 832 buf='CD: insert Kickstart 3.1 (Kickstart 3.1), 2147483648 tracks, 2147483648 sectors\r\n' side='--' | rv buf='CD: insert Kickstart 3.1 (Kickstart 3.1), -2147483648 tracks, -2147483648 sectors\r\n' side=''
+case 326 S SIGNUART: 'CDA: underrun %d\r\n' I(-1) | 832 buf='CDA: underrun 1\r\n' side='-' | rv buf='CDA: underrun -1\r\n' side=''
+case 327 S SIGNUART: 'CDA: underrun %d\r\n' I(-12) | 832 buf='CDA: underrun 12\r\n' side='-' | rv buf='CDA: underrun -12\r\n' side=''
+case 330 S SIGNUART: 'CDA: underrun %d\r\n' I(INT32_MIN) | 832 buf='CDA: underrun 2147483648\r\n' side='-' | rv buf='CDA: underrun -2147483648\r\n' side=''
+case 338 P ZERO: 'CMD17 (READ_BLOCK): invalid response 0x%02X (lba=%lu)\r' U(0), UL(0) | 832 out='CMD17 (READ_BLOCK): invalid response 0x0 (lba=0)\r' | rv out='CMD17 (READ_BLOCK): invalid response 0x00 (lba=0)\r'
+case 338 S ZERO: 'CMD17 (READ_BLOCK): invalid response 0x%02X (lba=%lu)\r' U(0), UL(0) | 832 buf='CMD17 (READ_BLOCK): invalid response 0x0 (lba=0)\r' | rv buf='CMD17 (READ_BLOCK): invalid response 0x00 (lba=0)\r'
+case 353 P ZERO: 'CMD18 (READ_MULTIPLE_BLOCK): invalid response 0x%02X (lba=%lu)\r' U(0), UL(0) | 832 out='CMD18 (READ_MULTIPLE_BLOCK): invalid response 0x0 (lba=0)\r' | rv out='CMD18 (READ_MULTIPLE_BLOCK): invalid response 0x00 (lba=0)\r'
+case 353 S ZERO: 'CMD18 (READ_MULTIPLE_BLOCK): invalid response 0x%02X (lba=%lu)\r' U(0), UL(0) | 832 buf='CMD18 (READ_MULTIPLE_BLOCK): invalid response 0x0 (lba=0)\r' | rv buf='CMD18 (READ_MULTIPLE_BLOCK): invalid response 0x00 (lba=0)\r'
+case 374 P ZERO: 'CMD24 (WRITE_BLOCK): invalid response 0x%02X (lba=%lu)\r' U(0), UL(0) | 832 out='CMD24 (WRITE_BLOCK): invalid response 0x0 (lba=0)\r' | rv out='CMD24 (WRITE_BLOCK): invalid response 0x00 (lba=0)\r'
+case 374 S ZERO: 'CMD24 (WRITE_BLOCK): invalid response 0x%02X (lba=%lu)\r' U(0), UL(0) | 832 buf='CMD24 (WRITE_BLOCK): invalid response 0x0 (lba=0)\r' | rv buf='CMD24 (WRITE_BLOCK): invalid response 0x00 (lba=0)\r'
+case 383 P ZERO: 'CMD24 (WRITE_BLOCK): invalid status 0x%02X (lba=%lu)\r' U(0), UL(0) | 832 out='CMD24 (WRITE_BLOCK): invalid status 0x0 (lba=0)\r' | rv out='CMD24 (WRITE_BLOCK): invalid status 0x00 (lba=0)\r'
+case 383 S ZERO: 'CMD24 (WRITE_BLOCK): invalid status 0x%02X (lba=%lu)\r' U(0), UL(0) | 832 buf='CMD24 (WRITE_BLOCK): invalid status 0x0 (lba=0)\r' | rv buf='CMD24 (WRITE_BLOCK): invalid status 0x00 (lba=0)\r'
+case 392 P ZERO: 'CMD9 (GET_CSD): invalid response 0x%02X \r' U(0) | 832 out='CMD9 (GET_CSD): invalid response 0x0 \r' | rv out='CMD9 (GET_CSD): invalid response 0x00 \r'
+case 392 S ZERO: 'CMD9 (GET_CSD): invalid response 0x%02X \r' U(0) | 832 buf='CMD9 (GET_CSD): invalid response 0x0 \r' | rv buf='CMD9 (GET_CSD): invalid response 0x00 \r'
+case 422 S SIGNUART: 'DF%d: motor %s (%d)\n' I(-1), "Kickstart 3.1", I(-1) | 832 buf='DF1: motor Kickstart 3.1 (1)\n' side='--' | rv buf='DF-1: motor Kickstart 3.1 (-1)\n' side=''
+case 423 S SIGNUART: 'DF%d: motor %s (%d)\n' I(-12), S40, I(-12) | 832 buf='DF12: motor ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!?#$ (12)\n' side='--' | rv buf='DF-12: motor ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!?#$ (-12)\n' side=''
+case 426 S SIGNUART: 'DF%d: motor %s (%d)\n' I(INT32_MIN), "Kickstart 3.1", I(INT32_MIN) | 832 buf='DF2147483648: motor Kickstart 3.1 (2147483648)\n' side='--' | rv buf='DF-2147483648: motor Kickstart 3.1 (-2147483648)\n' side=''
+case 429 S SIGNUART: 'DF%d: track changed to %d\n' I(-1), I(-1) | 832 buf='DF1: track changed to 1\n' side='--' | rv buf='DF-1: track changed to -1\n' side=''
+case 430 S SIGNUART: 'DF%d: track changed to %d\n' I(-12), I(-12) | 832 buf='DF12: track changed to 12\n' side='--' | rv buf='DF-12: track changed to -12\n' side=''
+case 433 S SIGNUART: 'DF%d: track changed to %d\n' I(INT32_MIN), I(INT32_MIN) | 832 buf='DF2147483648: track changed to 2147483648\n' side='--' | rv buf='DF-2147483648: track changed to -2147483648\n' side=''
+case 436 S SIGNUART: 'Directory not found at %ld\r' L(-1) | 832 buf='Directory not found at 1\r' side='-' | rv buf='Directory not found at -1\r' side=''
+case 439 S SIGNUART: 'Directory not found at %ld\r' L(INT32_MIN) | 832 buf='Directory not found at 2147483648\r' side='-' | rv buf='Directory not found at -2147483648\r' side=''
+case 460 S SIGNUART: 'File size: %dkB\r' I(-1) | 832 buf='File size: 1kB\r' side='-' | rv buf='File size: -1kB\r' side=''
+case 461 S SIGNUART: 'File size: %dkB\r' I(-12) | 832 buf='File size: 12kB\r' side='-' | rv buf='File size: -12kB\r' side=''
+case 464 S SIGNUART: 'File size: %dkB\r' I(INT32_MIN) | 832 buf='File size: 2147483648kB\r' side='-' | rv buf='File size: -2147483648kB\r' side=''
+case 489 S SIGNUART: 'Found directory at %ld \r' L(-1) | 832 buf='Found directory at 1 \r' side='-' | rv buf='Found directory at -1 \r' side=''
+case 492 S SIGNUART: 'Found directory at %ld \r' L(INT32_MIN) | 832 buf='Found directory at 2147483648 \r' side='-' | rv buf='Found directory at -2147483648 \r' side=''
+case 495 S SIGNUART: 'Found event %d at time %d\n' I(-1), I(-1) | 832 buf='Found event 1 at time 1\n' side='--' | rv buf='Found event -1 at time -1\n' side=''
+case 496 S SIGNUART: 'Found event %d at time %d\n' I(-12), I(-12) | 832 buf='Found event 12 at time 12\n' side='--' | rv buf='Found event -12 at time -12\n' side=''
+case 499 S SIGNUART: 'Found event %d at time %d\n' I(INT32_MIN), I(INT32_MIN) | 832 buf='Found event 2147483648 at time 2147483648\n' side='--' | rv buf='Found event -2147483648 at time -2147483648\n' side=''
+case 511 S SIGNUART: 'HARDFILE %d:\r' I(-1) | 832 buf='HARDFILE 1:\r' side='-' | rv buf='HARDFILE -1:\r' side=''
+case 512 S SIGNUART: 'HARDFILE %d:\r' I(-12) | 832 buf='HARDFILE 12:\r' side='-' | rv buf='HARDFILE -12:\r' side=''
+case 515 S SIGNUART: 'HARDFILE %d:\r' I(INT32_MIN) | 832 buf='HARDFILE 2147483648:\r' side='-' | rv buf='HARDFILE -2147483648:\r' side=''
+case 524 S SIGNUART: 'IDE%d: Identify Device' I(-1) | 832 buf='IDE1: Identify Device' side='-' | rv buf='IDE-1: Identify Device' side=''
+case 525 S SIGNUART: 'IDE%d: Identify Device' I(-12) | 832 buf='IDE12: Identify Device' side='-' | rv buf='IDE-12: Identify Device' side=''
+case 528 S SIGNUART: 'IDE%d: Identify Device' I(INT32_MIN) | 832 buf='IDE2147483648: Identify Device' side='-' | rv buf='IDE-2147483648: Identify Device' side=''
+case 531 S SIGNUART: 'Illegal track read: %d\r' I(-1) | 832 buf='Illegal track read: 1\r' side='-' | rv buf='Illegal track read: -1\r' side=''
+case 532 S SIGNUART: 'Illegal track read: %d\r' I(-12) | 832 buf='Illegal track read: 12\r' side='-' | rv buf='Illegal track read: -12\r' side=''
+case 535 S SIGNUART: 'Illegal track read: %d\r' I(INT32_MIN) | 832 buf='Illegal track read: 2147483648\r' side='-' | rv buf='Illegal track read: -2147483648\r' side=''
+case 542 S SIGNUART: 'MINMGAA%dCFG' I(-1) | 832 buf='MINMGAA1CFG' side='-' | rv buf='MINMGAA-1CFG' side=''
+case 543 S SIGNUART: 'MINMGAA%dCFG' I(-12) | 832 buf='MINMGAA12CFG' side='-' | rv buf='MINMGAA-12CFG' side=''
+case 546 S SIGNUART: 'MINMGAA%dCFG' I(INT32_MIN) | 832 buf='MINMGAA2147483648CFG' side='-' | rv buf='MINMGAA-2147483648CFG' side=''
+case 549 S SIGNUART: 'Minimig AGA%s version 20%d-%d-%d for Turbo Chameleon 64' "Kickstart 3.1", I(-1), I(-1), I(-1) | 832 buf='Minimig AGAKickstart 3.1 version 201-1-1 for Turbo Chameleon 64' side='---' | rv buf='Minimig AGAKickstart 3.1 version 20-1--1--1 for Turbo Chameleon 64' side=''
+case 550 S SIGNUART: 'Minimig AGA%s version 20%d-%d-%d for Turbo Chameleon 64' S40, I(-12), I(-12), I(-12) | 832 buf='Minimig AGAABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!?#$ version 2012-12-12 for Turbo Chameleon 64' side='---' | rv buf='Minimig AGAABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!?#$ version 20-12--12--12 for Turbo Chameleon 64' side=''
+case 553 S SIGNUART: 'Minimig AGA%s version 20%d-%d-%d for Turbo Chameleon 64' "Kickstart 3.1", I(INT32_MIN), I(INT32_MIN), I(INT32_MIN) | 832 buf='Minimig AGAKickstart 3.1 version 202147483648-2147483648-2147483648 for Turbo Chameleon 64' side='---' | rv buf='Minimig AGAKickstart 3.1 version 20-2147483648--2147483648--2147483648 for Turbo Chameleon 64' side=''
+case 556 P UPPER: 'New directory sector: %x\n' U(0xA) | 832 out='New directory sector: A\n' | rv out='New directory sector: a\n'
+case 556 S UPPER: 'New directory sector: %x\n' U(0xA) | 832 buf='New directory sector: A\n' | rv buf='New directory sector: a\n'
+case 557 P UPPER: 'New directory sector: %x\n' U(0xAB) | 832 out='New directory sector: AB\n' | rv out='New directory sector: ab\n'
+case 557 S UPPER: 'New directory sector: %x\n' U(0xAB) | 832 buf='New directory sector: AB\n' | rv buf='New directory sector: ab\n'
+case 558 P UPPER: 'New directory sector: %x\n' U(0xFF) | 832 out='New directory sector: FF\n' | rv out='New directory sector: ff\n'
+case 558 S UPPER: 'New directory sector: %x\n' U(0xFF) | 832 buf='New directory sector: FF\n' | rv buf='New directory sector: ff\n'
+case 559 P UPPER: 'New directory sector: %x\n' U(0xABCD) | 832 out='New directory sector: ABCD\n' | rv out='New directory sector: abcd\n'
+case 559 S UPPER: 'New directory sector: %x\n' U(0xABCD) | 832 buf='New directory sector: ABCD\n' | rv buf='New directory sector: abcd\n'
+case 560 P UPPER: 'New directory sector: %x\n' U(0x7FFFFFFF) | 832 out='New directory sector: 7FFFFFFF\n' | rv out='New directory sector: 7fffffff\n'
+case 560 S UPPER: 'New directory sector: %x\n' U(0x7FFFFFFF) | 832 buf='New directory sector: 7FFFFFFF\n' | rv buf='New directory sector: 7fffffff\n'
+case 562 P UPPER: 'New directory sector: %x\n' U(0xFFFFFFFFu) | 832 out='New directory sector: FFFFFFFF\n' | rv out='New directory sector: ffffffff\n'
+case 562 S UPPER: 'New directory sector: %x\n' U(0xFFFFFFFFu) | 832 buf='New directory sector: FFFFFFFF\n' | rv buf='New directory sector: ffffffff\n'
+case 565 S SIGNUART: 'Offset: %ld' L(-1) | 832 buf='Offset: 1' side='-' | rv buf='Offset: -1' side=''
+case 568 S SIGNUART: 'Offset: %ld' L(INT32_MIN) | 832 buf='Offset: 2147483648' side='-' | rv buf='Offset: -2147483648' side=''
+case 571 S SIGNUART: 'Parent directory is %ld \r' L(-1) | 832 buf='Parent directory is 1 \r' side='-' | rv buf='Parent directory is -1 \r' side=''
+case 574 S SIGNUART: 'Parent directory is %ld \r' L(INT32_MIN) | 832 buf='Parent directory is 2147483648 \r' side='-' | rv buf='Parent directory is -2147483648 \r' side=''
+case 577 S SIGNUART: 'Partition: %ld' L(-1) | 832 buf='Partition: 1' side='-' | rv buf='Partition: -1' side=''
+case 580 S SIGNUART: 'Partition: %ld' L(INT32_MIN) | 832 buf='Partition: 2147483648' side='-' | rv buf='Partition: -2147483648' side=''
+case 583 S SIGNUART: 'PartitionCount: %ld\n' L(-1) | 832 buf='PartitionCount: 1\n' side='-' | rv buf='PartitionCount: -1\n' side=''
+case 586 S SIGNUART: 'PartitionCount: %ld\n' L(INT32_MIN) | 832 buf='PartitionCount: 2147483648\n' side='-' | rv buf='PartitionCount: -2147483648\n' side=''
+case 589 S SIGNUART: 'ROM dir: %d\n' I(-1) | 832 buf='ROM dir: 1\n' side='-' | rv buf='ROM dir: -1\n' side=''
+case 590 S SIGNUART: 'ROM dir: %d\n' I(-12) | 832 buf='ROM dir: 12\n' side='-' | rv buf='ROM dir: -12\n' side=''
+case 593 S SIGNUART: 'ROM dir: %d\n' I(INT32_MIN) | 832 buf='ROM dir: 2147483648\n' side='-' | rv buf='ROM dir: -2147483648\n' side=''
+case 596 S SIGNUART: 'Read  %ld, %d' L(-1), I(-1) | 832 buf='Read  1, 1' side='--' | rv buf='Read  -1, -1' side=''
+case 597 S SIGNUART: 'Read  %ld, %d' L(123456789), I(-12) | 832 buf='Read  123456789, 12' side='-' | rv buf='Read  123456789, -12' side=''
+case 599 S SIGNUART: 'Read  %ld, %d' L(INT32_MIN), I(2147483647) | 832 buf='Read  2147483648, 2147483647' side='-' | rv buf='Read  -2147483648, 2147483647' side=''
+case 600 S SIGNUART: 'Read  %ld, %d' L(0), I(INT32_MIN) | 832 buf='Read  0, 2147483648' side='-' | rv buf='Read  0, -2147483648' side=''
+case 603 S SIGNUART: 'ReadM %ld, %d' L(-1), I(-1) | 832 buf='ReadM 1, 1' side='--' | rv buf='ReadM -1, -1' side=''
+case 604 S SIGNUART: 'ReadM %ld, %d' L(123456789), I(-12) | 832 buf='ReadM 123456789, 12' side='-' | rv buf='ReadM 123456789, -12' side=''
+case 606 S SIGNUART: 'ReadM %ld, %d' L(INT32_MIN), I(2147483647) | 832 buf='ReadM 2147483648, 2147483647' side='-' | rv buf='ReadM -2147483648, 2147483647' side=''
+case 607 S SIGNUART: 'ReadM %ld, %d' L(0), I(INT32_MIN) | 832 buf='ReadM 0, 2147483648' side='-' | rv buf='ReadM 0, -2147483648' side=''
+case 610 S SIGNUART: 'Rendering %d samples\n' I(-1) | 832 buf='Rendering 1 samples\n' side='-' | rv buf='Rendering -1 samples\n' side=''
+case 611 S SIGNUART: 'Rendering %d samples\n' I(-12) | 832 buf='Rendering 12 samples\n' side='-' | rv buf='Rendering -12 samples\n' side=''
+case 614 S SIGNUART: 'Rendering %d samples\n' I(INT32_MIN) | 832 buf='Rendering 2147483648 samples\n' side='-' | rv buf='Rendering -2147483648 samples\n' side=''
+case 641 S SIGNUART: 'Set Multiple Mode %d\r' I(-1) | 832 buf='Set Multiple Mode 1\r' side='-' | rv buf='Set Multiple Mode -1\r' side=''
+case 642 S SIGNUART: 'Set Multiple Mode %d\r' I(-12) | 832 buf='Set Multiple Mode 12\r' side='-' | rv buf='Set Multiple Mode -12\r' side=''
+case 645 S SIGNUART: 'Set Multiple Mode %d\r' I(INT32_MIN) | 832 buf='Set Multiple Mode 2147483648\r' side='-' | rv buf='Set Multiple Mode -2147483648\r' side=''
+case 654 S SIGNUART: 'Sound %d at %X, length %d\n' I(-1), U(0xA), I(-1) | 832 buf='Sound 1 at A, length 1\n' side='--' | rv buf='Sound -1 at A, length -1\n' side=''
+case 655 S SIGNUART: 'Sound %d at %X, length %d\n' I(-12), U(0xAB), I(-12) | 832 buf='Sound 12 at AB, length 12\n' side='--' | rv buf='Sound -12 at AB, length -12\n' side=''
+case 658 S SIGNUART: 'Sound %d at %X, length %d\n' I(INT32_MIN), U(0x7FFFFFFF), I(INT32_MIN) | 832 buf='Sound 2147483648 at 7FFFFFFF, length 2147483648\n' side='--' | rv buf='Sound -2147483648 at 7FFFFFFF, length -2147483648\n' side=''
+case 663 S SIGNUART: 'Start: %ld\n' L(-1) | 832 buf='Start: 1\n' side='-' | rv buf='Start: -1\n' side=''
+case 666 S SIGNUART: 'Start: %ld\n' L(INT32_MIN) | 832 buf='Start: 2147483648\n' side='-' | rv buf='Start: -2147483648\n' side=''
+case 676 S SIGNUART: 'Total sectors: %d, cyl: %d, heads: %d, sectors: %d\n' I(-1), I(-1), I(-1), I(-1) | 832 buf='Total sectors: 1, cyl: 1, heads: 1, sectors: 1\n' side='----' | rv buf='Total sectors: -1, cyl: -1, heads: -1, sectors: -1\n' side=''
+case 677 S SIGNUART: 'Total sectors: %d, cyl: %d, heads: %d, sectors: %d\n' I(-12), I(-12), I(-12), I(-12) | 832 buf='Total sectors: 12, cyl: 12, heads: 12, sectors: 12\n' side='----' | rv buf='Total sectors: -12, cyl: -12, heads: -12, sectors: -12\n' side=''
+case 680 S SIGNUART: 'Total sectors: %d, cyl: %d, heads: %d, sectors: %d\n' I(INT32_MIN), I(INT32_MIN), I(INT32_MIN), I(INT32_MIN) | 832 buf='Total sectors: 2147483648, cyl: 2147483648, heads: 2147483648, sectors: 2147483648\n' side='----' | rv buf='Total sectors: -2147483648, cyl: -2147483648, heads: -2147483648, sectors: -2147483648\n' side=''
+case 689 S SIGNUART: 'Write  %ld, %d' L(-1), I(-1) | 832 buf='Write  1, 1' side='--' | rv buf='Write  -1, -1' side=''
+case 690 S SIGNUART: 'Write  %ld, %d' L(123456789), I(-12) | 832 buf='Write  123456789, 12' side='-' | rv buf='Write  123456789, -12' side=''
+case 692 S SIGNUART: 'Write  %ld, %d' L(INT32_MIN), I(2147483647) | 832 buf='Write  2147483648, 2147483647' side='-' | rv buf='Write  -2147483648, 2147483647' side=''
+case 693 S SIGNUART: 'Write  %ld, %d' L(0), I(INT32_MIN) | 832 buf='Write  0, 2147483648' side='-' | rv buf='Write  0, -2147483648' side=''
+case 696 S SIGNUART: 'WriteM %ld, %d' L(-1), I(-1) | 832 buf='WriteM 1, 1' side='--' | rv buf='WriteM -1, -1' side=''
+case 697 S SIGNUART: 'WriteM %ld, %d' L(123456789), I(-12) | 832 buf='WriteM 123456789, 12' side='-' | rv buf='WriteM 123456789, -12' side=''
+case 699 S SIGNUART: 'WriteM %ld, %d' L(INT32_MIN), I(2147483647) | 832 buf='WriteM 2147483648, 2147483647' side='-' | rv buf='WriteM -2147483648, 2147483647' side=''
+case 700 S SIGNUART: 'WriteM %ld, %d' L(0), I(INT32_MIN) | 832 buf='WriteM 0, 2147483648' side='-' | rv buf='WriteM 0, -2147483648' side=''
+case 701 P PREC: '\nHardfile 0: %.8s.%.3s' "", "" | 832 out='\nHardfile 0: 8s.3s' | rv out='\nHardfile 0: .'
+case 701 S PREC: '\nHardfile 0: %.8s.%.3s' "", "" | 832 buf='\nHardfile 0: 8s.3s' | rv buf='\nHardfile 0: .'
+case 702 P PREC: '\nHardfile 0: %.8s.%.3s' "ab", "ab" | 832 out='\nHardfile 0: 8s.3s' | rv out='\nHardfile 0: ab.ab'
+case 702 S PREC: '\nHardfile 0: %.8s.%.3s' "ab", "ab" | 832 buf='\nHardfile 0: 8s.3s' | rv buf='\nHardfile 0: ab.ab'
+case 703 P PREC: '\nHardfile 0: %.8s.%.3s' S8, S3 | 832 out='\nHardfile 0: 8s.3s' | rv out='\nHardfile 0: ABCDEFGH.EXT'
+case 703 S PREC: '\nHardfile 0: %.8s.%.3s' S8, S3 | 832 buf='\nHardfile 0: 8s.3s' | rv buf='\nHardfile 0: ABCDEFGH.EXT'
+case 704 P PREC: '\nHardfile 0: %.8s.%.3s' S8_PLUS, S3_PLUS | 832 out='\nHardfile 0: 8s.3s' | rv out='\nHardfile 0: ABCDEFGH.EXT'
+case 704 S PREC: '\nHardfile 0: %.8s.%.3s' S8_PLUS, S3_PLUS | 832 buf='\nHardfile 0: 8s.3s' | rv buf='\nHardfile 0: ABCDEFGH.EXT'
+case 707 S SIGNUART: '\nHardfile 0: using SD card partition %d' I(-1) | 832 buf='\nHardfile 0: using SD card partition 1' side='-' | rv buf='\nHardfile 0: using SD card partition -1' side=''
+case 708 S SIGNUART: '\nHardfile 0: using SD card partition %d' I(-12) | 832 buf='\nHardfile 0: using SD card partition 12' side='-' | rv buf='\nHardfile 0: using SD card partition -12' side=''
+case 711 S SIGNUART: '\nHardfile 0: using SD card partition %d' I(INT32_MIN) | 832 buf='\nHardfile 0: using SD card partition 2147483648' side='-' | rv buf='\nHardfile 0: using SD card partition -2147483648' side=''
+case 712 P PREC: '\nHardfile 1 (with fake RDB): %.8s.%.3s' "", "" | 832 out='\nHardfile 1 (with fake RDB): 8s.3s' | rv out='\nHardfile 1 (with fake RDB): .'
+case 712 S PREC: '\nHardfile 1 (with fake RDB): %.8s.%.3s' "", "" | 832 buf='\nHardfile 1 (with fake RDB): 8s.3s' | rv buf='\nHardfile 1 (with fake RDB): .'
+case 713 P PREC: '\nHardfile 1 (with fake RDB): %.8s.%.3s' "ab", "ab" | 832 out='\nHardfile 1 (with fake RDB): 8s.3s' | rv out='\nHardfile 1 (with fake RDB): ab.ab'
+case 713 S PREC: '\nHardfile 1 (with fake RDB): %.8s.%.3s' "ab", "ab" | 832 buf='\nHardfile 1 (with fake RDB): 8s.3s' | rv buf='\nHardfile 1 (with fake RDB): ab.ab'
+case 714 P PREC: '\nHardfile 1 (with fake RDB): %.8s.%.3s' S8, S3 | 832 out='\nHardfile 1 (with fake RDB): 8s.3s' | rv out='\nHardfile 1 (with fake RDB): ABCDEFGH.EXT'
+case 714 S PREC: '\nHardfile 1 (with fake RDB): %.8s.%.3s' S8, S3 | 832 buf='\nHardfile 1 (with fake RDB): 8s.3s' | rv buf='\nHardfile 1 (with fake RDB): ABCDEFGH.EXT'
+case 715 P PREC: '\nHardfile 1 (with fake RDB): %.8s.%.3s' S8_PLUS, S3_PLUS | 832 out='\nHardfile 1 (with fake RDB): 8s.3s' | rv out='\nHardfile 1 (with fake RDB): ABCDEFGH.EXT'
+case 715 S PREC: '\nHardfile 1 (with fake RDB): %.8s.%.3s' S8_PLUS, S3_PLUS | 832 buf='\nHardfile 1 (with fake RDB): 8s.3s' | rv buf='\nHardfile 1 (with fake RDB): ABCDEFGH.EXT'
+case 716 P PREC: '\nHardfile 1: %.8s.%.3s' "", "" | 832 out='\nHardfile 1: 8s.3s' | rv out='\nHardfile 1: .'
+case 716 S PREC: '\nHardfile 1: %.8s.%.3s' "", "" | 832 buf='\nHardfile 1: 8s.3s' | rv buf='\nHardfile 1: .'
+case 717 P PREC: '\nHardfile 1: %.8s.%.3s' "ab", "ab" | 832 out='\nHardfile 1: 8s.3s' | rv out='\nHardfile 1: ab.ab'
+case 717 S PREC: '\nHardfile 1: %.8s.%.3s' "ab", "ab" | 832 buf='\nHardfile 1: 8s.3s' | rv buf='\nHardfile 1: ab.ab'
+case 718 P PREC: '\nHardfile 1: %.8s.%.3s' S8, S3 | 832 out='\nHardfile 1: 8s.3s' | rv out='\nHardfile 1: ABCDEFGH.EXT'
+case 718 S PREC: '\nHardfile 1: %.8s.%.3s' S8, S3 | 832 buf='\nHardfile 1: 8s.3s' | rv buf='\nHardfile 1: ABCDEFGH.EXT'
+case 719 P PREC: '\nHardfile 1: %.8s.%.3s' S8_PLUS, S3_PLUS | 832 out='\nHardfile 1: 8s.3s' | rv out='\nHardfile 1: ABCDEFGH.EXT'
+case 719 S PREC: '\nHardfile 1: %.8s.%.3s' S8_PLUS, S3_PLUS | 832 buf='\nHardfile 1: 8s.3s' | rv buf='\nHardfile 1: ABCDEFGH.EXT'
+case 722 S SIGNUART: '\nHardfile 1: using SD card partition %d' I(-1) | 832 buf='\nHardfile 1: using SD card partition 1' side='-' | rv buf='\nHardfile 1: using SD card partition -1' side=''
+case 723 S SIGNUART: '\nHardfile 1: using SD card partition %d' I(-12) | 832 buf='\nHardfile 1: using SD card partition 12' side='-' | rv buf='\nHardfile 1: using SD card partition -12' side=''
+case 726 S SIGNUART: '\nHardfile 1: using SD card partition %d' I(INT32_MIN) | 832 buf='\nHardfile 1: using SD card partition 2147483648' side='-' | rv buf='\nHardfile 1: using SD card partition -2147483648' side=''
+case 729 S SIGNUART: '\nIDE port 2 %s: type %d, %u.%u.%u' "Kickstart 3.1", I(-1), U(255), U(255), U(255) | 832 buf='\nIDE port 2 Kickstart 3.1: type 1, 255.255.255' side='-' | rv buf='\nIDE port 2 Kickstart 3.1: type -1, 255.255.255' side=''
+case 730 S SIGNUART: '\nIDE port 2 %s: type %d, %u.%u.%u' S40, I(-12), U(65535), U(65535), U(65535) | 832 buf='\nIDE port 2 ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!?#$: type 12, 65535.65535.65535' side='-' | rv buf='\nIDE port 2 ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!?#$: type -12, 65535.65535.65535' side=''
+case 733 S SIGNUART: '\nIDE port 2 %s: type %d, %u.%u.%u' "Kickstart 3.1", I(INT32_MIN), U(4294967295u), U(4294967295u), U(4294967295u) | 832 buf='\nIDE port 2 Kickstart 3.1: type 2147483648, 4294967295.4294967295.4294967295' side='-' | rv buf='\nIDE port 2 Kickstart 3.1: type -2147483648, 4294967295.4294967295.4294967295' side=''
+case 743 P UPPER: 'c1: %x\n' U(0xA) | 832 out='c1: A\n' | rv out='c1: a\n'
+case 743 S UPPER: 'c1: %x\n' U(0xA) | 832 buf='c1: A\n' | rv buf='c1: a\n'
+case 744 P UPPER: 'c1: %x\n' U(0xAB) | 832 out='c1: AB\n' | rv out='c1: ab\n'
+case 744 S UPPER: 'c1: %x\n' U(0xAB) | 832 buf='c1: AB\n' | rv buf='c1: ab\n'
+case 745 P UPPER: 'c1: %x\n' U(0xFF) | 832 out='c1: FF\n' | rv out='c1: ff\n'
+case 745 S UPPER: 'c1: %x\n' U(0xFF) | 832 buf='c1: FF\n' | rv buf='c1: ff\n'
+case 746 P UPPER: 'c1: %x\n' U(0xABCD) | 832 out='c1: ABCD\n' | rv out='c1: abcd\n'
+case 746 S UPPER: 'c1: %x\n' U(0xABCD) | 832 buf='c1: ABCD\n' | rv buf='c1: abcd\n'
+case 747 P UPPER: 'c1: %x\n' U(0x7FFFFFFF) | 832 out='c1: 7FFFFFFF\n' | rv out='c1: 7fffffff\n'
+case 747 S UPPER: 'c1: %x\n' U(0x7FFFFFFF) | 832 buf='c1: 7FFFFFFF\n' | rv buf='c1: 7fffffff\n'
+case 749 P UPPER: 'c1: %x\n' U(0xFFFFFFFFu) | 832 out='c1: FFFFFFFF\n' | rv out='c1: ffffffff\n'
+case 749 S UPPER: 'c1: %x\n' U(0xFFFFFFFFu) | 832 buf='c1: FFFFFFFF\n' | rv buf='c1: ffffffff\n'
+case 752 P UPPER: 'c2: %x\n' U(0xA) | 832 out='c2: A\n' | rv out='c2: a\n'
+case 752 S UPPER: 'c2: %x\n' U(0xA) | 832 buf='c2: A\n' | rv buf='c2: a\n'
+case 753 P UPPER: 'c2: %x\n' U(0xAB) | 832 out='c2: AB\n' | rv out='c2: ab\n'
+case 753 S UPPER: 'c2: %x\n' U(0xAB) | 832 buf='c2: AB\n' | rv buf='c2: ab\n'
+case 754 P UPPER: 'c2: %x\n' U(0xFF) | 832 out='c2: FF\n' | rv out='c2: ff\n'
+case 754 S UPPER: 'c2: %x\n' U(0xFF) | 832 buf='c2: FF\n' | rv buf='c2: ff\n'
+case 755 P UPPER: 'c2: %x\n' U(0xABCD) | 832 out='c2: ABCD\n' | rv out='c2: abcd\n'
+case 755 S UPPER: 'c2: %x\n' U(0xABCD) | 832 buf='c2: ABCD\n' | rv buf='c2: abcd\n'
+case 756 P UPPER: 'c2: %x\n' U(0x7FFFFFFF) | 832 out='c2: 7FFFFFFF\n' | rv out='c2: 7fffffff\n'
+case 756 S UPPER: 'c2: %x\n' U(0x7FFFFFFF) | 832 buf='c2: 7FFFFFFF\n' | rv buf='c2: 7fffffff\n'
+case 758 P UPPER: 'c2: %x\n' U(0xFFFFFFFFu) | 832 out='c2: FFFFFFFF\n' | rv out='c2: ffffffff\n'
+case 758 S UPPER: 'c2: %x\n' U(0xFFFFFFFFu) | 832 buf='c2: FFFFFFFF\n' | rv buf='c2: ffffffff\n'
+case 761 P UPPER: 'c3: %x\n' U(0xA) | 832 out='c3: A\n' | rv out='c3: a\n'
+case 761 S UPPER: 'c3: %x\n' U(0xA) | 832 buf='c3: A\n' | rv buf='c3: a\n'
+case 762 P UPPER: 'c3: %x\n' U(0xAB) | 832 out='c3: AB\n' | rv out='c3: ab\n'
+case 762 S UPPER: 'c3: %x\n' U(0xAB) | 832 buf='c3: AB\n' | rv buf='c3: ab\n'
+case 763 P UPPER: 'c3: %x\n' U(0xFF) | 832 out='c3: FF\n' | rv out='c3: ff\n'
+case 763 S UPPER: 'c3: %x\n' U(0xFF) | 832 buf='c3: FF\n' | rv buf='c3: ff\n'
+case 764 P UPPER: 'c3: %x\n' U(0xABCD) | 832 out='c3: ABCD\n' | rv out='c3: abcd\n'
+case 764 S UPPER: 'c3: %x\n' U(0xABCD) | 832 buf='c3: ABCD\n' | rv buf='c3: abcd\n'
+case 765 P UPPER: 'c3: %x\n' U(0x7FFFFFFF) | 832 out='c3: 7FFFFFFF\n' | rv out='c3: 7fffffff\n'
+case 765 S UPPER: 'c3: %x\n' U(0x7FFFFFFF) | 832 buf='c3: 7FFFFFFF\n' | rv buf='c3: 7fffffff\n'
+case 767 P UPPER: 'c3: %x\n' U(0xFFFFFFFFu) | 832 out='c3: FFFFFFFF\n' | rv out='c3: ffffffff\n'
+case 767 S UPPER: 'c3: %x\n' U(0xFFFFFFFFu) | 832 buf='c3: FFFFFFFF\n' | rv buf='c3: ffffffff\n'
+case 770 S SIGNUART: 'chained with sound %d\n' I(-1) | 832 buf='chained with sound 1\n' side='-' | rv buf='chained with sound -1\n' side=''
+case 771 S SIGNUART: 'chained with sound %d\n' I(-12) | 832 buf='chained with sound 12\n' side='-' | rv buf='chained with sound -12\n' side=''
+case 774 S SIGNUART: 'chained with sound %d\n' I(INT32_MIN) | 832 buf='chained with sound 2147483648\n' side='-' | rv buf='chained with sound -2147483648\n' side=''
+case 775 P ZERO: 'cluster_mask: %08lX\r' UL(0) | 832 out='cluster_mask: 0\r' | rv out='cluster_mask: 00000000\r'
+case 775 S ZERO: 'cluster_mask: %08lX\r' UL(0) | 832 buf='cluster_mask: 0\r' | rv buf='cluster_mask: 00000000\r'
+case 808 P ZERO: 'drive status: 0x%02X\r' U(0) | 832 out='drive status: 0x0\r' | rv out='drive status: 0x00\r'
+case 808 S ZERO: 'drive status: 0x%02X\r' U(0) | 832 buf='drive status: 0x0\r' | rv buf='drive status: 0x00\r'
+case 843 P ZERO: 'file attributes: 0x%02X\r' U(0) | 832 out='file attributes: 0x0\r' | rv out='file attributes: 0x00\r'
+case 843 S ZERO: 'file attributes: 0x%02X\r' U(0) | 832 buf='file attributes: 0x0\r' | rv buf='file attributes: 0x00\r'
+case 866 P UPPER: 'iDirectoryCluster: %x\n' U(0xA) | 832 out='iDirectoryCluster: A\n' | rv out='iDirectoryCluster: a\n'
+case 866 S UPPER: 'iDirectoryCluster: %x\n' U(0xA) | 832 buf='iDirectoryCluster: A\n' | rv buf='iDirectoryCluster: a\n'
+case 867 P UPPER: 'iDirectoryCluster: %x\n' U(0xAB) | 832 out='iDirectoryCluster: AB\n' | rv out='iDirectoryCluster: ab\n'
+case 867 S UPPER: 'iDirectoryCluster: %x\n' U(0xAB) | 832 buf='iDirectoryCluster: AB\n' | rv buf='iDirectoryCluster: ab\n'
+case 868 P UPPER: 'iDirectoryCluster: %x\n' U(0xFF) | 832 out='iDirectoryCluster: FF\n' | rv out='iDirectoryCluster: ff\n'
+case 868 S UPPER: 'iDirectoryCluster: %x\n' U(0xFF) | 832 buf='iDirectoryCluster: FF\n' | rv buf='iDirectoryCluster: ff\n'
+case 869 P UPPER: 'iDirectoryCluster: %x\n' U(0xABCD) | 832 out='iDirectoryCluster: ABCD\n' | rv out='iDirectoryCluster: abcd\n'
+case 869 S UPPER: 'iDirectoryCluster: %x\n' U(0xABCD) | 832 buf='iDirectoryCluster: ABCD\n' | rv buf='iDirectoryCluster: abcd\n'
+case 870 P UPPER: 'iDirectoryCluster: %x\n' U(0x7FFFFFFF) | 832 out='iDirectoryCluster: 7FFFFFFF\n' | rv out='iDirectoryCluster: 7fffffff\n'
+case 870 S UPPER: 'iDirectoryCluster: %x\n' U(0x7FFFFFFF) | 832 buf='iDirectoryCluster: 7FFFFFFF\n' | rv buf='iDirectoryCluster: 7fffffff\n'
+case 872 P UPPER: 'iDirectoryCluster: %x\n' U(0xFFFFFFFFu) | 832 out='iDirectoryCluster: FFFFFFFF\n' | rv out='iDirectoryCluster: ffffffff\n'
+case 872 S UPPER: 'iDirectoryCluster: %x\n' U(0xFFFFFFFFu) | 832 buf='iDirectoryCluster: FFFFFFFF\n' | rv buf='iDirectoryCluster: ffffffff\n'
+case 879 P ZERO: 'partition type: 0x%02X (' U(0) | 832 out='partition type: 0x0 (' | rv out='partition type: 0x00 ('
+case 879 S ZERO: 'partition type: 0x%02X (' U(0) | 832 buf='partition type: 0x0 (' | rv buf='partition type: 0x00 ('
+case 900 P ZERO: 'systimer:%08X  ' U(0) | 832 out='systimer:0  ' | rv out='systimer:00000000  '
+case 900 S ZERO: 'systimer:%08X  ' U(0) | 832 buf='systimer:0  ' | rv buf='systimer:00000000  '
+RET '\nHardfile 0: %.8s.%.3s': return value differs in 8 of 8 cases
+RET '\nHardfile 0: using SD card partition %d': return value differs in 14 of 14 cases
+RET '\nHardfile 1 (with fake RDB): %.8s.%.3s': return value differs in 8 of 8 cases
+RET '\nHardfile 1: %.8s.%.3s': return value differs in 8 of 8 cases
+RET '\nHardfile 1: using SD card partition %d': return value differs in 14 of 14 cases
+RET '\nIDE port 2 %s: type %d, %u.%u.%u': return value differs in 14 of 14 cases
+RET '\rWrong header: %u.%u.%u.%u\r': return value differs in 14 of 14 cases
+RET '          1 %s': return value differs in 8 of 8 cases
+RET '          2 %s': return value differs in 8 of 8 cases
+RET '          3 %s': return value differs in 8 of 8 cases
+RET '          4 %s': return value differs in 8 of 8 cases
+RET '    Default %s': return value differs in 8 of 8 cases
+RET '   INT %d  serviced %lu': return value differs in 14 of 14 cases
+RET '  %dC %04X HDMI %08lX': return value differs in 18 of 18 cases
+RET '  Size: %ld\n': return value differs in 12 of 12 cases
+RET '  Start: %ld': return value differs in 12 of 12 cases
+RET ' %02X': return value differs in 18 of 18 cases
+RET ' %X': return value differs in 18 of 18 cases
+RET ' %s': return value differs in 8 of 8 cases
+RET ' (%lu MB)\r': return value differs in 12 of 12 cases
+RET ' < %u bytes': return value differs in 14 of 14 cases
+RET ' > %u bytes': return value differs in 14 of 14 cases
+RET ' > audio %d': return value differs in 14 of 14 cases
+RET ' > read %lu+%lu': return value differs in 12 of 12 cases
+RET ' > read cd %d+%d': return value differs in 14 of 14 cases
+RET ' CD-ROM: %s': return value differs in 8 of 8 cases
+RET ' CHECK %02X/%02X/%02X': return value differs in 18 of 18 cases
+RET ' Floppy disk sounds : %s': return value differs in 8 of 8 cases
+RET ' Floppy disk turbo : %s': return value differs in 8 of 8 cases
+RET ' Floppy drives : %d': return value differs in 14 of 14 cases
+RET ' Hpos : %4d | Vpos : %4d': return value differs in 14 of 14 cases
+RET '##End result : %d': return value differs in 14 of 14 cases
+RET '%02X\r': return value differs in 18 of 18 cases
+RET '%02X.': return value differs in 18 of 18 cases
+RET '%X:%04X': return value differs in 18 of 18 cases
+RET '%s': return value differs in 8 of 8 cases
+RET '(%u)[%04X]:': return value differs in 18 of 18 cases
+RET '*%u:': return value differs in 14 of 14 cases
+RET '*%u:\r': return value differs in 14 of 14 cases
+RET ', C: %d, H: %d, S: %d, count: %d\r': return value differs in 14 of 14 cases
+RET 'Akiko read: %X\n': return value differs in 18 of 18 cases
+RET 'Akiko write: %X, %X\n': return value differs in 18 of 18 cases
+RET 'Audio file - length %d\n': return value differs in 14 of 14 cases
+RET 'Boot file size: %ld': return value differs in 12 of 12 cases
+RET 'CD%d ATA %02X fe %02X sc %02X bc %02X%02X dh %02X\r\n': return value differs in 18 of 18 cases
+RET 'CD%d CDB': return value differs in 14 of 14 cases
+RET 'CD-ROM: IDE port %d %s, %s': return value differs in 14 of 14 cases
+RET 'CD: %s refused: %s\r\n': return value differs in 8 of 8 cases
+RET 'CD: SD read error at %d\r\n': return value differs in 14 of 14 cases
+RET 'CD: insert %s (%s), %d tracks, %d sectors\r\n': return value differs in 14 of 14 cases
+RET 'CDA: underrun %d\r\n': return value differs in 14 of 14 cases
+RET 'CHS: %u.%u.%u': return value differs in 14 of 14 cases
+RET 'CMD17 (READ_BLOCK): invalid response 0x%02X (lba=%lu)\r': return value differs in 18 of 18 cases
+RET 'CMD17 (READ_BLOCK): no data token! (lba=%lu)\r': return value differs in 12 of 12 cases
+RET 'CMD18 (READ_MULTIPLE_BLOCK): invalid response 0x%02X (lba=%lu)\r': return value differs in 18 of 18 cases
+RET 'CMD18 (READ_MULTIPLE_BLOCK): no data token! (lba=%lu)\r': return value differs in 12 of 12 cases
+RET 'CMD24 (WRITE_BLOCK): busy wait timeout! (lba=%lu)\r': return value differs in 12 of 12 cases
+RET 'CMD24 (WRITE_BLOCK): invalid response 0x%02X (lba=%lu)\r': return value differs in 18 of 18 cases
+RET 'CMD24 (WRITE_BLOCK): invalid status 0x%02X (lba=%lu)\r': return value differs in 18 of 18 cases
+RET 'CMD9 (GET_CSD): invalid response 0x%02X \r': return value differs in 18 of 18 cases
+RET 'CPU: MC68040%s%s': return value differs in 8 of 8 cases
+RET 'Config size is %X (%X) - address is %X\n': return value differs in 18 of 18 cases
+RET 'Configuration file size: %lu\r': return value differs in 12 of 12 cases
+RET 'DF%d: motor %s (%d)\n': return value differs in 14 of 14 cases
+RET 'DF%d: track changed to %d\n': return value differs in 14 of 14 cases
+RET 'Directory "%s" not found\r': return value differs in 8 of 8 cases
+RET 'Directory not found at %ld\r': return value differs in 12 of 12 cases
+RET 'Empty cluster: %lu\r': return value differs in 12 of 12 cases
+RET 'Empty entry found in sector %lu at index %lu\r': return value differs in 12 of 12 cases
+RET 'Fatal error: %lu\n': return value differs in 12 of 12 cases
+RET 'File size: %dkB\r': return value differs in 14 of 14 cases
+RET 'FileCreate() filesize (after endian swap) is %lX\n': return value differs in 12 of 12 cases
+RET 'FileCreate() filesize (before endian swap) is %lX\n': return value differs in 12 of 12 cases
+RET 'FileCreate(): FAT copy #%lu write failed!\r': return value differs in 12 of 12 cases
+RET 'Firmware version: %s': return value differs in 8 of 8 cases
+RET 'Found directory "%s" at %ld \r': return value differs in 12 of 12 cases
+RET 'Found directory at %ld \r': return value differs in 12 of 12 cases
+RET 'Found event %d at time %d\n': return value differs in 14 of 14 cases
+RET 'Got key: %X\n': return value differs in 18 of 18 cases
+RET 'HARDFILE %d:\r': return value differs in 14 of 14 cases
+RET 'Hardfile indexed in %lu ms\r': return value differs in 12 of 12 cases
+RET 'IDE%d: Identify Device': return value differs in 14 of 14 cases
+RET 'Illegal track read: %d\r': return value differs in 14 of 14 cases
+RET 'Inserting floppy: "%.11s"\r': return value differs in 8 of 8 cases
+RET 'Inserting floppy: "%s"\r': return value differs in 8 of 8 cases
+RET 'Long filename: %s\n': return value differs in 8 of 8 cases
+RET 'MINMGAA%dCFG': return value differs in 14 of 14 cases
+RET 'Minimig AGA%s version 20%d-%d-%d for Turbo Chameleon 64': return value differs in 14 of 14 cases
+RET 'New directory sector: %x\n': return value differs in 18 of 18 cases
+RET 'Offset: %ld': return value differs in 12 of 12 cases
+RET 'Parent directory is %ld \r': return value differs in 12 of 12 cases
+RET 'Partition: %ld': return value differs in 12 of 12 cases
+RET 'PartitionCount: %ld\n': return value differs in 12 of 12 cases
+RET 'ROM dir: %d\n': return value differs in 14 of 14 cases
+RET 'Read  %ld, %d': return value differs in 14 of 14 cases
+RET 'ReadM %ld, %d': return value differs in 14 of 14 cases
+RET 'Rendering %d samples\n': return value differs in 14 of 14 cases
+RET 'ScanDirectory(): %lu ms\r': return value differs in 12 of 12 cases
+RET 'Scanning directory %X\n': return value differs in 18 of 18 cases
+RET 'Scanning root directory %X\n': return value differs in 18 of 18 cases
+RET 'Set Multiple Mode %d\r': return value differs in 14 of 14 cases
+RET 'Size: %lu MB': return value differs in 12 of 12 cases
+RET 'Sound %d at %X, length %d\n': return value differs in 18 of 18 cases
+RET 'Start: %ld\n': return value differs in 12 of 12 cases
+RET 'T%uS%u\r': return value differs in 14 of 14 cases
+RET 'Total sectors: %d, cyl: %d, heads: %d, sectors: %d\n': return value differs in 14 of 14 cases
+RET 'UNSUPPORTED ADF SIZE!!! Too many tracks: %lu\r': return value differs in 12 of 12 cases
+RET 'Write  %ld, %d': return value differs in 14 of 14 cases
+RET 'WriteM %ld, %d': return value differs in 14 of 14 cases
+RET 'c1: %x\n': return value differs in 18 of 18 cases
+RET 'c2: %x\n': return value differs in 18 of 18 cases
+RET 'c3: %x\n': return value differs in 18 of 18 cases
+RET 'chained with sound %d\n': return value differs in 14 of 14 cases
+RET 'cluster_mask: %08lX\r': return value differs in 12 of 12 cases
+RET 'cluster_size = %u\r': return value differs in 14 of 14 cases
+RET 'cluster_size: %u\r': return value differs in 14 of 14 cases
+RET 'data_start: %lu\r': return value differs in 12 of 12 cases
+RET 'dir_entries: %u\r': return value differs in 14 of 14 cases
+RET 'drive status: 0x%02X\r': return value differs in 18 of 18 cases
+RET 'drive tracks: %u\r': return value differs in 14 of 14 cases
+RET 'fat_number: %u\r': return value differs in 14 of 14 cases
+RET 'fat_size: %lu\r': return value differs in 12 of 12 cases
+RET 'fat_start: %lu\r': return value differs in 12 of 12 cases
+RET 'file "%s" found\r': return value differs in 8 of 8 cases
+RET 'file "%s" not found\r': return value differs in 8 of 8 cases
+RET 'file attributes: 0x%02X\r': return value differs in 18 of 18 cases
+RET 'file size: %lu (%lu KB)\r': return value differs in 12 of 12 cases
+RET 'file->size = %lu\r': return value differs in 12 of 12 cases
+RET 'file: "%.8s.%.3s"\r': return value differs in 8 of 8 cases
+RET 'iDirectoryCluster: %x\n': return value differs in 18 of 18 cases
+RET 'pEntry->FileSize = %lu\r': return value differs in 12 of 12 cases
+RET 'partition type: 0x%02X (': return value differs in 18 of 18 cases
+RET 'root_directory_start: %lu\r': return value differs in 12 of 12 cases
+RET 'size: %lu (%lu MB)\r': return value differs in 12 of 12 cases
+RET 'systimer:%08X  ': return value differs in 18 of 18 cases

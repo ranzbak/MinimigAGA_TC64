@@ -454,7 +454,7 @@ int drivesounds_init(const char *filename)
 				{
 					if(size && id<DRIVESOUND_COUNT)
 					{
-						printf("Sound %d at %x, length %d\n",id,buf,size);
+						printf("Sound %d at %X, length %d\n",id,buf,size);
 						drivesounds.sounds[id].base=(short *)buf;
 						drivesounds.sounds[id].length=size/2; /* Size needs to be in 16-bit words */
 						buf+=size;

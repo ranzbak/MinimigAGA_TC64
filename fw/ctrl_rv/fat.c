@@ -381,7 +381,7 @@ unsigned char FileOpen(fileTYPE *file, const char *name)
 				}
                 else if (!(pEntry->Attributes & (ATTR_VOLUME | ATTR_DIRECTORY))) // not a volume nor directory
                 {
-                    if (strncmp(fileLFN,name,strlen(name))==0 || strncmp((const char*)pEntry->Name, name, sizeof(file->name)) == 0)
+                    if ((name[0] && strncmp(fileLFN,name,strlen(name))==0) || strncmp((const char*)pEntry->Name, name, sizeof(file->name)) == 0)
                     {
                         strncpy(file->name, (const char*)pEntry->Name, sizeof(file->name));
                         file->attributes = pEntry->Attributes;
@@ -780,14 +780,14 @@ char ScanDirectory(unsigned long mode, char *extension, unsigned char options)
 
     if (iCurrentDirectory) // subdirectory
     {
-		printf("Scanning directory %x\n",iCurrentDirectory);
+		printf("Scanning directory %X\n",iCurrentDirectory);
         iDirectoryCluster = iCurrentDirectory;
         iDirectorySector = data_start + cluster_size * (iDirectoryCluster - 2);
         nEntries = cluster_size << 4; // 16 entries per sector
     }
     else // root directory
     {
-		printf("Scanning root directory %x\n",root_directory_cluster);
+		printf("Scanning root directory %X\n",root_directory_cluster);
         iDirectoryCluster = root_directory_cluster;
         iDirectorySector = root_directory_start;
         nEntries = fat32 ?  cluster_size << 4 : root_directory_size << 4; // 16 entries per sector
@@ -1644,9 +1644,9 @@ unsigned char FileCreate(unsigned long iDirectory, fileTYPE *file)
                             pEntry->ModifyTime = SwapBB(FILETIME(0, 0, 0));
                             pEntry->StartCluster = (unsigned short)SwapBB(cluster); // for 68000
                             pEntry->HighCluster = fat32 ? (unsigned short)SwapBB(cluster >> 16) : 0; // for 68000
-							printf("FileCreate() filesize (before endian swap) is %lx\n",file->size);
+							printf("FileCreate() filesize (before endian swap) is %lX\n",file->size);
                             pEntry->FileSize = SwapBBBB(file->size); // for 68000
-							printf("FileCreate() filesize (after endian swap) is %lx\n",pEntry->FileSize);
+							printf("FileCreate() filesize (after endian swap) is %lX\n",pEntry->FileSize);
 
                             // store dir entry
                             if (!MMC_Write(iDirectorySector - 1, sector_buffer))

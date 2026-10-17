@@ -1592,7 +1592,7 @@ void HandleUI(void)
             // HDMI status rides along on the same line while the HPD question
             // is open: is the part answering at all when the display is off?
             // ff = no answer, otherwise bit 6 (0x40) is Hot Plug Detect.
-            sprintf(s, "  %dC %04x HDMI %08lx", t, raw, adv_status_hist);
+            sprintf(s, "  %dC %04X HDMI %08lX", t, raw, adv_status_hist);
             OsdWrite(0, s, 0, 0);
         } else {
             OsdWrite(0, "", 0, 0);
@@ -2660,9 +2660,9 @@ void HandleUI(void)
         OsdWrite(2, s, 0, !(ErrorMask & (1 << errorpage)));
         snprintf(s, 32, " %s", Errors[errorpage].string);
         OsdWrite(3, s, 0, !(ErrorMask & (1 << errorpage)));
-        snprintf(s, 32, " %x", Errors[errorpage].a);
+        snprintf(s, 32, " %X", Errors[errorpage].a);
         OsdWrite(4, s, 0, !(ErrorMask & (1 << errorpage)));
-        snprintf(s, 32, " %x", Errors[errorpage].b);
+        snprintf(s, 32, " %X", Errors[errorpage].b);
         OsdWrite(5, s, 0, !(ErrorMask & (1 << errorpage)));
         OsdWrite(6, "", 0, 0);
         OsdWrite(7, ErrorFatal ? "           Reboot" : "             OK", 1, 0);
@@ -3037,19 +3037,19 @@ static int addcheck(int in)
 
 void SanityCheck()
 {
-    snprintf(s, 32, "%x", shiftcheck(0xabcdef01));
+    snprintf(s, 32, "%X", shiftcheck(0xabcdef01));
     DebugMessage(s);
-    snprintf(s, 32, "%x", shiftcheck(0x23456789));
+    snprintf(s, 32, "%X", shiftcheck(0x23456789));
     DebugMessage(s);
-    snprintf(s, 32, "%x", mulcheck(0xabcdef01));
+    snprintf(s, 32, "%X", mulcheck(0xabcdef01));
     DebugMessage(s);
-    snprintf(s, 32, "%x", mulcheck(0x23456789));
+    snprintf(s, 32, "%X", mulcheck(0x23456789));
     DebugMessage(s);
-    snprintf(s, 32, "%x", addcheck(0xabcdef01));
+    snprintf(s, 32, "%X", addcheck(0xabcdef01));
     DebugMessage(s);
-    snprintf(s, 32, "%x", addcheck(0x23456789));
+    snprintf(s, 32, "%X", addcheck(0x23456789));
     DebugMessage(s);
-    snprintf(s, 32, "%x", checksum_pre);
+    snprintf(s, 32, "%X", checksum_pre);
     DebugMessage(s);
 }
 

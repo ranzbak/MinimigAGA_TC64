@@ -611,7 +611,7 @@ unsigned char SaveConfiguration(char *filename)
         strncpy(file.name, filename, 11);
         file.attributes = 0;
         file.size = sizeof(config);
-        printf("Config size is %x (%x) - address is %x\n",sizeof(config),file.size,&config);
+        printf("Config size is %X (%X) - address is %X\n",sizeof(config),file.size,&config);
         if (FileCreate(0, &file))
         {
             printf("File created.\r");

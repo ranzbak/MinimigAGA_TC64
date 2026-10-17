@@ -20,7 +20,7 @@ X-checking reference) or on Verilator (`SIM=verilator`, much faster, see
 | `sw/crt0_l1.S`, `sw/l1.ld`, `sw/l1.h` | Start-up code, linker script, MMIO header |
 | `sw/boot_fw.S` | Boot ROM stand-in for programs linked as firmware (`irq_sig`, `irq_c`, `exc`) |
 | `tests/` | Test programs (`.S` or `.c`) and expected memory dumps (`.mem`); `tests/dm_smoke.v` is the debug smoke test sequence |
-| `prog/Makefile`, `sw/syscalls.c`, `sw/l1_newlib.ld` | Firmware-unit programs (newlib-nano) and their runtime, see "Firmware units" |
+| `prog/Makefile`, `sw/syscalls.c`, `sw/l1_newlib.ld` | Firmware-unit programs (newlib-nano) and their runtime, see "Firmware units"; `fmt_rv` (the firmware's C library link), see "C library check (`fmt`)" |
 
 ## Prerequisites
 
@@ -380,3 +380,35 @@ on both backends, 2026-10-17):
 19.1 M cycles: `units` passes `+TIMEOUT=40000000` (`TIMEOUT=` from the
 environment overrides it; the bench's own default stays 20 M). A slower memory
 setting (`WS=8`) needs it raised: `TIMEOUT=60000000 WS=8 bash sim/rv_l1/run.sh units`.
+
+
+## C library check (`fmt` target)
+
+`fmt_rv` (`fw/ctrl_rv/test/rv/fmt_rv.c`, built by `prog/Makefile`) runs the
+format-parity cases and newlib-nano's `mem*`/`str*` functions on the target
+libc, linked the way the firmware is: `rvlibc.c` (`printf`, `vprintf`, the heap
+stubs) + `libc_nano.a`, `crt0_l1.o` + `l1_newlib.ld` for the L1 memory map, no
+`syscalls.o` (a call that needs `_sbrk` or `_write` fails the link), `-lc_nano
+-lgcc` last. Its sources are taken from `fw/ctrl_rv` by explicit path (not
+`FWDIR`) and it is not part of `PROGS` or `units`. Details and the gates:
+`fw/ctrl_rv/README.md`, "Format parity" and "Host tests".
+
+```sh
+SIM=verilator RUNTAG=p3t3 bash sim/rv_l1/run.sh fmt      # 13.0 M cycles, about 10 s
+RUNTAG=p3t3i bash sim/rv_l1/run.sh fmt                   # iverilog, about 30 minutes
+bash sim/rv_l1/run.sh compare p3t3i p3t3
+```
+
+`fmt` first runs `make -C fw/ctrl_rv/test fmt.ok` (the host side; `LIB832=` is
+passed on, see the README of `fw/ctrl_rv`), builds `fmt_rv`, runs it once with
+WS=3 ROMWS=1 through the `units` verdict (bench `PASS`, a line `PASS`, no line
+`FAIL`, no bus violation; `TIMEOUT` default 300000000), writes its
+`FMT <n> S|P h=<digest>` lines to `run_${RUNTAG:-wt}/fmt_rv.txt` and checks:
+a line `MEMSTR ok, failures 0` (offsets 0..3: a misaligned access would trap
+and end the run `=== FAIL 80xx`), `HEAP calls=0`, no `EXC`; `fmt_rv.map` has
+none of `_sbrk _sbrk_r __sinit __sfp _write` and `_malloc_r _realloc_r
+_free_r` come from `rvlibc.o`; `fmt_rv.txt` equals the digests of the host's
+`fmt_glibc_64.txt`; and the 832-versus-RV difference list equals
+`fw/ctrl_rv/test/gold/fmt_diff_expected.txt`. It ends `=== FMT PASS` or
+`=== FMT FAILED`. The log `run_*/fmt_rv_ws3_r1_x0_d0.log` is picked up by
+`compare`.

@@ -58,6 +58,17 @@
 #                                      # TIMEOUT default 40000000 (cdaudio_emu
 #                                      # needs about 19.1 M cycles)
 #
+#   bash sim/rv_l1/run.sh fmt          # fmt_rv: the format-parity cases and newlib-nano's
+#                                      # mem/str functions on rvlibc.c + libc_nano.a
+#                                      # (WS=3 ROMWS=1 by default; LIB832= as for
+#                                      # make -C fw/ctrl_rv/test); its FMT records go to
+#                                      # run_<RUNTAG>/fmt_rv.txt.  Gates: the bench
+#                                      # PASS, a line "PASS", "MEMSTR ok", "HEAP
+#                                      # calls=0", no "EXC"; fmt_rv.txt (a digest per
+#                                      # record) == fmtcheck.py digest of the host's
+#                                      # fmt_glibc_64.txt; fmtcheck.py diff of the 832
+#                                      # records against that == gold/fmt_diff_expected.txt
+#
 #   bash sim/rv_l1/run.sh dhry         # fw/dhrystone_rv -O2 and -Os, WS=3 ROMWS=1
 #                                      # (WS, ROMWS, EXTRA_WS, DEBUG from env); each
 #                                      # must PASS with no "should be" line, "Result
@@ -330,6 +341,52 @@ case "${1:-}" in
       | xargs -P "$JOBS" -L1 bash "$0" __unit | sort | tee "$run/units.txt"
     [ "$(grep -c '^PASS' "$run/units.txt")" -eq "$(echo $UNITS | wc -w)" ] || rc=1
     if [ $rc -eq 0 ]; then echo "=== UNITS PASS"; else echo "=== UNITS FAILED"; fi
+    exit $rc
+    ;;
+  fmt)
+    x=${EXTRA_WS:-0}; dbg=${DEBUG:-0}; ws=${WS:-3}; r=${ROMWS:-1}
+    ft=$top/fw/ctrl_rv/test
+    # the host side first: fmt_glibc_64.txt (rvlibc.c over glibc) and the 832
+    # records, gated against each other by make fmt.ok (LIB832= is passed on)
+    if ! make -s -C "$ft" ${LIB832:+LIB832="$LIB832"} fmt.ok > "$run/make_fmt_host.log" 2>&1; then
+      echo "FAIL make -C fw/ctrl_rv/test fmt.ok ($run/make_fmt_host.log)"; tail -5 "$run/make_fmt_host.log"; exit 1
+    fi
+    if ! make -s -C "$here/prog" fmt > "$run/make_prog.log" 2>&1; then
+      echo "FAIL make -C sim/rv_l1/prog fmt ($run/make_prog.log)"; tail -5 "$run/make_prog.log"; exit 1
+    fi
+    drop "$x" "$dbg"
+    compile "$x" "$dbg" || exit 1
+    TIMEOUT=${TIMEOUT:-300000000} unit fmt_rv "$ws" "$r" "$x" "$dbg" | tee "$run/fmt.txt"
+    rc=${PIPESTATUS[0]}
+    log=$run/fmt_rv_ws${ws}_r${r}_x${x}_d${dbg}.log
+    grep -a '^FMT ' "$log" | tr -d '\r' > "$run/fmt_rv.txt"
+    grep -aq '^MEMSTR ok, failures 0$' "$log" || { echo "FAIL fmt_rv: no 'MEMSTR ok, failures 0' line"; rc=1; }
+    grep -aq '^HEAP calls=0$' "$log" || { echo "FAIL fmt_rv: no 'HEAP calls=0' line"; rc=1; }
+    grep -aq 'EXC' "$log" && { echo "FAIL fmt_rv: EXC line"; rc=1; }
+    map=$here/prog/build/fmt_rv.map
+    for sym in _sbrk _sbrk_r __sinit __sfp _write; do
+      grep -qE "^[[:space:]]+0x[0-9a-f]+[[:space:]]+$sym\$" "$map" && { echo "FAIL fmt_rv.map has $sym"; rc=1; }
+    done
+    for sym in _malloc_r _realloc_r _free_r; do
+      grep -B1 -E "^[[:space:]]+0x[0-9a-f]+[[:space:]]+$sym\$" "$map" | grep -q 'rvlibc.o' \
+        || { echo "FAIL fmt_rv.map: $sym does not come from rvlibc.o"; rc=1; }
+    done
+    # fmt_rv.txt holds one digest per record (fmt_run.h, FMT_DIGEST); the same
+    # digests made from the host's full records must be identical
+    python3 -I "$ft/gold/fmtcheck.py" digest "$ft/fmt_glibc_64.txt" > "$run/fmt_glibc_digest.txt"
+    if cmp -s "$run/fmt_rv.txt" "$run/fmt_glibc_digest.txt"; then
+      echo "PASS fmt_rv.txt == digests of fmt_glibc_64.txt ($(wc -l < "$run/fmt_rv.txt") records)"
+    else
+      echo "FAIL fmt_rv.txt differs from the digests of fmt_glibc_64.txt"; diff "$run/fmt_rv.txt" "$run/fmt_glibc_digest.txt" | sed -n '1,6p'; rc=1
+    fi
+    # the full text of the RV side is the host's glibc run (equal by the gate above)
+    python3 -I "$ft/gold/fmtcheck.py" diff "$ft/fmt_832.txt" "$ft/fmt_glibc_64.txt" "$ft/fmt_cases.h" > "$run/fmt_diff.txt" 2> "$run/fmt_diff.err"
+    if diff -q "$ft/gold/fmt_diff_expected.txt" "$run/fmt_diff.txt" > /dev/null; then
+      echo "PASS 832-versus-RV differences == gold/fmt_diff_expected.txt ($(wc -l < "$run/fmt_diff.txt") lines)"
+    else
+      echo "FAIL 832-versus-RV differences differ from gold/fmt_diff_expected.txt"; diff "$ft/gold/fmt_diff_expected.txt" "$run/fmt_diff.txt" | sed -n '1,6p'; head -3 "$run/fmt_diff.err"; rc=1
+    fi
+    if [ $rc -eq 0 ]; then echo "=== FMT PASS"; else echo "=== FMT FAILED"; fi
     exit $rc
     ;;
   irq)
