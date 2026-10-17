@@ -1,0 +1,3 @@
+build/
+test/*_test
+test/emu/*_emu

@@ -1,0 +1,81 @@
+#ifndef CDROM_H
+#define CDROM_H
+
+/*
+ * CD-ROM board glue (findings/cdrom/plan.md 7.4, 13.5): the disc behind the
+ * ATAPI unit of atapi.c -- an ISO, or a CUE sheet with its BIN / ISO / WAV
+ * files -- and the Gayle side of the commands.
+ */
+
+#include <string.h>
+#include "fat.h"
+#include "hdd.h"
+#include "atapi.h"
+
+/* CD_Insert / CD_Eject status, shown by the OSD */
+#define CD_OK      ATAPI_OK
+#define CD_LOCKED  ATAPI_LOCKED	/* the Amiga locked the drive (D5) */
+#define CD_NOFILE  2		/* bad directory or file not found */
+#define CD_BADCUE  3		/* the CUE sheet was refused: CD_Message() says why */
+
+/* hardfileTYPE.present of the CD slot: which disc the 8-character config
+   name is (the config has no room for the extension, phase3-plan.md spec
+   issue 1).  0 = no disc. */
+#define CD_PRESENT_ISO 1
+#define CD_PRESENT_CUE 2
+#define CD_PRESENT(name83) (memcmp((name83) + 8, "CUE", 3) == 0 ? CD_PRESENT_CUE : CD_PRESENT_ISO)
+
+typedef struct
+{
+	hdfTYPE           hdf;	/* the disc file being read (a CUE's data track's file): file + cluster index */
+	struct atapi_unit unit;
+	int               slot;	/* IDE slot (port << 1 | slave), valid while active */
+	unsigned char     active;	/* a CD drive is configured (BSS zero: none) */
+} cdromTYPE;
+
+extern cdromTYPE cdrom;
+
+/* The CD drive's IDE slot, -1 when there is none. */
+#define CD_SLOT() (cdrom.active ? cdrom.slot : -1)
+
+/* Make slot the CD drive and insert the ISO configured for it, if any.
+   slot -1: no CD drive.  Returns CD_OK or CD_NOFILE. */
+int CD_Open(int slot);
+
+/* OSD insert or swap.  name: the 8.3 name as in fileTYPE.name (11
+   characters, no dot): "xxxxxxxxISO" or "xxxxxxxxCUE"; long_name: the long
+   name without extension (IDENTIFY / INQUIRY, D7), may be NULL.  Refused
+   with CD_LOCKED while the Amiga holds the lock; CD_NOFILE when the ISO /
+   CUE is not there; CD_BADCUE when the CUE or one of its files is refused
+   (CD_Message()).  The drive is empty after any refusal but CD_LOCKED. */
+int CD_Insert(const char *name, const char *long_name, unsigned long dir);
+
+/* Why the last CD_Insert was refused, at most 23 characters ("" if it was not). */
+const char *CD_Message(void);
+
+/* OSD eject.  CD_LOCKED while the Amiga holds the lock, nothing changes. */
+int CD_Eject(void);
+
+/* Amiga reset seen (Gayle rst_seen): lock cleared, UNIT ATTENTION 06/29/00. */
+void CD_Reset(void);
+
+/* The Amiga holds the lock (PREVENT MEDIUM REMOVAL); looks for a reset first. */
+int CD_Locked(void);
+
+/* The flags of a task file register read of port: an rst_seen on the CD's
+   port resets the unit (CD_Reset). */
+void CD_Flags(int port, unsigned char flags);
+
+/* A command for the CD unit; tfr = the 8 task file registers. */
+void CD_HandleCommand(int port, unsigned char *tfr);
+
+/* CD audio refill (13.1, 13.5): call from the main loop and between the
+   blocks of every SD transfer loop, never inside an SD multi-block read
+   or write.  Prints "CDA: underrun n" in DebugMode. */
+void CD_AudioPoll(void);
+
+/* The track the player is in (playing or paused), 0 when it is not: the
+   OSD's play mark (13.8 step 3c). */
+int CD_PlayingTrack(void);
+
+#endif
