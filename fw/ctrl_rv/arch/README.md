@@ -158,7 +158,7 @@ is the path as long as `IrqInstall()` was not called.
 | Bit | Name | Source | Configure as |
 |---|---|---|---|
 | 0 | `IRQ_VBLANK` | vertical blank | EDGE |
-| 1 | `IRQ_I2C` | I2C master transfer event | LEVEL; the handler must access `0xFFFFFFA0` (`GetInterrupts()`), the only thing that clears it |
+| 1 | `IRQ_I2C` | I2C master transfer event | LEVEL; the handler must read `0xFFFFFFA0` (`GetInterrupts()`), the only thing that clears it (a write does not) |
 | 2 | `IRQ_AKIKO` | Akiko request | EDGE |
 | 3 | `IRQ_ADV7511` | ADV7511 INT pin | LEVEL |
 | 4..15 | | spare (`irq_src`: IDE, floppy, later) | as the device needs |

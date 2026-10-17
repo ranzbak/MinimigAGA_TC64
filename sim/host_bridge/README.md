@@ -16,8 +16,8 @@ it (see [Boot](#boot)).
 The L1 bench (`sim/rv_l1`, iverilog) tests `rv_hostcpu` against an abstract
 memory. This bench uses Vivado's xsim because `cfide` and the bridge are VHDL,
 or (`SIM=verilator`) Verilator on the Verilog that GHDL makes of that VHDL:
-same tests, same verdicts and cycle counts, 3.5x (boot runs) to 20x (`all`)
-faster (see [Verilator](#verilator)).
+same tests, same verdicts and cycle counts, 3.5x (boot runs) to 20x (`all`
+with a warm ccache; 4x cold) faster (see [Verilator](#verilator)).
 xsim stays the default and the X-checking reference.
 
 | File | What it is |
@@ -603,7 +603,7 @@ Sources:
 | Bit | cfide signal | What |
 |---|---|---|
 | 0 | `vbl_int` | vertical blank (pulse) |
-| 1 | `i2c_int` | the I2C master's transfer event (`i2c_master_mmio` `r_interrupt`): set by its transfer events, cleared only by an access to the legacy `0xFFFFFFA0` window |
+| 1 | `i2c_int` | the I2C master's transfer event (`i2c_master_mmio` `r_interrupt`): set by its transfer events, cleared only by a read of the legacy `0xFFFFFFA0` window (`GetInterrupts()`; `i2c_master_mmio.sv`: `interrupt_select & !wr`) |
 | 2 | `amiga_req` | Akiko request (pulse per request) |
 | 3 | `i2c_ext_int` | the ADV7511's INT pin (also I2C status bit 0x400). Active high as the part is set up: `fw/ctrl_832/adv7511.c` writes no polarity register, clearing the part's interrupt flags takes the pin low (ADV7511 Programming Guide), and `i2c_master_mmio` and the 832 firmware use it active high; no inversion. Meant for LEVEL mode |
 | 4..15 | `irq_src` | spare, new port (default 0), for IDE / floppy later |
@@ -615,8 +615,10 @@ synchronised level, and a read does not clear it. The bit's EDGE latch is
 held clear while it is in LEVEL mode: LEVEL -> EDGE with the line high
 starts the bit clear (it needs a new rising edge), and EDGE -> LEVEL drops an
 unread event. cfide's `interrupt` is the legacy flag OR (PENDING and MASK)
-/= 0. With MASK = MODE = 0 (reset) the legacy register `0xFFFFFFA0` behaves
-exactly as before. `irq_seen` (req one `clk_28` cycle earlier) marks the
+/= 0 in every `clk_28` cycle, from a register of its own that loads the
+next-state values (no logic between it and the CPU). With MASK = MODE = 0
+(reset) the legacy register `0xFFFFFFA0` behaves exactly as before, cycle
+for cycle. `irq_seen` (req one `clk_28` cycle earlier) marks the
 first cycle of an access: the read value is latched there and the bits are
 cleared there only. That guard is defensive and untested: with the current
 bridge every hw access is seen by exactly one `clk_28` edge.
@@ -693,7 +695,7 @@ RUNTAG=irqmut bash sim/host_bridge/run.sh irqmut
 ```
 
 Firmware rule: put level sources (bit 3 ADV7511 INT, IDE requests; bit 1
-the I2C transfer flag, whose handler must access `0xFFFFFFA0` to clear it)
+the I2C transfer flag, whose handler must read `0xFFFFFFA0` to clear it)
 in LEVEL mode. The interrupt then stays asserted until the device is
 serviced, so no IRQ_RAW re-check is needed. Pulse sources (vblank, Akiko)
 stay EDGE. A debugger that reads IRQ_PENDING consumes pending EDGE bits.

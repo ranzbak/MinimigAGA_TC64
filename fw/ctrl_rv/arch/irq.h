@@ -34,7 +34,7 @@
 /* source bits */
 #define IRQ_VBLANK         0   /* vertical blank, EDGE */
 #define IRQ_I2C            1   /* I2C master transfer event; the handler must
-                                  access 0xFFFFFFA0 (GetInterrupts()) to clear it */
+                                  read 0xFFFFFFA0 (GetInterrupts()) to clear it */
 #define IRQ_AKIKO          2   /* Akiko request, EDGE */
 #define IRQ_ADV7511        3   /* ADV7511 INT pin, LEVEL */
 /* 4..15: spare (cfide's irq_src port) */
@@ -70,8 +70,8 @@ void DisableInterrupts(void);
  * mode of every bit.  A LEVEL source keeps the CPU interrupt up until the
  * device is serviced, so no IrqRaw() re-check is needed.  A LEVEL handler
  * may be called once more right after its line dropped (synchroniser
- * latency); handlers must tolerate it.  The handler of IRQ_I2C must access
- * 0xFFFFFFA0 to clear its source.  A pending bit with a NULL handler has its
+ * latency); handlers must tolerate it.  The handler of IRQ_I2C must read
+ * 0xFFFFFFA0 (GetInterrupts()) to clear its source.  A pending bit with a NULL handler has its
  * MASK bit cleared by the dispatcher (no livelock).  Bits >= 16 are ignored. */
 void IrqSetHandler(unsigned bit, void (*handler)(void));
 void IrqSetMode(unsigned bit, int level);   /* level != 0: LEVEL, else EDGE */

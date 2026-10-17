@@ -606,7 +606,7 @@ selected by `addr(3 downto 2)`):
 | Bit | Source | Notes |
 |---|---|---|
 | 0 | `vbl_int` | vertical blank, pulse: EDGE |
-| 1 | `i2c_int` | I2C master transfer event (`i2c_master_mmio` `r_interrupt`); cleared only by an access to `0xFFFFFFA0`: LEVEL, and the handler must access `0xFFFFFFA0` |
+| 1 | `i2c_int` | I2C master transfer event (`i2c_master_mmio` `r_interrupt`); cleared only by a read of `0xFFFFFFA0` (`GetInterrupts()`): LEVEL, and the handler must read `0xFFFFFFA0` |
 | 2 | `amiga_req` | Akiko request, pulse: EDGE |
 | 3 | `i2c_ext_int` | the ADV7511's INT pin (also I2C status bit `0x400`): LEVEL |
 | 4..15 | `irq_src(15 downto 4)` | spare cfide input port, defaulted to 0 (a top that has no source leaves it open); P1 (IDE, floppy) and later |
@@ -619,8 +619,11 @@ pending until it is unmasked and read. LEVEL (MODE bit 1): the bit is the
 synchronised level itself, a read does not clear it, it drops with the
 source. Switching the mode: EDGE to LEVEL discards an unread event; LEVEL to
 EDGE starts clear and needs a new rising edge. The CPU line is the legacy
-flag OR `(PENDING and MASK) /= 0`; MASK and MODE reset to 0, so with MASK = 0
-the behaviour is the pre-8.0 one. The timer (P2) drives MTI directly from an
+flag OR `(PENDING and MASK) /= 0`, in every `clk_28` cycle; it is a register
+of its own loaded from the next-state values of those registers, so no
+logic sits between it and the CPU (the 832 uses it unregistered). MASK and
+MODE reset to 0, so with MASK = 0 the behaviour is the pre-8.0 one, cycle
+for cycle. The timer (P2) drives MTI directly from an
 `mtime >= mtimecmp` compare, not through this block. No PLIC: sixteen
 sources in software bit order (bit 0 first) are enough.
 
@@ -645,14 +648,18 @@ Firmware rules (`fw/ctrl_rv/arch/irq.h`, API in its README):
 - P1 sources connect to `irq_src` bits 4..15 and must be pulses of at least
   one `clk_28` cycle or levels.
 
-Measured cost (OOC synthesis of cfide alone, XC7A100T): +61 LUT / +113 FF,
+Measured cost (OOC synthesis of cfide alone, XC7A100T): +111 LUT / +114 FF,
 no BRAM or DSP (48 synchroniser/prev, 16 pend, 16 mask, 16 mode, 16 read
-latch, 1 request-seen), against the ~30 LUT of the earlier sketch.
+latch, 1 request-seen, 1 output register), against the ~30 LUT of the
+earlier sketch. About 50 of the LUTs are the output register's next-state
+cone (5 logic levels, `clk_28`); with the output combinational it was +61 /
++113.
 
 Open board items: the ADV7511 INT polarity is inferred active-high (the part
 is set up without a polarity write, and `i2c_master_mmio` and the 832
-firmware use it that way), not measured; the interrupt OR path is untimed in
-a full build; the top leaves `irq_src` open (all 0).
+firmware use it that way), not measured; the interrupt output register's
+`clk_28` input cone is untimed in a full build (no logic after the
+register); the top leaves `irq_src` open (all 0).
 
 Firmware structure from 8.0 on: ISRs only move bytes and set flags (timer
 tick, UART RX into a ring, "request pending" flags, audio half flag); the
@@ -672,7 +679,7 @@ measured against the previous stage.
 | P1 | **Request IRQ + OSD reply ready flag** | The 6-byte `HandleFpga()` SPI status poll per loop (~100 us) and the `SPI_reply()` pause: `userio_osd` exposes "reply byte loaded" and "key queue non-empty"; `paula_floppy` exposes "track request pending" (CMD_RDTRK/WRTRK), `gayle_port` "command written" / "FIFO threshold"; cfide shows them on `irq_src` bits 4..15 (6.3) and in a `HOST_REQ` status word | request lines (4-5 bits) | `0x..B4 HOST_REQ` R: {osd_reply_rdy, keyq, fdd_req, ide0_cmd, ide1_cmd, ide_fifo_rdy} | ~120 LUT, 0 BRAM | low (status only; minimig-side changes are output ports) | **1** -- biggest latency win per LUT; also fixes inventory item 2 in hardware |
 | P2 | Timer (`mtime`/`mtimecmp`, 64-bit at clk_114, on MTI, plus 100 Hz tick) | `GetTimer/CheckTimer` 16-bit wrap handling, RTC/drive-sound/HDMI 250 ms bookkeeping moves to the tick ISR | MTI, tick | `0x..D4 MTIME_LO/HI`, `0x..DC MTIMECMP_LO/HI` (TIMER at D0 stays) | ~100 LUT | low | **1** |
 | P3 | UART RX + 16-byte TX/RX FIFOs | A debug console (today TX-only, blocking per byte) | RX non-empty, TX empty | `0x..F0 DATA`, `0x..F4 STATUS` | ~120 LUT (LUTRAM) | low | 2 |
-| P4 | I2C INT routing | The 250 ms edge-poll of the ADV7511 INT | existing `i2c_int` as its own bit | none new | ~10 LUT | none | 1 (free with 8.0) |
+| P4 | I2C INT routing | The 250 ms edge-poll of the ADV7511 INT | the INT pin `i2c_ext_int`, bit 3 since 8.0 (bit 1 `i2c_int` is the I2C master's transfer event) | none new | 0 (in 8.0) | none | 1 (firmware only since 8.0) |
 | P5 | SPI master with 64-byte TX/RX FIFOs and byte counter | The two hw round trips per byte: the CPU queues "n bytes, CS pattern", reads the RX FIFO; SPI becomes wire-bound (~3.5 MB/s at 28 MHz) instead of CPU-bound; CS deassert timing becomes a hardware constant (inventory items 2-4) | FIFO half / done | `0x..E0` compatible byte register stays; `0x..EC CTRL/COUNT`, `0x..E8 FIFO` | ~300-400 LUT + LUTRAM (or 1 BRAM18) | medium: all five slaves share CS semantics; must keep the single-byte path for the 832 A/B | 2 -- only if Phase 4.4/7.1 show the byte loop matters |
 | P6 | Sector DMA engine SD <-> minimig FIFO (generalised direct mode) | The CPU from the read data path SD -> paula/gayle; the engine owns CS, count and both directions, FPGA -> SD for HDF/ADF writes included. Removes the CS-timing race class structurally | done / error | `0x..C4 DMA_CMD` {dir, slave, blocks}, `0x..C8 DMA_STAT` | ~300-500 LUT | medium-high: touches `paula_floppy`/`gayle_port` FIFO ports; the SD write protocol (token, busy) must be in hardware | 3 -- after P5 is measured |
 | P7 | CD-DA ring refill DMA + half-empty IRQ | The 32 KB copy per 186 ms and its SPI loop; firmware supplies an LBA run list per half | half flip, list empty | `0x..C0 CDA_LIST`, `CDA_CTL` | ~500-700 LUT + 1 BRAM; needs the bridge arbiter (3.3.5) | high: SDRAM host port is lowest priority; hostcache coherency (DMA writes must invalidate or bypass); `scale()` volume moves to hardware or is dropped | 4 -- only if P5+P1 still leave underruns |
