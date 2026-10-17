@@ -482,7 +482,10 @@ module tb_host_bridge #(
   // r1 = 0x0040, r2 = 0x0040 if the second edge is at or after the clear
   // cycle else 0, r3 = 0; at least 2 iterations must hit the clear cycle and
   // at least one each before and after it.
-  localparam IC_PULSES = 10, T4_ITER = 25;
+  // vbl_int pulses per run: t_irqctl IC_PULSES, t_irqapi IA_PULSES (one per
+  // STAMP 10 in tests 1, 8 and 10, 8 for STAMP 20 in test 2, one for STAMP 30
+  // in test 3)
+  localparam IC_PULSES = 10, IA_PULSES = 12, T4_ITER = 25;
   integer ic_cmd = 0, ic_busy = 0, ic_vbl = 0, ic_end = 0;
   event   ic_go;
   integer t4_iter = 0, t4_c0 = 0, t4_d = 0, t4_clr = -1, t4_set1 = -1, t4_set2 = -1;
@@ -640,7 +643,7 @@ module tb_host_bridge #(
         99: begin
              ic_end = 1;
              $display("t_irqctl: %0d vbl_int pulses, %0d test 4 iterations", ic_vbl, t4_iter);
-             expect_pin("t_irqctl vbl_int pulses", ic_vbl, test == "t_irqctl" ? IC_PULSES : 11);
+             expect_pin("t_irqctl vbl_int pulses", ic_vbl, test == "t_irqctl" ? IC_PULSES : IA_PULSES);
              if (test == "t_irqctl") expect_pin("t_irqctl test 4 iterations", t4_iter, T4_ITER);
              if (ic_busy) bench_error("t_irqctl: a pulse still running at the end");
            end

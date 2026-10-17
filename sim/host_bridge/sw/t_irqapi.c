@@ -13,7 +13,9 @@
  *   6  LEVEL bit 3 (the ADV7511 INT pin, STAMP 120/121)
  *   8  EnableInterrupts() after IrqInstall(): no storm, one vblank call
  *   9  LEVEL bit with a NULL handler: masked off, no hang
- *   7  IrqEnable/IrqDisable/IrqSetMode read-modify-write, bit >= 16 ignored */
+ *   7  IrqEnable/IrqDisable/IrqSetMode read-modify-write, bit >= 16 ignored
+ *  10  SetIntHandler(legacy handler) with MASK != 0 clears MASK: a vblank then
+ *      reaches the legacy handler once, no storm (STAMP 10) */
 #include <stdint.h>
 #include "hb.h"
 #include "irq.h"
@@ -243,6 +245,28 @@ static int test7(void)
     return 0;
 }
 
+/* SetIntHandler() of a legacy handler while MASK != 0: MASK becomes 0, so
+   no controller bit reaches a handler that never reads IRQ_PENDING (without
+   that, the vblank below would trap endlessly into leg_handler) */
+static int test10(void)
+{
+    unsigned base_leg = n_leg, base0 = n0;
+
+    IrqSetHandler(IRQ_VBLANK, h0);
+    IrqEnable(IRQ_VBLANK);
+    CHECK(HW_IRQ_MASK == 0x0001, 1001);
+    SetIntHandler(leg_handler);
+    CHECK(HW_IRQ_MASK == 0, 1002);
+    EnableInterrupts();
+    STAMP(10);
+    wait_ge(&n_leg, base_leg + 1, 20);
+    spin_steps(6);
+    CHECK(n_leg == base_leg + 1, 1003);
+    CHECK(n0 == base0, 1004);
+    SetIntHandler(0);
+    return 0;
+}
+
 /* EnableInterrupts() after IrqInstall(): the legacy flag must not storm */
 static int test8(void)
 {
@@ -287,6 +311,7 @@ static int run(void)
     if ((rc = test8()) != 0) return rc;
     if ((rc = test9()) != 0) return rc;
     if ((rc = test7()) != 0) return rc;
+    if ((rc = test10()) != 0) return rc;
     STAMP(99);
     return 0;
 }
