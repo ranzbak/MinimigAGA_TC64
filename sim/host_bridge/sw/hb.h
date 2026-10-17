@@ -20,6 +20,11 @@
 #define HB_SPI_CS_OFS    (-28)    /* 0xFFFFFFE4 W: bit0 = 0 selects, bits 7:1 pick the lines */
 #define HB_SPI_SPEED_OFS (-24)    /* 0xFFFFFFE8 W: SPI clock divider          */
 #define HB_UART_OFS      (-16)    /* 0xFFFFFFF0 W: character out (8-bit)      */
+/* interrupt controller (rtl/host/cfide.vhd, 0x3x window) */
+#define HB_IRQ_PENDING_OFS (-208) /* 0xFFFFFF30 R: PENDING & MASK, clears the EDGE bits returned */
+#define HB_IRQ_MASK_OFS    (-204) /* 0xFFFFFF34 R/W                           */
+#define HB_IRQ_RAW_OFS     (-200) /* 0xFFFFFF38 R: synchronised source levels */
+#define HB_IRQ_MODE_OFS    (-196) /* 0xFFFFFF3C R/W: 1 = LEVEL, 0 = EDGE      */
 
 /* platformdata with the bench's cfide generics (havespirtc = false) and
    menu_button = 1: X"000" & "0" & '0' & '1' & '1' */

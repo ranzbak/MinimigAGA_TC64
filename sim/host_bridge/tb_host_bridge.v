@@ -28,6 +28,9 @@
 // Test-specific checks (+TEST=<name>): see checkpoint() and final_checks().
 // t_irq: checkpoint 1 starts 20 vbl_int pulses into cfide (one clk_28 cycle
 // each, 2000 clk_114 apart); checkpoint 2 checks that all 20 were sent.
+// t_irqctl: the interrupt controller (cfide 0xFFFFFF30..3C); the bench drives
+// vbl_int, amiga_req and irq_src[15:3] per checkpoint (table at the
+// t_irqctl block below) and checks test 4 ("set wins") itself.
 //
 // SDCARD (boot runs, +TEST=boot / boot_nofile; the ROM is the committed boot
 // ROM fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd): sd_spi_model on sd_cs[1] with
@@ -104,6 +107,8 @@ module tb_host_bridge #(
   wire       sd_clk, sd_do, miso;
   wire       scandoubler, audio_ena, audio_clear;
   reg        vbl_int = 1'b0;     // t_irq: pulses from checkpoint 1
+  reg        amiga_req = 1'b0;   // t_irqctl: controller source 2
+  reg [15:3] irq_src = 13'h0;    // t_irqctl: controller sources 3..15
 
   cfide #(
     .spimux(1'b0), .havespirtc(1'b0), .havei2c(1'b0), .havevpos(1'b0)
@@ -116,9 +121,10 @@ module tb_host_bridge #(
     .xadc_temp(16'h0000),
     .scandoubler(scandoubler), .audio_ena(audio_ena), .audio_clear(audio_clear),
     .audio_buf(1'b1), .audio_amiga(1'b0), .vbl_int(vbl_int), .interrupt(cfide_int),
+    .irq_src(irq_src),
     .c64_keys(64'hFFFFFFFFFFFFFFFF), .amiga_key(), .amiga_key_stb(),
     .amiga_addr(8'h00), .amiga_d(16'h0000), .amiga_q(),
-    .amiga_req(1'b0), .amiga_wr(1'b0), .amiga_ack(),
+    .amiga_req(amiga_req), .amiga_wr(1'b0), .amiga_ack(),
     .rtc_q(),
     .scl_i(1'b1), .scl_o(), .scl_t(), .sda_i(1'b1), .sda_o(), .sda_t(),
     .i2c_ext_int(1'b0),
@@ -405,6 +411,199 @@ module tb_host_bridge #(
     end
   end
 
+  // ---------------------------------------------------------- t_irqctl
+  // Checkpoints (TIME <n>) of sw/t_irqctl.c; a pulse is high for one clk_28
+  // cycle (exactly one clk_28 edge of cfide sees it), as the t_irq pulser.
+  //   10  one vbl_int pulse                  20  8 vbl_int pulses, 2000 apart
+  //   30  vbl_int + irq_src[5] in the same clk_28 cycle, amiga_req rises one
+  //       clk_28 later (high for 4 clk_28)
+  //   40  test 4 iteration: irq_src[6] pulse (8 clk_114) at once, a second
+  //       one placed against the iteration's IRQ_PENDING read (below)
+  //   41  end of the test 4 sweep: coverage check
+  //   50  irq_src[7] pulse                   70  irq_src[9] pulse
+  //   60 / 61  irq_src[8] high / low (held)  90 / 91  irq_src[9] high / low
+  //   92 / 93  cfide's interrupt output must be 1 / 0
+  //   100 / 101  irq_src[10] high / low      102  irq_src[10] pulse
+  //   99  end: every action was taken
+  // Test 4 ("set wins"): a bit returned by an IRQ_PENDING read whose source
+  // rises again in the clk_28 cycle of that read's clear stays pending.  Per
+  // iteration the CPU (interrupts off, MASK = bit 6) does STAMP 40, four
+  // IRQ_RAW reads, read r1 of IRQ_PENDING, a wait, reads r2 and r3.  The
+  // first pulse sets bit 6 before r1.  The bench measures, at clk_28 edges,
+  // the edge of r1's clear (cfide's irq_seen rising on that read) and the
+  // edges where bit 6's edge detector fired (irq_prev[6] rising); iteration 1
+  // raises the second pulse late (STAMP + 300) and measures the distance d
+  // from STAMP to the clear; iterations 2..25 raise it at STAMP + d - 10 +
+  // (-6..5), which moves the second edge from before r1's clear through the
+  // clear cycle (4 of every 12) to after it.  Snooped read data must be
+  // r1 = 0x0040, r2 = 0x0040 if the second edge is at or after the clear
+  // cycle else 0, r3 = 0; at least 2 iterations must hit the clear cycle and
+  // at least one each before and after it.
+  localparam IC_PULSES = 10, T4_ITER = 25;
+  integer ic_cmd = 0, ic_busy = 0, ic_vbl = 0, ic_end = 0;
+  event   ic_go;
+  integer t4_iter = 0, t4_c0 = 0, t4_d = 0, t4_clr = -1, t4_set1 = -1, t4_set2 = -1;
+  integer t4_nrd = 0, t4_raise = 0, t4_early = 0, t4_coinc = 0, t4_late = 0;
+  reg     t4_on = 1'b0;
+  reg [15:0] t4_r0 = 16'h0, t4_r1 = 16'h0, t4_r2 = 16'h0;
+  // cfide internals, copied to bench wires first (xsim: a select taken
+  // straight on a hierarchical VHDL signal is not reliable)
+  wire [15:0] ic_prev = mycfide.irq_prev;
+  wire        ic_seen = mycfide.irq_seen;
+  wire        ic_p6 = ic_prev[6];
+  reg         ic_seen_d = 1'b0, ic_p6_d = 1'b0;
+
+  task ic_vbl_pulse;
+    begin
+      @(posedge clk28); vbl_int <= 1'b1;
+      @(posedge clk28); vbl_int <= 1'b0;
+      ic_vbl = ic_vbl + 1;
+    end
+  endtask
+
+  task ic_src_pulse(input integer b);
+    begin
+      @(posedge clk28); irq_src[b] <= 1'b1;
+      @(posedge clk28); irq_src[b] <= 1'b0;
+    end
+  endtask
+
+  always @(ic_go) begin : ic_proc
+    integer k, tgt;
+    ic_busy = 1;
+    case (ic_cmd)
+      10: ic_vbl_pulse;
+      20: for (k = 0; k < 8; k = k + 1) begin
+            repeat (2000) @(posedge clk114);
+            ic_vbl_pulse;
+          end
+      30: begin
+            @(posedge clk28); vbl_int <= 1'b1; irq_src[5] <= 1'b1;
+            @(posedge clk28); vbl_int <= 1'b0; irq_src[5] <= 1'b0; amiga_req <= 1'b1;
+            ic_vbl = ic_vbl + 1;
+            repeat (4) @(posedge clk28); amiga_req <= 1'b0;
+          end
+      40: begin
+            @(posedge clk114); irq_src[6] <= 1'b1;
+            repeat (8) @(posedge clk114); irq_src[6] <= 1'b0;
+            if (t4_iter == 1) tgt = t4_c0 + 300;
+            else tgt = t4_c0 + t4_d - 10 + ((t4_iter - 2) % 12) - 6;
+            if (tgt < cyc + 8) begin
+              bench_error("t_irqctl test 4: the IRQ_PENDING read follows STAMP 40 too closely for the sweep");
+              tgt = cyc + 8;
+            end
+            while (cyc < tgt) @(posedge clk114);
+            irq_src[6] <= 1'b1;
+            t4_raise = cyc;
+            repeat (8) @(posedge clk114); irq_src[6] <= 1'b0;
+          end
+      50: ic_src_pulse(7);
+      70: ic_src_pulse(9);
+      102: ic_src_pulse(10);
+      default: bench_error("t_irqctl: unknown pulse command");
+    endcase
+    ic_busy = 0;
+  end
+
+  // test 4 probes, sampled 1 ns after each clk_28 edge
+  always @(posedge clk28) begin
+    #1;
+    if (t4_on) begin
+      if (ic_seen === 1'b1 && ic_seen_d === 1'b0 && hw_req === 1'b1 && host_we === 1'b0 &&
+          hwa == 32'hFFFFFF30 && t4_clr < 0)
+        t4_clr = cyc;
+      if (ic_p6 === 1'b1 && ic_p6_d === 1'b0) begin
+        if (t4_set1 < 0) t4_set1 = cyc;
+        else if (t4_set2 < 0) t4_set2 = cyc;
+        else bench_error("t_irqctl test 4: a third bit-6 edge in one iteration");
+      end
+    end
+    ic_seen_d = ic_seen;
+    ic_p6_d = ic_p6;
+  end
+
+  // test 4 read data (IRQ_PENDING reads of the iteration)
+  always @(posedge clk114) if (t4_on && hw_done && !host_we && hwa == 32'hFFFFFF30) begin
+    if (t4_nrd == 0) t4_r0 = hw_d;
+    if (t4_nrd == 1) t4_r1 = hw_d;
+    if (t4_nrd == 2) t4_r2 = hw_d;
+    t4_nrd = t4_nrd + 1;
+  end
+
+  task t4_finish;
+    reg [15:0] exp1;
+    begin
+      if (t4_iter > 0) begin
+        if (t4_clr < 0 || t4_set1 < 0 || t4_set2 < 0 || t4_nrd != 3) begin
+          $display("BENCH ERROR at cycle %0d: t_irqctl test 4 iteration %0d incomplete: clear %0d, edges %0d %0d, %0d IRQ_PENDING reads",
+                   cyc, t4_iter, t4_clr, t4_set1, t4_set2, t4_nrd);
+          errors = errors + 1;
+        end else begin
+          if (t4_set1 >= t4_clr) bench_error("t_irqctl test 4: the first bit-6 edge is not before the read");
+          exp1 = t4_set2 >= t4_clr ? 16'h0040 : 16'h0000;
+          if (t4_set2 < t4_clr) t4_early = t4_early + 1;
+          else if (t4_set2 == t4_clr) t4_coinc = t4_coinc + 1;
+          else t4_late = t4_late + 1;
+          $display("t_irqctl test 4 iteration %0d: second pulse at STAMP+%0d, clear at STAMP+%0d, its edge at STAMP+%0d (%0s), reads %h %h %h",
+                   t4_iter, t4_raise - t4_c0, t4_clr - t4_c0, t4_set2 - t4_c0,
+                   t4_set2 < t4_clr ? "before" : t4_set2 == t4_clr ? "SAME CYCLE" : "after", t4_r0, t4_r1, t4_r2);
+          if (t4_r0 !== 16'h0040 || t4_r1 !== exp1 || t4_r2 !== 16'h0000) begin
+            $display("BENCH ERROR at cycle %0d: t_irqctl test 4 (set wins) iteration %0d: reads %h %h %h, want 0040 %h 0000",
+                     cyc, t4_iter, t4_r0, t4_r1, t4_r2, exp1);
+            errors = errors + 1;
+          end
+          t4_d = t4_clr - t4_c0;
+        end
+      end
+    end
+  endtask
+
+  task t_irqctl_checkpoint(input [31:0] v);
+    begin
+      case (v)
+        10, 20, 30, 50, 70, 102: begin
+             if (ic_busy) bench_error("t_irqctl: a pulse command while the previous one runs");
+             ic_cmd = v;
+             -> ic_go;
+           end
+        40: begin
+             if (ic_busy) bench_error("t_irqctl: STAMP 40 while the previous pulse runs");
+             t4_finish;
+             t4_iter = t4_iter + 1;
+             t4_c0 = cyc;
+             t4_clr = -1; t4_set1 = -1; t4_set2 = -1; t4_nrd = 0;
+             t4_on = 1'b1;
+             ic_cmd = 40;
+             -> ic_go;
+           end
+        41: begin
+             t4_finish;
+             t4_on = 1'b0;
+             $display("t_irqctl test 4: %0d iterations, second edge before / in / after the clear cycle: %0d / %0d / %0d",
+                      t4_iter, t4_early, t4_coinc, t4_late);
+             if (t4_coinc < 2) bench_error("t_irqctl test 4: the sweep hit the clear cycle fewer than 2 times");
+             if (t4_early < 1 || t4_late < 1) bench_error("t_irqctl test 4: the sweep missed one side of the clear cycle");
+           end
+        60:  irq_src[8] <= 1'b1;
+        61:  irq_src[8] <= 1'b0;
+        90:  irq_src[9] <= 1'b1;
+        91:  irq_src[9] <= 1'b0;
+        92:  expect_pin("cfide interrupt", cfide_int, 1'b1);
+        93:  expect_pin("cfide interrupt", cfide_int, 1'b0);
+        100: irq_src[10] <= 1'b1;
+        101: irq_src[10] <= 1'b0;
+        99: begin
+             ic_end = 1;
+             $display("t_irqctl: %0d vbl_int pulses, %0d test 4 iterations", ic_vbl, t4_iter);
+             expect_pin("t_irqctl vbl_int pulses", ic_vbl, IC_PULSES);
+             expect_pin("t_irqctl test 4 iterations", t4_iter, T4_ITER);
+             if (ic_busy) bench_error("t_irqctl: a pulse still running at the end");
+           end
+        default: bench_error("t_irqctl: unknown checkpoint");
+      endcase
+    end
+  endtask
+
   task checkpoint(input [31:0] v);
     integer k;
     begin
@@ -467,6 +666,8 @@ module tb_host_bridge #(
              end
           default: bench_error("t_irq/boot: unknown checkpoint");
         endcase
+      end else if (test == "t_irqctl") begin
+        t_irqctl_checkpoint(v);
       end else if (test == "t_spibusy") begin
         case (v)
           1: begin expect_pin("sd_cs", sd_cs, 8'hFC); mosi_base = mosi_n; busy_base = spi_busy_waits; end
@@ -512,6 +713,7 @@ module tb_host_bridge #(
         end
         $display("t_lanes: SDRAM halfwords 0x3000..0x301F checked");
       end
+      if (test == "t_irqctl" && !ic_end) bench_error("t_irqctl: no STAMP 99 (the program stopped early)");
     end
   endtask
 

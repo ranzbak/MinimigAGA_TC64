@@ -4,6 +4,7 @@
 #
 #   bash sim/host_bridge/run.sh all          # every test x SLAT {2,8,20} x SJIT {0,8}
 #   bash sim/host_bridge/run.sh mutant       # the four-phase handshake's teeth (below)
+#   bash sim/host_bridge/run.sh irqmut       # the interrupt controller's teeth (below)
 #   bash sim/host_bridge/run.sh t_lanes ...  # named tests at SLAT/SJIT from env
 #   SLAT=20 SJIT=8 EXTRA_WS=3 bash sim/host_bridge/run.sh t_b2b
 #   bash sim/host_bridge/run.sh boot         # committed boot ROM loads RV32OSDA.BIN
@@ -42,6 +43,18 @@
 # taken and the info leg passes (README.md, "Why the mutant needs the fast
 # master").
 #
+# irqmut: t_irqctl at SLAT=8 SJIT=0 EXTRA_WS=0 with three run copies of
+# cfide.vhd and the real one:
+#   a clear-all   an IRQ_PENDING read clears all of PENDING, the edges of that
+#                 cycle too ("-- IRQ SET WINS" line)     must FAIL test 4
+#   b no set-wins the read cycle clears the returned bits and drops that
+#                 cycle's edges                          must FAIL test 4
+#   c no LEVEL    PENDING ignores MODE ("-- IRQ MODE MUX" line)
+#                                                        must FAIL test 9
+#   control       the real cfide                         must PASS
+# "FAIL test 4" = a "BENCH ERROR ... t_irqctl test 4 (set wins)" line;
+# "FAIL test 9" = DONE code 9xx.
+#
 # Steps: copy the RTL into the run directory (src/), apply the simulation
 # fixes below, build the test ROMs there (make B=<run>/build), compile, then
 # per test compile its ROM and elaborate a snapshot; xsim runs one at a time.
@@ -60,7 +73,7 @@ VIVADO_PATH=${VIVADO_PATH:-/opt/Xilinx/Vivado/2023.2}
 export LC_ALL=C LANG=C
 export LD_LIBRARY_PATH="$HOME/lib/tinfo5${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-TESTS="t_lanes t_hwoff t_b2b t_spibusy t_irq"
+TESTS="t_lanes t_hwoff t_b2b t_spibusy t_irq t_irqctl"
 MATRIX="2,0 8,0 20,0 2,8 8,8 20,8"
 XW=${EXTRA_WS:-0}
 run="$HERE/run_${RUNTAG:-wt}"
@@ -87,6 +100,25 @@ setup() {
 	sed 's/^\( *\)state <= hw_release; -- 4PHASE.*/\1state <= waiting; -- 4PHASE MUTANT/' \
 		src/832_bridge.vhd > src/832_bridge_mutant.vhd
 	grep -q 'state <= waiting; -- 4PHASE MUTANT' src/832_bridge_mutant.vhd || die "mutant sed not applied"
+
+	# interrupt controller mutants (irqmut, see the header)
+	python3 - src/cfide.vhd <<'EOF' || die "cfide mutant patch not applied"
+import re, sys
+s = open(sys.argv[1]).read()
+def mutant(tag, marker, new):
+    lines = [l for l in s.split("\n") if l.rstrip().endswith(marker)]
+    assert len(lines) == 1, marker
+    ind = re.match(" *", lines[0]).group(0)
+    open(sys.argv[1].replace(".vhd", "_irqmut_%s.vhd" % tag), "w").write(
+        s.replace(lines[0], ind + new + " -- IRQ MUTANT " + tag))
+mutant("a", "-- IRQ SET WINS",
+       "if irq_rd = '1' then irq_pend <= (others => '0'); "
+       "else irq_pend <= (irq_pend or irq_edge) and not irq_mode; end if;")
+mutant("b", "-- IRQ SET WINS",
+       "if irq_rd = '1' then irq_pend <= irq_pend and not irq_clr and not irq_mode; "
+       "else irq_pend <= (irq_pend or irq_edge) and not irq_mode; end if;")
+mutant("c", "-- IRQ MODE MUX", "irq_eff  <= irq_pend;")
+EOF
 
 	# fast master: dBus command accepted in the ack cycle (see the header)
 	python3 - src/rv_hostcpu.v src/rv_hostcpu_fast.v <<'EOF' || die "fast-master patch not applied"
@@ -223,6 +255,33 @@ case "${1:-}" in
 		for t in $TESTS; do matrix "tb_${t}_x$XW" "$t" PASS ""; done | tee "$run/results.txt"
 		if grep -q '^BAD' "$run/results.txt"; then echo "=== SOME FAILED"; exit 1; fi
 		echo "=== ALL PASS ($(grep -c '^ok' "$run/results.txt") runs)"
+		;;
+	irqmut)
+		setup
+		variant 832_bridge.vhd rv_hostcpu.v
+		XW=0
+		for m in a b c; do
+			X xvhdl "src/cfide_irqmut_$m.vhd"
+			snapshot t_irqctl "tb_t_irqctl_mut${m}_x$XW"
+		done
+		X xvhdl src/cfide.vhd
+		snapshot t_irqctl "tb_t_irqctl_x$XW"
+		{
+			for m in a b c; do
+				echo "cfide mutant $m: $(grep -- '-- IRQ MUTANT' "src/cfide_irqmut_$m.vhd" | sed 's/^ *//')"
+				one "tb_t_irqctl_mut${m}_x$XW" t_irqctl 8 0 FAIL "gate    cfide mutant $m: "
+				log="$run/tb_t_irqctl_mut${m}_x${XW}_s8_j0.log"
+				if [ $m = c ]; then
+					if grep -qE '^=== FAIL code 9[0-9][0-9],' "$log"; then echo "ok   mutant c fails in test 9"
+					else echo "BAD  mutant c: not a test 9 failure ($(grep -m1 -E '^=== (PASS|FAIL)' "$log"))"; fi
+				elif grep -q 'BENCH ERROR.*t_irqctl test 4 (set wins)' "$log"; then
+					echo "ok   mutant $m fails test 4 in $(grep -c 'BENCH ERROR.*t_irqctl test 4 (set wins)' "$log") iterations"
+				else echo "BAD  mutant $m: no test 4 (set wins) error"; fi
+			done
+			one "tb_t_irqctl_x$XW" t_irqctl 8 0 PASS "control real cfide: "
+		} | tee "$run/results.txt"
+		if grep -q '^BAD' "$run/results.txt"; then echo "=== IRQ MUTANT SURVIVED or CONTROL FAILED"; exit 1; fi
+		echo "=== IRQ MUTANTS CAUGHT (3 mutants FAIL where expected, control PASS)"
 		;;
 	mutant)
 		setup

@@ -64,6 +64,10 @@ entity cfide is
         audio_amiga   : in  std_logic;
         vbl_int       : in  std_logic;
         interrupt     : out std_logic;
+        -- Interrupt controller sources 3..15 (0x3x window, see below); bits 0..2
+        -- are vbl_int, the I2C interrupt and amiga_req.  Defaulted: a top that
+        -- has no such source leaves the port open.
+        irq_src       : in  std_logic_vector(15 downto 3) := (others => '0');
         c64_keys      : in  std_logic_vector(63 downto 0) := X"FFFFFFFFFFFFFFFF";
         amiga_key     : out std_logic_vector(7 downto 0);
         amiga_key_stb : out std_logic;
@@ -162,9 +166,28 @@ architecture rtl of cfide is
     signal videoscl_select : std_logic;
     signal i2c_int         : std_logic;
     signal xadc_select     : std_logic;
+    signal irqctl_select   : std_logic;
     signal spirtcpresent   : std_logic;
 
     signal reset : std_logic;
+
+    -- Interrupt controller (0x3x window)
+    signal int_legacy  : std_logic;                      -- the 0xa0 flag
+    signal irq_in      : std_logic_vector(15 downto 0);  -- the sources
+    signal irq_sync1   : std_logic_vector(15 downto 0);
+    signal irq_sync2   : std_logic_vector(15 downto 0);  -- synchronised = IRQ_RAW
+    signal irq_prev    : std_logic_vector(15 downto 0);  -- irq_sync2 one cycle ago
+    signal irq_edge    : std_logic_vector(15 downto 0);
+    signal irq_pend    : std_logic_vector(15 downto 0);  -- EDGE-mode event latch
+    signal irq_eff     : std_logic_vector(15 downto 0);  -- PENDING as the CPU sees it
+    signal irq_ret     : std_logic_vector(15 downto 0);  -- PENDING and MASK
+    signal irq_clr     : std_logic_vector(15 downto 0);
+    signal irq_mask    : std_logic_vector(15 downto 0);
+    signal irq_mode    : std_logic_vector(15 downto 0);  -- 1 = LEVEL, 0 = EDGE
+    signal irq_q       : std_logic_vector(15 downto 0);
+    signal irq_seen    : std_logic;                      -- req one clk_28 cycle ago
+    signal irq_acc     : std_logic;                      -- first cycle of a 0x3x access
+    signal irq_rd      : std_logic;                      -- ... and it reads IRQ_PENDING
 
 -- attribute MARK_DEBUG : string;
 -- attribute MARK_DEBUG of pos_data_q : signal is "TRUE";
@@ -186,6 +209,7 @@ begin
     audio_q when audio_select = '1' else
     keyboard_q when keyboard_select = '1' else
     amigatohost when amiga_select = '1' else
+    irq_q when irqctl_select = '1' else
     xadc_temp when xadc_select = '1' else
     platformdata;
 
@@ -227,6 +251,8 @@ begin
     videoscl_select  <= '1' when addr(23) = '1' and addr(7 downto 4) = X"5" else '0';
     -- FPGA die temperature at 0fffff40; X"4" was the one free window left.
     xadc_select      <= '1' when addr(23) = '1' and addr(7 downto 4) = X"4" else '0';
+    -- Interrupt controller at 0fffff30
+    irqctl_select    <= '1' when addr(23) = '1' and addr(7 downto 4) = X"3" else '0';
 
     -- RTC handling at 0fffff70
 
@@ -304,27 +330,114 @@ begin
         end if;
     end process;
 
-    -- Interrupt handling at 0fffffa0
+    -- Interrupt handling at 0fffffa0 (legacy, the 832 firmware's)
     -- Any access to this range will clear the interrupt flag;
 
     process(clk_28, n_reset)
     begin
         if n_reset = '0' then
-            interrupt     <= '0';
+            int_legacy    <= '0';
             interrupt_ena <= '0';
         elsif rising_edge(clk_28) then
             amiga_req_d <= amiga_req;
             if vbl_int = '1' or i2c_int = '1' or (amiga_req = '1' and amiga_req_d = '0') then
-                interrupt <= interrupt_ena;
+                int_legacy <= interrupt_ena;
             end if;
             if interrupt_select = '1' and req = '1' then
-                interrupt <= '0';
+                int_legacy <= '0';
                 if wr = '1' then
                     interrupt_ena <= d(0);
                 end if;
             end if;
         end if;
     end process;
+
+    -- Interrupt controller at 0fffff30, 16-bit registers, addr(3 downto 2):
+    --   00 IRQ_PENDING  R: PENDING and MASK; clears exactly the EDGE-mode bits
+    --                      it returns, once per access.  W: no effect.
+    --   01 IRQ_MASK     R/W, reset 0
+    --   10 IRQ_RAW      R: the synchronised source levels, no side effect.
+    --                   W: no effect.
+    --   11 IRQ_MODE     R/W, reset 0; per bit 0 = EDGE, 1 = LEVEL
+    -- Sources: bit 0 vbl_int, 1 the I2C interrupt (i2c_master_mmio), 2 amiga_req,
+    -- 3..15 irq_src.  Every bit is the same logic: a 2-FF synchroniser into
+    -- clk_28, then
+    --   EDGE  (MODE bit 0): a rising edge of the synchronised level sets the
+    --         bit; an IRQ_PENDING read that returns it clears it.  An edge in
+    --         the cycle of that clear wins: the bit stays set.  An event of a
+    --         masked bit stays pending until it is unmasked and read.
+    --   LEVEL (MODE bit 1): the bit is the synchronised level itself; a read
+    --         returns it and does not clear it, it drops with the source.
+    -- Switching the mode: the EDGE latch is held clear while the bit is in
+    -- LEVEL mode.  So EDGE -> LEVEL discards an unread event (the bit then
+    -- follows the line), and LEVEL -> EDGE starts the bit clear: it needs a new
+    -- rising edge, i.e. the line must drop and rise again.  An edge set in the
+    -- clk_28 cycle of the MODE write that switches to EDGE is discarded too.
+    -- interrupt = the legacy flag OR (PENDING and MASK) /= 0.  MASK and MODE
+    -- reset to 0, so firmware that never writes MASK (the 832's) sees the
+    -- legacy behaviour unchanged.
+    -- A hw access holds req for one clk_28 edge or more (the bridge drops req
+    -- only after it saw ack); irq_seen = req one cycle ago, so irq_acc is the
+    -- first cycle of the access: the read value is latched into irq_q and the
+    -- returned bits are cleared there and at no later cycle of the access.
+    -- Firmware rule: a source that may stay high (ADV7511 INT, IDE request) in
+    -- EDGE mode raises one event per rising edge: after handling, read IRQ_RAW
+    -- and handle again while the level is still high; on unmasking such a bit,
+    -- check IRQ_RAW once.  A debugger reading IRQ_PENDING consumes events.
+
+    no_i2c : if not havei2c generate
+        i2c_int <= '0';
+    end generate;
+
+    irq_in   <= irq_src & amiga_req & i2c_int & vbl_int;
+    irq_edge <= irq_sync2 and not irq_prev;
+    irq_eff  <= (irq_sync2 and irq_mode) or (irq_pend and not irq_mode); -- IRQ MODE MUX
+    irq_ret  <= irq_eff and irq_mask;
+    irq_acc  <= '1' when irqctl_select = '1' and req = '1' and irq_seen = '0' else '0';
+    irq_rd   <= '1' when irq_acc = '1' and wr = '0' and addr(3 downto 2) = "00" else '0';
+    irq_clr  <= (irq_ret and not irq_mode) when irq_rd = '1' else (others => '0');
+
+    process(clk_28, n_reset)
+    begin
+        if n_reset = '0' then
+            irq_sync1 <= (others => '0');
+            irq_sync2 <= (others => '0');
+            irq_prev  <= (others => '0');
+            irq_pend  <= (others => '0');
+            irq_mask  <= (others => '0');
+            irq_mode  <= (others => '0');
+            irq_q     <= (others => '0');
+            irq_seen  <= '0';
+        elsif rising_edge(clk_28) then
+            irq_sync1 <= irq_in;
+            irq_sync2 <= irq_sync1;
+            irq_prev  <= irq_sync2;
+            irq_seen  <= req;
+            irq_pend  <= ((irq_pend and not irq_clr) or irq_edge) and not irq_mode; -- IRQ SET WINS
+            if irq_acc = '1' then
+                case addr(3 downto 2) is
+                    when "00" =>
+                        irq_q <= irq_ret;
+                    when "01" =>
+                        irq_q <= irq_mask;
+                    when "10" =>
+                        irq_q <= irq_sync2;
+                    when others =>
+                        irq_q <= irq_mode;
+                end case;
+                if wr = '1' then
+                    if addr(3 downto 2) = "01" then
+                        irq_mask <= d;
+                    end if;
+                    if addr(3 downto 2) = "11" then
+                        irq_mode <= d;
+                    end if;
+                end if;
+            end if;
+        end if;
+    end process;
+
+    interrupt <= '1' when int_legacy = '1' or irq_ret /= X"0000" else '0';
 
     ---------------------------------
     -- Platform specific registers --
