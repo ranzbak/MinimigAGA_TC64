@@ -20,8 +20,6 @@ typedef struct
 #define SPIMODE_NORMAL 0
 #define SPIMODE_FAST 1
 
-#define true -1
-#define false 0
 
 unsigned long CalculateCRC32(unsigned long crc, unsigned char *pBuffer, unsigned long nSize);
 unsigned char CheckFirmware(fileTYPE *file, char *name);

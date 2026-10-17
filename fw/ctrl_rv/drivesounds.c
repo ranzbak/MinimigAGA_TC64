@@ -8,7 +8,7 @@
 #include "drivesounds.h"
 #include "cdaudio.h"
 
-extern char _bss_end__;
+extern char __bss_end;
 
 struct drivesound
 {
@@ -377,7 +377,7 @@ int drivesounds_fill()
 			switch(dse->type)
 			{
 				case DRIVESOUND_MOTORSTART:
-					if ((drivesounds.enabled & DRIVESOUNDS_FLOPPY)
+					if ((drivesounds.enabled & DRIVESOUNDS_FLOPPY))
 					{
 						drivesounds.sounds[DRIVESOUND_MOTORLOOP].chain=DRIVESOUND_MOTORLOOP;
 						if(!drivesounds.sounds[DRIVESOUND_MOTORLOOP].active)
@@ -388,13 +388,13 @@ int drivesounds_fill()
 					}
 					break;
 				case DRIVESOUND_MOTORSTOP:
-					if ((drivesounds.enabled & DRIVESOUNDS_FLOPPY)
+					if ((drivesounds.enabled & DRIVESOUNDS_FLOPPY))
 					{
 						drivesounds.sounds[DRIVESOUND_MOTORLOOP].chain=DRIVESOUND_MOTORSTOP;
 					}
 					break;
 				case DRIVESOUND_STEP:
-					if ((drivesounds.enabled & DRIVESOUNDS_FLOPPY)
+					if ((drivesounds.enabled & DRIVESOUNDS_FLOPPY))
 					{
 						dse->type=DRIVESOUND_STEP+pickstep(1,DRIVESOUND_STEP);	/* Pick a step sound at "random" */
 						drivesounds.sounds[dse->type].active=1;
@@ -410,7 +410,7 @@ int drivesounds_fill()
 					}
 					break;
 				default:
-					if ((drivesounds.enabled & DRIVESOUNDS_FLOPPY)
+					if ((drivesounds.enabled & DRIVESOUNDS_FLOPPY))
 					{
 						drivesounds.sounds[dse->type].active=1;
 						drivesounds.sounds[dse->type].chain=0;
@@ -428,8 +428,8 @@ int drivesounds_fill()
 int drivesounds_init(const char *filename)
 {
 	int result=0;
-	char *buf=AUDIO_BUFFER;	/* Load the drivesounds immediately in front of the audio buffer */
-	int maxsize=buf-&_bss_end__;
+	char *buf=(char *)AUDIO_BUFFER;	/* Load the drivesounds immediately in front of the audio buffer */
+	int maxsize=buf-&__bss_end;
 	RAFile file;
 	drivesounds.in=0;
 	drivesounds.out=0;

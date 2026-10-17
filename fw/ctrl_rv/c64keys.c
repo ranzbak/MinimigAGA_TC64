@@ -1,6 +1,6 @@
 #include <stdio.h>
 
-#include "interrupts.h"
+#include "irq.h"
 #include "amiga_rawkey.h"
 #include "c64keys.h"
 
@@ -302,7 +302,7 @@ int c64keyboard_checkreset()
 	return(result);
 }
 
-__constructor(101.c64keys) void c64keysconstructor()
+__attribute__((constructor(103))) void c64keysconstructor()
 {
 	int i;
 	for(i=0;i<8;++i)

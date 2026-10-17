@@ -26,7 +26,7 @@ extern char s[40];
 char configfilename[12];
 char DebugMode;
 
-int CheckSum();
+int CheckSum(char *adr,int size);
 
 
 unsigned char romkey[3072];
@@ -38,7 +38,7 @@ static char filename[12];
 void ClearKickstartMirrorE0(void)
 {
 	int i;
-	int *p=(0xe00000 & 0x7fffff) ^ HOSTMAP_ADDR;
+	int *p=(int *)((0xe00000 & 0x7fffff) ^ HOSTMAP_ADDR);
 	for (i = 0; i < (0x80000 / 4); i++) {
 		*p++=0;
 	}
@@ -47,7 +47,7 @@ void ClearKickstartMirrorE0(void)
 void ClearVectorTable(void)
 {
 	int i;
-	int *p=0 ^ HOSTMAP_ADDR;
+	int *p=(int *)(0 ^ HOSTMAP_ADDR);
 	for (i = 0; i < 256; i++) {
 		*p++=0;
 	}

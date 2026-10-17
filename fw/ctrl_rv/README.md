@@ -3,7 +3,9 @@
 Port of `fw/ctrl_832` (ZPU-class 832 host CPU) to RV32IMC. Task 2 made the
 **verbatim copy**; from then on `diff -ru fw/ctrl_832 fw/ctrl_rv` is exactly
 the port. Edits so far: Task 3's call-site edits ("Differences from
-fw/ctrl_832") and the C library / host-test files ("C library", "Host tests").
+fw/ctrl_832") and the C library / host-test files ("C library", "Host tests");
+Task 4's `Makefile` and gcc 15 / gnu23 compile fixes ("Building", "gcc 15 and
+gnu23 compile fixes").
 
 ## Copy base
 
@@ -15,7 +17,8 @@ Copied from `fw/ctrl_832` at osd-riscv HEAD `2f5df34c9821fef3d9a4101fe649f9c954a
 - The 29 units of the 832 Makefile's `COMMON_SOURCES` (`.c` and `.h`):
   hardware config fat fdd fpga boot hdd main menu mmc spi osd rafile swap
   hexdump uart errors interrupts c64keys akiko audio drivesounds rtc i2c
-  adv7511 atapi cdrom cue cdaudio.
+  adv7511 atapi cdrom cue cdaudio. Task 4 deleted `interrupts.c` and
+  `interrupts.h` again: `arch/irq.c` / `arch/irq.h` replace them (same API).
 - Headers without a unit: `amiga_rawkey.h charrom.h logo.h minimig_cfg.h
   hdd_internal.h firmware.h bootcustominit.h`, and `bootcustominit.s`.
 - `test/*.c`, `test/Makefile`, `test/.gitignore` (unchanged for now) and
@@ -27,7 +30,7 @@ the copy.
 ## What was not copied, and why
 
 - `version.h`: generated into `build/` from Task 4 on, never tracked here.
-- `Makefile`: vbcc; replaced in Task 4.
+- `Makefile`: vbcc; this tree's `Makefile` (Task 4) is new.
 - `Makefile.68k`, `startup_m68k-elf.s`, `startup_zpu-elf.s`,
   `osd_m68k-elf.ld`, `osd_zpu-elf.ld`: 68k/ZPU leftovers.
 - `small_printf.c`, `small_printf.h`, `printf.c`: not in `COMMON_SOURCES`.
@@ -47,22 +50,89 @@ git, no toolchain):
 With the verbatim copy of Task 2 no `DIFF` line appeared. Since Task 3 these
 copied files differ on purpose (each edit is a row of "Differences from
 fw/ctrl_832"): `akiko.c boot.c config.c drivesounds.c fat.c main.c menu.c`, and
-`test/Makefile`, `test/.gitignore` (the C-library wiring). `find` also lists
-files that only exist here (`rvlibc.c`, `rvlibc.h`, `test/lib_test.c`,
+`test/Makefile`, `test/.gitignore` (the C-library wiring); since Task 4 also
+`audio.c c64keys.c drivesounds.h firmware.h hdd.c` and `Makefile`. `find` also
+lists files that only exist here (`rvlibc.c`, `rvlibc.h`, `test/lib_test.c`,
 `test/fmt_*`, `test/mutants.sh`, `test/gold/`, `test/rv/`); `cmp` reports
-those as missing in `fw/ctrl_832`.
+those as missing in `fw/ctrl_832`. `interrupts.c`/`interrupts.h` exist only in
+`fw/ctrl_832` (Task 4), so the loop above does not see them.
 
 ## Building
 
-Nothing builds as firmware yet; the RISC-V Makefile arrives in Task 4 (the C
-library and its tests build today: see "C library", "Host tests"). The toolchain
-setup it will need, from a fresh Ubuntu 24.04 machine:
+From a fresh Ubuntu 24.04 machine, from the repository root (works in zsh and
+bash):
 
 ```sh
-sudo apt install build-essential git python3
+sudo apt install build-essential git python3 xxd
 bash tools/riscv/fetch-xpack.sh
 bash tools/riscv/check-toolchain.sh
+make -C fw/ctrl_rv clean all size
+make -C fw/ctrl_rv check
 ```
+
+Output in `fw/ctrl_rv/build/` (gitignored): `RV32OSDA.BIN` (`objcopy -O
+binary`, loaded by `fw/ctrl_boot_rv` to 0x2000), `RV32OSDA.elf`, `.map`, `.lst`
+(disassembly with source), `version.h`. `B=dir` builds into another directory;
+`EXTRA_CFLAGS=...` adds compiler flags for bench variants (empty for the
+shipped image). Another toolchain install: `RV_GCC_DIR=... RV_PREFIX=...`
+(`tools/riscv/toolchain.mk`).
+
+- **Flags** (Global Constraints, decision 12.12): `$(RV_CFLAGS_FW) -std=gnu23
+  --specs=nano.specs -g -I. -Iarch -I$(B) -Wall`; link `$(RV_LDFLAGS_FW)
+  --specs=nano.specs -nostartfiles -T arch/firmware.ld
+  -Wl,--no-warn-rwx-segments -Wl,-Map,...` with `-lc_nano -lgcc` last;
+  `arch/crt0.S` is the start-up (`arch/arch.mk`). Warnings are not fatal yet
+  (`-Wall` only; Task 7 makes the tree `-Wall -Wextra -Werror` clean).
+- **Sources:** the 832 Makefile's `COMMON_SOURCES` without `interrupts`
+  (`arch/irq.c`), plus `rvlibc.c`.
+- **`version.h`** is generated into `build/` by the 832 recipe with `-RV` for
+  `-832` (`MM_VERSTRING "$VER:AMR<yymmdd>-RV"`, `MM_FIRMWARE_VERSION
+  "<yyyy-m-d-h-m>"`, `MM_YEAR`..`MM_WEEKDAY`), never in this directory. It is
+  regenerated on every `make` and replaced only when its text changed (the
+  minute), so `fpga.c main.c rtc.c` rebuild then (the 832 Makefile `touch`ed
+  `fpga.c main.c`).
+- **`bootcustominit.h`** is used as committed. It is rebuilt (`vasmm68k_mot`
+  + `xxd`, the `.bin` in `build/`) only if `bootcustominit.s` is newer and
+  vasm is installed; the result is byte-identical to the committed header
+  (checked 2026-10-17).
+
+**Size** (`make size`, xPack gcc 15.2.0-1, 2026-10-17, `-Os`):
+
+| | text | data | bss | `.BIN` |
+|---|---|---|---|---|
+| RV32IMC (this tree) | 90,278 | 3,484 | 59,288 | **93,764 B** |
+| 832 (`832OSDAD.bin`) | | | | 83,830 B |
+
+Plan estimate 85-95 KB; +11.9 % over the 832. The figure moves by a few bytes
+with the date strings of `version.h` (93,768 B at 21:58). `_end` = 0x275DC
+(< 0x70000, `AUDIO_BUFFER`).
+
+**`make check`** runs every part (`make -k`) and fails if any is red:
+
+| Part | What | Status |
+|---|---|---|
+| (a) | no `lr.w`/`sc.w`/`amo*.w` in the disassembly (the core has no A extension) | pass |
+| (b) | no load from `-16(zero)` (a UART read deadlocks the bus) | pass |
+| (c) | every load/store with base `zero` and an offset in -256..-1 has `offset % 4 == 0` (each register at offset 0, 4, 8 or 0xC of its 16-byte window) | **expected red until Task 5**: it passes today only because the copied I/O bases are still the 832's `0x0FFFFFxx`, which are not `zero`-relative (the only `zero`-based accesses are `arch/`'s); Task 5 moves them to `0xFFFFFFxx` and fixes the offsets |
+| (d) | no `__geta4`, `__constructor`, `setstack`, `c_entry` in `fw/ctrl_rv/*.[ch]` | pass |
+| (e) | the C library guard ("C library"): `nm` of the `.elf` has none of `_sbrk _sbrk_r malloc free realloc calloc _write _write_r _read _read_r _fstat _fstat_r _isatty _isatty_r _lseek _lseek_r _close _close_r __sinit __sfp _printf_float _scanf_float asprintf vasprintf open_memstream fprintf fputc fputs fflush`; the map shows `_malloc_r _realloc_r _free_r printf vprintf` from `rvlibc.o` and `putchar puts` from `uart.o` (so none of them from `libc_nano.a`). A syscall pull is already a link error (no syscall is defined) | pass |
+| (f) | no `#define true` / `#define false` in `fw/ctrl_rv/*.[ch]` (gcc 15 accepts redefining the C23 keywords without a word) | pass |
+
+Each part was seen red once: (a) (b) (c) (e) on a disassembly / `nm` / map
+with a planted `amoadd.w`, `lbu a5,-16(zero)`, `sh zero,-30(zero)`,
+`sw a4,-6(zero)`, `_sbrk`, `fflush` and `puts` moved to `libc_nano.a`; (d)
+and (f) on the Task 3 tree (`__constructor`, `setstack`, `c_entry`,
+`__geta4`; `firmware.h:23-24`).
+
+**Constructors** (`.init_array` in the map, `SORT_BY_INIT_PRIORITY`): the 832
+ran `interrupts` (priority 100), then the two at 101 in name order, `akiko`
+before `c64keys`. Here `arch/irq.c` (101) installs the default handler,
+`akikoconstructor` is `constructor(102)`, `c64keysconstructor`
+`constructor(103)`. The map shows `.init_array.00101` (`irq.o`) and
+`.init_array.00103` (`c64keys.o`) only: `akikoconstructor` has an empty body,
+and gcc at `-Os` drops the `.init_array` entry of an empty constructor (the
+function itself stays; at `-O0` `akiko.o` has `.init_array.00102`). Nothing
+runs at that slot on either CPU, so the order is the 832's.
 
 ## C library
 
@@ -234,6 +304,97 @@ is verbatim):
 |---|---|---|---|
 | `akiko.c:17,19`, `config.c:614`, `drivesounds.c:457`, `fat.c:783,790,1647,1649`, `main.c:175`, `menu.c:1595,2663,2665,3040,3042,3044,3046,3048,3050,3052` | `%x`, `%04x`, `%08lx`, `%lx` | `%X`, `%04X`, `%08lX`, `%lX` | `UPPER`: keeps the UART/OSD text identical |
 | `boot.c:263` | `printf(str)` | `printf("%s", str)` | `str` is data (a file name, `rtl_ver`): a `%` in it would be taken for a conversion with garbage arguments, and the two libraries differ on that. Identical for every string without `%` |
+
+### gcc 15 and gnu23 compile fixes (Task 4)
+
+Decision 12.12: the tree is C gnu23 (`f()` means `f(void)`; `bool`, `true`,
+`false` are keywords, `true` == 1) and the code is fixed for it, not built
+with `-std=gnu17`. Every edit is minimal; behaviour is the 832's. Found by
+building the Task 3 tree (`make -C fw/ctrl_rv -k`: 23 distinct errors, all
+covered below) plus the source rules of 12.12.
+
+| File:line | 832 | RV | Why |
+|---|---|---|---|
+| `firmware.h:23-24` | `#define true -1`, `#define false 0` | removed | C23 keywords; audit below (no site observes -1) |
+| `drivesounds.h:14-15` | `void drivesounds_enable();`, `void drivesounds_disable();` | `(int type)` | the definitions take `int`; gcc 15 rejects the calls (`main.c:228`, `menu.c:901,903,1961,1963`: too many arguments) and the conflicting definitions (`drivesounds.c:49,54`) |
+| `menu.c:2987` | `void ShowError(char *message, unsigned char code)` | `void ShowError(void)` | conflicts with `menu.h`'s `ShowError()` (= `(void)` in C23); the only call (`main.c:332`) passes nothing and the body uses neither parameter. `menu.h` stays as written |
+| `fat.c:473` | `int FindDirectoryByCluster(...)` | `unsigned long FindDirectoryByCluster(...)` | conflicts with `fat.h:126` (`unsigned long`), which its one caller (`fat.c:463`, a truth value) sees; same 32-bit value |
+| `config.c:29` | `int CheckSum();` | `int CheckSum(char *adr,int size);` | the definition (`main.c:81`) takes parameters (rule of 12.12); `config.c` calls it only in comments |
+| `config.c:41`, `config.c:50` | `int *p=(0xe00000 & 0x7fffff) ^ HOSTMAP_ADDR;`, `int *p=0 ^ HOSTMAP_ADDR;` | `(int *)(...)` | integer -> pointer is an error in gcc 15; same address |
+| `boot.c:240` | `BootClearScreen(SCREEN_ADDRESS, ...)` | `BootClearScreen((unsigned short *)SCREEN_ADDRESS, ...)` | `boot.h:15` `SCREEN_ADDRESS` is an integer; same address |
+| `audio.c:25`, `drivesounds.c:431` | `unsigned char *p=AUDIO_BUFFER;`, `char *buf=AUDIO_BUFFER;` | `(unsigned char *)`, `(char *)` cast | `hardware.h:33` `AUDIO_BUFFER` is an integer (its other users already cast); same address |
+| `hdd.c:518` | `while(blk && (((lba+hdf[unit].offset)<0) \|\| (unit==0 && hdf[unit].type==HDF_FILE && lba==0))` | one `)` added at the end: `blk && (A \|\| B)` | a missing `)` that vbcc832 accepted (warning 59 "`)` expected" at line 519: it inserts the `)` before the `{`). The 832 assembly (vbcc832 with the 832 Makefile's flags on `fw/ctrl_832/hdd.c`) tests `blk` first and leaves the loop when it is 0 without evaluating A or B, i.e. `blk && (A \|\| B)`, not `(blk && A) \|\| B` (the other place where one `)` would parse) |
+| `drivesounds.c:380`, `391`, `397`, `413` | `if ((drivesounds.enabled & DRIVESOUNDS_FLOPPY)` | `if ((drivesounds.enabled & DRIVESOUNDS_FLOPPY))` | the same missing `)` four times (the plan named the first; gcc's error at 380 hid the other three; vbcc832 warns 59 at 381, 392, 398, 414, and nowhere else in `fw/ctrl_832`): every placement means `(enabled & FLOPPY)` |
+| `drivesounds.c:11`, `432` | `extern char _bss_end__;`, `buf-&_bss_end__` | `__bss_end` | link error: `_bss_end__` is the 832 linker's `__bss_end__` (vbcc prefixes `_`); `arch/firmware.ld` names the end of `.bss` `__bss_end` (= `_end`) |
+| `akiko.c:25` | `__constructor(101.akiko)` | `__attribute__((constructor(102)))` | the 832 order ("Building", Constructors) |
+| `c64keys.c:305` | `__constructor(101.c64keys)` | `__attribute__((constructor(103)))` | the 832 order |
+| `akiko.c:3`, `c64keys.c:3`, `main.c:58` | `#include "interrupts.h"` | `#include "irq.h"` | `interrupts.c`/`.h` deleted; `arch/irq.c` replaces them (default handler at constructor priority 101; the 832's `intconstructor` was 100) |
+| `main.c:245-254` | `void setstack();`, `#ifdef __GNUC__ void c_entry(void) #else __geta4 int main(void) #endif`, `setstack();` | `int main(void)` | crt0 calls `main` and has set `sp`; `__geta4` (defined empty for the 832) is not needed. `main.c` is 6 lines shorter from here on: Task 3's printf audit lines `main.c:262`, `275` are now `256`, `269` |
+
+Checked and left alone:
+
+- **Implicit `puts`** (in the plan's list): not an error. `config.c` calls it
+  with newlib's `<stdio.h>` included, which declares `int puts(const char *)`,
+  the signature of `uart.c`'s definition.
+- **Other `f()` declarations:** each declaration with `()` was compared with
+  its definition: all are right as `f(void)` or have no definition and are
+  never called (`drivesounds_on`, `drivesounds_off`, `OsdKeyGet`,
+  `OsdCoreName`, `getserial`); they stay as written. `menu.c:136`
+  `void (*confirmfunc)()` holds only `void(void)` functions.
+- **K&R definitions:** none (`-Wold-style-definition` over every `*.c`, once;
+  the flag is not kept).
+- **C23 keywords as identifiers** (`bool nullptr constexpr typeof
+  static_assert thread_local alignas alignof`): none.
+
+#### `true`/`false` audit
+
+All 32 hits of `\btrue\b|\bfalse\b` in the copy (line numbers of the Task 3
+tree; Task 4 does not move these lines). "Truth only": the value is used only
+as a condition, so C23 `true` (1) behaves as the 832's -1 (0xFF in an
+`unsigned char`). "Value kept" would be a site where -1 is observable (stored
+and compared with `==`/`!=`, written to a config field, the SPI or the OSD, a
+mask, arithmetic, sign extension) and would use a named -1 constant. **No
+site is "value kept"**, so no such constant exists. The `menu.c` flags are
+locals and statics of `HandleUI()`, read only as conditions (`if (x)`, `else
+if (x)`, `&&`, `||`): `ctrl`/`lalt` at 472, 502, 553, 572; `lshift` at 481,
+511, 532; `menu`, `select`, `up`, `down`, `left`, `right` at 605 and in the
+menu states' `if`/`else if`; `plus` at 785, `minus` at 791. None is passed to
+a function, copied elsewhere or used in arithmetic.
+
+| File:line | Use | Verdict |
+|---|---|---|
+| `firmware.h:23` | `#define true -1` | removed (C23 keyword, `true` == 1) |
+| `firmware.h:24` | `#define false 0` | removed (C23 keyword, `false` == 0) |
+| `config.c:288` | `updatekickstart=true;` (`int` local) | truth only: never read (gcc: set but not used) |
+| `config.c:360` | `updatekickstart=true;` | truth only: never read |
+| `menu.c:124` | the word "true" in a help string | text, not code |
+| `menu.c:126` | the word "true" in a help string | text, not code |
+| `menu.c:410` | `static unsigned char ctrl = false;` | truth only |
+| `menu.c:411` | `static unsigned char lalt = false;` | truth only |
+| `menu.c:412` | `static unsigned char lshift = false;` | truth only |
+| `menu.c:442` | `menu = false;` (`unsigned char` local) | truth only |
+| `menu.c:443` | `select = false;` (`unsigned char` local) | truth only |
+| `menu.c:444` | `up = false;` (`unsigned char` local) | truth only |
+| `menu.c:445` | `down = false;` (`unsigned char` local) | truth only |
+| `menu.c:446` | `left = false;` (`unsigned char` local) | truth only |
+| `menu.c:447` | `right = false;` (`unsigned char` local) | truth only |
+| `menu.c:448` | `plus = false;` (`unsigned char` local) | truth only |
+| `menu.c:449` | `minus = false;` (`unsigned char` local) | truth only |
+| `menu.c:454` | `ctrl = true;` | truth only |
+| `menu.c:457` | `ctrl = false;` | truth only |
+| `menu.c:460` | `lalt = true;` | truth only |
+| `menu.c:463` | `lalt = false;` | truth only |
+| `menu.c:466` | `lshift = true;` | truth only |
+| `menu.c:469` | `lshift = false;` | truth only |
+| `menu.c:499` | `plus = true;` | truth only |
+| `menu.c:529` | `minus = true;` | truth only |
+| `menu.c:581` | `menu = true;` | truth only |
+| `menu.c:585` | `menu = true;` | truth only |
+| `menu.c:589` | `select = true;` | truth only |
+| `menu.c:592` | `up = true;` | truth only |
+| `menu.c:595` | `down = true;` | truth only |
+| `menu.c:598` | `left = true;` | truth only |
+| `menu.c:601` | `right = true;` | truth only |
 
 ## String semantics audit
 

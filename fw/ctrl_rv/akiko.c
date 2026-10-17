@@ -1,6 +1,6 @@
 #include <stdio.h>
 
-#include "interrupts.h"
+#include "irq.h"
 
 #include "akiko.h"
 
@@ -22,7 +22,7 @@ void akiko_inthandler()
 
 }
 
-__constructor(101.akiko) void akikoconstructor()
+__attribute__((constructor(102))) void akikoconstructor()
 {
 }
 

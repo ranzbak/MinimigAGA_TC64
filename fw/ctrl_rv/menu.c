@@ -2984,7 +2984,7 @@ void ErrorMessage(char *message, unsigned char code)
     OsdColor(OSDCOLOR_WARNING);
 }
 
-void ShowError(char *message, unsigned char code)
+void ShowError(void)
 {
     int t = ErrorMask >> 1;
     errorpage = 0;

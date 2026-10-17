@@ -237,7 +237,7 @@ void BootInit()
 	SPI(SPI_CPU_HLT | SPI_RST_CPU);
 	DisableOsd();
 
-	BootClearScreen(SCREEN_ADDRESS, SCREEN_MEM_SIZE);
+	BootClearScreen((unsigned short *)SCREEN_ADDRESS, SCREEN_MEM_SIZE);
 	BootUploadLogo();
 	BootUploadBall();
 	BootUploadCopper();

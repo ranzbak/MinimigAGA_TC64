@@ -55,7 +55,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "config.h"
 #include "c64keys.h"
 #include "akiko.h"
-#include "interrupts.h"
+#include "irq.h"
 #include "drivesounds.h"
 #include "cdrom.h"
 #include "audio.h"
@@ -242,16 +242,10 @@ int ColdBoot()
 	return(result);
 }
 
-void setstack();
-#ifdef __GNUC__
-void c_entry(void)
-#else
-__geta4 int main(void)
-#endif
+int main(void)
 {
 	int c=0;
 	int rtc;
-	setstack();
 	debugmsg[0]=0;
 	debugmsg2[0]=0;
 

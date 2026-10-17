@@ -470,7 +470,7 @@ int ValidateDirectory(unsigned long directory)
 }
 
 
-int FindDirectoryByCluster(unsigned long parent, unsigned long cluster)
+unsigned long FindDirectoryByCluster(unsigned long parent, unsigned long cluster)
 {
     DIRENTRY      *pEntry = NULL;        // pointer to current entry in sector buffer
     unsigned long  iDirectorySector;     // current sector of directory entries table

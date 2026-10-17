@@ -11,8 +11,8 @@ enum DriveSound_Type {
 #define DRIVESOUNDS_FLOPPY 1
 #define DRIVESOUNDS_HDD 2
 
-void drivesounds_enable();
-void drivesounds_disable();
+void drivesounds_enable(int type);
+void drivesounds_disable(int type);
 void drivesounds_on();
 void drivesounds_off();
 void drivesounds_queueevent(enum DriveSound_Type type);
