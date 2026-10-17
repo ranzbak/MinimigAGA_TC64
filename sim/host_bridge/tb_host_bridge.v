@@ -74,13 +74,19 @@
 //                    a HandleFpga frame is "10" with exactly six bytes 00
 //   === OSD GAP min <n> over <m> bytes     OSD reply reads (frames whose
 //                    command is OSD_CMD_VERSION 0x88 or OSD_CMD_KEYQ 0x98,
-//                    the firmware's SPI_reply() users): the idle clk_114
-//                    cycles between consecutive SPI DATA accesses of the
-//                    reply bytes, as sim/spi_cdc/tb_spi_cdc.v's +GAP (the
-//                    clk_114 edges strictly between the ack edge of one
-//                    access and the edge that raises the next request;
-//                    other hw accesses in between, the TIMER reads of
-//                    SPIN, count as idle); <m> = reply bytes
+//                    the firmware's SPI_reply() users): per reply byte, the
+//                    idle clk_114 cycles from the end of the previous byte
+//                    (the ack of its read-back: cfide holds every SPI access
+//                    while SD_busy is high) to the start of this byte (the
+//                    request of its DATA write), counted as
+//                    sim/spi_cdc/tb_spi_cdc.v's +GAP (the clk_114 edges
+//                    strictly between the ack edge and the edge that raises
+//                    the next request; the TIMER reads of SPIN in between
+//                    count as idle); <m> = reply bytes.  That is the
+//                    interval tb_spi_cdc's OSD_MIN_GAP = 40 constrains
+//                    (userio_osd loads the reply byte on the first sck edge
+//                    of that byte).  A second line gives the write ->
+//                    read-back gap, which userio_osd never sees.
 //   === STACK low <hex> (<n> bytes used)   the lowest byte address the CPU
 //                    writes below 0x2000 after the first read of 0x2000
 // UART lines may be up to 4095 characters (the boot ROM prints "00" per
@@ -488,7 +494,11 @@ module tb_host_bridge #(
   // one gap: the clk_114 edges strictly between the previous SPI DATA
   // access's ack edge (cycle og_done) and the edge that raised this request
   // (one before the edge that sees hw_req high first): cyc - og_done - 2.
-  integer og_i = 0, og_done = -1, og_min = 1000000, og_rw_min = 1000000, og_wr_min = 1000000;
+  // Even accesses (a reply byte's write: read-back -> write, the
+  // constrained interval) go to og_rw_min, the headline; odd ones (write ->
+  // its own read-back, which cfide holds until the transfer has ended) to
+  // og_wr_min.
+  integer og_i = 0, og_done = -1, og_rw_min = 1000000, og_wr_min = 1000000;
   integer og_bytes = 0, og_frames = 0, og_g = 0;
   reg [7:0] og_cmd = 8'h00;
   reg       og_cs5 = 1'b1;          // sd_cs[5] at the last clk_114 edge
@@ -500,7 +510,6 @@ module tb_host_bridge #(
         bench_error("OSD reply frame: SPI DATA accesses are not write/read pairs");
       if (og_i >= 2 && (og_cmd == 8'h88 || og_cmd == 8'h98)) begin
         og_g = cyc - og_done - 2;
-        if (og_g < og_min) og_min = og_g;
         if (og_i[0] == 1'b0) begin
           og_bytes = og_bytes + 1;
           if (og_i == 2) og_frames = og_frames + 1;
@@ -1040,11 +1049,12 @@ module tb_host_bridge #(
     end
     $display("=== SPI frames %0d, HandleFpga frames %0d, KEYQ frames %0d", n_frames, n_fpga6, n_keyq);
     if (og_bytes > 0)
-      $display("=== OSD GAP min %0d over %0d bytes", og_min, og_bytes);
+      $display("=== OSD GAP min %0d over %0d bytes", og_rw_min, og_bytes);
     else
       $display("=== OSD GAP min none over 0 bytes");
-    $display("=== OSD GAP read->write (transfer start) min %0d, write->read min %0d, %0d reply frames",
-             og_rw_min, og_wr_min, og_frames);
+    if (og_bytes > 0)
+      $display("=== OSD GAP (info) write->read-back min %0d (not seen by userio_osd), %0d reply frames",
+               og_wr_min, og_frames);
     $display("=== STACK low %h (%0d bytes used)", stack_low, 32'h2000 - stack_low);
     if (test == "fwboot" || test == "fwboot_trap") begin
       if (!done && errors == 0) $display("=== PASS");

@@ -547,8 +547,8 @@ firmware: .../fw/ctrl_rv/build/RV32OSDA.BIN, 92684 bytes, sha256 5b5a813887947a1
 === HW accesses 1447166, stale acks 0, X 0, SDRAM reads 91171 writes 388110, main done 79381, cycles 119600178
 === STATS irefill 28221 dread 1201163 dwrite 1224582 busy_cycles 97043641 (rv_hostcpu, whole run)
 === SPI frames 3201, HandleFpga frames 1, KEYQ frames 406
-=== OSD GAP min 4 over 412 bytes
-=== OSD GAP read->write (transfer start) min 44, write->read min 4, 407 reply frames
+=== OSD GAP min 44 over 412 bytes
+=== OSD GAP (info) write->read-back min 4 (not seen by userio_osd), 407 reply frames
 === STACK low 00001950 (1712 bytes used)
 ok   milestones: 27 of 27 found in order (.../run_fwv/milestones.txt)
 ok   bench verdict: === PASS
@@ -708,9 +708,17 @@ bytes as tokens.
   between one access's ack and the next access's request": its bus task
   drops `req` at the edge that sees `ack` and raises the next request
   `gap` edges later plus one, so GAP = the `clk_114` edges strictly between
-  the ack edge and the edge that raises the next request, for every pair of
-  consecutive accesses of the OSD reply read (write of 0xFF, read back, per
-  byte). Measured here at the bridge's `hw_req`/`hw_ack`: the events are
+  the ack edge and the edge that raises the next request. The bench task
+  applies it after every access, but the interval its `OSD_MIN_GAP = 40`
+  constrains (`tb_spi_cdc.v` at the plusarg: `userio_osd` loads a reply
+  byte on the first `sck` edge of that byte, from a counter that moves only
+  after the previous byte has been through the `clk7` synchroniser; "a host
+  that starts the next byte sooner gets a stale reply") runs from the end of
+  one byte to the start of the next. cfide holds every SPI access, the
+  read-back included, while `SD_busy` is high (`cfide.vhd`, `support_state`
+  `idle`: `SPI_select` is acked only with `SD_busy = '0'`), so a byte ends
+  at the ack of its read-back and the next one starts with the request of
+  the next DATA write: the read -> write gap. Measured here at the bridge's `hw_req`/`hw_ack`: the events are
   the SPI DATA accesses (`0xFFFFFFE0`) of every OSD frame whose command is
   `OSD_CMD_VERSION` (0x88) or `OSD_CMD_KEYQ` (0x98), the firmware's two
   `SPI_reply()` users: access 0 is the command write, 1 its read-back, then
@@ -718,10 +726,12 @@ bytes as tokens.
   `cycle(first edge that sees hw_req high) - cycle(previous SPI DATA ack
   edge) - 2`. The TIMER reads of `SPI_reply()`'s four `SPIN`s in between
   are not SPI accesses: they count as idle (they are what makes the gap).
-  `<m>` = reply bytes. The second line splits the minimum: read -> write
-  (the previous byte's read-back to this byte's write, i.e. to the start
-  of its transfer: the time `userio_osd` has to load the byte) and write
-  -> read (the write to its own read-back).
+  `<m>` = reply bytes. The headline is the minimum over the even accesses
+  (a reply byte's write, after the previous byte's read-back: the
+  constrained interval; for the first reply byte the previous byte is the
+  command). The `(info)` line gives the minimum over the odd ones (a write
+  to its own read-back): that interval lies inside the transfer, which a
+  byte takes about 48 `clk_114` at SPEED 1, and `userio_osd` never sees it.
 - **Stack low-water** (`=== STACK low <hex> (<n> bytes used)`): the lowest
   byte address the CPU writes below 0x2000 (boot BRAM, the bridge's `rom`
   state; `sel[i]` = byte A+i) after its first read of 0x2000.
@@ -735,21 +745,19 @@ bytes as tokens.
 | `ROM loading failed` (end of `ColdBoot()`) | cycle 77,793,169 |
 | 20th `KEYQ` frame (20th pass of the error loop) | cycle 79,668,370 (one pass about 94 k cycles) |
 | I$ refills, whole run (119.6 M cycles) | 28,221 (dread 1,201,163, dwrite 1,224,582) |
-| OSD GAP | **min 4** over 412 reply bytes (write -> read); read -> write (transfer start) min 44 |
+| OSD GAP (byte end -> next byte start) | min 44 over 412 reply bytes (>= 40, margin 4); write -> own read-back min 4 (info) |
 | stack low-water | 0x1950: 1712 bytes used, above Task 17's 0x1400 limit |
 | `fwboot_trap` `EXC` line | cycle 43,926,505, stack 0x1F8C (116 bytes) |
 | wall time | Verilator 329 s (`fwboot`), 162 s (`fwboot_trap`), with other simulations running; xsim 1592 s (`fwboot`) |
 
-**Open (plan 7.1 item 2): the OSD GAP is below 40.** By `tb_spi_cdc.v`'s
-definition the RV firmware's reply read has a gap of 4 `clk_114` cycles
-between each `SPI(0xff)` write and its read-back (`sb` then `lbu`, back to
-back: the four `SPIN`s come before the write, not between write and read),
-and 44 from one byte's read-back to the next byte's write. `tb_spi_cdc`
-applies its GAP to both pairs alike, so this bench cannot say which one
-`userio_osd`'s `clk7_en` reload depends on; 44 is only just above 40. Not
-tuned here (the brief): the real check is Phase 4 against `userio_osd`
-itself. In this run the stub answers at once, so the reply bytes are
-right whatever the gap.
+**Plan 7.1 item 2: the OSD GAP is 44, above the 40 of `tb_spi_cdc.v`,
+with a margin of 4 `clk_114` cycles.** It is the time from one reply
+byte's read-back to the next byte's `SPI(0xff)` write, which is what
+`SPI_reply()`'s four `SPIN`s stretch. The write -> read-back gap (4: `sb`
+then `lbu`, back to back) lies inside the transfer and does not count.
+The margin is small and the 40 is `tb_spi_cdc`'s model of `userio_osd`,
+so Phase 4 still re-checks it against the real `userio_osd`. In this run
+the stub answers at once, so the reply bytes are right whatever the gap.
 
 ## Bench
 
