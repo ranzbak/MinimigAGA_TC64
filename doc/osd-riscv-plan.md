@@ -1211,10 +1211,19 @@ P5-P7 on evidence. Of these, only the 8 KB boot BRAM survives unchanged.*
     addition (probed): newlib-nano's `*printf` core references
     `_malloc_r`/`_realloc_r`/`_free_r` for the `asprintf` case, so the
     firmware defines those three as `NULL`/no-op stubs to keep the allocator
-    and `_sbrk` out. Where lib832 differed from ISO C, exec-3 Task 3's
-    format-parity and string-semantics audits fix the call sites so the
-    832's behaviour stays, or list the difference (OSD layout differences
-    are always fixed at the call site); no LGPL-derived file in
+    and `_sbrk` out. Where lib832 differed from ISO C (exec-3 Task 3
+    audits): **evident lib832 printf bugs are not reproduced** (Paul,
+    2026-10-17, on the planner's question) -- unconsumed precision
+    (`%.Ns` printing `Ns`, later arguments shifted), a zero ignoring
+    width/zero fill, width digit 9 / second 0 not parsed, `-` ignored,
+    `sprintf`'s negative `-` going to the UART, return-value miscounts: the
+    RV firmware prints newlib's correct output, OSD lines included, with no
+    bug-emulation code at call sites; each case is a README "Differences
+    from fw/ctrl_832" row and a `fmt_diff_expected.txt` line (Phase 4
+    expected differences). Non-bug format differences (e.g. `%x` digit
+    case) may be matched at the call site (`%x` -> `%X`), otherwise listed.
+    String-function differences the firmware can observe are fixed at the
+    call site so the 832's behaviour stays. No LGPL-derived file in
     `fw/ctrl_rv`. (c) **C dialect: gnu23, fix the code**, not `-std=gnu17`:
     `firmware.h`'s `#define true -1`/`false 0` go, every `true`/`false` use
     is audited (where -1 is observable it stays -1 through a named

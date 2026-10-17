@@ -32,9 +32,12 @@ legacy interrupt API). C library (decision 12.12): newlib-nano of the pinned
 xPack toolchain for `sprintf`/`snprintf`/string/ctype/`strtol`, no stdio FILE
 layer, no heap; the firmware's own `printf`/`vprintf` (`rvlibc.c`:
 `vsnprintf` into a static buffer, then UART TX byte by byte) and
-`putchar`/`puts` (`uart.c`). Where lib832 differed from ISO C, Task 3's
-format and string audits fix the call sites so the behaviour stays the
-832's, or list the difference. C dialect gnu23 (Task 4 fixes the code).
+`putchar`/`puts` (`uart.c`). Task 3 audits where lib832 differed from ISO
+C: an evident lib832 printf bug is not reproduced (newlib's output, listed
+as a difference; Paul 2026-10-17, 12.12); a non-bug format difference may
+be matched at the call site or is listed; string-function differences that
+the firmware can observe are fixed at the call site so the 832's behaviour
+stays. C dialect gnu23 (Task 4 fixes the code).
 Byte-order helpers `le16/le32/be16/be32` replace the
 "for 68000" swaps (identity on LE disk fields) and make every Amiga-facing
 structure explicit big-endian. Tests: `fw/ctrl_rv/test` (host gcc, native and
@@ -153,8 +156,9 @@ replaces the stub with the real slaves).
   a port of lib832's printf/string code) / Task 2 (Task 1 for `arch.mk`).
   Runs before Task 4: nothing here needs the whole firmware to link (one
   small L1 program, host programs).
-- **Model:** Sonnet; Opus reviews the string-audit verdict table and every
-  OSD-layout call-site fix. The L1 wiring needs no Opus: one program rule in
+- **Model:** Sonnet; Opus reviews the string-audit verdict table, every
+  call-site fix and the bug/non-bug classification of the format
+  differences. The L1 wiring needs no Opus: one program rule in
   `sim/rv_l1/prog/Makefile` and one `run.sh` target modelled on `units`.
 - **What the firmware gets (Global Constraints "C library"):** newlib-nano
   headers (`--specs=nano.specs`) and `libc_nano.a`; `fw/ctrl_rv/rvlibc.c`
@@ -238,14 +242,17 @@ replaces the stub with the real slaves).
   buffer; return values count differently (`%s` one short; `snprintf`
   returns the bytes written, not the length needed).
   Every difference is a row in README "Differences from fw/ctrl_832" and a
-  line of `fmt_diff_expected.txt` (Phase 4's expected-differences list). A
-  difference that changes OSD layout (width or padding on an OSD line, text
-  shifted by an unconsumed argument) is fixed **at the call site** so the
-  OSD line equals the 832's, not in libc; where that reproduces an evident
-  832 printf bug, the row says "832 bug kept for parity" (fixing it is a
-  later decision for Paul, after Phase 4). A case-only difference may be
-  fixed at the call site the same way (`%x` -> `%X` keeps UART/OSD strings
-  identical for the Phase 4 diff); otherwise it is listed. Call sites that
+  line of `fmt_diff_expected.txt` (Phase 4's expected-differences list),
+  classified "832 printf bug" or "non-bug". **Evident lib832 printf bugs
+  are not reproduced** (Paul, 2026-10-17, decision 12.12): an unconsumed
+  precision (`%.Ns` printing `Ns` and shifting later arguments), a zero
+  that ignores width/zero fill, width digit `9` or a second `0` not parsed,
+  `-` ignored, `sprintf`'s negative `-` going to the UART, return-value
+  miscounts -- the RV firmware prints newlib's correct output, also where
+  that changes an OSD line, and there is no bug-emulation code at any call
+  site. A non-bug difference (e.g. `%x` digit case) may be matched at the
+  call site (`%x` -> `%X` keeps UART/OSD strings identical for the Phase 4
+  diff); otherwise it is listed. No difference is fixed in libc. Call sites that
   use a `printf`/`sprintf`/`snprintf` return value are listed with a verdict
   (a grep on 2026-10-17 found none; re-check).
 - **(b) String semantics audit:** read lib832 `string.S`, `string_c.c`,
@@ -1021,10 +1028,11 @@ trap log, speed, I$ hit rate) starts from:
    the basis of 4.2's 832-vs-RV diff. Expected, listed differences between
    the two CPUs' traces: config file names and sectors (`MINMGAR` vs
    `MINMGAA`, first-boot conversion writes), firmware file size/sectors,
-   version strings, timeout lengths of failure paths, and the printf
-   differences of `fw/ctrl_rv/test/gold/fmt_diff_expected.txt` that were
-   listed rather than fixed at the call site (Task 3: UART lines, and OSD
-   text in `OSD_CMD_OSD_WR` frames only where no layout changes); the
+   version strings, timeout lengths of failure paths, and every printf
+   difference in `fw/ctrl_rv/test/gold/fmt_diff_expected.txt` (Task 3: the
+   832's printf bugs, which RV does not reproduce, and the non-bug
+   differences not matched at the call site) in UART lines and in the OSD
+   text of `OSD_CMD_OSD_WR` frames, OSD layout changes included; the
    string-semantics table says which call sites were made to keep the
    832's behaviour.
 4. **Card recipes:** `sim/host_bridge/fwboot/Makefile` (RV32OSDA.BIN,
