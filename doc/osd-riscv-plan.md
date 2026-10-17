@@ -582,22 +582,77 @@ only mask.
 - Nothing else changes: same SPI polling, same main loop. This is the
   reference point for every later offload.
 
-### 6.3 Interrupt controller (Phase 8.0)
+### 6.3 Interrupt controller (Phase 8.0, implemented)
 
-VexRiscv has three standard lines: MEI, MTI, MSI. More sources go through
-one small pending/mask register on MEI in cfide (~30 LUT, cleanest), not
-through `ExternalInterruptArrayPlugin` (custom CSRs, regeneration). The
-block at 0x..A0 keeps the 832 working during A/B:
+Done on branch `osd-riscv` (RTL `7f0a672`, `75af45c`; firmware API `59f3552`,
+`d492f6e`; spec `doc/osd-riscv-exec-2.md`). VexRiscv has three standard
+lines: MEI, MTI, MSI. The sources go through one small controller in
+`rtl/host/cfide.vhd` on MEI (not through `ExternalInterruptArrayPlugin`:
+custom CSRs, regeneration). It runs on `clk_28` like the rest of cfide and
+sits beside the legacy INTERRUPT register at `0xFFFFFFA0`, which is
+unchanged (bit 0 = enable on write, any access clears its flag), so the 832
+firmware is unaffected. Four 16-bit registers in the cfide hw window
+`0xFFFFFF30..3C` (`addr(23)='1'`, `addr(7 downto 4) = X"3"`, register
+selected by `addr(3 downto 2)`):
 
 ```
-0x..A0  IRQ_STATUS  R: pending bits, W1C      bit0 = legacy aggregate (vblank|i2c|akiko), kept
-0x..A4  IRQ_ENABLE  R/W                        bit0 = legacy enable (today's semantics)
+0xFFFFFF30  IRQ_PENDING  R: PENDING and MASK; clears exactly the EDGE-mode bits it returns,
+                            once per access. W: no effect
+0xFFFFFF34  IRQ_MASK     R/W, reset 0
+0xFFFFFF38  IRQ_RAW      R: synchronised source levels, no side effect. W: no effect
+0xFFFFFF3C  IRQ_MODE     R/W, reset 0; per bit 0 = EDGE, 1 = LEVEL
 ```
 
-MEI = OR of (pending & enable). The timer (P2) drives MTI directly from an
-`mtime >= mtimecmp` compare instead of going through IRQ_STATUS (standard
-M-mode timer, no software dispatch). No PLIC: eight sources, fixed priority
-in software (`ctz` of IRQ_STATUS & IRQ_ENABLE) is enough.
+| Bit | Source | Notes |
+|---|---|---|
+| 0 | `vbl_int` | vertical blank, pulse: EDGE |
+| 1 | `i2c_int` | I2C master transfer event (`i2c_master_mmio` `r_interrupt`); cleared only by an access to `0xFFFFFFA0`: LEVEL, and the handler must access `0xFFFFFFA0` |
+| 2 | `amiga_req` | Akiko request, pulse: EDGE |
+| 3 | `i2c_ext_int` | the ADV7511's INT pin (also I2C status bit `0x400`): LEVEL |
+| 4..15 | `irq_src(15 downto 4)` | spare cfide input port, defaulted to 0 (a top that has no source leaves it open); P1 (IDE, floppy) and later |
+
+Every bit is the same logic (decision 12.9): a 2-FF synchroniser into
+`clk_28`, then EDGE (MODE bit 0): a rising edge of the synchronised level
+sets the bit, and an IRQ_PENDING read that returns it clears it; an edge in
+the cycle of that clear wins ("set wins"); an event of a masked bit stays
+pending until it is unmasked and read. LEVEL (MODE bit 1): the bit is the
+synchronised level itself, a read does not clear it, it drops with the
+source. Switching the mode: EDGE to LEVEL discards an unread event; LEVEL to
+EDGE starts clear and needs a new rising edge. The CPU line is the legacy
+flag OR `(PENDING and MASK) /= 0`; MASK and MODE reset to 0, so with MASK = 0
+the behaviour is the pre-8.0 one. The timer (P2) drives MTI directly from an
+`mtime >= mtimecmp` compare, not through this block. No PLIC: sixteen
+sources in software bit order (bit 0 first) are enough.
+
+Firmware rules (`fw/ctrl_rv/arch/irq.h`, API in its README):
+
+- Level sources (ADV7511 INT bit 3, IDE requests, the I2C flag bit 1) go in
+  LEVEL mode with `IrqSetMode(bit, 1)` before `IrqEnable(bit)`: the interrupt
+  stays asserted until the device is serviced, so no `IrqRaw()` re-check is
+  needed. Pulse sources (vblank, Akiko) stay EDGE, the reset mode.
+- The synchroniser delays a LEVEL bit's fall by up to 3 `clk_28` cycles after
+  the device drops its line: a handler that returns at once may be called one
+  extra time and must tolerate that.
+- A debugger reading IRQ_PENDING consumes pending EDGE bits.
+- API: `IrqSetHandler(bit, h)`, `IrqSetMode(bit, level)`, `IrqEnable(bit)`
+  (installs the dispatcher), `IrqDisable(bit)`, `IrqRaw()`, `IrqInstall()`
+  (idempotent; switches the legacy register off through `SetIntHandler`). The
+  dispatcher reads IRQ_PENDING, calls the handler of each set bit, bit 0
+  first, and repeats until a read returns 0. A pending bit with no handler
+  has its MASK bit cleared (no livelock); a spurious legacy flag is turned
+  off. `SetIntHandler(h)` with a non-dispatcher handler clears MASK. After
+  `IrqInstall()` do not use `EnableInterrupts()`.
+- P1 sources connect to `irq_src` bits 4..15 and must be pulses of at least
+  one `clk_28` cycle or levels.
+
+Measured cost (OOC synthesis of cfide alone, XC7A100T): +61 LUT / +113 FF,
+no BRAM or DSP (48 synchroniser/prev, 16 pend, 16 mask, 16 mode, 16 read
+latch, 1 request-seen), against the ~30 LUT of the earlier sketch.
+
+Open board items: the ADV7511 INT polarity is inferred active-high (the part
+is set up without a polarity write, and `i2c_master_mmio` and the 832
+firmware use it that way), not measured; the interrupt OR path is untimed in
+a full build; the top leaves `irq_src` open (all 0).
 
 Firmware structure from 8.0 on: ISRs only move bytes and set flags (timer
 tick, UART RX into a ring, "request pending" flags, audio half flag); the
@@ -614,7 +669,7 @@ measured against the previous stage.
 
 | # | Peripheral | Removes from firmware / timing it fixes | IRQ source(s) | Register sketch (cfide window) | LUT / BRAM est. | Risk | Priority (proposal) |
 |---|---|---|---|---|---|---|---|
-| P1 | **Request IRQ + OSD reply ready flag** | The 6-byte `HandleFpga()` SPI status poll per loop (~100 us) and the `SPI_reply()` pause: `userio_osd` exposes "reply byte loaded" and "key queue non-empty"; `paula_floppy` exposes "track request pending" (CMD_RDTRK/WRTRK), `gayle_port` "command written" / "FIFO threshold"; cfide shows them in IRQ_STATUS and a `HOST_REQ` status word | request lines (4-5 bits) | `0x..B4 HOST_REQ` R: {osd_reply_rdy, keyq, fdd_req, ide0_cmd, ide1_cmd, ide_fifo_rdy} | ~120 LUT, 0 BRAM | low (status only; minimig-side changes are output ports) | **1** -- biggest latency win per LUT; also fixes inventory item 2 in hardware |
+| P1 | **Request IRQ + OSD reply ready flag** | The 6-byte `HandleFpga()` SPI status poll per loop (~100 us) and the `SPI_reply()` pause: `userio_osd` exposes "reply byte loaded" and "key queue non-empty"; `paula_floppy` exposes "track request pending" (CMD_RDTRK/WRTRK), `gayle_port` "command written" / "FIFO threshold"; cfide shows them on `irq_src` bits 4..15 (6.3) and in a `HOST_REQ` status word | request lines (4-5 bits) | `0x..B4 HOST_REQ` R: {osd_reply_rdy, keyq, fdd_req, ide0_cmd, ide1_cmd, ide_fifo_rdy} | ~120 LUT, 0 BRAM | low (status only; minimig-side changes are output ports) | **1** -- biggest latency win per LUT; also fixes inventory item 2 in hardware |
 | P2 | Timer (`mtime`/`mtimecmp`, 64-bit at clk_114, on MTI, plus 100 Hz tick) | `GetTimer/CheckTimer` 16-bit wrap handling, RTC/drive-sound/HDMI 250 ms bookkeeping moves to the tick ISR | MTI, tick | `0x..D4 MTIME_LO/HI`, `0x..DC MTIMECMP_LO/HI` (TIMER at D0 stays) | ~100 LUT | low | **1** |
 | P3 | UART RX + 16-byte TX/RX FIFOs | A debug console (today TX-only, blocking per byte) | RX non-empty, TX empty | `0x..F0 DATA`, `0x..F4 STATUS` | ~120 LUT (LUTRAM) | low | 2 |
 | P4 | I2C INT routing | The 250 ms edge-poll of the ADV7511 INT | existing `i2c_int` as its own bit | none new | ~10 LUT | none | 1 (free with 8.0) |
@@ -913,9 +968,12 @@ no worse than the 832.
 Order to be confirmed by Paul (decision 12.9) with the dependency map in
 `doc/osd-riscv-exec-1.md` T15. Proposal:
 
-- 8.0 **O** IRQ pending/mask block (6.3) on MEI, legacy bit 0 preserved;
-  **S** firmware `irq_save/restore`, ISR skeleton. Gate: L2 tests per
-  source; 832 A/B unaffected; L3 differential still empty.
+- 8.0 **done** on branch `osd-riscv` (RTL `7f0a672`, `75af45c`; firmware
+  `59f3552`, `d492f6e`; design in 6.3): IRQ pending/mask/raw/mode block on
+  MEI, legacy `0xFFFFFFA0` preserved; firmware `irq_save/restore`, dispatcher
+  API. L2 tests `t_irqctl`, `t_irqapi`. P1 sources attach to `irq_src` bits
+  4..15 as pulses >= 1 `clk_28` cycle or levels. Still to do: board test, and
+  L3 differential / 832 A/B once those exist.
 - 8.1 **O/S** P1 request IRQ + OSD reply ready flag. Gate: L3 shows zero
   idle SPI polls and the `osd` test passing at GAP=2; board stress clean.
 - 8.2 **S** P2 timer on MTI + P4 I2C routing; tick ISR owns timers/RTC/
@@ -1071,3 +1129,6 @@ P5-P7 on evidence. Of these, only the 8 KB boot BRAM survives unchanged.*
 9. **Peripheral order:** deferred -- Paul wants it again once the
    dependencies between stages are worked out (re-ask after Phase 2, with
    the dependency map in `doc/osd-riscv-exec-1.md` T15).
+   Paul 2026-10-17: implement 8.0 now; uniform edge-detected sources; read
+   clears the returned bits; per-source EDGE/LEVEL MODE register. Done (6.3).
+   The rest of the Phase 8 order (P1..P7) stays open for Paul.

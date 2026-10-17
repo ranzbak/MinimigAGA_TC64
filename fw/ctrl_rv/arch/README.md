@@ -14,6 +14,8 @@ and the linker script.
 | `csr.h` | `csr_read` / `csr_write` / `csr_set` / `csr_clear`, `mstatus` / `mie` / `mcause` constants |
 | `firmware.ld` | the firmware image: 0x2000 up to below 0x70000, stack top 0x2000 |
 
+Editor: the worktree's `.clangd` gives clangd the include paths and RISC-V flags for this tree, `fw/ctrl_boot_rv`, `fw/dhrystone_rv` and the `sim/` test sources (`clangd --check=<file>`).
+
 ## Toolchain
 
 xPack `riscv-none-elf-gcc` 15.2.0-1 in `~/opt/xpack-riscv-none-elf-gcc-15.2.0-1`.
