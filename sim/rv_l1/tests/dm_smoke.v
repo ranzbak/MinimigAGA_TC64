@@ -70,8 +70,17 @@ module dm_smoke;
     end
   endtask
 
+  // n rising clock edges, then 1.001 ns off the clock grid.  Every JTAG
+  // edge follows a wait_clk by a multiple of 25 ns (TCK_NS / 2); the clock
+  // edges are 4.408 ns apart (#4.4077 at 1 ps precision), and 25000 and 4408
+  // share the factor 8 ps, so without the offset a TCK edge (and a sample of
+  // tb_rv_l1.cycles) lands on a clock edge in the same time step now and
+  // then, and the simulator's order of the two events decides on which side
+  // of the edge the core sees it (iverilog and Verilator chose differently:
+  // dm_smoke differed by one cycle).  1001 ps is 1 mod 8: a JTAG event can
+  // never coincide with a clock edge.
   task wait_clk(input integer n);
-    begin repeat (n) @(posedge tb_rv_l1.clk); end
+    begin repeat (n) @(posedge tb_rv_l1.clk); #1.001; end
   endtask
 
   task dtmcs_dmireset;

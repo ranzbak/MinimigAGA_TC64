@@ -1,10 +1,12 @@
-# L1 bench: `rv_hostcpu` + big-endian memory model (iverilog)
+# L1 bench: `rv_hostcpu` + big-endian memory model (iverilog, Verilator)
 
 The L1 bench runs RISC-V programs on the OSD host CPU block
 `rtl/host/rv_hostcpu.v` (VexRiscv behind the 832 req/ack bus) against an
 abstract memory model with per-region latency and a few simulation-only
 registers. A bus checker asserts the bus contract every cycle. One run takes
-seconds and needs no Vivado.
+seconds and needs no Vivado. It runs on Icarus Verilog (default, the
+X-checking reference) or on Verilator (`SIM=verilator`, much faster, see
+"Verilator").
 
 | File | What it is |
 |---|---|
@@ -12,7 +14,8 @@ seconds and needs no Vivado.
 | `mem_model.v` | 1 MB BE memory, latency per region, sim MMIO, interrupt register |
 | `bus_checker.v` | Bus contract assertions (`=== BUS VIOLATION ...`) |
 | `jtag_bfm.v` | JTAG master BFM (`jtag_reset`, `jtag_idle`, `jtag_ir`, `jtag_dr`), TCK 50 ns, for `dm_smoke` |
-| `run.sh` | Builds the simulator, runs one program or the whole matrix |
+| `run.sh` | Builds the simulator, runs one program or the whole matrix; `compare` diffs two run directories |
+| `verilator/l1.vlt` | Verilator lint waivers (bench side; `rtl/` is not edited for Verilator) |
 | `Makefile` | Builds the test programs into `build/<prog>.hex` |
 | `sw/crt0_l1.S`, `sw/l1.ld`, `sw/l1.h` | Start-up code, linker script, MMIO header |
 | `sw/boot_fw.S` | Boot ROM stand-in for programs linked as firmware (`irq_sig`, `irq_c`, `exc`) |
@@ -34,8 +37,12 @@ seconds and needs no Vivado.
    Another install: `export RV_GCC_DIR=/path/to/toolchain` (and
    `RV_PREFIX=` if its tools are not `riscv-none-elf-*`).
 2. **Icarus Verilog 12** at `/usr/local/bin/iverilog` and `/usr/local/bin/vvp`
-   (`IVERILOG=` / `VVP=` override the paths).
-3. GNU make, bash, `od`, `awk`.
+   (`IVERILOG=` / `VVP=` override the paths). The gates of `all` always use
+   it.
+3. Optional, **Verilator 5.020** or later (`--timing` support), for
+   `SIM=verilator`: `sudo apt install verilator` (Ubuntu 24.04 ships 5.020;
+   `VERILATOR=` overrides the path), plus g++; `ccache` is used when present.
+4. GNU make, bash, `od`, `awk`.
 
 ## Build the tests and run
 
@@ -43,8 +50,13 @@ From the repository root:
 
 ```sh
 make -C sim/rv_l1 tests            # build/<prog>.hex, .elf, .lst, .map
-bash sim/rv_l1/run.sh all          # gates + full matrix + teeth, ~1 min on 8 cores
+bash sim/rv_l1/run.sh all          # gates + full matrix + teeth, ~4 min on 8 cores
+SIM=verilator bash sim/rv_l1/run.sh all   # the same on Verilator, ~15 s
 ```
+
+`run.sh` runs the make itself first (`make tests`; `units`: `make -C prog`;
+`dhry`: `make -C fw/dhrystone_rv`), so a changed test source is never run
+from a stale image.
 
 `all` ends with `=== ALL PASS` (exit 0) or `=== SOME FAILED` (exit 1). It runs:
 
@@ -127,7 +139,7 @@ retry; the log prints the retry count, 0 so far).
 Outputs go to `sim/rv_l1/run_${RUNTAG:-wt}/` (one log per run, named
 `<prog>_ws<WS>_r<ROMWS>_x<EXTRA_WS>_d<DEBUG>.log`, plus `results.txt`); use a
 new `RUNTAG` per code change when comparing runs. `JOBS=` sets the number of
-parallel `vvp` runs (default `nproc`).
+parallel runs (default `nproc`).
 
 By hand (waveform):
 
@@ -138,6 +150,98 @@ iverilog -g2012 -DRV_HOSTCPU_STATS -s tb_rv_l1 -P tb_rv_l1.EXTRA_WS=0 -o /tmp/l1
 vvp -N /tmp/l1.vvp +HEX=build/lanes.hex +WS=3 +ROMWS=1 +VCD=/tmp/lanes.vcd
 ```
 
+## Verilator
+
+Every target runs on Verilator too: `SIM=verilator` in front of any
+`run.sh` command. Same programs, plusargs, parameters, verdict lines
+(`=== PASS/FAIL/TIMEOUT`, `=== CYCLES`, `=== STATS`), logs and run
+directories as on iverilog; the image of each build is
+`run_${RUNTAG:-wt}/vl_x<EXTRA_WS>_d<DEBUG>[_dm]/Vtb_rv_l1` instead of
+`tb_x<EXTRA_WS>_d<DEBUG>[_dm].vvp`. The default stays iverilog.
+
+```sh
+sudo apt install verilator ccache     # Ubuntu 24.04: Verilator 5.020
+verilator --version                   # needs 5.x (--binary --timing)
+SIM=verilator bash sim/rv_l1/run.sh all
+SIM=verilator bash sim/rv_l1/run.sh units
+SIM=verilator bash sim/rv_l1/run.sh irq
+SIM=verilator bash sim/rv_l1/run.sh dhry
+SIM=verilator bash sim/rv_l1/run.sh dm_smoke
+SIM=verilator WS=8 ROMWS=0 EXTRA_WS=3 bash sim/rv_l1/run.sh refill
+```
+
+Tested with Verilator 5.020 (2024-01-01, Debian 5.020-1), g++ 13.3. Build:
+`verilator --binary --timing` with the waivers in `verilator/l1.vlt`
+(warnings are fatal), C++ at `-O2`, through `ccache` when it is installed
+(`OBJCACHE=` empty switches it off). A build takes 10-40 s cold (the
+`DEBUG=2` cores are the big ones) and a few seconds from ccache; `all` builds
+five.
+
+What differs:
+
+* **2-state.** Verilator has no X or Z: the bench's X checks (`bus_checker`
+  "X on request / write data / read data", `!== 1'bx` tests) cannot fire,
+  and registers without a reset start at 0 where iverilog starts at X. A
+  missing reset or an X on the bus shows only on iverilog. **iverilog is the
+  X-checking reference**: run it (`run.sh all`) before a commit; use
+  Verilator for the long runs and quick iterations.
+* `$urandom` initialisers in the generated `VexOsd_DMJ` (JTAG-side flow
+  control, synchronisers, TAP state) get other values than on iverilog (on
+  iverilog the flow control toggles twice during the reset, with an X
+  command; the JTAG sequence starts with Test-Logic-Reset); the results are
+  the same.
+* `+VCD=` works only on iverilog (the Verilator images are built without
+  `--trace`; the bench prints `=== WARNING +VCD ignored`).
+* The gates of `all` always run on iverilog (they check what Quartus and
+  Vivado parse, not what the simulator does).
+* `DEBUG=1` (BSCANE2 tunnel) is xsim-only on both backends.
+
+**Agreement check.** Both backends must give the same verdict and the same
+`=== CYCLES` for every run. `compare` takes two `RUNTAG`s and diffs every
+run log of both (verdict, cycles, stats, memory dumps, TIME stamps, program
+and debug-test output; only the simulator's own `$finish` line and the order
+of the start-up lines are ignored):
+
+```sh
+RUNTAG=iv bash sim/rv_l1/run.sh all && RUNTAG=iv bash sim/rv_l1/run.sh dm_smoke
+SIM=verilator RUNTAG=vl bash sim/rv_l1/run.sh all && SIM=verilator RUNTAG=vl bash sim/rv_l1/run.sh dm_smoke
+bash sim/rv_l1/run.sh compare iv vl   # "SAME ..." per log, "=== COMPARE n logs: n same, 0 differ, ..."
+```
+
+(`all` clears the logs of its run directory first, so run it before the
+other targets of the same `RUNTAG`.) A difference is a race in the bench,
+to be fixed there: two found while adding Verilator, both fixed in the bench
+(see the comments in `tb_rv_l1.v` and `tests/dm_smoke.v`):
+
+1. The reset release was `repeat (8) @(posedge clk); rst <= 0;` in an
+   initial block. Verilator (`--timing`) commits the nonblocking assignments
+   of a process resumed by an edge before it runs that edge's `always`
+   blocks, so they saw `rst = 0` one edge earlier: the core started one clock
+   earlier in absolute time. Only `dm_smoke` showed it (its JTAG BFM runs in
+   absolute time; every other result counts from the reset), by one cycle.
+   Now a clocked block counts the reset cycles.
+2. `dm_smoke` drives JTAG a multiple of 25 ns after a clock edge, and 25 ns
+   and the 4.408 ns half period meet on a common 8 ps grid: TCK edges and
+   the bench's samples of `cycles`/`core_rst` could land on a clock edge in
+   the same time step, in an order the simulator picks. `wait_clk` now adds
+   1.001 ns, off that grid.
+
+Wall time, this machine (Intel i7-1165G7, 4 cores / 8 threads, 2026-10-17),
+whole target including the builds; Verilator from a warm ccache and cold
+(`OBJCACHE=`, no ccache):
+
+| Target | Runs | iverilog | Verilator | Verilator, cold build |
+|---|---|---|---|---|
+| `all` | 122 + gates | 228 s | 6.4 s | 77 s |
+| `irq` | 13 | 24.7 s | 0.9 s | 6.2 s |
+| `dhry` | 3 | 87.5 s | 1.1 s | 6.5 s |
+| `dm_smoke` | 6 | 16.6 s | 5.1 s | 60 s |
+| `units` | 3 in parallel (`cdaudio_emu` 19.1 M cycles) | 2768 s (46 min) | 10.2 s | 17.4 s |
+
+Same day, both backends over all five targets: `compare` 128 logs, 128
+same (every verdict incl. the teeth, every `=== CYCLES`, `=== STATS` and
+dump).
+
 ## Bench
 
 * **Plusargs**: `+HEX=<file>` (one 32-bit BE word per line, file byte i in
@@ -145,8 +249,8 @@ vvp -N /tmp/l1.vvp +HEX=build/lanes.hex +WS=3 +ROMWS=1 +VCD=/tmp/lanes.vcd
   that cannot be opened or read ends the run at once with `=== FAIL ...`),
   `+WS=` (default 3), `+ROMWS=` (default 1),
   `+TIMEOUT=<cycles>` (default 20 M), `+DUMP_ADDR=<hex> +DUMP_N=<words>`
-  (print `=== MEM <addr> <word>` after DONE), `+VCD=<file>`.
-* **Parameters** (`iverilog -P tb_rv_l1.<name>=<n>`): `EXTRA_WS` (idle
+  (print `=== MEM <addr> <word>` after DONE), `+VCD=<file>` (iverilog only).
+* **Parameters** (`iverilog -P tb_rv_l1.<name>=<n>`, `verilator -G<name>=<n>`): `EXTRA_WS` (idle
   cycles before every request), `DEBUG` (0 or 2).
 * **`-DDM_SMOKE`** (with `DEBUG=2`, plus `jtag_bfm.v tests/dm_smoke.v`): the
   BFM drives the `jtag_*` pins and `dm_smoke` runs its sequence; without it
@@ -258,16 +362,19 @@ A unit passes when the bench prints `=== PASS`, no output line starts with
 of `fw/ctrl_832/test/emu/Makefile`). `units` ends with `=== UNITS PASS` or
 `=== UNITS FAILED`; logs (the programs' own output plus `=== CYCLES`) are
 `run_${RUNTAG:-wt}/<prog>_ws3_r1_x0_d0.log`, the summary
-`run_${RUNTAG:-wt}/units.txt`. The runs are slow (about 1.5-3 minutes per
-million cycles of simulated time on this machine): `units` is not part of `all`.
+`run_${RUNTAG:-wt}/units.txt`. The runs are slow on iverilog (about 1.5-3 minutes
+per million cycles of simulated time on this machine) and take seconds on
+Verilator (`SIM=verilator bash sim/rv_l1/run.sh units`, about 2 M cycles per
+second): `units` is not part of `all`.
 
-Recorded cycles (WS=3 ROMWS=1 EXTRA_WS=0 DEBUG=0, 2026-10-16, all `PASS`):
+Recorded cycles (WS=3 ROMWS=1 EXTRA_WS=0 DEBUG=0, 2026-10-16, all `PASS`; the same
+on both backends, 2026-10-17):
 
-| Program | Cycles | Wall time (vvp) |
-|---|---|---|
-| `cue_emu` | 764,056 | ~2 min |
-| `atapi_emu` | 954,062 | ~2.5 min |
-| `cdaudio_emu` | 19,059,807 | ~50 min |
+| Program | Cycles | Wall time (vvp) | Wall time (Verilator) |
+|---|---|---|---|
+| `cue_emu` | 764,056 | ~2 min | <1 s |
+| `atapi_emu` | 954,062 | ~2.5 min | <1 s |
+| `cdaudio_emu` | 19,059,807 | ~46 min | ~9 s |
 
 `cdaudio_emu` fills the 64 KB ring byte by byte several times and needs about
 19.1 M cycles: `units` passes `+TIMEOUT=40000000` (`TIMEOUT=` from the

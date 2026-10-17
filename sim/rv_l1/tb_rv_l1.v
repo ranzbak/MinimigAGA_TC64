@@ -1,12 +1,13 @@
 `timescale 1ns/1ps
 // L1 bench: rv_hostcpu + BE memory model + bus contract checker.
-// Parameters (iverilog -P tb_rv_l1.<name>=<n>): EXTRA_WS, DEBUG (0 or 2).
+// Parameters (iverilog -P tb_rv_l1.<name>=<n>, Verilator -G<name>=<n>):
+// EXTRA_WS, DEBUG (0 or 2).
 // -DDM_SMOKE (DEBUG=2, + jtag_bfm.v tests/dm_smoke.v): the JTAG BFM drives
 // the pin TAP and dm_smoke runs the debug sequence; DONE passes only after
 // the whole sequence with the memory word DM_CNT = the debugger's target.
 // Plusargs: +HEX=<file> +WS=<n> +ROMWS=<n> +TIMEOUT=<cycles, default 20M>
 //           +DUMP_ADDR=<hex byte address> +DUMP_N=<words>  (dump after DONE)
-//           +VCD=<file>
+//           +VCD=<file>  (iverilog only; Verilator prints a WARNING)
 // Results: "=== PASS" (DONE 0), "=== FAIL <code>" (DONE code, hex),
 //          "=== FAIL bus violation", "=== FAIL bad address",
 //          "=== FAIL uart read" (a read of 0xFFFFFFF0: cfide never acks it),
@@ -64,15 +65,33 @@ module tb_rv_l1;
     if (!$value$plusargs("DUMP_ADDR=%h", dump_addr)) dump_addr = 32'h0;
     if (!$value$plusargs("DUMP_N=%d", dump_n))     dump_n = 0;
     if ($value$plusargs("VCD=%s", vcdfile)) begin
+`ifdef VERILATOR
+      // run.sh builds the Verilator images without --trace
+      $display("=== WARNING +VCD ignored: waveforms need iverilog (SIM=iverilog)");
+`else
       $dumpfile(vcdfile);
       $dumpvars(0, tb_rv_l1);
+`endif
     end
     $display("=== TB EXTRA_WS=%0d DEBUG=%0d TIMEOUT=%0d", EXTRA_WS, DEBUG, timeout);
-    // reset_n asserted (asynchronously) from time 0, released after 8 cycles
-    repeat (8) @(posedge clk);
-    rst     <= 1'b0;
-    reset_n <= 1'b1;
   end
+
+  // reset_n asserted (asynchronously) from time 0, released in the NBA region
+  // of the 8th rising edge.  A clocked block, not "repeat (8) @(posedge clk)"
+  // plus <= in an initial block: Verilator (--timing) commits the NBAs of a
+  // process resumed by the edge before it runs the edge's always blocks, so
+  // they saw rst = 0 one edge earlier than in iverilog (the core started one
+  // clock earlier against the absolute-time JTAG BFM: dm_smoke differed by
+  // one cycle).  Between always blocks both simulators order NBAs alike.
+  reg [3:0] rst_cnt = 4'd0;
+  always @(posedge clk)
+    if (rst_cnt != 4'd8) begin
+      rst_cnt <= rst_cnt + 4'd1;
+      if (rst_cnt == 4'd7) begin
+        rst     <= 1'b0;
+        reset_n <= 1'b1;
+      end
+    end
 
   task finish_run;
     begin
