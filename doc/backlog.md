@@ -68,7 +68,7 @@ Release 0.1 ships with these open (see doc/release-0.1.md).
   modifier / volume keys.  First step: a sim of the OSD SPI path with the
   firmware's byte spacing, or a scope on SCK.
 
-### SPI clock constraints and a floppy direct-mode race (2026-10-12) -- fixed on branch spicdc, not merged
+### SPI clock constraints and a floppy direct-mode race (2026-10-12) -- DONE: merged 49b1868, board-verified 2026-10-17
 
 - sd_card.xdc's asynchronous clock group left 32 one-cycle cfide paths
   untimed; now a generated clock spi_sck on its own pin register with
@@ -76,6 +76,10 @@ Release 0.1 ships with these open (see doc/release-0.1.md).
   direct-mode sector if the chip select went away within ~30 cycles
   (firmware: ~45; 202e077).  Board check before merging: report_clocks
   shows spi_sck, HDF copy + checksum, ADF read/write.
+- 2026-10-17: merged into 5.0-040-pipelined (49b1868). Board image
+  build/stage_spicdc_49b1868 (md5 28b07e8c): report_clocks has spi_sck
+  (52.9 ns, intra +19.2 ns, crossings to clk_114 +7.3 ns), clk_114 +0.101 ns;
+  Paul: boots into Workbench, demos run, SPI/floppy path verified.
 
 ### Demos: garbage in TBL "Ocean Machine" and the Roots2 rotozoomer (2026-10-03)
 
