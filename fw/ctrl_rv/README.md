@@ -225,7 +225,7 @@ Other rows:
 |---|---|---|
 | Order of an interrupt's `printf` inside another `printf` | streamed byte by byte while formatting | the interrupted line is formatted completely first; the interrupt's line is inserted at a byte boundary of its send loop. Both lines intact (`lib_test`) |
 | Line longer than the buffer | no limit | cut to 319 bytes, `rv_printf_truncations` (audit: no site reaches it) |
-| String and memory functions | lib832 `string.S` | newlib-nano; no observable difference at any call site except `fat.c:384` (next table; "String semantics audit") |
+| String and memory functions | lib832 `string.S` | newlib-nano; no observable difference at any call site (next table; "String semantics audit") |
 
 Call-site edits to the copied `fw/ctrl_rv/*.c` made by Task 3 (everything else
 is verbatim):
@@ -234,7 +234,6 @@ is verbatim):
 |---|---|---|---|
 | `akiko.c:17,19`, `config.c:614`, `drivesounds.c:457`, `fat.c:783,790,1647,1649`, `main.c:175`, `menu.c:1595,2663,2665,3040,3042,3044,3046,3048,3050,3052` | `%x`, `%04x`, `%08lx`, `%lx` | `%X`, `%04X`, `%08lX`, `%lX` | `UPPER`: keeps the UART/OSD text identical |
 | `boot.c:263` | `printf(str)` | `printf("%s", str)` | `str` is data (a file name, `rtl_ver`): a `%` in it would be taken for a conversion with garbage arguments, and the two libraries differ on that. Identical for every string without `%` |
-| `fat.c:384` | `strncmp(fileLFN, name, strlen(name)) == 0 \|\| ...` | `(name[0] && strncmp(fileLFN, name, strlen(name)) == 0) \|\| ...` | `strncmp(.., .., 0)`: lib832 returns whatever was in `r0`; ISO returns 0 (match any entry). An empty name (`FILE ""` in a CUE sheet) must not match; see the string table |
 
 ## String semantics audit
 
@@ -246,7 +245,7 @@ so they need no lib832 emulation.
 | Function | lib832 | ISO C / newlib | Observable? |
 |---|---|---|---|
 | `strncpy` | copies bytes up to and including the first NUL, or `n` bytes; **does not pad** the rest with NULs; `n == 0` copies nothing; returns `dst` | pads with NULs up to `n` | only if a byte after the NUL is read: see the call-site table |
-| `strncmp`, `memcmp` | `n == 0` returns an uninitialised `r0`; otherwise the byte difference `a - b` as unsigned bytes (same sign as ISO) | `n == 0` returns 0 | `strncmp(.., .., strlen(name))` with an empty `name`: `fat.c:384`, fixed at the call site |
+| `strncmp`, `memcmp` | `n == 0` returns whatever `r0` holds (nothing sets it); otherwise the byte difference `a - b` as unsigned bytes (same sign as ISO) | `n == 0` returns 0 | only `fat.c:384` can call with `n == 0` (`strncmp(fileLFN, name, strlen(name))`, empty `name`): there `r0` still holds the result of `strlen(name)`, i.e. 0 (checked by compiling the 832 `fat.c` with vbcc832), so lib832 returns 0 too. Same |
 | `strncat` | `n == 0` copies the **whole** source (the loop counts `n - 1` to zero); `n > 0` copies at most `n` bytes then a NUL, like ISO; the return value is not set | `n == 0` appends nothing | no `n == 0` call; the return value is never used |
 | `strcat` | return value not set | returns `dst` | never used |
 | `strcmp`, `strlen`, `strcpy`, `memcpy`, `memset` | ISO (`strcpy`, `memcpy`, `memset` return `dst`; the `void memset` in `stringstubs.c` is not what `string.h` maps to) | same | no |
@@ -272,7 +271,7 @@ counts are the compiled sites):
 | `strncpy` `menu.c:1369,1371,1372`, `2946,2953` | `file.name` 11 and `drive->name` 8 bytes from space-padded names: no NUL. `file.long_name` is zeroed by `memset` first (`1370`). `DiskInfo[5]` is `XX/XX` (5 characters, `GetDiskInfo`) or starts with NUL and is then not used (`menu.c:2950`). Same |
 | `strncpy` `menu.c:3058` (`debuglines`) | The line is drawn by `OsdWrite`, which stops at the NUL. Same |
 | `strncmp` (16: `config.c:287,295`, `drivesounds.c:445`, `fat.c:129,131,183,186,250,384 (x2),459,580`, `fpga.c:61,66`, `menu.c:1343,2140`) | `n` is a constant or `sizeof`, always > 0, and the result is compared with 0. Same |
-| `strncmp` `fat.c:384` first call, `n = strlen(name)` | `name` empty: lib832 returns an indeterminate value, ISO 0. Edited: `name[0] && ...` (no match for an empty name) |
+| `strncmp` `fat.c:384` first call, `n = strlen(name)` | `name` empty (`n == 0`): lib832 returns `r0`, which still holds the `strlen(name)` result, 0 (vbcc832 output of the 832 `fat.c`); ISO returns 0. An empty name matches the first plain file entry on both. Same, no edit |
 | `memcmp` (4: `cdrom.c:82,285`, `menu.c:393,2052`) | `n` = 3 or `sizeof`, > 0, compared with 0. Same |
 | `strncat` (3: `menu.c:756` n = 17/21, `1759` 16, `1761` 8) | `n > 0`: at most `n` bytes then NUL on both; `kickstart.name` has no NUL (8 characters) and both copy exactly 8. Return value unused. Same |
 | `strcat` (38), `strcpy` (54) | ISO on both; no return value is used. Same |

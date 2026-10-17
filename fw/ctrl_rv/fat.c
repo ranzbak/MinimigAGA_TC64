@@ -381,7 +381,7 @@ unsigned char FileOpen(fileTYPE *file, const char *name)
 				}
                 else if (!(pEntry->Attributes & (ATTR_VOLUME | ATTR_DIRECTORY))) // not a volume nor directory
                 {
-                    if ((name[0] && strncmp(fileLFN,name,strlen(name))==0) || strncmp((const char*)pEntry->Name, name, sizeof(file->name)) == 0)
+                    if (strncmp(fileLFN,name,strlen(name))==0 || strncmp((const char*)pEntry->Name, name, sizeof(file->name)) == 0)
                     {
                         strncpy(file->name, (const char*)pEntry->Name, sizeof(file->name));
                         file->attributes = pEntry->Attributes;
