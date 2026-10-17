@@ -35,7 +35,7 @@ openhf.inc: ../hdd.c
 openhf_test: openhf_test.c openhf.inc ../hdd.h ../config.h ../cdrom.h
 	$(HOSTCC) $(CFLAGS) -Wno-unused-function -o $@ openhf_test.c
 
-run: cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_run
+run: cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_run hwmap_run
 	./cue_test
 	./cdaudio_test
 	./atapi_test "$(ISO)"
@@ -44,11 +44,11 @@ run: cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_run
 
 clean:
 	rm -f cue_test cdaudio_test atapi_test cdrom_test openhf_test openhf.inc
-	rm -f lib_test lib_test_32 fmt_glibc_64 fmt_glibc_32 fmt_832 fmt_832.o fmt_host_832.o \
+	rm -f hwmap_test hwmap_test_32 lib_test lib_test_32 fmt_glibc_64 fmt_glibc_32 fmt_832 fmt_832.o fmt_host_832.o \
 	      fmt_glibc_64.txt fmt_glibc_32.txt fmt_832.txt fmt_diff.txt fmt.ok
 	rm -rf mut
 
-.PHONY: all run clean lib_run mutants
+.PHONY: all run clean lib_run mutants hwmap_run
 
 # ---- C library (decision 12.12): rvlibc.c and the format-parity check --------
 #   make -C fw/ctrl_rv/test lib_test && ./fw/ctrl_rv/test/lib_test
@@ -109,3 +109,13 @@ lib_run: lib_test lib_test_32
 
 mutants: fmt.ok
 	bash mutants.sh
+
+# ---- I/O register map and uart.c puts (plan 5.3) -------------------------------
+#   make -C fw/ctrl_rv/test hwmap_test && ./fw/ctrl_rv/test/hwmap_test
+hwmap_test: hwmap_test.c ../hardware.h ../uart.h ../uart.c ../c64keys.h ../akiko.h ../rtc.h ../i2c.h ../arch/irq.h
+	$(HOSTCC) $(LIBFLAGS) -I.. -I../arch -o $@ hwmap_test.c
+hwmap_test_32: hwmap_test.c ../hardware.h ../uart.h ../uart.c ../c64keys.h ../akiko.h ../rtc.h ../i2c.h ../arch/irq.h
+	$(HOSTCC) -m32 $(LIBFLAGS) -I.. -I../arch -o $@ hwmap_test.c
+hwmap_run: hwmap_test hwmap_test_32
+	./hwmap_test
+	./hwmap_test_32

@@ -11,25 +11,12 @@ int puts(const char *msg)
 {
 	int c;
 	int result=0;
-	// Because we haven't implemented loadb from ROM yet, we can't use *<char*>++.
-	// Therefore we read the source data in 32-bit chunks and shift-and-split accordingly.
-	int *s2=(int*)msg;
-
-	do
+	// A byte loop (no newline appended, like the 832's puts).
+	while((c=(unsigned char)*msg++))
 	{
-		int i;
-		int cs=*s2++;
-		for(i=0;i<4;++i)
-		{
-			c=(cs>>24)&0xff;
-			cs<<=8;
-			if(c==0)
-				return(result);
-			putchar(c);
-			++result;
-		}
+		putchar(c);
+		++result;
 	}
-	while(c);
 	return(result);
 }
 

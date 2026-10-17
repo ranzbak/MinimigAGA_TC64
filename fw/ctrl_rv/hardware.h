@@ -14,6 +14,13 @@
 //#define FPGA2 AT91C_PIO_PA15
 //#define BUTTON AT91C_PIO_PA28
 
+#ifndef HARDWARE_H
+#define HARDWARE_H
+
+/* I/O map (plan 5.3): every register at offset 0 of its 16-byte window,
+   CPU addresses 0xFFFFFFx0, so each access compiles to a zero-based
+   lw/sh/sb with a small negative offset. */
+
 #include "i2c.h"
 #include "spi.h"
 #include "uart.h"
@@ -24,7 +31,7 @@
 #define DISKLED_ON // *AT91C_PIOA_SODR = DISKLED;
 #define DISKLED_OFF // *AT91C_PIOA_CODR = DISKLED;
 
-#define AUDIO (*(volatile unsigned char *)0x0fffffb3)
+#define AUDIO (*(volatile unsigned char *)0xFFFFFFB0)
 #define AUDIOF_CLEAR 2
 #define AUDIOF_ENA 1
 #define AUDIOF_AMIGA 2
@@ -34,19 +41,21 @@
 /* We have two alternating buffers of this size */
 #define AUDIO_BUFFER_SIZE 0x8000
 
-#define HW_SPI(x) (*(volatile unsigned char *)(0x0fffffe0+x))
-#define HW_SPI_CS 7
-#define HW_SPI_DATA 3
-#define HW_SPI_SPEED 11
+#define HW_SPI(x) (*(volatile unsigned char *)(0xFFFFFFE0+(x)))
+#define HW_SPI_CS 4
+#define HW_SPI_DATA 0
+#define HW_SPI_SPEED 8
 
-#define RS232(x) (*(volatile unsigned char *)0x0ffffff3)=x
+/* UART TX: write only (cfide never acks a read of 0xFFFFFFF0) */
+#define UART_TX (*(volatile unsigned char *)0xFFFFFFF0)
+#define RS232(x) (UART_TX=(x))
 
-#define TIMER (*(volatile unsigned short *)0x0fffffd2)
+#define TIMER (*(volatile unsigned short *)0xFFFFFFD0)
 
 // FPGA die temperature: the XADC's raw 12-bit reading, see rtl/soc/fpga_temp.v.
 // Only decoded when CORE_CAPS_TEMP is set -- on a core without it this address
 // reads the platform register instead, so check the capability before using it.
-#define FPGA_TEMP_RAW (*(volatile unsigned short *)0x0fffff40)
+#define FPGA_TEMP_RAW (*(volatile unsigned short *)0xFFFFFF40)
 #define SPIN {int v=TIMER;}	// Waste a few cycles to let the FPGA catch up
 
 #if 1
@@ -85,7 +94,7 @@ unsigned char SPI_reply(void);
 //   Bit 1 -> 32meg supported
 //   Bit 8 -> Reconfig supportred 
 
-#define PLATFORM (*(volatile unsigned short *)0x0fffffc2)
+#define PLATFORM (*(volatile unsigned short *)0xFFFFFFC0)
 #define PLATFORM_MENUBUTTON 0
 #define PLATFORM_32MEG 1
 #define PLATFORM_SPIRTC 2
@@ -108,7 +117,7 @@ unsigned char SPI_reply(void);
 #define SPI_CPU_HLT         0x4
 
 // 15kHz to HDMI Video position
-#define VIDEOSCALE (*(volatile unsigned int *)0x0fffff50)
+#define VIDEOSCALE (*(volatile unsigned int *)0xFFFFFF50)
 #define VIDEOSCALE_SET_POS (VIDEOSCALE)
 
 //void USART_Init(unsigned long baudrate);
@@ -130,3 +139,5 @@ unsigned long CheckTimer(unsigned long t);
 void WaitTimer(unsigned long time);
 void ConfigMisc(unsigned short misc);
 void Reconfigure();
+
+#endif /* HARDWARE_H */

@@ -5,7 +5,7 @@
 #   make          $(B)/RV32OSDA.BIN (+ .elf, .map, .lst)
 #   make size     section sizes and the bytes of the .BIN
 #   make check    (a) no lr.w/sc.w/amo*.w, (b) no UART read, (c) I/O offsets
-#                 multiple of 4, (d) no 832 start-up names in the sources,
+#                 multiple of 4 (both via check_io.awk), (d) no 832 start-up names in the sources,
 #                 (e) the C library guard, (f) no #define true/false
 #   make clean
 #
@@ -86,6 +86,9 @@ CHECKS := check_a check_b check_c check_d check_e check_f
 check: $(B)/$(PROJECT).elf
 	@$(MAKE) --no-print-directory -k $(CHECKS)
 
+# a failed objdump must not leave an empty .dis for the greps to "pass" on
+.DELETE_ON_ERROR:
+
 $(B)/$(PROJECT).dis: $(B)/$(PROJECT).elf
 	$(RV_OBJDUMP) -d $< > $@
 
@@ -96,20 +99,16 @@ check_a: $(B)/$(PROJECT).dis
 	else echo "check (a) pass: no lr.w/sc.w/amo*.w"; fi
 
 # (b) the UART (0xFFFFFFF0) is write only: a read deadlocks the bus
-check_b: $(B)/$(PROJECT).dis
-	@if grep -E '\bl(b|bu|h|hu|w)[[:space:]]+[a-z0-9]+,-16\(zero\)' $<; then \
-	  echo "check (b) FAIL: load from -16(zero) (UART read)"; exit 1; \
-	else echo "check (b) pass: no load from -16(zero)"; fi
+# (c) every register at offset 0, 4, 8 or 0xC of its 16-byte window: I/O
+#     accesses (address 0xFFFFFF00..0xFFFFFFFF) are word aligned
+# Both read the disassembly through check_io.awk, which sees a base register
+# only when it holds a constant set by li/lui/addi/mv in the same function
+# (straight-line); it fails when it finds no I/O access at all.
+check_b: $(B)/$(PROJECT).dis check_io.awk
+	@awk -v mode=b -f check_io.awk $<
 
-# (c) every register at offset 0, 4, 8 or 0xC of its 16-byte window:
-#     zero-based I/O accesses (offset -256..-1) are word aligned
-check_c: $(B)/$(PROJECT).dis
-	@grep -E '\b(l(b|bu|h|hu|w)|s(b|h|w))[[:space:]]+[a-z0-9]+,-[0-9]+\(zero\)' $< \
-	  | awk '{ for (i = 1; i <= NF; i++) if ($$i ~ /\(zero\)$$/) { o = $$i; sub(/\(zero\)$$/, "", o); \
-	           o = substr(o, index(o, ",") + 1); o += 0; \
-	           if (o >= -256 && o <= -1 && (-o) % 4 != 0) { print; bad++ } } } \
-	         END { if (bad) { printf "check (c) FAIL: %d I/O accesses at an offset not a multiple of 4\n", bad; exit 1 } \
-	               else print "check (c) pass: zero-based I/O offsets are multiples of 4" }'
+check_c: $(B)/$(PROJECT).dis check_io.awk
+	@awk -v mode=c -f check_io.awk $<
 
 # (d) no 832 start-up names left in the sources
 check_d:
@@ -128,7 +127,8 @@ LIBC_BANNED := _sbrk _sbrk_r malloc free realloc calloc _write _write_r \
 LIBC_OWN    := _malloc_r:rvlibc.o _realloc_r:rvlibc.o _free_r:rvlibc.o \
                printf:rvlibc.o vprintf:rvlibc.o putchar:uart.o puts:uart.o
 check_e: $(B)/$(PROJECT).elf
-	@rc=0; syms=`$(RV_NM) $< | awk '{ print $$NF }'`; \
+	@rc=0; syms=`$(RV_NM) $<` || { echo "check (e) FAIL: nm failed"; exit 1; }; \
+	syms=`printf '%s\n' "$$syms" | awk '{ print $$NF }'`; \
 	for s in $(LIBC_BANNED); do \
 	  if printf '%s\n' "$$syms" | grep -qxF "$$s"; then echo "check (e) FAIL: $$s linked"; rc=1; fi; \
 	done; \

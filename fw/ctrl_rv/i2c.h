@@ -5,7 +5,7 @@
  * I2C functionality
  */
 // Base memory address
-#define I2C_BASE 0x0fffff60
+#define I2C_BASE 0xFFFFFF60
 
 // Memory offsets
 // #define HW_I2C_DATA         0x00000000 // Short pointer, 2bytes, per 4 bytes, so +2 per register.

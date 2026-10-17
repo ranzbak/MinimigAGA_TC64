@@ -7,12 +7,8 @@
 extern "C" {
 #endif
 
-#define UARTBASE 0xFFFFFFC0
-#define HW_UART(x) *(volatile unsigned int *)(UARTBASE+x)
-
-#define REG_UART 0x0
-#define REG_UART_RXINT 9
-#define REG_UART_TXREADY 8
+/* Transmit only: UART_TX (hardware.h, 0xFFFFFFF0) is write only; the core
+   never acknowledges a read of it.  There is no receive side. */
 
 #ifndef DISABLE_UART_TX
 int putchar(int c);
@@ -21,12 +17,6 @@ int puts(const char *msg);
 #else
 #define putchar(x) (x)
 #define puts(x)
-#endif
-
-#ifndef DISABLE_UART_RX
-char getserial();
-#else
-#define getserial 0
 #endif
 
 #ifdef __cplusplus

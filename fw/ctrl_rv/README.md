@@ -5,7 +5,7 @@ Port of `fw/ctrl_832` (ZPU-class 832 host CPU) to RV32IMC. Task 2 made the
 the port. Edits so far: Task 3's call-site edits ("Differences from
 fw/ctrl_832") and the C library / host-test files ("C library", "Host tests");
 Task 4's `Makefile` and gcc 15 / gnu23 compile fixes ("Building", "gcc 15 and
-gnu23 compile fixes").
+gnu23 compile fixes"); Task 5's I/O map ("Differences from fw/ctrl_832").
 
 ## Copy base
 
@@ -112,13 +112,25 @@ with the date strings of `version.h` (93,768 B at 21:58). `_end` = 0x275DC
 | Part | What | Status |
 |---|---|---|
 | (a) | no `lr.w`/`sc.w`/`amo*.w` in the disassembly (the core has no A extension) | pass |
-| (b) | no load from `-16(zero)` (a UART read deadlocks the bus) | pass |
-| (c) | every load/store with base `zero` and an offset in -256..-1 has `offset % 4 == 0` (each register at offset 0, 4, 8 or 0xC of its 16-byte window) | **expected red until Task 5**: it passes today only because the copied I/O bases are still the 832's `0x0FFFFFxx`, which are not `zero`-relative (the only `zero`-based accesses are `arch/`'s); Task 5 moves them to `0xFFFFFFxx` and fixes the offsets |
+| (b) | no load from the UART, `0xFFFFFFF0` (a read deadlocks the bus): `check_io.awk` over the disassembly | pass |
+| (c) | every I/O access (address `0xFFFFFF00..0xFFFFFFFF`) has an address that is a multiple of 4 (each register at offset 0, 4, 8 or 0xC of its 16-byte window): `check_io.awk` | pass (Task 5: 1155 I/O accesses seen) |
 | (d) | no `__geta4`, `__constructor`, `setstack`, `c_entry` in `fw/ctrl_rv/*.[ch]` | pass |
 | (e) | the C library guard ("C library"): `nm` of the `.elf` has none of `_sbrk _sbrk_r malloc free realloc calloc _write _write_r _read _read_r _fstat _fstat_r _isatty _isatty_r _lseek _lseek_r _close _close_r __sinit __sfp _printf_float _scanf_float asprintf vasprintf open_memstream fprintf fputc fputs fflush`; the map shows `_malloc_r _realloc_r _free_r printf vprintf` from `rvlibc.o` and `putchar puts` from `uart.o` (so none of them from `libc_nano.a`). A syscall pull is already a link error (no syscall is defined) | pass |
 | (f) | no `#define true` / `#define false` in `fw/ctrl_rv/*.[ch]` (gcc 15 accepts redefining the C23 keywords without a word) | pass |
 
-Each part was seen red once: (a) (b) (c) (e) on a disassembly / `nm` / map
+(b) and (c) see an access when its base register is `zero` or holds a
+constant set by `li`/`lui`/`addi`/`mv` earlier in the same function (straight
+line; forgotten at a call, no tracking over a branch join). On the Task 5 tree
+1147 of the 1155 I/O accesses are zero-based; 8 compile as `li a4,-112` +
+`lhu 0(a4)` (the keyboard words in `c64keys.c`) or `li a5,-160` + `sw 0(a5)`
+(the I2C base in `i2c.c`) and are seen through the tracking. An address
+computed any other way, or a base held across a branch join, is not seen:
+the only guarantees there are that `uart.h` has no read and that no source
+file reads `UART_TX`. The checks fail when they find no I/O access at all, and
+`.DELETE_ON_ERROR` plus a failing `nm` make a broken tool a red check, not an
+empty pass.
+
+Each part was seen red once (Task 4): (a) (b) (c) (e) on a disassembly / `nm` / map
 with a planted `amoadd.w`, `lbu a5,-16(zero)`, `sh zero,-30(zero)`,
 `sw a4,-6(zero)`, `_sbrk`, `fflush` and `puts` moved to `libc_nano.a`; (d)
 and (f) on the Task 3 tree (`__constructor`, `setstack`, `c_entry`,
@@ -297,6 +309,26 @@ Other rows:
 | Line longer than the buffer | no limit | cut to 319 bytes, `rv_printf_truncations` (audit: no site reaches it) |
 | String and memory functions | lib832 `string.S` | newlib-nano; no observable difference at any call site (next table; "String semantics audit") |
 
+I/O map (Task 5, plan 5.3): every register is at offset 0 of its 16-byte
+window, CPU address `0xFFFFFFx0` (the 832's `0x0FFFFFxx` bases lose the `0x0`
+and the big-endian byte lane `+2`/`+3`):
+
+| Register | 832 | RV |
+|---|---|---|
+| SPI `HW_SPI` base, DATA / CS / SPEED | `0x0FFFFFE0`; +3 / +7 / +11 | `0xFFFFFFE0`; +0 / +4 / +8 (`HW_SPI_DATA 0`, `HW_SPI_CS 4`, `HW_SPI_SPEED 8`) |
+| UART TX | `RS232(x)`: byte store to `0x0FFFFFF3` | `UART_TX`, byte store to `0xFFFFFFF0`; `RS232(x)` is `(UART_TX=(x))`. Write only |
+| `uart.h` | `UARTBASE`, `HW_UART`, `REG_UART_RXINT`, `REG_UART_TXREADY`, `getserial` | removed (cfide never acks a read of `0xFFFFFFF0`; nothing used them) |
+| `puts` (`uart.c`) | reads the string as 32-bit words, bytes by `>> 24` (BE only; misaligned for an unaligned string) | byte loop; still no newline, still returns the byte count |
+| `TIMER` / `PLATFORM` / `AUDIO` | `0x0FFFFFD2` / `0x0FFFFFC2` / `0x0FFFFFB3` | `0xFFFFFFD0` / `0xFFFFFFC0` / `0xFFFFFFB0` (16, 16, 8 bit) |
+| Keyboard | base `0x0FFFFF90`; words +2/+6/+0xA/+0xE, `REG_KEYBOARD_OUT` +2 | `0xFFFFFF90`; words +0/+4/+8/+0xC, `REG_KEYBOARD_OUT` +0 |
+| Akiko | base `0x0FFFFF80`; ADDR +2, DATA +6 | `0xFFFFFF80`; ADDR +0, DATA +4 |
+| RTC | base `0x0FFFFF72` | `0xFFFFFF70` (offsets 0/4/8/0xC as before) |
+| I2C / `VIDEOSCALE` / `FPGA_TEMP_RAW` | `0x0FFFFF60` / `0x0FFFFF50` / `0x0FFFFF40` | `0xFFFFFF60` / `0xFFFFFF50` / `0xFFFFFF40` |
+| `hardware.h` | no include guard | `HARDWARE_H` guard (the host test includes `uart.c` after it) |
+
+`test/hwmap_test.c` asserts address and access width of every register macro
+and `puts` over a mock for the UART store at offsets 0..3 of an aligned buffer.
+
 Call-site edits to the copied `fw/ctrl_rv/*.c` made by Task 3 (everything else
 is verbatim):
 
@@ -450,6 +482,8 @@ sudo apt install build-essential gcc-multilib python3 git
 git submodule update --init EightThirtyTwo          # lib832, the 832 printf reference
 make -C fw/ctrl_rv/test lib_test lib_test_32
 ./fw/ctrl_rv/test/lib_test && ./fw/ctrl_rv/test/lib_test_32
+make -C fw/ctrl_rv/test hwmap_test hwmap_test_32
+./fw/ctrl_rv/test/hwmap_test && ./fw/ctrl_rv/test/hwmap_test_32
 make -C fw/ctrl_rv/test mutants
 ```
 
@@ -461,9 +495,10 @@ checkout (EightThirtyTwo pin `d1cd671`). A missing `LIB832` fails the build;
 the check is never skipped. `lib_test` checks `rvlibc.c` against glibc's
 `vsnprintf` with a mock `putchar` (equal output and return value, the
 truncation case, a `printf` issued from inside `putchar`, the nesting count,
-the heap stubs). `make mutants` runs 9 mutants (a 16-byte print buffer, a format without a case and a
+the heap stubs). `make mutants` runs 17 mutants (a 16-byte print buffer, a format without a case and a
 deleted line of the expected list turn the format-parity checks red; six
-changes to `rvlibc.c` turn `lib_test` red); the full harness's `mutants`
+changes to `rvlibc.c` turn `lib_test` red; eight changes to the register map or
+`uart.c` turn `hwmap_test` red); the full harness's `mutants`
 target comes with Task 8.
 
 ### On the L1 bench

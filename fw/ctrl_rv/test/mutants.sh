@@ -63,5 +63,27 @@ libtest_mutant nodepthrestore 's/printf_depth = depth;/;/'
 libtest_mutant heapcount 's/rv_libc_heap_calls++;/;/'
 libtest_mutant retval 's/return n;/return 0;/'
 
+# hwmap_test mutants: a change in the register map or in uart.c must turn it red
+hwmap_mutant() {  # <name> <file> <sed>
+  mkdir -p "mut/$1/arch"
+  cp ../*.h ../uart.c "mut/$1/"; cp ../arch/*.h "mut/$1/arch/"
+  sed -i "$3" "mut/$1/$2"
+  if cmp -s "../$2" "mut/$1/$2"; then echo "mutant $1: the sed changed nothing"; bad=1; return; fi
+  # shellcheck disable=SC2086
+  if ! $HOSTCC $FLAGS -Imut/"$1" -Imut/"$1"/arch -o mut/"$1"/hwmap_test hwmap_test.c 2> mut/"$1"/build.log; then
+    killed "$1" "does not build: the test is red"
+  elif ./mut/"$1"/hwmap_test > mut/"$1"/run.log 2>&1; then
+    survived "$1" "hwmap_test passed"
+  else killed "$1" "hwmap_test red"; fi
+}
+hwmap_mutant hw_timer hardware.h 's/0xFFFFFFD0/0xFFFFFFD2/'
+hwmap_mutant hw_spidata hardware.h 's/define HW_SPI_DATA 0/define HW_SPI_DATA 3/'
+hwmap_mutant hw_uart hardware.h 's/(\*(volatile unsigned char \*)0xFFFFFFF0)/(*(volatile unsigned char *)0xFFFFFFF3)/'
+hwmap_mutant hw_kbd c64keys.h 's/WORD1 4/WORD1 6/'
+hwmap_mutant hw_akiko akiko.h 's/ADDR 0/ADDR 2/'
+hwmap_mutant hw_width hardware.h 's/volatile unsigned short \*)0xFFFFFFC0/volatile unsigned int *)0xFFFFFFC0/'
+hwmap_mutant puts_nl uart.c 's/++result;/++result; if (!*msg) putchar(10);/'
+hwmap_mutant puts_words uart.c 's/(c=(unsigned char)\*msg++)/(c=(unsigned char)*msg++) \&\& result < 1/'
+
 if [ $bad -eq 0 ]; then echo "=== MUTANTS PASS"; else echo "=== MUTANTS FAILED"; fi
 exit $bad

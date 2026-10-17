@@ -2,7 +2,7 @@
 #define RTC_H
 
 
-#define RTCBASE 0x0fffff72
+#define RTCBASE 0xFFFFFF70
 #define HW_RTC(x) *(volatile unsigned short *)(RTCBASE+x)
 
 void HandleRTC();
