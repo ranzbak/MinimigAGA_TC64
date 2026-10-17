@@ -7,7 +7,7 @@ bitstream was built:
 
 | Config | Bitstream generic (`EightThirtyTwo_Bridge`) | Core | JTAG path | Adapter connects to |
 |---|---|---|---|---|
-| `minimig-rv-bscan.cfg` | `cpu_riscv = true`, `rv_debug = 1` | `VexOsd_DMT` + `rtl/host/xilinx/rv_bscane2.v` | tunnelled through the FPGA's own TAP (`BSCANE2` USER4) | the board's FPGA JTAG header (where Vivado programs) |
+| `minimig-rv-bscan.cfg` | `cpu_riscv = true`, `rv_debug = 1` | `VexOsd_DMT` + `rtl/host/xilinx/rv_bscane2.v` | tunnelled through the FPGA's own TAP (`BSCANE2` USER4) | the board's FPGA JTAG header (where Vivado programs), via the Phase 5.4 `hw_server` bridge (not yet written) |
 | `minimig-rv-pins.cfg` | `cpu_riscv = true`, `rv_debug = 2` | `VexOsd_DMJ` | its own TAP (IDCODE `0x10002FFF`, IR 5 bits) on `rv_jtag_tck/tms/tdi/tdo` | four FPGA header pins |
 
 Production images use `rv_debug = 0` (no Debug Module); neither config works
@@ -18,32 +18,35 @@ stage (plan section 5.4) adds them. Until then these configs are tested only
 for syntax (OpenOCD's dummy adapter) and the Debug Module only in simulation
 (`bash sim/rv_l1/run.sh dm_smoke`).
 
-## The cable: the board's Platform Cable USB II does not work
+## The cable and the transport (decided 2026-10-17)
 
 The board is programmed with a **Xilinx Platform Cable USB II**. On this
 machine `lsusb` shows it as **`03fd:000f`** (observed 2026-10-16, with its
 firmware loaded); other documents give `03fd:0008`, which was not observed
-here. Check yours with `lsusb | grep 03fd`. **OpenOCD 0.12.0
-(the Ubuntu 24.04 package installed here) has no driver for it**:
-`openocd -c "adapter list" -c shutdown` lists parport, dummy, ftdi,
-usb_blaster, esp_usb_jtag, ft232r, ..., jlink, cmsis-dap, xds110, st-link,
-rshim and nothing for Xilinx cables. You need another cable. Two options:
+here. Check yours with `lsusb | grep 03fd`. OpenOCD 0.12.0 (the Ubuntu 24.04
+package installed here) has no driver for it (`openocd -c "adapter list" -c
+shutdown` lists parport, dummy, ftdi, usb_blaster, ..., jlink, cmsis-dap,
+xds110, st-link, rshim and nothing for Xilinx cables). There is **no FTDI
+adapter** for this board; none will be bought (plan decision 12.6, final).
 
-1. **FTDI-based JTAG cable on the FPGA JTAG header, `rv_debug = 1`**
-   (recommended): a Digilent JTAG-HS2 or JTAG-HS3 (OpenOCD `ftdi` driver;
-   Vivado's hardware manager drives the same cable, so one cable programs the
-   FPGA and debugs the CPU). Config `minimig-rv-bscan.cfg`. No extra pins, no
-   wiring beyond the 6-wire header (VREF, GND, TCK, TDO, TDI, TMS).
-2. **Any OpenOCD JTAG adapter on four spare FPGA pins, `rv_debug = 2`**
-   (J-Link, CMSIS-DAP probe, FT232H/FT2232H breakout, Raspberry Pi GPIO,
-   ...): config `minimig-rv-pins.cfg`. The pins carry `rv_jtag_tck`,
-   `rv_jtag_tms`, `rv_jtag_tdi` (FPGA inputs) and `rv_jtag_tdo` (FPGA
-   output), 3.3 V, plus GND; the FPGA's own JTAG header stays on the
-   Platform Cable for Vivado.
+Decision: debug uses `rv_debug = 1` (BSCANE2 tunnel) on the FPGA's own
+6-wire JTAG header with the Platform Cable USB II. The transport is a
+**Vivado `hw_server` Tcl JTAG-scan bridge** (modelled on
+`EightThirtyTwo/tcl/832bridge.tcl`, which did the same with Quartus STP, an
+Altera virtual JTAG and TCP to 832ocd) that serves OpenOCD's
+`remote_bitbang` adapter, and OpenOCD serves GDB. **This bridge does not
+exist yet**: writing it is a Phase 5.4 bring-up task (plan 5.4), and
+`minimig-rv-bscan.cfg` will be changed to use the `remote_bitbang` adapter
+when it does. Until then nothing below that needs a cable can be run on the
+board. Firmware logging goes over the Amiga-side serial `ttyUSB0` (UART TX
+only) and needs none of this.
 
-Only one program can own a USB cable at a time: close Vivado's hardware
-manager (or `hw_server`) before starting OpenOCD on an HS2/HS3, and the
-other way round.
+Because `hw_server` owns the Platform Cable, close any other Vivado hardware
+manager before starting the bridge, and the other way round.
+
+The pin variant (`minimig-rv-pins.cfg`, `rv_debug = 2`, four spare FPGA pins
+and any OpenOCD-supported adapter) stays in the tree but is not planned for
+use.
 
 ## Install OpenOCD
 
@@ -55,7 +58,9 @@ sudo apt install openocd                 # Ubuntu 24.04: 0.12.0
 openocd --version                        # Open On-Chip Debugger 0.12.0
 ```
 
-USB access without root for FTDI cables (Digilent HS2/HS3 = `0403:6014`):
+USB access without root applies only to the pin variant with an FTDI adapter
+(Digilent HS2/HS3 = `0403:6014`; not part of the decided setup, skip it for
+the Platform Cable path):
 the package ships `/usr/lib/udev/rules.d/60-openocd.rules`; make sure your
 user is in the group it names (`plugdev`), then replug the cable:
 
@@ -66,7 +71,8 @@ sudo usermod -aG plugdev $USER           # log out and in again
 
 ## Choose the adapter
 
-Both configs source the adapter config named by the Tcl variable
+Current state of the configs (the `remote_bitbang` change for
+`minimig-rv-bscan.cfg` is a Phase 5.4 task, not done yet): both configs source the adapter config named by the Tcl variable
 `ADAPTER`; the default is `interface/ftdi/digilent-hs2.cfg` (Digilent
 JTAG-HS2). Set another one with `-c "set ADAPTER ..."` **before** `-f`:
 
@@ -85,13 +91,11 @@ the pins; lower it if the scan is unreliable).
 ## Connect
 
 From the repository root, with the board powered and running a bitstream
-built with the matching `rv_debug`:
+built with the matching `rv_debug`. Only the pin variant can be run today;
+`rv_debug = 1` (the decided path) has to wait for the Phase 5.4 bridge:
 
 ```sh
-# rv_debug = 1, HS2 on the FPGA JTAG header
-openocd -f tools/openocd/minimig-rv-bscan.cfg
-
-# rv_debug = 2, J-Link on the four pins, 500 kHz
+# rv_debug = 2, J-Link on the four pins, 500 kHz (needs a bitstream with the pins, see above)
 openocd -c "set ADAPTER interface/jlink.cfg" -c "set SPEED_KHZ 500" -f tools/openocd/minimig-rv-pins.cfg
 ```
 

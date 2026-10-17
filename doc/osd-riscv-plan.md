@@ -18,7 +18,7 @@ tricks behind a switch that defaults off.
 
 "1:1" means functional parity for the user (same features, same behaviour),
 not the same implementation. The first port is nevertheless a straight
-polling port on today's hardware interface, with the 832 selectable as the
+polling port on today's hardware interface, with the 832 bitstream (a separate build, decision 12.10) as the
 reference; hardware offloads come afterwards, one bisectable step at a time.
 
 ---
@@ -35,10 +35,10 @@ reference; hardware offloads come afterwards, one bisectable step at a time.
 | Code size (measured) | Firmware RV32IMC ~85-95 KB vs 83,830 B. Boot ROM RV32IMC 3,636 B text + 650 B data/bss vs 4,333 B: **fits the 8 KB BRAM**. (gcc 14.2; re-measured with the pinned xPack 15.2 in Phase 2.) |
 | Verification before any board test | Unchanged: L1 (iverilog, core + memory model), L2 (xsim, real bridge + cfide + hostcache), L3 co-simulation with the real minimig SPI slaves, the real boot ROM and firmware, an Amiga-side model, golden images, 832 reference traces, stress grid and margin monitors (section 7, Phase 4). Floppy, HDD and CD/ATAPI paths are gated by it. |
 | Interrupts / peripherals | First port: the one existing cfide interrupt (vblank, I2C INT, Akiko request) on **machine external interrupt** (MEI); standard trap entry in the firmware's crt0 (`mtvec` writable, direct mode); `SetIntHandler()` ABI unchanged. Timer/software lines tied off. Phase 8: one pending/mask register block in cfide in front of MEI, `mtime` on MTI, individually benched offloads (section 6); their order is asked again after Phase 2 (decision 12.9). |
-| Debug | Three generated core variants, chosen by the bridge generic `rv_debug`: **0 = none (default, production)**, 1 = DM + **BSCANE2 tunnel** over the Xilinx JTAG chain (Artix-only file, off by default), 2 = DM + **pin TAP** (vendor-neutral, four header pins). OpenOCD `riscv` target. Hardware bring-up after Phase 5, off the critical path. Upstream OpenOCD cannot drive the Platform Cable USB II on this machine (section 3.8). |
+| Debug | Three generated core variants, chosen by the bridge generic `rv_debug`: **0 = none (default, production)**, 1 = DM + **BSCANE2 tunnel** over the Xilinx JTAG chain (Artix-only file, off by default), 2 = DM + **pin TAP** (vendor-neutral, four header pins). OpenOCD `riscv` target. Hardware bring-up in Phase 5.4, off the critical path: logging over ttyUSB0 plus the BSCANE2 variant on the FPGA's own JTAG header with the Platform Cable USB II, through a Vivado `hw_server` Tcl bridge -> OpenOCD `remote_bitbang` -> GDB (decision 12.6, final 2026-10-17; section 3.8). No FTDI adapter, no GDB-over-UART stub, no permanent ILA. |
 | Toolchain | **xPack `riscv-none-elf-gcc` 15.2.0-1** (GCC 15.2, binutils 2.45, newlib 4.5; multilibs `rv32imc/ilp32` and `rv32im/ilp32`), installed at `~/opt/xpack-riscv-none-elf-gcc-15.2.0-1`, `RV_GCC_DIR` override in every Makefile. Ubuntu `riscv64-unknown-elf-gcc` 13.2 is the fallback. |
-| Firmware trees | New: `fw/ctrl_rv`, `fw/ctrl_boot_rv`, `fw/dhrystone_rv`. `fw/ctrl_832`, `fw/ctrl_boot_832`, `fw/dhrystone_832` stay untouched as the A/B reference until Phase 9. |
-| Phases | 0 measure (**done**, tiny-cores.md) -> 1 VexRiscv vendoring + CPU block + bridge + L2 -> 2 toolchain + boot ROM + trap/IRQ + L1 + Dhrystone -> 3 firmware 1:1 + host tests -> 4 co-simulation (differential 832 vs RV, stress; I$ hit rate; 832 Dhrystone on the board) -> 5 build integration + A/B -> 6 board parity + stress -> 7 performance -> 8 peripherals/IRQ -> 9 retire the 832 |
+| Firmware trees | New: `fw/ctrl_rv`, `fw/ctrl_boot_rv`, `fw/dhrystone_rv`. `fw/ctrl_832`, `fw/ctrl_boot_832`, `fw/dhrystone_832` stay untouched until Phase 9. **One CPU per bitstream** (decision 12.10): a RISC-V build contains no 832; "A/B" means two bitstreams, the 832 side being `build/stage_spicdc_49b1868`. Firmware language **C**, Phase 3 is a 1:1 port (decision 12.11). |
+| Phases | 0 measure (**done**, tiny-cores.md) -> 1 VexRiscv vendoring + CPU block + bridge + L2 -> 2 toolchain + boot ROM + trap/IRQ + L1 + Dhrystone -> 3 firmware 1:1 + host tests -> 4 co-simulation (differential 832 vs RV, stress; I$ hit rate; 832 Dhrystone on the board) -> 5 build integration + A/B -> 6 board parity + stress -> 7 performance -> 8 peripherals/IRQ -> 9 retire the 832 (Phase 9 follows 6/7 once RISC-V is stable, decision 12.10) |
 
 ---
 
@@ -354,13 +354,22 @@ the same tree. Each boot ROM loads its own file: `OSDNAME="832OSDADBIN"` /
 **`"RV32OSDABIN"`** (8.3 name `RV32OSDA.BIN`; the earlier `RV32OSDADBIN` had
 12 characters), so one SD card serves both bitstreams and the A/B is a
 reprogram. Config files are not shared (decision 12.4: LE layout + converter
-tool).
+tool). **One CPU per bitstream** (decision 12.10, Paul 2026-10-17): the
+bridge's `cpu_riscv` generate leaves the 832 out of a RISC-V build entirely
+(no `EightThirtyTwo` instance, no 832 boot ROM, no `debug_bridge_jtag`), so
+the RISC-V file list of Phase 5.1 (Vivado and Quartus) excludes the
+EightThirtyTwo sources, the 832 boot ROM and `debug_bridge_jtag`. The 832
+reference image is `build/stage_spicdc_49b1868` (md5 28b07e8c,
+`5.0-040-pipelined` 49b1868, board-verified by Paul 2026-10-17).
 
 ### 3.7 Firmware trees and toolchain (decisions 12.7, 12.8)
 
 - `fw/ctrl_boot_rv/`: copy of `fw/ctrl_boot_832` sources + `crt0.S`,
   `boot.ld`, `Makefile`; builds `OSDBoot_rv.bin` and `OSDBoot_rv_ROM.vhd`
   (committed with the sources).
+- Language: **C** (decision 12.11, Paul 2026-10-17). Phase 3 is a 1:1 port
+  of `fw/ctrl_832`, not a rewrite; Rust is possible later, only for new
+  subsystems.
 - `fw/ctrl_rv/`: copy of `fw/ctrl_832` at a recorded commit (Phase 3) plus
   `arch/` (`crt0.S`, `trap.S`, `irq.c/.h`, `csr.h`, `firmware.ld`) created
   in Phase 2 so the trap/IRQ code is benched before the firmware exists.
@@ -400,12 +409,23 @@ OpenOCD: upstream `riscv` target. Pins: `jtag newtap riscv cpu -irlen 5
 -expected-id 0x10002FFF; target create riscv.cpu.0 riscv -chain-position
 riscv.cpu`. Tunnel: `source [find cpld/xilinx-xc7.cfg]; target create cpu.0
 riscv -chain-position xc7.tap; riscv use_bscan_tunnel 6 1` (VexRiscv README).
-Configs in `tools/openocd/`. **Cable:** the board's programming cable is a
-Xilinx Platform Cable USB II (03fd:0008); the installed OpenOCD 0.12.0 has no
-driver for it (`adapter list`: ftdi, usb_blaster, jlink, cmsis-dap, ...). The
-tunnel therefore needs an FTDI-based JTAG cable on the same header (e.g. a
-Digilent HS2/HS3, which Vivado also drives) -- Paul's call before Phase 5.4.
-The pin variant needs any OpenOCD adapter plus four free FPGA pins.
+Configs in `tools/openocd/`.
+
+**Decided 2026-10-17 (decision 12.6, final):** (a) firmware logging over
+ttyUSB0 -- UART TX only; the firmware never reads `0xFFFFFFF0`, because a
+read of it is never acked; (b) hardware debug is **Option B**: the VexRiscv
+debug module through BSCANE2 (`rv_debug = 1`) on the FPGA's own 6-wire JTAG
+header, driven by Paul's Xilinx Platform Cable USB II (observed `03fd:000f`;
+the installed OpenOCD 0.12.0 has no driver for it). The transport is a
+Vivado `hw_server` Tcl JTAG-scan bridge, modelled on
+`EightThirtyTwo/tcl/832bridge.tcl` (which did the same with Quartus STP + an
+Altera virtual JTAG + TCP to 832ocd), exposed to OpenOCD as `remote_bitbang`
+and on to GDB. Writing that bridge is a Phase 5.4 bring-up task; it does not
+exist yet, and `minimig-rv-bscan.cfg` will use the `remote_bitbang`
+adapter. No FTDI adapter (Paul has none for this board). Dropped: a
+GDB-over-UART stub and a permanent RISC-V ILA (ILA ad hoc only). The 832's
+own on-chip debug was Altera-only and never used on the QMTech board. The
+pin variant (`rv_debug = 2`) stays generated but is not planned for use.
 Production images use `rv_debug = 0`. Debug is not on the critical path:
 variants generated and OOC-measured in Phase 1, a DM smoke test in L1
 (pin TAP, JTAG BFM) in Phase 2, hardware bring-up in Phase 5.4.
@@ -937,21 +957,27 @@ ring-fill columns (4.4).
 
 - 5.1 **S** `add_src` in all six `tools/vivado/build*.tcl`, `rebuild.tcl`,
   `host.qip` (VexOsd.v + rv_hostcpu.v, never `rv_bscane2.v`), top
-  parameters; stages `stage_rv` and `stage_832ab`. Gate: both implement;
+  parameters; stage `stage_rv`; the 832 side is the existing
+  `build/stage_spicdc_49b1868` (no `stage_832ab` rebuild needed unless the
+  tree changes). The RISC-V file list excludes the EightThirtyTwo sources,
+  the 832 boot ROM and `debug_bridge_jtag` (decision 12.10). Gate: `stage_rv`
+  implements;
   hostcpu hierarchical utilisation recorded; clk_114 WNS of `stage_rv` not
-  worse than `stage_832ab` by more than 0.1 ns; `report_clocks` still shows
+  worse than the 832 reference by more than 0.1 ns; `report_clocks` still shows
   `spi_sck`.
 - 5.2 **O** Timing/fit recovery if needed (placement directives, retiming,
   I$ `twoCycleRam`, a pipeline register in the CPU block). Gate: WNS within
   the current -0.2 ns, no new failing endpoints under hostcpu.
 - 5.3 **S** Card image with both firmware files; build notes. The spicdc
-  board check (decision 12.5) is part of the 832 leg's acceptance:
-  `report_clocks` shows `spi_sck`, HDF copy + checksum, ADF read/write.
+  board check (decision 12.5) is done: `build/stage_spicdc_49b1868` was
+  board-verified by Paul 2026-10-17 (it is the 832 reference).
   Gate: both bitstreams boot from one card. Merge `osd-riscv` ->
   `5.0-040-pipelined`.
-- 5.4 **O** Debug bring-up (not blocking): a lab stage with `rv_debug=1`
-  (or 2), OpenOCD + GDB attach, halt, breakpoint in `main`, `load` +
-  `fence.i`. Needs an OpenOCD-supported cable (3.8). Gate: session log in
+- 5.4 **O** Debug bring-up (not blocking): a lab stage with `rv_debug=1`;
+  write the Vivado `hw_server` Tcl JTAG-scan bridge (model
+  `EightThirtyTwo/tcl/832bridge.tcl`) serving OpenOCD `remote_bitbang`,
+  then OpenOCD + GDB attach, halt, breakpoint in `main`, `load` + `fence.i`,
+  with the Platform Cable USB II (3.8, decision 12.6). Gate: session log in
   `findings/osd-riscv/debug.md`.
 
 ### Phase 6 -- board parity and stress
@@ -972,10 +998,14 @@ no worse than the 832.
 
 ### Phase 8 -- peripherals and interrupts (each step: bench, build, board, merge)
 
-Order to be confirmed by Paul (decision 12.9) with the dependency map in
-`doc/osd-riscv-exec-1.md` T15. Proposal:
+After 8.0 the order below is **proposed, Paul did not object** (decision 12.9;
+dependency map in `doc/osd-riscv-exec-1.md` T15): P1 -> P2+P4 -> P3 -> P5/P6/P7
+on measured need. The OSD redesign (bigger, tabbed menu) is not part of this
+plan: it is in `doc/backlog.md` on `5.0-040-pipelined` (commit 32d3c80),
+after RISC-V parity.
 
-- 8.0 **done** on branch `osd-riscv` (RTL `7f0a672`, `75af45c`; firmware
+- 8.0 **done** (stage 2a, `doc/osd-riscv-exec-2.md`, commits `8d05575..ac78a9d`;
+  controller +111 LUT / +114 FF with registered output) on branch `osd-riscv` (RTL `7f0a672`, `75af45c`; firmware
   `59f3552`, `d492f6e`; design in 6.3): IRQ pending/mask/raw/mode block on
   MEI, legacy `0xFFFFFFA0` preserved; firmware `irq_save/restore`, dispatcher
   API. L2 tests `t_irqctl`, `t_irqapi`. P1 sources attach to `irq_src` bits
@@ -1001,6 +1031,10 @@ Order to be confirmed by Paul (decision 12.9) with the dependency map in
 
 ### Phase 9 -- retire the 832
 
+Paul 2026-10-17 (decision 12.10): retire the 832 once RISC-V is stable --
+Phase 9 follows Phase 6/7 and does not wait for Phase 8. Rollback is git
+history (and `build/stage_spicdc_49b1868`).
+
 - 9.1 **S** Remove `cpu_riscv=false` branches, the EightThirtyTwo submodule,
   `fw/ctrl_832`, `fw/ctrl_boot_832`, `fw/dhrystone_832`, `test/emu`,
   `fw/testbed` 832 bits, `sim/spi_cdc/host832` (keep its results), the
@@ -1009,9 +1043,9 @@ Order to be confirmed by Paul (decision 12.9) with the dependency map in
   memory notes. Gate: clean clone builds; no `832` outside `doc/`; tag;
   merge to `5.0-040-pipelined`.
 
-Dependencies: 0 -> 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8.x -> 9, with: 2.1
+Dependencies: 0 -> 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 9 (Phase 8.x also follows 7 and may run before or after 9), with: 2.1
 before 1.2 (test programs); 3.2/3.6 can start on the gcc errors and host
-tests before Phase 2 finishes; 5.4 needs only 5.1 and a cable; 8.7 needs
+tests before Phase 2 finishes; 5.4 needs only 5.1 and the Platform Cable; 8.7 needs
 only 6. Full map in `doc/osd-riscv-exec-1.md` T15.
 
 ---
@@ -1068,7 +1102,7 @@ Plus the stress protocol 7.4.
 | Endianness miss in a shared structure | HDF does not boot, config corrupt | 5.2 audit; golden-byte tests; differential traces (4.2); config converter + rejection of the wrong byte order |
 | Firmware-timing margins change with the CPU (~7x faster) | Lost SPI writes, dropped words, OSD reply garbage | 7.1 inventory with monitors in L3; four-phase handshake; P1 ready flag; stress grid incl. `rv_extra_ws`; teeth mutants |
 | Firmware stack in the boot BRAM overgrows (gcc frames differ) | Corrupted data/stack at 0x0-0x1FFF | `mtvec` in SDRAM so ROM code may be overwritten; high-water mark measured (3.7); 16 KB BRAM reserve |
-| Debug cable: OpenOCD 0.12 has no driver for the Platform Cable USB II | No GDB on the board | Production does not need it; FTDI cable (Digilent HS2/HS3) for the tunnel, or the pin variant with any adapter; decided before 5.4 |
+| Debug cable: OpenOCD 0.12 has no driver for the Platform Cable USB II | No GDB on the board | Production does not need it; decided 2026-10-17: Vivado `hw_server` Tcl scan bridge -> OpenOCD `remote_bitbang` (written in 5.4, model `832bridge.tcl`); UART logging meanwhile |
 | Debug DM FF cost (+844 FF) at 98 % slices | Lab images fail timing | Debug only in lab stages; the pin/tunnel choice does not change the core |
 | libgcc/newlib with A or C instructions in an IM build | Illegal-instruction trap | Multilib check (rv32im directory) in the toolchain task; objdump link check; `catchIllegalInstruction` handler prints PC |
 | gcc exposes C bugs vbcc hid | Behaviour differences | Minimal fixes, host tests, differential bench |
@@ -1115,12 +1149,19 @@ P5-P7 on evidence. Of these, only the 8 KB boot BRAM survives unchanged.*
    port; it happens on the 832 leg of the A/B build (Phase 5.3):
    `report_clocks` shows `spi_sck`, HDF copy + checksum, ADF read/write,
    as part of the acceptance of the 832 A/B reference bitstream.
+   **Done 2026-10-17:** `build/stage_spicdc_49b1868` (md5 28b07e8c,
+   `5.0-040-pipelined` 49b1868) board-verified by Paul.
 6. **Debug: needed** ("debugging firmware is likely in our future"):
    RISC-V External Debug spec (DM + JTAG DTM; OpenOCD + GDB). Resolved with
    the core: the transport is a generation-time choice, so three variants
    are committed (3.8): none (default), BSCANE2 tunnel through the Xilinx
    JTAG chain (Artix-only file, off by default per the vendor-neutral rule),
    dedicated pins (vendor-neutral). Production images leave the DM out.
+   **FINAL, Paul 2026-10-17:** (a) logging over ttyUSB0 (UART TX only, the
+   firmware never reads `0xFFFFFFF0`); (b) Option B: `rv_debug = 1` on the
+   FPGA's own JTAG header with the Platform Cable USB II, via a Vivado
+   `hw_server` Tcl scan bridge -> OpenOCD `remote_bitbang` -> GDB (Phase 5.4
+   task, 3.8). No FTDI adapter; GDB-over-UART stub and permanent ILA dropped.
 7. **Firmware: new RISC-V dedicated trees** `fw/ctrl_rv`, `fw/ctrl_boot_rv`
    (and `fw/dhrystone_rv`), not a `Makefile.rv32` inside `fw/ctrl_832`. The
    832 trees stay untouched as the A/B reference until Phase 9.
@@ -1138,4 +1179,17 @@ P5-P7 on evidence. Of these, only the 8 KB boot BRAM survives unchanged.*
    the dependency map in `doc/osd-riscv-exec-1.md` T15).
    Paul 2026-10-17: implement 8.0 now; uniform edge-detected sources; read
    clears the returned bits; per-source EDGE/LEVEL MODE register. Done (6.3).
-   The rest of the Phase 8 order (P1..P7) stays open for Paul.
+   The rest of the Phase 8 order (P1 -> P2+P4 -> P3 -> P5/P6/P7 on measured
+   need) is proposed; Paul did not object (2026-10-17).
+10. **One CPU per bitstream; retire the 832 early (Paul, 2026-10-17).** A
+    RISC-V build contains no 832 (`cpu_riscv` generate; the Phase 5 RISC-V
+    Vivado/Quartus file list excludes the EightThirtyTwo sources, the 832
+    boot ROM and `debug_bridge_jtag`). "A/B" means two bitstreams; the 832
+    reference is `build/stage_spicdc_49b1868`. The 832 is retired once
+    RISC-V is stable: Phase 9 follows Phase 6/7 and does not wait for
+    Phase 8; rollback is git history. (Answers Task 15 question 2.)
+11. **Firmware language: C (Paul, 2026-10-17).** Phase 3 is a 1:1 port of
+    `fw/ctrl_832` into `fw/ctrl_rv`, not a rewrite; Rust possibly later,
+    only for new subsystems. The OSD redesign (bigger, tabbed menu) is a
+    backlog item after RISC-V parity (`doc/backlog.md` on
+    `5.0-040-pipelined`, commit 32d3c80).
