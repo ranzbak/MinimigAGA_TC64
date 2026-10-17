@@ -1,5 +1,7 @@
 # OSD host CPU -> VexRiscv: executable plan, stage 3 (Phase 3 -- firmware 1:1, host tests, LE config)
 
+Amended 2026-10-17 for decision 12.12 (newlib-nano, gnu23).
+
 **Goal.** Port the OSD firmware `fw/ctrl_832` (vbcc832, big-endian, ~14,400
 lines incl. CD-ROM/ATAPI/CUE/CD audio) 1:1 to the RISC-V host CPU as a new C
 tree `fw/ctrl_rv` that builds `RV32OSDA.BIN` with the pinned xPack gcc, boots
@@ -12,7 +14,7 @@ from which Phase 4 (L3 co-simulation of floppy, HDD and CD against the 832)
 starts; the list of what Phase 4 consumes is at the end. Parent plan:
 `doc/osd-riscv-plan.md` (sections 5, 6.2, 7.1, 7.3, 8 Phase 3/4; Paul's
 decisions in section 12, binding: 12.4 config, 12.6 debug, 12.10 one CPU per
-bitstream, 12.11 C and 1:1). Stages before this one: `doc/osd-riscv-exec-1.md`
+bitstream, 12.11 C and 1:1, 12.12 newlib-nano and gnu23). Stages before this one: `doc/osd-riscv-exec-1.md`
 (Phases 1-2), `doc/osd-riscv-exec-2.md` (Phase 8.0 and the Verilator
 backends).
 
@@ -26,8 +28,14 @@ workarounds), the difference is listed in `fw/ctrl_rv/README.md` section
 **Architecture summary.** `fw/ctrl_rv/` = a verbatim copy of the built part of
 `fw/ctrl_832` (Task 2, one commit, so every later change is a reviewable
 `diff -ru fw/ctrl_832 fw/ctrl_rv`), plus the Phase 2 `arch/` (crt0, trap entry,
-legacy interrupt API) and a small C library `lib/` that reproduces lib832's
-`printf`/string semantics. Byte-order helpers `le16/le32/be16/be32` replace the
+legacy interrupt API). C library (decision 12.12): newlib-nano of the pinned
+xPack toolchain for `sprintf`/`snprintf`/string/ctype/`strtol`, no stdio FILE
+layer, no heap; the firmware's own `printf`/`vprintf` (`rvlibc.c`:
+`vsnprintf` into a static buffer, then UART TX byte by byte) and
+`putchar`/`puts` (`uart.c`). Where lib832 differed from ISO C, Task 3's
+format and string audits fix the call sites so the behaviour stays the
+832's, or list the difference. C dialect gnu23 (Task 4 fixes the code).
+Byte-order helpers `le16/le32/be16/be32` replace the
 "for 68000" swaps (identity on LE disk fields) and make every Amiga-facing
 structure explicit big-endian. Tests: `fw/ctrl_rv/test` (host gcc, native and
 `-m32`, ASan/UBSan, an SPI/TIMER/card mock under `-DHOSTTEST`, goldens from
@@ -43,7 +51,8 @@ replaces the stub with the real slaves).
 | Earlier constraints | Everything in `doc/osd-riscv-exec-1.md` "Global Constraints" as corrected (worktree/branch `osd-riscv`, one commit per task with only its files, never stage `fw/ctrl_832/version.h`, `*.wcfg`, `tools/vivado/ila_fastram_check.py`; commit message ends with the implementer's `Co-Authored-By` line; tools; CPU byte memory map incl. the interrupt controller `0xFFFFFF3x`; lane rule; bus contract; toolchain pin; vendor-neutral rule; run directories) and `doc/osd-riscv-exec-2.md` (interrupt controller semantics, Verilator backends). Nothing of this branch goes to `5.0-040-pipelined` until board-verified (Phase 5.3). |
 | Scope | `fw/ctrl_rv/**`, `sim/**` benches, `tools/sim/**`, `doc/**`. **No change under `rtl/`** in Phase 3 (if the port seems to need one, stop and report). `fw/ctrl_832`, `fw/ctrl_boot_832`, `fw/dhrystone_832` are read-only (benches and tests may read them). `fw/ctrl_boot_rv` and its committed `OSDBoot_rv_ROM.vhd` stay unchanged. |
 | Copy base | Task 2 copies `fw/ctrl_832` as it is at the `osd-riscv` HEAD when Task 2 runs (last `fw/ctrl_832` change today: `8f8cf88`); the commit hash goes into `fw/ctrl_rv/README.md`. A fix that must land in both trees during the port is two commits that name each other (plan 3.7). |
-| C dialect and flags | Firmware: `$(RV_CFLAGS_FW) -std=gnu17` (gcc 15 defaults to gnu23, where `f()` means `f(void)` and `true`/`false` are keywords: `firmware.h` defines `true` as -1) plus `-g -I. -Iarch -Ilib`; from Task 7 on `-Wall -Wextra -Werror`. Link: `$(RV_LDFLAGS_FW) -nostartfiles -T arch/firmware.ld -Wl,--no-warn-rwx-segments -Wl,-Map,...` with `$(RV_LIBS_FW)` (`-lgcc`) **last** on the line. All RISC-V Makefiles include `tools/riscv/toolchain.mk` and (from Task 1) `fw/ctrl_rv/arch/arch.mk`. Output in `fw/ctrl_rv/build/` (gitignored): `RV32OSDA.BIN` (`objcopy -O binary`), `.elf`, `.map`, `.lst`. |
+| C dialect and flags | Firmware (decision 12.12): `$(RV_CFLAGS_FW) -std=gnu23 --specs=nano.specs` plus `-g -I. -Iarch`; from Task 7 on `-Wall -Wextra -Werror`. gnu23 is gcc 15's default, written out: `f()` means `f(void)`, `bool`/`true`/`false` are keywords (`true` == 1); Task 4 fixes the code (`firmware.h`'s `#define true -1` goes, the 32 `true`/`false` hits are audited). Code never tests `__STDC_VERSION__` (target gnu23 = 202311L, host `gnu2x` = 202000L). `--specs=nano.specs` at compile time only selects newlib-nano's headers (`include/newlib-nano/newlib.h` first: `_WANT_REENT_SMALL`, `_NANO_FORMATTED_IO`; without it the full-newlib `newlib.h` describes another `struct _reent` than `libc_nano.a`). `-ffreestanding` and `-fno-builtin` stay (shared `RV_CFLAGS_FW`): `-ffreestanding` only sets `__STDC_HOSTED__ 0` and takes gcc's `stdint-gcc.h`, built from the same `__INT*_TYPE__` macros as newlib's types (probe 2026-10-17: a vsnprintf/str*/mem*/strtol/toupper test compiles `-Wall -Wextra -Werror` clean and links to identical symbols with and without it); `-fno-builtin` also keeps gcc from turning `printf("..\n")` into a call of the firmware's `puts`, which appends no newline. Link: `$(RV_LDFLAGS_FW) --specs=nano.specs -nostartfiles -T arch/firmware.ld -Wl,--no-warn-rwx-segments -Wl,-Map,...` with `-lc_nano $(RV_LIBS_FW)` (`-lc_nano -lgcc`) **last** on the line; crt0 stays `arch/crt0.S` (no libgloss, no `crt0.o` of newlib). These newlib bits live in `fw/ctrl_rv/Makefile` only: `tools/riscv/toolchain.mk`'s shared variables and `arch.mk` stay as they are (the boot ROM stays libc-free; the L1/L2 benches keep their own link lines). All RISC-V Makefiles include `tools/riscv/toolchain.mk` and (from Task 1) `fw/ctrl_rv/arch/arch.mk`. Output in `fw/ctrl_rv/build/` (gitignored): `RV32OSDA.BIN` (`objcopy -O binary`), `.elf`, `.map`, `.lst`. |
+| C library (12.12) | newlib-nano 4.5 (`rv32imc/ilp32/libc_nano.a` of the xPack pin): `sprintf`, `snprintf`, `vsnprintf`, `mem*`/`str*`, ctype, `strtol`/`strtoul` as they are; integer formatting only (no `-u _printf_float`; nano has no `%ll`, `%hh`, `%z`, `%j`, `%t`: the firmware uses none). The firmware defines `printf`/`vprintf` (`rvlibc.c`) and `putchar`/`puts` (`uart.c`); no stdio FILE layer, no heap, no syscall stubs (`_sbrk`, `_write`, `_read`, `_fstat`, `_isatty`, `_lseek`, `_close` are never defined, so anything that pulls one fails the link: intended). Exception, probed 2026-10-17: newlib-nano's `nano-svfprintf.o` (behind every `*printf`) references `_malloc_r`/`_realloc_r`/`_free_r` for the `asprintf`/`open_memstream` case (`__SMBF`), which a fixed-buffer `snprintf` never takes; undefined, they pull `mallocr.o` -> `_sbrk_r` -> `_sbrk` and the link fails. `rvlibc.c` defines these three as stubs (`NULL`/no-op, counting calls in `rv_libc_heap_calls`), so no allocator is linked. `_impure_ptr`/`_impure_data` (errno, 84 B `.data` in the probe) are allowed. Guard: `make -C fw/ctrl_rv check` (e), Task 4. |
 | I/O map (plan 5.3) | Every firmware register at offset 0 of its 16-byte window, CPU addresses `0xFFFFFFx0`: SPI DATA `0xFFFFFFE0` (8-bit), CS `0xFFFFFFE4`, SPEED `0xFFFFFFE8`; UART TX `0xFFFFFFF0` (8-bit, write only); TIMER `0xFFFFFFD0` (16-bit); PLATFORM `0xFFFFFFC0` (16-bit); AUDIO `0xFFFFFFB0` (8-bit); INTERRUPT `0xFFFFFFA0` (32-bit); keyboard `0xFFFFFF90` + 0/4/8/0xC (words 0..3), `REG_KEYBOARD_OUT` + 0; Akiko `0xFFFFFF80` + 0 (ADDR) / 4 (DATA); RTC base `0xFFFFFF70`; I2C `0xFFFFFF60` (32-bit, as today); VIDEOSCALE `0xFFFFFF50` (32-bit); `FPGA_TEMP_RAW` `0xFFFFFF40` (16-bit). `RECONFIGURE` (`0xDEE016`) is kept as the 832 has it (an unmapped cfide window on this core; a halfword store, aligned). The 832's `0x0FFFFFxx` bases become `0xFFFFFFxx` (x0-relative 12-bit offsets). |
 | UART | Write only. cfide never acks a read of `0xFFFFFFF0` (the CPU deadlocks). No firmware file may read it: `uart.h` has no RX, no `REG_UART_TXREADY`, no `getserial`; `make -C fw/ctrl_rv check` greps the disassembly for any load from `-16(zero)` and fails. |
 | Interrupts | Phase 3 uses only the legacy path of `fw/ctrl_rv/arch/irq.h` (`SetIntHandler`, `EnableInterrupts`, `DisableInterrupts`, `GetInterrupts`; `0xFFFFFFA0`), exactly as the 832 (`inthandler()` in `main.c`). No `IrqInstall/IrqEnable/IrqSetMode` (Phase 8). Nothing in Phase 3 depends on `irq_src` bits 4..15; the P1 rule (sources are pulses of at least one `clk_28` cycle or levels) is Phase 8's. The firmware does not override `rv_exception` (the arch default prints `EXC mcause=.. mepc=.. mtval=..` and spins; no OSD message from a trap: it may hit mid-SPI-transfer). |
@@ -51,7 +60,7 @@ replaces the stub with the real slaves).
 | No new count-based delays (plan 7.1 item 11) | No new `SPIN`, empty counted loops or `timeout++` bounds. The live `SPIN` sites stay exactly three: `SPI_reply()` (`hardware.c`, 4 x `SPIN`, 174322f, OSD reply rule below), `fpga_init()` after the version read, `config.c:548`. The commented `SPIN`s in `fdd.c` stay commented. Gate in Task 20: `git diff <Task-2 commit> -- fw/ctrl_rv | grep '^+' | grep -nE 'SPIN|for *\([^;]*;[^;]*;[^)]*\) *;|timeout\+\+'` lists nothing but lines that Task 10 replaced. |
 | OSD reply rule | `userio_osd` loads a reply byte on its `clk7_en` grid after the previous transfer; the host needs >= 40 `clk_114` between the accesses of an OSD reply read (`sim/spi_cdc/tb_spi_cdc.v` `+GAP`, `OSD_MIN_GAP=40`; below it `OSD_CMD_VERSION` fails 3/3 in every skew corner). `SPI_reply()`'s four `SPIN`s (each a TIMER read through the four-phase hw handshake, i.e. bounded by cfide's `clk_28` handshake, not by CPU speed) stay; Task 6 measures the RV figure in L2 and Phase 4 re-checks it against the real `userio_osd` (plan 7.1 item 2, open until P1). |
 | Byte order | Helpers in `fw/ctrl_rv/swap.h`: `le16/le32` (identity when `__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__`), `be16/be32` (swap on LE), `rd_le16/rd_le32/rd_be16/rd_be32(const void *)` and `wr_be16/wr_be32(void *, v)` (byte-wise: safe at any alignment). Disk/Amiga data at a possibly misaligned address is always read byte-wise (VexRiscv traps misaligned accesses: `mcause` 4/6). Buffers that structs are overlaid on are `__attribute__((aligned(4)))`. |
-| Host tests | `make -C fw/ctrl_rv/test` is the single entry point (exit status = result). `gcc -std=c99 -D_DEFAULT_SOURCE -DHOSTTEST -Wall -Wextra -Wno-unused-parameter -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all`, each test built and run twice: native (LP64) and **`-m32`** (ILP32 like RV32: the firmware's `unsigned long` is 32 bits; `config.c` asserts `sizeof(configTYPE) == 212`). Every new test has a mutant check (`make -C fw/ctrl_rv/test mutants`: a sed on a run copy of the unit that must turn the test red). Goldens come from independent generators (`fw/ctrl_rv/test/gold/*.py`, python3 stdlib only, run with `python3 -I`) or, where the 832 code is byte-level, from the **`fw/ctrl_832` source compiled for the host** with the same mock -- never from the code under test. |
+| Host tests | `make -C fw/ctrl_rv/test` is the single entry point (exit status = result). `gcc -std=gnu2x -D_DEFAULT_SOURCE -DHOSTTEST -Wall -Wextra -Wno-unused-parameter -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all`, each test built and run twice: native (LP64) and **`-m32`** (ILP32 like RV32: the firmware's `unsigned long` is 32 bits; `config.c` asserts `sizeof(configTYPE) == 212`). Every new test has a mutant check (`make -C fw/ctrl_rv/test mutants`: a sed on a run copy of the unit that must turn the test red). Goldens come from independent generators (`fw/ctrl_rv/test/gold/*.py`, python3 stdlib only, run with `python3 -I`) or, where the 832 code is byte-level, from the **`fw/ctrl_832` source compiled for the host** with the same mock -- never from the code under test. Dialect: `fw/ctrl_rv` sources build with `-std=gnu2x` (host gcc is Ubuntu 13.3: it rejects the spelling `-std=gnu23`; `gnu2x` already has the C23 `bool`/`true`/`false` keywords and `f()` == `f(void)`, probed 2026-10-17). Builds of **unmodified 832 sources** for goldens (`fw/ctrl_832/fdd.c` in Task 13, lib832's `small_printf.c` in Task 3, any other) keep `-std=gnu17` (they `#define true -1` and declare `f()`), with the same mock; `fw/ctrl_832/test` keeps its own `-std=c99` Makefile (read-only). The host tests link glibc, whose ISO string/format semantics are now the target libc's too (newlib-nano); the format-parity check of Task 3 shows this for every firmware format string. |
 | Simulators | Long runs (`fwboot*`, L1 `units`) on Verilator (`SIM=verilator`); xsim (L2) / iverilog (L1) stay the X-checking reference: every new L2 target also passes once on xsim, and `run.sh compare` of the two run directories reports SAME. One xsim at a time. A new RUNTAG per code change. |
 | Sizes | `_start == 0x2000` and `_end < 0x70000` (`AUDIO_BUFFER`) are linker ASSERTs in `arch/firmware.ld`. Stack: top 0x2000, grows into the boot BRAM; Task 17's gate keeps it above **0x1400** (the boot ROM image ends below it, so a soft re-run of the boot ROM stays possible -- exec-1 final review, "Declined to judge"). |
 | README rule (Paul) | Every README a task creates or changes gives copy-pasteable commands from a fresh Ubuntu 24.04 machine, toolchain setup included (`bash tools/riscv/fetch-xpack.sh`, `bash tools/riscv/check-toolchain.sh`, apt packages by name), and works in zsh and bash (Paul's shell is zsh: no unquoted word-splitting of variables). |
@@ -68,7 +77,7 @@ replaces the stub with the real slaves).
 | 5 | config file: LE layout, own file names, `cfgconv`, first-boot conversion, wrong byte order rejected by `version` | 11 |
 | 6 | `firmware.h` `UPGRADE`/`CheckFirmware`/`WriteFirmware`: declared, never defined or called (dead) | 14 |
 | 7 | struct overlays: `fat.c:137` `MasterBootRecord` (9), `hdd.c:90/131` (12), `hdd.c:524` RDB patch of an HDF's own RDB (12), `config.c:275` (11) | 9, 11, 12 |
-| 8 | misaligned multi-byte accesses: MBR partition entries (`fat.c` copies them with `memcpy` first: verify), `uart.c` `puts` and lib832 `small_printf` reading strings as 32-bit words and taking bytes with `>> 24` (new: BE-only and misaligned for an unaligned string), drivesounds headers (4) | 3, 5, 9, 14 |
+| 8 | misaligned multi-byte accesses: MBR partition entries (`fat.c` copies them with `memcpy` first: verify), `uart.c` `puts` reading strings as 32-bit words and taking bytes with `>> 24` (new: BE-only and misaligned for an unaligned string; the lib832 `small_printf` part is moot with newlib-nano, 12.12 -- and lib832's `_pfputs` reads bytes anyway), newlib's `mem*`/`str*` at offsets 0..3 (Task 3's L1 program: VexRiscv traps a misaligned access), drivesounds headers (4) | 3, 5, 9, 14 |
 | new | `main.c` `CheckSum` (kickstart checksum `checksum_pre`, shown by the menu): summed over native words, so the shown value would differ from the 832's -> sum `be32` words; `hexdump.c` prints native 32-bit words -> print the 832's (BE) view | 14 |
 | 9 | anything else: L3 differential traces | Phase 4 |
 
@@ -124,7 +133,9 @@ replaces the stub with the real slaves).
   Task 4), `Makefile.68k`, `startup_m68k-elf.s`, `startup_zpu-elf.s`,
   `osd_m68k-elf.ld`, `osd_zpu-elf.ld` (68k/ZPU leftovers),
   `small_printf.c`/`small_printf.h`/`printf.c` of the firmware tree (not in
-  `COMMON_SOURCES`: the 832 links lib832's `printf`; Task 3 ports that one),
+  `COMMON_SOURCES`: the 832 links lib832's `printf`; the RV firmware uses
+  newlib-nano plus its own `printf`/`vprintf`, Task 3, decision 12.12; no
+  lib832 file is copied anywhere into `fw/ctrl_rv`),
   `test/emu/Makefile` (vbcc832 + 832e; 832-only).
 - **Test first:** a script line that proves the copy: for every copied file
   `cmp fw/ctrl_832/<f> fw/ctrl_rv/<f>`.
@@ -136,53 +147,162 @@ replaces the stub with the real slaves).
   benches are unaffected (nothing includes the new files yet; `make -C
   sim/rv_l1/prog` still uses `FWDIR=fw/ctrl_832` until Task 15).
 
-### Task 3: `fw/ctrl_rv/lib` -- lib832's printf and string semantics in plain C
+### Task 3: newlib-nano integration + format/string parity audit
 
-- **Phase / depends on:** plan 3.1/3.7 ("lib832's `string.S` becomes plain C") / Task 2.
-- **Model:** Sonnet.
-- **Why lib832 and not newlib-nano:** the firmware relies on lib832's
-  behaviour (e.g. `menu.c:752`: "lib832's printf has no precision", so the
-  code uses `strncat`); the same formatter keeps every UART/OSD string
-  identical to the 832's, which the Phase 4 differential compares.
-- **Files (create):** `fw/ctrl_rv/lib/small_printf.c` (from
-  `EightThirtyTwo/lib832/small_printf.c`: `printf`, `vprintf`, `sprintf`,
-  `snprintf`, `vsprintf`, the `_cvt`/`_pfputs` helpers; `putchar` comes
-  from `uart.c`), `fw/ctrl_rv/lib/string.c` (C versions of lib832
-  `string.S`, `string_c.c`, `stringstubs.c`: `memcpy memmove memset memcmp
-  strcpy strncpy strcat strncat strcmp strncmp strlen tolower toupper strspn
-  strcspn strtok strtok_r strtol strtoul`, byte loops, no word tricks),
-  `fw/ctrl_rv/lib/{stdio.h,string.h,ctype.h,stdlib.h}` with exactly the
-  prototypes the firmware uses (`stdarg.h`/`stddef.h`/`stdint.h` come from
-  gcc's freestanding headers), `fw/ctrl_rv/lib/COPYING.LESSER`
-  (lib832's licence, LGPL 2.1; the README says which files are derived and
-  from which EightThirtyTwo commit: `git -C EightThirtyTwo rev-parse HEAD`
-  in the main checkout), `fw/ctrl_rv/test/lib_test.c`.
-- **Rules:** keep lib832's semantics where they differ from ISO C and list
-  each difference in the README (read `string.S` for `strncpy` padding,
-  `strncat` count, `memcmp` sign, the return values; read `small_printf.c` for
-  the conversions it supports: `%d %u %x %s %c %l..`, width, zero fill, no
-  precision). The 32-bit-chunk string reading of the old ROM-loadb workaround
-  (if present in lib832's file) becomes a byte loop. No `__geta4`/vbcc
-  pragmas.
-- **Test first (`lib_test.c`, host, native and `-m32`):** (1) every string
-  function against glibc on random inputs (lengths 0..64, all offsets 0..3,
-  overlapping `memmove`) except the documented lib832 differences, which are
-  tested against their own expectation; (2) every format string used in
-  `fw/ctrl_rv/*.c` (`grep -ho '"[^"]*%[^"]*"' fw/ctrl_rv/*.c | sort -u` into
-  `test/gold/formats.txt`) with representative arguments, the RV copy against
-  **lib832's original `small_printf.c` compiled for the host** (it is C; a
-  shim provides `putchar` into a buffer) -- byte-identical output. Mutant:
-  `strncpy` without its padding (or whatever lib832 does) fails (1).
-- **Commands:** `make -C fw/ctrl_rv/test lib_test && ./fw/ctrl_rv/test/lib_test`
-  (the Makefile wiring is minimal here; Task 8 folds it into the harness).
-- **Pass gate:** `lib_test` PASS native and `-m32`; mutant FAIL; the lib
-  compiles for RV with `$(RV_CFLAGS_FW) -std=gnu17 -Wall -Wextra -Werror`.
+- **Phase / depends on:** plan 3.1/3.7 and decision 12.12 (newlib-nano, not
+  a port of lib832's printf/string code) / Task 2 (Task 1 for `arch.mk`).
+  Runs before Task 4: nothing here needs the whole firmware to link (one
+  small L1 program, host programs).
+- **Model:** Sonnet; Opus reviews the string-audit verdict table and every
+  OSD-layout call-site fix. The L1 wiring needs no Opus: one program rule in
+  `sim/rv_l1/prog/Makefile` and one `run.sh` target modelled on `units`.
+- **What the firmware gets (Global Constraints "C library"):** newlib-nano
+  headers (`--specs=nano.specs`) and `libc_nano.a`; `fw/ctrl_rv/rvlibc.c`
+  defines `printf` and `vprintf`: `vsnprintf` into a static `.bss` buffer of
+  `RV_PRINTF_BUF` bytes, then the bytes one by one through `putchar` (vprintf
+  returns `vsnprintf`'s value); plus the three heap stubs `_malloc_r`,
+  `_realloc_r`, `_free_r` of the Global Constraints. `putchar`/`puts` stay
+  in `uart.c` (Task 5 fixes `puts`). **Interrupt context:** `inthandler()`
+  (`main.c`) calls `akiko_inthandler()`, which `printf`s ("Akiko write/read:
+  %x"), so a `printf` can interrupt a `printf`: `vprintf` keeps a nesting
+  count and formats at depth 1 into a second static buffer
+  `RV_PRINTF_IRQ_BUF` (the legacy path does not nest deeper: MIE is clear in
+  the handler). Both lines arrive intact; where the interrupt's line lands
+  relative to the interrupted one may differ from the 832 (which streams
+  byte by byte): a README "Differences" row.
+- **`RV_PRINTF_BUF` / `RV_PRINTF_IRQ_BUF`:** sizes from an audit (README
+  table): for every `printf` call site (156 in the 832 tree today) the
+  longest output it can produce, each `%s` bounded by its source buffer (`fat.h` `long_name[261]` is the longest), the IRQ-reachable ones
+  separately; the size is the maximum rounded up to a multiple of 64.
+  Overflow: `vprintf` sends the first `RV_PRINTF_BUF - 1` bytes and
+  increments `rv_printf_truncations`; a test case longer than the buffer
+  shows the counter at 1 and exactly that prefix.
+- **Files:** create `fw/ctrl_rv/rvlibc.c`, `rvlibc.h` (the buffer sizes,
+  `rv_printf_truncations`, `rv_libc_heap_calls`, and any helper the string
+  audit needs, written from the semantics, not from lib832's code),
+  `fw/ctrl_rv/test/lib_test.c`, `test/fmt_cases.h`, `test/gold/formats.txt`,
+  `test/gold/fmt_diff_expected.txt`, `test/gold/fmtcheck.py`,
+  `fw/ctrl_rv/test/rv/fmt_rv.c`; modify `sim/rv_l1/prog/Makefile` (program
+  `fmt_rv` with explicit `fw/ctrl_rv` paths, not `FWDIR`, and the firmware's
+  library line: `--specs=nano.specs -nostdlib -nostartfiles`, `crt0_l1.o` +
+  `l1_newlib.ld` for the L1 memory map, **no** `syscalls.o`, `-lc_nano -lgcc`
+  last; not in `PROGS`/`units`), `sim/rv_l1/run.sh` (target `fmt`: builds
+  `fmt_rv`, runs it once WS=3 ROMWS=1 through `unit`, writes its `FMT` lines
+  to `run_<RUNTAG>/fmt_rv.txt`), `sim/rv_l1/README.md`, `fw/ctrl_rv/README.md`
+  ("C library", the audit tables, "Differences from fw/ctrl_832" rows), and
+  the copied `fw/ctrl_rv/*.c` call sites the audits fix (each a minimal
+  edit). The 832 reference is lib832's `small_printf.c` **in place**:
+  `LIB832 ?= $(TOP)/EightThirtyTwo/lib832` (this worktree's submodule is not
+  initialised: `git submodule update --init EightThirtyTwo`, or
+  `LIB832=<main checkout>/EightThirtyTwo/lib832`; EightThirtyTwo pin
+  `d1cd671`); a missing `LIB832` fails the test, it does not skip. No lib832
+  file is copied, no LGPL-derived file is in `fw/ctrl_rv` (the earlier plan's
+  `lib/` tree with `COPYING.LESSER` does not exist).
+- **(a) Format parity:**
+  `grep -ho '"[^"]*%[^"]*"' fw/ctrl_rv/*.c | sort -u > fw/ctrl_rv/test/gold/formats.txt`
+  (134 strings in the 832 tree today;
+  conversions used: `%d %u %x %X %s %ld %lu %lx`, widths `%4d %02X %04X
+  %04x %08X %08lX %08lx`, precision `%.3s %.8s %.11s`; no `%c %p %b %ll %h
+  %z` and no `-` flag). `fmt_cases.h`: for every line of `formats.txt` one or
+  more cases with representative arguments (0, 1, -1, the type's maximum, a
+  value with bit 31 set, strings empty, short, longer than the precision,
+  the longest the call site can pass); `fmtcheck.py cover` fails when a line
+  of `formats.txt` has no case. Each case runs as `sprintf` into a buffer and
+  as `printf` into a captured `putchar` stream, recorded as `FMT <n> S
+  ret=<r> buf=<hex> side=<hex>` (side = bytes that reached `putchar` during
+  the `sprintf`) and `FMT <n> P ret=<r> out=<hex>`. Three producers:
+  `fmt_832` (host: lib832's `small_printf.c` + a `putchar` capture shim,
+  `-std=gnu17 -m32 -w -D__weak=` and `-Dprintf=ref832_printf`-style renames
+  so it links next to glibc -- shown to work by a probe on 2026-10-17;
+  `-m32` only: its `%l` reads an `int`, so LP64 would differ by ABI, not by
+  the 832), `fmt_glibc` (host, the same cases on glibc, both ABIs, with
+  `rvlibc.c` providing `printf`/`vprintf` over glibc's `vsnprintf`, so the
+  P records exercise `rvlibc.c`; the program writes its records with
+  `fwrite`, never `printf`) and `fmt_rv` (L1: `rvlibc.c` + newlib-nano, the
+  real target libc, with its own capturing `putchar`; records written with
+  `l1_puts`). Gates: `fmt_rv.txt` == `fmt_glibc.txt` (the host
+  tests' glibc formats every firmware format string like the target; any
+  difference is listed and the host suite then compares against a committed
+  `fmt_rv.txt`), and `fmtcheck.py diff fmt_832.txt fmt_rv.txt` ==
+  `test/gold/fmt_diff_expected.txt` exactly. `make -C fw/ctrl_rv/test` runs
+  the host part every time (`fmt_glibc` stands in for `fmt_rv` by the first
+  gate); `run.sh fmt` is re-run whenever `rvlibc.c` or a format string
+  changes, and in Task 20.
+  Known from that probe, to be confirmed and completed by the table: the 832
+  prints `%x` digits upper case (newlib: lower); a zero argument ignores
+  width and zero fill (`%02X` of 0 is `0`); the width digit `9` and a `0`
+  after the first width digit are not parsed (`%10d` of 3 is `3`); `-` is
+  ignored (right-aligned); no precision: `%.8s` prints `8s` literally and
+  does not consume its argument, so later arguments shift; `%p` has no
+  `0x`; in `sprintf` a negative `%d` sends the `-` to the UART, not into the
+  buffer; return values count differently (`%s` one short; `snprintf`
+  returns the bytes written, not the length needed).
+  Every difference is a row in README "Differences from fw/ctrl_832" and a
+  line of `fmt_diff_expected.txt` (Phase 4's expected-differences list). A
+  difference that changes OSD layout (width or padding on an OSD line, text
+  shifted by an unconsumed argument) is fixed **at the call site** so the
+  OSD line equals the 832's, not in libc; where that reproduces an evident
+  832 printf bug, the row says "832 bug kept for parity" (fixing it is a
+  later decision for Paul, after Phase 4). A case-only difference may be
+  fixed at the call site the same way (`%x` -> `%X` keeps UART/OSD strings
+  identical for the Phase 4 diff); otherwise it is listed. Call sites that
+  use a `printf`/`sprintf`/`snprintf` return value are listed with a verdict
+  (a grep on 2026-10-17 found none; re-check).
+- **(b) String semantics audit:** read lib832 `string.S`, `string_c.c`,
+  `stringstubs.c` and the EightThirtyTwo `include/string.h`/`string_asm.h`
+  for every place where lib832 differs from ISO C; table in the README
+  (function, lib832 behaviour, ISO behaviour). Starting points from a first
+  reading (confirm each): `strncpy` copies up to and including the NUL and
+  does **not** pad the rest with zeros; `strncmp`/`memcmp` with `n == 0`
+  return an uninitialised `r0`, not 0; `strncat` with `n == 0` copies the
+  whole source; `strncat`'s return value is not set; `memmove` has a
+  forward-copy branch that jumps into `memcpy`'s loop with other register
+  roles (read it); `strtol`/`strtoul` skip only spaces, take no `+`, no
+  `0x` prefix, no base 0, store `*endptr` unconditionally, `strtoul`
+  ignores `-`; `memcpy`, `memset`, `strcpy` return `dst`. Then grep every
+  firmware call site that can observe a difference (832 tree today:
+  `strncpy` 45, `strncmp` 15, `strncat` 4, `memcmp` 2, `tolower` 4,
+  `memmove`/`strtol`/`strtoul`/`strtok` 0) and give each a verdict: no
+  observable difference (say why), or fixed so the behaviour equals the
+  832's (e.g. `fat.c:384` `strncmp(fileLFN, name, strlen(name))` with an
+  empty `name`; a `strncpy` whose bytes after the NUL reach the disk, the
+  SPI or the OSD). A call site that needs 832 semantics calls a helper in
+  `rvlibc.c` (e.g. a non-padding copy), never a redefined libc function.
+  The host tests run the firmware against glibc (ISO), which now matches the
+  target libc's semantics, so they need no lib832 emulation.
+- **Test first (`lib_test.c`, host, native and `-m32`, plus `fmt_rv` on
+  L1):** (1) the format-parity producers and both gates above; (2)
+  `rvlibc.c` built on the host against glibc with a `putchar` mock: the
+  output equals `vsnprintf`'s, the overflow case (counter 1, exact prefix),
+  a `printf` issued from inside the mock `putchar` (simulated interrupt:
+  both lines intact); (3) every `rvlibc.c` helper against its expectation
+  from the `string.S` reading; (4) `fmt_rv` also runs newlib's `memcpy`,
+  `memmove` (overlapping both ways), `memset`, `memcmp`, `strlen`,
+  `strncpy`, `strcmp` at source/destination offsets 0..3 (VexRiscv traps a
+  misaligned access: no `EXC` line allowed) and prints `rv_libc_heap_calls`
+  (must be 0). Mutants (`make -C fw/ctrl_rv/test mutants`): a run copy of
+  `rvlibc.c` with `RV_PRINTF_BUF` 16 turns the format-parity check red; one
+  line deleted from a run copy of `fmt_diff_expected.txt` turns it red.
+- **Commands:** `make -C fw/ctrl_rv/test lib_test && ./fw/ctrl_rv/test/lib_test && make -C fw/ctrl_rv/test mutants && SIM=verilator RUNTAG=p3t3 bash sim/rv_l1/run.sh fmt && RUNTAG=p3t3i bash sim/rv_l1/run.sh fmt && bash sim/rv_l1/run.sh compare p3t3i p3t3`
+  (the test Makefile wiring is minimal here; Task 8 folds it into the
+  harness).
+- **Pass gate:** `lib_test` PASS native and `-m32`; `run.sh fmt` PASS on
+  Verilator and iverilog (SAME); `fmt_rv.txt` == `fmt_glibc.txt` (or listed);
+  the 832/RV difference equals `fmt_diff_expected.txt`, each line covered by
+  a README row; `rv_libc_heap_calls` 0, no `EXC`; both mutants FAIL; the
+  string-audit table complete with a verdict per call site; `rvlibc.c`
+  compiles for RV with `$(RV_CFLAGS_FW) -std=gnu23 --specs=nano.specs -Wall
+  -Wextra -Werror`; `fmt_rv.map` has no `_sbrk`, `_sbrk_r`, `__sinit`,
+  `__sfp`, `_write`, and `_malloc_r`/`_realloc_r`/`_free_r` come from
+  `rvlibc.o`.
 
 ### Task 4: RV Makefile and the gcc build of the firmware (compile fixes only)
 
-- **Phase / depends on:** plan 3.1 + the gcc part of 3.2 / Tasks 1-3.
-- **Model:** Sonnet; Opus reviews the two parenthesis fixes and the
-  constructor order.
+- **Phase / depends on:** plan 3.1 + the gcc part of 3.2, decision 12.12
+  (gnu23, fix the code) / Tasks 1-3.
+- **Model:** Opus (12.12 added the `true`/`false` audit, whose verdicts need
+  the same judgement as the two parenthesis fixes and the constructor order;
+  one Opus implementer instead of Sonnet plus an Opus review of all three).
 - **Files:** create `fw/ctrl_rv/Makefile`; modify the copied sources only as
   listed; delete `fw/ctrl_rv/interrupts.c` and `interrupts.h` (replaced by
   `arch/irq.c`/`irq.h`; the copied `#include "interrupts.h"` lines become
@@ -203,13 +323,49 @@ replaces the stub with the real slaves).
   registers at offset 0, 4, 8 or 0xC of a window -- turns red until Task 5,
   so `check` is introduced here but listed as expected-red in the README
   until then); (d) no `__geta4`, `__constructor`, `setstack`, `c_entry` left
-  in `fw/ctrl_rv/*.[ch]`.
+  in `fw/ctrl_rv/*.[ch]`; (e) the C library guard (Global Constraints "C
+  library"): `$(RV_NM) build/RV32OSDA.elf` has none of `_sbrk _sbrk_r malloc
+  free realloc calloc _write _write_r _read _read_r _fstat _fstat_r _isatty
+  _isatty_r _lseek _lseek_r _close _close_r __sinit __sfp _printf_float
+  _scanf_float asprintf vasprintf open_memstream fprintf fputc fputs fflush`,
+  and the map shows `_malloc_r`, `_realloc_r`, `_free_r`, `printf`,
+  `vprintf` from `rvlibc.o` and `putchar`, `puts` from `uart.o` (none from
+  `libc_nano.a`); a syscall pull is already a link error (none is defined:
+  intended), (e) catches what links without one and names it; (f) no `#define true`/`#define false` left in
+  `fw/ctrl_rv/*.[ch]` (gcc 15 accepts redefining them in gnu23 without a
+  word: probed). `RV_NM` = `$(RV_GCC_DIR)/bin/$(RV_PREFIX)nm`, defined in
+  this Makefile (not in `toolchain.mk`).
 - **Source fixes (each a minimal edit, each listed in the README):**
-  - `-std=gnu17` (not gnu23: `firmware.h` `#define true -1`, and `f()`
-    prototypes).
+  - **gnu23** (decision 12.12, `-std=gnu23` as in the Global Constraints):
+    - `firmware.h:23-24` `#define true -1` / `#define false 0` removed. Audit
+      of **all 32 hits** of `\btrue\b|\bfalse\b` in the copy (2 in
+      `firmware.h`, 2 in `config.c`, 28 in `menu.c`, two of them the word
+      "true" inside the help strings at `menu.c:124/126`): a README table
+      `file:line | use | verdict`. Where only truthiness is used (`if (x)`,
+      `!x`, `&&`, a flag set and tested as a condition), C23 `true` (== 1) is
+      behaviour-identical: verdict "truth only". Where the value -1 is
+      observable -- stored and compared with `==`/`!=` against something
+      that is not also `true`, written to a config field, the SPI or the
+      OSD, used as a mask or in arithmetic, sign-extended into a wider type
+      (`unsigned char x = true` is 0xFF on the 832, 1 now) -- the code keeps
+      -1 explicitly through a named constant (e.g. `#define MM_TRUE (-1)` in
+      `firmware.h`) so behaviour is unchanged: verdict "value kept".
+    - Empty-parameter declarations `f()` that are called with arguments or
+      defined with parameters get the real prototype (gcc 15 rejects the
+      call: "too many arguments"); a `f()` declaration that is right as
+      `f(void)` stays as written (same meaning in C23). Includes the known
+      cases below.
+    - K&R definitions become prototyped (gcc 15 still accepts them in gnu23,
+      with only a `-Wold-style-definition` warning; clang 18 rejects them in
+      C23 -- probed; find them with `-Wold-style-definition` once, the flag
+      is not kept).
+    - Identifiers that are C23 keywords (`bool nullptr constexpr typeof
+      static_assert thread_local alignas alignof`) renamed: none in
+      `fw/ctrl_832` by a grep on 2026-10-17; re-check on the copy.
   - Prototype mismatches gcc rejects: `drivesounds_enable/disable` (header
     `()` vs definition `(int)`), `ShowError` (`menu.c:2987`),
-    `FindDirectoryByCluster` (`fat.c:473`), implicit `puts`.
+    `FindDirectoryByCluster` (`fat.c:473`), implicit `puts` (newlib's
+    `<stdio.h>` declares it now; the definition is `uart.c`'s).
   - Integer -> pointer initialisations: `AUDIO_BUFFER`, `HOSTMAP_ADDR`
     arithmetic (`config.c:41,50`, `boot.h:15` `SCREEN_ADDRESS` passed to
     `BootClearScreen`, `hardware.h:33` users): explicit casts, same address.
@@ -218,7 +374,7 @@ replaces the stub with the real slaves).
     (((lba+hdf[unit].offset)<0) || (...))` and `drivesounds.c:380` `if
     ((drivesounds.enabled & DRIVESOUNDS_FLOPPY)`: add the `)` that makes the
     evident intent (`blk && (A || B)`; `(enabled & FLOPPY)`), and state in
-    the commit message that this is the reading vbcc compiled (Opus checks it
+    the commit message that this is the reading vbcc compiled (checked
     against the surrounding logic and, if in doubt, against the 832 assembly
     `vbcc832 -S` output from the main checkout's `EightThirtyTwo/vbcc`).
   - `__constructor(100.interrupts)` is gone with `interrupts.c`
@@ -230,11 +386,14 @@ replaces the stub with the real slaves).
     main(void)` (crt0 calls it), `setstack()` and its prototype go (crt0 set
     `sp`), `__geta4` defined empty is no longer needed.
 - **Test first:** `make -C fw/ctrl_rv 2>&1 | grep -c error` is non-zero on
-  the pure copy (record the list: it must match the fixes above, otherwise
-  extend the list in the README).
+  the Task 3 tree (the copy plus Task 3's call-site edits; record the list:
+  it must match the fixes above, otherwise extend the list in the README);
+  `check` (f) is red on it (`firmware.h` still defines `true`).
 - **Commands:** `make -C fw/ctrl_rv clean all size && make -C fw/ctrl_rv check || true`
 - **Pass gate:** `build/RV32OSDA.BIN` links (the linker ASSERTs hold);
-  `check` (a), (b), (d) pass; size recorded in the README next to the 832's
+  `check` (a), (b), (d), (e), (f) pass; the `true`/`false` table has a
+  verdict for all 32 hits and every "value kept" site uses the named
+  constant; size recorded in the README next to the 832's
   83,830 B (plan estimate 85-95 KB); `git status fw/ctrl_832` clean; the
   constructor order is visible in `.init_array` of the map (irq 101, akiko
   102, c64keys 103).
@@ -255,7 +414,9 @@ replaces the stub with the real slaves).
   `REG_UART_RXINT`, `REG_UART_TXREADY`, `getserial`. `uart.c` `puts`: a byte
   loop (`while ((c = *msg++)) putchar(c)`) -- the 832 version reads the
   string as 32-bit words and takes bytes with `>> 24` (BE-only, and a
-  misaligned load for an unaligned string).
+  misaligned load for an unaligned string). `puts` keeps the 832's
+  behaviour of appending no newline (newlib's `puts`/`putchar` are not
+  linked: `check` (e)).
 - **Test first (`hwmap_test.c`, host, `-DHOSTTEST` off for this file: it
   only takes addresses):** asserts `(uintptr_t)&TIMER == 0xFFFFFFD0`,
   `sizeof(TIMER) == 2`, and the same for every register macro in the map
@@ -345,7 +506,7 @@ replaces the stub with the real slaves).
 
 - **Phase / depends on:** Paul's "warning-clean build" / Task 6.
 - **Model:** Sonnet.
-- **Files:** `fw/ctrl_rv/*.c`, `*.h`, `lib/*`, `fw/ctrl_rv/Makefile`
+- **Files:** `fw/ctrl_rv/*.c`, `*.h` (incl. `rvlibc.c`/`rvlibc.h`), `fw/ctrl_rv/Makefile`
   (`-Wall -Wextra -Werror` from here on).
 - **Rule:** a warning is fixed so that the generated code does not change:
   casts that spell out the conversion C already applies (e.g. for
@@ -376,7 +537,8 @@ replaces the stub with the real slaves).
   `PLATFORM`, `AUDIO`, `RS232`; the target build is untouched: `make -C
   fw/ctrl_rv` gives a byte-identical `RV32OSDA.BIN`), `fw/ctrl_rv/test/Makefile`
   (rewritten: native and `-m32` builds of every test, `run`, `mutants`,
-  `clean`; the five existing tests and `lib_test`/`hwmap_test` folded in);
+  `clean`; the five existing tests and `lib_test` (with Task 3's
+  format-parity producers and `LIB832`)/`hwmap_test` folded in);
   create `fw/ctrl_rv/test/mock_hw.c`, `mock_hw.h`, `fw/ctrl_rv/test/README.md`.
 - **Mock (`mock_hw.c`):** an SPI trace recorder (`cs` changes and bytes out,
   in the `spi.txt` format of Task 6 so host and L2 traces are comparable);
@@ -632,8 +794,9 @@ replaces the stub with the real slaves).
   - `hexdump.c`: print the bytes as the 832 shows them (BE word view).
   - `firmware.h`: `UPGRADE`, `romTYPE`, `CheckFirmware`, `WriteFirmware`,
     `CalculateCRC32`, `SetSPIMode`, `GetSPIMode`, `NVCONFIG*` are declared
-    and never defined or called (`grep`): delete the dead declarations,
-    keep `true`/`false` (README "Differences").
+    and never defined or called (`grep`): delete the dead declarations.
+    `true`/`false` are already handled (Task 4: the defines are gone, the
+    audit table and the named -1 constant are in place).
   - Close the audit: a README table of every `(short *)`, `(long *)`,
     `(int *)`, `unsigned short *` access to Amiga memory or file data in
     `fw/ctrl_rv` (`grep` list as in this plan's preparation: drivesounds,
@@ -667,7 +830,9 @@ replaces the stub with the real slaves).
   the final-fix-wave "stale Task-5 object gave 'want 2209'"),
   `sim/rv_l1/run.sh` (`units` always runs `make -C prog FWDIR=...` first and
   prints the FWDIR it used; one PROGS list read from the Makefile -- ledger
-  16; FAIL codes printed in decimal like the checks -- ledger 15),
+  16; FAIL codes printed in decimal like the checks -- ledger 15; Task 3's
+  `fmt_rv` stays out of that list: it runs under `run.sh fmt`, with its
+  own link line),
   `sim/rv_l1/tests/irq_c.c` (ledger 49: check 10 also catches a reversed
   `SetIntHandler` order), `sim/rv_l1/README.md`.
 - **Audit (README):** `cdaudio.c` ring writes are byte stores (LE 16-bit
@@ -744,17 +909,34 @@ replaces the stub with the real slaves).
 - **Model:** Sonnet.
 - **Files:** `fw/ctrl_rv/Makefile` (`CC=clang` mode: `make -C fw/ctrl_rv
   CLANG=1` -> `clang --target=riscv32-unknown-elf -march=rv32imc_zicsr_zifencei
-  -mabi=ilp32` with the same `-std=gnu17 -Os -ffreestanding -fno-builtin
-  -funsigned-char -Wall -Wextra`, link with the xPack `ld` and libgcc (or
-  `ld.lld` if simpler; say which), output `build_clang/`), README.
-- **Test first:** `clang --version` (Ubuntu 18.1.3 here) and `clang
-  -print-targets | grep riscv32`.
+  -mabi=ilp32` with `-std=gnu23 -Os -ffreestanding -fno-builtin
+  -funsigned-char -ffunction-sections -fdata-sections -Wall -Wextra`;
+  newlib-nano headers by hand, as clang has no `nano.specs`: `-isystem
+  $(RV_GCC_DIR)/riscv-none-elf/include/newlib-nano -isystem
+  $(RV_GCC_DIR)/riscv-none-elf/include` in that order; link through the
+  xPack gcc driver with the firmware's line (`-nostdlib -nostartfiles`,
+  `-lc_nano -lgcc` last, multilib `rv32imc/ilp32`), or `ld.lld` with
+  `-L$(RV_GCC_DIR)/riscv-none-elf/lib/rv32imc/ilp32` and the libgcc
+  directory if simpler -- say which; output `build_clang/`), README.
+  Probed 2026-10-17: clang 18.1.3 accepts `-std=gnu23`
+  (`__STDC_VERSION__` 202311L; `-std=gnu2x` is the fallback spelling if a
+  re-probe disagrees: state which), treats `f()` as `f(void)` and rejects K&R
+  definitions (Task 4 removed them); clang objects of a
+  vsnprintf/str*/mem*/strtol test link with the xPack driver + `-lc_nano
+  -lgcc` and the three `rvlibc.c` stubs; clang warns `-Wchar-subscripts`
+  on newlib's `toupper`/`tolower` macros with a `char` argument: cast
+  `(unsigned char)` at the call site (Task 7 rule; the same code under
+  `-funsigned-char`).
+- **Test first:** `clang --version` (Ubuntu 18.1.3 here), `clang
+  -print-targets | grep riscv32` and `clang -std=gnu23 -dM -E -x c /dev/null
+  | grep __STDC_VERSION__`.
 - **Commands:** `make -C fw/ctrl_rv CLANG=1 clean all size check && SIM=verilator RUNTAG=p3t18 FW=fw/ctrl_rv/build_clang/RV32OSDA.BIN bash sim/host_bridge/run.sh fwboot`
   (`FW=` as defined in Task 6).
 - **Pass gate:** the clang build compiles with zero warnings (a clang-only
   warning that is a real issue is fixed in the source with the Task 7 rule,
   `.text` of the gcc build unchanged; one that is not is listed with a
-  targeted `-Wno-` in the CLANG block only); links; `check` passes; size
+  targeted `-Wno-` in the CLANG block only); links; `check` passes,
+  including (e) on the clang image; size
   recorded; `fwboot` PASS with the clang image. Not a requirement for
   shipping (plan 3.7): gcc stays the build.
 
@@ -767,13 +949,22 @@ replaces the stub with the real slaves).
   guards), `sim/host_bridge/README.md` (`fwboot*`), `sim/rv_l1/README.md`
   (`units` on `fw/ctrl_rv`).
 - **Content:** from a fresh Ubuntu 24.04 machine: `sudo apt install` line
-  (build-essential gcc-multilib (for `-m32`), python3, mtools, dosfstools,
-  fdisk, verilator, ghdl, clang lld optional); `bash
-  tools/riscv/fetch-xpack.sh && bash tools/riscv/check-toolchain.sh`; build
+  (build-essential gcc-multilib (for `-m32`, also the 832 printf
+  reference), python3, mtools, dosfstools, fdisk, verilator, ghdl, clang
+  lld optional); `bash tools/riscv/fetch-xpack.sh && bash
+  tools/riscv/check-toolchain.sh` (newlib-nano comes with the xPack
+  toolchain: nothing else to install); `git submodule update --init
+  EightThirtyTwo` (lib832's `small_printf.c`, the format-parity reference,
+  or `LIB832=`); "C library" (newlib-nano, what the firmware defines itself:
+  `printf`/`vprintf` in `rvlibc.c`, `putchar`/`puts` in `uart.c`, the heap
+  stubs, the `check` (e) guard, the `printf` buffer sizes; dialect gnu23);
+  build
   (`make -C fw/ctrl_rv`), what lands where, copying `RV32OSDA.BIN` to the SD
   card root next to `832OSDAD.BIN`; config files on the card (`MINMGAR*.CFG`,
   first-boot conversion, `cfgconv` examples); host tests; L1/L2 runs; the
-  "Differences from fw/ctrl_832" list; the TIMER table; the audit tables;
+  "Differences from fw/ctrl_832" list (incl. the format-parity and
+  string-semantics rows and the `true`/`false` table); the TIMER table; the
+  audit tables;
   the sizes. Paths relative to the repository root, no `/home/paul`.
 - **Test first:** none (documentation); the check is the replay below.
 - **Commands:** extract every fenced `sh` block of `fw/ctrl_rv/README.md`
@@ -795,7 +986,9 @@ replaces the stub with the real slaves).
   line under the title).
 - **Gate run (record the results in the plan's Phase 3 entry):**
   `make -C fw/ctrl_rv clean all check size stack`; `make -C fw/ctrl_rv
-  CLANG=1 all`; `make -C fw/ctrl_rv/test run mutants`; `make -C
+  CLANG=1 all check`; `make -C fw/ctrl_rv/test run mutants`; L1 `run.sh fmt`
+  (format parity on the real newlib-nano; `fmt_rv.txt` == `fmt_glibc.txt`,
+  difference == `fmt_diff_expected.txt`); `make -C
   fw/ctrl_rv/tools/cfgconv`; `make -C fw/ctrl_832/test` (832 tree still
   green); L1 `all`, `irq`, `units`, `dm_smoke`, `dhry` (Verilator, plus
   `units` on iverilog); L2 `all`, `mutant`, `irqmut`, `boot`, `boot_nofile`,
@@ -828,7 +1021,12 @@ trap log, speed, I$ hit rate) starts from:
    the basis of 4.2's 832-vs-RV diff. Expected, listed differences between
    the two CPUs' traces: config file names and sectors (`MINMGAR` vs
    `MINMGAA`, first-boot conversion writes), firmware file size/sectors,
-   version strings, timeout lengths of failure paths.
+   version strings, timeout lengths of failure paths, and the printf
+   differences of `fw/ctrl_rv/test/gold/fmt_diff_expected.txt` that were
+   listed rather than fixed at the call site (Task 3: UART lines, and OSD
+   text in `OSD_CMD_OSD_WR` frames only where no layout changes); the
+   string-semantics table says which call sites were made to keep the
+   832's behaviour.
 4. **Card recipes:** `sim/host_bridge/fwboot/Makefile` (RV32OSDA.BIN,
    832OSDAD.BIN, DRIVESND.BIN, config in either order) on `mkcard.sh` with
    the 8.3 and size guards; L3 adds kickstart, ADF, HDF (incl. the
@@ -836,7 +1034,10 @@ trap log, speed, I$ hit rate) starts from:
 5. **Goldens and generators** in `fw/ctrl_rv/test/gold/`: `mfm.py` and the
    committed track streams (ADF read/write data checks), `rdb.py`,
    `identify.py` (HDF/RDB checks), `mkcfg832.py`, `drivesounds.py`,
-   `dmode.txt` (direct-mode call sequence), `formats.txt`.
+   `dmode.txt` (direct-mode call sequence), `formats.txt` with
+   `fmt_cases.h`, the 832 reference output `fmt_832.txt` (generated by `make -C
+   fw/ctrl_rv/test` from lib832's `small_printf.c`, `-m32`) and
+   `fmt_diff_expected.txt`.
 6. **`cfgconv`** and the conversion rules (decision 12.4 as implemented),
    for the A/B card (Phase 5.3) and the parity row "832-written config files
    load identically after `cfgconv`" (plan 9).

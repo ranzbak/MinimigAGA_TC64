@@ -362,7 +362,7 @@ EightThirtyTwo sources, the 832 boot ROM and `debug_bridge_jtag`. The 832
 reference image is `build/stage_spicdc_49b1868` (md5 28b07e8c,
 `5.0-040-pipelined` 49b1868, board-verified by Paul 2026-10-17).
 
-### 3.7 Firmware trees and toolchain (decisions 12.7, 12.8)
+### 3.7 Firmware trees and toolchain (decisions 12.7, 12.8, 12.12)
 
 - `fw/ctrl_boot_rv/`: copy of `fw/ctrl_boot_832` sources + `crt0.S`,
   `boot.ld`, `Makefile`; builds `OSDBoot_rv.bin` and `OSDBoot_rv_ROM.vhd`
@@ -387,10 +387,15 @@ reference image is `build/stage_spicdc_49b1868` (md5 28b07e8c,
   RV_PREFIX=riscv64-unknown-elf-` (Ubuntu 13.2 + picolibc). Flags
   `-march=rv32imc_zicsr_zifencei -mabi=ilp32 -Os -ffunction-sections
   -fdata-sections -fno-builtin -funsigned-char -ffreestanding -nostdlib
-  -Wl,--gc-sections` + `-lgcc` for the firmware and boot ROM (they bring
-  their own `small_printf.c`; lib832's `string.S` becomes plain C);
-  test programs may link newlib-nano. Link check: no A-extension opcodes
-  (`objdump -d | grep -E '\b(lr|sc|amo[a-z]+)\.w\b'` empty). Clang/LLVM
+  -Wl,--gc-sections` + `-lgcc` for the boot ROM (libc-free: it brings its
+  own `small_printf.c`). The firmware `fw/ctrl_rv` links **newlib-nano**
+  (`--specs=nano.specs` headers, `-lc_nano -lgcc`), defines its own
+  `printf`/`vprintf`/`putchar`/`puts`, has no stdio FILE layer and no heap,
+  and is C **gnu23** with the code fixed for it (decision 12.12, which
+  replaces the earlier "lib832's `string.S` becomes plain C" and the
+  `-std=gnu17` of `doc/osd-riscv-exec-3.md` before its 2026-10-17
+  amendment); test programs may link newlib-nano. Link check: no
+  A-extension opcodes (`objdump -d | grep -E '\b(lr|sc|amo[a-z]+)\.w\b'` empty). Clang/LLVM
   building the tree is a Phase 3 check, not a requirement.
 
 ### 3.8 Debug (decision 12.6)
@@ -1193,3 +1198,30 @@ P5-P7 on evidence. Of these, only the 8 KB boot BRAM survives unchanged.*
     only for new subsystems. The OSD redesign (bigger, tabbed menu) is a
     backlog item after RISC-V parity (`doc/backlog.md` on
     `5.0-040-pipelined`, commit 32d3c80).
+12. **C library and C dialect of `fw/ctrl_rv` (Paul, 2026-10-17).** Asked
+    to confirm three Phase 3 planner decisions of `doc/osd-riscv-exec-3.md`:
+    (a) config file as planned (`MINMGAR.CFG`/`MINMGAR<n>.CFG`, LE,
+    first-boot conversion of `MINMGAA*.CFG`, the 832 file never written,
+    `cfgconv`): confirmed, Task 11 unchanged. (b) **C library: newlib-nano**
+    of the pinned xPack toolchain (multilib `rv32imc/ilp32`, `libc_nano.a`),
+    **not** a port of lib832's printf/string code: `sprintf`/`snprintf`/
+    string/ctype/`strtol` from `libc_nano` as they are; the firmware defines
+    `printf`/`vprintf` (`vsnprintf` into a static buffer, UART TX) and
+    `putchar`/`puts`; no stdio FILE layer, no heap, no syscall stubs. One
+    addition (probed): newlib-nano's `*printf` core references
+    `_malloc_r`/`_realloc_r`/`_free_r` for the `asprintf` case, so the
+    firmware defines those three as `NULL`/no-op stubs to keep the allocator
+    and `_sbrk` out. Where lib832 differed from ISO C, exec-3 Task 3's
+    format-parity and string-semantics audits fix the call sites so the
+    832's behaviour stays, or list the difference (OSD layout differences
+    are always fixed at the call site); no LGPL-derived file in
+    `fw/ctrl_rv`. (c) **C dialect: gnu23, fix the code**, not `-std=gnu17`:
+    `firmware.h`'s `#define true -1`/`false 0` go, every `true`/`false` use
+    is audited (where -1 is observable it stays -1 through a named
+    constant), `f()` declarations used with arguments get real prototypes,
+    K&R definitions are prototyped (exec-3 Task 4). Host tests compile
+    `fw/ctrl_rv` with `-std=gnu2x` (host gcc 13.3 has no `gnu23` spelling;
+    same C23 keyword and `()` semantics); unmodified 832 sources built for
+    goldens keep `-std=gnu17`; the clang check uses `-std=gnu23` (clang
+    18.1.3 accepts it). Supersedes the lib832 sentence of 3.7 and the
+    gnu17 rule of exec-3 before its amendment of 2026-10-17.
