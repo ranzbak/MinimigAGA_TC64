@@ -1,29 +1,37 @@
 # clangd for the RISC-V firmware and its simulation tests (not for the 832
-# firmware or the host tools).  Include paths are absolute (clangd resolves
-# relative -I against each file's directory): change them if the worktree or
-# the xPack toolchain (tools/riscv/README.md) lives elsewhere.
+# firmware or the host tools).  Every -I is relative: clangd resolves it
+# against the directory of the file being parsed, so this works in any
+# checkout.  clang's own freestanding headers (stdint.h, stddef.h) are enough;
+# fw/dhrystone_rv/dhry_1.c, dhry_2.c (sys/types.h) and sim/rv_l1/sw/syscalls.c
+# (errno.h, sys/stat.h) need newlib: add the xPack
+# riscv-none-elf/include as -isystem in your own ~/.config/clangd/config.yaml,
+# not here (no absolute paths in the repo).
+CompileFlags:
+  Add: [--target=riscv32-unknown-elf, -march=rv32imc_zicsr_zifencei, -mabi=ilp32, -ffreestanding]
 If:
   PathMatch: (fw/ctrl_rv|fw/ctrl_boot_rv|fw/dhrystone_rv|sim/host_bridge/(sw|boot)|sim/rv_l1/sw)/.*\.(c|h|S)
+---
+If:
+  PathMatch: fw/ctrl_boot_rv/.*
 CompileFlags:
   Add:
-    - --target=riscv32-unknown-elf
-    - -march=rv32imc_zicsr_zifencei
-    - -mabi=ilp32
-    - -ffreestanding
-    - -nostdinc
-    - -isystem/home/paul/opt/xpack-riscv-none-elf-gcc-15.2.0-1/riscv-none-elf/include
-    - -isystem/home/paul/opt/xpack-riscv-none-elf-gcc-15.2.0-1/lib/gcc/riscv-none-elf/15.2.0/include
-    - -I/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64-riscv/fw/ctrl_rv/arch
-    - -I/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64-riscv/fw/ctrl_boot_rv
-    - -I/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64-riscv/fw/dhrystone_rv
-    - -I/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64-riscv/sim/rv_l1/sw
-    - -I/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64-riscv/sim/host_bridge/sw
+    - -I../ctrl_rv/arch
     # fw/ctrl_boot_rv/Makefile DEFS
     - -Dprg_start=0x2000
     - -DOSDNAME="RV32OSDABIN"
 ---
 # the Dhrystone sources are K&R-style (Makefile: -std=gnu89 -w)
 If:
-  PathMatch: fw/dhrystone_rv/dhry_.*\.c
+  PathMatch: fw/dhrystone_rv/.*
 CompileFlags:
-  Add: [-std=gnu89, -w]
+  Add: [-I../ctrl_rv/arch, -std=gnu89, -w]
+---
+If:
+  PathMatch: sim/host_bridge/sw/.*
+CompileFlags:
+  Add: [-I../../../fw/ctrl_rv/arch]
+---
+If:
+  PathMatch: sim/host_bridge/boot/.*
+CompileFlags:
+  Add: [-I../sw, -I../../../fw/ctrl_rv/arch]
