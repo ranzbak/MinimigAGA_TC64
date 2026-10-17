@@ -62,7 +62,8 @@
 #                                      # mem/str functions on rvlibc.c + libc_nano.a
 #                                      # (WS=3 ROMWS=1 by default; LIB832= as for
 #                                      # make -C fw/ctrl_rv/test); its FMT records go to
-#                                      # run_<RUNTAG>/fmt_rv.txt.  Gates: the bench
+#                                      # run_<RUNTAG>/fmt_rv.txt.  FMT_SUBSET=1 runs
+#                                      # fmt_rv_subset (272 of the 909 cases) instead.  Gates: the bench
 #                                      # PASS, a line "PASS", "MEMSTR ok", "HEAP
 #                                      # calls=0", no "EXC"; fmt_rv.txt (a digest per
 #                                      # record) == fmtcheck.py digest of the host's
@@ -346,6 +347,10 @@ case "${1:-}" in
   fmt)
     x=${EXTRA_WS:-0}; dbg=${DEBUG:-0}; ws=${WS:-3}; r=${ROMWS:-1}
     ft=$top/fw/ctrl_rv/test
+    # FMT_SUBSET=1: fmt_rv_subset, the first and last case of each run of equal
+    # format strings (272 of 909 cases); default: fmt_rv, all cases
+    prog=fmt_rv; sub=
+    [ -n "${FMT_SUBSET:-}" ] && { prog=fmt_rv_subset; sub=--subset; }
     # the host side first: fmt_glibc_64.txt (rvlibc.c over glibc) and the 832
     # records, gated against each other by make fmt.ok (LIB832= is passed on)
     if ! make -s -C "$ft" ${LIB832:+LIB832="$LIB832"} fmt.ok > "$run/make_fmt_host.log" 2>&1; then
@@ -356,14 +361,14 @@ case "${1:-}" in
     fi
     drop "$x" "$dbg"
     compile "$x" "$dbg" || exit 1
-    TIMEOUT=${TIMEOUT:-300000000} unit fmt_rv "$ws" "$r" "$x" "$dbg" | tee "$run/fmt.txt"
+    TIMEOUT=${TIMEOUT:-300000000} unit "$prog" "$ws" "$r" "$x" "$dbg" | tee "$run/fmt.txt"
     rc=${PIPESTATUS[0]}
-    log=$run/fmt_rv_ws${ws}_r${r}_x${x}_d${dbg}.log
+    log=$run/${prog}_ws${ws}_r${r}_x${x}_d${dbg}.log
     grep -a '^FMT ' "$log" | tr -d '\r' > "$run/fmt_rv.txt"
     grep -aq '^MEMSTR ok, failures 0$' "$log" || { echo "FAIL fmt_rv: no 'MEMSTR ok, failures 0' line"; rc=1; }
     grep -aq '^HEAP calls=0$' "$log" || { echo "FAIL fmt_rv: no 'HEAP calls=0' line"; rc=1; }
     grep -aq 'EXC' "$log" && { echo "FAIL fmt_rv: EXC line"; rc=1; }
-    map=$here/prog/build/fmt_rv.map
+    map=$here/prog/build/$prog.map
     for sym in _sbrk _sbrk_r __sinit __sfp _write; do
       grep -qE "^[[:space:]]+0x[0-9a-f]+[[:space:]]+$sym\$" "$map" && { echo "FAIL fmt_rv.map has $sym"; rc=1; }
     done
@@ -373,7 +378,7 @@ case "${1:-}" in
     done
     # fmt_rv.txt holds one digest per record (fmt_run.h, FMT_DIGEST); the same
     # digests made from the host's full records must be identical
-    python3 -I "$ft/gold/fmtcheck.py" digest "$ft/fmt_glibc_64.txt" > "$run/fmt_glibc_digest.txt"
+    python3 -I "$ft/gold/fmtcheck.py" digest $sub "$ft/fmt_glibc_64.txt" > "$run/fmt_glibc_digest.txt"
     if cmp -s "$run/fmt_rv.txt" "$run/fmt_glibc_digest.txt"; then
       echo "PASS fmt_rv.txt == digests of fmt_glibc_64.txt ($(wc -l < "$run/fmt_rv.txt") records)"
     else

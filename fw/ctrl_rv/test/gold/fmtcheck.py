@@ -3,10 +3,10 @@
 
   fmtcheck.py cover <formats.txt> <fmt_cases.h>
       every line of formats.txt has a case in fmt_cases.h
-  fmtcheck.py digest <fmt_x.txt>
+  fmtcheck.py digest [--subset] <fmt_x.txt>
       the S and P records of a full record file as the L1 bench prints them
-      (fmt_run.h, FMT_DIGEST): the first and last case of each run of equal
-      format strings, `FMT <n> S|P h=<32-bit FNV-1a of ret, buf/out, side>`
+      (fmt_run.h, FMT_DIGEST), all cases or with --subset (FMT_SUBSET) the first
+      and last case of each run of equal format strings: `FMT <n> S|P h=<32-bit FNV-1a of ret, buf/out, side>`
   fmtcheck.py diff <fmt_832.txt> <fmt_rv.txt> <fmt_cases.h>
       writes the 832-versus-RV difference report on stdout (the content of
       fmt_diff_expected.txt) and exits 1 when
@@ -297,7 +297,7 @@ def cmd_diff(f832, frv, cases_h):
         die('%d problems' % bad)
 
 
-def cmd_digest(path):
+def cmd_digest(path, subset):
     cases, recs = load(path)
     nums = sorted(cases)
 
@@ -313,7 +313,7 @@ def cmd_digest(path):
         return h
 
     for n in nums:
-        if not selected(n):
+        if subset and not selected(n):
             continue
         for kind in ('S', 'P'):
             r = recs[(n, kind)]
@@ -327,8 +327,8 @@ def cmd_digest(path):
 def main(argv):
     if len(argv) == 4 and argv[1] == 'cover':
         cmd_cover(argv[2], argv[3])
-    elif len(argv) == 3 and argv[1] == 'digest':
-        cmd_digest(argv[2])
+    elif len(argv) in (3, 4) and argv[1] == 'digest':
+        cmd_digest(argv[-1], argv[2] == '--subset')
     elif len(argv) == 5 and argv[1] == 'diff':
         cmd_diff(argv[2], argv[3], argv[4])
     else:

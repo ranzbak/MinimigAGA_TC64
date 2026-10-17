@@ -14,14 +14,15 @@
  * Text, written by the includer's fmt_write, never by a printf.
  *
  *
- * With FMT_DIGEST (the L1 bench: a case costs about 25,000 cycles there and
- * iverilog simulates about 7,000 cycles a second) only the first and the last
- * case of each run of equal format strings are run, and no record is written
- * but one line per S and P record,
+ * With FMT_DIGEST (the L1 bench) no record is written but one line per S and
+ * P record,
  *   FMT <n> S h=<8 hex digits>   (and P)
  * h = 32-bit FNV-1a over: ret as decimal text, 0, the bytes of buf (S) or out
  * (P), 0, and for S the bytes of side, 0.  `gold/fmtcheck.py digest` makes the
- * same lines from a full record file. */
+ * same lines from a full record file.  With FMT_SUBSET (a case costs about
+ * 30,000 cycles there and iverilog simulates about 5,500 cycles a second) only
+ * the first and the last case of each run of equal format strings are run
+ * (`fmtcheck.py digest --subset`). */
 #ifndef FMT_RUN_H
 #define FMT_RUN_H
 
@@ -156,6 +157,7 @@ static void fmt_digest_line(size_t n, const char *kind)
     fmt_str("\n");
 }
 
+#ifdef FMT_SUBSET
 /* run case n: the first or the last of a run of equal format strings */
 static int fmt_selected(size_t n)
 {
@@ -163,6 +165,7 @@ static int fmt_selected(size_t n)
         || strcmp(fmt_cases[n].fmt, fmt_cases[n - 1].fmt) != 0
         || strcmp(fmt_cases[n].fmt, fmt_cases[n + 1].fmt) != 0;
 }
+#endif
 #endif
 
 static void fmt_run_all(void)
@@ -176,8 +179,10 @@ static void fmt_run_all(void)
         int ret;
 
 #ifdef FMT_DIGEST
+#ifdef FMT_SUBSET
         if (!fmt_selected(n))
             continue;
+#endif
 #else
         fmt_record(n, "C fmt=");
         fmt_hex((const unsigned char *)c->fmt, strlen(c->fmt));

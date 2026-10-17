@@ -180,15 +180,16 @@ Gates (`make -C fw/ctrl_rv/test fmt.ok`, part of `lib_test`, and `run.sh fmt`):
 1. `fmt_glibc` native == `-m32`;
 2. `fmtcheck.py diff fmt_832.txt fmt_glibc_64.txt` == `test/gold/fmt_diff_expected.txt`
    exactly (413 lines: 278 case lines and 135 `RET` lines);
-3. on the L1 bench, `fmt_rv.txt` == `fmtcheck.py digest fmt_glibc_64.txt`. A
-   case costs about 30,000 cycles on the target and iverilog simulates about
-   7,000 cycles a second, so `fmt_rv` runs the **first and the last case of
-   every run of equal format strings** (272 of the 909 cases: the zero/empty
-   value and the extreme one, 544 records) and prints one 32-bit FNV-1a
-   digest per record instead of the text (`FMT <n> S h=<hex>`); the host runs
-   all 909 with the full text. Gate 3 makes glibc's text stand in for newlib-nano's
-   for gate 2, as the host tests need: every firmware format string
-   run on the target libc gives what glibc gives, for the cases on the target.
+3. on the L1 bench, `fmt_rv.txt` == `fmtcheck.py digest fmt_glibc_64.txt`: all
+   909 cases, one 32-bit FNV-1a digest per record instead of the text
+   (`FMT <n> S h=<hex>`; the host has the full text). This makes glibc's text
+   stand in for newlib-nano's in gate 2, as the host tests need. The full run
+   is 30.5 M cycles (25 s on Verilator, many hours on iverilog), so for the
+   iverilog X-check reference there is a **subset** build, `fmt_rv_subset`
+   (`FMT_SUBSET=1`): the first and the last case of every run of equal format
+   strings (272 cases, 544 records; `fmtcheck.py digest --subset`), 13.0 M cycles
+   (about 38 minutes on iverilog). Gates: Verilator full run; Verilator
+   subset run and iverilog subset run, which must be SAME under `run.sh compare`.
 
 `fmtcheck.py` is the golden. It holds a model of lib832's `_printfcore` and of
 ISO `printf` for these conversions, requires `fmt_832.txt` to equal the first
@@ -307,7 +308,7 @@ target comes with Task 8.
 
 ### On the L1 bench
 
-`fmt_rv` (`test/rv/fmt_rv.c`, 13.0 M cycles: about 9 s on Verilator, about 30 minutes on iverilog) is built by `sim/rv_l1/prog/Makefile` the way
+`fmt_rv` (`test/rv/fmt_rv.c`; `fmt_rv_subset` is the same source with `-DFMT_SUBSET=1`) is built by `sim/rv_l1/prog/Makefile` the way
 the firmware will be linked (`--specs=nano.specs -nostdlib -nostartfiles`,
 `crt0_l1.o` + `l1_newlib.ld`, no `syscalls.o`, `-lc_nano -lgcc` last). Besides
 the format cases it runs newlib-nano's `memcpy`, `memmove` (overlapping both
@@ -318,9 +319,10 @@ the run would end `=== FAIL 80xx`), and prints `rv_libc_heap_calls` (must be 0).
 ```sh
 bash tools/riscv/fetch-xpack.sh
 bash tools/riscv/check-toolchain.sh
-SIM=verilator RUNTAG=p3t3 bash sim/rv_l1/run.sh fmt       # Verilator, about a minute
-RUNTAG=p3t3i bash sim/rv_l1/run.sh fmt                    # iverilog, the X-checking reference
-bash sim/rv_l1/run.sh compare p3t3i p3t3
+SIM=verilator RUNTAG=p3t3b bash sim/rv_l1/run.sh fmt                    # all 909 cases, 25 s
+FMT_SUBSET=1 SIM=verilator RUNTAG=p3t3s bash sim/rv_l1/run.sh fmt       # subset, 10 s
+FMT_SUBSET=1 RUNTAG=p3t3i bash sim/rv_l1/run.sh fmt                     # iverilog (X reference), ~38 min
+bash sim/rv_l1/run.sh compare p3t3i p3t3s
 ```
 
 Verilator needs `sudo apt install verilator g++`; Icarus Verilog 12 is

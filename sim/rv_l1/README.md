@@ -394,12 +394,13 @@ stubs) + `libc_nano.a`, `crt0_l1.o` + `l1_newlib.ld` for the L1 memory map, no
 `fw/ctrl_rv/README.md`, "Format parity" and "Host tests".
 
 ```sh
-SIM=verilator RUNTAG=p3t3 bash sim/rv_l1/run.sh fmt      # 13.0 M cycles, about 10 s
-RUNTAG=p3t3i bash sim/rv_l1/run.sh fmt                   # iverilog, about 30 minutes
-bash sim/rv_l1/run.sh compare p3t3i p3t3
+SIM=verilator RUNTAG=p3t3b bash sim/rv_l1/run.sh fmt                 # all 909 cases: 30.5 M cycles, 25 s
+FMT_SUBSET=1 SIM=verilator RUNTAG=p3t3s bash sim/rv_l1/run.sh fmt    # subset (272 cases): 13.0 M cycles
+FMT_SUBSET=1 RUNTAG=p3t3i bash sim/rv_l1/run.sh fmt                  # iverilog, about 38 minutes
+bash sim/rv_l1/run.sh compare p3t3i p3t3s
 ```
 
-`fmt` first runs `make -C fw/ctrl_rv/test fmt.ok` (the host side; `LIB832=` is
+`fmt` (`FMT_SUBSET=1`: program `fmt_rv_subset`) first runs `make -C fw/ctrl_rv/test fmt.ok` (the host side; `LIB832=` is
 passed on, see the README of `fw/ctrl_rv`), builds `fmt_rv`, runs it once with
 WS=3 ROMWS=1 through the `units` verdict (bench `PASS`, a line `PASS`, no line
 `FAIL`, no bus violation; `TIMEOUT` default 300000000), writes its

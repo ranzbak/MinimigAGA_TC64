@@ -38,7 +38,7 @@ cdaudio_emu_OBJS = cdaudio_emu.o cdaudio.o cue.o
 
 .PHONY: all fmt clean
 all: $(PROGS:%=$(B)/%.hex)
-fmt: $(B)/fmt_rv.hex
+fmt: $(B)/fmt_rv.hex $(B)/fmt_rv_subset.hex
 
 $(U) $(B):
 	mkdir -p $@
@@ -59,11 +59,17 @@ $(U)/%.o: $(FWDIR)/%.c $(wildcard $(FWDIR)/*.h) | $(U)
 $(U)/fmt_rv.o: $(RVFW)/test/rv/fmt_rv.c $(RVFW)/test/fmt_run.h $(RVFW)/test/fmt_cases.h $(RVFW)/rvlibc.h $(S)/l1.h | $(U)
 	$(RV_CC) $(FWCFLAGS) -c -o $@ $<
 
+$(U)/fmt_rv_subset.o: $(RVFW)/test/rv/fmt_rv.c $(RVFW)/test/fmt_run.h $(RVFW)/test/fmt_cases.h $(RVFW)/rvlibc.h $(S)/l1.h | $(U)
+	$(RV_CC) $(FWCFLAGS) -DFMT_SUBSET=1 -c -o $@ $<
+
 $(U)/rvlibc.o: $(RVFW)/rvlibc.c $(RVFW)/rvlibc.h | $(U)
 	$(RV_CC) $(FWCFLAGS) -c -o $@ $<
 
 $(U)/fmt_rv.elf: $(U)/crt0_l1.o $(U)/fmt_rv.o $(U)/rvlibc.o $(S)/l1_newlib.ld
 	$(RV_CC) $(FWLDFLAGS) -Wl,-Map,$(@:.elf=.map) -o $@ $(U)/crt0_l1.o $(U)/fmt_rv.o $(U)/rvlibc.o $(FWLIBS)
+
+$(U)/fmt_rv_subset.elf: $(U)/crt0_l1.o $(U)/fmt_rv_subset.o $(U)/rvlibc.o $(S)/l1_newlib.ld
+	$(RV_CC) $(FWLDFLAGS) -Wl,-Map,$(@:.elf=.map) -o $@ $(U)/crt0_l1.o $(U)/fmt_rv_subset.o $(U)/rvlibc.o $(FWLIBS)
 
 .SECONDEXPANSION:
 $(U)/%.elf: $$(addprefix $(U)/,$$($$*_OBJS)) $(U)/crt0_l1.o $(U)/syscalls.o $(S)/l1_newlib.ld
@@ -79,4 +85,4 @@ $(B)/%.hex: $(U)/%.bin $(BIN2HEX) | $(B)
 .SECONDARY:
 
 clean:
-	$(RM) -r $(U) $(PROGS:%=$(B)/%.hex) $(B)/fmt_rv.hex
+	$(RM) -r $(U) $(PROGS:%=$(B)/%.hex) $(B)/fmt_rv.hex $(B)/fmt_rv_subset.hex
