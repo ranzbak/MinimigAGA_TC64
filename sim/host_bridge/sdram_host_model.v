@@ -9,6 +9,7 @@
 // at the ack (the bus contract: the master holds them until the ack).
 //   latency  SLAT (+SLAT=, default 8) plus a random 0..SJIT (+SJIT=, default
 //            0) clk_114 cycles from acceptance to the one-cycle ram_ack
+//            (xorshift32 from +SEED: the same sequence in every simulator)
 //   write    at the ack; byte lanes as sdram_ctrl.v (slot1_dqm =
 //            {!sel[0], !sel[1]}, dqm2 = {!sel[2], !sel[3]}):
 //              sel[0]: q[31:24] -> mem[A/2][15:8]    (byte A+0)
@@ -48,6 +49,10 @@ module sdram_host_model #(
 
   integer slat = 8, sjit = 0, seed = 1;
   integer i, fd;
+  // jitter: xorshift32 seeded from +SEED, not $urandom, so that both
+  // simulators (xsim, Verilator) draw the same latencies: their $urandom
+  // sequences differ
+  reg [31:0] rng = 32'h1;
   reg [8*1024-1:0] hexfile;          // +SDRAM_HEX path, up to 1024 characters
 
   integer    errors = 0;            // bus contract violations seen
@@ -57,7 +62,8 @@ module sdram_host_model #(
     if (!$value$plusargs("SLAT=%d", slat)) slat = 8;
     if (!$value$plusargs("SJIT=%d", sjit)) sjit = 0;
     if (!$value$plusargs("SEED=%d", seed)) seed = 1;
-    i = $urandom(seed);
+    rng = seed ^ 32'h9E3779B9;
+    if (rng == 32'h0) rng = 32'h1;
     for (i = 0; i < (1 << HW); i = i + 1) mem[i] = 16'h0000;
     if ($value$plusargs("SDRAM_HEX=%s", hexfile)) begin : preload
       fd = $fopen(hexfile, "r");
@@ -133,7 +139,10 @@ module sdram_host_model #(
         $display("=== BUS VIOLATION sdram model: request outside 0..0x7FFFFF: %h at %t", {addr, 2'b00}, $time);
         errors = errors + 1;
       end
-      lat_left = slat + (sjit ? ($urandom % (sjit + 1)) : 0);
+      rng = rng ^ (rng << 13);
+      rng = rng ^ (rng >> 17);
+      rng = rng ^ (rng << 5);
+      lat_left = slat + (sjit ? (rng % (sjit + 1)) : 0);
     end
   end
 

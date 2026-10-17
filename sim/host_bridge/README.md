@@ -1,4 +1,4 @@
-# L2 bench: the RISC-V host CPU through the real bridge (xsim)
+# L2 bench: the RISC-V host CPU through the real bridge (xsim, Verilator)
 
 The L2 bench runs small RISC-V programs from the boot BRAM on the real host
 side of the core. The bridge is `EightThirtyTwo_Bridge` with
@@ -14,7 +14,11 @@ on `sd_cs[1]`: the ROM loads `RV32OSDA.BIN` from a FAT16 card image and runs
 it (see [Boot](#boot)).
 
 The L1 bench (`sim/rv_l1`, iverilog) tests `rv_hostcpu` against an abstract
-memory. This bench uses Vivado's xsim because `cfide` and the bridge are VHDL.
+memory. This bench uses Vivado's xsim because `cfide` and the bridge are VHDL,
+or (`SIM=verilator`) Verilator on the Verilog that GHDL makes of that VHDL:
+same tests, same verdicts and cycle counts, 3.5x (boot runs) to 20x (`all`)
+faster (see [Verilator](#verilator)).
+xsim stays the default and the X-checking reference.
 
 | File | What it is |
 |---|---|
@@ -31,6 +35,9 @@ memory. This bench uses Vivado's xsim because `cfide` and the bridge are VHDL.
 | `boot/fwtest.c`, `boot/fwfill.S` | Boot runs: the test firmware `RV32OSDA.BIN` (on `fw/ctrl_rv/arch`, `firmware.ld`) |
 | `boot/Makefile` | `RV32OSDA.BIN` (padded to 2560 bytes), `img.txt`, the card images `card.img` and `card_nofile.img` (`tools/sim/mkcard.sh`) |
 | `boot/expect.txt`, `boot/expect_nofile.txt` | The expected `UART:` / `ERRORCODE:` lines of `boot` and `boot_nofile` |
+| `verilator/blackbox.vhd` | `SIM=verilator`: entity stubs of the Verilog modules the VHDL instantiates as `entity work.X` (`i2c_master_mmio`), for the GHDL analysis only |
+| `verilator/romcheck.py` | `SIM=verilator`: checks that `ghdl --synth` kept every word of the ROM in its memories |
+| `verilator/l2.vlt` | `SIM=verilator`: the lint waivers (warnings are fatal otherwise) |
 
 ## Prerequisites
 
@@ -61,6 +68,9 @@ memory. This bench uses Vivado's xsim because `cfide` and the bridge are VHDL.
 3. GNU make, bash, gcc (to build `fw/romgen/romgen`), python3, sed.
 4. Boot runs only: `mtools`, `dosfstools` and `fdisk` for
    `tools/sim/mkcard.sh` (see [`tools/sim/README.md`](../../tools/sim/README.md)).
+5. `SIM=verilator` only: GHDL 4.1 (with its built-in synthesis) and
+   Verilator 5.020, plus `ccache` (optional, faster rebuilds); see
+   [Verilator](#verilator). xsim is not needed for these runs.
 
 Run only one xsim at a time.
 
@@ -69,12 +79,16 @@ Run only one xsim at a time.
 From the repository root:
 
 ```sh
-bash sim/host_bridge/run.sh all       # 6 tests x SLAT {2,8,20} x SJIT {0,8}: 36 runs, ~5 min
+bash sim/host_bridge/run.sh all       # 7 tests x SLAT {2,8,20} x SJIT {0,8}: 42 runs, ~5 min
 bash sim/host_bridge/run.sh mutant    # the four-phase handshake's teeth, 34 runs
 bash sim/host_bridge/run.sh irqmut    # the interrupt controller's teeth, 4 runs, ~2 min
 ```
 
-`all` ends with `=== ALL PASS (36 runs)` (exit 0) or `=== SOME FAILED`
+Every target also runs under Verilator with `SIM=verilator` in front (e.g.
+`SIM=verilator bash sim/host_bridge/run.sh all`, 14 s with a warm ccache); see
+[Verilator](#verilator).
+
+`all` ends with `=== ALL PASS (42 runs, xsim)` (exit 0) or `=== SOME FAILED`
 (exit 1). `mutant` ends with `=== MUTANT CAUGHT ...` (exit 0) or
 `=== MUTANT SURVIVED or CONTROL FAILED` (exit 1). `irqmut` ends with
 `=== IRQ MUTANTS CAUGHT ...` (exit 0) or `=== IRQ MUTANT SURVIVED or CONTROL
@@ -107,6 +121,190 @@ make -C sim/host_bridge                 # -> sim/host_bridge/build/<test>/OSDBoo
 make -C sim/host_bridge B=/tmp/hb       # elsewhere
 ```
 
+## Verilator
+
+`SIM=verilator` runs every target (`all`, `mutant`, `irqmut`, `dhry`,
+`boot`, `boot_nofile`, single tests) under Verilator instead of xsim, with
+the same tests, plusargs, verdicts, log names and run directories. The VHDL
+(cfide, the bridge, the ROM) is converted to Verilog with GHDL's synthesis
+first. xsim stays the default and the reference: Verilator is 2-state, so
+the bench's X checks (`X on the bus`, the `X 0` count) cannot fire there. Run
+xsim `all` before a commit that touches the RTL.
+
+### Install (Ubuntu 24.04)
+
+```sh
+sudo apt install ghdl verilator ccache
+ghdl --version | head -1      # GHDL 4.1.0 (Ubuntu 4.1.0+dfsg-0ubuntu2.1) [Dunoon edition]
+verilator --version           # Verilator 5.020 2024-01-01 rev (Debian 5.020-1)
+ghdl help synth | head -1     # synth [FILES... -e] UNIT [ARCH]   (synthesis is built in)
+```
+
+The `ghdl` package is `ghdl-mcode`, which has `--synth` built in (no yosys
+plugin needed). `ccache` is optional: `run.sh` uses it when present
+(`OBJCACHE=` empty turns it off). Set `GHDL=` / `VERILATOR=` for other
+installs.
+
+### Run
+
+```sh
+SIM=verilator bash sim/host_bridge/run.sh all            # 42 runs
+SIM=verilator bash sim/host_bridge/run.sh mutant
+SIM=verilator bash sim/host_bridge/run.sh irqmut
+SIM=verilator bash sim/host_bridge/run.sh dhry
+SIM=verilator RUNTAG=vboot  bash sim/host_bridge/run.sh boot
+SIM=verilator RUNTAG=vbootn bash sim/host_bridge/run.sh boot_nofile
+SIM=verilator SLAT=20 SJIT=8 EXTRA_WS=3 bash sim/host_bridge/run.sh t_b2b
+```
+
+Verilator runs can run in parallel with each other and with one xsim (each
+in its own `RUNTAG`).
+
+To check that both simulators agree, run a target under each with its own
+`RUNTAG` and compare the two run directories:
+
+```sh
+RUNTAG=xall bash sim/host_bridge/run.sh all
+RUNTAG=vall SIM=verilator bash sim/host_bridge/run.sh all
+bash sim/host_bridge/run.sh compare xall vall
+```
+
+`compare` diffs every `tb_*.log` of the two directories after removing the
+simulators' own lines (xsim's banner, `$finish called at`, `exit`;
+Verilator's `Verilog $finish`) and with `run_<tag>/` paths as `run_*/`.
+Everything else must be identical: verdict, `main done`, `cycles`, the
+`=== TIME` checkpoints, `=== BOOT` / `=== STATS` counters, every `UART:` line,
+the `t_irqctl` test 4 iteration lines. It prints `SAME` / `DIFF` / `ONLY`
+per log and `=== COMPARE n logs: ...`, and exits 1 on any difference.
+
+### What run.sh does (the conversion step)
+
+Per snapshot (one per test, per bridge / cfide / master variant and
+`EXTRA_WS`; `<run>` = `sim/host_bridge/run_<RUNTAG>`):
+
+```sh
+cd <run>      # src/ holds the run copies (mutants: src/832_bridge_mutant.vhd, src/cfide_irqmut_<m>.vhd)
+d=ghdl_tb_t_lanes_x0
+F="--std=93c --ieee=synopsys -fexplicit"
+ghdl -a $F --workdir=$d ../verilator/blackbox.vhd src/cfide.vhd src/832_bridge.vhd build/t_lanes/OSDBoot_rv_ROM.vhd
+ghdl --synth $F --workdir=$d -gcpu_riscv=true -grv_extra_ws=0 --out=verilog EightThirtyTwo_Bridge > $d/bridge.v
+ghdl --synth $F --workdir=$d -gspimux=false -ghavespirtc=false -ghavei2c=false -ghavevpos=false \
+     --out=verilog cfide > $d/cfide.v
+python3 ../verilator/romcheck.py build/t_lanes/OSDBoot_rv_ROM.vhd $d/bridge.v
+sed -i '1i `timescale 1ns/1ps' $d/bridge.v $d/cfide.v
+verilator --binary --timing --x-assign 0 --x-initial 0 -DHB_GHDL --top-module tb_host_bridge \
+     -GEXTRA_WS=0 --Mdir vl_tb_t_lanes_x0 -o Vtb_host_bridge ../verilator/l2.vlt \
+     $d/bridge.v $d/cfide.v src/rv_hostcpu.v src/VexOsd.v src/hostcache.v src/dpram_inf_generic.v \
+     ../sdram_host_model.v ../tb_host_bridge.v
+vl_tb_t_lanes_x0/Vtb_host_bridge +TEST=t_lanes +SLAT=8 +SJIT=0 +SEED=1 +SDRAM_HEX=../sw/t_lanes.sdram.hex
+```
+
+This is the `t_lanes` snapshot; it ends with `=== PASS`. `run.sh` also
+requires the RAM note in GHDL's output, deletes the black-box modules from
+it, and builds the C++ with `-O2` through ccache.
+
+- **Flags**: `--std=93c --ieee=synopsys -fexplicit`. cfide.vhd uses
+  `std_logic_unsigned`; with plain `-fsynopsys` its `=` is ambiguous.
+- **Generics are fixed at the conversion**: the bridge gets `cpu_riscv` and
+  `rv_extra_ws` = `EXTRA_WS` with `-g`, cfide the bench's four generics. The
+  converted modules have no parameters; the bench, compiled with
+  `-DHB_GHDL`, instantiates them without, and checks that the converted
+  bridge's `rv_hostcpu` has its `EXTRA_WS`.
+- **Names**: GHDL writes identifiers in lower case and folds a generate
+  label into the instance name. The bench's hierarchical references go
+  through `HB_RV` (`hostcpu.genrv.myrv` / `hostcpu.genrv_myrv`) and
+  `HB_SD_BUSY` (`mycfide.SD_busy` / `mycfide.sd_busy`); `cpu_*`,
+  `irq_prev` and `irq_seen` keep their names.
+- **Black boxes**: the bridge binds `rv_hostcpu`, `hostcache` and the ROM
+  through component declarations. An unbound component (`rv_hostcpu`,
+  `hostcache`) comes out as an instance of the Verilog module, with its
+  generics as parameters; the ROM entity is analysed into the same library,
+  so it is converted with the bridge. cfide instantiates `i2c_master_mmio`
+  (SystemVerilog) as `entity work.i2c_master_mmio`, which needs an analysed
+  entity: `verilator/blackbox.vhd` declares it, GHDL turns it into an empty
+  module, and `run.sh` deletes that module so that Verilator would link the
+  real one. This bench builds cfide with `havei2c = false`, so the instance
+  is not there at all; the path was checked once with `havei2c = true`
+  (the stub module is deleted, Verilator lints cfide with
+  `rtl/host/i2c_master_mmio.sv`). No file under `rtl/` is changed.
+- **The ROM**: the shared-variable RAM of the `fw/ctrl_boot_rv` template is
+  inferred as memory (`run.sh` requires GHDL's `found RAM "ram", width: 32
+  bits, depth: 2048` note) and comes out as four 8-bit lane memories with
+  `initial` values (index order reversed). `verilator/romcheck.py` checks
+  that every word of the VHDL is in them (a ROM of another test fails it).
+  The boot runs convert the committed `fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd`
+  and match `boot/expect.txt` line for line, as xsim does.
+- **2-state**: X constants and uninitialised variables are 0
+  (`--x-assign 0 --x-initial 0`). Signals that xsim shows as `U`/`X` until
+  reset are 0 here.
+- **Warnings are fatal**; the waivers are in `verilator/l2.vlt` (generated
+  core widths, `WS_LOAD` in `rv_hostcpu.v`, integer/vector mixing in the
+  bench and models, the SD model's two `miso` writers). The GHDL output
+  needs none.
+
+### Bench changes for two simulators
+
+The first comparison (unchanged bench) agreed on every `SJIT=0` run. What
+differed, and the fix (bench code only; xsim numbers moved where noted):
+
+1. **Jitter**: the SDRAM model drew its `SJIT` latencies with `$urandom`,
+   whose sequence differs between simulators. It uses an xorshift32 seeded
+   from `+SEED` now (the `SJIT=8` runs see other latencies than before; they
+   all pass).
+2. **Disabling a named fork** (`disable run`) is not supported by Verilator:
+   two watcher blocks end the run (DONE + 8 cycles, or `+TIMEOUT`).
+3. **End-of-run counters**: read in the time step of the last edge, after
+   the edge's updates in Verilator but before them in xsim (`busy_cycles`
+   one apart in `boot_nofile`). The bench now waits 1 ns before printing:
+   `cycles` is one higher than before in every log (and `busy_cycles` in
+   the boot runs).
+4. **`=== ErrorCode at cycle`**: sampled on `sd_cs[5]`'s edge, which is a
+   cfide register changing on a `clk_114` edge (xsim 79255, Verilator 79256).
+   Sampled 1 ns later now: 79256 in both.
+5. **An empty `UART:` line** (dhry): `%0s` of an empty string prints nothing
+   in xsim and a space in Verilator; the bench prints `UART: ` itself.
+6. **Hardening** (no visible change in either simulator): the resets are
+   released at a `clk_114` falling edge, and the `clk_28`-sampled pulses
+   are driven 1 ns after a `clk_28` edge (`c28_step`), instead of in the
+   time step of the sampling edge.
+
+### Agreement and wall time (2026-10-17)
+
+All targets on the final tree, xsim (`t5y*`, `t5z*`) against Verilator
+(`t5g*`), with `run.sh compare`:
+
+| Target | Runs | Verdicts, both simulators | compare |
+|---|---|---|---|
+| `all` | 42 | 42 PASS | 42 SAME |
+| `mutant` | 34 | gate 6 FAIL (167 bench errors, 161 stale acks each), control 24 PASS, info 4 | 34 SAME |
+| `irqmut` | 4 | mutant a FAIL 504 (test 4, 8 iterations), b FAIL 0 (test 4, 8), c FAIL 904 (test 9), control PASS | 4 SAME |
+| `dhry` | 1 | PASS, 252,720 cycles per 100 runs, 0 wrong | SAME |
+| `boot` | 1 | PASS, `expect.txt` 14 lines | SAME (`cycles 13134514`) |
+| `boot_nofile` | 1 | PASS, `expect_nofile.txt` 45 lines | SAME (`cycles 27000178`) |
+
+Every `main done` / `cycles` value is the same in both, and so are the
+`=== TIME`, `=== BOOT`, `=== STATS` lines and the `t_irqctl` test 4 sweep
+(7 / 8 / 10 before / in / after the clear cycle).
+
+Wall time of the whole target, builds included (i7-1165G7, 4 cores / 8
+threads, idle machine; Verilator "warm" = ccache filled by an earlier run
+of the same sources, "cold" = `OBJCACHE=`):
+
+| Target | xsim | Verilator warm | Verilator cold |
+|---|---|---|---|
+| `all` | 301 s | 14 s | 76 s |
+| `mutant` | 243 s | 13 s | 83 s |
+| `irqmut` | 71 s | 6 s | |
+| `dhry` | 36 s | 6 s | |
+| `boot` | 110 s (simulation 85 s) | 28 s (simulation 25 s) | 39 s |
+| `boot_nofile` | 196 s (simulation 173 s) | 52 s (simulation 49 s) | |
+
+A Verilator build (conversion, verilate, C++) is 1 to 2 s warm and 7 to 9 s
+cold; `all` builds 7, `mutant` 9. The short tests run in well under a
+second each. The long runs are 3.4x (boot) to 3.5x (boot_nofile) faster in
+simulation alone: at about 0.55 M `clk_114` cycles per second the boot runs
+are dominated by the simulation, not the build.
+
 ## Boot
 
 `run.sh boot` is the end-to-end boot in L2: the committed boot ROM
@@ -137,12 +335,12 @@ Expected end of `boot`:
 ```
 boot ROM: fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd unmodified (= git HEAD), sha256 7fc4ae53fed88cb3
 === BOOT first read of 0x2000 at cycle 12392735, irefill 95 dread 5338 dwrite 7779 so far
-=== HW accesses 11714, stale acks 0, X 0, SDRAM reads 191 writes 683, main done 79381, cycles 13134513
-=== STATS irefill 120 dread 7986 dwrite 8326 busy_cycles 12931583 (rv_hostcpu, whole run)
+=== HW accesses 11699, stale acks 0, X 0, SDRAM reads 210 writes 699, main done 79381, cycles 13134514
+=== STATS irefill 122 dread 7979 dwrite 8344 busy_cycles 12931177 (rv_hostcpu, whole run)
 === SD card: 1 ErrorCode calls, last 0fff
 ok   log = expect.txt (14 lines)
 ok   bench verdict: === PASS
-xsim wall time 92 s
+xsim wall time 85 s
 === boot PASS
 ```
 
@@ -151,12 +349,12 @@ Expected end of `boot_nofile`:
 ```
 boot ROM: fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd unmodified (= git HEAD), sha256 7fc4ae53fed88cb3
 === cycle limit 27000000 reached, no DONE
-=== HW accesses 38280, stale acks 0, X 0, SDRAM reads 0 writes 22, main done 79381, cycles 27000177
-=== STATS irefill 102 dread 20557 dwrite 26396 busy_cycles 26364108 (rv_hostcpu, whole run)
+=== HW accesses 38280, stale acks 0, X 0, SDRAM reads 0 writes 22, main done 79381, cycles 27000178
+=== STATS irefill 102 dread 20557 dwrite 26396 busy_cycles 26364109 (rv_hostcpu, whole run)
 === SD card: 2 ErrorCode calls, last 00f0
 ok   log = expect_nofile.txt (45 lines)
 ok   bench verdict: === PASS
-xsim wall time 192 s
+xsim wall time 173 s
 === boot_nofile PASS
 ```
 
@@ -165,7 +363,9 @@ The exit code is 0 on PASS, 1 otherwise. Each run leaves in
 (`tb_boot_nofile_...` for the other), `boot.expect` / `boot.got` /
 `boot.diff`, and `boot/` (firmware, `img.txt`, card images). The sha256
 prefix changes with the committed ROM; the cycle numbers change with the
-RTL, the ROM and the firmware.
+RTL, the ROM and the firmware (these are of 2026-10-17, firmware on the
+`fw/ctrl_rv/arch` interrupt API). Under `SIM=verilator` the same lines
+appear, ending with `verilator wall time` (about 25 s and 49 s).
 
 The gate (`run.sh`): every `UART:` and `ERRORCODE:` line of the log equals
 `boot/expect.txt` (or `boot/expect_nofile.txt`) line for line, `@IMG@`
@@ -247,13 +447,14 @@ What it proves:
 
 | | `boot` | `boot_nofile` |
 |---|---|---|
-| SD init (`SPI_slow`, SPEED `0xEF`: 7664 `clk_114` per byte; five `spi_spin()` of 200 bytes = 7.7 M) | from cycle 79,255 (`ErrorCode(0xfff)`) to 9,145,941 (`Hunting for partition`): 9.07 M | the same |
+| SD init (`SPI_slow`, SPEED `0xEF`: 7664 `clk_114` per byte; five `spi_spin()` of 200 bytes = 7.7 M) | from cycle 79,256 (`ErrorCode(0xfff)`) to 9,145,941 (`Hunting for partition`): 9.07 M | the same |
 | one sector read at `SPI_fast` (SPEED 7) | about 140 k cycles | |
 | jump to 0x2000 (first CPU read there) | cycle 12,392,735 (109 ms at 113.44 MHz) | (no jump) |
-| `ErrorCode(0x0f0)` | | cycle 26,036,915 (32 root directory sectors read and printed) |
-| end | DONE at 13,134,513 | cycle limit 27,000,000 |
-| I$ refills (`RV_HOSTCPU_STATS`) | 95 up to the jump, 120 in all | 102 |
-| xsim wall time | 92 s | 192 s |
+| `ErrorCode(0x0f0)` | | cycle 26,036,916 (32 root directory sectors read and printed) |
+| end (`cycles`) | 13,134,514 | cycle limit 27,000,000 |
+| I$ refills (`RV_HOSTCPU_STATS`) | 95 up to the jump, 122 in all | 102 |
+| xsim wall time | 85 s | 173 s |
+| Verilator wall time | 25 s | 49 s |
 
 The UART costs about 9,900 `clk_114` per character (115200 baud from
 `clk_28`): the boot ROM's 307 characters are about 3.0 M of the 12.4 M. The
@@ -268,6 +469,13 @@ would hang the CPU.
 - **Clocks**: as `sim/spi_cdc/host832/tb_832_dmode.v`. `clk_114` has
   T = 8.8154 ns. `clk_28` = `clk_114` / 4, with its edges 0.3 ns after a
   `clk_114` edge.
+- **Resets and pulses off the clock edges**: `n_reset` and `cpu_reset_n` are
+  released at a `clk_114` falling edge (the next rising edge is the first
+  that sees them high), and the bench changes cfide's `clk_28`-sampled inputs
+  (`vbl_int`, `irq_src`, `amiga_req` pulses) 1 ns after a `clk_28` edge
+  (`c28_step`). A change in the time step of the sampling edge would race
+  with the clocked processes on that edge, and xsim and Verilator may order
+  it differently.
 - **cfide**: generics as in host832 (`spimux`, `havespirtc`, `havei2c` and
   `havevpos` are all false). The inputs are `tick_in = 1` (the timer counts
   every `clk_28`, so TIMER = `timecnt[23:8]` steps every 1024 `clk_114`),
@@ -275,7 +483,8 @@ would hang the CPU.
 - **SDRAM model** (`sdram_host_model.v`): 8 MB of halfwords at host address
   0.
   - Latency: `SLAT` + random 0..`SJIT` `clk_114` cycles from accept to the
-    one-cycle `ram_ack`.
+    one-cycle `ram_ack`. The random numbers are an xorshift32 seeded from
+    `+SEED`, not `$urandom`, so both simulators draw the same sequence.
   - Reads are an 8-halfword burst of the 4-word line, starting with the
     requested word and wrapping (word0.hi on the ack cycle). This is the
     order of tb_832_dmode, which hostcache's fill states expect.
@@ -507,6 +716,9 @@ are the only run-copy patches in force (besides the mutants of `mutant` and
   never sees.
 - `hostcache.v` and `dpram_inf_generic.v`: a `` `timescale `` line is added,
   to avoid an xelab warning.
+
+`SIM=verilator` simulates the same copies; its GHDL conversion adds no patch
+(see [Verilator](#verilator)).
 
 Earlier patches that are gone (2026-10-16):
 

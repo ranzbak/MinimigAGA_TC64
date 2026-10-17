@@ -43,8 +43,8 @@
 //   === STATS        rv_hostcpu's counters at the end
 // The counters need rv_hostcpu.v compiled with -d RV_HOSTCPU_STATS and this
 // bench with -d RV_HOSTCPU_STATS too (hierarchical references to
-// hostcpu.genrv.myrv.st_*); without it they are left out (run.sh boot sets
-// both).
+// hostcpu.genrv.myrv.st_*, `HB_RV below); without it they are left out
+// (run.sh boot sets both).
 //   boot:        checkpoints 1 / 2 as t_irq; verdict as every test (DONE)
 //   boot_nofile: the run must end at +TIMEOUT without DONE; "=== PASS" if
 //                no DONE, no bench error and the last ErrorCode is 00F0
@@ -56,7 +56,22 @@
 //           +VERBOSE=2 (also every change of the bus address)
 // Parameter: EXTRA_WS (xelab -generic_top EXTRA_WS=<n>), the bridge's
 //           rv_extra_ws: idle cycles before every RISC-V request.
+//
+// HB_GHDL (run.sh SIM=verilator): the bridge (with the ROM) and cfide are
+// the Verilog that ghdl --synth made of the VHDL.  Their generics are fixed
+// at the conversion (no parameters here), identifiers are lower case and a
+// generate label is folded into the instance name (genrv.myrv ->
+// genrv_myrv); the HB_* names below follow that.  The bench checks that the
+// converted bridge has this bench's EXTRA_WS.
 `timescale 1ns/1ps
+
+`ifdef HB_GHDL
+`define HB_RV      hostcpu.genrv_myrv
+`define HB_SD_BUSY mycfide.sd_busy
+`else
+`define HB_RV      hostcpu.genrv.myrv
+`define HB_SD_BUSY mycfide.SD_busy
+`endif
 
 module tb_host_bridge #(
   parameter EXTRA_WS = 0
@@ -88,7 +103,11 @@ module tb_host_bridge #(
   wire        cfide_int;
   wire        rv_tdo;
 
+`ifdef HB_GHDL
+  EightThirtyTwo_Bridge hostcpu (
+`else
   EightThirtyTwo_Bridge #(.cpu_riscv(1'b1), .rv_extra_ws(EXTRA_WS)) hostcpu (
+`endif
     .clk(clk114), .nReset(cpu_reset_n),
     .addr(hostaddr), .q(hostWR), .sel(hostsel), .wr(host_we),
     .ram_req(ram_req), .ram_ack(ram_ack), .ram_d(ram_d),
@@ -111,9 +130,13 @@ module tb_host_bridge #(
   reg        i2c_ext_int = 1'b0; // t_irqctl: controller source 3 (ADV7511 INT)
   reg [15:4] irq_src = 12'h0;    // t_irqctl: controller sources 4..15
 
+`ifdef HB_GHDL
+  cfide mycfide (     // converted with the generics below
+`else
   cfide #(
     .spimux(1'b0), .havespirtc(1'b0), .havei2c(1'b0), .havevpos(1'b0)
   ) mycfide (
+`endif
     .sysclk(clk114), .n_reset(n_reset),
     .addr(hostaddr), .d(hostWR[15:0]), .q(hw_d), .req(hw_req), .wr(host_we), .ack(hw_ack),
     .sd_di(miso), .sd_cs(sd_cs), .sd_clk(sd_clk), .sd_do(sd_do),
@@ -221,11 +244,16 @@ module tb_host_bridge #(
       osd_bit = 0;
     end
   end
-  always @(posedge sd_cs[5]) if (n_reset && cpu_reset_n && osd_n == 2 && osd_b0 == 8'h08 && osd_b1 == 8'h00) begin
-    errcode = ram.hw_at(32'h0010000A);
-    n_errcode = n_errcode + 1;
-    $display("ERRORCODE: %h", errcode);
-    $display("=== ErrorCode at cycle %0d", cyc);
+  // 1 ns after the sd_cs edge (a cfide register: it changes on a clk_114
+  // edge), when cyc has counted that edge in every simulator
+  always @(posedge sd_cs[5]) begin
+    #1;
+    if (n_reset && cpu_reset_n && osd_n == 2 && osd_b0 == 8'h08 && osd_b1 == 8'h00) begin
+      errcode = ram.hw_at(32'h0010000A);
+      n_errcode = n_errcode + 1;
+      $display("ERRORCODE: %h", errcode);
+      $display("=== ErrorCode at cycle %0d", cyc);
+    end
   end
 
 `endif
@@ -296,7 +324,7 @@ module tb_host_bridge #(
     boot_seen = 1'b1;
 `ifdef RV_HOSTCPU_STATS
     $display("=== BOOT first read of 0x2000 at cycle %0d, irefill %0d dread %0d dwrite %0d so far", cyc,
-             hostcpu.genrv.myrv.st_irefill, hostcpu.genrv.myrv.st_dread, hostcpu.genrv.myrv.st_dwrite);
+             `HB_RV.st_irefill, `HB_RV.st_dread, `HB_RV.st_dwrite);
 `else
     $display("=== BOOT first read of 0x2000 at cycle %0d", cyc);
 `endif
@@ -315,11 +343,11 @@ module tb_host_bridge #(
 
   always @(posedge clk114) begin
     hw_req_d <= hw_req;
-    if (hw_req && host_we && spi_data && mycfide.SD_busy === 1'b0)
+    if (hw_req && host_we && spi_data && `HB_SD_BUSY === 1'b0)
       spi_acc = 1'b1;
     if (hw_req && !hw_req_d) begin
       n_hw = n_hw + 1;
-      if (host_we && spi_data && mycfide.SD_busy === 1'b1) spi_busy_waits = spi_busy_waits + 1;
+      if (host_we && spi_data && `HB_SD_BUSY === 1'b1) spi_busy_waits = spi_busy_waits + 1;
       if (b2b_on && last_done >= 0) begin
         gap = cyc - last_done;
         if (gap < gap_min) gap_min = gap;
@@ -371,7 +399,8 @@ module tb_host_bridge #(
     begin
       s = 0;
       for (k = 0; k < uart_n; k = k + 1) s = {s[8*127-1:0], uart_line[k]};
-      $display("UART: %0s", s);
+      if (uart_n == 0) $display("UART: ");   // %0s of an empty string: xsim
+      else $display("UART: %0s", s);        // prints nothing, Verilator a space
       if (is_boot) $display("=== UART line at cycle %0d", cyc);
     end
   endtask
@@ -393,6 +422,18 @@ module tb_host_bridge #(
     end
   endtask
 
+  // c28_step: 1 ns after the next clk_28 rising edge.  The bench changes
+  // cfide's clk_28-sampled inputs there, never in the time step of a clk_28
+  // edge: a change made by a process that resumes on the edge races with
+  // cfide's clk_28 processes on that edge (the simulators order it
+  // differently).
+  task c28_step;
+    begin
+      @(posedge clk28);
+      #1;
+    end
+  endtask
+
   // t_irq pulse generator: vbl_int high for one clk_28 cycle (set after a
   // clk_28 edge, cleared after the next: exactly one edge of cfide sees it),
   // NPULSE times, PULSE_GAP clk_114 cycles apart.
@@ -403,9 +444,9 @@ module tb_host_bridge #(
     integer k;
     for (k = 0; k < NPULSE; k = k + 1) begin
       repeat (PULSE_GAP) @(posedge clk114);
-      @(posedge clk28);
+      c28_step;
       vbl_int <= 1'b1;
-      @(posedge clk28);
+      c28_step;
       vbl_int <= 1'b0;
       pulses_sent = pulses_sent + 1;
       if (verbose) $display("%0d vbl_int pulse %0d", cyc, pulses_sent);
@@ -457,16 +498,16 @@ module tb_host_bridge #(
 
   task ic_vbl_pulse;
     begin
-      @(posedge clk28); vbl_int <= 1'b1;
-      @(posedge clk28); vbl_int <= 1'b0;
+      c28_step; vbl_int <= 1'b1;
+      c28_step; vbl_int <= 1'b0;
       ic_vbl = ic_vbl + 1;
     end
   endtask
 
   task ic_src_pulse(input integer b);
     begin
-      @(posedge clk28); irq_src[b] <= 1'b1;
-      @(posedge clk28); irq_src[b] <= 1'b0;
+      c28_step; irq_src[b] <= 1'b1;
+      c28_step; irq_src[b] <= 1'b0;
     end
   endtask
 
@@ -480,10 +521,10 @@ module tb_host_bridge #(
             ic_vbl_pulse;
           end
       30: begin
-            @(posedge clk28); vbl_int <= 1'b1; irq_src[5] <= 1'b1;
-            @(posedge clk28); vbl_int <= 1'b0; irq_src[5] <= 1'b0; amiga_req <= 1'b1;
+            c28_step; vbl_int <= 1'b1; irq_src[5] <= 1'b1;
+            c28_step; vbl_int <= 1'b0; irq_src[5] <= 1'b0; amiga_req <= 1'b1;
             ic_vbl = ic_vbl + 1;
-            repeat (4) @(posedge clk28); amiga_req <= 1'b0;
+            repeat (4) c28_step; amiga_req <= 1'b0;
           end
       40: begin
             @(posedge clk114); irq_src[6] <= 1'b1;
@@ -723,6 +764,25 @@ module tb_host_bridge #(
   endtask
 
   // ---------------------------------------------------------------- run
+  // The run ends 8 cycles after DONE or at +TIMEOUT cycles, whichever comes
+  // first: two watchers started at the reset release (no disable of a
+  // named fork, which Verilator does not support).
+  event run_go;
+  reg   run_end = 1'b0;
+  always @(run_go) begin
+    wait (done);
+    repeat (8) @(posedge clk114);
+    run_end = 1'b1;
+  end
+  always @(run_go) begin
+    repeat (timeout) @(posedge clk114);
+    if (!run_end) begin
+      if (test == "boot_nofile") $display("=== cycle limit %0d reached, no DONE", timeout);
+      else bench_error("timeout, no DONE write");
+      run_end = 1'b1;
+    end
+  end
+
   initial begin
     if (!$value$plusargs("TEST=%s", test)) test = "none";
     if (!$value$plusargs("VERBOSE=%d", verbose)) verbose = 0;
@@ -730,24 +790,24 @@ module tb_host_bridge #(
     is_boot = test == "boot" || test == "boot_nofile";
     #1;
     $display("host-bridge bench: TEST=%0s SLAT=%0d SJIT=%0d EXTRA_WS=%0d", test, ram.slat, ram.sjit, EXTRA_WS);
-    repeat (20) @(posedge clk114);
+`ifdef HB_GHDL
+    if (`HB_RV.EXTRA_WS != EXTRA_WS)
+      bench_error("the converted bridge has another rv_extra_ws than EXTRA_WS");
+`endif
+    // The resets are released at a clk_114 falling edge: the next rising
+    // edge (the 20th, and the first after the 40th clk_28 edge) is the first
+    // that sees them high, in every simulator.  A release in the time step of
+    // a rising edge races with the clocked processes on that edge.
+    repeat (19) @(posedge clk114);
+    @(negedge clk114);
     n_reset = 1'b1;
     repeat (40) @(posedge clk28);
-    @(posedge clk114);
+    @(negedge clk114);
     cpu_reset_n = 1'b1;
-    fork : run
-      begin
-        wait (done);
-        repeat (8) @(posedge clk114);
-        disable run;
-      end
-      begin
-        repeat (timeout) @(posedge clk114);
-        if (test == "boot_nofile") $display("=== cycle limit %0d reached, no DONE", timeout);
-        else bench_error("timeout, no DONE write");
-        disable run;
-      end
-    join
+    @(posedge clk114);
+    -> run_go;
+    wait (run_end);
+    #1;   // the end-of-run counters after the last edge's updates, in every simulator
     if (uart_n) uart_print;
     final_checks;
     errors = errors + ram.errors;
@@ -756,15 +816,16 @@ module tb_host_bridge #(
 `ifdef SDCARD
 `ifdef RV_HOSTCPU_STATS
     $display("=== STATS irefill %0d dread %0d dwrite %0d busy_cycles %0d (rv_hostcpu, whole run)",
-             hostcpu.genrv.myrv.st_irefill, hostcpu.genrv.myrv.st_dread,
-             hostcpu.genrv.myrv.st_dwrite, hostcpu.genrv.myrv.st_busy);
+             `HB_RV.st_irefill, `HB_RV.st_dread,
+             `HB_RV.st_dwrite, `HB_RV.st_busy);
 `endif
     $display("=== SD card: %0d ErrorCode calls, last %h", n_errcode, errcode);
+    // one verdict line: Verilator's $finish ends the run only after the
+    // block has gone on, so no verdict may follow a $finish
     if (test == "boot_nofile") begin
       if (!done && errors == 0 && n_errcode > 0 && errcode == 16'h00F0) $display("=== PASS");
       else $display("=== FAIL boot_nofile: DONE %0d, bench errors %0d, last ErrorCode %h", done, errors, errcode);
-      $finish;
-    end
+    end else
 `endif
     if (done && done_code == 0 && errors == 0) $display("=== PASS");
     else if (!done) $display("=== FAIL timeout (bench errors %0d)", errors);

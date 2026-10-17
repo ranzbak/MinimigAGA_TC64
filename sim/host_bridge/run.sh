@@ -1,6 +1,17 @@
 #!/bin/bash
-# L2 host-bridge bench (xsim): the RISC-V host CPU through the real
+# L2 host-bridge bench: the RISC-V host CPU through the real
 # EightThirtyTwo_Bridge, hostcache and cfide.  See tb_host_bridge.v, README.md.
+#
+# Simulator: SIM=xsim (default; 4-state, the X-checking reference) or
+# SIM=verilator (Verilator 5, --binary --timing, 2-state: the bench's X
+# checks cannot fire there).  Under Verilator the VHDL (cfide, the bridge, the
+# ROM) is first converted to Verilog with ghdl --synth (GHDL 4.1), per
+# snapshot, from the same run copies (mutants included).  Same targets,
+# plusargs, verdicts, logs and run directories.
+#   SIM=verilator bash sim/host_bridge/run.sh all
+#   bash sim/host_bridge/run.sh compare <RUNTAG a> <RUNTAG b>
+#        every tb_*.log of both run directories: identical apart from the
+#        simulators' own lines (exit 1 otherwise)
 #
 #   bash sim/host_bridge/run.sh all          # every test x SLAT {2,8,20} x SJIT {0,8}
 #   bash sim/host_bridge/run.sh mutant       # the four-phase handshake's teeth (below)
@@ -12,7 +23,9 @@
 #
 # Environment: RUNTAG (run directory run_${RUNTAG:-wt}), SLAT (8), SJIT (0),
 # EXTRA_WS (0, the bridge's rv_extra_ws), SEED (1), XARGS (extra plusargs,
-# e.g. "+VERBOSE=1"), VIVADO_PATH; boot runs also BOOT_TIMEOUT (clk_114
+# e.g. "+VERBOSE=1"), VIVADO_PATH, SIM, GHDL (ghdl), VERILATOR (verilator),
+# JOBS (Verilator build jobs, nproc), OBJCACHE (ccache if present; empty =
+# none); boot runs also BOOT_TIMEOUT (clk_114
 # cycles; boot 40000000, boot_nofile 27000000: the cycle limit that ends it,
 # 0.76 M cycles after the retry's "Initializing SD card" line) and
 # BOOT_CARD (another card image, e.g. a corrupted copy).
@@ -58,6 +71,12 @@
 # Steps: copy the RTL into the run directory (src/), apply the simulation
 # fixes below, build the test ROMs there (make B=<run>/build), compile, then
 # per test compile its ROM and elaborate a snapshot; xsim runs one at a time.
+# Verilator: per snapshot, ghdl -a (verilator/blackbox.vhd, the cfide and
+# bridge variants, the test's ROM) into ghdl_<snapshot>/, ghdl --synth of the
+# bridge (cpu_riscv, rv_extra_ws = EXTRA_WS) and of cfide (the bench's
+# generics), then verilator into vl_<snapshot>/Vtb_host_bridge (-DHB_GHDL,
+# waivers in verilator/l2.vlt).  The conversion must find the ROM's RAM and
+# keep its contents (verilator/romcheck.py).
 # Simulation fixes on the copies (never on rtl/); there are no others, the
 # DUT is otherwise the RTL as committed:
 #   hostcache.v  "ack <= #1 1'b0" -> "ack <= 1'b0" (as host832/run.sh: the
@@ -70,8 +89,22 @@ set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
 VIVADO_PATH=${VIVADO_PATH:-/opt/Xilinx/Vivado/2023.2}
+SIM=${SIM:-xsim}
+GHDL=${GHDL:-ghdl}
+VERILATOR=${VERILATOR:-verilator}
+JOBS=${JOBS:-$(nproc)}
+case "$SIM" in
+	xsim|verilator) ;;
+	*) echo "SIM=$SIM: must be xsim or verilator"; exit 2 ;;
+esac
 export LC_ALL=C LANG=C
 export LD_LIBRARY_PATH="$HOME/lib/tinfo5${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+# GHDL: cfide.vhd needs the Synopsys packages with explicit operator
+# visibility (plain -fsynopsys makes its "=" ambiguous)
+GHDLFLAGS="--std=93c --ieee=synopsys -fexplicit"
+# cfide's generics, as the bench's xsim instance (tb_host_bridge.v)
+CFIDE_GENERICS="-gspimux=false -ghavespirtc=false -ghavei2c=false -ghavevpos=false"
+VB=832_bridge.vhd VR=rv_hostcpu.v VC=cfide.vhd   # Verilator: the current variant
 
 TESTS="t_lanes t_hwoff t_b2b t_spibusy t_irq t_irqctl t_irqapi"
 MATRIX="2,0 8,0 20,0 2,8 8,8 20,8"
@@ -147,15 +180,74 @@ open(sys.argv[2], "w").write(s)
 EOF
 
 	make -s -C "$HERE" B="$run/build" > make.log 2>&1 || { tail -20 make.log; die "make test ROMs (make.log)"; }
+	[ "$SIM" = verilator ] && return 0
 	X xvlog -sv "$ROOT/rtl/host/i2c_master_mmio.sv" "$ROOT/rtl/openaars/adv7511/i2c_master.v"
 	X xvlog src/VexOsd.v src/hostcache.v src/dpram_inf_generic.v "$HERE/sdram_host_model.v" "$HERE/tb_host_bridge.v"
 	X xvhdl src/cfide.vhd
 }
 
 # variant <bridge vhd> <rv_hostcpu v>: (re)compile the two variable sources
+# (Verilator: remember them for the next snapshots)
 variant() {
+	if [ "$SIM" = verilator ]; then VB=$1; VR=$2; return 0; fi
 	X xvlog "src/$2"
 	X xvhdl "src/$1"
+}
+
+# cfide_variant <cfide vhd>: the cfide of the next snapshots
+cfide_variant() {
+	if [ "$SIM" = verilator ]; then VC=$1; return 0; fi
+	X xvhdl "src/$1"
+}
+
+# convert <dir> <rom vhd>: ghdl --synth of the current variant (src/$VB,
+# src/$VC) with that ROM -> <dir>/bridge.v (EightThirtyTwo_Bridge, the ROM
+# inside, rv_hostcpu and hostcache as instances of the Verilog modules) and
+# <dir>/cfide.v.  The entities of verilator/blackbox.vhd come out as empty
+# modules: they are deleted (Verilator links the real Verilog).
+convert() {
+	local d=$1 rom=$2 bb
+	rm -rf "$d"; mkdir -p "$d" || die "mkdir $d"
+	# shellcheck disable=SC2086
+	"$GHDL" -a $GHDLFLAGS --workdir="$d" "$HERE/verilator/blackbox.vhd" "src/$VC" "src/$VB" "$rom" \
+		> "$d/analyse.log" 2>&1 || { cat "$d/analyse.log"; die "ghdl -a ($d/analyse.log)"; }
+	# shellcheck disable=SC2086
+	"$GHDL" --synth $GHDLFLAGS --workdir="$d" -gcpu_riscv=true -grv_extra_ws="$XW" --out=verilog \
+		EightThirtyTwo_Bridge > "$d/bridge.v" 2> "$d/bridge.log" || { cat "$d/bridge.log"; die "ghdl --synth bridge ($d/bridge.log)"; }
+	# shellcheck disable=SC2086
+	"$GHDL" --synth $GHDLFLAGS --workdir="$d" $CFIDE_GENERICS --out=verilog \
+		cfide > "$d/cfide.v" 2> "$d/cfide.log" || { cat "$d/cfide.log"; die "ghdl --synth cfide ($d/cfide.log)"; }
+	grep -q 'found RAM "ram", width: 32 bits, depth: 2048' "$d/bridge.log" \
+		|| die "ghdl --synth did not infer the ROM's RAM ($d/bridge.log)"
+	python3 "$HERE/verilator/romcheck.py" "$rom" "$d/bridge.v" > "$d/romcheck.log" 2>&1 \
+		|| { cat "$d/romcheck.log"; die "converted ROM contents ($rom)"; }
+	for bb in $(sed -n 's/^entity \([a-z0-9_]*\) is$/\1/p' "$HERE/verilator/blackbox.vhd"); do
+		sed -i "/^module $bb\$/,/^endmodule\$/d" "$d/bridge.v" "$d/cfide.v"
+	done
+	sed -i '1i `timescale 1ns/1ps' "$d/bridge.v" "$d/cfide.v"
+}
+
+# vbuild <name> <rom vhd> [defines]: convert, then verilate snapshot <name>
+# -> $run/vl_<name>/Vtb_host_bridge (EXTRA_WS=$XW, rv_hostcpu src/$VR).
+# Warnings are fatal (waivers in verilator/l2.vlt); X constants and
+# uninitialised variables are 0.  C++ with -O2, through ccache if present.
+vbuild() {
+	local name=$1 rom=$2 sd=""; shift 2
+	local d="$run/ghdl_$name"
+	case " $* " in *" -DSDCARD "*) sd="$ROOT/sim/common/sd_spi_model.v" ;; esac
+	convert "$d" "$rom"
+	rm -rf "$run/vl_$name"
+	# shellcheck disable=SC2086
+	OBJCACHE=${OBJCACHE-$(command -v ccache)} "$VERILATOR" --binary --timing -j "$JOBS" \
+		-MAKEFLAGS "OPT_FAST=-O2 OPT_GLOBAL=-O2" --x-assign 0 --x-initial 0 \
+		-DHB_GHDL "$@" --top-module tb_host_bridge -GEXTRA_WS="$XW" \
+		--Mdir "$run/vl_$name" -o Vtb_host_bridge "$HERE/verilator/l2.vlt" \
+		"$d/bridge.v" "$d/cfide.v" "src/$VR" src/VexOsd.v src/hostcache.v src/dpram_inf_generic.v \
+		"$HERE/sdram_host_model.v" $sd "$HERE/tb_host_bridge.v" > "$run/compile_$name.log" 2>&1
+	if [ ! -x "$run/vl_$name/Vtb_host_bridge" ]; then
+		grep -m20 -E '^%(Error|Warning)' "$run/compile_$name.log" || tail -20 "$run/compile_$name.log"
+		die "verilator $name ($run/compile_$name.log)"
+	fi
 }
 
 # snapshot <test> <name>: compile the test's ROM as built, elaborate snapshot
@@ -165,20 +257,37 @@ snapshot() {
 	local rom="$run/build/$t/OSDBoot_rv_ROM.vhd"
 	[ -f "$rom" ] || die "no ROM for $t (sw/$t.S or .c, TESTS in Makefile)"
 	grep -q '^shared variable ram' "$rom" || die "$t: ROM not built from the fw/ctrl_boot_rv template"
+	if [ "$SIM" = verilator ]; then vbuild "$2" "$rom"; return 0; fi
 	X xvhdl "$rom"
 	X xelab -debug off -generic_top "EXTRA_WS=$XW" tb_host_bridge -s "$2"
+}
+
+# simrun <snapshot> <log> <plusarg>...: one simulation (plusargs without +)
+simrun() {
+	local snap=$1 log=$2 x a=(); shift 2
+	if [ "$SIM" = verilator ]; then
+		for x; do a+=("+$x"); done
+		"$run/vl_$snap/Vtb_host_bridge" "${a[@]}" > "$log" 2>&1
+	else
+		for x; do a+=(-testplusarg "$x"); done
+		"$VIVADO_PATH/bin/xsim" "$snap" -R --onfinish quit "${a[@]}" > "$log" 2>&1
+	fi
+}
+
+# xargs_list: XARGS as plusargs without the +
+xargs_list() {
+	local x
+	for x in ${XARGS:-}; do echo "${x#+}"; done
 }
 
 # one <snapshot> <test> <slat> <sjit> <expect PASS|FAIL|ANY> <label>: one run
 one() {
 	local snap=$1 t=$2 s=$3 j=$4 exp=$5 label=$6
-	local log="$run/${snap}_s${s}_j${j}.log" hex=""
-	[ -f "$HERE/sw/$t.sdram.hex" ] && hex="-testplusarg SDRAM_HEX=$HERE/sw/$t.sdram.hex"
-	[ -n "${SDRAM_HEX_FILE:-}" ] && hex="-testplusarg SDRAM_HEX=$SDRAM_HEX_FILE"
-	# shellcheck disable=SC2046,SC2086
-	"$VIVADO_PATH/bin/xsim" "$snap" -R --onfinish quit -testplusarg "TEST=$t" \
-		-testplusarg "SLAT=$s" -testplusarg "SJIT=$j" -testplusarg "SEED=${SEED:-1}" $hex \
-		$(for x in ${XARGS:-}; do echo -testplusarg "${x#+}"; done) > "$log" 2>&1
+	local log="$run/${snap}_s${s}_j${j}.log" hex=()
+	[ -f "$HERE/sw/$t.sdram.hex" ] && hex=("SDRAM_HEX=$HERE/sw/$t.sdram.hex")
+	[ -n "${SDRAM_HEX_FILE:-}" ] && hex=("SDRAM_HEX=$SDRAM_HEX_FILE")
+	# shellcheck disable=SC2046
+	simrun "$snap" "$log" "TEST=$t" "SLAT=$s" "SJIT=$j" "SEED=${SEED:-1}" "${hex[@]}" $(xargs_list)
 	local res; res=$(grep -m1 -E '^=== (PASS|FAIL)' "$log" || echo "=== NO RESULT")
 	local cyc; cyc=$(sed -n 's/.*, main done \(-*[0-9]*\), cycles .*/\1/p' "$log")
 	local stale; stale=$(sed -n 's/.*stale acks \([0-9]*\),.*/\1/p' "$log")
@@ -210,17 +319,20 @@ boot() {
 	# the gate is the committed ROM: a modified one still runs, but the run fails
 	if git -C "$ROOT" diff --quiet HEAD -- "$rom"; then st="unmodified (= git HEAD)"; else st="BAD  MODIFIED against git HEAD"; fi
 	echo "boot ROM: $rom $st, sha256 $(sha256sum "$ROOT/$rom" | cut -c1-16)" | tee "$run/results.txt"
-	X xvlog -d RV_HOSTCPU_STATS src/rv_hostcpu.v
-	X xvhdl src/832_bridge.vhd
-	X xvlog -d SDCARD -d RV_HOSTCPU_STATS "$ROOT/sim/common/sd_spi_model.v" "$HERE/tb_host_bridge.v"
-	X xvhdl "$ROOT/$rom"
-	X xelab -debug off -generic_top "EXTRA_WS=$XW" tb_host_bridge -s "tb_${t}_x$XW"
+	if [ "$SIM" = verilator ]; then
+		VB=832_bridge.vhd VR=rv_hostcpu.v VC=cfide.vhd
+		vbuild "tb_${t}_x$XW" "$ROOT/$rom" -DSDCARD -DRV_HOSTCPU_STATS
+	else
+		X xvlog -d RV_HOSTCPU_STATS src/rv_hostcpu.v
+		X xvhdl src/832_bridge.vhd
+		X xvlog -d SDCARD -d RV_HOSTCPU_STATS "$ROOT/sim/common/sd_spi_model.v" "$HERE/tb_host_bridge.v"
+		X xvhdl "$ROOT/$rom"
+		X xelab -debug off -generic_top "EXTRA_WS=$XW" tb_host_bridge -s "tb_${t}_x$XW"
+	fi
 	local t0=$SECONDS
-	# shellcheck disable=SC2046,SC2086
-	"$VIVADO_PATH/bin/xsim" "tb_${t}_x$XW" -R --onfinish quit -testplusarg "TEST=$t" \
-		-testplusarg "SLAT=${SLAT:-8}" -testplusarg "SJIT=${SJIT:-0}" -testplusarg "SEED=${SEED:-1}" \
-		-testplusarg "SD_IMG=$card" -testplusarg "TIMEOUT=${BOOT_TIMEOUT:-$to}" \
-		$(for x in ${XARGS:-}; do echo -testplusarg "${x#+}"; done) > "$log" 2>&1
+	# shellcheck disable=SC2046
+	simrun "tb_${t}_x$XW" "$log" "TEST=$t" "SLAT=${SLAT:-8}" "SJIT=${SJIT:-0}" "SEED=${SEED:-1}" \
+		"SD_IMG=$card" "TIMEOUT=${BOOT_TIMEOUT:-$to}" $(xargs_list)
 	local secs=$((SECONDS - t0))
 	sed "s/@IMG@/$(cat "$run/boot/img.txt")/" "$exp" > "$run/$t.expect"
 	grep -E '^(UART|ERRORCODE): ' "$log" > "$run/$t.got"
@@ -235,14 +347,50 @@ boot() {
 		grep -qE '^UART: .*(TRAP|EXC)' "$log" && echo "BAD  TRAP/EXC on the UART"
 		if grep -q '^=== PASS' "$log"; then echo "ok   bench verdict: === PASS"
 		else echo "BAD  bench verdict: $(grep -m1 -E '^=== (PASS|FAIL)' "$log" || echo none) ($log)"; fi
-		echo "xsim wall time ${secs} s"
+		echo "$SIM wall time ${secs} s"
 	} | tee -a "$run/results.txt"
 	if grep -q 'BAD' "$run/results.txt"; then echo "=== $t FAILED"; return 1; fi
 	echo "=== $t PASS"
 }
 
+# norm <log>: a run log without the simulators' own lines (xsim's banner,
+# script echo, "$finish called at", exit, memory usage; Verilator's
+# "- ...: Verilog $finish") and without empty lines; run directories as run_*
+norm() {
+	grep -vE '^(\*\*\*\*\*\* xsim v|  \*\*\*\* |    \*\* |source xsim\.dir/|# xsim |Time resolution is |run -all$|exit [0-9]+$|INFO: \[Common 17-206\] Exiting xsim|INFO: xsimkernel Simulation Memory Usage|\$finish called at time |- .*: Verilog \$finish$|$)' "$1" \
+		| sed 's|/run_[^/]*/|/run_*/|g'
+}
+
+# compare <dir a> <dir b>: every run log (tb_*.log) of both directories
+compare() {
+	local a=$1 b=$2 f n=0 nd=0 no=0 v c
+	for f in $( (cd "$a" && ls tb_*.log; cd "$b" && ls tb_*.log) 2>/dev/null | LC_ALL=C sort -u); do
+		if [ ! -f "$a/$f" ] || [ ! -f "$b/$f" ]; then
+			echo "ONLY ${f%.log}: in $( [ -f "$a/$f" ] && echo "$a" || echo "$b")"; no=$((no + 1)); continue
+		fi
+		n=$((n + 1))
+		v=$(grep -m1 -E '^=== (PASS|FAIL)' "$a/$f" | sed 's/^=== //')
+		c=$(sed -n 's/.*, main done \(-*[0-9]*\), cycles \([0-9]*\)$/\1 \/ \2/p' "$a/$f")
+		if diff -q <(norm "$a/$f") <(norm "$b/$f") > /dev/null; then
+			echo "SAME ${f%.log}: ${v:-no verdict}, main done / cycles ${c:-?}"
+		else
+			nd=$((nd + 1))
+			echo "DIFF ${f%.log}: ${v:-no verdict} in $a, $(grep -m1 -E '^=== (PASS|FAIL)' "$b/$f" | sed 's/^=== //') in $b"
+			diff <(norm "$a/$f") <(norm "$b/$f") | sed -n '1,6s/^/    /p'
+		fi
+	done
+	echo "=== COMPARE $n logs: $((n - nd)) same, $nd differ, $no in one directory only"
+	[ "$nd" -eq 0 ] && [ "$no" -eq 0 ] && [ "$n" -gt 0 ]
+}
+
 case "${1:-}" in
 	""|-h|--help) sed -n '2,/^set -u$/{/^set -u$/!p}' "$0"; exit 0 ;;
+	compare)
+		[ $# -eq 3 ] || { echo "usage: run.sh compare <RUNTAG a> <RUNTAG b>"; exit 2; }
+		for t in "$2" "$3"; do [ -d "$HERE/run_$t" ] || { echo "no run directory $HERE/run_$t"; exit 2; }; done
+		compare "$HERE/run_$2" "$HERE/run_$3"
+		exit $?
+		;;
 	boot|boot_nofile)
 		setup
 		boot "$1"
@@ -254,17 +402,17 @@ case "${1:-}" in
 		for t in $TESTS; do snapshot "$t" "tb_${t}_x$XW"; done
 		for t in $TESTS; do matrix "tb_${t}_x$XW" "$t" PASS ""; done | tee "$run/results.txt"
 		if grep -q '^BAD' "$run/results.txt"; then echo "=== SOME FAILED"; exit 1; fi
-		echo "=== ALL PASS ($(grep -c '^ok' "$run/results.txt") runs)"
+		echo "=== ALL PASS ($(grep -c '^ok' "$run/results.txt") runs, $SIM)"
 		;;
 	irqmut)
 		setup
 		variant 832_bridge.vhd rv_hostcpu.v
 		XW=0
 		for m in a b c; do
-			X xvhdl "src/cfide_irqmut_$m.vhd"
+			cfide_variant "cfide_irqmut_$m.vhd"
 			snapshot t_irqctl "tb_t_irqctl_mut${m}_x$XW"
 		done
-		X xvhdl src/cfide.vhd
+		cfide_variant cfide.vhd
 		snapshot t_irqctl "tb_t_irqctl_x$XW"
 		{
 			for m in a b c; do

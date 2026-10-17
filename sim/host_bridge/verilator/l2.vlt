@@ -1,0 +1,28 @@
+// Lint waivers for the L2 bench under Verilator (run.sh with SIM=verilator).
+// Bench side only: the RTL under rtl/ is not edited for Verilator, and the
+// Verilog that ghdl --synth makes of cfide and the bridge needs none.  Every
+// other warning stops the build (warnings are fatal).  (Verilator 5.020
+// takes no comments after `verilator_config, so they are all up here.)
+//
+// 1-2  generated SpinalHDL core: width truncations of shift/replicate
+//      results (correct as generated)
+// 3    rv_hostcpu.v (and the fast-master copy rv_hostcpu_fast.v): WS_LOAD =
+//      (EXTRA_WS > 0) ? EXTRA_WS - 1 : 0, sized to WSW bits by its
+//      declaration (matched by name, not line: the copy moves it)
+// 4-6  bench, SDRAM model, SD card model (sim/common/sd_spi_model.v, boot
+//      runs): Verilog-2001 integer/vector mixing (integers tested as
+//      conditions, 1/2-bit pins into the 8-bit expect_pin argument, 32-bit
+//      sums into narrower registers)
+// 7    SD card model: miso is written from the sck and the cs_n edge blocks
+//      (a model, not synthesisable logic; Verilator simulates it in event
+//      order like any simulator, the warning is about synthesis/speed)
+`verilator_config
+lint_off -rule WIDTHTRUNC  -file "*/VexOsd*.v"
+lint_off -rule WIDTHEXPAND -file "*/VexOsd*.v"
+lint_off -rule WIDTHTRUNC  -file "*/rv_hostcpu*.v" -match "*VAR 'WS_LOAD'*"
+lint_off -rule WIDTHEXPAND -file "*tb_host_bridge.v"
+lint_off -rule WIDTHTRUNC  -file "*tb_host_bridge.v"
+lint_off -rule WIDTHEXPAND -file "*sdram_host_model.v"
+lint_off -rule WIDTHTRUNC  -file "*sdram_host_model.v"
+lint_off -rule WIDTHTRUNC  -file "*sd_spi_model.v"
+lint_off -rule MULTIDRIVEN -file "*sd_spi_model.v"
