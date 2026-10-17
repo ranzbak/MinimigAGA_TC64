@@ -8,6 +8,22 @@ Release 0.1 ships with these open (see doc/release-0.1.md).
 
 ## Stability and correctness
 
+### OSD redesign: more screen space, tabbed setup layout (2026-10-17, wish)
+
+- Paul: the OSD menu is cramped; wanted a layout like the AmiCube setup
+  utility: a tab bar (Main / Storage / System / Video / Acceleration), an
+  item list with values on the left, a navigation/help panel on the right,
+  a status line at the bottom.
+- Today `rtl/minimig/userio_osd.v` has a 2 KB `osdbuf` addressed as
+  `{vpos[5:3], horbeam_osd}` = 8 text lines x 32 characters, so the firmware
+  cannot draw more. Needs RTL (bigger buffer, e.g. 16 x 64 = 8 KB, window
+  size/position, a few colour/attribute bits for header, tabs, highlight bar,
+  panel) plus a new menu engine in the firmware.
+- Planned for the RISC-V firmware (`fw/ctrl_rv`, branch osd-riscv) AFTER the
+  1:1 port reaches board parity (Phase 6), so the A/B check compares the same
+  UI; the 832 firmware is not changed. Open: size (16 x 64 suggested) and
+  colour scheme.
+
 ### HDMI: sync loss in RTG modes and in demos that flash a lot (2026-10-03) -- RTG part SOLVED (Paul, 2026-10-12)
 
 - 2026-10-12, Paul: the RTG sync loss no longer happens on the current images
