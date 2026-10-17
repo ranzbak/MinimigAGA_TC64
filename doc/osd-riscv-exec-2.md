@@ -62,3 +62,11 @@ row corrected: a UART READ is never acked by cfide).
 - **Model:** Sonnet.
 - **Files:** `doc/osd-riscv-plan.md` section 6.3 (replace the 8.0 sketch with this design and the measured cost), section 8 Phase 8 (8.0 done on branch), decision 12.9 (Paul 2026-10-17: implement 8.0 now; uniform edge-detected sources; read clears the returned bits); `doc/osd-riscv-exec-1.md` Global Constraints memory-map row (add the 0xFFFFFF3x window).
 - **Pass gate:** text matches the RTL and API exactly (register addresses, bit numbers, semantics).
+
+### Task 4: Verilator backend for the L1 bench
+
+- **Model:** Opus.
+- **Why:** Paul 2026-10-17: use Verilator for simulation work where possible, it is much faster than xsim/iverilog. L1 (`sim/rv_l1`) is pure Verilog; long runs (units: cdaudio_emu ~50 min in iverilog, dhry, the 122-run matrix) gain most. L2 has VHDL (bridge, cfide, ROM) and needs a GHDL->Verilog step first (GHDL not installed yet; separate task once Paul installs it).
+- **Files:** `sim/rv_l1/run.sh` (`SIM=iverilog|verilator`, default iverilog), `sim/rv_l1/Makefile` or a `sim/rv_l1/verilator/` build dir (gitignored outputs), any bench edits needed for Verilator 5.020 (`--timing`, `--binary` or a small C++ main), `sim/rv_l1/README.md`.
+- **Rules:** same tests, plusargs (+HEX, +WS, +ROMWS, +TIMEOUT, +DM_SMOKE...), parameters (EXTRA_WS, DEBUG via -G), verdict lines (`=== PASS/FAIL/TIMEOUT`, `=== CYCLES`, `=== STATS`) and run directories as iverilog. Verilator is 2-state: the bench's X checks cannot fire there -- document that iverilog stays the X-checking reference, and keep `run.sh all` default on iverilog. No Verilator-only edits to rtl/ (lint waivers go in a bench-side .vlt config).
+- **Gate:** `SIM=verilator run.sh all` gives the same PASS/FAIL set as iverilog (incl. the teeth/mutant runs that must FAIL) AND identical `=== CYCLES` for every run (cycle-accurate agreement; any difference is a bench race to explain and fix); `SIM=verilator run.sh units` all PASS with wall time recorded vs iverilog; `dhry` and `dm_smoke` pass; README copy-pasteable incl. Verilator version and install (`sudo apt install verilator`).
