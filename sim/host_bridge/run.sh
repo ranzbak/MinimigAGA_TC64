@@ -20,6 +20,8 @@
 #   SLAT=20 SJIT=8 EXTRA_WS=3 bash sim/host_bridge/run.sh t_b2b
 #   bash sim/host_bridge/run.sh boot         # committed boot ROM loads RV32OSDA.BIN
 #   bash sim/host_bridge/run.sh boot_nofile  # card without it: error path
+#   bash sim/host_bridge/run.sh fwboot       # the real firmware to its main loop
+#   bash sim/host_bridge/run.sh fwboot_trap  # the same, trap constructor linked in
 #
 # Environment: RUNTAG (run directory run_${RUNTAG:-wt}), SLAT (8), SJIT (0),
 # EXTRA_WS (0, the bridge's rv_extra_ws), SEED (1), XARGS (extra plusargs,
@@ -28,7 +30,10 @@
 # none); boot runs also BOOT_TIMEOUT (clk_114
 # cycles; boot 40000000, boot_nofile 27000000: the cycle limit that ends it,
 # 0.76 M cycles after the retry's "Initializing SD card" line) and
-# BOOT_CARD (another card image, e.g. a corrupted copy).
+# BOOT_CARD (another card image, e.g. a corrupted copy); fwboot runs also
+# FW (the RV32OSDA.BIN to put on the card, default
+# fw/ctrl_rv/build/RV32OSDA.BIN: make -C fw/ctrl_rv first) and
+# FWBOOT_TIMEOUT (clk_114 cycles; defaults below).
 #
 # boot / boot_nofile: the committed fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd,
 # compiled unmodified (VHDL-93), boots from the SD card model (bench compiled
@@ -37,6 +42,22 @@
 # "UART:" and "ERRORCODE:" lines must equal boot/expect.txt (@IMG@ = the
 # line in <run>/boot/img.txt) or boot/expect_nofile.txt line for line, and
 # the bench verdict must be "=== PASS".  Results in <run>/results.txt.
+#
+# fwboot / fwboot_trap: the committed boot ROM loads the real firmware from
+# a 16 MB card (sim/host_bridge/fwboot: $FW + the decoy, no config, no
+# kickstart); the bench (-d SDCARD -d FWBOOT -d RV_HOSTCPU_STATS) answers
+# for the Minimig SPI slaves with minimig_spi_stub.v and logs every SPI frame
+# to <run>/spi.txt; cfide is built with havei2c = true (README).  The run
+# ends at FWBOOT_TIMEOUT.
+#   fwboot       fwboot/milestones.txt in order (spitrace.py check: UART
+#                lines and SPI frames), no EXC/TRAP line, bench "=== PASS"
+#                (no X, no stale ack, no bench error)
+#   fwboot_trap  the firmware of the source tree linked with
+#                fwboot/smoke_trap.o (make -C fw/ctrl_rv EXTRA_OBJS=...,
+#                into <run>/fwboot/trapfw; FW is not used): the UART shows
+#                the line of <run>/fwboot/trap_expect.txt (EXC mcause 2,
+#                mepc = smoke_trap from the map, mtval FFFFFFFF), no
+#                HandleFpga frame, bench "=== PASS"
 #
 # mutant: t_b2b over the SLAT/SJIT matrix in three legs (EXTRA_WS from the
 # environment is ignored, the legs set it):
@@ -118,13 +139,20 @@ run="$HERE/run_${RUNTAG:-wt}"
 die() { echo "FAILED: $*"; exit 1; }
 X() { "$VIVADO_PATH/bin/$@" >> "$run/compile.log" 2>&1 || { echo "FAILED: $*"; tail -20 "$run/compile.log"; exit 1; }; }
 
-# cfide_generics: CFIDE_GENERICS (-g<name>=true|false) from the bench's
-# instance, one per generic of the cfide entity; dies if the bench misses one
-# or sets one cfide does not have, so the two simulators build the same cfide
+# cfide_generics [fwboot]: CFIDE_GENERICS (-g<name>=true|false) from the
+# bench's instance, one per generic of the cfide entity; dies if the bench
+# misses one or sets one cfide does not have, so the two simulators build the
+# same cfide.  `HB_HAVEI2C is the value of the bench's "`define HB_HAVEI2C
+# ... // FWBOOT" line with the argument fwboot, else of its "// other runs"
+# line.
 cfide_generics() {
-	local names tbg n
+	local names tbg n hi tag="other runs"
+	[ "${1:-}" = fwboot ] && tag=FWBOOT
 	names=$(sed -n '/^entity cfide is$/,/^ *port($/s/^ *\([a-z0-9_]*\) *: *in boolean.*/\1/p' "$ROOT/rtl/host/cfide.vhd")
-	tbg=$(sed -n '/^  cfide #($/,/^  ) mycfide ($/p' "$HERE/tb_host_bridge.v" | grep -o "\.[a-z0-9_]*(1'b[01])" \
+	hi=$(sed -n "s|^\`define HB_HAVEI2C \(1'b[01]\) *// $tag\$|\1|p" "$HERE/tb_host_bridge.v")
+	[ "$(echo "$hi" | wc -w)" = 1 ] || die "tb_host_bridge.v: no single \`define HB_HAVEI2C line for '$tag'"
+	tbg=$(sed -n '/^  cfide #($/,/^  ) mycfide ($/p' "$HERE/tb_host_bridge.v" | sed "s/\`HB_HAVEI2C/$hi/" \
+		| grep -o "\.[a-z0-9_]*(1'b[01])" \
 		| sed "s/^\.\([a-z0-9_]*\)(1'b0)$/-g\1=false/; s/^\.\([a-z0-9_]*\)(1'b1)$/-g\1=true/")
 	[ -n "$names" ] || die "no boolean generics found in rtl/host/cfide.vhd's entity"
 	for n in $names; do
@@ -258,9 +286,10 @@ convert() {
 # Warnings are fatal (waivers in verilator/l2.vlt); X constants and
 # uninitialised variables are 0.  C++ with -O2, through ccache if present.
 vbuild() {
-	local name=$1 rom=$2 sd="" i2c=""; shift 2
+	local name=$1 rom=$2 sd="" i2c="" stub=""; shift 2
 	local d="$run/ghdl_$name"
 	case " $* " in *" -DSDCARD "*) sd="$ROOT/sim/common/sd_spi_model.v" ;; esac
+	case " $* " in *" -DFWBOOT "*) stub="$HERE/minimig_spi_stub.v" ;; esac
 	convert "$d" "$rom"
 	# havei2c = true: cfide.v instantiates i2c_master_mmio, link the real one
 	grep -qE '^ *i2c_master_mmio +[a-z0-9_]+ *\(' "$d/cfide.v" && i2c=$I2C_V
@@ -271,7 +300,7 @@ vbuild() {
 		-DHB_GHDL "$@" --top-module tb_host_bridge -GEXTRA_WS="$XW" \
 		--Mdir "$run/vl_$name" -o Vtb_host_bridge "$HERE/verilator/l2.vlt" \
 		"$d/bridge.v" "$d/cfide.v" "src/$VR" src/VexOsd.v src/hostcache.v src/dpram_inf_generic.v \
-		"$HERE/sdram_host_model.v" $sd $i2c "$HERE/tb_host_bridge.v" > "$run/compile_$name.log" 2>&1
+		"$HERE/sdram_host_model.v" $sd $stub $i2c "$HERE/tb_host_bridge.v" > "$run/compile_$name.log" 2>&1
 	if [ ! -x "$run/vl_$name/Vtb_host_bridge" ]; then
 		grep -m20 -E '^%(Error|Warning)' "$run/compile_$name.log" || tail -20 "$run/compile_$name.log"
 		die "verilator $name ($run/compile_$name.log)"
@@ -381,6 +410,81 @@ boot() {
 	echo "=== $t PASS"
 }
 
+# fwboot <fwboot|fwboot_trap>: the real firmware from the SD card model
+FWBOOT_TO=119600000        # fwboot: 1.5 x the cycle of the 20th KEYQ frame, 79,672,738 (README)
+FWBOOT_TRAP_TO=65900000   # fwboot_trap: 1.5 x the cycle of the EXC line, 43,926,505 (README)
+fwboot() {
+	local t=$1 rom="fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd" st to card fw
+	local log="$run/tb_${t}_x${XW}_s${SLAT:-8}_j${SJIT:-0}.log"
+	fw=$FWBIN
+	if [ "$t" = fwboot ]; then
+		[ -f "$fw" ] || die "no firmware $fw (make -C fw/ctrl_rv, or FW=<RV32OSDA.BIN>)"
+		make -s -C "$HERE/fwboot" B="$run/fwboot" FW="$fw" all > make_fwboot.log 2>&1 \
+			|| { tail -20 make_fwboot.log; die "make fwboot card (make_fwboot.log)"; }
+		card="$run/fwboot/card.img"; to=$FWBOOT_TO
+	else
+		make -C "$HERE/fwboot" B="$run/fwboot" trap > make_fwboot.log 2>&1 \
+			|| { tail -20 make_fwboot.log; die "make fwboot trap firmware/card (make_fwboot.log)"; }
+		card="$run/fwboot/card_trap.img"; to=$FWBOOT_TRAP_TO
+	fi
+	[ ${#card} -le 1024 ] || die "card image path longer than 1024 characters (sd_spi_model's +SD_IMG buffer): $card"
+	if git -C "$ROOT" diff --quiet HEAD -- "$rom"; then st="unmodified (= git HEAD)"; else st="BAD  MODIFIED against git HEAD"; fi
+	echo "boot ROM: $rom $st, sha256 $(sha256sum "$ROOT/$rom" | cut -c1-16)" | tee "$run/results.txt"
+	if [ "$t" = fwboot ]; then
+		echo "firmware: $fw, $(stat -c %s "$fw") bytes, sha256 $(sha256sum "$fw" | cut -c1-16)" | tee -a "$run/results.txt"
+	else
+		echo "firmware: $run/fwboot/trapfw/RV32OSDA.BIN (+ smoke_trap.o), expect: $(cat "$run/fwboot/trap_expect.txt")" \
+			| tee -a "$run/results.txt"
+	fi
+	if [ "$SIM" = verilator ]; then
+		VB=832_bridge.vhd VR=rv_hostcpu.v VC=cfide.vhd
+		cfide_generics fwboot     # havei2c = true (the bench's FWBOOT define)
+		vbuild "tb_${t}_x$XW" "$ROOT/$rom" -DSDCARD -DFWBOOT -DRV_HOSTCPU_STATS
+	else
+		X xvlog -d RV_HOSTCPU_STATS src/rv_hostcpu.v
+		X xvhdl src/832_bridge.vhd
+		X xvlog -d SDCARD -d FWBOOT -d RV_HOSTCPU_STATS "$ROOT/sim/common/sd_spi_model.v" \
+			"$HERE/minimig_spi_stub.v" "$HERE/tb_host_bridge.v"
+		X xvhdl "$ROOT/$rom"
+		X xelab -debug off -generic_top "EXTRA_WS=$XW" tb_host_bridge -s "tb_${t}_x$XW"
+	fi
+	local t0=$SECONDS
+	# shellcheck disable=SC2046
+	simrun "tb_${t}_x$XW" "$log" "TEST=$t" "SLAT=${SLAT:-8}" "SJIT=${SJIT:-0}" "SEED=${SEED:-1}" \
+		"SD_IMG=$card" "TIMEOUT=${FWBOOT_TIMEOUT:-$to}" "SPI_LOG=$run/spi.txt" $(xargs_list)
+	local secs=$((SECONDS - t0))
+	python3 -I "$HERE/spitrace.py" summary "$run/spi.txt" > "$run/spi_summary.txt" 2>&1
+	{
+		grep -E '^=== (BOOT|STATS|HW accesses|cycle limit|HandleFpga|SPI frames|OSD GAP|STACK)' "$log"
+		grep -q '^SD: image .* loaded' "$log" || echo "BAD  the SD model did not load $card"
+		if [ "$t" = fwboot ]; then
+			if python3 -I "$HERE/spitrace.py" check "$HERE/fwboot/milestones.txt" "$log" "$run/spi.txt" \
+				> "$run/milestones.txt" 2>&1; then
+				echo "ok   $(tail -1 "$run/milestones.txt") ($run/milestones.txt)"
+			else
+				grep '^BAD' "$run/milestones.txt"
+				echo "BAD  $(tail -1 "$run/milestones.txt") ($run/milestones.txt)"
+			fi
+			grep -E '^UART: .*(EXC |TRAP )' "$log" | sed 's/^/BAD  /'
+		else
+			# the boot ROM's last line has no newline: the EXC text ends that line
+			if grep -qE "^UART: .*$(cat "$run/fwboot/trap_expect.txt")\$" "$log"; then
+				echo "ok   UART line ends with: $(cat "$run/fwboot/trap_expect.txt")"
+			else
+				echo "BAD  no UART line '$(cat "$run/fwboot/trap_expect.txt")'; EXC/TRAP lines:"
+				grep -E '^UART: .*(EXC |TRAP )' "$log" | sed 's/^/     /'
+			fi
+			n=$(python3 -I "$HERE/spitrace.py" count "$run/spi.txt" 10 00 00 00 00 00 00)
+			if [ "$n" = 0 ]; then echo "ok   no HandleFpga frame"; else echo "BAD  $n HandleFpga frames after the trap"; fi
+		fi
+		if grep -q '^=== PASS' "$log"; then echo "ok   bench verdict: === PASS"
+		else echo "BAD  bench verdict: $(grep -m1 -E '^=== (PASS|FAIL)' "$log" || echo none) ($log)"; fi
+		echo "$SIM wall time ${secs} s"
+	} | tee -a "$run/results.txt"
+	if grep -q 'BAD' "$run/results.txt"; then echo "=== $t FAILED"; return 1; fi
+	echo "=== $t PASS"
+}
+
 # norm <log>: a run log without the simulators' own lines (xsim's banner,
 # script echo, "$finish called at", exit, memory usage; Verilator's
 # "- ...: Verilog $finish") and without empty lines; run directories as run_*.
@@ -410,6 +514,16 @@ compare() {
 			diff <(norm "$a/$f") <(norm "$b/$f") | sed -n '1,6s/^/    /p'
 		fi
 	done
+	# fwboot runs: the SPI frame log as well
+	if [ -f "$a/spi.txt" ] || [ -f "$b/spi.txt" ]; then
+		if [ ! -f "$a/spi.txt" ] || [ ! -f "$b/spi.txt" ]; then
+			echo "ONLY spi.txt: in $( [ -f "$a/spi.txt" ] && echo "$a" || echo "$b")"; no=$((no + 1))
+		else
+			n=$((n + 1))
+			if cmp -s "$a/spi.txt" "$b/spi.txt"; then echo "SAME spi.txt: $(wc -l < "$a/spi.txt") frames"
+			else nd=$((nd + 1)); echo "DIFF spi.txt"; diff "$a/spi.txt" "$b/spi.txt" | cut -c1-120 | sed -n '1,6s/^/    /p'; fi
+		fi
+	fi
 	echo "=== COMPARE $n logs: $((n - nd)) same, $nd differ, $no in one directory only"
 	[ "$nd" -eq 0 ] && [ "$no" -eq 0 ] && [ "$n" -gt 0 ]
 }
@@ -425,6 +539,13 @@ case "${1:-}" in
 	boot|boot_nofile)
 		setup
 		boot "$1"
+		exit $?
+		;;
+	fwboot|fwboot_trap)
+		# FW relative to the caller's directory (setup changes into the run's)
+		FWBIN=$(realpath -m -- "${FW:-$ROOT/fw/ctrl_rv/build/RV32OSDA.BIN}")
+		setup
+		fwboot "$1"
 		exit $?
 		;;
 	all)

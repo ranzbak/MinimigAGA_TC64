@@ -12,11 +12,15 @@
 #   B=dir         output directory (default build)
 #   EXTRA_CFLAGS  extra compiler flags for bench variants (empty for the
 #                 shipped image)
+#   EXTRA_OBJS    extra objects linked after the firmware's (bench variants,
+#                 e.g. sim/host_bridge/fwboot/smoke_trap.o; empty for the
+#                 shipped image)
 TOP := $(abspath ../..)
 include $(TOP)/tools/riscv/toolchain.mk
 
 B            ?= build
 EXTRA_CFLAGS ?=
+EXTRA_OBJS   ?=
 ARCH_B       := $(B)
 include $(TOP)/fw/ctrl_rv/arch/arch.mk
 .DEFAULT_GOAL := all
@@ -45,8 +49,8 @@ $(B)/%.o: %.c | $(B)/version.h
 	@mkdir -p $(@D)
 	$(RV_CC) $(CFLAGS) -c -o $@ $<
 
-$(B)/$(PROJECT).elf: $(ARCH_OBJS) $(OBJS) $(ARCH_LD)
-	$(RV_CC) $(LDFLAGS) -o $@ $(ARCH_OBJS) $(OBJS) $(LIBS)
+$(B)/$(PROJECT).elf: $(ARCH_OBJS) $(OBJS) $(EXTRA_OBJS) $(ARCH_LD)
+	$(RV_CC) $(LDFLAGS) -o $@ $(ARCH_OBJS) $(OBJS) $(EXTRA_OBJS) $(LIBS)
 	$(RV_OBJDUMP) -d -S $@ > $(B)/$(PROJECT).lst
 
 $(B)/$(PROJECT).BIN: $(B)/$(PROJECT).elf

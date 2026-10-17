@@ -50,6 +50,42 @@
 //                no DONE, no bench error and the last ErrorCode is 00F0
 // A UART carriage return is printed as the two characters \r.
 //
+// FWBOOT (with SDCARD; run.sh fwboot / fwboot_trap, +TEST=fwboot or
+// fwboot_trap): the committed boot ROM loads the real firmware
+// (fw/ctrl_rv RV32OSDA.BIN) from a 16 MB card; minimig_spi_stub.v answers
+// for the Minimig SPI slaves (FPGA sd_cs[4], OSD sd_cs[5], RTC sd_cs[7]);
+// cfide's MISO is the card's while sd_cs[1] is low, else the stub's.  The
+// firmware never writes DONE: the run ends at +TIMEOUT, "=== PASS" if no
+// bench error.  Also:
+//   +SPI_LOG=<file>  every SPI frame (a run of constant sd_cs; frames with
+//                    no select are written only if bytes were clocked), one
+//                    line each, no timestamps:
+//                      <cs> <MOSI bytes> / <MISO bytes>
+//                    <cs> = ~sd_cs without bit 0, i.e. the value of the
+//                    Enable write (0x20 OSD, 0x10 FPGA, 0x02 card, 0x00
+//                    none; cfide drives sd_cs[0] low with every Enable and
+//                    high with every Disable write), bytes in hex as cfide
+//                    shifted them (MISO as cfide sampled it)
+//   === HandleUI KEYQ frame 20 at cycle <n>   the 20th OSD_CMD_KEYQ frame
+//                    ("20 98 ..."): HandleUI's key-queue read, once per pass
+//                    of main()'s loop (no kickstart: the fatal-error loop,
+//                    which does not call HandleFpga, see README.md)
+//   === SPI frames <n>, HandleFpga frames <n>, KEYQ frames <n>  at the end;
+//                    a HandleFpga frame is "10" with exactly six bytes 00
+//   === OSD GAP min <n> over <m> bytes     OSD reply reads (frames whose
+//                    command is OSD_CMD_VERSION 0x88 or OSD_CMD_KEYQ 0x98,
+//                    the firmware's SPI_reply() users): the idle clk_114
+//                    cycles between consecutive SPI DATA accesses of the
+//                    reply bytes, as sim/spi_cdc/tb_spi_cdc.v's +GAP (the
+//                    clk_114 edges strictly between the ack edge of one
+//                    access and the edge that raises the next request;
+//                    other hw accesses in between, the TIMER reads of
+//                    SPIN, count as idle); <m> = reply bytes
+//   === STACK low <hex> (<n> bytes used)   the lowest byte address the CPU
+//                    writes below 0x2000 after the first read of 0x2000
+// UART lines may be up to 4095 characters (the boot ROM prints "00" per
+// sector of the firmware it loads, on one line).
+//
 // Plusargs: +TEST=<name> +SLAT=<n> +SJIT=<n> +SEED=<n> +SDRAM_HEX=<file>
 //           +SD_IMG=<file> and the model's +SD_* (SDCARD only)
 //           +TIMEOUT=<clk_114 cycles> (default 3000000) +VERBOSE=1 (hw log),
@@ -133,11 +169,21 @@ module tb_host_bridge #(
   // The generics below are the only copy: run.sh (cfide_generics) reads them
   // from this "cfide #( ... ) mycfide (" block for the GHDL conversion and
   // stops if they are not exactly the boolean generics of the cfide entity.
+  // havei2c is HB_HAVEI2C: true under FWBOOT, where the firmware polls the
+  // I2C status register (0xFFFFFF64) and cfide without the master returns X
+  // there (xsim; 0 in Verilator); the real i2c_master_mmio with no slave
+  // answers every transfer with a NACK.  run.sh takes the two values from
+  // the two define lines.
+`ifdef FWBOOT
+`define HB_HAVEI2C 1'b1   // FWBOOT
+`else
+`define HB_HAVEI2C 1'b0   // other runs
+`endif
 `ifdef HB_GHDL
   cfide mycfide (     // converted with the generics below
 `else
   cfide #(
-    .spimux(1'b0), .havespirtc(1'b0), .havei2c(1'b0), .havevpos(1'b0)
+    .spimux(1'b0), .havespirtc(1'b0), .havei2c(`HB_HAVEI2C), .havevpos(1'b0)
   ) mycfide (
 `endif
     .sysclk(clk114), .n_reset(n_reset),
@@ -186,11 +232,25 @@ module tb_host_bridge #(
 `ifdef SDCARD
   // The 8 MB card of tools/sim/mkcard.sh: IMG_SECTORS = 16384 (the model's
   // default 65536 costs about a minute and 0.5 GB in the simulator).
+  // FWBOOT: the 16 MB card of fwboot/Makefile.
+`ifdef FWBOOT
+  localparam CARD_SECTORS = 32768;
+`else
+  localparam CARD_SECTORS = 16384;
+`endif
   wire       card_miso;
-  sd_spi_model #(.IMG_SECTORS(16384)) card (
+  sd_spi_model #(.IMG_SECTORS(CARD_SECTORS)) card (
     .cs_n(sd_cs[1]), .sck(sd_clk), .mosi(sd_do), .miso(card_miso)
   );
+`ifdef FWBOOT
+  wire       stub_miso;
+  minimig_spi_stub stub (
+    .n_reset(n_reset), .cs(sd_cs), .sck(sd_clk), .mosi(sd_do), .miso(stub_miso)
+  );
+  assign miso = sd_cs[1] === 1'b0 ? card_miso : stub_miso;
+`else
   assign miso = card_miso;
+`endif
 `else
   assign miso = miso_r;
 `endif
@@ -248,7 +308,9 @@ module tb_host_bridge #(
     end
   end
   // 1 ns after the sd_cs edge (a cfide register: it changes on a clk_114
-  // edge), when cyc has counted that edge in every simulator
+  // edge), when cyc has counted that edge in every simulator.  Not under
+  // FWBOOT: the firmware sends 08 00 frames of its own.
+`ifndef FWBOOT
   always @(posedge sd_cs[5]) begin
     #1;
     if (n_reset && cpu_reset_n && osd_n == 2 && osd_b0 == 8'h08 && osd_b1 == 8'h00) begin
@@ -258,6 +320,7 @@ module tb_host_bridge #(
       $display("=== ErrorCode at cycle %0d", cyc);
     end
   end
+`endif
 
 `endif
 
@@ -286,7 +349,12 @@ module tb_host_bridge #(
 
   integer n_hw = 0, n_stale = 0, gap = 0, gap_min = 1000000, gap_max = 0, last_done = -1;
   integer b2b_on = 0;
-  reg [7:0]  uart_line [0:127];
+`ifdef FWBOOT
+  localparam UART_MAX = 4096;   // characters per UART line, see the header
+`else
+  localparam UART_MAX = 128;
+`endif
+  reg [7:0]  uart_line [0:UART_MAX-1];
   integer    uart_n = 0;
   integer    uart_first = -1;   // first UART write: main has returned
   reg        done = 1'b0;
@@ -334,6 +402,130 @@ module tb_host_bridge #(
   end
 `endif
 
+`ifdef FWBOOT
+  // i2c_master_mmio.sv (havei2c = true) starts a $monitor of r_cmd_done:
+  // under Verilator it prints at every evaluation (13 M lines in 52 M cycles),
+  // xsim on every change.  Off after the first time step; run.sh compare
+  // drops the r_cmd_done= lines anyway.
+  initial begin
+    #1;
+    $monitoroff;
+  end
+
+  // ------------------------------------------------ FWBOOT: SPI frame log
+  // A frame is a run of constant sd_cs (see the header).  Both directions
+  // are sampled on the rising sd_clk edge, where cfide samples MISO.  The
+  // frame boundary is taken at the clk_114 edge after sd_cs changed (a
+  // cfide register; the SPI is idle around a CS write): only edge-triggered
+  // blocks write the frame state (see minimig_spi_stub.v for what a
+  // level-sensitive block did under Verilator).
+  localparam FR_MAX = 1 << 20;      // bytes per frame (the boot ROM's load)
+  integer   spi_fd = 0;
+  reg [8*1024-1:0] spi_log_name;
+  reg [7:0] fr_cs = 8'h00;          // ~sd_cs[7:1] of the open frame, bit 0 = 0
+  integer   fr_n = 0, fr_bit = 0, n_frames = 0, n_fpga6 = 0, n_keyq = 0, fr_over = 0;
+  reg [7:0] fr_out [0:FR_MAX-1];
+  reg [7:0] fr_in  [0:FR_MAX-1];
+  reg [7:0] fr_osr = 8'h00, fr_isr = 8'h00;
+  reg       fr_fpga0 = 1'b0;        // every MOSI byte of the frame is 00
+
+  // at_end: the run ends, the frame is cut wherever the transfer is
+  task frame_close(input at_end);
+    integer k;
+    begin
+      if (fr_bit != 0 && !at_end) bench_error("SPI frame ended in the middle of a byte");
+      if (fr_cs != 8'h00 || fr_n > 0) begin
+        n_frames = n_frames + 1;
+        if (spi_fd != 0) begin
+          $fwrite(spi_fd, "%h", fr_cs);
+          for (k = 0; k < fr_n && k < FR_MAX; k = k + 1) $fwrite(spi_fd, " %h", fr_out[k]);
+          $fwrite(spi_fd, " /");
+          for (k = 0; k < fr_n && k < FR_MAX; k = k + 1) $fwrite(spi_fd, " %h", fr_in[k]);
+          $fwrite(spi_fd, "\n");
+        end
+      end
+      if (fr_cs == 8'h10 && fr_n == 6 && fr_fpga0) n_fpga6 = n_fpga6 + 1;
+      if (fr_cs == 8'h20 && fr_n > 0 && fr_out[0] == 8'h98) begin
+        n_keyq = n_keyq + 1;
+        if (n_keyq == 20) $display("=== HandleUI KEYQ frame 20 at cycle %0d", cyc);
+      end
+    end
+  endtask
+
+  reg [7:0] fr_sdcs = 8'hFF;        // sd_cs of the open frame
+  always @(posedge clk114) if (n_reset && sd_cs !== fr_sdcs) begin
+    frame_close(1'b0);
+    fr_sdcs = sd_cs;
+    fr_cs = ~sd_cs & 8'hFE;
+    fr_n = 0;
+    fr_bit = 0;
+    fr_fpga0 = 1'b1;
+  end
+
+  always @(posedge sd_clk) if (n_reset) begin
+    fr_osr = {fr_osr[6:0], sd_do};
+    fr_isr = {fr_isr[6:0], miso};
+    fr_bit = fr_bit + 1;
+    if (fr_bit == 8) begin
+      if (fr_n < FR_MAX) begin
+        fr_out[fr_n] = fr_osr;
+        fr_in[fr_n] = fr_isr;
+      end else if (fr_over == 0) begin
+        bench_error("SPI frame longer than FR_MAX bytes (not logged beyond)");
+        fr_over = 1;
+      end
+      if (fr_osr != 8'h00) fr_fpga0 = 1'b0;
+      fr_n = fr_n + 1;
+      fr_bit = 0;
+    end
+  end
+
+  // ------------------------------------------------ FWBOOT: OSD reply gap
+  // SPI DATA accesses while sd_cs[5] is low, numbered from the frame start:
+  // 0 the command write, 1 its read-back, then per reply byte k a write
+  // (2k) and a read (2k+1), as SPI(OSD_CMD_x) and SPI_reply() do.  For
+  // frames of OSD_CMD_VERSION / OSD_CMD_KEYQ, every access from 2 on gives
+  // one gap: the clk_114 edges strictly between the previous SPI DATA
+  // access's ack edge (cycle og_done) and the edge that raised this request
+  // (one before the edge that sees hw_req high first): cyc - og_done - 2.
+  integer og_i = 0, og_done = -1, og_min = 1000000, og_rw_min = 1000000, og_wr_min = 1000000;
+  integer og_bytes = 0, og_frames = 0, og_g = 0;
+  reg [7:0] og_cmd = 8'h00;
+  reg       og_cs5 = 1'b1;          // sd_cs[5] at the last clk_114 edge
+  always @(posedge clk114) if (cpu_reset_n) begin
+    if (sd_cs[5] !== og_cs5) begin og_cs5 = sd_cs[5]; og_i = 0; og_done = -1; end
+    if (sd_cs[5] === 1'b0 && spi_data && hw_req && !hw_req_d) begin
+      if (og_i == 0) og_cmd = hostWR[7:0];
+      if (og_i >= 1 && (og_cmd == 8'h88 || og_cmd == 8'h98) && host_we !== !og_i[0])
+        bench_error("OSD reply frame: SPI DATA accesses are not write/read pairs");
+      if (og_i >= 2 && (og_cmd == 8'h88 || og_cmd == 8'h98)) begin
+        og_g = cyc - og_done - 2;
+        if (og_g < og_min) og_min = og_g;
+        if (og_i[0] == 1'b0) begin
+          og_bytes = og_bytes + 1;
+          if (og_i == 2) og_frames = og_frames + 1;
+          if (og_g < og_rw_min) og_rw_min = og_g;
+        end else if (og_g < og_wr_min) og_wr_min = og_g;
+      end
+    end
+    if (sd_cs[5] === 1'b0 && spi_data && hw_done) begin
+      og_done = cyc;
+      og_i = og_i + 1;
+    end
+  end
+
+  // ------------------------------------------------ FWBOOT: stack low-water
+  // CPU writes below 0x2000 (the boot BRAM, the bridge's rom state) after
+  // the jump: the lowest byte written (sel[i] = byte A+i)
+  integer stack_low = 32'h2000;
+  integer sl_b = 0;
+  always @(posedge clk114) if (cpu_reset_n && boot_seen && cpu_ack === 1'b1 && cpu_wr === 1'b1 &&
+                               cpu_addr[31:13] == 19'h0) begin
+    sl_b = cpu_sel[0] ? 0 : cpu_sel[1] ? 1 : cpu_sel[2] ? 2 : 3;
+    if ({cpu_addr, 2'b00} + sl_b < stack_low) stack_low = {cpu_addr, 2'b00} + sl_b;
+  end
+`endif
+
   // VERBOSE=2: every change of the bridge's (registered) CPU address/write
   reg [31:2] addr_d = 30'h0;
   reg        we_d = 1'b0;
@@ -375,7 +567,7 @@ module tb_host_bridge #(
       end
       if (host_we && hwa == 32'hFFFFFFF0) begin
         if (uart_first < 0) uart_first = cyc;
-        if (hostWR[7:0] == 8'h0a || uart_n >= 127) begin
+        if (hostWR[7:0] == 8'h0a || uart_n >= UART_MAX - 1) begin
           uart_print;
           uart_n = 0;
         end
@@ -398,12 +590,21 @@ module tb_host_bridge #(
 
   task uart_print;
     integer k;
-    reg [8*128-1:0] s;
+`ifdef FWBOOT
+    // character by character: Verilator takes at most 8192 bits of
+    // $display arguments (1024 characters)
+    begin
+      $write("UART: ");
+      for (k = 0; k < uart_n; k = k + 1) $write("%c", uart_line[k]);
+      $write("\n");
+`else
+    reg [8*UART_MAX-1:0] s;
     begin
       s = 0;
-      for (k = 0; k < uart_n; k = k + 1) s = {s[8*127-1:0], uart_line[k]};
+      for (k = 0; k < uart_n; k = k + 1) s = {s[8*(UART_MAX-1)-1:0], uart_line[k]};
       if (uart_n == 0) $display("UART: ");   // %0s of an empty string: xsim
       else $display("UART: %0s", s);        // prints nothing, Verilator a space
+`endif
       if (is_boot) $display("=== UART line at cycle %0d", cyc);
     end
   endtask
@@ -783,7 +984,8 @@ module tb_host_bridge #(
   always @(run_go) begin
     repeat (timeout) @(posedge clk114);
     if (!run_end) begin
-      if (test == "boot_nofile") $display("=== cycle limit %0d reached, no DONE", timeout);
+      if (test == "boot_nofile" || test == "fwboot" || test == "fwboot_trap")
+        $display("=== cycle limit %0d reached, no DONE", timeout);
       else bench_error("timeout, no DONE write");
       run_end = 1'b1;
     end
@@ -793,7 +995,13 @@ module tb_host_bridge #(
     if (!$value$plusargs("TEST=%s", test)) test = "none";
     if (!$value$plusargs("VERBOSE=%d", verbose)) verbose = 0;
     if (!$value$plusargs("TIMEOUT=%d", timeout)) timeout = 3000000;
-    is_boot = test == "boot" || test == "boot_nofile";
+    is_boot = test == "boot" || test == "boot_nofile" || test == "fwboot" || test == "fwboot_trap";
+`ifdef FWBOOT
+    if ($value$plusargs("SPI_LOG=%s", spi_log_name)) begin
+      spi_fd = $fopen(spi_log_name, "w");
+      if (spi_fd == 0) bench_error("+SPI_LOG: cannot open the file");
+    end
+`endif
     #1;
     $display("host-bridge bench: TEST=%0s SLAT=%0d SJIT=%0d EXTRA_WS=%0d", test, ram.slat, ram.sjit, EXTRA_WS);
 `ifdef HB_GHDL
@@ -825,7 +1033,26 @@ module tb_host_bridge #(
              `HB_RV.st_irefill, `HB_RV.st_dread,
              `HB_RV.st_dwrite, `HB_RV.st_busy);
 `endif
+`ifdef FWBOOT
+    if (spi_fd != 0) begin
+      frame_close(1'b1);   // the frame still open at the end (its whole bytes)
+      $fclose(spi_fd);
+    end
+    $display("=== SPI frames %0d, HandleFpga frames %0d, KEYQ frames %0d", n_frames, n_fpga6, n_keyq);
+    if (og_bytes > 0)
+      $display("=== OSD GAP min %0d over %0d bytes", og_min, og_bytes);
+    else
+      $display("=== OSD GAP min none over 0 bytes");
+    $display("=== OSD GAP read->write (transfer start) min %0d, write->read min %0d, %0d reply frames",
+             og_rw_min, og_wr_min, og_frames);
+    $display("=== STACK low %h (%0d bytes used)", stack_low, 32'h2000 - stack_low);
+    if (test == "fwboot" || test == "fwboot_trap") begin
+      if (!done && errors == 0) $display("=== PASS");
+      else $display("=== FAIL %0s: DONE %0d, bench errors %0d", test, done, errors);
+    end else
+`else
     $display("=== SD card: %0d ErrorCode calls, last %h", n_errcode, errcode);
+`endif
     // one verdict line: Verilator's $finish ends the run only after the
     // block has gone on, so no verdict may follow a $finish
     if (test == "boot_nofile") begin

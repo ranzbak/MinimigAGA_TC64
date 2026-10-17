@@ -26,8 +26,23 @@ FAT16 partition (type 06) from LBA 2048 to the end, label `MINIMIG`, hidden
 sectors = 2048, the files copied to the root directory (8.3 names, upper
 case). Cluster size is chosen automatically so the volume stays FAT16.
 
+It refuses (exit 2, nothing written) a size above 2048 MB (FAT16 holds at
+most 65524 clusters of 32 KB) and a file whose name (the part after the
+last `/`) is not an upper-case 8.3 name: 1-8 characters, optionally `.`
+and 1-3 more, from `A-Z 0-9 _ ~ ! # % & @ ^ $ -`. The boot ROM and the
+firmware compare the short directory name, and `mcopy` stores a
+lower-case or long name as a long-name entry with a short name of its own
+choosing.
+
+The image is reproducible: the same arguments and file contents give the
+same bytes (fixed disk identifier `0x4d494e49`, `mkfs.fat --invariant` for
+the volume ID and label time, file times from `SOURCE_DATE_EPOCH`, default
+2026-01-01 00:00 UTC, written in UTC). Two runs of a bench that build their
+own card (e.g. `sim/host_bridge/run.sh fwboot` under xsim and Verilator)
+then see the same card, and `run.sh compare` can diff their SPI logs.
+
 ```
-tools/sim/mkcard.sh /tmp/card.img 8 fw.bin KICK.ROM       # 8 MB card, two files
+tools/sim/mkcard.sh /tmp/card.img 8 FW.BIN KICK.ROM       # 8 MB card, two files
 tools/sim/mkcard.sh /tmp/empty.img 64                     # empty 64 MB card
 MTOOLS_SKIP_CHECK=1 mdir -i /tmp/card.img@@1048576 ::     # look inside (2048*512)
 MTOOLS_SKIP_CHECK=1 mcopy -i /tmp/card.img@@1048576 ::KICK.ROM out.rom

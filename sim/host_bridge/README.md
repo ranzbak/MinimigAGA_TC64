@@ -11,7 +11,10 @@ entry and cfide's interrupt controller (0xFFFFFF30..3C, see
 [Interrupt controller](#interrupt-controller)). The boot runs (`run.sh boot`, `boot_nofile`) put the committed boot
 ROM `fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd` in the bridge and an SD card model
 on `sd_cs[1]`: the ROM loads `RV32OSDA.BIN` from a FAT16 card image and runs
-it (see [Boot](#boot)).
+it (see [Boot](#boot)). The firmware boot runs (`run.sh fwboot`,
+`fwboot_trap`) do the same with the real firmware (`fw/ctrl_rv`) on a 16 MB
+card and a stub for the Minimig SPI slaves, up to the firmware's main loop
+(see [Firmware boot](#firmware-boot-fwboot)).
 
 The L1 bench (`sim/rv_l1`, iverilog) tests `rv_hostcpu` against an abstract
 memory. This bench uses Vivado's xsim because `cfide` and the bridge are VHDL,
@@ -35,6 +38,11 @@ xsim stays the default and the X-checking reference.
 | `boot/fwtest.c`, `boot/fwfill.S` | Boot runs: the test firmware `RV32OSDA.BIN` (on `fw/ctrl_rv/arch`, `firmware.ld`) |
 | `boot/Makefile` | `RV32OSDA.BIN` (padded to 2560 bytes), `img.txt`, the card images `card.img` and `card_nofile.img` (`tools/sim/mkcard.sh`) |
 | `boot/expect.txt`, `boot/expect_nofile.txt` | The expected `UART:` / `ERRORCODE:` lines of `boot` and `boot_nofile` |
+| `minimig_spi_stub.v` | `fwboot`: fixed replies of the Minimig SPI slaves (FPGA `sd_cs[4]`, OSD `sd_cs[5]`, RTC `sd_cs[7]`) |
+| `fwboot/Makefile` | `fwboot`: the 16 MB card with `$FW` (`card.img`); `fwboot_trap`: the firmware with `smoke_trap.o` and its card (`card_trap.img`, `trap_expect.txt`) |
+| `fwboot/milestones.txt` | `fwboot`: the UART lines and SPI frames the firmware must produce, in order |
+| `fwboot/smoke_trap.c` | `fwboot_trap`: a constructor that executes an illegal instruction |
+| `spitrace.py` | `fwboot`: summary of `spi.txt`, the milestone check (`check`), frame counts (`count`) |
 | `verilator/blackbox.vhd` | `SIM=verilator`: entity stubs of the Verilog modules the VHDL instantiates as `entity work.X` (`i2c_master_mmio`), for the GHDL analysis only |
 | `verilator/romcheck.py` | `SIM=verilator`: checks that `ghdl --synth` kept every word of the ROM in its memories |
 | `verilator/l2.vlt` | `SIM=verilator`: the lint waivers (warnings are fatal otherwise) |
@@ -244,7 +252,9 @@ ccache.
   `i2c_master_mmio` (`havei2c = true`), `run.sh` links the real
   `rtl/host/i2c_master_mmio.sv` and `rtl/openaars/adv7511/i2c_master.v`
   (their two lint waivers are in `verilator/l2.vlt`). This bench builds
-  cfide with `havei2c = false`, so the instance is not there at all. The
+  cfide with `havei2c = false`, so the instance is not there at all,
+  except in the `fwboot` runs (`havei2c = true`, see
+  [Firmware boot](#firmware-boot-fwboot)). The
   `havei2c = true` path: set `.havei2c(1'b1)` in the bench's cfide
   instance (in a scratch copy) and run the same tests under both
   simulators; on 2026-10-17 `t_lanes t_hwoff t_irqctl t_irqapi` passed
@@ -304,6 +314,7 @@ All targets on the final tree, xsim (`t5y*`, `t5z*`) against Verilator
 | `dhry` | 1 | PASS, 252,720 cycles per 100 runs, 0 wrong | SAME |
 | `boot` | 1 | PASS, `expect.txt` 14 lines | SAME (`cycles 13134514`) |
 | `boot_nofile` | 1 | PASS, `expect_nofile.txt` 45 lines | SAME (`cycles 27000178`) |
+| `fwboot` | 1 | PASS, 27 of 27 milestones, X 0 (xsim) | SAME log and `spi.txt` (3201 frames), `cycles 119600178` |
 
 Every `main done` / `cycles` value is the same in both, and so are the
 `=== TIME`, `=== BOOT`, `=== STATS` lines and the `t_irqctl` test 4 sweep
@@ -487,6 +498,259 @@ needed. There is no TX-ready bit to poll: cfide never acks a UART read (its
 support state machine serves UART writes only), so a read of `0xFFFFFFF0`
 would hang the CPU.
 
+## Firmware boot (fwboot)
+
+`run.sh fwboot` is the first end-to-end run of the real firmware: the
+committed boot ROM loads `RV32OSDA.BIN` of `fw/ctrl_rv` (copied, never
+rebuilt with other flags) from a 16 MB FAT16 card in the SD card model,
+jumps to it, and the firmware runs `main()` -> `ColdBoot()` (`MMC_Init`,
+`FindDrive`, `LoadConfiguration`, `fpga_init`, the kickstart load) into its
+main loop. `minimig_spi_stub.v` answers for the Minimig SPI slaves. The
+card has the decoy `832OSDAD.BIN` and the firmware, no config file and no
+kickstart: the firmware takes the default configuration and ends in its
+error loop. `run.sh fwboot_trap` boots the same card recipe with a
+firmware that traps in a constructor: the trap path's teeth.
+
+### Run (fresh Ubuntu 24.04, bash or zsh, from the repository root)
+
+```sh
+sudo apt install make gcc python3 mtools dosfstools fdisk ghdl verilator ccache
+bash tools/riscv/fetch-xpack.sh          # RISC-V toolchain into ~/opt
+bash tools/riscv/check-toolchain.sh      # must pass
+make -C fw/ctrl_rv                       # -> fw/ctrl_rv/build/RV32OSDA.BIN
+SIM=verilator RUNTAG=fwv  bash sim/host_bridge/run.sh fwboot        # ~5 min
+SIM=verilator RUNTAG=fwvt bash sim/host_bridge/run.sh fwboot_trap   # ~3 min
+# the xsim reference (Vivado 2023.2 and the libtinfo shim, see Prerequisites):
+RUNTAG=fwx bash sim/host_bridge/run.sh fwboot                       # ~27 min
+bash sim/host_bridge/run.sh compare fwx fwv                         # every line SAME
+```
+
+Do not run `make -C fw/ctrl_rv` between the two `fwboot` runs: the
+firmware's `version.h` has the build minute in it, so a rebuild changes
+the image (and the OSD text in `spi.txt`). Another image on the same card
+recipe: `FW=<path to an RV32OSDA.BIN>` (relative to the current
+directory), e.g. `FW=/tmp/b/RV32OSDA.BIN bash sim/host_bridge/run.sh
+fwboot`. `FWBOOT_TIMEOUT=<clk_114 cycles>` overrides the run length
+(defaults: `fwboot` 119,600,000, 1.5 x the 20th `KEYQ` frame at 79,672,738;
+`fwboot_trap` 65,900,000, 1.5 x the `EXC` line at 43,926,505; both
+measured 2026-10-17 on Verilator; the `KEYQ` cycle moves by a few thousand
+with the length of the build-minute string).
+
+Expected end of `fwboot` (Verilator; xsim the same apart from the wall
+time; the firmware's size and hash change with every build):
+
+```
+boot ROM: fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd unmodified (= git HEAD), sha256 7fc4ae53fed88cb3
+firmware: .../fw/ctrl_rv/build/RV32OSDA.BIN, 92684 bytes, sha256 5b5a813887947a14
+=== BOOT first read of 0x2000 at cycle 43213395, irefill 95 dread 99932 dwrite 126096 so far
+=== cycle limit 119600000 reached, no DONE
+=== HW accesses 1447166, stale acks 0, X 0, SDRAM reads 91171 writes 388110, main done 79381, cycles 119600178
+=== STATS irefill 28221 dread 1201163 dwrite 1224582 busy_cycles 97043641 (rv_hostcpu, whole run)
+=== SPI frames 3201, HandleFpga frames 1, KEYQ frames 406
+=== OSD GAP min 4 over 412 bytes
+=== OSD GAP read->write (transfer start) min 44, write->read min 4, 407 reply frames
+=== STACK low 00001950 (1712 bytes used)
+ok   milestones: 27 of 27 found in order (.../run_fwv/milestones.txt)
+ok   bench verdict: === PASS
+verilator wall time 329 s
+=== fwboot PASS
+```
+
+and of `fwboot_trap`:
+
+```
+firmware: .../run_fwvt/fwboot/trapfw/RV32OSDA.BIN (+ smoke_trap.o), expect: EXC mcause=00000002 mepc=00012CCA mtval=FFFFFFFF
+=== BOOT first read of 0x2000 at cycle 43213395, irefill 95 dread 99932 dwrite 126096 so far
+=== cycle limit 65900000 reached, no DONE
+=== SPI frames 379, HandleFpga frames 0, KEYQ frames 0
+=== STACK low 00001f8c (116 bytes used)
+ok   UART line ends with: EXC mcause=00000002 mepc=00012CCA mtval=FFFFFFFF
+ok   no HandleFpga frame
+ok   bench verdict: === PASS
+=== fwboot_trap PASS
+```
+
+Exit code 0 on PASS, 1 otherwise. Each run leaves in `run_<RUNTAG>/`:
+`results.txt`, the log `tb_fwboot_x0_s8_j0.log` (`tb_fwboot_trap_...`),
+`spi.txt` and `spi_summary.txt`, `milestones.txt` (the check's output,
+`fwboot`) and `fwboot/` (the cards, the trap firmware).
+
+### The gate
+
+`fwboot`: the milestones of `fwboot/milestones.txt` in order
+(`spitrace.py check`); no `EXC `/`TRAP ` text on any `UART:` line; the SD
+model loaded the card; the bench verdict `=== PASS` (the run reaches the
+cycle limit without DONE, no X on the bus, no stale ack, no bench error);
+the committed boot ROM unmodified. `fwboot_trap` (its firmware: `make -C fw/ctrl_rv
+B=<run>/fwboot/trapfw EXTRA_OBJS=<run>/fwboot/smoke_trap.o`, through the
+`EXTRA_OBJS` hook this task added to `fw/ctrl_rv/Makefile`; no firmware
+source changes; `smoke_trap()` is a naked constructor at priority 65535
+whose first word is `0xffffffff`): a `UART:` line that ends
+with the line of `<run>/fwboot/trap_expect.txt` (the boot ROM's last line
+has no newline, so the `EXC` text ends it), no HandleFpga frame in
+`spi.txt`, `=== PASS`.
+
+The milestones are an ordered subsequence, not the log line for line
+(the card layout moves sector numbers and the boot ROM's `00` count, see
+[What the log shows](#what-the-log-shows)): UART milestones are substrings
+of the `UART:` lines in order, SPI milestones are frames of `spi.txt` in
+order, each stream on its own. They come from the sources:
+
+| Milestone | From |
+|---|---|
+| `Initializing SD card` ... `file "RV32OSDABIN" found` | the boot ROM, as `boot/expect.txt` without the layout numbers |
+| `Platform lacks SPI RTC support` | `main()`: PLATFORM bit 2 is 0 (`havespirtc = false`) |
+| `SDHC card detected` | `MMC_Init()` (the model answers CMD8 with `0x1AA`) |
+| `partition type: 0x00 (FAT16)` | `FindDrive()`: prints `sector_buffer[450]` after reading the partition's boot sector into it, so 0x00, not the MBR's type 6 |
+| `file "MINMGAA CFG" not found` | `LoadConfiguration(0)` -> `FileOpen` (Task 11's own file names change this line) |
+| `Minimig AGA BETA version 2026-10-2 ...`, `Firmware version:`, `CPU: MC68040 + FPU + MMU`, `Ported to Open AARS ...` | `fpga_init()`'s `BootPrintEx` of the stub's version reply |
+| `Loading kickstart ROM...`, `ROM dir: 0`, `##End result : 0`, `ROM loading failed` | `ColdBoot()`, `UploadKickstart()`, `ApplyConfiguration()`, `main()` |
+| `SPI 20 88 ff ff ff ff ff ff / 00 01 1a 0a 02 a4 7d` | `fpga_init()`: `OSD_CMD_VERSION` and six `SPI_reply()` |
+| `SPI>=2 20 08 ..` | `OsdDoReset()` after the version read (`OSD_CMD_RST`) |
+| `SPI 10 00 00 00 00 00 00` | `HandleFpga()` in the first pass of `main()`'s loop |
+| `SPI>=10 20 0c ..` | `ShowError()` / the error menu (`OSD_CMD_OSD_WR` lines) |
+| `SPI>=20 20 98 ff / xx 00` | 20 passes of the error loop: `HandleUI()`'s `OSD_CMD_KEYQ` read (empty queue) |
+
+**The main loop of this test is the fatal-error loop.** Without a
+kickstart, `UploadKickstart()` calls `FatalError(ERROR_ROM, "ROM missing")`
+(`config.c`, the same in `fw/ctrl_832`), so `ErrorFatal` is 1 and
+`main()`'s `while(ErrorMask)` loop calls `HandleUI()` but not
+`HandleFpga()` (`if(!ErrorFatal)`). `HandleFpga()` runs once, in the first
+pass of the outer loop before `ShowError()`. The per-pass evidence is
+therefore `HandleUI()`'s key-level (`OSD_CMD_READ`, `20 00`) and key-queue
+(`OSD_CMD_KEYQ`, `20 98 ff`) frames plus the error page redraw (four
+`0c` frames per pass on average), and the run length is set from the 20th
+`KEYQ` frame (`=== HandleUI KEYQ frame 20 at cycle`). The error page reads
+`*** FATAL ERROR ***`, `Kickstart ROM`, `ROM missing`, `Reboot`
+(decoded from the `0c` frames with `charrom.h`).
+
+The teeth: the Task 5 tree (`ace16ba`) built in a run copy with
+`#define HW_SPI_DATA 3` (the 832's big-endian byte offset) instead of 0,
+run as `FW=<that BIN> SIM=verilator bash sim/host_bridge/run.sh fwboot`:
+`=== fwboot FAILED`, 14 of 27 milestones (found: the boot ROM lines,
+`Platform lacks ...`, `ROM loading failed`, the boot ROM's own `08` frames
+and the main loop's HandleFpga frames; byte stores to `0xFFFFFFE3` still
+reach SPI DATA, but byte loads take bits 31:24 where cfide returns
+nothing, so `MMC_Init()` reads every R1 as 0 and fails: no `SDHC card
+detected`, no version frame, no error page, no KEYQ frames). The trap test fails on any firmware whose
+default `rv_exception` or trap entry does not print the `EXC` line.
+
+### The stub (`minimig_spi_stub.v`)
+
+| Select | Replies |
+|---|---|
+| `sd_cs[4]` FPGA (`EnableFpga`, 0x10) | every byte 0x00: no drive request |
+| `sd_cs[5]` OSD (`EnableOsd`, 0x20) | byte 0 (the command): 0x00; after it `OSD_CMD_VERSION` 0x88: `01 1A 0A 02 A4 7D` then 0x00 (the board's reply, 174322f: caps 0x7D = 68040 + FPU + MMU + KEYQ + TEMP); `OSD_CMD_KEYQ` 0x98: 0x00 (empty); anything else 0x00 (`OSD_CMD_READ` reads its level during byte 0: no key) |
+| `sd_cs[7]` RTC (`EnableRTC`, 0x80) | every byte 0x00 (not used on this run: PLATFORM says no SPI RTC) |
+
+cfide's MISO is the SD card model's while `sd_cs[1]` is low, else the
+stub's (1 when none of its selects is low).
+
+**cfide has `havei2c = true` in these runs** (the bench's `HB_HAVEI2C`
+define: true under `-d FWBOOT`, false in every other run; `run.sh` takes
+the conversion's `-ghavei2c` from the same two define lines). With
+`havei2c = false` the firmware did not stall, but it polls the I2C status
+register `0xFFFFFF64` (`i2c_read_reg()`, from `ApplyConfiguration()`'s
+ADV7511 set-up) and cfide without the master returns X there: xsim counted
+400,001 `X on the bus` reads (two 200,000-pass `guard` loops), Verilator
+read 0 and ran another path (its `SDHC card detected` line at cycle
+47,074,273, xsim's at 50,274,405). With the real `i2c_master_mmio` and no
+slave (SCL/SDA inputs held 1), every transfer ends with a NACK, the status
+is defined, and both simulators agree. The ADV7511 service of the main
+loop (`adv7511_poll()`) is not reached: its first `CheckTimer(adv_timer)`
+comes after the first pass, which already enters the error loop.
+`i2c_master_mmio.sv` starts a `$monitor` of `r_cmd_done`, which Verilator
+prints at every evaluation (13 M lines in 52 M cycles): the bench calls
+`$monitoroff` after the first time step under `FWBOOT` (`compare` drops
+the `r_cmd_done=` lines in any case).
+
+TIMER runs 643x fast (`tick_in = 1`), so the firmware's `WaitTimer(1000)`
+in `fpga_init()` is about 1 M cycles here.
+
+### spi.txt and spitrace.py
+
+The bench (`+SPI_LOG=<file>`, `run.sh` gives `<run>/spi.txt`) writes one
+line per SPI frame: a frame is a run of constant `sd_cs`, taken at the
+`clk_114` edge after `sd_cs` changed; a frame with no select is written
+only if bytes were clocked in it.
+
+```
+<cs> <MOSI bytes> / <MISO bytes>
+20 88 ff ff ff ff ff ff / 00 01 1a 0a 02 a4 7d
+```
+
+`<cs>` is `~sd_cs` without bit 0, i.e. the value the firmware's Enable
+write names (0x20 OSD, 0x10 FPGA, 0x02 card, 0x00 none; cfide drives
+`sd_cs[0]` low with every Enable and high with every Disable). The bytes
+are what cfide shifted, MISO as cfide sampled it (both on the rising
+`sd_clk` edge). No timestamps and nothing CPU-specific: Phase 4 diffs the
+832's and the RV's `spi.txt`. The frame still open when the run ends is
+written with its whole bytes.
+
+```sh
+python3 -I sim/host_bridge/spitrace.py summary sim/host_bridge/run_fwv/spi.txt
+python3 -I sim/host_bridge/spitrace.py check sim/host_bridge/fwboot/milestones.txt \
+    sim/host_bridge/run_fwv/tb_fwboot_x0_s8_j0.log sim/host_bridge/run_fwv/spi.txt
+python3 -I sim/host_bridge/spitrace.py count sim/host_bridge/run_fwv/spi.txt 10 00 00 00 00 00 00
+```
+
+Milestone syntax (`fwboot/milestones.txt`, `#` comments):
+`UART <text>`; `SPI <cs> <pattern>`; `SPI>=<n> <cs> <pattern>` (n such
+frames in order). A pattern is MOSI tokens, optionally `/` and MISO
+tokens; a token is a hex byte, `xx` (any byte) or `..` (any number of
+further bytes, last only). Without `..` the frame has exactly as many
+bytes as tokens.
+
+### The monitors
+
+- **OSD reply gap** (`=== OSD GAP min <n> over <m> bytes`), plan 7.1 item
+  2. `sim/spi_cdc/tb_spi_cdc.v`'s `+GAP` is "the number of clk_114 cycles
+  between one access's ack and the next access's request": its bus task
+  drops `req` at the edge that sees `ack` and raises the next request
+  `gap` edges later plus one, so GAP = the `clk_114` edges strictly between
+  the ack edge and the edge that raises the next request, for every pair of
+  consecutive accesses of the OSD reply read (write of 0xFF, read back, per
+  byte). Measured here at the bridge's `hw_req`/`hw_ack`: the events are
+  the SPI DATA accesses (`0xFFFFFFE0`) of every OSD frame whose command is
+  `OSD_CMD_VERSION` (0x88) or `OSD_CMD_KEYQ` (0x98), the firmware's two
+  `SPI_reply()` users: access 0 is the command write, 1 its read-back, then
+  per reply byte a write and a read. Each access from 2 on gives one gap:
+  `cycle(first edge that sees hw_req high) - cycle(previous SPI DATA ack
+  edge) - 2`. The TIMER reads of `SPI_reply()`'s four `SPIN`s in between
+  are not SPI accesses: they count as idle (they are what makes the gap).
+  `<m>` = reply bytes. The second line splits the minimum: read -> write
+  (the previous byte's read-back to this byte's write, i.e. to the start
+  of its transfer: the time `userio_osd` has to load the byte) and write
+  -> read (the write to its own read-back).
+- **Stack low-water** (`=== STACK low <hex> (<n> bytes used)`): the lowest
+  byte address the CPU writes below 0x2000 (boot BRAM, the bridge's `rom`
+  state; `sel[i]` = byte A+i) after its first read of 0x2000.
+
+### Measured (2026-10-17, Verilator and xsim the same, SLAT=8 SJIT=0)
+
+| | `fwboot` |
+|---|---|
+| jump to 0x2000 (`=== BOOT`) | cycle 43,213,395 (I$ refills 95 so far: the boot ROM) |
+| `SDHC card detected` line | cycle 47,074,273 |
+| `ROM loading failed` (end of `ColdBoot()`) | cycle 77,793,169 |
+| 20th `KEYQ` frame (20th pass of the error loop) | cycle 79,668,370 (one pass about 94 k cycles) |
+| I$ refills, whole run (119.6 M cycles) | 28,221 (dread 1,201,163, dwrite 1,224,582) |
+| OSD GAP | **min 4** over 412 reply bytes (write -> read); read -> write (transfer start) min 44 |
+| stack low-water | 0x1950: 1712 bytes used, above Task 17's 0x1400 limit |
+| `fwboot_trap` `EXC` line | cycle 43,926,505, stack 0x1F8C (116 bytes) |
+| wall time | Verilator 329 s (`fwboot`), 162 s (`fwboot_trap`), with other simulations running; xsim 1592 s (`fwboot`) |
+
+**Open (plan 7.1 item 2): the OSD GAP is below 40.** By `tb_spi_cdc.v`'s
+definition the RV firmware's reply read has a gap of 4 `clk_114` cycles
+between each `SPI(0xff)` write and its read-back (`sb` then `lbu`, back to
+back: the four `SPIN`s come before the write, not between write and read),
+and 44 from one byte's read-back to the next byte's write. `tb_spi_cdc`
+applies its GAP to both pairs alike, so this bench cannot say which one
+`userio_osd`'s `clk7_en` reload depends on; 44 is only just above 40. Not
+tuned here (the brief): the real check is Phase 4 against `userio_osd`
+itself. In this run the stub answers at once, so the reply bytes are
+right whatever the gap.
+
 ## Bench
 
 - **Clocks**: as `sim/spi_cdc/host832/tb_832_dmode.v`. `clk_114` has
@@ -500,7 +764,7 @@ would hang the CPU.
   with the clocked processes on that edge, and xsim and Verilator may order
   it differently.
 - **cfide**: generics as in host832 (`spimux`, `havespirtc`, `havei2c` and
-  `havevpos` are all false). The inputs are `tick_in = 1` (the timer counts
+  `havevpos` are all false; `fwboot`: `havei2c` true). The inputs are `tick_in = 1` (the timer counts
   every `clk_28`, so TIMER = `timecnt[23:8]` steps every 1024 `clk_114`),
   `menu_button = 1`, `audio_buf = 1`, `audio_amiga = 0` and `sd_ack = 1`.
 - **SDRAM model** (`sdram_host_model.v`): 8 MB of halfwords at host address
@@ -565,6 +829,7 @@ would hang the CPU.
 | `+SDRAM_HEX=<file>` | none | preload, `$readmemh` of BE 32-bit words, `@` = word address; first 1 MB (`run.sh` passes `sw/<test>.sdram.hex` if it exists); path up to 1024 characters, a file that cannot be opened ends the run with `=== FAIL` |
 | `+TIMEOUT=<n>` | 3000000 | `clk_114` cycles until `=== FAIL timeout` |
 | `+VERBOSE=1` / `2` | 0 | log hw accesses and SPI bytes / also every change of the bus address |
+| `+SPI_LOG=<file>` | none | `-d FWBOOT` only: the SPI frame log (`spi.txt`, see [Firmware boot](#firmware-boot-fwboot)) |
 | `+SD_IMG=<file>` | none | card image of the SD model (bench compiled with `-d SDCARD`); the model's other plusargs (`+SD_NCR`, `+SD_INIT_POLLS`, `+SD_LOG=1`, ...) are in `sim/common/sd_spi_model.v`. The `=== BOOT` / `=== STATS` counters need `-d RV_HOSTCPU_STATS` on both `rv_hostcpu.v` and the bench (hierarchical `hostcpu.genrv.myrv.st_*`); without it the bench leaves them out. `run.sh boot` sets both. |
 
 The bench parameter `EXTRA_WS` is the bridge's `rv_extra_ws`: idle cycles

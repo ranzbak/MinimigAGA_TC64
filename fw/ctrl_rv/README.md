@@ -74,7 +74,9 @@ Output in `fw/ctrl_rv/build/` (gitignored): `RV32OSDA.BIN` (`objcopy -O
 binary`, loaded by `fw/ctrl_boot_rv` to 0x2000), `RV32OSDA.elf`, `.map`, `.lst`
 (disassembly with source), `version.h`. `B=dir` builds into another directory;
 `EXTRA_CFLAGS=...` adds compiler flags for bench variants (empty for the
-shipped image). Another toolchain install: `RV_GCC_DIR=... RV_PREFIX=...`
+shipped image); `EXTRA_OBJS=...` links extra objects after the firmware's
+(empty for the shipped image; `sim/host_bridge/fwboot` links its trap
+constructor `smoke_trap.o` this way, into its own `B=` directory). Another toolchain install: `RV_GCC_DIR=... RV_PREFIX=...`
 (`tools/riscv/toolchain.mk`).
 
 - **Flags** (Global Constraints, decision 12.12): `$(RV_CFLAGS_FW) -std=gnu23
