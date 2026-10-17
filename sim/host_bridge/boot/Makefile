@@ -20,33 +20,22 @@ include $(TOP)/tools/riscv/toolchain.mk
 RV_NM      = $(RV_GCC_DIR)/bin/$(RV_PREFIX)nm
 
 B         ?= build
-ARCH      := $(TOP)/fw/ctrl_rv/arch
+ARCH_B    := $(B)
+include $(TOP)/fw/ctrl_rv/arch/arch.mk
+.DEFAULT_GOAL := all
 MKCARD    := $(TOP)/tools/sim/mkcard.sh
 IMG_BYTES := 2560
 
 CFLAGS  = $(RV_CFLAGS_FW) -g -Wall -Wextra -I../sw -I$(ARCH)
 ASFLAGS = $(RV_ARCH) -g
-LDFLAGS = $(RV_LDFLAGS_FW) -nostartfiles -T $(ARCH)/firmware.ld -Wl,--no-warn-rwx-segments \
+LDFLAGS = $(RV_LDFLAGS_FW) $(ARCH_LDFLAGS) \
           -Wl,-Map,$(B)/fw.map
 
-OBJS = $(B)/arch/crt0.o $(B)/arch/trap_entry.o $(B)/arch/trap.o $(B)/arch/irq.o \
-       $(B)/fwtest.o $(B)/fwfill.o
+OBJS = $(ARCH_OBJS) $(B)/fwtest.o $(B)/fwfill.o
 
 .PHONY: all clean
 .DELETE_ON_ERROR:
 all: $(B)/RV32OSDA.BIN $(B)/img.txt $(B)/fw.lst $(B)/card.img $(B)/card_nofile.img
-
-$(B)/arch/crt0.o: $(ARCH)/crt0.S
-	@mkdir -p $(@D)
-	$(RV_CC) $(ASFLAGS) -c -o $@ $<
-
-$(B)/arch/trap_entry.o: $(ARCH)/trap.S
-	@mkdir -p $(@D)
-	$(RV_CC) $(ASFLAGS) -c -o $@ $<
-
-$(B)/arch/%.o: $(ARCH)/%.c $(ARCH)/irq.h $(ARCH)/csr.h
-	@mkdir -p $(@D)
-	$(RV_CC) $(CFLAGS) -c -o $@ $<
 
 $(B)/fwtest.o: fwtest.c ../sw/hb.h $(ARCH)/irq.h
 	@mkdir -p $(@D)
@@ -56,7 +45,7 @@ $(B)/fwfill.o: fwfill.S
 	@mkdir -p $(@D)
 	$(RV_CC) $(ASFLAGS) -c -o $@ $<
 
-$(B)/fw.elf: $(OBJS) $(ARCH)/firmware.ld
+$(B)/fw.elf: $(OBJS) $(ARCH_LD)
 	$(RV_CC) $(LDFLAGS) -o $@ $(OBJS) $(RV_LIBS_FW)
 
 # pad to IMG_BYTES; fail if the image is already larger

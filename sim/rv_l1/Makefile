@@ -8,9 +8,12 @@
 # 0x2000).  run.sh keeps its own PROGS/TEETH list: keep the two in sync.
 TOP := $(abspath $(CURDIR)/../..)
 include $(TOP)/tools/riscv/toolchain.mk
+BIN2HEX := $(TOP)/tools/riscv/bin2hex.sh
 
 B       := build
-ARCH    := $(TOP)/fw/ctrl_rv/arch
+ARCH_B  := $(B)
+include $(TOP)/fw/ctrl_rv/arch/arch.mk
+.DEFAULT_GOAL := tests
 PROGS   := lanes refill fencei fencei_nofencei irq dm_smoke uart_read
 FWPROGS := irq_sig irq_c exc irq_sig_mut
 
@@ -20,12 +23,9 @@ CFLAGS  = $(RV_ARCH) -O2 -g -ffreestanding -fno-builtin -funsigned-char \
 ASFLAGS = $(RV_ARCH) -g -Isw
 LDFLAGS = $(RV_ARCH) -nostdlib -nostartfiles -T sw/l1.ld -Wl,--gc-sections -Wl,--no-warn-rwx-segments \
           -Wl,-Map,$(@:.elf=.map)
-# the arch files are built as the firmware builds them
-ARCH_CFLAGS = $(RV_CFLAGS_FW) -g -Wall -Wextra -I$(ARCH)
-FWLDFLAGS   = $(RV_LDFLAGS_FW) -nostartfiles -T $(ARCH)/firmware.ld -Wl,--no-warn-rwx-segments \
-              -Wl,-Map,$(@:.elf=.map)
-ARCH_OBJS   = $(B)/arch/crt0.o $(B)/arch/trap_entry.o $(B)/arch/trap.o $(B)/arch/irq.o
-ARCH_DEPS   = $(ARCH)/firmware.ld $(ARCH)/irq.h $(ARCH)/csr.h
+# the arch objects (fw/ctrl_rv/arch/arch.mk) are built as the firmware builds them
+FWLDFLAGS   = $(RV_LDFLAGS_FW) $(ARCH_LDFLAGS) -Wl,-Map,$(@:.elf=.map)
+ARCH_DEPS   = $(ARCH_LD)
 FW_LINK     = $(RV_CC) $(FWLDFLAGS) $(FW_EXTRA) -o $@ $(filter %.o,$^) $(RV_LIBS_FW)
 
 .PHONY: tests clean
@@ -53,10 +53,9 @@ $(B)/%.elf: $(B)/crt0_l1.o $(B)/%.o sw/l1.ld
 $(B)/%.bin: $(B)/%.elf
 	$(RV_OBJCOPY) -O binary $< $@
 
-# od prints the bytes in file order, four per line = one BE word per line;
-# a short last line is padded with 00 so every byte keeps its lane.
-$(B)/%.hex: $(B)/%.bin
-	od -An -v -tx1 -w4 $< | awk '{ printf "%s%s%s%s\n", $$1, ($$2 == "" ? "00" : $$2), ($$3 == "" ? "00" : $$3), ($$4 == "" ? "00" : $$4) }' > $@
+# one BE word per line, file byte i in lane i (tools/riscv/bin2hex.sh)
+$(B)/%.hex: $(B)/%.bin $(BIN2HEX)
+	bash $(BIN2HEX) $< $@
 
 $(B)/%.lst: $(B)/%.elf
 	$(RV_OBJDUMP) -d -h $< > $@
@@ -64,15 +63,6 @@ $(B)/%.lst: $(B)/%.elf
 # ---- firmware-linked programs (FWPROGS)
 $(B)/arch:
 	mkdir -p $@
-
-$(B)/arch/crt0.o: $(ARCH)/crt0.S | $(B)/arch
-	$(RV_CC) $(ASFLAGS) -c -o $@ $<
-
-$(B)/arch/trap_entry.o: $(ARCH)/trap.S | $(B)/arch
-	$(RV_CC) $(ASFLAGS) -c -o $@ $<
-
-$(B)/arch/%.o: $(ARCH)/%.c $(ARCH_DEPS) | $(B)/arch
-	$(RV_CC) $(ARCH_CFLAGS) -c -o $@ $<
 
 # teeth: trap.S without the restore of t3 (irq_sig must end "=== FAIL 11c")
 $(B)/arch/trap_mut.S: $(ARCH)/trap.S | $(B)/arch

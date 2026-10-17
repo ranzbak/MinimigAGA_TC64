@@ -18,7 +18,9 @@ include $(TOP)/tools/riscv/toolchain.mk
 B       ?= build
 TESTS   ?= t_lanes t_hwoff t_b2b t_spibusy t_irq t_irqctl t_irqapi dhry
 FWTESTS := t_irq t_irqctl t_irqapi
-ARCH    := $(TOP)/fw/ctrl_rv/arch
+ARCH_B  := $(B)
+include $(TOP)/fw/ctrl_rv/arch/arch.mk
+.DEFAULT_GOAL := all
 ROMGEN  := $(TOP)/fw/romgen/romgen
 ROMDIR  := $(TOP)/fw/ctrl_boot_rv
 
@@ -55,23 +57,9 @@ $(B)/%/prog.elf: $(B)/crt0_rom.o $(B)/%/prog.o sw/rom.ld
 	$(RV_CC) $(LDFLAGS) -o $@ $(B)/crt0_rom.o $(B)/$*/prog.o $(RV_LIBS_FW)
 
 # ---- FWTESTS: firmware start-up and trap entry (fw/ctrl_rv/arch)
-ARCH_OBJS = $(B)/arch/crt0.o $(B)/arch/trap_entry.o $(B)/arch/trap.o $(B)/arch/irq.o
-
 $(B)/reset_fw.o: sw/reset_fw.S sw/hb.h
 	@mkdir -p $(@D)
 	$(RV_CC) $(ASFLAGS) -c -o $@ $<
-
-$(B)/arch/crt0.o: $(ARCH)/crt0.S
-	@mkdir -p $(@D)
-	$(RV_CC) $(ASFLAGS) -c -o $@ $<
-
-$(B)/arch/trap_entry.o: $(ARCH)/trap.S
-	@mkdir -p $(@D)
-	$(RV_CC) $(ASFLAGS) -c -o $@ $<
-
-$(B)/arch/%.o: $(ARCH)/%.c $(ARCH)/irq.h $(ARCH)/csr.h
-	@mkdir -p $(@D)
-	$(RV_CC) $(CFLAGS) -c -o $@ $<
 
 $(FWTESTS:%=$(B)/%/prog.elf): $(B)/%/prog.elf: $(B)/reset_fw.o $(ARCH_OBJS) $(B)/%/prog.o sw/rom.ld
 	$(RV_CC) $(LDFLAGS) -o $@ $(B)/reset_fw.o $(ARCH_OBJS) $(B)/$*/prog.o $(RV_LIBS_FW)

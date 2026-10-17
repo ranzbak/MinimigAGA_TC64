@@ -36,35 +36,39 @@ Every Makefile includes `tools/riscv/toolchain.mk`, which gives `RV_CC`,
 
 ## Linking firmware with these files
 
-Assemble `crt0.S` and `trap.S`, compile `trap.c` and `irq.c` with the
-firmware flags, link everything with `firmware.ld` and without the C
-library's start files. In a Makefile (here one two levels below the
-repository root, e.g. `fw/<project>/Makefile`; `OBJS` = your own objects):
+Include `arch.mk` after `toolchain.mk`. It builds `crt0.S`, `trap.S`
+(as `trap_entry.o`), `trap.c` and `irq.c` with the firmware flags, with
+`-MMD -MP` header dependencies (touching `irq.h` or `csr.h` rebuilds them),
+and gives the link flags for `firmware.ld`. It needs `TOP` (the repository
+root) and `ARCH_B` (a build directory; the objects go to `$(ARCH_B)/arch/`).
+`arch.mk` defines rules, so set `.DEFAULT_GOAL` after the include. In a
+Makefile two levels below the repository root, e.g. `fw/<project>/Makefile`
+(`OBJS` = your own objects):
 
 ```make
 TOP     := $(abspath $(CURDIR)/../..)
 include $(TOP)/tools/riscv/toolchain.mk
-ARCH    := $(TOP)/fw/ctrl_rv/arch
-CFLAGS  := $(RV_CFLAGS_FW) -I$(ARCH)
+ARCH_B  := build
+include $(TOP)/fw/ctrl_rv/arch/arch.mk
+.DEFAULT_GOAL := RV32OSDA.BIN
 
-build:
-	mkdir -p build
-build/crt0.o:       $(ARCH)/crt0.S | build ; $(RV_CC) $(RV_ARCH) -c -o $@ $<
-build/trap_entry.o: $(ARCH)/trap.S | build ; $(RV_CC) $(RV_ARCH) -c -o $@ $<
-build/trap.o:       $(ARCH)/trap.c | build ; $(RV_CC) $(CFLAGS) -c -o $@ $<
-build/irq.o:        $(ARCH)/irq.c  | build ; $(RV_CC) $(CFLAGS) -c -o $@ $<
+CFLAGS := $(RV_CFLAGS_FW) -I$(ARCH)
 
-firmware.elf: build/crt0.o build/trap_entry.o build/trap.o build/irq.o $(OBJS)
-	$(RV_CC) $(RV_LDFLAGS_FW) -nostartfiles -T $(ARCH)/firmware.ld \
-	  -Wl,--no-warn-rwx-segments -o $@ $^ $(RV_LIBS_FW)
+firmware.elf: $(ARCH_OBJS) $(OBJS) $(ARCH_LD)
+	$(RV_CC) $(RV_LDFLAGS_FW) $(ARCH_LDFLAGS) -o $@ $(ARCH_OBJS) $(OBJS) $(RV_LIBS_FW)
 RV32OSDA.BIN: firmware.elf
 	$(RV_OBJCOPY) -O binary $< $@
 ```
 
-(`trap.S` and `trap.c` need different object names. `--no-warn-rwx-segments`:
-`firmware.ld` puts code and data in one RWX load segment, the whole image is
-loaded into RAM; without it binutils 2.45 warns on every link.) The boot ROM
-(`fw/ctrl_boot_rv`) loads `RV32OSDA.BIN` to 0x2000 and jumps there.
+`arch.mk` defines `ARCH` (this directory), `ARCH_OBJS`, `ARCH_LD`,
+`ARCH_CFLAGS`, `ARCH_ASFLAGS` and `ARCH_LDFLAGS` (`-nostartfiles -T
+firmware.ld -Wl,--no-warn-rwx-segments`: the script puts code and data in one
+RWX load segment, the whole image is loaded into RAM; without the option
+binutils 2.45 warns on every link). `$(RV_LIBS_FW)` stays last on the link
+line. A bench that needs a hex image uses `bash tools/riscv/bin2hex.sh in.bin
+out.hex` (one big-endian word per line, file byte i in lane i, last word
+zero-padded). The boot ROM (`fw/ctrl_boot_rv`) loads `RV32OSDA.BIN` to 0x2000
+and jumps there.
 
 ### Memory layout (`firmware.ld`)
 

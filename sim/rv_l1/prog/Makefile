@@ -6,6 +6,7 @@
 # Link sets as fw/ctrl_832/test/emu/Makefile.  Output: ../build/<prog>.hex.
 TOP := $(abspath $(CURDIR)/../../..)
 include $(TOP)/tools/riscv/toolchain.mk
+BIN2HEX := $(TOP)/tools/riscv/bin2hex.sh
 
 FWDIR ?= ../../../fw/ctrl_832
 B     := ../build
@@ -48,9 +49,9 @@ $(U)/%.elf: $$(addprefix $(U)/,$$($$*_OBJS)) $(U)/crt0_l1.o $(U)/syscalls.o $(S)
 $(U)/%.bin: $(U)/%.elf
 	$(RV_OBJCOPY) -O binary $< $@
 
-# one BE word per line, file byte i in lane i (as ../Makefile)
-$(B)/%.hex: $(U)/%.bin | $(B)
-	od -An -v -tx1 -w4 $< | awk '{ printf "%s%s%s%s\n", $$1, ($$2 == "" ? "00" : $$2), ($$3 == "" ? "00" : $$3), ($$4 == "" ? "00" : $$4) }' > $@
+# one BE word per line, file byte i in lane i (tools/riscv/bin2hex.sh)
+$(B)/%.hex: $(U)/%.bin $(BIN2HEX) | $(B)
+	bash $(BIN2HEX) $< $@
 
 .SECONDARY:
 

@@ -10,7 +10,10 @@ TOP := $(abspath $(CURDIR)/../..)
 include $(TOP)/tools/riscv/toolchain.mk
 
 B       := build
-ARCH    := $(TOP)/fw/ctrl_rv/arch
+ARCH_B  := $(B)
+include $(TOP)/fw/ctrl_rv/arch/arch.mk
+.DEFAULT_GOAL := all
+BIN2HEX := $(TOP)/tools/riscv/bin2hex.sh
 BOOTFW  := $(TOP)/sim/rv_l1/build/boot_fw.bin
 BOARD_OPT ?= O2
 
@@ -18,11 +21,8 @@ BOARD_OPT ?= O2
 DHEXTRA ?=            # e.g. DHEXTRA=-DNUMBER_OF_RUNS=1000
 DHFLAGS = $(DHEXTRA) $(RV_ARCH) -ffunction-sections -fdata-sections -fno-builtin -funsigned-char \
           -ffreestanding -std=gnu89 -w -I. -I$(ARCH)
-ARCH_CFLAGS = $(RV_CFLAGS_FW) -g -Wall -Wextra -I$(ARCH)
-ASFLAGS = $(RV_ARCH) -g
-LDFLAGS = $(RV_LDFLAGS_FW) -nostartfiles -T $(ARCH)/firmware.ld -Wl,--no-warn-rwx-segments
+LDFLAGS = $(RV_LDFLAGS_FW) $(ARCH_LDFLAGS)
 
-ARCH_OBJS = $(B)/arch/crt0.o $(B)/arch/trap_entry.o $(B)/arch/trap.o $(B)/arch/irq.o
 SRCS      = dhry_1.c dhry_2.c hw.c
 
 .PHONY: all clean
@@ -34,7 +34,7 @@ $(B)/$(1)_$(3)/%.o: %.c dhry.h hw.h | $(B)/$(1)_$(3)
 	$$(RV_CC) $$(DHFLAGS) -$(1) $(2) -c -o $$@ $$<
 $(B)/$(1)_$(3):
 	mkdir -p $$@
-$(B)/$(1)_$(3)/fw.elf: $(ARCH_OBJS) $(SRCS:%.c=$(B)/$(1)_$(3)/%.o) $(ARCH)/firmware.ld
+$(B)/$(1)_$(3)/fw.elf: $(ARCH_OBJS) $(SRCS:%.c=$(B)/$(1)_$(3)/%.o) $(ARCH_LD)
 	$$(RV_CC) $$(LDFLAGS) -Wl,-Map,$$(@:.elf=.map) -o $$@ $(ARCH_OBJS) $(SRCS:%.c=$(B)/$(1)_$(3)/%.o) $$(RV_LIBS_FW)
 endef
 $(eval $(call IMAGE,O2,-DL1,l1))
@@ -43,37 +43,28 @@ $(eval $(call IMAGE,O2,,board))
 $(eval $(call IMAGE,Os,,board))
 $(eval $(call IMAGE,O2,-DL1 -DDHRY_CHECK_TEETH,teeth))
 
-$(B)/arch:
-	mkdir -p $@
-$(B)/arch/crt0.o: $(ARCH)/crt0.S | $(B)/arch
-	$(RV_CC) $(ASFLAGS) -c -o $@ $<
-$(B)/arch/trap_entry.o: $(ARCH)/trap.S | $(B)/arch
-	$(RV_CC) $(ASFLAGS) -c -o $@ $<
-$(B)/arch/%.o: $(ARCH)/%.c $(ARCH)/irq.h $(ARCH)/csr.h | $(B)/arch
-	$(RV_CC) $(ARCH_CFLAGS) -c -o $@ $<
-
 $(B)/%/fw.bin: $(B)/%/fw.elf
 	$(RV_OBJCOPY) -O binary $< $@
 	$(RV_OBJDUMP) -d -h $< > $(@:.bin=.lst)
 	$(RV_SIZE) $<
 
-# one BE 32-bit word per line, file byte i in lane i (the romgen order);
-# a short last line is padded with 00 (as sim/rv_l1/Makefile)
-HEXCMD = od -An -v -tx1 -w4 $(1) | awk '{ printf "%s%s%s%s\n", $$1, ($$2 == "" ? "00" : $$2), ($$3 == "" ? "00" : $$3), ($$4 == "" ? "00" : $$4) }'
+# one BE 32-bit word per line, file byte i in lane i (the romgen order):
+# tools/riscv/bin2hex.sh, "-" = stdin / stdout
+HEXCMD = bash $(BIN2HEX) $(1) -
 
 $(BOOTFW):
 	$(MAKE) -C $(TOP)/sim/rv_l1 build/boot_fw.bin
 
-l1_O2.hex: $(B)/O2_l1/fw.bin $(BOOTFW)
+l1_O2.hex: $(B)/O2_l1/fw.bin $(BOOTFW) $(BIN2HEX)
 	cat $(BOOTFW) $< | $(call HEXCMD,-) > $@
-l1_Os.hex: $(B)/Os_l1/fw.bin $(BOOTFW)
+l1_Os.hex: $(B)/Os_l1/fw.bin $(BOOTFW) $(BIN2HEX)
 	cat $(BOOTFW) $< | $(call HEXCMD,-) > $@
-$(B)/l1_O2_teeth.hex: $(B)/O2_teeth/fw.bin $(BOOTFW)
+$(B)/l1_O2_teeth.hex: $(B)/O2_teeth/fw.bin $(BOOTFW) $(BIN2HEX)
 	cat $(BOOTFW) $< | $(call HEXCMD,-) > $@
 # L2: the SDRAM model preloads +SDRAM_HEX at word address 0x800 (byte 0x2000)
-l2_O2.hex: $(B)/O2_l1/fw.bin
+l2_O2.hex: $(B)/O2_l1/fw.bin $(BIN2HEX)
 	{ echo @800; $(call HEXCMD,$<); } > $@
-l2_Os.hex: $(B)/Os_l1/fw.bin
+l2_Os.hex: $(B)/Os_l1/fw.bin $(BIN2HEX)
 	{ echo @800; $(call HEXCMD,$<); } > $@
 
 RV32OSDA.BIN: $(B)/$(BOARD_OPT)_board/fw.bin
