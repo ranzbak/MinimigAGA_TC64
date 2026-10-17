@@ -7,10 +7,12 @@
  *   3  vblank + bit 5 in one clk_28 cycle, bit 2 one later: each handler once,
  *      bit 0 first (STAMP 30)
  *   4  a masked spare edge (bit 7) is delivered on IrqEnable, once; a NULL
- *      handler consumes an event; bit 9 pulse (STAMP 50, 70)
+ *      handler masks its bit off; bit 9 pulse (STAMP 50, 70)
  *   5  LEVEL bit 8 held high (STAMP 60/61): called until the handler drops it,
  *      twice in a row
  *   6  LEVEL bit 3 (the ADV7511 INT pin, STAMP 120/121)
+ *   8  EnableInterrupts() after IrqInstall(): no storm, one vblank call
+ *   9  LEVEL bit with a NULL handler: masked off, no hang
  *   7  IrqEnable/IrqDisable/IrqSetMode read-modify-write, bit >= 16 ignored */
 #include <stdint.h>
 #include "hb.h"
@@ -80,8 +82,6 @@ static int pos(unsigned b)
 
 static int test1(void)
 {
-    uint32_t s;
-
     SetIntHandler(leg_handler);
     EnableInterrupts();
     STAMP(10);
@@ -90,27 +90,25 @@ static int test1(void)
     spin_steps(4);
     CHECK(n_leg == 1, 102);
     SetIntHandler(0);
-    /* the controller latched that vblank as well (MASK = 0): consume it */
-    s = irq_save();             /* the default handler does not read PENDING */
-    HW_IRQ_MASK = 1;
-    (void)HW_IRQ_PENDING;
-    HW_IRQ_MASK = 0;
-    irq_restore(s);
-    CHECK(HW_IRQ_PENDING == 0, 103);
+    CHECK(HW_IRQ_MASK == 0, 103);
     return 0;
 }
 
 static int test2(void)
 {
     IrqSetHandler(IRQ_VBLANK, h0);
-    IrqInstall();
-    IrqEnable(IRQ_VBLANK);
+    IrqEnable(IRQ_VBLANK);      /* installs the dispatcher; the vblank test 1
+                                   latched (MASK was 0) is delivered once now */
+    IrqInstall();               /* idempotent */
+    wait_ge(&n0, 1, 4);
+    spin_steps(2);
+    CHECK(n0 == 1, 205);
     CHECK(HW_IRQ_MASK == 0x0001, 201);
     STAMP(20);
-    wait_ge(&n0, 8, 40);
-    CHECK(n0 == 8, 202);
+    wait_ge(&n0, 9, 40);
+    CHECK(n0 == 9, 202);
     spin_steps(6);
-    CHECK(n0 == 8, 203);
+    CHECK(n0 == 9, 203);
     CHECK(n_leg == 1, 204);
     return 0;
 }
@@ -127,7 +125,7 @@ static int test3(void)
     wait_ge(&nseq, 3, 10);
     spin_steps(4);
     CHECK(nseq == 3, 302);
-    CHECK(n0 == 9 && n5 == 1 && n2 == 1, 303);
+    CHECK(n0 == 10 && n5 == 1 && n2 == 1, 303);
     CHECK(pos(0) >= 0 && pos(5) >= 0 && pos(2) >= 0, 304);
     CHECK(pos(0) < pos(5) && pos(0) < pos(2), 305);     /* bit 0 first */
     IrqDisable(5);
@@ -154,6 +152,7 @@ static int test4(void)
     spin_steps(4);
     CHECK(n7 == 1, 404);
     CHECK(HW_IRQ_RAW == 0, 405);
+    CHECK(!(HW_IRQ_MASK & 0x80), 409);  /* no handler: masked off */
     IrqDisable(7);
     IrqSetHandler(9, h9);
     IrqEnable(9);
@@ -244,6 +243,37 @@ static int test7(void)
     return 0;
 }
 
+/* EnableInterrupts() after IrqInstall(): the legacy flag must not storm */
+static int test8(void)
+{
+    unsigned base = n0;
+
+    EnableInterrupts();
+    STAMP(10);
+    wait_ge(&n0, base + 1, 8);
+    spin_steps(6);
+    CHECK(n0 == base + 1, 801);
+    CHECK(HW_IRQ_MASK == 0x0001, 802);
+    return 0;
+}
+
+/* a LEVEL bit with a NULL handler: masked off by the dispatcher, no hang */
+static int test9(void)
+{
+    IrqSetHandler(8, 0);
+    IrqSetMode(8, 1);
+    IrqEnable(8);
+    STAMP(60);
+    spin_steps(6);
+    CHECK(HW_IRQ_MASK == 0x0001, 901);
+    STAMP(61);
+    spin_steps(2);
+    IrqSetMode(8, 0);
+    CHECK(HW_IRQ_MODE == 0, 902);
+    CHECK(HW_IRQ_RAW == 0, 903);
+    return 0;
+}
+
 static int run(void)
 {
     int rc;
@@ -254,6 +284,8 @@ static int run(void)
     if ((rc = test4()) != 0) return rc;
     if ((rc = test5()) != 0) return rc;
     if ((rc = test6()) != 0) return rc;
+    if ((rc = test8()) != 0) return rc;
+    if ((rc = test9()) != 0) return rc;
     if ((rc = test7()) != 0) return rc;
     STAMP(99);
     return 0;

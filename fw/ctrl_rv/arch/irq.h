@@ -57,18 +57,22 @@ void EnableInterrupts(void);
 void DisableInterrupts(void);
 
 /* ---- interrupt controller: per-source handlers, edge/level mode, mask.
- * IrqInstall() installs the dispatcher with SetIntHandler (which disables the
- * legacy INTERRUPT register).  The dispatcher reads IRQ_PENDING (already
- * masked by the hardware; the read clears the EDGE bits it returns), calls
- * the handler of each set bit in bit order (bit 0 first) and repeats until a
- * read returns 0.  Configure level sources (IRQ_ADV7511, IDE requests, the
- * I2C flag) with IrqSetMode(bit, 1) and pulse sources (vblank, Akiko) EDGE:
- * a LEVEL source keeps the CPU interrupt up until the device is serviced, so
- * no IrqRaw() re-check is needed.  A LEVEL handler may be called once more
- * right after its line dropped (synchroniser latency); handlers must tolerate
- * it.  The handler of IRQ_I2C must access 0xFFFFFFA0 to clear its source.
- * SetIntHandler()/EnableInterrupts() stay the legacy path when IrqInstall()
- * was not called.  Bits >= 16 are ignored; a NULL handler just consumes. */
+ * IrqInstall() installs the dispatcher with SetIntHandler (which switches the
+ * legacy INTERRUPT register off); it is idempotent and IrqEnable() calls it.
+ * After IrqInstall() do not use EnableInterrupts() (the dispatcher turns a
+ * stray legacy flag off again).  SetIntHandler(h) with any other handler
+ * clears MASK, so a legacy handler never sees a controller source.
+ * The dispatcher reads IRQ_PENDING (already masked by the hardware; the read
+ * clears the EDGE bits it returns), calls the handler of each set bit in bit
+ * order (bit 0 first) and repeats until a read returns 0.  Configure level
+ * sources (IRQ_ADV7511, IDE requests, the I2C flag) as LEVEL with
+ * IrqSetMode(bit, 1); pulse sources (vblank, Akiko) stay EDGE, the reset
+ * mode of every bit.  A LEVEL source keeps the CPU interrupt up until the
+ * device is serviced, so no IrqRaw() re-check is needed.  A LEVEL handler
+ * may be called once more right after its line dropped (synchroniser
+ * latency); handlers must tolerate it.  The handler of IRQ_I2C must access
+ * 0xFFFFFFA0 to clear its source.  A pending bit with a NULL handler has its
+ * MASK bit cleared by the dispatcher (no livelock).  Bits >= 16 are ignored. */
 void IrqSetHandler(unsigned bit, void (*handler)(void));
 void IrqSetMode(unsigned bit, int level);   /* level != 0: LEVEL, else EDGE */
 void IrqEnable(unsigned bit);               /* MASK |= 1 << bit */

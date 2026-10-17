@@ -9,11 +9,17 @@ static void rv_irq_default(void)
 
 void (*volatile _InterruptVector)(void) = rv_irq_default;
 
+static void irq_dispatch(void);
+
 void SetIntHandler(void (*handler)(void))
 {
     /* disable first: no event can reach the old handler once the pointer
        changes (the store order is program order on this core) */
     HW_INTERRUPT(REG_INTERRUPT_CTRL) = 0;
+    /* a legacy handler never reads IRQ_PENDING: no controller source may
+       reach it (endless trap).  Legacy users have MASK = 0 anyway. */
+    if (handler != irq_dispatch)
+        HW_IRQ_MASK = 0;
     _InterruptVector = handler ? handler : rv_irq_default;
 }
 
@@ -70,6 +76,7 @@ void IrqEnable(unsigned bit)
 
     if (bit >= NIRQ)
         return;
+    IrqInstall();               /* the dispatcher must be there before a source can fire */
     s = irq_save();
     HW_IRQ_MASK = HW_IRQ_MASK | (1u << bit);
     irq_restore(s);
@@ -93,17 +100,29 @@ uint32_t IrqRaw(void)
 
 static void irq_dispatch(void)
 {
-    uint32_t p;
+    uint32_t p = HW_IRQ_PENDING;
     unsigned b;
 
-    while ((p = HW_IRQ_PENDING) != 0) {
-        for (b = 0; b < NIRQ; b++)
-            if ((p & (1u << b)) && irq_handlers[b])
-                irq_handlers[b]();
+    if (p == 0) {
+        /* spurious: the legacy flag (EnableInterrupts() after IrqInstall()):
+           clear and disable it */
+        DisableInterrupts();
+        return;
     }
+    do {
+        for (b = 0; b < NIRQ; b++) {
+            if (!(p & (1u << b)))
+                continue;
+            if (irq_handlers[b])
+                irq_handlers[b]();
+            else
+                HW_IRQ_MASK = HW_IRQ_MASK & ~(1u << b);  /* no handler: mask it off, no livelock */
+        }
+    } while ((p = HW_IRQ_PENDING) != 0);
 }
 
 void IrqInstall(void)
 {
-    SetIntHandler(irq_dispatch);
+    if (_InterruptVector != irq_dispatch)
+        SetIntHandler(irq_dispatch);    /* also switches the legacy register off */
 }

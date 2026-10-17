@@ -153,7 +153,7 @@ is the path as long as `IrqInstall()` was not called.
 | `HW_IRQ_RAW` | `0xFFFFFF38` | read: synchronised source levels, no side effect |
 | `HW_IRQ_MODE` | `0xFFFFFF3C` | read/write, reset 0: bit set = LEVEL, clear = EDGE |
 
-| Bit | Name | Source | Mode |
+| Bit | Name | Source | Configure as |
 |---|---|---|---|
 | 0 | `IRQ_VBLANK` | vertical blank | EDGE |
 | 1 | `IRQ_I2C` | I2C master transfer event | LEVEL; the handler must access `0xFFFFFFA0` (`GetInterrupts()`), the only thing that clears it |
@@ -171,25 +171,38 @@ static void adv(void)
        pin (and with it this interrupt) stays up until then */
 }
 
-IrqSetHandler(IRQ_VBLANK, vbl);          /* EDGE is the reset mode */
-IrqSetHandler(IRQ_ADV7511, adv);
-IrqSetMode(IRQ_ADV7511, 1);              /* LEVEL: set the mode before the enable */
-IrqInstall();                            /* dispatcher; disables the legacy register */
-IrqEnable(IRQ_VBLANK);
-IrqEnable(IRQ_ADV7511);
-/* ... */
-IrqDisable(IRQ_ADV7511);                 /* a masked EDGE event stays pending */
-uint32_t levels = IrqRaw();              /* source levels, no side effect */
+void irq_setup(void)
+{
+    IrqSetHandler(IRQ_VBLANK, vbl);      /* EDGE is the reset mode of every bit */
+    IrqSetHandler(IRQ_ADV7511, adv);
+    IrqSetMode(IRQ_ADV7511, 1);          /* LEVEL: set the mode before the enable */
+    IrqEnable(IRQ_VBLANK);               /* installs the dispatcher (IrqInstall) */
+    IrqEnable(IRQ_ADV7511);
+}
+
+void irq_later(void)
+{
+    IrqDisable(IRQ_ADV7511);             /* a masked EDGE event stays pending */
+    uint32_t levels = IrqRaw();          /* source levels, no side effect */
+    (void)levels;
+}
 ```
 
-* `IrqSetHandler(bit, h)`: handler for one bit (table of 16; NULL = the
-  event is consumed and ignored). `IrqSetMode(bit, level)`: 1 = LEVEL,
+* `IrqSetHandler(bit, h)`: handler for one bit (table of 16; NULL: the
+  bit is masked off at its first event, so a LEVEL source cannot lock the
+  dispatcher). `IrqSetMode(bit, level)`: 1 = LEVEL,
   0 = EDGE. `IrqEnable(bit)` / `IrqDisable(bit)`: set / clear one MASK bit.
   Each of the three read-modify-writes runs inside `irq_save` /
   `irq_restore`. Bits above 15 are ignored.
 * `IrqInstall()` installs the dispatcher with `SetIntHandler`, so the legacy
   INTERRUPT register is then disabled (an `IRQ_I2C` handler only accesses it
-  to clear the I2C source). The dispatcher loops: read `HW_IRQ_PENDING`
+  to clear the I2C source). It is idempotent and `IrqEnable()` calls it, so
+  no source can fire before the dispatcher is there. After `IrqInstall()` do
+  not use `EnableInterrupts()`: the dispatcher answers a legacy flag (a
+  trap where PENDING reads 0) by disabling the legacy register again.
+  `SetIntHandler(h)` with any other handler (or NULL) also clears MASK, so
+  a legacy handler, which never reads PENDING, cannot be driven by the
+  controller. The dispatcher loops: read `HW_IRQ_PENDING`
   (already masked by the hardware), call the handler of every set bit in
   bit order (bit 0 first), read again, stop when a read returns 0. A later
   `SetIntHandler()` replaces the dispatcher (the legacy path again).
@@ -204,10 +217,17 @@ uint32_t levels = IrqRaw();              /* source levels, no side effect */
   controller sees the line through a synchroniser): it must tolerate a call
   with nothing left to do.
 * An EDGE event for a masked bit stays pending and is delivered once on
-  `IrqEnable`. Reading `HW_IRQ_PENDING` yourself (a debugger) consumes the
+  `IrqEnable`; this includes an event latched since reset (vblank pulses
+  with `MASK = 0` are latched), so the first `IrqEnable(IRQ_VBLANK)` can
+  call the handler at once. Reading `HW_IRQ_PENDING` yourself (a debugger) consumes the
   pending EDGE bits.
-* `IrqSetMode` on a bit with an unread event or a high line follows the
-  rule in `rtl/host/cfide.vhd`; set the mode before enabling the bit.
+* Switching a bit's mode: EDGE to LEVEL drops an unread EDGE event (the bit
+  then follows the line); LEVEL to EDGE needs the line to fall and rise
+  again before the next event (a high line starts clear). Set the mode
+  before enabling the bit.
+* The dispatcher loops over PENDING reads; no test tells the loop from a
+  single pass (the interrupt line would re-enter the trap at once), so it is
+  a latency optimisation only.
 * Never read the UART at `0xFFFFFFF0` (cfide does not ack it; bus deadlock).
 
 ## Tests
