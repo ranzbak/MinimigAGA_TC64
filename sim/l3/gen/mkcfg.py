@@ -12,9 +12,10 @@ Fields: the 832 firmware's defaults (mkcfg832.defaults()), except
   kickstart.name        "KICK    "              (KICK.ROM)
   enable_ide            1                         (HDD and CD need IDE)
   floppy.drives         1, floppy.speed 0         (normal speed, CONFIG_FLOPPY1X)
-  hardfile[0]           enabled 129 (HDF_FILE | HDF_SYNTHRDB), "SYNTH   "
+  hardfile[0]           enabled 1 (HDF_FILE), "RDB     " (RDB.HDF: unit 0
+                        plain HDF_FILE, so hdd.c patches its rdb_Flags)
+  hardfile[1]           enabled 129 (HDF_FILE | HDF_SYNTHRDB), "SYNTH   "
                         (SYNTH.HDF, the firmware synthesises the RDB)
-  hardfile[1]           enabled 1 (HDF_FILE), "RDB     " (RDB.HDF)
   secondaryhardfile[0]  enabled 7 (HDF_CDROM): IDE port 2 master, the ATAPI
                         CD; name "TEST    ", present 2 (CUE: TEST.CUE) or,
                         variant iso, present 1 (ISO: TEST.ISO)
@@ -39,8 +40,8 @@ def fields(m, cd):
     v = m.defaults()
     v.update({"enable_ide": 1,
               "floppy.speed": 0, "floppy.drives": 1,
-              "hardfile[0].enabled": 129, "hardfile[0].name": b"SYNTH   ",
-              "hardfile[1].enabled": 1, "hardfile[1].name": b"RDB     ",
+              "hardfile[0].enabled": 1, "hardfile[0].name": b"RDB     ",
+              "hardfile[1].enabled": 129, "hardfile[1].name": b"SYNTH   ",
               "secondaryhardfile[0].enabled": 7,
               "secondaryhardfile[0].name": b"TEST    ",
               "secondaryhardfile[0].present": 2 if cd == "cue" else 1})
