@@ -790,7 +790,7 @@ timing (reviewed in Phase 3's grep gate).
   boot ROM end-to-end boot from a FAT16 card image, Dhrystone on the real
   memory path; the 832 regression is `sim/spi_cdc/host832/run.sh` with the
   rewritten bridge.
-- **L3 co-simulation** `sim/l3/` (one bench for both CPUs, `CPU=rv|832`, Verilator and xsim; first planned as `sim/spi_cdc/hostrv/`, see `doc/osd-riscv-exec-4.md` Question 5):
+- **L3 co-simulation** `sim/l3/` (one bench for both CPUs, `CPU=rv|832`, first planned as `sim/spi_cdc/hostrv/`; `doc/osd-riscv-exec-4.md` Decisions 1 and 5): every scenario on Verilator, each pass-gate scenario also as an X-sensitivity twin (a Verilator build with randomised uninitialised state, `--x-assign unique --x-initial unique`, whose run must compare SAME); xsim only for one shortened boot cross-check per CPU and the handshake RTL's unit benches, at most ~4 h in the whole phase (Paul's time budget, 2026-10-18):
   the real `paula_floppy` + `paula_floppy_fifo`, `gayle` + `gayle_port` +
   `gayle_fifo`, `userio_osd` + `userio_osd_spi`, `cfide`, `hostcache`, the
   bridge, the **RISC-V core running the real boot ROM and firmware** (from
@@ -1031,6 +1031,11 @@ by decision 12.13: parity of the RV firmware with the 832 on the floppy, hard
 disk and CD paths is proven by the L3 differential co-simulation, and Phase 4
 adds 4.7, the OSD reply-ready handshake (RTL `userio_osd` + cfide, RV firmware
 `SPI_reply()`; the reply-ready part of P1). The L3 bench is `sim/l3/` (both CPUs).
+Simulators (Paul, 2026-10-18, exec-4 Decision 1): Verilator for every scenario,
+with a randomised-initial-state Verilator twin per pass-gate scenario as the
+X-sensitivity check; xsim at most ~4 h in total (one shortened boot cross-check
+per CPU, the handshake RTL's unit benches). Paul answered the eight planner
+questions the same day (exec-4 "Decisions").
 
 - 4.1 **O** L3 bench `sim/l3/` per 7.2: SD model with
   multi-block reads/writes (CMD17/18/24/25), Amiga-side bus-functional
