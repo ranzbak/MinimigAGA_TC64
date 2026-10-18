@@ -89,9 +89,12 @@ Run only one xsim at a time.
 From the repository root:
 
 ```sh
-bash sim/host_bridge/run.sh all       # 7 tests x SLAT {2,8,20} x SJIT {0,8}: 42 runs, ~5 min
-bash sim/host_bridge/run.sh mutant    # the four-phase handshake's teeth, 34 runs
-bash sim/host_bridge/run.sh irqmut    # the interrupt controller's teeth, 4 runs, ~2 min
+# 7 tests x SLAT {2,8,20} x SJIT {0,8}: 42 runs, ~5 min
+bash sim/host_bridge/run.sh all
+# the four-phase handshake's teeth, 34 runs
+bash sim/host_bridge/run.sh mutant
+# the interrupt controller's teeth, 4 runs, ~2 min
+bash sim/host_bridge/run.sh irqmut
 ```
 
 Every target also runs under Verilator with `SIM=verilator` in front (e.g.
@@ -110,7 +113,8 @@ To run one test or several, with settings from the environment (defaults
 ```sh
 bash sim/host_bridge/run.sh t_lanes
 SLAT=20 SJIT=8 EXTRA_WS=3 bash sim/host_bridge/run.sh t_b2b t_spibusy
-XARGS="+VERBOSE=1" bash sim/host_bridge/run.sh t_hwoff     # log every hw access
+# log every hw access
+XARGS="+VERBOSE=1" bash sim/host_bridge/run.sh t_hwoff
 ```
 
 Outputs go to `sim/host_bridge/run_${RUNTAG:-wt}/`:
@@ -127,8 +131,10 @@ To build the test ROMs without running anything (`run.sh` builds its own into
 `run_*/build`):
 
 ```sh
-make -C sim/host_bridge                 # -> sim/host_bridge/build/<test>/OSDBoot_rv_ROM.vhd
-make -C sim/host_bridge B=/tmp/hb       # elsewhere
+# -> sim/host_bridge/build/<test>/OSDBoot_rv_ROM.vhd
+make -C sim/host_bridge
+# elsewhere
+make -C sim/host_bridge B=/tmp/hb
 ```
 
 ## Verilator
@@ -145,9 +151,12 @@ xsim `all` before a commit that touches the RTL.
 
 ```sh
 sudo apt install ghdl verilator ccache
-ghdl --version | head -1      # GHDL 4.1.0 (Ubuntu 4.1.0+dfsg-0ubuntu2.1) [Dunoon edition]
-verilator --version           # Verilator 5.020 2024-01-01 rev (Debian 5.020-1)
-ghdl help synth | head -1     # synth [FILES... -e] UNIT [ARCH]   (synthesis is built in)
+# GHDL 4.1.0 (Ubuntu 4.1.0+dfsg-0ubuntu2.1) [Dunoon edition]
+ghdl --version | head -1
+# Verilator 5.020 2024-01-01 rev (Debian 5.020-1)
+verilator --version
+# synth [FILES... -e] UNIT [ARCH]   (synthesis is built in)
+ghdl help synth | head -1
 ```
 
 The `ghdl` package is `ghdl-mcode`, which has `--synth` built in (no yosys
@@ -158,7 +167,8 @@ installs.
 ### Run
 
 ```sh
-SIM=verilator bash sim/host_bridge/run.sh all            # 42 runs
+# 42 runs
+SIM=verilator bash sim/host_bridge/run.sh all
 SIM=verilator bash sim/host_bridge/run.sh mutant
 SIM=verilator bash sim/host_bridge/run.sh irqmut
 SIM=verilator bash sim/host_bridge/run.sh dhry
@@ -519,16 +529,24 @@ firmware that traps in a constructor: the trap path's teeth.
 ### Run (fresh Ubuntu 24.04, bash or zsh, from the repository root)
 
 ```sh
-sudo apt install make gcc python3 mtools dosfstools fdisk ghdl verilator ccache
-bash tools/riscv/fetch-xpack.sh          # RISC-V toolchain into ~/opt
-bash tools/riscv/check-toolchain.sh      # must pass
-make -C fw/ctrl_rv                       # -> fw/ctrl_rv/build/RV32OSDA.BIN
-SIM=verilator RUNTAG=fwv  bash sim/host_bridge/run.sh fwboot        # ~6 min
-SIM=verilator RUNTAG=fwvt bash sim/host_bridge/run.sh fwboot_trap   # ~3 min
-SIM=verilator RUNTAG=fwvc bash sim/host_bridge/run.sh fwboot_cfg    # ~6 min (Firmware boot with an 832 config file)
+sudo apt install build-essential curl git python3 mtools dosfstools fdisk ghdl verilator ccache
+# RISC-V toolchain into ~/opt
+bash tools/riscv/fetch-xpack.sh
+# must pass
+bash tools/riscv/check-toolchain.sh
+# -> fw/ctrl_rv/build/RV32OSDA.BIN
+make -C fw/ctrl_rv
+# ~6 min
+SIM=verilator RUNTAG=fwv  bash sim/host_bridge/run.sh fwboot
+# ~3 min
+SIM=verilator RUNTAG=fwvt bash sim/host_bridge/run.sh fwboot_trap
+# ~6 min (Firmware boot with an 832 config file)
+SIM=verilator RUNTAG=fwvc bash sim/host_bridge/run.sh fwboot_cfg
 # the xsim reference (Vivado 2023.2 and the libtinfo shim, see Prerequisites):
-RUNTAG=fwx bash sim/host_bridge/run.sh fwboot                       # ~27 min
-bash sim/host_bridge/run.sh compare fwx fwv                         # every line SAME
+# ~27 min
+RUNTAG=fwx bash sim/host_bridge/run.sh fwboot
+# every line SAME
+bash sim/host_bridge/run.sh compare fwx fwv
 ```
 
 Do not run `make -C fw/ctrl_rv` between the two `fwboot` runs: the
@@ -536,7 +554,10 @@ firmware's `version.h` has the build minute in it, so a rebuild changes
 the image (and the OSD text in `spi.txt`). Another image on the same card
 recipe: `FW=<path to an RV32OSDA.BIN>` (relative to the current
 directory), e.g. `FW=/tmp/b/RV32OSDA.BIN bash sim/host_bridge/run.sh
-fwboot`. `FWBOOT_TIMEOUT=<clk_114 cycles>` overrides the run length
+fwboot`. `FW=` is read by `fwboot` (and `fwboot_cfg`, whose card is the
+same recipe); `fwboot_trap` ignores it: it relinks the firmware from the
+tree's sources plus `smoke_trap.o` into its run directory, so a `FW=` image
+is never the one that runs there. `FWBOOT_TIMEOUT=<clk_114 cycles>` overrides the run length
 (defaults: `fwboot` 176,400,000, 1.5 x the 20th `KEYQ` frame at 117,557,674,
 measured 2026-10-18 on Verilator with `DRIVESND.BIN` on the card (its load
 takes about 39 M cycles; without it the frame was at 79,672,738);
@@ -550,7 +571,7 @@ from the wall time; the firmware's size and hash change with every build):
 
 ```
 boot ROM: fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd unmodified (= git HEAD), sha256 7fc4ae53fed88cb3
-firmware: .../fw/ctrl_rv/build/RV32OSDA.BIN, 92436 bytes, sha256 1776e715ab0eb68d
+firmware: .../fw/ctrl_rv/build/RV32OSDA.BIN, 92436 bytes (92,596 since Task 18), sha256 1776e715ab0eb68d
 === BOOT first read of 0x2000 at cycle 43039511, irefill 95 dread 99400 dwrite 125429 so far
 === cycle limit 176400000 reached, no DONE
 === HW accesses 2274912, stale acks 0, X 0, SDRAM reads 251588 writes 731656, main done 79381, cycles 176400178
@@ -1032,8 +1053,10 @@ per-iteration expectation catches it.
 To run the test at the gate settings:
 
 ```sh
-RUNTAG=irqctl bash sim/host_bridge/run.sh t_irqctl                 # SLAT=8 EXTRA_WS=0
-RUNTAG=irqctl3 EXTRA_WS=3 bash sim/host_bridge/run.sh t_irqctl     # EXTRA_WS=3
+# SLAT=8 EXTRA_WS=0
+RUNTAG=irqctl bash sim/host_bridge/run.sh t_irqctl
+# EXTRA_WS=3
+RUNTAG=irqctl3 EXTRA_WS=3 bash sim/host_bridge/run.sh t_irqctl
 RUNTAG=irqmut bash sim/host_bridge/run.sh irqmut
 ```
 

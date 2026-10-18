@@ -11,8 +11,23 @@ The commands work in bash and zsh, from the repository root:
 
 ```sh
 sudo apt install build-essential gcc-multilib python3 git mtools dosfstools fdisk
-git submodule update --init EightThirtyTwo      # lib832: the 832 printf reference
+git submodule update --init EightThirtyTwo
 make -C fw/ctrl_rv/test
+```
+
+The submodule is lib832, the 832's printf and the format-parity reference
+(`small_printf.c`). Where it cannot be initialised (no network), or when a
+checkout of EightThirtyTwo exists elsewhere, leave the `git submodule` line
+out and name the lib832 directory:
+
+```sh
+make -C fw/ctrl_rv/test LIB832=/path/to/EightThirtyTwo/lib832
+```
+
+The mutant check (every test must go red on its mutants):
+
+```sh
+make -C fw/ctrl_rv/test mutants
 ```
 
 * `build-essential` brings `objcopy` (binutils), which renames the symbols of `fdd_test`'s 832 `fdd.c`.
@@ -51,6 +66,29 @@ make -C fw/ctrl_rv/test
 Output goes to `fw/ctrl_rv/test/out/` and `mut/` (both ignored by git);
 `make -C fw/ctrl_rv/test clean` removes them.
 
+## Writing a test
+
+* **A timeout test must assert `mock_timer_reads()`.** The mock advances the
+  TIMER on every read (`mock_timer_step()`, default 1) so that a
+  `CheckTimer()` loop always ends. A loop whose bound is far too long ends
+  all the same: the test passes, silently. So a test of a timeout checks the
+  bound itself: the bytes in the SPI trace and `mock_timer_reads()` inside a
+  window (`mmc_test` does this for the five `SD_TIMEOUT` loops: 173..174 wait
+  bytes, 174..175 reads). A bare "the call failed" proves nothing.
+* **A register that has no `-DHOSTTEST` hook crashes the test.** Hooked are
+  `SPI`/`RDSPI`, the chip selects, `SPI_slow`/`SPI_fast`, `TIMER`,
+  `PLATFORM`, `AUDIO`, `RS232` and `AUDIO_BUFFER` (the `HOSTTEST` block at
+  the end of `fw/ctrl_rv/hardware.h`). Every other register macro still
+  dereferences its real address (`0xFFFFFFxx`, or `0xDEExxx`), which is not
+  mapped on the host: a test that reaches the keyboard (`HW_KEYBOARD`),
+  Akiko, the RTC, I2C, `VIDEOSCALE`, `FPGA_TEMP_RAW`, the interrupt
+  controller (`GetInterrupts`, `EnableInterrupts`, ...) or `RECONFIGURE` dies
+  with SIGSEGV. Such a test needs a new hook: a `HOSTTEST` macro or function
+  in `hardware.h` (the target build drops the block, so the image stays the
+  same bytes), a model in `mock_hw.c`/`mock_hw.h`, and a mutant for it.
+* **Every new test has a mutant** (`mutants.sh`, below) and a golden that does
+  not come from the code under test.
+
 ## Targets
 
 | Target | What |
@@ -78,12 +116,32 @@ built `-std=gnu17 -m32 -funsigned-char`, like the 832 firmware.
 | `fmt` | format strings of the firmware: ILP32 == LP64, `fmtcheck.py` model, the 832-versus-RV differences are exactly `gold/fmt_diff_expected.txt` |
 | `swap_test` | `../swap.h` and `../swap.c`: `le16/le32/be16/be32` by the bytes they leave in memory (true on any host) and by value on this LE host, `rd_le16/rd_le32/rd_be16/rd_be32` and `wr_be16/wr_be32` at offsets 0..3 of an aligned buffer (a pointer cast would be a misaligned access there, which UBSan stops), `SwapBB/SwapBBBB/SwapWW` without sign extension on LP64 |
 | `fat_test` | the real `fat.c` over the real `mmc.c` on the card model, once per image (below): `FindDrive()` (FAT type, partition start and size against the MBR bytes, cluster size), every directory through `ScanDirectory` (names, sizes, start clusters, long names) against `mdir -/ -a` + `mshowfat` (`gold/fatlist.py`), `FileOpen` + `FileRead`/`FileNextSector`, `FileSeek` and `FileReadEx` of a 300 KB file fragmented over a deleted file's clusters, a subdirectory walk with long names (`FindDirectory`, `ChangeDirectory`, `FileOpen` by long name, `ValidateDirectory`, `FindDirectoryByCluster`), `HIGH.BIN` (on FAT32 above cluster 65535: `HighCluster`), `FileOpen` by long name of a file in the second cluster of a two-cluster directory (`GetFATLink`), a name that does not exist, and `FileCreate` + 3 x `FileWrite` + `UpdateEntry` of a 3-sector file (on FAT32 above cluster 65535), read back through `fat.c`, its raw directory entry (create/access date, create time, start cluster, `HighCluster`) against the FAT layout, then `fsck.fat -n` of the written image, `mtype` of the file and `mdir` of its modify date and time (`fat_check.sh`) |
-| `config_test` | the config file's byte order (Task 11; `config_test.c`, `config_check.sh`): `gold/mkcfg832.py` writes 832 (big-endian) files from a field table that follows `config.h` (`struct.pack`, independent of the C code): the defaults, every field non-zero and distinct, versions 2 and 3, a 208-byte version 3 file, the `fwboot_cfg` file, and five corrupt ones (id, version 5, version 0, 155 and 213 bytes); `cfgconv` (built here with the sanitizers, native and `-m32`): `--check` == the generator's text, `--to-rv`, then `--check` of the result the same fields, `--to-832` back to the same bytes, the refusals (corrupt, already in the target order, the output is the input by name, `./` spelling or hard link, nothing written); `cfg_order` of every case, every field of each `--to-rv` result through the firmware's `configTYPE` against the table, `cfg_swap` == `cfgconv`; `LoadConfiguration`/`ConfigurationExists` of the real `config.c` over `fat.c` + `mmc.c` on the card model, on `mkcard.sh` images: (a) only `MINMGAR.CFG`, (b) only 832 files (slots 0, 1, 2: converted, the RV files appear and equal `cfgconv --to-rv` resp. the version-2 rules, the conversion line on the UART; every byte the run changed lies in the new files' entries, FAT entries and clusters, the 832 files' entries and clusters are unchanged byte for byte; a second load converts nothing and writes nothing), (c) an 832 file as `MINMGAR.CFG` (rejected, "Wrong configuration file format!" then "(832 byte order)", the defaults, nothing written), (d) both (the RV file wins), (e) an RV file as `MINMGAA.CFG` (not converted), no file (the defaults == the generator's); the card after (b) by `mtools` (`MINMGAR.CFG` == `cfgconv --to-rv MINMGAA.CFG`, the 832 files unchanged) and `fsck.fat -n`; `CFG832_DIR` (above) |
+| `config_test` | the config file's byte order (Task 11; `config_test.c`, `config_check.sh`): the generated 832 files, `cfgconv`, `cfg_order`/`cfg_swap`, and `LoadConfiguration`/`ConfigurationExists` on card images; the cases are the table "`config_test` cases" below |
 | `hdd_test` | the hard disk emulation (Task 12; `hdd_test.c`): the real `hdd.c` over the real `fat.c` + `mmc.c` on the card model, driven through `HandleHDD()` by a mock Gayle on the FPGA chip select (the status byte of each frame: `CMD_IDECMD` / `CMD_IDEDAT`; `CMD_IDE_REGS_RD`/`_WR`, `_STATUS_WR`, `_DATA_WR`/`_RD`; a 16-sector FIFO: in pio in a poll that finds data answers busy and the "Amiga" reads it all, one chunk, the next poll answers drained; in pio out every other poll finds a sector written). `gold/rdb.py` writes the expected RDSK and PART blocks (big-endian, from the field offsets of `devices/hardblocks.h`, checksum over the finished block) for a 2 MB, a 2 GB and an odd (20001 blocks) hardfile without RDB, with the geometry by WinUAE's rule, and three HDF files (`WORK.HDF` 4 MB with its own RDB, Flags 0x17; `SYNTH.HDF`; `ODD.HDF`) that the Makefile puts on a 32 MB `mkcard.sh` card; `gold/identify.py` the IDENTIFY DEVICE stream (word values low byte first, ATA strings first character in bits 15:8 = the 832's `memcpy` order) for `WORK.HDF` (long name, 8.3 name, SYNTHRDB, both), an odd-length and a 16-character long name, a 2 GB SYNTHRDB and the SD card (whole, partition 3). Checks: `hdf[]` set up as `OpenHardfile` does (geometry against `rdb.py`), FakeRDB's blocks byte for byte on units 0 and 1, and the real `OpenHardfile` on the card's files; IDENTIFY's 512 bytes; the RDB patch of `WORK.HDF`'s own block 0 (unit 0: Flags 0x12, checksum valid; unit 1: as it is); READ SECTORS / READ MULTIPLE (after SET MULTIPLE MODE 3, 4, 16) and WRITE SECTORS / WRITE MULTIPLE (2, 16): the task file -> CHS -> LBA, the task file written back (the last sector's CHS), sector count 0 = 256, the chunks (`sectors_per_block`, never more than the FIFO holds), the status writes, every block against the HDF file (reads: the data frames and the direct-mode transfers of the trace, in order) or on the card (writes: every other card byte unchanged, the read back after a write), READ MULTIPLE ranges that cross from the synthesised cylinder into the file inside a chunk (`hdd.c:536`, Task 4's parenthesis), a WRITE MULTIPLE over that boundary (the fake blocks dropped, `ERROR_HDD`) |
 | `fdd_test` | the floppy emulation (Task 13; `fdd_test.c`): the RV `fdd.c` and the 832's `fw/ctrl_832/fdd.c` (copied unchanged into `out/fdd/`, built `-std=gnu17 -funsigned-char` with the RV tree's headers, its globals renamed `<name>_832` by `objcopy`) run the same scenarios on the same mock, from `HandleFDD()`. `gold/mfm.py` (an Amiga MFM track encoder written from the track format: sync 0x4489, header info / label / data split into odd and even bits, header and data checksums as the XOR of the MFM longs AND 0x55555555; its header lists the spec facts and the two Minimig choices it takes as parameters: the 12668-byte track and the read stream's clock bits) writes an LBA-tagged ADF, the read stream of every track, write streams with real MFM clock bits and the ADFs after them. ReadTrack, behind a mock `paula_floppy` that answers the six status bytes of each frame and asks (`CMD_RDTRK`) for a number of frames: the bytes after the status bytes of every FPGA frame (`SendSector`, `SendGap`: the plan's `SectorToFpga`/`SectorGapToFpga`) == `mfm.py`, for each source, and the RV trace == the 832 trace, for track 0 side 0 and track 79 side 1 (`gold/mfm_c00_s0.hex`, `gold/mfm_c79_s1.hex`, committed for Phase 4's L3 data check; `mfm.py` must reproduce them, `cmp`), then every track 0..159 (track/side arithmetic, the cluster cache), a read that stops after 4 sectors and goes on at sector 4, a track change in the middle, the Copy Lock workaround (`fdd.c:243`: the mock reports DSKSYNC 0x8914, 0xA144, 0x0000 in its status bytes 2-3, the firmware must send 0x4489) and a sync it passes through (0x4891), DEBUG on (UART RV == 832). WriteTrack (`FindSync`/`GetHeader`/`GetData`) behind a mock write FIFO (2048 words; status `{trackwr}` and `{dmaen & dsklen[14], fifo_cnt}` as `paula_floppy`'s `wr_fifo_status`; the "Amiga" adds 2048, 300 or 7 words per poll): three cases (track 159 whole with 3 new sectors, track 1 sectors 5, 2, 9, track 80 whole from sector 6), the ADF afterwards == `mfm.py`'s (only the written sectors changed), the whole stream read, never past the FIFO count; a write-protected disk; a bad header and a bad data checksum (that sector dropped, `FatalError` 26 / 29). The file layer is a direct ADF mock with FAT semantics (4-sector clusters in a scattered chain; `FileRead`/`FileWrite` address through `file.cluster` and fail when it disagrees with `file.sector`). Also `UpdateDriveStatus` and `HandleFDD`'s drive sounds. Make also checks that every `SPIN` in `fdd.c` is commented out, as many as in the 832's (`out/fdd/spin.ok`) |
 | `mmc_test` | the real `mmc.c` on the card model, over a card image it writes itself (byte i of sector n = (37 n + 11 i + (n >> 8)) mod 256): `MMC_Init`'s card commands against `gold/mmc_init_cmds.txt` (the SD model's `+SD_LOG=1` log of the L2 `boot` run, the boot ROM's same protocol: CMD0, CMD8, three CMD55/ACMD41, CMD58) and its SPEED writes (slow before CMD0, fast after CMD58, no other); `MMC_Read` with token delay 0, 4, 200 bytes, `MMC_ReadMultiple` (+ CMD12) with 4 and 200, `MMC_Write` with busy 8 and 2000 bytes, `MMC_GetCapacity` (CMD9, delay 200): data against the image, every frame exactly as long as the protocol says; the five `SD_TIMEOUT` bounds (CMD17/CMD9/CMD18 token, CMD24/CMD12 busy) on a card that never answers: failure, the message, 173..174 wait bytes in the trace and 174..175 TIMER reads (the timer advances once per byte of the loop); `MMC_Read(lba, NULL)` (direct mode) against `gold/dmode.txt` (from `gold/dmode.py`, the SD protocol with an independent CRC7; also the reference trace for Phase 4), written to `out/mmc_<64\|32>_dmode.txt`; the model's CMD55, CMD0, CMD41 = plain CMD41 |
 | `drivesounds_test` | the drive sounds (Task 14; `drivesounds_test.c`): the real `drivesounds.c` (with `audio.c`) loads `sw/mkdrivesounds/drivesnd.bin` and `SYNTH.BIN` through `rafile.c` + `fat.c` + `mmc.c` on the card model (an 8 MB `mkcard.sh` card in `out/ds/`) into the mock's RAM in front of `AUDIO_BUFFER`, where they land as on the target (`DRIVESND.BIN` at 2 mod 4, `SYNTH.BIN` at 0 mod 8), then runs two op lists with the TIMER standing still (step 0, time moves by the ops): events queued (`drivesounds_queueevent`: motor start and stop, steps, insert, eject, HDD steps), `drivesounds_fill()`, the floppy sounds switched off and on, the AUDIO read value (the Amiga owns the ring), `cda_busy()` (the test's stub); the real file's sequence starts at TIMER 65450 (the wrap), renders up to the 127-tick limit, three voices and a fourth switched off, the chains (start -> loop -> loop, loop -> stop), a motor start that cancels a stop, a dropped fourth HDD step, silence until the player stops. `gold/drivesounds.py` computes the 832's ring for the same ops from the file format (big-endian header and samples, as `mkdrivesounds.c` writes them) and the 832's render rules (stated in its header: sum, swap, `* 0x10001`, big-endian store), and asserts the coverage of each case and that `pickstep` never depends on its uninitialised `count`. Checks: the load's return value and UART lines (`Audio file - length`, each `Sound <id> ... length <size>`), and after every fill its return value, AUDIO, and the 64 KB ring byte for byte (`ring_<case>.bin`) |
 | `boot_test` | the Amiga-facing words of `boot.c`, `main.c` and `hexdump.c` (Task 14; `boot_test.c`): `BootUploadCopper()` without a `COPPER_FILE` writes the default copper list as big-endian words (`00 E0 00 08 00 E2 ...`) at `COPPER_ADDRESS ^ HOSTMAP_ADDR` -- the test maps that page at its own address (`mmap` `MAP_FIXED_NOREPLACE`) and checks that nothing else in it changed; with a `COPPER_FILE` (stubbed `RAOpen`/`RARead`) the file's bytes. `CheckSum` (cut out of `main.c` by `sed` into `out/checksum.inc`: `main.c` holds `main()`) of a 512-byte block = its big-endian word sum (computed by python3, in the comment), at an aligned and an odd address; `hexdump()` prints the 832's (big-endian) words, at an aligned and an odd address |
+
+### `config_test` cases
+
+`gold/mkcfg832.py` writes 832 (big-endian) config files from a field table
+that follows `config.h` (`struct.pack`, independent of the C code); the card
+images come from `tools/sim/mkcard.sh`.
+
+| Part | What is checked |
+|---|---|
+| Generated files | the defaults, every field non-zero and distinct, versions 2 and 3, a 208-byte version 3 file, the `fwboot_cfg` file (`l2`), and five corrupt ones (id, version 5, version 0, 155 and 213 bytes) |
+| `cfgconv` (built here with the sanitizers, native and `-m32`) | `--check` == the generator's text; `--to-rv`, then `--check` of the result shows the same fields; `--to-832` gives back the same bytes |
+| `cfgconv` refusals | corrupt input, already in the target order, the output is the input (by name, `./` spelling or hard link): exit 1 and nothing written |
+| `cfg_order` / `cfg_swap` | `cfg_order` of every case; every field of each `--to-rv` result read through the firmware's `configTYPE` against the table; `cfg_swap` == `cfgconv` |
+| Card (a) | only `MINMGAR.CFG`: loaded as it is |
+| Card (b) | only 832 files (slots 0, 1, 2): converted, the RV files appear and equal `cfgconv --to-rv` (the version-2 rules for old files), the conversion line is on the UART; every byte the run changed lies in the new files' entries, FAT entries and clusters (the 832 files' entries and clusters are unchanged byte for byte); a second load converts nothing and writes nothing |
+| Card (c) | an 832 file as `MINMGAR.CFG`: rejected ("Wrong configuration file format!", then "(832 byte order)"), the defaults, nothing written |
+| Card (d) | both files: the RV file wins |
+| Card (e) | an RV file as `MINMGAA.CFG`: not converted; no file at all: the defaults == the generator's |
+| After card (b) | by `mtools`: `MINMGAR.CFG` == `cfgconv --to-rv MINMGAA.CFG`, the 832 files unchanged; `fsck.fat -n` clean |
+| `CFG832_DIR` | real 832 files (see Setup): the same round trip as the generated cases |
 
 ### The `fat_test` images
 

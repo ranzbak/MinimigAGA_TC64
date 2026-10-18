@@ -42,34 +42,56 @@ bytes, the end of `hdfdir[3]`.
 ## Build (fresh Ubuntu 24.04, bash or zsh, from the repository root)
 
 ```sh
-sudo apt install build-essential mtools fdisk
-make -C fw/ctrl_rv/tools/cfgconv              # -> fw/ctrl_rv/tools/cfgconv/cfgconv
-fw/ctrl_rv/tools/cfgconv/cfgconv --check fw/ctrl_rv/tools/cfgconv/README.md   # refused: not a config file
+sudo apt install build-essential python3 mtools dosfstools fdisk
+make -C fw/ctrl_rv/tools/cfgconv
+fw/ctrl_rv/tools/cfgconv/cfgconv --check fw/ctrl_rv/tools/cfgconv/README.md || echo "refused, exit $?"
 ```
+
+The binary is `fw/ctrl_rv/tools/cfgconv/cfgconv`; the last line shows a
+refusal (this file is not a config file: exit 1, "refused, exit 1").
 
 No RISC-V toolchain is needed. `make -C fw/ctrl_rv/tools/cfgconv B=<dir>`
 puts the binary into `<dir>`.
 
 ## Examples
 
-The commands work in bash and zsh. `C` is the binary built above.
+The commands work in bash and zsh, in one shell session (the variables
+`C`, `off` carry from block to block), from the repository root for the
+first block. `C` is the binary built above.
 
 ### A card image file
 
 `card.img` is a raw image of the whole SD card (e.g. `sudo dd
 if=/dev/sdX of=card.img bs=1M status=progress`, or one made by
-`tools/sim/mkcard.sh`). mtools reaches the FAT partition at its byte offset:
+`tools/sim/mkcard.sh`). To try the recipe without a card, make an image with
+an 832 config file on it (`mkcfg832.py` writes made-up 832 files) in a
+scratch directory and work there:
 
 ```sh
-C=$PWD/fw/ctrl_rv/tools/cfgconv/cfgconv
+C="$PWD/fw/ctrl_rv/tools/cfgconv/cfgconv"
+mkdir -p build/cfgdemo
+python3 -I fw/ctrl_rv/test/gold/mkcfg832.py build/cfgdemo
+cp build/cfgdemo/defaults.cfg build/cfgdemo/MINMGAA.CFG
+bash tools/sim/mkcard.sh build/cfgdemo/card.img 16 build/cfgdemo/MINMGAA.CFG
+cd build/cfgdemo
+```
+
+mtools reaches the FAT partition at its byte offset:
+
+```sh
 export MTOOLS_SKIP_CHECK=1
 start=$(sfdisk -d card.img | sed -n 's/^.*start= *\([0-9]*\),.*$/\1/p' | head -n 1)
 off=$((start * 512))
-mdir -i "card.img@@$off" ::                              # the MINMGAA*.CFG / MINMGAR*.CFG files
-mcopy -n -i "card.img@@$off" ::MINMGAA.CFG ./MINMGAA.CFG  # copy the 832 file off the card
-"$C" --check MINMGAA.CFG                                  # order = 832, then every field
-"$C" --to-rv MINMGAA.CFG MINMGAR.CFG                      # convert
-mcopy -o -i "card.img@@$off" MINMGAR.CFG ::MINMGAR.CFG    # copy the RISC-V file back (-o: overwrite)
+# the MINMGAA*.CFG / MINMGAR*.CFG files
+mdir -i "card.img@@$off" ::
+# copy the 832 file off the card
+mcopy -n -i "card.img@@$off" ::MINMGAA.CFG ./MINMGAA.CFG
+# order = 832, then every field
+"$C" --check MINMGAA.CFG
+# convert
+"$C" --to-rv MINMGAA.CFG MINMGAR.CFG
+# copy the RISC-V file back (-o: overwrite)
+mcopy -o -i "card.img@@$off" MINMGAR.CFG ::MINMGAR.CFG
 ```
 
 Write the image back to the card afterwards (`sudo dd if=card.img
@@ -81,7 +103,6 @@ With the card's FAT partition at `/dev/sdX1` (check with `lsblk`; not
 mounted, or unmount it first with `udisksctl unmount -b /dev/sdX1`):
 
 ```sh
-C=$PWD/fw/ctrl_rv/tools/cfgconv/cfgconv
 sudo env MTOOLS_SKIP_CHECK=1 mcopy -n -i /dev/sdX1 ::MINMGAA.CFG ./MINMGAA.CFG
 sudo chown "$USER" MINMGAA.CFG
 "$C" --to-rv MINMGAA.CFG MINMGAR.CFG
@@ -94,10 +115,14 @@ plain `cp` as well: `"$C" --to-rv "/media/$USER/MINIMIG/MINMGAA.CFG"
 
 ### RISC-V settings back to the 832 firmware
 
+For the default slot (slot `n` is `MINMGAR<n>.CFG` and `MINMGAA<n>.CFG`
+the same way). The output replaces an existing 832 file of that name, so keep
+a copy of it if the 832 settings matter:
+
 ```sh
-mcopy -n -i "card.img@@$off" ::MINMGAR1.CFG ./MINMGAR1.CFG     # slot 1
-"$C" --to-832 MINMGAR1.CFG MINMGAA1.CFG
-mcopy -o -i "card.img@@$off" MINMGAA1.CFG ::MINMGAA1.CFG
+mcopy -n -i "card.img@@$off" ::MINMGAR.CFG ./MINMGAR.CFG
+"$C" --to-832 MINMGAR.CFG MINMGAA.CFG
+mcopy -o -i "card.img@@$off" MINMGAA.CFG ::MINMGAA.CFG
 ```
 
 ## Tests
@@ -110,13 +135,18 @@ AddressSanitizer and UBSan (native and `-m32`) and checks it against
 `--check` of every case, the `--to-rv` / `--to-832` round trip byte for byte,
 every refusal (`fw/ctrl_rv/test/README.md`, `config_test`). There is no
 config file in the repository; to run the same round trip on real 832 files,
-e.g. copies from an SD card, put them in a directory and name it:
+e.g. copies from an SD card, put them in a directory and name it. The
+examples above leave the shell in `build/cfgdemo` (`card.img` and `off` are
+from there); the first line goes back to the repository root, the `mcopy`
+line takes the default slot's file (add `MINMGAA1.CFG` .. as present):
 
 ```sh
+cd ../..
 mkdir -p ~/cfg832
-mcopy -n -i "card.img@@$off" ::MINMGAA.CFG ~/cfg832/     # and MINMGAA1.CFG .. as present
+mcopy -n -i "build/cfgdemo/card.img@@$off" ::MINMGAA.CFG ~/cfg832/
 make -C fw/ctrl_rv/test run-config_test CFG832_DIR="$HOME/cfg832"
 ```
+
 
 Each file there must convert, convert back to the same bytes, and show the
 same fields in both `--check` outputs.

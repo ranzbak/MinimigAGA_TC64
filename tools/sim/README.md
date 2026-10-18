@@ -6,19 +6,25 @@ co-simulation). Two parts: `mkcard.sh` makes a raw FAT16 card image,
 
 ## Prerequisites
 
-```
-sudo apt install mtools dosfstools fdisk python3      # mformat/mcopy, mkfs.fat, sfdisk
+From a fresh Ubuntu 24.04 machine (the commands work in bash and zsh, from
+the repository root). `mtools` is `mformat`/`mcopy`, `dosfstools` is
+`mkfs.fat`, `fdisk` is `sfdisk`; `iverilog` (12.0) is for the bench:
+
+```sh
+sudo apt install mtools dosfstools fdisk python3 iverilog
 ```
 
-iverilog 12 (`/usr/local/bin/iverilog`) for the bench; Vivado 2023.2 `xvlog`
-only if you want the xsim check. No root and no loop devices are needed:
+The bench script looks for Icarus Verilog at `/usr/local/bin/iverilog`
+(`IVERILOG=`, `VVP=` override it): with the Ubuntu package write
+`IVERILOG=/usr/bin/iverilog VVP=/usr/bin/vvp` in front of the command (see
+"Bench"). Vivado 2023.2 `xvlog` only if you want the xsim check. No root and no loop devices are needed:
 `sfdisk` partitions the image file, `mkfs.fat --offset` formats inside it,
 `mcopy -i img@@offset` copies the files.
 
 ## mkcard.sh
 
 ```
-tools/sim/mkcard.sh <img> <size_MB> [file...]
+bash tools/sim/mkcard.sh <img> <size_MB> [file...]
 ```
 
 Creates `<img>` (size_MB * 1 MiB, at least 5): MBR (signature 55AA), one
@@ -41,12 +47,32 @@ the volume ID and label time, file times from `SOURCE_DATE_EPOCH`, default
 own card (e.g. `sim/host_bridge/run.sh fwboot` under xsim and Verilator)
 then see the same card, and `run.sh compare` can diff their SPI logs.
 
+Examples (the files must exist; `FW.BIN` and `KICK.ROM` stand for any two
+files with 8.3 names; the image has the partition at LBA 2048, byte offset
+1048576):
+
+```sh
+mkdir -p build/card_demo
+head -c 4096 /dev/urandom > build/card_demo/FW.BIN
+head -c 4096 /dev/urandom > build/card_demo/KICK.ROM
+bash tools/sim/mkcard.sh build/card_demo/card.img 8 build/card_demo/FW.BIN build/card_demo/KICK.ROM
+bash tools/sim/mkcard.sh build/card_demo/empty.img 64
+MTOOLS_SKIP_CHECK=1 mdir -i build/card_demo/card.img@@1048576 ::
+MTOOLS_SKIP_CHECK=1 mcopy -i build/card_demo/card.img@@1048576 ::KICK.ROM build/card_demo/out.rom
+cmp build/card_demo/KICK.ROM build/card_demo/out.rom
 ```
-tools/sim/mkcard.sh /tmp/card.img 8 FW.BIN KICK.ROM       # 8 MB card, two files
-tools/sim/mkcard.sh /tmp/empty.img 64                     # empty 64 MB card
-MTOOLS_SKIP_CHECK=1 mdir -i /tmp/card.img@@1048576 ::     # look inside (2048*512)
-MTOOLS_SKIP_CHECK=1 mcopy -i /tmp/card.img@@1048576 ::KICK.ROM out.rom
+
+(`build/` is the repository root's ignored build directory.) The guards, as
+exit status 2 with nothing written:
+
+```sh
+bash tools/sim/mkcard.sh build/card_demo/big.img 4096 || echo "refused, exit $?"
+bash tools/sim/mkcard.sh build/card_demo/low.img 8 build/card_demo/out.rom || echo "refused, exit $?"
+ls build/card_demo
 ```
+
+The first is a size above 2048 MB, the second a file whose name is not an
+upper-case 8.3 name (`out.rom`); `big.img` and `low.img` do not appear.
 
 ## sd_spi_model
 
@@ -132,9 +158,12 @@ firmware's polling loops accept any n from 0 to 8.)
 
 ### Bench
 
-```
-bash sim/common/run_sd_model.sh [+SD_TOKEN_DLY=200 +SD_NCR=8 ...]
-RUNTAG=a bash sim/common/run_sd_model.sh +SD_TOKEN_DLY=0     # run dir run_a
+Any plusarg of the table may follow (`+SD_TOKEN_DLY=200 +SD_NCR=8`); the run
+directory is `run_${RUNTAG}`:
+
+```sh
+IVERILOG=/usr/bin/iverilog VVP=/usr/bin/vvp bash sim/common/run_sd_model.sh +SD_TOKEN_DLY=200 +SD_NCR=8
+IVERILOG=/usr/bin/iverilog VVP=/usr/bin/vvp RUNTAG=a bash sim/common/run_sd_model.sh +SD_TOKEN_DLY=0
 ```
 
 It builds an 8 MB card image with `mkcard.sh` holding a 4 KB pseudo-random
@@ -152,10 +181,14 @@ the file is stored contiguously, true for the freshly made `mkcard.sh` image
 
 xsim check (compile and run, Vivado 2023.2):
 
-```
-export LD_LIBRARY_PATH=$HOME/lib/tinfo5:$LD_LIBRARY_PATH LC_ALL=C
-cd sim/common/run_wt          # after one run_sd_model.sh
+After one `run_sd_model.sh` (the run directory `sim/common/run_wt`), and the
+libtinfo shim of `sim/host_bridge/README.md` ("Prerequisites") in
+`~/lib/tinfo5`:
+
+```sh
+export LD_LIBRARY_PATH="$HOME/lib/tinfo5:$LD_LIBRARY_PATH" LC_ALL=C
+cd sim/common/run_wt
 V=/opt/Xilinx/Vivado/2023.2/bin
-$V/xvlog ../sd_spi_model.v ../tb_sd_spi_model.v && $V/xelab -debug off tb_sd_spi_model -s tbs
-$V/xsim tbs -R -testplusarg SD_IMG=$PWD/card.img -testplusarg HEX=$PWD/test4k.hex
+"$V/xvlog" ../sd_spi_model.v ../tb_sd_spi_model.v && "$V/xelab" -debug off tb_sd_spi_model -s tbs
+"$V/xsim" tbs -R -testplusarg SD_IMG="$PWD/card.img" -testplusarg HEX="$PWD/test4k.hex"
 ```

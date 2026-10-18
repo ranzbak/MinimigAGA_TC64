@@ -10,7 +10,15 @@ Task 9's byte-order helpers and the FAT/MBR fields ("Byte order (Task 9)");
 Task 10's TIMER bounds in `mmc.c` ("SD driver timeouts and the TIMER (Task 10)");
 Task 11's config file byte order, file names and `cfgconv` ("Config file byte
 order (Task 11)"); Task 12's hard disk byte order ("Hard disk byte order
-(Task 12)").
+(Task 12)"). Task 19 only completed the READMEs.
+
+Every command block in this file (and in the READMEs it points to) starts
+from a fresh Ubuntu 24.04 machine, from the repository root, and pastes into
+bash and into a stock zsh as it is: no unquoted variable that has to be split
+into words, and a comment sits on a line of its own above the command it
+describes, never behind it (stock zsh takes no `#` comments at the prompt
+without `setopt interactivecomments`: a pasted comment line makes it print
+`zsh: command not found: #` and go on; scripts and bash are not affected).
 
 ## Copy base
 
@@ -71,13 +79,38 @@ those as missing in `fw/ctrl_832`. `interrupts.c`/`interrupts.h` exist only in
 
 ## Building
 
-From a fresh Ubuntu 24.04 machine, from the repository root (works in zsh and
-bash):
+Packages (Ubuntu 24.04; `make` and `g++` come with `build-essential`):
 
 ```sh
-sudo apt install build-essential git python3 xxd
+sudo apt install build-essential gcc-multilib git curl python3 xxd mtools dosfstools fdisk
+```
+
+`gcc-multilib` is for the `-m32` host tests (and the lib832 printf format
+reference, which is a 32-bit program); `curl` is what `fetch-xpack.sh` uses;
+`mtools dosfstools fdisk` make the SD card images of the tests and the
+benches (`tools/sim/mkcard.sh`); `xxd` is for `bootcustominit.h`. For the
+simulations (L1, L2) add `sudo apt install verilator ghdl ccache`, for the
+Clang build `sudo apt install clang lld` (both optional; their sections say
+more).
+
+The RISC-V toolchain is the pinned xPack `riscv-none-elf-gcc` 15.2.0-1,
+installed into `~/opt` with its checksum verified. newlib-nano comes with it:
+there is nothing else to install.
+
+```sh
 bash tools/riscv/fetch-xpack.sh
 bash tools/riscv/check-toolchain.sh
+```
+
+Another install: `RV_GCC_DIR=... RV_PREFIX=...` in front of any `make`
+(`tools/riscv/toolchain.mk`); `tools/riscv/README.md` has the details.
+
+Build, and run the checks (the boot ROM is built first because `check` (g)
+reads its map; `make -C fw/ctrl_boot_rv` rebuilds the committed
+`OSDBoot_rv_ROM.vhd` byte for byte, so git shows no change):
+
+```sh
+make -C fw/ctrl_boot_rv
 make -C fw/ctrl_rv clean all size
 make -C fw/ctrl_rv check
 ```
@@ -88,8 +121,7 @@ binary`, loaded by `fw/ctrl_boot_rv` to 0x2000), `RV32OSDA.elf`, `.map`, `.lst`
 `EXTRA_CFLAGS=...` adds compiler flags for bench variants (empty for the
 shipped image); `EXTRA_OBJS=...` links extra objects after the firmware's
 (empty for the shipped image; `sim/host_bridge/fwboot` links its trap
-constructor `smoke_trap.o` this way, into its own `B=` directory). Another toolchain install: `RV_GCC_DIR=... RV_PREFIX=...`
-(`tools/riscv/toolchain.mk`).
+constructor `smoke_trap.o` this way, into its own `B=` directory).
 
 - **Flags** (Global Constraints, decision 12.12): `$(RV_CFLAGS_FW) -std=gnu23
   --specs=nano.specs -g -I. -Iarch -I$(B) -Wall -Wextra -Werror`; link `$(RV_LDFLAGS_FW)
@@ -114,14 +146,17 @@ constructor `smoke_trap.o` this way, into its own `B=` directory). Another toolc
 
 | | text | data | bss | `.BIN` |
 |---|---|---|---|---|
-| RV32IMC (this tree) | 90,278 | 3,484 | 59,288 | **93,764 B** |
+| RV32IMC, gcc (this tree, Task 18 fix) | 89,112 | 3,484 | 59,292 | **92,596 B** |
+| RV32IMC, clang (`CLANG=1`, "Clang build") | | | | 100,188 B |
 | 832 (`832OSDAD.bin`) | | | | 83,830 B |
 
-Plan estimate 85-95 KB; +11.9 % over the 832. The figure moves by a few bytes
-with the date strings of `version.h` (93,768 B at 21:58). `_end` = 0x275DC
-(< 0x70000, `AUDIO_BUFFER`). Task 9: text 87,882, **91,368 B** (2026-10-18):
-`le16`/`le32` are the identity on RV32, so the `SwapBB`/`SwapBBBB` calls of
-`fat.c` are gone.
+Plan estimate 85-95 KB; the gcc image is +8,766 B (+10.5 %) over the 832's.
+The figure moves by a few bytes with the date strings of `version.h`. `_end` =
+0x27150 (from the map; < 0x70000, `AUDIO_BUFFER`, a linker ASSERT); the boot
+ROM's `_end` is 0x1040 (< 0x1400). Stack high-water mark on `fwboot`: 0x1950
+(1712 B used). History: Task 4 93,764 B, Task 9 91,368 B (`le16`/`le32` are
+the identity on RV32, so the `SwapBB`/`SwapBBBB` calls of `fat.c` are gone),
+Task 14 92,436 B, Task 17 92,588 B, Task 18 92,596 B (`StackFill`, below).
 
 **`make check`** runs every part (`make -k`) and fails if any is red:
 
@@ -162,12 +197,79 @@ and gcc at `-Os` drops the `.init_array` entry of an empty constructor (the
 function itself stays; at `-O0` `akiko.o` has `.init_array.00102`). Nothing
 runs at that slot on either CPU, so the order is the 832's.
 
-## Clang build (Task 18, decision 12.8 gate 1b)
+## On the SD card
+
+The boot ROM (`fw/ctrl_boot_rv`, in the bitstream) looks for `RV32OSDA.BIN`
+in the root directory of the first FAT partition and loads it to 0x2000; the
+832 bitstream's boot ROM looks for `832OSDAD.BIN` in the same place. One card
+serves both bitstreams: copy `fw/ctrl_rv/build/RV32OSDA.BIN` to the card
+root next to `832OSDAD.BIN` (and `KICK.ROM`, `DRIVESND.BIN`, the ADFs and
+hardfiles as before). Names are upper-case 8.3.
+
+With a card that a desktop mounts (the volume name below is only an
+example; `sync` before the card comes out):
+
+<!-- replay-skip: needs a real SD card -->
+```sh
+cp fw/ctrl_rv/build/RV32OSDA.BIN "/media/$USER/MINIMIG/RV32OSDA.BIN"
+sync
+```
+
+Or without mounting, with mtools on the partition (`lsblk` shows it; `sdX1`
+is a placeholder, and the partition must not be mounted):
+
+<!-- replay-skip: needs a real SD card -->
+```sh
+lsblk -o NAME,SIZE,FSTYPE,LABEL,MOUNTPOINT
+sudo env MTOOLS_SKIP_CHECK=1 mcopy -o -i /dev/sdX1 fw/ctrl_rv/build/RV32OSDA.BIN ::RV32OSDA.BIN
+sync
+```
+
+Without a card, the same on a raw card image (what the benches use):
+`tools/sim/mkcard.sh` makes a reproducible FAT16 image (MBR, partition at
+LBA 2048 = byte 1048576) holding the files given, and mtools reaches
+inside:
 
 ```sh
-sudo apt install clang                              # once; plus the toolchain steps under "Building"
-make -C fw/ctrl_boot_rv                             # check (g) reads the boot ROM map
-make -C fw/ctrl_rv CLANG=1 clean all size check     # output build_clang/ (gitignored)
+bash tools/sim/mkcard.sh fw/ctrl_rv/build/card.img 16 fw/ctrl_rv/build/RV32OSDA.BIN
+MTOOLS_SKIP_CHECK=1 mdir -i fw/ctrl_rv/build/card.img@@1048576 ::
+```
+
+## Config files on the card
+
+The firmware keeps its settings in a 212-byte file in the card root:
+`MINMGAR.CFG` (the default slot) and `MINMGAR1.CFG` .. `MINMGAR4.CFG`,
+little-endian ("Config file byte order (Task 11)"). The 832 firmware's
+files are `MINMGAA*.CFG`, big-endian. **First boot:** when a slot has no
+`MINMGAR*` file but has the 832 one, the firmware reads the 832 file,
+converts it in memory, uses it and saves it as the `MINMGAR*` file (boot
+line `Converted 832 configuration MINMGAA.CFG`); the 832 file is never
+written. An 832 file that is put under the RV name is rejected ("Wrong
+configuration file format!", "(832 byte order)") and the defaults are used.
+`tools/cfgconv` converts by hand, ahead of time or back
+(`fw/ctrl_rv/tools/cfgconv/README.md` has the card and image recipes). A
+complete round trip on made-up data (`mkcfg832.py` writes the 832 files the
+host tests use) and onto the card image of the section above:
+
+```sh
+make -C fw/ctrl_rv/tools/cfgconv
+python3 -I fw/ctrl_rv/test/gold/mkcfg832.py fw/ctrl_rv/build/cfg832
+fw/ctrl_rv/tools/cfgconv/cfgconv --check fw/ctrl_rv/build/cfg832/defaults.cfg
+fw/ctrl_rv/tools/cfgconv/cfgconv --to-rv fw/ctrl_rv/build/cfg832/defaults.cfg fw/ctrl_rv/build/MINMGAR.CFG
+fw/ctrl_rv/tools/cfgconv/cfgconv --check fw/ctrl_rv/build/MINMGAR.CFG
+MTOOLS_SKIP_CHECK=1 mcopy -o -i fw/ctrl_rv/build/card.img@@1048576 fw/ctrl_rv/build/MINMGAR.CFG ::MINMGAR.CFG
+MTOOLS_SKIP_CHECK=1 mdir -i fw/ctrl_rv/build/card.img@@1048576 ::
+```
+
+## Clang build (Task 18, decision 12.8 gate 1b)
+
+After the packages and the toolchain steps under "Building" (the boot ROM
+is built there; `check` (g) reads its map), output in `build_clang/`
+(gitignored):
+
+```sh
+sudo apt install clang lld
+make -C fw/ctrl_rv CLANG=1 clean all size check
 ```
 
 A portability check, not a shipping build: gcc stays the image. clang is
@@ -213,20 +315,25 @@ like a UART read. The gcc listing gives the same counts as before. clang folds
 every I/O address into a zero-based access (1340 seen, all `(zero)`), so (b) and
 (c) still check something.
 
-Result: clang image `.text` 96,708 B, `RV32OSDA.BIN` 100,188 B (gcc 92,588 B).
+Result: clang image `.text` 96,708 B, `RV32OSDA.BIN` 100,188 B (gcc 92,596 B).
 `SIM=verilator RUNTAG=p3t18 FW=fw/ctrl_rv/build_clang/RV32OSDA.BIN bash
 sim/host_bridge/run.sh fwboot`: PASS, OSD GAP min 40, STACK low 0x1980 (gcc:
 40, 0x1950).
 
 ## Stack and size budget (Task 17)
 
+The boot ROM map that `check` (g) reads comes from `make -C fw/ctrl_boot_rv`
+(under "Building"). `build_sr` is the sim-only image:
+
 ```sh
-make -C fw/ctrl_boot_rv                  # once: the boot ROM map that `check` (g) reads
 make -C fw/ctrl_rv all stack size check
-make -C fw/ctrl_rv B=build_sr EXTRA_CFLAGS=-DRV_STACK_REPORT      # sim-only image
+make -C fw/ctrl_rv B=build_sr EXTRA_CFLAGS=-DRV_STACK_REPORT
 SIM=verilator RUNTAG=p3t17 bash sim/host_bridge/run.sh fwboot
 SIM=verilator RUNTAG=p3t17s FW=fw/ctrl_rv/build_sr/RV32OSDA.BIN bash sim/host_bridge/run.sh fwboot
 ```
+
+(The first `fwboot` run uses `fw/ctrl_rv/build/RV32OSDA.BIN`, the second the
+sim-only image; about 6 minutes each on Verilator.)
 
 The stack starts at 0x2000 (`__stack_top`) and grows down into the 8 KB boot
 BRAM. `stackcheck.c`: `StackFill()` (first statement of `main()`) paints
@@ -246,13 +353,13 @@ pass of either main loop (the bench card has no kickstart, so the firmware
 sits in the error loop). The bench's `STACK low` monitor ignores full-word
 writes of the pattern, so `StackFill` itself does not count.
 
-Measured (2026-10-18, gcc 15.2.0-1, `-Os`):
+Measured (2026-10-18, gcc 15.2.0-1, `-Os`, after the Task 18 fix):
 
 | | |
 |---|---|
-| `size` text / data / bss | 89,104 / 3,484 / 59,292 |
-| `RV32OSDA.BIN` | 92,588 B (83,830 B for the 832 image: +8,758 B) |
-| `_end` | 0x27148 (< 0x70000, the linker ASSERT) |
+| `size` text / data / bss | 89,112 / 3,484 / 59,292 |
+| `RV32OSDA.BIN` | 92,596 B (83,830 B for the 832 image: +8,766 B) |
+| `_end` | 0x27150 (< 0x70000, the linker ASSERT) |
 | boot ROM `_end` | 0x1040 (< 0x1400) |
 | L2 `fwboot` `STACK low` | 0x1950 (1712 B used); `STACKHW` 0x1950; 0x550 above the 0x1400 floor |
 
@@ -310,13 +417,13 @@ the figure to the width. Each `%s` is bounded by its source:
 
 | Site | `%s` bound |
 |---|---|
-| `fat.c:399`, `424`, `583`, `604` (`name` of `FileOpen`/`FindDirectory`) | 260: a CUE `FILE` name is at most 255 characters (`CUE_LINE_MAX 300`), `fat.h` `long_name[261]` |
+| `fat.c:398`, `423`, `582`, `603` (`name` of `FileOpen`/`FindDirectory`) | 260: a CUE `FILE` name is at most 255 characters (`CUE_LINE_MAX 300`), `fat.h` `long_name[261]` |
 | `menu.c:2968` (`file.long_name`) | 260 |
 | `cdrom.c:291` | `shortname` 11, `cd_msg[24]` 23 |
 | `cdrom.c:305` | `shortname` 11, `cdrom.unit.name` 40 |
-| `fpga.c:125`, `128` | `kick1xfoundstr` 21, `applymemdetectionpatchstr` 46 |
+| `fpga.c:124`, `127` | `kick1xfoundstr` 21, `applymemdetectionpatchstr` 46 |
 | `%.8s`, `%.3s`, `%.11s` | the precision |
-| `boot.c:263` (`printf("%s", str)`, `BootPrintEx`) | 80: the longest literal is 75, `s[40]`, `rtl_ver[45]` |
+| `boot.c:260` (`printf("%s", str)`, `BootPrintEx`) | 80: the longest literal is 75, `s[40]`, `rtl_ver[45]` |
 | `config.c:257` (`printf("%s", text)`, `ConfigMessage`, Task 11) | 40: `Converted 832 configuration MINMGAA4.CFG` (`msg[48]`), `(832 byte order)` 16 |
 
 Per file, `line:bytes`:
@@ -324,19 +431,19 @@ Per file, `line:bytes`:
 | File | Sites | Longest output of each (line:bytes) |
 |---|---|---|
 | `akiko.c` | 2 | 17:32, 19:21 |
-| `boot.c` | 2 | 263:80, 264:1 |
+| `boot.c` | 2 | 260:80, 261:1 |
 | `cdrom.c` | 17 | 291:50, 305:108, 334:17, 416:27, 485:18, 521:34, 684:17, 686:9, 688:19, 689:29, 690:34, 691:19, 692:33, 693:20, 694:5, 696:2, 777:84 |
 | `config.c` | 13 | 65:21, 186:24, 257:40, 258:1, 326:36, 679:30, 680:30, 684:57, 687:14, 688:28, 694:27, 698:19, 701:22 (Task 11's lines) |
-| `drivesounds.c` | 4 | 442:32, 457:50, 475:34, 478:28 |
-| `fat.c` | 39 | 189:28, 193:4, 196:5, 199:5, 202:5, 206:7, 209:2, 296:21, 297:23, 298:22, 299:33, 300:24, 301:23, 302:25, 303:23, 399:274, 424:278, 462:33, 515:32, 535:35, 583:295, 604:283, 783:28, 790:33, 863:11, 1581:59, 1594:31, 1609:26, 1621:32, 1631:49, 1647:55, 1649:54, 1654:38, 1701:38, 1712:45, 1713:30, 1714:24, 1715:26, 1723:39 |
+| `drivesounds.c` | 4 | 455:32, 477:50, 497:34, 500:28 |
+| `fat.c` | 39 | 188:28, 192:4, 195:5, 198:5, 201:5, 205:7, 208:2, 295:21, 296:23, 297:22, 298:33, 299:24, 300:23, 301:25, 302:23, 398:274, 423:278, 461:33, 514:32, 534:35, 582:295, 603:283, 782:28, 789:33, 862:11, 1583:59, 1596:31, 1611:26, 1623:32, 1633:49, 1649:55, 1651:54, 1656:38, 1703:38, 1714:45, 1715:30, 1716:24, 1717:26, 1725:39 |
 | `fdd.c` | 11 | 184:32, 191:12, 222:23, 252:17, 300:2, 303:4, 339:6, 377:29, 433:59, 438:23, 635:13 |
-| `fpga.c` | 6 | 94:25, 95:1, 103:1, 122:2, 125:21, 128:46 |
-| `hdd.c` | 13 | 453:29, 463:30, 745:20, 747:4, 749:9, 750:9, 840:87, 904:22, 905:21, 906:33, 907:37, 908:17, 913:34 |
-| `main.c` | 2 | 262:29, 275:31 |
+| `fpga.c` | 6 | 93:25, 94:1, 102:1, 121:2, 124:21, 127:46 |
+| `hdd.c` | 13 | 471:29, 481:30, 763:20, 765:4, 767:9, 768:9, 861:87, 926:22, 927:21, 928:33, 929:37, 930:17, 935:34 |
+| `main.c` | 2 | 277:29, 290:31 |
 | `menu.c` | 7 | 2928:52, 2968:281, 2970:32, 2972:28, 2973:38, 2974:25, 2975:25 |
-| `mmc.c` | 22 | 80:19, 95:25, 111:24, 116:36, 127:17, 136:29, 154:24, 159:34, 166:18, 173:29, 191:35, 197:25, 219:65, 231:52, 272:45, 285:34, 346:74, 360:61, 410:66, 434:64, 445:57, 518:46 |
+| `mmc.c` | 22 | 87:19, 102:25, 118:24, 123:36, 134:17, 143:29, 161:24, 166:34, 173:18, 180:29, 198:35, 204:25, 229:65, 241:52, 283:45, 296:34, 357:74, 371:61, 422:66, 446:64, 457:57, 532:46 |
 
-Maximum 295 bytes (`fat.c:583`, a `FindDirectory` name of 260 characters; no
+Maximum 295 bytes (`fat.c:582`, a `FindDirectory` name of 260 characters; no
 caller exists, so the real maximum is `menu.c:2968`, 281). 295 + NUL = 296,
 rounded up to a multiple of 64: **`RV_PRINTF_BUF` = 320**.
 
@@ -354,12 +461,13 @@ statement). Verdict: the return-value differences below are not observable.
 ## Format parity (832 versus RV)
 
 `test/gold/formats.txt` is every string literal of `fw/ctrl_rv/*.c` that
-contains a `%` (134 lines, made by
+contains a `%` (135 lines, made by
 `grep -ho '"[^"]*%[^"]*"' fw/ctrl_rv/*.c | LC_ALL=C sort -u`; the Makefile
 checks it is current). Conversions used: `%d %u %x %X %s %ld %lu %lx`, widths
 `%4d %02X %04X %04x %08X %08lX %08lx`, precisions `%.3s %.8s %.11s`; no `%c %p
-%b %ll %h %z`. Two lines are inline-assembly templates (`"rol.w #8,%0\n\t"`,
-`"swap %0\n\t"`) and are not formats. `test/fmt_cases.h` has one or more
+%b %ll %h %z`. Three lines are inline-assembly templates (`"rol.w #8,%0\n\t"`,
+`"swap %0\n\t"`, and since Task 18 `"mv %0, sp"` in `stackcheck.c`) and are
+not formats (`NOT_FORMATS` in `fmtcheck.py`). `test/fmt_cases.h` has one or more
 cases for every line (909 cases: 0, 1, -1, the type's maximum, bit 31 set,
 empty/short/longer-than-precision strings, the longest a call site can pass;
 the first case of a format has the zero/empty values, the last the extremes);
@@ -455,8 +563,8 @@ is verbatim):
 
 | File:line | 832 | RV | Why |
 |---|---|---|---|
-| `akiko.c:17,19`, `config.c:612`, `drivesounds.c:465`, `fat.c:782,789,1649,1651`, `main.c:175`, `menu.c:1595,2663,2665,3042,3044,3046,3048,3050,3052,3054` | `%x`, `%04x`, `%08lx`, `%lx` | `%X`, `%04X`, `%08lX`, `%lX` | `UPPER`: keeps the UART/OSD text identical |
-| `boot.c:258` | `printf(str)` | `printf("%s", str)` | `str` is data (a file name, `rtl_ver`): a `%` in it would be taken for a conversion with garbage arguments, and the two libraries differ on that. Identical for every string without `%` |
+| `akiko.c:17,19`, `config.c:684`, `drivesounds.c:477`, `fat.c:782,789,1649,1651`, `main.c:176`, `menu.c:1595,2663,2665,3042,3044,3046,3048,3050,3052,3054` | `%x`, `%04x`, `%08lx`, `%lx` | `%X`, `%04X`, `%08lX`, `%lX` | `UPPER`: keeps the UART/OSD text identical |
+| `boot.c:260` | `printf(str)` | `printf("%s", str)` | `str` is data (a file name, `rtl_ver`): a `%` in it would be taken for a conversion with garbage arguments, and the two libraries differ on that. Identical for every string without `%` |
 
 ### gcc 15 and gnu23 compile fixes (Task 4)
 
@@ -469,20 +577,20 @@ covered below) plus the source rules of 12.12.
 | File:line | 832 | RV | Why |
 |---|---|---|---|
 | `firmware.h:23-24` | `#define true -1`, `#define false 0` | removed | C23 keywords; audit below (no site observes -1) |
-| `drivesounds.h:14-15` | `void drivesounds_enable();`, `void drivesounds_disable();` | `(int type)` | the definitions take `int`; gcc 15 rejects the calls (`main.c:228`, `menu.c:901,903,1961,1963`: too many arguments) and the conflicting definitions (`drivesounds.c:49,54`) |
-| `menu.c:2987` | `void ShowError(char *message, unsigned char code)` | `void ShowError(void)` | conflicts with `menu.h`'s `ShowError()` (= `(void)` in C23); the only call (`main.c:332`) passes nothing and the body uses neither parameter. `menu.h` stays as written |
-| `fat.c:473` | `int FindDirectoryByCluster(...)` | `unsigned long FindDirectoryByCluster(...)` | conflicts with `fat.h:126` (`unsigned long`), which its one caller (`fat.c:463`, a truth value) sees; same 32-bit value |
-| `config.c:29` | `int CheckSum();` | `int CheckSum(char *adr,int size);` | the definition (`main.c:81`) takes parameters (rule of 12.12); `config.c` calls it only in comments |
+| `drivesounds.h:14-15` | `void drivesounds_enable();`, `void drivesounds_disable();` | `(int type)` | the definitions take `int`; gcc 15 rejects the calls (`main.c:229`, `menu.c:901,903,1961,1963`: too many arguments) and the conflicting definitions (`drivesounds.c:50,55`) |
+| `menu.c:2989` | `void ShowError(char *message, unsigned char code)` | `void ShowError(void)` | conflicts with `menu.h`'s `ShowError()` (= `(void)` in C23); the only call (`main.c:364`) passes nothing and the body uses neither parameter. `menu.h` stays as written |
+| `fat.c:472` | `int FindDirectoryByCluster(...)` | `unsigned long FindDirectoryByCluster(...)` | conflicts with `fat.h:126` (`unsigned long`), which its one caller (`fat.c:462`, a truth value) sees; same 32-bit value |
+| `config.c:30` | `int CheckSum();` | `int CheckSum(char *adr,int size);` | the definition (`main.c:82`) takes parameters (rule of 12.12); `config.c` calls it only in comments |
 | `config.c:41`, `config.c:50` | `int *p=(0xe00000 & 0x7fffff) ^ HOSTMAP_ADDR;`, `int *p=0 ^ HOSTMAP_ADDR;` | `(int *)(...)` | integer -> pointer is an error in gcc 15; same address |
-| `boot.c:240` | `BootClearScreen(SCREEN_ADDRESS, ...)` | `BootClearScreen((unsigned short *)SCREEN_ADDRESS, ...)` | `boot.h:15` `SCREEN_ADDRESS` is an integer; same address |
-| `audio.c:25`, `drivesounds.c:431` | `unsigned char *p=AUDIO_BUFFER;`, `char *buf=AUDIO_BUFFER;` | `(unsigned char *)`, `(char *)` cast | `hardware.h:33` `AUDIO_BUFFER` is an integer (its other users already cast); same address |
-| `hdd.c:518` | `while(blk && (((lba+hdf[unit].offset)<0) \|\| (unit==0 && hdf[unit].type==HDF_FILE && lba==0))` | one `)` added at the end: `blk && (A \|\| B)` | a missing `)` that vbcc832 accepted (warning 59 "`)` expected" at line 519: it inserts the `)` before the `{`). The 832 assembly (vbcc832 with the 832 Makefile's flags on `fw/ctrl_832/hdd.c`) tests `blk` first and leaves the loop when it is 0 without evaluating A or B, i.e. `blk && (A \|\| B)`, not `(blk && A) \|\| B` (the other place where one `)` would parse) |
-| `drivesounds.c:380`, `391`, `397`, `413` | `if ((drivesounds.enabled & DRIVESOUNDS_FLOPPY)` | `if ((drivesounds.enabled & DRIVESOUNDS_FLOPPY))` | the same missing `)` four times (the plan named the first; gcc's error at 380 hid the other three; vbcc832 warns 59 at 381, 392, 398, 414, and nowhere else in `fw/ctrl_832`): every placement means `(enabled & FLOPPY)` |
-| `drivesounds.c:11`, `432` | `extern char _bss_end__;`, `buf-&_bss_end__` | `__bss_end` | link error: `_bss_end__` is the 832 linker's `__bss_end__` (vbcc prefixes `_`); `arch/firmware.ld` names the end of `.bss` `__bss_end` (= `_end`) |
+| `boot.c:238` | `BootClearScreen(SCREEN_ADDRESS, ...)` | `BootClearScreen((unsigned short *)SCREEN_ADDRESS, ...)` | `boot.h:15` `SCREEN_ADDRESS` is an integer; same address |
+| `audio.c:25`, `drivesounds.c:444` | `unsigned char *p=AUDIO_BUFFER;`, `char *buf=AUDIO_BUFFER;` | `(unsigned char *)`, `(char *)` cast | `hardware.h:40` `AUDIO_BUFFER` is an integer (its other users already cast); same address |
+| `hdd.c:536` | `while(blk && (((lba+hdf[unit].offset)<0) \|\| (unit==0 && hdf[unit].type==HDF_FILE && lba==0))` | one `)` added at the end: `blk && (A \|\| B)` | a missing `)` that vbcc832 accepted (warning 59 "`)` expected" at line 519: it inserts the `)` before the `{`). The 832 assembly (vbcc832 with the 832 Makefile's flags on `fw/ctrl_832/hdd.c`) tests `blk` first and leaves the loop when it is 0 without evaluating A or B, i.e. `blk && (A \|\| B)`, not `(blk && A) \|\| B` (the other place where one `)` would parse) |
+| `drivesounds.c:393`, `404`, `410`, `426` | `if ((drivesounds.enabled & DRIVESOUNDS_FLOPPY)` | `if ((drivesounds.enabled & DRIVESOUNDS_FLOPPY))` | the same missing `)` four times (the plan named the first; gcc's error at 380 hid the other three; vbcc832 warns 59 at 381, 392, 398, 414, and nowhere else in `fw/ctrl_832`): every placement means `(enabled & FLOPPY)` |
+| `drivesounds.c:12`, `445` | `extern char _bss_end__;`, `buf-&_bss_end__` | `__bss_end` | link error: `_bss_end__` is the 832 linker's `__bss_end__` (vbcc prefixes `_`); `arch/firmware.ld` names the end of `.bss` `__bss_end` (= `_end`) |
 | `akiko.c:25` | `__constructor(101.akiko)` | `__attribute__((constructor(102)))` | the 832 order ("Building", Constructors) |
-| `c64keys.c:305` | `__constructor(101.c64keys)` | `__attribute__((constructor(103)))` | the 832 order |
+| `c64keys.c:301` | `__constructor(101.c64keys)` | `__attribute__((constructor(103)))` | the 832 order |
 | `akiko.c:3`, `c64keys.c:3`, `main.c:58` | `#include "interrupts.h"` | `#include "irq.h"` | `interrupts.c`/`.h` deleted; `arch/irq.c` replaces them (default handler at constructor priority 101; the 832's `intconstructor` was 100) |
-| `main.c:245-254` | `void setstack();`, `#ifdef __GNUC__ void c_entry(void) #else __geta4 int main(void) #endif`, `setstack();` | `int main(void)` | crt0 calls `main` and has set `sp`; `__geta4` (defined empty for the 832) is not needed. `main.c` is 6 lines shorter from here on: Task 3's printf audit lines `main.c:262`, `275` are now `256`, `269` |
+| `main.c:266` | `void setstack();`, `#ifdef __GNUC__ void c_entry(void) #else __geta4 int main(void) #endif`, `setstack();` | `int main(void)` | crt0 calls `main` and has set `sp`; `__geta4` (defined empty for the 832) is not needed. `main.c` is 6 lines shorter from here on: the printf audit lines of `main.c` are listed with their current numbers above |
 
 Checked and left alone:
 
@@ -522,9 +630,9 @@ a function, copied elsewhere or used in arithmetic.
 | `config.c:430` | `updatekickstart=true;` | truth only: never read |
 | `menu.c:124` | the word "true" in a help string | text, not code |
 | `menu.c:126` | the word "true" in a help string | text, not code |
-| `menu.c:410` | `static unsigned char ctrl = false;` | truth only |
-| `menu.c:411` | `static unsigned char lalt = false;` | truth only |
-| `menu.c:412` | `static unsigned char lshift = false;` | truth only |
+| `menu.c:411` | `static unsigned char ctrl = false;` | truth only |
+| `menu.c:412` | `static unsigned char lalt = false;` | truth only |
+| `menu.c:413` | `static unsigned char lshift = false;` | truth only |
 | `menu.c:442` | `menu = false;` (`unsigned char` local) | truth only |
 | `menu.c:443` | `select = false;` (`unsigned char` local) | truth only |
 | `menu.c:444` | `up = false;` (`unsigned char` local) | truth only |
@@ -571,19 +679,22 @@ names this section; no global `-Wno-...`.
 
 | File:line | What is wrong | Silenced by |
 |---|---|---|
-| `drivesounds.c:330-332` `pickstep()` | `count` is read in `while(count>maxactive)` before it is ever assigned: undefined behaviour (the 832 got whatever its stack held). When `count` happens to be `<= maxactive` the loop is skipped and no sound is stopped | pragma around the function (`-Wuninitialized`, `-Wmaybe-uninitialized`) |
+| `drivesounds.c:335-337` `pickstep()` | `count` is read in `while(count>maxactive)` before it is ever assigned: undefined behaviour (the 832 got whatever its stack held). When `count` happens to be `<= maxactive` the loop is skipped and no sound is stopped | pragma around the function (`-Wuninitialized`, `-Wmaybe-uninitialized`) |
 | `fpga.c:138` `BootPrint()` | declared `char`, falls off the end without a return (the body is the `//return(1)` stub). The callers (`config.c`) ignore the value today; using it would be undefined behaviour | pragma around the function (`-Wreturn-type`) |
 | `config.c:300,340,430` `LoadConfiguration()` | `updatekickstart` is set to `true` in two places and never read: whatever it was meant to trigger (a kickstart re-upload after a config change) does not happen | `__attribute__((unused))` on the variable |
-| `drivesounds.c:142,214` | `b1`, `b2` (the 0x4000 bit of the audio cursor before and after a fill) are assigned and never used (a check on them was probably meant, or removed) | `__attribute__((unused))` |
+| `drivesounds.c:150,222` | `b1`, `b2` (the 0x4000 bit of the audio cursor before and after a fill) are assigned and never used (a check on them was probably meant, or removed) | `__attribute__((unused))` |
 | `atapi.c:666` `atapi_packet()` | parameter `limit` (the host's allocation length) is never used | `(void)limit` |
 | `osd.c` `OsdColor(color)`, `ConfigScanlines(scanlines)`, `menu.c` `ErrorMessage(message, code)`, `hdd.c` `ATA_Recalibrate(.., unit)`, `ATA_Diagnostic(tfr)`, `ATA_Initialize(.., unit)`, `HandleHDD(c1, c2)`, `fdd.c` `HandleFDD(.., c3, ..)`, `menu.c` `VolumeBar(vol, ..)`, `fpga.c` `BootPrint(text)`, `cdrom.c` `cd_lookup_read`/`cd_cue_open` (`ctx`) | stubs or parameters the body ignores (FIXME/TODO in the 832 source) | `(void)param` |
 | `c64keys.c:47` `LAYER(x,y)` | the macro masks `x&0xffff` without parenthesising `x`; for `LAYER(QUAL_BLOCKLAYER\|RK_RAmiga, ..)` it computes `QUAL_BLOCKLAYER \| (RK_RAmiga&0xffff)`. Same value as long as every qualifier is `< 0x10000` (they are: `QUAL_*` are `<= 0x8000`), wrong for a larger one | macro parenthesised (`((x)&0xffff)`); the table values are unchanged |
 | `fdd.c:85,88,102` | `11 - sector >> 1 & 0x55` parses as `((11-sector)>>1)&0x55`; if the intent was `11 - (sector>>1&0x55)` this is a bug in the MFM checksum. It is the 832's reading (that is what vbcc832 compiled), so it is kept | parentheses spell out the existing parse |
-| `hdd.c:882` | `lba & (-1 << n)`: shift of a negative value (undefined in C before C23, well defined here because gcc shifts two's complement) | `(int)(~0U << n)`, same bits |
-| `config.c:620`, `drivesounds.c:365` | `if (romsize=Upload...)` and `while(dse=...)` assign in a condition: intended, but easy to misread | extra parentheses |
+| `hdd.c:897` | **Cosmetic, not a defect.** `lba & (-1 << n)`: shift of a negative value (undefined in C before C23, well defined here because gcc shifts two's complement) | `(int)(~0U << n)`, same bits |
+| `config.c:620`, `drivesounds.c:378` | **Cosmetic, not a defect.** `if (romsize=Upload...)` and `while(dse=...)` assign in a condition: intended, but easy to misread | extra parentheses |
+| `fpga.c:148` `ClearMemory()` | `c2` (the "disk present" byte of the `0x10` track-read status) is read from the SPI and never used; the read itself must stay (it clocks the byte) | `__attribute__((unused))` |
+| `fpga.c:207` `fpga_init()` | `time = GetTimer(0)` is set and never read (nothing uses it) | `__attribute__((unused))` |
+| `main.c:139` `inthandler()` | `ints = GetInterrupts()` is never read; the read is the point (it clears the interrupt sources, `arch/irq.h`), so it stays | `__attribute__((unused))` |
 | `menu.c:2763` | `static char template[4] = " of "` holds no NUL (4 chars): fine while only `sizeof` and byte compares are used, never as a string | `__attribute__((nonstring))` |
-| `menu.c:2593` | the `case MENU_ROMFILE_SELECTED:` falls into `..._SELECTED1:` ("no break intended" in the 832 source) | `__attribute__((fallthrough))` |
-| `hdd.c:764-848` `GetHardfileGeometry`, `drivesounds.c:133-302` `drivesounds_render` | `-Wmaybe-uninitialized` on `cyl/head/spt` (set in the first pass of loops that always run, `sptt[0] >= 0`) and `srcs/srcs2/srcs3` (read only when the matching `src` pointer is set, which also sets them): false positives, not bugs | pragma around the function |
+| `menu.c:2590` | the `case MENU_ROMFILE_SELECTED:` falls into `..._SELECTED1:` ("no break intended" in the 832 source) | `__attribute__((fallthrough))` |
+| `hdd.c:779-863` `GetHardfileGeometry`, `drivesounds.c:141-307` `drivesounds_render` | `-Wmaybe-uninitialized` on `cyl/head/spt` (set in the first pass of loops that always run, `sptt[0] >= 0`) and `srcs/srcs2/srcs3` (read only when the matching `src` pointer is set, which also sets them): false positives, not bugs | pragma around the function |
 | `fat.c`, `mmc.c` | `#pragma section_code_init` / `section_no_code_init` (the 832 linker's RAM-function sections) are unknown to gcc and do nothing here: `RAMFUNC` code stays in `.text` | file-level `#pragma GCC diagnostic ignored "-Wunknown-pragmas"` before the first one |
 | `fat.c:121` | `if (!MMC_Read(..)) return(0);` was followed by two tab-indented lines that looked guarded (`-Wmisleading-indentation`); they are not | re-indented with spaces |
 
@@ -786,7 +897,7 @@ order, and the dead firmware-upgrade declarations.
 | `drivesounds.c:467`, `469`, `484`, `486` (`drivesounds_init`) | `id=*(long *)buf; size=*(long *)buf;` | `rd_be32(buf)` | `DRIVESND` header longs are big-endian (`sw/mkdrivesounds/mkdrivesounds.c`) and at `2 mod 4` (the file sits at `AUDIO_BUFFER - 212098`, `0x3C37E`; the sound sizes are even, not multiples of 4): a word load there traps on VexRiscv (mcause 4) |
 | `drivesounds.c:476`-`481` | the samples used in place (big-endian = native) | each sound's samples converted once, in place: `samples[i]=(short)rd_be16(&samples[i])` | the render loops read them as `short`; the buffer is the firmware's own (in front of the ring), loaded anew by every `drivesounds_init` |
 | `drivesounds.c:239`-`242`, `262`-`264`, `281`-`282` (`drivesounds_render`, 3, 2 and 1 sources) | `int c=*src++; ...; c=((c&255)<<8) \| ((c>>8)&255); c=c*0x10001; *buf++=c;` | `unsigned int c=*src++; ...; c=(c&0xffff)*0x10001; *buf++=c;` | the ring bytes are the 832's: the low 16 bits of the sum, little-endian, both channels (`lo hi lo hi`). The 832 swapped the 16 bits and stored the long big-endian; the little-endian store does the same without the swap. `c*0x10001` stays; the `& 0xffff` is the swap's masking, which the multiply needs (a negative sum: `-1 * 0x10001` is `0xfffeffff`; mutant `ds_nomask`). Unsigned: the 832's `int` product overflows for every sum with bit 15 set (signed overflow: UBSan stops it on the host) |
-| `main.c:81`-`91` (`CheckSum`, the kickstart's `checksum_pre` the menu shows) | `int *ptr`, `sum+=*ptr++` | `sum+=rd_be32(adr)`, `unsigned int` | the 832 summed big-endian words; the shown value is now the 832's for the same file. Byte-wise (any alignment), unsigned (wraps without signed overflow) |
+| `main.c:82`-`92` (`CheckSum`, the kickstart's `checksum_pre` the menu shows) | `int *ptr`, `sum+=*ptr++` | `sum+=rd_be32(adr)`, `unsigned int` | the 832 summed big-endian words; the shown value is now the 832's for the same file. Byte-wise (any alignment), unsigned (wraps without signed overflow) |
 | `hexdump.c:14` | `unsigned int t=*p2++` | `rd_be32(p)` | prints 32-bit words in memory order, the 832's (big-endian) view, at any alignment. No caller today (`hexdump.h` is included by `fat.c`, `menu.c`, `config.c`) |
 | `firmware.h` | `romTYPE`, `UPGRADE`, `NVCONFIG`, `NVCONFIG_SPIMODE`, `SPIMODE_NORMAL`, `SPIMODE_FAST`, `CalculateCRC32`, `CheckFirmware`, `WriteFirmware`, `SetSPIMode`, `GetSPIMode` | file deleted; its `#include` became `#include "swap.h"` in `main.c:53` and a comment line in `config.c:11` and `menu.c:37` (their line numbers stay) | plan 5.2 item 6: declared, never defined or called (`grep`: only `mmc.c`'s commented-out `GetSPIMode() == SPIMODE_FAST` lines and `//#include "firmware.h"`, left as they are). Nothing in it was used; `SPIMODE_*` belong to the same dead upgrade path |
 | `hardware.h` (`HOSTTEST` block) | | `AUDIO_BUFFER` is `hosttest_audio_buffer()` | host tests only (the mock's RAM, `test/mock_hw.c`); the target build drops the block. `hwmap_test` checks the real value, `0x70000` |
@@ -841,7 +952,7 @@ struct overlays of Tasks 9, 11 and 12 (`grep -n '\*)sector_buffer\|\*)&sector_bu
 | `drivesounds.c:146`, `220` (`int *buf`) | the ring, one long per frame | `AUDIO_BUFFER` (the audio DMA reads it) | the 832's bytes, this task |
 | `drivesounds.c:17`, `147`, `476` (`short *base`, `src`, `samples`) | sample reads | `DRIVESND.BIN` | native after the load's conversion, this task |
 | `drivesounds.c:467`-`486` | the header longs | `DRIVESND.BIN` | `rd_be32`, this task |
-| `main.c:81` (`CheckSum`) | was `int *` | kickstart in Amiga memory | `rd_be32`, this task |
+| `main.c:82` (`CheckSum`) | was `int *` | kickstart in Amiga memory | `rd_be32`, this task |
 | `hexdump.c:14` | was `unsigned int *` | any | `rd_be32`, this task |
 | `fpga.c:101`-`117` (`SendFileV2`, kickstart upload) | `unsigned char *adr`: `RARead(file, adr, 512)` into Amiga memory, the decrypt `adr[j] ^= key[keyidx++]`, `PatchKick1xMemoryDetection` (`buf[0x154]`, `strncmp`) | kickstart ROM | bytes: neutral; `CheckSum` above |
 | `config.c:41`, `50` (`ClearKickstartMirrorE0`, `ClearVectorTable`) | `int *` stores | Amiga memory | zeros: neutral |
@@ -850,10 +961,10 @@ struct overlays of Tasks 9, 11 and 12 (`grep -n '\*)sector_buffer\|\*)&sector_bu
 | `hdd.c:65`, `130`, `161` (`RDBChecksum`), `:93`, `:135` (RDSK/PART on `sector_buffer`), `:542` (an HDF's own RDB) | `uint32_t *`, struct overlays | blocks for the Amiga | Task 12 (`be32`) |
 | `hdd.c:171` (`IdentifyDevice`), `:442` (`ATA_IdentifyDevice`) | `unsigned short *` | IDENTIFY DEVICE | Task 12 (words sent by value, low byte first; string words swapped) |
 | `hdd.c:870` (`unsigned long *index`) | | the firmware's own cluster index of an HDF | native: not Amiga or file data |
-| `atapi.c:102` (`ata_string`), `:221` (`atapi_identify`) | `uint16_t *` | IDENTIFY PACKET DEVICE | values (strings by shifts, first character in 15:8); `cdrom.c:766`-`767` sends them low byte first: neutral |
+| `atapi.c:102` (`ata_string`), `:221` (`atapi_identify`) | `uint16_t *` | IDENTIFY PACKET DEVICE | values (strings by shifts, first character in 15:8); `cdrom.c:763`-`765` sends them low byte first: neutral |
 | `fat.c:136`, `369` ff. (`MasterBootRecord`, `DIRENTRY` on `sector_buffer`), `fat_buffer` | struct overlays | FAT data (little-endian) | Task 9 (`le16`/`le32`) |
 | `fdd.c:350` (`GetHeader(unsigned int *pTrack, ...)`) | | `WriteTrack`'s locals | native; Task 13 ("Floppy", Multi-byte accesses) |
-| `cue.c:55`, `90` (`int32_t *v`), `cdrom.c:228` (`int *open`) | | parser outputs, a flag | native: not data |
+| `cue.c:52`, `82` (`int32_t *v`), `cdrom.c:226` (`int *open`) | | parser outputs, a flag | native: not data |
 | `akiko.h:6`, `c64keys.h:5`, `rtc.h:6`, `i2c.h:46`, `hardware.h:53`, `58`, `97`, `111`, `120` | `volatile` register macros | I/O registers | not memory: the I/O map (Task 5, `hwmap_test`) |
 | `hardware.h:79`, `osd.c:872` | | commented out | |
 
@@ -907,10 +1018,10 @@ us). Lines are those of the current tree.
 | `hardware.c:180`, `188`, `201` | `GetTimer`, `CheckTimer`, `WaitTimer` (above) | | |
 | `hardware.h:59` | `SPIN`: one TIMER read, the value unused (a cfide handshake as a delay); live at `hardware.c:236` (`SPI_reply`, 4x), `fpga.c:226` (4x), `config.c:618` (4x) | | one bus access each |
 | `audio.c:33`-`34` (`audio_clear`) | waits for the next TIMER change after `AUDIOF_ENA` | <= 1 | <= 5.804 ms |
-| `drivesounds.c:78`, `98`, `430` | event and render timestamps (`drivesounds_render`, `samples = timestamp - drivesounds.timestamp`, `:150`) | 1 = 256 frames | 5.804 ms per count |
-| `drivesounds.c:355` | `TIMER & 3`: pseudo-random pick of one of four sounds | | |
-| `cdrom.c:384` (`cda_port_timer`), `cdaudio.c:55`, `182`, `194` | CD audio play position: `CDA_HALF_UNITS` (`cdaudio.h:38`) counts per half buffer | 32 | 185.7 ms (8192 frames) |
-| `cdrom.c:473`, `485` (`cd_wait`) | `CD_TIMEOUT` (`cdrom.c:64`): host data phase | 10000 | 58.04 s |
+| `drivesounds.c:79`, `99`, `435` | event and render timestamps (`drivesounds_render`, `samples = timestamp - drivesounds.timestamp`, `:158`) | 1 = 256 frames | 5.804 ms per count |
+| `drivesounds.c:360` | `TIMER & 3`: pseudo-random pick of one of four sounds | | |
+| `cdrom.c:380` (`cda_port_timer`), `cdaudio.c:52`, `179`, `191` | CD audio play position: `CDA_HALF_UNITS` (`cdaudio.h:39`) counts per half buffer | 32 | 185.7 ms (8192 frames) |
+| `cdrom.c:471`, `483` (`cd_wait`) | `CD_TIMEOUT` (`cdrom.c:64`): host data phase | 10000 | 58.04 s |
 | `hdd.c:932`, `934` (`OpenHardfile`) | `GetTimer(0)` difference, printed as "ms" (`time >> 16`) | counts | 5.804 ms per printed "ms" |
 | `fpga.c:207` (`fpga_init`) | `GetTimer(0)`, unused | | |
 | `fpga.c:230`, `232`, `254` (`fpga_init`) | `WaitTimer(50)`, `WaitTimer(100)`, `WaitTimer(1000)` (boot screen) | 50, 100, 1000 | 290.2 ms, 580.4 ms, 5.804 s |
@@ -921,8 +1032,8 @@ us). Lines are those of the current tree.
 | `menu.c:247`, `269` (`cd_show_msg`, `cd_msg_expired`) | CD message: `CD_MSG_DELAY` (`menu.c:237`) | 4000 | 23.22 s |
 | `menu.c:610`, `617`, `619` (`HandleUI`) | help text: `HELPTEXT_DELAY`, `FRAME_DELAY` (`menu.c:201`, `202`) | 2500, 50 | 14.51 s, 290.2 ms |
 | `menu.c:3021`, `2714` (`InfoMessage`) | info popup | 1000 | 5.804 s |
-| `main.c:106`, `108`, `110` (`FatalError`) | LED blink: `WaitTimer(250)` x2, `WaitTimer(1000)` | 250, 1000 | 1.451 s, 5.804 s |
-| `main.c:275`, `310`, `313` (`main`) | ADV7511 poll (`adv_timer`) | 250 | 1.451 s |
+| `main.c:107`, `109`, `111` (`FatalError`) | LED blink: `WaitTimer(250)` x2, `WaitTimer(1000)` | 250, 1000 | 1.451 s, 5.804 s |
+| `main.c:297`, `343`, `346` (`main`) | ADV7511 poll (`adv_timer`) | 250 | 1.451 s |
 | `mmc.c:72` (`MMC_Init`) | `WaitTimer(20)` after the 80 clocks | 20 | 116.1 ms |
 | `mmc.c:80`, `88`, `135`, `174` (`MMC_Init`) | init timeout: `GetTimer(1000)`, ACMD41 / CMD1 polls | 1000 | 5.804 s |
 | `mmc.c:235`, `290`, `366`, `452`, `527` | `SD_TIMEOUT` (above) | 173 | 1.004 s |
@@ -941,7 +1052,7 @@ so they need no lib832 emulation.
 | Function | lib832 | ISO C / newlib | Observable? |
 |---|---|---|---|
 | `strncpy` | copies bytes up to and including the first NUL, or `n` bytes; **does not pad** the rest with NULs; `n == 0` copies nothing; returns `dst` | pads with NULs up to `n` | only if a byte after the NUL is read: see the call-site table |
-| `strncmp`, `memcmp` | `n == 0` returns whatever `r0` holds (nothing sets it); otherwise the byte difference `a - b` as unsigned bytes (same sign as ISO) | `n == 0` returns 0 | only `fat.c:384` can call with `n == 0` (`strncmp(fileLFN, name, strlen(name))`, empty `name`): there `r0` still holds the result of `strlen(name)`, i.e. 0 (checked by compiling the 832 `fat.c` with vbcc832), so lib832 returns 0 too. Same |
+| `strncmp`, `memcmp` | `n == 0` returns whatever `r0` holds (nothing sets it); otherwise the byte difference `a - b` as unsigned bytes (same sign as ISO) | `n == 0` returns 0 | only `fat.c:383` can call with `n == 0` (`strncmp(fileLFN, name, strlen(name))`, empty `name`): there `r0` still holds the result of `strlen(name)`, i.e. 0 (checked by compiling the 832 `fat.c` with vbcc832), so lib832 returns 0 too. Same |
 | `strncat` | `n == 0` copies the **whole** source (the loop counts `n - 1` to zero); `n > 0` copies at most `n` bytes then a NUL, like ISO; the return value is not set | `n == 0` appends nothing | no `n == 0` call; the return value is never used |
 | `strcat` | return value not set | returns `dst` | never used |
 | `strcmp`, `strlen`, `strcpy`, `memcpy`, `memset` | ISO (`strcpy`, `memcpy`, `memset` return `dst`; the `void memset` in `stringstubs.c` is not what `string.h` maps to) | same | no |
@@ -956,36 +1067,54 @@ counts are the compiled sites):
 
 | Call sites | Verdict |
 |---|---|
-| `strncpy` `config.c:62,150`, `hdd.c:892` (`filename`, 8, then `strcpy(&filename[8], "ROM"/"HDF")`) | The source is an 8-character space-padded name without NUL: exactly 8 bytes copied by both. A name with an early NUL (a corrupt config) would leave `filename` bytes uninitialised on the 832 and zero on RV; `FileOpen` then compares 11 bytes. Indeterminate on the 832: not emulated |
+| `strncpy` `config.c:62,150`, `hdd.c:914` (`filename`, 8, then `strcpy(&filename[8], "ROM"/"HDF")`) | The source is an 8-character space-padded name without NUL: exactly 8 bytes copied by both. A name with an early NUL (a corrupt config) would leave `filename` bytes uninitialised on the 832 and zero on RV; `FileOpen` then compares 11 bytes. Indeterminate on the 832: not emulated |
 | `strncpy` `config.c:353,409,410,421,423,435` | An 8-character literal (`EXTENDED`, `MNMGCFGA`, `KICK    `, `HARDFILE`) into an 8-byte field: no NUL copied, nothing to pad. Same |
 | `strncpy` `config.c:681` (`file.name`, 11) | `MINMGAR CFG` / `MINMGAR<n>CFG` is 11 characters. Same |
 | `strncpy` `config.c:247` (`ConfigName832`, Task 11, no 832 counterpart) | the source is an 11-character RV name, `buf[11] = 0` after it |
 | `strncpy` `cdrom.c:86`, `275` | `86`: the destination was zeroed by `memset` just before. `275`: `longname[41]`, read only as a NUL-terminated string (`atapi_insert`, `cd_config`). Same |
-| `strncpy` `osd.c:1105,1108` (`ScrollText`) | Inside `len > max_len`: the source is longer than `n` in both copies (`n < max_len < len <= strlen`), so no NUL is copied and nothing is padded. Same |
-| `strncpy` `fat.c:386` (`file->name`, 11) | `pEntry->Name` is 11 bytes of an 8.3 name, no NUL. Same |
-| `strncpy` `fat.c:885,900,933,952,967,1000,1025,1047,1070,1088,1104,1137,1153,1192,1208` (`DirEntryLFN[..]`, `lfn`, 261) | Destination rows are `[261]`, set to NUL-terminated names and read only as strings (`strlen`, `strcmp`, `strcpy`, `strncpy(file.long_name, .., len)`, `ScrollText`); no `memcpy` of a row. The zero padding of up to 260 bytes per copied entry is never read. Same |
-| `strncpy` `menu.c:348,350,717,2866,2867,2870,2874,2886` (the OSD line `s`) | Both copy the NUL at the same place; `OsdWrite` stops at the first NUL, so the bytes after it (spaces from the earlier `memset` on the 832, zeros on RV) are never drawn. For a long name shorter than 24 characters the NUL ends the line before the disk number (`2866/2867`) and before ` <DIR>` on both CPUs. Same |
-| `strncpy` `menu.c:1369,1371,1372`, `2946,2953` | `file.name` 11 and `drive->name` 8 bytes from space-padded names: no NUL. `file.long_name` is zeroed by `memset` first (`1370`). `DiskInfo[5]` is `XX/XX` (5 characters, `GetDiskInfo`) or starts with NUL and is then not used (`menu.c:2950`). Same |
+| `strncpy` `osd.c:1106,1109` (`ScrollText`) | Inside `len > max_len`: the source is longer than `n` in both copies (`n < max_len < len <= strlen`), so no NUL is copied and nothing is padded. Same |
+| `strncpy` `fat.c:385` (`file->name`, 11) | `pEntry->Name` is 11 bytes of an 8.3 name, no NUL. Same |
+| `strncpy` `fat.c:884,899,932,951,966,999,1024,1046,1069,1087,1103,1136,1152,1191,1207` (`DirEntryLFN[..]`, `lfn`, 261) | Destination rows are `[261]`, set to NUL-terminated names and read only as strings (`strlen`, `strcmp`, `strcpy`, `strncpy(file.long_name, .., len)`, `ScrollText`); no `memcpy` of a row. The zero padding of up to 260 bytes per copied entry is never read. Same |
+| `strncpy` `menu.c:349,351,717,2866,2867,2870,2874,2886` (the OSD line `s`) | Both copy the NUL at the same place; `OsdWrite` stops at the first NUL, so the bytes after it (spaces from the earlier `memset` on the 832, zeros on RV) are never drawn. For a long name shorter than 24 characters the NUL ends the line before the disk number (`2866/2867`) and before ` <DIR>` on both CPUs. Same |
+| `strncpy` `menu.c:1369,1371,1372`, `2946,2953` | `file.name` 11 and `drive->name` 8 bytes from space-padded names: no NUL. `file.long_name` is zeroed by `memset` first (`1370`). `DiskInfo[5]` is `XX/XX` (5 characters, `GetDiskInfo`) or starts with NUL and is then not used (`menu.c:2953`). Same |
 | `strncpy` `menu.c:3060` (`debuglines`) | The line is drawn by `OsdWrite`, which stops at the NUL. Same |
-| `strncmp` (17: `config.c:245` (Task 11, n = 7), `339,347`, `drivesounds.c:445`, `fat.c:129,131,183,186,250,384 (x2),459,580`, `fpga.c:61,66`, `menu.c:1343,2140`) | `n` is a constant or `sizeof`, always > 0, and the result is compared with 0. Same |
-| `strncmp` `fat.c:384` first call, `n = strlen(name)` | `name` empty (`n == 0`): lib832 returns `r0`, which still holds the `strlen(name)` result, 0 (vbcc832 output of the 832 `fat.c`); ISO returns 0. An empty name matches the first plain file entry on both. Same, no edit |
-| `memcmp` (5: `cdrom.c:82,285`, `menu.c:393,2052`, `cfgswap.c:22` (Task 11, n = 8)) | `n` = 3 or `sizeof`, > 0, compared with 0. Same |
+| `strncmp` (17: `config.c:245` (Task 11, n = 7), `339,347`, `drivesounds.c:463`, `fat.c:128,130,182,185,249,383 (x2),459,580`, `fpga.c:60,65`, `menu.c:1343,2140`) | `n` is a constant or `sizeof`, always > 0, and the result is compared with 0. Same |
+| `strncmp` `fat.c:383` first call, `n = strlen(name)` | `name` empty (`n == 0`): lib832 returns `r0`, which still holds the `strlen(name)` result, 0 (vbcc832 output of the 832 `fat.c`); ISO returns 0. An empty name matches the first plain file entry on both. Same, no edit |
+| `memcmp` (5: `cdrom.c:82,285`, `menu.c:394,2052`, `cfgswap.c:22` (Task 11, n = 8)) | `n` = 3 or `sizeof`, > 0, compared with 0. Same |
 | `strncat` (3: `menu.c:756` n = 17/21, `1759` 16, `1761` 8) | `n > 0`: at most `n` bytes then NUL on both; `kickstart.name` has no NUL (8 characters) and both copy exactly 8. Return value unused. Same |
 | `strcat` (38), `strcpy` (54) | ISO on both; no return value is used. Same |
-| `tolower` (6: `fat.c:629 x2, 1176 x2, 1178 x2`) | ASCII letters on both; the arguments are `unsigned char` values (`-funsigned-char`). Same |
+| `tolower` (6: `fat.c:628 x2, 1176 x2, 1178 x2`) | ASCII letters on both; the arguments are `unsigned char` values (`-funsigned-char`). Same |
 | `strcmp` (1: `menu.c:168`), `strlen` (10), `memcpy` (36), `memset` (28) (each count with Task 11's one in `LoadConfiguration`) | ISO on both. Same |
 | `memmove`, `strtol`, `strtoul`, `strtok`, `strspn`, `strcspn`, `toupper` | 0 call sites |
 
 ## Host tests
 
-From a fresh Ubuntu 24.04 machine (works in zsh and bash), from the repository
-root:
+The tests compile the firmware sources for the host (native and `-m32`, with
+AddressSanitizer and UBSan) against a mock of the hardware. The format-parity
+check needs lib832's `small_printf.c` (the 832's printf, the reference): it
+is in the `EightThirtyTwo` submodule. From a fresh Ubuntu 24.04 machine
+(works in bash and zsh), from the repository root:
 
 ```sh
 sudo apt install build-essential gcc-multilib python3 git mtools dosfstools fdisk
-git submodule update --init EightThirtyTwo          # lib832, the 832 printf reference
-make -C fw/ctrl_rv/test                             # every test, native and -m32, and the format gates
-make -C fw/ctrl_rv/test mutants                     # every test must go red on its mutants
+git submodule update --init EightThirtyTwo
+make -C fw/ctrl_rv/test
+```
+
+(`make -C fw/ctrl_rv/test` is every test, native and `-m32`, and the format
+gates; the exit status is the result.) Without the submodule (no network, or
+a checkout of EightThirtyTwo that already exists elsewhere) skip the
+`git submodule` line and name the lib832 directory instead:
+
+```sh
+make -C fw/ctrl_rv/test LIB832=/path/to/EightThirtyTwo/lib832
+```
+
+A missing `LIB832` fails the run; the check is never skipped. The mutants,
+which every test must go red on:
+
+```sh
+make -C fw/ctrl_rv/test mutants
 ```
 
 `swap_test` checks the byte-order helpers (memory order on any host, the
@@ -1010,16 +1139,28 @@ audio ring after every fill of an event sequence with
 their bytes.
 `fw/ctrl_rv/test/README.md` has the targets, the flags, the mock (an SPI/TIMER/UART
 model with a card-image model; `-DHOSTTEST` hooks in `hardware.h` that leave
-the target image byte for byte the same) and the mutant rules. `LIB832` is
-`$(TOP)/EightThirtyTwo/lib832` by default; pass
-`LIB832=/path/to/EightThirtyTwo/lib832` to use another checkout (EightThirtyTwo
-pin `d1cd671`). A missing `LIB832` fails the run; the check is never skipped.
+the target image byte for byte the same), the rules for writing a test and the
+mutant rules. `LIB832` is `$(TOP)/EightThirtyTwo/lib832` by default
+(EightThirtyTwo pin `d1cd671`).
 `lib_test` checks `rvlibc.c` against glibc's `vsnprintf` with a mock `putchar`
 (equal output and return value, the truncation case, a `printf` issued from
 inside `putchar`, the nesting count, the heap stubs). `make mutants` runs the
 mutants of every test and of every register class of the I/O map; a mutant
 counts as killed only when the real test target fails on a build that
 succeeded.
+
+## Simulation runs (L1, L2)
+
+The firmware also runs on the real host side of the core in simulation. The
+benches are `sim/rv_l1` (L1: `rv_hostcpu` against an abstract memory,
+Icarus Verilog or Verilator) and `sim/host_bridge` (L2: the real bridge,
+`cfide` and an SD card model, xsim or Verilator on the Verilog that GHDL
+makes of the VHDL); their READMEs have the details. The blocks here use
+Verilator, which needs the toolchain steps under "Building" and
+
+```sh
+sudo apt install verilator ghdl ccache
+```
 
 ### On the L1 bench
 
@@ -1030,17 +1171,64 @@ the format cases it runs newlib-nano's `memcpy`, `memmove` (overlapping both
 ways), `memset`, `memcmp`, `strlen`, `strcmp`, `strncmp`, `strncpy`, `strncat`
 at source and destination offsets 0..3 (lengths 0, 1, 3, 4, 5, 8, 9, 17) (VexRiscv traps a misaligned access:
 the run would end `=== FAIL 80xx`), and prints `rv_libc_heap_calls` (must be 0).
+`run.sh fmt` also checks that `fmt_rv.map` has no `_sbrk`, `_sbrk_r`,
+`__sinit`, `__sfp`, `_write`, and that `_malloc_r`, `_realloc_r`, `_free_r`
+come from `rvlibc.o`.
+
+All 909 cases take 25 s on Verilator, the subset 10 s:
 
 ```sh
-bash tools/riscv/fetch-xpack.sh
-bash tools/riscv/check-toolchain.sh
-SIM=verilator RUNTAG=p3t3b bash sim/rv_l1/run.sh fmt                    # all 909 cases, 25 s
-FMT_SUBSET=1 SIM=verilator RUNTAG=p3t3s bash sim/rv_l1/run.sh fmt       # subset, 10 s
-FMT_SUBSET=1 RUNTAG=p3t3i bash sim/rv_l1/run.sh fmt                     # iverilog (X reference), ~38 min
+SIM=verilator RUNTAG=p3t3b bash sim/rv_l1/run.sh fmt
+FMT_SUBSET=1 SIM=verilator RUNTAG=p3t3s bash sim/rv_l1/run.sh fmt
+```
+
+The X-checking reference is Icarus Verilog 12 at `/usr/local/bin/iverilog`
+(`sim/rv_l1/README.md`). The subset takes about 38 minutes there, and
+`compare` must say SAME against the Verilator subset run above:
+
+<!-- replay-skip: 38 minutes of iverilog -->
+```sh
+FMT_SUBSET=1 RUNTAG=p3t3i bash sim/rv_l1/run.sh fmt
 bash sim/rv_l1/run.sh compare p3t3i p3t3s
 ```
 
-Verilator needs `sudo apt install verilator g++`; Icarus Verilog 12 is
-described in `sim/rv_l1/README.md`. `run.sh fmt` also checks that
-`fmt_rv.map` has no `_sbrk`, `_sbrk_r`, `__sinit`, `__sfp`, `_write`, and that
-`_malloc_r`, `_realloc_r`, `_free_r` come from `rvlibc.o`.
+The firmware's CD-ROM unit programs (`test/emu`: `atapi_emu`, `cue_emu`,
+`cdaudio_emu`) are built from `fw/ctrl_rv` (the default `FWDIR`) and run on
+the same bench (seconds on Verilator; ends with `=== UNITS PASS`):
+
+```sh
+SIM=verilator RUNTAG=p3t19u bash sim/rv_l1/run.sh units
+```
+
+A change of the toolchain or of `RV_CFLAGS_FW` needs `make -B` in
+`sim/rv_l1/prog` (or a new tree): the `fwdir` stamp only covers the path of
+`FWDIR`, so the objects would otherwise be reused (`sim/rv_l1/README.md`).
+
+### On the L2 bench
+
+`fwboot` boots the real `RV32OSDA.BIN` (`fw/ctrl_rv/build/`, built as under
+"Building") from a 16 MB FAT16 card with the committed boot ROM and runs it
+into its main loop (the fatal-error loop: the bench card has no kickstart).
+`fwboot_trap` is the same with a constructor that executes an illegal
+instruction, `fwboot_cfg` has an 832 config file on the card that the
+firmware converts on its first boot. Each is a PASS/FAIL gate on milestones
+of the UART and SPI streams (`sim/host_bridge/README.md`, "Firmware boot"):
+
+```sh
+SIM=verilator RUNTAG=fwv bash sim/host_bridge/run.sh fwboot
+SIM=verilator RUNTAG=fwvt bash sim/host_bridge/run.sh fwboot_trap
+SIM=verilator RUNTAG=fwvc bash sim/host_bridge/run.sh fwboot_cfg
+```
+
+About 6, 3 and 6 minutes. The run lengths are cycle limits of `clk_114`:
+`fwboot` 176.4 M cycles (the card holds `DRIVESND.BIN`, whose load takes
+about 39 M cycles), `fwboot_cfg` 119.6 M (no `DRIVESND.BIN`), `fwboot_trap`
+65.9 M; `FWBOOT_TIMEOUT=<cycles>` overrides. `fwboot_trap` links its own
+firmware: it ignores `FW=`. The xsim reference run of `fwboot` takes about
+27 minutes and needs Vivado 2023.2 (`sim/host_bridge/README.md`).
+
+The `fwboot` run also reports the OSD reply gap: **`OSD GAP min 40`**, the
+bench's measure of the host's access spacing during an OSD reply read,
+against the 40 `clk_114` that `userio_osd` needs (`sim/spi_cdc`). It has no
+margin left; whether the real `userio_osd` accepts it is an open risk that
+Phase 4 (L3 co-simulation) checks.

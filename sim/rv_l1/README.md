@@ -38,7 +38,9 @@ X-checking reference) or on Verilator (`SIM=verilator`, much faster, see
    `RV_PREFIX=` if its tools are not `riscv-none-elf-*`).
 2. **Icarus Verilog 12** at `/usr/local/bin/iverilog` and `/usr/local/bin/vvp`
    (`IVERILOG=` / `VVP=` override the paths). The gates of `all` always use
-   it.
+   it. Ubuntu 24.04's package is 12.0 (`sudo apt install iverilog`, installed
+   to `/usr/bin`): put `IVERILOG=/usr/bin/iverilog VVP=/usr/bin/vvp` in front
+   of `bash sim/rv_l1/run.sh ...`.
 3. Optional, **Verilator 5.020** or later (`--timing` support), for
    `SIM=verilator`: `sudo apt install verilator` (Ubuntu 24.04 ships 5.020;
    `VERILATOR=` overrides the path), plus g++; `ccache` is used when present.
@@ -49,9 +51,12 @@ X-checking reference) or on Verilator (`SIM=verilator`, much faster, see
 From the repository root:
 
 ```sh
-make -C sim/rv_l1 tests            # build/<prog>.hex, .elf, .lst, .map
-bash sim/rv_l1/run.sh all          # gates + full matrix + teeth, ~4 min on 8 cores
-SIM=verilator bash sim/rv_l1/run.sh all   # the same on Verilator, ~15 s
+# build/<prog>.hex, .elf, .lst, .map
+make -C sim/rv_l1 tests
+# gates + full matrix + teeth, ~4 min on 8 cores
+bash sim/rv_l1/run.sh all
+# the same on Verilator, ~15 s
+SIM=verilator bash sim/rv_l1/run.sh all
 ```
 
 `run.sh` runs the make itself first (`make tests`; `units`: `make -C prog
@@ -164,8 +169,10 @@ directories as on iverilog; the image of each build is
 `tb_x<EXTRA_WS>_d<DEBUG>[_dm].vvp`. The default stays iverilog.
 
 ```sh
-sudo apt install verilator ccache     # Ubuntu 24.04: Verilator 5.020
-verilator --version                   # needs 5.x (--binary --timing)
+# Ubuntu 24.04: Verilator 5.020
+sudo apt install verilator ccache
+# needs 5.x (--binary --timing)
+verilator --version
 SIM=verilator bash sim/rv_l1/run.sh all
 SIM=verilator bash sim/rv_l1/run.sh units
 SIM=verilator bash sim/rv_l1/run.sh irq
@@ -209,7 +216,8 @@ of the start-up lines are ignored):
 ```sh
 RUNTAG=iv bash sim/rv_l1/run.sh all && RUNTAG=iv bash sim/rv_l1/run.sh dm_smoke
 SIM=verilator RUNTAG=vl bash sim/rv_l1/run.sh all && SIM=verilator RUNTAG=vl bash sim/rv_l1/run.sh dm_smoke
-bash sim/rv_l1/run.sh compare iv vl   # "SAME ..." per log, "=== COMPARE n logs: n same, 0 differ, ..."
+# "SAME ..." per log, "=== COMPARE n logs: n same, 0 differ, ..."
+bash sim/rv_l1/run.sh compare iv vl
 ```
 
 (`all` clears the logs of its run directory first, so run it before the
@@ -361,12 +369,18 @@ heap from `_end` to 0xE0000, `_exit` = DONE); `sw/l1_newlib.ld` puts the code
 at 0x2000 and the stack top at 0xF0000. `main` returns the failure count.
 
 ```sh
-bash sim/rv_l1/run.sh units                          # fw/ctrl_rv, WS=3 ROMWS=1 EXTRA_WS=0 DEBUG=0
-SIM=verilator bash sim/rv_l1/run.sh units            # the same on Verilator (seconds)
-FWDIR=fw/ctrl_832 SIM=verilator bash sim/rv_l1/run.sh units   # the 832 tree
-WS=8 TIMEOUT=60000000 bash sim/rv_l1/run.sh units    # other settings from the environment
-make -C sim/rv_l1/prog                               # build only: FWDIR=../../../fw/ctrl_rv (default)
-make -C sim/rv_l1/prog FWDIR=../../../fw/ctrl_832    # (FWDIR relative to sim/rv_l1/prog)
+# fw/ctrl_rv, WS=3 ROMWS=1 EXTRA_WS=0 DEBUG=0
+bash sim/rv_l1/run.sh units
+# the same on Verilator (seconds)
+SIM=verilator bash sim/rv_l1/run.sh units
+# the 832 tree
+FWDIR=fw/ctrl_832 SIM=verilator bash sim/rv_l1/run.sh units
+# other settings from the environment
+WS=8 TIMEOUT=60000000 bash sim/rv_l1/run.sh units
+# build only: FWDIR=../../../fw/ctrl_rv (default)
+make -C sim/rv_l1/prog
+# (FWDIR relative to sim/rv_l1/prog)
+make -C sim/rv_l1/prog FWDIR=../../../fw/ctrl_832
 ```
 
 `units` first prints the tree it uses (`=== UNITS FWDIR <absolute path>`,
@@ -397,6 +411,17 @@ and relinks `cdaudio_emu`; `cue.h` everything, since all three include it;
 check with `make -n -C sim/rv_l1/prog`). Every object also depends on
 `fwdir`, which changes only when `FWDIR` names another tree with the same
 last name: then everything is rebuilt.
+
+**A change of the toolchain or of the flags needs `make -B`.** The objects
+depend on their sources and headers (`-MMD`) and on `fwdir`, which holds the
+path of `FWDIR` only. A new `RV_GCC_DIR` (another compiler) or a change of
+`RV_CFLAGS_FW` in `tools/riscv/toolchain.mk` is therefore not seen: `units`
+would run the old objects. Rebuild everything first (`run.sh units` runs `make` itself, which
+finds the old objects up to date):
+
+```sh
+make -B -C sim/rv_l1/prog
+```
 
 Flags per tree: `fw/ctrl_rv` (any tree but `ctrl_832`) builds like the
 firmware (`fw/ctrl_rv/Makefile`: `$(RV_CFLAGS_FW) -std=gnu23
@@ -484,9 +509,12 @@ stubs) + `libc_nano.a`, `crt0_l1.o` + `l1_newlib.ld` for the L1 memory map, no
 `fw/ctrl_rv/README.md`, "Format parity" and "Host tests".
 
 ```sh
-SIM=verilator RUNTAG=p3t3b bash sim/rv_l1/run.sh fmt                 # all 909 cases: 30.5 M cycles, 25 s
-FMT_SUBSET=1 SIM=verilator RUNTAG=p3t3s bash sim/rv_l1/run.sh fmt    # subset (272 cases): 13.0 M cycles
-FMT_SUBSET=1 RUNTAG=p3t3i bash sim/rv_l1/run.sh fmt                  # iverilog, about 38 minutes
+# all 909 cases: 30.5 M cycles, 25 s
+SIM=verilator RUNTAG=p3t3b bash sim/rv_l1/run.sh fmt
+# subset (272 cases): 13.0 M cycles
+FMT_SUBSET=1 SIM=verilator RUNTAG=p3t3s bash sim/rv_l1/run.sh fmt
+# iverilog, about 38 minutes
+FMT_SUBSET=1 RUNTAG=p3t3i bash sim/rv_l1/run.sh fmt
 bash sim/rv_l1/run.sh compare p3t3i p3t3s
 ```
 
