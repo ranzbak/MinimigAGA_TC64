@@ -45,8 +45,8 @@
 # the bench verdict must be "=== PASS".  Results in <run>/results.txt.
 #
 # fwboot / fwboot_trap: the committed boot ROM loads the real firmware from
-# a 16 MB card (sim/host_bridge/fwboot: $FW + the decoy, no config, no
-# kickstart); the bench (-d SDCARD -d FWBOOT -d RV_HOSTCPU_STATS) answers
+# a 16 MB card (sim/host_bridge/fwboot: $FW + the decoy, + DRIVESND.BIN for
+# fwboot, no config, no kickstart); the bench (-d SDCARD -d FWBOOT -d RV_HOSTCPU_STATS) answers
 # for the Minimig SPI slaves with minimig_spi_stub.v and logs every SPI frame
 # to <run>/spi.txt; cfide is built with havei2c = true (README).  The run
 # ends at FWBOOT_TIMEOUT.
@@ -418,7 +418,8 @@ boot() {
 }
 
 # fwboot <fwboot|fwboot_trap>: the real firmware from the SD card model
-FWBOOT_TO=119600000        # fwboot: 1.5 x the cycle of the 20th KEYQ frame, 79,672,738 (README)
+FWBOOT_TO=176400000        # fwboot: 1.5 x the cycle of the 20th KEYQ frame, 117,557,674 (README; DRIVESND.BIN on the card)
+FWBOOT_CFG_TO=119600000    # fwboot_cfg: 1.5 x the 20th KEYQ frame of fwboot's card without DRIVESND.BIN, 79,672,738
 FWBOOT_TRAP_TO=65900000   # fwboot_trap: 1.5 x the cycle of the EXC line, 43,926,505 (README)
 fwboot() {
 	local t=$1 rom="fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd" st to card fw
@@ -434,7 +435,7 @@ fwboot() {
 		[ -f "$fw" ] || die "no firmware $fw (make -C fw/ctrl_rv, or FW=<RV32OSDA.BIN>)"
 		make -s -C "$HERE/fwboot" B="$run/fwboot" FW="$fw" cfg > make_fwboot.log 2>&1 \
 			|| { tail -20 make_fwboot.log; die "make fwboot_cfg card (make_fwboot.log)"; }
-		card="$run/fwboot/card_cfg.img"; to=$FWBOOT_TO
+		card="$run/fwboot/card_cfg.img"; to=$FWBOOT_CFG_TO
 		ms="$HERE/fwboot/milestones_cfg.txt"
 		rm -f "$saved"
 		[ ${#saved} -le 1024 ] || die "saved card path longer than 1024 characters: $saved"

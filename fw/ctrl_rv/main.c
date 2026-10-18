@@ -50,7 +50,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "fpga.h"
 #include "fdd.h"
 #include "hdd.h"
-#include "firmware.h"
+#include "swap.h"
 #include "menu.h"
 #include "config.h"
 #include "c64keys.h"
@@ -78,14 +78,14 @@ extern adfTYPE df[4];
 char s[40];
 
 extern int _bss_start__;
-int CheckSum(char *adr,int size)
+int CheckSum(char *adr,int size)	/* checksum_pre: the 68k's (832's) big-endian words, byte-wise, wrapping */
 {
-	int *end=(int *)(adr+size);
-	int *ptr=(int *)adr;
-	int sum=0;
-	while(ptr<end)
+	char *end=adr+size;
+	unsigned int sum=0;
+	while(adr<end)
 	{
-		sum+=*ptr++;
+		sum+=rd_be32(adr);
+		adr+=4;
 	}
 	return(sum);
 }

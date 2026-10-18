@@ -18,6 +18,7 @@
  *    read, so that a CheckTimer() loop ends, and (mock_timer_spi_rate) by 1
  *    every n SPI bytes: time that passes with the bytes on the wire.
  *  - UART: the bytes of RS232(), kept as text.
+ *  - RAM: AUDIO_BUFFER (the audio ring) and the room in front of it.
  */
 #ifndef MOCK_HW_H
 #define MOCK_HW_H
@@ -76,6 +77,15 @@ const char *mock_uart(void);
 size_t mock_uart_len(void);
 void mock_uart_clear(void);
 void mock_platform_set(unsigned short v);
-void mock_audio_set(unsigned char v);
+void mock_audio_set(unsigned char v);   /* what reads of AUDIO return (until a write) */
+
+/* ---- RAM: AUDIO_BUFFER and the room in front of it ---- */
+/* AUDIO_BUFFER (hardware.h under HOSTTEST) is the ring, MOCK_RING_BYTES; the
+   MOCK_LOAD_AREA bytes in front of it start at __bss_end (drivesounds_init
+   loads DRIVESND.BIN there, as on the target: 0x70000 - __bss_end, 0x48f54
+   bytes in the build of Task 14).  Zero after mock_reset(). */
+#define MOCK_LOAD_AREA  0x48000
+#define MOCK_RING_BYTES 0x10000          /* 2 x AUDIO_BUFFER_SIZE */
+unsigned char *mock_ring(void);
 
 #endif

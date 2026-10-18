@@ -99,7 +99,7 @@ fmt() {
 control() {
   prep control
   local t rc=0
-  for t in mock_selftest cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_test hwmap_test swap_test fat_test mmc_test config_test hdd_test fdd_test; do
+  for t in mock_selftest cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_test hwmap_test swap_test fat_test mmc_test config_test hdd_test fdd_test drivesounds_test boot_test; do
     mk control "run64-$t" > "mut/control/log.$t" 2>&1 || { echo "control: run64-$t FAILED (mut/control/log.$t)"; rc=1; }
   done
   mk control fmt > mut/control/log.fmt 2>&1 || { echo "control: fmt FAILED (mut/control/log.fmt)"; rc=1; }
@@ -241,6 +241,25 @@ unit fdd_getdata_count fdd_test src fdd.c 's/if (n >= 0x204)/if (n >= 0x203)/' \
   "FIFO +7 words per poll: RV reads past the FIFO count"
 # the committed golden streams are mfm.py's: a stale one fails the regeneration
 unit fdd_gold_stale fdd_test gold mfm_c79_s1.hex '100s/^/0/' "differ"
+
+# ---- drive sounds, copper list, CheckSum, hexdump (drivesounds_test, boot_test)
+# the brief's two: the 832's per-sample swap kept (all three loops) -> the ring;
+# the header read as *(long *) -> LP64: an 8-byte load at SYNTH.BIN's 4 mod 8
+# size field (the sanitizer stops it); as RV32 reads a long (4 bytes, *(int *)):
+# little-endian sizes, the test's load check
+unit ds_swap drivesounds_test src drivesounds.c 's/c=(c\&0xffff)\*0x10001;/c=((c\&255)<<8) | ((c>>8)\&255); c=c*0x10001;/' "FAIL synth fill"
+unit ds_header_long drivesounds_test src drivesounds.c 's/rd_be32(buf)/*(long *)buf/g' "load of misaligned address"
+unit ds_header_int drivesounds_test src drivesounds.c 's/rd_be32(buf)/*(int *)buf/g' "FAIL synth: load"
+unit ds_noconvert drivesounds_test src drivesounds.c 's/samples\[i\]=(short)rd_be16(\&samples\[i\]);/;/' "FAIL synth fill"
+unit ds_nomask drivesounds_test src drivesounds.c 's/c=(c\&0xffff)\*0x10001;/c=c*0x10001;/' "FAIL synth fill"
+# Task 4's parentheses: each (enabled & DRIVESOUNDS_FLOPPY) site taken always
+unit ds_floppy_start drivesounds_test src drivesounds.c '/case DRIVESOUND_MOTORSTART:/,/break;/ s/if ((drivesounds.enabled \& DRIVESOUNDS_FLOPPY))/if (1)/' "FAIL real fill"
+unit ds_floppy_stop drivesounds_test src drivesounds.c '/case DRIVESOUND_MOTORSTOP:/,/break;/ s/if ((drivesounds.enabled \& DRIVESOUNDS_FLOPPY))/if (1)/' "FAIL real fill"
+unit ds_floppy_step drivesounds_test src drivesounds.c '/case DRIVESOUND_STEP:/,/break;/ s/if ((drivesounds.enabled \& DRIVESOUNDS_FLOPPY))/if (1)/' "FAIL real fill"
+unit ds_floppy_default drivesounds_test src drivesounds.c '/default:/,/break;/ s/if ((drivesounds.enabled \& DRIVESOUNDS_FLOPPY))/if (1)/' "FAIL real fill"
+unit boot_copper boot_test src boot.c 's/be16(\(0x[0-9a-f]*\))/\1/g' "FAIL default copper list, big-endian words"
+unit boot_checksum boot_test src main.c 's/sum+=rd_be32(adr);/sum+=*(unsigned int *)adr;/' "FAIL CheckSum of a 512-byte block (aligned)"
+unit boot_hexdump boot_test src hexdump.c 's/unsigned int t=rd_be32(p);/unsigned int t=*(unsigned int *)p;/' "FAIL hexdump: the 832's (big-endian) word view (aligned)"
 
 # ---- the mock itself (mock_selftest) -----------------------------------------
 unit mock_token mock_selftest t mock_hw.c 's/c_push(0xFE);/c_push(0xFF);/'

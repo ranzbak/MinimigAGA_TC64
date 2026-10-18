@@ -16,6 +16,7 @@ unsigned short hosttest_timer(void);
 volatile unsigned short *hosttest_platform(void);
 volatile unsigned char *hosttest_audio(void);
 void hosttest_uart(int c);
+unsigned char *hosttest_audio_buffer(void);
 
 static void die(const char *what)
 {
@@ -457,6 +458,15 @@ volatile unsigned char *hosttest_audio(void) { return &audio_reg; }
 void mock_platform_set(unsigned short v) { platform_reg = v; }
 void mock_audio_set(unsigned char v) { audio_reg = v; }
 
+/* ------------------------------------------------- RAM below the ring */
+/* The firmware's RAM from the end of its .bss up to and including the audio
+   ring: one object, so that drivesounds.c's AUDIO_BUFFER - &__bss_end (the
+   room for DRIVESND.BIN in front of the ring) is a difference inside it.
+   The array is the linker symbol __bss_end the firmware declares. */
+char __bss_end[MOCK_LOAD_AREA + MOCK_RING_BYTES] __attribute__((aligned(16)));
+unsigned char *hosttest_audio_buffer(void) { return (unsigned char *)__bss_end + MOCK_LOAD_AREA; }
+unsigned char *mock_ring(void) { return hosttest_audio_buffer(); }
+
 void mock_reset(void)
 {
 	for (int i = 0; i < 8; i++) {
@@ -477,4 +487,5 @@ void mock_reset(void)
 	timer_count = 0; timer_step = 1; timer_reads = 0; timer_spi_rate = 0; timer_spi_bytes = 0;
 	mock_uart_clear();
 	platform_reg = 0; audio_reg = 0;
+	memset(__bss_end, 0, sizeof __bss_end);
 }

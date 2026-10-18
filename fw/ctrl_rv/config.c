@@ -8,7 +8,7 @@
 #include "fdd.h"
 #include "hdd.h"
 #include "cdrom.h"
-#include "firmware.h"
+// firmware.h (the 832's upgrade declarations, never defined): deleted in the RV port
 #include "menu.h"
 #include "config.h"
 #include "adv7511.h"

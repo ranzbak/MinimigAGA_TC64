@@ -58,12 +58,14 @@ fw/ctrl_832"): `akiko.c boot.c config.c drivesounds.c fat.c main.c menu.c`, and
 `test/Makefile`, `test/.gitignore` (the C-library wiring); since Task 4 also
 `audio.c c64keys.c drivesounds.h firmware.h hdd.c` and `Makefile`; since Task 9
 also `fat.h swap.c swap.h`; since Task 11 also `config.h`; since Task 12 also
-`hdd_internal.h`. `find` also
+`hdd_internal.h`; since Task 14 also `hexdump.c` (`firmware.h` is deleted: it
+exists only in `fw/ctrl_832` now). `find` also
 lists files that only exist here (`rvlibc.c`, `rvlibc.h`, `test/lib_test.c`,
 `test/fmt_*`, `test/mutants.sh`, `test/gold/`, `test/rv/`, `test/swap_test.c`,
 `test/fat_test.c`, `test/fatimg.sh`, `test/fat_check.sh`, `cfgswap.c`,
 `cfgswap.h`, `tools/cfgconv/`, `test/config_test.c`, `test/config_check.sh`,
-`test/hdd_test.c`); `cmp` reports
+`test/hdd_test.c`, `test/fdd_test.c`, `test/drivesounds_test.c`,
+`test/boot_test.c`); `cmp` reports
 those as missing in `fw/ctrl_832`. `interrupts.c`/`interrupts.h` exist only in
 `fw/ctrl_832` (Task 4), so the loop above does not see them.
 
@@ -671,6 +673,93 @@ Copy Lock workaround (`fdd.c:242`-`244`, DSKSYNC 0x0000, 0x8914, 0xA144 sent as
 0x4489) is reached by a mock `paula_floppy` that reports those values in the
 DSKSYNC bytes (2-3) of its status frames.
 
+## Amiga-facing data (Task 14)
+
+Plan 5.2 items 3, 4 and 6 and the "new" rows of the exec-3 audit list: the
+remaining data the Amiga reads (or a file made for it holds) in big-endian
+order, and the dead firmware-upgrade declarations.
+
+| File:line | 832 | RV | Why |
+|---|---|---|---|
+| `boot.c:196`-`204` (`BootUploadCopper`, no `MINIMIG.COP` on the card) | `*p++=0x00e0; *p++=0x0008; ...` (12 words) | `*p++=be16(0x00e0); ...` | the copper reads big-endian words: the list is `00 E0 00 08 00 E2 00 00 00 E4 00 08 00 E6 50 00 01 00 A2 00 FF FF FF FE` in Amiga memory, as the 832 left it. With the file: `RARead`, bytes, unchanged |
+| `drivesounds.c:467`, `469`, `484`, `486` (`drivesounds_init`) | `id=*(long *)buf; size=*(long *)buf;` | `rd_be32(buf)` | `DRIVESND` header longs are big-endian (`sw/mkdrivesounds/mkdrivesounds.c`) and at `2 mod 4` (the file sits at `AUDIO_BUFFER - 212098`, `0x3C37E`; the sound sizes are even, not multiples of 4): a word load there traps on VexRiscv (mcause 4) |
+| `drivesounds.c:476`-`481` | the samples used in place (big-endian = native) | each sound's samples converted once, in place: `samples[i]=(short)rd_be16(&samples[i])` | the render loops read them as `short`; the buffer is the firmware's own (in front of the ring), loaded anew by every `drivesounds_init` |
+| `drivesounds.c:239`-`242`, `262`-`264`, `281`-`282` (`drivesounds_render`, 3, 2 and 1 sources) | `int c=*src++; ...; c=((c&255)<<8) \| ((c>>8)&255); c=c*0x10001; *buf++=c;` | `unsigned int c=*src++; ...; c=(c&0xffff)*0x10001; *buf++=c;` | the ring bytes are the 832's: the low 16 bits of the sum, little-endian, both channels (`lo hi lo hi`). The 832 swapped the 16 bits and stored the long big-endian; the little-endian store does the same without the swap. `c*0x10001` stays; the `& 0xffff` is the swap's masking, which the multiply needs (a negative sum: `-1 * 0x10001` is `0xfffeffff`; mutant `ds_nomask`). Unsigned: the 832's `int` product overflows for every sum with bit 15 set (signed overflow: UBSan stops it on the host) |
+| `main.c:81`-`91` (`CheckSum`, the kickstart's `checksum_pre` the menu shows) | `int *ptr`, `sum+=*ptr++` | `sum+=rd_be32(adr)`, `unsigned int` | the 832 summed big-endian words; the shown value is now the 832's for the same file. Byte-wise (any alignment), unsigned (wraps without signed overflow) |
+| `hexdump.c:14` | `unsigned int t=*p2++` | `rd_be32(p)` | prints 32-bit words in memory order, the 832's (big-endian) view, at any alignment. No caller today (`hexdump.h` is included by `fat.c`, `menu.c`, `config.c`) |
+| `firmware.h` | `romTYPE`, `UPGRADE`, `NVCONFIG`, `NVCONFIG_SPIMODE`, `SPIMODE_NORMAL`, `SPIMODE_FAST`, `CalculateCRC32`, `CheckFirmware`, `WriteFirmware`, `SetSPIMode`, `GetSPIMode` | file deleted; its `#include` became `#include "swap.h"` in `main.c:53` and a comment line in `config.c:11` and `menu.c:37` (their line numbers stay) | plan 5.2 item 6: declared, never defined or called (`grep`: only `mmc.c`'s commented-out `GetSPIMode() == SPIMODE_FAST` lines and `//#include "firmware.h"`, left as they are). Nothing in it was used; `SPIMODE_*` belong to the same dead upgrade path |
+| `hardware.h` (`HOSTTEST` block) | | `AUDIO_BUFFER` is `hosttest_audio_buffer()` | host tests only (the mock's RAM, `test/mock_hw.c`); the target build drops the block. `hwmap_test` checks the real value, `0x70000` |
+
+The target image is otherwise unchanged by the task's test hooks; `make -C
+fw/ctrl_rv check` passes. `RV32OSDA.BIN` is 92,436 B, `__bss_end` `0x270AC`:
+room for 298,836 B of drive sounds in front of `AUDIO_BUFFER`.
+
+### Seen by `drivesounds_test`, unchanged (832 parity)
+
+- `pickstep()`'s `count` is read uninitialised ("Found by -Wextra"). The
+  test's sequences reach `pickstep` (floppy `STEP` and `HDDSTEP` events) only
+  with at most `maxactive` step sounds of that kind playing, which
+  `gold/drivesounds.py` asserts at every pick: there the result does not
+  depend on `count` (if the loop runs, it finds `count <= maxactive` and stops
+  nothing), so the test is deterministic and does not reach the case where
+  the stack garbage decides which sound is cut.
+- Three voices: every playing sound after the third (by index) is switched
+  off, its cursor kept; a step sound picked again later resumes there.
+- `drivesounds.sounds[dse->type].cursor=0` runs for every event before its
+  case: a `STEP`/`HDDSTEP` event rewinds sound `STEP`/`HDDSTEP` even when
+  another one is picked or the `HDDSTEP` is dropped (three already playing),
+  and a `MOTORSTART` with the floppy sounds off rewinds a playing
+  `MOTORSTART`.
+- `playing` is never set: `audio_start()` is written on every render that
+  ends in the second half of the ring.
+- `drivesounds_init()` resets the queue and the player, not the sounds'
+  `active`/`chain`/`cursor`, nor `timestamp`/`silence`.
+- Task 4's four parentheses (`(drivesounds.enabled & DRIVESOUNDS_FLOPPY)` in
+  the `MOTORSTART`, `MOTORSTOP`, `STEP` and `default` cases): each is reached
+  with the floppy sounds on and off (mutants `ds_floppy_start`, `_stop`,
+  `_step`, `_default`: the condition always true).
+
+### Audit: multi-byte accesses to Amiga memory and file data
+
+Every `(short *)`, `(long *)`, `(int *)`, `unsigned short *` (and `unsigned
+int *`, `unsigned long *`, `uint16_t *`, `uint32_t *`) access in `fw/ctrl_rv`,
+listed by (from the repository root)
+
+```sh
+grep -nE '\((unsigned )?(short|long|int) *\*\)|unsigned (short|long|int) *\*|u?int(16|32)_t *\*|(^|[^a-z_])(short|int|long) +\*[a-z_]' fw/ctrl_rv/*.c fw/ctrl_rv/*.h | grep -v '^fw/ctrl_rv/swap\.[ch]:'
+```
+
+plus the two this task removed (`main.c` `CheckSum`, `hexdump.c`) and the
+struct overlays of Tasks 9, 11 and 12 (`grep -n '\*)sector_buffer\|\*)&sector_buffer' fw/ctrl_rv/*.c`):
+
+| File:line | Access | Data | Verdict |
+|---|---|---|---|
+| `boot.c:126`-`133` (`BootClearScreen`, called at `:238`) | `unsigned short *` stores | Amiga chip RAM (the boot screen) | zeros: neutral |
+| `boot.c:198`-`204` (`BootUploadCopper`) | `unsigned short *` stores | the copper list | `be16`, this task |
+| `boot.c` `BootUploadLogo`, `BootUploadBall`, the `COPPER_FILE` case, `BootCustomInit`, `BootPrintEx` | `unsigned char *` | file bytes, font bytes | bytes: neutral |
+| `drivesounds.c:146`, `220` (`int *buf`) | the ring, one long per frame | `AUDIO_BUFFER` (the audio DMA reads it) | the 832's bytes, this task |
+| `drivesounds.c:17`, `147`, `476` (`short *base`, `src`, `samples`) | sample reads | `DRIVESND.BIN` | native after the load's conversion, this task |
+| `drivesounds.c:467`-`486` | the header longs | `DRIVESND.BIN` | `rd_be32`, this task |
+| `main.c:81` (`CheckSum`) | was `int *` | kickstart in Amiga memory | `rd_be32`, this task |
+| `hexdump.c:14` | was `unsigned int *` | any | `rd_be32`, this task |
+| `fpga.c:101`-`117` (`SendFileV2`, kickstart upload) | `unsigned char *adr`: `RARead(file, adr, 512)` into Amiga memory, the decrypt `adr[j] ^= key[keyidx++]`, `PatchKick1xMemoryDetection` (`buf[0x154]`, `strncmp`) | kickstart ROM | bytes: neutral; `CheckSum` above |
+| `config.c:41`, `50` (`ClearKickstartMirrorE0`, `ClearVectorTable`) | `int *` stores | Amiga memory | zeros: neutral |
+| `config.c:189`-`217` (HRTmon config) | `unsigned char *` | Amiga memory | bytes; `maxchip` stored high byte first by shifts: big-endian on either CPU |
+| `config.c:324` (`configTYPE` on `sector_buffer`) | struct overlay | the config file | Task 11 (little-endian file, own name, `cfgconv`) |
+| `hdd.c:65`, `130`, `161` (`RDBChecksum`), `:93`, `:135` (RDSK/PART on `sector_buffer`), `:542` (an HDF's own RDB) | `uint32_t *`, struct overlays | blocks for the Amiga | Task 12 (`be32`) |
+| `hdd.c:171` (`IdentifyDevice`), `:442` (`ATA_IdentifyDevice`) | `unsigned short *` | IDENTIFY DEVICE | Task 12 (words sent by value, low byte first; string words swapped) |
+| `hdd.c:870` (`unsigned long *index`) | | the firmware's own cluster index of an HDF | native: not Amiga or file data |
+| `atapi.c:102` (`ata_string`), `:221` (`atapi_identify`) | `uint16_t *` | IDENTIFY PACKET DEVICE | values (strings by shifts, first character in 15:8); `cdrom.c:766`-`767` sends them low byte first: neutral |
+| `fat.c:136`, `369` ff. (`MasterBootRecord`, `DIRENTRY` on `sector_buffer`), `fat_buffer` | struct overlays | FAT data (little-endian) | Task 9 (`le16`/`le32`) |
+| `fdd.c:350` (`GetHeader(unsigned int *pTrack, ...)`) | | `WriteTrack`'s locals | native; Task 13 ("Floppy", Multi-byte accesses) |
+| `cue.c:55`, `90` (`int32_t *v`), `cdrom.c:228` (`int *open`) | | parser outputs, a flag | native: not data |
+| `akiko.h:6`, `c64keys.h:5`, `rtc.h:6`, `i2c.h:46`, `hardware.h:53`, `58`, `97`, `111`, `120` | `volatile` register macros | I/O registers | not memory: the I/O map (Task 5, `hwmap_test`) |
+| `hardware.h:79`, `osd.c:872` | | commented out | |
+
+Not multi-byte, for completeness: `cdaudio.c:95`-`103` builds the CD audio
+samples from bytes (little-endian, the ring's order) and `atapi.c`'s
+`put16`/`put32`/`get16`/`get32` are byte-wise big-endian by shifts.
+
 ## SD driver timeouts and the TIMER (Task 10)
 
 The 832's `mmc.c` bounded its five data-token and busy waits by loop count
@@ -812,7 +901,12 @@ five `SD_TIMEOUT` bounds, the direct-mode trace `test/gold/dmode.txt`);
 ATA read/write paths against the HDF files); `fdd_test` runs `fdd.c` and the
 832's `fdd.c` (built for the host) behind a mock `paula_floppy`: the read
 stream of every track against `test/gold/mfm.py`, an independent MFM
-encoder, and track writes decoded into the ADF.
+encoder, and track writes decoded into the ADF; `drivesounds_test` loads
+`sw/mkdrivesounds/drivesnd.bin` through the card model and compares the
+audio ring after every fill of an event sequence with
+`test/gold/drivesounds.py` (the 832's file format and render rules);
+`boot_test` checks the default copper list, `CheckSum` and `hexdump` by
+their bytes.
 `fw/ctrl_rv/test/README.md` has the targets, the flags, the mock (an SPI/TIMER/UART
 model with a card-image model; `-DHOSTTEST` hooks in `hardware.h` that leave
 the target image byte for byte the same) and the mutant rules. `LIB832` is

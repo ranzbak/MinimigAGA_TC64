@@ -142,9 +142,10 @@ void Reconfigure();
 
 /* Host tests (-DHOSTTEST, fw/ctrl_rv/test/mock_hw.c): the register accesses
    the firmware makes through these macros go to a mock instead of to the
-   addresses above.  Not defined in the target build: the preprocessor drops
-   this block and RV32OSDA.BIN is the same.  hwmap_test #undefs HOSTTEST to
-   check the real expansions. */
+   addresses above, and AUDIO_BUFFER is the mock's RAM (the audio ring, with
+   the room drivesounds_init loads into in front of it).  Not defined in the
+   target build: the preprocessor drops this block and RV32OSDA.BIN is the
+   same.  hwmap_test #undefs HOSTTEST to check the real expansions. */
 #ifdef HOSTTEST
 unsigned char hosttest_spi(unsigned char out);	/* SPI(x): write DATA, read DATA */
 unsigned char hosttest_rdspi(void);		/* RDSPI: read DATA */
@@ -154,6 +155,7 @@ unsigned short hosttest_timer(void);		/* TIMER read */
 volatile unsigned short *hosttest_platform(void);	/* PLATFORM, an lvalue */
 volatile unsigned char *hosttest_audio(void);		/* AUDIO, an lvalue */
 void hosttest_uart(int c);			/* RS232(x) */
+unsigned char *hosttest_audio_buffer(void);	/* AUDIO_BUFFER: the mock's ring */
 
 #undef SPI
 #undef RDSPI
@@ -173,6 +175,7 @@ void hosttest_uart(int c);			/* RS232(x) */
 #undef PLATFORM
 #undef AUDIO
 #undef RS232
+#undef AUDIO_BUFFER
 #define SPI(x)         hosttest_spi(x)
 #define RDSPI          hosttest_rdspi()
 #define EnableCard()   hosttest_cs(0x02)
@@ -191,6 +194,7 @@ void hosttest_uart(int c);			/* RS232(x) */
 #define PLATFORM       (*hosttest_platform())
 #define AUDIO          (*hosttest_audio())
 #define RS232(x)       hosttest_uart(x)
+#define AUDIO_BUFFER   (hosttest_audio_buffer())
 #endif /* HOSTTEST */
 
 #endif /* HARDWARE_H */

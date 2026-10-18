@@ -65,6 +65,12 @@ static void check_addresses(void)
 	CHECK_REG("IRQ RAW",         HW_IRQ_RAW,     0xFFFFFF38u, 4);
 	CHECK_REG("IRQ MODE",        HW_IRQ_MODE,    0xFFFFFF3Cu, 4);
 	CHECK_REG("RECONFIGURE",     RECONFIGURE,   0xDEE016u,   2);
+	/* not a register: the audio ring's address (HOSTTEST: the mock's RAM) */
+	if ((uintptr_t)AUDIO_BUFFER != 0x70000u || AUDIO_BUFFER_SIZE != 0x8000) {
+		printf("FAIL AUDIO_BUFFER %lx size %x, want 70000 size 8000\n",
+		       (unsigned long)(uintptr_t)AUDIO_BUFFER, (unsigned)AUDIO_BUFFER_SIZE);
+		fails++;
+	}
 	/* RS232(x) is a store to UART_TX (its address and width above): the
 	   expression has the width of that store */
 	if (sizeof(RS232(0)) != 1) { printf("FAIL RS232(x) is not a one-byte store\n"); fails++; }

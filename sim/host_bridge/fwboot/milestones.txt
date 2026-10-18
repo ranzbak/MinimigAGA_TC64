@@ -1,7 +1,7 @@
 # run.sh fwboot: what the real firmware must do on fwboot/Makefile's card
-# (RV32OSDA.BIN + decoy, no config file, no kickstart).  Format and matching:
-# spitrace.py (UART and SPI are each an ordered subsequence of their own
-# stream).  Taken from the sources, not from a run.
+# (RV32OSDA.BIN + decoy + DRIVESND.BIN, no config file, no kickstart).
+# Format and matching: spitrace.py (UART and SPI are each an ordered
+# subsequence of their own stream).  Taken from the sources, not from a run.
 #
 # -- the boot ROM (fw/ctrl_boot_rv), as boot/expect.txt up to the jump,
 #    without the numbers that depend on the card layout
@@ -33,6 +33,15 @@ UART Minimig AGA BETA version 2026-10-2 for Turbo Chameleon 64
 UART Firmware version:
 UART CPU: MC68040 + FPU + MMU
 UART Ported to Open AARS by Paul Honig
+# ColdBoot() -> drivesounds_init("DRIVESNDBIN"): DRIVESND.BIN loads in front
+# of AUDIO_BUFFER, at 0x70000 - 212098 = 0x3C37E (2 mod 4: the first header's
+# longs are misaligned, a word load there traps); the 13 sounds' addresses
+# and sizes from the file's big-endian header
+UART file "DRIVESNDBIN" found
+UART Audio file - length 212098
+UART Sound 0 at 3C38E, length 22394
+UART Sound 1 at 41B10, length 26982
+UART Sound 12 at 6F67A, length 2430
 # ColdBoot(): the kickstart load; ApplyConfiguration(1,1) -> UploadKickstart
 # (no KICK ROM: FatalError(ERROR_ROM, "ROM missing"), config.c)
 UART Loading kickstart ROM...

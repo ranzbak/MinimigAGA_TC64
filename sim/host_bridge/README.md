@@ -508,7 +508,10 @@ rebuilt with other flags) from a 16 MB FAT16 card in the SD card model,
 jumps to it, and the firmware runs `main()` -> `ColdBoot()` (`MMC_Init`,
 `FindDrive`, `LoadConfiguration`, `fpga_init`, the kickstart load) into its
 main loop. `minimig_spi_stub.v` answers for the Minimig SPI slaves. The
-card has the decoy `832OSDAD.BIN` and the firmware, no config file and no
+card has the decoy `832OSDAD.BIN`, the firmware and (since Task 14)
+`DRIVESND.BIN` (`sw/mkdrivesounds/drivesnd.bin`, the drive sounds, which
+`ColdBoot()` loads before the kickstart: at `0x70000 - 212098`, 2 mod 4, so
+its first header's longs are misaligned), no config file and no
 kickstart: the firmware takes the default configuration and ends in its
 error loop. `run.sh fwboot_trap` boots the same card recipe with a
 firmware that traps in a constructor: the trap path's teeth.
@@ -520,7 +523,7 @@ sudo apt install make gcc python3 mtools dosfstools fdisk ghdl verilator ccache
 bash tools/riscv/fetch-xpack.sh          # RISC-V toolchain into ~/opt
 bash tools/riscv/check-toolchain.sh      # must pass
 make -C fw/ctrl_rv                       # -> fw/ctrl_rv/build/RV32OSDA.BIN
-SIM=verilator RUNTAG=fwv  bash sim/host_bridge/run.sh fwboot        # ~5 min
+SIM=verilator RUNTAG=fwv  bash sim/host_bridge/run.sh fwboot        # ~6 min
 SIM=verilator RUNTAG=fwvt bash sim/host_bridge/run.sh fwboot_trap   # ~3 min
 SIM=verilator RUNTAG=fwvc bash sim/host_bridge/run.sh fwboot_cfg    # ~6 min (Firmware boot with an 832 config file)
 # the xsim reference (Vivado 2023.2 and the libtinfo shim, see Prerequisites):
@@ -534,28 +537,31 @@ the image (and the OSD text in `spi.txt`). Another image on the same card
 recipe: `FW=<path to an RV32OSDA.BIN>` (relative to the current
 directory), e.g. `FW=/tmp/b/RV32OSDA.BIN bash sim/host_bridge/run.sh
 fwboot`. `FWBOOT_TIMEOUT=<clk_114 cycles>` overrides the run length
-(defaults: `fwboot` 119,600,000, 1.5 x the 20th `KEYQ` frame at 79,672,738;
-`fwboot_trap` 65,900,000, 1.5 x the `EXC` line at 43,926,505; both
-measured 2026-10-17 on Verilator; the `KEYQ` cycle moves by a few thousand
+(defaults: `fwboot` 176,400,000, 1.5 x the 20th `KEYQ` frame at 117,557,674,
+measured 2026-10-18 on Verilator with `DRIVESND.BIN` on the card (its load
+takes about 39 M cycles; without it the frame was at 79,672,738);
+`fwboot_cfg` 119,600,000, from that earlier figure (its card has no
+`DRIVESND.BIN`); `fwboot_trap` 65,900,000, 1.5 x the `EXC` line at
+43,926,505, measured 2026-10-17; the `KEYQ` cycle moves by a few thousand
 with the length of the build-minute string).
 
-Expected end of `fwboot` (Verilator; xsim the same apart from the wall
-time; the firmware's size and hash change with every build):
+Expected end of `fwboot` (Verilator, Task 14's image; xsim the same apart
+from the wall time; the firmware's size and hash change with every build):
 
 ```
 boot ROM: fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd unmodified (= git HEAD), sha256 7fc4ae53fed88cb3
-firmware: .../fw/ctrl_rv/build/RV32OSDA.BIN, 92684 bytes, sha256 5b5a813887947a14
-=== BOOT first read of 0x2000 at cycle 43213395, irefill 95 dread 99932 dwrite 126096 so far
-=== cycle limit 119600000 reached, no DONE
-=== HW accesses 1447166, stale acks 0, X 0, SDRAM reads 91171 writes 388110, main done 79381, cycles 119600178
-=== STATS irefill 28221 dread 1201163 dwrite 1224582 busy_cycles 97043641 (rv_hostcpu, whole run)
-=== SPI frames 3201, HandleFpga frames 1, KEYQ frames 406
-=== OSD GAP min 44 over 412 bytes
-=== OSD GAP (info) write->read-back min 4 (not seen by userio_osd), 407 reply frames
+firmware: .../fw/ctrl_rv/build/RV32OSDA.BIN, 92436 bytes, sha256 1776e715ab0eb68d
+=== BOOT first read of 0x2000 at cycle 43039511, irefill 95 dread 99400 dwrite 125429 so far
+=== cycle limit 176400000 reached, no DONE
+=== HW accesses 2274912, stale acks 0, X 0, SDRAM reads 251588 writes 731656, main done 79381, cycles 176400178
+=== STATS irefill 47277 dread 2042912 dwrite 2039391 busy_cycles 139834673 (rv_hostcpu, whole run)
+=== SPI frames 4706, HandleFpga frames 1, KEYQ frames 588
+=== OSD GAP min 40 over 594 bytes
+=== OSD GAP (info) write->read-back min 4 (not seen by userio_osd), 589 reply frames
 === STACK low 00001950 (1712 bytes used)
-ok   milestones: 27 of 27 found in order (.../run_fwv/milestones.txt)
+ok   milestones: 33 of 33 found in order (.../run_p3t14b/milestones.txt)
 ok   bench verdict: === PASS
-verilator wall time 329 s
+verilator wall time 372 s
 === fwboot PASS
 ```
 
@@ -608,6 +614,7 @@ order, each stream on its own. They come from the sources:
 | `SDHC card detected` | `MMC_Init()` (the model answers CMD8 with `0x1AA`) |
 | `partition type: 0x00 (FAT16)` | `FindDrive()`: prints `sector_buffer[450]` after reading the partition's boot sector into it, so 0x00, not the MBR's type 6 |
 | `file "MINMGAR CFG" not found`, `file "MINMGAA CFG" not found` | `LoadConfiguration(0)` -> `FileOpen` of the RISC-V name, then of the 832's (Task 11: the first-boot conversion finds no file either) |
+| `file "DRIVESNDBIN" found`, `Audio file - length 212098`, `Sound 0 at 3C38E, length 22394`, `Sound 1 at 41B10, length 26982`, `Sound 12 at 6F67A, length 2430` | `drivesounds_init()` (Task 14): the file at `0x70000 - 212098 = 0x3C37E`, the sounds' addresses and sizes from its big-endian header (the 832's `*(long *)` read of the first header at `0x3C386` traps on VexRiscv: `EXC mcause=00000004 ... mtval=0003C386`) |
 | `Minimig AGA BETA version 2026-10-2 ...`, `Firmware version:`, `CPU: MC68040 + FPU + MMU`, `Ported to Open AARS ...` | `fpga_init()`'s `BootPrintEx` of the stub's version reply |
 | `Loading kickstart ROM...`, `ROM dir: 0`, `##End result : 0`, `ROM loading failed` | `ColdBoot()`, `UploadKickstart()`, `ApplyConfiguration()`, `main()` |
 | `SPI 20 88 ff ff ff ff ff ff / 00 01 1a 0a 02 a4 7d` | `fpga_init()`: `OSD_CMD_VERSION` and six `SPI_reply()` |
@@ -642,7 +649,7 @@ default `rv_exception` or trap entry does not print the `EXC` line.
 
 ### With an 832 config file (fwboot_cfg)
 
-`run.sh fwboot_cfg` boots the `fwboot` card plus `MINMGAA.CFG`, an 832
+`run.sh fwboot_cfg` boots the `fwboot` card (without `DRIVESND.BIN`) plus `MINMGAA.CFG`, an 832
 (big-endian) config file: the `l2` case of `fw/ctrl_rv/test/gold/mkcfg832.py`
 (the 832 defaults with a few harmless changes: `audio.volume` 9,
 `floppy.speed` 0, two long names, `extromdir` 0x0A0B0C0D, `hdfdir[3]`

@@ -12,6 +12,7 @@
 #   FATIMG=<dir>   the three card images of fat_test and their listings (fatimg.sh;
 #                  default $(B)); FATIMG_DEPS= uses them as they are (mutants.sh)
 #   CFG832_DIR=<dir>  real 832 config files: config_test round-trips each (optional)
+#   DRIVESND=<file>   the drive sounds file of drivesounds_test (default sw/mkdrivesounds/drivesnd.bin)
 # Variables that mutants.sh points at a mutated copy of the sources, the tests
 # and the gold files: SRC TD GOLD B, and WERROR=-Wno-error.
 
@@ -229,6 +230,43 @@ run32-fdd_test: $(B)/fdd_test_32 $(B)/fdd/gold.ok $(B)/fdd/spin.ok
 run-fdd_test: run64-fdd_test run32-fdd_test
 .PHONY: run-fdd_test run64-fdd_test run32-fdd_test
 
+# drivesounds_test: the drive sound ring (Task 14): the real drivesounds.c
+# loads sw/mkdrivesounds/drivesnd.bin and gold/drivesounds.py's SYNTH.BIN
+# through rafile.c + fat.c + mmc.c on the card model, renders a fixed event
+# sequence into the mock's ring; drivesounds.py (the 832's file format and
+# render arithmetic) writes the ring after every fill (ring_<case>.bin) and
+# the op lists (dscases.h).
+DRIVESND ?= $(TOP)/sw/mkdrivesounds/drivesnd.bin
+DS_SRCS = $(TD)/mock_hw.c $(SRC)/hardware.c $(SRC)/mmc.c $(SRC)/uart.c $(SRC)/fat.c $(SRC)/swap.c \
+          $(SRC)/rvlibc.c $(SRC)/errors.c $(SRC)/rafile.c $(SRC)/audio.c $(SRC)/i2c.c $(SRC)/drivesounds.c
+$(B)/ds/dscases.h: $(GOLD)/drivesounds.py $(DRIVESND)
+	@mkdir -p $(@D)
+	$(PY) $(GOLD)/drivesounds.py $(@D) $(DRIVESND)
+$(B)/ds/card.img: $(B)/ds/dscases.h $(DRIVESND) $(TOP)/tools/sim/mkcard.sh
+	cp $(DRIVESND) $(@D)/DRIVESND.BIN
+	bash $(TOP)/tools/sim/mkcard.sh $@ 8 $(@D)/DRIVESND.BIN $(@D)/SYNTH.BIN
+$(B)/drivesounds_test: $(TD)/drivesounds_test.c $(DS_SRCS) $(HDRS) $(B)/ds/dscases.h
+	$(HOSTCC) $(CFLAGS) -I$(B)/ds -o $@ $(TD)/drivesounds_test.c $(DS_SRCS)
+$(B)/drivesounds_test_32: $(TD)/drivesounds_test.c $(DS_SRCS) $(HDRS) $(B)/ds/dscases.h
+	$(HOSTCC) -m32 $(CFLAGS) -I$(B)/ds -o $@ $(TD)/drivesounds_test.c $(DS_SRCS)
+run64-drivesounds_test: $(B)/drivesounds_test $(B)/ds/card.img
+	$(B)/drivesounds_test $(B)/ds
+run32-drivesounds_test: $(B)/drivesounds_test_32 $(B)/ds/card.img
+	$(B)/drivesounds_test_32 $(B)/ds
+run-drivesounds_test: run64-drivesounds_test run32-drivesounds_test
+.PHONY: run-drivesounds_test run64-drivesounds_test run32-drivesounds_test
+
+# boot_test: the default copper list (boot.c), CheckSum (main.c, cut out:
+# main.c holds main()) and hexdump.c, by their bytes (Task 14).  boot.c's
+# (int)adr casts of Amiga addresses are 32-bit casts (exact on RV32 and -m32;
+# the LP64 build does not run them): their LP64 warnings are off here.
+$(B)/checksum.inc: $(SRC)/main.c
+	@mkdir -p $(@D)
+	sed -n '/^int CheckSum(char \*adr,int size)/,/^}/p' $(SRC)/main.c > $@
+	grep -q '^int CheckSum' $@
+$(eval $(call TEST,boot_test,$$(TD)/mock_hw.c $$(SRC)/hardware.c $$(SRC)/uart.c $$(SRC)/boot.c $$(SRC)/hexdump.c,-Wno-pointer-to-int-cast -Wno-int-to-pointer-cast,))
+$(B)/boot_test $(B)/boot_test_32: $(B)/checksum.inc
+
 # atapi_test without the ISO: the ISO-backed cases are skipped, not failed
 run64-atapi_test::
 	$(B)/atapi_test /nonexistent.iso
@@ -253,7 +291,7 @@ $(B)/openhf_test $(B)/openhf_test_32: $(B)/openhf.inc
 
 run: fmt run-mock_selftest run-cue_test run-cdaudio_test run-atapi_test run-cdrom_test \
      run-openhf_test run-lib_test run-hwmap_test run-swap_test run-fat_test run-mmc_test \
-     run-config_test run-hdd_test run-fdd_test
+     run-config_test run-hdd_test run-fdd_test run-drivesounds_test run-boot_test
 
 clean:
 	$(RM) -r out mut

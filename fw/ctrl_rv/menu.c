@@ -34,7 +34,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "fdd.h"
 #include "hdd.h"
 #include "hardware.h"
-#include "firmware.h"
+// firmware.h (the 832's upgrade declarations, never defined): deleted in the RV port
 #include "config.h"
 #include "menu.h"
 #include "hexdump.h"

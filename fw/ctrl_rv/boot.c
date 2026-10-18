@@ -12,6 +12,7 @@
 #include "spi.h"
 #include "fat.h"
 #include "rafile.h"
+#include "swap.h"
 
 
 static unsigned char *bootscreen_adr; // = 0x80000 + /*120*/112*640/8;
@@ -193,13 +194,14 @@ void BootUploadCopper()
 		adr = (unsigned char *)(COPPER_ADDRESS ^ HOSTMAP_ADDR);
 		RARead(&file, adr, COPPER_SIZE);
 	} else {
+		/* the 68k's copper list: big-endian words */
 		unsigned short *p = (unsigned short *)(COPPER_ADDRESS ^ HOSTMAP_ADDR);
-		*p++=0x00e0; *p++=0x0008;
-		*p++=0x00e2; *p++=0x0000;
-		*p++=0x00e4; *p++=0x0008;
-		*p++=0x00e6; *p++=0x5000;
-		*p++=0x0100; *p++=0xa200;
-		*p++=0xffff; *p++=0xfffe;
+		*p++=be16(0x00e0); *p++=be16(0x0008);
+		*p++=be16(0x00e2); *p++=be16(0x0000);
+		*p++=be16(0x00e4); *p++=be16(0x0008);
+		*p++=be16(0x00e6); *p++=be16(0x5000);
+		*p++=be16(0x0100); *p++=be16(0xa200);
+		*p++=be16(0xffff); *p++=be16(0xfffe);
 	}
 	ClearError(ERROR_FILESYSTEM);
 }

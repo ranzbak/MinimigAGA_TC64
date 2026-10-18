@@ -7,6 +7,7 @@
 
 #include "drivesounds.h"
 #include "cdaudio.h"
+#include "swap.h"
 
 extern char __bss_end;
 
@@ -130,6 +131,13 @@ void drivesounds_finishsound(int i)
 
 
 /* srcs/srcs2/srcs3 are only read when the matching src pointer is set, which also sets them: a false positive, not a bug */
+/* Byte order: the samples are native (drivesounds_init converts them), and
+   each frame goes into the ring as the 832 put it there: the low 16 bits of
+   the sum, little-endian, twice (lo hi lo hi).  The 832 swapped the bytes of
+   the sum and stored the long big-endian; here the long is stored
+   little-endian and needs no swap.  The & 0xffff is what the 832's swap did
+   on the way: without it a negative sum's sign would reach the upper half
+   (-1 * 0x10001 = 0xfffeffff).  Unsigned: the sums wrap, as on the 832. */
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
 void drivesounds_render(int timestamp)
@@ -228,11 +236,10 @@ void drivesounds_render(int timestamp)
 			{
 				while(span--)
 				{
-					int c=*src++;
+					unsigned int c=*src++;
 					c+=*src2++;
 					c+=*src3++;
-					c=((c&255)<<8) | ((c>>8)&255);
-					c=c*0x10001;
+					c=(c&0xffff)*0x10001;
 					*buf++=c;
 				}
 			}
@@ -252,10 +259,9 @@ void drivesounds_render(int timestamp)
 			{
 				while(span--)
 				{
-					int c=*src++;
+					unsigned int c=*src++;
 					c+=*src2++;
-					c=((c&255)<<8) | ((c>>8)&255);
-					c=c*0x10001;
+					c=(c&0xffff)*0x10001;
 					*buf++=c;
 				}
 			}
@@ -272,9 +278,8 @@ void drivesounds_render(int timestamp)
 			{
 				while(span--)
 				{
-					int c=*src++;
-					c=((c&255)<<8) | ((c>>8)&255);
-					c=c*0x10001;
+					unsigned int c=*src++;
+					c=(c&0xffff)*0x10001;
 					*buf++=c;
 				}
 			}
@@ -450,26 +455,35 @@ int drivesounds_init(const char *filename)
 			printf("Audio file - length %d\n",(int)file.size);		
 			buf-=file.size;
 			RARead(&file,(unsigned char *)buf,file.size);
+			/* The file is big-endian (sw/mkdrivesounds): the header longs
+			   are read byte by byte (buf is at AUDIO_BUFFER - size, and
+			   the sizes are even, not multiples of 4: misaligned longs),
+			   and each sound's samples are made native here, once, in
+			   place (the render loops read them as shorts). */
 			if(strncmp(buf,"DRIVESND",8)==0)
 			{
 				int id=0;
 				buf+=8;
-				id=*(long *)buf;
+				id=rd_be32(buf);
 				buf+=4;
-				size=*(long *)buf;
+				size=rd_be32(buf);
 				buf+=4;
 				while(size)
 				{
 					if(size && id<DRIVESOUND_COUNT)
 					{
+						int i;
+						short *samples=(short *)buf;
 						printf("Sound %d at %X, length %d\n",id,(unsigned int)(uintptr_t)buf,size);
-						drivesounds.sounds[id].base=(short *)buf;
+						drivesounds.sounds[id].base=samples;
 						drivesounds.sounds[id].length=size/2; /* Size needs to be in 16-bit words */
+						for(i=0;i<size/2;++i)
+							samples[i]=(short)rd_be16(&samples[i]);
 						buf+=size;
 						result=1;
-						id=*(long *)buf;
+						id=rd_be32(buf);
 						buf+=4;
-						size=*(long *)buf;
+						size=rd_be32(buf);
 						buf+=4;
 					}
 					else

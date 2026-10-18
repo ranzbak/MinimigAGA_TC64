@@ -9,7 +9,9 @@
 #        fw/ctrl_rv): copied as it is, never rebuilt here
 # Outputs in $(B):
 #   card.img          16 MB FAT16 (tools/sim/mkcard.sh): 832OSDAD.BIN (decoy,
-#                     first in the directory), RV32OSDA.BIN = $(FW).  No
+#                     first in the directory), RV32OSDA.BIN = $(FW),
+#                     DRIVESND.BIN = sw/mkdrivesounds/drivesnd.bin (the drive
+#                     sounds: loaded at 0x70000 - 212098, 2 mod 4).  No
 #                     config file, no kickstart.
 #   smoke_trap.o      fwboot/smoke_trap.c with the firmware's flags
 #   trapfw/           make -C fw/ctrl_rv B=$(B)/trapfw EXTRA_OBJS=smoke_trap.o:
@@ -30,6 +32,7 @@ include $(TOP)/tools/riscv/toolchain.mk
 B      ?= build
 FW     ?= $(TOP)/fw/ctrl_rv/build/RV32OSDA.BIN
 MKCARD := $(TOP)/tools/sim/mkcard.sh
+DRIVESND := $(TOP)/sw/mkdrivesounds/drivesnd.bin
 CARDMB := 16
 BA     := $(abspath $(B))
 
@@ -51,8 +54,12 @@ $(B)/832OSDAD.BIN:
 	@mkdir -p $(@D)
 	yes DECOY832 | head -c 2000 > $@
 
-$(B)/card.img: $(B)/832OSDAD.BIN $(B)/fw/RV32OSDA.BIN $(MKCARD)
-	bash $(MKCARD) $@ $(CARDMB) $(B)/832OSDAD.BIN $(B)/fw/RV32OSDA.BIN
+$(B)/DRIVESND.BIN: $(DRIVESND)
+	@mkdir -p $(@D)
+	cp $(DRIVESND) $@
+
+$(B)/card.img: $(B)/832OSDAD.BIN $(B)/fw/RV32OSDA.BIN $(B)/DRIVESND.BIN $(MKCARD)
+	bash $(MKCARD) $@ $(CARDMB) $(B)/832OSDAD.BIN $(B)/fw/RV32OSDA.BIN $(B)/DRIVESND.BIN
 
 # fwboot_cfg: an 832 config file next to the firmware
 MKCFG832 := $(TOP)/fw/ctrl_rv/test/gold/mkcfg832.py
