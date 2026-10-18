@@ -945,7 +945,8 @@ ring-fill columns (4.4).
   DebugMode; Clang build check. Gate: numbers recorded.
 
 **Phase 3 done 2026-10-18** (`doc/osd-riscv-exec-3.md`, 20 tasks, commits
-`2f5df34..82852ac` plus the Task 20 gate commit; the gate evidence is
+`5d409a2` through `c8befc2` inclusive (`a082e78..c8befc2`, base exclusive;
+`5d409a2` and `0db52d9` amend the plan, Task 1 is `2f5df34`); the gate evidence is
 `.superpowers/sdd/osd-riscv-exec-3/task-20-report.md`, run directories
 `p3g*`). Gate run on the committed tree, all green:
 

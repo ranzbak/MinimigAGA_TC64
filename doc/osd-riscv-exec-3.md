@@ -1063,7 +1063,14 @@ trap log, speed, I$ hit rate) starts from:
    scenario that needs board-length timeouts (CD 10 s, SD 1 s) must drive
    `tick_in` at the real 44.1 kHz rate or account for the factor.
 10. **First hot-set data for 4.5:** `RV_HOSTCPU_STATS` I$ refill counts and
-    cycle counts of `fwboot` (boot to the 20th main-loop poll).
+    cycle counts of `fwboot`. The bench prints them for the **whole run** (boot
+    ROM, firmware load, DRIVESND load, init, main loop) up to its cycle limit,
+    not to a main-loop point (the 20th `OSD_CMD_KEYQ` frame is logged at cycle
+    117,642,678 as a milestone, no STATS are cut there; `HandleFpga` frames: 1).
+    Task 20 figures, `fwboot` to 176.4 M cycles: I$ refills 49,996, data reads
+    2,035,316, data writes 2,035,058, `busy_cycles` 139,902,033; `fwboot_cfg`
+    to 119.6 M: 28,384 / 1,082,786 / 1,168,401 / 98,846,470. A STATS cut at the
+    20th KEYQ frame is a Phase 4.5 bench change.
 11. **Host test suite** `make -C fw/ctrl_rv/test` (native + `-m32`, mutants)
     and L1 `units` on `fw/ctrl_rv`: the regression that every Phase 4 fix
     must keep green.
