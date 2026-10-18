@@ -12,6 +12,9 @@
 #   make clean
 #
 #   B=dir         output directory (default build)
+#   CLANG=1       portability check (decision 12.8 gate 1b): compile with
+#                 clang/LLVM into build_clang/, link with the xPack gcc
+#                 driver; gcc stays the shipping build (README "Clang build")
 #   EXTRA_CFLAGS  extra compiler flags for bench variants (empty for the
 #                 shipped image)
 #   EXTRA_OBJS    extra objects linked after the firmware's (bench variants,
@@ -20,7 +23,11 @@
 TOP := $(abspath ../..)
 include $(TOP)/tools/riscv/toolchain.mk
 
+ifeq ($(CLANG),1)
+B            ?= build_clang
+else
 B            ?= build
+endif
 EXTRA_CFLAGS ?=
 EXTRA_OBJS   ?=
 ARCH_B       := $(B)
@@ -39,8 +46,26 @@ SRCS := hardware.c config.c fat.c fdd.c fpga.c boot.c hdd.c main.c menu.c \
         atapi.c cdrom.c cue.c cdaudio.c rvlibc.c cfgswap.c stackcheck.c
 OBJS := $(addprefix $(B)/,$(SRCS:.c=.o))
 
+ifeq ($(CLANG),1)
+# clang has no nano.specs and no -fstack-usage: newlib-nano's headers by hand
+# (nano first: its newlib.h describes the struct _reent of libc_nano.a).
+# Compile only: the link stays on the xPack gcc driver (LDFLAGS below), so
+# the map is GNU ld's and check (e) reads it unchanged.
+CLANG_CC     ?= clang
+CLANG_TARGET := --target=riscv32-unknown-elf
+NANO_INC     := -isystem $(RV_GCC_DIR)/riscv-none-elf/include/newlib-nano \
+                -isystem $(RV_GCC_DIR)/riscv-none-elf/include
+# gcc-only spellings in the sources (#pragma GCC diagnostic ignored
+# "-Wmaybe-uninitialized" in hdd.c/drivesounds.c, __attribute__((nonstring))
+# in menu.c): not defects, clang has no such warning/attribute
+CLANG_WNO    := -Wno-unknown-warning-option -Wno-unknown-attributes
+CFLAGS  := $(RV_CFLAGS_FW) -std=gnu23 $(NANO_INC) -g -I. -Iarch \
+           -I$(B) -Wall -Wextra -Werror $(CLANG_WNO) -MMD -MP $(EXTRA_CFLAGS)
+$(ARCH_OBJS) $(OBJS): RV_CC := $(CLANG_CC) $(CLANG_TARGET)
+else
 CFLAGS  := $(RV_CFLAGS_FW) -std=gnu23 --specs=nano.specs -g -I. -Iarch \
            -I$(B) -Wall -Wextra -Werror -fstack-usage -MMD -MP $(EXTRA_CFLAGS)
+endif
 LDFLAGS := $(RV_LDFLAGS_FW) --specs=nano.specs $(ARCH_LDFLAGS) \
            -Wl,-Map,$(B)/$(PROJECT).map
 LIBS    := -lc_nano $(RV_LIBS_FW)
@@ -168,6 +193,7 @@ check_g:
 
 # the 20 largest stack frames of the firmware (-fstack-usage: bytes, kind)
 stack: $(OBJS)
+	@if [ "$(CLANG)" = 1 ]; then echo "make stack: no -fstack-usage in clang"; exit 1; fi
 	@cat $(B)/*.su | awk -F'\t' '{ print $$2 "\t" $$3 "\t" $$1 }' | sort -rn | head -20
 
 clean:

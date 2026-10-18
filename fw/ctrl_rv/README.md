@@ -162,6 +162,56 @@ and gcc at `-Os` drops the `.init_array` entry of an empty constructor (the
 function itself stays; at `-O0` `akiko.o` has `.init_array.00102`). Nothing
 runs at that slot on either CPU, so the order is the 832's.
 
+## Clang build (Task 18, decision 12.8 gate 1b)
+
+```sh
+make -C fw/ctrl_rv CLANG=1 clean all size check     # output build_clang/ (gitignored)
+```
+
+A portability check, not a shipping build: gcc stays the image. clang is
+Ubuntu 18.1.3 (`clang --target=riscv32-unknown-elf`; `-std=gnu23` is accepted,
+`__STDC_VERSION__` 202311L, so no `gnu2x` fallback). The flags are the gcc
+build's (`RV_CFLAGS_FW`, `-Wall -Wextra -Werror`) with two differences:
+
+- clang has no `nano.specs`: the newlib-nano headers are given by hand,
+  `-isystem $(RV_GCC_DIR)/riscv-none-elf/include/newlib-nano -isystem
+  $(RV_GCC_DIR)/riscv-none-elf/include`, in that order.
+- no `-fstack-usage` in clang (`make stack` refuses with `CLANG=1`).
+
+Only compiling (the C files and `arch/crt0.S`, `arch/trap.S`) is clang; the
+link stays on the xPack gcc driver with the firmware's line (`-nostdlib
+-nostartfiles`, `--specs=nano.specs`, `-lc_nano -lgcc` last), not `ld.lld`
+(installed here, unused): the map is GNU ld's, so check (e) works unchanged.
+`CLANG_CC=...` picks another clang.
+
+`-Wno-unknown-warning-option -Wno-unknown-attributes` (the `CLANG_WNO` variable,
+CLANG block only): `hdd.c` and `drivesounds.c` carry `#pragma GCC diagnostic
+ignored "-Wmaybe-uninitialized"` and `menu.c` an `__attribute__((nonstring))`,
+both gcc-only spellings that clang does not know; neither is a defect.
+
+Fixed in the source (codegen-neutral: the gcc build's disassembly is identical
+before and after, `.BIN` still 92,588 B):
+
+- `rafile.c` `RAReadLine`: `result` was only ever ANDed, never returned (clang
+  `-Wunused-but-set-variable`); the variable is gone, `FileRead` is still called.
+- `c64keys.c` `c64keys_inthandler`: `idx` was only decremented (same warning);
+  removed with its `--idx`.
+- `stackcheck.c` `StackFill`: `register uintptr_t sp __asm__("sp")` read as a
+  plain variable is an uninitialised local in clang (real: it would have read
+  garbage); an empty `__asm__("" : "+r"(sp))` binds it, gcc emits the same code.
+
+`check_io.awk` now forgets its tracked constants after an unconditional jump
+(`j`, `jr`, `ret`, `mret`): clang places blocks that are reached only by a
+branch right after a `j`, where a stale `li s1,0` made `lw s6,-16(s1)` look
+like a UART read. The gcc listing gives the same counts as before. clang folds
+every I/O address into a zero-based access (1340 seen, all `(zero)`), so (b) and
+(c) still check something.
+
+Result: clang image `.text` 96,712 B, `RV32OSDA.BIN` 100,192 B (gcc 92,588 B).
+`SIM=verilator RUNTAG=p3t18 FW=fw/ctrl_rv/build_clang/RV32OSDA.BIN bash
+sim/host_bridge/run.sh fwboot`: PASS, OSD GAP min 40, STACK low 0x1980 (gcc:
+40, 0x1950).
+
 ## Stack and size budget (Task 17)
 
 ```sh

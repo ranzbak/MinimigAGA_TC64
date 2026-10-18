@@ -140,7 +140,6 @@ void c64keys_inthandler()
 {
 	int i;
 	int count=0;
-	int idx=63;
 	int nextframe=(c64keys.frame+4)%12;
 	int prevframe=(c64keys.frame+8)%12;
 
@@ -191,7 +190,6 @@ void c64keys_inthandler()
 			unsigned int status=c64keys.keys[c64keys.frame+i];
 			for(j=0;j<16;++j)
 			{
-				--idx;
 				if(changed&0x8000)
 				{
 					int code=63-(i*16+j);	/* Fetch Amiga scancode for this key */

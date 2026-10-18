@@ -51,7 +51,6 @@ int RARead(RAFile *file,unsigned char *pBuffer, unsigned long bytes)
 
 int RAReadLine(RAFile *file,unsigned char *pBuffer, unsigned long bytes)
 {
-	int result=1;
 	// Since we can only read from the SD card on 512-byte aligned boundaries,
 	// we need to copy in multiple pieces.
 	while(bytes)
@@ -62,7 +61,7 @@ int RAReadLine(RAFile *file,unsigned char *pBuffer, unsigned long bytes)
 		int l=blockoffset+bytes;
 		if(!blockoffset)
 		{
-			result&=FileRead(&file->file,file->buffer);	// Read to temporary buffer, allowing us to preserve any leftover for the next read.
+			FileRead(&file->file,file->buffer);	// Read to temporary buffer, allowing us to preserve any leftover for the next read.
 			FileNextSector(&file->file);
 		}
 		if(l>512)

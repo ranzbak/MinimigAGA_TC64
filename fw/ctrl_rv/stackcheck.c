@@ -7,6 +7,9 @@ static uint32_t *fill_end;	// first word above the filled region
 void StackFill(void)
 {
 	register uintptr_t sp __asm__("sp");
+	// a register variable has its register only as an asm operand (clang
+	// reads it as an uninitialised local otherwise): bind it here
+	__asm__("" : "+r"(sp));
 	// 64 bytes below the caller's sp stay unfilled: this function's own
 	// frame and whatever the compiler spills around the call.
 	fill_end = (uint32_t *)((sp - 64) & ~(uintptr_t)3);

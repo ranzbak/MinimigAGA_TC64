@@ -5,8 +5,8 @@
 # after li / lui / addi / mv from a known register ("zero" is 0), so that
 #   li a4,-112 ; lhu a5,0(a4)      and      lui a5,0xfffff ; lw a0,-16(a5)
 # are seen like  lhu a5,-112(zero) .  Limits: straight-line tracking only (a
-# register is forgotten when anything else writes it and at every call, and
-# not at a branch join), so an address computed any other way, or held across
+# register is forgotten when anything else writes it, at every call and after
+# an unconditional jump, but not at other branch joins), so an address computed any other way, or held across
 # a join, is not seen.  An access counts as I/O when its address is in
 # -256..-1 (0xFFFFFF00..0xFFFFFFFF).
 function v32(x) { x = x % 4294967296; if (x >= 2147483648) x -= 4294967296; if (x < -2147483648) x += 4294967296; return x }
@@ -35,7 +35,10 @@ function getv(r) { return (r == "zero") ? 0 : val[r] }
 		}
 		next
 	}
-	if (op ~ /^(b[a-z]*|j|jr|ret|nop|ecall|ebreak|fence|mret|wfi)$/) next
+	# the instruction after an unconditional jump is reached only by a branch
+	# from elsewhere (clang lays out such blocks): nothing is known there
+	if (op ~ /^(j|jr|ret|mret)$/) { delete val; next }
+	if (op ~ /^(b[a-z]*|nop|ecall|ebreak|fence|wfi)$/) next
 	if (op ~ /^(jal|jalr|call|tail)$/) { delete val; next }
 	split(args, p, ",")
 	rd = p[1]
