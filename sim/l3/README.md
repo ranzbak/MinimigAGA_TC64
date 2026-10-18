@@ -39,7 +39,7 @@ directory with `mdir` against the names the card should hold; reads the config
 files back from the images and compares `cfgconv --check` with the field
 table `gen/mkcfg.py` was given; prints the CHS of `SYNTH.HDF` and requires
 more than 255 cylinders; and compares `manifest.txt` with a fresh stand-in
-build. It ends with `check PASS`. After a change to a generator,
+build. It ends with `check PASS`. The bytes of `TEST.ISO` depend on the xorriso version (the committed manifest was made with 1.5.6): on another version `check` can fail with "manifest.txt is stale", and `make -C sim/l3/card manifest` regenerates it. After a change to a generator,
 `make -C sim/l3/card manifest` rewrites `manifest.txt`.
 
 One card, with real firmware files (the 832 one from your own build):
