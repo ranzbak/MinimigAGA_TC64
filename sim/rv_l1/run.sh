@@ -378,14 +378,14 @@ case "${1:-}" in
     done
     # fmt_rv.txt holds one digest per record (fmt_run.h, FMT_DIGEST); the same
     # digests made from the host's full records must be identical
-    python3 -I "$ft/gold/fmtcheck.py" digest $sub "$ft/fmt_glibc_64.txt" > "$run/fmt_glibc_digest.txt"
+    python3 -I "$ft/gold/fmtcheck.py" digest $sub "$ft/out/fmt_glibc_64.txt" > "$run/fmt_glibc_digest.txt"
     if cmp -s "$run/fmt_rv.txt" "$run/fmt_glibc_digest.txt"; then
       echo "PASS fmt_rv.txt == digests of fmt_glibc_64.txt ($(wc -l < "$run/fmt_rv.txt") records)"
     else
       echo "FAIL fmt_rv.txt differs from the digests of fmt_glibc_64.txt"; diff "$run/fmt_rv.txt" "$run/fmt_glibc_digest.txt" | sed -n '1,6p'; rc=1
     fi
     # the full text of the RV side is the host's glibc run (equal by the gate above)
-    python3 -I "$ft/gold/fmtcheck.py" diff "$ft/fmt_832.txt" "$ft/fmt_glibc_64.txt" "$ft/fmt_cases.h" > "$run/fmt_diff.txt" 2> "$run/fmt_diff.err"
+    python3 -I "$ft/gold/fmtcheck.py" diff "$ft/out/fmt_832.txt" "$ft/out/fmt_glibc_64.txt" "$ft/fmt_cases.h" > "$run/fmt_diff.txt" 2> "$run/fmt_diff.err"
     if diff -q "$ft/gold/fmt_diff_expected.txt" "$run/fmt_diff.txt" > /dev/null; then
       echo "PASS 832-versus-RV differences == gold/fmt_diff_expected.txt ($(wc -l < "$run/fmt_diff.txt") lines)"
     else

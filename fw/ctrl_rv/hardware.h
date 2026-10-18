@@ -140,4 +140,57 @@ void WaitTimer(unsigned long time);
 void ConfigMisc(unsigned short misc);
 void Reconfigure();
 
+/* Host tests (-DHOSTTEST, fw/ctrl_rv/test/mock_hw.c): the register accesses
+   the firmware makes through these macros go to a mock instead of to the
+   addresses above.  Not defined in the target build: the preprocessor drops
+   this block and RV32OSDA.BIN is the same.  hwmap_test #undefs HOSTTEST to
+   check the real expansions. */
+#ifdef HOSTTEST
+unsigned char hosttest_spi(unsigned char out);	/* SPI(x): write DATA, read DATA */
+unsigned char hosttest_rdspi(void);		/* RDSPI: read DATA */
+void hosttest_cs(unsigned v);			/* the CS register: Enable*()/Disable*() */
+void hosttest_spi_speed(unsigned v);		/* the SPEED register: SPI_slow()/SPI_fast() */
+unsigned short hosttest_timer(void);		/* TIMER read */
+volatile unsigned short *hosttest_platform(void);	/* PLATFORM, an lvalue */
+volatile unsigned char *hosttest_audio(void);		/* AUDIO, an lvalue */
+void hosttest_uart(int c);			/* RS232(x) */
+
+#undef SPI
+#undef RDSPI
+#undef EnableCard
+#undef DisableCard
+#undef EnableFpga
+#undef DisableFpga
+#undef EnableOsd
+#undef DisableOsd
+#undef EnableDMode
+#undef DisableDMode
+#undef EnableRTC
+#undef DisableRTC
+#undef SPI_slow
+#undef SPI_fast
+#undef TIMER
+#undef PLATFORM
+#undef AUDIO
+#undef RS232
+#define SPI(x)         hosttest_spi(x)
+#define RDSPI          hosttest_rdspi()
+#define EnableCard()   hosttest_cs(0x02)
+#define DisableCard()  hosttest_cs(0x03)
+#define EnableFpga()   hosttest_cs(0x10)
+#define DisableFpga()  hosttest_cs(0x11)
+#define EnableOsd()    hosttest_cs(0x20)
+#define DisableOsd()   hosttest_cs(0x21)
+#define EnableDMode()  hosttest_cs(0x40)
+#define DisableDMode() hosttest_cs(0x41)
+#define EnableRTC()    hosttest_cs(0x80)
+#define DisableRTC()   hosttest_cs(0x81)
+#define SPI_slow()     hosttest_spi_speed(0x3f)
+#define SPI_fast()     hosttest_spi_speed(0x1)
+#define TIMER          hosttest_timer()
+#define PLATFORM       (*hosttest_platform())
+#define AUDIO          (*hosttest_audio())
+#define RS232(x)       hosttest_uart(x)
+#endif /* HOSTTEST */
+
 #endif /* HARDWARE_H */

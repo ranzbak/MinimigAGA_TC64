@@ -259,7 +259,7 @@ the `sprintf`). Three producers, one case list:
 | `fmt_glibc` (host, native and `-m32`) | glibc's `sprintf`; `printf` is `rvlibc.c` over glibc's `vsnprintf` |
 | `fmt_rv` (L1 bench, `sim/rv_l1/run.sh fmt`) | newlib-nano's `sprintf` and `rvlibc.c`, the target libc; digests, see gate 3 |
 
-Gates (`make -C fw/ctrl_rv/test fmt.ok`, part of `lib_test`, and `run.sh fmt`):
+Gates (`make -C fw/ctrl_rv/test fmt`, part of the default `run`, and `run.sh fmt`):
 
 1. `fmt_glibc` native == `-m32`;
 2. `fmtcheck.py diff fmt_832.txt fmt_glibc_64.txt` == `test/gold/fmt_diff_expected.txt`
@@ -329,7 +329,9 @@ and the big-endian byte lane `+2`/`+3`):
 | `hardware.h` | no include guard | `HARDWARE_H` guard (the host test includes `uart.c` after it) |
 
 `test/hwmap_test.c` asserts address and access width of every register macro
-and `puts` over a mock for the UART store at offsets 0..3 of an aligned buffer.
+(real macros: it undefines `HOSTTEST`), the CS / SPEED values, the order of
+`SPI()`, the real `RS232()` expansion, and `puts` over a UART store at offsets
+0..3 of an aligned buffer.
 
 Call-site edits to the copied `fw/ctrl_rv/*.c` made by Task 3 (everything else
 is verbatim):
@@ -518,28 +520,24 @@ From a fresh Ubuntu 24.04 machine (works in zsh and bash), from the repository
 root:
 
 ```sh
-sudo apt install build-essential gcc-multilib python3 git
+sudo apt install build-essential gcc-multilib python3 git mtools dosfstools fdisk
 git submodule update --init EightThirtyTwo          # lib832, the 832 printf reference
-make -C fw/ctrl_rv/test lib_test lib_test_32
-./fw/ctrl_rv/test/lib_test && ./fw/ctrl_rv/test/lib_test_32
-make -C fw/ctrl_rv/test hwmap_test hwmap_test_32
-./fw/ctrl_rv/test/hwmap_test && ./fw/ctrl_rv/test/hwmap_test_32
-make -C fw/ctrl_rv/test mutants
+make -C fw/ctrl_rv/test                             # every test, native and -m32, and the format gates
+make -C fw/ctrl_rv/test mutants                     # every test must go red on its mutants
 ```
 
-`make -C fw/ctrl_rv/test lib_test` first runs the format-parity gates (above)
-and fails when they are red. `make -C fw/ctrl_rv/test` runs all host tests,
-including `lib_test` natively and `-m32`. `LIB832` is `$(TOP)/EightThirtyTwo/lib832`
-by default; pass `LIB832=/path/to/EightThirtyTwo/lib832` to use another
-checkout (EightThirtyTwo pin `d1cd671`). A missing `LIB832` fails the build;
-the check is never skipped. `lib_test` checks `rvlibc.c` against glibc's
-`vsnprintf` with a mock `putchar` (equal output and return value, the
-truncation case, a `printf` issued from inside `putchar`, the nesting count,
-the heap stubs). `make mutants` runs 17 mutants (a 16-byte print buffer, a format without a case and a
-deleted line of the expected list turn the format-parity checks red; six
-changes to `rvlibc.c` turn `lib_test` red; eight changes to the register map or
-`uart.c` turn `hwmap_test` red); the full harness's `mutants`
-target comes with Task 8.
+`fw/ctrl_rv/test/README.md` has the targets, the flags, the mock (an SPI/TIMER/UART
+model with a card-image model; `-DHOSTTEST` hooks in `hardware.h` that leave
+the target image byte for byte the same) and the mutant rules. `LIB832` is
+`$(TOP)/EightThirtyTwo/lib832` by default; pass
+`LIB832=/path/to/EightThirtyTwo/lib832` to use another checkout (EightThirtyTwo
+pin `d1cd671`). A missing `LIB832` fails the run; the check is never skipped.
+`lib_test` checks `rvlibc.c` against glibc's `vsnprintf` with a mock `putchar`
+(equal output and return value, the truncation case, a `printf` issued from
+inside `putchar`, the nesting count, the heap stubs). `make mutants` runs the
+mutants of every test and of every register class of the I/O map; a mutant
+counts as killed only when the real test target fails on a build that
+succeeded.
 
 ### On the L1 bench
 

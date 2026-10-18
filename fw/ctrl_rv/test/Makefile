@@ -1,121 +1,144 @@
-# Host tests for the CD-ROM (findings/cdrom/plan.md): atapi_test, the ATAPI
-# command layer (task 0.1); cdrom_test, the board glue against a model of
-# the Gayle port and an ATAPI host (task 1.4); phase 3
-# (findings/cdrom/phase3-plan.md): cue_test, the CUE parser and disc model;
-# cdaudio_test, the CD audio player against a model of the audio ring;
-# openhf_test, hdd.c's OpenHardfile on a CD slot (cut out of hdd.c).
-#   make -C fw/ctrl_832/test            build and run them all (exit status = result)
-#   make -C fw/ctrl_832/test ISO=<path> use another ISO for the ISO-backed cases
-# Without the ISO those cases are skipped, not failed.
+# Host tests of the RISC-V OSD firmware (fw/ctrl_rv).  Every test is built
+# twice, native (LP64) and -m32 (ILP32 like RV32), and run twice.
+#   make -C fw/ctrl_rv/test                 build and run everything (exit status = result)
+#   make -C fw/ctrl_rv/test run-cue_test    one test, native and -m32  (run64-/run32-: one of them)
+#   make -C fw/ctrl_rv/test mutants         every test must go red on a mutated unit
+#   make -C fw/ctrl_rv/test clean
+# Settings (README.md has the setup of a fresh machine):
+#   LIB832=<dir>   the lib832 checkout whose small_printf.c is the 832 reference
+#                  (default $(TOP)/EightThirtyTwo/lib832, a submodule); missing = failure
+#   ISO=<file>     the ISO of the ISO-backed atapi_test cases (also run once without)
+#   CARD=<file>    the card image of mock_selftest (default: built by tools/sim/mkcard.sh)
+# Variables that mutants.sh points at a mutated copy of the sources, the tests
+# and the gold files: SRC TD GOLD B, and WERROR=-Wno-error.
 
-HOSTCC   = gcc
-CFLAGS   = -std=c99 -D_DEFAULT_SOURCE -DHOSTTEST -Wall -Wextra -Wno-unused-parameter -Werror -O1 -g \
-           -fsanitize=address,undefined -fno-sanitize-recover=all -I..
-ISO     ?= $(HOME)/work/amiga/AmigaOS3.9.iso
+HOSTCC  = gcc
+TOP    := $(abspath $(CURDIR)/../../..)
+LIB832 ?= $(TOP)/EightThirtyTwo/lib832
+ISO    ?= $(HOME)/work/amiga/AmigaOS3.9.iso
+SRC    ?= ..
+TD     ?= .
+GOLD   ?= gold
+B      ?= out
+CARD   ?= $(B)/card.img
+WERROR ?= -Werror
+PY      = python3 -I
+
+# gnu2x: the firmware's dialect (host gcc 13 spells gnu23 so).  -fno-builtin:
+# printf("..\n") must stay printf, not become the firmware's puts (uart.c);
+# -U_FORTIFY_SOURCE -D__NO_INLINE__: glibc must not rewrite putchar/printf.
+CFLAGS  = -std=gnu2x -D_DEFAULT_SOURCE -DHOSTTEST -Wall -Wextra -Wno-unused-parameter $(WERROR) -O1 -g \
+          -fsanitize=address,undefined -fno-sanitize-recover=all \
+          -U_FORTIFY_SOURCE -D__NO_INLINE__ -fno-builtin -I$(SRC) -I$(SRC)/arch -I$(TD) -I$(B)
+HDRS    = $(wildcard $(SRC)/*.h $(SRC)/arch/*.h $(TD)/*.h)
 
 all: run
 
-atapi_test: atapi_test.c ../atapi.c ../atapi.h ../cue.c ../cue.h
-	$(HOSTCC) $(CFLAGS) -o $@ atapi_test.c ../atapi.c ../cue.c
+# ---- the tests -----------------------------------------------------------------
+# $(call TEST,name,sources,compiler flags,run arguments)
+define TEST
+$$(B)/$(1): $$(TD)/$(1).c $(2) $$(HDRS)
+	@mkdir -p $$(@D)
+	$$(HOSTCC) $$(CFLAGS) $(3) -o $$@ $$(TD)/$(1).c $(2)
+$$(B)/$(1)_32: $$(TD)/$(1).c $(2) $$(HDRS)
+	@mkdir -p $$(@D)
+	$$(HOSTCC) -m32 $$(CFLAGS) $(3) -o $$@ $$(TD)/$(1).c $(2)
+run64-$(1):: $$(B)/$(1)
+	$$(B)/$(1) $(4)
+run32-$(1):: $$(B)/$(1)_32
+	$$(B)/$(1)_32 $(4)
+run-$(1): run64-$(1) run32-$(1)
+.PHONY: run-$(1) run64-$(1) run32-$(1)
+endef
 
-cue_test: cue_test.c ../cue.c ../cue.h
-	$(HOSTCC) $(CFLAGS) -o $@ cue_test.c ../cue.c
+$(eval $(call TEST,mock_selftest,$$(TD)/mock_hw.c $$(SRC)/hardware.c $$(SRC)/mmc.c $$(SRC)/uart.c,,$$(CARD)))
+$(eval $(call TEST,cue_test,$$(SRC)/cue.c,,))
+$(eval $(call TEST,cdaudio_test,$$(SRC)/cdaudio.c $$(SRC)/cue.c,,))
+$(eval $(call TEST,atapi_test,$$(SRC)/atapi.c $$(SRC)/cue.c,,$$(ISO)))
+$(eval $(call TEST,cdrom_test,$$(SRC)/cdrom.c $$(SRC)/atapi.c $$(SRC)/cue.c $$(SRC)/cdaudio.c,,))
+$(eval $(call TEST,openhf_test,,-Wno-unused-function,))
+$(eval $(call TEST,lib_test,$$(SRC)/rvlibc.c,,))
+$(eval $(call TEST,hwmap_test,,,))
 
-cdaudio_test: cdaudio_test.c ../cdaudio.c ../cdaudio.h ../cue.c ../cue.h
-	$(HOSTCC) $(CFLAGS) -o $@ cdaudio_test.c ../cdaudio.c ../cue.c
+# atapi_test without the ISO: the ISO-backed cases are skipped, not failed
+run64-atapi_test::
+	$(B)/atapi_test /nonexistent.iso
+run32-atapi_test::
+	$(B)/atapi_test_32 /nonexistent.iso
 
-cdrom_test: cdrom_test.c ../cdrom.c ../cdrom.h ../atapi.c ../atapi.h ../cue.c ../cue.h ../cdaudio.c ../cdaudio.h ../hdd.h
-	$(HOSTCC) $(CFLAGS) -o $@ cdrom_test.c ../cdrom.c ../atapi.c ../cue.c ../cdaudio.c
+# the card image of mock_selftest: tools/sim/mkcard.sh, byte-reproducible
+$(B)/card.img: $(TOP)/tools/sim/mkcard.sh
+	@mkdir -p $(@D)
+	printf 'host test card\n' > $(@D)/HELLO.TXT
+	bash $(TOP)/tools/sim/mkcard.sh $@ 8 $(@D)/HELLO.TXT
+$(B)/mock_selftest $(B)/mock_selftest_32: | $(CARD)
 
 # OpenHardfile alone: hdd.c as a whole does not build with gcc
-openhf.inc: ../hdd.c
-	sed -n '/^unsigned char OpenHardfile(unsigned int unit)/,/^}/p' ../hdd.c > $@
+$(B)/openhf.inc: $(SRC)/hdd.c
+	@mkdir -p $(@D)
+	sed -n '/^unsigned char OpenHardfile(unsigned int unit)/,/^}/p' $(SRC)/hdd.c > $@
 	grep -q '^unsigned char OpenHardfile' $@
+$(B)/openhf_test $(B)/openhf_test_32: $(B)/openhf.inc
 
-openhf_test: openhf_test.c openhf.inc ../hdd.h ../config.h ../cdrom.h
-	$(HOSTCC) $(CFLAGS) -Wno-unused-function -o $@ openhf_test.c
-
-run: cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_run hwmap_run
-	./cue_test
-	./cdaudio_test
-	./atapi_test "$(ISO)"
-	./cdrom_test
-	./openhf_test
+run: fmt run-mock_selftest run-cue_test run-cdaudio_test run-atapi_test run-cdrom_test \
+     run-openhf_test run-lib_test run-hwmap_test
 
 clean:
-	rm -f cue_test cdaudio_test atapi_test cdrom_test openhf_test openhf.inc
-	rm -f hwmap_test hwmap_test_32 lib_test lib_test_32 fmt_glibc_64 fmt_glibc_32 fmt_832 fmt_832.o fmt_host_832.o \
+	$(RM) -r out mut
+	$(RM) cue_test cdaudio_test atapi_test cdrom_test openhf_test openhf.inc hwmap_test hwmap_test_32 \
+	      lib_test lib_test_32 fmt_glibc_64 fmt_glibc_32 fmt_832 fmt_832.o fmt_host_832.o \
 	      fmt_glibc_64.txt fmt_glibc_32.txt fmt_832.txt fmt_diff.txt fmt.ok
-	rm -rf mut
 
-.PHONY: all run clean lib_run mutants hwmap_run
+mutants:
+	LIB832='$(LIB832)' ISO='$(ISO)' HOSTCC='$(HOSTCC)' bash mutants.sh
 
-# ---- C library (decision 12.12): rvlibc.c and the format-parity check --------
-#   make -C fw/ctrl_rv/test lib_test && ./fw/ctrl_rv/test/lib_test
-#   make -C fw/ctrl_rv/test mutants        (the full harness's mutants: Task 8)
+.PHONY: all run clean mutants fmt
+
+# ---- C library (decision 12.12): rvlibc.c and the format-parity check ----------
 # LIB832 is the lib832 checkout whose small_printf.c is the 832 reference:
 #   git submodule update --init EightThirtyTwo      (default LIB832)
 #   make -C fw/ctrl_rv/test LIB832=/path/to/EightThirtyTwo/lib832
 # A missing LIB832 fails the build; it does not skip the check.
-TOP     := $(abspath $(CURDIR)/../../..)
-LIB832  ?= $(TOP)/EightThirtyTwo/lib832
-LIBFLAGS = -std=gnu2x -D_DEFAULT_SOURCE -DHOSTTEST -Wall -Wextra -Wno-unused-parameter -Werror -O1 -g \
-           -fsanitize=address,undefined -fno-sanitize-recover=all \
-           -U_FORTIFY_SOURCE -D__NO_INLINE__ -fno-builtin
-PY      = python3 -I
-FMTDEPS = fmt_host.c fmt_run.h fmt_cases.h ../rvlibc.c ../rvlibc.h
+FMTDEPS = $(TD)/fmt_host.c $(TD)/fmt_run.h $(TD)/fmt_cases.h $(SRC)/rvlibc.c $(SRC)/rvlibc.h
 
 # printf of rvlibc.c over glibc's vsnprintf, native and ILP32
-fmt_glibc_64: $(FMTDEPS)
-	$(HOSTCC) $(LIBFLAGS) -I.. -o $@ fmt_host.c ../rvlibc.c
-fmt_glibc_32: $(FMTDEPS)
-	$(HOSTCC) -m32 $(LIBFLAGS) -I.. -o $@ fmt_host.c ../rvlibc.c
-fmt_glibc_%.txt: fmt_glibc_%
-	./$< > $@
+$(B)/fmt_glibc_64: $(FMTDEPS)
+	@mkdir -p $(@D)
+	$(HOSTCC) $(CFLAGS) -o $@ $(TD)/fmt_host.c $(SRC)/rvlibc.c
+$(B)/fmt_glibc_32: $(FMTDEPS)
+	@mkdir -p $(@D)
+	$(HOSTCC) -m32 $(CFLAGS) -o $@ $(TD)/fmt_host.c $(SRC)/rvlibc.c
+$(B)/fmt_glibc_%.txt: $(B)/fmt_glibc_%
+	$< > $@
 
 # lib832's printf (the 832 reference): small_printf.c unchanged, compiled
-# -std=gnu17 -m32 (its %l reads an int) with its names moved aside so that it
-# links next to glibc; the shim counts the bytes that reach putchar
+# -std=gnu17 -m32 -funsigned-char (the 832 firmware is built unsigned-char)
+# with its names moved aside so that it links next to glibc; the shim counts
+# the bytes that reach putchar
 $(LIB832)/small_printf.c:
 	@echo "LIB832=$(LIB832): no small_printf.c (git submodule update --init EightThirtyTwo, or set LIB832=)"; false
-fmt_832.o: $(LIB832)/small_printf.c
-	$(HOSTCC) -std=gnu17 -m32 -w -D__weak= -Dprintf=ref832_printf -Dsprintf=ref832_sprintf \
+$(B)/fmt_832.o: $(LIB832)/small_printf.c
+	@mkdir -p $(@D)
+	$(HOSTCC) -std=gnu17 -m32 -funsigned-char -w -D__weak= -Dprintf=ref832_printf -Dsprintf=ref832_sprintf \
 	    -Dsnprintf=ref832_snprintf -Dvprintf=ref832_vprintf -Dvsprintf=ref832_vsprintf \
 	    -Dputchar=ref832_putchar -I$(LIB832) -c -o $@ $(LIB832)/small_printf.c
-fmt_host_832.o: $(FMTDEPS)
-	$(HOSTCC) -m32 -std=gnu2x -O1 -g -fno-builtin -Wall -Wextra -Werror -DFMT_REF832 -c -o $@ fmt_host.c
-fmt_832: fmt_host_832.o fmt_832.o
-	$(HOSTCC) -m32 -o $@ fmt_host_832.o fmt_832.o
-fmt_832.txt: fmt_832
-	./$< > $@
+$(B)/fmt_host_832.o: $(FMTDEPS)
+	@mkdir -p $(@D)
+	$(HOSTCC) -m32 -std=gnu2x -funsigned-char -O1 -g -fno-builtin -Wall -Wextra $(WERROR) -DFMT_REF832 -c -o $@ $(TD)/fmt_host.c
+$(B)/fmt_832: $(B)/fmt_host_832.o $(B)/fmt_832.o
+	$(HOSTCC) -m32 -o $@ $^
+$(B)/fmt_832.txt: $(B)/fmt_832
+	$< > $@
 
 # the gates: formats.txt is current, every format has a case, the ILP32 and
 # LP64 hosts agree, and the 832-versus-RV differences are exactly the expected list
-fmt.ok: fmt_glibc_64.txt fmt_glibc_32.txt fmt_832.txt gold/formats.txt gold/fmt_diff_expected.txt gold/fmtcheck.py $(wildcard ../*.c)
-	grep -ho '"[^"]*%[^"]*"' ../*.c | LC_ALL=C sort -u | cmp - gold/formats.txt
-	$(PY) gold/fmtcheck.py cover gold/formats.txt fmt_cases.h
-	cmp fmt_glibc_64.txt fmt_glibc_32.txt
-	$(PY) gold/fmtcheck.py diff fmt_832.txt fmt_glibc_64.txt fmt_cases.h > fmt_diff.txt
-	diff gold/fmt_diff_expected.txt fmt_diff.txt
+$(B)/fmt.ok: $(B)/fmt_glibc_64.txt $(B)/fmt_glibc_32.txt $(B)/fmt_832.txt $(GOLD)/formats.txt \
+             $(GOLD)/fmt_diff_expected.txt $(GOLD)/fmtcheck.py $(wildcard $(SRC)/*.c)
+	grep -ho '"[^"]*%[^"]*"' $(SRC)/*.c | LC_ALL=C sort -u | cmp - $(GOLD)/formats.txt
+	$(PY) $(GOLD)/fmtcheck.py cover $(GOLD)/formats.txt $(TD)/fmt_cases.h
+	cmp $(B)/fmt_glibc_64.txt $(B)/fmt_glibc_32.txt
+	$(PY) $(GOLD)/fmtcheck.py diff $(B)/fmt_832.txt $(B)/fmt_glibc_64.txt $(TD)/fmt_cases.h > $(B)/fmt_diff.txt
+	diff $(GOLD)/fmt_diff_expected.txt $(B)/fmt_diff.txt
 	touch $@
-
-lib_test: lib_test.c ../rvlibc.c ../rvlibc.h fmt.ok
-	$(HOSTCC) $(LIBFLAGS) -I.. -o $@ lib_test.c ../rvlibc.c
-lib_test_32: lib_test.c ../rvlibc.c ../rvlibc.h fmt.ok
-	$(HOSTCC) -m32 $(LIBFLAGS) -I.. -o $@ lib_test.c ../rvlibc.c
-lib_run: lib_test lib_test_32
-	./lib_test
-	./lib_test_32
-
-mutants: fmt.ok
-	bash mutants.sh
-
-# ---- I/O register map and uart.c puts (plan 5.3) -------------------------------
-#   make -C fw/ctrl_rv/test hwmap_test && ./fw/ctrl_rv/test/hwmap_test
-hwmap_test: hwmap_test.c ../hardware.h ../uart.h ../uart.c ../c64keys.h ../akiko.h ../rtc.h ../i2c.h ../arch/irq.h
-	$(HOSTCC) $(LIBFLAGS) -I.. -I../arch -o $@ hwmap_test.c
-hwmap_test_32: hwmap_test.c ../hardware.h ../uart.h ../uart.c ../c64keys.h ../akiko.h ../rtc.h ../i2c.h ../arch/irq.h
-	$(HOSTCC) -m32 $(LIBFLAGS) -I.. -I../arch -o $@ hwmap_test.c
-hwmap_run: hwmap_test hwmap_test_32
-	./hwmap_test
-	./hwmap_test_32
+fmt: $(B)/fmt.ok
+fmt.ok: fmt	# the old name (sim/rv_l1/run.sh)

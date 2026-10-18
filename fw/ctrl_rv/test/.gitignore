@@ -1,3 +1,6 @@
+/out/
+/mut/
+# build products of the older Makefile
 atapi_test
 cdrom_test
 cue_test
@@ -6,6 +9,8 @@ openhf_test
 openhf.inc
 /lib_test
 /lib_test_32
+/hwmap_test
+/hwmap_test_32
 /fmt_glibc_64
 /fmt_glibc_32
 /fmt_832
@@ -15,5 +20,4 @@ openhf.inc
 /fmt_glibc_32.txt
 /fmt_diff.txt
 /fmt.ok
-/mut/
-hwmap_test_32
+/mock_trace.tmp
