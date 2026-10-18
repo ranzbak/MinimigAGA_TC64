@@ -86,7 +86,14 @@
 //                    interval tb_spi_cdc's OSD_MIN_GAP = 40 constrains
 //                    (userio_osd loads the reply byte on the first sck edge
 //                    of that byte).  A second line gives the write ->
-//                    read-back gap, which userio_osd never sees.
+//                    read-back gap, which userio_osd never sees; a third
+//                    where the minimum was (cycle, command, reply byte).
+//                    A minimum below +OSD_MIN_GAP=<n> (default 40, the
+//                    reporting threshold of tb_spi_cdc; its OSD failures
+//                    start below ~32, 1e135e7) is a BENCH ERROR: the run
+//                    fails.  Covered: the one OSD_CMD_VERSION frame and the
+//                    first reply byte of each OSD_CMD_KEYQ frame (the stub
+//                    answers count 0), not the per-key loop of osd.c.
 //   === STACK low <hex> (<n> bytes used)   the lowest byte address the CPU
 //                    writes below 0x2000 after the first read of 0x2000
 // UART lines may be up to 4095 characters (the boot ROM prints "00" per
@@ -501,7 +508,9 @@ module tb_host_bridge #(
   // og_wr_min.
   integer og_i = 0, og_done = -1, og_rw_min = 1000000, og_wr_min = 1000000;
   integer og_bytes = 0, og_frames = 0, og_g = 0;
-  reg [7:0] og_cmd = 8'h00;
+  integer og_min_cyc = -1, og_min_k = -1;   // where og_rw_min was seen first
+  integer osd_min_gap = 40;                 // +OSD_MIN_GAP: the check's bound
+  reg [7:0] og_cmd = 8'h00, og_min_cmd = 8'h00;
   reg       og_cs5 = 1'b1;          // sd_cs[5] at the last clk_114 edge
   always @(posedge clk114) if (cpu_reset_n) begin
     if (sd_cs[5] !== og_cs5) begin og_cs5 = sd_cs[5]; og_i = 0; og_done = -1; end
@@ -514,7 +523,9 @@ module tb_host_bridge #(
         if (og_i[0] == 1'b0) begin
           og_bytes = og_bytes + 1;
           if (og_i == 2) og_frames = og_frames + 1;
-          if (og_g < og_rw_min) og_rw_min = og_g;
+          if (og_g < og_rw_min) begin
+            og_rw_min = og_g; og_min_cyc = cyc; og_min_cmd = og_cmd; og_min_k = og_i / 2 - 1;
+          end
         end else if (og_g < og_wr_min) og_wr_min = og_g;
       end
     end
@@ -1011,6 +1022,7 @@ module tb_host_bridge #(
     is_boot = test == "boot" || test == "boot_nofile" || test == "fwboot" || test == "fwboot_trap"
               || test == "fwboot_cfg";
 `ifdef FWBOOT
+    if (!$value$plusargs("OSD_MIN_GAP=%d", osd_min_gap)) osd_min_gap = 40;
     if ($value$plusargs("SPI_LOG=%s", spi_log_name)) begin
       spi_fd = $fopen(spi_log_name, "w");
       if (spi_fd == 0) bench_error("+SPI_LOG: cannot open the file");
@@ -1061,6 +1073,11 @@ module tb_host_bridge #(
     if (og_bytes > 0)
       $display("=== OSD GAP (info) write->read-back min %0d (not seen by userio_osd), %0d reply frames",
                og_wr_min, og_frames);
+    if (og_bytes > 0)
+      $display("=== OSD GAP (info) min first at cycle %0d, command %h, reply byte %0d (0 = the first)",
+               og_min_cyc, og_min_cmd, og_min_k);
+    if (og_bytes > 0 && og_rw_min < osd_min_gap)
+      bench_error("OSD GAP min below OSD_MIN_GAP (sim/host_bridge/README.md, OSD reply gap)");
     $display("=== STACK low %h (%0d bytes used)", stack_low, 32'h2000 - stack_low);
     if (test == "fwboot" || test == "fwboot_trap" || test == "fwboot_cfg") begin
       if (!done && errors == 0) $display("=== PASS");

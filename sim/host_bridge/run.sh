@@ -52,7 +52,8 @@
 # ends at FWBOOT_TIMEOUT.
 #   fwboot       fwboot/milestones.txt in order (spitrace.py check: UART
 #                lines and SPI frames), no EXC/TRAP line, bench "=== PASS"
-#                (no X, no stale ack, no bench error)
+#                (no X, no stale ack, no bench error; one bench error is an
+#                OSD reply gap below +OSD_MIN_GAP, default 40: XARGS=+OSD_MIN_GAP=<n>)
 #   fwboot_trap  the firmware of the source tree linked with
 #                fwboot/smoke_trap.o (make -C fw/ctrl_rv EXTRA_OBJS=...,
 #                into <run>/fwboot/trapfw; FW is not used): the UART shows
@@ -474,6 +475,7 @@ fwboot() {
 	python3 -I "$HERE/spitrace.py" summary "$run/spi.txt" > "$run/spi_summary.txt" 2>&1
 	{
 		grep -E '^=== (BOOT|STATS|HW accesses|cycle limit|HandleFpga|SPI frames|OSD GAP|STACK)' "$log"
+		grep -E '^BENCH ERROR' "$log" | sed 's/^/BAD  /'    # e.g. the OSD GAP check
 		grep -q '^SD: image .* loaded' "$log" || echo "BAD  the SD model did not load $card"
 		if [ "$t" != fwboot_trap ]; then
 			if python3 -I "$HERE/spitrace.py" check "$ms" "$log" "$run/spi.txt" \

@@ -171,7 +171,7 @@ directories as on iverilog; the image of each build is
 ```sh
 # Ubuntu 24.04: Verilator 5.020
 sudo apt install verilator ccache
-# needs 5.x (--binary --timing)
+# needs 5.x: --binary --timing
 verilator --version
 SIM=verilator bash sim/rv_l1/run.sh all
 SIM=verilator bash sim/rv_l1/run.sh units
@@ -371,15 +371,15 @@ at 0x2000 and the stack top at 0xF0000. `main` returns the failure count.
 ```sh
 # fw/ctrl_rv, WS=3 ROMWS=1 EXTRA_WS=0 DEBUG=0
 bash sim/rv_l1/run.sh units
-# the same on Verilator (seconds)
+# the same on Verilator: seconds
 SIM=verilator bash sim/rv_l1/run.sh units
 # the 832 tree
 FWDIR=fw/ctrl_832 SIM=verilator bash sim/rv_l1/run.sh units
 # other settings from the environment
 WS=8 TIMEOUT=60000000 bash sim/rv_l1/run.sh units
-# build only: FWDIR=../../../fw/ctrl_rv (default)
+# build only: FWDIR=../../../fw/ctrl_rv is the default
 make -C sim/rv_l1/prog
-# (FWDIR relative to sim/rv_l1/prog)
+# FWDIR is relative to sim/rv_l1/prog
 make -C sim/rv_l1/prog FWDIR=../../../fw/ctrl_832
 ```
 
@@ -511,7 +511,7 @@ stubs) + `libc_nano.a`, `crt0_l1.o` + `l1_newlib.ld` for the L1 memory map, no
 ```sh
 # all 909 cases: 30.5 M cycles, 25 s
 SIM=verilator RUNTAG=p3t3b bash sim/rv_l1/run.sh fmt
-# subset (272 cases): 13.0 M cycles
+# subset, 272 cases: 13.0 M cycles
 FMT_SUBSET=1 SIM=verilator RUNTAG=p3t3s bash sim/rv_l1/run.sh fmt
 # iverilog, about 38 minutes
 FMT_SUBSET=1 RUNTAG=p3t3i bash sim/rv_l1/run.sh fmt

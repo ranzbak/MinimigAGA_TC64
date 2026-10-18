@@ -89,7 +89,7 @@ Run only one xsim at a time.
 From the repository root:
 
 ```sh
-# 7 tests x SLAT {2,8,20} x SJIT {0,8}: 42 runs, ~5 min
+# 7 tests x SLAT 2, 8, 20 x SJIT 0, 8: 42 runs, ~5 min
 bash sim/host_bridge/run.sh all
 # the four-phase handshake's teeth, 34 runs
 bash sim/host_bridge/run.sh mutant
@@ -151,11 +151,11 @@ xsim `all` before a commit that touches the RTL.
 
 ```sh
 sudo apt install ghdl verilator ccache
-# GHDL 4.1.0 (Ubuntu 4.1.0+dfsg-0ubuntu2.1) [Dunoon edition]
+# expect: GHDL 4.1.0 Ubuntu 4.1.0+dfsg-0ubuntu2.1 Dunoon edition
 ghdl --version | head -1
-# Verilator 5.020 2024-01-01 rev (Debian 5.020-1)
+# expect: Verilator 5.020 2024-01-01 rev Debian 5.020-1
 verilator --version
-# synth [FILES... -e] UNIT [ARCH]   (synthesis is built in)
+# expect: synth FILES... -e UNIT ARCH -- synthesis is built in
 ghdl help synth | head -1
 ```
 
@@ -365,13 +365,13 @@ the `PAT` and `IMG` lines and runs the `t_irq` check with cfide's `vbl_int`.
 From the repository root:
 
 ```sh
-# 1. the boot ROM (committed; a rebuild gives the same file, git shows no change)
+# 1. the boot ROM: committed; a rebuild gives the same file, git shows no change
 make -C fw/ctrl_boot_rv
 git status --short fw/ctrl_boot_rv
 # 2. the test firmware and the card images, into sim/host_bridge/boot/build
-#    (run.sh builds its own copy into run_*/boot)
+#    run.sh builds its own copy into boot/ of its run directory
 make -C sim/host_bridge/boot
-# 3. the two runs, one after the other (about 90 s and 190 s of xsim)
+# 3. the two runs, one after the other: about 90 s and 190 s of xsim
 RUNTAG=boot bash sim/host_bridge/run.sh boot
 RUNTAG=bootn bash sim/host_bridge/run.sh boot_nofile
 ```
@@ -540,9 +540,9 @@ make -C fw/ctrl_rv
 SIM=verilator RUNTAG=fwv  bash sim/host_bridge/run.sh fwboot
 # ~3 min
 SIM=verilator RUNTAG=fwvt bash sim/host_bridge/run.sh fwboot_trap
-# ~6 min (Firmware boot with an 832 config file)
+# ~6 min: firmware boot with an 832 config file
 SIM=verilator RUNTAG=fwvc bash sim/host_bridge/run.sh fwboot_cfg
-# the xsim reference (Vivado 2023.2 and the libtinfo shim, see Prerequisites):
+# the xsim reference, Vivado 2023.2 and the libtinfo shim, see Prerequisites:
 # ~27 min
 RUNTAG=fwx bash sim/host_bridge/run.sh fwboot
 # every line SAME
@@ -696,7 +696,8 @@ Measured 2026-10-18 (Task 11's image, Verilator and xsim the same): 34 of 34
 milestones, 2833 SPI frames, 20th `KEYQ` frame at cycle 86,392,290 (the
 conversion adds about 4.7 M: `fwboot` of the same image has it at 81,710,162), OSD GAP min 40, stack
 0x1950. The `fwboot` run of the same image (`p3t11f`): OSD GAP min **40**
-(Task 10's image: 44), i.e. no margin left over the 40 of `tb_spi_cdc.v`;
+(Task 10's image: 44), i.e. at `tb_spi_cdc.v`'s reporting threshold of 40,
+which is not a pinned failure edge (that is ~32, 1e135e7: "The monitors");
 `SPI_reply()` is at the same address, the callers moved (Phase 4 item, plan
 7.1 item 2).
 
@@ -797,13 +798,41 @@ bytes as tokens.
   command). The `(info)` line gives the minimum over the odd ones (a write
   to its own read-back): that interval lies inside the transfer, which a
   byte takes about 48 `clk_114` at SPEED 1, and `userio_osd` never sees it.
+  A second `(info)` line names where the minimum was first seen: cycle,
+  command and reply byte (0 = the first). After the final review
+  (`p3ffwboot`, `p3ffwboot_cfg`): the 40 is the first reply byte of an
+  `OSD_CMD_KEYQ` frame (`command 98, reply byte 0`); the `OSD_CMD_VERSION`
+  frame alone has min 44 (`p3fred2`, a run cut at 80 M cycles, before the
+  first `KEYQ` frame).
+  **Check:** a minimum below `+OSD_MIN_GAP=<n>` (default 40;
+  `XARGS=+OSD_MIN_GAP=<n>` sets it) is a `BENCH ERROR`, so `fwboot`,
+  `fwboot_cfg` (and `fwboot_trap`, which has no OSD frame) fail; it is a
+  check, the firmware's timing is not tuned to it. What the 40 is: the
+  *reporting* threshold of `tb_spi_cdc.v` (gaps below it are reported, not
+  counted; its GAPS list jumps 32 -> 40 and every access there adds a
+  random 0..3 cycles), and the reply goes stale below ~32 (1e135e7): the
+  failure edge lies in (~32, 40] and is not pinned (`tb_spi_cdc +SWEEP=1` on
+  the `osd` test pins it; Phase 4). What is covered: the one
+  `OSD_CMD_VERSION` frame at boot (cold I$) and the first reply byte of
+  each `OSD_CMD_KEYQ` frame; the stub answers the key queue with count 0,
+  so the per-key loop `kq_buf[i] = SPI_reply()` (`fw/ctrl_rv/osd.c` ~1004,
+  the path of every key press on the board) is not measured, and the run
+  sits in the fatal-error loop (no kickstart), not in the real main loop.
+  Phase 4: a stub that queues key events, and the first kickstart card.
+  The check's red run: `SIM=verilator RUNTAG=p3fred2 XARGS=+OSD_MIN_GAP=45
+  FWBOOT_TIMEOUT=80000000 bash sim/host_bridge/run.sh fwboot_cfg` reports
+  `BAD  BENCH ERROR ... OSD GAP min below OSD_MIN_GAP` and the bench
+  verdict `=== FAIL` (44 < 45); with `+OSD_MIN_GAP=41` it passes (44).
 - **Stack low-water** (`=== STACK low <hex> (<n> bytes used)`): the lowest
   byte address the CPU writes below 0x2000 (boot BRAM, the bridge's `rom`
   state; `sel[i]` = byte A+i) after its first read of 0x2000. Full-word writes
   of `0x5A5AA5A5` (the firmware's `StackFill`, `fw/ctrl_rv/stackcheck.c`) are
   not counted.
 
-### Measured (2026-10-17, Verilator and xsim the same, SLAT=8 SJIT=0)
+### Measured at Task 6 (2026-10-17, Verilator and xsim the same, SLAT=8 SJIT=0)
+
+Task 6's image; the OSD GAP of later images is 40 (since Task 11, see
+above), the other figures moved too (the expected end of `fwboot` above).
 
 | | `fwboot` |
 |---|---|
@@ -812,18 +841,19 @@ bytes as tokens.
 | `ROM loading failed` (end of `ColdBoot()`) | cycle 77,793,169 |
 | 20th `KEYQ` frame (20th pass of the error loop) | cycle 79,668,370 (one pass about 94 k cycles) |
 | I$ refills, whole run (119.6 M cycles) | 28,221 (dread 1,201,163, dwrite 1,224,582) |
-| OSD GAP (byte end -> next byte start) | min 44 over 412 reply bytes (>= 40, margin 4); write -> own read-back min 4 (info) |
+| OSD GAP (byte end -> next byte start) | min 44 over 412 reply bytes (Task 6's image; 40 since Task 11); write -> own read-back min 4 (info) |
 | stack low-water | 0x1950: 1712 bytes used, above Task 17's 0x1400 limit |
 | `fwboot_trap` `EXC` line | cycle 43,926,505, stack 0x1F8C (116 bytes) |
 | wall time | Verilator 329 s (`fwboot`), 162 s (`fwboot_trap`), with other simulations running; xsim 1592 s (`fwboot`) |
 
-**Plan 7.1 item 2: the OSD GAP is 44, above the 40 of `tb_spi_cdc.v`,
-with a margin of 4 `clk_114` cycles.** It is the time from one reply
+**Plan 7.1 item 2, Task 6's image: the OSD GAP was 44, 4 above the
+reporting threshold 40 of `tb_spi_cdc.v`** (since Task 11: 40, at the
+threshold; the failure edge, ~32, is not pinned: "The monitors"). It is the time from one reply
 byte's read-back to the next byte's `SPI(0xff)` write, which is what
 `SPI_reply()`'s four `SPIN`s stretch. The write -> read-back gap (4: `sb`
 then `lbu`, back to back) lies inside the transfer and does not count.
-The margin is small and the 40 is `tb_spi_cdc`'s model of `userio_osd`,
-so Phase 4 still re-checks it against the real `userio_osd`. In this run
+The 40 is `tb_spi_cdc`'s reporting threshold over its model of
+`userio_osd`, so Phase 4 still re-checks it against the real `userio_osd`. In this run
 the stub answers at once, so the reply bytes are right whatever the gap.
 
 ## Bench
