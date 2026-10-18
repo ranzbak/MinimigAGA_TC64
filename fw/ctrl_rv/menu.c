@@ -181,6 +181,7 @@ void SelectFile(char *pFileExt, unsigned char Options, unsigned char MenuSelect,
 
 void VolumeBar(unsigned char vol, char *bar)
 {
+    (void)vol;
     for (int i = 0; i < 32; i++)
     {
         if (i < config.audio.volume)
@@ -410,7 +411,6 @@ void HandleUI(void)
     static unsigned char ctrl = false;
     static unsigned char lalt = false;
     static unsigned char lshift = false;
-    char enable;
     static long helptext_timer;
     static const char *helptext;
     static char helpstate = 0;
@@ -636,7 +636,7 @@ void HandleUI(void)
     // Also set parentstate to the appropriate menustate.
     if (menumask)
     {
-        if (down && (menumask >= (1 << (menusub + 1)))) // Any active entries left?
+        if (down && (menumask >= (unsigned int)(1 << (menusub + 1)))) // Any active entries left?
         {
             do
                 menusub++;
@@ -2591,7 +2591,7 @@ void HandleUI(void)
 
         menusub = 1;
         menustate = MENU_ROMFILE_SELECTED1;
-        // no break intended
+        __attribute__((fallthrough)); // no break intended
 
     case MENU_ROMFILE_SELECTED1:
         helptext = helptexts[HELPTEXT_NONE];
@@ -2730,7 +2730,7 @@ void ScrollLongName(void)
     // this function is called periodically when file selection window is displayed
     // it checks if predefined period of time has elapsed and scrolls the name if necessary
 
-    char k = sort_table[iSelectedEntry];
+    unsigned char k = sort_table[iSelectedEntry];
     static int len;
     int max_len;
 
@@ -2760,7 +2760,7 @@ char *GetDiskInfo(char *lfn, long len)
 
     short i, k;
     static char info[] = "XX/XX";     // temporary buffer
-    static char template[4] = " of "; // template substring to search for
+    static char template[4] __attribute__((nonstring)) = " of "; // template substring to search for
     char *ptr1, *ptr2, c;
     unsigned char cmp;
 
@@ -2771,7 +2771,7 @@ char *GetDiskInfo(char *lfn, long len)
             ptr1 = &lfn[i]; // current start position
             ptr2 = template;
             cmp = 0;
-            for (k = 0; k < sizeof(template); k++) // scan through template
+            for (k = 0; (unsigned int)k < sizeof(template); k++) // scan through template
             {
                 cmp |= *ptr1++ ^ *ptr2++; // compare substrings' characters one by one
                 if (cmp)
@@ -2979,6 +2979,8 @@ void InsertFloppy(adfTYPE *drive)
 /*  Error Message */
 void ErrorMessage(char *message, unsigned char code)
 {
+    (void)message;
+    (void)code;
     menustate = MENU_ERROR;
     OsdShow(DISABLE_KEYBOARD); // do not disable KEYBOARD
     OsdColor(OSDCOLOR_WARNING);

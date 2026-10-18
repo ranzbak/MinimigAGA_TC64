@@ -56,14 +56,13 @@ const char applymemdetectionpatchstr[] = "Applying Kickstart 1.x memory detectio
 const char *kickfoundstr, *applypatchstr;
 
 void PatchKick1xMemoryDetection(unsigned char *buf) {
-  int applypatch = 0;
 
-  if (!strncmp(buf + 0x18, "exec 33.192 (8 Oct 1986)", 24)) {
+  if (!strncmp((const char *)buf + 0x18, "exec 33.192 (8 Oct 1986)", 24)) {
     kick1xfoundstr[13] = '2';
     kickfoundstr = kick1xfoundstr;
     goto applypatch;
   }
-  if (!strncmp(buf + 0x18, "exec 34.2 (28 Oct 1987)", 23)) {
+  if (!strncmp((const char *)buf + 0x18, "exec 34.2 (28 Oct 1987)", 23)) {
     kick1xfoundstr[13] = '3';
     kickfoundstr = kick1xfoundstr;
     goto applypatch;
@@ -106,10 +105,10 @@ void SendFileV2(RAFile* file, unsigned char* key, int keysize, int address, int 
 			// decrypt ROM
 			for (j=0; j<512; j++) {
 				adr[j] ^= key[keyidx++];
-				if(keyidx >= keysize) keyidx -= keysize;
+				if(keyidx >= (unsigned int)keysize) keyidx -= keysize;
 			}
 		}
-		checksum_pre+=CheckSum(adr,512);
+		checksum_pre+=CheckSum((char *)adr,512);
 
 		// patch kickstart 1.x to force memory detection every time the AMIGA is reset
 		if (config.kick13patch && (i == 0 || i == 512)) {
@@ -132,16 +131,21 @@ void SendFileV2(RAFile* file, unsigned char* key, int keysize, int address, int 
 
 // print message on the boot screen
 // (Temporarily disabled.)
+/* Falls off the end of a non-void function (the 832 build never used the value):
+ * found by -Wextra, left as is (README, "Found by -Wextra", fpga.c BootPrint). */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wreturn-type"
 char BootPrint(const char *text)
 {
+	(void)text;
 //	BootPrintEx(text);
 //	return(1);
 }
-
+#pragma GCC diagnostic pop
 
 void ClearMemory(unsigned long base, unsigned long size)
 {
-    unsigned char c1, c2, c3, c4;
+    unsigned char c1, c2 __attribute__((unused)), c3, c4;
 
     while (1)
     {
@@ -200,11 +204,10 @@ unsigned char GetFPGAStatus(void)
 unsigned char core_caps = 0;
 
 void fpga_init() {
-	unsigned long time = GetTimer(0);
+	unsigned long time __attribute__((unused)) = GetTimer(0);
 	char ver_beta,ver_major,ver_minor,ver_minion;
 	char ver_magic,ver_caps;
 	char rtl_ver[45];
-	int rstval;
 
 	EnableOsd();
 	SPI(OSD_CMD_VERSION);

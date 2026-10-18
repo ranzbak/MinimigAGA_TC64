@@ -38,7 +38,7 @@ SRCS := hardware.c config.c fat.c fdd.c fpga.c boot.c hdd.c main.c menu.c \
 OBJS := $(addprefix $(B)/,$(SRCS:.c=.o))
 
 CFLAGS  := $(RV_CFLAGS_FW) -std=gnu23 --specs=nano.specs -g -I. -Iarch \
-           -I$(B) -Wall -MMD -MP $(EXTRA_CFLAGS)
+           -I$(B) -Wall -Wextra -Werror -MMD -MP $(EXTRA_CFLAGS)
 LDFLAGS := $(RV_LDFLAGS_FW) --specs=nano.specs $(ARCH_LDFLAGS) \
            -Wl,-Map,$(B)/$(PROJECT).map
 LIBS    := -lc_nano $(RV_LIBS_FW)

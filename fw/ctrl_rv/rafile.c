@@ -39,7 +39,7 @@ int RARead(RAFile *file,unsigned char *pBuffer, unsigned long bytes)
 		int i;
 		result&=FileRead(&file->file,file->buffer);	// Read to temporary buffer, allowing us to preserve any leftover for the next read.
 		FileNextSector(&file->file);
-		for(i=0;i<bytes;++i)
+		for(i=0;(unsigned long)i<bytes;++i)
 		{
 			*pBuffer++=file->buffer[i];
 		}

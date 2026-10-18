@@ -56,7 +56,7 @@
 // Only decoded when CORE_CAPS_TEMP is set -- on a core without it this address
 // reads the platform register instead, so check the capability before using it.
 #define FPGA_TEMP_RAW (*(volatile unsigned short *)0xFFFFFF40)
-#define SPIN {int v=TIMER;}	// Waste a few cycles to let the FPGA catch up
+#define SPIN {int v=TIMER; (void)v;}	// Waste a few cycles to let the FPGA catch up
 
 #if 1
 #define EnableCard()  HW_SPI(HW_SPI_CS)=0x02

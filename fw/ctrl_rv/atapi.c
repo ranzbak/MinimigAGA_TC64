@@ -665,6 +665,7 @@ static int audio_request(struct atapi_unit *u, struct atapi_result *r, int32_t w
 
 int atapi_packet(struct atapi_unit *u, const uint8_t *cdb, uint16_t limit, struct atapi_result *r)
 {
+	(void)limit; // kept for the interface (no use in the packet path)
 	uint8_t op = cdb[0];
 
 	memset(r, 0, sizeof(*r));

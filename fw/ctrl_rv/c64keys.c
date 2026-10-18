@@ -44,7 +44,7 @@ struct keyspecial specialtable[]=
 	{RK_F7,RK_F8}
 };
 
-#define LAYER(x,y) ((x&0xffff)<<16)|(y)
+#define LAYER(x,y) (((x)&0xffff)<<16)|(y)
 
 unsigned int keytable[]=
 {
@@ -144,8 +144,6 @@ void c64keys_inthandler()
 	int nextframe=(c64keys.frame+4)%12;
 	int prevframe=(c64keys.frame+8)%12;
 
-	unsigned int aa;
-	unsigned int ad;
 
 
 	for(i=0;i<4;++i)

@@ -177,12 +177,12 @@ void StarsUpdate()
 
 
 // write a null-terminated string <s> to the frambuffer
-void OsdWriteFramebuffer(unsigned char n, char *s)
+void OsdWriteFramebuffer(unsigned char n, const char *s)
 {
     unsigned short i;
     unsigned char b;
     const unsigned char *p;
-	unsigned char *fb=framebuffer[n];
+	unsigned char *fb=(unsigned char *)framebuffer[n];
 	int linelimit=OSDLINELEN-16;
 
 	if(!s)
@@ -207,7 +207,7 @@ void OsdWriteFramebuffer(unsigned char n, char *s)
     }
 }
 
-char *supporter;
+const char *supporter;
 
 void FireworksInit()
 {
@@ -918,6 +918,7 @@ void ConfigFloppy(unsigned char drives, unsigned char speed)
 
 void ConfigScanlines(unsigned char scanlines)
 {
+	(void)scanlines;
     EnableOsd();
     //SPI(OSDCMDCFGSCL | (scanlines & 0x0F)); TODO! same reg as OSD_CMD_VID!
     DisableOsd();
@@ -1122,6 +1123,7 @@ void ScrollReset()
 // FIXME - reimplement?
 void OsdColor(unsigned char color)
 {
+	(void)color;
 }
 
 void OsdDoReset(int enter,int leave)

@@ -199,6 +199,9 @@ unsigned char MMC_Init(void)
 }
 
 // Read single 512-byte block
+/* 832 section pragmas (ignored by gcc: no RAM-function section on this target); the
+ * pragmas stay as in fw/ctrl_832, only their warning is silenced for this file. */
+#pragma GCC diagnostic ignored "-Wunknown-pragmas"
 #pragma section_code_init
 unsigned char MMC_Read(unsigned long lba, unsigned char *pReadBuffer)
 {

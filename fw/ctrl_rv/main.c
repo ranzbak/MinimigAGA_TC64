@@ -135,7 +135,7 @@ void HandleFpga(void)
 
 void inthandler()
 {
-	int ints=GetInterrupts();
+	int ints __attribute__((unused)) =GetInterrupts();
 	DisableInterrupts();
 	akiko_inthandler();
 	c64keys_inthandler();
@@ -244,7 +244,6 @@ int ColdBoot()
 
 int main(void)
 {
-	int c=0;
 	int rtc;
 	debugmsg[0]=0;
 	debugmsg2[0]=0;

@@ -175,6 +175,7 @@ static int cd_name83(const char *name, char *out)
 /* cue_wav's reader: the WAV opened in cd_lookup. */
 static int32_t cd_lookup_read(void *ctx, uint32_t offset, uint8_t *dst, uint32_t len)
 {
+	(void)ctx;
 	if (!RASeek(&cd_lookup, offset, SEEK_SET))
 		return 0;
 	return RARead(&cd_lookup, dst, len) ? 1 : 0;
@@ -184,6 +185,7 @@ static int32_t cd_lookup_read(void *ctx, uint32_t offset, uint8_t *dst, uint32_t
    keep the 8.3 name, read a WAV's header. */
 static int32_t cd_cue_open(void *ctx, const char *name, struct cd_file *f)
 {
+	(void)ctx;
 	char n83[12];
 	int ok = 0;
 	if (cd_name83(name, n83))

@@ -80,11 +80,11 @@ constructor `smoke_trap.o` this way, into its own `B=` directory). Another toolc
 (`tools/riscv/toolchain.mk`).
 
 - **Flags** (Global Constraints, decision 12.12): `$(RV_CFLAGS_FW) -std=gnu23
-  --specs=nano.specs -g -I. -Iarch -I$(B) -Wall`; link `$(RV_LDFLAGS_FW)
+  --specs=nano.specs -g -I. -Iarch -I$(B) -Wall -Wextra -Werror`; link `$(RV_LDFLAGS_FW)
   --specs=nano.specs -nostartfiles -T arch/firmware.ld
   -Wl,--no-warn-rwx-segments -Wl,-Map,...` with `-lc_nano -lgcc` last;
-  `arch/crt0.S` is the start-up (`arch/arch.mk`). Warnings are not fatal yet
-  (`-Wall` only; Task 7 makes the tree `-Wall -Wextra -Werror` clean).
+  `arch/crt0.S` is the start-up (`arch/arch.mk`). The tree is warning-free under
+  `-Wall -Wextra -Werror` ("Found by -Wextra (Task 7)").
 - **Sources:** the 832 Makefile's `COMMON_SOURCES` without `interrupts`
   (`arch/irq.c`), plus `rvlibc.c`.
 - **`version.h`** is generated into `build/` by the 832 recipe with `-RV` for
@@ -336,8 +336,8 @@ is verbatim):
 
 | File:line | 832 | RV | Why |
 |---|---|---|---|
-| `akiko.c:17,19`, `config.c:614`, `drivesounds.c:457`, `fat.c:783,790,1647,1649`, `main.c:175`, `menu.c:1595,2663,2665,3040,3042,3044,3046,3048,3050,3052` | `%x`, `%04x`, `%08lx`, `%lx` | `%X`, `%04X`, `%08lX`, `%lX` | `UPPER`: keeps the UART/OSD text identical |
-| `boot.c:263` | `printf(str)` | `printf("%s", str)` | `str` is data (a file name, `rtl_ver`): a `%` in it would be taken for a conversion with garbage arguments, and the two libraries differ on that. Identical for every string without `%` |
+| `akiko.c:17,19`, `config.c:612`, `drivesounds.c:465`, `fat.c:782,789,1649,1651`, `main.c:175`, `menu.c:1595,2663,2665,3042,3044,3046,3048,3050,3052,3054` | `%x`, `%04x`, `%08lx`, `%lx` | `%X`, `%04X`, `%08lX`, `%lX` | `UPPER`: keeps the UART/OSD text identical |
+| `boot.c:258` | `printf(str)` | `printf("%s", str)` | `str` is data (a file name, `rtl_ver`): a `%` in it would be taken for a conversion with garbage arguments, and the two libraries differ on that. Identical for every string without `%` |
 
 ### gcc 15 and gnu23 compile fixes (Task 4)
 
@@ -430,6 +430,44 @@ a function, copied elsewhere or used in arithmetic.
 | `menu.c:598` | `left = true;` | truth only |
 | `menu.c:601` | `right = true;` | truth only |
 
+## Found by -Wextra (Task 7)
+
+The tree builds `-Wall -Wextra -Werror` clean (`make -C fw/ctrl_rv clean all`).
+Rule: the generated code does not change (checked against the Task 6 `.text`,
+see the commit message). So the 120 `-Wall` warnings Task 4 left and the
+ones `-Wextra` adds were fixed only by casts that spell out the conversion C already applies, `(void)`
+and `__attribute__((unused))` for unused parameters/variables, removing dead
+locals, braces/parentheses, `const` where a pointer is only read, and
+`unsigned char` for `char` subscripts (the firmware is `-funsigned-char`, so
+`char` already was unsigned). `%d`/`%X` arguments that are `long`/pointers got
+casts to `int`/`unsigned int` (32 bits on RV32); no format string changed.
+Line numbers elsewhere in this README that point into a changed file refer to
+the Task 4 tree except where updated above.
+
+The warnings below point at real defects (or at code that does not do what it
+looks like). They are **left as they are**; Task 16 or a later task decides.
+Where `-Werror` would stop the build, the warning is silenced for that one
+function with a `#pragma GCC diagnostic push/ignored/pop` and a comment that
+names this section; no global `-Wno-...`.
+
+| File:line | What is wrong | Silenced by |
+|---|---|---|
+| `drivesounds.c:330-332` `pickstep()` | `count` is read in `while(count>maxactive)` before it is ever assigned: undefined behaviour (the 832 got whatever its stack held). When `count` happens to be `<= maxactive` the loop is skipped and no sound is stopped | pragma around the function (`-Wuninitialized`, `-Wmaybe-uninitialized`) |
+| `fpga.c:138` `BootPrint()` | declared `char`, falls off the end without a return (the body is the `//return(1)` stub). The callers (`config.c`) ignore the value today; using it would be undefined behaviour | pragma around the function (`-Wreturn-type`) |
+| `config.c:263,286,358` `LoadConfiguration()` | `updatekickstart` is set to `true` in two places and never read: whatever it was meant to trigger (a kickstart re-upload after a config change) does not happen | `__attribute__((unused))` on the variable |
+| `drivesounds.c:142,214` | `b1`, `b2` (the 0x4000 bit of the audio cursor before and after a fill) are assigned and never used (a check on them was probably meant, or removed) | `__attribute__((unused))` |
+| `atapi.c:666` `atapi_packet()` | parameter `limit` (the host's allocation length) is never used | `(void)limit` |
+| `osd.c` `OsdColor(color)`, `ConfigScanlines(scanlines)`, `menu.c` `ErrorMessage(message, code)`, `hdd.c` `ATA_Recalibrate(.., unit)`, `ATA_Diagnostic(tfr)`, `ATA_Initialize(.., unit)`, `HandleHDD(c1, c2)`, `fdd.c` `HandleFDD(.., c3, ..)`, `menu.c` `VolumeBar(vol, ..)`, `fpga.c` `BootPrint(text)`, `cdrom.c` `cd_lookup_read`/`cd_cue_open` (`ctx`) | stubs or parameters the body ignores (FIXME/TODO in the 832 source) | `(void)param` |
+| `c64keys.c:47` `LAYER(x,y)` | the macro masks `x&0xffff` without parenthesising `x`; for `LAYER(QUAL_BLOCKLAYER\|RK_RAmiga, ..)` it computes `QUAL_BLOCKLAYER \| (RK_RAmiga&0xffff)`. Same value as long as every qualifier is `< 0x10000` (they are: `QUAL_*` are `<= 0x8000`), wrong for a larger one | macro parenthesised (`((x)&0xffff)`); the table values are unchanged |
+| `fdd.c:85,88,102` | `11 - sector >> 1 & 0x55` parses as `((11-sector)>>1)&0x55`; if the intent was `11 - (sector>>1&0x55)` this is a bug in the MFM checksum. It is the 832's reading (that is what vbcc832 compiled), so it is kept | parentheses spell out the existing parse |
+| `hdd.c:882` | `lba & (-1 << n)`: shift of a negative value (undefined in C before C23, well defined here because gcc shifts two's complement) | `(int)(~0U << n)`, same bits |
+| `config.c:548`, `drivesounds.c:365` | `if (romsize=Upload...)` and `while(dse=...)` assign in a condition: intended, but easy to misread | extra parentheses |
+| `menu.c:2763` | `static char template[4] = " of "` holds no NUL (4 chars): fine while only `sizeof` and byte compares are used, never as a string | `__attribute__((nonstring))` |
+| `menu.c:2593` | the `case MENU_ROMFILE_SELECTED:` falls into `..._SELECTED1:` ("no break intended" in the 832 source) | `__attribute__((fallthrough))` |
+| `hdd.c:764-848` `GetHardfileGeometry`, `drivesounds.c:133-302` `drivesounds_render` | `-Wmaybe-uninitialized` on `cyl/head/spt` (set in the first pass of loops that always run, `sptt[0] >= 0`) and `srcs/srcs2/srcs3` (read only when the matching `src` pointer is set, which also sets them): false positives, not bugs | pragma around the function |
+| `fat.c`, `mmc.c` | `#pragma section_code_init` / `section_no_code_init` (the 832 linker's RAM-function sections) are unknown to gcc and do nothing here: `RAMFUNC` code stays in `.text` | file-level `#pragma GCC diagnostic ignored "-Wunknown-pragmas"` before the first one |
+| `fat.c:121` | `if (!MMC_Read(..)) return(0);` was followed by two tab-indented lines that looked guarded (`-Wmisleading-indentation`); they are not | re-indented with spaces |
+
 ## String semantics audit
 
 lib832 (`string.S`, `string_c.c`, `stringstubs.c`, `include/string.h`,
@@ -464,7 +502,7 @@ counts are the compiled sites):
 | `strncpy` `fat.c:885,900,933,952,967,1000,1025,1047,1070,1088,1104,1137,1153,1192,1208` (`DirEntryLFN[..]`, `lfn`, 261) | Destination rows are `[261]`, set to NUL-terminated names and read only as strings (`strlen`, `strcmp`, `strcpy`, `strncpy(file.long_name, .., len)`, `ScrollText`); no `memcpy` of a row. The zero padding of up to 260 bytes per copied entry is never read. Same |
 | `strncpy` `menu.c:348,350,717,2866,2867,2870,2874,2886` (the OSD line `s`) | Both copy the NUL at the same place; `OsdWrite` stops at the first NUL, so the bytes after it (spaces from the earlier `memset` on the 832, zeros on RV) are never drawn. For a long name shorter than 24 characters the NUL ends the line before the disk number (`2866/2867`) and before ` <DIR>` on both CPUs. Same |
 | `strncpy` `menu.c:1369,1371,1372`, `2946,2953` | `file.name` 11 and `drive->name` 8 bytes from space-padded names: no NUL. `file.long_name` is zeroed by `memset` first (`1370`). `DiskInfo[5]` is `XX/XX` (5 characters, `GetDiskInfo`) or starts with NUL and is then not used (`menu.c:2950`). Same |
-| `strncpy` `menu.c:3058` (`debuglines`) | The line is drawn by `OsdWrite`, which stops at the NUL. Same |
+| `strncpy` `menu.c:3060` (`debuglines`) | The line is drawn by `OsdWrite`, which stops at the NUL. Same |
 | `strncmp` (16: `config.c:287,295`, `drivesounds.c:445`, `fat.c:129,131,183,186,250,384 (x2),459,580`, `fpga.c:61,66`, `menu.c:1343,2140`) | `n` is a constant or `sizeof`, always > 0, and the result is compared with 0. Same |
 | `strncmp` `fat.c:384` first call, `n = strlen(name)` | `name` empty (`n == 0`): lib832 returns `r0`, which still holds the `strlen(name)` result, 0 (vbcc832 output of the 832 `fat.c`); ISO returns 0. An empty name matches the first plain file entry on both. Same, no edit |
 | `memcmp` (4: `cdrom.c:82,285`, `menu.c:393,2052`) | `n` = 3 or `sizeof`, > 0, compared with 0. Same |

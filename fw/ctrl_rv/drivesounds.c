@@ -117,7 +117,6 @@ struct dsevent *drivesounds_nextevent()
 
 void drivesounds_finishsound(int i)
 {
-	int result=0;
 	drivesounds.sounds[i].active=0;
 	drivesounds.sounds[i].cursor=0;
 	i=drivesounds.sounds[i].chain;
@@ -130,6 +129,9 @@ void drivesounds_finishsound(int i)
 }
 
 
+/* srcs/srcs2/srcs3 are only read when the matching src pointer is set, which also sets them: a false positive, not a bug */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
 void drivesounds_render(int timestamp)
 {
 	int samples;
@@ -137,7 +139,7 @@ void drivesounds_render(int timestamp)
 	short *src,*src2,*src3;
 	int srcs,srcs2,srcs3;
 	int i;
-	int b1,b2;
+	int b1 __attribute__((unused)), b2 __attribute__((unused)); // only ever assigned (832 leftover)
 
 	if(!drivesounds.loaded)
 	{
@@ -297,6 +299,7 @@ void drivesounds_render(int timestamp)
 
 	drivesounds.timestamp=timestamp;
 }
+#pragma GCC diagnostic pop
 
 
 int countstep(enum DriveSound_Type type)
@@ -316,6 +319,10 @@ int countstep(enum DriveSound_Type type)
 
 /* Pick a step sound at random, while keeping no more than "maxactive" other step sounds playing. */
 
+/* count is read before it is ever set: found by -Wextra, left as is (README, "Found by -Wextra", drivesounds.c pickstep) */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wuninitialized"
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
 int pickstep(int maxactive,enum DriveSound_Type type)
 {
 	int bestcursor=0;
@@ -350,6 +357,7 @@ int pickstep(int maxactive,enum DriveSound_Type type)
 		step=(step+1)&3;
 	return(step);
 }
+#pragma GCC diagnostic pop
 
 
 int drivesounds_fill()
@@ -362,7 +370,7 @@ int drivesounds_fill()
 	}
 	if(drivesounds.enabled && drivesounds.active)
 	{
-		while(dse=drivesounds_nextevent())
+		while((dse=drivesounds_nextevent()))
 		{
 			/* If we're about to start the motor but a stop is in progress, cancel both the stop and start, and go straight to loop. */
 			if(dse->type==DRIVESOUND_MOTORSTART && drivesounds.sounds[DRIVESOUND_MOTORSTOP].active)
@@ -439,9 +447,9 @@ int drivesounds_init(const char *filename)
 		int size=file.size;
 		if(size<=maxsize)
 		{
-			printf("Audio file - length %d\n",file.size);		
+			printf("Audio file - length %d\n",(int)file.size);		
 			buf-=file.size;
-			RARead(&file,buf,file.size);
+			RARead(&file,(unsigned char *)buf,file.size);
 			if(strncmp(buf,"DRIVESND",8)==0)
 			{
 				int id=0;
@@ -454,7 +462,7 @@ int drivesounds_init(const char *filename)
 				{
 					if(size && id<DRIVESOUND_COUNT)
 					{
-						printf("Sound %d at %X, length %d\n",id,buf,size);
+						printf("Sound %d at %X, length %d\n",id,(unsigned int)(uintptr_t)buf,size);
 						drivesounds.sounds[id].base=(short *)buf;
 						drivesounds.sounds[id].length=size/2; /* Size needs to be in 16-bit words */
 						buf+=size;

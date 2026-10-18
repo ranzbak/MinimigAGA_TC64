@@ -173,8 +173,6 @@ void BootUploadLogo()
 void BootUploadBall()
 {
 	RAFile file;
-	int x;
-	int i=0;
 	unsigned char *adr;
 
 	if (RAOpen(&file, BALL_FILE)) {
@@ -189,8 +187,6 @@ void BootUploadBall()
 void BootUploadCopper()
 {
 	RAFile file;
-	int x;
-	int i=0;
 	unsigned char *adr;
 
 	if (RAOpen(&file, COPPER_FILE)) {
@@ -253,7 +249,6 @@ void BootInit()
 //// BootPrint() ////
 void BootPrintEx(char * str)
 {
-  char buf[2];
   unsigned char i,j;
   unsigned char len;
   unsigned char *ptr;

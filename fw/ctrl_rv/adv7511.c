@@ -259,11 +259,11 @@ void adv7511_init(void)
     i2c_set_divider(0x0020);
 
     // Configure Main registers
-    adv_send_config(ADV_CTRL_ADDR, adv7511_init_main_vals);
+    adv_send_config(ADV_CTRL_ADDR, (char *)adv7511_init_main_vals);
     // The table's 0xBA entry is the default; the OSD setting overrides it
     adv_write_clkdelay();
     // Configure Packet memory
-    adv_send_config(ADV_PACKET_ADDR, adv7511_init_packet_vals);
+    adv_send_config(ADV_PACKET_ADDR, (char *)adv7511_init_packet_vals);
 
     // Done
     return;

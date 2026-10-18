@@ -402,6 +402,7 @@ static unsigned char  tfr[8];
 // ATA_Recalibrate()
 static inline void ATA_Recalibrate(unsigned char* tfr, int unit)
 {
+	(void)unit;
   // Recalibrate 0x10-0x1F (class 3 command: no data)
 	DEBUG1("Recalibrate");
 	WriteTaskFile(0, 0, 1, 0, 0, tfr[6] & 0xF0);
@@ -412,6 +413,7 @@ static inline void ATA_Recalibrate(unsigned char* tfr, int unit)
 // ATA_Diagnostic()
 static inline void ATA_Diagnostic(unsigned char* tfr)
 {
+	(void)tfr;
 	// Execute Drive Diagnostic (0x90): the ATA signature (error 01, count 1,
 	// sector 1, cylinder 0).  IDE_STATUS_SIG makes the two-port Gayle show
 	// each device's own signature (ATAPI for a CD on the same port).
@@ -449,6 +451,7 @@ void ATA_IdentifyDevice(unsigned char* tfr, int unit, unsigned short* id)
 // ATA_Initialize()
 void ATA_Initialize(unsigned char* tfr, int unit)
 {
+	(void)unit;
 	// Initialize Device Parameters (0x91)
 	printf("Initialize Device Parameters\r");
 	WriteTaskFile(0, tfr[2], tfr[3], tfr[4], tfr[5], tfr[6]);
@@ -673,13 +676,13 @@ void trap2()
 
 void HandleHDD(unsigned int c1, unsigned int c2)
 {
+	(void)c2;
 	int i;
 	int sector;
 	int cylinder;
 	int head;
     int unit;
 	int sector_count;
-	int block_count;
 
     if (c1 & CMD_IDECMD)
     {
@@ -757,6 +760,9 @@ void HandleHDD(unsigned int c1, unsigned int c2)
     }
 }
 
+/* cyl/head/spt are set in the first pass of the loops (sptt[0] >= 0 always): a false positive */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
 void GetHardfileGeometry(hdfTYPE *pHDF)
 { // this function comes from WinUAE, should return the same CHS as WinUAE
 
@@ -837,8 +843,9 @@ void GetHardfileGeometry(hdfTYPE *pHDF)
     pHDF->cylinders = (unsigned short)cyl;
     pHDF->heads = (unsigned short)head;
     pHDF->sectors = (unsigned short)spt;
-	printf("Total sectors: %d, cyl: %d, heads: %d, sectors: %d\n",total, cyl, head,spt);
+	printf("Total sectors: %d, cyl: %d, heads: %d, sectors: %d\n",(int)total, (int)cyl, (int)head,(int)spt);
 }
+#pragma GCC diagnostic pop
 
 void BuildHardfileIndex(hdfTYPE *pHDF)
 {
@@ -872,7 +879,7 @@ unsigned char HardFileSeek(hdfTYPE *pHDF, unsigned long lba)
         if ((pHDF->file.sector > lba) || ((pHDF->file.sector ^ lba) & (cluster_mask << (fat32 ? 7 : 8)))) // 7: 128 FAT32 links per sector, 8: 256 FAT16 links per sector
         { // requested cluster lies before current pointer position or in different FAT sector
             pHDF->file.cluster = pHDF->index[lba >> (pHDF->index_size - 9)];// minus 9 because lba is in 512-byte sectors
-            pHDF->file.sector = lba & (-1 << (pHDF->index_size - 9));
+            pHDF->file.sector = lba & (int)(~0U << (pHDF->index_size - 9));
         }
     }
     return FileSeek(&pHDF->file, lba, SEEK_SET);

@@ -33,7 +33,6 @@ unsigned char romkey[3072];
 
 RAFile romfile;
 
-static char filename[12];
 
 void ClearKickstartMirrorE0(void)
 {
@@ -62,7 +61,7 @@ int UploadKickstart(unsigned long dir,char *name)
 	strncpy(filename, name, 8); // copy base name
 	strcpy(&filename[8], "ROM"); // add extension
 
-	printf("ROM dir: %d\n",dir);
+	printf("ROM dir: %d\n",(int)dir);
 
 	if(!ValidateDirectory(dir))
 	{
@@ -261,9 +260,8 @@ typedef char config_size_is_212[(sizeof(configTYPE) == 212) ? 1 : -1];
 
 unsigned char LoadConfiguration(char *filename)
 {
-	int updatekickstart=0;
+	int updatekickstart __attribute__((unused)) =0; // only ever assigned (832 leftover)
 	int result=0;
-    unsigned int key;
 
 	if(!filename)
 		filename=configfilename;	// Use slot-based filename if none provided.
@@ -547,7 +545,7 @@ int ApplyConfiguration(char reloadkickstart, char applydrives)
 		DisableOsd();
 		SPIN; SPIN; SPIN; SPIN;
 		UploadActionReplay();
-		if (romsize=UploadKickstart(config.kickdir,config.kickstart.name))
+		if ((romsize=UploadKickstart(config.kickdir,config.kickstart.name)))
 		{
 			result=1;
 		}
@@ -611,7 +609,7 @@ unsigned char SaveConfiguration(char *filename)
         strncpy(file.name, filename, 11);
         file.attributes = 0;
         file.size = sizeof(config);
-        printf("Config size is %X (%X) - address is %X\n",sizeof(config),file.size,&config);
+        printf("Config size is %X (%X) - address is %X\n",(unsigned int)sizeof(config),(unsigned int)file.size,(unsigned int)(uintptr_t)&config);
         if (FileCreate(0, &file))
         {
             printf("File created.\r");

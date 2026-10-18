@@ -117,13 +117,12 @@ unsigned char FindDrive(void)
 {
     buffered_fat_index = -1;
 
-	int i;
 
     if (!MMC_Read(0, sector_buffer)) // read MBR
         return(0);
 
-	boot_sector=0;
-	partitioncount=1;
+    boot_sector=0;
+    partitioncount=1;
 
 	// If we can identify a filesystem on block 0 we don't look for partitions
     if (strncmp((const char*)&sector_buffer[0x36], "FAT16   ", 8)==0) // check for FAT16
@@ -356,7 +355,7 @@ unsigned char FileOpen(fileTYPE *file, const char *name)
     {
         iDirectoryCluster = root_directory_cluster;
         iDirectorySector = root_directory_start;
-        nEntries = fat32 ?  cluster_size << 4 : root_directory_size << 4; // 16 entries per sector
+        nEntries = fat32 ?  (unsigned long)(cluster_size << 4) : root_directory_size << 4; // 16 entries per sector
     }
 
     while (1)
@@ -488,7 +487,7 @@ unsigned long FindDirectoryByCluster(unsigned long parent, unsigned long cluster
     {
         iDirectoryCluster = root_directory_cluster;
         iDirectorySector = root_directory_start;
-        nEntries = fat32 ?  cluster_size << 4 : root_directory_size << 4; // 16 entries per sector
+        nEntries = fat32 ?  (unsigned long)(cluster_size << 4) : root_directory_size << 4; // 16 entries per sector
     }
 
     while (1)
@@ -555,7 +554,7 @@ unsigned long FindDirectory(unsigned long parent, const char *name)
     {
         iDirectoryCluster = root_directory_cluster;
         iDirectorySector = root_directory_start;
-        nEntries = fat32 ?  cluster_size << 4 : root_directory_size << 4; // 16 entries per sector
+        nEntries = fat32 ?  (unsigned long)(cluster_size << 4) : root_directory_size << 4; // 16 entries per sector
     }
 
     while (1)
@@ -703,7 +702,7 @@ char ScanDirectory(unsigned long mode, char *extension, unsigned char options)
     unsigned long iDirectoryCluster;
     unsigned long iEntry;               // entry index in directory
     unsigned long nEntries;
-             char i;
+    unsigned char i;
     unsigned char x;
     unsigned char nNewEntries = 0;      // indicates if a new entry has been found (used in scroll mode)
     char rc = 0; //return code
@@ -747,7 +746,7 @@ char ScanDirectory(unsigned long mode, char *extension, unsigned char options)
             if (nDirEntries < MAXDIRENTRIES)
                 return 0;
         }
-        else if (mode == SCAN_PREV)
+        else if (mode == (unsigned long)SCAN_PREV)
         {
             if (iSelectedEntry > 0) // scroll within visible items
             {
@@ -765,7 +764,7 @@ char ScanDirectory(unsigned long mode, char *extension, unsigned char options)
             if (nDirEntries < MAXDIRENTRIES)
                 return 0;
         }
-        else if (mode == SCAN_PREV_PAGE)
+        else if (mode == (unsigned long)SCAN_PREV_PAGE)
         {
             if (iSelectedEntry)
             {
@@ -780,17 +779,17 @@ char ScanDirectory(unsigned long mode, char *extension, unsigned char options)
 
     if (iCurrentDirectory) // subdirectory
     {
-		printf("Scanning directory %X\n",iCurrentDirectory);
+		printf("Scanning directory %X\n",(unsigned int)iCurrentDirectory);
         iDirectoryCluster = iCurrentDirectory;
         iDirectorySector = data_start + cluster_size * (iDirectoryCluster - 2);
         nEntries = cluster_size << 4; // 16 entries per sector
     }
     else // root directory
     {
-		printf("Scanning root directory %X\n",root_directory_cluster);
+		printf("Scanning root directory %X\n",(unsigned int)root_directory_cluster);
         iDirectoryCluster = root_directory_cluster;
         iDirectorySector = root_directory_start;
-        nEntries = fat32 ?  cluster_size << 4 : root_directory_size << 4; // 16 entries per sector
+        nEntries = fat32 ?  (unsigned long)(cluster_size << 4) : root_directory_size << 4; // 16 entries per sector
     }
 
     while (1)
@@ -918,7 +917,7 @@ char ScanDirectory(unsigned long mode, char *extension, unsigned char options)
                             }
                             else if (mode == SCAN_INIT_FIRST)
                             { // find a dir entry with given cluster number and store it in the buffer
-                                if (pEntry->StartCluster + (fat32 ? (pEntry->HighCluster & 0x0FFF) << 16 : 0) == iPreviousDirectory)
+                                if ((unsigned long)(pEntry->StartCluster + (fat32 ? (pEntry->HighCluster & 0x0FFF) << 16 : 0)) == iPreviousDirectory)
                                 { // directory entry found
                                     for (i = 0; i< MAXDIRENTRIES; i++)
                                         sort_table[i] = i; // init sorting table
@@ -1026,7 +1025,7 @@ char ScanDirectory(unsigned long mode, char *extension, unsigned char options)
                                         }
                                 }
                             }
-                            else if (mode == SCAN_PREV) // replace the first dir entry with the new (lower) one
+                            else if (mode == (unsigned long)SCAN_PREV) // replace the first dir entry with the new (lower) one
                             {
                                 if (nNewEntries == 0) // no entry lower than the first one has been found yet
                                 {
@@ -1121,7 +1120,7 @@ char ScanDirectory(unsigned long mode, char *extension, unsigned char options)
                                     }
                                 }
                             }
-                            else if (mode == SCAN_PREV_PAGE) // find next 8 entries
+                            else if (mode == (unsigned long)SCAN_PREV_PAGE) // find next 8 entries
                             {
 								// compare with the last visible entry
                                 if (CompareDirEntries(pEntry, lfn, &DirEntry[sort_table[0]], DirEntryLFN[sort_table[0]]) < 0)
@@ -1268,7 +1267,7 @@ char ScanDirectory(unsigned long mode, char *extension, unsigned char options)
                 strcpy(DirEntryLFN[sort_table[i + j]], t_DirEntryLFN[t_sort_table[i]]);
             }
         }
-        else if (mode == SCAN_PREV_PAGE)
+        else if (mode == (unsigned long)SCAN_PREV_PAGE)
         { // note: temporary buffer entries are in reverse order
             unsigned char j = nNewEntries - 1;
             for (i = 7; i > j; i--)
@@ -1367,6 +1366,9 @@ unsigned long GetFATLink(unsigned long cluster)
     return(fat32 ? SwapBBBB(fat_buffer.fat32[buffer_index]) & 0x0FFFFFFF : SwapBB(fat_buffer.fat16[buffer_index])); // get FAT link for 68000
 }
 
+/* 832 section pragmas (ignored by gcc: no RAM-function section on this target); the
+ * pragmas stay as in fw/ctrl_832, only their warning is silenced for this file. */
+#pragma GCC diagnostic ignored "-Wunknown-pragmas"
 #pragma section_code_init
 RAMFUNC unsigned char FileNextSector(fileTYPE *file)
 {
@@ -1559,7 +1561,7 @@ unsigned char FileCreate(unsigned long iDirectory, fileTYPE *file)
     {
         iDirectoryCluster = root_directory_cluster;
         iDirectorySector = root_directory_start;
-        nEntries = fat32 ?  cluster_size << 4 : root_directory_size << 4; // 16 entries per sector
+        nEntries = fat32 ?  (unsigned long)(cluster_size << 4) : root_directory_size << 4; // 16 entries per sector
     }
 
     while (1)

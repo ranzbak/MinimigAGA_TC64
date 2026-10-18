@@ -85,7 +85,7 @@ void SendSector(unsigned char *pData, unsigned char sector, unsigned char track,
     x = sector >> 1 & 0x55;
     checksum[2] = x;
     SPI(x);
-    x = 11 - sector >> 1 & 0x55;
+    x = ((11 - sector) >> 1) & 0x55;
     checksum[3] = x;
     SPI(x);
 
@@ -99,7 +99,7 @@ void SendSector(unsigned char *pData, unsigned char sector, unsigned char track,
     x = sector & 0x55;
     checksum[2] ^= x;
     SPI(x);
-    x = 11 - sector & 0x55;
+    x = (11 - sector) & 0x55;
     checksum[3] ^= x;
     SPI(x);
 
@@ -679,6 +679,7 @@ void UpdateDriveStatus(void)
 
 void HandleFDD(unsigned char c1, unsigned char c2, unsigned char c3, unsigned char c4)
 {
+    (void)c3;
     unsigned int sel;
     drives = (c1 >> 4) & 0x03; // number of active floppy drives
 
