@@ -165,6 +165,8 @@ runs at that slot on either CPU, so the order is the 832's.
 ## Clang build (Task 18, decision 12.8 gate 1b)
 
 ```sh
+sudo apt install clang                              # once; plus the toolchain steps under "Building"
+make -C fw/ctrl_boot_rv                             # check (g) reads the boot ROM map
 make -C fw/ctrl_rv CLANG=1 clean all size check     # output build_clang/ (gitignored)
 ```
 
@@ -189,8 +191,8 @@ CLANG block only): `hdd.c` and `drivesounds.c` carry `#pragma GCC diagnostic
 ignored "-Wmaybe-uninitialized"` and `menu.c` an `__attribute__((nonstring))`,
 both gcc-only spellings that clang does not know; neither is a defect.
 
-Fixed in the source (codegen-neutral: the gcc build's disassembly is identical
-before and after, `.BIN` still 92,588 B):
+Fixed in the source (codegen-neutral for gcc: the disassembly is identical
+before and after except `StackFill` below):
 
 - `rafile.c` `RAReadLine`: `result` was only ever ANDed, never returned (clang
   `-Wunused-but-set-variable`); the variable is gone, `FileRead` is still called.
@@ -198,7 +200,11 @@ before and after, `.BIN` still 92,588 B):
   removed with its `--idx`.
 - `stackcheck.c` `StackFill`: `register uintptr_t sp __asm__("sp")` read as a
   plain variable is an uninitialised local in clang (real: it would have read
-  garbage); an empty `__asm__("" : "+r"(sp))` binds it, gcc emits the same code.
+  garbage, and at `-O0` clang even stores that slot into `sp`). Now
+  `uintptr_t sp; __asm__ volatile("mv %0, sp" : "=r"(sp));`, which only reads
+  `sp` at every `-O` level on both compilers. This is the one change that is
+  not byte-identical for gcc: `StackFill` at `-Os` is `mv a4,sp; addi a4,a4,-64`
+  instead of `addi a3,sp,-64` (the same value; the gcc `.BIN` is 92,596 B, +8 B).
 
 `check_io.awk` now forgets its tracked constants after an unconditional jump
 (`j`, `jr`, `ret`, `mret`): clang places blocks that are reached only by a
@@ -207,7 +213,7 @@ like a UART read. The gcc listing gives the same counts as before. clang folds
 every I/O address into a zero-based access (1340 seen, all `(zero)`), so (b) and
 (c) still check something.
 
-Result: clang image `.text` 96,712 B, `RV32OSDA.BIN` 100,192 B (gcc 92,588 B).
+Result: clang image `.text` 96,708 B, `RV32OSDA.BIN` 100,188 B (gcc 92,588 B).
 `SIM=verilator RUNTAG=p3t18 FW=fw/ctrl_rv/build_clang/RV32OSDA.BIN bash
 sim/host_bridge/run.sh fwboot`: PASS, OSD GAP min 40, STACK low 0x1980 (gcc:
 40, 0x1950).

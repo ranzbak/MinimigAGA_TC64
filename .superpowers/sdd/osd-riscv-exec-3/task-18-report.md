@@ -18,3 +18,8 @@ Status: DONE.
 
 ## Files
 fw/ctrl_rv/{Makefile,.gitignore,README.md,check_io.awk,rafile.c,c64keys.c,stackcheck.c}
+
+## Fix round 1
+1. stackcheck.c: `uintptr_t sp; __asm__ volatile("mv %0, sp" : "=r"(sp));` (no register variable); comment and README reworded. StackFill disassembly: gcc -Os `mv a4,sp; addi a4,a4,-64; andi a4,a4,-4`; gcc -O0 `mv a5,sp; sw a5,-24(s0)`; clang -Os `mv a0,sp; andi a0,a0,-4; addi a0,a0,-64`; clang -O0 `mv a0,sp; sw a0,-12(s0); lw a0,-12(s0)`. Every case reads sp, none writes it. gcc .text is NOT byte-identical now: -Os StackFill was `addi a3,sp,-64`, now `mv`+`addi` (same value), BIN 92,596 B (+8 B with alignment), everything else only shifts addresses.
+2. README Clang block: added `sudo apt install clang` and `make -C fw/ctrl_boot_rv` (check g needs its map). Replayed (minus apt) in zsh and in `env -i bash`: clang build, size, checks (a)-(g) pass; gcc `make check` passes. clang .text 96,708, BIN 100,188 B.
+3. fwboot (RUNTAG p3t18f1 clang, p3t18f2 gcc): both PASS; clang GAP 40, STACK low 0x1980; gcc GAP 40, STACK low 0x1950.
