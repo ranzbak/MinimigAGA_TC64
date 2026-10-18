@@ -95,7 +95,7 @@ fmt() {
 control() {
   prep control
   local t rc=0
-  for t in mock_selftest cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_test hwmap_test swap_test fat_test mmc_test config_test; do
+  for t in mock_selftest cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_test hwmap_test swap_test fat_test mmc_test config_test hdd_test; do
     mk control "run64-$t" > "mut/control/log.$t" 2>&1 || { echo "control: run64-$t FAILED (mut/control/log.$t)"; rc=1; }
   done
   mk control fmt > mut/control/log.fmt 2>&1 || { echo "control: fmt FAILED (mut/control/log.fmt)"; rc=1; }
@@ -193,6 +193,21 @@ unit cfg_anyorder config_test src config.c 's/if (name832 \&\& order!=CFG_832)/i
 # cfgconv's refusals (without the order check its internal check still refuses, with another message)
 unit cfgconv_same config_test src tools/cfgconv/cfgconv.c 's/if (same_file(argv\[2\], argv\[3\])) {/if (0) {/' "wrote over its input"
 unit cfgconv_order config_test src tools/cfgconv/cfgconv.c 's/if (order == to) {/if (0) {/' "FAIL: cfgconv --to-832 defaults.cfg: cfgconv:"
+
+# ---- the hard disk emulation (hdd_test) -------------------------------------
+# the brief's two: the RDB checksum summed over native longs, IDENTIFY's strings unswapped
+unit hdd_cksum hdd_test src hdd.c 's/result+=be32(p\[c2\]);/result+=p[c2];/' "FAIL FakeRDB small RDSK (unit 0)"
+unit hdd_identswap hdd_test src hdd.c 's/pBuffer\[i\] = be16(pBuffer\[i\]);/;/' "FAIL IDENTIFY WORK.HDF long name"
+# the patch of an HDF's own RDB on native longs
+unit hdd_patch hdd_test src hdd.c 's/rdb->rdb_ChkSum = be32(be32(rdb->rdb_ChkSum) + be32(rdb->rdb_Flags) - 0x12);/rdb->rdb_ChkSum = rdb->rdb_ChkSum + rdb->rdb_Flags - 0x12;/' "FAIL WORK.HDF unit 0 lba 0 (own RDB, patched)"
+# the FakeRDB boundary loop (hdd.c, Task 4's parenthesis): file block 0 taken for a fake one ...
+unit hdd_boundary hdd_test src hdd.c 's/while(blk \&\& (((lba+hdf\[unit\].offset)<0)/while(blk \&\& (((lba+hdf[unit].offset)<=0)/' "FAIL ODD.HDF READ MULTIPLE 248+8: block 4 (lba 252)"
+# ... and without its blk bound: a read of fake blocks runs past its chunk into HardFileSeek
+unit hdd_boundary_blk hdd_test src hdd.c 's/while(blk \&\& (((lba+hdf\[unit\].offset)<0)/while((((lba+hdf[unit].offset)<0)/' "runtime error: shift exponent"
+# sector count 0 = 256
+unit hdd_count0 hdd_test src hdd.c 's/if (sector_count == 0) sector_count = 0x100;/if (sector_count == 0) sector_count = 0xFF;/' "FAIL ODD.HDF READ MULTIPLE 252+0 (256)"
+# the mock's direct-mode count (mock_dmode_blocks): the Gayle model's FIFO misses the direct blocks
+unit mock_dmode_count hdd_test t mock_hw.c 's/^\t\tdmode_blocks++;$/\t\t;/' "FAIL WORK.HDF READ SECTORS 501+5: chunks"
 
 # ---- the mock itself (mock_selftest) -----------------------------------------
 unit mock_token mock_selftest t mock_hw.c 's/c_push(0xFE);/c_push(0xFF);/'

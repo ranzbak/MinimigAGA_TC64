@@ -46,6 +46,9 @@ void mock_script_fn(unsigned cs, mock_miso_fn fn, void *ctx);
 void mock_script_idle(unsigned cs, unsigned char idle);   /* queue empty: this byte */
 unsigned mock_script_left(unsigned cs);     /* queued bytes not yet read */
 unsigned mock_underruns(unsigned cs);       /* reads that found the queue empty */
+/* direct-mode transfers so far (512 card bytes each, into the FPGA): a
+   callback's view of what reached the Gayle FIFO outside its own frames */
+unsigned mock_dmode_blocks(void);
 
 /* ---- SD card image model (sim/common/sd_spi_model.v) ---- */
 /* sectors 0: 65536 or the image if larger (rounded up to 1024) */

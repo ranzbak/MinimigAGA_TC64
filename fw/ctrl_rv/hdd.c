@@ -35,6 +35,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "config.h"
 #include "drivesounds.h"
 #include "cdrom.h"
+#include "swap.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -59,16 +60,18 @@ static int lastcyl;
 static char filename[12];
 
 
-static void RDBChecksum(unsigned long *p)
+// The block's longs are big-endian (the Amiga's order); the sum wraps
+// modulo 2^32, as on the 832 (uint32_t: no signed overflow).
+static void RDBChecksum(uint32_t *p)
 {
-	unsigned long count=p[1];
-	unsigned long c2;
-	long result=0;
+	uint32_t count=be32(p[1]);
+	uint32_t c2;
+	uint32_t result=0;
 	DEBUG1("Generating checksum");
 	p[2]=0;
 	for(c2=0;c2<count;++c2)
-		result+=p[c2];
-	p[2]=(unsigned long)-result;
+		result+=be32(p[c2]);
+	p[2]=be32(-result);
 }
 
 
@@ -89,14 +92,15 @@ static void FakeRDB(int unit,int block)
 			{
 				struct RigidDiskBlock *rdb=(struct RigidDiskBlock *)sector_buffer;
 				DEBUG1("Creating RDB...");
-				rdb->rdb_ID = 'R'<<24 | 'D' << 16 | 'S' << 8 | 'K';
+				// every long big-endian (be32), as the Amiga reads it
+				rdb->rdb_ID = be32('R'<<24 | 'D' << 16 | 'S' << 8 | 'K');
 				
-				rdb->rdb_Summedlongs=0x40;
-				rdb->rdb_HostID=0x07;
-				rdb->rdb_BlockBytes=0x200;
-				rdb->rdb_Flags=0x12; // (Disk ID valid, no LUNs after this one)
+				rdb->rdb_Summedlongs=be32(0x40);
+				rdb->rdb_HostID=be32(0x07);
+				rdb->rdb_BlockBytes=be32(0x200);
+				rdb->rdb_Flags=be32(0x12); // (Disk ID valid, no LUNs after this one)
 				rdb->rdb_BadBlockList=0xffffffff; // We don't provide a bad block list
-				rdb->rdb_PartitionList=1;
+				rdb->rdb_PartitionList=be32(1);
 				rdb->rdb_FileSysHeaderList=0xffffffff;
 				rdb->rdb_DriveInit=0xffffffff;
 				rdb->rdb_Reserved1[0]=0xffffffff;
@@ -105,55 +109,56 @@ static void FakeRDB(int unit,int block)
 				rdb->rdb_Reserved1[3]=0xffffffff;
 				rdb->rdb_Reserved1[4]=0xffffffff;
 				rdb->rdb_Reserved1[5]=0xffffffff;
-				rdb->rdb_Cylinders=hdf[unit].cylinders;
-				rdb->rdb_Sectors=hdf[unit].sectors;
-				rdb->rdb_Heads=hdf[unit].heads;
-				rdb->rdb_Interleave=1;
-				rdb->rdb_Park=rdb->rdb_Cylinders;
+				rdb->rdb_Cylinders=be32(hdf[unit].cylinders);
+				rdb->rdb_Sectors=be32(hdf[unit].sectors);
+				rdb->rdb_Heads=be32(hdf[unit].heads);
+				rdb->rdb_Interleave=be32(1);
+				rdb->rdb_Park=rdb->rdb_Cylinders;	// copies of a big-endian long
 				rdb->rdb_WritePreComp=rdb->rdb_Cylinders;
 				rdb->rdb_ReducedWrite=rdb->rdb_Cylinders;
-				rdb->rdb_StepRate=3;
+				rdb->rdb_StepRate=be32(3);
 				rdb->rdb_RDBBlocksLo=0;
-				rdb->rdb_RDBBlocksHi=1;
-				rdb->rdb_LoCylinder=1;
-				rdb->rdb_HiCylinder=rdb->rdb_Cylinders-1;
-				rdb->rdb_CylBlocks=rdb->rdb_Heads * rdb->rdb_Sectors;
+				rdb->rdb_RDBBlocksHi=be32(1);
+				rdb->rdb_LoCylinder=be32(1);
+				rdb->rdb_HiCylinder=be32(hdf[unit].cylinders-1);
+				rdb->rdb_CylBlocks=be32(hdf[unit].heads * hdf[unit].sectors);
 				rdb->rdb_AutoParkSeconds=0;
-				rdb->rdb_HighRDSKBlock=1;
+				rdb->rdb_HighRDSKBlock=be32(1);
 				strcpy(rdb->rdb_DiskVendor,"Do not ");
 				strcpy(rdb->rdb_DiskProduct, "repartition!");
 
-				RDBChecksum((unsigned long *)rdb);
+				RDBChecksum((uint32_t *)rdb);
 			}
 			break;
 		case 1: // Partition
 			{
 				struct PartitionBlock *pb=(struct PartitionBlock *)sector_buffer;
 				DEBUG1("Creating RDB...");
-				pb->pb_ID = 'P'<<24 | 'A' << 16 | 'R' << 8 | 'T';
+				// every long big-endian (be32), as the Amiga reads it
+				pb->pb_ID = be32('P'<<24 | 'A' << 16 | 'R' << 8 | 'T');
 			
-				pb->pb_Summedlongs=0x40;
-				pb->pb_HostID=0x07;
+				pb->pb_Summedlongs=be32(0x40);
+				pb->pb_HostID=be32(0x07);
 				pb->pb_Next=0xffffffff;
-				pb->pb_Flags=0x1; // Bootable
+				pb->pb_Flags=be32(0x1); // Bootable
 				pb->pb_DevFlags=0;
 				strcpy(pb->pb_DriveName," DH0");
 				pb->pb_DriveName[0]=3;	// BCPL string
 
-				pb->pb_Environment.de_TableSize=0x10;
-				pb->pb_Environment.de_SizeBlock=0x80;
-				pb->pb_Environment.de_Surfaces=hdf[unit].heads;
-				pb->pb_Environment.de_SectorPerBlock=1;
-				pb->pb_Environment.de_BlocksPerTrack=hdf[unit].sectors;
-				pb->pb_Environment.de_Reserved=2;
-				pb->pb_Environment.de_LowCyl=1;
-				pb->pb_Environment.de_HighCyl=hdf[unit].cylinders-1;
-				pb->pb_Environment.de_NumBuffers=30;
-				pb->pb_Environment.de_MaxTransfer=0x1fffe;
-				pb->pb_Environment.de_Mask=0x7ffffffe;
-				pb->pb_Environment.de_DosType=0x444f5301;
+				pb->pb_Environment.de_TableSize=be32(0x10);
+				pb->pb_Environment.de_SizeBlock=be32(0x80);
+				pb->pb_Environment.de_Surfaces=be32(hdf[unit].heads);
+				pb->pb_Environment.de_SectorPerBlock=be32(1);
+				pb->pb_Environment.de_BlocksPerTrack=be32(hdf[unit].sectors);
+				pb->pb_Environment.de_Reserved=be32(2);
+				pb->pb_Environment.de_LowCyl=be32(1);
+				pb->pb_Environment.de_HighCyl=be32(hdf[unit].cylinders-1);
+				pb->pb_Environment.de_NumBuffers=be32(30);
+				pb->pb_Environment.de_MaxTransfer=be32(0x1fffe);
+				pb->pb_Environment.de_Mask=be32(0x7ffffffe);
+				pb->pb_Environment.de_DosType=be32(0x444f5301);
 
-				RDBChecksum((unsigned long *)pb);
+				RDBChecksum((uint32_t *)pb);
 			}
 			break;
 			break;
@@ -237,6 +242,16 @@ void IdentifyDevice(unsigned short *pBuffer, int unit)
 			//    SwapBytes((char*)&pBuffer[27], 40); //not for 68000
 			break;
 	}
+
+	// ATA strings (serial 10-19, firmware 23-26, model 27-46): the first
+	// character in bits 15:8 of each word.  The memcpy above stored them in
+	// memory order, which is that on the big-endian 832; on a little-endian
+	// CPU each word is swapped (be16), so the stream ATA_IdentifyDevice sends
+	// (every word low byte first) is the 832's.  The numeric words are values.
+	for (i = 10; i < 20; i++)
+		pBuffer[i] = be16(pBuffer[i]);
+	for (i = 23; i < 47; i++)
+		pBuffer[i] = be16(pBuffer[i]);
 
     pBuffer[47] = 0x8010; //maximum sectors per block in Read/Write Multiple command
     pBuffer[53] = 1;
@@ -525,8 +540,8 @@ void ATA_ReadSectors(unsigned char* tfr, int sector, int cylinder, int head, int
 							HardFileSeek(&hdf[unit], lba + hdf[unit].offset); // Patch flags and checksum of RDB.  Actually necessary?
 							FileReadEx(&hdf[unit].file, sector_buffer, 1);
 							struct RigidDiskBlock *rdb = (struct RigidDiskBlock *)sector_buffer;
-							rdb->rdb_ChkSum = rdb->rdb_ChkSum + rdb->rdb_Flags - 0x12;
-							rdb->rdb_Flags=0x12;
+							rdb->rdb_ChkSum = be32(be32(rdb->rdb_ChkSum) + be32(rdb->rdb_Flags) - 0x12);	// big-endian longs
+							rdb->rdb_Flags=be32(0x12);
 						}
 						else
 							FakeRDB(unit,lba);

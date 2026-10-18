@@ -9,7 +9,8 @@ gnu23 compile fixes"); Task 5's I/O map ("Differences from fw/ctrl_832");
 Task 9's byte-order helpers and the FAT/MBR fields ("Byte order (Task 9)");
 Task 10's TIMER bounds in `mmc.c` ("SD driver timeouts and the TIMER (Task 10)");
 Task 11's config file byte order, file names and `cfgconv` ("Config file byte
-order (Task 11)").
+order (Task 11)"); Task 12's hard disk byte order ("Hard disk byte order
+(Task 12)").
 
 ## Copy base
 
@@ -56,11 +57,13 @@ copied files differ on purpose (each edit is a row of "Differences from
 fw/ctrl_832"): `akiko.c boot.c config.c drivesounds.c fat.c main.c menu.c`, and
 `test/Makefile`, `test/.gitignore` (the C-library wiring); since Task 4 also
 `audio.c c64keys.c drivesounds.h firmware.h hdd.c` and `Makefile`; since Task 9
-also `fat.h swap.c swap.h`; since Task 11 also `config.h`. `find` also
+also `fat.h swap.c swap.h`; since Task 11 also `config.h`; since Task 12 also
+`hdd_internal.h`. `find` also
 lists files that only exist here (`rvlibc.c`, `rvlibc.h`, `test/lib_test.c`,
 `test/fmt_*`, `test/mutants.sh`, `test/gold/`, `test/rv/`, `test/swap_test.c`,
 `test/fat_test.c`, `test/fatimg.sh`, `test/fat_check.sh`, `cfgswap.c`,
-`cfgswap.h`, `tools/cfgconv/`, `test/config_test.c`, `test/config_check.sh`); `cmp` reports
+`cfgswap.h`, `tools/cfgconv/`, `test/config_test.c`, `test/config_check.sh`,
+`test/hdd_test.c`); `cmp` reports
 those as missing in `fw/ctrl_832`. `interrupts.c`/`interrupts.h` exist only in
 `fw/ctrl_832` (Task 4), so the loop above does not see them.
 
@@ -549,6 +552,55 @@ generator of 832 files (`test/README.md`); L2 `run.sh fwboot_cfg`
 (`file "MINMGAR CFG" not found`, `file "MINMGAA CFG" not found`). No change
 in `fat.c` or `mmc.c`.
 
+## Hard disk byte order (Task 12)
+
+Plan 5.2 items 1, 2 and 7 (`hdd.c` struct overlays). The Amiga reads a
+disk's RigidDiskBlock and PartitionBlock as big-endian longs and IDENTIFY
+DEVICE as ATA words; the 832, big-endian, produced both by storing native
+values. The RV firmware stores the same bytes:
+
+| File:line | 832 | RV | Why |
+|---|---|---|---|
+| `hdd_internal.h` (`RigidDiskBlock`, `DosEnvec`, `PartitionBlock`) | `unsigned long` / `long` fields | `uint32_t` / `int32_t`; `#include <stdint.h>`; `_Static_assert` 256 bytes each (SummedLongs 0x40) | on-disk layouts: 32 bits on every ABI (on the LP64 host leg `unsigned long` made the RDSK 8-byte longs, `hdd_test` RED). The same types on RV32 |
+| `hdd.c:65`-`74` (`RDBChecksum`) | `count=p[1]`, `result+=p[c2]` (`long`), `p[2]=-result` | `count=be32(p[1])`, `result+=be32(p[c2])` (`uint32_t`), `p[2]=be32(-result)`; the argument `uint32_t *` | the checksum is over big-endian longs; `uint32_t` wraps as the 832's `long` did, without signed overflow (UBSan) |
+| `hdd.c:96`-`130` (`FakeRDB`, RDSK) | every long assigned its value | every long `be32(value)`; `0xffffffff` and `0` as they are (the same in either order); `Park`, `WritePreComp`, `ReducedWrite` copy the big-endian `Cylinders`; `HiCylinder` = `be32(cylinders-1)`, `CylBlocks` = `be32(heads*sectors)` from `hdf[]` (the 832 computed them from the fields it had just stored) | big-endian longs; the strings unchanged |
+| `hdd.c:138`-`161` (`FakeRDB`, PART) | the same | the same | the same |
+| `hdd.c:246`-`254` (`IdentifyDevice`) | (none) | after the `switch`: `pBuffer[i] = be16(pBuffer[i])` for words 10..19 (serial) and 23..46 (firmware, model incl. the file name copy) | ATA strings have the first character in bits 15:8. The 832's `memcpy` put it there (big-endian); on RV it lands in bits 7:0, so each string word is swapped after all copies (also after `p[10]+=partition`). `ATA_IdentifyDevice` sends every word low byte first from its value: the numeric words (0, 1, 3, 6, 47, 53-58) need nothing. The byte stream is the 832's (correction of plan 5.2 item 2, which said "swap every word") |
+| `hdd.c:543`-`544` (`ATA_ReadSectors`, unit 0, plain `HDF_FILE`, block 0) | `rdb_ChkSum = rdb_ChkSum + rdb_Flags - 0x12; rdb_Flags = 0x12` | `be32(be32(rdb_ChkSum) + be32(rdb_Flags) - 0x12)`, `be32(0x12)` | the HDF's own RDB: big-endian longs read from the file |
+| `hdd.c:38` | | `#include "swap.h"` | |
+
+No other change in `hdd.c` (`hdd.c` grew by 15 lines: line numbers after 64
+moved). `test/hdd_test` (`test/README.md`) checks each row against
+`test/gold/rdb.py` (the RDSK and PART blocks from the field offsets of
+`devices/hardblocks.h`, the checksum computed over the finished block) and
+`test/gold/identify.py` (the IDENTIFY stream from the ATA word and string
+rules), not against `fw/ctrl_832`'s code: compiled for this little-endian
+host, the 832 source would not give the 832's bytes for exactly these fields.
+
+Found while testing, unchanged (832 parity):
+
+- `hdd.c:536`, the Task 4 parenthesis: `blk && (A || B)` and the other parse,
+  `(blk && A) || B`, behave the same for every valid CHS address. They differ
+  only when `blk` is 0 and B holds (`unit == 0`, plain `HDF_FILE`, `lba ==
+  0`), but `lba` is 0 only on the loop's first pass, where `blk` is the chunk
+  size (>= 1). With sector number 0 in the task file (invalid, `lba` -1) the
+  other parse would run on with `blk` negative. So no host test can tell the
+  two apart; Task 4's reading rests on the 832 assembly. `hdd_test` covers the
+  line with READ MULTIPLE chunks that cross from the synthesised cylinder into
+  the file (mutants `hdd_boundary`, `hdd_boundary_blk`).
+- The RDB patch is for unit 0 only (`unit==0 && ... lba==0`): the same HDF on
+  unit 1 is sent with its own `rdb_Flags` (`hdd_test` "unit 1 lba 0").
+- A write into the synthesised first cylinder (`lba < 0` after the offset)
+  drops those blocks and sets `ERROR_HDD` ("Write to auto-generated RDB!"),
+  but the status still reports success (END | IRQ).
+- `ATA_ReadSectors`/`ATA_WriteSectors` always decode CHS: the LBA bit of the
+  drive/head register is ignored. IDENTIFY offers no LBA mode (word 49 is 0),
+  so the Amiga's driver uses CHS.
+- `IdentifyDevice`, `HDF_CARD` case: `pBuffer[23] += type - HDF_CARD` is
+  overwritten by the `memcpy` of the firmware revision on the next line (dead).
+- `HandleHDD` calls `trap2()` (prints `T` on the UART) after any command whose
+  task file holds cylinder 444, head 2, sector 61: a debugging leftover.
+
 ## SD driver timeouts and the TIMER (Task 10)
 
 The 832's `mmc.c` bounded its five data-token and busy waits by loop count
@@ -599,7 +651,7 @@ us). Lines are those of the current tree.
 | `drivesounds.c:355` | `TIMER & 3`: pseudo-random pick of one of four sounds | | |
 | `cdrom.c:384` (`cda_port_timer`), `cdaudio.c:55`, `182`, `194` | CD audio play position: `CDA_HALF_UNITS` (`cdaudio.h:38`) counts per half buffer | 32 | 185.7 ms (8192 frames) |
 | `cdrom.c:473`, `485` (`cd_wait`) | `CD_TIMEOUT` (`cdrom.c:64`): host data phase | 10000 | 58.04 s |
-| `hdd.c:917`, `919` (`OpenHardfile`) | `GetTimer(0)` difference, printed as "ms" (`time >> 16`) | counts | 5.804 ms per printed "ms" |
+| `hdd.c:932`, `934` (`OpenHardfile`) | `GetTimer(0)` difference, printed as "ms" (`time >> 16`) | counts | 5.804 ms per printed "ms" |
 | `fpga.c:207` (`fpga_init`) | `GetTimer(0)`, unused | | |
 | `fpga.c:230`, `232`, `254` (`fpga_init`) | `WaitTimer(50)`, `WaitTimer(100)`, `WaitTimer(1000)` (boot screen) | 50, 100, 1000 | 290.2 ms, 580.4 ms, 5.804 s |
 | `osd.c:1030` (`OsdGetCtrl`) | menu button held: `BUTTONDELAY` (`osd.h:56`) | 20 | 116.1 ms |
@@ -684,7 +736,10 @@ extension); `fat_test` runs the real `fat.c` + `mmc.c` on three card images
 command sequence against the L2 boot run's SD log, token delays, busy, the
 five `SD_TIMEOUT` bounds, the direct-mode trace `test/gold/dmode.txt`);
 `config_test` checks the config file's byte order (`cfgswap.c`, `cfgconv`,
-`LoadConfiguration` on the card model, the 832 file never written).
+`LoadConfiguration` on the card model, the 832 file never written);
+`hdd_test` runs the real `hdd.c` over `fat.c` + `mmc.c` behind a mock Gayle
+(FakeRDB, the RDB patch, IDENTIFY DEVICE against independent generators, the
+ATA read/write paths against the HDF files).
 `fw/ctrl_rv/test/README.md` has the targets, the flags, the mock (an SPI/TIMER/UART
 model with a card-image model; `-DHOSTTEST` hooks in `hardware.h` that leave
 the target image byte for byte the same) and the mutant rules. `LIB832` is

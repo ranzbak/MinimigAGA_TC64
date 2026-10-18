@@ -285,6 +285,7 @@ static struct script scripts[8];		/* by the bit number of the line, 0 = none */
 static unsigned scs;				/* cfide's scs register */
 static unsigned spi_speed;
 static unsigned char last_in;
+static unsigned dmode_blocks;			/* mock_dmode_blocks */
 
 static struct buf speed_log;			/* mock_spi_speed_log */
 static void timer_spi_byte(void);
@@ -384,6 +385,7 @@ unsigned char hosttest_spi(unsigned char out)
 			timer_spi_byte();
 		}
 		last_in = in;
+		dmode_blocks++;
 		return in;
 	}
 	if (scs & 2) {
@@ -403,6 +405,7 @@ unsigned char hosttest_spi(unsigned char out)
 }
 
 unsigned char hosttest_rdspi(void) { return last_in; }
+unsigned mock_dmode_blocks(void) { return dmode_blocks; }
 
 void mock_script_bytes(unsigned cs, const unsigned char *b, size_t n)
 {
@@ -465,7 +468,7 @@ void mock_reset(void)
 	free(fr_out.p); memset(&fr_out, 0, sizeof fr_out);
 	free(fr_in.p); memset(&fr_in, 0, sizeof fr_in);
 	free(view); view = NULL;
-	frames = 0; fr_cs = 0; scs = 0; spi_speed = 0; last_in = 0xFF;
+	frames = 0; fr_cs = 0; scs = 0; spi_speed = 0; last_in = 0xFF; dmode_blocks = 0;
 	free(card.mem);
 	free(card.log.p);
 	memset(&card, 0, sizeof card);

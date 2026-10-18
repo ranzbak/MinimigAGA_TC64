@@ -146,6 +146,33 @@ run32-config_test: $(B)/config_test_32 $(B)/cfgconv_32
 run-config_test: run64-config_test run32-config_test
 .PHONY: run-config_test run64-config_test run32-config_test
 
+# hdd_test: the real hdd.c over fat.c + mmc.c on the card model, driven
+# through HandleHDD() by the test's mock Gayle (Task 12): FakeRDB's RDSK and
+# PART blocks against gold/rdb.py, IDENTIFY DEVICE against gold/identify.py,
+# the RDB patch of an HDF's own RDB, READ/WRITE (MULTIPLE) LBA/CHS, chunks
+# and data against the HDF files rdb.py writes (on a mkcard.sh card).
+HDD_SRCS = $(TD)/mock_hw.c $(SRC)/hardware.c $(SRC)/mmc.c $(SRC)/uart.c $(SRC)/fat.c $(SRC)/swap.c \
+           $(SRC)/rvlibc.c $(SRC)/errors.c $(SRC)/hdd.c
+$(B)/hdd/rdb.ok: $(GOLD)/rdb.py
+	@mkdir -p $(@D)
+	$(PY) $(GOLD)/rdb.py $(@D)
+	touch $@
+$(B)/hdd/identcases.h: $(GOLD)/identify.py
+	@mkdir -p $(@D)
+	$(PY) $(GOLD)/identify.py $(@D)
+$(B)/hdd/hdd.img: $(B)/hdd/rdb.ok $(TOP)/tools/sim/mkcard.sh
+	bash $(TOP)/tools/sim/mkcard.sh $@ 32 $(B)/hdd/hdf/WORK.HDF $(B)/hdd/hdf/SYNTH.HDF $(B)/hdd/hdf/ODD.HDF
+$(B)/hdd_test: $(TD)/hdd_test.c $(HDD_SRCS) $(HDRS) $(B)/hdd/rdb.ok $(B)/hdd/identcases.h
+	$(HOSTCC) $(CFLAGS) -I$(B)/hdd -o $@ $(TD)/hdd_test.c $(HDD_SRCS)
+$(B)/hdd_test_32: $(TD)/hdd_test.c $(HDD_SRCS) $(HDRS) $(B)/hdd/rdb.ok $(B)/hdd/identcases.h
+	$(HOSTCC) -m32 $(CFLAGS) -I$(B)/hdd -o $@ $(TD)/hdd_test.c $(HDD_SRCS)
+run64-hdd_test: $(B)/hdd_test $(B)/hdd/hdd.img
+	$(B)/hdd_test $(B)/hdd
+run32-hdd_test: $(B)/hdd_test_32 $(B)/hdd/hdd.img
+	$(B)/hdd_test_32 $(B)/hdd
+run-hdd_test: run64-hdd_test run32-hdd_test
+.PHONY: run-hdd_test run64-hdd_test run32-hdd_test
+
 # atapi_test without the ISO: the ISO-backed cases are skipped, not failed
 run64-atapi_test::
 	$(B)/atapi_test /nonexistent.iso
@@ -159,7 +186,9 @@ $(B)/card.img: $(TOP)/tools/sim/mkcard.sh
 	bash $(TOP)/tools/sim/mkcard.sh $@ 8 $(@D)/HELLO.TXT
 $(B)/mock_selftest $(B)/mock_selftest_32: | $(CARD)
 
-# OpenHardfile alone: hdd.c as a whole does not build with gcc
+# OpenHardfile alone, with stubs for the FAT calls (the CD slot case): cut
+# out of hdd.c.  hdd.c as a whole builds under HOSTTEST (hdd_test links it);
+# openhf_test keeps the cut so that its stubs stay the only FAT it sees.
 $(B)/openhf.inc: $(SRC)/hdd.c
 	@mkdir -p $(@D)
 	sed -n '/^unsigned char OpenHardfile(unsigned int unit)/,/^}/p' $(SRC)/hdd.c > $@
@@ -168,7 +197,7 @@ $(B)/openhf_test $(B)/openhf_test_32: $(B)/openhf.inc
 
 run: fmt run-mock_selftest run-cue_test run-cdaudio_test run-atapi_test run-cdrom_test \
      run-openhf_test run-lib_test run-hwmap_test run-swap_test run-fat_test run-mmc_test \
-     run-config_test
+     run-config_test run-hdd_test
 
 clean:
 	$(RM) -r out mut
