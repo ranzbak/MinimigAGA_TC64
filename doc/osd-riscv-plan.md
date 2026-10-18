@@ -1,6 +1,6 @@
 # OSD / host CPU: EightThirtyTwo -> RISC-V -- implementation plan
 
-Status: **Phase 3 done 2026-10-18** (firmware 1:1 in `fw/ctrl_rv`, host tests, L1/L2 gates green; details in section 8, Phase 3; Phase 4 next; nothing is on the board yet). Written 2026-10-16 around picorv32, revised the same day
+Status: **Phase 3 done 2026-10-18** (firmware 1:1 in `fw/ctrl_rv`, host tests, L1/L2 gates green; details in section 8, Phase 3); **Phase 4 planned 2026-10-18** (`doc/osd-riscv-exec-4.md`, 23 tasks; decision 12.13); nothing is on the board yet. Written 2026-10-16 around picorv32, revised the same day
 after the core survey (`findings/osd-riscv/tiny-cores.md`) and Paul's
 decisions (section 12): the core is **VexRiscv**. Branch `osd-riscv`, off
 `5.0-040-pipelined` (the main branch for this board version; `osd-riscv`
@@ -10,7 +10,7 @@ on core `main` first, as usual). Baseline must be 49b1868 or later: it
 contains the merged `spicdc` branch (SPI generated clock 7c33c98,
 paula_floppy direct-mode race 202e077, `sim/spi_cdc`). The executable task
 lists: Phases 1-2 `doc/osd-riscv-exec-1.md` and `-exec-2.md`, Phase 3
-`doc/osd-riscv-exec-3.md`.
+`doc/osd-riscv-exec-3.md`, Phase 4 `doc/osd-riscv-exec-4.md`.
 
 Target: QMTech XC7A100T (`xc7a100tfgg676-2`, fpga/openaars project_1). The
 core must still build on Intel FPGAs: plain VHDL/Verilog only, Artix-specific
@@ -714,7 +714,7 @@ measured against the previous stage.
 
 | # | Peripheral | Removes from firmware / timing it fixes | IRQ source(s) | Register sketch (cfide window) | LUT / BRAM est. | Risk | Priority (proposal) |
 |---|---|---|---|---|---|---|---|
-| P1 | **Request IRQ + OSD reply ready flag** | The 6-byte `HandleFpga()` SPI status poll per loop (~100 us) and the `SPI_reply()` pause: `userio_osd` exposes "reply byte loaded" and "key queue non-empty"; `paula_floppy` exposes "track request pending" (CMD_RDTRK/WRTRK), `gayle_port` "command written" / "FIFO threshold"; cfide shows them on `irq_src` bits 4..15 (6.3) and in a `HOST_REQ` status word | request lines (4-5 bits) | `0x..B4 HOST_REQ` R: {osd_reply_rdy, keyq, fdd_req, ide0_cmd, ide1_cmd, ide_fifo_rdy} | ~120 LUT, 0 BRAM | low (status only; minimig-side changes are output ports) | **1** -- biggest latency win per LUT; also fixes inventory item 2 in hardware |
+| P1 | **Request IRQ + OSD reply ready flag** | The 6-byte `HandleFpga()` SPI status poll per loop (~100 us) and the `SPI_reply()` pause: `userio_osd` exposes "reply byte loaded" and "key queue non-empty"; `paula_floppy` exposes "track request pending" (CMD_RDTRK/WRTRK), `gayle_port` "command written" / "FIFO threshold"; cfide shows them on `irq_src` bits 4..15 (6.3) and in a `HOST_REQ` status word | request lines (4-5 bits) | `0x..B4 HOST_REQ` R: {osd_reply_rdy, keyq, fdd_req, ide0_cmd, ide1_cmd, ide_fifo_rdy} | ~120 LUT, 0 BRAM | low (status only; minimig-side changes are output ports) | **1** -- biggest latency win per LUT. **The reply-ready part moves to Phase 4** (decision 12.13, `doc/osd-riscv-exec-4.md` Tasks 9-11: `userio_osd.osd_rx_seq`, cfide `HOST_REQ` bit 0 `OSD_RDY` at `0x..B4`); P1 keeps the request IRQ and `HOST_REQ` bits 1-15 |
 | P2 | Timer (`mtime`/`mtimecmp`, 64-bit at clk_114, on MTI, plus 100 Hz tick) | `GetTimer/CheckTimer` 16-bit wrap handling, RTC/drive-sound/HDMI 250 ms bookkeeping moves to the tick ISR | MTI, tick | `0x..D4 MTIME_LO/HI`, `0x..DC MTIMECMP_LO/HI` (TIMER at D0 stays) | ~100 LUT | low | **1** |
 | P3 | UART RX + 16-byte TX/RX FIFOs | A debug console (today TX-only, blocking per byte) | RX non-empty, TX empty | `0x..F0 DATA`, `0x..F4 STATUS` | ~120 LUT (LUTRAM) | low | 2 |
 | P4 | I2C INT routing | The 250 ms edge-poll of the ADV7511 INT | the INT pin `i2c_ext_int`, bit 3 since 8.0 (bit 1 `i2c_int` is the I2C master's transfer event) | none new | 0 (in 8.0) | none | 1 (firmware only since 8.0) |
@@ -722,8 +722,18 @@ measured against the previous stage.
 | P6 | Sector DMA engine SD <-> minimig FIFO (generalised direct mode) | The CPU from the read data path SD -> paula/gayle; the engine owns CS, count and both directions, FPGA -> SD for HDF/ADF writes included. Removes the CS-timing race class structurally | done / error | `0x..C4 DMA_CMD` {dir, slave, blocks}, `0x..C8 DMA_STAT` | ~300-500 LUT | medium-high: touches `paula_floppy`/`gayle_port` FIFO ports; the SD write protocol (token, busy) must be in hardware | 3 -- after P5 is measured |
 | P7 | CD-DA ring refill DMA + half-empty IRQ | The 32 KB copy per 186 ms and its SPI loop; firmware supplies an LBA run list per half | half flip, list empty | `0x..C0 CDA_LIST`, `CDA_CTL` | ~500-700 LUT + 1 BRAM; needs the bridge arbiter (3.3.5) | high: SDRAM host port is lowest priority; hostcache coherency (DMA writes must invalidate or bypass); `scale()` volume moves to hardware or is dropped | 4 -- only if P5+P1 still leave underruns |
 | P8 | I2C engine | already exists (`i2c_master_mmio`) | -- | -- | 0 | -- | n/a |
+| P9 | **Memory-mapped OSD buffer** (decision 12.13 b) | The OSD text path over SPI (`OSD_CMD_OSD_WR` framing per line, the reply reads): `userio_osd`'s 2 KB `osdbuf` becomes an inferred dual-port RAM, one port in the host CPU's address space (direct stores), the other feeding the overlay; key-queue status and OSD control as MMIO registers + an IRQ | key queue non-empty | a host window for the buffer (address chosen with the design) + control/status registers | ~1 BRAM18 (already used by `osdbuf`) + ~100 LUT | medium: touches the overlay read side; designed together with the bigger tabbed 16x64 OSD of the backlog | after parity, with the OSD redesign; the SPI path stays for the 832 build until Phase 9 |
 
 Estimated total if P1-P5 are built: ~700 LUT, 0-1 BRAM; within budget.
+
+P9 (decision 12.13 b, Paul 2026-10-18): the OSD display path (firmware <->
+`userio_osd`) is detached from the Minimig logic, so its protocol may change,
+RTL included. The 2 KB `osdbuf` becomes dual-port (vendor-neutral inferred RAM):
+the host CPU writes characters/pixels with plain stores instead of SPI frames,
+the overlay reads the other port; the key queue status and OSD control become
+MMIO registers with an interrupt. It is designed together with the bigger, tabbed
+16x64 OSD of `doc/backlog.md` (after RISC-V parity). The SPI OSD commands stay
+for the 832 build until Phase 9. Not a Phase 4 task.
 P6/P7 are decided on Phase 7/8 measurements, not up front. The order is
 asked again after Phase 2 with the dependency map at the end of
 `doc/osd-riscv-exec-1.md` (decision 12.9).
@@ -747,7 +757,7 @@ rests on instruction spacing shrinks.
 | # | Handshake | Where | Dependency / margin today | Status | How it is checked |
 |---|---|---|---|---|---|
 | 1 | hw register write hold / stale `ack` between back-to-back hw accesses | bridge <-> cfide (clk_114 <-> clk_28) | an access needs >= 1 clk_28 period of `req`; a second access within ~4 clk_114 of the previous `ack` can be falsely acknowledged. 832 spacing happened to exceed it | fixed by the four-phase handshake (3.3.4) | `sim/host_bridge` back-to-back test + mutant; `tb_spi_cdc` GAP=2 rows |
-| 2 | OSD reply byte load | `userio_osd` loads the reply per SPI transfer on the clk7_en grid | a minimum idle time between host accesses of a reply read; `tb_spi_cdc`'s `OSD_MIN_GAP` = 40 clk_114 is its *reporting* threshold (gaps below it are reported, not counted; its GAPS list jumps 32 -> 40 and every access adds a random 0..3 cycles), and the reply goes stale below ~32 (1e135e7): the failure edge lies in (~32, 40], not pinned; firmware 174322f adds a pause (`SPI_reply()`: 4 x `SPIN`) | **open**: firmware pause only; margin shrinks with a faster CPU. Phase 3 (L2, stub slave): measured `OSD GAP min` **40** on the shipped image, i.e. at the reporting threshold, not necessarily at the failure edge (44 before Task 11; it moves with code layout). Covered: the one `OSD_CMD_VERSION` frame at boot (cold I$; its own minimum is 44) and the first reply byte of each `OSD_CMD_KEYQ` frame (where the 40 is), in the fatal-error loop (no kickstart); the per-key loop `kq_buf[i] = SPI_reply()` (`osd.c` ~1004, every key press on the board) is unmeasured (the stub answers count 0). Since the final review the L2 `fwboot*` runs fail when the minimum drops below 40 (bench error, `+OSD_MIN_GAP`). Phase 4: run `tb_spi_cdc +SWEEP=1` on the `osd` test once to pin the edge (a measurement, not a change), measure the per-key loop (a stub that queues keys) and re-take the figure on the first kickstart card; open until L3 with the real `userio_osd` (and P1) | `tb_spi_cdc` `osd` test with the RV host (hostrv); margin monitor "cycles between accesses during OSD reads" >= 40; hardware fix = P1's reply-ready flag (poll it instead of counting) |
+| 2 | OSD reply byte load | `userio_osd` loads the reply per SPI transfer on the clk7_en grid | a minimum idle time between host accesses of a reply read; `tb_spi_cdc`'s `OSD_MIN_GAP` = 40 clk_114 is its *reporting* threshold (gaps below it are reported, not counted; its GAPS list jumps 32 -> 40 and every access adds a random 0..3 cycles), and the reply goes stale below ~32 (1e135e7): the failure edge lies in (~32, 40], not pinned; firmware 174322f adds a pause (`SPI_reply()`: 4 x `SPIN`) | **open**: firmware pause only; margin shrinks with a faster CPU. Phase 3 (L2, stub slave): measured `OSD GAP min` **40** on the shipped image, i.e. at the reporting threshold, not necessarily at the failure edge (44 before Task 11; it moves with code layout). Covered: the one `OSD_CMD_VERSION` frame at boot (cold I$; its own minimum is 44) and the first reply byte of each `OSD_CMD_KEYQ` frame (where the 40 is), in the fatal-error loop (no kickstart); the per-key loop `kq_buf[i] = SPI_reply()` (`osd.c` ~1004, every key press on the board) is unmeasured (the stub answers count 0). Since the final review the L2 `fwboot*` runs fail when the minimum drops below 40 (bench error, `+OSD_MIN_GAP`). Phase 4: run `tb_spi_cdc +SWEEP=1` on the `osd` test once to pin the edge (a measurement, not a change), measure the per-key loop (a stub that queues keys) and re-take the figure on the first kickstart card; open until L3 with the real `userio_osd` (and P1). **Phase 4 (decision 12.13):** a reply-ready handshake replaces the `SPIN`s in the RV firmware (`doc/osd-riscv-exec-4.md` Tasks 1, 8-12: edge pinned, before/after on the real `userio_osd`) | `tb_spi_cdc` `osd` test with the RV host (hostrv); margin monitor "cycles between accesses during OSD reads" >= 40; hardware fix = the reply-ready handshake (`HOST_REQ.OSD_RDY`, Phase 4; polled instead of counting) |
 | 3 | Direct-mode SD -> paula/gayle, CS release after the 4096th bit | `mmc.c` `EnableDMode; SPI(0xFF); RDSPI; DisableDMode` | was >= ~30 cycles after the last bit, 832 ~45 | fixed in RTL (202e077: word latched on its last sck edge) | `tb_spi_cdc` `direct` GAP 2..64 and `host832`/`hostrv` real-CPU runs; monitor measures last-sck-to-CS-release; mutant (202e077 reverted) must fail |
 | 4 | Command byte then CS release on the minimig slaves (`DisableFpga/DisableOsd` right after the last byte) | `userio_osd_spi` `rx`/`cmd` through clk7_en synchronisers; `paula_floppy`, `gayle` command decode | unknown; the GAP sweep covers it for `wr/rd/osd` | measured, not guaranteed by design | same bench; add a monitor "last sck edge to `_scs` rise" per slave with a per-slave minimum derived from the RTL (2 clk7_en = ~8 clk_28) |
 | 5 | SPI data register write while the shifter is busy | cfide `SD_busy` | the write is held, not dropped (support state machine stalls the CPU) | by construction | assertion in `sim/host_bridge`: no SPI write accepted while `SD_busy` |
@@ -780,7 +790,7 @@ timing (reviewed in Phase 3's grep gate).
   boot ROM end-to-end boot from a FAT16 card image, Dhrystone on the real
   memory path; the 832 regression is `sim/spi_cdc/host832/run.sh` with the
   rewritten bridge.
-- **L3 co-simulation** `sim/spi_cdc/hostrv/` (sibling of `host832/`, xsim):
+- **L3 co-simulation** `sim/l3/` (one bench for both CPUs, `CPU=rv|832`, Verilator and xsim; first planned as `sim/spi_cdc/hostrv/`, see `doc/osd-riscv-exec-4.md` Question 5):
   the real `paula_floppy` + `paula_floppy_fifo`, `gayle` + `gayle_port` +
   `gayle_fifo`, `userio_osd` + `userio_osd_spi`, `cfide`, `hostcache`, the
   bridge, the **RISC-V core running the real boot ROM and firmware** (from
@@ -1016,7 +1026,13 @@ cases 0 failed, PASS.
 
 ### Phase 4 -- co-simulation (the gate for floppy/HDD/CD)
 
-- 4.1 **O** L3 bench `sim/spi_cdc/hostrv/` per 7.2: SD model with
+Executable plan: `doc/osd-riscv-exec-4.md` (23 tasks, planned 2026-10-18), amended
+by decision 12.13: parity of the RV firmware with the 832 on the floppy, hard
+disk and CD paths is proven by the L3 differential co-simulation, and Phase 4
+adds 4.7, the OSD reply-ready handshake (RTL `userio_osd` + cfide, RV firmware
+`SPI_reply()`; the reply-ready part of P1). The L3 bench is `sim/l3/` (both CPUs).
+
+- 4.1 **O** L3 bench `sim/l3/` per 7.2: SD model with
   multi-block reads/writes (CMD17/18/24/25), Amiga-side bus-functional
   model, Paula DMA model, Gayle traffic from `sim/gayle`, trace logger,
   margin monitors (7.1), `rv_extra_ws` and `+FAST_HW` stress, skew grid.
@@ -1039,6 +1055,14 @@ cases 0 failed, PASS.
 - 4.6 **S** 832 Dhrystone on the board (`fw/dhrystone_832`, current
   bitstream, UART). Gate: number recorded next to the bench's 0.113
   DMIPS/MHz.
+- 4.7 **O** OSD reply-ready handshake (decision 12.13 a): `userio_osd` output
+  `osd_rx_seq` (bytes processed), cfide `HOST_REQ` (`0xFFFFFFB4`, read-only)
+  bit 0 `OSD_RDY` = cfide's own OSD byte count equals it; `SPI_reply()` polls it
+  (TIMER-bounded) instead of four `SPIN`s; the 832 firmware never reads it.
+  RTL reviewed by Paul before any bitstream. Gate: `tb_spi_cdc +RDY=1` `osd`
+  passes at GAP=2 on the skew grid, L3 `OSD EARLY 0` with the real `userio_osd`
+  incl. the per-key loop, before/after figures in `findings/osd-riscv/phase4.md`,
+  832 traces unchanged.
 
 ### Phase 5 -- build integration and A/B
 
@@ -1098,8 +1122,8 @@ after RISC-V parity.
   API. L2 tests `t_irqctl`, `t_irqapi`. P1 sources attach to `irq_src` bits
   4..15 as pulses >= 1 `clk_28` cycle or levels. Still to do: board test, and
   L3 differential / 832 A/B once those exist.
-- 8.1 **O/S** P1 request IRQ + OSD reply ready flag. Gate: L3 shows zero
-  idle SPI polls and the `osd` test passing at GAP=2; board stress clean.
+- 8.1 **O/S** P1 request IRQ (the OSD reply-ready flag was done in Phase 4,
+  4.7). Gate: L3 shows zero idle SPI polls; board stress clean.
 - 8.2 **S** P2 timer on MTI + P4 I2C routing; tick ISR owns timers/RTC/
   drive-sound cursor/HDMI check. Gate: L3 + board.
 - 8.3 **S** P3 UART RX FIFO + debug console. Gate: L3 + serial test per the
@@ -1331,3 +1355,21 @@ P5-P7 on evidence. Of these, only the 8 KB boot BRAM survives unchanged.*
     **Implemented (Tasks 3-4, checked in Task 20):** newlib-nano `libc_nano`
     with `rvlibc.c`, gnu23 with the code fixed, lib832 printf bugs listed in
     `fmt_diff_expected.txt`, not reproduced.
+13. **Minimig-facing parity is critical; the OSD display path is free (Paul,
+    2026-10-18).** The timing and function between the Minimig core and the
+    floppy, hard disk and CD-ROM must be the same with the RISC-V firmware as
+    with the 832; parity is proven by the L3 differential co-simulation
+    (Phase 4, `doc/osd-riscv-exec-4.md`). The OSD display path (firmware <->
+    `userio_osd`) is detached from the Minimig logic: its protocol may be
+    changed, RTL side included, to be more consistent and easier. Applied
+    (Paul chose option 1): (a) Phase 4 adds a small backward-compatible "OSD
+    reply byte ready" handshake -- a status bit the firmware polls before each
+    reply-byte read (the 832 firmware never reads it, so the 832 build is
+    unchanged in behaviour); the RV `SPI_reply()` uses it, so the 40-cycle gap
+    rule, its four `SPIN`s and the layout-dependent margin go away; a subset
+    of 6.4 P1 (the request IRQ stays Phase 8); measured before and after on
+    L3 with the real `userio_osd`, the key-press loop included. (b) A
+    memory-mapped OSD buffer is added to 6.4 as P9 (dual-port `osdbuf`, MMIO
+    key-queue status/control + IRQ, designed with the bigger tabbed 16x64 OSD
+    of the backlog after parity, the SPI path kept for the 832 build until
+    Phase 9, vendor-neutral); not a Phase 4 task.
