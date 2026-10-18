@@ -30,7 +30,7 @@ import sys
 # --------------------------------------------------------------------------
 # Not format strings: inline-assembly templates the grep that builds
 # formats.txt also finds (a "%0" operand reference).
-NOT_FORMATS = {'"rol.w #8,%0\\n\\t"', '"swap %0\\n\\t"'}
+NOT_FORMATS = {'"rol.w #8,%0\\n\\t"', '"swap %0\\n\\t"', '"mv %0, sp"'}
 
 # The known deviations of lib832's printf (the model's switches).  UPPER is a
 # difference, not a bug; the others are bugs (README, "Differences").  The

@@ -125,6 +125,7 @@
 "file size: %lu (%lu KB)\r"
 "file->size = %lu\r"
 "iDirectoryCluster: %x\n"
+"mv %0, sp"
 "pEntry->FileSize = %lu\r"
 "partition type: 0x%02X ("
 "rol.w #8,%0\n\t"
