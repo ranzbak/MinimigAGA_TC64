@@ -23,6 +23,8 @@
 #   A relative FWRV / FW832 is taken from this directory if it exists there,
 #   else from the repository root.
 #   SOURCE_DATE_EPOCH  file times on the card (default 2026-01-01 00:00 UTC)
+#   NOKICK  1: the boot card without KICK.ROM (sim/l3 run.sh's negative
+#           boot run; use its own B, the image name is boot.img all the same)
 # Output in $(B): content/ (generated files), cfg_cue/ cfg_iso/ (MINMGAA.CFG,
 # MINMGAA.check, MINMGAR.CFG), fw/ (the firmware copies under their card
 # names), <card>.img, cfgconv.
@@ -52,12 +54,13 @@ CFGCD_cd := $(CDCFG)
 img_cd = $(BA)/cd$(if $(filter iso,$(CDCFG)),_iso).img
 
 FWS      := RV32OSDA.BIN 832OSDAD.BIN
-names_boot       := $(FWS) MINMGAR.CFG MINMGAA.CFG KICK.ROM
+names_base       := $(FWS) MINMGAR.CFG MINMGAA.CFG KICK.ROM
+names_boot       := $(if $(filter 1,$(NOKICK)),$(filter-out KICK.ROM,$(names_base)),$(names_base))
 names_boot832cfg := $(FWS) MINMGAA.CFG KICK.ROM
-names_fdd        := $(names_boot) TEST.ADF DRIVESND.BIN
-names_hdd        := $(names_boot) SYNTH.HDF RDB.HDF
-names_cd         := $(names_boot) TEST.CUE TEST.BIN TEST.ISO
-names_cdhdd      := $(names_boot) SYNTH.HDF RDB.HDF TEST.CUE TEST.BIN
+names_fdd        := $(names_base) TEST.ADF DRIVESND.BIN
+names_hdd        := $(names_base) SYNTH.HDF RDB.HDF
+names_cd         := $(names_base) TEST.CUE TEST.BIN TEST.ISO
+names_cdhdd      := $(names_base) SYNTH.HDF RDB.HDF TEST.CUE TEST.BIN
 
 # where each name comes from, for a card whose configs are in $(1)
 src_RV32OSDA.BIN = $(BA)/fw/RV32OSDA.BIN

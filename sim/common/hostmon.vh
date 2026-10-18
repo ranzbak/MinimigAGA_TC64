@@ -19,7 +19,10 @@
 //   hm_init               the plusargs of the above (call in the bench's initial block)
 //   hm_final_hw / hm_final_stats / hm_final_fwboot   the end-of-run counter lines
 // The text of the blocks is that of tb_host_bridge.v before Phase 4 Task 2,
-// moved without change.
+// moved without change.  One addition (sim/l3): a bench that defines
+// HM_FRAME_HOOK provides task hm_frame_hook(input at_end, input logged),
+// which frame_close calls last, with the closed frame still in fr_*; logged
+// is 1 for a frame spi.txt got a line for.  The L2 bench does not define it.
 `ifndef HM_CPU
 `define HM_CPU hostcpu
 `endif
@@ -145,6 +148,9 @@
         n_keyq = n_keyq + 1;
         if (n_keyq == 20) $display("=== HandleUI KEYQ frame 20 at cycle %0d", cyc);
       end
+`ifdef HM_FRAME_HOOK
+      hm_frame_hook(at_end, fr_cs != 8'h00 || fr_n > 0);
+`endif
     end
   endtask
 

@@ -26,6 +26,8 @@
 // rest of memory starts at 0.  The path may be up to 1024 characters; a file
 // that cannot be opened ends the run at time 0 with "=== FAIL ...".
 //
+// Dump: task dump(<file>) writes all 8 MB (sim/l3, +SDRAM_DUMP).
+//
 // Simulation only.
 `timescale 1ns/1ps
 
@@ -87,6 +89,25 @@ module sdram_host_model #(
   function [15:0] hw_at(input [31:0] a);
     hw_at = mem[a[HW:1]];
   endfunction
+
+  // dump(<file>): the whole 8 MB as raw bytes, file offset = host byte
+  // address (byte A+0 = the upper byte of halfword A).  The L3 bench calls
+  // it with its +SDRAM_DUMP=<file> before the verdict; the L2 bench never
+  // does.  A file that cannot be written counts as a model error.
+  task dump(input [8*1024-1:0] fname);
+    integer f, n;
+    begin
+      f = $fopen(fname, "wb");
+      if (f == 0) begin
+        $display("=== BUS VIOLATION sdram model: cannot write the dump %0s", fname);
+        errors = errors + 1;
+      end else begin
+        for (n = 0; n < (1 << HW); n = n + 1) $fwrite(f, "%c%c", mem[n][15:8], mem[n][7:0]);
+        $fclose(f);
+        $display("SDRAM: dump written to %0s", fname);
+      end
+    end
+  endtask
 
   integer       lat_left = -1, burst = -1;
   reg   [HW-1:0] b_hw;               // halfword index of the requested word
