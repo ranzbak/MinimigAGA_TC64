@@ -253,7 +253,7 @@ clears x1-x31 and jumps to 0x2000).
 | Program | Checks |
 |---|---|
 | `irq_sig` (`tests/irq_sig.S`, handler `tests/irq_sig_h.c`) | x1, x3-x30 hold distinct patterns, x31 is the only scratch register; 50 events at pseudo-random distances (IRQ_AT 20..275 cycles) while the loop checks every register each iteration; the C handler counts, clears, re-arms and overwrites every caller-saved register. Pass: count 50 (and still 50 after 64 more iterations), no register changed |
-| `irq_c` (`tests/irq_c.c`) | constructors ran; crt0 left MIE/MEIE set; the default handler clears the line; `SetIntHandler`; an event while `DisableInterrupts()` is lost; `irq_save`/`irq_restore` nesting; switching handlers while events keep coming |
+| `irq_c` (`tests/irq_c.c`) | constructors ran; crt0 left MIE/MEIE set; the default handler clears the line; `SetIntHandler`; an event while `DisableInterrupts()` is lost; `irq_save`/`irq_restore` nesting; switching handlers while events keep coming; an event swept over every cycle of a `SetIntHandler(h1 -> h2)` call never reaches h2 before `EnableInterrupts()` (a copy of `irq.c` that changes the pointer before it disables the register fails it: `sim/rv_l1/README.md`, "irq_c check 10") |
 | `exc` (`tests/exc.c`) | `.word 0xffffffff`, a misaligned `lw`, a misaligned `sh`: mcause 2/4/6, mepc = the instruction, mtval = 0xffffffff / the address; the `rv_exception` override steps mepc and returns; load target and stored memory unchanged |
 
 L2 (Vivado xsim, the real bridge and cfide, about a minute):

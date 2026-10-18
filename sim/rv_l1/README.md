@@ -20,7 +20,7 @@ X-checking reference) or on Verilator (`SIM=verilator`, much faster, see
 | `sw/crt0_l1.S`, `sw/l1.ld`, `sw/l1.h` | Start-up code, linker script, MMIO header |
 | `sw/boot_fw.S` | Boot ROM stand-in for programs linked as firmware (`irq_sig`, `irq_c`, `exc`) |
 | `tests/` | Test programs (`.S` or `.c`) and expected memory dumps (`.mem`); `tests/dm_smoke.v` is the debug smoke test sequence |
-| `prog/Makefile`, `sw/syscalls.c`, `sw/l1_newlib.ld` | Firmware-unit programs (newlib-nano) and their runtime, see "Firmware units"; `fmt_rv` (the firmware's C library link), see "C library check (`fmt`)" |
+| `prog/Makefile`, `sw/syscalls.c`, `sw/l1_newlib.ld` | Firmware-unit programs (newlib-nano) built from `FWDIR` (default `fw/ctrl_rv`) and their runtime, see "Firmware units"; `fmt_rv` (the firmware's C library link), see "C library check (`fmt`)" |
 
 ## Prerequisites
 
@@ -54,9 +54,13 @@ bash sim/rv_l1/run.sh all          # gates + full matrix + teeth, ~4 min on 8 co
 SIM=verilator bash sim/rv_l1/run.sh all   # the same on Verilator, ~15 s
 ```
 
-`run.sh` runs the make itself first (`make tests`; `units`: `make -C prog`;
-`dhry`: `make -C fw/dhrystone_rv`), so a changed test source is never run
-from a stale image.
+`run.sh` runs the make itself first (`make tests`; `units`: `make -C prog
+FWDIR=...`; `dhry`: `make -C fw/dhrystone_rv`), so a changed test source is
+never run from a stale image. The program lists come from the Makefiles
+(`make -C sim/rv_l1 print-progs`, `make -C sim/rv_l1/prog print-progs`):
+`run.sh` itself only names the teeth (`TEETH`, `uart_read`), the `irq` set and
+the programs that need the `-DDM_SMOKE` bench; every other program the
+Makefile builds is in the matrix.
 
 `all` ends with `=== ALL PASS` (exit 0) or `=== SOME FAILED` (exit 1). It runs:
 
@@ -236,7 +240,7 @@ whole target including the builds; Verilator from a warm ccache and cold
 | `irq` | 13 | 24.7 s | 0.9 s | 6.2 s |
 | `dhry` | 3 | 87.5 s | 1.1 s | 6.5 s |
 | `dm_smoke` | 6 | 16.6 s | 5.1 s | 60 s |
-| `units` | 3 in parallel (`cdaudio_emu` 19.1 M cycles) | 2768 s (46 min) | 10.2 s | 17.4 s |
+| `units` | 3 in parallel (`fw/ctrl_rv`, `cdaudio_emu` 19.9 M cycles; 2026-10-18) | 2937 s (49 min) | 12 s | 17.4 s (2026-10-17, `fw/ctrl_832`) |
 
 Same day, both backends over all five targets: `compare` 128 logs, 128
 same (every verdict incl. the teeth, every `=== CYCLES`, `=== STATS` and
@@ -257,7 +261,9 @@ dump).
   the pins are tied idle (TCK 0, TMS 1). By hand:
   `iverilog -g2012 -DDM_SMOKE -s tb_rv_l1 -P tb_rv_l1.DEBUG=2 -o /tmp/dm.vvp tb_rv_l1.v mem_model.v bus_checker.v jtag_bfm.v tests/dm_smoke.v ../../rtl/host/rv_hostcpu.v ../../rtl/host/vexriscv/VexOsd*.v`
   and `vvp -N /tmp/dm.vvp +HEX=build/dm_smoke.hex`.
-* **Results**: `=== PASS` (DONE 0), `=== FAIL <code>` (DONE code in hex),
+* **Results**: `=== PASS` (DONE 0), `=== FAIL <code>` (DONE code in hex;
+  `run.sh` adds the decimal value, the numbering of the checks:
+  `got 'FAIL a' = FAIL 10 (0xa)`),
   `=== FAIL bus violation`, `=== FAIL bad address`, `=== FAIL uart read`,
   `=== TIMEOUT`; every run
   also prints `=== STATS` (I$ line refills, dBus reads/writes, busy cycles)
@@ -322,7 +328,7 @@ run itself (`l1_done`): the firmware crt0 spins when `main` returns.
 | `fencei_nofencei` | same without `fence.i`: must end `=== FAIL 1` (teeth) |
 | `irq` | INTERRUPT disabled: no trap; enabled: one trap, `mcause` = `0x8000000B`, the handler's access clears the line |
 | `irq_sig` | firmware trap entry keeps every register: x1, x3-x31 patterns (x31 and x30 take turns as the check's scratch), 50 events at pseudo-random distances, C handler (`tests/irq_sig_h.c`) trashes the caller-saved registers; linked `--no-relax` (gp holds a pattern) |
-| `irq_c` | `fw/ctrl_rv/arch/irq.h` API: constructors, MIE/MEIE from crt0, default handler, `SetIntHandler`, `DisableInterrupts` loses events, `irq_save`/`irq_restore` nesting, handler switch while events arrive |
+| `irq_c` | `fw/ctrl_rv/arch/irq.h` API: constructors, MIE/MEIE from crt0, default handler, `SetIntHandler`, `DisableInterrupts` loses events, `irq_save`/`irq_restore` nesting, handler switch while events arrive; check 10 also sweeps one event over every cycle of a `SetIntHandler(h1 -> h2)` call (distance 1..64 cycles): it may reach h1 or nobody, never h2 before `EnableInterrupts()` (catches `SetIntHandler` changing the pointer before it disables the register, see "irq_c check 10") |
 | `exc` | illegal instruction, misaligned `lw`, misaligned `sh` through `rv_trap` to an `rv_exception` override: mcause 2/4/6, mepc, mtval, resume after the instruction |
 | `irq_sig_mut` | teeth: `irq_sig` with `trap.S` minus `lw t3`: must end `=== FAIL 11c` |
 | `uart_read` | teeth for the model: one `lhu` of the UART register; must end `=== FAIL uart read` (in `all` once, `WS=3 ROMWS=1`) |
@@ -334,9 +340,10 @@ run itself (`l1_done`): the firmware crt0 spins when `main` returns.
    `tests/<name>.c` (`int main(void)`); `#include "l1.h"`. Return 0 for pass,
    a nonzero code for each failing check.
 2. Add `<name>` to `PROGS` in the `Makefile` (or to `FWPROGS` with a link
-   rule, for a program linked as firmware) and to `PROGS` in `run.sh` (or
-   to `TEETH` with an `expect_of` entry if it must fail, or to `DMPROGS` if
-   it needs the `-DDM_SMOKE` bench).
+   rule, for a program linked as firmware). `run.sh` reads that list and
+   runs it in the matrix; only if it must fail, add it to `TEETH` in
+   `run.sh` with an `expect_of` entry (or to `ONCE` for a run at
+   `WS=3 ROMWS=1` only), or to `DMPROGS` if it needs the `-DDM_SMOKE` bench.
 3. Optional: `tests/<name>.mem` with lines `<byte address> <BE word>` (hex,
    consecutive words); `run.sh` dumps that range after DONE and compares.
 4. `make -C sim/rv_l1 tests && bash sim/rv_l1/run.sh <name>`, then `all`.
@@ -344,18 +351,60 @@ run itself (`l1_done`): the firmware crt0 spins when `main` returns.
 ## Firmware units (`units` target)
 
 `atapi_emu`, `cue_emu` and `cdaudio_emu` are the CD-ROM unit programs of
-`fw/ctrl_832/test/emu` (they print `ok ...` lines and end with `PASS` or
+`<FWDIR>/test/emu` with the units they test (`atapi.c`, `cue.c`,
+`cdaudio.c` of `<FWDIR>`; they print `ok ...` lines and end with `PASS` or
 `FAIL n`), built with the RISC-V gcc and newlib-nano and run on the L1 bench.
+`FWDIR` is `fw/ctrl_rv` by default (the RISC-V firmware tree, Phase 3);
+`FWDIR=fw/ctrl_832` builds the 832 tree's copies (read-only) as before.
 `printf` goes through `sw/syscalls.c` (`_write` = UART byte stores, `_sbrk` =
 heap from `_end` to 0xE0000, `_exit` = DONE); `sw/l1_newlib.ld` puts the code
 at 0x2000 and the stack top at 0xF0000. `main` returns the failure count.
 
 ```sh
-make -C sim/rv_l1/prog FWDIR=../../../fw/ctrl_832   # build/<prog>.hex (FWDIR default as shown;
-                                                    # fw/ctrl_rv in Phase 3)
-bash sim/rv_l1/run.sh units                         # WS=3 ROMWS=1 EXTRA_WS=0 DEBUG=0
-WS=8 bash sim/rv_l1/run.sh units                    # other settings from the environment
+bash sim/rv_l1/run.sh units                          # fw/ctrl_rv, WS=3 ROMWS=1 EXTRA_WS=0 DEBUG=0
+SIM=verilator bash sim/rv_l1/run.sh units            # the same on Verilator (seconds)
+FWDIR=fw/ctrl_832 SIM=verilator bash sim/rv_l1/run.sh units   # the 832 tree
+WS=8 TIMEOUT=60000000 bash sim/rv_l1/run.sh units    # other settings from the environment
+make -C sim/rv_l1/prog                               # build only: FWDIR=../../../fw/ctrl_rv (default)
+make -C sim/rv_l1/prog FWDIR=../../../fw/ctrl_832    # (FWDIR relative to sim/rv_l1/prog)
 ```
+
+`units` first prints the tree it uses (`=== UNITS FWDIR <absolute path>`,
+also in `run_${RUNTAG:-wt}/units_fwdir.txt`; a relative `FWDIR` is taken
+from the current directory), then always runs `make -C sim/rv_l1/prog
+FWDIR=<that path>`, reads the program list from the Makefile (`make
+print-progs`) and runs every program from that tree's hexes (`make
+print-hexdir`).
+
+Build layout (`prog/Makefile`), per tree (`<TREE>` = the last part of
+`FWDIR`, e.g. `ctrl_rv`):
+
+| What | Where |
+|---|---|
+| unit and emu objects, `.d` files, `.elf`/`.map`/`.bin` | `prog/build/<TREE>/` |
+| hexes run by `units` | `build/<TREE>/<prog>.hex` |
+| the absolute `FWDIR` those objects came from | `prog/build/<TREE>/fwdir` |
+| bench runtime (`crt0_l1.o`, `syscalls.o`) and `fmt_rv` | `prog/build/`, `build/fmt_rv*.hex` |
+
+So the two trees never share an object or an image, and a switch of
+`FWDIR` never runs the other tree's code (before Task 15 one `build/` held
+both, and a unit built from one tree ran as the other: a scratch copy's
+`cue_emu.o` made `cue_emu` fail "want 2209" until `make -B`). Every object
+is compiled with `-MMD -MP`: a change to any header a unit or emu program
+includes (`<FWDIR>/*.h`, `<FWDIR>/test/emu/*.h`) rebuilds exactly the objects
+that include it (touching `cdaudio.h` rebuilds `cdaudio.o`, `cdaudio_emu.o`
+and relinks `cdaudio_emu`; `cue.h` everything, since all three include it;
+check with `make -n -C sim/rv_l1/prog`). Every object also depends on
+`fwdir`, which changes only when `FWDIR` names another tree with the same
+last name: then everything is rebuilt.
+
+Flags per tree: `fw/ctrl_rv` (any tree but `ctrl_832`) builds like the
+firmware (`fw/ctrl_rv/Makefile`: `$(RV_CFLAGS_FW) -std=gnu23
+--specs=nano.specs -Wall -Wextra -Werror`); the emu programs add
+`-Wno-unused-parameter` as the host tests do (`main(argc, argv)`, port
+stubs). `ctrl_832` keeps the flags it had before (gcc's default dialect,
+`-Os -Wall`): its sources are not `-Wextra` clean and stay unchanged; its
+cycles below are the ones recorded for it on 2026-10-16.
 
 A unit passes when the bench prints `=== PASS`, no output line starts with
 `FAIL`, a line is exactly `PASS` and there is no bus violation (the verdict
@@ -367,20 +416,61 @@ per million cycles of simulated time on this machine) and take seconds on
 Verilator (`SIM=verilator bash sim/rv_l1/run.sh units`, about 2 M cycles per
 second): `units` is not part of `all`.
 
-Recorded cycles (WS=3 ROMWS=1 EXTRA_WS=0 DEBUG=0, 2026-10-16, all `PASS`; the same
-on both backends, 2026-10-17):
+Recorded cycles (WS=3 ROMWS=1 EXTRA_WS=0 DEBUG=0, all `PASS`):
 
-| Program | Cycles | Wall time (vvp) | Wall time (Verilator) |
-|---|---|---|---|
-| `cue_emu` | 764,056 | ~2 min | <1 s |
-| `atapi_emu` | 954,062 | ~2.5 min | <1 s |
-| `cdaudio_emu` | 19,059,807 | ~46 min | ~9 s |
+| Program | `fw/ctrl_rv` (2026-10-18) | `fw/ctrl_832` (2026-10-16, again 2026-10-18) | Wall time (vvp, `fw/ctrl_rv`) | Wall time (Verilator) |
+|---|---|---|---|---|
+| `cue_emu` | 738,808 | 764,056 | ~3 min | <1 s |
+| `atapi_emu` | 890,566 | 954,062 | ~3 min | <1 s |
+| `cdaudio_emu` | 19,916,613 | 19,059,807 | ~49 min | ~10 s |
+
+`fw/ctrl_rv` on iverilog and on Verilator: `run.sh compare` 3 logs, 3 same
+(2026-10-18). The two trees' unit sources are the same C (Task 2's copy; the
+CD units needed no port change, see "CD units in fw/ctrl_rv" below): the
+differences are the flags (`-ffreestanding -fno-builtin`, `-std=gnu23`),
+not the code.
 
 `cdaudio_emu` fills the 64 KB ring byte by byte several times and needs about
-19.1 M cycles: `units` passes `+TIMEOUT=40000000` (`TIMEOUT=` from the
+20 M cycles: `units` passes `+TIMEOUT=40000000` (`TIMEOUT=` from the
 environment overrides it; the bench's own default stays 20 M). A slower memory
 setting (`WS=8`) needs it raised: `TIMEOUT=60000000 WS=8 bash sim/rv_l1/run.sh units`.
 
+### CD units in `fw/ctrl_rv` (audit, Task 15)
+
+`cdaudio.c`, `cdrom.c`, `atapi.c` and `cue.c` of `fw/ctrl_rv` read, for byte
+order, alignment and timing on the little-endian VexRiscv. Nothing needed a
+change; the host tests `cue_test`, `cdaudio_test`, `atapi_test` and
+`cdrom_test` (`make -C fw/ctrl_rv/test`, LP64 and `-m32`) and the three
+`units` programs pass on this code.
+
+| What | Verdict |
+|---|---|
+| `cdaudio.c` ring writes (`zero`, `copy`, `scale`, `produce`, `fill`) | `uint8_t` stores only; samples stay 16-bit little endian (red book) in the ring, `scale` reads and writes them byte by byte (`p[i] \| p[i + 1] << 8`): neutral, the 832 writes the same bytes |
+| `CD_AudioPoll` / `cda_poll` timing | TIMER units, the same on both CPUs: one count = 256 x 643 `clk_28` = 5.804 ms = 256 frames at 44.1 kHz (cfide's `timecnt`, not CPU speed); `CDA_HALF_UNITS` = 32 counts per 32 KB half (8192 frames); the 16-bit TIMER wrap is masked (`& 0xFFFF`) |
+| `cda_port_ring()` | `(uint8_t *)AUDIO_BUFFER` = 0x70000; `fw/ctrl_rv/arch/firmware.ld` asserts `_end < 0x70000` (today `_end` = 0x270ac in `build/RV32OSDA.map`) |
+| `cdrom.c` `CD_TIMEOUT` | 10000 "ms" through `GetTimer`/`CheckTimer` = 10000 TIMER counts = 58 s on the board, on both CPUs (parity; the 16-bit window of `CheckTimer` allows up to 32767) |
+| `cdrom.c` `cd_cue` | `static struct cue_parser` (0x910 = 2320 bytes in the map): stays static, the stack is still the 8 KB boot BRAM |
+| `cd_identify` / `atapi_identify` | words built from values (`ata_string` puts the first character in bits 15:8) and sent low byte first byte by byte: neutral (unlike `hdd.c`'s `memcpy`'d strings, Task 12) |
+| `cue.c` WAV header | `le16`/`le32` read byte by byte (file-local helpers): neutral at any alignment |
+| pointer casts to wider types | none in the four files (`grep '(\(unsigned \)\?\(short\|long\|int\|uint16_t\|uint32_t\) \*)'`) |
+
+Refill cost and ring-fill time on the RISC-V (cycles per half against the
+185.8 ms a half plays) are Phase 4.4.
+
+### irq_c check 10
+
+`SetIntHandler` (`fw/ctrl_rv/arch/irq.c`) writes 0 to the INTERRUPT
+register before it changes `_InterruptVector`, so no event reaches a handler
+between the call and `EnableInterrupts()`. Check 10 sweeps one event
+(`IRQ_AT` d, d = 1..64 cycles) over a `SetIntHandler(h1)`,
+`EnableInterrupts()`, `IRQ_AT`, `SetIntHandler(h2)` sequence: before the
+disable the event reaches h1, after it the event is lost; h2 must never run.
+A run copy of `irq.c` with the two stores swapped (pointer first) ends
+`=== FAIL a` (check 10) at every `WS` {0, 3, 8} x `ROMWS` {0, 1} x
+`EXTRA_WS` {0, 3} and with `DEBUG=2` (Verilator; iverilog at WS=3 ROMWS=1
+the same); the event hits h2 at d = 10..13 (WS=0 EXTRA_WS=0) up to d =
+7..28 (WS=8 EXTRA_WS=3). The irq_c of before Task 15 passed against that
+copy. The sweep adds about 31,000 cycles to `irq_c`.
 
 ## C library check (`fmt` target)
 

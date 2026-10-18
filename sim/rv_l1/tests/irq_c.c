@@ -13,7 +13,12 @@
  *   7  an event under nested irq_save(): the inner irq_restore() keeps MIE
  *      off (no trap), 8 the outer irq_restore() takes it
  *   9  SetIntHandler(h2) while h1 re-arms events: h2 gets them, 10 h1 gets
- *      none after SetIntHandler returned
+ *      none after SetIntHandler returned, and SetIntHandler disables the
+ *      register before it changes the pointer: an event swept over every
+ *      cycle of a SetIntHandler(h1 -> h2) call reaches h1 (before the
+ *      disable) or nobody (after it: lost), never h2 before
+ *      EnableInterrupts().  In the reversed order (pointer first) an event
+ *      between the two stores reaches h2.
  * Exit code: 0 = pass, else the number of the failing check. */
 #include <stdint.h>
 #include "l1.h"
@@ -24,6 +29,13 @@
    main still runs between two events */
 #define H1_GAP 1000
 #define H2_GAP 1100
+/* check 10's sweep: event distances 1..SWEEP_MAX cycles after the IRQ_AT
+   store, past the end of the SetIntHandler call that follows it.  A run
+   copy with the order reversed hits h2 at d = 10..13 (WS=0 EXTRA_WS=0) up
+   to d = 7..28 (WS=8 EXTRA_WS=3).  A spin() step is five instructions or
+   more, so spin(SWEEP_MAX / 4) outlasts the event; were it shorter, the
+   event would reach h1 or nobody in the next step (harmless). */
+#define SWEEP_MAX 64
 
 static volatile unsigned ctor_ran;
 static volatile unsigned c1, c2, chain;
@@ -66,7 +78,7 @@ static int wait_for(volatile unsigned *c, unsigned want, unsigned n)
 
 static int run(void)
 {
-    unsigned base, s1, s2;
+    unsigned base, s1, s2, d;
 
     if (!ctor_ran)
         return 1;
@@ -135,6 +147,18 @@ static int run(void)
     DisableInterrupts();
     if (c1 != base)
         return 10;
+
+    /* 10: the disable comes before the pointer change */
+    base = c2;
+    for (d = 1; d <= SWEEP_MAX; d++) {
+        SetIntHandler(h1);
+        EnableInterrupts();
+        l1_irq_at(d);
+        SetIntHandler(h2);
+        spin(SWEEP_MAX / 4);
+        if (c2 != base)
+            return 10;
+    }
     return 0;
 }
 

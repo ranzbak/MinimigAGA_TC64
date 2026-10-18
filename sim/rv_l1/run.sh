@@ -17,7 +17,11 @@
 #   bash sim/rv_l1/run.sh dm_smoke     # debug smoke test over the pin TAP (below)
 #
 # The test programs are (re)built first (make -C sim/rv_l1 tests; units:
-# make -C sim/rv_l1/prog; dhry: make -C fw/dhrystone_rv).
+# make -C sim/rv_l1/prog FWDIR=...; dhry: make -C fw/dhrystone_rv).  The
+# program lists come from the Makefiles (make print-progs): run.sh only says
+# which of them are teeth (TEETH, uart_read) or need the dm bench (DMPROGS).
+# A failing run's DONE code (the bench prints it in hex) is also given in
+# decimal, the numbering of the programs' checks: "got 'FAIL a' = FAIL 10 (0xa)".
 # Outputs: sim/rv_l1/run_${RUNTAG:-wt}/ (simulator images tb_*.vvp or
 # vl_*/Vtb_rv_l1, one log per run, results.txt).  JOBS= parallel runs
 # (default nproc).
@@ -51,7 +55,11 @@
 #   EXTRA_WS {0,3} (ROMWS from env, default 1); each run must end "=== PASS";
 #   ends "=== DM_SMOKE PASS (6 runs)" or "=== DM_SMOKE FAILED"
 #
-#   bash sim/rv_l1/run.sh units        # atapi_emu cue_emu cdaudio_emu in parallel
+#   bash sim/rv_l1/run.sh units        # the programs of prog/Makefile (atapi_emu
+#                                      # cue_emu cdaudio_emu) in parallel, built from
+#                                      # FWDIR (default fw/ctrl_rv; FWDIR=fw/ctrl_832
+#                                      # for the 832 tree), which it prints first;
+#                                      # always runs make -C prog FWDIR=... first
 #                                      # (WS=3 ROMWS=1 by default); verdict as the emu
 #                                      # Makefile: no line "FAIL...", a line
 #                                      # exactly "PASS", bench "=== PASS";
@@ -95,10 +103,11 @@ case "$SIM" in
 esac
 export SIM
 
-PROGS="lanes refill fencei irq irq_sig irq_c exc"
+# roles of the programs the Makefile builds (make -C sim/rv_l1 print-progs);
+# every other one is in the matrix (PROGS, filled in by the targets that use it)
 IRQPROGS="irq irq_sig irq_c exc"
-UNITS="atapi_emu cue_emu cdaudio_emu"
 TEETH="fencei_nofencei irq_sig_mut"
+ONCE="uart_read"     # teeth for the model, once (WS=3 ROMWS=1)
 DMPROGS="dm_smoke"   # need the -DDM_SMOKE bench (BFM + tests/dm_smoke.v), DEBUG=2
 
 CORES="$top/rtl/host/vexriscv/VexOsd.v $top/rtl/host/vexriscv/VexOsd_DMT.v $top/rtl/host/vexriscv/VexOsd_DMJ.v"
@@ -174,7 +183,33 @@ progs() {
   exit 1
 }
 
-is_dm() { case " $DMPROGS " in *" $1 "*) return 0 ;; esac; return 1; }
+in_list() { case " $2 " in *" $1 "*) return 0 ;; esac; return 1; }
+is_dm() { in_list "$1" "$DMPROGS"; }
+
+# matrix_progs: PROGS = the Makefile's programs without TEETH, ONCE and
+# DMPROGS; each of those must be a Makefile program too
+matrix_progs() {
+  local built p
+  built=$(make -s --no-print-directory -C "$here" print-progs) || { echo "FAIL make -C sim/rv_l1 print-progs"; exit 1; }
+  for p in $IRQPROGS $TEETH $ONCE $DMPROGS; do
+    in_list "$p" "$built" || { echo "FAIL run.sh names $p, sim/rv_l1/Makefile does not build it"; exit 1; }
+  done
+  PROGS=""
+  for p in $built; do
+    in_list "$p" "$TEETH $ONCE $DMPROGS" || PROGS="$PROGS $p"
+  done
+  PROGS=${PROGS# }
+}
+
+# code <verdict>: " = FAIL <decimal> (0x<hex>)" for a "FAIL <hex>" verdict
+# (the bench prints DONE codes in hex, the checks count in decimal)
+code() {
+  case "$1" in
+    "FAIL "*) local h=${1#FAIL }
+              case "$h" in *[!0-9a-f]*|"") return 0 ;; esac
+              echo " = FAIL $((16#$h)) (0x$h)" ;;
+  esac
+}
 
 # one <prog> <ws> <romws> <extra_ws> <debug>: prints one result line
 one() {
@@ -209,7 +244,7 @@ one() {
     elif [ "$exp" != pass ] && [ "$res" = "FAIL ${exp#fail:}" ]; then
       echo "PASS $tag cycles=$cyc (expected FAIL ${exp#fail:})"; return 0
     fi
-    bad="got '${res:-nothing}', expected $exp"
+    bad="got '${res:-nothing}'$(code "$res"), expected $exp"
   fi
   echo "FAIL $tag: $bad ($log)"
   return 1
@@ -217,23 +252,26 @@ one() {
 
 # unit <prog> <ws> <romws> <extra_ws> <debug>: a firmware unit (prog/Makefile).
 # Passes when the bench says PASS, no output line starts with FAIL, a line is
-# exactly PASS (the verdict grep of fw/ctrl_832/test/emu/Makefile).
+# exactly PASS (the verdict grep of fw/ctrl_832/test/emu/Makefile).  The hex
+# is $UNIT_HEXDIR/<prog>.hex (units: make print-hexdir of its FWDIR), else
+# build/<prog>.hex (fmt).
 unit() {
   local prog=$1 ws=$2 romws=$3 x=$4 dbg=$5
   local tag="$prog ws=$ws romws=$romws x=$x d=$dbg"
   local log=$run/${prog}_ws${ws}_r${romws}_x${x}_d${dbg}.log
   local im; im=$(image "$x" "$dbg")
-  if [ ! -f "$build/$prog.hex" ]; then
-    echo "FAIL $tag: $build/$prog.hex missing (make -C sim/rv_l1/prog)"; return 1
+  local hex=${UNIT_HEXDIR:-$build}/$prog.hex
+  if [ ! -f "$hex" ]; then
+    echo "FAIL $tag: $hex missing (make -C sim/rv_l1/prog)"; return 1
   fi
-  sim "$im" +HEX="$build/$prog.hex" +WS="$ws" +ROMWS="$romws" +TIMEOUT="${TIMEOUT:-40000000}" > "$log" 2>&1
+  sim "$im" +HEX="$hex" +WS="$ws" +ROMWS="$romws" +TIMEOUT="${TIMEOUT:-40000000}" > "$log" 2>&1
   local cyc; cyc=$(sed -n 's/^=== CYCLES //p' "$log")
   local res; res=$(grep -m1 -E '^=== (PASS|FAIL|TIMEOUT)' "$log" | sed 's/^=== //')
   if [ "$res" = PASS ] && ! grep -q '^FAIL' "$log" && grep -qx PASS "$log" \
      && ! grep -q 'BUS VIOLATION' "$log"; then
     echo "PASS $tag cycles=$cyc"; return 0
   fi
-  echo "FAIL $tag: bench '${res:-nothing}' ($log)"
+  echo "FAIL $tag: bench '${res:-nothing}'$(code "$res") ($log)"
   return 1
 }
 
@@ -332,15 +370,25 @@ case "${1:-}" in
   __unit) shift; unit "$@" ;;
   units)
     x=${EXTRA_WS:-0}; dbg=${DEBUG:-0}
-    if ! make -s -C "$here/prog" > "$run/make_prog.log" 2>&1; then
-      echo "FAIL make -C sim/rv_l1/prog ($run/make_prog.log)"; tail -5 "$run/make_prog.log"; exit 1
+    # FWDIR: the tree the units are built from (relative to the current
+    # directory), absolute for make -C
+    fwdir=${FWDIR:-$top/fw/ctrl_rv}
+    [ -d "$fwdir" ] || { echo "FAIL FWDIR=$fwdir: no such directory"; exit 1; }
+    fwdir=$(cd "$fwdir" && pwd)
+    echo "=== UNITS FWDIR $fwdir" | tee "$run/units_fwdir.txt"
+    if ! make -s -C "$here/prog" FWDIR="$fwdir" > "$run/make_prog.log" 2>&1; then
+      echo "FAIL make -C sim/rv_l1/prog FWDIR=$fwdir ($run/make_prog.log)"; tail -5 "$run/make_prog.log"; exit 1
     fi
+    units=$(make -s --no-print-directory -C "$here/prog" print-progs) || exit 1
+    UNIT_HEXDIR=$(make -s --no-print-directory -C "$here/prog" FWDIR="$fwdir" print-hexdir) || exit 1
+    export UNIT_HEXDIR
     drop "$x" "$dbg"
     compile "$x" "$dbg" || exit 1
     rc=0
-    for p in $UNITS; do echo "$p ${WS:-3} ${ROMWS:-1} $x $dbg"; done \
+    for p in $units; do echo "$p ${WS:-3} ${ROMWS:-1} $x $dbg"; done \
       | xargs -P "$JOBS" -L1 bash "$0" __unit | sort | tee "$run/units.txt"
-    [ "$(grep -c '^PASS' "$run/units.txt")" -eq "$(echo $UNITS | wc -w)" ] || rc=1
+    # shellcheck disable=SC2086
+    [ "$(grep -c '^PASS' "$run/units.txt")" -eq "$(echo $units | wc -w)" ] || rc=1
     if [ $rc -eq 0 ]; then echo "=== UNITS PASS"; else echo "=== UNITS FAILED"; fi
     exit $rc
     ;;
@@ -451,6 +499,7 @@ case "${1:-}" in
     exit $rc
     ;;
   all)
+    matrix_progs
     rm -f "$run"/*.vvp "$run"/*.log "$run/results.txt"
     for t in "x0 0" "x3 0" "x0 2" "x0 2 dm" "x3 2 dm"; do
       # shellcheck disable=SC2086
@@ -471,7 +520,7 @@ case "${1:-}" in
         done; done; done
       done
       for p in $PROGS; do echo "$p 3 1 0 2"; done
-      echo "uart_read 3 1 0 0"
+      for p in $ONCE; do echo "$p 3 1 0 0"; done
       for p in $DMPROGS; do for ws in 0 3 8; do for x in 0 3; do echo "$p $ws 1 $x 2"; done; done; done
     } | xargs -P "$JOBS" -L1 bash "$0" __one | sort > "$run/results.txt"
     cat "$run/results.txt"

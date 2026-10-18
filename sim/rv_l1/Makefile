@@ -5,7 +5,8 @@
 # FWPROGS are linked as firmware: fw/ctrl_rv/arch (crt0, trap entry, irq
 # API) with fw/ctrl_rv/arch/firmware.ld (_start at 0x2000), behind
 # sw/boot_fw.S padded to 0x2000 (a boot ROM stand-in: zero x1-x31, jump to
-# 0x2000).  run.sh keeps its own PROGS/TEETH list: keep the two in sync.
+# 0x2000).  run.sh reads PROGS and FWPROGS (make print-progs) and runs every
+# program in its matrix except the ones it names as teeth or dm programs.
 TOP := $(abspath $(CURDIR)/../..)
 include $(TOP)/tools/riscv/toolchain.mk
 BIN2HEX := $(TOP)/tools/riscv/bin2hex.sh
@@ -28,8 +29,11 @@ FWLDFLAGS   = $(RV_LDFLAGS_FW) $(ARCH_LDFLAGS) -Wl,-Map,$(@:.elf=.map)
 ARCH_DEPS   = $(ARCH_LD)
 FW_LINK     = $(RV_CC) $(FWLDFLAGS) $(FW_EXTRA) -o $@ $(filter %.o,$^) $(RV_LIBS_FW)
 
-.PHONY: tests clean
+.PHONY: tests clean print-progs
 tests: $(PROGS:%=$(B)/%.hex) $(PROGS:%=$(B)/%.lst) $(FWPROGS:%=$(B)/%.hex) $(FWPROGS:%=$(B)/%.lst)
+
+print-progs:
+	@echo $(PROGS) $(FWPROGS)
 
 $(B):
 	mkdir -p $@
