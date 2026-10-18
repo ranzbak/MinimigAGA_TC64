@@ -325,6 +325,45 @@ Result: clang image `.text` 96,708 B, `RV32OSDA.BIN` 100,188 B (gcc 92,596 B).
 sim/host_bridge/run.sh fwboot`: PASS, OSD GAP min 40, STACK low 0x1980 (gcc:
 40, 0x1950).
 
+## Editor (clangd)
+
+The repository's `.clangd` gives clangd the flags of the Makefiles: RISC-V
+target flags and gnu23 for the firmware, `arch/`, `test/emu/` and `test/rv/`;
+host flags (gnu2x, `-DHOSTTEST`, glibc) for `test/*.c` and `tools/cfgconv`;
+`-xc` so headers parse as C. The generated `*cases.h`/`*.inc` that the host
+tests include appear in `test/out/` after one `make -C fw/ctrl_rv/test`.
+It suppresses nothing in a real source file. The only suppressions are all
+diagnostics in the two X-macro fragments `test/fmt_cases.h` and
+`test/fmt_run.h`, which only compile inside their includer, and
+`unknown type name` in `hdd.h` and `minimig_cfg.h`, which are not
+self-contained (as in fw/ctrl_832).
+
+newlib-nano's headers for the RISC-V files have an absolute path (the xPack
+toolchain), so they go into your own clangd user config, not the repository.
+This block creates it, or appends to an existing one:
+
+```sh
+mkdir -p "$HOME/.config/clangd"
+cfg="$HOME/.config/clangd/config.yaml"
+if [ -s "$cfg" ]; then echo '---' >> "$cfg"; fi
+cat >> "$cfg" <<EOF
+If:
+  PathMatch: .*/(fw/ctrl_rv|fw/ctrl_boot_rv|fw/dhrystone_rv|sim/host_bridge/(sw|boot)|sim/rv_l1/sw)/.*\.(c|h|S)
+  PathExclude: .*/fw/ctrl_rv/(test/[^/]*|tools/.*)
+CompileFlags:
+  Add:
+    - -isystem
+    - $HOME/opt/xpack-riscv-none-elf-gcc-15.2.0-1/riscv-none-elf/include/newlib-nano
+    - -isystem
+    - $HOME/opt/xpack-riscv-none-elf-gcc-15.2.0-1/riscv-none-elf/include
+EOF
+```
+
+If you installed the toolchain elsewhere (`RV_GCC_DIR`), use that path. Check a
+file with `clangd --check=fw/ctrl_rv/menu.c` (it ends `All checks completed, 0
+errors`; on header files `--check` also counts failed DefineOutline code-action
+tests, which are not diagnostics).
+
 ## Stack and size budget (Task 17)
 
 The boot ROM map that `check` (g) reads comes from `make -C fw/ctrl_boot_rv`
