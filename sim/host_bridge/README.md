@@ -215,22 +215,19 @@ it. The next bench (`sim/l3`) uses the same files.
 (default: the `cksum` of the `RUNTAG` mod 2147483647 + 1). The log then starts with
 `=== XRAND seed <n>`, a line `compare` ignores. A twin of a normal run must
 `compare` SAME; a difference means the design or a bench model reads a
-value before it is written. Known (2026-10-18, not changed here): flops
-without a reset that the FPGA starts at 0 (`cache_req` in `832_bridge.vhd`,
-`sdram_req` and `ack` in `hostcache.v`) start random under `XRAND=1`; when
-`cache_req` or `sdram_req` starts at 1 the run fails with
-`BUS VIOLATION sdram model: request outside 0..0x7FFFFF` at cycle 0, so about
-half of the seeds fail: pick another `XSEED` and report a failure
-that has another signature. From the repository root, bash or zsh, after
+value before it is written. Five flops have no reset and rely on the
+FPGA starting them at 0 (`cache_req`, `cpu_ack`, `rom_wr` in
+`832_bridge.vhd`; `sdram_req`, `ack` in `hostcache.v`): `XRAND=1` pins
+exactly those to 0 in the run copies (the log says `=== XRAND pinned 5 regs`,
+a line `compare` ignores) and randomises everything else
+(`findings/osd-riscv/phase4.md`, "Findings for Paul"). From the repository root, bash or zsh, after
 `make -C fw/ctrl_rv`:
 
 ```sh
 SIM=verilator RUNTAG=fwn bash sim/host_bridge/run.sh fwboot
-SIM=verilator XRAND=1 XSEED=1923170909 RUNTAG=fwr bash sim/host_bridge/run.sh fwboot
+SIM=verilator XRAND=1 RUNTAG=fwr bash sim/host_bridge/run.sh fwboot
 bash sim/host_bridge/run.sh compare fwn fwr
 ```
-
-(Seed 1923170909 is one that starts those flops at 0; every `compare` line SAME.)
 
 ### What run.sh does (the conversion step)
 

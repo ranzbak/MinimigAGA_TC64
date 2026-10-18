@@ -57,6 +57,36 @@ hs_copy_rtl() {
 	sed -i "s/ack <= #1 1'b0;/ack <= 1'b0;/" "$run/src/hostcache.v"
 	grep -q "ack <= #1" "$run/src/hostcache.v" && hs_die "hostcache #1 fix not applied"
 	sed -i '1i `timescale 1ns/1ps' "$run/src/hostcache.v" "$run/src/dpram_inf_generic.v"
+	hs_pin_hostcache "$run"
+}
+
+# XRAND=1: flops the RTL leaves without a reset and the FPGA starts at 0 (its
+# configuration initialises every flop; sim/host_bridge/README.md, "Shared
+# parts") are pinned to 0 at time 0 in the run copies / the conversion, so the
+# seeds keep randomising everything else.  hostcache.v: ack, sdram_req;
+# 832_bridge.vhd (converted): cache_req, cpu_ack, rom_wr.  Counts in
+# <run>/src/pinned_hostcache and <ghdl dir>/pinned.txt, printed by hs_simrun.
+hs_pin_hostcache() {
+	local run=$1 n
+	[ "${XRAND:-0}" = 1 ] || return 0
+	sed -i -e 's/^\toutput reg ack,/\toutput reg ack = 1'"'"'b0,/' -e 's/^\toutput reg sdram_req,/\toutput reg sdram_req = 1'"'"'b0,/' "$run/src/hostcache.v"
+	n=$(grep -c "output reg [a-z_]* = 1'b0," "$run/src/hostcache.v")
+	[ "$n" = 2 ] || hs_die "XRAND pin: hostcache.v ack / sdram_req not found"
+	echo "$n" > "$run/src/pinned_hostcache"
+}
+
+# hs_pin_bridge <converted bridge.v> <count file>
+hs_pin_bridge() {
+	local v=$1 n=0 sig q
+	[ "${XRAND:-0}" = 1 ] || return 0
+	for sig in cache_req cpu_ack rom_wr; do
+		q=$(sed -n "s/^  assign $sig = \(n[0-9]*_q\); .*/\1/p" "$v")
+		[ -n "$q" ] || hs_die "XRAND pin: no flop behind $sig in $v (GHDL output format?)"
+		sed -i "s/^  reg $q;/  reg $q = 1'b0;/" "$v"
+		grep -q "^  reg $q = 1'b0;" "$v" || hs_die "XRAND pin: flop $q of $sig not found in $v"
+		n=$((n + 1))
+	done
+	echo "$n" > "$2"
 }
 
 hs_ghdl_convert() {
@@ -83,6 +113,7 @@ hs_ghdl_convert() {
 			&& hs_die "black-box module $bb still in $d/bridge.v or cfide.v after the delete (GHDL output format?)"
 	done
 	sed -i '1i `timescale 1ns/1ps' "$d/bridge.v" "$d/cfide.v"
+	hs_pin_bridge "$d/bridge.v" "$d/pinned.txt"
 }
 
 # hs_xrand_seed: the seed of this run (XSEED, else the cksum of the RUNTAG
@@ -131,6 +162,7 @@ hs_simrun() {
 		for x; do a+=("+$x"); done
 		if [ "${XRAND:-0}" = 1 ]; then
 			echo "=== XRAND seed $(hs_xrand_seed)" > "$log"
+			echo "=== XRAND pinned $(cat "$run/ghdl_$snap/pinned.txt" "$run/src/pinned_hostcache" 2>/dev/null | awk '{s += $1} END {print s + 0}') regs" >> "$log"
 			# shellcheck disable=SC2046
 			"$run/vl_$snap/V$top" $(hs_xrand_args) "${a[@]}" >> "$log" 2>&1
 		else
@@ -150,7 +182,7 @@ hs_simrun() {
 # true only): xsim prints the first one, Verilator repeats it at every
 # evaluation.  And without the "=== XRAND seed" line of an XRAND run.
 hs_norm() {
-	grep -vE '^(r_cmd_done=|=== XRAND seed |\*\*\*\*\*\* xsim v|  \*\*\*\* |    \*\* |source xsim\.dir/|# xsim |Time resolution is |run -all$|exit [0-9]+$|INFO: \[Common 17-206\] Exiting xsim|INFO: xsimkernel Simulation Memory Usage|\$finish called at time |- .*: Verilog \$finish$|$)' "$1" \
+	grep -vE '^(r_cmd_done=|=== XRAND (seed|pinned) |\*\*\*\*\*\* xsim v|  \*\*\*\* |    \*\* |source xsim\.dir/|# xsim |Time resolution is |run -all$|exit [0-9]+$|INFO: \[Common 17-206\] Exiting xsim|INFO: xsimkernel Simulation Memory Usage|\$finish called at time |- .*: Verilog \$finish$|$)' "$1" \
 		| sed 's|/run_[^/]*/|/run_*/|g'
 }
 
