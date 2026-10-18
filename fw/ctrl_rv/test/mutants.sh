@@ -57,9 +57,9 @@ verdict() {  # <name> <rc of the check> <what>
   else echo "mutant $1: SURVIVED ($3 passed)"; bad=1; fi
 }
 
-# unit <name> <test> <src|t|gold> <file> <sed> [text]: the test must fail,
-# native; with [text], a failure whose log does not hold it is BROKEN (the
-# mutant must be killed by that case)
+# unit <name> <test> <src|t|gold> <file> <sed> [text...]: the test must fail,
+# native; with [text], a failure whose log does not hold it (each of them,
+# when there are several) is BROKEN (the mutant must be killed by that case)
 unit() {
   local n=$1 test=$2
   prep "$n"; mutate "$n" "$3" "$4" "$5" || return
@@ -69,9 +69,13 @@ unit() {
   # a mutant may hang a loop that waits for the mock: the timeout is a kill
   timeout 120 make -s -f Makefile SRC="mut/$n/src" TD="mut/$n/t" GOLD="mut/$n/gold" B="mut/$n/b" \
        WERROR=-Wno-error CARD="$CARD" FATIMG="$FATIMG" FATIMG_DEPS= "run64-$test" > "mut/$n/log" 2>&1
-  local rc=$?
-  if [ $rc -ne 0 ] && [ -n "${6:-}" ] && ! grep -q -- "$6" "mut/$n/log"; then
-    echo "mutant $n: BROKEN (run64-$test failed, but not with \"$6\": mut/$n/log)"; bad=1; return
+  local rc=$? text
+  if [ $rc -ne 0 ]; then
+    for text in "${@:6}"; do
+      if ! grep -q -- "$text" "mut/$n/log"; then
+        echo "mutant $n: BROKEN (run64-$test failed, but not with \"$text\": mut/$n/log)"; bad=1; return
+      fi
+    done
   fi
   verdict "$n" $rc "run64-$test"
 }
@@ -95,7 +99,7 @@ fmt() {
 control() {
   prep control
   local t rc=0
-  for t in mock_selftest cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_test hwmap_test swap_test fat_test mmc_test config_test hdd_test; do
+  for t in mock_selftest cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_test hwmap_test swap_test fat_test mmc_test config_test hdd_test fdd_test; do
     mk control "run64-$t" > "mut/control/log.$t" 2>&1 || { echo "control: run64-$t FAILED (mut/control/log.$t)"; rc=1; }
   done
   mk control fmt > mut/control/log.fmt 2>&1 || { echo "control: fmt FAILED (mut/control/log.fmt)"; rc=1; }
@@ -208,6 +212,35 @@ unit hdd_boundary_blk hdd_test src hdd.c 's/while(blk \&\& (((lba+hdf\[unit\].of
 unit hdd_count0 hdd_test src hdd.c 's/if (sector_count == 0) sector_count = 0x100;/if (sector_count == 0) sector_count = 0xFF;/' "FAIL ODD.HDF READ MULTIPLE 252+0 (256)"
 # the mock's direct-mode count (mock_dmode_blocks): the Gayle model's FIFO misses the direct blocks
 unit mock_dmode_count hdd_test t mock_hw.c 's/^\t\tdmode_blocks++;$/\t\t;/' "FAIL WORK.HDF READ SECTORS 501+5: chunks"
+
+# ---- the floppy emulation (fdd_test) -----------------------------------------
+# the brief's mutant: SendSector one byte short (the odd data bits loop) -> both references
+unit fdd_short_sector fdd_test src fdd.c '0,/i = DATA_SIZE \/ 2;/s//i = DATA_SIZE \/ 2 - 1;/' \
+  "FAIL ReadTrack track 0 side 0: RV != mfm.py" "FAIL ReadTrack track 0 side 0: RV != 832" \
+  "FAIL ReadTrack track 79 side 1: RV != mfm.py" "FAIL ReadTrack track 79 side 1: RV != 832"
+# the Copy Lock workaround gone: the Amiga's 0x8914 is sent as it is
+unit fdd_copylock fdd_test src fdd.c 's/if (dsksync == 0x0000 || dsksync == 0x8914 || dsksync == 0xA144)/if (0)/' \
+  "FAIL ReadTrack copy lock dsksync 8914: RV != mfm.py" "FAIL ReadTrack copy lock dsksync 8914: RV != 832"
+# track/side arithmetic: the sector of tracks 128..159 taken modulo 128
+unit fdd_track_sector fdd_test src fdd.c '0,/file.sector = drive->track \* SECTOR_COUNT;/s//file.sector = (drive->track \& 0x7F) * SECTOR_COUNT;/' \
+  "FAIL ReadTrack track 128 (cylinder 64 side 0): FileRead: cluster" "FAIL ReadTrack track 128 (cylinder 64 side 0): RV != 832"
+# the header's sector number decoded from the wrong bits (GetHeader)
+unit fdd_header_sector fdd_test src fdd.c 's/c3 |= c \& 0x55;$/c3 |= c \& 0x54;/' \
+  "FAIL WriteTrack subset1 (track 1, 3 sectors), FIFO +2048 words per poll: RV: the ADF differs"
+# GetData: one data bit of the even half lost
+unit fdd_data_even fdd_test src fdd.c '0,/\*p++ |= c \& 0x55;/s//*p++ |= c \& 0x54;/' \
+  "FAIL WriteTrack full159 (track 159, 11 sectors), FIFO +2048 words per poll: RV: the ADF differs"
+# WriteTrack going back to the start of the track one sector off (subset1 writes 2 after 5)
+unit fdd_rewind fdd_test src fdd.c '/while (sector != Sector)/,/^                }/ s/file.sector = drive->track \* 11;/file.sector = drive->track * 11 + 1;/' \
+  "FAIL WriteTrack subset1 (track 1, 3 sectors), FIFO +2048 words per poll: file layer"
+# the header checksum not checked: the bad sector is written
+unit fdd_header_checksum fdd_test src fdd.c '0,/if (c1 != checksum\[0\] || c2 != checksum\[1\] || c3 != checksum\[2\] || c4 != checksum\[3\])/s//if (0)/' \
+  "FAIL WriteTrack subset1 bad header checksum (sector 5): RV: the ADF differs"
+# GetData waiting for one word fewer than the sector holds: it reads past the FIFO count
+unit fdd_getdata_count fdd_test src fdd.c 's/if (n >= 0x204)/if (n >= 0x203)/' \
+  "FIFO +7 words per poll: RV reads past the FIFO count"
+# the committed golden streams are mfm.py's: a stale one fails the regeneration
+unit fdd_gold_stale fdd_test gold mfm_c79_s1.hex '100s/^/0/' "differ"
 
 # ---- the mock itself (mock_selftest) -----------------------------------------
 unit mock_token mock_selftest t mock_hw.c 's/c_push(0xFE);/c_push(0xFF);/'

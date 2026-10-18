@@ -173,6 +173,62 @@ run32-hdd_test: $(B)/hdd_test_32 $(B)/hdd/hdd.img
 run-hdd_test: run64-hdd_test run32-hdd_test
 .PHONY: run-hdd_test run64-hdd_test run32-hdd_test
 
+# fdd_test: the floppy emulation (Task 13): ReadTrack's MFM track streams and
+# WriteTrack's decoder (FindSync/GetHeader/GetData) behind a mock paula_floppy,
+# against gold/mfm.py (an independent Amiga MFM encoder) and against the 832's
+# fdd.c compiled for the host with the same mock.  The 832 source is copied
+# unchanged into $(B)/fdd/ (from its own directory "hardware.h" would be the
+# 832's, which has no HOSTTEST hooks: the copy takes the RV tree's headers,
+# which differ from the 832's in the hooks, the I/O addresses, uint32_t for
+# unsigned long, alignment and prototypes, none of which fdd.c's bytes
+# depend on), built
+# -std=gnu17 -funsigned-char like the 832 firmware, -Wno-parentheses for its
+# two unparenthesised `11 - sector >> 1 & 0x55` lines (Task 7 parenthesised
+# them in fw/ctrl_rv), and its globals renamed <name>_832 (objcopy, with
+# ASan's __odr_asan.<name>) so that both link into one test.  The golden
+# streams of tracks 0 and 159 are committed (gold/mfm_c00_s0.hex,
+# gold/mfm_c79_s1.hex, Phase 4's L3 data check): mfm.py must reproduce them.
+OBJCOPY ?= objcopy
+FDD832  := $(TOP)/fw/ctrl_832/fdd.c
+FDD832_DATA = DEBUG drives pdfx df
+FDD832_FUNCS = SendSector SendGap ReadTrack FindSync GetHeader GetData WriteTrack UpdateDriveStatus HandleFDD
+FDD832_RENAME = $(foreach s,$(FDD832_DATA),--redefine-sym $(s)=$(s)_832 --redefine-sym __odr_asan.$(s)=__odr_asan.$(s)_832) \
+                $(foreach s,$(FDD832_FUNCS),--redefine-sym $(s)=$(s)_832)
+FDD_SRCS = $(TD)/mock_hw.c $(SRC)/uart.c $(SRC)/rvlibc.c $(SRC)/errors.c $(SRC)/fdd.c
+$(B)/fdd/fddcases.h: $(GOLD)/mfm.py
+	@mkdir -p $(@D)
+	$(PY) $(GOLD)/mfm.py $(@D)
+$(B)/fdd/gold.ok: $(B)/fdd/fddcases.h $(GOLD)/mfm_c00_s0.hex $(GOLD)/mfm_c79_s1.hex
+	cmp $(B)/fdd/track_c00_s0.hex $(GOLD)/mfm_c00_s0.hex
+	cmp $(B)/fdd/track_c79_s1.hex $(GOLD)/mfm_c79_s1.hex
+	touch $@
+$(B)/fdd/fdd832.c: $(FDD832)
+	@mkdir -p $(@D)
+	cp $(FDD832) $@
+$(B)/fdd/fdd832_64.o: $(B)/fdd/fdd832.c $(HDRS)
+	$(HOSTCC) $(CFLAGS) -std=gnu17 -funsigned-char -Wno-parentheses -c -o $@ $(B)/fdd/fdd832.c
+	$(OBJCOPY) $(FDD832_RENAME) $@
+$(B)/fdd/fdd832_32.o: $(B)/fdd/fdd832.c $(HDRS)
+	$(HOSTCC) -m32 $(CFLAGS) -std=gnu17 -funsigned-char -Wno-parentheses -c -o $@ $(B)/fdd/fdd832.c
+	$(OBJCOPY) $(FDD832_RENAME) $@
+$(B)/fdd_test: $(TD)/fdd_test.c $(FDD_SRCS) $(HDRS) $(B)/fdd/fddcases.h $(B)/fdd/fdd832_64.o
+	$(HOSTCC) $(CFLAGS) -I$(B)/fdd -o $@ $(TD)/fdd_test.c $(FDD_SRCS) $(B)/fdd/fdd832_64.o
+$(B)/fdd_test_32: $(TD)/fdd_test.c $(FDD_SRCS) $(HDRS) $(B)/fdd/fddcases.h $(B)/fdd/fdd832_32.o
+	$(HOSTCC) -m32 $(CFLAGS) -I$(B)/fdd -o $@ $(TD)/fdd_test.c $(FDD_SRCS) $(B)/fdd/fdd832_32.o
+# the audit's SPIN rule (plan 7.1 item 11): fdd.c's SPINs stay commented, as many as the 832's
+$(B)/fdd/spin.ok: $(SRC)/fdd.c $(FDD832)
+	@mkdir -p $(@D)
+	@if grep -n 'SPIN' $(SRC)/fdd.c | grep -v '^[0-9]*:[[:space:]]*//[[:space:]]*SPIN;[[:space:]]*$$'; then \
+	    echo "FAIL fdd.c: a SPIN that is not commented out"; false; fi
+	test "$$(grep -c SPIN $(SRC)/fdd.c)" = "$$(grep -c SPIN $(FDD832))"
+	touch $@
+run64-fdd_test: $(B)/fdd_test $(B)/fdd/gold.ok $(B)/fdd/spin.ok
+	$(B)/fdd_test $(B)/fdd
+run32-fdd_test: $(B)/fdd_test_32 $(B)/fdd/gold.ok $(B)/fdd/spin.ok
+	$(B)/fdd_test_32 $(B)/fdd
+run-fdd_test: run64-fdd_test run32-fdd_test
+.PHONY: run-fdd_test run64-fdd_test run32-fdd_test
+
 # atapi_test without the ISO: the ISO-backed cases are skipped, not failed
 run64-atapi_test::
 	$(B)/atapi_test /nonexistent.iso
@@ -197,7 +253,7 @@ $(B)/openhf_test $(B)/openhf_test_32: $(B)/openhf.inc
 
 run: fmt run-mock_selftest run-cue_test run-cdaudio_test run-atapi_test run-cdrom_test \
      run-openhf_test run-lib_test run-hwmap_test run-swap_test run-fat_test run-mmc_test \
-     run-config_test run-hdd_test
+     run-config_test run-hdd_test run-fdd_test
 
 clean:
 	$(RM) -r out mut

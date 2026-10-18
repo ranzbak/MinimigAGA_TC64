@@ -601,6 +601,76 @@ Found while testing, unchanged (832 parity):
 - `HandleHDD` calls `trap2()` (prints `T` on the UART) after any command whose
   task file holds cylinder 444, head 2, sector 61: a debugging leftover.
 
+## Floppy (Task 13)
+
+`fdd.c` is unchanged by the port (the audit finds nothing to change). Its
+only differences from `fw/ctrl_832/fdd.c` are Task 7's: the parentheses in
+`SendSector` (`fdd.c:88`, `:102`, `11 - sector >> 1 & 0x55` parses as
+`((11 - sector) >> 1) & 0x55` either way) and `(void)c3` in `HandleFDD`.
+`test/fdd_test` shows the two sources give the same SPI traces (below).
+
+### Multi-byte accesses
+
+| File:line | Access | Verdict |
+|---|---|---|
+| `fdd.c:197`, `:291`, `:624`, `:652` | `drive->cache[drive->track]`, an `unsigned long` load | native value: `InsertFloppy` (`menu.c:2936`) stores `file.cluster` there, `fdd.c` hands it back to `fat.c`; never on disk or on the wire. Aligned struct member |
+| `fdd.c:197`-`200`, `:204`-`206`, `:291`-`292`, `:296`-`297`, `:624`-`625`, `:652`-`653` | `file.cluster`, `file.sector`, `drive->cluster_offset` (`unsigned long`) | native values for `fat.c` (`file.sector = track * 11 [+ sector]`): no byte order. Aligned |
+| `fdd.c:440`-`441` | `*pTrack = c2; *pSector = c3;` (`unsigned int *`) | `WriteTrack`'s locals: aligned, native |
+| `fdd.c:212`-`215`, `:234`-`237`, `:329`, `:516` | `dsksync = SPI(0) << 8 \| SPI(0)`, `dsklen`, `n = ((c3 & 0x3F) << 8) + c4` | `unsigned int` arithmetic on the bytes in the order paula_floppy sends them (high byte first): values, not memory |
+| `fdd.c:131`-`161` (`SendSector`), `:548`-`587` (`GetData`) | the sector data, `*p++` over `sector_buffer` | bytes. The Amiga's big-endian data longs exist only on the wire: byte k of each long is sent first / stored first, so `sector_buffer` holds the ADF's bytes in file order on either CPU and the checksums are per byte position (`checksum[0..3]`) |
+| everything else | `checksum[]`, `drive->track`/`track_prev`/`status`/`tracks`/`motor`, `df[].status`, the `c1`..`c4` bytes | `unsigned char` |
+
+No `swap.h` helper is needed. `drive->track_prev = -1` (`fdd.c:632`) stores
+0xFF into an `unsigned char`, as on the 832. `fdd.h` still declares
+`SectorGapToFpga` and `SectorHeaderToFpga`, which no file defines (the plan's
+`SectorToFpga`/`SectorGapToFpga` are `SendSector`/`SendGap`): dead
+declarations, kept (832 parity).
+
+### SPIN
+
+The 28 `SPIN`s of `fdd.c` (`GetHeader` lines 381-470: 14, `GetData` lines
+520-581: 14; the historic ADF-write workaround) stay commented out, the same
+28 lines as in the 832 tree. `make -C fw/ctrl_rv/test run-fdd_test` checks it
+(`out/fdd/spin.ok`: every line with `SPIN` is `// SPIN;`, and the count equals
+the 832's).
+
+### Timing items for Phase 4 (plan 7.1 items 6 and 7)
+
+The host tests check the protocol (what is sent and read, never past the
+FIFO count), not the rates; both items stay Phase 4's (L3 co-simulation with
+the real `paula_floppy` / `paula_floppy_fifo`).
+
+- Item 6, track read, FIFO not starved: `ReadTrack` -> `SendSector`
+  (1088 bytes per sector) / `SendGap` (700 bytes after sector 10), one
+  `FileRead` (an SD block read) and one `CD_AudioPoll` per sector, called
+  from `HandleFDD` in the main loop. `paula_floppy` asks (`CMD_RDTRK`,
+  `spi_tx_data_0` bit 0 = `trackrd & ~fifo_cnt[10]`) while its FIFO holds
+  fewer than 1024 words; `ReadTrack` then sends a whole sector (544 words,
+  +350 of gap), so it does not overrun the 2048-word FIFO. Paula's DMA drains
+  a word per ~32 us; the latency to watch is the main loop between two
+  `HandleFDD` calls and the SD read + CD refill inside the loop.
+- Item 7, track write, FIFO not overrun: `WriteTrack` -> `FindSync`,
+  `GetHeader` (25 words), `GetData` (516 words), then `FileWrite` (an SD
+  block write with its busy time) per sector. `paula_floppy` requests the
+  Amiga's write DMA only while the FIFO is not full (`dmal`/`dmas`,
+  `~fifo_full`, `paula_floppy.v:733`-`736`), so a slow host stretches the
+  write rather than losing words; Phase 4 measures how long the FIFO stays
+  full (the plan's "FIFO full && Amiga writing" monitor) over a whole track
+  (~6300 words, ~200 ms at the disk rate).
+
+### Tests
+
+`test/fdd_test` (`test/README.md`) runs `fdd.c` and, in the same binary, the
+832's `fdd.c` compiled for the host with the same mock, against
+`test/gold/mfm.py`, an Amiga MFM track encoder written from the track
+format. `ReadTrack`'s stream of tracks 0 (cylinder 0 side 0) and 159
+(cylinder 79 side 1) is equal in all three; the golden streams are committed
+as `test/gold/mfm_c00_s0.hex` and `test/gold/mfm_c79_s1.hex` (hex, 32 bytes per
+line, `xxd -r -p` gives the 12668 bytes) for Phase 4's L3 data check. The
+Copy Lock workaround (`fdd.c:242`-`244`, DSKSYNC 0x0000, 0x8914, 0xA144 sent as
+0x4489) is reached by a mock `paula_floppy` that reports those values in the
+DSKSYNC bytes (2-3) of its status frames.
+
 ## SD driver timeouts and the TIMER (Task 10)
 
 The 832's `mmc.c` bounded its five data-token and busy waits by loop count
@@ -739,7 +809,10 @@ five `SD_TIMEOUT` bounds, the direct-mode trace `test/gold/dmode.txt`);
 `LoadConfiguration` on the card model, the 832 file never written);
 `hdd_test` runs the real `hdd.c` over `fat.c` + `mmc.c` behind a mock Gayle
 (FakeRDB, the RDB patch, IDENTIFY DEVICE against independent generators, the
-ATA read/write paths against the HDF files).
+ATA read/write paths against the HDF files); `fdd_test` runs `fdd.c` and the
+832's `fdd.c` (built for the host) behind a mock `paula_floppy`: the read
+stream of every track against `test/gold/mfm.py`, an independent MFM
+encoder, and track writes decoded into the ADF.
 `fw/ctrl_rv/test/README.md` has the targets, the flags, the mock (an SPI/TIMER/UART
 model with a card-image model; `-DHOSTTEST` hooks in `hardware.h` that leave
 the target image byte for byte the same) and the mutant rules. `LIB832` is
