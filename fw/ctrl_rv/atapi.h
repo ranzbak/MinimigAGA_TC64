@@ -79,10 +79,8 @@ struct atapi_unit
 
 struct atapi_result
 {
-	/* 32 bits on purpose: vbcc832 compiles "r->kind = X; return X;" as a
-	   32-bit store whatever the field's type, and with a uint8_t kind the
-	   big-endian 832 wrote 0 into it and X over the next three bytes (every
-	   packet ended as GOOD without data; test/emu/atapi_emu.c). */
+	/* int32_t: it is also the function's return value ("r->kind = X;
+	   return X;"); a uint8_t would only add masking code on RV32. */
 	int32_t  kind;		/* ATAPI_DONE .. ATAPI_PLAY, also the return value */
 	uint8_t  ejected;	/* START STOP UNIT ejected the disc: close the file */
 	uint8_t  sense_key;	/* ATAPI_CHECK: error register = sense_key << 4 */

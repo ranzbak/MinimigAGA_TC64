@@ -51,7 +51,7 @@ static hdfTYPE cd_audio;		/* the disc file being played (13.5: the second open f
 static int cd_audio_file = -1;		/* its index in cd_disc.file[], -1 = none */
 static uint32_t cd_underruns;		/* cda_underruns() at the last report */
 static struct cd_disc cd_disc;		/* the disc in the drive */
-static struct cue_parser cd_cue;	/* 2.5 KB: static, the 832 stack is small */
+static struct cue_parser cd_cue;	/* 2.5 KB: static, the stack is small (8 KB boot BRAM) */
 static RAFile cd_cuefile;		/* the CUE text */
 static RAFile cd_lookup;		/* each FILE of the CUE: its size, a WAV's header */
 static unsigned long cd_dir;		/* the directory of the disc's files */
@@ -142,16 +142,14 @@ static int cd_raopen(RAFile *f, const char *name)
 /* name as an 8.3 directory name ("game.bin" -> "GAME    BIN"), 0 when it
    is not one (a long name).  An 8.3 name written in lower case has no long
    name entry on a FAT card (Linux, Windows), so FileOpen's long-name match
-   cannot find it.  Loops in the "for (;;) / break" form (cue.c). */
+   cannot find it. */
 static int cd_name83(const char *name, char *out)
 {
 	int i = 0, n = 0, dot = 0;
 	memset(out, ' ', 11);
 	out[11] = 0;
-	for (;;) {
+	while (name[i]) {
 		char c = name[i];
-		if (!c)
-			break;
 		if (c == '.') {
 			if (dot || i == 0)
 				return 0;

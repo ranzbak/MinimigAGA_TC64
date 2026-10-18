@@ -13,7 +13,8 @@
  * has changed it fills the other one.  The position comes from TIMER
  * (256 frames a unit), not from the read-ahead.
  *
- * vbcc832 (12.6): every state field is 32 bits.
+ * The state fields are 32 bits wide: narrower ones only add masking code
+ * on RV32 (probed in Task 16: +28 bytes), and the structs are internal.
  */
 
 #include <stdint.h>

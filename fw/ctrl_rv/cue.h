@@ -6,14 +6,13 @@
  *
  * Pure C, no hardware or SD access: the caller feeds the CUE text in any
  * chunks and opens each FILE through a callback (cdrom.c on the board, a
- * table in the tests).  Builds for the 832 (vbcc832) and the host
- * (fw/ctrl_832/test/cue_test.c, test/emu/cue_emu.c).
+ * table in the tests).  Builds for the RV32 firmware and the host
+ * (test/cue_test.c, test/emu/cue_emu.c).
  *
- * vbcc832 rule (12.6): a field that is set and then returned with the same
- * constant ("p->error = E; return E;") must be 32 bits wide -- vbcc832
- * stores it with a 32-bit store whatever its type.  The parser's result
- * fields are int32_t for that reason; the disc model's narrow fields are
- * never set that way, and test/emu/cue_emu.c checks every one of them.
+ * The parser's result fields are int32_t: error codes and line numbers
+ * are plain ints, and 8-bit fields would only add masking code on RV32
+ * (cue.c compares p->error with 0 and CUE_E_READ).  The disc model keeps
+ * its narrow fields (the structs are internal: never on disk or SPI).
  */
 
 #include <stdint.h>

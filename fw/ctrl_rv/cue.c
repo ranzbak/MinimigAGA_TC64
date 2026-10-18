@@ -32,10 +32,7 @@ static int32_t fail(struct cue_parser *p, int32_t e)
 	return fail_at(p, e, p->line);
 }
 
-/* Keyword match, any case.  Loops here and below are written
-   "for (;;) { c = s[i]; if (stop) break; i++; }": vbcc832 -O=1343 drops
-   the increment of "while (*s && *s != ' ') s++;" (the loop never ends;
-   test/emu/cue_emu.c hung on it). */
+/* Keyword match, any case. */
 static int32_t kw(const char *s, const char *k)
 {
 	int32_t i = 0;
@@ -55,13 +52,10 @@ static int32_t kw(const char *s, const char *k)
 static int32_t num(const char *s, int32_t *v)
 {
 	int32_t n = 0, i = 0;
-	for (;;) {
-		char c = s[i];
-		if (c < '0' || c > '9')
-			break;
+	while (s[i] >= '0' && s[i] <= '9') {
 		if (i == 6)
 			return 0;
-		n = n * 10 + (c - '0');
+		n = n * 10 + (s[i] - '0');
 		i++;
 	}
 	if (!i || s[i])
@@ -74,16 +68,14 @@ static int32_t num(const char *s, int32_t *v)
 static int32_t cut_colon(char *s)
 {
 	int32_t i = 0;
-	for (;;) {
-		char c = s[i];
-		if (!c)
-			return -1;
-		if (c == ':') {
+	while (s[i]) {
+		if (s[i] == ':') {
 			s[i] = 0;
 			return i;
 		}
 		i++;
 	}
+	return -1;
 }
 
 /* mm:ss:ff -> sectors (75 per second). */
@@ -230,35 +222,24 @@ static int32_t do_line(struct cue_parser *p)
 		i = 3;	/* UTF-8 byte order mark */
 	while (n < 5) {
 		char c;
-		for (;;) {
-			c = b[i];
-			if (!is_blank(c))
-				break;
+		while (is_blank(b[i]))
 			i++;
-		}
+		c = b[i];
 		if (!c)
 			break;
 		if (c == '"') {
 			i++;
 			tok[n++] = b + i;
-			for (;;) {
-				c = b[i];
-				if (!c || c == '"')
-					break;
+			while (b[i] != '"' && b[i])
 				i++;
-			}
-			if (!c)
+			if (!b[i])
 				return fail(p, CUE_E_SYNTAX);
 			b[i++] = 0;
 		} else {
 			tok[n++] = b + i;
-			for (;;) {
-				c = b[i];
-				if (!c || is_blank(c))
-					break;
+			while (b[i] && !is_blank(b[i]))
 				i++;
-			}
-			if (c)
+			if (b[i])
 				b[i++] = 0;
 		}
 	}
@@ -412,13 +393,8 @@ void cue_message(const struct cue_parser *p, char *buf)
 		buf[n++] = ':';
 		buf[n++] = ' ';
 	}
-	for (;;) {
-		char c = t[i];
-		if (!c || n == 23)
-			break;
-		buf[n++] = c;
-		i++;
-	}
+	while (t[i] && n != 23)
+		buf[n++] = t[i++];
 	buf[n] = 0;
 }
 
@@ -494,11 +470,8 @@ int32_t cue_locate(const struct cd_disc *d, uint32_t lba, struct cue_loc *loc)
 	if (lba >= d->leadout || !d->tracks)
 		return 0;
 	i = d->tracks - 1;
-	for (;;) {
-		if (i == 0 || d->track[i].pregap_lba <= lba)
-			break;
+	while (i != 0 && d->track[i].pregap_lba > lba)
 		i--;
-	}
 	t = &d->track[i];
 	end = i + 1 < d->tracks ? d->track[i + 1].pregap_lba : d->leadout;
 	size = cue_sector_size(t->type);

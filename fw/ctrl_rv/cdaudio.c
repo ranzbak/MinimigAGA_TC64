@@ -6,9 +6,6 @@
  * the halves it has entered.  Range frame f of the run sits in the ring at
  * byte ((f - base) * 4) mod 64 KB.  TIMER says how far the run has played
  * (`played`, in 256-frame units); AUDIO bit 0 says which half plays now.
- *
- * Loops are "for (;;) / break" or counted (cue.c: vbcc832 drops the
- * increment of "while (*p ...) p++;").
  */
 
 #include <string.h>
