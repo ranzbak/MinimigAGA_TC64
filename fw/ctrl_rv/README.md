@@ -1216,6 +1216,10 @@ FMT_SUBSET=1 RUNTAG=p3t3i bash sim/rv_l1/run.sh fmt
 bash sim/rv_l1/run.sh compare p3t3i p3t3s
 ```
 
+Last run 2026-10-18 after the Phase 3 final review (`fmt_cases.h` as of
+123133e): `p3f_fmti` (iverilog) `=== FMT PASS`, 13,005,098 cycles, 544
+records, 413 difference lines; `compare p3f_fmti p3f_fmts` 1 same, 0 differ.
+
 The firmware's CD-ROM unit programs (`test/emu`: `atapi_emu`, `cue_emu`,
 `cdaudio_emu`) are built from `fw/ctrl_rv` (the default `FWDIR`) and run on
 the same bench (seconds on Verilator; ends with `=== UNITS PASS`):

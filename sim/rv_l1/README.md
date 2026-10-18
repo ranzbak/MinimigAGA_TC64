@@ -529,5 +529,5 @@ none of `_sbrk _sbrk_r __sinit __sfp _write` and `_malloc_r _realloc_r
 _free_r` come from `rvlibc.o`; `fmt_rv.txt` equals the digests of the host's
 `fmt_glibc_64.txt`; and the 832-versus-RV difference list equals
 `fw/ctrl_rv/test/gold/fmt_diff_expected.txt`. It ends `=== FMT PASS` or
-`=== FMT FAILED`. The log `run_*/fmt_rv_ws3_r1_x0_d0.log` is picked up by
+`=== FMT FAILED`. Last run 2026-10-18 after the Phase 3 final review (`fmt_cases.h` as of 123133e): `p3f_fmti` (iverilog) `=== FMT PASS`, 13,005,098 cycles, 544 records, 413 difference lines; `compare p3f_fmti p3f_fmts` 1 same, 0 differ. The log `run_*/fmt_rv_ws3_r1_x0_d0.log` is picked up by
 `compare`.
