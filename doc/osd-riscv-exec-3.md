@@ -1,5 +1,7 @@
 # OSD host CPU -> VexRiscv: executable plan, stage 3 (Phase 3 -- firmware 1:1, host tests, LE config)
 
+Status: **done 2026-10-18** (Task 20 gate run green; see `doc/osd-riscv-plan.md` section 8, Phase 3).
+
 Amended 2026-10-17 for decision 12.12 (newlib-nano, gnu23).
 
 **Goal.** Port the OSD firmware `fw/ctrl_832` (vbcc832, big-endian, ~14,400

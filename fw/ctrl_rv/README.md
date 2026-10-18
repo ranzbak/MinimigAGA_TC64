@@ -657,6 +657,17 @@ a function, copied elsewhere or used in arithmetic.
 | `menu.c:598` | `left = true;` | truth only |
 | `menu.c:601` | `right = true;` | truth only |
 
+### Task 16: the vbcc832 loop shapes and comments (commit 1583f75)
+
+Hunks of `cue.c`, `cdrom.c` (`cd_name83`), `cue.h`, `atapi.h`, `cdaudio.c`,
+`cdaudio.h` that are not in the table above: `cue.c` and `cd_name83` scan with
+plain `while` loops again (the 832 tree writes them `for (;;) / break` because
+vbcc832 -O=1343 dropped a loop increment; the behaviour is the same), and the
+comments that blamed vbcc832 now say why the "32 bits on purpose" fields stay
+`int32_t` (narrowing them grew the firmware by 28 bytes). No layout change:
+the structs are internal. `adv7511.c` (two `(char *)` casts) is a Task 7
+`-Wextra` cast.
+
 ## Found by -Wextra (Task 7)
 
 The tree builds `-Wall -Wextra -Werror` clean (`make -C fw/ctrl_rv clean all`).

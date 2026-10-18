@@ -1,6 +1,6 @@
 # OSD / host CPU: EightThirtyTwo -> RISC-V -- implementation plan
 
-Status: plan only. Written 2026-10-16 around picorv32, revised the same day
+Status: **Phase 3 done 2026-10-18** (firmware 1:1 in `fw/ctrl_rv`, host tests, L1/L2 gates green; details in section 8, Phase 3; Phase 4 next; nothing is on the board yet). Originally: plan only. Written 2026-10-16 around picorv32, revised the same day
 after the core survey (`findings/osd-riscv/tiny-cores.md`) and Paul's
 decisions (section 12): the core is **VexRiscv**. Branch `osd-riscv`, off
 `5.0-040-pipelined` (the main branch for this board version; `osd-riscv`
@@ -488,7 +488,10 @@ units compile unchanged -- RV32IMC 48,105 B text + 2,921 B data, RV32IM
 argument, implicit `puts`) are ~45 % of the lines, so the whole image is
 ~85-95 KB RV32IMC / ~105-115 KB RV32IM against 83,830 B (832 incl. lib832);
 bss ~33 KB. Boot ROM RV32IMC 3,636 B text + 22 + 628 (RV32IM 4,576) against
-4,333 B. Re-measured with xPack 15.2 in Phase 2/3. Stack: the firmware's
+4,333 B. Re-measured with xPack 15.2 in Phase 3 (Task 20 gate build, `-Os`,
+`fw/ctrl_rv`): **gcc `RV32OSDA.BIN` 92,596 B** (text 89,112 + data 3,484,
+bss 59,292) against 832 83,830 B (+10.5 %); the Clang build (`CLANG=1`) is
+100,188 B. Stack: the firmware's
 stack shares the 8 KB boot BRAM with dead boot ROM code; gcc's RISC-V frames
 differ from vbcc's, so Phase 3 measures the stack high-water mark (fill
 pattern) in L3 and on the board.
@@ -533,8 +536,11 @@ rename call sites once.
 Explicit big-endian handling to add:
 1. `hdd.c` RDB/PartitionBlock synthesis (86-160): every long -> `be32()`;
    the longs checksum sums BE longs.
-2. `hdd.c` `IdentifyDevice()` `unsigned short id[256]` sent byte-wise by
-   `WriteIDEData` -> store with `be16()` so the byte stream is unchanged.
+2. `hdd.c` `IdentifyDevice()`. **Corrected in Phase 3:** `ATA_IdentifyDevice`
+   already sends every word low byte first from its value, so the numeric
+   words are endian-neutral; only the `memcpy`'d string words (serial,
+   firmware, model, file name) change byte order on LE and get a 16-bit swap
+   (`identify.py` golden, Task 12).
 3. `boot.c:200` default copper list -> `be16()`.
 4. `drivesounds.c:231-233` manual byte swap (BE CPU producing LE samples) ->
    delete on LE; keep `c*0x10001`.
@@ -552,6 +558,12 @@ Explicit big-endian handling to add:
    at MBR offset 454 (2 mod 4) -- read it byte-wise (`le32` from bytes); the
    same overlay in `fat.c`. The trap handler names the PC; L1/L3 runs find
    the rest.
+New rows found in Phase 3 (Task 14): `main.c` `CheckSum` (kickstart checksum
+   shown by the menu) sums `be32` words so the shown value equals the 832's;
+   `hexdump.c` prints the 832's big-endian view of 32-bit words
+   (`rd_be32`); `drivesounds.c` `DRIVESND` header longs sit at 2 mod 4
+   addresses (sound sizes are even, not multiples of 4) and are read
+   byte-wise (`rd_be32`), samples are BE words.
 9. Anything found by the differential bench (Phase 4) -- the golden SPI
    byte traces catch what the grep did not.
 
@@ -734,7 +746,7 @@ rests on instruction spacing shrinks.
 | # | Handshake | Where | Dependency / margin today | Status | How it is checked |
 |---|---|---|---|---|---|
 | 1 | hw register write hold / stale `ack` between back-to-back hw accesses | bridge <-> cfide (clk_114 <-> clk_28) | an access needs >= 1 clk_28 period of `req`; a second access within ~4 clk_114 of the previous `ack` can be falsely acknowledged. 832 spacing happened to exceed it | fixed by the four-phase handshake (3.3.4) | `sim/host_bridge` back-to-back test + mutant; `tb_spi_cdc` GAP=2 rows |
-| 2 | OSD reply byte load | `userio_osd` loads the reply per SPI transfer on the clk7_en grid | needs >= 40 clk_114 between host accesses; below that `OSD_CMD_VERSION` fails 3/3 in every skew corner; firmware 174322f adds a pause (`SPI_reply()`: 4 x `SPIN`) | **open**: firmware pause only; margin shrinks with a faster CPU | `tb_spi_cdc` `osd` test with the RV host (hostrv); margin monitor "cycles between accesses during OSD reads" >= 40; hardware fix = P1's reply-ready flag (poll it instead of counting) |
+| 2 | OSD reply byte load | `userio_osd` loads the reply per SPI transfer on the clk7_en grid | needs >= 40 clk_114 between host accesses; below that `OSD_CMD_VERSION` fails 3/3 in every skew corner; firmware 174322f adds a pause (`SPI_reply()`: 4 x `SPIN`) | **open**: firmware pause only; margin shrinks with a faster CPU. Phase 3 (L2, stub slave): measured `OSD GAP min` **40** on the shipped image (= `OSD_MIN_GAP`, zero margin; 44 before Task 11, it moves with code layout). Stays open until Phase 4 L3 with the real `userio_osd` (and P1) | `tb_spi_cdc` `osd` test with the RV host (hostrv); margin monitor "cycles between accesses during OSD reads" >= 40; hardware fix = P1's reply-ready flag (poll it instead of counting) |
 | 3 | Direct-mode SD -> paula/gayle, CS release after the 4096th bit | `mmc.c` `EnableDMode; SPI(0xFF); RDSPI; DisableDMode` | was >= ~30 cycles after the last bit, 832 ~45 | fixed in RTL (202e077: word latched on its last sck edge) | `tb_spi_cdc` `direct` GAP 2..64 and `host832`/`hostrv` real-CPU runs; monitor measures last-sck-to-CS-release; mutant (202e077 reverted) must fail |
 | 4 | Command byte then CS release on the minimig slaves (`DisableFpga/DisableOsd` right after the last byte) | `userio_osd_spi` `rx`/`cmd` through clk7_en synchronisers; `paula_floppy`, `gayle` command decode | unknown; the GAP sweep covers it for `wr/rd/osd` | measured, not guaranteed by design | same bench; add a monitor "last sck edge to `_scs` rise" per slave with a per-slave minimum derived from the RTL (2 clk7_en = ~8 clk_28) |
 | 5 | SPI data register write while the shifter is busy | cfide `SD_busy` | the write is held, not dropped (support state machine stalls the CPU) | by construction | assertion in `sim/host_bridge`: no SPI write accepted while `SD_busy` |
@@ -742,8 +754,8 @@ rests on instruction spacing shrinks.
 | 7 | Floppy track **write**: host drains the write FIFO while the Amiga writes | `fdd.c` `FindSync/GetHeader/GetData`, `CMD_WRTRK` | FIFO depth gives the slack; host must keep up for a whole track (~200 ms) | depends on main-loop latency | co-sim: ADF track write with "FIFO full && Amiga writing" monitor; written ADF compared with the golden image |
 | 8 | IDE PIO flow control | `hdd.c` `while(!(GetFPGAStatus() & CMD_IDECMD))`, `CMD_IDEDAT`; gayle FIFOs | status-driven, no timing margin; latency only affects throughput | by construction | co-sim HDF multi-sector read/write, data compare; `sim/gayle` golden trace unchanged |
 | 9 | ATAPI phases / CD READ | `cdrom.c` flags, `CD_TIMEOUT` 10 s | status-driven; 10 s host timeout (timer-based) | by construction | co-sim CD READ(10/12) of ISO sectors, data compare |
-| 10 | SD card protocol waits | `mmc.c`: CMD41 1000 ms (timer), data-token wait `timeout++ >= 1000000` (count), write-busy loop | count-based waits expire ~7x sooner on VexRiscv (still well above the token time, but no longer a 1 s guarantee) | low | SD model with programmable token delay up to 250 ms; count loops converted to `CheckTimer` in Phase 3 (one-line changes) |
-| 11 | `SPIN` / explicit delays | `hardware.c:236` (OSD reply, item 2); commented-out `SPIN`s in `fdd.c` (historic ADF-write workaround); `audio_clear` waits one TIMER tick | only item 2 is live | -- | grep gate in Phase 3: no new count-based delays |
+| 10 | SD card protocol waits | `mmc.c`: CMD41 1000 ms (timer), data-token wait `timeout++ >= 1000000` (count), write-busy loop | count-based waits expire ~7x sooner on VexRiscv (still well above the token time, but no longer a 1 s guarantee) | **closed** (Phase 3, Task 10): waits on TIMER, `SD_TIMEOUT` 173 = 1.004 s | SD model with programmable token delay up to 250 ms; count loops converted to `CheckTimer` in Phase 3 (one-line changes) |
+| 11 | `SPIN` / explicit delays | `hardware.c:236` (OSD reply, item 2); commented-out `SPIN`s in `fdd.c` (historic ADF-write workaround); `audio_clear` waits one TIMER tick | only item 2 is live | **closed** (Phase 3 grep gate as ruled: firmware code only; live `SPIN` sites exactly three: `hardware.c:236`, `fpga.c:226`, `config.c:618`) | grep gate in Phase 3: no new count-based delays |
 | 12 | RTC (`pcf2123`) CS high time between transfers | `rtc.c`, `scs(7)` | the chip's minimum CS-inactive time is covered by the firmware's instruction spacing today | depends on CPU speed | add the datasheet minimum as a monitor in the co-sim (RTC model) or insert an explicit timer-based guard; low risk, listed for completeness |
 | 13 | Akiko C2P service latency | `amiga_req` held until the host answers | the 68k bus waits; latency = ISR latency; correctness independent of speed | fine | co-sim: an Amiga-side Akiko write; measure latency both CPUs |
 | 14 | Kickstart upload complete before CPU release | SDRAM write acks precede `OsdDoReset` | ordering by the bridge (one transaction in flight; dBus waits for the previous write's ack) | by construction | differential trace: last SDRAM write before the reset SPI command |
@@ -931,6 +943,49 @@ ring-fill columns (4.4).
   Gate: `make -C fw/ctrl_rv/test` green; each test has a mutant check.
 - 3.7 **S** Stack high-water mark: fill pattern below 0x2000, report in
   DebugMode; Clang build check. Gate: numbers recorded.
+
+**Phase 3 done 2026-10-18** (`doc/osd-riscv-exec-3.md`, 20 tasks, commits
+`2f5df34..82852ac` plus the Task 20 gate commit; the gate evidence is
+`.superpowers/sdd/osd-riscv-exec-3/task-20-report.md`, run directories
+`p3g*`). Gate run on the committed tree, all green:
+
+- Builds: `make -C fw/ctrl_rv clean all check size stack` (checks a-g pass,
+  `RV32OSDA.BIN` 92,596 B, `_end` below 0x70000, boot ROM end 0x1040 < 0x1400);
+  `CLANG=1 all check` (100,188 B); `fw/ctrl_rv/tools/cfgconv`;
+  `make -C fw/ctrl_832/test` (832 tree still green, tree untouched).
+- Host tests: `make -C fw/ctrl_rv/test run mutants` native + `-m32`, 164 mutants
+  killed.
+- L1 (Verilator): `fmt` (all 909 cases on the real newlib-nano, 1818 records
+  equal the glibc digests, 413 expected-difference lines match), `all` (122
+  runs, 0 bus violations), `irq` (13), `dm_smoke` (6), `dhry`, `units`; `units`
+  also on iverilog (the X-checking reference).
+- L2 (Verilator): `all` (42 runs), `mutant` (6 gate runs fail, 24 control runs
+  pass), `irqmut`, `boot`, `boot_nofile`, `fwboot` (33 milestones), `fwboot_trap`
+  (`EXC mcause=2` line), `fwboot_cfg` (34 milestones, `MINMGAR.CFG` ==
+  `cfgconv --to-rv MINMGAA.CFG`, 832 file unchanged, `fsck.fat` clean);
+  `fwboot` and `fwboot_cfg` once on xsim, `run.sh compare` SAME;
+  `sim/common/run_sd_model.sh` PASS.
+- Figures: `STACK low 0x1950` (1,712 B used; floor 0x1400); `fwboot` to
+  176.4 M cycles: I$ refills 49,996, `OSD GAP min 40`; `fwboot_cfg` 119.6 M
+  cycles; L1 Dhrystone `dhry_Os` 273,376 cycles per 100 runs (WS=3).
+- Grep gate (ruling: firmware code only, `git diff 7d7d43b -- 'fw/ctrl_rv/*.c'
+  'fw/ctrl_rv/*.h' fw/ctrl_rv/arch`, excluding `test/`, `*.md`, Makefiles; 43
+  README/test lines quote `SPIN`/`timeout++` as prose): the one added `SPIN`
+  hit is the reworded `#define` (`(void)v` for `-Wextra`); the `timeout++`
+  lines in the diff are all removed ones (the five `mmc.c` waits Task 10
+  replaced). Live `SPIN` sites are exactly three: `hardware.c:236`,
+  `fpga.c:226`, `config.c:618` (the earlier `config.c:548` is stale).
+- `git status fw/ctrl_832 fw/ctrl_boot_832 fw/ctrl_boot_rv rtl` clean;
+  `diff -ru fw/ctrl_832 fw/ctrl_rv` reviewed against the README "Differences"
+  list; the Task 16 hunks (loop shapes, comments) had no entry and got one.
+- Timeouts used: `fwboot` 176.4 M cycles (DRIVESND on the card), `fwboot_cfg`
+  119.6 M; xsim `fwboot` 7,835 s.
+
+Open into Phase 4: 7.1 item 2 (OSD reply gap measured min 40 = `OSD_MIN_GAP`,
+zero margin on the shipped image, 44 earlier; it moves with code layout; open
+until L3 with `userio_osd` and the board); 7.1 items 10 and 11 closed; items
+3, 4, 6-9, 12-14 untouched, for L3. Decisions 12.4 and 12.12 are implemented
+(see there).
 
 ### Phase 4 -- co-simulation (the gate for floppy/HDD/CD)
 
@@ -1149,7 +1204,14 @@ P5-P7 on evidence. Of these, only the 8 KB boot BRAM survives unchanged.*
    reads/writes a native little-endian layout; a host command-line tool
    converts old (832, big-endian) config files to the new format. Task in
    Phase 3 (3.4, Sonnet; gate: round-trip test on every config file in the
-   repo/SD image, field-by-field compare).
+   repo/SD image, field-by-field compare). **Implemented (Task 11):**
+   `MINMGAR.CFG`, `MINMGAR1.CFG` .. `MINMGAR4.CFG` (the 832's are
+   `MINMGAA*.CFG`), 212 bytes, little-endian; the byte order is told by
+   `version` (1..4 read LE = RV, read BE = 832; a wrong-order file is rejected
+   with an OSD message and the defaults are used); first boot with only the
+   832 file converts in memory and saves the `MINMGAR*` file (the 832 file is
+   never written); `fw/ctrl_rv/tools/cfgconv` shares `cfgswap.c` with the
+   firmware.
 5. **spicdc board check: Paul takes the risk.** No separate check before the
    port; it happens on the 832 leg of the A/B build (Phase 5.3):
    `report_clocks` shows `spi_sck`, HDF copy + checksum, ADF read/write,
@@ -1234,3 +1296,6 @@ P5-P7 on evidence. Of these, only the 8 KB boot BRAM survives unchanged.*
     goldens keep `-std=gnu17`; the clang check uses `-std=gnu23` (clang
     18.1.3 accepts it). Supersedes the lib832 sentence of 3.7 and the
     gnu17 rule of exec-3 before its amendment of 2026-10-17.
+    **Implemented (Tasks 3-4, checked in Task 20):** newlib-nano `libc_nano`
+    with `rvlibc.c`, gnu23 with the code fixed, lib832 printf bugs listed in
+    `fmt_diff_expected.txt`, not reproduced.
