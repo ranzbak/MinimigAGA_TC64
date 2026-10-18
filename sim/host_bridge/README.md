@@ -199,6 +199,39 @@ Everything else must be identical: verdict, `main done`, `cycles`, the
 the `t_irqctl` test 4 iteration lines. It prints `SAME` / `DIFF` / `ONLY`
 per log and `=== COMPARE n logs: ...`, and exits 1 on any difference.
 
+### Shared parts, and the X-sensitivity twin (`XRAND=1`)
+
+The simulator-independent parts of `run.sh` live in
+`sim/common/hostsim.sh` (RTL copies with the `hostcache.v` fix, the GHDL
+conversion, the Verilator build, `hs_simrun`, `hs_compare`, the firmware
+build `hs_fwrv`), the bench's monitors in `sim/common/hostmon.vh` (hw-bus
+snoop checks, UART printer, the `+SPI_LOG` frame log, the OSD reply-gap and
+stack monitors, the end-of-run counter lines); `tb_host_bridge.v` includes
+it. The next bench (`sim/l3`) uses the same files.
+
+`XRAND=1` (Verilator only) builds with randomised uninitialised state
+(`--x-assign unique --x-initial unique`) and runs with
+`+verilator+rand+reset+2 +verilator+seed+<n>`; `XSEED=<n>` sets the seed
+(default: the `cksum` of the `RUNTAG` mod 2147483647 + 1). The log then starts with
+`=== XRAND seed <n>`, a line `compare` ignores. A twin of a normal run must
+`compare` SAME; a difference means the design or a bench model reads a
+value before it is written. Known (2026-10-18, not changed here): flops
+without a reset that the FPGA starts at 0 (`cache_req` in `832_bridge.vhd`,
+`sdram_req` and `ack` in `hostcache.v`) start random under `XRAND=1`; when
+`cache_req` or `sdram_req` starts at 1 the run fails with
+`BUS VIOLATION sdram model: request outside 0..0x7FFFFF` at cycle 0, so about
+half of the seeds fail: pick another `XSEED` and report a failure
+that has another signature. From the repository root, bash or zsh, after
+`make -C fw/ctrl_rv`:
+
+```sh
+SIM=verilator RUNTAG=fwn bash sim/host_bridge/run.sh fwboot
+SIM=verilator XRAND=1 XSEED=1923170909 RUNTAG=fwr bash sim/host_bridge/run.sh fwboot
+bash sim/host_bridge/run.sh compare fwn fwr
+```
+
+(Seed 1923170909 is one that starts those flops at 0; every `compare` line SAME.)
+
 ### What run.sh does (the conversion step)
 
 Per snapshot (one per test, per bridge / cfide / master variant and
@@ -822,7 +855,7 @@ bytes as tokens.
   The check's red run: `SIM=verilator RUNTAG=p3fred2 XARGS=+OSD_MIN_GAP=45
   FWBOOT_TIMEOUT=80000000 bash sim/host_bridge/run.sh fwboot_cfg` reports
   `BAD  BENCH ERROR ... OSD GAP min below OSD_MIN_GAP` and the bench
-  verdict `=== FAIL` (44 < 45); with `+OSD_MIN_GAP=41` it passes (44).
+  verdict `=== FAIL` (44 < 45); with `+OSD_MIN_GAP=41` it gives no bench error (44).
 - **Stack low-water** (`=== STACK low <hex> (<n> bytes used)`): the lowest
   byte address the CPU writes below 0x2000 (boot BRAM, the bridge's `rom`
   state; `sel[i]` = byte A+i) after its first read of 0x2000. Full-word writes
