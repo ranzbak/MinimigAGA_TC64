@@ -7,7 +7,9 @@ fw/ctrl_832") and the C library / host-test files ("C library", "Host tests");
 Task 4's `Makefile` and gcc 15 / gnu23 compile fixes ("Building", "gcc 15 and
 gnu23 compile fixes"); Task 5's I/O map ("Differences from fw/ctrl_832");
 Task 9's byte-order helpers and the FAT/MBR fields ("Byte order (Task 9)");
-Task 10's TIMER bounds in `mmc.c` ("SD driver timeouts and the TIMER (Task 10)").
+Task 10's TIMER bounds in `mmc.c` ("SD driver timeouts and the TIMER (Task 10)");
+Task 11's config file byte order, file names and `cfgconv` ("Config file byte
+order (Task 11)").
 
 ## Copy base
 
@@ -54,10 +56,11 @@ copied files differ on purpose (each edit is a row of "Differences from
 fw/ctrl_832"): `akiko.c boot.c config.c drivesounds.c fat.c main.c menu.c`, and
 `test/Makefile`, `test/.gitignore` (the C-library wiring); since Task 4 also
 `audio.c c64keys.c drivesounds.h firmware.h hdd.c` and `Makefile`; since Task 9
-also `fat.h swap.c swap.h`. `find` also
+also `fat.h swap.c swap.h`; since Task 11 also `config.h`. `find` also
 lists files that only exist here (`rvlibc.c`, `rvlibc.h`, `test/lib_test.c`,
 `test/fmt_*`, `test/mutants.sh`, `test/gold/`, `test/rv/`, `test/swap_test.c`,
-`test/fat_test.c`, `test/fatimg.sh`, `test/fat_check.sh`); `cmp` reports
+`test/fat_test.c`, `test/fatimg.sh`, `test/fat_check.sh`, `cfgswap.c`,
+`cfgswap.h`, `tools/cfgconv/`, `test/config_test.c`, `test/config_check.sh`); `cmp` reports
 those as missing in `fw/ctrl_832`. `interrupts.c`/`interrupts.h` exist only in
 `fw/ctrl_832` (Task 4), so the loop above does not see them.
 
@@ -193,7 +196,8 @@ byte boundary of the interrupted line's *send* loop, not of its formatting
 ### printf buffer audit
 
 Longest output of each `printf` call site that is compiled (found by running
-the preprocessor over every `fw/ctrl_rv/*.c`, 2026-10-17: 136 sites; a
+the preprocessor over every `fw/ctrl_rv/*.c`, 2026-10-17: 136 sites, 138
+with Task 11's two in `config.c` (`ConfigMessage`); a
 raw `grep` also finds the commented-out ones). Conversions are taken at their
 maximum: `%d`/`%ld` 11 bytes, `%u`/`%lu` 10, `%x`/`%X`/`%lX` 8, a width raises
 the figure to the width. Each `%s` is bounded by its source:
@@ -207,6 +211,7 @@ the figure to the width. Each `%s` is bounded by its source:
 | `fpga.c:125`, `128` | `kick1xfoundstr` 21, `applymemdetectionpatchstr` 46 |
 | `%.8s`, `%.3s`, `%.11s` | the precision |
 | `boot.c:263` (`printf("%s", str)`, `BootPrintEx`) | 80: the longest literal is 75, `s[40]`, `rtl_ver[45]` |
+| `config.c:257` (`printf("%s", text)`, `ConfigMessage`, Task 11) | 40: `Converted 832 configuration MINMGAA4.CFG` (`msg[48]`), `(832 byte order)` 16 |
 
 Per file, `line:bytes`:
 
@@ -215,7 +220,7 @@ Per file, `line:bytes`:
 | `akiko.c` | 2 | 17:32, 19:21 |
 | `boot.c` | 2 | 263:80, 264:1 |
 | `cdrom.c` | 17 | 291:50, 305:108, 334:17, 416:27, 485:18, 521:34, 684:17, 686:9, 688:19, 689:29, 690:34, 691:19, 692:33, 693:20, 694:5, 696:2, 777:84 |
-| `config.c` | 11 | 65:21, 186:24, 277:36, 609:30, 610:30, 614:57, 617:14, 618:28, 624:27, 628:19, 631:22 |
+| `config.c` | 13 | 65:21, 186:24, 257:40, 258:1, 326:36, 679:30, 680:30, 684:57, 687:14, 688:28, 694:27, 698:19, 701:22 (Task 11's lines) |
 | `drivesounds.c` | 4 | 442:32, 457:50, 475:34, 478:28 |
 | `fat.c` | 39 | 189:28, 193:4, 196:5, 199:5, 202:5, 206:7, 209:2, 296:21, 297:23, 298:22, 299:33, 300:24, 301:23, 302:25, 303:23, 399:274, 424:278, 462:33, 515:32, 535:35, 583:295, 604:283, 783:28, 790:33, 863:11, 1581:59, 1594:31, 1609:26, 1621:32, 1631:49, 1647:55, 1649:54, 1654:38, 1701:38, 1712:45, 1713:30, 1714:24, 1715:26, 1723:39 |
 | `fdd.c` | 11 | 184:32, 191:12, 222:23, 252:17, 300:2, 303:4, 339:6, 377:29, 433:59, 438:23, 635:13 |
@@ -407,8 +412,8 @@ a function, copied elsewhere or used in arithmetic.
 |---|---|---|
 | `firmware.h:23` | `#define true -1` | removed (C23 keyword, `true` == 1) |
 | `firmware.h:24` | `#define false 0` | removed (C23 keyword, `false` == 0) |
-| `config.c:288` | `updatekickstart=true;` (`int` local) | truth only: never read (gcc: set but not used) |
-| `config.c:360` | `updatekickstart=true;` | truth only: never read |
+| `config.c:340` | `updatekickstart=true;` (`int` local) | truth only: never read (gcc: set but not used) |
+| `config.c:430` | `updatekickstart=true;` | truth only: never read |
 | `menu.c:124` | the word "true" in a help string | text, not code |
 | `menu.c:126` | the word "true" in a help string | text, not code |
 | `menu.c:410` | `static unsigned char ctrl = false;` | truth only |
@@ -462,14 +467,14 @@ names this section; no global `-Wno-...`.
 |---|---|---|
 | `drivesounds.c:330-332` `pickstep()` | `count` is read in `while(count>maxactive)` before it is ever assigned: undefined behaviour (the 832 got whatever its stack held). When `count` happens to be `<= maxactive` the loop is skipped and no sound is stopped | pragma around the function (`-Wuninitialized`, `-Wmaybe-uninitialized`) |
 | `fpga.c:138` `BootPrint()` | declared `char`, falls off the end without a return (the body is the `//return(1)` stub). The callers (`config.c`) ignore the value today; using it would be undefined behaviour | pragma around the function (`-Wreturn-type`) |
-| `config.c:263,286,358` `LoadConfiguration()` | `updatekickstart` is set to `true` in two places and never read: whatever it was meant to trigger (a kickstart re-upload after a config change) does not happen | `__attribute__((unused))` on the variable |
+| `config.c:300,340,430` `LoadConfiguration()` | `updatekickstart` is set to `true` in two places and never read: whatever it was meant to trigger (a kickstart re-upload after a config change) does not happen | `__attribute__((unused))` on the variable |
 | `drivesounds.c:142,214` | `b1`, `b2` (the 0x4000 bit of the audio cursor before and after a fill) are assigned and never used (a check on them was probably meant, or removed) | `__attribute__((unused))` |
 | `atapi.c:666` `atapi_packet()` | parameter `limit` (the host's allocation length) is never used | `(void)limit` |
 | `osd.c` `OsdColor(color)`, `ConfigScanlines(scanlines)`, `menu.c` `ErrorMessage(message, code)`, `hdd.c` `ATA_Recalibrate(.., unit)`, `ATA_Diagnostic(tfr)`, `ATA_Initialize(.., unit)`, `HandleHDD(c1, c2)`, `fdd.c` `HandleFDD(.., c3, ..)`, `menu.c` `VolumeBar(vol, ..)`, `fpga.c` `BootPrint(text)`, `cdrom.c` `cd_lookup_read`/`cd_cue_open` (`ctx`) | stubs or parameters the body ignores (FIXME/TODO in the 832 source) | `(void)param` |
 | `c64keys.c:47` `LAYER(x,y)` | the macro masks `x&0xffff` without parenthesising `x`; for `LAYER(QUAL_BLOCKLAYER\|RK_RAmiga, ..)` it computes `QUAL_BLOCKLAYER \| (RK_RAmiga&0xffff)`. Same value as long as every qualifier is `< 0x10000` (they are: `QUAL_*` are `<= 0x8000`), wrong for a larger one | macro parenthesised (`((x)&0xffff)`); the table values are unchanged |
 | `fdd.c:85,88,102` | `11 - sector >> 1 & 0x55` parses as `((11-sector)>>1)&0x55`; if the intent was `11 - (sector>>1&0x55)` this is a bug in the MFM checksum. It is the 832's reading (that is what vbcc832 compiled), so it is kept | parentheses spell out the existing parse |
 | `hdd.c:882` | `lba & (-1 << n)`: shift of a negative value (undefined in C before C23, well defined here because gcc shifts two's complement) | `(int)(~0U << n)`, same bits |
-| `config.c:548`, `drivesounds.c:365` | `if (romsize=Upload...)` and `while(dse=...)` assign in a condition: intended, but easy to misread | extra parentheses |
+| `config.c:620`, `drivesounds.c:365` | `if (romsize=Upload...)` and `while(dse=...)` assign in a condition: intended, but easy to misread | extra parentheses |
 | `menu.c:2763` | `static char template[4] = " of "` holds no NUL (4 chars): fine while only `sizeof` and byte compares are used, never as a string | `__attribute__((nonstring))` |
 | `menu.c:2593` | the `case MENU_ROMFILE_SELECTED:` falls into `..._SELECTED1:` ("no break intended" in the 832 source) | `__attribute__((fallthrough))` |
 | `hdd.c:764-848` `GetHardfileGeometry`, `drivesounds.c:133-302` `drivesounds_render` | `-Wmaybe-uninitialized` on `cyl/head/spt` (set in the first pass of loops that always run, `sptt[0] >= 0`) and `srcs/srcs2/srcs3` (read only when the matching `src` pointer is set, which also sets them): false positives, not bugs | pragma around the function |
@@ -501,7 +506,7 @@ converted line says what the disk format is ("little-endian on disk").
 | `fat.c:1651` | `printf(".. %lX\n",pEntry->FileSize)` | `(unsigned long)pEntry->FileSize` | `FileSize` is `uint32_t` now (row `fat.h` below); format and output unchanged |
 | `fat.c:146`, `154` (`FindDrive`) | `switch(mbr->Signature)`: `case 0x55aa:` swaps the partition entries, falls through to `case 0xaa55:` | unchanged, comments only | on LE the signature bytes `55 AA` read `0xaa55`: no swap; `SwapPartitionBytes` keeps `SwapBBBB` (a real swap, BE host only). `fat_mbr_sig` mutant (labels exchanged): `FindDrive` fails |
 | `fat.c:139` | `memcpy(&partitions[0],&mbr->Partition[0],..)` x4 | unchanged, comment | item 8: `Partition[]` is at 446 (2 mod 4); the entries are copied (newlib `memcpy`, a call: `-fno-builtin`) into the aligned `partitions[]`, never read in place. The disassembly of `FindDrive` has the four `jal memcpy` from `sector_buffer+0x1be..0x1ee` and only aligned `lhu`/`lw` from `sector_buffer` (`lhu 22`, `lhu 44`, `lw 36`, `lhu 510`) |
-| `fat.c:74`, `fat.h:85` | `unsigned char sector_buffer[1024];` | `__attribute__((aligned(4)))` (definition and `extern`) | item 7: `DIRENTRY`, `MasterBootRecord` (and `configTYPE`, `config.c:273`, Task 11) are overlaid on it; gcc merges the BPB byte reads into `lw 36(s0)` (`fat_size`), which needs the 4-aligned base |
+| `fat.c:74`, `fat.h:85` | `unsigned char sector_buffer[1024];` | `__attribute__((aligned(4)))` (definition and `extern`) | item 7: `DIRENTRY`, `MasterBootRecord` (and `configTYPE`, `config.c:324`, Task 11) are overlaid on it; gcc merges the BPB byte reads into `lw 36(s0)` (`fat_size`), which needs the 4-aligned base |
 | `fat.c:79` | `FATBUFFER fat_buffer;` | `__attribute__((aligned(4)))` | item 7 |
 | `fat.h:31-32`, `72`, `77` | `unsigned long startlba, sectors`, `unsigned long FileSize`, `unsigned long fat32[128]` | `uint32_t` | on-disk layouts: 32 bits on every ABI. Same type on RV32 (`uint32_t` is `unsigned long` there: `__UINT32_TYPE__`), so the target code does not change by it; on the LP64 host leg `unsigned long` made `PartitionEntry` 24 and `DIRENTRY` 40 bytes (`fat_test` RED). `_Static_assert`s at the end of `fat.h`: 16, 512, 32, 512 bytes |
 | `fat.h:5` | (blank line) | `#include <stdint.h>` | for `uint32_t` |
@@ -515,6 +520,34 @@ whose count is known; the test's FAT32 image has it "unknown", 0xFFFFFFFF);
 next (every caller passes one sector or `NULL`). Task 9 kept the line count
 of `fat.c` (each edit on its own line), so the `fat.c` line numbers elsewhere
 in this README still hold.
+
+## Config file byte order (Task 11)
+
+Plan 5.2 item 5 and item 7 (`config.c:324`), decision 12.4. The struct is
+unchanged: `configTYPE`, 212 bytes, `CONFIG_VERSION 4`, id `MNMGCFGA`. The
+RISC-V firmware reads and writes it as it is in memory, little-endian; the
+832 wrote it big-endian. Its only multi-byte fields are seven 32-bit ones:
+`version` @8, `kickdir` @132, `extromdir` @136, `hdfdir[0..3]` @140, 144,
+148, 152 (`cfgswap.h` `CFG_OFF_*`, checked by `_Static_assert` in `config.c`
+against `offsetof`, with `sizeof == 212`, which replaces the negative-array
+typedef). The byte order of a file is told by `version`: 1..4 read
+little-endian = RV, 1..4 read big-endian = 832.
+
+| What | 832 | RV |
+|---|---|---|
+| file names (`SetConfigurationFilename`) | `MINMGAA CFG`, `MINMGAA%dCFG` | `MINMGAR CFG`, `MINMGAR%dCFG` (`MINMGAR.CFG`, `MINMGAR1.CFG` ..) |
+| `config.h` `version`, `kickdir`, `extromdir`, `hdfdir[4]` | `unsigned long` | `uint32_t`: the file layout on every ABI. The same type on RV32 (`__UINT32_TYPE__` is `unsigned long`): the stripped code of `cdrom.o`, `hdd.o`, `fpga.o`, `main.o` is the same as before; on the LP64 host leg `unsigned long` made the struct 240 bytes |
+| `cfgswap.c`, `cfgswap.h` (new; pure C, shared with `tools/cfgconv`) | | `cfg_order(buf, len)` -> `CFG_RV` / `CFG_832` / `CFG_BAD` (length 156..212, id, version); `cfg_swap(buf)` swaps the seven fields in place, byte by byte |
+| `LoadConfiguration` | reads `MINMGAA..` | reads `MINMGAR..`. A file in 832 order under that name takes the existing `version > CONFIG_VERSION` path ("Wrong configuration file format!") plus "(832 byte order)": the defaults. **First boot:** no `MINMGAR..` file but the slot's `MINMGAA..` file: it is read, `cfg_order == CFG_832` -> `cfg_swap` in the sector buffer, then the usual checks (old versions included); used, and saved under the RV name (`SaveConfiguration` creates it), "Converted 832 configuration MINMGAA.CFG". Any other order under the 832 name: the defaults. The 832 file is never written (no `FileWrite`/`UpdateEntry` on it) |
+| `ConfigurationExists` | the file | the RV file, or else the slot's 832 file (so that the Load page offers a slot that only the 832 firmware saved; loading it converts it) |
+| the two new messages | | `ConfigMessage`: `BootPrint` (disabled, as on the 832) and the UART |
+
+Tools and tests: `tools/cfgconv` (`cfgconv --to-rv|--to-832|--check`, its
+`README.md`); `test/config_test` with `test/gold/mkcfg832.py`, an independent
+generator of 832 files (`test/README.md`); L2 `run.sh fwboot_cfg`
+(`sim/host_bridge/README.md`). `fwboot`'s milestones now name both files
+(`file "MINMGAR CFG" not found`, `file "MINMGAA CFG" not found`). No change
+in `fat.c` or `mmc.c`.
 
 ## SD driver timeouts and the TIMER (Task 10)
 
@@ -560,7 +593,7 @@ us). Lines are those of the current tree.
 |---|---|---|---|
 | `hardware.h:53` | `TIMER`, 16-bit read of `0xFFFFFFD0` | | |
 | `hardware.c:180`, `188`, `201` | `GetTimer`, `CheckTimer`, `WaitTimer` (above) | | |
-| `hardware.h:59` | `SPIN`: one TIMER read, the value unused (a cfide handshake as a delay); live at `hardware.c:236` (`SPI_reply`, 4x), `fpga.c:226` (4x), `config.c:546` (4x) | | one bus access each |
+| `hardware.h:59` | `SPIN`: one TIMER read, the value unused (a cfide handshake as a delay); live at `hardware.c:236` (`SPI_reply`, 4x), `fpga.c:226` (4x), `config.c:618` (4x) | | one bus access each |
 | `audio.c:33`-`34` (`audio_clear`) | waits for the next TIMER change after `AUDIOF_ENA` | <= 1 | <= 5.804 ms |
 | `drivesounds.c:78`, `98`, `430` | event and render timestamps (`drivesounds_render`, `samples = timestamp - drivesounds.timestamp`, `:150`) | 1 = 256 frames | 5.804 ms per count |
 | `drivesounds.c:355` | `TIMER & 3`: pseudo-random pick of one of four sounds | | |
@@ -582,7 +615,7 @@ us). Lines are those of the current tree.
 | `mmc.c:80`, `88`, `135`, `174` (`MMC_Init`) | init timeout: `GetTimer(1000)`, ACMD41 / CMD1 polls | 1000 | 5.804 s |
 | `mmc.c:235`, `290`, `366`, `452`, `527` | `SD_TIMEOUT` (above) | 173 | 1.004 s |
 | `fat.c:723`, `1318` | `GetTimer(0)` inside a comment (dead); `fat.c:96` declares `GetTimer` | | |
-| `menu.c:2737`, `config.c:540`, `fat.c:168` | in comments (dead) | | |
+| `menu.c:2737`, `config.c:612`, `fat.c:168` | in comments (dead) | | |
 
 The boot ROM (`fw/ctrl_boot_rv`) is not part of this firmware and unchanged.
 
@@ -612,8 +645,9 @@ counts are the compiled sites):
 | Call sites | Verdict |
 |---|---|
 | `strncpy` `config.c:62,150`, `hdd.c:892` (`filename`, 8, then `strcpy(&filename[8], "ROM"/"HDF")`) | The source is an 8-character space-padded name without NUL: exactly 8 bytes copied by both. A name with an early NUL (a corrupt config) would leave `filename` bytes uninitialised on the 832 and zero on RV; `FileOpen` then compares 11 bytes. Indeterminate on the 832: not emulated |
-| `strncpy` `config.c:301,339,340,351,353,365` | An 8-character literal (`EXTENDED`, `MNMGCFGA`, `KICK    `, `HARDFILE`) into an 8-byte field: no NUL copied, nothing to pad. Same |
-| `strncpy` `config.c:611` (`file.name`, 11) | `MINMGAA CFG` is 11 characters. Same |
+| `strncpy` `config.c:353,409,410,421,423,435` | An 8-character literal (`EXTENDED`, `MNMGCFGA`, `KICK    `, `HARDFILE`) into an 8-byte field: no NUL copied, nothing to pad. Same |
+| `strncpy` `config.c:681` (`file.name`, 11) | `MINMGAR CFG` / `MINMGAR<n>CFG` is 11 characters. Same |
+| `strncpy` `config.c:247` (`ConfigName832`, Task 11, no 832 counterpart) | the source is an 11-character RV name, `buf[11] = 0` after it |
 | `strncpy` `cdrom.c:86`, `275` | `86`: the destination was zeroed by `memset` just before. `275`: `longname[41]`, read only as a NUL-terminated string (`atapi_insert`, `cd_config`). Same |
 | `strncpy` `osd.c:1105,1108` (`ScrollText`) | Inside `len > max_len`: the source is longer than `n` in both copies (`n < max_len < len <= strlen`), so no NUL is copied and nothing is padded. Same |
 | `strncpy` `fat.c:386` (`file->name`, 11) | `pEntry->Name` is 11 bytes of an 8.3 name, no NUL. Same |
@@ -621,13 +655,13 @@ counts are the compiled sites):
 | `strncpy` `menu.c:348,350,717,2866,2867,2870,2874,2886` (the OSD line `s`) | Both copy the NUL at the same place; `OsdWrite` stops at the first NUL, so the bytes after it (spaces from the earlier `memset` on the 832, zeros on RV) are never drawn. For a long name shorter than 24 characters the NUL ends the line before the disk number (`2866/2867`) and before ` <DIR>` on both CPUs. Same |
 | `strncpy` `menu.c:1369,1371,1372`, `2946,2953` | `file.name` 11 and `drive->name` 8 bytes from space-padded names: no NUL. `file.long_name` is zeroed by `memset` first (`1370`). `DiskInfo[5]` is `XX/XX` (5 characters, `GetDiskInfo`) or starts with NUL and is then not used (`menu.c:2950`). Same |
 | `strncpy` `menu.c:3060` (`debuglines`) | The line is drawn by `OsdWrite`, which stops at the NUL. Same |
-| `strncmp` (16: `config.c:287,295`, `drivesounds.c:445`, `fat.c:129,131,183,186,250,384 (x2),459,580`, `fpga.c:61,66`, `menu.c:1343,2140`) | `n` is a constant or `sizeof`, always > 0, and the result is compared with 0. Same |
+| `strncmp` (17: `config.c:245` (Task 11, n = 7), `339,347`, `drivesounds.c:445`, `fat.c:129,131,183,186,250,384 (x2),459,580`, `fpga.c:61,66`, `menu.c:1343,2140`) | `n` is a constant or `sizeof`, always > 0, and the result is compared with 0. Same |
 | `strncmp` `fat.c:384` first call, `n = strlen(name)` | `name` empty (`n == 0`): lib832 returns `r0`, which still holds the `strlen(name)` result, 0 (vbcc832 output of the 832 `fat.c`); ISO returns 0. An empty name matches the first plain file entry on both. Same, no edit |
-| `memcmp` (4: `cdrom.c:82,285`, `menu.c:393,2052`) | `n` = 3 or `sizeof`, > 0, compared with 0. Same |
+| `memcmp` (5: `cdrom.c:82,285`, `menu.c:393,2052`, `cfgswap.c:22` (Task 11, n = 8)) | `n` = 3 or `sizeof`, > 0, compared with 0. Same |
 | `strncat` (3: `menu.c:756` n = 17/21, `1759` 16, `1761` 8) | `n > 0`: at most `n` bytes then NUL on both; `kickstart.name` has no NUL (8 characters) and both copy exactly 8. Return value unused. Same |
 | `strcat` (38), `strcpy` (54) | ISO on both; no return value is used. Same |
 | `tolower` (6: `fat.c:629 x2, 1176 x2, 1178 x2`) | ASCII letters on both; the arguments are `unsigned char` values (`-funsigned-char`). Same |
-| `strcmp` (1: `menu.c:168`), `strlen` (9), `memcpy` (35), `memset` (28) | ISO on both. Same |
+| `strcmp` (1: `menu.c:168`), `strlen` (10), `memcpy` (36), `memset` (28) (each count with Task 11's one in `LoadConfiguration`) | ISO on both. Same |
 | `memmove`, `strtol`, `strtoul`, `strtok`, `strspn`, `strcspn`, `toupper` | 0 call sites |
 
 ## Host tests
@@ -648,7 +682,9 @@ extension); `fat_test` runs the real `fat.c` + `mmc.c` on three card images
 (FAT16 with MBR, FAT32 with MBR, FAT16 superfloppy) against `mtools` and
 `fsck.fat`; `mmc_test` runs the real `mmc.c` on the card model (`MMC_Init`'s
 command sequence against the L2 boot run's SD log, token delays, busy, the
-five `SD_TIMEOUT` bounds, the direct-mode trace `test/gold/dmode.txt`).
+five `SD_TIMEOUT` bounds, the direct-mode trace `test/gold/dmode.txt`);
+`config_test` checks the config file's byte order (`cfgswap.c`, `cfgconv`,
+`LoadConfiguration` on the card model, the 832 file never written).
 `fw/ctrl_rv/test/README.md` has the targets, the flags, the mock (an SPI/TIMER/UART
 model with a card-image model; `-DHOSTTEST` hooks in `hardware.h` that leave
 the target image byte for byte the same) and the mutant rules. `LIB832` is

@@ -50,8 +50,8 @@
 //                no DONE, no bench error and the last ErrorCode is 00F0
 // A UART carriage return is printed as the two characters \r.
 //
-// FWBOOT (with SDCARD; run.sh fwboot / fwboot_trap, +TEST=fwboot or
-// fwboot_trap): the committed boot ROM loads the real firmware
+// FWBOOT (with SDCARD; run.sh fwboot / fwboot_trap / fwboot_cfg, +TEST=fwboot,
+// fwboot_trap or fwboot_cfg): the committed boot ROM loads the real firmware
 // (fw/ctrl_rv RV32OSDA.BIN) from a 16 MB card; minimig_spi_stub.v answers
 // for the Minimig SPI slaves (FPGA sd_cs[4], OSD sd_cs[5], RTC sd_cs[7]);
 // cfide's MISO is the card's while sd_cs[1] is low, else the stub's.  The
@@ -93,7 +93,8 @@
 // sector of the firmware it loads, on one line).
 //
 // Plusargs: +TEST=<name> +SLAT=<n> +SJIT=<n> +SEED=<n> +SDRAM_HEX=<file>
-//           +SD_IMG=<file> and the model's +SD_* (SDCARD only)
+//           +SD_IMG=<file> and the model's +SD_* (SDCARD only; +SD_SAVE=<file>:
+//           the card as the run left it, written before the verdict)
 //           +TIMEOUT=<clk_114 cycles> (default 3000000) +VERBOSE=1 (hw log),
 //           +VERBOSE=2 (also every change of the bus address)
 // Parameter: EXTRA_WS (xelab -generic_top EXTRA_WS=<n>), the bridge's
@@ -993,7 +994,7 @@ module tb_host_bridge #(
   always @(run_go) begin
     repeat (timeout) @(posedge clk114);
     if (!run_end) begin
-      if (test == "boot_nofile" || test == "fwboot" || test == "fwboot_trap")
+      if (test == "boot_nofile" || test == "fwboot" || test == "fwboot_trap" || test == "fwboot_cfg")
         $display("=== cycle limit %0d reached, no DONE", timeout);
       else bench_error("timeout, no DONE write");
       run_end = 1'b1;
@@ -1004,7 +1005,8 @@ module tb_host_bridge #(
     if (!$value$plusargs("TEST=%s", test)) test = "none";
     if (!$value$plusargs("VERBOSE=%d", verbose)) verbose = 0;
     if (!$value$plusargs("TIMEOUT=%d", timeout)) timeout = 3000000;
-    is_boot = test == "boot" || test == "boot_nofile" || test == "fwboot" || test == "fwboot_trap";
+    is_boot = test == "boot" || test == "boot_nofile" || test == "fwboot" || test == "fwboot_trap"
+              || test == "fwboot_cfg";
 `ifdef FWBOOT
     if ($value$plusargs("SPI_LOG=%s", spi_log_name)) begin
       spi_fd = $fopen(spi_log_name, "w");
@@ -1037,6 +1039,7 @@ module tb_host_bridge #(
     $display("=== HW accesses %0d, stale acks %0d, X %0d, SDRAM reads %0d writes %0d, main done %0d, cycles %0d",
              n_hw, n_stale, n_x, ram.n_rd, ram.n_wr, uart_first, cyc);
 `ifdef SDCARD
+    card.save_image;   // the card as the run left it, to +SD_SAVE=<file> (fwboot_cfg); nothing without it
 `ifdef RV_HOSTCPU_STATS
     $display("=== STATS irefill %0d dread %0d dwrite %0d busy_cycles %0d (rv_hostcpu, whole run)",
              `HB_RV.st_irefill, `HB_RV.st_dread,
@@ -1056,7 +1059,7 @@ module tb_host_bridge #(
       $display("=== OSD GAP (info) write->read-back min %0d (not seen by userio_osd), %0d reply frames",
                og_wr_min, og_frames);
     $display("=== STACK low %h (%0d bytes used)", stack_low, 32'h2000 - stack_low);
-    if (test == "fwboot" || test == "fwboot_trap") begin
+    if (test == "fwboot" || test == "fwboot_trap" || test == "fwboot_cfg") begin
       if (!done && errors == 0) $display("=== PASS");
       else $display("=== FAIL %0s: DONE %0d, bench errors %0d", test, done, errors);
     end else

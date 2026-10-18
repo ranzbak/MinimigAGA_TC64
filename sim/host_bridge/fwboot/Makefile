@@ -2,6 +2,7 @@
 # card images with the real firmware.
 #   make -C sim/host_bridge/fwboot                    # card.img, into ./build
 #   make -C sim/host_bridge/fwboot trap               # card_trap.img + trap_expect.txt
+#   make -C sim/host_bridge/fwboot cfg                # card_cfg.img + cfgconv (fwboot_cfg)
 #   make -C sim/host_bridge/fwboot B=<dir> FW=<bin>   # run.sh: its run directory
 # Inputs:
 #   FW   an RV32OSDA.BIN, default fw/ctrl_rv/build/RV32OSDA.BIN (make -C
@@ -17,6 +18,12 @@
 #   card_trap.img     as card.img, with trapfw/RV32OSDA.BIN
 #   trap_expect.txt   the EXC line the trap must print, mepc = smoke_trap's
 #                     address in trapfw/RV32OSDA.map
+#   cfg/MINMGAA.CFG   an 832 (big-endian) config file: the l2 case of
+#                     fw/ctrl_rv/test/gold/mkcfg832.py (cfg/: all its cases)
+#   card_cfg.img      as card.img, plus cfg/MINMGAA.CFG (fwboot_cfg: the
+#                     firmware converts it to MINMGAR.CFG on its first boot)
+#   cfgconv           fw/ctrl_rv/tools/cfgconv, for run.sh's check of the
+#                     card after the run
 TOP := $(abspath $(CURDIR)/../../..)
 include $(TOP)/tools/riscv/toolchain.mk
 
@@ -28,10 +35,11 @@ BA     := $(abspath $(B))
 
 CFLAGS = $(RV_CFLAGS_FW) -std=gnu23 --specs=nano.specs -g -Wall -Wextra -Werror
 
-.PHONY: all trap clean
+.PHONY: all trap cfg clean
 .DELETE_ON_ERROR:
 all: $(B)/card.img
 trap: $(B)/card_trap.img $(B)/trap_expect.txt
+cfg: $(B)/card_cfg.img $(B)/cfgconv
 
 $(B)/fw/RV32OSDA.BIN: $(FW)
 	@[ -f "$(FW)" ] || { echo "no firmware $(FW) (make -C fw/ctrl_rv)"; exit 1; }
@@ -45,6 +53,19 @@ $(B)/832OSDAD.BIN:
 
 $(B)/card.img: $(B)/832OSDAD.BIN $(B)/fw/RV32OSDA.BIN $(MKCARD)
 	bash $(MKCARD) $@ $(CARDMB) $(B)/832OSDAD.BIN $(B)/fw/RV32OSDA.BIN
+
+# fwboot_cfg: an 832 config file next to the firmware
+MKCFG832 := $(TOP)/fw/ctrl_rv/test/gold/mkcfg832.py
+$(B)/cfg/MINMGAA.CFG: $(MKCFG832)
+	@mkdir -p $(@D)
+	python3 -I $(MKCFG832) $(@D)
+	cp $(@D)/l2.cfg $@
+
+$(B)/card_cfg.img: $(B)/832OSDAD.BIN $(B)/fw/RV32OSDA.BIN $(B)/cfg/MINMGAA.CFG $(MKCARD)
+	bash $(MKCARD) $@ $(CARDMB) $(B)/832OSDAD.BIN $(B)/fw/RV32OSDA.BIN $(B)/cfg/MINMGAA.CFG
+
+$(B)/cfgconv: $(TOP)/fw/ctrl_rv/tools/cfgconv/cfgconv.c $(TOP)/fw/ctrl_rv/cfgswap.c $(TOP)/fw/ctrl_rv/cfgswap.h
+	$(MAKE) -C $(TOP)/fw/ctrl_rv/tools/cfgconv B=$(BA)
 
 $(B)/smoke_trap.o: smoke_trap.c
 	@mkdir -p $(@D)

@@ -123,9 +123,9 @@ case 528 S SIGNUART: 'IDE%d: Identify Device' I(INT32_MIN) | 832 buf='IDE2147483
 case 531 S SIGNUART: 'Illegal track read: %d\r' I(-1) | 832 buf='Illegal track read: 1\r' side='-' | rv buf='Illegal track read: -1\r' side=''
 case 532 S SIGNUART: 'Illegal track read: %d\r' I(-12) | 832 buf='Illegal track read: 12\r' side='-' | rv buf='Illegal track read: -12\r' side=''
 case 535 S SIGNUART: 'Illegal track read: %d\r' I(INT32_MIN) | 832 buf='Illegal track read: 2147483648\r' side='-' | rv buf='Illegal track read: -2147483648\r' side=''
-case 542 S SIGNUART: 'MINMGAA%dCFG' I(-1) | 832 buf='MINMGAA1CFG' side='-' | rv buf='MINMGAA-1CFG' side=''
-case 543 S SIGNUART: 'MINMGAA%dCFG' I(-12) | 832 buf='MINMGAA12CFG' side='-' | rv buf='MINMGAA-12CFG' side=''
-case 546 S SIGNUART: 'MINMGAA%dCFG' I(INT32_MIN) | 832 buf='MINMGAA2147483648CFG' side='-' | rv buf='MINMGAA-2147483648CFG' side=''
+case 542 S SIGNUART: 'MINMGAR%dCFG' I(-1) | 832 buf='MINMGAR1CFG' side='-' | rv buf='MINMGAR-1CFG' side=''
+case 543 S SIGNUART: 'MINMGAR%dCFG' I(-12) | 832 buf='MINMGAR12CFG' side='-' | rv buf='MINMGAR-12CFG' side=''
+case 546 S SIGNUART: 'MINMGAR%dCFG' I(INT32_MIN) | 832 buf='MINMGAR2147483648CFG' side='-' | rv buf='MINMGAR-2147483648CFG' side=''
 case 549 S SIGNUART: 'Minimig AGA%s version 20%d-%d-%d for Turbo Chameleon 64' "Kickstart 3.1", I(-1), I(-1), I(-1) | 832 buf='Minimig AGAKickstart 3.1 version 201-1-1 for Turbo Chameleon 64' side='---' | rv buf='Minimig AGAKickstart 3.1 version 20-1--1--1 for Turbo Chameleon 64' side=''
 case 550 S SIGNUART: 'Minimig AGA%s version 20%d-%d-%d for Turbo Chameleon 64' S40, I(-12), I(-12), I(-12) | 832 buf='Minimig AGAABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!?#$ version 2012-12-12 for Turbo Chameleon 64' side='---' | rv buf='Minimig AGAABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!?#$ version 20-12--12--12 for Turbo Chameleon 64' side=''
 case 553 S SIGNUART: 'Minimig AGA%s version 20%d-%d-%d for Turbo Chameleon 64' "Kickstart 3.1", I(INT32_MIN), I(INT32_MIN), I(INT32_MIN) | 832 buf='Minimig AGAKickstart 3.1 version 202147483648-2147483648-2147483648 for Turbo Chameleon 64' side='---' | rv buf='Minimig AGAKickstart 3.1 version 20-2147483648--2147483648--2147483648 for Turbo Chameleon 64' side=''
@@ -362,7 +362,7 @@ RET 'Illegal track read: %d\r': return value differs in 14 of 14 cases
 RET 'Inserting floppy: "%.11s"\r': return value differs in 8 of 8 cases
 RET 'Inserting floppy: "%s"\r': return value differs in 8 of 8 cases
 RET 'Long filename: %s\n': return value differs in 8 of 8 cases
-RET 'MINMGAA%dCFG': return value differs in 14 of 14 cases
+RET 'MINMGAR%dCFG': return value differs in 14 of 14 cases
 RET 'Minimig AGA%s version 20%d-%d-%d for Turbo Chameleon 64': return value differs in 14 of 14 cases
 RET 'New directory sector: %x\n': return value differs in 18 of 18 cases
 RET 'Offset: %ld': return value differs in 12 of 12 cases

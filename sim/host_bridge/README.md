@@ -14,7 +14,8 @@ on `sd_cs[1]`: the ROM loads `RV32OSDA.BIN` from a FAT16 card image and runs
 it (see [Boot](#boot)). The firmware boot runs (`run.sh fwboot`,
 `fwboot_trap`) do the same with the real firmware (`fw/ctrl_rv`) on a 16 MB
 card and a stub for the Minimig SPI slaves, up to the firmware's main loop
-(see [Firmware boot](#firmware-boot-fwboot)).
+(see [Firmware boot](#firmware-boot-fwboot)); `fwboot_cfg` adds an 832
+config file that the firmware converts on its first boot.
 
 The L1 bench (`sim/rv_l1`, iverilog) tests `rv_hostcpu` against an abstract
 memory. This bench uses Vivado's xsim because `cfide` and the bridge are VHDL,
@@ -39,8 +40,9 @@ xsim stays the default and the X-checking reference.
 | `boot/Makefile` | `RV32OSDA.BIN` (padded to 2560 bytes), `img.txt`, the card images `card.img` and `card_nofile.img` (`tools/sim/mkcard.sh`) |
 | `boot/expect.txt`, `boot/expect_nofile.txt` | The expected `UART:` / `ERRORCODE:` lines of `boot` and `boot_nofile` |
 | `minimig_spi_stub.v` | `fwboot`: fixed replies of the Minimig SPI slaves (FPGA `sd_cs[4]`, OSD `sd_cs[5]`, RTC `sd_cs[7]`) |
-| `fwboot/Makefile` | `fwboot`: the 16 MB card with `$FW` (`card.img`); `fwboot_trap`: the firmware with `smoke_trap.o` and its card (`card_trap.img`, `trap_expect.txt`) |
+| `fwboot/Makefile` | `fwboot`: the 16 MB card with `$FW` (`card.img`); `fwboot_trap`: the firmware with `smoke_trap.o` and its card (`card_trap.img`, `trap_expect.txt`); `fwboot_cfg`: `card.img` plus an 832 `MINMGAA.CFG` (`card_cfg.img`, `cfg/`) and `cfgconv` |
 | `fwboot/milestones.txt` | `fwboot`: the UART lines and SPI frames the firmware must produce, in order |
+| `fwboot/milestones_cfg.txt` | `fwboot_cfg`: the same with the first-boot conversion of the config file |
 | `fwboot/smoke_trap.c` | `fwboot_trap`: a constructor that executes an illegal instruction |
 | `spitrace.py` | `fwboot`: summary of `spi.txt`, the milestone check (`check`), frame counts (`count`) |
 | `verilator/blackbox.vhd` | `SIM=verilator`: entity stubs of the Verilog modules the VHDL instantiates as `entity work.X` (`i2c_master_mmio`), for the GHDL analysis only |
@@ -520,6 +522,7 @@ bash tools/riscv/check-toolchain.sh      # must pass
 make -C fw/ctrl_rv                       # -> fw/ctrl_rv/build/RV32OSDA.BIN
 SIM=verilator RUNTAG=fwv  bash sim/host_bridge/run.sh fwboot        # ~5 min
 SIM=verilator RUNTAG=fwvt bash sim/host_bridge/run.sh fwboot_trap   # ~3 min
+SIM=verilator RUNTAG=fwvc bash sim/host_bridge/run.sh fwboot_cfg    # ~6 min (Firmware boot with an 832 config file)
 # the xsim reference (Vivado 2023.2 and the libtinfo shim, see Prerequisites):
 RUNTAG=fwx bash sim/host_bridge/run.sh fwboot                       # ~27 min
 bash sim/host_bridge/run.sh compare fwx fwv                         # every line SAME
@@ -573,7 +576,9 @@ ok   bench verdict: === PASS
 Exit code 0 on PASS, 1 otherwise. Each run leaves in `run_<RUNTAG>/`:
 `results.txt`, the log `tb_fwboot_x0_s8_j0.log` (`tb_fwboot_trap_...`),
 `spi.txt` and `spi_summary.txt`, `milestones.txt` (the check's output,
-`fwboot`) and `fwboot/` (the cards, the trap firmware).
+`fwboot`, `fwboot_cfg`) and `fwboot/` (the cards, the trap firmware;
+`fwboot_cfg`: `card_cfg_saved.img`, the card as the run left it, and
+`cfgcheck/`, the files read back from it).
 
 ### The gate
 
@@ -602,7 +607,7 @@ order, each stream on its own. They come from the sources:
 | `Platform lacks SPI RTC support` | `main()`: PLATFORM bit 2 is 0 (`havespirtc = false`) |
 | `SDHC card detected` | `MMC_Init()` (the model answers CMD8 with `0x1AA`) |
 | `partition type: 0x00 (FAT16)` | `FindDrive()`: prints `sector_buffer[450]` after reading the partition's boot sector into it, so 0x00, not the MBR's type 6 |
-| `file "MINMGAA CFG" not found` | `LoadConfiguration(0)` -> `FileOpen` (Task 11's own file names change this line) |
+| `file "MINMGAR CFG" not found`, `file "MINMGAA CFG" not found` | `LoadConfiguration(0)` -> `FileOpen` of the RISC-V name, then of the 832's (Task 11: the first-boot conversion finds no file either) |
 | `Minimig AGA BETA version 2026-10-2 ...`, `Firmware version:`, `CPU: MC68040 + FPU + MMU`, `Ported to Open AARS ...` | `fpga_init()`'s `BootPrintEx` of the stub's version reply |
 | `Loading kickstart ROM...`, `ROM dir: 0`, `##End result : 0`, `ROM loading failed` | `ColdBoot()`, `UploadKickstart()`, `ApplyConfiguration()`, `main()` |
 | `SPI 20 88 ff ff ff ff ff ff / 00 01 1a 0a 02 a4 7d` | `fpga_init()`: `OSD_CMD_VERSION` and six `SPI_reply()` |
@@ -634,6 +639,38 @@ reach SPI DATA, but byte loads take bits 31:24 where cfide returns
 nothing, so `MMC_Init()` reads every R1 as 0 and fails: no `SDHC card
 detected`, no version frame, no error page, no KEYQ frames). The trap test fails on any firmware whose
 default `rv_exception` or trap entry does not print the `EXC` line.
+
+### With an 832 config file (fwboot_cfg)
+
+`run.sh fwboot_cfg` boots the `fwboot` card plus `MINMGAA.CFG`, an 832
+(big-endian) config file: the `l2` case of `fw/ctrl_rv/test/gold/mkcfg832.py`
+(the 832 defaults with a few harmless changes: `audio.volume` 9,
+`floppy.speed` 0, two long names, `extromdir` 0x0A0B0C0D, `hdfdir[3]`
+0x01020304; `kickdir` stays 0, so the run takes the `fwboot` path to the
+"ROM missing" error loop). `LoadConfiguration` runs in `ColdBoot()` before
+the kickstart load, so the conversion and `SaveConfiguration` happen before
+that fatal error. The bench runs with `+SD_SAVE=<run>/fwboot/card_cfg_saved.img`
+(`tb_host_bridge.v` calls `sd_spi_model`'s `save_image` before the verdict;
+without the plusarg nothing is written). The gate: the milestones of
+`fwboot/milestones_cfg.txt` (`fwboot`'s with `file "MINMGAR CFG" not found`,
+`file "MINMGAA CFG" found`, `Configuration file size: 212`,
+`SaveConfiguration`'s `Trying to create a new one...`, `File created.`,
+`File written successfully.` and `Converted 832 configuration MINMGAA.CFG`),
+no `EXC`/`TRAP`, `=== PASS`, and on the saved card (`mtools`, `fsck.fat`):
+
+```
+ok   card: MINMGAR.CFG == cfgconv --to-rv MINMGAA.CFG
+ok   card: MINMGAA.CFG unchanged
+ok   card: fsck.fat -n clean
+```
+
+Measured 2026-10-18 (Task 11's image, Verilator and xsim the same): 34 of 34
+milestones, 2833 SPI frames, 20th `KEYQ` frame at cycle 86,392,290 (the
+conversion adds about 4.7 M: `fwboot` of the same image has it at 81,710,162), OSD GAP min 40, stack
+0x1950. The `fwboot` run of the same image (`p3t11f`): OSD GAP min **40**
+(Task 10's image: 44), i.e. no margin left over the 40 of `tb_spi_cdc.v`;
+`SPI_reply()` is at the same address, the callers moved (Phase 4 item, plan
+7.1 item 2).
 
 ### The stub (`minimig_spi_stub.v`)
 
@@ -838,6 +875,7 @@ the stub answers at once, so the reply bytes are right whatever the gap.
 | `+TIMEOUT=<n>` | 3000000 | `clk_114` cycles until `=== FAIL timeout` |
 | `+VERBOSE=1` / `2` | 0 | log hw accesses and SPI bytes / also every change of the bus address |
 | `+SPI_LOG=<file>` | none | `-d FWBOOT` only: the SPI frame log (`spi.txt`, see [Firmware boot](#firmware-boot-fwboot)) |
+| `+SD_SAVE=<file>` | none | `-d SDCARD` only: the card as the run left it, written before the verdict (`fwboot_cfg`) |
 | `+SD_IMG=<file>` | none | card image of the SD model (bench compiled with `-d SDCARD`); the model's other plusargs (`+SD_NCR`, `+SD_INIT_POLLS`, `+SD_LOG=1`, ...) are in `sim/common/sd_spi_model.v`. The `=== BOOT` / `=== STATS` counters need `-d RV_HOSTCPU_STATS` on both `rv_hostcpu.v` and the bench (hierarchical `hostcpu.genrv.myrv.st_*`); without it the bench leaves them out. `run.sh boot` sets both. |
 
 The bench parameter `EXTRA_WS` is the bridge's `rv_extra_ws`: idle cycles

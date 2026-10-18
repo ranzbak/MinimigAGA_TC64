@@ -26,6 +26,12 @@ make -C fw/ctrl_rv/test
 * `LIB832` defaults to `EightThirtyTwo/lib832` of the repository. Another
   checkout: `make -C fw/ctrl_rv/test LIB832=/path/to/EightThirtyTwo/lib832`.
   A missing `LIB832` fails the run, it never skips the format check.
+* `config_test` takes `CFG832_DIR=<dir>` (optional): every file there, real
+  832 config files such as copies from an SD card, gets the same round trip
+  as the generated cases (`cfgconv --to-rv`, `--to-832` back to the same
+  bytes, the same fields in both `--check` outputs), e.g.
+  `make -C fw/ctrl_rv/test run-config_test CFG832_DIR="$HOME/cfg832"`.
+  There is no config file in the repository.
 * `atapi_test` has ISO-backed cases. `ISO=<file>` names the ISO (default
   `~/work/amiga/AmigaOS3.9.iso`); every run is repeated with a name that does
   not exist, where those cases are skipped, not failed.
@@ -66,6 +72,7 @@ built `-std=gnu17 -m32 -funsigned-char`, like the 832 firmware.
 | `fmt` | format strings of the firmware: ILP32 == LP64, `fmtcheck.py` model, the 832-versus-RV differences are exactly `gold/fmt_diff_expected.txt` |
 | `swap_test` | `../swap.h` and `../swap.c`: `le16/le32/be16/be32` by the bytes they leave in memory (true on any host) and by value on this LE host, `rd_le16/rd_le32/rd_be16/rd_be32` and `wr_be16/wr_be32` at offsets 0..3 of an aligned buffer (a pointer cast would be a misaligned access there, which UBSan stops), `SwapBB/SwapBBBB/SwapWW` without sign extension on LP64 |
 | `fat_test` | the real `fat.c` over the real `mmc.c` on the card model, once per image (below): `FindDrive()` (FAT type, partition start and size against the MBR bytes, cluster size), every directory through `ScanDirectory` (names, sizes, start clusters, long names) against `mdir -/ -a` + `mshowfat` (`gold/fatlist.py`), `FileOpen` + `FileRead`/`FileNextSector`, `FileSeek` and `FileReadEx` of a 300 KB file fragmented over a deleted file's clusters, a subdirectory walk with long names (`FindDirectory`, `ChangeDirectory`, `FileOpen` by long name, `ValidateDirectory`, `FindDirectoryByCluster`), `HIGH.BIN` (on FAT32 above cluster 65535: `HighCluster`), `FileOpen` by long name of a file in the second cluster of a two-cluster directory (`GetFATLink`), a name that does not exist, and `FileCreate` + 3 x `FileWrite` + `UpdateEntry` of a 3-sector file (on FAT32 above cluster 65535), read back through `fat.c`, its raw directory entry (create/access date, create time, start cluster, `HighCluster`) against the FAT layout, then `fsck.fat -n` of the written image, `mtype` of the file and `mdir` of its modify date and time (`fat_check.sh`) |
+| `config_test` | the config file's byte order (Task 11; `config_test.c`, `config_check.sh`): `gold/mkcfg832.py` writes 832 (big-endian) files from a field table that follows `config.h` (`struct.pack`, independent of the C code): the defaults, every field non-zero and distinct, versions 2 and 3, a 208-byte version 3 file, the `fwboot_cfg` file, and five corrupt ones (id, version 5, version 0, 155 and 213 bytes); `cfgconv` (built here with the sanitizers, native and `-m32`): `--check` == the generator's text, `--to-rv`, then `--check` of the result the same fields, `--to-832` back to the same bytes, the refusals (corrupt, already in the target order, the output is the input by name, `./` spelling or hard link, nothing written); `cfg_order` of every case, every field of each `--to-rv` result through the firmware's `configTYPE` against the table, `cfg_swap` == `cfgconv`; `LoadConfiguration`/`ConfigurationExists` of the real `config.c` over `fat.c` + `mmc.c` on the card model, on `mkcard.sh` images: (a) only `MINMGAR.CFG`, (b) only 832 files (slots 0, 1, 2: converted, the RV files appear and equal `cfgconv --to-rv` resp. the version-2 rules, the conversion line on the UART; every byte the run changed lies in the new files' entries, FAT entries and clusters, the 832 files' entries and clusters are unchanged byte for byte; a second load converts nothing and writes nothing), (c) an 832 file as `MINMGAR.CFG` (rejected, "Wrong configuration file format!" then "(832 byte order)", the defaults, nothing written), (d) both (the RV file wins), (e) an RV file as `MINMGAA.CFG` (not converted), no file (the defaults == the generator's); the card after (b) by `mtools` (`MINMGAR.CFG` == `cfgconv --to-rv MINMGAA.CFG`, the 832 files unchanged) and `fsck.fat -n`; `CFG832_DIR` (above) |
 | `mmc_test` | the real `mmc.c` on the card model, over a card image it writes itself (byte i of sector n = (37 n + 11 i + (n >> 8)) mod 256): `MMC_Init`'s card commands against `gold/mmc_init_cmds.txt` (the SD model's `+SD_LOG=1` log of the L2 `boot` run, the boot ROM's same protocol: CMD0, CMD8, three CMD55/ACMD41, CMD58) and its SPEED writes (slow before CMD0, fast after CMD58, no other); `MMC_Read` with token delay 0, 4, 200 bytes, `MMC_ReadMultiple` (+ CMD12) with 4 and 200, `MMC_Write` with busy 8 and 2000 bytes, `MMC_GetCapacity` (CMD9, delay 200): data against the image, every frame exactly as long as the protocol says; the five `SD_TIMEOUT` bounds (CMD17/CMD9/CMD18 token, CMD24/CMD12 busy) on a card that never answers: failure, the message, 173..174 wait bytes in the trace and 174..175 TIMER reads (the timer advances once per byte of the loop); `MMC_Read(lba, NULL)` (direct mode) against `gold/dmode.txt` (from `gold/dmode.py`, the SD protocol with an independent CRC7; also the reference trace for Phase 4), written to `out/mmc_<64\|32>_dmode.txt`; the model's CMD55, CMD0, CMD41 = plain CMD41 |
 
 ### The `fat_test` images
@@ -161,7 +168,11 @@ the new entry's start cluster and size, `HighCluster` everywhere, in
 dates, `GetFATLink`; for `mmc_test`: `SD_TIMEOUT` 0, which must fail the
 200-byte token delay, `SD_TIMEOUT` 1000, each of the five bounds doubled on its
 own, ACMD41 without HCS, no `SPI_slow`, and the mock's direct mode cut to one
-byte) and one for every register class of the I/O map (address and width of
+byte; for `config_test`: `cfg_swap` without `hdfdir[3]` (the brief's), `cfg_order`
+without the 832 case, `LoadConfiguration` without the swap, saving over the
+832 file, with the 832 names, without "(832 byte order)", converting a file
+of any order, `ConfigurationExists` without the 832 file, and `cfgconv`
+without its output-is-input and target-order refusals) and one for every register class of the I/O map (address and width of
 SPI DATA/CS/SPEED, UART, TIMER, PLATFORM, AUDIO, `FPGA_TEMP_RAW`,
 `VIDEOSCALE`, `RECONFIGURE`, keyboard words and OUT, Akiko, RTC, I2C, the
 interrupt controllers, each CS and SPEED value, `SPI()`/`RDSPI`, and

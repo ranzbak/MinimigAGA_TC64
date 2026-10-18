@@ -77,7 +77,7 @@
 "IDE%d: Identify Device"
 "Illegal track read: %d\r"
 "Long filename: %s\n"
-"MINMGAA%dCFG"
+"MINMGAR%dCFG"
 "Minimig AGA%s version 20%d-%d-%d for Turbo Chameleon 64"
 "New directory sector: %x\n"
 "Offset: %ld"

@@ -22,6 +22,7 @@
 #   bash sim/host_bridge/run.sh boot_nofile  # card without it: error path
 #   bash sim/host_bridge/run.sh fwboot       # the real firmware to its main loop
 #   bash sim/host_bridge/run.sh fwboot_trap  # the same, trap constructor linked in
+#   bash sim/host_bridge/run.sh fwboot_cfg   # fwboot with an 832 config file to convert
 #
 # Environment: RUNTAG (run directory run_${RUNTAG:-wt}), SLAT (8), SJIT (0),
 # EXTRA_WS (0, the bridge's rv_extra_ws), SEED (1), XARGS (extra plusargs,
@@ -58,6 +59,12 @@
 #                the line of <run>/fwboot/trap_expect.txt (EXC mcause 2,
 #                mepc = smoke_trap from the map, mtval FFFFFFFF), no
 #                HandleFpga frame, bench "=== PASS"
+#   fwboot_cfg   fwboot on card_cfg.img (the fwboot card plus an 832
+#                MINMGAA.CFG, gold/mkcfg832.py's l2 case): the milestones of
+#                fwboot/milestones_cfg.txt (the first-boot conversion),
+#                then the card as the run left it (+SD_SAVE): mtools reads
+#                MINMGAR.CFG == cfgconv --to-rv MINMGAA.CFG and MINMGAA.CFG
+#                unchanged, fsck.fat -n clean; no EXC/TRAP, "=== PASS"
 #
 # mutant: t_b2b over the SLAT/SJIT matrix in three legs (EXTRA_WS from the
 # environment is ignored, the legs set it):
@@ -416,12 +423,22 @@ FWBOOT_TRAP_TO=65900000   # fwboot_trap: 1.5 x the cycle of the EXC line, 43,926
 fwboot() {
 	local t=$1 rom="fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd" st to card fw
 	local log="$run/tb_${t}_x${XW}_s${SLAT:-8}_j${SJIT:-0}.log"
+	local ms="$HERE/fwboot/milestones.txt" save=() saved="$run/fwboot/card_cfg_saved.img"
 	fw=$FWBIN
 	if [ "$t" = fwboot ]; then
 		[ -f "$fw" ] || die "no firmware $fw (make -C fw/ctrl_rv, or FW=<RV32OSDA.BIN>)"
 		make -s -C "$HERE/fwboot" B="$run/fwboot" FW="$fw" all > make_fwboot.log 2>&1 \
 			|| { tail -20 make_fwboot.log; die "make fwboot card (make_fwboot.log)"; }
 		card="$run/fwboot/card.img"; to=$FWBOOT_TO
+	elif [ "$t" = fwboot_cfg ]; then
+		[ -f "$fw" ] || die "no firmware $fw (make -C fw/ctrl_rv, or FW=<RV32OSDA.BIN>)"
+		make -s -C "$HERE/fwboot" B="$run/fwboot" FW="$fw" cfg > make_fwboot.log 2>&1 \
+			|| { tail -20 make_fwboot.log; die "make fwboot_cfg card (make_fwboot.log)"; }
+		card="$run/fwboot/card_cfg.img"; to=$FWBOOT_TO
+		ms="$HERE/fwboot/milestones_cfg.txt"
+		rm -f "$saved"
+		[ ${#saved} -le 1024 ] || die "saved card path longer than 1024 characters: $saved"
+		save=("SD_SAVE=$saved")
 	else
 		make -C "$HERE/fwboot" B="$run/fwboot" trap > make_fwboot.log 2>&1 \
 			|| { tail -20 make_fwboot.log; die "make fwboot trap firmware/card (make_fwboot.log)"; }
@@ -430,7 +447,7 @@ fwboot() {
 	[ ${#card} -le 1024 ] || die "card image path longer than 1024 characters (sd_spi_model's +SD_IMG buffer): $card"
 	if git -C "$ROOT" diff --quiet HEAD -- "$rom"; then st="unmodified (= git HEAD)"; else st="BAD  MODIFIED against git HEAD"; fi
 	echo "boot ROM: $rom $st, sha256 $(sha256sum "$ROOT/$rom" | cut -c1-16)" | tee "$run/results.txt"
-	if [ "$t" = fwboot ]; then
+	if [ "$t" != fwboot_trap ]; then
 		echo "firmware: $fw, $(stat -c %s "$fw") bytes, sha256 $(sha256sum "$fw" | cut -c1-16)" | tee -a "$run/results.txt"
 	else
 		echo "firmware: $run/fwboot/trapfw/RV32OSDA.BIN (+ smoke_trap.o), expect: $(cat "$run/fwboot/trap_expect.txt")" \
@@ -451,14 +468,14 @@ fwboot() {
 	local t0=$SECONDS
 	# shellcheck disable=SC2046
 	simrun "tb_${t}_x$XW" "$log" "TEST=$t" "SLAT=${SLAT:-8}" "SJIT=${SJIT:-0}" "SEED=${SEED:-1}" \
-		"SD_IMG=$card" "TIMEOUT=${FWBOOT_TIMEOUT:-$to}" "SPI_LOG=$run/spi.txt" $(xargs_list)
+		"SD_IMG=$card" "TIMEOUT=${FWBOOT_TIMEOUT:-$to}" "SPI_LOG=$run/spi.txt" "${save[@]}" $(xargs_list)
 	local secs=$((SECONDS - t0))
 	python3 -I "$HERE/spitrace.py" summary "$run/spi.txt" > "$run/spi_summary.txt" 2>&1
 	{
 		grep -E '^=== (BOOT|STATS|HW accesses|cycle limit|HandleFpga|SPI frames|OSD GAP|STACK)' "$log"
 		grep -q '^SD: image .* loaded' "$log" || echo "BAD  the SD model did not load $card"
-		if [ "$t" = fwboot ]; then
-			if python3 -I "$HERE/spitrace.py" check "$HERE/fwboot/milestones.txt" "$log" "$run/spi.txt" \
+		if [ "$t" != fwboot_trap ]; then
+			if python3 -I "$HERE/spitrace.py" check "$ms" "$log" "$run/spi.txt" \
 				> "$run/milestones.txt" 2>&1; then
 				echo "ok   $(tail -1 "$run/milestones.txt") ($run/milestones.txt)"
 			else
@@ -466,6 +483,7 @@ fwboot() {
 				echo "BAD  $(tail -1 "$run/milestones.txt") ($run/milestones.txt)"
 			fi
 			grep -E '^UART: .*(EXC |TRAP )' "$log" | sed 's/^/BAD  /'
+			[ "$t" = fwboot_cfg ] && fwboot_cfg_card "$saved"
 		else
 			# the boot ROM's last line has no newline: the EXC text ends that line
 			if grep -qE "^UART: .*$(cat "$run/fwboot/trap_expect.txt")\$" "$log"; then
@@ -483,6 +501,28 @@ fwboot() {
 	} | tee -a "$run/results.txt"
 	if grep -q 'BAD' "$run/results.txt"; then echo "=== $t FAILED"; return 1; fi
 	echo "=== $t PASS"
+}
+
+# fwboot_cfg_card <saved card>: the config files on the card the run left
+# (mtools, fsck.fat): the firmware wrote MINMGAR.CFG = cfgconv --to-rv of
+# the 832 file and left MINMGAA.CFG as it was
+fwboot_cfg_card() {
+	local img=$1 d="$run/fwboot/cfgcheck" off=$((2048 * 512))
+	if [ ! -f "$img" ]; then echo "BAD  no saved card $img (+SD_SAVE)"; return; fi
+	rm -rf "$d"; mkdir -p "$d"
+	if ! MTOOLS_SKIP_CHECK=1 mcopy -n -i "$img@@$off" ::MINMGAR.CFG ::MINMGAA.CFG "$d/" 2> "$d/mcopy.err"; then
+		echo "BAD  mcopy of MINMGAR.CFG / MINMGAA.CFG from the saved card: $(head -1 "$d/mcopy.err")"; return
+	fi
+	"$run/fwboot/cfgconv" --to-rv "$run/fwboot/cfg/MINMGAA.CFG" "$d/expect_rv.cfg" || { echo "BAD  cfgconv --to-rv"; return; }
+	if cmp -s "$d/MINMGAR.CFG" "$d/expect_rv.cfg"; then echo "ok   card: MINMGAR.CFG == cfgconv --to-rv MINMGAA.CFG"
+	else echo "BAD  card: MINMGAR.CFG differs from cfgconv --to-rv MINMGAA.CFG ($d)"; fi
+	if cmp -s "$d/MINMGAA.CFG" "$run/fwboot/cfg/MINMGAA.CFG"; then echo "ok   card: MINMGAA.CFG unchanged"
+	else echo "BAD  card: MINMGAA.CFG changed ($d)"; fi
+	dd if="$img" of="$d/part.img" bs=512 skip=2048 status=none
+	if PATH=$PATH:/usr/sbin:/sbin fsck.fat -n "$d/part.img" > "$d/fsck.txt" 2>&1; then echo "ok   card: fsck.fat -n clean"
+	else echo "BAD  card: fsck.fat -n: $(tail -1 "$d/fsck.txt") ($d/fsck.txt)"; fi
+	rm -f "$d/part.img"
+	MTOOLS_SKIP_CHECK=1 mdir -i "$img@@$off" :: > "$d/mdir.txt" 2>&1 || true
 }
 
 # norm <log>: a run log without the simulators' own lines (xsim's banner,
@@ -541,7 +581,7 @@ case "${1:-}" in
 		boot "$1"
 		exit $?
 		;;
-	fwboot|fwboot_trap)
+	fwboot|fwboot_trap|fwboot_cfg)
 		# FW relative to the caller's directory (setup changes into the run's)
 		FWBIN=$(realpath -m -- "${FW:-$ROOT/fw/ctrl_rv/build/RV32OSDA.BIN}")
 		setup

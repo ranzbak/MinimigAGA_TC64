@@ -11,6 +11,7 @@
 #   CARD=<file>    the card image of mock_selftest (default: built by tools/sim/mkcard.sh)
 #   FATIMG=<dir>   the three card images of fat_test and their listings (fatimg.sh;
 #                  default $(B)); FATIMG_DEPS= uses them as they are (mutants.sh)
+#   CFG832_DIR=<dir>  real 832 config files: config_test round-trips each (optional)
 # Variables that mutants.sh points at a mutated copy of the sources, the tests
 # and the gold files: SRC TD GOLD B, and WERROR=-Wno-error.
 
@@ -115,6 +116,36 @@ run32-mmc_test: $(B)/mmc_test_32 $(B)/dmode.ok
 run-mmc_test: run64-mmc_test run32-mmc_test
 .PHONY: run-mmc_test run64-mmc_test run32-mmc_test
 
+# config_test: the config file's byte order (Task 11): cfgswap.c, cfgconv
+# (built here with the sanitizers, native and -m32), LoadConfiguration of
+# the real config.c over fat.c + mmc.c on the card model.  The cases come
+# from gold/mkcfg832.py (832 files and the expected fields, cfgcases.h);
+# config_check.sh runs cfgconv on them, builds the card images and checks
+# the card config_test saved with mtools and fsck.fat.  CFG832_DIR=<dir>:
+# the same round trip on real 832 config files.
+CFG_SRCS = $(TD)/mock_hw.c $(SRC)/hardware.c $(SRC)/mmc.c $(SRC)/uart.c $(SRC)/fat.c $(SRC)/swap.c \
+           $(SRC)/rvlibc.c $(SRC)/errors.c $(SRC)/rafile.c $(SRC)/config.c $(SRC)/cfgswap.c
+CFGCONV_SRCS = $(SRC)/tools/cfgconv/cfgconv.c $(SRC)/cfgswap.c
+$(B)/cfg/cfgcases.h: $(GOLD)/mkcfg832.py
+	@mkdir -p $(@D)
+	$(PY) $(GOLD)/mkcfg832.py $(@D)
+$(B)/config_test: $(TD)/config_test.c $(CFG_SRCS) $(HDRS) $(B)/cfg/cfgcases.h
+	$(HOSTCC) $(CFLAGS) -I$(B)/cfg -o $@ $(TD)/config_test.c $(CFG_SRCS)
+$(B)/config_test_32: $(TD)/config_test.c $(CFG_SRCS) $(HDRS) $(B)/cfg/cfgcases.h
+	$(HOSTCC) -m32 $(CFLAGS) -I$(B)/cfg -o $@ $(TD)/config_test.c $(CFG_SRCS)
+$(B)/cfgconv: $(CFGCONV_SRCS) $(SRC)/cfgswap.h $(SRC)/swap.h
+	@mkdir -p $(@D)
+	$(HOSTCC) $(CFLAGS) -o $@ $(CFGCONV_SRCS)
+$(B)/cfgconv_32: $(CFGCONV_SRCS) $(SRC)/cfgswap.h $(SRC)/swap.h
+	@mkdir -p $(@D)
+	$(HOSTCC) -m32 $(CFLAGS) -o $@ $(CFGCONV_SRCS)
+run64-config_test: $(B)/config_test $(B)/cfgconv
+	CFG832_DIR='$(CFG832_DIR)' bash $(TD)/config_check.sh $(B)/config_test $(B)/cfgconv $(B)/cfg $(B) 64 $(TOP)/tools/sim/mkcard.sh
+run32-config_test: $(B)/config_test_32 $(B)/cfgconv_32
+	CFG832_DIR='$(CFG832_DIR)' bash $(TD)/config_check.sh $(B)/config_test_32 $(B)/cfgconv_32 $(B)/cfg $(B) 32 $(TOP)/tools/sim/mkcard.sh
+run-config_test: run64-config_test run32-config_test
+.PHONY: run-config_test run64-config_test run32-config_test
+
 # atapi_test without the ISO: the ISO-backed cases are skipped, not failed
 run64-atapi_test::
 	$(B)/atapi_test /nonexistent.iso
@@ -136,7 +167,8 @@ $(B)/openhf.inc: $(SRC)/hdd.c
 $(B)/openhf_test $(B)/openhf_test_32: $(B)/openhf.inc
 
 run: fmt run-mock_selftest run-cue_test run-cdaudio_test run-atapi_test run-cdrom_test \
-     run-openhf_test run-lib_test run-hwmap_test run-swap_test run-fat_test run-mmc_test
+     run-openhf_test run-lib_test run-hwmap_test run-swap_test run-fat_test run-mmc_test \
+     run-config_test
 
 clean:
 	$(RM) -r out mut

@@ -23,7 +23,9 @@ UART SDHC card detected
 # partition's boot sector into sector_buffer (fat.c: MMC_Read(boot_sector,
 # sector_buffer) comes first), so 0x00, not the MBR's type 6
 UART partition type: 0x00 (FAT16)
-# ColdBoot() -> LoadConfiguration(0) -> FileOpen("MINMGAA CFG"): no file
+# ColdBoot() -> LoadConfiguration(0) -> FileOpen("MINMGAR CFG") (the RISC-V
+# name), then the 832's "MINMGAA CFG" (first-boot conversion): neither exists
+UART file "MINMGAR CFG" not found
 UART file "MINMGAA CFG" not found
 # ColdBoot() -> fpga_init(): BootPrintEx lines (printf + boot screen) of the
 # stub's OSD_CMD_VERSION reply (beta 1, 20 + 0x1A, 0x0A, 0x02; caps 0x7D)

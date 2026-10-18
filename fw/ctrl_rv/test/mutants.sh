@@ -36,6 +36,8 @@ prep() {
   mkdir -p "mut/$n/src" "mut/$n/t"
   cp ../*.c ../*.h "mut/$n/src/"
   cp -r ../arch "mut/$n/src/arch"
+  mkdir -p "mut/$n/src/tools"
+  cp -r ../tools/cfgconv "mut/$n/src/tools/cfgconv"
   cp ./*.c ./*.h ./*.sh "mut/$n/t/"
   cp -r gold "mut/$n/gold"
 }
@@ -93,7 +95,7 @@ fmt() {
 control() {
   prep control
   local t rc=0
-  for t in mock_selftest cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_test hwmap_test swap_test fat_test mmc_test; do
+  for t in mock_selftest cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_test hwmap_test swap_test fat_test mmc_test config_test; do
     mk control "run64-$t" > "mut/control/log.$t" 2>&1 || { echo "control: run64-$t FAILED (mut/control/log.$t)"; rc=1; }
   done
   mk control fmt > mut/control/log.fmt 2>&1 || { echo "control: fmt FAILED (mut/control/log.fmt)"; rc=1; }
@@ -176,6 +178,21 @@ unit mmc_init_hcs mmc_test src mmc.c 's/MMC_Command(CMD41, 1 << 30)/MMC_Command(
 unit mmc_init_slow mmc_test src mmc.c 's/^\tSPI_slow();$/\t;/' "FAIL SPI slow before CMD0"
 # direct mode: one byte instead of cfide's 4096 clocks -> gold/dmode.txt
 unit mmc_dmode mmc_test t mock_hw.c 's/for (int n = 0; n < 512; n++) {/for (int n = 0; n < 1; n++) {/' "FAIL the direct-mode trace"
+
+# ---- the config file's byte order (config_test) ------------------------------
+# the brief's mutant: cfg_swap without hdfdir[3] -> its field differs in cfgconv's RV file
+unit cfg_swap_hdfdir3 config_test src cfgswap.c 's/^\tCFG_OFF_HDFDIR + 12,$/\t/' "cfgconv --check distinct.rv: other fields"
+unit cfg_order_832 config_test src cfgswap.c 's/^\t\treturn CFG_832;$/\t\treturn CFG_BAD;/' "FAIL: cfgconv --check defaults.cfg"
+# LoadConfiguration: the 832 file not swapped, saved over, the old names, no message, no fallback
+unit cfg_noswap config_test src config.c 's/^\t\t\t\tcfg_swap(sector_buffer);/\t\t\t\t;/' "FAIL (b) LoadConfiguration slot 0"
+unit cfg_save832 config_test src config.c 's/SaveConfiguration(filename);\t\/\/ creates/SaveConfiguration((char *)name832);\t\/\/ creates/' "FAIL (b): MINMGAA CFG data cluster unchanged"
+unit cfg_name832 config_test src config.c 's/"MINMGAR%dCFG"/"MINMGAA%dCFG"/; s/"MINMGAR CFG"/"MINMGAA CFG"/' "FAIL (a) LoadConfiguration"
+unit cfg_nomsg config_test src config.c 's/ConfigMessage("(832 byte order)");/;/' "FAIL (c) BootPrint: wrong format, 832 byte order"
+unit cfg_exists config_test src config.c 's/if ((name832 = ConfigName832(filename, buf832)) \&\& FileOpen(\&file, name832))/if (0)/' "FAIL (b) ConfigurationExists(slot 0), 832 file only"
+unit cfg_anyorder config_test src config.c 's/if (name832 \&\& order!=CFG_832)/if (0)/' "FAIL (e) LoadConfiguration"
+# cfgconv's refusals (without the order check its internal check still refuses, with another message)
+unit cfgconv_same config_test src tools/cfgconv/cfgconv.c 's/if (same_file(argv\[2\], argv\[3\])) {/if (0) {/' "wrote over its input"
+unit cfgconv_order config_test src tools/cfgconv/cfgconv.c 's/if (order == to) {/if (0) {/' "FAIL: cfgconv --to-832 defaults.cfg: cfgconv:"
 
 # ---- the mock itself (mock_selftest) -----------------------------------------
 unit mock_token mock_selftest t mock_hw.c 's/c_push(0xFE);/c_push(0xFF);/'

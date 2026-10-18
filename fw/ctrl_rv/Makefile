@@ -34,7 +34,7 @@ PROJECT := RV32OSDA
 SRCS := hardware.c config.c fat.c fdd.c fpga.c boot.c hdd.c main.c menu.c \
         mmc.c spi.c osd.c rafile.c swap.c hexdump.c uart.c errors.c \
         c64keys.c akiko.c audio.c drivesounds.c rtc.c i2c.c adv7511.c \
-        atapi.c cdrom.c cue.c cdaudio.c rvlibc.c
+        atapi.c cdrom.c cue.c cdaudio.c rvlibc.c cfgswap.c
 OBJS := $(addprefix $(B)/,$(SRCS:.c=.o))
 
 CFLAGS  := $(RV_CFLAGS_FW) -std=gnu23 --specs=nano.specs -g -I. -Iarch \

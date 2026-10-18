@@ -1,3 +1,5 @@
+#include <stdint.h>
+
 #include "fat.h"
 
 #define CONFIG_VERSION 4
@@ -67,7 +69,7 @@ typedef struct
 typedef struct
 {
   char          id[8];
-  unsigned long version;
+  uint32_t      version;	// uint32_t: the file layout (cfgswap.h) on every ABI
   kickstartTYPE kickstart;
   filterTYPE    filter;
   unsigned char memory;
@@ -101,9 +103,9 @@ typedef struct
 	// ignores the two bytes.
 	unsigned char crt_mask;
 	unsigned char crt_bloom;
-	unsigned long kickdir;	// Directory of kick file.
-	unsigned long extromdir;	// Directory of ext rom file.
-	unsigned long hdfdir[4]; // Directory for HDF files.  Space for expansion to four devices.
+	uint32_t kickdir;	// Directory of kick file.
+	uint32_t extromdir;	// Directory of ext rom file.
+	uint32_t hdfdir[4]; // Directory for HDF files.  Space for expansion to four devices.
   hardfileTYPE  secondaryhardfile[2]; // hardfile entries for potential secondary IDE devices.
   audioTYPE     audio;
   videoPosTYPE  videopos;

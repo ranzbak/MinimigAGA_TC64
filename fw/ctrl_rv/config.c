@@ -12,6 +12,7 @@
 #include "menu.h"
 #include "config.h"
 #include "adv7511.h"
+#include "cfgswap.h"
 
 #include "hexdump.h"
 
@@ -226,18 +227,43 @@ char UploadActionReplay()
 }
 
 
+// RISC-V config files (little-endian, cfgswap.h): MINMGAR CFG, MINMGAR<n>CFG.
+// The 832 firmware's are MINMGAA..CFG (big-endian): read once, converted,
+// saved under the RV name (LoadConfiguration), never written.
 void SetConfigurationFilename(int config)
 {
 	if(config)
-		sprintf(configfilename,"MINMGAA%dCFG",config);
+		sprintf(configfilename,"MINMGAR%dCFG",config);
 	else
-		strcpy(configfilename,"MINMGAA CFG");
+		strcpy(configfilename,"MINMGAR CFG");
+}
+
+// The 832 firmware's name for an RV config file name (MINMGAR.. -> MINMGAA..)
+// in buf (12 bytes), or NULL for any other name.
+static const char *ConfigName832(const char *filename, char *buf)
+{
+	if (strncmp(filename, "MINMGAR", 7) != 0)
+		return(NULL);
+	strncpy(buf, filename, 11);
+	buf[11] = 0;
+	buf[6] = 'A';
+	return(buf);
+}
+
+// A boot message that also reaches the UART (BootPrint is disabled, fpga.c)
+static void ConfigMessage(const char *text)
+{
+	BootPrint(text);
+	printf("%s", text);
+	printf("\n");
 }
 
 
-
+// An 832 file of the slot counts too: its first load converts it.
 unsigned char ConfigurationExists(char *filename)
 {
+	char buf832[12];
+	const char *name832;
 	if(!filename)
 		filename=configfilename;	// Use slot-based filename if none provided.
 	ChangeDirectory(0); // Config files always live in the root directory
@@ -245,6 +271,9 @@ unsigned char ConfigurationExists(char *filename)
     {
 		return(1);
 	}
+	ClearError(ERROR_FILESYSTEM);
+	if ((name832 = ConfigName832(filename, buf832)) && FileOpen(&file, name832))
+		return(1);
 	ClearError(ERROR_FILESYSTEM);
 	return(0);
 }
@@ -254,21 +283,43 @@ static const char config_id[] = "MNMGCFGA"; /* New signature for AGA core */
 
 // Config files are read and written as sizeof(configTYPE) bytes and older
 // firmware expects 212 (there is no tail padding left: hdmi_clkdelay took
-// it).  If the struct ever grows, this array's size is -1: vbcc832 then
-// warns "warning 61 ... array of size <=0" (other compilers stop).
-typedef char config_size_is_212[(sizeof(configTYPE) == 212) ? 1 : -1];
+// it).  cfgswap.c swaps the 32-bit fields at these offsets (832 <-> RV).
+_Static_assert(sizeof(configTYPE) == CFG_SIZE, "configTYPE is 212 bytes");
+_Static_assert(CONFIG_VERSION == CFG_VERSION_MAX, "cfg_order knows the versions");
+_Static_assert(offsetof(configTYPE, version) == CFG_OFF_VERSION, "version @8");
+_Static_assert(offsetof(configTYPE, kickdir) == CFG_OFF_KICKDIR, "kickdir @132");
+_Static_assert(offsetof(configTYPE, extromdir) == CFG_OFF_EXTROMDIR, "extromdir @136");
+_Static_assert(offsetof(configTYPE, hdfdir[0]) == CFG_OFF_HDFDIR, "hdfdir[0] @140");
+_Static_assert(offsetof(configTYPE, hdfdir[1]) == CFG_OFF_HDFDIR + 4, "hdfdir[1] @144");
+_Static_assert(offsetof(configTYPE, hdfdir[2]) == CFG_OFF_HDFDIR + 8, "hdfdir[2] @148");
+_Static_assert(offsetof(configTYPE, hdfdir[3]) == CFG_OFF_HDFDIR + 12, "hdfdir[3] @152");
+_Static_assert(offsetof(configTYPE, secondaryhardfile) == CFG_OFF_HDFDIR + 16, "no other long after hdfdir");
 
 unsigned char LoadConfiguration(char *filename)
 {
 	int updatekickstart __attribute__((unused)) =0; // only ever assigned (832 leftover)
 	int result=0;
+	int order=CFG_BAD;
+	char buf832[12];
+	const char *name832=NULL;	// set: the 832's file of the slot is being converted
+	int opened;
 
 	if(!filename)
 		filename=configfilename;	// Use slot-based filename if none provided.
 
     // load configuration data
 	ChangeDirectory(0); // Config files always live in the root directory
-    if (FileOpen(&file, filename))
+	opened=FileOpen(&file, filename);
+	if (!opened)
+	{
+		// No RV file (the first boot after the 832 firmware): the slot's 832 file
+		ClearError(ERROR_FILESYSTEM);
+		name832=ConfigName832(filename, buf832);
+		opened=name832 && FileOpen(&file, name832);
+		if (!opened)
+			name832=NULL;
+	}
+    if (opened)
     {
       configTYPE *tmpconf=(configTYPE *)&sector_buffer;
       BootPrint("Opened configuration file\n");
@@ -276,6 +327,9 @@ unsigned char LoadConfiguration(char *filename)
         if (file.size <= sizeof(config))
         {
             FileRead(&file, sector_buffer);
+			order=cfg_order(sector_buffer, file.size);
+			if (name832 && order==CFG_832)
+				cfg_swap(sector_buffer);	// the 832's big-endian file, in memory only
 
 			// A few more sanity checks...
 			if(tmpconf->floppy.drives<=4) 
@@ -320,14 +374,32 @@ unsigned char LoadConfiguration(char *filename)
 			if(tmpconf->version>CONFIG_VERSION)
 			{
 				BootPrint("Wrong configuration file format!\n");
+				if (order==CFG_832 && !name832)
+					ConfigMessage("(832 byte order)");	// an 832 file under the RV name
 				result=0;
 			}
+			if (name832 && order!=CFG_832)
+				result=0;	// only an 832-order file is converted
 
 			tmpconf->version=CONFIG_VERSION;
 			if(result)
                 memcpy((void*)&config, (void*)sector_buffer, sizeof(config));
         }
     }
+	if (result && name832)
+	{
+		// "MINMGAA CFG" -> "MINMGAA.CFG"
+		char msg[48]="Converted 832 configuration ";
+		char *p=msg+strlen(msg);
+		int i;
+		for (i=0; i<8 && name832[i]!=' '; i++)
+			*p++=name832[i];
+		*p++='.';
+		memcpy(p, name832+8, 3);
+		p[3]=0;
+		SaveConfiguration(filename);	// creates the RV file; the 832's is left as it is
+		ConfigMessage(msg);
+	}
     if(!result)
 	{
         BootPrint("Config loading failed - using defaults\n");
