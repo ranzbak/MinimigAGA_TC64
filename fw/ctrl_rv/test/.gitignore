@@ -21,3 +21,4 @@ openhf.inc
 /fmt_diff.txt
 /fmt.ok
 /mock_trace.tmp
+/gold/__pycache__/

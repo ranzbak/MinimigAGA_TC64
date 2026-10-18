@@ -51,7 +51,7 @@ static hdfTYPE cd_audio;		/* the disc file being played (13.5: the second open f
 static int cd_audio_file = -1;		/* its index in cd_disc.file[], -1 = none */
 static uint32_t cd_underruns;		/* cda_underruns() at the last report */
 static struct cd_disc cd_disc;		/* the disc in the drive */
-static struct cue_parser cd_cue;	/* 2.5 KB: static, the stack is small (8 KB boot BRAM) */
+static struct cue_parser cd_cue;	/* 2.5 KB: static, the stack is ~3 KB (0x1400..0x2000) */
 static RAFile cd_cuefile;		/* the CUE text */
 static RAFile cd_lookup;		/* each FILE of the CUE: its size, a WAV's header */
 static unsigned long cd_dir;		/* the directory of the disc's files */

@@ -1,9 +1,10 @@
 /* drivesounds_test: the drive sound ring against the 832's (Task 14).
  *   drivesounds_test <dir>
  * <dir> (the Makefile's out/ds) holds what gold/drivesounds.py wrote --
- * dscases.h (compiled in), ring_synth.bin, ring_real.bin, SYNTH.BIN -- and
+ * dscases.h (compiled in), ring_synth.bin, ring_real.bin, SYNTH.BIN, the
+ * bad files -- and
  * card.img (tools/sim/mkcard.sh: DRIVESND.BIN = sw/mkdrivesounds/drivesnd.bin,
- * SYNTH.BIN).
+ * SYNTH.BIN and the bad files).
  * The real drivesounds.c loads each file through rafile.c + fat.c + mmc.c on
  * the card model into the mock's RAM in front of AUDIO_BUFFER (mock_hw.c),
  * where it lands as on the target (DRIVESND.BIN at 2 mod 4: its header
@@ -17,6 +18,9 @@
  *     a case whose load differs stops there
  *   - after every drivesounds_fill(): its return value, the AUDIO register,
  *     and the whole 64 KB ring, byte for byte, against the snapshot
+ *   - five bad files (TRUNC ODDLEN ODDSND NEGSIZE NEGID.BIN, drivesounds.py
+ *     bad_files): the load leaves the ring as it was, and its return value,
+ *     drivesounds_loaded() and lines are the port's bounds rule (rv_load)
  * The firmware's printf (rvlibc.c) goes to the mock UART; this program
  * reports with fprintf(stdout), line buffered (a mutant that hangs a render
  * loop is stopped by mutants.sh's timeout: the FAIL lines before it stay).
@@ -43,6 +47,12 @@ struct ds_op {
 	int b;              /* DS_INIT: the TIMER value the case starts at */
 	int want_ret;       /* DS_INIT, DS_FILL: the return value */
 	int want_audio;     /* DS_FILL: the AUDIO register afterwards */
+};
+struct ds_bad {             /* a bad file: the RV port's bounded load */
+	const char *name;   /* the 8.3 directory name */
+	int want_ret;       /* drivesounds_init's return value */
+	int want_loaded;    /* drivesounds_loaded() afterwards */
+	const char *lines;  /* the load's lines (load_lines) */
 };
 #include "dscases.h"
 
@@ -87,8 +97,8 @@ static unsigned char *slurp(const char *path, size_t *n)
 }
 
 /* the load's UART lines as drivesounds.py writes them: "Audio file - length
-   <n>" and "Sound <id> at <addr>, length <size>" without the address (a host
-   address here); the other lines (fat.c's) left out */
+   <n>", "Sound <id> at <addr>, length <size>" without the address (a host
+   address here) and the "Bad ..." lines; the other lines (fat.c's) left out */
 static void load_lines(char *out, size_t cap)
 {
 	const char *u = mock_uart();
@@ -102,7 +112,7 @@ static void load_lines(char *out, size_t cap)
 		snprintf(line, sizeof line, "%.*s", (int)len, u);
 		if (sscanf(line, "Sound %d at %X, length %d", &id, &addr, &size) == 3)
 			n += (size_t)snprintf(out + n, cap - n, "Sound %d length %d\n", id, size);
-		else if (!strncmp(line, "Audio file", 10))
+		else if (!strncmp(line, "Audio file", 10) || !strncmp(line, "Bad ", 4))
 			n += (size_t)snprintf(out + n, cap - n, "%s\n", line);
 		if (n >= cap) { say("FAIL load_lines: too long\n"); exit(1); }
 		u += len + (u[len] != 0);
@@ -192,6 +202,37 @@ static void run_case(const char *dir, const char *name, const struct ds_op *ops,
 	free(snaps);
 }
 
+/* a bad file (drivesounds.py bad_files, rv_load): the load must not write
+   into the ring (a pattern that a byte swap changes), and its return value,
+   loaded flag and lines are the port's rule */
+static void run_bad(const struct ds_bad *c)
+{
+	char what[160], lines[2048];
+	unsigned char *ring = mock_ring();
+	size_t nd = 0;
+	int fails0 = fails;
+	for (size_t i = 0; i < RING; i++)
+		ring[i] = (unsigned char)(i * 37 + 11);
+	mock_timer_step(1);
+	mock_uart_clear();
+	snprintf(what, sizeof what, "bad %s: drivesounds_init", c->name);
+	check(what, drivesounds_init(c->name), c->want_ret);
+	for (size_t i = 0; i < RING; i++)
+		nd += ring[i] != (unsigned char)(i * 37 + 11);
+	snprintf(what, sizeof what, "bad %s: ring written, bytes", c->name);
+	check(what, (long)nd, 0);
+	snprintf(what, sizeof what, "bad %s: drivesounds_loaded()", c->name);
+	check(what, drivesounds_loaded(), c->want_loaded);
+	load_lines(lines, sizeof lines);
+	cases++;
+	if (strcmp(lines, c->lines)) {
+		say("FAIL bad %s: load, the UART says\n%swant\n%s", c->name, lines, c->lines);
+		fails++;
+	}
+	if (fails == fails0)
+		say("ok   bad %s: refused as the port's rule says, the ring untouched\n", c->name);
+}
+
 int main(int argc, char **argv)
 {
 	char path[1024];
@@ -212,6 +253,8 @@ int main(int argc, char **argv)
 	         ds_lines_synth, DS_SNAPS_SYNTH);
 	run_case(argv[1], "real", ds_ops_real, sizeof ds_ops_real / sizeof ds_ops_real[0],
 	         ds_lines_real, DS_SNAPS_REAL);
+	for (size_t i = 0; i < sizeof ds_bad / sizeof ds_bad[0]; i++)
+		run_bad(&ds_bad[i]);
 	say("%s: %d checks, %d failed\n", fails ? "FAIL" : "PASS", cases, fails);
 	return fails != 0;
 }

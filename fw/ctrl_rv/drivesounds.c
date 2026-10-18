@@ -459,9 +459,17 @@ int drivesounds_init(const char *filename)
 			   are read byte by byte (buf is at AUDIO_BUFFER - size, and
 			   the sizes are even, not multiples of 4: misaligned longs),
 			   and each sound's samples are made native here, once, in
-			   place (the render loops read them as shorts). */
-			if(strncmp(buf,"DRIVESND",8)==0)
+			   place (the render loops read them as shorts).  That write is
+			   bounded (the 832 only read): an odd file length (an odd
+			   halfword address: a trap) is refused; a sound with a negative
+			   id, a negative or odd size or more bytes than are left before
+			   AUDIO_BUFFER ends the list, as does a header with fewer than
+			   8 bytes left. */
+			if(file.size&1)
+				printf("Bad length in DriveSounds file\n");
+			else if(strncmp(buf,"DRIVESND",8)==0)
 			{
+				char *end=(char *)AUDIO_BUFFER;
 				int id=0;
 				buf+=8;
 				id=rd_be32(buf);
@@ -470,10 +478,15 @@ int drivesounds_init(const char *filename)
 				buf+=4;
 				while(size)
 				{
-					if(size && id<DRIVESOUND_COUNT)
+					if(size && id>=0 && id<DRIVESOUND_COUNT)
 					{
 						int i;
 						short *samples=(short *)buf;
+						if(size<0 || (size&1) || size>end-buf)
+						{
+							printf("Bad sound in DriveSounds file\n");
+							break;
+						}
 						printf("Sound %d at %X, length %d\n",id,(unsigned int)(uintptr_t)buf,size);
 						drivesounds.sounds[id].base=samples;
 						drivesounds.sounds[id].length=size/2; /* Size needs to be in 16-bit words */
@@ -481,6 +494,8 @@ int drivesounds_init(const char *filename)
 							samples[i]=(short)rd_be16(&samples[i]);
 						buf+=size;
 						result=1;
+						if(end-buf<8)
+							break;
 						id=rd_be32(buf);
 						buf+=4;
 						size=rd_be32(buf);

@@ -1,6 +1,7 @@
 /*
  * cue_emu: the CUE parser and disc model compiled by vbcc832 and run in
- * 832e (make -C fw/ctrl_832/test/emu).  cue_test checks the logic with gcc;
+ * 832e (make -C fw/ctrl_832/test/emu); this copy in fw/ctrl_rv is built
+ * for the L1 bench (sim/rv_l1/prog/Makefile).  cue_test checks the logic with gcc;
  * this checks what vbcc832 makes of it: every narrow field of the reference
  * disc (13.9), the int32 error fields of a refusal (set and returned with
  * the same value: the 12.6 trap), cue_locate and cue_wav.  The last line is
@@ -21,7 +22,8 @@ static void expect(const char *what, unsigned int got, unsigned int want)
 		printf("ok   %s = %u\n", what, got);
 }
 
-/* Not "while (*a && *a == *b) { a++; b++; }": vbcc832 drops those increments. */
+/* Not "while (*a && *a == *b) { a++; b++; }": vbcc832 (the 832 tree's
+   compiler) drops those increments; kept as the 832 copy has it. */
 static int same(const char *a, const char *b)
 {
 	int i = 0;

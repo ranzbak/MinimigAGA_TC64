@@ -13,7 +13,7 @@ The file (sw/mkdrivesounds/mkdrivesounds.c writes it):
     size 0 or at an id >= 13; sound <id> starts after its header, length =
     size / 2 samples.
 
-The ring: AUDIO_BUFFER, 0x8000 stereo frames of 4 bytes (64 KB).  The 832's
+The ring: AUDIO_BUFFER, 0x4000 stereo frames of 4 bytes (64 KB).  The 832's
 render arithmetic per frame: c = the sum of the active sources' samples (one
 to three, int), c = ((c & 255) << 8) | ((c >> 8) & 255), then c * 0x10001
 stored as a big-endian long.  The bytes in the ring are therefore, for the
@@ -46,7 +46,7 @@ countstep, finishsound), as the 832 executes it:
     playing sounds by index are the sources, every playing sound after the
     third is switched off (cursor kept); span = n, at most the frames to the
     ring's end and each source's samples left; the ring cursor advances
-    span frames (mod 0x8000 frames); n -= span.  With sources: silence = 0,
+    span frames (mod 0x4000 frames); n -= span.  With sources: silence = 0,
     each source's cursor += span, the frames written unless AUDIO bit 1 (the
     Amiga owns the ring) reads set, then each finished source (cursor >=
     length) stops, cursor 0, and its chain (if not 0) starts at 0.  Without:
@@ -69,11 +69,21 @@ Written into <dir>:
                  32/64-bit header load is aligned there and the wrong value it
                  gives is reported by the test, not by the sanitizer
   ring_synth.bin, ring_real.bin   the ring after every "fill" op, 64 KB each
+  TRUNC.BIN ODDLEN.BIN ODDSND.BIN NEGSIZE.BIN NEGID.BIN
+                 bad files (bad_files()): SYNTH.BIN cut inside sound 2,
+                 SYNTH.BIN plus one byte, a sound of odd size, of negative
+                 size, of negative id
   dscases.h      the two cases: the op lists ({op, a, name, b, return value,
                  AUDIO}: the expected return value of the load and of each
                  fill, the AUDIO value after each fill), the lines each load
                  prints ("Audio file - length <n>", "Sound <id> length
-                 <bytes>": the firmware's line without the address)
+                 <bytes>": the firmware's line without the address); and
+                 ds_bad[]: per bad file the load's return value, loaded flag
+                 and lines (rv_load())
+
+The bad files are not the 832's behaviour (it only read the file and has no
+bounds; on RV the samples are made native in place, a write): the RV port's
+rule, fw/ctrl_rv/drivesounds.c drivesounds_init, is stated in rv_load().
 python3 -I, standard library only.
 """
 import os
@@ -128,6 +138,54 @@ def synth_file():
         out.append(struct.pack(">%dh" % len(smp), *smp))
     out.append(struct.pack(">II", 0, 0))
     return b"".join(out)
+
+
+def rv_load(data):
+    """The RV port's load of a file (the bounded in-place conversion): its
+    return value, loaded flag and lines.  An odd length: refused ("Bad length
+    in DriveSounds file"), nothing loaded.  Otherwise, after "DRIVESND", per
+    header (id, size: signed big-endian): size 0, id < 0 or id >= 13 ends the
+    list; a size < 0, odd or larger than the bytes left before the ring's
+    start ends it with "Bad sound in DriveSounds file"; else the sound loads;
+    fewer than 8 bytes left after a sound ends the list."""
+    lines = ["Audio file - length %d" % len(data)]
+    if len(data) & 1:
+        return 0, 0, lines + ["Bad length in DriveSounds file"]
+    assert data[:8] == b"DRIVESND" and len(data) >= 16
+    o, end, ret = 8, len(data), 0
+    sid, size = struct.unpack(">ii", data[o:o + 8])
+    o += 8
+    while size != 0 and 0 <= sid < COUNT:
+        if size < 0 or size & 1 or size > end - o:
+            lines.append("Bad sound in DriveSounds file")
+            break
+        lines.append("Sound %d length %d" % (sid, size))
+        o += size
+        ret = 1
+        if end - o < 8:
+            break
+        sid, size = struct.unpack(">ii", data[o:o + 8])
+        o += 8
+    return ret, 1, lines
+
+
+def bad_files(synth):
+    """{8.3 name: file}: SYNTH.BIN cut 100 bytes into sound 2 (its size 1600
+    is more than is left: the conversion would run 1500 bytes into the
+    ring), SYNTH.BIN plus one byte (odd length: every halfword odd), and
+    three short files: sound 1 of odd size 801 (then one pad byte, so the
+    length is even), sound 1 of size -2, sound 1 of id -1."""
+    o2 = 8 + 8 + 0x10000 + 8 + 2048 + 8
+    def snd(sid, size, n):
+        return struct.pack(">ii", sid, size) + bytes((k * 37 + 11) & 255 for k in range(n))
+    tail = struct.pack(">II", 0, 0)
+    return {
+        "TRUNC   BIN": synth[:o2 + 100],
+        "ODDLEN  BIN": synth + b"\0",
+        "ODDSND  BIN": b"DRIVESND" + snd(0, 2048, 2048) + snd(1, 801, 801) + b"\0" + snd(2, 400, 400) + tail,
+        "NEGSIZE BIN": b"DRIVESND" + snd(0, 2048, 2048) + snd(1, -2, 400) + tail,
+        "NEGID   BIN": b"DRIVESND" + snd(0, 2048, 2048) + snd(-1, 400, 400) + tail,
+    }
 
 
 class Sound:
@@ -446,6 +504,13 @@ def main():
         lines = files[ops[0][1]][1]
         out.append("static const char ds_lines_%s[] =\n%s;\n"
                    % (name, "\n".join('\t"%s\\n"' % l for l in lines)))
+    out.append("static const struct ds_bad ds_bad[] = {\n")
+    for name, data in bad_files(synth).items():
+        with open(os.path.join(d, name[:8].rstrip() + "." + name[8:]), "wb") as f:
+            f.write(data)
+        ret, loaded, lines = rv_load(data)
+        out.append('\t{ "%s", %d, %d,\n%s },\n' % (name, ret, loaded, "\n".join('\t  "%s\\n"' % l for l in lines)))
+    out.append("};\n")
     with open(os.path.join(d, "dscases.h"), "w") as f:
         f.write("".join(out))
 

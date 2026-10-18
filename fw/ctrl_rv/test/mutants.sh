@@ -252,6 +252,16 @@ unit ds_header_long drivesounds_test src drivesounds.c 's/rd_be32(buf)/*(long *)
 unit ds_header_int drivesounds_test src drivesounds.c 's/rd_be32(buf)/*(int *)buf/g' "FAIL synth: load"
 unit ds_noconvert drivesounds_test src drivesounds.c 's/samples\[i\]=(short)rd_be16(\&samples\[i\]);/;/' "FAIL synth fill"
 unit ds_nomask drivesounds_test src drivesounds.c 's/c=(c\&0xffff)\*0x10001;/c=c*0x10001;/' "FAIL synth fill"
+# the bounded in-place conversion (final review I1): the oversize clamp (TRUNC:
+# the conversion runs into the ring), the odd file length (ODDLEN: halfword
+# stores at odd addresses, a trap on RV; x86 takes them: the return value),
+# the odd and negative size (the list goes on: the load lines differ), the
+# negative id (sounds[-1]: UBSan)
+unit ds_noclamp drivesounds_test src drivesounds.c 's/ || size>end-buf//' "FAIL bad TRUNC   BIN: ring written"
+unit ds_oddfile drivesounds_test src drivesounds.c 's/if(file.size\&1)/if(0)/' "FAIL bad ODDLEN  BIN: drivesounds_init"
+unit ds_oddsize drivesounds_test src drivesounds.c 's/ || (size\&1)//' "FAIL bad ODDSND  BIN: load"
+unit ds_negsize drivesounds_test src drivesounds.c 's/if(size<0 || /if(/' "FAIL bad NEGSIZE BIN: load"
+unit ds_negid drivesounds_test src drivesounds.c 's/ \&\& id>=0 \&\& / \&\& /' "index -1 out of bounds"
 # Task 4's parentheses: each (enabled & DRIVESOUNDS_FLOPPY) site taken always
 unit ds_floppy_start drivesounds_test src drivesounds.c '/case DRIVESOUND_MOTORSTART:/,/break;/ s/if ((drivesounds.enabled \& DRIVESOUNDS_FLOPPY))/if (1)/' "FAIL real fill"
 unit ds_floppy_stop drivesounds_test src drivesounds.c '/case DRIVESOUND_MOTORSTOP:/,/break;/ s/if ((drivesounds.enabled \& DRIVESOUNDS_FLOPPY))/if (1)/' "FAIL real fill"

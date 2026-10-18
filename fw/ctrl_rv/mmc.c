@@ -37,9 +37,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 /* Bound of the data-token and busy waits, in TIMER counts (one count =
    5.804 ms on the board, cfide timecnt(23 downto 8), the same for the 832 and
-   the RISC-V CPU): 173 x 5.804 ms = 1.004 s, at least the 832's real bound,
-   which was ~1,000,000 SPI byte reads.  A TIMER bound does not depend on the
-   CPU's speed; the 832's count loop did. */
+   the RISC-V CPU): 173 x 5.804 ms = 1.004 s, above the SD spec maxima (write
+   busy 500 ms, read 100 ms); the 832's count bound (~1,000,000 SPI byte reads)
+   was not measured in time.  A TIMER bound does not depend on the CPU. */
 #define SD_TIMEOUT 173
 
 // variables

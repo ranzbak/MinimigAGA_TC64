@@ -1,6 +1,7 @@
 /*
  * cdaudio_emu: the CD audio player compiled by vbcc832 and run in 832e
- * (make -C fw/ctrl_832/test/emu).  cdaudio_test checks the logic with gcc;
+ * (make -C fw/ctrl_832/test/emu); this copy in fw/ctrl_rv is built for
+ * the L1 bench (sim/rv_l1/prog/Makefile).  cdaudio_test checks the logic with gcc;
  * this checks what vbcc832 makes of it: the int32 state set and returned,
  * the sample scaling (mul, shifts, a negative sample), the position
  * (division by 588), the refill after a flip and the underrun path.  The

@@ -4,8 +4,8 @@
 /*
  * ATAPI CD-ROM command layer (findings/cdrom/plan.md, sections 7.1, 7.2, 9).
  *
- * Pure C, no hardware access: builds into the 832 firmware and, with
- * -DHOSTTEST, into the host test fw/ctrl_832/test/atapi_test.c.  The board
+ * Pure C, no hardware access: builds into the RV firmware and, with
+ * -DHOSTTEST, into the host test fw/ctrl_rv/test/atapi_test.c.  The board
  * glue (cdrom.c) owns the file, the Gayle registers and the data phases; this
  * layer decides what each command answers and keeps the drive state (disc,
  * lock, sense, UNIT ATTENTION, media event).

@@ -33,7 +33,9 @@ PY      = python3 -I
 # gnu2x: the firmware's dialect (host gcc 13 spells gnu23 so).  -fno-builtin:
 # printf("..\n") must stay printf, not become the firmware's puts (uart.c);
 # -U_FORTIFY_SOURCE -D__NO_INLINE__: glibc must not rewrite putchar/printf.
-CFLAGS  = -std=gnu2x -D_DEFAULT_SOURCE -DHOSTTEST -Wall -Wextra -Wno-unused-parameter $(WERROR) -O1 -g \
+# -funsigned-char: the firmware's char (tools/riscv/toolchain.mk); x86 gcc's
+# default is signed.
+CFLAGS  = -std=gnu2x -funsigned-char -D_DEFAULT_SOURCE -DHOSTTEST -Wall -Wextra -Wno-unused-parameter $(WERROR) -O1 -g \
           -fsanitize=address,undefined -fno-sanitize-recover=all \
           -U_FORTIFY_SOURCE -D__NO_INLINE__ -fno-builtin -I$(SRC) -I$(SRC)/arch -I$(TD) -I$(B)
 HDRS    = $(wildcard $(SRC)/*.h $(SRC)/arch/*.h $(TD)/*.h)
@@ -235,7 +237,8 @@ run-fdd_test: run64-fdd_test run32-fdd_test
 # through rafile.c + fat.c + mmc.c on the card model, renders a fixed event
 # sequence into the mock's ring; drivesounds.py (the 832's file format and
 # render arithmetic) writes the ring after every fill (ring_<case>.bin) and
-# the op lists (dscases.h).
+# the op lists (dscases.h); and five bad files with the RV port's bounded
+# load (dscases.h ds_bad).
 DRIVESND ?= $(TOP)/sw/mkdrivesounds/drivesnd.bin
 DS_SRCS = $(TD)/mock_hw.c $(SRC)/hardware.c $(SRC)/mmc.c $(SRC)/uart.c $(SRC)/fat.c $(SRC)/swap.c \
           $(SRC)/rvlibc.c $(SRC)/errors.c $(SRC)/rafile.c $(SRC)/audio.c $(SRC)/i2c.c $(SRC)/drivesounds.c
@@ -244,7 +247,8 @@ $(B)/ds/dscases.h: $(GOLD)/drivesounds.py $(DRIVESND)
 	$(PY) $(GOLD)/drivesounds.py $(@D) $(DRIVESND)
 $(B)/ds/card.img: $(B)/ds/dscases.h $(DRIVESND) $(TOP)/tools/sim/mkcard.sh
 	cp $(DRIVESND) $(@D)/DRIVESND.BIN
-	bash $(TOP)/tools/sim/mkcard.sh $@ 8 $(@D)/DRIVESND.BIN $(@D)/SYNTH.BIN
+	bash $(TOP)/tools/sim/mkcard.sh $@ 8 $(@D)/DRIVESND.BIN $(@D)/SYNTH.BIN \
+	  $(@D)/TRUNC.BIN $(@D)/ODDLEN.BIN $(@D)/ODDSND.BIN $(@D)/NEGSIZE.BIN $(@D)/NEGID.BIN
 $(B)/drivesounds_test: $(TD)/drivesounds_test.c $(DS_SRCS) $(HDRS) $(B)/ds/dscases.h
 	$(HOSTCC) $(CFLAGS) -I$(B)/ds -o $@ $(TD)/drivesounds_test.c $(DS_SRCS)
 $(B)/drivesounds_test_32: $(TD)/drivesounds_test.c $(DS_SRCS) $(HDRS) $(B)/ds/dscases.h

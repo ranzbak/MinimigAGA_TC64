@@ -90,7 +90,7 @@ mcopy -n -i "card.img@@$off" ::MINMGAA.CFG ./MINMGAA.CFG
 "$C" --check MINMGAA.CFG
 # convert
 "$C" --to-rv MINMGAA.CFG MINMGAR.CFG
-# copy the RISC-V file back (-o: overwrite)
+# copy the RISC-V file back; -o: overwrite
 mcopy -o -i "card.img@@$off" MINMGAR.CFG ::MINMGAR.CFG
 ```
 
@@ -142,9 +142,9 @@ line takes the default slot's file (add `MINMGAA1.CFG` .. as present):
 
 ```sh
 cd ../..
-mkdir -p ~/cfg832
-mcopy -n -i "build/cfgdemo/card.img@@$off" ::MINMGAA.CFG ~/cfg832/
-make -C fw/ctrl_rv/test run-config_test CFG832_DIR="$HOME/cfg832"
+mkdir -p build/cfg832
+mcopy -n -i "build/cfgdemo/card.img@@$off" ::MINMGAA.CFG build/cfg832/
+make -C fw/ctrl_rv/test run-config_test CFG832_DIR="$PWD/build/cfg832"
 ```
 
 

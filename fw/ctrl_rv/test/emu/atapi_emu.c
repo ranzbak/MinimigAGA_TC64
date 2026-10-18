@@ -1,6 +1,7 @@
 /*
  * atapi_emu: the ATAPI command layer compiled by vbcc832 and run in 832e,
- * the EightThirtyTwo emulator (make -C fw/ctrl_832/test emu).
+ * the EightThirtyTwo emulator (make -C fw/ctrl_832/test emu).  This copy
+ * in fw/ctrl_rv is built for the L1 bench (sim/rv_l1/prog/Makefile).
  *
  * The host tests (atapi_test, cdrom_test) build atapi.c with gcc, so they
  * cannot see what the 832 compiler does with it.  On the board (2026-10-15,

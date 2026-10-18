@@ -146,17 +146,19 @@ constructor `smoke_trap.o` this way, into its own `B=` directory).
 
 | | text | data | bss | `.BIN` |
 |---|---|---|---|---|
-| RV32IMC, gcc (this tree, Task 18 fix) | 89,112 | 3,484 | 59,292 | **92,596 B** |
-| RV32IMC, clang (`CLANG=1`, "Clang build") | | | | 100,188 B |
+| RV32IMC, gcc (this tree, final review fix, 2026-10-18) | 89,252 | 3,484 | 59,292 | **92,736 B** |
+| RV32IMC, gcc (Task 18 fix, the Phase 3 gate) | 89,112 | 3,484 | 59,292 | 92,596 B |
+| RV32IMC, clang (`CLANG=1`, "Clang build"; 100,188 B at the gate) | | | | 100,352 B |
 | 832 (`832OSDAD.bin`) | | | | 83,830 B |
 
-Plan estimate 85-95 KB; the gcc image is +8,766 B (+10.5 %) over the 832's.
+Plan estimate 85-95 KB; the gcc image is +8,906 B (+10.6 %) over the 832's.
 The figure moves by a few bytes with the date strings of `version.h`. `_end` =
-0x27150 (from the map; < 0x70000, `AUDIO_BUFFER`, a linker ASSERT); the boot
+0x271DC (from the map; 0x27150 at the gate; < 0x70000, `AUDIO_BUFFER`, a linker ASSERT); the boot
 ROM's `_end` is 0x1040 (< 0x1400). Stack high-water mark on `fwboot`: 0x1950
 (1712 B used). History: Task 4 93,764 B, Task 9 91,368 B (`le16`/`le32` are
 the identity on RV32, so the `SwapBB`/`SwapBBBB` calls of `fat.c` are gone),
-Task 14 92,436 B, Task 17 92,588 B, Task 18 92,596 B (`StackFill`, below).
+Task 14 92,436 B, Task 17 92,588 B, Task 18 92,596 B (`StackFill`, below),
+final review 92,736 B (`drivesounds_init` bounds, I1: +140 B).
 
 **`make check`** runs every part (`make -k`) and fails if any is red:
 
@@ -246,6 +248,9 @@ converts it in memory, uses it and saves it as the `MINMGAR*` file (boot
 line `Converted 832 configuration MINMGAA.CFG`); the 832 file is never
 written. An 832 file that is put under the RV name is rejected ("Wrong
 configuration file format!", "(832 byte order)") and the defaults are used.
+An 832 file shorter than 156 bytes (`CFG_MIN_SIZE`: a version 1 or 2 file,
+written before 2020-11, `d1bc87a`) is not converted (the defaults are used);
+load and save it once on the 832 first.
 `tools/cfgconv` converts by hand, ahead of time or back
 (`fw/ctrl_rv/tools/cfgconv/README.md` has the card and image recipes). A
 complete round trip on made-up data (`mkcfg832.py` writes the 832 files the
@@ -363,7 +368,12 @@ Measured (2026-10-18, gcc 15.2.0-1, `-Os`, after the Task 18 fix):
 | boot ROM `_end` | 0x1040 (< 0x1400) |
 | L2 `fwboot` `STACK low` | 0x1950 (1712 B used); `STACKHW` 0x1950; 0x550 above the 0x1400 floor |
 
-The 20 largest frames (bytes, `make stack`): drivesounds_init 880, BootUploadLogo
+After the final review's fix (92,736 B, `_end` 0x271DC): L2 `fwboot`
+(`p3ffwboot`) and `fwboot_cfg` `STACK low` 0x1950 (unchanged), OSD GAP min
+40, all milestones found (33 of 33, 34 of 34).
+
+The 20 largest frames (bytes, `make stack`; after the final review's fix,
+drivesounds_init was 880 before): drivesounds_init 896, BootUploadLogo
 880, BootUploadCopper 848, BootUploadBall 848, CD_Insert 160, ScanDirectory 128,
 cd_read 128, cdaudio fill 128, HandleUI 112, LoadConfiguration 112,
 CD_HandleCommand 112, ATA_ReadSectors 96, cue_wav 96, atapi_packet 96,
@@ -410,7 +420,8 @@ byte boundary of the interrupted line's *send* loop, not of its formatting
 
 Longest output of each `printf` call site that is compiled (found by running
 the preprocessor over every `fw/ctrl_rv/*.c`, 2026-10-17: 136 sites, 138
-with Task 11's two in `config.c` (`ConfigMessage`); a
+with Task 11's two in `config.c` (`ConfigMessage`), 140 with the final
+review's two in `drivesounds.c` (I1, no conversion); a
 raw `grep` also finds the commented-out ones). Conversions are taken at their
 maximum: `%d`/`%ld` 11 bytes, `%u`/`%lu` 10, `%x`/`%X`/`%lX` 8, a width raises
 the figure to the width. Each `%s` is bounded by its source:
@@ -434,7 +445,7 @@ Per file, `line:bytes`:
 | `boot.c` | 2 | 260:80, 261:1 |
 | `cdrom.c` | 17 | 291:50, 305:108, 334:17, 416:27, 485:18, 521:34, 684:17, 686:9, 688:19, 689:29, 690:34, 691:19, 692:33, 693:20, 694:5, 696:2, 777:84 |
 | `config.c` | 13 | 65:21, 186:24, 257:40, 258:1, 326:36, 679:30, 680:30, 684:57, 687:14, 688:28, 694:27, 698:19, 701:22 (Task 11's lines) |
-| `drivesounds.c` | 4 | 455:32, 477:50, 497:34, 500:28 |
+| `drivesounds.c` | 6 | 455:32, 469:31, 487:30, 490:50, 512:34, 515:28 (469, 487: the final review's I1) |
 | `fat.c` | 39 | 188:28, 192:4, 195:5, 198:5, 201:5, 205:7, 208:2, 295:21, 296:23, 297:22, 298:33, 299:24, 300:23, 301:25, 302:23, 398:274, 423:278, 461:33, 514:32, 534:35, 582:295, 603:283, 782:28, 789:33, 862:11, 1583:59, 1596:31, 1611:26, 1623:32, 1633:49, 1649:55, 1651:54, 1656:38, 1703:38, 1714:45, 1715:30, 1716:24, 1717:26, 1725:39 |
 | `fdd.c` | 11 | 184:32, 191:12, 222:23, 252:17, 300:2, 303:4, 339:6, 377:29, 433:59, 438:23, 635:13 |
 | `fpga.c` | 6 | 93:25, 94:1, 102:1, 121:2, 124:21, 127:46 |
@@ -563,7 +574,7 @@ is verbatim):
 
 | File:line | 832 | RV | Why |
 |---|---|---|---|
-| `akiko.c:17,19`, `config.c:684`, `drivesounds.c:477`, `fat.c:782,789,1649,1651`, `main.c:176`, `menu.c:1595,2663,2665,3042,3044,3046,3048,3050,3052,3054` | `%x`, `%04x`, `%08lx`, `%lx` | `%X`, `%04X`, `%08lX`, `%lX` | `UPPER`: keeps the UART/OSD text identical |
+| `akiko.c:17,19`, `config.c:684`, `drivesounds.c:490`, `fat.c:782,789,1649,1651`, `main.c:176`, `menu.c:1595,2663,2665,3042,3044,3046,3048,3050,3052,3054` | `%x`, `%04x`, `%08lx`, `%lx` | `%X`, `%04X`, `%08lX`, `%lX` | `UPPER`: keeps the UART/OSD text identical |
 | `boot.c:260` | `printf(str)` | `printf("%s", str)` | `str` is data (a file name, `rtl_ver`): a `%` in it would be taken for a conversion with garbage arguments, and the two libraries differ on that. Identical for every string without `%` |
 
 ### gcc 15 and gnu23 compile fixes (Task 4)
@@ -700,6 +711,7 @@ names this section; no global `-Wno-...`.
 | `fdd.c:85,88,102` | `11 - sector >> 1 & 0x55` parses as `((11-sector)>>1)&0x55`; if the intent was `11 - (sector>>1&0x55)` this is a bug in the MFM checksum. It is the 832's reading (that is what vbcc832 compiled), so it is kept | parentheses spell out the existing parse |
 | `hdd.c:897` | **Cosmetic, not a defect.** `lba & (-1 << n)`: shift of a negative value (undefined in C before C23, well defined here because gcc shifts two's complement) | `(int)(~0U << n)`, same bits |
 | `config.c:620`, `drivesounds.c:378` | **Cosmetic, not a defect.** `if (romsize=Upload...)` and `while(dse=...)` assign in a condition: intended, but easy to misread | extra parentheses |
+| `config.c` (the 832's line 36) | **Cosmetic, not a defect.** the file-scope `static char filename[12]` is dead: every function that uses a `filename` has its own, a local (`UploadKickstart` `config.c:60`, `UploadExtROM` `148`) or a parameter (`ConfigurationExists`, ...), so no use refers to it | removed |
 | `fpga.c:148` `ClearMemory()` | `c2` (the "disk present" byte of the `0x10` track-read status) is read from the SPI and never used; the read itself must stay (it clocks the byte) | `__attribute__((unused))` |
 | `fpga.c:207` `fpga_init()` | `time = GetTimer(0)` is set and never read (nothing uses it) | `__attribute__((unused))` |
 | `main.c:139` `inthandler()` | `ints = GetInterrupts()` is never read; the read is the point (it clears the interrupt sources, `arch/irq.h`), so it stays | `__attribute__((unused))` |
@@ -767,7 +779,7 @@ little-endian = RV, 1..4 read big-endian = 832.
 | `config.h` `version`, `kickdir`, `extromdir`, `hdfdir[4]` | `unsigned long` | `uint32_t`: the file layout on every ABI. The same type on RV32 (`__UINT32_TYPE__` is `unsigned long`): the stripped code of `cdrom.o`, `hdd.o`, `fpga.o`, `main.o` is the same as before; on the LP64 host leg `unsigned long` made the struct 240 bytes |
 | `cfgswap.c`, `cfgswap.h` (new; pure C, shared with `tools/cfgconv`) | | `cfg_order(buf, len)` -> `CFG_RV` / `CFG_832` / `CFG_BAD` (length 156..212, id, version); `cfg_swap(buf)` swaps the seven fields in place, byte by byte |
 | `LoadConfiguration` | reads `MINMGAA..` | reads `MINMGAR..`. A file in 832 order under that name takes the existing `version > CONFIG_VERSION` path ("Wrong configuration file format!") plus "(832 byte order)": the defaults. **First boot:** no `MINMGAR..` file but the slot's `MINMGAA..` file: it is read, `cfg_order == CFG_832` -> `cfg_swap` in the sector buffer, then the usual checks (old versions included); used, and saved under the RV name (`SaveConfiguration` creates it), "Converted 832 configuration MINMGAA.CFG". Any other order under the 832 name: the defaults. The 832 file is never written (no `FileWrite`/`UpdateEntry` on it) |
-| `ConfigurationExists` | the file | the RV file, or else the slot's 832 file (so that the Load page offers a slot that only the 832 firmware saved; loading it converts it) |
+| `ConfigurationExists` | the file | the RV file, or else the slot's 832 file (so that the Load page offers a slot that only the 832 firmware saved; loading it converts it). Side effect, cosmetic: the Save page (`menu.c:1483-1495`) also shows "(overwrite)" for such a slot, although saving creates the `MINMGAR*` file and leaves the 832 one alone |
 | the two new messages | | `ConfigMessage`: `BootPrint` (disabled, as on the 832) and the UART |
 
 Tools and tests: `tools/cfgconv` (`cfgconv --to-rv|--to-832|--check`, its
@@ -905,8 +917,8 @@ order, and the dead firmware-upgrade declarations.
 | File:line | 832 | RV | Why |
 |---|---|---|---|
 | `boot.c:196`-`204` (`BootUploadCopper`, no `MINIMIG.COP` on the card) | `*p++=0x00e0; *p++=0x0008; ...` (12 words) | `*p++=be16(0x00e0); ...` | the copper reads big-endian words: the list is `00 E0 00 08 00 E2 00 00 00 E4 00 08 00 E6 50 00 01 00 A2 00 FF FF FF FE` in Amiga memory, as the 832 left it. With the file: `RARead`, bytes, unchanged |
-| `drivesounds.c:467`, `469`, `484`, `486` (`drivesounds_init`) | `id=*(long *)buf; size=*(long *)buf;` | `rd_be32(buf)` | `DRIVESND` header longs are big-endian (`sw/mkdrivesounds/mkdrivesounds.c`) and at `2 mod 4` (the file sits at `AUDIO_BUFFER - 212098`, `0x3C37E`; the sound sizes are even, not multiples of 4): a word load there traps on VexRiscv (mcause 4) |
-| `drivesounds.c:476`-`481` | the samples used in place (big-endian = native) | each sound's samples converted once, in place: `samples[i]=(short)rd_be16(&samples[i])` | the render loops read them as `short`; the buffer is the firmware's own (in front of the ring), loaded anew by every `drivesounds_init` |
+| `drivesounds.c:475`, `477`, `499`, `501` (`drivesounds_init`) | `id=*(long *)buf; size=*(long *)buf;` | `rd_be32(buf)` | `DRIVESND` header longs are big-endian (`sw/mkdrivesounds/mkdrivesounds.c`) and at `2 mod 4` (the file sits at `AUDIO_BUFFER - 212098`, `0x3C37E`; the sound sizes are even, not multiples of 4): a word load there traps on VexRiscv (mcause 4) |
+| `drivesounds.c:468`-`498` | the samples used in place (big-endian = native) | each sound's samples converted once, in place: `samples[i]=(short)rd_be16(&samples[i])`; bounded (final review I1): an odd file length is refused (`Bad length in DriveSounds file`), a sound with a negative id ends the list, one with a negative or odd size or more bytes than are left before `AUDIO_BUFFER` ends it with `Bad sound in DriveSounds file`, fewer than 8 bytes after a sound end it | the render loops read them as `short`; the buffer is the firmware's own (in front of the ring), loaded anew by every `drivesounds_init`. The 832 only read the file; the in-place write is new, and unbounded it ran past `AUDIO_BUFFER` on a truncated file and trapped (`mcause 6`, at `ColdBoot`) on an odd one. A valid file loads as before (`drivesounds_test`: the bad files `TRUNC ODDLEN ODDSND NEGSIZE NEGID.BIN`, mutants `ds_noclamp ds_oddfile ds_oddsize ds_negsize ds_negid`) |
 | `drivesounds.c:239`-`242`, `262`-`264`, `281`-`282` (`drivesounds_render`, 3, 2 and 1 sources) | `int c=*src++; ...; c=((c&255)<<8) \| ((c>>8)&255); c=c*0x10001; *buf++=c;` | `unsigned int c=*src++; ...; c=(c&0xffff)*0x10001; *buf++=c;` | the ring bytes are the 832's: the low 16 bits of the sum, little-endian, both channels (`lo hi lo hi`). The 832 swapped the 16 bits and stored the long big-endian; the little-endian store does the same without the swap. `c*0x10001` stays; the `& 0xffff` is the swap's masking, which the multiply needs (a negative sum: `-1 * 0x10001` is `0xfffeffff`; mutant `ds_nomask`). Unsigned: the 832's `int` product overflows for every sum with bit 15 set (signed overflow: UBSan stops it on the host) |
 | `main.c:82`-`92` (`CheckSum`, the kickstart's `checksum_pre` the menu shows) | `int *ptr`, `sum+=*ptr++` | `sum+=rd_be32(adr)`, `unsigned int` | the 832 summed big-endian words; the shown value is now the 832's for the same file. Byte-wise (any alignment), unsigned (wraps without signed overflow) |
 | `hexdump.c:14` | `unsigned int t=*p2++` | `rd_be32(p)` | prints 32-bit words in memory order, the 832's (big-endian) view, at any alignment. No caller today (`hexdump.h` is included by `fat.c`, `menu.c`, `config.c`) |
@@ -961,8 +973,8 @@ struct overlays of Tasks 9, 11 and 12 (`grep -n '\*)sector_buffer\|\*)&sector_bu
 | `boot.c:198`-`204` (`BootUploadCopper`) | `unsigned short *` stores | the copper list | `be16`, this task |
 | `boot.c` `BootUploadLogo`, `BootUploadBall`, the `COPPER_FILE` case, `BootCustomInit`, `BootPrintEx` | `unsigned char *` | file bytes, font bytes | bytes: neutral |
 | `drivesounds.c:146`, `220` (`int *buf`) | the ring, one long per frame | `AUDIO_BUFFER` (the audio DMA reads it) | the 832's bytes, this task |
-| `drivesounds.c:17`, `147`, `476` (`short *base`, `src`, `samples`) | sample reads | `DRIVESND.BIN` | native after the load's conversion, this task |
-| `drivesounds.c:467`-`486` | the header longs | `DRIVESND.BIN` | `rd_be32`, this task |
+| `drivesounds.c:17`, `147`, `484` (`short *base`, `src`, `samples`) | sample reads | `DRIVESND.BIN` | native after the load's conversion, this task |
+| `drivesounds.c:475`-`501` | the header longs | `DRIVESND.BIN` | `rd_be32`, this task |
 | `main.c:82` (`CheckSum`) | was `int *` | kickstart in Amiga memory | `rd_be32`, this task |
 | `hexdump.c:14` | was `unsigned int *` | any | `rd_be32`, this task |
 | `fpga.c:101`-`117` (`SendFileV2`, kickstart upload) | `unsigned char *adr`: `RARead(file, adr, 512)` into Amiga memory, the decrypt `adr[j] ^= key[keyidx++]`, `PatchKick1xMemoryDetection` (`buf[0x154]`, `strncmp`) | kickstart ROM | bytes: neutral; `CheckSum` above |
@@ -998,8 +1010,9 @@ now, `SD_TIMEOUT` counts:
 | `mmc.c:452`/`455` (`MMC_Write`, CMD24) | busy (0x00) after the data response | same |
 | `mmc.c:527`/`530` (`MMC_CMD12`) | busy after the stop command | same |
 
-`#define SD_TIMEOUT 173` (`mmc.c:43`): 173 x 5.804 ms = 1.004 s, at least the
-832's real bound (~1,000,000 SPI byte reads). `t` is a local of each
+`#define SD_TIMEOUT 173` (`mmc.c:43`): 173 x 5.804 ms = 1.004 s, above the SD
+spec maxima (write busy 500 ms, read 100 ms); the 832's count bound (~1,000,000
+SPI byte reads) was not measured in time (ruling T10). `t` is a local of each
 function; the global `timeout` stays `MMC_Init`'s. Unchanged: the `Ncr` loops
 of `MMC_Command` and `MMC_CMD12` (`while (response == 0xFF && Ncr--)`, 100
 polls: an SD-spec byte count, not a delay), `MMC_Init`'s `WaitTimer(20)` and
@@ -1089,7 +1102,7 @@ counts are the compiled sites):
 | `strncpy` `menu.c:349,351,717,2866,2867,2870,2874,2886` (the OSD line `s`) | Both copy the NUL at the same place; `OsdWrite` stops at the first NUL, so the bytes after it (spaces from the earlier `memset` on the 832, zeros on RV) are never drawn. For a long name shorter than 24 characters the NUL ends the line before the disk number (`2866/2867`) and before ` <DIR>` on both CPUs. Same |
 | `strncpy` `menu.c:1369,1371,1372`, `2946,2953` | `file.name` 11 and `drive->name` 8 bytes from space-padded names: no NUL. `file.long_name` is zeroed by `memset` first (`1370`). `DiskInfo[5]` is `XX/XX` (5 characters, `GetDiskInfo`) or starts with NUL and is then not used (`menu.c:2953`). Same |
 | `strncpy` `menu.c:3060` (`debuglines`) | The line is drawn by `OsdWrite`, which stops at the NUL. Same |
-| `strncmp` (17: `config.c:245` (Task 11, n = 7), `339,347`, `drivesounds.c:463`, `fat.c:128,130,182,185,249,383 (x2),459,580`, `fpga.c:60,65`, `menu.c:1343,2140`) | `n` is a constant or `sizeof`, always > 0, and the result is compared with 0. Same |
+| `strncmp` (17: `config.c:245` (Task 11, n = 7), `339,347`, `drivesounds.c:470`, `fat.c:128,130,182,185,249,383 (x2),459,580`, `fpga.c:60,65`, `menu.c:1343,2140`) | `n` is a constant or `sizeof`, always > 0, and the result is compared with 0. Same |
 | `strncmp` `fat.c:383` first call, `n = strlen(name)` | `name` empty (`n == 0`): lib832 returns `r0`, which still holds the `strlen(name)` result, 0 (vbcc832 output of the 832 `fat.c`); ISO returns 0. An empty name matches the first plain file entry on both. Same, no edit |
 | `memcmp` (5: `cdrom.c:82,285`, `menu.c:394,2052`, `cfgswap.c:22` (Task 11, n = 8)) | `n` = 3 or `sizeof`, > 0, compared with 0. Same |
 | `strncat` (3: `menu.c:756` n = 17/21, `1759` 16, `1761` 8) | `n > 0`: at most `n` bytes then NUL on both; `kickstart.name` has no NUL (8 characters) and both copy exactly 8. Return value unused. Same |
