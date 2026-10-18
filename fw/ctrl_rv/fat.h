@@ -2,7 +2,7 @@
 #define _FAT16_H_INCLUDED
 
 #include "hardware.h"
-
+#include <stdint.h>
 #define MAXDIRENTRIES 8
 
 extern unsigned char secbuf[512];
@@ -28,8 +28,8 @@ typedef struct
 struct PartitionEntry
 {
 	unsigned char geometry[8];		// ignored
-	unsigned long startlba;
-	unsigned long sectors;
+	uint32_t startlba;		// on-disk layout: 32 bits on every ABI (host tests: LP64)
+	uint32_t sectors;
 };
 
 struct MasterBootRecord
@@ -69,12 +69,12 @@ typedef struct
     unsigned short      ModifyTime;         /* last update time */
     unsigned short      ModifyDate;         /* last update date */
     unsigned short      StartCluster;       /* starting cluster of file */
-    unsigned long       FileSize;           /* size of file in bytes */
+    uint32_t            FileSize;           /* size of file in bytes (32 bits: on-disk layout) */
 } DIRENTRY;
 
 typedef union {
     unsigned short fat16[256];
-    unsigned long  fat32[128];
+    uint32_t       fat32[128];
 } FATBUFFER;
 
 #define FILETIME(h,m,s) (((h<<11)&0xF800)|((m<<5)&0x7E0)|((s/2)&0x1F))
@@ -82,7 +82,7 @@ typedef union {
 
 // global sector buffer, data for read/write actions is stored here.
 // BEWARE, this buffer is also used and thus trashed by all other functions
-extern unsigned char sector_buffer[1024]; // sector buffer - room for 2 sectors, to ease reading data not sector-aligned...
+extern unsigned char sector_buffer[1024] __attribute__((aligned(4))); // structs are overlaid on it; sector buffer - room for 2 sectors, to ease reading data not sector-aligned...
 extern unsigned char cluster_size;
 extern unsigned long cluster_mask;
 extern unsigned char fat32;
@@ -130,6 +130,13 @@ unsigned char UpdateEntry(fileTYPE *file);
 
 char ScanDirectory(unsigned long mode, char *extension, unsigned char options);
 void ChangeDirectory(unsigned long iStartCluster);
+
+/* The on-disk structures, overlaid on sector_buffer / read with memcpy: the
+   same size on RV32 and on both host-test ABIs */
+_Static_assert(sizeof(struct PartitionEntry) == 16, "MBR partition entry is 16 bytes");
+_Static_assert(sizeof(struct MasterBootRecord) == 512, "MBR is one sector");
+_Static_assert(sizeof(DIRENTRY) == 32, "FAT directory entry is 32 bytes");
+_Static_assert(sizeof(FATBUFFER) == 512, "FAT buffer is one sector");
 
 #endif
 

@@ -9,6 +9,8 @@
 #                  (default $(TOP)/EightThirtyTwo/lib832, a submodule); missing = failure
 #   ISO=<file>     the ISO of the ISO-backed atapi_test cases (also run once without)
 #   CARD=<file>    the card image of mock_selftest (default: built by tools/sim/mkcard.sh)
+#   FATIMG=<dir>   the three card images of fat_test and their listings (fatimg.sh;
+#                  default $(B)); FATIMG_DEPS= uses them as they are (mutants.sh)
 # Variables that mutants.sh points at a mutated copy of the sources, the tests
 # and the gold files: SRC TD GOLD B, and WERROR=-Wno-error.
 
@@ -21,6 +23,8 @@ TD     ?= .
 GOLD   ?= gold
 B      ?= out
 CARD   ?= $(B)/card.img
+FATIMG ?= $(B)
+FATIMG_DEPS ?= $(TD)/fatimg.sh $(GOLD)/fatdata.py $(GOLD)/fatlist.py $(TOP)/tools/sim/mkcard.sh
 WERROR ?= -Werror
 PY      = python3 -I
 
@@ -59,6 +63,31 @@ $(eval $(call TEST,cdrom_test,$$(SRC)/cdrom.c $$(SRC)/atapi.c $$(SRC)/cue.c $$(S
 $(eval $(call TEST,openhf_test,,-Wno-unused-function,))
 $(eval $(call TEST,lib_test,$$(SRC)/rvlibc.c,,))
 $(eval $(call TEST,hwmap_test,,,))
+$(eval $(call TEST,swap_test,$$(SRC)/swap.c,,))
+
+# fat_test: the real fat.c + mmc.c on the card model, once per image of
+# fatimg.sh (FAT16 with MBR by mkcard.sh, FAT32 with MBR, FAT16 superfloppy);
+# fat_check.sh adds the checks by mtools and fsck.fat.  The firmware's printf
+# is rvlibc.c's (to the mock UART).
+FAT_SRCS = $(TD)/mock_hw.c $(SRC)/hardware.c $(SRC)/mmc.c $(SRC)/uart.c $(SRC)/fat.c $(SRC)/swap.c $(SRC)/rvlibc.c
+$(B)/fat_test: $(TD)/fat_test.c $(FAT_SRCS) $(HDRS)
+	@mkdir -p $(@D)
+	$(HOSTCC) $(CFLAGS) -o $@ $(TD)/fat_test.c $(FAT_SRCS)
+$(B)/fat_test_32: $(TD)/fat_test.c $(FAT_SRCS) $(HDRS)
+	@mkdir -p $(@D)
+	$(HOSTCC) -m32 $(CFLAGS) -o $@ $(TD)/fat_test.c $(FAT_SRCS)
+$(FATIMG)/fatimg.ok: $(FATIMG_DEPS)
+	bash $(TD)/fatimg.sh $(FATIMG) $(TOP)/tools/sim/mkcard.sh $(GOLD)
+run64-fat_test: $(B)/fat_test $(FATIMG)/fatimg.ok
+	bash $(TD)/fat_check.sh $(B)/fat_test $(FATIMG) $(B) fat16 64
+	bash $(TD)/fat_check.sh $(B)/fat_test $(FATIMG) $(B) fat32 64
+	bash $(TD)/fat_check.sh $(B)/fat_test $(FATIMG) $(B) super 64
+run32-fat_test: $(B)/fat_test_32 $(FATIMG)/fatimg.ok
+	bash $(TD)/fat_check.sh $(B)/fat_test_32 $(FATIMG) $(B) fat16 32
+	bash $(TD)/fat_check.sh $(B)/fat_test_32 $(FATIMG) $(B) fat32 32
+	bash $(TD)/fat_check.sh $(B)/fat_test_32 $(FATIMG) $(B) super 32
+run-fat_test: run64-fat_test run32-fat_test
+.PHONY: run-fat_test run64-fat_test run32-fat_test
 
 # atapi_test without the ISO: the ISO-backed cases are skipped, not failed
 run64-atapi_test::
@@ -81,7 +110,7 @@ $(B)/openhf.inc: $(SRC)/hdd.c
 $(B)/openhf_test $(B)/openhf_test_32: $(B)/openhf.inc
 
 run: fmt run-mock_selftest run-cue_test run-cdaudio_test run-atapi_test run-cdrom_test \
-     run-openhf_test run-lib_test run-hwmap_test
+     run-openhf_test run-lib_test run-hwmap_test run-swap_test run-fat_test
 
 clean:
 	$(RM) -r out mut

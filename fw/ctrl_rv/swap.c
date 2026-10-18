@@ -1,3 +1,8 @@
+#include "swap.h"
+
+/* The results are unsigned: an int result was sign-extended into a 64-bit
+   unsigned long (LP64 host tests) when bit 31 was set; on RV32 the bits are
+   the same either way. */
 unsigned long SwapBBBB(unsigned long i)
 {
 #ifdef _M68K
@@ -12,7 +17,7 @@ unsigned long SwapBBBB(unsigned long i)
 	);	
 	return i;
 #else
-	int result=(i>>24)&0xff;
+	unsigned long result=(i>>24)&0xff;
 	result|=(i>>8)&0xff00;
 	result|=(i<<8)&0xff0000;
 	result|=(i<<24)&0xff000000;
@@ -22,14 +27,14 @@ unsigned long SwapBBBB(unsigned long i)
 
 unsigned int SwapBB(unsigned int i)
 {
-	int result=(i>>8)&0xff;
+	unsigned int result=(i>>8)&0xff;
 	result|=(i<<8)&0xff00;
 	return(result);
 }
 
 unsigned long SwapWW(unsigned long i)
 {
-	int result=(i>>16)&0xffff;
+	unsigned long result=(i>>16)&0xffff;
 	result|=(i<<16)&0xffff0000;
 	return(result);
 }

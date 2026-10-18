@@ -18,7 +18,11 @@ make -C fw/ctrl_rv/test
 * `gcc-multilib` is for the `-m32` builds (with AddressSanitizer and UBSan);
   `python3` runs the golden generators and `fmtcheck.py` (standard library
   only, `python3 -I`); `mtools dosfstools fdisk` are what
-  `tools/sim/mkcard.sh` needs for the card image of `mock_selftest`.
+  `tools/sim/mkcard.sh` needs for the card image of `mock_selftest`, and what
+  `fatimg.sh` / `fat_check.sh` use for the images of `fat_test` (`sfdisk`,
+  `mkfs.fat`, `fsck.fat`, `mcopy`, `mdel`, `mmd`, `mdir`, `mshowfat`, `mtype`;
+  no root, no loop devices). Those images take about 170 MB in `out/` (the
+  FAT32 one is 132 MB: FAT32 needs at least 65525 clusters).
 * `LIB832` defaults to `EightThirtyTwo/lib832` of the repository. Another
   checkout: `make -C fw/ctrl_rv/test LIB832=/path/to/EightThirtyTwo/lib832`.
   A missing `LIB832` fails the run, it never skips the format check.
@@ -60,6 +64,32 @@ built `-std=gnu17 -m32 -funsigned-char`, like the 832 firmware.
 | `lib_test` | `rvlibc.c` against glibc's `vsnprintf` (output, return value, truncation, nesting, heap stubs) |
 | `hwmap_test` | with the real macros (`-DHOSTTEST` undefined in that file): address and width of every register, the CS/SPEED values of `Enable*()`/`Disable*()`/`SPI_slow()`/`SPI_fast()`, `SPI()`/`RDSPI` order, the real `RS232()` expansion, `uart.c` `puts` |
 | `fmt` | format strings of the firmware: ILP32 == LP64, `fmtcheck.py` model, the 832-versus-RV differences are exactly `gold/fmt_diff_expected.txt` |
+| `swap_test` | `../swap.h` and `../swap.c`: `le16/le32/be16/be32` by the bytes they leave in memory (true on any host) and by value on this LE host, `rd_le16/rd_le32/rd_be16/rd_be32` and `wr_be16/wr_be32` at offsets 0..3 of an aligned buffer (a pointer cast would be a misaligned access there, which UBSan stops), `SwapBB/SwapBBBB/SwapWW` without sign extension on LP64 |
+| `fat_test` | the real `fat.c` over the real `mmc.c` on the card model, once per image (below): `FindDrive()` (FAT type, partition start and size against the MBR bytes, cluster size), every directory through `ScanDirectory` (names, sizes, start clusters, long names) against `mdir -/ -a` + `mshowfat` (`gold/fatlist.py`), `FileOpen` + `FileRead`/`FileNextSector`, `FileSeek` and `FileReadEx` of a 300 KB file fragmented over a deleted file's clusters, a subdirectory walk with long names (`FindDirectory`, `ChangeDirectory`, `FileOpen` by long name, `ValidateDirectory`, `FindDirectoryByCluster`), a name that does not exist, and `FileCreate` + 3 x `FileWrite` + `UpdateEntry` of a 3-sector file, read back through `fat.c`, then `fsck.fat -n` of the written image and `mtype` of the file (`fat_check.sh`) |
+
+### The `fat_test` images
+
+`fatimg.sh` builds them into `out/` (or `FATIMG=<dir>`), byte-reproducible
+(fixed disk identifier, `mkfs.fat --invariant`, file times from
+`SOURCE_DATE_EPOCH` in UTC), with the same files on each (`gold/fatdata.py`:
+deterministic contents) and their expected listings (`<image>.gold`):
+
+| Image | Layout | Built by |
+|---|---|---|
+| `fat16.img` | 16 MB, MBR, FAT16 at LBA 2048 | `tools/sim/mkcard.sh` (+ `mtools` for the deletion, directories, long names) |
+| `fat32.img` | 132 MB, MBR (type 0x0c), FAT32 at LBA 2048 | `sfdisk` + `mkfs.fat -F 32 --offset` + `mtools`, the way `mkcard.sh` does FAT16 |
+| `super.img` | 16 MB, FAT16 without MBR ("superfloppy") | `mkfs.fat` on the whole file + `mtools` |
+
+All have 4-sector clusters (`FileCreate` allocates one cluster: the 3-sector
+file must fit). `BIG.BIN` (307,300 bytes) is copied after `MIDDLE.BIN` was
+deleted, so it is fragmented over the hole (`fatimg.sh` checks this with
+`mshowfat`). On FAT32 the FSInfo free-cluster count and next-free hint are
+"unknown" (0xFFFFFFFF): `mtools` then allocates from cluster 2 (it would
+otherwise continue after the last file), and `fsck.fat` does not report the
+count that `FileCreate`, like the 832 firmware, leaves alone. Each image is
+also checked clean by `fsck.fat -n` as built. `fat_test` only reads the image;
+it writes the card to `out/<image>_<64|32>.img` for the checks, which
+`fat_check.sh` deletes when they pass.
 
 ## The mock (`mock_hw.c`, `mock_hw.h`)
 
@@ -95,10 +125,15 @@ targets (`SRC= TD= GOLD= B=`) and runs the real test target. The unmutated
 copy must pass first. A mutant is *killed* only when its build succeeded and
 the test target then failed; a sed that changed nothing or a build failure is
 reported `BROKEN` and fails the run, a passing test is `SURVIVED`. Every run
-starts from a fresh copy. The format-parity mutants run the real `make fmt`
+starts from a fresh copy. `fat_test`'s mutants use the images in `out/`, built
+once from the unmutated scripts (`FATIMG=out FATIMG_DEPS=`). The format-parity mutants run the real `make fmt`
 (a 16-byte print buffer, a deleted line of the expected-difference list, a
 stale `formats.txt`, a format without a case). There is a mutant for each
-test and one for every register class of the I/O map (address and width of
+test (for `swap_test`: `rd_le32`, `wr_be16`, `be32`, `le16`, the sign
+extension of `SwapBBBB`; for `fat_test`: `StartCluster` read with `SwapBB`
+again, everywhere and in `ScanDirectory` only, `FileSize`, the FAT16 and FAT32
+links, the FAT32 EOC literal `0xFFFFFF0F`, the MBR signature cases exchanged,
+the new entry's start cluster and size) and one for every register class of the I/O map (address and width of
 SPI DATA/CS/SPEED, UART, TIMER, PLATFORM, AUDIO, `FPGA_TEMP_RAW`,
 `VIDEOSCALE`, `RECONFIGURE`, keyboard words and OUT, Akiko, RTC, I2C, the
 interrupt controllers, each CS and SPEED value, `SPI()`/`RDSPI`, and

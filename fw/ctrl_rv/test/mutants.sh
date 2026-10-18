@@ -17,6 +17,8 @@ set -u
 cd "$(dirname "$0")" || exit 1
 HERE=$PWD
 CARD=$HERE/out/card.img
+# the fat_test images, built once from the unmutated scripts (FATIMG_DEPS=: as they are)
+FATIMG=$HERE/out
 bad=0
 nkilled=0
 
@@ -24,7 +26,7 @@ nkilled=0
 mk() {
   local n=$1; shift
   make -s -f Makefile SRC="mut/$n/src" TD="mut/$n/t" GOLD="mut/$n/gold" B="mut/$n/b" \
-       WERROR=-Wno-error CARD="$CARD" "$@"
+       WERROR=-Wno-error CARD="$CARD" FATIMG="$FATIMG" FATIMG_DEPS= "$@"
 }
 
 # prep <name>: fresh copies
@@ -34,7 +36,7 @@ prep() {
   mkdir -p "mut/$n/src" "mut/$n/t"
   cp ../*.c ../*.h "mut/$n/src/"
   cp -r ../arch "mut/$n/src/arch"
-  cp ./*.c ./*.h "mut/$n/t/"
+  cp ./*.c ./*.h ./*.sh "mut/$n/t/"
   cp -r gold "mut/$n/gold"
 }
 
@@ -62,7 +64,7 @@ unit() {
   fi
   # a mutant may hang a loop that waits for the mock: the timeout is a kill
   timeout 120 make -s -f Makefile SRC="mut/$n/src" TD="mut/$n/t" GOLD="mut/$n/gold" B="mut/$n/b" \
-       WERROR=-Wno-error CARD="$CARD" "run64-$test" > "mut/$n/log" 2>&1
+       WERROR=-Wno-error CARD="$CARD" FATIMG="$FATIMG" FATIMG_DEPS= "run64-$test" > "mut/$n/log" 2>&1
   verdict "$n" $? "run64-$test"
 }
 
@@ -85,7 +87,7 @@ fmt() {
 control() {
   prep control
   local t rc=0
-  for t in mock_selftest cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_test hwmap_test; do
+  for t in mock_selftest cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_test hwmap_test swap_test fat_test; do
     mk control "run64-$t" > "mut/control/log.$t" 2>&1 || { echo "control: run64-$t FAILED (mut/control/log.$t)"; rc=1; }
   done
   mk control fmt > mut/control/log.fmt 2>&1 || { echo "control: fmt FAILED (mut/control/log.fmt)"; rc=1; }
@@ -94,7 +96,9 @@ control() {
 }
 
 mkdir -p out
-make -s -f Makefile "$CARD" > /dev/null || { echo "no card image"; exit 1; }
+# (the targets as the Makefile names them: out/card.img is $(B)/card.img)
+make -s -f Makefile out/card.img > /dev/null || { echo "no card image"; exit 1; }
+make -s -f Makefile FATIMG="$FATIMG" "$FATIMG/fatimg.ok" > /dev/null || { echo "no fat_test images"; exit 1; }
 control
 
 # ---- the C library: format parity (Task 3) -----------------------------------
@@ -122,6 +126,23 @@ unit atapi_capacity atapi_test src atapi.c 's/put32(atapi_buf + 4, ATAPI_SECTOR_
 unit atapi_msf atapi_test src atapi.c 's/p\[3\] = (uint8_t)(f % 75);/p[3] = (uint8_t)(f % 74);/'
 unit cdrom_marker cdrom_test src cdrom.c 's/CD_PRESENT_CUE ? "CUE" : "ISO"/CD_PRESENT_CUE ? "ISO" : "CUE"/'
 unit openhf_cdslot openhf_test src hdd.c '/case HDF_CDROM:/,/return 0;/ s/return 0;/hf->present = 0; return 0;/'
+
+# ---- byte order (swap_test) and FAT/MBR (fat_test) ---------------------------
+unit swap_rdle32 swap_test src swap.h 's/(uint32_t)b\[3\] << 24;/(uint32_t)b[3] << 16;/'
+unit swap_wrbe16 swap_test src swap.h 's/b\[0\] = (uint8_t)(v >> 8);/b[0] = (uint8_t)v; b[1] = (uint8_t)(v >> 8); return;/'
+unit swap_be32 swap_test src swap.h 's/static inline uint32_t be32(uint32_t v) { return swap_bytes32(v); }/static inline uint32_t be32(uint32_t v) { return v; }/'
+unit swap_le16 swap_test src swap.h '0,/static inline uint16_t le16(uint16_t v) { return v; }/s//static inline uint16_t le16(uint16_t v) { return swap_bytes16(v); }/'
+unit swap_signext swap_test src swap.c 's/\tunsigned long result=(i>>24)\&0xff;/\tint result=(i>>24)\&0xff;/'
+# the brief's mutant: StartCluster read with the 68000 swap again -> the listing
+unit fat_startcluster fat_test src fat.c 's/le16(pEntry->StartCluster)/SwapBB(pEntry->StartCluster)/g'
+unit fat_startcluster_scan fat_test src fat.c 's/pEntry->StartCluster = le16(pEntry->StartCluster);/pEntry->StartCluster = SwapBB(pEntry->StartCluster);/'
+unit fat_filesize fat_test src fat.c 's/pEntry->FileSize = le32(pEntry->FileSize);/pEntry->FileSize = SwapBBBB(pEntry->FileSize);/'
+unit fat_link16 fat_test src fat.c 's/file->cluster = le16(fat_buffer.fat16\[i\]);/file->cluster = SwapBB(fat_buffer.fat16[i]);/'
+unit fat_link32 fat_test src fat.c 's/le32(fat_buffer.fat32\[i\]) \& 0x0FFFFFFF : le16/SwapBBBB(fat_buffer.fat32[i]) \& 0x0FFFFFFF : le16/'
+unit fat_eoc32 fat_test src fat.c 's/= le32(0x0FFFFFFF);/= 0xFFFFFF0F;/'
+unit fat_mbr_sig fat_test src fat.c 's/case 0x55aa:/case 0xFFFF0:/; s/case 0xaa55:/case 0x55aa:/; s/case 0xFFFF0:/case 0xaa55:/'
+unit fat_newcluster fat_test src fat.c 's/pEntry->StartCluster = le16((unsigned short)cluster);/pEntry->StartCluster = SwapBB(cluster);/'
+unit fat_newsize fat_test src fat.c 's/^      pEntry->FileSize = le32(file->size); \/\/ little-endian on disk/      pEntry->FileSize = SwapBBBB(file->size);/'
 
 # ---- the mock itself (mock_selftest) -----------------------------------------
 unit mock_token mock_selftest t mock_hw.c 's/c_push(0xFE);/c_push(0xFF);/'

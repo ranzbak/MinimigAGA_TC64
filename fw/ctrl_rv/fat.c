@@ -71,12 +71,12 @@ unsigned long cluster_mask;             // binary mask of cluster number
 unsigned short dir_entries;             // number of entry's in directory table
 unsigned long fat_size;                 // size of fat
 
-unsigned char sector_buffer[1024];       // sector buffer - room for two consecutive sectors...
+unsigned char sector_buffer[1024] __attribute__((aligned(4)));       // sector buffer - room for two consecutive sectors... (aligned: DIRENTRY, MBR and configTYPE are overlaid on it)
 
 struct PartitionEntry partitions[4];	// lbastart and sectors will be byteswapped as necessary
 int partitioncount;
 
-FATBUFFER fat_buffer;                   // buffer for caching fat entries
+FATBUFFER fat_buffer __attribute__((aligned(4))); // buffer for caching fat entries
 unsigned long buffered_fat_index;       // index of buffered FAT sector
 
 char DirEntryLFN[MAXDIRENTRIES][261];
@@ -136,14 +136,14 @@ unsigned char FindDrive(void)
 		struct MasterBootRecord *mbr=(struct MasterBootRecord *)sector_buffer;
 		if(DEBUG)
 			BootPrint("Copying partitions");
-		memcpy(&partitions[0],&mbr->Partition[0],sizeof(struct PartitionEntry));
+		memcpy(&partitions[0],&mbr->Partition[0],sizeof(struct PartitionEntry));	// Partition[] is at 446 (2 mod 4): copied, never read in place
 		memcpy(&partitions[1],&mbr->Partition[1],sizeof(struct PartitionEntry));
 		memcpy(&partitions[2],&mbr->Partition[2],sizeof(struct PartitionEntry));
 		memcpy(&partitions[3],&mbr->Partition[3],sizeof(struct PartitionEntry));
 
 		switch(mbr->Signature)
 		{
-			case 0x55aa:	// Little-endian MBR on a big-endian system
+			case 0x55aa:	// Little-endian MBR on a big-endian system (SwapBBBB really swaps here)
 				if(DEBUG)
 					BootPrint("Swapping byte order of partition entries");
 				SwapPartitionBytes(0);
@@ -151,7 +151,7 @@ unsigned char FindDrive(void)
 				SwapPartitionBytes(2);
 				SwapPartitionBytes(3);
 				// fall through...
-			case 0xaa55:
+			case 0xaa55:	// Little-endian MBR on a little-endian system (RV32): no swap
 				// get start of first partition
 				boot_sector = partitions[0].startlba;
 				bprintfl("Start: %ld\n",partitions[0].startlba);
@@ -385,10 +385,10 @@ unsigned char FileOpen(fileTYPE *file, const char *name)
                         strncpy(file->name, (const char*)pEntry->Name, sizeof(file->name));
                         file->attributes = pEntry->Attributes;
 //                        file->size = pEntry->FileSize; 																		// it only works when using little endian long representation
-                        file->size = SwapBBBB(pEntry->FileSize); 		// for 68000
+                        file->size = le32(pEntry->FileSize); 		// little-endian on disk
 //                        file->size = ((file->size>>24)&0xFF)|((file->size>>8)&0xFF00)|((file->size<<8)&0xFF0000)|((file->size<<24)&0xFF000000); // for 68000 
 //                        file->start_cluster = pEntry->StartCluster + (fat32 ? (pEntry->HighCluster & 0x0FFF) << 16 : 0); 	// it only works when using little endian long representation
-                        file->start_cluster = SwapBB(pEntry->StartCluster) + (fat32 ? (SwapBB(pEntry->HighCluster) & 0x0FFF) << 16 : 0); 	// it only works when using little endian long representation for 68000 
+                        file->start_cluster = le16(pEntry->StartCluster) + (fat32 ? (le16(pEntry->HighCluster) & 0x0FFF) << 16 : 0); 	// little-endian on disk
 //                        file->start_cluster = (((pEntry->StartCluster>>8)&0xFF)|((pEntry->StartCluster<<8)&0xFF00)) | (fat32 ? ((pEntry->HighCluster & 0x0F) << 24)|((pEntry->HighCluster & 0xFF00) << 8)  : 0);  // for 68000 
                         file->cluster =  file->start_cluster;
                         file->sector = 0;
@@ -457,7 +457,7 @@ int ValidateDirectory(unsigned long directory)
             {
                 if (strncmp((const char*)pEntry->Name, "..         ", sizeof(pEntry->Name)) == 0)
                 {
-					unsigned long parent=SwapBB(pEntry->StartCluster) + (fat32 ? (SwapBB(pEntry->HighCluster) & 0x0FFF) << 16 : 0);
+					unsigned long parent=le16(pEntry->StartCluster) + (fat32 ? (le16(pEntry->HighCluster) & 0x0FFF) << 16 : 0);
                     printf("Parent directory is %ld \r",parent);
                     return(ValidateDirectory(parent) && FindDirectoryByCluster(parent,directory));
                 }
@@ -508,7 +508,7 @@ unsigned long FindDirectoryByCluster(unsigned long parent, unsigned long cluster
             {
                 if (pEntry->Attributes & ATTR_DIRECTORY) // is this a directory
                 {
-					unsigned long dircluster=SwapBB(pEntry->StartCluster) + (fat32 ? (SwapBB(pEntry->HighCluster) & 0x0FFF) << 16 : 0);
+					unsigned long dircluster=le16(pEntry->StartCluster) + (fat32 ? (le16(pEntry->HighCluster) & 0x0FFF) << 16 : 0);
 					if(dircluster==cluster)
 					{
                         printf("Found directory at %ld \r",dircluster);
@@ -578,7 +578,7 @@ unsigned long FindDirectory(unsigned long parent, const char *name)
                 {
                     if (strncmp((const char*)pEntry->Name, name, sizeof(pEntry->Name)) == 0)
                     {
-						unsigned long dircluster=SwapBB(pEntry->StartCluster) + (fat32 ? (SwapBB(pEntry->HighCluster) & 0x0FFF) << 16 : 0);
+						unsigned long dircluster=le16(pEntry->StartCluster) + (fat32 ? (le16(pEntry->HighCluster) & 0x0FFF) << 16 : 0);
                         printf("Found directory \"%s\" at %ld \r",name,dircluster);
 
                         return(dircluster);
@@ -805,9 +805,9 @@ char ScanDirectory(unsigned long mode, char *extension, unsigned char options)
 				{
 					if (pEntry->Attributes != ATTR_LFN)
 					{
-						pEntry->StartCluster = SwapBB(pEntry->StartCluster);
-						pEntry->HighCluster = SwapBB(pEntry->HighCluster);
-						pEntry->FileSize = SwapBBBB(pEntry->FileSize);
+						pEntry->StartCluster = le16(pEntry->StartCluster);	// little-endian on disk: native in DirEntry[]
+						pEntry->HighCluster = le16(pEntry->HighCluster);
+						pEntry->FileSize = le32(pEntry->FileSize);
 					}
 					pEntry++;
 				}		
@@ -1363,7 +1363,7 @@ unsigned long GetFATLink(unsigned long cluster)
 
 
 //    return(fat32 ? fat_buffer.fat32[buffer_index] & 0x0FFFFFFF : fat_buffer.fat16[buffer_index]); // get FAT link
-    return(fat32 ? SwapBBBB(fat_buffer.fat32[buffer_index]) & 0x0FFFFFFF : SwapBB(fat_buffer.fat16[buffer_index])); // get FAT link for 68000
+    return(fat32 ? le32(fat_buffer.fat32[buffer_index]) & 0x0FFFFFFF : le16(fat_buffer.fat16[buffer_index])); // get FAT link (little-endian on disk)
 }
 
 /* 832 section pragmas (ignored by gcc: no RAM-function section on this target); the
@@ -1402,7 +1402,7 @@ RAMFUNC unsigned char FileNextSector(fileTYPE *file)
             buffered_fat_index = sb;
         }
 
-        file->cluster = fat32 ? SwapBBBB(fat_buffer.fat32[i]) & 0x0FFFFFFF : SwapBB(fat_buffer.fat16[i]); // get FAT link for 68000 
+        file->cluster = fat32 ? le32(fat_buffer.fat32[i]) & 0x0FFFFFFF : le16(fat_buffer.fat16[i]); // get FAT link (little-endian on disk)
     }
 
     return(1);
@@ -1457,13 +1457,13 @@ unsigned char FileSeek(fileTYPE *file, unsigned long offset, unsigned long origi
 
         if (fat32)
         {
-            file->cluster = SwapBBBB(fat_buffer.fat32[i]) & 0x0FFFFFFF; // get FAT32 link
+            file->cluster = le32(fat_buffer.fat32[i]) & 0x0FFFFFFF; // get FAT32 link (little-endian on disk)
             if (file->cluster == 0x0FFFFFFF) // FAT32 EOC
                 return 0;
         }
         else
         {
-            file->cluster = SwapBB(fat_buffer.fat16[i]); // get FAT16 link
+            file->cluster = le16(fat_buffer.fat16[i]); // get FAT16 link (little-endian on disk)
             if (file->cluster == 0xFFFF) // FAT16 EOC
                 return 0;
         }
@@ -1613,7 +1613,7 @@ unsigned char FileCreate(unsigned long iDirectory, fileTYPE *file)
                             // mark cluster as used
                             if (fat32)
 //                                fat_buffer.fat32[buffer_index] = 0x0FFFFFFF; // FAT32 EOC change
-                                fat_buffer.fat32[buffer_index] = 0xFFFFFF0F; // FAT32 EOC change for 68000!
+                                fat_buffer.fat32[buffer_index] = le32(0x0FFFFFFF); // FAT32 EOC, little-endian on disk (the 832 stored the swapped literal 0xFFFFFF0F)
                             else
                                 fat_buffer.fat16[buffer_index] = 0xFFFF; // FAT16 EOC
 
@@ -1639,16 +1639,16 @@ unsigned char FileCreate(unsigned long iDirectory, fileTYPE *file)
                             memset((void*)pEntry, 0, sizeof(DIRENTRY));
                             memcpy((void*)pEntry->Name, file->name, 11);
                             pEntry->Attributes = file->attributes;
-                            pEntry->CreateDate = SwapBB(FILEDATE(2009, 9, 1));
-                            pEntry->CreateTime = SwapBB(FILETIME(0, 0, 0));
-                            pEntry->AccessDate = SwapBB(FILEDATE(2009, 9, 1));
-                            pEntry->ModifyDate = SwapBB(FILEDATE(2009, 9, 1));
-                            pEntry->ModifyTime = SwapBB(FILETIME(0, 0, 0));
-                            pEntry->StartCluster = (unsigned short)SwapBB(cluster); // for 68000
-                            pEntry->HighCluster = fat32 ? (unsigned short)SwapBB(cluster >> 16) : 0; // for 68000
+                            pEntry->CreateDate = le16(FILEDATE(2009, 9, 1));
+                            pEntry->CreateTime = le16(FILETIME(0, 0, 0));
+                            pEntry->AccessDate = le16(FILEDATE(2009, 9, 1));
+                            pEntry->ModifyDate = le16(FILEDATE(2009, 9, 1));
+                            pEntry->ModifyTime = le16(FILETIME(0, 0, 0));
+                            pEntry->StartCluster = le16((unsigned short)cluster); // little-endian on disk
+                            pEntry->HighCluster = fat32 ? le16((unsigned short)(cluster >> 16)) : 0; // little-endian on disk
 							printf("FileCreate() filesize (before endian swap) is %lX\n",file->size);
-                            pEntry->FileSize = SwapBBBB(file->size); // for 68000
-							printf("FileCreate() filesize (after endian swap) is %lX\n",pEntry->FileSize);
+                            pEntry->FileSize = le32(file->size); // little-endian on disk
+							printf("FileCreate() filesize (after endian swap) is %lX\n",(unsigned long)pEntry->FileSize);
 
                             // store dir entry
                             if (!MMC_Write(iDirectorySector - 1, sector_buffer))
@@ -1709,16 +1709,16 @@ unsigned char UpdateEntry(fileTYPE *file)
     memcpy((void*)pEntry->Name, file->name, 11);
     pEntry->Attributes = file->attributes;
 
-    if ((SwapBBBB(pEntry->FileSize) + cluster_size - 1) / (cluster_size << 9) != (file->size + cluster_size - 1) / (cluster_size << 9))
+    if ((le32(pEntry->FileSize) + cluster_size - 1) / (cluster_size << 9) != (file->size + cluster_size - 1) / (cluster_size << 9))
     {
         printf("UpdateEntry(): different number of clusters!\r");
-        printf("pEntry->FileSize = %lu\r", SwapBBBB(pEntry->FileSize));
+        printf("pEntry->FileSize = %lu\r", (unsigned long)le32(pEntry->FileSize));
         printf("file->size = %lu\r", file->size);
         printf("cluster_size = %u\r", cluster_size);
         return(0);
     }
 
-      pEntry->FileSize = SwapBBBB(file->size); // for 68000
+      pEntry->FileSize = le32(file->size); // little-endian on disk
 
     if (!MMC_Write(file->entry.sector, sector_buffer))
     {

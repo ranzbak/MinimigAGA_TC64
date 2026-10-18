@@ -5,7 +5,8 @@ Port of `fw/ctrl_832` (ZPU-class 832 host CPU) to RV32IMC. Task 2 made the
 the port. Edits so far: Task 3's call-site edits ("Differences from
 fw/ctrl_832") and the C library / host-test files ("C library", "Host tests");
 Task 4's `Makefile` and gcc 15 / gnu23 compile fixes ("Building", "gcc 15 and
-gnu23 compile fixes"); Task 5's I/O map ("Differences from fw/ctrl_832").
+gnu23 compile fixes"); Task 5's I/O map ("Differences from fw/ctrl_832");
+Task 9's byte-order helpers and the FAT/MBR fields ("Byte order (Task 9)").
 
 ## Copy base
 
@@ -51,9 +52,11 @@ With the verbatim copy of Task 2 no `DIFF` line appeared. Since Task 3 these
 copied files differ on purpose (each edit is a row of "Differences from
 fw/ctrl_832"): `akiko.c boot.c config.c drivesounds.c fat.c main.c menu.c`, and
 `test/Makefile`, `test/.gitignore` (the C-library wiring); since Task 4 also
-`audio.c c64keys.c drivesounds.h firmware.h hdd.c` and `Makefile`. `find` also
+`audio.c c64keys.c drivesounds.h firmware.h hdd.c` and `Makefile`; since Task 9
+also `fat.h swap.c swap.h`. `find` also
 lists files that only exist here (`rvlibc.c`, `rvlibc.h`, `test/lib_test.c`,
-`test/fmt_*`, `test/mutants.sh`, `test/gold/`, `test/rv/`); `cmp` reports
+`test/fmt_*`, `test/mutants.sh`, `test/gold/`, `test/rv/`, `test/swap_test.c`,
+`test/fat_test.c`, `test/fatimg.sh`, `test/fat_check.sh`); `cmp` reports
 those as missing in `fw/ctrl_832`. `interrupts.c`/`interrupts.h` exist only in
 `fw/ctrl_832` (Task 4), so the loop above does not see them.
 
@@ -107,7 +110,9 @@ constructor `smoke_trap.o` this way, into its own `B=` directory). Another toolc
 
 Plan estimate 85-95 KB; +11.9 % over the 832. The figure moves by a few bytes
 with the date strings of `version.h` (93,768 B at 21:58). `_end` = 0x275DC
-(< 0x70000, `AUDIO_BUFFER`).
+(< 0x70000, `AUDIO_BUFFER`). Task 9: text 87,882, **91,368 B** (2026-10-18):
+`le16`/`le32` are the identity on RV32, so the `SwapBB`/`SwapBBBB` calls of
+`fat.c` are gone.
 
 **`make check`** runs every part (`make -k`) and fails if any is red:
 
@@ -470,6 +475,46 @@ names this section; no global `-Wno-...`.
 | `fat.c`, `mmc.c` | `#pragma section_code_init` / `section_no_code_init` (the 832 linker's RAM-function sections) are unknown to gcc and do nothing here: `RAMFUNC` code stays in `.text` | file-level `#pragma GCC diagnostic ignored "-Wunknown-pragmas"` before the first one |
 | `fat.c:121` | `if (!MMC_Read(..)) return(0);` was followed by two tab-indented lines that looked guarded (`-Wmisleading-indentation`); they are not | re-indented with spaces |
 
+## Byte order (Task 9)
+
+Plan 5.2 "flips" and items 7/8 for `fat.c`. `swap.h` has the helpers of the
+Global Constraints, `static inline`: `le16`/`le32` (a field that is
+little-endian in memory: the identity here, a swap on a big-endian CPU),
+`be16`/`be32` (big-endian in memory: a swap here), `rd_le16`, `rd_le32`,
+`rd_be16`, `rd_be32` (read byte by byte, any alignment), `wr_be16`, `wr_be32`.
+`SwapBB`/`SwapBBBB`/`SwapWW` (`swap.c`) stay for a caller that really means
+"swap"; after Task 9 that is only `SwapPartitionBytes` (`SwapBBBB`). A
+converted line says what the disk format is ("little-endian on disk").
+
+| File:line | 832 | RV | Why |
+|---|---|---|---|
+| `fat.c:388` | `file->size = SwapBBBB(pEntry->FileSize); // for 68000` | `le32(pEntry->FileSize)` | `FileSize` is little-endian on disk |
+| `fat.c:391`, `460`, `511`, `581` | `SwapBB(pEntry->StartCluster) + (fat32 ? (SwapBB(pEntry->HighCluster) & 0x0FFF) << 16 : 0)` | `le16(..)` for both | `StartCluster`/`HighCluster` little-endian on disk |
+| `fat.c:808-810` (`ScanDirectory`) | the in-place `SwapBB`/`SwapBB`/`SwapBBBB` of each non-LFN entry of the sector | `le16`/`le16`/`le32` | `DirEntry[]` keeps native values (`menu.c:1257,1340,1374-1377` use them as such) |
+| `fat.c:1366` (`GetFATLink`), `1405` (`FileNextSector`), `1460`, `1466` (`FileSeek`) | `SwapBBBB(fat_buffer.fat32[i])`, `SwapBB(fat_buffer.fat16[i])` | `le32`, `le16` | FAT links are little-endian on disk |
+| `fat.c:1616` (`FileCreate`) | `fat_buffer.fat32[..] = 0xFFFFFF0F; // FAT32 EOC change for 68000!` | `= le32(0x0FFFFFFF)` | the 832 stored the byte-swapped literal; on LE that would be cluster `0x0FFFFF0F` (`fat_eoc32` mutant: `fsck.fat` "Cluster .. out of range") |
+| `fat.c:1642-1646` | `SwapBB(FILEDATE(2009, 9, 1))`, `SwapBB(FILETIME(0, 0, 0))` | `le16(..)` | dates and times are little-endian on disk |
+| `fat.c:1647-1648` | `(unsigned short)SwapBB(cluster)`, `(unsigned short)SwapBB(cluster >> 16)` | `le16((unsigned short)cluster)`, `le16((unsigned short)(cluster >> 16))` | same |
+| `fat.c:1650`, `1721` | `pEntry->FileSize = SwapBBBB(file->size); // for 68000` | `le32(file->size)` | same |
+| `fat.c:1712`, `1715` (`UpdateEntry`) | `SwapBBBB(pEntry->FileSize)` | `le32(..)`; the `%lu` argument cast `(unsigned long)` | same; the cast because `le32` is `uint32_t` (`unsigned int` on the host ABIs) |
+| `fat.c:1651` | `printf(".. %lX\n",pEntry->FileSize)` | `(unsigned long)pEntry->FileSize` | `FileSize` is `uint32_t` now (row `fat.h` below); format and output unchanged |
+| `fat.c:146`, `154` (`FindDrive`) | `switch(mbr->Signature)`: `case 0x55aa:` swaps the partition entries, falls through to `case 0xaa55:` | unchanged, comments only | on LE the signature bytes `55 AA` read `0xaa55`: no swap; `SwapPartitionBytes` keeps `SwapBBBB` (a real swap, BE host only). `fat_mbr_sig` mutant (labels exchanged): `FindDrive` fails |
+| `fat.c:139` | `memcpy(&partitions[0],&mbr->Partition[0],..)` x4 | unchanged, comment | item 8: `Partition[]` is at 446 (2 mod 4); the entries are copied (newlib `memcpy`, a call: `-fno-builtin`) into the aligned `partitions[]`, never read in place. The disassembly of `FindDrive` has the four `jal memcpy` from `sector_buffer+0x1be..0x1ee` and only aligned `lhu`/`lw` from `sector_buffer` (`lhu 22`, `lhu 44`, `lw 36`, `lhu 510`) |
+| `fat.c:74`, `fat.h:85` | `unsigned char sector_buffer[1024];` | `__attribute__((aligned(4)))` (definition and `extern`) | item 7: `DIRENTRY`, `MasterBootRecord` (and `configTYPE`, `config.c:273`, Task 11) are overlaid on it; gcc merges the BPB byte reads into `lw 36(s0)` (`fat_size`), which needs the 4-aligned base |
+| `fat.c:79` | `FATBUFFER fat_buffer;` | `__attribute__((aligned(4)))` | item 7 |
+| `fat.h:31-32`, `72`, `77` | `unsigned long startlba, sectors`, `unsigned long FileSize`, `unsigned long fat32[128]` | `uint32_t` | on-disk layouts: 32 bits on every ABI. Same type on RV32 (`uint32_t` is `unsigned long` there: `__UINT32_TYPE__`), so the target code does not change by it; on the LP64 host leg `unsigned long` made `PartitionEntry` 24 and `DIRENTRY` 40 bytes (`fat_test` RED). `_Static_assert`s at the end of `fat.h`: 16, 512, 32, 512 bytes |
+| `fat.h:5` | (blank line) | `#include <stdint.h>` | for `uint32_t` |
+| `swap.c:20`, `30`, `37` | `int result` | `unsigned long result` / `unsigned int result` | an `int` with bit 31 set was sign-extended into a 64-bit `unsigned long` (LP64: `SwapBBBB(0xFF)` = `0xffffffffff000000`, `swap_test` RED against `fw/ctrl_832/swap.c`); the same bits on RV32. `swap.c` now includes `swap.h` |
+
+Not changed (832 parity, seen by `fat_test`): `FileCreate` allocates exactly
+one cluster and does not update the FAT32 FSInfo free-cluster count
+(`fsck.fat -n` then reports "Free cluster summary wrong" and exits 1 on a card
+whose count is known; the test's FAT32 image has it "unknown", 0xFFFFFFFF);
+`FileReadEx` with a buffer does not advance `pBuffer` from one cluster to the
+next (every caller passes one sector or `NULL`). Task 9 kept the line count
+of `fat.c` (each edit on its own line), so the `fat.c` line numbers elsewhere
+in this README still hold.
+
 ## String semantics audit
 
 lib832 (`string.S`, `string_c.c`, `stringstubs.c`, `include/string.h`,
@@ -526,6 +571,11 @@ make -C fw/ctrl_rv/test                             # every test, native and -m3
 make -C fw/ctrl_rv/test mutants                     # every test must go red on its mutants
 ```
 
+`swap_test` checks the byte-order helpers (memory order on any host, the
+`rd_*`/`wr_*` forms at offsets 0..3 under UBSan, the legacy swaps without sign
+extension); `fat_test` runs the real `fat.c` + `mmc.c` on three card images
+(FAT16 with MBR, FAT32 with MBR, FAT16 superfloppy) against `mtools` and
+`fsck.fat`.
 `fw/ctrl_rv/test/README.md` has the targets, the flags, the mock (an SPI/TIMER/UART
 model with a card-image model; `-DHOSTTEST` hooks in `hardware.h` that leave
 the target image byte for byte the same) and the mutant rules. `LIB832` is
