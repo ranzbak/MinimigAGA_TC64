@@ -6,7 +6,9 @@
 #   make size     section sizes and the bytes of the .BIN
 #   make check    (a) no lr.w/sc.w/amo*.w, (b) no UART read, (c) I/O offsets
 #                 multiple of 4 (both via check_io.awk), (d) no 832 start-up names in the sources,
-#                 (e) the C library guard, (f) no #define true/false
+#                 (e) the C library guard, (f) no #define true/false,
+#                 (g) the boot ROM image ends below the stack floor 0x1400
+#   make stack    the 20 largest stack frames (-fstack-usage, $(B)/*.su)
 #   make clean
 #
 #   B=dir         output directory (default build)
@@ -34,11 +36,11 @@ PROJECT := RV32OSDA
 SRCS := hardware.c config.c fat.c fdd.c fpga.c boot.c hdd.c main.c menu.c \
         mmc.c spi.c osd.c rafile.c swap.c hexdump.c uart.c errors.c \
         c64keys.c akiko.c audio.c drivesounds.c rtc.c i2c.c adv7511.c \
-        atapi.c cdrom.c cue.c cdaudio.c rvlibc.c cfgswap.c
+        atapi.c cdrom.c cue.c cdaudio.c rvlibc.c cfgswap.c stackcheck.c
 OBJS := $(addprefix $(B)/,$(SRCS:.c=.o))
 
 CFLAGS  := $(RV_CFLAGS_FW) -std=gnu23 --specs=nano.specs -g -I. -Iarch \
-           -I$(B) -Wall -Wextra -Werror -MMD -MP $(EXTRA_CFLAGS)
+           -I$(B) -Wall -Wextra -Werror -fstack-usage -MMD -MP $(EXTRA_CFLAGS)
 LDFLAGS := $(RV_LDFLAGS_FW) --specs=nano.specs $(ARCH_LDFLAGS) \
            -Wl,-Map,$(B)/$(PROJECT).map
 LIBS    := -lc_nano $(RV_LIBS_FW)
@@ -85,7 +87,7 @@ size: $(B)/$(PROJECT).elf $(B)/$(PROJECT).BIN
 	@echo "$(PROJECT).BIN: `wc -c < $(B)/$(PROJECT).BIN` bytes"
 
 # ---- check: each part is its own target; all run (-k), any red fails ----
-CHECKS := check_a check_b check_c check_d check_e check_f
+CHECKS := check_a check_b check_c check_d check_e check_f check_g
 
 check: $(B)/$(PROJECT).elf
 	@$(MAKE) --no-print-directory -k $(CHECKS)
@@ -153,9 +155,24 @@ check_f:
 	  echo "check (f) FAIL: #define true/false in fw/ctrl_rv/*.[ch]"; exit 1; \
 	else echo "check (f) pass: no #define true/false"; fi
 
+# (g) the stack grows into the boot BRAM down to STACK_FLOOR (stackcheck.h);
+#     the boot ROM image must end below it, so a soft re-run of the boot ROM
+#     stays possible.  _end of the boot ROM's map (build it with
+#     make -C fw/ctrl_boot_rv).
+BOOT_MAP := $(TOP)/fw/ctrl_boot_rv/build/OSDBoot_rv.map
+check_g:
+	@end=`sed -n 's/^[[:space:]]*0x\([0-9a-f]*\)[[:space:]]*_end = \..*/0x\1/p' $(BOOT_MAP) | head -1`; \
+	if [ -z "$$end" ]; then echo "check (g) FAIL: no _end in $(BOOT_MAP) (make -C fw/ctrl_boot_rv)"; exit 1; fi; \
+	if [ $$(($$end)) -lt $$((0x1400)) ]; then echo "check (g) pass: boot ROM _end $$end < 0x1400"; \
+	else echo "check (g) FAIL: boot ROM _end $$end is not below 0x1400"; exit 1; fi
+
+# the 20 largest stack frames of the firmware (-fstack-usage: bytes, kind)
+stack: $(OBJS)
+	@cat $(B)/*.su | awk -F'\t' '{ print $$2 "\t" $$3 "\t" $$1 }' | sort -rn | head -20
+
 clean:
 	$(RM) -r $(B)
 
 -include $(OBJS:.o=.d)
 
-.PHONY: all size check $(CHECKS) clean force
+.PHONY: all size check stack $(CHECKS) clean force

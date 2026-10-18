@@ -778,7 +778,9 @@ bytes as tokens.
   byte takes about 48 `clk_114` at SPEED 1, and `userio_osd` never sees it.
 - **Stack low-water** (`=== STACK low <hex> (<n> bytes used)`): the lowest
   byte address the CPU writes below 0x2000 (boot BRAM, the bridge's `rom`
-  state; `sel[i]` = byte A+i) after its first read of 0x2000.
+  state; `sel[i]` = byte A+i) after its first read of 0x2000. Full-word writes
+  of `0x5A5AA5A5` (the firmware's `StackFill`, `fw/ctrl_rv/stackcheck.c`) are
+  not counted.
 
 ### Measured (2026-10-17, Verilator and xsim the same, SLAT=8 SJIT=0)
 

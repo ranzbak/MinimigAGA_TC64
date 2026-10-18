@@ -162,6 +162,51 @@ and gcc at `-Os` drops the `.init_array` entry of an empty constructor (the
 function itself stays; at `-O0` `akiko.o` has `.init_array.00102`). Nothing
 runs at that slot on either CPU, so the order is the 832's.
 
+## Stack and size budget (Task 17)
+
+```sh
+make -C fw/ctrl_boot_rv                  # once: the boot ROM map that `check` (g) reads
+make -C fw/ctrl_rv all stack size check
+make -C fw/ctrl_rv B=build_sr EXTRA_CFLAGS=-DRV_STACK_REPORT      # sim-only image
+SIM=verilator RUNTAG=p3t17 bash sim/host_bridge/run.sh fwboot
+SIM=verilator RUNTAG=p3t17s FW=fw/ctrl_rv/build_sr/RV32OSDA.BIN bash sim/host_bridge/run.sh fwboot
+```
+
+The stack starts at 0x2000 (`__stack_top`) and grows down into the 8 KB boot
+BRAM. `stackcheck.c`: `StackFill()` (first statement of `main()`) paints
+`[0x1400, sp - 64)` with `0x5A5AA5A5`; `StackHighWater()` returns the lowest
+address that no longer holds the pattern. The floor 0x1400 is where the boot
+ROM image has to end below (`make check` (g) reads `_end` from
+`fw/ctrl_boot_rv/build/OSDBoot_rv.map`: 0x1040), so a soft re-run of the boot
+ROM stays possible. The value is printed on the UART (`Stack high water <hex>`)
+when DebugMode is switched on (main loop, on the 0 -> 1 edge). The Debug OSD
+page has no free text line (`_showdebugmessages` writes all eight rows), so
+UART only. `-fstack-usage` writes `build/*.su`; `make stack` lists the 20
+largest frames.
+
+`-DRV_STACK_REPORT` (directory `build_sr`, gitignored; the shipped
+`build/RV32OSDA.BIN` has no such code) prints `STACKHW <hex>` once, at the 5th
+pass of either main loop (the bench card has no kickstart, so the firmware
+sits in the error loop). The bench's `STACK low` monitor ignores full-word
+writes of the pattern, so `StackFill` itself does not count.
+
+Measured (2026-10-18, gcc 15.2.0-1, `-Os`):
+
+| | |
+|---|---|
+| `size` text / data / bss | 89,104 / 3,484 / 59,292 |
+| `RV32OSDA.BIN` | 92,588 B (83,830 B for the 832 image: +8,758 B) |
+| `_end` | 0x27148 (< 0x70000, the linker ASSERT) |
+| boot ROM `_end` | 0x1040 (< 0x1400) |
+| L2 `fwboot` `STACK low` | 0x1950 (1712 B used); `STACKHW` 0x1950; 0x550 above the 0x1400 floor |
+
+The 20 largest frames (bytes, `make stack`): drivesounds_init 880, BootUploadLogo
+880, BootUploadCopper 848, BootUploadBall 848, CD_Insert 160, ScanDirectory 128,
+cd_read 128, cdaudio fill 128, HandleUI 112, LoadConfiguration 112,
+CD_HandleCommand 112, ATA_ReadSectors 96, cue_wav 96, atapi_packet 96,
+ATA_WriteSectors 80, SendFileV2 80, fpga_init 80, FileOpen 80, FindDrive 80,
+bprintfl 80. (The deepest call chain, not the sum, is what the bench measures.)
+
 ## C library
 
 Decision 12.12: the firmware links **newlib-nano 4.5** (`rv32imc/ilp32/libc_nano.a`

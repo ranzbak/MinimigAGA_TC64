@@ -526,11 +526,14 @@ module tb_host_bridge #(
 
   // ------------------------------------------------ FWBOOT: stack low-water
   // CPU writes below 0x2000 (the boot BRAM, the bridge's rom state) after
-  // the jump: the lowest byte written (sel[i] = byte A+i)
+  // the jump: the lowest byte written (sel[i] = byte A+i).  Full-word writes
+  // of 5A5AA5A5 (cpu_q is byte-swapped, the bus is big-endian) are not counted: that is StackFill() (fw/ctrl_rv/stackcheck.c)
+  // painting [0x1400, sp-64), not a stack store.
   integer stack_low = 32'h2000;
   integer sl_b = 0;
   always @(posedge clk114) if (cpu_reset_n && boot_seen && cpu_ack === 1'b1 && cpu_wr === 1'b1 &&
-                               cpu_addr[31:13] == 19'h0) begin
+                               cpu_addr[31:13] == 19'h0 &&
+                               !(cpu_sel == 4'hF && cpu_q == 32'hA5A55A5A)) begin
     sl_b = cpu_sel[0] ? 0 : cpu_sel[1] ? 1 : cpu_sel[2] ? 2 : 3;
     if ({cpu_addr, 2'b00} + sl_b < stack_low) stack_low = {cpu_addr, 2'b00} + sl_b;
   end

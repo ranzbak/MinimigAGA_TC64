@@ -64,6 +64,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include <stdio.h>
 #include "adv7511.h"
+#include "stackcheck.h"
 
 static unsigned long adv_timer = 0;
 static unsigned char adv_first = 1;   // service the ADV7511 once at start-up
@@ -242,9 +243,30 @@ int ColdBoot()
 	return(result);
 }
 
+// Sim-only STACKHW line for the L2 bench (make B=build_sr
+// EXTRA_CFLAGS=-DRV_STACK_REPORT; the shipped image has no such code): once,
+// at the 5th call.  Called from both main loops -- the bench card has no
+// kickstart, so the firmware sits in the error loop below the main one.
+// Counted, not timed: the bench's TIMER does not run at wall-clock speed.
+#ifdef RV_STACK_REPORT
+static void stackhw_poll(void)
+{
+	static unsigned int passes;
+	if(passes < 6 && ++passes == 5)
+	{
+		printf("STACKHW ");
+		printf("%X", StackHighWater());
+		printf("\n");
+	}
+}
+#else
+#define stackhw_poll() ((void)0)
+#endif
+
 int main(void)
 {
 	int rtc;
+	StackFill();
 	debugmsg[0]=0;
 	debugmsg2[0]=0;
 
@@ -273,8 +295,19 @@ int main(void)
 		BootPrintEx("ROM loading failed");
 
     adv_timer = GetTimer(250);
+	unsigned char debug_was = 0;
     while(1)
     {
+		stackhw_poll();
+		if(DebugMode && !debug_was)
+		{
+			// (the existing "%X" format: a new format string needs a case in
+			// test/gold/formats.txt and fmt_cases.h)
+			printf("Stack high water ");
+			printf("%X", StackHighWater());
+			printf("\n");
+		}
+		debug_was = DebugMode;
 		drivesounds_fill();
 		CD_AudioPoll();	// CD audio refill (findings/cdrom/plan.md 13.1)
 		//if(c64keyboard_checkreset())
@@ -329,6 +362,7 @@ int main(void)
 					HandleFpga();
 		        HandleUI();
 				CD_AudioPoll();	// the music goes on behind an error page
+				stackhw_poll();
             }
 		}
     }
