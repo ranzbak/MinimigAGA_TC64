@@ -1007,12 +1007,12 @@ reply byte of each `OSD_CMD_KEYQ` frame, the per-key loop of `osd.c` is not;
 `fwboot*` now fails below 40; it moves with code layout; open until L3 with
 `userio_osd` and the board); 7.1 items 10 and 11 closed; items 3, 4, 6-9,
 12-14 untouched, for L3. Decisions 12.4 and 12.12 are implemented (see
-there). **Open before Phase 5.3** (decision 12.4's gate "round trip on every
-config file"): the round trip on real 832 files, `make -C fw/ctrl_rv/test
-run-config_test CFG832_DIR=<dir with copies of the card's MINMGAA*.CFG>`, has
-not run (the repository holds no 832 config file; the gate ran
-`mkcfg832.py`'s generated files only); it must run on Paul's files before
-the A/B card of Phase 5.3.
+there). Decision 12.4's gate "round trip on every config file" is
+**closed** (2026-10-18): `make -C fw/ctrl_rv/test run-config_test
+CFG832_DIR=<copies>` on the five `MINMGAA*.CFG` of Paul's SD card (copied
+read-only: `MINMGAA.CFG`, `MINMGAA1.CFG` 212 B version 4; `MINMGAA2..4.CFG`
+208 B version 3): "5 file(s) round trip, fields equal" on both ABIs, 430
+cases 0 failed, PASS.
 
 ### Phase 4 -- co-simulation (the gate for floppy/HDD/CD)
 
@@ -1238,10 +1238,10 @@ P5-P7 on evidence. Of these, only the 8 KB boot BRAM survives unchanged.*
    with an OSD message and the defaults are used); first boot with only the
    832 file converts in memory and saves the `MINMGAR*` file (the 832 file is
    never written); `fw/ctrl_rv/tools/cfgconv` shares `cfgswap.c` with the
-   firmware. **Gate not closed:** the round trip ran on `mkcfg832.py`'s
-   generated files only; the repository holds no 832 config file. Real 832
-   files: `make -C fw/ctrl_rv/test run-config_test CFG832_DIR=<copies of the
-   card's MINMGAA*.CFG>` is **open**, before the A/B card of Phase 5.3. An
+   firmware. **Gate closed 2026-10-18:** besides `mkcfg832.py`'s generated
+   files, `make -C fw/ctrl_rv/test run-config_test CFG832_DIR=<copies of the
+   card's MINMGAA*.CFG>` passed on Paul's five real 832 files (two 212 B
+   version 4, three 208 B version 3), both ABIs, fields equal. An
    832 file shorter than 156 bytes (version 1 or 2, before 2020-11) is not
    converted (`CFG_MIN_SIZE`).
 5. **spicdc board check: Paul takes the risk.** No separate check before the
