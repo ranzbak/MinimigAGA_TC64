@@ -58,6 +58,8 @@ static struct {
 	int wcnt;
 	unsigned char wbuf[512];
 	unsigned commands;
+	int busy_stuck;			/* busy < 0: 0x00 until deselect or CMD0 */
+	struct buf log;			/* one line per command (mock_card_log) */
 } card;
 
 static void c_push(unsigned char b) { card.q[card.qt++ % QSZ] = b; }
@@ -66,9 +68,14 @@ static void c_push_r1(unsigned char r)
 	for (int n = 0; n < card.ncr; n++) c_push(0xFF);
 	c_push(r);
 }
-static void c_push_busy(void) { for (int n = 0; n < card.busy_n; n++) c_push(0x00); }
+static void c_push_busy(void)
+{
+	if (card.busy_n < 0) card.busy_stuck = 1;
+	for (int n = 0; n < card.busy_n; n++) c_push(0x00);
+}
 static void c_push_block(unsigned lba)
 {
+	if (card.tok_dly < 0) return;	/* no token, ever */
 	for (int n = 0; n < card.tok_dly; n++) c_push(0xFF);
 	c_push(0xFE);
 	for (int n = 0; n < 512; n++) c_push(card.mem[(size_t)lba * 512 + n]);
@@ -82,17 +89,21 @@ static void card_state_reset(void)
 	card.app_cmd = 0; card.idle = 1; card.ready = 0; card.polls = 0;
 	card.rd_multi = 0; card.wstate = 0; card.wmulti = 0;
 	card.rd_lba = card.wlba = 0; card.wcnt = 0; card.commands = 0;
+	card.busy_stuck = 0; card.log.n = 0;
 }
 
 static void card_do_cmd(void)
 {
 	int was_app = card.app_cmd;
+	char line[40];
 	card.app_cmd = 0;
 	card.commands++;
+	snprintf(line, sizeof line, "%sCMD%u arg=%08x\n", was_app ? "A" : "", card.cidx, card.carg);
+	buf_put(&card.log, line, strlen(line));
 	switch (card.cidx) {
 	case 0:
-		card.idle = 1; card.ready = 0; card.polls = 0;
-		card.rd_multi = 0; card.wstate = 0;
+		card.idle = 1; card.ready = 0; card.polls = 0; card.app_cmd = 0;
+		card.rd_multi = 0; card.wstate = 0; card.busy_stuck = 0;
 		c_push_r1(0x01);
 		break;
 	case 8:
@@ -121,6 +132,7 @@ static void card_do_cmd(void)
 	case 9: {			/* CSD v2.0 */
 		unsigned csize = card.sectors / 1024 - 1;
 		c_push_r1(0x00);
+		if (card.tok_dly < 0) break;	/* no token, ever */
 		for (int n = 0; n < card.tok_dly; n++) c_push(0xFF);
 		c_push(0xFE);
 		for (int n = 0; n < 16; n++) {
@@ -207,13 +219,14 @@ static void card_on_byte(unsigned char b)
 		else card.rd_multi = 0;
 	}
 	if (card.qh != card.qt) card.txb = card.q[card.qh++ % QSZ];
-	else card.txb = 0xFF;
+	else card.txb = card.busy_stuck ? 0x00 : 0xFF;
 }
 
 static void card_select(void) { card.cmdcnt = 0; card.txb = 0xFF; }
 static void card_deselect(void)
 {
 	card.cmdcnt = 0; card.qh = card.qt; card.rd_multi = 0; card.wstate = 0;
+	card.busy_stuck = 0;
 }
 
 void mock_card_params(int token_dly, int busy, int ncr, int init_polls)
@@ -222,6 +235,7 @@ void mock_card_params(int token_dly, int busy, int ncr, int init_polls)
 }
 
 unsigned mock_card_commands(void) { return card.commands; }
+const char *mock_card_log(void) { buf_put(&card.log, "", 0); return (const char *)card.log.p; }
 
 int mock_card_load(const char *path, unsigned sectors)
 {
@@ -271,6 +285,9 @@ static struct script scripts[8];		/* by the bit number of the line, 0 = none */
 static unsigned scs;				/* cfide's scs register */
 static unsigned spi_speed;
 static unsigned char last_in;
+
+static struct buf speed_log;			/* mock_spi_speed_log */
+static void timer_spi_byte(void);
 
 static struct buf trace;			/* closed frames */
 static struct buf fr_out, fr_in;		/* the open frame */
@@ -327,6 +344,7 @@ int mock_trace_write(const char *path)
 int mock_frames(void) { return frames + (frame_visible() ? 1 : 0); }
 unsigned mock_cs(void) { return scs; }
 unsigned mock_spi_speed(void) { return spi_speed; }
+const char *mock_spi_speed_log(void) { buf_put(&speed_log, "", 0); return (const char *)speed_log.p; }
 
 void hosttest_cs(unsigned v)
 {
@@ -343,11 +361,31 @@ void hosttest_cs(unsigned v)
 	fr_cs = scs & 0xFE;
 }
 
-void hosttest_spi_speed(unsigned v) { spi_speed = v; }
+void hosttest_spi_speed(unsigned v)
+{
+	char line[48];
+	spi_speed = v;
+	snprintf(line, sizeof line, "%02x after %u commands\n", v, card.commands);
+	buf_put(&speed_log, line, strlen(line));
+}
 
 unsigned char hosttest_spi(unsigned char out)
 {
 	unsigned char in;
+	if ((scs & 2) && (scs & 0x40)) {
+		/* direct mode: cfide clocks 4096 bits with MOSI high (sd_out FFFF,
+		   shiftcnt "10111111111111"), the FPGA takes the card's bytes */
+		const unsigned char ff = 0xFF;
+		for (int n = 0; n < 512; n++) {
+			in = card.txb;
+			card_on_byte(ff);
+			buf_put(&fr_out, &ff, 1);
+			buf_put(&fr_in, &in, 1);
+			timer_spi_byte();
+		}
+		last_in = in;
+		return in;
+	}
 	if (scs & 2) {
 		in = card.txb;
 		card_on_byte(out);
@@ -359,6 +397,7 @@ unsigned char hosttest_spi(unsigned char out)
 	}
 	buf_put(&fr_out, &out, 1);
 	buf_put(&fr_in, &in, 1);
+	timer_spi_byte();
 	last_in = in;
 	return in;
 }
@@ -383,10 +422,15 @@ unsigned mock_script_left(unsigned cs)
 unsigned mock_underruns(unsigned cs) { return scripts[slot_of(cs)].underruns; }
 
 /* ---------------------------------------------------------------- TIMER */
-static unsigned timer_count, timer_step, timer_reads;
+static unsigned timer_count, timer_step, timer_reads, timer_spi_rate, timer_spi_bytes;
 
 void hosttest_advance(unsigned n) { timer_count += n; }
 void mock_timer_step(unsigned n) { timer_step = n; }
+void mock_timer_spi_rate(unsigned n) { timer_spi_rate = n; timer_spi_bytes = 0; }
+static void timer_spi_byte(void)
+{
+	if (timer_spi_rate && ++timer_spi_bytes == timer_spi_rate) { timer_count++; timer_spi_bytes = 0; }
+}
 unsigned mock_timer_reads(void) { return timer_reads; }
 unsigned short hosttest_timer(void)
 {
@@ -423,9 +467,11 @@ void mock_reset(void)
 	free(view); view = NULL;
 	frames = 0; fr_cs = 0; scs = 0; spi_speed = 0; last_in = 0xFF;
 	free(card.mem);
+	free(card.log.p);
 	memset(&card, 0, sizeof card);
 	card_state_reset();
-	timer_count = 0; timer_step = 1; timer_reads = 0;
+	free(speed_log.p); memset(&speed_log, 0, sizeof speed_log);
+	timer_count = 0; timer_step = 1; timer_reads = 0; timer_spi_rate = 0; timer_spi_bytes = 0;
 	mock_uart_clear();
 	platform_reg = 0; audio_reg = 0;
 }

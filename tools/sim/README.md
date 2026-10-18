@@ -77,12 +77,14 @@ card to `+SD_SAVE`.
 
 ### Commands
 
-CMD0 (R1=01), CMD8 (R1, then 00 00 01 AA), CMD55, ACMD41 (R1=01 for
+CMD0 (R1=01; resets the card state, the application-command flag of a
+CMD55 before it too), CMD8 (R1, then 00 00 01 AA), CMD55, ACMD41 (R1=01 for
 `+SD_INIT_POLLS` polls, then 00), CMD58 (R1, OCR C0FF8000 when ready, CCS=1),
 CMD16 (R1=00), CMD9 (R1, token, 16 byte CSD v2.0, 2 CRC), CMD17 (R1, token
 FE, 512 bytes, 2 CRC), CMD18 (same, repeated until CMD12), CMD12 (one stuff
 byte, R1=00, busy), CMD24 (R1, host: token FE + 512 + 2 CRC, card: data
-response 05, busy), CMD25 (token FC per block, stop token FD, busy). Any
+response 05, busy), CMD25 (token FC per block, stop token FD, busy). CMD41
+not right after CMD55 (also CMD55, CMD0, CMD41): plain CMD41, R1=05. Any
 other command: R1=04. Address beyond the card: R1=40. Raising CS aborts a
 running multi-block read or write. Not modelled: byte addressing (SDSC),
 CMD1/MMC, CRC errors, write protect.
@@ -136,11 +138,15 @@ RUNTAG=a bash sim/common/run_sd_model.sh +SD_TOKEN_DLY=0     # run dir run_a
 ```
 
 It builds an 8 MB card image with `mkcard.sh` holding a 4 KB pseudo-random
-`TEST4K.BIN`, runs `tb_sd_spi_model.v` (init as in the boot ROM, MBR check,
+`TEST4K.BIN`, runs `tb_sd_spi_model.v` (CMD55, CMD0, CMD41 answered as a
+plain CMD41, init as in the boot ROM, MBR check,
 BPB, root directory, 8 sectors by CMD18 + CMD12 compared with the file's
 hex dump, CMD9, CMD24 write + CMD17 read-back, CMD25 two blocks + CMD18
 read-back), then checks that the `+SD_SAVE` image holds the CMD24 pattern
-at LBA 100 and still reads `TEST4K.BIN` back with `mcopy`. Pass line:
+at LBA 100 and still reads `TEST4K.BIN` back with `mcopy`. The file compare
+reads 8 consecutive sectors from the file's start cluster: it assumes that
+the file is stored contiguously, true for the freshly made `mkcard.sh` image
+(one file, nothing deleted), and does not follow the FAT chain. Pass line:
 `=== PASS`. Outputs in `sim/common/run_${RUNTAG:-wt}/`. Takes about 20 s
 (the 8 MB array is initialised and saved byte by byte).
 

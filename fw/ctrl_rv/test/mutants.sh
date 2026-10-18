@@ -55,7 +55,9 @@ verdict() {  # <name> <rc of the check> <what>
   else echo "mutant $1: SURVIVED ($3 passed)"; bad=1; fi
 }
 
-# unit <name> <test> <src|t|gold> <file> <sed>: the test must fail, native
+# unit <name> <test> <src|t|gold> <file> <sed> [text]: the test must fail,
+# native; with [text], a failure whose log does not hold it is BROKEN (the
+# mutant must be killed by that case)
 unit() {
   local n=$1 test=$2
   prep "$n"; mutate "$n" "$3" "$4" "$5" || return
@@ -65,7 +67,11 @@ unit() {
   # a mutant may hang a loop that waits for the mock: the timeout is a kill
   timeout 120 make -s -f Makefile SRC="mut/$n/src" TD="mut/$n/t" GOLD="mut/$n/gold" B="mut/$n/b" \
        WERROR=-Wno-error CARD="$CARD" FATIMG="$FATIMG" FATIMG_DEPS= "run64-$test" > "mut/$n/log" 2>&1
-  verdict "$n" $? "run64-$test"
+  local rc=$?
+  if [ $rc -ne 0 ] && [ -n "${6:-}" ] && ! grep -q -- "$6" "mut/$n/log"; then
+    echo "mutant $n: BROKEN (run64-$test failed, but not with \"$6\": mut/$n/log)"; bad=1; return
+  fi
+  verdict "$n" $rc "run64-$test"
 }
 
 # fmt <name> <src|t|gold> <file> <sed> [expected text in the output]
@@ -87,7 +93,7 @@ fmt() {
 control() {
   prep control
   local t rc=0
-  for t in mock_selftest cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_test hwmap_test swap_test fat_test; do
+  for t in mock_selftest cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_test hwmap_test swap_test fat_test mmc_test; do
     mk control "run64-$t" > "mut/control/log.$t" 2>&1 || { echo "control: run64-$t FAILED (mut/control/log.$t)"; rc=1; }
   done
   mk control fmt > mut/control/log.fmt 2>&1 || { echo "control: fmt FAILED (mut/control/log.fmt)"; rc=1; }
@@ -143,6 +149,33 @@ unit fat_eoc32 fat_test src fat.c 's/= le32(0x0FFFFFFF);/= 0xFFFFFF0F;/'
 unit fat_mbr_sig fat_test src fat.c 's/case 0x55aa:/case 0xFFFF0:/; s/case 0xaa55:/case 0x55aa:/; s/case 0xFFFF0:/case 0xaa55:/'
 unit fat_newcluster fat_test src fat.c 's/pEntry->StartCluster = le16((unsigned short)cluster);/pEntry->StartCluster = SwapBB(cluster);/'
 unit fat_newsize fat_test src fat.c 's/^      pEntry->FileSize = le32(file->size); \/\/ little-endian on disk/      pEntry->FileSize = SwapBBBB(file->size);/'
+# HighCluster (FAT32 HIGH.BIN and NEWFILE.BIN above cluster 65535): every read,
+# FileOpen's alone, and FileCreate's write (fat.c:1648)
+unit fat_highcluster fat_test src fat.c 's/le16(pEntry->HighCluster)/SwapBB(pEntry->HighCluster)/g' "fat32"
+unit fat_highcluster_open fat_test src fat.c 's/file->start_cluster = le16(pEntry->StartCluster) + (fat32 ? (le16(pEntry->HighCluster)/file->start_cluster = le16(pEntry->StartCluster) + (fat32 ? (SwapBB(pEntry->HighCluster)/' "HIGH.BIN"
+unit fat_highcluster_new fat_test src fat.c 's/pEntry->HighCluster = fat32 ? le16((unsigned short)(cluster >> 16)) : 0;/pEntry->HighCluster = fat32 ? SwapBB(cluster >> 16) : 0;/' "fat32"
+# FileCreate's dates: ModifyDate by mdir (fat_check.sh), CreateDate by the raw entry
+unit fat_modifydate fat_test src fat.c 's/pEntry->ModifyDate = le16(FILEDATE(2009, 9, 1));/pEntry->ModifyDate = SwapBB(FILEDATE(2009, 9, 1));/' "mdir: NEWFILE.BIN is not"
+unit fat_createdate fat_test src fat.c 's/pEntry->CreateDate = le16(FILEDATE(2009, 9, 1));/pEntry->CreateDate = SwapBB(FILEDATE(2009, 9, 1));/' "FAIL entry CreateDate"
+# GetFATLink (fat.c:1366): the second cluster of "Many Long Names" (DELTA) and FAT32's root chain
+unit fat_getfatlink fat_test src fat.c 's/return(fat32 ? le32(fat_buffer.fat32\[buffer_index\]) \& 0x0FFFFFFF : le16(fat_buffer.fat16\[buffer_index\]));/return(fat32 ? SwapBBBB(fat_buffer.fat32[buffer_index]) \& 0x0FFFFFFF : SwapBB(fat_buffer.fat16[buffer_index]));/'
+
+# ---- the SD driver (mmc_test) -------------------------------------------------
+# the brief's mutant: no time at all for the data token -> the 200-byte delay fails
+unit mmc_timeout0 mmc_test src mmc.c 's/^#define SD_TIMEOUT 173$/#define SD_TIMEOUT 0/' "FAIL MMC_Read lba 300, token delay 200"
+# too long a bound passes silently under the auto-advancing TIMER: the byte bound catches it
+unit mmc_timeout_long mmc_test src mmc.c 's/^#define SD_TIMEOUT 173$/#define SD_TIMEOUT 1000/' "FAIL CMD17: wait bytes"
+# each of the five bounds on its own
+unit mmc_bound_read mmc_test src mmc.c '/^unsigned char MMC_Read(/,/^}/ s/GetTimer(SD_TIMEOUT)/GetTimer(2 * SD_TIMEOUT)/' "FAIL CMD17: wait bytes"
+unit mmc_bound_csd mmc_test src mmc.c '/^unsigned char MMC_GetCSD(/,/^}/ s/GetTimer(SD_TIMEOUT)/GetTimer(2 * SD_TIMEOUT)/' "FAIL CMD9: wait bytes"
+unit mmc_bound_multi mmc_test src mmc.c '/^unsigned char MMC_ReadMultiple(/,/^}/ s/GetTimer(SD_TIMEOUT)/GetTimer(2 * SD_TIMEOUT)/' "FAIL CMD18: wait bytes"
+unit mmc_bound_write mmc_test src mmc.c '/^unsigned char MMC_Write(/,/^}/ s/GetTimer(SD_TIMEOUT)/GetTimer(2 * SD_TIMEOUT)/' "FAIL CMD24: wait bytes"
+unit mmc_bound_cmd12 mmc_test src mmc.c '/^unsigned char MMC_CMD12(/,/^}/ s/GetTimer(SD_TIMEOUT)/GetTimer(2 * SD_TIMEOUT)/' "FAIL CMD12: wait bytes"
+# MMC_Init: the command golden (ACMD41 without HCS) and the speed switch
+unit mmc_init_hcs mmc_test src mmc.c 's/MMC_Command(CMD41, 1 << 30)/MMC_Command(CMD41, 0)/' "FAIL the card's commands"
+unit mmc_init_slow mmc_test src mmc.c 's/^\tSPI_slow();$/\t;/' "FAIL SPI slow before CMD0"
+# direct mode: one byte instead of cfide's 4096 clocks -> gold/dmode.txt
+unit mmc_dmode mmc_test t mock_hw.c 's/for (int n = 0; n < 512; n++) {/for (int n = 0; n < 1; n++) {/' "FAIL the direct-mode trace"
 
 # ---- the mock itself (mock_selftest) -----------------------------------------
 unit mock_token mock_selftest t mock_hw.c 's/c_push(0xFE);/c_push(0xFF);/'

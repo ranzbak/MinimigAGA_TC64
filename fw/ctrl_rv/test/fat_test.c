@@ -12,10 +12,17 @@
  *     (300 KB, fragmented over a deleted file's clusters), byte for byte
  *   - a subdirectory walk with long names: FindDirectory, ChangeDirectory,
  *     FileOpen by long name, ValidateDirectory, FindDirectoryByCluster
+ *   - HIGH.BIN by FileOpen + FileRead (on FAT32 its start cluster is above
+ *     65535: HighCluster)
+ *   - "Games Collection/Many Long Names", two clusters: FileOpen of DELTA by
+ *     its long name (its entries are in the directory's second cluster,
+ *     GetFATLink) and of S2.BIN, byte for byte
  *   - FileOpen of a name that does not exist: 0, "not found"
  *   - FileCreate + FileWrite x3 + UpdateEntry of NEWFILE.BIN (W3.BIN), read
- *     back through fat.c; the card is saved to <out prefix>.img for
- *     fsck.fat -n and mtype (fat_check.sh)
+ *     back through fat.c; its raw directory entry (create and access date,
+ *     create time, start cluster, HighCluster: on FAT32 above 65535) against
+ *     the FAT layout; the card is saved to <out prefix>.img for fsck.fat -n,
+ *     mtype and mdir (the modify date and time) (fat_check.sh)
  * The firmware's printf goes through rvlibc.c and uart.c to the mock UART
  * (saved to <out prefix>.uart); this program reports with fprintf(stdout). */
 #include <stdarg.h>
@@ -266,6 +273,71 @@ static void subdirs(const char *data)
 	free(ref);
 }
 
+/* FileOpen(name) in the current directory, then the file byte for byte */
+static void open_and_read(const char *data, const char *file, const char *name, unsigned long min_cluster)
+{
+	size_t len;
+	unsigned char *ref = slurp(data, file, &len);
+	unsigned char sec[512];
+	char what[400];
+	fileTYPE f;
+
+	snprintf(what, sizeof what, "FileOpen(\"%s\")", name);
+	if (check(what, FileOpen(&f, name), 1)) {
+		snprintf(what, sizeof what, "%s size", file);
+		check(what, f.size, len);
+		snprintf(what, sizeof what, "%s start cluster >= %lu", file, min_cluster);
+		check(what, f.start_cluster >= min_cluster, 1);
+		unsigned long nsec = (len + 511) / 512;
+		int ok = 1;
+		for (unsigned long s = 0; s < nsec && ok; s++) {
+			size_t n = len - s * 512 < 512 ? len - s * 512 : 512;
+			ok = FileRead(&f, sec) && !memcmp(sec, ref + s * 512, n) && (s + 1 == nsec || FileNextSector(&f));
+		}
+		snprintf(what, sizeof what, "%s data", file);
+		check(what, ok, 1);
+	}
+	free(ref);
+}
+
+/* the long name of <file> in lfn_names.txt (fatdata.py) */
+static void long_name_of(const char *data, const char *file, char *out, size_t n)
+{
+	size_t len;
+	char *t = (char *)slurp(data, "lfn_names.txt", &len);
+	size_t fl = strlen(file);
+	out[0] = 0;
+	for (char *l = t; l < t + len; ) {
+		char *e = memchr(l, '\n', (size_t)(t + len - l));
+		if (!e) e = t + len;
+		if ((size_t)(e - l) > fl && !memcmp(l, file, fl) && l[fl] == '|')
+			snprintf(out, n, "%.*s", (int)(e - l - fl - 1), l + fl + 1);
+		l = e + 1;
+	}
+	free(t);
+	if (!out[0]) { say("FAIL no long name of %s in lfn_names.txt\n", file); exit(1); }
+}
+
+/* ---- HIGH.BIN, the two-cluster directory ---------------------------------- */
+static void high_and_long(const char *data)
+{
+	char lfn[300];
+
+	ChangeDirectory(0);
+	/* FAT32: fatimg.sh put HIGH.BIN above cluster 65535 (HighCluster 1) */
+	open_and_read(data, "HIGH.BIN", "HIGH    BIN", fat32 ? 0x10000 : 2);
+
+	unsigned long games = FindDirectory(0, "GAMESC~1   ");
+	ChangeDirectory(games);
+	unsigned long many = FindDirectory(games, "MANYLO~1   ");
+	check("FindDirectory(Games Collection, MANYLO~1) is a cluster", many >= 2, 1);
+	ChangeDirectory(many);
+	long_name_of(data, "DELTA.BIN", lfn, sizeof lfn);
+	open_and_read(data, "DELTA.BIN", lfn, 2);	/* in the directory's second cluster */
+	open_and_read(data, "S2.BIN", "S2      BIN", 2);
+	ChangeDirectory(0);
+}
+
 /* ---- a name that does not exist ----------------------------------------- */
 static void not_found(void)
 {
@@ -303,6 +375,27 @@ static void create_file(const char *data)
 	}
 	f.size = 1536;
 	check("UpdateEntry(size 1536)", UpdateEntry(&f), 1);
+	/* FAT32: every cluster below 65536 is taken (fatimg.sh's filler) */
+	if (fat32) check("FAT32: NEWFILE.BIN starts above cluster 65535", f.start_cluster > 0xFFFF, 1);
+
+	/* its directory entry as bytes on the card, against the FAT layout: the
+	   firmware stamps 2009-09-01 00:00:00 (fat.c FileCreate).  ModifyDate and
+	   ModifyTime are what mdir shows: fat_check.sh compares those */
+	const unsigned char *e = NULL;
+	for (unsigned lba = 0; !e && mock_card_sector(lba); lba++) {
+		const unsigned char *sp = mock_card_sector(lba);
+		for (int k = 0; k < 16 && !e; k++)
+			if (!memcmp(sp + 32 * k, "NEWFILE BIN", 11) && sp[32 * k + 11] != 0x0F) e = sp + 32 * k;
+	}
+	if (check("NEWFILE.BIN's directory entry on the card", e != NULL, 1)) {
+		unsigned date = ((2009 - 1980) << 9) | (9 << 5) | 1;	/* FAT date: years since 1980, month, day */
+		check("entry CreateTime (bytes 14-15)", e[14] | e[15] << 8, 0);
+		check("entry CreateDate (bytes 16-17) 2009-09-01", e[16] | e[17] << 8, date);
+		check("entry AccessDate (bytes 18-19)", e[18] | e[19] << 8, date);
+		check("entry HighCluster (bytes 20-21)", e[20] | e[21] << 8, f.start_cluster >> 16);
+		check("entry StartCluster (bytes 26-27)", e[26] | e[27] << 8, f.start_cluster & 0xFFFF);
+		check("entry FileSize (bytes 28-31)", le32_at(e + 28), 1536);
+	}
 
 	fileTYPE g;
 	if (check("FileOpen(\"NEWFILE BIN\") after the write", FileOpen(&g, "NEWFILE BIN"), 1)) {
@@ -345,6 +438,7 @@ int main(int argc, char **argv)
 		fclose(out);
 		read_big(data);
 		subdirs(data);
+		high_and_long(data);
 		not_found();
 		create_file(data);
 		snprintf(path, sizeof path, "%s.img", pre);

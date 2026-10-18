@@ -5,6 +5,7 @@
 #   - fat_test's listing (ScanDirectory) == <image>.gold (mdir + mshowfat)
 #   - fsck.fat -n of the image fat_test wrote (FileCreate/FileWrite/UpdateEntry)
 #   - mtype of the file it wrote == W3.BIN
+#   - mdir of it: 1536 bytes, 2009-09-01 0:00 (FileCreate's ModifyDate/Time)
 # The image in <image dir> is only read; fat_test saves its card to <out>/<image>_<tag>.img.
 set -euo pipefail
 if [ $# -ne 5 ]; then echo "usage: $0 <fat_test> <image dir> <out dir> <fat16|fat32|super> <tag>" >&2; exit 2; fi
@@ -45,6 +46,9 @@ fi
 
 mtype -i "$pre.img@@$((start * 512))" ::NEWFILE.BIN > "$pre.new" || fail "mtype ::NEWFILE.BIN"
 cmp "$pre.new" "$imgs/fatdata/W3.BIN" || fail "NEWFILE.BIN read back by mtype differs from W3.BIN"
+mdir -i "$pre.img@@$((start * 512))" ::NEWFILE.BIN > "$pre.mdir" || fail "mdir ::NEWFILE.BIN"
+grep -qE '^NEWFILE +BIN +1536 2009-09-01 +0:00' "$pre.mdir" \
+    || { cat "$pre.mdir"; fail "mdir: NEWFILE.BIN is not 1536 bytes of 2009-09-01 0:00"; }
 # the written card is not needed any more (132 MB for FAT32)
-rm -f "$pre.img" "$pre.new"
-echo "fat_test $name ($tag): PASS (listing == mdir/mshowfat, fsck.fat -n clean, mtype == W3.BIN)"
+rm -f "$pre.img" "$pre.new" "$pre.mdir"
+echo "fat_test $name ($tag): PASS (listing == mdir/mshowfat, fsck.fat -n clean, mtype == W3.BIN, mdir date)"

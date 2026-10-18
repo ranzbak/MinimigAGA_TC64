@@ -133,8 +133,9 @@ module sd_spi_model #(parameter IMG_SECTORS = 65536)
             if (log_on)
                 $display("SD: %0t %0sCMD%0d arg=%h cs=%b", $time, was_app ? "A" : "", cidx, carg, cs_n);
             case (cidx)
-                6'd0: begin
-                    idle = 1; ready = 0; polls = 0;
+                6'd0: begin     // reset: all card state, app_cmd too (also
+                                // cleared above for every command)
+                    idle = 1; ready = 0; polls = 0; app_cmd = 0;
                     rd_multi = 0; wstate = 0;
                     push_r1(8'h01);
                 end

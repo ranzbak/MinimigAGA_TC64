@@ -35,6 +35,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "fat.h"
 //#include "firmware.h"
 
+/* Bound of the data-token and busy waits, in TIMER counts (one count =
+   5.804 ms on the board, cfide timecnt(23 downto 8), the same for the 832 and
+   the RISC-V CPU): 173 x 5.804 ms = 1.004 s, at least the 832's real bound,
+   which was ~1,000,000 SPI byte reads.  A TIMER bound does not depend on the
+   CPU's speed; the 832's count loop did. */
+#define SD_TIMEOUT 173
+
 // variables
 unsigned char crc;
 unsigned long timeout;
@@ -208,7 +215,7 @@ unsigned char MMC_Read(unsigned long lba, unsigned char *pReadBuffer)
 // if pReadBuffer is NULL then use direct to the FPGA transfer mode (FPGA2 asserted)
 
     unsigned long i;
-//    unsigned long t;
+    unsigned long t;
 	unsigned char *p;
 
     if (CardType != CARDTYPE_SDHC) // SDHC cards are addressed in sectors not bytes
@@ -225,10 +232,10 @@ unsigned char MMC_Read(unsigned long lba, unsigned char *pReadBuffer)
     }
 
     // now we are waiting for data token, it takes around 300us
-    timeout = 0;
+    t = GetTimer(SD_TIMEOUT);
     while ((SPI(0xFF)) != 0xFE)
     {
-        if (timeout++ >= 1000000) // we can't wait forever
+        if (CheckTimer(t)) // we can't wait forever
         {
             DisableCard();
             printf("CMD17 (READ_BLOCK): no data token! (lba=%lu)\r", lba);
@@ -268,6 +275,7 @@ unsigned char MMC_Read(unsigned long lba, unsigned char *pReadBuffer)
 unsigned char MMC_GetCSD()
 {
 	int i;
+    unsigned long t;
     EnableCard();
 
     if (MMC_Command(CMD9,0))
@@ -279,10 +287,10 @@ unsigned char MMC_GetCSD()
     }
 
     // now we are waiting for data token, it takes around 300us
-    timeout = 0;
+    t = GetTimer(SD_TIMEOUT);
     while ((SPI(0xFF)) != 0xFE)
     {
-        if (timeout++ >= 1000000) // we can't wait forever
+        if (CheckTimer(t)) // we can't wait forever
         {
 			FatalError(ERROR_SDCARD,"GetCSD - No data token",0,0);
             printf("CMD9 (READ_BLOCK): no data token!\r");
@@ -337,7 +345,7 @@ unsigned char MMC_ReadMultiple(unsigned long lba, unsigned char *pReadBuffer, un
 // if pReadBuffer is NULL then use direct to the FPGA transfer mode (FPGA2 asserted)
 
     unsigned long i;
-//    unsigned long t;
+    unsigned long t;
 	unsigned char *p;
 //                printf("CMD18 (READ_MULTIPLE_BLOCK)");
     if (CardType != CARDTYPE_SDHC) // SDHC cards are addressed in sectors not bytes
@@ -355,10 +363,10 @@ unsigned char MMC_ReadMultiple(unsigned long lba, unsigned char *pReadBuffer, un
     while (nBlockCount--)
     {
         // now we are waiting for data token, it takes around 300us
-        timeout = 0;
+        t = GetTimer(SD_TIMEOUT);
         while ((SPI(0xFF)) != 0xFE)
         {
-            if (timeout++ >= 1000000) // we can't wait forever
+            if (CheckTimer(t)) // we can't wait forever
             {
                 printf("CMD18 (READ_MULTIPLE_BLOCK): no data token! (lba=%lu)\r", lba);
                 DisableCard();
@@ -402,6 +410,7 @@ unsigned char MMC_ReadMultiple(unsigned long lba, unsigned char *pReadBuffer, un
 unsigned char MMC_Write(unsigned long lba, unsigned char *pWriteBuffer)
 {
     unsigned long i;
+    unsigned long t;
 
    if (CardType != CARDTYPE_SDHC) // SDHC cards are addressed in sectors not bytes
         lba = lba << 9; // otherwise convert sector adddress to byte address
@@ -440,10 +449,10 @@ unsigned char MMC_Write(unsigned long lba, unsigned char *pWriteBuffer)
         return(0);
     }
 
-    timeout = 0;
+    t = GetTimer(SD_TIMEOUT);
     while ((SPI(0xFF)) == 0x00) // wait until the card is not busy
     {
-        if (timeout++ >= 1000000)
+        if (CheckTimer(t))
         {
             printf("CMD24 (WRITE_BLOCK): busy wait timeout! (lba=%lu)\r", lba);
             DisableCard();
@@ -499,6 +508,8 @@ unsigned char MMC_Command(unsigned char cmd, unsigned long arg)
 // stop multi block data transmission
 unsigned char MMC_CMD12(void)
 {
+    unsigned long t;
+
     SPI(CMD12); // command
     SPI(0x00);
     SPI(0x00);
@@ -513,10 +524,10 @@ unsigned char MMC_CMD12(void)
 //        RS232(response);
    } while (response == 0xFF && Ncr--);
 
-    timeout = 0;
+    t = GetTimer(SD_TIMEOUT);
     while ((SPI(0xFF)) == 0x00) // wait until the card is not busy
     {   // RS232('+');
-        if (timeout++ >= 1000000)
+        if (CheckTimer(t))
         {
             printf("CMD12 (STOP_TRANSMISSION): busy wait timeout!\r");
             DisableCard();

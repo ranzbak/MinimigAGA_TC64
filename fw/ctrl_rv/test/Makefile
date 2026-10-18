@@ -76,8 +76,13 @@ $(B)/fat_test: $(TD)/fat_test.c $(FAT_SRCS) $(HDRS)
 $(B)/fat_test_32: $(TD)/fat_test.c $(FAT_SRCS) $(HDRS)
 	@mkdir -p $(@D)
 	$(HOSTCC) -m32 $(CFLAGS) -o $@ $(TD)/fat_test.c $(FAT_SRCS)
-$(FATIMG)/fatimg.ok: $(FATIMG_DEPS)
+# (re)built when a script changed or one of its outputs is missing
+FATIMG_OUT = $(addprefix $(FATIMG)/,fat16.img fat32.img super.img fat16.gold fat32.gold super.gold \
+               fatdata/W3.BIN fatdata/lfn_names.txt)
+$(FATIMG)/fatimg.ok: $(FATIMG_DEPS) $(if $(filter-out $(wildcard $(FATIMG_OUT)),$(FATIMG_OUT)),FORCE)
 	bash $(TD)/fatimg.sh $(FATIMG) $(TOP)/tools/sim/mkcard.sh $(GOLD)
+FORCE:
+.PHONY: FORCE
 run64-fat_test: $(B)/fat_test $(FATIMG)/fatimg.ok
 	bash $(TD)/fat_check.sh $(B)/fat_test $(FATIMG) $(B) fat16 64
 	bash $(TD)/fat_check.sh $(B)/fat_test $(FATIMG) $(B) fat32 64
@@ -88,6 +93,27 @@ run32-fat_test: $(B)/fat_test_32 $(FATIMG)/fatimg.ok
 	bash $(TD)/fat_check.sh $(B)/fat_test_32 $(FATIMG) $(B) super 32
 run-fat_test: run64-fat_test run32-fat_test
 .PHONY: run-fat_test run64-fat_test run32-fat_test
+
+# mmc_test: the real mmc.c on the card model (SD_TIMEOUT bounds, token delay,
+# busy, MMC_Init's command sequence against the L2 boot run's SD log, the
+# direct-mode trace gold/dmode.txt, which gold/dmode.py must reproduce)
+MMC_SRCS = $(TD)/mock_hw.c $(SRC)/hardware.c $(SRC)/mmc.c $(SRC)/uart.c $(SRC)/rvlibc.c
+$(B)/mmc_test: $(TD)/mmc_test.c $(MMC_SRCS) $(HDRS)
+	@mkdir -p $(@D)
+	$(HOSTCC) $(CFLAGS) -o $@ $(TD)/mmc_test.c $(MMC_SRCS)
+$(B)/mmc_test_32: $(TD)/mmc_test.c $(MMC_SRCS) $(HDRS)
+	@mkdir -p $(@D)
+	$(HOSTCC) -m32 $(CFLAGS) -o $@ $(TD)/mmc_test.c $(MMC_SRCS)
+$(B)/dmode.ok: $(GOLD)/dmode.py $(GOLD)/dmode.txt
+	@mkdir -p $(@D)
+	$(PY) $(GOLD)/dmode.py 513 | cmp - $(GOLD)/dmode.txt
+	touch $@
+run64-mmc_test: $(B)/mmc_test $(B)/dmode.ok
+	$(B)/mmc_test $(GOLD) $(B)/mmc_64
+run32-mmc_test: $(B)/mmc_test_32 $(B)/dmode.ok
+	$(B)/mmc_test_32 $(GOLD) $(B)/mmc_32
+run-mmc_test: run64-mmc_test run32-mmc_test
+.PHONY: run-mmc_test run64-mmc_test run32-mmc_test
 
 # atapi_test without the ISO: the ISO-backed cases are skipped, not failed
 run64-atapi_test::
@@ -110,7 +136,7 @@ $(B)/openhf.inc: $(SRC)/hdd.c
 $(B)/openhf_test $(B)/openhf_test_32: $(B)/openhf.inc
 
 run: fmt run-mock_selftest run-cue_test run-cdaudio_test run-atapi_test run-cdrom_test \
-     run-openhf_test run-lib_test run-hwmap_test run-swap_test run-fat_test
+     run-openhf_test run-lib_test run-hwmap_test run-swap_test run-fat_test run-mmc_test
 
 clean:
 	$(RM) -r out mut

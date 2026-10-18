@@ -6,7 +6,8 @@ the port. Edits so far: Task 3's call-site edits ("Differences from
 fw/ctrl_832") and the C library / host-test files ("C library", "Host tests");
 Task 4's `Makefile` and gcc 15 / gnu23 compile fixes ("Building", "gcc 15 and
 gnu23 compile fixes"); Task 5's I/O map ("Differences from fw/ctrl_832");
-Task 9's byte-order helpers and the FAT/MBR fields ("Byte order (Task 9)").
+Task 9's byte-order helpers and the FAT/MBR fields ("Byte order (Task 9)");
+Task 10's TIMER bounds in `mmc.c` ("SD driver timeouts and the TIMER (Task 10)").
 
 ## Copy base
 
@@ -515,6 +516,76 @@ next (every caller passes one sector or `NULL`). Task 9 kept the line count
 of `fat.c` (each edit on its own line), so the `fat.c` line numbers elsewhere
 in this README still hold.
 
+## SD driver timeouts and the TIMER (Task 10)
+
+The 832's `mmc.c` bounded its five data-token and busy waits by loop count
+(`timeout = 0; ... if (timeout++ >= 1000000)`): a bound in CPU speed, which
+the ~7x faster RISC-V CPU would have cut to a seventh. They are TIMER bounds
+now, `SD_TIMEOUT` counts:
+
+| File:line (832 bound) | Wait | RV |
+|---|---|---|
+| `mmc.c:235`/`238` (`MMC_Read`, CMD17) | data token 0xFE | `t = GetTimer(SD_TIMEOUT); ... if (CheckTimer(t))` |
+| `mmc.c:290`/`293` (`MMC_GetCSD`, CMD9) | data token 0xFE | same |
+| `mmc.c:366`/`369` (`MMC_ReadMultiple`, CMD18, per block) | data token 0xFE | same |
+| `mmc.c:452`/`455` (`MMC_Write`, CMD24) | busy (0x00) after the data response | same |
+| `mmc.c:527`/`530` (`MMC_CMD12`) | busy after the stop command | same |
+
+`#define SD_TIMEOUT 173` (`mmc.c:43`): 173 x 5.804 ms = 1.004 s, at least the
+832's real bound (~1,000,000 SPI byte reads). `t` is a local of each
+function; the global `timeout` stays `MMC_Init`'s. Unchanged: the `Ncr` loops
+of `MMC_Command` and `MMC_CMD12` (`while (response == 0xFF && Ncr--)`, 100
+polls: an SD-spec byte count, not a delay), `MMC_Init`'s `WaitTimer(20)` and
+`GetTimer(1000)` (TIMER units already: parity), the messages and the
+`FatalError` calls, and `MMC_ReadMultiple` still returning 1 when
+`MMC_CMD12` timed out (it ignores that result, as on the 832). `grep -n
+'timeout++' fw/ctrl_rv/mmc.c` is empty. `test/mmc_test.c` checks every bound
+(`test/README.md`). In the L2 bench (TIMER 643x fast) `SD_TIMEOUT` is 1.56 ms
+of simulated time; the SD model's waits there (4 token bytes, 8 busy bytes)
+stay far below it.
+
+### Every TIMER user
+
+One TIMER count = 256 x 643 `clk_28` = **5.804 ms** on the board, for both
+CPUs (cfide `timecnt(23 downto 8)`, `tick_in` 44.1 kHz: 256 audio frames).
+`GetTimer(n)` returns `(TIMER + n) << 16`, `CheckTimer(t)` is true once
+`t - (TIMER << 16)` is negative, so a deadline can be at most 32,767 counts
+(190 s) ahead; `WaitTimer(n)` spins on both. The firmware's "ms" arguments
+are counts: every value below is unchanged from `fw/ctrl_832` (the
+`SD_TIMEOUT` sites replace count loops), and both CPUs wait the same board
+time. In the L2 bench TIMER runs 643x fast (`tick_in = 1`: one count ~9.0
+us). Lines are those of the current tree.
+
+| File:line | User | Nominal (counts) | Board time |
+|---|---|---|---|
+| `hardware.h:53` | `TIMER`, 16-bit read of `0xFFFFFFD0` | | |
+| `hardware.c:180`, `188`, `201` | `GetTimer`, `CheckTimer`, `WaitTimer` (above) | | |
+| `hardware.h:59` | `SPIN`: one TIMER read, the value unused (a cfide handshake as a delay); live at `hardware.c:236` (`SPI_reply`, 4x), `fpga.c:226` (4x), `config.c:546` (4x) | | one bus access each |
+| `audio.c:33`-`34` (`audio_clear`) | waits for the next TIMER change after `AUDIOF_ENA` | <= 1 | <= 5.804 ms |
+| `drivesounds.c:78`, `98`, `430` | event and render timestamps (`drivesounds_render`, `samples = timestamp - drivesounds.timestamp`, `:150`) | 1 = 256 frames | 5.804 ms per count |
+| `drivesounds.c:355` | `TIMER & 3`: pseudo-random pick of one of four sounds | | |
+| `cdrom.c:384` (`cda_port_timer`), `cdaudio.c:55`, `182`, `194` | CD audio play position: `CDA_HALF_UNITS` (`cdaudio.h:38`) counts per half buffer | 32 | 185.7 ms (8192 frames) |
+| `cdrom.c:473`, `485` (`cd_wait`) | `CD_TIMEOUT` (`cdrom.c:64`): host data phase | 10000 | 58.04 s |
+| `hdd.c:917`, `919` (`OpenHardfile`) | `GetTimer(0)` difference, printed as "ms" (`time >> 16`) | counts | 5.804 ms per printed "ms" |
+| `fpga.c:207` (`fpga_init`) | `GetTimer(0)`, unused | | |
+| `fpga.c:230`, `232`, `254` (`fpga_init`) | `WaitTimer(50)`, `WaitTimer(100)`, `WaitTimer(1000)` (boot screen) | 50, 100, 1000 | 290.2 ms, 580.4 ms, 5.804 s |
+| `osd.c:1030` (`OsdGetCtrl`) | menu button held: `BUTTONDELAY` (`osd.h:56`) | 20 | 116.1 ms |
+| `osd.c:1035` | `GetTimer(-1)`: expired at once | -1 | 0 |
+| `osd.c:1044`, `1048` (`OsdGetCtrl`) | key repeat: `REPEATDELAY`, `REPEATRATE` (`osd.h:54`, `55`) | 100, 25 | 580.4 ms, 145.1 ms |
+| `osd.c:1119`, `1085` (`ScrollReset`, `ScrollText`) | name scroll: `SCROLL_DELAY`, `SCROLL_DELAY2` (`osd.c:269`, `270`) | 300, 3 | 1.741 s, 17.4 ms |
+| `menu.c:247`, `269` (`cd_show_msg`, `cd_msg_expired`) | CD message: `CD_MSG_DELAY` (`menu.c:237`) | 4000 | 23.22 s |
+| `menu.c:610`, `617`, `619` (`HandleUI`) | help text: `HELPTEXT_DELAY`, `FRAME_DELAY` (`menu.c:201`, `202`) | 2500, 50 | 14.51 s, 290.2 ms |
+| `menu.c:3021`, `2714` (`InfoMessage`) | info popup | 1000 | 5.804 s |
+| `main.c:106`, `108`, `110` (`FatalError`) | LED blink: `WaitTimer(250)` x2, `WaitTimer(1000)` | 250, 1000 | 1.451 s, 5.804 s |
+| `main.c:275`, `310`, `313` (`main`) | ADV7511 poll (`adv_timer`) | 250 | 1.451 s |
+| `mmc.c:72` (`MMC_Init`) | `WaitTimer(20)` after the 80 clocks | 20 | 116.1 ms |
+| `mmc.c:80`, `88`, `135`, `174` (`MMC_Init`) | init timeout: `GetTimer(1000)`, ACMD41 / CMD1 polls | 1000 | 5.804 s |
+| `mmc.c:235`, `290`, `366`, `452`, `527` | `SD_TIMEOUT` (above) | 173 | 1.004 s |
+| `fat.c:723`, `1318` | `GetTimer(0)` inside a comment (dead); `fat.c:96` declares `GetTimer` | | |
+| `menu.c:2737`, `config.c:540`, `fat.c:168` | in comments (dead) | | |
+
+The boot ROM (`fw/ctrl_boot_rv`) is not part of this firmware and unchanged.
+
 ## String semantics audit
 
 lib832 (`string.S`, `string_c.c`, `stringstubs.c`, `include/string.h`,
@@ -575,7 +646,9 @@ make -C fw/ctrl_rv/test mutants                     # every test must go red on 
 `rd_*`/`wr_*` forms at offsets 0..3 under UBSan, the legacy swaps without sign
 extension); `fat_test` runs the real `fat.c` + `mmc.c` on three card images
 (FAT16 with MBR, FAT32 with MBR, FAT16 superfloppy) against `mtools` and
-`fsck.fat`.
+`fsck.fat`; `mmc_test` runs the real `mmc.c` on the card model (`MMC_Init`'s
+command sequence against the L2 boot run's SD log, token delays, busy, the
+five `SD_TIMEOUT` bounds, the direct-mode trace `test/gold/dmode.txt`).
 `fw/ctrl_rv/test/README.md` has the targets, the flags, the mock (an SPI/TIMER/UART
 model with a card-image model; `-DHOSTTEST` hooks in `hardware.h` that leave
 the target image byte for byte the same) and the mutant rules. `LIB832` is

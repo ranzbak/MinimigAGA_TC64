@@ -10,7 +10,14 @@
 # 132 MB.  Files (gold/fatdata.py): HELLO.TXT A.BIN MIDDLE.BIN C.BIN, then
 # MIDDLE.BIN deleted and BIG.BIN (300 KB) copied, so that it is fragmented
 # over the hole (checked here); "Games Collection/Another Level/Deep File
-# Name.dat" and "Long Name File.txt" (long names).
+# Name.dat" and "Long Name File.txt" (long names); "Games Collection/Many
+# Long Names" spans two clusters (checked here): three 246-character names
+# of 20 entries each and two 8.3 names fill its first 64 entries with "."
+# and "..", so DELTA's entries are in the second cluster; HIGH.BIN in the
+# root.  FAT32 only: a 128 MB filler of zeros ("Another Level/FILL.BIN")
+# takes every free cluster below 65536 first, so HIGH.BIN and the file that
+# fat_test creates start above cluster 65535 (HighCluster != 0; checked here
+# and in fat_test).
 # Byte-reproducible like mkcard.sh: fixed disk identifier, mkfs.fat
 # --invariant, file times from SOURCE_DATE_EPOCH in UTC.  FAT32: the FSInfo
 # free-cluster count and next-free hint are set to "unknown" (0xFFFFFFFF,
@@ -38,6 +45,14 @@ poke32() {
 # u16 <file> <byte offset>
 u16() { od -An -tu2 -j "$2" -N2 "$1" | tr -d ' '; }
 
+# lfn_of <file>: its long name (fatdata.py's lfn_names.txt)
+lfn_of() { sed -n "s/^$1|//p" "$data/lfn_names.txt"; }
+# chain_len <mshowfat output>: the clusters of "<a-b> <c> ..."
+chain_len() {
+    echo "$1" | grep -o '<[0-9-]*>' | tr -d '<>' |
+        awk -F- '{ n += (NF == 2 ? $2 - $1 + 1 : 1) } END { print n + 0 }'
+}
+
 # fsinfo_unknown <img> <partition byte offset>: FAT32 FSInfo counts unknown
 fsinfo_unknown() {
     local s; s=$(u16 "$1" $(($2 + 0x30)))
@@ -55,7 +70,24 @@ populate() {
     mmd -i "$i" "::Games Collection/Another Level"
     mcopy -i "$i" "$data/DEEP.DAT" "::Games Collection/Another Level/Deep File Name.dat"
     mcopy -i "$i" "$data/LONG.TXT" "::Long Name File.txt"
-    if [ "$3" = 1 ]; then fsinfo_unknown "$1" "$2"; fi
+    local many="::Games Collection/Many Long Names" f n hc
+    mmd -i "$i" "$many"
+    for f in ALPHA.BIN BRAVO.BIN CHARLIE.BIN; do mcopy -i "$i" "$data/$f" "$many/$(lfn_of $f)"; done
+    mcopy -i "$i" "$data/S1.BIN" "$data/S2.BIN" "$many"
+    mcopy -i "$i" "$data/DELTA.BIN" "$many/$(lfn_of DELTA.BIN)"
+    n=$(chain_len "$(mshowfat -i "$i" "$many")")
+    [ "$n" = 2 ] || { echo "fatimg: $many is $n clusters in $1, not 2" >&2; exit 1; }
+    if [ "$3" = 1 ]; then
+        fsinfo_unknown "$1" "$2"
+        head -c $((65536 * 2048)) /dev/zero | mcopy -i "$i" - "::Games Collection/Another Level/FILL.BIN"
+        fsinfo_unknown "$1" "$2"
+    fi
+    mcopy -i "$i" "$data/HIGH.BIN" ::HIGH.BIN
+    if [ "$3" = 1 ]; then
+        fsinfo_unknown "$1" "$2"
+        hc=$(mshowfat -i "$i" ::HIGH.BIN | sed -n 's/^[^<]*<\([0-9]*\).*/\1/p')
+        [ "${hc:-0}" -gt 65535 ] || { echo "fatimg: HIGH.BIN starts at cluster ${hc:-?} in $1, not above 65535" >&2; exit 1; }
+    fi
     local fat; fat=$(mshowfat -i "$i" ::BIG.BIN)
     case $fat in
         *"> <"*) ;;

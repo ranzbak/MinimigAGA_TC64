@@ -125,6 +125,21 @@ module tb_sd_spi_model;
         $readmemh(hexname, expd);
         #100;
 
+        // ---- CMD0 ends an application command: CMD55, CMD0, CMD41 is a plain
+        // CMD41 (illegal in SPI mode: R1 = 05), not ACMD41 (idle: R1 = 01)
+        cs_n = 1'b0;
+        cmd(6'd0, 32'd0, 8'h95);
+        if (r1 !== 8'h01) fail("app_cmd case: CMD0 R1 != 01");
+        cmd(6'd55, 32'd0, 8'hFF);
+        if (r1 !== 8'h01) fail("app_cmd case: CMD55 R1 != 01");
+        cmd(6'd0, 32'd0, 8'h95);
+        if (r1 !== 8'h01) fail("app_cmd case: 2nd CMD0 R1 != 01");
+        cmd(6'd41, 32'h4000_0000, 8'h87);
+        if (r1 !== 8'h05) begin fail("CMD55,CMD0,CMD41 not plain CMD41"); $display("  R1=%h", r1); end
+        else $display("CMD55, CMD0, CMD41: plain CMD41 (R1=05)");
+        cs_n = 1'b1;
+        spi(8'hFF);
+
         // ---- spi.c spi_init(): clocks with CS high, CMD0, CMD8, ACMD41, CMD58
         spin(200);
         cs_n = 1'b0;

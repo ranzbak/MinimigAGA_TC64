@@ -11,8 +11,12 @@
  *    register without bit 0).  A frame with cs 00 and no bytes is not written.
  *  - MISO per chip select: a queue of reply bytes, or a callback; nothing
  *    scripted gives the idle byte (0xFF).  Card (cs 02): the card image model.
- *  - TIMER: a counter, advanced by hosttest_advance() and by `step` on every
- *    read, so that a CheckTimer() loop ends.
+ *  - Direct mode (DMode, 0x40, with the card selected): one SPI write clocks
+ *    512 bytes out of the card with MOSI high, as cfide does (shiftcnt
+ *    "10111111111111": 4096 clocks); the trace shows them under cs 42.
+ *  - TIMER: a counter, advanced by hosttest_advance(), by `step` on every
+ *    read, so that a CheckTimer() loop ends, and (mock_timer_spi_rate) by 1
+ *    every n SPI bytes: time that passes with the bytes on the wire.
  *  - UART: the bytes of RS232(), kept as text.
  */
 #ifndef MOCK_HW_H
@@ -30,6 +34,9 @@ int mock_trace_write(const char *path);     /* 0 = ok */
 int mock_frames(void);                      /* frames in the trace so far */
 unsigned mock_cs(void);                     /* the CS register (cfide's scs) */
 unsigned mock_spi_speed(void);              /* last SPEED write, 0 = none */
+/* every SPEED write with the card commands parsed before it, one line each:
+   "3f after 0 commands" */
+const char *mock_spi_speed_log(void);
 
 /* ---- scripted MISO ---- */
 /* cs = the Enable value: 0x10 FPGA, 0x20 OSD, 0x40 DMode, 0x80 RTC, 0x00 no select */
@@ -45,12 +52,20 @@ unsigned mock_underruns(unsigned cs);       /* reads that found the queue empty 
 int mock_card_load(const char *path, unsigned sectors);   /* 0 = ok */
 int mock_card_save(const char *path);
 const unsigned char *mock_card_sector(unsigned lba);      /* NULL beyond the card */
-void mock_card_params(int token_dly, int busy, int ncr, int init_polls);  /* model defaults 4 8 1 2 */
+/* model defaults 4 8 1 2.  token_dly < 0: no data token ever (reads, CSD:
+   0xFF until the card is deselected); busy < 0: busy (0x00) without end after
+   a write or CMD12, until deselect or CMD0 (not in sd_spi_model.v: the timeout
+   cases of mmc_test) */
+void mock_card_params(int token_dly, int busy, int ncr, int init_polls);
 unsigned mock_card_commands(void);          /* commands the card has parsed */
+/* one line per command, as sd_spi_model.v's +SD_LOG=1 lines without the time
+   and cs fields: "CMD0 arg=00000000", "ACMD41 arg=40000000" (A = after CMD55) */
+const char *mock_card_log(void);
 
 /* ---- TIMER ---- */
 void hosttest_advance(unsigned n);
 void mock_timer_step(unsigned n);           /* added after every read, default 1 */
+void mock_timer_spi_rate(unsigned n);       /* +1 every n SPI bytes, 0 = off (default) */
 unsigned mock_timer_reads(void);
 
 /* ---- UART, PLATFORM, AUDIO ---- */
