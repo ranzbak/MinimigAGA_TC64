@@ -1,8 +1,9 @@
-// mon_l3.vh: the L3 margin monitors, plan 7.1 items 1, 3, 4, 5, 12 and 14
-// (README "Monitors").  `include"d by tb_l3.v after hostmon.vh (it reads
+// mon_l3.vh: the L3 margin monitors, plan 7.1 items 1, 3, 4, 5, 6, 12 and
+// 14 (README "Monitors").  `include"d by tb_l3.v after hostmon.vh (it reads
 // hostmon's hw_req_d, hw_done, hwa, spi_data, n_stale, n_hw) and after the
-// rtc_model instance rtc1; mon_final prints one line per measurement at the
-// end of the run, before the verdict:
+// rtc_model instance rtc1, paula_floppy pf1 and bfm_floppy fdd; mon_final
+// prints one line per measurement at the end of the run, before the
+// verdict:
 //
 //   === MARGIN <item> <name> min <value> <unit> (bound <b>, <verdict>) over <n> <events>
 //
@@ -41,6 +42,23 @@
 //                          transfer of their own (no SD_busy rise from the
 //                          request to the cycle after its ack): the write
 //                          was taken while the shifter was busy (bound 0)
+//   6  fdd_fifo_empty_dma  floppy read DMA (bfm_floppy): the Agnus disk slots
+//                          (one clk_28 cycle each: the clk7_en cycle Agnus
+//                          samples dmal in) with paula_floppy's dmaon = 1 and
+//                          its FIFO empty, counted per track from the first
+//                          slot at which the FIFO has reached the firmware's
+//                          working level (fifo_cnt >= 1024, where paula masks
+//                          the read request: fdd.c stops sending) to the
+//                          track's last word (lenzero); bound 0.  Before that
+//                          level the FIFO is filling: the wait for the
+//                          firmware's first word and the first lines, where
+//                          the three slots of a line come faster than the
+//                          SPI delivers (README "fdd_rd").  Per track an
+//                          "=== MARGIN (info) 6 fdd track" line: the minimum
+//                          fill at the slots of that window, the ramp, and
+//                          the brief's literal count (dmaon and empty at a
+//                          slot from the starting DSKLEN write on); a track
+//                          whose FIFO never reaches 1024 is a bench error
 //  12  rtc_cs_high         rtc_model: CS-inactive time between two RTC
 //                          transfers, ns; bound +RTC_CSH_MIN=<ns>; with the
 //                          default 0 (the PCF2123 datasheet is not in
@@ -165,6 +183,52 @@
     mn_done_d <= hw_done;      // non-blocking: every block of this edge sees the old value
   end
 
+  // ------------------------------------------------- item 6: floppy FIFO
+  // sampled in the middle of the clk_28 cycle before the clk7 edge (the
+  // slot's cycle, clk7_en = 1): paula_floppy's state is stable there.  The
+  // slot is checked before this cycle's first FIFO write is noted, so the
+  // window starts with the next slot.
+  integer m6_n = 0, m6_slots = 0, m6_lit_all = 0, m6_seen = 0, m6_min_all = 4096, m6_tracks = 0;
+  integer m6_tn = 0, m6_tslots = 0, m6_tmin = 4096, m6_ramp = 0, m6_ramp_e = 0, m6_lit = 0;
+  integer m6_c_first = 0, m6_c_full = 0;
+  reg     m6_open = 1'b0, m6_first = 1'b0, m6_full = 1'b0;
+  always @(negedge clk28) if (n_reset && clk7_en === 1'b1) begin
+    if (fdd.n_dma != m6_seen) begin              // a track DMA has started
+      m6_seen = fdd.n_dma;
+      m6_open = 1'b1; m6_first = 1'b0; m6_full = 1'b0;
+      m6_tn = 0; m6_tslots = 0; m6_tmin = 4096; m6_ramp = 0; m6_ramp_e = 0; m6_lit = 0;
+    end
+    if (m6_open && fdd.slot) begin
+      if (pf1.dmaon === 1'b1 && pf1.fifo_empty === 1'b1) m6_lit = m6_lit + 1;
+      if (m6_full) begin
+        m6_tslots = m6_tslots + 1;
+        if ({20'd0, pf1.fifo_cnt} < m6_tmin) m6_tmin = {20'd0, pf1.fifo_cnt};
+        if (pf1.dmaon === 1'b1 && pf1.fifo_empty === 1'b1) m6_tn = m6_tn + 1;
+      end else if (m6_first) begin
+        m6_ramp = m6_ramp + 1;
+        if (pf1.fifo_empty === 1'b1) m6_ramp_e = m6_ramp_e + 1;
+      end
+    end
+    if (m6_open && !m6_first && pf1.fifo_wr === 1'b1) begin m6_first = 1'b1; m6_c_first = cyc; end
+    if (m6_open && m6_first && !m6_full && pf1.fifo_cnt >= 12'd1024) begin m6_full = 1'b1; m6_c_full = cyc; end
+    if (m6_open && m6_first && pf1.lenzero === 1'b1) begin
+      m6_open = 1'b0;
+      m6_tracks = m6_tracks + 1;
+      m6_n = m6_n + m6_tn;
+      m6_slots = m6_slots + m6_tslots;
+      m6_lit_all = m6_lit_all + m6_lit;
+      if (m6_full && m6_tmin < m6_min_all) m6_min_all = m6_tmin;
+      if (m6_full)
+        $display("=== MARGIN (info) 6 fdd track %0d/%0d: fifo min %0d words over %0d slots from cycle %0d, %0d empty; ramp from the first word (cycle %0d) %0d slots, %0d empty; literal count %0d",
+                 fdd.cur_cyl, fdd.cur_head, m6_tmin, m6_tslots, m6_c_full, m6_tn, m6_c_first, m6_ramp, m6_ramp_e, m6_lit);
+      else begin
+        $display("=== MARGIN (info) 6 fdd track %0d/%0d: the FIFO never reached 1024 words (ramp from cycle %0d: %0d slots, %0d empty)",
+                 fdd.cur_cyl, fdd.cur_head, m6_c_first, m6_ramp, m6_ramp_e);
+        bench_error("MARGIN 6: a track's FIFO never reached the firmware's working level (1024 words)");
+      end
+    end
+  end
+
   // ----------------------------------------------- item 14: kickstart order
   integer m14_w = -1, m14_nw = 0, m14_rel = -1, m14_nrel = 0;
   reg [31:0] m14_a = 32'h0;
@@ -232,6 +296,10 @@
       mon_real("4", "paula_word_spacing", m4p_wn, m4p_wmin, "clk_114", 40, 1'b0, "words");
       mon_real("4", "userio_byte_spacing", m4u_wn, m4u_wmin, "clk_114", 40, 1'b0, "bytes");
       mon_count("5", "spi_write_busy", m5_n, 0, m5_w, "DATA writes");
+      mon_count("6", "fdd_fifo_empty_dma", m6_n, 0, m6_slots, "DMA slots");
+      if (m6_tracks > 0)
+        $display("=== MARGIN (info) 6 fdd %0d tracks: fifo min %0d words at the working level; literal count %0d slots (dmaon and empty from the starting DSKLEN write)",
+                 m6_tracks, m6_min_all, m6_lit_all);
       mon_real("12", "rtc_cs_high", rtc1.n_gaps, rtc1.csh_min_ns, "ns", rtc_csh_bound, rtc_csh_bound <= 0,
                "gaps");
       mon_real("14", "kick_order", (m14_nw > 0) ? m14_nrel : 0, m14_rel - m14_w, "clk_114", 1, 1'b0,

@@ -19,7 +19,10 @@
 //     minimig_syscontrol (rtl/minimig): the chipset reset
 //     bfm_audio: the CD-audio ring position (cfide audio_buf)
 //     bfm_keys: userio_osd's osd_ctrl (the OSD keys) from a key script
-//       (+KEYS=<file>, scenario keys); 0 without one
+//       (+KEYS=<file>, scenarios keys and fdd_rd); 0 without one
+//     bfm_floppy: paula_floppy's Amiga side, the CIA lines, Paula's disk
+//       registers and Agnus's disk DMA slots (scenario fdd_rd; idle
+//       otherwise)
 //
 // Wiring as rtl/minimig/minimig.v and rtl/soc/minimig_virtual_top.v:
 //   SPI_DO (cfide sd_di)   = paula_sdo | user_sdo          (minimig.v)
@@ -36,10 +39,11 @@
 //   The slaves get rtl/soc/openaars_defines.vh first (the board's global
 //   include: MINIMIG_HOST_DIRECT, so userio_osd's host_cs is constant 0).
 //
-// The Amiga side is idle: the CIA lines deselect the floppy (_sel 1111,
-// _motor 1, _step 1), no register or Gayle access, osd_ctrl from bfm_keys
-// (0 unless a key script runs), in_diag 0 (not modelled), c1 / c3 / sol 0,
-// rtg_ena 0.  The chipset reset is minimig.v's: reset = sys_reset | ~_cpu_reset_in, sys_reset from
+// The Amiga side is idle except for bfm_floppy (fdd_rd) and bfm_keys: until
+// bfm_floppy starts, the CIA lines deselect the floppy (_sel 1111, _motor
+// 1, _step 1), no Paula register write, no disk DMA; no Gayle access,
+// osd_ctrl from bfm_keys (0 unless a key script runs), in_diag 0 (not
+// modelled), c1 / c3 / sol 0, rtg_ena 0.  The chipset reset is minimig.v's: reset = sys_reset | ~_cpu_reset_in, sys_reset from
 // minimig_syscontrol (mrst = userio_osd usrrst, cnt = sof), and the idle
 // CPU's reset output follows its reset input (_cpu_reset_in = ~(cpurst |
 // sys_reset)): reset = sys_reset | cpurst.  sof: one clk7 cycle per PAL
@@ -301,15 +305,30 @@ module tb_l3 #(
   wire [15:0] hdd_data_out, hdd_data_in;
   wire        hdd_wr, hdd_status_wr, hdd_data_wr, hdd_data_rd, hdd_port, hdd_xfer_wr, hdd_regs_rd;
   wire        fl_track0, fl_change, fl_ready, fl_wprot, fl_index, fl_dmal, fl_dmas;
+  wire [3:0]  fl_sel;
+  wire        fl_motor, fl_side, fl_step, fl_direc, fl_enable, fl_wordsync, fl_blckint;
+  wire [8:1]  fl_rga;
+  wire [15:0] fl_din, fl_dout;
+
+  // the Amiga side of the floppy: CIA lines, Paula's registers, Agnus's
+  // disk DMA (scenario fdd_rd; idle otherwise)
+  bfm_floppy fdd (
+    .clk28(clk28), .clk7_en(clk7_en), .cyc(cyc),
+    ._sel(fl_sel), ._motor(fl_motor), .side(fl_side), ._step(fl_step), .direc(fl_direc),
+    ._track0(fl_track0), ._ready(fl_ready),
+    .reg_address_in(fl_rga), .data_in(fl_din), .data_out(fl_dout),
+    .dmal(fl_dmal), .dmas(fl_dmas), .blckint(fl_blckint),
+    .enable(fl_enable), .wordsync(fl_wordsync)
+  );
 
   paula_floppy pf1 (
     .clk(clk28), .clk7_en(clk7_en), .clk7n_en(clk7n_en),
-    .reset(mm_reset), .ntsc(1'b0), .sof(sof), .enable(1'b0),
-    .reg_address_in(8'h00), .data_in(16'h0000), .data_out(),
+    .reset(mm_reset), .ntsc(1'b0), .sof(sof), .enable(fl_enable),
+    .reg_address_in(fl_rga), .data_in(fl_din), .data_out(fl_dout),
     .dmal(fl_dmal), .dmas(fl_dmas),
-    ._step(1'b1), .direc(1'b0), ._sel(4'hF), .side(1'b0), ._motor(1'b1),
+    ._step(fl_step), .direc(fl_direc), ._sel(fl_sel), .side(fl_side), ._motor(fl_motor),
     ._track0(fl_track0), ._change(fl_change), ._ready(fl_ready), ._wprot(fl_wprot), .index(fl_index),
-    .blckint(), .syncint(), .wordsync(1'b0),
+    .blckint(fl_blckint), .syncint(), .wordsync(fl_wordsync),
     ._scs(sd_cs[4]), .sdi(sd_do), .sdo(paula_sdo), .sck(sck_slv),
     .disk_led(), .floppy_drives(floppy_config[3:2]),
     .direct_scs(~sd_cs[6]), .direct_sdi(card_miso),
@@ -570,7 +589,7 @@ module tb_l3 #(
     wait (run_end);
     #1;   // the end-of-run counters after the last edge's updates, in every simulator
     if (uart_n) uart_print;
-    errors = errors + ram.errors + keys.errors;
+    errors = errors + ram.errors + keys.errors + fdd.errors;
     hm_final_hw;
     card.save_image;
 `ifdef RV_HOSTCPU_STATS

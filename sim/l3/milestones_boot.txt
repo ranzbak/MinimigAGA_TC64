@@ -5,7 +5,9 @@
 # subsequence of their own stream); "NOT UART <text>" lines are run.sh's:
 # no UART line of the run contains <text>.  "CPU=rv <line>" and "CPU=832
 # <line>": a line of that CPU only (run.sh keeps it without the prefix for
-# that CPU and drops it for the other); only the boot ROM's file name and
+# that CPU and drops it for the other); "CARD=<card> <line>" likewise a
+# line of that card only (fdd_rd boots the fdd card, the others the boot
+# card: run.sh CARDNAME); only the boot ROM's file name and
 # the config file name differ (the firmware version line is the same:
 # both builds print L3_DATE's "Firmware version: 2026-1-1-0-0", and only
 # its prefix is a milestone).  Taken from the sources, not from a run.
@@ -77,8 +79,11 @@ SPI 20 00
 #@ boot_short end
 #
 # -- UART after the boot screen
-# ColdBoot() -> drivesounds_init("DRIVESNDBIN"): not on the boot card
-UART file "DRIVESNDBIN" not found
+# ColdBoot() -> drivesounds_init("DRIVESNDBIN"): not on the boot card; on
+# the fdd card (fdd_rd) it is sw/mkdrivesounds/drivesnd.bin, 212,098 bytes
+CARD=boot UART file "DRIVESNDBIN" not found
+CARD=fdd UART file "DRIVESNDBIN" found
+CARD=fdd UART Audio file - length 212098
 UART Loading kickstart ROM...
 # ApplyConfiguration(1,1) -> OpenHardfile(0), (1): hardfile[0] = RDB.HDF
 # (plain file), hardfile[1] = SYNTH.HDF (synthesised RDB): neither is on

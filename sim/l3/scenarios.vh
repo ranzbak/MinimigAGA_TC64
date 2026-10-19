@@ -31,6 +31,16 @@
 //               TIMER: run.sh sets +TICKDIV=643 +TICKDIV_AT=scenario (the
 //               firmware's key repeat, help text and message timers run at
 //               the board's rate from the script's start)
+//   fdd_rd      the floppy read (README "fdd_rd"; run.sh: the fdd card,
+//               +KEYS=sim/l3/keys/insert_df0.txt): main-loop milestone as
+//               boot, where the key script starts (drive sounds on, TEST.ADF
+//               into df0, OSD closed); at its end bfm_floppy reads the
+//               tracks of FDD_PLAN below (drive 0, motor on, a seek, the
+//               side, one full-track DMA of FDD_WORDS words with sync
+//               FDD_SYNC each, dumped to +FDD_DUMP_<cyl>_<head>.hex); end
+//               event: the blckint of the last track DMA ("=== STATS@fdd_rd").
+//               TIMER: run.sh sets +TICKDIV=643 +TICKDIV_AT=scenario, as
+//               keys (fdd.c uses no TIMER, the drive sounds' renderer does)
 
   reg [8*32-1:0]  scenario;
   reg [8*16-1:0]  short_end;
@@ -40,25 +50,42 @@
   integer         sc_fpga = 0;        // HandleFpga frames so far
   reg             sc_ver = 1'b0;      // the OSD_CMD_VERSION frame has closed
 
+  // fdd_rd: cylinders 0, 1, 2, 39, 40, 41, 77, 78, 79 head 0 and cylinder
+  // 79 head 1, in that order (entry k in bits 8k+7..8k: bit 7 the head);
+  // each a full-track read of 6,334 words (fdd.c: TRACK_SIZE 12,668 bytes)
+  localparam integer FDD_N     = 10;
+  localparam integer FDD_WORDS = 6334;
+  localparam [15:0]  FDD_SYNC  = 16'h4489;
+  localparam [127:0] FDD_PLAN  = {48'h0, 8'h80 | 8'd79, 8'd79, 8'd78, 8'd77, 8'd41, 8'd40, 8'd39, 8'd2, 8'd1, 8'd0};
+
   task sc_init;
     begin
       if (!$value$plusargs("SCENARIO=%s", scenario)) scenario = "boot";
       if (!$value$plusargs("SHORT_END=%s", short_end)) short_end = "";
       if (!$value$plusargs("BOOT_END=%s", boot_end)) boot_end = "";
-      if (scenario != "boot" && scenario != "boot_short" && scenario != "keys")
+      if (scenario != "boot" && scenario != "boot_short" && scenario != "keys" && scenario != "fdd_rd")
         bench_error("unknown +SCENARIO (scenarios.vh)");
       if (short_end != "" && (scenario != "boot_short" || short_end != "version"))
         bench_error("+SHORT_END=version is the only value, and only for boot_short");
       if (boot_end != "" && (scenario != "boot" || boot_end != "rtc2"))
         bench_error("+BOOT_END=rtc2 is the only value, and only for boot");
-      if (scenario == "keys" && !$test$plusargs("KEYS="))
-        bench_error("scenario keys needs +KEYS=<key script>");
+      if ((scenario == "keys" || scenario == "fdd_rd") && !$test$plusargs("KEYS="))
+        bench_error("scenarios keys and fdd_rd need +KEYS=<key script>");
+      if (scenario == "fdd_rd") begin
+        fdd.plan_n = FDD_N;
+        fdd.plan_words = FDD_WORDS;
+        fdd.plan_sync = FDD_SYNC;
+        fdd.plan = FDD_PLAN;
+      end
     end
   endtask
 
   // keys: the script starts at the main-loop milestone, ends the scenario
-  always @(posedge sc_started) if (scenario == "keys") keys.go = 1'b1;
+  always @(posedge sc_started) if (scenario == "keys" || scenario == "fdd_rd") keys.go = 1'b1;
   always @(posedge keys.done) if (scenario == "keys") sc_end("keys", "the end of the key script");
+  // fdd_rd: the track reads start when the key script has ended
+  always @(posedge keys.done) if (scenario == "fdd_rd") fdd.go = 1'b1;
+  always @(posedge fdd.done) if (scenario == "fdd_rd") sc_end("fdd_rd", "the blckint of the last track DMA");
 
   // STATS@<event>: the rv_hostcpu counters 1 ns after the end event's
   // clk_114 edge.  rv_hostcpu counts with blocking assignments on that

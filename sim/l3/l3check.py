@@ -6,6 +6,7 @@
     python3 -I l3check.py mmc <run> [<golden>]
     python3 -I l3check.py memhash <run>
     python3 -I l3check.py keys <run>
+    python3 -I l3check.py fdd_rd <run>
 
 kick: the 256 KB kickstart the firmware uploaded equals the card's KICK.ROM
 byte for byte.  UploadKickstart (fw/ctrl_rv/config.c) sends a 0x40000-byte
@@ -62,6 +63,38 @@ It prints "REPLY <cmd> byte <k>: <right> of <n> right" per reply byte
 (VERSION 88 bytes 0-5, KEYQ 98 byte 0 = the status, 1.. the per-key bytes)
 before its verdict.
 
+fdd_rd (scenario fdd_rd): the floppy reads of bfm_floppy against TEST.ADF.
+The run log's "=== FDD dma <k> cylinder <c> head <h>: <n> words to
+blckint" lines must be the 10 track reads of the scenario (FDD_TRACKS
+below, in order, FDD_WORDS words each), and each dump
+<run>/fdd_rd_<c>_<h>.hex (the words Agnus moved, in order) must:
+  - decode with fw/ctrl_rv/test/gold/mfm.py's decode_sector: the read runs
+    with WORDSYNC, so Paula starts the DMA with the word after the sync word
+    it matched; the decoder gets that sync word (and two preamble words,
+    which it does not read) in front of the dump.  Every sector found
+    (sync sync at a word boundary, 1,088 bytes) has its header and data
+    checksums right, the track number c * 2 + h, a sector number 0..10 with
+    "sectors to the gap" 11 - sector, and the 512 data bytes of
+    <run>/card/content/TEST.ADF at (track * 11 + sector) * 512; all 11
+    sectors are found
+  - equal, byte for byte, the stream mfm.py's read_track() makes of the ADF
+    track (sectors 0..10 and the gap, 12,668 bytes) read cyclically from
+    some offset: a DMA starts at a sync, after the sectors the firmware sent
+    before it (the offset is printed: 6 = sector 0's preamble and first
+    sync, the WORDSYNC start); a dump that does not start with the sync word
+    is decode-only (said so)
+  - for cylinder 0 head 0 and cylinder 79 head 1 also equal, read the same
+    way, the committed golden streams of exec-3 Task 13
+    (fw/ctrl_rv/test/gold/mfm_c00_s0.hex, mfm_c79_s1.hex)
+and the OSD and UART:
+  - no OSD_CMD_OSD_WR frame before the first key event (an error page) and
+    none after the first track DMA started (the OSD is closed; fdd.c's
+    FatalError would draw one)
+  - after the first key event, an OSD row 3 "Floppy disk sounds : on" and
+    then an OSD row 0 "df0: TEST" (keys/insert_df0.txt: sounds on, TEST.ADF
+    in df0), decoded as spitrace.py osd
+  - no UART line with "Illegal track", "Fatal" or "Wrong header"
+
 Each prints one line, "PASS <name>: ..." (exit 0) or "FAIL <name>: ..."
 (exit 1); exit 2 on a usage error.  Python 3 standard library only.
 """
@@ -74,6 +107,14 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 L2 = os.path.join(HERE, "..", "host_bridge")
+
+GOLD = os.path.join(HERE, "..", "..", "fw", "ctrl_rv", "test", "gold")
+
+# scenario fdd_rd (scenarios.vh FDD_PLAN): (cylinder, head) in order
+FDD_TRACKS = [(0, 0), (1, 0), (2, 0), (39, 0), (40, 0), (41, 0), (77, 0), (78, 0), (79, 0), (79, 1)]
+FDD_WORDS = 6334
+FDD_SYNC = 0x4489
+FDD_GOLDEN = {(0, 0): "mfm_c00_s0.hex", (79, 1): "mfm_c79_s1.hex"}
 
 HOSTMAP_ADDR = 0x680000
 KICK_SIZE = 0x40000
@@ -422,6 +463,174 @@ def keys(run):
     return 0
 
 
+def load_mfm():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("mfm", os.path.join(GOLD, "mfm.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def read_hex(path):
+    """a hex dump (any line length, no separators) -> bytes"""
+    with open(path) as f:
+        return bytes.fromhex("".join(f.read().split()))
+
+
+def cyclic_offset(dump, stream):
+    """the offset o at which dump equals stream read cyclically from o,
+    or None"""
+    if not stream or len(dump) > len(stream):
+        return None
+    ss = stream + stream
+    o = ss.find(dump)
+    while 0 <= o < len(stream):
+        if o % 2 == 0:
+            return o
+        o = ss.find(dump, o + 1)
+    return None
+
+
+def fdd_track(mfm, adf, cyl, head, dump):
+    """(problems, sectors found, the decoder's start note)"""
+    track = cyl * 2 + head
+    bad = []
+    sync = FDD_SYNC.to_bytes(2, "big")
+    stream = b"\xaa\xaa\xaa\xaa" + sync + dump
+    w = [int.from_bytes(stream[i:i + 2], "big") for i in range(0, len(stream) - 1, 2)]
+    found = set()
+    for i in range(2, len(w) - 1):
+        if w[i] != FDD_SYNC or w[i + 1] != FDD_SYNC:
+            continue
+        b = stream[2 * (i - 2):2 * (i - 2) + mfm.SECTOR_BYTES]
+        if len(b) < mfm.SECTOR_BYTES:
+            continue                  # the last, cut by the end of the DMA
+        try:
+            t, sec, gap, data = mfm.decode_sector(b, FDD_SYNC)
+        except ValueError as e:
+            bad.append("sector at dump word %d: %s" % (i - 3, e))
+            continue
+        if t != track or not 0 <= sec < mfm.SECTORS or gap != mfm.SECTORS - sec:
+            bad.append("sector at dump word %d: header track %d sector %d gap %d (want track %d)"
+                       % (i - 3, t, sec, gap, track))
+            continue
+        n = track * mfm.SECTORS + sec
+        if data != adf[n * 512:(n + 1) * 512]:
+            k = first_diff(data, adf[n * 512:(n + 1) * 512])
+            bad.append("sector %d: data byte %d is %02x, TEST.ADF has %02x" % (sec, k, data[k], adf[n * 512 + k]))
+            continue
+        found.add(sec)
+    if len(found) != mfm.SECTORS and not bad:
+        bad.append("sectors found: %s (want 0..10)" % sorted(found))
+    return bad, found
+
+
+def fdd_rd(run):
+    sys.path.insert(0, L2)
+    import spitrace
+    got = run_log(run, "fdd_rd")
+    if got is None:
+        return 1
+    log, lines = got
+    bad, notes = [], []
+    adf_path = os.path.join(run, "card", "content", "TEST.ADF")
+    if not os.path.isfile(adf_path):
+        print("FAIL fdd_rd: no %s" % adf_path)
+        return 1
+    with open(adf_path, "rb") as f:
+        adf = f.read()
+    mfm = load_mfm()
+    # the bench's track reads, in order
+    dmas = []
+    for line in lines:
+        m = re.match(r"=== FDD dma (\d+) cylinder (\d+) head (\d+): (\d+) words to blckint at cycle (\d+)", line)
+        if m:
+            dmas.append((int(m.group(2)), int(m.group(3)), int(m.group(4))))
+    if [(c, h) for c, h, _ in dmas] != FDD_TRACKS:
+        bad.append("the track reads in the log are %s, want %s" % ([(c, h) for c, h, _ in dmas], FDD_TRACKS))
+    for c, h, n in dmas:
+        if n != FDD_WORDS:
+            bad.append("track %d/%d: %d words, want %d" % (c, h, n, FDD_WORDS))
+    nsec = nstream = ngold = 0
+    for cyl, head in FDD_TRACKS:
+        path = os.path.join(run, "fdd_rd_%d_%d.hex" % (cyl, head))
+        if not os.path.isfile(path):
+            bad.append("no dump %s" % path)
+            continue
+        dump = read_hex(path)
+        if len(dump) != 2 * FDD_WORDS:
+            bad.append("%s: %d bytes, want %d" % (path, len(dump), 2 * FDD_WORDS))
+            continue
+        nbad = len(bad)
+        tbad, found = fdd_track(mfm, adf, cyl, head, dump)
+        bad += ["track %d/%d: %s" % (cyl, head, b) for b in tbad]
+        nsec += len(found)
+        note = "track %d/%d: %d sectors decode = TEST.ADF" % (cyl, head, len(found))
+        if dump[:2] != FDD_SYNC.to_bytes(2, "big"):
+            note += "; decode-only (the dump does not start with the sync word)"
+        else:
+            ref = mfm.read_track(adf, cyl * 2 + head, FDD_SYNC)
+            o = cyclic_offset(dump, ref)
+            if o is None:
+                bad.append("track %d/%d: the dump is not mfm.py's read_track stream read cyclically from any offset" % (cyl, head))
+            else:
+                note += "; = read_track from byte %d" % o
+                nstream += 1
+            if (cyl, head) in FDD_GOLDEN:
+                gpath = os.path.join(GOLD, FDD_GOLDEN[(cyl, head)])
+                og = cyclic_offset(dump, read_hex(gpath))
+                if og is None:
+                    bad.append("track %d/%d: the dump is not %s read cyclically from any offset"
+                               % (cyl, head, os.path.relpath(gpath, os.path.join(HERE, "..", ".."))))
+                else:
+                    note += "; = %s from byte %d" % (FDD_GOLDEN[(cyl, head)], og)
+                    ngold += 1
+        if len(bad) == nbad:
+            notes.append(note)
+    # OSD and UART
+    frames = frames_t(os.path.join(run, "spi_t.txt"))
+    evs = [int(m.group(1)) for m in (re.match(r"=== KEYS ev \d+ [0-9a-f]{2} at cycle (\d+)$", l) for l in lines) if m]
+    dma0 = next((int(m.group(1)) for m in (re.match(r"=== FDD dma 1 cylinder \d+ head \d+: \d+ words, sync [0-9a-f]+, from cycle (\d+)$", l)
+                                           for l in lines) if m), None)
+    if not evs or dma0 is None:
+        bad.append("no key event or no first track DMA in %s" % log)
+    else:
+        glyphs = spitrace.load_charrom(spitrace.CHARROM)
+        osd = [(t0, spitrace.osd_line(mosi, glyphs)) for t0, _, cs, mosi, _ in frames
+               if cs == 0x20 and mosi and mosi[0] == 0x0C]
+        early = [t0 for t0, _ in osd if t0 < evs[0]]
+        late = [t0 for t0, _ in osd if t0 > dma0]
+        if early:
+            bad.append("%d OSD_CMD_OSD_WR frame(s) before the first key (an error page?), the first at cycle %d"
+                       % (len(early), early[0]))
+        if late:
+            bad.append("%d OSD_CMD_OSD_WR frame(s) after the first track DMA started (cycle %d), the first at cycle %d"
+                       % (len(late), dma0, late[0]))
+        snd = next((t0 for t0, (row, text) in osd if row == 3 and "Floppy disk sounds : on" in text), None)
+        ins = next((t0 for t0, (row, text) in osd
+                    if row == 0 and re.search(r"df0: TEST\b", text) and snd is not None and t0 > snd), None)
+        if snd is None:
+            bad.append("no OSD row 3 'Floppy disk sounds : on' (the drive sounds were not turned on)")
+        elif ins is None:
+            bad.append("no OSD row 0 'df0: TEST' after the sounds were turned on (TEST.ADF not in df0)")
+        else:
+            notes.append("OSD: 'Floppy disk sounds : on' at cycle %d, 'df0: TEST' at cycle %d" % (snd, ins))
+    for line in lines:
+        if line.startswith("UART: ") and re.search(r"Illegal track|Fatal|Wrong header", line):
+            bad.append("UART: %s" % line[6:])
+    for n in notes:
+        print("ok   " + n)
+    for b in bad:
+        print("BAD  " + b)
+    if bad:
+        print("FAIL fdd_rd: %d problem(s) (the BAD lines)" % len(bad))
+        return 1
+    print("PASS fdd_rd: %d track reads of %d words, %d sectors = TEST.ADF, %d streams = mfm.py's read_track, "
+          "%d of the %d golden tracks (0/0, 79/1) = gold/mfm_c*.hex; drive sounds on and df0: TEST on the OSD"
+          % (len(dmas), FDD_WORDS, nsec, nstream, ngold, len(FDD_GOLDEN)))
+    return 0
+
+
 def main(argv):
     if len(argv) == 3 and argv[1] == "kick":
         return kick(argv[2])
@@ -435,6 +644,8 @@ def main(argv):
         return memhash(argv[2])
     if len(argv) == 3 and argv[1] == "keys":
         return keys(argv[2])
+    if len(argv) == 3 and argv[1] == "fdd_rd":
+        return fdd_rd(argv[2])
     sys.stderr.write(__doc__)
     return 2
 

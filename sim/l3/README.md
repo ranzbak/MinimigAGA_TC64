@@ -2,7 +2,7 @@
 
 Work in progress (Phase 4 of the OSD host CPU migration). This file grows
 with the bench; so far it has the sections "Bench", "Run", "boot",
-"832", "Differential", "keys", "Monitors" and "Cards".
+"832", "Differential", "keys", "fdd_rd", "Monitors" and "Cards".
 
 ## Bench
 
@@ -20,6 +20,7 @@ the committed boot ROM and the real firmware from an SD card image:
 | floppy / HDD | `paula_floppy` on `sd_cs[4]`, direct mode on `~sd_cs[6]` from the card's MISO; `gayle #(.IDE_PORTS(2))` behind it on the `hdd_*` bus | `rtl/minimig` |
 | reset | `minimig_syscontrol` (`mrst` = `usrrst`, `cnt` = sof); chipset reset = `sys_reset \| cpurst` | `rtl/minimig` |
 | audio ring | `bfm_audio.v`: the ring position, cfide `audio_buf` = bit 15 | `sim/l3` |
+| floppy's Amiga side | `bfm_floppy.v` (instance `fdd`): the CIA lines, Paula's disk registers and Agnus's disk DMA slots for paula_floppy (scenario `fdd_rd`, section "fdd_rd"; idle otherwise) | `sim/l3` |
 
 The wiring is that of `rtl/minimig/minimig.v` and
 `rtl/soc/minimig_virtual_top.v`: cfide's `sd_di` is the slaves' MISO
@@ -34,8 +35,9 @@ board's global include; `MINIMIG_HOST_DIRECT`: userio_osd's `host_cs` is
 constant 0, and the bench fails the run if it ever rises) with the board's
 `fpga/openaars/minimig_version.vh`.
 
-The Amiga side is idle: the floppy is deselected (`_sel` 1111, `_motor`
-1), no register or Gayle access, `osd_ctrl` 0, `in_diag` 0. The CPU's
+The Amiga side is idle outside `fdd_rd` and the key scripts: the floppy
+is deselected (`_sel` 1111, `_motor` 1), no register or Gayle access,
+`osd_ctrl` 0, `in_diag` 0. The CPU's
 reset output follows its reset input, so the chipset reset is
 `sys_reset | cpurst`; sof is one clk7 cycle per PAL frame (`+SOF_CLK7`,
 default 142,102 = 313 lines x 227 colour clocks x 2).
@@ -716,6 +718,233 @@ into two frames of three, a changed character column of an OSD row, an
 short, a stale status byte (00, the events read one frame later) and a
 missing `=== KEYS ev` line; the unedited copy passes.
 
+## fdd_rd
+
+`fdd_rd` reads floppy tracks the way the Amiga does, against the real
+`paula_floppy` and the firmware's `fdd.c`. It boots the `fdd` card (the
+`boot` card plus `TEST.ADF` and `DRIVESND.BIN`). At the main-loop milestone
+the key script `keys/insert_df0.txt` starts (`bfm_keys.v`, section "keys").
+It opens the OSD and turns "Floppy disk sounds" on: the card's config has
+`drivesounds` 0, and `DRIVESND.BIN` is loaded, so the line can be selected.
+Then it opens df0's file selector, selects `TEST    ADF` (the card's only
+ADF) and closes the OSD. At the end of the script `bfm_floppy.v` reads 10
+tracks: cylinders 0, 1, 2, 39, 40, 41, 77, 78, 79 on head 0, then cylinder
+79 on head 1. Each read is one full-track DMA of 6,334 words (`fdd.c`
+`TRACK_SIZE` 12,668 bytes) with sync 0x4489. The end event is the
+`blckint` of the last DMA (`=== STATS@fdd_rd`).
+
+TIMER: `+TICKDIV=643 +TICKDIV_AT=scenario`, as `keys`. `fdd.c` uses no
+TIMER: `ReadTrack` sends a sector whenever paula_floppy's status asks for
+one. The drive sounds do use it. `drivesounds_fill` renders 256 samples per
+TIMER count into the audio ring on every main-loop pass while the motor
+loop plays (`drivesounds_render(TIMER)`). At `TICKDIV` 1 that would be 643
+times the board's rendering load: one sample per 4 `clk_114`, so every pass
+renders the cap of 32,512 samples and the main loop is mostly rendering.
+At 643 the load is the board's (one sample per 2,572 `clk_114`). The menu
+part needs 643 for the reasons given in "keys". (The brief said `TICKDIV`
+1; it also said the drive sounds should run "as on the board", and only
+643 gives that.)
+
+### bfm_floppy: what the model reproduces
+
+CIA side (`ciab` PRB as minimig.v wires it): `_sel[3:0]`, `_motor`,
+`side` (the CIA's active-low `_SIDE`: paula_floppy's track byte is
+`{cylinder, ~side}`), `_step` and `direc`. One CIA write is 10 clk7 cycles
+(an E-clock period). Tasks:
+
+- `fdd_select(drive)`: `_ready` must then be 0.
+- `fdd_motor(on)`: deselect, set `_motor`, select again. paula_floppy
+  latches the motor on the falling edge of `_sel`.
+- `fdd_seek(cyl)`: trackdisk.device's default delays. First a
+  recalibration (step out until `_track0` is 0, 4 ms apart), then step
+  pulses 3 ms apart, then 15 ms settle after the last one. `_track0` must
+  be 0 exactly at cylinder 0.
+- `fdd_side(head)`
+- `fdd_dma_read(words, sync)`, in this order:
+  - `wordsync` (ADKCON WORDSYNC) and `enable` (DMACON DMAEN & DSKEN) on.
+    These are Paula registers outside paula_floppy, set as trackdisk
+    leaves them for a read.
+  - `DSKSYNC` = sync.
+  - `DSKLEN` = 0x4000 (DMA off).
+  - `DSKLEN` = 0x8000 | words, twice. paula_floppy starts on the second
+    write in a row with bit 15 set.
+
+  A 68k register write is one clk7 cycle with `cck` low (the CPU's half of
+  the colour clock, `minimig_m68k_bridge.v`). The idle register address is
+  0xFF (Agnus's "no register"; the bench tied it to 0x00 before, and
+  paula_floppy decodes neither).
+
+Agnus (`agnus_diskdma.v`, `agnus.v`): a beam counter over the 227 colour
+clocks of a PAL line (454 clk7 cycles). At normal floppy speed (the card's
+config: `floppy.speed` 0; no turbo) the disk DMA engine has three slots per
+line: `hpos[8:1]` = 0x0C, 0x0E, 0x10 with `hpos[0]` = 1 (Agnus's counter
+runs 4 colour clocks ahead), one clk7 cycle each. In a slot where
+paula_floppy's `dmal` is 1 (`dmaon & ~fifo_empty` for a read), the disk
+channel gets the bus (it has the highest priority). `reg_address_in` is
+then `DSKDATR` for that clk7 cycle, and the word on `data_out` is what
+Agnus writes to chip RAM: the model collects it. paula_floppy pops its
+FIFO at the end of the cycle (`fifo_rd = busrd & dmaon`).
+
+A read continues until `blckint`: `DISKDMA_INT`, after `lenzero` (all
+`words` written into the FIFO) and the FIFO drained. The collected words go
+to `<run>/fdd_rd_<cylinder>_<head>.hex`, 16 words per line (`xxd -r -p`
+reads it back). Not modelled:
+
+- the DMA pointer and chip RAM
+- the other DMA channels (the disk wins every slot it asks for)
+- the refresh slots of `floppy_speed` 1
+- write DMA (`dmas` = 1 in a read slot is a bench error)
+
+With WORDSYNC on, Paula starts filling the FIFO with the word *after* the
+sync word it matched (`trackrdok`). So a dump starts with the sector's
+second 0x4489, at byte 6 of the firmware's stream.
+
+### Checks
+
+`l3check.py fdd_rd`:
+
+- the 10 `=== FDD dma` lines are the scenario's tracks, in order, 6,334
+  words each
+- each dump, given the matched sync word in front, decodes with
+  `fw/ctrl_rv/test/gold/mfm.py`'s `decode_sector`. All 11 sectors decode,
+  with header and data checksums, track `cyl * 2 + head`, sector numbers,
+  "sectors to the gap", and data equal to `TEST.ADF`
+- each dump is byte-equal to `mfm.py`'s `read_track` stream of that ADF
+  track, read cyclically from the printed offset (6 = the WORDSYNC start
+  at sector 0). A dump that does not start with the sync word would be
+  decode-only, and the check says so
+- tracks 0/0 and 79/1 are also byte-equal, read the same way, to exec-3
+  Task 13's committed golden streams `fw/ctrl_rv/test/gold/mfm_c00_s0.hex`
+  and `mfm_c79_s1.hex`
+- the OSD shows row 3 "Floppy disk sounds : on" and then row 0 "df0:
+  TEST"
+- no `OSD_CMD_OSD_WR` frame before the first key (an error page) and none
+  after the first DMA started (the OSD is closed; `fdd.c`'s `FatalError`
+  would draw one)
+- no UART "Illegal track", "Fatal" or "Wrong header"
+
+Also: boot's milestones, no `EXC` / `TRAP`, kick, order, every MARGIN line
+with item 6 required (`MARGIN_REQ_fdd_rd`), and bench `=== PASS`.
+
+Monitor item 6, `fdd_fifo_empty_dma` (`mon_l3.vh`), counts Agnus disk slots
+with `dmaon` = 1 and an empty FIFO. Each slot is sampled in its clk7_en
+`clk_28` cycle. The count runs per track, from the first slot at which the
+FIFO has reached the firmware's working level to the track's last word
+(`lenzero`). The working level is 1,024 words, where paula masks the read
+request (`trackrd & ~fifo_cnt[10]`), so `ReadTrack` stops sending. Bound
+0. The brief's literal count (any such slot from the starting `DSKLEN`
+write on) is printed as information, and it cannot be 0. A DMA waits for
+the firmware's first word: the transfer starts at the firmware's next
+status frame, and the first sector follows a `FileRead`. Then come the
+first lines, where a line's three slots, 4 clk7 cycles apart, come faster
+than the SPI delivers words (about one per 120 `clk_114`). After the
+working level, an empty FIFO means the host fell behind: a main-loop pass
+longer than about 1,024 words x 605 `clk_114`. Per track, `=== MARGIN
+(info) 6 fdd track <c>/<h>` gives the minimum fill at the slots of the
+window, the ramp, and the literal count. A track whose FIFO never reaches
+1,024 words is a bench error.
+
+### Run
+
+Setup as in "Run" and "832". Both legs boot the same card (section
+"Differential"). From the repository root:
+
+```sh
+E832DIR=$PWD/EightThirtyTwo
+E832=$E832DIR/RTL
+FWD=$PWD/sim/l3/run_fw
+mkdir -p "$FWD/dateshim" "$FWD/fwrv"
+printf '%s\n' '#!/bin/sh' 'TZ=UTC exec /bin/date -d "${L3_DATE:-2026-01-01} 00:00:00" "$@"' > "$FWD/dateshim/date"
+chmod +x "$FWD/dateshim/date"
+PATH="$FWD/dateshim:$PATH" make -s -C fw/ctrl_rv B="$FWD/fwrv"
+make -C sim/l3/fw832 B="$FWD/fw832" E832DIR="$E832DIR"
+CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=fc FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh xpair fdd_rd
+SIM=verilator RUNTAG=f FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh xpair fdd_rd
+bash sim/l3/run.sh diff --unused-rules f fc
+```
+
+The four simulations take about 40 to 55 minutes side by side. The 832
+`xpair` twin's default seed (the RUNTAG's `cksum`) can stop the
+EightThirtyTwo at the start (see "Measured"). The 832 twin with the seed
+whose start matches, and its comparison:
+
+```sh
+CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator XRAND=1 XSEED=4 RUNTAG=fc_xs4 FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh fdd_rd
+bash sim/l3/run.sh compare fc fc_xs4
+```
+
+`run.sh diff` exits 1 for `fdd_rd` until the timing-only differences
+listed under "Measured" have rules. The data check alone, on a run
+directory:
+
+```sh
+python3 -I sim/l3/l3check.py fdd_rd sim/l3/run_f
+```
+
+### Measured (2026-10-19, SLAT=8 SJIT=0, SCKDLY 1.5 / C28DLY 0.3, TICKDIV 1 then 643)
+
+| | RV (`p4t13`) | 832 (`p4t13c`) |
+|---|---|---|
+| main-loop milestone (script start) | 193,536,684 | 237,170,112 |
+| bfm_floppy starts (end of the script) | 201,236,597 | 249,698,969 |
+| end event (the 10th `blckint`) | 393,222,555 | 442,065,819 |
+| one track DMA, `DSKLEN` to `blckint` | 15.41 to 15.43 M | 15.45 to 15.46 M |
+| item 6: count / slots at the working level | 0 / 52,058 | 0 / 50,913 |
+| item 6: FIFO minimum at the working level | 992 words | 949 words |
+| ramp (first word to 1,024 words): slots, of them empty | 129, 0 (156 on 77/0) | 258 to 297, 5 to 8 |
+| literal count (all 10 tracks) | 300 | 473 |
+| `OSD EARLY` / `OSD GAP` min | 0 of 26,504 / 43 | 0 of 9,925 / 254 |
+| `l3check.py fdd_rd` | PASS: 110 sectors, 10 streams = `read_track` from byte 6, both golden tracks | the same |
+| wall time (Verilator, four runs on the machine) | 2,490 s | 3,151 s |
+
+Each DMA takes about 15.4 M `clk_114`. That is 6,334 words at three slots
+per line: 2,111 lines x 454 clk7 cycles x 16 = 15.3 M `clk_114`, plus the
+wait for the firmware's first word. The firmware keeps the FIFO between
+about 950 and 1,600 words. It refills when paula's request comes back
+below 1,024, so the lowest fill at a slot is 949 words. That is about 300
+lines of DMA, roughly 550,000 `clk_114` of main-loop stall before an empty
+slot. The boot is longer than `boot` (RV 193.5 M against 158.0 M):
+`drivesounds_init` loads `DRIVESND.BIN` (212,098 bytes) from the fdd card.
+`L3_FDD_TO` = 580,000,000 (RV) and 660,000,000 (832): 1.5 x the estimates
+made before the runs, which the measured ends confirm.
+
+XRAND: the RV twin `p4t13_xr` is SAME (`tb_fdd_rd` log and `spi.txt`,
+108,785 frames). The 832 twin `p4t13c_xr` (seed 1,528,826,596) never
+started: no hw access and no SDRAM read in 660 M cycles.
+`run_p4t13c_hang` reproduces it in 3 M cycles with `boot_short` and the
+same `XSEED`. The EightThirtyTwo's reset-less state (section "keys",
+XRAND; `findings/osd-riscv/phase4.md`) can apparently stop it at the
+start, not only shift its timing. With `XSEED=4`, the seed whose 832 start
+matches (Task 8), the twin is `p4t13c_xs4`: `fdd_rd` PASS with the same
+checks. Its `hw.txt`, the MOSI of every frame and the ten dumps are equal
+to `p4t13c`'s. It is cycle-identical up to frame 31,795 (cycle
+389,813,554, during track 78/0), then 4 `clk_114` late. After that, 33
+sector frames differ in one or two MISO bytes: paula's `dsklen` countdown
+one word apart at a word boundary, the timing-dependent bytes of the list
+below. `compare` says DIFF for both files (`spi.txt` MISO only), and the
+log differs in those cycle numbers and in the run directory's name in the
+`=== FDD dma` lines.
+
+The differential `run.sh diff p4t13 p4t13c` is not empty. Every difference
+left is timing, from the floppy DMA running at Agnus's rate against two
+CPUs of different speed:
+
+- the MISO of the sector frames (paula's `{dmaen, dsklen}` countdown while
+  the sector streams in)
+- the status polls around a DMA's start (whether a poll falls between
+  the `DSKLEN` writes, the start and the firmware's first request)
+- the per-pass `AUDIO` writes of the drive sounds (`HW ffffb0 0001`: RV
+  12,083, 832 4,569), a shared firmware defect in
+  `findings/osd-riscv/phase4.md`
+- HandleRTC's Amiga-RTC writes every 8,192 passes (`HW ffff70..7c` with
+  the SPI speed writes around them: RV 4, 832 2)
+- the position of one I2C / keyboard write group among the frames
+- `HW MEM audio_ring`, the rendered drive sounds
+
+The SPI frames' MOSI, the sector data and every card read are equal. The
+`expected_diff.txt` rule for `Inserting floppy` (`fmt_diff_expected.txt`
+lines 37-44) is in; the timing rules await a ruling (Task 13 report).
+
 ## Monitors
 
 `mon_l3.vh` (included by `tb_l3.v`) measures the host-side handshakes of
@@ -736,7 +965,7 @@ count and `LOW` means above the bound. The verdict:
 | `n/a` | no such event in this run (`min none`) |
 | `rec` | events seen, record only: the value cannot violate its bound. `dmode_L` (the request always follows the ack) and `rtc_cs_high` with the default bound 0 (a gap is never negative) |
 
-`run.sh` fails a scenario unless all ten lines are there and none is
+`run.sh` fails a scenario unless all eleven lines are there and none is
 `LOW`. Each scenario also lists the lines that must have seen events
 (`MARGIN_REQ_<scenario>` in `run.sh`); for those, `n/a` or `rec` fails it
 too. A monitor that stops seeing its events therefore cannot pass in
@@ -746,6 +975,12 @@ silence:
 |---|---|---|
 | `boot` | 1, 4 (all four), 5, 14 | 3 (no direct transfer), 12 (one RTC transfer, no gap) |
 | `boot_short` | 1, `userio_cs_release`, `userio_byte_spacing`, 5 | 3, 12, the paula lines (no paula frame before the cut); its `kick_order` is fpga_init's reset pulse, not a kickstart release, so it is not required |
+| `keys` | as `boot` | as `boot` |
+| `fdd_rd` | as `boot`, and 6 | 3, 12 as `boot` |
+
+Item 6 (`fdd_fifo_empty_dma`) is `n/a` in every scenario without a floppy
+DMA. Lines printed before Task 13 (the measured outputs above) have ten
+MARGIN lines; item 6 came with `fdd_rd`.
 
 Times are taken at the slave pins: an `sck` edge reaches the slaves
 `+SCKDLY` ns after cfide's pin, `sd_cs` undelayed.
@@ -758,6 +993,7 @@ Times are taken at the slave pins: an `sck` edge reaches the slaves
 | 4 | `paula_cs_release`, `userio_cs_release` | per slave (`sd_cs[4]` paula, `sd_cs[5]` userio_osd): the last `sck` rising edge of a frame at the slave to its select rising, `clk_114` | 0 (derived below) | 10.8 over 41 frames; 10.8 over 72 frames |
 | 4 | `paula_word_spacing`, `userio_byte_spacing` | the last edge of one received word (paula, 16 bits, `sd_cs[4]` or `[6]`) / byte (userio, 8) to the last edge of the next, `clk_114` | 40 (derived below) | 117.0 over 82 words; 57.0 over 129 bytes |
 | 5 | `spi_write_busy` | SPI DATA writes acknowledged without starting a transfer of their own (no `SD_busy` rise from the request to the cycle after its ack): taken while the shifter was busy | 0 | 0 of 829,924 |
+| 6 | `fdd_fifo_empty_dma` | floppy read DMA: Agnus disk slots with paula_floppy's `dmaon` = 1 and its FIFO empty, per track from the first slot at which the FIFO has reached the firmware's working level (1,024 words) to the track's last word (section "fdd_rd") | 0 | n/a (no floppy DMA) |
 | 12 | `rtc_cs_high` | `rtc_model`: the CS-inactive time between two RTC transfers, ns | `+RTC_CSH_MIN`; the default 0 (datasheet not found, below) makes it `rec` | n/a (one RTC transfer in `boot`); 363,982,789 ns rec in the `rtc2` run below |
 | 14 | `kick_order` | the last `cpurst` fall (userio_osd releases the Amiga CPU) minus the last SDRAM write into the kickstart region (host 0x100000..0x17ffff, `sdram_host_model` at its ack), `clk_114` | 1 (the write lands first) | 6,829,787 (write at 150,139,042, release at 156,968,829) |
 

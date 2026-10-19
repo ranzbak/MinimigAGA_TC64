@@ -3,7 +3,7 @@
 # (userio_osd, paula_floppy, gayle) boots the real boot ROM and firmware from
 # an SD card image.  See tb_l3.v, scenarios.vh, README.md.
 #
-#   bash sim/l3/run.sh <scenario>        boot, boot_short, keys
+#   bash sim/l3/run.sh <scenario>        boot, boot_short, keys, fdd_rd
 #   bash sim/l3/run.sh xpair <scenario>  the scenario and its XRAND twin
 #                                        (run_$RUNTAG, run_${RUNTAG}_xr; in
 #                                        parallel), then compare: both PASS
@@ -44,9 +44,10 @@
 #   SLAT, SJIT, SEED   the SDRAM model (8, 0, 1)
 #   XARGS    extra plusargs ("+FAST_HW=1 +OSD_EARLY_OK=1 +TICKDIV=643 ...");
 #            +FAST_HW=1 also puts the models' fast plusargs first (below)
-#   KEYS     keys only: the key script (default sim/l3/keys/menu_tour.txt;
-#            l3check.py keys checks the pages against osdtext_expect/keys.txt,
-#            which is that script's)
+#   KEYS     keys and fdd_rd: the key script (default keys:
+#            sim/l3/keys/menu_tour.txt; l3check.py keys checks the pages
+#            against osdtext_expect/keys.txt, which is that script's;
+#            fdd_rd: sim/l3/keys/insert_df0.txt)
 #   NOKICK=1 boot only: the boot card without KICK.ROM.  The run must FAIL
 #            at the main-loop milestone (the fatal-error loop); the exit
 #            status is 0 when it does
@@ -79,6 +80,14 @@
 #               order, the MARGIN lines, l3check.py keys (the KEYQ replies =
 #               the events the script made, the OSD pages =
 #               osdtext_expect/keys.txt), bench "=== PASS"
+#   fdd_rd      fdd card (boot + TEST.ADF + DRIVESND.BIN), +SCENARIO=fdd_rd
+#               +KEYS=sim/l3/keys/insert_df0.txt +FDD_DUMP=<run>/fdd_rd,
+#               TICKDIV 643 from the script's start (+TICKDIV_AT=scenario):
+#               the key script (drive sounds on, TEST.ADF into df0), then
+#               bfm_floppy's 10 track reads; checks: boot's milestones, no
+#               EXC / TRAP, kick, order, the MARGIN lines (item 6 required),
+#               l3check.py fdd_rd (the dumps decode and equal TEST.ADF, the
+#               golden streams, the OSD), bench "=== PASS"
 # Logs in the run directory: tb_<scenario>_x<EXTRA_WS>_s<SLAT>_j<SJIT>.log,
 # spi.txt, spi_t.txt (frames with cycles, not compared), hw.txt and uart.txt
 # (sim/common/hostmon.vh +HW_LOG / +UART_LOG, for diff; hw.txt's MEM lines
@@ -133,24 +142,29 @@ MM_INC="$ROOT/fpga/openaars"     # minimig_version.vh (the board's)
 # transfer (items 3 and 12: n/a); boot_short has no paula frame yet and its
 # only cpurst fall is fpga_init's reset pulse, before any kickstart
 MARGINS="1:stale_acks 3:dmode_release 3:dmode_L 4:paula_cs_release 4:userio_cs_release
-         4:paula_word_spacing 4:userio_byte_spacing 5:spi_write_busy 12:rtc_cs_high 14:kick_order"
+         4:paula_word_spacing 4:userio_byte_spacing 5:spi_write_busy 6:fdd_fifo_empty_dma
+         12:rtc_cs_high 14:kick_order"
 MARGIN_REQ_boot="1:stale_acks 4:paula_cs_release 4:userio_cs_release 4:paula_word_spacing
                  4:userio_byte_spacing 5:spi_write_busy 14:kick_order"
 MARGIN_REQ_boot_short="1:stale_acks 4:userio_cs_release 4:userio_byte_spacing 5:spi_write_busy"
 MARGIN_REQ_keys=$MARGIN_REQ_boot
+MARGIN_REQ_fdd_rd="$MARGIN_REQ_boot 6:fdd_fifo_empty_dma"
 
 # cycles per scenario (clk_114): 1.5 x the measured end event (README "boot",
 # Verilator 2026-10-19: RV boot 158,155,012, boot_short 57,659,090; 832
 # boot 202,841,132, boot_short 74,525,542; README "keys": RV keys
-# 164,959,781, 832 214,187,801)
+# 164,959,781, 832 214,187,801); fdd_rd: 1.5 x the estimate of README
+# "fdd_rd" (RV 382 M, 832 440 M; measured 393,222,555 and 442,065,819)
 if [ "$CPU" = 832 ]; then
 	L3_BOOT_TO=${L3_BOOT_TO:-304300000}
 	L3_SHORT_TO=${L3_SHORT_TO:-111800000}
 	L3_KEYS_TO=${L3_KEYS_TO:-321300000}
+	L3_FDD_TO=${L3_FDD_TO:-660000000}
 else
 	L3_BOOT_TO=${L3_BOOT_TO:-237300000}
 	L3_SHORT_TO=${L3_SHORT_TO:-86500000}
 	L3_KEYS_TO=${L3_KEYS_TO:-247400000}
+	L3_FDD_TO=${L3_FDD_TO:-580000000}
 fi
 
 # shellcheck source=../common/hostsim.sh
@@ -330,9 +344,13 @@ setup() {
 	fi
 	[ -n "$FW832BIN" ] && mk+=(FW832="$FW832BIN")
 	[ "${NOKICK:-0}" = 1 ] && mk+=(NOKICK=1)
-	make -s -C "$HERE/card" boot B="$run/card" FWRV="$FWBIN" "${mk[@]}" > "$run/make_card.log" 2>&1 \
-		|| { tail -20 "$run/make_card.log"; die "make the boot card ($run/make_card.log)"; }
-	CARD="$run/card/boot.img"
+	# the card of the scenario (sim/l3/card): fdd_rd the fdd card, the others
+	# boot (CARDNAME: also milestones()'s "CARD=<card>" lines)
+	CARDNAME=boot
+	[ "${SCEN:-}" = fdd_rd ] && CARDNAME=fdd
+	make -s -C "$HERE/card" "$CARDNAME" B="$run/card" FWRV="$FWBIN" "${mk[@]}" > "$run/make_card.log" 2>&1 \
+		|| { tail -20 "$run/make_card.log"; die "make the $CARDNAME card ($run/make_card.log)"; }
+	CARD="$run/card/$CARDNAME.img"
 	[ ${#CARD} -le 1024 ] || die "card image path longer than 1024 characters (+SD_IMG): $CARD"
 }
 
@@ -361,7 +379,7 @@ build() {
 		hs_verilate "$run" tb_l3 "-DL3_GHDL -D$def" \
 			"$d/bridge.v" "$d/cfide.v" "${cpuv[@]}" src/hostcache.v src/dpram_inf_generic.v \
 			"$L2/sdram_host_model.v" "$ROOT/sim/common/sd_spi_model.v" $i2c \
-			"${mm[@]}" "$HERE/bfm_audio.v" "$HERE/bfm_keys.v" "$HERE/rtc_model.v" "$HERE/tb_l3.v"
+			"${mm[@]}" "$HERE/bfm_audio.v" "$HERE/bfm_keys.v" "$HERE/bfm_floppy.v" "$HERE/rtc_model.v" "$HERE/tb_l3.v"
 	else
 		X xvlog -sv $I2C_V
 		X xvhdl src/cfide.vhd
@@ -377,7 +395,7 @@ build() {
 		X xvlog --relax -i "$MM_INC" -i "$ROOT/rtl/minimig" "${mm[@]}"
 		X xvlog -d "$def" -i "$ROOT/sim/common" -i "$HERE" \
 			"$L2/sdram_host_model.v" "$ROOT/sim/common/sd_spi_model.v" "$HERE/bfm_audio.v" \
-			"$HERE/bfm_keys.v" "$HERE/rtc_model.v" "$HERE/tb_l3.v"
+			"$HERE/bfm_keys.v" "$HERE/bfm_floppy.v" "$HERE/rtc_model.v" "$HERE/tb_l3.v"
 		hs_xsim_build "$run" "$snap" "$XW" tb_l3
 	fi
 }
@@ -386,15 +404,18 @@ build() {
 # milestones <scenario> <log>: the milestone file of the scenario, spitrace
 # check of its UART / SPI lines, and its "NOT UART <text>" lines.  A line
 # "CPU=<cpu> <milestone>" is a milestone of that CPU only (rv or 832): it is
-# kept, without the prefix, for that CPU and dropped for the other
+# kept, without the prefix, for that CPU and dropped for the other; a line
+# "CARD=<card> <milestone>" likewise for the scenario's card (CARDNAME)
 milestones() {
 	local s=$1 log=$2 ms="$run/milestones_$1.txt" t
 	if [ "$s" = boot_short ]; then
 		sed '/^#@ boot_short end/q' "$HERE/milestones_boot.txt"
 	else
 		cat "$HERE/milestones_boot.txt"
-	fi | sed -n -e "s/^CPU=$CPU //p" -e t -e '/^CPU=/d' -e p > "$ms"
+	fi | sed -n -e "s/^CARD=${CARDNAME:-boot} //p" -e t -e '/^CARD=/d' -e p \
+		| sed -n -e "s/^CPU=$CPU //p" -e t -e '/^CPU=/d' -e p > "$ms"
 	grep -E '^CPU=' "$HERE/milestones_boot.txt" | grep -vE '^CPU=(rv|832) ' | sed 's/^/BAD  milestones_boot.txt: a CPU= line for neither rv nor 832: /'
+	grep -E '^CARD=' "$HERE/milestones_boot.txt" | grep -vE '^CARD=(boot|fdd) ' | sed 's/^/BAD  milestones_boot.txt: a CARD= line for neither boot nor fdd: /'
 	grep -v '^NOT ' "$ms" > "$ms.check"
 	l3_check milestones "$run/milestones.txt" '^milestones: [0-9]+ of [0-9]+ found in order$' \
 		python3 -I "$L2/spitrace.py" check "$ms.check" "$log" "$run/spi.txt"
@@ -439,6 +460,9 @@ scenario() {
 		boot) to=${TIMEOUT:-$L3_BOOT_TO}; pa=("SD_LOG=1") ;;
 		boot_short) to=${TIMEOUT:-$L3_SHORT_TO} ;;
 		keys) to=${TIMEOUT:-$L3_KEYS_TO}; pa=("KEYS=$(realpath -m -- "${KEYS:-$HERE/keys/menu_tour.txt}")" "TICKDIV=643" "TICKDIV_AT=scenario") ;;
+		fdd_rd) to=${TIMEOUT:-$L3_FDD_TO}
+			pa=("KEYS=$(realpath -m -- "${KEYS:-$HERE/keys/insert_df0.txt}")" "TICKDIV=643" "TICKDIV_AT=scenario"
+			    "FDD_DUMP=$run/fdd_rd") ;;
 		*) die "unknown scenario $s" ;;
 	esac
 	if git -C "$ROOT" diff --quiet HEAD -- "${ROM#$ROOT/}"; then st="unmodified (= git HEAD)"; else st="BAD  MODIFIED against git HEAD"; fi
@@ -470,14 +494,14 @@ scenario() {
 	local secs=$((SECONDS - t0))
 	python3 -I "$L2/spitrace.py" summary "$run/spi.txt" > "$run/spi_summary.txt" 2>&1
 	{
-		grep -E '^=== (BOOT|MAIN|END|STATS|HW accesses|cycle limit|HandleFpga|SPI frames|OSD GAP|OSD EARLY|OSD REPLY|STACK|RTC|KICK|MARGIN|KEYS script)' "$log"
+		grep -E '^=== (BOOT|MAIN|END|STATS|HW accesses|cycle limit|HandleFpga|SPI frames|OSD GAP|OSD EARLY|OSD REPLY|STACK|RTC|KICK|MARGIN|KEYS script|FDD)' "$log"
 		grep -E '^BENCH ERROR' "$log" | sed 's/^/BAD  /'
 		margins "$s" "$log"
 		grep -q '^SD: image .* loaded' "$log" || echo "BAD  the SD model did not load $CARD"
 		milestones "$s" "$log"
 		grep -E '^UART: .*(EXC |TRAP )' "$log" | sed 's/^/BAD  /'
 		l3_check memhash "$run/memhash.txt" '^PASS memhash: ' python3 -I "$L3CHECK" memhash "$run"
-		if [ "$s" = boot ] || [ "$s" = keys ]; then
+		if [ "$s" = boot ] || [ "$s" = keys ] || [ "$s" = fdd_rd ]; then
 			l3_check kick "$run/kick.txt" '^PASS kick: ' python3 -I "$L3CHECK" kick "$run"
 			l3_check order "$run/order.txt" '^PASS order: ' python3 -I "$L3CHECK" order "$run"
 		fi
@@ -485,6 +509,10 @@ scenario() {
 		if [ "$s" = keys ]; then
 			l3_check keys "$run/keys.txt" '^PASS keys: ' python3 -I "$L3CHECK" keys "$run"
 			grep -E '^REPLY ' "$run/keys.txt"
+		fi
+		if [ "$s" = fdd_rd ]; then
+			l3_check fdd_rd "$run/fdd_rd.txt" '^PASS fdd_rd: ' python3 -I "$L3CHECK" fdd_rd "$run"
+			grep -E '^ok   ' "$run/fdd_rd.txt"
 		fi
 		if grep -q '^=== PASS' "$log"; then echo "ok   bench verdict: === PASS"
 		else echo "BAD  bench verdict: $(grep -m1 -E '^=== (PASS|FAIL)' "$log" || echo none) ($log)"; fi
@@ -560,7 +588,7 @@ case "${1:-}" in
 		echo "=== xpair $2 FAILED (runs $r1 / $r2, compare $rc)"
 		exit 1
 		;;
-	boot|boot_short|keys)
+	boot|boot_short|keys|fdd_rd)
 		SCEN=$1
 		[ "${NOKICK:-0}" = 1 ] && [ "$1" != boot ] && die "NOKICK=1 is for boot only"
 		setup

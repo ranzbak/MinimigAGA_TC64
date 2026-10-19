@@ -39,3 +39,9 @@ DROPBLOCK uart ^Overriding\x20screenmode\.$ ^##End\x20result\x20:\x200$
 # handler) and exec-1's memory map (the RV interrupt controller at
 # 0xFFFFFF30..3C): an RV-only register, the 832 has none
 DROP hw ^ffff34\x20
+
+# fw/ctrl_rv/test/gold/fmt_diff_expected.txt lines 37-44 (cases 152-155
+# PREC: 'Inserting floppy: "%.11s"\r'): lib832's printf has no precision,
+# the 832 prints "11s", the RV the 8.3 name (menu.c InsertFloppy, a file
+# without a long name; fdd_rd: "TEST    ADF", runs p4t13 / p4t13c)
+SUBST uart Inserting\x20floppy:\x20"(11s|[^"]{11})" Inserting floppy: "%.11s"
