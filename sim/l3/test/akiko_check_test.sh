@@ -40,7 +40,7 @@ def build(name, cpu="rv", mut=None):
             if mut == "readdata" and (b, k) == (0, 40):
                 q = "00ff"
             if mut == "lowercase_rv" and (b, k) == (0, 3):
-                text = text.lower()
+                text = text[:text.index(": ") + 2] + text[text.index(": ") + 2:].lower()
             if mut == "noack" and (b, k) == (0, 9):
                 ack = False
             lat = 250000 + 7 * k if ack else 0

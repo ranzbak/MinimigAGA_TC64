@@ -1071,7 +1071,7 @@ and of the ack to `EnableInterrupts`). Test first:
 `bash sim/l3/test/akiko_check_test.sh` builds synthetic run directories from
 the bench's and the firmware's line formats; the good ones pass, and the
 mutants (one wrong UART word, a lost, a repeated and an unacked request, a
-read that returns data, a missing DATA write, a lower-case line) each fail
+read that returns data, a missing DATA write, a line with lower-case hex) each fail
 with their own `BAD` line.
 
 Run (from the repository root; toolchain and packages as in "Run"):
