@@ -50,6 +50,11 @@ proc add_xdc {f} {
         [get_files -of_objects [get_filesets XC7A100T] $f]
 }
 
+# The OSD host CPU file groups (hostcpu_apply / hostcpu_restore): the board
+# top builds the RISC-V host CPU (HOSTCPU_RISCV = 1, osd-riscv Phase 5), whose
+# sources project_1 does not list.
+source [file dirname [info script]]/hostcpu.tcl
+
 #-----------------------------------------------------------------------------
 # Constraints
 #-----------------------------------------------------------------------------
@@ -246,6 +251,8 @@ set pro_was [get_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED $impl]
 set_property STEPS.PHYS_OPT_DESIGN.IS_ENABLED true $impl
 set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED true $impl
 
+# The RV host CPU sources in, the 832 ones out, for this run (restored below).
+hostcpu_apply $R
 reset_run synth_1
 launch_runs impl_1 -to_step write_bitstream -jobs 8
 wait_on_run impl_1
@@ -282,6 +289,7 @@ foreach ext {bit ltx} {
 }
 
 set_property generic {} [get_filesets sources_1]
+hostcpu_restore
 set_property STEPS.PHYS_OPT_DESIGN.IS_ENABLED $ppo_was $impl
 set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED $pro_was $impl
 puts "build_ila.tcl: generics cleared: '[get_property generic [get_filesets sources_1]]'"
