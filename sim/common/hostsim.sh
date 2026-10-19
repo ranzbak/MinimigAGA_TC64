@@ -149,7 +149,8 @@ hs_verilate() {
 
 hs_X() {
 	local run=$1; shift
-	"$VIVADO_PATH/bin/$@" >> "$run/compile.log" 2>&1 || { echo "FAILED: $*"; tail -20 "$run/compile.log"; exit 1; }
+	# through hs_die, which a bench may redefine (sim/l3: the verdict line)
+	"$VIVADO_PATH/bin/$@" >> "$run/compile.log" 2>&1 || { tail -20 "$run/compile.log"; hs_die "$*"; }
 }
 
 hs_xsim_build() {
