@@ -2,14 +2,22 @@
 # Fixtures for the differential tools (sim/host_bridge/spitrace.py norm /
 # diff / osd, sim/l3 README "Differential"):
 #   (a) the same frames with other poll counts (and other firmware / config
-#       file names, sizes and printf forms, covered by the fixture's rules)
-#       -> an empty diff
+#       file names, sizes and printf forms, covered by the fixture's rules;
+#       and the timing of a floppy read DMA, as sim/l3 fdd_rd p4t13 / p4t13c:
+#       other countdown bytes in the status and sector frames, other numbers
+#       of AUDIO rewrites and of HandleRTC units, a FLOAT group elsewhere
+#       among the frames, another audio ring) -> an empty diff
 #   (b) one changed byte in an SD read, an FPGA data frame, an OSD text
 #       line, a hw write, a UART line, a KEYQ event, a status frame with a
 #       request, a changed drive status, a deselect frame that is not all
 #       ff, and the lines just before and after a DROPBLOCK block -> each a
 #       diff line: the normaliser hides no content; a DROPBLOCK start
-#       without its end -> norm fails
+#       without its end -> norm fails.  Task 13: a changed sector data
+#       byte, a changed track byte in a status frame whose DMA bytes are
+#       masked, a changed AUDIO (ffffb0) value among its rewrites, a changed
+#       SD-init speed write (ffffe8, the RTC unit's addresses but no RTC
+#       frame), a changed, an extra and a missing write of the FLOAT group
+#       -> each a diff line
 #   (c) each rule of the fixture's expected-diff list removed in turn -> its
 #       difference comes back; an unused rule -> diff --unused-rules reports it
 # The card is built with tools/sim/mkcard.sh (sfdisk, mkfs.fat, mtools), the
@@ -104,9 +112,11 @@ def osd(row, text):
 b = var == "b"
 fw, cfg = ("FWB.BIN", "CFGB.CFG") if b else ("FWA.BIN", "CFGA.CFG")
 say("Initializing SD card")
+hwrite("ffffe8", 0x003F)                  # SPI_slow: the RTC unit's addresses, no RTC frame
 sd(0, 0, 0x01)
 sd(8, 0x1AA, 0x01, (0, 0, 1, 0xAA))
 sd(58, 0, 0x00, (0xC0, 0xFF, 0x80, 0x00))
+hwrite("ffffe8", 0x0002 if change == "sdspeed" else 0x0001)
 sd(17, 0, 0x00, data=sector(0))
 sd(17, c.root, 0x00, data=sector(c.root))
 say('file "%s" found' % (fw.split(".")[0].ljust(8) + fw.split(".")[1]))
@@ -121,6 +131,39 @@ for lba in c.file_lbas(cfg):
 hwrite("ffffc0", 0x0001)
 hwrite("ffffb0", 0x0003 if change == "hw" else 0x0002)
 polls(5 if b else 2)
+# a floppy read DMA (sim/l3 fdd_rd): paula's countdown bytes, the AUDIO
+# rewrites and the HandleRTC units differ by variant (timing), the FLOAT
+# group sits elsewhere (variant b: at the end)
+trk = 0x05
+frame(0x10, [0] * 6, [0x10, trk, 0x44, 0x89, 0x00, 0x01])            # motor on, no DMA yet
+for k, cnt in enumerate([0xBE, 0xBC, 0xBA] if b else [0xBE]):        # DMA on, no request yet
+    frame(0x10, [0] * 6, [0x10, 0x06 if change == "dmatrack" and k == 0 else trk, 0x44, 0x89, 0x98, cnt])
+frame(0x10, [0] * 6, [0x11, trk, 0x44, 0x89, 0x98, 0xBA if b else 0xBE])   # the request
+sec = [0xAA] * 4 + [0x44, 0x89, 0x44, 0x89] + [(0x55 + 3 * i) & 0xFF for i in range(40)]
+if change == "sector":
+    sec[20] ^= 0x01
+miso = [0x11, trk, 0x44, 0x89] + [x for i in range(len(sec) // 2 + 1) for x in (0x98, (0xBE - i // (3 if b else 2)) & 0xFF)]
+frame(0x10, [0] * 6 + sec, miso[:6 + len(sec)])
+for k in range(4 if b else 2):                                       # AUDIO = ENA, rewritten every pass
+    hwrite("ffffb0", 0x0005 if change == "audio" and k == 1 else 0x0001)
+def rtc_unit():                                                      # HandleRTC: speed, RTC regs, frame, speed
+    hwrite("ffffe8", 0x003F)
+    for a, v in (("ffff7c", 0x0000), ("ffff78", 0x0100), ("ffff74", 0x2601), ("ffff70", 0x4004)):
+        hwrite(a, v)
+    frame(0x80, [0x92] + [0xFF] * 7, [0xFF, 0, 0, 0, 1, 4, 1, 0x26])
+    hwrite("ffffe8", 0x0001)
+for _ in range(2 if b else 1):
+    rtc_unit()
+    polls(1)
+def float_group():
+    hwrite("ffff60", 0x0b72)
+    if change != "floatmiss":
+        hwrite("ffff60", 0x0243 if change == "float" else 0x0242)
+    if change == "floatextra":
+        hwrite("ffff60", 0x1100)
+    hwrite("ffffa0", 0x0000)
+if not b:
+    float_group()
 data = bytearray(sector(c.file_lbas("DATA.BIN")[1]))
 if change == "sd":
     data[100] ^= 0x01
@@ -141,7 +184,10 @@ if b:                                     # a block only variant b has (DROPBLOC
         say("##End result : 0")
 say("Loading kickstart" + ("s" if change == "post" else ""))      # just after it
 polls(7 if b else 3)
+if b:
+    float_group()
 hw.append("MEM kickstart " + "ab" * 32)
+hw.append("MEM audio_ring " + ("cd" if b else "ef") * 32)
 for name, lines in (("spi.txt", frames), ("hw.txt", hw), ("uart.txt", uart)):
     with open(os.path.join(d, name), "w", encoding="latin-1") as f:
         f.write("".join(l + "\n" for l in lines))
@@ -164,6 +210,15 @@ SUBST uart partition\x20type:\x200x0+\b partition type: 0x00
 
 # fixture: a block only variant b has
 DROPBLOCK uart ^Overriding\x20screenmode\.$ ^##End\x20result\x20:\x200$
+
+# fixture (sim/l3 fdd_rd, p4t13 / p4t13c): AUDIO rewritten every pass
+DEDUP hw ^ffffb0$
+
+# fixture: a write group at another place among the frames
+FLOAT hw ^ffff(60|90|a0)$
+
+# fixture: the drive sounds' ring
+DROP hw ^MEM\x20audio_ring\x20
 EOR
 
 bad=0
@@ -187,9 +242,14 @@ src, dst = sys.argv[1], sys.argv[2]
 poll = ("10 00 00 00 00 00 00 /", "10 10 00 /", "20 00 /", "20 98 ff /", "80 ")
 lines = open(src + "/spi.txt", encoding="latin-1").read().splitlines()
 out, idx = [], []
+def is_poll(l):
+    # a status frame with a request (MISO byte 0 bits 3..0) is no poll
+    if l.startswith("10 00 00 00 00 00 00 /"):
+        return int(l.split("/")[1].split()[0], 16) & 0x0F == 0
+    return l.startswith(poll)
 for l in lines:
     idx.append(len(out))
-    out += [l] * (3 if l.startswith(poll) else 1)
+    out += [l] * (3 if is_poll(l) else 1)
 open(dst + "/spi.txt", "w", encoding="latin-1").write("".join(l + "\n" for l in out))
 for name in ("hw.txt", "uart.txt"):
     res = []
@@ -211,13 +271,14 @@ else fail "(a) variant a vs b: $(head -20 "$OUT/diff.txt")"; fi
 # the poll frames really were dropped and the content kept
 if grep -q '^OSD 0 stripe=[0-9a-f]* Minimig Load$' "$OUT/b/norm.txt" && grep -q '^SD CMD17 FIRMWARE+00000000 .. R00$' "$OUT/b/norm.txt" \
 	&& ! grep -qE '^SPI (80|20 98 ff / 00 00$)' "$OUT/b/norm.txt" \
-	&& [ "$(grep -c '^SPI 10 00 00 00 00 00 00 / 10 01 44 89 00 00$' "$OUT/b/norm.txt")" = 1 ] \
+	&& [ "$(grep -c '^SPI 10 00 00 00 00 00 00 / 10 01 44 89 00 00$' "$OUT/b/norm.txt")" = 2 ] \
 	&& [ "$(grep -c '^SPI 20 00 / 00$' "$OUT/b/norm.txt")" = 1 ] && [ "$(grep -c '^SPI 10 10 00 / 10 01$' "$OUT/b/norm.txt")" = 1 ]; then
 	pass "(a) norm: OSD text decoded, FIRMWARE run collapsed, poll frames dropped"
 else fail "(a) norm content: $(head -40 "$OUT/b/norm.txt")"; fi
 
 # (b) one content change against b: exactly one - line and one + line
-for ch in sd fpga osd hw uart keyq status uds desel pre post track motor level hibyte; do
+for ch in sd fpga osd hw uart keyq status uds desel pre post track motor level hibyte \
+	sector dmatrack audio sdspeed float floatextra floatmiss; do
 	gen "$OUT/b_$ch" b "$ch" || exit 1
 	norm "$OUT/b_$ch" "$OUT/rules.txt"
 	if dodiff "$OUT/b/norm.txt" "$OUT/b_$ch/norm.txt"; then fail "(b) $ch: the change is hidden (empty diff)"; continue; fi
@@ -232,9 +293,15 @@ for ch in sd fpga osd hw uart keyq status uds desel pre post track motor level h
 		desel) want='^\+SPI 00 fe / ff$' ;;                   # not deselect clocks: kept
 		pre) want='^\+SPI 20 24 06 / 00 00$' ;;
 		post) want='^\+UART Loading kickstarts$' ;;
+		dmatrack) want='^\+SPI 10 00 00 00 00 00 00 / 10 06 44 89 -- --$' ;;   # masked DMA bytes, other track: kept
+		audio) want='^\+HW ffffb0 0005$' ;;
+		sdspeed) want='^\+HW ffffe8 0002$' ;;
+		float) want='^\+HW ffff60 0243$' ;;
+		floatextra) want='^\+HW ffff60 1100$' ;;
+		floatmiss) want='^-HW ffff60 0242$' ;;
 		*) want='^\+' ;;
 	esac
-	case "$ch" in status|uds|desel|track|motor|level) one=1 ;; *) one=0 ;; esac
+	case "$ch" in status|uds|desel|track|motor|level|dmatrack|audio|floatextra|floatmiss) one=1 ;; *) one=0 ;; esac
 	if grep -qE "$want" "$OUT/diff.txt" && { [ "$one" = 1 ] || { [ "$m" = 1 ] && [ "$p" = 1 ]; }; }; then
 		pass "(b) $ch: $(grep -E '^\+[^+]' "$OUT/diff.txt" | head -1 | cut -c1-100)"
 	else fail "(b) $ch: $m - / $p + lines: $(cat "$OUT/diff.txt" | head -12)"; fi
@@ -253,7 +320,7 @@ else pass "(a) DROPBLOCK: the block is dropped, the lines around it stay"; fi
 n=0
 while IFS= read -r line; do
 	n=$((n + 1))
-	case "$line" in SUBST*|SDFILE*|DROP*) ;; *) continue ;; esac
+	case "$line" in SUBST*|SDFILE*|DROP*|DEDUP*|FLOAT*) ;; *) continue ;; esac
 	sed "${n}d" "$OUT/rules.txt" > "$OUT/rules_minus.txt"
 	norm "$OUT/a" "$OUT/rules_minus.txt" 2> "$OUT/norm_err.txt"; ra=$?
 	norm "$OUT/b" "$OUT/rules_minus.txt" 2>> "$OUT/norm_err.txt"; rb=$?
@@ -264,13 +331,13 @@ done < "$OUT/rules.txt"
 
 # (c) an unused rule is reported; with all rules used, none is
 norm "$OUT/a" "$OUT/rules.txt"; norm "$OUT/b" "$OUT/rules.txt"
-if dodiff --unused-rules "$OUT/a/norm.txt" "$OUT/b/norm.txt" && grep -q '^rules: all 7 used$' "$OUT/diff.txt"; then
-	pass "(c) --unused-rules: all 7 rules used"
+if dodiff --unused-rules "$OUT/a/norm.txt" "$OUT/b/norm.txt" && grep -q '^rules: all 10 used$' "$OUT/diff.txt"; then
+	pass "(c) --unused-rules: all 10 rules used"
 else fail "(c) --unused-rules: $(cat "$OUT/diff.txt")"; fi
 { cat "$OUT/rules.txt"; printf '\n# fixture: a rule no difference needs\nDROP uart nothing\\x20matches\\x20this\n'; } > "$OUT/rules_extra.txt"
 norm "$OUT/a" "$OUT/rules_extra.txt"; norm "$OUT/b" "$OUT/rules_extra.txt"
 if dodiff --unused-rules "$OUT/a/norm.txt" "$OUT/b/norm.txt"; then fail "(c) an unused rule: exit 0"
-elif grep -q '^UNUSED 17: DROP uart nothing' "$OUT/diff.txt" && [ "$(grep -c '^UNUSED' "$OUT/diff.txt")" = 1 ]; then
+elif grep -q '^UNUSED 26: DROP uart nothing' "$OUT/diff.txt" && [ "$(grep -c '^UNUSED' "$OUT/diff.txt")" = 1 ]; then
 	pass "(c) an unused rule: $(grep '^UNUSED' "$OUT/diff.txt")"
 else fail "(c) an unused rule: $(cat "$OUT/diff.txt")"; fi
 

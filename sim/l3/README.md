@@ -488,6 +488,33 @@ only when it is empty. `norm` writes one stream in frame order,
   MOSI ff). A request, a changed status frame, level or drive status, a
   queued key stays. Every file is read as latin-1, byte for byte (a UART
   byte >= 0x80 stays itself)
+- **paula's floppy DMA progress, masked** (`fdd_rd`, runs `p4t13` /
+  `p4t13c`). The firmware fills the FIFO and Agnus empties it at its own
+  rate, so these bytes follow the CPU's speed. They are masked by byte
+  position, as `--`:
+  - in a status frame (`10`, six 00 bytes) whose MISO byte 4 has bit 7
+    set (word 2 is `{dmaen, dsklen}` or the write FIFO status): MISO bytes
+    4 and 5
+  - in a sector frame (`10`, six 00 bytes, then the data; MISO byte 0 bits
+    1..0 = 01) whose MISO byte 4 has bit 7 set: MISO bytes 4 to the end
+    (word 2 and every word 3)
+
+  MOSI (the sector data) and MISO bytes 0..3 (request, track, sync) stay
+  compared, and so do the motor bits (word 2 without DMA). In the repeat
+  drop above, a masked status frame without a request counts as a repeat
+  when its bytes 0..3 equal the previous status frame's. It holds no motor
+  bits, only the DMA progress, and whether the frame that starts the DMA
+  shows it in word 2 depends on the timing.
+- **the HandleRTC unit**. `HandleRTC()` runs every 8,192 main-loop passes,
+  so the count follows the CPU's speed (`p4t13` 4, `p4t13c` 2). An RTC
+  frame is dropped together with exactly the hw writes of its call, when
+  they have exactly this shape:
+  - before the frame, `ffffe8` (`SPI_slow`), then `ffff7c`, `ffff78`,
+    `ffff74`, `ffff70` (`HW_RTC`)
+  - after it, `ffffe8` (`SPI_fast`) as the next hw write
+
+  With any other shape the hw writes stay (and the frame is dropped, as
+  every RTC frame). The `# dropped` line counts `rtc_unit`.
 - `SD CMD<n> <lba or arg> R<r1> [rd|wr <sha256 per block>]`: one line per
   card command (CMD8 / CMD58 with their response bytes, writes with the data
   response `D<xx>`)
@@ -507,8 +534,15 @@ only when it is empty. `norm` writes one stream in frame order,
   clusters (read from the run's card) is `CMD<n> <alias>+<offset>` without
   its data hash, and a run of them is one line (the hw writes and other card
   accesses inside the run are printed once): `RV32OSDA.BIN` and
-  `832OSDAD.BIN` are both `FIRMWARE+00000000 ..`. A rule without a comment
-  line above it is refused
+  `832OSDAD.BIN` are both `FIRMWARE+00000000 ..`.
+  - `DEDUP hw <addr-regex>`: a write to a matching address whose value
+    equals the previous write to that address is dropped (a no-op
+    rewrite). A changed value stays.
+  - `FLOAT hw <addr-regex>`: the matching writes leave their place among
+    the frames and are printed after everything else, in their own order.
+    Their order among themselves is compared; their position is not.
+
+  A rule without a comment line above it is refused.
 - `# rule <line> used <n>` and `# dropped ...` lines (not compared):
   `diff --unused-rules` prints `UNUSED <line>: <rule>` for a rule neither
   run used, and exits 1
@@ -521,6 +555,16 @@ a request, a new drive status (`10 10 <s>`), a cs `00` frame that is not
 all ff, and the lines just before and after a `DROPBLOCK` block each give a
 diff line; a `DROPBLOCK` start without its end fails `norm`; each rule
 removed in turn brings its difference back; an unused rule is reported.
+For the floppy DMA (Task 13), the fixture's variants also differ in the
+timing of a read DMA, and that gives an empty diff: other countdown bytes,
+other numbers of AUDIO rewrites and HandleRTC units, a FLOAT group at
+another place, another audio ring. Each of these gives a diff line:
+
+- a changed sector data byte
+- a changed track byte in a masked status frame
+- a changed AUDIO value among its rewrites
+- a changed SD-init speed write (`ffffe8` with no RTC frame next to it)
+- a changed, an extra and a missing write of the FLOAT group
 
 The rules of `boot` (`expected_diff.txt`): the firmware file
 (`SDFILE` of both names, the UART line with the name and the boot ROM's
@@ -531,6 +575,24 @@ pass (a `DROPBLOCK` up to its `##End result : 0`: an 832-only firmware
 defect, `findings/osd-riscv/phase4.md` "Findings for Paul") and the RV-only
 `IRQ_MASK` write (`HW ffff34`, `fw/ctrl_rv/arch/irq.c`). With them, the
 `boot` diff (runs `p4t7r2`, `p4t7c2`) is empty and all 9 rules are used.
+`fdd_rd` adds four rules (section "fdd_rd"):
+
+- `Inserting floppy` (`fmt_diff_expected.txt` lines 37-44)
+- `DEDUP hw ^ffffb0$`: the drive sounds rewrite AUDIO on every pass
+- `FLOAT hw ^ffff(60|90|a0)$`: a TIMER-driven I2C / keyboard group
+- `DROP hw ^MEM audio_ring`: the drive sounds' ring is rendered per
+  TIMER count; `cdda` checks its ring with `l3check.py`
+
+The `boot`, `keys` and handshake pairs (`p4t7r2`/`p4t7c2`, `p4t8`/`p4t8c`,
+`p4t12`/`p4t12c`) still give an empty diff. `--unused-rules` lists two of
+the four (`Inserting floppy` and `DEDUP`) for them; that clean-up is Task
+19's.
+
+XRAND twins of `CPU=832`: the EightThirtyTwo's random start can shift its
+timing (section "keys") or stop it (section "fdd_rd"). When a scenario's
+traces carry timing bytes (`fdd_rd`), compare the 832 twin normalised:
+`bash sim/l3/run.sh diff <832 run> <832 twin>` must be empty, and both
+must pass their data checks. RV twins stay `compare` SAME.
 
 ## keys
 
@@ -870,12 +932,13 @@ whose start matches, and its comparison:
 
 ```sh
 CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator XRAND=1 XSEED=4 RUNTAG=fc_xs4 FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh fdd_rd
-bash sim/l3/run.sh compare fc fc_xs4
+bash sim/l3/run.sh diff fc fc_xs4
 ```
 
-`run.sh diff` exits 1 for `fdd_rd` until the timing-only differences
-listed under "Measured" have rules. The data check alone, on a run
-directory:
+The 832 twin is compared normalised (section "Differential"): its
+`spi.txt` carries paula's timing bytes. `run.sh diff f fc` still prints
+the two status frames described under "Measured". The data check alone,
+on a run directory:
 
 ```sh
 python3 -I sim/l3/l3check.py fdd_rd sim/l3/run_f
@@ -923,27 +986,39 @@ sector frames differ in one or two MISO bytes: paula's `dsklen` countdown
 one word apart at a word boundary, the timing-dependent bytes of the list
 below. `compare` says DIFF for both files (`spi.txt` MISO only), and the
 log differs in those cycle numbers and in the run directory's name in the
-`=== FDD dma` lines.
+`=== FDD dma` lines. Normalised (`run.sh diff p4t13c p4t13c_xs4`), the twin is
+empty, as `run.sh diff p4t13 p4t13_xr` is for the RV.
 
-The differential `run.sh diff p4t13 p4t13c` is not empty. Every difference
-left is timing, from the floppy DMA running at Agnus's rate against two
-CPUs of different speed:
+The differential `run.sh diff --unused-rules p4t13 p4t13c` with the
+floppy-DMA masking, the HandleRTC unit and the four `fdd_rd` rules
+(section "Differential") leaves two lines. They are the first status frame
+after the motor goes on (track 0/0) and after the side change (79/1),
+where `bfm_floppy` starts the DMA:
 
-- the MISO of the sector frames (paula's `{dmaen, dsklen}` countdown while
-  the sector streams in)
-- the status polls around a DMA's start (whether a poll falls between
-  the `DSKLEN` writes, the start and the firmware's first request)
-- the per-pass `AUDIO` writes of the drive sounds (`HW ffffb0 0001`: RV
-  12,083, 832 4,569), a shared firmware defect in
-  `findings/osd-riscv/phase4.md`
-- HandleRTC's Amiga-RTC writes every 8,192 passes (`HW ffff70..7c` with
-  the SPI speed writes around them: RV 4, 832 2)
-- the position of one I2C / keyboard write group among the frames
-- `HW MEM audio_ring`, the rendered drive sounds
+```
+-SPI 10 00 00 00 00 00 00 / 10 00 44 89 -- --
++SPI 10 00 00 00 00 00 00 / 10 00 44 89 00 01
+-SPI 10 00 00 00 00 00 00 / 10 9f 44 89 -- --
++SPI 10 00 00 00 00 00 00 / 10 9f 44 89 00 01
+```
 
-The SPI frames' MOSI, the sector data and every card read are equal. The
-`expected_diff.txt` rule for `Inserting floppy` (`fmt_diff_expected.txt`
-lines 37-44) is in; the timing rules await a ruling (Task 13 report).
+The model writes `DSKLEN` about 100 clk7 cycles after the motor / side
+change, which is less than one main-loop pass. So the 832's next status
+frame still shows the motor in word 2, while the RV's shows the DMA
+already running (masked). Both see the same bytes 0..3. The difference is
+real firmware behaviour, not only trace bytes: `HandleFpga` passes byte 5
+to `HandleFDD` as the motor bits even when it is `dsklen`
+(`findings/osd-riscv/phase4.md`, "Shared defects"). A model that waits
+before the DMA, as trackdisk waits for the drive to come ready, would give
+both CPUs the same frames. That is a bench change, and it needs new runs
+(Task 13 report). Everything else is equal:
+
+- the SPI MOSI and every sector's data
+- the masked status sequence
+- every SD command and data hash
+- every OSD and UART line
+- the hw writes, with AUDIO deduplicated and the I2C / keyboard group
+  floated
 
 ## Monitors
 

@@ -42,6 +42,24 @@ norm: one normalised stream of a run, in frame order, one item per line
     frames (20 00) whose level (MISO) equals the previous one, OSD_CMD_KEYQ
     frames (20 98) whose status byte (MISO 1) is 00 (no event, no
     overflow), every RTC frame (80); each run of them leaves nothing
+  - paula's floppy DMA progress (sim/l3 fdd_rd, runs p4t13 / p4t13c: the
+    FIFO is filled by the firmware and emptied at Agnus's rate, so these
+    bytes depend on the CPU's speed) is masked by byte position, as "--":
+    in a status frame (10, six 00 bytes) whose MISO byte 4 has bit 7 set
+    (word 2 = {dmaen, dsklen} or the write FIFO status: DMA on), MISO bytes
+    4 and 5; in a sector frame (10, six 00 bytes, then the data the
+    firmware sends; MISO byte 0 bits 1..0 = 01, a track read without
+    write) whose MISO byte 4 has bit 7 set, MISO bytes 4 to the end (word 2
+    and every word 3: the countdown).  MOSI (the sector data) and MISO
+    bytes 0..3 (request, track, sync) and the motor bits stay compared; the
+    identical-repeat drop of status frames compares the masked bytes
+  - the HandleRTC unit (fw/ctrl_rv/rtc.c HandleRTC, every 8,192 main-loop
+    passes, so their number depends on the CPU's speed: p4t13 4, p4t13c
+    2): an RTC frame (80) together with exactly the hw writes of that call,
+    when they have exactly this shape: "ffffe8" (SPI_slow), "ffff7c",
+    "ffff78", "ffff74", "ffff70" (HW_RTC) logged before the frame, and
+    "ffffe8" (SPI_fast) as the next hw write after it.  Another shape
+    keeps every hw write (only the frame is dropped, as every RTC frame)
   - SD card frames (cs 02) become one "SD CMD<n> ..." line per command: the
     argument (CMD17/18/24/25: the block, "lba"), "R<r1>" (CMD8 / CMD58 with
     their four response bytes) and the sha256 of each data block (read: the
@@ -74,6 +92,8 @@ block, blank lines end a block:
     DROP <stream> <python-regex>
     DROPBLOCK <stream> <start-regex> <end-regex>
     SDFILE <8.3 name> <alias>
+    DEDUP hw <addr-regex>
+    FLOAT hw <addr-regex>
 <stream> = uart, osd, hw, sd, spi or all; the regex (no blanks: \x20 or
 \s) is searched in the text after "<STREAM> "; <replacement> is the rest
 of the line, Python re.sub syntax, "" for the empty string.  DROPBLOCK:
@@ -83,7 +103,13 @@ dropped; a start without its end is an error (exit 1).  SDFILE: every
 SD access inside the file's clusters is printed "CMD<n> <alias>+<offset>"
 without its data hash, and a run of such accesses (same alias, same
 command) is one line: so RV32OSDA.BIN and 832OSDAD.BIN are both
-"FIRMWARE+00000000 .." whatever their sizes.
+"FIRMWARE+00000000 .." whatever their sizes.  DEDUP: a hw write to an
+address matching <addr-regex> whose value equals the previous write to
+that address is dropped (a no-op rewrite; a changed value stays).  FLOAT:
+the hw writes to addresses matching <addr-regex> leave their place among
+the frames and are printed, in their own order, after everything else
+("HW <addr> <value>" lines): their order among themselves is compared,
+their position is not.
 
 diff: unified diff of two norm outputs without their '#' lines; exit 0
 only when it is empty.  --unused-rules: also "UNUSED <line>: <rule>" for
@@ -265,7 +291,7 @@ STREAMS = ("uart", "osd", "hw", "sd", "spi", "all")
 
 
 def hexs(bs):
-    return " ".join("%02x" % b for b in bs)
+    return " ".join("--" if b is None else "%02x" % b for b in bs)
 
 
 def load_charrom(path):
@@ -409,6 +435,14 @@ class Rule:
                 self.re, self.end = re.compile(words[2]), re.compile(words[3])
             except re.error as e:
                 raise SystemExit("line %d: regex: %s" % (lineno, e))
+        elif self.kind in ("DEDUP", "FLOAT"):
+            if len(words) != 3 or words[1] != "hw":
+                raise SystemExit("line %d: %s hw <addr-regex> (no blanks)" % (lineno, self.kind))
+            self.stream = "hw"
+            try:
+                self.re = re.compile(words[2])
+            except re.error as e:
+                raise SystemExit("line %d: regex %r: %s" % (lineno, words[2], e))
         elif self.kind == "SDFILE":
             if len(words) != 3:
                 raise SystemExit("line %d: SDFILE <8.3 name> <alias>" % lineno)
@@ -580,10 +614,23 @@ def norm(spi, hw, uart, rules_path, card_path, charrom):
     drop = Counter()
     prev_read = prev_uds = prev_status = None
     st = {}
+    rtc_at = []                   # item indices of the RTC frames' markers
     for i, (cs, out, inp) in enumerate(frames):
         key = (i, 1, 0)
+        # paula's DMA progress bytes (the doc above): masked, None = "--"
+        if cs == 0x10 and len(out) >= 6 and not any(out[:6]) and len(inp) >= 6 and inp[4] & 0x80:
+            if len(out) == 6:
+                inp = inp[:4] + [None, None]
+            elif inp[0] & 0x03 == 0x01:
+                inp = inp[:4] + [None] * (len(inp) - 4)
         if cs == 0x10 and len(out) == 6 and not any(out):
-            if inp[0] & 0x0F == 0 and tuple(inp) == prev_status:
+            # a masked frame without a request whose bytes 0..3 equal the
+            # previous status frame's is a repeat too: its bytes 4..5 hold no
+            # motor bits, only the DMA progress (the trigger frame's word 2
+            # shows it or not by the CPU's timing: p4t13 / p4t13c)
+            if inp[0] & 0x0F == 0 and (tuple(inp) == prev_status or
+                                       (inp[4] is None and prev_status is not None and
+                                        tuple(inp[:4]) == prev_status[:4])):
                 drop["status"] += 1
                 continue
             prev_status = tuple(inp)
@@ -602,6 +649,7 @@ def norm(spi, hw, uart, rules_path, card_path, charrom):
             continue
         if cs == 0x80:
             drop["rtc"] += 1
+            items.append((key, "rtc", "", None))     # a marker for the HandleRTC unit
             continue
         if cs == 0x00 and all(b == 0xFF for b in out):
             drop["sd_deselect"] += 1
@@ -616,6 +664,22 @@ def norm(spi, hw, uart, rules_path, card_path, charrom):
             continue
         items.append((key, "spi", " ".join(x for x in ("%02x" % cs, hexs(out), "/", hexs(inp)) if x), None))
     items.sort(key=lambda t: t[0])
+    # the HandleRTC unit (the doc above): the marker with exactly its hw writes
+    keep = [True] * len(items)
+    shape = ("ffffe8", "ffff7c", "ffff78", "ffff74", "ffff70")
+    for k, (key, stream, _, _) in enumerate(items):
+        if stream != "rtc":
+            continue
+        keep[k] = False
+        before = items[k - 5:k] if k >= 5 else []
+        after = next((j for j in range(k + 1, len(items)) if items[j][1] != "rtc"), None)
+        if (len(before) == 5 and all(b[1] == "hw" and b[0][0] == key[0] and b[2].split()[0] == a
+                                     for b, a in zip(before, shape))
+                and after is not None and items[after][1] == "hw" and items[after][2].split()[0] == "ffffe8"):
+            for j in list(range(k - 5, k)) + [after]:
+                keep[j] = False
+            drop["rtc_unit"] += 1
+    items = [t for t, kp in zip(items, keep) if kp]
     for m in mem:
         items.append(((len(frames) + 1, 0, 0), "hw", m, None))
     # SDFILE runs: one line per run of accesses with the same alias and
@@ -639,8 +703,27 @@ def norm(spi, hw, uart, rules_path, card_path, charrom):
             run_key = None
         lines.append([stream, text])
     # the text rules, in file order
+    floated = []
     for r in rules:
         if r.kind == "SDFILE":
+            continue
+        if r.kind in ("DEDUP", "FLOAT"):
+            kept, last = [], {}
+            for ln in lines:
+                w = ln[1].split()
+                if ln[0] != "hw" or len(w) != 2 or not r.re.search(w[0]):
+                    kept.append(ln)
+                    continue
+                if r.kind == "FLOAT":
+                    r.used += 1
+                    floated.append(ln)
+                    continue
+                if last.get(w[0]) == w[1]:
+                    r.used += 1
+                    continue
+                last[w[0]] = w[1]
+                kept.append(ln)
+            lines = kept
             continue
         kept = []
         if r.kind == "DROPBLOCK":
@@ -676,13 +759,14 @@ def norm(spi, hw, uart, rules_path, card_path, charrom):
                     ln[1] = t
             kept.append(ln)
         lines = kept
+    lines += floated
     w = sys.stdout.write
     for stream, text in lines:
         w("%s %s\n" % (stream.upper(), text))
     for r in rules:
         w("# rule %d used %d: %s\n" % (r.lineno, r.used, r.text))
     w("# dropped " + ", ".join("%s %d" % (k, drop[k]) for k in
-                                ("status", "drivestatus", "read", "keyq", "rtc", "sd_deselect",
+                                ("status", "drivestatus", "read", "keyq", "rtc", "rtc_unit", "sd_deselect",
                                  "sdfile_run")) + "\n")
     return 0
 

@@ -45,3 +45,23 @@ DROP hw ^ffff34\x20
 # the 832 prints "11s", the RV the 8.3 name (menu.c InsertFloppy, a file
 # without a long name; fdd_rd: "TEST    ADF", runs p4t13 / p4t13c)
 SUBST uart Inserting\x20floppy:\x20"(11s|[^"]{11})" Inserting floppy: "%.11s"
+
+# Task 13 ruling (3), runs p4t13 / p4t13c (fdd_rd): drivesounds_render()
+# writes AUDIO = AUDIOF_ENA on every main-loop pass while the motor sound
+# plays (drivesounds.playing is never set: findings/osd-riscv/phase4.md
+# "Shared defects"), so the count of these no-op rewrites follows the CPU's
+# speed (12,083 / 4,569).  A write with a changed value stays
+DEDUP hw ^ffffb0$
+
+# Task 13 ruling (5), runs p4t13 / p4t13c: the I2C (ffff60), keyboard
+# (ffff90) and ffffa0 write group that a TIMER-driven call makes in the
+# main loop lands among other frames on each CPU (spi.txt line 82,967 /
+# 31,794); compared as its own ordered sub-stream.  After the DROPBLOCK
+# above, so the 832-only ApplyConfiguration pass stays dropped
+FLOAT hw ^ffff(60|90|a0)$
+
+# Task 13 ruling (6), runs p4t13 / p4t13c: the audio ring holds the drive
+# sounds rendered per TIMER count (drivesounds_render(TIMER), pickstep's
+# TIMER&3), timing-dependent; scenario cdda checks its ring against
+# TEST.BIN with l3check.py on each CPU (Task 17)
+DROP hw ^MEM\x20audio_ring\x20
