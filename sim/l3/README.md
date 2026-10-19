@@ -513,8 +513,12 @@ only when it is empty. `norm` writes one stream in frame order,
     `ffff74`, `ffff70` (`HW_RTC`)
   - after it, `ffffe8` (`SPI_fast`) as the next hw write
 
-  With any other shape the hw writes stay (and the frame is dropped, as
-  every RTC frame). The `# dropped` line counts `rtc_unit`.
+  A unit is dropped only when its six (address, value) pairs equal the
+  previous kept unit's (a repeat, as with the status frames). The first
+  unit's writes stay, and so does a unit with another value (another RTC
+  time, another speed). With any other shape the hw writes stay too, and
+  the frame is dropped, as every RTC frame. The `# dropped` line counts
+  `rtc_unit`.
 - `SD CMD<n> <lba or arg> R<r1> [rd|wr <sha256 per block>]`: one line per
   card command (CMD8 / CMD58 with their response bytes, writes with the data
   response `D<xx>`)
@@ -565,6 +569,8 @@ another place, another audio ring. Each of these gives a diff line:
 - a changed AUDIO value among its rewrites
 - a changed SD-init speed write (`ffffe8` with no RTC frame next to it)
 - a changed, an extra and a missing write of the FLOAT group
+- a repeated HandleRTC unit with a changed RTC value (`ffff70`), or with a
+  changed closing speed write (`ffffe8`)
 
 The rules of `boot` (`expected_diff.txt`): the firmware file
 (`SDFILE` of both names, the UART line with the name and the boot ROM's
@@ -901,7 +907,8 @@ status frame, and the first sector follows a `FileRead`. Then come the
 first lines, where a line's three slots, 4 clk7 cycles apart, come faster
 than the SPI delivers words (about one per 120 `clk_114`). After the
 working level, an empty FIFO means the host fell behind: a main-loop pass
-longer than about 1,024 words x 605 `clk_114`. Per track, `=== MARGIN
+longer than about 1,024 words x 2,421 `clk_114` (2.5 M; a line is 454
+clk7 cycles = 7,264 `clk_114`, three words). Per track, `=== MARGIN
 (info) 6 fdd track <c>/<h>` gives the minimum fill at the slots of the
 window, the ramp, and the literal count. A track whose FIFO never reaches
 1,024 words is a bench error.
@@ -965,7 +972,7 @@ per line: 2,111 lines x 454 clk7 cycles x 16 = 15.3 M `clk_114`, plus the
 wait for the firmware's first word. The firmware keeps the FIFO between
 about 950 and 1,600 words. It refills when paula's request comes back
 below 1,024, so the lowest fill at a slot is 949 words. That is about 300
-lines of DMA, roughly 550,000 `clk_114` of main-loop stall before an empty
+lines of DMA, roughly 2.2 M `clk_114` of main-loop stall before an empty
 slot. The boot is longer than `boot` (RV 193.5 M against 158.0 M):
 `drivesounds_init` loads `DRIVESND.BIN` (212,098 bytes) from the fdd card.
 `L3_FDD_TO` = 580,000,000 (RV) and 660,000,000 (832): 1.5 x the estimates

@@ -16,8 +16,9 @@
 #       byte, a changed track byte in a status frame whose DMA bytes are
 #       masked, a changed AUDIO (ffffb0) value among its rewrites, a changed
 #       SD-init speed write (ffffe8, the RTC unit's addresses but no RTC
-#       frame), a changed, an extra and a missing write of the FLOAT group
-#       -> each a diff line
+#       frame), a changed, an extra and a missing write of the FLOAT group,
+#       a repeated HandleRTC unit with a changed RTC value or a changed
+#       closing speed write -> each a diff line
 #   (c) each rule of the fixture's expected-diff list removed in turn -> its
 #       difference comes back; an unused rule -> diff --unused-rules reports it
 # The card is built with tools/sim/mkcard.sh (sfdisk, mkfs.fat, mtools), the
@@ -146,14 +147,15 @@ miso = [0x11, trk, 0x44, 0x89] + [x for i in range(len(sec) // 2 + 1) for x in (
 frame(0x10, [0] * 6 + sec, miso[:6 + len(sec)])
 for k in range(4 if b else 2):                                       # AUDIO = ENA, rewritten every pass
     hwrite("ffffb0", 0x0005 if change == "audio" and k == 1 else 0x0001)
-def rtc_unit():                                                      # HandleRTC: speed, RTC regs, frame, speed
+def rtc_unit(last):                                                  # HandleRTC: speed, RTC regs, frame, speed
     hwrite("ffffe8", 0x003F)
     for a, v in (("ffff7c", 0x0000), ("ffff78", 0x0100), ("ffff74", 0x2601), ("ffff70", 0x4004)):
-        hwrite(a, v)
+        hwrite(a, 0x4005 if change == "rtcval" and last and a == "ffff70" else v)
     frame(0x80, [0x92] + [0xFF] * 7, [0xFF, 0, 0, 0, 1, 4, 1, 0x26])
-    hwrite("ffffe8", 0x0001)
-for _ in range(2 if b else 1):
-    rtc_unit()
+    hwrite("ffffe8", 0x0002 if change == "rtcspeed" and last else 0x0001)
+n_rtc = 2 if b else 1
+for k in range(n_rtc):                    # the changes are in b's second (a repeated) unit
+    rtc_unit(k == n_rtc - 1 and k > 0)
     polls(1)
 def float_group():
     hwrite("ffff60", 0x0b72)
@@ -278,7 +280,7 @@ else fail "(a) norm content: $(head -40 "$OUT/b/norm.txt")"; fi
 
 # (b) one content change against b: exactly one - line and one + line
 for ch in sd fpga osd hw uart keyq status uds desel pre post track motor level hibyte \
-	sector dmatrack audio sdspeed float floatextra floatmiss; do
+	sector dmatrack audio sdspeed float floatextra floatmiss rtcval rtcspeed; do
 	gen "$OUT/b_$ch" b "$ch" || exit 1
 	norm "$OUT/b_$ch" "$OUT/rules.txt"
 	if dodiff "$OUT/b/norm.txt" "$OUT/b_$ch/norm.txt"; then fail "(b) $ch: the change is hidden (empty diff)"; continue; fi
@@ -299,9 +301,11 @@ for ch in sd fpga osd hw uart keyq status uds desel pre post track motor level h
 		float) want='^\+HW ffff60 0243$' ;;
 		floatextra) want='^\+HW ffff60 1100$' ;;
 		floatmiss) want='^-HW ffff60 0242$' ;;
+		rtcval) want='^\+HW ffff70 4005$' ;;      # a repeated HandleRTC unit with another value: kept
+		rtcspeed) want='^\+HW ffffe8 0002$' ;;
 		*) want='^\+' ;;
 	esac
-	case "$ch" in status|uds|desel|track|motor|level|dmatrack|audio|floatextra|floatmiss) one=1 ;; *) one=0 ;; esac
+	case "$ch" in status|uds|desel|track|motor|level|dmatrack|audio|floatextra|floatmiss|rtcval|rtcspeed) one=1 ;; *) one=0 ;; esac
 	if grep -qE "$want" "$OUT/diff.txt" && { [ "$one" = 1 ] || { [ "$m" = 1 ] && [ "$p" = 1 ]; }; }; then
 		pass "(b) $ch: $(grep -E '^\+[^+]' "$OUT/diff.txt" | head -1 | cut -c1-100)"
 	else fail "(b) $ch: $m - / $p + lines: $(cat "$OUT/diff.txt" | head -12)"; fi

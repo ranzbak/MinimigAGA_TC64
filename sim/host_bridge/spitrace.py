@@ -58,8 +58,12 @@ norm: one normalised stream of a run, in frame order, one item per line
     2): an RTC frame (80) together with exactly the hw writes of that call,
     when they have exactly this shape: "ffffe8" (SPI_slow), "ffff7c",
     "ffff78", "ffff74", "ffff70" (HW_RTC) logged before the frame, and
-    "ffffe8" (SPI_fast) as the next hw write after it.  Another shape
-    keeps every hw write (only the frame is dropped, as every RTC frame)
+    "ffffe8" (SPI_fast) as the next hw write after it, and whose six
+    (address, value) pairs equal the previous kept unit's: a repeat, as
+    the status-frame collapse.  The first unit's writes stay, and so do a
+    unit's with another value (another RTC time, another speed) and every
+    hw write of another shape (the frame itself is always dropped, as every
+    RTC frame)
   - SD card frames (cs 02) become one "SD CMD<n> ..." line per command: the
     argument (CMD17/18/24/25: the block, "lba"), "R<r1>" (CMD8 / CMD58 with
     their four response bytes) and the sha256 of each data block (read: the
@@ -667,6 +671,7 @@ def norm(spi, hw, uart, rules_path, card_path, charrom):
     # the HandleRTC unit (the doc above): the marker with exactly its hw writes
     keep = [True] * len(items)
     shape = ("ffffe8", "ffff7c", "ffff78", "ffff74", "ffff70")
+    prev_unit = None
     for k, (key, stream, _, _) in enumerate(items):
         if stream != "rtc":
             continue
@@ -676,9 +681,12 @@ def norm(spi, hw, uart, rules_path, card_path, charrom):
         if (len(before) == 5 and all(b[1] == "hw" and b[0][0] == key[0] and b[2].split()[0] == a
                                      for b, a in zip(before, shape))
                 and after is not None and items[after][1] == "hw" and items[after][2].split()[0] == "ffffe8"):
-            for j in list(range(k - 5, k)) + [after]:
-                keep[j] = False
-            drop["rtc_unit"] += 1
+            unit = tuple(items[j][2] for j in list(range(k - 5, k)) + [after])
+            if unit == prev_unit:
+                for j in list(range(k - 5, k)) + [after]:
+                    keep[j] = False
+                drop["rtc_unit"] += 1
+            prev_unit = unit
     items = [t for t, kp in zip(items, keep) if kp]
     for m in mem:
         items.append(((len(frames) + 1, 0, 0), "hw", m, None))
