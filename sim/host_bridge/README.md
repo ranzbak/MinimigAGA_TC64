@@ -32,7 +32,7 @@ xsim stays the default and the X-checking reference.
 | `Makefile` | Test programs -> `<B>/<test>/OSDBoot_rv_ROM.vhd` (romgen with the `fw/ctrl_boot_rv` ROM template, as the boot ROM) |
 | `sw/crt0_rom.S`, `sw/rom.ld` | Start-up (reset at 0x0, trap at 0x20, clear x1-x31, `sp` = 0x2000, `.bss`, `main`, PASS/FAIL on the UART, DONE) and the 8 KB BRAM layout |
 | `sw/hb.h`, `sw/check.h` | cfide register offsets, `CHECK` / `STAMP` macros |
-| `sw/t_*.S`, `sw/t_*.c`, `sw/t_lanes.sdram.hex` | The six tests; the SDRAM preload of `t_lanes` |
+| `sw/t_*.S`, `sw/t_*.c`, `sw/t_lanes.sdram.hex` | The tests ([Tests and expectations](#tests-and-expectations)); the SDRAM preload of `t_lanes` |
 | `sw/reset_fw.S` | Reset, trap at 0x20 and register clear for tests that start through `fw/ctrl_rv/arch/crt0.S` (`t_irq`, `t_irqctl`) |
 | `sw/dhry.S` | `dhry`: boot-ROM stand-in for `fw/dhrystone_rv` (clear x1-x31, jump to 0x2000; the firmware is preloaded with `+SDRAM_HEX`) |
 | `stub/` | Elaboration check of the bridge's RISC-V branch: `stub/elab.sh` (`rv_debug` 0 and 2, neutral sources only), `stub/elab.sh dmt` (`rv_debug` 1: `VexOsd_DMT` + `rtl/host/xilinx/rv_bscane2.v`, BSCANE2/BUFG from `unisims_ver`), `stub/elab.sh all` |
@@ -115,6 +115,15 @@ bash sim/host_bridge/run.sh t_lanes
 SLAT=20 SJIT=8 EXTRA_WS=3 bash sim/host_bridge/run.sh t_b2b t_spibusy
 # log every hw access
 XARGS="+VERBOSE=1" bash sim/host_bridge/run.sh t_hwoff
+```
+
+`t_osdrdy` (cfide's `HOST_REQ` register, the OSD reply-ready handshake) is
+not in `all`; run it by name, on both simulators, and compare:
+
+```sh
+SIM=verilator RUNTAG=osdrdy bash sim/host_bridge/run.sh t_osdrdy
+RUNTAG=osdrdyx bash sim/host_bridge/run.sh t_osdrdy
+bash sim/host_bridge/run.sh compare osdrdyx osdrdy
 ```
 
 Outputs go to `sim/host_bridge/run_${RUNTAG:-wt}/`:
@@ -902,6 +911,8 @@ the stub answers at once, so the reply bytes are right whatever the gap.
   `havevpos` are all false; `fwboot`: `havei2c` true). The inputs are `tick_in = 1` (the timer counts
   every `clk_28`, so TIMER = `timecnt[23:8]` steps every 1024 `clk_114`),
   `menu_button = 1`, `audio_buf = 1`, `audio_amiga = 0` and `sd_ack = 1`.
+  `osd_rx_seq` (`userio_osd`'s reply sequence on the board) is a bench
+  register: 0, except in `t_osdrdy` (set per checkpoint).
 - **SDRAM model** (`sdram_host_model.v`): 8 MB of halfwords at host address
   0.
   - Latency: `SLAT` + random 0..`SJIT` `clk_114` cycles from accept to the
@@ -1007,6 +1018,7 @@ unexpected trap writes `0x8000 | mcause`.
 | `t_irqctl` | Started as `t_irq`. The interrupt controller, tests 1..7 and 9..12 of [Interrupt controller](#interrupt-controller): reset values, the legacy 0xFFFFFFA0 path, one event per edge, masking, "set wins", level sources, LEVEL mode, mode switching, read-back, the ADV7511 INT pin. Exit code 100 * test + check. | The STAMP commands of the table there (pulses, held levels, the interrupt output); test 4 is checked by the bench. |
 | `t_irqapi` | Started as `t_irq`. The firmware interrupt-controller API of `fw/ctrl_rv/arch/irq.h` against the real controller: legacy `SetIntHandler` path without the dispatcher, vblank handler (8 pulses), dispatch order (bit 0 first), masked EDGE delivered on `IrqEnable`, NULL handler, LEVEL bits 8 and 3 handled until the handler drops the line (called 2..3 times), `IrqEnable` / `IrqDisable` / `IrqSetMode` read-modify-write, bits >= 16 ignored, `SetIntHandler` of a legacy handler clears MASK (test 10: one legacy call per vblank, no storm). Exit code 100 * test + check. | The `t_irqctl` STAMP commands 10, 20, 30, 50, 60/61, 70, 120/121 (pulses and held levels). |
 | `t_spibusy` | `SPI_slow()` (SPEED `0xEF`, about 7700 `clk_114` per byte), CS `0x02`, 8 straight-line `sb` to SPI DATA (`01 80 55 AA FF 00 3C C3`), then a DATA read (`0x1C`, the 8th MISO byte), then CS `0x03`. | The slave got the 8 bytes in order. At least 7 DATA writes found `SD_busy` high. No DATA write completed without cfide accepting it. |
+| `t_osdrdy` | cfide's `HOST_REQ` (`0xFFFFFFB4`, bit 0 `OSD_RDY`: cfide's count of the bytes it started with the OSD selected equals `osd_rx_seq`; resync after 64 deselected cycles). 17 checks: 1 after reset; a byte to `sd_cs[1]` is not counted; one byte with the OSD selected (CS `0x20`) reads 0 until the bench steps `osd_rx_seq`, while `0xFFFFFFB0` (half and byte), `B8` and `BC` still read `audio_q` (1); two bytes outstanding read 0, also with one taken; a byte never taken reads 0, still 0 right after the deselect (CS `0x21`), 1 after the resync (polled, at most 64 reads); counting goes on from the resynced value; byte, half and word reads. Not in `all`. | STAMP 10..13: `osd_rx_seq` = 0..3. STAMP 20 arms, STAMP 21 checks the resync: a read after the deselect returned 0, and the first that returned 1 completed at least 64 cycles after the deselect (`t_osdrdy resync: ... (+65)`). STAMP 99 reached. |
 | `boot` | The committed boot ROM loads `RV32OSDA.BIN` (`boot/fwtest.c`) from `card.img`; the firmware prints `FW OK`, `PAT`, `IMG`, runs the `t_irq` check, prints `IRQ 20`, writes DONE. Not in `all`; see [Boot](#boot). | STAMP 1/2 as `t_irq`; `ERRORCODE:` lines; `=== BOOT`, `=== STATS`. |
 | `boot_nofile` | The same ROM with `card_nofile.img`: `Can't load firmware`, `ErrorCode(0x0f0)`, retry. Not in `all`. | No DONE before the cycle limit; last ErrorCode `00f0`. |
 

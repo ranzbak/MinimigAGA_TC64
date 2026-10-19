@@ -8,6 +8,13 @@
 #
 # Extra plusargs: XARGS="+REPS=5 +SEED=7 ..." (see tb_spi_cdc.v).
 #
+# The OSD reply-ready handshake (cfide HOST_REQ, see tb_spi_cdc.v +RDY):
+#   RUNTAG=a XARGS="+RDY=1 +TESTS=24 +OSD_MIN_GAP=0" bash sim/spi_cdc/run.sh
+#        osd and xframe with the HOST_REQ poll, every osd failure counted
+#   RUNTAG=b RDY_MUT=1 XARGS="+RDY=1 +TESTS=8 +OSD_MIN_GAP=0" bash sim/spi_cdc/run.sh
+#        the same on a run copy of cfide.vhd whose OSD_RDY is always 1 (the
+#        "-- OSD RDY" line): must FAIL (osd at the small gaps)
+#
 # xsim because cfide is VHDL.  The configurations run one after the other in
 # ONE directory (concurrent xsim runs in one directory corrupt each other);
 # RUNTAG names that directory, as everywhere else in sim/.
@@ -32,6 +39,14 @@ for f in $FILES; do
 		cp "$ROOT/$f" "src/$(basename $f)"
 	fi
 done
+
+# RDY_MUT=1: the run copy of cfide answers OSD_RDY = 1 whatever the counts say
+if [ "${RDY_MUT:-0}" = 1 ]; then
+	[ "$(grep -c -- '-- OSD RDY$' src/cfide.vhd)" = 1 ] || { echo "RDY_MUT: not exactly one '-- OSD RDY' line in cfide.vhd"; exit 1; }
+	sed -i "s/^\( *\)osd_rdy <= .*-- OSD RDY\$/\1osd_rdy <= '1'; -- OSD RDY MUTANT/" src/cfide.vhd
+	[ "$(grep -c -- "osd_rdy <= '1'; -- OSD RDY MUTANT\$" src/cfide.vhd)" = 1 ] || { echo "RDY_MUT: mutation not applied"; exit 1; }
+	echo "RDY_MUT: $(grep -- '-- OSD RDY MUTANT' src/cfide.vhd | sed 's/^ *//')"
+fi
 
 # cfide instantiates i2c_master_mmio (its generate is off here, but the entity
 # must still be known to the VHDL analyser)

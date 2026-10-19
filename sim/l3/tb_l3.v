@@ -201,6 +201,7 @@ module tb_l3 #(
   wire        scandoubler, audio_ena, audio_clear;
   wire [15:0] aud_addr;
   reg         tick = 1'b1;       // cfide tick_in (tick generator below)
+  wire [1:0]  osd_rx_seq;        // userio_osd's reply sequence -> cfide HOST_REQ (minimig_virtual_top)
 
   // The generics below are the only copy: run.sh reads them from this
   // "cfide #( ... ) mycfide (" block for the GHDL conversion and stops
@@ -228,6 +229,7 @@ module tb_l3 #(
     .scl_i(1'b1), .scl_o(), .scl_t(), .sda_i(1'b1), .sda_o(), .sda_t(),
     .i2c_ext_int(1'b0),
     .pos_data_q(),
+    .osd_rx_seq(osd_rx_seq),
     .clk_28(clk28), .tick_in(tick)
   );
 
@@ -357,7 +359,7 @@ module tb_l3 #(
     .osd_ctrl(osd_ctrl),
     .in_diag(32'h00000000), .in_diag_clr(),
     ._scs(sd_cs[5]), .sdi(sd_do), .sdo(user_sdo), .sck(sck_slv),
-    .osd_rx_seq(),   // reply sequence: not read yet (Phase 4 Task 9; Verilator's PINMISSING needs the pin named)
+    .osd_rx_seq(osd_rx_seq),   // reply sequence -> cfide's HOST_REQ OSD_RDY (as minimig_virtual_top)
     .osd_blank(), .osd_pixel(),
     .osd_enable(), .key_disable(),
     .lr_filter(), .hr_filter(),

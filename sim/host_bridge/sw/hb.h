@@ -14,6 +14,9 @@
 #define HB_TIME_OFS      (-256)   /* 0xFFFFFF00 bench checkpoint (W)          */
 #define HB_DONE_OFS      (-252)   /* 0xFFFFFF04 bench verdict (W)             */
 #define HB_AUDIO_OFS     (-80)    /* 0xFFFFFFB0 W: bit0 audio_ena, bit1 audio_clear; R: {audio_amiga, audio_buf} */
+#define HB_HOST_REQ_OFS  (-76)    /* 0xFFFFFFB4 R: bit0 OSD_RDY (OSD reply-ready handshake) */
+#define HB_AUDIO8_OFS    (-72)    /* 0xFFFFFFB8 R: audio_q (the AUDIO window, addr(3:2) = 10) */
+#define HB_AUDIOC_OFS    (-68)    /* 0xFFFFFFBC R: audio_q (addr(3:2) = 11) */
 #define HB_PLATFORM_OFS  (-64)    /* 0xFFFFFFC0 W: bit0 scandoubler; R: platformdata */
 #define HB_TIMER_OFS     (-48)    /* 0xFFFFFFD0 R: timecnt[23:8]              */
 #define HB_SPI_DATA_OFS  (-32)    /* 0xFFFFFFE0 W: shift a byte out; R: last byte in */
@@ -32,6 +35,9 @@
 /* SPI CS values: sd_cs[0] and sd_cs[1] low (selected) / high */
 #define HB_CS1_ON        0x02
 #define HB_CS1_OFF       0x03
+/* SPI CS values: the OSD (sd_cs[5]) selected / deselected, as fw EnableOsd() / DisableOsd() */
+#define HB_OSD_ON        0x20
+#define HB_OSD_OFF       0x21
 #define HB_SPI_SLOW      0xEF
 
 #endif

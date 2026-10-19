@@ -36,6 +36,22 @@
 //          model received equal the card's sector
 //   osd    OSD_CMD_VERSION + 10 reply bytes: equal a reference read done
 //          with a slow host
+//   xframe (+TESTS bit 16, not in the default mask) the cross-frame case: a
+//          3-byte OSD_CMD_OSD_WR frame (0c 00 00), CS up and down again at
+//          gap 2, then osd's VERSION read; its 10 bytes equal the reference
+//
+// +RDY=1: the OSD reply-ready handshake (cfide HOST_REQ 0x0fffffb4, bit 0
+// OSD_RDY = cfide's count of OSD bytes started equals userio_osd's
+// osd_rx_seq).  Before each OSD reply byte (osd and xframe) the bus model
+// reads HOST_REQ until bit 0 is 1, each read an ordinary bus access with the
+// same gap; a poll that has not ended after 100000 clk_114 cycles ends the run
+// with "=== FAIL (watchdog ...)".  The firmware's way from Phase 4 Task 11 on.
+// cfide's osd_rx_seq input is this bench's userio_osd output.  With RDY the
+// bench prints per gap how many HOST_REQ reads it made and how many of them
+// read 0, and for xframe in how many runs the OSD_WR frame's last byte was
+// still not taken when the VERSION frame's command byte started (the case
+// the count exists for; the bench fails if that never happens in a run with
+// xframe).
 //
 // Result lines:  "GAP <g> <test> fail <n>/<m>" and a final "=== PASS"/"=== FAIL".
 //
@@ -56,7 +72,8 @@ module tb_spi_cdc;
   integer seed    = 1;
   integer reps    = 3;
   integer osd_min_gap = 0;
-  integer tests_mask = 15;           // 1 wr, 2 rd, 4 direct, 8 osd
+  integer tests_mask = 15;           // 1 wr, 2 rd, 4 direct, 8 osd, 16 xframe
+  integer rdy = 0;                   // +RDY=1: poll HOST_REQ before each OSD reply byte
   integer gapmax = 1000;
   integer debug = 0;
 
@@ -84,6 +101,9 @@ module tb_spi_cdc;
   reg n_reset = 1'b0;
   reg mm_reset = 1'b1;
 
+  integer cyc = 0;                   // clk_114 cycles (the RDY watchdog)
+  always @(posedge clk114) cyc <= cyc + 1;
+
   // ---------------------------------------------------------------- cfide
   reg  [31:2] addr = 30'd0;
   reg  [15:0] d    = 16'd0;
@@ -97,6 +117,7 @@ module tb_spi_cdc;
   wire        spi_di;       // MOSI
   wire        spi_do;       // MISO from the Minimig slaves
   wire        sd_miso;      // the card's DO pin
+  wire [1:0]  osd_rx_seq;   // userio_osd's reply sequence (clk_28) -> cfide
 
   cfide #(
     .spimux(1'b0), .havespirtc(1'b0), .havei2c(1'b0), .havevpos(1'b0)
@@ -116,6 +137,7 @@ module tb_spi_cdc;
     .scl_i(1'b1), .scl_o(), .scl_t(), .sda_i(1'b1), .sda_o(), .sda_t(),
     .i2c_ext_int(1'b0),
     .pos_data_q(),
+    .osd_rx_seq(osd_rx_seq),
     .clk_28(clk28), .tick_in(1'b0)
   );
 
@@ -179,6 +201,7 @@ module tb_spi_cdc;
     .osd_ctrl(8'h00),
     .in_diag(32'h9A785634), .in_diag_clr(),
     ._scs(spi_cs[5]), .sdi(spi_di), .sdo(user_sdo), .sck(sck_slv),
+    .osd_rx_seq(osd_rx_seq),
     .osd_blank(), .osd_pixel(),
     .osd_enable(), .key_disable(),
     .lr_filter(), .hr_filter(),
@@ -217,6 +240,7 @@ module tb_spi_cdc;
   integer gap = 8;
   integer jitter;
   localparam [31:0] HW_SPI = 32'h0fffffe0;
+  localparam [31:0] HW_HOST_REQ = 32'h0fffffb4;
 
   task bus(input [31:0] a, input w, input [7:0] data, output [7:0] rd);
     begin
@@ -244,6 +268,28 @@ module tb_spi_cdc;
   task spi(input [7:0] tx, output [7:0] rx); begin spi_w(tx); spi_r(rx); end endtask
 
   task settle; begin repeat (400) @(posedge clk114); end endtask   // ~3.5 us
+
+  // +RDY=1: before an OSD reply byte, read HOST_REQ until OSD_RDY (bit 0)
+  integer rdy_reads = 0, rdy_zero = 0;
+  task osd_wait_rdy;
+    integer t0;
+    reg [7:0] v;
+    begin
+      if (rdy) begin
+        t0 = cyc;
+        v = 8'h00;
+        while (!v[0]) begin
+          bus(HW_HOST_REQ, 1'b0, 8'h00, v);
+          rdy_reads = rdy_reads + 1;
+          if (!v[0]) rdy_zero = rdy_zero + 1;
+          if (!v[0] && cyc - t0 > 100000) begin
+            $display("=== FAIL (watchdog: HOST_REQ read %h for 100000 cycles, gap %0d, cycle %0d)", v, gap, cyc);
+            $finish;
+          end
+        end
+      end
+    end
+  endtask
 
   task rnd_phase; begin repeat ($urandom % 16) @(posedge clk114); end endtask
 
@@ -358,7 +404,7 @@ module tb_spi_cdc;
       rnd_phase;
       cs_w(8'h20);
       spi(8'h88, rb);
-      for (k = 0; k < 10; k = k + 1) spi(8'hFF, got[k]);
+      for (k = 0; k < 10; k = k + 1) begin osd_wait_rdy; spi(8'hFF, got[k]); end
       cs_w(8'h21);
       settle;
       bad = 0;
@@ -369,6 +415,42 @@ module tb_spi_cdc;
           bad = 1;
         end
       end
+    end
+  endtask
+
+  // xframe: OSD_CMD_OSD_WR as OsdWriteOffset starts it (0c 00 00), CS up and
+  // at once down again (both writes at gap 2), then the VERSION read.  The
+  // OSD_WR frame's last byte can still be in userio_osd's synchroniser (up to
+  // ~40 clk_114 after its last sck edge) when the new frame's command byte
+  // starts; `live' says whether it was (osd_rx_seq short of the frame's 3
+  // bytes after the second CS write, just before the command byte).
+  task t_xframe(output integer bad, output integer live);
+    integer k, g0;
+    reg [1:0] rx3;
+    reg [7:0] got [0:9];
+    begin
+      rnd_phase;
+      rx3 = osd_rx_seq + 2'd3;       // settled now (every earlier byte taken); +3 = OSD_WR taken
+      cs_w(8'h20);
+      spi(8'h0c, rb);
+      spi(8'h00, rb);
+      spi(8'h00, rb);
+      g0 = gap;
+      gap = 2;
+      cs_w(8'h21);
+      cs_w(8'h20);
+      live = (osd_rx_seq != rx3);
+      gap = g0;
+      spi(8'h88, rb);
+      for (k = 0; k < 10; k = k + 1) begin osd_wait_rdy; spi(8'hFF, got[k]); end
+      cs_w(8'h21);
+      settle;
+      bad = 0;
+      for (k = 0; k < 10; k = k + 1)
+        if (got[k] !== osd_ref[k] && !bad) begin
+          $display("  xframe: byte %0d = %h, want %h", k, got[k], osd_ref[k]);
+          bad = 1;
+        end
     end
   endtask
 
@@ -387,7 +469,7 @@ module tb_spi_cdc;
   integer ngaps = 16;
   integer sweep = 0;
   integer g, r, bad, total_fail, osd_fail_low;
-  integer f_wr, f_rd, f_dir, f_osd;
+  integer f_wr, f_rd, f_dir, f_osd, f_xf, live, n_live, n_live_all;
 
   initial begin
     if (!$value$plusargs("SCKDLY=%f", sckdly)) sckdly = 1.5;
@@ -406,6 +488,7 @@ module tb_spi_cdc;
     if (!$value$plusargs("TESTS=%d", tests_mask)) tests_mask = 15;
     if (!$value$plusargs("GAPMAX=%d", gapmax)) gapmax = 1000;
     if (!$value$plusargs("DEBUG=%d", debug)) debug = 0;
+    if (!$value$plusargs("RDY=%d", rdy)) rdy = 0;
     dummy = $urandom(seed);
 
     // From 2: 832_bridge.vhd cannot raise the next hw_req less than two
@@ -425,6 +508,7 @@ module tb_spi_cdc;
 
     $display("SPI CDC bench: SCKDLY=%0.2f ns C28DLY=%0.2f ns SPEED=%0d SEED=%0d REPS=%0d",
              sckdly, c28dly, speed, seed, reps);
+    if (rdy) $display("RDY=1: HOST_REQ poll before each OSD reply byte");
 
     repeat (20) @(posedge clk114);
     n_reset = 1'b1;
@@ -443,26 +527,38 @@ module tb_spi_cdc;
 
     total_fail = 0;
     osd_fail_low = 0;
+    n_live_all = 0;
     for (g = 0; g < ngaps && gaps[g] <= gapmax; g = g + 1) begin
       gap = gaps[g];
-      f_wr = 0; f_rd = 0; f_dir = 0; f_osd = 0;
+      f_wr = 0; f_rd = 0; f_dir = 0; f_osd = 0; f_xf = 0; n_live = 0;
+      rdy_reads = 0; rdy_zero = 0;
       for (r = 0; r < reps; r = r + 1) begin
         if (tests_mask & 1) begin t_wr(bad);     f_wr  = f_wr + bad; end
         if (tests_mask & 2) begin t_rd(bad);     f_rd  = f_rd + bad; end
         if (tests_mask & 4) begin t_direct(bad); f_dir = f_dir + bad; end
         if (tests_mask & 8) begin osd_version(bad, 0); f_osd = f_osd + bad; end
+        if (tests_mask & 16) begin t_xframe(bad, live); f_xf = f_xf + bad; n_live = n_live + live; end
       end
       $display("GAP %0d wr fail %0d/%0d", gap, f_wr, reps);
       $display("GAP %0d rd fail %0d/%0d", gap, f_rd, reps);
       $display("GAP %0d direct fail %0d/%0d", gap, f_dir, reps);
       $display("GAP %0d osd fail %0d/%0d", gap, f_osd, reps);
-      total_fail = total_fail + f_wr + f_rd + f_dir;
+      if (tests_mask & 16)
+        $display("GAP %0d xframe fail %0d/%0d (OSD_WR byte not yet taken at the VERSION command in %0d)", gap, f_xf, reps, n_live);
+      if (rdy)
+        $display("GAP %0d HOST_REQ reads %0d, of them OSD_RDY 0: %0d", gap, rdy_reads, rdy_zero);
+      total_fail = total_fail + f_wr + f_rd + f_dir + f_xf;
+      n_live_all = n_live_all + n_live;
       if (gap >= osd_min_gap) total_fail = total_fail + f_osd;
       else osd_fail_low = osd_fail_low + f_osd;
     end
 
     if (osd_fail_low)
       $display("NOTE: %0d osd failures below OSD_MIN_GAP=%0d (not counted)", osd_fail_low, osd_min_gap);
+    if ((tests_mask & 16) && n_live_all == 0) begin
+      $display("xframe: the OSD_WR frame's last byte was taken before the VERSION command in every run: the case was not exercised");
+      total_fail = total_fail + 1;
+    end
     if (total_fail == 0) $display("=== PASS");
     else                 $display("=== FAIL (%0d failing sectors)", total_fail);
     $finish;

@@ -88,6 +88,11 @@ entity cfide is
         i2c_ext_int   : in  std_logic := '0';  -- the ADV7511's INT (status 0x400)
         -- Video scaler coordinates
         pos_data_q    : out std_logic_vector(15 downto 0);
+        -- userio_osd's reply sequence (rtl/minimig/userio_osd.v osd_rx_seq):
+        -- +1 per OSD byte it has taken; clk_28 domain.  For HOST_REQ (0x0fffffb4),
+        -- see the OSD reply-ready handshake below.  Defaulted: a top without
+        -- the port reads OSD_RDY 0 after the first OSD byte (until the resync).
+        osd_rx_seq    : in  std_logic_vector(1 downto 0) := "00";
         -- 28Mhz signals
         clk_28        : in  std_logic;
         tick_in       : in  std_logic   -- 44.1KHz - makes it easy to keep timer in lockstep with audio.
@@ -171,6 +176,13 @@ architecture rtl of cfide is
 
     signal reset : std_logic;
 
+    -- OSD reply-ready handshake (HOST_REQ, 0x0fffffb4), see below
+    signal osd_tx_seq  : std_logic_vector(1 downto 0) := "00";  -- no reset
+    signal osd_idle    : std_logic_vector(6 downto 0) := (others => '0');
+    signal osd_rdy     : std_logic;
+    signal host_req_q  : std_logic;
+    signal spi_dat_go  : std_logic;
+
     -- Interrupt controller (0x3x window)
     signal int_legacy  : std_logic;                      -- the 0xa0 flag
     signal int_legacy_nx : std_logic;                    -- ... its next state
@@ -221,6 +233,7 @@ begin
     q(15 downto 0) <= IOdata when rs232_select = '1' or SPI_select = '1' else
     I2Cdata when i2c_select = '1' else
     timecnt(23 downto 8) when timer_select = '1' else
+    X"000" & "000" & host_req_q when audio_select = '1' and addr(3 downto 2) = "01" else
     audio_q when audio_select = '1' else
     keyboard_q when keyboard_select = '1' else
     amigatohost when amiga_select = '1' else
@@ -665,6 +678,59 @@ begin
 
         END IF;
     END PROCESS;
+
+    -----------------------------------------------------------------
+    -- OSD reply-ready handshake: HOST_REQ at 0fffffb4 (the audio window,
+    -- addr(3 downto 2) = "01"), read only:
+    --   bit 0      OSD_RDY: userio_osd has taken every byte cfide started
+    --              with the OSD selected, so the next byte's reply is loaded
+    --              from the right data (a reply byte may start now)
+    --   bits 15..1 0 (reserved)
+    -- The rest of the window reads audio_q and is written as before.
+    -- osd_tx_seq (sysclk): +1 when a DATA write starts a byte while the OSD
+    -- is selected (scs(5) = '1', i.e. sd_cs(5) low).  osd_rx_seq (clk_28,
+    -- userio_osd): +1 when it has taken a byte, up to ~40 clk_114 after the
+    -- byte's last sck edge.  OSD_RDY = the two agree (2 bits: 1, 2 and 3
+    -- bytes outstanding all read 0; across a frame boundary there can be 2).
+    -- Resync: once the OSD has been deselected for 64 sysclk cycles (longer
+    -- than that window, so every byte has been taken), osd_tx_seq follows
+    -- osd_rx_seq; this heals a byte userio_osd never took, and sets the
+    -- start value (no reset needed: scs is 0 in reset, so it resyncs then).
+    -- Clock domains: the read value is latched in clk_28 at the access, like
+    -- the other registered reads here, so osd_rx_seq is compared in its own
+    -- domain; osd_tx_seq last changed at the DATA write of an earlier access
+    -- (>= 4 sysclk cycles before), and the resync copies osd_rx_seq only
+    -- while it is static.  findings/osd-riscv/phase4.md, "Handshake design".
+    -----------------------------------------------------------------
+    spi_dat_go <= '1' when SPI_select = '1' and req = '1' and wr = '1' and SD_busy = '0'
+                           and addr(3 downto 2) = "00" else '0';   -- the byte starts (above)
+
+    process(sysclk)
+    begin
+        if rising_edge(sysclk) then
+            if scs(5) = '1' then
+                osd_idle <= (others => '0');
+                if spi_dat_go = '1' then
+                    osd_tx_seq <= osd_tx_seq + 1;
+                end if;
+            elsif osd_idle(6) = '0' then
+                osd_idle <= osd_idle + 1;
+            else
+                osd_tx_seq <= osd_rx_seq;   -- OSD RESYNC
+            end if;
+        end if;
+    end process;
+
+    osd_rdy <= '1' when osd_tx_seq = osd_rx_seq else '0'; -- OSD RDY
+
+    process(clk_28)
+    begin
+        if rising_edge(clk_28) then
+            if audio_select = '1' and req = '1' then
+                host_req_q <= osd_rdy;
+            end if;
+        end if;
+    end process;
 
     -----------------------------------------------------------------
     -- Simple UART only TxD

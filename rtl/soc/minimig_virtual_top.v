@@ -1148,8 +1148,15 @@ end
 
 
 //// minimig top ////
+// userio_osd's OSD reply sequence (CLK_28 domain) -> cfide's HOST_REQ register.
+// No synchroniser: CLK_28 and CLK_114 (cfide's sysclk) are outputs of the one
+// MMCM in amiga_clk; cfide compares it in clk_28 and copies it in sysclk only
+// while it is static (cfide.vhd; findings/osd-riscv/phase4.md).
+wire [1:0] osd_rx_seq;
+
 `ifdef HOSTONLY
 assign SPI_DO=1'b1;
+assign osd_rx_seq=2'b00;   // no OSD
 assign _ram_oe=1'b1;
 assign _ram_we=1'b1;
 `else
@@ -1266,6 +1273,7 @@ minimig #(
     .sdi          (SPI_DI           ), // SPI data input
     .sdo          (SPI_DO           ), // SPI data output
     .sck          (SPI_SCK          ), // SPI clock
+    .osd_rx_seq   (osd_rx_seq       ), // OSD reply sequence -> cfide HOST_REQ
     //video
     .selcsync     (VGA_SELCS        ), // composite sync
     ._csync       (cs               ), // horizontal sync
@@ -1423,6 +1431,7 @@ cfide #(
     .pos_data_q(VPOS_DATA),
 `endif
 
+    .osd_rx_seq(osd_rx_seq),   // HOST_REQ OSD_RDY (OSD reply-ready handshake)
     .clk_28(CLK_28),
     .tick_in(aud_tick)
 );

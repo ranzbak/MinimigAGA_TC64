@@ -31,6 +31,9 @@
 // t_irqctl: the interrupt controller (cfide 0xFFFFFF30..3C); the bench drives
 // vbl_int, amiga_req, i2c_ext_int and irq_src[15:4] per checkpoint (table at the
 // t_irqctl block below) and checks test 4 ("set wins") itself.
+// t_osdrdy: cfide's HOST_REQ (0xFFFFFFB4, bit 0 OSD_RDY); the bench drives
+// cfide's osd_rx_seq (userio_osd's reply sequence, 0 in every other test) per
+// checkpoint and measures the resync (t_osdrdy block below).
 //
 // SDCARD (boot runs, +TEST=boot / boot_nofile; the ROM is the committed boot
 // ROM fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd): sd_spi_model on sd_cs[1] with
@@ -190,6 +193,7 @@ module tb_host_bridge #(
   reg        amiga_req = 1'b0;   // t_irqctl: controller source 2
   reg        i2c_ext_int = 1'b0; // t_irqctl: controller source 3 (ADV7511 INT)
   reg [15:4] irq_src = 12'h0;    // t_irqctl: controller sources 4..15
+  reg [1:0]  osd_rx_seq = 2'd0;  // t_osdrdy: userio_osd's reply sequence
 
   // The generics below are the only copy: run.sh (cfide_generics) reads them
   // from this "cfide #( ... ) mycfide (" block for the GHDL conversion and
@@ -227,6 +231,7 @@ module tb_host_bridge #(
     .scl_i(1'b1), .scl_o(), .scl_t(), .sda_i(1'b1), .sda_o(), .sda_t(),
     .i2c_ext_int(i2c_ext_int),
     .pos_data_q(),
+    .osd_rx_seq(osd_rx_seq),
     .clk_28(clk28), .tick_in(1'b1)
   );
 
@@ -641,11 +646,59 @@ module tb_host_bridge #(
     end
   endtask
 
+  // ---------------------------------------------------------- t_osdrdy
+  // Checkpoints (TIME <n>) of sw/t_osdrdy.S:
+  //   10..13  osd_rx_seq <= n - 10 (set at the clk_114 edge of the TIME
+  //           write's completion, 0.3 ns before any clk_28 edge, so the
+  //           CPU's next HOST_REQ read sees it)
+  //   20      arm the resync measurement: the cycle sd_cs[5] rises (the OSD
+  //           deselected), then every HOST_REQ read that completes after it
+  //   21      the resync: at least one read after the deselect returned 0,
+  //           and the first that returned 1 completed at least 64 cycles
+  //           after the deselect (cfide resyncs after 64 idle sysclk cycles)
+  //   99      end: STAMP 21 was checked
+  reg     or_on = 1'b0, or_end = 1'b0;
+  integer or_desel = -1, or_zero = 0, or_ready = -1;
+
+  always @(posedge sd_cs[5]) begin
+    #1;   // when cyc has counted the edge (see the ErrorCode monitor)
+    if (or_on && or_desel < 0) or_desel = cyc;
+  end
+  always @(posedge clk114) if (or_on && or_desel >= 0 && hw_done && !host_we && hwa == 32'hFFFFFFB4) begin
+    if (hw_d[0] === 1'b0 && or_ready < 0) or_zero = or_zero + 1;
+    if (hw_d[0] === 1'b1 && or_ready < 0) or_ready = cyc;
+  end
+
+  task t_osdrdy_checkpoint(input [31:0] v);
+    begin
+      case (v)
+        10: osd_rx_seq <= 2'd0;
+        11: osd_rx_seq <= 2'd1;
+        12: osd_rx_seq <= 2'd2;
+        13: osd_rx_seq <= 2'd3;
+        20: begin or_on = 1'b1; or_desel = -1; or_zero = 0; or_ready = -1; end
+        21: begin
+              $display("t_osdrdy resync: OSD deselected at cycle %0d, %0d HOST_REQ reads 0 after it, the first 1 at cycle %0d (+%0d)",
+                       or_desel, or_zero, or_ready, or_ready - or_desel);
+              if (or_desel < 0) bench_error("t_osdrdy: the OSD select did not rise after STAMP 20");
+              else if (or_zero < 1) bench_error("t_osdrdy: no HOST_REQ read returned 0 after the deselect");
+              else if (or_ready < 0) bench_error("t_osdrdy: no HOST_REQ read returned 1 after the deselect");
+              else if (or_ready - or_desel < 64) bench_error("t_osdrdy: OSD_RDY came back less than 64 cycles after the deselect");
+              or_on = 1'b0;
+            end
+        99: or_end = 1'b1;
+        default: bench_error("t_osdrdy: unknown checkpoint");
+      endcase
+    end
+  endtask
+
   task checkpoint(input [31:0] v);
     integer k;
     begin
       $display("=== TIME %0d cycle %0d", v, cyc);
-      if (test == "t_hwoff") begin
+      if (test == "t_osdrdy") begin
+        t_osdrdy_checkpoint(v);
+      end else if (test == "t_hwoff") begin
         case (v)
           1: expect_pin("scandoubler", scandoubler, 1'b0);
           2: expect_pin("scandoubler", scandoubler, 1'b1);
@@ -752,6 +805,7 @@ module tb_host_bridge #(
       end
       if (test == "t_irqctl" && !ic_end) bench_error("t_irqctl: no STAMP 99 (the program stopped early)");
       if (test == "t_irqapi" && !ic_end) bench_error("t_irqapi: no STAMP 99 (the program stopped early)");
+      if (test == "t_osdrdy" && !or_end) bench_error("t_osdrdy: no STAMP 99 (the program stopped early)");
     end
   endtask
 
