@@ -6,7 +6,9 @@
 #       and the timing of a floppy read DMA, as sim/l3 fdd_rd p4t13 / p4t13c:
 #       other countdown bytes in the status and sector frames, other numbers
 #       of AUDIO rewrites and of HandleRTC units, a FLOAT group elsewhere
-#       among the frames, another audio ring) -> an empty diff
+#       among the frames, another audio ring; and the timing of a floppy
+#       write DMA, as sim/l3 fdd_wr p4t14 / p4t14c: the FIFO read in other
+#       pieces, other polls while it fills) -> an empty diff
 #   (b) one changed byte in an SD read, an FPGA data frame, an OSD text
 #       line, a hw write, a UART line, a KEYQ event, a status frame with a
 #       request, a changed drive status, a deselect frame that is not all
@@ -18,7 +20,9 @@
 #       SD-init speed write (ffffe8, the RTC unit's addresses but no RTC
 #       frame), a changed, an extra and a missing write of the FLOAT group,
 #       a repeated HandleRTC unit with a changed RTC value or a changed
-#       closing speed write -> each a diff line
+#       closing speed write -> each a diff line.  Task 14: a changed word
+#       read from the write FIFO, a changed track byte in a write frame, a
+#       missing write frame -> each a diff line
 #   (c) each rule of the fixture's expected-diff list removed in turn -> its
 #       difference comes back; an unused rule -> diff --unused-rules reports it
 # The card is built with tools/sim/mkcard.sh (sfdisk, mkfs.fat, mtools), the
@@ -145,6 +149,23 @@ if change == "sector":
     sec[20] ^= 0x01
 miso = [0x11, trk, 0x44, 0x89] + [x for i in range(len(sec) // 2 + 1) for x in (0x98, (0xBE - i // (3 if b else 2)) & 0xFF)]
 frame(0x10, [0] * 6 + sec, miso[:6 + len(sec)])
+# a floppy write DMA (sim/l3 fdd_wr): the FIFO's words read in other pieces
+# and other polls while it fills (variant b), a hw write between two
+# sectors (the SD write's place): FindSync / GetHeader / GetData frames
+wtrk = 0x07
+wst = [(0x2A + 5 * i) & 0xFF for i in range(64)]                      # 32 FIFO words
+if change == "wrdata":
+    wst[34] ^= 0x01
+frame(0x10, [0] * 6, [0x10, wtrk, 0x44, 0x89, 0x00, 0x01])           # motor on, no write yet
+for part, cuts in enumerate(([0, 0, 4, 10, 30], [30, 30, 46, 64]) if b else ([0, 12, 30], [30, 40, 64])):
+    for k, (lo, hi) in enumerate(zip(cuts, cuts[1:])):
+        if change == "wrmiss" and part == 1 and k == len(cuts) - 2:
+            continue
+        t = 0x08 if change == "wrhdr" and part == 0 and k == 0 else wtrk
+        frame(0x10, [0] * (6 + hi - lo), [0x12, t, 0x44, 0x89, 0x80, (hi - lo) // 2] + wst[lo:hi])
+    if part == 0:
+        hwrite("ffffe8", 0x0101)                                      # between two sectors
+frame(0x10, [0, 0], [0x10, wtrk])                                     # FindSync: the write is over
 for k in range(4 if b else 2):                                       # AUDIO = ENA, rewritten every pass
     hwrite("ffffb0", 0x0005 if change == "audio" and k == 1 else 0x0001)
 def rtc_unit(last):                                                  # HandleRTC: speed, RTC regs, frame, speed
@@ -280,7 +301,7 @@ else fail "(a) norm content: $(head -40 "$OUT/b/norm.txt")"; fi
 
 # (b) one content change against b: exactly one - line and one + line
 for ch in sd fpga osd hw uart keyq status uds desel pre post track motor level hibyte \
-	sector dmatrack audio sdspeed float floatextra floatmiss rtcval rtcspeed; do
+	sector dmatrack audio sdspeed float floatextra floatmiss rtcval rtcspeed wrdata wrhdr wrmiss; do
 	gen "$OUT/b_$ch" b "$ch" || exit 1
 	norm "$OUT/b_$ch" "$OUT/rules.txt"
 	if dodiff "$OUT/b/norm.txt" "$OUT/b_$ch/norm.txt"; then fail "(b) $ch: the change is hidden (empty diff)"; continue; fi
@@ -303,9 +324,12 @@ for ch in sd fpga osd hw uart keyq status uds desel pre post track motor level h
 		floatmiss) want='^-HW ffff60 0242$' ;;
 		rtcval) want='^\+HW ffff70 4005$' ;;      # a repeated HandleRTC unit with another value: kept
 		rtcspeed) want='^\+HW ffffe8 0002$' ;;
+		wrdata) want='^\+SPI 10 wrfifo 12 07 44 89 / 34 ' ;;      # the second sector's words, one changed
+		wrhdr) want='^\+SPI 10 wrfifo 12 08 44 89 / ' ;;           # another track byte: its own line
+		wrmiss) want='^\+SPI 10 wrfifo 12 07 44 89 / 16 ' ;;       # the second sector's bytes, the last 18 missing
 		*) want='^\+' ;;
 	esac
-	case "$ch" in status|uds|desel|track|motor|level|dmatrack|audio|floatextra|floatmiss|rtcval|rtcspeed) one=1 ;; *) one=0 ;; esac
+	case "$ch" in status|uds|desel|track|motor|level|dmatrack|audio|floatextra|floatmiss|rtcval|rtcspeed|wrhdr) one=1 ;; *) one=0 ;; esac
 	if grep -qE "$want" "$OUT/diff.txt" && { [ "$one" = 1 ] || { [ "$m" = 1 ] && [ "$p" = 1 ]; }; }; then
 		pass "(b) $ch: $(grep -E '^\+[^+]' "$OUT/diff.txt" | head -1 | cut -c1-100)"
 	else fail "(b) $ch: $m - / $p + lines: $(cat "$OUT/diff.txt" | head -12)"; fi

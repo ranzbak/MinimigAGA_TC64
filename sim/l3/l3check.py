@@ -7,6 +7,7 @@
     python3 -I l3check.py memhash <run>
     python3 -I l3check.py keys <run>
     python3 -I l3check.py fdd_rd <run>
+    python3 -I l3check.py fdd_wr <run> [<reference run>]
 
 kick: the 256 KB kickstart the firmware uploaded equals the card's KICK.ROM
 byte for byte.  UploadKickstart (fw/ctrl_rv/config.c) sends a 0x40000-byte
@@ -95,6 +96,35 @@ and the OSD and UART:
     in df0), decoded as spitrace.py osd
   - no UART line with "Illegal track", "Fatal" or "Wrong header"
 
+fdd_wr (scenario fdd_wr): the floppy writes of bfm_floppy against the card
+the run left.  The run log's "=== FDD wdma <k> cylinder <c> head <h>: <n>
+words to blckint" lines must be the 10 track writes of the scenario
+(FDD_WR_TRACKS below, in order, FDD_WORDS words each).  TEST.ADF is copied
+out of <run>/card_saved.img (+SD_SAVE) with mtools (mcopy, the partition's
+offset from the MBR) to <run>/fdd_wr_saved.adf, and compared, sector by
+sector, with the original <run>/card/content/TEST.ADF:
+  - every sector of a written track holds its new data
+    (sim/l3/gen/mkwrtrack.py new_data: mfm.py's new_sector), except the
+    bad-header sector (FDD_WR_BAD: cylinder 40 head 0, sector 3)
+  - every other sector is unchanged
+  - the bad-header sector is classified: "skipped" (the original data),
+    "written" (its new data; the stream's data block is right, only the
+    header checksum is wrong) or "other" (anything else: BAD)
+  - fsck.fat -n of the saved card's partition is clean
+and the OSD and UART:
+  - no OSD_CMD_OSD_WR frame before the first key event, none from the first
+    track write's start to the last one's blckint
+  - after the first key event, an OSD row 3 "Floppy disk sounds : on" and
+    then an OSD row 0 "df0: TEST", as fdd_rd
+  - the OSD rows written after the last blckint (the error page, if any)
+    are recorded, rows 0, 2, 3 and 4 (title, category, message, code)
+  - no UART line with "Illegal track", "Wrong header" or "Second sync"
+It prints "HEADER track <t> sector <s> (LBA <n>): <skipped | written |
+other>; error page: <rows> | none".  With <reference run> (the 832 leg of
+the same scenario on the same card): the saved TEST.ADF must equal the
+reference's byte for byte and the HEADER line must be the reference's (the
+bad-header path taken the same way on both CPUs).
+
 Each prints one line, "PASS <name>: ..." (exit 0) or "FAIL <name>: ..."
 (exit 1); exit 2 on a usage error.  Python 3 standard library only.
 """
@@ -115,6 +145,11 @@ FDD_TRACKS = [(0, 0), (1, 0), (2, 0), (39, 0), (40, 0), (41, 0), (77, 0), (78, 0
 FDD_WORDS = 6334
 FDD_SYNC = 0x4489
 FDD_GOLDEN = {(0, 0): "mfm_c00_s0.hex", (79, 1): "mfm_c79_s1.hex"}
+
+# scenario fdd_wr (scenarios.vh FDD_WPLAN, run.sh FDD_WR_PLAN): (cylinder,
+# head) in order, and the track / sector with the bad header checksum
+FDD_WR_TRACKS = [(0, 0), (1, 0), (2, 0), (39, 0), (41, 0), (77, 0), (78, 0), (79, 0), (79, 1), (40, 0)]
+FDD_WR_BAD = ((40, 0), 3)
 
 HOSTMAP_ADDR = 0x680000
 KICK_SIZE = 0x40000
@@ -631,6 +666,209 @@ def fdd_rd(run):
     return 0
 
 
+def load_mkwrtrack():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("mkwrtrack", os.path.join(HERE, "gen", "mkwrtrack.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def card_file(img_path, name, dest):
+    """copy <name> out of the card image's first partition with mtools;
+    None or the error text"""
+    with open(img_path, "rb") as f:
+        mbr = f.read(512)
+    part = 0
+    if len(mbr) == 512 and mbr[510:512] == b"\x55\xaa" and mbr[0x1BE + 4] != 0:
+        part = int.from_bytes(mbr[0x1BE + 8:0x1BE + 12], "little")
+    env = dict(os.environ, MTOOLS_SKIP_CHECK="1")
+    r = subprocess.run(["mcopy", "-n", "-o", "-i", "%s@@%d" % (img_path, part * 512), "::" + name, dest],
+                       capture_output=True, encoding="latin-1", env=env)
+    if r.returncode != 0:
+        return "mcopy %s: exit %d: %s" % (name, r.returncode, (r.stderr or r.stdout).strip()[:200])
+    return None
+
+
+def card_fsck(img_path, tmp):
+    """fsck.fat -n of the card image's first partition; None or the error"""
+    with open(img_path, "rb") as f:
+        img = f.read()
+    part = 0
+    if img[510:512] == b"\x55\xaa" and img[0x1BE + 4] != 0:
+        part = int.from_bytes(img[0x1BE + 8:0x1BE + 12], "little")
+    with open(tmp, "wb") as f:
+        f.write(img[part * 512:])
+    env = dict(os.environ, PATH=os.environ.get("PATH", "") + ":/usr/sbin:/sbin")
+    try:
+        r = subprocess.run(["fsck.fat", "-n", tmp], capture_output=True, encoding="latin-1", env=env)
+    except FileNotFoundError:
+        os.remove(tmp)
+        return "no fsck.fat (apt package dosfstools)"
+    os.remove(tmp)
+    if r.returncode != 0:
+        return "fsck.fat -n: exit %d: %s" % (r.returncode, (r.stdout + r.stderr).strip().splitlines()[-1][:200])
+    return None
+
+
+def osd_plain(text):
+    """an OSD row's text without its stripe and inversion marks"""
+    t = re.sub(r"^stripe=[0-9a-f]+ ?", "", text)
+    t = re.sub(r"\{inv:([^}]*)\}", r"\1", t)
+    return " ".join(t.split())
+
+
+def fdd_wr_state(run):
+    """(problems, notes, the HEADER line, the saved ADF or None)"""
+    sys.path.insert(0, L2)
+    import spitrace
+    bad, notes = [], []
+    got = run_log(run, "fdd_wr")
+    if got is None:
+        return ["no run log"], notes, None, None
+    log, lines = got
+    mkw = load_mkwrtrack()
+    adf_path = os.path.join(run, "card", "content", "TEST.ADF")
+    img_path = os.path.join(run, "card_saved.img")
+    for p in (adf_path, img_path):
+        if not os.path.isfile(p):
+            return ["no %s" % p], notes, None, None
+    with open(adf_path, "rb") as f:
+        adf = f.read()
+    # the bench's track writes, in order
+    wr, start0, end_last = [], None, None
+    for line in lines:
+        m = re.match(r"=== FDD wdma (\d+) cylinder (\d+) head (\d+): (\d+) words, from cycle (\d+)", line)
+        if m and start0 is None:
+            start0 = int(m.group(5))
+        m = re.match(r"=== FDD wdma (\d+) cylinder (\d+) head (\d+): (\d+) words to blckint at cycle (\d+)", line)
+        if m:
+            wr.append((int(m.group(2)), int(m.group(3)), int(m.group(4))))
+            end_last = int(m.group(5))
+    if [(c, h) for c, h, _ in wr] != FDD_WR_TRACKS:
+        bad.append("the track writes in the log are %s, want %s" % ([(c, h) for c, h, _ in wr], FDD_WR_TRACKS))
+    for c, h, n in wr:
+        if n != FDD_WORDS:
+            bad.append("track %d/%d: %d words written, want %d" % (c, h, n, FDD_WORDS))
+    # TEST.ADF from the saved card
+    saved_path = os.path.join(run, "fdd_wr_saved.adf")
+    err = card_file(img_path, "TEST.ADF", saved_path)
+    if err:
+        return bad + [err], notes, None, None
+    with open(saved_path, "rb") as f:
+        saved = f.read()
+    if len(saved) != len(adf):
+        return bad + ["the saved TEST.ADF is %d bytes, the original %d" % (len(saved), len(adf))], notes, None, None
+    (bc, bh), bs = FDD_WR_BAD
+    bad_lba = (bc * 2 + bh) * 11 + bs
+    written = set()
+    for c, h in FDD_WR_TRACKS:
+        written.update(range((c * 2 + h) * 11, (c * 2 + h) * 11 + 11))
+    written.discard(bad_lba)
+    nnew = nsame = 0
+    for n in range(len(adf) // 512):
+        got_s, orig = saved[n * 512:(n + 1) * 512], adf[n * 512:(n + 1) * 512]
+        t, sec = divmod(n, 11)
+        if n in written:
+            want = mkw.new_data(t, sec)
+            if got_s == want:
+                nnew += 1
+            else:
+                k = first_diff(got_s, want)
+                bad.append("track %d sector %d (LBA %d): %s, byte %d is %02x, the new data's %02x"
+                           % (t, sec, n, "the original data (not written)" if got_s == orig else "not the new data",
+                              k, got_s[k], want[k]))
+        elif n != bad_lba:
+            if got_s == orig:
+                nsame += 1
+            else:
+                k = first_diff(got_s, orig)
+                bad.append("track %d sector %d (LBA %d) changed, but no write covers it (byte %d: %02x, was %02x)"
+                           % (t, sec, n, k, got_s[k], orig[k]))
+    got_b = saved[bad_lba * 512:(bad_lba + 1) * 512]
+    if got_b == adf[bad_lba * 512:(bad_lba + 1) * 512]:
+        fate = "skipped"
+    elif got_b == mkw.new_data(bad_lba // 11, bad_lba % 11):
+        fate = "written"
+    else:
+        fate = "other"
+        bad.append("the bad-header sector (LBA %d) is neither the original nor its new data" % bad_lba)
+    notes.append("TEST.ADF from the saved card: %d sectors hold their new data, %d unchanged (of %d)"
+                 % (nnew, nsame, len(adf) // 512))
+    err = card_fsck(img_path, os.path.join(run, "fdd_wr_part.img"))
+    if err:
+        bad.append("saved card: " + err)
+    else:
+        notes.append("saved card: fsck.fat -n clean")
+    # OSD and UART
+    frames = frames_t(os.path.join(run, "spi_t.txt"))
+    evs = [int(m.group(1)) for m in (re.match(r"=== KEYS ev \d+ [0-9a-f]{2} at cycle (\d+)$", l) for l in lines) if m]
+    page = {}
+    if not evs or start0 is None or end_last is None:
+        bad.append("no key event or no track write in %s" % log)
+    else:
+        glyphs = spitrace.load_charrom(spitrace.CHARROM)
+        osd = [(t0, spitrace.osd_line(mosi, glyphs)) for t0, _, cs, mosi, _ in frames
+               if cs == 0x20 and mosi and mosi[0] == 0x0C]
+        early = [t0 for t0, _ in osd if t0 < evs[0]]
+        during = [t0 for t0, _ in osd if start0 < t0 < end_last]
+        if early:
+            bad.append("%d OSD_CMD_OSD_WR frame(s) before the first key (an error page?), the first at cycle %d"
+                       % (len(early), early[0]))
+        if during:
+            bad.append("%d OSD_CMD_OSD_WR frame(s) during the track writes (cycles %d..%d), the first at cycle %d"
+                       % (len(during), start0, end_last, during[0]))
+        snd = next((t0 for t0, (row, text) in osd if row == 3 and "Floppy disk sounds : on" in text), None)
+        ins = next((t0 for t0, (row, text) in osd
+                    if row == 0 and re.search(r"df0: TEST\b", text) and snd is not None and t0 > snd), None)
+        if snd is None:
+            bad.append("no OSD row 3 'Floppy disk sounds : on' (the drive sounds were not turned on)")
+        elif ins is None:
+            bad.append("no OSD row 0 'df0: TEST' after the sounds were turned on (TEST.ADF not in df0)")
+        else:
+            notes.append("OSD: 'Floppy disk sounds : on' at cycle %d, 'df0: TEST' at cycle %d" % (snd, ins))
+        for t0, (row, text) in osd:
+            if t0 > end_last and isinstance(row, int) and row not in page:
+                page[row] = osd_plain(text)
+    for line in lines:
+        if line.startswith("UART: ") and re.search(r"Illegal track|Wrong header|Second sync", line):
+            bad.append("UART: %s" % line[6:])
+    errpage = " / ".join("'%s'" % page.get(r, "") for r in (0, 2, 3, 4)) if page else "none"
+    badhdr = "HEADER track %d sector %d (LBA %d): %s; error page: %s" % (bad_lba // 11, bs, bad_lba, fate, errpage)
+    return bad, notes, badhdr, saved
+
+
+def fdd_wr(run, ref):
+    bad, notes, badhdr, saved = fdd_wr_state(run)
+    if ref is not None and badhdr is not None:
+        rbad, _, rbadhdr, rsaved = fdd_wr_state(ref)
+        if rbad or rbadhdr is None:
+            bad.append("the reference run %s fails its own check (%d problem(s): %s)"
+                       % (ref, len(rbad), "; ".join(rbad[:3])))
+        else:
+            if rbadhdr != badhdr:
+                bad.append("the bad-header path differs from the reference's: %s, the reference %s"
+                           % (badhdr[len("HEADER "):], rbadhdr[len("HEADER "):]))
+            if rsaved != saved:
+                k = first_diff(saved, rsaved)
+                bad.append("the saved TEST.ADF differs from the reference's from byte %d (LBA %d)" % (k, k // 512))
+            else:
+                notes.append("= the reference run %s: the same saved TEST.ADF and bad-header path" % ref)
+    for n in notes:
+        print("ok   " + n)
+    if badhdr is not None:
+        print(badhdr)
+    for b in bad:
+        print("BAD  " + b)
+    if bad:
+        print("FAIL fdd_wr: %d problem(s) (the BAD lines)" % len(bad))
+        return 1
+    print("PASS fdd_wr: %d track writes of %d words; TEST.ADF on the saved card = the original with the %d written "
+          "sectors' new data; the bad-header sector %s"
+          % (len(FDD_WR_TRACKS), FDD_WORDS, len(FDD_WR_TRACKS) * 11 - 1, badhdr.split(": ", 1)[1].split(";")[0]))
+    return 0
+
+
 def main(argv):
     if len(argv) == 3 and argv[1] == "kick":
         return kick(argv[2])
@@ -646,6 +884,8 @@ def main(argv):
         return keys(argv[2])
     if len(argv) == 3 and argv[1] == "fdd_rd":
         return fdd_rd(argv[2])
+    if len(argv) in (3, 4) and argv[1] == "fdd_wr":
+        return fdd_wr(argv[2], argv[3] if len(argv) == 4 else None)
     sys.stderr.write(__doc__)
     return 2
 

@@ -1,5 +1,5 @@
-// mon_l3.vh: the L3 margin monitors, plan 7.1 items 1, 3, 4, 5, 6, 12 and
-// 14 (README "Monitors").  `include"d by tb_l3.v after hostmon.vh (it reads
+// mon_l3.vh: the L3 margin monitors, plan 7.1 items 1, 3, 4, 5, 6, 7, 12
+// and 14 (README "Monitors").  `include"d by tb_l3.v after hostmon.vh (it reads
 // hostmon's hw_req_d, hw_done, hwa, spi_data, n_stale, n_hw) and after the
 // rtc_model instance rtc1, paula_floppy pf1 and bfm_floppy fdd; mon_final
 // prints one line per measurement at the end of the run, before the
@@ -59,6 +59,17 @@
 //                          the brief's literal count (dmaon and empty at a
 //                          slot from the starting DSKLEN write on); a track
 //                          whose FIFO never reaches 1024 is a bench error
+//   7  fdd_fifo_full_write floppy write DMA (bfm_floppy, scenario fdd_wr): the
+//                          Agnus disk slots (sampled as item 6) offered to
+//                          the write DMA (paula_floppy's dmaon = 1 with
+//                          DSKLEN bit 14: until the last word is in the
+//                          FIFO) at which the FIFO is full, so dmal is 0
+//                          and the slot goes unused: the firmware has not
+//                          emptied it in time (bound 0).  Per track an
+//                          "=== MARGIN (info) 7 fdd write track" line with
+//                          the maximum fill (any clk7 cycle of the DMA, to
+//                          blckint) and the slots; at the end the maximum
+//                          over all tracks
 //  12  rtc_cs_high         rtc_model: CS-inactive time between two RTC
 //                          transfers, ns; bound +RTC_CSH_MIN=<ns>; with the
 //                          default 0 (the PCF2123 datasheet is not in
@@ -229,6 +240,34 @@
     end
   end
 
+  // ------------------------------------------- item 7: floppy write FIFO
+  integer m7_n = 0, m7_slots = 0, m7_max = 0, m7_seen = 0, m7_tracks = 0;
+  integer m7_tn = 0, m7_tslots = 0, m7_tmax = 0;
+  reg     m7_open = 1'b0;
+  always @(negedge clk28) if (n_reset && clk7_en === 1'b1) begin
+    if (fdd.n_wdma != m7_seen) begin             // a track write has started
+      m7_seen = fdd.n_wdma;
+      m7_open = 1'b1;
+      m7_tn = 0; m7_tslots = 0; m7_tmax = 0;
+    end
+    if (m7_open) begin
+      if ({20'd0, pf1.fifo_cnt} > m7_tmax) m7_tmax = {20'd0, pf1.fifo_cnt};
+      if (fdd.slot && pf1.dmaon === 1'b1 && pf1.dsklen[14] === 1'b1) begin
+        m7_tslots = m7_tslots + 1;
+        if (pf1.fifo_full === 1'b1) m7_tn = m7_tn + 1;
+      end
+      if (fdd.wdma_busy !== 1'b1) begin
+        m7_open = 1'b0;
+        m7_tracks = m7_tracks + 1;
+        m7_n = m7_n + m7_tn;
+        m7_slots = m7_slots + m7_tslots;
+        if (m7_tmax > m7_max) m7_max = m7_tmax;
+        $display("=== MARGIN (info) 7 fdd write track %0d/%0d: fifo max %0d words, full at %0d of %0d slots",
+                 fdd.cur_cyl, fdd.cur_head, m7_tmax, m7_tn, m7_tslots);
+      end
+    end
+  end
+
   // ----------------------------------------------- item 14: kickstart order
   integer m14_w = -1, m14_nw = 0, m14_rel = -1, m14_nrel = 0;
   reg [31:0] m14_a = 32'h0;
@@ -300,6 +339,9 @@
       if (m6_tracks > 0)
         $display("=== MARGIN (info) 6 fdd %0d tracks: fifo min %0d words at the working level; literal count %0d slots (dmaon and empty from the starting DSKLEN write)",
                  m6_tracks, m6_min_all, m6_lit_all);
+      mon_count("7", "fdd_fifo_full_write", m7_n, 0, m7_slots, "DMA slots");
+      if (m7_tracks > 0)
+        $display("=== MARGIN (info) 7 fdd write %0d tracks: fifo max %0d words (of 2048)", m7_tracks, m7_max);
       mon_real("12", "rtc_cs_high", rtc1.n_gaps, rtc1.csh_min_ns, "ns", rtc_csh_bound, rtc_csh_bound <= 0,
                "gaps");
       mon_real("14", "kick_order", (m14_nw > 0) ? m14_nrel : 0, m14_rel - m14_w, "clk_114", 1, 1'b0,

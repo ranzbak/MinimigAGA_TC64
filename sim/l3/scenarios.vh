@@ -41,6 +41,21 @@
 //               event: the blckint of the last track DMA ("=== STATS@fdd_rd").
 //               TIMER: run.sh sets +TICKDIV=643 +TICKDIV_AT=scenario, as
 //               keys (fdd.c uses no TIMER, the drive sounds' renderer does)
+//   fdd_wr      the floppy write (README "fdd_wr"; run.sh: the fdd card, the
+//               key script of fdd_rd, +FDD_WFILE=<run>/fdd_wr, the files
+//               sim/l3/gen/mkwrtrack.py made, +SD_SAVE): main-loop milestone
+//               and key script as fdd_rd; at its end bfm_floppy writes the
+//               tracks of FDD_WPLAN below (drive 0, motor on, a seek, the
+//               side, one full-track write DMA of the file's words each);
+//               the last one (cylinder 40 head 0) carries a sector with a
+//               bad header checksum, fdd.c's FatalError path ("Bad
+//               checksum", 26), after which the firmware serves the error
+//               page and no more floppy requests (main.c: no HandleFpga
+//               while ErrorFatal), so it is the last track; end event: the
+//               first OSD row-7 frame (OSD_CMD_OSD_WR, the error page's last
+//               row) after the last write's blckint, or, if no error page
+//               comes, the 20th HandleFpga frame after it ("=== STATS@fdd_wr").
+//               TIMER: as fdd_rd
 
   reg [8*32-1:0]  scenario;
   reg [8*16-1:0]  short_end;
@@ -57,34 +72,46 @@
   localparam integer FDD_WORDS = 6334;
   localparam [15:0]  FDD_SYNC  = 16'h4489;
   localparam [127:0] FDD_PLAN  = {48'h0, 8'h80 | 8'd79, 8'd79, 8'd78, 8'd77, 8'd41, 8'd40, 8'd39, 8'd2, 8'd1, 8'd0};
+  // fdd_wr: the cylinders of fdd_rd, with 40/0 (the bad-header track, see
+  // the header) moved to the end: 0, 1, 2, 39, 41, 77, 78, 79 head 0, 79
+  // head 1, 40 head 0 (= run.sh FDD_WR_PLAN, l3check.py FDD_WR_TRACKS)
+  localparam [127:0] FDD_WPLAN = {48'h0, 8'd40, 8'h80 | 8'd79, 8'd79, 8'd78, 8'd77, 8'd41, 8'd39, 8'd2, 8'd1, 8'd0};
+  integer            sc_wfpga = 0;    // fdd_wr: HandleFpga frames after the last write
 
   task sc_init;
     begin
       if (!$value$plusargs("SCENARIO=%s", scenario)) scenario = "boot";
       if (!$value$plusargs("SHORT_END=%s", short_end)) short_end = "";
       if (!$value$plusargs("BOOT_END=%s", boot_end)) boot_end = "";
-      if (scenario != "boot" && scenario != "boot_short" && scenario != "keys" && scenario != "fdd_rd")
+      if (scenario != "boot" && scenario != "boot_short" && scenario != "keys" && scenario != "fdd_rd" &&
+          scenario != "fdd_wr")
         bench_error("unknown +SCENARIO (scenarios.vh)");
       if (short_end != "" && (scenario != "boot_short" || short_end != "version"))
         bench_error("+SHORT_END=version is the only value, and only for boot_short");
       if (boot_end != "" && (scenario != "boot" || boot_end != "rtc2"))
         bench_error("+BOOT_END=rtc2 is the only value, and only for boot");
-      if ((scenario == "keys" || scenario == "fdd_rd") && !$test$plusargs("KEYS="))
-        bench_error("scenarios keys and fdd_rd need +KEYS=<key script>");
+      if ((scenario == "keys" || scenario == "fdd_rd" || scenario == "fdd_wr") && !$test$plusargs("KEYS="))
+        bench_error("scenarios keys, fdd_rd and fdd_wr need +KEYS=<key script>");
       if (scenario == "fdd_rd") begin
         fdd.plan_n = FDD_N;
         fdd.plan_words = FDD_WORDS;
         fdd.plan_sync = FDD_SYNC;
         fdd.plan = FDD_PLAN;
       end
+      if (scenario == "fdd_wr") begin
+        if (!$test$plusargs("FDD_WFILE=")) bench_error("scenario fdd_wr needs +FDD_WFILE=<prefix of the write files>");
+        fdd.plan_n = FDD_N;
+        fdd.plan_write = 1'b1;
+        fdd.plan = FDD_WPLAN;
+      end
     end
   endtask
 
   // keys: the script starts at the main-loop milestone, ends the scenario
-  always @(posedge sc_started) if (scenario == "keys" || scenario == "fdd_rd") keys.go = 1'b1;
+  always @(posedge sc_started) if (scenario == "keys" || scenario == "fdd_rd" || scenario == "fdd_wr") keys.go = 1'b1;
   always @(posedge keys.done) if (scenario == "keys") sc_end("keys", "the end of the key script");
   // fdd_rd: the track reads start when the key script has ended
-  always @(posedge keys.done) if (scenario == "fdd_rd") fdd.go = 1'b1;
+  always @(posedge keys.done) if (scenario == "fdd_rd" || scenario == "fdd_wr") fdd.go = 1'b1;
   always @(posedge fdd.done) if (scenario == "fdd_rd") sc_end("fdd_rd", "the blckint of the last track DMA");
 
   // STATS@<event>: the rv_hostcpu counters 1 ns after the end event's
@@ -125,7 +152,14 @@
           sc_started = 1'b1;
         end
         if (scenario == "boot" && boot_end == "" && sc_fpga == 21) sc_end("boot", "HandleFpga frame 20 after the first");
+        if (scenario == "fdd_wr" && fdd.done) begin
+          sc_wfpga = sc_wfpga + 1;
+          if (sc_wfpga == 20) sc_end("fdd_wr", "HandleFpga frame 20 after the last write (no error page)");
+        end
       end
+      if (scenario == "fdd_wr" && fdd.done && fr_cs == 8'h20 && fr_n > 4 && fr_out[0] == 8'h0C &&
+          fr_out[1] == 8'h00 && fr_out[2] == 8'h00 && fr_out[3] == 8'h00 && fr_out[4] == 8'h07)
+        sc_end("fdd_wr", "OSD row 7 after the last write (the error page)");
       if (fr_cs == 8'h80) begin
         sc_rtc = sc_rtc + 1;
         if (scenario == "boot" && boot_end == "rtc2" && sc_rtc == 2) sc_end("boot", "the second RTC frame");

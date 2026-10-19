@@ -1,6 +1,6 @@
-// bfm_floppy: the Amiga side of paula_floppy in the L3 bench (scenario
-// fdd_rd): the 68k through the CIAs (drive select, motor, side, step,
-// direction) and Paula's registers, and Agnus's disk DMA channel.
+// bfm_floppy: the Amiga side of paula_floppy in the L3 bench (scenarios
+// fdd_rd and fdd_wr): the 68k through the CIAs (drive select, motor, side,
+// step, direction) and Paula's registers, and Agnus's disk DMA channel.
 //
 // CIA side (ciab PRB as minimig.v wires it to paula_floppy): _sel[3:0],
 // _motor, side, _step, direc; paula_floppy answers _track0 and _ready.  One
@@ -27,21 +27,30 @@
 // dmal = 1, Agnus gives the bus to the disk channel (it has the highest
 // priority): reg_address_in = DSKDATR for that clk7 cycle, and the word on
 // data_out is what Agnus writes to chip RAM (collected here).  paula_floppy
-// pops its FIFO at the end of that cycle (fifo_rd = busrd & dmaon).  Not
-// modelled: the DMA pointer and chip RAM, the other DMA channels (disk DMA
-// wins every slot it asks for), turbo / the refresh slots of
-// floppy_speed 1, write DMA (dmas = 1 in a read slot is a bench error).
+// pops its FIFO at the end of that cycle (fifo_rd = busrd & dmaon).  A
+// write DMA (DSKLEN bit 14) is the same slots the other way: in a slot with
+// dmal (= dmas = dmaon & ~fifo_full for a write) Agnus puts the next word of
+// chip RAM on the bus with reg_address_in = DSKDAT; here the next word of
+// the write file, held through the clk7 edge that ends the slot (paula's
+// fifo_wr = buswr & dmaon) and advanced after it.  Not modelled: the DMA
+// pointer and chip RAM, the other DMA channels (disk DMA wins every slot it
+// asks for), turbo / the refresh slots of floppy_speed 1, ADKCON's
+// precompensation and MFM bits (paula_floppy has none).  dmas = 1 in a read
+// slot, or 0 in a write slot, is a bench error.
 //
 // Tasks (run by the sequencer below):
 //   fdd_select(drive)      _sel = only that drive; _ready must be 0
 //   fdd_motor(on)          as trackdisk: deselect, _motor = ~on, select again
-//                          (paula_floppy latches the motor on _sel falling)
+//                          (paula_floppy latches the motor on _sel falling);
+//                          on: then MOTOR_CLK7 (500 ms) for the drive to come
+//                          up to speed before anything else (below)
 //   fdd_seek(cyl)          first a recalibration (step out, 4 ms apart, until
 //                          _track0 = 0), then step pulses, 3 ms apart, and
 //                          15 ms settle after the last step (trackdisk's
 //                          defaults: step 3 ms, settle 15 ms, calibrate 4 ms);
 //                          _track0 must be 0 exactly at cylinder 0
-//   fdd_side(head)         side = ~head
+//   fdd_side(head)         side = ~head; when that changes the head, then
+//                          SETTLE_CLK7 (15 ms) before the next DMA (below)
 //   fdd_dma_read(words, sync)  WORDSYNC and DMA on, DSKSYNC = sync, DSKLEN =
 //                          0x4000 (DMA off), then DSKLEN = 0x8000 | words
 //                          twice (paula_floppy starts on the second write in a
@@ -49,14 +58,38 @@
 //                          until blckint; the words go to
 //                          <+FDD_DUMP>_<cylinder>_<head>.hex (16 words per
 //                          line, xxd -r -p reads it back)
+//   fdd_dma_write(file)    the words of <file> (hex, whitespace-separated:
+//                          sim/l3/gen/mkwrtrack.py's one per line), n of
+//                          them: WORDSYNC off (trackdisk clears it for a
+//                          write) and DMA on, DSKLEN = 0x4000, then DSKLEN =
+//                          0xC000 | n twice (bit 14: write), one DMA slot per
+//                          dmal request, word k in the k-th, until blckint;
+//                          the slots taken must be n
+//
+// Drive ready (the bench's DMA must not start before the firmware has seen
+// the drive's new state in a status poll, as on the Amiga, where it takes
+// trackdisk milliseconds): after motor on, MOTOR_CLK7 = 500 ms, the time
+// trackdisk.device gives the drive to come up to speed (about half a
+// second; ROM Kernel Reference Manual, TD_MOTOR; not in this repository);
+// paula_floppy's _ready is 0 at once, so a wait for _ready would end at
+// once, and the time is modelled.  After
+// a head change, SETTLE_CLK7 = 15 ms, trackdisk's settle delay, the wait
+// the model already makes after a step: the head switch counts as head
+// movement.  Both are longer than any main-loop pass of either firmware
+// (the 832's is about 0.4 ms in fdd_rd), so the first status poll after the
+// change sees the motor / track without a DMA in it (Task 13's diff p4t13 /
+// p4t13c: the 832's poll after motor on and after the side change came
+// after bfm_floppy's DSKLEN, ~100 clk7 later, the RV's before).
 //
 // The bench (scenarios.vh) writes plan_n, plan (entry k in bits 8k+7..8k:
-// bit 7 the head, bits 6..0 the cylinder), plan_words, plan_sync before it
-// sets go; the sequencer selects drive 0, turns its motor on, and for each
-// entry seeks, sets the side and reads; then done.  Read by the bench and
-// mon_l3.vh: done, errors, slot (an Agnus disk slot this clk7 cycle),
-// n_dma (track DMAs started), dma_busy (from the starting DSKLEN write to
-// blckint), cur_cyl, cur_head.
+// bit 7 the head, bits 6..0 the cylinder), plan_words, plan_sync and
+// plan_write before it sets go; the sequencer selects drive 0, turns its
+// motor on, and for each entry seeks, sets the side and reads (plan_write
+// 0) or writes the file <+FDD_WFILE>_<cylinder>_<head>.hex (plan_write 1);
+// then done.  Read by the bench and mon_l3.vh: done, errors, slot (an Agnus
+// disk slot this clk7 cycle), n_dma (track reads started), dma_busy (from a
+// read's starting DSKLEN write to blckint), n_wdma (track writes started),
+// wdma_busy (likewise for a write), cur_cyl, cur_head.
 `timescale 1ns/1ps
 
 module bfm_floppy (
@@ -73,7 +106,7 @@ module bfm_floppy (
   input             _ready,
   // paula_floppy, register bus and DMA side
   output      [8:1] reg_address_in,
-  output reg [15:0] data_in,
+  output     [15:0] data_in,
   input      [15:0] data_out,
   input             dmal,
   input             dmas,
@@ -86,17 +119,19 @@ module bfm_floppy (
   localparam [8:1] RGA_DSKDATR = 8'h04;      // 0x008
   localparam [8:1] RGA_DSKLEN  = 8'h12;      // 0x024
   localparam [8:1] RGA_DSKSYNC = 8'h3F;      // 0x07E
+  localparam [8:1] RGA_DSKDAT  = 8'h13;      // 0x026
   localparam integer LINE_CLK7  = 454;       // 227 colour clocks
   localparam integer CIA_CLK7   = 10;        // one E-clock period
   // trackdisk.device's default delays at the PAL clk7 (7.09379 MHz)
   localparam integer STEP_CLK7  = 21281;     // 3 ms between steps
   localparam integer SETTLE_CLK7 = 106407;   // 15 ms after the last step
   localparam integer CALIB_CLK7 = 28375;     // 4 ms between recalibration steps
+  localparam integer MOTOR_CLK7 = 3546895;   // 500 ms: the drive comes up to speed
   localparam integer CAP_MAX    = 16384;
 
   initial begin
     _sel = 4'hF; _motor = 1'b1; side = 1'b0; _step = 1'b1; direc = 1'b0;
-    data_in = 16'h0000; enable = 1'b0; wordsync = 1'b0;
+    data_cpu = 16'h0000; enable = 1'b0; wordsync = 1'b0;
   end
 
   // written by the bench
@@ -104,10 +139,11 @@ module bfm_floppy (
   integer           plan_n = 0, plan_words = 0;
   reg      [127:0]  plan = 128'h0;
   reg       [15:0]  plan_sync = 16'h4489;
+  reg               plan_write = 1'b0;
   // read by the bench
   reg               done = 1'b0;
-  integer           errors = 0, n_dma = 0, cur_cyl = 0, cur_head = 0;
-  reg               dma_busy = 1'b0;
+  integer           errors = 0, n_dma = 0, n_wdma = 0, cur_cyl = 0, cur_head = 0;
+  reg               dma_busy = 1'b0, wdma_busy = 1'b0;
 
   task fl_error(input [8*100-1:0] msg);
     begin
@@ -123,24 +159,44 @@ module bfm_floppy (
   wire         slot = h7[0] && (cck_n == 8'h0C || cck_n == 8'h0E || cck_n == 8'h10);
   wire         dma = slot && dmal === 1'b1;
   reg    [8:1] rga_cpu = RGA_IDLE;
-  assign reg_address_in = dma ? RGA_DSKDATR : rga_cpu;
+  reg   [15:0] data_cpu;
+  // a write: the file's words (wbuf), word wptr in the current slot
+  reg   [15:0] wbuf [0:CAP_MAX-1];
+  integer      wr_n = 0, wptr = 0;
+  reg          wr_on = 1'b0, wr_adv = 1'b0;
+  assign reg_address_in = dma ? (wr_on ? RGA_DSKDAT : RGA_DSKDATR) : rga_cpu;
+  assign data_in = (dma && wr_on) ? wbuf[wptr < CAP_MAX ? wptr : 0] : data_cpu;
 
   // the words Agnus moves, read in the middle of the clk_28 cycle before the
   // clk7 edge that ends the slot (data_out is stable there); blckint the
-  // same way
+  // same way.  A write slot: data_in holds word wptr through that edge
+  // (paula takes it there); wptr moves on at the next clk_28 falling edge,
+  // which is no clk7_en cycle (clk7_en is one clk_28 cycle in four)
   reg [15:0] cap [0:CAP_MAX-1];
   reg        cap_on = 1'b0, blk_seen = 1'b0;
   integer    cap_n = 0;
-  always @(negedge clk28) if (clk7_en === 1'b1) begin
-    if (dma) begin
-      if (dmas === 1'b1) fl_error("dmas = 1 in a read DMA slot");
-      if (cap_on && cap_n < CAP_MAX) begin
-        cap[cap_n] = data_out;
-        cap_n = cap_n + 1;
-      end else
-        fl_error("a disk DMA slot taken outside fdd_dma_read");
+  always @(negedge clk28) begin
+    if (wr_adv) begin
+      wptr = wptr + 1;
+      wr_adv = 1'b0;
     end
-    if (blckint === 1'b1 && cap_on) blk_seen = 1'b1;
+    if (clk7_en === 1'b1) begin
+      if (dma) begin
+        if (wr_on) begin
+          if (dmas !== 1'b1) fl_error("dmas = 0 in a write DMA slot");
+          if (wptr >= wr_n) fl_error("a write DMA slot after the file's last word");
+          wr_adv = 1'b1;
+        end else begin
+          if (dmas === 1'b1) fl_error("dmas = 1 in a read DMA slot");
+          if (cap_on && cap_n < CAP_MAX) begin
+            cap[cap_n] = data_out;
+            cap_n = cap_n + 1;
+          end else
+            fl_error("a disk DMA slot taken outside fdd_dma_read / fdd_dma_write");
+        end
+      end
+      if (blckint === 1'b1 && (cap_on || wr_on)) blk_seen = 1'b1;
+    end
   end
 
   // ------------------------------------------------------------- timing
@@ -167,10 +223,10 @@ module bfm_floppy (
       clk7;
       while (h7[0] != 1'b0) clk7;
       rga_cpu = a;
-      data_in = d;
+      data_cpu = d;
       clk7;
       rga_cpu = RGA_IDLE;
-      data_in = 16'h0000;
+      data_cpu = 16'h0000;
     end
   endtask
 
@@ -197,6 +253,10 @@ module bfm_floppy (
       _sel = sel_mask;
       wait_clk7(CIA_CLK7);
       $display("=== FDD motor %0s at cycle %0d", on ? "on" : "off", cyc);
+      if (on) begin
+        wait_clk7(MOTOR_CLK7);
+        $display("=== FDD motor up to speed (500 ms) at cycle %0d", cyc);
+      end
     end
   endtask
 
@@ -246,13 +306,18 @@ module bfm_floppy (
 
   task fdd_side(input integer head);
     begin
-      side = (head == 0);
-      cur_head = head;
-      wait_clk7(CIA_CLK7);
+      if (side != (head == 0)) begin
+        side = (head == 0);
+        cur_head = head;
+        wait_clk7(CIA_CLK7);
+        wait_clk7(SETTLE_CLK7);
+        $display("=== FDD head %0d, settled (15 ms) at cycle %0d", head, cyc);
+      end else
+        cur_head = head;
     end
   endtask
 
-  reg [8*1024-1:0] prefix, fname;
+  reg [8*1024-1:0] prefix, fname, wprefix;
   task fdd_dma_read(input integer words, input [15:0] sync);
     integer fd, i, t0;
     begin
@@ -290,21 +355,73 @@ module bfm_floppy (
     end
   endtask
 
+  reg [15:0] wword;
+  task fdd_dma_write(input [8*1024-1:0] file);
+    integer fd, r, n, t0;
+    begin
+      n = 0;
+      fd = $fopen(file, "r");
+      if (fd == 0) fl_error("fdd_dma_write: cannot open the write file (+FDD_WFILE)");
+      else begin
+        r = $fscanf(fd, "%h", wword);
+        while (r == 1 && n < CAP_MAX) begin
+          wbuf[n] = wword;
+          n = n + 1;
+          r = $fscanf(fd, "%h", wword);
+        end
+        $fclose(fd);
+      end
+      if (n < 1 || n > 16'h3FFF) fl_error("fdd_dma_write: the file has no words or more than 0x3fff");
+      wr_n = n;
+      wptr = 0;
+      wordsync = 1'b0;
+      enable = 1'b1;
+      cpu_write(RGA_DSKLEN, 16'h4000);
+      blk_seen = 1'b0;
+      wr_on = 1'b1;
+      cpu_write(RGA_DSKLEN, 16'hC000 | n[15:0]);
+      wdma_busy = 1'b1;
+      n_wdma = n_wdma + 1;
+      t0 = cyc;
+      $display("=== FDD wdma %0d cylinder %0d head %0d: %0d words, from cycle %0d, %0s",
+               n_wdma, cur_cyl, cur_head, n, t0, file);
+      cpu_write(RGA_DSKLEN, 16'hC000 | n[15:0]);
+      wait (blk_seen === 1'b1);
+      clk7;
+      wr_on = 1'b0;
+      wdma_busy = 1'b0;
+      if (wptr != n) fl_error("the write DMA took another number of slots than the file has words");
+      $display("=== FDD wdma %0d cylinder %0d head %0d: %0d words to blckint at cycle %0d (%0d cycles)",
+               n_wdma, cur_cyl, cur_head, wptr, cyc, cyc - t0);
+    end
+  endtask
+
   // ------------------------------------------------------------- sequencer
   integer pk = 0;
   initial begin
     if (!$value$plusargs("FDD_DUMP=%s", prefix)) prefix = "fdd_rd";
+    if (!$value$plusargs("FDD_WFILE=%s", wprefix)) wprefix = "fdd_wr";
     wait (go === 1'b1);
-    $display("=== FDD start: %0d track reads of %0d words, sync %h, at cycle %0d", plan_n, plan_words, plan_sync, cyc);
+    if (plan_write)
+      $display("=== FDD start: %0d track writes from %0s_<cylinder>_<head>.hex, at cycle %0d", plan_n, wprefix, cyc);
+    else
+      $display("=== FDD start: %0d track reads of %0d words, sync %h, at cycle %0d", plan_n, plan_words, plan_sync, cyc);
     if (plan_n < 1 || plan_n > 16) fl_error("plan_n: 1 to 16 tracks");
     fdd_select(0);
     fdd_motor(1'b1);
     for (pk = 0; pk < plan_n && pk < 16; pk = pk + 1) begin
       fdd_seek({25'd0, plan[8 * pk +: 7]});
       fdd_side({31'd0, plan[8 * pk + 7]});
-      fdd_dma_read(plan_words, plan_sync);
+      if (plan_write) begin
+        $sformat(fname, "%0s_%0d_%0d.hex", wprefix, cur_cyl, cur_head);
+        fdd_dma_write(fname);
+      end else
+        fdd_dma_read(plan_words, plan_sync);
     end
-    $display("=== FDD done: %0d track reads at cycle %0d", n_dma, cyc);
+    if (plan_write)
+      $display("=== FDD done: %0d track writes at cycle %0d", n_wdma, cyc);
+    else
+      $display("=== FDD done: %0d track reads at cycle %0d", n_dma, cyc);
     done = 1'b1;
   end
 

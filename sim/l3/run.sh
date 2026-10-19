@@ -3,7 +3,7 @@
 # (userio_osd, paula_floppy, gayle) boots the real boot ROM and firmware from
 # an SD card image.  See tb_l3.v, scenarios.vh, README.md.
 #
-#   bash sim/l3/run.sh <scenario>        boot, boot_short, keys, fdd_rd
+#   bash sim/l3/run.sh <scenario>        boot, boot_short, keys, fdd_rd, fdd_wr
 #   bash sim/l3/run.sh xpair <scenario>  the scenario and its XRAND twin
 #                                        (run_$RUNTAG, run_${RUNTAG}_xr; in
 #                                        parallel), then compare: both PASS
@@ -44,15 +44,20 @@
 #   SLAT, SJIT, SEED   the SDRAM model (8, 0, 1)
 #   XARGS    extra plusargs ("+FAST_HW=1 +OSD_EARLY_OK=1 +TICKDIV=643 ...");
 #            +FAST_HW=1 also puts the models' fast plusargs first (below)
-#   KEYS     keys and fdd_rd: the key script (default keys:
+#   KEYS     keys, fdd_rd, fdd_wr: the key script (default keys:
 #            sim/l3/keys/menu_tour.txt; l3check.py keys checks the pages
 #            against osdtext_expect/keys.txt, which is that script's;
-#            fdd_rd: sim/l3/keys/insert_df0.txt)
+#            fdd_rd and fdd_wr: sim/l3/keys/insert_df0.txt)
 #   NOKICK=1 boot only: the boot card without KICK.ROM.  The run must FAIL
 #            at the main-loop milestone (the fatal-error loop); the exit
 #            status is 0 when it does
 #   RDY_MUT=1 the run copy of cfide answers OSD_RDY = 1 (the handshake's
 #            tooth, README "keys"); the run must FAIL with OSD EARLY > 0
+#   PAULA_TXPOP=1 the run copy of paula_floppy.v pops the write FIFO when a
+#            word starts going out (tx_flag, tx_cnt 3, as Gayle's hdd_data_rd)
+#            instead of after it came in (spidat): the evidence fix of the
+#            write-FIFO finding (README "fdd_wr", findings/osd-riscv/phase4.md
+#            Task 14); rtl/ is never edited
 #   XRAND=1  (verilator) the X-sensitivity build, XSEED=<n> its seed
 #   TIMEOUT  clk_114 cycles (default per scenario below)
 #   L3CHECK  tests of run.sh only: the l3check.py to run (default sim/l3's)
@@ -88,11 +93,23 @@
 #               EXC / TRAP, kick, order, the MARGIN lines (item 6 required),
 #               l3check.py fdd_rd (the dumps decode and equal TEST.ADF, the
 #               golden streams, the OSD), bench "=== PASS"
+#   fdd_wr      fdd card, +SCENARIO=fdd_wr, the key script of fdd_rd,
+#               +FDD_WFILE=<run>/fdd_wr (the write streams, made here by
+#               sim/l3/gen/mkwrtrack.py from the card's TEST.ADF for the
+#               tracks of FDD_WR_PLAN below), +SD_SAVE=<run>/card_saved.img,
+#               TICKDIV as fdd_rd: the key script, then bfm_floppy's 10 track
+#               writes, the last with a bad header checksum in sector 3;
+#               checks: boot's milestones, no EXC / TRAP, kick, order, the
+#               MARGIN lines (item 7 required), l3check.py fdd_wr (TEST.ADF
+#               from the saved card = the original with the written
+#               sectors' new data; the bad-header sector's fate and the error
+#               page recorded; the OSD), bench "=== PASS"
 # Logs in the run directory: tb_<scenario>_x<EXTRA_WS>_s<SLAT>_j<SJIT>.log,
 # spi.txt, spi_t.txt (frames with cycles, not compared), hw.txt and uart.txt
 # (sim/common/hostmon.vh +HW_LOG / +UART_LOG, for diff; hw.txt's MEM lines
 # hashed from sdram.bin by l3check.py memhash), sdram.bin, milestones.txt,
-# results.txt (with the wall time).
+# results.txt (with the wall time); fdd_wr also fdd_wr_<cyl>_<head>.hex (the
+# write streams) and card_saved.img (the card as the run left it).
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
@@ -143,28 +160,38 @@ MM_INC="$ROOT/fpga/openaars"     # minimig_version.vh (the board's)
 # only cpurst fall is fpga_init's reset pulse, before any kickstart
 MARGINS="1:stale_acks 3:dmode_release 3:dmode_L 4:paula_cs_release 4:userio_cs_release
          4:paula_word_spacing 4:userio_byte_spacing 5:spi_write_busy 6:fdd_fifo_empty_dma
-         12:rtc_cs_high 14:kick_order"
+         7:fdd_fifo_full_write 12:rtc_cs_high 14:kick_order"
 MARGIN_REQ_boot="1:stale_acks 4:paula_cs_release 4:userio_cs_release 4:paula_word_spacing
                  4:userio_byte_spacing 5:spi_write_busy 14:kick_order"
 MARGIN_REQ_boot_short="1:stale_acks 4:userio_cs_release 4:userio_byte_spacing 5:spi_write_busy"
 MARGIN_REQ_keys=$MARGIN_REQ_boot
 MARGIN_REQ_fdd_rd="$MARGIN_REQ_boot 6:fdd_fifo_empty_dma"
+MARGIN_REQ_fdd_wr="$MARGIN_REQ_boot 7:fdd_fifo_full_write"
+
+# fdd_wr's tracks, in order (= scenarios.vh FDD_WPLAN, l3check.py
+# FDD_WR_TRACKS): "<cylinder>:<head>[:<sector with a bad header checksum>]"
+FDD_WR_PLAN="0:0 1:0 2:0 39:0 41:0 77:0 78:0 79:0 79:1 40:0:3"
 
 # cycles per scenario (clk_114): 1.5 x the measured end event (README "boot",
 # Verilator 2026-10-19: RV boot 158,155,012, boot_short 57,659,090; 832
 # boot 202,841,132, boot_short 74,525,542; README "keys": RV keys
 # 164,959,781, 832 214,187,801); fdd_rd: 1.5 x the estimate of README
-# "fdd_rd" (RV 382 M, 832 440 M; measured 393,222,555 and 442,065,819)
+# "fdd_rd" (Task 13's measured ends, RV 393,222,555 and 832 442,065,819,
+# plus bfm_floppy's drive-ready waits of Task 14: 500 ms after motor on and
+# 15 ms per head change, 59 M: RV 452 M, 832 501 M); fdd_wr: 1.5 x the
+# estimate of README "fdd_wr" (RV 470 M, 832 520 M)
 if [ "$CPU" = 832 ]; then
 	L3_BOOT_TO=${L3_BOOT_TO:-304300000}
 	L3_SHORT_TO=${L3_SHORT_TO:-111800000}
 	L3_KEYS_TO=${L3_KEYS_TO:-321300000}
-	L3_FDD_TO=${L3_FDD_TO:-660000000}
+	L3_FDD_TO=${L3_FDD_TO:-750000000}
+	L3_FDDW_TO=${L3_FDDW_TO:-780000000}
 else
 	L3_BOOT_TO=${L3_BOOT_TO:-237300000}
 	L3_SHORT_TO=${L3_SHORT_TO:-86500000}
 	L3_KEYS_TO=${L3_KEYS_TO:-247400000}
-	L3_FDD_TO=${L3_FDD_TO:-580000000}
+	L3_FDD_TO=${L3_FDD_TO:-680000000}
+	L3_FDDW_TO=${L3_FDDW_TO:-700000000}
 fi
 
 # shellcheck source=../common/hostsim.sh
@@ -272,6 +299,21 @@ l3_rdy_mut() {
 	echo "RDY_MUT: $(grep -- '-- OSD RDY MUTANT' "$c" | sed 's/^ *//')" >> "$run/compile.log"
 }
 
+# l3_paula_txpop (PAULA_TXPOP=1 only): the run copy of paula_floppy.v takes
+# the evidence fix of Task 14's write-FIFO finding: a track write's FIFO word
+# is popped at tx_flag of word 3+ (its transmission has started, the word is
+# in spi_sdo_reg) instead of at spidat (received), so the next word's load,
+# a whole word later, sees the next FIFO entry
+l3_paula_txpop() {
+	local p="$run/src/paula_floppy.v"
+	local old='	assign fifo_rd = (busrd & dmaon) | (trackwr & spidat);'
+	[ "${PAULA_TXPOP:-0}" = 1 ] || return 0
+	[ "$(grep -cxF -- "$old" "$p")" = 1 ] || die "PAULA_TXPOP: the fifo_rd line not found in paula_floppy.v"
+	sed -i "s/^	assign fifo_rd = (busrd & dmaon) | (trackwr & spidat);\$/	assign fifo_rd = (busrd \& dmaon) | (trackwr \& cmd_fdd \& tx_flag \& tx_cnt==2'd3); \/\/ PAULA_TXPOP/" "$p"
+	[ "$(grep -c '// PAULA_TXPOP$' "$p")" = 1 ] || die "PAULA_TXPOP: patch not applied"
+	echo "PAULA_TXPOP: $(grep -- '// PAULA_TXPOP' "$p" | sed 's/^[[:space:]]*//')" >> "$run/compile.log"
+}
+
 # l3_e832_xsim (CPU=832, xsim): copies of the EightThirtyTwo VHDL in
 # <run>/src/e832 for xsim, with the register file's data registers
 # (eightthirtytwo_cpu.vhd regfile: tmp, gpr0..gpr6, which its reset leaves
@@ -324,6 +366,7 @@ setup() {
 	l3_pin_minimig
 	l3_pin_async
 	l3_rdy_mut
+	l3_paula_txpop
 	[ "$CPU" = 832 ] && hs_rom832 "$run"
 	if [ -n "${FW:-}" ]; then
 		FWBIN=$(realpath -m -- "$FW")
@@ -344,14 +387,25 @@ setup() {
 	fi
 	[ -n "$FW832BIN" ] && mk+=(FW832="$FW832BIN")
 	[ "${NOKICK:-0}" = 1 ] && mk+=(NOKICK=1)
-	# the card of the scenario (sim/l3/card): fdd_rd the fdd card, the others
-	# boot (CARDNAME: also milestones()'s "CARD=<card>" lines)
+	# the card of the scenario (sim/l3/card): fdd_rd and fdd_wr the fdd card,
+	# the others boot (CARDNAME: also milestones()'s "CARD=<card>" lines)
 	CARDNAME=boot
-	[ "${SCEN:-}" = fdd_rd ] && CARDNAME=fdd
+	case "${SCEN:-}" in fdd_rd|fdd_wr) CARDNAME=fdd ;; esac
 	make -s -C "$HERE/card" "$CARDNAME" B="$run/card" FWRV="$FWBIN" "${mk[@]}" > "$run/make_card.log" 2>&1 \
 		|| { tail -20 "$run/make_card.log"; die "make the $CARDNAME card ($run/make_card.log)"; }
 	CARD="$run/card/$CARDNAME.img"
 	[ ${#CARD} -le 1024 ] || die "card image path longer than 1024 characters (+SD_IMG): $CARD"
+	# fdd_wr: the write stream of each track, from the card's TEST.ADF
+	if [ "${SCEN:-}" = fdd_wr ]; then
+		local e c h b
+		for e in $FDD_WR_PLAN; do
+			c=${e%%:*} h=${e#*:} h=${h%%:*} b=
+			case "$e" in *:*:*) b=${e##*:} ;; esac
+			python3 -I "$HERE/gen/mkwrtrack.py" "$run/card/content/TEST.ADF" "$c" "$h" "$run/fdd_wr_${c}_${h}.hex" \
+				${b:+--bad-header "$b"} >> "$run/mkwrtrack.log" 2>&1 \
+				|| { tail -5 "$run/mkwrtrack.log"; die "mkwrtrack.py $c $h ($run/mkwrtrack.log)"; }
+		done
+	fi
 }
 
 # build: the snapshot tb_l3_x<XW> (Verilator: GHDL conversion + verilate)
@@ -463,6 +517,9 @@ scenario() {
 		fdd_rd) to=${TIMEOUT:-$L3_FDD_TO}
 			pa=("KEYS=$(realpath -m -- "${KEYS:-$HERE/keys/insert_df0.txt}")" "TICKDIV=643" "TICKDIV_AT=scenario"
 			    "FDD_DUMP=$run/fdd_rd") ;;
+		fdd_wr) to=${TIMEOUT:-$L3_FDDW_TO}
+			pa=("KEYS=$(realpath -m -- "${KEYS:-$HERE/keys/insert_df0.txt}")" "TICKDIV=643" "TICKDIV_AT=scenario"
+			    "FDD_WFILE=$run/fdd_wr" "SD_SAVE=$run/card_saved.img") ;;
 		*) die "unknown scenario $s" ;;
 	esac
 	if git -C "$ROOT" diff --quiet HEAD -- "${ROM#$ROOT/}"; then st="unmodified (= git HEAD)"; else st="BAD  MODIFIED against git HEAD"; fi
@@ -478,6 +535,7 @@ scenario() {
 		fi
 		[ "$CPU" = 832 ] && echo "EightThirtyTwo RTL: $E832"
 		echo "card: $CARD$( [ "${NOKICK:-0}" = 1 ] && echo " (NOKICK=1: no KICK.ROM)")"
+		[ "${PAULA_TXPOP:-0}" = 1 ] && echo "PAULA_TXPOP=1: $(sed -n 's/^PAULA_TXPOP: //p' "$run/compile.log")"
 	} | tee "$run/results.txt"
 	build "$snap"
 	# plusargs without the +: FAST_HW's model timing first (the first match
@@ -501,7 +559,7 @@ scenario() {
 		milestones "$s" "$log"
 		grep -E '^UART: .*(EXC |TRAP )' "$log" | sed 's/^/BAD  /'
 		l3_check memhash "$run/memhash.txt" '^PASS memhash: ' python3 -I "$L3CHECK" memhash "$run"
-		if [ "$s" = boot ] || [ "$s" = keys ] || [ "$s" = fdd_rd ]; then
+		if [ "$s" = boot ] || [ "$s" = keys ] || [ "$s" = fdd_rd ] || [ "$s" = fdd_wr ]; then
 			l3_check kick "$run/kick.txt" '^PASS kick: ' python3 -I "$L3CHECK" kick "$run"
 			l3_check order "$run/order.txt" '^PASS order: ' python3 -I "$L3CHECK" order "$run"
 		fi
@@ -513,6 +571,10 @@ scenario() {
 		if [ "$s" = fdd_rd ]; then
 			l3_check fdd_rd "$run/fdd_rd.txt" '^PASS fdd_rd: ' python3 -I "$L3CHECK" fdd_rd "$run"
 			grep -E '^ok   ' "$run/fdd_rd.txt"
+		fi
+		if [ "$s" = fdd_wr ]; then
+			l3_check fdd_wr "$run/fdd_wr.txt" '^PASS fdd_wr: ' python3 -I "$L3CHECK" fdd_wr "$run"
+			grep -E '^(ok   |HEADER )' "$run/fdd_wr.txt"
 		fi
 		if grep -q '^=== PASS' "$log"; then echo "ok   bench verdict: === PASS"
 		else echo "BAD  bench verdict: $(grep -m1 -E '^=== (PASS|FAIL)' "$log" || echo none) ($log)"; fi
@@ -588,7 +650,7 @@ case "${1:-}" in
 		echo "=== xpair $2 FAILED (runs $r1 / $r2, compare $rc)"
 		exit 1
 		;;
-	boot|boot_short|keys|fdd_rd)
+	boot|boot_short|keys|fdd_rd|fdd_wr)
 		SCEN=$1
 		[ "${NOKICK:-0}" = 1 ] && [ "$1" != boot ] && die "NOKICK=1 is for boot only"
 		setup

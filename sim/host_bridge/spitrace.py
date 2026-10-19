@@ -53,6 +53,20 @@ norm: one normalised stream of a run, in frame order, one item per line
     and every word 3: the countdown).  MOSI (the sector data) and MISO
     bytes 0..3 (request, track, sync) and the motor bits stay compared; the
     identical-repeat drop of status frames compares the masked bytes
+  - paula's floppy write FIFO (sim/l3 fdd_wr, runs p4t14 / p4t14c: Agnus
+    fills it at its rate, the firmware's FindSync / GetHeader / GetData
+    empty it in pieces whose size is the FIFO's count when each frame
+    starts, so how the stream is cut into frames, and the number of polls
+    while it fills, depend on the CPU's speed): consecutive write frames
+    (10, every MOSI byte 00, at least six bytes, MISO byte 0 bit 1 set: a
+    track write, CMD_WRTRK) with no other frame and no hw / UART line
+    between them and the same MISO bytes 0..3 (request, track, sync) become
+    one line "SPI 10 wrfifo <bytes 0..3> / <n> <the n FIFO bytes, in
+    order>": the MISO bytes after the six header bytes of each frame,
+    concatenated (bytes 4..5, the FIFO count, are dropped).  Every word the firmware
+    read from the FIFO stays compared, in order; the line ends where
+    anything else happens (the SD write of a sector, a 2-byte frame), so
+    the cut points the firmware chooses by content stay too
   - the HandleRTC unit (fw/ctrl_rv/rtc.c HandleRTC, every 8,192 main-loop
     passes, so their number depends on the CPU's speed: p4t13 4, p4t13c
     2): an RTC frame (80) together with exactly the hw writes of that call,
@@ -611,6 +625,7 @@ def norm(spi, hw, uart, rules_path, card_path, charrom):
                 sdfiles[lba] = (r, i * 512)
     # items: (key, stream, text, collapse key)
     items = []
+    wr_runs = []
     for fr, ev, text in hw_ev:
         items.append(((fr, 0, ev), "hw", text, None))
     for fr, ev, text in uart_ev:
@@ -619,8 +634,22 @@ def norm(spi, hw, uart, rules_path, card_path, charrom):
     prev_read = prev_uds = prev_status = None
     st = {}
     rtc_at = []                   # item indices of the RTC frames' markers
+    ev_at = {k[0][0] for k in items}   # frame counts with a hw / UART line before that frame
+    wr_run = None                 # the open write-FIFO line: [item index, bytes 0..3, words, last frame]
     for i, (cs, out, inp) in enumerate(frames):
         key = (i, 1, 0)
+        # paula's write FIFO (the doc above): merged into one line
+        if cs == 0x10 and len(out) >= 6 and not any(out) and len(inp) == len(out) and inp[0] & 0x02:
+            hdr = tuple(inp[:4])
+            if wr_run is not None and wr_run[3] == i - 1 and wr_run[1] == hdr and i not in ev_at:
+                wr_run[2].extend(inp[6:])
+                wr_run[3] = i
+                drop["wrfifo"] += 1
+                continue
+            items.append((key, "spi", None, None))
+            wr_run = [len(items) - 1, hdr, list(inp[6:]), i]
+            wr_runs.append(wr_run)
+            continue
         # paula's DMA progress bytes (the doc above): masked, None = "--"
         if cs == 0x10 and len(out) >= 6 and not any(out[:6]) and len(inp) >= 6 and inp[4] & 0x80:
             if len(out) == 6:
@@ -667,6 +696,8 @@ def norm(spi, hw, uart, rules_path, card_path, charrom):
             items.append((key, "osd", "%s %s" % (row, text) if text else str(row), None))
             continue
         items.append((key, "spi", " ".join(x for x in ("%02x" % cs, hexs(out), "/", hexs(inp)) if x), None))
+    for idx, hdr, words, _ in wr_runs:
+        items[idx] = (items[idx][0], "spi", "10 wrfifo %s / %d %s" % (hexs(hdr), len(words), hexs(words)), None)
     items.sort(key=lambda t: t[0])
     # the HandleRTC unit (the doc above): the marker with exactly its hw writes
     keep = [True] * len(items)
@@ -775,7 +806,7 @@ def norm(spi, hw, uart, rules_path, card_path, charrom):
         w("# rule %d used %d: %s\n" % (r.lineno, r.used, r.text))
     w("# dropped " + ", ".join("%s %d" % (k, drop[k]) for k in
                                 ("status", "drivestatus", "read", "keyq", "rtc", "rtc_unit", "sd_deselect",
-                                 "sdfile_run")) + "\n")
+                                 "sdfile_run", "wrfifo")) + "\n")
     return 0
 
 
