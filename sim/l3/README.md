@@ -118,7 +118,7 @@ scenario and its `XRAND=1` twin in parallel (`run_<RUNTAG>`,
 (default) or `832` (section "832", with `E832`, `E832DIR`), `SIM=xsim`
 (default) or `verilator`, `RUNTAG`, `FW`, `FW832`, `L3_DATE`, `EXTRA_WS`,
 `SLAT`, `SJIT`, `SEED`, `XARGS` (more plusargs), `TIMEOUT`, `NOKICK=1`,
-`XRAND=1`, `XSEED`, `KEYS` (section "keys"). Every log starts with `=== CPU rv` or `=== CPU 832`.
+`XRAND=1`, `XSEED`, `KEYS` (section "keys"), `RDY_MUT=1` (section "keys", teeth). Every log starts with `=== CPU rv` or `=== CPU 832`.
 
 A run directory `sim/l3/run_<RUNTAG>/` holds `results.txt`, the log
 `tb_<scenario>_x<EXTRA_WS>_s<SLAT>_j<SJIT>.log`, `spi.txt`,
@@ -620,9 +620,9 @@ python3 -I sim/l3/osdtext_expect/osdpages.py keys > sim/l3/osdtext_expect/keys.t
 ```
 
 Run, setup as in "Run" and "832" (both legs boot the same card, as in
-"Differential"; `+OSD_EARLY_OK=1` for the RV until the reply-ready
-handshake: its `SPI_reply()` still has the `SPIN`s), from the repository
-root:
+"Differential"; the RV firmware polls the reply-ready handshake since
+Phase 4 Task 11, so no `+OSD_EARLY_OK=1`: `OSD EARLY` must be 0), from the
+repository root:
 
 ```sh
 E832DIR=$PWD/EightThirtyTwo
@@ -633,13 +633,40 @@ printf '%s\n' '#!/bin/sh' 'TZ=UTC exec /bin/date -d "${L3_DATE:-2026-01-01} 00:0
 chmod +x "$FWD/dateshim/date"
 PATH="$FWD/dateshim:$PATH" make -s -C fw/ctrl_rv B="$FWD/fwrv"
 make -C sim/l3/fw832 B="$FWD/fw832" E832DIR="$E832DIR"
-SIM=verilator RUNTAG=k XARGS=+OSD_EARLY_OK=1 FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh xpair keys
+SIM=verilator RUNTAG=k FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh xpair keys
 CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=kc FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh xpair keys
 bash sim/l3/run.sh diff k kc
 ```
 
 (the two `xpair`s run four simulations; side by side 22 minutes for the RV
 pair, 31 for the 832 pair, with a fifth run on the machine.)
+
+### The handshake's teeth (Phase 4 Task 12)
+
+`RDY_MUT=1` makes the run copy of cfide (`<run>/src/cfide.vhd`, never the
+tree's) answer `OSD_RDY` = 1 whatever the counts say, like `sim/spi_cdc/run.sh`'s
+`RDY_MUT` (an exact-count check on the `-- OSD RDY` line). The firmware
+without the poll is another image: a copy of `fw/ctrl_rv` from git `HEAD`
+outside the tree, built under the date shim (`FWD` as above):
+
+```sh
+D=$FWD/nopoll
+mkdir -p "$D"
+git archive HEAD fw/ctrl_rv tools/riscv | tar -x -C "$D"
+sed -i 's/if (!(HOST_REQ & HOST_REQ_OSD_RDY)) {/if (0) {/' "$D/fw/ctrl_rv/hardware.c"
+grep -c 'if (0) {' "$D/fw/ctrl_rv/hardware.c"
+PATH="$FWD/dateshim:$PATH" make -s -C "$D/fw/ctrl_rv" B="$D/build"
+SIM=verilator RUNTAG=m1c RDY_MUT=1 XARGS=+FAST_HW=1 FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh keys
+SIM=verilator RUNTAG=m2 FW="$D/build/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh keys
+```
+
+(`grep -c` must print 1.) Both must exit 1 (`=== keys FAILED`): `m1c` with
+`OSD EARLY 1 of 450` and `version reply byte 2: 1a, want 0a`, `m2` with
+`OSD EARLY 3 of 6`, the repeated VERSION bytes and no KEYQ frame. The
+default-timing run of the cfide mutant fails on `OSD GAP min 27` alone
+(`OSD EARLY 0`): the `FAST_HW` bus is what makes its one remaining poll
+read too quick for the synchroniser. Figures: `findings/osd-riscv/phase4.md`,
+"Task 12".
 
 ### Measured (2026-10-19, SLAT=8 SJIT=0, SCKDLY 1.5 / C28DLY 0.3, TICKDIV 1 then 643)
 
@@ -653,6 +680,14 @@ pair, 31 for the 832 pair, with a fifth run on the machine.)
 | `OSD GAP` min: VERSION / KEYQ status / per-key bytes | 44 / 295 / 56 | 254 / 306 / 338 |
 | `l3check.py keys` | PASS: 48 events, BURST one frame, count 6, 24 pages | the same |
 | wall time (Verilator, 5 runs on the machine) | 1,281 s | 1,824 s |
+
+After the handshake (Task 12, `p4t12`, no `+OSD_EARLY_OK`): the script
+ends at 164,861,841 (milestone 157,844,924), KEYQ frames 366, `OSD EARLY` 0
+of 420, `OSD GAP` min 43, `l3check.py keys` PASS, wall 1,653 s (six runs on
+the machine); the same `keys` with `+FAST_HW=1`, and in the skew pairs
+0.3 / 4.0 and 9.5 / 0.3, also `OSD EARLY` 0; `run.sh diff p4t12 p4t12c`
+(832) empty. The per-byte before/after table is in
+`findings/osd-riscv/phase4.md`, "Task 12".
 
 `L3_KEYS_TO` = 247,400,000 (RV) and 321,300,000 (832): 1.5 x the end of
 the script. The per-byte figures are the "before" table of

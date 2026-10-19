@@ -190,6 +190,49 @@ No new timing exception is needed: each path is covered by the clock-level multi
 | `p4t10c` (Verilator, 1,232 s) | L3 `CPU=832 boot`, Task 7 cards (`FW` fd3b3c6a0b8ca273, `FW832` 768c765d57deb1a0) | `=== boot PASS`; `spi.txt` (1,937 frames) and `hw.txt` `cmp`-identical to `p4t9c2`; `run.sh compare p4t9c2 p4t10c` SAME; `results.txt` differs only in the wall time |
 | `p4t10k` (Verilator, 1,296 s) | L3 `CPU=832 keys`, the same images | `=== keys PASS`, OSD EARLY 0 of 198; `spi.txt` (2,698 frames) and `hw.txt` `cmp`-identical to `p4t8c`; `run.sh compare p4t8c p4t10k` SAME; `results.txt` differs only in the wall time |
 
+### Task 12: the "after" OSD reply measurement on L3, and the handshake's teeth
+
+Tree: `osd-riscv` at 2c377f2 (Tasks 9-11 in), Verilator, SLAT=8 SJIT=0, SCKDLY 1.5 / C28DLY 0.3 unless stated, `EXTRA_WS` 0, no `+OSD_EARLY_OK`. One RV image (`RV32OSDA.BIN` sha256 0162e53fc0b4ce4d, built once from this tree) and one 832 image (`832OSDAD.BIN` 768c765d57deb1a0, the "before" one) on every card.
+
+| Run (RUNTAG) | Scenario | Verdict |
+|---|---|---|
+| `p4t12` + `p4t12_xr` (xpair) | `keys` | PASS, `OSD EARLY 0 of 420`, `l3check.py keys` PASS (48 events, BURST one frame, 24 pages), twin SAME (3523 frames) |
+| `p4t12b` + `p4t12b_xr` (xpair) | `boot` | PASS, `OSD EARLY 0 of 26`, twin SAME (1874 frames) |
+| `p4t12f` (`+FAST_HW=1`) | `keys` | PASS, `OSD EARLY 0 of 450` |
+| `p4t12s1` (`+SCKDLY=0.3 +C28DLY=4.0`) | `keys` | PASS, `OSD EARLY 0 of 420` |
+| `p4t12s2` (`+SCKDLY=9.5 +C28DLY=0.3`) | `keys` | PASS, `OSD EARLY 0 of 420` |
+| `p4t12c` (`CPU=832`, same cards) | `keys` | PASS, `OSD EARLY 0 of 198`; `run.sh diff p4t12 p4t12c` empty (exit 0, `boot`'s 9 rules) |
+
+`EXTRA_WS` is 0 in every run (the default; the L3 `EXTRA_WS` sweep is Task 19).
+
+**Before / after** (RV; `clk_114`; `OSD GAP` min per command and reply byte, 0 = the first byte after the command; E_osd = 34; "before" = `p4t8`, the `SPIN`s, `+OSD_EARLY_OK=1`; "after" = `p4t12`; all bytes right and `OSD EARLY` 0 of the loads in both, the 832's figures from `p4t12c`, which equal `p4t8c`'s (unchanged firmware)):
+
+| Reply byte | RV gap before | RV gap after | `OSD EARLY` before / after | 832 gap | 832 `OSD EARLY` |
+|---|---|---|---|---|---|
+| VERSION (0x88) byte 0 | 211 | 192 | 0 of 1 / 0 of 1 | 286 | 0 of 1 |
+| VERSION byte 1 | 128 | 111 | 0 / 0 of 1 | 254 | 0 of 1 |
+| VERSION byte 2 | 44 | 147 | 0 / 0 of 1 | 286 | 0 of 1 |
+| VERSION byte 3 | 44 | 111 | 0 / 0 of 1 | 266 | 0 of 1 |
+| VERSION byte 4 | 44 | 63 | 0 / 0 of 1 | 286 | 0 of 1 |
+| VERSION byte 5 | 44 | 63 | 0 / 0 of 1 | 254 | 0 of 1 |
+| KEYQ (0x98) byte 0 (status) | 295 | 196 | 0 of 354 / 0 of 366 | 306 | 0 of 144 |
+| KEYQ byte 1 | 56 | 203 | 0 of 22 / 0 of 22 | 370 | 0 of 22 |
+| KEYQ byte 2 | 60 | 43 | 0 of 22 / 0 of 22 | 358 | 0 of 22 |
+| KEYQ byte 3 | 60 | 43 | 0 of 1 / 0 of 1 | 338 | 0 of 1 |
+| KEYQ byte 4 | 60 | 43 | 0 of 1 / 0 of 1 | 338 | 0 of 1 |
+| KEYQ byte 5 | 60 | 43 | 0 of 1 / 0 of 1 | 338 | 0 of 1 |
+| KEYQ byte 6 | 60 | 43 | 0 of 1 / 0 of 1 | 338 | 0 of 1 |
+| whole run `OSD GAP` min / `OSD EARLY` | 44 / 0 of 408 | 43 / 0 of 420 | | 254 / 0 of 198 | |
+
+The gap column is no longer the safety margin: with the handshake the gap is whatever the poll leaves (the minimum 43 is the poll read's own round trip, 9 above E_osd and 3 above `OSD_MIN_GAP`), and the guarantee is the `OSD_RDY` poll itself. The measured fact is that every reply byte is loaded after the previous one passed the synchroniser (`OSD EARLY` 0), in the default timing, with `FAST_HW`, and in the two extreme skew pairs; the same figures in the skew runs (`p4t12s1/s2` gaps equal `p4t12`'s).
+
+**Teeth** (run copies only; `rtl/` and `fw/` untouched):
+
+- `p4t12m1c`, cfide's `OSD_RDY` forced '1' (`RDY_MUT=1`, `sim/l3/run.sh`) with the RV firmware, `+FAST_HW=1`: **FAILS** with `OSD EARLY 1 of 450` and its bench error, `version reply byte 2: 1a, want 0a` (`REPLY 88 byte 2: 0 of 1 right`), `l3check.py keys` FAIL, milestones 49 of 51 (the version frame). In the default timing the same mutant (`p4t12m1`, and `p4t12m1a/b` in the two skew pairs) fails only on `OSD GAP min 27` below `OSD_MIN_GAP` 40, with `OSD EARLY 0 of 420` and every reply byte right: the one poll read that still happens leaves 27 cycles, which at those timings is enough for the synchroniser. So the default-timing mutant is caught by the gap monitor, not by EARLY, and the EARLY/wrong-byte tooth needs the faster `FAST_HW` bus.
+- `p4t12m2`, the firmware with the `HOST_REQ` poll removed (`sed` on `hardware.c` in a copy built from git `HEAD` outside the tree, `grep -c 'if (0) {'` = 1, no `SPIN` in `SPI_reply()`): **FAILS** with `OSD EARLY 3 of 6 reply bytes`, `OSD GAP min 14`, the VERSION reply `00 01 1a 1a 0a a4 a4` (bytes repeated) instead of `01 1a 0a 02 a4 fd`, milestones 48 of 51, and no KEYQ frame at all in the run (the wrong caps byte 0xa4 lacks `CAPS_KEYQ`, so the firmware never uses the queue), the run ends at the cycle limit. So the KEYQ-byte leg of the stated failure cannot show here: the mutant breaks `fpga_init`'s version reply first, and `l3check.py keys` fails on the missing steps/events instead of on KEYQ bytes.
+
+**Plan 7.1 item 2** (the firmware's `SPI_reply()` timing against `userio_osd`'s reply synchroniser): closed in simulation by the handshake; board confirmation in Phase 6.
+
 ## Shared defects
 
 - **The OSD menu's key repeat cannot start: the level read answers with the key queue, not the key (both firmwares since the KEYQ in userio_osd; found by Task 8, not fixed: parity, and the cause is in the command order plus the RTL's read path).**

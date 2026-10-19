@@ -50,6 +50,8 @@
 #   NOKICK=1 boot only: the boot card without KICK.ROM.  The run must FAIL
 #            at the main-loop milestone (the fatal-error loop); the exit
 #            status is 0 when it does
+#   RDY_MUT=1 the run copy of cfide answers OSD_RDY = 1 (the handshake's
+#            tooth, README "keys"); the run must FAIL with OSD EARLY > 0
 #   XRAND=1  (verilator) the X-sensitivity build, XSEED=<n> its seed
 #   TIMEOUT  clk_114 cycles (default per scenario below)
 #   L3CHECK  tests of run.sh only: the l3check.py to run (default sim/l3's)
@@ -244,6 +246,18 @@ EOP
 		|| die "async pin: initialisers not inserted"
 }
 
+# l3_rdy_mut (RDY_MUT=1 only): the run copy of cfide answers OSD_RDY = 1
+# whatever the counts say (the mutant of sim/spi_cdc/run.sh's RDY_MUT): the
+# handshake's tooth.  The tree's rtl/ is never edited.
+l3_rdy_mut() {
+	local c="$run/src/cfide.vhd"
+	[ "${RDY_MUT:-0}" = 1 ] || return 0
+	[ "$(grep -c -- '-- OSD RDY$' "$c")" = 1 ] || die "RDY_MUT: not exactly one '-- OSD RDY' line in cfide.vhd"
+	sed -i "s/^\( *\)osd_rdy <= .*-- OSD RDY\$/\1osd_rdy <= '1'; -- OSD RDY MUTANT/" "$c"
+	[ "$(grep -c -- "osd_rdy <= '1'; -- OSD RDY MUTANT\$" "$c")" = 1 ] || die "RDY_MUT: mutation not applied"
+	echo "RDY_MUT: $(grep -- '-- OSD RDY MUTANT' "$c" | sed 's/^ *//')" >> "$run/compile.log"
+}
+
 # l3_e832_xsim (CPU=832, xsim): copies of the EightThirtyTwo VHDL in
 # <run>/src/e832 for xsim, with the register file's data registers
 # (eightthirtytwo_cpu.vhd regfile: tmp, gpr0..gpr6, which its reset leaves
@@ -295,6 +309,7 @@ setup() {
 	done
 	l3_pin_minimig
 	l3_pin_async
+	l3_rdy_mut
 	[ "$CPU" = 832 ] && hs_rom832 "$run"
 	if [ -n "${FW:-}" ]; then
 		FWBIN=$(realpath -m -- "$FW")
