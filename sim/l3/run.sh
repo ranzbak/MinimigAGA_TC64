@@ -29,6 +29,7 @@
 #            status is 0 when it does
 #   XRAND=1  (verilator) the X-sensitivity build, XSEED=<n> its seed
 #   TIMEOUT  clk_114 cycles (default per scenario below)
+#   L3CHECK  tests of run.sh only: the l3check.py to run (default sim/l3's)
 #   VIVADO_PATH, GHDL, VERILATOR, JOBS, OBJCACHE as sim/host_bridge/run.sh
 #
 # Scenarios (scenarios.vh), card, checks:
@@ -82,7 +83,26 @@ L3_SHORT_TO=${L3_SHORT_TO:-86500000}
 
 # shellcheck source=../common/hostsim.sh
 . "$ROOT/sim/common/hostsim.sh"
+# every fatal step, hostsim.sh's hs_* included (they call hs_die), ends the
+# run with the scenario's verdict line: no step failure is silent
+hs_die() { echo "FAILED: $*"; echo "=== ${SCEN:-run.sh} FAILED"; exit 1; }
 die() { hs_die "$@"; }
+L3CHECK=${L3CHECK:-$HERE/l3check.py}   # tests of run.sh only: another l3check.py
+
+# l3_check <name> <out file> <pass regex> <command...>: one offline check
+# (spitrace.py, l3check.py), its output in <out file>.  "ok   <the first line
+# matching <pass regex>>" only when the command exits 0 AND printed such a
+# line; otherwise its BAD lines and "BAD  <name>: exit <rc>, ..." (a crash
+# prints no PASS line and exits non-zero: it fails the scenario either way)
+l3_check() {
+	local name=$1 out=$2 re=$3 rc line; shift 3
+	"$@" > "$out" 2>&1; rc=$?
+	line=$(grep -m1 -E -- "$re" "$out")
+	if [ "$rc" -eq 0 ] && [ -n "$line" ]; then echo "ok   $line ($out)"; return 0; fi
+	grep '^BAD' "$out"
+	echo "BAD  $name: exit $rc, ${line:-no line matching '$re'}; last line: $(tail -1 "$out") ($out)"
+	return 1
+}
 X() { hs_X "$run" "$@"; }
 
 # cfide_generics: -g<name>=true|false from tb_l3.v's "cfide #( ... ) mycfide ("
@@ -188,12 +208,8 @@ milestones() {
 		cp "$HERE/milestones_boot.txt" "$ms"
 	fi
 	grep -v '^NOT ' "$ms" > "$ms.check"
-	if python3 -I "$L2/spitrace.py" check "$ms.check" "$log" "$run/spi.txt" > "$run/milestones.txt" 2>&1; then
-		echo "ok   $(tail -1 "$run/milestones.txt") ($run/milestones.txt)"
-	else
-		grep '^BAD' "$run/milestones.txt"
-		echo "BAD  $(tail -1 "$run/milestones.txt") ($run/milestones.txt)"
-	fi
+	l3_check milestones "$run/milestones.txt" '^milestones: [0-9]+ of [0-9]+ found in order$' \
+		python3 -I "$L2/spitrace.py" check "$ms.check" "$log" "$run/spi.txt"
 	grep '^NOT UART ' "$ms" | sed 's/^NOT UART //' | while IFS= read -r t; do
 		if grep -E '^UART: ' "$log" | grep -qF -- "$t"; then echo "BAD  a UART line contains '$t'"
 		else echo "ok   no UART line contains '$t'"; fi
@@ -234,7 +250,7 @@ scenario() {
 		grep -q '^SD: image .* loaded' "$log" || echo "BAD  the SD model did not load $CARD"
 		milestones "$s" "$log"
 		grep -E '^UART: .*(EXC |TRAP )' "$log" | sed 's/^/BAD  /'
-		[ "$s" = boot ] && echo "$(python3 -I "$HERE/l3check.py" kick "$run" 2>&1 | sed 's/^PASS/ok  /; s/^FAIL/BAD /')"
+		[ "$s" = boot ] && l3_check kick "$run/kick.txt" '^PASS kick: ' python3 -I "$L3CHECK" kick "$run"
 		if grep -q '^=== PASS' "$log"; then echo "ok   bench verdict: === PASS"
 		else echo "BAD  bench verdict: $(grep -m1 -E '^=== (PASS|FAIL)' "$log" || echo none) ($log)"; fi
 		echo "$SIM wall time ${secs} s, $(sed -n 's/.*, cycles \([0-9]*\)$/\1/p' "$log") cycles"
@@ -283,6 +299,7 @@ case "${1:-}" in
 		exit 1
 		;;
 	boot|boot_short)
+		SCEN=$1
 		[ "${NOKICK:-0}" = 1 ] && [ "$1" != boot ] && die "NOKICK=1 is for boot only"
 		setup
 		if [ "${NOKICK:-0}" = 1 ]; then nokick; else scenario "$1"; fi

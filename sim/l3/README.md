@@ -103,7 +103,10 @@ bash sim/l3/run.sh compare sx s
 directory under a date shim (so two runs of one tree boot the same image;
 `FW=<RV32OSDA.BIN>` takes another one), builds the card into it
 (`sim/l3/card`), builds the bench, runs it and then the scenario's checks,
-and prints `=== <scenario> PASS` or `FAILED` (exit 0 / 1). `xpair` runs the
+and prints `=== <scenario> PASS` or `FAILED` (exit 0 / 1). A step that
+fails (firmware, card, conversion, build) ends the run at once with
+`=== <scenario> FAILED`, and an offline check (`spitrace.py`, `l3check.py`,
+run.sh's `l3_check`) counts only when it exits 0 and prints its pass line. `xpair` runs the
 scenario and its `XRAND=1` twin in parallel (`run_<RUNTAG>`,
 `run_<RUNTAG>_xr`) and compares them. `compare` diffs every `tb_*.log` and
 `spi.txt` of two run directories (L2's rules). Environment: `CPU=rv`
@@ -194,7 +197,7 @@ end event):
 === STACK low 00001950 (1712 bytes used)
 === OSD EARLY 0 of 26 reply bytes
 ok   milestones: 50 of 50 found in order
-ok   kick: KICK.ROM (262144 bytes) at Amiga 0xf80000 and 0xfc0000 (host 0x100000, 0x140000)
+ok   PASS kick: KICK.ROM (262144 bytes) at Amiga 0xf80000 and 0xfc0000 (host 0x100000, 0x140000)
 ok   bench verdict: === PASS
 === boot PASS
 ```
