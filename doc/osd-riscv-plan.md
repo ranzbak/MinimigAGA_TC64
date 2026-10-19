@@ -1,6 +1,6 @@
 # OSD / host CPU: EightThirtyTwo -> RISC-V -- implementation plan
 
-Status: **Phase 3 done 2026-10-18** (firmware 1:1 in `fw/ctrl_rv`, host tests, L1/L2 gates green; details in section 8, Phase 3); **Phase 4 planned 2026-10-18** (`doc/osd-riscv-exec-4.md`, 23 tasks; decision 12.13); nothing is on the board yet. Written 2026-10-16 around picorv32, revised the same day
+Status: **Phase 3 done 2026-10-18** (firmware 1:1 in `fw/ctrl_rv`, host tests, L1/L2 gates green; details in section 8, Phase 3); **Phase 4 planned 2026-10-18** (`doc/osd-riscv-exec-4.md`, 23 tasks; decision 12.13); **Phase 5 build B done 2026-10-19** (build commit C1 `87577e2`, `findings/osd-riscv/phase5.md`), **A/B board test pending** (`findings/osd-riscv/ab-board-test.md`); nothing has run on the board yet. Written 2026-10-16 around picorv32, revised the same day
 after the core survey (`findings/osd-riscv/tiny-cores.md`) and Paul's
 decisions (section 12): the core is **VexRiscv**. Branch `osd-riscv`, off
 `5.0-040-pipelined` (the main branch for this board version; `osd-riscv`
@@ -1071,7 +1071,7 @@ questions the same day (exec-4 "Decisions").
 
 ### Phase 5 -- build integration and A/B
 
-- 5.1 **S** `add_src` in all six `tools/vivado/build*.tcl`, `rebuild.tcl`,
+- 5.1 **S** **done 2026-10-19**, build commit C1 `87577e2`, B = `build/stage_p5b_87577e2` (`findings/osd-riscv/phase5.md`, `b90fb0a`): clk_114 intra WNS +0.019 ns against A's +0.101 ns, gate +0.001 ns met; the only failing paths are A's 16 SDRAM-input endpoints. A = `stage_spicdc_49b1868` (Paul 2026-10-19: RISC-V only on this branch, no 832 build here). `add_src` in all six `tools/vivado/build*.tcl`, `rebuild.tcl`,
   `host.qip` (VexOsd.v + rv_hostcpu.v, never `rv_bscane2.v`), top
   parameters; stage `stage_rv`; the 832 side is the existing
   `build/stage_spicdc_49b1868` (no `stage_832ab` rebuild needed unless the
@@ -1081,15 +1081,15 @@ questions the same day (exec-4 "Decisions").
   hostcpu hierarchical utilisation recorded; clk_114 WNS of `stage_rv` not
   worse than the 832 reference by more than 0.1 ns; `report_clocks` still shows
   `spi_sck`.
-- 5.2 **O** Timing/fit recovery if needed (placement directives, retiming,
+- 5.2 **O** **skipped, gate 5.1 met.** Timing/fit recovery if needed (placement directives, retiming,
   I$ `twoCycleRam`, a pipeline register in the CPU block). Gate: WNS within
   the current -0.2 ns, no new failing endpoints under hostcpu.
-- 5.3 **S** Card image with both firmware files; build notes. The spicdc
+- 5.3 **S** **card files ready, board test pending** (`build/ab_card_87577e2`, protocol `findings/osd-riscv/ab-board-test.md`); the merge is **deferred** until Paul's go after the board A/B. Card image with both firmware files; build notes. The spicdc
   board check (decision 12.5) is done: `build/stage_spicdc_49b1868` was
   board-verified by Paul 2026-10-17 (it is the 832 reference).
   Gate: both bitstreams boot from one card. Merge `osd-riscv` ->
   `5.0-040-pipelined`.
-- 5.4 **O** Debug bring-up (not blocking): a lab stage with `rv_debug=1`;
+- 5.4 **O** **not started.** Debug bring-up (not blocking): a lab stage with `rv_debug=1`;
   write the Vivado `hw_server` Tcl JTAG-scan bridge (model
   `EightThirtyTwo/tcl/832bridge.tcl`) serving OpenOCD `remote_bitbang`,
   then OpenOCD + GDB attach, halt, breakpoint in `main`, `load` + `fence.i`,

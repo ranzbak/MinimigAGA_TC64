@@ -1,6 +1,6 @@
 # OSD host CPU -> VexRiscv: executable plan, stage 5 (Phase 5 -- build integration, build B, the A/B card, the board-test protocol)
 
-Status: **planned 2026-10-19**, executing on branch `p5-build` (worktree `MinimigAGA_TC64-p5build`, off `osd-riscv` 5462a0f). Corrected the same day by Paul: RISC-V only on this branch, A = `stage_spicdc_49b1868` (see Decisions). Stops at the first step that needs Paul at the board (Task 6).
+Status: **planned 2026-10-19**, executing on branch `p5-build` (worktree `MinimigAGA_TC64-p5build`, off `osd-riscv` 5462a0f). Corrected the same day by Paul: RISC-V only on this branch, A = `stage_spicdc_49b1868` (see Decisions). Stops at the first step that needs Paul at the board (Task 6). **Status 2026-10-20:** Tasks 1, 2, 3, 5 done and reviewed, Task 4 skipped (gate met), Task 6 protocol written (`findings/osd-riscv/ab-board-test.md`), final review pending; stops for Paul at the board.
 
 > For agentic workers: execute task by task with superpowers:subagent-driven-development
 > (SDD tooling extracts tasks by their `### Task N` heading). Each task ends at its pass
