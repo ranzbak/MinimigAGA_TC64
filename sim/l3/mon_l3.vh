@@ -60,9 +60,10 @@
 //                          the brief's literal count (dmaon and empty at a
 //                          slot from the starting DSKLEN write on); a track
 //                          whose FIFO never reaches 1024 is a bench error
-//   8  ide_wait            IDE PIO flow control (bfm_ide): the 68k side's
-//                          waits on the firmware, clk_114 cycles: each wait
-//                          for an interrupt or a BSY poll, and each data
+//   8  ide_wait            IDE PIO flow control (bfm_ide): the time the
+//                          68k side spent waiting on the firmware, clk_114
+//                          cycles, only when it waited: an interrupt not
+//                          yet pending, a BSY poll that saw BSY, a data
 //                          register read held by nrdy.  Status-driven, no
 //                          margin (plan 7.1: latency only costs throughput),
 //                          so rec; per command bfm_ide's "=== IDE end" line

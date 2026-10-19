@@ -39,10 +39,14 @@
 //     the drive (g_heads, g_spt: from IDENTIFY's words 3 and 6, checked by
 //     l3check.py)
 //
-// Waits (plan 7.1 item 8, mon_l3.vh): each ata_wait (the cycles from its
-// start to the status read that met it: the firmware's service latency,
-// "irq" or "poll") and each read held by nrdy ("nrdy": the stall) is one
-// wait, in clk_114 cycles (the bench's cyc).  Per command: "=== IDE end
+// Waits (plan 7.1 item 8, mon_l3.vh): a wait is time the 68k side spent
+// on the firmware, in clk_114 cycles (the bench's cyc), recorded only when
+// it waited at all: "irq" from the start of an ata_wait (the command's or
+// the block's start) to the interrupt, when it was not already pending;
+// "poll" from the start of a BSY poll (ata_wait without interrupt,
+// ata_end) to the status read that met it, when an earlier read had seen
+// BSY (or DRQ at the end); "nrdy" the stall of a data read held by nrdy.
+// A status read that finds the drive ready at once is no wait.  Per command: "=== IDE end
 // <k> ... waits <n> (irq <a>, poll <b>, nrdy <c>) min/median/max
 // <x>/<y>/<z> clk_114, total <t>" (median: the lower one); over the run
 // w_all_n, w_all_min for the MARGIN line.
@@ -320,19 +324,20 @@ module bfm_ide (
   // wait for the interrupt (with_irq) or poll until BSY is 0; then BSY 0
   // and DRQ = drq, no ERR; INTREQ cleared after an interrupt
   task ata_wait(input with_irq, input drq);
-    integer t0;
+    integer t0, tl;
     begin
       t0 = cyc;
       if (with_irq) begin
         while (irq !== 1'b1 && cyc - t0 < WAIT_MAX) en;
         if (irq !== 1'b1) ide_error("no interrupt within WAIT_MAX cycles");
-        add_wait(cyc - t0, 0);
+        if (cyc != t0) add_wait(cyc - t0, 0);
         hr(tf(c_port, 7), v);
         hww(INTREQ, 16'h0000);
       end else begin
+        tl = cyc;
         hr(tf(c_port, 7), v);
-        while (v[15] === 1'b1 && cyc - t0 < WAIT_MAX) hr(tf(c_port, 7), v);
-        add_wait(cyc - t0, 1);
+        while (v[15] === 1'b1 && cyc - t0 < WAIT_MAX) begin tl = cyc; hr(tf(c_port, 7), v); end
+        if (tl != t0) add_wait(tl - t0, 1);
       end
       if (v[15] !== 1'b0) ide_error("BSY still set after the wait");
       if (v[11] !== drq) ide_error(drq ? "DRQ not set after the wait" : "DRQ set after the wait");
@@ -385,12 +390,13 @@ module bfm_ide (
   // back; the log line with the waits
   reg [7:0] t_st, t_err, t_cnt, t_sec, t_cl, t_ch, t_dh;
   task ata_end;
-    integer t0;
+    integer t0, tl;
     begin
       t0 = cyc;
+      tl = cyc;
       hr(tf(c_port, 7), v);
-      while ((v[15] === 1'b1 || v[11] === 1'b1) && cyc - t0 < WAIT_MAX) hr(tf(c_port, 7), v);
-      add_wait(cyc - t0, 1);
+      while ((v[15] === 1'b1 || v[11] === 1'b1) && cyc - t0 < WAIT_MAX) begin tl = cyc; hr(tf(c_port, 7), v); end
+      if (tl != t0) add_wait(tl - t0, 1);
       t_st = v[15:8];
       if (t_st !== ST_DRDY) ide_error("the status at the end of a command is not DRDY (0x40)");
       hr(tf(c_port, 1), v); t_err = v[15:8];
@@ -528,7 +534,7 @@ module bfm_ide (
       while (v[11] === 1'b1 && ph < 4096) begin
         while (irq !== 1'b1 && cyc - t0 < WAIT_MAX) en;
         if (irq !== 1'b1) ide_error("PACKET: no interrupt within WAIT_MAX cycles");
-        add_wait(cyc - t0, 0);
+        if (cyc != t0) add_wait(cyc - t0, 0);
         hr(tf(port, 7), v);
         hww(INTREQ, 16'h0000);
         if (v[15] !== 1'b0) ide_error("PACKET: BSY set at an interrupt");

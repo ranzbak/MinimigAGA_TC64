@@ -1129,7 +1129,8 @@ the device's byte count) is for the CD scenarios; `hdd` does not use it.
 `l3check.py hdd`:
 
 - the commands in the log are `HDD_PLAN`, in order; each ends with status
-  0x40 and error 0, has at least one wait (item 8), moved the words of its
+  0x40 and error 0, has at least one interrupt or `nrdy` wait (item 8;
+  every command waits for the firmware's interrupt), moved the words of its
   kind, and left the task file `hdd.c` writes: the CHS of the last sector
   for a read or write (its CHS advance, across cylinder 255 / 256 in
   command 5), the host's own registers for IDENTIFY and SET MULTIPLE
@@ -1155,9 +1156,13 @@ their `OpenHardfile` lines, the IDE port frame `20 54 07`; the 832 prints
 (`MARGIN_REQ_hdd`: the HDF sectors come in direct mode), bench `=== PASS`.
 
 Item 8, `=== MARGIN 8 ide_wait min <v> clk_114 (bound 0, rec) over <n>
-waits`: the 68k side's waits on the firmware, one per interrupt wait or
-BSY poll (from its start to the status read that met it) and one per data
-read held by `nrdy` (its stall). The flow control is status-driven, with no
+waits`: the time the 68k side spent waiting on the firmware, recorded only
+when it waited at all. An interrupt wait runs from the command's or the
+block's start to the interrupt (none when it was already pending); a BSY
+poll (the first WRITE block, the end of a command) from its start to the
+status read that met it, when an earlier read had seen BSY (or DRQ at the
+end); a data read held by `nrdy`, its stall. A status read that finds the
+drive ready at once is no wait. The flow control is status-driven, with no
 margin to violate (plan 7.1: latency only costs throughput), so the line is
 `rec`. Each `=== IDE end` line has the command's waits, min / median /
 max (the lower median) and the total.
@@ -1194,14 +1199,14 @@ python3 -I sim/l3/l3check.py hdd sim/l3/run_h
 
 ### Measured (2026-10-19, SLAT=8 SJIT=0, SCKDLY 1.5 / C28DLY 0.3, TICKDIV 1)
 
-| | RV (`p4t15`) | 832 (`p4t15c`) |
+| | RV (`p4t15`; item 8 `p4t15f`) | 832 (`p4t15c`; item 8 `p4t15cf`) |
 |---|---|---|
 | main-loop milestone | 157,326,780 | 201,740,552 |
 | `bfm_ide` starts (chipset reset low) | 163,701,501 | 204,626,877 |
 | end event (the end of command 12) | 187,958,349 | 233,511,245 |
 | `l3check.py hdd` | PASS: 12 commands, 274 sectors read, 96 written and read back, on the saved card and nowhere else | the same |
 | item 3 `dmode_release` min | 20.8 over 271 direct transfers | 42.8 over 271 |
-| item 8 `ide_wait` | min 32.0 over 34,325 waits, `rec` | min 32.0 over 34,374 |
+| item 8 `ide_wait` | min 64.0 over 34,313 waits, `rec` | min 64.0 over 34,362 |
 | `OSD EARLY` / `OSD GAP` min | 0 of 1,232 / 63 | 0 of 260 / 254 |
 | wall time (Verilator, 3 to 5 runs on the machine) | 2,289 s | 3,217 s |
 
@@ -1209,35 +1214,43 @@ python3 -I sim/l3/l3check.py hdd sim/l3/run_h
 188.0 M) and 350,000,000 (832, 1.5 x its end in `p4t15c3`, the same
 cycle as `p4t15c`).
 
-Item 8 per command (`clk_114`; waits = interrupt / poll / nrdy; min /
-median / max; the command's wall in cycles):
+Item 8 per command (Task 15 fix round, runs `p4t15f` / `p4t15cf`: the
+same bench, firmware and card as `p4t15` / `p4t15c`, with only the wait
+accounting changed; their `spi.txt` and `hw.txt` are byte-identical to
+those runs'). `clk_114`; waits = interrupt / poll / nrdy; min / median /
+max; the command's wall in cycles:
 
 | # | Command | RV waits | RV min / median / max | RV cycles | 832 waits | 832 min / median / max | 832 cycles |
 |---|---|---|---|---|---|---|---|
-| 1 | IDENTIFY | 1 / 1 / 0 | 32 / 32 / 60,464 | 69,024 | 1 / 1 / 0 | 32 / 32 / 76,928 | 85,488 |
-| 2 | READ 2 (RDB) | 2 / 1 / 0 | 32 / 55,296 / 66,192 | 138,288 | 2 / 1 / 0 | 32 / 94,512 / 106,032 | 217,344 |
-| 3 | READ 64 | 64 / 1 / 0 | 32 / 48,880 / 63,680 | 3,673,088 | 64 / 1 / 0 | 32 / 58,464 / 84,784 | 4,292,112 |
-| 4 | SET MULTIPLE 16 | 1 / 1 / 0 | 32 / 32 / 210,400 | 210,768 | 1 / 1 / 0 | 32 / 32 / 211,872 | 212,240 |
-| 5 | READ MULTIPLE 64 | 4 / 1 / 15,136 | 32 / 128 / 129,600 | 2,840,912 | 4 / 1 / 15,156 | 32 / 128 / 170,416 | 2,989,568 |
-| 6 | READ MULTIPLE 32 | 2 / 1 / 7,568 | 32 / 128 / 70,272 | 1,399,872 | 2 / 1 / 7,578 | 32 / 128 / 97,472 | 1,474,800 |
-| 7 | WRITE 64 | 64 / 2 / 0 | 32 / 98,768 / 160,928 | 6,666,752 | 64 / 2 / 0 | 32 / 128,544 / 209,200 | 8,611,776 |
-| 8 | WRITE MULTIPLE 32 | 2 / 2 / 0 | 32 / 12,736 / 1,502,720 | 3,148,512 | 2 / 2 / 0 | 32 / 23,200 / 1,978,576 | 4,111,296 |
-| 9 | READ 64 (back) | 64 / 1 / 0 | 32 / 48,864 / 66,800 | 3,674,816 | 64 / 1 / 0 | 32 / 58,560 / 91,856 | 4,305,296 |
-| 10 | READ MULTIPLE 32 (back) | 2 / 1 / 7,568 | 32 / 128 / 60,192 | 1,389,776 | 2 / 1 / 7,578 | 32 / 128 / 83,168 | 1,460,528 |
-| 11 | SET MULTIPLE 16 (master) | 1 / 1 / 0 | 32 / 32 / 217,872 | 218,240 | 1 / 1 / 0 | 32 / 32 / 219,680 | 220,048 |
-| 12 | READ MULTIPLE 16 (RDB.HDF) | 1 / 1 / 3,831 | 32 / 128 / 119,584 | 826,368 | 1 / 1 / 3,840 | 32 / 128 / 154,496 | 903,440 |
+| 1 | IDENTIFY | 1 / 0 / 0 | 60,464 / 60,464 / 60,464 | 69,024 | 1 / 0 / 0 | 76,928 / 76,928 / 76,928 | 85,488 |
+| 2 | READ 2 (RDB) | 2 / 0 / 0 | 55,296 / 55,296 / 66,192 | 138,288 | 2 / 0 / 0 | 94,512 / 94,512 / 106,032 | 217,344 |
+| 3 | READ 64 | 64 / 0 / 0 | 48,864 / 48,880 / 63,680 | 3,673,088 | 64 / 0 / 0 | 57,936 / 58,464 / 84,784 | 4,292,112 |
+| 4 | SET MULTIPLE 16 | 1 / 0 / 0 | 210,400 / 210,400 / 210,400 | 210,768 | 1 / 0 / 0 | 211,872 / 211,872 / 211,872 | 212,240 |
+| 5 | READ MULTIPLE 64 | 4 / 0 / 15,136 | 80 / 128 / 129,600 | 2,840,912 | 4 / 0 / 15,156 | 64 / 128 / 170,416 | 2,989,568 |
+| 6 | READ MULTIPLE 32 | 2 / 0 / 7,568 | 96 / 128 / 70,272 | 1,399,872 | 2 / 0 / 7,578 | 64 / 128 / 97,472 | 1,474,800 |
+| 7 | WRITE 64 | 64 / 1 / 0 | 16,736 / 98,768 / 160,928 | 6,666,752 | 64 / 1 / 0 | 31,424 / 128,544 / 209,200 | 8,611,776 |
+| 8 | WRITE MULTIPLE 32 | 2 / 1 / 0 | 12,704 / 1,501,568 / 1,502,720 | 3,148,512 | 2 / 1 / 0 | 23,168 / 1,978,032 / 1,978,576 | 4,111,296 |
+| 9 | READ 64 (back) | 64 / 0 / 0 | 48,848 / 48,864 / 66,800 | 3,674,816 | 64 / 0 / 0 | 58,032 / 58,560 / 91,856 | 4,305,296 |
+| 10 | READ MULTIPLE 32 (back) | 2 / 0 / 7,568 | 96 / 128 / 60,192 | 1,389,776 | 2 / 0 / 7,578 | 64 / 128 / 83,168 | 1,460,528 |
+| 11 | SET MULTIPLE 16 (master) | 1 / 0 / 0 | 217,872 / 217,872 / 217,872 | 218,240 | 1 / 0 / 0 | 219,680 / 219,680 / 219,680 | 220,048 |
+| 12 | READ MULTIPLE 16 (RDB.HDF) | 1 / 0 / 3,831 | 64 / 128 / 119,584 | 826,368 | 1 / 0 / 3,840 | 128 / 128 / 154,496 | 903,440 |
 
-32 is one status read (two clk7 cycles): the end-of-command poll that
-finds the drive ready at once. A READ waits once per sector for the
-firmware to send it (interrupt; median 49 k RV, 58 k 832: the card's
-read plus the firmware's turn-around), a READ MULTIPLE once per 16 sectors
-and then on `nrdy` for nearly every word (the 68k reads faster than
-direct mode delivers: 128, about one 16-bit SPI word at 6 `clk_114` a
-bit plus the read). A
+No command ended with a BSY poll that had to wait: every end-of-command
+status read found the drive ready (poll 0, except the first WRITE block's
+wait for the firmware's DRQ: 16,736 / 31,424, and the WRITE MULTIPLE's
+12,704 / 23,168). A READ waits once per sector for the firmware to send
+it (interrupt; median 49 k RV, 58 k 832: the card's read plus the
+firmware's turn-around), a READ MULTIPLE once per 16 sectors and then on
+`nrdy` for nearly every word (the 68k reads faster than direct mode
+delivers: 128, about one 16-bit SPI word at 6 `clk_114` a bit plus the
+read; the smallest stalls are 64 to 128). A
 WRITE waits per sector for the firmware to read and write it (99 k / 129
 k); a WRITE MULTIPLE block of 16 sectors costs 1.5 M / 2.0 M. SET
 MULTIPLE's 210 k is the main loop's turn-around plus the `printf` of "Set
-Multiple Mode 16". Item 8 has no bound: these are throughput figures.
+Multiple Mode 16". Item 8 has no bound: these are throughput figures. (In
+the first gate runs `p4t15` / `p4t15c` every status read that found the
+drive ready counted as a 32-cycle wait, so the min was 32 everywhere: Task
+15 review I1.)
 
 XRAND: the first RV twin, `p4t15_xr` (seed 1,807,595,372), differed from
 `p4t15` in one frame. The first IDE command's register read (`10 80`,
@@ -1328,7 +1341,7 @@ Times are taken at the slave pins: an `sck` edge reaches the slaves
 | 4 | `paula_word_spacing`, `userio_byte_spacing` | the last edge of one received word (paula, 16 bits, `sd_cs[4]` or `[6]`) / byte (userio, 8) to the last edge of the next, `clk_114` | 40 (derived below) | 117.0 over 82 words; 57.0 over 129 bytes |
 | 5 | `spi_write_busy` | SPI DATA writes acknowledged without starting a transfer of their own (no `SD_busy` rise from the request to the cycle after its ack): taken while the shifter was busy | 0 | 0 of 829,924 |
 | 6 | `fdd_fifo_empty_dma` | floppy read DMA: Agnus disk slots with paula_floppy's `dmaon` = 1 and its FIFO empty, per track from the first slot at which the FIFO has reached the firmware's working level (1,024 words) to the track's last word (section "fdd_rd") | 0 | n/a (no floppy DMA) |
-| 8 | `ide_wait` | IDE PIO flow control (`bfm_ide`): the 68k side's waits on the firmware, one per interrupt wait or BSY poll and one per data read held by `nrdy`, `clk_114`; per command min / median / max in the `=== IDE end` lines (section "hdd") | 0, `rec` (status-driven, no margin) | n/a (no IDE command) |
+| 8 | `ide_wait` | IDE PIO flow control (`bfm_ide`): the time the 68k side spent waiting on the firmware, `clk_114`, only when it waited: an interrupt not yet pending, a BSY poll that saw BSY, a data read held by `nrdy`; per command min / median / max in the `=== IDE end` lines (section "hdd") | 0, `rec` (status-driven, no margin) | n/a (no IDE command) |
 | 12 | `rtc_cs_high` | `rtc_model`: the CS-inactive time between two RTC transfers, ns | `+RTC_CSH_MIN`; the default 0 (datasheet not found, below) makes it `rec` | n/a (one RTC transfer in `boot`); 363,982,789 ns rec in the `rtc2` run below |
 | 14 | `kick_order` | the last `cpurst` fall (userio_osd releases the Amiga CPU) minus the last SDRAM write into the kickstart region (host 0x100000..0x17ffff, `sdram_host_model` at its ack), `clk_114` | 1 (the write lands first) | 6,829,787 (write at 150,139,042, release at 156,968,829) |
 

@@ -100,7 +100,8 @@ hdd (scenario hdd, bfm_ide.v): from the run log's "=== IDE cmd" / "=== IDE
 end" lines and the dumps <run>/hdd_<k>.hex (the 68k's words, first word
 first = the bytes in its memory order):
   - the commands are HDD_PLAN below, in order, each ending with status 40
-    (DRDY, no ERR), error 00, at least one wait (item 8), the words in /
+    (DRDY, no ERR), error 00, at least one interrupt or nrdy wait (item 8:
+    every command waits for the firmware's interrupt), the words in /
     out of its kind, and the task file the firmware leaves: the CHS of the
     last sector (hdd.c's CHS advance; the cylinder > 255 reads), the host's
     own registers for IDENTIFY / SET MULTIPLE
@@ -792,11 +793,14 @@ def hdd(run):
         what = "command %d %s %d/%d/%d count %d on %s" % (k, name, c, h, s, count, geo[0])
         st, er = int(e.group(3), 16), int(e.group(4), 16)
         tfr = [int(e.group(i), 16) for i in range(5, 10)]
-        win, wout, fname, nwait = int(e.group(10)), int(e.group(11)), e.group(12), int(e.group(13))
+        win, wout, fname = int(e.group(10)), int(e.group(11)), e.group(12)
         if st != 0x40 or er != 0:
             bad.append("%s: status %02x error %02x at the end, want 40 00" % (what, st, er))
-        if nwait < 1:
-            bad.append("%s: no wait recorded (item 8)" % what)
+        nirq, nnrdy = int(e.group(14)), int(e.group(16))
+        if nirq + nnrdy < 1:
+            # every command of the plan waits for the firmware's interrupt
+            # (bfm_ide records a wait only when the 68k waited)
+            bad.append("%s: no interrupt or nrdy wait recorded (item 8): irq %d, nrdy %d" % (what, nirq, nnrdy))
         dh = 0xA0 | (dev << 4)
         if name in ("IDENTIFY", "SET_MULT"):
             want_tf = [count & 255, s, c & 255, c >> 8, dh | h]
