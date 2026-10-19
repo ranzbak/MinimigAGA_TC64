@@ -620,9 +620,14 @@ try_report hostcpu_cells.txt {
     puts $fh "# openaars_virtual_top/hostcpu: every hierarchical (leaf-parent) cell below it, with its REF_NAME"
     set hc [get_cells -quiet -hierarchical -filter {IS_PRIMITIVE == 0 && NAME =~ openaars_virtual_top/hostcpu/*}]
     foreach c [lsort $hc] { puts $fh "$c [get_property REF_NAME $c]" }
+    # The 832 CPU is counted as eightthirtytwo_cpu*, its top entity (the
+    # alu/decode/... entities live inside it): a bare eightthirtytwo* would
+    # also match the bridge, EightThirtyTwo_Bridge, which both CPUs keep.
     puts $fh "# hierarchical cells in the whole design per REF_NAME pattern (case-insensitive)"
+    puts $fh "# patterns: 832 CPU eightthirtytwo_cpu*, 832 ROM OSDBoot_832_ROM*, 832 JTAG debug_bridge_jtag*;"
+    puts $fh "# RISC-V VexOsd*, rv_hostcpu*, OSDBoot_rv_ROM*; the shared bridge EightThirtyTwo_Bridge* (1 in every image)"
     set refs [get_property REF_NAME [get_cells -quiet -hierarchical -filter {IS_PRIMITIVE == 0}]]
-    foreach pat {eightthirtytwo* OSDBoot_832_ROM* debug_bridge_jtag* VexOsd* rv_hostcpu* OSDBoot_rv_ROM*} {
+    foreach pat {eightthirtytwo_cpu* OSDBoot_832_ROM* debug_bridge_jtag* VexOsd* rv_hostcpu* OSDBoot_rv_ROM* EightThirtyTwo_Bridge*} {
         set n 0
         foreach r $refs { if {[string match -nocase $pat $r]} { incr n } }
         puts $fh "count $pat $n"
