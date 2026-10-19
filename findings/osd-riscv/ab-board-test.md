@@ -27,7 +27,8 @@ UUID as the live card, so no software check can tell the two apart. Then find th
 
 ```
 lsblk -o NAME,SIZE,LABEL,UUID,MOUNTPOINT
-CARD='/mount/point/of/the/card/copy'   # edit: the MOUNTPOINT column
+# edit the next line: the MOUNTPOINT column of the card copy
+CARD='/mount/point/of/the/card/copy'
 ```
 
 If the MOUNTPOINT column is empty, the card did not auto-mount: `udisksctl mount -b /dev/sdX1` (the card copy's partition from the NAME column), then run `lsblk` again.
@@ -65,15 +66,18 @@ if card_ok; then
   for f in RV32OSDA.BIN MINMGAR.CFG MINMGAR1.CFG MINMGAR2.CFG MINMGAR3.CFG MINMGAR4.CFG; do if [ -e "$CARD/$f" ]; then echo "EXISTS, not copied: $f"; else cp "$SET/$f" "$CARD/$f"; fi; done
   (cd "$CARD" && sha256sum -c "$SET/SHA256SUMS")
   # scratch ADF for the floppy WRITE test (row 6): a copy of one of your ADFs, never overwritten
-  SRC_ADF='Workbench.adf'  # edit to one of your ADFs in the card root
+  # edit the next line to one of your ADFs in the card root
+  SRC_ADF='Workbench.adf'
   if [ -e "$CARD/SCRATCH.ADF" ]; then echo "EXISTS, not created: SCRATCH.ADF"
-  elif [ -e "$CARD/$SRC_ADF" ]; then cp "$CARD/$SRC_ADF" "$CARD/SCRATCH.ADF" && (cd "$CARD" && sha256sum SCRATCH.ADF | tee ~/ab-scratch-adf.sha256)
-  else echo "NO SCRATCH.ADF: $SRC_ADF not found in the card root; edit SRC_ADF and run this line again"; fi
+  elif [ -e "$CARD/$SRC_ADF" ]; then cp "$CARD/$SRC_ADF" "$CARD/SCRATCH.ADF"
+  else echo "NO SCRATCH.ADF: $SRC_ADF not found in the card root; edit SRC_ADF and run this block again"; fi
+  # the hash file always matches the SCRATCH.ADF now on the card
+  if [ -e "$CARD/SCRATCH.ADF" ]; then (cd "$CARD" && sha256sum SCRATCH.ADF | tee ~/ab-scratch-adf.sha256); fi
   sync
 fi
 ```
 
-- `SCRATCH.ADF` is a copy of `SRC_ADF` made on the card copy; the source ADF is only read. Its sha256 is kept in `~/ab-scratch-adf.sha256` for row 6.
+- `SCRATCH.ADF` is a copy of `SRC_ADF` made on the card copy; the source ADF is only read. Its sha256 is (re)written to `~/ab-scratch-adf.sha256` on every run of the block, for row 6.
 - Do not copy `SHA256SUMS`, `PROVENANCE.txt`, `work/` or `orig/` onto the card; they are provenance only.
 - `SHA256SUMS` holds bare file names, so run `sha256sum -c` from the card root as above. Expected: six lines ending in `: OK`.
 - The loop never overwrites: if a file of that name is already on the copy it prints `EXISTS, not copied: <name>`, and `sha256sum -c` then shows it as FAILED if it differs. Stop and tell me.
@@ -142,7 +146,7 @@ env LD_LIBRARY_PATH=$HOME/lib/tinfo5 LC_ALL=C /opt/Xilinx/Vivado/2023.2/bin/viva
 
 1. Card copy in the board, power-cycle, start picocom with `ab-A.log`, load A.
 2. The 832 boot ROM loads `832OSDAD.BIN`; the OSD opens; Kickstart boots to Workbench from the HDF.
-3. A runs rows 1 to 7, with row 3 by eye (is there a picture?); rows 8 to 10 are "-" for A. A has no row 1 boot lines to match (they are B's); write "832 ok" and note anything else on the ttyUSB0 log.
+3. A runs rows 1 to 5 and 7, with row 3 by eye (is there a picture?); rows 6 and 8 to 10 are "-" for A (A must not write `SCRATCH.ADF`; see row 6). A has no row 1 boot lines to match (they are B's); write "832 ok" and note anything else on the ttyUSB0 log.
 
 ## 5. Run B (about 30 minutes)
 
@@ -236,6 +240,8 @@ Insert an ADF from the OSD floppy page and boot or `dir` it.
 ### Row 6: floppy WRITE
 
 Fixed on 2026-10-19 night by osd-riscv `6ea1b76`. Use a scratch COPY of an ADF, never your only copy.
+
+A must not write `SCRATCH.ADF` before B's row 6: B's check compares against the hash recorded in section 1, so a write by A would make it report FAILED even if B wrote nothing.
 
 1. Use `SCRATCH.ADF`; its sha256 was recorded in section 1 (`~/ab-scratch-adf.sha256`).
 2. Put `SCRATCH.ADF` in DF0 (or DF1) from the OSD.
