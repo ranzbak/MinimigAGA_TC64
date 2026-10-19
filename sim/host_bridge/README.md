@@ -943,6 +943,30 @@ stub's 40 cycles, then cfide's `clk_28` latch of `OSD_RDY` and the poll
 that sees it. Every run reaches the 20th `KEYQ` frame well inside the cycle
 limit (586 / 336 / 572 `KEYQ` frames).
 
+**The monitor's tooth** (Task 11 review I1). At the default delay a
+firmware without the poll would also pass: its gap is above 40 anyway. So
+the tooth is a copy of the firmware with the poll removed (built from git
+`HEAD` outside the tree, the tree's `fw/ctrl_rv` untouched) against a slow
+stub (200 cycles), with the gap check off so that `OSD RDY early` is the
+only check that can fail:
+
+```sh
+D=$(mktemp -d)
+git archive HEAD fw/ctrl_rv tools/riscv | tar -x -C "$D"
+sed -i 's/if (!(HOST_REQ & HOST_REQ_OSD_RDY)) {/if (0) {/' "$D/fw/ctrl_rv/hardware.c"
+grep -c 'if (0) {' "$D/fw/ctrl_rv/hardware.c"
+make -C "$D/fw/ctrl_rv" B="$D/fw/ctrl_rv/build"
+SIM=verilator RUNTAG=fwvnp FW="$D/fw/ctrl_rv/build/RV32OSDA.BIN" XARGS="+STUB_RDY_DLY=200 +OSD_MIN_GAP=0" bash sim/host_bridge/run.sh fwboot
+```
+
+(`grep -c` must print 1.) Expected: exit 1, `=== fwboot FAILED`, with
+`OSD RDY early` > 0 and its `BENCH ERROR` as the only one. Measured
+2026-10-19 (`p4t11t`, 382 s): `OSD RDY early 590 of 590 reply bytes (stub
+delay 200 clk_114)`, `OSD RDY polls 0`, `OSD GAP min 14`, `BAD  BENCH ERROR
+... OSD RDY early: a reply byte started before the stub's osd_rx_seq caught
+up`, bench verdict `=== FAIL fwboot: DONE 0, bench errors 1`; the
+milestones are still found (the stub answers at once).
+
 ## Bench
 
 - **Clocks**: as `sim/spi_cdc/host832/tb_832_dmode.v`. `clk_114` has
