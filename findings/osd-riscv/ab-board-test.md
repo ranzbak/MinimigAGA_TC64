@@ -25,23 +25,43 @@ Work on the COPY of your card. The live card is `/media/paul/AARSDISK55`: do not
 Find the copy's mount point and put it in one variable:
 
 ```
-lsblk -o NAME,LABEL,MOUNTPOINT
+lsblk -o NAME,LABEL,MOUNTPOINT,UUID
 CARD=<mount point of the card COPY, from the MOUNTPOINT column>
 ```
+
+A clone of the live card can carry the same label and mount under another name, so go by the device and UUID: the line for `$CARD` must be the
+COPY. The block below prints them, and aborts before any copy if `$CARD` is empty, is not a directory, is the live card
+(`/media/paul/AARSDISK55`, by name or after `realpath`, or anything below it), or sits on the same device as the live card (when that is mounted).
+It is one block for bash or zsh; paste it whole. If it prints `ABORT`, nothing was copied.
 
 Copy the six files into the root of the copy, next to your own files. Nothing is replaced: `832OSDAD.BIN`, `MINMGAA*.CFG`, the kickstarts,
 HDFs, ISO and `drivesnd.bin` stay as they are.
 
 ```
 SET=/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64-riscv/build/ab_card_87577e2
-for f in RV32OSDA.BIN MINMGAR.CFG MINMGAR1.CFG MINMGAR2.CFG MINMGAR3.CFG MINMGAR4.CFG; do cp -n "$SET/$f" "$CARD/$f"; done
-cd "$CARD" && sha256sum -c "$SET/SHA256SUMS"
-sync
+card_ok() {
+  local live=/media/paul/AARSDISK55 c l cdev ldev
+  [ -n "${CARD:-}" ] || { echo "ABORT: CARD is empty"; return 1; }
+  [ -d "$CARD" ] || { echo "ABORT: CARD=$CARD is not a directory"; return 1; }
+  c=$(realpath -- "$CARD") || { echo "ABORT: realpath failed"; return 1; }
+  l=$(realpath -m -- "$live")
+  case "$c/" in "$l"/*) echo "ABORT: $CARD is the live card ($l)"; return 1;; esac
+  cdev=$(findmnt -n -o SOURCE -T "$c")
+  echo "CARD=$CARD  device=$cdev  UUID=$(findmnt -n -o UUID -T "$c")  label=$(findmnt -n -o LABEL -T "$c")"
+  ldev=$(findmnt -n -o SOURCE -M "$l" 2>/dev/null)
+  if [ -n "$ldev" ] && [ "$cdev" = "$ldev" ]; then echo "ABORT: $CARD is on the live card's device $ldev"; return 1; fi
+  echo "guard passed: check that the device above is the card COPY, not the live card"
+}
+if card_ok; then
+  for f in RV32OSDA.BIN MINMGAR.CFG MINMGAR1.CFG MINMGAR2.CFG MINMGAR3.CFG MINMGAR4.CFG; do if [ -e "$CARD/$f" ]; then echo "EXISTS, not copied: $f"; else cp "$SET/$f" "$CARD/$f"; fi; done
+  (cd "$CARD" && sha256sum -c "$SET/SHA256SUMS")
+  sync
+fi
 ```
 
 - Do not copy `SHA256SUMS`, `PROVENANCE.txt`, `work/` or `orig/` onto the card; they are provenance only.
 - `SHA256SUMS` holds bare file names, so run `sha256sum -c` from the card root as above. Expected: six lines ending in `: OK`.
-- `cp -n` refuses to overwrite: if a file of that name is already on the copy, `sha256sum -c` shows it as FAILED. Stop and tell me.
+- The loop never overwrites: if a file of that name is already on the copy it prints `EXISTS, not copied: <name>`, and `sha256sum -c` then shows it as FAILED if it differs. Stop and tell me.
 - Then unmount cleanly (`umount "$CARD"`, or eject in the file manager) before the card goes into the board.
 
 The six files (all values copied from `$SET/SHA256SUMS`):
