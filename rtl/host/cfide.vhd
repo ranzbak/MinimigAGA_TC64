@@ -696,11 +696,15 @@ begin
     -- than that window, so every byte has been taken), osd_tx_seq follows
     -- osd_rx_seq; this heals a byte userio_osd never took, and sets the
     -- start value (no reset needed: scs is 0 in reset, so it resyncs then).
-    -- Clock domains: the read value is latched in clk_28 at the access, like
-    -- the other registered reads here, so osd_rx_seq is compared in its own
+    -- Clock domains: the read value is a clk_28 register loaded at EVERY
+    -- clk_28 edge (no enable: req and addr are sysclk registers, and a load
+    -- enable from them could miss the edge whose ack the bridge takes and
+    -- return the previous poll's value), so the value read is the one loaded
+    -- at the edge that raised ack, and osd_rx_seq is compared in its own
     -- domain; osd_tx_seq last changed at the DATA write of an earlier access
-    -- (>= 4 sysclk cycles before), and the resync copies osd_rx_seq only
-    -- while it is static.  findings/osd-riscv/phase4.md, "Handshake design".
+    -- (>= 4 sysclk cycles before that edge), and the resync copies
+    -- osd_rx_seq only while it is static.  findings/osd-riscv/phase4.md,
+    -- "Handshake design".
     -----------------------------------------------------------------
     spi_dat_go <= '1' when SPI_select = '1' and req = '1' and wr = '1' and SD_busy = '0'
                            and addr(3 downto 2) = "00" else '0';   -- the byte starts (above)
@@ -726,9 +730,7 @@ begin
     process(clk_28)
     begin
         if rising_edge(clk_28) then
-            if audio_select = '1' and req = '1' then
-                host_req_q <= osd_rdy;
-            end if;
+            host_req_q <= osd_rdy;   -- every edge: see "Clock domains" above
         end if;
     end process;
 
