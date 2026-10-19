@@ -48,6 +48,13 @@ norm: one normalised stream of a run, in frame order, one item per line
     frames (20 00) whose level (MISO) equals the previous one, OSD_CMD_KEYQ
     frames (20 98) whose status byte (MISO 1) is 00 (no event, no
     overflow), every RTC frame (80); each run of them leaves nothing
+  - the IDE flag polls (hdd.c ReadIDEFlags(): 10, MOSI 80 or 81 and nine
+    00 bytes; sim/l3 cd, runs p4t16 / p4t16c and p4t16i / p4t16ci, Task
+    16 ruling): MISO byte 0's IDE request bits (3..2) are printed as 0.
+    The firmware keeps only MISO byte 8 (the flags) of that frame; byte 0
+    is clocked out during the command byte, and whether the 68k has read
+    the last word of a data phase by then follows the CPU's speed.  Byte 8,
+    the other bits of byte 0 and the poll count stay compared
   - paula's floppy DMA progress (sim/l3 fdd_rd, runs p4t13 / p4t13c: the
     FIFO is filled by the firmware and emptied at Agnus's rate, so these
     bytes depend on the CPU's speed) is masked by byte position, as "--":
@@ -633,6 +640,12 @@ def norm(spi, hw, uart, rules_path, card_path, charrom):
                 inp = inp[:4] + [None, None]
             elif inp[0] & 0x03 == 0x01:
                 inp = inp[:4] + [None] * (len(inp) - 4)
+        # the IDE flag polls (the doc above; cdrom.c cd_wait(), runs p4t16 /
+        # p4t16c, p4t16i / p4t16ci: the first poll after the INQUIRY and
+        # MODE SENSE data phases, RV 10 01 ..., 832 14 01 ..., byte 8 53 in
+        # both): MISO byte 0's IDE request bits not compared
+        if cs == 0x10 and len(out) == 10 and out[0] in (0x80, 0x81) and not any(out[1:]) and inp and inp[0] is not None:
+            inp = [inp[0] & ~0x0C] + list(inp[1:])
         if cs == 0x10 and len(out) == 6 and not any(out):
             # a masked frame without a request whose bytes 0..3 equal the
             # previous status frame's is a repeat too: its bytes 4..5 hold no

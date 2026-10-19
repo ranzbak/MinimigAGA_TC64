@@ -494,6 +494,15 @@ only when it is empty. `norm` writes one stream in frame order,
   MOSI ff). A request, a changed status frame, level or drive status, a
   queued key stays. Every file is read as latin-1, byte for byte (a UART
   byte >= 0x80 stays itself)
+- **the IDE flag polls' request bits, masked** (`cd`, runs `p4t16` /
+  `p4t16c` and `p4t16i` / `p4t16ci`, Task 16 ruling): in a
+  `ReadIDEFlags()` frame (`10`, MOSI `80` or `81` and nine 00 bytes:
+  `cdrom.c`'s `cd_wait()`, `CD_Locked()`, `CD_AudioPoll()`), MISO byte 0's IDE request
+  bits 3..2 are printed as 0. The firmware keeps only MISO byte 8 (the
+  flags) of that frame; byte 0 is clocked out during the command byte, and
+  whether the 68k has read a data phase's last word by then follows the
+  CPU's speed. Byte 8, the other bits of byte 0 and the number of polls
+  stay compared (`spitrace_test.sh` cases `cdflags`, `cdbit`)
 - **paula's floppy DMA progress, masked** (`fdd_rd`, runs `p4t13` /
   `p4t13c`). The firmware fills the FIFO and Agnus empties it at its own
   rate, so these bytes follow the CPU's speed. They are masked by byte
@@ -594,6 +603,8 @@ defect, `findings/osd-riscv/phase4.md` "Findings for Paul") and the RV-only
 - `FLOAT hw ^ffff(60|90|a0)$`: a TIMER-driven I2C / keyboard group
 - `DROP hw ^MEM audio_ring`: the drive sounds' ring is rendered per
   TIMER count; `cdda` checks its ring with `l3check.py`
+
+`cd` adds no rule, only the IDE flag poll mask above (section "cd").
 
 `hdd` adds three UART rules (section "hdd"): `file: "%.8s.%.3s"`
 (`fmt_diff_expected.txt` lines 45-52), the index time `Hardfile indexed
@@ -1428,18 +1439,19 @@ EightThirtyTwo's random start moves the milestone to 204.2 M, so it makes
 `run.sh diff p4t16c p4t16c_xr` is empty (as `hdd`'s 832 twin). All twelve
 dumps are byte-identical between the two CPUs and between each twin pair.
 
-The differential (`run.sh diff p4t16 p4t16c`, `p4t16i p4t16ci`) is not
-empty: two lines each, both timing-only. After the INQUIRY (36 bytes) and
-the MODE SENSE (52 bytes) data phase, `cd_wait()`'s first `ReadIDEFlags()`
-frame (`10 81` and nine 00) of the RV starts before the 68k has read the
-last word, so MISO byte 0 (paula's request byte, sampled during the command
-byte) still has the IDE command bit 0x04 clear (`10 01 ...`); the 832's
-frame starts later and has it set (`14 01 ...`). MISO byte 8, the flags the
-firmware reads, is the same (`53`: xfer done). The number of these polls is
-the same on both CPUs (77 cue, 53 iso: every `cd_wait()` sees `xfer_done`
-at its first read). The normaliser has no rule for it: a proposal is in
-the Task 16 report (mask MISO byte 0's IDE bits in the `ReadIDEFlags()`
-frames, whose byte 0 the firmware discards; with it both diffs are empty).
+The differential (`run.sh diff p4t16 p4t16c`, `p4t16i p4t16ci`) is empty
+with the IDE flag poll mask (section "Differential"; Task 16 ruling).
+Without it, two lines per disc differed, both timing-only. After the
+INQUIRY (36 bytes) and the MODE SENSE (52 bytes) data phase, `cd_wait()`'s
+first `ReadIDEFlags()` frame (`10 81` and nine 00) of the RV starts before
+the 68k has read the last word, so MISO byte 0 (paula's request byte,
+sampled during the command byte) still has the IDE command bit 0x04 clear
+(`10 01 ...`); the 832's frame starts later and has it set (`14 01 ...`).
+MISO byte 8, the flags the firmware reads, is the same (`53`: xfer done).
+The number of these polls is the same on both CPUs (77 cue, 53 iso: every
+`cd_wait()` sees `xfer_done` at its first read). The mask changes nothing
+in the earlier pairs (`p4t7r2` / `p4t7c2`, `p4t15f` / `p4t15cf`: their
+normalised streams are byte-identical with and without it).
 `--unused-rules` lists the `fdd_rd` and `hdd` rules (Task 19's clean-up).
 
 ## Monitors
