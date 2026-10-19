@@ -228,9 +228,17 @@ $(B)/fdd/spin.ok: $(SRC)/fdd.c $(FDD832)
 	    echo "FAIL fdd.c: a SPIN that is not commented out"; false; fi
 	test "$$(grep -c SPIN $(SRC)/fdd.c)" = "$$(grep -c SPIN $(FDD832))"
 	touch $@
-run64-fdd_test: $(B)/fdd_test $(B)/fdd/gold.ok $(B)/fdd/spin.ok
+# the write-FIFO gap (Phase 4 Task 14, README "Write-FIFO gap"): the listed
+# exception to "No new count-based delays", exactly its 20 sites in fdd.c
+$(B)/fdd/wrfifo.ok: $(SRC)/fdd.c
+	@mkdir -p $(@D)
+	test "$$(grep -c '^[[:space:]]*WRFIFO_GAP;[[:space:]]*$$' $(SRC)/fdd.c)" = 20
+	@if grep -ln 'WRFIFO_GAP' $(SRC)/*.c | grep -v '/fdd\.c$$'; then echo "FAIL WRFIFO_GAP outside fdd.c"; false; fi
+	@touch $@
+
+run64-fdd_test: $(B)/fdd_test $(B)/fdd/gold.ok $(B)/fdd/spin.ok $(B)/fdd/wrfifo.ok
 	$(B)/fdd_test $(B)/fdd
-run32-fdd_test: $(B)/fdd_test_32 $(B)/fdd/gold.ok $(B)/fdd/spin.ok
+run32-fdd_test: $(B)/fdd_test_32 $(B)/fdd/gold.ok $(B)/fdd/spin.ok $(B)/fdd/wrfifo.ok
 	$(B)/fdd_test_32 $(B)/fdd
 run-fdd_test: run64-fdd_test run32-fdd_test
 .PHONY: run-fdd_test run64-fdd_test run32-fdd_test

@@ -233,6 +233,9 @@ unit mock_dmode_count hdd_test t mock_hw.c 's/^\t\tdmode_blocks++;$/\t\t;/' "FAI
 unit fdd_short_sector fdd_test src fdd.c '0,/i = DATA_SIZE \/ 2;/s//i = DATA_SIZE \/ 2 - 1;/' \
   "FAIL ReadTrack track 0 side 0: RV != mfm.py" "FAIL ReadTrack track 0 side 0: RV != 832" \
   "FAIL ReadTrack track 79 side 1: RV != mfm.py" "FAIL ReadTrack track 79 side 1: RV != 832"
+# the write-FIFO gap (Phase 4 Task 14) one TIMER read short (a site removed is wrfifo.ok's)
+unit fdd_wrfifo_gap fdd_test src hardware.h 's/for (i_ = 0; i_ < WRFIFO_GAP_READS; i_++)/for (i_ = 1; i_ < WRFIFO_GAP_READS; i_++)/' \
+  "FAIL WriteTrack full159 (track 159, 11 sectors), FIFO +2048 words per poll: RV TIMER reads between two FIFO words"
 # the Copy Lock workaround gone: the Amiga's 0x8914 is sent as it is
 unit fdd_copylock fdd_test src fdd.c 's/if (dsksync == 0x0000 || dsksync == 0x8914 || dsksync == 0xA144)/if (0)/' \
   "FAIL ReadTrack copy lock dsksync 8914: RV != mfm.py" "FAIL ReadTrack copy lock dsksync 8914: RV != 832"

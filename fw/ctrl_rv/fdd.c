@@ -330,6 +330,7 @@ unsigned char FindSync(adfTYPE *drive)
 
         while (n--)
         {
+            WRFIFO_GAP;
             c3 = SPI(0);
             c4 = SPI(0);
             if (c3 == 0x44 && c4 == 0x89)
@@ -369,6 +370,7 @@ unsigned char GetHeader(unsigned int *pTrack, unsigned int *pSector)
 
         if ((c3 & 0x3F) != 0 || c4 > 24)// remaining header data is 25 mfm words
         {
+            WRFIFO_GAP;
             c1 = SPI(0); // second sync lsb
             c2 = SPI(0); // second sync msb
             if (c1 != 0x44 || c2 != 0x89)
@@ -380,6 +382,7 @@ unsigned char GetHeader(unsigned int *pTrack, unsigned int *pSector)
 
 //			SPIN;
 
+            WRFIFO_GAP;
             c = SPI(0);
             checksum[0] = c;
             c1 = (c & 0x55) << 1;
@@ -390,6 +393,7 @@ unsigned char GetHeader(unsigned int *pTrack, unsigned int *pSector)
 
 //			SPIN;
 
+            WRFIFO_GAP;
             c = SPI(0);
             checksum[2] = c;
             c3 = (c & 0x55) << 1;
@@ -400,6 +404,7 @@ unsigned char GetHeader(unsigned int *pTrack, unsigned int *pSector)
 
 //			SPIN;
 
+            WRFIFO_GAP;
             c = SPI(0);
             checksum[0] ^= c;
             c1 |= c & 0x55;
@@ -410,6 +415,7 @@ unsigned char GetHeader(unsigned int *pTrack, unsigned int *pSector)
 
 //			SPIN;
 
+            WRFIFO_GAP;
             c = SPI(0);
             checksum[2] ^= c;
             c3 |= c & 0x55;
@@ -443,9 +449,11 @@ unsigned char GetHeader(unsigned int *pTrack, unsigned int *pSector)
             for (i = 0; i < 8; i++)
             {
 //				SPIN;
+                WRFIFO_GAP;
                 checksum[0] ^= SPI(0);
                 checksum[1] ^= SPI(0);
 //				SPIN;
+                WRFIFO_GAP;
                 checksum[2] ^= SPI(0);
                 checksum[3] ^= SPI(0);
             }
@@ -457,17 +465,21 @@ unsigned char GetHeader(unsigned int *pTrack, unsigned int *pSector)
 
 //			SPIN;
 
+            WRFIFO_GAP;
             c1 = ((SPI(0)) & 0x55) << 1;
             c2 = ((SPI(0)) & 0x55) << 1;
 //			SPIN;
+            WRFIFO_GAP;
             c3 = ((SPI(0)) & 0x55) << 1;
             c4 = ((SPI(0)) & 0x55) << 1;
 
 //			SPIN;
 
+            WRFIFO_GAP;
             c1 |= (SPI(0)) & 0x55;
             c2 |= (SPI(0)) & 0x55;
 //			SPIN;
+            WRFIFO_GAP;
             c3 |= (SPI(0)) & 0x55;
             c4 |= (SPI(0)) & 0x55;
 
@@ -519,17 +531,21 @@ unsigned char GetData(void)
         {
 //			SPIN;
 
+            WRFIFO_GAP;
             c1 = ((SPI(0)) & 0x55) << 1;
             c2 = ((SPI(0)) & 0x55) << 1;
 //			SPIN;
+            WRFIFO_GAP;
             c3 = ((SPI(0)) & 0x55) << 1;
             c4 = ((SPI(0)) & 0x55) << 1;
 
 //			SPIN;
 
+            WRFIFO_GAP;
             c1 |= (SPI(0)) & 0x55;
             c2 |= (SPI(0)) & 0x55;
 //			SPIN;
+            WRFIFO_GAP;
             c3 |= (SPI(0)) & 0x55;
             c4 |= (SPI(0)) & 0x55;
 
@@ -545,6 +561,7 @@ unsigned char GetData(void)
             {
 //				SPIN;
 //				SPIN;
+                WRFIFO_GAP;
                 c = SPI(0);
                 checksum[0] ^= c;
                 *p++ = (c & 0x55) << 1;
@@ -555,6 +572,7 @@ unsigned char GetData(void)
                 *p++ = (c & 0x55) << 1;
 //				SPIN;
 //				SPIN;
+                WRFIFO_GAP;
                 c = SPI(0);
                 checksum[2] ^= c;
                 *p++ = (c & 0x55) << 1;
@@ -572,6 +590,7 @@ unsigned char GetData(void)
             do
             {
 //				SPIN;
+                WRFIFO_GAP;
                 c = SPI(0);
                 checksum[0] ^= c;
                 *p++ |= c & 0x55;
@@ -579,6 +598,7 @@ unsigned char GetData(void)
                 checksum[1] ^= c;
                 *p++ |= c & 0x55;
 //				SPIN;
+                WRFIFO_GAP;
                 c = SPI(0);
                 checksum[2] ^= c;
                 *p++ |= c & 0x55;

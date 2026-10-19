@@ -587,6 +587,7 @@ Other rows:
 | Order of an interrupt's `printf` inside another `printf` | streamed byte by byte while formatting | the interrupted line is formatted completely first; the interrupt's line is inserted at a byte boundary of its send loop. Both lines intact (`lib_test`) |
 | Line longer than the buffer | no limit | cut to 319 bytes, `rv_printf_truncations` (audit: no site reaches it) |
 | `SPI_reply` polls `HOST_REQ` (RV only; needs a core with the Phase 4 RTL; the 832 keeps its four `SPIN`s) | four `SPIN`s (TIMER reads as a delay) before each OSD reply byte | waits for `HOST_REQ` bit 0 (`OSD_RDY`) before each reply byte, at most 2 TIMER counts; the waits that ran out are counted in `osd_rdy_timeouts` ("OSD reply wait (Phase 4 Task 11)") |
+| Track write: a gap before every word read from paula's write FIFO (RV only; Phase 4 Task 14, the one listed exception to "No new count-based delays") | none (its word loop is slow enough: 220 to 400 `clk_114` per word, sim/l3 `p4t14c`) | `WRFIFO_GAP` (`hardware.h`): 16 TIMER reads before each FIFO word in `FindSync`, `GetHeader` and `GetData` (20 sites), so paula has popped the word before when the next one is loaded ("Floppy (Task 13)", "Write-FIFO gap") |
 | DebugMode stack line (RV only, Task 17) | none | `Stack high water <hex>, OSD RDY timeouts 0x<hex>` on the UART when DebugMode is switched on |
 | String and memory functions | lib832 `string.S` | newlib-nano; no observable difference at any call site (next table; "String semantics audit") |
 
@@ -915,6 +916,43 @@ The 28 `SPIN`s of `fdd.c` (`GetHeader` lines 381-470: 14, `GetData` lines
 (`out/fdd/spin.ok`: every line with `SPIN` is `// SPIN;`, and the count equals
 the 832's).
 
+### Write-FIFO gap (Phase 4 Task 14)
+
+`WRFIFO_GAP` (`hardware.h`) runs before every word `FindSync`, `GetHeader`
+and `GetData` read from paula_floppy's write FIFO (20 sites in `fdd.c`, at
+the word boundaries the 28 commented `SPIN`s once marked). paula loads a
+word's transmit register from `fifo_out` at the word's first `sck` edge,
+but pops the word before it only after that word went through its
+`rx_flag` synchroniser, the FIFO pointer and the FIFO's registered output:
+about 56 to 64 `clk_114` after its last edge. A word started sooner is the
+previous word again. sim/l3 `fdd_wr` run `p4t14w` (this firmware without
+the gap, about 124 `clk_114` per word) wrote nothing: "Second sync word
+missing...". The 832 (`p4t14c`) does not need it. Findings:
+`findings/osd-riscv/phase4.md`, "Found by the L3 bench (Task 14)".
+
+The gap is 16 TIMER reads (`WRFIFO_GAP_READS`). Each is a cfide access
+acknowledged at a `clk_28` edge, so the gap has a floor in hardware time
+whatever the CPU's speed; it is not an empty counted loop. It is the one
+listed exception to the Global Constraints' "No new count-based delays"
+(Paul, 2026-10-19: "fix floppy write before I'll try it"; controller
+ruling: firmware pacing, no RTL change). The measured gap and the cost per
+word and per track are in `sim/l3/README.md` "fdd_wr". Checked by:
+
+- `test/fdd_test.c`: in every write case the RV makes at least
+  `WRFIFO_GAP_READS` TIMER reads between two FIFO words of one frame
+  (mutant `fdd_wrfifo_gap`: the gap one TIMER read short, killed)
+- `test/Makefile` `out/fdd/wrfifo.ok`: `WRFIFO_GAP;` appears exactly 20
+  times in `fdd.c` and in no other `.c` file
+
+The delay sites of the firmware are then:
+
+```sh
+grep -n 'SPIN\|WRFIFO_GAP' fw/ctrl_rv/*.c | grep -v '^[a-z0-9_/]*\.c:[0-9]*:[[:space:]]*//'
+```
+
+`fpga.c:226` and `config.c:618` (`SPIN`, as before) and the 20
+`WRFIFO_GAP` lines of `fdd.c`.
+
 ### Timing items for Phase 4 (plan 7.1 items 6 and 7)
 
 The host tests check the protocol (what is sent and read, never past the
@@ -1084,6 +1122,7 @@ us). Lines are those of the current tree.
 |---|---|---|---|
 | `hardware.h:53` | `TIMER`, 16-bit read of `0xFFFFFFD0` | | |
 | `hardware.c:180`, `188`, `201` | `GetTimer`, `CheckTimer`, `WaitTimer` (above) | | |
+| `hardware.h` `WRFIFO_GAP` | 16 TIMER reads, the values unused, before each word read from paula's write FIFO (`fdd.c`, 20 sites; Phase 4 Task 14, "Write-FIFO gap") | | 16 cfide handshakes per word |
 | `hardware.h:59` | `SPIN`: one TIMER read, the value unused (a cfide handshake as a delay); live at `fpga.c:226` (4x) and `config.c:618` (4x) only (`SPI_reply`'s four went with Phase 4 Task 11) | | one bus access each |
 | `hardware.c:244`, `246` (`SPI_reply`) | the `OSD_RDY` wait: `GetTimer(2)`, ends when TIMER has passed T0 + 2 (`CheckTimer`) | 2 | 11.6..17.4 ms (2..3 counts) |
 | `audio.c:33`-`34` (`audio_clear`) | waits for the next TIMER change after `AUDIOF_ENA` | <= 1 | <= 5.804 ms |
@@ -1126,7 +1165,8 @@ the start by 2, after 2 to 3 counts (11.6 to 17.4 ms on the board, about
 4: at least 5.8 ms). A wait that runs out adds 1 to `osd_rdy_timeouts` and
 reads the byte all the same. A poll bounded by TIMER is not a count delay
 (Global Constraints "No new count-based delays"): the live `SPIN` sites are
-now `fpga.c:226` and `config.c:618` only:
+now `fpga.c:226` and `config.c:618` only (plus, since Phase 4 Task 14, the
+listed `WRFIFO_GAP` sites of `fdd.c`, "Write-FIFO gap"):
 
 ```sh
 grep -n 'SPIN' fw/ctrl_rv/*.c | grep -v '^[a-z0-9_/]*\.c:[0-9]*:[[:space:]]*//'

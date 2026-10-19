@@ -58,6 +58,22 @@
 #define FPGA_TEMP_RAW (*(volatile unsigned short *)0xFFFFFF40)
 #define SPIN {int v=TIMER; (void)v;}	// Waste a few cycles to let the FPGA catch up
 
+// Track write (fdd.c FindSync / GetHeader / GetData): the time paula_floppy's
+// write FIFO needs between two FIFO words the firmware reads.  paula loads a
+// word's SPI transmit register (fifo_out) at the word's first sck edge, but
+// pops the word before it only after that word has gone through its rx_flag
+// synchroniser, the FIFO pointer and the FIFO's registered output: about 56
+// to 64 clk_114 after the word's last edge.  A word started sooner sends the
+// previous word again (sim/l3 fdd_wr run p4t14w: "Second sync word
+// missing...", nothing written; findings/osd-riscv/phase4.md, Task 14).
+// The 832 is slow enough not to need this.  WRFIFO_GAP is WRFIFO_GAP_READS
+// TIMER reads: each one is a cfide access acknowledged at a clk_28 edge (as
+// SPIN), so the gap has a floor in clk_28 cycles whatever the CPU's speed;
+// not an empty counted loop.  The one listed exception to "No new
+// count-based delays" (README "Differences", "Delay sites").
+#define WRFIFO_GAP_READS 16
+#define WRFIFO_GAP {int i_; for (i_ = 0; i_ < WRFIFO_GAP_READS; i_++) {int v_=TIMER; (void)v_;}}
+
 #if 1
 #define EnableCard()  HW_SPI(HW_SPI_CS)=0x02
 #define DisableCard() HW_SPI(HW_SPI_CS)=0x03

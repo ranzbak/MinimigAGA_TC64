@@ -380,7 +380,13 @@ static void read_track_case(const char *what, int t, unsigned sync, const uint8_
  * at the start of every FPGA frame the Amiga's DMA adds up to `rate` words
  * of its stream; the status bytes: trackwr while the DMA has words left or
  * the FIFO holds some, the FIFO count of that moment ({dmaen & dsklen[14],
- * 000, cnt[11:0]}); from byte 6 on every word read pops the FIFO */
+ * 000, cnt[11:0]}); from byte 6 on every word read pops the FIFO.
+ * gapmin: the fewest TIMER reads between two FIFO words of one frame (the
+ * second byte of one to the first byte of the next): paula_floppy loads a
+ * word's transmit register at its first sck edge and pops the word before
+ * it only some 64 clk_114 after that word ended, so the RV firmware keeps
+ * WRFIFO_GAP_READS clk_28-bounded TIMER reads there (hardware.h WRFIFO_GAP;
+ * sim/l3 fdd_wr, findings/osd-riscv/phase4.md Task 14) */
 #define FIFO_WORDS 2048
 #define MAX_POLLS 200000
 static struct wrmodel {
@@ -390,6 +396,7 @@ static struct wrmodel {
 	size_t nwords, pushed, popped;
 	unsigned rate, cnt, cur, overread;
 	int active;
+	unsigned last_reads, gapmin;
 } wm;
 
 static unsigned char write_miso(void *ctx, unsigned char out)
@@ -415,15 +422,18 @@ static unsigned char write_miso(void *ctx, unsigned char out)
 	case 5: return (unsigned char)wm.cnt;
 	default:
 		if (!(pos & 1)) {
+			if (pos >= 8 && mock_timer_reads() - wm.last_reads < wm.gapmin)
+				wm.gapmin = mock_timer_reads() - wm.last_reads;
 			if (wm.popped >= wm.pushed) { wm.overread++; wm.cur = 0; }
 			else { wm.cur = (unsigned)wm.w[2 * wm.popped] << 8 | wm.w[2 * wm.popped + 1]; wm.popped++; }
 			return (unsigned char)(wm.cur >> 8);
 		}
+		wm.last_reads = mock_timer_reads();
 		return (unsigned char)wm.cur;
 	}
 }
 
-struct wres { uint8_t *adf; char *trace; int writes, errmask, erra; const char *errstr; int prev; size_t popped; unsigned overread; int polls; };
+struct wres { uint8_t *adf; char *trace; int writes, errmask, erra; const char *errstr; int prev; size_t popped; unsigned overread; int polls; unsigned gapmin; };
 
 static struct wres write_run(const struct src *S, int track, const uint8_t *stream, size_t nbytes, unsigned rate, int writable)
 {
@@ -432,7 +442,7 @@ static struct wres write_run(const struct src *S, int track, const uint8_t *stre
 	insert(&S->df[SEL], writable);
 	mock_reset();
 	mock_script_fn(0x10, write_miso, NULL);
-	wm = (struct wrmodel){ .frame = -1, .track = track, .w = stream, .nwords = nbytes / 2, .rate = rate };
+	wm = (struct wrmodel){ .frame = -1, .track = track, .w = stream, .nwords = nbytes / 2, .rate = rate, .gapmin = ~0u };
 	file_writes = 0; nwlog = 0; ClearError(ERROR_ALL);
 	S->handle((unsigned char)(SEL << 6 | DRIVES << 4 | CMD_WRTRK), (unsigned char)track, 0, 0);
 	r.adf = malloc(ADF_BYTES);
@@ -447,6 +457,7 @@ static struct wres write_run(const struct src *S, int track, const uint8_t *stre
 	r.popped = wm.popped;
 	r.overread = wm.overread;
 	r.polls = wm.polls;
+	r.gapmin = wm.gapmin;
 	return r;
 }
 
@@ -502,6 +513,10 @@ static void write_case(const char *what, int track, const uint8_t *stream, size_
 		snprintf(w, sizeof w, "%s: %s track_prev -1 (the next read starts the track over)", what, srcs[i].name);
 		check(w, r[i].prev, 0xFF);
 	}
+	/* the RV only: the 832 (fw/ctrl_832, unchanged) has no gap and does not
+	   need one (its word loop is slow enough, sim/l3 p4t14c) */
+	snprintf(w, sizeof w, "%s: RV TIMER reads between two FIFO words >= WRFIFO_GAP_READS (%d)", what, WRFIFO_GAP_READS);
+	check(w, r[0].gapmin != ~0u && r[0].gapmin >= WRFIFO_GAP_READS, 1);
 	snprintf(w, sizeof w, "%s: file layer (cluster and sector agree)", what);
 	check(w, file_errs, 0);
 	for (int i = 0; i < 2; i++) { free(r[i].adf); free(r[i].trace); }
