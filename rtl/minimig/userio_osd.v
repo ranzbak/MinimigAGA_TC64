@@ -26,6 +26,12 @@ module userio_osd #(
 	input	sdi,		  		//SPI data in
 	output	sdo,	 			//SPI data out
 	input	sck,	  			//SPI clock
+	// Reply sequence: +1 (mod 4) at the clk7 edge that takes each byte received
+	// under _scs, so once it has caught up with the host's own byte count the
+	// reply to the next byte is already in place.  No reset, initial value
+	// only: the host compares increments, never the absolute value.  See
+	// "reply sequence" below and findings/osd-riscv/phase4.md "Handshake design".
+	output	reg [1:0] osd_rx_seq = 2'd0,
 	output	osd_blank,			//osd overlay, normal video blank output
 	output	osd_pixel,			//osd video pixel
 	output	reg osd_enable = 0,			//osd enable
@@ -259,6 +265,14 @@ always @ (posedge clk) begin
   end
 end
 assign spi_invalidate = ~vld && vld_d;
+
+// reply sequence: the same clk7 edge at which cmd_dat, dat_cnt, ver_cnt and
+// kq_rptr take the byte (rx is high for exactly one clk7 period per byte)
+always @ (posedge clk) begin
+  if (clk7_en) begin
+    if (rx) osd_rx_seq <= #1 osd_rx_seq + 2'd1;
+  end
+end
 
 // !!! OLD !!! OSD SPI commands:
  // 8'b00000000  NOP

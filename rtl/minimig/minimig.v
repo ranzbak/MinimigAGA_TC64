@@ -234,6 +234,7 @@ module minimig #(
   input sdi, //SPI data input
   inout sdo, //SPI data output
   input sck, //SPI clock
+  output [1:0] osd_rx_seq, // OSD reply sequence, clk domain (userio_osd.v)
   // // host
   // output wire           host_cs,
   // output wire [ 24-1:0] host_adr,
@@ -762,6 +763,7 @@ userio #(.CORE_CAPS(CORE_CAPS | CAPS_IDE2)) USERIO1
   .sdi(sdi),
   .sdo(user_sdo),
   .sck(sck),
+  .osd_rx_seq(osd_rx_seq),
   .osd_blank(osd_blank),
   .osd_pixel(osd_pixel),
   .lr_filter(lr_filter),

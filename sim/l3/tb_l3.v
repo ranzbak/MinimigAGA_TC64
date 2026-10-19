@@ -357,6 +357,7 @@ module tb_l3 #(
     .osd_ctrl(osd_ctrl),
     .in_diag(32'h00000000), .in_diag_clr(),
     ._scs(sd_cs[5]), .sdi(sd_do), .sdo(user_sdo), .sck(sck_slv),
+    .osd_rx_seq(),   // reply sequence: not read yet (Phase 4 Task 9; Verilator's PINMISSING needs the pin named)
     .osd_blank(), .osd_pixel(),
     .osd_enable(), .key_disable(),
     .lr_filter(), .hr_filter(),

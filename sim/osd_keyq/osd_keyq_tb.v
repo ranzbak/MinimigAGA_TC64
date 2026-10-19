@@ -11,6 +11,15 @@
 // byte counter advances), so a queue drain that agrees with it is safe for the
 // same reason the version read is.
 //
+// Sections 9-12 check the reply sequence osd_rx_seq (the RTL half of the OSD
+// "reply byte ready" handshake, findings/osd-riscv/phase4.md "Handshake
+// design"): one increment per byte, at the clk7 edge that takes the byte, so
+// a host that starts a reply byte only once the sequence has caught up with
+// its own byte count reads the right byte even with no extra wait at all.
+// That host is modelled the way cfide clocks SPI at SPI_fast() (speed 1):
+// sck half period 3 clk_114, everything on clk_114 edges (clk114 below, four
+// per clk), tx_seq its count of bytes started (cfide's osd_tx_seq, Task 10).
+//
 // Run: ./run.sh
 
 `timescale 1ns/1ps
@@ -28,6 +37,12 @@ module osd_keyq_tb;
   wire clk7_en  = (ph == 2'd0);
   wire clk7n_en = (ph == 2'd2);
 
+  // clk_114 for the fast host: four periods per clk, its rising edges half
+  // way between two clk edges (so the host never samples a clk-domain
+  // register in the time step it changes)
+  reg clk114 = 0;
+  always #4.45 clk114 = ~clk114;
+
   reg  [7:0] osd_ctrl = 8'h00;
   reg        _scs = 1'b1, sdi = 1'b0, sck = 1'b1;
   wire       sdo;
@@ -39,6 +54,21 @@ module osd_keyq_tb;
   wire       diag_clr;
   integer    diag_clrs = 0;
   always @(posedge diag_clr) diag_clrs = diag_clrs + 1;   // one clk7-long pulse
+
+  // osd_rx_seq: every change must be +1 (mod 4); seq_incs counts them
+  wire [1:0] rx_seq;
+  reg  [1:0] seq_prev = 2'd0;
+  integer    seq_incs = 0;
+  always @(posedge clk) begin
+    if (rx_seq !== seq_prev) begin
+      if (rx_seq !== seq_prev + 2'd1) begin
+        $display("FAIL: (a) osd_rx_seq stepped %0d -> %0d", seq_prev, rx_seq);
+        errors = errors + 1;
+      end
+      seq_incs = seq_incs + 1;
+    end
+    seq_prev <= rx_seq;
+  end
 
   userio_osd #(.CORE_CAPS(CAPS)) dut (
     .clk(clk), .clk7_en(clk7_en), .clk7n_en(clk7n_en),
@@ -53,6 +83,7 @@ module osd_keyq_tb;
     .lr_filter(), .hr_filter(),
     .memory_config(), .chipset_config(), .floppy_config(),
     .scanline(), .dither(),
+    .osd_rx_seq(rx_seq),
     .ide_config0(ide_cfg0), .ide_config1(ide_cfg1),
     .cpu_config(cpu_cfg), .autofire_config(), .cd32pad(),
     .usrrst(), .cpurst(), .cpuhlt(),
@@ -109,7 +140,82 @@ module osd_keyq_tb;
     end
   endtask
 
+  // ---- the fast host (sections 10-12) -------------------------------------
+  localparam HALF = 3;             // sck half period, clk_114 (cfide, speed 1)
+  reg [1:0] tx_seq = 2'd0;         // bytes started, mod 4 (cfide's osd_tx_seq)
+
+  // One byte at full speed.  poll = 1: first wait until osd_rx_seq has caught
+  // up with tx_seq (every byte before this one has been taken), then start at
+  // that very clk_114 edge -- a gap of 0 extra cycles.  poll = 0: start at
+  // once.  Called on a clk_114 edge, returns on one.
+  task fbyte(input [8*12:1] tag, input poll, input [7:0] tx, output [7:0] rx_b);
+    integer i, w;
+    begin
+      if (poll) begin
+        w = 0;
+        while (rx_seq !== tx_seq && w < 200) begin
+          @(posedge clk114);  w = w + 1;
+        end
+        if (rx_seq !== tx_seq) begin
+          $display("FAIL: %0s osd_rx_seq %0d never reached tx_seq %0d", tag, rx_seq, tx_seq);
+          errors = errors + 1;
+        end
+      end
+      tx_seq = tx_seq + 2'd1;
+      for (i = 7; i >= 0; i = i - 1) begin
+        sck = 1'b0;  sdi = tx[i];  repeat (HALF) @(posedge clk114);
+        rx_b[i] = sdo;
+        sck = 1'b1;  repeat (HALF) @(posedge clk114);
+      end
+    end
+  endtask
+
+  // Open a frame at full speed after an idle bus: tx_seq takes osd_rx_seq
+  // (cfide resyncs after 64 idle cycles, Task 10), CS falls, and the command
+  // byte starts one clk_114 later.
+  task fopen(input [7:0] cmd);
+    reg [7:0] dummy;
+    begin
+      @(posedge clk114);
+      tx_seq = rx_seq;
+      _scs = 1'b0;  @(posedge clk114);
+      fbyte("cmd", 1'b0, cmd, dummy);
+    end
+  endtask
+
+  task fclose;
+    begin
+      _scs = 1'b1;  #2000;
+    end
+  endtask
+
+  // Drain the key queue at the slow rate: read the count, pop that many.
+  task drain;
+    reg [7:0] n, d;
+    integer i;
+    begin
+      spi_open(8'h98);
+      spi_byte(8'hff, n);
+      for (i = 0; i < n[3:0]; i = i + 1) spi_byte(8'hff, d);
+      spi_close;
+    end
+  endtask
+
+  task expect_int(input [8*48:1] what, input integer got, input integer want);
+    begin
+      if (got !== want) begin
+        $display("FAIL: %0s = %0d, expected %0d", what, got, want);
+        errors = errors + 1;
+      end else
+        $display("  ok: %0s = %0d", what, got);
+    end
+  endtask
+
   reg [7:0] b0, b1, b2, b3, b4, b5, b6, b7, b8, b9;
+  reg [7:0] ver_ref [0:9];         // the version reply, read at the slow rate
+  reg [7:0] kq_ev   [0:5];         // six key events (sections 9-11)
+  reg [7:0] rb;
+  integer   k, n0, wrong;
 
   initial begin
     $dumpfile("osd_keyq.vcd");
@@ -258,6 +364,126 @@ module osd_keyq_tb;
     osd_reset = 1'b1;  #2000;  osd_reset = 1'b0;  #2000;
     expect_byte("ide_config0 (0x54)", {3'b000, ide_cfg0}, 8'h17);
     expect_byte("ide_config1 (0x58)", {3'b000, ide_cfg1}, 8'h0b);
+
+    // ---- 9. (a) osd_rx_seq: exactly one step per byte ----------------------
+    // Slow frames, so every byte has long been taken when the count is read.
+    $display("--- (a) osd_rx_seq per byte ---");
+    drain;                         // sections 5-6 left the queue full
+    #2000;
+    n0 = seq_incs;
+    spi_open(8'h88);
+    for (k = 0; k < 10; k = k + 1) begin
+      spi_byte(8'hff, rb);
+      ver_ref[k] = rb;
+    end
+    spi_close;  #2000;
+    expect_int("(a) steps, VERSION (command + 10)", seq_incs - n0, 11);
+
+    for (k = 0; k < 6; k = k + 1) begin
+      kq_ev[k] = 8'h50 + k[7:0];
+      key(kq_ev[k]);
+    end
+    n0 = seq_incs;
+    spi_open(8'h98);
+    spi_byte(8'hff, b0);
+    for (k = 0; k < 6; k = k + 1) begin
+      spi_byte(8'hff, rb);
+      expect_byte("(a) KEYQ event", rb, kq_ev[k]);
+    end
+    spi_close;  #2000;
+    expect_byte("(a) KEYQ count", b0, 8'h06);
+    expect_int("(a) steps, KEYQ (command + count + 6)", seq_incs - n0, 8);
+
+    // OSD_CMD_OSD_WR as OsdWriteOffset sends it: 0x0c, 00 00 00 <line>, text
+    n0 = seq_incs;
+    spi_open(8'h0c);
+    spi_byte(8'h00, rb);  spi_byte(8'h00, rb);  spi_byte(8'h00, rb);  spi_byte(8'h02, rb);
+    for (k = 0; k < 35; k = k + 1) spi_byte(8'h41 + k[7:0], rb);
+    spi_close;  #2000;
+    expect_int("(a) steps, OSD_WR (40 bytes)", seq_incs - n0, 40);
+
+    // ---- 10. (b) polling the sequence, gap 0: every reply byte right --------
+    $display("--- (b) fast host, polls osd_rx_seq, gap 0 ---");
+    fopen(8'h88);
+    for (k = 0; k < 10; k = k + 1) begin
+      fbyte("(b) VERSION", 1'b1, 8'hff, rb);
+      expect_byte("(b) VERSION byte", rb, ver_ref[k]);
+    end
+    fclose;
+
+    for (k = 0; k < 6; k = k + 1) begin
+      kq_ev[k] = 8'h58 + k[7:0];
+      key(kq_ev[k]);
+    end
+    fopen(8'h98);
+    fbyte("(b) KEYQ", 1'b1, 8'hff, rb);
+    expect_byte("(b) KEYQ count", rb, 8'h06);
+    for (k = 0; k < 6; k = k + 1) begin
+      fbyte("(b) KEYQ", 1'b1, 8'hff, rb);
+      expect_byte("(b) KEYQ event", rb, kq_ev[k]);
+    end
+    fbyte("(b) KEYQ", 1'b1, 8'hff, rb);
+    expect_byte("(b) KEYQ past the end", rb, 8'h00);
+    fclose;
+
+    // ---- 11. (c) the same host ignoring the sequence: wrong bytes -----------
+    // Proves (b) bites: at gap 0 the next byte is loaded three clk_114 after
+    // the previous one's last edge, long before the clk7 edge that takes it.
+    $display("--- (c) fast host, ignores osd_rx_seq, gap 0 ---");
+    wrong = 0;
+    fopen(8'h88);
+    for (k = 0; k < 10; k = k + 1) begin
+      fbyte("(c) VERSION", 1'b0, 8'hff, rb);
+      if (rb !== ver_ref[k]) wrong = wrong + 1;
+    end
+    fclose;
+    for (k = 0; k < 6; k = k + 1) key(8'h60 + k[7:0]);
+    fopen(8'h98);
+    fbyte("(c) KEYQ", 1'b0, 8'hff, rb);
+    if (rb !== 8'h06) wrong = wrong + 1;
+    for (k = 0; k < 6; k = k + 1) begin
+      fbyte("(c) KEYQ", 1'b0, 8'hff, rb);
+      if (rb !== 8'h60 + k[7:0]) wrong = wrong + 1;
+    end
+    fclose;
+    if (wrong == 0) begin
+      $display("FAIL: (c) ignoring osd_rx_seq read every byte right: (b) proves nothing");
+      errors = errors + 1;
+    end else
+      $display("  ok: (c) ignoring osd_rx_seq read %0d of 17 bytes wrong (expected > 0)", wrong);
+    drain;                         // (c) may leave events behind
+
+    // ---- 12. (d) cross-frame: the previous frame's last byte is late --------
+    // An OSD_WR frame of 3 bytes at full speed (no poll: a write), CS up, and
+    // the KEYQ frame's first sck edge 8 clk_114 after CS rose.  The OSD_WR
+    // frame's last byte is taken up to ~40 clk_114 after its last edge, i.e.
+    // inside the KEYQ frame: a "byte done" flag would say the KEYQ command
+    // has been taken when it has not.  The sequence cannot be fooled that way.
+    $display("--- (d) OSD_WR, CS up, KEYQ 8 clk_114 later ---");
+    key(8'h71);  key(8'h72);
+    fopen(8'h0c);
+    fbyte("(d) OSD_WR", 1'b0, 8'h00, rb);
+    fbyte("(d) OSD_WR", 1'b0, 8'h00, rb);
+    _scs = 1'b1;
+    repeat (7) @(posedge clk114);
+    _scs = 1'b0;
+    if (rx_seq !== tx_seq - 2'd1) begin
+      $display("FAIL: (d) at the KEYQ frame's CS osd_rx_seq = %0d, tx_seq = %0d: the case is not exercised",
+               rx_seq, tx_seq);
+      errors = errors + 1;
+    end else
+      $display("  ok: (d) the OSD_WR frame's last byte is still in the synchroniser when the KEYQ frame starts");
+    @(posedge clk114);
+    fbyte("(d) KEYQ cmd", 1'b0, 8'h98, rb);
+    fbyte("(d) KEYQ", 1'b1, 8'hff, rb);
+    expect_byte("(d) KEYQ count", rb, 8'h02);
+    fbyte("(d) KEYQ", 1'b1, 8'hff, rb);
+    expect_byte("(d) KEYQ event 0", rb, 8'h71);
+    fbyte("(d) KEYQ", 1'b1, 8'hff, rb);
+    expect_byte("(d) KEYQ event 1", rb, 8'h72);
+    fbyte("(d) KEYQ", 1'b1, 8'hff, rb);
+    expect_byte("(d) KEYQ past the end", rb, 8'h00);
+    fclose;
 
     if (errors == 0)
       $display("\n=== PASS: 0 failures ===");

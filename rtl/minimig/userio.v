@@ -69,6 +69,7 @@ module userio #(
   input  wire           sdi,                // SPI data in
   output wire           sdo,                // SPI data out
   input  wire           sck,                // SPI clock
+  output wire [  2-1:0] osd_rx_seq,         // OSD reply sequence (userio_osd.v)
   output wire           osd_blank,          // osd overlay, normal video blank output
   output wire           osd_pixel,          // osd video pixel
   output wire [  2-1:0] lr_filter,
@@ -599,6 +600,7 @@ userio_osd #(.CORE_CAPS(CORE_CAPS)) osd1
   .sdi              (sdi),
   .sdo              (sdo),
   .sck              (sck),
+  .osd_rx_seq       (osd_rx_seq),
   .osd_blank        (osd_blank),
   .osd_pixel        (osd_pixel),
   .osd_enable       (osd_enable),
