@@ -21,7 +21,10 @@
 # targets version.h and 832OSDAD.bin are made: bootcustominit.h is a
 # tracked file, so vasmm68k_mot is not needed.  USER, BUILD_TG and BUILD_R
 # are fixed (fw/ctrl_832's -D__BUILD_USER / __BUILD_TAG, unused by the
-# sources, and its git calls).  Every make rebuilds (about a minute).
+# sources, and its git calls).  Every make rebuilds (about a minute).  The
+# inner make runs with -j1 whatever the outer -j: fw/ctrl_832/Makefile does
+# not order version.h before the objects that include it, so in parallel
+# they could compile against the copied tracked version.h (not reproducible).
 TOP     := $(abspath $(CURDIR)/../../..)
 B       ?= build
 BA      := $(abspath $(B))
@@ -41,7 +44,7 @@ $(BA)/832OSDAD.BIN: FORCE
 	install -m 755 date.sh "$(BA)/dateshim/date"
 	cd "$(TOP)" && git ls-files -z -- fw/ctrl_832 | tar --null -T - -cf - | tar -C "$(BA)/src" --strip-components=2 -xf -
 	[ -f "$(BA)/src/Makefile" ] && [ -f "$(BA)/src/main.c" ] || { echo "fw832: copy of fw/ctrl_832 failed"; exit 1; }
-	PATH="$(BA)/dateshim:$$PATH" $(MAKE) -C "$(BA)/src" 832DIR="$(E832A)" USER=l3 BUILD_TG=l3 BUILD_R=l3 \
+	PATH="$(BA)/dateshim:$$PATH" $(MAKE) -j1 -C "$(BA)/src" 832DIR="$(E832A)" USER=l3 BUILD_TG=l3 BUILD_R=l3 \
 		version.h 832OSDAD.bin > "$(BA)/make.log" 2>&1 || { tail -20 "$(BA)/make.log"; echo "fw832: build failed ($(BA)/make.log)"; exit 1; }
 	cp "$(BA)/src/832OSDAD.map" "$(BA)/832OSDAD.map"
 	cp "$(BA)/src/832OSDAD.bin" "$@"
