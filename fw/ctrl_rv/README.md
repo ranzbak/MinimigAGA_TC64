@@ -935,12 +935,36 @@ acknowledged at a `clk_28` edge, so the gap has a floor in hardware time
 whatever the CPU's speed; it is not an empty counted loop. It is the one
 listed exception to the Global Constraints' "No new count-based delays"
 (Paul, 2026-10-19: "fix floppy write before I'll try it"; controller
-ruling: firmware pacing, no RTL change). The measured gap and the cost per
-word and per track are in `sim/l3/README.md` "fdd_wr". Checked by:
+ruling: firmware pacing, no RTL change).
 
-- `test/fdd_test.c`: in every write case the RV makes at least
-  `WRFIFO_GAP_READS` TIMER reads between two FIFO words of one frame
-  (mutant `fdd_wrfifo_gap`: the gap one TIMER read short, killed)
+The floor: a TIMER read is a cfide access. cfide raises `ack` at the
+first `clk_28` rising edge that sees `req` and drops it at the next one
+(the bridge has dropped `req` in the meantime), and the bridge starts its
+next access only after `ack` has fallen. So every read spans at least two
+`clk_28` edges, 8 `clk_114`, and 16 reads are at least 128 `clk_114`.
+With the loop and the next `SPI(0)` write that is about 136 `clk_114` of
+gap after a word, whatever the CPU's speed (a slower CPU only adds to it).
+paula needs about 64.
+
+Measured (sim/l3 `fdd_wr`, run `p4t14f`, this image, `EXTRA_WS` 0):
+- the gap from a FIFO word's last `sck` rise to the next word's first fall
+  is at least **202 `clk_114`** over 61,221 words (the bench's item-7
+  monitor, bound 64: 0 below)
+- `FindSync` reads about 379 `clk_114` per word with the gap, against
+  124 without it (`p4t14w`); `GetData` 454 (the 832: 494 for the same
+  loop)
+- per track that is about 255 `clk_114` more per word, 1.6 M `clk_114`
+  (14 ms) of firmware time for 6,334 words, inside
+  the DMA's own 15.3 M (135 ms): `DSKLEN` to `blckint` takes 15.57 M per
+  track (832: 15.59 to 16.20 M), and item 7 (FIFO full) stays 0 of 63,340
+  slots
+
+`sim/l3/README.md` "fdd_wr" has the runs. Checked by:
+
+- `test/fdd_test.c`: in every write case the RV makes at least 16
+  TIMER reads (a literal floor, `WRFIFO_GAP_FLOOR`) between two FIFO words
+  of one frame (mutants `fdd_wrfifo_gap`, the gap one TIMER read short,
+  and `fdd_wrfifo_gap8`, `WRFIFO_GAP_READS` 8: both killed)
 - `test/Makefile` `out/fdd/wrfifo.ok`: `WRFIFO_GAP;` appears exactly 20
   times in `fdd.c` and in no other `.c` file
 
