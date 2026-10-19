@@ -2,7 +2,7 @@
 
 Work in progress (Phase 4 of the OSD host CPU migration). This file grows
 with the bench; so far it has the sections "Bench", "Run", "boot",
-"832", "Monitors" and "Cards".
+"832", "Differential", "Monitors" and "Cards".
 
 ## Bench
 
@@ -122,9 +122,10 @@ scenario and its `XRAND=1` twin in parallel (`run_<RUNTAG>`,
 
 A run directory `sim/l3/run_<RUNTAG>/` holds `results.txt`, the log
 `tb_<scenario>_x<EXTRA_WS>_s<SLAT>_j<SJIT>.log`, `spi.txt`,
-`spi_summary.txt`, `spi_t.txt`, `milestones.txt` (the check's output),
-`kick.txt`, `order.txt`, `mmc.txt` and `sdram.bin` (`boot`), `card/`,
-`fwrv/` and (`CPU=832`) `fw832/`.
+`spi_summary.txt`, `spi_t.txt`, `hw.txt` and `uart.txt` (section
+"Differential"), `sdram.bin`, `memhash.txt`, `milestones.txt` (the check's
+output), `kick.txt`, `order.txt` and `mmc.txt` (`boot`), `card/`, `fwrv/` and
+(`CPU=832`) `fw832/`.
 
 ## boot
 
@@ -425,6 +426,96 @@ mmc PASS (the 832's `MMC_Init` sends the 9 commands of
 | 4 paula_word_spacing / userio_byte_spacing | 121.0 / 49.0 | 117.0 / 57.0 |
 | 5 spi_write_busy | 0 of 844,721 | 0 of 829,924 |
 | 14 kick_order | 13,589,729 | 6,829,787 |
+
+## Differential
+
+The RV and the 832 run of one scenario are compared after normalisation:
+what remains different must be a rule of `sim/l3/expected_diff.txt`, each
+with a comment naming its source. Setup as in "Run" and "832" (the 832
+tools; in a worktree `E832DIR` = the main checkout's `EightThirtyTwo`).
+Both runs must boot the same card, so both firmwares are built once and
+given to both runs (`FW`, `FW832`); `run.sh diff` refuses two different
+card images. From the repository root:
+
+```sh
+E832DIR=$PWD/EightThirtyTwo
+E832=$E832DIR/RTL
+FWD=$PWD/sim/l3/run_fw
+mkdir -p "$FWD/dateshim" "$FWD/fwrv"
+printf '%s\n' '#!/bin/sh' 'TZ=UTC exec /bin/date -d "${L3_DATE:-2026-01-01} 00:00:00" "$@"' > "$FWD/dateshim/date"
+chmod +x "$FWD/dateshim/date"
+PATH="$FWD/dateshim:$PATH" make -s -C fw/ctrl_rv B="$FWD/fwrv"
+make -C sim/l3/fw832 B="$FWD/fw832" E832DIR="$E832DIR"
+SIM=verilator RUNTAG=drv FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh boot &
+CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=d832 FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh boot &
+wait
+bash sim/l3/run.sh diff --unused-rules drv d832
+bash sim/l3/test/spitrace_test.sh
+```
+
+(the date shim is the one `run.sh` uses, so `FWD/fwrv` is the image a
+default RV run would build; the two `boot` runs take about 10 and 15
+minutes side by side.)
+
+What a run writes for it (`sim/common/hostmon.vh`, every L3 scenario):
+
+| File | Lines |
+|---|---|
+| `spi.txt` | the SPI frames (section "Bench") |
+| `hw.txt` | `<frames> <ev> <addr> <value16>` per hw-register write except SPI DATA / CS, the UART and the L2 bench registers 0x..00 / 04; `addr` = the 24 bits cfide decodes (the RV's 0xFFFFFFB0 and the 832's 0x0FFFFFB3 are both `ffffb0`), `value16` = cfide's d (a byte write: 00 and its byte); at the end `MEM <region> <sha256>` per SDRAM region the CPU wrote (`kickstart` host 0x100000..0x17ffff, `audio_ring` 0x70000..0x7ffff), hashed from `sdram.bin` by `l3check.py memhash` |
+| `uart.txt` | `<frames> <ev> <text>` per UART line |
+
+`<frames>` is the number of `spi.txt` lines before the event and `<ev>`
+one counter over both files: the order without the cycles.
+
+`run.sh diff <rv run> <832 run>` runs `spitrace.py norm` on each
+(`<run>/norm.txt`) and `spitrace.py diff` on the two: a unified diff, exit 0
+only when it is empty. `norm` writes one stream in frame order,
+`<STREAM> <text>` per line:
+
+- **dropped poll frames** (their number depends on the CPU's speed):
+  FPGA status frames (`10` and six 00 bytes) whose status byte has no
+  request (bits 3..0: track read / write, IDE command / data), FPGA
+  drive-status frames (`10 10 <s>`, after every HandleFpga) whose `<s>`
+  is the previous one's, `OSD_CMD_READ` (`20 00`) whose level is the
+  previous one's, `OSD_CMD_KEYQ` (`20 98`) with status 00 (no event, no
+  overflow), every RTC frame (`80`), the SD deselect clocks (cs `00`, all
+  MOSI ff). A request, a changed level or drive status, a queued key stays
+- `SD CMD<n> <lba or arg> R<r1> [rd|wr <sha256 per block>]`: one line per
+  card command (CMD8 / CMD58 with their response bytes, writes with the data
+  response `D<xx>`)
+- `OSD <row> <text>`: `OSD_CMD_OSD_WR` frames decoded with
+  `fw/ctrl_rv/charrom.h` (`stripe=<hash>` for the side stripe,
+  `{inv:...}` inverted characters, `{xx ...}` columns that are no
+  character); `spitrace.py osd <spi.txt>` prints the pages
+- `SPI <cs> <MOSI> / <MISO>`: every other frame, unchanged
+- `HW <addr> <value16>`, `HW MEM <region> <sha256>`, `UART <text>`
+- then the rules of `expected_diff.txt`, in file order:
+  `SUBST <stream> <regex> <replacement>`, `DROP <stream> <regex>` (stream
+  `uart`, `osd`, `hw`, `sd`, `spi` or `all`; the regex has no blanks,
+  `\x20`), `SDFILE <8.3 name> <alias>`: an access inside the file's
+  clusters (read from the run's card) is `CMD<n> <alias>+<offset>` without
+  its data hash, and a run of them is one line (the hw writes and other card
+  accesses inside the run are printed once): `RV32OSDA.BIN` and
+  `832OSDAD.BIN` are both `FIRMWARE+00000000 ..`. A rule without a comment
+  line above it is refused
+- `# rule <line> used <n>` and `# dropped ...` lines (not compared):
+  `diff --unused-rules` prints `UNUSED <line>: <rule>` for a rule neither
+  run used, and exits 1
+
+`sim/l3/test/spitrace_test.sh` (one second, `mkcard.sh`'s tools) checks
+the tools on generated fixtures: other poll counts and the fixture's
+rules give an empty diff; one changed byte in an SD read, an FPGA frame, an
+OSD text line, a hw write, a UART line, a KEYQ event and a status frame with
+a request each give a diff line; each rule removed in turn brings its
+difference back; an unused rule is reported.
+
+The rules of `boot` (`expected_diff.txt`): the firmware file
+(`SDFILE` of both names, the UART line with the name and the boot ROM's
+one `0` per sector), the config file (`SDFILE` of `MINMGAR.CFG` and
+`MINMGAA.CFG`, the UART name) and `fmt_diff_expected.txt` line 275 (the
+832's `partition type: 0x0`). What `boot` showed besides them is in
+`findings/osd-riscv/phase4.md` (Task 7).
 
 ## Monitors
 

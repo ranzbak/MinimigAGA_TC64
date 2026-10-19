@@ -12,6 +12,15 @@
 #                                        every tb_*.log and spi.txt of both
 #                                        run directories (sim/common/hostsim.sh
 #                                        hs_compare; exit 1 unless all SAME)
+#   bash sim/l3/run.sh diff [--unused-rules] <RUNTAG rv> <RUNTAG 832>
+#                                        the differential (README
+#                                        "Differential"): each run's spi.txt,
+#                                        hw.txt and uart.txt normalised with
+#                                        expected_diff.txt (spitrace.py norm,
+#                                        <run>/norm.txt), then spitrace.py diff:
+#                                        exit 0 only when empty; with
+#                                        --unused-rules also the rules neither
+#                                        run used (exit 1 when there is one)
 #
 # Environment:
 #   CPU      rv (default: rv_hostcpu, fw/ctrl_boot_rv, RV32OSDA.BIN) or 832
@@ -59,7 +68,9 @@
 #               up to the line "#@ boot_short end"; the MARGIN lines; no
 #               kick, order or mmc check
 # Logs in the run directory: tb_<scenario>_x<EXTRA_WS>_s<SLAT>_j<SJIT>.log,
-# spi.txt, spi_t.txt (frames with cycles, not compared), milestones.txt,
+# spi.txt, spi_t.txt (frames with cycles, not compared), hw.txt and uart.txt
+# (sim/common/hostmon.vh +HW_LOG / +UART_LOG, for diff; hw.txt's MEM lines
+# hashed from sdram.bin by l3check.py memhash), sdram.bin, milestones.txt,
 # results.txt (with the wall time).
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -396,7 +407,7 @@ scenario() {
 	local s=$1 to snap="tb_l3_x$XW" pa=() st x
 	local log="$run/tb_${s}_x${XW}_s${SL}_j${SJ}.log"
 	case "$s" in
-		boot) to=${TIMEOUT:-$L3_BOOT_TO}; pa=("SDRAM_DUMP=$run/sdram.bin" "SD_LOG=1") ;;
+		boot) to=${TIMEOUT:-$L3_BOOT_TO}; pa=("SD_LOG=1") ;;
 		boot_short) to=${TIMEOUT:-$L3_SHORT_TO} ;;
 		*) die "unknown scenario $s" ;;
 	esac
@@ -421,7 +432,8 @@ scenario() {
 		*" +FAST_HW=1 "*) pa=(SD_TOKEN_DLY=0 SD_BUSY=1 SD_NCR=1 SLAT=2 SJIT=0 "${pa[@]}") ;;
 	esac
 	pa+=("SCENARIO=$s" "SLAT=$SL" "SJIT=$SJ" "SEED=${SEED:-1}" "SD_IMG=$CARD" "TIMEOUT=$to"
-	     "SPI_LOG=$run/spi.txt" "SPI_T_LOG=$run/spi_t.txt")
+	     "SPI_LOG=$run/spi.txt" "SPI_T_LOG=$run/spi_t.txt" "HW_LOG=$run/hw.txt" "UART_LOG=$run/uart.txt"
+	     "SDRAM_DUMP=$run/sdram.bin")
 	for x in ${XARGS:-}; do pa+=("${x#+}"); done
 	local t0=$SECONDS
 	hs_simrun "$run" "$snap" tb_l3 "$log" "${pa[@]}"
@@ -434,6 +446,7 @@ scenario() {
 		grep -q '^SD: image .* loaded' "$log" || echo "BAD  the SD model did not load $CARD"
 		milestones "$s" "$log"
 		grep -E '^UART: .*(EXC |TRAP )' "$log" | sed 's/^/BAD  /'
+		l3_check memhash "$run/memhash.txt" '^PASS memhash: ' python3 -I "$L3CHECK" memhash "$run"
 		if [ "$s" = boot ]; then
 			l3_check kick "$run/kick.txt" '^PASS kick: ' python3 -I "$L3CHECK" kick "$run"
 			l3_check order "$run/order.txt" '^PASS order: ' python3 -I "$L3CHECK" order "$run"
@@ -466,6 +479,33 @@ case "${1:-}" in
 		[ $# -eq 3 ] || { echo "usage: run.sh compare <RUNTAG a> <RUNTAG b>"; exit 2; }
 		for t in "$2" "$3"; do [ -d "$HERE/run_$t" ] || { echo "no run directory $HERE/run_$t"; exit 2; }; done
 		hs_compare "$HERE/run_$2" "$HERE/run_$3"
+		exit $?
+		;;
+	diff)
+		shift
+		unused=()
+		[ "${1:-}" = --unused-rules ] && { unused=(--unused-rules); shift; }
+		[ $# -eq 2 ] || { echo "usage: run.sh diff [--unused-rules] <RUNTAG rv> <RUNTAG 832>"; exit 2; }
+		cards=()
+		for t in "$1" "$2"; do
+			d="$HERE/run_$t"
+			[ -d "$d" ] || { echo "no run directory $d"; exit 2; }
+			for f in spi.txt hw.txt uart.txt results.txt; do
+				[ -f "$d/$f" ] || { echo "no $d/$f (a run before hw.txt / uart.txt: run it again)"; exit 2; }
+			done
+			# the card the run booted (results.txt "card: <image>")
+			c=$(sed -n 's/^card: \([^ ]*\).*/\1/p' "$d/results.txt" | head -1)
+			[ -f "$c" ] || { echo "no card image for $d (results.txt: '${c}')"; exit 2; }
+			cards+=("$c")
+			python3 -I "$L2/spitrace.py" norm "$d/spi.txt" "$d/hw.txt" "$d/uart.txt" \
+				-r "$HERE/expected_diff.txt" --card "$c" > "$d/norm.txt" \
+				|| { echo "spitrace.py norm failed for $d"; exit 2; }
+		done
+		# the same card in both runs (FW= and FW832= the same images), or
+		# the SD reads differ for that reason alone
+		cmp -s "${cards[0]}" "${cards[1]}" \
+			|| { echo "the cards of run_$1 and run_$2 differ: give both runs the same FW= and FW832="; exit 2; }
+		python3 -I "$L2/spitrace.py" diff "${unused[@]}" "$HERE/run_$1/norm.txt" "$HERE/run_$2/norm.txt"
 		exit $?
 		;;
 	xpair)

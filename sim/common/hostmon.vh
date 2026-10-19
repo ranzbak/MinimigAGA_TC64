@@ -8,7 +8,7 @@
 // and may define HM_CPU (the bridge instance, default hostcpu) and HM_RAM
 // (the SDRAM model, default ram) before the include.  The bench signals it
 // reads: clk114 clk28 n_reset cpu_reset_n hostaddr hostWR hostsel host_we
-// hw_req hw_ack sd_cs sd_clk sd_do miso.
+// hw_req hw_ack ram_req ram_ack sd_cs sd_clk sd_do miso.
 //
 // Contents, with the bench-side hooks the bench's per-cycle hw block calls:
 //   hw bus snoop checks   stale ack, SPI accept (hm_hw_cycle / hm_hw_done), X on the bus
@@ -23,6 +23,29 @@
 // HM_FRAME_HOOK provides task hm_frame_hook(input at_end, input logged),
 // which frame_close calls last, with the closed frame still in fr_*; logged
 // is 1 for a frame spi.txt got a line for.  The L2 bench does not define it.
+//
+// FWBOOT, for the differential (sim/l3 "Differential", spitrace.py norm):
+//   +HW_LOG=<file>   hw.txt: one line per hw-register write the CPU makes
+//                    except SPI DATA / CS (0x..E0 / E4), the UART (0x..F0..FF)
+//                    and the L2 bench registers (0x..00 / 04):
+//                      <frames> <ev> <addr> <value16>
+//                    addr = the 24 address bits cfide decodes ({hostaddr,
+//                    2'b00}[23:0]: the RV's 0xFFFFFFB0 and the 832's
+//                    0x0FFFFFB3 are both ffffb0), value16 = hostWR[15:0]
+//                    (cfide's d), for a byte write (one hostsel bit) 00 and
+//                    hostWR[7:0]: the RV's bridge puts a stored byte on
+//                    every lane, the 832's on one, and cfide's byte
+//                    registers take d(7 downto 0); at the end, per SDRAM
+//                    region the CPU wrote
+//                    (host kickstart 0x100000..0x17ffff, AUDIO_BUFFER ring
+//                    0x70000..0x7ffff),
+//                      MEM <region> <first host byte> <bytes>
+//                    which sim/l3/l3check.py memhash turns into
+//                    "MEM <region> <sha256>" from the SDRAM dump
+//   +UART_LOG=<file> uart.txt: every UART line as "<frames> <ev> <text>"
+//   <frames> = the SPI frames logged so far (the line comes after spi.txt
+//   line <frames>), <ev> = one counter over both files (their order within
+//   one gap between frames).  No cycles: the CPUs' timing does not show.
 `ifndef HM_CPU
 `define HM_CPU hostcpu
 `endif
@@ -62,6 +85,8 @@
   reg [7:0]  uart_line [0:UART_MAX-1];
   integer    uart_n = 0;
   integer    uart_first = -1;   // first UART write: main has returned
+  // +HW_LOG / +UART_LOG (FWBOOT, see the header)
+  integer    hw_fd = 0, uart_fd = 0, hm_ev = 0;
 
   // X on the CPU bus: read data the bridge returns (cpu_d, read
   // hierarchically) in its ack cycle, write data on the lanes sel enables
@@ -249,6 +274,27 @@
     sl_b = cpu_sel[0] ? 0 : cpu_sel[1] ? 1 : cpu_sel[2] ? 2 : 3;
     if ({cpu_addr, 2'b00} + sl_b < stack_low) stack_low = {cpu_addr, 2'b00} + sl_b;
   end
+
+  // ------------------------------------------------ FWBOOT: hw.txt, uart.txt
+  // SDRAM writes into the regions of the MEM lines (see the header)
+  reg hm_mem_kick = 1'b0, hm_mem_audio = 1'b0;
+  always @(posedge clk114) if (ram_req === 1'b1 && ram_ack === 1'b1 && host_we === 1'b1) begin
+    if (hwa >= 32'h00100000 && hwa < 32'h00180000) hm_mem_kick = 1'b1;
+    if (hwa >= 32'h00070000 && hwa < 32'h00080000) hm_mem_audio = 1'b1;
+  end
+
+  // a completed hw write (hm_hw_done): its hw.txt line
+  task hm_hw_log;
+    begin
+      if (hw_fd != 0 && host_we && !(hostaddr[23] && hostaddr[7:4] == 4'hE && hostaddr[3:2] <= 2'b01) &&
+          !uart_tx && !(hostaddr[23] && hostaddr[7:3] == 5'b00000)) begin
+        $fwrite(hw_fd, "%0d %0d %h %h\n", n_frames, hm_ev, hwa[23:0],
+                (hostsel == 4'b0001 || hostsel == 4'b0010 || hostsel == 4'b0100 || hostsel == 4'b1000) ?
+                {8'h00, hostWR[7:0]} : hostWR[15:0]);
+        hm_ev = hm_ev + 1;
+      end
+    end
+  endtask
 `endif
 
   task uart_print;
@@ -260,6 +306,12 @@
       $write("UART: ");
       for (k = 0; k < uart_n; k = k + 1) $write("%c", uart_line[k]);
       $write("\n");
+      if (uart_fd != 0) begin
+        $fwrite(uart_fd, "%0d %0d ", n_frames, hm_ev);
+        for (k = 0; k < uart_n; k = k + 1) $fwrite(uart_fd, "%c", uart_line[k]);
+        $fwrite(uart_fd, "\n");
+        hm_ev = hm_ev + 1;
+      end
 `else
     reg [8*UART_MAX-1:0] s;
     begin
@@ -298,6 +350,9 @@
       errors = errors + 1;
     end
     c28_seen = 1'b0;     // re-arm for the next request
+`ifdef FWBOOT
+    hm_hw_log;
+`endif
     if (host_we && spi_data && !spi_acc) begin
       $display("BENCH ERROR at cycle %0d: SPI DATA write %h completed, cfide did not accept it (SD_busy high)",
                cyc, hostWR[7:0]);
@@ -330,6 +385,14 @@
         spi_fd = $fopen(spi_log_name, "w");
         if (spi_fd == 0) bench_error("+SPI_LOG: cannot open the file");
       end
+      if ($value$plusargs("HW_LOG=%s", spi_log_name)) begin
+        hw_fd = $fopen(spi_log_name, "w");
+        if (hw_fd == 0) bench_error("+HW_LOG: cannot open the file");
+      end
+      if ($value$plusargs("UART_LOG=%s", spi_log_name)) begin
+        uart_fd = $fopen(spi_log_name, "w");
+        if (uart_fd == 0) bench_error("+UART_LOG: cannot open the file");
+      end
 `endif
     end
   endtask
@@ -359,6 +422,12 @@
         frame_close(1'b1);   // the frame still open at the end (its whole bytes)
         $fclose(spi_fd);
       end
+      if (hw_fd != 0) begin
+        if (hm_mem_kick) $fwrite(hw_fd, "MEM kickstart 00100000 00080000\n");
+        if (hm_mem_audio) $fwrite(hw_fd, "MEM audio_ring 00070000 00010000\n");
+        $fclose(hw_fd);
+      end
+      if (uart_fd != 0) $fclose(uart_fd);
       $display("=== SPI frames %0d, HandleFpga frames %0d, KEYQ frames %0d", n_frames, n_fpga6, n_keyq);
       if (og_bytes > 0)
         $display("=== OSD GAP min %0d over %0d bytes", og_rw_min, og_bytes);

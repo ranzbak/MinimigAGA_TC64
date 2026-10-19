@@ -4,6 +4,7 @@
     python3 -I l3check.py kick <run>
     python3 -I l3check.py order <run>
     python3 -I l3check.py mmc <run> [<golden>]
+    python3 -I l3check.py memhash <run>
 
 kick: the 256 KB kickstart the firmware uploaded equals the card's KICK.ROM
 byte for byte.  UploadKickstart (fw/ctrl_rv/config.c) sends a 0x40000-byte
@@ -27,10 +28,16 @@ sim/l3/gold/mmc_init_rv.txt).  From the run log (+SD_LOG=1: sd_spi_model's
 firmware ("=== BOOT first read of 0x2000"), up to and including the first
 CMD58, as "<cmd> arg=<a>"; the golden's lines without '#' comments.
 
+memhash: the MEM lines of <run>/hw.txt (sim/common/hostmon.vh +HW_LOG:
+"MEM <region> <first host byte> <bytes>", hex, one per SDRAM region the CPU
+wrote) become "MEM <region> <sha256>" of those bytes of <run>/sdram.bin, in
+place (spitrace.py norm reads them; a line already hashed stays).
+
 Each prints one line, "PASS <name>: ..." (exit 0) or "FAIL <name>: ..."
 (exit 1); exit 2 on a usage error.  Python 3 standard library only.
 """
 import glob
+import hashlib
 import re
 import os
 import sys
@@ -165,6 +172,41 @@ def mmc(run, golden):
     return 0
 
 
+def memhash(run):
+    hw_path = os.path.join(run, "hw.txt")
+    dump_path = os.path.join(run, "sdram.bin")
+    if not os.path.isfile(hw_path):
+        print("FAIL memhash: no %s" % hw_path)
+        return 1
+    with open(hw_path) as f:
+        lines = f.read().splitlines()
+    mem = None
+    out, names = [], []
+    for line in lines:
+        w = line.split()
+        if len(w) == 4 and w[0] == "MEM":
+            if mem is None:
+                if not os.path.isfile(dump_path):
+                    print("FAIL memhash: %s has MEM lines but there is no %s" % (hw_path, dump_path))
+                    return 1
+                with open(dump_path, "rb") as f:
+                    mem = f.read()
+            a, n = int(w[2], 16), int(w[3], 16)
+            if a + n > len(mem):
+                print("FAIL memhash: MEM %s 0x%x+0x%x beyond the dump (%d bytes)" % (w[1], a, n, len(mem)))
+                return 1
+            line = "MEM %s %s" % (w[1], hashlib.sha256(mem[a:a + n]).hexdigest())
+        if line.startswith("MEM "):
+            names.append(line.split()[1])
+        out.append(line)
+    tmp = hw_path + ".tmp"
+    with open(tmp, "w") as f:
+        f.write("".join(l + "\n" for l in out))
+    os.replace(tmp, hw_path)
+    print("PASS memhash: %d region(s)%s" % (len(names), (" (" + ", ".join(names) + ")") if names else ""))
+    return 0
+
+
 def main(argv):
     if len(argv) == 3 and argv[1] == "kick":
         return kick(argv[2])
@@ -174,6 +216,8 @@ def main(argv):
         golden = argv[3] if len(argv) == 4 else os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                                              "gold", "mmc_init_rv.txt")
         return mmc(argv[2], golden)
+    if len(argv) == 3 and argv[1] == "memhash":
+        return memhash(argv[2])
     sys.stderr.write(__doc__)
     return 2
 

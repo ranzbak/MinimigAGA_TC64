@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
-"""spitrace.py: the L2 firmware boot's SPI frame log (tb_host_bridge.v
-+SPI_LOG, run.sh fwboot) -- summary and milestone check.
+r"""spitrace.py: the SPI frame log of the L2 firmware boot (tb_host_bridge.v
++SPI_LOG, run.sh fwboot) and of the L3 bench (sim/l3) -- summary, milestone
+check, and the 832-vs-RV differential.
 
     python3 -I spitrace.py summary <spi.txt>
     python3 -I spitrace.py check <milestones.txt> <run log> <spi.txt>
     python3 -I spitrace.py count <spi.txt> <pattern>
+    python3 -I spitrace.py norm <spi.txt> <hw.txt> <uart.txt> -r <expected_diff.txt>
+                                [--card <card image>] [--charrom <charrom.h>]
+    python3 -I spitrace.py diff [--unused-rules] <norm a> <norm b>
+    python3 -I spitrace.py osd <spi.txt> [--charrom <charrom.h>]
 
 spi.txt: one SPI frame per line, "<cs> <MOSI bytes> / <MISO bytes>", hex,
 no timestamps (cs = ~sd_cs without bit 0, the Enable value: 20 OSD, 10 FPGA,
@@ -24,8 +29,68 @@ Without "..", the frame has exactly as many bytes as tokens; without a
 MISO part, MISO is not checked.
 
 Exit status: 0 = every milestone found (check), 1 = not, 2 = usage.
+
+norm: one normalised stream of a run, in frame order, one item per line
+"<STREAM> <text>" (STREAM = SPI, SD, OSD, HW, UART), for diff:
+  - the poll frames, whose number depends on the CPU's speed, are dropped:
+    FPGA status frames (10, six 00 bytes) whose status byte (MISO 0) has no
+    request (bits 3..0 = 0: no track read / write, no IDE command / data;
+    HandleFpga), the FPGA drive-status frames (10 10 <s>: UpdateDriveStatus
+    after every HandleFpga) whose <s> equals the previous one, OSD_CMD_READ
+    frames (20 00) whose level (MISO) equals the previous one, OSD_CMD_KEYQ
+    frames (20 98) whose status byte (MISO 1) is 00 (no event, no
+    overflow), every RTC frame (80); each run of them leaves nothing
+  - SD card frames (cs 02) become one "SD CMD<n> ..." line per command: the
+    argument (CMD17/18/24/25: the block, "lba"), "R<r1>" (CMD8 / CMD58 with
+    their four response bytes) and the sha256 of each data block (read: the
+    512 bytes after the FE token on MISO; write: after the FE / FC token on
+    MOSI); the deselect clocks (cs 00, every MOSI byte ff: no device
+    selected) are not printed
+  - OSD_CMD_OSD_WR frames (20 0c 00 00 00 <row> ...) become "OSD <row>
+    <text>", the 8-byte columns decoded with fw/ctrl_rv/charrom.h:
+    "stripe=<hash>" for the side stripe, {inv:...} for inverted
+    characters, {xx ...} for columns that are no character; trailing
+    spaces dropped
+  - other frames: "SPI <cs> <MOSI> / <MISO>"
+  - hw.txt (sim/common/hostmon.vh +HW_LOG; "<frames> <ev> <addr> <value16>")
+    -> "HW <addr> <value16>" after spi.txt line <frames>, its "MEM <region>
+    <sha256>" lines (l3check.py memhash) -> "HW MEM ..." at the end;
+    uart.txt (+UART_LOG; "<frames> <ev> <text>") -> "UART <text>"; within
+    one gap between frames in <ev> order
+  - then the rules of <expected_diff.txt> (below), in file order
+  - last, one "# rule <line> used <n>: <rule>" line per rule ('#' lines are
+    not compared) and a "# dropped ..." count line
+<card image> (the run's card/boot.img) is needed by SDFILE rules: the FAT16
+file's clusters are read from it.
+
+expected_diff.txt: '#' comment lines and rules; every rule has a comment
+line (its source) directly above it or above the rules before it in one
+block, blank lines end a block:
+    SUBST <stream> <python-regex> <replacement>
+    DROP <stream> <python-regex>
+    SDFILE <8.3 name> <alias>
+<stream> = uart, osd, hw, sd, spi or all; the regex (no blanks: \x20 or
+\s) is searched in the text after "<STREAM> "; <replacement> is the rest
+of the line, Python re.sub syntax, "" for the empty string.  SDFILE: every
+SD access inside the file's clusters is printed "CMD<n> <alias>+<offset>"
+without its data hash, and a run of such accesses (same alias, same
+command) is one line: so RV32OSDA.BIN and 832OSDAD.BIN are both
+"FIRMWARE+00000000 .." whatever their sizes.
+
+diff: unified diff of two norm outputs without their '#' lines; exit 0
+only when it is empty.  --unused-rules: also "UNUSED <line>: <rule>" for
+each rule that neither run used (exit 1 when there is one).
+
+osd: the OSD pages of a spi.txt, "--- page <k>" before each redraw (a row
+number not above the previous one) and "<row> <text>" per OSD_CMD_OSD_WR
+frame as norm decodes it.
+
 Python 3 standard library only.
 """
+import difflib
+import hashlib
+import os
+import re
 import sys
 from collections import Counter
 
@@ -184,7 +249,484 @@ def check(mpath, logpath, spipath):
     return 1 if bad else 0
 
 
+# ------------------------------------------------------------ differential
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+CHARROM = os.path.join(HERE, "..", "..", "fw", "ctrl_rv", "charrom.h")
+STREAMS = ("uart", "osd", "hw", "sd", "spi", "all")
+
+
+def hexs(bs):
+    return " ".join("%02x" % b for b in bs)
+
+
+def load_charrom(path):
+    """charfont[256][8] of charrom.h -> {8 column bytes: character}; of
+    several codes with the same glyph the printable one (the space for the
+    empty glyph) wins, else the lowest code"""
+    with open(path) as f:
+        text = f.read()
+    k = text.find("charfont[256][8]")
+    if k < 0:
+        raise SystemExit("%s: no charfont[256][8]" % path)
+    rows = re.findall(r"\{((?:\s*0x[0-9A-Fa-f]{1,2}\s*,){7}\s*0x[0-9A-Fa-f]{1,2}\s*)\}", text[k:])
+    if len(rows) != 256:
+        raise SystemExit("%s: %d glyphs, want 256" % (path, len(rows)))
+    glyphs = {}
+    for code, row in enumerate(rows):
+        g = bytes(int(x, 16) for x in row.split(","))
+        ch = chr(code) if 0x20 <= code < 0x7f else "\\x%02x" % code
+        old = glyphs.get(g)
+        if old is None or (len(old) > 1 and len(ch) == 1):
+            glyphs[g] = ch
+    return glyphs
+
+
+def osd_text(data, glyphs):
+    """the column bytes of one OSD_CMD_OSD_WR line (after the row) -> text"""
+    out, k, inv = [], 0, []
+
+    def flush():
+        if inv:
+            out.append("{inv:" + "".join(inv) + "}")
+            del inv[:]
+    if len(data) >= 22 and data[0] == 0xFF and data[1] == 0xFF:
+        out.append("stripe=" + hashlib.sha256(bytes(data[:22])).hexdigest()[:12] + " ")
+        k = 22
+    while k + 8 <= len(data):
+        g = bytes(data[k:k + 8])
+        k += 8
+        if g in glyphs:
+            flush()
+            out.append(glyphs[g])
+            continue
+        gi = bytes(b ^ 0xFF for b in g)
+        if gi in glyphs:
+            inv.append(glyphs[gi])
+            continue
+        flush()
+        out.append("{" + hexs(g) + "}")
+    rest = data[k:]
+    if rest and any(b != 0 for b in rest) and not (inv and all(b == 0xFF for b in rest)):
+        flush()
+        out.append("{" + hexs(rest) + "}")
+    flush()
+    return "".join(out).rstrip(" ")
+
+
+def osd_line(out, glyphs):
+    """OSD_CMD_OSD_WR frame MOSI (0c a2 a1 a0 row ...) -> (row, text)"""
+    if len(out) < 5:
+        return None, "{short " + hexs(out) + "}"
+    row = out[4] if out[1:4] == [0, 0, 0] else "%02x%02x%02x%02x" % tuple(out[1:5])
+    return row, osd_text(out[5:], glyphs)
+
+
+class Card:
+    """the FAT16 root-directory files of an SD card image (tools/sim/mkcard.sh):
+    name -> set of LBAs of its clusters, in file order"""
+
+    def __init__(self, path):
+        self.path = path
+        with open(path, "rb") as f:
+            self.img = f.read()
+        mbr = self.img[:512]
+        part = 0
+        if mbr[510:512] == b"\x55\xaa" and mbr[0x1BE + 4] != 0:
+            part = int.from_bytes(mbr[0x1BE + 8:0x1BE + 12], "little")
+        b = self.img[part * 512:part * 512 + 512]
+        bps = int.from_bytes(b[11:13], "little")
+        self.spc = b[13]
+        res = int.from_bytes(b[14:16], "little")
+        nfat = b[16]
+        nroot = int.from_bytes(b[17:19], "little")
+        spf = int.from_bytes(b[22:24], "little")
+        if bps != 512 or spf == 0 or self.spc == 0:
+            raise SystemExit("%s: not a FAT16 card with 512-byte sectors (SDFILE)" % path)
+        self.fat = (part + res) * 512
+        self.root = part + res + nfat * spf
+        self.data = self.root + (nroot * 32 + 511) // 512
+        self.nroot = nroot
+
+    def file_lbas(self, name):
+        if "." in name:
+            base, ext = name.split(".", 1)
+        else:
+            base, ext = name, ""
+        want = (base.ljust(8) + ext.ljust(3)).encode("ascii")
+        for i in range(self.nroot):
+            e = self.img[self.root * 512 + 32 * i:self.root * 512 + 32 * i + 32]
+            if e[0] == 0:
+                break
+            if e[0] == 0xE5 or e[11] & 0x08:
+                continue
+            if e[:11] == want:
+                c = int.from_bytes(e[26:28], "little")
+                lbas = []
+                while 2 <= c < 0xFFF8:
+                    first = self.data + (c - 2) * self.spc
+                    lbas.extend(range(first, first + self.spc))
+                    c = int.from_bytes(self.img[self.fat + 2 * c:self.fat + 2 * c + 2], "little")
+                return lbas
+        raise SystemExit("%s: no file %s in the root directory (SDFILE)" % (self.path, name))
+
+
+class Rule:
+    def __init__(self, lineno, text, words, comment):
+        self.lineno, self.text, self.used = lineno, text, 0
+        self.kind = words[0]
+        self.comment = comment
+        if self.kind in ("SUBST", "DROP"):
+            if len(words) < (4 if self.kind == "SUBST" else 3):
+                raise SystemExit("line %d: %s <stream> <regex>%s" % (lineno, self.kind,
+                                 " <replacement>" if self.kind == "SUBST" else ""))
+            self.stream = words[1]
+            if self.stream not in STREAMS:
+                raise SystemExit("line %d: stream %r is not one of %s" % (lineno, self.stream, "|".join(STREAMS)))
+            try:
+                self.re = re.compile(words[2])
+            except re.error as e:
+                raise SystemExit("line %d: regex %r: %s" % (lineno, words[2], e))
+            if self.kind == "SUBST":
+                self.repl = "" if words[3] == '""' else words[3]
+            elif len(words) > 3:
+                raise SystemExit("line %d: DROP <stream> <regex> (the regex has no blanks)" % lineno)
+        elif self.kind == "SDFILE":
+            if len(words) != 3:
+                raise SystemExit("line %d: SDFILE <8.3 name> <alias>" % lineno)
+            self.name, self.alias = words[1], words[2]
+        else:
+            raise SystemExit("line %d: unknown rule %r" % (lineno, self.kind))
+
+    def applies(self, stream):
+        return self.stream == "all" or self.stream == stream
+
+
+def read_rules(path):
+    rules, comment = [], None
+    with open(path) as f:
+        for n, raw in enumerate(f, 1):
+            line = raw.rstrip("\n")
+            if not line.strip():
+                comment = None
+                continue
+            if line.lstrip().startswith("#"):
+                comment = line.strip()
+                continue
+            kind, _, rest = line.partition(" ")
+            if kind == "SUBST":
+                words = [kind] + rest.split(None, 2)
+            else:
+                words = line.split()
+            if comment is None:
+                raise SystemExit("%s:%d: a rule without a '#' comment line (its source) above it" % (path, n))
+            rules.append(Rule(n, line, words, comment))
+    return rules
+
+
+def read_events(path, kind):
+    """hw.txt / uart.txt lines -> [(frames, ev, text)], MEM lines -> [text]"""
+    ev, mem = [], []
+    with open(path, errors="replace") as f:
+        for n, raw in enumerate(f, 1):
+            line = raw.rstrip("\n")
+            if kind == "hw" and line.startswith("MEM "):
+                w = line.split()
+                if len(w) != 3:
+                    raise SystemExit("%s:%d: a MEM line not yet hashed (sim/l3/l3check.py memhash)" % (path, n))
+                mem.append(line)
+                continue
+            w = line.split(" ", 2)
+            if len(w) < 2 or not w[0].isdigit() or not w[1].isdigit():
+                raise SystemExit("%s:%d: not '<frames> <ev> ...'" % (path, n))
+            ev.append((int(w[0]), int(w[1]), w[2] if len(w) > 2 else ""))
+    return ev, mem
+
+
+def sd_commands(out, inp, st):
+    """the commands of one card frame -> [(cmd, arg, r1, extra, [blocks], dir)];
+    st carries the card's addressing (CMD58's CCS bit) across frames"""
+    cmds, k, n = [], 0, len(out)
+    while k < n:
+        if out[k] == 0xFF:
+            k += 1
+            continue
+        if out[k] & 0xC0 != 0x40 or k + 6 > n:
+            cmds.append(("junk", hexs(out[k:k + 16]), None, [], [], ""))
+            break
+        cmd = out[k] & 0x3F
+        arg = int.from_bytes(bytes(out[k + 1:k + 5]), "big")
+        k += 6
+        if cmd == 12 and k < n:
+            k += 1                      # CMD12's stuff byte
+        j = k
+        while j < n and inp[j] == 0xFF and out[j] == 0xFF and j < k + 64:
+            j += 1
+        r1 = inp[j] if j < n and out[j] == 0xFF and inp[j] != 0xFF else None
+        k = j + 1 if r1 is not None else j
+        extra = []
+        if cmd in (8, 58) and r1 is not None:
+            extra = inp[k:k + 4]
+            k += 4
+            if cmd == 58 and len(extra) == 4 and r1 & 0xFE == 0:
+                st["ccs"] = bool(extra[0] & 0x40)
+        blocks, d = [], ""
+        if cmd in (17, 18) and r1 == 0:
+            d = "rd"
+            while k < n and out[k] == 0xFF:
+                if inp[k] == 0xFE:
+                    blocks.append(bytes(inp[k + 1:k + 513]))
+                    k += 515
+                    if cmd == 17:
+                        break
+                else:
+                    k += 1
+        elif cmd in (24, 25) and r1 == 0:
+            d = "wr"
+            while k < n:
+                if out[k] in (0xFE, 0xFC):
+                    blocks.append(bytes(out[k + 1:k + 513]))
+                    k += 515
+                    # the data response (xxx0sss1) and the busy 00s: kept
+                    # in the line as "D<response>"
+                    resp = None
+                    while k < n and out[k] == 0xFF and inp[k] != 0xFF:
+                        if resp is None:
+                            resp = inp[k]
+                        k += 1
+                    extra.append(resp)
+                    if cmd == 24:
+                        break
+                elif out[k] == 0xFD:
+                    k += 1
+                    while k < n and out[k] == 0xFF and inp[k] != 0xFF:
+                        k += 1
+                    break
+                elif out[k] == 0xFF:
+                    k += 1
+                else:
+                    break
+        lba = arg if st.get("ccs", True) else arg >> 9
+        cmds.append((cmd, lba if cmd in (17, 18, 24, 25) else arg, r1, extra, blocks, d))
+    return cmds
+
+
+def sd_lines(frame_cmds, sdfiles):
+    """[(cmd, ...)] -> [(text, alias key or None)]"""
+    res = []
+    for cmd, arg, r1, extra, blocks, d in frame_cmds:
+        if cmd == "junk":
+            res.append(("junk " + arg, None))
+            continue
+        r = "R--" if r1 is None else "R%02x" % r1
+        if d == "wr":
+            r += "".join(" D--" if x is None else " D%02x" % x for x in extra)
+        elif extra:
+            r += " " + hexs(extra)
+        hit = sdfiles.get(arg) if cmd in (17, 18, 24, 25) else None
+        if hit is not None:
+            rule, off = hit
+            rule.used += 1
+            res.append(("CMD%d %s+%08x .. %s" % (cmd, rule.alias, off, r), (rule.alias, cmd)))
+            continue
+        a = ("%08x" % arg) if cmd in (17, 18, 24, 25) else ("arg=%08x" % arg)
+        h = " ".join(hashlib.sha256(b).hexdigest() + ("" if len(b) == 512 else "/short%d" % len(b))
+                     for b in blocks)
+        if d and not blocks:
+            h = "no data"
+        res.append(("CMD%d %s %s%s" % (cmd, a, r, (" " + d + " " + h) if d else ""), None))
+    return res
+
+
+def norm(spi, hw, uart, rules_path, card_path, charrom):
+    rules = read_rules(rules_path)
+    glyphs = load_charrom(charrom)
+    frames = read_frames(spi)
+    hw_ev, mem = read_events(hw, "hw")
+    uart_ev, _ = read_events(uart, "uart")
+    sdfiles = {}
+    sdrules = [r for r in rules if r.kind == "SDFILE"]
+    if sdrules:
+        if not card_path:
+            raise SystemExit("SDFILE rules need --card <card image>")
+        card = Card(card_path)
+        for r in sdrules:
+            for i, lba in enumerate(card.file_lbas(r.name)):
+                sdfiles[lba] = (r, i * 512)
+    # items: (key, stream, text, collapse key)
+    items = []
+    for fr, ev, text in hw_ev:
+        items.append(((fr, 0, ev), "hw", text, None))
+    for fr, ev, text in uart_ev:
+        items.append(((fr, 0, ev), "uart", text, None))
+    drop = Counter()
+    prev_read = prev_uds = None
+    st = {}
+    for i, (cs, out, inp) in enumerate(frames):
+        key = (i, 1, 0)
+        if cs == 0x10 and len(out) == 6 and not any(out) and inp[0] & 0x0F == 0:
+            drop["status"] += 1
+            continue
+        if cs == 0x10 and len(out) == 2 and out[0] == 0x10:
+            if out[1] == prev_uds:
+                drop["drivestatus"] += 1
+                continue
+            prev_uds = out[1]
+        if cs == 0x20 and out and out[0] == 0x00:
+            if tuple(inp) == prev_read:
+                drop["read"] += 1
+                continue
+            prev_read = tuple(inp)
+        if cs == 0x20 and len(out) >= 2 and out[0] == 0x98 and inp[1] == 0x00:
+            drop["keyq"] += 1
+            continue
+        if cs == 0x80:
+            drop["rtc"] += 1
+            continue
+        if cs == 0x00 and all(b == 0xFF for b in out):
+            drop["sd_deselect"] += 1
+            continue
+        if cs == 0x02:
+            for n, (text, ck) in enumerate(sd_lines(sd_commands(out, inp, st), sdfiles)):
+                items.append(((i, 1, n), "sd", text, ck))
+            continue
+        if cs == 0x20 and out and out[0] == 0x0C:
+            row, text = osd_line(out, glyphs)
+            items.append((key, "osd", "%s %s" % (row, text) if text else str(row), None))
+            continue
+        items.append((key, "spi", " ".join(x for x in ("%02x" % cs, hexs(out), "/", hexs(inp)) if x), None))
+    items.sort(key=lambda t: t[0])
+    for m in mem:
+        items.append(((len(frames) + 1, 0, 0), "hw", m, None))
+    # SDFILE runs: one line per run of accesses with the same alias and
+    # command.  Inside a run, the hw writes and other card accesses between
+    # them (the SPI speed write before each sector, the FAT sector at a
+    # cluster boundary) are printed once, the first time; a UART line or
+    # any other frame ends the run
+    lines, run_key, run_seen = [], None, set()
+    for _, stream, text, ck in items:
+        if ck is not None:
+            if ck == run_key:
+                drop["sdfile_run"] += 1
+                continue
+            run_key, run_seen = ck, set()
+        elif run_key is not None and stream in ("hw", "sd"):
+            if (stream, text) in run_seen:
+                drop["sdfile_run"] += 1
+                continue
+            run_seen.add((stream, text))
+        else:
+            run_key = None
+        lines.append([stream, text])
+    # the text rules, in file order
+    for r in rules:
+        if r.kind == "SDFILE":
+            continue
+        kept = []
+        for ln in lines:
+            if not r.applies(ln[0]):
+                kept.append(ln)
+                continue
+            if r.kind == "DROP":
+                if r.re.search(ln[1]):
+                    r.used += 1
+                    continue
+            else:
+                t, k = r.re.subn(r.repl, ln[1])
+                if k and t != ln[1]:
+                    r.used += 1
+                    ln[1] = t
+            kept.append(ln)
+        lines = kept
+    w = sys.stdout.write
+    for stream, text in lines:
+        w("%s %s\n" % (stream.upper(), text))
+    for r in rules:
+        w("# rule %d used %d: %s\n" % (r.lineno, r.used, r.text))
+    w("# dropped " + ", ".join("%s %d" % (k, drop[k]) for k in
+                                ("status", "drivestatus", "read", "keyq", "rtc", "sd_deselect",
+                                 "sdfile_run")) + "\n")
+    return 0
+
+
+def read_norm(path):
+    body, rules = [], []
+    with open(path, errors="replace") as f:
+        for line in f:
+            if line.startswith("#"):
+                m = re.match(r"# rule (\d+) used (\d+): (.*)$", line.rstrip("\n"))
+                if m:
+                    rules.append((int(m.group(1)), int(m.group(2)), m.group(3)))
+                continue
+            body.append(line)
+    return body, rules
+
+
+def diff(a, b, unused):
+    ba, ra = read_norm(a)
+    bb, rb = read_norm(b)
+    d = list(difflib.unified_diff(ba, bb, a, b))
+    sys.stdout.writelines(d)
+    rc = 1 if d else 0
+    if unused:
+        if [(n, t) for n, _, t in ra] != [(n, t) for n, _, t in rb]:
+            print("BAD  %s and %s were normalised with other rules" % (a, b))
+            return 2
+        for (n, ua, t), (_, ub, _) in zip(ra, rb):
+            if ua == 0 and ub == 0:
+                print("UNUSED %d: %s" % (n, t))
+                rc = 1
+        if not any(ua == 0 and ub == 0 for (_, ua, _), (_, ub, _) in zip(ra, rb)):
+            print("rules: all %d used" % len(ra))
+    return rc
+
+
+def osd_pages(spi, charrom):
+    glyphs = load_charrom(charrom)
+    page, prev = 0, None
+    for cs, out, inp in read_frames(spi):
+        if cs != 0x20 or not out or out[0] != 0x0C:
+            continue
+        row, text = osd_line(out, glyphs)
+        if prev is None or not isinstance(row, int) or not isinstance(prev, int) or row <= prev:
+            page += 1
+            print("--- page %d" % page)
+        prev = row
+        print("%s %s" % (row, text) if text else str(row))
+    return 0
+
+
+def opt(args, name, default=None):
+    if name in args:
+        k = args.index(name)
+        if k + 1 >= len(args):
+            raise SystemExit("%s needs a value" % name)
+        v = args[k + 1]
+        del args[k:k + 2]
+        return v
+    return default
+
+
 def main(argv):
+    if len(argv) >= 2 and argv[1] in ("norm", "diff", "osd"):
+        args = argv[2:]
+        if argv[1] == "norm":
+            rules = opt(args, "-r")
+            card = opt(args, "--card")
+            charrom = opt(args, "--charrom", CHARROM)
+            if len(args) == 3 and rules:
+                return norm(args[0], args[1], args[2], rules, card, charrom)
+        elif argv[1] == "diff":
+            unused = "--unused-rules" in args
+            args = [a for a in args if a != "--unused-rules"]
+            if len(args) == 2:
+                return diff(args[0], args[1], unused)
+        else:
+            charrom = opt(args, "--charrom", CHARROM)
+            if len(args) == 1:
+                return osd_pages(args[0], charrom)
+        sys.stderr.write(__doc__)
+        return 2
     if len(argv) == 3 and argv[1] == "summary":
         return summary(argv[2])
     if len(argv) == 5 and argv[1] == "check":

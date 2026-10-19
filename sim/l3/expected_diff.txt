@@ -1,0 +1,26 @@
+# sim/l3/expected_diff.txt: the only allowed differences between the RV
+# and the 832 traces of one L3 scenario (README "Differential"; syntax in
+# sim/host_bridge/spitrace.py's help).  Every rule has a '#' line above it
+# naming its source; a rule no scenario uses is removed (run.sh diff
+# --unused-rules).  Not needed in boot, so not here: the version strings
+# (both builds print the same L3_DATE; "-RV" is only in MM_VERSTRING, which
+# no output shows) and the failure-path timeouts (boot takes none).
+
+# exec-3 hand-over item 3 (doc/osd-riscv-exec-3.md "What Phase 4
+# consumes"): the firmware file name, size and sectors.  The RV boot ROM
+# loads RV32OSDA.BIN, the 832's 832OSDAD.BIN (other sizes); the boot ROM
+# prints one '0' per sector it loads
+SDFILE RV32OSDA.BIN FIRMWARE
+SDFILE 832OSDAD.BIN FIRMWARE
+SUBST uart file\x20"(RV32OSDABIN|832OSDADBIN)"\x20found\\r0+ file "FIRMWARE" found\\r0..
+
+# exec-3 hand-over item 3: the config file names.  The RV firmware reads
+# MINMGAR.CFG (little-endian), the 832's MINMGAA.CFG (big-endian; the same
+# fields, sim/l3/card)
+SDFILE MINMGAR.CFG CONFIG
+SDFILE MINMGAA.CFG CONFIG
+SUBST uart file\x20"MINMGA[RA]\x20CFG"\x20found file "MINMGA? CFG" found
+
+# fw/ctrl_rv/test/gold/fmt_diff_expected.txt line 275 (case 879 P ZERO:
+# 'partition type: 0x%02X (' U(0)): the 832's printf prints 0x0, the RV's 0x00
+SUBST uart partition\x20type:\x200x0\x20\( partition type: 0x00 (
