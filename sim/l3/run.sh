@@ -81,9 +81,16 @@ MM_FILES="rtl/soc/openaars_defines.vh rtl/minimig/userio_osd.v rtl/minimig/useri
           rtl/minimig/gayle_port.v rtl/minimig/gayle_fifo.v rtl/minimig/minimig_syscontrol.v"
 MM_INC="$ROOT/fpga/openaars"     # minimig_version.vh (the board's)
 
-# the "=== MARGIN <item> <name>" lines every run must print (mon_l3.vh)
+# the "=== MARGIN <item> <name>" lines every run must print (mon_l3.vh),
+# and per scenario the ones that must have seen events: their verdict must
+# be ok (n/a fails the scenario).  boot has no direct transfer and one RTC
+# transfer (items 3 and 12: n/a); boot_short has no paula frame yet and its
+# only cpurst fall is fpga_init's reset pulse, before any kickstart
 MARGINS="1:stale_acks 3:dmode_release 3:dmode_L 4:paula_cs_release 4:userio_cs_release
          4:paula_word_spacing 4:userio_byte_spacing 5:spi_write_busy 12:rtc_cs_high 14:kick_order"
+MARGIN_REQ_boot="1:stale_acks 4:paula_cs_release 4:userio_cs_release 4:paula_word_spacing
+                 4:userio_byte_spacing 5:spi_write_busy 14:kick_order"
+MARGIN_REQ_boot_short="1:stale_acks 4:userio_cs_release 4:userio_byte_spacing 5:spi_write_busy"
 
 # cycles per scenario (clk_114): 1.5 x the measured end event (README "boot",
 # Verilator 2026-10-19: boot 158,155,012, boot_short 57,659,090)
@@ -134,11 +141,7 @@ cfide_generics() {
 # run copy, as hostsim.sh pins the bridge's and hostcache's flops (README
 # "boot", XRAND): paula_floppy.v dsktrack[0..3] (the drives' head
 # positions, never reset: HandleFpga's track byte; found by the first XRAND
-# twin, findings/osd-riscv/phase4.md) and userio_osd_spi.v bit_cnt and
-# first_byte (cleared only by a rising _scs, which a start at "deselected"
-# never gives: a random bit_cnt shifted a random reply bit pattern into the
-# first OSD frame's MISO in twin p4t5c_xr, seed 820757315; first_byte has
-# the same reset).  The count joins hostsim.sh's
+# twin, findings/osd-riscv/phase4.md).  The count joins hostsim.sh's
 # "=== XRAND pinned <n> regs" (it sums the lines of src/pinned_hostcache).
 l3_pin_minimig() {
 	local v="$run/src/paula_floppy.v" decl='	reg		[6:0] dsktrack[3:0]; //track select'
@@ -147,14 +150,44 @@ l3_pin_minimig() {
 	sed -i "/^$(printf '%s' "$decl" | sed 's/[][\/.*^$]/\\&/g')\$/a\\	initial begin dsktrack[0] = 7'd0; dsktrack[1] = 7'd0; dsktrack[2] = 7'd0; dsktrack[3] = 7'd0; end // XRAND pin" "$v"
 	[ "$(grep -c '// XRAND pin$' "$v")" = 1 ] || die "XRAND pin: dsktrack initialiser not inserted"
 	echo 4 >> "$run/src/pinned_hostcache"
-	v="$run/src/userio_osd_spi.v"
-	for decl in 'reg [2:0] bit_cnt;		//bit counter' 'reg first_byte;		//first byte is going to be received'; do
-		[ "$(grep -cxF -- "$decl" "$v")" = 1 ] || die "XRAND pin: userio_osd_spi.v declaration '$decl' not found"
-	done
-	sed -i -e "/^reg \[2:0\] bit_cnt;		\/\/bit counter\$/a\initial bit_cnt = 3'd0; // XRAND pin" \
-		-e "/^reg first_byte;		\/\/first byte is going to be received\$/a\initial first_byte = 1'b0; // XRAND pin" "$v"
-	[ "$(grep -c '// XRAND pin$' "$v")" = 2 ] || die "XRAND pin: userio_osd_spi.v initialisers not inserted"
-	echo 2 >> "$run/src/pinned_hostcache"
+}
+
+# l3_pin_async (every run, both simulators): the slaves' SPI registers with
+# an edge-triggered asynchronous set / clear ("always @(posedge sck or
+# posedge _scs) if (_scs) ...") start in the state that set / clear holds.
+# Synthesis makes these level-sensitive preset / clear flops, and the
+# selects are high from configuration on (cfide's sd_cs = NOT scs, scs
+# cleared by its reset), so on the board they are held there from the
+# start.  A simulator applies them only on an edge of the select: xsim sees
+# X -> 1 at time 0 as one, Verilator's two-state build does not (probed:
+# first_byte 0 at 50 ns, so its first OSD frame's command byte was taken as
+# data), and XRAND starts them random (twin p4t5c_xr: bit_cnt shifted a
+# random sdo_reg into the first OSD frame's MISO).  Initialisers in the run
+# copies:  userio_osd_spi.v bit_cnt 0, first_byte 1; paula_floppy.v
+# spi_bit_cnt 0, spi_tx_cnt 0 (clear on ~scs), spi_rx_cnt_rst 1 (set on
+# ~scs1).  A model of the RTL as built, not a change to it.
+l3_pin_async() {
+	local u="$run/src/userio_osd_spi.v" p="$run/src/paula_floppy.v"
+	python3 - "$u" "$p" <<'EOP' || die "async pin: a declaration was not found (run.sh l3_pin_async)"
+import sys
+u, p = sys.argv[1], sys.argv[2]
+def pin(path, pairs):
+    s = open(path).read()
+    for decl, init in pairs:
+        assert s.count(decl + "\n") == 1, decl
+        ind = decl[:len(decl) - len(decl.lstrip())]
+        s = s.replace(decl + "\n", decl + "\n" + ind + init + " // ASYNC pin\n")
+    open(path, "w").write(s)
+pin(u, [("reg [2:0] bit_cnt;\t\t//bit counter", "initial bit_cnt = 3'd0;"),
+        ("reg first_byte;\t\t//first byte is going to be received", "initial first_byte = 1'b1;")])
+pin(p, [("\treg [3:0] spi_bit_cnt; //received bit counter - incremented on rising edge of SCK",
+         "initial spi_bit_cnt = 4'd0;"),
+        ("\treg [1:0] spi_tx_cnt; //transmitted SPI words counter", "initial spi_tx_cnt = 2'd0;"),
+        ("\treg\tspi_rx_cnt_rst; //indicates reception of the first spi word after activation of the chip select",
+         "initial spi_rx_cnt_rst = 1'b1;")])
+EOP
+	[ "$(grep -c '// ASYNC pin$' "$u")" = 2 ] && [ "$(grep -c '// ASYNC pin$' "$p")" = 3 ] \
+		|| die "async pin: initialisers not inserted"
 }
 
 # setup: run directory, RTL copies, firmware, card
@@ -171,6 +204,7 @@ setup() {
 		case "$f" in *.v) sed -i '1i `timescale 1ns/1ps' "$run/src/$(basename "$f")" ;; esac
 	done
 	l3_pin_minimig
+	l3_pin_async
 	if [ -n "${FW:-}" ]; then
 		FWBIN=$(realpath -m -- "$FW")
 		[ -f "$FWBIN" ] || die "no firmware $FWBIN (FW=)"
@@ -238,17 +272,31 @@ milestones() {
 	done
 }
 
-# margins <log>: every MARGINS line once, none LOW (mon_l3.vh)
+# margins <scenario> <log>: every MARGINS line once, none LOW, and each of
+# MARGIN_REQ_<scenario> with events (ok; n/a or rec there is BAD)
 margins() {
-	local m n re k=0 bad=0
+	local s=$1 log=$2 m re line v req k=0 bad=0
+	req=$(eval "echo \${MARGIN_REQ_$s:-}")
 	for m in $MARGINS; do
 		re="^=== MARGIN ${m%%:*} ${m#*:} min "
 		k=$((k + 1))
-		n=$(grep -c -E -- "$re" "$1")
-		if [ "$n" != 1 ]; then echo "BAD  $n lines '=== MARGIN ${m%%:*} ${m#*:} ...' (want 1)"; bad=1
-		elif grep -E -- "$re" "$1" | grep -q ', LOW)'; then echo "BAD  MARGIN ${m%%:*} ${m#*:} LOW"; bad=1; fi
+		if [ "$(grep -c -E -- "$re" "$log")" != 1 ]; then
+			echo "BAD  not exactly one line '=== MARGIN ${m%%:*} ${m#*:} ...'"; bad=1; continue
+		fi
+		line=$(grep -E -- "$re" "$log")
+		v=$(printf '%s\n' "$line" | sed -n 's/.*(bound [-0-9]*, \([a-zA-Z/]*\)) over .*/\1/p')
+		# a value of "none" is no event, whatever the verdict says
+		case "$line" in *" min none "*) v=n/a ;; esac
+		case "$v" in
+			ok|rec|n/a) ;;
+			LOW) echo "BAD  MARGIN ${m%%:*} ${m#*:} LOW"; bad=1; continue ;;
+			*) echo "BAD  MARGIN ${m%%:*} ${m#*:}: no verdict in '$line'"; bad=1; continue ;;
+		esac
+		case " $(echo $req) " in
+			*" $m "*) [ "$v" = ok ] || { echo "BAD  MARGIN ${m%%:*} ${m#*:} is $v: scenario $s must check it (MARGIN_REQ_$s)"; bad=1; } ;;
+		esac
 	done
-	[ "$bad" = 0 ] && echo "ok   MARGIN lines: all $k present, none LOW"
+	[ "$bad" = 0 ] && echo "ok   MARGIN lines: all $k present, none LOW, $(echo $req | wc -w) required ones ok"
 }
 
 # scenario <name>: build, run, checks
@@ -282,7 +330,7 @@ scenario() {
 	{
 		grep -E '^=== (BOOT|MAIN|END|STATS|HW accesses|cycle limit|HandleFpga|SPI frames|OSD GAP|OSD EARLY|STACK|RTC|KICK|MARGIN)' "$log"
 		grep -E '^BENCH ERROR' "$log" | sed 's/^/BAD  /'
-		margins "$log"
+		margins "$s" "$log"
 		grep -q '^SD: image .* loaded' "$log" || echo "BAD  the SD model did not load $CARD"
 		milestones "$s" "$log"
 		grep -E '^UART: .*(EXC |TRAP )' "$log" | sed 's/^/BAD  /'

@@ -4,11 +4,17 @@
 // rtc_model instance rtc1; mon_final prints one line per measurement at the
 // end of the run, before the verdict:
 //
-//   === MARGIN <item> <name> min <value> <unit> (bound <b>, ok|LOW) over <n> <events>
+//   === MARGIN <item> <name> min <value> <unit> (bound <b>, <verdict>) over <n> <events>
 //
-// <value> is the smallest one seen ("none" when the run had no such event:
-// ok).  For the two counts (items 1 and 5) the value is the count and LOW
-// means above the bound.  A LOW line is a bench error (the run FAILS).
+// <value> is the smallest one seen.  For the two counts (items 1 and 5) the
+// value is the count and LOW means above the bound.  <verdict>:
+//   ok    events seen, a bound the value can violate, and it holds
+//   LOW   events seen and the bound is violated: a bench error (run FAILS)
+//   n/a   no such event in this run (<value> "none"); run.sh fails a
+//         scenario that must have the event (MARGIN_REQ_<scenario>)
+//   rec   events seen, record only: the value cannot violate its bound
+//         (dmode_L: the request always follows the ack; rtc_cs_high with
+//         the default bound 0: a gap is never negative)
 // Times measured at the slave pins: an sck edge reaches the slaves +SCKDLY
 // ns after cfide's pin (tb_l3.v sck_slv); sd_cs reaches them undelayed.
 //
@@ -20,7 +26,7 @@
 //                          any value >= 0 passes, the figure is recorded)
 //      dmode_L             the RDSPI ack (an SPI DATA read acked while sd_cs[6]
 //                          is low) to the DisableDMode request (CS write 41),
-//                          clk_114 cycles (tb_832_dmode.v's L); bound 0
+//                          clk_114 cycles (tb_832_dmode.v's L); rec
 //   4  paula_cs_release    per slave: the last sck rising edge of a frame at
 //      userio_cs_release   the slave to its select rising (sd_cs[4] paula,
 //                          sd_cs[5] userio_osd), clk_114 cycles; bound 0:
@@ -36,8 +42,9 @@
 //                          request to the cycle after its ack): the write
 //                          was taken while the shifter was busy (bound 0)
 //  12  rtc_cs_high         rtc_model: CS-inactive time between two RTC
-//                          transfers, ns; bound +RTC_CSH_MIN=<ns> (default
-//                          0: the PCF2123 datasheet is not in doc/rtc)
+//                          transfers, ns; bound +RTC_CSH_MIN=<ns>; with the
+//                          default 0 (the PCF2123 datasheet is not in
+//                          doc/rtc) rec
 //  14  kick_order          the last cpurst fall (userio_osd: the Amiga CPU
 //                          released) minus the last SDRAM write into the
 //                          kickstart region (host 0x100000..0x17ffff),
@@ -178,16 +185,20 @@
   // ------------------------------------------------------------- report
   integer rtc_csh_bound = 0;       // +RTC_CSH_MIN=<ns>
 
+  // the verdict of a line with n events (see the header); LOW is a bench error
+  function [8*3-1:0] mon_verdict(input integer n, input rec, input low);
+    mon_verdict = (n == 0) ? "n/a" : rec ? "rec" : low ? "LOW" : "ok";
+  endfunction
+
   task mon_real(input [8*4-1:0] item, input [8*24-1:0] name, input integer n, input real v,
-                input [8*8-1:0] unit, input integer bound, input [8*24-1:0] what);
+                input [8*8-1:0] unit, input integer bound, input rec, input [8*24-1:0] what);
     begin
       if (n == 0)
-        $display("=== MARGIN %0s %0s min none %0s (bound %0d, ok) over 0 %0s", item, name, unit, bound, what);
-      else begin
+        $display("=== MARGIN %0s %0s min none %0s (bound %0d, n/a) over 0 %0s", item, name, unit, bound, what);
+      else
         $display("=== MARGIN %0s %0s min %0.1f %0s (bound %0d, %0s) over %0d %0s", item, name, v, unit, bound,
-                 v < bound ? "LOW" : "ok", n, what);
-        if (v < bound) bench_error("MARGIN below its bound (the LOW line)");
-      end
+                 mon_verdict(n, rec, v < bound), n, what);
+      if (n > 0 && !rec && v < bound) bench_error("MARGIN below its bound (the LOW line)");
     end
   endtask
 
@@ -195,8 +206,8 @@
                  input integer n, input [8*24-1:0] what);
     begin
       $display("=== MARGIN %0s %0s min %0d count (bound %0d, %0s) over %0d %0s", item, name, v, bound,
-               v > bound ? "LOW" : "ok", n, what);
-      if (v > bound) bench_error("MARGIN count above its bound (the LOW line)");
+               mon_verdict(n, 1'b0, v > bound), n, what);
+      if (n > 0 && v > bound) bench_error("MARGIN count above its bound (the LOW line)");
     end
   endtask
 
@@ -214,15 +225,16 @@
       else
         $display("=== KICK last SDRAM write into the kickstart region at cycle none, 0 writes");
       mon_count("1", "stale_acks", n_stale, 0, n_hw, "hw accesses");
-      mon_real("3", "dmode_release", m3_n, m3_min, "clk_114", 0, "direct transfers");
-      mon_real("3", "dmode_L", m3_Ln, m3_Lmin, "clk_114", 0, "direct transfers");
-      mon_real("4", "paula_cs_release", m4p_n, m4p_min, "clk_114", 0, "frames");
-      mon_real("4", "userio_cs_release", m4u_n, m4u_min, "clk_114", 0, "frames");
-      mon_real("4", "paula_word_spacing", m4p_wn, m4p_wmin, "clk_114", 40, "words");
-      mon_real("4", "userio_byte_spacing", m4u_wn, m4u_wmin, "clk_114", 40, "bytes");
+      mon_real("3", "dmode_release", m3_n, m3_min, "clk_114", 0, 1'b0, "direct transfers");
+      mon_real("3", "dmode_L", m3_Ln, m3_Lmin, "clk_114", 0, 1'b1, "direct transfers");
+      mon_real("4", "paula_cs_release", m4p_n, m4p_min, "clk_114", 0, 1'b0, "frames");
+      mon_real("4", "userio_cs_release", m4u_n, m4u_min, "clk_114", 0, 1'b0, "frames");
+      mon_real("4", "paula_word_spacing", m4p_wn, m4p_wmin, "clk_114", 40, 1'b0, "words");
+      mon_real("4", "userio_byte_spacing", m4u_wn, m4u_wmin, "clk_114", 40, 1'b0, "bytes");
       mon_count("5", "spi_write_busy", m5_n, 0, m5_w, "DATA writes");
-      mon_real("12", "rtc_cs_high", rtc1.n_gaps, rtc1.csh_min_ns, "ns", rtc_csh_bound, "gaps");
-      mon_real("14", "kick_order", (m14_nw > 0) ? m14_nrel : 0, m14_rel - m14_w, "clk_114", 1,
+      mon_real("12", "rtc_cs_high", rtc1.n_gaps, rtc1.csh_min_ns, "ns", rtc_csh_bound, rtc_csh_bound <= 0,
+               "gaps");
+      mon_real("14", "kick_order", (m14_nw > 0) ? m14_nrel : 0, m14_rel - m14_w, "clk_114", 1, 1'b0,
                "releases");
     end
   endtask

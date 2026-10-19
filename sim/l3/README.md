@@ -199,7 +199,7 @@ xsim 2023.2 48 k cycles/s (`boot_short` in 1,191 s, with Verilator runs
 alongside). The bench is slower than L2 (0.47 M cycles/s) by the Minimig
 slaves on `clk_28` and their `#1` delays.
 
-End of `boot` (p4t5b; the same in its `XRAND` twin p4t5b_xr; `STATS@boot`
+End of `boot` (p4t5e; the same in its `XRAND` twin p4t5e_xr; `STATS@boot`
 counts up to the end event):
 
 ```
@@ -219,16 +219,16 @@ counts up to the end event):
 === RTC CS high min none ns over 0 gaps (datasheet minimum: not found)
 === KICK last SDRAM write into the kickstart region at cycle 150139042 (host 0017fffc), 524594 writes
 === MARGIN 1 stale_acks min 0 count (bound 0, ok) over 1685611 hw accesses
-=== MARGIN 3 dmode_release min none clk_114 (bound 0, ok) over 0 direct transfers
-=== MARGIN 3 dmode_L min none clk_114 (bound 0, ok) over 0 direct transfers
+=== MARGIN 3 dmode_release min none clk_114 (bound 0, n/a) over 0 direct transfers
+=== MARGIN 3 dmode_L min none clk_114 (bound 0, n/a) over 0 direct transfers
 === MARGIN 4 paula_cs_release min 10.8 clk_114 (bound 0, ok) over 41 frames
 === MARGIN 4 userio_cs_release min 10.8 clk_114 (bound 0, ok) over 72 frames
 === MARGIN 4 paula_word_spacing min 117.0 clk_114 (bound 40, ok) over 82 words
 === MARGIN 4 userio_byte_spacing min 57.0 clk_114 (bound 40, ok) over 129 bytes
 === MARGIN 5 spi_write_busy min 0 count (bound 0, ok) over 829924 DATA writes
-=== MARGIN 12 rtc_cs_high min none ns (bound 0, ok) over 0 gaps
+=== MARGIN 12 rtc_cs_high min none ns (bound 0, n/a) over 0 gaps
 === MARGIN 14 kick_order min 6829787.0 clk_114 (bound 1, ok) over 2 releases
-ok   MARGIN lines: all 10 present, none LOW
+ok   MARGIN lines: all 10 present, none LOW, 7 required ones ok
 ok   milestones: 51 of 51 found in order
 ok   no UART line contains 'ROM loading failed'
 ok   no UART line contains 'Fatal error'
@@ -249,13 +249,36 @@ Phase 3 figure (0x1950, 1,712 bytes).
 XRAND: the first twin differed in every HandleFpga frame (the track byte,
 `paula_floppy.v`'s never-reset `dsktrack`); `XRAND=1` now pins it to 0 in
 the run copy, as the bridge's and hostcache's reset-less flops are pinned
-(`=== XRAND pinned 9 regs`), and the twin is SAME. A later twin (p4t5c_xr,
-seed 820757315) differed in the MISO of the very first OSD frame (`20 08 06
-/ a8 00` instead of `/ 00 00`): `userio_osd_spi.v`'s `bit_cnt` and
-`first_byte` are cleared only by a rising `_scs`, which a start at
-"deselected" never gives. `XRAND=1` pins both to 0 as well (`=== XRAND
-pinned 11 regs`; the same seed is then SAME, p4t5d). The findings are in
+(`=== XRAND pinned 9 regs`), and the twin is SAME. The finding is in
 `findings/osd-riscv/phase4.md`.
+
+Async set / clear at time 0 (every run, both simulators, `run.sh
+l3_pin_async`). A later twin, p4t5c_xr with seed 820757315, differed in
+the MISO of the very first OSD frame: `20 08 06 / a8 00` instead of
+`/ 00 00`.
+
+- **Cause.** `userio_osd_spi.v` and `paula_floppy.v` set or clear some SPI
+  registers with an edge-triggered asynchronous reset on the select
+  (`always @(posedge sck or posedge _scs) if (_scs) ...`). Synthesis makes
+  these level-sensitive preset / clear flops, and the selects are high
+  from configuration on, so on the board the registers are held in that
+  state from the start.
+- **Simulators.** A simulator applies the reset only on an edge of the
+  select:
+  - xsim sees X -> 1 at time 0 as an edge.
+  - Verilator's two-state build does not. Probed: `first_byte` was 0 at
+    50 ns, so the boot ROM's first OSD frame had its command byte taken as
+    data.
+  - XRAND starts the registers random.
+- **The pin.** The run copies initialise the registers to the held state:
+  - `userio_osd_spi.v`: `bit_cnt` 0, `first_byte` 1.
+  - `paula_floppy.v`: `spi_bit_cnt` 0, `spi_tx_cnt` 0, `spi_rx_cnt_rst` 1.
+
+  With the pin, both simulators and the board agree: the probe shows
+  `first_byte` 1 and command `08` decoded in the first frame. The twin pairs
+  p4t5e / p4t5e_xr (default seed) and p4t5f / p4t5f_xr (seed 820757315) are
+  SAME. This models the RTL as synthesised; it is not
+  a defect of the RTL (`findings/osd-riscv/phase4.md`).
 
 ## Monitors
 
@@ -264,25 +287,42 @@ plan 7.1 that depend on timing, in every run, and prints one line per
 measurement before the verdict:
 
 ```
-=== MARGIN <item> <name> min <value> <unit> (bound <b>, ok|LOW) over <n> <events>
+=== MARGIN <item> <name> min <value> <unit> (bound <b>, <verdict>) over <n> <events>
 ```
 
-`<value>` is the smallest seen, `none` when the run had no such event (then
-`ok`). Items 1 and 5 are counts: the value is the count and `LOW` means
-above the bound. A `LOW` line is a bench error, and `run.sh` fails a
-scenario unless all ten lines are there and none is `LOW`. Times are taken at
-the slave pins: an `sck` edge reaches the slaves `+SCKDLY` ns after cfide's
-pin, `sd_cs` undelayed.
+`<value>` is the smallest seen. Items 1 and 5 are counts: the value is the
+count and `LOW` means above the bound. The verdict:
 
-| Item | Name | What | Bound | `boot` (p4t5b) |
+| Verdict | Meaning |
+|---|---|
+| `ok` | events seen, the value can violate its bound, and it does not |
+| `LOW` | events seen, the bound is violated: a bench error, the run fails |
+| `n/a` | no such event in this run (`min none`) |
+| `rec` | events seen, record only: the value cannot violate its bound. `dmode_L` (the request always follows the ack) and `rtc_cs_high` with the default bound 0 (a gap is never negative) |
+
+`run.sh` fails a scenario unless all ten lines are there and none is
+`LOW`. Each scenario also lists the lines that must have seen events
+(`MARGIN_REQ_<scenario>` in `run.sh`); for those, `n/a` or `rec` fails it
+too. A monitor that stops seeing its events therefore cannot pass in
+silence:
+
+| Scenario | Lines that must be `ok` | `n/a` there, and why |
+|---|---|---|
+| `boot` | 1, 4 (all four), 5, 14 | 3 (no direct transfer), 12 (one RTC transfer, no gap) |
+| `boot_short` | 1, `userio_cs_release`, `userio_byte_spacing`, 5 | 3, 12, the paula lines (no paula frame before the cut); its `kick_order` is fpga_init's reset pulse, not a kickstart release, so it is not required |
+
+Times are taken at the slave pins: an `sck` edge reaches the slaves
+`+SCKDLY` ns after cfide's pin, `sd_cs` undelayed.
+
+| Item | Name | What | Bound | `boot` (p4t5e) |
 |---|---|---|---|---|
 | 1 | `stale_acks` | hostmon's stale-ack count (an ack no `clk_28` edge saw the request for) | 0 | 0 of 1,685,611 hw accesses |
-| 3 | `dmode_release` | a direct-mode transfer (`sd_cs[6]` low): its last (4096th) `sck` rising edge at paula to `direct_scs` released (`sd_cs[6]` rising), `clk_114` | 0 | none (`boot` has no direct transfer); 108.8 in the probe run below |
-| 3 | `dmode_L` | the RDSPI ack (a DATA read acked while `sd_cs[6]` is low) to the DisableDMode request (CS write 41), `clk_114`: `sim/spi_cdc/host832/tb_832_dmode.v`'s `L` | 0 | none; 6 in the probe run |
+| 3 | `dmode_release` | a direct-mode transfer (`sd_cs[6]` low): its last (4096th) `sck` rising edge at paula to `direct_scs` released (`sd_cs[6]` rising), `clk_114` | 0 | n/a (`boot` has no direct transfer); 108.8 ok in the probe run below |
+| 3 | `dmode_L` | the RDSPI ack (a DATA read acked while `sd_cs[6]` is low) to the DisableDMode request (CS write 41), `clk_114`: `sim/spi_cdc/host832/tb_832_dmode.v`'s `L` | 0, `rec` | n/a; 6.0 rec in the probe run |
 | 4 | `paula_cs_release`, `userio_cs_release` | per slave (`sd_cs[4]` paula, `sd_cs[5]` userio_osd): the last `sck` rising edge of a frame at the slave to its select rising, `clk_114` | 0 (derived below) | 10.8 over 41 frames; 10.8 over 72 frames |
 | 4 | `paula_word_spacing`, `userio_byte_spacing` | the last edge of one received word (paula, 16 bits, `sd_cs[4]` or `[6]`) / byte (userio, 8) to the last edge of the next, `clk_114` | 40 (derived below) | 117.0 over 82 words; 57.0 over 129 bytes |
 | 5 | `spi_write_busy` | SPI DATA writes acknowledged without starting a transfer of their own (no `SD_busy` rise from the request to the cycle after its ack): taken while the shifter was busy | 0 | 0 of 829,924 |
-| 12 | `rtc_cs_high` | `rtc_model`: the CS-inactive time between two RTC transfers, ns | `+RTC_CSH_MIN`, default 0 (datasheet not found, below) | none (one RTC transfer in `boot`); 363,982,789 ns in the `rtc2` run below |
+| 12 | `rtc_cs_high` | `rtc_model`: the CS-inactive time between two RTC transfers, ns | `+RTC_CSH_MIN`; the default 0 (datasheet not found, below) makes it `rec` | n/a (one RTC transfer in `boot`); 363,982,789 ns rec in the `rtc2` run below |
 | 14 | `kick_order` | the last `cpurst` fall (userio_osd releases the Amiga CPU) minus the last SDRAM write into the kickstart region (host 0x100000..0x17ffff, `sdram_host_model` at its ack), `clk_114` | 1 (the write lands first) | 6,829,787 (write at 150,139,042, release at 156,968,829) |
 
 Also printed: `=== KICK cpurst falls at cycle <n> ...` at every fall,
@@ -319,9 +359,14 @@ word on the same slave.
 So the select may rise any time after the slave's last `sck` edge: the bound
 is 0. A negative value means the slave sees its last edge after the select
 rose, and the async reset clears the bit counter before the last bit.
-Measured: 10.8 `clk_114` on both slaves. cfide takes a CS write only while
-`SD_busy` is 0, and `SD_busy` falls one SPI half-period (3 `clk_114` at
-speed 1) after the last edge.
+Measured: 10.8 `clk_114` on both slaves.
+
+At cfide's pins the release cannot come early. cfide holds a CS write
+(and every SPI register access) until `SD_busy` is 0, and `SD_busy` falls
+one SPI half-period (3 `clk_114` at speed 1) after the last edge. So the
+CPU can only make the figure larger. It goes negative only if the slaves
+see `sck` later than their select by more than that distance, which is a
+clock-routing delay (the red case below, `+SCKDLY`), not a firmware timing.
 
 The synchroniser: a byte's last edge sets `new_byte` / `spi_rx_flag` at
 t0. The first `clk7n_en` edge after it comes within 16 `clk_114` and takes
@@ -331,9 +376,13 @@ after `clk7n_en`). The consumers see them, and read `out` / `rx_data`, at
 the `clk7_en` edge after that, 16 later. That makes at most 16 + 8 + 16 =
 40 `clk_114` from t0. The next byte's or word's last edge must come later:
 it overwrites `out` / `rx_data`, and its flag would merge with the
-pending one. The SPI clock alone keeps this safe, because at speed 1 a
-bit takes 6 `clk_114`, so 8 bits take 48 and 16 take 96, whatever the CPU
-does. The firmware's minima are 57 and 117.
+pending one. The SPI clock sets the floor of this spacing: the next
+byte's eighth edge cannot come sooner than eight bit periods after the
+last one, plus cfide's hold of the next write until `SD_busy` falls. At
+speed 1 a bit takes 6 `clk_114`, so 8 bits take 48 and 16 take 96,
+whatever the CPU does. The firmware's minima are 57 and 117. Only a
+faster SPI speed can break it: speed 0, 2 `clk_114` per bit, in the red
+case below.
 
 ### Item 12: the RTC
 
@@ -345,8 +394,8 @@ says "register 0000"; the code reads from register 2. `rtc_model.v`
 answers that protocol with the fixed BCD time 2026-01-01 00:00:00 (weekday
 4) and records writes, so the RTC frame is the same in every run:
 `80 92 ff ff ff ff ff ff ff / ff 00 00 00 01 04 01 26`. This is the
-`milestones_boot.txt` line; `boot` at SLAT 8 (p4t5b) and the `rtc2` run
-at SLAT 4 (p4t5rtcb, both frames) give the same bytes.
+`milestones_boot.txt` line; `boot` at SLAT 8 (p4t5e) and the `rtc2` run
+at SLAT 4 (p4t5rtce, both frames) give the same bytes.
 
 **Datasheet minimum: not found.** `doc/rtc` holds `OKI MSM6242B.pdf` (the
 parallel clock-port RTC the PCF2123 is presented to the Amiga as), a clock
@@ -355,8 +404,8 @@ port manual and HTML pages; no PCF2123 datasheet. The bound is therefore
 RTC on the first main-loop pass and then every 8,192 passes
 (`(c++&8191)==0`), so `boot` (20 passes) has one transfer and no gap.
 `XARGS=+BOOT_END=rtc2` ends `boot` at the second RTC frame instead and
-measures it: 363,982,789 ns = 41.3 M `clk_114` at SLAT 4 (p4t5rtcb), 389,857,255
-ns = 44.2 M at SLAT 8 (p4t5r12b), TICKDIV 1. Both are 8,192 passes of the
+measures it: 363,982,789 ns = 41.3 M `clk_114` at SLAT 4 (p4t5rtce), 389,857,255
+ns = 44.2 M at SLAT 8 (p4t5r12e), TICKDIV 1. Both are 8,192 passes of the
 main loop, so the figure follows the loop's speed. It is milliseconds
 apart from any bound a datasheet could give. `+RTC_CSH_MIN=<ns>` sets a bound once the datasheet value is
 known.
@@ -376,18 +425,22 @@ as `sim/host_bridge/fwboot/smoke_trap.c`). It runs before `main`: two SPI
 DATA writes back to back with no read-back, one paula frame (`10`, two
 bytes), then `MMC_Init()` and `MMC_Read(0, 0)` (one direct-mode sector).
 Probe v3 adds a 4-byte paula frame and a 4-byte userio frame (command 00)
-at SPI speed 0. Its runs end at `TIMEOUT=46000000`, just after the probe,
+at SPI speed 0. The red runs were repeated on the tree with the verdicts
+and the async pins (RUNTAGs below; the first round, p4t5r1a, p4t5r34b,
+p4t5r4s, p4t5r5a and p4t5r12b, gave the same values). The probe runs end
+at `TIMEOUT=46000000`, just after the probe,
 so their verdict is FAIL (end event not reached); the MARGIN lines are what
 counts.
 
 | Item | Red case | RUNTAG | Result | Green |
 |---|---|---|---|---|
-| 1 | run copy: `832_bridge.vhd`'s `-- 4PHASE` line becomes `state <= waiting;` and `rv_hostcpu.v` gets the fast master (both exactly as `sim/host_bridge/run.sh` `mutant`'s gate leg), `boot_short`, `TIMEOUT=10000000` | p4t5r1a | `stale_acks min 1184 count (bound 0, LOW)` | p4t5b: 0 |
-| 3, 4 | probe v2, `XARGS=+SCKDLY=1000` (the slaves see `sck` 1 us late) | p4t5r34b | `dmode_release min -4.4 LOW`, `paula_cs_release min -87.4 LOW`, `userio_cs_release min -102.4 LOW` | probe v2 without the plusarg, p4t5p35b: 108.8 / 25.8 / 10.8, `dmode_L` 6.0 |
-| 4 spacing | probe v3 (SPI speed 0: 2 `clk_114` per bit) | p4t5r4s | `userio_byte_spacing min 24.0 (bound 40, LOW)`; `paula_word_spacing` 48.0 stays ok (16 bits cannot come closer than 32 plus the access) | p4t5b: 57.0 / 117.0 |
-| 5 | run copy: cfide's support state machine acknowledges an SPI write while `SD_busy` (`IF SD_busy = '0' or wr = '1' THEN`), probe v1 (v2 without the paula frame) | p4t5r5a | `spi_write_busy min 92934 count (bound 0, LOW)`, from the boot ROM on | p4t5p35b: 0 (the probe's second write is held) |
-| 12 | `XARGS="+BOOT_END=rtc2 +RTC_CSH_MIN=1000000000"`, `TIMEOUT=300000000` | p4t5r12b | `rtc_cs_high min 389857255.3 ns (bound 1000000000, LOW) over 1 gaps` | p4t5rtcb: 363982789.0, ok |
+| 1 | run copy: `832_bridge.vhd`'s `-- 4PHASE` line becomes `state <= waiting;` and `rv_hostcpu.v` gets the fast master (both exactly as `sim/host_bridge/run.sh` `mutant`'s gate leg), `boot_short`, `TIMEOUT=10000000` | p4t5r1e | `stale_acks min 1184 count (bound 0, LOW)` | p4t5e: 0 |
+| 3, 4 | probe v2, `XARGS=+SCKDLY=1000` (the slaves see `sck` 1 us late) | p4t5r34e | `dmode_release min -4.4 LOW`, `paula_cs_release min -87.4 LOW`, `userio_cs_release min -102.4 LOW` | probe v2 without the plusarg, p4t5p35e: 108.8 / 25.8 / 10.8 ok, `dmode_L` 6.0 rec |
+| 4 spacing | probe v3 (SPI speed 0: 2 `clk_114` per bit) | p4t5r4se | `userio_byte_spacing min 24.0 (bound 40, LOW)`; `paula_word_spacing` 48.0 stays ok (16 bits cannot come closer than 32 plus the access) | p4t5e: 57.0 / 117.0 |
+| 5 | run copy: cfide's support state machine acknowledges an SPI write while `SD_busy` (`IF SD_busy = '0' or wr = '1' THEN`), probe v1 (v2 without the paula frame) | p4t5r5e | `spi_write_busy min 92934 count (bound 0, LOW)`, from the boot ROM on | p4t5p35e: 0 (the probe's second write is held) |
+| 12 | `XARGS="+BOOT_END=rtc2 +RTC_CSH_MIN=1000000000"`, `TIMEOUT=300000000` | p4t5r12e | `rtc_cs_high min 389857255.3 ns (bound 1000000000, LOW) over 1 gaps` | p4t5rtce: 363982789.0, rec (bound 0) |
 | 14 | `l3check.py order` on a copy of `run_p4t5/tb_boot_x0_s8_j0.log` with the last kickstart write moved to cycle 156,968,900 (after the release at 156,968,829) | offline | `FAIL order: the last kickstart-region SDRAM write (cycle 156968900, ...) is not before the last cpurst fall (cycle 156968829)` | `PASS order` on the log |
+| required events | `run.sh`'s `margins` with `boot`'s `MARGIN_REQ_boot` on a `boot_short` log (p4t5cs: no paula frame) | offline | `BAD  MARGIN 4 paula_cs_release is n/a: scenario boot must check it (MARGIN_REQ_boot)`, the same for `paula_word_spacing` | the same log as `boot_short`: `ok   MARGIN lines: all 10 present, none LOW, 4 required ones ok` |
 | MMC | `l3check.py mmc run_p4t5 <golden>` with the first `ACMD41 arg=40000000` changed to `arg=00000000` | offline | `FAIL mmc: command 4 is ACMD41 arg=40000000, the golden ... says ACMD41 arg=00000000` | `PASS mmc: MMC_Init's 9 commands` |
 
 The RTC measurement and its red case, from the repository root (about

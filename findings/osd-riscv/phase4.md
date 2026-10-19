@@ -42,15 +42,15 @@ Cycles: jump to 0x2000 at 43,190,675; the first HandleFpga frame (main loop) at 
 
 ### Task 5: margin monitors on the L3 boot (plan 7.1 items 1, 3, 4, 5, 12, 14)
 
-`sim/l3` `boot`, RV, Verilator, SLAT=8 SJIT=0, SCKDLY 1.5 / C28DLY 0.3, TICKDIV 1, gate pair `p4t5b` / `p4t5b_xr` (SAME). Method, bounds and red cases: `sim/l3/README.md` "Monitors".
+`sim/l3` `boot`, RV, Verilator, SLAT=8 SJIT=0, SCKDLY 1.5 / C28DLY 0.3, TICKDIV 1, gate pair `p4t5e` / `p4t5e_xr` (SAME; review round 1: the verdicts ok / LOW / n/a / rec and the async-reset pins, same figures as the first gate `p4t5b`). Method, bounds and red cases: `sim/l3/README.md` "Monitors".
 
 | Item | Measured (min) | Bound | Note |
 |---|---|---|---|
 | 1 stale acks | 0 of 1,685,611 hw accesses | 0 | red: L2 mutant bridge + fast master, 1,184 |
-| 3 direct mode, last sck edge -> `direct_scs` release | none in `boot`; 108.8 `clk_114` (probe firmware, one `MMC_Read(0, 0)`) | 0 | RDSPI ack -> DisableDMode request (`L`) 6 `clk_114` |
+| 3 direct mode, last sck edge -> `direct_scs` release | n/a in `boot`; 108.8 `clk_114` (probe firmware, one `MMC_Read(0, 0)`) | 0 | RDSPI ack -> DisableDMode request (`L`) 6 `clk_114` |
 | 4 last sck edge -> select rise | paula 10.8, userio 10.8 `clk_114` | 0 (corrected from 32: no state the last byte needs is cleared by the select) | byte / word spacing 57.0 / 117.0 against the synchroniser's 40 |
 | 5 SPI DATA write taken while busy | 0 of 829,924 | 0 | the boot ROM's back-to-back writes are held, not taken |
-| 12 RTC CS high | one transfer in `boot`; 363,982,789 ns between the first two (`+BOOT_END=rtc2`, SLAT 4) | datasheet not found (0) | 8,192 main-loop passes |
+| 12 RTC CS high | one transfer in `boot` (n/a); 363,982,789 ns between the first two (`+BOOT_END=rtc2`, SLAT 4, rec) | datasheet not found (0) | 8,192 main-loop passes |
 | 14 last kickstart write -> CPU release | 6,829,787 `clk_114` (write 150,139,042, release 156,968,829) | 1 | `l3check.py order` PASS |
 
 The firmware's `MMC_Init` sends the same 9 card commands as `fw/ctrl_rv/test`'s mmc_test golden (`l3check.py mmc` PASS). The RTC frame is `80 92 ff ff ff ff ff ff ff / ff 00 00 00 01 04 01 26` at SLAT 8 and SLAT 4 (the model's fixed time).
@@ -91,7 +91,16 @@ Found by the X-sensitivity twin of Task 2 (`XRAND=1`, sim/host_bridge, 2026-10-1
 
 ### Found while modelling the RTC (Task 5, 2026-10-19)
 
-**`rtl/minimig/userio_osd_spi.v` `bit_cnt` (line 34) and `first_byte` (line 40) have no reset but a rising `_scs` and no initial value.** After configuration `_scs` starts high with no edge, so both start at the FPGA's power-up 0. Under random init (sim/l3 twin `p4t5c_xr`, seed 820757315) a random `bit_cnt` made the first OSD frame of the boot (the boot ROM's `20 08 06`, cycle 1948) answer `a8 00` instead of `00 00`: userio_osd_spi shifted its random `sdo_reg` instead of loading `in` on the first falling edge. Nothing after that frame differed (`tb_boot` SAME). On the board, power-up 0 also means `first_byte` = 0 for that first frame. Its command byte is then taken as a data byte, so this reading of the RTL says the first frame (`20 08 06`, CPU halt + reset) is not decoded until `_scs` has risen once. The firmware's `20 08 07` two frames later sets the same register, so no effect is known; this is a reading of the RTL, not checked on the board. Minimal fix if wanted: `initial` values (`bit_cnt` 0, `first_byte` 1). Bench handling: `XRAND=1` pins both to 0 in the run copy (`l3_pin_minimig`, `=== XRAND pinned 11 regs`), which is what the 2-state runs start with; twin `p4t5d` / `p4t5d_xr` with the same seed is SAME.
+**`userio_osd_spi.v` `bit_cnt` / `first_byte` at time 0: a simulation-model artefact, not a board risk (corrected in Task 5's review round 1).**
+
+- **What the twin showed.** Twin `p4t5c_xr` (seed 820757315) answered the boot's first OSD frame (the boot ROM's `20 08 06`, cycle 1948) with `a8 00` instead of `00 00`. Nothing after that frame differed.
+- **The RTL.** Both registers are written in `always @(posedge sck or posedge _scs) if (_scs) ...`. paula_floppy.v's `spi_bit_cnt`, `spi_tx_cnt` (`negedge scs`) and `spi_rx_cnt_rst` (`negedge scs1`) are written the same way.
+- **Why the board is fine.** Synthesis makes these level-sensitive asynchronous preset / clear flops (FDPE / FDCE). `_scs` is a direct wire from cfide, and `sd_cs = NOT scs` is 1 from configuration on: cfide's reset clears `scs`. So on the board, from the start, `bit_cnt` is held at 0, `first_byte` at 1, `spi_bit_cnt` / `spi_tx_cnt` at 0 and `spi_rx_cnt_rst` at 1. They do not depend on power-up values, and the boot's first OSD frame is decoded normally.
+- **Why simulation differed.** A Verilog simulator applies such a set / clear only on an edge of the select.
+  - xsim sees X -> 1 at time 0 as an edge, so it gives the board's values.
+  - Verilator's two-state build does not. Probed with a run copy, p4t5t0: `first_byte` 0 at 50 ns, and the first frame's command byte was taken as data (its write was the reset value anyway, so nothing visible followed).
+  - Under `XRAND` the registers start random.
+- **Bench handling.** `sim/l3/run.sh l3_pin_async`, in every run for both simulators, initialises the five registers to the held state in the run copies. Probe p4t5t0b then shows `first_byte` 1 and command `08` decoded in the first frame; the twins are SAME (sim/l3 README, "boot"). The earlier entry here said the board relied on power-up 0 and might drop that frame: that was wrong. No RTL change is suggested.
 
 **On the board the firmware's RTC read reaches no chip.** `rtl/soc/minimig_openaars_top.v` leaves `minimig_virtual_top`'s `RTC_CS` (= `SPI_CS[7]`, line 1122 there) unconnected (`.RTC_CS()`, line 652); the PCF2123 sits on its own pins and is read by `rtl/openaars/pcf2123/rtc_spi_clock.sv` (the OKI MSM6242 bridge in `minimig.v`). `HandleRTC()` (`rtc.c`, identical in `fw/ctrl_832` and `fw/ctrl_rv`) still selects `sd_cs[7]` every 8,192 main-loop passes. With that select low, cfide samples `sd_dimm`, the SD card's MISO, while the card is deselected, and writes what it reads into its RTC registers (`HW_RTC`). Both firmwares do this, so it is not a parity item; L3 models a PCF2123 on `sd_cs[7]` so that the frame is checked. `rtc.c`'s comment "start reading at register 0000" does not match the command 0x92, which selects register 2 (Seconds); the code reads registers 2..8, which is right, so only the comment is wrong.
 
