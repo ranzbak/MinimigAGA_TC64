@@ -1146,7 +1146,7 @@ us). Lines are those of the current tree.
 |---|---|---|---|
 | `hardware.h:53` | `TIMER`, 16-bit read of `0xFFFFFFD0` | | |
 | `hardware.c:180`, `188`, `201` | `GetTimer`, `CheckTimer`, `WaitTimer` (above) | | |
-| `hardware.h` `WRFIFO_GAP` | 16 TIMER reads, the values unused, before each word read from paula's write FIFO (`fdd.c`, 20 sites; Phase 4 Task 14, "Write-FIFO gap") | | 16 cfide handshakes per word |
+| `hardware.h` `WRFIFO_GAP` | 16 TIMER reads, the values unused, before each word read from paula's write FIFO (`fdd.c`, 20 sites; Phase 4 Task 14, "Write-FIFO gap") | | 16 cfide handshakes per word: at least 128 `clk_114` (1.1 us); measured gap at least 202 `clk_114` (1.8 us), about 255 `clk_114` (2.2 us) more per word |
 | `hardware.h:59` | `SPIN`: one TIMER read, the value unused (a cfide handshake as a delay); live at `fpga.c:226` (4x) and `config.c:618` (4x) only (`SPI_reply`'s four went with Phase 4 Task 11) | | one bus access each |
 | `hardware.c:244`, `246` (`SPI_reply`) | the `OSD_RDY` wait: `GetTimer(2)`, ends when TIMER has passed T0 + 2 (`CheckTimer`) | 2 | 11.6..17.4 ms (2..3 counts) |
 | `audio.c:33`-`34` (`audio_clear`) | waits for the next TIMER change after `AUDIOF_ENA` | <= 1 | <= 5.804 ms |
