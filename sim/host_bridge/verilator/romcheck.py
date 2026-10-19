@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""romcheck.py <OSDBoot_rv_ROM.vhd> <bridge.v>: the boot BRAM after ghdl --synth.
+"""romcheck.py <OSDBoot_rv_ROM.vhd | OSDBoot_832_ROM.vhd> <bridge.v>: the boot BRAM after ghdl --synth.
 
-The ROM template (fw/ctrl_boot_rv) is a shared-variable RAM with its contents
+The ROM template (fw/ctrl_boot_rv; the 832's run copy, sim/common/hostsim.sh
+hs_rom832) is a shared-variable RAM with its contents
 as the variable's initial value.  ghdl --synth must turn it into memories
 (not registers) and keep every word.  GHDL 4.1 writes one 8-bit memory per
 byte lane (ram_n1 .. ram_n4) with "initial" assignments, index order
@@ -28,9 +29,9 @@ def vhdl_words(path):
 
 def verilog_lanes(path):
     s = open(path).read()
-    mod = re.search(r"^module osdboot_rv_rom\w*\n.*?^endmodule", s, re.S | re.M)
+    mod = re.search(r"^module osdboot_(?:rv|832)_rom\w*\n.*?^endmodule", s, re.S | re.M)
     if not mod:
-        sys.exit("romcheck: no osdboot_rv_rom module in %s" % path)
+        sys.exit("romcheck: no osdboot_rv_rom / osdboot_832_rom module in %s" % path)
     body = mod.group(0)
     lanes = {}
     for name, depth in re.findall(r"reg \[7:0\] (\w+)\[(\d+):0\] ; // memory", body):

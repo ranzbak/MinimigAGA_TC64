@@ -3,7 +3,10 @@
 // See sim/l3/README.md ("Bench") and run.sh.
 //
 //   EightThirtyTwo_Bridge (cpu_riscv = true: rv_hostcpu + VexOsd, the
-//     committed boot ROM fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd, hostcache.v)
+//     committed boot ROM fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd, hostcache.v;
+//     L3_CPU832 (run.sh CPU=832): cpu_riscv = false, the EightThirtyTwo and
+//     fw/ctrl_boot_832/OSDBoot_832_ROM.vhd in its run copy's shared-variable
+//     form, sim/common/hostsim.sh hs_rom832)
 //     -> sdram_host_model (sim/host_bridge, +SLAT +SJIT +SEED)
 //     -> cfide (the board's generics: spimux false, havespirtc, havei2c,
 //        havevpos true; no I2C slave, SCL/SDA read 1, every transfer NACKs)
@@ -87,7 +90,9 @@
 `timescale 1ns/1ps
 
 // hostmon.vh's firmware-boot monitors; RV_HOSTCPU_STATS comes from the
-// command line (rv_hostcpu.v needs it too, run.sh sets it for both)
+// command line (rv_hostcpu.v needs it too, run.sh sets it for both; the
+// 832 has no such counters: L3_CPU832 builds without it, and the STATS
+// lines are left out)
 `ifndef SDCARD
 `define SDCARD
 `endif
@@ -100,6 +105,11 @@
 `else
 `define HM_RV      hostcpu.genrv.myrv
 `define HM_SD_BUSY mycfide.SD_busy
+`endif
+`ifdef L3_CPU832
+`define L3_CPU "832"
+`else
+`define L3_CPU "rv"
 `endif
 `define HM_FRAME_HOOK
 
@@ -155,6 +165,8 @@ module tb_l3 #(
 
 `ifdef L3_GHDL
   EightThirtyTwo_Bridge hostcpu (
+`elsif L3_CPU832
+  EightThirtyTwo_Bridge #(.cpu_riscv(1'b0)) hostcpu (
 `else
   EightThirtyTwo_Bridge #(.cpu_riscv(1'b1), .rv_extra_ws(EXTRA_WS)) hostcpu (
 `endif
@@ -450,10 +462,13 @@ module tb_l3 #(
     sc_init;
     #1;
     // (no empty %0s: Verilator prints a space for it, xsim nothing)
-    $display("L3 bench: CPU=rv SCENARIO=%0s SLAT=%0d SJIT=%0d EXTRA_WS=%0d TICKDIV=%0d TICKDIV_AT=%0s SCKDLY=%0.2f C28DLY=%0.2f",
-             scenario, ram.slat, ram.sjit, EXTRA_WS, tickdiv, tick_at_scen ? "scenario" : "start",
+    $display("=== CPU %0s", `L3_CPU);
+    $display("L3 bench: CPU=%0s SCENARIO=%0s SLAT=%0d SJIT=%0d EXTRA_WS=%0d TICKDIV=%0d TICKDIV_AT=%0s SCKDLY=%0.2f C28DLY=%0.2f",
+             `L3_CPU, scenario, ram.slat, ram.sjit, EXTRA_WS, tickdiv, tick_at_scen ? "scenario" : "start",
              sckdly, c28dly);
-`ifdef L3_GHDL
+`ifdef L3_CPU832
+    if (EXTRA_WS != 0) bench_error("EXTRA_WS (the bridge's rv_extra_ws) is the RV's only: 0 with the 832");
+`elsif L3_GHDL
     if (`HM_RV.EXTRA_WS != EXTRA_WS)
       bench_error("the converted bridge has another rv_extra_ws than EXTRA_WS");
 `endif
@@ -476,6 +491,8 @@ module tb_l3 #(
     card.save_image;
 `ifdef RV_HOSTCPU_STATS
     hm_final_stats;
+`elsif L3_CPU832
+    // the 832: no counters, no STATS line
 `else
     bench_error("built without -DRV_HOSTCPU_STATS (run.sh sets it)");
 `endif

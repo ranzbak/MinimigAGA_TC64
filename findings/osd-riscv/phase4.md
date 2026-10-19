@@ -55,6 +55,24 @@ Cycles: jump to 0x2000 at 43,190,675; the first HandleFpga frame (main loop) at 
 
 The firmware's `MMC_Init` sends the same 9 card commands as `fw/ctrl_rv/test`'s mmc_test golden (`l3check.py mmc` PASS). The RTC frame is `80 92 ff ff ff ff ff ff ff / ff 00 00 00 01 04 01 26` at SLAT 8 and SLAT 4 (the model's fixed time).
 
+### Task 6: the 832 in L3 (`CPU=832`)
+
+`sim/l3` with the EightThirtyTwo, `fw/ctrl_boot_832` and `832OSDAD.BIN` built from a copy of the unchanged `fw/ctrl_832` (`sim/l3/fw832`, two builds byte-identical, sha256 768c765d57deb1a0, 107,479 bytes). Verilator, SLAT=8 SJIT=0, TICKDIV 1; gate pair `p4t6` / `p4t6_xr` SAME, `boot_short` `p4t6s` (Verilator) / `p4t6x` (xsim). Details: `sim/l3/README.md` "832".
+
+| Event | 832 | RV (Task 4) | 832 / RV |
+|---|---|---|---|
+| jump to 0x2000 | 54,832,554 | 43,190,675 | 1.270 |
+| `boot_short` end | 74,525,542 | 57,659,090 | 1.293 |
+| main loop (first HandleFpga frame) | 202,610,912 | 158,044,038 | 1.282 |
+
+`OSD EARLY 0 of 26`, `OSD GAP min 254` (RV 44): the 832's four `SPIN`s per reply byte keep it far behind the synchroniser. kick, order and mmc PASS: the 832's `MMC_Init` sends the same 9 card commands as the RV's golden. All MARGIN lines ok (release 3.8 `clk_114` at both slaves, byte spacing 49.0 against the 40 bound; the RV 10.8 / 57.0).
+
+Speed: Verilator 0.29 M `clk_114` cycles/s (`boot_short`), 0.106 M/s with seven simulations on the machine (`boot` 1,918 s); xsim 33 k cycles/s (`boot_short` 2,282 s, `X 0`, SAME against `p4t6s`). xsim used by the task: about 45 min (that run, two builds and two runs of under 20 k / 200 k cycles that found the register-file X).
+
+Tool finding (not RTL): **GHDL 4.1 `--synth` mis-converts `eightthirtytwo_cpu.vhd`.** In the main process (async reset), the `thread` record has some fields reset (`pc`, `setpc`, `d_ex_op`, the hazard flags, `pause`) and some not (`d_imm`, `d_reg`, `d_alu_op`, `d_alu_reg1`, `d_alu_reg2`, `d_read_tmp`, `d_read_reg`); GHDL then emits no flops for any field from `d_imm` on (the clock edge becomes `1'b0`, each field a mux of its own value), so the decoded op never reaches the ALU and the CPU runs straight through its boot ROM (Verilator and iverilog agree on the netlist; GHDL's own simulation of the VHDL agrees with xsim). Found by a bus-trace comparison with xsim (first 20 k cycles). The bench's conversion copy resets those seven fields too (`hs_ghdl_convert`); with it the bus trace equals xsim's and the xsim `boot_short` is SAME. Also: the instance label `alu` collides with GHDL's net names (`alu_q1` ...), renamed in the copy. Nothing to change in the RTL: Vivado builds the board's 832.
+
+Bench notes: the 832 boot ROM's RAM (`OSDBoot_832_ROM.vhd`) is a `signal` with two writing processes, which simulates as two drivers (writes read back X) and which GHDL refuses; the run copy uses the RV ROM's shared-variable form (`hs_rom832`). The 832's register file data registers have no reset and the boot ROM's first prologue stores them: xsim pins them to 0 (the FPGA's start value; the XRAND twin, which randomises them, is SAME). Two hostmon monitors assumed the RV's access pattern (UART at 0xFFFFFFF0 only; the command byte's read-back in OSD reply frames, which vbcc drops) and now decode as cfide does; L2 `boot` / `fwboot` and the RV L3 `boot` are unchanged by it (SAME / only the new `=== CPU rv` line).
+
 ## Shared defects
 
 (none yet)

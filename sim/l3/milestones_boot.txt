@@ -1,13 +1,19 @@
-# run.sh boot: what the RV firmware must do on the L3 boot card (both
+# run.sh boot: what the firmware must do on the L3 boot card (both
 # firmwares, MINMGAR.CFG + MINMGAA.CFG, KICK.ROM; sim/l3/card) against the
-# real userio_osd / paula_floppy / gayle.  Format and matching:
-# sim/host_bridge/spitrace.py (UART and SPI each an ordered subsequence of
-# their own stream); "NOT UART <text>" lines are run.sh's: no UART line of
-# the run contains <text>.  Taken from the sources, not from a run.
+# real userio_osd / paula_floppy / gayle, for both CPUs.  Format and
+# matching: sim/host_bridge/spitrace.py (UART and SPI each an ordered
+# subsequence of their own stream); "NOT UART <text>" lines are run.sh's:
+# no UART line of the run contains <text>.  "CPU=rv <line>" and "CPU=832
+# <line>": a line of that CPU only (run.sh keeps it without the prefix for
+# that CPU and drops it for the other); only the boot ROM's file name and
+# the config file name differ (the firmware version line is the same:
+# both builds print L3_DATE's "Firmware version: 2026-1-1-0-0", and only
+# its prefix is a milestone).  Taken from the sources, not from a run.
 # boot_short checks the lines up to "#@ boot_short end" (its run ends at the
 # OSD_CMD_READ frame before that line, scenarios.vh).
 #
-# -- the boot ROM (fw/ctrl_boot_rv), as sim/host_bridge/fwboot/milestones.txt
+# -- the boot ROM (fw/ctrl_boot_rv, fw/ctrl_boot_832: the same messages), as
+# sim/host_bridge/fwboot/milestones.txt; the file each loads (OSDNAME)
 UART Initializing SD card
 UART cmd_CMD8 response: 1
 UART Hunting for partition
@@ -17,7 +23,8 @@ UART Reading boot sector
 UART Read boot sector from first partition
 UART Hunting for filesystem
 UART Reading directory sector
-UART file "RV32OSDABIN" found
+CPU=rv UART file "RV32OSDABIN" found
+CPU=832 UART file "832OSDADBIN" found
 # -- the firmware: main(), PLATFORM bit 2 (SPI RTC) is 1 (havespirtc = true)
 UART Platform has SPI RTC support
 # ColdBoot() -> MMC_Init(): the model answers CMD8 with 0x1AA, an SDHC card
@@ -26,8 +33,10 @@ UART SDHC card detected
 # boot sector, card-layout data: not checked)
 UART partition type: 0x
 UART (FAT16)
-# LoadConfiguration(0): the RISC-V file exists, 212 bytes (no conversion)
-UART file "MINMGAR CFG" found
+# LoadConfiguration(0): the CPU's own file exists, 212 bytes (the RISC-V:
+# no conversion)
+CPU=rv UART file "MINMGAR CFG" found
+CPU=832 UART file "MINMGAA CFG" found
 UART Configuration file size: 212
 # fpga_init(): the real userio_osd's OSD_CMD_VERSION reply (below) printed:
 # BETA_FLAG 1, 20 + MAJOR_VER 26, MINOR_VER 10, MINION_VER 2
@@ -41,7 +50,8 @@ UART Ported to Open AARS by Paul Honig
 # ColdBoot(): OsdDoReset(SPI_RST_USR | SPI_RST_CPU | SPI_CPU_HLT, SPI_RST_CPU | SPI_CPU_HLT)
 SPI 20 08 07
 SPI 20 08 06
-# ApplyConfiguration(0,0) with MINMGAR.CFG (sim/l3/gen/mkcfg.py): ConfigCPU 0,
+# ApplyConfiguration(0,0) with MINMGAR.CFG / MINMGAA.CFG (the same fields,
+# sim/l3/gen/mkcfg.py): ConfigCPU 0,
 # ConfigMemory 0x15, ConfigChipset 0, ConfigFloppy drives 1 speed 0 = 0x04
 # (the defaults of a failed load would send speed 1: 0x05)
 SPI 20 14 00

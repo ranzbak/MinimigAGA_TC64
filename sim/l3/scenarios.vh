@@ -55,11 +55,14 @@
   reg [8*16-1:0]  sc_ev = "";
   integer         sc_ev_cyc = 0;
   event           sc_stats_go;
+  // (CPU=832: no such counters, no STATS@ line)
+`ifndef L3_CPU832
   always @(sc_stats_go) begin
     #1;
     $display("=== STATS@%0s irefill %0d dread %0d dwrite %0d busy_cycles %0d (rv_hostcpu, to cycle %0d)",
              sc_ev, `HM_RV.st_irefill, `HM_RV.st_dread, `HM_RV.st_dwrite, `HM_RV.st_busy, sc_ev_cyc);
   end
+`endif
 
   task sc_end(input [8*16-1:0] ev, input [8*80-1:0] what);
     begin

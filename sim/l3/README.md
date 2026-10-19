@@ -2,7 +2,7 @@
 
 Work in progress (Phase 4 of the OSD host CPU migration). This file grows
 with the bench; so far it has the sections "Bench", "Run", "boot",
-"Monitors" and "Cards".
+"832", "Monitors" and "Cards".
 
 ## Bench
 
@@ -11,7 +11,7 @@ the committed boot ROM and the real firmware from an SD card image:
 
 | Part | What | From |
 |---|---|---|
-| host CPU | `EightThirtyTwo_Bridge` (`cpu_riscv = true`: `rv_hostcpu` + VexOsd, the boot ROM `fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd`, `hostcache.v`) | `rtl/host` |
+| host CPU | `EightThirtyTwo_Bridge` (`cpu_riscv = true`: `rv_hostcpu` + VexOsd, the boot ROM `fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd`, `hostcache.v`; `CPU=832`: `cpu_riscv = false`, the EightThirtyTwo and `fw/ctrl_boot_832/OSDBoot_832_ROM.vhd`, section "832") | `rtl/host` |
 | SDRAM | `sdram_host_model.v` (`+SLAT`, `+SJIT`, `+SEED`; `+SDRAM_DUMP=<file>` writes its 8 MB before the verdict) | `sim/host_bridge` |
 | cfide | the board's generics: `spimux` false, `havespirtc`, `havei2c`, `havevpos` true; no I2C slave (every ADV7511 transfer NACKs) | `rtl/host/cfide.vhd` |
 | card | `sd_spi_model #(.IMG_SECTORS(65536))` on `sd_cs[1]`, a 32 MB card from `sim/l3/card` | `sim/common` |
@@ -115,15 +115,16 @@ run.sh's `l3_check`) counts only when it exits 0 and prints its pass line. `xpai
 scenario and its `XRAND=1` twin in parallel (`run_<RUNTAG>`,
 `run_<RUNTAG>_xr`) and compares them. `compare` diffs every `tb_*.log` and
 `spi.txt` of two run directories (L2's rules). Environment: `CPU=rv`
-(default; `832` comes with Task 6), `SIM=xsim` (default) or `verilator`,
-`RUNTAG`, `FW`, `EXTRA_WS`, `SLAT`, `SJIT`, `SEED`, `XARGS` (more
-plusargs), `TIMEOUT`, `NOKICK=1`, `XRAND=1`, `XSEED`.
+(default) or `832` (section "832", with `E832`, `E832DIR`), `SIM=xsim`
+(default) or `verilator`, `RUNTAG`, `FW`, `FW832`, `L3_DATE`, `EXTRA_WS`,
+`SLAT`, `SJIT`, `SEED`, `XARGS` (more plusargs), `TIMEOUT`, `NOKICK=1`,
+`XRAND=1`, `XSEED`. Every log starts with `=== CPU rv` or `=== CPU 832`.
 
 A run directory `sim/l3/run_<RUNTAG>/` holds `results.txt`, the log
 `tb_<scenario>_x<EXTRA_WS>_s<SLAT>_j<SJIT>.log`, `spi.txt`,
 `spi_summary.txt`, `spi_t.txt`, `milestones.txt` (the check's output),
-`kick.txt`, `order.txt`, `mmc.txt` and `sdram.bin` (`boot`), `card/` and
-`fwrv/`.
+`kick.txt`, `order.txt`, `mmc.txt` and `sdram.bin` (`boot`), `card/`,
+`fwrv/` and (`CPU=832`) `fw832/`.
 
 ## boot
 
@@ -279,6 +280,151 @@ the MISO of the very first OSD frame: `20 08 06 / a8 00` instead of
   p4t5e / p4t5e_xr (default seed) and p4t5f / p4t5f_xr (seed 820757315) are
   SAME. This models the RTL as synthesised; it is not
   a defect of the RTL (`findings/osd-riscv/phase4.md`).
+
+## 832
+
+`CPU=832` runs the same scenarios and checks with the 832 host CPU: the
+bridge with `cpu_riscv = false` (the EightThirtyTwo, the committed boot ROM
+`fw/ctrl_boot_832/OSDBoot_832_ROM.vhd`) and `832OSDAD.BIN`, built from a
+copy of the unchanged `fw/ctrl_832`. The card is the same `boot` card,
+with both firmwares built in the run directory: the 832 boot ROM loads
+`832OSDAD.BIN`, and the firmware reads `MINMGAA.CFG` (the RV firmware
+reads `MINMGAR.CFG`; both files have the same fields). This is the other
+leg of the 832-vs-RV differential (Task 7).
+
+### Setup
+
+The EightThirtyTwo tools (vbcc832, 832a / 832l, lib832) and its VHDL come
+from an EightThirtyTwo checkout: the submodule, or in a git worktree
+(where the submodule is not initialised) the main checkout's. On a fresh
+machine, after the "Run" setup, from the repository root:
+
+```sh
+git submodule update --init EightThirtyTwo
+E832DIR=$PWD/EightThirtyTwo
+E832=$E832DIR/RTL
+make -C "$E832DIR" vbcc
+make -C "$E832DIR/832a"
+make -C "$E832DIR/lib832"
+```
+
+`make vbcc` fetches vbcc 0.9g (wget), applies the volatile fix and builds
+it; vbcc's configuration asks questions, the defaults are right on Linux
+(EightThirtyTwo's Makefile). In a worktree set `E832DIR` to the main
+checkout's `EightThirtyTwo` instead of the first three lines (the tools
+are used in place; nothing is built there by the bench).
+
+### Run
+
+```sh
+make -C sim/l3/fw832 E832DIR="$E832DIR"
+CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=b832 bash sim/l3/run.sh boot
+CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=bx832 bash sim/l3/run.sh xpair boot
+CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=s832 bash sim/l3/run.sh boot_short
+CPU=832 E832="$E832" E832DIR="$E832DIR" RUNTAG=sx832 bash sim/l3/run.sh boot_short
+bash sim/l3/run.sh compare sx832 s832
+```
+
+`sim/l3/fw832/Makefile` (`make -C sim/l3/fw832 B=<dir> E832DIR=<dir>`)
+copies the tracked files of `fw/ctrl_832` to `<dir>/src` and builds them
+there with fw/ctrl_832's own Makefile (`832DIR=$E832DIR`, targets
+`version.h` and `832OSDAD.bin` only, so the tracked `bootcustominit.h` is
+used and no 68k assembler is needed) with `date.sh` first on `PATH` as
+`date`: every `date` prints `L3_DATE` (default 2026-01-01), so the version
+strings and the image are the same in every build. Output:
+`<dir>/832OSDAD.BIN`, `.map`, `832OSDAD.txt` (the sources' git state,
+`L3_DATE`, size and sha256) and `make.log`. `fw/ctrl_832` is never built
+in place (its tracked `version.h` would change). `run.sh` builds it into
+`<run>/fw832` for `CPU=832`; `FW832=<file>` takes another image, for
+either CPU (with `CPU=rv` and no `FW832` the card has the stand-in).
+
+### What differs from the RV run
+
+- Milestones: `milestones_boot.txt` lines `CPU=rv <line>` / `CPU=832
+  <line>` hold for that CPU only: the file the boot ROM loads
+  (`RV32OSDABIN` / `832OSDADBIN`) and the config file
+  (`MINMGAR CFG` / `MINMGAA CFG`). The printed firmware version is the
+  same, `Firmware version: 2026-1-1-0-0` in both (one `L3_DATE`).
+- No `rv_hostcpu` counters: no `=== STATS` / `=== STATS@` lines, and the
+  `=== BOOT` line has no counts. `boot_seen` (the first read of 0x2000)
+  works for both CPUs.
+- `EXTRA_WS` is the RV's (`rv_extra_ws`); `CPU=832` refuses another value
+  than 0.
+- `=== STACK low` is not the 832's stack depth: the firmware installs its
+  interrupt handler by writing the vector word at 0x0d (lib832's
+  `_InterruptVector`), the lowest write below 0x2000.
+- Timeouts: `L3_BOOT_TO` / `L3_SHORT_TO` default to 1.5 x the 832's end
+  events (below).
+
+Two bench monitors were RV-shaped and now follow the hardware for both
+CPUs (`sim/common/hostmon.vh`; L2 and the RV runs are unchanged by it):
+the UART line printer takes every write cfide decodes as the transmit
+register (`rs232_select`: address bit 23 and bits 7..4 = F; the RV writes
+the word at 0xFFFFFFF0, the 832 firmware the byte at 0x0FFFFFF3), and the
+OSD reply-gap monitor no longer assumes the command byte's read-back
+(vbcc drops it: `SPI(OSD_CMD_VERSION)`'s result is unused), so a read is
+the read-back of the write before it and every later write is a reply
+byte's.
+
+### The 832 under Verilator and xsim
+
+The VHDL is converted with `ghdl --synth` as for the RV
+(`sim/common/hostsim.sh` `hs_ghdl_convert` with `cpu_riscv=false`: the
+EightThirtyTwo VHDL from `E832`, `sim/spi_cdc/host832/debug_bridge_stub.vhd`
+for the debug bridge entity the bridge names, the ROM). Four things needed
+a bench-side answer; the RTL and the sources in `E832` are not changed:
+
+| What | Where | Why |
+|---|---|---|
+| the boot ROM's RAM is a `signal` written by two port processes | `hs_rom832`, both simulators: the run copy uses the RV ROM's `shared variable` template (same words, ports, processes) | in simulation the two processes are two drivers of the whole signal: a port A write resolves against port B's driver and reads back X (the 832's stack is in this BRAM); `ghdl --synth` refuses it ("multiple assignments for ram"). Synthesis infers one true-dual-port BRAM either way |
+| ALU instance label `alu` | `hs_ghdl_convert`, the conversion's copy: `alu_unit` | GHDL 4.1 names an instance's output nets `<label>_<port>`; with outputs `q1 q2 carry ack` wired to signals `alu_q1` ... the output declares them twice |
+| reset branch of the main process | `hs_ghdl_convert`, the conversion's copy: also clears `thread.d_imm`, `d_reg`, `d_alu_op`, `d_alu_reg1`, `d_alu_reg2`, `d_read_tmp`, `d_read_reg` | GHDL 4.1 drops the flops of the `thread` record's fields from `d_imm` on when some fields are reset and others not (the clock edge becomes a constant 0, each field a mux of itself: the decoded op never reaches the ALU and the CPU runs straight through its boot ROM; found by comparing bus traces with xsim, GHDL's own simulation of the VHDL agrees with xsim). The FPGA starts these flops at 0 and the bench resets once at time 0, so the state at the release is the same; xsim on the original VHDL is the cross-check |
+| the register file's data registers (`regfile.tmp`, `gpr0..gpr6`) have no reset | `run.sh l3_e832_xsim`, xsim only: declaration initial value 0 | the boot ROM's first function prologue stores them to the stack: xsim's X on the bus (`write 0000158c data xxxxxxxx`, cycle 2627). The FPGA starts them at 0; Verilator's two-state build does too, and the XRAND twin randomises them |
+
+`l3.vlt` waives `UNOPTFLAT` for the converted CPU: the `regfile` and
+`thread` records are one vector each, and some fields are concurrent
+assignments from other fields, a vector-level path, not a loop between
+bits.
+
+### Measured (2026-10-19, 832, SLAT=8 SJIT=0, SCKDLY 1.5 / C28DLY 0.3, TICKDIV 1)
+
+| Event | 832 `clk_114` cycle | RV (section "boot") | 832 / RV |
+|---|---|---|---|
+| the boot ROM jumps to the firmware (first read of 0x2000) | 54,832,554 | 43,190,675 | 1.270 |
+| `boot_short` end | 74,525,542 | 57,659,090 | 1.293 |
+| the Amiga CPU released after the kickstart upload (the last cpurst fall) | 198,239,949 | 156,968,829 | 1.263 |
+| main-loop milestone (first HandleFpga frame) | 202,610,912 | 158,044,038 | **1.282** (the 832 factor) |
+| `boot` end | 202,841,132 | 158,155,012 | 1.283 |
+
+`L3_BOOT_TO` = 304,300,000 and `L3_SHORT_TO` = 111,800,000 for `CPU=832`
+(1.5 x the end events). `boot_short` is 74.5 M cycles, under the plan's
+120 M limit, so the xsim cross-check runs the whole of it (no
+`+SHORT_END=version`).
+
+Speed: Verilator 0.29 M cycles/s for the 832 (p4t6e: `boot_short`, 74.5 M cycles in 257 s, with
+one short L2 run alongside; the RV 0.38 M/s alone), 0.106 M cycles/s with
+seven simulations on the machine (`boot` 1,918 s); xsim 2023.2
+33 k cycles/s (`boot_short` in 2,282 s, with Verilator runs alongside; the RV
+48 k cycles/s). The 832 bench is slower per cycle than the RV one: the
+converted CPU is a flat netlist with the two record vectors that Verilator
+re-evaluates (`UNOPTFLAT`).
+
+Gate runs (`p4t6` / `p4t6_xr`, seed 639498575, `=== XRAND pinned 9 regs`;
+`p4t6s`, `p4t6x`): `boot` PASS with milestones 51 / 51, kick, order and
+mmc PASS (the 832's `MMC_Init` sends the 9 commands of
+`gold/mmc_init_rv.txt`), every MARGIN line present and the 7 required ones
+`ok`, X 0, stale 0, `OSD EARLY 0 of 26`, `OSD GAP min 254` (the 832's four
+`SPIN`s per reply byte; the RV 44); the twin SAME (`tb_boot_*.log`,
+`spi.txt`, 1,937 frames). `boot_short` on xsim SAME against Verilator
+(`run.sh compare p4t6x p4t6s`: 2 same; xsim `X 0`).
+
+| MARGIN | 832 `boot` | RV `boot` |
+|---|---|---|
+| 1 stale_acks | 0 of 1,685,709 | 0 of 1,685,611 |
+| 4 paula_cs_release / userio_cs_release | 3.8 / 3.8 | 10.8 / 10.8 |
+| 4 paula_word_spacing / userio_byte_spacing | 121.0 / 49.0 | 117.0 / 57.0 |
+| 5 spi_write_busy | 0 of 844,721 | 0 of 829,924 |
+| 14 kick_order | 13,589,729 | 6,829,787 |
 
 ## Monitors
 
@@ -470,8 +616,8 @@ make -C fw/ctrl_rv
 ```
 
 The cards need `fw/ctrl_rv/build/RV32OSDA.BIN` (the last line) and,
-for the 832 twin, `832OSDAD.BIN`. Until the 832 firmware is built (Task 6)
-leave `FW832` out: a deterministic 84 KB stand-in takes its place.
+for the 832 twin, `832OSDAD.BIN` (`make -C sim/l3/fw832`, section "832").
+Without `FW832` a deterministic 84 KB stand-in takes its place.
 
 Build the cards and run the proof (one minute; output in
 `sim/l3/card/build/`, `B=<dir>` puts it elsewhere):

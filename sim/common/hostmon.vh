@@ -35,6 +35,10 @@
   wire        hw_done  = hw_req && hw_ack;
   wire [31:0] hwa      = {hostaddr, 2'b00};
   wire        spi_data = hostaddr[23] && hostaddr[7:4] == 4'hE && hostaddr[3:2] == 2'b00;
+  // the UART transmit register as cfide decodes it (rs232_select: a write
+  // anywhere in 0x..F0..FF with address bit 23 set): the RV firmware
+  // writes the word at 0xFFFFFFF0, the 832's the byte at 0x0FFFFFF3
+  wire        uart_tx  = hostaddr[23] && hostaddr[7:4] == 4'hF;
 
   // stale ack: no clk_28 edge saw this request's hw_req.  Re-armed when
   // hw_req rises and when an access completes (below), so a request that
@@ -183,42 +187,51 @@
   end
 
   // ------------------------------------------------ FWBOOT: OSD reply gap
-  // SPI DATA accesses while sd_cs[5] is low, numbered from the frame start:
-  // 0 the command write, 1 its read-back, then per reply byte k a write
-  // (2k) and a read (2k+1), as SPI(OSD_CMD_x) and SPI_reply() do.  For
-  // frames of OSD_CMD_VERSION / OSD_CMD_KEYQ, every access from 2 on gives
-  // one gap: the clk_114 edges strictly between the previous SPI DATA
-  // access's ack edge (cycle og_done) and the edge that raised this request
-  // (one before the edge that sees hw_req high first): cyc - og_done - 2.
-  // Even accesses (a reply byte's write: read-back -> write, the
-  // constrained interval) go to og_rw_min, the headline; odd ones (write ->
-  // its own read-back, which cfide holds until the transfer has ended) to
-  // og_wr_min.
+  // SPI DATA accesses while sd_cs[5] is low, numbered from the frame start
+  // (og_i): 0 the command write, then per reply byte a write and a read,
+  // as SPI(OSD_CMD_x) and SPI_reply() do; between them the command's
+  // read-back, which the RV firmware does and the 832's vbcc drops (its
+  // result is unused).  So a read is the read-back of the write just
+  // before it (two reads in a row, or a read first, is a bench error), and
+  // every write after the first is a reply byte's.  For frames of
+  // OSD_CMD_VERSION / OSD_CMD_KEYQ, every access from 1 on except the
+  // command's read-back gives one gap: the clk_114 edges strictly between
+  // the previous SPI DATA access's ack edge (cycle og_done) and the edge
+  // that raised this request (one before the edge that sees hw_req high
+  // first): cyc - og_done - 2.  A reply byte's write (after the previous
+  // byte's read-back, or the command's: the constrained interval) goes to
+  // og_rw_min, the headline; a read (write -> its own read-back, which
+  // cfide holds until the transfer has ended) to og_wr_min.  The RV's
+  // accesses alternate from the start, so for it this is "even og_i >= 2:
+  // og_rw_min, odd og_i >= 3: og_wr_min".
   integer og_i = 0, og_done = -1, og_rw_min = 1000000, og_wr_min = 1000000;
-  integer og_bytes = 0, og_frames = 0, og_g = 0;
+  integer og_bytes = 0, og_frames = 0, og_g = 0, og_k = 0;
+  reg     og_we = 1'b1;              // the previous SPI DATA access was a write
   integer og_min_cyc = -1, og_min_k = -1;   // where og_rw_min was seen first
   integer osd_min_gap = 40;                 // +OSD_MIN_GAP: the check's bound
   reg [7:0] og_cmd = 8'h00, og_min_cmd = 8'h00;
   reg       og_cs5 = 1'b1;          // sd_cs[5] at the last clk_114 edge
   always @(posedge clk114) if (cpu_reset_n) begin
-    if (sd_cs[5] !== og_cs5) begin og_cs5 = sd_cs[5]; og_i = 0; og_done = -1; end
+    if (sd_cs[5] !== og_cs5) begin og_cs5 = sd_cs[5]; og_i = 0; og_done = -1; og_k = 0; end
     if (sd_cs[5] === 1'b0 && spi_data && hw_req && !hw_req_d) begin
       if (og_i == 0) og_cmd = hostWR[7:0];
-      if (og_i >= 1 && (og_cmd == 8'h88 || og_cmd == 8'h98) && host_we !== !og_i[0])
+      if ((og_cmd == 8'h88 || og_cmd == 8'h98) && host_we !== 1'b1 && (og_i == 0 || !og_we))
         bench_error("OSD reply frame: SPI DATA accesses are not write/read pairs");
-      if (og_i >= 2 && (og_cmd == 8'h88 || og_cmd == 8'h98)) begin
+      if (og_i >= 1 && (og_cmd == 8'h88 || og_cmd == 8'h98) && !(og_i == 1 && host_we !== 1'b1)) begin
         og_g = cyc - og_done - 2;
-        if (og_i[0] == 1'b0) begin
+        if (host_we === 1'b1) begin
           og_bytes = og_bytes + 1;
-          if (og_i == 2) og_frames = og_frames + 1;
+          if (og_k == 0) og_frames = og_frames + 1;
           if (og_g < og_rw_min) begin
-            og_rw_min = og_g; og_min_cyc = cyc; og_min_cmd = og_cmd; og_min_k = og_i / 2 - 1;
+            og_rw_min = og_g; og_min_cyc = cyc; og_min_cmd = og_cmd; og_min_k = og_k;
           end
+          og_k = og_k + 1;
         end else if (og_g < og_wr_min) og_wr_min = og_g;
       end
     end
     if (sd_cs[5] === 1'b0 && spi_data && hw_done) begin
       og_done = cyc;
+      og_we = host_we === 1'b1;
       og_i = og_i + 1;
     end
   end
@@ -290,7 +303,7 @@
                cyc, hostWR[7:0]);
       errors = errors + 1;
     end
-    if (host_we && hwa == 32'hFFFFFFF0) begin
+    if (host_we && uart_tx) begin
       if (uart_first < 0) uart_first = cyc;
       if (hostWR[7:0] == 8'h0a || uart_n >= UART_MAX - 1) begin
         uart_print;
