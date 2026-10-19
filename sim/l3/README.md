@@ -2,7 +2,7 @@
 
 Work in progress (Phase 4 of the OSD host CPU migration). This file grows
 with the bench; so far it has the sections "Bench", "Run", "boot",
-"832", "Differential", "Monitors" and "Cards".
+"832", "Differential", "keys", "Monitors" and "Cards".
 
 ## Bench
 
@@ -118,7 +118,7 @@ scenario and its `XRAND=1` twin in parallel (`run_<RUNTAG>`,
 (default) or `832` (section "832", with `E832`, `E832DIR`), `SIM=xsim`
 (default) or `verilator`, `RUNTAG`, `FW`, `FW832`, `L3_DATE`, `EXTRA_WS`,
 `SLAT`, `SJIT`, `SEED`, `XARGS` (more plusargs), `TIMEOUT`, `NOKICK=1`,
-`XRAND=1`, `XSEED`. Every log starts with `=== CPU rv` or `=== CPU 832`.
+`XRAND=1`, `XSEED`, `KEYS` (section "keys"). Every log starts with `=== CPU rv` or `=== CPU 832`.
 
 A run directory `sim/l3/run_<RUNTAG>/` holds `results.txt`, the log
 `tb_<scenario>_x<EXTRA_WS>_s<SLAT>_j<SJIT>.log`, `spi.txt`,
@@ -529,6 +529,157 @@ pass (a `DROPBLOCK` up to its `##End result : 0`: an 832-only firmware
 defect, `findings/osd-riscv/phase4.md` "Findings for Paul") and the RV-only
 `IRQ_MASK` write (`HW ffff34`, `fw/ctrl_rv/arch/irq.c`). With them, the
 `boot` diff (runs `p4t7r2`, `p4t7c2`) is empty and all 9 rules are used.
+
+## keys
+
+`keys` drives the OSD keys: `bfm_keys.v` sets userio_osd's `osd_ctrl` (the
+keyboard's OSD code; 0 in every other scenario) from a key script, and the
+firmware's menu runs on the real userio_osd. It boots the `boot` card like
+`boot` and starts the script (`+KEYS=`, run.sh `KEYS`, default
+`keys/menu_tour.txt`) at the main-loop milestone; the end event is the
+script's end. TIMER: `+TICKDIV=643 +TICKDIV_AT=scenario` (run.sh): the boot
+runs at TICKDIV 1, the script at the board's rate, so the firmware's key
+repeat (`REPEATRATE` 25 counts), help text (`HELPTEXT_DELAY` 2,500) and CD
+message (4,000) timers do not run out inside the script (at TICKDIV 1 the
+help text would start scrolling 2.6 M cycles into an idle page, a number of
+OSD writes that depends on the CPU's speed).
+
+The script (`bfm_keys.v` has the syntax): `KEY <code> <hold>` (the code,
+then 0 after the hold: two queue events), `BURST <code> ...` (one change
+every 32 `clk_114`), `WAIT_OSD_IDLE <cycles>` (no `OSD_CMD_OSD_WR` frame
+open or closing for that long, counted from the step's start),
+`WAIT_KEYQ <n>`. `menu_tour.txt` opens the OSD (`KEY_MENU`), walks down
+the main page over all six selectable lines and up again, enters the
+Floppy page (down twice, `exit`) and the Harddisks page (`KEY_ESC` back),
+sends one `BURST 4c 00 4d 00 4c 00` (three presses, up / down / up, each
+with its release: six events) and closes the OSD with `KEY_MENU`.
+
+Two rules keep the run independent of the CPU's speed, each enforced by a
+bench error:
+
+- Every `KEY` / `BURST` comes right after a KEYQ frame that drained
+  nothing (`WAIT_OSD_IDLE`, then `WAIT_KEYQ 1`; `bfm_keys` checks the last
+  frame's status byte). The next KEYQ frame then takes all of the step's
+  events: a main-loop pass is at least 5,320 `clk_114` on the RV and
+  11,244 on the 832, the `BURST` takes 192. While the firmware still hands
+  out drained events (one per pass), `OSD_CMD_READ` could see a new code
+  with no event to deliver, and `OsdGetCtrl` turns that into a key repeat
+  when its TIMER says so.
+- No `OSD_CMD_READ` frame while a key is held (`tb_l3.v`): the holds are 64
+  `clk_114`, far shorter than the time to the next level read, so the key
+  repeat never sees a held key.
+
+Found on the way (both firmwares, `findings/osd-riscv/phase4.md` "Shared
+defects"): `OSD_CMD_READ`'s answer is the byte userio_osd_spi loads at the
+frame's start, the read data of the *previous* command (`userio_osd.v`
+`rddat` under the old `cmd_dat`). In the main loop that command is the
+previous pass's `OSD_CMD_KEYQ`, so the "level" is the queue's head or 0,
+not `osd_ctrl` (run p4t8, spi.txt line 1877: `20 00 / 4d` 6,325
+`clk_114` after the key was released, just before the frame that drains
+it). Only the key repeat reads it.
+
+Checks: boot's milestones (`milestones_boot.txt`, so the main loop was
+reached), no `EXC` / `TRAP`, kick and order (as `boot`), every MARGIN line
+(`MARGIN_REQ_keys` = boot's), bench `=== PASS` (with `OSD EARLY 0` unless
+`+OSD_EARLY_OK=1`) and `l3check.py keys`:
+
+- the events the bench made (`=== KEYS ev` lines) are the script's
+- the KEYQ frames against the queue as a FIFO (`spi_t.txt`): each status
+  byte is the number of events made before the frame and not yet read, each
+  per-key byte the queue's head (a wrong one counts as read: the RTL pops
+  on every byte), nothing left at the end; no event while a KEYQ frame is
+  open
+- each `KEY` / `BURST` step's events in one KEYQ frame, the `BURST` with
+  count 6
+- the `OSD_CMD_VERSION` reply equal to `milestones_boot.txt`'s
+- no `OSD_CMD_OSD_WR` frame before the first key: the boot draws no page,
+  so one there is an error page, which the main-loop milestones alone
+  cannot tell from the main loop
+- the OSD pages (decoded as `spitrace.py osd`, after the `osd` / `all`
+  `SUBST` and `DROP` rules of `expected_diff.txt`) equal
+  `osdtext_expect/keys.txt`
+
+It prints `REPLY <cmd> byte <k>: <r> of <n> right` per reply byte, and the
+bench `=== OSD REPLY <cmd> byte <k>: gap min <g> over <n> writes, early
+<e> of <m> loads` (hostmon's OSD GAP and the OSD EARLY monitor per byte):
+the "before" table of `findings/osd-riscv/phase4.md` (Task 8).
+
+`osdtext_expect/keys.txt` is written by `osdtext_expect/osdpages.py keys`
+from the sources, before any run: a model of `fw/ctrl_rv/osd.c`'s
+`OsdSetTitle` / `OsdWriteOffset` / `OsdClear` (so the side stripe, arrows,
+inverted and stippled lines come out byte for byte) and of the `menu.c`
+pages the tour passes, with the line numbers they come from and the boot
+card's configuration (two floppy drives, no disk; IDE on, two hardfiles
+not on the card; the CD slot with no disc). Its rows are decoded with
+`spitrace.py`'s own decoder; `l3check.py keys` fails when `keys.txt` is
+not what `osdpages.py keys` writes. After a change to the script or the
+menu:
+
+```sh
+python3 -I sim/l3/osdtext_expect/osdpages.py keys > sim/l3/osdtext_expect/keys.txt
+```
+
+Run, setup as in "Run" and "832" (both legs boot the same card, as in
+"Differential"; `+OSD_EARLY_OK=1` for the RV until the reply-ready
+handshake: its `SPI_reply()` still has the `SPIN`s), from the repository
+root:
+
+```sh
+E832DIR=$PWD/EightThirtyTwo
+E832=$E832DIR/RTL
+FWD=$PWD/sim/l3/run_fw
+mkdir -p "$FWD/dateshim" "$FWD/fwrv"
+printf '%s\n' '#!/bin/sh' 'TZ=UTC exec /bin/date -d "${L3_DATE:-2026-01-01} 00:00:00" "$@"' > "$FWD/dateshim/date"
+chmod +x "$FWD/dateshim/date"
+PATH="$FWD/dateshim:$PATH" make -s -C fw/ctrl_rv B="$FWD/fwrv"
+make -C sim/l3/fw832 B="$FWD/fw832" E832DIR="$E832DIR"
+SIM=verilator RUNTAG=k XARGS=+OSD_EARLY_OK=1 FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh xpair keys
+CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=kc FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh xpair keys
+bash sim/l3/run.sh diff k kc
+```
+
+(the two `xpair`s run four simulations; side by side 22 minutes for the RV
+pair, 31 for the 832 pair, with a fifth run on the machine.)
+
+### Measured (2026-10-19, SLAT=8 SJIT=0, SCKDLY 1.5 / C28DLY 0.3, TICKDIV 1 then 643)
+
+| | RV (`p4t8`, `+OSD_EARLY_OK=1`) | 832 (`p4t8c`) |
+|---|---|---|
+| main-loop milestone (script start) | 158,045,126 | 202,610,912 |
+| end of the script | 165,059,293 (+7.01 M) | 215,391,641 (+12.78 M) |
+| KEYQ frames (with events) | 354 (22) | 144 (22) |
+| main-loop pass in the open menu, min / median (`p4t8d`, `p4t8dc`) | 5,320 / 7,108 | 11,244 / 13,324 |
+| `OSD EARLY` | 0 of 408 | 0 of 198 |
+| `OSD GAP` min: VERSION / KEYQ status / per-key bytes | 44 / 295 / 56 | 254 / 306 / 338 |
+| `l3check.py keys` | PASS: 48 events, BURST one frame, count 6, 24 pages | the same |
+| wall time (Verilator, 5 runs on the machine) | 1,281 s | 1,824 s |
+
+`L3_KEYS_TO` = 247,400,000 (RV) and 321,300,000 (832): 1.5 x the end of
+the script. The per-byte figures are the "before" table of
+`findings/osd-riscv/phase4.md`. `run.sh diff p4t8 p4t8c` is empty with the
+9 rules of `boot` (all used; `keys` reaches no line of
+`fmt_diff_expected.txt`: the only formatted number on its pages is
+"Floppy drives : 2").
+
+XRAND: the RV twin `p4t8_xr` is SAME. The 832 twin `p4t8c_xr` (seed
+505647130) has the same `spi.txt` but other cycles from the first frame on
+(the first hw access at 2,644 instead of 2,641): the EightThirtyTwo starts
+from random state that changes its timing, a property of the 832 build
+that the `boot` twin of Task 6 did not show only because of its seed
+(`findings/osd-riscv/phase4.md`, "Found by the L3 bench (Task 8)"). With a
+seed whose 832 start matches (`XSEED=4`, run `p4t8c_xs4`) the twin is
+SAME: the rest of the bench, userio_osd and `bfm_keys` start from random
+state without effect.
+
+Teeth (not committed): `p4t8red`, a script that applies a key right after
+the KEYQ frame that drained the previous one, fails with `BENCH ERROR:
+bfm_keys ... key applied after a KEYQ frame that drained events`.
+`l3check.py keys` on edited copies of the `p4t8d` log and `spi_t.txt`
+fails for each of: a wrong per-key byte in the BURST frame, the BURST split
+into two frames of three, a changed character column of an OSD row, an
+`OSD_CMD_OSD_WR` frame before the first key, a frame one per-key byte
+short, a stale status byte (00, the events read one frame later) and a
+missing `=== KEYS ev` line; the unedited copy passes.
 
 ## Monitors
 

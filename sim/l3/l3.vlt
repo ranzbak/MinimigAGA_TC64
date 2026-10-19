@@ -5,7 +5,7 @@
 //
 // 1-3  as sim/host_bridge/verilator/l2.vlt: the generated SpinalHDL core and
 //      rv_hostcpu.v's WS_LOAD
-// 4-8  bench and models (tb_l3.v, sdram_host_model.v, sd_spi_model.v):
+// 4-8  bench and models (tb_l3.v, bfm_keys.v, sdram_host_model.v, sd_spi_model.v):
 //      Verilog-2001 integer/vector mixing; the SD model writes miso from its
 //      sck and cs_n edge blocks (a model, see l2.vlt)
 // 9-10 cfide's havei2c = true: the real I2C master (see l2.vlt)
@@ -28,6 +28,8 @@ lint_off -rule WIDTHEXPAND -file "*/VexOsd*.v"
 lint_off -rule WIDTHTRUNC  -file "*/rv_hostcpu*.v" -match "*VAR 'WS_LOAD'*"
 lint_off -rule WIDTHEXPAND -file "*tb_l3.v"
 lint_off -rule WIDTHTRUNC  -file "*tb_l3.v"
+lint_off -rule WIDTHEXPAND -file "*bfm_keys.v"
+lint_off -rule WIDTHTRUNC  -file "*bfm_keys.v"
 lint_off -rule WIDTHEXPAND -file "*sdram_host_model.v"
 lint_off -rule WIDTHTRUNC  -file "*sdram_host_model.v"
 lint_off -rule WIDTHTRUNC  -file "*sd_spi_model.v"

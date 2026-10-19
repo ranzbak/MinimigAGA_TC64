@@ -23,6 +23,9 @@
 // HM_FRAME_HOOK provides task hm_frame_hook(input at_end, input logged),
 // which frame_close calls last, with the closed frame still in fr_*; logged
 // is 1 for a frame spi.txt got a line for.  The L2 bench does not define it.
+// Likewise HM_OSD_GAP_HOOK: task hm_osd_gap_hook(input [7:0] cmd, input
+// integer k, input integer gap), called for every OSD GAP sample of a reply
+// byte's write (reply byte k of command cmd; sim/l3's per-byte table).
 //
 // FWBOOT, for the differential (sim/l3 "Differential", spitrace.py norm):
 //   +HW_LOG=<file>   hw.txt: one line per hw-register write the CPU makes
@@ -250,6 +253,9 @@
           if (og_g < og_rw_min) begin
             og_rw_min = og_g; og_min_cyc = cyc; og_min_cmd = og_cmd; og_min_k = og_k;
           end
+`ifdef HM_OSD_GAP_HOOK
+          hm_osd_gap_hook(og_cmd, og_k, og_g);
+`endif
           og_k = og_k + 1;
         end else if (og_g < og_wr_min) og_wr_min = og_g;
       end

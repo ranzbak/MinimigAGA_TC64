@@ -18,6 +18,8 @@
 //          paula_floppy <-> gayle #(.IDE_PORTS(2)) over the hdd_* bus
 //     minimig_syscontrol (rtl/minimig): the chipset reset
 //     bfm_audio: the CD-audio ring position (cfide audio_buf)
+//     bfm_keys: userio_osd's osd_ctrl (the OSD keys) from a key script
+//       (+KEYS=<file>, scenario keys); 0 without one
 //
 // Wiring as rtl/minimig/minimig.v and rtl/soc/minimig_virtual_top.v:
 //   SPI_DO (cfide sd_di)   = paula_sdo | user_sdo          (minimig.v)
@@ -35,9 +37,9 @@
 //   include: MINIMIG_HOST_DIRECT, so userio_osd's host_cs is constant 0).
 //
 // The Amiga side is idle: the CIA lines deselect the floppy (_sel 1111,
-// _motor 1, _step 1), no register or Gayle access, osd_ctrl 0, in_diag 0
-// (not modelled), c1 / c3 / sol 0, rtg_ena 0.  The chipset reset is
-// minimig.v's: reset = sys_reset | ~_cpu_reset_in, sys_reset from
+// _motor 1, _step 1), no register or Gayle access, osd_ctrl from bfm_keys
+// (0 unless a key script runs), in_diag 0 (not modelled), c1 / c3 / sol 0,
+// rtg_ena 0.  The chipset reset is minimig.v's: reset = sys_reset | ~_cpu_reset_in, sys_reset from
 // minimig_syscontrol (mrst = userio_osd usrrst, cnt = sof), and the idle
 // CPU's reset output follows its reset input (_cpu_reset_in = ~(cpurst |
 // sys_reset)): reset = sys_reset | cpurst.  sof: one clk7 cycle per PAL
@@ -71,6 +73,11 @@
 //                      rx is 1 then (the previous byte is still in the clk7
 //                      synchroniser: the reply counters have not moved).
 //                      n > 0 is a bench error unless +OSD_EARLY_OK=1
+//   === OSD REPLY <cmd> byte <k>: gap min <g> over <n> writes, early <e> of
+//                      <m> loads   per reply byte k (0 = the first after the
+//                      command) of OSD_CMD_VERSION (88) and OSD_CMD_KEYQ
+//                      (98): hostmon's OSD GAP and the OSD EARLY count of
+//                      that byte alone (the "before" table, Task 8)
 //   +FAST_HW=1         run.sh puts +SD_TOKEN_DLY=0 +SD_BUSY=1 +SD_NCR=1
 //                      +SLAT=2 +SJIT=0 first; the bench checks the models
 //                      took them
@@ -112,6 +119,7 @@
 `define L3_CPU "rv"
 `endif
 `define HM_FRAME_HOOK
+`define HM_OSD_GAP_HOOK
 
 module tb_l3 #(
   parameter EXTRA_WS = 0
@@ -328,6 +336,17 @@ module tb_l3 #(
     .hd_fwr(), .hd_frd()
   );
 
+  // ------------------------------------------------------------- OSD keys
+  wire [7:0] osd_ctrl;
+  bfm_keys keys (.clk28(clk28), .clk7_en(clk7_en), .osd_ctrl(osd_ctrl));
+
+  // the script's events as userio_osd gets them (l3check.py keys)
+  integer kev_n = 0;
+  always @(osd_ctrl) if (keys.go) begin
+    kev_n = kev_n + 1;
+    $display("=== KEYS ev %0d %h at cycle %0d", kev_n, osd_ctrl, cyc);
+  end
+
   // ----------------------------------------------------------- userio_osd
   wire osd_host_cs;
   userio_osd #(.CORE_CAPS(8'hAD)) osd1 (
@@ -335,7 +354,7 @@ module tb_l3 #(
     .reset(mm_reset),
     .c1(1'b0), .c3(1'b0), .sol(1'b0), .sof(sof),
     .varbeamen(1'b0), .rtg_ena(1'b0),
-    .osd_ctrl(8'h00),
+    .osd_ctrl(osd_ctrl),
     .in_diag(32'h00000000), .in_diag_clr(),
     ._scs(sd_cs[5]), .sdi(sd_do), .sdo(user_sdo), .sck(sck_slv),
     .osd_blank(), .osd_pixel(),
@@ -394,18 +413,71 @@ module tb_l3 #(
   integer    oe_n = 0, oe_m = 0, oe_first_cyc = -1, oe_first_k = -1;
   reg  [7:0] oe_first_cmd = 8'h00;
   reg        osd_early_ok = 1'b0;
+  // per reply byte (k = fr_n - 1, at most OR_K - 1): index 0 VERSION, 1 KEYQ
+  localparam OR_K = 16;
+  integer    or_e [0:1][0:OR_K-1];     // OSD EARLY loads
+  integer    or_m [0:1][0:OR_K-1];     // loads
+  integer    or_g [0:1][0:OR_K-1];     // OSD GAP min (hostmon's hook)
+  integer    or_n [0:1][0:OR_K-1];     // OSD GAP samples
+  integer    or_i = 0, or_j = 0;
+  initial for (or_i = 0; or_i < 2; or_i = or_i + 1) for (or_j = 0; or_j < OR_K; or_j = or_j + 1) begin
+    or_e[or_i][or_j] = 0; or_m[or_i][or_j] = 0; or_g[or_i][or_j] = 1000000; or_n[or_i][or_j] = 0;
+  end
+  integer    oe_c = 0, oe_k = 0;
   always @(negedge sck_slv) if (n_reset && sd_cs[5] === 1'b0 && oe_bit == 3'd0 &&
                                 fr_cs == 8'h20 && fr_n >= 1 && (fr_out[0] == 8'h88 || fr_out[0] == 8'h98)) begin
     oe_m = oe_m + 1;
+    oe_c = (fr_out[0] == 8'h98) ? 1 : 0;
+    oe_k = (fr_n - 1 < OR_K) ? fr_n - 1 : OR_K - 1;
+    or_m[oe_c][oe_k] = or_m[oe_c][oe_k] + 1;
     if ((oe_new | oe_sync | oe_rx) === 1'b1) begin
       oe_n = oe_n + 1;
+      or_e[oe_c][oe_k] = or_e[oe_c][oe_k] + 1;
       if (oe_first_cyc < 0) begin oe_first_cyc = cyc; oe_first_cmd = fr_out[0]; oe_first_k = fr_n - 1; end
     end
   end
 
+  // hostmon.vh's OSD GAP, per reply byte (HM_OSD_GAP_HOOK)
+  integer og_c = 0, og_kk = 0;
+  task hm_osd_gap_hook(input [7:0] cmd, input integer k, input integer gap);
+    begin
+      og_c = (cmd == 8'h98) ? 1 : 0;
+      og_kk = (k < OR_K) ? k : OR_K - 1;
+      or_n[og_c][og_kk] = or_n[og_c][og_kk] + 1;
+      if (gap < or_g[og_c][og_kk]) or_g[og_c][og_kk] = gap;
+    end
+  endtask
+
+  // (byte OR_K - 1 also counts every later one: "<k>+")
+  task or_final;
+    integer c, k;
+    begin
+      for (c = 0; c < 2; c = c + 1) for (k = 0; k < OR_K; k = k + 1)
+        if (or_n[c][k] > 0 || or_m[c][k] > 0) begin
+          if (or_n[c][k] > 0)
+            $display("=== OSD REPLY %0s byte %0d%0s: gap min %0d over %0d writes, early %0d of %0d loads",
+                     c ? "98" : "88", k, k == OR_K - 1 ? "+" : "", or_g[c][k], or_n[c][k], or_e[c][k], or_m[c][k]);
+          else
+            $display("=== OSD REPLY %0s byte %0d%0s: gap min none over 0 writes, early %0d of %0d loads",
+                     c ? "98" : "88", k, k == OR_K - 1 ? "+" : "", or_e[c][k], or_m[c][k]);
+        end
+    end
+  endtask
+
   // ----------------------------------------------------- spi_t.txt, scenario
   integer spi_t_fd = 0, fr_t_open = 0;
   reg [8*1024-1:0] spi_t_name;
+
+  // bfm_keys' WAIT_OSD_IDLE: an OSD_CMD_OSD_WR frame is open
+  always @(posedge clk114) keys.osdwr_open = sd_cs[5] === 1'b0 && fr_cs == 8'h20 && fr_n >= 1 && fr_out[0] == 8'h0c;
+
+  // a level read (OSD_CMD_READ, "20 00") while the key script holds a key
+  // is a bench error (hm_frame_hook): the firmware's key repeat reads that
+  // level (bfm_keys.v), so the script keeps every key shorter than the time
+  // to the next level read.  kb_held: osd_ctrl was not 0 while the open OSD
+  // frame was selected
+  reg kb_held = 1'b0;
+  always @(posedge clk114) if (sd_cs[5] === 1'b0 && osd_ctrl != 8'h00) kb_held = 1'b1;
 
 `include "scenarios.vh"
 
@@ -421,6 +493,15 @@ module tb_l3 #(
         $fwrite(spi_t_fd, "\n");
       end
       fr_t_open = cyc;
+      // bfm_keys' view of the frame log
+      if (logged && fr_cs == 8'h20 && fr_n >= 2 && fr_out[0] == 8'h98) begin
+        keys.keyq_st = fr_in[1];
+        keys.n_keyq = keys.n_keyq + 1;
+      end
+      if (logged && fr_cs == 8'h20 && fr_n >= 1 && fr_out[0] == 8'h0c) keys.n_osdwr = keys.n_osdwr + 1;
+      if (logged && fr_cs == 8'h20 && fr_n == 1 && fr_out[0] == 8'h00 && kb_held)
+        bench_error("an OSD_CMD_READ frame while bfm_keys held a key (the level read saw it)");
+      kb_held = 1'b0;
       if (logged && !at_end) sc_frame;
     end
   endtask
@@ -486,7 +567,7 @@ module tb_l3 #(
     wait (run_end);
     #1;   // the end-of-run counters after the last edge's updates, in every simulator
     if (uart_n) uart_print;
-    errors = errors + ram.errors;
+    errors = errors + ram.errors + keys.errors;
     hm_final_hw;
     card.save_image;
 `ifdef RV_HOSTCPU_STATS
@@ -499,6 +580,7 @@ module tb_l3 #(
     hm_final_fwboot;
     if (spi_t_fd != 0) $fclose(spi_t_fd);
     $display("=== OSD EARLY %0d of %0d reply bytes", oe_n, oe_m);
+    or_final;
     if (oe_n > 0)
       $display("=== OSD EARLY (info) first at cycle %0d, command %h, reply byte %0d (0 = the first)",
                oe_first_cyc, oe_first_cmd, oe_first_k);

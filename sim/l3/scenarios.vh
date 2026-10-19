@@ -24,6 +24,13 @@
 //               frame, does not exist on a card with a kickstart: the boot
 //               sends no OSD_CMD_OSD_WR frame at all, README "boot_short".)
 //               "=== STATS@boot_short" at the end event.
+//   keys        the OSD key script (+KEYS=<file>, bfm_keys.v; run.sh: the
+//               boot card, sim/l3/keys/menu_tour.txt): main-loop milestone
+//               as boot (the first HandleFpga frame), where the script
+//               starts; end event: the script's end ("=== STATS@keys").
+//               TIMER: run.sh sets +TICKDIV=643 +TICKDIV_AT=scenario (the
+//               firmware's key repeat, help text and message timers run at
+//               the board's rate from the script's start)
 
   reg [8*32-1:0]  scenario;
   reg [8*16-1:0]  short_end;
@@ -38,14 +45,20 @@
       if (!$value$plusargs("SCENARIO=%s", scenario)) scenario = "boot";
       if (!$value$plusargs("SHORT_END=%s", short_end)) short_end = "";
       if (!$value$plusargs("BOOT_END=%s", boot_end)) boot_end = "";
-      if (scenario != "boot" && scenario != "boot_short")
+      if (scenario != "boot" && scenario != "boot_short" && scenario != "keys")
         bench_error("unknown +SCENARIO (scenarios.vh)");
       if (short_end != "" && (scenario != "boot_short" || short_end != "version"))
         bench_error("+SHORT_END=version is the only value, and only for boot_short");
       if (boot_end != "" && (scenario != "boot" || boot_end != "rtc2"))
         bench_error("+BOOT_END=rtc2 is the only value, and only for boot");
+      if (scenario == "keys" && !$test$plusargs("KEYS="))
+        bench_error("scenario keys needs +KEYS=<key script>");
     end
   endtask
+
+  // keys: the script starts at the main-loop milestone, ends the scenario
+  always @(posedge sc_started) if (scenario == "keys") keys.go = 1'b1;
+  always @(posedge keys.done) if (scenario == "keys") sc_end("keys", "the end of the key script");
 
   // STATS@<event>: the rv_hostcpu counters 1 ns after the end event's
   // clk_114 edge.  rv_hostcpu counts with blocking assignments on that

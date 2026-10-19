@@ -82,9 +82,45 @@ Runs `p4t7r2` (RV, 699 s) and `p4t7c2` (832, 990 s), Verilator, side by side, bo
 
 Bench fixes found by the first pair (`p4t7r` / `p4t7c`): a byte write's value16 differed by the bridge's lanes (the RV puts the byte on all four lanes, `efef`; the 832 on one, `00ef`); hw.txt now logs a one-lane write as `00` and its byte (cfide's byte registers take d(7 downto 0)). The second pair's `spi.txt` and logs are SAME as the first's (`run.sh compare p4t7r p4t7r2`, `p4t7c p4t7c2`).
 
+### Task 8: OSD keys (`keys`), the "before" OSD reply table
+
+`sim/l3` scenario `keys` (README "keys"): the boot card, from the main-loop milestone the key script `sim/l3/keys/menu_tour.txt` (open the OSD, walk the main page down and up, the Floppy and the Harddisks page in and out, one `BURST` of six events, close) at TICKDIV 643; Verilator, SLAT=8 SJIT=0, SCKDLY 1.5 / C28DLY 0.3. Both legs on the same card (`FW` RV32OSDA.BIN sha256 fd3b3c6a0b8ca273, `FW832` 832OSDAD.BIN 768c765d57deb1a0). RV: `p4t8` / `p4t8_xr` with `+OSD_EARLY_OK=1` (the RV keeps its `SPIN`s until Task 11); 832: `p4t8c` / `p4t8c_xr`.
+
+"Before" table (the reply-ready handshake, Tasks 9-12, is compared against it). Per command and reply byte (0 = the first byte after the command): `OSD GAP` min (`clk_114` from the previous SPI DATA access's ack to the request of this byte's write: what the firmware leaves userio_osd's synchroniser), `OSD EARLY` (the byte loaded while the previous one was still in the synchroniser) of the loads, and the bytes that were right (`l3check.py keys`: VERSION against the milestone, KEYQ against userio_osd's queue modelled as a FIFO). **E_osd = 34** (Task 1).
+
+| Reply byte | RV `OSD GAP` min | RV `OSD EARLY` | RV right | RV margin to E_osd | 832 `OSD GAP` min | 832 `OSD EARLY` | 832 right |
+|---|---|---|---|---|---|---|---|
+| `OSD_CMD_VERSION` (0x88) byte 0 | 211 | 0 of 1 | 1 of 1 | +177 | 286 | 0 of 1 | 1 of 1 |
+| VERSION byte 1 | 128 | 0 of 1 | 1 of 1 | +94 | 254 | 0 of 1 | 1 of 1 |
+| VERSION byte 2 | **44** | 0 of 1 | 1 of 1 | **+10** | 286 | 0 of 1 | 1 of 1 |
+| VERSION byte 3 | 44 | 0 of 1 | 1 of 1 | +10 | 266 | 0 of 1 | 1 of 1 |
+| VERSION byte 4 | 44 | 0 of 1 | 1 of 1 | +10 | 286 | 0 of 1 | 1 of 1 |
+| VERSION byte 5 | 44 | 0 of 1 | 1 of 1 | +10 | 254 | 0 of 1 | 1 of 1 |
+| `OSD_CMD_KEYQ` (0x98) byte 0 (status) | 295 | 0 of 354 | 354 of 354 | +261 | 306 | 0 of 144 | 144 of 144 |
+| KEYQ byte 1 (first event) | **56** | 0 of 22 | 22 of 22 | **+22** | 370 | 0 of 22 | 22 of 22 |
+| KEYQ byte 2 | 60 | 0 of 22 | 22 of 22 | +26 | 358 | 0 of 22 | 22 of 22 |
+| KEYQ byte 3 | 60 | 0 of 1 | 1 of 1 | +26 | 338 | 0 of 1 | 1 of 1 |
+| KEYQ byte 4 | 60 | 0 of 1 | 1 of 1 | +26 | 338 | 0 of 1 | 1 of 1 |
+| KEYQ byte 5 | 60 | 0 of 1 | 1 of 1 | +26 | 338 | 0 of 1 | 1 of 1 |
+| KEYQ byte 6 | 60 | 0 of 1 | 1 of 1 | +26 | 338 | 0 of 1 | 1 of 1 |
+
+(`clk_114` cycles. VERSION: one frame per run, `fpga_init`. KEYQ byte 0: every KEYQ frame, 354 on the RV, 144 on the 832; bytes 1-2: the 21 `KEY` frames (two events each) and the `BURST`; bytes 3-6: the `BURST` alone. The RV's twin `p4t8_xr` has the same figures; the 832's twin, see below.)
+
+The per-key loop (`osd.c` `OsdNextEvent`, `kq_buf[i] = SPI_reply()`, exec-3 hand-over item 8) is now measured: the BURST frame `20 98 ff ff ff ff ff ff ff / 00 06 4c 00 4d 00 4c 00` read all six events right on both CPUs. The RV's smallest per-key gap is 56 (byte 1) and 60 (bytes 2..6), 22 and 26 `clk_114` above E_osd; the firmware's smallest gap anywhere in the run stays the version reply's 44. No `OSD EARLY` on either CPU, every reply byte right: **no "before" defect in the key path**, the handshake is a margin (and SPIN-removal) change, not a fix of an observed failure.
+
+Coverage (Task 4 minor M2): the `OSD EARLY` monitor (`tb_l3.v`) checks every byte after the command of a 0x88 / 0x98 frame, so a KEYQ frame's per-key bytes 1..n are covered, and so is the status byte 0; hostmon's `OSD GAP` takes every reply write of those frames (per-key ones included). The new `=== OSD REPLY <cmd> byte <k>` lines split both per byte. The two commands are the only users of `SPI_reply()` in either firmware.
+
+X-sensitivity: the RV twin `p4t8_xr` is SAME. The 832 twin `p4t8c_xr` (seed 505647130) has the same `spi.txt` (2,698 frames) but other cycles from the very first frame on: the 832 host CPU's random start state changes its timing (finding below, "Found by the L3 bench (Task 8)"); with `XSEED=4`, a seed whose 832 start matches, the twin `p4t8c_xs4` is SAME. The diff `run.sh diff p4t8 p4t8c` is empty with `boot`'s 9 rules, all used: no new `expected_diff.txt` rule.
+
+Scenario figures: the script ends at cycle 165,059,293 on the RV (7.01 M cycles after the main-loop milestone at 158,045,126) and 215,391,641 (12.78 M after its milestone at 202,610,912) on the 832; a main-loop pass in the open menu is at least 5,320 `clk_114` on the RV (median 7,108) and 11,244 on the 832 (median 13,324) (runs p4t8d / p4t8dc), the `BURST` 192.
+
 ## Shared defects
 
-(none yet)
+- **The OSD menu's key repeat cannot start: the level read answers with the key queue, not the key (both firmwares since the KEYQ in userio_osd; found by Task 8, not fixed: parity, and the cause is in the command order plus the RTL's read path).**
+  - **Mechanism.** `OsdGetCtrl()` (`fw/ctrl_rv/osd.c`, the same in `fw/ctrl_832`) reads the level with `OsdGetKeyLevel()`: a one-byte `OSD_CMD_READ` frame whose answer is the byte userio_osd_spi loads at the frame's start (`sdo_reg <= in` at the first falling `sck` edge), i.e. `userio_osd.v`'s `rddat` under the *previous* command's `cmd_dat`: the new command byte is decoded only after it has been shifted in. Before the KEYQ, the previous OSD command in an idle main loop was the previous pass's `OSD_CMD_READ` (`rddat` = `osd_ctrl`), so it worked. Now it is the previous pass's `OSD_CMD_KEYQ`, and `rddat` is `kq_rddat`: the queue's head, or 00 when the queue is empty. Only a pass right after a redraw (last command `OSD_CMD_OSD_WR`, default `rddat` = `osd_ctrl`) sees the real level.
+  - **Evidence.** `keys` run `p4t8` (spi.txt line 1877): `20 00 / 4d` 6,325 `clk_114` after `KEY_DOWN` was released, just before the KEYQ frame that drains it (the queue's head, not the level 00). Probe (scratch, not committed: the `p4t8red` binary, a script that holds `KEY_DOWN` for 500,000 `clk_114` at TICKDIV 643): with `osd_ctrl` = 4d throughout, the `OSD_CMD_READ` frame right after the redraw answers 4d, and every later one in the idle passes (from cycle 158,718,390 on, one per pass of 7,108 cycles) answers **00**; the KEYQ frames' first MISO byte is 4d (that frame's command-time byte is the READ's `rddat`, which is the level, and the firmware discards it).
+  - **Board effect (inferred from the above and the source, not seen on the board).** The repeat needs a level read showing the held key when `REPEATDELAY` (100 TIMER counts, about 580 ms) has run out; at that time the menu is idle and the level read gives 00, so holding up / down in the OSD menu does not auto-repeat. Rarely (when the free-running repeat timer, re-armed every `REPEATRATE` = 25 counts, about 145 ms, runs out during the redraw pass of a key, about 1 % of presses) one press moves two lines. At TICKDIV 1 (L2 / L3 boot speed) the timer is 643 x faster and the repeat can fire in the pass after a redraw, which is why the first probe at TICKDIV 1 did see one repeat.
+  - **Fix options for Paul.** Firmware: read the level as the reply byte after the command (`SPI(OSD_CMD_READ); level = SPI_reply();`: by then `cmd_dat` is READ and `rddat` is `osd_ctrl`), in both firmwares (a reply byte, so it follows the reply-gap / handshake rules). Or RTL: have userio_osd answer the first byte of every frame from `osd_ctrl` rather than from the stale selection. The `keys` scenario's rules keep the run independent of this (no level read while a key is held, README "keys").
 
 ## Findings for Paul (RTL outside Phase 4 scope)
 
@@ -120,6 +156,18 @@ Found by the X-sensitivity twin of Task 2 (`XRAND=1`, sim/host_bridge, 2026-10-1
 - **Probe** (run `p4t7probe`: a scratch copy of the 832 sources with two `printf`s in `main.c` ColdBoot, not committed): `L3PROBE1 key=0 override=0` right after the key read, `L3PROBE2 key=0 override=6F6E2036` just before `if(override)`. Between them only `sprintf(s,"Got key: %x\n",key)` and the empty `BootPrint(s)` run; `override` then holds four ASCII bytes ("on 6"). In the unprobed build vbcc832 keeps `override` in the callee-saved r4 from before `ChangeDirectory` to the test (vbcc832 `-O=1343` asm of `main.c`). Suspect: lib832's `sprintf` (or vbcc832 code around the call) not preserving the caller's state; the root cause was not pinned further.
 - **Board effect:** on every cold boot one extra configuration pass with the values just applied (chipset, CPU, memory, floppy, video frames to userio_osd; VIDEOSCALE; the ADV7511 I2C writes; PLATFORM) and the line "Overriding screenmode." on the boot screen. The four F-key bodies did not run (no key matched), so `config` is unchanged: the resent frames equal the first pass. The corrupted value reaches nothing else in ColdBoot (`override` is only tested once); a different corruption elsewhere in the 832 build by the same `sprintf` would not show in this test.
 - **Bench handling:** `sim/l3/expected_diff.txt` rule `DROPBLOCK uart ^Overriding\x20screenmode\.$ ^##End\x20result\x20:\x200$` (comment names this entry and the probe).
+
+### Found by the L3 bench (Task 8, 2026-10-19)
+
+**The 832 host CPU depends on power-up values of state that has no reset (not pinned by the bench, not investigated to the flop).** Under random initial state (`XRAND=1`) the EightThirtyTwo build's first hw access (the boot ROM's SPI write, before any SDRAM or card access) moves with the seed, and one seed hangs:
+
+| binary | seed | first hw access (`clk_114`) |
+|---|---|---|
+| `p4t6` (no XRAND) / `p4t8c` (no XRAND) | - | 2,641 |
+| `p4t6_xr` (Task 6) | 639498575 (its twin's), 505647130, 1, 2, 3, 4, 6, 7 | 2,641, 2,644, 2,644, 2,644, 2,659, 2,644, 2,644, **none in 400,000 cycles** |
+| `p4t8c_xr` (Task 8) | 505647130 (its twin's), 1..8 | 2,644, 2,659, 2,644, 2,644, 2,641, none by 3,178, 2,644, 2,662, 2,644 |
+
+(Each run with `+VERBOSE=1 +TIMEOUT=3000`, seed 7 of `p4t6_xr` with 400,000; the seed's mapping to the state changes with the binary.) Until the first hw access only the bridge, the 832 core and its boot ROM BRAM run; the bridge's three reset-less flops of Task 2 (`cache_req`, `cpu_ack`, `rom_wr`) are pinned, so the cause is other reset-less state in the EightThirtyTwo (`E832` RTL: the register file and the `thread` fields the reset leaves alone, beyond the seven the GHDL conversion copy resets; the decoder / fetch state) or in the 832 path of `832_bridge.vhd`. The board starts every flop at 0 (configuration), so power-up is fine; a warm `nReset` while the CPU runs is the open question, as for Task 2's five flops. Task 6's `boot` twin was SAME only because its seed happened to give the normal start. Bench handling: none yet; the 832 twins of later tasks will differ in timing the same way unless the state is found and pinned (a later task's or Paul's call). Task 8 shows the `keys` path X-insensitive with `XSEED=4` (`p4t8c_xs4` SAME).
 
 ### Found by the L3 bench (Task 4, 2026-10-19)
 
