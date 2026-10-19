@@ -22,17 +22,18 @@ worth reporting with its log, even if it looks random.
 
 Work on the COPY of your card. The live card is `/media/paul/AARSDISK55`: do not put these files on it.
 
-Find the copy's mount point and put it in one variable:
+**Remove the live card from the reader. Insert ONLY the card copy.** The physical card is the identity: a clone has the same label and the same
+UUID as the live card, so no software check can tell the two apart. Then find the copy's mount point and put it in one variable:
 
 ```
-lsblk -o NAME,LABEL,MOUNTPOINT,UUID
+lsblk -o NAME,SIZE,LABEL,UUID,MOUNTPOINT
 CARD=<mount point of the card COPY, from the MOUNTPOINT column>
 ```
 
-A clone of the live card can carry the same label and mount under another name, so go by the device and UUID: the line for `$CARD` must be the
-COPY. The block below prints them, and aborts before any copy if `$CARD` is empty, is not a directory, is the live card
-(`/media/paul/AARSDISK55`, by name or after `realpath`, or anything below it), or sits on the same device as the live card (when that is mounted).
-It is one block for bash or zsh; paste it whole. If it prints `ABORT`, nothing was copied.
+The block below is one block for bash or zsh; paste it whole. It aborts, before any copy, if `$CARD` is empty, is not a directory, is not a mount
+point (checked after `realpath`), or if more than one `AARSDISK55*` card (or more than one filesystem with the same label as `$CARD`) is mounted.
+It then prints the device, size, label and UUID of `$CARD` and asks you to type `COPY`; anything else aborts. If it prints `ABORT`, nothing was
+copied. A copy mounted alone at `/media/paul/AARSDISK55` is fine.
 
 Copy the six files into the root of the copy, next to your own files. Nothing is replaced: `832OSDAD.BIN`, `MINMGAA*.CFG`, the kickstarts,
 HDFs, ISO and `drivesnd.bin` stay as they are.
@@ -40,17 +41,23 @@ HDFs, ISO and `drivesnd.bin` stay as they are.
 ```
 SET=/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64-riscv/build/ab_card_87577e2
 card_ok() {
-  local live=/media/paul/AARSDISK55 c l cdev ldev
+  local c src label n ans
   [ -n "${CARD:-}" ] || { echo "ABORT: CARD is empty"; return 1; }
   [ -d "$CARD" ] || { echo "ABORT: CARD=$CARD is not a directory"; return 1; }
   c=$(realpath -- "$CARD") || { echo "ABORT: realpath failed"; return 1; }
-  l=$(realpath -m -- "$live")
-  case "$c/" in "$l"/*) echo "ABORT: $CARD is the live card ($l)"; return 1;; esac
-  cdev=$(findmnt -n -o SOURCE -T "$c")
-  echo "CARD=$CARD  device=$cdev  UUID=$(findmnt -n -o UUID -T "$c")  label=$(findmnt -n -o LABEL -T "$c")"
-  ldev=$(findmnt -n -o SOURCE -M "$l" 2>/dev/null)
-  if [ -n "$ldev" ] && [ "$cdev" = "$ldev" ]; then echo "ABORT: $CARD is on the live card's device $ldev"; return 1; fi
-  echo "guard passed: check that the device above is the card COPY, not the live card"
+  src=$(findmnt -n -o SOURCE --mountpoint "$c")
+  [ -n "$src" ] || { echo "ABORT: $c is not a mount point"; return 1; }
+  label=$(findmnt -rn -o LABEL --mountpoint "$c")
+  n=$(findmnt -rn -o LABEL | grep -c '^AARSDISK55')
+  [ "$n" -le 1 ] || { echo "ABORT: more than one AARSDISK55 card is mounted: remove the live card first"; return 1; }
+  if [ -n "$label" ]; then
+    n=$(findmnt -rn -o LABEL | grep -cFx -- "$label")
+    [ "$n" -le 1 ] || { echo "ABORT: more than one filesystem labelled $label is mounted: remove the live card first"; return 1; }
+  fi
+  echo "CARD=$c  device=$src  size=$(lsblk -dno SIZE "$src")  label=$label  UUID=$(findmnt -n -o UUID --mountpoint "$c")"
+  printf 'Type COPY if this is the card copy: '
+  read -r ans
+  [ "$ans" = "COPY" ] || { echo "ABORT: not confirmed"; return 1; }
 }
 if card_ok; then
   for f in RV32OSDA.BIN MINMGAR.CFG MINMGAR1.CFG MINMGAR2.CFG MINMGAR3.CFG MINMGAR4.CFG; do if [ -e "$CARD/$f" ]; then echo "EXISTS, not copied: $f"; else cp "$SET/$f" "$CARD/$f"; fi; done
