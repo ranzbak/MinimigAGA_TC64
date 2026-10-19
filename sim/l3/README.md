@@ -503,7 +503,7 @@ only when it is empty. `norm` writes one stream in frame order,
   `diff --unused-rules` prints `UNUSED <line>: <rule>` for a rule neither
   run used, and exits 1
 
-`sim/l3/test/spitrace_test.sh` (one second, `mkcard.sh`'s tools) checks
+`sim/l3/test/spitrace_test.sh` (a few seconds, `mkcard.sh`'s tools) checks
 the tools on generated fixtures: other poll counts and the fixture's
 rules give an empty diff; one changed byte in an SD read, an FPGA frame, an
 OSD text line, a hw write, a UART line, a KEYQ event and a status frame with
