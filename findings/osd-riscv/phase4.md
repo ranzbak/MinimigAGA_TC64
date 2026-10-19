@@ -122,6 +122,39 @@ Ten full-track read DMAs (6,334 words, sync 0x4489, WORDSYNC) by `sim/l3/bfm_flo
 
 Ten full-track write DMAs by `sim/l3/bfm_floppy.v` against the real `paula_floppy`: `sim/l3/gen/mkwrtrack.py`'s MFM streams with new data in every sector, the last track (cylinder 40 head 0) with a bad header checksum in sector 3, after the OSD inserts `TEST.ADF` (TICKDIV 643 from the script's start). `TEST.ADF` is then copied off the saved card. 832 `p4t14fc` (on the same card as the RV run; earlier `p4t14c` on the card with the old RV image, and its `XSEED=4` twin, normalised diff empty) and RV `p4t14f` (the fixed firmware; twin SAME; `run.sh diff` against `p4t14fc` empty): 109 sectors hold their new data, the other 1,650 are unchanged; the bad-header sector is skipped, and `GetHeader`'s FatalError ("Bad checksum", 26) shows the FATAL page, the same on both CPUs. Item 7 (`fdd_fifo_full_write`): 0 of 63,340 slots on both, FIFO max 518 words. The RV without the gap (`p4t14w`) wrote nothing: "Found by the L3 bench (Task 14)" below. `bfm_floppy` now waits for the drive after motor on (500 ms) and after a head change (15 ms), so Task 13's two remaining `fdd_rd` diff lines are gone (`p4t14r` / `p4t14rc`: empty, all 13 rules used). Details: `sim/l3/README.md` "fdd_wr".
 
+### Task 18: Akiko request service on L3 (`akiko`, plan 7.1 item 13)
+
+`sim/l3/bfm_akiko.v` drives cfide's `amiga_req/addr/d/wr` and takes `amiga_q/ack`, as the TG68 side would. Each block is 32 write requests then 32 read requests (one at a time, `amiga_req` held to `amiga_ack`); block 0 runs in the idle main loop, block 1 from the first track DMA's start (`fdd` card, 2 track reads, TICKDIV 643 from the scenario start). RV `p4t18`, 832 `p4t18c3`: all 128 requests acked once, every UART line equal to the pattern computed in Python, every read answered 0, 128 DATA writes, both track reads decode to TEST.ADF, block 1 entirely inside the DMA (64 of 64), MARGIN 6 ok (0 empty slots; FIFO min 995 words RV, 981 words 832), OSD EARLY 0.
+
+Latency, `amiga_req` rise to `amiga_ack`, clk_114 cycles (113.4375 MHz; 1 ms = 113,437 cycles), n = 32 each:
+
+| CPU | block | type | min | median | max | ack to EnableInterrupts (min / median / max) |
+|---|---|---|---|---|---|---|
+| RV | 0 | write | 224052 | 234004 | 235904 | 4062 / 4082 / 21118 |
+| RV | 0 | read | 163856 | 163876 | 163876 | 4062 / 4062 / 4082 |
+| RV | 1 | write | 224124 | 234024 | 238856 | 4062 / 4062 / 4598 |
+| RV | 1 | read | 163856 | 163876 | 163880 | 4062 / 4062 / 4082 |
+| 832 | 0 | write | 209112 | 228736 | 229128 | 22790 / 22914 / 90366 |
+| 832 | 0 | read | 158836 | 158956 | 159968 | 22790 / 22814 / 22934 |
+| 832 | 1 | write | 218136 | 228100 | 229084 | 22790 / 22834 / 22994 |
+| 832 | 1 | read | 158856 | 158960 | 159944 | 22790 / 22814 / 22934 |
+
+The latency is the ISR's `printf` to the UART (115200 baud: ~9,840 `clk_114` per character, 25 characters for a write line, 16 for a read), not the CPU: both CPUs are within ~3 % of each other, and the track DMA changes nothing (block 0 idle loop vs block 1 in the DMA). Median write ~2.0 ms, read ~1.4 ms.
+
+**Finding for Paul: the host Akiko path is a logging stub and is tied off.** `fw/ctrl_rv/akiko.c` (and `fw/ctrl_832/akiko.c`) only print "Akiko write: <addr>, <data>" / "Akiko read: <addr>" and write DATA = 0 (the ack); a read request therefore returns 0. There is no C2P in the host. The real C2P is `rtl/minimig/akiko.v` (Amiga side, `havec2p` in TG68K). `rtl/soc/minimig_virtual_top.v` ties `tg68_host_addr/_d/_wr` to 0 (lines 671-673) and `amigahost_req` is never raised in this build, so on the board the path is unused. Task 18's brief ("C2P output equals the planar conversion") cannot hold; the approved reinterpretation checks the request/ack/print path and the latency.
+
+**Finding for Paul (from the RTL and firmware, NOT confirmed by a run): a request raised between the ISR's DATA write and `EnableInterrupts` is lost.** `inthandler()` (`fw/ctrl_rv/main.c`, the 832's the same) does `DisableInterrupts(); akiko_inthandler(); c64keys_inthandler(); EnableInterrupts();`. cfide's `int_legacy_nx` sets the flag on an `amiga_req` rising edge only when `interrupt_ena` is 1, so a request whose edge comes after the DATA write (the ack of its predecessor) and before the EnableInterrupts write sets no flag, and with `amiga_req` held and no new edge the requester waits forever. The window, measured as ack to the EnableInterrupts write: RV 4,062 cycles (36 us), 832 22,790 cycles (200 us). `bfm_akiko` does not enter the window (it waits for the re-arm, +AKI_GAP 4 clk_28), so the run neither shows nor refutes the loss; a requester that issues the next request sooner than that (a 68k loop, ~1 us per access) would hit it. Only relevant if the host Akiko path is ever connected.
+
+**Differential `p4t18` (RV) vs `p4t18c3` (832): NOT empty (6 hunks, `rules: all 13 used`), timing only, no new rule added (Task 18 ruling).** The Akiko lines, their order and the DATA writes (HW ffff84 0000) are identical on both. The hunks are placements of main-loop frames among them:
+
+- one `SPI 10 10 00 / 10 01` (HandleFpga status poll) sits 1 Akiko line earlier on the 832 (block 0, after "C035") than the RV (after the block's last read);
+- the first key event vs the OSD level read: RV `SPI 20 28 00 / 69 69` then the KEYQ frame; 832 `20 28 00 / 00 00`, `20 00 / 69`, then the KEYQ frame (the known level-read race of "Shared defects", moved by the CPU's timing relative to `bfm_keys` starting at block 0's end);
+- one `10 00 00 00 00 00 00 / 10 00 44 89` poll frame (with the 00 01 track bytes on the 832) and the DEDUP'd `HW ffffb0 0001` sit at another place around the Akiko burst of block 1 / the first track's DMA start.
+
+None changes a value; all are the position of a poll frame relative to an Akiko burst. A rule would have to collapse poll frames that fall into the Akiko burst; Task 19 decides whether to add one (evidence: runs `p4t18`, `p4t18c3`, `norm.txt` hunks at lines 1930, 2014, 2196, 2324, 2353, 2366).
+
+**XRAND twins.** RV `p4t18_xr` (2,270 s) PASS and `compare p4t18 p4t18_xr` SAME (log, spi.txt: 20,721 frames). 832 `p4t18c3_xr` (3,817 s) PASS with its data checks; `compare` DIFF (cycle numbers) and the normalised `diff p4t18c3 p4t18c3_xr` has one hunk: the 64 `HW ffff84 0000` lines of block 1 sit after rather than before their UART lines around the "Inserting floppy" text (an ordering of the UART printer vs the DATA write, timing only). Accepted per scenario-rulings.md (the 832's reset-less start-up state), recorded here. Note: the 832 UART prints hex in upper case although its source says `%x` (lib832), so no SUBST rule for the "Akiko" lines was needed; `diff --unused-rules p4t18 p4t18c3` reports `rules: all 13 used`.
+
 ## Handshake design
 
 The OSD "reply byte ready" handshake (decision 12.13 (a), plan 6.4 P1): the firmware starts a reply byte only once `userio_osd` has taken every byte before it, instead of waiting a counted `SPIN`. Task 9 is the RTL half in the Minimig (**RTL: Paul reviews before any bitstream**); Task 10 adds cfide's half (`osd_tx_seq`, `HOST_REQ` at `0xFFFFFFB4`, also **RTL: Paul reviews before any bitstream**).

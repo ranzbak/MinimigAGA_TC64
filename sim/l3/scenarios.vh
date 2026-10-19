@@ -56,6 +56,14 @@
 //               row) after the last write's blckint, or, if no error page
 //               comes, the 20th HandleFpga frame after it ("=== STATS@fdd_wr").
 //               TIMER: as fdd_rd
+//   akiko       the Akiko request service (README "akiko"; run.sh: the fdd
+//               card, +KEYS=sim/l3/keys/insert_df0.txt): main-loop milestone
+//               as boot, where bfm_akiko runs block 0 (32 write + 32 read
+//               requests on cfide's amiga_* window) in the idle main loop;
+//               then the key script (TEST.ADF into df0), then bfm_floppy
+//               reads FDD_PLAN's first AKIKO_TRACKS tracks, and block 1 starts
+//               at the first track DMA's DSKLEN write; end event: block 1 and
+//               the last track DMA done ("=== STATS@akiko").  TIMER as fdd_rd
 
   reg [8*32-1:0]  scenario;
   reg [8*16-1:0]  short_end;
@@ -71,6 +79,7 @@
   localparam integer FDD_N     = 10;
   localparam integer FDD_WORDS = 6334;
   localparam [15:0]  FDD_SYNC  = 16'h4489;
+  localparam integer AKIKO_TRACKS = 2;       // akiko: the plan's first two tracks (cylinders 0, 1 head 0)
   localparam [127:0] FDD_PLAN  = {48'h0, 8'h80 | 8'd79, 8'd79, 8'd78, 8'd77, 8'd41, 8'd40, 8'd39, 8'd2, 8'd1, 8'd0};
   // fdd_wr: the cylinders of fdd_rd, with 40/0 (the bad-header track, see
   // the header) moved to the end: 0, 1, 2, 39, 41, 77, 78, 79 head 0, 79
@@ -84,14 +93,21 @@
       if (!$value$plusargs("SHORT_END=%s", short_end)) short_end = "";
       if (!$value$plusargs("BOOT_END=%s", boot_end)) boot_end = "";
       if (scenario != "boot" && scenario != "boot_short" && scenario != "keys" && scenario != "fdd_rd" &&
-          scenario != "fdd_wr")
+          scenario != "fdd_wr" && scenario != "akiko")
         bench_error("unknown +SCENARIO (scenarios.vh)");
       if (short_end != "" && (scenario != "boot_short" || short_end != "version"))
         bench_error("+SHORT_END=version is the only value, and only for boot_short");
       if (boot_end != "" && (scenario != "boot" || boot_end != "rtc2"))
         bench_error("+BOOT_END=rtc2 is the only value, and only for boot");
-      if ((scenario == "keys" || scenario == "fdd_rd" || scenario == "fdd_wr") && !$test$plusargs("KEYS="))
-        bench_error("scenarios keys, fdd_rd and fdd_wr need +KEYS=<key script>");
+      if ((scenario == "keys" || scenario == "fdd_rd" || scenario == "fdd_wr" || scenario == "akiko") &&
+          !$test$plusargs("KEYS="))
+        bench_error("scenarios keys, fdd_rd, fdd_wr and akiko need +KEYS=<key script>");
+      if (scenario == "akiko") begin
+        fdd.plan_n = AKIKO_TRACKS;
+        fdd.plan_words = FDD_WORDS;
+        fdd.plan_sync = FDD_SYNC;
+        fdd.plan = FDD_PLAN;
+      end
       if (scenario == "fdd_rd") begin
         fdd.plan_n = FDD_N;
         fdd.plan_words = FDD_WORDS;
@@ -109,9 +125,16 @@
 
   // keys: the script starts at the main-loop milestone, ends the scenario
   always @(posedge sc_started) if (scenario == "keys" || scenario == "fdd_rd" || scenario == "fdd_wr") keys.go = 1'b1;
+  // akiko: block 0 in the idle main loop, then the key script, the track reads,
+  // block 1 from the first track DMA's start
+  always @(posedge sc_started) if (scenario == "akiko") aki.go1 = 1'b1;
+  always @(posedge aki.b1_done) if (scenario == "akiko") keys.go = 1'b1;
+  always @(posedge fdd.dma_busy) if (scenario == "akiko") aki.go2 = 1'b1;
+  always @(posedge aki.done or posedge fdd.done)
+    if (scenario == "akiko" && aki.done && fdd.done) sc_end("akiko", "block 1 and the last track DMA done");
   always @(posedge keys.done) if (scenario == "keys") sc_end("keys", "the end of the key script");
   // fdd_rd: the track reads start when the key script has ended
-  always @(posedge keys.done) if (scenario == "fdd_rd" || scenario == "fdd_wr") fdd.go = 1'b1;
+  always @(posedge keys.done) if (scenario == "fdd_rd" || scenario == "fdd_wr" || scenario == "akiko") fdd.go = 1'b1;
   always @(posedge fdd.done) if (scenario == "fdd_rd") sc_end("fdd_rd", "the blckint of the last track DMA");
 
   // STATS@<event>: the rv_hostcpu counters 1 ns after the end event's

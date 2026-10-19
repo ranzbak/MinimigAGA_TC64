@@ -2,7 +2,7 @@
 
 Work in progress (Phase 4 of the OSD host CPU migration). This file grows
 with the bench; so far it has the sections "Bench", "Run", "boot",
-"832", "Differential", "keys", "fdd_rd", "fdd_wr", "Monitors" and "Cards".
+"832", "Differential", "keys", "fdd_rd", "fdd_wr", "akiko", "Monitors" and "Cards".
 
 ## Bench
 
@@ -21,6 +21,7 @@ the committed boot ROM and the real firmware from an SD card image:
 | reset | `minimig_syscontrol` (`mrst` = `usrrst`, `cnt` = sof); chipset reset = `sys_reset \| cpurst` | `rtl/minimig` |
 | audio ring | `bfm_audio.v`: the ring position, cfide `audio_buf` = bit 15 | `sim/l3` |
 | floppy's Amiga side | `bfm_floppy.v` (instance `fdd`): the CIA lines, Paula's disk registers and Agnus's disk DMA slots for paula_floppy, read and write (scenarios `fdd_rd` and `fdd_wr`, sections "fdd_rd" and "fdd_wr"; idle otherwise) | `sim/l3` |
+| Akiko requester | `bfm_akiko.v` (instance `aki`): cfide's `amiga_req/addr/d/wr` in, `amiga_q/ack` out (scenario `akiko`, section "akiko"; idle otherwise) | `sim/l3` |
 
 The wiring is that of `rtl/minimig/minimig.v` and
 `rtl/soc/minimig_virtual_top.v`: cfide's `sd_di` is the slaves' MISO
@@ -1337,6 +1338,71 @@ seek; the 832 is busy for 11 to 20 ms with its last sector's
 `FileWrite`. The 832 leg on the card with the old RV image (`p4t14c`)
 and its `XSEED=4` twin (`p4t14c_xs4`) gave the same results;
 `run.sh diff p4t14c p4t14c_xs4` is empty.
+
+## akiko
+
+`akiko` exercises the host's Akiko request service, the legacy interrupt
+path (plan 7.1 item 13). In this build the host side of Akiko is a logging
+stub: `akiko_inthandler()` (`fw/ctrl_rv/akiko.c`, the 832's the same) reads
+cfide's ADDR and DATA registers (`0xFFFFFF80`, `0xFFFFFF84`), prints
+"Akiko write: <addr>, <data>" or "Akiko read: <addr>" (hex), and writes
+DATA = 0, which is the ack (`amiga_ack`, one `clk_28` cycle, and `amiga_q`
+= 0). There is no C2P in the host: the C2P is `rtl/minimig/akiko.v` on the
+Amiga side, and `rtl/soc/minimig_virtual_top.v` ties the host request path
+off. The scenario therefore checks the request / ack / print path and its
+latency, not a conversion.
+
+`bfm_akiko.v` is the requester. A request sets `amiga_addr`, `amiga_d`,
+`amiga_wr`, raises `amiga_req` and holds all of them to `amiga_ack`; it
+drives and samples on the falling `clk_28` edge. After the ack it waits for
+the firmware's `EnableInterrupts` (an `0xFFFFFFA0` write with bit 0 set)
+and `+AKI_GAP=<n>` more `clk_28` cycles (default 4): a request raised before
+that sets no interrupt flag (cfide `int_legacy_nx` needs `interrupt_ena`)
+and would be lost, so the model keeps out of that window and logs its length
+as "rearm" (`findings/osd-riscv/phase4.md` Task 18). One block is 32 write
+requests, then 32 read requests: `addr = 0x20 + 0x80 b + i`, write data
+`((i + 1) * 0x9E37) & 0xFFFF` (xor `0xC3A5` in block 1).
+
+Scenario: the `fdd` card (as `fdd_rd`), TICKDIV 643 from the main-loop
+milestone. Block 0 runs at the milestone, in the idle main loop. When it is
+done the key script `keys/insert_df0.txt` starts, then `bfm_floppy.v` reads
+2 tracks (cylinders 0 and 1, head 0; `AKIKO_TRACKS` in `scenarios.vh`), and
+block 1 starts at the first track DMA's DSKLEN write. The end event is block
+1 and the last track DMA done (`=== STATS@akiko`).
+
+`l3check.py akiko <run>` checks: the 128 requests in order, none lost or
+repeated (the log's `=== AKIKO req` lines), each with the bench's pattern
+(recomputed in Python) and acked; every read answered 0; the UART lines
+equal to the pattern (upper-case hex on both CPUs: lib832's `%x` prints
+A-F in upper case); exactly 128 DATA writes of 0 in `hw.txt`; block 1's
+first request and at least 16 of its requests inside the DMA; both track
+dumps decode to `TEST.ADF`; the OSD pages of `fdd_rd` (no error page); and
+prints the latency table (min / median / max of `amiga_req` to `amiga_ack`,
+and of the ack to `EnableInterrupts`). Test first:
+`bash sim/l3/test/akiko_check_test.sh` builds synthetic run directories from
+the bench's and the firmware's line formats; the good ones pass, and the
+mutants (one wrong UART word, a lost, a repeated and an unacked request, a
+read that returns data, a missing DATA write, a line with lower-case hex) each fail
+with their own `BAD` line.
+
+Run (from the repository root; toolchain and packages as in "Run"):
+
+```
+CPU=832 SIM=verilator RUNTAG=p4t18c3 bash sim/l3/run.sh akiko
+CPU=rv  SIM=verilator RUNTAG=p4t18   bash sim/l3/run.sh akiko
+bash sim/l3/run.sh diff --unused-rules p4t18 p4t18c3
+```
+
+with `FW=` and `FW832=` the same images for both (section "Differential")
+and `E832`, `E832DIR` for the 832. `RUNTAG=... XRAND=1` is the twin.
+Verilator wall time 2,611 s (RV, 259.9 M cycles) and 4,133 s (832, 311.6 M
+cycles) on a loaded machine. The MARGIN 6 monitor stays required: the ISR's
+UART prints stall the main loop, and the floppy FIFO never ran empty (0
+slots, fifo min 995 words RV, 981 words 832).
+
+The diff of the two runs is not empty; see `findings/osd-riscv/phase4.md`
+Task 18 (poll frames placed differently among the Akiko lines, a timing
+difference no rule covers).
 
 ## Monitors
 
