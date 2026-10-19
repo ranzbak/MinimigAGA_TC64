@@ -27,8 +27,10 @@ UUID as the live card, so no software check can tell the two apart. Then find th
 
 ```
 lsblk -o NAME,SIZE,LABEL,UUID,MOUNTPOINT
-CARD=<mount point of the card COPY, from the MOUNTPOINT column>
+CARD='/mount/point/of/the/card/copy'   # edit: the MOUNTPOINT column
 ```
+
+If the MOUNTPOINT column is empty, the card did not auto-mount: `udisksctl mount -b /dev/sdX1` (the card copy's partition from the NAME column), then run `lsblk` again.
 
 The block below is one block for bash or zsh; paste it whole. It aborts, before any copy, if `$CARD` is empty, is not a directory, is not a mount
 point (checked after `realpath`), or if more than one `AARSDISK55*` card (or more than one filesystem with the same label as `$CARD`) is mounted.
@@ -62,10 +64,16 @@ card_ok() {
 if card_ok; then
   for f in RV32OSDA.BIN MINMGAR.CFG MINMGAR1.CFG MINMGAR2.CFG MINMGAR3.CFG MINMGAR4.CFG; do if [ -e "$CARD/$f" ]; then echo "EXISTS, not copied: $f"; else cp "$SET/$f" "$CARD/$f"; fi; done
   (cd "$CARD" && sha256sum -c "$SET/SHA256SUMS")
+  # scratch ADF for the floppy WRITE test (row 6): a copy of one of your ADFs, never overwritten
+  SRC_ADF='Workbench.adf'  # edit to one of your ADFs in the card root
+  if [ -e "$CARD/SCRATCH.ADF" ]; then echo "EXISTS, not created: SCRATCH.ADF"
+  elif [ -e "$CARD/$SRC_ADF" ]; then cp "$CARD/$SRC_ADF" "$CARD/SCRATCH.ADF" && (cd "$CARD" && sha256sum SCRATCH.ADF | tee ~/ab-scratch-adf.sha256)
+  else echo "NO SCRATCH.ADF: $SRC_ADF not found in the card root; edit SRC_ADF and run this line again"; fi
   sync
 fi
 ```
 
+- `SCRATCH.ADF` is a copy of `SRC_ADF` made on the card copy; the source ADF is only read. Its sha256 is kept in `~/ab-scratch-adf.sha256` for row 6.
 - Do not copy `SHA256SUMS`, `PROVENANCE.txt`, `work/` or `orig/` onto the card; they are provenance only.
 - `SHA256SUMS` holds bare file names, so run `sha256sum -c` from the card root as above. Expected: six lines ending in `: OK`.
 - The loop never overwrites: if a file of that name is already on the copy it prints `EXISTS, not copied: <name>`, and `sha256sum -c` then shows it as FAILED if it differs. Stop and tell me.
@@ -92,17 +100,20 @@ The boot ROM and the firmware of both CPUs print through the same `cfide` UART (
 FPGA never reads it. Settings: **115200 baud, 8N1, no flow control**.
 
 Where this comes from: `rtl/host/cfide.vhd` lines 756-760. The bit counter `clkgen` reloads with `"0011110110"` = 246 on `clk_28`, so a bit lasts
-247 clocks; 28.375 MHz / 247 = about 114.9 kBd, which is 115200 -0.3 %. The RISC-V boot ROM (`fw/ctrl_boot_rv/uart.h`, `0xFFFFFFF0`) and the
+247 clocks; `dll_28` is 35.262 ns = 28.359 MHz (B's `clocks.rpt`), so 28.359 MHz / 247 = 114.8 kBd, which is 115200 -0.33 %. The RISC-V boot ROM (`fw/ctrl_boot_rv/uart.h`, `0xFFFFFFF0`) and the
 firmware (`fw/ctrl_rv/hardware.h`, `UART_TX 0xFFFFFFF0`) write the same register, so A and B use the same settings.
 
-Command (the options are those of `picocom --help` on this machine: `-b` baud, `-d` data bits, `-p` parity, `-y` flow control, `--imap`, `--logfile`):
+Command (the options are those of `picocom --help` on this machine: `-b` baud, `-d` data bits, `-y` parity, `-p` stop bits, `-f` flow control, `--imap`, `--logfile`):
 
 ```
-picocom -b 115200 -d 8 -p n -y n --imap lfcrlf --logfile <file> /dev/ttyUSB0
+picocom -b 115200 -d 8 -y n -p 1 -f n --imap crcrlf,lfcrlf --logfile <file> /dev/ttyUSB0
 ```
 
-Use separate log files, for example `ab-A.log` and `ab-B.log` (the `<file>` is yours to name). Leave picocom running across the power-cycle and
-the load, so the boot lines are in the log; leave with Ctrl-A Ctrl-X. `/dev/ttyUSB1` is the Amiga `SER:` port (38400 or 57600); it is not needed.
+Use separate log files, for example `ab-A.log` and `ab-B.log` (the `<file>` is yours to name). Power-cycle the board first, then start picocom, then load the bitstream (section 3), so the boot lines are in the log. Lines printed before the load
+come from the bitstream in flash, not from A or B. Leave with Ctrl-A Ctrl-X.
+
+Several firmware lines end in a lone CR (`file "..." found`, `Configuration file size: ...`); `--imap crcrlf,lfcrlf` makes them visible on the screen. The log file
+keeps the raw CRs: read it with `tr '\r' '\n' < ab-B.log | less`. `Reading directory sector <n>` repeats once per sector. `/dev/ttyUSB1` is the Amiga `SER:` port (38400 or 57600); it is not needed.
 
 ## 3. Loading a bitstream
 
@@ -129,9 +140,9 @@ env LD_LIBRARY_PATH=$HOME/lib/tinfo5 LC_ALL=C /opt/Xilinx/Vivado/2023.2/bin/viva
 
 ## 4. Run A first (about 10 minutes): the card copy still boots as today
 
-1. Card copy in the board, picocom running with `ab-A.log`, power-cycle, load A.
+1. Card copy in the board, power-cycle, start picocom with `ab-A.log`, load A.
 2. The 832 boot ROM loads `832OSDAD.BIN`; the OSD opens; Kickstart boots to Workbench from the HDF.
-3. Fill in the A column of rows 1, 2 and 4 to 7 of the table. A has no row 1 boot lines to match (they are B's); write "832 ok" and note anything else on the ttyUSB0 log.
+3. A runs rows 1 to 7, with row 3 by eye (is there a picture?); rows 8 to 10 are "-" for A. A has no row 1 boot lines to match (they are B's); write "832 ok" and note anything else on the ttyUSB0 log.
 
 ## 5. Run B (about 30 minutes)
 
@@ -226,11 +237,12 @@ Insert an ADF from the OSD floppy page and boot or `dir` it.
 
 Fixed on 2026-10-19 night by osd-riscv `6ea1b76`. Use a scratch COPY of an ADF, never your only copy.
 
-1. On the PC, before the test: `sha256sum "$CARD"/<scratch>.adf` and note the value.
-2. Put the scratch ADF in DF0 (or DF1) from the OSD.
+1. Use `SCRATCH.ADF`; its sha256 was recorded in section 1 (`~/ab-scratch-adf.sha256`).
+2. Put `SCRATCH.ADF` in DF0 (or DF1) from the OSD.
 3. Write a file to it from Workbench or the CLI (for example `copy S:Startup-Sequence DF0:test`), or format it.
 4. Eject and reinsert the ADF or reset the Amiga, and read the file back.
-5. Power down, unmount the card on the PC, run `sha256sum` on the same `.adf`: it must differ from step 1.
+5. Power down, put the card into the PC and mount it (re-set `CARD` if the mount point differs, and `cd "$CARD"`). Run
+   `sha256sum -c ~/ab-scratch-adf.sha256`: it must report `SCRATCH.ADF: FAILED`. FAILED means the file changed, which is the pass. Then unmount.
 
 Note the ttyUSB0 lines during the write (`fdd.c` prints track/sector messages) and on failure the last one.
 
@@ -246,7 +258,7 @@ stop from an Amiga CD player. The Amiga needs AtapiMagic (3.1.4/3.2) or IDEfix97
 ### Remaining checks
 
 - Row 9, config save to a slot and reload: save to a slot in the OSD, change a setting, load the slot, and check that the setting returned. On
-  the PC the slot's `MINMGAR<n>.CFG` has a new date.
+  the PC compare `sha256sum` of the slot's `MINMGAR<n>.CFG` before and after (the card's FAT dates are not reliable); it must change.
 - Row 10, reset from the OSD: Misc, Reset, yes; the Amiga restarts and boots again.
 
 Any lock-up: write down the last line on ttyUSB0 and what was on screen.
