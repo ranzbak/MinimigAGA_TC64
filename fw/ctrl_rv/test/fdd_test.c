@@ -388,6 +388,7 @@ static void read_track_case(const char *what, int t, unsigned sync, const uint8_
  * WRFIFO_GAP_READS clk_28-bounded TIMER reads there (hardware.h WRFIFO_GAP;
  * sim/l3 fdd_wr, findings/osd-riscv/phase4.md Task 14) */
 #define FIFO_WORDS 2048
+#define WRFIFO_GAP_FLOOR 16	/* TIMER reads between two FIFO words (a literal; hardware.h WRFIFO_GAP) */
 #define MAX_POLLS 200000
 static struct wrmodel {
 	int frame, pos, polls;
@@ -515,8 +516,11 @@ static void write_case(const char *what, int track, const uint8_t *stream, size_
 	}
 	/* the RV only: the 832 (fw/ctrl_832, unchanged) has no gap and does not
 	   need one (its word loop is slow enough, sim/l3 p4t14c) */
-	snprintf(w, sizeof w, "%s: RV TIMER reads between two FIFO words >= WRFIFO_GAP_READS (%d)", what, WRFIFO_GAP_READS);
-	check(w, r[0].gapmin != ~0u && r[0].gapmin >= WRFIFO_GAP_READS, 1);
+	/* a literal floor, not WRFIFO_GAP_READS (a smaller constant would pass
+	   against itself): 16 reads, the count sized from paula's pop latency
+	   (README "Write-FIFO gap"); mutants fdd_wrfifo_gap, fdd_wrfifo_gap8 */
+	snprintf(w, sizeof w, "%s: RV TIMER reads between two FIFO words >= %d", what, WRFIFO_GAP_FLOOR);
+	check(w, r[0].gapmin != ~0u && r[0].gapmin >= WRFIFO_GAP_FLOOR, 1);
 	snprintf(w, sizeof w, "%s: file layer (cluster and sector agree)", what);
 	check(w, file_errs, 0);
 	for (int i = 0; i < 2; i++) { free(r[i].adf); free(r[i].trace); }
