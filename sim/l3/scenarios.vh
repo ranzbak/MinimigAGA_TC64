@@ -9,6 +9,10 @@
 //   boot        main-loop milestone: the first HandleFpga frame ("10" with six
 //               00 bytes); end event: the 20th HandleFpga frame after it
 //               ("=== STATS@boot" there).  TIMER: TICKDIV as given (run.sh: 1).
+//               +BOOT_END=rtc2: the end event is the close of the second RTC
+//               frame (cs 80) instead: HandleRTC() reads the RTC every 8192
+//               main-loop passes, so only such a run measures the RTC's CS
+//               high time between two transfers (mon_l3.vh item 12)
 //   boot_short  the xsim cross-check: boot cut at the end of the first
 //               OSD_CMD_READ frame ("20 00", ColdBoot()'s OsdGetKeyLevel()
 //               after fpga_init(): boot ROM, firmware load, MMC_Init,
@@ -23,6 +27,8 @@
 
   reg [8*32-1:0]  scenario;
   reg [8*16-1:0]  short_end;
+  reg [8*16-1:0]  boot_end;
+  integer         sc_rtc = 0;         // RTC frames so far
   reg             sc_done = 1'b0;
   integer         sc_fpga = 0;        // HandleFpga frames so far
   reg             sc_ver = 1'b0;      // the OSD_CMD_VERSION frame has closed
@@ -31,10 +37,13 @@
     begin
       if (!$value$plusargs("SCENARIO=%s", scenario)) scenario = "boot";
       if (!$value$plusargs("SHORT_END=%s", short_end)) short_end = "";
+      if (!$value$plusargs("BOOT_END=%s", boot_end)) boot_end = "";
       if (scenario != "boot" && scenario != "boot_short")
         bench_error("unknown +SCENARIO (scenarios.vh)");
       if (short_end != "" && (scenario != "boot_short" || short_end != "version"))
         bench_error("+SHORT_END=version is the only value, and only for boot_short");
+      if (boot_end != "" && (scenario != "boot" || boot_end != "rtc2"))
+        bench_error("+BOOT_END=rtc2 is the only value, and only for boot");
     end
   endtask
 
@@ -72,7 +81,11 @@
           $display("=== MAIN first HandleFpga frame at cycle %0d", cyc);
           sc_started = 1'b1;
         end
-        if (scenario == "boot" && sc_fpga == 21) sc_end("boot", "HandleFpga frame 20 after the first");
+        if (scenario == "boot" && boot_end == "" && sc_fpga == 21) sc_end("boot", "HandleFpga frame 20 after the first");
+      end
+      if (fr_cs == 8'h80) begin
+        sc_rtc = sc_rtc + 1;
+        if (scenario == "boot" && boot_end == "rtc2" && sc_rtc == 2) sc_end("boot", "the second RTC frame");
       end
       if (scenario == "boot_short") begin
         if (sc_ver && fr_cs == 8'h20 && fr_n == 1 && fr_out[0] == 8'h00)

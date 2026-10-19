@@ -33,15 +33,20 @@
 #   VIVADO_PATH, GHDL, VERILATOR, JOBS, OBJCACHE as sim/host_bridge/run.sh
 #
 # Scenarios (scenarios.vh), card, checks:
-#   boot        boot card (sim/l3/card), +SCENARIO=boot, TICKDIV 1; checks:
-#               milestones_boot.txt (spitrace.py check: UART lines and SPI
-#               frames in order; "NOT UART <text>" lines here: no UART line
-#               contains <text>), no EXC / TRAP on the UART, l3check.py kick
-#               (the uploaded kickstart = KICK.ROM, from the SDRAM dump),
-#               bench "=== PASS" (no bench error: OSD GAP >= 40, OSD EARLY 0,
-#               no X, no stale ack)
+#   boot        boot card (sim/l3/card), +SCENARIO=boot +SD_LOG=1, TICKDIV 1;
+#               checks: milestones_boot.txt (spitrace.py check: UART lines and
+#               SPI frames in order; "NOT UART <text>" lines here: no UART
+#               line contains <text>), no EXC / TRAP on the UART, l3check.py
+#               kick (the uploaded kickstart = KICK.ROM, from the SDRAM
+#               dump), order (plan 7.1 item 14: the last kickstart write
+#               before the CPU release) and mmc (MMC_Init's card commands =
+#               gold/mmc_init_rv.txt), every "=== MARGIN" line of MARGINS
+#               below present and none LOW, bench "=== PASS" (no bench
+#               error: OSD GAP >= 40, OSD EARLY 0, no X, no stale ack, no
+#               MARGIN LOW)
 #   boot_short  boot cut at its end event (scenarios.vh); milestones_boot.txt
-#               up to the line "#@ boot_short end"; no kick check
+#               up to the line "#@ boot_short end"; the MARGIN lines; no
+#               kick, order or mmc check
 # Logs in the run directory: tb_<scenario>_x<EXTRA_WS>_s<SLAT>_j<SJIT>.log,
 # spi.txt, spi_t.txt (frames with cycles, not compared), milestones.txt,
 # results.txt (with the wall time).
@@ -75,6 +80,10 @@ MM_FILES="rtl/soc/openaars_defines.vh rtl/minimig/userio_osd.v rtl/minimig/useri
           rtl/minimig/paula_floppy.v rtl/minimig/paula_floppy_fifo.v rtl/minimig/gayle.v
           rtl/minimig/gayle_port.v rtl/minimig/gayle_fifo.v rtl/minimig/minimig_syscontrol.v"
 MM_INC="$ROOT/fpga/openaars"     # minimig_version.vh (the board's)
+
+# the "=== MARGIN <item> <name>" lines every run must print (mon_l3.vh)
+MARGINS="1:stale_acks 3:dmode_release 3:dmode_L 4:paula_cs_release 4:userio_cs_release
+         4:paula_word_spacing 4:userio_byte_spacing 5:spi_write_busy 12:rtc_cs_high 14:kick_order"
 
 # cycles per scenario (clk_114): 1.5 x the measured end event (README "boot",
 # Verilator 2026-10-19: boot 158,155,012, boot_short 57,659,090)
@@ -181,7 +190,7 @@ build() {
 		hs_verilate "$run" tb_l3 "-DL3_GHDL -DRV_HOSTCPU_STATS" \
 			"$d/bridge.v" "$d/cfide.v" src/rv_hostcpu.v src/VexOsd.v src/hostcache.v src/dpram_inf_generic.v \
 			"$L2/sdram_host_model.v" "$ROOT/sim/common/sd_spi_model.v" $i2c \
-			"${mm[@]}" "$HERE/bfm_audio.v" "$HERE/tb_l3.v"
+			"${mm[@]}" "$HERE/bfm_audio.v" "$HERE/rtc_model.v" "$HERE/tb_l3.v"
 	else
 		X xvlog -sv $I2C_V
 		X xvhdl src/cfide.vhd
@@ -192,7 +201,8 @@ build() {
 		# declaration (an error for xvlog, accepted by synthesis and Verilator)
 		X xvlog --relax -i "$MM_INC" -i "$ROOT/rtl/minimig" "${mm[@]}"
 		X xvlog -d RV_HOSTCPU_STATS -i "$ROOT/sim/common" -i "$HERE" \
-			"$L2/sdram_host_model.v" "$ROOT/sim/common/sd_spi_model.v" "$HERE/bfm_audio.v" "$HERE/tb_l3.v"
+			"$L2/sdram_host_model.v" "$ROOT/sim/common/sd_spi_model.v" "$HERE/bfm_audio.v" \
+			"$HERE/rtc_model.v" "$HERE/tb_l3.v"
 		hs_xsim_build "$run" "$snap" "$XW" tb_l3
 	fi
 }
@@ -216,12 +226,25 @@ milestones() {
 	done
 }
 
+# margins <log>: every MARGINS line once, none LOW (mon_l3.vh)
+margins() {
+	local m n re k=0 bad=0
+	for m in $MARGINS; do
+		re="^=== MARGIN ${m%%:*} ${m#*:} min "
+		k=$((k + 1))
+		n=$(grep -c -E -- "$re" "$1")
+		if [ "$n" != 1 ]; then echo "BAD  $n lines '=== MARGIN ${m%%:*} ${m#*:} ...' (want 1)"; bad=1
+		elif grep -E -- "$re" "$1" | grep -q ', LOW)'; then echo "BAD  MARGIN ${m%%:*} ${m#*:} LOW"; bad=1; fi
+	done
+	[ "$bad" = 0 ] && echo "ok   MARGIN lines: all $k present, none LOW"
+}
+
 # scenario <name>: build, run, checks
 scenario() {
 	local s=$1 to snap="tb_l3_x$XW" pa=() st x
 	local log="$run/tb_${s}_x${XW}_s${SL}_j${SJ}.log"
 	case "$s" in
-		boot) to=${TIMEOUT:-$L3_BOOT_TO}; pa=("SDRAM_DUMP=$run/sdram.bin") ;;
+		boot) to=${TIMEOUT:-$L3_BOOT_TO}; pa=("SDRAM_DUMP=$run/sdram.bin" "SD_LOG=1") ;;
 		boot_short) to=${TIMEOUT:-$L3_SHORT_TO} ;;
 		*) die "unknown scenario $s" ;;
 	esac
@@ -245,12 +268,17 @@ scenario() {
 	local secs=$((SECONDS - t0))
 	python3 -I "$L2/spitrace.py" summary "$run/spi.txt" > "$run/spi_summary.txt" 2>&1
 	{
-		grep -E '^=== (BOOT|MAIN|END|STATS|HW accesses|cycle limit|HandleFpga|SPI frames|OSD GAP|OSD EARLY|STACK)' "$log"
+		grep -E '^=== (BOOT|MAIN|END|STATS|HW accesses|cycle limit|HandleFpga|SPI frames|OSD GAP|OSD EARLY|STACK|RTC|KICK|MARGIN)' "$log"
 		grep -E '^BENCH ERROR' "$log" | sed 's/^/BAD  /'
+		margins "$log"
 		grep -q '^SD: image .* loaded' "$log" || echo "BAD  the SD model did not load $CARD"
 		milestones "$s" "$log"
 		grep -E '^UART: .*(EXC |TRAP )' "$log" | sed 's/^/BAD  /'
-		[ "$s" = boot ] && l3_check kick "$run/kick.txt" '^PASS kick: ' python3 -I "$L3CHECK" kick "$run"
+		if [ "$s" = boot ]; then
+			l3_check kick "$run/kick.txt" '^PASS kick: ' python3 -I "$L3CHECK" kick "$run"
+			l3_check order "$run/order.txt" '^PASS order: ' python3 -I "$L3CHECK" order "$run"
+			l3_check mmc "$run/mmc.txt" '^PASS mmc: ' python3 -I "$L3CHECK" mmc "$run"
+		fi
 		if grep -q '^=== PASS' "$log"; then echo "ok   bench verdict: === PASS"
 		else echo "BAD  bench verdict: $(grep -m1 -E '^=== (PASS|FAIL)' "$log" || echo none) ($log)"; fi
 		echo "$SIM wall time ${secs} s, $(sed -n 's/.*, cycles \([0-9]*\)$/\1/p' "$log") cycles"

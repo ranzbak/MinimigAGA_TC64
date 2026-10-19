@@ -8,6 +8,7 @@
 //     -> cfide (the board's generics: spimux false, havespirtc, havei2c,
 //        havevpos true; no I2C slave, SCL/SDA read 1, every transfer NACKs)
 //          sd_cs[1]  sd_spi_model (sim/common), 32 MB card (+SD_IMG)
+//          sd_cs[7]  rtc_model (sim/l3): the SPI RTC rtc.c reads, fixed time
 //          sd_cs[4]  paula_floppy  (rtl/minimig), _scs
 //          sd_cs[5]  userio_osd    (rtl/minimig), instance osd1, _scs
 //          sd_cs[6]  paula_floppy direct_scs = ~sd_cs[6] (card -> paula)
@@ -17,7 +18,8 @@
 //
 // Wiring as rtl/minimig/minimig.v and rtl/soc/minimig_virtual_top.v:
 //   SPI_DO (cfide sd_di)   = paula_sdo | user_sdo          (minimig.v)
-//   SD_MISO (cfide sd_dimm) = the card's MISO              (virtual top)
+//   SD_MISO (cfide sd_dimm) = the card's MISO              (virtual top),
+//                            the RTC's while sd_cs[7] is low (a shared line)
 //   cfide samples sd_di unless sd_cs[1] or sd_cs[7] is low, then sd_dimm.
 //   userio_osd CORE_CAPS = 8'hAD: minimig_virtual_top's CORE_CAPS with the
 //   board's ap040_has_mmu = ap040_has_fpu = 1 (8'h2D), ORed with minimig.v's
@@ -53,7 +55,9 @@
 //
 // Monitors: sim/common/hostmon.vh (stale ack, SPI accept, X on the bus, UART
 // lines, the SPI frame log +SPI_LOG=<file> (spi.txt), OSD GAP, STACK low,
-// STATS, BOOT) and, here:
+// STATS, BOOT), mon_l3.vh (the "=== MARGIN" lines of plan 7.1 items 1, 3,
+// 4, 5, 12, 14 and "=== KICK", +RTC_CSH_MIN=<ns>; rtc_model's "=== RTC")
+// and, here:
 //   +SPI_T_LOG=<file>  the frames of spi.txt with "<start> <end> " cycles in
 //                      front (spi_t.txt; never compared)
 //   === OSD EARLY <n> of <m> reply bytes   in OSD_CMD_VERSION (0x88) and
@@ -171,7 +175,9 @@ module tb_l3 #(
   wire [7:0]  sd_cs;
   wire        sd_clk, sd_do;
   wire        spi_do;            // SPI_DO: the Minimig slaves' MISO (cfide sd_di)
-  wire        card_miso;         // SD_MISO (cfide sd_dimm)
+  wire        card_miso;         // the card's MISO (paula's direct_sdi)
+  wire        rtc_miso;
+  wire        sd_miso = (sd_cs[7] === 1'b0) ? rtc_miso : card_miso;   // SD_MISO (cfide sd_dimm)
   wire        scandoubler, audio_ena, audio_clear;
   wire [15:0] aud_addr;
   reg         tick = 1'b1;       // cfide tick_in (tick generator below)
@@ -189,7 +195,7 @@ module tb_l3 #(
     .sysclk(clk114), .n_reset(n_reset),
     .addr(hostaddr), .d(hostWR[15:0]), .q(hw_d), .req(hw_req), .wr(host_we), .ack(hw_ack),
     .sd_di(spi_do), .sd_cs(sd_cs), .sd_clk(sd_clk), .sd_do(sd_do),
-    .sd_dimm(card_miso), .sd_ack(1'b1),
+    .sd_dimm(sd_miso), .sd_ack(1'b1),
     .debugTxD(), .debugRxD(1'b1), .menu_button(1'b1),
     .xadc_temp(16'h0000),
     .scandoubler(scandoubler), .audio_ena(audio_ena), .audio_clear(audio_clear),
@@ -205,9 +211,9 @@ module tb_l3 #(
     .clk_28(clk28), .tick_in(tick)
   );
 
-  // what cfide samples: the card (and later the RTC) while sd_cs[1] or
-  // sd_cs[7] is low, else the Minimig slaves (hostmon's frame log reads it)
-  wire miso = (sd_cs[1] === 1'b0 || sd_cs[7] === 1'b0) ? card_miso : spi_do;
+  // what cfide samples: the card or the RTC while sd_cs[1] or sd_cs[7] is
+  // low, else the Minimig slaves (hostmon's frame log reads it)
+  wire miso = (sd_cs[1] === 1'b0 || sd_cs[7] === 1'b0) ? sd_miso : spi_do;
 
   // --------------------------------------------------- bench state, errors
   integer errors = 0;
@@ -226,6 +232,11 @@ module tb_l3 #(
   // --------------------------------------------------------------- SD card
   sd_spi_model #(.IMG_SECTORS(65536)) card (
     .cs_n(sd_cs[1]), .sck(sd_clk), .mosi(sd_do), .miso(card_miso)
+  );
+
+  // ------------------------------------------------------------------ RTC
+  rtc_model rtc1 (
+    .cs_n(sd_cs[7]), .sck(sd_clk), .mosi(sd_do), .miso(rtc_miso)
   );
 
   // -------------------------------------------------- Minimig: clocks, reset
@@ -362,6 +373,9 @@ module tb_l3 #(
     if (hw_done) hm_hw_done;
   end
 
+  // ------------------------------------------------------ margin monitors
+`include "mon_l3.vh"
+
   // ------------------------------------------------------------ OSD EARLY
   wire       oe_new = osd1.spi0.new_byte, oe_sync = osd1.spi0.rx_sync, oe_rx = osd1.spi0.rx;
   wire [2:0] oe_bit = osd1.spi0.bit_cnt;
@@ -432,6 +446,7 @@ module tb_l3 #(
       if (spi_t_fd == 0) bench_error("+SPI_T_LOG: cannot open the file");
     end
     hm_init;
+    mon_init;
     sc_init;
     #1;
     // (no empty %0s: Verilator prints a space for it, xsim nothing)
@@ -477,6 +492,7 @@ module tb_l3 #(
       ram.dump(dump_name);
       errors = errors + ram.errors - dump_err0;
     end
+    mon_final;
     sc_verdict;
     $finish;
   end

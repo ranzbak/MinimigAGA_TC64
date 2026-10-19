@@ -100,6 +100,11 @@ SPI 20 08 06
 # releases the Amiga
 SPI 20 08 03
 SPI 20 08 00
+# main()'s loop, its first pass: HandleRTC() reads the RTC (rtc_model on
+# sd_cs[7], the fixed time 2026-01-01 00:00:00, a Thursday): command 92 =
+# read from register 2, then seconds, minutes, hours, day, weekday, month,
+# year in BCD (the command byte answers ff)
+SPI 80 92 ff ff ff ff ff ff ff / ff 00 00 00 01 04 01 26
 # main()'s loop: HandleFpga's six-byte request read every pass (the fatal
 # error loop of a failed kickstart load does not call HandleFpga): the
 # first and 20 more
