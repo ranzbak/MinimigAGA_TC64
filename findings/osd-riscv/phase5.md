@@ -35,7 +35,7 @@ The 8 critical warnings:
 - `Vivado 12-4739` x2: `wizard.xdc:41-42`, `tg68k/lds2_reg` (no such cell in this core).
 - `Timing 38-282` x1: the known `clk_gen_sdram -> clk_114` violation.
 
-A has no stored `vivado.log`, so no one-to-one comparison of the warnings was possible. The `hostcpu/hw_req_reg` and `hostcpu/wr_reg` multicycle rules (`wizard.xdc:29-32`) raise no warning, so both cells exist in B.
+The 8 critical warnings are identical in kind and count to those of the reference run (`MinimigAGA_TC64-v2023/project_1/project_1.runs/impl_1/runme.log`, 2026-10-17 16:18; Task 2 review). The `hostcpu/hw_req_reg` and `hostcpu/wr_reg` multicycle rules (`wizard.xdc:29-32`) raise no warning, so both cells exist in B.
 
 ## Fit
 
@@ -230,7 +230,7 @@ Source: `handshake_timing.rpt` (`report_timing -setup -hold -max_paths 4 -nworst
   That is setup 4, hold 3 in the direction-appropriate edge sense. No cell-scoped exception overrides it.
 - `osd_rx_seq -> host_req_q` is a same-clock `dll_28` path, as designed: `host_req_q` samples `osd_rdy` on `clk_28`.
 - **None is unconstrained.** Every path has a real requirement and a clock on both ends. `check_timing` reports 0 unconstrained internal endpoints. Every row is met.
-- Not every setup path appears in the report. With `-setup -hold -max_paths 4` together, Vivado keeps the 4 worst paths across both checks, and the hold paths sort first. The setup paths not shown fall in clock pairs whose worst setup slack is +2.326 ns (`dll_28 -> clk_114`) and +3.800 ns (`clk_114 -> dll_28`), with 0 failing endpoints (inter-clock table).
+- Not every setup path appears in the report. With `-setup -hold -max_paths 4` together, Vivado keeps the 4 smallest slacks across both checks, and the hold slacks are the smaller ones. The setup paths not shown are `osd_rx_seq -> osd_tx_seq_reg[1]` (`dll_28 -> clk_114`, bounded by that pair's worst setup slack of +2.326 ns) and `osd_rx_seq -> host_req_q` (`dll_28` intra-clock, bounded by +13.214 ns), with 0 failing endpoints (inter-clock table).
 
 ## Netlist CPU check
 
@@ -263,7 +263,7 @@ B was written with C1's pattern set:
 |---|---|
 | 832 CPU (`eightthirtytwo_cpu*`) | 0 |
 | `OSDBoot_832_ROM` | 0 |
-| `debug_bridge*` | 0 |
+| `debug_bridge_jtag*` | 0 |
 | `VexOsd` | 1 |
 | `VexOsd_InstructionCache` | 1 |
 | `rv_hostcpu` | 1 |

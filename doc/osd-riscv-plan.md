@@ -1084,7 +1084,7 @@ questions the same day (exec-4 "Decisions").
 - 5.2 **O** **skipped, gate 5.1 met.** Timing/fit recovery if needed (placement directives, retiming,
   I$ `twoCycleRam`, a pipeline register in the CPU block). Gate: WNS within
   the current -0.2 ns, no new failing endpoints under hostcpu.
-- 5.3 **S** **card files ready, board test pending** (`build/ab_card_87577e2`, protocol `findings/osd-riscv/ab-board-test.md`); the merge is **deferred** until Paul's go after the board A/B. Card image with both firmware files; build notes. The spicdc
+- 5.3 **S** **card files ready, board test pending** (`build/ab_card_87577e2`, protocol `findings/osd-riscv/ab-board-test.md`); the merge is **deferred** until Paul's go after the board A/B; card `RV32OSDA.BIN` = osd-riscv `6ea1b76` floppy-write fix (sha256 `17bf2563`, replaces Task 5's C1 image `0162e53f`; ledger R11). Card image with both firmware files; build notes. The spicdc
   board check (decision 12.5) is done: `build/stage_spicdc_49b1868` was
   board-verified by Paul 2026-10-17 (it is the 832 reference).
   Gate: both bitstreams boot from one card. Merge `osd-riscv` ->
