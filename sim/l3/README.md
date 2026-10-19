@@ -523,6 +523,18 @@ only when it is empty. `norm` writes one stream in frame order,
   points where the firmware stops reading because of the content stay
   compared too. The `# dropped` line counts `wrfifo` (frames merged into
   the line before them).
+- **a seek in progress, collapsed** (`fdd_wr`, runs `p4t14f` /
+  `p4t14fc`). bfm_floppy steps the head every 3 ms right after a track
+  write's `blckint`; the RV polls again after 2 to 5 ms, the 832 after 11
+  to 20 ms, so which intermediate head positions a CPU sees follows its
+  speed. On the normalised lines, after the rules below (so an AUDIO
+  rewrite that `DEDUP` drops does not cut the run), adjacent status lines
+  without a request and without masked bytes that differ in the track
+  byte only, by whole cylinders (an even step, the head bit unchanged)
+  and always in one direction, keep only the last. The position where the
+  seek ends stays compared, and so do a track byte that goes back or
+  flips the head bit, every request, and every other byte. The `# dropped`
+  line counts `seek`.
 - **the HandleRTC unit**. `HandleRTC()` runs every 8,192 main-loop passes,
   so the count follows the CPU's speed (`p4t13` 4, `p4t13c` 2). An RTC
   frame is dropped together with exactly the hw writes of its call, when
@@ -594,7 +606,11 @@ For the write FIFO (Task 14), the variants also read a write DMA's FIFO
 in other pieces, with other polls while it fills; that gives an empty
 diff. Each of these gives a diff line: a changed word read from the FIFO,
 a changed track byte in a write frame, a missing write frame. Against the
-`spitrace.py` of Task 13 (no merge) the variants' diff is not empty.
+`spitrace.py` of Task 13 (no merge) the variants' diff is not empty. The
+variants also see other head positions during a seek (the seek collapse:
+empty diff; not empty against the `spitrace.py` of commit `49471e9`), and
+each of these gives a diff line: a seek that ends at another track, a
+position that goes back, a head bit that flips during the seek.
 
 The rules of `boot` (`expected_diff.txt`): the firmware file
 (`SDFILE` of both names, the UART line with the name and the boot ROM's
@@ -992,8 +1008,8 @@ bash sim/l3/run.sh diff fc fc_xs4
 ```
 
 The 832 twin is compared normalised (section "Differential"): its
-`spi.txt` carries paula's timing bytes. `run.sh diff f fc` still prints
-the two status frames described under "Measured". The data check alone,
+`spi.txt` carries paula's timing bytes. With the drive-ready waits of
+Task 14, `run.sh diff f fc` is empty ("Measured"). The data check alone,
 on a run directory:
 
 ```sh
@@ -1066,8 +1082,7 @@ real firmware behaviour, not only trace bytes: `HandleFpga` passes byte 5
 to `HandleFDD` as the motor bits even when it is `dsklen`
 (`findings/osd-riscv/phase4.md`, "Shared defects"). A model that waits
 before the DMA, as trackdisk waits for the drive to come ready, would give
-both CPUs the same frames. That is a bench change, and it needs new runs
-(Task 13 report). Everything else is equal:
+both CPUs the same frames. Everything else is equal:
 
 - the SPI MOSI and every sector's data
 - the masked status sequence
@@ -1075,6 +1090,16 @@ both CPUs the same frames. That is a bench change, and it needs new runs
 - every OSD and UART line
 - the hw writes, with AUDIO deduplicated and the I2C / keyboard group
   floated
+
+Task 14 made that bench change: `bfm_floppy` waits 500 ms after motor on
+and 15 ms after a head change (section "bfm_floppy"), so the first status
+poll after each sees the new motor / track without a DMA. The pair re-run
+on the same images, RV `p4t14r` (3,568 s, end 453,368,475) and 832
+`p4t14rc` (5,086 s, end 502,284,379), both `fdd_rd` PASS with the same
+checks (item 6: 0 of 52,056 and 0 of 50,904). `run.sh diff
+--unused-rules p4t14r p4t14rc` is empty, with all 13 rules used. With
+the RV image of Task 14's write fix (17bf2563), `p4t14fr` also passes
+`fdd_rd` (5,328 s).
 
 ## fdd_wr
 
@@ -1209,11 +1234,10 @@ time. Bound 0. Per track `=== MARGIN (info) 7 fdd write track <c>/<h>`
 gives the maximum fill (any clk7 cycle of the DMA, up to `blckint`) and
 the slots; at the end, the maximum over all tracks (of 2,048).
 
-### The RV leg fails: paula_floppy's write FIFO (Task 14 finding)
+### paula_floppy's write FIFO and the RV's gap (Task 14 finding)
 
-On this RTL the RV firmware cannot write a track; the 832 can. During a
-track write the firmware reads the FIFO as word 3 onwards of a status
-frame. paula_floppy loads each word's transmit register
+During a track write the firmware reads the FIFO as word 3 onwards of a
+status frame. paula_floppy loads each word's transmit register
 (`spi_tx_data_3 = fifo_out`) at the word's first falling `sck` edge, but
 pops the word just read only after it has been received. The pop goes
 through the `rx_flag` synchroniser (about 1.5 clk7), the FIFO pointer
@@ -1222,29 +1246,36 @@ update (1 clk7) and the FIFO's registered output (1 clk7): about 56 to
 word again, and the word it should have had is popped unseen.
 
 - The 832 (`p4t14c`): 220 to 400 `clk_114` per word in its `WriteTrack`
-  frames. It reads exactly the 12,668 bytes Agnus wrote on each track and
-  passes every check.
-- The RV (`p4t14w`): about 124 `clk_114` per word, the 16 bits included.
-  It reads stale words from byte 704 of track 0/0 (`aa aa` where the
-  first `44 89` sync belongs). Every sector then fails `GetHeader`
-  ("Second sync word missing...", error 21; "Wrong header"), nothing is
-  written, and the fatal-error loop stops `HandleFpga`. The next DMA never
-  starts, and the run ends at its timeout.
+  frames (at least 85 `clk_114` of gap at the slave, `p4t14fc`). It reads
+  exactly the 12,668 bytes Agnus wrote on each track and passes every
+  check.
+- The RV without a gap (`p4t14w`, image 0162e53f): about 124 `clk_114`
+  per word, the 16 bits included. It reads stale words from byte 704 of
+  track 0/0 (`aa aa` where the first `44 89` sync belongs). Every sector
+  then fails `GetHeader` ("Second sync word missing...", error 21;
+  "Wrong header"), nothing is written, and the fatal-error loop stops
+  `HandleFpga`. The next DMA never starts, and the run ends at its timeout.
 - Item 4's `paula_word_spacing` (bound 40, derived for the receive path)
-  does not cover this transmit path: the RV's minimum was 117.
+  does not cover this transmit path: the RV's minimum was 117. Item 7 now
+  measures it (`=== MARGIN (info) 7 fdd write FIFO word gap`: a FIFO
+  word's last `sck` rise to the next word's first fall, during a track
+  write; below 64 is a bench error).
 
 The defect is in `rtl/minimig/paula_floppy.v`, which this phase does not
-change (Decision 8). The firmware is not slowed down either (no new
-count-based delays). Paul decides between an RTL fix, a firmware gap
-and a handshake (`findings/osd-riscv/phase4.md`, "Found by the L3 bench
-(Task 14)"). Until then the RV leg of `fdd_wr` fails, there is no RV
-XRAND twin, and there is no RV-vs-832 diff.
+change (Decision 8; it stays on Paul's backlog,
+`findings/osd-riscv/phase4.md` "Found by the L3 bench (Task 14)"). The fix
+is the RV firmware's (Paul, 2026-10-19: "fix floppy write before I'll try
+it"): `WRFIFO_GAP`, 16 TIMER reads before each word it reads from the
+write FIFO, at least 8 `clk_114` each (two `clk_28` edges), the one
+listed exception to "No new count-based delays" (`fw/ctrl_rv/README.md`
+"Write-FIFO gap"). With it (`p4t14f`, image 17bf2563) the gap at the
+slave is at least 202 `clk_114` and `fdd_wr` passes on both CPUs.
 
-Evidence that the firmware is otherwise right: `PAULA_TXPOP=1` makes
-`run.sh` patch its run copy of `paula_floppy.v` (never `rtl/`). A track
-write's FIFO word is then popped when its transmission starts (`tx_flag`
-with `tx_cnt` 3, as Gayle's `hdd_data_rd` pops its read FIFO), so the
-next word's load, a whole word later, sees the next entry:
+An RTL fix also works (not taken): `PAULA_TXPOP=1` makes `run.sh` patch
+its run copy of `paula_floppy.v` (never `rtl/`). A track write's FIFO
+word is then popped when its transmission starts (`tx_flag` with
+`tx_cnt` 3, as Gayle's `hdd_data_rd` pops its read FIFO), so the next
+word's load, a whole word later, sees the next entry:
 
 ```
 -	assign fifo_rd = (busrd & dmaon) | (trackwr & spidat);
@@ -1254,8 +1285,9 @@ next word's load, a whole word later, sees the next entry:
 With the patch, a unit bench (`bfm_floppy` and the RTL with an SPI
 reader, not committed) reads all 6,334 words of a track right at every
 gap it was tried with, from 128 down to 16 `clk_114` after a word.
-Without the patch the same bench gets about 3,500 wrong words at 48
-`clk_114` or less. The RV run with the patch is `p4t14e` ("Measured").
+Without it, the same bench gets about 3,500 wrong words at 48 `clk_114`
+or less. No L3 run was made with the patch (the firmware fix was chosen
+first).
 
 ### Run
 
@@ -1271,13 +1303,40 @@ python3 -I sim/l3/l3check.py fdd_wr sim/l3/run_w sim/l3/run_wc
 bash sim/l3/test/fdd_wr_test.sh
 ```
 
-On the current RTL the RV `xpair` fails (section above), so the `diff`
-and the reference check need an RTL that passes it. The evidence run
-with the patched run copy:
+The four simulations take about 1.7 to 2.2 hours side by side.
+`PAULA_TXPOP=1` (above) is the RTL variant:
 
 ```sh
 SIM=verilator RUNTAG=we PAULA_TXPOP=1 FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh fdd_wr
 ```
+
+### Measured (2026-10-19/20, SLAT=8 SJIT=0, SCKDLY 1.5 / C28DLY 0.3, TICKDIV 1 then 643)
+
+RV image 17bf2563 (with `WRFIFO_GAP`), 832 image 768c765d; the RV
+without the gap (0162e53f) for comparison:
+
+| | RV `p4t14f` | 832 `p4t14fc` | RV without the gap `p4t14w` |
+|---|---|---|---|
+| bfm_floppy starts (end of the key script) | 201,661,805 | 249,698,969 | 201,236,597 |
+| end event (the error page's row 7) | 470,697,752 | 520,161,161 | none (timeout 700 M) |
+| one track write, `DSKLEN` to `blckint` | 15.57 to 15.58 M | 15.59 to 16.20 M | 15.34 M (track 0/0) |
+| `TEST.ADF` on the saved card | 109 sectors new, 1,650 unchanged | the same | 0 written |
+| bad-header sector (40/0 sector 3) | skipped, FATAL "Bad checksum" 1A | the same | - |
+| item 7: full at slots / FIFO max | 0 of 63,340 / 518 words | 0 of 63,340 / 518 | 0 of 6,334 |
+| write-FIFO word gap min (bound 64) | 202 `clk_114` over 61,221 words | 85 over 61,665 | not measured (monitor added after) |
+| `FindSync` / `GetData` per word | 379 / 454 `clk_114` | about 220 to 400 / 494 | 124 / - |
+| XRAND twin | `p4t14f_xr` SAME (log, 342,601 frames) | `p4t14c_xs4` (previous card): normalised diff empty | - |
+| wall time (Verilator, 4 to 6 runs on the machine) | 6,377 s | 7,919 s | 7,299 s |
+
+`run.sh diff --unused-rules p4t14f p4t14fc` is empty, and all 13 rules
+are used. Two normalisations make it so (section "Differential"): the
+write-FIFO merge, and the seek collapse. The seek collapse is needed
+because the head steps every 3 ms right after a track write's `blckint`.
+The RV polls again after 2 to 5 ms and sees the first positions of the
+seek; the 832 is busy for 11 to 20 ms with its last sector's
+`FileWrite`. The 832 leg on the card with the old RV image (`p4t14c`)
+and its `XSEED=4` twin (`p4t14c_xs4`) gave the same results;
+`run.sh diff p4t14c p4t14c_xs4` is empty.
 
 ## Monitors
 

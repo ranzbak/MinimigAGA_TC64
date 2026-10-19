@@ -69,7 +69,16 @@
 //                          "=== MARGIN (info) 7 fdd write track" line with
 //                          the maximum fill (any clk7 cycle of the DMA, to
 //                          blckint) and the slots; at the end the maximum
-//                          over all tracks
+//                          over all tracks.  Also the write FIFO's word gap
+//                          (Task 14 finding): in an sd_cs[4] frame during a
+//                          track write, from the last sck rise of a FIFO
+//                          word (word 3 on) to the first sck fall of the
+//                          next word, where paula loads that word from
+//                          fifo_out; paula has popped the word before only
+//                          about 56 to 64 clk_114 after its last edge, so a
+//                          gap below 64 is a bench error.  "=== MARGIN
+//                          (info) 7 fdd write FIFO word gap min <g> clk_114
+//                          over <n> words"
 //  12  rtc_cs_high         rtc_model: CS-inactive time between two RTC
 //                          transfers, ns; bound +RTC_CSH_MIN=<ns>; with the
 //                          default 0 (the PCF2123 datasheet is not in
@@ -268,6 +277,31 @@
     end
   end
 
+  // item 7, the write FIFO's word gap (cfide's sd_clk: idle high, a byte
+  // starts with a fall; the delay to the slave cancels)
+  localparam real M7_GAP_MIN = 64.0;
+  integer m7_fid = 0, m7_bid = -1, m7_bits = 0, m7_gn = 0, m7_glow = 0;
+  real    m7_trise = -1.0, m7_gmin = 0.0, m7_g = 0.0;
+  always @(negedge sd_cs[4]) if (n_reset) m7_fid = m7_fid + 1;
+  always @(posedge sd_clk) if (n_reset && sd_cs[4] === 1'b0) begin
+    if (m7_bid != m7_fid) begin m7_bid = m7_fid; m7_bits = 0; end
+    m7_bits = m7_bits + 1;
+    if (m7_bits % 16 == 0) m7_trise = $realtime;
+  end
+  always @(negedge sd_clk) if (n_reset && sd_cs[4] === 1'b0 && m7_bid == m7_fid && m7_bits >= 64 &&
+                               m7_bits % 16 == 0 && pf1.trackwr === 1'b1) begin
+    m7_g = ($realtime - m7_trise) / T114;
+    if (m7_gn == 0 || m7_g < m7_gmin) m7_gmin = m7_g;
+    m7_gn = m7_gn + 1;
+    if (m7_g < M7_GAP_MIN) begin
+      m7_glow = m7_glow + 1;
+      if (m7_glow <= 3) begin
+        $display("=== MARGIN (info) 7 fdd write FIFO word gap %0.1f clk_114 at cycle %0d (word %0d of the frame)", m7_g, cyc, m7_bits / 16);
+        bench_error("MARGIN 7: a write-FIFO word started within 64 clk_114 of the previous one (paula sends a stale word)");
+      end
+    end
+  end
+
   // ----------------------------------------------- item 14: kickstart order
   integer m14_w = -1, m14_nw = 0, m14_rel = -1, m14_nrel = 0;
   reg [31:0] m14_a = 32'h0;
@@ -342,6 +376,8 @@
       mon_count("7", "fdd_fifo_full_write", m7_n, 0, m7_slots, "DMA slots");
       if (m7_tracks > 0)
         $display("=== MARGIN (info) 7 fdd write %0d tracks: fifo max %0d words (of 2048)", m7_tracks, m7_max);
+      if (m7_gn > 0)
+        $display("=== MARGIN (info) 7 fdd write FIFO word gap min %0.1f clk_114 over %0d words (bound 64), %0d below", m7_gmin, m7_gn, m7_glow);
       mon_real("12", "rtc_cs_high", rtc1.n_gaps, rtc1.csh_min_ns, "ns", rtc_csh_bound, rtc_csh_bound <= 0,
                "gaps");
       mon_real("14", "kick_order", (m14_nw > 0) ? m14_nrel : 0, m14_rel - m14_w, "clk_114", 1, 1'b0,

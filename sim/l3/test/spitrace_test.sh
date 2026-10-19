@@ -8,7 +8,8 @@
 #       of AUDIO rewrites and of HandleRTC units, a FLOAT group elsewhere
 #       among the frames, another audio ring; and the timing of a floppy
 #       write DMA, as sim/l3 fdd_wr p4t14 / p4t14c: the FIFO read in other
-#       pieces, other polls while it fills) -> an empty diff
+#       pieces, other polls while it fills; the head positions seen during
+#       a seek) -> an empty diff
 #   (b) one changed byte in an SD read, an FPGA data frame, an OSD text
 #       line, a hw write, a UART line, a KEYQ event, a status frame with a
 #       request, a changed drive status, a deselect frame that is not all
@@ -22,7 +23,9 @@
 #       a repeated HandleRTC unit with a changed RTC value or a changed
 #       closing speed write -> each a diff line.  Task 14: a changed word
 #       read from the write FIFO, a changed track byte in a write frame, a
-#       missing write frame -> each a diff line
+#       missing write frame, a seek that ends elsewhere, a head position
+#       that goes back or flips the head bit during a seek -> each a diff
+#       line
 #   (c) each rule of the fixture's expected-diff list removed in turn -> its
 #       difference comes back; an unused rule -> diff --unused-rules reports it
 # The card is built with tools/sim/mkcard.sh (sfdisk, mkfs.fat, mtools), the
@@ -166,6 +169,19 @@ for part, cuts in enumerate(([0, 0, 4, 10, 30], [30, 30, 46, 64]) if b else ([0,
     if part == 0:
         hwrite("ffffe8", 0x0101)                                      # between two sectors
 frame(0x10, [0, 0], [0x10, wtrk])                                     # FindSync: the write is over
+# a seek right after the write (sim/l3 fdd_wr): the head steps 3 ms apart,
+# variant a polls once per step, variant b sees only some positions; the
+# seek ends at track 0x30 (change seekend: 0x32; seekback: one position
+# goes back; seekhead: the head bit flips during the seek)
+for t in ([0x20, 0x22, 0x24, 0x26, 0x28, 0x2a, 0x2c, 0x2e, 0x30] if not b else [0x26, 0x2c, 0x30]):
+    if change == "seekend" and t == 0x30:
+        t = 0x32
+    if change == "seekback" and t == 0x2c:
+        t = 0x24
+    if change == "seekhead" and t == 0x2c:
+        t = 0x2d
+    frame(0x10, [0] * 6, [0x10, t, 0x44, 0x89, 0x00, 0x01])
+    frame(0x10, [0x10, 0x00], [0x10, 0x01])                          # UpdateDriveStatus (dropped)
 for k in range(4 if b else 2):                                       # AUDIO = ENA, rewritten every pass
     hwrite("ffffb0", 0x0005 if change == "audio" and k == 1 else 0x0001)
 def rtc_unit(last):                                                  # HandleRTC: speed, RTC regs, frame, speed
@@ -301,7 +317,8 @@ else fail "(a) norm content: $(head -40 "$OUT/b/norm.txt")"; fi
 
 # (b) one content change against b: exactly one - line and one + line
 for ch in sd fpga osd hw uart keyq status uds desel pre post track motor level hibyte \
-	sector dmatrack audio sdspeed float floatextra floatmiss rtcval rtcspeed wrdata wrhdr wrmiss; do
+	sector dmatrack audio sdspeed float floatextra floatmiss rtcval rtcspeed wrdata wrhdr wrmiss \
+	seekend seekback seekhead; do
 	gen "$OUT/b_$ch" b "$ch" || exit 1
 	norm "$OUT/b_$ch" "$OUT/rules.txt"
 	if dodiff "$OUT/b/norm.txt" "$OUT/b_$ch/norm.txt"; then fail "(b) $ch: the change is hidden (empty diff)"; continue; fi
@@ -327,9 +344,12 @@ for ch in sd fpga osd hw uart keyq status uds desel pre post track motor level h
 		wrdata) want='^\+SPI 10 wrfifo 12 07 44 89 / 34 ' ;;      # the second sector's words, one changed
 		wrhdr) want='^\+SPI 10 wrfifo 12 08 44 89 / ' ;;           # another track byte: its own line
 		wrmiss) want='^\+SPI 10 wrfifo 12 07 44 89 / 16 ' ;;       # the second sector's bytes, the last 18 missing
+		seekend) want='^\+SPI 10 00 00 00 00 00 00 / 10 32 44 89 00 01$' ;;   # the seek ends elsewhere
+		seekback) want='^\+SPI 10 00 00 00 00 00 00 / 10 24 44 89 00 01$' ;;  # a position that goes back: kept
+		seekhead) want='^\+SPI 10 00 00 00 00 00 00 / 10 2d 44 89 00 01$' ;;  # the head bit flips: kept
 		*) want='^\+' ;;
 	esac
-	case "$ch" in status|uds|desel|track|motor|level|dmatrack|audio|floatextra|floatmiss|rtcval|rtcspeed|wrhdr) one=1 ;; *) one=0 ;; esac
+	case "$ch" in status|uds|desel|track|motor|level|dmatrack|audio|floatextra|floatmiss|rtcval|rtcspeed|wrhdr|seekback|seekhead) one=1 ;; *) one=0 ;; esac
 	if grep -qE "$want" "$OUT/diff.txt" && { [ "$one" = 1 ] || { [ "$m" = 1 ] && [ "$p" = 1 ]; }; }; then
 		pass "(b) $ch: $(grep -E '^\+[^+]' "$OUT/diff.txt" | head -1 | cut -c1-100)"
 	else fail "(b) $ch: $m - / $p + lines: $(cat "$OUT/diff.txt" | head -12)"; fi

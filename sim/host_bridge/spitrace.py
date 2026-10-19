@@ -53,6 +53,20 @@ norm: one normalised stream of a run, in frame order, one item per line
     and every word 3: the countdown).  MOSI (the sector data) and MISO
     bytes 0..3 (request, track, sync) and the motor bits stay compared; the
     identical-repeat drop of status frames compares the masked bytes
+  - a seek in progress (sim/l3 fdd_wr, runs p4t14f / p4t14fc: bfm_floppy
+    steps the head every 3 ms right after a track write's blckint, and the
+    RV polls again after 2 to 5 ms, the 832 after 11 to 20 ms, so the
+    intermediate head positions a CPU sees depend on its speed): of a run
+    of consecutive status frames without a request and without masked DMA
+    bytes (10, six 00 bytes, MISO 0 bits 3..0 = 0) whose MISO differs from
+    the previous one's in byte 1 (the track) only, by whole cylinders (an
+    even step: the head bit unchanged) and always in the same direction
+    (a slower CPU sees fewer of the positions), with no kept
+    frame and no hw / UART line in between, only the last is kept; the
+    position the seek ends at, a track byte that jumps or goes back, every
+    request and every other changed byte stay compared.  Applied to the
+    normalised lines after the rules below (so a rewrite the DEDUP rule
+    drops does not cut the run; any line left in between does)
   - paula's floppy write FIFO (sim/l3 fdd_wr, runs p4t14 / p4t14c: Agnus
     fills it at its rate, the firmware's FindSync / GetHeader / GetData
     empty it in pieces whose size is the FIFO's count when each frame
@@ -798,6 +812,32 @@ def norm(spi, hw, uart, rules_path, card_path, charrom):
                     ln[1] = t
             kept.append(ln)
         lines = kept
+    # a seek in progress (the doc above), on the normalised lines: adjacent
+    # unmasked no-request status lines that differ in the track byte only,
+    # by an even step in one direction, keep only the last
+    def status_of(ln):
+        if ln[0] != "spi":
+            return None
+        m = re.match(r"10 00 00 00 00 00 00 / ([0-9a-f]{2}) ([0-9a-f]{2}) ([0-9a-f]{2}) ([0-9a-f]{2}) ([0-9a-f]{2}) ([0-9a-f]{2})$", ln[1])
+        if not m:
+            return None
+        v = [int(x, 16) for x in m.groups()]
+        return v if v[0] & 0x0F == 0 else None
+    kept, run_dir = [], 0
+    for ln in lines:
+        v = status_of(ln)
+        pv = status_of(kept[-1]) if kept else None
+        if v is not None and pv is not None:
+            step = v[1] - pv[1]
+            if (step != 0 and step % 2 == 0 and v[:1] + v[2:] == pv[:1] + pv[2:]
+                    and (run_dir == 0 or (run_dir > 0) == (step > 0))):
+                kept[-1] = ln
+                run_dir = step
+                drop["seek"] += 1
+                continue
+        run_dir = 0
+        kept.append(ln)
+    lines = kept
     lines += floated
     w = sys.stdout.write
     for stream, text in lines:
@@ -806,7 +846,7 @@ def norm(spi, hw, uart, rules_path, card_path, charrom):
         w("# rule %d used %d: %s\n" % (r.lineno, r.used, r.text))
     w("# dropped " + ", ".join("%s %d" % (k, drop[k]) for k in
                                 ("status", "drivestatus", "read", "keyq", "rtc", "rtc_unit", "sd_deselect",
-                                 "sdfile_run", "wrfifo")) + "\n")
+                                 "sdfile_run", "wrfifo", "seek")) + "\n")
     return 0
 
 
