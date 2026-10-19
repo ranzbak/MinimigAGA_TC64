@@ -24,3 +24,18 @@ SUBST uart file\x20"MINMGA[RA]\x20CFG"\x20found file "MINMGA? CFG" found
 # fw/ctrl_rv/test/gold/fmt_diff_expected.txt line 275 (case 879 P ZERO:
 # 'partition type: 0x%02X (' U(0)): the 832's printf prints 0x0, the RV's 0x00
 SUBST uart partition\x20type:\x200x0\x20\( partition type: 0x00 (
+
+# Task 7 finding (findings/osd-riscv/phase4.md "Findings for Paul", run
+# p4t7probe): an 832-only firmware defect, not RV parity.  The 832 build
+# corrupts ColdBoot's `override` (L3PROBE1 key=0 override=0, L3PROBE2
+# key=0 override=6F6E2036 across sprintf("Got key: %x\n") and the empty
+# BootPrint(); lib832 / vbcc832 sprintf suspected), so it prints
+# "Overriding screenmode." and runs ApplyConfiguration(0,0) a second time
+# with no key held; the RV (right per the source) does neither.  The block
+# ends at the "##End result : 0" line that ApplyConfiguration prints
+DROPBLOCK uart ^Overriding\x20screenmode\.$ ^##End\x20result\x20:\x200$
+
+# fw/ctrl_rv/arch/irq.c:22 (SetIntHandler: IRQ_MASK = 0 for a legacy
+# handler) and exec-1's memory map (the RV interrupt controller at
+# 0xFFFFFF30..3C): an RV-only register, the 832 has none
+DROP hw ^ffff34\x20

@@ -493,7 +493,10 @@ only when it is empty. `norm` writes one stream in frame order,
 - then the rules of `expected_diff.txt`, in file order:
   `SUBST <stream> <regex> <replacement>`, `DROP <stream> <regex>` (stream
   `uart`, `osd`, `hw`, `sd`, `spi` or `all`; the regex has no blanks,
-  `\x20`), `SDFILE <8.3 name> <alias>`: an access inside the file's
+  `\x20`), `DROPBLOCK <stream> <start-regex> <end-regex>` (from a line of
+  the stream matching the start to the next one matching the end, both
+  included, every line of any stream; a start without its end is an
+  error), `SDFILE <8.3 name> <alias>`: an access inside the file's
   clusters (read from the run's card) is `CMD<n> <alias>+<offset>` without
   its data hash, and a run of them is one line (the hw writes and other card
   accesses inside the run are printed once): `RV32OSDA.BIN` and
@@ -506,16 +509,21 @@ only when it is empty. `norm` writes one stream in frame order,
 `sim/l3/test/spitrace_test.sh` (a few seconds, `mkcard.sh`'s tools) checks
 the tools on generated fixtures: other poll counts and the fixture's
 rules give an empty diff; one changed byte in an SD read, an FPGA frame, an
-OSD text line, a hw write, a UART line, a KEYQ event and a status frame with
-a request each give a diff line; each rule removed in turn brings its
-difference back; an unused rule is reported.
+OSD text line, a hw write, a UART line, a KEYQ event, a status frame with
+a request, a new drive status (`10 10 <s>`), a cs `00` frame that is not
+all ff, and the lines just before and after a `DROPBLOCK` block each give a
+diff line; a `DROPBLOCK` start without its end fails `norm`; each rule
+removed in turn brings its difference back; an unused rule is reported.
 
 The rules of `boot` (`expected_diff.txt`): the firmware file
 (`SDFILE` of both names, the UART line with the name and the boot ROM's
 one `0` per sector), the config file (`SDFILE` of `MINMGAR.CFG` and
-`MINMGAA.CFG`, the UART name) and `fmt_diff_expected.txt` line 275 (the
-832's `partition type: 0x0`). What `boot` showed besides them is in
-`findings/osd-riscv/phase4.md` (Task 7).
+`MINMGAA.CFG`, the UART name), `fmt_diff_expected.txt` line 275 (the
+832's `partition type: 0x0`), the 832's spurious "Overriding screenmode."
+pass (a `DROPBLOCK` up to its `##End result : 0`: an 832-only firmware
+defect, `findings/osd-riscv/phase4.md` "Findings for Paul") and the RV-only
+`IRQ_MASK` write (`HW ffff34`, `fw/ctrl_rv/arch/irq.c`). With them, the
+`boot` diff (runs `p4t7r2`, `p4t7c2`) is empty and all 9 rules are used.
 
 ## Monitors
 

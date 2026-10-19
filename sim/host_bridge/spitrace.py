@@ -68,10 +68,14 @@ line (its source) directly above it or above the rules before it in one
 block, blank lines end a block:
     SUBST <stream> <python-regex> <replacement>
     DROP <stream> <python-regex>
+    DROPBLOCK <stream> <start-regex> <end-regex>
     SDFILE <8.3 name> <alias>
 <stream> = uart, osd, hw, sd, spi or all; the regex (no blanks: \x20 or
 \s) is searched in the text after "<STREAM> "; <replacement> is the rest
-of the line, Python re.sub syntax, "" for the empty string.  SDFILE: every
+of the line, Python re.sub syntax, "" for the empty string.  DROPBLOCK:
+from a line of <stream> matching <start-regex> up to and including the next
+line of <stream> matching <end-regex>, every line (of any stream) is
+dropped; a start without its end is an error (exit 1).  SDFILE: every
 SD access inside the file's clusters is printed "CMD<n> <alias>+<offset>"
 without its data hash, and a run of such accesses (same alias, same
 command) is one line: so RV32OSDA.BIN and 832OSDAD.BIN are both
@@ -391,6 +395,16 @@ class Rule:
                 self.repl = "" if words[3] == '""' else words[3]
             elif len(words) > 3:
                 raise SystemExit("line %d: DROP <stream> <regex> (the regex has no blanks)" % lineno)
+        elif self.kind == "DROPBLOCK":
+            if len(words) != 4:
+                raise SystemExit("line %d: DROPBLOCK <stream> <start-regex> <end-regex> (no blanks in them)" % lineno)
+            self.stream = words[1]
+            if self.stream not in STREAMS:
+                raise SystemExit("line %d: stream %r is not one of %s" % (lineno, self.stream, "|".join(STREAMS)))
+            try:
+                self.re, self.end = re.compile(words[2]), re.compile(words[3])
+            except re.error as e:
+                raise SystemExit("line %d: regex: %s" % (lineno, e))
         elif self.kind == "SDFILE":
             if len(words) != 3:
                 raise SystemExit("line %d: SDFILE <8.3 name> <alias>" % lineno)
@@ -623,6 +637,24 @@ def norm(spi, hw, uart, rules_path, card_path, charrom):
         if r.kind == "SDFILE":
             continue
         kept = []
+        if r.kind == "DROPBLOCK":
+            k = 0
+            while k < len(lines):
+                ln = lines[k]
+                if r.applies(ln[0]) and r.re.search(ln[1]):
+                    e = k + 1
+                    while e < len(lines) and not (r.applies(lines[e][0]) and r.end.search(lines[e][1])):
+                        e += 1
+                    if e >= len(lines):
+                        raise SystemExit("rule line %d: DROPBLOCK start at normalised line %d (%s %s) has no end"
+                                         % (r.lineno, k + 1, ln[0].upper(), ln[1][:60]))
+                    r.used += 1
+                    k = e + 1
+                    continue
+                kept.append(ln)
+                k += 1
+            lines = kept
+            continue
         for ln in lines:
             if not r.applies(ln[0]):
                 kept.append(ln)
