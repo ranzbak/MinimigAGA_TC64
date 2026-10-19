@@ -48,10 +48,21 @@
 //               MULTIPLE on SYNTH.HDF, READ MULTIPLE of RDB.HDF's block 0..15);
 //               end event: the end of its last command ("=== STATS@hdd").
 //               TIMER: TICKDIV 1 (hdd.c is status-driven)
+//   cd          the CD-ROM data path (README "cd"; run.sh: the cd card with
+//               +CDCFG=cue or iso, the disc in the drive, +IDE_DUMP=<run>/cd):
+//               main-loop milestone as boot, where bfm_ide starts its plan
+//               "cd" on IDE port 2 (IDENTIFY PACKET DEVICE, then ATAPI
+//               packets: TEST UNIT READY, REQUEST SENSE, INQUIRY, READ
+//               CAPACITY, READ TOC, READ(10), READ(12), MODE SENSE, an
+//               unsupported command); end event: the end of its last command
+//               ("=== STATS@cd").  TIMER: run.sh sets +TICKDIV=643
+//               +TICKDIV_AT=scenario (cdrom.c's CD_TIMEOUT at the board's
+//               rate; mon_l3.vh item 9)
 
   reg [8*32-1:0]  scenario;
   reg [8*16-1:0]  short_end;
   reg [8*16-1:0]  boot_end;
+  reg [8*8-1:0]   cdcfg;              // cd: +CDCFG=cue|iso, the disc (logged for l3check.py)
   integer         sc_rtc = 0;         // RTC frames so far
   reg             sc_done = 1'b0;
   integer         sc_fpga = 0;        // HandleFpga frames so far
@@ -70,9 +81,13 @@
       if (!$value$plusargs("SCENARIO=%s", scenario)) scenario = "boot";
       if (!$value$plusargs("SHORT_END=%s", short_end)) short_end = "";
       if (!$value$plusargs("BOOT_END=%s", boot_end)) boot_end = "";
+      if (!$value$plusargs("CDCFG=%s", cdcfg)) cdcfg = "";
       if (scenario != "boot" && scenario != "boot_short" && scenario != "keys" && scenario != "fdd_rd" &&
-          scenario != "hdd")
+          scenario != "hdd" && scenario != "cd")
         bench_error("unknown +SCENARIO (scenarios.vh)");
+      if ((scenario == "cd") != (cdcfg == "cue" || cdcfg == "iso"))
+        bench_error("scenario cd needs +CDCFG=cue or iso (and only cd takes it)");
+      if (scenario == "cd") $display("=== CD config %0s", cdcfg);
       if (short_end != "" && (scenario != "boot_short" || short_end != "version"))
         bench_error("+SHORT_END=version is the only value, and only for boot_short");
       if (boot_end != "" && (scenario != "boot" || boot_end != "rtc2"))
@@ -97,6 +112,9 @@
   // hdd: bfm_ide's plan from the main-loop milestone on
   always @(posedge sc_started) if (scenario == "hdd") begin ide.plan = "hdd"; ide.go = 1'b1; end
   always @(posedge ide.done) if (scenario == "hdd") sc_end("hdd", "the end of the last IDE command");
+  // cd: bfm_ide's plan cd from the main-loop milestone on
+  always @(posedge sc_started) if (scenario == "cd") begin ide.plan = "cd"; ide.go = 1'b1; end
+  always @(posedge ide.done) if (scenario == "cd") sc_end("cd", "the end of the last ATAPI command");
 
   // STATS@<event>: the rv_hostcpu counters 1 ns after the end event's
   // clk_114 edge.  rv_hostcpu counts with blocking assignments on that

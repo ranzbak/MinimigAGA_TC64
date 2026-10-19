@@ -1,8 +1,8 @@
-// mon_l3.vh: the L3 margin monitors, plan 7.1 items 1, 3, 4, 5, 6, 8, 12
-// and 14 (README "Monitors").  `include"d by tb_l3.v after hostmon.vh (it
+// mon_l3.vh: the L3 margin monitors, plan 7.1 items 1, 3, 4, 5, 6, 8, 9,
+// 12 and 14 (README "Monitors").  `include"d by tb_l3.v after hostmon.vh (it
 // reads hostmon's hw_req_d, hw_done, hwa, spi_data, n_stale, n_hw) and after
-// the rtc_model instance rtc1, paula_floppy pf1, bfm_floppy fdd and bfm_ide
-// ide; mon_final
+// the rtc_model instance rtc1, paula_floppy pf1, bfm_floppy fdd, bfm_ide
+// ide, gayle gayle1 and the tick generator's tickdiv; mon_final
 // prints one line per measurement at the end of the run, before the
 // verdict:
 //
@@ -68,6 +68,20 @@
 //                          margin (plan 7.1: latency only costs throughput),
 //                          so rec; per command bfm_ide's "=== IDE end" line
 //                          has min / median / max (README "hdd")
+//   9  cd_timeout_left     ATAPI data phases (scenario cd): each phase window
+//                          of gayle's port 1 (IDE port 2, the CD drive's)
+//                          runs from the firmware's CMD_IDE_XFER_WR (the
+//                          phase set up: hdd_xfer_wr_p) to the end of the
+//                          transfer (xfer_done), clk_114 cycles.  cdrom.c's
+//                          cd_wait() polls inside it (it starts after the
+//                          set-up and, for ISO sectors, after FileReadEx
+//                          has filled the FIFO; it sees xfer_done at its
+//                          next flag read) and gives up after CD_TIMEOUT =
+//                          10000 TIMER counts; one count = 1024 x TICKDIV
+//                          clk_114 (58 s at the board's TICKDIV 643).  The
+//                          value is that timeout minus the longest window,
+//                          bound 0; an "(info) 9" line has the longest
+//                          window, in TIMER counts too
 //  12  rtc_cs_high         rtc_model: CS-inactive time between two RTC
 //                          transfers, ns; bound +RTC_CSH_MIN=<ns>; with the
 //                          default 0 (the PCF2123 datasheet is not in
@@ -255,6 +269,26 @@
     $display("=== KICK cpurst falls at cycle %0d (last kickstart-region SDRAM write so far: cycle %0d)", cyc, m14_w);
   end
 
+  // ------------------------------------------------- item 9: CD phases
+  // sampled on the falling clk_28 edge before the rising one where gayle
+  // samples (clk7_en): the values gayle_port.v acts on
+  localparam integer CD_TIMEOUT = 10000;   // fw/ctrl_rv/cdrom.c (and fw/ctrl_832): TIMER counts
+  integer m9_n = 0, m9_t0 = 0, m9_max = 0, m9_maxat = 0;
+  reg     m9_open = 1'b0;
+  always @(negedge clk28) if (clk7_en === 1'b1) begin
+    if (gayle1.g_port1.PORT1.hdd_xfer_wr_p === 1'b1) begin
+      m9_t0 = cyc;
+      m9_open = 1'b1;
+    end else if (m9_open && gayle1.g_port1.PORT1.xfer_done === 1'b1) begin
+      if (m9_n == 0 || cyc - m9_t0 > m9_max) begin
+        m9_max = cyc - m9_t0;
+        m9_maxat = cyc;
+      end
+      m9_n = m9_n + 1;
+      m9_open = 1'b0;
+    end
+  end
+
   // ------------------------------------------------------------- report
   integer rtc_csh_bound = 0;       // +RTC_CSH_MIN=<ns>
 
@@ -310,6 +344,11 @@
         $display("=== MARGIN (info) 6 fdd %0d tracks: fifo min %0d words at the working level; literal count %0d slots (dmaon and empty from the starting DSKLEN write)",
                  m6_tracks, m6_min_all, m6_lit_all);
       mon_real("8", "ide_wait", ide.w_all_n, ide.w_all_min, "clk_114", 0, 1'b1, "waits");
+      if (m9_n > 0)
+        $display("=== MARGIN (info) 9 cd longest phase window %0d clk_114 = %0.3f TIMER counts at TICKDIV %0d (CD_TIMEOUT %0d counts = %0.0f clk_114), ended at cycle %0d, over %0d phases%0s",
+                 m9_max, m9_max / (1024.0 * tickdiv), tickdiv, CD_TIMEOUT, CD_TIMEOUT * 1024.0 * tickdiv, m9_maxat,
+                 m9_n, m9_open ? "; one window still open at the end" : "");
+      mon_real("9", "cd_timeout_left", m9_n, CD_TIMEOUT * 1024.0 * tickdiv - m9_max, "clk_114", 0, 1'b0, "phases");
       mon_real("12", "rtc_cs_high", rtc1.n_gaps, rtc1.csh_min_ns, "ns", rtc_csh_bound, rtc_csh_bound <= 0,
                "gaps");
       mon_real("14", "kick_order", (m14_nw > 0) ? m14_nrel : 0, m14_rel - m14_w, "clk_114", 1, 1'b0,

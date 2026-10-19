@@ -1,5 +1,5 @@
-// bfm_ide: the Amiga side of gayle in the L3 bench (scenario hdd; the ATAPI
-// task for the CD scenarios): a 68k IDE driver on gayle's 68k ports
+// bfm_ide: the Amiga side of gayle in the L3 bench (scenarios hdd and cd):
+// a 68k IDE driver on gayle's 68k ports
 // (address_in, data_in, data_out, rd, hwr, lwr, sel_ide, sel_gayle, irq,
 // nrdy).
 //
@@ -32,7 +32,8 @@
 //     and the end after an interrupt (DRQ 1: the next block; DRQ 0: done)
 //   no data (SET MULTIPLE): wait for the interrupt, BSY 0, DRQ 0
 //   every command ends with ata_end: the status polled until BSY and DRQ
-//     are 0 (DRDY 0x40, no ERR, else a bench error), then the task file
+//     are 0 (DRDY 0x40, no ERR; 0x41 for a PACKET command that must end in
+//     CHECK CONDITION; else a bench error), then the task file
 //     read back (error, count, sector, cylinder low / high, device / head)
 //     for the log.  The firmware ignores the LBA bit (hdd.c chs2lba), so
 //     addresses are CHS: ata_cmd converts an LBA with the geometry set for
@@ -58,16 +59,21 @@
 //   ata_pio_in(words, fd)                    data register reads, words to fd
 //   ata_pio_out(fd, words)                   data register writes of the write
 //                                            pattern (wr_kind, wr_lba), to fd
-//   ata_identify(port, dev, fname)           IDENTIFY DEVICE, the 256 words to fname
+//   ata_identify(port, dev)                  IDENTIFY DEVICE, the 256 words to the dump
+//   ata_identify_cmd(port, dev, cmd)         the same with another command
+//                                            (A1 IDENTIFY PACKET DEVICE)
 //   ata_read(port, dev, cmd, lba, count), ata_read_chs(...), ata_write(...),
 //   ata_setmult(port, dev, n)                one whole command each (log, dump)
-//   atapi_packet(port, dev, pkt, bytecount)  PACKET (A0) with the 12 bytes of
+//   atapi_packet(port, dev, pkt, bytecount, chk)
+//                                            PACKET (A0) with the 12 bytes of
 //                                            pkt (byte 0 in bits 95:88) and the
 //                                            byte count limit; each data-in phase
 //                                            (interrupt reason IO, the device's
 //                                            byte count) to the command's dump
-//                                            file; the status phase ends it
-//                                            (not used by hdd: Tasks 16 / 17)
+//                                            file, one "=== IDE phase <k> <n>"
+//                                            line each; the status phase ends it,
+//                                            status 0x41 (CHECK CONDITION) when
+//                                            chk, else 0x40
 // Each whole command writes "=== IDE cmd <k> ..." at its start and "=== IDE
 // end <k> ..." at its end, and its data to <+IDE_DUMP>_<k>.hex (16 words
 // per line, the first word first: xxd -r -p reads it back as the bytes in
@@ -77,7 +83,7 @@
 // 'W', kind ('S' WRITE SECTORS, 'M' WRITE MULTIPLE), L >> 8, L & 255, then
 // (L * 29 + j * 7 + 0x5A) & 255 for j = 4..511 (l3check.py wpattern).
 //
-// The bench (scenarios.vh) sets plan ("hdd") and go; the plan starts when
+// The bench (scenarios.vh) sets plan ("hdd" or "cd") and go; the plan starts when
 // the chipset reset is low as well (minimig_syscontrol holds it for four
 // frames after userio_osd's usrrst falls, so at the main-loop milestone the
 // Amiga side is still in reset: writes then are lost, as on the Amiga);
@@ -108,7 +114,7 @@ module bfm_ide (
   localparam [23:0] INTREQ = 24'hDA9000, INTENA = 24'hDAA000;
   localparam [7:0]  ST_BSY = 8'h80, ST_DRDY = 8'h40, ST_DRQ = 8'h08, ST_ERR = 8'h01;
   localparam [7:0]  C_IDENTIFY = 8'hEC, C_READ = 8'h20, C_WRITE = 8'h30, C_READM = 8'hC4,
-                    C_WRITEM = 8'hC5, C_SETMULT = 8'hC6, C_PACKET = 8'hA0;
+                    C_WRITEM = 8'hC5, C_SETMULT = 8'hC6, C_PACKET = 8'hA0, C_IDPACKET = 8'hA1;
   localparam integer WAIT_MAX = 40000000;    // clk_114 cycles, one wait (a bench error beyond)
   localparam integer WMAX = 65536;           // waits kept per command (for the median)
 
@@ -242,6 +248,7 @@ module bfm_ide (
   integer    c_port = 0, c_dev = 0, c_lba = 0, c_count = 0, c_c = 0, c_h = 0, c_s = 0;
   integer    c_t0 = 0, c_win = 0, c_wout = 0;
   reg  [7:0] c_cmd = 8'h00;
+  reg  [7:0] c_st_want = 8'h40;    // the status ata_end expects (ST_DRDY; | ST_ERR: CHECK CONDITION)
   reg [8*12-1:0] c_name = "";
   integer    fd = 0;
   reg  [8*1024-1:0] prefix, fname;
@@ -267,6 +274,7 @@ module bfm_ide (
       C_WRITEM:   cmd_name = "WRITE_MULT";
       C_SETMULT:  cmd_name = "SET_MULT";
       C_PACKET:   cmd_name = "PACKET";
+      C_IDPACKET: cmd_name = "ID_PACKET";
       default:    cmd_name = "OTHER";
     endcase
   endfunction
@@ -292,7 +300,7 @@ module bfm_ide (
       if (v[15] !== 1'b0) ide_error("a command while BSY is set");
       slot = port * 2 + dev;
       c_port = port; c_dev = dev; c_cmd = cmd; c_name = cmd_name(cmd);
-      c_c = c; c_h = h; c_s = s; c_count = count;
+      c_c = c; c_h = h; c_s = s; c_count = count; c_st_want = ST_DRDY;
       c_lba = (c * g_heads[slot] + h) * g_spt[slot] + s - 1;
       c_win = 0; c_wout = 0;
       w_n = 0; w_irq = 0; w_poll = 0; w_nrdy = 0; w_min = 0; w_max = 0; w_tot = 0;
@@ -398,7 +406,9 @@ module bfm_ide (
       while ((v[15] === 1'b1 || v[11] === 1'b1) && cyc - t0 < WAIT_MAX) begin tl = cyc; hr(tf(c_port, 7), v); end
       if (tl != t0) add_wait(tl - t0, 1);
       t_st = v[15:8];
-      if (t_st !== ST_DRDY) ide_error("the status at the end of a command is not DRDY (0x40)");
+      if (t_st !== c_st_want)
+        ide_error((c_st_want == ST_DRDY) ? "the status at the end of a command is not DRDY (0x40)"
+                                         : "the status at the end of a command is not DRDY | ERR (0x41, CHECK CONDITION)");
       hr(tf(c_port, 1), v); t_err = v[15:8];
       hr(tf(c_port, 2), v); t_cnt = v[15:8];
       hr(tf(c_port, 3), v); t_sec = v[15:8];
@@ -432,8 +442,13 @@ module bfm_ide (
 
   // ------------------------------------------------- whole commands
   task ata_identify(input integer port, input integer dev);
+    ata_identify_cmd(port, dev, C_IDENTIFY);
+  endtask
+
+  // IDENTIFY DEVICE (EC) or IDENTIFY PACKET DEVICE (A1): one PIO-in block
+  task ata_identify_cmd(input integer port, input integer dev, input [7:0] cmd);
     begin
-      ata_cmd_chs(port, dev, C_IDENTIFY, 0, 0, 0, 0);
+      ata_cmd_chs(port, dev, cmd, 0, 0, 0, 0);
       dump_open;
       ata_wait(1'b1, 1'b1);
       ata_pio_in(256, fd);
@@ -502,8 +517,10 @@ module bfm_ide (
   // then (no interrupt, gayle_port.v) DRQ with interrupt reason CoD for the
   // 6 packet words; then phases until one without DRQ: each data-in phase
   // (reason IO) reads the device's byte count into the dump file, a
-  // data-out phase is a bench error (no ATAPI write is modelled)
-  task atapi_packet(input integer port, input integer dev, input [95:0] pkt, input integer bytecount);
+  // data-out phase is a bench error (no ATAPI write is modelled).  chk: the
+  // command must end in CHECK CONDITION (status 0x41 at the end)
+  task atapi_packet(input integer port, input integer dev, input [95:0] pkt, input integer bytecount,
+                    input chk);
     integer i, n, ph, t0;
     reg [7:0] reason;
     begin
@@ -511,12 +528,14 @@ module bfm_ide (
       if (v[15] !== 1'b0) ide_error("PACKET while BSY is set");
       c_port = port; c_dev = dev; c_cmd = C_PACKET; c_name = cmd_name(C_PACKET);
       c_c = 0; c_h = 0; c_s = 0; c_count = bytecount; c_lba = 0;
+      c_st_want = chk ? (ST_DRDY | ST_ERR) : ST_DRDY;
       c_win = 0; c_wout = 0;
       w_n = 0; w_irq = 0; w_poll = 0; w_nrdy = 0; w_min = 0; w_max = 0; w_tot = 0;
       cmd_k = cmd_k + 1;
       c_t0 = cyc;
-      $display("=== IDE cmd %0d PACKET port %0d dev %0d packet %h bytecount %0d at cycle %0d",
-               cmd_k, port, dev, pkt, bytecount, cyc);
+      $display("=== IDE cmd %0d PACKET port %0d dev %0d packet %h bytecount %0d want %h at cycle %0d",
+               cmd_k, port, dev, pkt, bytecount, c_st_want, cyc);
+      $fflush;
       dump_open;
       hwb(tf(port, 1), 8'h00);
       hwb(tf(port, 4), bytecount[7:0]);
@@ -543,7 +562,7 @@ module bfm_ide (
           hr(tf(port, 4), v); n = {24'd0, v[15:8]};
           hr(tf(port, 5), v); n = n + 256 * {24'd0, v[15:8]};
           if (reason[1:0] !== 2'b10) ide_error("PACKET: a DRQ phase that is not data in (IO, not CoD)");
-          $display("=== IDE phase %0d: reason %h, %0d bytes at cycle %0d", ph, reason, n, cyc);
+          $display("=== IDE phase %0d %0d: reason %h, %0d bytes at cycle %0d", cmd_k, ph, reason, n, cyc);
           ata_pio_in((n + 1) / 2, fd);
           v = 16'h0800;
           ph = ph + 1;
@@ -584,6 +603,43 @@ module bfm_ide (
     end
   endtask
 
+  // -------------------------------------------------------- plan cd
+  // (sim/l3/README.md "cd"; l3check.py cd holds the same list).  The card
+  // (sim/l3/card cd, configs from gen/mkcfg.py): secondaryhardfile[0] = the
+  // ATAPI CD on IDE port 2 (gayle port 1, $DA3000) master, with TEST.CUE
+  // (CDCFG=cue) or TEST.ISO (CDCFG=iso) in it.  The same packets for both
+  // discs; l3check.py knows the answers.  Byte count limit 0xFFFE (the most
+  // a driver may ask for) except the READ(12): 0x0400, so that every data
+  // phase is split below a sector (cdrom.c cd_send_sectors / cd_send_buffer)
+  localparam integer CD_PORT = 1, CD_DEV = 0, CD_LIM = 65534, CD_LIM12 = 1024;   // 0xFFFE, 0x0400
+  task plan_cd;
+    begin
+      ata_identify_cmd(CD_PORT, CD_DEV, C_IDPACKET);
+      // TEST UNIT READY: the pending UNIT ATTENTION (CHECK CONDITION)
+      atapi_packet(CD_PORT, CD_DEV, 96'h00_00_00_00_00_00_00_00_00_00_00_00, CD_LIM, 1'b1);
+      // REQUEST SENSE, allocation length 18: that UNIT ATTENTION
+      atapi_packet(CD_PORT, CD_DEV, 96'h03_00_00_00_12_00_00_00_00_00_00_00, CD_LIM, 1'b0);
+      // TEST UNIT READY again: GOOD
+      atapi_packet(CD_PORT, CD_DEV, 96'h00_00_00_00_00_00_00_00_00_00_00_00, CD_LIM, 1'b0);
+      // INQUIRY, allocation length 36
+      atapi_packet(CD_PORT, CD_DEV, 96'h12_00_00_00_24_00_00_00_00_00_00_00, CD_LIM, 1'b0);
+      // READ CAPACITY
+      atapi_packet(CD_PORT, CD_DEV, 96'h25_00_00_00_00_00_00_00_00_00_00_00, CD_LIM, 1'b0);
+      // READ TOC, format 0, LBA addresses, from track 0 (all), allocation 804
+      atapi_packet(CD_PORT, CD_DEV, 96'h43_00_00_00_00_00_00_03_24_00_00_00, CD_LIM, 1'b0);
+      // READ(10): 32 sectors from LBA 16
+      atapi_packet(CD_PORT, CD_DEV, 96'h28_00_00_00_00_10_00_00_20_00_00_00, CD_LIM, 1'b0);
+      // READ(12): 8 sectors from LBA 56 (CUE: the last 8 of the data track)
+      atapi_packet(CD_PORT, CD_DEV, 96'hA8_00_00_00_00_38_00_00_00_08_00_00, CD_LIM12, 1'b0);
+      // MODE SENSE(10), all pages (3F), allocation 256
+      atapi_packet(CD_PORT, CD_DEV, 96'h5A_00_3F_00_00_00_00_01_00_00_00_00, CD_LIM, 1'b0);
+      // READ CD MSF (B9), which atapi.c does not support: CHECK CONDITION
+      atapi_packet(CD_PORT, CD_DEV, 96'hB9_00_00_00_02_00_00_00_03_00_10_00, CD_LIM, 1'b1);
+      // REQUEST SENSE: its sense
+      atapi_packet(CD_PORT, CD_DEV, 96'h03_00_00_00_12_00_00_00_00_00_00_00, CD_LIM, 1'b0);
+    end
+  endtask
+
   always @(posedge reset) if (go === 1'b1 && done !== 1'b1) ide_error("the chipset reset rose during the plan");
 
   // ------------------------------------------------------------- sequencer
@@ -596,6 +652,7 @@ module bfm_ide (
     hww(INTENA, 16'h8000);
     hww(INTREQ, 16'h0000);
     if (plan == "hdd") plan_hdd;
+    else if (plan == "cd") plan_cd;
     else ide_error("unknown plan");
     $display("=== IDE done: %0d commands, %0d waits at cycle %0d", cmd_k, w_all_n, cyc);
     done = 1'b1;

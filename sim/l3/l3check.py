@@ -8,6 +8,7 @@
     python3 -I l3check.py keys <run>
     python3 -I l3check.py fdd_rd <run>
     python3 -I l3check.py hdd <run>
+    python3 -I l3check.py cd <run>
 
 kick: the 256 KB kickstart the firmware uploaded equals the card's KICK.ROM
 byte for byte.  UploadKickstart (fw/ctrl_rv/config.c) sends a 0x40000-byte
@@ -121,6 +122,49 @@ first = the bytes in its memory order):
     of its block (spitrace.py's Card on <run>/card/hdd.img), and no other
     card sector differs from <run>/card/hdd.img
 
+cd (scenario cd, bfm_ide.v plan_cd): the CD drive on IDE port 2 master
+(gayle port 1), the disc of the run's "=== CD config <cue|iso>" line
+(it must be the card's: <run>/card/cd.img or cd_iso.img, and the config's
+CD slot, <run>/card/cfg_<cfg>/MINMGAA.check, must name TEST.CUE / TEST.ISO).
+From the "=== IDE cmd", "=== IDE phase" and "=== IDE end" lines and the
+dumps <run>/cd_<k>.hex:
+  - the commands are CD_PLAN below, in order, with their packets and byte
+    count limits; each ends with its status (40, or 41 = CHECK CONDITION
+    where the plan expects it), the error register cdrom.c's cd_error()
+    makes of the sense key (key << 4, | ABRT 04 for ILLEGAL REQUEST and
+    ABORTED COMMAND), and the task file cd_complete() leaves (interrupt
+    reason 03, the sector register and the host's byte count limit as the
+    command found them, device A0); IDENTIFY PACKET DEVICE the host's
+  - the data phases: reason 02 (IO), each at most the byte count limit
+    and 8 KB (the FIFO); their bytes add up to the answer's length
+  - IDENTIFY PACKET DEVICE = the words atapi_identify() of the run CPU's
+    own source (fw/ctrl_rv/atapi.c or fw/ctrl_832/atapi.c, read field by
+    field: each "id[n] = v", "ata_string(id + n, s, len)" and the loop of
+    id[84..87]), each word little-endian in the 68k's memory as for ATA
+    IDENTIFY; the disc name in the model field is the config's (long name,
+    else the 8-character name, cdrom.c CD_Open / CD_Insert); and decoded:
+    ATAPI, CD-ROM, removable, 12-byte packets
+  - TEST UNIT READY: CHECK CONDITION UNIT ATTENTION 06/29/00 (the insert's
+    06/28/00 replaced by the Amiga reset the first command's task file read
+    saw, gayle rst_seen -> cdrom.c CD_Flags -> atapi_reset), then REQUEST
+    SENSE = that sense, a second TEST UNIT READY GOOD
+  - INQUIRY, READ CAPACITY, READ TOC (format 0, every track and the
+    lead-out), MODE SENSE(10) of all pages = the bytes atapi.c builds
+    (inquiry, the READ CAPACITY case, read_toc, mode_sense / mode_page),
+    for this disc: the TOC from TEST.CUE (a parser here: INDEX 01 + the
+    PREGAPs; CDCFG=cue) or one DATA2048 track of TEST.ISO's size (iso)
+  - READ(10) 32 sectors from LBA 16, READ(12) 8 from LBA 56 = the disc's
+    2048-byte user data: TEST.ISO's blocks, or TEST.BIN's MODE1/2352
+    sectors from byte 16 (the CUE's data track)
+  - READ CD MSF (B9, not supported): CHECK CONDITION 05/20/00 (atapi.c's
+    default), REQUEST SENSE = that sense
+  - item 9: the bench ran at TICKDIV 643 from the scenario's start, its
+    "=== MARGIN 9 cd_timeout_left" line is ok over one window per phase
+    (each packet's command phase and each data phase), and the longest
+    window is far from CD_TIMEOUT; printed as INFO lines with the command
+    it was in, and the longest 68k-side wait on the firmware per command (the
+    firmware's service time)
+
 Each prints one line, "PASS <name>: ..." (exit 0) or "FAIL <name>: ..."
 (exit 1); exit 2 on a usage error.  Python 3 standard library only.
 """
@@ -163,6 +207,27 @@ HDD_PLAN = [
     ("READ_MULT", 0, 0, 0, 0, 1, 16),      # RDB.HDF blocks 0..15, block 0 patched
 ]
 HDF_FILE, HDF_SYNTHRDB = 1, 128
+
+# scenario cd (bfm_ide.v plan_cd): name, packet (12 bytes, hex; None for
+# IDENTIFY PACKET DEVICE), byte count limit, CHECK CONDITION expected
+CD_FW = os.path.join(HERE, "..", "..", "fw")
+CD_PORT, CD_DEV = 1, 0
+CD_PLAN = [
+    ("ID_PACKET", None, None, False),
+    ("TEST_UNIT_READY", "000000000000000000000000", 0xFFFE, True),
+    ("REQUEST_SENSE", "030000001200000000000000", 0xFFFE, False),
+    ("TEST_UNIT_READY", "000000000000000000000000", 0xFFFE, False),
+    ("INQUIRY", "120000002400000000000000", 0xFFFE, False),
+    ("READ_CAPACITY", "250000000000000000000000", 0xFFFE, False),
+    ("READ_TOC", "430000000000000324000000", 0xFFFE, False),
+    ("READ10", "280000000010000020000000", 0xFFFE, False),
+    ("READ12", "a80000000038000000080000", 0x0400, False),
+    ("MODE_SENSE10", "5a003f000000000100000000", 0xFFFE, False),
+    ("READ_CD_MSF", "b90000000200000003001000", 0xFFFE, True),
+    ("REQUEST_SENSE", "030000001200000000000000", 0xFFFE, False),
+]
+CD_FIFO = 8192          # bytes: gayle's FIFO, cdrom.c CD_FIFO_512 x 512
+CD_TICKDIV = 643        # the board's TIMER rate (run.sh cd)
 
 HOSTMAP_ADDR = 0x680000
 KICK_SIZE = 0x40000
@@ -923,6 +988,381 @@ def hdd(run):
     return 0
 
 
+def cue_disc(cue_path, bin_path):
+    """TEST.CUE as the CUE sheet standard reads it (FILE, TRACK, PREGAP,
+    INDEX 01; one BINARY file of 2352-byte sectors): the tracks (number,
+    type, LBA of INDEX 01, the file sector of LBA 0's track), the lead-out
+    LBA.  Independent of fw/ctrl_rv/cue.c"""
+    def msf(t):
+        m, sec, f = (int(x) for x in t.split(":"))
+        return (m * 60 + sec) * 75 + f
+    tracks, gaps, cur = [], 0, None
+    with open(cue_path) as f:
+        for line in f:
+            w = line.split()
+            if not w:
+                continue
+            if w[0] == "FILE":
+                if w[-1] != "BINARY":
+                    raise ValueError("FILE is not BINARY")
+            elif w[0] == "TRACK":
+                cur = {"number": int(w[1]), "type": w[2]}
+                tracks.append(cur)
+            elif w[0] == "PREGAP":
+                gaps += msf(w[1])
+            elif w[0] == "INDEX" and int(w[1]) == 1:
+                cur["file_sector"] = msf(w[2])
+                cur["lba"] = msf(w[2]) + gaps
+    size = os.path.getsize(bin_path)
+    if size % 2352:
+        raise ValueError("%s is not whole 2352-byte sectors" % bin_path)
+    return tracks, size // 2352 + gaps
+
+
+def cd_identify_words(src, name):
+    """atapi_identify() of the C source src, field by field: the words it
+    sets (id[n] = v; ata_string(id + n, "s", len) with the disc name for
+    disc_name(u); the loop "for (i = 84; i <= 87; i++) id[i] = v"), the
+    rest 0.  Returns the 256 words and the fields as (first word, words,
+    what)"""
+    with open(src) as f:
+        text = f.read()
+    m = re.search(r"\nvoid atapi_identify\(uint16_t \*id, const struct atapi_unit \*u\)\n\{\n(.*?)\n\}\n", text, re.S)
+    if not m:
+        raise ValueError("no atapi_identify() in %s" % src)
+    words, fields = [0] * 256, []
+    for line in m.group(1).splitlines():
+        line = line.split("/*")[0].strip()
+        if not line or line in ("int i;", "memset(id, 0, 256 * sizeof(uint16_t));"):
+            continue
+        a = re.match(r"id\[(\d+)\] = (0x[0-9A-Fa-f]+);$", line)
+        b = re.match(r'ata_string\(id \+ (\d+), (?:"([^"]*)"|(disc_name\(u\))), (\d+|ATAPI_NAME_LEN)\);$', line)
+        c = re.match(r"for \(i = (\d+); i <= (\d+); i\+\+\)$", line)
+        d = re.match(r"id\[i\] = (0x[0-9A-Fa-f]+);$", line)
+        if a:
+            words[int(a.group(1))] = int(a.group(2), 16)
+            fields.append((int(a.group(1)), 1, "id[%s] = %s" % (a.group(1), a.group(2))))
+        elif b:
+            n = 40 if b.group(4) == "ATAPI_NAME_LEN" else int(b.group(4))
+            sv = b.group(2) if b.group(2) is not None else name
+            st = (sv.encode("latin-1") + b" " * n)[:n]
+            for i in range(0, n, 2):
+                words[int(b.group(1)) + i // 2] = (st[i] << 8) | st[i + 1]
+            fields.append((int(b.group(1)), n // 2, "ata_string %r (%d bytes)" % (st.decode("latin-1"), n)))
+        elif c:
+            loop = (int(c.group(1)), int(c.group(2)))
+        elif d:
+            for i in range(loop[0], loop[1] + 1):
+                words[i] = int(d.group(1), 16)
+            fields.append((loop[0], loop[1] - loop[0] + 1, "id[%d..%d] = %s" % (loop[0], loop[1], d.group(1))))
+        else:
+            raise ValueError("atapi_identify(): a line this check cannot read: %r" % line)
+    return words, fields
+
+
+def cd_sense(key, asc, ascq):
+    """atapi.c request_sense(): fixed format, 18 bytes"""
+    b = bytearray(18)
+    b[0], b[2], b[7], b[12], b[13] = 0x70, key, 18 - 8, asc, ascq
+    return bytes(b)
+
+
+def cd(run):
+    """the cd scenario's answers and data (README "cd")"""
+    got = run_log(run, "cd")
+    if got is None:
+        return 1
+    log, lines = got
+    bad, notes, info = [], [], []
+    cfg = [ln.split()[3] for ln in lines if ln.startswith("=== CD config ")]
+    cpu = [ln.split()[2] for ln in lines if ln.startswith("=== CPU ")]
+    if len(cfg) != 1 or cfg[0] not in ("cue", "iso") or len(cpu) != 1 or cpu[0] not in ("rv", "832"):
+        print("FAIL cd: want one '=== CD config <cue|iso>' and one '=== CPU <rv|832>' line in %s" % log)
+        return 1
+    cfg, cpu = cfg[0], cpu[0]
+    content = os.path.join(run, "card", "content")
+    img = os.path.join(run, "card", "cd.img" if cfg == "cue" else "cd_iso.img")
+    other = os.path.join(run, "card", "cd_iso.img" if cfg == "cue" else "cd.img")
+    check = os.path.join(run, "card", "cfg_" + cfg, "MINMGAA.check")
+    for p in (img, check):
+        if not os.path.isfile(p):
+            print("FAIL cd: CD config %s, but no %s" % (cfg, p))
+            return 1
+    if os.path.exists(other):
+        print("FAIL cd: CD config %s, but the run has %s too" % (cfg, other))
+        return 1
+    hf = {}
+    with open(check) as f:
+        for line in f:
+            m = re.match(r"secondaryhardfile\[0\]\.(\w+) = (.*)$", line.rstrip("\n"))
+            if m:
+                hf[m.group(1)] = m.group(2)
+    want_present = "2" if cfg == "cue" else "1"
+    if hf.get("enabled") != "7" or hf.get("present") != want_present or hf.get("name") != '"TEST    "':
+        print("FAIL cd: %s's CD slot (secondaryhardfile[0]) is %s, want enabled 7, present %s, name \"TEST    \""
+              % (check, hf, want_present))
+        return 1
+    # cdrom.c CD_Open / CD_Insert: the long name if the config has one, else
+    # the 8 characters of the name (atapi_insert keeps printable ASCII)
+    disc_name = hf["long_name"][1:-1] or hf["name"][1:-1]
+    if "\\" in disc_name:
+        print("FAIL cd: the disc name %s has escaped bytes (this check does not model them)" % disc_name)
+        return 1
+
+    # the disc: (lba -> 2048 bytes), tracks for the TOC, lead-out
+    if cfg == "cue":
+        cue_p, bin_p = os.path.join(content, "TEST.CUE"), os.path.join(content, "TEST.BIN")
+        with open(bin_p, "rb") as f:
+            binf = f.read()
+        tracks, leadout = cue_disc(cue_p, bin_p)
+        data = tracks[0]
+        if data["type"] != "MODE1/2352" or data["lba"] != 0 or data["file_sector"] != 0:
+            print("FAIL cd: TEST.CUE's track 1 is not MODE1/2352 at LBA 0 (this check reads only that)")
+            return 1
+        data_end = tracks[1]["lba"] if len(tracks) > 1 else leadout   # gaps of track 2 come before its LBA
+
+        def sector(lba):
+            if not 0 <= lba < data_end:
+                return None
+            raw = binf[2352 * lba:2352 * lba + 2352]
+            m, r = divmod(lba + 150, 75 * 60)
+            sc, fr = divmod(r, 75)
+            bcd = lambda v: ((v // 10) << 4) | (v % 10)
+            if raw[:16] != b"\x00" + b"\xff" * 10 + b"\x00" + bytes((bcd(m), bcd(sc), bcd(fr), 1)):
+                bad.append("TEST.BIN sector %d has no MODE1 sync / header for its MSF" % lba)
+            return raw[16:16 + 2048]
+        toc = [(1 if t["type"].startswith("MODE") else 0, t["number"], t["lba"]) for t in tracks]
+        src_name = "TEST.BIN (MODE1/2352, user data from byte 16)"
+    else:
+        iso_p = os.path.join(content, "TEST.ISO")
+        with open(iso_p, "rb") as f:
+            iso = f.read()
+        leadout = len(iso) // 2048      # cue.c cue_single: bytes / 2048
+
+        def sector(lba):
+            return iso[2048 * lba:2048 * lba + 2048] if 0 <= lba < leadout else None
+        toc = [(1, 1, 0)]
+        src_name = "TEST.ISO"
+
+    def adr_ctrl(is_data):
+        return 0x14 if is_data else 0x10
+
+    def put32(v):
+        return bytes(((v >> 24) & 255, (v >> 16) & 255, (v >> 8) & 255, v & 255))
+
+    def pad(t, n):
+        return (t.encode("latin-1") + b" " * n)[:n]
+
+    # the answers (atapi.c), by plan index
+    toc_b = bytearray()
+    for is_data, num, lba in toc:
+        toc_b += bytes((0, adr_ctrl(is_data), num, 0)) + put32(lba)
+    toc_b += bytes((0, adr_ctrl(toc[-1][0]), 0xAA, 0)) + put32(leadout)
+    toc_b = bytes(((len(toc_b) + 2) >> 8, (len(toc_b) + 2) & 255, 1, len(toc))) + toc_b
+    inquiry = bytes((0x05, 0x80, 0x00, 0x21, 36 - 5, 0, 0, 0)) + pad("MINIMIG", 8) + pad(disc_name, 16) + pad("1.00", 4)
+    pages = (bytes((0x01, 0x06, 0, 3, 0, 0, 0, 0))                                         # read error recovery
+             + bytes((0x0E, 0x0E, 0x04, 0, 0, 0, 0, 0, 0x01, 0xFF, 0x02, 0xFF, 0, 0, 0, 0))  # audio control, volume FF FF
+             + bytes((0x2A, 0x12, 0, 0, 0x01, 0, 0x29, 0, 0x02, 0xC2, 0x01, 0x00, 0x00, 0x40, 0x02, 0xC2,
+                      0, 0, 0, 0)))                                                       # capabilities, not locked
+    mode = bytes(((len(pages) + 6) >> 8, (len(pages) + 6) & 255, 0, 0, 0, 0, 0, 0)) + pages
+
+    def sectors(lba, n):
+        out = bytearray()
+        for i in range(n):
+            blk = sector(lba + i)
+            if blk is None:
+                return None
+            out += blk
+        return bytes(out)
+    answers = {
+        1: (0x60, b""),                                  # UNIT ATTENTION 06/29/00
+        2: (0, cd_sense(0x06, 0x29, 0x00)),
+        3: (0, b""),
+        4: (0, inquiry),
+        5: (0, put32(leadout - 1) + put32(2048)),
+        6: (0, toc_b),
+        7: (0, sectors(16, 32)),
+        8: (0, sectors(56, 8)),
+        9: (0, mode),
+        10: (0x54, b""),                                 # ILLEGAL REQUEST 05/20/00: 0x50 | ABRT
+        11: (0, cd_sense(0x05, 0x20, 0x00)),
+    }
+    if answers[7][1] is None or answers[8][1] is None:
+        print("FAIL cd: the READ(10) / READ(12) range is outside the disc's data track (%s)" % src_name)
+        return 1
+
+    # the log
+    cmds, ends, phases = {}, {}, {}
+    for line in lines:
+        m = re.match(r"=== IDE cmd (\d+) ID_PACKET port (\d+) dev (\d+) chs 0/0/0 lba -?\d+ count 0 at cycle (\d+)$", line)
+        if m:
+            cmds[int(m.group(1))] = ("ID_PACKET", int(m.group(2)), int(m.group(3)), None, None, None, int(m.group(4)))
+        m = re.match(r"=== IDE cmd (\d+) PACKET port (\d+) dev (\d+) packet ([0-9a-f]{24}) bytecount (\d+) want ([0-9a-f]{2}) at cycle (\d+)$", line)
+        if m:
+            cmds[int(m.group(1))] = ("PACKET", int(m.group(2)), int(m.group(3)), m.group(4), int(m.group(5)),
+                                     int(m.group(6), 16), int(m.group(7)))
+        m = re.match(r"=== IDE phase (\d+) (\d+): reason ([0-9a-f]{2}), (\d+) bytes at cycle (\d+)$", line)
+        if m:
+            phases.setdefault(int(m.group(1)), []).append((int(m.group(3), 16), int(m.group(4))))
+        m = re.match(r"=== IDE end (\d+) (\S+): status ([0-9a-f]{2}) error ([0-9a-f]{2}) tf ([0-9a-f]{2}) ([0-9a-f]{2}) "
+                     r"([0-9a-f]{2}) ([0-9a-f]{2}) ([0-9a-f]{2}), (\d+) words in, (\d+) out, file (\S+), waits (\d+) "
+                     r"\(irq (\d+), poll (\d+), nrdy (\d+)\) min/median/max (\d+)/(\d+)/(\d+) clk_114, total (\d+), "
+                     r"(\d+) cycles, at cycle (\d+)$", line)
+        if m:
+            ends[int(m.group(1))] = m
+    if sorted(cmds) != list(range(1, len(CD_PLAN) + 1)):
+        print("FAIL cd: the IDE commands in the log are %s, want 1..%d (CD_PLAN)" % (sorted(cmds), len(CD_PLAN)))
+        return 1
+
+    id_src = os.path.join(CD_FW, "ctrl_rv" if cpu == "rv" else "ctrl_832", "atapi.c")
+    ndata = nphase = 0
+    for k, (name, pkt, lim, chk) in enumerate(CD_PLAN, 1):
+        c, e = cmds[k], ends.get(k)
+        what = "command %d %s" % (k, name)
+        if e is None:
+            bad.append("%s: no '=== IDE end %d' line" % (what, k))
+            continue
+        if (c[1], c[2]) != (CD_PORT, CD_DEV):
+            bad.append("%s: on port %d dev %d, want %d %d (IDE port 2 master)" % (what, c[1], c[2], CD_PORT, CD_DEV))
+        st, er = int(e.group(3), 16), int(e.group(4), 16)
+        tfr = [int(e.group(i), 16) for i in range(5, 10)]
+        win, wout, fname = int(e.group(10)), int(e.group(11)), e.group(12)
+        path = os.path.join(run, fname)
+        dump = read_hex(path) if fname != "-" and os.path.isfile(path) else None
+        if pkt is None:
+            if c[0] != "ID_PACKET" or e.group(2) != "ID_PACKET":
+                bad.append("%s: the log has %s" % (what, c[0]))
+                continue
+            if (st, er, tfr) != (0x40, 0, [0, 0, 0, 0, 0xA0]):
+                bad.append("%s: status %02x error %02x tf %s at the end, want 40 00 tf 00 00 00 00 a0"
+                           % (what, st, er, " ".join("%02x" % x for x in tfr)))
+            if (win, wout) != (256, 0) or dump is None or len(dump) != 512:
+                bad.append("%s: %d words in, %d out, dump %s: want 256 words" % (what, win, wout, fname))
+                continue
+            words, fields = cd_identify_words(id_src, disc_name)
+            got_w = [int.from_bytes(dump[2 * i:2 * i + 2], "little") for i in range(256)]
+            nf = 0
+            for first, n, desc in fields:
+                if got_w[first:first + n] != words[first:first + n]:
+                    bad.append("%s: IDENTIFY PACKET words %d..%d (%s, %s) are %s" % (
+                        what, first, first + n - 1, desc, os.path.relpath(id_src, HERE),
+                        " ".join("%04x" % x for x in got_w[first:first + n])))
+                else:
+                    nf += 1
+            rest = [i for i in range(256) if got_w[i] != words[i]]
+            if rest:
+                bad.append("%s: IDENTIFY PACKET words %s differ from atapi_identify()" % (what, rest[:8]))
+            w0 = got_w[0]
+            dec = ("ATAPI" if w0 >> 14 == 2 else "not ATAPI", "CD-ROM" if (w0 >> 8) & 0x1F == 5 else "type %d" % ((w0 >> 8) & 0x1F),
+                   "removable" if w0 & 0x80 else "fixed", "12-byte packets" if w0 & 3 == 0 else "16-byte packets" if w0 & 3 == 1 else "packet size %d" % (w0 & 3))
+            model = bytes(b for w in got_w[27:47] for b in (w >> 8, w & 255)).decode("latin-1").rstrip()
+            if dec != ("ATAPI", "CD-ROM", "removable", "12-byte packets"):
+                bad.append("%s: word 0 %04x is %s" % (what, w0, ", ".join(dec)))
+            if not rest:
+                notes.append("%s: = atapi_identify() of %s, %d fields (%s); word 0 %04x: %s; model %r"
+                             % (what, os.path.relpath(id_src, os.path.join(HERE, "..", "..")), nf,
+                                "; ".join(d for _, _, d in fields), w0, ", ".join(dec), model))
+            continue
+        if c[0] != "PACKET" or c[3] != pkt or c[4] != lim:
+            bad.append("%s: the log has %s packet %s limit %s, want %s %s" % (what, c[0], c[3], c[4], pkt, lim))
+            continue
+        want_st = 0x41 if chk else 0x40
+        want_er, want = answers[k - 1]
+        if c[5] != want_st:
+            bad.append("%s: the bench expected status %02x, the plan %02x" % (what, c[5], want_st))
+        want_tf = [0x03, 0x00, lim & 255, lim >> 8, 0xA0]
+        if (st, er, tfr) != (want_st, want_er, want_tf):
+            bad.append("%s: status %02x error %02x tf %s at the end, want %02x %02x tf %s" % (
+                what, st, er, " ".join("%02x" % x for x in tfr), want_st, want_er, " ".join("%02x" % x for x in want_tf)))
+        ph = phases.get(k, [])
+        nphase += 1 + len(ph)
+        tot = sum(n for _, n in ph)
+        for i, (reason, n) in enumerate(ph):
+            if reason != 0x02 or n <= 0 or n > min(lim, CD_FIFO) or n % 2:
+                bad.append("%s: data phase %d is reason %02x, %d bytes (want 02, even, 1..%d)"
+                           % (what, i, reason, n, min(lim, CD_FIFO)))
+        if tot != len(want) or (win, wout) != ((len(want) + 1) // 2, 6):
+            bad.append("%s: %d data bytes in %d phases (%d words in, %d out), want %d bytes (%d words in, 6 out)"
+                       % (what, tot, len(ph), win, wout, len(want), (len(want) + 1) // 2))
+            continue
+        if not want:
+            notes.append("%s: status %02x error %02x, no data" % (what, st, er))
+            continue
+        if dump is None or len(dump) != len(want):
+            bad.append("%s: dump %s is %s bytes, want %d" % (what, fname, None if dump is None else len(dump), len(want)))
+            continue
+        k0 = first_diff(dump, want)
+        if k0 >= 0:
+            where = ""
+            if name in ("READ10", "READ12"):
+                lba0 = 16 if name == "READ10" else 56
+                where = " (LBA %d byte %d of %s)" % (lba0 + k0 // 2048, k0 % 2048, src_name)
+            bad.append("%s: differs at byte %d%s (%02x, want %02x)" % (what, k0, where, dump[k0], want[k0]))
+            continue
+        sizes = {}
+        for _, n in ph:
+            sizes[n] = sizes.get(n, 0) + 1
+        split = ", ".join("%d x %d" % (sizes[n], n) for n in sorted(sizes, reverse=True))
+        if name in ("READ10", "READ12"):
+            lba0, n = (16, 32) if name == "READ10" else (56, 8)
+            ndata += n
+            notes.append("%s: LBA %d..%d = %s, in %s bytes" % (what, lba0, lba0 + n - 1, src_name, split))
+        else:
+            notes.append("%s: %d bytes = atapi.c's (%s)" % (what, len(want), " ".join("%02x" % b for b in want[:20])
+                                                           + (" ..." if len(want) > 20 else "")))
+    if cfg == "cue":
+        notes.append("TOC = TEST.CUE: %s, lead-out %d" % (", ".join("track %d %s LBA %d" % (t["number"], t["type"], t["lba"])
+                                                                   for t in tracks), leadout))
+    else:
+        notes.append("TOC = one data track at LBA 0, lead-out %d (TEST.ISO, %d bytes)" % (leadout, leadout * 2048))
+
+    # item 9 (mon_l3.vh) and the service times
+    hdr = [ln for ln in lines if ln.startswith("L3 bench: ")]
+    if len(hdr) != 1 or " TICKDIV=%d TICKDIV_AT=scenario " % CD_TICKDIV not in hdr[0]:
+        bad.append("the run is not at TICKDIV %d from the scenario's start: %s" % (CD_TICKDIV, hdr))
+    m9 = [re.match(r"=== MARGIN 9 cd_timeout_left min ([0-9.]+) clk_114 \(bound 0, (\w+)\) over (\d+) phases$", ln)
+          for ln in lines if ln.startswith("=== MARGIN 9 ")]
+    i9 = [re.match(r"=== MARGIN \(info\) 9 cd longest phase window (\d+) clk_114 = ([0-9.]+) TIMER counts at TICKDIV (\d+) "
+                   r"\(CD_TIMEOUT (\d+) counts = (\d+) clk_114\), ended at cycle (\d+), over (\d+) phases ?$", ln)
+          for ln in lines if ln.startswith("=== MARGIN (info) 9 ")]
+    if len(m9) != 1 or not m9[0] or len(i9) != 1 or not i9[0]:
+        # (mon_l3.vh prints an empty %0s as one space: "phases " when every
+        # window closed; "; one window still open at the end" fails here)
+        bad.append("want one '=== MARGIN 9 cd_timeout_left' and one '=== MARGIN (info) 9' line, all windows closed")
+    else:
+        m9, i9 = m9[0], i9[0]
+        if m9.group(2) != "ok" or int(m9.group(3)) != nphase or int(i9.group(7)) != nphase:
+            bad.append("MARGIN 9: %s over %s phases, want ok over %d (one per packet and per data phase)"
+                       % (m9.group(2), m9.group(3), nphase))
+        w, at = int(i9.group(1)), int(i9.group(6))
+        inside = [k for k in cmds if k in ends and cmds[k][-1] <= at <= int(ends[k].group(22))]
+        info.append("longest phase window %d clk_114 = %s TIMER counts at TICKDIV %s, %.6f of CD_TIMEOUT (%s counts = %s clk_114), in %s"
+                    % (w, i9.group(2), i9.group(3), w / float(i9.group(5)), i9.group(4), i9.group(5),
+                       ", ".join("command %d %s" % (k, CD_PLAN[k - 1][0]) for k in inside) or "no command"))
+    srv = []
+    for k in sorted(ends):
+        e = ends[k]
+        srv.append("%d %s irq %s max %s" % (k, CD_PLAN[k - 1][0], e.group(14), e.group(19)))
+    longest = max(sorted(ends), key=lambda k: int(ends[k].group(19)))
+    info.append("the firmware's longest service time (the longest 68k-side wait on it: interrupt, BSY poll or nrdy): %s clk_114 in command %d %s"
+                % (ends[longest].group(19), longest, CD_PLAN[longest - 1][0]))
+    info.append("per command (interrupt waits; the longest wait of any kind, clk_114): " + "; ".join(srv))
+
+    for b in bad:
+        print("BAD  " + b)
+    for n in notes:
+        print("ok   " + n)
+    for n in info:
+        print("INFO " + n)
+    if bad:
+        print("FAIL cd: %d problem(s)" % len(bad))
+        return 1
+    print("PASS cd: %s, CPU %s: %d commands, IDENTIFY PACKET = atapi.c, INQUIRY / sense / capacity / TOC / MODE SENSE "
+          "= atapi.c's for the disc, %d sectors = %s, CHECK CONDITION 06/29/00 and 05/20/00, %d phase windows under CD_TIMEOUT"
+          % (cfg, cpu, len(CD_PLAN), ndata, src_name, nphase))
+    return 0
+
+
 def main(argv):
     if len(argv) == 3 and argv[1] == "kick":
         return kick(argv[2])
@@ -940,6 +1380,8 @@ def main(argv):
         return fdd_rd(argv[2])
     if len(argv) == 3 and argv[1] == "hdd":
         return hdd(argv[2])
+    if len(argv) == 3 and argv[1] == "cd":
+        return cd(argv[2])
     sys.stderr.write(__doc__)
     return 2
 

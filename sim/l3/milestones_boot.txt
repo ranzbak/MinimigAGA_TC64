@@ -6,8 +6,9 @@
 # no UART line of the run contains <text>.  "CPU=rv <line>" and "CPU=832
 # <line>": a line of that CPU only (run.sh keeps it without the prefix for
 # that CPU and drops it for the other); "CARD=<card> <line>" likewise a
-# line of that card only (fdd_rd boots the fdd card, hdd the hdd card,
-# the others the boot card: run.sh CARDNAME); only the boot ROM's file
+# line of that card only (fdd_rd boots the fdd card, hdd the hdd card, cd
+# the cd card as cd_cue or cd_iso by its CDCFG, the others the boot card:
+# run.sh MSCARD); only the boot ROM's file
 # name and the config file name differ (the firmware version line is the same:
 # both builds print L3_DATE's "Firmware version: 2026-1-1-0-0", and only
 # its prefix is a milestone).  Taken from the sources, not from a run.
@@ -85,6 +86,8 @@ CARD=boot UART file "DRIVESNDBIN" not found
 CARD=hdd UART file "DRIVESNDBIN" not found
 CARD=fdd UART file "DRIVESNDBIN" found
 CARD=fdd UART Audio file - length 212098
+CARD=cd_cue UART file "DRIVESNDBIN" not found
+CARD=cd_iso UART file "DRIVESNDBIN" not found
 UART Loading kickstart ROM...
 # ApplyConfiguration(1,1) -> OpenHardfile(0), (1): hardfile[0] = RDB.HDF
 # (plain file), hardfile[1] = SYNTH.HDF (synthesised RDB): neither is on
@@ -99,6 +102,8 @@ UART Loading kickstart ROM...
 # 'file: "8s.3s"' (fw/ctrl_rv/test/gold/fmt_diff_expected.txt lines 45-52)
 CARD=boot UART file "RDB     HDF" not found
 CARD=fdd UART file "RDB     HDF" not found
+CARD=cd_cue UART file "RDB     HDF" not found
+CARD=cd_iso UART file "RDB     HDF" not found
 CARD=hdd UART file "RDB     HDF" found
 CARD=hdd UART Total sectors: 4096, cyl: 16, heads: 4, sectors: 63
 CARD=hdd UART HARDFILE 0:
@@ -109,6 +114,8 @@ CARD=hdd UART CHS: 16.4.63 (1 MB)
 CARD=hdd UART Hardfile indexed in
 CARD=boot UART file "SYNTH   HDF" not found
 CARD=fdd UART file "SYNTH   HDF" not found
+CARD=cd_cue UART file "SYNTH   HDF" not found
+CARD=cd_iso UART file "SYNTH   HDF" not found
 CARD=hdd UART file "SYNTH   HDF" found
 CARD=hdd UART HARDFILE 1:
 CARD=hdd CPU=rv UART file: "SYNTH   .HDF"
@@ -116,6 +123,17 @@ CARD=hdd CPU=832 UART file: "8s.3s"
 CARD=hdd UART size: 4194304 (4 MB)
 CARD=hdd UART CHS: 257.1.32 (4 MB)
 CARD=hdd UART Hardfile indexed in
+# ApplyCDROM() -> CD_Open(2) -> CD_Insert() (cdrom.c; it prints nothing
+# else without DebugMode): the cd card's disc opens.  CUE: the sheet
+# (cd_raopen), its FILE TEST.BIN looked up by the parser's callback
+# (cd_cue_open: its 8.3 name), then opened as the data track's file
+# (cd_data_open).  ISO: looked up, then opened as the data file.  On the
+# other cards TEST.CUE is not found (not a milestone)
+CARD=cd_cue UART file "TEST    CUE" found
+CARD=cd_cue UART file "TEST    BIN" found
+CARD=cd_cue UART file "TEST    BIN" found
+CARD=cd_iso UART file "TEST    ISO" found
+CARD=cd_iso UART file "TEST    ISO" found
 # UploadKickstart(): kickdir 0, the 256 KB KICK.ROM, sent twice (0xf80000
 # and the 0xfc0000 mirror; SendFileV2 prints the size in kB)
 UART ROM dir: 0
@@ -136,6 +154,8 @@ NOT UART Fatal error
 # secondaryhardfile[0] as an ATAPI master: atapi 1 << 3 | master 2 | on 1 = 0b
 CARD=boot SPI 20 54 01
 CARD=fdd SPI 20 54 01
+CARD=cd_cue SPI 20 54 01
+CARD=cd_iso SPI 20 54 01
 CARD=hdd SPI 20 54 07
 SPI 20 58 0b
 # ApplyConfiguration(1,1): the CPU held for the kickstart upload
