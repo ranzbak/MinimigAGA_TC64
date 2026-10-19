@@ -249,7 +249,12 @@ Phase 3 figure (0x1950, 1,712 bytes).
 XRAND: the first twin differed in every HandleFpga frame (the track byte,
 `paula_floppy.v`'s never-reset `dsktrack`); `XRAND=1` now pins it to 0 in
 the run copy, as the bridge's and hostcache's reset-less flops are pinned
-(`=== XRAND pinned 9 regs`), and the twin is SAME. The finding is in
+(`=== XRAND pinned 9 regs`), and the twin is SAME. A later twin (p4t5c_xr,
+seed 820757315) differed in the MISO of the very first OSD frame (`20 08 06
+/ a8 00` instead of `/ 00 00`): `userio_osd_spi.v`'s `bit_cnt` and
+`first_byte` are cleared only by a rising `_scs`, which a start at
+"deselected" never gives. `XRAND=1` pins both to 0 as well (`=== XRAND
+pinned 11 regs`; the same seed is then SAME, p4t5d). The findings are in
 `findings/osd-riscv/phase4.md`.
 
 ## Monitors

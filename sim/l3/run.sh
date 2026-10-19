@@ -134,7 +134,11 @@ cfide_generics() {
 # run copy, as hostsim.sh pins the bridge's and hostcache's flops (README
 # "boot", XRAND): paula_floppy.v dsktrack[0..3] (the drives' head
 # positions, never reset: HandleFpga's track byte; found by the first XRAND
-# twin, findings/osd-riscv/phase4.md).  The count joins hostsim.sh's
+# twin, findings/osd-riscv/phase4.md) and userio_osd_spi.v bit_cnt and
+# first_byte (cleared only by a rising _scs, which a start at "deselected"
+# never gives: a random bit_cnt shifted a random reply bit pattern into the
+# first OSD frame's MISO in twin p4t5c_xr, seed 820757315; first_byte has
+# the same reset).  The count joins hostsim.sh's
 # "=== XRAND pinned <n> regs" (it sums the lines of src/pinned_hostcache).
 l3_pin_minimig() {
 	local v="$run/src/paula_floppy.v" decl='	reg		[6:0] dsktrack[3:0]; //track select'
@@ -143,6 +147,14 @@ l3_pin_minimig() {
 	sed -i "/^$(printf '%s' "$decl" | sed 's/[][\/.*^$]/\\&/g')\$/a\\	initial begin dsktrack[0] = 7'd0; dsktrack[1] = 7'd0; dsktrack[2] = 7'd0; dsktrack[3] = 7'd0; end // XRAND pin" "$v"
 	[ "$(grep -c '// XRAND pin$' "$v")" = 1 ] || die "XRAND pin: dsktrack initialiser not inserted"
 	echo 4 >> "$run/src/pinned_hostcache"
+	v="$run/src/userio_osd_spi.v"
+	for decl in 'reg [2:0] bit_cnt;		//bit counter' 'reg first_byte;		//first byte is going to be received'; do
+		[ "$(grep -cxF -- "$decl" "$v")" = 1 ] || die "XRAND pin: userio_osd_spi.v declaration '$decl' not found"
+	done
+	sed -i -e "/^reg \[2:0\] bit_cnt;		\/\/bit counter\$/a\initial bit_cnt = 3'd0; // XRAND pin" \
+		-e "/^reg first_byte;		\/\/first byte is going to be received\$/a\initial first_byte = 1'b0; // XRAND pin" "$v"
+	[ "$(grep -c '// XRAND pin$' "$v")" = 2 ] || die "XRAND pin: userio_osd_spi.v initialisers not inserted"
+	echo 2 >> "$run/src/pinned_hostcache"
 }
 
 # setup: run directory, RTL copies, firmware, card
