@@ -3,7 +3,7 @@
 # (userio_osd, paula_floppy, gayle) boots the real boot ROM and firmware from
 # an SD card image.  See tb_l3.v, scenarios.vh, README.md.
 #
-#   bash sim/l3/run.sh <scenario>        boot, boot_short, keys, fdd_rd
+#   bash sim/l3/run.sh <scenario>        boot, boot_short, keys, fdd_rd, akiko
 #   bash sim/l3/run.sh xpair <scenario>  the scenario and its XRAND twin
 #                                        (run_$RUNTAG, run_${RUNTAG}_xr; in
 #                                        parallel), then compare: both PASS
@@ -88,6 +88,15 @@
 #               EXC / TRAP, kick, order, the MARGIN lines (item 6 required),
 #               l3check.py fdd_rd (the dumps decode and equal TEST.ADF, the
 #               golden streams, the OSD), bench "=== PASS"
+#   akiko       fdd card, +SCENARIO=akiko +KEYS=sim/l3/keys/insert_df0.txt
+#               +FDD_DUMP=<run>/akiko, TICKDIV 643 from the scenario start:
+#               bfm_akiko block 0 (32 write + 32 read requests on cfide's
+#               amiga_* window) in the idle main loop, the key script, two
+#               track reads and block 1 from the first track DMA's start;
+#               checks as fdd_rd's (milestones, kick, order, MARGIN lines with
+#               item 6 required) and l3check.py akiko (every request's UART
+#               line = the pattern, every read 0, every request acked once,
+#               the DATA writes in hw.txt, the latency table, the track read)
 # Logs in the run directory: tb_<scenario>_x<EXTRA_WS>_s<SLAT>_j<SJIT>.log,
 # spi.txt, spi_t.txt (frames with cycles, not compared), hw.txt and uart.txt
 # (sim/common/hostmon.vh +HW_LOG / +UART_LOG, for diff; hw.txt's MEM lines
@@ -149,6 +158,7 @@ MARGIN_REQ_boot="1:stale_acks 4:paula_cs_release 4:userio_cs_release 4:paula_wor
 MARGIN_REQ_boot_short="1:stale_acks 4:userio_cs_release 4:userio_byte_spacing 5:spi_write_busy"
 MARGIN_REQ_keys=$MARGIN_REQ_boot
 MARGIN_REQ_fdd_rd="$MARGIN_REQ_boot 6:fdd_fifo_empty_dma"
+MARGIN_REQ_akiko=$MARGIN_REQ_fdd_rd
 
 # cycles per scenario (clk_114): 1.5 x the measured end event (README "boot",
 # Verilator 2026-10-19: RV boot 158,155,012, boot_short 57,659,090; 832
@@ -160,11 +170,13 @@ if [ "$CPU" = 832 ]; then
 	L3_SHORT_TO=${L3_SHORT_TO:-111800000}
 	L3_KEYS_TO=${L3_KEYS_TO:-321300000}
 	L3_FDD_TO=${L3_FDD_TO:-660000000}
+	L3_AKIKO_TO=${L3_AKIKO_TO:-700000000}
 else
 	L3_BOOT_TO=${L3_BOOT_TO:-237300000}
 	L3_SHORT_TO=${L3_SHORT_TO:-86500000}
 	L3_KEYS_TO=${L3_KEYS_TO:-247400000}
 	L3_FDD_TO=${L3_FDD_TO:-580000000}
+	L3_AKIKO_TO=${L3_AKIKO_TO:-520000000}
 fi
 
 # shellcheck source=../common/hostsim.sh
@@ -347,7 +359,7 @@ setup() {
 	# the card of the scenario (sim/l3/card): fdd_rd the fdd card, the others
 	# boot (CARDNAME: also milestones()'s "CARD=<card>" lines)
 	CARDNAME=boot
-	[ "${SCEN:-}" = fdd_rd ] && CARDNAME=fdd
+	{ [ "${SCEN:-}" = fdd_rd ] || [ "${SCEN:-}" = akiko ]; } && CARDNAME=fdd
 	make -s -C "$HERE/card" "$CARDNAME" B="$run/card" FWRV="$FWBIN" "${mk[@]}" > "$run/make_card.log" 2>&1 \
 		|| { tail -20 "$run/make_card.log"; die "make the $CARDNAME card ($run/make_card.log)"; }
 	CARD="$run/card/$CARDNAME.img"
@@ -379,7 +391,7 @@ build() {
 		hs_verilate "$run" tb_l3 "-DL3_GHDL -D$def" \
 			"$d/bridge.v" "$d/cfide.v" "${cpuv[@]}" src/hostcache.v src/dpram_inf_generic.v \
 			"$L2/sdram_host_model.v" "$ROOT/sim/common/sd_spi_model.v" $i2c \
-			"${mm[@]}" "$HERE/bfm_audio.v" "$HERE/bfm_keys.v" "$HERE/bfm_floppy.v" "$HERE/rtc_model.v" "$HERE/tb_l3.v"
+			"${mm[@]}" "$HERE/bfm_audio.v" "$HERE/bfm_keys.v" "$HERE/bfm_floppy.v" "$HERE/bfm_akiko.v" "$HERE/rtc_model.v" "$HERE/tb_l3.v"
 	else
 		X xvlog -sv $I2C_V
 		X xvhdl src/cfide.vhd
@@ -395,7 +407,7 @@ build() {
 		X xvlog --relax -i "$MM_INC" -i "$ROOT/rtl/minimig" "${mm[@]}"
 		X xvlog -d "$def" -i "$ROOT/sim/common" -i "$HERE" \
 			"$L2/sdram_host_model.v" "$ROOT/sim/common/sd_spi_model.v" "$HERE/bfm_audio.v" \
-			"$HERE/bfm_keys.v" "$HERE/bfm_floppy.v" "$HERE/rtc_model.v" "$HERE/tb_l3.v"
+			"$HERE/bfm_keys.v" "$HERE/bfm_floppy.v" "$HERE/bfm_akiko.v" "$HERE/rtc_model.v" "$HERE/tb_l3.v"
 		hs_xsim_build "$run" "$snap" "$XW" tb_l3
 	fi
 }
@@ -463,6 +475,9 @@ scenario() {
 		fdd_rd) to=${TIMEOUT:-$L3_FDD_TO}
 			pa=("KEYS=$(realpath -m -- "${KEYS:-$HERE/keys/insert_df0.txt}")" "TICKDIV=643" "TICKDIV_AT=scenario"
 			    "FDD_DUMP=$run/fdd_rd") ;;
+		akiko) to=${TIMEOUT:-$L3_AKIKO_TO}
+			pa=("KEYS=$(realpath -m -- "${KEYS:-$HERE/keys/insert_df0.txt}")" "TICKDIV=643" "TICKDIV_AT=scenario"
+			    "FDD_DUMP=$run/akiko") ;;
 		*) die "unknown scenario $s" ;;
 	esac
 	if git -C "$ROOT" diff --quiet HEAD -- "${ROM#$ROOT/}"; then st="unmodified (= git HEAD)"; else st="BAD  MODIFIED against git HEAD"; fi
@@ -494,14 +509,14 @@ scenario() {
 	local secs=$((SECONDS - t0))
 	python3 -I "$L2/spitrace.py" summary "$run/spi.txt" > "$run/spi_summary.txt" 2>&1
 	{
-		grep -E '^=== (BOOT|MAIN|END|STATS|HW accesses|cycle limit|HandleFpga|SPI frames|OSD GAP|OSD EARLY|OSD REPLY|STACK|RTC|KICK|MARGIN|KEYS script|FDD)' "$log"
+		grep -E '^=== (BOOT|MAIN|END|STATS|HW accesses|cycle limit|HandleFpga|SPI frames|OSD GAP|OSD EARLY|OSD REPLY|STACK|RTC|KICK|MARGIN|KEYS script|FDD|AKIKO block)' "$log"
 		grep -E '^BENCH ERROR' "$log" | sed 's/^/BAD  /'
 		margins "$s" "$log"
 		grep -q '^SD: image .* loaded' "$log" || echo "BAD  the SD model did not load $CARD"
 		milestones "$s" "$log"
 		grep -E '^UART: .*(EXC |TRAP )' "$log" | sed 's/^/BAD  /'
 		l3_check memhash "$run/memhash.txt" '^PASS memhash: ' python3 -I "$L3CHECK" memhash "$run"
-		if [ "$s" = boot ] || [ "$s" = keys ] || [ "$s" = fdd_rd ]; then
+		if [ "$s" = boot ] || [ "$s" = keys ] || [ "$s" = fdd_rd ] || [ "$s" = akiko ]; then
 			l3_check kick "$run/kick.txt" '^PASS kick: ' python3 -I "$L3CHECK" kick "$run"
 			l3_check order "$run/order.txt" '^PASS order: ' python3 -I "$L3CHECK" order "$run"
 		fi
@@ -513,6 +528,10 @@ scenario() {
 		if [ "$s" = fdd_rd ]; then
 			l3_check fdd_rd "$run/fdd_rd.txt" '^PASS fdd_rd: ' python3 -I "$L3CHECK" fdd_rd "$run"
 			grep -E '^ok   ' "$run/fdd_rd.txt"
+		fi
+		if [ "$s" = akiko ]; then
+			l3_check akiko "$run/akiko.txt" '^PASS akiko: ' python3 -I "$L3CHECK" akiko "$run"
+			grep -E '^ok   ' "$run/akiko.txt"
 		fi
 		if grep -q '^=== PASS' "$log"; then echo "ok   bench verdict: === PASS"
 		else echo "BAD  bench verdict: $(grep -m1 -E '^=== (PASS|FAIL)' "$log" || echo none) ($log)"; fi
@@ -588,7 +607,7 @@ case "${1:-}" in
 		echo "=== xpair $2 FAILED (runs $r1 / $r2, compare $rc)"
 		exit 1
 		;;
-	boot|boot_short|keys|fdd_rd)
+	boot|boot_short|keys|fdd_rd|akiko)
 		SCEN=$1
 		[ "${NOKICK:-0}" = 1 ] && [ "$1" != boot ] && die "NOKICK=1 is for boot only"
 		setup

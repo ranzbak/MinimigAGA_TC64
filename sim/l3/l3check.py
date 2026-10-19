@@ -7,6 +7,7 @@
     python3 -I l3check.py memhash <run>
     python3 -I l3check.py keys <run>
     python3 -I l3check.py fdd_rd <run>
+    python3 -I l3check.py akiko <run>
 
 kick: the 256 KB kickstart the firmware uploaded equals the card's KICK.ROM
 byte for byte.  UploadKickstart (fw/ctrl_rv/config.c) sends a 0x40000-byte
@@ -94,6 +95,34 @@ and the OSD and UART:
     then an OSD row 0 "df0: TEST" (keys/insert_df0.txt: sounds on, TEST.ADF
     in df0), decoded as spitrace.py osd
   - no UART line with "Illegal track", "Fatal" or "Wrong header"
+
+akiko (scenario akiko): the host's Akiko request service, served from
+cfide's amiga_* window by bfm_akiko.v (README "akiko").  The firmware's
+akiko_inthandler (fw/ctrl_rv/akiko.c) is a logging stub: it prints one UART
+line per request and answers DATA = 0 (the ack); there is no C2P in the host
+path (the C2P is rtl/minimig/akiko.v, Amiga side; the virtual top ties the
+host path off).  From the run log's "=== AKIKO req <b> <k> <W|R> ..." lines,
+the "UART: Akiko ..." lines, <run>/hw.txt and the track dumps:
+  - 128 requests, 2 blocks of 32 writes then 32 reads, in order (none lost,
+    none repeated); addr 0x20 + 0x80 b + i, write data ((i + 1) * 0x9E37) &
+    0xFFFF (xor 0xC3A5 in block 1: the pattern is computed here, not read
+    from the bench); every ack came (lat > 0), every read returned 0
+  - the UART shows exactly those requests as the firmware prints them, in
+    order, one line each: "Akiko write: <0xC000 | addr>, <data>" and
+    "Akiko read: <0x8000 | addr>" (hex, upper case on both CPUs: lib832's %x
+    prints A-F in upper case), nothing else mentioning Akiko
+  - hw.txt has exactly 128 writes of 0 to the Akiko DATA register (ffff84):
+    one ack each
+  - block 1 starts while a track DMA is in progress and at least 16 of its
+    requests are acked inside the DMA (the log's "dma 1"); the two track
+    reads (cylinder 0 and 1, head 0) decode to TEST.ADF as in fdd_rd
+  - the OSD of fdd_rd (no page before the first key, none after the first
+    track DMA, "Floppy disk sounds : on", "df0: TEST"); no UART line with
+    "Illegal track", "Fatal" or "Wrong header"
+It prints the latency table (amiga_req rise to amiga_ack in clk_114 cycles,
+per block and request type: n, min, median = the middle of the sorted
+values, max; and the ack to the host's EnableInterrupts write, the window in
+which a new request would set no interrupt).
 
 Each prints one line, "PASS <name>: ..." (exit 0) or "FAIL <name>: ..."
 (exit 1); exit 2 on a usage error.  Python 3 standard library only.
@@ -525,6 +554,43 @@ def fdd_track(mfm, adf, cyl, head, dump):
     return bad, found
 
 
+def fdd_osd(lines, run, bad, notes):
+    """the OSD pages of keys/insert_df0.txt around the first track DMA
+    (fdd_rd and akiko): problems into bad, notes into notes"""
+    sys.path.insert(0, L2)
+    import spitrace
+    if not os.path.isfile(os.path.join(run, "spi_t.txt")):
+        bad.append("no spi_t.txt in %s" % run)
+        return
+    frames = frames_t(os.path.join(run, "spi_t.txt"))
+    evs = [int(m.group(1)) for m in (re.match(r"=== KEYS ev \d+ [0-9a-f]{2} at cycle (\d+)$", l) for l in lines) if m]
+    dma0 = next((int(m.group(1)) for m in (re.match(r"=== FDD dma 1 cylinder \d+ head \d+: \d+ words, sync [0-9a-f]+, from cycle (\d+)$", l)
+                                           for l in lines) if m), None)
+    if not evs or dma0 is None:
+        bad.append("no key event or no first track DMA in the run log")
+    else:
+        glyphs = spitrace.load_charrom(spitrace.CHARROM)
+        osd = [(t0, spitrace.osd_line(mosi, glyphs)) for t0, _, cs, mosi, _ in frames
+               if cs == 0x20 and mosi and mosi[0] == 0x0C]
+        early = [t0 for t0, _ in osd if t0 < evs[0]]
+        late = [t0 for t0, _ in osd if t0 > dma0]
+        if early:
+            bad.append("%d OSD_CMD_OSD_WR frame(s) before the first key (an error page?), the first at cycle %d"
+                       % (len(early), early[0]))
+        if late:
+            bad.append("%d OSD_CMD_OSD_WR frame(s) after the first track DMA started (cycle %d), the first at cycle %d"
+                       % (len(late), dma0, late[0]))
+        snd = next((t0 for t0, (row, text) in osd if row == 3 and "Floppy disk sounds : on" in text), None)
+        ins = next((t0 for t0, (row, text) in osd
+                    if row == 0 and re.search(r"df0: TEST\b", text) and snd is not None and t0 > snd), None)
+        if snd is None:
+            bad.append("no OSD row 3 'Floppy disk sounds : on' (the drive sounds were not turned on)")
+        elif ins is None:
+            bad.append("no OSD row 0 'df0: TEST' after the sounds were turned on (TEST.ADF not in df0)")
+        else:
+            notes.append("OSD: 'Floppy disk sounds : on' at cycle %d, 'df0: TEST' at cycle %d" % (snd, ins))
+
+
 def fdd_rd(run):
     sys.path.insert(0, L2)
     import spitrace
@@ -588,33 +654,7 @@ def fdd_rd(run):
         if len(bad) == nbad:
             notes.append(note)
     # OSD and UART
-    frames = frames_t(os.path.join(run, "spi_t.txt"))
-    evs = [int(m.group(1)) for m in (re.match(r"=== KEYS ev \d+ [0-9a-f]{2} at cycle (\d+)$", l) for l in lines) if m]
-    dma0 = next((int(m.group(1)) for m in (re.match(r"=== FDD dma 1 cylinder \d+ head \d+: \d+ words, sync [0-9a-f]+, from cycle (\d+)$", l)
-                                           for l in lines) if m), None)
-    if not evs or dma0 is None:
-        bad.append("no key event or no first track DMA in %s" % log)
-    else:
-        glyphs = spitrace.load_charrom(spitrace.CHARROM)
-        osd = [(t0, spitrace.osd_line(mosi, glyphs)) for t0, _, cs, mosi, _ in frames
-               if cs == 0x20 and mosi and mosi[0] == 0x0C]
-        early = [t0 for t0, _ in osd if t0 < evs[0]]
-        late = [t0 for t0, _ in osd if t0 > dma0]
-        if early:
-            bad.append("%d OSD_CMD_OSD_WR frame(s) before the first key (an error page?), the first at cycle %d"
-                       % (len(early), early[0]))
-        if late:
-            bad.append("%d OSD_CMD_OSD_WR frame(s) after the first track DMA started (cycle %d), the first at cycle %d"
-                       % (len(late), dma0, late[0]))
-        snd = next((t0 for t0, (row, text) in osd if row == 3 and "Floppy disk sounds : on" in text), None)
-        ins = next((t0 for t0, (row, text) in osd
-                    if row == 0 and re.search(r"df0: TEST\b", text) and snd is not None and t0 > snd), None)
-        if snd is None:
-            bad.append("no OSD row 3 'Floppy disk sounds : on' (the drive sounds were not turned on)")
-        elif ins is None:
-            bad.append("no OSD row 0 'df0: TEST' after the sounds were turned on (TEST.ADF not in df0)")
-        else:
-            notes.append("OSD: 'Floppy disk sounds : on' at cycle %d, 'df0: TEST' at cycle %d" % (snd, ins))
+    fdd_osd(lines, run, bad, notes)
     for line in lines:
         if line.startswith("UART: ") and re.search(r"Illegal track|Fatal|Wrong header", line):
             bad.append("UART: %s" % line[6:])
@@ -628,6 +668,141 @@ def fdd_rd(run):
     print("PASS fdd_rd: %d track reads of %d words, %d sectors = TEST.ADF, %d streams = mfm.py's read_track, "
           "%d of the %d golden tracks (0/0, 79/1) = gold/mfm_c*.hex; drive sounds on and df0: TEST on the OSD"
           % (len(dmas), FDD_WORDS, nsec, nstream, ngold, len(FDD_GOLDEN)))
+    return 0
+
+
+AKI_N = 32
+AKI_DATA_REG = "ffff84"          # 0xFFFFFF84: the Akiko DATA register (hw.txt prints the low 24 bits)
+
+
+def aki_pattern(b, i):
+    """the bench's request pattern (bfm_akiko.v): (addr, data) of write i /
+    the addr of read i of block b"""
+    return 0x20 + 0x80 * b + i, (((i + 1) * 0x9E37) & 0xFFFF) ^ (0xC3A5 if b == 1 else 0)
+
+
+def aki_expected(b, k, upper):
+    """(kind, addr, data, UART text) of request k (0..63) of block b"""
+    fmt = "%X" if upper else "%x"
+    if k < AKI_N:
+        addr, data = aki_pattern(b, k)
+        return "W", addr, data, ("Akiko write: " + fmt + ", " + fmt) % (0xC000 | addr, data)
+    addr, _ = aki_pattern(b, k - AKI_N)
+    return "R", addr, 0, ("Akiko read: " + fmt) % (0x8000 | addr)
+
+
+def stats(v):
+    v = sorted(v)
+    return "n %d min %d median %d max %d" % (len(v), v[0], v[len(v) // 2], v[-1]) if v else "n 0"
+
+
+def akiko(run):
+    got = run_log(run, "akiko")
+    if got is None:
+        return 1
+    log, lines = got
+    bad, notes = [], []
+    # both firmwares print upper-case hex: the 832's source says %x, but lib832's
+    # printf prints A-F in upper case (run p4t18c3)
+    upper = True
+    # the bench's requests
+    reqs = []
+    for l in lines:
+        m = re.match(r"=== AKIKO req (\d+) (\d+) ([WR]) addr ([0-9a-f]{2}) d ([0-9a-f]{4}) q ([0-9a-fx]{4}) "
+                     r"req (\d+) ack (\d+) lat (-?\d+) rearm (-?\d+) dma ([01])$", l)
+        if m:
+            reqs.append((int(m.group(1)), int(m.group(2)), m.group(3), int(m.group(4), 16), int(m.group(5), 16),
+                         m.group(6), int(m.group(7)), int(m.group(8)), int(m.group(9)), int(m.group(10)), int(m.group(11))))
+    want = [(b, k) for b in (0, 1) for k in range(2 * AKI_N)]
+    if [(r[0], r[1]) for r in reqs] != want:
+        bad.append("the requests in the log are %s ..., want blocks 0 and 1 of 64 in order (none lost, none repeated): %d found"
+                   % ([(r[0], r[1]) for r in reqs[:3]], len(reqs)))
+    exp_uart = []
+    for r in reqs:
+        b, k, kind, addr, data, q, t_req, t_ack, lat, rearm, dma = r
+        ekind, eaddr, edata, etext = aki_expected(b, k, upper)
+        if (kind, addr) != (ekind, eaddr) or (kind == "W" and data != edata):
+            bad.append("request %d/%d: %s addr %02x data %04x, want %s addr %02x data %04x"
+                       % (b, k, kind, addr, data, ekind, eaddr, edata if kind == "W" else 0))
+        if q != "0000":
+            bad.append("request %d/%d: the answer (amiga_q) is %s, the host answers 0" % (b, k, q))
+        if lat <= 0 or t_ack <= t_req:
+            bad.append("request %d/%d: not acked (lat %d)" % (b, k, lat))
+        if rearm <= 0:
+            bad.append("request %d/%d: no EnableInterrupts after the ack (rearm %d)" % (b, k, rearm))
+        exp_uart.append(etext)
+    # the UART, as the firmware prints the requests
+    # (a line may start with earlier text that ended in \r, not \n: from "Akiko" on)
+    uart = [l[l.index("Akiko"):] for l in lines if l.startswith("UART: ") and "Akiko" in l]
+    if uart != exp_uart:
+        i = first_diff(uart, exp_uart)
+        bad.append("the UART Akiko lines differ from the pattern at line %d (of %d, want %d): got %r, want %r"
+                   % (i, len(uart), len(exp_uart), uart[i] if i < len(uart) else None,
+                      exp_uart[i] if i < len(exp_uart) else None))
+    # one DATA write (the ack) per request
+    hw = os.path.join(run, "hw.txt")
+    nw = 0
+    if os.path.isfile(hw):
+        with open(hw) as f:
+            for l in f:
+                w = l.split()
+                if len(w) == 4 and w[2] == AKI_DATA_REG:
+                    nw += 1
+                    if int(w[3], 16) != 0:
+                        bad.append("hw.txt: Akiko DATA written with %s (want 0): %s" % (w[3], l.strip()))
+        if nw != 2 * 2 * AKI_N:
+            bad.append("hw.txt: %d Akiko DATA writes, want %d (one ack per request)" % (nw, 4 * AKI_N))
+    else:
+        bad.append("no %s" % hw)
+    # block 1 inside the track DMA
+    b1 = [r for r in reqs if r[0] == 1]
+    ndma = sum(r[10] for r in b1)
+    if b1 and (b1[0][10] != 1 or ndma < 16):
+        bad.append("block 1: first request in the DMA %d, %d of %d requests acked inside it (want the first and >= 16)"
+                   % (b1[0][10], ndma, len(b1)))
+    # the two track reads
+    adf_path = os.path.join(run, "card", "content", "TEST.ADF")
+    if not os.path.isfile(adf_path):
+        bad.append("no %s" % adf_path)
+    else:
+        with open(adf_path, "rb") as f:
+            adf = f.read()
+        mfm = load_mfm()
+        dmas = [(int(m.group(2)), int(m.group(3)), int(m.group(4)))
+                for m in (re.match(r"=== FDD dma (\d+) cylinder (\d+) head (\d+): (\d+) words to blckint at cycle (\d+)", l)
+                          for l in lines) if m]
+        if [(c, h) for c, h, _ in dmas] != [(0, 0), (1, 0)] or any(n != FDD_WORDS for _, _, n in dmas):
+            bad.append("the track reads in the log are %s, want (0, 0) and (1, 0) of %d words" % (dmas, FDD_WORDS))
+        for cyl, head in ((0, 0), (1, 0)):
+            path = os.path.join(run, "akiko_%d_%d.hex" % (cyl, head))
+            if not os.path.isfile(path):
+                bad.append("no dump %s" % path)
+                continue
+            dump = read_hex(path)
+            tbad, found = fdd_track(mfm, adf, cyl, head, dump)
+            bad += ["track %d/%d: %s" % (cyl, head, b) for b in tbad]
+            if not tbad:
+                notes.append("track %d/%d read during the Akiko traffic: %d sectors decode = TEST.ADF" % (cyl, head, len(found)))
+    fdd_osd(lines, run, bad, notes)
+    for line in lines:
+        if line.startswith("UART: ") and re.search(r"Illegal track|Fatal|Wrong header", line):
+            bad.append("UART: %s" % line[6:])
+    # the latency table
+    for b in (0, 1):
+        for kind, name in (("W", "write"), ("R", "read")):
+            sel = [r for r in reqs if r[0] == b and r[2] == kind]
+            notes.append("LAT block %d %-5s amiga_req to amiga_ack (clk_114): %s; ack to EnableInterrupts: %s"
+                         % (b, name, stats([r[8] for r in sel]), stats([r[9] for r in sel])))
+    notes.append("block 1: %d of %d requests acked inside the track DMA" % (ndma, len(b1)))
+    for n in notes:
+        print("ok   " + n)
+    for b in bad:
+        print("BAD  " + b)
+    if bad:
+        print("FAIL akiko: %d problem(s) (the BAD lines)" % len(bad))
+        return 1
+    print("PASS akiko: %d requests in 2 blocks, every UART line = the pattern, every read 0, %d DATA writes = %d acks, "
+          "%d of block 1 inside the track DMA" % (len(reqs), nw, len(reqs), ndma))
     return 0
 
 
@@ -646,6 +821,8 @@ def main(argv):
         return keys(argv[2])
     if len(argv) == 3 and argv[1] == "fdd_rd":
         return fdd_rd(argv[2])
+    if len(argv) == 3 and argv[1] == "akiko":
+        return akiko(argv[2])
     sys.stderr.write(__doc__)
     return 2
 

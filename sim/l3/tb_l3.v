@@ -205,6 +205,9 @@ module tb_l3 #(
   wire        scandoubler, audio_ena, audio_clear;
   wire [15:0] aud_addr;
   reg         tick = 1'b1;       // cfide tick_in (tick generator below)
+  wire [7:0]  aki_addr;          // cfide's Akiko request window, from bfm_akiko (scenario akiko; idle otherwise)
+  wire [15:0] aki_d, aki_q;
+  wire        aki_req, aki_wr, aki_ack;
   wire [1:0]  osd_rx_seq;        // userio_osd's reply sequence -> cfide HOST_REQ (minimig_virtual_top)
 
   // The generics below are the only copy: run.sh reads them from this
@@ -227,8 +230,8 @@ module tb_l3 #(
     .audio_buf(aud_addr[15]), .audio_amiga(1'b0), .vbl_int(1'b0), .interrupt(cfide_int),
     .irq_src(12'h000),
     .c64_keys(64'hFFFFFFFFFFFFFFFF), .amiga_key(), .amiga_key_stb(),
-    .amiga_addr(8'h00), .amiga_d(16'h0000), .amiga_q(),
-    .amiga_req(1'b0), .amiga_wr(1'b0), .amiga_ack(),
+    .amiga_addr(aki_addr), .amiga_d(aki_d), .amiga_q(aki_q),
+    .amiga_req(aki_req), .amiga_wr(aki_wr), .amiga_ack(aki_ack),
     .rtc_q(),
     .scl_i(1'b1), .scl_o(), .scl_t(), .sda_i(1'b1), .sda_o(), .sda_t(),
     .i2c_ext_int(1'b0),
@@ -355,6 +358,16 @@ module tb_l3 #(
     .hdd_data_wr(hdd_data_wr), .hdd_data_rd(hdd_data_rd),
     .hdd_port(hdd_port), .hdd_xfer_wr(hdd_xfer_wr), .hdd_regs_rd(hdd_regs_rd),
     .hd_fwr(), .hd_frd()
+  );
+
+  // the Amiga side of the Akiko request window (scenario akiko).  ena_wr: a
+  // completed write with bit 0 set to the INTERRUPT window (0xFFFFFFA0), the
+  // firmware's EnableInterrupts (bfm_akiko.v)
+  bfm_akiko aki (
+    .clk28(clk28), .clk114(clk114), .cyc(cyc),
+    .ena_wr(hw_req && hw_ack && host_we && hostaddr[23] && hostaddr[7:4] == 4'hA && hostWR[0]),
+    .busy(fdd.dma_busy),
+    .addr(aki_addr), .d(aki_d), .wr(aki_wr), .req(aki_req), .q(aki_q), .ack(aki_ack)
   );
 
   // ------------------------------------------------------------- OSD keys
@@ -589,7 +602,7 @@ module tb_l3 #(
     wait (run_end);
     #1;   // the end-of-run counters after the last edge's updates, in every simulator
     if (uart_n) uart_print;
-    errors = errors + ram.errors + keys.errors + fdd.errors;
+    errors = errors + ram.errors + keys.errors + fdd.errors + aki.errors;
     hm_final_hw;
     card.save_image;
 `ifdef RV_HOSTCPU_STATS
