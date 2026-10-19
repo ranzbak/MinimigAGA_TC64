@@ -33,9 +33,11 @@ Exit status: 0 = every milestone found (check), 1 = not, 2 = usage.
 norm: one normalised stream of a run, in frame order, one item per line
 "<STREAM> <text>" (STREAM = SPI, SD, OSD, HW, UART), for diff:
   - the poll frames, whose number depends on the CPU's speed, are dropped:
-    FPGA status frames (10, six 00 bytes) whose status byte (MISO 0) has no
-    request (bits 3..0 = 0: no track read / write, no IDE command / data;
-    HandleFpga), the FPGA drive-status frames (10 10 <s>: UpdateDriveStatus
+    FPGA status frames (10, six 00 bytes) without a request (MISO 0 bits
+    3..0 = 0: no track read / write, no IDE command / data) whose MISO
+    equals the previous status frame's: HandleFDD also acts on the other
+    bytes (drive count, track, motor: fdd.c), so a changed one is kept,
+    and a request is always kept; the FPGA drive-status frames (10 10 <s>: UpdateDriveStatus
     after every HandleFpga) whose <s> equals the previous one, OSD_CMD_READ
     frames (20 00) whose level (MISO) equals the previous one, OSD_CMD_KEYQ
     frames (20 98) whose status byte (MISO 1) is 00 (no event, no
@@ -60,6 +62,8 @@ norm: one normalised stream of a run, in frame order, one item per line
   - then the rules of <expected_diff.txt> (below), in file order
   - last, one "# rule <line> used <n>: <rule>" line per rule ('#' lines are
     not compared) and a "# dropped ..." count line
+Every file is read as latin-1 (byte for byte: a UART byte >= 0x80 stays
+itself) and norm writes latin-1.
 <card image> (the run's card/boot.img) is needed by SDFILE rules: the FAT16
 file's clusters are read from it.
 
@@ -101,7 +105,7 @@ from collections import Counter
 
 def read_frames(path):
     frames = []
-    with open(path) as f:
+    with open(path, encoding="latin-1") as f:
         for n, line in enumerate(f, 1):
             line = line.strip()
             if not line:
@@ -192,7 +196,7 @@ def summary(path):
 
 def uart_lines(path):
     lines = []
-    with open(path, errors="replace") as f:
+    with open(path, encoding="latin-1") as f:
         for line in f:
             if line.startswith("UART: "):
                 lines.append(line[len("UART: "):].rstrip("\n"))
@@ -206,7 +210,7 @@ def check(mpath, logpath, spipath):
     fpos = 0             # next frame
     bad = 0
     nm = 0
-    with open(mpath) as f:
+    with open(mpath, encoding="latin-1") as f:
         for n, raw in enumerate(f, 1):
             line = raw.rstrip("\n")
             if not line.strip() or line.lstrip().startswith("#"):
@@ -268,7 +272,7 @@ def load_charrom(path):
     """charfont[256][8] of charrom.h -> {8 column bytes: character}; of
     several codes with the same glyph the printable one (the space for the
     empty glyph) wins, else the lowest code"""
-    with open(path) as f:
+    with open(path, encoding="latin-1") as f:
         text = f.read()
     k = text.find("charfont[256][8]")
     if k < 0:
@@ -418,7 +422,7 @@ class Rule:
 
 def read_rules(path):
     rules, comment = [], None
-    with open(path) as f:
+    with open(path, encoding="latin-1") as f:
         for n, raw in enumerate(f, 1):
             line = raw.rstrip("\n")
             if not line.strip():
@@ -441,7 +445,7 @@ def read_rules(path):
 def read_events(path, kind):
     """hw.txt / uart.txt lines -> [(frames, ev, text)], MEM lines -> [text]"""
     ev, mem = [], []
-    with open(path, errors="replace") as f:
+    with open(path, encoding="latin-1") as f:
         for n, raw in enumerate(f, 1):
             line = raw.rstrip("\n")
             if kind == "hw" and line.startswith("MEM "):
@@ -574,13 +578,15 @@ def norm(spi, hw, uart, rules_path, card_path, charrom):
     for fr, ev, text in uart_ev:
         items.append(((fr, 0, ev), "uart", text, None))
     drop = Counter()
-    prev_read = prev_uds = None
+    prev_read = prev_uds = prev_status = None
     st = {}
     for i, (cs, out, inp) in enumerate(frames):
         key = (i, 1, 0)
-        if cs == 0x10 and len(out) == 6 and not any(out) and inp[0] & 0x0F == 0:
-            drop["status"] += 1
-            continue
+        if cs == 0x10 and len(out) == 6 and not any(out):
+            if inp[0] & 0x0F == 0 and tuple(inp) == prev_status:
+                drop["status"] += 1
+                continue
+            prev_status = tuple(inp)
         if cs == 0x10 and len(out) == 2 and out[0] == 0x10:
             if out[1] == prev_uds:
                 drop["drivestatus"] += 1
@@ -683,7 +689,7 @@ def norm(spi, hw, uart, rules_path, card_path, charrom):
 
 def read_norm(path):
     body, rules = [], []
-    with open(path, errors="replace") as f:
+    with open(path, encoding="latin-1") as f:
         for line in f:
             if line.startswith("#"):
                 m = re.match(r"# rule (\d+) used (\d+): (.*)$", line.rstrip("\n"))
@@ -740,6 +746,8 @@ def opt(args, name, default=None):
 
 
 def main(argv):
+    # the traces are latin-1 (byte for byte), and so is what norm / diff / osd print
+    sys.stdout.reconfigure(encoding="latin-1")
     if len(argv) >= 2 and argv[1] in ("norm", "diff", "osd"):
         args = argv[2:]
         if argv[1] == "norm":

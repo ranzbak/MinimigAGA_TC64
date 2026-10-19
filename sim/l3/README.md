@@ -474,13 +474,18 @@ only when it is empty. `norm` writes one stream in frame order,
 `<STREAM> <text>` per line:
 
 - **dropped poll frames** (their number depends on the CPU's speed):
-  FPGA status frames (`10` and six 00 bytes) whose status byte has no
-  request (bits 3..0: track read / write, IDE command / data), FPGA
+  FPGA status frames (`10` and six 00 bytes) without a request (MISO 0
+  bits 3..0: track read / write, IDE command / data) whose MISO bytes equal
+  the previous status frame's (HandleFDD also acts on the drive count,
+  track and motor bytes, so a frame where one changed is kept; a request
+  is always kept), FPGA
   drive-status frames (`10 10 <s>`, after every HandleFpga) whose `<s>`
   is the previous one's, `OSD_CMD_READ` (`20 00`) whose level is the
   previous one's, `OSD_CMD_KEYQ` (`20 98`) with status 00 (no event, no
   overflow), every RTC frame (`80`), the SD deselect clocks (cs `00`, all
-  MOSI ff). A request, a changed level or drive status, a queued key stays
+  MOSI ff). A request, a changed status frame, level or drive status, a
+  queued key stays. Every file is read as latin-1, byte for byte (a UART
+  byte >= 0x80 stays itself)
 - `SD CMD<n> <lba or arg> R<r1> [rd|wr <sha256 per block>]`: one line per
   card command (CMD8 / CMD58 with their response bytes, writes with the data
   response `D<xx>`)

@@ -21,6 +21,7 @@ set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../../.." && pwd)
 ST=${SPITRACE:-$ROOT/sim/host_bridge/spitrace.py}   # SPITRACE: another spitrace.py (the RED run)
+CHARROM="$ROOT/fw/ctrl_rv/charrom.h"
 OUT="$HERE/build/spitrace_test"
 rm -rf "$OUT"
 mkdir -p "$OUT/content" || exit 1
@@ -87,9 +88,11 @@ def polls(n):
     for _ in range(n):
         npoll += 1
         st = 0x11 if change == "status" and _ == 1 else 0x10
-        frame(0x10, [0] * 6, [st, 0x01, 0x44, 0x89, 0, 0])
+        trk = 0x02 if change == "track" and npoll == 3 else 0x01     # no request, track changed
+        mot = 0x01 if change == "motor" and npoll == 3 else 0x00     # no request, motor on
+        frame(0x10, [0] * 6, [st, trk, 0x44, 0x89, mot, 0])
         frame(0x10, [0x10, 0x01 if change == "uds" and npoll == 3 else 0x00], [0x10, 0x01])
-        frame(0x20, [0x00], [0x00])
+        frame(0x20, [0x00], [0x50 if change == "level" and npoll == 3 else 0x00])   # OSD_CMD_READ level
         frame(0x20, [0x98, 0xFF], [0x00, 0x00])
         frame(0x80, [0x92] + [0xFF] * 7, [0xFF, 0, 0, 0, 1, 4, 1, 0x26])
 def osd(row, text):
@@ -128,6 +131,7 @@ osd(0, "Minimig " + ("Lead" if change == "osd" else "Load"))
 polls(1 if b else 4)
 frame(0x20, [0x98, 0xFF, 0xFF], [0x00, 0x01, 0x46 if change == "keyq" else 0x45])
 say("Kickstart " + ("okay" if change == "uart" else "ok"))
+say("caf" + ("\xea" if change == "hibyte" else "\xe9"))           # a UART byte >= 0x80
 frame(0x20, [0x24, 0x06 if change == "pre" else 0x05], [0x00, 0x00])   # just before the block
 if b:                                     # a block only variant b has (DROPBLOCK)
     say("Overriding screenmode.")
@@ -139,7 +143,7 @@ say("Loading kickstart" + ("s" if change == "post" else ""))      # just after i
 polls(7 if b else 3)
 hw.append("MEM kickstart " + "ab" * 32)
 for name, lines in (("spi.txt", frames), ("hw.txt", hw), ("uart.txt", uart)):
-    with open(os.path.join(d, name), "w") as f:
+    with open(os.path.join(d, name), "w", encoding="latin-1") as f:
         f.write("".join(l + "\n" for l in lines))
 EOP
 }
@@ -166,7 +170,7 @@ bad=0
 pass() { echo "PASS $*"; }
 fail() { echo "FAIL $*"; bad=1; }
 norm() {   # norm <run dir> <rules> -> <run dir>/norm.txt
-	python3 -I "$ST" norm "$1/spi.txt" "$1/hw.txt" "$1/uart.txt" -r "$2" --card "$OUT/card.img" > "$1/norm.txt"
+	python3 -I "$ST" norm "$1/spi.txt" "$1/hw.txt" "$1/uart.txt" -r "$2" --card "$OUT/card.img" --charrom "$CHARROM" > "$1/norm.txt"
 }
 dodiff() { python3 -I "$ST" diff "$@" > "$OUT/diff.txt" 2>&1; }
 
@@ -181,21 +185,21 @@ import sys
 # a2: every poll frame repeated three times (the frames of polls())
 src, dst = sys.argv[1], sys.argv[2]
 poll = ("10 00 00 00 00 00 00 /", "10 10 00 /", "20 00 /", "20 98 ff /", "80 ")
-lines = open(src + "/spi.txt").read().splitlines()
+lines = open(src + "/spi.txt", encoding="latin-1").read().splitlines()
 out, idx = [], []
 for l in lines:
     idx.append(len(out))
     out += [l] * (3 if l.startswith(poll) else 1)
-open(dst + "/spi.txt", "w").write("".join(l + "\n" for l in out))
+open(dst + "/spi.txt", "w", encoding="latin-1").write("".join(l + "\n" for l in out))
 for name in ("hw.txt", "uart.txt"):
     res = []
-    for l in open(src + "/" + name).read().splitlines():
+    for l in open(src + "/" + name, encoding="latin-1").read().splitlines():
         w = l.split(" ", 1)
         if w[0].isdigit():
             n = int(w[0])
             l = "%d %s" % (idx[n] if n < len(idx) else len(out), w[1])
         res.append(l)
-    open(dst + "/" + name, "w").write("".join(l + "\n" for l in res))
+    open(dst + "/" + name, "w", encoding="latin-1").write("".join(l + "\n" for l in res))
 EOP
 norm "$OUT/a2" "$OUT/rules.txt"
 if [ "$(wc -l < "$OUT/a2/spi.txt")" -gt "$(wc -l < "$OUT/a/spi.txt")" ] && dodiff "$OUT/a/norm.txt" "$OUT/a2/norm.txt"; then
@@ -206,13 +210,14 @@ if dodiff "$OUT/a/norm.txt" "$OUT/b/norm.txt"; then
 else fail "(a) variant a vs b: $(head -20 "$OUT/diff.txt")"; fi
 # the poll frames really were dropped and the content kept
 if grep -q '^OSD 0 stripe=[0-9a-f]* Minimig Load$' "$OUT/b/norm.txt" && grep -q '^SD CMD17 FIRMWARE+00000000 .. R00$' "$OUT/b/norm.txt" \
-	&& ! grep -qE '^SPI (80|10 00 00 00 00 00 00 |20 98 ff / 00 00$)' "$OUT/b/norm.txt" \
+	&& ! grep -qE '^SPI (80|20 98 ff / 00 00$)' "$OUT/b/norm.txt" \
+	&& [ "$(grep -c '^SPI 10 00 00 00 00 00 00 / 10 01 44 89 00 00$' "$OUT/b/norm.txt")" = 1 ] \
 	&& [ "$(grep -c '^SPI 20 00 / 00$' "$OUT/b/norm.txt")" = 1 ] && [ "$(grep -c '^SPI 10 10 00 / 10 01$' "$OUT/b/norm.txt")" = 1 ]; then
 	pass "(a) norm: OSD text decoded, FIRMWARE run collapsed, poll frames dropped"
 else fail "(a) norm content: $(head -40 "$OUT/b/norm.txt")"; fi
 
 # (b) one content change against b: exactly one - line and one + line
-for ch in sd fpga osd hw uart keyq status uds desel pre post; do
+for ch in sd fpga osd hw uart keyq status uds desel pre post track motor level hibyte; do
 	gen "$OUT/b_$ch" b "$ch" || exit 1
 	norm "$OUT/b_$ch" "$OUT/rules.txt"
 	if dodiff "$OUT/b/norm.txt" "$OUT/b_$ch/norm.txt"; then fail "(b) $ch: the change is hidden (empty diff)"; continue; fi
@@ -220,12 +225,16 @@ for ch in sd fpga osd hw uart keyq status uds desel pre post; do
 	case "$ch" in
 		status) want='^\+SPI 10 00 00 00 00 00 00 / 11 ' ;;   # a request: kept, not a poll
 		uds) want='^\+SPI 10 10 01 / 10 01$' ;;               # a new drive status: kept
+		track) want='^\+SPI 10 00 00 00 00 00 00 / 10 02 44 89 00 00$' ;;   # no request, other track: kept
+		motor) want='^\+SPI 10 00 00 00 00 00 00 / 10 01 44 89 01 00$' ;;   # no request, motor on: kept
+		level) want='^\+SPI 20 00 / 50$' ;;                   # another key level: kept
+		hibyte) want=$'^\\+UART caf\xea$' ;;
 		desel) want='^\+SPI 00 fe / ff$' ;;                   # not deselect clocks: kept
 		pre) want='^\+SPI 20 24 06 / 00 00$' ;;
 		post) want='^\+UART Loading kickstarts$' ;;
 		*) want='^\+' ;;
 	esac
-	case "$ch" in status|uds|desel) one=1 ;; *) one=0 ;; esac
+	case "$ch" in status|uds|desel|track|motor|level) one=1 ;; *) one=0 ;; esac
 	if grep -qE "$want" "$OUT/diff.txt" && { [ "$one" = 1 ] || { [ "$m" = 1 ] && [ "$p" = 1 ]; }; }; then
 		pass "(b) $ch: $(grep -E '^\+[^+]' "$OUT/diff.txt" | head -1 | cut -c1-100)"
 	else fail "(b) $ch: $m - / $p + lines: $(cat "$OUT/diff.txt" | head -12)"; fi
@@ -272,7 +281,7 @@ else pass "a rule without a comment: refused ($(cut -c1-80 "$OUT/norm_err.txt"))
 
 # osd: the page text, as norm decodes it
 norm "$OUT/b" "$OUT/rules.txt"
-python3 -I "$ST" osd "$OUT/b/spi.txt" > "$OUT/osd.txt"
+python3 -I "$ST" osd "$OUT/b/spi.txt" --charrom "$CHARROM" > "$OUT/osd.txt"
 if [ "$(cat "$OUT/osd.txt")" = "$(printf -- '--- page 1\n0 stripe=%s Minimig Load' "$(sed -n 's/^OSD 0 stripe=\([0-9a-f]*\) .*/\1/p' "$OUT/b/norm.txt")")" ]; then
 	pass "osd: $(tail -1 "$OUT/osd.txt")"
 else fail "osd: $(cat "$OUT/osd.txt")"; fi
