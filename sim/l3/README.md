@@ -2,7 +2,7 @@
 
 Work in progress (Phase 4 of the OSD host CPU migration). This file grows
 with the bench; so far it has the sections "Bench", "Run", "boot",
-"832", "Differential", "keys", "fdd_rd", "Monitors" and "Cards".
+"832", "Differential", "keys", "fdd_rd", "hdd", "Monitors" and "Cards".
 
 ## Bench
 
@@ -21,6 +21,7 @@ the committed boot ROM and the real firmware from an SD card image:
 | reset | `minimig_syscontrol` (`mrst` = `usrrst`, `cnt` = sof); chipset reset = `sys_reset \| cpurst` | `rtl/minimig` |
 | audio ring | `bfm_audio.v`: the ring position, cfide `audio_buf` = bit 15 | `sim/l3` |
 | floppy's Amiga side | `bfm_floppy.v` (instance `fdd`): the CIA lines, Paula's disk registers and Agnus's disk DMA slots for paula_floppy (scenario `fdd_rd`, section "fdd_rd"; idle otherwise) | `sim/l3` |
+| Gayle's Amiga side | `bfm_ide.v` (instance `ide`): a 68k IDE driver on gayle's task file, data, INTENA / INTREQ registers, `irq` and `nrdy` (scenario `hdd`, section "hdd"; idle otherwise: every 68k input 0) | `sim/l3` |
 
 The wiring is that of `rtl/minimig/minimig.v` and
 `rtl/soc/minimig_virtual_top.v`: cfide's `sd_di` is the slaves' MISO
@@ -35,8 +36,8 @@ board's global include; `MINIMIG_HOST_DIRECT`: userio_osd's `host_cs` is
 constant 0, and the bench fails the run if it ever rises) with the board's
 `fpga/openaars/minimig_version.vh`.
 
-The Amiga side is idle outside `fdd_rd` and the key scripts: the floppy
-is deselected (`_sel` 1111, `_motor` 1), no register or Gayle access,
+The Amiga side is idle outside `fdd_rd`, `hdd` and the key scripts: the
+floppy is deselected (`_sel` 1111, `_motor` 1), no register or Gayle access,
 `osd_ctrl` 0, `in_diag` 0. The CPU's
 reset output follows its reset input, so the chipset reset is
 `sys_reset | cpurst`; sof is one clk7 cycle per PAL frame (`+SOF_CLK7`,
@@ -480,7 +481,11 @@ only when it is empty. `norm` writes one stream in frame order,
   bits 3..0: track read / write, IDE command / data) whose MISO bytes equal
   the previous status frame's (HandleFDD also acts on the drive count,
   track and motor bytes, so a frame where one changed is kept; a request
-  is always kept), FPGA
+  is always kept). After an IDE request frame (MISO 0 bits 3..2), a
+  frame without a request that equals it but for those two bits is a poll
+  too (`hdd`, runs `p4t15` / `p4t15c`): the firmware served the request,
+  and whether its wait loop polls once before the 68k has emptied or
+  filled the FIFO follows the CPU's speed (`# dropped ide_served`). FPGA
   drive-status frames (`10 10 <s>`, after every HandleFpga) whose `<s>`
   is the previous one's, `OSD_CMD_READ` (`20 00`) whose level is the
   previous one's, `OSD_CMD_KEYQ` (`20 98`) with status 00 (no event, no
@@ -588,6 +593,11 @@ defect, `findings/osd-riscv/phase4.md` "Findings for Paul") and the RV-only
 - `FLOAT hw ^ffff(60|90|a0)$`: a TIMER-driven I2C / keyboard group
 - `DROP hw ^MEM audio_ring`: the drive sounds' ring is rendered per
   TIMER count; `cdda` checks its ring with `l3check.py`
+
+`hdd` adds three UART rules (section "hdd"): `file: "%.8s.%.3s"`
+(`fmt_diff_expected.txt` lines 45-52), the index time `Hardfile indexed
+in <n> ms` (TIMER counts) and the 832's lone `-` of `Offset: %ld`
+(`fmt_diff_expected.txt` lines 144-145).
 
 The `boot`, `keys` and handshake pairs (`p4t7r2`/`p4t7c2`, `p4t8`/`p4t8c`,
 `p4t12`/`p4t12c`) still give an empty diff. `--unused-rules` lists two of
@@ -1027,6 +1037,246 @@ both CPUs the same frames. That is a bench change, and it needs new runs
 - the hw writes, with AUDIO deduplicated and the I2C / keyboard group
   floated
 
+## hdd
+
+`hdd` drives the hard disk path the way an Amiga IDE driver does, against
+the real `gayle` (both ports), `paula_floppy`'s HDD commands and direct
+mode, and the firmware's `hdd.c`. It boots the `hdd` card (the `boot` card
+plus `SYNTH.HDF` and `RDB.HDF`; section "Cards"). The card's configuration
+puts the two hardfiles on IDE port 0 (`$DA2000`):
+
+| Unit (`hdd.c` slot) | Drive | File | What |
+|---|---|---|---|
+| 0 | master | `RDB.HDF`, 4,096 blocks | a plain HDF with its own RDB (`rdb_Flags` 0x17): `hdd.c` patches block 0 for unit 0 only (`ATA_ReadSectors`: `rdb_Flags` 0x12, `rdb_ChkSum` + Flags - 0x12); CHS 16.4.63 |
+| 1 | slave | `SYNTH.HDF`, 8,192 blocks | no RDB: `FakeRDB` synthesises an RDSK (LBA 0) and a PART (LBA 1) in the first cylinder; CHS 257.1.32 (more than 255 cylinders); drive LBA = file block + 32 |
+
+(The plan's brief had the units the other way round. The own-RDB patch
+applies to unit 0 only, so `RDB.HDF` is hardfile 0: Task 3's card layout.)
+
+`bfm_ide.v` (instance `ide`) starts at the main-loop milestone, once the
+chipset reset is low. `minimig_syscontrol` holds it for four frames after
+userio_osd's `usrrst` falls, so the Amiga side is still in reset at the
+milestone (the plan starts RV 6.4 M, 832 2.9 M `clk_114` after it); a
+write then is lost, as on the Amiga (the first gate attempt, `p4t15c2`,
+wrote IDENTIFY into the reset and the firmware never saw a command).
+The plan (`plan_hdd` in `bfm_ide.v`; `HDD_PLAN` in `l3check.py`):
+
+| # | Command | Drive | CHS (LBA) | Count | What it checks |
+|---|---|---|---|---|---|
+| 1 | IDENTIFY DEVICE (EC) | slave | - | - | the 256 words = `fw/ctrl_rv/test/gold/identify.py` (HDF_SYNTHRDB, 257.1.32) |
+| 2 | READ SECTORS (20) | slave | 0/0/1 (0) | 2 | RDSK and PART = `gold/rdb.py` `rdsk` / `part` for 257.1.32 |
+| 3 | READ SECTORS | slave | 3/0/5 (100) | 64 | the file's blocks 68..131 |
+| 4 | SET MULTIPLE (C6) | slave | - | 16 | |
+| 5 | READ MULTIPLE (C4) | slave | 255/0/1 (8,160) | 64 | four DRQ blocks of 16, from cylinder 255 into 256 (the last cylinder: 64 sectors cannot start there) |
+| 6 | READ MULTIPLE | slave | 256/0/1 (8,192) | 32 | cylinder high = 1 |
+| 7 | WRITE SECTORS (30) | slave | 62/0/17 (2,000) | 64 | |
+| 8 | WRITE MULTIPLE (C5) | slave | 93/0/25 (3,000) | 32 | |
+| 9, 10 | READ SECTORS, READ MULTIPLE | slave | as 7, 8 | 64, 32 | the written data read back |
+| 11 | SET MULTIPLE | master | - | 16 | |
+| 12 | READ MULTIPLE | master | 0/0/1 (0) | 16 | block 0 patched, 1..15 unchanged (exec-3 tested the patch through READ SECTORS only) |
+
+Then the run's end saves the card (`+SD_SAVE=<run>/card_saved.img`).
+
+TIMER: `TICKDIV` 1. `hdd.c` is status-driven: every wait is on paula's
+request bits (`CMD_IDECMD`, `CMD_IDEDAT`). Its one TIMER user, in
+`OpenHardfile` (RV `hdd.c:932`, 832 `hdd.c:910`), bounds nothing: it
+measures `BuildHardfileIndex` for the UART line `Hardfile indexed in <n>
+ms`. The number is TIMER counts (one count = 256 `clk_28` at `TICKDIV` 1),
+so it follows the CPU's speed (an `expected_diff.txt` rule).
+
+The firmware ignores the LBA bit of the device / head register
+(`chs2lba` only), so `bfm_ide` addresses in CHS. `ata_cmd` converts an LBA
+with the drive's geometry (`g_heads`, `g_spt`), and `l3check.py` checks
+that IDENTIFY's words 1, 3 and 6 are that geometry.
+
+Found while reading `hdd.c` (both firmwares, not run): a READ / WRITE
+MULTIPLE before any SET MULTIPLE on that unit hangs the firmware.
+`sectors_per_block` starts at 0, so each DRQ block is 0 sectors and the
+loop never ends (ATA says abort). Every driver sends SET MULTIPLE first,
+and so does the plan (also for the master).
+
+### bfm_ide: the 68k side
+
+`bfm_ide.v` reuses `sim/gayle/gayle_tb.v`'s bus tasks by copy (`en`,
+`set_addr`, `bus_off`, `hwb`, `hww`, `hr`), on `clk_28` with the bench's
+`clk7_en`. A read is one clk7 cycle of address setup, the nrdy stall if
+any, and one with `rd`; a write is one clk7 cycle. The host side of ATA
+PIO, as `gayle_port.v` and `hdd.c` implement the device side:
+
+- PIO in (IDENTIFY, READ, READ MULTIPLE): per DRQ block, wait for the
+  interrupt (Gayle INTENA on, INTREQ cleared after each), read the status
+  (BSY 0, DRQ 1), read the block. A READ MULTIPLE block is 16 sectors
+  (4,096 words); a read of an empty FIFO is held by `nrdy` while the
+  firmware streams the block in direct mode.
+- PIO out (WRITE, WRITE MULTIPLE): the first block after polling the status
+  for DRQ (no interrupt, ATA), each later block and the end after an
+  interrupt.
+- No data (SET MULTIPLE): wait for the interrupt.
+- Every command ends with the status polled until BSY and DRQ are 0: it
+  must be 0x40, no ERR. Then the task file is read back for the log.
+
+Each command logs `=== IDE cmd <k> ...` and `=== IDE end <k> ...`
+(status, error, task file, words, the dump file, the waits) and writes its
+words to `<run>/hdd_<k>.hex` (16 words per line, `xxd -r -p` gives the
+bytes in the 68k's memory order). The write data is a pattern per sector:
+`W`, `S` (WRITE) or `M` (WRITE MULTIPLE), the LBA's two bytes, then
+`(LBA * 29 + j * 7 + 0x5A) & 255` for byte j (`l3check.py` `wpattern`).
+`atapi_packet` (PACKET with 6 command words, then the data-in phases with
+the device's byte count) is for the CD scenarios; `hdd` does not use it.
+
+### Checks
+
+`l3check.py hdd`:
+
+- the commands in the log are `HDD_PLAN`, in order; each ends with status
+  0x40 and error 0, has at least one wait (item 8), moved the words of its
+  kind, and left the task file `hdd.c` writes: the CHS of the last sector
+  for a read or write (its CHS advance, across cylinder 255 / 256 in
+  command 5), the host's own registers for IDENTIFY and SET MULTIPLE
+- IDENTIFY = `identify.py`'s stream. In the 68k's memory each ATA word is
+  little-endian: the firmware sends the low byte first, and the first byte
+  of a word lands in bits 15:8 (paula_floppy's shift register), as on an
+  Amiga's Gayle (IDE drivers swap the words)
+- every sector read = the drive: `SYNTH.HDF`'s blocks (tags `H` 2 n),
+  `rdb.py`'s RDSK and PART, zeros for the rest of the RDB cylinder; for
+  `RDB.HDF`, block 0 with `rdb_Flags` 0x12 and the checksum computed from
+  scratch with `rdb.py` (which must equal `hdd.c`'s incremental one), its
+  other blocks as on the card; a sector written earlier = the write
+  pattern. The files' tags are checked first
+- the WRITE dumps = the write pattern; `card_saved.img` holds each written
+  sector in `SYNTH.HDF`'s cluster for its block (`spitrace.py`'s `Card` on
+  `<run>/card/hdd.img`), and no other card sector differs from the card
+  the run booted
+
+Also, as `boot`: the milestones (`CARD=hdd` lines: both hardfiles found,
+their `OpenHardfile` lines, the IDE port frame `20 54 07`; the 832 prints
+`file: "8s.3s"`, `fmt_diff_expected.txt` lines 45-52), no `EXC` / `TRAP`,
+`kick`, `order`, memhash, every MARGIN line with item 3 required
+(`MARGIN_REQ_hdd`: the HDF sectors come in direct mode), bench `=== PASS`.
+
+Item 8, `=== MARGIN 8 ide_wait min <v> clk_114 (bound 0, rec) over <n>
+waits`: the 68k side's waits on the firmware, one per interrupt wait or
+BSY poll (from its start to the status read that met it) and one per data
+read held by `nrdy` (its stall). The flow control is status-driven, with no
+margin to violate (plan 7.1: latency only costs throughput), so the line is
+`rec`. Each `=== IDE end` line has the command's waits, min / median /
+max (the lower median) and the total.
+
+### Run
+
+Setup as in "Run" and "832". Both legs boot the same card (section
+"Differential"). From the repository root:
+
+```sh
+E832DIR=$PWD/EightThirtyTwo
+E832=$E832DIR/RTL
+FWD=$PWD/sim/l3/run_fw
+mkdir -p "$FWD/dateshim" "$FWD/fwrv"
+printf '%s\n' '#!/bin/sh' 'TZ=UTC exec /bin/date -d "${L3_DATE:-2026-01-01} 00:00:00" "$@"' > "$FWD/dateshim/date"
+chmod +x "$FWD/dateshim/date"
+PATH="$FWD/dateshim:$PATH" make -s -C fw/ctrl_rv B="$FWD/fwrv"
+make -C sim/l3/fw832 B="$FWD/fw832" E832DIR="$E832DIR"
+CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=hc FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh xpair hdd
+SIM=verilator RUNTAG=h FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh xpair hdd
+bash sim/l3/run.sh diff --unused-rules h hc
+bash sim/l3/run.sh diff hc hc_xr
+```
+
+(about 40 minutes for the RV pair and 55 for the 832 pair side by side.)
+The 832 pair's `compare` says DIFF: the EightThirtyTwo's random start
+moves its timing and so the poll counts (section "keys"); its twin is
+compared normalised, the last line, which must be empty. The data check
+alone, on a run directory:
+
+```sh
+python3 -I sim/l3/l3check.py hdd sim/l3/run_h
+```
+
+### Measured (2026-10-19, SLAT=8 SJIT=0, SCKDLY 1.5 / C28DLY 0.3, TICKDIV 1)
+
+| | RV (`p4t15`) | 832 (`p4t15c`) |
+|---|---|---|
+| main-loop milestone | 157,326,780 | 201,740,552 |
+| `bfm_ide` starts (chipset reset low) | 163,701,501 | 204,626,877 |
+| end event (the end of command 12) | 187,958,349 | 233,511,245 |
+| `l3check.py hdd` | PASS: 12 commands, 274 sectors read, 96 written and read back, on the saved card and nowhere else | the same |
+| item 3 `dmode_release` min | 20.8 over 271 direct transfers | 42.8 over 271 |
+| item 8 `ide_wait` | min 32.0 over 34,325 waits, `rec` | min 32.0 over 34,374 |
+| `OSD EARLY` / `OSD GAP` min | 0 of 1,232 / 63 | 0 of 260 / 254 |
+| wall time (Verilator, 3 to 5 runs on the machine) | 2,289 s | 3,217 s |
+
+`L3_HDD_TO` = 300,000,000 (RV, 1.5 x the 200 M estimate; the end came at
+188.0 M) and 350,000,000 (832, 1.5 x its end in `p4t15c3`, the same
+cycle as `p4t15c`).
+
+Item 8 per command (`clk_114`; waits = interrupt / poll / nrdy; min /
+median / max; the command's wall in cycles):
+
+| # | Command | RV waits | RV min / median / max | RV cycles | 832 waits | 832 min / median / max | 832 cycles |
+|---|---|---|---|---|---|---|---|
+| 1 | IDENTIFY | 1 / 1 / 0 | 32 / 32 / 60,464 | 69,024 | 1 / 1 / 0 | 32 / 32 / 76,928 | 85,488 |
+| 2 | READ 2 (RDB) | 2 / 1 / 0 | 32 / 55,296 / 66,192 | 138,288 | 2 / 1 / 0 | 32 / 94,512 / 106,032 | 217,344 |
+| 3 | READ 64 | 64 / 1 / 0 | 32 / 48,880 / 63,680 | 3,673,088 | 64 / 1 / 0 | 32 / 58,464 / 84,784 | 4,292,112 |
+| 4 | SET MULTIPLE 16 | 1 / 1 / 0 | 32 / 32 / 210,400 | 210,768 | 1 / 1 / 0 | 32 / 32 / 211,872 | 212,240 |
+| 5 | READ MULTIPLE 64 | 4 / 1 / 15,136 | 32 / 128 / 129,600 | 2,840,912 | 4 / 1 / 15,156 | 32 / 128 / 170,416 | 2,989,568 |
+| 6 | READ MULTIPLE 32 | 2 / 1 / 7,568 | 32 / 128 / 70,272 | 1,399,872 | 2 / 1 / 7,578 | 32 / 128 / 97,472 | 1,474,800 |
+| 7 | WRITE 64 | 64 / 2 / 0 | 32 / 98,768 / 160,928 | 6,666,752 | 64 / 2 / 0 | 32 / 128,544 / 209,200 | 8,611,776 |
+| 8 | WRITE MULTIPLE 32 | 2 / 2 / 0 | 32 / 12,736 / 1,502,720 | 3,148,512 | 2 / 2 / 0 | 32 / 23,200 / 1,978,576 | 4,111,296 |
+| 9 | READ 64 (back) | 64 / 1 / 0 | 32 / 48,864 / 66,800 | 3,674,816 | 64 / 1 / 0 | 32 / 58,560 / 91,856 | 4,305,296 |
+| 10 | READ MULTIPLE 32 (back) | 2 / 1 / 7,568 | 32 / 128 / 60,192 | 1,389,776 | 2 / 1 / 7,578 | 32 / 128 / 83,168 | 1,460,528 |
+| 11 | SET MULTIPLE 16 (master) | 1 / 1 / 0 | 32 / 32 / 217,872 | 218,240 | 1 / 1 / 0 | 32 / 32 / 219,680 | 220,048 |
+| 12 | READ MULTIPLE 16 (RDB.HDF) | 1 / 1 / 3,831 | 32 / 128 / 119,584 | 826,368 | 1 / 1 / 3,840 | 32 / 128 / 154,496 | 903,440 |
+
+32 is one status read (two clk7 cycles): the end-of-command poll that
+finds the drive ready at once. A READ waits once per sector for the
+firmware to send it (interrupt; median 49 k RV, 58 k 832: the card's
+read plus the firmware's turn-around), a READ MULTIPLE once per 16 sectors
+and then on `nrdy` for nearly every word (the 68k reads faster than
+direct mode delivers: 128, about one 16-bit SPI word at 6 `clk_114` a
+bit plus the read). A
+WRITE waits per sector for the firmware to read and write it (99 k / 129
+k); a WRITE MULTIPLE block of 16 sectors costs 1.5 M / 2.0 M. SET
+MULTIPLE's 210 k is the main loop's turn-around plus the `printf` of "Set
+Multiple Mode 16". Item 8 has no bound: these are throughput figures.
+
+XRAND: the first RV twin, `p4t15_xr` (seed 1,807,595,372), differed from
+`p4t15` in one frame. The first IDE command's register read (`10 80`,
+`spi.txt` line 6,593) returned gayle's never-written FIFO head word and
+features register (`2c bc`, `39` instead of 0); the ATA path does not use
+them, and everything else was SAME. `run.sh l3_pin_minimig` now also pins
+`gayle_port.v`'s task file and `gayle_fifo.v`'s buffer to 0 at time 0
+(`findings/osd-riscv/phase4.md`, "Found by the L3 bench (Task 15)"), and
+the twin `p4t15_xr2` (seed 1,512,261,430, `=== XRAND pinned 8217 regs`) is
+SAME as `p4t15` (log and 8,959 frames). The 832 twin `p4t15c_xr` (seed
+30,418,420) passes every check. From cycle 9.6 M on (a UART line 4,940
+cycles late) its timing differs, the EightThirtyTwo's random start
+(section "keys"), so the poll counts differ (100 frames fewer, the end
+at 236.1 M); its hw writes are the same, only their positions among the
+frames differ, the frames without the polls are identical, and `run.sh
+diff p4t15c p4t15c_xr` is empty.
+
+The differential (`run.sh diff p4t15 p4t15c`) is empty with three new
+rules of `expected_diff.txt` and one addition to the normaliser (section
+"Differential"):
+
+- `file: "%.8s.%.3s"` (`fmt_diff_expected.txt` lines 45-52): the 832
+  prints `file: "8s.3s"`
+- `Hardfile indexed in <n> ms`: TIMER counts, RV 289 / 539, 832 621 /
+  1,174 (`RDB.HDF` / `SYNTH.HDF`)
+- the 832's lone `-` (`fmt_diff_expected.txt` lines 144-145, `Offset: %ld`
+  with `SYNTH.HDF`'s offset -32: lib832's `sprintf` puts the sign on the
+  UART)
+- the normaliser drops the first polls after a served IDE request (a
+  status frame without a request equal to the request frame but for its
+  IDE bits): the RV polled three times before the 68k had emptied or
+  filled the FIFO, where the 832 did not (`# dropped ide_served` 961 /
+  434). Without it the diff is those three `SPI 10 00 00 00 00 00 00 / 10
+  01 44 89 00 00` lines
+
+`--unused-rules` lists the two `fdd_rd` rules `Inserting floppy` and
+`DEDUP hw ^ffffb0$` (unused here; the all-scenario clean-up is Task 19);
+every rule `hdd` needs is used.
+
 ## Monitors
 
 `mon_l3.vh` (included by `tb_l3.v`) measures the host-side handshakes of
@@ -1045,9 +1295,9 @@ count and `LOW` means above the bound. The verdict:
 | `ok` | events seen, the value can violate its bound, and it does not |
 | `LOW` | events seen, the bound is violated: a bench error, the run fails |
 | `n/a` | no such event in this run (`min none`) |
-| `rec` | events seen, record only: the value cannot violate its bound. `dmode_L` (the request always follows the ack) and `rtc_cs_high` with the default bound 0 (a gap is never negative) |
+| `rec` | events seen, record only: the value cannot violate its bound. `dmode_L` (the request always follows the ack), `rtc_cs_high` with the default bound 0 (a gap is never negative) and `ide_wait` (no margin to violate) |
 
-`run.sh` fails a scenario unless all eleven lines are there and none is
+`run.sh` fails a scenario unless all twelve lines are there and none is
 `LOW`. Each scenario also lists the lines that must have seen events
 (`MARGIN_REQ_<scenario>` in `run.sh`); for those, `n/a` or `rec` fails it
 too. A monitor that stops seeing its events therefore cannot pass in
@@ -1059,10 +1309,12 @@ silence:
 | `boot_short` | 1, `userio_cs_release`, `userio_byte_spacing`, 5 | 3, 12, the paula lines (no paula frame before the cut); its `kick_order` is fpga_init's reset pulse, not a kickstart release, so it is not required |
 | `keys` | as `boot` | as `boot` |
 | `fdd_rd` | as `boot`, and 6 | 3, 12 as `boot` |
+| `hdd` | as `boot`, and 3 (`dmode_release`: the HDF sectors come in direct mode) | 6, 12; 8 is `rec` (no bound), `l3check.py hdd` requires its per-command waits |
 
 Item 6 (`fdd_fifo_empty_dma`) is `n/a` in every scenario without a floppy
-DMA. Lines printed before Task 13 (the measured outputs above) have ten
-MARGIN lines; item 6 came with `fdd_rd`.
+DMA, item 8 (`ide_wait`) in every scenario without an IDE command. Lines
+printed before Task 13 (the measured outputs above) have ten MARGIN lines;
+item 6 came with `fdd_rd`, item 8 with `hdd`.
 
 Times are taken at the slave pins: an `sck` edge reaches the slaves
 `+SCKDLY` ns after cfide's pin, `sd_cs` undelayed.
@@ -1076,6 +1328,7 @@ Times are taken at the slave pins: an `sck` edge reaches the slaves
 | 4 | `paula_word_spacing`, `userio_byte_spacing` | the last edge of one received word (paula, 16 bits, `sd_cs[4]` or `[6]`) / byte (userio, 8) to the last edge of the next, `clk_114` | 40 (derived below) | 117.0 over 82 words; 57.0 over 129 bytes |
 | 5 | `spi_write_busy` | SPI DATA writes acknowledged without starting a transfer of their own (no `SD_busy` rise from the request to the cycle after its ack): taken while the shifter was busy | 0 | 0 of 829,924 |
 | 6 | `fdd_fifo_empty_dma` | floppy read DMA: Agnus disk slots with paula_floppy's `dmaon` = 1 and its FIFO empty, per track from the first slot at which the FIFO has reached the firmware's working level (1,024 words) to the track's last word (section "fdd_rd") | 0 | n/a (no floppy DMA) |
+| 8 | `ide_wait` | IDE PIO flow control (`bfm_ide`): the 68k side's waits on the firmware, one per interrupt wait or BSY poll and one per data read held by `nrdy`, `clk_114`; per command min / median / max in the `=== IDE end` lines (section "hdd") | 0, `rec` (status-driven, no margin) | n/a (no IDE command) |
 | 12 | `rtc_cs_high` | `rtc_model`: the CS-inactive time between two RTC transfers, ns | `+RTC_CSH_MIN`; the default 0 (datasheet not found, below) makes it `rec` | n/a (one RTC transfer in `boot`); 363,982,789 ns rec in the `rtc2` run below |
 | 14 | `kick_order` | the last `cpurst` fall (userio_osd releases the Amiga CPU) minus the last SDRAM write into the kickstart region (host 0x100000..0x17ffff, `sdram_host_model` at its ack), `clk_114` | 1 (the write lands first) | 6,829,787 (write at 150,139,042, release at 156,968,829) |
 

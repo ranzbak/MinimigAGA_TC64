@@ -6,7 +6,9 @@
 #       and the timing of a floppy read DMA, as sim/l3 fdd_rd p4t13 / p4t13c:
 #       other countdown bytes in the status and sector frames, other numbers
 #       of AUDIO rewrites and of HandleRTC units, a FLOAT group elsewhere
-#       among the frames, another audio ring) -> an empty diff
+#       among the frames, another audio ring; and as sim/l3 hdd p4t15 /
+#       p4t15c, one more poll without a request after an IDE request was
+#       served) -> an empty diff
 #   (b) one changed byte in an SD read, an FPGA data frame, an OSD text
 #       line, a hw write, a UART line, a KEYQ event, a status frame with a
 #       request, a changed drive status, a deselect frame that is not all
@@ -18,7 +20,8 @@
 #       SD-init speed write (ffffe8, the RTC unit's addresses but no RTC
 #       frame), a changed, an extra and a missing write of the FLOAT group,
 #       a repeated HandleRTC unit with a changed RTC value or a changed
-#       closing speed write -> each a diff line
+#       closing speed write -> each a diff line.  Task 15: a changed
+#       track byte in that poll after the served IDE request -> a diff line
 #   (c) each rule of the fixture's expected-diff list removed in turn -> its
 #       difference comes back; an unused rule -> diff --unused-rules reports it
 # The card is built with tools/sim/mkcard.sh (sfdisk, mkfs.fat, mtools), the
@@ -172,6 +175,14 @@ if change == "sd":
 sd(17, c.file_lbas("DATA.BIN")[1], 0x00, data=bytes(data))
 frame(0x00, [0xFE if change == "desel" else 0xFF], [0xFF])     # cs 00, not all ff: kept
 frame(0x10, [0x00, 0x05 if change == "fpga" else 0x04, 0x00], [0x10, 0x00, 0x00])
+# an IDE command served (sim/l3 hdd, p4t15 / p4t15c): the request frame,
+# the register read, then the firmware's wait loop: variant b (the faster
+# CPU) polls once before the 68k has emptied the FIFO (no request), a not
+frame(0x10, [0] * 6, [0x14, 0x01, 0x44, 0x89, 0x00, 0x00])
+frame(0x10, [0x80] + [0] * 5, [0x14, 0x01, 0x44, 0x89, 0x00, 0x00])
+if b:
+    frame(0x10, [0] * 6, [0x10, 0x02 if change == "idetrack" else 0x01, 0x44, 0x89, 0x00, 0x00])
+frame(0x10, [0] * 6, [0x14, 0x01, 0x44, 0x89, 0x00, 0x00])
 osd(0, "Minimig " + ("Lead" if change == "osd" else "Load"))
 polls(1 if b else 4)
 frame(0x20, [0x98, 0xFF, 0xFF], [0x00, 0x01, 0x46 if change == "keyq" else 0x45])
@@ -280,7 +291,7 @@ else fail "(a) norm content: $(head -40 "$OUT/b/norm.txt")"; fi
 
 # (b) one content change against b: exactly one - line and one + line
 for ch in sd fpga osd hw uart keyq status uds desel pre post track motor level hibyte \
-	sector dmatrack audio sdspeed float floatextra floatmiss rtcval rtcspeed; do
+	sector dmatrack audio sdspeed float floatextra floatmiss rtcval rtcspeed idetrack; do
 	gen "$OUT/b_$ch" b "$ch" || exit 1
 	norm "$OUT/b_$ch" "$OUT/rules.txt"
 	if dodiff "$OUT/b/norm.txt" "$OUT/b_$ch/norm.txt"; then fail "(b) $ch: the change is hidden (empty diff)"; continue; fi
@@ -303,9 +314,10 @@ for ch in sd fpga osd hw uart keyq status uds desel pre post track motor level h
 		floatmiss) want='^-HW ffff60 0242$' ;;
 		rtcval) want='^\+HW ffff70 4005$' ;;      # a repeated HandleRTC unit with another value: kept
 		rtcspeed) want='^\+HW ffffe8 0002$' ;;
+		idetrack) want='^\+SPI 10 00 00 00 00 00 00 / 10 02 44 89 00 00$' ;;   # served IDE request, other track: kept
 		*) want='^\+' ;;
 	esac
-	case "$ch" in status|uds|desel|track|motor|level|dmatrack|audio|floatextra|floatmiss|rtcval|rtcspeed) one=1 ;; *) one=0 ;; esac
+	case "$ch" in status|uds|desel|track|motor|level|dmatrack|audio|floatextra|floatmiss|rtcval|rtcspeed|idetrack) one=1 ;; *) one=0 ;; esac
 	if grep -qE "$want" "$OUT/diff.txt" && { [ "$one" = 1 ] || { [ "$m" = 1 ] && [ "$p" = 1 ]; }; }; then
 		pass "(b) $ch: $(grep -E '^\+[^+]' "$OUT/diff.txt" | head -1 | cut -c1-100)"
 	else fail "(b) $ch: $m - / $p + lines: $(cat "$OUT/diff.txt" | head -12)"; fi

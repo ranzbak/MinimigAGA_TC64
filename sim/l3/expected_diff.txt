@@ -46,6 +46,28 @@ DROP hw ^ffff34\x20
 # without a long name; fdd_rd: "TEST    ADF", runs p4t13 / p4t13c)
 SUBST uart Inserting\x20floppy:\x20"(11s|[^"]{11})" Inserting floppy: "%.11s"
 
+# fw/ctrl_rv/test/gold/fmt_diff_expected.txt lines 45-52 (cases 156-159
+# PREC: 'file: "%.8s.%.3s"\r'): lib832's printf has no precision, the 832
+# prints "8s.3s", the RV the hardfile's 8.3 name (hdd.c OpenHardfile; hdd:
+# "RDB     .HDF" and "SYNTH   .HDF", runs p4t15 / p4t15c)
+SUBST uart file:\x20"(8s\.3s|[^"]{8}\.[^"]{3})" file: "%.8s.%.3s"
+
+# Task 15, runs p4t15 / p4t15c (hdd): OpenHardfile() prints how long
+# BuildHardfileIndex() took, in TIMER counts (one count = 256 clk_28 at
+# TICKDIV 1), so the number follows the CPU's speed: RV 289 / 539, 832
+# 621 / 1174 for RDB.HDF / SYNTH.HDF.  It is only printed (hdd.c:932 RV,
+# hdd.c:910 832): no bound, no decision depends on it
+SUBST uart Hardfile\x20indexed\x20in\x20[0-9]+\x20ms Hardfile indexed in <TIMER counts> ms
+
+# fw/ctrl_rv/test/gold/fmt_diff_expected.txt lines 144-145 (cases 565, 568
+# SIGNUART: 'Offset: %ld'): lib832's sprintf puts a negative number's '-'
+# on the UART and the digits alone into the buffer.  ApplyConfiguration's
+# boot-screen line "Offset: %ld" of hdf[1].offset (config.c 832 :491, RV
+# :561) is -32 for SYNTH.HDF (HDF_SYNTHRDB), so the 832's UART gets one '-'
+# (hdd: in front of the next printf, after "Hardfile indexed ... ms\r";
+# runs p4t15 / p4t15c).  After the rule above
+SUBST uart (Hardfile\x20indexed\x20in\x20<TIMER\x20counts>\x20ms\\r)-(file\x20") \1\2
+
 # Task 13 ruling (3), runs p4t13 / p4t13c (fdd_rd): drivesounds_render()
 # writes AUDIO = AUDIOF_ENA on every main-loop pass while the motor sound
 # plays (drivesounds.playing is never set: findings/osd-riscv/phase4.md

@@ -6,9 +6,9 @@
 # no UART line of the run contains <text>.  "CPU=rv <line>" and "CPU=832
 # <line>": a line of that CPU only (run.sh keeps it without the prefix for
 # that CPU and drops it for the other); "CARD=<card> <line>" likewise a
-# line of that card only (fdd_rd boots the fdd card, the others the boot
-# card: run.sh CARDNAME); only the boot ROM's file name and
-# the config file name differ (the firmware version line is the same:
+# line of that card only (fdd_rd boots the fdd card, hdd the hdd card,
+# the others the boot card: run.sh CARDNAME); only the boot ROM's file
+# name and the config file name differ (the firmware version line is the same:
 # both builds print L3_DATE's "Firmware version: 2026-1-1-0-0", and only
 # its prefix is a milestone).  Taken from the sources, not from a run.
 # boot_short checks the lines up to "#@ boot_short end" (its run ends at the
@@ -82,14 +82,40 @@ SPI 20 00
 # ColdBoot() -> drivesounds_init("DRIVESNDBIN"): not on the boot card; on
 # the fdd card (fdd_rd) it is sw/mkdrivesounds/drivesnd.bin, 212,098 bytes
 CARD=boot UART file "DRIVESNDBIN" not found
+CARD=hdd UART file "DRIVESNDBIN" not found
 CARD=fdd UART file "DRIVESNDBIN" found
 CARD=fdd UART Audio file - length 212098
 UART Loading kickstart ROM...
 # ApplyConfiguration(1,1) -> OpenHardfile(0), (1): hardfile[0] = RDB.HDF
 # (plain file), hardfile[1] = SYNTH.HDF (synthesised RDB): neither is on
-# the boot card
-UART file "RDB     HDF" not found
-UART file "SYNTH   HDF" not found
+# the boot and fdd cards.  On the hdd card (sim/l3/gen/mkhdf.py) both open:
+# RDB.HDF 4,096 blocks, plain HDF_FILE: GetHardfileGeometry's generic table
+# (63 sectors, 4 heads, 16 cylinders) and its "Total sectors" line; SYNTH.HDF
+# 8,192 blocks, HDF_SYNTHRDB: WinUAE's exact fit, 256 cylinders of 1 x 32,
+# plus the RDB cylinder = 257.1.32 (no "Total sectors" line); OpenHardfile's
+# lines (CHS ... (MB) = cylinders x heads x sectors >> 11); the index time
+# is TIMER counts, CPU-speed dependent: only its prefix is a milestone.
+# The 832's printf has no precision: its "file: %.8s.%.3s" line is
+# 'file: "8s.3s"' (fw/ctrl_rv/test/gold/fmt_diff_expected.txt lines 45-52)
+CARD=boot UART file "RDB     HDF" not found
+CARD=fdd UART file "RDB     HDF" not found
+CARD=hdd UART file "RDB     HDF" found
+CARD=hdd UART Total sectors: 4096, cyl: 16, heads: 4, sectors: 63
+CARD=hdd UART HARDFILE 0:
+CARD=hdd CPU=rv UART file: "RDB     .HDF"
+CARD=hdd CPU=832 UART file: "8s.3s"
+CARD=hdd UART size: 2097152 (2 MB)
+CARD=hdd UART CHS: 16.4.63 (1 MB)
+CARD=hdd UART Hardfile indexed in
+CARD=boot UART file "SYNTH   HDF" not found
+CARD=fdd UART file "SYNTH   HDF" not found
+CARD=hdd UART file "SYNTH   HDF" found
+CARD=hdd UART HARDFILE 1:
+CARD=hdd CPU=rv UART file: "SYNTH   .HDF"
+CARD=hdd CPU=832 UART file: "8s.3s"
+CARD=hdd UART size: 4194304 (4 MB)
+CARD=hdd UART CHS: 257.1.32 (4 MB)
+CARD=hdd UART Hardfile indexed in
 # UploadKickstart(): kickdir 0, the 256 KB KICK.ROM, sent twice (0xf80000
 # and the 0xfc0000 mirror; SendFileV2 prints the size in kB)
 UART ROM dir: 0
@@ -105,9 +131,12 @@ NOT UART Fatal error
 #
 # -- SPI after the boot screen
 # ApplyConfiguration(1,1) -> ConfigIDEPorts(): port 1 on, no device (the
-# hardfiles did not open): 01; port 2 (CORE_CAPS_IDE2) on, the CD drive of
+# hardfiles did not open): 01 (hdd card: both open, slave 4 | master 2 |
+# on 1 = 07); port 2 (CORE_CAPS_IDE2) on, the CD drive of
 # secondaryhardfile[0] as an ATAPI master: atapi 1 << 3 | master 2 | on 1 = 0b
-SPI 20 54 01
+CARD=boot SPI 20 54 01
+CARD=fdd SPI 20 54 01
+CARD=hdd SPI 20 54 07
 SPI 20 58 0b
 # ApplyConfiguration(1,1): the CPU held for the kickstart upload
 SPI 20 08 06

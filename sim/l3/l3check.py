@@ -7,6 +7,7 @@
     python3 -I l3check.py memhash <run>
     python3 -I l3check.py keys <run>
     python3 -I l3check.py fdd_rd <run>
+    python3 -I l3check.py hdd <run>
 
 kick: the 256 KB kickstart the firmware uploaded equals the card's KICK.ROM
 byte for byte.  UploadKickstart (fw/ctrl_rv/config.c) sends a 0x40000-byte
@@ -95,6 +96,30 @@ and the OSD and UART:
     in df0), decoded as spitrace.py osd
   - no UART line with "Illegal track", "Fatal" or "Wrong header"
 
+hdd (scenario hdd, bfm_ide.v): from the run log's "=== IDE cmd" / "=== IDE
+end" lines and the dumps <run>/hdd_<k>.hex (the 68k's words, first word
+first = the bytes in its memory order):
+  - the commands are HDD_PLAN below, in order, each ending with status 40
+    (DRDY, no ERR), error 00, at least one wait (item 8), the words in /
+    out of its kind, and the task file the firmware leaves: the CHS of the
+    last sector (hdd.c's CHS advance; the cylinder > 255 reads), the host's
+    own registers for IDENTIFY / SET MULTIPLE
+  - IDENTIFY of SYNTH.HDF = fw/ctrl_rv/test/gold/identify.py's stream for
+    HDF_FILE | HDF_SYNTHRDB at CHS 257.1.32 (words 1, 3, 6, little-endian
+    in the 68k's memory, = the geometry bfm_ide converts LBAs with)
+  - every read sector = the drive: SYNTH.HDF (drive LBA = file block + 32)
+    with the synthesised RDB cylinder in front (LBA 0 / 1 = gold/rdb.py's
+    rdsk / part for 257.1.32, the rest zeros); RDB.HDF's block 0 as hdd.c
+    patches it for unit 0 (rdb_Flags 0x12, the checksum computed from
+    scratch with rdb.py, which must equal hdd.c's ChkSum + Flags - 0x12),
+    its other blocks as on the card; a sector written before = the write
+    pattern (bfm_ide.v; wpattern here).  The HDF files' own tags ('H',
+    file id, block) are checked first
+  - every written sector (the dumps of the WRITE commands = the write
+    pattern) is in <run>/card_saved.img (+SD_SAVE) in SYNTH.HDF's cluster
+    of its block (spitrace.py's Card on <run>/card/hdd.img), and no other
+    card sector differs from <run>/card/hdd.img
+
 Each prints one line, "PASS <name>: ..." (exit 0) or "FAIL <name>: ..."
 (exit 1); exit 2 on a usage error.  Python 3 standard library only.
 """
@@ -115,6 +140,28 @@ FDD_TRACKS = [(0, 0), (1, 0), (2, 0), (39, 0), (40, 0), (41, 0), (77, 0), (78, 0
 FDD_WORDS = 6334
 FDD_SYNC = 0x4489
 FDD_GOLDEN = {(0, 0): "mfm_c00_s0.hex", (79, 1): "mfm_c79_s1.hex"}
+
+# scenario hdd (bfm_ide.v plan_hdd): the drives (port, dev) -> file, CHS,
+# the drive LBA of the file's block 0 (SYNTH.HDF: the firmware's RDB
+# cylinder in front), the file id of its block tags (gen/mkhdf.py)
+HDD_GEO = {(0, 0): ("RDB.HDF", 16, 4, 63, 0, 1), (0, 1): ("SYNTH.HDF", 257, 1, 32, 32, 2)}
+# the commands in order: name, port, dev, cylinder, head, sector, count
+# (IDENTIFY / SET_MULT: the task file the host writes, CHS 0/0/0)
+HDD_PLAN = [
+    ("IDENTIFY", 0, 1, 0, 0, 0, 0),
+    ("READ", 0, 1, 0, 0, 1, 2),            # LBA 0: RDSK, PART (FakeRDB)
+    ("READ", 0, 1, 3, 0, 5, 64),           # LBA 100
+    ("SET_MULT", 0, 1, 0, 0, 0, 16),
+    ("READ_MULT", 0, 1, 255, 0, 1, 64),    # LBA 8160, into cylinder 256
+    ("READ_MULT", 0, 1, 256, 0, 1, 32),    # LBA 8192: cylinder high 1
+    ("WRITE", 0, 1, 62, 0, 17, 64),        # LBA 2000
+    ("WRITE_MULT", 0, 1, 93, 0, 25, 32),   # LBA 3000
+    ("READ", 0, 1, 62, 0, 17, 64),         # read back
+    ("READ_MULT", 0, 1, 93, 0, 25, 32),
+    ("SET_MULT", 0, 0, 0, 0, 0, 16),
+    ("READ_MULT", 0, 0, 0, 0, 1, 16),      # RDB.HDF blocks 0..15, block 0 patched
+]
+HDF_FILE, HDF_SYNTHRDB = 1, 128
 
 HOSTMAP_ADDR = 0x680000
 KICK_SIZE = 0x40000
@@ -631,6 +678,247 @@ def fdd_rd(run):
     return 0
 
 
+def load_gold(name):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(name, os.path.join(GOLD, name + ".py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def wpattern(lba, kind):
+    """bfm_ide.v's write pattern of the sector at drive LBA lba (kind 'S' / 'M')"""
+    b = bytearray((lba * 29 + j * 7 + 0x5A) & 255 for j in range(512))
+    b[0:4] = bytes((0x57, ord(kind), (lba >> 8) & 255, lba & 255))
+    return bytes(b)
+
+
+def chs_lba(geo, c, h, s):
+    _, _, heads, spt, _, _ = geo
+    return (c * heads + h) * spt + s - 1
+
+
+def chs_last(geo, c, h, s, count):
+    """hdd.c ATA_ReadSectors / ATA_WriteSectors: the CHS of the last sector"""
+    _, _, heads, spt, _, _ = geo
+    for _ in range(count - 1):
+        if s == spt:
+            s = 1
+            h += 1
+            if h == heads:
+                h = 0
+                c += 1
+        else:
+            s += 1
+    return c, h, s
+
+
+def hdd(run):
+    """the hdd scenario's data (README "hdd")"""
+    sys.path.insert(0, L2)
+    import spitrace
+    rdb = load_gold("rdb")
+    ident = load_gold("identify")
+    got = run_log(run, "hdd")
+    if got is None:
+        return 1
+    log, lines = got
+    bad, notes = [], []
+    files = {}
+    for geo in HDD_GEO.values():
+        path = os.path.join(run, "card", "content", geo[0])
+        if not os.path.isfile(path):
+            print("FAIL hdd: no %s" % path)
+            return 1
+        with open(path, "rb") as f:
+            files[geo[0]] = f.read()
+        for n in range(len(files[geo[0]]) // 512):
+            blk = files[geo[0]][512 * n:512 * n + 512]
+            if blk[:4] not in (b"RDSK", b"PART") and blk[:4] != bytes((ord("H"), geo[5], n >> 8, n & 255)):
+                print("FAIL hdd: %s block %d is not tagged H %d %d %d" % (geo[0], n, geo[5], n >> 8, n & 255))
+                return 1
+
+    # what each drive holds, block by block (drive LBA); writes update it
+    written = {}
+
+    def drive_block(port, dev, lba):
+        geo = HDD_GEO[(port, dev)]
+        if (port, dev, lba) in written:
+            return written[(port, dev, lba)], "written"
+        n = lba - geo[4]
+        if n < 0:       # the synthesised RDB cylinder (hdd.c FakeRDB)
+            if lba == 0:
+                return bytes(rdb.rdsk(geo[1], geo[2], geo[3])), "rdb.py rdsk"
+            if lba == 1:
+                return bytes(rdb.part(geo[1], geo[2], geo[3])), "rdb.py part"
+            return bytes(512), "zeros"
+        blk = files[geo[0]][512 * n:512 * n + 512]
+        if len(blk) != 512:
+            return None, "past the end of %s" % geo[0]
+        if n == 0 and (port, dev) == (0, 0) and geo[4] == 0:
+            # unit 0, a plain HDF: hdd.c patches rdb_Flags to 0x12 and its
+            # checksum; expected here from scratch with rdb.py's checksum,
+            # and that equals hdd.c's ChkSum + Flags - 0x12
+            p = bytearray(blk)
+            rdb.put32(p, 20, 0x12)
+            rdb.checksum(p)
+            ck, fl = int.from_bytes(blk[8:12], "big"), int.from_bytes(blk[20:24], "big")
+            if int.from_bytes(p[8:12], "big") != (ck + fl - 0x12) & 0xFFFFFFFF:
+                bad.append("%s block 0: rdb.py's checksum differs from hdd.c's incremental one (the file's checksum is not valid?)" % geo[0])
+            return bytes(p), "patched %s block 0 (rdb_Flags 0x12, rdb_ChkSum)" % geo[0]
+        return blk, "%s block %d" % (geo[0], n)
+
+    cmds, ends = {}, {}
+    for line in lines:
+        m = re.match(r"=== IDE cmd (\d+) (\S+) port (\d+) dev (\d+) chs (\d+)/(\d+)/(\d+) lba (-?\d+) count (\d+) at cycle (\d+)$", line)
+        if m:
+            cmds[int(m.group(1))] = (m.group(2),) + tuple(int(m.group(i)) for i in (3, 4, 5, 6, 7, 9))
+        m = re.match(r"=== IDE end (\d+) (\S+): status ([0-9a-f]{2}) error ([0-9a-f]{2}) tf ([0-9a-f]{2}) ([0-9a-f]{2}) "
+                     r"([0-9a-f]{2}) ([0-9a-f]{2}) ([0-9a-f]{2}), (\d+) words in, (\d+) out, file (\S+), waits (\d+) "
+                     r"\(irq (\d+), poll (\d+), nrdy (\d+)\) min/median/max (\d+)/(\d+)/(\d+) clk_114, total (\d+), "
+                     r"(\d+) cycles, at cycle (\d+)$", line)
+        if m:
+            ends[int(m.group(1))] = m
+    plan = [cmds[k] for k in sorted(cmds)]
+    if plan != HDD_PLAN or sorted(cmds) != list(range(1, len(HDD_PLAN) + 1)):
+        bad.append("the IDE commands in the log are %s, want %s" % (plan, HDD_PLAN))
+    nsec = nwr = 0
+    for k, (name, port, dev, c, h, s, count) in enumerate(HDD_PLAN, 1):
+        e = ends.get(k)
+        if e is None:
+            bad.append("command %d %s: no '=== IDE end %d' line" % (k, name, k))
+            continue
+        geo = HDD_GEO[(port, dev)]
+        what = "command %d %s %d/%d/%d count %d on %s" % (k, name, c, h, s, count, geo[0])
+        st, er = int(e.group(3), 16), int(e.group(4), 16)
+        tfr = [int(e.group(i), 16) for i in range(5, 10)]
+        win, wout, fname, nwait = int(e.group(10)), int(e.group(11)), e.group(12), int(e.group(13))
+        if st != 0x40 or er != 0:
+            bad.append("%s: status %02x error %02x at the end, want 40 00" % (what, st, er))
+        if nwait < 1:
+            bad.append("%s: no wait recorded (item 8)" % what)
+        dh = 0xA0 | (dev << 4)
+        if name in ("IDENTIFY", "SET_MULT"):
+            want_tf = [count & 255, s, c & 255, c >> 8, dh | h]
+        else:
+            lc, lh, ls = chs_last(geo, c, h, s, count)
+            want_tf = [count & 255, ls, lc & 255, lc >> 8, dh | lh]
+        if tfr != want_tf:
+            bad.append("%s: task file at the end %s, want %s (count, sector, cylinder low, high, device/head)"
+                       % (what, " ".join("%02x" % x for x in tfr), " ".join("%02x" % x for x in want_tf)))
+        want_in = 256 * count if name in ("READ", "READ_MULT") else 256 if name == "IDENTIFY" else 0
+        want_out = 256 * count if name in ("WRITE", "WRITE_MULT") else 0
+        if (win, wout) != (want_in, want_out):
+            bad.append("%s: %d words in, %d out, want %d, %d" % (what, win, wout, want_in, want_out))
+        if want_in + want_out == 0:
+            notes.append("%s: status 40, task file %s" % (what, " ".join("%02x" % x for x in tfr)))
+            continue
+        path = os.path.join(run, fname)
+        if fname == "-" or not os.path.isfile(path):
+            bad.append("%s: no dump file %s" % (what, path))
+            continue
+        dump = read_hex(path)
+        if len(dump) != 2 * (want_in + want_out):
+            bad.append("%s: %s is %d bytes, want %d" % (what, fname, len(dump), 2 * (want_in + want_out)))
+            continue
+        if name == "IDENTIFY":
+            want = ident.stream(HDF_FILE | HDF_SYNTHRDB, 0, geo[1], geo[2], geo[3], b"SYNTH   ", b"")
+            # ATA words go low byte first, the first byte of a word into
+            # bits 15:8 of the 68k's word: in the 68k's memory each ATA word
+            # is little-endian (the Amiga IDE drivers swap them)
+            words = [int.from_bytes(dump[2 * i:2 * i + 2], "little") for i in (1, 3, 6)]
+            if words != [geo[1], geo[2], geo[3]]:
+                bad.append("%s: IDENTIFY words 1, 3, 6 (C, H, S) are %s, the bench's geometry %s"
+                           % (what, words, list(geo[1:4])))
+            k0 = first_diff(dump, want)
+            if k0 >= 0:
+                bad.append("%s: differs from identify.py's stream at byte %d (%02x, want %02x)"
+                           % (what, k0, dump[k0], want[k0]))
+            else:
+                notes.append("%s: = fw/ctrl_rv/test/gold/identify.py (HDF_SYNTHRDB, CHS %d.%d.%d)" % ((what,) + geo[1:4]))
+            continue
+        lba = chs_lba(geo, c, h, s)
+        nb = 0
+        kinds = {}
+        for i in range(count):
+            blk = dump[512 * i:512 * i + 512]
+            if name in ("WRITE", "WRITE_MULT"):
+                want, src = wpattern(lba + i, "S" if name == "WRITE" else "M"), "the write pattern"
+                written[(port, dev, lba + i)] = want
+            else:
+                want, src = drive_block(port, dev, lba + i)
+            if want is None:
+                bad.append("%s: LBA %d: %s" % (what, lba + i, src))
+                nb += 1
+                continue
+            k0 = first_diff(blk, want)
+            if k0 >= 0:
+                nb += 1
+                if nb <= 4:
+                    bad.append("%s: LBA %d (%s) differs at byte %d (%02x, want %02x)" % (what, lba + i, src, k0, blk[k0], want[k0]))
+            kinds[src.split(" block")[0]] = kinds.get(src.split(" block")[0], 0) + 1
+        if nb > 4:
+            bad.append("%s: %d of %d sectors differ" % (what, nb, count))
+        if nb == 0:
+            notes.append("%s: LBA %d..%d = %s" % (what, lba, lba + count - 1,
+                                                    ", ".join("%s %d" % (x, n) for x, n in sorted(kinds.items()))))
+            if name in ("WRITE", "WRITE_MULT"):
+                nwr += count
+            else:
+                nsec += count
+
+    # the card as the run left it: every written sector in SYNTH.HDF's
+    # clusters at its block, no other sector changed
+    orig_p, saved_p = os.path.join(run, "card", "hdd.img"), os.path.join(run, "card_saved.img")
+    missing = [p for p in (orig_p, saved_p) if not os.path.isfile(p)]
+    if missing:
+        bad.append("no card image %s" % " ".join(missing))
+    else:
+        with open(orig_p, "rb") as f:
+            orig = f.read()
+        with open(saved_p, "rb") as f:
+            saved = f.read()
+        card = spitrace.Card(orig_p)
+        want_lbas = {}
+        for (port, dev, lba), data in written.items():
+            geo = HDD_GEO[(port, dev)]
+            n = lba - geo[4]
+            lbas = card.file_lbas(geo[0])
+            if not 0 <= n < len(lbas):
+                bad.append("a write to %s LBA %d is outside the file" % (geo[0], lba))
+                continue
+            want_lbas[lbas[n]] = (data, "%s block %d (drive LBA %d)" % (geo[0], n, lba))
+        if len(saved) != len(orig):
+            bad.append("card_saved.img is %d bytes, the card %d" % (len(saved), len(orig)))
+        else:
+            changed = [i for i in range(len(orig) // 512) if orig[512 * i:512 * i + 512] != saved[512 * i:512 * i + 512]]
+            stray = [i for i in changed if i not in want_lbas]
+            if stray:
+                bad.append("%d card sector(s) changed that no IDE write addressed, the first: %s"
+                           % (len(stray), stray[:8]))
+            wrong = [(i, what, first_diff(saved[512 * i:512 * i + 512], data))
+                     for i, (data, what) in sorted(want_lbas.items())
+                     if saved[512 * i:512 * i + 512] != data]
+            for i, what, k0 in wrong[:4]:
+                bad.append("card sector %d (%s) is not the written data (byte %d)" % (i, what, k0))
+            if len(wrong) > 4:
+                bad.append("%d of the %d written card sectors are not the written data" % (len(wrong), len(want_lbas)))
+            if not stray and not wrong:
+                notes.append("card_saved.img: the %d written sectors in SYNTH.HDF's clusters, no other sector changed"
+                             % len(want_lbas))
+
+    for b in bad:
+        print("BAD  " + b)
+    for n in notes:
+        print("ok   " + n)
+    if bad:
+        print("FAIL hdd: %d problem(s)" % len(bad))
+        return 1
+    print("PASS hdd: %d IDE commands, %d sectors read = the drives, %d written and read back, on the saved card "
+          "and nowhere else; IDENTIFY and the RDB blocks = the goldens" % (len(HDD_PLAN), nsec, nwr))
+    return 0
+
+
 def main(argv):
     if len(argv) == 3 and argv[1] == "kick":
         return kick(argv[2])
@@ -646,6 +934,8 @@ def main(argv):
         return keys(argv[2])
     if len(argv) == 3 and argv[1] == "fdd_rd":
         return fdd_rd(argv[2])
+    if len(argv) == 3 and argv[1] == "hdd":
+        return hdd(argv[2])
     sys.stderr.write(__doc__)
     return 2
 

@@ -41,6 +41,13 @@
 //               event: the blckint of the last track DMA ("=== STATS@fdd_rd").
 //               TIMER: run.sh sets +TICKDIV=643 +TICKDIV_AT=scenario, as
 //               keys (fdd.c uses no TIMER, the drive sounds' renderer does)
+//   hdd         the hard disk (README "hdd"; run.sh: the hdd card,
+//               +IDE_DUMP=<run>/hdd +SD_SAVE=<run>/card_saved.img):
+//               main-loop milestone as boot, where bfm_ide starts its plan
+//               "hdd" (IDENTIFY, READ / READ MULTIPLE / WRITE / WRITE
+//               MULTIPLE on SYNTH.HDF, READ MULTIPLE of RDB.HDF's block 0..15);
+//               end event: the end of its last command ("=== STATS@hdd").
+//               TIMER: TICKDIV 1 (hdd.c is status-driven)
 
   reg [8*32-1:0]  scenario;
   reg [8*16-1:0]  short_end;
@@ -63,7 +70,8 @@
       if (!$value$plusargs("SCENARIO=%s", scenario)) scenario = "boot";
       if (!$value$plusargs("SHORT_END=%s", short_end)) short_end = "";
       if (!$value$plusargs("BOOT_END=%s", boot_end)) boot_end = "";
-      if (scenario != "boot" && scenario != "boot_short" && scenario != "keys" && scenario != "fdd_rd")
+      if (scenario != "boot" && scenario != "boot_short" && scenario != "keys" && scenario != "fdd_rd" &&
+          scenario != "hdd")
         bench_error("unknown +SCENARIO (scenarios.vh)");
       if (short_end != "" && (scenario != "boot_short" || short_end != "version"))
         bench_error("+SHORT_END=version is the only value, and only for boot_short");
@@ -86,6 +94,9 @@
   // fdd_rd: the track reads start when the key script has ended
   always @(posedge keys.done) if (scenario == "fdd_rd") fdd.go = 1'b1;
   always @(posedge fdd.done) if (scenario == "fdd_rd") sc_end("fdd_rd", "the blckint of the last track DMA");
+  // hdd: bfm_ide's plan from the main-loop milestone on
+  always @(posedge sc_started) if (scenario == "hdd") begin ide.plan = "hdd"; ide.go = 1'b1; end
+  always @(posedge ide.done) if (scenario == "hdd") sc_end("hdd", "the end of the last IDE command");
 
   // STATS@<event>: the rv_hostcpu counters 1 ns after the end event's
   // clk_114 edge.  rv_hostcpu counts with blocking assignments on that

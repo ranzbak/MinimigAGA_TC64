@@ -3,7 +3,7 @@
 # (userio_osd, paula_floppy, gayle) boots the real boot ROM and firmware from
 # an SD card image.  See tb_l3.v, scenarios.vh, README.md.
 #
-#   bash sim/l3/run.sh <scenario>        boot, boot_short, keys, fdd_rd
+#   bash sim/l3/run.sh <scenario>        boot, boot_short, keys, fdd_rd, hdd
 #   bash sim/l3/run.sh xpair <scenario>  the scenario and its XRAND twin
 #                                        (run_$RUNTAG, run_${RUNTAG}_xr; in
 #                                        parallel), then compare: both PASS
@@ -88,6 +88,14 @@
 #               EXC / TRAP, kick, order, the MARGIN lines (item 6 required),
 #               l3check.py fdd_rd (the dumps decode and equal TEST.ADF, the
 #               golden streams, the OSD), bench "=== PASS"
+#   hdd         hdd card (boot + SYNTH.HDF + RDB.HDF), +SCENARIO=hdd
+#               +IDE_DUMP=<run>/hdd +SD_SAVE=<run>/card_saved.img, TICKDIV 1:
+#               bfm_ide's ATA commands from the main-loop milestone on;
+#               checks: boot's milestones (the hdd card's lines), no EXC /
+#               TRAP, kick, order, the MARGIN lines (item 3 required: the
+#               firmware reads the HDFs in direct mode), l3check.py hdd (the
+#               reads = the HDFs and the goldens, the writes on the saved
+#               card and nowhere else), bench "=== PASS"
 # Logs in the run directory: tb_<scenario>_x<EXTRA_WS>_s<SLAT>_j<SJIT>.log,
 # spi.txt, spi_t.txt (frames with cycles, not compared), hw.txt and uart.txt
 # (sim/common/hostmon.vh +HW_LOG / +UART_LOG, for diff; hw.txt's MEM lines
@@ -143,28 +151,35 @@ MM_INC="$ROOT/fpga/openaars"     # minimig_version.vh (the board's)
 # only cpurst fall is fpga_init's reset pulse, before any kickstart
 MARGINS="1:stale_acks 3:dmode_release 3:dmode_L 4:paula_cs_release 4:userio_cs_release
          4:paula_word_spacing 4:userio_byte_spacing 5:spi_write_busy 6:fdd_fifo_empty_dma
-         12:rtc_cs_high 14:kick_order"
+         8:ide_wait 12:rtc_cs_high 14:kick_order"
 MARGIN_REQ_boot="1:stale_acks 4:paula_cs_release 4:userio_cs_release 4:paula_word_spacing
                  4:userio_byte_spacing 5:spi_write_busy 14:kick_order"
 MARGIN_REQ_boot_short="1:stale_acks 4:userio_cs_release 4:userio_byte_spacing 5:spi_write_busy"
 MARGIN_REQ_keys=$MARGIN_REQ_boot
 MARGIN_REQ_fdd_rd="$MARGIN_REQ_boot 6:fdd_fifo_empty_dma"
+# hdd: the HDF sectors come in direct mode (item 3); item 8 is rec (no
+# bound), l3check.py hdd requires its per-command lines
+MARGIN_REQ_hdd="$MARGIN_REQ_boot 3:dmode_release"
 
 # cycles per scenario (clk_114): 1.5 x the measured end event (README "boot",
 # Verilator 2026-10-19: RV boot 158,155,012, boot_short 57,659,090; 832
 # boot 202,841,132, boot_short 74,525,542; README "keys": RV keys
 # 164,959,781, 832 214,187,801); fdd_rd: 1.5 x the estimate of README
-# "fdd_rd" (RV 382 M, 832 440 M; measured 393,222,555 and 442,065,819)
+# "fdd_rd" (RV 382 M, 832 440 M; measured 393,222,555 and 442,065,819);
+# hdd: 832 1.5 x its measured end (p4t15c3: 233,511,245), RV 1.5 x the
+# estimate 200 M (README "hdd")
 if [ "$CPU" = 832 ]; then
 	L3_BOOT_TO=${L3_BOOT_TO:-304300000}
 	L3_SHORT_TO=${L3_SHORT_TO:-111800000}
 	L3_KEYS_TO=${L3_KEYS_TO:-321300000}
 	L3_FDD_TO=${L3_FDD_TO:-660000000}
+	L3_HDD_TO=${L3_HDD_TO:-350000000}
 else
 	L3_BOOT_TO=${L3_BOOT_TO:-237300000}
 	L3_SHORT_TO=${L3_SHORT_TO:-86500000}
 	L3_KEYS_TO=${L3_KEYS_TO:-247400000}
 	L3_FDD_TO=${L3_FDD_TO:-580000000}
+	L3_HDD_TO=${L3_HDD_TO:-300000000}
 fi
 
 # shellcheck source=../common/hostsim.sh
@@ -211,7 +226,11 @@ cfide_generics() {
 # run copy, as hostsim.sh pins the bridge's and hostcache's flops (README
 # "boot", XRAND): paula_floppy.v dsktrack[0..3] (the drives' head
 # positions, never reset: HandleFpga's track byte; found by the first XRAND
-# twin, findings/osd-riscv/phase4.md).  The count joins hostsim.sh's
+# twin, findings/osd-riscv/phase4.md); gayle_port.v's task file tfr[0..7]
+# and gayle_fifo.v's sector buffer mem[0..4095] (no reset: the firmware's
+# CMD_IDE_REGS_RD of the first IDE command reads the FIFO's head word and
+# the features register before the 68k wrote them; found by the hdd twin
+# p4t15_xr; 8 + 4,096 per port, two ports).  The count joins hostsim.sh's
 # "=== XRAND pinned <n> regs" (it sums the lines of src/pinned_hostcache).
 l3_pin_minimig() {
 	local v="$run/src/paula_floppy.v" decl='	reg		[6:0] dsktrack[3:0]; //track select'
@@ -220,6 +239,21 @@ l3_pin_minimig() {
 	sed -i "/^$(printf '%s' "$decl" | sed 's/[][\/.*^$]/\\&/g')\$/a\\	initial begin dsktrack[0] = 7'd0; dsktrack[1] = 7'd0; dsktrack[2] = 7'd0; dsktrack[3] = 7'd0; end // XRAND pin" "$v"
 	[ "$(grep -c '// XRAND pin$' "$v")" = 1 ] || die "XRAND pin: dsktrack initialiser not inserted"
 	echo 4 >> "$run/src/pinned_hostcache"
+	python3 - "$run/src/gayle_port.v" "$run/src/gayle_fifo.v" <<'EOP' || die "XRAND pin: gayle_port.v tfr / gayle_fifo.v mem declaration not found"
+import sys
+for path, decl, init in (
+        (sys.argv[1], "reg\t\t[7:0] tfr [7:0];",
+         "initial begin : xrand_pin_tfr integer i; for (i = 0; i < 8; i = i + 1) tfr[i] = 8'd0; end // XRAND pin"),
+        (sys.argv[2], "reg \t[15:0] mem [4095:0];\t\t// 16 bit wide fifo memory",
+         "initial begin : xrand_pin_mem integer i; for (i = 0; i < 4096; i = i + 1) mem[i] = 16'd0; end // XRAND pin")):
+    s = open(path).read()
+    assert s.count(decl + "\n") == 1, decl
+    s = s.replace(decl + "\n", decl + "\n" + init + "\n")
+    open(path, "w").write(s)
+EOP
+	[ "$(grep -c '// XRAND pin$' "$run/src/gayle_port.v")" = 1 ] && [ "$(grep -c '// XRAND pin$' "$run/src/gayle_fifo.v")" = 1 ] \
+		|| die "XRAND pin: gayle initialisers not inserted"
+	echo 8208 >> "$run/src/pinned_hostcache"
 }
 
 # l3_pin_async (every run, both simulators): the slaves' SPI registers with
@@ -348,6 +382,7 @@ setup() {
 	# boot (CARDNAME: also milestones()'s "CARD=<card>" lines)
 	CARDNAME=boot
 	[ "${SCEN:-}" = fdd_rd ] && CARDNAME=fdd
+	[ "${SCEN:-}" = hdd ] && CARDNAME=hdd
 	make -s -C "$HERE/card" "$CARDNAME" B="$run/card" FWRV="$FWBIN" "${mk[@]}" > "$run/make_card.log" 2>&1 \
 		|| { tail -20 "$run/make_card.log"; die "make the $CARDNAME card ($run/make_card.log)"; }
 	CARD="$run/card/$CARDNAME.img"
@@ -379,7 +414,7 @@ build() {
 		hs_verilate "$run" tb_l3 "-DL3_GHDL -D$def" \
 			"$d/bridge.v" "$d/cfide.v" "${cpuv[@]}" src/hostcache.v src/dpram_inf_generic.v \
 			"$L2/sdram_host_model.v" "$ROOT/sim/common/sd_spi_model.v" $i2c \
-			"${mm[@]}" "$HERE/bfm_audio.v" "$HERE/bfm_keys.v" "$HERE/bfm_floppy.v" "$HERE/rtc_model.v" "$HERE/tb_l3.v"
+			"${mm[@]}" "$HERE/bfm_audio.v" "$HERE/bfm_keys.v" "$HERE/bfm_floppy.v" "$HERE/bfm_ide.v" "$HERE/rtc_model.v" "$HERE/tb_l3.v"
 	else
 		X xvlog -sv $I2C_V
 		X xvhdl src/cfide.vhd
@@ -395,7 +430,7 @@ build() {
 		X xvlog --relax -i "$MM_INC" -i "$ROOT/rtl/minimig" "${mm[@]}"
 		X xvlog -d "$def" -i "$ROOT/sim/common" -i "$HERE" \
 			"$L2/sdram_host_model.v" "$ROOT/sim/common/sd_spi_model.v" "$HERE/bfm_audio.v" \
-			"$HERE/bfm_keys.v" "$HERE/bfm_floppy.v" "$HERE/rtc_model.v" "$HERE/tb_l3.v"
+			"$HERE/bfm_keys.v" "$HERE/bfm_floppy.v" "$HERE/bfm_ide.v" "$HERE/rtc_model.v" "$HERE/tb_l3.v"
 		hs_xsim_build "$run" "$snap" "$XW" tb_l3
 	fi
 }
@@ -415,7 +450,7 @@ milestones() {
 	fi | sed -n -e "s/^CARD=${CARDNAME:-boot} //p" -e t -e '/^CARD=/d' -e p \
 		| sed -n -e "s/^CPU=$CPU //p" -e t -e '/^CPU=/d' -e p > "$ms"
 	grep -E '^CPU=' "$HERE/milestones_boot.txt" | grep -vE '^CPU=(rv|832) ' | sed 's/^/BAD  milestones_boot.txt: a CPU= line for neither rv nor 832: /'
-	grep -E '^CARD=' "$HERE/milestones_boot.txt" | grep -vE '^CARD=(boot|fdd) ' | sed 's/^/BAD  milestones_boot.txt: a CARD= line for neither boot nor fdd: /'
+	grep -E '^CARD=' "$HERE/milestones_boot.txt" | grep -vE '^CARD=(boot|fdd|hdd) ' | sed 's/^/BAD  milestones_boot.txt: a CARD= line for none of boot, fdd, hdd: /'
 	grep -v '^NOT ' "$ms" > "$ms.check"
 	l3_check milestones "$run/milestones.txt" '^milestones: [0-9]+ of [0-9]+ found in order$' \
 		python3 -I "$L2/spitrace.py" check "$ms.check" "$log" "$run/spi.txt"
@@ -463,6 +498,7 @@ scenario() {
 		fdd_rd) to=${TIMEOUT:-$L3_FDD_TO}
 			pa=("KEYS=$(realpath -m -- "${KEYS:-$HERE/keys/insert_df0.txt}")" "TICKDIV=643" "TICKDIV_AT=scenario"
 			    "FDD_DUMP=$run/fdd_rd") ;;
+		hdd) to=${TIMEOUT:-$L3_HDD_TO}; pa=("IDE_DUMP=$run/hdd" "SD_SAVE=$run/card_saved.img") ;;
 		*) die "unknown scenario $s" ;;
 	esac
 	if git -C "$ROOT" diff --quiet HEAD -- "${ROM#$ROOT/}"; then st="unmodified (= git HEAD)"; else st="BAD  MODIFIED against git HEAD"; fi
@@ -494,14 +530,14 @@ scenario() {
 	local secs=$((SECONDS - t0))
 	python3 -I "$L2/spitrace.py" summary "$run/spi.txt" > "$run/spi_summary.txt" 2>&1
 	{
-		grep -E '^=== (BOOT|MAIN|END|STATS|HW accesses|cycle limit|HandleFpga|SPI frames|OSD GAP|OSD EARLY|OSD REPLY|STACK|RTC|KICK|MARGIN|KEYS script|FDD)' "$log"
+		grep -E '^=== (BOOT|MAIN|END|STATS|HW accesses|cycle limit|HandleFpga|SPI frames|OSD GAP|OSD EARLY|OSD REPLY|STACK|RTC|KICK|MARGIN|KEYS script|FDD|IDE)' "$log"
 		grep -E '^BENCH ERROR' "$log" | sed 's/^/BAD  /'
 		margins "$s" "$log"
 		grep -q '^SD: image .* loaded' "$log" || echo "BAD  the SD model did not load $CARD"
 		milestones "$s" "$log"
 		grep -E '^UART: .*(EXC |TRAP )' "$log" | sed 's/^/BAD  /'
 		l3_check memhash "$run/memhash.txt" '^PASS memhash: ' python3 -I "$L3CHECK" memhash "$run"
-		if [ "$s" = boot ] || [ "$s" = keys ] || [ "$s" = fdd_rd ]; then
+		if [ "$s" = boot ] || [ "$s" = keys ] || [ "$s" = fdd_rd ] || [ "$s" = hdd ]; then
 			l3_check kick "$run/kick.txt" '^PASS kick: ' python3 -I "$L3CHECK" kick "$run"
 			l3_check order "$run/order.txt" '^PASS order: ' python3 -I "$L3CHECK" order "$run"
 		fi
@@ -513,6 +549,10 @@ scenario() {
 		if [ "$s" = fdd_rd ]; then
 			l3_check fdd_rd "$run/fdd_rd.txt" '^PASS fdd_rd: ' python3 -I "$L3CHECK" fdd_rd "$run"
 			grep -E '^ok   ' "$run/fdd_rd.txt"
+		fi
+		if [ "$s" = hdd ]; then
+			l3_check hdd "$run/hdd.txt" '^PASS hdd: ' python3 -I "$L3CHECK" hdd "$run"
+			grep -E '^ok   ' "$run/hdd.txt"
 		fi
 		if grep -q '^=== PASS' "$log"; then echo "ok   bench verdict: === PASS"
 		else echo "BAD  bench verdict: $(grep -m1 -E '^=== (PASS|FAIL)' "$log" || echo none) ($log)"; fi
@@ -588,7 +628,7 @@ case "${1:-}" in
 		echo "=== xpair $2 FAILED (runs $r1 / $r2, compare $rc)"
 		exit 1
 		;;
-	boot|boot_short|keys|fdd_rd)
+	boot|boot_short|keys|fdd_rd|hdd)
 		SCEN=$1
 		[ "${NOKICK:-0}" = 1 ] && [ "$1" != boot ] && die "NOKICK=1 is for boot only"
 		setup

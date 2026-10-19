@@ -1,7 +1,8 @@
-// mon_l3.vh: the L3 margin monitors, plan 7.1 items 1, 3, 4, 5, 6, 12 and
-// 14 (README "Monitors").  `include"d by tb_l3.v after hostmon.vh (it reads
-// hostmon's hw_req_d, hw_done, hwa, spi_data, n_stale, n_hw) and after the
-// rtc_model instance rtc1, paula_floppy pf1 and bfm_floppy fdd; mon_final
+// mon_l3.vh: the L3 margin monitors, plan 7.1 items 1, 3, 4, 5, 6, 8, 12
+// and 14 (README "Monitors").  `include"d by tb_l3.v after hostmon.vh (it
+// reads hostmon's hw_req_d, hw_done, hwa, spi_data, n_stale, n_hw) and after
+// the rtc_model instance rtc1, paula_floppy pf1, bfm_floppy fdd and bfm_ide
+// ide; mon_final
 // prints one line per measurement at the end of the run, before the
 // verdict:
 //
@@ -59,6 +60,13 @@
 //                          the brief's literal count (dmaon and empty at a
 //                          slot from the starting DSKLEN write on); a track
 //                          whose FIFO never reaches 1024 is a bench error
+//   8  ide_wait            IDE PIO flow control (bfm_ide): the 68k side's
+//                          waits on the firmware, clk_114 cycles: each wait
+//                          for an interrupt or a BSY poll, and each data
+//                          register read held by nrdy.  Status-driven, no
+//                          margin (plan 7.1: latency only costs throughput),
+//                          so rec; per command bfm_ide's "=== IDE end" line
+//                          has min / median / max (README "hdd")
 //  12  rtc_cs_high         rtc_model: CS-inactive time between two RTC
 //                          transfers, ns; bound +RTC_CSH_MIN=<ns>; with the
 //                          default 0 (the PCF2123 datasheet is not in
@@ -300,6 +308,7 @@
       if (m6_tracks > 0)
         $display("=== MARGIN (info) 6 fdd %0d tracks: fifo min %0d words at the working level; literal count %0d slots (dmaon and empty from the starting DSKLEN write)",
                  m6_tracks, m6_min_all, m6_lit_all);
+      mon_real("8", "ide_wait", ide.w_all_n, ide.w_all_min, "clk_114", 0, 1'b1, "waits");
       mon_real("12", "rtc_cs_high", rtc1.n_gaps, rtc1.csh_min_ns, "ns", rtc_csh_bound, rtc_csh_bound <= 0,
                "gaps");
       mon_real("14", "kick_order", (m14_nw > 0) ? m14_nrel : 0, m14_rel - m14_w, "clk_114", 1, 1'b0,

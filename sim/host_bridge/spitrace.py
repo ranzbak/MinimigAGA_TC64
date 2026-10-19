@@ -37,7 +37,13 @@ norm: one normalised stream of a run, in frame order, one item per line
     3..0 = 0: no track read / write, no IDE command / data) whose MISO
     equals the previous status frame's: HandleFDD also acts on the other
     bytes (drive count, track, motor: fdd.c), so a changed one is kept,
-    and a request is always kept; the FPGA drive-status frames (10 10 <s>: UpdateDriveStatus
+    and a request is always kept.  After an IDE request frame (MISO 0
+    bits 3..2: command / data; sim/l3 hdd, runs p4t15 / p4t15c) a frame
+    without a request that equals it but for those two bits is a poll too:
+    the firmware served the request, and whether its wait loop polls once
+    before the 68k has emptied or filled the FIFO follows the CPU's speed
+    (the IDE bits going to 0 drive nothing; every other byte stays
+    compared); the FPGA drive-status frames (10 10 <s>: UpdateDriveStatus
     after every HandleFpga) whose <s> equals the previous one, OSD_CMD_READ
     frames (20 00) whose level (MISO) equals the previous one, OSD_CMD_KEYQ
     frames (20 98) whose status byte (MISO 1) is 00 (no event, no
@@ -637,6 +643,12 @@ def norm(spi, hw, uart, rules_path, card_path, charrom):
                                         tuple(inp[:4]) == prev_status[:4])):
                 drop["status"] += 1
                 continue
+            # the first polls after an IDE request was served (the doc
+            # above): the request frame's bytes without its IDE bits
+            if (inp[0] & 0x0F == 0 and prev_status is not None and prev_status[0] & 0x0C and
+                    (prev_status[0] & ~0x0C,) + prev_status[1:] == tuple(inp)):
+                drop["ide_served"] += 1
+                continue
             prev_status = tuple(inp)
         if cs == 0x10 and len(out) == 2 and out[0] == 0x10:
             if out[1] == prev_uds:
@@ -774,7 +786,7 @@ def norm(spi, hw, uart, rules_path, card_path, charrom):
     for r in rules:
         w("# rule %d used %d: %s\n" % (r.lineno, r.used, r.text))
     w("# dropped " + ", ".join("%s %d" % (k, drop[k]) for k in
-                                ("status", "drivestatus", "read", "keyq", "rtc", "rtc_unit", "sd_deselect",
+                                ("status", "ide_served", "drivestatus", "read", "keyq", "rtc", "rtc_unit", "sd_deselect",
                                  "sdfile_run")) + "\n")
     return 0
 
