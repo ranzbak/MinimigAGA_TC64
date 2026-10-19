@@ -34,11 +34,12 @@ prep() {
   local n=$1
   rm -rf "mut/$n"
   mkdir -p "mut/$n/src" "mut/$n/t"
-  cp ../*.c ../*.h "mut/$n/src/"
+  cp ../*.c ../*.h ../check_io.awk "mut/$n/src/"
   cp -r ../arch "mut/$n/src/arch"
   mkdir -p "mut/$n/src/tools"
   cp -r ../tools/cfgconv "mut/$n/src/tools/cfgconv"
   cp ./*.c ./*.h ./*.sh "mut/$n/t/"
+  cp -r check_io "mut/$n/t/check_io"
   cp -r gold "mut/$n/gold"
 }
 
@@ -95,14 +96,28 @@ fmt() {
   verdict "$n" $rc "make fmt"
 }
 
+# checkio <name> <src|t> <file> <sed> [expected text]: the check_io fixture
+# target (check_io.awk on check_io/*.dis) must fail
+checkio() {
+  local n=$1
+  prep "$n"; mutate "$n" "$2" "$3" "$4" || return
+  mk "$n" check_io > "mut/$n/log" 2>&1
+  local rc=$?
+  if [ $rc -ne 0 ] && [ -n "${5:-}" ] && ! grep -q -- "$5" "mut/$n/log"; then
+    echo "mutant $n: BROKEN (check_io failed, but not with \"$5\": mut/$n/log)"; bad=1; return
+  fi
+  verdict "$n" $rc "make check_io"
+}
+
 # controls: the unmutated copy passes every test target
 control() {
   prep control
   local t rc=0
-  for t in mock_selftest cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_test hwmap_test swap_test fat_test mmc_test config_test hdd_test fdd_test drivesounds_test boot_test; do
+  for t in mock_selftest cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_test hwmap_test spireply_test swap_test fat_test mmc_test config_test hdd_test fdd_test drivesounds_test boot_test; do
     mk control "run64-$t" > "mut/control/log.$t" 2>&1 || { echo "control: run64-$t FAILED (mut/control/log.$t)"; rc=1; }
   done
   mk control fmt > mut/control/log.fmt 2>&1 || { echo "control: fmt FAILED (mut/control/log.fmt)"; rc=1; }
+  mk control check_io > mut/control/log.check_io 2>&1 || { echo "control: check_io FAILED (mut/control/log.check_io)"; rc=1; }
   if [ $rc -ne 0 ]; then echo "=== MUTANTS FAILED (the unmutated copy is red)"; exit 1; fi
   echo "controls: the unmutated copy passes"
 }
@@ -271,6 +286,26 @@ unit boot_copper boot_test src boot.c 's/be16(\(0x[0-9a-f]*\))/\1/g' "FAIL defau
 unit boot_checksum boot_test src main.c 's/sum+=rd_be32(adr);/sum+=*(unsigned int *)adr;/' "FAIL CheckSum of a 512-byte block (aligned)"
 unit boot_hexdump boot_test src hexdump.c 's/unsigned int t=rd_be32(p);/unsigned int t=*(unsigned int *)p;/' "FAIL hexdump: the 832's (big-endian) word view (aligned)"
 
+# ---- SPI_reply() on HOST_REQ (spireply_test, Phase 4 Task 11) ---------------
+# the brief's two: the poll removed -> the order (no HOST_REQ read before the
+# write); the bound 0 -> the stuck case returns at once (TIMER reads)
+unit spireply_nopoll spireply_test src hardware.c 's/if (!(HOST_REQ \& HOST_REQ_OSD_RDY)) {/if (0) {/' "FAIL 1 zeros: order"
+unit spireply_bound0 spireply_test src hardware.c 's/GetTimer(2)/GetTimer(0)/' "FAIL stuck, TIMER step 1: TIMER reads"
+# a bound one count too long, the timeout not counted, the wrong bit
+unit spireply_bound3 spireply_test src hardware.c 's/GetTimer(2)/GetTimer(3)/' "FAIL stuck, TIMER step 1: TIMER reads"
+unit spireply_nocount spireply_test src hardware.c 's/osd_rdy_timeouts++;/;/' "FAIL stuck, TIMER step 1: osd_rdy_timeouts"
+unit spireply_bit spireply_test src hardware.h 's/define HOST_REQ_OSD_RDY 0x0001/define HOST_REQ_OSD_RDY 0x0002/' "FAIL ready: order"
+
+# ---- the check_io.awk fixture (check_io.sh, exec-3 deferred #18) --------------
+# no forgetting after a j: good.dis's stale s1 is taken for the UART (b)
+checkio checkio_j src check_io.awk 's/(j|jr|ret|mret)/(jr|ret|mret)/' "FAIL check_io fixture"
+# (c) by 2 instead of 4: HOST_REQ at -74 passes
+checkio checkio_c src check_io.awk 's/(-a) % 4 != 0/(-a) % 2 != 0/' "FAIL check_io fixture"
+# (b) without 0xFFFFFFF0: the UART read through a4 passes
+checkio checkio_b src check_io.awk 's/a >= -16 \&\& a <= -13/a >= -15 \&\& a <= -13/' "FAIL check_io fixture"
+# li not tracked: the accesses through a4 are not seen
+checkio checkio_li src check_io.awk 's/if (op == "li") { val\[rd\] = v32(num(p\[2\])); next }/if (op == "li") { delete val[rd]; next }/' "FAIL check_io fixture"
+
 # ---- the mock itself (mock_selftest) -----------------------------------------
 unit mock_token mock_selftest t mock_hw.c 's/c_push(0xFE);/c_push(0xFF);/'
 unit mock_r7 mock_selftest t mock_hw.c 's/c_push(0x01); c_push(0xAA);/c_push(0x01); c_push(0xAB);/'
@@ -308,6 +343,8 @@ hwmap platform_addr hardware.h 's/unsigned short \*)0xFFFFFFC0/unsigned short *)
 hwmap platform_width hardware.h 's/unsigned short \*)0xFFFFFFC0/unsigned int *)0xFFFFFFC0/'
 hwmap audio_addr hardware.h 's/unsigned char \*)0xFFFFFFB0/unsigned char *)0xFFFFFFB1/'
 hwmap audio_width hardware.h 's/unsigned char \*)0xFFFFFFB0/unsigned short *)0xFFFFFFB0/'
+hwmap host_req_addr hardware.h 's/unsigned short \*)0xFFFFFFB4/unsigned short *)0xFFFFFFB6/'
+hwmap host_req_width hardware.h 's/unsigned short \*)0xFFFFFFB4/unsigned char *)0xFFFFFFB4/'
 hwmap temp_addr  hardware.h 's/unsigned short \*)0xFFFFFF40/unsigned short *)0xFFFFFF42/'
 hwmap temp_width hardware.h 's/unsigned short \*)0xFFFFFF40/unsigned int *)0xFFFFFF40/'
 hwmap vscale_addr hardware.h 's/unsigned int \*)0xFFFFFF50/unsigned int *)0xFFFFFF54/'

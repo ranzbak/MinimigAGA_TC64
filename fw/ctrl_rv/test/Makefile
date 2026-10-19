@@ -68,6 +68,9 @@ $(eval $(call TEST,openhf_test,,-Wno-unused-function,))
 $(eval $(call TEST,lib_test,$$(SRC)/rvlibc.c,,))
 $(eval $(call TEST,hwmap_test,,,))
 $(eval $(call TEST,swap_test,$$(SRC)/swap.c,,))
+# spireply_test: SPI_reply() (hardware.c) waits for HOST_REQ's OSD_RDY, at
+# most 2 TIMER counts (Phase 4 Task 11), on the mock's HOST_REQ
+$(eval $(call TEST,spireply_test,$$(TD)/mock_hw.c $$(SRC)/hardware.c,,))
 
 # fat_test: the real fat.c + mmc.c on the card model, once per image of
 # fatimg.sh (FAT16 with MBR by mkcard.sh, FAT32 with MBR, FAT16 superfloppy);
@@ -293,8 +296,15 @@ $(B)/openhf.inc: $(SRC)/hdd.c
 	grep -q '^unsigned char OpenHardfile' $@
 $(B)/openhf_test $(B)/openhf_test_32: $(B)/openhf.inc
 
-run: fmt run-mock_selftest run-cue_test run-cdaudio_test run-atapi_test run-cdrom_test \
-     run-openhf_test run-lib_test run-hwmap_test run-swap_test run-fat_test run-mmc_test \
+# check_io: fw/ctrl_rv/check_io.awk (make check (b), (c)) on the fixture
+# check_io/*.dis against check_io/expected.txt (check_io.sh)
+check_io: $(SRC)/check_io.awk $(TD)/check_io.sh $(wildcard $(TD)/check_io/*)
+	@mkdir -p $(B)
+	bash $(TD)/check_io.sh $(SRC)/check_io.awk $(TD)/check_io $(B)/check_io.txt
+.PHONY: check_io
+
+run: fmt check_io run-mock_selftest run-cue_test run-cdaudio_test run-atapi_test run-cdrom_test \
+     run-openhf_test run-lib_test run-hwmap_test run-spireply_test run-swap_test run-fat_test run-mmc_test \
      run-config_test run-hdd_test run-fdd_test run-drivesounds_test run-boot_test
 
 clean:

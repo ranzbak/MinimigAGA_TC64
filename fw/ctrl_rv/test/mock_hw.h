@@ -17,6 +17,8 @@
  *  - TIMER: a counter, advanced by hosttest_advance(), by `step` on every
  *    read, so that a CheckTimer() loop ends, and (mock_timer_spi_rate) by 1
  *    every n SPI bytes: time that passes with the bytes on the wire.
+ *  - HOST_REQ: bit 0 (OSD_RDY) 0 for a scripted number of reads, then 1;
+ *    the order of those reads and the SPI DATA accesses (mock_order).
  *  - UART: the bytes of RS232(), kept as text.
  *  - RAM: AUDIO_BUFFER (the audio ring) and the room in front of it.
  */
@@ -71,6 +73,20 @@ void hosttest_advance(unsigned n);
 void mock_timer_step(unsigned n);           /* added after every read, default 1 */
 void mock_timer_spi_rate(unsigned n);       /* +1 every n SPI bytes, 0 = off (default) */
 unsigned mock_timer_reads(void);
+
+/* ---- HOST_REQ (cfide 0xFFFFFFB4, bit 0 OSD_RDY) ---- */
+/* the next `zeros` reads return 0, every read after them 1 (OSD_RDY);
+   MOCK_HOST_REQ_STUCK: 0 for ever.  After mock_reset(): 1 at once. */
+#define MOCK_HOST_REQ_STUCK (~0u)
+void mock_host_req(unsigned zeros);
+unsigned mock_host_req_reads(void);
+/* the order of the HOST_REQ reads and the SPI DATA accesses since the last
+   mock_order_start() (recording is off after mock_reset()): one character
+   each, '0' / '1' a HOST_REQ read and its bit 0, 'W' an SPI DATA write,
+   'R' a read of it (SPI(x) is "WR", RDSPI "R"); at most 4095 characters,
+   then '+' and nothing more */
+void mock_order_start(void);
+const char *mock_order(void);
 
 /* ---- UART, PLATFORM, AUDIO ---- */
 const char *mock_uart(void);

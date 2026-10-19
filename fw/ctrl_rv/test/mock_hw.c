@@ -13,6 +13,7 @@ unsigned char hosttest_rdspi(void);
 void hosttest_cs(unsigned v);
 void hosttest_spi_speed(unsigned v);
 unsigned short hosttest_timer(void);
+unsigned short hosttest_host_req(void);
 volatile unsigned short *hosttest_platform(void);
 volatile unsigned char *hosttest_audio(void);
 void hosttest_uart(int c);
@@ -290,6 +291,7 @@ static unsigned dmode_blocks;			/* mock_dmode_blocks */
 
 static struct buf speed_log;			/* mock_spi_speed_log */
 static void timer_spi_byte(void);
+static void order_put(char c);
 
 static struct buf trace;			/* closed frames */
 static struct buf fr_out, fr_in;		/* the open frame */
@@ -378,6 +380,7 @@ unsigned char hosttest_spi(unsigned char out)
 		/* direct mode: cfide clocks 4096 bits with MOSI high (sd_out FFFF,
 		   shiftcnt "10111111111111"), the FPGA takes the card's bytes */
 		const unsigned char ff = 0xFF;
+		order_put('W'); order_put('R');
 		for (int n = 0; n < 512; n++) {
 			in = card.txb;
 			card_on_byte(ff);
@@ -389,6 +392,7 @@ unsigned char hosttest_spi(unsigned char out)
 		dmode_blocks++;
 		return in;
 	}
+	order_put('W'); order_put('R');
 	if (scs & 2) {
 		in = card.txb;
 		card_on_byte(out);
@@ -405,7 +409,7 @@ unsigned char hosttest_spi(unsigned char out)
 	return in;
 }
 
-unsigned char hosttest_rdspi(void) { return last_in; }
+unsigned char hosttest_rdspi(void) { order_put('R'); return last_in; }
 unsigned mock_dmode_blocks(void) { return dmode_blocks; }
 
 void mock_script_bytes(unsigned cs, const unsigned char *b, size_t n)
@@ -441,6 +445,34 @@ unsigned short hosttest_timer(void)
 	unsigned short v = (unsigned short)timer_count;
 	timer_count += timer_step;
 	timer_reads++;
+	return v;
+}
+
+/* ------------------------------------------------------------- HOST_REQ */
+static unsigned host_req_zeros, host_req_reads;
+static struct buf order;		/* mock_order */
+static int order_on;
+
+static void order_put(char c)
+{
+	if (!order_on) return;
+	if (order.n < 4095) buf_put(&order, &c, 1);
+	else if (order.n == 4095) buf_put(&order, "+", 1);
+}
+void mock_order_start(void) { order.n = 0; if (order.p) order.p[0] = 0; order_on = 1; }
+const char *mock_order(void) { buf_put(&order, "", 0); return (const char *)order.p; }
+
+void mock_host_req(unsigned zeros) { host_req_zeros = zeros; }
+unsigned mock_host_req_reads(void) { return host_req_reads; }
+unsigned short hosttest_host_req(void)
+{
+	unsigned short v = 1;
+	host_req_reads++;
+	if (host_req_zeros) {
+		v = 0;
+		if (host_req_zeros != MOCK_HOST_REQ_STUCK) host_req_zeros--;
+	}
+	order_put(v ? '1' : '0');
 	return v;
 }
 
@@ -485,6 +517,8 @@ void mock_reset(void)
 	card_state_reset();
 	free(speed_log.p); memset(&speed_log, 0, sizeof speed_log);
 	timer_count = 0; timer_step = 1; timer_reads = 0; timer_spi_rate = 0; timer_spi_bytes = 0;
+	host_req_zeros = 0; host_req_reads = 0;
+	free(order.p); memset(&order, 0, sizeof order); order_on = 0;
 	mock_uart_clear();
 	platform_reg = 0; audio_reg = 0;
 	memset(__bss_end, 0, sizeof __bss_end);

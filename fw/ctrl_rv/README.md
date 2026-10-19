@@ -10,7 +10,9 @@ Task 9's byte-order helpers and the FAT/MBR fields ("Byte order (Task 9)");
 Task 10's TIMER bounds in `mmc.c` ("SD driver timeouts and the TIMER (Task 10)");
 Task 11's config file byte order, file names and `cfgconv` ("Config file byte
 order (Task 11)"); Task 12's hard disk byte order ("Hard disk byte order
-(Task 12)"). Task 19 only completed the READMEs.
+(Task 12)"). Task 19 only completed the READMEs. Phase 4 Task 11:
+`SPI_reply()` waits for `HOST_REQ`'s `OSD_RDY` ("OSD reply wait (Phase 4
+Task 11)").
 
 Every command block in this file (and in the READMEs it points to) starts
 from a fresh Ubuntu 24.04 machine, from the repository root, and pastes into
@@ -584,6 +586,8 @@ Other rows:
 |---|---|---|
 | Order of an interrupt's `printf` inside another `printf` | streamed byte by byte while formatting | the interrupted line is formatted completely first; the interrupt's line is inserted at a byte boundary of its send loop. Both lines intact (`lib_test`) |
 | Line longer than the buffer | no limit | cut to 319 bytes, `rv_printf_truncations` (audit: no site reaches it) |
+| `SPI_reply` polls `HOST_REQ` (RV only; needs a core with the Phase 4 RTL; the 832 keeps its four `SPIN`s) | four `SPIN`s (TIMER reads as a delay) before each OSD reply byte | waits for `HOST_REQ` bit 0 (`OSD_RDY`) before each reply byte, at most 2 TIMER counts; the waits that ran out are counted in `osd_rdy_timeouts` ("OSD reply wait (Phase 4 Task 11)") |
+| DebugMode stack line (RV only, Task 17) | none | `Stack high water <hex>, OSD RDY timeouts 0x<hex>` on the UART when DebugMode is switched on |
 | String and memory functions | lib832 `string.S` | newlib-nano; no observable difference at any call site (next table; "String semantics audit") |
 
 I/O map (Task 5, plan 5.3): every register is at offset 0 of its 16-byte
@@ -602,6 +606,7 @@ and the big-endian byte lane `+2`/`+3`):
 | RTC | base `0x0FFFFF72` | `0xFFFFFF70` (offsets 0/4/8/0xC as before) |
 | I2C / `VIDEOSCALE` / `FPGA_TEMP_RAW` | `0x0FFFFF60` / `0x0FFFFF50` / `0x0FFFFF40` | `0xFFFFFF60` / `0xFFFFFF50` / `0xFFFFFF40` |
 | `hardware.h` | no include guard | `HARDWARE_H` guard (the host test includes `uart.c` after it) |
+| `HOST_REQ` (Phase 4 Task 11) | none (the 832 firmware does not read it) | `0xFFFFFFB4` (16 bit, read only, offset 4 of the audio window): bit 0 `OSD_RDY` (`HOST_REQ_OSD_RDY`), bits 15..1 read 0 |
 
 `test/hwmap_test.c` asserts address and access width of every register macro
 (real macros: it undefines `HOSTTEST`), the CS / SPEED values, the order of
@@ -1079,7 +1084,8 @@ us). Lines are those of the current tree.
 |---|---|---|---|
 | `hardware.h:53` | `TIMER`, 16-bit read of `0xFFFFFFD0` | | |
 | `hardware.c:180`, `188`, `201` | `GetTimer`, `CheckTimer`, `WaitTimer` (above) | | |
-| `hardware.h:59` | `SPIN`: one TIMER read, the value unused (a cfide handshake as a delay); live at `hardware.c:236` (`SPI_reply`, 4x), `fpga.c:226` (4x), `config.c:618` (4x) | | one bus access each |
+| `hardware.h:59` | `SPIN`: one TIMER read, the value unused (a cfide handshake as a delay); live at `fpga.c:226` (4x) and `config.c:618` (4x) only (`SPI_reply`'s four went with Phase 4 Task 11) | | one bus access each |
+| `hardware.c:244`, `246` (`SPI_reply`) | the `OSD_RDY` wait: `GetTimer(2)`, ends when TIMER has passed T0 + 2 (`CheckTimer`) | 2 | 11.6..17.4 ms (2..3 counts) |
 | `audio.c:33`-`34` (`audio_clear`) | waits for the next TIMER change after `AUDIOF_ENA` | <= 1 | <= 5.804 ms |
 | `drivesounds.c:79`, `99`, `435` | event and render timestamps (`drivesounds_render`, `samples = timestamp - drivesounds.timestamp`, `:158`) | 1 = 256 frames | 5.804 ms per count |
 | `drivesounds.c:360` | `TIMER & 3`: pseudo-random pick of one of four sounds | | |
@@ -1096,7 +1102,7 @@ us). Lines are those of the current tree.
 | `menu.c:610`, `617`, `619` (`HandleUI`) | help text: `HELPTEXT_DELAY`, `FRAME_DELAY` (`menu.c:201`, `202`) | 2500, 50 | 14.51 s, 290.2 ms |
 | `menu.c:3021`, `2714` (`InfoMessage`) | info popup | 1000 | 5.804 s |
 | `main.c:107`, `109`, `111` (`FatalError`) | LED blink: `WaitTimer(250)` x2, `WaitTimer(1000)` | 250, 1000 | 1.451 s, 5.804 s |
-| `main.c:297`, `343`, `346` (`main`) | ADV7511 poll (`adv_timer`) | 250 | 1.451 s |
+| `main.c:297`, `345`, `348` (`main`) | ADV7511 poll (`adv_timer`) | 250 | 1.451 s |
 | `mmc.c:72` (`MMC_Init`) | `WaitTimer(20)` after the 80 clocks | 20 | 116.1 ms |
 | `mmc.c:80`, `88`, `135`, `174` (`MMC_Init`) | init timeout: `GetTimer(1000)`, ACMD41 / CMD1 polls | 1000 | 5.804 s |
 | `mmc.c:235`, `290`, `366`, `452`, `527` | `SD_TIMEOUT` (above) | 173 | 1.004 s |
@@ -1104,6 +1110,66 @@ us). Lines are those of the current tree.
 | `menu.c:2737`, `config.c:612`, `fat.c:168` | in comments (dead) | | |
 
 The boot ROM (`fw/ctrl_boot_rv`) is not part of this firmware and unchanged.
+
+## OSD reply wait (Phase 4 Task 11)
+
+`SPI_reply()` (`hardware.c`, the six `OSD_CMD_VERSION` bytes in
+`fpga_init()` and the `OSD_CMD_KEYQ` bytes in `osd.c`) reads cfide's
+`HOST_REQ` (`0xFFFFFFB4`) before each reply byte. Bit 0, `OSD_RDY`, is 1 when
+`userio_osd` has taken every byte cfide sent with the OSD selected
+(`osd_tx_seq == osd_rx_seq`, `findings/osd-riscv/phase4.md` "Handshake
+design"): only then is the byte that `SPI(0xff)` clocks the current reply,
+not the previous one. While it reads 0 the firmware polls on, bounded by
+TIMER: `GetTimer(2)`, so the wait ends once TIMER has passed its value at
+the start by 2, after 2 to 3 counts (11.6 to 17.4 ms on the board, about
+2,000 to 3,000 `clk_114` in the L2 bench, where TIMER is 643x fast; Decision
+4: at least 5.8 ms). A wait that runs out adds 1 to `osd_rdy_timeouts` and
+reads the byte all the same. A poll bounded by TIMER is not a count delay
+(Global Constraints "No new count-based delays"): the live `SPIN` sites are
+now `fpga.c:226` and `config.c:618` only:
+
+```sh
+grep -n 'SPIN' fw/ctrl_rv/*.c | grep -v '^[a-z0-9_/]*\.c:[0-9]*:[[:space:]]*//'
+```
+
+`osd_rdy_timeouts` is printed with the stack high water when DebugMode is
+switched on (UART, `Stack high water <hex>, OSD RDY timeouts 0x<hex>`; the
+existing `%X` format, so `test/gold/formats.txt` is unchanged).
+
+**It needs a core with the Phase 4 RTL** (Tasks 9 and 10: `userio_osd`'s
+`osd_rx_seq`, cfide's `HOST_REQ`). An older cfide answers `0xFFFFFFB4` with
+its audio status, whose bit 0 is `audio_buf`: the firmware then waits its
+full bound before every reply byte, or not at all, so the old stale-byte
+risk is back. The 832 firmware is unchanged and keeps its four `SPIN`s.
+
+Tests:
+
+- `test/spireply_test.c` (native and `-m32`): the mock's `HOST_REQ` reads 0
+  n times, then 1. `SPI_reply()` must read it until 1 and only then write
+  SPI DATA (the mock's order log: `0001WR`), with no TIMER read when it is
+  1 at once; stuck at 0, the call returns after the TIMER bound (4 TIMER
+  and 4 `HOST_REQ` reads at one count per read, 3 at two, 2 at three) with
+  `osd_rdy_timeouts` = 1 and the byte still read; a three-byte frame waits
+  per byte. Mutants (`test/mutants.sh`): the poll removed, the bound 0, the
+  bound 3, the count not kept, the wrong bit; `hwmap_test` checks
+  `&HOST_REQ == 0xFFFFFFB4`, width 2 (mutants: address, width).
+- `test/check_io/` (exec-3 deferred #18): `check_io.awk` on three small
+  listings, the verdicts of (b) and (c) against `expected.txt`:
+  `good.dis` (HOST_REQ at `-76(zero)`, offset 4 of its window; I/O through
+  a tracked `li` base; a `lui` base that is not I/O; a register forgotten
+  after a `j`), `uart_read.dis` (a UART load through a register: (b)
+  fails), `misaligned.dis` (`HOST_REQ` at `-74`: (c) fails). Mutants: four
+  edits of `check_io.awk`.
+- L2 (`sim/host_bridge`, `fwboot` and `fwboot_cfg`): the stub models
+  `userio_osd`'s `osd_rx_seq` (40 `clk_114` after each OSD byte); the bench
+  reports `OSD RDY early` (a bench error if > 0), the polls and the
+  firmware's `osd_rdy_timeouts` (read from the SDRAM model at the end). With
+  the stub's sequence frozen (`XARGS=+STUB_RDY_DLY=-1`) the waits run into
+  their bound and the run still reaches every milestone (the bounded wait).
+  Figures: `sim/host_bridge/README.md` "OSD_RDY".
+
+Size: `RV32OSDA.BIN` 92,736 -> 92,832 B (+96); `size` text 89,252 -> 89,348
+(+96), data 3,484, bss 59,292 -> 59,296 (+4, the counter).
 
 ## String semantics audit
 
@@ -1199,7 +1265,10 @@ encoder, and track writes decoded into the ADF; `drivesounds_test` loads
 audio ring after every fill of an event sequence with
 `test/gold/drivesounds.py` (the 832's file format and render rules);
 `boot_test` checks the default copper list, `CheckSum` and `hexdump` by
-their bytes.
+their bytes; `spireply_test` checks `SPI_reply()`'s `OSD_RDY` wait on the
+mock's `HOST_REQ` (below); `check_io` runs `check_io.awk` (`make check` (b),
+(c)) on three small listings in `test/check_io/` against their expected
+verdicts.
 `fw/ctrl_rv/test/README.md` has the targets, the flags, the mock (an SPI/TIMER/UART
 model with a card-image model; `-DHOSTTEST` hooks in `hardware.h` that leave
 the target image byte for byte the same), the rules for writing a test and the
@@ -1294,8 +1363,16 @@ about 39 M cycles), `fwboot_cfg` 119.6 M (no `DRIVESND.BIN`), `fwboot_trap`
 firmware: it ignores `FW=`. The xsim reference run of `fwboot` takes about
 27 minutes and needs Vivado 2023.2 (`sim/host_bridge/README.md`).
 
-The `fwboot` run also reports the OSD reply gap: **`OSD GAP min 40`**, the
-bench's measure of the host's access spacing during an OSD reply read,
-against the 40 `clk_114` that `userio_osd` needs (`sim/spi_cdc`). It has no
-margin left; whether the real `userio_osd` accepts it is an open risk that
-Phase 4 (L3 co-simulation) checks.
+The `fwboot` run also reports the OSD reply gap, the bench's measure of
+the host's access spacing during an OSD reply read: **`OSD GAP min 40`**
+with `SPI_reply()`'s four `SPIN`s, **63** since Phase 4 Task 11, where the
+firmware waits for `HOST_REQ`'s `OSD_RDY` and the stub models
+`userio_osd`'s reply sequence (`OSD RDY early 0`, no timeout). The frozen
+sequence shows the bound at work:
+
+```sh
+SIM=verilator RUNTAG=fwvf XARGS=+STUB_RDY_DLY=-1 bash sim/host_bridge/run.sh fwboot
+```
+
+(577 of 578 reply waits run out, `osd_rdy_timeouts` 577, all milestones;
+`sim/host_bridge/README.md` "OSD_RDY".)

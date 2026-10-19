@@ -1,0 +1,19 @@
+# check_io.awk fixture: the accesses (b) and (c) must pass.  objdump -d format.
+
+00002270 <SPI_reply>:
+    2270:	fb405783          	lhu	a5,-76(zero) # ffffffb4 HOST_REQ: offset 4 of the B0 window
+    2278:	fd005783          	lhu	a5,-48(zero) # ffffffd0 TIMER
+    22a2:	fef00023          	sb	a5,-32(zero) # ffffffe0 SPI DATA write
+    22a6:	fe004503          	lbu	a0,-32(zero) # ffffffe0 SPI DATA read
+    22aa:	8082              	ret	
+
+0000ea20 <tracked>:
+    ea22:	f9000713          	li	a4,-112
+    ea26:	00075783          	lhu	a5,0(a4) # I/O through a tracked base: ffffff90
+    ea2a:	fffff6b7          	lui	a3,0xfffff
+    ea2e:	ff06a503          	lw	a0,-16(a3) # fffff000 - 16 = ffffeff0: not I/O
+    ea32:	fef00823          	sb	a5,-16(zero) # fffffff0 UART store: allowed
+    ea36:	4481              	li	s1,0
+    ea38:	a011              	j	ea3c <tracked+0x1c>
+    ea3a:	ff04ab03          	lw	s6,-16(s1) # reached only by a branch: s1 forgotten after the j
+    ea3e:	8082              	ret	

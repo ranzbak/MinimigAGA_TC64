@@ -85,8 +85,20 @@
 // with SPI(0xff) gave 00 01 0A 0A A4 A4, with four SPINs before each byte
 // 01 1A 0A 02 A4 7D every time -- the stale magic byte is what brought the
 // 68020 CPU menu back on a 68040 core.
+// The RV firmware (Phase 4) waits instead for HOST_REQ's OSD_RDY before each
+// reply byte, at most 2 TIMER counts (hardware.c); every wait that ran out is
+// counted in osd_rdy_timeouts (printed with the stack high water in DebugMode).
 unsigned char SPI_reply(void);
+extern unsigned long osd_rdy_timeouts;
 #define RDSPI  HW_SPI(HW_SPI_DATA)
+
+// HOST_REQ (cfide, read only; audio window offset 4).  Bit 0 OSD_RDY: 1 when
+// userio_osd has taken every byte cfide sent with the OSD selected, i.e. a
+// reply byte read now is the current one.  Bits 15..1 read 0 (reserved).
+// Needs a core with the Phase 4 RTL: an older cfide returns its audio status
+// here (bit 0 = audio_buf), so SPI_reply() waits its full bound or not at all.
+#define HOST_REQ (*(volatile unsigned short *)0xFFFFFFB4)
+#define HOST_REQ_OSD_RDY 0x0001
 
 // A 16-bit register for platform-specific config.
 // On read:
@@ -152,6 +164,7 @@ unsigned char hosttest_rdspi(void);		/* RDSPI: read DATA */
 void hosttest_cs(unsigned v);			/* the CS register: Enable*()/Disable*() */
 void hosttest_spi_speed(unsigned v);		/* the SPEED register: SPI_slow()/SPI_fast() */
 unsigned short hosttest_timer(void);		/* TIMER read */
+unsigned short hosttest_host_req(void);		/* HOST_REQ read */
 volatile unsigned short *hosttest_platform(void);	/* PLATFORM, an lvalue */
 volatile unsigned char *hosttest_audio(void);		/* AUDIO, an lvalue */
 void hosttest_uart(int c);			/* RS232(x) */
@@ -172,6 +185,7 @@ unsigned char *hosttest_audio_buffer(void);	/* AUDIO_BUFFER: the mock's ring */
 #undef SPI_slow
 #undef SPI_fast
 #undef TIMER
+#undef HOST_REQ
 #undef PLATFORM
 #undef AUDIO
 #undef RS232
@@ -191,6 +205,7 @@ unsigned char *hosttest_audio_buffer(void);	/* AUDIO_BUFFER: the mock's ring */
 #define SPI_slow()     hosttest_spi_speed(0x3f)
 #define SPI_fast()     hosttest_spi_speed(0x1)
 #define TIMER          hosttest_timer()
+#define HOST_REQ       hosttest_host_req()
 #define PLATFORM       (*hosttest_platform())
 #define AUDIO          (*hosttest_audio())
 #define RS232(x)       hosttest_uart(x)

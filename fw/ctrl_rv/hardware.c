@@ -231,8 +231,23 @@ void Reconfigure()
 
 
 
+// An OSD reply byte (hardware.h): wait until cfide's HOST_REQ says that
+// userio_osd has taken every byte sent so far (OSD_RDY), so that this byte
+// is the current reply and not the previous one.  At most 2 TIMER counts
+// (>= 5.8 ms on the board, Decision 4); a wait that runs out is counted and
+// the byte is read all the same.  (The 832 firmware keeps its four TIMER
+// reads, the SPIN delay of hardware.h, here.)
+unsigned long osd_rdy_timeouts;
+
 unsigned char SPI_reply(void)
 {
-	SPIN; SPIN; SPIN; SPIN;
+	if (!(HOST_REQ & HOST_REQ_OSD_RDY)) {
+		unsigned long t = GetTimer(2);
+		while (!(HOST_REQ & HOST_REQ_OSD_RDY))
+			if (CheckTimer(t)) {
+				osd_rdy_timeouts++;
+				break;
+			}
+	}
 	return SPI(0xff);
 }

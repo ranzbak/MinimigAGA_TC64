@@ -78,7 +78,7 @@ Output goes to `fw/ctrl_rv/test/out/` and `mut/` (both ignored by git);
   bytes, 174..175 reads). A bare "the call failed" proves nothing.
 * **A register that has no `-DHOSTTEST` hook crashes the test.** Hooked are
   `SPI`/`RDSPI`, the chip selects, `SPI_slow`/`SPI_fast`, `TIMER`,
-  `PLATFORM`, `AUDIO`, `RS232` and `AUDIO_BUFFER` (the `HOSTTEST` block at
+  `HOST_REQ`, `PLATFORM`, `AUDIO`, `RS232` and `AUDIO_BUFFER` (the `HOSTTEST` block at
   the end of `fw/ctrl_rv/hardware.h`). Every other register macro still
   dereferences its real address (`0xFFFFFFxx`, or `0xDEExxx`), which is not
   mapped on the host: a test that reaches the keyboard (`HW_KEYBOARD`),
@@ -97,6 +97,7 @@ Output goes to `fw/ctrl_rv/test/out/` and `mut/` (both ignored by git);
 | `run` (default) | `fmt` and every `run-<test>` |
 | `run-<test>` | one test, native then `-m32` (`run64-<test>`, `run32-<test>`: one of them) |
 | `fmt` (`fmt.ok`) | the format-parity gates of `rvlibc.c` against glibc and lib832 (below) |
+| `check_io` | `../check_io.awk` (`make -C fw/ctrl_rv check` (b), (c)) on the three listings of `check_io/` (`check_io.sh`): its output and exit status for each listing and mode must be `check_io/expected.txt` |
 | `mutants` | `mutants.sh`: each mutant must make the real test target fail |
 | `clean` | remove `out/` and `mut/` |
 
@@ -118,6 +119,7 @@ built `-std=gnu17 -m32 -funsigned-char`, like the 832 firmware.
 | `lib_test` | `rvlibc.c` against glibc's `vsnprintf` (output, return value, truncation, nesting, heap stubs) |
 | `hwmap_test` | with the real macros (`-DHOSTTEST` undefined in that file): address and width of every register, the CS/SPEED values of `Enable*()`/`Disable*()`/`SPI_slow()`/`SPI_fast()`, `SPI()`/`RDSPI` order, the real `RS232()` expansion, `uart.c` `puts` |
 | `fmt` | format strings of the firmware: ILP32 == LP64, `fmtcheck.py` model, the 832-versus-RV differences are exactly `gold/fmt_diff_expected.txt` |
+| `spireply_test` | `SPI_reply()` (`../hardware.c`, Phase 4 Task 11) on the mock's `HOST_REQ`: ready at once (`1WR`: no TIMER read), ready after 1..3 reads of 0 (polls until 1, only then the DATA write; n TIMER reads, no timeout), never ready at one, two and three TIMER counts per read (returns at the bound: 4 / 3 / 2 TIMER and `HOST_REQ` reads, `osd_rdy_timeouts` 1, the byte still read), and a three-byte frame that waits per byte. The expected orders and counts follow from the rule (2 TIMER counts, `CheckTimer` true once TIMER > T0 + 2) and the mock's TIMER, written in the test's header |
 | `swap_test` | `../swap.h` and `../swap.c`: `le16/le32/be16/be32` by the bytes they leave in memory (true on any host) and by value on this LE host, `rd_le16/rd_le32/rd_be16/rd_be32` and `wr_be16/wr_be32` at offsets 0..3 of an aligned buffer (a pointer cast would be a misaligned access there, which UBSan stops), `SwapBB/SwapBBBB/SwapWW` without sign extension on LP64 |
 | `fat_test` | the real `fat.c` over the real `mmc.c` on the card model, once per image (below): `FindDrive()` (FAT type, partition start and size against the MBR bytes, cluster size), every directory through `ScanDirectory` (names, sizes, start clusters, long names) against `mdir -/ -a` + `mshowfat` (`gold/fatlist.py`), `FileOpen` + `FileRead`/`FileNextSector`, `FileSeek` and `FileReadEx` of a 300 KB file fragmented over a deleted file's clusters, a subdirectory walk with long names (`FindDirectory`, `ChangeDirectory`, `FileOpen` by long name, `ValidateDirectory`, `FindDirectoryByCluster`), `HIGH.BIN` (on FAT32 above cluster 65535: `HighCluster`), `FileOpen` by long name of a file in the second cluster of a two-cluster directory (`GetFATLink`), a name that does not exist, and `FileCreate` + 3 x `FileWrite` + `UpdateEntry` of a 3-sector file (on FAT32 above cluster 65535), read back through `fat.c`, its raw directory entry (create/access date, create time, start cluster, `HighCluster`) against the FAT layout, then `fsck.fat -n` of the written image, `mtype` of the file and `mdir` of its modify date and time (`fat_check.sh`) |
 | `config_test` | the config file's byte order (Task 11; `config_test.c`, `config_check.sh`): the generated 832 files, `cfgconv`, `cfg_order`/`cfg_swap`, and `LoadConfiguration`/`ConfigurationExists` on card images; the cases are the table "`config_test` cases" below |
@@ -182,7 +184,7 @@ script changed or one of `fatimg.sh`'s outputs is missing.
 ## The mock (`mock_hw.c`, `mock_hw.h`)
 
 `-DHOSTTEST` swaps the register macros of `fw/ctrl_rv/hardware.h`
-(`SPI`, `RDSPI`, `Enable*`/`Disable*`, `SPI_slow`/`SPI_fast`, `TIMER`,
+(`SPI`, `RDSPI`, `Enable*`/`Disable*`, `SPI_slow`/`SPI_fast`, `TIMER`, `HOST_REQ`,
 `PLATFORM`, `AUDIO`, `RS232`) for calls into the mock; without it the target
 build is the same bytes. A test that uses the mock links `mock_hw.c`.
 
@@ -215,6 +217,12 @@ build is the same bytes. A test that uses the mock links `mock_hw.c`.
   passes with the bytes on the wire. Under the per-read step a loop that is
   bounded too long still ends, so a timeout test checks the bound itself (bytes
   in the trace, `mock_timer_reads()`), not only that the call failed.
+* **HOST_REQ** (cfide `0xFFFFFFB4`, bit 0 `OSD_RDY`): `mock_host_req(n)`, the
+  next n reads return 0, every read after them 1 (`MOCK_HOST_REQ_STUCK`: 0 for
+  ever); 1 at once after `mock_reset()`. `mock_host_req_reads()` counts the
+  reads. `mock_order_start()` starts the order log `mock_order()`: one
+  character per `HOST_REQ` read (`0`/`1`, its bit 0) and per SPI DATA access
+  (`W` write, `R` read: `SPI(x)` is `WR`).
 * **UART**: the bytes of `RS232()` as text (`mock_uart()`).
 * **RAM** (`mock_ring()`): `AUDIO_BUFFER` is a `HOSTTEST` hook in
   `hardware.h` (`hosttest_audio_buffer()`); the mock's array `__bss_end` (the
@@ -259,8 +267,8 @@ of any order, `ConfigurationExists` without the 832 file, and `cfgconv`
 without its output-is-input and target-order refusals; for `hdd_test`: `RDBChecksum`
 summing native longs and IDENTIFY without the string swap (the brief's two),
 the RDB patch on native longs, the boundary loop with `<= 0` and without its
-`blk` bound, sector count 0 = 255, and the mock's direct-mode count; for `fdd_test`: `SendSector` one byte short, which must fail against both references on tracks 0 and 159 (the brief's), the Copy Lock workaround gone, tracks 128..159 read at the sector of track - 128, `GetHeader`'s sector number and `GetData`'s even data bits decoded from the wrong bits, `WriteTrack` going back one sector off, the header checksum not checked, `GetData` taking 515 words for a 516-word sector (reads past the FIFO count at 7 words per poll), and a stale committed golden stream; for `drivesounds_test`: the 832's per-sample swap kept (the brief's: the ring differs), the header read as `*(long *)` (the brief's: on LP64 an 8-byte load at `SYNTH.BIN`'s 4 mod 8 size field, which UBSan stops) and as `*(int *)` (RV32's 4-byte long: the little-endian sizes, the test's load check), the samples not converted at load, the `& 0xffff` dropped, each of the four `(enabled & DRIVESOUNDS_FLOPPY)` conditions always true, and each bound of the in-place conversion dropped (`ds_noclamp`: `TRUNC.BIN` writes the ring; `ds_oddfile`: `ODDLEN.BIN` loads, on x86 without a trap; `ds_oddsize`, `ds_negsize`: the load lines; `ds_negid`: UBSan, `sounds[-1]`); for `boot_test`: the copper list without `be16`, `CheckSum` and `hexdump` on native words) and one for every register class of the I/O map (address and width of
-SPI DATA/CS/SPEED, UART, TIMER, PLATFORM, AUDIO, `FPGA_TEMP_RAW`,
+`blk` bound, sector count 0 = 255, and the mock's direct-mode count; for `fdd_test`: `SendSector` one byte short, which must fail against both references on tracks 0 and 159 (the brief's), the Copy Lock workaround gone, tracks 128..159 read at the sector of track - 128, `GetHeader`'s sector number and `GetData`'s even data bits decoded from the wrong bits, `WriteTrack` going back one sector off, the header checksum not checked, `GetData` taking 515 words for a 516-word sector (reads past the FIFO count at 7 words per poll), and a stale committed golden stream; for `drivesounds_test`: the 832's per-sample swap kept (the brief's: the ring differs), the header read as `*(long *)` (the brief's: on LP64 an 8-byte load at `SYNTH.BIN`'s 4 mod 8 size field, which UBSan stops) and as `*(int *)` (RV32's 4-byte long: the little-endian sizes, the test's load check), the samples not converted at load, the `& 0xffff` dropped, each of the four `(enabled & DRIVESOUNDS_FLOPPY)` conditions always true, and each bound of the in-place conversion dropped (`ds_noclamp`: `TRUNC.BIN` writes the ring; `ds_oddfile`: `ODDLEN.BIN` loads, on x86 without a trap; `ds_oddsize`, `ds_negsize`: the load lines; `ds_negid`: UBSan, `sounds[-1]`); for `boot_test`: the copper list without `be16`, `CheckSum` and `hexdump` on native words; for `spireply_test`: the poll removed and the bound 0 (the brief's two), the bound 3, the timeout not counted, `HOST_REQ_OSD_RDY` on bit 1; for the `check_io` fixture, through `make check_io`: no forgetting after a `j`, the offset rule by 2, the UART range without `0xFFFFFFF0`, `li` not tracked) and one for every register class of the I/O map (address and width of
+SPI DATA/CS/SPEED, UART, TIMER, `HOST_REQ`, PLATFORM, AUDIO, `FPGA_TEMP_RAW`,
 `VIDEOSCALE`, `RECONFIGURE`, keyboard words and OUT, Akiko, RTC, I2C, the
 interrupt controllers, each CS and SPEED value, `SPI()`/`RDSPI`, and
 `RS232()` itself).

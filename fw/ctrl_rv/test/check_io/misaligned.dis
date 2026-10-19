@@ -1,0 +1,6 @@
+# check_io.awk fixture: HOST_REQ read on the wrong lane (ffffffb6) -> (c) FAIL.
+
+00004000 <host_req_lane>:
+    4000:	fb605783          	lhu	a5,-74(zero) # ffffffb6: offset 6, not a multiple of 4
+    4004:	fb405783          	lhu	a5,-76(zero) # ffffffb4: right
+    4008:	8082              	ret	

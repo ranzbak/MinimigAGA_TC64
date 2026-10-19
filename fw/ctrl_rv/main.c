@@ -305,6 +305,8 @@ int main(void)
 			// test/gold/formats.txt and fmt_cases.h)
 			printf("Stack high water ");
 			printf("%X", StackHighWater());
+			printf(", OSD RDY timeouts 0x");	// SPI_reply() waits that ran out (hardware.c)
+			printf("%X", (unsigned int)osd_rdy_timeouts);
 			printf("\n");
 		}
 		debug_was = DebugMode;

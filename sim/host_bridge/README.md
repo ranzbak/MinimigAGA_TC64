@@ -39,7 +39,7 @@ xsim stays the default and the X-checking reference.
 | `boot/fwtest.c`, `boot/fwfill.S` | Boot runs: the test firmware `RV32OSDA.BIN` (on `fw/ctrl_rv/arch`, `firmware.ld`) |
 | `boot/Makefile` | `RV32OSDA.BIN` (padded to 2560 bytes), `img.txt`, the card images `card.img` and `card_nofile.img` (`tools/sim/mkcard.sh`) |
 | `boot/expect.txt`, `boot/expect_nofile.txt` | The expected `UART:` / `ERRORCODE:` lines of `boot` and `boot_nofile` |
-| `minimig_spi_stub.v` | `fwboot`: fixed replies of the Minimig SPI slaves (FPGA `sd_cs[4]`, OSD `sd_cs[5]`, RTC `sd_cs[7]`) |
+| `minimig_spi_stub.v` | `fwboot`: fixed replies of the Minimig SPI slaves (FPGA `sd_cs[4]`, OSD `sd_cs[5]`, RTC `sd_cs[7]`), and `userio_osd`'s reply sequence `osd_rx_seq` for cfide's `OSD_RDY` |
 | `fwboot/Makefile` | `fwboot`: the 16 MB card with `$FW` (`card.img`); `fwboot_trap`: the firmware with `smoke_trap.o` and its card (`card_trap.img`, `trap_expect.txt`); `fwboot_cfg`: `card.img` plus an 832 `MINMGAA.CFG` (`card_cfg.img`, `cfg/`) and `cfgconv` |
 | `fwboot/milestones.txt` | `fwboot`: the UART lines and SPI frames the firmware must produce, in order |
 | `fwboot/milestones_cfg.txt` | `fwboot_cfg`: the same with the first-boot conversion of the config file |
@@ -581,6 +581,8 @@ SIM=verilator RUNTAG=fwv  bash sim/host_bridge/run.sh fwboot
 SIM=verilator RUNTAG=fwvt bash sim/host_bridge/run.sh fwboot_trap
 # ~6 min: firmware boot with an 832 config file
 SIM=verilator RUNTAG=fwvc bash sim/host_bridge/run.sh fwboot_cfg
+# ~6 min: the OSD_RDY sequence frozen, every OSD reply wait runs into its bound
+SIM=verilator RUNTAG=fwvf XARGS=+STUB_RDY_DLY=-1 bash sim/host_bridge/run.sh fwboot
 # the xsim reference, Vivado 2023.2 and the libtinfo shim, see Prerequisites:
 # ~27 min
 RUNTAG=fwx bash sim/host_bridge/run.sh fwboot
@@ -747,6 +749,7 @@ which is not a pinned failure edge (that is ~32, 1e135e7: "The monitors");
 | `sd_cs[4]` FPGA (`EnableFpga`, 0x10) | every byte 0x00: no drive request |
 | `sd_cs[5]` OSD (`EnableOsd`, 0x20) | byte 0 (the command): 0x00; after it `OSD_CMD_VERSION` 0x88: `01 1A 0A 02 A4 7D` then 0x00 (the board's reply, 174322f: caps 0x7D = 68040 + FPU + MMU + KEYQ + TEMP); `OSD_CMD_KEYQ` 0x98: 0x00 (empty); anything else 0x00 (`OSD_CMD_READ` reads its level during byte 0: no key) |
 | `sd_cs[7]` RTC (`EnableRTC`, 0x80) | every byte 0x00 (not used on this run: PLATFORM says no SPI RTC) |
+| `osd_rx_seq` (to cfide) | +1 (mod 4) for every byte clocked with `sd_cs[5]` low, `+STUB_RDY_DLY` `clk_114` cycles (default 40, `userio_osd`'s worst case) after its last `sck` edge; `+STUB_RDY_DLY=-1`: stays 0 (see "OSD_RDY") |
 
 cfide's MISO is the SD card model's while `sd_cs[1]` is low, else the
 stub's (1 when none of its selects is low).
@@ -829,8 +832,9 @@ bytes as tokens.
   `SPI_reply()` users: access 0 is the command write, 1 its read-back, then
   per reply byte a write and a read. Each access from 2 on gives one gap:
   `cycle(first edge that sees hw_req high) - cycle(previous SPI DATA ack
-  edge) - 2`. The TIMER reads of `SPI_reply()`'s four `SPIN`s in between
-  are not SPI accesses: they count as idle (they are what makes the gap).
+  edge) - 2`. The `HOST_REQ` polls of `SPI_reply()` in between (until
+  Phase 4 Task 11: the TIMER reads of its four `SPIN`s) are not SPI
+  accesses: they count as idle (they are what makes the gap).
   `<m>` = reply bytes. The headline is the minimum over the even accesses
   (a reply byte's write, after the previous byte's read-back: the
   constrained interval; for the first reply byte the previous byte is the
@@ -862,6 +866,7 @@ bytes as tokens.
   FWBOOT_TIMEOUT=80000000 bash sim/host_bridge/run.sh fwboot_cfg` reports
   `BAD  BENCH ERROR ... OSD GAP min below OSD_MIN_GAP` and the bench
   verdict `=== FAIL` (44 < 45); with `+OSD_MIN_GAP=41` it gives no bench error (44).
+- **OSD_RDY** (Phase 4 Task 11; `=== OSD RDY ...`): see "OSD_RDY" below.
 - **Stack low-water** (`=== STACK low <hex> (<n> bytes used)`): the lowest
   byte address the CPU writes below 0x2000 (boot BRAM, the bridge's `rom`
   state; `sel[i]` = byte A+i) after its first read of 0x2000. Full-word writes
@@ -895,6 +900,49 @@ The 40 is `tb_spi_cdc`'s reporting threshold over its model of
 `userio_osd`, so Phase 4 still re-checks it against the real `userio_osd`. In this run
 the stub answers at once, so the reply bytes are right whatever the gap.
 
+### OSD_RDY (Phase 4 Task 11)
+
+Since Phase 4 Task 11 the firmware's `SPI_reply()` reads cfide's `HOST_REQ`
+(`0xFFFFFFB4`, bit 0 `OSD_RDY`) before each OSD reply byte, until it reads
+1 or 2 TIMER counts have passed (`fw/ctrl_rv/README.md`, "OSD reply wait").
+`OSD_RDY` is 1 when cfide's count of the bytes it sent with the OSD
+selected equals `userio_osd`'s `osd_rx_seq` (mod 4). In `fwboot` the stub
+gives cfide that `osd_rx_seq`: +1 per byte clocked with `sd_cs[5]` low,
+`+STUB_RDY_DLY` `clk_114` cycles (default 40) after the byte's last `sck`
+edge. The bench adds three lines (header of `tb_host_bridge.v`):
+
+- `=== OSD RDY early <n> of <m> reply bytes`: reply bytes whose DATA write
+  request came while the stub still had a step of `osd_rx_seq` due, i.e.
+  the firmware started the byte before `userio_osd` would have taken the
+  previous one. **A BENCH ERROR if n > 0** (not with the sequence frozen).
+- `=== OSD RDY polls <p>, reply bytes after a last poll of 0 <z>`: the
+  `HOST_REQ` reads, and the reply bytes whose last `HOST_REQ` read before the
+  write returned 0 (the wait ran into its bound).
+- `=== OSD RDY timeouts <t>`: the firmware's `osd_rdy_timeouts`, read from
+  the SDRAM model at the end (`run.sh` passes its address from
+  `RV32OSDA.map` as `+OSD_RDY_TO_ADDR`); **a BENCH ERROR if t != z**.
+
+`XARGS=+STUB_RDY_DLY=-1` freezes the stub's sequence at 0: every wait of
+the firmware runs into its bound, except where cfide's 2-bit count wraps
+back onto 0 (the fourth reply byte of the `OSD_CMD_VERSION` frame: command +
+3 bytes = 4), and the run must still reach every milestone (the bound
+works).
+
+Measured 2026-10-19 (Verilator, SLAT=8 SJIT=0, image of Task 11, 92,832 B;
+four runs in parallel, so the wall times are high):
+
+| Run | OSD GAP min | OSD RDY early | polls | timeouts (bench / firmware) | milestones | wall |
+|---|---|---|---|---|---|---|
+| `fwboot` (`p4t11`) | 63 over 592 bytes (was 40 with the `SPIN`s) | 0 of 592 | 887 | 0 / 0 | 33 of 33 | 814 s |
+| `fwboot` `XRAND=1` (`p4t11r`) | 63 | 0 of 592 | 887 | 0 / 0 | 33 of 33; `compare p4t11 p4t11r` SAME | 791 s |
+| `fwboot_cfg` (`p4t11c`) | 63 over 342 bytes | 0 of 342 | 512 | 0 / 0 | 34 of 34, card checks ok | 606 s |
+| `fwboot` frozen (`p4t11f`) | 111 over 578 bytes | 578 of 578 (not an error) | 17,673 | 577 / 577 (578 - the wrapped byte) | 33 of 33 | 808 s |
+
+The minimum gap (63) is the `OSD_CMD_VERSION` frame's reply byte 4: the
+stub's 40 cycles, then cfide's `clk_28` latch of `OSD_RDY` and the poll
+that sees it. Every run reaches the 20th `KEYQ` frame well inside the cycle
+limit (586 / 336 / 572 `KEYQ` frames).
+
 ## Bench
 
 - **Clocks**: as `sim/spi_cdc/host832/tb_832_dmode.v`. `clk_114` has
@@ -911,8 +959,9 @@ the stub answers at once, so the reply bytes are right whatever the gap.
   `havevpos` are all false; `fwboot`: `havei2c` true). The inputs are `tick_in = 1` (the timer counts
   every `clk_28`, so TIMER = `timecnt[23:8]` steps every 1024 `clk_114`),
   `menu_button = 1`, `audio_buf = 1`, `audio_amiga = 0` and `sd_ack = 1`.
-  `osd_rx_seq` (`userio_osd`'s reply sequence on the board) is a bench
-  register: 0, except in `t_osdrdy` (set per checkpoint).
+  `osd_rx_seq` (`userio_osd`'s reply sequence on the board) is the stub's
+  under `FWBOOT` ("OSD_RDY"), else a bench register: 0, except in
+  `t_osdrdy` (set per checkpoint).
 - **SDRAM model** (`sdram_host_model.v`): 8 MB of halfwords at host address
   0.
   - Latency: `SLAT` + random 0..`SJIT` `clk_114` cycles from accept to the
@@ -976,6 +1025,8 @@ the stub answers at once, so the reply bytes are right whatever the gap.
 | `+TIMEOUT=<n>` | 3000000 | `clk_114` cycles until `=== FAIL timeout` |
 | `+VERBOSE=1` / `2` | 0 | log hw accesses and SPI bytes / also every change of the bus address |
 | `+SPI_LOG=<file>` | none | `-d FWBOOT` only: the SPI frame log (`spi.txt`, see [Firmware boot](#firmware-boot-fwboot)) |
+| `+STUB_RDY_DLY=<n>` | 40 | `-d FWBOOT` only: the stub's `osd_rx_seq` steps n `clk_114` cycles after each OSD byte; -1 = never (frozen) |
+| `+OSD_RDY_TO_ADDR=<hex>` | none | `-d FWBOOT` only: the address of the firmware's `osd_rdy_timeouts` (`run.sh` takes it from the `.map` next to the `.BIN`) for the `=== OSD RDY timeouts` line |
 | `+SD_SAVE=<file>` | none | `-d SDCARD` only: the card as the run left it, written before the verdict (`fwboot_cfg`) |
 | `+SD_IMG=<file>` | none | card image of the SD model (bench compiled with `-d SDCARD`); the model's other plusargs (`+SD_NCR`, `+SD_INIT_POLLS`, `+SD_LOG=1`, ...) are in `sim/common/sd_spi_model.v`. The `=== BOOT` / `=== STATS` counters need `-d RV_HOSTCPU_STATS` on both `rv_hostcpu.v` and the bench (hierarchical `hostcpu.genrv.myrv.st_*`); without it the bench leaves them out. `run.sh boot` sets both. |
 

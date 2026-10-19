@@ -99,6 +99,24 @@
 //                    answers count 0), not the per-key loop of osd.c.
 //   === STACK low <hex> (<n> bytes used)   the lowest byte address the CPU
 //                    writes below 0x2000 after the first read of 0x2000
+//   OSD_RDY (Phase 4 Task 11): cfide's osd_rx_seq is the stub's (the
+//   userio_osd model there, +STUB_RDY_DLY=<clk_114 cycles>, default 40;
+//   -1 = frozen).  For every reply byte of an OSD_CMD_VERSION / KEYQ frame
+//   (the OSD GAP samples above):
+//   === OSD RDY early <n> of <m> reply bytes   reply bytes whose DATA write
+//                    request came while the stub still had an osd_rx_seq
+//                    step due (it had not caught up with the bytes sent):
+//                    the firmware read HOST_REQ too early or ignored it.
+//                    A BENCH ERROR if n > 0, except with the sequence
+//                    frozen (every reply byte is early there by design)
+//   === OSD RDY polls <p>, reply bytes after a last poll of 0 <z>
+//                    HOST_REQ reads, and the reply bytes whose last HOST_REQ
+//                    read before the write returned 0 (SPI_reply() gave up
+//                    at its bound: one osd_rdy_timeouts count each)
+//   === OSD RDY timeouts <t> (osd_rdy_timeouts at <addr>)   the firmware's
+//                    counter in the SDRAM model at the end, with
+//                    +OSD_RDY_TO_ADDR=<hex> (run.sh takes the address from
+//                    the firmware's .map); a BENCH ERROR if t != z
 // UART lines may be up to 4095 characters (the boot ROM prints "00" per
 // sector of the firmware it loads, on one line).
 //
@@ -194,6 +212,7 @@ module tb_host_bridge #(
   reg        i2c_ext_int = 1'b0; // t_irqctl: controller source 3 (ADV7511 INT)
   reg [15:4] irq_src = 12'h0;    // t_irqctl: controller sources 4..15
   reg [1:0]  osd_rx_seq = 2'd0;  // t_osdrdy: userio_osd's reply sequence
+  wire [1:0] cfide_rx_seq;       // cfide's: the stub's under FWBOOT, else osd_rx_seq
 
   // The generics below are the only copy: run.sh (cfide_generics) reads them
   // from this "cfide #( ... ) mycfide (" block for the GHDL conversion and
@@ -231,7 +250,7 @@ module tb_host_bridge #(
     .scl_i(1'b1), .scl_o(), .scl_t(), .sda_i(1'b1), .sda_o(), .sda_t(),
     .i2c_ext_int(i2c_ext_int),
     .pos_data_q(),
-    .osd_rx_seq(osd_rx_seq),
+    .osd_rx_seq(cfide_rx_seq),
     .clk_28(clk28), .tick_in(1'b1)
   );
 
@@ -274,15 +293,20 @@ module tb_host_bridge #(
   );
 `ifdef FWBOOT
   wire       stub_miso;
+  wire [1:0] stub_rx_seq;
   minimig_spi_stub stub (
-    .n_reset(n_reset), .cs(sd_cs), .sck(sd_clk), .mosi(sd_do), .miso(stub_miso)
+    .clk(clk114), .n_reset(n_reset), .cs(sd_cs), .sck(sd_clk), .mosi(sd_do), .miso(stub_miso),
+    .osd_rx_seq(stub_rx_seq)
   );
   assign miso = sd_cs[1] === 1'b0 ? card_miso : stub_miso;
+  assign cfide_rx_seq = stub_rx_seq;
 `else
   assign miso = card_miso;
+  assign cfide_rx_seq = osd_rx_seq;
 `endif
 `else
   assign miso = miso_r;
+  assign cfide_rx_seq = osd_rx_seq;
 `endif
 
   function [7:0] miso_script(input integer n);
@@ -361,7 +385,62 @@ module tb_host_bridge #(
 
   // ----------------------------------------------- hw bus snoop and checks
   // (sim/common/hostmon.vh: the snoop checks, UART printer, FWBOOT monitors, end-of-run counters)
+`ifdef FWBOOT
+`define HM_OSD_GAP_HOOK   // hm_osd_gap_hook below: the OSD RDY monitor
+`endif
 `include "hostmon.vh"
+
+`ifdef FWBOOT
+  // ------------------------------------------------ FWBOOT: OSD RDY (header)
+  // hm_osd_gap_hook runs at the clk_114 edge that first sees a reply byte's
+  // DATA write request; the stub's rdy_pending and the HOST_REQ read below
+  // are from before that edge (non-blocking in the stub; a read completes
+  // at least two edges before the next request, hostmon's OSD GAP).
+  integer rdy_early = 0, rdy_early_cyc = -1, rdy_polls = 0, rdy_zero_last = 0;
+  integer rdy_to_addr = -1;          // +OSD_RDY_TO_ADDR
+  reg     rdy_last_valid = 1'b0, rdy_last = 1'b0;   // the last HOST_REQ read since the previous reply write
+  always @(posedge clk114) if (cpu_reset_n && hw_done && !host_we && hwa == 32'hFFFFFFB4) begin
+    rdy_polls = rdy_polls + 1;
+    rdy_last_valid = 1'b1;
+    rdy_last = hw_d[0];
+  end
+  task hm_osd_gap_hook(input [7:0] cmd, input integer k, input integer gap);
+    begin
+      if (stub.rdy_pending) begin
+        rdy_early = rdy_early + 1;
+        if (rdy_early_cyc < 0) rdy_early_cyc = cyc;
+      end
+      if (rdy_last_valid && !rdy_last) rdy_zero_last = rdy_zero_last + 1;
+      rdy_last_valid = 1'b0;
+    end
+  endtask
+
+  // the firmware's osd_rdy_timeouts (a little-endian long at rdy_to_addr:
+  // byte A+0 is the upper byte of halfword A, as t_lanes checks)
+  task rdy_final;
+    reg [15:0] h0, h2;
+    reg [31:0] v;
+    begin
+      if (stub.rdy_dly < 0)
+        $display("=== OSD RDY early %0d of %0d reply bytes (stub sequence frozen: not an error)", rdy_early, og_bytes);
+      else
+        $display("=== OSD RDY early %0d of %0d reply bytes (stub delay %0d clk_114)", rdy_early, og_bytes, stub.rdy_dly);
+      if (rdy_early_cyc >= 0) $display("=== OSD RDY (info) first early reply byte at cycle %0d", rdy_early_cyc);
+      $display("=== OSD RDY polls %0d, reply bytes after a last poll of 0 %0d", rdy_polls, rdy_zero_last);
+      if (rdy_early > 0 && stub.rdy_dly >= 0)
+        bench_error("OSD RDY early: a reply byte started before the stub's osd_rx_seq caught up");
+      if (rdy_to_addr >= 0) begin
+        h0 = ram.hw_at(rdy_to_addr);       // bytes A+0, A+1
+        h2 = ram.hw_at(rdy_to_addr + 2);   // bytes A+2, A+3
+        v = {h2[7:0], h2[15:8], h0[7:0], h0[15:8]};
+        $display("=== OSD RDY timeouts %0d (osd_rdy_timeouts at %h)", v, rdy_to_addr);
+        if (v != rdy_zero_last)
+          bench_error("OSD RDY timeouts: the firmware's count is not the reply bytes after a last poll of 0");
+      end else
+        $display("=== OSD RDY timeouts unknown (no +OSD_RDY_TO_ADDR)");
+    end
+  endtask
+`endif
 
   integer gap = 0, gap_min = 1000000, gap_max = 0, last_done = -1;
   integer b2b_on = 0;
@@ -834,6 +913,9 @@ module tb_host_bridge #(
     if (!$value$plusargs("TEST=%s", test)) test = "none";
     if (!$value$plusargs("VERBOSE=%d", verbose)) verbose = 0;
     if (!$value$plusargs("TIMEOUT=%d", timeout)) timeout = 3000000;
+`ifdef FWBOOT
+    if (!$value$plusargs("OSD_RDY_TO_ADDR=%h", rdy_to_addr)) rdy_to_addr = -1;
+`endif
     is_boot = test == "boot" || test == "boot_nofile" || test == "fwboot" || test == "fwboot_trap"
               || test == "fwboot_cfg";
     hm_init;
@@ -868,6 +950,7 @@ module tb_host_bridge #(
 `endif
 `ifdef FWBOOT
     hm_final_fwboot;
+    rdy_final;
     if (test == "fwboot" || test == "fwboot_trap" || test == "fwboot_cfg") begin
       if (!done && errors == 0) $display("=== PASS");
       else $display("=== FAIL %0s: DONE %0d, bench errors %0d", test, done, errors);

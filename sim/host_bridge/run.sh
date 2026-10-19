@@ -402,7 +402,15 @@ fwboot() {
 	local t=$1 rom="fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd" st to card fw
 	local log="$run/tb_${t}_x${XW}_s${SLAT:-8}_j${SJIT:-0}.log"
 	local ms="$HERE/fwboot/milestones.txt" save=() saved="$run/fwboot/card_cfg_saved.img"
+	local rdy=() map a
 	fw=$FWBIN
+	# the firmware's osd_rdy_timeouts (bench line "=== OSD RDY timeouts"):
+	# its address from the GNU ld map next to the .BIN, if there is one
+	map="${fw%.BIN}.map"
+	if [ "$t" != fwboot_trap ] && [ -f "$map" ]; then
+		a=$(awk '$2 == "osd_rdy_timeouts" && $1 ~ /^0x/ { print $1; exit }' "$map")
+		[ -n "$a" ] && rdy=("OSD_RDY_TO_ADDR=${a#0x}")
+	fi
 	if [ "$t" = fwboot ]; then
 		[ -f "$fw" ] || die "no firmware $fw (make -C fw/ctrl_rv, or FW=<RV32OSDA.BIN>)"
 		make -s -C "$HERE/fwboot" B="$run/fwboot" FW="$fw" all > make_fwboot.log 2>&1 \
@@ -446,11 +454,11 @@ fwboot() {
 	local t0=$SECONDS
 	# shellcheck disable=SC2046
 	simrun "tb_${t}_x$XW" "$log" "TEST=$t" "SLAT=${SLAT:-8}" "SJIT=${SJIT:-0}" "SEED=${SEED:-1}" \
-		"SD_IMG=$card" "TIMEOUT=${FWBOOT_TIMEOUT:-$to}" "SPI_LOG=$run/spi.txt" "${save[@]}" $(xargs_list)
+		"SD_IMG=$card" "TIMEOUT=${FWBOOT_TIMEOUT:-$to}" "SPI_LOG=$run/spi.txt" "${save[@]}" "${rdy[@]}" $(xargs_list)
 	local secs=$((SECONDS - t0))
 	python3 -I "$HERE/spitrace.py" summary "$run/spi.txt" > "$run/spi_summary.txt" 2>&1
 	{
-		grep -E '^=== (BOOT|STATS|HW accesses|cycle limit|HandleFpga|SPI frames|OSD GAP|STACK)' "$log"
+		grep -E '^=== (BOOT|STATS|HW accesses|cycle limit|HandleFpga|SPI frames|OSD GAP|OSD RDY|STACK)' "$log"
 		grep -E '^BENCH ERROR' "$log" | sed 's/^/BAD  /'    # e.g. the OSD GAP check
 		grep -q '^SD: image .* loaded' "$log" || echo "BAD  the SD model did not load $card"
 		if [ "$t" != fwboot_trap ]; then

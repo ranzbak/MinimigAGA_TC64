@@ -1,0 +1,20 @@
+== good.dis b
+check (b) pass: 6 I/O accesses seen (5 zero-based, 1 through a tracked constant base)
+exit 0
+== good.dis c
+check (c) pass: 6 I/O accesses seen (5 zero-based, 1 through a tracked constant base)
+exit 0
+== uart_read.dis b
+    3004:	01074783          	lbu	a5,16(a4) # ffffffe0 + 16 = fffffff0: UART read
+check (b) FAIL: 1 offending I/O accesses (2 I/O accesses seen: 1 zero-based, 1 through a tracked constant base)
+exit 1
+== uart_read.dis c
+check (c) pass: 2 I/O accesses seen (1 zero-based, 1 through a tracked constant base)
+exit 0
+== misaligned.dis b
+check (b) pass: 2 I/O accesses seen (2 zero-based, 0 through a tracked constant base)
+exit 0
+== misaligned.dis c
+    4000:	fb605783          	lhu	a5,-74(zero) # ffffffb6: offset 6, not a multiple of 4
+check (c) FAIL: 1 offending I/O accesses (2 I/O accesses seen: 2 zero-based, 0 through a tracked constant base)
+exit 1

@@ -17,6 +17,17 @@
 // miso is 1 while none of the three is selected (the bench gives cfide the
 // SD card model's MISO while cs[1] is low).
 //
+// osd_rx_seq (Phase 4 Task 11): userio_osd's reply sequence as cfide's
+// HOST_REQ OSD_RDY compares it (rtl/minimig/userio_osd.v osd_rx_seq, a byte
+// count mod 4).  +1 for every byte clocked while cs[5] is low, +STUB_RDY_DLY
+// clk_114 cycles (default 40) after its last sck edge, counted from the
+// first clk_114 edge after that edge; in the RTL osd_rx_seq steps at most
+// 40 clk_114 after that edge (findings/osd-riscv/phase4.md, "The rx
+// window"), so the default is userio_osd's worst case.  +STUB_RDY_DLY=-1: frozen at 0, the firmware's every OSD
+// wait runs into its bound (except where cfide's 2-bit count wraps onto
+// it: README "OSD_RDY").  rdy_pending is 1 while an increment is due and not
+// yet applied (the bench's OSD RDY early monitor).
+//
 // SPI mode as cfide drives it: sck idles high, the master changes MOSI on
 // the falling edge and samples MISO on the rising edge.  The stub loads the
 // next reply byte at the falling edge that starts a byte and samples MOSI on
@@ -25,11 +36,13 @@
 // "always @(cs)" writing the counters made Verilator 5.020 lose the
 // OSD_CMD_VERSION reply (all 00) in one build and not in another.
 module minimig_spi_stub (
+  input        clk,       // clk_114 (the OSD_RDY delay counts its edges)
   input        n_reset,
   input  [7:0] cs,        // cfide's sd_cs, active low
   input        sck,
   input        mosi,
-  output       miso
+  output       miso,
+  output [1:0] osd_rx_seq
 );
 
   wire sel_fpga = cs[4] === 1'b0;
@@ -42,6 +55,35 @@ module minimig_spi_stub (
   reg [7:0] rx = 8'h00, tx = 8'h00;
   reg       miso_r = 1'b1;
   assign miso = sel ? miso_r : 1'b1;
+
+  // OSD_RDY: osd_bytes is written by the sck block, the rest by the clk
+  // block; rdy_done and rx_seq with non-blocking assignments, so a reader at
+  // the same clk_114 edge sees the value from before it.
+  integer   rdy_dly = 40;          // +STUB_RDY_DLY
+  integer   osd_bytes = 0;         // OSD bytes whose last sck edge has passed
+  integer   rdy_seen = 0;          // of those, queued with their due cycle
+  integer   rdy_done = 0;          // increments applied
+  integer   rdy_cyc = 0;           // clk_114 edges
+  integer   rdy_due [0:63];        // due cycle per queued byte (mod 64)
+  reg [1:0] rx_seq = 2'd0;
+  assign osd_rx_seq = rx_seq;
+  wire      rdy_pending = osd_bytes != rdy_done;
+
+  initial if (!$value$plusargs("STUB_RDY_DLY=%d", rdy_dly)) rdy_dly = 40;
+
+  always @(posedge clk) begin
+    rdy_cyc = rdy_cyc + 1;
+    if (rdy_dly >= 0) begin
+      if (rdy_seen < osd_bytes) begin
+        rdy_due[rdy_seen % 64] = rdy_cyc + rdy_dly;
+        rdy_seen = rdy_seen + 1;
+      end
+      if (rdy_done < rdy_seen && rdy_cyc >= rdy_due[rdy_done % 64]) begin
+        rx_seq <= rx_seq + 2'd1;
+        rdy_done <= rdy_done + 1;
+      end
+    end
+  end
 
   always @(negedge cs[4] or negedge cs[5] or negedge cs[7]) begin
     nbyte = 0;
@@ -74,6 +116,7 @@ module minimig_spi_stub (
     nbit = nbit + 1;
     if (nbit == 8) begin
       if (nbyte == 0) cmd = rx;
+      if (sel_osd) osd_bytes = osd_bytes + 1;
       nbyte = nbyte + 1;
       nbit = 0;
     end
