@@ -24,6 +24,8 @@ same model (Task 4 of `doc/osd-riscv-exec-5b.md`).
 | `xvc_idcode.py` | XVC client: IDCODE, IR capture and BYPASS through the harness |
 | `xcheck/` | xsim cross-check of `xc7_tap.v` against Vivado's `JTAG_SIME2` + `BSCANE2` |
 | `Makefile`, `tests/attach.S` | Test program (an endless counter loop), linked with `sim/rv_l1/sw` |
+| `sw/dbgtest.c` | Program of the GDB session, built as image A and image B |
+| `gdb/session.gdb`, `gdb/openocd.tcl` | The scripted GDB session and the OpenOCD side of it |
 
 ## Prerequisites
 
@@ -64,9 +66,14 @@ bash sim/rv_dbg/run.sh attach1
 bash sim/rv_dbg/run.sh teeth
 # DEBUG=1, harness as XVC server: IDCODE/IR capture/BYPASS through XVC
 bash sim/rv_dbg/run.sh xvc_loop
+# scripted GDB session, DEBUG=2 / DEBUG=1 (see "GDB session")
+bash sim/rv_dbg/run.sh gdb2
+bash sim/rv_dbg/run.sh gdb1
+# DEBUG=1, the core's fence.i flushes no I-cache: the session must fail at "mailbox"
+bash sim/rv_dbg/run.sh gdb_teeth
 # xsim: xc7_tap.v against JTAG_SIME2 + BSCANE2 (0 mismatches) and its teeth
 bash sim/rv_dbg/run.sh xcheck
-# all five: "=== RV_DBG ALL PASS"
+# all of them: "=== RV_DBG ALL PASS"
 bash sim/rv_dbg/run.sh all
 ```
 
@@ -95,15 +102,70 @@ core` (`attach1`: `; found 1 harts`), `halted` after `halt`, the PC in
 (bytes received).
 
 Environment: `RBB_PORT` (default 44853), `XVC_PORT` (default 2542),
-`TCK_HALF` (default 4), `RUNTAG`, `VERILATOR`, `OPENOCD`, `PYTHON`,
+`GDB_PORT` (default 3333), `TCK_HALF` (default 4), `RUNTAG`, `VERILATOR`,
+`OPENOCD`, `GDB` (default the xPack `riscv-none-elf-gdb`), `PYTHON`,
 `VIVADO_PATH`, `JOBS` (C++ build jobs, default 2). A port in use: the
-harness takes a free one and prints it (`run.sh` passes it on). Every run has
-a wall-clock limit (`timeout`) and kills its own children by PID on exit.
+harness takes a free one and prints it (`run.sh` passes it on); for
+`GDB_PORT` `run.sh` picks a free one and prints it. Every run has a
+wall-clock limit (`timeout`) and kills its own children by PID on exit.
+
+## GDB session (`gdb1`, `gdb2`, `gdb_teeth`)
+
+The test program `sw/dbgtest.c` is built twice (`make -C sim/rv_dbg`,
+`-g -O1`, the L1 start-up code and linker script): `build/dbgtest_a.elf`
+and `build/dbgtest_b.elf` differ only in the constant the `noipa` function
+`work()` returns (`0xA5A50001` / `0xB5B50002`); the Makefile checks that
+their `nm` output is identical (`build/dbgtest.layout`). `main` copies
+eight known words into `pattern`, then loops forever: `mailbox = work();
+counter++`. `main` is at `0x2000`, `work` at `0x2100` (256-byte aligned: an
+I-cache set nothing between the reset vector and the call uses, so A's
+`work` line stays cached until a flush).
+
+`run.sh gdb<n>` starts the harness with image A, OpenOCD with the board
+config and `gdb/openocd.tcl` (GDB server on `127.0.0.1:$GDB_PORT`, no
+telnet/Tcl servers, `shutdown` on GDB's detach), then
+
+```sh
+riscv-none-elf-gdb -batch -nx -cd=sim/rv_dbg/build \
+    -ex 'set $gdb_port = 3333' -x sim/rv_dbg/gdb/session.gdb dbgtest_a.elf
+```
+
+`session.gdb` prints one `CHECK <name> <value>` line per step; `run.sh`
+compares them in order:
+
+| Check | Step | Expected |
+|---|---|---|
+| `halt_pc` | `monitor halt`, `info registers pc sp ra` | PC in `main` or `work` |
+| `pattern` | `x/8wx &pattern` | the eight words of `pattern_init` |
+| `counter` | `print counter`, `monitor resume`, `monitor halt`, `print counter` | grows |
+| `reset_pc` | `monitor reset halt` (ndmreset) | `0x00000000` (`_reset`) |
+| `main_pc` | `break *main` (software), `continue` | `main` |
+| `mailbox_a` | `monitor reset halt`, `monitor resume`, `monitor halt` | `0xa5a50001` (A's `work` ran, now cached) |
+| `work_pc` | `file dbgtest_b.elf`, `load`, `hbreak work`, `continue` | `work` |
+| `mailbox` | `continue` (one iteration) | `0xb5b50002`: OpenOCD's `fence.i` on resume flushed A's `work` |
+| `detach` | `detach` | done |
+
+PASS (`=== GDB PASS`) also needs GDB exit 0, OpenOCD exit 0 with no
+`Error` line in its log, and the harness closed by OpenOCD's `Q`; otherwise
+`=== GDB FAIL <first failing check>: <got>, expected <value>` (a GDB
+command that fails ends the script, so its check is `missing`). Logs:
+`run_<RUNTAG>/<target>.gdb.log`, `.openocd.log`, `.harness.log`.
+
+`gdb_teeth` runs the `gdb1` session on a scratch copy of `VexOsd_DMT.v`
+(`run_<RUNTAG>/noflush_rtl/`, never the committed core) whose I-cache flush
+input is tied low: `fence.i` flushes nothing, the hart keeps running A's
+cached `work`, and the session must end `=== GDB FAIL mailbox: 0xa5a50001`
+with every earlier check passing (`=== GDB_TEETH PASS`). The breakpoint at
+`main` is a software one, the one in `work` a hardware trigger, and the
+hart is reset again before A's `work` is cached: without a flush a
+software breakpoint in a cached line is never fetched, and the ebreak
+OpenOCD wrote and removed at `main` would stay in the cached line, so the
+teeth would stop before the `mailbox` check.
 
 ### By hand (a debugger session)
 
 ```sh
-# harness in the foreground, DEBUG=2 (or 1), port 44853, no time limit
+# harness in the foreground, DEBUG=2 (or 1), port 44853, ends after 2 hours
 bash sim/rv_dbg/run.sh harness 2 +rbb_port=44853
 # another terminal: OpenOCD (GDB on 3333), then GDB
 openocd -c "set ADAPTER tools/openocd/remote-bitbang.cfg" -c "set RBB_PORT 44853" \
@@ -199,10 +261,16 @@ image rebuilt from a warm ccache, and cold (`OBJCACHE=` empty, a new
 | `attach1` | 3 s | 22 s |
 | `teeth` | 11 s | 19 s |
 | `xvc_loop` | < 1 s | (shares `attach1`'s image) |
+| `gdb2` (`TCK_HALF` 4 / 16) | 9 s / 31 s | |
+| `gdb1` (`TCK_HALF` 4 / 16) | 14 s / 47 s | |
+| `gdb_teeth` | 21 s (11 s of it the build of its image) | |
 | `xcheck` (both xsim runs) | 52 s | 52 s |
-| `all` | | 113 s |
+| `all` (eight targets, with the GDB runs) | 93 s | 113 s (Task 1's five targets) |
 
 OpenOCD itself needs well under a second of the attach: about 25,000 pin
 writes and 9,500 `R` (attach2) or 40,000 and 12,000 (attach1, the tunnel),
 170,000-220,000 system clocks at `TCK_HALF=4`. Both attaches pass at
 `TCK_HALF` 1, 4 and 16.
+The GDB session: about 650,000 pin writes and 235,000 `R` (gdb2) or
+1,060,000 and 304,000 (gdb1), 3.1 / 4.6 million system clocks at
+`TCK_HALF=4` (10.9 / 17.9 million at 16); both pass at `TCK_HALF` 4 and 16.
