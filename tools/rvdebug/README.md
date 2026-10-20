@@ -329,8 +329,8 @@ raw Vivado commands (`run_state_hw_jtag RESET`, `IDLE`, `scan_ir_hw_jtag 6
 -tdi 09`, `scan_dr_hw_jtag 32`; the returned hex strings are printed), then
 the same through the core (IR capture `..01`, IDCODE `0x?3631093`, BYPASS:
 8 DR bits come back delayed by one). A mismatch prints the value read and
-exits 1: a wrong value points at the bit order (`RVBRIDGE_TEST_REVERSE` in
-Task 4) or the chain length. Log lines: `=== RVBRIDGE SELF-TEST PASS ...`,
+exits 1: a wrong value points at the bit order (the hex convention below)
+or the chain length. Log lines: `=== RVBRIDGE SELF-TEST PASS ...`,
 `=== RBB BRIDGE listening 127.0.0.1:33582`, one line per connection opened
 and closed (bytes, edges, reads, scans, partial scans, longest scan,
 read-ahead, Vivado commands), and `rbb: HH:MM scans in the last minute: n`.
@@ -340,3 +340,48 @@ knows it): the scan's first bit is the LSB of `-tdi` and of the returned
 TDO (`help scan_dr_hw_jtag`: "a 24 bit value 0x00_0010 (LSB first)");
 `-tdi` is given on every call (the length changes); TDO may come with or
 without `0x`, in either case, with or without leading zeros.
+
+## XVC dress rehearsal (not run)
+
+A rehearsal of the whole chain with real Vivado and `hw_server` but no
+board was planned: a private `hw_server` on `tcp::3131`, Vivado
+`connect_hw_server -url localhost:3131` and `open_hw_target -jtag_mode on
+-xvc_url localhost:<port>` into `sim/rv_dbg`'s harness in XVC mode
+(`+xvc=<port>`, `DEBUG = 1`), then OpenOCD and the GDB session through the
+bridge. **It was not run** (2026-10-20, Phase 5.4 Task 4): the Platform
+Cable USB II is plugged into the build machine (`lsusb -d 03fd:` shows
+`03fd:0008`, firmware not loaded), and the rule was to start `hw_server`
+only if its own documented options provably keep it off USB cables. None
+does:
+
+- `hw_server -h` (2023.2) lists `-e <command>` and `--init=<file>`
+  ("evaluate initialization command") but no setting names.
+- UG908 "Advanced Options" documents `-e "set ..."` settings. The only
+  cable-related ones are `jtag-port-filter` ("hw_server ignores JTAG ports
+  that do not match the filter", e.g. `-e "set jtag-port-filter
+  Xilinx/DLC10/<serial>"`) and `auto-open-ports` ("controls automatic open
+  of ports"). Neither says that USB enumeration, or the firmware download
+  that turns `03fd:0008` into a working cable, is skipped: a filter on a
+  port's name or serial can only apply once the cable is enumerated, and
+  the serial needs the firmware. "Standard hw_server Options", "Init
+  Option", "Command Line Options for hw_server" and "JTAG Cables and
+  Devices Supported by hw_server" have no way to disable cable drivers.
+- No text file in `/opt/Xilinx/Vivado/2023.2` mentions these settings.
+
+So these remain unproven against real Vivado; the first board session
+checks them, the bridge's self-test first (IR capture and IDCODE, raw and
+through the core):
+
+1. Bit order: the first bit shifted is the LSB of `-tdi` and of the
+   returned TDO (from `help scan_dr_hw_jtag` only). A swap fails the
+   self-test (wrong IDCODE) before OpenOCD connects.
+2. `runtest_hw_jtag` (`be_idle`): whether `-wait_state`/`-end_state` from
+   an earlier call carry over into later scans. The core always sets the
+   pause state before a scan, so it does not depend on this.
+3. `JTAG_FREQ` has no effect together with `XVC_URL`: the XVC branch opens
+   the target without setting `PARAM.FREQUENCY`; the log line still
+   prints the requested TCK.
+
+A rehearsal without the board is possible only with no Xilinx or FTDI JTAG
+cable on the USB bus at all (`lsusb -d 03fd:` and `lsusb -d 0403:` empty),
+which needs the cable unplugged by hand.
