@@ -1,6 +1,6 @@
 # OSD host CPU migration, Phase 5.4: debug bring-up (lab bitstream, rv_debug = 1)
 
-- Status: the lab build is recorded below, the simulation proof is summarised, the board-session protocol is written (`debug-board-session.md`); the board session is **not yet held**.
+- Status: the lab build is recorded below, the simulation proof is summarised, the board-session protocol is written (`debug-board-session.md`); the board session was held on 2026-10-20 and **stopped at step 3: the bridge self-test failed** (section "Board session").
 - The **lab bitstream** is a separate image from B (the shipping RISC-V image). It adds the RISC-V debug module and is for Paul's board session only.
   - Built from C2 = `42f7cbb735da8f7cd9951b307edc82c25e5ba3f3` on `p5-build` (`build_ap040.tcl` with `RV_DEBUG=1`), Vivado 2023.2, `xc7a100tfgg676-2`.
   - Outputs: `MinimigAGA_TC64-riscv/build/stage_p5dbg_42f7cbb/` (`$OUT`).
@@ -172,7 +172,48 @@ Findings that bear on the board session (Task 3 report):
 
 ## Board session
 
-**Not yet held.** The protocol Paul runs by hand is `findings/osd-riscv/debug-board-session.md` (lab bitstream `stage_p5dbg_42f7cbb`, bridge, OpenOCD, GDB with `$OUT/fw/RV32OSDA.elf`, paste-back list in its section 7). This section is filled from the logs he returns (`~/rvbridge.log`, `~/openocd.log`, `~/gdb.log`, `~/rvdbg-tty.log`, one line per step); plan 5.4 gate.
+**Held 2026-10-20 14:15-14:25, remotely** (an agent at the build machine, Paul not at the board; Paul allowed loading test bitstreams over JTAG).
+Protocol `debug-board-session.md` as of `dd91e5b` (Paul's answers: self-test first and stop on failure, `monitor reset halt` before `load`).
+**Result: stopped at step 3. The bridge self-test failed, so OpenOCD and GDB were not started** (Paul's answer 1). B is loaded again and
+runs. Logs (text only): `findings/osd-riscv/debug-board-session-logs/2026-10-20/`.
+
+| Step | ok / what happened |
+|---|---|
+| 1 before (tools, checksums) | ok: OpenOCD 0.12.0, GDB 16.3 (xPack), lab `.bit` md5 `990199ce...`, B `.bit` md5 `4065f272...`, `RV32OSDA.elf: OK`, `RV32OSDA.BIN: OK` |
+| 2 program lab bitstream, boot | `DONE pin = 1` (`program-lab.txt`), no power cycle (nobody at the board). ttyUSB0: boot ROM, `file "RV32OSDABIN" found`, firmware banner, `Loading kickstart ROM...`, hardfile, HRTmon upload, then `ROM dir: 105448` twice, `##End result : 0`, **`ROM loading failed`**: the OSD CPU runs, **the Amiga does not boot** (Kickstart not loaded). The OSD itself could not be checked (no key press possible). |
+| 2a comparison with B (recovery step) | B loaded (`program-B-cmp.txt`, `DONE pin = 1`): **the same lines, the same `ROM loading failed`**. The failure is not the lab image's (same firmware, same card, same result); "OSD works as on B" therefore holds as far as ttyUSB0 shows, and the lab image was loaded again (`program-lab2.txt`) for step 3. See "Kickstart not loaded" below. |
+| 3 bridge self-test | **FAIL** (`rvbridge.txt`): target opened, `PARAM.FREQUENCY 6000000`; raw self-test line `scan_ir_hw_jtag 6 -> '35' (IR capture 0x35), scan_dr_hw_jtag 32 -> '13631093' (IDCODE 0x13631093)`, then `ERROR: [Labtoolstcl 44-271] run_state_hw_jtag failed chain_0` and `rvb: ERROR: ERROR: [Common 17-39] 'run_state_hw_jtag' failed due to earlier errors.`; Vivado exited, no `=== RVBRIDGE SELF-TEST` line |
+| 4 OpenOCD | not run (abort rule of step 3) |
+| 5.1-5.5 GDB | not run |
+| 6 stop | the bridge's Vivado had exited by itself; its `hw_server`/`cs_server` stopped (`pkill -x`); nothing left running |
+| recovery | B loaded (`program-B-final.txt`, `DONE pin = 1`), ttyUSB0 shows the same boot as before (firmware runs, `ROM loading failed`) |
+
+What the self-test log proves:
+
+- **Bit order is right.** The raw `scan_dr_hw_jtag 32` after IR `0x09` (IDCODE) returned `13631093`, which the bridge decoded LSB first to
+  IDCODE `0x13631093` (the XC7A100T, version 1): the TDO order is LSB first as assumed. The TDI order is consistent with it (the IR
+  value `0x09`, shifted LSB first, selected IDCODE; reversed it would be `0x24`), but the bridge core's own checks (IR capture and BYPASS
+  through `rbb::self_test`) never ran, so BYPASS and the pause-state scans are still unproven. The IR capture `0x35` = `110101`
+  ends in the mandatory `01`; the upper bits differ from the simulation model's `0x11` (on 7-series they are status bits; a configured device
+  reads differently from the model).
+- **The failing call is the last `run_state_hw_jtag RESET` of `rvb::raw_self_test`**, the one after the two scans (the log line printed before
+  it is the `raw self-test:` line; `rv_jtag_bridge.tcl` prints that line and then calls `run_state_hw_jtag RESET`). The two calls before the
+  scans (`run_state_hw_jtag RESET`, `run_state_hw_jtag IDLE`) and both scans succeeded.
+- Vivado 2023.2's help (`help-run_state-scan_dr-2023.2.txt`): a scan ends "in the IDLE state, or [in] the stable state defined by the
+  run_state_hw_jtag command" (IDLE here), and `IDLE -> RESET` is a listed transition (`IDLE -> DRSELECT -> IRSELECT -> RESET`). So the call
+  is a documented one; the log gives no reason for the failure beyond `failed chain_0`. Not yet known: whether it is the transition after a
+  scan, `RESET` as such once scans have run, or the hw_server state. The bridge core uses the same `run_state_hw_jtag RESET` (`vbe::be_reset`),
+  so skipping the raw test (`-self_test 0`) would not avoid it.
+- Next check (needs Paul's go, it is a new JTAG experiment): a short Tcl in the hardware manager, lab or B image, that repeats
+  `RESET; IDLE; scan_ir 6; scan_dr 32` and then tries, each with `-verbose` and `catch`: `run_state_hw_jtag RESET`,
+  `run_state_hw_jtag -state {IDLE DRSELECT IRSELECT RESET} RESET`, `run_state_hw_jtag IDLE` then `RESET`, and `run_state_hw_jtag DRPAUSE`.
+
+**Kickstart not loaded (B and lab alike).** `UploadKickstart` (`fw/ctrl_rv/config.c`) printed `ROM dir: 105448` for the configured name and
+again for the fallback `KICK    ROM`, and neither reached `Boot file size:` (a `BootPrintEx` line): either `ValidateDirectory(105448)` failed
+or the file was not found there (the reason goes to the OSD screen only, which nobody saw). The card's `MINMGAR.CFG` holds kickstart name
+`KICKA1~1` and kick directory cluster `0x00019be8` = 105448 (`build/ab_card_87577e2/MINMGAR.CFG`, converted from the live card's 832 config).
+B has no board record before today, so whether B ever loaded Kickstart from this card is not known. The OSD screen (F12) would show the
+error text.
 
 ## Files and paths
 
@@ -181,4 +222,3 @@ Findings that bear on the board session (Task 3 report):
 - Build worktree of the lab image: `MinimigAGA_TC64-p5dbg` (detached at `42f7cbb`).
 - OOC expectation: `findings/osd-riscv/ooc-2023.2.md` (`rv1` row).
 
-Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
