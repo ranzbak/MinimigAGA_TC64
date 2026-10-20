@@ -71,6 +71,10 @@ bash sim/rv_dbg/run.sh gdb2
 bash sim/rv_dbg/run.sh gdb1
 # DEBUG=1, the core's fence.i flushes no I-cache: the session must fail at "mailbox"
 bash sim/rv_dbg/run.sh gdb_teeth
+# gdb1 / gdb_teeth through the Phase 5.4 hw_server bridge's core and a shim
+# with Vivado's scan semantics (tools/rvdebug/README.md)
+bash sim/rv_dbg/run.sh bridge_sim
+bash sim/rv_dbg/run.sh bridge_teeth
 # xsim: xc7_tap.v against JTAG_SIME2 + BSCANE2 (0 mismatches) and its teeth
 bash sim/rv_dbg/run.sh xcheck
 # all of them: "=== RV_DBG ALL PASS"

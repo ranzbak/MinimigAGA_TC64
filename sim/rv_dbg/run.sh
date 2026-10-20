@@ -10,6 +10,8 @@
 #   bash sim/rv_dbg/run.sh gdb2      # DEBUG=2: scripted GDB session (gdb/session.gdb)
 #   bash sim/rv_dbg/run.sh gdb1      # DEBUG=1: the same over the BSCANE2 tunnel
 #   bash sim/rv_dbg/run.sh gdb_teeth # DEBUG=1, fence.i flushes no I-cache: must fail at "mailbox"
+#   bash sim/rv_dbg/run.sh bridge_sim   # gdb1 through the Phase 5.4 bridge core (tools/rvdebug)
+#   bash sim/rv_dbg/run.sh bridge_teeth # gdb_teeth through the bridge: must fail at "mailbox"
 #   bash sim/rv_dbg/run.sh xcheck    # xsim: xc7_tap.v against Vivado's JTAG_SIME2 + BSCANE2
 #   bash sim/rv_dbg/run.sh all       # all of the above, "=== RV_DBG ALL PASS"
 #   bash sim/rv_dbg/run.sh harness <1|2> [plusargs]   # build, then run the harness
@@ -42,6 +44,12 @@
 # input is tied low (fence.i flushes nothing; run_<tag>/noflush_rtl/, never
 # the committed core): the session must fail exactly at "mailbox" with A's
 # value 0xa5a50001 (the stale work() line).  "=== GDB_TEETH PASS/FAIL".
+# bridge_sim / bridge_teeth: gdb1 / gdb_teeth with the hw_server bridge's
+# core in between: OpenOCD -> tools/rvdebug/rbb_core.tcl in tclsh with
+# shim_rbb_backend.tcl (Vivado's documented scan semantics, replayed as
+# bits to the harness).  The bridge's self-test must pass first; its log
+# (run_<tag>/bridge_*.bridge.log) has the scan counts, the shim's call log
+# is run_<tag>/bridge_*.shim.log.
 #
 # Environment: RBB_PORT (default 44853; in use -> the harness takes a free
 # port and prints it), XVC_PORT (default 2542), TCK_HALF (system clocks per
@@ -49,7 +57,12 @@
 # VERILATOR, OPENOCD, PYTHON, VIVADO_PATH (xcheck; default
 # /opt/Xilinx/Vivado/2023.2), JOBS (C++ build jobs, default 2), GDB_PORT
 # (default 3333; in use -> a free port, printed), GDB (default the xPack
-# riscv-none-elf-gdb).
+# riscv-none-elf-gdb), BRIDGE_PORT (bridge_*: the bridge's remote_bitbang
+# port, default 33582; in use -> a free port, printed), BRIDGE_SPLIT (bridge_*:
+# split every shift after that many bits, a test of the pause splits; default
+# 0 = only where OpenOCD waits; any n > 0 breaks the BSCANE2 tunnel: see
+# tools/rvdebug/README.md), BRIDGE_READAHEAD (bridge_*: 0 = split OpenOCD's
+# IDCODE autoprobe instead of answering it ahead; default 1), TCLSH.
 # Every run has a wall-clock timeout and kills its own children by PID.
 set -u
 
@@ -64,6 +77,8 @@ TCK_HALF=${TCK_HALF:-4}
 RBB_PORT=${RBB_PORT:-44853}
 XVC_PORT=${XVC_PORT:-2542}
 GDB_PORT=${GDB_PORT:-3333}
+BRIDGE_PORT=${BRIDGE_PORT:-33582}
+TCLSH=${TCLSH:-tclsh}
 RV_BIN=${RV_GCC_DIR:-$HOME/opt/xpack-riscv-none-elf-gcc-15.2.0-1}/bin/${RV_PREFIX:-riscv-none-elf-}
 NM=${RV_BIN}nm
 GDB=${GDB:-${RV_BIN}gdb}
@@ -309,11 +324,12 @@ gdb_check() {
   esac
 }
 
-# gdb_session <debug> [noflush]
+# gdb_session <debug> [noflush] [bridge]
 gdb_session() {
-  local dbg=$1 var=${2:-} name log hlog glog im opid gport t0=$SECONDS i
+  local dbg=$1 var=${2:-} bridge=${3:-} name log hlog glog blog im opid gport bport bpid t0=$SECONDS i
   local elf=$build/dbgtest_a.elf fail="" why="" n v w
   name=gdb$dbg; [ -n "$var" ] && name=gdb_teeth
+  [ -n "$bridge" ] && { name=bridge_sim; [ -n "$var" ] && name=bridge_teeth; }
   progs || return 1
   build "$dbg" "$var" || return 1
   im=$(image "$dbg" "$var")
@@ -321,6 +337,27 @@ gdb_session() {
   start_harness "$im" "$hlog" +HEX="$build/dbgtest_a.hex" +rbb_port="$RBB_PORT" \
     +tck_half="$TCK_HALF" +timeout=2000000000 +exit_on_disconnect || return 1
   [ "$hport" = "$RBB_PORT" ] || echo "RBB port $RBB_PORT in use: the harness listens on $hport"
+  if [ -n "$bridge" ]; then
+    # the bridge core + shim between OpenOCD and the harness
+    blog=$run/$name.bridge.log
+    bport=$(free_port "$BRIDGE_PORT")
+    [ "$bport" = "$BRIDGE_PORT" ] || echo "bridge port $BRIDGE_PORT in use: the bridge listens on $bport"
+    timeout 900 "$TCLSH" "$top/tools/rvdebug/shim_rbb_backend.tcl" -target "127.0.0.1:$hport" \
+      -port "$bport" -log "$run/$name.shim.log" -exit_on_disconnect 1 \
+      -split_test "${BRIDGE_SPLIT:-0}" -idcode_readahead "${BRIDGE_READAHEAD:-1}" > "$blog" 2>&1 &
+    bpid=$!; pids="$pids $bpid"
+    for i in $(seq 1 600); do
+      grep -q '^=== RBB BRIDGE listening' "$blog" && break
+      kill -0 "$bpid" 2> /dev/null || break
+      sleep 0.1
+    done
+    if ! grep -q '^=== RBB BRIDGE listening' "$blog"; then
+      echo "=== GDB FAIL bridge did not start ($blog)"; tail -5 "$blog"; return 1
+    fi
+    grep '^=== SHIM SELF-TEST' "$blog"
+    # OpenOCD talks to the bridge
+    hport=$(sed -n 's/^=== RBB BRIDGE listening 127\.0\.0\.1:\([0-9]*\).*/\1/p' "$blog")
+  fi
   gport=$(free_port "$GDB_PORT")
   [ "$gport" = "$GDB_PORT" ] || echo "GDB port $GDB_PORT in use: OpenOCD serves GDB on $gport"
   start_openocd "$dbg" "$log" "$here/gdb/openocd.tcl" -c "set GDB_PORT $gport"
@@ -337,6 +374,7 @@ gdb_session() {
   local gpid=$!; pids="$pids $gpid"
   wait "$gpid"; local grc=$?
   wait_pid "$opid" 60; local orc=$?   # OpenOCD shuts down on the detach
+  [ -n "$bridge" ] && wait_pid "$bpid" 60
   wait_pid "$hpid" 60
   local secs=$((SECONDS - t0))
 
@@ -354,10 +392,16 @@ gdb_session() {
   grep -q '^Error' "$log" && env="$env; OpenOCD: $(grep -m1 '^Error' "$log")"
   grep -q 'connection 1 closed (Q)' "$hlog" || env="$env; harness: no 'connection 1 closed (Q)'"
   grep -q '^=== EXIT disconnect' "$hlog" || env="$env; harness did not exit on the disconnect"
+  if [ -n "$bridge" ]; then
+    grep -q '^=== SHIM SELF-TEST PASS' "$blog" || env="$env; bridge self-test did not pass"
+    grep -q 'BRIDGE connection 1 closed (Q)' "$blog" || env="$env; bridge: no 'connection 1 closed (Q)'"
+    grep -q '^=== SHIM done' "$blog" || env="$env; bridge did not end"
+    grep 'BRIDGE connection 1 closed' "$blog" | sed 's/^/    /'
+  fi
 
   grep '^CHECK ' "$glog" | sed 's/^/    /'
   if [ -z "$fail" ] && [ -z "$env" ]; then
-    echo "=== GDB PASS DEBUG=$dbg TCK_HALF=$TCK_HALF: $(echo $GDB_CHECKS | wc -w) checks, $secs s"
+    echo "=== GDB PASS DEBUG=$dbg TCK_HALF=$TCK_HALF${bridge:+ through the bridge}: $(echo $GDB_CHECKS | wc -w) checks, $secs s"
   elif [ -n "$fail" ]; then
     echo "=== GDB FAIL $fail: $why${env:+ (also${env#;})} ($glog, $log)"
   else
@@ -366,7 +410,7 @@ gdb_session() {
   if [ -n "$var" ]; then
     # teeth: every check before mailbox passes, mailbox holds A's value
     if [ "$fail" = mailbox ] && [ -z "$env" ] && grep -q '^CHECK mailbox 0xa5a50001$' "$glog"; then
-      echo "=== GDB_TEETH PASS: fence.i without I-cache flush leaves A's work() running ($secs s)"
+      echo "=== GDB_TEETH PASS${bridge:+ through the bridge}: fence.i without I-cache flush leaves A's work() running ($secs s)"
       return 0
     fi
     echo "=== GDB_TEETH FAIL: expected '=== GDB FAIL mailbox' with 0xa5a50001"
@@ -387,6 +431,8 @@ case "${1:-}" in
   gdb2)    gdb_session 2; exit $? ;;
   gdb1)    gdb_session 1; exit $? ;;
   gdb_teeth) gdb_session 1 noflush; exit $? ;;
+  bridge_sim)   gdb_session 1 "" bridge; exit $? ;;
+  bridge_teeth) gdb_session 1 noflush bridge; exit $? ;;
   xcheck)  xcheck; exit $? ;;
   harness)
     shift; dbg=${1:-}; shift
@@ -397,7 +443,7 @@ case "${1:-}" in
     ;;
   all)
     fail=0
-    for t in attach2 attach1 teeth gdb2 gdb1 gdb_teeth xvc_loop xcheck; do
+    for t in attach2 attach1 teeth gdb2 gdb1 gdb_teeth bridge_sim bridge_teeth xvc_loop xcheck; do
       echo "--- $t"
       bash "$0" "$t" || fail=1
     done
