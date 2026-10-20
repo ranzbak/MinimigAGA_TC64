@@ -118,7 +118,8 @@ static int audio_polls;
 static char sounds[64];
 static size_t nsounds;
 
-void CD_AudioPoll(void) { audio_polls++; }
+void CD_AudioPoll(void) { audio_polls++; }	/* the 832's fdd.c */
+void CD_AudioRefill(void) { audio_polls++; }	/* the RV's: the refill without the IDE flags read */
 void drivesounds_queueevent(enum DriveSound_Type type)
 {
 	if (nsounds + 1 < sizeof sounds) sounds[nsounds++] = (char)('A' + type);

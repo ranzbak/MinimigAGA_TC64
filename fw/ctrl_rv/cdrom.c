@@ -397,17 +397,12 @@ void cda_port_claim(void)
    right after its poll and must see an rst_seen there (the command ends). */
 static int cd_in_command;
 
-void CD_AudioPoll(void)
+/* The refill: SD card reads into RAM and the audio registers, no FPGA
+   command word, so the Gayle's firmware port stays where the caller's
+   transfer latched it. */
+void CD_AudioRefill(void)
 {
 	uint32_t n;
-	/* An Amiga reset with no port-2 command after it (a floppy game, no
-	   atapi.device) would leave the music playing: outside a CD command the
-	   poll reads the CD port's flags, and CD_Flags stops the player on
-	   rst_seen (13.7).  Reading the flags consumes nothing else. */
-	if (!cd_in_command && cdrom.active && cda_busy()) {
-		int port = cdrom.slot >> 1;
-		CD_Flags(port, ReadIDEFlags(port));
-	}
 	cda_poll();
 	n = cda_underruns();
 	if (n != cd_underruns) {
@@ -415,6 +410,24 @@ void CD_AudioPoll(void)
 		if (DebugMode)
 			printf("CDA: underrun %d\r\n", (int)n);
 	}
+}
+
+/* An Amiga reset with no port-2 command after it (a floppy game, no
+   atapi.device) would leave the music playing: outside a CD command the
+   poll reads the CD port's flags, and CD_Flags stops the player on rst_seen
+   (13.7).  Reading the flags consumes nothing else, but its command word
+   re-latches the Gayle's firmware port to the CD's: inside a port-1 transfer
+   the next block went to the CD port's FIFO and "drained" was hidden behind
+   the busy CD port, a deadlock on the board (CD audio + READ MULTIPLE of
+   more than one block, 2026-10-20).  So: main loop only; transfer loops
+   call CD_AudioRefill. */
+void CD_AudioPoll(void)
+{
+	if (!cd_in_command && cdrom.active && cda_busy()) {
+		int port = cdrom.slot >> 1;
+		CD_Flags(port, ReadIDEFlags(port));
+	}
+	CD_AudioRefill();
 }
 
 int CD_PlayingTrack(void)

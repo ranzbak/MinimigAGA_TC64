@@ -69,10 +69,18 @@ void CD_Flags(int port, unsigned char flags);
 /* A command for the CD unit; tfr = the 8 task file registers. */
 void CD_HandleCommand(int port, unsigned char *tfr);
 
-/* CD audio refill (13.1, 13.5): call from the main loop and between the
-   blocks of every SD transfer loop, never inside an SD multi-block read
-   or write.  Prints "CDA: underrun n" in DebugMode. */
+/* CD audio poll of the main loop (13.1, 13.7): the refill, and while the
+   music plays outside a CD command, the CD port's flags (an Amiga reset
+   stops the player).  That flags read is a CMD_IDE_REGS_RD of the CD's
+   port, whose command word re-latches the Gayle's firmware port
+   (paula_floppy.v hdd_port_r): never call this inside an IDE or floppy
+   transfer, use CD_AudioRefill there. */
 void CD_AudioPoll(void);
+
+/* CD audio refill only (13.5): no IDE register access, so it is safe
+   between the blocks of every transfer loop (hdd.c, fdd.c), never inside an
+   SD multi-block read or write.  Prints "CDA: underrun n" in DebugMode. */
+void CD_AudioRefill(void);
 
 /* The track the player is in (playing or paused), 0 when it is not: the
    OSD's play mark (13.8 step 3c). */

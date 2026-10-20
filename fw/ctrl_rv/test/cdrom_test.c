@@ -1328,6 +1328,30 @@ static void t_reset_idle(void)
 	end();
 }
 
+/* The board deadlock of 2026-10-20: the transfer loops of hdd.c and fdd.c
+   poll the player between blocks, and a flags read there (a CMD_IDE_REGS_RD
+   of the CD's port) re-latches the Gayle's firmware port in the middle of a
+   port-1 transfer.  CD_AudioRefill reads no flags: a pending rst_seen stays
+   for the main loop's CD_AudioPoll, which still stops the music (13.7). */
+static void t_refill_no_flags(void)
+{
+	unsigned long t0;
+	begin("CD_AudioRefill reads no IDE flags (transfer loops); CD_AudioPoll still stops on a reset");
+	playing_mixed();
+	EXPECT(cda_status() == CDA_PLAYING, "player: %02X", (unsigned)cda_status());
+	g.rst_pending = 1;
+	t0 = now_ms;
+	CD_AudioRefill();
+	CD_AudioRefill();
+	EXPECT(g.rst_pending == 1 && now_ms == t0, "the refill read the CD port's flags (rst_pending %d, %lu reads)",
+	       g.rst_pending, now_ms - t0);
+	EXPECT(cda_status() == CDA_PLAYING, "player after the refill: %02X", (unsigned)cda_status());
+	CD_AudioPoll();
+	EXPECT(cda_status() == CDA_IDLE && !audio_ena, "after the main-loop poll: player %02X ena %d",
+	       (unsigned)cda_status(), audio_ena);
+	end();
+}
+
 static void t_playing_track(void)
 {
 	uint8_t c[12];
@@ -1382,6 +1406,7 @@ int main(void)
 	t_play_refused();
 	t_play_stops();
 	t_reset_idle();
+	t_refill_no_flags();
 	t_read_cd();
 	t_volume_select();
 	t_playing_track();

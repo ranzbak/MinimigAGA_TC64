@@ -223,7 +223,7 @@ void ReadTrack(adfTYPE *drive)
 
     while (1)
     {
-        CD_AudioPoll(); // CD audio refill between sectors (findings/cdrom/plan.md 13.5)
+        CD_AudioRefill(); // CD audio refill between sectors (13.5); no IDE flags read (cdrom.h)
         FileRead(&file, sector_buffer);
 
         EnableFpga();
