@@ -336,6 +336,7 @@ order suggested: 8, then 1 and 4, then 5 and 6.
 | MOVEM one register per clock | ~20 clocks per run | not planned |
 | Timing margin: a Pblock for the CPU island | release has clk_38 +0.44 ns, earlier builds +0.05 | experiment build |
 | Higher CPU clock (clk_114 / 2 = 57 MHz) or dual issue | the two large levers; weeks of work | measure first |
+| HD/CD throughput (SD -> SPI -> Gayle FIFO -> 040 PIO) | board ~1.1 MB/s on the 832 and the RISC-V OSD alike; reads already bypass the OSD CPU (direct mode), so FIFO/DMA in the host would not help reads. SPI ceiling ~1.4 MB/s from cfide (spi_wait per half-bit at ~11 MHz SCK, derived, not measured); 040 read rate of $DA0000 unmeasured. Levers: drop spi_wait when spimux=0 (slave CDC limits), CMD25 + direct-mode writes, SD 4-bit bus (pinout to check) | measure the 040 $DA0000 rate first; separate from the OSD RISC-V migration (Paul, 2026-10-20) |
 
 ## Verification
 
