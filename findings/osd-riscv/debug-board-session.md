@@ -5,6 +5,10 @@ Cable (the XVC rehearsal was not run, `tools/rvdebug/README.md` "XVC dress rehea
 self-test in step 3, and the abort rules below are meant seriously. Time needed: about 30 minutes without the `load` step, much more with it
 (see step 5.5).
 
+**Revised 2026-10-20 (Paul's answers to the Task 8 questions):** the bridge self-test (step 3) is the first bit-order check and a
+failure stops the session; the Amiga reboots in 5.4 and 5.5 are acceptable; **`monitor reset halt` comes before the `load`** (step 5.5
+below), so the board `load` follows the order of the simulation proof instead of writing over the running firmware.
+
 The picture:
 
 ```text
@@ -35,7 +39,7 @@ GDB=$HOME/opt/xpack-riscv-none-elf-gcc-15.2.0-1/bin/riscv-none-elf-gdb
 What the session can and cannot do: GDB stops and inspects the **OSD CPU** (the VexRiscv that runs the OSD firmware). It does not stop the
 Amiga, but the OSD CPU also serves the Amiga's floppy and HDF disk access: **while it is halted the Amiga's disk service stalls**. Workbench
 goes on only while it does no disk access; an Amiga stuck on a disk access during a halt is expected and resumes on `continue`. So do not leave the
-CPU halted long. **Two steps reboot the Amiga on purpose: `load` + `continue` (5.4) and `monitor reset halt` + `continue` (5.5)**, because the OSD
+CPU halted long. **Two steps reboot the Amiga on purpose: `monitor reset halt` + `continue` (5.4) and `monitor reset halt` + `load` + `continue` (5.5)**, because the OSD
 firmware's start-up (`_start`, `main`, `ColdBoot()`) resets the Amiga and reloads Kickstart. An Amiga reboot back to Workbench after those two steps
 is the expected outcome, not a failure.
 
@@ -250,7 +254,10 @@ continue
 `bt` shows `OsdShow` called from `HandleUI` (or `menu.c` code). After `continue` the OSD must open and work normally. **Abort rule for this step**: if the
 breakpoint never hits after two OSD key presses, press Ctrl-C in GDB, `monitor halt`, `info registers pc`, `delete`, `continue`, note it and go on.
 
-### 5.3 Timing probe (decides step 5.4)
+**Remote run (nobody at the board to press the key):** use `hbreak HandleUI` (`0x8e20`, hit on every main-loop pass, so at once) in place of
+`hbreak OsdShow` and the key press; the rest of the step is the same. The OSD checks of the other steps are then replaced by the ttyUSB0 log.
+
+### 5.3 Timing probe (decides step 5.5)
 
 Every memory read goes through `hw_server`. Measure its speed before a `load` is tried:
 
@@ -265,26 +272,50 @@ continue
 Write down the two times from the terminal (shell output is not in `gdb.log`). 256 words are 1 KB; the firmware image is 93,032 bytes (about 23,300 words, 91 times as much). A write is likely
 slower than a read.
 
-- Under 5 seconds for the 256 words: the `load` below takes about 8 minutes or less. Go on.
+- Under 5 seconds for the 256 words: the `load` of 5.5 takes about 8 minutes or less. Go on.
 - 5 to 20 seconds: the `load` takes about 8 to 30 minutes. Go on only if you want to wait.
-- Over 20 seconds: **skip 5.4** (do not try the `load`), go to 5.5, and say so in the paste-back.
+- Over 20 seconds: do 5.4, then **skip 5.5** (do not try the `load`), and say so in the paste-back.
 
-### 5.4 Load the same ELF over the running image, then continue
+### 5.4 `monitor reset halt`, breakpoint in `main`
 
-Equal bytes are written, and GDB sets the pc to the ELF entry, so this also exercises `fence.i` after a write through the debug module. The firmware
-**restarts from its entry point** (`0x2000`, C start-up `_start` -> `main` -> `ColdBoot()`) instead of continuing where it was; `.data` and `.bss` are
-reinitialised by the start-up code and the boot ROM is not run again. **`ColdBoot()` resets the chipset and the Amiga CPU, re-initialises the SD card,
-reloads the configuration and the Kickstart ROM and then releases the Amiga: the Amiga cold-boots** (seconds of black screen, Kickstart, Workbench from
-the HDF again, as after a normal OSD boot). That is the expected outcome here, not a failure.
-
-**Not covered by the simulation proof.** The sim session (`sim/rv_dbg/gdb/session.gdb`) does `monitor reset halt` first and then loads a small, different
-image. "`load` of the large image over the running firmware, with no reset before it, then start at 0x2000" runs on the board only; the SPI chip selects, an
-SD transaction in flight or a pending interrupt are not reset before it (`ColdBoot` re-initialises most of that; unproven). Expected: the firmware restarts,
-the Amiga reboots. Recovery if it does not: step 5.5 (`monitor reset halt`, `continue`), and if that fails, power-cycle and program the lab bitstream
-again (or B, step 6).
+Restarts the OSD CPU through the debug module's ndmreset and holds it at the boot ROM's reset vector. On `continue` the **boot ROM runs again and
+loads `RV32OSDA.BIN` from the card** to `0x2000` and jumps to `_start`; a hardware breakpoint on `main` (`0x80a0`, `main.c` line 269) stops it
+there, which shows the boot-ROM path and a breakpoint on code the boot ROM has just written. After the second `continue` the firmware runs
+`ColdBoot()`: **the Amiga is reset and reboots** (Kickstart reloads, Workbench again). That is expected.
 
 ```
-monitor halt
+monitor reset halt
+info registers pc
+hbreak main
+continue
+```
+
+Expected: `pc` is the boot ROM's reset vector (a low address, below `0x2000`) before the `continue`; ttyUSB0 shows the boot lines again
+(`Initializing SD card`, ... `file "RV32OSDA.BIN" found`), then GDB prints `Breakpoint 1, main () at main.c:269` (or `Thread 1 hit Breakpoint 1`).
+Then:
+
+```
+info registers pc
+bt
+delete
+continue
+```
+
+Wait up to 60 seconds for Workbench; the OSD must work. If the breakpoint does not hit within 60 seconds: Ctrl-C in GDB, `info registers pc`,
+`delete`, note the pc and the last ttyUSB0 line, `continue`. If the boot hangs, note the last ttyUSB0 line; power-cycle and program B (step 6).
+
+### 5.5 `monitor reset halt`, then `load` the same ELF, then continue
+
+Decided by 5.3. The reset comes first (Paul, 2026-10-20), so the CPU is held at the reset vector, nothing of the old firmware runs, and the
+`load` writes the same bytes into RAM the boot ROM would load; GDB sets the pc to the ELF entry, so this also exercises `fence.i` after a write
+through the debug module. The boot ROM is **not** run (the pc goes straight to `0x2000`, `_start` -> `main` -> `ColdBoot()`). This is the order of
+the simulation proof (`sim/rv_dbg/gdb/session.gdb`: `monitor reset halt`, then `load`), with the large firmware image instead of the small test
+image. **`ColdBoot()` resets the chipset and the Amiga CPU, re-initialises the SD card, reloads the configuration and the Kickstart ROM and then
+releases the Amiga: the Amiga cold-boots** (seconds of black screen, Kickstart, Workbench from the HDF again). That is expected.
+
+```
+monitor reset halt
+info registers pc
 shell date +%T
 load
 shell date +%T
@@ -292,28 +323,16 @@ info registers pc
 continue
 ```
 
-Expected: `Loading section .text, size 0x136b8 lma 0x2000`, then `.rodata`, `.init_array`, `.data`, a `Start address 0x2000`, `Transfer rate: ... bytes/sec`,
-and `pc` = `0x2000` (as `_start`) before the `continue`. No `Error`, no `Remote communication error`. The simulation moved 205 bytes/s through the
-bridge; the board may be faster or slower. Watch `~/rvbridge.log` in another window: scans per minute rise during the load.
-Ctrl-C in GDB aborts a `load` that takes too long (the firmware is then half-written: finish with step 5.5 `monitor reset halt` and `continue`, which
-restarts it from the boot ROM and the card, so a half-written image is replaced).
+Expected: `pc` below `0x2000` after the reset; `Loading section .text, size 0x136b8 lma 0x2000`, then `.rodata`, `.init_array`, `.data`, a
+`Start address 0x2000`, `Transfer rate: ... bytes/sec`, and `pc` = `0x2000` (as `_start`) before the `continue`. No `Error`, no
+`Remote communication error`. The simulation moved 205 bytes/s through the bridge; the board may be faster or slower. Watch `~/rvbridge.log` in
+another window: scans per minute rise during the load. Ctrl-C in GDB aborts a `load` that takes too long (the firmware is then half-written:
+finish with `monitor reset halt` and `continue`, which restarts it from the boot ROM and the card, so a half-written image is replaced).
 
-After the `continue`: wait for the Amiga to reboot (ttyUSB0 shows the SD and Kickstart boot lines; allow 60 seconds, about a normal boot). Then Workbench
-must be back and the OSD must open and close. If the Amiga does not come back or the OSD is dead after 60 seconds, do 5.5 now, whatever the plan said.
-
-### 5.5 Optional, last: `monitor reset halt`
-
-Restarts the OSD CPU through the debug module's ndmreset; the **boot ROM runs again and loads `RV32OSDA.BIN` from the card**, so the OSD firmware
-restarts from scratch and runs `ColdBoot()` as in 5.4: **the Amiga is reset and reboots** (Kickstart reloads, Workbench again). That is expected.
-
-```
-monitor reset halt
-info registers pc
-continue
-```
-
-Expected: `pc` is the boot ROM's reset vector (a low address, below `0x2000`) before the `continue`; after it the ttyUSB0 log shows the boot lines again
-(`Initializing SD card`, ... `file "RV32OSDA.BIN" found`) wait up to 60 seconds for Workbench; the OSD must work. If the boot hangs, note the last ttyUSB0 line; power-cycle and program B (step 6).
+After the `continue`: ttyUSB0 shows no boot ROM lines this time (the boot ROM did not run) but the firmware's own start-up lines; wait for the
+Amiga to reboot (allow 60 seconds, about a normal boot). Then Workbench must be back and the OSD must open and close. If the Amiga does not come
+back or the OSD is dead after 60 seconds: `monitor reset halt`, `continue` (the boot ROM path of 5.4), and if that fails, power-cycle and program
+the lab bitstream again (or B, step 6).
 
 ## 6. Detach and stop
 
@@ -352,7 +371,7 @@ flash.
 2. `~/openocd.log`.
 3. The GDB transcript `/home/paul/gdb.log`. The `shell date +%T` outputs go to the terminal, not into this log: copy the times by hand into the step table.
 4. The ttyUSB0 log `~/rvdbg-tty.log`.
-5. One line per step, "ok" or what happened, with the two time stamps of steps 5.3 and 5.4:
+5. One line per step, "ok" or what happened, with the two time stamps of steps 5.3 and 5.5:
 
    | Step | ok / what happened |
    |---|---|
@@ -363,8 +382,8 @@ flash.
    | 5.1 read-only (halt, registers, `bt`, `x/s 0x142f4`, continue) | |
    | 5.2 `hbreak OsdShow` hit on the OSD key | |
    | 5.3 timing probe, times | |
-   | 5.4 `load` of the same ELF, times, Amiga reboot to Workbench, OSD alive after | |
-   | 5.5 `monitor reset halt` (or "not run") | |
+   | 5.4 `monitor reset halt`, `hbreak main` hit, Amiga reboot to Workbench | |
+   | 5.5 `monitor reset halt` + `load` of the same ELF, times, Amiga reboot to Workbench, OSD alive after (or "not run") | |
    | 6 detach, stop, OSD still works | |
 
 ## 8. STOP
