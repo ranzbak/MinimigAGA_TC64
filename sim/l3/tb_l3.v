@@ -17,11 +17,16 @@
 //          sd_cs[6]  paula_floppy direct_scs = ~sd_cs[6] (card -> paula)
 //          paula_floppy <-> gayle #(.IDE_PORTS(2)) over the hdd_* bus
 //     minimig_syscontrol (rtl/minimig): the chipset reset
-//     bfm_audio: the CD-audio ring position (cfide audio_buf)
+//     bfm_audio: the CD-audio ring position (cfide audio_buf); with
+//       +CDDA_DUMP=<prefix> (scenarios cdda, cdda_load) a copy of every half
+//       the player starts, from this SDRAM model
 //     bfm_keys: userio_osd's osd_ctrl (the OSD keys) from a key script
 //       (+KEYS=<file>, scenarios keys and fdd_rd); 0 without one
 //     bfm_floppy: paula_floppy's Amiga side, the CIA lines, Paula's disk
 //       registers and Agnus's disk DMA slots (scenario fdd_rd; idle
+//       otherwise)
+//     bfm_ide: gayle's Amiga side, a 68k IDE driver on the task file, data,
+//       INTENA / INTREQ registers, irq and nrdy (scenario hdd; idle
 //       otherwise)
 //
 // Wiring as rtl/minimig/minimig.v and rtl/soc/minimig_virtual_top.v:
@@ -39,9 +44,10 @@
 //   The slaves get rtl/soc/openaars_defines.vh first (the board's global
 //   include: MINIMIG_HOST_DIRECT, so userio_osd's host_cs is constant 0).
 //
-// The Amiga side is idle except for bfm_floppy (fdd_rd) and bfm_keys: until
-// bfm_floppy starts, the CIA lines deselect the floppy (_sel 1111, _motor
-// 1, _step 1), no Paula register write, no disk DMA; no Gayle access,
+// The Amiga side is idle except for bfm_floppy (fdd_rd), bfm_ide (hdd) and
+// bfm_keys: until bfm_floppy starts, the CIA lines deselect the floppy
+// (_sel 1111, _motor 1, _step 1), no Paula register write, no disk DMA;
+// until bfm_ide starts, no Gayle access (its 68k inputs all 0),
 // osd_ctrl from bfm_keys (0 unless a key script runs), in_diag 0 (not
 // modelled), c1 / c3 / sol 0, rtg_ena 0.  The chipset reset is minimig.v's: reset = sys_reset | ~_cpu_reset_in, sys_reset from
 // minimig_syscontrol (mrst = userio_osd usrrst, cnt = sof), and the idle
@@ -65,7 +71,7 @@
 // Monitors: sim/common/hostmon.vh (stale ack, SPI accept, X on the bus, UART
 // lines, the SPI frame log +SPI_LOG=<file> (spi.txt), OSD GAP, STACK low,
 // STATS, BOOT), mon_l3.vh (the "=== MARGIN" lines of plan 7.1 items 1, 3,
-// 4, 5, 12, 14 and "=== KICK", +RTC_CSH_MIN=<ns>; rtc_model's "=== RTC")
+// 4, 5, 6, 7, 8, 9, 12, 14 and "=== KICK", +RTC_CSH_MIN=<ns>; rtc_model's "=== RTC")
 // and, here:
 //   +SPI_T_LOG=<file>  the frames of spi.txt with "<start> <end> " cycles in
 //                      front (spi_t.txt; never compared)
@@ -87,6 +93,8 @@
 //                      took them
 //   +SDRAM_DUMP=<file> the SDRAM model's 8 MB, written before the verdict
 //   +SD_SAVE=<file>    the card as the run left it (the SD model)
+//   +IDE_DUMP=<prefix> bfm_ide's dump files <prefix>_<k>.hex (scenario hdd)
+//   +CDDA_DUMP=<prefix> bfm_audio's ring snapshots <prefix>_<n>.bin (cdda)
 // Scenarios (+SCENARIO=<name>): scenarios.vh.  A scenario ends the run at
 // its end event ("=== PASS" without DONE when no bench error) or the run
 // ends at +TIMEOUT=<clk_114 cycles> ("=== FAIL <scenario>: ...").
@@ -345,10 +353,22 @@ module tb_l3 #(
 
   // --------------------------------------------------------------- gayle
   wire gayle_irq, gayle_nrdy;
+  wire [23:1] ide_a;
+  wire [15:0] ide_din, ide_dout;
+  wire        ide_rd, ide_hwr, ide_lwr, ide_sel, ide_selg;
+
+  // the Amiga side of gayle: a 68k IDE driver (scenario hdd; idle otherwise)
+  bfm_ide ide (
+    .clk28(clk28), .clk7_en(clk7_en), .reset(mm_reset), .cyc(cyc),
+    .address_in(ide_a), .data_in(ide_din), .data_out(ide_dout),
+    .rd(ide_rd), .hwr(ide_hwr), .lwr(ide_lwr), .sel_ide(ide_sel), .sel_gayle(ide_selg),
+    .irq(gayle_irq), .nrdy(gayle_nrdy)
+  );
+
   gayle #(.IDE_PORTS(2)) gayle1 (
     .clk(clk28), .clk7_en(clk7_en), .reset(mm_reset),
-    .address_in(23'h000000), .data_in(16'h0000), .data_out(),
-    .rd(1'b0), .hwr(1'b0), .lwr(1'b0), .sel_ide(1'b0), .sel_gayle(1'b0),
+    .address_in(ide_a), .data_in(ide_din), .data_out(ide_dout),
+    .rd(ide_rd), .hwr(ide_hwr), .lwr(ide_lwr), .sel_ide(ide_sel), .sel_gayle(ide_selg),
     .irq(gayle_irq), .nrdy(gayle_nrdy),
     .hdd0_ena(ide_config0[2:1]), .hdd1_ena(ide_config1[2:1]),
     .hdd0_atapi(ide_config0[4:3]), .hdd1_atapi(ide_config1[4:3]),
@@ -408,7 +428,8 @@ module tb_l3 #(
 
   // -------------------------------------------------- audio ring, TIMER tick
   bfm_audio audio (
-    .clk28(clk28), .tick(tick), .audio_ena(audio_ena), .audio_clear(audio_clear), .aud_addr(aud_addr)
+    .clk28(clk28), .tick(tick), .audio_ena(audio_ena), .audio_clear(audio_clear), .cyc(cyc),
+    .aud_addr(aud_addr)
   );
 
   integer tickdiv = 1, tick_cnt = 0;
@@ -602,7 +623,7 @@ module tb_l3 #(
     wait (run_end);
     #1;   // the end-of-run counters after the last edge's updates, in every simulator
     if (uart_n) uart_print;
-    errors = errors + ram.errors + keys.errors + fdd.errors + aki.errors;
+    errors = errors + ram.errors + keys.errors + fdd.errors + aki.errors + ide.errors + audio.errors;
     hm_final_hw;
     card.save_image;
 `ifdef RV_HOSTCPU_STATS

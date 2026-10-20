@@ -9,7 +9,13 @@
 #       among the frames, another audio ring; and the timing of a floppy
 #       write DMA, as sim/l3 fdd_wr p4t14 / p4t14c: the FIFO read in other
 #       pieces, other polls while it fills; the head positions seen during
-#       a seek) -> an empty diff
+#       a seek; and as sim/l3 hdd p4t15 / p4t15c, one more poll without a
+#       request after an IDE request was served; and as sim/l3 cd p4t16 /
+#       p4t16c, an IDE flag poll whose MISO byte 0 has the IDE command bit
+#       clear in one run and set in the other; and as sim/l3 cdda p4t17 /
+#       p4t17c, more repeated IDE flag polls (CD_AudioPoll, one per
+#       main-loop pass, an RTC frame among them) and another paused position
+#       inside the READ SUB-CHANNEL .. ENA block) -> an empty diff
 #   (b) one changed byte in an SD read, an FPGA data frame, an OSD text
 #       line, a hw write, a UART line, a KEYQ event, a status frame with a
 #       request, a changed drive status, a deselect frame that is not all
@@ -25,7 +31,13 @@
 #       read from the write FIFO, a changed track byte in a write frame, a
 #       missing write frame, a seek that ends elsewhere, a head position
 #       that goes back or flips the head bit during a seek -> each a diff
-#       line
+#       line.  Task 15: a changed track byte in that poll after the served
+#       IDE request -> a diff line.  Task 16: in the IDE flag poll a changed
+#       flags byte (MISO 8) and a changed other bit of MISO byte 0 -> each a
+#       diff line.  Task 17: a changed flags byte in one of the repeated flag
+#       polls, the lines just before and after the READ SUB-CHANNEL .. ENA
+#       block -> each a diff line; that block without its ENA write -> norm
+#       fails
 #   (c) each rule of the fixture's expected-diff list removed in turn -> its
 #       difference comes back; an unused rule -> diff --unused-rules reports it
 # The card is built with tools/sim/mkcard.sh (sfdisk, mkfs.fat, mtools), the
@@ -209,9 +221,54 @@ if change == "sd":
 sd(17, c.file_lbas("DATA.BIN")[1], 0x00, data=bytes(data))
 frame(0x00, [0xFE if change == "desel" else 0xFF], [0xFF])     # cs 00, not all ff: kept
 frame(0x10, [0x00, 0x05 if change == "fpga" else 0x04, 0x00], [0x10, 0x00, 0x00])
+# an IDE command served (sim/l3 hdd, p4t15 / p4t15c): the request frame,
+# the register read, then the firmware's wait loop: variant b (the faster
+# CPU) polls once before the 68k has emptied the FIFO (no request), a not
+frame(0x10, [0] * 6, [0x14, 0x01, 0x44, 0x89, 0x00, 0x00])
+frame(0x10, [0x80] + [0] * 5, [0x14, 0x01, 0x44, 0x89, 0x00, 0x00])
+if b:
+    frame(0x10, [0] * 6, [0x10, 0x02 if change == "idetrack" else 0x01, 0x44, 0x89, 0x00, 0x00])
+frame(0x10, [0] * 6, [0x14, 0x01, 0x44, 0x89, 0x00, 0x00])
+# an IDE flag poll (hdd.c ReadIDEFlags(1), cdrom.c cd_wait(); sim/l3 cd,
+# p4t16 / p4t16c): variant b (the faster CPU) starts it before the 68k has
+# read the data phase's last word, so MISO byte 0's IDE command bit (0x04)
+# is still clear; MISO byte 8 is the flags byte the firmware reads
+b0 = (0x11 if change == "cdbit" else 0x10) if b else 0x14
+frame(0x10, [0x81] + [0] * 9, [b0, 0x01, 0x44, 0x89, 0x00, 0x00, 0x20, 0x20, 0x51 if change == "cdflags" else 0x53, 0x00])
 osd(0, "Minimig " + ("Lead" if change == "osd" else "Load"))
 polls(1 if b else 4)
 frame(0x20, [0x98, 0xFF, 0xFF], [0x00, 0x01, 0x46 if change == "keyq" else 0x45])
+# CD audio (sim/l3 cdda, p4t17 / p4t17c): while the player runs,
+# CD_AudioPoll reads the CD port's flags on every main-loop pass, so
+# variant b (the faster CPU) makes more of these polls, with a repeated
+# HandleRTC unit among them (its frame and hw writes are dropped: they do
+# not end the run of repeats); change cdpoll: one of them sees other
+# flags; cdpollhw / cdpolluart: an AUDIO write / a UART line between two
+# of them (kept, so the next poll is kept too)
+for k in range(6 if b else 2):
+    frame(0x10, [0] * 6, [0x10, 0x01, 0x44, 0x89, 0x00, 0x00])
+    if b and k == 3:
+        rtc_unit(False)
+    if b and k == 2 and change == "cdpollhw":
+        hwrite("ffffb0", 0x0009)
+    if b and k == 2 and change == "cdpolluart":
+        say("CDA: underrun 1")
+    frame(0x10, [0x81] + [0] * 9, [0x10, 0x01, 0x44, 0x89, 0x00, 0x00, 0x00, 0x00,
+                                   0x11 if change == "cdpoll" and k == 3 else 0x13, 0x00])
+# the PAUSE's READ SUB-CHANNEL reply up to the RESUME's ENA (Task 17 P2):
+# another paused LBA and other TEST.BIN blocks per variant; changes subpre /
+# subpost: the frames just before and after the block; subunterm: no ENA
+frame(0x10, [0xF1, 0x09 if change == "subpre" else 0x08, 0, 0, 0, 0], [0x14, 0x01, 0x44, 0x89, 0x00, 0x00])
+pos = 0x2C if b else 0x30
+frame(0x10, [0xA1, 0, 0, 0, 0, 0, 0, 0x12, 0, 0x0C, 0x01, 0x10, 0x02, 0x01, 0, 0, 0x01, pos, 0, 0, 0, pos - 0xD6 + 0x100 if pos < 0xD6 else pos - 0xD6],
+      [0x14, 0x01, 0x44, 0x89, 0x00, 0x00] + [0] * 16)
+hwrite("ffffb0", 0x0002)                  # CLEAR (the RESUME's run())
+for lba in ((c.root + 3, c.root + 4) if b else (c.root + 4,)):
+    sd(17, lba, 0x00, data=sector(lba))
+if change != "subunterm":
+    hwrite("ffffb0", 0x0001)              # ENA
+frame(0x10, [0x91] + [0] * 9 + [0x03, 0, 0, 0, 0xFE if change != "subpost" else 0xFC, 0, 0xFF, 0, 0xA0],
+      [0x14, 0x01, 0x44, 0x89, 0x00, 0x00] + [0] * 13)
 say("Kickstart " + ("okay" if change == "uart" else "ok"))
 say("caf" + ("\xea" if change == "hibyte" else "\xe9"))           # a UART byte >= 0x80
 frame(0x20, [0x24, 0x06 if change == "pre" else 0x05], [0x00, 0x00])   # just before the block
@@ -258,6 +315,9 @@ FLOAT hw ^ffff(60|90|a0)$
 
 # fixture: the drive sounds' ring
 DROP hw ^MEM\x20audio_ring\x20
+
+# fixture (sim/l3 cdda, p4t17 / p4t17c): the paused position's block
+DROPBLOCK all ^10\x20a1\x2000\x2000\x2000\x2000\x2000\x2000\x2012\x2000\x200c\x2001\x20 ^ffffb0\x200001$
 EOR
 
 bad=0
@@ -318,7 +378,7 @@ else fail "(a) norm content: $(head -40 "$OUT/b/norm.txt")"; fi
 # (b) one content change against b: exactly one - line and one + line
 for ch in sd fpga osd hw uart keyq status uds desel pre post track motor level hibyte \
 	sector dmatrack audio sdspeed float floatextra floatmiss rtcval rtcspeed wrdata wrhdr wrmiss \
-	seekend seekback seekhead; do
+	seekend seekback seekhead idetrack cdflags cdbit cdpoll subpre subpost; do
 	gen "$OUT/b_$ch" b "$ch" || exit 1
 	norm "$OUT/b_$ch" "$OUT/rules.txt"
 	if dodiff "$OUT/b/norm.txt" "$OUT/b_$ch/norm.txt"; then fail "(b) $ch: the change is hidden (empty diff)"; continue; fi
@@ -347,12 +407,31 @@ for ch in sd fpga osd hw uart keyq status uds desel pre post track motor level h
 		seekend) want='^\+SPI 10 00 00 00 00 00 00 / 10 32 44 89 00 01$' ;;   # the seek ends elsewhere
 		seekback) want='^\+SPI 10 00 00 00 00 00 00 / 10 24 44 89 00 01$' ;;  # a position that goes back: kept
 		seekhead) want='^\+SPI 10 00 00 00 00 00 00 / 10 2d 44 89 00 01$' ;;  # the head bit flips: kept
+		idetrack) want='^\+SPI 10 00 00 00 00 00 00 / 10 02 44 89 00 00$' ;;   # served IDE request, other track: kept
+		cdflags) want='^\+SPI 10 81 00 00 00 00 00 00 00 00 00 / 10 01 44 89 00 00 20 20 51 00$' ;;   # IDE flag poll, other flags: kept
+		cdbit) want='^\+SPI 10 81 00 00 00 00 00 00 00 00 00 / 11 01 44 89 00 00 20 20 53 00$' ;;    # other bit of MISO byte 0: kept
+		cdpoll) want='^\+SPI 10 81 00 00 00 00 00 00 00 00 00 / 10 01 44 89 00 00 00 00 11 00$' ;;   # a repeated flag poll, other flags: kept
+		subpre) want='^\+SPI 10 f1 09 ' ;;        # just before the READ SUB-CHANNEL block
+		subpost) want='^\+SPI 10 91 .* fc 00 ff 00 a0 /' ;;   # just after it
 		*) want='^\+' ;;
 	esac
-	case "$ch" in status|uds|desel|track|motor|level|dmatrack|audio|floatextra|floatmiss|rtcval|rtcspeed|wrhdr|seekback|seekhead) one=1 ;; *) one=0 ;; esac
+	case "$ch" in status|uds|desel|track|motor|level|dmatrack|audio|floatextra|floatmiss|rtcval|rtcspeed|wrhdr|seekback|seekhead|idetrack|cdpoll) one=1 ;; *) one=0 ;; esac
 	if grep -qE "$want" "$OUT/diff.txt" && { [ "$one" = 1 ] || { [ "$m" = 1 ] && [ "$p" = 1 ]; }; }; then
 		pass "(b) $ch: $(grep -E '^\+[^+]' "$OUT/diff.txt" | head -1 | cut -c1-100)"
 	else fail "(b) $ch: $m - / $p + lines: $(cat "$OUT/diff.txt" | head -12)"; fi
+done
+
+# Task 17 review I1: a kept hw write or UART line between two equal flag
+# polls ends the run of repeats: the line and the poll after it come back
+for ch in cdpollhw cdpolluart; do
+	gen "$OUT/b_$ch" b "$ch" || exit 1
+	norm "$OUT/b_$ch" "$OUT/rules.txt"
+	if [ "$ch" = cdpollhw ]; then want='^\+HW ffffb0 0009$'; else want='^\+UART CDA: underrun 1$'; fi
+	if ! dodiff "$OUT/b/norm.txt" "$OUT/b_$ch/norm.txt" && grep -qE "$want" "$OUT/diff.txt" \
+		&& grep -A1 -E "$want" "$OUT/diff.txt" | tail -n 1 | grep -q '^+SPI 10 81 00 00 00 00 00 00 00 00 00 / 10 01 44 89 00 00 00 00 13 00$' \
+		&& [ "$(grep -c '^-[^-]' "$OUT/diff.txt")" = 0 ] && [ "$(grep -c '^+[^+]' "$OUT/diff.txt")" = 2 ]; then
+		pass "(b) $ch: $(grep -E '^\+[^+]' "$OUT/diff.txt" | tr '\n' ' ' | cut -c1-120)"
+	else fail "(b) $ch: $(head -12 "$OUT/diff.txt")"; fi
 done
 
 # a DROPBLOCK start without its end: an error, not a drop to the end
@@ -360,6 +439,16 @@ gen "$OUT/b_unterm" b unterm || exit 1
 if norm "$OUT/b_unterm" "$OUT/rules.txt" 2> "$OUT/norm_err.txt"; then fail "(b) unterminated DROPBLOCK: norm exit 0"
 elif grep -q 'DROPBLOCK start .* has no end' "$OUT/norm_err.txt"; then pass "(b) unterminated DROPBLOCK: $(cut -c1-90 "$OUT/norm_err.txt")"
 else fail "(b) unterminated DROPBLOCK: $(cat "$OUT/norm_err.txt")"; fi
+gen "$OUT/b_subunterm" b subunterm || exit 1
+if norm "$OUT/b_subunterm" "$OUT/rules.txt" 2> "$OUT/norm_err.txt"; then fail "(b) READ SUB-CHANNEL block without its ENA: norm exit 0"
+elif grep -q 'DROPBLOCK start .* has no end' "$OUT/norm_err.txt"; then pass "(b) READ SUB-CHANNEL block without its ENA: $(cut -c1-90 "$OUT/norm_err.txt")"
+else fail "(b) READ SUB-CHANNEL block without its ENA: $(cat "$OUT/norm_err.txt")"; fi
+# the repeated flag polls collapse to one line, the block is dropped
+if [ "$(grep -c '^SPI 10 81 00 00 00 00 00 00 00 00 00 / 10 01 44 89 00 00 00 00 13 00$' "$OUT/b/norm.txt")" = 1 ] \
+	&& grep -q '^# dropped .*flagpoll 5,' "$OUT/b/norm.txt" && ! grep -q '^SPI 10 a1 ' "$OUT/b/norm.txt" \
+	&& grep -A1 '^SPI 10 f1 08 ' "$OUT/b/norm.txt" | tail -n 1 | grep -q '^SPI 10 91 .* fe 00 ff 00 a0 /'; then
+	pass "(a) flag poll repeats: one line kept (flagpoll 5 dropped); READ SUB-CHANNEL block dropped, its neighbours kept"
+else fail "(a) flag polls / READ SUB-CHANNEL block: $(grep -nE '^(SPI 10 (81|a1|f1|91)|HW ffffb0|# dropped)' "$OUT/b/norm.txt")"; fi
 if grep -q '^UART Overriding' "$OUT/b/norm.txt" || ! grep -q '^UART Loading kickstart$' "$OUT/b/norm.txt" || ! grep -q '^SPI 20 24 05 / 00 00$' "$OUT/b/norm.txt"; then
 	fail "(a) DROPBLOCK: the block is not dropped, or a line around it is: $(grep -n -A3 -B3 'Kickstart ok' "$OUT/b/norm.txt")"
 else pass "(a) DROPBLOCK: the block is dropped, the lines around it stay"; fi
@@ -379,13 +468,13 @@ done < "$OUT/rules.txt"
 
 # (c) an unused rule is reported; with all rules used, none is
 norm "$OUT/a" "$OUT/rules.txt"; norm "$OUT/b" "$OUT/rules.txt"
-if dodiff --unused-rules "$OUT/a/norm.txt" "$OUT/b/norm.txt" && grep -q '^rules: all 10 used$' "$OUT/diff.txt"; then
-	pass "(c) --unused-rules: all 10 rules used"
+if dodiff --unused-rules "$OUT/a/norm.txt" "$OUT/b/norm.txt" && grep -q '^rules: all 11 used$' "$OUT/diff.txt"; then
+	pass "(c) --unused-rules: all 11 rules used"
 else fail "(c) --unused-rules: $(cat "$OUT/diff.txt")"; fi
 { cat "$OUT/rules.txt"; printf '\n# fixture: a rule no difference needs\nDROP uart nothing\\x20matches\\x20this\n'; } > "$OUT/rules_extra.txt"
 norm "$OUT/a" "$OUT/rules_extra.txt"; norm "$OUT/b" "$OUT/rules_extra.txt"
 if dodiff --unused-rules "$OUT/a/norm.txt" "$OUT/b/norm.txt"; then fail "(c) an unused rule: exit 0"
-elif grep -q '^UNUSED 26: DROP uart nothing' "$OUT/diff.txt" && [ "$(grep -c '^UNUSED' "$OUT/diff.txt")" = 1 ]; then
+elif grep -q '^UNUSED 29: DROP uart nothing' "$OUT/diff.txt" && [ "$(grep -c '^UNUSED' "$OUT/diff.txt")" = 1 ]; then
 	pass "(c) an unused rule: $(grep '^UNUSED' "$OUT/diff.txt")"
 else fail "(c) an unused rule: $(cat "$OUT/diff.txt")"; fi
 

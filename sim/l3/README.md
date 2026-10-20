@@ -2,7 +2,8 @@
 
 Work in progress (Phase 4 of the OSD host CPU migration). This file grows
 with the bench; so far it has the sections "Bench", "Run", "boot",
-"832", "Differential", "keys", "fdd_rd", "fdd_wr", "akiko", "Monitors" and "Cards".
+"832", "Differential", "keys", "fdd_rd", "fdd_wr", "hdd", "cd", "cdda",
+"akiko", "Monitors" and "Cards".
 
 ## Bench
 
@@ -19,8 +20,9 @@ the committed boot ROM and the real firmware from an SD card image:
 | OSD | `userio_osd` (instance `osd1`) on `sd_cs[5]`, `CORE_CAPS` 0xAD | `rtl/minimig` |
 | floppy / HDD | `paula_floppy` on `sd_cs[4]`, direct mode on `~sd_cs[6]` from the card's MISO; `gayle #(.IDE_PORTS(2))` behind it on the `hdd_*` bus | `rtl/minimig` |
 | reset | `minimig_syscontrol` (`mrst` = `usrrst`, `cnt` = sof); chipset reset = `sys_reset \| cpurst` | `rtl/minimig` |
-| audio ring | `bfm_audio.v`: the ring position, cfide `audio_buf` = bit 15 | `sim/l3` |
+| audio ring | `bfm_audio.v`: the ring position, cfide `audio_buf` = bit 15; with `+CDDA_DUMP` a copy of every half the player starts (section "cdda") | `sim/l3` |
 | floppy's Amiga side | `bfm_floppy.v` (instance `fdd`): the CIA lines, Paula's disk registers and Agnus's disk DMA slots for paula_floppy, read and write (scenarios `fdd_rd` and `fdd_wr`, sections "fdd_rd" and "fdd_wr"; idle otherwise) | `sim/l3` |
+| Gayle's Amiga side | `bfm_ide.v` (instance `ide`): a 68k IDE driver on gayle's task file, data, INTENA / INTREQ registers, `irq` and `nrdy` (scenarios `hdd`, `cd`, `cdda` and `cdda_load`, sections "hdd", "cd" and "cdda"; idle otherwise: every 68k input 0) | `sim/l3` |
 | Akiko requester | `bfm_akiko.v` (instance `aki`): cfide's `amiga_req/addr/d/wr` in, `amiga_q/ack` out (scenario `akiko`, section "akiko"; idle otherwise) | `sim/l3` |
 
 The wiring is that of `rtl/minimig/minimig.v` and
@@ -36,8 +38,8 @@ board's global include; `MINIMIG_HOST_DIRECT`: userio_osd's `host_cs` is
 constant 0, and the bench fails the run if it ever rises) with the board's
 `fpga/openaars/minimig_version.vh`.
 
-The Amiga side is idle outside `fdd_rd`, `fdd_wr` and the key scripts: the floppy
-is deselected (`_sel` 1111, `_motor` 1), no register or Gayle access,
+The Amiga side is idle outside `fdd_rd`, `fdd_wr`, `hdd`, `cd`, `cdda`, `cdda_load` and the key
+scripts: the floppy is deselected (`_sel` 1111, `_motor` 1), no register or Gayle access,
 `osd_ctrl` 0, `in_diag` 0. The CPU's
 reset output follows its reset input, so the chipset reset is
 `sys_reset | cpurst`; sof is one clk7 cycle per PAL frame (`+SOF_CLK7`,
@@ -483,7 +485,11 @@ only when it is empty. `norm` writes one stream in frame order,
   bits 3..0: track read / write, IDE command / data) whose MISO bytes equal
   the previous status frame's (HandleFDD also acts on the drive count,
   track and motor bytes, so a frame where one changed is kept; a request
-  is always kept), FPGA
+  is always kept). After an IDE request frame (MISO 0 bits 3..2), a
+  frame without a request that equals it but for those two bits is a poll
+  too (`hdd`, runs `p4t15` / `p4t15c`): the firmware served the request,
+  and whether its wait loop polls once before the 68k has emptied or
+  filled the FIFO follows the CPU's speed (`# dropped ide_served`). FPGA
   drive-status frames (`10 10 <s>`, after every HandleFpga) whose `<s>`
   is the previous one's, `OSD_CMD_READ` (`20 00`) whose level is the
   previous one's, `OSD_CMD_KEYQ` (`20 98`) with status 00 (no event, no
@@ -491,6 +497,29 @@ only when it is empty. `norm` writes one stream in frame order,
   MOSI ff). A request, a changed status frame, level or drive status, a
   queued key stays. Every file is read as latin-1, byte for byte (a UART
   byte >= 0x80 stays itself)
+- **the IDE flag polls' request bits, masked** (`cd`, runs `p4t16` /
+  `p4t16c` and `p4t16i` / `p4t16ci`, Task 16 ruling): in a
+  `ReadIDEFlags()` frame (`10`, MOSI `80` or `81` and nine 00 bytes:
+  `cdrom.c`'s `cd_wait()`, `CD_Locked()`, `CD_AudioPoll()`), MISO byte 0's IDE request
+  bits 3..2 are printed as 0. The firmware keeps only MISO byte 8 (the
+  flags) of that frame; byte 0 is clocked out during the command byte, and
+  whether the 68k has read a data phase's last word by then follows the
+  CPU's speed. Byte 8, the other bits of byte 0 and the number of polls
+  stay compared (`spitrace_test.sh` cases `cdflags`, `cdbit`), except
+  repeats: a flag poll equal (after the mask) to the previous flag poll,
+  with nothing kept between them, is dropped (`# dropped flagpoll`;
+  `cdda`, runs `p4t17` / `p4t17c`, `p4t17l` / `p4t17lc`, Task 17 ruling).
+  While the CD player runs, `CD_AudioPoll()` reads the flags on every
+  main-loop pass: RV 17,174 frames, 832 7,228. "Kept" is decided on the
+  finished stream, after every drop of this list and every rule
+  (`DROP`, `DEDUP`, `DROPBLOCK`, `SUBST`; `FLOAT` lines have no place
+  among the frames). So the dropped poll frames and a repeated HandleRTC
+  unit (its RTC frame and hw writes) do not end a run of repeats, while
+  any printed line does: an SPI, SD or OSD frame, a hw write, a UART line
+  (`spitrace_test.sh` cases `cdpollhw`, `cdpolluart`: the line and the
+  poll after it come back; Task 17 review). `cd_wait()`'s polls between
+  data phases stay compared (the `cd` and `hdd` streams are unchanged),
+  and so does a poll with other flags (case `cdpoll`)
 - **paula's floppy DMA progress, masked** (`fdd_rd`, runs `p4t13` /
   `p4t13c`). The firmware fills the FIFO and Agnus empties it at its own
   rate, so these bytes follow the CPU's speed. They are masked by byte
@@ -602,6 +631,10 @@ another place, another audio ring. Each of these gives a diff line:
 - a changed, an extra and a missing write of the FLOAT group
 - a repeated HandleRTC unit with a changed RTC value (`ffff70`), or with a
   changed closing speed write (`ffffe8`)
+- (Task 17) a repeated IDE flag poll with other flags, an AUDIO write or a
+  UART line between two equal flag polls (with the poll after it), and
+  the frames just before and after the READ SUB-CHANNEL .. ENA block;
+  that block without its end fails `norm`
 
 For the write FIFO (Task 14), the variants also read a write DMA's FIFO
 in other pieces, with other polls while it fills; that gives an empty
@@ -629,6 +662,24 @@ defect, `findings/osd-riscv/phase4.md` "Findings for Paul") and the RV-only
 - `FLOAT hw ^ffff(60|90|a0)$`: a TIMER-driven I2C / keyboard group
 - `DROP hw ^MEM audio_ring`: the drive sounds' ring is rendered per
   TIMER count; `cdda` checks its ring with `l3check.py`
+
+`cd` adds no rule, only the IDE flag poll mask above (section "cd").
+`cdda` and `cdda_load` add one rule (Task 17 ruling P2), besides the
+flag poll repeats above: `DROPBLOCK all` from the READ SUB-CHANNEL data
+frame (`10 a1 ...`, audio status 12 = paused) to the RESUME's ENA write
+(`ffffb0 0001`). The paused position is TIMER-quantised, and the PAUSE is
+served after the refill, so READ SUB-CHANNEL's address and the RESUME's
+fill (TEST.BIN blocks from that position) differ between the CPUs and
+between the 832 twins. `l3check.py cdda` checks both on each CPU. In
+`spitrace_test.sh`, `subpre` and `subpost` (the frames just before and
+after the block) each give a diff line, and `subunterm` (no ENA) fails
+`norm`. With it, the diffs `p4t17` / `p4t17c`, `p4t17l` / `p4t17lc` and
+`p4t17c` / `p4t17c_xs1` are empty.
+
+`hdd` adds three UART rules (section "hdd"): `file: "%.8s.%.3s"`
+(`fmt_diff_expected.txt` lines 45-52), the index time `Hardfile indexed
+in <n> ms` (TIMER counts) and the 832's lone `-` of `Offset: %ld`
+(`fmt_diff_expected.txt` lines 144-145).
 
 The `boot`, `keys` and handshake pairs (`p4t7r2`/`p4t7c2`, `p4t8`/`p4t8c`,
 `p4t12`/`p4t12c`) still give an empty diff. `--unused-rules` lists two of
@@ -1339,6 +1390,614 @@ seek; the 832 is busy for 11 to 20 ms with its last sector's
 and its `XSEED=4` twin (`p4t14c_xs4`) gave the same results;
 `run.sh diff p4t14c p4t14c_xs4` is empty.
 
+## hdd
+
+`hdd` drives the hard disk path the way an Amiga IDE driver does, against
+the real `gayle` (both ports), `paula_floppy`'s HDD commands and direct
+mode, and the firmware's `hdd.c`. It boots the `hdd` card (the `boot` card
+plus `SYNTH.HDF` and `RDB.HDF`; section "Cards"). The card's configuration
+puts the two hardfiles on IDE port 0 (`$DA2000`):
+
+| Unit (`hdd.c` slot) | Drive | File | What |
+|---|---|---|---|
+| 0 | master | `RDB.HDF`, 4,096 blocks | a plain HDF with its own RDB (`rdb_Flags` 0x17): `hdd.c` patches block 0 for unit 0 only (`ATA_ReadSectors`: `rdb_Flags` 0x12, `rdb_ChkSum` + Flags - 0x12); CHS 16.4.63 |
+| 1 | slave | `SYNTH.HDF`, 8,192 blocks | no RDB: `FakeRDB` synthesises an RDSK (LBA 0) and a PART (LBA 1) in the first cylinder; CHS 257.1.32 (more than 255 cylinders); drive LBA = file block + 32 |
+
+(The plan's brief had the units the other way round. The own-RDB patch
+applies to unit 0 only, so `RDB.HDF` is hardfile 0: Task 3's card layout.)
+
+`bfm_ide.v` (instance `ide`) starts at the main-loop milestone, once the
+chipset reset is low. `minimig_syscontrol` holds it for four frames after
+userio_osd's `usrrst` falls, so the Amiga side is still in reset at the
+milestone (the plan starts RV 6.4 M, 832 2.9 M `clk_114` after it); a
+write then is lost, as on the Amiga (the first gate attempt, `p4t15c2`,
+wrote IDENTIFY into the reset and the firmware never saw a command).
+The plan (`plan_hdd` in `bfm_ide.v`; `HDD_PLAN` in `l3check.py`):
+
+| # | Command | Drive | CHS (LBA) | Count | What it checks |
+|---|---|---|---|---|---|
+| 1 | IDENTIFY DEVICE (EC) | slave | - | - | the 256 words = `fw/ctrl_rv/test/gold/identify.py` (HDF_SYNTHRDB, 257.1.32) |
+| 2 | READ SECTORS (20) | slave | 0/0/1 (0) | 2 | RDSK and PART = `gold/rdb.py` `rdsk` / `part` for 257.1.32 |
+| 3 | READ SECTORS | slave | 3/0/5 (100) | 64 | the file's blocks 68..131 |
+| 4 | SET MULTIPLE (C6) | slave | - | 16 | |
+| 5 | READ MULTIPLE (C4) | slave | 255/0/1 (8,160) | 64 | four DRQ blocks of 16, from cylinder 255 into 256 (the last cylinder: 64 sectors cannot start there) |
+| 6 | READ MULTIPLE | slave | 256/0/1 (8,192) | 32 | cylinder high = 1 |
+| 7 | WRITE SECTORS (30) | slave | 62/0/17 (2,000) | 64 | |
+| 8 | WRITE MULTIPLE (C5) | slave | 93/0/25 (3,000) | 32 | |
+| 9, 10 | READ SECTORS, READ MULTIPLE | slave | as 7, 8 | 64, 32 | the written data read back |
+| 11 | SET MULTIPLE | master | - | 16 | |
+| 12 | READ MULTIPLE | master | 0/0/1 (0) | 16 | block 0 patched, 1..15 unchanged (exec-3 tested the patch through READ SECTORS only) |
+
+Then the run's end saves the card (`+SD_SAVE=<run>/card_saved.img`).
+
+TIMER: `TICKDIV` 1. `hdd.c` is status-driven: every wait is on paula's
+request bits (`CMD_IDECMD`, `CMD_IDEDAT`). Its one TIMER user, in
+`OpenHardfile` (RV `hdd.c:932`, 832 `hdd.c:910`), bounds nothing: it
+measures `BuildHardfileIndex` for the UART line `Hardfile indexed in <n>
+ms`. The number is TIMER counts (one count = 256 `clk_28` at `TICKDIV` 1),
+so it follows the CPU's speed (an `expected_diff.txt` rule).
+
+The firmware ignores the LBA bit of the device / head register
+(`chs2lba` only), so `bfm_ide` addresses in CHS. `ata_cmd` converts an LBA
+with the drive's geometry (`g_heads`, `g_spt`), and `l3check.py` checks
+that IDENTIFY's words 1, 3 and 6 are that geometry.
+
+Found while reading `hdd.c` (both firmwares, not run): a READ / WRITE
+MULTIPLE before any SET MULTIPLE on that unit hangs the firmware.
+`sectors_per_block` starts at 0, so each DRQ block is 0 sectors and the
+loop never ends (ATA says abort). Every driver sends SET MULTIPLE first,
+and so does the plan (also for the master).
+
+### bfm_ide: the 68k side
+
+`bfm_ide.v` reuses `sim/gayle/gayle_tb.v`'s bus tasks by copy (`en`,
+`set_addr`, `bus_off`, `hwb`, `hww`, `hr`), on `clk_28` with the bench's
+`clk7_en`. A read is one clk7 cycle of address setup, the nrdy stall if
+any, and one with `rd`; a write is one clk7 cycle. The host side of ATA
+PIO, as `gayle_port.v` and `hdd.c` implement the device side:
+
+- PIO in (IDENTIFY, READ, READ MULTIPLE): per DRQ block, wait for the
+  interrupt (Gayle INTENA on, INTREQ cleared after each), read the status
+  (BSY 0, DRQ 1), read the block. A READ MULTIPLE block is 16 sectors
+  (4,096 words); a read of an empty FIFO is held by `nrdy` while the
+  firmware streams the block in direct mode.
+- PIO out (WRITE, WRITE MULTIPLE): the first block after polling the status
+  for DRQ (no interrupt, ATA), each later block and the end after an
+  interrupt.
+- No data (SET MULTIPLE): wait for the interrupt.
+- Every command ends with the status polled until BSY and DRQ are 0: it
+  must be 0x40, no ERR. Then the task file is read back for the log.
+
+Each command logs `=== IDE cmd <k> ...` and `=== IDE end <k> ...`
+(status, error, task file, words, the dump file, the waits) and writes its
+words to `<run>/hdd_<k>.hex` (16 words per line, `xxd -r -p` gives the
+bytes in the 68k's memory order). The write data is a pattern per sector:
+`W`, `S` (WRITE) or `M` (WRITE MULTIPLE), the LBA's two bytes, then
+`(LBA * 29 + j * 7 + 0x5A) & 255` for byte j (`l3check.py` `wpattern`).
+`atapi_packet` (PACKET with 6 command words, then the data-in phases with
+the device's byte count) is for the CD scenarios; `hdd` does not use it.
+
+### Checks
+
+`l3check.py hdd`:
+
+- the commands in the log are `HDD_PLAN`, in order; each ends with status
+  0x40 and error 0, has at least one interrupt or `nrdy` wait (item 8;
+  every command waits for the firmware's interrupt), moved the words of its
+  kind, and left the task file `hdd.c` writes: the CHS of the last sector
+  for a read or write (its CHS advance, across cylinder 255 / 256 in
+  command 5), the host's own registers for IDENTIFY and SET MULTIPLE
+- IDENTIFY = `identify.py`'s stream. In the 68k's memory each ATA word is
+  little-endian: the firmware sends the low byte first, and the first byte
+  of a word lands in bits 15:8 (paula_floppy's shift register), as on an
+  Amiga's Gayle (IDE drivers swap the words)
+- every sector read = the drive: `SYNTH.HDF`'s blocks (tags `H` 2 n),
+  `rdb.py`'s RDSK and PART, zeros for the rest of the RDB cylinder; for
+  `RDB.HDF`, block 0 with `rdb_Flags` 0x12 and the checksum computed from
+  scratch with `rdb.py` (which must equal `hdd.c`'s incremental one), its
+  other blocks as on the card; a sector written earlier = the write
+  pattern. The files' tags are checked first
+- the WRITE dumps = the write pattern; `card_saved.img` holds each written
+  sector in `SYNTH.HDF`'s cluster for its block (`spitrace.py`'s `Card` on
+  `<run>/card/hdd.img`), and no other card sector differs from the card
+  the run booted
+
+Also, as `boot`: the milestones (`CARD=hdd` lines: both hardfiles found,
+their `OpenHardfile` lines, the IDE port frame `20 54 07`; the 832 prints
+`file: "8s.3s"`, `fmt_diff_expected.txt` lines 45-52), no `EXC` / `TRAP`,
+`kick`, `order`, memhash, every MARGIN line with item 3 required
+(`MARGIN_REQ_hdd`: the HDF sectors come in direct mode), bench `=== PASS`.
+
+Item 8, `=== MARGIN 8 ide_wait min <v> clk_114 (bound 0, rec) over <n>
+waits`: the time the 68k side spent waiting on the firmware, recorded only
+when it waited at all. An interrupt wait runs from the command's or the
+block's start to the interrupt (none when it was already pending); a BSY
+poll (the first WRITE block, the end of a command) from its start to the
+status read that met it, when an earlier read had seen BSY (or DRQ at the
+end); a data read held by `nrdy`, its stall. A status read that finds the
+drive ready at once is no wait. The flow control is status-driven, with no
+margin to violate (plan 7.1: latency only costs throughput), so the line is
+`rec`. Each `=== IDE end` line has the command's waits, min / median /
+max (the lower median) and the total.
+
+### Run
+
+Setup as in "Run" and "832". Both legs boot the same card (section
+"Differential"). From the repository root:
+
+```sh
+E832DIR=$PWD/EightThirtyTwo
+E832=$E832DIR/RTL
+FWD=$PWD/sim/l3/run_fw
+mkdir -p "$FWD/dateshim" "$FWD/fwrv"
+printf '%s\n' '#!/bin/sh' 'TZ=UTC exec /bin/date -d "${L3_DATE:-2026-01-01} 00:00:00" "$@"' > "$FWD/dateshim/date"
+chmod +x "$FWD/dateshim/date"
+PATH="$FWD/dateshim:$PATH" make -s -C fw/ctrl_rv B="$FWD/fwrv"
+make -C sim/l3/fw832 B="$FWD/fw832" E832DIR="$E832DIR"
+CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=hc FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh xpair hdd
+SIM=verilator RUNTAG=h FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh xpair hdd
+bash sim/l3/run.sh diff --unused-rules h hc
+bash sim/l3/run.sh diff hc hc_xr
+```
+
+(about 40 minutes for the RV pair and 55 for the 832 pair side by side.)
+The 832 pair's `compare` says DIFF: the EightThirtyTwo's random start
+moves its timing and so the poll counts (section "keys"); its twin is
+compared normalised, the last line, which must be empty. The data check
+alone, on a run directory:
+
+```sh
+python3 -I sim/l3/l3check.py hdd sim/l3/run_h
+```
+
+### Measured (2026-10-19, SLAT=8 SJIT=0, SCKDLY 1.5 / C28DLY 0.3, TICKDIV 1)
+
+| | RV (`p4t15`; item 8 `p4t15f`) | 832 (`p4t15c`; item 8 `p4t15cf`) |
+|---|---|---|
+| main-loop milestone | 157,326,780 | 201,740,552 |
+| `bfm_ide` starts (chipset reset low) | 163,701,501 | 204,626,877 |
+| end event (the end of command 12) | 187,958,349 | 233,511,245 |
+| `l3check.py hdd` | PASS: 12 commands, 274 sectors read, 96 written and read back, on the saved card and nowhere else | the same |
+| item 3 `dmode_release` min | 20.8 over 271 direct transfers | 42.8 over 271 |
+| item 8 `ide_wait` | min 64.0 over 34,313 waits, `rec` | min 64.0 over 34,362 |
+| `OSD EARLY` / `OSD GAP` min | 0 of 1,232 / 63 | 0 of 260 / 254 |
+| wall time (Verilator, 3 to 5 runs on the machine) | 2,289 s | 3,217 s |
+
+`L3_HDD_TO` = 300,000,000 (RV, 1.5 x the 200 M estimate; the end came at
+188.0 M) and 350,000,000 (832, 1.5 x its end in `p4t15c3`, the same
+cycle as `p4t15c`).
+
+Item 8 per command (Task 15 fix round, runs `p4t15f` / `p4t15cf`: the
+same bench, firmware and card as `p4t15` / `p4t15c`, with only the wait
+accounting changed; their `spi.txt` and `hw.txt` are byte-identical to
+those runs'). `clk_114`; waits = interrupt / poll / nrdy; min / median /
+max; the command's wall in cycles:
+
+| # | Command | RV waits | RV min / median / max | RV cycles | 832 waits | 832 min / median / max | 832 cycles |
+|---|---|---|---|---|---|---|---|
+| 1 | IDENTIFY | 1 / 0 / 0 | 60,464 / 60,464 / 60,464 | 69,024 | 1 / 0 / 0 | 76,928 / 76,928 / 76,928 | 85,488 |
+| 2 | READ 2 (RDB) | 2 / 0 / 0 | 55,296 / 55,296 / 66,192 | 138,288 | 2 / 0 / 0 | 94,512 / 94,512 / 106,032 | 217,344 |
+| 3 | READ 64 | 64 / 0 / 0 | 48,864 / 48,880 / 63,680 | 3,673,088 | 64 / 0 / 0 | 57,936 / 58,464 / 84,784 | 4,292,112 |
+| 4 | SET MULTIPLE 16 | 1 / 0 / 0 | 210,400 / 210,400 / 210,400 | 210,768 | 1 / 0 / 0 | 211,872 / 211,872 / 211,872 | 212,240 |
+| 5 | READ MULTIPLE 64 | 4 / 0 / 15,136 | 80 / 128 / 129,600 | 2,840,912 | 4 / 0 / 15,156 | 64 / 128 / 170,416 | 2,989,568 |
+| 6 | READ MULTIPLE 32 | 2 / 0 / 7,568 | 96 / 128 / 70,272 | 1,399,872 | 2 / 0 / 7,578 | 64 / 128 / 97,472 | 1,474,800 |
+| 7 | WRITE 64 | 64 / 1 / 0 | 16,736 / 98,768 / 160,928 | 6,666,752 | 64 / 1 / 0 | 31,424 / 128,544 / 209,200 | 8,611,776 |
+| 8 | WRITE MULTIPLE 32 | 2 / 1 / 0 | 12,704 / 1,501,568 / 1,502,720 | 3,148,512 | 2 / 1 / 0 | 23,168 / 1,978,032 / 1,978,576 | 4,111,296 |
+| 9 | READ 64 (back) | 64 / 0 / 0 | 48,848 / 48,864 / 66,800 | 3,674,816 | 64 / 0 / 0 | 58,032 / 58,560 / 91,856 | 4,305,296 |
+| 10 | READ MULTIPLE 32 (back) | 2 / 0 / 7,568 | 96 / 128 / 60,192 | 1,389,776 | 2 / 0 / 7,578 | 64 / 128 / 83,168 | 1,460,528 |
+| 11 | SET MULTIPLE 16 (master) | 1 / 0 / 0 | 217,872 / 217,872 / 217,872 | 218,240 | 1 / 0 / 0 | 219,680 / 219,680 / 219,680 | 220,048 |
+| 12 | READ MULTIPLE 16 (RDB.HDF) | 1 / 0 / 3,831 | 64 / 128 / 119,584 | 826,368 | 1 / 0 / 3,840 | 128 / 128 / 154,496 | 903,440 |
+
+No command ended with a BSY poll that had to wait: every end-of-command
+status read found the drive ready (poll 0, except the first WRITE block's
+wait for the firmware's DRQ: 16,736 / 31,424, and the WRITE MULTIPLE's
+12,704 / 23,168). A READ waits once per sector for the firmware to send
+it (interrupt; median 49 k RV, 58 k 832: the card's read plus the
+firmware's turn-around), a READ MULTIPLE once per 16 sectors and then on
+`nrdy` for nearly every word (the 68k reads faster than direct mode
+delivers: 128, about one 16-bit SPI word at 6 `clk_114` a bit plus the
+read; the smallest stalls are 64 to 128). A
+WRITE waits per sector for the firmware to read and write it (99 k / 129
+k); a WRITE MULTIPLE block of 16 sectors costs 1.5 M / 2.0 M. SET
+MULTIPLE's 210 k is the main loop's turn-around plus the `printf` of "Set
+Multiple Mode 16". Item 8 has no bound: these are throughput figures. (In
+the first gate runs `p4t15` / `p4t15c` every status read that found the
+drive ready counted as a 32-cycle wait, so the min was 32 everywhere: Task
+15 review I1.)
+
+XRAND: the first RV twin, `p4t15_xr` (seed 1,807,595,372), differed from
+`p4t15` in one frame. The first IDE command's register read (`10 80`,
+`spi.txt` line 6,593) returned gayle's never-written FIFO head word and
+features register (`2c bc`, `39` instead of 0); the ATA path does not use
+them, and everything else was SAME. `run.sh l3_pin_minimig` now also pins
+`gayle_port.v`'s task file and `gayle_fifo.v`'s buffer to 0 at time 0
+(`findings/osd-riscv/phase4.md`, "Found by the L3 bench (Task 15)"), and
+the twin `p4t15_xr2` (seed 1,512,261,430, `=== XRAND pinned 8217 regs`) is
+SAME as `p4t15` (log and 8,959 frames). The 832 twin `p4t15c_xr` (seed
+30,418,420) passes every check. From cycle 9.6 M on (a UART line 4,940
+cycles late) its timing differs, the EightThirtyTwo's random start
+(section "keys"), so the poll counts differ (100 frames fewer, the end
+at 236.1 M); its hw writes are the same, only their positions among the
+frames differ, the frames without the polls are identical, and `run.sh
+diff p4t15c p4t15c_xr` is empty.
+
+The differential (`run.sh diff p4t15 p4t15c`) is empty with three new
+rules of `expected_diff.txt` and one addition to the normaliser (section
+"Differential"):
+
+- `file: "%.8s.%.3s"` (`fmt_diff_expected.txt` lines 45-52): the 832
+  prints `file: "8s.3s"`
+- `Hardfile indexed in <n> ms`: TIMER counts, RV 289 / 539, 832 621 /
+  1,174 (`RDB.HDF` / `SYNTH.HDF`)
+- the 832's lone `-` (`fmt_diff_expected.txt` lines 144-145, `Offset: %ld`
+  with `SYNTH.HDF`'s offset -32: lib832's `sprintf` puts the sign on the
+  UART)
+- the normaliser drops the first polls after a served IDE request (a
+  status frame without a request equal to the request frame but for its
+  IDE bits): the RV polled three times before the 68k had emptied or
+  filled the FIFO, where the 832 did not (`# dropped ide_served` 961 /
+  434). Without it the diff is those three `SPI 10 00 00 00 00 00 00 / 10
+  01 44 89 00 00` lines
+
+`--unused-rules` lists the two `fdd_rd` rules `Inserting floppy` and
+`DEDUP hw ^ffffb0$` (unused here; the all-scenario clean-up is Task 19);
+every rule `hdd` needs is used.
+
+## cd
+
+`cd` drives the CD-ROM data path the way an Amiga ATAPI driver does,
+against the real `gayle` port 1 (IDE port 2, `$DA3000`) in packet mode,
+`paula_floppy`'s HDD commands and direct mode, and the firmware's
+`cdrom.c` / `atapi.c` / `cue.c`. It boots the `cd` card (the `boot` card
+plus `TEST.CUE`, `TEST.BIN` and `TEST.ISO`; section "Cards"), whose
+configuration puts the CD drive on IDE port 2 master with `TEST.CUE` in it
+(`CDCFG=cue`, the default) or `TEST.ISO` (`CDCFG=iso`, image
+`cd_iso.img`). One run per `CDCFG`; the plan is the same for both, the
+answers are the disc's.
+
+`bfm_ide.v` starts its plan `cd` at the main-loop milestone, once the
+chipset reset is low (section "hdd"). The plan (`plan_cd`; `CD_PLAN` in
+`l3check.py`), all on port 1 master, byte count limit 0xFFFE unless said:
+
+| # | Command | Packet | What it checks |
+|---|---|---|---|
+| 1 | IDENTIFY PACKET DEVICE (A1) | - | the 256 words = `atapi_identify()` of the run CPU's own `atapi.c`, read field by field from the source; word 0 0x8580 = ATAPI, CD-ROM, removable, 12-byte packets; the model field = the disc's name (`TEST`) |
+| 2 | TEST UNIT READY | `00` | CHECK CONDITION, error 0x60: UNIT ATTENTION 06/29/00 (below) |
+| 3 | REQUEST SENSE | `03`, 18 | that sense, fixed format |
+| 4 | TEST UNIT READY | `00` | GOOD |
+| 5 | INQUIRY | `12`, 36 | type 5, removable, `MINIMIG`, the disc's name, `1.00` |
+| 6 | READ CAPACITY | `25` | the lead-out - 1, 2048 |
+| 7 | READ TOC | `43`, format 0, LBA, all tracks, 804 | `CDCFG=cue`: the tracks of `TEST.CUE` (data at 0, audio at 214 and 364, lead-out 514, from a CUE reader in `l3check.py`); `iso`: one data track, lead-out = the ISO's blocks (311) |
+| 8 | READ(10) | `28`, LBA 16, 32 | the disc's 2048-byte user data: `TEST.ISO`'s blocks 16..47 (the volume descriptors, the root directory, the path tables, `DATA.BIN` from LBA 33), or `TEST.BIN`'s MODE1/2352 sectors from byte 16 (their sync and header checked too) |
+| 9 | READ(12) | `A8`, LBA 56, 8, limit 0x0400 | the same for LBA 56..63 (the CUE's last data sectors); the limit splits every phase below a sector |
+| 10 | MODE SENSE(10) | `5A`, page 3F, 256 | the 52 bytes of `mode_sense()`: pages 01, 0E (volume FF FF), 2A (not locked) |
+| 11 | READ CD MSF (B9) | `B9` | not supported (`atapi.c`'s default): CHECK CONDITION 05/20/00, error 0x54 (ILLEGAL REQUEST << 4, ABRT) |
+| 12 | REQUEST SENSE | `03`, 18 | 05/20/00 |
+
+The first command's UNIT ATTENTION is 06/29/00 (power on or reset), not the
+insert's 06/28/00: gayle sets `rst_seen` while the chipset reset is high,
+and the first task file read of port 1 (`HandleHDD` -> `ReadTaskFile(1)`)
+passes it to `CD_Flags()`, whose `CD_Reset()` -> `atapi_reset()` replaces
+the pending one.
+
+Every PACKET command: the packet phase (DRQ, interrupt reason CoD, six
+words), the data-in phases (an interrupt each, reason IO, the device's
+byte count: `cd_send_sectors()` blocks of at most the limit and 8 KB for an
+ISO, straight from the card in direct mode; `cd_send_raw()` one 2048-byte
+sector per block for the CUE's MODE1/2352 track, split by the limit), then
+the status phase (interrupt, status 0x40, or 0x41 where the plan expects
+CHECK CONDITION). `l3check.py cd` also checks the error register
+(`cd_error()`), the task file `cd_complete()` leaves (reason 03, the
+host's limit in the byte count registers), the phases (reason 02, each at
+most the limit and 8 KB, their bytes = the answer's length) and that the
+dumps (`<run>/cd_<k>.hex`, as in "hdd") equal the answers.
+
+TIMER: `TICKDIV` 643 from the scenario's start (`+TICKDIV_AT=scenario`),
+the board's rate. `cdrom.c`'s `cd_wait()` aborts a phase whose host does
+nothing for `CD_TIMEOUT` = 10000 TIMER counts, 58 s on the board (the
+source says "ms": `GetTimer()` counts TIMER ticks). The scenario does not
+wait 58 s (exec-3 hand-over item 9): it measures how far a normal READ(10)
+stays from the timeout. Item 9 (`=== MARGIN 9 cd_timeout_left`, section
+"Monitors") takes every phase window on port 1, from the firmware's
+`CMD_IDE_XFER_WR` to gayle's `xfer_done`: `cd_wait()` polls inside it.
+`l3check.py cd` requires one window per packet and data phase, prints the
+longest one (`INFO`, with the command it was in and its share of
+`CD_TIMEOUT`) and the firmware's longest service time: the longest wait of
+the 68k side on the firmware (the `=== IDE end` lines' max: an interrupt,
+a BSY poll or an `nrdy` stall).
+
+Also, as `boot`: the milestones (`CARD=cd_cue` / `CARD=cd_iso` lines: no
+drive sounds, no hardfiles, the disc's files found by `CD_Insert()`, the IDE
+port frame `20 54 01`), no `EXC` / `TRAP`, `kick`, `order`, memhash,
+every MARGIN line with item 9 required (and item 3 for `iso`), bench
+`=== PASS`.
+
+### Run
+
+Setup as in "Run", "832" and "hdd" (the shell variables of its block).
+From the repository root:
+
+```sh
+CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=cc CDCFG=cue FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh xpair cd
+CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=cci CDCFG=iso FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh cd
+SIM=verilator RUNTAG=c CDCFG=cue FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh xpair cd
+SIM=verilator RUNTAG=ci CDCFG=iso FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh cd
+bash sim/l3/run.sh diff --unused-rules c cc
+bash sim/l3/run.sh diff --unused-rules ci cci
+bash sim/l3/run.sh diff cc cc_xr
+```
+
+`xpair` runs the scenario and its XRAND twin side by side; on a busy
+machine run them one after the other (`XRAND=0` and `XRAND=1` with the
+RUNTAGs `cc` and `cc_xr`, then `bash sim/l3/run.sh compare cc cc_xr`).
+The data check alone, on a run directory:
+
+```sh
+python3 -I sim/l3/l3check.py cd sim/l3/run_c
+```
+
+### Measured (2026-10-20, SLAT=8 SJIT=0, SCKDLY 1.5 / C28DLY 0.3, TICKDIV 1 then 643)
+
+Runs `p4t16` (RV, cue), `p4t16c` (832, cue), `p4t16i` (RV, iso),
+`p4t16ci` (832, iso); the same `RV32OSDA.BIN` / `832OSDAD.BIN` (sha256
+0162e53fc0b4ce4d / 768c765d57deb1a0) and so byte-identical cards per
+`CDCFG`. Cycles are `clk_114`:
+
+| | RV cue | 832 cue | RV iso | 832 iso |
+|---|---|---|---|---|
+| main-loop milestone | 156,926,388 | 201,742,616 | 156,388,796 | 200,833,308 |
+| `bfm_ide` starts (chipset reset low) | 163,701,501 | 204,626,877 | 163,701,501 | 204,626,877 |
+| end event (the end of command 12) | 185,153,357 | 233,680,093 | 171,271,517 | 212,934,605 |
+| `l3check.py cd` | PASS | PASS | PASS | PASS |
+| READ(10) 32 / READ(12) 8 sectors | 32 x 2,048 / 16 x 1,024 bytes | the same | 8 x 8,192 / 16 x 1,024 | the same |
+| READ(10) / READ(12), cycles | 16,835,376 / 4,277,056 | 22,682,320 / 5,779,104 | 5,644,624 / 1,588,288 | 5,919,264 / 1,799,936 |
+| item 9: phase windows; the longest (in READ(10)) | 65; 161,376 = 0.245 counts | 65; 180,112 = 0.274 | 41; 690,208 = 1.048 | 41; 714,144 = 1.085 |
+| its share of `CD_TIMEOUT` (6,584,320,000) | 2.5e-5 | 2.7e-5 | 1.05e-4 | 1.08e-4 |
+| the longest 68k wait on the firmware (READ(10)) | 419,280 | 602,464 | 127,872 | 166,400 |
+| item 3 `dmode_release` min | n/a | n/a | 20.8 over 160 | 42.8 over 160 |
+| item 8 `ide_wait` min | 16.0 over 25,533 | 128.0 over 25,869 | 112.0 over 33,501 | 64.0 over 33,621 |
+| `OSD EARLY` / `OSD GAP` min | 0 of 1,331 / 63 | 0 of 274 / 254 | 0 of 1,435 / 63 | 0 of 355 / 254 |
+| wall time (Verilator) | 3,025 s | 3,735 s | 1,129 s | 1,621 s |
+
+The ISO windows are the longest: a phase of 8 KB is set up, filled from
+the card in direct mode (16 FAT sectors) and drained by the 68k inside one
+window; a CUE sector is read into the CPU first and its window is only the
+SPI copy into the FIFO and the drain. The firmware's longest service time is
+the CUE's: the interrupt of a raw sector comes after four or five FAT-sector reads
+through the CPU (`cd_file_read()`) and the copy, 419 k (RV) / 602 k (832)
+`clk_114`, 3.7 / 5.3 ms. Every window is at most about one TIMER count at the
+board's rate, four orders of magnitude below `CD_TIMEOUT`.
+
+`L3_CD_TO` = 315,000,000 (RV) and 450,000,000 (832): 1.5 x the estimates
+210 M / 300 M; the ends came at 185.2 M / 233.7 M.
+
+XRAND: the RV twin `p4t16_xr` (seed 816,455,678, `pinned 8217 regs`) is
+`compare` SAME with `p4t16` (log and 7,642 frames). The 832 twin
+`p4t16c_xr` (seed 749,220,476) passes every check with the same dumps; its
+EightThirtyTwo's random start moves the milestone to 204.2 M, so it makes
+100 fewer main-loop poll frames (status `10 00`, OSD read and KEYQ) and
+`compare` says DIFF; `hw.txt` and `uart.txt` are byte-identical and
+`run.sh diff p4t16c p4t16c_xr` is empty (as `hdd`'s 832 twin). All twelve
+dumps are byte-identical between the two CPUs and between each twin pair.
+
+The differential (`run.sh diff p4t16 p4t16c`, `p4t16i p4t16ci`) is empty
+with the IDE flag poll mask (section "Differential"; Task 16 ruling).
+Without it, two lines per disc differed, both timing-only. After the
+INQUIRY (36 bytes) and the MODE SENSE (52 bytes) data phase, `cd_wait()`'s
+first `ReadIDEFlags()` frame (`10 81` and nine 00) of the RV starts before
+the 68k has read the last word, so MISO byte 0 (paula's request byte,
+sampled during the command byte) still has the IDE command bit 0x04 clear
+(`10 01 ...`); the 832's frame starts later and has it set (`14 01 ...`).
+MISO byte 8, the flags the firmware reads, is the same (`53`: xfer done).
+The number of these polls is the same on both CPUs (77 cue, 53 iso: every
+`cd_wait()` sees `xfer_done` at its first read). The mask changes nothing
+in the earlier pairs (`p4t7r2` / `p4t7c2`, `p4t15f` / `p4t15cf`: their
+normalised streams are byte-identical with and without it).
+`--unused-rules` lists the `fdd_rd` and `hdd` rules (Task 19's clean-up).
+
+## cdda
+
+`cdda` plays CD audio the way an Amiga CD player program does, through
+`atapi.c`'s audio commands and `cdaudio.c`'s player into the 64 KB ring,
+at the board's TIMER rate. `cdda_load` is the same with an HDF transfer
+during the play (plan 7.4 "HDF copy with CD audio", plan 1.2:
+"underruns come from foreground jobs blocking the loop > 150 ms").
+
+| | `cdda` | `cdda_load` |
+|---|---|---|
+| card | `cd` (`CDCFG=cue`: `TEST.CUE` in the CD drive, IDE port 2 master) | `cdhdd`: the same configs, plus the `hdd` card's `SYNTH.HDF` and `RDB.HDF` on IDE port 0 |
+| plan (`bfm_ide.v` `plan_cdda`) | below | below, plus at flip 2 SET MULTIPLE 16 and READ MULTIPLE of 256 sectors of `SYNTH.HDF` (port 0 slave, LBA 1000) |
+| TIMER | `TICKDIV` 643 from the scenario's start | the same |
+
+The player (`bfm_audio.v`) takes one stereo frame per tick, so at 643 one
+32 KB half (8,192 frames) lasts 186 ms = 21.1 M `clk_114`. The plan, on
+IDE port 2 master, byte count limit 0xFFFE:
+
+| # | Command | Packet | Then |
+|---|---|---|---|
+| 1 | TEST UNIT READY | `00` | CHECK CONDITION: the reset's UNIT ATTENTION (error 0x60), which would otherwise refuse the PLAY |
+| 2 | PLAY AUDIO MSF | `47`, 00:04:64 .. 00:06:27 | LBA 214 .. 326: track 2 from its INDEX 01, 113 sectors = 66,444 frames (1.5 s). `cdaudio.c` `run()` fills both halves before the status phase |
+| (3, 4) | `cdda_load`: SET MULTIPLE, READ MULTIPLE 256 | ATA, port 0 slave | at the player's flip 2; the data = `SYNTH.HDF` blocks 968..1223 |
+| 3 | PAUSE | `4B`, byte 8 = 0 | at flip 6 |
+| 4 | READ SUB-CHANNEL | `42`, SubQ, format 1, LBA, 16 bytes | the paused position |
+| 5 | RESUME | `4B`, byte 8 = 1 | a new run from the position |
+| 6 | STOP | `4E` | at flip 7 (the resumed run's first) |
+
+After each flip the plan waits 500,000 `clk_114` (4.4 ms) more before its
+next command. By then the firmware has seen the flip and started the
+refill (`main()` calls `CD_AudioPoll()` before `HandleFpga()`), so both
+CPUs serve the command after their refill.
+
+**Ring snapshots.** With `+CDDA_DUMP=<run>/cdda_half` the model copies,
+at every half start, the 32 KB half the player is about to play from the
+SDRAM model (ring at host 0x70000, half h at 0x70000 + h x 0x8000) into
+`<run>/cdda_half_<n>.bin`. A half starts at a run's start (ENA: half 0)
+and at every flip (the tick that takes the play address into the other
+half). The log has `=== CDDA half <n> run <r> k <k> ring half <h> at cycle
+<c>: <file>` and per run `=== CDDA run <r> start` / `end ... <f> frames
+played, <k> halves`. The PLAY's run has 7 halves (6 flips, then the
+PAUSE), the RESUME's 2. The boot makes a run of its own before the
+scenario: `main()`'s `audio_clear()` zeroes the ring, sets ENA for one
+TIMER count and clears it again (the copy is in the log; `l3check.py`
+counts only the runs from the PLAY on).
+
+**Refill timing** (plan 4.4, `mon_l3.vh`):
+
+- `=== CDDA fill <n> start <cycle> done <cycle> (<ms> ms at 113.4375 MHz)`:
+  from flip n to the firmware's last SDRAM write into the half that is now
+  free, before the next flip or the player's stop. `done none` means no
+  write at all.
+- `=== CDDA start fill run <r>`: `run()`'s own fill of both halves, from
+  the CLEAR to ENA.
+- `=== CDDA fills <n>`: min / median / max over the run.
+- `=== CDDA main loop while playing`: the gaps between two main-loop
+  frames (`HandleFpga`'s `10` + six 00 bytes) while the player runs: one
+  pass of `main()`'s loop, refills and served IDE commands included.
+- `=== CDDA writes into the playing half: <n>`: the firmware's underrun
+  response (`cda_poll` zeroes the late half) or a defect.
+
+### Checks
+
+`l3check.py cdda <run>` (both scenarios; the script's docstring has the details):
+
+- the commands in order, each with its status, error register and task
+  file (`cd`'s rules); `cdda_load`'s 256 sectors = `SYNTH.HDF`
+- two runs of 7 and 2 halves, ring half k mod 2
+- every half = what `cdaudio.c` `fill()` puts there: range frame f =
+  base + k x 8,192, `TEST.BIN`'s bytes of the CUE's track 2 (LE 16-bit
+  stereo; gaps, data sectors, past the file or the range: zeros), scaled
+  with `scale()` when the volume is not 255 / 255 (the run CPU's
+  `cda_init` volume, read from its `cdaudio.c`; the scenario sends no MODE
+  SELECT). The CUE is read by `l3check.py`'s own reader, not `cue.c`. base
+  is 0 for the PLAY's run. For the RESUME's it is the firmware's paused
+  position: a multiple of 256 frames (TIMER units) inside the sector READ
+  SUB-CHANNEL reports, and within one half of the frames the player had
+  played at the PAUSE
+- a half that differs is an **underrun** (a late refill) when each frame
+  is the expected one, that ring half's earlier content (two halves
+  before in the run) or zero. Anything else, or any difference in a run's
+  first two halves (filled before ENA), is a **wrong** half, which fails
+  both scenarios. `cdda`: no underrun and no write into the playing half.
+  `cdda_load`: the underruns are counted (`INFO`); the gate compares the
+  two CPUs (RV <= 832)
+- READ SUB-CHANNEL: 16 bytes, audio status 12 (paused), adr/control 10,
+  track 2 index 1, LBA 214 + pos / 588, relative LBA
+- one `=== CDDA fill` line per flip (7), each with a write; the min /
+  median / max ms and the main-loop gaps as `INFO`
+- `TICKDIV` 643 from the scenario's start
+- the ring is all zero at the end (`sdram.bin`, host 0x70000..0x7ffff):
+  the STOP's `release()` clears it, so the drive sounds do not start on a
+  remnant of the music. The ring held TEST.BIN frames at the STOP
+  (the RESUME's halves), so the zeros are the STOP's
+
+Also, as `cd`: the milestones (`CARD=cd_cue`; `cdda_load`: `CARD=cdhdd`,
+the `hdd` card's hardfile lines and `cd_cue`'s disc lines, the IDE port
+frame `20 54 07`), no `EXC` / `TRAP`, `kick`, `order`, memhash, every
+MARGIN line with item 9 required (`cdda_load`: also 3), bench `=== PASS`.
+
+The `audio_ring` MEM line is not compared between the CPUs
+(`expected_diff.txt`, from `fdd_rd`). On each CPU, the per-half check
+against the BIN and the zero ring at the end are the ring's content gates.
+
+### Run
+
+Setup as in "Run", "832" and "hdd" (the shell variables of its block).
+From the repository root:
+
+```sh
+CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=ac FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh cdda
+CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=ac_xs1 XRAND=1 XSEED=1 FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh cdda
+CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=alc FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh cdda_load
+SIM=verilator RUNTAG=a FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh xpair cdda
+SIM=verilator RUNTAG=al FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh cdda_load
+bash sim/l3/run.sh diff --unused-rules a ac
+bash sim/l3/run.sh diff --unused-rules al alc
+bash sim/l3/run.sh diff ac ac_xs1
+```
+
+The 832's XRAND twin is a separate run with `XSEED=1`, not `xpair`.
+`xpair`'s default seed (the RUNTAG's `cksum`), and seed 4 as well, leave
+the EightThirtyTwo stopped at reset, with no hw access at all (below,
+XRAND). Its twin is compared normalised (`diff ac ac_xs1`, empty), as in
+`fdd_rd` and `hdd`. The RV pair stays `xpair` (`compare` SAME).
+
+Each run is long, because the board's TIMER rate makes the play last
+1.5 s of simulated time. See "Measured" for the wall times. The data check
+alone, on a run directory:
+
+```sh
+python3 -I sim/l3/l3check.py cdda sim/l3/run_a
+```
+
+### Measured (2026-10-20, SLAT=8 SJIT=0, SCKDLY 1.5 / C28DLY 0.3, TICKDIV 1 then 643)
+
+Runs `p4t17` / `p4t17_xr` (RV `cdda` and its twin), `p4t17c` (832
+`cdda`), `p4t17l` / `p4t17lc` (`cdda_load`); the same `RV32OSDA.BIN` /
+`832OSDAD.BIN` (sha256 0162e53fc0b4ce4d / 768c765d57deb1a0), so the cards
+are byte-identical per scenario. Cycles are `clk_114`, ms at 113.4375 MHz:
+
+| | RV `cdda` | 832 `cdda` | RV `cdda_load` | 832 `cdda_load` |
+|---|---|---|---|---|
+| `l3check.py cdda` | PASS | PASS | PASS | PASS |
+| PLAY's `run()` (both halves, CLEAR to ENA) | 84.1 ms | 175.3 ms | 84.1 ms | 175.4 ms |
+| refill after a flip, min / median / max (7 fills) | 4.65 / 42.40 / 42.42 ms | 21.73 / 88.15 / 88.16 ms | 4.66 / 42.39 / 42.96 ms | 21.79 / 88.14 / 96.69 ms |
+| RESUME's `run()` | 80.6 ms | 152.2 ms | 80.6 ms | 152.3 ms |
+| main loop while playing: gaps, median / max | 17,163, 0.063 / 42.44 ms | 7,217, 0.119 / 88.18 ms | 15,585, 0.063 / 42.97 ms | 6,342, 0.119 / 95.23 ms |
+| underruns (late halves) / writes into the playing half | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+| paused at (READ SUB-CHANNEL) / RESUME from | LBA 300 / frame 50,944 | LBA 304 / frame 52,992 | LBA 300 / 50,944 | LBA 304 / 52,992 |
+| the player at the PAUSE | 51,030 frames | 53,051 | 51,029 | 53,051 |
+| READ MULTIPLE 256 (`cdda_load`) | - | - | 11.20 M cycles, = `SYNTH.HDF` | 11.75 M, = `SYNTH.HDF` |
+| item 3 `dmode_release` min | n/a | n/a | 20.8 over 256 | 42.8 over 256 |
+| `OSD EARLY` | 0 of 18,487 | 0 of 7,485 | 0 of 16,996 | 0 of 6,672 |
+| end event (STOP's end) | 337,017,061 | 407,815,893 | 337,077,525 | 407,912,613 |
+| wall time (Verilator) | 2,665 s | 3,269 s | 2,646 s | 3,272 s |
+
+A refill is 64 TEST.BIN sectors read through the CPU (`cda_port_read`, 128
+SD blocks for 32 KB) and copied into the ring. The minimum is the last
+fill after the RESUME, which lies past the range's end (all zeros, no SD
+read). Each refill blocks the main loop (`cda_poll` runs inside it): the
+longest main-loop gap is one refill, plus a block of the HDF transfer
+under load. The PAUSE comes 4.4 ms after flip 6 and is served after that
+refill, so the RV pauses 2,048 frames (8 TIMER units, = its 46 ms shorter
+refill) earlier than the 832. The position and the RESUME's fill differ
+between the CPUs for that reason; each CPU's are checked against
+TEST.BIN.
+
+XRAND: the RV twin `p4t17_xr` (`pinned 8217 regs`) is `compare` SAME with
+`p4t17` (log and 93,557 frames). The 832 twin of the default seed
+(`p4t17c_xr`, seed 931,151,620) never started, with no hw access in 585 M
+cycles, as `fdd_rd`'s `p4t13c_xr`. So did `p4t17c_xs4` (`XSEED=4`,
+`fdd_rd`'s working seed). 832 `boot_short` probes with a 5 M-cycle limit
+(`p4t17seed1`, `2`, `3`, `5`) started with seeds 1, 2 and 5 and stopped
+with 3. The twin is `p4t17c_xs1` (`XSEED=1`): `cdda` PASS with the same
+checks, milestone at 203.7 M (2.0 M later), halves 1..8 byte-identical to
+`p4t17c`'s. It pauses one TIMER unit later (frame 53,248, the same LBA 304:
+the TIMER phase against the run's start moved), so half 9 and two SD
+blocks of the RESUME's fill differ; both lie inside the READ SUB-CHANNEL
+.. ENA block of the Task 17 ruling.
+
+The differential (`run.sh diff p4t17 p4t17c`, `p4t17l p4t17lc`, and the
+832 twins `p4t17c p4t17c_xs1`) is empty. It needs the two Task 17 rulings
+(section "Differential"). Without them it had 10,033 / 9,327 / 438 lines,
+all timing-only:
+
+- `CD_AudioPoll()` reads the CD port's flags on every main-loop pass while
+  the player runs (`ReadIDEFlags()`, `10 81` and nine 00): the RV makes
+  17,174 such frames, the 832 7,228. They are now dropped as repeats
+  (`flagpoll` 17,158 / 7,212), on the finished stream, so a hw write or
+  UART line between two polls keeps the second.
+- The paused position (above), now the `DROPBLOCK` from READ SUB-CHANNEL
+  to the RESUME's ENA.
+
+`--unused-rules` lists only the other scenarios' rules (Task 19's
+clean-up). The `cd` and `hdd` pairs stay empty, and their normalised
+streams are byte-identical with and without the flag poll drop.
+
+The underrun gate is weak: 0 on both CPUs. The 256-sector READ MULTIPLE
+never blocks the 832's main loop for a whole half (its longest gap is
+95 ms against the half's 186 ms), so the scenario cannot separate the CPUs
+there. Plan 1.2's > 150 ms foreground job would need a longer transfer.
+
 ## akiko
 
 `akiko` exercises the host's Akiko request service, the legacy interrupt
@@ -1422,9 +2081,9 @@ count and `LOW` means above the bound. The verdict:
 | `ok` | events seen, the value can violate its bound, and it does not |
 | `LOW` | events seen, the bound is violated: a bench error, the run fails |
 | `n/a` | no such event in this run (`min none`) |
-| `rec` | events seen, record only: the value cannot violate its bound. `dmode_L` (the request always follows the ack) and `rtc_cs_high` with the default bound 0 (a gap is never negative) |
+| `rec` | events seen, record only: the value cannot violate its bound. `dmode_L` (the request always follows the ack), `rtc_cs_high` with the default bound 0 (a gap is never negative) and `ide_wait` (no margin to violate) |
 
-`run.sh` fails a scenario unless all twelve lines are there and none is
+`run.sh` fails a scenario unless all fourteen lines are there and none is
 `LOW`. Each scenario also lists the lines that must have seen events
 (`MARGIN_REQ_<scenario>` in `run.sh`); for those, `n/a` or `rec` fails it
 too. A monitor that stops seeing its events therefore cannot pass in
@@ -1435,14 +2094,22 @@ silence:
 | `boot` | 1, 4 (all four), 5, 14 | 3 (no direct transfer), 12 (one RTC transfer, no gap) |
 | `boot_short` | 1, `userio_cs_release`, `userio_byte_spacing`, 5 | 3, 12, the paula lines (no paula frame before the cut); its `kick_order` is fpga_init's reset pulse, not a kickstart release, so it is not required |
 | `keys` | as `boot` | as `boot` |
-| `fdd_rd` | as `boot`, and 6 | 3, 12 as `boot`; 7 (no write) |
-| `fdd_wr` | as `boot`, and 7 | 3, 12 as `boot`; 6 (no read) |
+| `fdd_rd` | as `boot`, and 6 | 3, 12 as `boot`; 7 (no write); 8, 9 (no IDE command) |
+| `fdd_wr` | as `boot`, and 7 | 3, 12 as `boot`; 6 (no read); 8, 9 (no IDE command) |
+| `hdd` | as `boot`, and 3 (`dmode_release`: the HDF sectors come in direct mode) | 6, 7, 12; 8 is `rec` (no bound), `l3check.py hdd` requires its per-command waits |
+| `cd` | as `boot`, and 9; with `CDCFG=iso` also 3 (`dmode_release`: the ISO's sectors come in direct mode; a CUE's MODE1/2352 sectors go through the CPU) | 6, 7, 12; 3 with `CDCFG=cue`; 8 is `rec` |
+| `cdda` | as `boot`, and 9 (every packet's command phase) | 3, 6, 7, 12; 8 is `rec` |
+| `cdda_load` | as `cdda`, and 3 (the HDF sectors in direct mode) | 6, 7, 12; 8 is `rec` |
 
 Item 6 (`fdd_fifo_empty_dma`) is `n/a` in every scenario without a floppy
 read DMA, item 7 (`fdd_fifo_full_write`) in every scenario without a
-floppy write DMA. Lines printed before Task 13 (the measured outputs
-above) have ten MARGIN lines, those of Task 13 eleven; item 6 came with
-`fdd_rd`, item 7 with `fdd_wr`.
+floppy write DMA, item 8 (`ide_wait`) in every scenario without an IDE
+command, item 9 (`cd_timeout_left`) in every scenario without an ATAPI
+data phase. Lines printed before Task 13 (the measured outputs above)
+have ten MARGIN lines, those of Task 13 eleven; item 6 came with
+`fdd_rd`, item 7 with `fdd_wr`, item 8 with `hdd`, item 9 with `cd`.
+The lane runs of Tasks 14 to 18 have twelve or thirteen (each lane's
+items only), the runs of the merged bench (merge 2, `p4m2*`) fourteen.
 
 Times are taken at the slave pins: an `sck` edge reaches the slaves
 `+SCKDLY` ns after cfide's pin, `sd_cs` undelayed.
@@ -1457,6 +2124,8 @@ Times are taken at the slave pins: an `sck` edge reaches the slaves
 | 5 | `spi_write_busy` | SPI DATA writes acknowledged without starting a transfer of their own (no `SD_busy` rise from the request to the cycle after its ack): taken while the shifter was busy | 0 | 0 of 829,924 |
 | 6 | `fdd_fifo_empty_dma` | floppy read DMA: Agnus disk slots with paula_floppy's `dmaon` = 1 and its FIFO empty, per track from the first slot at which the FIFO has reached the firmware's working level (1,024 words) to the track's last word (section "fdd_rd") | 0 | n/a (no floppy DMA) |
 | 7 | `fdd_fifo_full_write` | floppy write DMA: Agnus disk slots offered to the write DMA (`dmaon` = 1, `DSKLEN` bit 14) at which paula_floppy's FIFO is full, so the slot goes unused (section "fdd_wr") | 0 | n/a (no floppy DMA) |
+| 8 | `ide_wait` | IDE PIO flow control (`bfm_ide`): the time the 68k side spent waiting on the firmware, `clk_114`, only when it waited: an interrupt not yet pending, a BSY poll that saw BSY, a data read held by `nrdy`; per command min / median / max in the `=== IDE end` lines (section "hdd") | 0, `rec` (status-driven, no margin) | n/a (no IDE command) |
+| 9 | `cd_timeout_left` | ATAPI phases on gayle's port 1 (IDE port 2): each window from the firmware's `CMD_IDE_XFER_WR` (`hdd_xfer_wr_p`, a phase set up) to `xfer_done` (the host is through), `clk_114`; `cdrom.c`'s `cd_wait()` polls inside it and gives up after `CD_TIMEOUT` = 10000 TIMER counts (1024 x `TICKDIV` `clk_114` each: 58 s at 643). The value is that timeout minus the longest window; an `(info) 9` line has the longest window, also in TIMER counts (section "cd") | 0 | n/a (no ATAPI phase) |
 | 12 | `rtc_cs_high` | `rtc_model`: the CS-inactive time between two RTC transfers, ns | `+RTC_CSH_MIN`; the default 0 (datasheet not found, below) makes it `rec` | n/a (one RTC transfer in `boot`); 363,982,789 ns rec in the `rtc2` run below |
 | 14 | `kick_order` | the last `cpurst` fall (userio_osd releases the Amiga CPU) minus the last SDRAM write into the kickstart region (host 0x100000..0x17ffff, `sdram_host_model` at its ack), `clk_114` | 1 (the write lands first) | 6,829,787 (write at 150,139,042, release at 156,968,829) |
 

@@ -3,7 +3,8 @@
 # (userio_osd, paula_floppy, gayle) boots the real boot ROM and firmware from
 # an SD card image.  See tb_l3.v, scenarios.vh, README.md.
 #
-#   bash sim/l3/run.sh <scenario>        boot, boot_short, keys, fdd_rd, fdd_wr, akiko
+#   bash sim/l3/run.sh <scenario>        boot, boot_short, keys, fdd_rd, fdd_wr, hdd,
+#                                        cd, cdda, cdda_load, akiko
 #   bash sim/l3/run.sh xpair <scenario>  the scenario and its XRAND twin
 #                                        (run_$RUNTAG, run_${RUNTAG}_xr; in
 #                                        parallel), then compare: both PASS
@@ -44,6 +45,9 @@
 #   SLAT, SJIT, SEED   the SDRAM model (8, 0, 1)
 #   XARGS    extra plusargs ("+FAST_HW=1 +OSD_EARLY_OK=1 +TICKDIV=643 ...");
 #            +FAST_HW=1 also puts the models' fast plusargs first (below)
+#   CDCFG    cd: the disc in the drive, cue (default: TEST.CUE + TEST.BIN)
+#            or iso (TEST.ISO); the card's configs name it (sim/l3/card).
+#            cdda and cdda_load play TEST.CUE's track 2: cue only
 #   KEYS     keys, fdd_rd, fdd_wr: the key script (default keys:
 #            sim/l3/keys/menu_tour.txt; l3check.py keys checks the pages
 #            against osdtext_expect/keys.txt, which is that script's;
@@ -104,6 +108,40 @@
 #               from the saved card = the original with the written
 #               sectors' new data; the bad-header sector's fate and the error
 #               page recorded; the OSD), bench "=== PASS"
+#   hdd         hdd card (boot + SYNTH.HDF + RDB.HDF), +SCENARIO=hdd
+#               +IDE_DUMP=<run>/hdd +SD_SAVE=<run>/card_saved.img, TICKDIV 1:
+#               bfm_ide's ATA commands from the main-loop milestone on;
+#               checks: boot's milestones (the hdd card's lines), no EXC /
+#               TRAP, kick, order, the MARGIN lines (item 3 required: the
+#               firmware reads the HDFs in direct mode), l3check.py hdd (the
+#               reads = the HDFs and the goldens, the writes on the saved
+#               card and nowhere else), bench "=== PASS"
+#   cd          cd card (boot + TEST.CUE / TEST.BIN + TEST.ISO, the configs'
+#               CD drive on IDE port 2 holding TEST.CUE or, CDCFG=iso,
+#               TEST.ISO), +SCENARIO=cd +CDCFG=<cfg> +IDE_DUMP=<run>/cd,
+#               TICKDIV 643 from the scenario's start (+TICKDIV_AT=scenario):
+#               bfm_ide's ATAPI commands from the main-loop milestone on;
+#               checks: boot's milestones (the cd card's lines, per CDCFG),
+#               no EXC / TRAP, kick, order, the MARGIN lines (item 9
+#               required, item 3 too for iso: its sectors come in direct
+#               mode), l3check.py cd (every answer = what atapi.c / cdrom.c
+#               build for the disc, the sectors = TEST.ISO / TEST.BIN's data
+#               track, the TOC = TEST.CUE), bench "=== PASS"
+#   cdda        cd card with CDCFG=cue, +SCENARIO=cdda +IDE_DUMP=<run>/cdda
+#               +CDDA_DUMP=<run>/cdda_half, TICKDIV 643 from the scenario's
+#               start: bfm_ide's PLAY AUDIO MSF / PAUSE / READ SUB-CHANNEL /
+#               RESUME / STOP on IDE port 2, bfm_audio's copy of every half
+#               the player starts, mon_l3.vh's refill timing; checks: boot's
+#               milestones (cd_cue's lines), no EXC / TRAP, kick, order, the
+#               MARGIN lines (item 9 required), l3check.py cdda (every half =
+#               TEST.BIN at the firmware's position, no underrun, READ
+#               SUB-CHANNEL), bench "=== PASS"
+#   cdda_load   cdhdd card (boot + SYNTH.HDF + RDB.HDF + TEST.CUE / TEST.BIN),
+#               +SCENARIO=cdda_load, the same plusargs: cdda plus a READ
+#               MULTIPLE of 256 SYNTH.HDF sectors from the player's second
+#               flip; checks as cdda (item 3 required too: the HDF sectors
+#               come in direct mode; the cdhdd card's milestones), l3check.py
+#               cdda counts the underruns and checks the HDF sectors
 #   akiko       fdd card, +SCENARIO=akiko +KEYS=sim/l3/keys/insert_df0.txt
 #               +FDD_DUMP=<run>/akiko, TICKDIV 643 from the scenario start:
 #               bfm_akiko block 0 (32 write + 32 read requests on cfide's
@@ -169,13 +207,29 @@ MM_INC="$ROOT/fpga/openaars"     # minimig_version.vh (the board's)
 # only cpurst fall is fpga_init's reset pulse, before any kickstart
 MARGINS="1:stale_acks 3:dmode_release 3:dmode_L 4:paula_cs_release 4:userio_cs_release
          4:paula_word_spacing 4:userio_byte_spacing 5:spi_write_busy 6:fdd_fifo_empty_dma
-         7:fdd_fifo_full_write 12:rtc_cs_high 14:kick_order"
+         7:fdd_fifo_full_write 8:ide_wait 9:cd_timeout_left 12:rtc_cs_high 14:kick_order"
 MARGIN_REQ_boot="1:stale_acks 4:paula_cs_release 4:userio_cs_release 4:paula_word_spacing
                  4:userio_byte_spacing 5:spi_write_busy 14:kick_order"
 MARGIN_REQ_boot_short="1:stale_acks 4:userio_cs_release 4:userio_byte_spacing 5:spi_write_busy"
 MARGIN_REQ_keys=$MARGIN_REQ_boot
 MARGIN_REQ_fdd_rd="$MARGIN_REQ_boot 6:fdd_fifo_empty_dma"
 MARGIN_REQ_fdd_wr="$MARGIN_REQ_boot 7:fdd_fifo_full_write"
+# hdd: the HDF sectors come in direct mode (item 3); item 8 is rec (no
+# bound), l3check.py hdd requires its per-command lines
+MARGIN_REQ_hdd="$MARGIN_REQ_boot 3:dmode_release"
+# cd: item 9 (the CD phase windows against CD_TIMEOUT); an ISO's sectors
+# come in direct mode (cdrom.c cd_send_sectors: FileReadEx), a CUE's
+# MODE1/2352 sectors through the CPU (cd_send_raw): item 3 only for iso
+CDCFG=${CDCFG:-cue}
+case "$CDCFG" in
+	cue) MARGIN_REQ_cd="$MARGIN_REQ_boot 9:cd_timeout_left" ;;
+	iso) MARGIN_REQ_cd="$MARGIN_REQ_boot 9:cd_timeout_left 3:dmode_release" ;;
+	*) echo "CDCFG=$CDCFG: must be cue or iso"; exit 2 ;;
+esac
+# cdda: item 9 (each packet's command phase); cdda_load also item 3 (the
+# HDF sectors in direct mode)
+MARGIN_REQ_cdda="$MARGIN_REQ_boot 9:cd_timeout_left"
+MARGIN_REQ_cdda_load="$MARGIN_REQ_cdda 3:dmode_release"
 MARGIN_REQ_akiko=$MARGIN_REQ_fdd_rd
 
 # fdd_wr's tracks, in order (= scenarios.vh FDD_WPLAN, l3check.py
@@ -189,13 +243,22 @@ FDD_WR_PLAN="0:0 1:0 2:0 39:0 41:0 77:0 78:0 79:0 79:1 40:0:3"
 # "fdd_rd" (Task 13's measured ends, RV 393,222,555 and 832 442,065,819,
 # plus bfm_floppy's drive-ready waits of Task 14: 500 ms after motor on and
 # 15 ms per head change, 59 M: RV 452 M, 832 501 M); fdd_wr: 1.5 x the
-# estimate of README "fdd_wr" (RV 470 M, 832 520 M)
+# estimate of README "fdd_wr" (RV 470 M, 832 520 M);
+# hdd: 832 1.5 x its measured end (p4t15c3: 233,511,245), RV 1.5 x the
+# estimate 200 M (README "hdd"); cd: 1.5 x the estimates RV 210 M, 832
+# 300 M (measured, README "cd": RV 185,153,365, 832 233,680,101); cdda,
+# cdda_load: 1.5 x the estimates RV 345 M, 832 390 M (the plan start as
+# cd, then 7 halves of the board's 21.1 M and the refills; measured, README
+# "cdda": RV 337,017,061, 832 407,912,613)
 if [ "$CPU" = 832 ]; then
 	L3_BOOT_TO=${L3_BOOT_TO:-304300000}
 	L3_SHORT_TO=${L3_SHORT_TO:-111800000}
 	L3_KEYS_TO=${L3_KEYS_TO:-321300000}
 	L3_FDD_TO=${L3_FDD_TO:-750000000}
 	L3_FDDW_TO=${L3_FDDW_TO:-780000000}
+	L3_HDD_TO=${L3_HDD_TO:-350000000}
+	L3_CD_TO=${L3_CD_TO:-450000000}
+	L3_CDDA_TO=${L3_CDDA_TO:-585000000}
 	L3_AKIKO_TO=${L3_AKIKO_TO:-700000000}
 else
 	L3_BOOT_TO=${L3_BOOT_TO:-237300000}
@@ -203,6 +266,9 @@ else
 	L3_KEYS_TO=${L3_KEYS_TO:-247400000}
 	L3_FDD_TO=${L3_FDD_TO:-680000000}
 	L3_FDDW_TO=${L3_FDDW_TO:-700000000}
+	L3_HDD_TO=${L3_HDD_TO:-300000000}
+	L3_CD_TO=${L3_CD_TO:-315000000}
+	L3_CDDA_TO=${L3_CDDA_TO:-520000000}
 	L3_AKIKO_TO=${L3_AKIKO_TO:-520000000}
 fi
 
@@ -250,7 +316,11 @@ cfide_generics() {
 # run copy, as hostsim.sh pins the bridge's and hostcache's flops (README
 # "boot", XRAND): paula_floppy.v dsktrack[0..3] (the drives' head
 # positions, never reset: HandleFpga's track byte; found by the first XRAND
-# twin, findings/osd-riscv/phase4.md).  The count joins hostsim.sh's
+# twin, findings/osd-riscv/phase4.md); gayle_port.v's task file tfr[0..7]
+# and gayle_fifo.v's sector buffer mem[0..4095] (no reset: the firmware's
+# CMD_IDE_REGS_RD of the first IDE command reads the FIFO's head word and
+# the features register before the 68k wrote them; found by the hdd twin
+# p4t15_xr; 8 + 4,096 per port, two ports).  The count joins hostsim.sh's
 # "=== XRAND pinned <n> regs" (it sums the lines of src/pinned_hostcache).
 l3_pin_minimig() {
 	local v="$run/src/paula_floppy.v" decl='	reg		[6:0] dsktrack[3:0]; //track select'
@@ -259,6 +329,21 @@ l3_pin_minimig() {
 	sed -i "/^$(printf '%s' "$decl" | sed 's/[][\/.*^$]/\\&/g')\$/a\\	initial begin dsktrack[0] = 7'd0; dsktrack[1] = 7'd0; dsktrack[2] = 7'd0; dsktrack[3] = 7'd0; end // XRAND pin" "$v"
 	[ "$(grep -c '// XRAND pin$' "$v")" = 1 ] || die "XRAND pin: dsktrack initialiser not inserted"
 	echo 4 >> "$run/src/pinned_hostcache"
+	python3 - "$run/src/gayle_port.v" "$run/src/gayle_fifo.v" <<'EOP' || die "XRAND pin: gayle_port.v tfr / gayle_fifo.v mem declaration not found"
+import sys
+for path, decl, init in (
+        (sys.argv[1], "reg\t\t[7:0] tfr [7:0];",
+         "initial begin : xrand_pin_tfr integer i; for (i = 0; i < 8; i = i + 1) tfr[i] = 8'd0; end // XRAND pin"),
+        (sys.argv[2], "reg \t[15:0] mem [4095:0];\t\t// 16 bit wide fifo memory",
+         "initial begin : xrand_pin_mem integer i; for (i = 0; i < 4096; i = i + 1) mem[i] = 16'd0; end // XRAND pin")):
+    s = open(path).read()
+    assert s.count(decl + "\n") == 1, decl
+    s = s.replace(decl + "\n", decl + "\n" + init + "\n")
+    open(path, "w").write(s)
+EOP
+	[ "$(grep -c '// XRAND pin$' "$run/src/gayle_port.v")" = 1 ] && [ "$(grep -c '// XRAND pin$' "$run/src/gayle_fifo.v")" = 1 ] \
+		|| die "XRAND pin: gayle initialisers not inserted"
+	echo 8208 >> "$run/src/pinned_hostcache"
 }
 
 # l3_pin_async (every run, both simulators): the slaves' SPI registers with
@@ -399,13 +484,29 @@ setup() {
 	fi
 	[ -n "$FW832BIN" ] && mk+=(FW832="$FW832BIN")
 	[ "${NOKICK:-0}" = 1 ] && mk+=(NOKICK=1)
-	# the card of the scenario (sim/l3/card): fdd_rd and fdd_wr the fdd card,
-	# the others boot (CARDNAME: also milestones()'s "CARD=<card>" lines)
+	# the card of the scenario (sim/l3/card): fdd_rd, fdd_wr and akiko the
+	# fdd card, hdd the hdd card, cd the cd card with CDCFG's configs (image
+	# cd.img or cd_iso.img), cdda the cd card (cue), cdda_load the cdhdd
+	# card, the others boot.  MSCARD: milestones()'s "CARD=<card>" lines (cd:
+	# cd_cue or cd_iso, the disc's files differ)
 	CARDNAME=boot
 	case "${SCEN:-}" in fdd_rd|fdd_wr|akiko) CARDNAME=fdd ;; esac
+	[ "${SCEN:-}" = hdd ] && CARDNAME=hdd
+	[ "${SCEN:-}" = cd ] && CARDNAME=cd
+	[ "${SCEN:-}" = cdda ] && CARDNAME=cd
+	[ "${SCEN:-}" = cdda_load ] && CARDNAME=cdhdd
+	case "${SCEN:-}" in
+		cdda|cdda_load) [ "$CDCFG" = cue ] || die "CDCFG=$CDCFG: ${SCEN} plays TEST.CUE's track 2 (cue only)" ;;
+	esac
+	MSCARD=$CARDNAME IMG=$CARDNAME
+	if [ "$CARDNAME" = cd ]; then
+		MSCARD=cd_$CDCFG
+		[ "$CDCFG" = iso ] && IMG=cd_iso
+		mk+=(CDCFG="$CDCFG")
+	fi
 	make -s -C "$HERE/card" "$CARDNAME" B="$run/card" FWRV="$FWBIN" "${mk[@]}" > "$run/make_card.log" 2>&1 \
 		|| { tail -20 "$run/make_card.log"; die "make the $CARDNAME card ($run/make_card.log)"; }
-	CARD="$run/card/$CARDNAME.img"
+	CARD="$run/card/$IMG.img"
 	[ ${#CARD} -le 1024 ] || die "card image path longer than 1024 characters (+SD_IMG): $CARD"
 	# fdd_wr: the write stream of each track, from the card's TEST.ADF
 	if [ "${SCEN:-}" = fdd_wr ]; then
@@ -445,7 +546,7 @@ build() {
 		hs_verilate "$run" tb_l3 "-DL3_GHDL -D$def" \
 			"$d/bridge.v" "$d/cfide.v" "${cpuv[@]}" src/hostcache.v src/dpram_inf_generic.v \
 			"$L2/sdram_host_model.v" "$ROOT/sim/common/sd_spi_model.v" $i2c \
-			"${mm[@]}" "$HERE/bfm_audio.v" "$HERE/bfm_keys.v" "$HERE/bfm_floppy.v" "$HERE/bfm_akiko.v" "$HERE/rtc_model.v" "$HERE/tb_l3.v"
+			"${mm[@]}" "$HERE/bfm_audio.v" "$HERE/bfm_keys.v" "$HERE/bfm_floppy.v" "$HERE/bfm_ide.v" "$HERE/bfm_akiko.v" "$HERE/rtc_model.v" "$HERE/tb_l3.v"
 	else
 		X xvlog -sv $I2C_V
 		X xvhdl src/cfide.vhd
@@ -461,7 +562,7 @@ build() {
 		X xvlog --relax -i "$MM_INC" -i "$ROOT/rtl/minimig" "${mm[@]}"
 		X xvlog -d "$def" -i "$ROOT/sim/common" -i "$HERE" \
 			"$L2/sdram_host_model.v" "$ROOT/sim/common/sd_spi_model.v" "$HERE/bfm_audio.v" \
-			"$HERE/bfm_keys.v" "$HERE/bfm_floppy.v" "$HERE/bfm_akiko.v" "$HERE/rtc_model.v" "$HERE/tb_l3.v"
+			"$HERE/bfm_keys.v" "$HERE/bfm_floppy.v" "$HERE/bfm_ide.v" "$HERE/bfm_akiko.v" "$HERE/rtc_model.v" "$HERE/tb_l3.v"
 		hs_xsim_build "$run" "$snap" "$XW" tb_l3
 	fi
 }
@@ -471,17 +572,18 @@ build() {
 # check of its UART / SPI lines, and its "NOT UART <text>" lines.  A line
 # "CPU=<cpu> <milestone>" is a milestone of that CPU only (rv or 832): it is
 # kept, without the prefix, for that CPU and dropped for the other; a line
-# "CARD=<card> <milestone>" likewise for the scenario's card (CARDNAME)
+# "CARD=<card> <milestone>" likewise for the scenario's card (MSCARD)
 milestones() {
 	local s=$1 log=$2 ms="$run/milestones_$1.txt" t
 	if [ "$s" = boot_short ]; then
 		sed '/^#@ boot_short end/q' "$HERE/milestones_boot.txt"
 	else
 		cat "$HERE/milestones_boot.txt"
-	fi | sed -n -e "s/^CARD=${CARDNAME:-boot} //p" -e t -e '/^CARD=/d' -e p \
+	fi | sed -n -e "s/^CARD=${MSCARD:-boot} //p" -e t -e '/^CARD=/d' -e p \
 		| sed -n -e "s/^CPU=$CPU //p" -e t -e '/^CPU=/d' -e p > "$ms"
 	grep -E '^CPU=' "$HERE/milestones_boot.txt" | grep -vE '^CPU=(rv|832) ' | sed 's/^/BAD  milestones_boot.txt: a CPU= line for neither rv nor 832: /'
-	grep -E '^CARD=' "$HERE/milestones_boot.txt" | grep -vE '^CARD=(boot|fdd) ' | sed 's/^/BAD  milestones_boot.txt: a CARD= line for neither boot nor fdd: /'
+	grep -E '^CARD=' "$HERE/milestones_boot.txt" | grep -vE '^CARD=(boot|fdd|hdd|cd_cue|cd_iso|cdhdd) ' \
+		| sed 's/^/BAD  milestones_boot.txt: a CARD= line for none of boot, fdd, hdd, cd_cue, cd_iso, cdhdd: /'
 	grep -v '^NOT ' "$ms" > "$ms.check"
 	l3_check milestones "$run/milestones.txt" '^milestones: [0-9]+ of [0-9]+ found in order$' \
 		python3 -I "$L2/spitrace.py" check "$ms.check" "$log" "$run/spi.txt"
@@ -532,6 +634,10 @@ scenario() {
 		fdd_wr) to=${TIMEOUT:-$L3_FDDW_TO}
 			pa=("KEYS=$(realpath -m -- "${KEYS:-$HERE/keys/insert_df0.txt}")" "TICKDIV=643" "TICKDIV_AT=scenario"
 			    "FDD_WFILE=$run/fdd_wr" "SD_SAVE=$run/card_saved.img") ;;
+		hdd) to=${TIMEOUT:-$L3_HDD_TO}; pa=("IDE_DUMP=$run/hdd" "SD_SAVE=$run/card_saved.img") ;;
+		cd) to=${TIMEOUT:-$L3_CD_TO}; pa=("IDE_DUMP=$run/cd" "CDCFG=$CDCFG" "TICKDIV=643" "TICKDIV_AT=scenario") ;;
+		cdda|cdda_load) to=${TIMEOUT:-$L3_CDDA_TO}
+			pa=("IDE_DUMP=$run/cdda" "CDDA_DUMP=$run/cdda_half" "TICKDIV=643" "TICKDIV_AT=scenario") ;;
 		akiko) to=${TIMEOUT:-$L3_AKIKO_TO}
 			pa=("KEYS=$(realpath -m -- "${KEYS:-$HERE/keys/insert_df0.txt}")" "TICKDIV=643" "TICKDIV_AT=scenario"
 			    "FDD_DUMP=$run/akiko") ;;
@@ -551,6 +657,7 @@ scenario() {
 		[ "$CPU" = 832 ] && echo "EightThirtyTwo RTL: $E832"
 		echo "card: $CARD$( [ "${NOKICK:-0}" = 1 ] && echo " (NOKICK=1: no KICK.ROM)")"
 		[ "${PAULA_TXPOP:-0}" = 1 ] && echo "PAULA_TXPOP=1: $(sed -n 's/^PAULA_TXPOP: //p' "$run/compile.log")"
+		[ "$s" = cd ] && echo "cd config: $CDCFG"
 	} | tee "$run/results.txt"
 	build "$snap"
 	# plusargs without the +: FAST_HW's model timing first (the first match
@@ -567,14 +674,15 @@ scenario() {
 	local secs=$((SECONDS - t0))
 	python3 -I "$L2/spitrace.py" summary "$run/spi.txt" > "$run/spi_summary.txt" 2>&1
 	{
-		grep -E '^=== (BOOT|MAIN|END|STATS|HW accesses|cycle limit|HandleFpga|SPI frames|OSD GAP|OSD EARLY|OSD REPLY|STACK|RTC|KICK|MARGIN|KEYS script|FDD|AKIKO block)' "$log"
+		grep -E '^=== (BOOT|MAIN|END|STATS|HW accesses|cycle limit|HandleFpga|SPI frames|OSD GAP|OSD EARLY|OSD REPLY|STACK|RTC|KICK|MARGIN|KEYS script|FDD|IDE|CD|AKIKO block)' "$log"
 		grep -E '^BENCH ERROR' "$log" | sed 's/^/BAD  /'
 		margins "$s" "$log"
 		grep -q '^SD: image .* loaded' "$log" || echo "BAD  the SD model did not load $CARD"
 		milestones "$s" "$log"
 		grep -E '^UART: .*(EXC |TRAP )' "$log" | sed 's/^/BAD  /'
 		l3_check memhash "$run/memhash.txt" '^PASS memhash: ' python3 -I "$L3CHECK" memhash "$run"
-		if [ "$s" = boot ] || [ "$s" = keys ] || [ "$s" = fdd_rd ] || [ "$s" = fdd_wr ] || [ "$s" = akiko ]; then
+		if [ "$s" = boot ] || [ "$s" = keys ] || [ "$s" = fdd_rd ] || [ "$s" = fdd_wr ] || [ "$s" = hdd ] \
+			|| [ "$s" = cd ] || [ "$s" = cdda ] || [ "$s" = cdda_load ] || [ "$s" = akiko ]; then
 			l3_check kick "$run/kick.txt" '^PASS kick: ' python3 -I "$L3CHECK" kick "$run"
 			l3_check order "$run/order.txt" '^PASS order: ' python3 -I "$L3CHECK" order "$run"
 		fi
@@ -590,6 +698,18 @@ scenario() {
 		if [ "$s" = fdd_wr ]; then
 			l3_check fdd_wr "$run/fdd_wr.txt" '^PASS fdd_wr: ' python3 -I "$L3CHECK" fdd_wr "$run"
 			grep -E '^(ok   |HEADER )' "$run/fdd_wr.txt"
+		fi
+		if [ "$s" = hdd ]; then
+			l3_check hdd "$run/hdd.txt" '^PASS hdd: ' python3 -I "$L3CHECK" hdd "$run"
+			grep -E '^ok   ' "$run/hdd.txt"
+		fi
+		if [ "$s" = cd ]; then
+			l3_check cd "$run/cd.txt" '^PASS cd: ' python3 -I "$L3CHECK" cd "$run"
+			grep -E '^(ok   |INFO )' "$run/cd.txt"
+		fi
+		if [ "$s" = cdda ] || [ "$s" = cdda_load ]; then
+			l3_check cdda "$run/cdda.txt" '^PASS cdda: ' python3 -I "$L3CHECK" cdda "$run"
+			grep -E '^(ok   |INFO )' "$run/cdda.txt"
 		fi
 		if [ "$s" = akiko ]; then
 			l3_check akiko "$run/akiko.txt" '^PASS akiko: ' python3 -I "$L3CHECK" akiko "$run"
@@ -669,7 +789,7 @@ case "${1:-}" in
 		echo "=== xpair $2 FAILED (runs $r1 / $r2, compare $rc)"
 		exit 1
 		;;
-	boot|boot_short|keys|fdd_rd|fdd_wr|akiko)
+	boot|boot_short|keys|fdd_rd|fdd_wr|hdd|cd|cdda|cdda_load|akiko)
 		SCEN=$1
 		[ "${NOKICK:-0}" = 1 ] && [ "$1" != boot ] && die "NOKICK=1 is for boot only"
 		setup

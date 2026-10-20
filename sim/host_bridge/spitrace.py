@@ -37,11 +37,36 @@ norm: one normalised stream of a run, in frame order, one item per line
     3..0 = 0: no track read / write, no IDE command / data) whose MISO
     equals the previous status frame's: HandleFDD also acts on the other
     bytes (drive count, track, motor: fdd.c), so a changed one is kept,
-    and a request is always kept; the FPGA drive-status frames (10 10 <s>: UpdateDriveStatus
+    and a request is always kept.  After an IDE request frame (MISO 0
+    bits 3..2: command / data; sim/l3 hdd, runs p4t15 / p4t15c) a frame
+    without a request that equals it but for those two bits is a poll too:
+    the firmware served the request, and whether its wait loop polls once
+    before the 68k has emptied or filled the FIFO follows the CPU's speed
+    (the IDE bits going to 0 drive nothing; every other byte stays
+    compared); the FPGA drive-status frames (10 10 <s>: UpdateDriveStatus
     after every HandleFpga) whose <s> equals the previous one, OSD_CMD_READ
     frames (20 00) whose level (MISO) equals the previous one, OSD_CMD_KEYQ
     frames (20 98) whose status byte (MISO 1) is 00 (no event, no
     overflow), every RTC frame (80); each run of them leaves nothing
+  - the IDE flag polls (hdd.c ReadIDEFlags(): 10, MOSI 80 or 81 and nine
+    00 bytes; sim/l3 cd, runs p4t16 / p4t16c and p4t16i / p4t16ci, Task
+    16 ruling): MISO byte 0's IDE request bits (3..2) are printed as 0.
+    The firmware keeps only MISO byte 8 (the flags) of that frame; byte 0
+    is clocked out during the command byte, and whether the 68k has read
+    the last word of a data phase by then follows the CPU's speed.  Byte 8,
+    the other bits of byte 0 and the poll count stay compared, except:
+    a flag poll equal (after that mask) to the previous flag poll, with no
+    kept item between them, is a repeat and dropped (sim/l3 cdda, runs
+    p4t17 / p4t17c and p4t17l / p4t17lc, Task 17 ruling: CD_AudioPoll()
+    reads the CD port's flags on every main-loop pass while the player
+    runs, RV 17,174 frames, 832 7,228).  "Kept" is decided on the
+    finished stream: after every drop above (the poll frames, the RTC
+    frames and their HandleRTC unit's hw writes) and every rule of the
+    list (DROP, DEDUP, DROPBLOCK, SUBST; FLOAT lines have no place among
+    the frames).  So any line of any stream that is printed between two
+    equal flag polls (an SPI, SD or OSD frame, a hw write, a UART line)
+    keeps the second one; cd_wait()'s polls between data phases stay
+    compared
   - paula's floppy DMA progress (sim/l3 fdd_rd, runs p4t13 / p4t13c: the
     FIFO is filled by the firmware and emptied at Agnus's rate, so these
     bytes depend on the CPU's speed) is masked by byte position, as "--":
@@ -622,6 +647,11 @@ def sd_lines(frame_cmds, sdfiles):
     return res
 
 
+# an IDE flag poll as norm prints it (hdd.c ReadIDEFlags: cs 10, MOSI 80 or
+# 81 and nine 00 bytes)
+FLAGPOLL = re.compile(r"10 8[01]( 00){9} / ")
+
+
 def norm(spi, hw, uart, rules_path, card_path, charrom):
     rules = read_rules(rules_path)
     glyphs = load_charrom(charrom)
@@ -670,6 +700,12 @@ def norm(spi, hw, uart, rules_path, card_path, charrom):
                 inp = inp[:4] + [None, None]
             elif inp[0] & 0x03 == 0x01:
                 inp = inp[:4] + [None] * (len(inp) - 4)
+        # the IDE flag polls (the doc above; cdrom.c cd_wait(), runs p4t16 /
+        # p4t16c, p4t16i / p4t16ci: the first poll after the INQUIRY and
+        # MODE SENSE data phases, RV 10 01 ..., 832 14 01 ..., byte 8 53 in
+        # both): MISO byte 0's IDE request bits not compared
+        if cs == 0x10 and len(out) == 10 and out[0] in (0x80, 0x81) and not any(out[1:]) and inp and inp[0] is not None:
+            inp = [inp[0] & ~0x0C] + list(inp[1:])
         if cs == 0x10 and len(out) == 6 and not any(out):
             # a masked frame without a request whose bytes 0..3 equal the
             # previous status frame's is a repeat too: its bytes 4..5 hold no
@@ -679,6 +715,12 @@ def norm(spi, hw, uart, rules_path, card_path, charrom):
                                        (inp[4] is None and prev_status is not None and
                                         tuple(inp[:4]) == prev_status[:4])):
                 drop["status"] += 1
+                continue
+            # the first polls after an IDE request was served (the doc
+            # above): the request frame's bytes without its IDE bits
+            if (inp[0] & 0x0F == 0 and prev_status is not None and prev_status[0] & 0x0C and
+                    (prev_status[0] & ~0x0C,) + prev_status[1:] == tuple(inp)):
+                drop["ide_served"] += 1
                 continue
             prev_status = tuple(inp)
         if cs == 0x10 and len(out) == 2 and out[0] == 0x10:
@@ -838,14 +880,22 @@ def norm(spi, hw, uart, rules_path, card_path, charrom):
         run_dir = 0
         kept.append(ln)
     lines = kept
-    lines += floated
+    # the flag poll repeats (the doc above; Task 17), on the finished
+    # stream: a flag poll line equal to the line printed just before it
+    kept = []
+    for ln in lines:
+        if ln[0] == "spi" and FLAGPOLL.match(ln[1]) and kept and kept[-1] == ln:
+            drop["flagpoll"] += 1
+            continue
+        kept.append(ln)
+    lines = kept + floated
     w = sys.stdout.write
     for stream, text in lines:
         w("%s %s\n" % (stream.upper(), text))
     for r in rules:
         w("# rule %d used %d: %s\n" % (r.lineno, r.used, r.text))
     w("# dropped " + ", ".join("%s %d" % (k, drop[k]) for k in
-                                ("status", "drivestatus", "read", "keyq", "rtc", "rtc_unit", "sd_deselect",
+                                ("status", "ide_served", "flagpoll", "drivestatus", "read", "keyq", "rtc", "rtc_unit", "sd_deselect",
                                  "sdfile_run", "wrfifo", "seek")) + "\n")
     return 0
 
