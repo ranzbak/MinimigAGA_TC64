@@ -8,6 +8,17 @@ Release 0.1 ships with these open (see doc/release-0.1.md).
 
 ## Stability and correctness
 
+### CD audio + HDF read deadlock in the 832 firmware (2026-10-20) -- fixed for RISC-V (fix-cdpoll 05e8780)
+
+With CD audio playing, a port-1 READ MULTIPLE of more than one block hangs the firmware (OSD dead,
+Workbench waits on I/O). The drain-wait loop in `fw/ctrl_832/hdd.c:508` calls `CD_AudioPoll()`,
+whose `ReadIDEFlags(1)` command word re-latches the Gayle firmware port (`paula_floppy.v`
+`hdd_port_r`) to the CD port mid-transfer: "FIFO drained" hides behind the busy CD port and the next
+direct-mode block goes into the CD port's FIFO. Found with GDB on the RISC-V debug bitstream;
+the RISC-V fix (split into `CD_AudioRefill` for transfer loops, `CD_AudioPoll` main loop only) is
+board-verified. Port the same change to `fw/ctrl_832` (hdd.c read/write loops, fdd.c ReadTrack).
+Open: the wait loops still have no exit when the Amiga abandons a command.
+
 ### OSD redesign: more screen space, tabbed setup layout (2026-10-17, wish)
 
 - Paul: the OSD menu is cramped; wanted a layout like the AmiCube setup
