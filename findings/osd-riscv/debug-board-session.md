@@ -33,7 +33,11 @@ GDB=$HOME/opt/xpack-riscv-none-elf-gcc-15.2.0-1/bin/riscv-none-elf-gdb
 | Recovery | power-cycle the board and program B again with the command of `ab-board-test.md` section 3 ("Load B"). Nothing here touches the flash or the card, so a power cycle alone returns the board to what the flash holds |
 
 What the session can and cannot do: GDB stops and inspects the **OSD CPU** (the VexRiscv that runs the OSD firmware). It does not stop the
-Amiga; the Amiga keeps running while the OSD CPU is halted (the OSD freezes, Workbench goes on).
+Amiga, but the OSD CPU also serves the Amiga's floppy and HDF disk access: **while it is halted the Amiga's disk service stalls**. Workbench
+goes on only while it does no disk access; an Amiga stuck on a disk access during a halt is expected and resumes on `continue`. So do not leave the
+CPU halted long. **Two steps reboot the Amiga on purpose: `load` + `continue` (5.4) and `monitor reset halt` + `continue` (5.5)**, because the OSD
+firmware's start-up (`_start`, `main`, `ColdBoot()`) resets the Amiga and reloads Kickstart. An Amiga reboot back to Workbench after those two steps
+is the expected outcome, not a failure.
 
 ## 1. Before you start
 
@@ -58,7 +62,7 @@ Amiga; the Amiga keeps running while the OSD CPU is halted (the OSD freezes, Wor
    md5sum "$OUT/minimig_openaars_top.bit"
    (cd "$OUT/fw" && sha256sum -c SHA256SUMS)
    ```
-   Expected: `Open On-Chip Debugger 0.12.0`, `GNU gdb (xPack GNU RISC-V Embedded GCC x86_64) 16.3`,
+   Expected: a line starting `Open On-Chip Debugger 0.12`, `GNU gdb (xPack GNU RISC-V Embedded GCC x86_64) 16.3`,
    `990199ce7b0ca771b5c83c1c59192814  .../minimig_openaars_top.bit`, `RV32OSDA.elf: OK`, `RV32OSDA.BIN: OK`.
    Anything else: **stop** and report it.
 
@@ -162,12 +166,12 @@ The OpenOCD config is `tools/openocd/minimig-rv-bscan.cfg`: `remote_bitbang` to 
 Ctrl-C the bridge, paste `~/openocd.log` and `~/rvbridge.log`. One retry at `JTAG_FREQ=3000000` (step 3) is allowed before you give up.
 
 Check the Amiga while attached: the OSD CPU may be stopped by OpenOCD at attach (OpenOCD halts the hart to examine it and resumes it). If Workbench
-or the OSD is frozen **after** `found 1 harts` and before GDB is connected, note it and go on: GDB's `continue` resumes.
+or the OSD is frozen (a halted CPU stalls disk access) **after** `found 1 harts` and before GDB is connected, note it and go on: GDB's `continue` resumes.
 
 ## 5. GDB
 
 Terminal 5. The ELF is absolute; GDB is started without `-cd` and without relative `-x` (a relative `-x` after `-cd` was found broken in
-Task 2). Logging is switched on first, so the transcript lands in `~/gdb.log`:
+Task 2). Logging is switched on first, so the transcript lands in `/home/paul/gdb.log` (written out in full: GDB's `set logging file` is not relied on to expand `~`):
 
 ```
 "$GDB" -nx "$OUT/fw/RV32OSDA.elf"
@@ -180,7 +184,7 @@ set pagination off
 set confirm off
 set width 0
 set remotetimeout 300
-set logging file ~/gdb.log
+set logging file /home/paul/gdb.log
 set logging overwrite on
 set logging enabled on
 target extended-remote 127.0.0.1:3333
@@ -189,7 +193,7 @@ target extended-remote 127.0.0.1:3333
 Expected: `Remote debugging using 127.0.0.1:3333` (and a `0x... in ?? ()` or a function name at the stopped pc; `target extended-remote` halts the hart).
 The ELF is the firmware at `0x2000` (entry), so symbols resolve when the hart is in the OSD firmware.
 
-### 5.1 Read-only first (the Amiga keeps running)
+### 5.1 Read-only first (halt only briefly: the Amiga's disk service stalls while the CPU is halted)
 
 ```
 monitor halt
@@ -210,7 +214,7 @@ Expected: `monitor halt` answers with the hart's halted state (`target halted du
 RAM as in the ELF; any other value means the card's `RV32OSDA.BIN` is not the one this ELF belongs to: **write it down, it invalidates the later
 steps**); `x/wx &osd_rdy_timeouts` prints the live count (normally `0x00000000`); `continue` prints `Continuing.`
 
-**After the `continue`: the OSD must work** (open it, close it) and the Amiga must have kept running. If not, note what you saw. Press Ctrl-C in GDB
+**After the `continue`: the OSD must work** (open it, close it) and the Amiga must have kept running (an Amiga that waited on a disk access during the halt resumes on `continue`). If not, note what you saw. Press Ctrl-C in GDB
 to get the prompt back (`Program received signal SIGINT`).
 
 Repeat `monitor halt` / `info registers pc` / `continue` three times; the pc will differ.
@@ -234,7 +238,7 @@ Expected: `Hardware assisted breakpoint 1 at 0xe316: file osd.c, line 800.`, the
 Breakpoint 1, OsdShow (mode=...) at osd.c:800
 ```
 
-(or `Thread 1 hit Breakpoint 1`). The OSD does not open (the CPU is stopped there); the Amiga screen keeps going. Then:
+(or `Thread 1 hit Breakpoint 1`). The OSD does not open (the CPU is stopped there); the Amiga screen keeps going unless it needs the disk (it resumes on `continue`). Do not leave the CPU stopped long. Then:
 
 ```
 bt
@@ -258,7 +262,7 @@ shell date +%T
 continue
 ```
 
-Write down the two times. 256 words are 1 KB; the firmware image is 93,032 bytes (about 23,300 words, 91 times as much). A write is likely
+Write down the two times from the terminal (shell output is not in `gdb.log`). 256 words are 1 KB; the firmware image is 93,032 bytes (about 23,300 words, 91 times as much). A write is likely
 slower than a read.
 
 - Under 5 seconds for the 256 words: the `load` below takes about 8 minutes or less. Go on.
@@ -268,9 +272,16 @@ slower than a read.
 ### 5.4 Load the same ELF over the running image, then continue
 
 Equal bytes are written, and GDB sets the pc to the ELF entry, so this also exercises `fence.i` after a write through the debug module. The firmware
-**restarts from its entry point** (`0x2000`, C start-up) instead of continuing where it was; its `.data` and `.bss` are reinitialised by the
-start-up code, the boot ROM is not run again and the Amiga side is not reset. Expect the OSD to redraw or to forget an open menu; the Amiga should
-keep running.
+**restarts from its entry point** (`0x2000`, C start-up `_start` -> `main` -> `ColdBoot()`) instead of continuing where it was; `.data` and `.bss` are
+reinitialised by the start-up code and the boot ROM is not run again. **`ColdBoot()` resets the chipset and the Amiga CPU, re-initialises the SD card,
+reloads the configuration and the Kickstart ROM and then releases the Amiga: the Amiga cold-boots** (seconds of black screen, Kickstart, Workbench from
+the HDF again, as after a normal OSD boot). That is the expected outcome here, not a failure.
+
+**Not covered by the simulation proof.** The sim session (`sim/rv_dbg/gdb/session.gdb`) does `monitor reset halt` first and then loads a small, different
+image. "`load` of the large image over the running firmware, with no reset before it, then start at 0x2000" runs on the board only; the SPI chip selects, an
+SD transaction in flight or a pending interrupt are not reset before it (`ColdBoot` re-initialises most of that; unproven). Expected: the firmware restarts,
+the Amiga reboots. Recovery if it does not: step 5.5 (`monitor reset halt`, `continue`), and if that fails, power-cycle and program the lab bitstream
+again (or B, step 6).
 
 ```
 monitor halt
@@ -287,12 +298,13 @@ bridge; the board may be faster or slower. Watch `~/rvbridge.log` in another win
 Ctrl-C in GDB aborts a `load` that takes too long (the firmware is then half-written: finish with step 5.5 `monitor reset halt` and `continue`, which
 restarts it from the boot ROM and the card, so a half-written image is replaced).
 
-After the `continue`: the OSD must open and close, Workbench keeps running. If the OSD is dead, do 5.5 now, whatever the plan said.
+After the `continue`: wait for the Amiga to reboot (ttyUSB0 shows the SD and Kickstart boot lines; allow 60 seconds, about a normal boot). Then Workbench
+must be back and the OSD must open and close. If the Amiga does not come back or the OSD is dead after 60 seconds, do 5.5 now, whatever the plan said.
 
 ### 5.5 Optional, last: `monitor reset halt`
 
 Restarts the OSD CPU through the debug module's ndmreset; the **boot ROM runs again and loads `RV32OSDA.BIN` from the card**, so the OSD firmware
-restarts from scratch. The Amiga side is not reset (the Amiga keeps running; it may notice the OSD CPU being away for a second or two).
+restarts from scratch and runs `ColdBoot()` as in 5.4: **the Amiga is reset and reboots** (Kickstart reloads, Workbench again). That is expected.
 
 ```
 monitor reset halt
@@ -301,7 +313,7 @@ continue
 ```
 
 Expected: `pc` is the boot ROM's reset vector (a low address, below `0x2000`) before the `continue`; after it the ttyUSB0 log shows the boot lines again
-(`Initializing SD card`, ... `file "RV32OSDA.BIN" found`) and the OSD works. If the boot hangs, note the last ttyUSB0 line; power-cycle and program B (step 6).
+(`Initializing SD card`, ... `file "RV32OSDA.BIN" found`) wait up to 60 seconds for Workbench; the OSD must work. If the boot hangs, note the last ttyUSB0 line; power-cycle and program B (step 6).
 
 ## 6. Detach and stop
 
@@ -330,15 +342,15 @@ flash.
 
 1. `~/rvbridge.log` (and `~/rvbridge-3mhz.log` if the retry ran). **First, grep it** and paste the output of both commands with the log:
    ```
-   grep -n -i -e 'WARNING: DR shift split' -e 'forced by a timer' ~/rvbridge.log
+   grep -n -i -e 'shift split' -e 'forced by a timer' ~/rvbridge.log
    grep -n -e 'SELF-TEST' -e 'raw self-test' -e 'connection .* closed' ~/rvbridge.log
    ```
-   **Any `WARNING: DR shift split` or `forced by a timer N` with N > 0 invalidates the DMI results of that session**: a DR shift was split by the bridge's
+   **Any `WARNING: ... shift split` line (the bridge prints `DR shift split` or `IR shift split`) or `forced by a timer N` with N > 0 invalidates the DMI results of that session**: a shift was split by the bridge's
    100 ms timer (OpenOCD stalled inside a scan), which corrupts a tunnel scan (`Unsupported DTM version`, wrong memory values). Say so in the step
    notes and repeat the session. `forced by a timer 0` in every connection close line is the clean result. Also paste the line `IDCODE read-ahead N (M bad)`:
    `M` must be 0.
 2. `~/openocd.log`.
-3. The GDB transcript `~/gdb.log`.
+3. The GDB transcript `/home/paul/gdb.log`. The `shell date +%T` outputs go to the terminal, not into this log: copy the times by hand into the step table.
 4. The ttyUSB0 log `~/rvdbg-tty.log`.
 5. One line per step, "ok" or what happened, with the two time stamps of steps 5.3 and 5.4:
 
@@ -351,7 +363,7 @@ flash.
    | 5.1 read-only (halt, registers, `bt`, `x/s 0x142f4`, continue) | |
    | 5.2 `hbreak OsdShow` hit on the OSD key | |
    | 5.3 timing probe, times | |
-   | 5.4 `load` of the same ELF, times, OSD alive after | |
+   | 5.4 `load` of the same ELF, times, Amiga reboot to Workbench, OSD alive after | |
    | 5.5 `monitor reset halt` (or "not run") | |
    | 6 detach, stop, OSD still works | |
 
