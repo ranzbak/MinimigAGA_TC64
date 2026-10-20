@@ -1617,8 +1617,16 @@ TEST.BIN.
 XRAND: the RV twin `p4t17_xr` (`pinned 8217 regs`) is `compare` SAME with
 `p4t17` (log and 93,557 frames). The 832 twin of the default seed
 (`p4t17c_xr`, seed 931,151,620) never started, with no hw access in 585 M
-cycles, as `fdd_rd`'s `p4t13c_xr`. `p4t17c_xs4` (`XSEED=4`) is the twin
-(below).
+cycles, as `fdd_rd`'s `p4t13c_xr`. So did `p4t17c_xs4` (`XSEED=4`,
+`fdd_rd`'s working seed). 832 `boot_short` probes with a 5 M-cycle limit
+(`p4t17seed1`, `2`, `3`, `5`) started with seeds 1, 2 and 5 and stopped
+with 3. The twin is `p4t17c_xs1` (`XSEED=1`): `cdda` PASS with the same
+checks, milestone at 203.7 M (2.0 M later), halves 1..8 byte-identical to
+`p4t17c`'s. It pauses one TIMER unit later (frame 53,248, the same LBA 304:
+the TIMER phase against the run's start moved), so half 9 and two SD
+blocks of the RESUME's fill differ. With the current rules, `run.sh diff
+p4t17c p4t17c_xs1` gives 438 lines: 378 per-pass flag polls and those two
+blocks. With the two proposed rules the diff is empty.
 
 The differential is not empty with the current rules (`run.sh diff p4t17
 p4t17c`: 10,033 lines; `p4t17l p4t17lc`: 9,327). It comes from two
