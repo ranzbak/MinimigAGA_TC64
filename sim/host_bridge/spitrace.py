@@ -54,7 +54,14 @@ norm: one normalised stream of a run, in frame order, one item per line
     The firmware keeps only MISO byte 8 (the flags) of that frame; byte 0
     is clocked out during the command byte, and whether the 68k has read
     the last word of a data phase by then follows the CPU's speed.  Byte 8,
-    the other bits of byte 0 and the poll count stay compared
+    the other bits of byte 0 and the poll count stay compared, except:
+    a flag poll equal (after that mask) to the previous flag poll, with no
+    kept item between them, is a repeat and dropped (sim/l3 cdda, runs
+    p4t17 / p4t17c and p4t17l / p4t17lc, Task 17 ruling: CD_AudioPoll()
+    reads the CD port's flags on every main-loop pass while the player
+    runs, RV 17,174 frames, 832 7,228).  The dropped poll frames above
+    (an RTC frame among them) do not end a run of repeats; anything kept
+    does, so cd_wait()'s polls between data phases stay compared
   - paula's floppy DMA progress (sim/l3 fdd_rd, runs p4t13 / p4t13c: the
     FIFO is filled by the firmware and emptied at Agnus's rate, so these
     bytes depend on the CPU's speed) is masked by byte position, as "--":
@@ -629,11 +636,16 @@ def norm(spi, hw, uart, rules_path, card_path, charrom):
     for fr, ev, text in uart_ev:
         items.append(((fr, 0, ev), "uart", text, None))
     drop = Counter()
-    prev_read = prev_uds = prev_status = None
+    prev_read = prev_uds = prev_status = prev_flags = None
+    flag_at = 0                   # items after the last kept flag poll start here
     st = {}
     rtc_at = []                   # item indices of the RTC frames' markers
     for i, (cs, out, inp) in enumerate(frames):
         key = (i, 1, 0)
+        # a kept item since the last flag poll ends its run of repeats (an
+        # RTC frame's marker is a dropped frame: it does not)
+        if prev_flags is not None and any(it[1] != "rtc" for it in items[flag_at:]):
+            prev_flags = None
         # paula's DMA progress bytes (the doc above): masked, None = "--"
         if cs == 0x10 and len(out) >= 6 and not any(out[:6]) and len(inp) >= 6 and inp[4] & 0x80:
             if len(out) == 6:
@@ -646,6 +658,12 @@ def norm(spi, hw, uart, rules_path, card_path, charrom):
         # both): MISO byte 0's IDE request bits not compared
         if cs == 0x10 and len(out) == 10 and out[0] in (0x80, 0x81) and not any(out[1:]) and inp and inp[0] is not None:
             inp = [inp[0] & ~0x0C] + list(inp[1:])
+            # a repeat of the previous flag poll (the doc above; Task 17)
+            if prev_flags == (out[0],) + tuple(inp):
+                drop["flagpoll"] += 1
+                continue
+            prev_flags = (out[0],) + tuple(inp)
+            flag_at = len(items) + 1      # the generic SPI line below is this poll
         if cs == 0x10 and len(out) == 6 and not any(out):
             # a masked frame without a request whose bytes 0..3 equal the
             # previous status frame's is a repeat too: its bytes 4..5 hold no
@@ -799,7 +817,7 @@ def norm(spi, hw, uart, rules_path, card_path, charrom):
     for r in rules:
         w("# rule %d used %d: %s\n" % (r.lineno, r.used, r.text))
     w("# dropped " + ", ".join("%s %d" % (k, drop[k]) for k in
-                                ("status", "ide_served", "drivestatus", "read", "keyq", "rtc", "rtc_unit", "sd_deselect",
+                                ("status", "ide_served", "flagpoll", "drivestatus", "read", "keyq", "rtc", "rtc_unit", "sd_deselect",
                                  "sdfile_run")) + "\n")
     return 0
 

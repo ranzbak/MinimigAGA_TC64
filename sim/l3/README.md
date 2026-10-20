@@ -502,7 +502,16 @@ only when it is empty. `norm` writes one stream in frame order,
   flags) of that frame; byte 0 is clocked out during the command byte, and
   whether the 68k has read a data phase's last word by then follows the
   CPU's speed. Byte 8, the other bits of byte 0 and the number of polls
-  stay compared (`spitrace_test.sh` cases `cdflags`, `cdbit`)
+  stay compared (`spitrace_test.sh` cases `cdflags`, `cdbit`), except
+  repeats: a flag poll equal (after the mask) to the previous flag poll,
+  with nothing kept between them, is dropped (`# dropped flagpoll`;
+  `cdda`, runs `p4t17` / `p4t17c`, `p4t17l` / `p4t17lc`, Task 17 ruling).
+  While the CD player runs, `CD_AudioPoll()` reads the flags on every
+  main-loop pass: RV 17,174 frames, 832 7,228. The dropped poll frames
+  above, an RTC frame among them, do not end a run of repeats; anything
+  kept does. So `cd_wait()`'s polls between data phases stay compared
+  (the `cd` and `hdd` streams are unchanged), and so does a poll with
+  other flags (`spitrace_test.sh` case `cdpoll`)
 - **paula's floppy DMA progress, masked** (`fdd_rd`, runs `p4t13` /
   `p4t13c`). The firmware fills the FIFO and Agnus empties it at its own
   rate, so these bytes follow the CPU's speed. They are masked by byte
@@ -586,6 +595,9 @@ another place, another audio ring. Each of these gives a diff line:
 - a changed, an extra and a missing write of the FLOAT group
 - a repeated HandleRTC unit with a changed RTC value (`ffff70`), or with a
   changed closing speed write (`ffffe8`)
+- (Task 17) a repeated IDE flag poll with other flags, and the frames just
+  before and after the READ SUB-CHANNEL .. ENA block; that block without
+  its end fails `norm`
 
 The rules of `boot` (`expected_diff.txt`): the firmware file
 (`SDFILE` of both names, the UART line with the name and the boot ROM's
@@ -605,9 +617,17 @@ defect, `findings/osd-riscv/phase4.md` "Findings for Paul") and the RV-only
   TIMER count; `cdda` checks its ring with `l3check.py`
 
 `cd` adds no rule, only the IDE flag poll mask above (section "cd").
-`cdda` and `cdda_load` add no rule yet. Their two timing-only differences
-(the per-pass flag polls and the paused position) await a ruling (section
-"cdda", Measured).
+`cdda` and `cdda_load` add one rule (Task 17 ruling P2), besides the
+flag poll repeats above: `DROPBLOCK all` from the READ SUB-CHANNEL data
+frame (`10 a1 ...`, audio status 12 = paused) to the RESUME's ENA write
+(`ffffb0 0001`). The paused position is TIMER-quantised, and the PAUSE is
+served after the refill, so READ SUB-CHANNEL's address and the RESUME's
+fill (TEST.BIN blocks from that position) differ between the CPUs and
+between the 832 twins. `l3check.py cdda` checks both on each CPU. In
+`spitrace_test.sh`, `subpre` and `subpost` (the frames just before and
+after the block) each give a diff line, and `subunterm` (no ENA) fails
+`norm`. With it, the diffs `p4t17` / `p4t17c`, `p4t17l` / `p4t17lc` and
+`p4t17c` / `p4t17c_xs1` are empty.
 
 `hdd` adds three UART rules (section "hdd"): `file: "%.8s.%.3s"`
 (`fmt_diff_expected.txt` lines 45-52), the index time `Hardfile indexed
@@ -1628,16 +1648,26 @@ blocks of the RESUME's fill differ. With the current rules, `run.sh diff
 p4t17c p4t17c_xs1` gives 438 lines: 378 per-pass flag polls and those two
 blocks. With the two proposed rules the diff is empty.
 
-The differential is not empty with the current rules (`run.sh diff p4t17
-p4t17c`: 10,033 lines; `p4t17l p4t17lc`: 9,327). It comes from two
-sources, both timing-only:
+The differential (`run.sh diff p4t17 p4t17c`, `p4t17l p4t17lc`, and the
+832 twins `p4t17c p4t17c_xs1`) is empty. It needs the two Task 17 rulings
+(section "Differential"). Without them it had 10,033 / 9,327 / 438 lines,
+all timing-only:
 
 - `CD_AudioPoll()` reads the CD port's flags on every main-loop pass while
-  the player runs (`ReadIDEFlags()`, `10 81` and nine 00). The RV makes
-  17,174 such frames, the 832 7,228.
-- The paused position: see above.
+  the player runs (`ReadIDEFlags()`, `10 81` and nine 00): the RV makes
+  17,174 such frames, the 832 7,228. They are now dropped as repeats
+  (`flagpoll` 17,158 / 7,212).
+- The paused position (above), now the `DROPBLOCK` from READ SUB-CHANNEL
+  to the RESUME's ENA.
 
-The Task 17 report proposes the rules; none is added yet.
+`--unused-rules` lists only the other scenarios' rules (Task 19's
+clean-up). The `cd` and `hdd` pairs stay empty, and their normalised
+streams are byte-identical with and without the flag poll drop.
+
+The underrun gate is weak: 0 on both CPUs. The 256-sector READ MULTIPLE
+never blocks the 832's main loop for a whole half (its longest gap is
+95 ms against the half's 186 ms), so the scenario cannot separate the CPUs
+there. Plan 1.2's > 150 ms foreground job would need a longer transfer.
 
 ## Monitors
 

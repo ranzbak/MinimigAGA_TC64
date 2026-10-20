@@ -87,3 +87,14 @@ FLOAT hw ^ffff(60|90|a0)$
 # TIMER&3), timing-dependent; scenario cdda checks its ring against
 # TEST.BIN with l3check.py on each CPU (Task 17)
 DROP hw ^MEM\x20audio_ring\x20
+
+# Task 17 ruling (P2), runs p4t17 / p4t17c, p4t17l / p4t17lc and the 832
+# twin p4t17c_xs1: the paused position is TIMER-quantised and the PAUSE is
+# served after the refill (RV 42 ms, 832 88 ms: RV LBA 300 / frame 50,944,
+# 832 LBA 304 / 52,992; the twin one TIMER unit later, 53,248), so READ
+# SUB-CHANNEL's address and the RESUME's fill (the TEST.BIN blocks from that
+# position) differ.  l3check.py cdda checks both on each CPU (the position
+# within one half of the player, every half = TEST.BIN).  The block runs from
+# the READ SUB-CHANNEL data frame (audio status 12, paused) to the RESUME's
+# ENA write (AUDIO = 1)
+DROPBLOCK all ^10\x20a1\x2000\x2000\x2000\x2000\x2000\x2000\x2012\x2000\x200c\x2001\x20 ^ffffb0\x200001$
