@@ -268,3 +268,18 @@ test::case "hold: fewer than 255 reads owed inside a shift -> wait 100 ms, then 
     test::eq [rbb::drain now] done "255th R of the scan: no hold"
     test::eq [string length [rbb::take_out]] 155 "the 155 owed replies"
 }
+
+test::case "tunnel: OpenOCD stalls of 0..50 ms at TCP boundaries never split a tunnel scan" {
+    # an R before its rising edge (a 512-byte flush landing between OpenOCD's
+    # R and its rising write) must not expire into a split on a short timer
+    lassign [oocd::session tunnel] k stream flushes blocks
+    for {set k 0} {$k < 4} {incr k} {
+        foreach c {random bytes} {
+            set r [equiv::run $stream $c -quirk tunnel -stall_ms 50]
+            if {![dict get $r ok]} { error "$c, round $k: [dict get $r why]" }
+            set st [dict get $r stats]
+            test::eq [dict get $st partial] 0 "$c, round $k: no partial scan"
+            test::eq [dict get $st forced] 0 "$c, round $k: no forced split"
+        }
+    }
+}

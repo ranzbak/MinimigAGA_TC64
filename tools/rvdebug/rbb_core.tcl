@@ -136,7 +136,7 @@ proc rbb::conn_open {} {
     }
     variable st
     set st [dict create bytes 0 writes 0 reads 0 edges 0 resets 0 blinks 0 \
-            scans 0 partial 0 max_scan 0 max_shift 0 scan_bits 0 \
+            scans 0 partial 0 forced 0 max_scan 0 max_shift 0 scan_bits 0 \
             gotos 0 idles 0 idle_clocks 0 be_resets 0 readahead 0 readahead_bad 0]
     ${be}::be_reset
     dict incr st be_resets
@@ -518,11 +518,13 @@ proc rbb::Resolve {tdo base} {
 #            visit of Shift-xR).  Otherwise OpenOCD is not blocked (a TCP
 #            segment boundary) and the bridge holds ("wait", hold_ms 100):
 #            a split is not transparent to the BSCANE2 tunnel (README).  An
-#            R whose rising edge has not arrived and a trailing Update are
+#            R whose rising edge has not arrived gets the same hold:
+#            OpenOCD queues the rising write before it waits (bitbang.c
+#            226-253), so it is never waiting there.  A trailing Update is
 #            held 2 ms.  The caller calls again with "timeout" after
 #            [rbb::hold_ms] ms without input.
-#   timeout  the hold expired: split (before a missing edge), finish the
-#            Update through Run-Test/Idle
+#   timeout  the hold expired: split (before a missing edge; counted as
+#            "forced" and logged), finish the Update through Run-Test/Idle
 #   close    end of the connection: flush everything
 # Returns "done" or "wait"; the replies are in take_out.
 proc rbb::drain {mode} {
@@ -548,7 +550,7 @@ proc rbb::drain {mode} {
     if {$mode eq "now" && $owed} {
         if {[lindex $q end] >= $total} {
             set held redge
-            set hold_ms 2
+            set hold_ms $shift_hold_ms
             return wait
         }
         if {$sh_bits ne {} && ($shift_r == 0 || $shift_r % $client_buf != 0)} {
@@ -558,6 +560,15 @@ proc rbb::drain {mode} {
         }
     }
     if {$sh_bits ne {} && ($owed || $mode eq "close")} {
+        if {$mode eq "timeout"} {
+            # no client block explains this split: OpenOCD stalled longer
+            # than the hold (a tunnel scan split here is corrupted)
+            variable st
+            variable sh_type
+            dict incr st forced
+            log "rbb: WARNING: [Up $sh_type] shift split after a [hold_ms] ms hold without\
+                input ([string length $sh_bits] bits, $owed reads owed, [dict get $st forced] so far)"
+        }
         Emit shift
     }
     if {$vs eq "IDLE" && $idle_n} {
@@ -886,7 +897,7 @@ proc rbb::Close {ch why} {
     set s [stats]
     log "=== RBB BRIDGE connection $nconn closed ($why): bytes [dict get $s bytes],\
         edges [dict get $s edges], R [dict get $s reads], scans [dict get $s scans]\
-        (partial [dict get $s partial], longest [dict get $s max_scan] bits,\
+        (partial [dict get $s partial], forced by a timer [dict get $s forced], longest [dict get $s max_scan] bits,\
         longest shift [dict get $s max_shift] bits), IDCODE read-ahead [dict get $s readahead]\
         ([dict get $s readahead_bad] bad), gotos [dict get $s gotos],\
         idle runs [dict get $s idles] ([dict get $s idle_clocks] clocks),\

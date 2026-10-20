@@ -259,7 +259,7 @@ test::case "mid-shift: R before its rising edge -> wait; more input -> no split"
     test::eq [dict get [rbb::stats] partial] 0 "no partial scan"
 }
 
-test::case "mid-shift: R before its rising edge, 2 ms timeout -> split before that bit" {
+test::case "mid-shift: R before its rising edge, 100 ms hold expires -> forced split before that bit" {
     rec::open
     reftap::new A
     set s [cycs 0100][rbb::bb_shift [oocd::randbits 20]][cycs 10]
@@ -268,8 +268,10 @@ test::case "mid-shift: R before its rising edge, 2 ms timeout -> split before th
     set cut [expr {[string length [cycs 0100]] + 9 * 3 + 2}]
     rbb::feed [string range $s 0 [expr {$cut - 1}]]
     test::eq [rbb::drain now] wait "drain waits"
+    test::eq [rbb::hold_ms] 100 "the shift hold, not 2 ms (OpenOCD never waits there)"
     rbb::drain timeout
     set got [rbb::take_out]
+    test::eq [dict get [rbb::stats] forced] 1 "counted as forced"
     test::eq [string length $got] 9 "9 replies; the 10th waits for its edge"
     test::eq [lindex $rec::calls end] {scan dr 9 DRPAUSE} "partial scan of 9 bits"
     test::eq [rbb::pending] 1 "one reply pending"
@@ -377,7 +379,8 @@ proc tcp_session {stream {split {}}} {
     set ::tcp(got) {}
     set ::tcp(log) {}
     set ::tcp(stream) $stream
-    set ::tcp(split) $split
+    set ::tcp(split) [lindex $split 0]
+    set ::tcp(delay) [lindex $split 1]
     rbb::configure -backend ::rec -log tcp_log -idcode {}
     reftap::new B
     shim::set_driver {reftap::drive B} RESET
@@ -401,9 +404,9 @@ proc tcp_client {p} {
     if {$::tcp(split) eq {}} {
         puts -nonewline $c $s
     } else {
-        # first part now, the rest after 30 ms (the 2 ms timer fires between)
+        # first part now, the rest after tcp(delay) ms
         puts -nonewline $c [string range $s 0 [expr {$::tcp(split) - 1}]]
-        after 30 [list catch [list puts -nonewline $c [string range $s $::tcp(split) end]]]
+        after $::tcp(delay) [list catch [list puts -nonewline $c [string range $s $::tcp(split) end]]]
     }
 }
 proc tcp_read {c} {
@@ -412,15 +415,21 @@ proc tcp_read {c} {
     if {[eof $c]} { close $c; set ::tcp(eof) 1 }
 }
 
-test::case "tcp: replies over a socket, Q closes, 2 ms timer splits a waiting R" {
+test::case "tcp: replies over a socket, Q closes; an R before its edge: 30 ms gap held, 150 ms gap split and logged" {
     reftap::new A
     set s [cycs 0100][rbb::bb_shift [oocd::randbits 20]][cycs 10]Q
     set ref [reftap::rbb A $s]
-    set got [tcp_session $s [expr {[string length [cycs 0100]] + 9 * 3 + 2}]]
-    test::eq $got $ref "replies"
+    set cut [expr {[string length [cycs 0100]] + 9 * 3 + 2}]
+    set got [tcp_session $s [list $cut 30]]
+    test::eq $got $ref "replies (30 ms gap)"
     set closed [lsearch -inline $::tcp(log) "*closed (Q)*"]
     test::check {$closed ne {}} "closed on Q: $::tcp(log)"
-    test::check {[string match "*partial 1,*" $closed]} "one partial scan (the timer split): $closed"
+    test::check {[string match "*partial 0, forced by a timer 0,*" $closed]} "30 ms: held, not split: $closed"
+    set got [tcp_session $s [list $cut 150]]
+    test::eq $got $ref "replies (150 ms gap)"
+    set closed [lsearch -inline $::tcp(log) "*closed (Q)*"]
+    test::check {[string match "*partial 1, forced by a timer 1,*" $closed]} "150 ms: one forced split: $closed"
+    test::check {[lsearch $::tcp(log) "*WARNING: DR shift split after a 100 ms hold*"] >= 0} "logged: $::tcp(log)"
 }
 
 test::case "tcp: an unknown byte closes the connection with an error line" {

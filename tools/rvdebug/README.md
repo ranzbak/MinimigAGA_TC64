@@ -79,7 +79,7 @@ What the unit tests cover:
   transitions), and `R` answering the TDO the state presents before the next
   rising edge;
 - one `be_scan` per shift, the end-state mapping (the back-end calls and the
-  Update/Capture counts of every path below), the mid-shift splits, the 2 ms
+  Update/Capture counts of every path below), the mid-shift splits, the hold
   rules, the TMS-only moves, the self-test, the TCP server (a real socket);
 - equivalence: a bit-level reference TAP (IR 6, IDCODE, BYPASS, a 48-bit
   USER4 whose capture value depends on every Update and Capture) answers each
@@ -205,16 +205,22 @@ client other than OpenOCD) it splits. Why not split freely: a split is not
 transparent to the debug module's tunnel (next section). Also held:
 
 - an `R` whose rising edge has not arrived (a segment boundary between
-  OpenOCD's `R` and its rising write): **2 ms**, then a split before that
-  bit, the reads before it answered, that read waiting for its edge;
+  OpenOCD's `R` and its rising write; OpenOCD queues the rising write
+  before it waits, `bitbang.c:226-253`, so it never waits there): the same
+  100 ms, then a split before that bit, the reads before it answered, that
+  read waiting for its edge;
 - a trailing Update (the virtual TAP passed Update and nothing after it has
   arrived): 2 ms, then performed through Run-Test/Idle
   (`be_goto IDLE {xREXIT2 xRUPDATE IDLE}`, an extra Run-Test/Idle visit
   without a clock), so the target sees the Update (a DMI write) without
   waiting for OpenOCD's next command.
 
-Run-Test/Idle clocks are passed on at every drain; shift bits with no read
-owed are never split at a drain.
+Every split forced by an expired hold (no OpenOCD block explains it) is
+counted (`forced by a timer` in the connection's close line) and logged
+(`rbb: WARNING: DR shift split after a 100 ms hold ...`): with OpenOCD it
+means OpenOCD stalled for 100 ms inside a scan, and a tunnel scan split
+there is corrupted. Run-Test/Idle clocks are passed on at every drain;
+shift bits with no read owed are never split at a drain.
 
 ### The BSCANE2 tunnel is not pause-transparent
 

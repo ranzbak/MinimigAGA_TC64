@@ -608,9 +608,11 @@ proc equiv::Track {chunk} {
 # options: -blocks {offset nR ...} -be <ns> -ra 0|1 (IDCODE read-ahead with
 # the reference IDCODE known) -quirk {idreload tunnel} (both TAPs, see
 # reftap::new) -idcode <value the bridge believes> -timeout_p <p> (chance
-# that a hold expires at a chunk boundary)
+# that a hold expires at a chunk boundary) -stall_ms <max> (instead of
+# -timeout_p: the client stalls 0..max ms at each chunk boundary, uniformly;
+# a hold expires when the stall reaches [rbb::hold_ms])
 proc equiv::run {stream chunking args} {
-    array set o {-blocks {} -be ::shim -ra 0 -quirk {} -idcode 0x13631093 -timeout_p 0.5}
+    array set o {-blocks {} -be ::shim -ra 0 -quirk {} -idcode 0x13631093 -timeout_p 0.5 -stall_ms 0}
     array set o $args
     set blocks $o(-blocks)
     set timeout_p $o(-timeout_p)
@@ -683,7 +685,12 @@ proc equiv::run {stream chunking args} {
         } elseif {[string length $got] != $nr} {
             return [list ok 0 why "after $pos bytes: [string length $got] replies of $nr R"]
         }
-        if {$d eq "wait" && rand() < $timeout_p} {
+        if {$o(-stall_ms) > 0} {
+            set expire [expr {rand() * $o(-stall_ms) >= [rbb::hold_ms]}]
+        } else {
+            set expire [expr {rand() < $timeout_p}]
+        }
+        if {$d eq "wait" && $expire} {
             rbb::drain timeout
             append got [rbb::take_out]
         }
