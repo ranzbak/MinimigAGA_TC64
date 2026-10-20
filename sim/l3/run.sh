@@ -63,6 +63,20 @@
 #            write-FIFO finding (README "fdd_wr", findings/osd-riscv/phase4.md
 #            Task 14); rtl/ is never edited
 #   XRAND=1  (verilator) the X-sensitivity build, XSEED=<n> its seed
+#   PATCH=<script>  teeth only: "bash <script> <run>/src <repository root>"
+#            runs on the run copies of the RTL (rtl/host's and the Minimig
+#            slaves', before the timescale lines and the pins), e.g. one
+#            reverted file or a mutant line (sim/l3/teeth); rtl/ is never
+#            edited; results.txt names the script
+#   BUILD_FROM=<RUNTAG>  (verilator) the simulator of run_<RUNTAG> instead
+#            of a build of its own, when that run's build key (a sha256 of
+#            every build input: the run copies in src/, the bench, the
+#            include files, the ROM, the tools' versions, CPU, EXTRA_WS,
+#            XRAND; <run>/buildkey_<snapshot>, written by every Verilator
+#            build) equals this run's; else it builds its own (results.txt
+#            says so).  Plusargs (the
+#            scenario, the card, skew, FAST_HW, SLAT, SJIT) are not build
+#            inputs (sim/l3/grid.sh)
 #   TIMEOUT  clk_114 cycles (default per scenario below)
 #   L3CHECK  tests of run.sh only: the l3check.py to run (default sim/l3's)
 #   VIVADO_PATH, GHDL, VERILATOR, JOBS, OBJCACHE as sim/host_bridge/run.sh
@@ -478,6 +492,13 @@ setup() {
 	: > compile.log
 	hs_copy_rtl "$run" "$ROOT"
 	for f in $MM_FILES; do cp "$ROOT/$f" "$run/src/" || die "copy $f"; done
+	if [ -n "${PATCH:-}" ]; then
+		PATCHF=$(realpath -m -- "$PATCH")
+		[ -f "$PATCHF" ] || die "no PATCH script $PATCHF"
+		echo "PATCH: $PATCHF" >> "$run/compile.log"
+		bash "$PATCHF" "$run/src" "$ROOT" >> "$run/compile.log" 2>&1 \
+			|| { tail -20 "$run/compile.log"; die "PATCH $PATCHF ($run/compile.log)"; }
+	fi
 	# the slaves have no `timescale (xelab refuses a design that mixes);
 	# their #1 delays are 1 ns, as in a build after any 1ns/1ps file
 	for f in $MM_FILES; do
@@ -545,11 +566,53 @@ setup() {
 	fi
 }
 
+# l3_build_key: sha256 of every input of a Verilator build (BUILD_FROM)
+l3_build_key() {
+	local f files=()
+	while IFS= read -r f; do files+=("$f"); done < <(find "$run/src" -maxdepth 1 -type f | LC_ALL=C sort)
+	files+=("$HERE"/*.v "$HERE"/*.vh "$HERE/l3.vlt" "$ROOT"/sim/common/*.v "$ROOT"/sim/common/*.vh
+	        "$ROOT/sim/common/hostsim.sh" "$L2/sdram_host_model.v" "$L2/verilator/blackbox.vhd"
+	        "$L2/verilator/romcheck.py" "$ROM_SIM" $I2C_V "$MM_INC"/*.vh "$ROOT"/rtl/minimig/*.vh "$HERE/run.sh")
+	if [ "$CPU" = 832 ]; then
+		for f in $HS_E832_FILES; do files+=("$E832/$f"); done
+		files+=("$ROOT/$HS_E832_STUB")
+	fi
+	{
+		echo "SIM=$SIM CPU=$CPU EXTRA_WS=$XW XRAND=${XRAND:-0} generics=$CFIDE_GENERICS"
+		"$GHDL" --version | head -1
+		"$VERILATOR" --version
+		sha256sum "${files[@]}" | sed 's|  .*/|  |'
+	} | sha256sum | cut -c1-64
+}
+
 # build: the snapshot tb_l3_x<XW> (Verilator: GHDL conversion + verilate)
 build() {
-	local snap=$1 d="$run/ghdl_$1" i2c="" mm=() f
+	local snap=$1 d="$run/ghdl_$1" i2c="" mm=() f key from
 	for f in $MM_FILES; do mm+=("$run/src/$(basename "$f")"); done
 	cfide_generics
+	if [ "$SIM" = verilator ]; then
+		key=$(l3_build_key)
+		[ ${#key} = 64 ] || die "build key not computed"
+	fi
+	from=
+	if [ -n "${BUILD_FROM:-}" ]; then
+		from="$HERE/run_$BUILD_FROM"
+		[ "$SIM" = verilator ] || die "BUILD_FROM needs SIM=verilator"
+		if [ ! -f "$from/buildkey_$snap" ] || [ ! -x "$from/vl_$snap/Vtb_l3" ] \
+			|| [ "$(cat "$from/buildkey_$snap")" != "$key" ]; then
+			echo "BUILD_FROM=$BUILD_FROM: no finished build there with this run's build key: building" \
+				| tee -a "$run/compile.log" >> "$run/results.txt"
+			from=
+		fi
+	fi
+	if [ -n "$from" ]; then
+		mkdir -p "$run/vl_$snap" "$d" || die "mkdir $run/vl_$snap"
+		cp "$from/vl_$snap/Vtb_l3" "$run/vl_$snap/" || die "copy $from/vl_$snap/Vtb_l3"
+		if [ -f "$from/ghdl_$snap/pinned.txt" ]; then cp "$from/ghdl_$snap/pinned.txt" "$d/" || die "copy pinned.txt"; fi
+		echo "$key" > "$run/buildkey_$snap"
+		echo "BUILD_FROM: run_$BUILD_FROM's simulator, build key $key" | tee -a "$run/compile.log" >> "$run/results.txt"
+		return 0
+	fi
 	# per CPU: the core's files, the defines (CPU=rv: rv_hostcpu's counters;
 	# CPU=832: L3_CPU832, no counters), the bridge's cpu_riscv
 	local cpuv=() def riscv
@@ -571,6 +634,7 @@ build() {
 			"$d/bridge.v" "$d/cfide.v" "${cpuv[@]}" src/hostcache.v src/dpram_inf_generic.v \
 			"$L2/sdram_host_model.v" "$ROOT/sim/common/sd_spi_model.v" $i2c \
 			"${mm[@]}" "$HERE/bfm_audio.v" "$HERE/bfm_keys.v" "$HERE/bfm_floppy.v" "$HERE/bfm_ide.v" "$HERE/bfm_akiko.v" "$HERE/rtc_model.v" "$HERE/tb_l3.v"
+		echo "$key" > "$run/buildkey_$snap"
 	else
 		X xvlog -sv $I2C_V
 		X xvhdl src/cfide.vhd
@@ -681,6 +745,7 @@ scenario() {
 		[ "$CPU" = 832 ] && echo "EightThirtyTwo RTL: $E832"
 		echo "card: $CARD$( [ "${NOKICK:-0}" = 1 ] && echo " (NOKICK=1: no KICK.ROM)")"
 		[ "${PAULA_TXPOP:-0}" = 1 ] && echo "PAULA_TXPOP=1: $(sed -n 's/^PAULA_TXPOP: //p' "$run/compile.log")"
+		[ -n "${PATCH:-}" ] && echo "PATCH: $PATCHF, sha256 $(sha256sum "$PATCHF" | cut -c1-16)"
 		[ "$s" = cd ] && echo "cd config: $CDCFG"
 	} | tee "$run/results.txt"
 	build "$snap"
