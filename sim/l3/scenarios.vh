@@ -58,6 +58,19 @@
 //               ("=== STATS@cd").  TIMER: run.sh sets +TICKDIV=643
 //               +TICKDIV_AT=scenario (cdrom.c's CD_TIMEOUT at the board's
 //               rate; mon_l3.vh item 9)
+//   cdda        CD audio (README "cdda"; run.sh: the cd card, CDCFG cue,
+//               +IDE_DUMP=<run>/cdda +CDDA_DUMP=<run>/cdda_half): main-loop
+//               milestone as boot, where bfm_ide starts its plan "cdda" on
+//               IDE port 2 (TEST UNIT READY, PLAY AUDIO MSF of 1.5 s from
+//               track 2's start, at the player's 6th flip PAUSE, READ
+//               SUB-CHANNEL, RESUME, at the 7th STOP); bfm_audio copies
+//               every half the player starts; mon_l3.vh times the refills
+//               ("=== CDDA fill").  End event: the end of the STOP command
+//               ("=== STATS@cdda").  TIMER: run.sh sets +TICKDIV=643
+//               +TICKDIV_AT=scenario (the player takes one frame per tick)
+//   cdda_load   cdda on the cdhdd card (the hdd card's HDFs as well), plus
+//               from the player's second flip a READ MULTIPLE of 256
+//               sectors of SYNTH.HDF ("=== STATS@cdda_load")
 
   reg [8*32-1:0]  scenario;
   reg [8*16-1:0]  short_end;
@@ -83,7 +96,7 @@
       if (!$value$plusargs("BOOT_END=%s", boot_end)) boot_end = "";
       if (!$value$plusargs("CDCFG=%s", cdcfg)) cdcfg = "";
       if (scenario != "boot" && scenario != "boot_short" && scenario != "keys" && scenario != "fdd_rd" &&
-          scenario != "hdd" && scenario != "cd")
+          scenario != "hdd" && scenario != "cd" && scenario != "cdda" && scenario != "cdda_load")
         bench_error("unknown +SCENARIO (scenarios.vh)");
       if ((scenario == "cd") != (cdcfg == "cue" || cdcfg == "iso"))
         bench_error("scenario cd needs +CDCFG=cue or iso (and only cd takes it)");
@@ -115,6 +128,15 @@
   // cd: bfm_ide's plan cd from the main-loop milestone on
   always @(posedge sc_started) if (scenario == "cd") begin ide.plan = "cd"; ide.go = 1'b1; end
   always @(posedge ide.done) if (scenario == "cd") sc_end("cd", "the end of the last ATAPI command");
+  // cdda, cdda_load: bfm_ide's plan of the same name, which follows the
+  // player's flips (bfm_audio n_flip, copied into the model)
+  always @(posedge sc_started) if (scenario == "cdda" || scenario == "cdda_load") begin
+    ide.plan = scenario[8*16-1:0];
+    ide.go = 1'b1;
+  end
+  always @(posedge clk28) ide.cd_flips = audio.n_flip;
+  always @(posedge ide.done) if (scenario == "cdda" || scenario == "cdda_load")
+    sc_end(scenario[8*16-1:0], "the end of the STOP command");
 
   // STATS@<event>: the rv_hostcpu counters 1 ns after the end event's
   // clk_114 edge.  rv_hostcpu counts with blocking assignments on that
@@ -149,6 +171,7 @@
     begin
       if (fr_cs == 8'h10 && fr_n == 6 && fr_fpga0) begin
         sc_fpga = sc_fpga + 1;
+        m_cdda_loop;
         if (sc_fpga == 1) begin
           $display("=== MAIN first HandleFpga frame at cycle %0d", cyc);
           sc_started = 1'b1;

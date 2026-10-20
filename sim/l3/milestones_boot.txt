@@ -7,7 +7,9 @@
 # <line>": a line of that CPU only (run.sh keeps it without the prefix for
 # that CPU and drops it for the other); "CARD=<card> <line>" likewise a
 # line of that card only (fdd_rd boots the fdd card, hdd the hdd card, cd
-# the cd card as cd_cue or cd_iso by its CDCFG, the others the boot card:
+# the cd card as cd_cue or cd_iso by its CDCFG, cdda the cd card as cd_cue,
+# cdda_load the cdhdd card: the hdd card's hardfiles and the cd card's
+# TEST.CUE, so its lines are hdd's and cd_cue's; the others the boot card:
 # run.sh MSCARD); only the boot ROM's file
 # name and the config file name differ (the firmware version line is the same:
 # both builds print L3_DATE's "Firmware version: 2026-1-1-0-0", and only
@@ -84,6 +86,7 @@ SPI 20 00
 # the fdd card (fdd_rd) it is sw/mkdrivesounds/drivesnd.bin, 212,098 bytes
 CARD=boot UART file "DRIVESNDBIN" not found
 CARD=hdd UART file "DRIVESNDBIN" not found
+CARD=cdhdd UART file "DRIVESNDBIN" not found
 CARD=fdd UART file "DRIVESNDBIN" found
 CARD=fdd UART Audio file - length 212098
 CARD=cd_cue UART file "DRIVESNDBIN" not found
@@ -105,24 +108,39 @@ CARD=fdd UART file "RDB     HDF" not found
 CARD=cd_cue UART file "RDB     HDF" not found
 CARD=cd_iso UART file "RDB     HDF" not found
 CARD=hdd UART file "RDB     HDF" found
+CARD=cdhdd UART file "RDB     HDF" found
 CARD=hdd UART Total sectors: 4096, cyl: 16, heads: 4, sectors: 63
+CARD=cdhdd UART Total sectors: 4096, cyl: 16, heads: 4, sectors: 63
 CARD=hdd UART HARDFILE 0:
+CARD=cdhdd UART HARDFILE 0:
 CARD=hdd CPU=rv UART file: "RDB     .HDF"
+CARD=cdhdd CPU=rv UART file: "RDB     .HDF"
 CARD=hdd CPU=832 UART file: "8s.3s"
+CARD=cdhdd CPU=832 UART file: "8s.3s"
 CARD=hdd UART size: 2097152 (2 MB)
+CARD=cdhdd UART size: 2097152 (2 MB)
 CARD=hdd UART CHS: 16.4.63 (1 MB)
+CARD=cdhdd UART CHS: 16.4.63 (1 MB)
 CARD=hdd UART Hardfile indexed in
+CARD=cdhdd UART Hardfile indexed in
 CARD=boot UART file "SYNTH   HDF" not found
 CARD=fdd UART file "SYNTH   HDF" not found
 CARD=cd_cue UART file "SYNTH   HDF" not found
 CARD=cd_iso UART file "SYNTH   HDF" not found
 CARD=hdd UART file "SYNTH   HDF" found
+CARD=cdhdd UART file "SYNTH   HDF" found
 CARD=hdd UART HARDFILE 1:
+CARD=cdhdd UART HARDFILE 1:
 CARD=hdd CPU=rv UART file: "SYNTH   .HDF"
+CARD=cdhdd CPU=rv UART file: "SYNTH   .HDF"
 CARD=hdd CPU=832 UART file: "8s.3s"
+CARD=cdhdd CPU=832 UART file: "8s.3s"
 CARD=hdd UART size: 4194304 (4 MB)
+CARD=cdhdd UART size: 4194304 (4 MB)
 CARD=hdd UART CHS: 257.1.32 (4 MB)
+CARD=cdhdd UART CHS: 257.1.32 (4 MB)
 CARD=hdd UART Hardfile indexed in
+CARD=cdhdd UART Hardfile indexed in
 # ApplyCDROM() -> CD_Open(2) -> CD_Insert() (cdrom.c; it prints nothing
 # else without DebugMode): the cd card's disc opens.  CUE: the sheet
 # (cd_raopen), its FILE TEST.BIN looked up by the parser's callback
@@ -130,8 +148,11 @@ CARD=hdd UART Hardfile indexed in
 # (cd_data_open).  ISO: looked up, then opened as the data file.  On the
 # other cards TEST.CUE is not found (not a milestone)
 CARD=cd_cue UART file "TEST    CUE" found
+CARD=cdhdd UART file "TEST    CUE" found
 CARD=cd_cue UART file "TEST    BIN" found
+CARD=cdhdd UART file "TEST    BIN" found
 CARD=cd_cue UART file "TEST    BIN" found
+CARD=cdhdd UART file "TEST    BIN" found
 CARD=cd_iso UART file "TEST    ISO" found
 CARD=cd_iso UART file "TEST    ISO" found
 # UploadKickstart(): kickdir 0, the 256 KB KICK.ROM, sent twice (0xf80000
@@ -157,6 +178,7 @@ CARD=fdd SPI 20 54 01
 CARD=cd_cue SPI 20 54 01
 CARD=cd_iso SPI 20 54 01
 CARD=hdd SPI 20 54 07
+CARD=cdhdd SPI 20 54 07
 SPI 20 58 0b
 # ApplyConfiguration(1,1): the CPU held for the kickstart upload
 SPI 20 08 06

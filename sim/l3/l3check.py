@@ -9,6 +9,7 @@
     python3 -I l3check.py fdd_rd <run>
     python3 -I l3check.py hdd <run>
     python3 -I l3check.py cd <run>
+    python3 -I l3check.py cdda <run>
 
 kick: the 256 KB kickstart the firmware uploaded equals the card's KICK.ROM
 byte for byte.  UploadKickstart (fw/ctrl_rv/config.c) sends a 0x40000-byte
@@ -165,6 +166,47 @@ dumps <run>/cd_<k>.hex:
     it was in, and the longest 68k-side wait on the firmware per command (the
     firmware's service time)
 
+cdda (scenarios cdda and cdda_load, bfm_ide.v plan_cdda, bfm_audio.v,
+mon_l3.vh "CDDA"): CD audio from TEST.CUE's track 2 through the ring.  The
+scenario is the log's SCENARIO=; the card is <run>/card/cd.img (cdda) or
+cdhdd.img (cdda_load), its config's CD slot TEST.CUE.  From the "=== IDE"
+lines, the dumps <run>/cdda_<k>.hex, the "=== CDDA" lines and the ring
+snapshots <run>/cdda_half_<n>.bin:
+  - the commands are CDDA_PLAN below, in order: TEST UNIT READY (CHECK
+    CONDITION, the reset's UNIT ATTENTION: error 60), PLAY AUDIO MSF,
+    (cdda_load: SET MULTIPLE 16, READ MULTIPLE 256 sectors of SYNTH.HDF
+    from drive LBA 1000 = its blocks 968..1223, compared with the file),
+    PAUSE, READ SUB-CHANNEL, RESUME, STOP; each with its status, error
+    register and task file (cd's rules)
+  - the player: two runs from the PLAY command on, the PLAY's with 7
+    halves (6 flips, then PAUSE) and the RESUME's with 2 (one flip, then
+    STOP); the ring half of the k-th half of a run is k mod 2.  A run
+    before the PLAY is the boot's audio_clear() (main.c: the ring zeroed,
+    ENA for one TIMER count, CLEAR) and is not counted; nor are the refill
+    lines before it
+  - every half equals what cdaudio.c's fill() puts there for its place in
+    the run: range frame f = base + k * 8,192 of the range (LBA 214 .. 326)
+    -- TEST.BIN's bytes (LE 16-bit stereo, the CUE's track 2 from its INDEX
+    01; a gap or data sector, the end of the file or of the range: zeros),
+    scale()d at the volume when it is not 255 / 255 (the run CPU's
+    cdaudio.c: cda_init's volume; the scenario sends no MODE SELECT).  base
+    is 0 for the PLAY's run; for the RESUME's, the firmware's paused
+    position pos (a multiple of 256 frames: TIMER units) inside the sector
+    READ SUB-CHANNEL reports, within one half of the frames the player had
+    played when the PAUSE stopped it
+  - a half that differs is an underrun (late refill) when each of its
+    frames is the expected one, the half's earlier content (the same ring
+    half two halves before in the run) or zero; anything else is a wrong
+    half (FAIL in both scenarios).  cdda: no underrun (and no write into the
+    playing half); cdda_load: the underruns are counted (INFO), the gate is
+    a comparison of the two CPUs (README "cdda")
+  - READ SUB-CHANNEL (format 1, LBA): 16 bytes, audio status 12 (paused),
+    adr/control 10, track 2 index 1, the absolute LBA 214 + pos // 588 and
+    the relative pos // 588; within one half (8,192 frames) of the player
+  - the refills (mon_l3.vh): one "=== CDDA fill" line per flip, each with a
+    write ("done"); min / median / max ms and the main-loop gaps as INFO
+  - the run is at TICKDIV 643 from the scenario's start
+
 Each prints one line, "PASS <name>: ..." (exit 0) or "FAIL <name>: ..."
 (exit 1); exit 2 on a usage error.  Python 3 standard library only.
 """
@@ -228,6 +270,23 @@ CD_PLAN = [
 ]
 CD_FIFO = 8192          # bytes: gayle's FIFO, cdrom.c CD_FIFO_512 x 512
 CD_TICKDIV = 643        # the board's TIMER rate (run.sh cd)
+
+# scenarios cdda / cdda_load (bfm_ide.v plan_cdda): name, packet (None for
+# the ATA commands of cdda_load), status, error, data bytes; port / dev
+CDDA_START, CDDA_END = 214, 327          # PLAY AUDIO MSF 00:04:64 .. 00:06:27
+CDDA_HALF = 8192                         # frames in a half (cdaudio.h CDA_HALF_FRAMES)
+CDDA_UNIT = 256                          # frames per TIMER unit (cdaudio.c frames_played)
+CDDA_RUNS = (7, 2)                       # halves of the PLAY's and the RESUME's run
+CDDA_HDF_LBA, CDDA_HDF_N = 1000, 256     # cdda_load: READ MULTIPLE on SYNTH.HDF
+CDDA_PLAN = [
+    ("TEST_UNIT_READY", "000000000000000000000000", 0x41, 0x60, 0),
+    ("PLAY_AUDIO_MSF", "47000000044000061b000000", 0x40, 0x00, 0),
+    ("PAUSE", "4b0000000000000000000000", 0x40, 0x00, 0),
+    ("READ_SUBCHANNEL", "420040010000000010000000", 0x40, 0x00, 16),
+    ("RESUME", "4b0000000000000001000000", 0x40, 0x00, 0),
+    ("STOP", "4e0000000000000000000000", 0x40, 0x00, 0),
+]
+CDDA_LOAD = [("SET_MULT", None, 0x40, 0x00, 0), ("READ_MULT", None, 0x40, 0x00, CDDA_HDF_N * 512)]
 
 HOSTMAP_ADDR = 0x680000
 KICK_SIZE = 0x40000
@@ -1363,6 +1422,332 @@ def cd(run):
     return 0
 
 
+def cdda_volume(src):
+    """cda_init()'s volume in the C source src (cdaudio.c), and that fill()
+    scales only when it is not 255 / 255"""
+    with open(src) as f:
+        text = f.read()
+    v = [re.search(r"\n\tcda\.vol\[%d\] = (\d+);\n" % i, text) for i in (0, 1)]
+    rule = "if (cda.vol[0] != 255 || cda.vol[1] != 255)\n\t\tscale(dst, CDA_HALF_FRAMES);" in text
+    if not all(v) or not rule:
+        raise ValueError("%s: cda_init's volume or fill()'s scale rule not found" % src)
+    return int(v[0].group(1)), int(v[1].group(1))
+
+
+def cdda_scale(buf, vol):
+    """cdaudio.c scale(): each 16-bit LE sample times vol / 256, rounded
+    toward zero (left vol[0], right vol[1])"""
+    if vol == (255, 255):
+        return bytes(buf)
+    out = bytearray(buf)
+    for i in range(0, len(out), 2):
+        v = vol[(i >> 1) & 1]
+        x = int.from_bytes(out[i:i + 2], "little", signed=True)
+        x = -((-x * v) >> 8) if x < 0 else (x * v) >> 8
+        out[i:i + 2] = (x & 0xFFFF).to_bytes(2, "little")
+    return bytes(out)
+
+
+def cdda(run):
+    """the cdda / cdda_load scenario (README "cdda")"""
+    got = run_log(run, "cdda")
+    if got is None:
+        return 1
+    log, lines = got
+    bad, notes, info = [], [], []
+    hdr = [ln for ln in lines if ln.startswith("L3 bench: ")]
+    cpu = [ln.split()[2] for ln in lines if ln.startswith("=== CPU ")]
+    m = re.search(r" SCENARIO=(\S+) ", hdr[0]) if len(hdr) == 1 else None
+    if not m or m.group(1) not in ("cdda", "cdda_load") or len(cpu) != 1 or cpu[0] not in ("rv", "832"):
+        print("FAIL cdda: want one 'L3 bench: ... SCENARIO=cdda|cdda_load' and one '=== CPU <rv|832>' line in %s" % log)
+        return 1
+    scen, cpu = m.group(1), cpu[0]
+    load = scen == "cdda_load"
+    if " TICKDIV=%d TICKDIV_AT=scenario " % CD_TICKDIV not in hdr[0]:
+        bad.append("the run is not at TICKDIV %d from the scenario's start: %s" % (CD_TICKDIV, hdr[0]))
+    content = os.path.join(run, "card", "content")
+    img = os.path.join(run, "card", "cdhdd.img" if load else "cd.img")
+    check = os.path.join(run, "card", "cfg_cue", "MINMGAA.check")
+    for p in (img, check):
+        if not os.path.isfile(p):
+            print("FAIL cdda: scenario %s, but no %s" % (scen, p))
+            return 1
+    hf = {}
+    with open(check) as f:
+        for line in f:
+            mm = re.match(r"secondaryhardfile\[0\]\.(\w+) = (.*)$", line.rstrip("\n"))
+            if mm:
+                hf[mm.group(1)] = mm.group(2)
+    if hf.get("enabled") != "7" or hf.get("present") != "2" or hf.get("name") != '"TEST    "':
+        print("FAIL cdda: %s's CD slot is %s, want enabled 7, present 2 (TEST.CUE), name \"TEST    \"" % (check, hf))
+        return 1
+
+    # the disc: TEST.CUE's tracks (an independent reader), TEST.BIN
+    bin_p = os.path.join(content, "TEST.BIN")
+    with open(bin_p, "rb") as f:
+        binf = f.read()
+    tracks, leadout = cue_disc(os.path.join(content, "TEST.CUE"), bin_p)
+    vol_src = os.path.join(CD_FW, "ctrl_rv" if cpu == "rv" else "ctrl_832", "cdaudio.c")
+    vol = cdda_volume(vol_src)
+    total = (CDDA_END - CDDA_START) * 588
+    t2 = [t for t in tracks if t["lba"] <= CDDA_START][-1]
+    if t2["type"] != "AUDIO" or t2["lba"] != CDDA_START:
+        print("FAIL cdda: LBA %d is not the INDEX 01 of an audio track in TEST.CUE (%s)" % (CDDA_START, tracks))
+        return 1
+
+    def produce(f0, n):
+        """cdaudio.c produce() + fill(): n frames of the range from range
+        frame f0, then scale()"""
+        out = bytearray()
+        for f in range(f0, f0 + n):
+            if f >= total:
+                out += bytes(4)
+                continue
+            lba = CDDA_START + f // 588
+            t = [x for x in tracks if x["lba"] <= lba][-1]
+            if t["type"] != "AUDIO" or lba >= leadout:
+                out += bytes(4)
+                continue
+            off = (t["file_sector"] + lba - t["lba"]) * 2352 + (f % 588) * 4
+            out += (binf[off:off + 4] + bytes(4))[:4]
+        return cdda_scale(out, vol)
+
+    # the IDE commands
+    plan = CDDA_PLAN[:2] + (CDDA_LOAD if load else []) + CDDA_PLAN[2:]
+    cmds, ends = {}, {}
+    for line in lines:
+        mm = re.match(r"=== IDE cmd (\d+) PACKET port (\d+) dev (\d+) packet ([0-9a-f]{24}) bytecount (\d+) want ([0-9a-f]{2}) at cycle (\d+)$", line)
+        if mm:
+            cmds[int(mm.group(1))] = ("PACKET", int(mm.group(2)), int(mm.group(3)), mm.group(4), int(mm.group(5)))
+        mm = re.match(r"=== IDE cmd (\d+) (\S+) port (\d+) dev (\d+) chs (\d+)/(\d+)/(\d+) lba (-?\d+) count (\d+) at cycle (\d+)$", line)
+        if mm:
+            cmds[int(mm.group(1))] = (mm.group(2), int(mm.group(3)), int(mm.group(4))) + tuple(int(mm.group(i)) for i in (5, 6, 7, 8, 9))
+        mm = re.match(r"=== IDE end (\d+) (\S+): status ([0-9a-f]{2}) error ([0-9a-f]{2}) tf ([0-9a-f]{2}) ([0-9a-f]{2}) "
+                      r"([0-9a-f]{2}) ([0-9a-f]{2}) ([0-9a-f]{2}), (\d+) words in, (\d+) out, file (\S+), waits (\d+) "
+                      r"\(irq (\d+), poll (\d+), nrdy (\d+)\) min/median/max (\d+)/(\d+)/(\d+) clk_114, total (\d+), "
+                      r"(\d+) cycles, at cycle (\d+)$", line)
+        if mm:
+            ends[int(mm.group(1))] = mm
+    if sorted(cmds) != list(range(1, len(plan) + 1)):
+        print("FAIL cdda: the IDE commands in the log are %s, want 1..%d (CDDA_PLAN)" % (sorted(cmds), len(plan)))
+        return 1
+    subch = None
+    hdf_geo = HDD_GEO[(0, 1)]
+    for k, (name, pkt, want_st, want_er, nbytes) in enumerate(plan, 1):
+        c, e = cmds[k], ends.get(k)
+        what = "command %d %s" % (k, name)
+        if e is None:
+            bad.append("%s: no '=== IDE end %d' line" % (what, k))
+            continue
+        st, er = int(e.group(3), 16), int(e.group(4), 16)
+        tfr = [int(e.group(i), 16) for i in range(5, 10)]
+        win, wout, fname = int(e.group(10)), int(e.group(11)), e.group(12)
+        path = os.path.join(run, fname)
+        dump = read_hex(path) if fname != "-" and os.path.isfile(path) else None
+        if pkt is not None:
+            if c[0] != "PACKET" or (c[1], c[2]) != (CD_PORT, CD_DEV) or c[3] != pkt or c[4] != 0xFFFE:
+                bad.append("%s: the log has %s, want PACKET %s on port %d dev %d limit 65534" % (what, c, pkt, CD_PORT, CD_DEV))
+                continue
+            want_tf = [0x03, 0x00, 0xFE, 0xFF, 0xA0]
+            if (st, er, tfr) != (want_st, want_er, want_tf):
+                bad.append("%s: status %02x error %02x tf %s at the end, want %02x %02x tf %s" % (
+                    what, st, er, " ".join("%02x" % x for x in tfr), want_st, want_er, " ".join("%02x" % x for x in want_tf)))
+            if (win, wout) != ((nbytes + 1) // 2, 6):
+                bad.append("%s: %d words in, %d out, want %d in, 6 out" % (what, win, wout, (nbytes + 1) // 2))
+            if nbytes:
+                if dump is None or len(dump) != nbytes:
+                    bad.append("%s: dump %s has %s bytes, want %d" % (what, fname, None if dump is None else len(dump), nbytes))
+                elif name == "READ_SUBCHANNEL":
+                    subch = dump
+            continue
+        # cdda_load's ATA commands on SYNTH.HDF (port 0 slave)
+        if c[0] != name or (c[1], c[2]) != (0, 1):
+            bad.append("%s: the log has %s, want %s on port 0 dev 1 (SYNTH.HDF)" % (what, c, name))
+            continue
+        if (st, er) != (want_st, want_er):
+            bad.append("%s: status %02x error %02x at the end, want %02x %02x" % (what, st, er, want_st, want_er))
+        if name == "READ_MULT":
+            cc, hh, ss = c[3], c[4], c[5]
+            lba = chs_lba(hdf_geo, cc, hh, ss)
+            lc, lh, ls = chs_last(hdf_geo, cc, hh, ss, CDDA_HDF_N)
+            if lba != CDDA_HDF_LBA or tfr != [0, ls, lc & 255, lc >> 8, 0xB0 | lh]:
+                bad.append("%s: LBA %d, task file at the end %s, want LBA %d and 00 %02x %02x %02x %02x"
+                           % (what, lba, " ".join("%02x" % x for x in tfr), CDDA_HDF_LBA, ls, lc & 255, lc >> 8, 0xB0 | lh))
+            with open(os.path.join(content, "SYNTH.HDF"), "rb") as f:
+                hdf = f.read()
+            n0 = CDDA_HDF_LBA - hdf_geo[4]
+            want = hdf[512 * n0:512 * (n0 + CDDA_HDF_N)]
+            if win != CDDA_HDF_N * 256 or dump is None or len(want) != CDDA_HDF_N * 512:
+                bad.append("%s: %d words in, dump %s: want %d sectors" % (what, win, fname, CDDA_HDF_N))
+            else:
+                k0 = first_diff(dump, want)
+                if k0 >= 0:
+                    bad.append("%s: differs at byte %d (SYNTH.HDF block %d byte %d) (%02x, want %02x)"
+                               % (what, k0, n0 + k0 // 512, k0 % 512, dump[k0], want[k0]))
+                else:
+                    notes.append("%s: drive LBA %d..%d = SYNTH.HDF blocks %d..%d, %d waits, the longest %s clk_114"
+                                 % (what, CDDA_HDF_LBA, CDDA_HDF_LBA + CDDA_HDF_N - 1, n0, n0 + CDDA_HDF_N - 1,
+                                    int(e.group(13)), e.group(19)))
+
+    # the player's runs and halves (bfm_audio.v).  Only the runs from the
+    # PLAY command on count: the boot's audio_clear() (main.c: the ring
+    # zeroed, ENA for one TIMER count, CLEAR) is a run of its own before
+    # the scenario; they are numbered from 0 at the PLAY's here
+    play_at = [int(mm.group(1)) for mm in (re.match(r"=== IDE cmd \d+ PACKET port \d+ dev \d+ packet 47[0-9a-f]{22} "
+                                                     r"bytecount \d+ want [0-9a-f]{2} at cycle (\d+)$", ln) for ln in lines) if mm]
+    if len(play_at) != 1:
+        print("FAIL cdda: want one PLAY AUDIO MSF command line in %s" % log)
+        return 1
+    play_at = play_at[0]
+    starts = {}
+    for line in lines:
+        mm = re.match(r"=== CDDA run (\d+) start at cycle (\d+)$", line)
+        if mm:
+            starts[int(mm.group(1))] = int(mm.group(2))
+    r0 = min([r for r in starts if starts[r] >= play_at] or [None]) if starts else None
+    early = sorted(r for r in starts if starts[r] < play_at)
+    if r0 is None:
+        print("FAIL cdda: no player run after the PLAY command (cycle %d)" % play_at)
+        return 1
+    if early:
+        notes.append("player run(s) %s before the PLAY (the boot's audio_clear()) not counted; the PLAY's run is bfm_audio's run %d"
+                     % (early, r0))
+    halves, runs = [], {}
+    for line in lines:
+        mm = re.match(r"=== CDDA half (\d+) run (\d+) k (\d+) ring half (\d) at cycle (\d+): (\S+)$", line)
+        if mm and int(mm.group(2)) >= r0:
+            halves.append((int(mm.group(1)), int(mm.group(2)) - r0) + tuple(int(mm.group(i)) for i in range(3, 6)) + (mm.group(6),))
+        mm = re.match(r"=== CDDA run (\d+) end at cycle (\d+): (\d+) frames played, (\d+) halves$", line)
+        if mm and int(mm.group(1)) >= r0:
+            runs[int(mm.group(1)) - r0] = (int(mm.group(3)), int(mm.group(4)), int(mm.group(2)))
+    n_first = halves[0][0] if halves else 1
+    want_hk = [(r, k) for r, n in enumerate(CDDA_RUNS) for k in range(n)]
+    if [(h[1], h[2]) for h in halves] != want_hk or [h[0] for h in halves] != list(range(n_first, n_first + len(halves))):
+        print("BAD  the player's halves (run, k) are %s, want %s" % ([(h[1], h[2]) for h in halves], want_hk))
+        print("FAIL cdda: the halves are not the plan's (two runs of %s halves)" % (CDDA_RUNS,))
+        return 1
+    if sorted(runs) != [0, 1] or [runs[r][1] for r in (0, 1)] != list(CDDA_RUNS):
+        bad.append("the '=== CDDA run <r> end' lines are %s, want runs 0 and 1 with %s halves" % (runs, CDDA_RUNS))
+    snaps = {}
+    for n, r, k, rh, at, fname in halves:
+        if rh != k % 2:
+            bad.append("half %d (run %d k %d): ring half %d, want %d" % (n, r, k, rh, k % 2))
+        p = os.path.join(run, fname)
+        if not os.path.isfile(p) or os.path.getsize(p) != CDDA_HALF * 4:
+            bad.append("half %d: no %d-byte snapshot %s" % (n, CDDA_HALF * 4, p))
+            continue
+        with open(p, "rb") as f:
+            snaps[(r, k)] = f.read()
+    if sorted(runs) != [0, 1] or len(snaps) != len(halves):
+        for b in bad:
+            print("BAD  " + b)
+        print("FAIL cdda: %d problem(s)" % len(bad))
+        return 1
+
+    # the paused position: READ SUB-CHANNEL, the RESUME's first half, the player
+    played0 = runs[0][0]
+    pos = None
+    if subch is not None:
+        lba = int.from_bytes(subch[8:12], "big")
+        rel = int.from_bytes(subch[12:16], "big", signed=True)
+        want_head = bytes((0x00, 0x12, 0x00, 0x0C, 0x01, 0x10, 0x02, 0x01))
+        if subch[:8] != want_head or rel != lba - CDDA_START:
+            bad.append("READ SUB-CHANNEL: %s, want %s, LBA, LBA - %d (paused, audio, track 2 index 1)"
+                       % (subch.hex(), want_head.hex(), CDDA_START))
+        cands = [p for p in range(0, total, CDDA_UNIT) if CDDA_START + p // 588 == lba]
+        hit = [p for p in cands if produce(p, CDDA_HALF) == snaps[(1, 0)]]
+        if len(hit) != 1:
+            bad.append("the RESUME's first half is the range from none of the TIMER-unit positions %s of LBA %d "
+                       "(READ SUB-CHANNEL)" % (cands, lba))
+        else:
+            pos = hit[0]
+            if abs(pos - played0) > CDDA_HALF:
+                bad.append("the paused position %d frames is more than one half (%d) from the %d frames the player played"
+                           % (pos, CDDA_HALF, played0))
+            if abs((lba - CDDA_START) * 588 - played0) > CDDA_HALF + 588:
+                bad.append("READ SUB-CHANNEL LBA %d is more than one half from the player (%d frames)" % (lba, played0))
+            notes.append("READ SUB-CHANNEL: paused at LBA %d (relative %d); the RESUME starts at range frame %d = %d "
+                         "TIMER units; the player had played %d frames (%+d)" % (lba, rel, pos, pos // CDDA_UNIT, played0,
+                                                                                 pos - played0))
+    if pos is None:
+        bad.append("no paused position: the RESUME's halves are not checked")
+
+    # every half
+    late, wrong, nzero = [], [], 0
+    for n, r, k, rh, at, fname in halves:
+        base = 0 if r == 0 else pos
+        if base is None:
+            continue
+        want = produce(base + k * CDDA_HALF, CDDA_HALF)
+        got = snaps[(r, k)]
+        if got == want:
+            continue
+        if not any(got):
+            nzero += 1
+        # a run's first two halves are filled before its ENA (cdaudio.c
+        # run()): they cannot be late
+        stale = snaps.get((r, k - 2))
+        frames_bad = [i for i in range(0, len(got), 4)
+                      if stale is None or got[i:i + 4] not in (want[i:i + 4], stale[i:i + 4], bytes(4))]
+        k0 = first_diff(got, want)
+        desc = "half %d (run %d k %d, range frames %d..%d, cycle %d): differs from byte %d (%02x, want %02x)" % (
+            n, r, k, base + k * CDDA_HALF, base + (k + 1) * CDDA_HALF - 1, at, k0, got[k0], want[k0])
+        if stale is None:
+            wrong.append(desc + "; a half the run filled before it started")
+        elif frames_bad:
+            wrong.append(desc + "; frame %d is neither the expected, the half's earlier content nor zero" % (frames_bad[0] // 4))
+        else:
+            late.append(desc + "; a late refill (every frame expected, earlier or zero)")
+    for w in wrong:
+        bad.append("WRONG " + w)
+    if not load:
+        for w in late:
+            bad.append("UNDERRUN " + w)
+    else:
+        for w in late:
+            info.append("UNDERRUN " + w)
+
+    # the refills (mon_l3.vh)
+    fills = [re.match(r"=== CDDA fill (\d+) start (\d+) done (\d+|none)", ln) for ln in lines if ln.startswith("=== CDDA fill ")]
+    nflip = sum(n - 1 for n in CDDA_RUNS)
+    if not all(fills):
+        bad.append("an '=== CDDA fill' line this check cannot read")
+    fills = [f for f in fills if f and int(f.group(2)) >= play_at]
+    if len(fills) != nflip or [int(f.group(1)) for f in fills] != list(range(int(fills[0].group(1)) if fills else 1,
+                                                                               (int(fills[0].group(1)) if fills else 1) + nflip)):
+        bad.append("the '=== CDDA fill' lines after the PLAY are for flips %s, want %d consecutive" % ([f.group(1) for f in fills], nflip))
+    elif any(f.group(3) == "none" for f in fills):
+        bad.append("a flip without a refill write: flips %s" % [f.group(1) for f in fills if f.group(3) == "none"])
+    pw = [ln for ln in lines if ln.startswith("=== CDDA writes into the playing half: ")]
+    npw = int(pw[0].split()[-1]) if len(pw) == 1 else None
+    if npw is None:
+        bad.append("no '=== CDDA writes into the playing half' line")
+    elif npw and not load:
+        bad.append("%d writes into the playing half (the firmware's underrun response)" % npw)
+    for key in ("=== CDDA fills ", "=== CDDA main loop while playing: ", "=== CDDA start fill "):
+        for ln in lines:
+            if ln.startswith(key):
+                info.append(ln[4:])
+    nh = len(halves)
+    info.append("%s, CPU %s: %d halves, %d underrun(s) (late refills), %d zero-filled, %s writes into the playing half"
+                % (scen, cpu, nh, len(late), nzero, npw))
+
+    for b in bad:
+        print("BAD  " + b)
+    for n in notes:
+        print("ok   " + n)
+    for n in info:
+        print("INFO " + n)
+    if bad:
+        print("FAIL cdda: %d problem(s)" % len(bad))
+        return 1
+    print("PASS cdda: %s, CPU %s: %d commands, %d halves of 2 runs (%d flips) = TEST.BIN's track 2 at the firmware's "
+          "position (volume %d/%d), %d underrun(s)%s, READ SUB-CHANNEL within one half of the player%s"
+          % (scen, cpu, len(plan), nh, nflip, vol[0], vol[1], len(late), " (counted)" if load else "",
+             ", %d HDF sectors = SYNTH.HDF" % CDDA_HDF_N if load else ""))
+    return 0
+
+
 def main(argv):
     if len(argv) == 3 and argv[1] == "kick":
         return kick(argv[2])
@@ -1382,6 +1767,8 @@ def main(argv):
         return hdd(argv[2])
     if len(argv) == 3 and argv[1] == "cd":
         return cd(argv[2])
+    if len(argv) == 3 and argv[1] == "cdda":
+        return cdda(argv[2])
     sys.stderr.write(__doc__)
     return 2
 

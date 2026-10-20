@@ -2,7 +2,9 @@
 // 12 and 14 (README "Monitors").  `include"d by tb_l3.v after hostmon.vh (it
 // reads hostmon's hw_req_d, hw_done, hwa, spi_data, n_stale, n_hw) and after
 // the rtc_model instance rtc1, paula_floppy pf1, bfm_floppy fdd, bfm_ide
-// ide, gayle gayle1 and the tick generator's tickdiv; mon_final
+// ide, gayle gayle1, bfm_audio audio and the tick generator's tickdiv; the
+// CD audio ring timing ("=== CDDA" lines, scenarios cdda and cdda_load) is
+// the last block before the report; mon_final
 // prints one line per measurement at the end of the run, before the
 // verdict:
 //
@@ -289,6 +291,163 @@
     end
   end
 
+  // ---------------------------------------- CD audio ring timing (cdda)
+  // Only with bfm_audio's +CDDA_DUMP (scenarios cdda, cdda_load; README
+  // "cdda").  An SDRAM write into the ring is a write acknowledged at host
+  // 0x70000..0x7ffff (as item 14); its half is address bit 15.
+  //   fill <n>   from flip n (bfm_audio n_flip; seen here up to 4 clk_114
+  //              after the clk_28 edge) to the firmware's last write into
+  //              the half that is now free (the other one than the player's),
+  //              before the next flip or the player's stop (PAUSE, STOP: the
+  //              AUDIO write that takes audio_ena low or audio_clear high);
+  //              one line when the window closes:
+  //   === CDDA fill <n> start <cycle> done <cycle> (<ms> ms at 113.4375 MHz), <w> writes into ring half <h>, until the <next flip|stop>
+  //              ("done none" when the firmware wrote nothing into it)
+  //   start fill a run's own fill (cdaudio.c run(): CLEAR, both halves,
+  //              ENA): the ring writes from the CLEAR to the player's start
+  //   === CDDA start fill run <r>: <w> ring writes from cycle <a> to <b> (<ms> ms), the player starts at cycle <c>
+  //   main loop  the time between two HandleFpga frames (scenarios.vh's
+  //              main-loop frame: cs 10, six 00 bytes) while the player
+  //              runs: one pass of main()'s loop, refills and served IDE
+  //              commands included
+  //   writes into the playing half: the firmware's underrun response
+  //              (cdaudio.c cda_poll: the late half is zeroed) or a defect;
+  //              0 when every refill was in time
+  // mon_final prints min / median (the lower one) / max of the fills and of
+  // the main-loop gaps.
+  localparam [31:0]  MC_RING = 32'h00070000;
+  localparam integer MC_FMAX = 256;          // fills kept
+  localparam integer MC_LMAX = 262144;       // main-loop gaps kept
+  real    MC_MHZ = 113.4375;                 // clk_114 (T114 = 8.8154 ns)
+  integer mc_fill [0:MC_FMAX-1];
+  integer mc_gap  [0:MC_LMAX-1];
+  integer mc_n = 0, mc_none = 0, mc_flip = 0, mc_t0 = 0, mc_last = -1, mc_w = 0, mc_pw = 0;
+  integer mc_s_t0 = -1, mc_s_last = -1, mc_s_w = 0, mc_run = 0;
+  integer ml_n = 0, ml_prev = -1, ml_max = 0, ml_maxat = 0;
+  reg     mc_open = 1'b0, mc_free = 1'b0, mc_play_d = 1'b0, mc_clear_d = 1'b0;
+  wire    mc_play = audio_ena === 1'b1 && audio_clear === 1'b0;
+  wire    mc_ringw = ram_req === 1'b1 && ram_ack === 1'b1 && host_we === 1'b1 &&
+                     hwa >= MC_RING && hwa < MC_RING + 32'h00010000;
+
+  task mc_close(input stop);
+    begin
+      mc_open = 1'b0;
+      if (mc_last >= 0) begin
+        if (mc_n < MC_FMAX) mc_fill[mc_n] = mc_last - mc_t0;
+        mc_n = mc_n + 1;
+        $display("=== CDDA fill %0d start %0d done %0d (%0.3f ms at 113.4375 MHz), %0d writes into ring half %0d, until the %0s",
+                 mc_flip, mc_t0, mc_last, (mc_last - mc_t0) / (MC_MHZ * 1000.0), mc_w, mc_free, stop ? "stop" : "next flip");
+      end else begin
+        mc_none = mc_none + 1;
+        $display("=== CDDA fill %0d start %0d done none (no write into ring half %0d), until the %0s",
+                 mc_flip, mc_t0, mc_free, stop ? "stop" : "next flip");
+      end
+    end
+  endtask
+
+  always @(posedge clk114) if (cpu_reset_n && audio.dump_on) begin
+    if (mc_open && !mc_play) mc_close(1'b1);
+    if (mc_open && audio.n_flip != mc_flip) mc_close(1'b0);
+    if (mc_play && audio.n_flip != mc_flip) begin
+      mc_flip = audio.n_flip;
+      mc_open = 1'b1;
+      mc_t0 = cyc;
+      mc_last = -1;
+      mc_w = 0;
+      mc_free = !aud_addr[15];
+    end
+    if (audio_clear === 1'b1 && !mc_clear_d) begin mc_s_t0 = -1; mc_s_last = -1; mc_s_w = 0; end
+    if (mc_ringw) begin
+      if (mc_open && hwa[15] == mc_free) begin
+        mc_last = cyc;
+        mc_w = mc_w + 1;
+      end else if (mc_play) begin
+        mc_pw = mc_pw + 1;
+        if (mc_pw <= 5)
+          $display("=== CDDA (info) a write into the playing half %0d at cycle %0d (host %h)", aud_addr[15], cyc, hwa);
+      end else begin
+        if (mc_s_t0 < 0) mc_s_t0 = cyc;
+        mc_s_last = cyc;
+        mc_s_w = mc_s_w + 1;
+      end
+    end
+    if (mc_play && !mc_play_d) begin
+      if (mc_s_t0 >= 0)
+        $display("=== CDDA start fill run %0d: %0d ring writes from cycle %0d to %0d (%0.3f ms), the player starts at cycle %0d",
+                 mc_run, mc_s_w, mc_s_t0, mc_s_last, (mc_s_last - mc_s_t0) / (MC_MHZ * 1000.0), cyc);
+      else
+        $display("=== CDDA start fill run %0d: no ring write since the CLEAR, the player starts at cycle %0d", mc_run, cyc);
+      mc_run = mc_run + 1;
+      mc_s_t0 = -1; mc_s_last = -1; mc_s_w = 0;
+    end
+    mc_play_d = mc_play;
+    mc_clear_d = audio_clear === 1'b1;
+  end
+
+  // scenarios.vh sc_frame, at the close of every main-loop frame
+  task m_cdda_loop;
+    begin
+      if (audio.dump_on && mc_play) begin
+        if (ml_prev >= 0) begin
+          if (ml_n < MC_LMAX) mc_gap[ml_n] = cyc - ml_prev;
+          if (ml_n == 0 || cyc - ml_prev > ml_max) begin ml_max = cyc - ml_prev; ml_maxat = cyc; end
+          ml_n = ml_n + 1;
+        end
+        ml_prev = cyc;
+      end else
+        ml_prev = -1;
+    end
+  endtask
+
+  // min / lower median / max of the first n kept values of mc_fill (which 0)
+  // or mc_gap (which 1), the median by binary search as bfm_ide.v's
+  integer mc_r_min, mc_r_med, mc_r_max;
+  task mc_stats(input which, input integer n_all);
+    integer lo, hi, mid, c, i, n, x;
+    begin
+      n = which ? ((n_all < MC_LMAX) ? n_all : MC_LMAX) : ((n_all < MC_FMAX) ? n_all : MC_FMAX);
+      mc_r_min = 0; mc_r_max = 0;
+      for (i = 0; i < n; i = i + 1) begin
+        x = which ? mc_gap[i] : mc_fill[i];
+        if (i == 0 || x < mc_r_min) mc_r_min = x;
+        if (i == 0 || x > mc_r_max) mc_r_max = x;
+      end
+      lo = mc_r_min; hi = mc_r_max;
+      while (lo < hi) begin
+        mid = lo + (hi - lo) / 2;
+        c = 0;
+        for (i = 0; i < n; i = i + 1) if ((which ? mc_gap[i] : mc_fill[i]) <= mid) c = c + 1;
+        if (c >= (n + 1) / 2) hi = mid; else lo = mid + 1;
+      end
+      mc_r_med = lo;
+    end
+  endtask
+
+  task mc_final;
+    begin
+      if (audio.dump_on) begin
+        if (mc_open) mc_close(1'b1);
+        if (mc_n > 0) begin
+          mc_stats(1'b0, mc_n);
+          $display("=== CDDA fills %0d (%0d without a write): min/median/max %0.3f/%0.3f/%0.3f ms = %0d/%0d/%0d clk_114",
+                   mc_n, mc_none, mc_r_min / (MC_MHZ * 1000.0), mc_r_med / (MC_MHZ * 1000.0), mc_r_max / (MC_MHZ * 1000.0),
+                   mc_r_min, mc_r_med, mc_r_max);
+        end else
+          $display("=== CDDA fills 0 (%0d without a write)", mc_none);
+        if (ml_n > 0) begin
+          mc_stats(1'b1, ml_n);
+          $display("=== CDDA main loop while playing: %0d gaps, min/median/max %0.3f/%0.3f/%0.3f ms = %0d/%0d/%0d clk_114, the longest ending at cycle %0d",
+                   ml_n, mc_r_min / (MC_MHZ * 1000.0), mc_r_med / (MC_MHZ * 1000.0), mc_r_max / (MC_MHZ * 1000.0),
+                   mc_r_min, mc_r_med, mc_r_max, ml_maxat);
+        end else
+          $display("=== CDDA main loop while playing: 0 gaps");
+        if (ml_n > MC_LMAX) bench_error("CDDA: more main-loop gaps than MC_LMAX (the median is of the first MC_LMAX)");
+        if (mc_n > MC_FMAX) bench_error("CDDA: more fills than MC_FMAX (the median is of the first MC_FMAX)");
+        $display("=== CDDA writes into the playing half: %0d", mc_pw);
+      end
+    end
+  endtask
+
   // ------------------------------------------------------------- report
   integer rtc_csh_bound = 0;       // +RTC_CSH_MIN=<ns>
 
@@ -326,6 +485,7 @@
 
   task mon_final;
     begin
+      mc_final;
       rtc1.report;
       if (m14_nw > 0)
         $display("=== KICK last SDRAM write into the kickstart region at cycle %0d (host %h), %0d writes", m14_w, m14_a, m14_nw);

@@ -2,8 +2,8 @@
 
 Work in progress (Phase 4 of the OSD host CPU migration). This file grows
 with the bench; so far it has the sections "Bench", "Run", "boot",
-"832", "Differential", "keys", "fdd_rd", "hdd", "cd", "Monitors" and
-"Cards".
+"832", "Differential", "keys", "fdd_rd", "hdd", "cd", "cdda", "Monitors"
+and "Cards".
 
 ## Bench
 
@@ -20,9 +20,9 @@ the committed boot ROM and the real firmware from an SD card image:
 | OSD | `userio_osd` (instance `osd1`) on `sd_cs[5]`, `CORE_CAPS` 0xAD | `rtl/minimig` |
 | floppy / HDD | `paula_floppy` on `sd_cs[4]`, direct mode on `~sd_cs[6]` from the card's MISO; `gayle #(.IDE_PORTS(2))` behind it on the `hdd_*` bus | `rtl/minimig` |
 | reset | `minimig_syscontrol` (`mrst` = `usrrst`, `cnt` = sof); chipset reset = `sys_reset \| cpurst` | `rtl/minimig` |
-| audio ring | `bfm_audio.v`: the ring position, cfide `audio_buf` = bit 15 | `sim/l3` |
+| audio ring | `bfm_audio.v`: the ring position, cfide `audio_buf` = bit 15; with `+CDDA_DUMP` a copy of every half the player starts (section "cdda") | `sim/l3` |
 | floppy's Amiga side | `bfm_floppy.v` (instance `fdd`): the CIA lines, Paula's disk registers and Agnus's disk DMA slots for paula_floppy (scenario `fdd_rd`, section "fdd_rd"; idle otherwise) | `sim/l3` |
-| Gayle's Amiga side | `bfm_ide.v` (instance `ide`): a 68k IDE driver on gayle's task file, data, INTENA / INTREQ registers, `irq` and `nrdy` (scenarios `hdd` and `cd`, sections "hdd" and "cd"; idle otherwise: every 68k input 0) | `sim/l3` |
+| Gayle's Amiga side | `bfm_ide.v` (instance `ide`): a 68k IDE driver on gayle's task file, data, INTENA / INTREQ registers, `irq` and `nrdy` (scenarios `hdd`, `cd`, `cdda` and `cdda_load`, sections "hdd", "cd" and "cdda"; idle otherwise: every 68k input 0) | `sim/l3` |
 
 The wiring is that of `rtl/minimig/minimig.v` and
 `rtl/soc/minimig_virtual_top.v`: cfide's `sd_di` is the slaves' MISO
@@ -37,7 +37,7 @@ board's global include; `MINIMIG_HOST_DIRECT`: userio_osd's `host_cs` is
 constant 0, and the bench fails the run if it ever rises) with the board's
 `fpga/openaars/minimig_version.vh`.
 
-The Amiga side is idle outside `fdd_rd`, `hdd`, `cd` and the key scripts: the
+The Amiga side is idle outside `fdd_rd`, `hdd`, `cd`, `cdda`, `cdda_load` and the key scripts: the
 floppy is deselected (`_sel` 1111, `_motor` 1), no register or Gayle access,
 `osd_ctrl` 0, `in_diag` 0. The CPU's
 reset output follows its reset input, so the chipset reset is
@@ -605,6 +605,9 @@ defect, `findings/osd-riscv/phase4.md` "Findings for Paul") and the RV-only
   TIMER count; `cdda` checks its ring with `l3check.py`
 
 `cd` adds no rule, only the IDE flag poll mask above (section "cd").
+`cdda` and `cdda_load` add no rule yet. Their two timing-only differences
+(the per-pass flag polls and the paused position) await a ruling (section
+"cdda", Measured).
 
 `hdd` adds three UART rules (section "hdd"): `file: "%.8s.%.3s"`
 (`fmt_diff_expected.txt` lines 45-52), the index time `Hardfile indexed
@@ -1454,6 +1457,180 @@ in the earlier pairs (`p4t7r2` / `p4t7c2`, `p4t15f` / `p4t15cf`: their
 normalised streams are byte-identical with and without it).
 `--unused-rules` lists the `fdd_rd` and `hdd` rules (Task 19's clean-up).
 
+## cdda
+
+`cdda` plays CD audio the way an Amiga CD player program does, through
+`atapi.c`'s audio commands and `cdaudio.c`'s player into the 64 KB ring,
+at the board's TIMER rate. `cdda_load` is the same with an HDF transfer
+during the play (plan 7.4 "HDF copy with CD audio", plan 1.2:
+"underruns come from foreground jobs blocking the loop > 150 ms").
+
+| | `cdda` | `cdda_load` |
+|---|---|---|
+| card | `cd` (`CDCFG=cue`: `TEST.CUE` in the CD drive, IDE port 2 master) | `cdhdd`: the same configs, plus the `hdd` card's `SYNTH.HDF` and `RDB.HDF` on IDE port 0 |
+| plan (`bfm_ide.v` `plan_cdda`) | below | below, plus at flip 2 SET MULTIPLE 16 and READ MULTIPLE of 256 sectors of `SYNTH.HDF` (port 0 slave, LBA 1000) |
+| TIMER | `TICKDIV` 643 from the scenario's start | the same |
+
+The player (`bfm_audio.v`) takes one stereo frame per tick, so at 643 one
+32 KB half (8,192 frames) lasts 186 ms = 21.1 M `clk_114`. The plan, on
+IDE port 2 master, byte count limit 0xFFFE:
+
+| # | Command | Packet | Then |
+|---|---|---|---|
+| 1 | TEST UNIT READY | `00` | CHECK CONDITION: the reset's UNIT ATTENTION (error 0x60), which would otherwise refuse the PLAY |
+| 2 | PLAY AUDIO MSF | `47`, 00:04:64 .. 00:06:27 | LBA 214 .. 326: track 2 from its INDEX 01, 113 sectors = 66,444 frames (1.5 s). `cdaudio.c` `run()` fills both halves before the status phase |
+| (3, 4) | `cdda_load`: SET MULTIPLE, READ MULTIPLE 256 | ATA, port 0 slave | at the player's flip 2; the data = `SYNTH.HDF` blocks 968..1223 |
+| 3 | PAUSE | `4B`, byte 8 = 0 | at flip 6 |
+| 4 | READ SUB-CHANNEL | `42`, SubQ, format 1, LBA, 16 bytes | the paused position |
+| 5 | RESUME | `4B`, byte 8 = 1 | a new run from the position |
+| 6 | STOP | `4E` | at flip 7 (the resumed run's first) |
+
+After each flip the plan waits 500,000 `clk_114` (4.4 ms) more before its
+next command. By then the firmware has seen the flip and started the
+refill (`main()` calls `CD_AudioPoll()` before `HandleFpga()`), so both
+CPUs serve the command after their refill.
+
+**Ring snapshots.** With `+CDDA_DUMP=<run>/cdda_half` the model copies,
+at every half start, the 32 KB half the player is about to play from the
+SDRAM model (ring at host 0x70000, half h at 0x70000 + h x 0x8000) into
+`<run>/cdda_half_<n>.bin`. A half starts at a run's start (ENA: half 0)
+and at every flip (the tick that takes the play address into the other
+half). The log has `=== CDDA half <n> run <r> k <k> ring half <h> at cycle
+<c>: <file>` and per run `=== CDDA run <r> start` / `end ... <f> frames
+played, <k> halves`. The PLAY's run has 7 halves (6 flips, then the
+PAUSE), the RESUME's 2. The boot makes a run of its own before the
+scenario: `main()`'s `audio_clear()` zeroes the ring, sets ENA for one
+TIMER count and clears it again (the copy is in the log; `l3check.py`
+counts only the runs from the PLAY on).
+
+**Refill timing** (plan 4.4, `mon_l3.vh`):
+
+- `=== CDDA fill <n> start <cycle> done <cycle> (<ms> ms at 113.4375 MHz)`:
+  from flip n to the firmware's last SDRAM write into the half that is now
+  free, before the next flip or the player's stop. `done none` means no
+  write at all.
+- `=== CDDA start fill run <r>`: `run()`'s own fill of both halves, from
+  the CLEAR to ENA.
+- `=== CDDA fills <n>`: min / median / max over the run.
+- `=== CDDA main loop while playing`: the gaps between two main-loop
+  frames (`HandleFpga`'s `10` + six 00 bytes) while the player runs: one
+  pass of `main()`'s loop, refills and served IDE commands included.
+- `=== CDDA writes into the playing half: <n>`: the firmware's underrun
+  response (`cda_poll` zeroes the late half) or a defect.
+
+### Checks
+
+`l3check.py cdda <run>` (both scenarios; the script's docstring has the details):
+
+- the commands in order, each with its status, error register and task
+  file (`cd`'s rules); `cdda_load`'s 256 sectors = `SYNTH.HDF`
+- two runs of 7 and 2 halves, ring half k mod 2
+- every half = what `cdaudio.c` `fill()` puts there: range frame f =
+  base + k x 8,192, `TEST.BIN`'s bytes of the CUE's track 2 (LE 16-bit
+  stereo; gaps, data sectors, past the file or the range: zeros), scaled
+  with `scale()` when the volume is not 255 / 255 (the run CPU's
+  `cda_init` volume, read from its `cdaudio.c`; the scenario sends no MODE
+  SELECT). The CUE is read by `l3check.py`'s own reader, not `cue.c`. base
+  is 0 for the PLAY's run. For the RESUME's it is the firmware's paused
+  position: a multiple of 256 frames (TIMER units) inside the sector READ
+  SUB-CHANNEL reports, and within one half of the frames the player had
+  played at the PAUSE
+- a half that differs is an **underrun** (a late refill) when each frame
+  is the expected one, that ring half's earlier content (two halves
+  before in the run) or zero. Anything else, or any difference in a run's
+  first two halves (filled before ENA), is a **wrong** half, which fails
+  both scenarios. `cdda`: no underrun and no write into the playing half.
+  `cdda_load`: the underruns are counted (`INFO`); the gate compares the
+  two CPUs (RV <= 832)
+- READ SUB-CHANNEL: 16 bytes, audio status 12 (paused), adr/control 10,
+  track 2 index 1, LBA 214 + pos / 588, relative LBA
+- one `=== CDDA fill` line per flip (7), each with a write; the min /
+  median / max ms and the main-loop gaps as `INFO`
+- `TICKDIV` 643 from the scenario's start
+
+Also, as `cd`: the milestones (`CARD=cd_cue`; `cdda_load`: `CARD=cdhdd`,
+the `hdd` card's hardfile lines and `cd_cue`'s disc lines, the IDE port
+frame `20 54 07`), no `EXC` / `TRAP`, `kick`, `order`, memhash, every
+MARGIN line with item 9 required (`cdda_load`: also 3), bench `=== PASS`.
+
+The `audio_ring` MEM line is not compared between the CPUs
+(`expected_diff.txt`, from `fdd_rd`): the per-half check against the BIN on
+each CPU is the ring's content gate.
+
+### Run
+
+Setup as in "Run", "832" and "hdd" (the shell variables of its block).
+From the repository root:
+
+```sh
+CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=ac FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh xpair cdda
+CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=alc FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh cdda_load
+SIM=verilator RUNTAG=a FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh xpair cdda
+SIM=verilator RUNTAG=al FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh cdda_load
+bash sim/l3/run.sh diff --unused-rules a ac
+bash sim/l3/run.sh diff --unused-rules al alc
+bash sim/l3/run.sh diff ac ac_xr
+```
+
+Each run is long, because the board's TIMER rate makes the play last
+1.5 s of simulated time. See "Measured" for the wall times. The data check
+alone, on a run directory:
+
+```sh
+python3 -I sim/l3/l3check.py cdda sim/l3/run_a
+```
+
+### Measured (2026-10-20, SLAT=8 SJIT=0, SCKDLY 1.5 / C28DLY 0.3, TICKDIV 1 then 643)
+
+Runs `p4t17` / `p4t17_xr` (RV `cdda` and its twin), `p4t17c` (832
+`cdda`), `p4t17l` / `p4t17lc` (`cdda_load`); the same `RV32OSDA.BIN` /
+`832OSDAD.BIN` (sha256 0162e53fc0b4ce4d / 768c765d57deb1a0), so the cards
+are byte-identical per scenario. Cycles are `clk_114`, ms at 113.4375 MHz:
+
+| | RV `cdda` | 832 `cdda` | RV `cdda_load` | 832 `cdda_load` |
+|---|---|---|---|---|
+| `l3check.py cdda` | PASS | PASS | PASS | PASS |
+| PLAY's `run()` (both halves, CLEAR to ENA) | 84.1 ms | 175.3 ms | 84.1 ms | 175.4 ms |
+| refill after a flip, min / median / max (7 fills) | 4.65 / 42.40 / 42.42 ms | 21.73 / 88.15 / 88.16 ms | 4.66 / 42.39 / 42.96 ms | 21.79 / 88.14 / 96.69 ms |
+| RESUME's `run()` | 80.6 ms | 152.2 ms | 80.6 ms | 152.3 ms |
+| main loop while playing: gaps, median / max | 17,163, 0.063 / 42.44 ms | 7,217, 0.119 / 88.18 ms | 15,585, 0.063 / 42.97 ms | 6,342, 0.119 / 95.23 ms |
+| underruns (late halves) / writes into the playing half | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+| paused at (READ SUB-CHANNEL) / RESUME from | LBA 300 / frame 50,944 | LBA 304 / frame 52,992 | LBA 300 / 50,944 | LBA 304 / 52,992 |
+| the player at the PAUSE | 51,030 frames | 53,051 | 51,029 | 53,051 |
+| READ MULTIPLE 256 (`cdda_load`) | - | - | 11.20 M cycles, = `SYNTH.HDF` | 11.75 M, = `SYNTH.HDF` |
+| item 3 `dmode_release` min | n/a | n/a | 20.8 over 256 | 42.8 over 256 |
+| `OSD EARLY` | 0 of 18,487 | 0 of 7,485 | 0 of 16,996 | 0 of 6,672 |
+| end event (STOP's end) | 337,017,061 | 407,815,893 | 337,077,525 | 407,912,613 |
+| wall time (Verilator) | 2,665 s | 3,269 s | 2,646 s | 3,272 s |
+
+A refill is 64 TEST.BIN sectors read through the CPU (`cda_port_read`, 128
+SD blocks for 32 KB) and copied into the ring. The minimum is the last
+fill after the RESUME, which lies past the range's end (all zeros, no SD
+read). Each refill blocks the main loop (`cda_poll` runs inside it): the
+longest main-loop gap is one refill, plus a block of the HDF transfer
+under load. The PAUSE comes 4.4 ms after flip 6 and is served after that
+refill, so the RV pauses 2,048 frames (8 TIMER units, = its 46 ms shorter
+refill) earlier than the 832. The position and the RESUME's fill differ
+between the CPUs for that reason; each CPU's are checked against
+TEST.BIN.
+
+XRAND: the RV twin `p4t17_xr` (`pinned 8217 regs`) is `compare` SAME with
+`p4t17` (log and 93,557 frames). The 832 twin of the default seed
+(`p4t17c_xr`, seed 931,151,620) never started, with no hw access in 585 M
+cycles, as `fdd_rd`'s `p4t13c_xr`. `p4t17c_xs4` (`XSEED=4`) is the twin
+(below).
+
+The differential is not empty with the current rules (`run.sh diff p4t17
+p4t17c`: 10,033 lines; `p4t17l p4t17lc`: 9,327). It comes from two
+sources, both timing-only:
+
+- `CD_AudioPoll()` reads the CD port's flags on every main-loop pass while
+  the player runs (`ReadIDEFlags()`, `10 81` and nine 00). The RV makes
+  17,174 such frames, the 832 7,228.
+- The paused position: see above.
+
+The Task 17 report proposes the rules; none is added yet.
+
 ## Monitors
 
 `mon_l3.vh` (included by `tb_l3.v`) measures the host-side handshakes of
@@ -1487,6 +1664,8 @@ silence:
 | `keys` | as `boot` | as `boot` |
 | `fdd_rd` | as `boot`, and 6 | 3, 12 as `boot` |
 | `hdd` | as `boot`, and 3 (`dmode_release`: the HDF sectors come in direct mode) | 6, 12; 8 is `rec` (no bound), `l3check.py hdd` requires its per-command waits |
+| `cdda` | as `boot`, and 9 (every packet's command phase) | 3, 6, 12; 8 is `rec` |
+| `cdda_load` | as `cdda`, and 3 (the HDF sectors in direct mode) | 6, 12; 8 is `rec` |
 | `cd` | as `boot`, and 9; with `CDCFG=iso` also 3 (`dmode_release`: the ISO's sectors come in direct mode; a CUE's MODE1/2352 sectors go through the CPU) | 6, 12; 3 with `CDCFG=cue`; 8 is `rec` |
 
 Item 6 (`fdd_fifo_empty_dma`) is `n/a` in every scenario without a floppy

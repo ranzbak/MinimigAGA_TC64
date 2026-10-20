@@ -17,7 +17,9 @@
 //          sd_cs[6]  paula_floppy direct_scs = ~sd_cs[6] (card -> paula)
 //          paula_floppy <-> gayle #(.IDE_PORTS(2)) over the hdd_* bus
 //     minimig_syscontrol (rtl/minimig): the chipset reset
-//     bfm_audio: the CD-audio ring position (cfide audio_buf)
+//     bfm_audio: the CD-audio ring position (cfide audio_buf); with
+//       +CDDA_DUMP=<prefix> (scenarios cdda, cdda_load) a copy of every half
+//       the player starts, from this SDRAM model
 //     bfm_keys: userio_osd's osd_ctrl (the OSD keys) from a key script
 //       (+KEYS=<file>, scenarios keys and fdd_rd); 0 without one
 //     bfm_floppy: paula_floppy's Amiga side, the CIA lines, Paula's disk
@@ -92,6 +94,7 @@
 //   +SDRAM_DUMP=<file> the SDRAM model's 8 MB, written before the verdict
 //   +SD_SAVE=<file>    the card as the run left it (the SD model)
 //   +IDE_DUMP=<prefix> bfm_ide's dump files <prefix>_<k>.hex (scenario hdd)
+//   +CDDA_DUMP=<prefix> bfm_audio's ring snapshots <prefix>_<n>.bin (cdda)
 // Scenarios (+SCENARIO=<name>): scenarios.vh.  A scenario ends the run at
 // its end event ("=== PASS" without DONE when no bench error) or the run
 // ends at +TIMEOUT=<clk_114 cycles> ("=== FAIL <scenario>: ...").
@@ -412,7 +415,8 @@ module tb_l3 #(
 
   // -------------------------------------------------- audio ring, TIMER tick
   bfm_audio audio (
-    .clk28(clk28), .tick(tick), .audio_ena(audio_ena), .audio_clear(audio_clear), .aud_addr(aud_addr)
+    .clk28(clk28), .tick(tick), .audio_ena(audio_ena), .audio_clear(audio_clear), .cyc(cyc),
+    .aud_addr(aud_addr)
   );
 
   integer tickdiv = 1, tick_cnt = 0;
@@ -606,7 +610,7 @@ module tb_l3 #(
     wait (run_end);
     #1;   // the end-of-run counters after the last edge's updates, in every simulator
     if (uart_n) uart_print;
-    errors = errors + ram.errors + keys.errors + fdd.errors + ide.errors;
+    errors = errors + ram.errors + keys.errors + fdd.errors + ide.errors + audio.errors;
     hm_final_hw;
     card.save_image;
 `ifdef RV_HOSTCPU_STATS

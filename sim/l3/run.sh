@@ -3,7 +3,8 @@
 # (userio_osd, paula_floppy, gayle) boots the real boot ROM and firmware from
 # an SD card image.  See tb_l3.v, scenarios.vh, README.md.
 #
-#   bash sim/l3/run.sh <scenario>        boot, boot_short, keys, fdd_rd, hdd, cd
+#   bash sim/l3/run.sh <scenario>        boot, boot_short, keys, fdd_rd, hdd, cd,
+#                                        cdda, cdda_load
 #   bash sim/l3/run.sh xpair <scenario>  the scenario and its XRAND twin
 #                                        (run_$RUNTAG, run_${RUNTAG}_xr; in
 #                                        parallel), then compare: both PASS
@@ -45,7 +46,8 @@
 #   XARGS    extra plusargs ("+FAST_HW=1 +OSD_EARLY_OK=1 +TICKDIV=643 ...");
 #            +FAST_HW=1 also puts the models' fast plusargs first (below)
 #   CDCFG    cd: the disc in the drive, cue (default: TEST.CUE + TEST.BIN)
-#            or iso (TEST.ISO); the card's configs name it (sim/l3/card)
+#            or iso (TEST.ISO); the card's configs name it (sim/l3/card).
+#            cdda and cdda_load play TEST.CUE's track 2: cue only
 #   KEYS     keys and fdd_rd: the key script (default keys:
 #            sim/l3/keys/menu_tour.txt; l3check.py keys checks the pages
 #            against osdtext_expect/keys.txt, which is that script's;
@@ -109,6 +111,21 @@
 #               mode), l3check.py cd (every answer = what atapi.c / cdrom.c
 #               build for the disc, the sectors = TEST.ISO / TEST.BIN's data
 #               track, the TOC = TEST.CUE), bench "=== PASS"
+#   cdda        cd card with CDCFG=cue, +SCENARIO=cdda +IDE_DUMP=<run>/cdda
+#               +CDDA_DUMP=<run>/cdda_half, TICKDIV 643 from the scenario's
+#               start: bfm_ide's PLAY AUDIO MSF / PAUSE / READ SUB-CHANNEL /
+#               RESUME / STOP on IDE port 2, bfm_audio's copy of every half
+#               the player starts, mon_l3.vh's refill timing; checks: boot's
+#               milestones (cd_cue's lines), no EXC / TRAP, kick, order, the
+#               MARGIN lines (item 9 required), l3check.py cdda (every half =
+#               TEST.BIN at the firmware's position, no underrun, READ
+#               SUB-CHANNEL), bench "=== PASS"
+#   cdda_load   cdhdd card (boot + SYNTH.HDF + RDB.HDF + TEST.CUE / TEST.BIN),
+#               +SCENARIO=cdda_load, the same plusargs: cdda plus a READ
+#               MULTIPLE of 256 SYNTH.HDF sectors from the player's second
+#               flip; checks as cdda (item 3 required too: the HDF sectors
+#               come in direct mode; the cdhdd card's milestones), l3check.py
+#               cdda counts the underruns and checks the HDF sectors
 # Logs in the run directory: tb_<scenario>_x<EXTRA_WS>_s<SLAT>_j<SJIT>.log,
 # spi.txt, spi_t.txt (frames with cycles, not compared), hw.txt and uart.txt
 # (sim/common/hostmon.vh +HW_LOG / +UART_LOG, for diff; hw.txt's MEM lines
@@ -182,6 +199,10 @@ case "$CDCFG" in
 	iso) MARGIN_REQ_cd="$MARGIN_REQ_boot 9:cd_timeout_left 3:dmode_release" ;;
 	*) echo "CDCFG=$CDCFG: must be cue or iso"; exit 2 ;;
 esac
+# cdda: item 9 (each packet's command phase); cdda_load also item 3 (the
+# HDF sectors in direct mode)
+MARGIN_REQ_cdda="$MARGIN_REQ_boot 9:cd_timeout_left"
+MARGIN_REQ_cdda_load="$MARGIN_REQ_cdda 3:dmode_release"
 
 # cycles per scenario (clk_114): 1.5 x the measured end event (README "boot",
 # Verilator 2026-10-19: RV boot 158,155,012, boot_short 57,659,090; 832
@@ -190,7 +211,10 @@ esac
 # "fdd_rd" (RV 382 M, 832 440 M; measured 393,222,555 and 442,065,819);
 # hdd: 832 1.5 x its measured end (p4t15c3: 233,511,245), RV 1.5 x the
 # estimate 200 M (README "hdd"); cd: 1.5 x the estimates RV 210 M, 832
-# 300 M (measured, README "cd": RV 185,153,365, 832 233,680,101)
+# 300 M (measured, README "cd": RV 185,153,365, 832 233,680,101); cdda,
+# cdda_load: 1.5 x the estimates RV 345 M, 832 390 M (the plan start as
+# cd, then 7 halves of the board's 21.1 M and the refills; measured, README
+# "cdda": RV 337,017,061, 832 407,912,613)
 if [ "$CPU" = 832 ]; then
 	L3_BOOT_TO=${L3_BOOT_TO:-304300000}
 	L3_SHORT_TO=${L3_SHORT_TO:-111800000}
@@ -198,6 +222,7 @@ if [ "$CPU" = 832 ]; then
 	L3_FDD_TO=${L3_FDD_TO:-660000000}
 	L3_HDD_TO=${L3_HDD_TO:-350000000}
 	L3_CD_TO=${L3_CD_TO:-450000000}
+	L3_CDDA_TO=${L3_CDDA_TO:-585000000}
 else
 	L3_BOOT_TO=${L3_BOOT_TO:-237300000}
 	L3_SHORT_TO=${L3_SHORT_TO:-86500000}
@@ -205,6 +230,7 @@ else
 	L3_FDD_TO=${L3_FDD_TO:-580000000}
 	L3_HDD_TO=${L3_HDD_TO:-300000000}
 	L3_CD_TO=${L3_CD_TO:-315000000}
+	L3_CDDA_TO=${L3_CDDA_TO:-520000000}
 fi
 
 # shellcheck source=../common/hostsim.sh
@@ -405,12 +431,18 @@ setup() {
 	[ "${NOKICK:-0}" = 1 ] && mk+=(NOKICK=1)
 	# the card of the scenario (sim/l3/card): fdd_rd the fdd card, hdd the
 	# hdd card, cd the cd card with CDCFG's configs (image cd.img or
-	# cd_iso.img), the others boot.  MSCARD: milestones()'s "CARD=<card>"
-	# lines (cd: cd_cue or cd_iso, the disc's files differ)
+	# cd_iso.img), cdda the cd card (cue), cdda_load the cdhdd card, the
+	# others boot.  MSCARD: milestones()'s "CARD=<card>" lines (cd: cd_cue
+	# or cd_iso, the disc's files differ)
 	CARDNAME=boot
 	[ "${SCEN:-}" = fdd_rd ] && CARDNAME=fdd
 	[ "${SCEN:-}" = hdd ] && CARDNAME=hdd
 	[ "${SCEN:-}" = cd ] && CARDNAME=cd
+	[ "${SCEN:-}" = cdda ] && CARDNAME=cd
+	[ "${SCEN:-}" = cdda_load ] && CARDNAME=cdhdd
+	case "${SCEN:-}" in
+		cdda|cdda_load) [ "$CDCFG" = cue ] || die "CDCFG=$CDCFG: ${SCEN} plays TEST.CUE's track 2 (cue only)" ;;
+	esac
 	MSCARD=$CARDNAME IMG=$CARDNAME
 	if [ "$CARDNAME" = cd ]; then
 		MSCARD=cd_$CDCFG
@@ -484,8 +516,8 @@ milestones() {
 	fi | sed -n -e "s/^CARD=${MSCARD:-boot} //p" -e t -e '/^CARD=/d' -e p \
 		| sed -n -e "s/^CPU=$CPU //p" -e t -e '/^CPU=/d' -e p > "$ms"
 	grep -E '^CPU=' "$HERE/milestones_boot.txt" | grep -vE '^CPU=(rv|832) ' | sed 's/^/BAD  milestones_boot.txt: a CPU= line for neither rv nor 832: /'
-	grep -E '^CARD=' "$HERE/milestones_boot.txt" | grep -vE '^CARD=(boot|fdd|hdd|cd_cue|cd_iso) ' \
-		| sed 's/^/BAD  milestones_boot.txt: a CARD= line for none of boot, fdd, hdd, cd_cue, cd_iso: /'
+	grep -E '^CARD=' "$HERE/milestones_boot.txt" | grep -vE '^CARD=(boot|fdd|hdd|cd_cue|cd_iso|cdhdd) ' \
+		| sed 's/^/BAD  milestones_boot.txt: a CARD= line for none of boot, fdd, hdd, cd_cue, cd_iso, cdhdd: /'
 	grep -v '^NOT ' "$ms" > "$ms.check"
 	l3_check milestones "$run/milestones.txt" '^milestones: [0-9]+ of [0-9]+ found in order$' \
 		python3 -I "$L2/spitrace.py" check "$ms.check" "$log" "$run/spi.txt"
@@ -535,6 +567,8 @@ scenario() {
 			    "FDD_DUMP=$run/fdd_rd") ;;
 		hdd) to=${TIMEOUT:-$L3_HDD_TO}; pa=("IDE_DUMP=$run/hdd" "SD_SAVE=$run/card_saved.img") ;;
 		cd) to=${TIMEOUT:-$L3_CD_TO}; pa=("IDE_DUMP=$run/cd" "CDCFG=$CDCFG" "TICKDIV=643" "TICKDIV_AT=scenario") ;;
+		cdda|cdda_load) to=${TIMEOUT:-$L3_CDDA_TO}
+			pa=("IDE_DUMP=$run/cdda" "CDDA_DUMP=$run/cdda_half" "TICKDIV=643" "TICKDIV_AT=scenario") ;;
 		*) die "unknown scenario $s" ;;
 	esac
 	if git -C "$ROOT" diff --quiet HEAD -- "${ROM#$ROOT/}"; then st="unmodified (= git HEAD)"; else st="BAD  MODIFIED against git HEAD"; fi
@@ -574,7 +608,8 @@ scenario() {
 		milestones "$s" "$log"
 		grep -E '^UART: .*(EXC |TRAP )' "$log" | sed 's/^/BAD  /'
 		l3_check memhash "$run/memhash.txt" '^PASS memhash: ' python3 -I "$L3CHECK" memhash "$run"
-		if [ "$s" = boot ] || [ "$s" = keys ] || [ "$s" = fdd_rd ] || [ "$s" = hdd ] || [ "$s" = cd ]; then
+		if [ "$s" = boot ] || [ "$s" = keys ] || [ "$s" = fdd_rd ] || [ "$s" = hdd ] || [ "$s" = cd ] \
+			|| [ "$s" = cdda ] || [ "$s" = cdda_load ]; then
 			l3_check kick "$run/kick.txt" '^PASS kick: ' python3 -I "$L3CHECK" kick "$run"
 			l3_check order "$run/order.txt" '^PASS order: ' python3 -I "$L3CHECK" order "$run"
 		fi
@@ -594,6 +629,10 @@ scenario() {
 		if [ "$s" = cd ]; then
 			l3_check cd "$run/cd.txt" '^PASS cd: ' python3 -I "$L3CHECK" cd "$run"
 			grep -E '^(ok   |INFO )' "$run/cd.txt"
+		fi
+		if [ "$s" = cdda ] || [ "$s" = cdda_load ]; then
+			l3_check cdda "$run/cdda.txt" '^PASS cdda: ' python3 -I "$L3CHECK" cdda "$run"
+			grep -E '^(ok   |INFO )' "$run/cdda.txt"
 		fi
 		if grep -q '^=== PASS' "$log"; then echo "ok   bench verdict: === PASS"
 		else echo "BAD  bench verdict: $(grep -m1 -E '^=== (PASS|FAIL)' "$log" || echo none) ($log)"; fi
@@ -669,7 +708,7 @@ case "${1:-}" in
 		echo "=== xpair $2 FAILED (runs $r1 / $r2, compare $rc)"
 		exit 1
 		;;
-	boot|boot_short|keys|fdd_rd|hdd|cd)
+	boot|boot_short|keys|fdd_rd|hdd|cd|cdda|cdda_load)
 		SCEN=$1
 		[ "${NOKICK:-0}" = 1 ] && [ "$1" != boot ] && die "NOKICK=1 is for boot only"
 		setup

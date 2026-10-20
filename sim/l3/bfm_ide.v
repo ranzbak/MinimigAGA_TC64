@@ -1,4 +1,5 @@
-// bfm_ide: the Amiga side of gayle in the L3 bench (scenarios hdd and cd):
+// bfm_ide: the Amiga side of gayle in the L3 bench (scenarios hdd, cd, cdda
+// and cdda_load):
 // a 68k IDE driver on gayle's 68k ports
 // (address_in, data_in, data_out, rd, hwr, lwr, sel_ide, sel_gayle, irq,
 // nrdy).
@@ -83,7 +84,9 @@
 // 'W', kind ('S' WRITE SECTORS, 'M' WRITE MULTIPLE), L >> 8, L & 255, then
 // (L * 29 + j * 7 + 0x5A) & 255 for j = 4..511 (l3check.py wpattern).
 //
-// The bench (scenarios.vh) sets plan ("hdd" or "cd") and go; the plan starts when
+// The bench (scenarios.vh) sets plan ("hdd", "cd", "cdda" or "cdda_load"; the
+// cdda plans also read cd_flips, which the bench keeps equal to bfm_audio's
+// flip count) and go; the plan starts when
 // the chipset reset is low as well (minimig_syscontrol holds it for four
 // frames after userio_osd's usrrst falls, so at the main-loop milestone the
 // Amiga side is still in reset: writes then are lost, as on the Amiga);
@@ -640,6 +643,66 @@ module bfm_ide (
     end
   endtask
 
+  // ------------------------------------------------ plans cdda, cdda_load
+  // (sim/l3/README.md "cdda"; l3check.py cdda holds the same list).  The
+  // card: cd (CDCFG=cue) for cdda, cdhdd for cdda_load (the same configs:
+  // TEST.CUE in the CD drive on IDE port 2 master; cdhdd also has the HDFs
+  // of "hdd").  Run at the board's TIMER rate (TICKDIV 643): the player
+  // takes one frame per tick, one half (8,192 frames) per ~21.1 M clk_114.
+  // The bench copies bfm_audio's flip count into cd_flips.  After a flip the
+  // plan waits CDDA_D clk_114 more before its next command, so that the
+  // firmware has seen the flip and started the refill first (its main loop
+  // calls CD_AudioPoll before HandleFpga): the command is then served after
+  // the refill on both CPUs.
+  //   TEST UNIT READY (the reset's UNIT ATTENTION: CHECK CONDITION)
+  //   PLAY AUDIO MSF 00:04:64 .. 00:06:27 (LBA 214 .. 326: track 2 from its
+  //     INDEX 01, 113 sectors = 66,444 frames, 1.5 s)
+  //   cdda_load: at flip 2 SET MULTIPLE 16 and READ MULTIPLE 256 sectors of
+  //     SYNTH.HDF (port 0 slave, LBA 1000; the 7.4 "HDF copy with CD audio")
+  //   at flip 6: PAUSE, READ SUB-CHANNEL (current position, LBA), RESUME
+  //   at flip 7 (the resumed run's first): STOP
+  localparam integer CDDA_D = 500000;               // clk_114, 4.4 ms
+  localparam integer CDDA_FLIP_MAX = 30000000;      // clk_114 per flip waited for (a half: ~21.1 M)
+  integer cd_flips = 0;                             // written by the bench: bfm_audio's n_flip
+
+  task wait_flips(input integer n);
+    integer t0, lim;
+    begin
+      t0 = cyc;
+      lim = (n - cd_flips) * CDDA_FLIP_MAX;
+      while (cd_flips < n && cyc - t0 < lim) en;
+      if (cd_flips < n) ide_error("cdda: the player did not reach the flip the plan waits for");
+      $display("=== IDE cdda: flip %0d at cycle %0d", n, cyc);
+      t0 = cyc;
+      while (cyc - t0 < CDDA_D) en;
+    end
+  endtask
+
+  task plan_cdda(input load);
+    begin
+      // TEST UNIT READY: the pending UNIT ATTENTION (CHECK CONDITION)
+      atapi_packet(CD_PORT, CD_DEV, 96'h00_00_00_00_00_00_00_00_00_00_00_00, CD_LIM, 1'b1);
+      // PLAY AUDIO MSF from 00:04:64 (LBA 214) to 00:06:27 (LBA 327, not played)
+      atapi_packet(CD_PORT, CD_DEV, 96'h47_00_00_00_04_40_00_06_1B_00_00_00, CD_LIM, 1'b0);
+      if (load) begin
+        wait_flips(2);
+        g_heads[1] = 1; g_spt[1] = 32;              // SYNTH.HDF (plan hdd)
+        ata_setmult(0, 1, 16);
+        ata_read(0, 1, C_READM, 1000, 0, 16);       // count 0 = 256 sectors
+      end
+      wait_flips(6);
+      // PAUSE (byte 8 bit 0 = 0)
+      atapi_packet(CD_PORT, CD_DEV, 96'h4B_00_00_00_00_00_00_00_00_00_00_00, CD_LIM, 1'b0);
+      // READ SUB-CHANNEL: LBA addresses, SubQ, format 1 (current position), allocation 16
+      atapi_packet(CD_PORT, CD_DEV, 96'h42_00_40_01_00_00_00_00_10_00_00_00, CD_LIM, 1'b0);
+      // RESUME (byte 8 bit 0 = 1)
+      atapi_packet(CD_PORT, CD_DEV, 96'h4B_00_00_00_00_00_00_00_01_00_00_00, CD_LIM, 1'b0);
+      wait_flips(7);
+      // STOP PLAY / SCAN
+      atapi_packet(CD_PORT, CD_DEV, 96'h4E_00_00_00_00_00_00_00_00_00_00_00, CD_LIM, 1'b0);
+    end
+  endtask
+
   always @(posedge reset) if (go === 1'b1 && done !== 1'b1) ide_error("the chipset reset rose during the plan");
 
   // ------------------------------------------------------------- sequencer
@@ -653,6 +716,8 @@ module bfm_ide (
     hww(INTREQ, 16'h0000);
     if (plan == "hdd") plan_hdd;
     else if (plan == "cd") plan_cd;
+    else if (plan == "cdda") plan_cdda(1'b0);
+    else if (plan == "cdda_load") plan_cdda(1'b1);
     else ide_error("unknown plan");
     $display("=== IDE done: %0d commands, %0d waits at cycle %0d", cmd_k, w_all_n, cyc);
     done = 1'b1;
