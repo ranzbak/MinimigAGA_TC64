@@ -507,11 +507,16 @@ only when it is empty. `norm` writes one stream in frame order,
   with nothing kept between them, is dropped (`# dropped flagpoll`;
   `cdda`, runs `p4t17` / `p4t17c`, `p4t17l` / `p4t17lc`, Task 17 ruling).
   While the CD player runs, `CD_AudioPoll()` reads the flags on every
-  main-loop pass: RV 17,174 frames, 832 7,228. The dropped poll frames
-  above, an RTC frame among them, do not end a run of repeats; anything
-  kept does. So `cd_wait()`'s polls between data phases stay compared
-  (the `cd` and `hdd` streams are unchanged), and so does a poll with
-  other flags (`spitrace_test.sh` case `cdpoll`)
+  main-loop pass: RV 17,174 frames, 832 7,228. "Kept" is decided on the
+  finished stream, after every drop of this list and every rule
+  (`DROP`, `DEDUP`, `DROPBLOCK`, `SUBST`; `FLOAT` lines have no place
+  among the frames). So the dropped poll frames and a repeated HandleRTC
+  unit (its RTC frame and hw writes) do not end a run of repeats, while
+  any printed line does: an SPI, SD or OSD frame, a hw write, a UART line
+  (`spitrace_test.sh` cases `cdpollhw`, `cdpolluart`: the line and the
+  poll after it come back; Task 17 review). `cd_wait()`'s polls between
+  data phases stay compared (the `cd` and `hdd` streams are unchanged),
+  and so does a poll with other flags (case `cdpoll`)
 - **paula's floppy DMA progress, masked** (`fdd_rd`, runs `p4t13` /
   `p4t13c`). The firmware fills the FIFO and Agnus empties it at its own
   rate, so these bytes follow the CPU's speed. They are masked by byte
@@ -595,9 +600,10 @@ another place, another audio ring. Each of these gives a diff line:
 - a changed, an extra and a missing write of the FLOAT group
 - a repeated HandleRTC unit with a changed RTC value (`ffff70`), or with a
   changed closing speed write (`ffffe8`)
-- (Task 17) a repeated IDE flag poll with other flags, and the frames just
-  before and after the READ SUB-CHANNEL .. ENA block; that block without
-  its end fails `norm`
+- (Task 17) a repeated IDE flag poll with other flags, an AUDIO write or a
+  UART line between two equal flag polls (with the poll after it), and
+  the frames just before and after the READ SUB-CHANNEL .. ENA block;
+  that block without its end fails `norm`
 
 The rules of `boot` (`expected_diff.txt`): the firmware file
 (`SDFILE` of both names, the UART line with the name and the boot ROM's
@@ -1567,6 +1573,10 @@ counts only the runs from the PLAY on).
 - one `=== CDDA fill` line per flip (7), each with a write; the min /
   median / max ms and the main-loop gaps as `INFO`
 - `TICKDIV` 643 from the scenario's start
+- the ring is all zero at the end (`sdram.bin`, host 0x70000..0x7ffff):
+  the STOP's `release()` clears it, so the drive sounds do not start on a
+  remnant of the music. The ring held TEST.BIN frames at the STOP
+  (the RESUME's halves), so the zeros are the STOP's
 
 Also, as `cd`: the milestones (`CARD=cd_cue`; `cdda_load`: `CARD=cdhdd`,
 the `hdd` card's hardfile lines and `cd_cue`'s disc lines, the IDE port
@@ -1574,8 +1584,8 @@ frame `20 54 07`), no `EXC` / `TRAP`, `kick`, `order`, memhash, every
 MARGIN line with item 9 required (`cdda_load`: also 3), bench `=== PASS`.
 
 The `audio_ring` MEM line is not compared between the CPUs
-(`expected_diff.txt`, from `fdd_rd`): the per-half check against the BIN on
-each CPU is the ring's content gate.
+(`expected_diff.txt`, from `fdd_rd`). On each CPU, the per-half check
+against the BIN and the zero ring at the end are the ring's content gates.
 
 ### Run
 
@@ -1583,14 +1593,21 @@ Setup as in "Run", "832" and "hdd" (the shell variables of its block).
 From the repository root:
 
 ```sh
-CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=ac FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh xpair cdda
+CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=ac FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh cdda
+CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=ac_xs1 XRAND=1 XSEED=1 FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh cdda
 CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=alc FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh cdda_load
 SIM=verilator RUNTAG=a FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh xpair cdda
 SIM=verilator RUNTAG=al FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh cdda_load
 bash sim/l3/run.sh diff --unused-rules a ac
 bash sim/l3/run.sh diff --unused-rules al alc
-bash sim/l3/run.sh diff ac ac_xr
+bash sim/l3/run.sh diff ac ac_xs1
 ```
+
+The 832's XRAND twin is a separate run with `XSEED=1`, not `xpair`.
+`xpair`'s default seed (the RUNTAG's `cksum`), and seed 4 as well, leave
+the EightThirtyTwo stopped at reset, with no hw access at all (below,
+XRAND). Its twin is compared normalised (`diff ac ac_xs1`, empty), as in
+`fdd_rd` and `hdd`. The RV pair stays `xpair` (`compare` SAME).
 
 Each run is long, because the board's TIMER rate makes the play last
 1.5 s of simulated time. See "Measured" for the wall times. The data check
@@ -1644,9 +1661,8 @@ with 3. The twin is `p4t17c_xs1` (`XSEED=1`): `cdda` PASS with the same
 checks, milestone at 203.7 M (2.0 M later), halves 1..8 byte-identical to
 `p4t17c`'s. It pauses one TIMER unit later (frame 53,248, the same LBA 304:
 the TIMER phase against the run's start moved), so half 9 and two SD
-blocks of the RESUME's fill differ. With the current rules, `run.sh diff
-p4t17c p4t17c_xs1` gives 438 lines: 378 per-pass flag polls and those two
-blocks. With the two proposed rules the diff is empty.
+blocks of the RESUME's fill differ; both lie inside the READ SUB-CHANNEL
+.. ENA block of the Task 17 ruling.
 
 The differential (`run.sh diff p4t17 p4t17c`, `p4t17l p4t17lc`, and the
 832 twins `p4t17c p4t17c_xs1`) is empty. It needs the two Task 17 rulings
@@ -1656,7 +1672,8 @@ all timing-only:
 - `CD_AudioPoll()` reads the CD port's flags on every main-loop pass while
   the player runs (`ReadIDEFlags()`, `10 81` and nine 00): the RV makes
   17,174 such frames, the 832 7,228. They are now dropped as repeats
-  (`flagpoll` 17,158 / 7,212).
+  (`flagpoll` 17,158 / 7,212), on the finished stream, so a hw write or
+  UART line between two polls keeps the second.
 - The paused position (above), now the `DROPBLOCK` from READ SUB-CHANNEL
   to the RESUME's ENA.
 

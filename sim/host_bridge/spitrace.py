@@ -59,9 +59,14 @@ norm: one normalised stream of a run, in frame order, one item per line
     kept item between them, is a repeat and dropped (sim/l3 cdda, runs
     p4t17 / p4t17c and p4t17l / p4t17lc, Task 17 ruling: CD_AudioPoll()
     reads the CD port's flags on every main-loop pass while the player
-    runs, RV 17,174 frames, 832 7,228).  The dropped poll frames above
-    (an RTC frame among them) do not end a run of repeats; anything kept
-    does, so cd_wait()'s polls between data phases stay compared
+    runs, RV 17,174 frames, 832 7,228).  "Kept" is decided on the
+    finished stream: after every drop above (the poll frames, the RTC
+    frames and their HandleRTC unit's hw writes) and every rule of the
+    list (DROP, DEDUP, DROPBLOCK, SUBST; FLOAT lines have no place among
+    the frames).  So any line of any stream that is printed between two
+    equal flag polls (an SPI, SD or OSD frame, a hw write, a UART line)
+    keeps the second one; cd_wait()'s polls between data phases stay
+    compared
   - paula's floppy DMA progress (sim/l3 fdd_rd, runs p4t13 / p4t13c: the
     FIFO is filled by the firmware and emptied at Agnus's rate, so these
     bytes depend on the CPU's speed) is masked by byte position, as "--":
@@ -614,6 +619,11 @@ def sd_lines(frame_cmds, sdfiles):
     return res
 
 
+# an IDE flag poll as norm prints it (hdd.c ReadIDEFlags: cs 10, MOSI 80 or
+# 81 and nine 00 bytes)
+FLAGPOLL = re.compile(r"10 8[01]( 00){9} / ")
+
+
 def norm(spi, hw, uart, rules_path, card_path, charrom):
     rules = read_rules(rules_path)
     glyphs = load_charrom(charrom)
@@ -636,16 +646,11 @@ def norm(spi, hw, uart, rules_path, card_path, charrom):
     for fr, ev, text in uart_ev:
         items.append(((fr, 0, ev), "uart", text, None))
     drop = Counter()
-    prev_read = prev_uds = prev_status = prev_flags = None
-    flag_at = 0                   # items after the last kept flag poll start here
+    prev_read = prev_uds = prev_status = None
     st = {}
     rtc_at = []                   # item indices of the RTC frames' markers
     for i, (cs, out, inp) in enumerate(frames):
         key = (i, 1, 0)
-        # a kept item since the last flag poll ends its run of repeats (an
-        # RTC frame's marker is a dropped frame: it does not)
-        if prev_flags is not None and any(it[1] != "rtc" for it in items[flag_at:]):
-            prev_flags = None
         # paula's DMA progress bytes (the doc above): masked, None = "--"
         if cs == 0x10 and len(out) >= 6 and not any(out[:6]) and len(inp) >= 6 and inp[4] & 0x80:
             if len(out) == 6:
@@ -658,12 +663,6 @@ def norm(spi, hw, uart, rules_path, card_path, charrom):
         # both): MISO byte 0's IDE request bits not compared
         if cs == 0x10 and len(out) == 10 and out[0] in (0x80, 0x81) and not any(out[1:]) and inp and inp[0] is not None:
             inp = [inp[0] & ~0x0C] + list(inp[1:])
-            # a repeat of the previous flag poll (the doc above; Task 17)
-            if prev_flags == (out[0],) + tuple(inp):
-                drop["flagpoll"] += 1
-                continue
-            prev_flags = (out[0],) + tuple(inp)
-            flag_at = len(items) + 1      # the generic SPI line below is this poll
         if cs == 0x10 and len(out) == 6 and not any(out):
             # a masked frame without a request whose bytes 0..3 equal the
             # previous status frame's is a repeat too: its bytes 4..5 hold no
@@ -810,7 +809,15 @@ def norm(spi, hw, uart, rules_path, card_path, charrom):
                     ln[1] = t
             kept.append(ln)
         lines = kept
-    lines += floated
+    # the flag poll repeats (the doc above; Task 17), on the finished
+    # stream: a flag poll line equal to the line printed just before it
+    kept = []
+    for ln in lines:
+        if ln[0] == "spi" and FLAGPOLL.match(ln[1]) and kept and kept[-1] == ln:
+            drop["flagpoll"] += 1
+            continue
+        kept.append(ln)
+    lines = kept + floated
     w = sys.stdout.write
     for stream, text in lines:
         w("%s %s\n" % (stream.upper(), text))

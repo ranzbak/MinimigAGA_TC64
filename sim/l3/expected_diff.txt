@@ -85,7 +85,8 @@ FLOAT hw ^ffff(60|90|a0)$
 # Task 13 ruling (6), runs p4t13 / p4t13c: the audio ring holds the drive
 # sounds rendered per TIMER count (drivesounds_render(TIMER), pickstep's
 # TIMER&3), timing-dependent; scenario cdda checks its ring against
-# TEST.BIN with l3check.py on each CPU (Task 17)
+# TEST.BIN with l3check.py on each CPU, every half the player starts and
+# the ring all zero after the STOP's release() (Task 17)
 DROP hw ^MEM\x20audio_ring\x20
 
 # Task 17 ruling (P2), runs p4t17 / p4t17c, p4t17l / p4t17lc and the 832

@@ -204,12 +204,19 @@ polls(1 if b else 4)
 frame(0x20, [0x98, 0xFF, 0xFF], [0x00, 0x01, 0x46 if change == "keyq" else 0x45])
 # CD audio (sim/l3 cdda, p4t17 / p4t17c): while the player runs,
 # CD_AudioPoll reads the CD port's flags on every main-loop pass, so
-# variant b (the faster CPU) makes more of these polls, with an RTC frame
-# among them; change cdpoll: one of them sees other flags
+# variant b (the faster CPU) makes more of these polls, with a repeated
+# HandleRTC unit among them (its frame and hw writes are dropped: they do
+# not end the run of repeats); change cdpoll: one of them sees other
+# flags; cdpollhw / cdpolluart: an AUDIO write / a UART line between two
+# of them (kept, so the next poll is kept too)
 for k in range(6 if b else 2):
     frame(0x10, [0] * 6, [0x10, 0x01, 0x44, 0x89, 0x00, 0x00])
     if b and k == 3:
-        frame(0x80, [0x92] + [0xFF] * 7, [0xFF, 0, 0, 0, 1, 4, 1, 0x26])
+        rtc_unit(False)
+    if b and k == 2 and change == "cdpollhw":
+        hwrite("ffffb0", 0x0009)
+    if b and k == 2 and change == "cdpolluart":
+        say("CDA: underrun 1")
     frame(0x10, [0x81] + [0] * 9, [0x10, 0x01, 0x44, 0x89, 0x00, 0x00, 0x00, 0x00,
                                    0x11 if change == "cdpoll" and k == 3 else 0x13, 0x00])
 # the PAUSE's READ SUB-CHANNEL reply up to the RESUME's ENA (Task 17 P2):
@@ -369,6 +376,19 @@ for ch in sd fpga osd hw uart keyq status uds desel pre post track motor level h
 	if grep -qE "$want" "$OUT/diff.txt" && { [ "$one" = 1 ] || { [ "$m" = 1 ] && [ "$p" = 1 ]; }; }; then
 		pass "(b) $ch: $(grep -E '^\+[^+]' "$OUT/diff.txt" | head -1 | cut -c1-100)"
 	else fail "(b) $ch: $m - / $p + lines: $(cat "$OUT/diff.txt" | head -12)"; fi
+done
+
+# Task 17 review I1: a kept hw write or UART line between two equal flag
+# polls ends the run of repeats: the line and the poll after it come back
+for ch in cdpollhw cdpolluart; do
+	gen "$OUT/b_$ch" b "$ch" || exit 1
+	norm "$OUT/b_$ch" "$OUT/rules.txt"
+	if [ "$ch" = cdpollhw ]; then want='^\+HW ffffb0 0009$'; else want='^\+UART CDA: underrun 1$'; fi
+	if ! dodiff "$OUT/b/norm.txt" "$OUT/b_$ch/norm.txt" && grep -qE "$want" "$OUT/diff.txt" \
+		&& grep -A1 -E "$want" "$OUT/diff.txt" | tail -n 1 | grep -q '^+SPI 10 81 00 00 00 00 00 00 00 00 00 / 10 01 44 89 00 00 00 00 13 00$' \
+		&& [ "$(grep -c '^-[^-]' "$OUT/diff.txt")" = 0 ] && [ "$(grep -c '^+[^+]' "$OUT/diff.txt")" = 2 ]; then
+		pass "(b) $ch: $(grep -E '^\+[^+]' "$OUT/diff.txt" | tr '\n' ' ' | cut -c1-120)"
+	else fail "(b) $ch: $(head -12 "$OUT/diff.txt")"; fi
 done
 
 # a DROPBLOCK start without its end: an error, not a drop to the end

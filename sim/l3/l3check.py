@@ -206,6 +206,11 @@ snapshots <run>/cdda_half_<n>.bin:
   - the refills (mon_l3.vh): one "=== CDDA fill" line per flip, each with a
     write ("done"); min / median / max ms and the main-loop gaps as INFO
   - the run is at TICKDIV 643 from the scenario's start
+  - the ring at the end (<run>/sdram.bin, host 0x70000..0x7ffff) is all
+    zero: the STOP's cdaudio.c release() clears it, so that the drive
+    sounds do not start on a remnant of the music (the MEM audio_ring
+    line is not compared between the CPUs, expected_diff.txt: this is
+    its gate; Task 17 review I2)
 
 Each prints one line, "PASS <name>: ..." (exit 0) or "FAIL <name>: ..."
 (exit 1); exit 2 on a usage error.  Python 3 standard library only.
@@ -278,6 +283,7 @@ CDDA_HALF = 8192                         # frames in a half (cdaudio.h CDA_HALF_
 CDDA_UNIT = 256                          # frames per TIMER unit (cdaudio.c frames_played)
 CDDA_RUNS = (7, 2)                       # halves of the PLAY's and the RESUME's run
 CDDA_HDF_LBA, CDDA_HDF_N = 1000, 256     # cdda_load: READ MULTIPLE on SYNTH.HDF
+CDDA_RING = 0x70000                      # AUDIO_BUFFER (hardware.h), 2 x 32 KB
 CDDA_PLAN = [
     ("TEST_UNIT_READY", "000000000000000000000000", 0x41, 0x60, 0),
     ("PLAY_AUDIO_MSF", "47000000044000061b000000", 0x40, 0x00, 0),
@@ -1718,6 +1724,22 @@ def cdda(run):
         bad.append("the '=== CDDA fill' lines after the PLAY are for flips %s, want %d consecutive" % ([f.group(1) for f in fills], nflip))
     elif any(f.group(3) == "none" for f in fills):
         bad.append("a flip without a refill write: flips %s" % [f.group(1) for f in fills if f.group(3) == "none"])
+    # the ring after the STOP: release() zeroes both halves (cdaudio.c)
+    sdram = os.path.join(run, "sdram.bin")
+    if not os.path.isfile(sdram):
+        bad.append("no %s (the SDRAM at the end of the run)" % sdram)
+    else:
+        with open(sdram, "rb") as f:
+            f.seek(CDDA_RING)
+            ring = f.read(0x10000)
+        nz = [i for i, x in enumerate(ring) if x]
+        if len(ring) != 0x10000:
+            bad.append("%s ends inside the ring (%d of 65536 bytes)" % (sdram, len(ring)))
+        elif nz:
+            bad.append("the ring is not zero after the STOP (release()): %d nonzero bytes, the first at host %06x (%02x)"
+                       % (len(nz), CDDA_RING + nz[0], ring[nz[0]]))
+        else:
+            notes.append("the ring (host %06x..%06x) is all zero after the STOP (release())" % (CDDA_RING, CDDA_RING + 0xFFFF))
     pw = [ln for ln in lines if ln.startswith("=== CDDA writes into the playing half: ")]
     npw = int(pw[0].split()[-1]) if len(pw) == 1 else None
     if npw is None:
