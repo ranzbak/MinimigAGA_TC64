@@ -1,0 +1,69 @@
+
+****** Vivado v2023.2 (64-bit)
+  **** SW Build 4029153 on Fri Oct 13 20:13:54 MDT 2023
+  **** IP Build 4028589 on Sat Oct 14 00:45:43 MDT 2023
+  **** SharedData Build 4025554 on Tue Oct 10 17:18:54 MDT 2023
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source /tmp/claude-1000/-home-paul-work-fpga-Xilinx-artix7-MinimigAGA-TC64/07701334-ab8d-4ba4-9b16-963ecb990a1e/scratchpad/jtag_probe4.tcl
+open_hw_manager: Time (s): cpu = 00:00:11 ; elapsed = 00:00:10 . Memory (MB): peak = 1340.469 ; gain = 0.027 ; free physical = 9398 ; free virtual = 34547
+INFO: [Labtools 27-2285] Connecting to hw_server url TCP:localhost:3121
+INFO: [Labtools 27-3415] Connecting to cs_server url TCP:localhost:0
+INFO: [Labtools 27-3417] Launching cs_server...
+INFO: [Labtools 27-2221] Launch Output:
+
+
+******** Xilinx cs_server v2023.2.0
+  ****** Build date   : Oct 10 2023-06:01:56
+    **** Build number : 2023.2.1696910516
+      ** Copyright 2017-2022 Xilinx, Inc. All Rights Reserved.
+      ** Copyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved.
+
+
+
+PROBE4: --- V1 control (get_hw_targets, current, open)
+INFO: [Labtoolstcl 44-466] Opening hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301
+INFO: [Labtoolstcl 44-467] Setting hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301 into jtag_mode
+rvb: raw self-test: scan_ir_hw_jtag 6 -> '35' (IR capture 0x35), scan_dr_hw_jtag 32 -> '13631093' (IDCODE 0x13631093)
+PROBE4:   raw_self_test -> ok 1
+INFO: [Labtoolstcl 44-464] Closing hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301
+PROBE4:   close_hw_target -> 
+PROBE4: --- V2 get_hw_targets -quiet *
+INFO: [Labtoolstcl 44-466] Opening hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301
+INFO: [Labtoolstcl 44-467] Setting hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301 into jtag_mode
+rvb: raw self-test: scan_ir_hw_jtag 6 -> '35' (IR capture 0x35), scan_dr_hw_jtag 32 -> '13631093' (IDCODE 0x13631093)
+PROBE4:   raw_self_test -> ok 1
+INFO: [Labtoolstcl 44-464] Closing hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301
+PROBE4:   close_hw_target -> 
+PROBE4: --- V3 V2 + catch get_property PARAM.FREQUENCY
+INFO: [Labtoolstcl 44-466] Opening hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301
+INFO: [Labtoolstcl 44-467] Setting hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301 into jtag_mode
+rvb: raw self-test: scan_ir_hw_jtag 6 -> '35' (IR capture 0x35), scan_dr_hw_jtag 32 -> '13631093' (IDCODE 0x13631093)
+PROBE4:   raw_self_test -> ok 1
+INFO: [Labtoolstcl 44-464] Closing hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301
+PROBE4:   close_hw_target -> 
+PROBE4: --- V4 V3 + rbb::configure -backend ::vbe -idcode_readahead 1
+INFO: [Labtoolstcl 44-466] Opening hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301
+INFO: [Labtoolstcl 44-467] Setting hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301 into jtag_mode
+rvb: raw self-test: scan_ir_hw_jtag 6 -> '35' (IR capture 0x35), scan_dr_hw_jtag 32 -> '13631093' (IDCODE 0x13631093)
+PROBE4:   raw_self_test -> ok 1
+INFO: [Labtoolstcl 44-464] Closing hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301
+PROBE4:   close_hw_target -> 
+PROBE4: --- V5 open inside proc rvb::open_like_main
+INFO: [Labtoolstcl 44-466] Opening hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301
+INFO: [Labtoolstcl 44-467] Setting hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301 into jtag_mode
+rvb: target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301 open in JTAG mode, PARAM.FREQUENCY 6000000
+rvb: raw self-test: scan_ir_hw_jtag 6 -> '35' (IR capture 0x35), scan_dr_hw_jtag 32 -> '13631093' (IDCODE 0x13631093)
+PROBE4:   raw_self_test -> ok 1
+INFO: [Labtoolstcl 44-464] Closing hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301
+PROBE4:   close_hw_target -> 
+PROBE4: --- V6 control again
+INFO: [Labtoolstcl 44-466] Opening hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301
+INFO: [Labtoolstcl 44-467] Setting hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301 into jtag_mode
+rvb: raw self-test: scan_ir_hw_jtag 6 -> '35' (IR capture 0x35), scan_dr_hw_jtag 32 -> '13631093' (IDCODE 0x13631093)
+PROBE4:   raw_self_test -> ok 1
+INFO: [Labtoolstcl 44-464] Closing hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301
+PROBE4:   close_hw_target -> 
+PROBE4: end
+INFO: [Common 17-206] Exiting Vivado at Tue Oct 20 15:12:46 2026...

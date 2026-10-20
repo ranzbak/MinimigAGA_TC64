@@ -1,0 +1,60 @@
+
+****** Vivado v2023.2 (64-bit)
+  **** SW Build 4029153 on Fri Oct 13 20:13:54 MDT 2023
+  **** IP Build 4028589 on Sat Oct 14 00:45:43 MDT 2023
+  **** SharedData Build 4025554 on Tue Oct 10 17:18:54 MDT 2023
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source /tmp/claude-1000/-home-paul-work-fpga-Xilinx-artix7-MinimigAGA-TC64/07701334-ab8d-4ba4-9b16-963ecb990a1e/scratchpad/jtag_probe7.tcl
+open_hw_manager: Time (s): cpu = 00:00:13 ; elapsed = 00:00:12 . Memory (MB): peak = 1285.266 ; gain = 68.168 ; free physical = 9467 ; free virtual = 34564
+INFO: [Labtools 27-2285] Connecting to hw_server url TCP:localhost:3121
+INFO: [Labtools 27-2222] Launching hw_server...
+INFO: [Labtools 27-2221] Launch Output:
+
+****** Xilinx hw_server v2023.2
+  **** Build date : Oct 13 2023 at 20:26:23
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+
+
+INFO: [Labtools 27-3415] Connecting to cs_server url TCP:localhost:0
+INFO: [Labtools 27-3417] Launching cs_server...
+INFO: [Labtools 27-2221] Launch Output:
+
+
+******** Xilinx cs_server v2023.2.0
+  ****** Build date   : Oct 10 2023-06:01:56
+    **** Build number : 2023.2.1696910516
+      ** Copyright 2017-2022 Xilinx, Inc. All Rights Reserved.
+      ** Copyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved.
+
+
+
+INFO: [Labtoolstcl 44-466] Opening hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301
+INFO: [Labtoolstcl 44-467] Setting hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301 into jtag_mode
+rvb: raw self-test: scan_ir_hw_jtag 6 -> '35' (IR capture 0x35), scan_dr_hw_jtag 32 -> '13631093' (IDCODE 0x13631093)
+PROBE7: raw: 1
+PROBE7:   be_reset  -> ok 'RESET'
+PROBE7:   be_goto IDLE IDLE -> ok 'IDLE'
+ERROR: [Labtoolstcl 44-271] run_state_hw_jtag failed chain_0
+PROBE7:   be_goto IRPAUSE {DRSELECT IRSELECT IRCAPTURE IREXIT1 IRPAUSE} -> ERROR: ERROR: [Common 17-39] 'run_state_hw_jtag' failed due to earlier errors. | 
+PROBE7: rbb::self_test -> ERROR: ERROR: [Common 17-39] 'run_state_hw_jtag' failed due to earlier errors.
+
+PROBE7: recovery RESET -> RESET
+PROBE7: --- single calls
+PROBE7:   [run_state_hw_jtag RESET] -> ok 'RESET'
+PROBE7:   [run_state_hw_jtag -state {IDLE} IDLE] -> ok 'IDLE'
+PROBE7:   [run_state_hw_jtag RESET] -> ok 'RESET'
+PROBE7:   [run_state_hw_jtag -state {RESET IDLE} IDLE] -> ok 'IDLE'
+PROBE7:   [run_state_hw_jtag RESET] -> ok 'RESET'
+PROBE7:   [run_state_hw_jtag IDLE] -> ok 'IDLE'
+ERROR: [Labtoolstcl 44-271] run_state_hw_jtag failed chain_0
+PROBE7:   [run_state_hw_jtag -state {DRSELECT IRSELECT IRCAPTURE IREXIT1 IRPAUSE} IRPAUSE] -> ERROR: ERROR: [Common 17-39] 'run_state_hw_jtag' failed due to earlier errors. | 
+PROBE7:   [run_state_hw_jtag RESET] -> ok 'RESET'
+PROBE7:   [run_state_hw_jtag IDLE] -> ok 'IDLE'
+ERROR: [Labtoolstcl 44-271] run_state_hw_jtag failed chain_0
+PROBE7:   [run_state_hw_jtag -state {IDLE DRSELECT IRSELECT IRCAPTURE IREXIT1 IRPAUSE} IRPAUSE] -> ERROR: ERROR: [Common 17-39] 'run_state_hw_jtag' failed due to earlier errors. | 
+PROBE7:   [run_state_hw_jtag RESET] -> ok 'RESET'
+PROBE7: end
+INFO: [Labtoolstcl 44-464] Closing hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301
+INFO: [Common 17-206] Exiting Vivado at Tue Oct 20 15:15:51 2026...

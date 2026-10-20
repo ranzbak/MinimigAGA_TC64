@@ -1,0 +1,26 @@
+Info : only one transport option; autoselect 'jtag'
+Warn : Transport "jtag" was already selected
+Info : Simple Register based Bscan Tunnel Selected
+Info : Listening on port 6666 for tcl connections
+Info : Listening on port 4444 for telnet connections
+Info : Initializing remote_bitbang driver
+Info : Connecting to 127.0.0.1:33582
+Info : remote_bitbang driver initialized
+Info : This adapter doesn't support configurable speed
+Info : JTAG tap: xc7.tap tap/device found: 0x13631093 (mfg: 0x049 (Xilinx), part: 0x3631, ver: 0x1)
+Info : datacount=1 progbufsize=2
+Info : Disabling abstract command reads from CSRs.
+Info : Examined RISC-V core; found 1 harts
+Info :  hart 0: XLEN=32, misa=0x0
+Info : starting gdb server for cpu.0 on 3333
+Info : Listening on port 3333 for gdb connections
+Info : accepting 'gdb' connection on tcp/3333
+Info : Disabling abstract command writes to CSRs.
+Info : [cpu.0] Found 2 triggers
+Info : JTAG tap: xc7.tap tap/device found: 0x13631093 (mfg: 0x049 (Xilinx), part: 0x3631, ver: 0x1)
+Info : JTAG tap: xc7.tap tap/device found: 0x13631093 (mfg: 0x049 (Xilinx), part: 0x3631, ver: 0x1)
+Info : dropped 'gdb' connection
+Info : accepting 'telnet' connection on tcp/4444
+shutdown command invoked
+Info : dropped 'telnet' connection
+Info : remote_bitbang interface quit

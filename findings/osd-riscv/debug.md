@@ -1,6 +1,6 @@
 # OSD host CPU migration, Phase 5.4: debug bring-up (lab bitstream, rv_debug = 1)
 
-- Status: the lab build is recorded below, the simulation proof is summarised, the board-session protocol is written (`debug-board-session.md`); the board session was held on 2026-10-20 and **stopped at step 3: the bridge self-test failed** (section "Board session").
+- Status: the lab build is recorded below, the simulation proof is summarised, the board-session protocol is written (`debug-board-session.md`); board session 1 (2026-10-20) stopped at the bridge self-test; JTAG probes found Vivado's real scan semantics, `vbe` was fixed (`39f3367`), and **board session 2 passed the self-test, OpenOCD (`found 1 harts`) and GDB (halt, registers, memory, hardware breakpoints, `monitor reset halt`)**; the 93 KB `load` was skipped by the protocol's timing rule (1 KB read = 103 s). Section "Board session".
 - The **lab bitstream** is a separate image from B (the shipping RISC-V image). It adds the RISC-V debug module and is for Paul's board session only.
   - Built from C2 = `42f7cbb735da8f7cd9951b307edc82c25e5ba3f3` on `p5-build` (`build_ap040.tcl` with `RV_DEBUG=1`), Vivado 2023.2, `xc7a100tfgg676-2`.
   - Outputs: `MinimigAGA_TC64-riscv/build/stage_p5dbg_42f7cbb/` (`$OUT`).
@@ -172,6 +172,8 @@ Findings that bear on the board session (Task 3 report):
 
 ## Board session
 
+### Session 1 (stopped at the self-test)
+
 **Held 2026-10-20 14:15-14:25, remotely** (an agent at the build machine, Paul not at the board; Paul allowed loading test bitstreams over JTAG).
 Protocol `debug-board-session.md` as of `dd91e5b` (Paul's answers: self-test first and stop on failure, `monitor reset halt` before `load`).
 **Result: stopped at step 3. The bridge self-test failed, so OpenOCD and GDB were not started** (Paul's answer 1). B is loaded again and
@@ -196,24 +198,75 @@ What the self-test log proves:
   through `rbb::self_test`) never ran, so BYPASS and the pause-state scans are still unproven. The IR capture `0x35` = `110101`
   ends in the mandatory `01`; the upper bits differ from the simulation model's `0x11` (on 7-series they are status bits; a configured device
   reads differently from the model).
-- **The failing call is the last `run_state_hw_jtag RESET` of `rvb::raw_self_test`**, the one after the two scans (the log line printed before
-  it is the `raw self-test:` line; `rv_jtag_bridge.tcl` prints that line and then calls `run_state_hw_jtag RESET`). The two calls before the
-  scans (`run_state_hw_jtag RESET`, `run_state_hw_jtag IDLE`) and both scans succeeded.
+- ~~The failing call is the last `run_state_hw_jtag RESET` of `rvb::raw_self_test`~~ **Wrong, corrected by session 2:** the raw
+  self-test passed; the failing call was the first capture goto of the bridge core's own self-test (`rbb::self_test`), which follows the
+  `raw self-test:` line without printing anything: `run_state_hw_jtag -state {DRSELECT IRSELECT IRCAPTURE IREXIT1 IRPAUSE} IRPAUSE`
+  (probe 7 below).
 - Vivado 2023.2's help (`help-run_state-scan_dr-2023.2.txt`): a scan ends "in the IDLE state, or [in] the stable state defined by the
   run_state_hw_jtag command" (IDLE here), and `IDLE -> RESET` is a listed transition (`IDLE -> DRSELECT -> IRSELECT -> RESET`). So the call
   is a documented one; the log gives no reason for the failure beyond `failed chain_0`. Not yet known: whether it is the transition after a
   scan, `RESET` as such once scans have run, or the hw_server state. The bridge core uses the same `run_state_hw_jtag RESET` (`vbe::be_reset`),
   so skipping the raw test (`-self_test 0`) would not avoid it.
-- Next check (needs Paul's go, it is a new JTAG experiment): a short Tcl in the hardware manager, lab or B image, that repeats
+- Next check (Paul approved it; run in session 2): a short Tcl in the hardware manager, lab or B image, that repeats
   `RESET; IDLE; scan_ir 6; scan_dr 32` and then tries, each with `-verbose` and `catch`: `run_state_hw_jtag RESET`,
   `run_state_hw_jtag -state {IDLE DRSELECT IRSELECT RESET} RESET`, `run_state_hw_jtag IDLE` then `RESET`, and `run_state_hw_jtag DRPAUSE`.
 
-**Kickstart not loaded (B and lab alike).** `UploadKickstart` (`fw/ctrl_rv/config.c`) printed `ROM dir: 105448` for the configured name and
+**Kickstart not loaded (B and lab alike).** **Paul (2026-10-20): his configuration was not saved; the default kickstart path on the card copy
+is wrong. He will fix and save it. Not a firmware bug.** The log evidence, for the record: `UploadKickstart` (`fw/ctrl_rv/config.c`) printed `ROM dir: 105448` for the configured name and
 again for the fallback `KICK    ROM`, and neither reached `Boot file size:` (a `BootPrintEx` line): either `ValidateDirectory(105448)` failed
 or the file was not found there (the reason goes to the OSD screen only, which nobody saw). The card's `MINMGAR.CFG` holds kickstart name
 `KICKA1~1` and kick directory cluster `0x00019be8` = 105448 (`build/ab_card_87577e2/MINMGAR.CFG`, converted from the live card's 832 config).
 B has no board record before today, so whether B ever loaded Kickstart from this card is not known. The OSD screen (F12) would show the
 error text.
+
+### Session 2 (JTAG probes, `vbe` fix, self-test, OpenOCD, GDB)
+
+**Held 2026-10-20 15:05-15:45, remotely**, with Paul's go for the probes. Logs: `debug-board-session-logs/2026-10-20/session2/` (probe
+scripts and their output in `probes/`, the bridge logs with Vivado's echo of the Tcl source removed, `openocd.txt`, `gdb.txt` = GDB's
+`set logging` file, `gdb-terminal.txt` = what GDB printed, including the `shell date` times). Lab image loaded (`program-lab.txt`,
+`DONE pin = 1`), firmware booted (ttyUSB0), no power cycle.
+
+**JTAG probes** (Vivado batch scripts on the hardware manager, IDCODE/BYPASS/IR capture only):
+
+| Probe | What | Result |
+|---|---|---|
+| 1 | RESET/IDLE, scan IR `09`, scan DR 32, then `run_state_hw_jtag RESET` plain, `-state {IDLE DRSELECT IRSELECT RESET}`, `-state {DRSELECT IRSELECT RESET}`, via IDLE, via DRPAUSE/IRPAUSE, IR-only, DR-only, after `runtest` | **every form works** (`ok 'RESET'`); IR `35`, DR `13631093` each time. The session-1 failure did not reproduce |
+| 2-6 | `rvb::raw_self_test` from global code, from a namespace proc, after `get_hw_targets -quiet *`, `get_property PARAM.FREQUENCY`, `rbb::configure`, the hardware manager opened inside a proc, a copy of `rvb::main`'s open sequence | raw self-test passes in all of them; the real `rvb::main` (probe 3) fails as on the board, so the failure is after the raw test |
+| 7 | trace of every back-end call of `rbb::self_test` | `be_reset -> ok`, `be_goto IDLE IDLE -> ok`, **`be_goto IRPAUSE {DRSELECT IRSELECT IRCAPTURE IREXIT1 IRPAUSE} -> ERROR: [Labtoolstcl 44-271] run_state_hw_jtag failed chain_0`**; the same `-state` path from IDLE fails on its own too, with or without a leading IDLE |
+| 8 | every path the core builds, `-state` and plain, from each start state | **only IDLE -> IRPAUSE with `-state` is refused**; all others and all plain forms work. Plain `run_state_hw_jtag IRPAUSE` captures (scan IR -> `35`) |
+| 8, 9 | two scans in a row from a pause state; Vivado's idea of the state after a scan | BYPASS: `a5` -> `4a`, then `00` -> `00` (not `01`): **the second scan captured again**. After a scan from DRPAUSE/IRPAUSE, `-state {DREXIT2 DRUPDATE IDLE} IDLE` is refused and `-state {IDLE} IDLE` accepted: **every scan ends in IDLE through Update** |
+| 10 | `runtest_hw_jtag -wait_state DRPAUSE -end_state DRPAUSE` before the scans (the help's sticky end state) | no change: still `4a`, `00`; path from DRPAUSE afterwards refused |
+
+So Vivado 2023.2 does not do what `help scan_dr_hw_jtag` describes (a scan ending in the pause state, the next one going Exit2 -> Shift).
+The core assumed it, and so did the shim; nothing in the simulation could have shown it.
+
+**Fix** (`39f3367`, `tools/rvdebug/rv_jtag_bridge.tcl`, `vbe` only; core and shim unchanged): `vbe` tracks the state Vivado's TAP is really
+in (IDLE with the Update done after every scan), drops the already-walked `xREXIT2 xRUPDATE [IDLE]` prefix of the core's next path, uses the
+plain form for paths equal to Vivado's default (this avoids the refused one), and logs `rvb: WARNING: ... shift split` for a shift split
+across two scans (cannot be continued on Vivado). New tests `test/fake_vivado.tcl` (the measured behaviour) and `test/test_vivado.tcl`:
+the old `vbe` fails the self-test with `44-271` as on the board; the new one passes it, and the OpenOCD `dmi`, `tunnel` and `autoprobe`
+(read-ahead) sessions and the recorded `attach1` session give the bit-level reference's replies and counters, without a split.
+`run_all.tcl` (SEED=1): 57 passed, 0 failed.
+
+**Protocol run after the fix** (lab image, bridge from `39f3367`):
+
+| Step | ok / what happened |
+|---|---|
+| 3 bridge self-test | **PASS**: `rvb: raw self-test: scan_ir_hw_jtag 6 -> '35' (IR capture 0x35), scan_dr_hw_jtag 32 -> '13631093' (IDCODE 0x13631093)`, `=== RVBRIDGE SELF-TEST PASS: IDCODE 0x13631093, IR capture 0x35, BYPASS ok`, `=== RBB BRIDGE listening 127.0.0.1:33582` |
+| 4 OpenOCD | ok: `JTAG tap: xc7.tap tap/device found: 0x13631093 (mfg: 0x049 (Xilinx), part: 0x3631, ver: 0x1)`, `datacount=1 progbufsize=2`, **`Examined RISC-V core; found 1 harts`**, `hart 0: XLEN=32, misa=0x0`, `Listening on port 3333 for gdb connections`, within 10 s. Later: `Found 2 triggers` |
+| 5 attach | `target extended-remote` 3 s; `0x0000dd60 in OsdWriteOffset (...) at osd.c:479` |
+| 5.1 read-only | ok: `info registers` x1..x31 and `pc 0xdd60 <OsdWriteOffset+1516>`; `bt` main -> HandleUI (menu.c:2658) -> OsdWrite -> OsdWriteOffset; `x/s 0x142f4` = `"Firmware version: %s"`, `x/16wx` starts `0x6d726946 0x65726177 0x72657620 0x6e6f6973` (the ELF's bytes); `osd_rdy_timeouts` `0x00000000`, `DebugMode` `0x00`. 4 x `continue` / Ctrl-C (SIGINT) / `info registers pc`: `0xd6fc`, `0xdd5a`, `0xdd60`, `0xd706` (OSD title/text code: the OSD shows the kickstart error) |
+| 5.2 breakpoint (remote variant) | ok: `Hardware assisted breakpoint 1 at 0x8e20: file menu.c, line 420.`, **`Breakpoint 1, HandleUI () at menu.c:420`** after 7 s; `bt` main+320; `delete`, `continue`, Ctrl-C |
+| 5.3 timing | `x/256wx 0x2000`: **103.5 s** (15:38:41.77 -> 15:40:25.25), the 1 KB equal to `RV32OSDA.BIN[0:1024]`. Over 20 s: 5.5 skipped by the protocol rule (93 KB would take about 2.6 h by reading speed; writing is slower) |
+| 5.4 `monitor reset halt`, `hbreak main` | ok: reset (OpenOCD re-reads the TAP), `Hardware assisted breakpoint 2 at 0x80a0: file main.c, line 269.`, `continue`: ttyUSB0 shows the boot ROM again (`Initializing SD card` ... `file "RV32OSDABIN" found`, 15:40:45), **`Breakpoint 2, main () at main.c:269`** after 7 s. `info registers pc` right after the reset printed the old `0xdd60`: GDB's cached value. Repeated with `monitor reg pc` (`0x00000000`) and `maintenance flush register-cache`: `pc 0x0`, `0x0: j 0x34` (the boot ROM's reset vector). Protocol fixed (flush before `info registers pc`). After `continue` the firmware ran its main loop again (Ctrl-C after 40 s: main -> HandleUI -> OsdWrite) |
+| 5.5 reset + `load` | **not run** (5.3 rule) |
+| 6 stop | `detach` (`[Inferior 1 (Remote target) detached]`), OpenOCD `shutdown` (telnet; SIGINT is ignored by a background-started OpenOCD), bridge close line: `connection 1 closed (Q): ... scans 82214 (partial 0, forced by a timer 0, longest 672 bits, longest shift 672 bits), IDCODE read-ahead 1530 (0 bad), gotos 164431`; no `shift split` line. Bridge Vivado, `hw_server`, `cs_server` stopped |
+| recovery | B loaded (md5 `4065f272...`, `program-B-final.txt`, `DONE pin = 1`); ttyUSB0: boot ROM, `file "RV32OSDABIN" found`, `Firmware version: 2026-1-1-0-0` (the kickstart line as before: Paul's config) |
+
+Speed: about 2.5 bytes/s for memory reads (sim: 205 bytes/s through the shim). The bridge logged 6,800 to 24,500 scans per minute,
+about 3 Vivado commands per scan (82,214 scans and 164,431 gotos, i.e. about 246,600 commands, in a connection of about 6.5 minutes, so at
+least about 1.5 ms per Vivado JTAG command).
+GDB on the board is usable for halting, registers, breakpoints and small memory reads; `load` of the firmware is not, at this speed.
 
 ## Files and paths
 

@@ -1,0 +1,53 @@
+
+****** Vivado v2023.2 (64-bit)
+  **** SW Build 4029153 on Fri Oct 13 20:13:54 MDT 2023
+  **** IP Build 4028589 on Sat Oct 14 00:45:43 MDT 2023
+  **** SharedData Build 4025554 on Tue Oct 10 17:18:54 MDT 2023
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source /home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64-p5build/tools/vivado/program.tcl
+# open_hw_manager
+open_hw_manager: Time (s): cpu = 00:00:17 ; elapsed = 00:00:17 . Memory (MB): peak = 1339.500 ; gain = 0.027 ; free physical = 7435 ; free virtual = 32839
+# connect_hw_server -allow_non_jtag
+INFO: [Labtools 27-2285] Connecting to hw_server url TCP:localhost:3121
+INFO: [Labtools 27-2222] Launching hw_server...
+INFO: [Labtools 27-2221] Launch Output:
+
+****** Xilinx hw_server v2023.2
+  **** Build date : Oct 13 2023 at 20:26:23
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+
+
+INFO: [Labtools 27-3415] Connecting to cs_server url TCP:localhost:0
+INFO: [Labtools 27-3417] Launching cs_server...
+INFO: [Labtools 27-2221] Launch Output:
+
+
+******** Xilinx cs_server v2023.2.0
+  ****** Build date   : Oct 10 2023-06:01:56
+    **** Build number : 2023.2.1696910516
+      ** Copyright 2017-2022 Xilinx, Inc. All Rights Reserved.
+      ** Copyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved.
+
+
+
+connect_hw_server: Time (s): cpu = 00:00:02 ; elapsed = 00:00:06 . Memory (MB): peak = 1347.680 ; gain = 8.180 ; free physical = 7234 ; free virtual = 32696
+# open_hw_target
+INFO: [Labtoolstcl 44-466] Opening hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301
+# set dev [lindex [get_hw_devices] 0]
+# puts "=== devices: [get_hw_devices] ; using $dev ==="
+=== devices: xc7a100t_0 ; using xc7a100t_0 ===
+# current_hw_device $dev
+# refresh_hw_device -update_hw_probes false $dev
+INFO: [Labtools 27-1434] Device xc7a100t (JTAG device index = 0) is programmed with a design that has no supported debug core(s) in it.
+# set_property PROGRAM.FILE [lindex $argv 0] $dev
+# program_hw_device $dev
+INFO: [Labtools 27-3164] End of startup status: HIGH
+program_hw_devices: Time (s): cpu = 00:00:08 ; elapsed = 00:00:08 . Memory (MB): peak = 1355.684 ; gain = 0.000 ; free physical = 7277 ; free virtual = 32727
+# refresh_hw_device $dev
+INFO: [Labtools 27-1434] Device xc7a100t (JTAG device index = 0) is programmed with a design that has no supported debug core(s) in it.
+# puts "=== DONE: [get_property PROGRAM.FILE $dev] loaded, DONE pin = [get_property REGISTER.CONFIG_STATUS.BIT14_DONE_PIN $dev] ==="
+=== DONE: /home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64-riscv/build/stage_p5dbg_42f7cbb/minimig_openaars_top.bit loaded, DONE pin = 1 ===
+# close_hw_manager
+INFO: [Common 17-206] Exiting Vivado at Tue Oct 20 15:06:31 2026...

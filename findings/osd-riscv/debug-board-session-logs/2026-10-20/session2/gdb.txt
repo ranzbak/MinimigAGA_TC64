@@ -1,0 +1,186 @@
+(gdb) (gdb) Remote debugging using 127.0.0.1:3333
+0x0000dd60 in OsdWriteOffset (n=<optimized out>, n@entry=1 '\001', s=<optimized out>, s@entry=0x16d74 "", invert=invert@entry=0 '\000', stipple=<optimized out>, offset=offset@entry=0 '\000') at osd.c:479
+479	    for (; i < linelimit; i++) // clear end of line
+(gdb) (gdb) (gdb) (gdb) ra             0xc6e6	0xc6e6 <HandleUI+14534>
+sp             0x1f50	0x1f50
+gp             0x1932c	0x1932c <romkey+1104>
+tp             0x0	0x0
+t0             0xffffffff	-1
+t1             0xf8	248
+t2             0x20df4	134644
+fp             0x20	0x20
+s1             0xc	12
+a0             0x1	1
+a1             0x16d74	93556
+a2             0x18140	98624
+a3             0x0	0
+a4             0x0	0
+a5             0x68	104
+a6             0x0	0
+a7             0x0	0
+s2             0x7	7
+s3             0x21	33
+s4             0x22000	139264
+s5             0x17000	94208
+s6             0x0	0
+s7             0x0	0
+s8             0x0	0
+s9             0x21000	135168
+s10            0x0	0
+s11            0x0	0
+t3             0x100	256
+t4             0x3	3
+t5             0x0	0
+t6             0xff	255
+pc             0xdd60	0xdd60 <OsdWriteOffset+1516>
+(gdb) #0  0x0000dd60 in OsdWriteOffset (n=<optimized out>, n@entry=1 '\001', s=<optimized out>, s@entry=0x16d74 "", invert=invert@entry=0 '\000', stipple=<optimized out>, offset=offset@entry=0 '\000') at osd.c:479
+#1  0x0000dd68 in OsdWrite (n=n@entry=1 '\001', s=s@entry=0x16d74 "", invert=invert@entry=0 '\000', stipple=<optimized out>) at osd.c:361
+#2  0x0000c6e6 in HandleUI () at menu.c:2658
+#3  0x000081e0 in main () at main.c:365
+(gdb) OsdWriteOffset + 1516 in section .text
+(gdb) 0x142f4:	"Firmware version: %s"
+(gdb) 0x142f4:	0x6d726946	0x65726177	0x72657620	0x6e6f6973
+0x14304:	0x7325203a	0x00000000	0x3a555043	0x36434d20
+0x14314:	0x30343038	0x73257325	0x00000000	0x696e694d
+0x14324:	0x2067696d	0x20414741	0x52207962	0x4b206b6f
+(gdb) 0x18ba4 <osd_rdy_timeouts>:	0x00000000
+(gdb) 0x19adc <DebugMode>:	0x00
+(gdb) (gdb) ===51DONE
+(gdb) (gdb) Continuing.
+Disabling abstract command writes to CSRs.
+
+Program received signal SIGINT, Interrupt.
+rotatechar (in=0x20e14 <titlebuffer+32> "\f\b", out=0x1f58 "") at osd.c:290
+290				a<<=1;
+(gdb) pc             0xd6fc	0xd6fc <OsdSetTitle+188>
+(gdb) (gdb) (gdb) Continuing.
+
+Program received signal SIGINT, Interrupt.
+0x0000dd5a in OsdWriteOffset (n=<optimized out>, n@entry=0 '\000', s=<optimized out>, invert=255 '\377', invert@entry=1 '\001', stipple=<optimized out>, stipple@entry=0 '\000', offset=offset@entry=0 '\000') at osd.c:480
+480	       SPI(invert);
+(gdb) pc             0xdd5a	0xdd5a <OsdWriteOffset+1510>
+(gdb) (gdb) (gdb) Continuing.
+
+Program received signal SIGINT, Interrupt.
+0x0000dd60 in OsdWriteOffset (n=<optimized out>, n@entry=1 '\001', s=<optimized out>, s@entry=0x16d74 "", invert=invert@entry=0 '\000', stipple=<optimized out>, offset=offset@entry=0 '\000') at osd.c:479
+479	    for (; i < linelimit; i++) // clear end of line
+(gdb) pc             0xdd60	0xdd60 <OsdWriteOffset+1516>
+(gdb) (gdb) (gdb) Continuing.
+
+Program received signal SIGINT, Interrupt.
+rotatechar (in=0x20e04 <titlebuffer+16> "IIAA", out=0x1f58 <incomplete sequence \360>) at osd.c:291
+291				a|=(in[c]>>b)&1;
+(gdb) pc             0xd706	0xd706 <OsdSetTitle+198>
+(gdb) (gdb) ===CONTDONE
+(gdb) Hardware assisted breakpoint 1 at 0x8e20: file menu.c, line 420.
+(gdb) (gdb) Continuing.
+
+Breakpoint 1, HandleUI () at menu.c:420
+420	    c = OsdGetCtrl();
+(gdb) (gdb) #0  HandleUI () at menu.c:420
+#1  0x000081e0 in main () at main.c:365
+(gdb) pc             0x8e20	0x8e20 <HandleUI>
+ra             0x81e0	0x81e0 <main+320>
+(gdb) (gdb) Continuing.
+
+Program received signal SIGINT, Interrupt.
+0x0000dd60 in OsdWriteOffset (n=<optimized out>, n@entry=0 '\000', s=<optimized out>, invert=255 '\377', invert@entry=1 '\001', stipple=<optimized out>, stipple@entry=0 '\000', offset=offset@entry=0 '\000') at osd.c:479
+479	    for (; i < linelimit; i++) // clear end of line
+(gdb) pc             0xdd60	0xdd60 <OsdWriteOffset+1516>
+(gdb) ===52DONE
+(gdb) (gdb) (gdb) 0x2000 <_start>:	0x30047073	0x000191b7	0x32c18193	0x00000117
+0x2010 <_start+16>:	0xff410113	0x83818293	0x00025317	0x2ec30313
+0x2020 <_start+32>:	0x0062f663	0x0002a023	0xbfdd0291	0x00000297
+0x2030 <_start+48>:	0x04428293	0x30529073	0x00016417	0xd9040413
+0x2040 <_start+64>:	0x00016497	0xd9048493	0x00947763	0x00042283
+0x2050 <_start+80>:	0x04119282	0x6285bfd5	0x80028293	0x3042a073
+0x2060 <_start+96>:	0x30046073	0x45814501	0x038060ef	0x0000a001
+0x2070 <trap_entry>:	0xc0067139	0xc41ac216	0xc872c61e	0xcc7aca76
+0x2080 <trap_entry+16>:	0xd02ace7e	0xd432d22e	0xd83ad636	0xdc42da3e
+0x2090 <trap_entry+32>:	0x2573de46	0x25f33420	0x26733410	0x20c13430
+0x20a0 <trap_entry+48>:	0x42924082	0x43b24322	0x4ed24e42	0x4ff24f62
+0x20b0 <trap_entry+64>:	0x55925502	0x56b25622	0x57d25742	0x58f25862
+0x20c0 <trap_entry+80>:	0x00736121	0x00013020	0xfea00823	0x11018082
+0x20d0 <rv_puthex+2>:	0x64cdca26	0xc84acc22	0xce06c64e	0x447189aa
+0x20e0 <rv_puthex+18>:	0x6b848493	0xd7b35971	0x8bbd0089	0xc50397a6
+0x20f0 <rv_puthex+34>:	0x14710007	0x18e33fd1	0x40f2ff24	0x44d24462
+0x2100 <rv_puthex+50>:	0x49b24942	0x80826105	0xc4221141	0x842ac606
+0x2110 <rv_puts+8>:	0x00044503	0x40b2e509	0x01414422	0x04058082
+0x2120 <rv_puts+24>:	0xb7fd3765	0xcc221101	0x654d842a	0x6cc50513
+0x2130 <rv_exception+12>:	0xc62ece06	0x3fc9c432	0x3f518522	0x0513654d
+0x2140 <rv_exception+28>:	0x37d96d85	0x37614532	0x0513654d	0x3f6d6e05
+0x2150 <rv_exception+44>:	0x3fb54522	0x0513655d	0x377dd485	0x07b7a001
+0x2160 <rv_trap+2>:	0x07ad8000	0x00f51663	0xa78367e5	0x8782b2c7
+0x2170 <rv_trap+18>:	0x2783bf55	0x8082fa00	0xcc221101	0xf3002403
+0x2180 <irq_dispatch+8>:	0xca26ce06	0xc64ec84a	0xc256c452	0x69e5c805
+0x2190 <irq_dispatch+24>:	0x4ac14a05	0xb6498913	0x17b34481	0xf733009a
+0x21a0 <irq_dispatch+40>:	0xc7090087	0x00092703	0x9702c70d	0x09110485
+0x21b0 <irq_dispatch+56>:	0xff5495e3	0xf3002403	0xa019fc71	0xfa002023
+0x21c0 <irq_dispatch+72>:	0x446240f2	0x494244d2	0x4a2249b2	0x61054a92
+0x21d0 <irq_dispatch+88>:	0x07138082	0x4314f340	0xfff7c793	0xc31c8ff5
+0x21e0 <irq_dispatch+104>:	0x6789b7f1	0xfa002023	0x17878793	0x00f50863
+0x21f0 <SetIntHandler+14>:	0xf2002a23	0x6509e501	0x17250513	0xa62367e5
+0x2200 <SetIntHandler+30>:	0x8082b2a7	0x05136509	0xbfe11725	0xfa002503
+0x2210 <GetInterrupts+4>:	0x47858082	0xfaf02023	0x20238082	0x8082fa00
+0x2220 <CheckButton>:	0xfc005503	0xfff54513	0x80828905	0xfd005783
+0x2230 <GetTimer+4>:	0x0542953e	0x57838082	0x07c2fd00	0x817d8d1d
+0x2240 <CheckTimer+10>:	0x57838082	0x1141fd00	0x97aac422	0x9413c606
+0x2250 <WaitTimer+14>:	0x85220107	0xdd7537cd	0x442240b2	0x80820141
+0x2260 <ConfigMisc>:	0xfca01023	0xe7b78082	0x9b2300de	0x80820007
+0x2270 <SPI_reply>:	0xfb405783	0xef958b85	0xfd005783	0xc4221141
+0x2280 <SPI_reply+16>:	0xc6060789	0x01079413	0xfb405783	0xeb898b85
+0x2290 <SPI_reply+32>:	0x37558522	0xa783d975	0x07858781	0x86f1ac23
+0x22a0 <SPI_reply+48>:	0x002357fd	0x40b2fef0	0x45034422	0x0141fe00
+0x22b0 <SPI_reply+64>:	0x57fd8082	0xfef00023	0xfe004503	0x07b78082
+0x22c0 <ClearKickstartMirrorE0+2>:	0x07370008	0x86be0010	0x0006a023	0x9ce30791
+0x22d0 <ClearKickstartMirrorE0+18>:	0x8082fee7	0x006807b7	0x40078713	0xa02386be
+0x22e0 <ClearVectorTable+12>:	0x07910006	0xfee79ce3	0x11018082	0x4621cc22
+0x22f0 <UploadKickstart+6>:	0x0048842a	0xca26ce06	0x00efc84a	0x65d14231
+0x2300 <UploadKickstart+22>:	0x87858593	0x00ef0068	0x654d4731	0x051385a2
+0x2310 <UploadKickstart+38>:	0x00ef6e85	0x85220f31	0x1ad010ef	0x2737e515
+0x2320 <UploadKickstart+54>:	0x27830002	0xe793a807	0x20230047	0x27b7a8f7
+0x2330 <UploadKickstart+70>:	0x674d0002	0xa4478793	0x6f870713	0xcfc0cf98
+0x2340 <UploadKickstart+86>:	0x0207a023	0xa2354501	0x10ef8522	0x654d54c0
+0x2350 <UploadKickstart+102>:	0x70c50513	0x070040ef	0x646565cd	0x73458593
+0x2360 <UploadKickstart+118>:	0xba840513	0x6800c0ef	0xc10584aa	0xba840513
+0x2370 <UploadKickstart+134>:	0x12c52483	0x87936785	0xe463bff7	0x65e50897
+0x2380 <UploadKickstart+150>:	0x85938626	0xc0efedc5	0x004c4fe0	0xba840513
+0x2390 <UploadKickstart+166>:	0x6540c0ef	0x24050163	0xc0ef4505	0x04136b00
+0x23a0 <UploadKickstart+182>:	0x2603ba84	0x193712c4	0x65cd0002	0x75858593
+0x23b0 <UploadKickstart+198>:	0xb8c90513	0x229100ef	0xb8c90513	0x4aa040ef
+0x23c0 <UploadKickstart+214>:	0x12c42783	0x00f7f713	0xe3251755	0x2737ecb9
+0x23d0 <UploadKickstart+230>:	0x27830002	0xe793a807	0x20230047	0x27b7a8f7
+0x23e0 <UploadKickstart+246>:	0x674d0002	0xa4478793	0x76c70713	0xae23cf98
+0x23f0 <UploadKickstart+262>:	0xa0230007	0x47050207	0x000227b7	0xa8e7a223
+(gdb) (gdb) ===53DONE
+(gdb) (gdb) JTAG tap: xc7.tap tap/device found: 0x13631093 (mfg: 0x049 (Xilinx), part: 0x3631, ver: 0x1)
+(gdb) pc             0xdd60	0xdd60 <OsdWriteOffset+1516>
+(gdb) Hardware assisted breakpoint 2 at 0x80a0: file main.c, line 269.
+(gdb) (gdb) Continuing.
+
+Breakpoint 2, main () at main.c:269
+269		StackFill();
+(gdb) (gdb) pc             0x80a0	0x80a0 <main>
+(gdb) #0  main () at main.c:269
+(gdb) (gdb) ===54DONE
+(gdb) (gdb) JTAG tap: xc7.tap tap/device found: 0x13631093 (mfg: 0x049 (Xilinx), part: 0x3631, ver: 0x1)
+(gdb) pc             0x80a0	0x80a0 <main>
+(gdb) pc (/32): 0x00000000
+(gdb) Register cache flushed.
+(gdb) pc             0x0	0x0
+(gdb) => 0x0:	j	0x34
+   0x4:	unimp
+   0x6:	unimp
+   0x8:	unimp
+(gdb) (gdb) Continuing.
+
+Program received signal SIGINT, Interrupt.
+0x0000dd60 in OsdWriteOffset (n=<optimized out>, n@entry=1 '\001', s=<optimized out>, s@entry=0x16d74 "", invert=invert@entry=0 '\000', stipple=<optimized out>, offset=offset@entry=0 '\000') at osd.c:479
+479	    for (; i < linelimit; i++) // clear end of line
+(gdb) pc             0xdd60	0xdd60 <OsdWriteOffset+1516>
+(gdb) #0  0x0000dd60 in OsdWriteOffset (n=<optimized out>, n@entry=1 '\001', s=<optimized out>, s@entry=0x16d74 "", invert=invert@entry=0 '\000', stipple=<optimized out>, offset=offset@entry=0 '\000') at osd.c:479
+#1  0x0000dd68 in OsdWrite (n=n@entry=1 '\001', s=s@entry=0x16d74 "", invert=invert@entry=0 '\000', stipple=<optimized out>) at osd.c:361
+#2  0x0000c6e6 in HandleUI () at menu.c:2658
+#3  0x000081e0 in main () at main.c:365
+(gdb) (gdb) ===54BDONE
+(gdb) 

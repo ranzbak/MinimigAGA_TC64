@@ -285,12 +285,16 @@ there, which shows the boot-ROM path and a breakpoint on code the boot ROM has j
 
 ```
 monitor reset halt
+maintenance flush register-cache
 info registers pc
 hbreak main
 continue
 ```
 
-Expected: `pc` is the boot ROM's reset vector (a low address, below `0x2000`) before the `continue`; ttyUSB0 shows the boot lines again
+(`maintenance flush register-cache`: GDB does not know that a `monitor` command changed the registers and prints its cached pc without it;
+seen on the board 2026-10-20, where `info registers pc` showed the old `0xdd60` and, after the flush, `0x0`.)
+
+Expected: `pc` is the boot ROM's reset vector (`0x0`, `j 0x34` on the board) before the `continue`; ttyUSB0 shows the boot lines again
 (`Initializing SD card`, ... `file "RV32OSDA.BIN" found`), then GDB prints `Breakpoint 1, main () at main.c:269` (or `Thread 1 hit Breakpoint 1`).
 Then:
 
@@ -315,6 +319,7 @@ releases the Amiga: the Amiga cold-boots** (seconds of black screen, Kickstart, 
 
 ```
 monitor reset halt
+maintenance flush register-cache
 info registers pc
 shell date +%T
 load
