@@ -88,12 +88,18 @@
 //               sectors of SYNTH.HDF ("=== STATS@cdda_load")
 //   akiko       the Akiko request service (README "akiko"; run.sh: the fdd
 //               card, +KEYS=sim/l3/keys/insert_df0.txt): main-loop milestone
-//               as boot, where bfm_akiko runs block 0 (32 write + 32 read
-//               requests on cfide's amiga_* window) in the idle main loop;
-//               then the key script (TEST.ADF into df0), then bfm_floppy
-//               reads FDD_PLAN's first AKIKO_TRACKS tracks, and block 1 starts
-//               at the first track DMA's DSKLEN write; end event: block 1 and
-//               the last track DMA done ("=== STATS@akiko").  TIMER as fdd_rd
+//               as boot; at the AKIKO_PASSES-th HandleFpga frame after it
+//               bfm_akiko runs block 0 (32 write + 32 read requests on
+//               cfide's amiga_* window) in the idle main loop (after the
+//               main loop's first passes, the first drive status and
+//               OsdHide: during the ISR's burst the RV's main loop stands
+//               still and the 832's runs a few passes, Task 19); then the
+//               key script (TEST.ADF into df0), then bfm_floppy reads
+//               FDD_PLAN's first AKIKO_TRACKS tracks, and block 1 starts at
+//               the first track DMA's DSKLEN write; end event: the first
+//               HandleFpga frame after block 1 and the last track DMA are
+//               done (a frame's close: no frame in flight when the run
+//               ends, Task 19) ("=== STATS@akiko").  TIMER as fdd_rd
 
   reg [8*32-1:0]  scenario;
   reg [8*16-1:0]  short_end;
@@ -111,6 +117,8 @@
   localparam integer FDD_WORDS = 6334;
   localparam [15:0]  FDD_SYNC  = 16'h4489;
   localparam integer AKIKO_TRACKS = 2;       // akiko: the plan's first two tracks (cylinders 0, 1 head 0)
+  localparam integer AKIKO_PASSES = 20;      // akiko: block 0 at this HandleFpga frame after the first
+  reg                sc_aki_end = 1'b0;      // akiko: block 1 and the last track DMA are done
   localparam [127:0] FDD_PLAN  = {48'h0, 8'h80 | 8'd79, 8'd79, 8'd78, 8'd77, 8'd41, 8'd40, 8'd39, 8'd2, 8'd1, 8'd0};
   // fdd_wr: the cylinders of fdd_rd, with 40/0 (the bad-header track, see
   // the header) moved to the end: 0, 1, 2, 39, 41, 77, 78, 79 head 0, 79
@@ -163,11 +171,10 @@
   always @(posedge sc_started) if (scenario == "keys" || scenario == "fdd_rd" || scenario == "fdd_wr") keys.go = 1'b1;
   // akiko: block 0 in the idle main loop, then the key script, the track reads,
   // block 1 from the first track DMA's start
-  always @(posedge sc_started) if (scenario == "akiko") aki.go1 = 1'b1;
   always @(posedge aki.b1_done) if (scenario == "akiko") keys.go = 1'b1;
   always @(posedge fdd.dma_busy) if (scenario == "akiko") aki.go2 = 1'b1;
   always @(posedge aki.done or posedge fdd.done)
-    if (scenario == "akiko" && aki.done && fdd.done) sc_end("akiko", "block 1 and the last track DMA done");
+    if (scenario == "akiko" && aki.done && fdd.done) sc_aki_end = 1'b1;
   always @(posedge keys.done) if (scenario == "keys") sc_end("keys", "the end of the key script");
   // fdd_rd: the track reads start when the key script has ended
   always @(posedge keys.done) if (scenario == "fdd_rd" || scenario == "fdd_wr" || scenario == "akiko") fdd.go = 1'b1;
@@ -230,6 +237,9 @@
           sc_started = 1'b1;
         end
         if (scenario == "boot" && boot_end == "" && sc_fpga == 21) sc_end("boot", "HandleFpga frame 20 after the first");
+        if (scenario == "akiko" && sc_fpga == 1 + AKIKO_PASSES) aki.go1 = 1'b1;
+        if (scenario == "akiko" && sc_aki_end)
+          sc_end("akiko", "the first HandleFpga frame after block 1 and the last track DMA");
         if (scenario == "fdd_wr" && fdd.done) begin
           sc_wfpga = sc_wfpga + 1;
           if (sc_wfpga == 20) sc_end("fdd_wr", "HandleFpga frame 20 after the last write (no error page)");

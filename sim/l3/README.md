@@ -2025,11 +2025,17 @@ requests, then 32 read requests: `addr = 0x20 + 0x80 b + i`, write data
 `((i + 1) * 0x9E37) & 0xFFFF` (xor `0xC3A5` in block 1).
 
 Scenario: the `fdd` card (as `fdd_rd`), TICKDIV 643 from the main-loop
-milestone. Block 0 runs at the milestone, in the idle main loop. When it is
-done the key script `keys/insert_df0.txt` starts, then `bfm_floppy.v` reads
-2 tracks (cylinders 0 and 1, head 0; `AKIKO_TRACKS` in `scenarios.vh`), and
-block 1 starts at the first track DMA's DSKLEN write. The end event is block
-1 and the last track DMA done (`=== STATS@akiko`).
+milestone. Block 0 runs at the 20th HandleFpga frame after the milestone
+(`AKIKO_PASSES`), in the idle main loop, after the main loop's first passes
+(the first drive status, OsdHide): during the ISR's UART-bound burst the
+RV's main loop does not advance while the 832's runs a few passes, so a
+block 0 at the milestone put those first frames inside the burst on the 832
+only (Task 19). When it is done the key script `keys/insert_df0.txt`
+starts, then `bfm_floppy.v` reads 2 tracks (cylinders 0 and 1, head 0;
+`AKIKO_TRACKS` in `scenarios.vh`), and block 1 starts at the first track
+DMA's DSKLEN write. The end event is the first HandleFpga frame after block
+1 and the last track DMA are done (`=== STATS@akiko`): it is a frame's close,
+so no frame is in flight when the run ends.
 
 `l3check.py akiko <run>` checks: the 128 requests in order, none lost or
 repeated (the log's `=== AKIKO req` lines), each with the bench's pattern
@@ -2061,9 +2067,10 @@ cycles) on a loaded machine. The MARGIN 6 monitor stays required: the ISR's
 UART prints stall the main loop, and the floppy FIFO never ran empty (0
 slots, fifo min 995 words RV, 981 words 832).
 
-The diff of the two runs is not empty; see `findings/osd-riscv/phase4.md`
-Task 18 (poll frames placed differently among the Akiko lines, a timing
-difference no rule covers).
+The diff of the two runs is empty with the rules of the other scenarios
+(no rule of its own): runs `p4t19ak_rv_akiko` / `p4t19ak_832_akiko`
+(Task 19). Before that scenario change it had 3 timing hunks (Task 18's lane
+had 6), `findings/osd-riscv/phase4.md` Task 18.
 
 ## Monitors
 
