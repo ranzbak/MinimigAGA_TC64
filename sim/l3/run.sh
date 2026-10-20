@@ -77,7 +77,8 @@
 #            says so).  Plusargs (the
 #            scenario, the card, skew, FAST_HW, SLAT, SJIT) are not build
 #            inputs (sim/l3/grid.sh)
-#   TIMEOUT  clk_114 cycles (default per scenario below)
+#   TIMEOUT  clk_114 cycles (default per scenario below), at most
+#            2147483647 (tb_l3.v's integer)
 #   L3CHECK  tests of run.sh only: the l3check.py to run (default sim/l3's)
 #   VIVADO_PATH, GHDL, VERILATOR, JOBS, OBJCACHE as sim/host_bridge/run.sh
 #
@@ -731,6 +732,10 @@ scenario() {
 			    "FDD_DUMP=$run/akiko") ;;
 		*) die "unknown scenario $s" ;;
 	esac
+	# tb_l3.v reads +TIMEOUT into a 32-bit integer: a larger value wraps
+	# negative and ends the run at once (Task 19, grid run p4g_rv_ws64_fdd_rd)
+	case "$to" in ''|*[!0-9]*) die "TIMEOUT=$to: not a number of cycles" ;; esac
+	[ "${#to}" -lt 10 ] || [ "$to" -le 2147483647 ] || die "TIMEOUT=$to: above 2147483647 (tb_l3.v's 32-bit integer)"
 	if git -C "$ROOT" diff --quiet HEAD -- "${ROM#$ROOT/}"; then st="unmodified (= git HEAD)"; else st="BAD  MODIFIED against git HEAD"; fi
 	{
 		echo "=== CPU $CPU"

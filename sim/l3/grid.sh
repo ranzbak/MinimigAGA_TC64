@@ -65,7 +65,10 @@ export E832=${E832:-$E832DIR/RTL}
 # accesses at EXTRA_WS 0 (dread + dwrite + 8 x irefill of the merged-tree
 # runs p4m2b, p4t14fr, p4t14f, p4m2h, p4m2a: boot 3.46 M, fdd_rd 24.7 M,
 # fdd_wr 19.85 M, hdd 4.37 M, cdda 15.87 M), the time if every access
-# waited n cycles longer: a bound, not an estimate.
+# waited n cycles longer: a bound, not an estimate; at most 2,147,000,000
+# (run.sh's limit, tb_l3.v's 32-bit integer: fdd_rd at EXTRA_WS 64 would be
+# 2,261 M).  Do not edit grid.sh while a grid runs: bash reads a script as
+# it goes, and the running grid would continue at the old byte offsets.
 default_list() {
 	cat <<'EOF'
 1 def_fdd_wr     832 fdd_wr
@@ -88,7 +91,7 @@ default_list() {
 1 def_cdiso      rv  cd        CDCFG=iso
 1 def_keys       rv  keys
 1 def_boot       rv  boot
-2 ws64_fdd_rd    rv  fdd_rd    EXTRA_WS=64 TIMEOUT=2261000000
+2 ws64_fdd_rd    rv  fdd_rd    EXTRA_WS=64 TIMEOUT=2147000000
 2 ws64_fdd_wr    rv  fdd_wr    EXTRA_WS=64 TIMEOUT=1971000000
 2 ws64_cdda      rv  cdda      EXTRA_WS=64 TIMEOUT=1536000000
 2 sk0340_fdd_rd  832 fdd_rd    XARGS="+SCKDLY=0.3 +C28DLY=4.0"

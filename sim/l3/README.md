@@ -3,7 +3,7 @@
 Work in progress (Phase 4 of the OSD host CPU migration). This file grows
 with the bench; so far it has the sections "Bench", "Run", "boot",
 "832", "Differential", "keys", "fdd_rd", "fdd_wr", "hdd", "cd", "cdda",
-"akiko", "Monitors" and "Cards".
+"akiko", "Monitors", "Stress grid" and "Cards".
 
 ## Bench
 
@@ -2263,6 +2263,97 @@ The RTC measurement and its red case, from the repository root (about
 SIM=verilator RUNTAG=rtc SLAT=4 TIMEOUT=300000000 XARGS=+BOOT_END=rtc2 bash sim/l3/run.sh boot
 SIM=verilator RUNTAG=rtcred TIMEOUT=300000000 XARGS="+BOOT_END=rtc2 +RTC_CSH_MIN=1000000000" bash sim/l3/run.sh boot
 ```
+
+## Stress grid
+
+`grid.sh` runs a list of `run.sh` runs (Phase 4 Task 19: plan 7.2's
+timing-stress mode), at most `MAXSIM` (6) simulations on the machine at once
+and one Verilator build per build configuration. From the repository root,
+after the "Run" and "832" setup (in a worktree `E832DIR` = the main
+checkout's `EightThirtyTwo`):
+
+```sh
+E832DIR=$PWD/EightThirtyTwo
+LIST=1 bash sim/l3/grid.sh p4g
+nohup bash sim/l3/grid.sh p4g > sim/l3/grid_p4g.out 2>&1 &
+python3 -I sim/l3/margins.py sim/l3/run_p4g_*
+```
+
+The first line prints the run list only. The grid takes about 10 hours
+with six slots (60 runs), so it runs in the background; its runs are
+`sim/l3/run_p4g_<cpu>_<name>`, each with `run.out` (run.sh's output), and
+`sim/l3/grid_p4g.txt` lists every run with its verdict, wall time,
+simulated seconds and cycles as it ends. Every run takes the same two
+firmware images (`FW`, default `sim/l3/run_fw14/fwrv/RV32OSDA.BIN`, and
+`FW832`, default `sim/l3/run_fw12/fw832/832OSDAD.BIN`; build them as in
+"Differential" and pass the paths on a fresh tree), so each RV / 832 pair
+boots the same card and `run.sh diff` compares them.
+
+The default list (`grid.sh` `default_list`):
+
+| Phase | CPU | Grid point | Scenarios |
+|---|---|---|---|
+| 1 | both | default (`EXTRA_WS` 0, SCKDLY 1.5 / C28DLY 0.3, SLAT 8, SJIT 0) | `boot`, `keys`, `fdd_rd`, `fdd_wr`, `hdd`, `cd` (cue), `cd` (`CDCFG=iso`), `cdda`, `cdda_load`, `akiko` |
+| 2 | RV | `EXTRA_WS` 4, 16, 64 | `boot`, `fdd_rd`, `fdd_wr`, `hdd`, `cdda` |
+| 2 | RV | skew (0.5, 0.2), (0.2, 0.5), (4.0, 0.3), (0.3, 4.0), (9.5, 0.3) (`XARGS="+SCKDLY=<a> +C28DLY=<b>"`) | `fdd_rd`, `hdd`, `keys` |
+| 2 | RV | `+FAST_HW=1` | `boot`, `hdd`, `cd`, `keys` |
+| 2 | RV | `SJIT=8` | `hdd`, `cdda` |
+| 2 | 832 | skew (0.3, 4.0), (9.5, 0.3) | `fdd_rd`, `hdd` |
+
+A phase-2 run starts when every phase-1 run has started. `EXTRA_WS` n
+(and `SJIT` 8) runs get `TIMEOUT` = run.sh's default plus n (8) x the
+scenario's bus accesses at `EXTRA_WS` 0 (`grid.sh`'s comment): the time if
+every access waited n cycles longer.
+
+Slots: a run starts only while fewer than `MAXSIM` simulations run on the
+machine (every `sim/l3/run.sh` of any lane, a build included, and every
+other `Vtb*`); while Vivado runs the cap is `VIVADO_CAP` (2) and the grid's
+own simulators beyond it are stopped (`SIGSTOP`) until Vivado ends.
+Builds: the first run of a configuration (CPU, `EXTRA_WS`, `XRAND`,
+`PATCH`, `RDY_MUT`, `PAULA_TXPOP`) builds; the others start when its
+`buildkey_<snapshot>` is there and run with `BUILD_FROM=<its RUNTAG>`, which
+copies its simulator when the build keys (a sha256 of every build input)
+are equal and builds otherwise. So a bench file edited while a grid runs
+gives the later runs their own build (and their `results.txt` says so):
+do not edit the bench under a running grid. A list file
+(`bash sim/l3/grid.sh <tag> <list>`) has one run per line,
+`<phase> <name> <cpu> <scenario> [VAR=value ...]` (`sim/l3/teeth/teeth.list`
+is one).
+
+`margins.py <run dirs>` prints the margin table: one row per measurement
+of plan 7.1 (the `=== MARGIN` lines, `OSD GAP` / `OSD EARLY` for item 2,
+the floppy FIFO's lowest fill and the write FIFO's word gap, the CD-DA
+underruns and longest fill, the Akiko request latency, the `keys` check),
+one column per CPU and grid point, each cell the worst value over that
+point's runs with its verdict and scenario; `--long` adds one line per run
+and measurement. A run that has no verdict yet or ended at its `TIMEOUT`
+is listed as incomplete and left out.
+
+### Teeth (Task 19)
+
+Each must fail. `PATCH=<script>` (run.sh) edits the run copies of the RTL;
+`teeth/fwmut.sh <dir> <file> <sed>` builds a firmware run copy with one
+changed line (with an empty sed it reproduces the tree's image):
+
+```sh
+bash sim/l3/teeth/fwmut.sh sim/l3/run_p4t19fwc fdd.c '0,/i = DATA_SIZE \/ 2;/s//i = DATA_SIZE \/ 2 - 1;/'
+bash sim/l3/teeth/fwmut.sh sim/l3/run_p4t19fwf cdaudio.c 's/^\tcda\.cursor += CDA_HALF_FRAMES;$/\tcda.cursor += CDA_HALF_FRAMES - 1;/'
+nohup bash sim/l3/grid.sh p4t19 sim/l3/teeth/teeth.list > sim/l3/grid_p4t19.out 2>&1 &
+bash sim/l3/teeth/sdbyte.sh p4g_rv_def_hdd p4g_832_def_hdd sim/l3/run_p4t19tg
+```
+
+| Tooth | How | Must fail on |
+|---|---|---|
+| (a) | `teeth/paula_202e077.sh`: 202e077 reverted in `paula_floppy.v` | `hdd` (direct-mode reads): data check or item 3 |
+| (b) | `teeth/bridge_2phase.sh`: the bridge without the four-phase handshake plus the fast master (`sim/host_bridge/run.sh mutant`'s gate leg), `boot_short`, `TIMEOUT=10000000` | item 1 `stale_acks` |
+| (c) | `fwmut.sh` on `fdd.c`: `SendSector` one word short | `fdd_rd` data check |
+| (d) | `RDY_MUT=1` (cfide's `osd_rdy` forced 1), `+FAST_HW=1` (Task 12's run `p4t12m1c`, section "keys") | `OSD EARLY` |
+| (e) | `teeth/gayle_shared.sh`: `GAYLE_MUT_SHARED` in `gayle.v` | `cdda_load` (`hdd` uses gayle port 0 only, both units on it, so the shared register file does not show there: the brief's `hdd` run passes) |
+| (f) | `fwmut.sh` on `cdaudio.c`: the cursor one frame short per half | `cdda` data check |
+| (g) | `teeth/sdbyte.sh`: one SD data byte changed in the 832 run's `spi.txt` | `spitrace.py diff` not empty |
+| (h) | the RV image before the write-FIFO fix (`run_fw12/fwrv/RV32OSDA.BIN`, 0162e53f) | `fdd_wr`: item 7's word-gap monitor |
+
+The results are in `findings/osd-riscv/phase4.md` "Teeth".
 
 ## Cards
 
