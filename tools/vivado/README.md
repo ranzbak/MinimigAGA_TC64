@@ -43,6 +43,44 @@ env LD_LIBRARY_PATH=$HOME/lib/tinfo5 LC_ALL=C POST_CHIP=1 POST_CI=1 \
 The boot ROM is committed with its sources; to rebuild it, see `fw/ctrl_boot_rv/README.md`
 (`make -C fw/ctrl_boot_rv`, xPack riscv-none-elf-gcc 15.2 via `tools/riscv/toolchain.mk`).
 
+### Debug lab build
+
+`RV_DEBUG=1` in the environment builds the LAB bitstream: the same image with the
+RISC-V debug module in the host CPU (`rtl/host/vexriscv/VexOsd_DMT.v`), its debug
+transport tunnelled through the FPGA's own JTAG chain by a `BSCANE2` on USER4
+(`rtl/host/xilinx/rv_bscane2.v`), so OpenOCD/GDB reach the CPU over the Platform Cable
+(`tools/openocd/minimig-rv-bscan.cfg`). For that run only, `build_ap040.tcl` appends
+` HOSTCPU_RVDEBUG=1` to the generic (the board top's parameter; the bridge gets
+`rv_debug = 1`) and prints `host CPU = RISC-V, DEBUG MODULE (rv_debug = 1, LAB BUILD)`;
+`hostcpu.tcl` adds the two debug sources to `sources_1` and `tools/vivado/rv_debug.xdc`
+(TCK as clock `rv_tck`, 50 ns, asynchronous to `clk_114`; the comments name the
+synchronisers that make that safe) to `XC7A100T` with `PROCESSING_ORDER LATE`, and
+restores the project afterwards like the RV group. The extra report `rv_debug.rpt` has the
+`BSCANE2` cell(s) with `JTAG_CHAIN`, the `VexOsd_DMT` cell count, `rv_tck`, its timing
+(from, to, within) and the CDC report of both crossings. The changed generic forces a
+re-synthesis, both into and out of a lab build. `RV_DEBUG` unset or `0` is the shipping
+image, call for call as before; any other value stops the build before the project is
+touched. Never ship a lab bitstream: the debug module lets anyone with a JTAG cable halt
+the host CPU and rewrite its memory.
+
+```
+env LD_LIBRARY_PATH=$HOME/lib/tinfo5 LC_ALL=C POST_CHIP=1 POST_CI=1 RV_DEBUG=1 \
+  /opt/Xilinx/Vivado/2023.2/bin/vivado -mode batch -nojournal -log $OUT/vivado.log \
+  -source $WB/tools/vivado/build_ap040.tcl -tclargs $OUT 0 $WB
+```
+
+The scripts' host CPU handling is tested without Vivado (Tcl 8.6, `apt install tcl8.6`):
+
+```
+tclsh tools/vivado/test/hostcpu_mock_test.tcl    # ends "=== HOSTCPU MOCK PASS (<n> checks)"
+```
+
+It runs `build_ap040.tcl` and `hostcpu.tcl` against a mocked Vivado (recorded calls, a
+small project model, a throw-away fake repository root) and compares the default build's
+call list and output with those of commit `547693f` (the scripts before `RV_DEBUG`;
+`-base <rev>` picks another, `-keep <dir>` saves the call lists), then checks the
+`RV_DEBUG=1` additions, the restore and the crash recovery from `.hostcpu_undo`.
+
 ## AP68040 build, program and test runbook
 
 Step-by-step procedures for the AP68040 core: environment, `build_ap040.tcl`
