@@ -7,7 +7,7 @@ if {[info exists env(SEED)]} { set seed $env(SEED) } else { set seed [expr {[clo
 expr {srand($seed)}
 puts "seed $seed"
 set t0 [clock seconds]
-foreach f {test_core.tcl test_equiv.tcl test_hex.tcl} {
+foreach f {test_core.tcl test_equiv.tcl test_hex.tcl test_vivado.tcl} {
     puts "--- $f"
     source [file join $here $f]
 }

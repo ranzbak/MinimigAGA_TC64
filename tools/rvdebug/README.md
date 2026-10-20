@@ -300,6 +300,30 @@ semantics and not against an idealised back end:
   stalls, Tcl sockets having no TCP_NODELAY).
 - Every call is logged (`-log`), e.g. `scan dr 53 end DRPAUSE (from DRPAUSE)`.
 
+## Vivado as measured on the board (2026-10-20)
+
+The board session (`findings/osd-riscv/debug.md` "Board session") showed that Vivado 2023.2 does
+**not** behave as the help text (and the shim) say:
+
+- `scan_ir_hw_jtag` / `scan_dr_hw_jtag` always end in IDLE through Exit1 -> Update, also after
+  `run_state_hw_jtag DRPAUSE` and after `runtest_hw_jtag -end_state DRPAUSE`. Two scans in a row each
+  capture (BYPASS: `a5` then `00` gives `4a`, `00`). A shift cannot be continued across two scans.
+- `run_state_hw_jtag -state {DRSELECT IRSELECT IRCAPTURE IREXIT1 IRPAUSE} IRPAUSE` from IDLE fails
+  (`[Labtoolstcl 44-271] run_state_hw_jtag failed chain_0`); the plain `run_state_hw_jtag IRPAUSE` works
+  and captures. Every other path the core builds is accepted.
+- A scan from the pause state a `run_state_hw_jtag` reached does not capture again.
+
+`vbe` (in `rv_jtag_bridge.tcl`) therefore tracks the state Vivado's TAP is really in: after a scan it is
+IDLE with the Update done, so the core's next path loses its `xREXIT2 xRUPDATE [IDLE]` prefix, and paths
+equal to Vivado's default use the plain form. The core's back-end interface and the shim are unchanged.
+What Vivado cannot do is reported: a shift the core splits into two scans (255 reads owed, a timer-forced
+split, OpenOCD's own continuation through Pause-xR) logs `rvb: WARNING: DR shift split: ...` and is
+corrupted; OpenOCD's RISC-V traffic (the recorded `attach1` session, the tunnel and DMI sessions) has no
+such split. A connection that ends, or a TRST that resets the TAP, after a shift and before Update-xR
+also differs: Vivado has already done the Update. `test/fake_vivado.tcl` implements the measured
+behaviour; `test/test_vivado.tcl` runs `vbe` on it (and the pre-fix `vbe`, which fails the self-test
+with the board's error).
+
 ## The Vivado bridge
 
 ```sh

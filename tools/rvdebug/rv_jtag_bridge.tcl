@@ -104,30 +104,117 @@ proc rvb::hex_to_bits {hex n} {
 
 # ---------------------------------------------------------------------------
 # the back end: Vivado hw_jtag commands (target opened with -jtag_mode on)
+#
+# Measured on the board, Vivado 2023.2 + Platform Cable USB II
+# (findings/osd-riscv/debug.md "Board session"), against what the help text
+# says and the core (and the shim) assumed:
+#   1. scan_ir_hw_jtag / scan_dr_hw_jtag ALWAYS end in IDLE through
+#      Exit1-xR -> Update-xR, also after run_state_hw_jtag DRPAUSE/IRPAUSE and
+#      after runtest_hw_jtag -end_state DRPAUSE (a -state path from the pause
+#      state is refused afterwards, one from IDLE accepted; two scans in a
+#      row each capture: BYPASS 0xA5 then 0x00 gives 4a, 00).  A shift can
+#      therefore not be continued across two scans.
+#   2. run_state_hw_jtag -state {DRSELECT IRSELECT IRCAPTURE IREXIT1 IRPAUSE}
+#      IRPAUSE from IDLE fails ("run_state_hw_jtag failed chain_0"); the
+#      plain run_state_hw_jtag IRPAUSE from IDLE works and captures the IR
+#      (0x35 read).  Every other path the core builds is accepted.
+#   3. A scan entered from the pause state reached by run_state_hw_jtag does
+#      not capture again (Exit2 -> Shift): 4a after a DRPAUSE goto.
+# So vbe keeps the TAP state Vivado is really in (rs) and whether the last
+# scan's Update already happened (upd): the core's next path starts with
+# xREXIT2 xRUPDATE [IDLE], which Vivado has already walked; vbe drops that
+# prefix and goes on from IDLE.  Paths equal to Vivado's default path from
+# the real state use the plain form (item 2).  The core splits a shift into
+# two scans only when it must (255 reads owed, a timer-forced split, the
+# split knob); on Vivado such a split is corrupted (item 1): it is logged
+# as a WARNING ("shift split", the protocol's grep) and counted.
 
-namespace eval vbe {}
-
-proc vbe::be_reset {} {
-    run_state_hw_jtag RESET
-}
-
-proc vbe::be_goto {stable {path {}}} {
-    if {$path eq {}} {
-        run_state_hw_jtag $stable
-    } else {
-        run_state_hw_jtag -state $path $stable
+namespace eval vbe {
+    variable rs RESET   ;# where Vivado's TAP is (stable state)
+    variable upd {}     ;# dr/ir: the last scan's Update-xR is done, the core does not know it yet
+    variable splits 0   ;# scans that had to continue a shift (corrupted)
+    # Vivado's default paths (help run_state_hw_jtag; typos "IDLE -> DRPAUSE
+    # -> IRSELECT" and "IREXIT12" read as DRSELECT and IREXIT1)
+    variable DEF
+    array set DEF {
+        DRPAUSE,RESET   {DREXIT2 DRUPDATE DRSELECT IRSELECT RESET}
+        DRPAUSE,IDLE    {DREXIT2 DRUPDATE IDLE}
+        DRPAUSE,DRPAUSE {DREXIT2 DRUPDATE DRSELECT DRCAPTURE DREXIT1 DRPAUSE}
+        DRPAUSE,IRPAUSE {DREXIT2 DRUPDATE DRSELECT IRSELECT IRCAPTURE IREXIT1 IRPAUSE}
+        IDLE,RESET      {DRSELECT IRSELECT RESET}
+        IDLE,IDLE       {}
+        IDLE,DRPAUSE    {DRSELECT DRCAPTURE DREXIT1 DRPAUSE}
+        IDLE,IRPAUSE    {DRSELECT IRSELECT IRCAPTURE IREXIT1 IRPAUSE}
+        IRPAUSE,RESET   {IREXIT2 IRUPDATE DRSELECT IRSELECT RESET}
+        IRPAUSE,IDLE    {IREXIT2 IRUPDATE IDLE}
+        IRPAUSE,DRPAUSE {IREXIT2 IRUPDATE DRSELECT DRCAPTURE DREXIT1 DRPAUSE}
+        IRPAUSE,IRPAUSE {IREXIT2 IRUPDATE DRSELECT IRSELECT IRCAPTURE IREXIT1 IRPAUSE}
+        RESET,RESET     {}
+        RESET,IDLE      {IDLE}
+        RESET,DRPAUSE   {IDLE DRSELECT DRCAPTURE DREXIT1 DRPAUSE}
+        RESET,IRPAUSE   {IDLE DRSELECT IRSELECT IRCAPTURE IREXIT1 IRPAUSE}
     }
 }
 
-proc vbe::be_idle {n} {
-    runtest_hw_jtag -wait_state IDLE -end_state IDLE -tck $n
+proc vbe::be_reset {} {
+    variable rs
+    variable upd
+    run_state_hw_jtag RESET
+    set rs RESET
+    set upd {}
 }
 
-# The core calls this with the TAP in <end> (the pause state of <type>,
-# reached by be_goto, or left there by the scan before): the scan enters
-# from xREXIT2 without a capture and ends in the same pause state.
+proc vbe::be_goto {stable {path {}}} {
+    variable rs
+    variable upd
+    variable DEF
+    if {$upd ne {}} {
+        # the core's TAP is in xRPAUSE with the Update pending; Vivado's
+        # scan has already gone Exit1 -> Update -> IDLE
+        set u [string toupper $upd]
+        if {[lrange $path 0 1] ne [list ${u}EXIT2 ${u}UPDATE]} {
+            error "vbe: goto $stable {$path} after a $upd scan (Vivado is in IDLE, Update-$u done)"
+        }
+        set path [lrange $path 2 end]
+        if {[lindex $path 0] eq "IDLE"} {
+            set path [lrange $path 1 end]
+        }
+        set upd {}
+    }
+    if {$path eq {} && $stable eq $rs} {
+        return $stable
+    }
+    if {$path eq {} || ([info exists DEF($rs,$stable)] && $path eq $DEF($rs,$stable))} {
+        set r [run_state_hw_jtag $stable]
+    } else {
+        set r [run_state_hw_jtag -state $path $stable]
+    }
+    set rs $stable
+    return $r
+}
+
+proc vbe::be_idle {n} {
+    variable rs
+    runtest_hw_jtag -wait_state IDLE -end_state IDLE -tck $n
+    set rs IDLE
+}
+
+# The core calls this with its TAP in <end> (the pause state of <type>).
+# Vivado's TAP is there after a goto; it is in IDLE when the core continues
+# a shift it split (item 1 above: the new scan captures again).
 proc vbe::be_scan {type n bits end} {
+    variable rs
+    variable upd
+    variable splits
+    if {$rs ne $end} {
+        incr splits
+        rbb::log "rvb: WARNING: [string toupper $type] shift split: Vivado ended the previous scan with\
+            Update-[string toupper $type] in IDLE, this $n-bit scan starts with a new Capture (TDO and the\
+            target are wrong; $splits so far)"
+    }
     set tdo [scan_${type}_hw_jtag $n -tdi [rvb::bits_to_hex $bits]]
+    set rs IDLE
+    set upd $type
     return [rvb::hex_to_bits $tdo $n]
 }
 
