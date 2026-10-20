@@ -1089,7 +1089,7 @@ questions the same day (exec-4 "Decisions").
   board-verified by Paul 2026-10-17 (it is the 832 reference).
   Gate: both bitstreams boot from one card. Merge `osd-riscv` ->
   `5.0-040-pipelined`.
-- 5.4 **O** **not started.** Debug bring-up (not blocking): a lab stage with `rv_debug=1`;
+- 5.4 **O** **lab build + sim proof done, board session pending** (2026-10-20: lab bitstream `stage_p5dbg_42f7cbb`, `sim/rv_dbg`, `tools/rvdebug` bridge, protocol `findings/osd-riscv/debug-board-session.md`; the XVC rehearsal was not run). Debug bring-up (not blocking): a lab stage with `rv_debug=1`;
   write the Vivado `hw_server` Tcl JTAG-scan bridge (model
   `EightThirtyTwo/tcl/832bridge.tcl`) serving OpenOCD `remote_bitbang`,
   then OpenOCD + GDB attach, halt, breakpoint in `main`, `load` + `fence.i`,

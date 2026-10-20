@@ -1,6 +1,6 @@
 # OSD host CPU -> VexRiscv: executable plan, stage 5b (Phase 5.4 -- debug bring-up: simulation proof, hw_server bridge, lab bitstream, board session)
 
-Status: **planned 2026-10-20**, executing on branch `p5-build` (worktree `MinimigAGA_TC64-p5build`,
+Status: **Tasks 1-8 done 2026-10-20 (lab build + sim proof done, board session pending)**: the run stops at the board-session protocol `findings/osd-riscv/debug-board-session.md`, which needs Paul. Planned and executed on branch `p5-build` (worktree `MinimigAGA_TC64-p5build`,
 after `fe2a7b4`). Stops at the first step that needs Paul at the board (Task 8: the GDB attach over
 the real Platform Cable).
 
