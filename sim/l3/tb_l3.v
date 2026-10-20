@@ -535,6 +535,51 @@ module tb_l3 #(
   reg kb_held = 1'b0;
   always @(posedge clk114) if (sd_cs[5] === 1'b0 && osd_ctrl != 8'h00) kb_held = 1'b1;
 
+  // ------------------------------------------------- RETIRED, STATS windows
+  // RV only (RV_HOSTCPU_STATS; plan 4.5, Task 20's I-cache table): rt_n
+  // counts the instructions the core retires, one per cycle at most
+  // (VexOsd u_core's writeBack_arbitration_isFiring), on its clock and out
+  // of reset, as rv_hostcpu's st_* counters.  Every "=== STATS@<event>"
+  // line is followed by "=== RETIRED <n> (STATS@<event>, to cycle <c>)"
+  // (scenarios.vh and the windows below).  The windows: STATS@win_start and
+  // STATS@win_end, sampled at the clk_114 edge after the event:
+  //   boot    the main-loop milestone (first HandleFpga frame) to the end
+  //           event (HandleFpga frame 21; not with +BOOT_END=rtc2)
+  //   fdd_rd  the first track DMA's DSKLEN start to the end event (the
+  //           blckint of the last track DMA)
+  //   hdd     the first IDE command's start to the end event (the end of
+  //           the last command)
+  //   cdda    the player's flip 2 to its flip 6 (bfm_audio n_flip)
+  //   keys    the first key event (osd_ctrl change) to the end event (the
+  //           script's end, after the last key's redraw)
+  // The core's signal comes through l3_retire, a wire run.sh's
+  // l3_retire_tap adds to the run copy of rv_hostcpu.v (Verilator 5.020
+  // does not resolve a reference into the g_core generate branch from here)
+`ifdef RV_HOSTCPU_STATS
+  integer rt_n = 0;
+  always @(posedge `HM_RV.clk) if (!`HM_RV.rst && `HM_RV.l3_retire === 1'b1) rt_n = rt_n + 1;
+`endif
+  event           win_go;
+  reg [8*16-1:0]  win_ev = "";
+  integer         win_cyc = 0;
+  reg             win_on = 1'b0, win_off = 1'b0;
+  reg             win_start_c, win_end_c;
+  task win_stats(input [8*16-1:0] ev);
+    begin
+      win_ev = ev;
+      win_cyc = cyc;
+      -> win_go;
+    end
+  endtask
+`ifdef RV_HOSTCPU_STATS
+  always @(win_go) begin
+    #1;
+    $display("=== STATS@%0s irefill %0d dread %0d dwrite %0d busy_cycles %0d (rv_hostcpu, to cycle %0d)",
+             win_ev, `HM_RV.st_irefill, `HM_RV.st_dread, `HM_RV.st_dwrite, `HM_RV.st_busy, win_cyc);
+    $display("=== RETIRED %0d (STATS@%0s, to cycle %0d)", rt_n, win_ev, win_cyc);
+  end
+`endif
+
 `include "scenarios.vh"
 
   // frame_close's last call (hostmon.vh): spi_t.txt line, then the scenario
@@ -561,6 +606,19 @@ module tb_l3 #(
       if (logged && !at_end) sc_frame;
     end
   endtask
+
+  // the STATS windows (above); CPU=832 has no counters and prints nothing
+  always @(posedge clk114) if (sc_started && !win_off) begin
+    win_start_c = 1'b0;
+    win_end_c = 1'b0;
+    if (scenario == "boot" && boot_end == "") begin win_start_c = 1'b1; win_end_c = sc_done; end
+    if (scenario == "fdd_rd") begin win_start_c = fdd.dma_busy; win_end_c = sc_done; end
+    if (scenario == "hdd") begin win_start_c = ide.cmd_k >= 1; win_end_c = sc_done; end
+    if (scenario == "cdda") begin win_start_c = audio.n_flip >= 2; win_end_c = audio.n_flip >= 6; end
+    if (scenario == "keys") begin win_start_c = keys.n_ev >= 1; win_end_c = sc_done; end
+    if (!win_on && win_start_c) begin win_on = 1'b1; win_stats("win_start"); end
+    else if (win_on && win_end_c) begin win_off = 1'b1; win_stats("win_end"); end
+  end
 
   // ---------------------------------------------------------------- run
   // The run ends 8 cycles after the scenario's end event or at +TIMEOUT.
@@ -628,6 +686,7 @@ module tb_l3 #(
     card.save_image;
 `ifdef RV_HOSTCPU_STATS
     hm_final_stats;
+    $display("=== RETIRED %0d (whole run)", rt_n);
 `elsif L3_CPU832
     // the 832: no counters, no STATS line
 `else

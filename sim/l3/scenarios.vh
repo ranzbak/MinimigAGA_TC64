@@ -202,6 +202,9 @@
     #1;
     $display("=== STATS@%0s irefill %0d dread %0d dwrite %0d busy_cycles %0d (rv_hostcpu, to cycle %0d)",
              sc_ev, `HM_RV.st_irefill, `HM_RV.st_dread, `HM_RV.st_dwrite, `HM_RV.st_busy, sc_ev_cyc);
+`ifdef RV_HOSTCPU_STATS
+    $display("=== RETIRED %0d (STATS@%0s, to cycle %0d)", rt_n, sc_ev, sc_ev_cyc);
+`endif
   end
 `endif
 

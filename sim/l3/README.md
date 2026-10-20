@@ -63,6 +63,8 @@ the bus, the UART lines, the SPI frame log `spi.txt`, `=== OSD GAP`,
 | `spi_t.txt` | the frames of `spi.txt` with `<start> <end>` cycles in front (for Task 20; never compared) |
 | `=== MAIN first HandleFpga frame at cycle <n>` | the main-loop milestone |
 | `=== END <scenario>: ...`, `=== STATS@<scenario>` | the scenario's end event and the `rv_hostcpu` counters up to it |
+| `=== STATS@win_start`, `=== STATS@win_end` | (RV) the counters at the start and end of the scenario's measurement window (Task 20): `boot` the main-loop milestone to the end event, `fdd_rd` the first track DMA's start to the end event, `hdd` the first IDE command's start to the end event, `cdda` the player's flip 2 to flip 6, `keys` the first key event to the end event; sampled at the `clk_114` edge after the event |
+| `=== RETIRED <n> (STATS@<event>, to cycle <c>)`, `=== RETIRED <n> (whole run)` | (RV) after every `STATS@` line and the whole-run `STATS`: the instructions the core retired (VexOsd's `writeBack_arbitration_isFiring`, through the wire `l3_retire` that `run.sh` adds to the run copy of `rv_hostcpu.v`: Verilator 5.020 does not resolve a bench reference into its `g_core` generate branch) |
 | `=== MARGIN ...`, `=== KICK ...`, `=== RTC ...` | the margin monitors of `mon_l3.vh` and `rtc_model.v` ("Monitors") |
 | `=== OSD EARLY <n> of <m> reply bytes` | in `OSD_CMD_VERSION` (0x88) and `OSD_CMD_KEYQ` (0x98) frames, every byte after the command: userio_osd_spi loads its output register from `in` (negedge of its `sck`, `bit_cnt` 0) while `osd1.spi0.new_byte \| rx_sync \| rx` is 1, i.e. before the previous byte is through the clk7 synchroniser and the reply counters have moved. n > 0 is a bench error unless `+OSD_EARLY_OK=1` |
 

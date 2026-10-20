@@ -384,6 +384,29 @@ EOP
 		|| die "async pin: initialisers not inserted"
 }
 
+# l3_retire_tap (CPU=rv): the run copy of rv_hostcpu.v gets a wire
+# l3_retire = the VexOsd core's writeBack_arbitration_isFiring (one retired
+# instruction), driven inside the DEBUG = 0 generate branch, for tb_l3.v's
+# "=== RETIRED" count.  A reference from the bench into the branch does not
+# resolve under Verilator 5.020 (every branch is labelled g_core, and the
+# lookup does not pick the elaborated one); the wire is read from outside
+# instead.  It drives nothing in the design; rtl/ is never edited
+l3_retire_tap() {
+	local v="$run/src/rv_hostcpu.v"
+	[ "$CPU" = rv ] || return 0
+	python3 - "$v" <<'EOP' || die "RETIRED tap: rv_hostcpu.v's generate / DEBUG = 0 branch not found"
+import sys
+p = sys.argv[1]
+s = open(p).read()
+g = "\n  generate\n    if (DEBUG == 0) begin : g_core\n"
+assert s.count(g) == 1
+s = s.replace(g, "\n  wire l3_retire; // L3 RETIRED tap (sim/l3/run.sh)" + g +
+              "      assign l3_retire = u_core.writeBack_arbitration_isFiring; // L3 RETIRED tap\n")
+open(p, "w").write(s)
+EOP
+	[ "$(grep -c '// L3 RETIRED tap' "$v")" = 2 ] || die "RETIRED tap: not inserted"
+}
+
 # l3_rdy_mut (RDY_MUT=1 only): the run copy of cfide answers OSD_RDY = 1
 # whatever the counts say (the mutant of sim/spi_cdc/run.sh's RDY_MUT): the
 # handshake's tooth.  The tree's rtl/ is never edited.
@@ -462,6 +485,7 @@ setup() {
 	done
 	l3_pin_minimig
 	l3_pin_async
+	l3_retire_tap
 	l3_rdy_mut
 	l3_paula_txpop
 	[ "$CPU" = 832 ] && hs_rom832 "$run"
