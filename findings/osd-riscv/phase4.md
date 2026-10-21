@@ -544,3 +544,28 @@ Found by the X-sensitivity twin of Task 2 (`XRAND=1`, sim/host_bridge, 2026-10-1
 
 **`rtl/minimig/gayle_port.v` line 139 uses the wire `err` before its declaration (line 143).** xvlog refuses it (VRFC 10-3380) unless `--relax` is given; Vivado synthesis and Verilator accept it. sim/l3 compiles the slaves with `xvlog --relax`. Cosmetic; moving the declaration up would make the file plain Verilog-2001.
 
+
+## Task 20 / I-cache
+
+Status: stopped at the plan 4.5 gate (Decision 7); nothing regenerated, no RTL change, no new simulation.
+
+Source: default-grid RV runs `sim/l3/run_p4g_rv_def_{boot,fdd_rd,hdd,cdda,keys}`: `STATS@win_start` / `STATS@win_end`
+in `run.out`, `=== RETIRED` in the run's `*.log` (instrumentation 1b4da86). A refill is one iBus command (size 5 = 8 words).
+
+| Scenario (window) | Run dir | refills | retired | refills / retired | 8 x refills / retired | window cycles | retired / cycle |
+|---|---|---|---|---|---|---|---|
+| boot (1st..21st HandleFpga frame) | run_p4g_rv_def_boot | 748 | 8,298 | **9.01 %** | 0.721 | 113,224 | 0.073 |
+| fdd_rd (1st..last track DMA) | run_p4g_rv_def_fdd_rd | 1,108,249 | 14,617,607 | **7.58 %** | 0.607 | 193,659,710 | 0.075 |
+| cdda (flip 2..6) | run_p4g_rv_def_cdda | 427,808 | 5,887,507 | **7.27 %** | 0.581 | 84,279,296 | 0.070 |
+| keys (1st..last key) | run_p4g_rv_def_keys | 19,258 | 682,199 | 2.82 % | 0.226 | 6,963,988 | 0.098 |
+| hdd (1st..last command) | run_p4g_rv_def_hdd | 8,622 | 950,312 | 0.91 % | 0.073 | 24,375,168 | 0.039 |
+
+Decision line: **stopped: miss ratio 9.0 % boot, 7.6 % fdd_rd, 7.3 % cdda** (gate: above 5 % on any scenario).
+The boot window is short (8.3 k instructions) and cold, so cold misses weigh heavily; fdd_rd and cdda are long
+steady-state windows and are the real signal. 4 KB vs the 8 KB regeneration + OOC is Paul's decision.
+
+Ring fill (Task 19, CD-DA): RV max fill 42.85 ms at default against 88.16 ms for the 832 (half = 185.8 ms), 0 underruns:
+RV <= 832 holds.
+
+`sim/l3/speed.py` and the "Speed" section (SPI ns/byte, sector read time, ring fill, menu redraw) wait for Paul's I-cache answer.
+"Refill share of busy cycles" needs a per-refill latency the STATS lines do not carry.
