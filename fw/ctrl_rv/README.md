@@ -930,12 +930,14 @@ the gap, about 124 `clk_114` per word) wrote nothing: "Second sync word
 missing...". The 832 (`p4t14c`) does not need it. Findings:
 `findings/osd-riscv/phase4.md`, "Found by the L3 bench (Task 14)".
 
-The gap is 16 TIMER reads (`WRFIFO_GAP_READS`). Each is a cfide access
-acknowledged at a `clk_28` edge, so the gap has a floor in hardware time
-whatever the CPU's speed; it is not an empty counted loop. It is the one
-listed exception to the Global Constraints' "No new count-based delays"
-(Paul, 2026-10-19: "fix floppy write before I'll try it"; controller
-ruling: firmware pacing, no RTL change).
+The gap is a counted loop of 16 discarded TIMER reads
+(`WRFIFO_GAP_READS`), 16 `SPIN`s under another name. Each is a cfide
+access acknowledged at a `clk_28` edge, so the gap has a floor in hardware
+time whatever the CPU's speed, unlike an empty loop whose length follows
+the CPU. It is the one listed exception to the Global Constraints' "No new
+count-based delays": chosen by the controller (a ruling: firmware pacing,
+no RTL change) after Paul's "fix floppy write before I'll try it"
+(2026-10-19); Paul to confirm the exception.
 
 The floor: a TIMER read is a cfide access. cfide raises `ack` at the
 first `clk_28` rising edge that sees `req` and drops it at the next one
@@ -965,17 +967,22 @@ Measured (sim/l3 `fdd_wr`, run `p4t14f`, this image, `EXTRA_WS` 0):
   TIMER reads (a literal floor, `WRFIFO_GAP_FLOOR`) between two FIFO words
   of one frame (mutants `fdd_wrfifo_gap`, the gap one TIMER read short,
   and `fdd_wrfifo_gap8`, `WRFIFO_GAP_READS` 8: both killed)
-- `test/Makefile` `out/fdd/wrfifo.ok`: `WRFIFO_GAP;` appears exactly 20
-  times in `fdd.c` and in no other `.c` file
+- `test/Makefile` `out/fdd/wrfifo.ok` (rebuilt when any source changes):
+  `WRFIFO_GAP;` appears exactly 20 times in `fdd.c` and in no other `.c`
+  file, and a discarded TIMER read (`TIMER; (void)`, the shape of both
+  macros) appears only in `hardware.h`'s `SPIN` and `WRFIFO_GAP`
+  definitions: a delay under a new name fails
 
 The delay sites of the firmware are then:
 
 ```sh
 grep -n 'SPIN\|WRFIFO_GAP' fw/ctrl_rv/*.c | grep -v '^[a-z0-9_/]*\.c:[0-9]*:[[:space:]]*//'
+grep -nE 'TIMER;[[:space:]]*\(void\)|\(void\)[[:space:]]*TIMER' fw/ctrl_rv/*.[ch] fw/ctrl_rv/arch/*.[ch]
 ```
 
 `fpga.c:226` and `config.c:618` (`SPIN`, as before) and the 20
-`WRFIFO_GAP` lines of `fdd.c`.
+`WRFIFO_GAP` lines of `fdd.c`; the second grep, which finds a delay
+whatever its name, only the two definitions in `hardware.h`.
 
 ### Timing items for Phase 4 (plan 7.1 items 6 and 7)
 

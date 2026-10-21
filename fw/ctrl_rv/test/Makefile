@@ -229,11 +229,19 @@ $(B)/fdd/spin.ok: $(SRC)/fdd.c $(FDD832)
 	test "$$(grep -c SPIN $(SRC)/fdd.c)" = "$$(grep -c SPIN $(FDD832))"
 	touch $@
 # the write-FIFO gap (Phase 4 Task 14, README "Write-FIFO gap"): the listed
-# exception to "No new count-based delays", exactly its 20 sites in fdd.c
-$(B)/fdd/wrfifo.ok: $(SRC)/fdd.c
+# exception to "No new count-based delays", exactly its 20 sites in fdd.c.
+# Every source is a prerequisite (final review M2: the "not outside fdd.c"
+# check must see a change to any .c).  A discarded TIMER read (the shape of
+# SPIN and WRFIFO_GAP) appears only in those two macros of hardware.h, so a
+# delay under a new name fails here too (final review M1)
+FIFOGAP_SRCS := $(wildcard $(SRC)/*.c $(SRC)/*.h $(SRC)/arch/*.c $(SRC)/arch/*.h)
+$(B)/fdd/wrfifo.ok: $(FIFOGAP_SRCS)
 	@mkdir -p $(@D)
 	test "$$(grep -c '^[[:space:]]*WRFIFO_GAP;[[:space:]]*$$' $(SRC)/fdd.c)" = 20
 	@if grep -ln 'WRFIFO_GAP' $(SRC)/*.c | grep -v '/fdd\.c$$'; then echo "FAIL WRFIFO_GAP outside fdd.c"; false; fi
+	@if grep -nE 'TIMER;[[:space:]]*\(void\)|\(void\)[[:space:]]*TIMER' $(FIFOGAP_SRCS) \
+	    | grep -vE '/hardware\.h:[0-9]+:#define (SPIN|WRFIFO_GAP) \{'; then \
+	    echo "FAIL a discarded TIMER read outside hardware.h's SPIN / WRFIFO_GAP (a delay under another name)"; false; fi
 	@touch $@
 
 run64-fdd_test: $(B)/fdd_test $(B)/fdd/gold.ok $(B)/fdd/spin.ok $(B)/fdd/wrfifo.ok
