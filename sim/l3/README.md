@@ -2319,10 +2319,16 @@ goes, and the bench files are build inputs); its runs are
 `sim/l3/run_p4g_<cpu>_<name>`, each with `run.out` (run.sh's output), and
 `sim/l3/grid_p4g.txt` lists every run with its verdict, wall time,
 simulated seconds and cycles as it ends. Every run takes the same two
-firmware images (`FW`, default `sim/l3/run_fw14/fwrv/RV32OSDA.BIN`, and
-`FW832`, default `sim/l3/run_fw12/fw832/832OSDAD.BIN`; build them as in
-"Differential" and pass the paths on a fresh tree), so each RV / 832 pair
-boots the same card and `run.sh diff` compares them.
+firmware images, so each RV / 832 pair boots the same card and `run.sh
+diff` compares them. Without `FW` / `FW832`, `grid.sh` builds both from
+the tree at its start, as `run.sh` does (about 2 minutes: `fw/ctrl_rv`
+under the `L3_DATE` date shim, `fw/ctrl_832` through `sim/l3/fw832` with
+`E832DIR`), into `sim/l3/run_<tag>_fw/fwrv` and `sim/l3/run_<tag>_fw/fw832`,
+and refuses to start if that directory exists. To reuse images, pass both
+paths: `FW=<RV32OSDA.BIN> FW832=<832OSDAD.BIN> bash sim/l3/grid.sh <tag>`.
+`grid_<tag>.txt` names each image, whether it was built or given, and its
+sha256 (the Phase 4 tree builds `RV32OSDA.BIN` 17bf2563... and
+`832OSDAD.BIN` 768c765d..., the images of Task 19's `p4g`).
 
 The default list (`grid.sh` `default_list`):
 
