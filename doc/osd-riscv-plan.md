@@ -718,8 +718,8 @@ measured against the previous stage.
 | P2 | Timer (`mtime`/`mtimecmp`, 64-bit at clk_114, on MTI, plus 100 Hz tick) | `GetTimer/CheckTimer` 16-bit wrap handling, RTC/drive-sound/HDMI 250 ms bookkeeping moves to the tick ISR | MTI, tick | `0x..D4 MTIME_LO/HI`, `0x..DC MTIMECMP_LO/HI` (TIMER at D0 stays) | ~100 LUT | low | **1** |
 | P3 | UART RX + 16-byte TX/RX FIFOs | A debug console (today TX-only, blocking per byte) | RX non-empty, TX empty | `0x..F0 DATA`, `0x..F4 STATUS` | ~120 LUT (LUTRAM) | low | 2 |
 | P4 | I2C INT routing | The 250 ms edge-poll of the ADV7511 INT | the INT pin `i2c_ext_int`, bit 3 since 8.0 (bit 1 `i2c_int` is the I2C master's transfer event) | none new | 0 (in 8.0) | none | 1 (firmware only since 8.0) |
-| P5 | SPI master with 64-byte TX/RX FIFOs and byte counter | The two hw round trips per byte: the CPU queues "n bytes, CS pattern", reads the RX FIFO; SPI becomes wire-bound (~3.5 MB/s at 28 MHz) instead of CPU-bound; CS deassert timing becomes a hardware constant (inventory items 2-4) | FIFO half / done | `0x..E0` compatible byte register stays; `0x..EC CTRL/COUNT`, `0x..E8 FIFO` | ~300-400 LUT + LUTRAM (or 1 BRAM18) | medium: all five slaves share CS semantics; must keep the single-byte path for the 832 A/B | 2 -- only if Phase 4.4/7.1 show the byte loop matters |
-| P6 | Sector DMA engine SD <-> minimig FIFO (generalised direct mode) | The CPU from the read data path SD -> paula/gayle; the engine owns CS, count and both directions, FPGA -> SD for HDF/ADF writes included. Removes the CS-timing race class structurally | done / error | `0x..C4 DMA_CMD` {dir, slave, blocks}, `0x..C8 DMA_STAT` | ~300-500 LUT | medium-high: touches `paula_floppy`/`gayle_port` FIFO ports; the SD write protocol (token, busy) must be in hardware | 3 -- after P5 is measured |
+| P5 | SPI master with 64-byte TX/RX FIFOs and byte counter | The two hw round trips per byte: the CPU queues "n bytes, CS pattern", reads the RX FIFO; SPI becomes wire-bound (~3.5 MB/s at 28 MHz) instead of CPU-bound; CS deassert timing becomes a hardware constant (inventory items 2-4) | FIFO half / done | `0x..E0` compatible byte register stays; `0x..EC CTRL/COUNT`, `0x..E8 FIFO` | ~300-400 LUT + LUTRAM (or 1 BRAM18) | medium: all five slaves share CS semantics; must keep the single-byte path for the 832 A/B | 2 -- only if Phase 4.4/7.1 show the byte loop matters **Left the migration plan (12.14): HD/CD throughput is a backlog item, `doc/backlog.md` on `5.0-040-pipelined`.** |
+| P6 | Sector DMA engine SD <-> minimig FIFO (generalised direct mode) | The CPU from the read data path SD -> paula/gayle; the engine owns CS, count and both directions, FPGA -> SD for HDF/ADF writes included. Removes the CS-timing race class structurally | done / error | `0x..C4 DMA_CMD` {dir, slave, blocks}, `0x..C8 DMA_STAT` | ~300-500 LUT | medium-high: touches `paula_floppy`/`gayle_port` FIFO ports; the SD write protocol (token, busy) must be in hardware | 3 -- after P5 is measured **Left the migration plan (12.14): HD/CD throughput is a backlog item, `doc/backlog.md` on `5.0-040-pipelined`.** |
 | P7 | CD-DA ring refill DMA + half-empty IRQ | The 32 KB copy per 186 ms and its SPI loop; firmware supplies an LBA run list per half | half flip, list empty | `0x..C0 CDA_LIST`, `CDA_CTL` | ~500-700 LUT + 1 BRAM; needs the bridge arbiter (3.3.5) | high: SDRAM host port is lowest priority; hostcache coherency (DMA writes must invalidate or bypass); `scale()` volume moves to hardware or is dropped | 4 -- only if P5+P1 still leave underruns |
 | P8 | I2C engine | already exists (`i2c_master_mmio`) | -- | -- | 0 | -- | n/a |
 | P9 | **Memory-mapped OSD buffer** (decision 12.13 b) | The OSD text path over SPI (`OSD_CMD_OSD_WR` framing per line, the reply reads): `userio_osd`'s 2 KB `osdbuf` becomes an inferred dual-port RAM, one port in the host CPU's address space (direct stores), the other feeding the overlay; key-queue status and OSD control as MMIO registers + an IRQ | key queue non-empty | a host window for the buffer (address chosen with the design) + control/status registers | ~1 BRAM18 (already used by `osdbuf`) + ~100 LUT | medium: touches the overlay read side; designed together with the bigger tabbed 16x64 OSD of the backlog | after parity, with the OSD redesign; the SPI path stays for the 832 build until Phase 9 |
@@ -756,17 +756,17 @@ rests on instruction spacing shrinks.
 
 | # | Handshake | Where | Dependency / margin today | Status | How it is checked |
 |---|---|---|---|---|---|
-| 1 | hw register write hold / stale `ack` between back-to-back hw accesses | bridge <-> cfide (clk_114 <-> clk_28) | an access needs >= 1 clk_28 period of `req`; a second access within ~4 clk_114 of the previous `ack` can be falsely acknowledged. 832 spacing happened to exceed it | fixed by the four-phase handshake (3.3.4). **Phase 4 (L3, gate run 2026-10-21): closed in simulation.** `stale_acks` 0 over the 60-run stress grid and the 40-run gate grid (both CPUs, `EXTRA_WS` 0..64, `FAST_HW`, five skew pairs); tooth (b) (bridge without the four-phase handshake) FAILS with `stale_acks min 1184 count`. | `sim/host_bridge` back-to-back test + mutant; `tb_spi_cdc` GAP=2 rows |
-| 2 | OSD reply byte load | `userio_osd` loads the reply per SPI transfer on the clk7_en grid | a minimum idle time between host accesses of a reply read; `tb_spi_cdc`'s `OSD_MIN_GAP` = 40 clk_114 is its *reporting* threshold (gaps below it are reported, not counted; its GAPS list jumps 32 -> 40 and every access adds a random 0..3 cycles), and the reply goes stale below ~32 (1e135e7): the failure edge lies in (~32, 40], not pinned; firmware 174322f adds a pause (`SPI_reply()`: 4 x `SPIN`) | **open**: firmware pause only; margin shrinks with a faster CPU. Phase 3 (L2, stub slave): measured `OSD GAP min` **40** on the shipped image, i.e. at the reporting threshold, not necessarily at the failure edge (44 before Task 11; it moves with code layout). Covered: the one `OSD_CMD_VERSION` frame at boot (cold I$; its own minimum is 44) and the first reply byte of each `OSD_CMD_KEYQ` frame (where the 40 is), in the fatal-error loop (no kickstart); the per-key loop `kq_buf[i] = SPI_reply()` (`osd.c` ~1004, every key press on the board) is unmeasured (the stub answers count 0). Since the final review the L2 `fwboot*` runs fail when the minimum drops below 40 (bench error, `+OSD_MIN_GAP`). Phase 4: run `tb_spi_cdc +SWEEP=1` on the `osd` test once to pin the edge (a measurement, not a change), measure the per-key loop (a stub that queues keys) and re-take the figure on the first kickstart card; open until L3 with the real `userio_osd` (and P1). **Phase 4 (decision 12.13):** a reply-ready handshake replaces the `SPIN`s in the RV firmware (`doc/osd-riscv-exec-4.md` Tasks 1, 8-12: edge pinned, before/after on the real `userio_osd`). **Phase 4: closed in simulation by the reply-ready handshake; board confirmation in Phase 6.** E_osd = 34 `clk_114` (Task 1: largest failing gap 32; no failure at any gap >= 34), so the old 40 sat 6 above the edge; since Task 11 the RV `SPI_reply()` polls `HOST_REQ.OSD_RDY` (cfide `0xFFFFFFB4` bit 0, `userio_osd.osd_rx_seq`) instead of four `SPIN`s. `OSD EARLY` 0 in every L3 run (RV and 832, `EXTRA_WS` 0..64, `FAST_HW`, skew pairs, the per-key loop included); `OSD GAP` min 43 (the poll's own round trip, no longer a margin to an edge). Teeth: `OSD_RDY` forced 1 + `FAST_HW` FAILS (`OSD EARLY 1 of 450`), poll removed FAILS (`OSD EARLY 3 of 6`). RTL (Tasks 9, 10) awaits Paul's review before any bitstream. | `tb_spi_cdc` `osd` test with the RV host (hostrv); margin monitor "cycles between accesses during OSD reads" >= 40; hardware fix = the reply-ready handshake (`HOST_REQ.OSD_RDY`, Phase 4; polled instead of counting) |
+| 1 | hw register write hold / stale `ack` between back-to-back hw accesses | bridge <-> cfide (clk_114 <-> clk_28) | an access needs >= 1 clk_28 period of `req`; a second access within ~4 clk_114 of the previous `ack` can be falsely acknowledged. 832 spacing happened to exceed it | fixed by the four-phase handshake (3.3.4). **Phase 4 (L3, gate run 2026-10-21): closed in simulation.** `stale_acks` 0 over the 60-run stress grid and the 30 `p4g23` runs that started (20 RV, 10 832 default) (both CPUs, `EXTRA_WS` 0..64, `FAST_HW`, five skew pairs); tooth (b) (bridge without the four-phase handshake) FAILS with `stale_acks min 1184 count`. | `sim/host_bridge` back-to-back test + mutant; `tb_spi_cdc` GAP=2 rows |
+| 2 | OSD reply byte load | `userio_osd` loads the reply per SPI transfer on the clk7_en grid | a minimum idle time between host accesses of a reply read; `tb_spi_cdc`'s `OSD_MIN_GAP` = 40 clk_114 is its *reporting* threshold (gaps below it are reported, not counted; its GAPS list jumps 32 -> 40 and every access adds a random 0..3 cycles), and the reply goes stale below ~32 (1e135e7): the failure edge lies in (~32, 40], not pinned; firmware 174322f adds a pause (`SPI_reply()`: 4 x `SPIN`) | **closed in simulation (Phase 4)**: firmware pause only; margin shrinks with a faster CPU. Phase 3 (L2, stub slave): measured `OSD GAP min` **40** on the shipped image, i.e. at the reporting threshold, not necessarily at the failure edge (44 before Task 11; it moves with code layout). Covered: the one `OSD_CMD_VERSION` frame at boot (cold I$; its own minimum is 44) and the first reply byte of each `OSD_CMD_KEYQ` frame (where the 40 is), in the fatal-error loop (no kickstart); the per-key loop `kq_buf[i] = SPI_reply()` (`osd.c` ~1004, every key press on the board) is unmeasured (the stub answers count 0). Since the final review the L2 `fwboot*` runs fail when the minimum drops below 40 (bench error, `+OSD_MIN_GAP`). Phase 4: run `tb_spi_cdc +SWEEP=1` on the `osd` test once to pin the edge (a measurement, not a change), measure the per-key loop (a stub that queues keys) and re-take the figure on the first kickstart card; open until L3 with the real `userio_osd` (and P1). **Phase 4 (decision 12.13):** a reply-ready handshake replaces the `SPIN`s in the RV firmware (`doc/osd-riscv-exec-4.md` Tasks 1, 8-12: edge pinned, before/after on the real `userio_osd`). **Phase 4: closed in simulation by the reply-ready handshake; board confirmation in Phase 6.** E_osd = 34 `clk_114` (Task 1: largest failing gap 32; no failure at any gap >= 34), so the old 40 sat 6 above the edge; since Task 11 the RV `SPI_reply()` polls `HOST_REQ.OSD_RDY` (cfide `0xFFFFFFB4` bit 0, `userio_osd.osd_rx_seq`) instead of four `SPIN`s. `OSD EARLY` 0 in every L3 run (RV and 832, `EXTRA_WS` 0..64, `FAST_HW`, skew pairs, the per-key loop included); `OSD GAP` min 43 (the poll's own round trip, no longer a margin to an edge). Teeth: `OSD_RDY` forced 1 + `FAST_HW` FAILS (`OSD EARLY 1 of 450`), poll removed FAILS (`OSD EARLY 3 of 6`). RTL (Tasks 9, 10) awaits Paul's review before any bitstream. | `tb_spi_cdc` `osd` test with the RV host (hostrv); margin monitor "cycles between accesses during OSD reads" >= 40; hardware fix = the reply-ready handshake (`HOST_REQ.OSD_RDY`, Phase 4; polled instead of counting) |
 | 3 | Direct-mode SD -> paula/gayle, CS release after the 4096th bit | `mmc.c` `EnableDMode; SPI(0xFF); RDSPI; DisableDMode` | was >= ~30 cycles after the last bit, 832 ~45 | fixed in RTL (202e077: word latched on its last sck edge). **Phase 4 L3:** `dmode_release` (4,096th edge to CS release) RV 20.8, 832 42.8 `clk_114` at default (bound 0); smallest over the grid 19.9 (RV, skew 9.5/0.3); tooth (a) (202e077 reverted) FAILS the `hdd` data check. | `tb_spi_cdc` `direct` GAP 2..64 and `host832`/`hostrv` real-CPU runs; monitor measures last-sck-to-CS-release; mutant (202e077 reverted) must fail |
-| 4 | Command byte then CS release on the minimig slaves (`DisableFpga/DisableOsd` right after the last byte) | `userio_osd_spi` `rx`/`cmd` through clk7_en synchronisers; `paula_floppy`, `gayle` command decode | unknown; the GAP sweep covers it for `wr/rd/osd` | measured, not guaranteed by design. **Phase 4 L3:** release monitors `ok` in every run: paula / userio CS release RV 10.8, 832 3.8 at default (smallest 2.9, 832 at skew 9.5/0.3, bound 0); byte and word spacing monitored (RV 57 / 114, 832 49 / 98). | same bench; add a monitor "last sck edge to `_scs` rise" per slave with a per-slave minimum derived from the RTL (2 clk7_en = ~8 clk_28) |
-| 5 | SPI data register write while the shifter is busy | cfide `SD_busy` | the write is held, not dropped (support state machine stalls the CPU) | by construction. **Phase 4 L3:** `spi_write_busy` 0 in every run. | assertion in `sim/host_bridge`: no SPI write accepted while `SD_busy` |
+| 4 | Command byte then CS release on the minimig slaves (`DisableFpga/DisableOsd` right after the last byte) | `userio_osd_spi` `rx`/`cmd` through clk7_en synchronisers; `paula_floppy`, `gayle` command decode | unknown; the GAP sweep covers it for `wr/rd/osd` | measured, not guaranteed by design. **Phase 4 L3:** release monitors `ok` in every `p4g23` run that started (30): paula / userio CS release RV 10.8, 832 3.8 at default (smallest 2.9, 832 at skew 9.5/0.3, bound 0); byte and word spacing monitored (RV 57 / 114, 832 49 / 98). | same bench; add a monitor "last sck edge to `_scs` rise" per slave with a per-slave minimum derived from the RTL (2 clk7_en = ~8 clk_28) |
+| 5 | SPI data register write while the shifter is busy | cfide `SD_busy` | the write is held, not dropped (support state machine stalls the CPU) | by construction. **Phase 4 L3:** `spi_write_busy` 0 in every `p4g23` run that started (30). | assertion in `sim/host_bridge`: no SPI write accepted while `SD_busy` |
 | 6 | Floppy track **read**: host feeds MFM words into the paula FIFO while Paula DMA drains | `fdd.c` `ReadTrack`/`SectorToFpga`, `CMD_RDTRK` status | FIFO must not run empty while `dsklen` DMA is active; drain rate ~1 word per 32 us (250 kbit/s MFM), fill rate = SPI; large slack, but a stalled host (CD refill, menu) can starve it | depends on main-loop latency. **Phase 4 L3:** `fdd_rd`: floppy read FIFO never empty with DMA active in any run; at least 892 words in the FIFO at `EXTRA_WS` 64 (995 at default). | co-sim: ADF track reads with a monitor "FIFO empty && DMA active" = failure; stress mode with the CPU throttled finds the latency bound |
-| 7 | Floppy track **write**: host drains the write FIFO while the Amiga writes | `fdd.c` `FindSync/GetHeader/GetData`, `CMD_WRTRK` | FIFO depth gives the slack; host must keep up for a whole track (~200 ms) | depends on main-loop latency. **Phase 4 L3:** `fdd_wr`: write FIFO never full; word-gap monitor `ok` (RV 202, 832 85 at default, bound 64); a write-FIFO defect found by L3 (Task 14, firmware `WRFIFO_GAP`) fixed, tooth (h) (image before the fix) FAILS. | co-sim: ADF track write with "FIFO full && Amiga writing" monitor; written ADF compared with the golden image |
+| 7 | Floppy track **write**: host drains the write FIFO while the Amiga writes | `fdd.c` `FindSync/GetHeader/GetData`, `CMD_WRTRK` | FIFO depth gives the slack; host must keep up for a whole track (~200 ms) | depends on main-loop latency. **Phase 4 L3:** `fdd_wr`: write FIFO never full; word-gap monitor `ok` (RV 202, 832 85 at default, bound 64); a write-FIFO defect found by L3 (Task 14, firmware `WRFIFO_GAP`) fixed, tooth (h) (image before the fix) FAILS; the `WRFIFO_GAP` pacing itself is accepted by Paul 2026-10-21 (12.14). | co-sim: ADF track write with "FIFO full && Amiga writing" monitor; written ADF compared with the golden image |
 | 8 | IDE PIO flow control | `hdd.c` `while(!(GetFPGAStatus() & CMD_IDECMD))`, `CMD_IDEDAT`; gayle FIFOs | status-driven, no timing margin; latency only affects throughput | by construction. **Phase 4 L3:** `hdd`: the reads compare equal to `SYNTH.HDF` / `RDB.HDF` and the writes land on the saved card (Task 15); `ide_wait` recorded (RV 32, 832 64 `clk_114`). A deadlock of the CD-DA poll inside an HDF READ MULTIPLE (board 2026-10-20) is fixed (`CD_AudioRefill`, `fix-cdpoll`) and has its own L3 gate (`cdda_load` with `+IDE_HOST_DELAY=2000000`). | co-sim HDF multi-sector read/write, data compare; `sim/gayle` golden trace unchanged |
 | 9 | ATAPI phases / CD READ | `cdrom.c` flags, `CD_TIMEOUT` 10000 TIMER counts (58 s on the board; the source says "ms") | status-driven; 58 s host timeout (timer-based) | by construction. **Phase 4 L3:** `cd` (cue and iso) and `cdda` / `cdda_load`: data compare equal; `cd_timeout_left` keeps 99.99 % of `CD_TIMEOUT`; CD-DA underruns 0, RV ring fill 42.85 ms max against the 832's 88.16 ms (plan 4.4 gate holds). | co-sim CD READ(10/12) of ISO sectors, data compare |
 | 10 | SD card protocol waits | `mmc.c`: CMD41 1000 ms (timer), data-token wait `timeout++ >= 1000000` (count), write-busy loop | count-based waits expire ~7x sooner on VexRiscv (still well above the token time, but no longer a 1 s guarantee) | **closed** (Phase 3, Task 10): waits on TIMER, `SD_TIMEOUT` 173 = 1.004 s; Phase 4: no L3 monitor, none needed. | SD model with programmable token delay up to 250 ms; count loops converted to `CheckTimer` in Phase 3 (one-line changes) |
-| 11 | `SPIN` / explicit delays | `hardware.c:236` (OSD reply, item 2); commented-out `SPIN`s in `fdd.c` (historic ADF-write workaround); `audio_clear` waits one TIMER tick | only item 2 is live | **closed** (Phase 3 grep gate as ruled: firmware code only; live `SPIN` sites exactly three: `hardware.c:236`, `fpga.c:226`, `config.c:618`). **Phase 4:** Task 11 removed `hardware.c:236` (`SPI_reply()` polls `OSD_RDY`); live `SPIN` sites exactly two, `fpga.c:226` and `config.c:618`; the Phase 4 firmware changes add no count-based delay (the floppy write FIFO's `WRFIFO_GAP` reads are documented in the README "Delay sites" and gated by `wrfifo.ok`). | grep gate in Phase 3: no new count-based delays |
+| 11 | `SPIN` / explicit delays | `hardware.c:236` (OSD reply, item 2); commented-out `SPIN`s in `fdd.c` (historic ADF-write workaround); `audio_clear` waits one TIMER tick | only item 2 is live | **closed** (Phase 3 grep gate as ruled: firmware code only; live `SPIN` sites exactly three: `hardware.c:236`, `fpga.c:226`, `config.c:618`). **Phase 4:** Task 11 removed `hardware.c:236` (`SPI_reply()` polls `OSD_RDY`); live `SPIN` sites exactly two, `fpga.c:226` and `config.c:618`; the Phase 4 firmware changes add no count-based delay (the floppy write FIFO's `WRFIFO_GAP` reads are accepted by Paul 2026-10-21 (12.14) and documented in the README "Delay sites" and gated by `wrfifo.ok`). | grep gate in Phase 3: no new count-based delays |
 | 12 | RTC (`pcf2123`) CS high time between transfers | `rtc.c`, `scs(7)` | the chip's minimum CS-inactive time is covered by the firmware's instruction spacing today | depends on CPU speed. **Phase 4:** L3 models the PCF2123 (`rtc_cs_high` recorded: RV 558 M, 832 1,318 M `clk_114` at default; the datasheet minimum is unknown, bound 0). The check against the real part stays with the board (Phase 6). | add the datasheet minimum as a monitor in the co-sim (RTC model) or insert an explicit timer-based guard; low risk, listed for completeness |
 | 13 | Akiko C2P service latency | `amiga_req` held until the host answers | the 68k bus waits; latency = ISR latency; correctness independent of speed | fine. **Phase 4 L3:** `akiko`: request / ack / print path correct on both CPUs; `akiko_req_ack_max` RV 238,392, 832 229,128 `clk_114` (UART-bound; write ~2.0 ms, read ~1.4 ms); no `Akiko` line differs between the CPUs. | co-sim: an Amiga-side Akiko write; measure latency both CPUs |
 | 14 | Kickstart upload complete before CPU release | SDRAM write acks precede `OsdDoReset` | ordering by the bridge (one transaction in flight; dBus waits for the previous write's ack) | by construction. **Phase 4 L3:** `kick_order` `ok` in every boot-based run (RV 6.86 M, 832 13.59 M `clk_114` between the last kickstart write and the CPU release). | differential trace: last SDRAM write before the reset SPI command |
@@ -826,8 +826,8 @@ timing (reviewed in Phase 3's grep gate).
   six runs on the machine; xsim 33 to 48 k cycles/s (the xsim share of the phase
   was `boot_short` per CPU, the handshake unit benches and the Task 1 sweep).
   The `TICKDIV` rule: 1 for boot, 643 (the board's 44.1 kHz) from the scenario's
-  start for CD, CD-DA, floppy and keys. The gate runs of Task 23 (the 40-run
-  grid `p4g23` and the merged-tree regressions) are in section 8, Phase 4.
+  start for CD, CD-DA, floppy and keys. The gate runs of Task 23 (the 30 runs
+  that started of grid `p4g23` and the merged-tree regressions) are in section 8, Phase 4.
 - **Timing-stress mode** in L3: `rv_extra_ws` (0, 4, 16, 64 idle cycles per
   bus access -- slower CPU: the latency-bound items 6/7/10) and a
   `+FAST_HW` plusarg that shortens the SD model's token delay and the SDRAM
@@ -1038,7 +1038,7 @@ read-only: `MINMGAA.CFG`, `MINMGAA1.CFG` 212 B version 4; `MINMGAA2..4.CFG`
 208 B version 3): "5 file(s) round trip, fields equal" on both ABIs, 430
 cases 0 failed, PASS.
 
-### Phase 4 -- co-simulation (the gate for floppy/HDD/CD)
+### Phase 4 -- co-simulation (the gate for floppy/HDD/CD) -- **done 2026-10-21** (4.6 deferred to the Phase 5 board session)
 
 Executable plan: `doc/osd-riscv-exec-4.md` (23 tasks, planned 2026-10-18), amended
 by decision 12.13: parity of the RV firmware with the 832 on the floppy, hard
@@ -1051,7 +1051,7 @@ X-sensitivity check; xsim at most ~4 h in total (one shortened boot cross-check
 per CPU, the handshake RTL's unit benches). Paul answered the eight planner
 questions the same day (exec-4 "Decisions").
 
-- 4.1 **O** L3 bench `sim/l3/` per 7.2: SD model with
+- 4.1 **O** **done** L3 bench `sim/l3/` per 7.2: SD model with
   multi-block reads/writes (CMD17/18/24/25), Amiga-side bus-functional
   model, Paula DMA model, Gayle traffic from `sim/gayle`, trace logger,
   margin monitors (7.1), `rv_extra_ws` and `+FAST_HW` stress, skew grid.
@@ -1059,22 +1059,22 @@ questions the same day (exec-4 "Decisions").
   tracks compare equal; HDF 64-sector read and write compare equal; CD
   READ(10) of 32 sectors compares equal; CD-DA fill of both halves compares
   with the BIN; monitors report every 7.1 margin; teeth mutants fail.
-- 4.2 **O** Differential: the same scenarios with `cpu_riscv=false` and the
+- 4.2 **O** **done** Differential: the same scenarios with `cpu_riscv=false` and the
   832 firmware produce the golden normalised SPI/host-bus traces; RV traces
   `diff` empty modulo version/timing. Gate: documented in
   `findings/osd-riscv/phase4.md` with the margin table for both CPUs across
   the stress grid.
-- 4.3 **S** No misaligned-access or illegal-instruction trap in any L3
+- 4.3 **S** **done** No misaligned-access or illegal-instruction trap in any L3
   scenario (trap log empty). Gate: log.
-- 4.4 **S** Speed in L3, end to end, both CPUs: SPI byte loop ns/byte,
+- 4.4 **S** **done** Speed in L3, end to end, both CPUs: SPI byte loop ns/byte,
   32 KB ring fill ms, menu redraw. Gate: RV ring fill <= 832.
-- 4.5 **S** I$ hit rate from the L3 trace per scenario (miss counter in
+- 4.5 **S** **done** I$ hit rate from the L3 trace per scenario (miss counter in
   `rv_hostcpu`, sim only). Gate: recorded; if the main-loop hot set misses
   > 5 %, evaluate 8 KB (regeneration + OOC) before Phase 5.
-- 4.6 **S** 832 Dhrystone on the board (`fw/dhrystone_832`, current
+- 4.6 **S** **deferred to the Phase 5 board session** 832 Dhrystone on the board (`fw/dhrystone_832`, current
   bitstream, UART). Gate: number recorded next to the bench's 0.113
   DMIPS/MHz.
-- 4.7 **O** OSD reply-ready handshake (decision 12.13 a): `userio_osd` output
+- 4.7 **O** **done** OSD reply-ready handshake (decision 12.13 a): `userio_osd` output
   `osd_rx_seq` (bytes processed), cfide `HOST_REQ` (`0xFFFFFFB4`, read-only)
   bit 0 `OSD_RDY` = cfide's own OSD byte count equals it; `SPI_reply()` polls it
   (TIMER-bounded) instead of four `SPIN`s; the 832 firmware never reads it.
@@ -1088,7 +1088,7 @@ kept by Paul 2026-10-21; T21 deferred to the Phase 5 board session); merged
 with fix-cdpoll and p5-build at 43c6cc7; build B rebuilt from 43c6cc7 (results:
 controller). Commits `d8804185..43c6cc75` (94). Gate results (details and
 tables in `findings/osd-riscv/phase4.md`, "Gate run (Task 23)"): L3 grid `p4g23`
-40 runs, all 20 RV runs (10 default + 10 XRAND twins) PASS and SAME, all 10 832
+30 runs started (20 RV, 10 832 default), all 20 RV runs (10 default + 10 XRAND twins) PASS and SAME, all 10 832
 default runs PASS, all ten RV-vs-832 diffs empty on the merged rules; the 832
 X-twins are dropped (Paul: the 832 is retired). Merged tree 43c6cc7: L3
 `cdda_load` with `+IDE_HOST_DELAY=2000000` PASS, L3 `boot` both CPUs PASS and
@@ -1111,10 +1111,13 @@ empty, RV `STACK low` 0x1950, live `SPIN` sites two, `rtl/` diff = Tasks 9 and
   hostcpu hierarchical utilisation recorded; clk_114 WNS of `stage_rv` not
   worse than the 832 reference by more than 0.1 ns; `report_clocks` still shows
   `spi_sck`.
+  Build B was rebuilt from 43c6cc7 (2026-10-21): `build/stage_p5b_43c6cc7` and
+  debug `build/stage_p5dbg_43c6cc7`, configuration data byte-identical to
+  `stage_p5b_87577e2` / `stage_p5dbg_42f7cbb`.
 - 5.2 **O** **skipped, gate 5.1 met.** Timing/fit recovery if needed (placement directives, retiming,
   I$ `twoCycleRam`, a pipeline register in the CPU block). Gate: WNS within
   the current -0.2 ns, no new failing endpoints under hostcpu.
-- 5.3 **S** **card files ready, board test pending** (`build/ab_card_87577e2`, protocol `findings/osd-riscv/ab-board-test.md`); the merge is **deferred** until Paul's go after the board A/B; card `RV32OSDA.BIN` = osd-riscv `6ea1b76` floppy-write fix (sha256 `17bf2563`, replaces Task 5's C1 image `0162e53f`; ledger R11). Card image with both firmware files; build notes. The spicdc
+- 5.3 **S** **card files ready, board test pending** (`build/ab_card_87577e2`, protocol `findings/osd-riscv/ab-board-test.md`); the merge is **deferred** until Paul's go after the board A/B; card `RV32OSDA.BIN` = osd-riscv `6ea1b76` floppy-write fix (sha256 `17bf2563`, replaces Task 5's C1 image `0162e53f`; ledger R11) -- superseded: the current card is `build/card_43c6cc7`, `RV32OSDA.BIN` sha256 `1c6bbd5a` (fix-cdpoll image, board-verified 2026-10-20). Card image with both firmware files; build notes. The spicdc
   board check (decision 12.5) is done: `build/stage_spicdc_49b1868` was
   board-verified by Paul 2026-10-17 (it is the 832 reference).
   Gate: both bitstreams boot from one card. Merge `osd-riscv` ->
@@ -1128,16 +1131,18 @@ empty, RV `STACK low` 0x1950, live `SPIN` sites two, `rtl/` diff = Tasks 9 and
 
 ### Phase 6 -- board parity and stress
 
-Checklist in section 9 and the stress protocol 7.4, both bitstreams,
-recorded in `findings/osd-riscv/parity.md` and `stress.md`. Gate: every row
-"same" or an explained, accepted difference; stress runs clean on RV and
-no worse than the 832.
+Functional checklist (section 9) on build B only; the A comparison is run only
+for failing or suspect items (12.14, Paul 2026-10-20). Stress protocol 7.4 as
+needed, recorded in `findings/osd-riscv/parity.md` and `stress.md`. Gate: every
+row works, or an explained, accepted difference; stress runs clean on RV.
 
 ### Phase 7 -- performance
 
-- 7.1 **S** Board numbers: Dhrystone over UART, `cda_underruns` under the
-  7.4 loads, the Cure/stutter scenario, menu redraw latency. Gate: table.
-- 7.2 **O** If needed, each a separate stage re-measured with 7.1 and re-run
+- 7.1 **dropped** (12.14, Paul 2026-10-20: the board A/B performance table is
+  not worth it unless there are problem areas). Was: Dhrystone over UART,
+  `cda_underruns` under the 7.4 loads, the Cure/stutter scenario, menu redraw
+  latency.
+- 7.2 **O** Only for a measured problem (12.14); if needed, each a separate stage re-measured with 7.1 and re-run
   through L3: line refills as hostcache bursts (one 16-byte hostcache line
   per two I$ beats without a round trip each), 8 KB I$, hostcache to 2 K
   words (+1 BRAM). Gate: no parity regression; 7.1 improvement.
@@ -1146,7 +1151,7 @@ no worse than the 832.
 
 After 8.0 the order below is **proposed, Paul did not object** (decision 12.9;
 dependency map in `doc/osd-riscv-exec-1.md` T15): P1 -> P2+P4 -> P3 -> P5/P6/P7
-on measured need. The OSD redesign (bigger, tabbed menu) is not part of this
+on measured need (P5/P6 left the migration plan, 12.14; HD/CD throughput is a backlog item, `doc/backlog.md` on `5.0-040-pipelined`). The OSD redesign (bigger, tabbed menu) is not part of this
 plan: it is in `doc/backlog.md` on `5.0-040-pipelined` (commit 32d3c80),
 after RISC-V parity.
 
@@ -1163,10 +1168,10 @@ after RISC-V parity.
   drive-sound cursor/HDMI check. Gate: L3 + board.
 - 8.3 **S** P3 UART RX FIFO + debug console. Gate: L3 + serial test per the
   CP210x notes.
-- 8.4 **O** P5 SPI master FIFO (only if 4.4/7.1 say the byte loop matters).
+- 8.4 **O** P5 SPI master FIFO: left the migration plan (12.14); HD/CD throughput is a backlog item (`doc/backlog.md` on `5.0-040-pipelined`). Was: only if 4.4/7.1 say the byte loop matters.
   Gate: L3 data compares + margin monitors with the new CS timing; ring
   fill time; board stress.
-- 8.5 **O** P6 sector DMA (only after 8.4 measurements). Gate: as 8.4 plus
+- 8.5 **O** P6 sector DMA: left the migration plan (12.14); HD/CD throughput is a backlog item (`doc/backlog.md` on `5.0-040-pipelined`). Was: only after 8.4 measurements. Gate: as 8.4 plus
   the 202e077 class of race provably removed (the engine owns CS).
 - 8.6 **O** P7 CD-DA ring DMA (only if underruns remain). Gate: L3 ring
   compare with the arbiter under HDF load; `cda_underruns` = 0 on the board
@@ -1443,4 +1448,15 @@ P5-P7 on evidence. Of these, only the 8 KB boot BRAM survives unchanged.*
       9.0 % / fdd_rd 7.6 % / cdda 7.3 %, above the 5 % gate of exec-4
       Decision 7). Paul: "It should match the original 040". Applied: the
       OSD RISC-V I-cache stays 4 KB (a real 68040 has 4 KB I + 4 KB D); no
-      8 KB regeneration, no OOC run, no RTL change.
+      8 KB regeneration, no OOC run, no RTL change. Measured miss ratios of
+      the other scenarios: keys 2.82 %, hdd 0.91 %.
+    - *2026-10-21 ~19:45, on the `WRFIFO_GAP` exception* (fw/ctrl_rv pacing of
+      the floppy write FIFO, 16 discarded TIMER reads per word). Paul: "Looks
+      like an issue that doesn't affect data integrity, floppies are slow
+      anyways." Applied: exception ACCEPTED (7.1 items 7 and 11). RTL fix (a)
+      (pop on tx start, as Gayle's `hdd_data_rd`) stays on the backlog; the gap
+      can go after it.
+    - *2026-10-21, on Task 23's 832 XRAND twins.* Paul: "If it's about the 832,
+      don't run it, we won't use that anymore" (anchor: decision 12.10, retire
+      the 832). Applied: the 832 X-twins are dropped; the gate is the RV column,
+      20/20 including its 10 XRAND twins.
