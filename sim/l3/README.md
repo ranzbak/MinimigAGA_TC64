@@ -2407,11 +2407,15 @@ more than 255 cylinders; and compares `manifest.txt` with a fresh stand-in
 build. It ends with `check PASS`. The bytes of `TEST.ISO` depend on the xorriso version (the committed manifest was made with 1.5.6): on another version `check` can fail with "manifest.txt is stale", and `make -C sim/l3/card manifest` regenerates it. After a change to a generator,
 `make -C sim/l3/card manifest` rewrites `manifest.txt`.
 
-One card, with real firmware files (the 832 one from your own build):
+One card, with real firmware files (the 832 one from your own build,
+`FW832=` an image such as `sim/l3/run_fw/fw832/832OSDAD.BIN` of section
+"Differential"). Put it in its own `B=` directory: in `build/` the cards of
+the commands above already exist with the stand-in, and `make` does not
+rebuild an image whose name has not changed:
 
 ```sh
-make -C sim/l3/card hdd FWRV=fw/ctrl_rv/build/RV32OSDA.BIN FW832=path/to/832OSDAD.BIN
-mdir -i sim/l3/card/build/hdd.img@@1048576 ::
+make -C sim/l3/card hdd B=build_real FWRV=fw/ctrl_rv/build/RV32OSDA.BIN FW832=path/to/832OSDAD.BIN
+mdir -i sim/l3/card/build_real/hdd.img@@1048576 ::
 ```
 
 | Card | Files (all cards also hold both firmwares and `KICK.ROM`) |
