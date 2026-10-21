@@ -274,7 +274,8 @@ proc file_entry {en {order NORMAL}} { return [dict create IS_ENABLED $en PROCESS
 
 # fresh: a project_1.xpr from before the 832 and the reference 68040 core were
 #        retired (the 832's sources, its boot ROM, the old bridge
-#        rtl/host/832_bridge.vhd and a lib/AP68040 file in, no RV files).
+#        rtl/host/832_bridge.vhd, a lib/AP68040 and an rtl/tg68k file in, no
+#        RV files).
 #        Its include_dirs name lib/AP68040/rtl, as project_1's do.  (lib/AP68040
 #        itself stays: the faster build takes its ap040_bus16_adapter.v, so its
 #        files are not retired; a pipelined build turns them off for the run.)
@@ -286,7 +287,8 @@ proc state {kind} {
     set src [list $R/rtl/soc/minimig_openaars_top.v $R/rtl/soc/minimig_virtual_top.v \
                   $R/rtl/host/832_bridge.vhd \
                   $R/EightThirtyTwo/RTL/eightthirtytwo_cpu.vhd $R/EightThirtyTwo/RTL/eightthirtytwo_alu.vhd \
-                  $R/fw/ctrl_boot_832/OSDBoot_832_ROM.vhd $R/lib/AP68040/rtl/ap040_top.v]
+                  $R/fw/ctrl_boot_832/OSDBoot_832_ROM.vhd $R/lib/AP68040/rtl/ap040_top.v \
+                  $R/rtl/tg68k/TG68KdotC_Kernel.vhd]
     set xdc [list $xdcdir/clocks.xdc $xdcdir/wizard.xdc $xdcdir/cpu.xdc $xdcdir/ddr3.xdc]
     set fp [dict create]
     foreach f [concat $src $xdc] { dict set fp $f [file_entry 1] }
@@ -433,7 +435,8 @@ set TOKEN " HOSTCPU_RVDEBUG=1"
 set RVGROUP [list $R/rtl/host/host_bridge.vhd $R/rtl/host/rv_hostcpu.v \
                   $R/rtl/host/vexriscv/VexOsd.v $R/fw/ctrl_boot/OSDBoot_rv_ROM.vhd]
 set RETIRED [list $R/rtl/host/832_bridge.vhd $R/EightThirtyTwo/RTL/eightthirtytwo_cpu.vhd \
-                  $R/EightThirtyTwo/RTL/eightthirtytwo_alu.vhd $R/fw/ctrl_boot_832/OSDBoot_832_ROM.vhd]
+                  $R/EightThirtyTwo/RTL/eightthirtytwo_alu.vhd $R/fw/ctrl_boot_832/OSDBoot_832_ROM.vhd \
+                  $R/rtl/tg68k/TG68KdotC_Kernel.vhd]
 
 # What a run must see: the RV group in sources_1 and enabled, every retired
 # file disabled, no debug file enabled (rvdebug 0).  Returns "" or the problem.

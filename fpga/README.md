@@ -10,8 +10,10 @@ so that the core stays vendor-neutral (plain VHDL/Verilog; Artix-7-specific
 parts sit behind switches that default off), but nobody builds them on this
 branch and they may not build as they are:
 
-- **CPU:** they were made for the TG68K CPU. The last commit that builds them
-  with it is tag `d3_stable`; the design's CPU is now the AP68040 core.
+- **CPU:** they were made for the TG68K CPU (the TG68K.C kernel, submodule
+  `rtl/tg68k`, now removed; `rtl/soc/tg68.qip` lists only the wrapper). The
+  last commit that builds them with it is tag `d3_stable`; the design's CPU is
+  now the AP68040 core.
 - **OSD host CPU:** the EightThirtyTwo (832) host CPU and its firmware were
   replaced by the VexRiscv RV32IMC (`rtl/host/`, firmware in `fw/ctrl` and
   `fw/ctrl_boot`, `RV32OSDA.BIN` on the SD card). The 832 files are gone from

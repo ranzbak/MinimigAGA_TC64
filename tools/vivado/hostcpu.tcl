@@ -13,8 +13,9 @@
 #
 # hostcpu_apply adds the RV group if missing and enables it, and disables the
 # retired group (every sources_1 file under EightThirtyTwo/, the old boot ROM
-# fw/ctrl_boot_832/ and the old bridge rtl/host/832_bridge.vhd, if the project
-# still lists them), so the run sees only files that exist.  It returns the
+# fw/ctrl_boot_832/, the old bridge rtl/host/832_bridge.vhd and the TG68K.C
+# kernel rtl/tg68k/, if the project still lists them), so the
+# run sees only files that exist.  It returns the
 # number of changes it made.  hostcpu_restore undoes exactly those changes
 # (files it added are removed, enable flags and the xdc's PROCESSING_ORDER go
 # back to what they were), so the project is left as found.
@@ -78,10 +79,14 @@ proc hostcpu_rvdebug {} {
     error "hostcpu.tcl: RV_DEBUG='$::env(RV_DEBUG)': must be 0 (or unset) or 1 (the LAB build with the RISC-V debug module)"
 }
 
-# Files a project may still list that are no longer in the tree (removed with
-# the 832): disabled for the run, restored afterwards.
+# Files a project may still list that are no longer in the tree: the 832's
+# (its RTL, boot ROM and the bridge's old name) and the TG68K.C kernel
+# (rtl/tg68k, which rebuild.tcl used to list).  Disabled for the run, restored
+# afterwards.  (lib/AP68040, the reference 68040 core, is not retired: the
+# faster core's build takes ap040_bus16_adapter.v from it.)
 proc hostcpu__retired_patterns {} {
-    return [list */EightThirtyTwo/* */fw/ctrl_boot_832/* */rtl/host/832_bridge.vhd]
+    return [list */EightThirtyTwo/* */fw/ctrl_boot_832/* */rtl/host/832_bridge.vhd \
+                 */rtl/tg68k/*]
 }
 
 proc hostcpu__retired_files {} {

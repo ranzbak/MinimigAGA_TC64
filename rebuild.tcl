@@ -111,9 +111,6 @@
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/fw/ctrl_boot/OSDBoot_rv_ROM.vhd"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/host/host_bridge.vhd"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/audio/AudioMix.vhd"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/tg68k/TG68K_Pack.vhd"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/tg68k/TG68K_ALU.vhd"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/tg68k/TG68KdotC_Kernel.vhd"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/rtg/VideoStream.vhd"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/akiko/cornerturn.vhd"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/akiko/akiko.vhd"
@@ -309,9 +306,6 @@ proc checkRequiredFiles { origin_dir} {
  "[file normalize "$origin_dir/fw/ctrl_boot/OSDBoot_rv_ROM.vhd"]"\
  "[file normalize "$origin_dir/rtl/host/host_bridge.vhd"]"\
  "[file normalize "$origin_dir/rtl/audio/AudioMix.vhd"]"\
- "[file normalize "$origin_dir/rtl/tg68k/TG68K_Pack.vhd"]"\
- "[file normalize "$origin_dir/rtl/tg68k/TG68K_ALU.vhd"]"\
- "[file normalize "$origin_dir/rtl/tg68k/TG68KdotC_Kernel.vhd"]"\
  "[file normalize "$origin_dir/rtl/rtg/VideoStream.vhd"]"\
  "[file normalize "$origin_dir/rtl/akiko/cornerturn.vhd"]"\
  "[file normalize "$origin_dir/rtl/akiko/akiko.vhd"]"\
@@ -630,9 +624,6 @@ set files [list \
  [file normalize "${origin_dir}/fw/ctrl_boot/OSDBoot_rv_ROM.vhd"] \
  [file normalize "${origin_dir}/rtl/host/host_bridge.vhd"] \
  [file normalize "${origin_dir}/rtl/audio/AudioMix.vhd"] \
- [file normalize "${origin_dir}/rtl/tg68k/TG68K_Pack.vhd"] \
- [file normalize "${origin_dir}/rtl/tg68k/TG68K_ALU.vhd"] \
- [file normalize "${origin_dir}/rtl/tg68k/TG68KdotC_Kernel.vhd"] \
  [file normalize "${origin_dir}/rtl/rtg/VideoStream.vhd"] \
  [file normalize "${origin_dir}/rtl/akiko/cornerturn.vhd"] \
  [file normalize "${origin_dir}/rtl/akiko/akiko.vhd"] \
@@ -1082,24 +1073,6 @@ set_property -name "file_type" -value "VHDL" -objects $file_obj
 set_property -name "library" -value "work" -objects $file_obj
 
 set file "$origin_dir/rtl/audio/AudioMix.vhd"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
-set_property -name "file_type" -value "VHDL" -objects $file_obj
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/rtl/tg68k/TG68K_Pack.vhd"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
-set_property -name "file_type" -value "VHDL" -objects $file_obj
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/rtl/tg68k/TG68K_ALU.vhd"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
-set_property -name "file_type" -value "VHDL" -objects $file_obj
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/rtl/tg68k/TG68KdotC_Kernel.vhd"
 set file [file normalize $file]
 set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
 set_property -name "file_type" -value "VHDL" -objects $file_obj

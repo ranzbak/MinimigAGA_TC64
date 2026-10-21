@@ -1,7 +1,7 @@
 ;-----------------------------------------------------------------------------
 ; ddr3_cpu_test.asm -- 68k program for sim/ddr3_cpu.
 ;
-; Runs on the real TG68KdotC kernel inside the real rtl/soc/TG68K.vhd wrapper.
+; Runs on the AP68040 inside the real rtl/soc/TG68K.vhd wrapper.
 ; Program, vectors and stack live in the bench's behavioural chip RAM (the
 ; wrapper's SDRAM-side port); everything it exercises at $41000000 is the real
 ; ddr3_fastram + ddr3_top + Micron DDR3 model chain.

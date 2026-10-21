@@ -61,7 +61,6 @@ In an existing clone, `git submodule update --init` does the same.
 |---|---|---|
 | `lib/AP68040-pipelined` | the 68040 CPU core | the bitstream |
 | `lib/AP68040` | the non-pipelined reference 68040 (branch `ap68040-reference` of the AP68040-pipelined repository); the core itself is no longer built | `ap040_bus16_adapter.v`, which the faster core's build (`FASTER`) and its `sim/ddr3_cpu` leg take from it, and the pipelined core's own `compat:` test legs |
-| `rtl/tg68k` | the TG68K CPU | only the older ports; not in this build's project |
 
 All submodule URLs are HTTPS (since commit 829167b), so no GitHub SSH key is
 needed. On 2026-09-25 each submodule's pinned commit was fetched from its
