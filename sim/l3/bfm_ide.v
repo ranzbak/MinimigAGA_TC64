@@ -23,7 +23,7 @@
 // and INTREQ $DA9000 (bit 15; writing 0 clears the request).
 //
 // ATA protocol (the host side of ATA-2 PIO, as gayle_port.v and
-// fw/ctrl_rv/hdd.c implement the device side):
+// fw/ctrl/hdd.c implement the device side):
 //   PIO in (IDENTIFY, READ SECTORS, READ MULTIPLE): per DRQ block, wait for
 //     the interrupt, read the status (BSY 0, DRQ 1), clear INTREQ, read the
 //     block (one sector; READ MULTIPLE: the SET MULTIPLE count, the last
@@ -665,7 +665,7 @@ module bfm_ide (
   // plan waits CDDA_D clk_114 more before its next command, so that the
   // firmware has seen the flip and started the refill first (its main loop
   // calls CD_AudioPoll before HandleFpga): the command is then served after
-  // the refill on both CPUs.
+  // the refill.
   //   TEST UNIT READY (the reset's UNIT ATTENTION: CHECK CONDITION)
   //   PLAY AUDIO MSF 00:04:64 .. 00:06:27 (LBA 214 .. 326: track 2 from its
   //     INDEX 01, 113 sectors = 66,444 frames, 1.5 s)

@@ -2,8 +2,8 @@
 """mkblob.py <file> <size> <tag>: a deterministic stand-in firmware file.
 
 <size> bytes of a counter pattern that starts with <tag> (ASCII).  Used by
-the manifest and by `make check` when no real firmware is given
-(FWRV= / FW832=).  python3 -I, standard library only.
+the manifest (a stand-in RV32OSDA.BIN, so the manifest does not change with
+a firmware build).  python3 -I, standard library only.
 """
 import sys
 

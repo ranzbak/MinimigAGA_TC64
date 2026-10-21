@@ -20,10 +20,10 @@ T, L3 = sys.argv[1:3]
 sys.path.insert(0, L3)
 import l3check as c
 
-def build(name, cpu="rv", mut=None):
+def build(name, mut=None):
     d = os.path.join(T, name)
     os.makedirs(d)
-    log, hw, cyc = ["=== CPU %s" % cpu], [], 1000
+    log, hw, cyc = ["=== CPU rv"], [], 1000
     n = 0
     upper = True
     for b in (0, 1):
@@ -55,14 +55,13 @@ def build(name, cpu="rv", mut=None):
     open(os.path.join(d, "hw.txt"), "w").write("\n".join(hw) + "\n")
 
 build("good")
-build("good832", cpu="832")
 for m in ("wrongword", "lost", "repeat", "readdata", "lowercase_rv", "noack", "nodata"):
     build(m, mut=m)
 PY
 
 fail=0
 judged() { python3 -I "$L3/l3check.py" akiko "$1" | grep -E '^BAD ' | grep -E 'requests in the log|request [01]/|UART Akiko|DATA|hw.txt|answer' ; }
-for g in good good832; do
+for g in good; do
 	out=$(judged "$T/$g")
 	if [ -n "$out" ]; then echo "FAIL $g: unexpected BAD lines:"; echo "$out"; fail=1; else echo "ok   $g: no request/UART/hw BAD line"; fi
 done

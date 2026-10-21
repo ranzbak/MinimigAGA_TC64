@@ -1,5 +1,5 @@
 -- Stub OSDBoot_rv_ROM for elaboration checks (Task 7 builds the real ROMs).
--- Same generics and ports as OSDBoot_832_ROM.  Two words, big-endian lanes
+-- Same generics and ports as fw/ctrl_boot/OSDBoot_rv_ROM.vhd.  Two words, big-endian lanes
 -- (byte A+0 in bits 31:24, rv_hostcpu swaps them for the core):
 --   0x00: j 0    (jal x0,0   = 0x0000006f)
 --   0x04: j 0    (jal x0,-4  = 0xffdff06f)

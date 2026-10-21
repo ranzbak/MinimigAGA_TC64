@@ -11,7 +11,7 @@ TEST.BIN  one raw file of 2352-byte sectors, 364 of them (856,128 bytes):
   Audio frame f counts from 0 at the first frame of track 2 through track 3
   (0..176,399): left sample f & 0xFFFF, right sample ~f & 0xFFFF, 16-bit
   little-endian, 588 frames to a sector.
-TEST.CUE  as fw/ctrl_rv/cue.c parses it: one FILE, track 2 with the standard
+TEST.CUE  as fw/ctrl/cue.c parses it: one FILE, track 2 with the standard
   2 s PREGAP (silent, not in the file), so the disc map is
     LBA 0..63 track 1 | 64..213 pregap of track 2 | 214..363 track 2 |
     364..513 track 3 | lead-out 514

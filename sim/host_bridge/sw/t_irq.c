@@ -1,5 +1,5 @@
 /* t_irq: cfide's interrupt through the bridge to the firmware trap entry
- * (fw/ctrl_rv/arch: crt0, trap_entry, rv_trap, irq API), with the real
+ * (fw/ctrl/arch: crt0, trap_entry, rv_trap, irq API), with the real
  * cfide INTERRUPT register at 0xFFFFFFA0.
  *   SetIntHandler(handler), EnableInterrupts(), then STAMP 1: the bench
  *   pulses cfide's vbl_int 20 times (one clk_28 cycle each, 2000 clk_114

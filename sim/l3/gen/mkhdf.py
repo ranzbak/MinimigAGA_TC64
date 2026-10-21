@@ -13,7 +13,7 @@ RDB.HDF    2 MB (4096 blocks) with its own RDB at block 0: an RDSK block with
            PART block at block 1.  Plain HDF_FILE: the firmware's generic
            geometry for 4096 blocks is 16.4.63 (the RDSK says the same).
 Every other 512-byte block n of file id k (RDB.HDF 1, SYNTH.HDF 2, the ids of
-fw/ctrl_rv/test/gold/rdb.py) is 'H', k, n>>8, n&255, then
+fw/ctrl/test/gold/rdb.py) is 'H', k, n>>8, n&255, then
 (k*53 + n*37 + i*11) & 255 for byte i: the LBA and the file are in the block.
 In SYNTH.HDF n is the file's block; the disk's LBA is n + 32 (the RDB cylinder
 is in front: hdf offset = -heads*sectors).

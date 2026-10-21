@@ -2,7 +2,7 @@
 # firmware's sequence after the jump to 0x2000, up to and including the
 # first CMD58, on sd_spi_model with its defaults (SDHC, +SD_INIT_POLLS 2:
 # two ACMD41 polls answered idle, the third ready).  The lines are those of
-# fw/ctrl_rv/test/gold/mmc_init_cmds.txt, the golden mmc_test checks the
+# fw/ctrl/test/gold/mmc_init_cmds.txt, the golden mmc_test checks the
 # real mmc.c against on the same card model (that file names the run they
 # came from); a change there is a change here.
 CMD0 arg=00000000

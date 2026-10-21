@@ -5,7 +5,7 @@
 // host to serve.
 //
 // Protocol (rtl/host/cfide.vhd "Amiga interface at 0fffff80", the firmware's
-// akiko_inthandler in fw/ctrl_rv/akiko.c): the requester sets amiga_addr,
+// akiko_inthandler in fw/ctrl/akiko.c): the requester sets amiga_addr,
 // amiga_d (a write's data), amiga_wr and raises amiga_req, and holds all of
 // them until amiga_ack.  The rising edge of amiga_req is the host's
 // interrupt (EDGE, one per request).  The host's handler reads ADDR

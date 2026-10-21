@@ -13,12 +13,8 @@
 
 module minimig_virtual_top #(
     parameter hostonly=0,
-    parameter debug = 0,
-    // OSD host CPU (rtl/host/832_bridge.vhd): 0 = EightThirtyTwo, 1 = the
-    // VexRiscv RV32IMC in rtl/host/rv_hostcpu.v.  0 by default, so every top
-    // that does not set it keeps the 832; minimig_openaars_top sets 1.
-    parameter hostcpu_riscv = 0,
-    // RISC-V debug: 0 none (production), 1 BSCANE2 tunnel (Xilinx only).
+    // OSD host CPU (rtl/host/host_bridge.vhd, the VexRiscv RV32IMC in
+    // rtl/host/rv_hostcpu.v).  RISC-V debug: 0 none (production), 1 BSCANE2 tunnel (Xilinx only).
     parameter hostcpu_rvdebug = 0,
     parameter spimux = 0,
     parameter havertg = 1,
@@ -169,7 +165,7 @@ module minimig_virtual_top #(
     input                 SDA_I, // Clock in
     output                SDA_O, // Clock out
     output                SDA_T, // Clock tristate
-    input                 I2C_INT, // the ADV7511's INT, readable by the 832
+    input                 I2C_INT, // the ADV7511's INT, readable by the host CPU
 `endif
 
 // `ifdef MINIMIG_RTC_BUS
@@ -1061,9 +1057,9 @@ if (CPU040_DEBUG_ILA) begin : g_cpu040_ila
     .probe9 (dbg_rtg),         // 32  {akiko_req, akiko_wr, state, cpuaddr[11:0], akiko_d}
     // (board bring-up 2026-09-23, black-screen investigation) probe10 is
     // repurposed from the RTG group to the signals that say whether the CPU
-    // is even allowed to run: its reset from the 832/minimig side, its clock
+    // is even allowed to run: its reset from the host CPU/minimig side, its clock
     // enable, the SDRAM controller's reset_out (which is what releases the
-    // 832) and DDR3's init_done.  Same width, so the ILA IP is unchanged.
+    // host CPU) and DDR3's init_done.  Same width, so the ILA IP is unchanged.
     //   [28]=tg68_rst  [27]=tg68_nrst_out  [26]=reset_out  [25]=DDR3_INIT_DONE
     //   [24]=tg68_ena28 [23]=tg68_dtack     [22]=rtg_ena    [21:0]=rtg_baseaddr
     .probe10({tg68_rst, tg68_nrst_out, reset_out, DDR3_INIT_DONE, tg68_ena28,
@@ -1353,9 +1349,7 @@ assign RTG_ENABLE = rtg_ena;
 
 wire host_interrupt;
 
-EightThirtyTwo_Bridge #(
-    .debug(debug ? 1'b1 : 1'b0),
-    .cpu_riscv(hostcpu_riscv ? 1'b1 : 1'b0),
+host_bridge #(
     .rv_debug(hostcpu_rvdebug ? 1'b1 : 1'b0)
 ) hostcpu
 (

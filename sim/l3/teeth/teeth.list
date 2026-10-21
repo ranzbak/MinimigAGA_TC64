@@ -1,18 +1,18 @@
 # Task 19's teeth (sim/l3/README.md "Teeth (Task 19)"): every run must FAIL.
 #   bash sim/l3/grid.sh p4t19 sim/l3/teeth/teeth.list
 # (a) 202e077 reverted in paula_floppy.v: hdd, direct-mode reads (item 3 / data)
-1 ta  rv  hdd        PATCH=$ROOT/sim/l3/teeth/paula_202e077.sh
+1 ta   hdd        PATCH=$ROOT/sim/l3/teeth/paula_202e077.sh
 # (b) the bridge without the four-phase handshake + fast master: item 1 stale acks
-1 tb  rv  boot_short PATCH=$ROOT/sim/l3/teeth/bridge_2phase.sh TIMEOUT=10000000
+1 tb   boot_short PATCH=$ROOT/sim/l3/teeth/bridge_2phase.sh TIMEOUT=10000000
 # (c) the short-MFM-sector firmware (fdd.c SendSector one word short): fdd_rd data
-1 tc  rv  fdd_rd     FW=$ROOT/sim/l3/run_p4t19fwc/fwrv/RV32OSDA.BIN
+1 tc   fdd_rd     FW=$ROOT/sim/l3/run_p4t19fwc/fwrv/RV32OSDA.BIN
 # (e) GAYLE_MUT_SHARED (one register file for both ports): hdd
-1 te  rv  hdd        PATCH=$ROOT/sim/l3/teeth/gayle_shared.sh
+1 te   hdd        PATCH=$ROOT/sim/l3/teeth/gayle_shared.sh
 # (f) cdaudio.c advances the cursor one frame short per half: cdda data
-1 tf  rv  cdda       FW=$ROOT/sim/l3/run_p4t19fwf/fwrv/RV32OSDA.BIN
+1 tf   cdda       FW=$ROOT/sim/l3/run_p4t19fwf/fwrv/RV32OSDA.BIN
 # (h) the RV image before the write-FIFO fix (0162e53f): fdd_wr, the word-gap monitor
-1 th  rv  fdd_wr     FW=$ROOT/sim/l3/run_fw12/fwrv/RV32OSDA.BIN
+1 th   fdd_wr     FW=$ROOT/sim/l3/run_fw12/fwrv/RV32OSDA.BIN
 # (e) again on cdda_load: hdd uses gayle port 0 only (both units on it), so the
 # shared register file cannot show there; cdda_load has the CD on port 1 and
 # the HDFs on port 0 (run p4t19_rv_te passed hdd, trace = p4m2h's)
-2 te2 rv  cdda_load  PATCH=$ROOT/sim/l3/teeth/gayle_shared.sh
+2 te2  cdda_load  PATCH=$ROOT/sim/l3/teeth/gayle_shared.sh

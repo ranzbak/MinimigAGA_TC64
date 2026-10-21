@@ -92,8 +92,8 @@
 //               bfm_akiko runs block 0 (32 write + 32 read requests on
 //               cfide's amiga_* window) in the idle main loop (after the
 //               main loop's first passes, the first drive status and
-//               OsdHide: during the ISR's burst the RV's main loop stands
-//               still and the 832's runs a few passes, Task 19); then the
+//               OsdHide: during the ISR's burst the main loop stands
+//               still, Task 19); then the
 //               key script (TEST.ADF into df0), then bfm_floppy reads
 //               FDD_PLAN's first AKIKO_TRACKS tracks, and block 1 starts at
 //               the first track DMA's DSKLEN write; end event: the first
@@ -203,8 +203,6 @@
   reg [8*16-1:0]  sc_ev = "";
   integer         sc_ev_cyc = 0;
   event           sc_stats_go;
-  // (CPU=832: no such counters, no STATS@ line)
-`ifndef L3_CPU832
   always @(sc_stats_go) begin
     #1;
     $display("=== STATS@%0s irefill %0d dread %0d dwrite %0d busy_cycles %0d (rv_hostcpu, to cycle %0d)",
@@ -213,7 +211,6 @@
     $display("=== RETIRED %0d (STATS@%0s, to cycle %0d)", rt_n, sc_ev, sc_ev_cyc);
 `endif
   end
-`endif
 
   task sc_end(input [8*16-1:0] ev, input [8*80-1:0] what);
     begin

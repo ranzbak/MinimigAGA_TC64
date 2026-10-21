@@ -30,7 +30,7 @@
 //                          any value >= 0 passes, the figure is recorded)
 //      dmode_L             the RDSPI ack (an SPI DATA read acked while sd_cs[6]
 //                          is low) to the DisableDMode request (CS write 41),
-//                          clk_114 cycles (tb_832_dmode.v's L); rec
+//                          clk_114 cycles; rec
 //   4  paula_cs_release    per slave: the last sck rising edge of a frame at
 //      userio_cs_release   the slave to its select rising (sd_cs[4] paula,
 //                          sd_cs[5] userio_osd), clk_114 cycles; bound 0:
@@ -347,7 +347,7 @@
   // ------------------------------------------------- item 9: CD phases
   // sampled on the falling clk_28 edge before the rising one where gayle
   // samples (clk7_en): the values gayle_port.v acts on
-  localparam integer CD_TIMEOUT = 10000;   // fw/ctrl_rv/cdrom.c (and fw/ctrl_832): TIMER counts
+  localparam integer CD_TIMEOUT = 10000;   // fw/ctrl/cdrom.c: TIMER counts
   integer m9_n = 0, m9_t0 = 0, m9_max = 0, m9_maxat = 0;
   reg     m9_open = 1'b0;
   always @(negedge clk28) if (clk7_en === 1'b1) begin

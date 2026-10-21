@@ -1,5 +1,5 @@
 #!/bin/bash
-# check.sh <make> <build-dir> <FWRV> <FW832>: the proof of `make check`.
+# check.sh <make> <build-dir> <FWRV>: the proof of `make check`.
 #  1. every card (and cd with CDCFG=iso) built twice, in two directories, 2 s
 #     apart: byte-identical
 #  2. fsck.fat -n of each image's FAT partition
@@ -11,27 +11,22 @@
 #  6. manifest.txt equals the manifest of a fresh stand-in build
 set -euo pipefail
 export PATH=$PATH:/usr/sbin:/sbin
-make=$1; b=$2; fwrv=$3; fw832=$4
+make=$1; b=$2; fwrv=$3
 here=$(cd "$(dirname "$0")" && pwd)
 gen=$here/../gen
 fail=0
 bad() { echo "FAIL: $*"; fail=1; }
 mkdir -p "$b/check"
-if [ ! -f "$fw832" ]; then
-    mkdir -p "$b/check"
-    python3 -I "$gen/mkblob.py" "$b/check/832OSDAD.BIN" 86016 CHECK-832OSDAD
-    fw832=$b/check/832OSDAD.BIN
-fi
 build() {   # dir
-    $make -s --no-print-directory B="$1" FWRV="$fwrv" FW832="$fw832" cards CDCFG=cue >/dev/null
-    $make -s --no-print-directory B="$1" FWRV="$fwrv" FW832="$fw832" cd CDCFG=iso >/dev/null
+    $make -s --no-print-directory B="$1" FWRV="$fwrv" cards CDCFG=cue >/dev/null
+    $make -s --no-print-directory B="$1" FWRV="$fwrv" cd CDCFG=iso >/dev/null
 }
 d1=$b/check/a; d2=$b/check/b
 mkdir -p "$d1" "$d2"
 build "$d1"
 sleep 2
 build "$d2"
-imgs="boot boot832cfg fdd hdd cd cd_iso cdhdd"
+imgs="boot bootbecfg fdd hdd cd cd_iso cdhdd"
 for i in $imgs; do
     cmp -s "$d1/$i.img" "$d2/$i.img" && echo "ok    reproducible $i.img" || bad "$i.img differs between two builds"
 done
@@ -77,8 +72,8 @@ if [ "$cyl" -gt 255 ] && [ "$size" -le 8388608 ] && [ "$size" = "$(echo "$line" 
     echo "ok    SYNTH.HDF $size bytes, $cyl cylinders > 255"
 else bad "SYNTH.HDF CHS rule: $cyl cylinders, $size bytes"; fi
 # manifest
-$make -s --no-print-directory B="$b/manifest" FWRV="$b/manifest/standin/RV32OSDA.BIN" FW832= cards CDCFG=cue >/dev/null
-$make -s --no-print-directory B="$b/manifest" FWRV="$b/manifest/standin/RV32OSDA.BIN" FW832= cd CDCFG=iso >/dev/null
+$make -s --no-print-directory B="$b/manifest" FWRV="$b/manifest/standin/RV32OSDA.BIN" cards CDCFG=cue >/dev/null
+$make -s --no-print-directory B="$b/manifest" FWRV="$b/manifest/standin/RV32OSDA.BIN" cd CDCFG=iso >/dev/null
 "$here/manifest.sh" "$b/manifest" > "$b/check/manifest.new"
 if diff "$b/check/manifest.new" "$here/manifest.txt" >/dev/null; then echo "ok    manifest.txt current"
 else bad "manifest.txt is stale (make manifest)"; diff "$b/check/manifest.new" "$here/manifest.txt" || true; fi

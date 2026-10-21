@@ -3,7 +3,7 @@
 
 Sector s (0..1759, the LBA) is tagged 'L' 'B' s>>8 s&0xff, then byte i
 (4..511) is (s*37 + i*151 + ((i*s) >> 7)) & 0xff: the layout of
-fw/ctrl_rv/test/gold/mfm.py adf_sector(), so the L3 floppy data check
+fw/ctrl/test/gold/mfm.py adf_sector(), so the L3 floppy data check
 (Task 13) and the L2 gold files agree on what sector s holds.
 python3 -I, standard library only.
 """

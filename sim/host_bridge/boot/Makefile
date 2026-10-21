@@ -3,15 +3,15 @@
 #   make -C sim/host_bridge/boot             # into sim/host_bridge/boot/build
 #   make -C sim/host_bridge/boot B=<dir>     # run.sh: into its run directory
 # Outputs in $(B):
-#   RV32OSDA.BIN       fwtest.c + fwfill.S on fw/ctrl_rv/arch (crt0, trap
+#   RV32OSDA.BIN       fwtest.c + fwfill.S on fw/ctrl/arch (crt0, trap
 #                      entry, irq API) with firmware.ld, objcopy -O binary,
 #                      padded to $(IMG_BYTES) bytes (5 sectors: the boot ROM
 #                      log then has a fixed number of sector reads)
 #   img.txt            "IMG <len> <sum>": the line the firmware must print,
 #                      from the file: .text + .rodata length and word sum
-#   card.img           8 MB FAT16: 832OSDAD.BIN (decoy, first in the
+#   card.img           8 MB FAT16: OSDDECOY.BIN (decoy, first in the
 #                      directory), RV32OSDA.BIN
-#   card_nofile.img    8 MB FAT16: 832OSDAD.BIN, RV32OSDB.BIN (the firmware
+#   card_nofile.img    8 MB FAT16: OSDDECOY.BIN, RV32OSDB.BIN (the firmware
 #                      under a near-miss name): the boot ROM must not load
 #                      either
 #   fw.elf, fw.map, fw.lst
@@ -21,7 +21,7 @@ RV_NM      = $(RV_GCC_DIR)/bin/$(RV_PREFIX)nm
 
 B         ?= build
 ARCH_B    := $(B)
-include $(TOP)/fw/ctrl_rv/arch/arch.mk
+include $(TOP)/fw/ctrl/arch/arch.mk
 .DEFAULT_GOAL := all
 MKCARD    := $(TOP)/tools/sim/mkcard.sh
 IMG_BYTES := 2560
@@ -65,17 +65,17 @@ $(B)/fw.lst: $(B)/fw.elf
 	$(RV_OBJDUMP) -d -h $< > $@
 
 # decoy: text, an illegal instruction stream if it were ever run
-$(B)/832OSDAD.BIN:
+$(B)/OSDDECOY.BIN:
 	@mkdir -p $(@D)
-	yes DECOY832 | head -c 2000 > $@
+	yes OSDDECOY | head -c 2000 > $@
 
-$(B)/card.img: $(B)/832OSDAD.BIN $(B)/RV32OSDA.BIN $(MKCARD)
-	bash $(MKCARD) $@ 8 $(B)/832OSDAD.BIN $(B)/RV32OSDA.BIN
+$(B)/card.img: $(B)/OSDDECOY.BIN $(B)/RV32OSDA.BIN $(MKCARD)
+	bash $(MKCARD) $@ 8 $(B)/OSDDECOY.BIN $(B)/RV32OSDA.BIN
 
-$(B)/card_nofile.img: $(B)/832OSDAD.BIN $(B)/RV32OSDA.BIN $(MKCARD)
+$(B)/card_nofile.img: $(B)/OSDDECOY.BIN $(B)/RV32OSDA.BIN $(MKCARD)
 	mkdir -p $(B)/nofile
 	cp $(B)/RV32OSDA.BIN $(B)/nofile/RV32OSDB.BIN
-	bash $(MKCARD) $@ 8 $(B)/832OSDAD.BIN $(B)/nofile/RV32OSDB.BIN
+	bash $(MKCARD) $@ 8 $(B)/OSDDECOY.BIN $(B)/nofile/RV32OSDB.BIN
 
 .PRECIOUS: $(B)/%.o $(B)/arch/%.o
 

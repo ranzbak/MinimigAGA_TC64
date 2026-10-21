@@ -71,8 +71,6 @@ set_output_delay -clock $clk_114 .5 [get_ports {altera_reserved_tdo}]
 #set_multicycle_path -from {virtual_top|TG68K:tg68k|TG68KdotC_Kernel:pf68K_Kernel_inst|*} -setup 4
 #set_multicycle_path -from {virtual_top|TG68K:tg68k|TG68KdotC_Kernel:pf68K_Kernel_inst|*} -hold 3
 
-set_multicycle_path -from {minimig_virtual_top:virtual_top|EightThirtyTwo_Bridge:hostcpu|eightthirtytwo_cpu:\gen832:my832|*} -to {minimig_virtual_top:virtual_top|EightThirtyTwo_Bridge:hostcpu|eightthirtytwo_cpu:\gen832:my832|eightthirtytwo_alu:alu|mulresult[*]} -setup -end 2
-set_multicycle_path -from {minimig_virtual_top:virtual_top|EightThirtyTwo_Bridge:hostcpu|eightthirtytwo_cpu:\gen832:my832|*} -to {minimig_virtual_top:virtual_top|EightThirtyTwo_Bridge:hostcpu|eightthirtytwo_cpu:\gen832:my832|eightthirtytwo_alu:alu|mulresult[*]} -hold -end 2
 
 set_multicycle_path -from {virtual_top|tg68k|pf68K_Kernel_inst|*} -setup 4
 set_multicycle_path -from {virtual_top|tg68k|pf68K_Kernel_inst|*} -hold 3

@@ -1,4 +1,4 @@
-/* t_irqapi: the interrupt-controller API of fw/ctrl_rv/arch (irq.h: IrqInstall,
+/* t_irqapi: the interrupt-controller API of fw/ctrl/arch (irq.h: IrqInstall,
  * IrqSetHandler, IrqSetMode, IrqEnable, IrqDisable, IrqRaw) against the real
  * cfide controller.  Same bench stimuli as t_irqctl (STAMP n, table in
  * tb_host_bridge.v).  Exit code: 100 * test + the number of the failing check.

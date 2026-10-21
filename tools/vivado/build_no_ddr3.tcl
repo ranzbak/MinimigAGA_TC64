@@ -51,7 +51,7 @@ proc add_xdc {f} {
 }
 
 # The OSD host CPU file groups (hostcpu_apply / hostcpu_restore): the board
-# top builds the RISC-V host CPU (HOSTCPU_RISCV = 1, osd-riscv Phase 5), whose
+# top builds the RISC-V host CPU, whose
 # sources project_1 does not list.
 source [file dirname [info script]]/hostcpu.tcl
 
@@ -98,7 +98,7 @@ add_src $R/rtl/minimig/gayle_port.v
 # Build
 #-----------------------------------------------------------------------------
 set_property generic {HAVEDDR3=0} [get_filesets sources_1]
-# The RV host CPU sources in, the 832 ones out, for this run (restored below).
+# The host CPU sources in, retired ones out, for this run (restored below).
 hostcpu_apply $R
 reset_run synth_1
 launch_runs impl_1 -to_step write_bitstream -jobs 8

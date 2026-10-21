@@ -1,16 +1,18 @@
 # L3 card images (sim/l3/README.md "Cards"): reproducible FAT16 SD cards for
-# the co-simulation scenarios, from generators (sim/l3/gen) and the two
-# firmwares, which are inputs.
+# the co-simulation scenarios, from generators (sim/l3/gen) and the
+# firmware, which is an input.
 #
-#   make -C sim/l3/card <card> FWRV=<RV32OSDA.BIN> FW832=<832OSDAD.BIN>
+#   make -C sim/l3/card <card> FWRV=<RV32OSDA.BIN>
 #   make -C sim/l3/card cards  ...             all cards
 #   make -C sim/l3/card check  ...             reproducibility + content proof
 #   make -C sim/l3/card manifest               rewrite manifest.txt
 #   make -C sim/l3/card list                   card name and the files on it
 #
-# Cards (32 MB each; boot = both firmwares, MINMGAR.CFG + MINMGAA.CFG, KICK.ROM):
+# Cards (32 MB each; boot = RV32OSDA.BIN, MINMGAR.CFG + MINMGAA.CFG, KICK.ROM;
+# MINMGAA.CFG is the previous firmware's big-endian config, which the RV
+# firmware converts when its own MINMGAR.CFG is missing):
 #   boot        boot
-#   boot832cfg  both firmwares, only MINMGAA.CFG (the first-boot conversion), KICK.ROM
+#   bootbecfg   RV32OSDA.BIN, only MINMGAA.CFG (the first-boot conversion), KICK.ROM
 #   fdd         boot + TEST.ADF + DRIVESND.BIN
 #   hdd         boot + SYNTH.HDF + RDB.HDF
 #   cd          boot + TEST.CUE, TEST.BIN, TEST.ISO; CDCFG=cue (default) or iso
@@ -18,10 +20,9 @@
 #   cdhdd       boot + SYNTH.HDF + RDB.HDF + TEST.CUE, TEST.BIN (CDCFG=cue)
 # Variables:
 #   B       output directory, default build (relative to this directory)
-#   FWRV    RV32OSDA.BIN, default fw/ctrl_rv/build/RV32OSDA.BIN (make -C fw/ctrl_rv)
-#   FW832   832OSDAD.BIN, default a stand-in (gen/mkblob.py, 86,016 bytes)
-#   A relative FWRV / FW832 is taken from this directory if it exists there,
-#   else from the repository root.
+#   FWRV    RV32OSDA.BIN, default fw/ctrl/build/RV32OSDA.BIN (make -C fw/ctrl)
+#   A relative FWRV is taken from this directory if it exists there, else
+#   from the repository root.
 #   SOURCE_DATE_EPOCH  file times on the card (default 2026-01-01 00:00 UTC)
 #   NOKICK  1: the boot card without KICK.ROM (sim/l3 run.sh's negative
 #           boot run; use its own B, the image name is boot.img all the same)
@@ -33,7 +34,7 @@ B      ?= build
 BA     := $(abspath $(B))
 GEN    := $(TOP)/sim/l3/gen
 MKCARD := $(TOP)/tools/sim/mkcard.sh
-CFGDIR := $(TOP)/fw/ctrl_rv/tools/cfgconv
+CFGDIR := $(TOP)/fw/ctrl/tools/cfgconv
 DRIVESND := $(TOP)/sw/mkdrivesounds/drivesnd.bin
 CARDMB := 32
 CDCFG  ?= cue
@@ -41,22 +42,17 @@ PY     := python3 -I
 export SOURCE_DATE_EPOCH ?= 1767225600
 
 resolve = $(if $(filter /%,$(1)),$(1),$(if $(wildcard $(1)),$(abspath $(1)),$(TOP)/$(1)))
-FWRV    ?= fw/ctrl_rv/build/RV32OSDA.BIN
+FWRV    ?= fw/ctrl/build/RV32OSDA.BIN
 FWRV_A  := $(call resolve,$(FWRV))
-ifdef FW832
-FW832_A := $(call resolve,$(FW832))
-else
-FW832_A := $(BA)/standin/832OSDAD.BIN
-endif
 
-CARDS  := boot boot832cfg fdd hdd cd cdhdd
+CARDS  := boot bootbecfg fdd hdd cd cdhdd
 CFGCD_cd := $(CDCFG)
 img_cd = $(BA)/cd$(if $(filter iso,$(CDCFG)),_iso).img
 
-FWS      := RV32OSDA.BIN 832OSDAD.BIN
+FWS      := RV32OSDA.BIN
 names_base       := $(FWS) MINMGAR.CFG MINMGAA.CFG KICK.ROM
 names_boot       := $(if $(filter 1,$(NOKICK)),$(filter-out KICK.ROM,$(names_base)),$(names_base))
-names_boot832cfg := $(FWS) MINMGAA.CFG KICK.ROM
+names_bootbecfg  := $(FWS) MINMGAA.CFG KICK.ROM
 names_fdd        := $(names_base) TEST.ADF DRIVESND.BIN
 names_hdd        := $(names_base) SYNTH.HDF RDB.HDF
 names_cd         := $(names_base) TEST.CUE TEST.BIN TEST.ISO
@@ -64,7 +60,6 @@ names_cdhdd      := $(names_base) SYNTH.HDF RDB.HDF TEST.CUE TEST.BIN
 
 # where each name comes from, for a card whose configs are in $(1)
 src_RV32OSDA.BIN = $(BA)/fw/RV32OSDA.BIN
-src_832OSDAD.BIN = $(BA)/fw/832OSDAD.BIN
 src_KICK.ROM     = $(BA)/content/KICK.ROM
 src_TEST.ADF     = $(BA)/content/TEST.ADF
 src_SYNTH.HDF    = $(BA)/content/SYNTH.HDF
@@ -86,7 +81,7 @@ $(1): $(call files,$(1),$(2)) | $(BA)
 	$(MKCARD) $(3) $(CARDMB) $(call files,$(1),$(2))
 endef
 $(eval $(call CARD,boot,cue,$(BA)/boot.img))
-$(eval $(call CARD,boot832cfg,cue,$(BA)/boot832cfg.img))
+$(eval $(call CARD,bootbecfg,cue,$(BA)/bootbecfg.img))
 $(eval $(call CARD,fdd,cue,$(BA)/fdd.img))
 $(eval $(call CARD,hdd,cue,$(BA)/hdd.img))
 $(eval $(call CARD,cd,$(CDCFG),$(img_cd)))
@@ -113,22 +108,18 @@ $(BA)/content/TEST.ISO: $(GEN)/mkiso.sh | $(BA)/content
 $(BA)/content/DRIVESND.BIN: $(DRIVESND) | $(BA)/content
 	cp $< $@
 
-# ---- configs: the 832 file from the field table, the RV file by cfgconv ----
+# ---- configs: the previous firmware's (BE) file from the field table, the RV file by cfgconv ----
 $(BA)/cfgconv: $(CFGDIR)/cfgconv.c $(CFGDIR)/Makefile
 	$(MAKE) -C $(CFGDIR) B=$(BA)
-$(BA)/cfg_%/MINMGAA.CFG: $(GEN)/mkcfg.py $(TOP)/fw/ctrl_rv/test/gold/mkcfg832.py
+$(BA)/cfg_%/MINMGAA.CFG: $(GEN)/mkcfg.py $(TOP)/fw/ctrl/test/gold/mkcfgbe.py
 	$(PY) $< $(@D) $*
 $(BA)/cfg_%/MINMGAA.check: $(BA)/cfg_%/MINMGAA.CFG ;
 $(BA)/cfg_%/MINMGAR.CFG: $(BA)/cfg_%/MINMGAA.CFG $(BA)/cfgconv
 	$(BA)/cfgconv --to-rv $< $@
 
-# ---- firmware inputs under their card names ----
+# ---- firmware input under its card name ----
 $(BA)/fw/RV32OSDA.BIN: $(FWRV_A) | $(BA)/fw
 	cp $< $@
-$(BA)/fw/832OSDAD.BIN: $(FW832_A) | $(BA)/fw
-	cp $< $@
-$(BA)/standin/832OSDAD.BIN: $(GEN)/mkblob.py | $(BA)/standin
-	$(PY) $< $@ 86016 STANDIN-832OSDAD
 $(BA)/standin/RV32OSDA.BIN: $(GEN)/mkblob.py | $(BA)/standin
 	$(PY) $< $@ 94208 STANDIN-RV32OSDA
 
@@ -139,12 +130,12 @@ list:
 # manifest.txt: the generated files and the images built with stand-in
 # firmware (so it does not change with a firmware build)
 manifest:
-	$(MAKE) B=$(BA)/manifest FWRV=$(BA)/manifest/standin/RV32OSDA.BIN FW832= cards CDCFG=cue
-	$(MAKE) B=$(BA)/manifest FWRV=$(BA)/manifest/standin/RV32OSDA.BIN FW832= cd CDCFG=iso
+	$(MAKE) B=$(BA)/manifest FWRV=$(BA)/manifest/standin/RV32OSDA.BIN cards CDCFG=cue
+	$(MAKE) B=$(BA)/manifest FWRV=$(BA)/manifest/standin/RV32OSDA.BIN cd CDCFG=iso
 	$(CURDIR)/manifest.sh $(BA)/manifest > manifest.txt
 
 check:
-	$(CURDIR)/check.sh "$(MAKE)" "$(BA)" "$(FWRV_A)" "$(FW832_A)"
+	$(CURDIR)/check.sh "$(MAKE)" "$(BA)" "$(FWRV_A)"
 
 clean:
 	@echo "remove $(BA) by hand"

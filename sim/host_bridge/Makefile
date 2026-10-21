@@ -1,6 +1,6 @@
 # L2 host-bridge bench test ROMs: each test program becomes
 # $(B)/<test>/OSDBoot_rv_ROM.vhd (the boot BRAM image, entity OSDBoot_rv_ROM),
-# built as fw/ctrl_boot_rv/Makefile builds the boot ROM, from its template:
+# built as fw/ctrl_boot/Makefile builds the boot ROM, from its template:
 # romgen between rom_prologue.vhd and rom_epilogue.vhd (the shared-variable
 # RAM, which simulates without X), soc_firmware renamed.  The .elf, .bin,
 # .lst and .map land next to it.
@@ -10,7 +10,7 @@
 # dhry is a ROM that clears x1-x31 and jumps to 0x2000 (no crt0_rom.S); the
 # firmware comes from fw/dhrystone_rv through +SDRAM_HEX (run.sh dhry).
 # FWTESTS (C) start through the firmware start-up instead of sw/crt0_rom.S:
-# sw/reset_fw.S (reset, trap 0x20, register clear) + fw/ctrl_rv/arch (crt0,
+# sw/reset_fw.S (reset, trap 0x20, register clear) + fw/ctrl/arch (crt0,
 # trap entry, irq API), still linked with sw/rom.ld.
 TOP := $(abspath $(CURDIR)/../..)
 include $(TOP)/tools/riscv/toolchain.mk
@@ -19,10 +19,10 @@ B       ?= build
 TESTS   ?= t_lanes t_hwoff t_b2b t_spibusy t_irq t_irqctl t_irqapi t_osdrdy dhry
 FWTESTS := t_irq t_irqctl t_irqapi
 ARCH_B  := $(B)
-include $(TOP)/fw/ctrl_rv/arch/arch.mk
+include $(TOP)/fw/ctrl/arch/arch.mk
 .DEFAULT_GOAL := all
 ROMGEN  := $(TOP)/fw/romgen/romgen
-ROMDIR  := $(TOP)/fw/ctrl_boot_rv
+ROMDIR  := $(TOP)/fw/ctrl_boot
 
 CFLAGS  = $(RV_CFLAGS_FW) -g -Wall -Wextra -Isw -I$(ARCH)
 ASFLAGS = $(RV_ARCH) -g -Isw
@@ -56,7 +56,7 @@ $(B)/%/prog.o: sw/%.c sw/hb.h $(ARCH)/irq.h
 $(B)/%/prog.elf: $(B)/crt0_rom.o $(B)/%/prog.o sw/rom.ld
 	$(RV_CC) $(LDFLAGS) -o $@ $(B)/crt0_rom.o $(B)/$*/prog.o $(RV_LIBS_FW)
 
-# ---- FWTESTS: firmware start-up and trap entry (fw/ctrl_rv/arch)
+# ---- FWTESTS: firmware start-up and trap entry (fw/ctrl/arch)
 $(B)/reset_fw.o: sw/reset_fw.S sw/hb.h
 	@mkdir -p $(@D)
 	$(RV_CC) $(ASFLAGS) -c -o $@ $<

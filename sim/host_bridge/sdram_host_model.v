@@ -18,8 +18,8 @@
 //              sel[3]: q[7:0]   -> mem[A/2+1][7:0]   (byte A+3)
 //   read     an 8-halfword burst of the 4-word line, starting with the
 //            requested word, wrapping inside the line: word0.hi on the ack
-//            cycle, then word0.lo, word1.hi, ... (tb_832_dmode.v's order,
-//            what hostcache's zFILL states expect)
+//            cycle, then word0.lo, word1.hi, ... (the order hostcache's
+//            zFILL states expect)
 //
 // Preload: +SDRAM_HEX=<file>, $readmemh of big-endian 32-bit words, "@"
 // addresses in words (byte address / 4), the first 1 MB (PRE_WORDS).  The

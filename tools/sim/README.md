@@ -117,9 +117,12 @@ CMD1/MMC, CRC errors, write protect.
 
 ### What the firmware sends (derived from the sources)
 
-`fw/ctrl_boot_832/spi.c` (boot ROM, `spi_init` / `sd_read_sector`) and
-`fw/ctrl_832/mmc.c` (`MMC_Init`, `MMC_Read`, `MMC_ReadMultiple`, `MMC_Write`,
-`MMC_GetCSD`). Command byte = 0x40 | n; 4 argument bytes, MSB first; CRC byte.
+`fw/ctrl_boot/spi.c` (boot ROM, `spi_init` / `sd_read_sector`) and
+`fw/ctrl/mmc.c` (`MMC_Init`, `MMC_Read`, `MMC_ReadMultiple`, `MMC_Write`,
+`MMC_GetCSD`); written from the previous firmware's copies,
+from which these were ported with the SD protocol unchanged (the RISC-V
+`mmc.c` bounds its token and busy waits by TIMER, `SD_TIMEOUT`, instead of a
+loop count). Command byte = 0x40 | n; 4 argument bytes, MSB first; CRC byte.
 
 Boot ROM init (`SPI_slow`; no byte addressing is ever used because the
 card answers CMD8 and CCS=1):

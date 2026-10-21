@@ -8,7 +8,7 @@
 # would find nothing.
 #
 # rv_tck: the BSCANE2 (USER4) TCK output in rtl/host/xilinx/rv_bscane2.v,
-# instance openaars_virtual_top/hostcpu/genrv.myrv/g_core.u_bscan/u_bscane2
+# instance openaars_virtual_top/hostcpu/myrv/g_core.u_bscan/u_bscane2
 # (rtl/host/rv_hostcpu.v, DEBUG = 1).  It goes through the BUFG u_bufg_tck
 # beside it and clocks the JTAG side of VexOsd_DMT's debug transport
 # (DebugTransportModuleTunneled: the tunnel's shift/instruction registers, the
@@ -18,7 +18,7 @@
 create_clock -name rv_tck -period 50.000 [get_pins -hier -filter {NAME =~ *u_bscan/u_bscane2/TCK}]
 
 # The host CPU's clock: the bridge (openaars_virtual_top/hostcpu, rtl/host/
-# 832_bridge.vhd, and rv_hostcpu/VexOsd_DMT inside it) runs on CLK_114
+# host_bridge.vhd, and rv_hostcpu/VexOsd_DMT inside it) runs on CLK_114
 # (rtl/soc/minimig_virtual_top.v, hostcpu .clk(CLK_114)), which is
 # clk_114 = openaars_virtual_top/amiga_clk/amiga_clk_i/clk_main/CLKOUT0,
 # 8.815 ns (clocks.xdc; build B's clocks.rpt, build/stage_p5b_87577e2).

@@ -105,7 +105,7 @@ module osd_keyq_tb;
     .host_rdat(16'h0000), .host_ack(1'b0)
   );
 
-  // One SPI byte, the way the 832 clocks it: sck idles high, data out changes
+  // One SPI byte, the way cfide clocks it: sck idles high, data out changes
   // on the falling edge, data in is sampled on the rising one.  The half
   // period is deliberately generous -- the point of the bench is the queue,
   // not how fast the link can be pushed.

@@ -5,9 +5,9 @@
 # Usage (run.sh): PATCH=sim/l3/teeth/bridge_2phase.sh; args <run>/src <root>
 set -eu
 src=$1
-[ "$(grep -c -- '-- 4PHASE' "$src/832_bridge.vhd")" = 1 ]
-sed -i 's/^\( *\)state <= hw_release; -- 4PHASE.*/\1state <= waiting; -- 4PHASE MUTANT/' "$src/832_bridge.vhd"
-grep -q 'state <= waiting; -- 4PHASE MUTANT' "$src/832_bridge.vhd"
+[ "$(grep -c -- '-- 4PHASE' "$src/host_bridge.vhd")" = 1 ]
+sed -i 's/^\( *\)state <= hw_release; -- 4PHASE.*/\1state <= waiting; -- 4PHASE MUTANT/' "$src/host_bridge.vhd"
+grep -q 'state <= waiting; -- 4PHASE MUTANT' "$src/host_bridge.vhd"
 python3 - "$src/rv_hostcpu.v" <<'EOP'
 import sys
 p = sys.argv[1]
@@ -32,4 +32,4 @@ f = s.index("      if (d_fire || i_fire) begin")
 s = s[:f] + ack + s[f:]
 open(p, "w").write(s)
 EOP
-echo "bridge_2phase: 832_bridge.vhd 4PHASE mutant, rv_hostcpu.v fast master"
+echo "bridge_2phase: host_bridge.vhd 4PHASE mutant, rv_hostcpu.v fast master"

@@ -1,12 +1,12 @@
 // L2 host-bridge bench: the RISC-V host CPU through the real bridge.
 //
-//   EightThirtyTwo_Bridge (cpu_riscv, rv_hostcpu + VexOsd, OSDBoot_rv_ROM =
-//   the test program, hostcache.v)  ->  cfide (generics as host832)
+//   host_bridge (rv_hostcpu + VexOsd, OSDBoot_rv_ROM = the test
+//   program, hostcache.v)  ->  cfide (generics below)
 //                                   ->  sdram_host_model (lanes of sdram_ctrl)
 //   + an SPI byte-capture slave on sd_cs[1] / sd_clk / sd_do, or, compiled
 //     with -d SDCARD, the SD card model (sim/common/sd_spi_model.v) there
 //
-// Clocks as sim/spi_cdc/host832/tb_832_dmode.v: clk_114 T114 = 8.8154 ns,
+// Clocks: clk_114 T114 = 8.8154 ns,
 // clk_28 = clk_114 / 4, its edges 0.3 ns after a clk_114 edge.  cfide's
 // tick_in is held at 1 (the timer counts every clk_28; TIMER = timecnt[23:8]
 // steps every 1024 clk_114 cycles).
@@ -36,7 +36,7 @@
 // checkpoint and measures the resync (t_osdrdy block below).
 //
 // SDCARD (boot runs, +TEST=boot / boot_nofile; the ROM is the committed boot
-// ROM fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd): sd_spi_model on sd_cs[1] with
+// ROM fw/ctrl_boot/OSDBoot_rv_ROM.vhd): sd_spi_model on sd_cs[1] with
 // +SD_IMG=<8 MB card image>, MISO from the model.  Also:
 //   ERRORCODE: hhll  printed when the boot ROM's ErrorCode() releases the
 //                    chipset: the OSD bytes 08 00 under sd_cs[5]; hhll =
@@ -46,7 +46,7 @@
 //   === STATS        rv_hostcpu's counters at the end
 // The counters need rv_hostcpu.v compiled with -d RV_HOSTCPU_STATS and this
 // bench with -d RV_HOSTCPU_STATS too (hierarchical references to
-// hostcpu.genrv.myrv.st_*, `HM_RV below); without it they are left out
+// hostcpu.myrv.st_*, `HM_RV below); without it they are left out
 // (run.sh boot sets both).
 //   boot:        checkpoints 1 / 2 as t_irq; verdict as every test (DONE)
 //   boot_nofile: the run must end at +TIMEOUT without DONE; "=== PASS" if
@@ -55,7 +55,7 @@
 //
 // FWBOOT (with SDCARD; run.sh fwboot / fwboot_trap / fwboot_cfg, +TEST=fwboot,
 // fwboot_trap or fwboot_cfg): the committed boot ROM loads the real firmware
-// (fw/ctrl_rv RV32OSDA.BIN) from a 16 MB card; minimig_spi_stub.v answers
+// (fw/ctrl RV32OSDA.BIN) from a 16 MB card; minimig_spi_stub.v answers
 // for the Minimig SPI slaves (FPGA sd_cs[4], OSD sd_cs[5], RTC sd_cs[7]);
 // cfide's MISO is the card's while sd_cs[1] is low, else the stub's.  The
 // firmware never writes DONE: the run ends at +TIMEOUT, "=== PASS" if no
@@ -130,17 +130,15 @@
 //
 // HB_GHDL (run.sh SIM=verilator): the bridge (with the ROM) and cfide are
 // the Verilog that ghdl --synth made of the VHDL.  Their generics are fixed
-// at the conversion (no parameters here), identifiers are lower case and a
-// generate label is folded into the instance name (genrv.myrv ->
-// genrv_myrv); the HM_* names below follow that.  The bench checks that the
-// converted bridge has this bench's EXTRA_WS.
+// at the conversion (no parameters here) and identifiers are lower case;
+// the HM_* names below follow that.  The bench checks that the converted
+// bridge has this bench's EXTRA_WS.
 `timescale 1ns/1ps
 
+`define HM_RV      hostcpu.myrv
 `ifdef HB_GHDL
-`define HM_RV      hostcpu.genrv_myrv
 `define HM_SD_BUSY mycfide.sd_busy
 `else
-`define HM_RV      hostcpu.genrv.myrv
 `define HM_SD_BUSY mycfide.SD_busy
 `endif
 
@@ -186,9 +184,9 @@ module tb_host_bridge #(
   wire        rv_tdo;
 
 `ifdef HB_GHDL
-  EightThirtyTwo_Bridge hostcpu (
+  host_bridge hostcpu (
 `else
-  EightThirtyTwo_Bridge #(.cpu_riscv(1'b1), .rv_extra_ws(EXTRA_WS)) hostcpu (
+  host_bridge #(.rv_extra_ws(EXTRA_WS)) hostcpu (
 `endif
     .clk(clk114), .nReset(cpu_reset_n),
     .addr(hostaddr), .q(hostWR), .sel(hostsel), .wr(host_we),

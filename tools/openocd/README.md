@@ -5,15 +5,15 @@ Two OpenOCD configurations attach GDB to the VexRiscv host CPU
 upstream OpenOCD `riscv` target). Which one you use depends on how the
 bitstream was built:
 
-| Config | Bitstream generic (`EightThirtyTwo_Bridge`) | Core | JTAG path | Adapter connects to |
+| Config | Bitstream generic (`host_bridge`) | Core | JTAG path | Adapter connects to |
 |---|---|---|---|---|
-| `minimig-rv-bscan.cfg` | `cpu_riscv = true`, `rv_debug = 1` | `VexOsd_DMT` + `rtl/host/xilinx/rv_bscane2.v` | tunnelled through the FPGA's own TAP (`BSCANE2` USER4) | default `remote-bitbang.cfg`: the Phase 5.4 `hw_server` bridge (port 33582) on the board's FPGA JTAG header (where Vivado programs) |
-| `minimig-rv-pins.cfg` | `cpu_riscv = true`, `rv_debug = 2` | `VexOsd_DMJ` | its own TAP (IDCODE `0x10002FFF`, IR 5 bits) on `rv_jtag_tck/tms/tdi/tdo` | four FPGA header pins |
+| `minimig-rv-bscan.cfg` | `rv_debug = 1` | `VexOsd_DMT` + `rtl/host/xilinx/rv_bscane2.v` | tunnelled through the FPGA's own TAP (`BSCANE2` USER4) | default `remote-bitbang.cfg`: the Phase 5.4 `hw_server` bridge (port 33582) on the board's FPGA JTAG header (where Vivado programs) |
+| `minimig-rv-pins.cfg` | `rv_debug = 2` | `VexOsd_DMJ` | its own TAP (IDCODE `0x10002FFF`, IR 5 bits) on `rv_jtag_tck/tms/tdi/tdo` | four FPGA header pins |
 
 Production images use `rv_debug = 0` (no Debug Module); neither config works
 with them. `rv_debug = 1` is Xilinx 7-series only (Vivado); a Quartus build
 must use `rv_debug = 0` or `2`. The board top level does not pass
-`cpu_riscv` / `rv_debug` yet and has no pins for `rv_jtag_*`: the debug lab
+`rv_debug` yet and has no pins for `rv_jtag_*`: the debug lab
 stage (plan section 5.4) adds them. Until then both configs are tested in
 simulation only: real OpenOCD attaches to the Verilator model of the core
 through them (`sim/rv_dbg`, see "Simulation" below); the L1 smoke test
@@ -33,9 +33,7 @@ adapter** for this board; none will be bought (plan decision 12.6, final).
 
 Decision: debug uses `rv_debug = 1` (BSCANE2 tunnel) on the FPGA's own
 6-wire JTAG header with the Platform Cable USB II. The transport is a
-**Vivado `hw_server` Tcl JTAG-scan bridge** (modelled on
-`EightThirtyTwo/tcl/832bridge.tcl`, which did the same with Quartus STP, an
-Altera virtual JTAG and TCP to 832ocd) that serves OpenOCD's
+**Vivado `hw_server` Tcl JTAG-scan bridge** that serves OpenOCD's
 `remote_bitbang` adapter on `127.0.0.1:33582`, and OpenOCD serves GDB.
 `minimig-rv-bscan.cfg` uses that adapter by default (`remote-bitbang.cfg`).
 **The bridge does not exist yet**: it is written and rehearsed in Phase 5.4

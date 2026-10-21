@@ -1,14 +1,14 @@
 # Dhrystone 2.1 for the RISC-V host CPU (VexRiscv RV32IMC)
 
-The benchmark of `fw/dhrystone_832`, ported to the OSD's RISC-V core:
-`dhry.h`, `dhry_1.c`, `dhry_2.c` are copies of `fw/dhrystone_832` at commit
-`289a42d` (`git log -1 -- fw/dhrystone_832/dhry_1.c`); `fw/dhrystone_832` itself
-is untouched.  Changes to the copies (`dhry_1.c` only; diff it against the 832 file):
+Dhrystone 2.1 on the OSD's RISC-V core.  `dhry.h`, `dhry_1.c`, `dhry_2.c` came
+from the benchmark of the previous host CPU (`fw/dhrystone_832` at commit
+`289a42d`, removed with the EightThirtyTwo; tag `osd-832-final` has it).
+Changes to that source (`dhry_1.c` only):
 
 - `#include "hw.h"`; `Number_Of_Runs = NUMBER_OF_RUNS` (100 in the L1/L2
   simulation build, 200000 on the board, `-DNUMBER_OF_RUNS=n` overrides);
-- `_readMilliseconds()` is `hw_ms()` (cfide TIMER) instead of the 832 TIMER
-  trick; `setstack()` (832 stack set-up) removed;
+- `_readMilliseconds()` is `hw_ms()` (cfide TIMER) instead of the previous
+  CPU's TIMER trick; `setstack()` (its stack set-up) removed;
 - `hw_stamp(1)` / `hw_stamp(2)` right before / after the timed loop: in the
   simulation build they write the bench's TIME stamp (0xFFFFFF00), so the cycles
   between the two lines `=== TIME 1 cycle n` / `=== TIME 2 cycle m` are the
@@ -42,7 +42,7 @@ xPack `riscv-none-elf-gcc` 15.2.0-1 in `$HOME/opt`: set it up with
     make -C fw/dhrystone_rv l1_Os.hex l2_Os.hex     # one target
     make -C fw/dhrystone_rv BOARD_OPT=Os RV32OSDA.BIN
 
-Linked with `fw/ctrl_rv/arch` (`crt0.S`, `trap.S`, `trap.c`, `irq.c`) and its
+Linked with `fw/ctrl/arch` (`crt0.S`, `trap.S`, `trap.c`, `irq.c`) and its
 `firmware.ld` (`_start` at 0x2000, stack top 0x2000).  `l1_*.hex`: the L1
 bench image (`sim/rv_l1/build/boot_fw.bin`, the boot ROM stand-in padded to
 0x2000, then the firmware; made by `make -C sim/rv_l1 build/boot_fw.bin`,
@@ -65,8 +65,7 @@ The L2 run takes minutes: the UART prints at 115200 baud.
 
 ## Run on the board
 
-Needs the RISC-V bitstream (host CPU = VexRiscv, `cpu_riscv`), which does not
-exist yet.  Then: `make -C fw/dhrystone_rv RV32OSDA.BIN`, copy `RV32OSDA.BIN` to
+Needs a bitstream of this core (host CPU = VexRiscv).  Then: `make -C fw/dhrystone_rv RV32OSDA.BIN`, copy `RV32OSDA.BIN` to
 the root of the SD card, reset.  The boot ROM loads it and Dhrystone runs 200000
 passes (a few seconds) on the serial port; "Dhrystones per Second" and
 "VAX MIPS rating * 1000" (= DMIPS x 1000) are printed from the TIMER (5.8 ms

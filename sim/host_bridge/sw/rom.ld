@@ -3,7 +3,7 @@
  *   0x0020  trap entry            (.text.trap, mtvec reset value)
  *   ....    crt0, text, rodata, init_array, data, bss
  *           (init_array and the symbols __init_array_start/_end for tests
- *           linked with the firmware start-up fw/ctrl_rv/arch/crt0.S, see
+ *           linked with the firmware start-up fw/ctrl/arch/crt0.S, see
  *           sw/reset_fw.S; no __global_pointer$, so no gp-relative code)
  *   0x1800  .scratch: 256 bytes the tests store into (t_lanes); NOLOAD
  *   stack: 0x2000 down to the end of .scratch

@@ -1,10 +1,11 @@
 `timescale 1ns / 1ps
-// rv_hostcpu: VexRiscv OSD host CPU behind the EightThirtyTwo req/ack bus.
+// rv_hostcpu: VexRiscv OSD host CPU behind the host bridge's req/ack bus
+// (rtl/host/host_bridge.vhd).
 //
 // Plain Verilog-2005 (no vendor primitives), Vivado and Quartus.
 // doc/osd-riscv-plan.md 3.2; generated cores: rtl/host/vexriscv/README.md.
 //
-// Bus contract (832 req/ack): req, addr, q, sel, wr are registers and stay
+// Bus contract (req/ack): req, addr, q, sel, wr are registers and stay
 // stable until the cycle in which ack = 1; d is sampled in that cycle; in the
 // next cycle req is 0 or a new request.  One transaction in flight.
 //

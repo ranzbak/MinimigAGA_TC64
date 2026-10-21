@@ -75,11 +75,10 @@
 // once, and the time is modelled.  After
 // a head change, SETTLE_CLK7 = 15 ms, trackdisk's settle delay, the wait
 // the model already makes after a step: the head switch counts as head
-// movement.  Both are longer than any main-loop pass of either firmware
-// (the 832's is about 0.4 ms in fdd_rd), so the first status poll after the
-// change sees the motor / track without a DMA in it (Task 13's diff p4t13 /
-// p4t13c: the 832's poll after motor on and after the side change came
-// after bfm_floppy's DSKLEN, ~100 clk7 later, the RV's before).
+// movement.  Both are longer than any main-loop pass of the firmware, so
+// the first status poll after the change sees the motor / track without a
+// DMA in it (Task 13: with a shorter wait a slower firmware's poll after
+// motor on and after the side change came after bfm_floppy's DSKLEN).
 //
 // The bench (scenarios.vh) writes plan_n, plan (entry k in bits 8k+7..8k:
 // bit 7 the head, bits 6..0 the cylinder), plan_words, plan_sync and

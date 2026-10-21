@@ -3,7 +3,7 @@
 # mocked Vivado: plain tclsh 8.6, no Vivado, no project_1, nothing written
 # outside a temporary directory.
 #
-#   tclsh tools/vivado/test/hostcpu_mock_test.tcl [-base <rev>] [-keep <dir>]
+#   tclsh tools/vivado/test/hostcpu_mock_test.tcl [-keep <dir>]
 #
 # Every Vivado command the scripts call is a stub.  A small project model
 # (filesets with ordered file lists, per-file IS_ENABLED / PROCESSING_ORDER,
@@ -11,48 +11,50 @@
 # get_filesets / get_files / add_files / remove_files / get_property /
 # set_property / get_runs; every other command (open_project, create_ip,
 # launch_runs, report_*, get_cells, ...) is recorded and returns "".  Each
-# call goes into a call list, and stdout is captured with it.  The repository
-# root the scripts are given is a temporary fake one (the files the host CPU
-# code checks for exist there, empty), so .hostcpu_undo and .last_generics are
-# written there, never into the checkout's project_1.
+# call goes into a call list, and stdout is captured with it; the project
+# state at `launch_runs impl_1` is kept too (what the run sees).  The
+# repository root the scripts are given is a temporary fake one (the files the
+# host CPU code checks for exist there, empty), so .hostcpu_undo and
+# .last_generics are written there, never into the checkout's project_1.
 #
-# <rev> (default 547693f, the last commit before RV_DEBUG) supplies the
-# reference build_ap040.tcl + hostcpu.tcl (git show); the working tree supplies
-# the scripts under test.  Checks:
+# The project fixtures model a project_1 made before the EightThirtyTwo (832)
+# was retired: it lists the 832's sources, its boot ROM and the bridge under
+# its old name (rtl/host/832_bridge.vhd), none of which exist any more.  Checks:
 #   default   build_ap040.tcl with RV_DEBUG unset and RV_DEBUG=0, ila 0/1,
-#             reference / pipelined core, two project states: call list and
-#             stdout byte-identical to <rev>'s, the project left as <rev>'s
-#             leaves it
-#   unit      hostcpu_apply/hostcpu_restore of <rev> vs the working tree's
-#             (default call, and an explicit rvdebug 0): byte-identical
+#             reference / pipelined core, two project states: at launch_runs
+#             the host CPU group (host_bridge.vhd, rv_hostcpu.v, VexOsd.v,
+#             OSDBoot_rv_ROM.vhd) is in sources_1 and enabled, every retired
+#             file disabled, no debug file in; afterwards the project is as
+#             found; the generic has no HOSTCPU_RVDEBUG
+#   unit      hostcpu_apply/hostcpu_restore (default call, and an explicit
+#             rvdebug 0): the same groups after apply, identical call lists
+#             for both calls, the project as found after restore
 #   debug     hostcpu_apply $R 1: VexOsd_DMT.v + rv_bscane2.v added/enabled in
 #             sources_1, rv_debug.xdc in XC7A100T (the runs' constraint set,
 #             not constrs_1) with PROCESSING_ORDER LATE, all in the undo
 #             record; hostcpu_restore leaves the project exactly as found
 #   crash     apply, no restore (a dead Vivado): the next hostcpu_apply undoes
-#             the .hostcpu_undo record first, debug files included; also a
-#             <rev>-format record undone by the working tree's code
+#             the .hostcpu_undo record first, debug files included
 #   rvdebug   RV_DEBUG parsing: unset/""/0 -> 0, 1 -> 1, anything else an
 #             error; RV_DEBUG=2 stops build_ap040.tcl before any project change
-#   build     build_ap040.tcl with RV_DEBUG=1: the generic is <rev>'s plus
-#             " HOSTCPU_RVDEBUG=1", the LAB banner, <rev>'s call list is a
-#             subsequence of it (only additions), the rv_debug.rpt calls, the
-#             project left as <rev>'s leaves it, .last_generics changed
+#   build     build_ap040.tcl with RV_DEBUG=1: the generic is the default
+#             run's plus " HOSTCPU_RVDEBUG=1", the LAB banner, the default
+#             run's call list is a subsequence of it (only additions), the
+#             rv_debug.rpt calls, the project left as found, .last_generics
+#             changed
 #   repo      `echo 'source tools/vivado/hostcpu.tcl' | tclsh` parses silently;
-#             the debug sources and rv_debug.xdc exist in the checkout
-# -keep <dir> writes every call list / stdout pair there (<case>.<base|new>.log)
-# for a manual diff.  Ends "=== HOSTCPU MOCK PASS (<n> checks)" or
+#             the host CPU and debug sources and rv_debug.xdc exist in the checkout
+# -keep <dir> writes every call list / stdout pair there (<case>.log) for a
+# manual diff.  Ends "=== HOSTCPU MOCK PASS (<n> checks)" or
 # "=== HOSTCPU MOCK FAIL (<k> of <n> checks)"; exit status 0 / 1.
 
 set here [file normalize [file dirname [info script]]]
 set repo [file normalize $here/../../..]
-set base_rev 547693f
 set keep ""
 foreach {k v} $argv {
     switch -- $k {
-        -base { set base_rev $v }
         -keep { set keep [file normalize $v] }
-        default { puts stderr "usage: tclsh [info script] \[-base <rev>\] \[-keep <dir>\]"; exit 2 }
+        default { puts stderr "usage: tclsh [info script] \[-keep <dir>\]"; exit 2 }
     }
 }
 
@@ -66,6 +68,7 @@ namespace eval ::mock {
     variable files [dict create]
     variable fprops [dict create]
     variable fsprops [dict create]
+    variable at_launch ""
 }
 proc ::mock::rec {args} { lappend ::mock::log $args }
 proc ::mock::load {st} {
@@ -195,7 +198,7 @@ proc get_property {args} {
 proc get_cells {args} {
     ::mock::rec get_cells {*}$args
     if {[string match "*REF_NAME == BSCANE2*" $args]} {
-        return openaars_virtual_top/hostcpu/genrv.myrv/g_core.u_bscan/u_bscane2
+        return openaars_virtual_top/hostcpu/myrv/g_core.u_bscan/u_bscane2
     }
     return ""
 }
@@ -213,6 +216,9 @@ proc unknown {cmd args} {
         return [uplevel 1 [list ::mock::_unknown $cmd {*}$args]]
     }
     ::mock::rec $cmd {*}$args
+    if {$cmd eq "launch_runs" && [lsearch -exact $args impl_1] >= 0} {
+        set ::mock::at_launch [::mock::state]
+    }
     return ""
 }
 rename puts ::mock::_puts
@@ -245,7 +251,7 @@ file mkdir $tmp
 set R $tmp/R
 set PIPE $tmp/pipe
 set xdcdir $R/fpga/openaars/aars_v5.0/xc7a100t
-foreach f [list rtl/host/rv_hostcpu.v rtl/host/vexriscv/VexOsd.v fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd \
+foreach f [list rtl/host/host_bridge.vhd rtl/host/rv_hostcpu.v rtl/host/vexriscv/VexOsd.v fw/ctrl_boot/OSDBoot_rv_ROM.vhd \
                 rtl/host/vexriscv/VexOsd_DMT.v rtl/host/xilinx/rv_bscane2.v tools/vivado/rv_debug.xdc] {
     file mkdir [file dirname $R/$f]
     close [open $R/$f w]
@@ -256,25 +262,15 @@ foreach f {ap040_pipe_pkg.sv ap040_core.v ap040_icache.v compat/ap040_compat.v} 
     close [open $PIPE/rtl/$f w]
 }
 
-# The reference scripts of <rev>, side by side as build_ap040.tcl sources them.
-file mkdir $tmp/base/tools/vivado
-foreach f {build_ap040.tcl hostcpu.tcl} {
-    if {[catch {exec git -C $repo show $base_rev:tools/vivado/$f} txt]} {
-        puts "FAIL setup: git show $base_rev:tools/vivado/$f: $txt"
-        exit 1
-    }
-    set fh [open $tmp/base/tools/vivado/$f w]; puts $fh $txt; close $fh
-}
-set BASE_BUILD $tmp/base/tools/vivado/build_ap040.tcl
-set BASE_HOST  $tmp/base/tools/vivado/hostcpu.tcl
 set NEW_BUILD  $repo/tools/vivado/build_ap040.tcl
 set NEW_HOST   $repo/tools/vivado/hostcpu.tcl
 
 proc file_entry {en {order NORMAL}} { return [dict create IS_ENABLED $en PROCESSING_ORDER $order] }
 
-# fresh: project_1.xpr as committed (832 group in, no RV files).
+# fresh: a project_1.xpr from before the 832 was retired (the 832's sources,
+#        its boot ROM and the old bridge rtl/host/832_bridge.vhd in, no RV files).
 # pre:   an untidy project: the RV group and both debug sources already listed
-#        (some disabled), rv_debug.xdc listed but disabled, one 832 file
+#        (some disabled), rv_debug.xdc listed but disabled, one retired file
 #        already disabled.
 proc state {kind} {
     global R xdcdir
@@ -287,7 +283,7 @@ proc state {kind} {
     foreach f [concat $src $xdc] { dict set fp $f [file_entry 1] }
     if {$kind eq "pre"} {
         foreach {f en} [list $R/rtl/host/rv_hostcpu.v 0 $R/rtl/host/vexriscv/VexOsd.v 1 \
-                             $R/fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd 0 \
+                             $R/fw/ctrl_boot/OSDBoot_rv_ROM.vhd 0 \
                              $R/rtl/host/vexriscv/VexOsd_DMT.v 0 $R/rtl/host/xilinx/rv_bscane2.v 0] {
             lappend src $f; dict set fp $f [file_entry $en]
         }
@@ -318,7 +314,8 @@ proc run {st envd body} {
     set err ""
     if {[catch {$i eval $body} e]} { set err $e }
     set r [dict create log [$i eval {set ::mock::log}] out [$i eval {set ::mock::out}] \
-                       state [$i eval {::mock::state}] err $err]
+                       state [$i eval {::mock::state}] err $err \
+                       at_launch [$i eval {set ::mock::at_launch}]]
     interp delete $i
     foreach s $SWITCHES { unset -nocomplain ::env($s) }
     return $r
@@ -376,7 +373,7 @@ proc first_diff {a b} {
     set la [split $a \n]; set lb [split $b \n]
     for {set k 0} {$k < max([llength $la], [llength $lb])} {incr k} {
         if {[lindex $la $k] ne [lindex $lb $k]} {
-            return "line [expr {$k + 1}]: <rev> '[lindex $la $k]' / new '[lindex $lb $k]'"
+            return "line [expr {$k + 1}]: '[lindex $la $k]' / '[lindex $lb $k]'"
         }
     }
     return "identical"
@@ -420,8 +417,59 @@ set BANNER "build_ap040.tcl: host CPU = RISC-V, DEBUG MODULE (rv_debug = 1, LAB 
 set TOKEN " HOSTCPU_RVDEBUG=1"
 
 #-----------------------------------------------------------------------------
-# default: the whole build script, <rev> vs working tree
+# The host CPU group and the retired files of the fixture project
 #-----------------------------------------------------------------------------
+set RVGROUP [list $R/rtl/host/host_bridge.vhd $R/rtl/host/rv_hostcpu.v \
+                  $R/rtl/host/vexriscv/VexOsd.v $R/fw/ctrl_boot/OSDBoot_rv_ROM.vhd]
+set RETIRED [list $R/rtl/host/832_bridge.vhd $R/EightThirtyTwo/RTL/eightthirtytwo_cpu.vhd \
+                  $R/EightThirtyTwo/RTL/eightthirtytwo_alu.vhd $R/fw/ctrl_boot_832/OSDBoot_832_ROM.vhd]
+
+# What a run must see: the RV group in sources_1 and enabled, every retired
+# file disabled, no debug file enabled (rvdebug 0).  Returns "" or the problem.
+proc run_view {st rvdebug} {
+    global RVGROUP RETIRED DMT BSC XDC
+    if {$st eq ""} { return "no state (launch_runs not reached?)" }
+    foreach f $RVGROUP {
+        if {![in_fs $st sources_1 $f] || [prop $st $f IS_ENABLED] ne "1"} { return "[file tail $f] not in/enabled" }
+    }
+    foreach f $RETIRED {
+        if {[in_fs $st sources_1 $f] && [prop $st $f IS_ENABLED] ne "0"} { return "retired [file tail $f] enabled" }
+    }
+    foreach f [list $DMT $BSC] {
+        set on [expr {[in_fs $st sources_1 $f] && [prop $st $f IS_ENABLED] eq "1"}]
+        if {$on != $rvdebug} { return "[file tail $f] enabled = $on" }
+    }
+    set on [expr {[in_fs $st XC7A100T $XDC] && [prop $st $XDC IS_ENABLED] eq "1"}]
+    if {$on != $rvdebug} { return "rv_debug.xdc enabled = $on" }
+    return ""
+}
+
+# The project after a whole build as found before it, as far as the host CPU
+# goes: every file of <st0> still there with the same IS_ENABLED and
+# PROCESSING_ORDER, and no host CPU or debug file added (build_ap040.tcl's own
+# add_src calls, the DDR3 sources for one, are permanent and not looked at).
+# Returns "" or the first problem.
+proc left_as_found {st0 st1} {
+    global RVGROUP DMT BSC XDC
+    foreach fs [dict keys [dict get $st0 files]] {
+        foreach f [dict get $st0 files $fs] {
+            if {![in_fs $st1 $fs $f]} { return "$fs: [file tail $f] removed" }
+            foreach k {IS_ENABLED PROCESSING_ORDER} {
+                if {[prop $st0 $f $k] ne [prop $st1 $f $k]} { return "$fs: [file tail $f] $k [prop $st0 $f $k] -> [prop $st1 $f $k]" }
+            }
+        }
+        foreach f [dict get $st1 files $fs] {
+            if {[in_fs $st0 $fs $f]} { continue }
+            if {$f in [concat $RVGROUP [list $DMT $BSC $XDC]]} { return "$fs: [file tail $f] added" }
+        }
+    }
+    return ""
+}
+
+#-----------------------------------------------------------------------------
+# default: the whole build script, RV_DEBUG unset or 0
+#-----------------------------------------------------------------------------
+set DEFAULT_RUN [dict create]
 foreach envcase {unset 0} {
     set envd [expr {$envcase eq "unset" ? {} : [dict create RV_DEBUG 0]}]
     foreach ila {0 1} {
@@ -430,37 +478,48 @@ foreach envcase {unset 0} {
             foreach kind {fresh pre} {
                 set case default_rv${envcase}_ila${ila}_${pipe}_$kind
                 set st [state $kind]
-                set rb [run_build $BASE_BUILD $st $envd $ila $tmp/out/$case]
-                set rn [run_build $NEW_BUILD  $st $envd $ila $tmp/out/$case]
-                save $case.base $rb
-                save $case.new $rn
-                check "$case: <rev> ran clean" [expr {[dict get $rb err] eq ""}] [dict get $rb err]
-                check "$case: call list + stdout identical to <rev> ([llength [dict get $rb log]] calls)" \
-                    [expr {[text $rb] eq [text $rn]}] [first_diff [text $rb] [text $rn]]
-                check "$case: project left as <rev> leaves it" \
-                    [expr {[dict get $rb state] eq [dict get $rn state]}]
+                set rn [run_build $NEW_BUILD $st $envd $ila $tmp/out/$case]
+                save $case $rn
+                dict set DEFAULT_RUN $envcase,$ila,$pipe,$kind $rn
+                check "$case: ran clean" [expr {[dict get $rn err] eq ""}] [dict get $rn err]
+                set v [run_view [dict get $rn at_launch] 0]
+                check "$case: at launch_runs: RV group in and enabled, retired files off, no debug files" [expr {$v eq ""}] $v
+                set v [left_as_found $st [dict get $rn state]]
+                check "$case: project left as found" [expr {$v eq ""}] $v
                 check "$case: no .hostcpu_undo left" [expr {![file exists $UNDO]}]
+                check "$case: generic without HOSTCPU_RVDEBUG" \
+                    [expr {[generic_of $rn] ne "" && [string first HOSTCPU_RVDEBUG [generic_of $rn]] < 0}] [generic_of $rn]
             }
         }
+    }
+    if {$envcase eq "0"} {
+        set same 1
+        dict for {k r} $DEFAULT_RUN {
+            if {![string match unset,* $k]} { continue }
+            set k0 [string map {unset, 0,} $k]
+            if {[string map {default_rvunset_ default_rv0_} [text $r]] ne [text [dict get $DEFAULT_RUN $k0]]} { set same 0 }
+        }
+        check "default: RV_DEBUG=0 runs identical to RV_DEBUG unset (call list + stdout)" $same
     }
 }
 
 #-----------------------------------------------------------------------------
-# unit: hostcpu_apply / hostcpu_restore, <rev> vs working tree
+# unit: hostcpu_apply / hostcpu_restore
 #-----------------------------------------------------------------------------
 foreach kind {fresh pre} {
     set st [state $kind]
     file delete -force $UNDO
-    set rb [run_unit $BASE_HOST $st {} [list hostcpu_apply $R]\nhostcpu_restore]
+    set ra [run_unit $NEW_HOST $st {} [list hostcpu_apply $R]]
     file delete -force $UNDO
     set rn [run_unit $NEW_HOST $st {} [list hostcpu_apply $R]\nhostcpu_restore]
     file delete -force $UNDO
     set r0 [run_unit $NEW_HOST $st {} [list hostcpu_apply $R 0]\nhostcpu_restore]
-    save unit_$kind.base $rb
-    save unit_$kind.new $rn
-    save unit_${kind}_rvdebug0.new $r0
-    check "unit $kind: hostcpu_apply \$R: identical to <rev>" [expr {[text $rb] eq [text $rn]}] [first_diff [text $rb] [text $rn]]
-    check "unit $kind: hostcpu_apply \$R 0: identical to <rev>" [expr {[text $rb] eq [text $r0]}] [first_diff [text $rb] [text $r0]]
+    file delete -force $UNDO
+    save unit_$kind $rn
+    save unit_${kind}_rvdebug0 $r0
+    set v [run_view [dict get $ra state] 0]
+    check "unit $kind: after hostcpu_apply \$R: RV group in and enabled, retired files off" [expr {$v eq ""}] $v
+    check "unit $kind: hostcpu_apply \$R 0 identical to hostcpu_apply \$R" [expr {[text $rn] eq [text $r0]}] [first_diff [text $rn] [text $r0]]
     check "unit $kind: restored to the state found" [expr {[dict get $rn state] eq $st}]
 }
 
@@ -471,7 +530,7 @@ foreach kind {fresh pre} {
     set st [state $kind]
     file delete -force $UNDO
     set ra [run_unit $NEW_HOST $st {} [list hostcpu_apply $R 1]]
-    save debug_${kind}_apply.new $ra
+    save debug_${kind}_apply $ra
     set sa [dict get $ra state]
     check "debug $kind: apply ran clean" [expr {[dict get $ra err] eq ""}] [dict get $ra err]
     foreach f [list $DMT $BSC] {
@@ -483,7 +542,7 @@ foreach kind {fresh pre} {
     check "debug $kind: rv_debug.xdc not in constrs_1 or sources_1" \
         [expr {![in_fs $sa constrs_1 $XDC] && ![in_fs $sa sources_1 $XDC]}]
     set ok 1
-    foreach f [list $R/rtl/host/rv_hostcpu.v $R/rtl/host/vexriscv/VexOsd.v $R/fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd] {
+    foreach f [list $R/rtl/host/rv_hostcpu.v $R/rtl/host/vexriscv/VexOsd.v $R/fw/ctrl_boot/OSDBoot_rv_ROM.vhd] {
         if {!([in_fs $sa sources_1 $f] && [prop $sa $f IS_ENABLED] eq "1")} { set ok 0 }
     }
     check "debug $kind: the RV group enabled as in a default apply" $ok
@@ -492,7 +551,7 @@ foreach kind {fresh pre} {
     foreach f [list $DMT $BSC $XDC] { if {[string first $f $u] < 0} { set ok 0 } }
     check "debug $kind: .hostcpu_undo names the three debug files" $ok
     set rx [run_unit $NEW_HOST $st {} "[list hostcpu_apply $R 1]\nhostcpu_restore"]
-    save debug_${kind}_apply_restore.new $rx
+    save debug_${kind}_apply_restore $rx
     check "debug $kind: hostcpu_restore leaves the project as found" [expr {[dict get $rx state] eq $st}]
     check "debug $kind: .hostcpu_undo deleted by restore" [expr {![file exists $UNDO]}]
     set apply_calls {}
@@ -507,19 +566,14 @@ file delete -force $UNDO
 #-----------------------------------------------------------------------------
 foreach kind {fresh pre} {
     set st [state $kind]
-    foreach {first second} {1 0  1 1  base1 1  0 1} {
+    foreach {first second} {1 0  1 1  0 0  0 1} {
         file delete -force $UNDO
-        if {$first eq "base1"} {
-            set r1 [run_unit $BASE_HOST $st {} [list hostcpu_apply $R]]
-            set what "<rev> apply"
-        } else {
-            set r1 [run_unit $NEW_HOST $st {} [list hostcpu_apply $R $first]]
-            set what "apply rvdebug $first"
-        }
+        set r1 [run_unit $NEW_HOST $st {} [list hostcpu_apply $R $first]]
+        set what "apply rvdebug $first"
         set dead [dict get $r1 state]
         set left [file exists $UNDO]
         set r2 [run_unit $NEW_HOST $dead {} "[list hostcpu_apply $R $second]\nhostcpu_restore"]
-        save crash_${kind}_${first}_${second}.new $r2
+        save crash_${kind}_${first}_${second} $r2
         set case "crash $kind: $what, dead, then apply rvdebug $second"
         check "$case: record left behind" $left
         check "$case: next apply undid it first" \
@@ -559,7 +613,7 @@ foreach {val want} {unset 0 "" 0 0 0 1 1 2 error yes error " 1" error} {
     }
 }
 set r [run_build $NEW_BUILD [state fresh] [dict create RV_DEBUG 2] 0 $tmp/out/rv2]
-save build_rv2.new $r
+save build_rv2 $r
 set changes [lsearch -all -inline -regexp -index 0 [dict get $r log] {^(add_files|remove_files|set_property|create_ip|launch_runs|reset_run)$}]
 check "rvdebug: build_ap040.tcl RV_DEBUG=2 stops with an error" [string match *RV_DEBUG* [dict get $r err]] [dict get $r err]
 check "rvdebug: ... before any project change" [expr {[llength $changes] == 0}] [lrange $changes 0 2]
@@ -569,21 +623,23 @@ check "rvdebug: ... before any project change" [expr {[llength $changes] == 0}] 
 #-----------------------------------------------------------------------------
 foreach {ila pipe kind} {0 pipe fresh  1 ref pre  0 ref fresh} {
     set envd [dict create RV_DEBUG 1]
-    set envb [dict create]
-    if {$pipe eq "pipe"} { dict set envd AP040_PIPE_DIR $PIPE; dict set envb AP040_PIPE_DIR $PIPE }
+    if {$pipe eq "pipe"} { dict set envd AP040_PIPE_DIR $PIPE }
     set case build_rv1_ila${ila}_${pipe}_$kind
     set st [state $kind]
-    set rb [run_build $BASE_BUILD $st $envb $ila $tmp/out/$case]
+    set envb [dict create]
+    if {$pipe eq "pipe"} { dict set envb AP040_PIPE_DIR $PIPE }
+    set rb [run_build $NEW_BUILD $st $envb $ila $tmp/out/$case]
     set gb [generic_of $rb]
     set rn [run_build $NEW_BUILD $st $envd $ila $tmp/out/$case]
-    save $case.base $rb
-    save $case.new $rn
+    save $case $rn
     set gn [generic_of $rn]
     check "$case: ran clean" [expr {[dict get $rn err] eq ""}] [dict get $rn err]
-    check "$case: generic = <rev>'s + '$TOKEN'" [expr {$gb ne "" && $gn eq "$gb$TOKEN"}] "new '$gn'"
+    set v [run_view [dict get $rn at_launch] 1]
+    check "$case: at launch_runs: RV group and debug files in and enabled, retired files off" [expr {$v eq ""}] $v
+    check "$case: generic = the default run's + '$TOKEN'" [expr {$gb ne "" && $gn eq "$gb$TOKEN"}] "new '$gn'"
     set outl [split [dict get $rn out] \n]
     check "$case: LAB banner printed once" [expr {[llength [lsearch -all -exact $outl $BANNER]] == 1}]
-    # <rev>'s calls, with the generic of this run, must all be there in order
+    # the default run's calls, with the generic of this run, must all be there in order
     set blog {}
     foreach c [dict get $rb log] {
         if {[lindex $c 0] eq "set_property" && [lindex $c 1] eq "generic" && [lindex $c 2] eq $gb} {
@@ -592,7 +648,7 @@ foreach {ila pipe kind} {0 pipe fresh  1 ref pre  0 ref fresh} {
         lappend blog $c
     }
     set extra [additions $blog [dict get $rn log]]
-    check "$case: only additions to <rev>'s call list ([llength $extra] extra calls)" \
+    check "$case: only additions to the default run's call list ([llength $extra] extra calls)" \
         [expr {[lindex $extra 0] ne "MISSING"}] [lrange $extra 0 1]
     if {$kind eq "fresh"} {
         foreach f [list $DMT $BSC] {
@@ -619,15 +675,16 @@ foreach {ila pipe kind} {0 pipe fresh  1 ref pre  0 ref fresh} {
     set rt [expr {[file exists $rpt] ? [read_file $rpt] : ""}]
     check "$case: rv_debug.rpt written (BSCANE2 + VexOsd_DMT count lines)" \
         [expr {[string match "*BSCANE2*" $rt] && [string match "*count VexOsd_DMT *" $rt]}]
-    check "$case: project left as <rev> leaves it" [expr {[dict get $rb state] eq [dict get $rn state]}]
+    set v [left_as_found $st [dict get $rn state]]
+    check "$case: project left as found" [expr {$v eq ""}] $v
+    check "$case: project left as the default run leaves it" [expr {[dict get $rb state] eq [dict get $rn state]}]
     check "$case: no .hostcpu_undo left" [expr {![file exists $UNDO]}]
     set lg [expr {[file exists $R/project_1/.last_generics] ? [string trim [read_file $R/project_1/.last_generics]] : ""}]
     check "$case: .last_generics = the debug generic" [expr {$lg eq "$gb$TOKEN"}] "'$lg'"
 }
-# After a B build (.last_generics = <rev>'s generic) the lab build re-synthesises.
+# After a B build (.last_generics = the default generic) the lab build re-synthesises.
 set st [state fresh]
-set rb [run_build $BASE_BUILD $st {} 0 $tmp/out/resynth]
-set gb [generic_of $rb]
+set gb [generic_of [dict get $DEFAULT_RUN unset,0,pipe,fresh]]
 file delete -force $tmp/out/resynth
 set fh [open $R/project_1/.last_generics w]; puts $fh $gb; close $fh
 set r [run [state fresh] [dict create RV_DEBUG 1] [list apply {{script argv} {
@@ -644,7 +701,8 @@ file delete -force $R/project_1/.last_generics $UNDO
 #-----------------------------------------------------------------------------
 set rc [catch {exec sh -c "cd '$repo' && echo 'source tools/vivado/hostcpu.tcl' | tclsh" 2>@1} msg]
 check "repo: echo 'source tools/vivado/hostcpu.tcl' | tclsh parses silently" [expr {$rc == 0 && $msg eq ""}] $msg
-foreach f {rtl/host/vexriscv/VexOsd_DMT.v rtl/host/xilinx/rv_bscane2.v tools/vivado/rv_debug.xdc} {
+foreach f {rtl/host/host_bridge.vhd rtl/host/rv_hostcpu.v rtl/host/vexriscv/VexOsd.v fw/ctrl_boot/OSDBoot_rv_ROM.vhd
+           rtl/host/vexriscv/VexOsd_DMT.v rtl/host/xilinx/rv_bscane2.v tools/vivado/rv_debug.xdc} {
     check "repo: $f exists" [file exists $repo/$f]
 }
 if {[file exists $repo/tools/vivado/rv_debug.xdc]} {

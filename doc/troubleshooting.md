@@ -8,7 +8,7 @@ first.
 |---|---|---|
 | No HDMI signal right after loading a bitstream over JTAG | the HDMI side can stay dark after JTAG loads | power-cycle the board, then load the same bitstream again ([1](#1-no-hdmi-after-a-jtag-load)) |
 | Picture dark or lost after unplugging the display | the HDMI chip forgot its settings | wait a moment (the firmware re-sends them), or press Left Shift + keypad `.` |
-| Wrong colours, sparkles along edges, or the picture drops out after some minutes | OSD firmware and bitstream from different versions | use `832OSDAD.BIN` built from the same commit as the bitstream ([2](#2-firmware-and-bitstream-belong-together)) |
+| Wrong colours, sparkles along edges, or the picture drops out after some minutes | OSD firmware and bitstream from different versions | use `RV32OSDA.BIN` built from the same commit as the bitstream ([2](#2-firmware-and-bitstream-belong-together)) |
 | Right mouse button stuck, odd keys, or "Unknown command" / missing commands at boot, after many JTAG loads | the mouse and SD card kept their state across FPGA reloads | switch the board off and on ([3](#3-odd-input-or-boot-errors-after-many-jtag-loads)) |
 | Swapped the SD card, but it's still the JTAG-loaded bitstream | a card swap doesn't reload the FPGA | expected; only a power cycle brings back the flash image ([4](#4-sd-card-swaps)) |
 | OSD shows a fatal error with no SD card in, and the reset button doesn't clear it | known firmware bug | insert the card and power-cycle the board |
@@ -36,7 +36,7 @@ about the bitstream. Power-cycle, load it again, and only then judge.
 ## 2. Firmware and bitstream belong together
 
 The HDMI chip samples the video data with a clock delay that the firmware
-sets (`0xBA = 0xA0` in `fw/ctrl_832/adv7511.c`). That value is matched to how
+sets (register `0xBA`, `fw/ctrl/adv7511.c`). That value is matched to how
 the bitstream drives the video pins (`rtl/openaars/adv7511/adv_ddr.v`, which
 since commit 2817521 puts the data in the middle of each clock period). With
 a mismatched pair the sampling point is wrong: colour errors, artifacts along
@@ -57,7 +57,7 @@ been seen with the older 68020 core.
 ## 4. SD card swaps
 
 Swapping the SD card resets the Amiga side and the OSD firmware reloads
-`832OSDAD.BIN` and the Kickstart from the new card, but the bitstream in the
+`RV32OSDA.BIN` and the Kickstart from the new card, but the bitstream in the
 FPGA stays. So after a JTAG load, a card swap doesn't bring back the flash
 image. A firmware change on the card needs no JTAG reload. Only a power cycle
 loads the bitstream from the flash again.
@@ -100,7 +100,7 @@ Workarounds (unverified):
 
 - Use a configuration file saved by an older Minimig core with the CPU set to
   "020 alpha".
-- Or edit the file on a PC: in `MINMGAA.CFG` (or `MINMGAA1-4.CFG`), set the
+- Or edit the file on a PC: in `MINMGAR.CFG` (or `MINMGAR1-4.CFG`), set the
   two low bits of the byte at offset 98 (hex `0x62`) to `11`, keeping the
   other bits (they're the Turbo setting). `00` becomes `03`, for example.
 - For the DDR3 board alone, Memory → Boards: DDR3 only doesn't need the CPU

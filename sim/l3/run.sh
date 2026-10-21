@@ -13,35 +13,19 @@
 #                                        every tb_*.log and spi.txt of both
 #                                        run directories (sim/common/hostsim.sh
 #                                        hs_compare; exit 1 unless all SAME)
-#   bash sim/l3/run.sh diff [--unused-rules] <RUNTAG rv> <RUNTAG 832>
-#                                        the differential (README
-#                                        "Differential"): each run's spi.txt,
-#                                        hw.txt and uart.txt normalised with
-#                                        expected_diff.txt (spitrace.py norm,
-#                                        <run>/norm.txt), then spitrace.py diff:
-#                                        exit 0 only when empty; with
-#                                        --unused-rules also the rules neither
-#                                        run used (exit 1 when there is one)
+#
+# The host CPU is rv_hostcpu (VexRiscv RV32IMC) with the boot ROM
+# fw/ctrl_boot and the firmware RV32OSDA.BIN (fw/ctrl); the logs say
+# "=== CPU rv".
 #
 # Environment:
-#   CPU      rv (default: rv_hostcpu, fw/ctrl_boot_rv, RV32OSDA.BIN) or 832
-#            (the EightThirtyTwo, fw/ctrl_boot_832, 832OSDAD.BIN): the same
-#            scenarios and checks; the logs say "=== CPU <cpu>"
-#   E832     CPU=832: the EightThirtyTwo VHDL (default $ROOT/EightThirtyTwo/RTL)
-#   E832DIR  CPU=832: the EightThirtyTwo checkout whose tools build
-#            832OSDAD.BIN (sim/l3/fw832; default $ROOT/EightThirtyTwo).  The
-#            submodule of a worktree is not initialised: set both to the
-#            main checkout's
 #   SIM      xsim (default, 4-state, the X-checking reference) or verilator
 #            (GHDL --synth converts the VHDL, as sim/host_bridge)
 #   RUNTAG   run directory sim/l3/run_${RUNTAG:-wt}; a new one per code change
 #   FW       an RV32OSDA.BIN to put on the card; default: built from
-#            fw/ctrl_rv into <run>/fwrv under a date shim (hs_fwrv, L3_DATE)
-#   FW832    an 832OSDAD.BIN to put on the card; default with CPU=832:
-#            built from a copy of fw/ctrl_832 into <run>/fw832 (sim/l3/fw832,
-#            the same L3_DATE); with CPU=rv: the card's stand-in
-#   L3_DATE  the date of both firmware builds (default 2026-01-01)
-#   EXTRA_WS the bridge's rv_extra_ws (0; CPU=rv only)
+#            fw/ctrl into <run>/fwrv under a date shim (hs_fwrv, L3_DATE)
+#   L3_DATE  the date of the firmware build (default 2026-01-01)
+#   EXTRA_WS the bridge's rv_extra_ws (0)
 #   SLAT, SJIT, SEED   the SDRAM model (8, 0, 1)
 #   XARGS    extra plusargs ("+FAST_HW=1 +OSD_EARLY_OK=1 +TICKDIV=643 ...");
 #            +FAST_HW=1 also puts the models' fast plusargs first (below)
@@ -71,7 +55,7 @@
 #   BUILD_FROM=<RUNTAG>  (verilator) the simulator of run_<RUNTAG> instead
 #            of a build of its own, when that run's build key (a sha256 of
 #            every build input: the run copies in src/, the bench, the
-#            include files, the ROM, the tools' versions, CPU, EXTRA_WS,
+#            include files, the ROM, the tools' versions, EXTRA_WS,
 #            XRAND; <run>/buildkey_<snapshot>, written by every Verilator
 #            build) equals this run's; else it builds its own (results.txt
 #            says so).  Plusargs (the
@@ -168,7 +152,7 @@
 #               the DATA writes in hw.txt, the latency table, the track read)
 # Logs in the run directory: tb_<scenario>_x<EXTRA_WS>_s<SLAT>_j<SJIT>.log,
 # spi.txt, spi_t.txt (frames with cycles, not compared), hw.txt and uart.txt
-# (sim/common/hostmon.vh +HW_LOG / +UART_LOG, for diff; hw.txt's MEM lines
+# (sim/common/hostmon.vh +HW_LOG / +UART_LOG; hw.txt's MEM lines
 # hashed from sdram.bin by l3check.py memhash), sdram.bin, milestones.txt,
 # results.txt (with the wall time); fdd_wr also fdd_wr_<cyl>_<head>.hex (the
 # write streams) and card_saved.img (the card as the run left it).
@@ -178,7 +162,6 @@ ROOT=$(cd "$HERE/../.." && pwd)
 L2="$ROOT/sim/host_bridge"
 VIVADO_PATH=${VIVADO_PATH:-/opt/Xilinx/Vivado/2023.2}
 SIM=${SIM:-xsim}
-CPU=${CPU:-rv}
 GHDL=${GHDL:-ghdl}
 VERILATOR=${VERILATOR:-verilator}
 JOBS=${JOBS:-$(nproc)}
@@ -186,10 +169,8 @@ case "$SIM" in
 	xsim|verilator) ;;
 	*) echo "SIM=$SIM: must be xsim or verilator"; exit 2 ;;
 esac
-case "$CPU" in
-	rv|832) ;;
-	*) echo "CPU=$CPU: must be rv or 832"; exit 2 ;;
-esac
+# CPU: the RV is the only host CPU (a leftover CPU=rv is accepted)
+[ "${CPU:-rv}" = rv ] || { echo "CPU=$CPU: the host CPU is the RV (rv_hostcpu) only"; exit 2; }
 export LC_ALL=C LANG=C
 export LD_LIBRARY_PATH="$HOME/lib/tinfo5${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 GHDLFLAGS="--std=93c --ieee=synopsys -fexplicit"
@@ -197,16 +178,9 @@ I2C_V="$ROOT/rtl/host/i2c_master_mmio.sv $ROOT/rtl/openaars/adv7511/i2c_master.v
 XW=${EXTRA_WS:-0}
 SL=${SLAT:-8} SJ=${SJIT:-0}
 run="$HERE/run_${RUNTAG:-wt}"
-# the committed boot ROM (ROM, checked against git HEAD) and the file the
-# simulators read (ROM_SIM: the 832's is the run copy of hs_rom832)
-E832=${E832:-$ROOT/EightThirtyTwo/RTL}
-E832DIR=${E832DIR:-$ROOT/EightThirtyTwo}
-if [ "$CPU" = 832 ]; then
-	ROM="$ROOT/fw/ctrl_boot_832/OSDBoot_832_ROM.vhd" ROM_SIM="$run/src/OSDBoot_832_ROM.vhd"
-	[ "$XW" = 0 ] || { echo "EXTRA_WS=$XW: the bridge's rv_extra_ws is the RV's (CPU=832: 0)"; exit 2; }
-else
-	ROM="$ROOT/fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd" ROM_SIM=$ROM
-fi
+# the committed boot ROM (checked against git HEAD; the simulators read it
+# as it is)
+ROM="$ROOT/fw/ctrl_boot/OSDBoot_rv_ROM.vhd"
 
 # the Minimig RTL the bench simulates (copied into <run>/src), after the
 # board's global include (rtl/soc/openaars_defines.vh)
@@ -252,40 +226,24 @@ MARGIN_REQ_akiko=$MARGIN_REQ_fdd_rd
 FDD_WR_PLAN="0:0 1:0 2:0 39:0 41:0 77:0 78:0 79:0 79:1 40:0:3"
 
 # cycles per scenario (clk_114): 1.5 x the measured end event (README "boot",
-# Verilator 2026-10-19: RV boot 158,155,012, boot_short 57,659,090; 832
-# boot 202,841,132, boot_short 74,525,542; README "keys": RV keys
-# 164,959,781, 832 214,187,801); fdd_rd: 1.5 x the estimate of README
-# "fdd_rd" (Task 13's measured ends, RV 393,222,555 and 832 442,065,819,
-# plus bfm_floppy's drive-ready waits of Task 14: 500 ms after motor on and
-# 15 ms per head change, 59 M: RV 452 M, 832 501 M); fdd_wr: 1.5 x the
-# estimate of README "fdd_wr" (RV 470 M, 832 520 M);
-# hdd: 832 1.5 x its measured end (p4t15c3: 233,511,245), RV 1.5 x the
-# estimate 200 M (README "hdd"); cd: 1.5 x the estimates RV 210 M, 832
-# 300 M (measured, README "cd": RV 185,153,365, 832 233,680,101); cdda,
-# cdda_load: 1.5 x the estimates RV 345 M, 832 390 M (the plan start as
-# cd, then 7 halves of the board's 21.1 M and the refills; measured, README
-# "cdda": RV 337,017,061, 832 407,912,613)
-if [ "$CPU" = 832 ]; then
-	L3_BOOT_TO=${L3_BOOT_TO:-304300000}
-	L3_SHORT_TO=${L3_SHORT_TO:-111800000}
-	L3_KEYS_TO=${L3_KEYS_TO:-321300000}
-	L3_FDD_TO=${L3_FDD_TO:-750000000}
-	L3_FDDW_TO=${L3_FDDW_TO:-780000000}
-	L3_HDD_TO=${L3_HDD_TO:-350000000}
-	L3_CD_TO=${L3_CD_TO:-450000000}
-	L3_CDDA_TO=${L3_CDDA_TO:-585000000}
-	L3_AKIKO_TO=${L3_AKIKO_TO:-700000000}
-else
-	L3_BOOT_TO=${L3_BOOT_TO:-237300000}
-	L3_SHORT_TO=${L3_SHORT_TO:-86500000}
-	L3_KEYS_TO=${L3_KEYS_TO:-247400000}
-	L3_FDD_TO=${L3_FDD_TO:-680000000}
-	L3_FDDW_TO=${L3_FDDW_TO:-700000000}
-	L3_HDD_TO=${L3_HDD_TO:-300000000}
-	L3_CD_TO=${L3_CD_TO:-315000000}
-	L3_CDDA_TO=${L3_CDDA_TO:-520000000}
-	L3_AKIKO_TO=${L3_AKIKO_TO:-520000000}
-fi
+# Verilator 2026-10-19: boot 158,155,012, boot_short 57,659,090; README
+# "keys": 164,959,781); fdd_rd: 1.5 x the estimate of README "fdd_rd" (Task
+# 13's measured end 393,222,555 plus bfm_floppy's drive-ready waits of Task
+# 14: 500 ms after motor on and 15 ms per head change, 59 M: 452 M); fdd_wr:
+# 1.5 x the estimate of README "fdd_wr" (470 M); hdd: 1.5 x the estimate
+# 200 M (README "hdd"); cd: 1.5 x the estimate 210 M (measured, README
+# "cd": 185,153,365); cdda, cdda_load: 1.5 x the estimate 345 M (the plan
+# start as cd, then 7 halves of the board's 21.1 M and the refills;
+# measured, README "cdda": 337,017,061); akiko: 520 M
+L3_BOOT_TO=${L3_BOOT_TO:-237300000}
+L3_SHORT_TO=${L3_SHORT_TO:-86500000}
+L3_KEYS_TO=${L3_KEYS_TO:-247400000}
+L3_FDD_TO=${L3_FDD_TO:-680000000}
+L3_FDDW_TO=${L3_FDDW_TO:-700000000}
+L3_HDD_TO=${L3_HDD_TO:-300000000}
+L3_CD_TO=${L3_CD_TO:-315000000}
+L3_CDDA_TO=${L3_CDDA_TO:-520000000}
+L3_AKIKO_TO=${L3_AKIKO_TO:-520000000}
 
 # shellcheck source=../common/hostsim.sh
 . "$ROOT/sim/common/hostsim.sh"
@@ -399,7 +357,7 @@ EOP
 		|| die "async pin: initialisers not inserted"
 }
 
-# l3_retire_tap (CPU=rv): the run copy of rv_hostcpu.v gets a wire
+# l3_retire_tap: the run copy of rv_hostcpu.v gets a wire
 # l3_retire = the VexOsd core's writeBack_arbitration_isFiring (one retired
 # instruction), driven inside the DEBUG = 0 generate branch, for tb_l3.v's
 # "=== RETIRED" count.  A reference from the bench into the branch does not
@@ -408,7 +366,6 @@ EOP
 # instead.  It drives nothing in the design; rtl/ is never edited
 l3_retire_tap() {
 	local v="$run/src/rv_hostcpu.v"
-	[ "$CPU" = rv ] || return 0
 	python3 - "$v" <<'EOP' || die "RETIRED tap: rv_hostcpu.v's generate / DEBUG = 0 branch not found"
 import sys
 p = sys.argv[1]
@@ -449,42 +406,6 @@ l3_paula_txpop() {
 	echo "PAULA_TXPOP: $(grep -- '// PAULA_TXPOP' "$p" | sed 's/^[[:space:]]*//')" >> "$run/compile.log"
 }
 
-# l3_e832_xsim (CPU=832, xsim): copies of the EightThirtyTwo VHDL in
-# <run>/src/e832 for xsim, with the register file's data registers
-# (eightthirtytwo_cpu.vhd regfile: tmp, gpr0..gpr6, which its reset leaves
-# alone) starting at 0 as the FPGA's configuration starts them: the 4-state
-# simulator otherwise has them X, and the boot ROM's first function
-# prologue saves them to the stack, an "X on the bus" bench error (probe
-# p4t6xb: a write of xxxxxxxx to 0x158c at cycle 2627).  The other fields
-# get 0 as well (the reset or a concurrent assignment sets them before
-# use).  Verilator's two-state build starts them at 0 anyway; the XRAND
-# twin randomises them (any effect on the run would show as a difference).
-# Sets E832_XSIM to the copies, in analysis order
-l3_e832_xsim() {
-	local f
-	E832_XSIM=()
-	mkdir -p "$run/src/e832" || die "mkdir $run/src/e832"
-	for f in $HS_E832_FILES; do
-		[ -f "$E832/$f" ] || die "no $E832/$f (E832= the EightThirtyTwo RTL directory)"
-		cp "$E832/$f" "$run/src/e832/" || die "copy $E832/$f"
-		E832_XSIM+=("$run/src/e832/$f")
-	done
-	python3 - "$run/src/e832/eightthirtytwo_cpu.vhd" <<'EOP' || die "l3_e832_xsim: eightthirtytwo_cpu.vhd's regfile declaration not found"
-import sys
-p = sys.argv[1]
-s = open(p).read()
-old = "\nsignal regfile : e32_regfile;\n"
-z = "(others => '0')"
-init = ", ".join(["tmp => " + z, "gpr_a => " + z, "gpr_q => " + z] +
-                 ["gpr%d => %s" % (i, z) for i in range(8)] +
-                 ["gpr7_flags => " + z, "gpr7_readflags => '0'"] +
-                 ["flag_%s => '0'" % f for f in ("z", "c", "cond", "sgn", "interrupting", "halfword", "byte")])
-assert s.count(old) == 1
-s = s.replace(old, "\nsignal regfile : e32_regfile := (" + init + "); -- L3 pin (run.sh l3_e832_xsim)\n")
-open(p, "w").write(s)
-EOP
-}
-
 # setup: run directory, RTL copies, firmware, card
 setup() {
 	local f mk=()
@@ -510,7 +431,6 @@ setup() {
 	l3_retire_tap
 	l3_rdy_mut
 	l3_paula_txpop
-	[ "$CPU" = 832 ] && hs_rom832 "$run"
 	if [ -n "${FW:-}" ]; then
 		FWBIN=$(realpath -m -- "$FW")
 		[ -f "$FWBIN" ] || die "no firmware $FWBIN (FW=)"
@@ -518,17 +438,6 @@ setup() {
 		hs_fwrv "$run"
 		FWBIN="$run/fwrv/RV32OSDA.BIN"
 	fi
-	# the 832 firmware: FW832, else (CPU=832) built here, else the stand-in
-	FW832BIN=
-	if [ -n "${FW832:-}" ]; then
-		FW832BIN=$(realpath -m -- "$FW832")
-		[ -f "$FW832BIN" ] || die "no firmware $FW832BIN (FW832=)"
-	elif [ "$CPU" = 832 ]; then
-		make -C "$HERE/fw832" B="$run/fw832" E832DIR="$E832DIR" > "$run/make_fw832.log" 2>&1 \
-			|| { tail -20 "$run/make_fw832.log"; die "make sim/l3/fw832 ($run/make_fw832.log)"; }
-		FW832BIN="$run/fw832/832OSDAD.BIN"
-	fi
-	[ -n "$FW832BIN" ] && mk+=(FW832="$FW832BIN")
 	[ "${NOKICK:-0}" = 1 ] && mk+=(NOKICK=1)
 	# the card of the scenario (sim/l3/card): fdd_rd, fdd_wr and akiko the
 	# fdd card, hdd the hdd card, cd the cd card with CDCFG's configs (image
@@ -573,13 +482,9 @@ l3_build_key() {
 	while IFS= read -r f; do files+=("$f"); done < <(find "$run/src" -maxdepth 1 -type f | LC_ALL=C sort)
 	files+=("$HERE"/*.v "$HERE"/*.vh "$HERE/l3.vlt" "$ROOT"/sim/common/*.v "$ROOT"/sim/common/*.vh
 	        "$ROOT/sim/common/hostsim.sh" "$L2/sdram_host_model.v" "$L2/verilator/blackbox.vhd"
-	        "$L2/verilator/romcheck.py" "$ROM_SIM" $I2C_V "$MM_INC"/*.vh "$ROOT"/rtl/minimig/*.vh "$HERE/run.sh")
-	if [ "$CPU" = 832 ]; then
-		for f in $HS_E832_FILES; do files+=("$E832/$f"); done
-		files+=("$ROOT/$HS_E832_STUB")
-	fi
+	        "$L2/verilator/romcheck.py" "$ROM" $I2C_V "$MM_INC"/*.vh "$ROOT"/rtl/minimig/*.vh "$HERE/run.sh")
 	{
-		echo "SIM=$SIM CPU=$CPU EXTRA_WS=$XW XRAND=${XRAND:-0} generics=$CFIDE_GENERICS"
+		echo "SIM=$SIM EXTRA_WS=$XW XRAND=${XRAND:-0} generics=$CFIDE_GENERICS"
 		"$GHDL" --version | head -1
 		"$VERILATOR" --version
 		sha256sum "${files[@]}" | sed 's|  .*/|  |'
@@ -614,19 +519,13 @@ build() {
 		echo "BUILD_FROM: run_$BUILD_FROM's simulator, build key $key" | tee -a "$run/compile.log" >> "$run/results.txt"
 		return 0
 	fi
-	# per CPU: the core's files, the defines (CPU=rv: rv_hostcpu's counters;
-	# CPU=832: L3_CPU832, no counters), the bridge's cpu_riscv
-	local cpuv=() def riscv
-	if [ "$CPU" = 832 ]; then
-		def=L3_CPU832 riscv=false
-	else
-		def=RV_HOSTCPU_STATS riscv=true cpuv=(src/rv_hostcpu.v src/VexOsd.v)
-	fi
+	# the core's files and define (rv_hostcpu's counters)
+	local cpuv=(src/rv_hostcpu.v src/VexOsd.v) def=RV_HOSTCPU_STATS
 	if [ "$SIM" = verilator ]; then
 		# the L2 bench's black-box list and ROM check (HERE, for this call only)
-		HS_DIR=$d HS_ROM=$ROM_SIM HS_VB=832_bridge.vhd HS_VC=cfide.vhd HS_E832=$E832
+		HS_DIR=$d HS_ROM=$ROM HS_VB=host_bridge.vhd HS_VC=cfide.vhd
 		# shellcheck disable=SC2086
-		HERE=$L2 hs_ghdl_convert "$run" "$riscv" "$XW" $CFIDE_GENERICS
+		HERE=$L2 hs_ghdl_convert "$run" "$XW" $CFIDE_GENERICS
 		grep -qE '^ *i2c_master_mmio +[a-z0-9_]+ *\(' "$d/cfide.v" && i2c=$I2C_V
 		HS_NAME=$snap HS_VLT="$HERE/l3.vlt"
 		HS_VFLAGS="-GEXTRA_WS=$XW -I$ROOT/sim/common -I$HERE -I$MM_INC -I$ROOT/rtl/minimig"
@@ -640,12 +539,8 @@ build() {
 		X xvlog -sv $I2C_V
 		X xvhdl src/cfide.vhd
 		X xvlog -d "$def" "${cpuv[@]}" src/hostcache.v src/dpram_inf_generic.v
-		if [ "$CPU" = 832 ]; then
-			l3_e832_xsim
-			X xvhdl "${E832_XSIM[@]}" "$ROOT/$HS_E832_STUB"
-		fi
-		X xvhdl src/832_bridge.vhd
-		X xvhdl "$ROM_SIM"
+		X xvhdl src/host_bridge.vhd
+		X xvhdl "$ROM"
 		# --relax: rtl/minimig/gayle_port.v uses the wire err before its
 		# declaration (an error for xvlog, accepted by synthesis and Verilator)
 		X xvlog --relax -i "$MM_INC" -i "$ROOT/rtl/minimig" "${mm[@]}"
@@ -659,18 +554,16 @@ build() {
 
 # milestones <scenario> <log>: the milestone file of the scenario, spitrace
 # check of its UART / SPI lines, and its "NOT UART <text>" lines.  A line
-# "CPU=<cpu> <milestone>" is a milestone of that CPU only (rv or 832): it is
-# kept, without the prefix, for that CPU and dropped for the other; a line
-# "CARD=<card> <milestone>" likewise for the scenario's card (MSCARD)
+# "CARD=<card> <milestone>" is a milestone of that card only: it is kept,
+# without the prefix, for the scenario's card (MSCARD) and dropped for the
+# others
 milestones() {
 	local s=$1 log=$2 ms="$run/milestones_$1.txt" t
 	if [ "$s" = boot_short ]; then
 		sed '/^#@ boot_short end/q' "$HERE/milestones_boot.txt"
 	else
 		cat "$HERE/milestones_boot.txt"
-	fi | sed -n -e "s/^CARD=${MSCARD:-boot} //p" -e t -e '/^CARD=/d' -e p \
-		| sed -n -e "s/^CPU=$CPU //p" -e t -e '/^CPU=/d' -e p > "$ms"
-	grep -E '^CPU=' "$HERE/milestones_boot.txt" | grep -vE '^CPU=(rv|832) ' | sed 's/^/BAD  milestones_boot.txt: a CPU= line for neither rv nor 832: /'
+	fi | sed -n -e "s/^CARD=${MSCARD:-boot} //p" -e t -e '/^CARD=/d' -e p > "$ms"
 	grep -E '^CARD=' "$HERE/milestones_boot.txt" | grep -vE '^CARD=(boot|fdd|hdd|cd_cue|cd_iso|cdhdd) ' \
 		| sed 's/^/BAD  milestones_boot.txt: a CARD= line for none of boot, fdd, hdd, cd_cue, cd_iso, cdhdd: /'
 	grep -v '^NOT ' "$ms" > "$ms.check"
@@ -738,16 +631,9 @@ scenario() {
 	[ "${#to}" -lt 10 ] || [ "$to" -le 2147483647 ] || die "TIMEOUT=$to: above 2147483647 (tb_l3.v's 32-bit integer)"
 	if git -C "$ROOT" diff --quiet HEAD -- "${ROM#$ROOT/}"; then st="unmodified (= git HEAD)"; else st="BAD  MODIFIED against git HEAD"; fi
 	{
-		echo "=== CPU $CPU"
-		echo "boot ROM: ${ROM#$ROOT/} $st, sha256 $(sha256sum "$ROM" | cut -c1-16)$( [ "$ROM_SIM" != "$ROM" ] && echo ", simulated as $ROM_SIM (hs_rom832)")"
+		echo "=== CPU rv"
+		echo "boot ROM: ${ROM#$ROOT/} $st, sha256 $(sha256sum "$ROM" | cut -c1-16)"
 		echo "firmware: $FWBIN, $(stat -c %s "$FWBIN") bytes, sha256 $(sha256sum "$FWBIN" | cut -c1-16)"
-		if [ -n "$FW832BIN" ]; then
-			echo "firmware 832: $FW832BIN, $(stat -c %s "$FW832BIN") bytes, sha256 $(sha256sum "$FW832BIN" | cut -c1-16)"
-			[ -f "$run/fw832/832OSDAD.txt" ] && sed 's/^/  /' "$run/fw832/832OSDAD.txt"
-		else
-			echo "firmware 832: the card's stand-in"
-		fi
-		[ "$CPU" = 832 ] && echo "EightThirtyTwo RTL: $E832"
 		echo "card: $CARD$( [ "${NOKICK:-0}" = 1 ] && echo " (NOKICK=1: no KICK.ROM)")"
 		[ "${PAULA_TXPOP:-0}" = 1 ] && echo "PAULA_TXPOP=1: $(sed -n 's/^PAULA_TXPOP: //p' "$run/compile.log")"
 		[ -n "${PATCH:-}" ] && echo "PATCH: $PATCHF, sha256 $(sha256sum "$PATCHF" | cut -c1-16)"
@@ -837,64 +723,6 @@ case "${1:-}" in
 		[ $# -eq 3 ] || { echo "usage: run.sh compare <RUNTAG a> <RUNTAG b>"; exit 2; }
 		for t in "$2" "$3"; do [ -d "$HERE/run_$t" ] || { echo "no run directory $HERE/run_$t"; exit 2; }; done
 		hs_compare "$HERE/run_$2" "$HERE/run_$3"
-		exit $?
-		;;
-	diff)
-		shift
-		unused=() twin=0
-		while :; do
-			case "${1:-}" in
-				--unused-rules) unused=(--unused-rules); shift ;;
-				--twin) twin=1; shift ;;
-				*) break ;;
-			esac
-		done
-		[ $# -eq 2 ] || { echo "usage: run.sh diff [--unused-rules] [--twin] <RUNTAG rv> <RUNTAG 832>"; exit 2; }
-		cards=() meta=()
-		for t in "$1" "$2"; do
-			d="$HERE/run_$t"
-			[ -d "$d" ] || { echo "no run directory $d"; exit 2; }
-			for f in spi.txt hw.txt uart.txt results.txt; do
-				[ -f "$d/$f" ] || { echo "no $d/$f (a run before hw.txt / uart.txt: run it again)"; exit 2; }
-			done
-			# what the run was (results.txt): its CPU, scenario, CD config,
-			# and that it passed (final review M5).  The scenario: the
-			# "scenario:" line, or (a run before that line) the one
-			# tb_<scenario>_x*.log of the run directory
-			cpu=$(sed -n 's/^=== CPU \([a-z0-9]*\)$/\1/p' "$d/results.txt" | head -1)
-			sc=$(sed -n 's/^scenario: //p' "$d/results.txt" | head -1)
-			if [ -z "$sc" ]; then
-				sc=$(for l in "$d"/tb_*_x*_s*_j*.log; do [ -f "$l" ] && basename "$l" | sed 's/^tb_\(.*\)_x[0-9]*_s[0-9]*_j[0-9]*\.log$/\1/'; done | sort -u)
-				[ "$(printf '%s\n' "$sc" | grep -c .)" = 1 ] || { echo "run_$t: no 'scenario:' line in results.txt and not exactly one tb_<scenario>_x*.log"; exit 2; }
-			fi
-			cdc=$(sed -n 's/^cd config: //p' "$d/results.txt" | head -1)
-			grep -qx 'ok   bench verdict: === PASS' "$d/results.txt" && ! grep -q 'BAD' "$d/results.txt" \
-				|| { echo "run_$t did not PASS (results.txt: a BAD line or no bench verdict PASS): no diff"; exit 2; }
-			meta+=("$cpu" "$sc" "${cdc:-none}")
-		done
-		if [ "$twin" = 1 ]; then
-			[ "${meta[0]}" = "${meta[3]}" ] || { echo "--twin: run_$1 is CPU ${meta[0]}, run_$2 CPU ${meta[3]}"; exit 2; }
-		else
-			[ "${meta[0]}" = rv ] && [ "${meta[3]}" = 832 ] \
-				|| { echo "run_$1 must be CPU rv and run_$2 CPU 832 (they are ${meta[0]:-?} and ${meta[3]:-?}; --twin for two runs of one CPU)"; exit 2; }
-		fi
-		[ "${meta[1]}" = "${meta[4]}" ] || { echo "run_$1 ran scenario ${meta[1]}, run_$2 ${meta[4]}"; exit 2; }
-		[ "${meta[2]}" = "${meta[5]}" ] || { echo "run_$1 has cd config ${meta[2]}, run_$2 ${meta[5]}"; exit 2; }
-		for t in "$1" "$2"; do
-			d="$HERE/run_$t"
-			# the card the run booted (results.txt "card: <image>")
-			c=$(sed -n 's/^card: \([^ ]*\).*/\1/p' "$d/results.txt" | head -1)
-			[ -f "$c" ] || { echo "no card image for $d (results.txt: '${c}')"; exit 2; }
-			cards+=("$c")
-			python3 -I "$L2/spitrace.py" norm "$d/spi.txt" "$d/hw.txt" "$d/uart.txt" \
-				-r "$HERE/expected_diff.txt" --card "$c" > "$d/norm.txt" \
-				|| { echo "spitrace.py norm failed for $d"; exit 2; }
-		done
-		# the same card in both runs (FW= and FW832= the same images), or
-		# the SD reads differ for that reason alone
-		cmp -s "${cards[0]}" "${cards[1]}" \
-			|| { echo "the cards of run_$1 and run_$2 differ: give both runs the same FW= and FW832="; exit 2; }
-		python3 -I "$L2/spitrace.py" diff "${unused[@]}" "$HERE/run_$1/norm.txt" "$HERE/run_$2/norm.txt"
 		exit $?
 		;;
 	xpair)

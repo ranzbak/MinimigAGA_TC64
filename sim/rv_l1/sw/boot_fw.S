@@ -1,5 +1,5 @@
 /* L1 stand-in for the boot ROM, for programs linked as firmware
- * (fw/ctrl_rv/arch/firmware.ld, _start at 0x2000).  The Makefile pads this to
+ * (fw/ctrl/arch/firmware.ld, _start at 0x2000).  The Makefile pads this to
  * 0x2000 bytes and puts the firmware image after it, so the bench image looks
  * like the real machine after the boot ROM has loaded the firmware:
  *   0x0000  reset vector

@@ -10,7 +10,7 @@ cd "$d"
 for f in content/KICK.ROM content/TEST.ADF content/SYNTH.HDF content/RDB.HDF \
          content/TEST.ISO content/TEST.CUE content/TEST.BIN content/DRIVESND.BIN \
          cfg_cue/MINMGAA.CFG cfg_cue/MINMGAR.CFG cfg_iso/MINMGAA.CFG cfg_iso/MINMGAR.CFG \
-         standin/RV32OSDA.BIN standin/832OSDAD.BIN \
-         boot.img boot832cfg.img fdd.img hdd.img cd.img cd_iso.img cdhdd.img; do
+         standin/RV32OSDA.BIN \
+         boot.img bootbecfg.img fdd.img hdd.img cd.img cd_iso.img cdhdd.img; do
     printf '%s %s %s\n' "$f" "$(stat -c %s "$f")" "$(sha256sum "$f" | cut -d' ' -f1)"
 done

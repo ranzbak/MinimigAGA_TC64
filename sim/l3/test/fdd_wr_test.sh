@@ -2,7 +2,7 @@
 # Offline tests of the floppy write scenario's tools (sim/l3 README "fdd_wr"):
 #   (a) sim/l3/gen/mkwrtrack.py round trip: its word stream for a track,
 #       read back as big-endian MFM words and decoded with
-#       fw/ctrl_rv/test/gold/mfm.py's decode_sector (sync 0x4489 0x4489 at a
+#       fw/ctrl/test/gold/mfm.py's decode_sector (sync 0x4489 0x4489 at a
 #       word boundary, 1,088 bytes), gives the 11 sectors of that track with
 #       mfm.py's new_sector() data, in order 0..10, after a gap of zero data;
 #       the stream obeys MFM's run-length rules (real clock bits); its
@@ -48,7 +48,7 @@ import importlib.util, os, sys
 root, adfp, c, h, hexp, badarg = sys.argv[1:7]
 c, h = int(c), int(h)
 bad = int(badarg) if badarg else None
-spec = importlib.util.spec_from_file_location("mfm", os.path.join(root, "fw", "ctrl_rv", "test", "gold", "mfm.py"))
+spec = importlib.util.spec_from_file_location("mfm", os.path.join(root, "fw", "ctrl", "test", "gold", "mfm.py"))
 mfm = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mfm)
 adf = open(adfp, "rb").read()

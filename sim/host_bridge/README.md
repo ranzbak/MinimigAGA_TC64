@@ -1,21 +1,20 @@
 # L2 bench: the RISC-V host CPU through the real bridge (xsim, Verilator)
 
 The L2 bench runs small RISC-V programs from the boot BRAM on the real host
-side of the core. The bridge is `EightThirtyTwo_Bridge` with
-`cpu_riscv => true`: it holds `rv_hostcpu` + `VexOsd`, `OSDBoot_rv_ROM` (the
-test program) and `hostcache.v`. Behind it are the real `cfide` and an SDRAM
+side of the core. The bridge is `host_bridge`: it holds `rv_hostcpu` +
+`VexOsd`, `OSDBoot_rv_ROM` (the test program) and `hostcache.v`. Behind it are the real `cfide` and an SDRAM
 model of the host port. It checks six things at the bridge's bus: the byte
 lanes, the cfide register offsets, back-to-back hw accesses (the four-phase
 handshake), the SPI busy wait, cfide's interrupt through the firmware trap
 entry and cfide's interrupt controller (0xFFFFFF30..3C, see
 [Interrupt controller](#interrupt-controller)). The boot runs (`run.sh boot`, `boot_nofile`) put the committed boot
-ROM `fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd` in the bridge and an SD card model
+ROM `fw/ctrl_boot/OSDBoot_rv_ROM.vhd` in the bridge and an SD card model
 on `sd_cs[1]`: the ROM loads `RV32OSDA.BIN` from a FAT16 card image and runs
 it (see [Boot](#boot)). The firmware boot runs (`run.sh fwboot`,
-`fwboot_trap`) do the same with the real firmware (`fw/ctrl_rv`) on a 16 MB
+`fwboot_trap`) do the same with the real firmware (`fw/ctrl`) on a 16 MB
 card and a stub for the Minimig SPI slaves, up to the firmware's main loop
-(see [Firmware boot](#firmware-boot-fwboot)); `fwboot_cfg` adds an 832
-config file that the firmware converts on its first boot.
+(see [Firmware boot](#firmware-boot-fwboot)); `fwboot_cfg` adds a legacy
+(big-endian) config file that the firmware converts on its first boot.
 
 The L1 bench (`sim/rv_l1`, iverilog) tests `rv_hostcpu` against an abstract
 memory. This bench uses Vivado's xsim because `cfide` and the bridge are VHDL,
@@ -29,18 +28,18 @@ xsim stays the default and the X-checking reference.
 | `tb_host_bridge.v` | Top: bridge + cfide + SDRAM model + SPI slave (or, `-d SDCARD`, the SD card model), bus snoop, checks, verdict |
 | `sdram_host_model.v` | 8 MB halfword SDRAM behind hostcache: latency, burst order, `sdram_ctrl` lanes, preload |
 | `run.sh` | Copies the RTL, applies the two simulation fixes, builds the ROMs, compiles, runs |
-| `Makefile` | Test programs -> `<B>/<test>/OSDBoot_rv_ROM.vhd` (romgen with the `fw/ctrl_boot_rv` ROM template, as the boot ROM) |
+| `Makefile` | Test programs -> `<B>/<test>/OSDBoot_rv_ROM.vhd` (romgen with the `fw/ctrl_boot` ROM template, as the boot ROM) |
 | `sw/crt0_rom.S`, `sw/rom.ld` | Start-up (reset at 0x0, trap at 0x20, clear x1-x31, `sp` = 0x2000, `.bss`, `main`, PASS/FAIL on the UART, DONE) and the 8 KB BRAM layout |
 | `sw/hb.h`, `sw/check.h` | cfide register offsets, `CHECK` / `STAMP` macros |
 | `sw/t_*.S`, `sw/t_*.c`, `sw/t_lanes.sdram.hex` | The tests ([Tests and expectations](#tests-and-expectations)); the SDRAM preload of `t_lanes` |
-| `sw/reset_fw.S` | Reset, trap at 0x20 and register clear for tests that start through `fw/ctrl_rv/arch/crt0.S` (`t_irq`, `t_irqctl`) |
+| `sw/reset_fw.S` | Reset, trap at 0x20 and register clear for tests that start through `fw/ctrl/arch/crt0.S` (`t_irq`, `t_irqctl`) |
 | `sw/dhry.S` | `dhry`: boot-ROM stand-in for `fw/dhrystone_rv` (clear x1-x31, jump to 0x2000; the firmware is preloaded with `+SDRAM_HEX`) |
-| `stub/` | Elaboration check of the bridge's RISC-V branch: `stub/elab.sh` (`rv_debug` 0 and 2, neutral sources only), `stub/elab.sh dmt` (`rv_debug` 1: `VexOsd_DMT` + `rtl/host/xilinx/rv_bscane2.v`, BSCANE2/BUFG from `unisims_ver`), `stub/elab.sh all` |
-| `boot/fwtest.c`, `boot/fwfill.S` | Boot runs: the test firmware `RV32OSDA.BIN` (on `fw/ctrl_rv/arch`, `firmware.ld`) |
+| `stub/` | Elaboration check of the bridge with a stub ROM: `stub/elab.sh` (`rv_debug` 0 and 2, neutral sources only), `stub/elab.sh dmt` (`rv_debug` 1: `VexOsd_DMT` + `rtl/host/xilinx/rv_bscane2.v`, BSCANE2/BUFG from `unisims_ver`), `stub/elab.sh all` |
+| `boot/fwtest.c`, `boot/fwfill.S` | Boot runs: the test firmware `RV32OSDA.BIN` (on `fw/ctrl/arch`, `firmware.ld`) |
 | `boot/Makefile` | `RV32OSDA.BIN` (padded to 2560 bytes), `img.txt`, the card images `card.img` and `card_nofile.img` (`tools/sim/mkcard.sh`) |
 | `boot/expect.txt`, `boot/expect_nofile.txt` | The expected `UART:` / `ERRORCODE:` lines of `boot` and `boot_nofile` |
 | `minimig_spi_stub.v` | `fwboot`: fixed replies of the Minimig SPI slaves (FPGA `sd_cs[4]`, OSD `sd_cs[5]`, RTC `sd_cs[7]`), and `userio_osd`'s reply sequence `osd_rx_seq` for cfide's `OSD_RDY` |
-| `fwboot/Makefile` | `fwboot`: the 16 MB card with `$FW` (`card.img`); `fwboot_trap`: the firmware with `smoke_trap.o` and its card (`card_trap.img`, `trap_expect.txt`); `fwboot_cfg`: `card.img` plus an 832 `MINMGAA.CFG` (`card_cfg.img`, `cfg/`) and `cfgconv` |
+| `fwboot/Makefile` | `fwboot`: the 16 MB card with `$FW` (`card.img`); `fwboot_trap`: the firmware with `smoke_trap.o` and its card (`card_trap.img`, `trap_expect.txt`); `fwboot_cfg`: `card.img` plus a legacy `MINMGAA.CFG` (`card_cfg.img`, `cfg/`) and `cfgconv` |
 | `fwboot/milestones.txt` | `fwboot`: the UART lines and SPI frames the firmware must produce, in order |
 | `fwboot/milestones_cfg.txt` | `fwboot_cfg`: the same with the first-boot conversion of the config file |
 | `fwboot/smoke_trap.c` | `fwboot_trap`: a constructor that executes an illegal instruction |
@@ -226,11 +225,11 @@ it. The next bench (`sim/l3`) uses the same files.
 `compare` SAME; a difference means the design or a bench model reads a
 value before it is written. Five flops have no reset and rely on the
 FPGA starting them at 0 (`cache_req`, `cpu_ack`, `rom_wr` in
-`832_bridge.vhd`; `sdram_req`, `ack` in `hostcache.v`): `XRAND=1` pins
+`host_bridge.vhd`; `sdram_req`, `ack` in `hostcache.v`): `XRAND=1` pins
 exactly those to 0 in the run copies (the log says `=== XRAND pinned 5 regs`,
 a line `compare` ignores) and randomises everything else
 (`findings/osd-riscv/phase4.md`, "Findings for Paul"). From the repository root, bash or zsh, after
-`make -C fw/ctrl_rv`:
+`make -C fw/ctrl`:
 
 ```sh
 SIM=verilator RUNTAG=fwn bash sim/host_bridge/run.sh fwboot
@@ -253,8 +252,8 @@ cd sim/host_bridge/run_manual
 d=ghdl_manual
 F=(--std=93c --ieee=synopsys -fexplicit)
 mkdir -p $d
-ghdl -a "${F[@]}" --workdir=$d ../verilator/blackbox.vhd src/cfide.vhd src/832_bridge.vhd build/t_lanes/OSDBoot_rv_ROM.vhd
-ghdl --synth "${F[@]}" --workdir=$d -gcpu_riscv=true -grv_extra_ws=0 --out=verilog EightThirtyTwo_Bridge > $d/bridge.v
+ghdl -a "${F[@]}" --workdir=$d ../verilator/blackbox.vhd src/cfide.vhd src/host_bridge.vhd build/t_lanes/OSDBoot_rv_ROM.vhd
+ghdl --synth "${F[@]}" --workdir=$d -grv_extra_ws=0 --out=verilog host_bridge > $d/bridge.v
 ghdl --synth "${F[@]}" --workdir=$d -gspimux=false -ghavespirtc=false -ghavei2c=false -ghavevpos=false \
      --out=verilog cfide > $d/cfide.v
 python3 ../verilator/romcheck.py build/t_lanes/OSDBoot_rv_ROM.vhd $d/bridge.v
@@ -278,7 +277,7 @@ ccache.
 
 - **Flags**: `--std=93c --ieee=synopsys -fexplicit`. cfide.vhd uses
   `std_logic_unsigned`; with plain `-fsynopsys` its `=` is ambiguous.
-- **Generics are fixed at the conversion**: the bridge gets `cpu_riscv` and
+- **Generics are fixed at the conversion**: the bridge gets
   `rv_extra_ws` = `EXTRA_WS` with `-g`, cfide the bench's four generics.
   `run.sh` reads those from the bench's xsim instance (`cfide #(...)
   mycfide` in `tb_host_bridge.v`) and stops if it does not set exactly the
@@ -286,11 +285,10 @@ ccache.
   same cfide. The converted modules have no parameters; the bench, compiled
   with `-DHB_GHDL`, instantiates them without, and checks that the
   converted bridge's `rv_hostcpu` has its `EXTRA_WS`.
-- **Names**: GHDL writes identifiers in lower case and folds a generate
-  label into the instance name. The bench's hierarchical references go
-  through `HB_RV` (`hostcpu.genrv.myrv` / `hostcpu.genrv_myrv`) and
-  `HB_SD_BUSY` (`mycfide.SD_busy` / `mycfide.sd_busy`); `cpu_*`,
-  `irq_prev` and `irq_seen` keep their names.
+- **Names**: GHDL writes identifiers in lower case. The bench's
+  hierarchical references go through `HM_RV` (`hostcpu.myrv` in both
+  simulators) and `HM_SD_BUSY` (`mycfide.SD_busy` / `mycfide.sd_busy`);
+  `cpu_*`, `irq_prev` and `irq_seen` keep their names.
 - **Black boxes**: the bridge binds `rv_hostcpu`, `hostcache` and the ROM
   through component declarations. An unbound component (`rv_hostcpu`,
   `hostcache`) comes out as an instance of the Verilog module, with its
@@ -311,12 +309,12 @@ ccache.
   simulators; on 2026-10-17 `t_lanes t_hwoff t_irqctl t_irqapi` passed
   under both and `compare` found them the same (4 SAME). No file under `rtl/` is
   changed.
-- **The ROM**: the shared-variable RAM of the `fw/ctrl_boot_rv` template is
+- **The ROM**: the shared-variable RAM of the `fw/ctrl_boot` template is
   inferred as memory (`run.sh` requires GHDL's `found RAM "ram", width: 32
   bits, depth: 2048` note) and comes out as four 8-bit lane memories with
   `initial` values (index order reversed). `verilator/romcheck.py` checks
   that every word of the VHDL is in them (a ROM of another test fails it).
-  The boot runs convert the committed `fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd`
+  The boot runs convert the committed `fw/ctrl_boot/OSDBoot_rv_ROM.vhd`
   and match `boot/expect.txt` line for line, as xsim does.
 - **2-state**: X constants and uninitialised variables are 0
   (`--x-assign 0 --x-initial 0`). Signals that xsim shows as `U`/`X` until
@@ -393,11 +391,11 @@ are dominated by the simulation, not the build.
 ## Boot
 
 `run.sh boot` is the end-to-end boot in L2: the committed boot ROM
-`fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd` (compiled as it is, VHDL-93, not a run
+`fw/ctrl_boot/OSDBoot_rv_ROM.vhd` (compiled as it is, VHDL-93, not a run
 copy) initialises the SD card model at the slow SPI clock, reads the MBR,
 the boot sector and the root directory of an 8 MB FAT16 card image, loads
 `RV32OSDA.BIN` to 0x2000 through dBus + hostcache, runs `fence.i` and jumps
-there. The firmware (`boot/fwtest.c` on `fw/ctrl_rv/arch`) prints `FW OK`,
+there. The firmware (`boot/fwtest.c` on `fw/ctrl/arch`) prints `FW OK`,
 the `PAT` and `IMG` lines and runs the `t_irq` check with cfide's `vbl_int`.
 `run.sh boot_nofile` boots a card without `RV32OSDA.BIN`: the error path.
 
@@ -405,8 +403,8 @@ From the repository root:
 
 ```sh
 # 1. the boot ROM: committed; a rebuild gives the same file, git shows no change
-make -C fw/ctrl_boot_rv
-git status --short fw/ctrl_boot_rv
+make -C fw/ctrl_boot
+git status --short fw/ctrl_boot
 # 2. the test firmware and the card images, into sim/host_bridge/boot/build
 #    run.sh builds its own copy into boot/ of its run directory
 make -C sim/host_bridge/boot
@@ -418,7 +416,7 @@ RUNTAG=bootn bash sim/host_bridge/run.sh boot_nofile
 Expected end of `boot`:
 
 ```
-boot ROM: fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd unmodified (= git HEAD), sha256 7fc4ae53fed88cb3
+boot ROM: fw/ctrl_boot/OSDBoot_rv_ROM.vhd unmodified (= git HEAD), sha256 7fc4ae53fed88cb3
 === BOOT first read of 0x2000 at cycle 12392735, irefill 95 dread 5338 dwrite 7779 so far
 === HW accesses 11699, stale acks 0, X 0, SDRAM reads 210 writes 699, main done 79381, cycles 13134514
 === STATS irefill 122 dread 7979 dwrite 8344 busy_cycles 12931177 (rv_hostcpu, whole run)
@@ -432,7 +430,7 @@ xsim wall time 85 s
 Expected end of `boot_nofile`:
 
 ```
-boot ROM: fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd unmodified (= git HEAD), sha256 7fc4ae53fed88cb3
+boot ROM: fw/ctrl_boot/OSDBoot_rv_ROM.vhd unmodified (= git HEAD), sha256 7fc4ae53fed88cb3
 === cycle limit 27000000 reached, no DONE
 === HW accesses 38280, stale acks 0, X 0, SDRAM reads 0 writes 22, main done 79381, cycles 27000178
 === STATS irefill 102 dread 20557 dwrite 26396 busy_cycles 26364109 (rv_hostcpu, whole run)
@@ -449,7 +447,7 @@ The exit code is 0 on PASS, 1 otherwise. Each run leaves in
 `boot.diff`, and `boot/` (firmware, `img.txt`, card images). The sha256
 prefix changes with the committed ROM; the cycle numbers change with the
 RTL, the ROM and the firmware (these are of 2026-10-17, firmware on the
-`fw/ctrl_rv/arch` interrupt API). Under `SIM=verilator` the same lines
+`fw/ctrl/arch` interrupt API). Under `SIM=verilator` the same lines
 appear, ending with `verilator wall time` (about 25 s and 49 s).
 
 The gate (`run.sh`): every `UART:` and `ERRORCODE:` line of the log equals
@@ -490,7 +488,7 @@ UART: IRQ 20
 - After `found\r` (the ROM's `printf` ends that line with a carriage return,
   which the bench prints as `\r`): six reads, the five sectors of
   `RV32OSDA.BIN` and one FAT sector (the file starts at cluster 4 behind the
-  decoy `832OSDAD.BIN`; clusters are 2 sectors, so the ROM follows the
+  decoy `OSDDECOY.BIN`; clusters are 2 sectors, so the ROM follows the
   chain twice). The Makefile pads the image to 2560 bytes so that this
   count does not move with the code size.
 - `Reading directory sector 2106` and the layout depend on `mkfs.fat`
@@ -524,8 +522,8 @@ What it proves:
   1024 characters (the model's `+SD_IMG` buffer; `run.sh` refuses a longer
   one, and the model ends the run with `=== FAIL` if it cannot open the
   file).
-- **The file name**: `card.img` has the decoy `832OSDAD.BIN` first in the
-  directory; `card_nofile.img` has `832OSDAD.BIN` and the real firmware
+- **The file name**: `card.img` has the decoy `OSDDECOY.BIN` first in the
+  directory; `card_nofile.img` has `OSDDECOY.BIN` and the real firmware
   under the near-miss name `RV32OSDB.BIN`. The ROM loads neither.
 
 ### Measured (2026-10-17, SLAT=8 SJIT=0, boot ROM with the x1-x31 clear)
@@ -552,12 +550,12 @@ would hang the CPU.
 ## Firmware boot (fwboot)
 
 `run.sh fwboot` is the first end-to-end run of the real firmware: the
-committed boot ROM loads `RV32OSDA.BIN` of `fw/ctrl_rv` (copied, never
+committed boot ROM loads `RV32OSDA.BIN` of `fw/ctrl` (copied, never
 rebuilt with other flags) from a 16 MB FAT16 card in the SD card model,
 jumps to it, and the firmware runs `main()` -> `ColdBoot()` (`MMC_Init`,
 `FindDrive`, `LoadConfiguration`, `fpga_init`, the kickstart load) into its
 main loop. `minimig_spi_stub.v` answers for the Minimig SPI slaves. The
-card has the decoy `832OSDAD.BIN`, the firmware and (since Task 14)
+card has the decoy `OSDDECOY.BIN`, the firmware and (since Task 14)
 `DRIVESND.BIN` (`sw/mkdrivesounds/drivesnd.bin`, the drive sounds, which
 `ColdBoot()` loads before the kickstart: at `0x70000 - 212098`, 2 mod 4, so
 its first header's longs are misaligned), no config file and no
@@ -573,13 +571,13 @@ sudo apt install build-essential curl git python3 mtools dosfstools fdisk ghdl v
 bash tools/riscv/fetch-xpack.sh
 # must pass
 bash tools/riscv/check-toolchain.sh
-# -> fw/ctrl_rv/build/RV32OSDA.BIN
-make -C fw/ctrl_rv
+# -> fw/ctrl/build/RV32OSDA.BIN
+make -C fw/ctrl
 # ~6 min
 SIM=verilator RUNTAG=fwv  bash sim/host_bridge/run.sh fwboot
 # ~3 min
 SIM=verilator RUNTAG=fwvt bash sim/host_bridge/run.sh fwboot_trap
-# ~6 min: firmware boot with an 832 config file
+# ~6 min: firmware boot with a legacy config file to convert
 SIM=verilator RUNTAG=fwvc bash sim/host_bridge/run.sh fwboot_cfg
 # ~6 min: the OSD_RDY sequence frozen, every OSD reply wait runs into its bound
 SIM=verilator RUNTAG=fwvf XARGS=+STUB_RDY_DLY=-1 bash sim/host_bridge/run.sh fwboot
@@ -590,7 +588,7 @@ RUNTAG=fwx bash sim/host_bridge/run.sh fwboot
 bash sim/host_bridge/run.sh compare fwx fwv
 ```
 
-Do not run `make -C fw/ctrl_rv` between the two `fwboot` runs: the
+Do not run `make -C fw/ctrl` between the two `fwboot` runs: the
 firmware's `version.h` has the build minute in it, so a rebuild changes
 the image (and the OSD text in `spi.txt`). Another image on the same card
 recipe: `FW=<path to an RV32OSDA.BIN>` (relative to the current
@@ -611,8 +609,8 @@ Expected end of `fwboot` (Verilator, Task 14's image; xsim the same apart
 from the wall time; the firmware's size and hash change with every build):
 
 ```
-boot ROM: fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd unmodified (= git HEAD), sha256 7fc4ae53fed88cb3
-firmware: .../fw/ctrl_rv/build/RV32OSDA.BIN, 92436 bytes (92,596 since Task 18), sha256 1776e715ab0eb68d
+boot ROM: fw/ctrl_boot/OSDBoot_rv_ROM.vhd unmodified (= git HEAD), sha256 7fc4ae53fed88cb3
+firmware: .../fw/ctrl/build/RV32OSDA.BIN, 92436 bytes (92,596 since Task 18), sha256 1776e715ab0eb68d
 === BOOT first read of 0x2000 at cycle 43039511, irefill 95 dread 99400 dwrite 125429 so far
 === cycle limit 176400000 reached, no DONE
 === HW accesses 2274912, stale acks 0, X 0, SDRAM reads 251588 writes 731656, main done 79381, cycles 176400178
@@ -654,9 +652,9 @@ Exit code 0 on PASS, 1 otherwise. Each run leaves in `run_<RUNTAG>/`:
 (`spitrace.py check`); no `EXC `/`TRAP ` text on any `UART:` line; the SD
 model loaded the card; the bench verdict `=== PASS` (the run reaches the
 cycle limit without DONE, no X on the bus, no stale ack, no bench error);
-the committed boot ROM unmodified. `fwboot_trap` (its firmware: `make -C fw/ctrl_rv
+the committed boot ROM unmodified. `fwboot_trap` (its firmware: `make -C fw/ctrl
 B=<run>/fwboot/trapfw EXTRA_OBJS=<run>/fwboot/smoke_trap.o`, through the
-`EXTRA_OBJS` hook this task added to `fw/ctrl_rv/Makefile`; no firmware
+`EXTRA_OBJS` hook this task added to `fw/ctrl/Makefile`; no firmware
 source changes; `smoke_trap()` is a naked constructor at priority 65535
 whose first word is `0xffffffff`): a `UART:` line that ends
 with the line of `<run>/fwboot/trap_expect.txt` (the boot ROM's last line
@@ -675,8 +673,8 @@ order, each stream on its own. They come from the sources:
 | `Platform lacks SPI RTC support` | `main()`: PLATFORM bit 2 is 0 (`havespirtc = false`) |
 | `SDHC card detected` | `MMC_Init()` (the model answers CMD8 with `0x1AA`) |
 | `partition type: 0x00 (FAT16)` | `FindDrive()`: prints `sector_buffer[450]` after reading the partition's boot sector into it, so 0x00, not the MBR's type 6 |
-| `file "MINMGAR CFG" not found`, `file "MINMGAA CFG" not found` | `LoadConfiguration(0)` -> `FileOpen` of the RISC-V name, then of the 832's (Task 11: the first-boot conversion finds no file either) |
-| `file "DRIVESNDBIN" found`, `Audio file - length 212098`, `Sound 0 at 3C38E, length 22394`, `Sound 1 at 41B10, length 26982`, `Sound 12 at 6F67A, length 2430` | `drivesounds_init()` (Task 14): the file at `0x70000 - 212098 = 0x3C37E`, the sounds' addresses and sizes from its big-endian header (the 832's `*(long *)` read of the first header at `0x3C386` traps on VexRiscv: `EXC mcause=00000004 ... mtval=0003C386`) |
+| `file "MINMGAR CFG" not found`, `file "MINMGAA CFG" not found` | `LoadConfiguration(0)` -> `FileOpen` of the RISC-V name, then of the legacy big-endian one (Task 11: the first-boot conversion finds no file either) |
+| `file "DRIVESNDBIN" found`, `Audio file - length 212098`, `Sound 0 at 3C38E, length 22394`, `Sound 1 at 41B10, length 26982`, `Sound 12 at 6F67A, length 2430` | `drivesounds_init()` (Task 14): the file at `0x70000 - 212098 = 0x3C37E`, the sounds' addresses and sizes from its big-endian header (a `*(long *)` read of the first header at `0x3C386` traps on VexRiscv: `EXC mcause=00000004 ... mtval=0003C386`) |
 | `Minimig AGA BETA version 2026-10-2 ...`, `Firmware version:`, `CPU: MC68040 + FPU + MMU`, `Ported to Open AARS ...` | `fpga_init()`'s `BootPrintEx` of the stub's version reply |
 | `Loading kickstart ROM...`, `ROM dir: 0`, `##End result : 0`, `ROM loading failed` | `ColdBoot()`, `UploadKickstart()`, `ApplyConfiguration()`, `main()` |
 | `SPI 20 88 ff ff ff ff ff ff / 00 01 1a 0a 02 a4 7d` | `fpga_init()`: `OSD_CMD_VERSION` and six `SPI_reply()` |
@@ -687,7 +685,7 @@ order, each stream on its own. They come from the sources:
 
 **The main loop of this test is the fatal-error loop.** Without a
 kickstart, `UploadKickstart()` calls `FatalError(ERROR_ROM, "ROM missing")`
-(`config.c`, the same in `fw/ctrl_832`), so `ErrorFatal` is 1 and
+(`config.c`), so `ErrorFatal` is 1 and
 `main()`'s `while(ErrorMask)` loop calls `HandleUI()` but not
 `HandleFpga()` (`if(!ErrorFatal)`). `HandleFpga()` runs once, in the first
 pass of the outer loop before `ShowError()`. The per-pass evidence is
@@ -699,7 +697,7 @@ therefore `HandleUI()`'s key-level (`OSD_CMD_READ`, `20 00`) and key-queue
 (decoded from the `0c` frames with `charrom.h`).
 
 The teeth: the Task 5 tree (`ace16ba`) built in a run copy with
-`#define HW_SPI_DATA 3` (the 832's big-endian byte offset) instead of 0,
+`#define HW_SPI_DATA 3` (a big-endian byte offset) instead of 0,
 run as `FW=<that BIN> SIM=verilator bash sim/host_bridge/run.sh fwboot`:
 `=== fwboot FAILED`, 14 of 27 milestones (found: the boot ROM lines,
 `Platform lacks ...`, `ROM loading failed`, the boot ROM's own `08` frames
@@ -709,11 +707,12 @@ nothing, so `MMC_Init()` reads every R1 as 0 and fails: no `SDHC card
 detected`, no version frame, no error page, no KEYQ frames). The trap test fails on any firmware whose
 default `rv_exception` or trap entry does not print the `EXC` line.
 
-### With an 832 config file (fwboot_cfg)
+### With a legacy config file (fwboot_cfg)
 
-`run.sh fwboot_cfg` boots the `fwboot` card (without `DRIVESND.BIN`) plus `MINMGAA.CFG`, an 832
-(big-endian) config file: the `l2` case of `fw/ctrl_rv/test/gold/mkcfg832.py`
-(the 832 defaults with a few harmless changes: `audio.volume` 9,
+`run.sh fwboot_cfg` boots the `fwboot` card (without `DRIVESND.BIN`) plus
+`MINMGAA.CFG`, a legacy big-endian config file as the previous firmware
+wrote it: the `l2` case of `fw/ctrl/test/gold/mkcfgbe.py` (the defaults
+with a few harmless changes: `audio.volume` 9,
 `floppy.speed` 0, two long names, `extromdir` 0x0A0B0C0D, `hdfdir[3]`
 0x01020304; `kickdir` stays 0, so the run takes the `fwboot` path to the
 "ROM missing" error loop). `LoadConfiguration` runs in `ColdBoot()` before
@@ -724,7 +723,8 @@ without the plusarg nothing is written). The gate: the milestones of
 `fwboot/milestones_cfg.txt` (`fwboot`'s with `file "MINMGAR CFG" not found`,
 `file "MINMGAA CFG" found`, `Configuration file size: 212`,
 `SaveConfiguration`'s `Trying to create a new one...`, `File created.`,
-`File written successfully.` and `Converted 832 configuration MINMGAA.CFG`),
+`File written successfully.` and the end of the conversion message,
+`configuration MINMGAA.CFG`),
 no `EXC`/`TRAP`, `=== PASS`, and on the saved card (`mtools`, `fsck.fat`):
 
 ```
@@ -791,8 +791,8 @@ only if bytes were clocked in it.
 write names (0x20 OSD, 0x10 FPGA, 0x02 card, 0x00 none; cfide drives
 `sd_cs[0]` low with every Enable and high with every Disable). The bytes
 are what cfide shifted, MISO as cfide sampled it (both on the rising
-`sd_clk` edge). No timestamps and nothing CPU-specific: Phase 4 diffs the
-832's and the RV's `spi.txt`. The frame still open when the run ends is
+`sd_clk` edge). No timestamps and nothing CPU-specific, so the `spi.txt`
+of two runs can be diffed (`run.sh compare`). The frame still open when the run ends is
 written with its whole bytes.
 
 ```sh
@@ -858,7 +858,7 @@ bytes as tokens.
   the `osd` test pins it; Phase 4). What is covered: the one
   `OSD_CMD_VERSION` frame at boot (cold I$) and the first reply byte of
   each `OSD_CMD_KEYQ` frame; the stub answers the key queue with count 0,
-  so the per-key loop `kq_buf[i] = SPI_reply()` (`fw/ctrl_rv/osd.c` ~1004,
+  so the per-key loop `kq_buf[i] = SPI_reply()` (`fw/ctrl/osd.c` ~1004,
   the path of every key press on the board) is not measured, and the run
   sits in the fatal-error loop (no kickstart), not in the real main loop.
   Phase 4: a stub that queues key events, and the first kickstart card.
@@ -870,7 +870,7 @@ bytes as tokens.
 - **Stack low-water** (`=== STACK low <hex> (<n> bytes used)`): the lowest
   byte address the CPU writes below 0x2000 (boot BRAM, the bridge's `rom`
   state; `sel[i]` = byte A+i) after its first read of 0x2000. Full-word writes
-  of `0x5A5AA5A5` (the firmware's `StackFill`, `fw/ctrl_rv/stackcheck.c`) are
+  of `0x5A5AA5A5` (the firmware's `StackFill`, `fw/ctrl/stackcheck.c`) are
   not counted.
 
 ### Measured at Task 6 (2026-10-17, Verilator and xsim the same, SLAT=8 SJIT=0)
@@ -904,7 +904,7 @@ the stub answers at once, so the reply bytes are right whatever the gap.
 
 Since Phase 4 Task 11 the firmware's `SPI_reply()` reads cfide's `HOST_REQ`
 (`0xFFFFFFB4`, bit 0 `OSD_RDY`) before each OSD reply byte, until it reads
-1 or 2 TIMER counts have passed (`fw/ctrl_rv/README.md`, "OSD reply wait").
+1 or 2 TIMER counts have passed (`fw/ctrl/README.md`, "OSD reply wait").
 `OSD_RDY` is 1 when cfide's count of the bytes it sent with the OSD
 selected equals `userio_osd`'s `osd_rx_seq` (mod 4). In `fwboot` the stub
 gives cfide that `osd_rx_seq`: +1 per byte clocked with `sd_cs[5]` low,
@@ -946,17 +946,17 @@ limit (586 / 336 / 572 `KEYQ` frames).
 **The monitor's tooth** (Task 11 review I1). At the default delay a
 firmware without the poll would also pass: its gap is above 40 anyway. So
 the tooth is a copy of the firmware with the poll removed (built from git
-`HEAD` outside the tree, the tree's `fw/ctrl_rv` untouched) against a slow
+`HEAD` outside the tree, the tree's `fw/ctrl` untouched) against a slow
 stub (200 cycles), with the gap check off so that `OSD RDY early` is the
 only check that can fail:
 
 ```sh
 D=$(mktemp -d)
-git archive HEAD fw/ctrl_rv tools/riscv | tar -x -C "$D"
-sed -i 's/if (!(HOST_REQ & HOST_REQ_OSD_RDY)) {/if (0) {/' "$D/fw/ctrl_rv/hardware.c"
-grep -c 'if (0) {' "$D/fw/ctrl_rv/hardware.c"
-make -C "$D/fw/ctrl_rv" B="$D/fw/ctrl_rv/build"
-SIM=verilator RUNTAG=fwvnp FW="$D/fw/ctrl_rv/build/RV32OSDA.BIN" XARGS="+STUB_RDY_DLY=200 +OSD_MIN_GAP=0" bash sim/host_bridge/run.sh fwboot
+git archive HEAD fw/ctrl tools/riscv | tar -x -C "$D"
+sed -i 's/if (!(HOST_REQ & HOST_REQ_OSD_RDY)) {/if (0) {/' "$D/fw/ctrl/hardware.c"
+grep -c 'if (0) {' "$D/fw/ctrl/hardware.c"
+make -C "$D/fw/ctrl" B="$D/fw/ctrl/build"
+SIM=verilator RUNTAG=fwvnp FW="$D/fw/ctrl/build/RV32OSDA.BIN" XARGS="+STUB_RDY_DLY=200 +OSD_MIN_GAP=0" bash sim/host_bridge/run.sh fwboot
 ```
 
 (`grep -c` must print 1.) Expected: exit 1, `=== fwboot FAILED`, with
@@ -969,8 +969,7 @@ milestones are still found (the stub answers at once).
 
 ## Bench
 
-- **Clocks**: as `sim/spi_cdc/host832/tb_832_dmode.v`. `clk_114` has
-  T = 8.8154 ns. `clk_28` = `clk_114` / 4, with its edges 0.3 ns after a
+- **Clocks**: `clk_114` has T = 8.8154 ns. `clk_28` = `clk_114` / 4, with its edges 0.3 ns after a
   `clk_114` edge.
 - **Resets and pulses off the clock edges**: `n_reset` and `cpu_reset_n` are
   released at a `clk_114` falling edge (the next rising edge is the first
@@ -979,8 +978,8 @@ milestones are still found (the stub answers at once).
   (`c28_step`). A change in the time step of the sampling edge would race
   with the clocked processes on that edge, and xsim and Verilator may order
   it differently.
-- **cfide**: generics as in host832 (`spimux`, `havespirtc`, `havei2c` and
-  `havevpos` are all false; `fwboot`: `havei2c` true). The inputs are `tick_in = 1` (the timer counts
+- **cfide**: generics `spimux`, `havespirtc`, `havei2c` and `havevpos` all
+  false (`fwboot`: `havei2c` true). The inputs are `tick_in = 1` (the timer counts
   every `clk_28`, so TIMER = `timecnt[23:8]` steps every 1024 `clk_114`),
   `menu_button = 1`, `audio_buf = 1`, `audio_amiga = 0` and `sd_ack = 1`.
   `osd_rx_seq` (`userio_osd`'s reply sequence on the board) is the stub's
@@ -992,8 +991,8 @@ milestones are still found (the stub answers at once).
     one-cycle `ram_ack`. The random numbers are an xorshift32 seeded from
     `+SEED`, not `$urandom`, so both simulators draw the same sequence.
   - Reads are an 8-halfword burst of the 4-word line, starting with the
-    requested word and wrapping (word0.hi on the ack cycle). This is the
-    order of tb_832_dmode, which hostcache's fill states expect.
+    requested word and wrapping (word0.hi on the ack cycle): the order
+    hostcache's fill states expect.
   - Writes happen at the ack.
   - It checks that addr, wr, q and sel do not change between accept and ack
     (`=== BUS VIOLATION`).
@@ -1052,7 +1051,7 @@ milestones are still found (the stub answers at once).
 | `+STUB_RDY_DLY=<n>` | 40 | `-d FWBOOT` only: the stub's `osd_rx_seq` steps n `clk_114` cycles after each OSD byte; -1 = never (frozen) |
 | `+OSD_RDY_TO_ADDR=<hex>` | none | `-d FWBOOT` only: the address of the firmware's `osd_rdy_timeouts` (`run.sh` takes it from the `.map` next to the `.BIN`) for the `=== OSD RDY timeouts` line |
 | `+SD_SAVE=<file>` | none | `-d SDCARD` only: the card as the run left it, written before the verdict (`fwboot_cfg`) |
-| `+SD_IMG=<file>` | none | card image of the SD model (bench compiled with `-d SDCARD`); the model's other plusargs (`+SD_NCR`, `+SD_INIT_POLLS`, `+SD_LOG=1`, ...) are in `sim/common/sd_spi_model.v`. The `=== BOOT` / `=== STATS` counters need `-d RV_HOSTCPU_STATS` on both `rv_hostcpu.v` and the bench (hierarchical `hostcpu.genrv.myrv.st_*`); without it the bench leaves them out. `run.sh boot` sets both. |
+| `+SD_IMG=<file>` | none | card image of the SD model (bench compiled with `-d SDCARD`); the model's other plusargs (`+SD_NCR`, `+SD_INIT_POLLS`, `+SD_LOG=1`, ...) are in `sim/common/sd_spi_model.v`. The `=== BOOT` / `=== STATS` counters need `-d RV_HOSTCPU_STATS` on both `rv_hostcpu.v` and the bench (hierarchical `hostcpu.myrv.st_*`); without it the bench leaves them out. `run.sh boot` sets both. |
 
 The bench parameter `EXTRA_WS` is the bridge's `rv_extra_ws`: idle cycles
 before every RISC-V request. It is set with `xelab -generic_top EXTRA_WS=<n>`,
@@ -1073,9 +1072,8 @@ or with `EXTRA_WS=<n>` for `run.sh`.
 | `sel[3]` | `q[7:0]` | lower byte of halfword A+2 (byte A+3) |
 
 So `sw 0x12345678` to 0x3000 leaves the halfwords `0x7856 0x3412`: big-endian
-byte order, as the 68k sees memory. The SDRAM model in
-`sim/spi_cdc/host832/tb_832_dmode.v` maps `sel[3]` to `q[31:24]`. That model
-is not the reference for lanes; `sdram_ctrl.v` is.
+byte order, as the 68k sees memory. The reference for the lanes is
+`sdram_ctrl.v`.
 
 ## Tests and expectations
 
@@ -1089,9 +1087,9 @@ unexpected trap writes `0x8000 | mcause`.
 | `t_lanes` | Loads of every width and alignment from SDRAM 0x4000 (preloaded bytes `11 22 .. 88`) and from `.rodata` in the boot BRAM. Stores of every width and alignment to SDRAM 0x3000.. and to BRAM 0x1800.., read back through the CPU; the SDRAM reads miss hostcache, because a write invalidates the line. | At the end, the SDRAM model's halfwords 0x3000..0x301F: `7856 34AB 01FF FFFF FF02 FFFF FFFF 03FF EFBE 0000 0000 FECA BBAA 9988 1122 3344`. |
 | `t_hwoff` | PLATFORM read = `0x0003` (halfword, byte and word); AUDIO read = `0x0001`. TIMER read twice: it advances by exactly 1. SPI: CS `0x02`, DATA `0x5A`, DATA read = `0xA5`, CS `0x03`. | STAMP 1/2: `scandoubler` 0/1 after PLATFORM writes 0/1. STAMP 3/4/5: `{audio_clear, audio_ena}` = 01/10/00. STAMP 6: `sd_cs = 0xFC`. STAMP 7: the slave got exactly one byte, `0x5A`. STAMP 8: `sd_cs = 0xFF`. |
 | `t_b2b` | 64 `sh` to PLATFORM (1, 0, 1, ...), 64 `sh` to AUDIO, then 32 `sb` to SPI CS (0x02, 0x03, ...). Each block is straight-line code and runs twice; the first call fills the I-cache, so the measured call has no line refill between the stores. Then it reads PLATFORM and AUDIO back; neither register reads back the written value. | 64 `scandoubler` toggles, ending at 0; 64 `audio_ena` toggles, ending at 0; 32 `sd_cs` changes `FC FF FC ...`. Each block prints its request gap. No stale ack. |
-| `t_irq` | Started through `fw/ctrl_rv/arch` (`sw/reset_fw.S`, then `crt0.S`, `trap_entry`, `rv_trap`; linked with `sw/rom.ld`). `SetIntHandler`, `EnableInterrupts`, STAMP 1, then waits for 20 handler calls (the handler counts and clears with `GetInterrupts()`), at most 100 TIMER steps; still 20 six TIMER steps later. | STAMP 1: start 20 `vbl_int` pulses, one `clk_28` cycle each, 2000 `clk_114` apart. STAMP 2: all 20 were sent. |
+| `t_irq` | Started through `fw/ctrl/arch` (`sw/reset_fw.S`, then `crt0.S`, `trap_entry`, `rv_trap`; linked with `sw/rom.ld`). `SetIntHandler`, `EnableInterrupts`, STAMP 1, then waits for 20 handler calls (the handler counts and clears with `GetInterrupts()`), at most 100 TIMER steps; still 20 six TIMER steps later. | STAMP 1: start 20 `vbl_int` pulses, one `clk_28` cycle each, 2000 `clk_114` apart. STAMP 2: all 20 were sent. |
 | `t_irqctl` | Started as `t_irq`. The interrupt controller, tests 1..7 and 9..12 of [Interrupt controller](#interrupt-controller): reset values, the legacy 0xFFFFFFA0 path, one event per edge, masking, "set wins", level sources, LEVEL mode, mode switching, read-back, the ADV7511 INT pin. Exit code 100 * test + check. | The STAMP commands of the table there (pulses, held levels, the interrupt output); test 4 is checked by the bench. |
-| `t_irqapi` | Started as `t_irq`. The firmware interrupt-controller API of `fw/ctrl_rv/arch/irq.h` against the real controller: legacy `SetIntHandler` path without the dispatcher, vblank handler (8 pulses), dispatch order (bit 0 first), masked EDGE delivered on `IrqEnable`, NULL handler, LEVEL bits 8 and 3 handled until the handler drops the line (called 2..3 times), `IrqEnable` / `IrqDisable` / `IrqSetMode` read-modify-write, bits >= 16 ignored, `SetIntHandler` of a legacy handler clears MASK (test 10: one legacy call per vblank, no storm). Exit code 100 * test + check. | The `t_irqctl` STAMP commands 10, 20, 30, 50, 60/61, 70, 120/121 (pulses and held levels). |
+| `t_irqapi` | Started as `t_irq`. The firmware interrupt-controller API of `fw/ctrl/arch/irq.h` against the real controller: legacy `SetIntHandler` path without the dispatcher, vblank handler (8 pulses), dispatch order (bit 0 first), masked EDGE delivered on `IrqEnable`, NULL handler, LEVEL bits 8 and 3 handled until the handler drops the line (called 2..3 times), `IrqEnable` / `IrqDisable` / `IrqSetMode` read-modify-write, bits >= 16 ignored, `SetIntHandler` of a legacy handler clears MASK (test 10: one legacy call per vblank, no storm). Exit code 100 * test + check. | The `t_irqctl` STAMP commands 10, 20, 30, 50, 60/61, 70, 120/121 (pulses and held levels). |
 | `t_spibusy` | `SPI_slow()` (SPEED `0xEF`, about 7700 `clk_114` per byte), CS `0x02`, 8 straight-line `sb` to SPI DATA (`01 80 55 AA FF 00 3C C3`), then a DATA read (`0x1C`, the 8th MISO byte), then CS `0x03`. | The slave got the 8 bytes in order. At least 7 DATA writes found `SD_busy` high. No DATA write completed without cfide accepting it. |
 | `t_osdrdy` | cfide's `HOST_REQ` (`0xFFFFFFB4`, bit 0 `OSD_RDY`: cfide's count of the bytes it started with the OSD selected equals `osd_rx_seq`; resync after 64 deselected cycles). 17 checks: 1 after reset; a byte to `sd_cs[1]` is not counted; one byte with the OSD selected (CS `0x20`) reads 0 until the bench steps `osd_rx_seq`, while `0xFFFFFFB0` (half and byte), `B8` and `BC` still read `audio_q` (1); two bytes outstanding read 0, also with one taken; a byte never taken reads 0, still 0 right after the deselect (CS `0x21`), 1 after the resync (polled, at most 64 reads); counting goes on from the resynced value; byte, half and word reads. Not in `all`. | STAMP 10..13: `osd_rx_seq` = 0..3. STAMP 20 arms, STAMP 21 checks the resync: a read after the deselect returned 0, and the first that returned 1 completed at least 64 cycles after the deselect (`t_osdrdy resync: ... (+65)`). STAMP 99 reached. |
 | `boot` | The committed boot ROM loads `RV32OSDA.BIN` (`boot/fwtest.c`) from `card.img`; the firmware prints `FW OK`, `PAT`, `IMG`, runs the `t_irq` check, prints `IRQ 20`, writes DONE. Not in `all`; see [Boot](#boot). | STAMP 1/2 as `t_irq`; `ERRORCODE:` lines; `=== BOOT`, `=== STATS`. |
@@ -1116,7 +1114,7 @@ Sources:
 | 0 | `vbl_int` | vertical blank (pulse) |
 | 1 | `i2c_int` | the I2C master's transfer event (`i2c_master_mmio` `r_interrupt`): set by its transfer events, cleared only by a read of the legacy `0xFFFFFFA0` window (`GetInterrupts()`; `i2c_master_mmio.sv`: `interrupt_select & !wr`) |
 | 2 | `amiga_req` | Akiko request (pulse per request) |
-| 3 | `i2c_ext_int` | the ADV7511's INT pin (also I2C status bit 0x400). Active high as the part is set up: `fw/ctrl_832/adv7511.c` writes no polarity register, clearing the part's interrupt flags takes the pin low (ADV7511 Programming Guide), and `i2c_master_mmio` and the 832 firmware use it active high; no inversion. Meant for LEVEL mode |
+| 3 | `i2c_ext_int` | the ADV7511's INT pin (also I2C status bit 0x400). Active high as the part is set up: `fw/ctrl/adv7511.c` writes no polarity register, clearing the part's interrupt flags takes the pin low (ADV7511 Programming Guide), and `i2c_master_mmio` and the firmware use it active high; no inversion. Meant for LEVEL mode |
 | 4..15 | `irq_src` | spare, new port (default 0), for IDE / floppy later |
 
 Each bit has a 2-FF synchroniser into `clk_28`.
@@ -1226,9 +1224,8 @@ are the only run-copy patches in force (besides the mutants of `mutant` and
 `irqmut`, which are separate files next to the copies); everything else (cfide, the bridge,
 `rv_hostcpu`, `VexOsd`, the boot ROM) is simulated as committed:
 
-- `hostcache.v`: `ack <= #1 1'b0` becomes `ack <= 1'b0`, as in
-  `host832/run.sh`. With the delay, the ack is a 1 ns glitch that the bridge
-  never sees.
+- `hostcache.v`: `ack <= #1 1'b0` becomes `ack <= 1'b0`. With the delay,
+  the ack is a 1 ns glitch that the bridge never sees.
 - `hostcache.v` and `dpram_inf_generic.v`: a `` `timescale `` line is added,
   to avoid an xelab warning.
 
@@ -1241,11 +1238,11 @@ Earlier patches that are gone (2026-10-16):
   stayed `'U'` (TIMER never counted, the UART never shifted). The RTL now
   declares both with the initial value 0, the FPGA's power-up value.
 - `VexOsd.v` register file (it starts X in simulation): every program clears
-  x1-x31 at reset instead: `fw/ctrl_boot_rv/crt0.S` (the committed boot ROM),
+  x1-x31 at reset instead: `fw/ctrl_boot/crt0.S` (the committed boot ROM),
   `sw/crt0_rom.S`, `sw/reset_fw.S`, `sw/dhry.S`.
-- Port B of the test ROMs: they were built from the `fw/ctrl_boot_832`
-  template, whose RAM signal has a driver in each port's process (every
-  port-A write resolved to X). They now use the `fw/ctrl_boot_rv` template
+- Port B of the test ROMs: they were built from an older ROM template,
+  whose RAM signal has a driver in each port's process (every
+  port-A write resolved to X). They now use the `fw/ctrl_boot` template
   (a shared variable), as the boot ROM does; `run.sh` refuses a ROM built
   from another template.
 

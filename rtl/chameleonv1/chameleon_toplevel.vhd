@@ -209,8 +209,7 @@ architecture rtl of chameleon_toplevel is
 
 	COMPONENT minimig_virtual_top
 	generic
-	( debug : integer := 0;
-	  spimux : integer := 0;
+	( spimux : integer := 0;
 	  havespirtc : integer := 0
 	);
 	PORT
@@ -428,7 +427,6 @@ joy4<="1" & joystick4;
 virtual_top : COMPONENT minimig_virtual_top
 generic map
 	(
-		debug => 0,
 		spimux => 1,
 		havespirtc => 1
 	)

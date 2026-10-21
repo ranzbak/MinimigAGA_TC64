@@ -1,7 +1,7 @@
 /* L2 boot-ROM stand-in for fw/dhrystone_rv (test "dhry"): the firmware image
  * is preloaded into the SDRAM model (+SDRAM_HEX, fw/dhrystone_rv l2_*.hex,
  * byte 0x2000 = _start); the ROM clears x1-x31 and jumps there, as the real
- * boot ROM (fw/ctrl_boot_rv/crt0.S clears them at reset) does after loading
+ * boot ROM (fw/ctrl_boot/crt0.S clears them at reset) does after loading
  * RV32OSDA.BIN.  The simulated register file starts as X; a firmware
  * prologue that saves an unused register would put X on the bus.
  *   0x0000  reset vector: jump to the register clear

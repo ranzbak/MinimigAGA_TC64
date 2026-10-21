@@ -358,7 +358,7 @@ begin
         end if;
     end process;
 
-    -- Interrupt handling at 0fffffa0 (legacy, the 832 firmware's)
+    -- Interrupt handling at 0fffffa0 (legacy)
     -- Any access to this range will clear the interrupt flag; a source event
     -- sets it to interrupt_ena.  The access wins over an event in its cycle.
     -- int_legacy_nx is the flag's next state, also used for the interrupt
@@ -400,10 +400,10 @@ begin
     --   2  amiga_req    Akiko request (pulse per request)
     --   3  i2c_ext_int  the ADV7511's INT pin (I2C status bit 0x400 shows it
     --                   too).  Active high as the part is set up: no polarity
-    --                   register is written (fw/ctrl_832/adv7511.c), clearing
+    --                   register is written (fw/ctrl/adv7511.c), clearing
     --                   its interrupt flags takes the pin low (ADV7511
     --                   Programming Guide, CEC and interrupt sections), and
-    --                   i2c_master_mmio and the 832 firmware use it active
+    --                   i2c_master_mmio and the firmware use it active
     --                   high.  So no inversion here.  Meant for LEVEL mode.
     --   4..15 irq_src   spare (IDE, floppy, ...)
     -- Every bit is the same logic: a 2-FF synchroniser into clk_28, then
@@ -422,8 +422,8 @@ begin
     -- cycle.  It is a register of its own (int_out), loaded from the
     -- next-state values of the flag, PENDING, MASK and MODE: the same value
     -- in the same cycle as that OR of the registers, with no logic between
-    -- the register and the CPU (the 832 uses interrupt unregistered).  MASK
-    -- and MODE reset to 0, so firmware that never writes MASK (the 832's)
+    -- the register and the CPU.  MASK
+    -- and MODE reset to 0, so firmware that never writes MASK
     -- sees the legacy flag cycle for cycle.
     -- Once per access: irq_seen = req one cycle ago, so irq_acc is the first
     -- clk_28 cycle of an access; the read value is latched into irq_q and the

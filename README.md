@@ -13,7 +13,8 @@ or AliExpress.
 **Only this board is built and maintained.** The other ports under `fpga/`
 (MiST, Chameleon v1/v2, DE0-Nano, DE10-Lite, virtual) share RTL with this
 build but don't build from this branch. Tag `d3_stable` is the last version
-that builds them, with the TG68K CPU.
+that builds them, with the TG68K CPU; tag `osd-832-final` is the last one with
+their EightThirtyTwo OSD host CPU ([fpga/README.md](fpga/README.md)).
 
 ## What you get
 
@@ -29,7 +30,8 @@ that builds them, with the TG68K CPU.
   sounds.
 - **Storage:** hard disk images (HDF) and floppy images (ADF) on a FAT32 SD card.
 - **Input:** PS/2 keyboard and mouse (scroll wheel supported), two joystick ports.
-- **Also:** a battery-backed real-time clock, HRTmon, an on-screen menu (OSD).
+- **Also:** a battery-backed real-time clock, HRTmon, an on-screen menu (OSD)
+  run by a VexRiscv RV32IMC soft CPU.
 
 Details and addresses: [doc/hardware.md](doc/hardware.md).
 
@@ -68,8 +70,16 @@ on). As on a real 68040, those need an FPU emulation library such as
 
 1. Get the bitstream onto the board: build it ([doc/building.md](doc/building.md)),
    then load it over JTAG or write it to the board's flash with Vivado.
-2. Prepare a FAT32 SD card with the OSD firmware `832OSDAD.BIN` and a Kickstart
-   ROM: [doc/getting-started.md](doc/getting-started.md).
+2. Prepare a FAT32 SD card with the OSD firmware `RV32OSDA.BIN` and a Kickstart
+   ROM: [doc/getting-started.md](doc/getting-started.md). The firmware is
+   built with `make -C fw/ctrl` after a one-time toolchain install
+   ([doc/building.md](doc/building.md#6-building-the-osd-firmware)):
+
+   ```bash
+   bash tools/riscv/fetch-xpack.sh     # once: the pinned RISC-V gcc into ~/opt
+   make -C fw/ctrl_boot && make -C fw/ctrl
+   cp fw/ctrl/build/RV32OSDA.BIN /path/to/sdcard/
+   ```
 3. Boot, press **F12** for the menu, pick a hard disk image or a floppy.
 4. For a Workbench with the FPU, MMU and RTG screen working:
    [doc/workbench-setup.md](doc/workbench-setup.md).

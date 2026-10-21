@@ -15,12 +15,8 @@ module minimig_openaars_top #(
   // Zorro-III fast RAM drives the request port (task 4) it is off by default:
   // no VIO, no debug hub, and the BIST mux leaves the port to the fast RAM.
   parameter DDR3_BIST_VIO = 0,
-  // OSD host CPU: 1 = the VexRiscv RV32IMC (rtl/host/rv_hostcpu.v), the board
-  // build since osd-riscv Phase 5; 0 = the EightThirtyTwo (the 832 board image
-  // is build/stage_spicdc_49b1868, branch 5.0-040-pipelined).  The RV sources
-  // come from tools/vivado/hostcpu.tcl, which build_ap040.tcl sources.
-  parameter HOSTCPU_RISCV = 1,
-  // RISC-V debug tunnel (BSCANE2, rtl/host/xilinx/rv_bscane2.v): 0 in every
+  // OSD host CPU: the VexRiscv RV32IMC (rtl/host/rv_hostcpu.v).  RISC-V debug
+  // tunnel (BSCANE2, rtl/host/xilinx/rv_bscane2.v): 0 in every
   // production build; hostcpu.tcl does not add the debug cores' sources.
   parameter HOSTCPU_RVDEBUG = 0,
   // Zorro-III fast RAM on the DDR3 island (rtl/ddr3/ddr3_fastram.v).  With 0
@@ -508,7 +504,7 @@ i2c_sender myi2c_sender (
   .resend(1'b0),
   .read_regs(1'b0),
   // Not dv_int: the table goes out once, at reset, for the boot screen.  After
-  // that the 832 firmware owns the ADV7511 (its hot-plug poll, Shift + '.',
+  // that the host firmware owns the ADV7511 (its hot-plug poll, Shift + '.',
   // the OSD HDMI page).  A re-send on every interrupt edge ran into the
   // firmware's own transfers on this shared, unarbitrated bus (io_scl/io_sda
   // below are a wired AND of both masters) -- and the firmware clears the
@@ -557,8 +553,6 @@ pal_to_ddr my_pal_to_ddr (
 // Instatiation of the Minimig Core
 minimig_virtual_top
 #(
-  .debug(1'b0),
-  .hostcpu_riscv(HOSTCPU_RISCV),
   .hostcpu_rvdebug(HOSTCPU_RVDEBUG),
   .havertg(1'b1),
   .haveaudio(1'b1),
@@ -675,7 +669,7 @@ minimig_virtual_top
   .SDA_I(sda_i),
   .SDA_O(sda_o),
   .SDA_T(sda_t),
-  .I2C_INT(dv_int),     // the 832 services the ADV7511 when it raises INT
+  .I2C_INT(dv_int),     // the host CPU services the ADV7511 when it raises INT
   .RTC_CS(),
   .VPOS_DATA(vpos_data),
   .floppy_frd(),

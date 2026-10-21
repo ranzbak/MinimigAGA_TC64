@@ -144,8 +144,7 @@ architecture RTL of minimig_de0_nano_top is
 	
 	COMPONENT minimig_virtual_top
 	generic
-	( debug : boolean := false;
-		havertg : boolean := true;
+	( havertg : boolean := true;
 		haveaudio : boolean := true;
 		havec2p : boolean := true
 	);
@@ -234,7 +233,6 @@ PS2_CLK <= '0' when ps2_keyboard_clk_out='0' else 'Z';
 virtual_top : COMPONENT minimig_virtual_top
 generic map
 	(
-		debug => false,
 		havertg => true,
 		haveaudio => true,
 		havec2p => true

@@ -16,10 +16,9 @@
 # immediately after, so the project is left as it was found (project defaults
 # are HAVEDDR3=1, DDR3_FASTRAM_ILA=0).
 #
-# The OSD host CPU is the VexRiscv RV32IMC (minimig_openaars_top parameter
-# HOSTCPU_RISCV = 1): tools/vivado/hostcpu.tcl puts its sources in and the
-# 832's out for the run and restores the project afterwards.  No 832 mode: the
-# 832 board image is build/stage_spicdc_49b1868 (branch 5.0-040-pipelined).
+# The OSD host CPU is the VexRiscv RV32IMC: tools/vivado/hostcpu.tcl puts its
+# sources in (and the files of the retired EightThirtyTwo out, should the
+# project still list them) for the run and restores the project afterwards.
 #
 # RV_DEBUG=1 in the environment builds the LAB bitstream: the host CPU with the
 # RISC-V debug module (VexOsd_DMT, its DTM tunnelled through the FPGA's own
@@ -580,8 +579,7 @@ if {$rv_debug} {
 set_property generic "HAVEDDR3=1 DDR3_BIST_VIO=0 DDR3_FASTRAM_ILA=$fila CPU040_DEBUG_ILA=$ila AP040_POST_STORES=$post CPU_CLK_DIVIDE=$cpudiv CHIP32=$chip32$pipe_gen$rv_gen" \
     [get_filesets sources_1]
 
-# The host CPU is the top's parameter default (HOSTCPU_RISCV = 1), not a
-# generic: the RV sources in, the 832's out, for this run only (restored below).
+# The host CPU's sources in, retired ones out, for this run only (restored below).
 # A run that changed the file groups always re-synthesises (below), so a
 # synthesis of the other CPU is never reused.  RV_DEBUG=1 also puts the debug
 # module's two sources and rv_debug.xdc in, restored the same way.
@@ -718,14 +716,10 @@ try_report hostcpu_cells.txt {
     puts $fh "# openaars_virtual_top/hostcpu: every hierarchical (leaf-parent) cell below it, with its REF_NAME"
     set hc [get_cells -quiet -hierarchical -filter {IS_PRIMITIVE == 0 && NAME =~ openaars_virtual_top/hostcpu/*}]
     foreach c [lsort $hc] { puts $fh "$c [get_property REF_NAME $c]" }
-    # The 832 CPU is counted as eightthirtytwo_cpu*, its top entity (the
-    # alu/decode/... entities live inside it): a bare eightthirtytwo* would
-    # also match the bridge, EightThirtyTwo_Bridge, which both CPUs keep.
     puts $fh "# hierarchical cells in the whole design per REF_NAME pattern (case-insensitive)"
-    puts $fh "# patterns: 832 CPU eightthirtytwo_cpu*, 832 ROM OSDBoot_832_ROM*, 832 JTAG debug_bridge_jtag*;"
-    puts $fh "# RISC-V VexOsd*, rv_hostcpu*, OSDBoot_rv_ROM*; the shared bridge EightThirtyTwo_Bridge* (1 in every image)"
+    puts $fh "# patterns: VexOsd*, rv_hostcpu*, OSDBoot_rv_ROM*, the bridge host_bridge*"
     set refs [get_property REF_NAME [get_cells -quiet -hierarchical -filter {IS_PRIMITIVE == 0}]]
-    foreach pat {eightthirtytwo_cpu* OSDBoot_832_ROM* debug_bridge_jtag* VexOsd* rv_hostcpu* OSDBoot_rv_ROM* EightThirtyTwo_Bridge*} {
+    foreach pat {VexOsd* rv_hostcpu* OSDBoot_rv_ROM* host_bridge*} {
         set n 0
         foreach r $refs { if {[string match -nocase $pat $r]} { incr n } }
         puts $fh "count $pat $n"

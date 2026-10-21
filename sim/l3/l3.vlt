@@ -13,15 +13,6 @@
 //      extension, correct)
 // 12   rtl/minimig/paula_floppy.v hdd_addr: "... : 1'b0" into 3 bits (zero
 //      extension, correct)
-// 13   CPU=832: the EightThirtyTwo after ghdl --synth (bridge.v, instance
-//      gen832_my832): the records regfile and thread
-//      (eightthirtytwo_cpu.vhd) are one flat vector each, and some of their
-//      fields are concurrent assignments from other fields (regfile:
-//      gpr7_flags from the flag flops, gpr_q a mux of gpr0..7; thread:
-//      nextpc from pc, the decoder's f_* from f_op): a path from the vector
-//      to itself through nets, not a loop between bits (Verilator settles
-//      it by re-evaluation; a real loop stops the run with "didn't
-//      converge")
 `verilator_config
 lint_off -rule WIDTHTRUNC  -file "*/VexOsd*.v"
 lint_off -rule WIDTHEXPAND -file "*/VexOsd*.v"
@@ -38,4 +29,3 @@ lint_off -rule WIDTHEXPAND -file "*/i2c_master.v" -match "*VARREF 'prescale'*"
 lint_off -rule MULTIDRIVEN -file "*/i2c_master_mmio.sv" -match "*'status_reg'*"
 lint_off -rule WIDTHEXPAND -file "*/gayle_fifo.v" -match "*CONST '12'h0'*"
 lint_off -rule WIDTHEXPAND -file "*/paula_floppy.v" -match "*Conditional False's CONST '1'h0'*"
-lint_off -rule UNOPTFLAT   -file "*/ghdl_*/bridge.v" -match "*gen832_my832.*"

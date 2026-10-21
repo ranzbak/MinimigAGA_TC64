@@ -1,22 +1,23 @@
 # The OSD host CPU's file groups in project_1, for the Vivado build scripts.
 #
-# minimig_openaars_top builds the VexRiscv RV32IMC host CPU (parameter
-# HOSTCPU_RISCV = 1, osd-riscv Phase 5): rtl/host/832_bridge.vhd then
-# elaborates rv_hostcpu and OSDBoot_rv_ROM instead of the EightThirtyTwo and
-# OSDBoot_832_ROM.  project_1.xpr predates the RISC-V sources and lists the
-# 832's, so a build script sources this file after defining add_src and calls
+# minimig_openaars_top builds the VexRiscv RV32IMC host CPU:
+# rtl/host/host_bridge.vhd elaborates rv_hostcpu and OSDBoot_rv_ROM.
+# project_1.xpr is not in git and predates these sources, and a project made
+# before the EightThirtyTwo (832) was retired still lists the 832's sources
+# and the bridge under its old name, which are no longer in the tree.  So a
+# build script sources this file after defining add_src and calls
 #
 #   set changed [hostcpu_apply $R]    ;# before the run
 #   ...
 #   hostcpu_restore                   ;# with the script's other restores
 #
-# hostcpu_apply adds the RV group if missing and enables it, disables the 832
-# group (every sources_1 file under EightThirtyTwo/RTL/ and
-# fw/ctrl_boot_832/OSDBoot_832_ROM.vhd), so the bitstream carries one host CPU
-# and no idle 832 sources.  It returns the number of changes it made.
-# hostcpu_restore undoes exactly those changes (files it added are removed,
-# enable flags and the xdc's PROCESSING_ORDER go back to what they were), so
-# the project is left as found.
+# hostcpu_apply adds the RV group if missing and enables it, and disables the
+# retired group (every sources_1 file under EightThirtyTwo/, the old boot ROM
+# fw/ctrl_boot_832/ and the old bridge rtl/host/832_bridge.vhd, if the project
+# still lists them), so the run sees only files that exist.  It returns the
+# number of changes it made.  hostcpu_restore undoes exactly those changes
+# (files it added are removed, enable flags and the xdc's PROCESSING_ORDER go
+# back to what they were), so the project is left as found.
 #
 # The record is also written to project_1/.hostcpu_undo and deleted by
 # hostcpu_restore: a build that died between the two leaves it behind, and the
@@ -38,8 +39,7 @@
 # .hostcpu_undo) takes them out again.  VexOsd_DMJ.v (DEBUG = 2, the pin TAP)
 # is never added.
 #
-# There is no 832 mode: the 832 board image is build/stage_spicdc_49b1868
-# (branch 5.0-040-pipelined).  Sourcing this file only defines procs.
+# Sourcing this file only defines procs.
 
 # The prefix of every message: the calling build script's name.
 proc hostcpu__tag {} {
@@ -49,9 +49,10 @@ proc hostcpu__tag {} {
 }
 
 proc hostcpu__rv_files {R} {
-    return [list $R/rtl/host/rv_hostcpu.v \
+    return [list $R/rtl/host/host_bridge.vhd \
+                 $R/rtl/host/rv_hostcpu.v \
                  $R/rtl/host/vexriscv/VexOsd.v \
-                 $R/fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd]
+                 $R/fw/ctrl_boot/OSDBoot_rv_ROM.vhd]
 }
 
 # The LAB build's debug module (rv_hostcpu DEBUG = 1): the core with the
@@ -77,11 +78,19 @@ proc hostcpu_rvdebug {} {
     error "hostcpu.tcl: RV_DEBUG='$::env(RV_DEBUG)': must be 0 (or unset) or 1 (the LAB build with the RISC-V debug module)"
 }
 
-proc hostcpu__832_files {} {
+# Files a project may still list that are no longer in the tree (removed with
+# the 832): disabled for the run, restored afterwards.
+proc hostcpu__retired_patterns {} {
+    return [list */EightThirtyTwo/* */fw/ctrl_boot_832/* */rtl/host/832_bridge.vhd]
+}
+
+proc hostcpu__retired_files {} {
     set fs [get_filesets sources_1]
-    set l [get_files -quiet -of_objects $fs */EightThirtyTwo/RTL/*]
-    foreach f [get_files -quiet -of_objects $fs */fw/ctrl_boot_832/OSDBoot_832_ROM.vhd] {
-        lappend l $f
+    set l {}
+    foreach p [hostcpu__retired_patterns] {
+        foreach f [get_files -quiet -of_objects $fs $p] {
+            if {[lsearch -exact $l $f] < 0} { lappend l $f }
+        }
     }
     return $l
 }
@@ -155,7 +164,7 @@ proc hostcpu_apply {R {rvdebug 0}} {
         }
     }
     set off 0
-    foreach o [hostcpu__832_files] {
+    foreach o [hostcpu__retired_files] {
         set was [get_property IS_ENABLED $o]
         if {$was} {
             set_property IS_ENABLED false $o
@@ -186,7 +195,7 @@ proc hostcpu_apply {R {rvdebug 0}} {
     set fh [open $hostcpu_undo_file w]; puts $fh $undo; close $fh
 
     set n [llength [hostcpu__rv_files $R]]
-    puts "[hostcpu__tag]: host CPU = RISC-V ($n RV files enabled, $off 832 files disabled)"
+    puts "[hostcpu__tag]: host CPU = RISC-V ($n RV files enabled, $off retired files disabled)"
     if {$rvdebug} {
         puts "[hostcpu__tag]: host CPU: debug module in: [file tail [lindex [hostcpu__dbg_files $R] 0]], [file tail [lindex [hostcpu__dbg_files $R] 1]] (sources_1), [file tail [hostcpu__dbg_xdc $R]] (XC7A100T, LATE)"
     }

@@ -18,15 +18,14 @@ prefix `openaars_virtual_top/amiga_clk/amiga_clk_i/`; adapt the prefix for a new
 
 ## Host CPU
 
-The board build (`minimig_openaars_top`, parameter `HOSTCPU_RISCV = 1`) is the
-VexRiscv RV32IMC OSD host CPU (`rtl/host/rv_hostcpu.v`, `rtl/host/vexriscv/VexOsd.v`,
-boot ROM `fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd`). `project_1.xpr` predates those sources
-and lists the EightThirtyTwo's, so `build_ap040.tcl` sources `hostcpu.tcl`: for the run
-it adds and enables the RISC-V group and disables the 832 group (`EightThirtyTwo/RTL/*`,
-`fw/ctrl_boot_832/OSDBoot_832_ROM.vhd`), and afterwards puts the project back as it
-found it. There is no 832 build mode; every other top keeps the 832 through the
-`minimig_virtual_top` defaults (`hostcpu_riscv = 0`). The 832 board image is
-`build/stage_spicdc_49b1868` (branch `5.0-040-pipelined`). The build extras the
+The OSD host CPU is the VexRiscv RV32IMC (`rtl/host/host_bridge.vhd`,
+`rtl/host/rv_hostcpu.v`, `rtl/host/vexriscv/VexOsd.v`, boot ROM
+`fw/ctrl_boot/OSDBoot_rv_ROM.vhd`). `project_1.xpr` is not in git and predates those
+sources, so `build_ap040.tcl` sources `hostcpu.tcl`: for the run it adds and enables the
+host CPU group, disables the files of the retired EightThirtyTwo host CPU should the
+project still list them (`EightThirtyTwo/*`, `fw/ctrl_boot_832/*`,
+`rtl/host/832_bridge.vhd`; the last commit with that CPU is tag `osd-832-final`), and
+afterwards puts the project back as it found it. The build extras the
 script writes for the host CPU: `util_hier.rpt`, `util_hostcpu.rpt`, `clocks.rpt`,
 `hostcpu_cells.txt` (which CPU is in the netlist), `handshake_timing.rpt`, `failing.rpt`,
 `drc.rpt`.
@@ -40,8 +39,8 @@ env LD_LIBRARY_PATH=$HOME/lib/tinfo5 LC_ALL=C POST_CHIP=1 POST_CI=1 \
   -source $WB/tools/vivado/build_ap040.tcl -tclargs $OUT 0 $WB
 ```
 
-The boot ROM is committed with its sources; to rebuild it, see `fw/ctrl_boot_rv/README.md`
-(`make -C fw/ctrl_boot_rv`, xPack riscv-none-elf-gcc 15.2 via `tools/riscv/toolchain.mk`).
+The boot ROM is committed with its sources; to rebuild it, see `fw/ctrl_boot/README.md`
+(`make -C fw/ctrl_boot`, xPack riscv-none-elf-gcc 15.2 via `tools/riscv/toolchain.mk`).
 
 ### Debug lab build
 

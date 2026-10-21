@@ -1,11 +1,11 @@
 # run.sh fwboot_cfg: what the real firmware must do on fwboot/Makefile's
-# card_cfg.img (RV32OSDA.BIN + decoy + the 832 config file MINMGAA.CFG, no
+# card_cfg.img (RV32OSDA.BIN + decoy + the legacy config file MINMGAA.CFG, no
 # kickstart): milestones.txt with the first-boot conversion of the config.
 # Format and matching:
 # spitrace.py (UART and SPI are each an ordered subsequence of their own
 # stream).  Taken from the sources, not from a run.
 #
-# -- the boot ROM (fw/ctrl_boot_rv), as boot/expect.txt up to the jump,
+# -- the boot ROM (fw/ctrl_boot), as boot/expect.txt up to the jump,
 #    without the numbers that depend on the card layout
 UART Initializing SD card
 UART cmd_CMD8 response: 1
@@ -26,7 +26,8 @@ UART SDHC card detected
 # sector_buffer) comes first), so 0x00, not the MBR's type 6
 UART partition type: 0x00 (FAT16)
 # ColdBoot() -> LoadConfiguration(0): no "MINMGAR CFG" (the RISC-V name);
-# the 832's "MINMGAA CFG" is read and converted (cfg_swap), then
+# the legacy big-endian "MINMGAA CFG" is read and converted (cfg_swap),
+# then
 # SaveConfiguration(): "MINMGAR CFG" is not there, FileCreate + FileWrite
 UART file "MINMGAR CFG" not found
 UART file "MINMGAA CFG" found
@@ -35,7 +36,8 @@ UART file "MINMGAR CFG" not found
 UART Trying to create a new one...
 UART File created.
 UART File written successfully.
-UART Converted 832 configuration MINMGAA.CFG
+# (config.c's "Converted ... configuration MINMGAA.CFG": the end of the line)
+UART configuration MINMGAA.CFG
 # ColdBoot() -> fpga_init(): BootPrintEx lines (printf + boot screen) of the
 # stub's OSD_CMD_VERSION reply (beta 1, 20 + 0x1A, 0x0A, 0x02; caps 0x7D)
 UART Minimig AGA BETA version 2026-10-2 for Turbo Chameleon 64

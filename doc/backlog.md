@@ -8,15 +8,15 @@ Release 0.1 ships with these open (see doc/release-0.1.md).
 
 ## Stability and correctness
 
-### CD audio + HDF read deadlock in the 832 firmware (2026-10-20) -- fixed for RISC-V (fix-cdpoll 05e8780)
+### CD audio + HDF read deadlock (2026-10-20) -- FIXED (fix-cdpoll 05e8780)
 
 With CD audio playing, a port-1 READ MULTIPLE of more than one block hangs the firmware (OSD dead,
-Workbench waits on I/O). The drain-wait loop in `fw/ctrl_832/hdd.c:508` calls `CD_AudioPoll()`,
+Workbench waits on I/O). The drain-wait loop in `hdd.c` called `CD_AudioPoll()`,
 whose `ReadIDEFlags(1)` command word re-latches the Gayle firmware port (`paula_floppy.v`
 `hdd_port_r`) to the CD port mid-transfer: "FIFO drained" hides behind the busy CD port and the next
 direct-mode block goes into the CD port's FIFO. Found with GDB on the RISC-V debug bitstream;
 the RISC-V fix (split into `CD_AudioRefill` for transfer loops, `CD_AudioPoll` main loop only) is
-board-verified. Port the same change to `fw/ctrl_832` (hdd.c read/write loops, fdd.c ReadTrack).
+board-verified. (The 832 firmware, which had the same loop, is retired: Phase 9.1.)
 Open: the wait loops still have no exit when the Amiga abandons a command.
 
 ### OSD redesign: more screen space, tabbed setup layout (2026-10-17, wish)
@@ -30,10 +30,8 @@ Open: the wait loops still have no exit when the Amiga abandons a command.
   cannot draw more. Needs RTL (bigger buffer, e.g. 16 x 64 = 8 KB, window
   size/position, a few colour/attribute bits for header, tabs, highlight bar,
   panel) plus a new menu engine in the firmware.
-- Planned for the RISC-V firmware (`fw/ctrl_rv`, branch osd-riscv) AFTER the
-  1:1 port reaches board parity (Phase 6), so the A/B check compares the same
-  UI; the 832 firmware is not changed. Open: size (16 x 64 suggested) and
-  colour scheme.
+- Planned for the firmware (`fw/ctrl`) after the RISC-V port's board parity
+  (Phase 6). Open: size (16 x 64 suggested) and colour scheme.
 
 ### HDMI: sync loss in RTG modes and in demos that flash a lot (2026-10-03) -- RTG part SOLVED (Paul, 2026-10-12)
 
@@ -86,7 +84,11 @@ Open: the wait loops still have no exit when the Amiga abandons a command.
   xc7-cache vs xc7-fpuframe on the board, or run the benches on the
   post-synthesis netlist.
 
-### OSD reply byte may be stale after OSD_CMD_KEYQ (2026-10-12, lead)
+### OSD reply byte may be stale after OSD_CMD_KEYQ (2026-10-12, lead) -- MOOT (832 retired)
+
+- 2026-10-21: the lead was the 832 build's dropped read-back; the RISC-V
+  firmware does the read-back and the 832 is retired (osd-riscv Phase 9.1).
+  Kept for the record:
 
 - From the SPI study (disassembly, not observed): the 832 starts the next
   SPI byte sooner than ~350 ns after some OSD commands because the compiler
@@ -151,7 +153,14 @@ Open: the wait loops still have no exit when the Amiga abandons a command.
   at that pitch and how it is cleared on a mode change (border lines are
   never written, so they keep whatever was there).
 
-### Reset and boot: a corrupted 832 firmware survives the board reset (2026-10-02)
+### Reset and boot: a corrupted firmware survives the board reset (2026-10-02)
+
+- 2026-10-21: written for the 832 host CPU, now retired. The RISC-V host CPU
+  has the same layout: the writable 8 KB boot BRAM (`rtl/host/host_bridge.vhd`,
+  `rom_wr <= cpu_wr`), the firmware's stack at its top (down to
+  `STACK_FLOOR` 0x1400, `fw/ctrl/stackcheck.h`, guarded by `make check` (g)),
+  and `fw/ctrl_boot/boot.c` jumping to 0x2000 after the load. Paths below are
+  the 832's (tag `osd-832-final`).
 
 - Symptom: after a half-loaded or corrupted 832 firmware, the reset button
   does not recover; the same firmware error repeats until a power cycle.
@@ -186,7 +195,7 @@ Open: the wait loops still have no exit when the Amiga abandons a command.
 
 - Symptom: after a keyboard reset the SD card does not show up; an OSD menu
   reboot brings it back. Also with CopyBack off.
-- Known: Ctrl-Amiga-Amiga resets only the Amiga side, not the 832 or the SD
+- Known: Ctrl-Amiga-Amiga resets only the Amiga side, not the host CPU or the SD
   card; a card left mid-transfer ignores CMD0. Not yet checked on stage_cu9.
 - Part of the reset-and-boot work above.
 
@@ -384,7 +393,7 @@ order suggested: 8, then 1 and 4, then 5 and 6.
   run from Workbench) can be mounted.  Paul: the user picks the ISO in the
   OSD, like an ADF or a hardfile.
 - What exists (2026-10-12): nothing ATAPI.  The IDE emulation is ATA only
-  (Gayle in rtl/minimig/gayle.v, commands served by fw/ctrl_832/hdd.c).
+  (Gayle in rtl/minimig/gayle.v, commands served by fw/ctrl/hdd.c).
   Gayle already has a secondary channel (hdd1_ena from ide_config1), and the
   config struct already reserves `secondaryhardfile[2]` (config.h; only
   cleared in config.c, never used) -- room for a CD entry without growing
@@ -406,7 +415,7 @@ order suggested: 8, then 1 and 4, then 5 and 6.
   that Gayle passes the byte-count registers (cylinder low/high) and the
   interrupt-reason register (sector count) for packet transfers; probably
   no other RTL change.
-- OSD (firmware, fw/ctrl_832/menu.c):
+- OSD (firmware, fw/ctrl/menu.c):
   - "Harddisks" page: a line for the secondary channel master,
     "CD-ROM : <name> / Disabled", selectable when IDE is enabled.
   - Selecting it opens the file selector with the ISO extension
@@ -443,7 +452,7 @@ order suggested: 8, then 1 and 4, then 5 and 6.
   hardware.  Options: a 16-byte receive FIFO in paula_uart.v behind an OSD
   option (transparent to serial.device, not authentic), or a 16C550/16C650
   UART at the clockport address (Silversurfer-like, its own Aminet driver,
-  authentic; needs a free pin pair or sharing the 832 debug UART).  Tests:
+  authentic; needs a free pin pair or sharing the host CPU's debug UART).  Tests:
   amiga_sw/SerRx + sertx.py, a ZMODEM ADF transfer to disk.
 
 ### 8 MB chip RAM, emulator-style (study 2026-10-11)

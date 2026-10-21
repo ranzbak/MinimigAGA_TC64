@@ -25,7 +25,7 @@
 //     low); half 0 is next
 //   - at every flip: the tick that takes aud_addr into the other half
 // The copy is read from the SDRAM model (tb_l3.ram.mem). The ring is at host
-// 0x70000 (AUDIO_BUFFER in both firmwares' hardware.h), half h at
+// 0x70000 (AUDIO_BUFFER in fw/ctrl/hardware.h), half h at
 // 0x70000 + h * 0x8000; halfword A/2 holds byte A in its upper byte. It is
 // written as the bytes in host address order to <prefix>_<n>.bin, n = 1, 2,
 // ... over the run. One log line per snapshot:
