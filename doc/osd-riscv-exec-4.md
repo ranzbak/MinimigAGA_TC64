@@ -1,6 +1,6 @@
 # OSD host CPU -> VexRiscv: executable plan, stage 4 (Phase 4 -- L3 co-simulation, 832-vs-RV differential, OSD reply-ready handshake)
 
-Status: **planned 2026-10-18**, not started. Revised the same day after Paul's answers (section "Decisions (Paul, 2026-10-18)"): the xsim scope is cut to Paul's time budget (Decision 1).
+Status: **Phase 4 done (gate run 2026-10-21; T20 4 KB I$ kept by Paul 2026-10-21; T21 deferred to the Phase 5 board session); merged with fix-cdpoll and p5-build at 43c6cc7; build B rebuilt from 43c6cc7 (results: controller).** Planned 2026-10-18. Revised the same day after Paul's answers (section "Decisions (Paul, 2026-10-18)"): the xsim scope is cut to Paul's time budget (Decision 1).
 
 > For agentic workers: execute task by task with superpowers:subagent-driven-development
 > (SDD tooling extracts tasks by their `### Task N` heading). Each task ends at its pass

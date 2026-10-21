@@ -1,5 +1,7 @@
 # OSD host CPU migration, Phase 4 findings
 
+Status: **Phase 4 done (gate run 2026-10-21; T20 4 KB I$ kept by Paul 2026-10-21; T21 deferred to the Phase 5 board session); merged with fix-cdpoll and p5-build at 43c6cc7.** Gate table at the end ("Gate run (Task 23)").
+
 ## Measurements
 
 ### Task 1: failure edge of the real `userio_osd` reply (E_osd)
@@ -602,3 +604,44 @@ Window events per scenario as in the Task 20 brief (boot: 1st..21st HandleFpga f
 **The refill share is an estimate, not a measurement.** The STATS lines carry the refill count and the port's busy-cycle total (all requests: refills, data reads and writes) but no refill latency, and the three request counts do not separate (a least-squares fit of busy cycles on refills, reads and writes over the five windows gives a negative refill weight, so the busy total is dominated by something else, most likely the slow peripheral accesses). The estimate is `refills x L / busy cycles` with an assumed refill latency of L = 30 `clk_114` per 8-word refill (bracket 20 and 40); it scales linearly with L. A measured figure needs a per-refill latency counter in the bench.
 
 `cdda_load` has no `win_start` / `win_end` lines (n/a: window line missing in run_p4g_rv_def_cdda_load and run_p4g_832_def_cdda_load, not re-run); the other scenarios of the grid (`fdd_wr`, `cd`, `cdiso`, `akiko`) are outside the brief's window list.
+
+## Gate run (Task 23, 2026-10-21)
+
+Merged tree `osd-riscv` 43c6cc75 (Phase 4 tree 68e4409c plus the merges `p4-final-fix` 9af1c5b, `fix-cdpoll` 07ccfcf, `p5-build` 43c6cc7). Phase 4 commit range `d8804185..43c6cc75` (94 commits). Status: **Phase 4 done (gate run 2026-10-21; T20 4 KB I$ kept by Paul 2026-10-21; T21 deferred to the Phase 5 board session); merged with fix-cdpoll and p5-build at 43c6cc7.**
+
+### L3 gate grid `p4g23` (tree 150a57fe, RV 17bf2563, 832 768c765d, 40 runs, wall 38,811 s)
+
+| Group | Result |
+|---|---|
+| RV, 10 scenarios at default (boot, keys, fdd_rd, fdd_wr, hdd, cd cue, cd iso, cdda, cdda_load, akiko) | 10/10 PASS |
+| RV XRAND twins (default seeds) | 10/10 PASS, `run.sh compare` SAME and `diff --twin` empty for every pair |
+| 832 at default | 10/10 PASS |
+| 832 XRAND twins (`XSEED=1`) | not a gate (see below) |
+| RV vs 832 `run.sh diff` of the ten default pairs, re-normalised offline with the merged rules (`expected_diff.txt`, `spitrace.py` of 43c6cc75) | all ten empty (exit 0) |
+
+832 X-twins: `XSEED=1` did reach the runs (every log starts `=== XRAND seed 1`; not a grid defect). The EightThirtyTwo, whose core has reset-less state, did not start in any of the ten (spi.txt and hw.txt empty, TIMEOUT), although the Task 17 `cdda` twin with seed 1 started on an earlier bench build (the start depends on the seed and the build). Ruling (Paul, 2026-10-21, "If it's about the 832, don't run it, we won't use that anymore"): the 832 X-twins are dropped, the 832 is being retired; the RV column (20/20 including 10 XRAND twins) is the gate. Earlier 832 twins as recorded: fdd_rd `p4t13c_xs4`, fdd_wr `p4t14c_xs4`, cdda `p4t17c_xs1`, akiko `p4t18c3_xr`, hdd `p4t15c_xr`, cd `p4t16c_xr` (normalised diffs empty; akiko one accepted hunk), keys `p4t8c_xs4` (diff --twin empty on the merged rules), boot `p4t6_xr`. No 832 twin exists after Task 10 for boot, keys, cdda_load, cd iso; not run (ruling).
+
+### Regressions on the merged tree 43c6cc75
+
+| Item | Result | Wall |
+|---|---|---|
+| L3 `cdda_load` RV, `XARGS=+IDE_HOST_DELAY=2000000` (fix-cdpoll slow-host gate), image 1c6bbd5a, `p4m_cdload_dly` | PASS, 256 HDF sectors = SYNTH.HDF, 0 underruns, OSD EARLY 0 | 3,839 s |
+| L3 `boot` RV `p4m_boot_rv` / 832 `p4m_boot_832`, same cards | both PASS; `run.sh diff` empty | 1,788 / 1,615 s |
+| `make -C fw/ctrl_rv clean all check size stack` | rc 0, text 89,558 | 23 s |
+| `make -C fw/ctrl_rv CLANG=1 all check` | rc 0 | 10 s |
+| `make -C fw/ctrl_rv/test run mutants` | 2064 ok / 0 not ok, 2412 / 2432 / 127 checks, 182 mutants killed | 1,077 s |
+| `make -C fw/ctrl_832/test` | rc 0 | <1 s |
+| L1 Verilator `all`, `irq`, `units`, `fmt` | 122/122, 13 runs, PASS, PASS (fmt needs `LIB832=` in a worktree) | 19, 1, 29, 29 s |
+| L2 Verilator `all`, `mutant`, `irqmut`, `t_osdrdy`, `boot`, `fwboot`, `fwboot_cfg`, `fwboot_trap` | 42 runs PASS, mutant caught, irqmut caught, PASS x5 | 47, 33, 13, 4, 36, 532, 377, 190 s |
+| `sim/osd_keyq/run.sh` normal, `mutant`, `mutant_seq`, `mutant_cs` | PASS; the three mutants FAIL as expected | seconds |
+| `sim/gayle/run.sh all` | all OK | 3 s |
+| `sim/spi_cdc/host832/run.sh` (xsim, after Vivado ended) | 7/7 PASS | 324 s |
+| `tb_spi_cdc +RDY=1` | not repeated: `git log a5a5c70..HEAD -- rtl/host/cfide.vhd` is empty | - |
+
+### Static gates
+
+- Trap log: `grep -l 'EXC mcause=\|TRAP' sim/l3/run_p4*/tb_*.log` lists no L3 run (the deliberate trap run is L2 `fwboot_trap`, which ends with its expected `EXC mcause=00000002`).
+- `STACK low` over all RV L3 runs (and the new ones): lowest 0x1950 (1,712 bytes used), above 0x1400. The 832 runs print a meaningless value (n/a).
+- No new delays: live `SPIN` sites exactly two (`fpga.c:226`, `config.c:618`); no `timeout++` bound; the only added delay is the documented `WRFIFO_GAP` (README "Delay sites", gated by `wrfifo.ok`).
+- `git status fw/ctrl_832 fw/ctrl_boot_832 fw/ctrl_boot_rv`: clean.
+- `git diff d8804185 68e4409c -- rtl` equals Tasks 9 and 10 exactly (`35218e3c~1..a5a5c70e`, byte-identical diff: cfide.vhd, minimig.v, userio.v, userio_osd.v, minimig_virtual_top.v, 95 insertions). p5-build adds (separately) `rtl/host/host.qip`, `rtl/soc/minimig_openaars_top.v` (`HOSTCPU_RISCV` 1, `HOSTCPU_RVDEBUG` 0) and `rtl/soc/minimig_virtual_top.v` (defaults 0, 832 unchanged); the debug bridge is behind `HOSTCPU_RVDEBUG`, default 0.
