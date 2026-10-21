@@ -1,0 +1,5 @@
+// t_lanes SDRAM preload: big-endian 32-bit words, @ = word address
+// (byte address / 4).  0x4000: bytes 11 22 33 44 55 66 77 88.
+@1000
+11223344
+55667788

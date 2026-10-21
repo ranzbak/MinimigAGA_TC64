@@ -1,0 +1,6 @@
+build/
+test/*_test
+test/emu/*_emu
+tools/cfgconv/cfgconv
+build_sr/
+build_clang/

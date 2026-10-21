@@ -1,0 +1,15 @@
+# MMC_Init's card commands on an SDHC card (mmc_test), the golden: the SD model's
+# command log of the L2 boot run (the boot ROM's spi_init: the same protocol,
+# CMD0, CMD8 0x1AA, CMD55/ACMD41 HCS polls, CMD58), up to the first CMD58:
+#   SIM=verilator RUNTAG=p3t10sd XARGS=+SD_LOG=1 bash sim/host_bridge/run.sh boot
+#   grep '^SD: [0-9]' sim/host_bridge/run_p3t10sd/tb_boot_x0_s8_j0.log | sed '/ CMD58 /q' | awk '{print $3, $4}'
+# (model defaults: 2 ACMD41 polls answered idle, the third ready)
+CMD0 arg=00000000
+CMD8 arg=000001aa
+CMD55 arg=00000000
+ACMD41 arg=40000000
+CMD55 arg=00000000
+ACMD41 arg=40000000
+CMD55 arg=00000000
+ACMD41 arg=40000000
+CMD58 arg=00000000

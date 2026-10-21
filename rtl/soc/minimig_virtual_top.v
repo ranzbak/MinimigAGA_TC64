@@ -14,6 +14,12 @@
 module minimig_virtual_top #(
     parameter hostonly=0,
     parameter debug = 0,
+    // OSD host CPU (rtl/host/832_bridge.vhd): 0 = EightThirtyTwo, 1 = the
+    // VexRiscv RV32IMC in rtl/host/rv_hostcpu.v.  0 by default, so every top
+    // that does not set it keeps the 832; minimig_openaars_top sets 1.
+    parameter hostcpu_riscv = 0,
+    // RISC-V debug: 0 none (production), 1 BSCANE2 tunnel (Xilinx only).
+    parameter hostcpu_rvdebug = 0,
     parameter spimux = 0,
     parameter havertg = 1,
     parameter haveaudio = 1,
@@ -1148,8 +1154,15 @@ end
 
 
 //// minimig top ////
+// userio_osd's OSD reply sequence (CLK_28 domain) -> cfide's HOST_REQ register.
+// No synchroniser: CLK_28 and CLK_114 (cfide's sysclk) are outputs of the one
+// MMCM in amiga_clk; cfide compares it in clk_28 and copies it in sysclk only
+// while it is static (cfide.vhd; findings/osd-riscv/phase4.md).
+wire [1:0] osd_rx_seq;
+
 `ifdef HOSTONLY
 assign SPI_DO=1'b1;
+assign osd_rx_seq=2'b00;   // no OSD
 assign _ram_oe=1'b1;
 assign _ram_we=1'b1;
 `else
@@ -1266,6 +1279,7 @@ minimig #(
     .sdi          (SPI_DI           ), // SPI data input
     .sdo          (SPI_DO           ), // SPI data output
     .sck          (SPI_SCK          ), // SPI clock
+    .osd_rx_seq   (osd_rx_seq       ), // OSD reply sequence -> cfide HOST_REQ
     //video
     .selcsync     (VGA_SELCS        ), // composite sync
     ._csync       (cs               ), // horizontal sync
@@ -1326,7 +1340,11 @@ assign RTG_ENABLE = rtg_ena;
 
 wire host_interrupt;
 
-EightThirtyTwo_Bridge #( debug ? 1'b1 : 1'b0) hostcpu
+EightThirtyTwo_Bridge #(
+    .debug(debug ? 1'b1 : 1'b0),
+    .cpu_riscv(hostcpu_riscv ? 1'b1 : 1'b0),
+    .rv_debug(hostcpu_rvdebug ? 1'b1 : 1'b0)
+) hostcpu
 (
     .clk(CLK_114),
     .nReset(reset_out), // (nReset)
@@ -1345,7 +1363,7 @@ EightThirtyTwo_Bridge #( debug ? 1'b1 : 1'b0) hostcpu
     .ram_req(host_ramreq), // Ram request (To SDRAM when ram request)
     .ram_ack(host_ramack), // Ram acknowledge (clkena_in)
 
-    .interrupt(host_interrupt) // TODO find out
+    .interrupt(host_interrupt)
 );
 
 
@@ -1423,6 +1441,7 @@ cfide #(
     .pos_data_q(VPOS_DATA),
 `endif
 
+    .osd_rx_seq(osd_rx_seq),   // HOST_REQ OSD_RDY (OSD reply-ready handshake)
     .clk_28(CLK_28),
     .tick_in(aud_tick)
 );

@@ -1,0 +1,1 @@
+15:05:46 --- sercap start /dev/ttyUSB1 38400

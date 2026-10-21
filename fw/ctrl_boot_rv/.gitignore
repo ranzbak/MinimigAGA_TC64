@@ -1,0 +1,4 @@
+build/
+build_im/
+test/out/
+bootdiag.bin

@@ -1,0 +1,321 @@
+# Shared shell functions of the host-CPU benches (sim/host_bridge, later
+# sim/l3).  Sourced by their run.sh (bash), never run:
+#   . "$ROOT/sim/common/hostsim.sh"
+#
+# The caller sets, before calling any function here:
+#   ROOT        the checkout (rtl/, fw/, sim/)
+#   HERE        the bench directory (verilator/blackbox.vhd, verilator/romcheck.py
+#               and the waiver file are looked up there)
+#   SIM         xsim or verilator
+#   GHDL, GHDLFLAGS, VERILATOR, JOBS, VIVADO_PATH
+# and may set XRAND=1 (Verilator only), XSEED=<n>, RUNTAG.
+#
+# Functions (the run directory <run> is an absolute path):
+#   hs_die <message>                     print "FAILED: ..." and exit 1
+#   hs_copy_rtl <run> <rev>              the RTL of <rev> (a checkout directory) into <run>/src
+#                                        with the hostcache.v simulation fixes
+#   hs_ghdl_convert <run> <cpu_riscv> <extra_ws> <cfide generics...>
+#                                        ghdl --synth of the bridge (with the ROM) and cfide
+#                                        into $HS_DIR/bridge.v, cfide.v.  Inputs in variables:
+#                                        HS_DIR (output directory), HS_ROM (the ROM vhd),
+#                                        HS_VB, HS_VC (bridge and cfide file names in <run>/src);
+#                                        cpu_riscv = false (the EightThirtyTwo) also HS_E832
+#                                        (the EightThirtyTwo RTL directory: $HS_E832_FILES) and
+#                                        HS_ROM = the run copy of hs_rom832
+#   hs_rom832 <run>                      the 832 boot ROM fw/ctrl_boot_832/OSDBoot_832_ROM.vhd
+#                                        as <run>/src/OSDBoot_832_ROM.vhd in the shared-variable
+#                                        form of the RV ROM (both simulators; see the function)
+#   hs_verilate <run> <top> <defines> <sources...>
+#                                        Verilator build of snapshot $HS_NAME into
+#                                        <run>/vl_$HS_NAME/V<top>; <defines> is a
+#                                        space-separated list of -D options; HS_VFLAGS holds
+#                                        further verilator options (a plain string),
+#                                        HS_VLT the waiver file.  XRAND=1: randomised
+#                                        uninitialised state (hs_xrand_args)
+#   hs_X <run> <tool> <args...>          one Vivado tool (xvlog, xvhdl, xelab), logged
+#   hs_xsim_build <run> <snapshot> <extra_ws> <top>
+#                                        the xelab step of an xsim snapshot
+#   hs_simrun <run> <snapshot> <top> <log> <plusarg...>
+#                                        one simulation (plusargs without the +); XRAND=1
+#                                        adds the Verilator run plusargs and writes the
+#                                        "=== XRAND seed <n>" line first in the log
+#   hs_compare <runA> <runB>             every tb_*.log and spi.txt of two run directories
+#                                        (exit 1 unless all SAME)
+#   hs_fwrv <run>                        the RV firmware into <run>/fwrv (RV32OSDA.BIN) under
+#                                        a date shim (L3_DATE, default 2026-01-01)
+#
+# XRAND=1 (X-sensitivity twin): the build flags --x-assign unique --x-initial
+# unique instead of 0 / 0, and the run plusargs +verilator+rand+reset+2
+# +verilator+seed+<n> (without rand+reset+2 the state still starts at 0).
+# The seed is XSEED, default the cksum of the RUNTAG mod 2147483647 + 1 (Verilator takes 1..2147483647).
+
+hs_die() { echo "FAILED: $*"; exit 1; }
+
+# RTL files a bench copies (the Verilog / VHDL it simulates, never rtl/ itself)
+HS_RTL_FILES="rtl/host/cfide.vhd rtl/host/832_bridge.vhd rtl/host/hostcache.v rtl/sdram/dpram_inf_generic.v rtl/host/rv_hostcpu.v rtl/host/vexriscv/VexOsd.v"
+
+hs_copy_rtl() {
+	local run=$1 rev=$2 f
+	mkdir -p "$run/src" || hs_die "mkdir $run/src"
+	for f in $HS_RTL_FILES; do
+		cp "$rev/$f" "$run/src/" || hs_die "copy $f"
+	done
+	sed -i "s/ack <= #1 1'b0;/ack <= 1'b0;/" "$run/src/hostcache.v"
+	grep -q "ack <= #1" "$run/src/hostcache.v" && hs_die "hostcache #1 fix not applied"
+	sed -i '1i `timescale 1ns/1ps' "$run/src/hostcache.v" "$run/src/dpram_inf_generic.v"
+	hs_pin_hostcache "$run"
+}
+
+# XRAND=1: flops the RTL leaves without a reset and the FPGA starts at 0 (its
+# configuration initialises every flop; sim/host_bridge/README.md, "Shared
+# parts") are pinned to 0 at time 0 in the run copies / the conversion, so the
+# seeds keep randomising everything else.  hostcache.v: ack, sdram_req;
+# 832_bridge.vhd (converted): cache_req, cpu_ack, rom_wr.  Counts in
+# <run>/src/pinned_hostcache and <ghdl dir>/pinned.txt, printed by hs_simrun.
+hs_pin_hostcache() {
+	local run=$1 n
+	[ "${XRAND:-0}" = 1 ] || return 0
+	sed -i -e 's/^\toutput reg ack,/\toutput reg ack = 1'"'"'b0,/' -e 's/^\toutput reg sdram_req,/\toutput reg sdram_req = 1'"'"'b0,/' "$run/src/hostcache.v"
+	n=$(grep -c "output reg [a-z_]* = 1'b0," "$run/src/hostcache.v")
+	[ "$n" = 2 ] || hs_die "XRAND pin: hostcache.v ack / sdram_req not found"
+	echo "$n" > "$run/src/pinned_hostcache"
+}
+
+# hs_pin_bridge <converted bridge.v> <count file>
+hs_pin_bridge() {
+	local v=$1 n=0 sig q
+	[ "${XRAND:-0}" = 1 ] || return 0
+	for sig in cache_req cpu_ack rom_wr; do
+		q=$(sed -n "s/^  assign $sig = \(n[0-9]*_q\); .*/\1/p" "$v")
+		[ -n "$q" ] || hs_die "XRAND pin: no flop behind $sig in $v (GHDL output format?)"
+		sed -i "s/^  reg $q;/  reg $q = 1'b0;/" "$v"
+		grep -q "^  reg $q = 1'b0;" "$v" || hs_die "XRAND pin: flop $q of $sig not found in $v"
+		n=$((n + 1))
+	done
+	echo "$n" > "$2"
+}
+
+# the EightThirtyTwo CPU's VHDL (in HS_E832), in analysis order
+# (sim/spi_cdc/host832/run.sh), and the stub of its debug bridge entity
+# (832_bridge.vhd instantiates debug_bridge_jtag only when debug = true; the
+# analyser still wants the entity)
+HS_E832_FILES="eightthirtytwo_pkg.vhd eightthirtytwo_shifter.vhd eightthirtytwo_alu.vhd eightthirtytwo_aligner.vhd
+	eightthirtytwo_aligner_le.vhd eightthirtytwo_decode.vhd eightthirtytwo_fetchloadstore.vhd eightthirtytwo_hazard.vhd
+	eightthirtytwo_debug.vhd eightthirtytwo_cpu.vhd"
+HS_E832_STUB=sim/spi_cdc/host832/debug_bridge_stub.vhd
+
+# hs_rom832 <run>: fw/ctrl_boot_832/OSDBoot_832_ROM.vhd declares its RAM as a
+# signal written by two port processes.  Synthesis infers one true-dual-port
+# BRAM from it, but in simulation the processes are two drivers of the whole
+# signal: a write of port A resolves against port B's driver, which still
+# holds the initial contents, and the written bytes read back as X (the
+# 832's stack lives in this BRAM, below 0x2000), and ghdl --synth refuses it
+# ("multiple assignments for ram").  The run copy is the shared-variable
+# form of fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd's template (the same words,
+# ports and processes; signal -> shared variable, the two writes <= -> :=),
+# i.e. the BRAM as synthesis builds it.
+hs_rom832() {
+	local src="$ROOT/fw/ctrl_boot_832/OSDBoot_832_ROM.vhd" dst="$1/src/OSDBoot_832_ROM.vhd"
+	mkdir -p "$1/src" || hs_die "mkdir $1/src"
+	python3 - "$src" "$dst" <<'EOP' || hs_die "hs_rom832: $src is not the expected template"
+import sys
+s = open(sys.argv[1]).read()
+for old, new, n in (("\nsignal ram : ram_type :=\n", "\nshared variable ram : ram_type :=\n", 1),
+                    ("attribute ram_style of ram: signal is", "attribute ram_style of ram: variable is", 1),
+                    (") <= d((i + 1) * COL_WIDTH", ") := d((i + 1) * COL_WIDTH", 1),
+                    (") <= d2((i + 1) * COL_WIDTH", ") := d2((i + 1) * COL_WIDTH", 1)):
+    assert s.count(old) == n, old
+    s = s.replace(old, new)
+open(sys.argv[2], "w").write(s)
+EOP
+}
+
+hs_ghdl_convert() {
+	local run=$1 cpu=$2 xw=$3 bb d=$HS_DIR rom=$HS_ROM f e832=(); shift 3
+	case "$cpu" in
+		true) ;;
+		false)
+			[ -n "${HS_E832:-}" ] || hs_die "hs_ghdl_convert: cpu_riscv=false needs HS_E832 (the EightThirtyTwo RTL)"
+			for f in $HS_E832_FILES; do
+				[ -f "$HS_E832/$f" ] || hs_die "no $HS_E832/$f (E832= the EightThirtyTwo RTL directory)"
+				e832+=("$d/e832/$f")
+			done
+			e832+=("$ROOT/$HS_E832_STUB") ;;
+		*) hs_die "hs_ghdl_convert: cpu_riscv=$cpu (true or false)" ;;
+	esac
+	rm -rf "$d"; mkdir -p "$d" || hs_die "mkdir $d"
+	if [ "$cpu" = false ]; then
+		# copies of the CPU's VHDL with two changes for GHDL 4.1's --synth
+		# (sim/l3/README.md "832", the evidence):
+		# 1. the ALU instance label: GHDL names an instance's output nets
+		#    <label>_<port>, and the instance "alu" has outputs q1, q2,
+		#    carry, ack wired to signals named alu_q1, alu_q2, alu_carry,
+		#    alu_ack: the output declares each twice (Verilator: "Duplicate
+		#    declaration of signal").  The label becomes alu_unit.
+		# 2. the main process's async reset also clears the thread record's
+		#    decode fields it leaves alone (d_imm, d_reg, d_alu_op,
+		#    d_alu_reg1, d_alu_reg2, d_read_tmp, d_read_reg).  With some
+		#    fields of the record reset and others not, GHDL makes no flops
+		#    at all for the fields from d_imm on (the clock edge becomes a
+		#    constant 0, each field a mux of its own value: the decoded op
+		#    never reaches the ALU, the CPU runs straight through its boot
+		#    ROM).  The FPGA starts these flops at 0 and the reset comes
+		#    once, at the start: the values at the reset's release are the
+		#    same; xsim (the original VHDL) is the cross-check.
+		mkdir -p "$d/e832" || hs_die "mkdir $d/e832"
+		for f in $HS_E832_FILES; do cp "$HS_E832/$f" "$d/e832/" || hs_die "copy $HS_E832/$f"; done
+		python3 - "$d/e832/eightthirtytwo_cpu.vhd" <<'EOP' || hs_die "hs_ghdl_convert: eightthirtytwo_cpu.vhd is not the expected source (ALU label, reset branch)"
+import sys
+p = sys.argv[1]
+s = open(p).read()
+for old, new in (("\nalu : entity work.eightthirtytwo_alu\n", "\nalu_unit : entity work.eightthirtytwo_alu\n"),
+                 ("\n\t\tthread.d_ex_op<=e32_ex_bubble;\n",
+                  "\n\t\tthread.d_ex_op<=e32_ex_bubble;\n" +
+                  "".join("\t\tthread.%s<=%s; -- hs_ghdl_convert\n" % (f, v) for f, v in
+                          (("d_imm", "(others=>'0')"), ("d_reg", "(others=>'0')"), ("d_alu_op", "(others=>'0')"),
+                           ("d_alu_reg1", "(others=>'0')"), ("d_alu_reg2", "(others=>'0')"),
+                           ("d_read_tmp", "'0'"), ("d_read_reg", "'0'"))))):
+    assert s.count(old) == 1, old
+    s = s.replace(old, new)
+open(p, "w").write(s)
+EOP
+	fi
+	# shellcheck disable=SC2086
+	"$GHDL" -a $GHDLFLAGS --workdir="$d" "$HERE/verilator/blackbox.vhd" "$run/src/$HS_VC" "${e832[@]}" "$run/src/$HS_VB" "$rom" \
+		> "$d/analyse.log" 2>&1 || { cat "$d/analyse.log"; hs_die "ghdl -a ($d/analyse.log)"; }
+	# shellcheck disable=SC2086
+	"$GHDL" --synth $GHDLFLAGS --workdir="$d" -gcpu_riscv="$cpu" -grv_extra_ws="$xw" --out=verilog \
+		EightThirtyTwo_Bridge > "$d/bridge.v" 2> "$d/bridge.log" || { cat "$d/bridge.log"; hs_die "ghdl --synth bridge ($d/bridge.log)"; }
+	# shellcheck disable=SC2086
+	"$GHDL" --synth $GHDLFLAGS --workdir="$d" "$@" --out=verilog \
+		cfide > "$d/cfide.v" 2> "$d/cfide.log" || { cat "$d/cfide.log"; hs_die "ghdl --synth cfide ($d/cfide.log)"; }
+	grep -q 'found RAM "ram", width: 32 bits, depth: 2048' "$d/bridge.log" \
+		|| hs_die "ghdl --synth did not infer the ROM's RAM ($d/bridge.log)"
+	python3 "$HERE/verilator/romcheck.py" "$rom" "$d/bridge.v" > "$d/romcheck.log" 2>&1 \
+		|| { cat "$d/romcheck.log"; hs_die "converted ROM contents ($rom)"; }
+	for bb in $(sed -n 's/^entity \([a-z0-9_]*\) is$/\1/p' "$HERE/verilator/blackbox.vhd"); do
+		sed -i "/^module $bb\$/,/^endmodule\$/d" "$d/bridge.v" "$d/cfide.v"
+		# the delete must have worked: a stub left in would shadow the real module
+		grep -qE "^ *module +$bb\b" "$d/bridge.v" "$d/cfide.v" \
+			&& hs_die "black-box module $bb still in $d/bridge.v or cfide.v after the delete (GHDL output format?)"
+	done
+	sed -i '1i `timescale 1ns/1ps' "$d/bridge.v" "$d/cfide.v"
+	hs_pin_bridge "$d/bridge.v" "$d/pinned.txt"
+}
+
+# hs_xrand_seed: the seed of this run (XSEED, else the cksum of the RUNTAG
+# reduced to Verilator's range 1..2147483647)
+hs_xrand_seed() {
+	local c
+	if [ -n "${XSEED:-}" ]; then echo "$XSEED"
+	else c=$(printf '%s' "${RUNTAG:-wt}" | cksum | cut -d' ' -f1); echo $((c % 2147483647 + 1)); fi
+}
+
+# hs_xrand_args: the Verilator run plusargs of an XRAND run (empty otherwise)
+hs_xrand_args() {
+	[ "${XRAND:-0}" = 1 ] || return 0
+	echo "+verilator+rand+reset+2 +verilator+seed+$(hs_xrand_seed)"
+}
+
+hs_verilate() {
+	local run=$1 top=$2 defs=$3 xr="--x-assign 0 --x-initial 0"; shift 3
+	local name=$HS_NAME
+	[ "${XRAND:-0}" = 1 ] && xr="--x-assign unique --x-initial unique"
+	rm -rf "$run/vl_$name"
+	# shellcheck disable=SC2086
+	OBJCACHE=${OBJCACHE-$(command -v ccache)} "$VERILATOR" --binary --timing -j "$JOBS" \
+		-MAKEFLAGS "OPT_FAST=-O2 OPT_GLOBAL=-O2" $xr \
+		$defs ${HS_VFLAGS:-} --top-module "$top" \
+		--Mdir "$run/vl_$name" -o "V$top" "$HS_VLT" \
+		"$@" > "$run/compile_$name.log" 2>&1
+	if [ ! -x "$run/vl_$name/V$top" ]; then
+		grep -m20 -E '^%(Error|Warning)' "$run/compile_$name.log" || tail -20 "$run/compile_$name.log"
+		hs_die "verilator $name ($run/compile_$name.log)"
+	fi
+}
+
+hs_X() {
+	local run=$1; shift
+	# through hs_die, which a bench may redefine (sim/l3: the verdict line)
+	"$VIVADO_PATH/bin/$@" >> "$run/compile.log" 2>&1 || { tail -20 "$run/compile.log"; hs_die "$*"; }
+}
+
+hs_xsim_build() {
+	hs_X "$1" xelab -debug off -generic_top "EXTRA_WS=$3" "$4" -s "$2"
+}
+
+hs_simrun() {
+	local run=$1 snap=$2 top=$3 log=$4 x a=(); shift 4
+	if [ "$SIM" = verilator ]; then
+		for x; do a+=("+$x"); done
+		if [ "${XRAND:-0}" = 1 ]; then
+			echo "=== XRAND seed $(hs_xrand_seed)" > "$log"
+			echo "=== XRAND pinned $(cat "$run/ghdl_$snap/pinned.txt" "$run/src/pinned_hostcache" 2>/dev/null | awk '{s += $1} END {print s + 0}') regs" >> "$log"
+			# shellcheck disable=SC2046
+			"$run/vl_$snap/V$top" $(hs_xrand_args) "${a[@]}" >> "$log" 2>&1
+		else
+			"$run/vl_$snap/V$top" "${a[@]}" > "$log" 2>&1
+		fi
+	else
+		[ "${XRAND:-0}" = 1 ] && hs_die "XRAND=1 needs SIM=verilator"
+		for x; do a+=(-testplusarg "$x"); done
+		"$VIVADO_PATH/bin/xsim" "$snap" -R --onfinish quit "${a[@]}" > "$log" 2>&1
+	fi
+}
+
+# hs_norm <log>: a run log without the simulators' own lines (xsim's banner,
+# script echo, "$finish called at", exit, memory usage; Verilator's
+# "- ...: Verilog $finish") and without empty lines; run directories as run_*.
+# Also without i2c_master_mmio.sv's $monitor lines ("r_cmd_done=", havei2c =
+# true only): xsim prints the first one, Verilator repeats it at every
+# evaluation.  And without the "=== XRAND seed" line of an XRAND run.
+hs_norm() {
+	grep -vE '^(r_cmd_done=|=== XRAND (seed|pinned) |\*\*\*\*\*\* xsim v|  \*\*\*\* |    \*\* |source xsim\.dir/|# xsim |Time resolution is |run -all$|exit [0-9]+$|INFO: \[Common 17-206\] Exiting xsim|INFO: xsimkernel Simulation Memory Usage|\$finish called at time |- .*: Verilog \$finish$|$)' "$1" \
+		| sed 's|/run_[^/]*/|/run_*/|g'
+}
+
+# hs_compare <dir a> <dir b>: every run log (tb_*.log) of both directories
+hs_compare() {
+	local a=$1 b=$2 f n=0 nd=0 no=0 v c
+	for f in $( (cd "$a" && ls tb_*.log; cd "$b" && ls tb_*.log) 2>/dev/null | LC_ALL=C sort -u); do
+		if [ ! -f "$a/$f" ] || [ ! -f "$b/$f" ]; then
+			echo "ONLY ${f%.log}: in $( [ -f "$a/$f" ] && echo "$a" || echo "$b")"; no=$((no + 1)); continue
+		fi
+		n=$((n + 1))
+		v=$(grep -m1 -E '^=== (PASS|FAIL)' "$a/$f" | sed 's/^=== //')
+		c=$(sed -n 's/.*, main done \(-*[0-9]*\), cycles \([0-9]*\)$/\1 \/ \2/p' "$a/$f")
+		if diff -q <(hs_norm "$a/$f") <(hs_norm "$b/$f") > /dev/null; then
+			echo "SAME ${f%.log}: ${v:-no verdict}, main done / cycles ${c:-?}"
+		else
+			nd=$((nd + 1))
+			echo "DIFF ${f%.log}: ${v:-no verdict} in $a, $(grep -m1 -E '^=== (PASS|FAIL)' "$b/$f" | sed 's/^=== //') in $b"
+			diff <(hs_norm "$a/$f") <(hs_norm "$b/$f") | sed -n '1,6s/^/    /p'
+		fi
+	done
+	# fwboot runs: the SPI frame log as well
+	if [ -f "$a/spi.txt" ] || [ -f "$b/spi.txt" ]; then
+		if [ ! -f "$a/spi.txt" ] || [ ! -f "$b/spi.txt" ]; then
+			echo "ONLY spi.txt: in $( [ -f "$a/spi.txt" ] && echo "$a" || echo "$b")"; no=$((no + 1))
+		else
+			n=$((n + 1))
+			if cmp -s "$a/spi.txt" "$b/spi.txt"; then echo "SAME spi.txt: $(wc -l < "$a/spi.txt") frames"
+			else nd=$((nd + 1)); echo "DIFF spi.txt"; diff "$a/spi.txt" "$b/spi.txt" | cut -c1-120 | sed -n '1,6s/^/    /p'; fi
+		fi
+	fi
+	echo "=== COMPARE $n logs: $((n - nd)) same, $nd differ, $no in one directory only"
+	[ "$nd" -eq 0 ] && [ "$no" -eq 0 ] && [ "$n" -gt 0 ]
+}
+
+# hs_fwrv <run>: build fw/ctrl_rv into <run>/fwrv with a `date` that always
+# prints L3_DATE (default 2026-01-01), so two builds of one tree are
+# byte-identical (the version string carries the build minute).  The shim
+# is <run>/dateshim/date; the image is <run>/fwrv/RV32OSDA.BIN.
+hs_fwrv() {
+	local run=$1 shim="$1/dateshim"
+	mkdir -p "$shim" "$run/fwrv" || hs_die "mkdir $run/fwrv"
+	printf '%s\n' '#!/bin/sh' 'TZ=UTC exec /bin/date -d "${L3_DATE:-2026-01-01} 00:00:00" "$@"' > "$shim/date"
+	chmod +x "$shim/date"
+	PATH="$shim:$PATH" make -s -C "$ROOT/fw/ctrl_rv" B="$run/fwrv" > "$run/make_fwrv.log" 2>&1 \
+		|| { tail -20 "$run/make_fwrv.log"; hs_die "make fw/ctrl_rv ($run/make_fwrv.log)"; }
+	[ -f "$run/fwrv/RV32OSDA.BIN" ] || hs_die "no $run/fwrv/RV32OSDA.BIN"
+}

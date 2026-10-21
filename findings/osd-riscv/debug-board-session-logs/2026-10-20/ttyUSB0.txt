@@ -1,0 +1,261 @@
+14:15:14 --- sercap start /dev/ttyUSB0 115200
+14:16:11 Initializing SD card
+14:16:11 0101cmd_CMD8 response: 1
+14:16:11 0101010000Hunting for partition
+14:16:11 Reading MBR
+14:16:11 00Partitioncount 1
+14:16:11 Reading boot sector 2048
+14:16:11 00Read boot sector from first partition
+14:16:11 Hunting for filesystem
+14:16:11 Reading directory sector 32544
+14:16:11 00Reading directory sector 32545
+14:16:11 00Reading directory sector 32546
+14:16:11 00Reading directory sector 32547
+14:16:11 00Reading directory sector 32548
+14:16:11 00Reading directory sector 32549
+14:16:11 00file "RV32OSDABIN" found
+14:16:11 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000Platform has SPI RTC support
+14:16:11 SDHC card detected
+14:16:11 partition type: 0x00 (FAT32)
+14:16:11 file "MINMGAR CFG" found
+14:16:11 Configuration file size: 212
+14:16:11 ##End result : 0
+14:16:12 file "MINIMIG ART" found
+14:16:12 file "MINIMIG BAL" found
+14:16:12 file "MINIMIG COP" found
+14:16:12 Minimig AGA BETA version 2026-10-2 for Turbo Chameleon 64
+14:16:12 Firmware version: 2026-1-1-0-0
+14:16:12 CPU: MC68040 + FPU + MMU
+14:16:12  
+14:16:12 Minimig AGA by Rok Krajnc.  Original Minimig by Dennis van Weeren
+14:16:12 Updates by Jakub Bednarski, Tobias Gubener, Sascha Boing, A.M. Robinson & others
+14:16:12  
+14:16:12 Ported to Turbo Chameleon 64 by Alastair M. Robinson
+14:16:12 Ported to Open AARS by Paul Honig
+14:16:12  
+14:16:18 file "DRIVESNDBIN" found
+14:16:18 Audio file - length 212098
+14:16:19 Sound 0 at 3C38E, length 22394
+14:16:19 Sound 1 at 41B10, length 26982
+14:16:19 Sound 2 at 4847E, length 26054
+14:16:19 Sound 3 at 4EA4C, length 36680
+14:16:19 Sound 4 at 5799C, length 36388
+14:16:19 Sound 5 at 607C8, length 12800
+14:16:19 Sound 6 at 639D0, length 13194
+14:16:19 Sound 7 at 66D62, length 13396
+14:16:19 Sound 8 at 6A1BE, length 13198
+14:16:19 Sound 9 at 6D554, length 2748
+14:16:19 Sound 10 at 6E018, length 2868
+14:16:19 Sound 11 at 6EB54, length 2846
+14:16:19 Sound 12 at 6F67A, length 2430
+14:16:19 Loading kickstart ROM...
+14:16:19 file "HARDFILEHDF" found
+14:16:19 Total sectors: 7421875, cyl: 29451, heads: 4, sectors: 63
+14:16:19 HARDFILE 0:
+14:16:19 file: "HARDFILE.HDF"
+14:16:19 size: 3800000000 (3623 MB)
+14:16:19 CHS: 29451.4.63 (3623 MB)
+14:16:24 Hardfile indexed in 847 ms
+14:16:24 Total sectors: 31205376, cyl: 61915, heads: 8, sectors: 63
+14:16:24 file "HRTMON  ROM" found
+14:16:24 Uploading HRTmon ROM... File size: 194kB
+14:16:24 [*************]
+14:16:24 ROM dir: 105448
+14:16:24 ROM dir: 105448
+14:16:24 ##End result : 0
+14:16:24 ROM loading failed
+14:20:13 Initializing SD card
+14:20:13 0101cmd_CMD8 response: 1
+14:20:13 0101010000Hunting for partition
+14:20:13 Reading MBR
+14:20:13 00Partitioncount 1
+14:20:13 Reading boot sector 2048
+14:20:13 00Read boot sector from first partition
+14:20:13 Hunting for filesystem
+14:20:13 Reading directory sector 32544
+14:20:13 00Reading directory sector 32545
+14:20:13 00Reading directory sector 32546
+14:20:13 00Reading directory sector 32547
+14:20:13 00Reading directory sector 32548
+14:20:13 00Reading directory sector 32549
+14:20:13 00file "RV32OSDABIN" found
+14:20:14 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000Platform has SPI RTC support
+14:20:14 SDHC card detected
+14:20:14 partition type: 0x00 (FAT32)
+14:20:14 file "MINMGAR CFG" found
+14:20:14 Configuration file size: 212
+14:20:14 ##End result : 0
+14:20:14 file "MINIMIG ART" found
+14:20:14 file "MINIMIG BAL" found
+14:20:14 file "MINIMIG COP" found
+14:20:15 Minimig AGA BETA version 2026-10-2 for Turbo Chameleon 64
+14:20:15 Firmware version: 2026-1-1-0-0
+14:20:15 CPU: MC68040 + FPU + MMU
+14:20:15  
+14:20:15 Minimig AGA by Rok Krajnc.  Original Minimig by Dennis van Weeren
+14:20:15 Updates by Jakub Bednarski, Tobias Gubener, Sascha Boing, A.M. Robinson & others
+14:20:15  
+14:20:15 Ported to Turbo Chameleon 64 by Alastair M. Robinson
+14:20:15 Ported to Open AARS by Paul Honig
+14:20:15  
+14:20:21 file "DRIVESNDBIN" found
+14:20:21 Audio file - length 212098
+14:20:21 Sound 0 at 3C38E, length 22394
+14:20:21 Sound 1 at 41B10, length 26982
+14:20:21 Sound 2 at 4847E, length 26054
+14:20:21 Sound 3 at 4EA4C, length 36680
+14:20:21 Sound 4 at 5799C, length 36388
+14:20:21 Sound 5 at 607C8, length 12800
+14:20:21 Sound 6 at 639D0, length 13194
+14:20:21 Sound 7 at 66D62, length 13396
+14:20:21 Sound 8 at 6A1BE, length 13198
+14:20:21 Sound 9 at 6D554, length 2748
+14:20:21 Sound 10 at 6E018, length 2868
+14:20:21 Sound 11 at 6EB54, length 2846
+14:20:21 Sound 12 at 6F67A, length 2430
+14:20:21 Loading kickstart ROM...
+14:20:21 file "HARDFILEHDF" found
+14:20:21 Total sectors: 7421875, cyl: 29451, heads: 4, sectors: 63
+14:20:21 HARDFILE 0:
+14:20:21 file: "HARDFILE.HDF"
+14:20:21 size: 3800000000 (3623 MB)
+14:20:21 CHS: 29451.4.63 (3623 MB)
+14:20:26 Hardfile indexed in 847 ms
+14:20:26 Total sectors: 31205376, cyl: 61915, heads: 8, sectors: 63
+14:20:26 file "HRTMON  ROM" found
+14:20:26 Uploading HRTmon ROM... File size: 194kB
+14:20:27 [*************]
+14:20:27 ROM dir: 105448
+14:20:27 ROM dir: 105448
+14:20:27 ##End result : 0
+14:20:27 ROM loading failed
+14:21:31 Initializing SD card
+14:21:31 0101cmd_CMD8 response: 1
+14:21:31 0101010000Hunting for partition
+14:21:31 Reading MBR
+14:21:31 00Partitioncount 1
+14:21:31 Reading boot sector 2048
+14:21:31 00Read boot sector from first partition
+14:21:31 Hunting for filesystem
+14:21:31 Reading directory sector 32544
+14:21:31 00Reading directory sector 32545
+14:21:31 00Reading directory sector 32546
+14:21:31 00Reading directory sector 32547
+14:21:31 00Reading directory sector 32548
+14:21:31 00Reading directory sector 32549
+14:21:31 00file "RV32OSDABIN" found
+14:21:31 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000Platform has SPI RTC support
+14:21:31 SDHC card detected
+14:21:31 partition type: 0x00 (FAT32)
+14:21:31 file "MINMGAR CFG" found
+14:21:31 Configuration file size: 212
+14:21:31 ##End result : 0
+14:21:32 file "MINIMIG ART" found
+14:21:32 file "MINIMIG BAL" found
+14:21:32 file "MINIMIG COP" found
+14:21:32 Minimig AGA BETA version 2026-10-2 for Turbo Chameleon 64
+14:21:32 Firmware version: 2026-1-1-0-0
+14:21:32 CPU: MC68040 + FPU + MMU
+14:21:32  
+14:21:32 Minimig AGA by Rok Krajnc.  Original Minimig by Dennis van Weeren
+14:21:32 Updates by Jakub Bednarski, Tobias Gubener, Sascha Boing, A.M. Robinson & others
+14:21:32  
+14:21:32 Ported to Turbo Chameleon 64 by Alastair M. Robinson
+14:21:32 Ported to Open AARS by Paul Honig
+14:21:32  
+14:21:38 file "DRIVESNDBIN" found
+14:21:38 Audio file - length 212098
+14:21:39 Sound 0 at 3C38E, length 22394
+14:21:39 Sound 1 at 41B10, length 26982
+14:21:39 Sound 2 at 4847E, length 26054
+14:21:39 Sound 3 at 4EA4C, length 36680
+14:21:39 Sound 4 at 5799C, length 36388
+14:21:39 Sound 5 at 607C8, length 12800
+14:21:39 Sound 6 at 639D0, length 13194
+14:21:39 Sound 7 at 66D62, length 13396
+14:21:39 Sound 8 at 6A1BE, length 13198
+14:21:39 Sound 9 at 6D554, length 2748
+14:21:39 Sound 10 at 6E018, length 2868
+14:21:39 Sound 11 at 6EB54, length 2846
+14:21:39 Sound 12 at 6F67A, length 2430
+14:21:39 Loading kickstart ROM...
+14:21:39 file "HARDFILEHDF" found
+14:21:39 Total sectors: 7421875, cyl: 29451, heads: 4, sectors: 63
+14:21:39 HARDFILE 0:
+14:21:39 file: "HARDFILE.HDF"
+14:21:39 size: 3800000000 (3623 MB)
+14:21:39 CHS: 29451.4.63 (3623 MB)
+14:21:44 Hardfile indexed in 846 ms
+14:21:44 Total sectors: 31205376, cyl: 61915, heads: 8, sectors: 63
+14:21:44 file "HRTMON  ROM" found
+14:21:44 Uploading HRTmon ROM... File size: 194kB
+14:21:44 [*************]
+14:21:44 ROM dir: 105448
+14:21:44 ROM dir: 105448
+14:21:44 ##End result : 0
+14:21:44 ROM loading failed
+14:24:26 Initializing SD card
+14:24:26 0101cmd_CMD8 response: 1
+14:24:26 0101010000Hunting for partition
+14:24:26 Reading MBR
+14:24:26 00Partitioncount 1
+14:24:26 Reading boot sector 2048
+14:24:26 00Read boot sector from first partition
+14:24:26 Hunting for filesystem
+14:24:26 Reading directory sector 32544
+14:24:26 00Reading directory sector 32545
+14:24:26 00Reading directory sector 32546
+14:24:26 00Reading directory sector 32547
+14:24:26 00Reading directory sector 32548
+14:24:26 00Reading directory sector 32549
+14:24:26 00file "RV32OSDABIN" found
+14:24:26 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000Platform has SPI RTC support
+14:24:26 SDHC card detected
+14:24:26 partition type: 0x00 (FAT32)
+14:24:26 file "MINMGAR CFG" found
+14:24:26 Configuration file size: 212
+14:24:26 ##End result : 0
+14:24:26 file "MINIMIG ART" found
+14:24:26 file "MINIMIG BAL" found
+14:24:27 file "MINIMIG COP" found
+14:24:27 Minimig AGA BETA version 2026-10-2 for Turbo Chameleon 64
+14:24:27 Firmware version: 2026-1-1-0-0
+14:24:27 CPU: MC68040 + FPU + MMU
+14:24:27  
+14:24:27 Minimig AGA by Rok Krajnc.  Original Minimig by Dennis van Weeren
+14:24:27 Updates by Jakub Bednarski, Tobias Gubener, Sascha Boing, A.M. Robinson & others
+14:24:27  
+14:24:27 Ported to Turbo Chameleon 64 by Alastair M. Robinson
+14:24:27 Ported to Open AARS by Paul Honig
+14:24:27  
+14:24:33 file "DRIVESNDBIN" found
+14:24:33 Audio file - length 212098
+14:24:33 Sound 0 at 3C38E, length 22394
+14:24:33 Sound 1 at 41B10, length 26982
+14:24:33 Sound 2 at 4847E, length 26054
+14:24:33 Sound 3 at 4EA4C, length 36680
+14:24:33 Sound 4 at 5799C, length 36388
+14:24:33 Sound 5 at 607C8, length 12800
+14:24:33 Sound 6 at 639D0, length 13194
+14:24:33 Sound 7 at 66D62, length 13396
+14:24:33 Sound 8 at 6A1BE, length 13198
+14:24:33 Sound 9 at 6D554, length 2748
+14:24:33 Sound 10 at 6E018, length 2868
+14:24:33 Sound 11 at 6EB54, length 2846
+14:24:33 Sound 12 at 6F67A, length 2430
+14:24:33 Loading kickstart ROM...
+14:24:34 file "HARDFILEHDF" found
+14:24:34 Total sectors: 7421875, cyl: 29451, heads: 4, sectors: 63
+14:24:34 HARDFILE 0:
+14:24:34 file: "HARDFILE.HDF"
+14:24:34 size: 3800000000 (3623 MB)
+14:24:34 CHS: 29451.4.63 (3623 MB)
+14:24:38 Hardfile indexed in 847 ms
+14:24:38 Total sectors: 31205376, cyl: 61915, heads: 8, sectors: 63
+14:24:38 file "HRTMON  ROM" found
+14:24:38 Uploading HRTmon ROM... File size: 194kB
+14:24:39 [*************]
+14:24:39 ROM dir: 105448
+14:24:39 ROM dir: 105448
+14:24:39 ##End result : 0
+14:24:39 ROM loading failed

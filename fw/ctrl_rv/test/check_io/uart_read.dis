@@ -1,0 +1,7 @@
+# check_io.awk fixture: a load from the UART through a register -> (b) FAIL.
+
+00003000 <uart_read>:
+    3000:	fe000713          	li	a4,-32
+    3004:	01074783          	lbu	a5,16(a4) # ffffffe0 + 16 = fffffff0: UART read
+    3008:	fe000023          	sb	zero,-32(zero) # ffffffe0
+    300c:	8082              	ret	

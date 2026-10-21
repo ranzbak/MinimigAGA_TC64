@@ -1,0 +1,210 @@
+#-----------------------------------------------------------
+# Vivado v2023.2 (64-bit)
+# SW Build 4029153 on Fri Oct 13 20:13:54 MDT 2023
+# IP Build 4028589 on Sat Oct 14 00:45:43 MDT 2023
+# SharedData Build 4025554 on Tue Oct 10 17:18:54 MDT 2023
+# Start of session at: Tue Oct 20 14:22:02 2026
+# Process ID: 1465127
+# Current directory: /home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64-p5build
+# Command line: vivado -mode batch -nojournal -log /tmp/claude-1000/-home-paul-work-fpga-Xilinx-artix7-MinimigAGA-TC64/07701334-ab8d-4ba4-9b16-963ecb990a1e/scratchpad/run/rvbridge.log -source /home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64-p5build/tools/vivado/../rvdebug/rv_jtag_bridge.tcl
+# Log file: /tmp/claude-1000/-home-paul-work-fpga-Xilinx-artix7-MinimigAGA-TC64/07701334-ab8d-4ba4-9b16-963ecb990a1e/scratchpad/run/rvbridge.log
+# Journal file: 
+# Running On: jeager, OS: Linux, CPU Frequency: 1900.000 MHz, CPU Physical cores: 4, Host memory: 50222 MB
+#-----------------------------------------------------------
+source /home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64-p5build/tools/vivado/../rvdebug/rv_jtag_bridge.tcl
+# if {[catch {source -notrace [file join [file dirname [file normalize [info script]]] rbb_core.tcl]}]} {
+#     source [file join [file dirname [file normalize [info script]]] rbb_core.tcl]
+# }
+# namespace eval rvb {
+#     variable warned 0
+# }
+# proc rvb::bits_to_hex {bits} {
+#     set n [string length $bits]
+#     if {$n == 0 || ![regexp {^[01]+$} $bits]} {
+#         error "rvb::bits_to_hex: '$bits' is not a bit string"
+#     }
+#     set hex {}
+#     for {set d [expr {($n + 3) / 4 - 1}]} {$d >= 0} {incr d -1} {
+#         set v 0
+#         for {set b 3} {$b >= 0} {incr b -1} {
+#             set i [expr {4 * $d + $b}]
+#             set v [expr {2 * $v + ($i < $n ? [string index $bits $i] : 0)}]
+#         }
+#         append hex [format %x $v]
+#     }
+#     return $hex
+# }
+# proc rvb::hex_to_bits {hex n} {
+#     variable warned
+#     set h [string trim $hex]
+#     regsub {^0[xX]} $h {} h
+#     if {$h eq {} || ![regexp {^[0-9a-fA-F]+$} $h]} {
+#         error "rvb::hex_to_bits: TDO '$hex' is not one hex number"
+#     }
+#     set nd [string length $h]
+#     set bits {}
+#     for {set i 0} {$i < $n} {incr i} {
+#         set d [expr {$nd - 1 - $i / 4}]
+#         if {$d < 0} {
+#             append bits 0
+#         } else {
+#             append bits [expr {("0x[string index $h $d]" >> ($i % 4)) & 1}]
+#         }
+#     }
+#     # anything above bit n-1?
+#     set extra 0
+#     for {set d [expr {$nd - 1 - $n / 4}]} {$d >= 0} {incr d -1} {
+#         set v [expr {"0x[string index $h $d]"}]
+#         if {$d == $nd - 1 - $n / 4} { set v [expr {$v >> ($n % 4)}] }
+#         if {$v} { set extra 1 }
+#     }
+#     if {$extra && !$warned} {
+#         set warned 1
+#         rbb::log "rvb: WARNING: TDO '$hex' has bits set above bit [expr {$n - 1}] (dropped; reported once)"
+#     }
+#     return $bits
+# }
+# namespace eval vbe {}
+# proc vbe::be_reset {} {
+#     run_state_hw_jtag RESET
+# }
+# proc vbe::be_goto {stable {path {}}} {
+#     if {$path eq {}} {
+#         run_state_hw_jtag $stable
+#     } else {
+#         run_state_hw_jtag -state $path $stable
+#     }
+# }
+# proc vbe::be_idle {n} {
+#     runtest_hw_jtag -wait_state IDLE -end_state IDLE -tck $n
+# }
+# proc vbe::be_scan {type n bits end} {
+#     set tdo [scan_${type}_hw_jtag $n -tdi [rvb::bits_to_hex $bits]]
+#     return [rvb::hex_to_bits $tdo $n]
+# }
+# proc rvb::raw_self_test {} {
+#     run_state_hw_jtag RESET
+#     run_state_hw_jtag IDLE
+#     set ir [scan_ir_hw_jtag 6 -tdi [bits_to_hex [rbb::int_to_bits 0x09 6]]]
+#     set dr [scan_dr_hw_jtag 32 -tdi [bits_to_hex [string repeat 0 32]]]
+#     set id [rbb::bits_to_int [hex_to_bits $dr 32]]
+#     set irc [rbb::bits_to_int [hex_to_bits $ir 6]]
+#     rbb::log "rvb: raw self-test: scan_ir_hw_jtag 6 -> '$ir' (IR capture [format 0x%02X $irc]),\
+#         scan_dr_hw_jtag 32 -> '$dr' (IDCODE [format 0x%08X $id])"
+#     run_state_hw_jtag RESET
+#     return [expr {($id & 0x0FFFFFFF) == 0x03631093}]
+# }
+# proc rvb::opt {argv name envname default} {
+#     set i [lsearch -exact $argv -$name]
+#     if {$i >= 0} { return [lindex $argv [expr {$i + 1}]] }
+#     if {$envname ne {} && [info exists ::env($envname)] && $::env($envname) ne {}} {
+#         return $::env($envname)
+#     }
+#     return $default
+# }
+# proc rvb::main {argv} {
+#     foreach a $argv {
+#         if {[string match -* $a] && $a ni {-port -url -xvc_url -target -freq -exit_on_disconnect -self_test -idcode_readahead}} {
+#             rbb::log "rvb: unknown option $a"
+#             exit 2
+#         }
+#     }
+#     set port [opt $argv port RBB_PORT 33582]
+#     set url  [opt $argv url HW_SERVER_URL localhost:3121]
+#     set xvc  [opt $argv xvc_url XVC_URL {}]
+#     set pat  [opt $argv target TARGET *]
+#     set freq [opt $argv freq JTAG_FREQ {}]
+#     set eod  [opt $argv exit_on_disconnect {} 0]
+#     set selftest [opt $argv self_test {} 1]
+#     set ra [opt $argv idcode_readahead {} 1]
+#     rbb::log "rvb: rv_jtag_bridge: hw_server $url, [expr {$xvc ne {} ? "XVC $xvc" : "target pattern '$pat'"}],\
+#         remote_bitbang 127.0.0.1:$port[expr {$freq ne {} ? ", TCK $freq Hz" : ""}]"
+# 
+#     open_hw_manager
+#     connect_hw_server -url $url
+#     if {$xvc ne {}} {
+#         open_hw_target -jtag_mode on -xvc_url $xvc
+#         set t [current_hw_target]
+#     } else {
+#         set ts [get_hw_targets -quiet $pat]
+#         if {[llength $ts] == 0} {
+#             rbb::log "rvb: no hardware target matches '$pat' on $url"
+#             exit 1
+#         }
+#         if {[llength $ts] > 1} {
+#             rbb::log "rvb: [llength $ts] targets match '$pat'; choose one with -target / TARGET:"
+#             foreach x $ts { rbb::log "    $x" }
+#             exit 2
+#         }
+#         set t [lindex $ts 0]
+#         current_hw_target $t
+#         if {$freq ne {}} {
+#             if {[catch {set_property PARAM.FREQUENCY $freq $t} err]} {
+#                 rbb::log "rvb: WARNING: PARAM.FREQUENCY $freq not set: $err"
+#             }
+#         }
+#         open_hw_target -jtag_mode on $t
+#     }
+#     set f {}
+#     catch {set f [get_property PARAM.FREQUENCY $t]}
+#     rbb::log "rvb: target $t open in JTAG mode[expr {$f ne {} ? ", PARAM.FREQUENCY $f" : ""}]"
+# 
+#     rbb::configure -backend ::vbe -idcode_readahead $ra
+#     if {$selftest} {
+#         if {![raw_self_test]} {
+#             rbb::log "=== RVBRIDGE SELF-TEST FAIL (raw Vivado commands): IDCODE is not 0x?3631093"
+#             catch {close_hw_target}
+#             exit 1
+#         }
+#         set r [rbb::self_test]
+#         if {![dict get $r ok]} {
+#             rbb::log "=== RVBRIDGE SELF-TEST FAIL (through the bridge core): [dict get $r msg]"
+#             catch {close_hw_target}
+#             exit 1
+#         }
+#         rbb::log "=== RVBRIDGE SELF-TEST PASS: [dict get $r msg]"
+#     }
+#     rbb::serve -port $port -exit_on_disconnect $eod -minute_log 1
+#     catch {close_hw_target}
+#     catch {disconnect_hw_server}
+#     rbb::log "rvb: done"
+# }
+# if {![info exists ::env(RVBRIDGE_NO_MAIN)] || $::env(RVBRIDGE_NO_MAIN) in {{} 0}} {
+#     if {[catch {rvb::main $argv} err]} {
+#         rbb::log "rvb: ERROR: $err"
+#         exit 1
+#     }
+#     exit 0
+# }
+rvb: rv_jtag_bridge: hw_server localhost:3121, target pattern '*', remote_bitbang 127.0.0.1:33582
+open_hw_manager: Time (s): cpu = 00:00:11 ; elapsed = 00:00:11 . Memory (MB): peak = 1342.344 ; gain = 124.434 ; free physical = 3440 ; free virtual = 32873
+INFO: [Labtools 27-2285] Connecting to hw_server url TCP:localhost:3121
+INFO: [Labtools 27-2222] Launching hw_server...
+INFO: [Labtools 27-2221] Launch Output:
+
+****** Xilinx hw_server v2023.2
+  **** Build date : Oct 13 2023 at 20:26:23
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+
+
+INFO: [Labtools 27-3415] Connecting to cs_server url TCP:localhost:0
+INFO: [Labtools 27-3417] Launching cs_server...
+INFO: [Labtools 27-2221] Launch Output:
+
+
+******** Xilinx cs_server v2023.2.0
+  ****** Build date   : Oct 10 2023-06:01:56
+    **** Build number : 2023.2.1696910516
+      ** Copyright 2017-2022 Xilinx, Inc. All Rights Reserved.
+      ** Copyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved.
+
+
+
+INFO: [Labtoolstcl 44-466] Opening hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301
+INFO: [Labtoolstcl 44-467] Setting hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301 into jtag_mode
+rvb: target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301 open in JTAG mode, PARAM.FREQUENCY 6000000
+rvb: raw self-test: scan_ir_hw_jtag 6 -> '35' (IR capture 0x35), scan_dr_hw_jtag 32 -> '13631093' (IDCODE 0x13631093)
+ERROR: [Labtoolstcl 44-271] run_state_hw_jtag failed chain_0
+rvb: ERROR: ERROR: [Common 17-39] 'run_state_hw_jtag' failed due to earlier errors.
+
+INFO: [Common 17-206] Exiting Vivado at Tue Oct 20 14:22:20 2026...

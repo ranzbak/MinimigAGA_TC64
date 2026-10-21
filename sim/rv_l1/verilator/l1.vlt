@@ -1,0 +1,20 @@
+// Lint waivers for the L1 bench under Verilator (run.sh with SIM=verilator).
+// Bench side only: the RTL under rtl/ is not edited for Verilator.  Every
+// other warning stops the build (warnings are fatal).  (Verilator 5.020
+// takes no comments after `verilator_config, so they are all up here.)
+//
+// 1-2  generated SpinalHDL cores: width truncations of shift/replicate
+//      results and of the $urandom initialisers (correct as generated)
+// 3    rv_hostcpu.v: WS_LOAD = (EXTRA_WS > 0) ? EXTRA_WS - 1 : 0, sized to
+//      WSW bits by its declaration (matched by name, not line, as in
+//      sim/host_bridge/verilator/l2.vlt)
+// 4-6  bench: Verilog-2001 integer/vector mixing (constants into 32-bit task
+//      arguments, 16-bit values into 32-bit regs, the 32-bit timeout against
+//      the 64-bit cycle counter, the integer $feof result tested with !)
+`verilator_config
+lint_off -rule WIDTHTRUNC  -file "*/rtl/host/vexriscv/VexOsd*.v"
+lint_off -rule WIDTHEXPAND -file "*/rtl/host/vexriscv/VexOsd*.v"
+lint_off -rule WIDTHTRUNC  -file "*/rtl/host/rv_hostcpu.v" -match "*VAR 'WS_LOAD'*"
+lint_off -rule WIDTHEXPAND -file "*/sim/rv_l1/*.v"
+lint_off -rule WIDTHTRUNC  -file "*/sim/rv_l1/*.v"
+lint_off -rule WIDTHEXPAND -file "*/sim/rv_l1/tests/*.v"

@@ -1,0 +1,144 @@
+# sim/l3/keys/menu_tour.txt: the key script of scenario keys (bfm_keys.v,
+# syntax there).  The boot card's menu (fw/ctrl_rv/menu.c), from the
+# main-loop milestone: open the OSD, walk down and up the main page, enter
+# and leave the Floppy and the Hard disk pages, one BURST of six events,
+# close the OSD.  The pages it draws are sim/l3/osdtext_expect/keys.txt.
+#
+# Each key: WAIT_KEYQ 1 (applied right after a KEYQ frame, so the next KEYQ
+# frame drains it and no level read sees it: bfm_keys.v), KEY <code> 64
+# (down for four clk7 periods: a key-down and a key-up event, 2 in one KEYQ
+# frame), WAIT_KEYQ 1 (that frame), WAIT_OSD_IDLE 100000 (the page drawn:
+# no OSD_CMD_OSD_WR frame for 100,000 clk_114, about 14 main-loop passes of
+# the RV, 7 of the 832 in an idle menu; a key's redraw is at most two
+# passes after the frame that drains it).
+# Codes (fw/ctrl_rv/osd.h): 69 KEY_MENU, 4c KEY_UP, 4d KEY_DOWN, 44
+# KEY_ENTER, 45 KEY_ESC.  menusub = the selected line (menu.c).
+# open the OSD (MENU_NONE2 -> MENU_MAIN1, OsdClear; main page, line 0)
+WAIT_KEYQ 1
+KEY 69 64
+WAIT_KEYQ 1
+WAIT_OSD_IDLE 100000
+
+# --- main page: walk down over every selectable line (menumask 0xf3: df0, df1, Floppy, Hard disk, CD-ROM, exit)
+# down: df1
+WAIT_KEYQ 1
+KEY 4d 64
+WAIT_KEYQ 1
+WAIT_OSD_IDLE 100000
+# down: Floppy disk settings
+WAIT_KEYQ 1
+KEY 4d 64
+WAIT_KEYQ 1
+WAIT_OSD_IDLE 100000
+# down: Hard disk settings
+WAIT_KEYQ 1
+KEY 4d 64
+WAIT_KEYQ 1
+WAIT_OSD_IDLE 100000
+# down: CD-ROM
+WAIT_KEYQ 1
+KEY 4d 64
+WAIT_KEYQ 1
+WAIT_OSD_IDLE 100000
+# down: exit
+WAIT_KEYQ 1
+KEY 4d 64
+WAIT_KEYQ 1
+WAIT_OSD_IDLE 100000
+
+# --- main page: and up again
+# up: CD-ROM
+WAIT_KEYQ 1
+KEY 4c 64
+WAIT_KEYQ 1
+WAIT_OSD_IDLE 100000
+# up: Hard disk settings
+WAIT_KEYQ 1
+KEY 4c 64
+WAIT_KEYQ 1
+WAIT_OSD_IDLE 100000
+# up: Floppy disk settings
+WAIT_KEYQ 1
+KEY 4c 64
+WAIT_KEYQ 1
+WAIT_OSD_IDLE 100000
+# up: df1
+WAIT_KEYQ 1
+KEY 4c 64
+WAIT_KEYQ 1
+WAIT_OSD_IDLE 100000
+# up: df0
+WAIT_KEYQ 1
+KEY 4c 64
+WAIT_KEYQ 1
+WAIT_OSD_IDLE 100000
+
+# --- sub-page 1: Floppy disk settings
+# down: df1
+WAIT_KEYQ 1
+KEY 4d 64
+WAIT_KEYQ 1
+WAIT_OSD_IDLE 100000
+# down: Floppy disk settings
+WAIT_KEYQ 1
+KEY 4d 64
+WAIT_KEYQ 1
+WAIT_OSD_IDLE 100000
+# enter: the Floppy page, line 0
+WAIT_KEYQ 1
+KEY 44 64
+WAIT_KEYQ 1
+WAIT_OSD_IDLE 100000
+# down: Floppy disk turbo
+WAIT_KEYQ 1
+KEY 4d 64
+WAIT_KEYQ 1
+WAIT_OSD_IDLE 100000
+# down: exit (Floppy disk sounds is greyed out: no DRIVESND.BIN, menumask 0x0b)
+WAIT_KEYQ 1
+KEY 4d 64
+WAIT_KEYQ 1
+WAIT_OSD_IDLE 100000
+# enter on exit: back to the main page, Floppy disk settings
+WAIT_KEYQ 1
+KEY 44 64
+WAIT_KEYQ 1
+WAIT_OSD_IDLE 100000
+
+# --- sub-page 2: Hard disk settings
+# down: Hard disk settings
+WAIT_KEYQ 1
+KEY 4d 64
+WAIT_KEYQ 1
+WAIT_OSD_IDLE 100000
+# enter: the Harddisks page, line 0
+WAIT_KEYQ 1
+KEY 44 64
+WAIT_KEYQ 1
+WAIT_OSD_IDLE 100000
+# escape: MENU_HARDFILE_EXIT, nothing changed: the main page, Hard disk settings
+WAIT_KEYQ 1
+KEY 45 64
+WAIT_KEYQ 1
+WAIT_OSD_IDLE 100000
+
+# --- the BURST: six events between two KEYQ frames, so the firmware's drain
+# (osd.c OsdNextEvent) gets count 6 and its loop kq_buf[i] = SPI_reply() runs
+# six times.  Three presses, each followed by its release (the events
+# alternate key-down / key-up), the presses alternately up and down: the
+# selection goes Floppy disk settings, Hard disk settings, Floppy disk
+# settings.  BURST changes osd_ctrl every 32 clk_114 (192 in all) right
+# after a KEYQ frame; the next one comes a main-loop pass later (at least
+# 5,320 clk_114 on the RV, 11,244 on the 832: runs p4t8d, p4t8dc), so all
+# six are in it
+WAIT_KEYQ 1
+BURST 4c 00 4d 00 4c 00
+WAIT_KEYQ 1
+WAIT_OSD_IDLE 100000
+
+# --- close the OSD (MENU_MAIN2: menu -> MENU_NONE1, OsdHide)
+# menu: close
+WAIT_KEYQ 1
+KEY 69 64
+WAIT_KEYQ 1
+WAIT_OSD_IDLE 100000

@@ -13,6 +13,7 @@
 # RETIRED in Stage E4a.  This script built the TG68K design (the project's
 # default before the AP68040), and the TG68K is gone.  Build with
 # tools/vivado/build_ap040.tcl; the TG68K design builds at tag d3_stable.
+# retired; not updated for the RISC-V host CPU (osd-riscv Phase 5)
 error "build.tcl built the TG68K design, removed in Stage E4a: use tools/vivado/build_ap040.tcl, or check out tag d3_stable to build the TG68K"
 
 set out [lindex $argv 0]

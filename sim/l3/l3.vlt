@@ -1,0 +1,41 @@
+// Lint waivers for the L3 bench under Verilator (run.sh with SIM=verilator).
+// The RTL under rtl/ is not edited for Verilator; every other warning stops
+// the build (warnings are fatal).  (Verilator 5.020 takes no comments after
+// `verilator_config, so they are all up here.)
+//
+// 1-3  as sim/host_bridge/verilator/l2.vlt: the generated SpinalHDL core and
+//      rv_hostcpu.v's WS_LOAD
+// 4-8  bench and models (tb_l3.v, bfm_keys.v, sdram_host_model.v, sd_spi_model.v):
+//      Verilog-2001 integer/vector mixing; the SD model writes miso from its
+//      sck and cs_n edge blocks (a model, see l2.vlt)
+// 9-10 cfide's havei2c = true: the real I2C master (see l2.vlt)
+// 11   rtl/minimig/gayle_fifo.v: the 13-bit inptr reset with 12'd0 (zero
+//      extension, correct)
+// 12   rtl/minimig/paula_floppy.v hdd_addr: "... : 1'b0" into 3 bits (zero
+//      extension, correct)
+// 13   CPU=832: the EightThirtyTwo after ghdl --synth (bridge.v, instance
+//      gen832_my832): the records regfile and thread
+//      (eightthirtytwo_cpu.vhd) are one flat vector each, and some of their
+//      fields are concurrent assignments from other fields (regfile:
+//      gpr7_flags from the flag flops, gpr_q a mux of gpr0..7; thread:
+//      nextpc from pc, the decoder's f_* from f_op): a path from the vector
+//      to itself through nets, not a loop between bits (Verilator settles
+//      it by re-evaluation; a real loop stops the run with "didn't
+//      converge")
+`verilator_config
+lint_off -rule WIDTHTRUNC  -file "*/VexOsd*.v"
+lint_off -rule WIDTHEXPAND -file "*/VexOsd*.v"
+lint_off -rule WIDTHTRUNC  -file "*/rv_hostcpu*.v" -match "*VAR 'WS_LOAD'*"
+lint_off -rule WIDTHEXPAND -file "*tb_l3.v"
+lint_off -rule WIDTHTRUNC  -file "*tb_l3.v"
+lint_off -rule WIDTHEXPAND -file "*bfm_keys.v"
+lint_off -rule WIDTHTRUNC  -file "*bfm_keys.v"
+lint_off -rule WIDTHEXPAND -file "*sdram_host_model.v"
+lint_off -rule WIDTHTRUNC  -file "*sdram_host_model.v"
+lint_off -rule WIDTHTRUNC  -file "*sd_spi_model.v"
+lint_off -rule MULTIDRIVEN -file "*sd_spi_model.v"
+lint_off -rule WIDTHEXPAND -file "*/i2c_master.v" -match "*VARREF 'prescale'*"
+lint_off -rule MULTIDRIVEN -file "*/i2c_master_mmio.sv" -match "*'status_reg'*"
+lint_off -rule WIDTHEXPAND -file "*/gayle_fifo.v" -match "*CONST '12'h0'*"
+lint_off -rule WIDTHEXPAND -file "*/paula_floppy.v" -match "*Conditional False's CONST '1'h0'*"
+lint_off -rule UNOPTFLAT   -file "*/ghdl_*/bridge.v" -match "*gen832_my832.*"

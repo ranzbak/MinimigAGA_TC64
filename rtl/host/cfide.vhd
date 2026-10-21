@@ -64,6 +64,10 @@ entity cfide is
         audio_amiga   : in  std_logic;
         vbl_int       : in  std_logic;
         interrupt     : out std_logic;
+        -- Interrupt controller sources 4..15 (0x3x window, see below); bits 0..3
+        -- are vbl_int, the I2C transfer event, amiga_req and i2c_ext_int.
+        -- Defaulted: a top that has no such source leaves the port open.
+        irq_src       : in  std_logic_vector(15 downto 4) := (others => '0');
         c64_keys      : in  std_logic_vector(63 downto 0) := X"FFFFFFFFFFFFFFFF";
         amiga_key     : out std_logic_vector(7 downto 0);
         amiga_key_stb : out std_logic;
@@ -84,6 +88,11 @@ entity cfide is
         i2c_ext_int   : in  std_logic := '0';  -- the ADV7511's INT (status 0x400)
         -- Video scaler coordinates
         pos_data_q    : out std_logic_vector(15 downto 0);
+        -- userio_osd's reply sequence (rtl/minimig/userio_osd.v osd_rx_seq):
+        -- +1 per OSD byte it has taken; clk_28 domain.  For HOST_REQ (0x0fffffb4),
+        -- see the OSD reply-ready handshake below.  Defaulted: a top without
+        -- the port reads OSD_RDY 0 after the first OSD byte (until the resync).
+        osd_rx_seq    : in  std_logic_vector(1 downto 0) := "00";
         -- 28Mhz signals
         clk_28        : in  std_logic;
         tick_in       : in  std_logic   -- 44.1KHz - makes it easy to keep timer in lockstep with audio.
@@ -94,7 +103,9 @@ end cfide;
 architecture rtl of cfide is
 
     signal shift           : std_logic_vector(9 downto 0);
-    signal clkgen          : std_logic_vector(9 downto 0);
+    -- clkgen and timecnt have no reset: the explicit 0 is the FPGA power-up value
+    -- (Xilinx and Intel honour VHDL signal initial values) and lets simulation count
+    signal clkgen          : std_logic_vector(9 downto 0) := (others => '0');
     signal shiftout        : std_logic;
     signal txbusy          : std_logic;
     signal uart_ld         : std_logic;
@@ -139,7 +150,7 @@ architecture rtl of cfide is
     signal spi_wait    : std_logic;
     signal spi_wait_d  : std_logic;
 
-    signal timecnt : std_logic_vector(23 downto 0);
+    signal timecnt : std_logic_vector(23 downto 0) := (others => '0'); -- no reset, see clkgen
 
     signal rs232_select : std_logic;
     --signal rs232data : std_logic_vector(15 downto 0);
@@ -160,9 +171,50 @@ architecture rtl of cfide is
     signal videoscl_select : std_logic;
     signal i2c_int         : std_logic;
     signal xadc_select     : std_logic;
+    signal irqctl_select   : std_logic;
     signal spirtcpresent   : std_logic;
 
     signal reset : std_logic;
+
+    -- OSD reply-ready handshake (HOST_REQ, 0x0fffffb4), see below
+    signal osd_tx_seq  : std_logic_vector(1 downto 0) := "00";  -- no reset
+    signal osd_idle    : std_logic_vector(6 downto 0) := (others => '0');
+    signal osd_rdy     : std_logic;
+    signal host_req_q  : std_logic;
+    signal spi_dat_go  : std_logic;
+
+    -- Interrupt controller (0x3x window)
+    signal int_legacy  : std_logic;                      -- the 0xa0 flag
+    signal int_legacy_nx : std_logic;                    -- ... its next state
+    signal irq_in      : std_logic_vector(15 downto 0);  -- the sources
+    signal irq_sync1   : std_logic_vector(15 downto 0);
+    signal irq_sync2   : std_logic_vector(15 downto 0);  -- synchronised = IRQ_RAW
+    signal irq_prev    : std_logic_vector(15 downto 0);  -- irq_sync2 one cycle ago
+    signal irq_edge    : std_logic_vector(15 downto 0);
+    signal irq_pend    : std_logic_vector(15 downto 0);  -- EDGE-mode event latch
+    signal irq_eff     : std_logic_vector(15 downto 0);  -- PENDING as the CPU sees it
+    signal irq_ret     : std_logic_vector(15 downto 0);  -- PENDING and MASK
+    signal irq_clr     : std_logic_vector(15 downto 0);
+    signal irq_mask    : std_logic_vector(15 downto 0);
+    signal irq_mode    : std_logic_vector(15 downto 0);  -- 1 = LEVEL, 0 = EDGE
+    signal irq_q       : std_logic_vector(15 downto 0);
+    signal irq_seen    : std_logic;                      -- req one clk_28 cycle ago
+    signal irq_acc     : std_logic;                      -- first cycle of a 0x3x access
+    signal irq_rd      : std_logic;                      -- ... and it reads IRQ_PENDING
+    -- next-state values of the registers (loaded at the next clk_28 edge)
+    signal irq_pend_nx : std_logic_vector(15 downto 0);
+    signal irq_mask_nx : std_logic_vector(15 downto 0);
+    signal irq_mode_nx : std_logic_vector(15 downto 0);
+    signal irq_eff_nx  : std_logic_vector(15 downto 0);  -- irq_eff after that edge
+    signal int_nx      : std_logic;
+    signal int_out     : std_logic;                      -- the interrupt output register
+
+    -- PENDING as the CPU sees it: per bit the level (MODE 1, LEVEL) or the
+    -- EDGE latch (MODE 0).  One function for the current and the next state.
+    function irq_mux(lvl, pend, mode : std_logic_vector) return std_logic_vector is
+    begin
+        return (lvl and mode) or (pend and not mode); -- IRQ MODE MUX
+    end function;
 
 -- attribute MARK_DEBUG : string;
 -- attribute MARK_DEBUG of pos_data_q : signal is "TRUE";
@@ -181,9 +233,11 @@ begin
     q(15 downto 0) <= IOdata when rs232_select = '1' or SPI_select = '1' else
     I2Cdata when i2c_select = '1' else
     timecnt(23 downto 8) when timer_select = '1' else
+    X"000" & "000" & host_req_q when audio_select = '1' and addr(3 downto 2) = "01" else
     audio_q when audio_select = '1' else
     keyboard_q when keyboard_select = '1' else
     amigatohost when amiga_select = '1' else
+    irq_q when irqctl_select = '1' else
     xadc_temp when xadc_select = '1' else
     platformdata;
 
@@ -223,8 +277,10 @@ begin
     rtc_select       <= '1' when addr(23) = '1' and addr(7 downto 4) = X"7" else '0';
     i2c_select       <= '1' when addr(23) = '1' and addr(7 downto 4) = X"6" else '0';
     videoscl_select  <= '1' when addr(23) = '1' and addr(7 downto 4) = X"5" else '0';
-    -- FPGA die temperature at 0fffff40; X"4" was the one free window left.
+    -- FPGA die temperature at 0fffff40.
     xadc_select      <= '1' when addr(23) = '1' and addr(7 downto 4) = X"4" else '0';
+    -- Interrupt controller at 0fffff30
+    irqctl_select    <= '1' when addr(23) = '1' and addr(7 downto 4) = X"3" else '0';
 
     -- RTC handling at 0fffff70
 
@@ -302,27 +358,147 @@ begin
         end if;
     end process;
 
-    -- Interrupt handling at 0fffffa0
-    -- Any access to this range will clear the interrupt flag;
+    -- Interrupt handling at 0fffffa0 (legacy, the 832 firmware's)
+    -- Any access to this range will clear the interrupt flag; a source event
+    -- sets it to interrupt_ena.  The access wins over an event in its cycle.
+    -- int_legacy_nx is the flag's next state, also used for the interrupt
+    -- output register (see the controller below).
+
+    int_legacy_nx <= '0' when interrupt_select = '1' and req = '1' else
+                     interrupt_ena when vbl_int = '1' or i2c_int = '1' or (amiga_req = '1' and amiga_req_d = '0') else
+                     int_legacy;
 
     process(clk_28, n_reset)
     begin
         if n_reset = '0' then
-            interrupt     <= '0';
+            int_legacy    <= '0';
             interrupt_ena <= '0';
         elsif rising_edge(clk_28) then
             amiga_req_d <= amiga_req;
-            if vbl_int = '1' or i2c_int = '1' or (amiga_req = '1' and amiga_req_d = '0') then
-                interrupt <= interrupt_ena;
-            end if;
+            int_legacy  <= int_legacy_nx;
             if interrupt_select = '1' and req = '1' then
-                interrupt <= '0';
                 if wr = '1' then
                     interrupt_ena <= d(0);
                 end if;
             end if;
         end if;
     end process;
+
+    -- Interrupt controller at 0fffff30, 16-bit registers, addr(3 downto 2):
+    --   00 IRQ_PENDING  R: PENDING and MASK; clears exactly the EDGE-mode bits
+    --                      it returns, once per access.  W: no effect.
+    --   01 IRQ_MASK     R/W, reset 0
+    --   10 IRQ_RAW      R: the synchronised source levels, no side effect.
+    --                   W: no effect.
+    --   11 IRQ_MODE     R/W, reset 0; per bit 0 = EDGE, 1 = LEVEL
+    -- Sources:
+    --   0  vbl_int      vertical blank (pulse)
+    --   1  i2c_int      the I2C master's transfer event (i2c_master_mmio
+    --                   r_interrupt): set by its transfer events, cleared only
+    --                   by a read of the legacy 0fffffa0 window
+    --                   (i2c_master_mmio.sv: interrupt_select and not wr)
+    --   2  amiga_req    Akiko request (pulse per request)
+    --   3  i2c_ext_int  the ADV7511's INT pin (I2C status bit 0x400 shows it
+    --                   too).  Active high as the part is set up: no polarity
+    --                   register is written (fw/ctrl_832/adv7511.c), clearing
+    --                   its interrupt flags takes the pin low (ADV7511
+    --                   Programming Guide, CEC and interrupt sections), and
+    --                   i2c_master_mmio and the 832 firmware use it active
+    --                   high.  So no inversion here.  Meant for LEVEL mode.
+    --   4..15 irq_src   spare (IDE, floppy, ...)
+    -- Every bit is the same logic: a 2-FF synchroniser into clk_28, then
+    --   EDGE  (MODE bit 0): a rising edge of the synchronised level sets the
+    --         bit; an IRQ_PENDING read that returns it clears it.  An edge in
+    --         the cycle of that clear wins: the bit stays set.  An event of a
+    --         masked bit stays pending until it is unmasked and read.
+    --   LEVEL (MODE bit 1): the bit is the synchronised level itself; a read
+    --         returns it and does not clear it, it drops with the source.
+    -- Switching the mode: the EDGE latch is held clear while the bit is in
+    -- LEVEL mode.  So EDGE -> LEVEL discards an unread event (the bit then
+    -- follows the line), and LEVEL -> EDGE starts the bit clear: it needs a new
+    -- rising edge, i.e. the line must drop and rise again.  An edge set in the
+    -- clk_28 cycle of the MODE write that switches to EDGE is discarded too.
+    -- interrupt = the legacy flag OR (PENDING and MASK) /= 0, in every clk_28
+    -- cycle.  It is a register of its own (int_out), loaded from the
+    -- next-state values of the flag, PENDING, MASK and MODE: the same value
+    -- in the same cycle as that OR of the registers, with no logic between
+    -- the register and the CPU (the 832 uses interrupt unregistered).  MASK
+    -- and MODE reset to 0, so firmware that never writes MASK (the 832's)
+    -- sees the legacy flag cycle for cycle.
+    -- Once per access: irq_seen = req one cycle ago, so irq_acc is the first
+    -- clk_28 cycle of an access; the read value is latched into irq_q and the
+    -- returned bits are cleared there and at no later cycle of the access.
+    -- The guard is defensive: with the current bridge every hw access is seen
+    -- by exactly one clk_28 edge (the bridge drops req in the clk_114 cycle
+    -- after ack, and hw_release waits for ack to fall), so a multi-edge access
+    -- never happens and the guard is untested.
+    -- Firmware rule: put level sources (bit 3 ADV7511 INT, IDE requests; bit 1
+    -- the I2C transfer flag, whose handler must read 0fffffa0 to clear it)
+    -- in LEVEL mode: the interrupt stays asserted until the device is
+    -- serviced, so no IRQ_RAW re-check is needed.  Pulse sources (vblank,
+    -- Akiko) stay EDGE.  A LEVEL source the handler cannot service in
+    -- interrupt context can be masked off until it is serviced.  The 2-FF
+    -- synchroniser delays a LEVEL bit's fall by up to 3 clk_28 cycles after
+    -- the device drops its line: a handler that returns at once may be
+    -- called one extra time and must tolerate that.  A debugger reading
+    -- IRQ_PENDING consumes pending EDGE bits.
+
+    no_i2c : if not havei2c generate
+        i2c_int <= '0';
+    end generate;
+
+    irq_in   <= irq_src & i2c_ext_int & amiga_req & i2c_int & vbl_int;
+    irq_edge <= irq_sync2 and not irq_prev;
+    irq_eff  <= irq_mux(irq_sync2, irq_pend, irq_mode);
+    irq_ret  <= irq_eff and irq_mask;
+    irq_acc  <= '1' when irqctl_select = '1' and req = '1' and irq_seen = '0' else '0';
+    irq_rd   <= '1' when irq_acc = '1' and wr = '0' and addr(3 downto 2) = "00" else '0';
+    irq_clr  <= (irq_ret and not irq_mode) when irq_rd = '1' else (others => '0');
+
+    -- next state
+    irq_pend_nx <= ((irq_pend and not irq_clr) or irq_edge) and not irq_mode; -- IRQ SET WINS
+    irq_mask_nx <= d when irq_acc = '1' and wr = '1' and addr(3 downto 2) = "01" else irq_mask;
+    irq_mode_nx <= d when irq_acc = '1' and wr = '1' and addr(3 downto 2) = "11" else irq_mode;
+    irq_eff_nx  <= irq_mux(irq_sync1, irq_pend_nx, irq_mode_nx);
+    int_nx      <= '1' when int_legacy_nx = '1' or (irq_eff_nx and irq_mask_nx) /= X"0000" else '0';
+
+    process(clk_28, n_reset)
+    begin
+        if n_reset = '0' then
+            irq_sync1 <= (others => '0');
+            irq_sync2 <= (others => '0');
+            irq_prev  <= (others => '0');
+            irq_pend  <= (others => '0');
+            irq_mask  <= (others => '0');
+            irq_mode  <= (others => '0');
+            irq_q     <= (others => '0');
+            irq_seen  <= '0';
+            int_out   <= '0';
+        elsif rising_edge(clk_28) then
+            irq_sync1 <= irq_in;
+            irq_sync2 <= irq_sync1;
+            irq_prev  <= irq_sync2;
+            irq_seen  <= req;
+            irq_pend  <= irq_pend_nx;
+            irq_mask  <= irq_mask_nx;
+            irq_mode  <= irq_mode_nx;
+            int_out   <= int_nx;
+            if irq_acc = '1' then
+                case addr(3 downto 2) is
+                    when "00" =>
+                        irq_q <= irq_ret;
+                    when "01" =>
+                        irq_q <= irq_mask;
+                    when "10" =>
+                        irq_q <= irq_sync2;
+                    when others =>
+                        irq_q <= irq_mode;
+                end case;
+            end if;
+        end if;
+    end process;
+
+    interrupt <= int_out;
 
     ---------------------------------
     -- Platform specific registers --
@@ -502,6 +678,61 @@ begin
 
         END IF;
     END PROCESS;
+
+    -----------------------------------------------------------------
+    -- OSD reply-ready handshake: HOST_REQ at 0fffffb4 (the audio window,
+    -- addr(3 downto 2) = "01"), read only:
+    --   bit 0      OSD_RDY: userio_osd has taken every byte cfide started
+    --              with the OSD selected, so the next byte's reply is loaded
+    --              from the right data (a reply byte may start now)
+    --   bits 15..1 0 (reserved)
+    -- The rest of the window reads audio_q and is written as before.
+    -- osd_tx_seq (sysclk): +1 when a DATA write starts a byte while the OSD
+    -- is selected (scs(5) = '1', i.e. sd_cs(5) low).  osd_rx_seq (clk_28,
+    -- userio_osd): +1 when it has taken a byte, up to ~40 clk_114 after the
+    -- byte's last sck edge.  OSD_RDY = the two agree (2 bits: 1, 2 and 3
+    -- bytes outstanding all read 0; across a frame boundary there can be 2).
+    -- Resync: once the OSD has been deselected for 64 sysclk cycles (longer
+    -- than that window, so every byte has been taken), osd_tx_seq follows
+    -- osd_rx_seq; this heals a byte userio_osd never took, and sets the
+    -- start value (no reset needed: scs is 0 in reset, so it resyncs then).
+    -- Clock domains: the read value is a clk_28 register loaded at EVERY
+    -- clk_28 edge (no enable: req and addr are sysclk registers, and a load
+    -- enable from them could miss the edge whose ack the bridge takes and
+    -- return the previous poll's value), so the value read is the one loaded
+    -- at the edge that raised ack, and osd_rx_seq is compared in its own
+    -- domain; osd_tx_seq last changed at the DATA write of an earlier access
+    -- (>= 4 sysclk cycles before that edge), and the resync copies
+    -- osd_rx_seq only while it is static.  findings/osd-riscv/phase4.md,
+    -- "Handshake design".
+    -----------------------------------------------------------------
+    spi_dat_go <= '1' when SPI_select = '1' and req = '1' and wr = '1' and SD_busy = '0'
+                           and addr(3 downto 2) = "00" else '0';   -- the byte starts (above)
+
+    process(sysclk)
+    begin
+        if rising_edge(sysclk) then
+            if scs(5) = '1' then
+                osd_idle <= (others => '0');
+                if spi_dat_go = '1' then
+                    osd_tx_seq <= osd_tx_seq + 1;
+                end if;
+            elsif osd_idle(6) = '0' then
+                osd_idle <= osd_idle + 1;
+            else
+                osd_tx_seq <= osd_rx_seq;   -- OSD RESYNC
+            end if;
+        end if;
+    end process;
+
+    osd_rdy <= '1' when osd_tx_seq = osd_rx_seq else '0'; -- OSD RDY
+
+    process(clk_28)
+    begin
+        if rising_edge(clk_28) then
+            host_req_q <= osd_rdy;   -- every edge: see "Clock domains" above
+        end if;
+    end process;
 
     -----------------------------------------------------------------
     -- Simple UART only TxD

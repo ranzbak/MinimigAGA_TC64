@@ -1,0 +1,40 @@
+source /home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64-p5build/tools/rvdebug/rv_jtag_bridge.tcl
+rvb: rv_jtag_bridge: hw_server localhost:3121, target pattern '*', remote_bitbang 127.0.0.1:33582
+open_hw_manager: Time (s): cpu = 00:00:13 ; elapsed = 00:00:15 . Memory (MB): peak = 1286.266 ; gain = 9.934 ; free physical = 9427 ; free virtual = 34627
+INFO: [Labtools 27-2285] Connecting to hw_server url TCP:localhost:3121
+INFO: [Labtools 27-2222] Launching hw_server...
+INFO: [Labtools 27-2221] Launch Output:
+
+****** Xilinx hw_server v2023.2
+  **** Build date : Oct 13 2023 at 20:26:23
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+
+
+INFO: [Labtools 27-3415] Connecting to cs_server url TCP:localhost:0
+INFO: [Labtools 27-3417] Launching cs_server...
+INFO: [Labtools 27-2221] Launch Output:
+
+
+******** Xilinx cs_server v2023.2.0
+  ****** Build date   : Oct 10 2023-06:01:56
+    **** Build number : 2023.2.1696910516
+      ** Copyright 2017-2022 Xilinx, Inc. All Rights Reserved.
+      ** Copyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved.
+
+
+
+INFO: [Labtoolstcl 44-466] Opening hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301
+INFO: [Labtoolstcl 44-467] Setting hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301 into jtag_mode
+rvb: target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301 open in JTAG mode, PARAM.FREQUENCY 6000000
+rvb: raw self-test: scan_ir_hw_jtag 6 -> '35' (IR capture 0x35), scan_dr_hw_jtag 32 -> '13631093' (IDCODE 0x13631093)
+=== RVBRIDGE SELF-TEST PASS: IDCODE 0x13631093, IR capture 0x35, BYPASS ok
+=== RBB BRIDGE listening 127.0.0.1:33582
+=== RBB BRIDGE connection 1 from 127.0.0.1:50240
+rbb: 15:37 scans in the last minute: 6784 (partial 0)
+rbb: 15:38 scans in the last minute: 10044 (partial 0)
+rbb: 15:39 scans in the last minute: 17508 (partial 0)
+rbb: 15:40 scans in the last minute: 24500 (partial 0)
+rbb: 15:41 scans in the last minute: 12942 (partial 0)
+rbb: 15:42 scans in the last minute: 4840 (partial 0)
+rbb: 15:43 scans in the last minute: 5362 (partial 0)
+=== RBB BRIDGE connection 1 closed (Q): bytes 6275152, edges 2337835, R 1383202, scans 82214 (partial 0, forced by a timer 0, longest 672 bits, longest shift 672 bits), IDCODE read-ahead 1530 (0 bad), gotos 164431, idle runs 0 (0 clocks), resets 6, reset bytes 1, blink 51842

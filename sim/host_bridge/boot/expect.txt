@@ -1,0 +1,14 @@
+ERRORCODE: 0fff
+UART: Initializing SD card
+UART: 0101cmd_CMD8 response: 1
+UART: 01010101010000Hunting for partition
+UART: Reading MBR
+UART: 00Partitioncount 1
+UART: Reading boot sector 2048
+UART: 00Read boot sector from first partition
+UART: Hunting for filesystem
+UART: Reading directory sector 2106
+UART: 00file "RV32OSDABIN" found\r000000000000FW OK
+UART: PAT 00112233445566778899AABBCCDDEEFF
+UART: @IMG@
+UART: IRQ 20

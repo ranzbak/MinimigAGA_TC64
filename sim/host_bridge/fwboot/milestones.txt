@@ -1,0 +1,66 @@
+# run.sh fwboot: what the real firmware must do on fwboot/Makefile's card
+# (RV32OSDA.BIN + decoy + DRIVESND.BIN, no config file, no kickstart).
+# Format and matching: spitrace.py (UART and SPI are each an ordered
+# subsequence of their own stream).  Taken from the sources, not from a run.
+#
+# -- the boot ROM (fw/ctrl_boot_rv), as boot/expect.txt up to the jump,
+#    without the numbers that depend on the card layout
+UART Initializing SD card
+UART cmd_CMD8 response: 1
+UART Hunting for partition
+UART Reading MBR
+UART Partitioncount 1
+UART Reading boot sector
+UART Read boot sector from first partition
+UART Hunting for filesystem
+UART Reading directory sector
+UART file "RV32OSDABIN" found
+# -- the firmware: main(), PLATFORM bit 2 (SPI RTC) is 0 (havespirtc = false)
+UART Platform lacks SPI RTC support
+# ColdBoot() -> MMC_Init(): the model answers CMD8 with 0x1AA, an SDHC card
+UART SDHC card detected
+# ColdBoot() -> FindDrive(): prints sector_buffer[450] AFTER it has read the
+# partition's boot sector into sector_buffer (fat.c: MMC_Read(boot_sector,
+# sector_buffer) comes first), so 0x00, not the MBR's type 6
+UART partition type: 0x00 (FAT16)
+# ColdBoot() -> LoadConfiguration(0) -> FileOpen("MINMGAR CFG") (the RISC-V
+# name), then the 832's "MINMGAA CFG" (first-boot conversion): neither exists
+UART file "MINMGAR CFG" not found
+UART file "MINMGAA CFG" not found
+# ColdBoot() -> fpga_init(): BootPrintEx lines (printf + boot screen) of the
+# stub's OSD_CMD_VERSION reply (beta 1, 20 + 0x1A, 0x0A, 0x02; caps 0x7D)
+UART Minimig AGA BETA version 2026-10-2 for Turbo Chameleon 64
+UART Firmware version:
+UART CPU: MC68040 + FPU + MMU
+UART Ported to Open AARS by Paul Honig
+# ColdBoot() -> drivesounds_init("DRIVESNDBIN"): DRIVESND.BIN loads in front
+# of AUDIO_BUFFER, at 0x70000 - 212098 = 0x3C37E (2 mod 4: the first header's
+# longs are misaligned, a word load there traps); the 13 sounds' addresses
+# and sizes from the file's big-endian header
+UART file "DRIVESNDBIN" found
+UART Audio file - length 212098
+UART Sound 0 at 3C38E, length 22394
+UART Sound 1 at 41B10, length 26982
+UART Sound 12 at 6F67A, length 2430
+# ColdBoot(): the kickstart load; ApplyConfiguration(1,1) -> UploadKickstart
+# (no KICK ROM: FatalError(ERROR_ROM, "ROM missing"), config.c)
+UART Loading kickstart ROM...
+UART ROM dir: 0
+UART ##End result : 0
+# main(): ColdBoot() returned 0
+UART ROM loading failed
+#
+# -- SPI frames (cs = ~sd_cs)
+# fpga_init(): OSD_CMD_VERSION, six SPI_reply() reads, the board's reply
+SPI 20 88 ff ff ff ff ff ff / 00 01 1a 0a 02 a4 7d
+# fpga_init() -> OsdDoReset(), BootInit(): OSD_CMD_RST frames
+SPI>=2 20 08 ..
+# main()'s loop, first pass: HandleFpga's six-byte request read
+SPI 10 00 00 00 00 00 00
+# ShowError() / HandleUI(): the error page, OSD_CMD_OSD_WR lines
+SPI>=10 20 0c ..
+# the error loop while(ErrorMask): the error is fatal ("ROM missing"), so
+# it calls HandleUI() but not HandleFpga(); every pass reads the key level
+# (OSD_CMD_READ) and the key queue (OSD_CMD_KEYQ, CORE_CAPS_KEYQ is set in
+# the stub's caps 0x7D): 20 passes
+SPI>=20 20 98 ff / xx 00

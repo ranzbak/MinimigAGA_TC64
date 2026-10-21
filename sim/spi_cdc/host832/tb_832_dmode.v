@@ -59,7 +59,8 @@ module tb_832_dmode;
     .addr(hostaddr), .q(hostWR), .sel(hostsel), .wr(host_we),
     .ram_req(ram_req), .ram_ack(ram_ack), .ram_d(ram_d),
     .hw_req(hw_req), .hw_ack(hw_ack), .hw_d(hw_d),
-    .interrupt(1'b0)
+    .interrupt(1'b0),
+    .rv_jtag_tdo()     // RISC-V debug port: unused with the 832 (cpu_riscv = false)
   );
 
   // SDRAM behind hostcache: halfwords, big-endian, from RAM_BASE
