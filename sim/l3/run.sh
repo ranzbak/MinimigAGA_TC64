@@ -752,6 +752,7 @@ scenario() {
 		[ "${PAULA_TXPOP:-0}" = 1 ] && echo "PAULA_TXPOP=1: $(sed -n 's/^PAULA_TXPOP: //p' "$run/compile.log")"
 		[ -n "${PATCH:-}" ] && echo "PATCH: $PATCHF, sha256 $(sha256sum "$PATCHF" | cut -c1-16)"
 		[ "$s" = cd ] && echo "cd config: $CDCFG"
+		echo "scenario: $s"
 	} | tee "$run/results.txt"
 	build "$snap"
 	# plusargs without the +: FAST_HW's model timing first (the first match
@@ -840,16 +841,47 @@ case "${1:-}" in
 		;;
 	diff)
 		shift
-		unused=()
-		[ "${1:-}" = --unused-rules ] && { unused=(--unused-rules); shift; }
-		[ $# -eq 2 ] || { echo "usage: run.sh diff [--unused-rules] <RUNTAG rv> <RUNTAG 832>"; exit 2; }
-		cards=()
+		unused=() twin=0
+		while :; do
+			case "${1:-}" in
+				--unused-rules) unused=(--unused-rules); shift ;;
+				--twin) twin=1; shift ;;
+				*) break ;;
+			esac
+		done
+		[ $# -eq 2 ] || { echo "usage: run.sh diff [--unused-rules] [--twin] <RUNTAG rv> <RUNTAG 832>"; exit 2; }
+		cards=() meta=()
 		for t in "$1" "$2"; do
 			d="$HERE/run_$t"
 			[ -d "$d" ] || { echo "no run directory $d"; exit 2; }
 			for f in spi.txt hw.txt uart.txt results.txt; do
 				[ -f "$d/$f" ] || { echo "no $d/$f (a run before hw.txt / uart.txt: run it again)"; exit 2; }
 			done
+			# what the run was (results.txt): its CPU, scenario, CD config,
+			# and that it passed (final review M5).  The scenario: the
+			# "scenario:" line, or (a run before that line) the one
+			# tb_<scenario>_x*.log of the run directory
+			cpu=$(sed -n 's/^=== CPU \([a-z0-9]*\)$/\1/p' "$d/results.txt" | head -1)
+			sc=$(sed -n 's/^scenario: //p' "$d/results.txt" | head -1)
+			if [ -z "$sc" ]; then
+				sc=$(for l in "$d"/tb_*_x*_s*_j*.log; do [ -f "$l" ] && basename "$l" | sed 's/^tb_\(.*\)_x[0-9]*_s[0-9]*_j[0-9]*\.log$/\1/'; done | sort -u)
+				[ "$(printf '%s\n' "$sc" | grep -c .)" = 1 ] || { echo "run_$t: no 'scenario:' line in results.txt and not exactly one tb_<scenario>_x*.log"; exit 2; }
+			fi
+			cdc=$(sed -n 's/^cd config: //p' "$d/results.txt" | head -1)
+			grep -qx 'ok   bench verdict: === PASS' "$d/results.txt" && ! grep -q 'BAD' "$d/results.txt" \
+				|| { echo "run_$t did not PASS (results.txt: a BAD line or no bench verdict PASS): no diff"; exit 2; }
+			meta+=("$cpu" "$sc" "${cdc:-none}")
+		done
+		if [ "$twin" = 1 ]; then
+			[ "${meta[0]}" = "${meta[3]}" ] || { echo "--twin: run_$1 is CPU ${meta[0]}, run_$2 CPU ${meta[3]}"; exit 2; }
+		else
+			[ "${meta[0]}" = rv ] && [ "${meta[3]}" = 832 ] \
+				|| { echo "run_$1 must be CPU rv and run_$2 CPU 832 (they are ${meta[0]:-?} and ${meta[3]:-?}; --twin for two runs of one CPU)"; exit 2; }
+		fi
+		[ "${meta[1]}" = "${meta[4]}" ] || { echo "run_$1 ran scenario ${meta[1]}, run_$2 ${meta[4]}"; exit 2; }
+		[ "${meta[2]}" = "${meta[5]}" ] || { echo "run_$1 has cd config ${meta[2]}, run_$2 ${meta[5]}"; exit 2; }
+		for t in "$1" "$2"; do
+			d="$HERE/run_$t"
 			# the card the run booted (results.txt "card: <image>")
 			c=$(sed -n 's/^card: \([^ ]*\).*/\1/p' "$d/results.txt" | head -1)
 			[ -f "$c" ] || { echo "no card image for $d (results.txt: '${c}')"; exit 2; }

@@ -162,7 +162,9 @@ ends at the 20th after it. Checks:
   kickstart lines (`Boot file size: 262144`, two `File size: 256kB`,
   `##End result : 1`), the release `20 08 03` / `20 08 00`, then 21
   HandleFpga frames; and its `NOT UART` lines: no `ROM loading failed`, no
-  `Fatal error`
+  `Fatal error`, and on the RV no `Overriding screenmode` (the 832 prints
+  it on every boot, an 832-only defect that `expected_diff.txt` drops on
+  both CPUs: so the RV's is checked here, final review I2)
 - no `EXC` / `TRAP` on the UART
 - `l3check.py kick <run>`: the 256 KB the firmware uploaded equals `KICK.ROM`
   byte for byte at both places (Amiga 0xf80000 and the 0xfc0000 mirror,
@@ -249,6 +251,7 @@ ok   MARGIN lines: all 10 present, none LOW, 7 required ones ok
 ok   milestones: 51 of 51 found in order
 ok   no UART line contains 'ROM loading failed'
 ok   no UART line contains 'Fatal error'
+ok   no UART line contains 'Overriding screenmode'
 ok   PASS kick: KICK.ROM (262144 bytes) at Amiga 0xf80000 and 0xfc0000 (host 0x100000, 0x140000)
 ok   PASS order: the last kickstart-region SDRAM write at cycle 150139042 (host 0017fffc), the CPU released at cycle 156968829, 6829787 cycles later
 ok   PASS mmc: MMC_Init's 9 commands after the jump (CMD0 arg=00000000 ... CMD58 arg=00000000) = sim/l3/gold/mmc_init_rv.txt
@@ -486,7 +489,12 @@ one counter over both files: the order without the cycles.
 
 `run.sh diff <rv run> <832 run>` runs `spitrace.py norm` on each
 (`<run>/norm.txt`) and `spitrace.py diff` on the two: a unified diff, exit 0
-only when it is empty. `norm` writes one stream in frame order,
+only when it is empty. First it checks each run's `results.txt` (final
+review M5) and refuses (exit 2) unless the first run is `CPU rv` and the
+second `CPU 832` (`--twin`: two runs of one CPU, an X twin), both ran the
+same scenario (the `scenario:` line; a run from before that line: its one
+`tb_<scenario>_x*.log`) with the same `cd config`, and both passed (the
+bench verdict `ok` and no `BAD` line). `norm` writes one stream in frame order,
 `<STREAM> <text>` per line:
 
 - **dropped poll frames** (their number depends on the CPU's speed):
@@ -521,8 +529,9 @@ only when it is empty. `norm` writes one stream in frame order,
   While the CD player runs, `CD_AudioPoll()` reads the flags on every
   main-loop pass: RV 17,174 frames, 832 7,228. "Kept" is decided on the
   finished stream, after every drop of this list and every rule
-  (`DROP`, `DEDUP`, `DROPBLOCK`, `SUBST`; `FLOAT` lines have no place
-  among the frames). So the dropped poll frames and a repeated HandleRTC
+  (`DROP`, `DEDUP`, `DROPBLOCK`, `SUBST`). A `FLOAT` run has no place
+  among the frames, so it does not end a run of repeats either: its place
+  is what the rule declares timing-dependent. So the dropped poll frames and a repeated HandleRTC
   unit (its RTC frame and hw writes) do not end a run of repeats, while
   any printed line does: an SPI, SD or OSD frame, a hw write, a UART line
   (`spitrace_test.sh` cases `cdpollhw`, `cdpolluart`: the line and the
@@ -611,9 +620,16 @@ only when it is empty. `norm` writes one stream in frame order,
   - `DEDUP hw <addr-regex>`: a write to a matching address whose value
     equals the previous write to that address is dropped (a no-op
     rewrite). A changed value stays.
-  - `FLOAT hw <addr-regex>`: the matching writes leave their place among
-    the frames and are printed after everything else, in their own order.
-    Their order among themselves is compared; their position is not.
+  - `FLOAT hw <addr-regex> <anchor-regex>`: a maximal run of adjacent hw
+    writes to matching addresses (no other line between them) that holds
+    at least one write to an address matching `<anchor-regex>` leaves its
+    place among the frames. The runs are printed after everything else, in
+    their order, one line per run: `HW float <addr> <value> ...`. A run's
+    writes, their order and where a run is cut are compared; its place is
+    not. A matching write in a run without an anchor write keeps its place
+    (final review I1). The rules after a `FLOAT`: `SUBST` and `DROP` also
+    apply to the floated writes; a `DEDUP`, `FLOAT` or `DROPBLOCK` that
+    would match a floated write is an error (`norm` exits 1).
 
   A rule without a comment line above it is refused.
 - `# rule <line> used <n>` and `# dropped ...` lines (not compared):
@@ -638,6 +654,10 @@ another place, another audio ring. Each of these gives a diff line:
 - a changed AUDIO value among its rewrites
 - a changed SD-init speed write (`ffffe8` with no RTC frame next to it)
 - a changed, an extra and a missing write of the FLOAT group
+- (final review I1) a DisableInterrupts write (`ffffa0 0000`) moved after
+  an Akiko ack (`ffff84`) or before the frame it follows; a `SUBST` after
+  the `FLOAT` rewrites the floated writes too, a `DEDUP` after it that
+  matches a floated write fails `norm`
 - a repeated HandleRTC unit with a changed RTC value (`ffff70`), or with a
   changed closing speed write (`ffffe8`)
 - (Task 17) a repeated IDE flag poll with other flags, an AUDIO write or a
@@ -662,13 +682,21 @@ one `0` per sector), the config file (`SDFILE` of `MINMGAR.CFG` and
 832's `partition type: 0x0`), the 832's spurious "Overriding screenmode."
 pass (a `DROPBLOCK` up to its `##End result : 0`: an 832-only firmware
 defect, `findings/osd-riscv/phase4.md` "Findings for Paul") and the RV-only
-`IRQ_MASK` write (`HW ffff34`, `fw/ctrl_rv/arch/irq.c`). With them, the
+`IRQ_MASK` write (`HW ffff34 0000`, `fw/ctrl_rv/arch/irq.c`; only that
+value: another one shows). With them, the
 `boot` diff (runs `p4t7r2`, `p4t7c2`) is empty and all 9 rules are used.
 `fdd_rd` adds four rules (section "fdd_rd"):
 
 - `Inserting floppy` (`fmt_diff_expected.txt` lines 37-44)
 - `DEDUP hw ^ffffb0$`: the drive sounds rewrite AUDIO on every pass
-- `FLOAT hw ^ffff(60|90|a0)$`: a TIMER-driven I2C / keyboard group
+- `FLOAT hw ^ffff(60|90|a0)$ ^ffff60$`: the TIMER-driven I2C run (the
+  ADV7511 poll, `ffff60`) with the interrupt handler next to it
+  (`ffffa0` = cfide's INTERRUPT register, `ffff90` = KEYBOARD_OUT). Only a
+  run with an I2C write floats: every other INTERRUPT-register write
+  (ColdBoot, the Akiko ISR around each request, c64keys) keeps its place.
+  On the gate pairs the floated runs are `ffff60 0b72 0242 1100, ffffa0
+  0000, ffff90 009b, ffffa0 0001` and the boot I2C run `ffff60 0b72 02ba
+  0200 0500`
 - `DROP hw ^MEM audio_ring`: the drive sounds' ring is rendered per
   TIMER count; `cdda` checks its ring with `l3check.py`
 
@@ -700,7 +728,7 @@ rule is used by at least one scenario, so none was removed, and a pair's
 XRAND twins of `CPU=832`: the EightThirtyTwo's random start can shift its
 timing (section "keys") or stop it (section "fdd_rd"). When a scenario's
 traces carry timing bytes (`fdd_rd`), compare the 832 twin normalised:
-`bash sim/l3/run.sh diff <832 run> <832 twin>` must be empty, and both
+`bash sim/l3/run.sh diff --twin <832 run> <832 twin>` must be empty, and both
 must pass their data checks. RV twins stay `compare` SAME.
 
 ## keys
@@ -1067,7 +1095,7 @@ whose start matches, and its comparison:
 
 ```sh
 CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator XRAND=1 XSEED=4 RUNTAG=fc_xs4 FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh fdd_rd
-bash sim/l3/run.sh diff fc fc_xs4
+bash sim/l3/run.sh diff --twin fc fc_xs4
 ```
 
 The 832 twin is compared normalised (section "Differential"): its
@@ -1151,8 +1179,8 @@ both CPUs the same frames. Everything else is equal:
 - the masked status sequence
 - every SD command and data hash
 - every OSD and UART line
-- the hw writes, with AUDIO deduplicated and the I2C / keyboard group
-  floated
+- the hw writes, with AUDIO deduplicated and the I2C run (with the
+  interrupt handler next to it) floated
 
 Task 14 made that bench change: `bfm_floppy` waits 500 ms after motor on
 and 15 ms after a head change (section "bfm_floppy"), so the first status
@@ -1361,7 +1389,7 @@ SIM=verilator RUNTAG=w FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BI
 CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=wc FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh fdd_wr
 CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator XRAND=1 XSEED=4 RUNTAG=wc_xs4 FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh fdd_wr
 bash sim/l3/run.sh diff --unused-rules w wc
-bash sim/l3/run.sh diff wc wc_xs4
+bash sim/l3/run.sh diff --twin wc wc_xs4
 python3 -I sim/l3/l3check.py fdd_wr sim/l3/run_w sim/l3/run_wc
 bash sim/l3/test/fdd_wr_test.sh
 ```
@@ -1548,7 +1576,7 @@ make -C sim/l3/fw832 B="$FWD/fw832" E832DIR="$E832DIR"
 CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=hc FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh xpair hdd
 SIM=verilator RUNTAG=h FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh xpair hdd
 bash sim/l3/run.sh diff --unused-rules h hc
-bash sim/l3/run.sh diff hc hc_xr
+bash sim/l3/run.sh diff --twin hc hc_xr
 ```
 
 (about 40 minutes for the RV pair and 55 for the 832 pair side by side.)
@@ -1735,7 +1763,7 @@ SIM=verilator RUNTAG=c CDCFG=cue FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/8
 SIM=verilator RUNTAG=ci CDCFG=iso FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh cd
 bash sim/l3/run.sh diff --unused-rules c cc
 bash sim/l3/run.sh diff --unused-rules ci cci
-bash sim/l3/run.sh diff cc cc_xr
+bash sim/l3/run.sh diff --twin cc cc_xr
 ```
 
 `xpair` runs the scenario and its XRAND twin side by side; on a busy
@@ -1923,7 +1951,7 @@ SIM=verilator RUNTAG=a FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BI
 SIM=verilator RUNTAG=al FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh cdda_load
 bash sim/l3/run.sh diff --unused-rules a ac
 bash sim/l3/run.sh diff --unused-rules al alc
-bash sim/l3/run.sh diff ac ac_xs1
+bash sim/l3/run.sh diff --twin ac ac_xs1
 ```
 
 The 832's XRAND twin is a separate run with `XSEED=1`, not `xpair`.
@@ -2297,10 +2325,16 @@ goes, and the bench files are build inputs); its runs are
 `sim/l3/run_p4g_<cpu>_<name>`, each with `run.out` (run.sh's output), and
 `sim/l3/grid_p4g.txt` lists every run with its verdict, wall time,
 simulated seconds and cycles as it ends. Every run takes the same two
-firmware images (`FW`, default `sim/l3/run_fw14/fwrv/RV32OSDA.BIN`, and
-`FW832`, default `sim/l3/run_fw12/fw832/832OSDAD.BIN`; build them as in
-"Differential" and pass the paths on a fresh tree), so each RV / 832 pair
-boots the same card and `run.sh diff` compares them.
+firmware images, so each RV / 832 pair boots the same card and `run.sh
+diff` compares them. Without `FW` / `FW832`, `grid.sh` builds both from
+the tree at its start, as `run.sh` does (about 2 minutes: `fw/ctrl_rv`
+under the `L3_DATE` date shim, `fw/ctrl_832` through `sim/l3/fw832` with
+`E832DIR`), into `sim/l3/run_<tag>_fw/fwrv` and `sim/l3/run_<tag>_fw/fw832`,
+and refuses to start if that directory exists. To reuse images, pass both
+paths: `FW=<RV32OSDA.BIN> FW832=<832OSDAD.BIN> bash sim/l3/grid.sh <tag>`.
+`grid_<tag>.txt` names each image, whether it was built or given, and its
+sha256 (the Phase 4 tree builds `RV32OSDA.BIN` 17bf2563... and
+`832OSDAD.BIN` 768c765d..., the images of Task 19's `p4g`).
 
 The default list (`grid.sh` `default_list`):
 

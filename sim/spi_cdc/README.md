@@ -119,6 +119,22 @@ RUNTAG=rdymut RDY_MUT=1 XARGS="+RDY=1 +TESTS=8 +OSD_MIN_GAP=0" bash sim/spi_cdc/
 `run.sh` exits 1 when a pair does not PASS, so the tooth run exits 1 when
 it works. That is the expected result of the mutant, not an error.
 
+The cross-frame tooth (final review I4): `RESYNC_MUT=1` runs `xframe` on a
+copy of `cfide.vhd` that resyncs `osd_tx_seq` to `osd_rx_seq` after 4 idle
+cycles (`osd_idle(2)`) instead of 64 (`osd_idle(6)`; `run.sh` checks that
+exactly one `elsif osd_idle(6)` line matches and that the edit applied).
+The resync then lands while the `OSD_WR` frame's last byte is still in
+`userio_osd`'s synchroniser, the late byte is counted against the VERSION
+command byte, and `OSD_RDY` comes one byte early. It must FAIL in every
+pair (run `p4fx_rsm`, 119 s: `xframe` fails 3 of 3 at gaps 2 to 10, and
+the run ends on the watchdog at gap 20 in six pairs); the same command
+without `RESYNC_MUT` passes in every pair (`p4fx_rsg`, 112 s):
+
+```sh
+RUNTAG=rsmut RESYNC_MUT=1 XARGS="+RDY=1 +TESTS=16 +OSD_MIN_GAP=0" bash sim/spi_cdc/run.sh
+RUNTAG=rsgreen XARGS="+RDY=1 +TESTS=16 +OSD_MIN_GAP=0" bash sim/spi_cdc/run.sh
+```
+
 ## `host832/run.sh`: the real 832
 
 ```sh

@@ -66,11 +66,13 @@
 // to 64 clk_114 after the word's last edge.  A word started sooner sends the
 // previous word again (sim/l3 fdd_wr run p4t14w: "Second sync word
 // missing...", nothing written; findings/osd-riscv/phase4.md, Task 14).
-// The 832 is slow enough not to need this.  WRFIFO_GAP is WRFIFO_GAP_READS
-// TIMER reads: each one is a cfide access acknowledged at a clk_28 edge (as
-// SPIN), so the gap has a floor in clk_28 cycles whatever the CPU's speed;
-// not an empty counted loop.  The one listed exception to "No new
-// count-based delays" (README "Differences", "Delay sites").
+// The 832 is slow enough not to need this.  WRFIFO_GAP is a counted loop of
+// WRFIFO_GAP_READS discarded TIMER reads, 16 SPINs under another name: each
+// read is a cfide access acknowledged at a clk_28 edge, so the gap has a
+// floor in clk_28 cycles whatever the CPU's speed (not an empty loop whose
+// length follows the CPU).  The one listed exception to "No new count-based
+// delays" (README "Differences", "Delay sites"); test/Makefile wrfifo.ok
+// allows a discarded TIMER read only in SPIN and here.
 #define WRFIFO_GAP_READS 16
 #define WRFIFO_GAP {int i_; for (i_ = 0; i_ < WRFIFO_GAP_READS; i_++) {int v_=TIMER; (void)v_;}}
 

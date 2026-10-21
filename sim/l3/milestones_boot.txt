@@ -167,6 +167,11 @@ UART ##End result : 1
 # the real main loop, not the fatal-error loop
 NOT UART ROM loading failed
 NOT UART Fatal error
+# ColdBoot()'s screen-mode override (main.c: F1..F4 held when it reads the
+# key level; no L3 scenario holds a key then).  expected_diff.txt drops the
+# 832's spurious "Overriding screenmode." pass (an 832-only defect, Task 7)
+# on both CPUs, so the RV's is checked here (final review I2)
+CPU=rv NOT UART Overriding screenmode
 #
 # -- SPI after the boot screen
 # ApplyConfiguration(1,1) -> ConfigIDEPorts(): port 1 on, no device (the

@@ -6,6 +6,10 @@
 #   ./run.sh mutant_seq   teeth check: osd_rx_seq steps one clk7 period early
 #                         (on the SPI synchroniser's rx_sync, in a run copy of
 #                         userio_osd.v): check (b) MUST fail
+#   ./run.sh mutant_cs    teeth check: osd_rx_seq counts only a byte taken
+#                         while CS is low (rx && !_scs, in a run copy of
+#                         userio_osd.v), so the previous frame's late last
+#                         byte is lost: check (d') MUST fail
 #
 # iverilog, not xsim: this is a two-module bench that finishes in a second, and
 # it can then be run while a Vivado build holds the machine -- concurrent xsim
@@ -34,7 +38,10 @@ for mode in $MODES; do
 		# byte, so a host polling it loads the reply before rddat has moved:
 		# check (b) must catch that.
 		mutant_seq) want=FAIL; mustfail="(b)" ;;
-		*) echo "unknown mode: $mode (use normal, mutant or mutant_seq)"; exit 2 ;;
+		# The late byte of the previous frame (taken after CS rose) is not
+		# counted: the cross-frame check (d') must catch that.
+		mutant_cs) want=FAIL; mustfail="(d')" ;;
+		*) echo "unknown mode: $mode (use normal, mutant, mutant_seq or mutant_cs)"; exit 2 ;;
 	esac
 
 	run="$HERE/run_${RUNTAG:-$mode}"
@@ -47,6 +54,15 @@ for mode in $MODES; do
 			echo "$mode: the osd_rx_seq increment line was not found in $osd"; exit 1; }
 		sed "s/^    if (rx) osd_rx_seq <= /    if (spi0.rx_sync) osd_rx_seq <= /" "$osd" > "$run/userio_osd.v"
 		[ "$(grep -c '^    if (spi0.rx_sync) osd_rx_seq <= ' "$run/userio_osd.v")" = 1 ] || {
+			echo "$mode: mutation not applied"; exit 1; }
+		osd="$run/userio_osd.v"
+	fi
+	if [ "$mode" = mutant_cs ]; then
+		inc="    if (rx) osd_rx_seq <= #1 osd_rx_seq + 2'd1;"
+		[ "$(grep -cxF -- "$inc" "$osd")" = 1 ] || {
+			echo "$mode: the osd_rx_seq increment line was not found in $osd"; exit 1; }
+		sed "s/^    if (rx) osd_rx_seq <= /    if (rx \&\& !_scs) osd_rx_seq <= /" "$osd" > "$run/userio_osd.v"
+		[ "$(grep -c '^    if (rx && !_scs) osd_rx_seq <= ' "$run/userio_osd.v")" = 1 ] || {
 			echo "$mode: mutation not applied"; exit 1; }
 		osd="$run/userio_osd.v"
 	fi

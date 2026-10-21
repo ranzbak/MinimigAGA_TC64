@@ -37,22 +37,31 @@
 # run list, then one line per run as it ends (verdict, wall time, simulated
 # seconds, cycles), then the grid's wall time.  Exit 0 when every run passed.
 #
-# Environment: FW (default sim/l3/run_fw14/fwrv/RV32OSDA.BIN), FW832 (default
-# sim/l3/run_fw12/fw832/832OSDAD.BIN), E832DIR (default the repository's
+# Environment: FW (an RV32OSDA.BIN) and FW832 (an 832OSDAD.BIN): the two
+# images every run's card gets.  Unset, grid.sh builds them from this tree
+# at its start, as run.sh does (fw/ctrl_rv under run.sh's date shim,
+# L3_DATE; fw/ctrl_832 through sim/l3/fw832), into sim/l3/run_<tag>_fw/fwrv
+# and sim/l3/run_<tag>_fw/fw832.  grid_<tag>.txt names both images, where
+# they came from and their sha256.  E832DIR (default the repository's
 # EightThirtyTwo; in a worktree: the main checkout's), E832 (default
 # $E832DIR/RTL), MAXSIM, VIVADO_CAP, POLL; RUNSH (tests of grid.sh only:
 # the run.sh to start, default sim/l3's).
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
+# shellcheck source=../common/hostsim.sh
+. "$ROOT/sim/common/hostsim.sh"     # hs_fwrv, hs_die
 TAG=${1:-}
 LISTFILE=${2:-}
 [ -n "$TAG" ] || { sed -n '2,/^set -u$/{/^set -u$/!p}' "$0"; exit 2; }
 case "$TAG" in *[!a-zA-Z0-9_]*) echo "tag '$TAG': letters, digits and _ only"; exit 2 ;; esac
 MAXSIM=${MAXSIM:-6} VIVADO_CAP=${VIVADO_CAP:-2} POLL=${POLL:-60}
 export SIM=verilator
-export FW=${FW:-$HERE/run_fw14/fwrv/RV32OSDA.BIN}
-export FW832=${FW832:-$HERE/run_fw12/fw832/832OSDAD.BIN}
+FWDIR="$HERE/run_${TAG}_fw"
+FW_FROM="given (FW=)" FW832_FROM="given (FW832=)"
+[ -n "${FW:-}" ] || { FW="$FWDIR/fwrv/RV32OSDA.BIN"; FW_FROM="built from the tree"; }
+[ -n "${FW832:-}" ] || { FW832="$FWDIR/fw832/832OSDAD.BIN"; FW832_FROM="built from the tree"; }
+export FW FW832
 export E832DIR=${E832DIR:-$ROOT/EightThirtyTwo}
 export E832=${E832:-$E832DIR/RTL}
 
@@ -167,17 +176,34 @@ done < <(if [ -n "$LISTFILE" ]; then cat "$LISTFILE"; else default_list; fi)
 [ "$n" -gt 0 ] || { echo "list: no runs"; exit 2; }
 
 OUT="$HERE/grid_$TAG.txt"
+# the two images: built from the tree unless given (not for LIST=1)
+if [ "${LIST:-0}" != 1 ]; then
+	if [ "$FW_FROM" != "given (FW=)" ] || [ "$FW832_FROM" != "given (FW832=)" ]; then
+		[ -e "$FWDIR" ] && { echo "$FWDIR exists: another tag, or pass FW= and FW832="; exit 2; }
+		mkdir -p "$FWDIR" || exit 2
+	fi
+	if [ "$FW_FROM" != "given (FW=)" ]; then
+		echo "building $FW from the tree"
+		( run=$FWDIR; hs_fwrv "$run" ) || exit 2
+	fi
+	if [ "$FW832_FROM" != "given (FW832=)" ]; then
+		echo "building $FW832 from the tree (E832DIR $E832DIR)"
+		make -C "$HERE/fw832" B="$FWDIR/fw832" E832DIR="$E832DIR" > "$FWDIR/make_fw832.log" 2>&1 \
+			|| { tail -20 "$FWDIR/make_fw832.log"; echo "make sim/l3/fw832 failed ($FWDIR/make_fw832.log)"; exit 2; }
+	fi
+	[ -f "$FW" ] && [ -f "$FW832" ] || { echo "no FW ($FW) or FW832 ($FW832)"; exit 2; }
+fi
+sha() { if [ -f "$1" ]; then sha256sum "$1" | cut -d' ' -f1; else echo "(not built yet)"; fi; }
 {
 	echo "# grid $TAG: $n runs, $(date '+%Y-%m-%d %H:%M:%S'), MAXSIM $MAXSIM"
-	echo "# FW $FW sha256 $(sha256sum "$FW" | cut -c1-16)"
-	echo "# FW832 $FW832 sha256 $(sha256sum "$FW832" | cut -c1-16)"
-	echo "# tree $(git -C "$ROOT" rev-parse --short HEAD)$(git -C "$ROOT" diff --quiet HEAD -- sim rtl fw/ctrl_rv fw/ctrl_boot_rv || echo ' (sim/rtl/fw modified)')"
+	echo "# FW $FW, $FW_FROM, sha256 $(sha "$FW")"
+	echo "# FW832 $FW832, $FW832_FROM, sha256 $(sha "$FW832")"
+	echo "# tree $(git -C "$ROOT" rev-parse --short HEAD)$(git -C "$ROOT" diff --quiet HEAD -- sim rtl fw/ctrl_rv fw/ctrl_boot_rv fw/ctrl_832 || echo ' (sim/rtl/fw modified)')"
 	for ((i = 0; i < n; i++)); do
 		printf 'run %s phase %s %s %s %s\n' "${RT[$i]}" "${PH[$i]}" "${CPUS[$i]}" "${SCEN[$i]}" "${ENVS[$i]}"
 	done
 } > "$OUT.list"
 if [ "${LIST:-0}" = 1 ]; then cat "$OUT.list"; rm -f "$OUT.list"; exit 0; fi
-[ -f "$FW" ] && [ -f "$FW832" ] || { echo "no FW ($FW) or FW832 ($FW832)"; exit 2; }
 mv "$OUT.list" "$OUT"
 cat "$OUT"
 
