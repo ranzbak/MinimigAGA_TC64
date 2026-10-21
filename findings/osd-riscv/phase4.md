@@ -547,7 +547,7 @@ Found by the X-sensitivity twin of Task 2 (`XRAND=1`, sim/host_bridge, 2026-10-1
 
 ## Task 20 / I-cache
 
-Status: stopped at the plan 4.5 gate (Decision 7); nothing regenerated, no RTL change, no new simulation.
+Status: done. The plan 4.5 gate tripped (Decision 7) and Paul ruled on it (see the decision line); nothing regenerated, no RTL change, no new simulation (every figure below is read from the existing Task 19 default-grid runs).
 
 Source: default-grid RV runs `sim/l3/run_p4g_rv_def_{boot,fdd_rd,hdd,cdda,keys}`: `STATS@win_start` / `STATS@win_end`
 in `run.out`, `=== RETIRED` in the run's `*.log` (instrumentation 1b4da86). A refill is one iBus command (size 5 = 8 words).
@@ -560,12 +560,41 @@ in `run.out`, `=== RETIRED` in the run's `*.log` (instrumentation 1b4da86). A re
 | keys (1st..last key) | run_p4g_rv_def_keys | 19,258 | 682,199 | 2.82 % | 0.226 | 6,963,988 | 0.098 |
 | hdd (1st..last command) | run_p4g_rv_def_hdd | 8,622 | 950,312 | 0.91 % | 0.073 | 24,375,168 | 0.039 |
 
-Decision line: **stopped: miss ratio 9.0 % boot, 7.6 % fdd_rd, 7.3 % cdda** (gate: above 5 % on any scenario).
+Decision line: **4 KB kept (Paul 2026-10-21: match the original 68040's 4 KB I-cache) at main-loop miss ratios boot 9.0 %, fdd_rd 7.6 %, cdda 7.3 %** (gate: above 5 % on any scenario; keys 2.8 %, hdd 0.9 %).
 The boot window is short (8.3 k instructions) and cold, so cold misses weigh heavily; fdd_rd and cdda are long
-steady-state windows and are the real signal. 4 KB vs the 8 KB regeneration + OOC is Paul's decision.
+steady-state windows and are the real signal. A real 68040 has 4 KB I + 4 KB D, so the I-cache stays 4 KB: no 8 KB regeneration, no OOC, no RTL change.
+
+STATS cut at the end condition (exec-3 hand-over item 10): satisfied by the `STATS@win_start` / `STATS@win_end` lines and the `=== RETIRED` lines printed with them (commit 1b4da86); the tables here use the window deltas, not the whole-run `=== STATS` line.
 
 Ring fill (Task 19, CD-DA): RV max fill 42.85 ms at default against 88.16 ms for the 832 (half = 185.8 ms), 0 underruns:
 RV <= 832 holds.
 
-`sim/l3/speed.py` and the "Speed" section (SPI ns/byte, sector read time, ring fill, menu redraw) wait for Paul's I-cache answer.
-"Refill share of busy cycles" needs a per-refill latency the STATS lines do not carry.
+## Speed (plan 4.4)
+
+`python3 -I sim/l3/speed.py sim/l3/run_p4g_rv_def_<scenario> sim/l3/run_p4g_832_def_<scenario>` reads `spi_t.txt`, the run's `tb_*.log` and `results.txt` of the existing default-grid runs (Task 19, `SLAT=8 SJIT=0`, same card and same firmware images for both CPUs per scenario); self-test `python3 -I sim/l3/speed.py --selftest`. Cycles are `clk_114` (113.4375 MHz).
+
+| Figure | RV | 832 | Source and definition |
+|---|---|---|---|
+| SPI byte loop, ns per byte | **1,018** (min 913 in fdd_rd, max 3,032) | 1,299 (min 1,200, max 3,540) | median over the firmware-loop SD reads (CMD17 frames on cs 02, 527/528 bytes) of `boot`: frame duration / frame bytes, so command, card wait and data are all in it. Runs: boot, fdd_rd, hdd, cdda, cdda_load, keys give the same medians (+-0.1 ns); max = the first read of a run (cold I$ / card init) |
+| SD sector read end to end, CMD17 | **537.6 us** (536.2 .. 1,598) | 685.8 us (682.5 .. 1,866) | one CMD17 frame, start to the last data byte, median of boot (n 1,569 / 1,597) |
+| SD sector read end to end, CMD18 | **421.5 us** (418.8 .. 569.9) | 481.7 us (479.6 .. 733.2) | `hdd`, n 147 each: the CMD18 command frame start to the end of the direct-mode data frame (cs 42, 512 bytes) that follows it without a gap |
+| 32 KB ring fill (`cdda`, Task 17) | **42.81 ms median, 42.85 max** | 88.15 ms median, 88.16 max | `CDDA fill` lines, the three fills of the measured halves plus the PLAY-time fills (n 7; the min of 4.67 / 21.73 ms is the PLAY-time partial fill, not a refill after a flip). `cdda_load`: RV median 42.82, max 43.35; 832 median 88.14, max 96.69 |
+| Menu redraw (`keys`, Task 8's tour) | **1.708 ms median** (1.706 .. 5.218) | 4.210 ms median (3.784 .. 12.744) | key-down event (`KEYS ev`) to the end of the last `20 0c` frame before the next key-down, n 21 each; the max is the first open of a page |
+
+Gate (plan 4.4, from Task 17): **RV ring fill <= 832 holds** (42.85 ms max vs 88.16 ms, 0.49x); every other figure is also lower on the RV (SPI byte 0.78x, sector read 0.78x / 0.88x, menu redraw 0.41x). `fdd_rd` has an incidental menu redraw too (n 13: RV median 1.826 ms, 832 4.211 ms), same ratio.
+
+### I-cache per window (RV; the 832 has neither I$ nor STATS lines)
+
+Window events per scenario as in the Task 20 brief (boot: 1st..21st HandleFpga frame; fdd_rd: first..last track DMA; hdd: first..last command; cdda: flip 2..6; keys: first..last key). `refills / retired` and `8 x refills / retired` are measured; the last two columns are not:
+
+| Scenario | refills | retired | refills / retired | 8 x refills / retired | busy cycles (I$ port, all requests) | window cycles | refill share of busy, ESTIMATE L=30 (L=20 .. 40) |
+|---|---|---|---|---|---|---|---|
+| boot | 748 | 8,298 | 9.01 % | 0.721 | 91,581 | 113,224 | 24.5 % (16.3 .. 32.7) |
+| fdd_rd | 1,108,249 | 14,617,607 | 7.58 % | 0.607 | 156,229,789 | 193,659,710 | 21.3 % (14.2 .. 28.4) |
+| cdda | 427,808 | 5,887,507 | 7.27 % | 0.581 | 70,199,943 | 84,279,296 | 18.3 % (12.2 .. 24.4) |
+| keys | 19,258 | 682,199 | 2.82 % | 0.226 | 5,049,253 | 6,963,988 | 11.4 % (7.6 .. 15.3) |
+| hdd | 8,622 | 950,312 | 0.91 % | 0.073 | 21,840,927 | 24,375,168 | 1.2 % (0.8 .. 1.6) |
+
+**The refill share is an estimate, not a measurement.** The STATS lines carry the refill count and the port's busy-cycle total (all requests: refills, data reads and writes) but no refill latency, and the three request counts do not separate (a least-squares fit of busy cycles on refills, reads and writes over the five windows gives a negative refill weight, so the busy total is dominated by something else, most likely the slow peripheral accesses). The estimate is `refills x L / busy cycles` with an assumed refill latency of L = 30 `clk_114` per 8-word refill (bracket 20 and 40); it scales linearly with L. A measured figure needs a per-refill latency counter in the bench.
+
+`cdda_load` has no `win_start` / `win_end` lines (n/a: window line missing in run_p4g_rv_def_cdda_load and run_p4g_832_def_cdda_load, not re-run); the other scenarios of the grid (`fdd_wr`, `cd`, `cdiso`, `akiko`) are outside the brief's window list.
