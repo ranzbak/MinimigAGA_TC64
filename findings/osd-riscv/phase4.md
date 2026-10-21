@@ -171,6 +171,163 @@ Cause (`spi_t.txt`, `uart.txt` of `p4m1a` / `p4m1ac`): block 0 started at the ma
 
 **XRAND twins.** RV `p4t18_xr` (2,270 s) PASS and `compare p4t18 p4t18_xr` SAME (log, spi.txt: 20,721 frames). 832 `p4t18c3_xr` (3,817 s) PASS with its data checks; `compare` DIFF (cycle numbers) and the normalised `diff p4t18c3 p4t18c3_xr` has one hunk: the 64 `HW ffff84 0000` lines of block 1 sit after rather than before their UART lines around the "Inserting floppy" text (an ordering of the UART printer vs the DATA write, timing only). Accepted per scenario-rulings.md (the 832's reset-less start-up state), recorded here. Note: the 832 UART prints hex in upper case although its source says `%x` (lib832), so no SUBST rule for the "Akiko" lines was needed; `diff --unused-rules p4t18 p4t18c3` reports `rules: all 13 used`.
 
+### Task 19: differential, stress grid, margins, teeth (plan 4.1 / 4.2 gate)
+
+Tree `osd-riscv` 23b86db (the RETIRED instrumentation 1b4da86 and the grid tooling 23b86db in), Verilator, one RV image (`RV32OSDA.BIN` 17bf2563, `run_fw14`) and one 832 image (`832OSDAD.BIN` 768c765d, `run_fw12`) on every card. `bash sim/l3/grid.sh p4g` (README "Stress grid"): 60 runs, six simulations at most on the machine (the cap was 2 while Vivado ran: 10:10-11:12 and from 21:54, when the grid stopped its own simulators), one Verilator build per configuration (five: RV `EXTRA_WS` 0, 4, 16, 64 and the 832). Wall time 69,004 s (19.2 h, 07:34 to 02:44, with the teeth and the akiko evidence runs on the same slots); simulation ran at 0.04 to 0.12 M cycles/s per run with six on the machine (4 cores, 8 threads).
+
+**Gate: every grid run PASS.** 59 of 60 on the first pass; the 60th, `p4g_rv_ws64_fdd_rd`, ended at cycle 178 because its `TIMEOUT` bound (2,261 M) wrapped the bench's 32-bit integer (a bench fault: run.sh now refuses a `TIMEOUT` above 2,147,483,647, 249508e) and passed when re-run with 2,147 M as `p4gx_rv_ws64_fdd_rd`. No run has an `EXC` / `TRAP`, a MARGIN `LOW` or a data check failure; no latency-bound item went `LOW`, not even at `EXTRA_WS` 64.
+
+#### Differential
+
+`run.sh diff --unused-rules` of every RV / 832 pair of the same scenario and grid point (both runs on the same card):
+
+| Pair | Diff |
+|---|---|
+| default: `boot`, `keys`, `fdd_rd`, `fdd_wr`, `hdd`, `cd` (cue), `cd` (iso), `cdda`, `cdda_load` | empty |
+| default: `akiko` (`p4g_rv_def_akiko` / `p4g_832_def_akiko`, the bench before 31a54db) | 3 timing hunks (Task 18 above: the first main-loop pass inside block 0 on the 832 only, an end-cut frame) |
+| `akiko` with 31a54db's scenario (`p4t19ak_rv_akiko` / `p4t19ak_832_akiko`) | empty |
+| skew (0.3, 4.0) and (9.5, 0.3): `fdd_rd`, `hdd` | empty |
+
+Unused rules: each pair's `UNUSED` list names only other scenarios' rules (`hdd`'s three UART rules, the floppy rules, the cdda `DROPBLOCK`); no rule of `expected_diff.txt` is unused in all ten default pairs, so none is removed (Task 7 ruling). `p4g_rv_def_boot` is byte-identical to `p4m2b` in `spi.txt`, `hw.txt` and `uart.txt`, and `p4g_rv_def_fdd_wr` to `p4t14f`: the RETIRED counter changes no trace.
+
+#### Stress grid
+
+Runs (RUNTAG, verdict, wall s, simulated s, end cycle):
+
+| RUNTAG | verdict | wall | sim | cycles |
+|---|---|---|---|---|
+| p4g_832_def_akiko | akiko PASS | 7212 | 7194 | 369621955 |
+| p4g_832_def_boot | boot PASS | 3455 | 3407 | 202841141 |
+| p4g_832_def_cd | cd PASS | 4124 | 4071 | 233680101 |
+| p4g_832_def_cdda | cdda PASS | 11684 | 11662 | 407815893 |
+| p4g_832_def_cdda_load | cdda_load PASS | 11435 | 11381 | 407912613 |
+| p4g_832_def_cdiso | cd PASS | 3756 | 3720 | 212934613 |
+| p4g_832_def_fdd_rd | fdd_rd PASS | 7627 | 7591 | 502284387 |
+| p4g_832_def_fdd_wr | fdd_wr PASS | 10469 | 9400 | 520161170 |
+| p4g_832_def_hdd | hdd PASS | 4182 | 4146 | 233511253 |
+| p4g_832_def_keys | keys PASS | 3762 | 3723 | 215391649 |
+| p4g_832_sk0340_fdd_rd | fdd_rd PASS | 8283 | 8260 | 502284387 |
+| p4g_832_sk0340_hdd | hdd PASS | 10397 | 10381 | 233511253 |
+| p4g_832_sk9503_fdd_rd | fdd_rd PASS | 10166 | 10149 | 502284387 |
+| p4g_832_sk9503_hdd | hdd PASS | 3940 | 3878 | 233511269 |
+| p4g_rv_def_akiko | akiko PASS | 4841 | 4823 | 318788355 |
+| p4g_rv_def_boot | boot PASS | 2610 | 2569 | 158213821 |
+| p4g_rv_def_cd | cd PASS | 2612 | 2578 | 185264325 |
+| p4g_rv_def_cdda | cdda PASS | 5690 | 5628 | 337251973 |
+| p4g_rv_def_cdda_load | cdda_load PASS | 5569 | 5508 | 337317973 |
+| p4g_rv_def_cdiso | cd PASS | 2368 | 2342 | 171314533 |
+| p4g_rv_def_fdd_rd | fdd_rd PASS | 8415 | 8358 | 453775267 |
+| p4g_rv_def_fdd_wr | fdd_wr PASS | 7442 | 7388 | 470697761 |
+| p4g_rv_def_hdd | hdd PASS | 2726 | 2705 | 188076757 |
+| p4g_rv_def_keys | keys PASS | 2730 | 2722 | 165068169 |
+| p4g_rv_fast_boot | boot PASS | 1445 | 1387 | 151181149 |
+| p4g_rv_fast_cd | cd PASS | 1751 | 1742 | 177045413 |
+| p4g_rv_fast_hdd | hdd PASS | 1814 | 1800 | 180641269 |
+| p4g_rv_fast_keys | keys PASS | 1508 | 1450 | 157997173 |
+| p4g_rv_sj8_cdda | cdda PASS | 11605 | 11579 | 343480325 |
+| p4g_rv_sj8_hdd | hdd PASS | 3033 | 3005 | 193039381 |
+| p4g_rv_sk0205_fdd_rd | fdd_rd PASS | 7141 | 7071 | 453775267 |
+| p4g_rv_sk0205_hdd | hdd PASS | 3035 | 2985 | 188076757 |
+| p4g_rv_sk0205_keys | keys PASS | 2430 | 2364 | 165068169 |
+| p4g_rv_sk0340_fdd_rd | fdd_rd PASS | 7445 | 7404 | 453775267 |
+| p4g_rv_sk0340_hdd | hdd PASS | 3093 | 3049 | 188076757 |
+| p4g_rv_sk0340_keys | keys PASS | 2369 | 2320 | 165067341 |
+| p4g_rv_sk0502_fdd_rd | fdd_rd PASS | 7078 | 7058 | 453775267 |
+| p4g_rv_sk0502_hdd | hdd PASS | 3034 | 2975 | 188076757 |
+| p4g_rv_sk0502_keys | keys PASS | 2431 | 2403 | 165068169 |
+| p4g_rv_sk4003_fdd_rd | fdd_rd PASS | 7507 | 7463 | 453775267 |
+| p4g_rv_sk4003_hdd | hdd PASS | 3159 | 3109 | 188076757 |
+| p4g_rv_sk4003_keys | keys PASS | 2369 | 2344 | 165068169 |
+| p4g_rv_sk9503_fdd_rd | fdd_rd PASS | 7690 | 7621 | 453775267 |
+| p4g_rv_sk9503_hdd | hdd PASS | 3220 | 3146 | 188076757 |
+| p4g_rv_sk9503_keys | keys PASS | 2183 | 2128 | 165068169 |
+| p4g_rv_ws16_boot | boot PASS | 2851 | 2803 | 200665364 |
+| p4g_rv_ws16_cdda | cdda PASS | 5813 | 5759 | 391054373 |
+| p4g_rv_ws16_fdd_rd | fdd_rd PASS | 9680 | 8637 | 511349731 |
+| p4g_rv_ws16_fdd_wr | fdd_wr PASS | 8417 | 8335 | 530137717 |
+| p4g_rv_ws16_hdd | hdd PASS | 3395 | 3358 | 233647925 |
+| p4g_rv_ws4_boot | boot PASS | 2491 | 2478 | 167680228 |
+| p4g_rv_ws4_cdda | cdda PASS | 9550 | 9485 | 349345941 |
+| p4g_rv_ws4_fdd_rd | fdd_rd PASS | 8292 | 6981 | 466734243 |
+| p4g_rv_ws4_fdd_wr | fdd_wr PASS | 7379 | 7341 | 484070981 |
+| p4g_rv_ws4_hdd | hdd PASS | 2902 | 2837 | 198620485 |
+| p4g_rv_ws64_boot | boot PASS | 4668 | 4615 | 324131704 |
+| p4g_rv_ws64_cdda | cdda PASS | 8706 | 8684 | 547160773 |
+| p4g_rv_ws64_fdd_rd | fdd_rd FAILED | 1031 | 3 | 178 |
+| p4g_rv_ws64_fdd_wr | fdd_wr PASS | 11196 | 11181 | 705763493 |
+| p4g_rv_ws64_hdd | hdd PASS | 5868 | 5847 | 366586213 |
+| p4gx_rv_ws64_fdd_rd | fdd_rd PASS | 9153 | 9087 | 679671139 |
+
+
+What the grid points change (the RV unless named): `EXTRA_WS` 64 roughly doubles the boot (main loop at about 404 M cycles on the `fdd` card instead of 194 M) and slows every latency-bound path, yet the floppy read FIFO keeps 892 words at least (item 6, 0 empty slots), the write FIFO is never full (item 7), and every CD-DA half is refilled in time. The skew pairs change nothing the firmware sees: `fdd_rd` and `hdd` end at the same cycle on all five pairs (453,775,267 and 188,076,757), `keys` within 828 cycles. `+FAST_HW=1` shortens `boot` to 151.2 M cycles; OSD GAP stays 43 and OSD EARLY 0. `SJIT` 8 costs `hdd` 5 M cycles and `cdda` 2.5 ms per fill.
+
+CD-DA (ruling 5: the underrun gate gets its teeth from the `EXTRA_WS` sweep). A half is 8,192 frames, 185.8 ms at 44.1 kHz:
+
+| Run | underruns | fill min / median / max (ms) |
+|---|---|---|
+| RV `cdda` `EXTRA_WS` 0 | 0 | 4.667 / 42.811 / 42.847 |
+| RV `cdda` `EXTRA_WS` 4 | 0 | 5.789 / 47.627 / 47.679 |
+| RV `cdda` `EXTRA_WS` 16 | 0 | 9.262 / 64.109 / 64.394 |
+| RV `cdda` `EXTRA_WS` 64 | 0 | 23.552 / 126.168 / 126.332 |
+| RV `cdda` `SJIT` 8 | 0 | 5.836 / 45.308 / 45.346 |
+| 832 `cdda` default | 0 | 21.732 / 88.147 / 88.156 |
+| RV `cdda_load` default | 0 | 4.664 / 42.818 / 43.355 |
+| 832 `cdda_load` default | 0 | 21.791 / 88.139 / 96.694 |
+
+The RV at `EXTRA_WS` 16 still fills faster than the 832 at default; at 64 it is 43 % slower than the 832 and keeps 59 ms of a half. The 832 has no `EXTRA_WS`.
+
+#### Margins
+
+`python3 -I sim/l3/margins.py sim/l3/run_p4g*` (60 runs; the overflowed `p4g_rv_ws64_fdd_rd` is left out as incomplete, its re-run `p4gx` counts). Rows: plan 7.1 items (and CD-DA); columns: CPU x grid point; a cell is the worst value over that point's runs, its verdict and the scenario. Counts (1, 2 early, 5, 6, 7, underruns): the largest; times: the smallest. Units: items 3, 4, 7 gap, 8, 9, 14 `clk_114`; 12 ns; CD-DA ms; 13 `clk_114`; 6 words.
+
+| item | measurement | rv default | 832 default | rv FAST_HW | rv SJIT 8 | rv sk 0.2/0.5 | rv sk 0.3/4 | rv sk 0.5/0.2 | rv sk 4/0.3 | rv sk 9.5/0.3 | rv ws16 | rv ws4 | rv ws64 | 832 sk 0.3/4 | 832 sk 9.5/0.3 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | stale_acks | 0 ok (akiko) | 0 ok (akiko) | 0 ok (boot) | 0 ok (cdda) | 0 ok (fdd_rd) | 0 ok (fdd_rd) | 0 ok (fdd_rd) | 0 ok (fdd_rd) | 0 ok (fdd_rd) | 0 ok (boot) | 0 ok (boot) | 0 ok (boot) | 0 ok (fdd_rd) | 0 ok (fdd_rd) |
+| 2 | osd_gap | 43 ok (akiko) | 254 ok (akiko) | 43 ok (keys) | 59 ok (cdda) | 43 ok (fdd_rd) | 43 ok (fdd_rd) | 43 ok (fdd_rd) | 43 ok (fdd_rd) | 43 ok (fdd_rd) | 55 ok (boot) | 51 ok (fdd_rd) | 151 ok (boot) | 254 ok (fdd_rd) | 254 ok (fdd_rd) |
+| 2 | osd_early | 0 ok (akiko) | 0 ok (akiko) | 0 ok (boot) | 0 ok (cdda) | 0 ok (fdd_rd) | 0 ok (fdd_rd) | 0 ok (fdd_rd) | 0 ok (fdd_rd) | 0 ok (fdd_rd) | 0 ok (boot) | 0 ok (boot) | 0 ok (boot) | 0 ok (fdd_rd) | 0 ok (fdd_rd) |
+| 3 | dmode_release | 20.8 ok (cdda_load) | 42.8 ok (cdda_load) | 20.8 ok (hdd) | 20.8 ok (hdd) | 21 ok (hdd) | 21 ok (hdd) | 20.9 ok (hdd) | 20.5 ok (hdd) | 19.9 ok (hdd) | 53.8 ok (hdd) | 30.8 ok (hdd) | 150.8 ok (hdd) | 43 ok (hdd) | 41.9 ok (hdd) |
+| 3 | dmode_L | 6 rec (cdda_load) | 34 rec (cdda_load) | 6 rec (hdd) | 6 rec (hdd) | 6 rec (hdd) | 6 rec (hdd) | 6 rec (hdd) | 6 rec (hdd) | 6 rec (hdd) | 22 rec (hdd) | 10 rec (hdd) | 70 rec (hdd) | 34 rec (hdd) | 34 rec (hdd) |
+| 4 | paula_cs_release | 10.8 ok (akiko) | 3.8 ok (akiko) | 10.8 ok (boot) | 10.8 ok (cdda) | 11 ok (fdd_rd) | 11 ok (fdd_rd) | 10.9 ok (fdd_rd) | 10.5 ok (fdd_rd) | 9.9 ok (fdd_rd) | 26.8 ok (boot) | 14.8 ok (boot) | 97.8 ok (cdda) | 4 ok (fdd_rd) | 2.9 ok (fdd_rd) |
+| 4 | userio_cs_release | 10.8 ok (akiko) | 3.8 ok (akiko) | 10.8 ok (boot) | 10.8 ok (cdda) | 11 ok (fdd_rd) | 11 ok (fdd_rd) | 10.9 ok (fdd_rd) | 10.5 ok (fdd_rd) | 9.9 ok (fdd_rd) | 24.8 ok (boot) | 12.8 ok (boot) | 96.8 ok (boot) | 4 ok (fdd_rd) | 2.9 ok (fdd_rd) |
+| 4 | paula_word_spacing | 114 ok (akiko) | 98 ok (akiko) | 115 ok (boot) | 114 ok (cdda) | 114 ok (fdd_rd) | 114 ok (fdd_rd) | 114 ok (fdd_rd) | 114 ok (fdd_rd) | 114 ok (fdd_rd) | 142 ok (boot) | 118 ok (boot) | 160 ok (hdd) | 98 ok (fdd_rd) | 98 ok (fdd_rd) |
+| 4 | userio_byte_spacing | 57 ok (akiko) | 49 ok (akiko) | 57 ok (boot) | 57 ok (cdda) | 57 ok (fdd_rd) | 57 ok (fdd_rd) | 57 ok (fdd_rd) | 57 ok (fdd_rd) | 57 ok (fdd_rd) | 70 ok (boot) | 58 ok (boot) | 141 ok (boot) | 49 ok (fdd_rd) | 49 ok (fdd_rd) |
+| 5 | spi_write_busy | 0 ok (akiko) | 0 ok (akiko) | 0 ok (boot) | 0 ok (cdda) | 0 ok (fdd_rd) | 0 ok (fdd_rd) | 0 ok (fdd_rd) | 0 ok (fdd_rd) | 0 ok (fdd_rd) | 0 ok (boot) | 0 ok (boot) | 0 ok (boot) | 0 ok (fdd_rd) | 0 ok (fdd_rd) |
+| 6 | fdd_fifo_empty_dma | 0 ok (akiko) | 0 ok (akiko) | n/a | n/a | 0 ok (fdd_rd) | 0 ok (fdd_rd) | 0 ok (fdd_rd) | 0 ok (fdd_rd) | 0 ok (fdd_rd) | 0 ok (fdd_rd) | 0 ok (fdd_rd) | 0 ok (fdd_rd) | 0 ok (fdd_rd) | 0 ok (fdd_rd) |
+| 6 | fdd_fifo_min_words | 995 rec (akiko) | 955 rec (fdd_rd) | - | - | 995 rec (fdd_rd) | 995 rec (fdd_rd) | 995 rec (fdd_rd) | 995 rec (fdd_rd) | 995 rec (fdd_rd) | 980 rec (fdd_rd) | 984 rec (fdd_rd) | 892 rec (fdd_rd) | 955 rec (fdd_rd) | 955 rec (fdd_rd) |
+| 7 | fdd_fifo_full_write | 0 ok (fdd_wr) | 0 ok (fdd_wr) | n/a | n/a | n/a | n/a | n/a | n/a | n/a | 0 ok (fdd_wr) | 0 ok (fdd_wr) | 0 ok (fdd_wr) | n/a | n/a |
+| 7 | fdd_wr_word_gap | 202 ok (fdd_wr) | 85 ok (fdd_wr) | - | - | - | - | - | - | - | 473 ok (fdd_wr) | 269 ok (fdd_wr) | 1,313.1 ok (fdd_wr) | - | - |
+| 8 | ide_wait | 32 rec (hdd) | 64 rec (cdda_load) | 48 rec (hdd) | 48 rec (hdd) | 32 rec (hdd) | 32 rec (hdd) | 32 rec (hdd) | 32 rec (hdd) | 32 rec (hdd) | 48 rec (hdd) | 16 rec (hdd) | 48 rec (hdd) | 64 rec (hdd) | 64 rec (hdd) |
+| 9 | cd_timeout_left | 6,583,629,248 ok (cd iso) | 6,583,605,856 ok (cd iso) | 6,584,159,632 ok (cd cue) | 6,584,315,680 ok (cdda) | n/a | n/a | n/a | n/a | n/a | 6,584,313,760 ok (cdda) | 6,584,315,344 ok (cdda) | 6,584,306,256 ok (cdda) | n/a | n/a |
+| CD-DA | cdda_underruns | 0 ok (cdda) | 0 ok (cdda) | - | 0 ok (cdda) | - | - | - | - | - | 0 ok (cdda) | 0 ok (cdda) | 0 ok (cdda) | - | - |
+| CD-DA | cdda_fill_max_ms | 43.355 rec (cdda_load) | 96.694 rec (cdda_load) | - | 45.346 rec (cdda) | - | - | - | - | - | 64.394 rec (cdda) | 47.679 rec (cdda) | 126.332 rec (cdda) | - | - |
+| 12 | rtc_cs_high | 558,460,866.2 rec (fdd_rd) | 1,317,505,453.8 rec (fdd_rd) | n/a | 786,723,292.4 rec (cdda) | 558,460,866.2 rec (fdd_rd) | 558,452,191.2 rec (fdd_rd) | 558,460,866.2 rec (fdd_rd) | 558,460,866.2 rec (fdd_rd) | 558,460,866.2 rec (fdd_rd) | 1,445,592,271.4 rec (fdd_rd) | 760,634,315.2 rec (fdd_rd) | n/a | 1,317,505,453.8 rec (fdd_rd) | 1,317,505,453.8 rec (fdd_rd) |
+| 13 | akiko_req_ack_max | 238,392 rec (akiko) | 229,128 rec (akiko) | - | - | - | - | - | - | - | - | - | - | - | - |
+| 14 | kick_order | 6,864,999 ok (boot) | 13,589,729 ok (boot) | 5,835,953 ok (boot) | 7,535,459 ok (hdd) | 6,864,999 ok (keys) | 6,864,999 ok (keys) | 6,864,999 ok (keys) | 6,864,999 ok (keys) | 6,864,999 ok (keys) | 10,285,699 ok (hdd) | 7,662,367 ok (boot) | 20,275,707 ok (boot) | 13,594,665 ok (fdd_rd) | 13,594,665 ok (fdd_rd) |
+| 15 | keys_check | PASS (keys) | PASS (keys) | PASS (keys) | - | PASS (keys) | PASS (keys) | PASS (keys) | PASS (keys) | PASS (keys) | - | - | - | - | - |
+| 10 | - | SD protocol waits: closed in Phase 3 (TIMER waits); no L3 monitor |
+| 11 | - | SPIN / delays: grep gate (Phase 3, Task 11); no L3 monitor |
+
+runs: 60; LOW: none
+
+Notes: item 2 is the OSD reply gap (bound 40, OSD EARLY 0 required); since Task 11 the RV waits on `OSD_RDY`, so 43 is the handshake's spacing, not a margin to an edge. Item 3 at default: RV 20.8, 832 42.8 `clk_114` from the 4,096th edge to the release (bound 0 since 202e077; tooth (a) shows the race without it). Item 4's release figures are bound 0 (README "Item 4"); the 832 at skew (9.5, 0.3) has the smallest, 2.9. Item 8 is status-driven (`rec`); item 9 keeps 99.99 % of `CD_TIMEOUT` in every run. Item 12: the PCF2123 datasheet minimum is unknown (bound 0, `rec`). Item 13 (Akiko) is UART-bound: 238,392 vs 229,128 `clk_114`. Items 10 and 11 have no L3 monitor (Phase 3 closed them).
+
+#### Teeth
+
+Each must fail; all do.
+
+| Tooth | Run | Result |
+|---|---|---|
+| (a) 202e077 reverted in `paula_floppy.v` (`teeth/paula_202e077.sh`) | `p4t19_rv_ta`, `hdd` | FAILS: the data check (command 3 READ: LBA 101 differs at byte 510, the following sectors shifted; the plan stops after command 7 with BSY/DRQ errors, `TIMEOUT`). Item 3 itself reads 20.8 ok: it measures the release, which the revert does not move; the data check is this tooth's evidence, at the default point (no escalation needed) |
+| (b) bridge without the four-phase handshake + fast master (`teeth/bridge_2phase.sh`) | `p4t19_rv_tb`, `boot_short`, `TIMEOUT` 10 M | FAILS: `MARGIN 1 stale_acks min 1184 count (bound 0, LOW)` over 2,510 hw accesses (as Task 5's p4t5r1e) |
+| (c) `fdd.c` `SendSector` one word short (`teeth/fwmut.sh`, image 91c96027) | `p4t19_rv_tc`, `fdd_rd` | FAILS: `l3check.py fdd_rd` 122 problems (data checksum of every sector) |
+| (d) cfide `osd_rdy` forced 1 + `FAST_HW` | Task 12's `p4t12m1c` (reused, ruling) | FAILS: `OSD EARLY 1 of 450`, keys check |
+| (e) `GAYLE_MUT_SHARED` (`teeth/gayle_shared.sh`) | `p4t19_rv_te`, `hdd`; `p4t19e_rv_te2`, `cdda_load` | `hdd` PASSES, trace byte-identical to `p4m2h`: the plan uses gayle port 0 only (both units on it), so a shared register file is not seen. `cdda_load` (CD on port 1, HDFs on port 0) FAILS: the CD's packet phase gets ERR / no DRQ, the plan never ends (`TIMEOUT`) |
+| (f) `cdaudio.c` cursor one frame short per half (image 552dfa26) | `p4t19_rv_tf`, `cdda` | FAILS: 9 wrong halves (`l3check.py cdda`: half 3 on differs from byte 0) |
+| (g) one SD data byte changed in the 832 run's `spi.txt` (`teeth/sdbyte.sh`) | offline, `p4g_rv_def_hdd` / `p4g_832_def_hdd` | FAILS: the diff shows the CMD17 of LBA 0x80c with another block hash |
+| (h) the RV image before the write-FIFO fix (0162e53f) | `p4t19_rv_th`, `fdd_wr` | FAILS: item 7's word-gap monitor, `min 22.0 clk_114 over 4287 words (bound 64), 4284 below`, bench errors, `TIMEOUT` |
+
+The firmware copies of (c) and (f) are built by `teeth/fwmut.sh`; the same procedure without the sed reproduces the tree's 17bf2563.
+
 ## Handshake design
 
 The OSD "reply byte ready" handshake (decision 12.13 (a), plan 6.4 P1): the firmware starts a reply byte only once `userio_osd` has taken every byte before it, instead of waiting a counted `SPIN`. Task 9 is the RTL half in the Minimig (**RTL: Paul reviews before any bitstream**); Task 10 adds cfide's half (`osd_tx_seq`, `HOST_REQ` at `0xFFFFFFB4`, also **RTL: Paul reviews before any bitstream**).

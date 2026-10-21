@@ -125,7 +125,7 @@ scenario and its `XRAND=1` twin in parallel (`run_<RUNTAG>`,
 (default) or `832` (section "832", with `E832`, `E832DIR`), `SIM=xsim`
 (default) or `verilator`, `RUNTAG`, `FW`, `FW832`, `L3_DATE`, `EXTRA_WS`,
 `SLAT`, `SJIT`, `SEED`, `XARGS` (more plusargs), `TIMEOUT`, `NOKICK=1`,
-`XRAND=1`, `XSEED`, `KEYS` (section "keys"), `RDY_MUT=1` (section "keys", teeth), `PAULA_TXPOP=1` (section "fdd_wr", the write-FIFO evidence fix in the run copy). Every log starts with `=== CPU rv` or `=== CPU 832`.
+`XRAND=1`, `XSEED`, `KEYS` (section "keys"), `RDY_MUT=1` (section "keys", teeth), `PAULA_TXPOP=1` (section "fdd_wr", the write-FIFO evidence fix in the run copy), `PATCH=<script>` (teeth: edits the run copies of the RTL) and `BUILD_FROM=<RUNTAG>` (another run's simulator when the build inputs are the same; section "Stress grid"). `TIMEOUT` is at most 2,147,483,647. Every log starts with `=== CPU rv` or `=== CPU 832`.
 
 A run directory `sim/l3/run_<RUNTAG>/` holds `results.txt`, the log
 `tb_<scenario>_x<EXTRA_WS>_s<SLAT>_j<SJIT>.log`, `spi.txt`,
@@ -684,9 +684,11 @@ in <n> ms` (TIMER counts) and the 832's lone `-` of `Offset: %ld`
 (`fmt_diff_expected.txt` lines 144-145).
 
 The `boot`, `keys` and handshake pairs (`p4t7r2`/`p4t7c2`, `p4t8`/`p4t8c`,
-`p4t12`/`p4t12c`) still give an empty diff. `--unused-rules` lists two of
-the four (`Inserting floppy` and `DEDUP`) for them; that clean-up is Task
-19's.
+`p4t12`/`p4t12c`) still give an empty diff. `--unused-rules` lists, for each
+pair, the rules of the other scenarios; Task 19 diffed every pair of its
+grid (section "Stress grid", `findings/osd-riscv/phase4.md` Task 19): every
+rule is used by at least one scenario, so none was removed, and a pair's
+`UNUSED` list (exit 1 of `diff --unused-rules`) is expected.
 
 XRAND twins of `CPU=832`: the EightThirtyTwo's random start can shift its
 timing (section "keys") or stop it (section "fdd_rd"). When a scenario's
@@ -2279,8 +2281,11 @@ nohup bash sim/l3/grid.sh p4g > sim/l3/grid_p4g.out 2>&1 &
 python3 -I sim/l3/margins.py sim/l3/run_p4g_*
 ```
 
-The first line prints the run list only. The grid takes about 10 hours
-with six slots (60 runs), so it runs in the background; its runs are
+The first line prints the run list only. The grid (60 runs) took 19.2
+hours on a 4-core, 8-thread machine (Task 19, with Vivado builds and the
+teeth on the same slots), so it runs in the background; do not edit
+`grid.sh` or the bench while it runs (bash reads a running script as it
+goes, and the bench files are build inputs); its runs are
 `sim/l3/run_p4g_<cpu>_<name>`, each with `run.out` (run.sh's output), and
 `sim/l3/grid_p4g.txt` lists every run with its verdict, wall time,
 simulated seconds and cycles as it ends. Every run takes the same two
