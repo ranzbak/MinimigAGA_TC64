@@ -2037,6 +2037,46 @@ never blocks the 832's main loop for a whole half (its longest gap is
 95 ms against the half's 186 ms), so the scenario cannot separate the CPUs
 there. Plan 1.2's > 150 ms foreground job would need a longer transfer.
 
+### Slow host (`+IDE_HOST_DELAY`, the board deadlock of 2026-10-20)
+
+On the board, CD audio playing plus an HDF READ MULTIPLE of more than 16
+sectors hung the firmware (GDB: `ATA_ReadSectors` -> `CD_AudioPoll` ->
+`ReadIDEFlags(1)`). `cdda_load` passed with that firmware: `bfm_ide.v`
+reads each block while the firmware is still sending it (the reads stream
+behind the SD transfer, `nrdy` holds them), so at the firmware's first
+"drained" poll after a block (`10 f0 08`, then `10 00 ..` answering `14`)
+the FIFO is already empty and the drain-wait loop of `hdd.c` never calls
+the poll (`run_p4t17l`: 0 flag reads there). A real Amiga with other work
+(the CD player program, the OS) reads later.
+
+`XARGS=+IDE_HOST_DELAY=<n>` makes the model wait n `clk_114` after each
+PIO-in block's interrupt before reading it (default 0: every other run is
+unchanged; the log says `=== IDE host delay <n> ...`). n must be longer
+than the firmware takes to send a block (~700 K cycles for 16 sectors):
+200,000 still streamed (0 flag reads in the loop, PASS on the old
+firmware); 2,000,000 (17.6 ms per block) leaves the FIFO full when the
+firmware polls, so the loop runs. With the old poll the loop's
+`ReadIDEFlags(1)` (`10 81`) re-latches the Gayle's firmware port to
+port 2: the run shows the board's signature, `10 00` (status `10`, no
+IDECMD) and `10 81` alternating after the second block's status write,
+and the Amiga's second block never comes. The fix (`CD_AudioRefill` in
+the transfer loops, no flags read; `fw/ctrl_rv/cdrom.h`) leaves the port
+alone.
+
+```sh
+SIM=verilator RUNTAG=cdf_new XARGS="+IDE_HOST_DELAY=2000000" FW="$FWD/fwrv/RV32OSDA.BIN" bash sim/l3/run.sh cdda_load
+```
+
+Measured 2026-10-20 (Verilator, SLAT 8, `+IDE_HOST_DELAY=2000000`; runs
+`cdf_old` / `cdf_new`, kept only locally):
+
+| | old firmware (6ea1b76 build, sha256 17bf2563) | fixed (05e8780, sha256 1c6bbd5a) |
+|---|---|---|
+| `10 81` frames in the READ MULTIPLE's drain waits | 420 after the 2nd block's status write, then for ever | 0 (3,644+ status polls: the loop ran) |
+| READ MULTIPLE 256 data | 240 of 256 sectors wrong (only the first block right), task file 00 07 2f (want 00 08 27) | = `SYNTH.HDF` blocks 968..1223 |
+| firmware after it | stuck: `10 00` / `10 81` alternating (6,586 each) and the audio refill's SD reads to the end, no OSD frame | main loop, the plan goes on |
+| verdict | FAIL (`TIMEOUT=290000000`: commands 1..4 only) | `cdda_load` PASS, 337.3 M cycles, 2,684 s wall |
+
 ## akiko
 
 `akiko` exercises the host's Akiko request service, the legacy interrupt

@@ -64,7 +64,11 @@
 configTYPE config;
 char DebugMode;
 cdromTYPE cdrom;		/* BSS zero: no CD drive, CD_SLOT() is -1 */
-static int audio_polls, hdd_steps;
+static int audio_polls, full_polls, hdd_steps;
+/* The CD player is busy (playing): the real CD_AudioPoll (cdrom.c) then reads
+   the CD port's flags, ReadIDEFlags(1) -- a CMD_IDE_REGS_RD | 1, whose command
+   word re-latches the Gayle's firmware port.  The stub does the same. */
+static int cd_audio_busy;
 
 /* config.c's */
 hardfileTYPE *SlotConfig(int slot)
@@ -72,7 +76,14 @@ hardfileTYPE *SlotConfig(int slot)
 	return (slot & 2) ? &config.secondaryhardfile[slot & 1] : &config.hardfile[slot & 1];
 }
 void DebugMessage(char *message) { (void)message; }
-void CD_AudioPoll(void) { audio_polls++; }
+void CD_AudioPoll(void)
+{
+	audio_polls++;
+	full_polls++;
+	if (cd_audio_busy)
+		ReadIDEFlags(1);	/* the CD on port 2, as cdrom.c CD_AudioPoll */
+}
+void CD_AudioRefill(void) { audio_polls++; }
 void CD_Flags(int port, unsigned char flags) { }
 void CD_HandleCommand(int port, unsigned char *tfr) { fprintf(stdout, "FAIL CD_HandleCommand called\n"); exit(1); }
 void drivesounds_queueevent(enum DriveSound_Type type) { if (type == DRIVESOUND_HDDSTEP) hdd_steps++; }
@@ -149,7 +160,14 @@ static void die(const char *what)
  * Amiga then reads all of it (one chunk, logged) -- and the next one
  * "drained".  pio out (bit 2, REQ): every other poll finds a sector the
  * Amiga wrote (hdd_dat_req), which the next CMD_IDE_DATA_RD reads.  The
- * flags of the register reads are 0 (port 1, no other port busy). */
+ * flags of the register reads are 0 (port 1, no other port busy).
+ * The firmware port latch (paula_floppy.v hdd_port_r, gayle.v fw_port): bit
+ * 0 of the first byte of every HDD command word (10xx, 1100, 1111) selects
+ * the port, and it stays latched for what follows without a command word
+ * (the direct-mode blocks, GetFPGAStatus).  Every command here is on port 1:
+ * a port-2 command word inside it is an error (on the board: the next block
+ * went to port 2's FIFO and "drained" hid behind the busy CD port, a
+ * deadlock, 2026-10-20). */
 #define FIFO_SECTORS 16
 #define MAXCHUNKS 300
 static struct gayle {
@@ -212,6 +230,11 @@ static unsigned char gayle_miso(void *ctx, unsigned char out)
 	unsigned pos = g.pos++;
 	if (pos == 0) {
 		g.cmd = out;
+		if ((out & 0xC0) == 0x80 || (out & 0xF0) == 0xC0 || (out & 0xF0) == 0xF0) {
+			char m[120];
+			snprintf(m, sizeof m, "a port-2 command word %02X inside a port-1 command: re-latches hdd_port", out);
+			if (out & 1) gayle_err(m);
+		}
 		return out == 0 ? gayle_poll() : 0;
 	}
 	if (pos < sizeof g.fb) g.fb[pos] = out;
@@ -250,6 +273,7 @@ static size_t trace_mark;
 static uint8_t blocks[MAXBLOCKS][512];
 static int nblocks;
 static int bad_frames;
+static int port2_blocks;	/* data blocks sent while the latch said port 2 */
 
 static int nibble(char c)
 {
@@ -273,8 +297,10 @@ static void trace_blocks(void)
 {
 	const char *all = mock_trace(), *t = all + trace_mark;
 	static uint8_t out[1 << 16], in[1 << 16];
+	int latch = 0;	/* HandleHDD's first frame latches port 1 */
 	nblocks = 0;
 	bad_frames = 0;
+	port2_blocks = 0;
 	while (*t) {
 		const char *eol = strchr(t, '\n');
 		if (!eol) break;
@@ -286,6 +312,10 @@ static void trace_blocks(void)
 		while (*p == ' ') p++;
 		if (*p == '/') p++;
 		while (p < eol && (v = hexval(&p)) >= 0) if (ni < sizeof in) in[ni++] = (uint8_t)v;
+		if (cs == 0x10 && no && ((out[0] & 0xC0) == 0x80 || (out[0] & 0xF0) == 0xC0 || (out[0] & 0xF0) == 0xF0))
+			latch = out[0] & 1;
+		if ((cs == 0x10 && no && (out[0] & 0xFE) == CMD_IDE_DATA_WR) || cs == 0x42)
+			port2_blocks += latch;
 		if (cs == 0x10 && no && (out[0] & 0xFE) == CMD_IDE_DATA_WR) {
 			if (no != 6 + 512) bad_frames++;
 			else if (nblocks < MAXBLOCKS) memcpy(blocks[nblocks++], out + 6, 512);
@@ -403,6 +433,7 @@ static void command(int unit, unsigned char cmd, long lba, unsigned char count)
 	memcpy(g.tfr, t, 8);
 	g.dm0 = mock_dmode_blocks();
 	audio_polls = 0;
+	full_polls = 0;
 	HandleHDD(CMD_IDECMD, 0);
 	if (g.pio == 1 && fifo_sectors()) {	/* the Amiga reads the last chunk */
 		if (g.nchunks < MAXCHUNKS) g.chunk[g.nchunks++] = (int)fifo_sectors();
@@ -441,6 +472,10 @@ static void check_gayle(const char *what)
 	check(w, g.err[0] != 0, 0);
 	snprintf(w, sizeof w, "%s: data frames of a wrong length", what);
 	check(w, bad_frames, 0);
+	snprintf(w, sizeof w, "%s: blocks sent to port 2's FIFO", what);
+	check(w, port2_blocks, 0);
+	snprintf(w, sizeof w, "%s: CD_AudioPoll (reads IDE flags) inside the command, not CD_AudioRefill", what);
+	check(w, full_polls, 0);
 }
 
 static void set_multiple(int unit, unsigned char n)
@@ -692,6 +727,13 @@ int main(int argc, char **argv)
 	set_multiple(1, 16);
 	read_case("WORK.HDF READ MULTIPLE 4000+0 (256)", 1, 1, 4000, 256);
 	read_case("WORK.HDF READ SECTORS 7000+0 (256)", 1, 0, 7000, 256);
+	/* the board deadlock of 2026-10-20: CD audio plays (CD on port 2), the
+	   Amiga reads its HDF with READ MULTIPLE of more than one block */
+	cd_audio_busy = 1;
+	set_multiple(0, 16);
+	read_case("CD audio playing: WORK.HDF unit 0 READ MULTIPLE 1200+19", 0, 1, 1200, 19);
+	read_case("CD audio playing: WORK.HDF unit 0 READ SECTORS 1300+3", 0, 0, 1300, 3);
+	cd_audio_busy = 0;
 	snprintf(w, sizeof w, "drive sound steps (cylinder changes)");
 	check(w, hdd_steps > 0, 1);
 
@@ -703,6 +745,10 @@ int main(int argc, char **argv)
 	set_multiple(1, 16);
 	write_case("WORK.HDF WRITE MULTIPLE 3000+0 (256)", 1, 1, 3000, 256, d256);
 	write_case("WORK.HDF WRITE SECTORS 6000+0 (256)", 1, 0, 6000, 256, d256);
+	cd_audio_busy = 1;
+	set_multiple(0, 2);
+	write_case("CD audio playing: WORK.HDF unit 0 WRITE MULTIPLE 5000+5", 0, 1, 5000, 5, d5);
+	cd_audio_busy = 0;
 	read_case("WORK.HDF READ MULTIPLE 3000+0 (256) after the write", 1, 1, 3000, 256);
 	snprintf(w, sizeof w, "the read back is the data written");
 	if (check(w, nblocks, 256)) check_mem(w, blocks[0], d256, (size_t)256 * 512);

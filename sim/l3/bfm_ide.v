@@ -80,6 +80,15 @@
 // per line, the first word first: xxd -r -p reads it back as the bytes in
 // the 68k's memory order).
 //
+// Slow host (+IDE_HOST_DELAY=<n>, default 0): before reading each PIO-in
+// block of ata_read (READ SECTORS / READ MULTIPLE), wait n clk_114 more
+// after the block's interrupt, as an Amiga busy elsewhere does (the OS, a CD
+// player program).  The FIFO then stays full when the firmware polls for
+// "drained", so its drain-wait loop runs (hdd.c ATA_ReadSectors).  Without
+// the delay this bench drains each block while the firmware is still
+// sending it, and that loop never runs (sim/l3/README.md "cdda", slow host:
+// the board deadlock of 2026-10-20).
+//
 // The write pattern of a sector at drive LBA L (68k memory order, byte j):
 // 'W', kind ('S' WRITE SECTORS, 'M' WRITE MULTIPLE), L >> 8, L & 255, then
 // (L * 29 + j * 7 + 0x5A) & 255 for j = 4..511 (l3check.py wpattern).
@@ -133,6 +142,7 @@ module bfm_ide (
   reg               done = 1'b0;
   integer           errors = 0;
   integer           w_all_n = 0, w_all_min = 0;
+  integer           host_delay = 0;            // +IDE_HOST_DELAY (clk_114 cycles)
 
   task ide_error(input [8*100-1:0] msg);
     begin
@@ -461,7 +471,7 @@ module bfm_ide (
 
   task ata_read_chs(input integer port, input integer dev, input [7:0] cmd,
                     input integer c, input integer h, input integer s, input integer count, input integer mult);
-    integer left, blk;
+    integer left, blk, t0;
     begin
       ata_cmd_chs(port, dev, cmd, c, h, s, count);
       dump_open;
@@ -469,6 +479,8 @@ module bfm_ide (
       while (left > 0) begin
         blk = (cmd == C_READM && mult > 1) ? ((left < mult) ? left : mult) : 1;
         ata_wait(1'b1, 1'b1);
+        t0 = cyc;
+        while (cyc - t0 < host_delay) en;	// the slow host (+IDE_HOST_DELAY)
         ata_pio_in(256 * blk, fd);
         left = left - blk;
       end
@@ -708,9 +720,11 @@ module bfm_ide (
   // ------------------------------------------------------------- sequencer
   initial begin
     if (!$value$plusargs("IDE_DUMP=%s", prefix)) prefix = "ide";
+    if (!$value$plusargs("IDE_HOST_DELAY=%d", host_delay)) host_delay = 0;
     wait (go === 1'b1);
     wait (reset === 1'b0);
     $display("=== IDE start: plan %0s at cycle %0d (the chipset reset low)", plan, cyc);
+    if (host_delay != 0) $display("=== IDE host delay %0d clk_114 before each PIO-in block", host_delay);
     en;
     hww(INTENA, 16'h8000);
     hww(INTREQ, 16'h0000);
