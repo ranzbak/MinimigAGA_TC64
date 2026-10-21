@@ -14,6 +14,10 @@
 #   RUNTAG=b RDY_MUT=1 XARGS="+RDY=1 +TESTS=8 +OSD_MIN_GAP=0" bash sim/spi_cdc/run.sh
 #        the same on a run copy of cfide.vhd whose OSD_RDY is always 1 (the
 #        "-- OSD RDY" line): must FAIL (osd at the small gaps)
+#   RUNTAG=c RESYNC_MUT=1 XARGS="+RDY=1 +TESTS=16 +OSD_MIN_GAP=0" bash sim/spi_cdc/run.sh
+#        xframe on a run copy of cfide.vhd that resyncs after 4 idle cycles
+#        instead of 64: must FAIL (the late byte of the OSD_WR frame is
+#        counted against the VERSION command byte)
 #
 # xsim because cfide is VHDL.  The configurations run one after the other in
 # ONE directory (concurrent xsim runs in one directory corrupt each other);
@@ -46,6 +50,15 @@ if [ "${RDY_MUT:-0}" = 1 ]; then
 	sed -i "s/^\( *\)osd_rdy <= .*-- OSD RDY\$/\1osd_rdy <= '1'; -- OSD RDY MUTANT/" src/cfide.vhd
 	[ "$(grep -c -- "osd_rdy <= '1'; -- OSD RDY MUTANT\$" src/cfide.vhd)" = 1 ] || { echo "RDY_MUT: mutation not applied"; exit 1; }
 	echo "RDY_MUT: $(grep -- '-- OSD RDY MUTANT' src/cfide.vhd | sed 's/^ *//')"
+fi
+# RESYNC_MUT=1: the run copy of cfide resyncs osd_tx_seq to osd_rx_seq after
+# 4 idle sysclk cycles (osd_idle(2)) instead of 64 (osd_idle(6)): shorter
+# than a late byte's synchroniser, so xframe must FAIL (final review I4)
+if [ "${RESYNC_MUT:-0}" = 1 ]; then
+	[ "$(grep -c -- "elsif osd_idle(6) = '0' then\$" src/cfide.vhd)" = 1 ] || { echo "RESYNC_MUT: not exactly one 'elsif osd_idle(6)' line in cfide.vhd"; exit 1; }
+	sed -i "s/elsif osd_idle(6) = '0' then\$/elsif osd_idle(2) = '0' then -- OSD RESYNC MUTANT/" src/cfide.vhd
+	[ "$(grep -c -- "elsif osd_idle(2) = '0' then -- OSD RESYNC MUTANT\$" src/cfide.vhd)" = 1 ] || { echo "RESYNC_MUT: mutation not applied"; exit 1; }
+	echo "RESYNC_MUT: $(grep -- '-- OSD RESYNC MUTANT' src/cfide.vhd | sed 's/^ *//')"
 fi
 
 # cfide instantiates i2c_master_mmio (its generate is off here, but the entity

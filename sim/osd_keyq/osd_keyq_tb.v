@@ -11,7 +11,7 @@
 // byte counter advances), so a queue drain that agrees with it is safe for the
 // same reason the version read is.
 //
-// Sections 9-12 check the reply sequence osd_rx_seq (the RTL half of the OSD
+// Sections 9-13 check the reply sequence osd_rx_seq (the RTL half of the OSD
 // "reply byte ready" handshake, findings/osd-riscv/phase4.md "Handshake
 // design"): one increment per byte, at the clk7 edge that takes the byte, so
 // a host that starts a reply byte only once the sequence has caught up with
@@ -28,6 +28,8 @@
 //   bash sim/osd_keyq/run.sh mutant     the queue removed: must FAIL
 //   bash sim/osd_keyq/run.sh mutant_seq osd_rx_seq one clk7 period early:
 //                                       check (b) must FAIL
+//   bash sim/osd_keyq/run.sh mutant_cs  osd_rx_seq counts only bytes taken
+//                                       under CS: check (d') must FAIL
 //
 // Each mode prints "<mode>: PASS|FAIL (expected ...) -- OK" and exits 0 when
 // every mode did what it should; RUNTAG=<tag> names the run directory
@@ -151,7 +153,7 @@ module osd_keyq_tb;
     end
   endtask
 
-  // ---- the fast host (sections 10-12) -------------------------------------
+  // ---- the fast host (sections 10-13) -------------------------------------
   localparam HALF = 3;             // sck half period, clk_114 (cfide, speed 1)
   reg [1:0] tx_seq = 2'd0;         // bytes started, mod 4 (cfide's osd_tx_seq)
 
@@ -494,6 +496,44 @@ module osd_keyq_tb;
     expect_byte("(d) KEYQ event 1", rb, 8'h72);
     fbyte("(d) KEYQ", 1'b1, 8'hff, rb);
     expect_byte("(d) KEYQ past the end", rb, 8'h00);
+    fclose;
+
+    // ---- 13. (d') cross-frame, the late byte taken while CS is high ---------
+    // As (d), but CS stays high 45 clk_114 (less than cfide's 64-cycle
+    // resync, so tx_seq is kept): the OSD_WR frame's last byte is still in
+    // the synchroniser when CS rises and is taken before CS falls again, i.e.
+    // with _scs high.  It must be counted all the same: a sequence that
+    // counts only bytes taken under CS (mutant_cs: rx && !_scs) stays one
+    // short, and the KEYQ frame's polls never see it catch up.
+    $display("--- (d') OSD_WR, CS up, KEYQ 45 clk_114 later ---");
+    key(8'h73);  key(8'h74);
+    fopen(8'h0c);
+    fbyte("(d') OSD_WR", 1'b0, 8'h00, rb);
+    fbyte("(d') OSD_WR", 1'b0, 8'h00, rb);
+    _scs = 1'b1;
+    if (rx_seq !== tx_seq - 2'd1) begin
+      $display("FAIL: (d') at CS high osd_rx_seq = %0d, tx_seq = %0d: the last byte is not late, the case is not exercised",
+               rx_seq, tx_seq);
+      errors = errors + 1;
+    end
+    repeat (45) @(posedge clk114);
+    _scs = 1'b0;
+    if (rx_seq !== tx_seq) begin
+      $display("FAIL: (d') at the KEYQ frame's CS osd_rx_seq = %0d, tx_seq = %0d: the byte taken while CS was high is not counted",
+               rx_seq, tx_seq);
+      errors = errors + 1;
+    end else
+      $display("  ok: (d') the OSD_WR frame's last byte, late at CS high, is counted before the KEYQ frame starts");
+    @(posedge clk114);
+    fbyte("(d') KEYQ cmd", 1'b0, 8'h98, rb);
+    fbyte("(d') KEYQ", 1'b1, 8'hff, rb);
+    expect_byte("(d') KEYQ count", rb, 8'h02);
+    fbyte("(d') KEYQ", 1'b1, 8'hff, rb);
+    expect_byte("(d') KEYQ event 0", rb, 8'h73);
+    fbyte("(d') KEYQ", 1'b1, 8'hff, rb);
+    expect_byte("(d') KEYQ event 1", rb, 8'h74);
+    fbyte("(d') KEYQ", 1'b1, 8'hff, rb);
+    expect_byte("(d') KEYQ past the end", rb, 8'h00);
     fclose;
 
     if (errors == 0)
