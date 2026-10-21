@@ -521,8 +521,9 @@ only when it is empty. `norm` writes one stream in frame order,
   While the CD player runs, `CD_AudioPoll()` reads the flags on every
   main-loop pass: RV 17,174 frames, 832 7,228. "Kept" is decided on the
   finished stream, after every drop of this list and every rule
-  (`DROP`, `DEDUP`, `DROPBLOCK`, `SUBST`; `FLOAT` lines have no place
-  among the frames). So the dropped poll frames and a repeated HandleRTC
+  (`DROP`, `DEDUP`, `DROPBLOCK`, `SUBST`). A `FLOAT` run has no place
+  among the frames, so it does not end a run of repeats either: its place
+  is what the rule declares timing-dependent. So the dropped poll frames and a repeated HandleRTC
   unit (its RTC frame and hw writes) do not end a run of repeats, while
   any printed line does: an SPI, SD or OSD frame, a hw write, a UART line
   (`spitrace_test.sh` cases `cdpollhw`, `cdpolluart`: the line and the
@@ -611,9 +612,16 @@ only when it is empty. `norm` writes one stream in frame order,
   - `DEDUP hw <addr-regex>`: a write to a matching address whose value
     equals the previous write to that address is dropped (a no-op
     rewrite). A changed value stays.
-  - `FLOAT hw <addr-regex>`: the matching writes leave their place among
-    the frames and are printed after everything else, in their own order.
-    Their order among themselves is compared; their position is not.
+  - `FLOAT hw <addr-regex> <anchor-regex>`: a maximal run of adjacent hw
+    writes to matching addresses (no other line between them) that holds
+    at least one write to an address matching `<anchor-regex>` leaves its
+    place among the frames. The runs are printed after everything else, in
+    their order, one line per run: `HW float <addr> <value> ...`. A run's
+    writes, their order and where a run is cut are compared; its place is
+    not. A matching write in a run without an anchor write keeps its place
+    (final review I1). The rules after a `FLOAT`: `SUBST` and `DROP` also
+    apply to the floated writes; a `DEDUP`, `FLOAT` or `DROPBLOCK` that
+    would match a floated write is an error (`norm` exits 1).
 
   A rule without a comment line above it is refused.
 - `# rule <line> used <n>` and `# dropped ...` lines (not compared):
@@ -638,6 +646,10 @@ another place, another audio ring. Each of these gives a diff line:
 - a changed AUDIO value among its rewrites
 - a changed SD-init speed write (`ffffe8` with no RTC frame next to it)
 - a changed, an extra and a missing write of the FLOAT group
+- (final review I1) a DisableInterrupts write (`ffffa0 0000`) moved after
+  an Akiko ack (`ffff84`) or before the frame it follows; a `SUBST` after
+  the `FLOAT` rewrites the floated writes too, a `DEDUP` after it that
+  matches a floated write fails `norm`
 - a repeated HandleRTC unit with a changed RTC value (`ffff70`), or with a
   changed closing speed write (`ffffe8`)
 - (Task 17) a repeated IDE flag poll with other flags, an AUDIO write or a
@@ -668,7 +680,14 @@ defect, `findings/osd-riscv/phase4.md` "Findings for Paul") and the RV-only
 
 - `Inserting floppy` (`fmt_diff_expected.txt` lines 37-44)
 - `DEDUP hw ^ffffb0$`: the drive sounds rewrite AUDIO on every pass
-- `FLOAT hw ^ffff(60|90|a0)$`: a TIMER-driven I2C / keyboard group
+- `FLOAT hw ^ffff(60|90|a0)$ ^ffff60$`: the TIMER-driven I2C run (the
+  ADV7511 poll, `ffff60`) with the interrupt handler next to it
+  (`ffffa0` = cfide's INTERRUPT register, `ffff90` = KEYBOARD_OUT). Only a
+  run with an I2C write floats: every other INTERRUPT-register write
+  (ColdBoot, the Akiko ISR around each request, c64keys) keeps its place.
+  On the gate pairs the floated runs are `ffff60 0b72 0242 1100, ffffa0
+  0000, ffff90 009b, ffffa0 0001` and the boot I2C run `ffff60 0b72 02ba
+  0200 0500`
 - `DROP hw ^MEM audio_ring`: the drive sounds' ring is rendered per
   TIMER count; `cdda` checks its ring with `l3check.py`
 
@@ -1151,8 +1170,8 @@ both CPUs the same frames. Everything else is equal:
 - the masked status sequence
 - every SD command and data hash
 - every OSD and UART line
-- the hw writes, with AUDIO deduplicated and the I2C / keyboard group
-  floated
+- the hw writes, with AUDIO deduplicated and the I2C run (with the
+  interrupt handler next to it) floated
 
 Task 14 made that bench change: `bfm_floppy` waits 500 ms after motor on
 and 15 ms after a head change (section "bfm_floppy"), so the first status

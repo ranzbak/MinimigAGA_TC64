@@ -62,8 +62,10 @@ norm: one normalised stream of a run, in frame order, one item per line
     runs, RV 17,174 frames, 832 7,228).  "Kept" is decided on the
     finished stream: after every drop above (the poll frames, the RTC
     frames and their HandleRTC unit's hw writes) and every rule of the
-    list (DROP, DEDUP, DROPBLOCK, SUBST; FLOAT lines have no place among
-    the frames).  So any line of any stream that is printed between two
+    list (DROP, DEDUP, DROPBLOCK, SUBST; a FLOAT run has no place among
+    the frames, so it does not separate two polls: its place is what the
+    FLOAT rule declares timing-dependent, and on the other CPU the run
+    sits elsewhere).  So any line of any stream that is printed between two
     equal flag polls (an SPI, SD or OSD frame, a hw write, a UART line)
     keeps the second one; cd_wait()'s polls between data phases stay
     compared
@@ -150,7 +152,7 @@ block, blank lines end a block:
     DROPBLOCK <stream> <start-regex> <end-regex>
     SDFILE <8.3 name> <alias>
     DEDUP hw <addr-regex>
-    FLOAT hw <addr-regex>
+    FLOAT hw <addr-regex> <anchor-regex>
 <stream> = uart, osd, hw, sd, spi or all; the regex (no blanks: \x20 or
 \s) is searched in the text after "<STREAM> "; <replacement> is the rest
 of the line, Python re.sub syntax, "" for the empty string.  DROPBLOCK:
@@ -163,10 +165,18 @@ command) is one line: so RV32OSDA.BIN and 832OSDAD.BIN are both
 "FIRMWARE+00000000 .." whatever their sizes.  DEDUP: a hw write to an
 address matching <addr-regex> whose value equals the previous write to
 that address is dropped (a no-op rewrite; a changed value stays).  FLOAT:
-the hw writes to addresses matching <addr-regex> leave their place among
-the frames and are printed, in their own order, after everything else
-("HW <addr> <value>" lines): their order among themselves is compared,
-their position is not.
+a maximal run of adjacent hw writes to addresses matching <addr-regex> (no
+line of any stream between them, after the rules above it) of which at
+least one write's address matches <anchor-regex> leaves its place among
+the frames; the runs are printed, in their order, after everything else,
+one line per run, "HW float <addr> <value> <addr> <value> ...".  So a run's
+writes, their order and where a run is cut stay compared, its place does
+not.  A matching write in a run without an anchor write stays in its place
+(sim/l3: an INTERRUPT-register write stays where it brackets its frames,
+unless it is part of the TIMER-driven I2C run).  The rules after a FLOAT
+line: SUBST and DROP also apply to the floated writes; a DEDUP, FLOAT or
+DROPBLOCK after it that would match a floated write is an error (exit 1),
+since such a write has no place to dedup against or to drop a block from.
 
 diff: unified diff of two norm outputs without their '#' lines; exit 0
 only when it is empty.  --unused-rules: also "UNUSED <line>: <rule>" for
@@ -492,14 +502,22 @@ class Rule:
                 self.re, self.end = re.compile(words[2]), re.compile(words[3])
             except re.error as e:
                 raise SystemExit("line %d: regex: %s" % (lineno, e))
-        elif self.kind in ("DEDUP", "FLOAT"):
+        elif self.kind == "DEDUP":
             if len(words) != 3 or words[1] != "hw":
-                raise SystemExit("line %d: %s hw <addr-regex> (no blanks)" % (lineno, self.kind))
+                raise SystemExit("line %d: DEDUP hw <addr-regex> (no blanks)" % lineno)
             self.stream = "hw"
             try:
                 self.re = re.compile(words[2])
             except re.error as e:
                 raise SystemExit("line %d: regex %r: %s" % (lineno, words[2], e))
+        elif self.kind == "FLOAT":
+            if len(words) != 4 or words[1] != "hw":
+                raise SystemExit("line %d: FLOAT hw <addr-regex> <anchor-regex> (no blanks)" % lineno)
+            self.stream = "hw"
+            try:
+                self.re, self.anchor = re.compile(words[2]), re.compile(words[3])
+            except re.error as e:
+                raise SystemExit("line %d: regex: %s" % (lineno, e))
         elif self.kind == "SDFILE":
             if len(words) != 3:
                 raise SystemExit("line %d: SDFILE <8.3 name> <alias>" % lineno)
@@ -797,21 +815,73 @@ def norm(spi, hw, uart, rules_path, card_path, charrom):
         else:
             run_key = None
         lines.append([stream, text])
-    # the text rules, in file order
+    # the text rules, in file order.  floated: the runs a FLOAT rule took
+    # out (the doc above), each a list of hw lines
     floated = []
+
+    def hw_addr(ln, rx):
+        w = ln[1].split()
+        return ln[0] == "hw" and len(w) == 2 and rx.search(w[0])
+
     for r in rules:
         if r.kind == "SDFILE":
             continue
-        if r.kind in ("DEDUP", "FLOAT"):
+        # a rule after a FLOAT: SUBST and DROP see the floated lines too; a
+        # DEDUP, FLOAT or DROPBLOCK that would match one has no meaning there
+        # (the floated lines have no place among the others): an error
+        if floated and r.kind in ("SUBST", "DROP") and r.applies("hw"):
+            runs = []
+            for run in floated:
+                kept = []
+                for ln in run:
+                    if r.kind == "DROP":
+                        if r.re.search(ln[1]):
+                            r.used += 1
+                            continue
+                    else:
+                        t, k = r.re.subn(r.repl, ln[1])
+                        if k and t != ln[1]:
+                            r.used += 1
+                            ln[1] = t
+                    kept.append(ln)
+                if kept:
+                    runs.append(kept)
+            floated = runs
+        elif floated and r.kind in ("DEDUP", "FLOAT", "DROPBLOCK"):
+            for run in floated:
+                for ln in run:
+                    if (hw_addr(ln, r.re) if r.kind != "DROPBLOCK" else
+                            r.applies("hw") and (r.re.search(ln[1]) or r.end.search(ln[1]))):
+                        raise SystemExit("rule line %d: %s matches the floated line HW %s (an earlier FLOAT took it out)"
+                                         % (r.lineno, r.kind, ln[1]))
+        if r.kind == "FLOAT":
+            # maximal runs of adjacent matching hw writes (no other line
+            # between them); a run with an anchor write floats as a whole,
+            # every other matching write stays in its place
+            kept, run = [], []
+
+            def flush():
+                if any(hw_addr(ln, r.anchor) for ln in run):
+                    r.used += len(run)
+                    floated.append(list(run))
+                else:
+                    kept.extend(run)
+                run.clear()
+            for ln in lines:
+                if hw_addr(ln, r.re):
+                    run.append(ln)
+                    continue
+                flush()
+                kept.append(ln)
+            flush()
+            lines = kept
+            continue
+        if r.kind == "DEDUP":
             kept, last = [], {}
             for ln in lines:
                 w = ln[1].split()
                 if ln[0] != "hw" or len(w) != 2 or not r.re.search(w[0]):
                     kept.append(ln)
-                    continue
-                if r.kind == "FLOAT":
-                    r.used += 1
-                    floated.append(ln)
                     continue
                 if last.get(w[0]) == w[1]:
                     r.used += 1
@@ -888,7 +958,9 @@ def norm(spi, hw, uart, rules_path, card_path, charrom):
             drop["flagpoll"] += 1
             continue
         kept.append(ln)
-    lines = kept + floated
+    # the floated runs, one line each: a run's writes, their order and where
+    # the runs are cut stay compared, their place among the other lines not
+    lines = kept + [["hw", "float " + " ".join(ln[1] for ln in run)] for run in floated]
     w = sys.stdout.write
     for stream, text in lines:
         w("%s %s\n" % (stream.upper(), text))

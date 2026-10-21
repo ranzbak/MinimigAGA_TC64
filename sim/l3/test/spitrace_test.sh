@@ -26,6 +26,8 @@
 #       masked, a changed AUDIO (ffffb0) value among its rewrites, a changed
 #       SD-init speed write (ffffe8, the RTC unit's addresses but no RTC
 #       frame), a changed, an extra and a missing write of the FLOAT group,
+#       (final review I1) an INTERRUPT-register write (DisableInterrupts)
+#       moved across an Akiko ack or across a frame,
 #       a repeated HandleRTC unit with a changed RTC value or a changed
 #       closing speed write -> each a diff line.  Task 14: a changed word
 #       read from the write FIFO, a changed track byte in a write frame, a
@@ -39,7 +41,9 @@
 #       block -> each a diff line; that block without its ENA write -> norm
 #       fails
 #   (c) each rule of the fixture's expected-diff list removed in turn -> its
-#       difference comes back; an unused rule -> diff --unused-rules reports it
+#       difference comes back; an unused rule -> diff --unused-rules reports it;
+#       a SUBST after the FLOAT rewrites the floated writes too, a DEDUP after
+#       it that matches a floated write -> norm fails
 # The card is built with tools/sim/mkcard.sh (sfdisk, mkfs.fat, mtools), the
 # frames by the generator below.  Run from anywhere:
 #   bash sim/l3/test/spitrace_test.sh
@@ -229,6 +233,22 @@ frame(0x10, [0x80] + [0] * 5, [0x14, 0x01, 0x44, 0x89, 0x00, 0x00])
 if b:
     frame(0x10, [0] * 6, [0x10, 0x02 if change == "idetrack" else 0x01, 0x44, 0x89, 0x00, 0x00])
 frame(0x10, [0] * 6, [0x14, 0x01, 0x44, 0x89, 0x00, 0x00])
+# the Akiko ISR (sim/l3 akiko; main.c inthandler(): DisableInterrupts, the
+# request's UART line, its ack, c64keys' KEYBOARD_OUT, EnableInterrupts)
+# right after a frame and not next to an I2C write: the FLOAT rule (anchor
+# ffff60) leaves it in its place.  change irqack: the DisableInterrupts
+# after the ack; irqframe: before the frame
+if change == "irqframe":
+    hwrite("ffffa0", 0x0000)
+frame(0x20, [0x28, 0x00], [0x00, 0x00])
+if change not in ("irqframe", "irqack"):
+    hwrite("ffffa0", 0x0000)
+say("Akiko write: C020, 9E37")
+hwrite("ffff84", 0x0000)
+if change == "irqack":
+    hwrite("ffffa0", 0x0000)
+hwrite("ffff90", 0x009b)
+hwrite("ffffa0", 0x0001)
 # an IDE flag poll (hdd.c ReadIDEFlags(1), cdrom.c cd_wait(); sim/l3 cd,
 # p4t16 / p4t16c): variant b (the faster CPU) starts it before the 68k has
 # read the data phase's last word, so MISO byte 0's IDE command bit (0x04)
@@ -311,7 +331,7 @@ DROPBLOCK uart ^Overriding\x20screenmode\.$ ^##End\x20result\x20:\x200$
 DEDUP hw ^ffffb0$
 
 # fixture: a write group at another place among the frames
-FLOAT hw ^ffff(60|90|a0)$
+FLOAT hw ^ffff(60|90|a0)$ ^ffff60$
 
 # fixture: the drive sounds' ring
 DROP hw ^MEM\x20audio_ring\x20
@@ -377,7 +397,7 @@ else fail "(a) norm content: $(head -40 "$OUT/b/norm.txt")"; fi
 
 # (b) one content change against b: exactly one - line and one + line
 for ch in sd fpga osd hw uart keyq status uds desel pre post track motor level hibyte \
-	sector dmatrack audio sdspeed float floatextra floatmiss rtcval rtcspeed wrdata wrhdr wrmiss \
+	sector dmatrack audio sdspeed float floatextra floatmiss irqack irqframe rtcval rtcspeed wrdata wrhdr wrmiss \
 	seekend seekback seekhead idetrack cdflags cdbit cdpoll subpre subpost; do
 	gen "$OUT/b_$ch" b "$ch" || exit 1
 	norm "$OUT/b_$ch" "$OUT/rules.txt"
@@ -396,9 +416,10 @@ for ch in sd fpga osd hw uart keyq status uds desel pre post track motor level h
 		dmatrack) want='^\+SPI 10 00 00 00 00 00 00 / 10 06 44 89 -- --$' ;;   # masked DMA bytes, other track: kept
 		audio) want='^\+HW ffffb0 0005$' ;;
 		sdspeed) want='^\+HW ffffe8 0002$' ;;
-		float) want='^\+HW ffff60 0243$' ;;
-		floatextra) want='^\+HW ffff60 1100$' ;;
-		floatmiss) want='^-HW ffff60 0242$' ;;
+		float) want='^\+HW float ffff60 0b72 ffff60 0243 ffffa0 0000$' ;;   # a floated run: one line
+		floatextra) want='^\+HW float ffff60 0b72 ffff60 0242 ffff60 1100 ffffa0 0000$' ;;
+		floatmiss) want='^\+HW float ffff60 0b72 ffffa0 0000$' ;;
+		irqack|irqframe) want='^\+HW ffffa0 0000$' ;;   # the DisableInterrupts in its new place
 		rtcval) want='^\+HW ffff70 4005$' ;;      # a repeated HandleRTC unit with another value: kept
 		rtcspeed) want='^\+HW ffffe8 0002$' ;;
 		wrdata) want='^\+SPI 10 wrfifo 12 07 44 89 / 34 ' ;;      # the second sector's words, one changed
@@ -477,6 +498,19 @@ if dodiff --unused-rules "$OUT/a/norm.txt" "$OUT/b/norm.txt"; then fail "(c) an 
 elif grep -q '^UNUSED 29: DROP uart nothing' "$OUT/diff.txt" && [ "$(grep -c '^UNUSED' "$OUT/diff.txt")" = 1 ]; then
 	pass "(c) an unused rule: $(grep '^UNUSED' "$OUT/diff.txt")"
 else fail "(c) an unused rule: $(cat "$OUT/diff.txt")"; fi
+
+# rules after the FLOAT (final review I1): a SUBST rewrites the floated
+# writes too; a DEDUP that matches a floated write is an error
+{ cat "$OUT/rules.txt"; printf '\n# fixture: a SUBST after the FLOAT\nSUBST hw ^ffffa0\\x200000$ ffffa0 dis\n'; } > "$OUT/rules_fsubst.txt"
+norm "$OUT/b" "$OUT/rules_fsubst.txt"
+if grep -q '^HW float ffff60 0b72 ffff60 0242 ffffa0 dis$' "$OUT/b/norm.txt" && grep -q '^HW ffffa0 dis$' "$OUT/b/norm.txt" \
+	&& grep -q '^# rule 29 used [2-9]' "$OUT/b/norm.txt"; then
+	pass "(c) a SUBST after the FLOAT: the floated run and the in-place write rewritten"
+else fail "(c) a SUBST after the FLOAT: $(grep -E '^(HW (float|ffffa0)|# rule 29)' "$OUT/b/norm.txt")"; fi
+{ cat "$OUT/rules.txt"; printf '\n# fixture: a DEDUP after the FLOAT\nDEDUP hw ^ffffa0$\n'; } > "$OUT/rules_fdedup.txt"
+if norm "$OUT/b" "$OUT/rules_fdedup.txt" 2> "$OUT/norm_err.txt"; then fail "(c) a DEDUP after the FLOAT matching a floated write: norm exit 0"
+elif grep -q 'DEDUP matches the floated line HW ffffa0 0000' "$OUT/norm_err.txt"; then pass "(c) a DEDUP after the FLOAT: $(cut -c1-90 "$OUT/norm_err.txt")"
+else fail "(c) a DEDUP after the FLOAT: $(cat "$OUT/norm_err.txt")"; fi
 
 # a rule without a comment line is refused
 printf 'SDFILE FWA.BIN FIRMWARE\n' > "$OUT/rules_nocomment.txt"

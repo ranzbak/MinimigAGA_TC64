@@ -75,12 +75,18 @@ SUBST uart (Hardfile\x20indexed\x20in\x20<TIMER\x20counts>\x20ms\\r)-(file\x20")
 # speed (12,083 / 4,569).  A write with a changed value stays
 DEDUP hw ^ffffb0$
 
-# Task 13 ruling (5), runs p4t13 / p4t13c: the I2C (ffff60), keyboard
-# (ffff90) and ffffa0 write group that a TIMER-driven call makes in the
-# main loop lands among other frames on each CPU (spi.txt line 82,967 /
-# 31,794); compared as its own ordered sub-stream.  After the DROPBLOCK
+# Task 13 ruling (5), runs p4t13 / p4t13c: the I2C write run (ffff60, the
+# ADV7511 poll a TIMER-driven call makes in the main loop) and the
+# interrupt handler next to it (ffffa0 = cfide's INTERRUPT register:
+# inthandler()'s DisableInterrupts / EnableInterrupts, arch/irq.c; ffff90
+# = c64keys' KEYBOARD_OUT write between them) land among other frames on
+# each CPU (spi.txt line 82,967 / 31,794; in every gate pair the run is
+# ffff60 0b72, 0242, 1100, ffffa0 0000, ffff90 009b, ffffa0 0001).  Only a
+# run with an I2C write floats (final review I1): every other ffffa0 /
+# ffff90 write (ColdBoot, the Akiko ISR around each request, c64keys)
+# keeps its place among the frames it brackets.  After the DROPBLOCK
 # above, so the 832-only ApplyConfiguration pass stays dropped
-FLOAT hw ^ffff(60|90|a0)$
+FLOAT hw ^ffff(60|90|a0)$ ^ffff60$
 
 # Task 13 ruling (6), runs p4t13 / p4t13c: the audio ring holds the drive
 # sounds rendered per TIMER count (drivesounds_render(TIMER), pickstep's
