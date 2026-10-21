@@ -489,7 +489,12 @@ one counter over both files: the order without the cycles.
 
 `run.sh diff <rv run> <832 run>` runs `spitrace.py norm` on each
 (`<run>/norm.txt`) and `spitrace.py diff` on the two: a unified diff, exit 0
-only when it is empty. `norm` writes one stream in frame order,
+only when it is empty. First it checks each run's `results.txt` (final
+review M5) and refuses (exit 2) unless the first run is `CPU rv` and the
+second `CPU 832` (`--twin`: two runs of one CPU, an X twin), both ran the
+same scenario (the `scenario:` line; a run from before that line: its one
+`tb_<scenario>_x*.log`) with the same `cd config`, and both passed (the
+bench verdict `ok` and no `BAD` line). `norm` writes one stream in frame order,
 `<STREAM> <text>` per line:
 
 - **dropped poll frames** (their number depends on the CPU's speed):
@@ -723,7 +728,7 @@ rule is used by at least one scenario, so none was removed, and a pair's
 XRAND twins of `CPU=832`: the EightThirtyTwo's random start can shift its
 timing (section "keys") or stop it (section "fdd_rd"). When a scenario's
 traces carry timing bytes (`fdd_rd`), compare the 832 twin normalised:
-`bash sim/l3/run.sh diff <832 run> <832 twin>` must be empty, and both
+`bash sim/l3/run.sh diff --twin <832 run> <832 twin>` must be empty, and both
 must pass their data checks. RV twins stay `compare` SAME.
 
 ## keys
@@ -1090,7 +1095,7 @@ whose start matches, and its comparison:
 
 ```sh
 CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator XRAND=1 XSEED=4 RUNTAG=fc_xs4 FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh fdd_rd
-bash sim/l3/run.sh diff fc fc_xs4
+bash sim/l3/run.sh diff --twin fc fc_xs4
 ```
 
 The 832 twin is compared normalised (section "Differential"): its
@@ -1384,7 +1389,7 @@ SIM=verilator RUNTAG=w FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BI
 CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=wc FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh fdd_wr
 CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator XRAND=1 XSEED=4 RUNTAG=wc_xs4 FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh fdd_wr
 bash sim/l3/run.sh diff --unused-rules w wc
-bash sim/l3/run.sh diff wc wc_xs4
+bash sim/l3/run.sh diff --twin wc wc_xs4
 python3 -I sim/l3/l3check.py fdd_wr sim/l3/run_w sim/l3/run_wc
 bash sim/l3/test/fdd_wr_test.sh
 ```
@@ -1571,7 +1576,7 @@ make -C sim/l3/fw832 B="$FWD/fw832" E832DIR="$E832DIR"
 CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=hc FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh xpair hdd
 SIM=verilator RUNTAG=h FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh xpair hdd
 bash sim/l3/run.sh diff --unused-rules h hc
-bash sim/l3/run.sh diff hc hc_xr
+bash sim/l3/run.sh diff --twin hc hc_xr
 ```
 
 (about 40 minutes for the RV pair and 55 for the 832 pair side by side.)
@@ -1758,7 +1763,7 @@ SIM=verilator RUNTAG=c CDCFG=cue FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/8
 SIM=verilator RUNTAG=ci CDCFG=iso FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh cd
 bash sim/l3/run.sh diff --unused-rules c cc
 bash sim/l3/run.sh diff --unused-rules ci cci
-bash sim/l3/run.sh diff cc cc_xr
+bash sim/l3/run.sh diff --twin cc cc_xr
 ```
 
 `xpair` runs the scenario and its XRAND twin side by side; on a busy
@@ -1946,7 +1951,7 @@ SIM=verilator RUNTAG=a FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BI
 SIM=verilator RUNTAG=al FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh cdda_load
 bash sim/l3/run.sh diff --unused-rules a ac
 bash sim/l3/run.sh diff --unused-rules al alc
-bash sim/l3/run.sh diff ac ac_xs1
+bash sim/l3/run.sh diff --twin ac ac_xs1
 ```
 
 The 832's XRAND twin is a separate run with `XSEED=1`, not `xpair`.
