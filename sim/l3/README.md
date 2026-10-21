@@ -162,7 +162,9 @@ ends at the 20th after it. Checks:
   kickstart lines (`Boot file size: 262144`, two `File size: 256kB`,
   `##End result : 1`), the release `20 08 03` / `20 08 00`, then 21
   HandleFpga frames; and its `NOT UART` lines: no `ROM loading failed`, no
-  `Fatal error`
+  `Fatal error`, and on the RV no `Overriding screenmode` (the 832 prints
+  it on every boot, an 832-only defect that `expected_diff.txt` drops on
+  both CPUs: so the RV's is checked here, final review I2)
 - no `EXC` / `TRAP` on the UART
 - `l3check.py kick <run>`: the 256 KB the firmware uploaded equals `KICK.ROM`
   byte for byte at both places (Amiga 0xf80000 and the 0xfc0000 mirror,
@@ -249,6 +251,7 @@ ok   MARGIN lines: all 10 present, none LOW, 7 required ones ok
 ok   milestones: 51 of 51 found in order
 ok   no UART line contains 'ROM loading failed'
 ok   no UART line contains 'Fatal error'
+ok   no UART line contains 'Overriding screenmode'
 ok   PASS kick: KICK.ROM (262144 bytes) at Amiga 0xf80000 and 0xfc0000 (host 0x100000, 0x140000)
 ok   PASS order: the last kickstart-region SDRAM write at cycle 150139042 (host 0017fffc), the CPU released at cycle 156968829, 6829787 cycles later
 ok   PASS mmc: MMC_Init's 9 commands after the jump (CMD0 arg=00000000 ... CMD58 arg=00000000) = sim/l3/gold/mmc_init_rv.txt

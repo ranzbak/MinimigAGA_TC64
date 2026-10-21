@@ -32,7 +32,9 @@ SUBST uart partition\x20type:\x200x0\x20\( partition type: 0x00 (
 # BootPrint(); lib832 / vbcc832 sprintf suspected), so it prints
 # "Overriding screenmode." and runs ApplyConfiguration(0,0) a second time
 # with no key held; the RV (right per the source) does neither.  The block
-# ends at the "##End result : 0" line that ApplyConfiguration prints
+# ends at the "##End result : 0" line that ApplyConfiguration prints.  The
+# rule drops the block on both CPUs: milestones_boot.txt's "CPU=rv NOT UART
+# Overriding screenmode" fails an RV run that prints it (final review I2)
 DROPBLOCK uart ^Overriding\x20screenmode\.$ ^##End\x20result\x20:\x200$
 
 # fw/ctrl_rv/arch/irq.c:22 (SetIntHandler: IRQ_MASK = 0 for a legacy
