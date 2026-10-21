@@ -677,7 +677,8 @@ one `0` per sector), the config file (`SDFILE` of `MINMGAR.CFG` and
 832's `partition type: 0x0`), the 832's spurious "Overriding screenmode."
 pass (a `DROPBLOCK` up to its `##End result : 0`: an 832-only firmware
 defect, `findings/osd-riscv/phase4.md` "Findings for Paul") and the RV-only
-`IRQ_MASK` write (`HW ffff34`, `fw/ctrl_rv/arch/irq.c`). With them, the
+`IRQ_MASK` write (`HW ffff34 0000`, `fw/ctrl_rv/arch/irq.c`; only that
+value: another one shows). With them, the
 `boot` diff (runs `p4t7r2`, `p4t7c2`) is empty and all 9 rules are used.
 `fdd_rd` adds four rules (section "fdd_rd"):
 

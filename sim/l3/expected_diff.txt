@@ -39,8 +39,10 @@ DROPBLOCK uart ^Overriding\x20screenmode\.$ ^##End\x20result\x20:\x200$
 
 # fw/ctrl_rv/arch/irq.c:22 (SetIntHandler: IRQ_MASK = 0 for a legacy
 # handler) and exec-1's memory map (the RV interrupt controller at
-# 0xFFFFFF30..3C): an RV-only register, the 832 has none
-DROP hw ^ffff34\x20
+# 0xFFFFFF30..3C): an RV-only register, the 832 has none.  Only the value
+# 0000 the legacy path writes (final review M7): an RV IRQ_MASK write of
+# another value stays and shows in the diff
+DROP hw ^ffff34\x200000$
 
 # fw/ctrl_rv/test/gold/fmt_diff_expected.txt lines 37-44 (cases 152-155
 # PREC: 'Inserting floppy: "%.11s"\r'): lib832's printf has no precision,
