@@ -20,7 +20,18 @@
 // sck half period 3 clk_114, everything on clk_114 edges (clk114 below, four
 // per clk), tx_seq its count of bytes started (cfide's osd_tx_seq, Task 10).
 //
-// Run: ./run.sh
+// Run (fresh Ubuntu 24.04, from the repository root, bash or zsh; iverilog
+// only, no Vivado, about a second):
+//
+//   sudo apt install iverilog
+//   bash sim/osd_keyq/run.sh            the bench: "=== PASS"
+//   bash sim/osd_keyq/run.sh mutant     the queue removed: must FAIL
+//   bash sim/osd_keyq/run.sh mutant_seq osd_rx_seq one clk7 period early:
+//                                       check (b) must FAIL
+//
+// Each mode prints "<mode>: PASS|FAIL (expected ...) -- OK" and exits 0 when
+// every mode did what it should; RUNTAG=<tag> names the run directory
+// (sim/osd_keyq/run_<tag>).
 
 `timescale 1ns/1ps
 

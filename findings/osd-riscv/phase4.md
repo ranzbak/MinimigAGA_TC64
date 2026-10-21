@@ -322,7 +322,7 @@ Each must fail; all do.
 | (c) `fdd.c` `SendSector` one word short (`teeth/fwmut.sh`, image 91c96027) | `p4t19_rv_tc`, `fdd_rd` | FAILS: `l3check.py fdd_rd` 122 problems (data checksum of every sector) |
 | (d) cfide `osd_rdy` forced 1 + `FAST_HW` | Task 12's `p4t12m1c` (reused, ruling) | FAILS: `OSD EARLY 1 of 450`, keys check |
 | (e) `GAYLE_MUT_SHARED` (`teeth/gayle_shared.sh`) | `p4t19_rv_te`, `hdd`; `p4t19e_rv_te2`, `cdda_load` | `hdd` PASSES, trace byte-identical to `p4m2h`: the plan uses gayle port 0 only (both units on it), so a shared register file is not seen. `cdda_load` (CD on port 1, HDFs on port 0) FAILS: the CD's packet phase gets ERR / no DRQ, the plan never ends (`TIMEOUT`) |
-| (f) `cdaudio.c` cursor one frame short per half (image 552dfa26) | `p4t19_rv_tf`, `cdda` | FAILS: 9 wrong halves (`l3check.py cdda`: half 3 on differs from byte 0) |
+| (f) `cdaudio.c` cursor one frame short per half (image 552dfa26) | `p4t19_rv_tf`, `cdda` | FAILS: 7 wrong halves (`l3check.py cdda`: half 3 on differs from byte 0) |
 | (g) one SD data byte changed in the 832 run's `spi.txt` (`teeth/sdbyte.sh`) | offline, `p4g_rv_def_hdd` / `p4g_832_def_hdd` | FAILS: the diff shows the CMD17 of LBA 0x80c with another block hash |
 | (h) the RV image before the write-FIFO fix (0162e53f) | `p4t19_rv_th`, `fdd_wr` | FAILS: item 7's word-gap monitor, `min 22.0 clk_114 over 4287 words (bound 64), 4284 below`, bench errors, `TIMEOUT` |
 

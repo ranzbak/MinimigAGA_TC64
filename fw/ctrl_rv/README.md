@@ -1186,7 +1186,8 @@ not the previous one. While it reads 0 the firmware polls on, bounded by
 TIMER: `GetTimer(2)`, so the wait ends once TIMER has passed its value at
 the start by 2, after 2 to 3 counts (11.6 to 17.4 ms on the board, about
 2,000 to 3,000 `clk_114` in the L2 bench, where TIMER is 643x fast; Decision
-4: at least 5.8 ms). A wait that runs out adds 1 to `osd_rdy_timeouts` and
+4's bound is "at least 5.8 ms", which is what the comment in
+`hardware.c` quotes; the wait itself is the 11.6 to 17.4 ms). A wait that runs out adds 1 to `osd_rdy_timeouts` and
 reads the byte all the same. A poll bounded by TIMER is not a count delay
 (Global Constraints "No new count-based delays"): the live `SPIN` sites are
 now `fpga.c:226` and `config.c:618` only (plus, since Phase 4 Task 14, the

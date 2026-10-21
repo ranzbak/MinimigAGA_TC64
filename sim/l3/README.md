@@ -1,9 +1,15 @@
 # L3 co-simulation bench
 
-Work in progress (Phase 4 of the OSD host CPU migration). This file grows
-with the bench; so far it has the sections "Bench", "Run", "boot",
+The L3 bench boots the OSD host CPU (the VexRiscv or, with `CPU=832`, the
+EightThirtyTwo) with its real firmware against the real Minimig SPI slaves
+(Phase 4 of the OSD host CPU migration), runs a scenario, and compares the
+RV and the 832 run of the same scenario. Sections: "Bench", "Run", "boot",
 "832", "Differential", "keys", "fdd_rd", "fdd_wr", "hdd", "cd", "cdda",
-"akiko", "Monitors", "Stress grid" and "Cards".
+"akiko", "Monitors", "Stress grid" and "Cards". Every command is meant to
+be copied from the repository root of a fresh Ubuntu 24.04 checkout, into
+bash or zsh; the sections after "Run" assume the "Run" setup and, for
+`CPU=832` and the differential, the "832" setup (the shell variables of
+the first block that sets them).
 
 ## Bench
 
@@ -93,7 +99,7 @@ Vivado part only for `SIM=xsim`, see `sim/host_bridge/README.md`,
 Prerequisites: Vivado 2023.2 and the `libtinfo.so.5` shim):
 
 ```sh
-sudo apt install build-essential make python3 mtools dosfstools fdisk xorriso ghdl verilator ccache iverilog
+sudo apt install build-essential make git curl python3 mtools dosfstools fdisk xorriso ghdl verilator ccache iverilog
 bash tools/riscv/fetch-xpack.sh
 bash tools/riscv/check-toolchain.sh
 make -C fw/ctrl_rv
@@ -310,6 +316,7 @@ from an EightThirtyTwo checkout: the submodule, or in a git worktree
 machine, after the "Run" setup, from the repository root:
 
 ```sh
+sudo apt install wget patch
 git submodule update --init EightThirtyTwo
 E832DIR=$PWD/EightThirtyTwo
 E832=$E832DIR/RTL
@@ -2105,7 +2112,7 @@ silence:
 | `boot` | 1, 4 (all four), 5, 14 | 3 (no direct transfer), 12 (one RTC transfer, no gap) |
 | `boot_short` | 1, `userio_cs_release`, `userio_byte_spacing`, 5 | 3, 12, the paula lines (no paula frame before the cut); its `kick_order` is fpga_init's reset pulse, not a kickstart release, so it is not required |
 | `keys` | as `boot` | as `boot` |
-| `fdd_rd` | as `boot`, and 6 | 3, 12 as `boot`; 7 (no write); 8, 9 (no IDE command) |
+| `fdd_rd` | as `boot`, and 6 | 3 as `boot`; 7 (no write); 8, 9 (no IDE command); 12 is `rec` (3 RTC gaps, the shortest 558 ms) |
 | `fdd_wr` | as `boot`, and 7 | 3, 12 as `boot`; 6 (no read); 8, 9 (no IDE command) |
 | `hdd` | as `boot`, and 3 (`dmode_release`: the HDF sectors come in direct mode) | 6, 7, 12; 8 is `rec` (no bound), `l3check.py hdd` requires its per-command waits |
 | `cd` | as `boot`, and 9; with `CDCFG=iso` also 3 (`dmode_release`: the ISO's sectors come in direct mode; a CUE's MODE1/2352 sectors go through the CPU) | 6, 7, 12; 3 with `CDCFG=cue`; 8 is `rec` |
@@ -2136,7 +2143,7 @@ Times are taken at the slave pins: an `sck` edge reaches the slaves
 | 6 | `fdd_fifo_empty_dma` | floppy read DMA: Agnus disk slots with paula_floppy's `dmaon` = 1 and its FIFO empty, per track from the first slot at which the FIFO has reached the firmware's working level (1,024 words) to the track's last word (section "fdd_rd") | 0 | n/a (no floppy DMA) |
 | 7 | `fdd_fifo_full_write` | floppy write DMA: Agnus disk slots offered to the write DMA (`dmaon` = 1, `DSKLEN` bit 14) at which paula_floppy's FIFO is full, so the slot goes unused (section "fdd_wr") | 0 | n/a (no floppy DMA) |
 | 8 | `ide_wait` | IDE PIO flow control (`bfm_ide`): the time the 68k side spent waiting on the firmware, `clk_114`, only when it waited: an interrupt not yet pending, a BSY poll that saw BSY, a data read held by `nrdy`; per command min / median / max in the `=== IDE end` lines (section "hdd") | 0, `rec` (status-driven, no margin) | n/a (no IDE command) |
-| 9 | `cd_timeout_left` | ATAPI phases on gayle's port 1 (IDE port 2): each window from the firmware's `CMD_IDE_XFER_WR` (`hdd_xfer_wr_p`, a phase set up) to `xfer_done` (the host is through), `clk_114`; `cdrom.c`'s `cd_wait()` polls inside it and gives up after `CD_TIMEOUT` = 10000 TIMER counts (1024 x `TICKDIV` `clk_114` each: 58 s at 643). The value is that timeout minus the longest window; an `(info) 9` line has the longest window, also in TIMER counts (section "cd") | 0 | n/a (no ATAPI phase) |
+| 9 | `cd_timeout_left` | ATAPI phases on gayle's port 1 (IDE port 2): each window from the firmware's `CMD_IDE_XFER_WR` (`hdd_xfer_wr_p`, a phase set up) to `xfer_done` (the host is through), `clk_114`; `cdrom.c`'s `cd_wait()` polls inside it and gives up after `CD_TIMEOUT` = 10000 TIMER counts (1024 x `TICKDIV` `clk_114` each: 58 s at 643). The value is that timeout minus the longest window; an `(info) 9` line has the longest window, also in TIMER counts (section "cd") | 0; `ok` is required but cannot turn LOW: the longest window is four orders of magnitude under the timeout and `L3_CD_TO` ends the run first, so the line is `rec` in effect (the real teeth are `l3check.py cd`'s status, sense and window checks) | n/a (no ATAPI phase) |
 | 12 | `rtc_cs_high` | `rtc_model`: the CS-inactive time between two RTC transfers, ns | `+RTC_CSH_MIN`; the default 0 (datasheet not found, below) makes it `rec` | n/a (one RTC transfer in `boot`); 363,982,789 ns rec in the `rtc2` run below |
 | 14 | `kick_order` | the last `cpurst` fall (userio_osd releases the Amiga CPU) minus the last SDRAM write into the kickstart region (host 0x100000..0x17ffff, `sdram_host_model` at its ack), `clk_114` | 1 (the write lands first) | 6,829,787 (write at 150,139,042, release at 156,968,829) |
 
@@ -2275,7 +2282,8 @@ after the "Run" and "832" setup (in a worktree `E832DIR` = the main
 checkout's `EightThirtyTwo`):
 
 ```sh
-E832DIR=$PWD/EightThirtyTwo
+export E832DIR=$PWD/EightThirtyTwo
+export E832=$E832DIR/RTL
 LIST=1 bash sim/l3/grid.sh p4g
 nohup bash sim/l3/grid.sh p4g > sim/l3/grid_p4g.out 2>&1 &
 python3 -I sim/l3/margins.py sim/l3/run_p4g_*
@@ -2372,7 +2380,7 @@ every generated file and image, so a generator change shows in review.
 Setup on a fresh Ubuntu 24.04, bash or zsh, from the repository root:
 
 ```sh
-sudo apt install build-essential make python3 mtools dosfstools fdisk xorriso ghdl verilator ccache iverilog
+sudo apt install build-essential make git curl python3 mtools dosfstools fdisk xorriso ghdl verilator ccache iverilog
 bash tools/riscv/fetch-xpack.sh
 bash tools/riscv/check-toolchain.sh
 make -C fw/ctrl_rv
