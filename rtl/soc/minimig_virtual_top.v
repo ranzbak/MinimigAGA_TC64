@@ -36,8 +36,6 @@ module minimig_virtual_top #(
     parameter ap040_has_fpu = 1,
     parameter ap040_enable_cache = 1,
     parameter ap040_post_stores = 1,
-    // 1: the pipelined AP68040 (findings/ap040-pipelined/PLAN.md M5)
-    parameter ap040_pipelined = 0,
     // 1: the pipelined core runs free of the bus wait (findings/unfreeze/plan.md)
     parameter ap040_free_core = 0,
     // the pipelined core's store buffer (findings/storebuf/plan.md; TG68K.vhd)
@@ -691,7 +689,6 @@ TG68K #(
     .ap040_has_fpu(ap040_has_fpu),
     .ap040_enable_cache(ap040_enable_cache),
     .ap040_post_stores(ap040_post_stores),
-    .ap040_pipelined(ap040_pipelined),
     .ap040_free_core(ap040_free_core),
     .ap040_store_buf(ap040_store_buf),
     .ap040_fwd(ap040_fwd),

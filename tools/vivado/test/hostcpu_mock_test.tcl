@@ -257,9 +257,14 @@ foreach f [list rtl/host/host_bridge.vhd rtl/host/rv_hostcpu.v rtl/host/vexriscv
     close [open $R/$f w]
 }
 file mkdir $R/project_1
+# The CPU core: a checkout named by AP040_PIPE_DIR ($PIPE), and the
+# lib/AP68040-pipelined submodule of the fake root (SUB).
+set SUB $R/lib/AP68040-pipelined
 foreach f {ap040_pipe_pkg.sv ap040_core.v ap040_icache.v compat/ap040_compat.v} {
-    file mkdir [file dirname $PIPE/rtl/$f]
-    close [open $PIPE/rtl/$f w]
+    foreach d [list $PIPE $SUB] {
+        file mkdir [file dirname $d/rtl/$f]
+        close [open $d/rtl/$f w]
+    }
 }
 
 set NEW_BUILD  $repo/tools/vivado/build_ap040.tcl
@@ -267,8 +272,12 @@ set NEW_HOST   $repo/tools/vivado/hostcpu.tcl
 
 proc file_entry {en {order NORMAL}} { return [dict create IS_ENABLED $en PROCESSING_ORDER $order] }
 
-# fresh: a project_1.xpr from before the 832 was retired (the 832's sources,
-#        its boot ROM and the old bridge rtl/host/832_bridge.vhd in, no RV files).
+# fresh: a project_1.xpr from before the 832 and the reference 68040 core were
+#        retired (the 832's sources, its boot ROM, the old bridge
+#        rtl/host/832_bridge.vhd and a lib/AP68040 file in, no RV files).
+#        Its include_dirs name lib/AP68040/rtl, as project_1's do.  (lib/AP68040
+#        itself stays: the faster build takes its ap040_bus16_adapter.v, so its
+#        files are not retired; a pipelined build turns them off for the run.)
 # pre:   an untidy project: the RV group and both debug sources already listed
 #        (some disabled), rv_debug.xdc listed but disabled, one retired file
 #        already disabled.
@@ -292,7 +301,9 @@ proc state {kind} {
         dict set fp $R/tools/vivado/rv_debug.xdc [file_entry 0]
     }
     set files [dict create sources_1 $src constrs_1 {} XC7A100T $xdc sim_1 {}]
-    return [dict create files $files fprops $fp fsprops [dict create sources_1 {} constrs_1 {} XC7A100T {} sim_1 {}]]
+    set fsp [dict create sources_1 [dict create INCLUDE_DIRS [list $R/lib/AP68040/rtl $R/lib/AP68040-pipelined/rtl]] \
+                         constrs_1 {} XC7A100T {} sim_1 {}]
+    return [dict create files $files fprops $fp fsprops $fsp]
 }
 
 # The build switches build_ap040.tcl reads, cleared for every run so the
@@ -473,7 +484,7 @@ set DEFAULT_RUN [dict create]
 foreach envcase {unset 0} {
     set envd [expr {$envcase eq "unset" ? {} : [dict create RV_DEBUG 0]}]
     foreach ila {0 1} {
-        foreach pipe {ref pipe} {
+        foreach pipe {sub pipe} {
             if {$pipe eq "pipe"} { dict set envd AP040_PIPE_DIR $PIPE } else { dict unset envd AP040_PIPE_DIR }
             foreach kind {fresh pre} {
                 set case default_rv${envcase}_ila${ila}_${pipe}_$kind
@@ -487,6 +498,17 @@ foreach envcase {unset 0} {
                 set v [left_as_found $st [dict get $rn state]]
                 check "$case: project left as found" [expr {$v eq ""}] $v
                 check "$case: no .hostcpu_undo left" [expr {![file exists $UNDO]}]
+                set core [expr {$pipe eq "pipe" ? $PIPE : $SUB}]
+                set inc [expr {[dict get $rn at_launch] eq "" ? "" : [dict get [dict get $rn at_launch] fsprops sources_1 INCLUDE_DIRS]}]
+                set want [list $R/lib/AP68040/rtl $SUB/rtl]
+                foreach d [list $core/rtl $core/rtl/compat] { if {$d ni $want} { lappend want $d } }
+                check "$case: at launch_runs: include_dirs = the project's plus the core's" \
+                    [expr {$inc eq $want}] "got '$inc' want '$want'"
+                set ref $R/lib/AP68040/rtl/ap040_top.v
+                set ren [expr {[dict get $rn at_launch] eq "" ? "?" : [dict get [dict get $rn at_launch] fprops $ref IS_ENABLED]}]
+                check "$case: at launch_runs: lib/AP68040 files off (the pipelined compat has the same modules)" \
+                    [expr {$ren eq "0"}] "IS_ENABLED '$ren'"
+                check "$case: generic has no AP040_PIPELINED (the only core)" [expr {[string first AP040_PIPELINED [generic_of $rn]] < 0}]
                 check "$case: generic without HOSTCPU_RVDEBUG" \
                     [expr {[generic_of $rn] ne "" && [string first HOSTCPU_RVDEBUG [generic_of $rn]] < 0}] [generic_of $rn]
             }
@@ -599,6 +621,16 @@ foreach kind {fresh pre} {
 }
 
 #-----------------------------------------------------------------------------
+# core: AP040_PIPE_DIR=none (the removed reference core) and a missing core
+#-----------------------------------------------------------------------------
+foreach {what envd} [list none [dict create AP040_PIPE_DIR none] missing [dict create AP040_PIPE_DIR $tmp/nonexistent]] {
+    set r [run_build $NEW_BUILD [state fresh] $envd 0 $tmp/out/core_$what]
+    set changes [lsearch -all -inline -regexp -index 0 [dict get $r log] {^(launch_runs|reset_run)$}]
+    check "core: AP040_PIPE_DIR $what stops with an error" [expr {[dict get $r err] ne ""}] [dict get $r err]
+    check "core: AP040_PIPE_DIR $what: no run launched" [expr {[llength $changes] == 0}]
+}
+
+#-----------------------------------------------------------------------------
 # rvdebug: RV_DEBUG parsing
 #-----------------------------------------------------------------------------
 foreach {val want} {unset 0 "" 0 0 0 1 1 2 error yes error " 1" error} {
@@ -621,7 +653,7 @@ check "rvdebug: ... before any project change" [expr {[llength $changes] == 0}] 
 #-----------------------------------------------------------------------------
 # build: the whole script with RV_DEBUG=1
 #-----------------------------------------------------------------------------
-foreach {ila pipe kind} {0 pipe fresh  1 ref pre  0 ref fresh} {
+foreach {ila pipe kind} {0 pipe fresh  1 sub pre  0 sub fresh} {
     set envd [dict create RV_DEBUG 1]
     if {$pipe eq "pipe"} { dict set envd AP040_PIPE_DIR $PIPE }
     set case build_rv1_ila${ila}_${pipe}_$kind

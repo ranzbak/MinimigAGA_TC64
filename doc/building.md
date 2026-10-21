@@ -60,7 +60,7 @@ In an existing clone, `git submodule update --init` does the same.
 | Submodule | What | Needed for |
 |---|---|---|
 | `lib/AP68040-pipelined` | the 68040 CPU core | the bitstream |
-| `lib/AP68040` | the non-pipelined reference 68040 (branch `ap68040-reference` of the AP68040-pipelined repository) | `AP040_PIPE_DIR=none` builds and some benches |
+| `lib/AP68040` | the non-pipelined reference 68040 (branch `ap68040-reference` of the AP68040-pipelined repository); the core itself is no longer built | `ap040_bus16_adapter.v`, which the faster core's build (`FASTER`) and its `sim/ddr3_cpu` leg take from it, and the pipelined core's own `compat:` test legs |
 | `rtl/tg68k` | the TG68K CPU | only the older ports; not in this build's project |
 
 All submodule URLs are HTTPS (since commit 829167b), so no GitHub SSH key is
@@ -106,7 +106,6 @@ timing and utilisation reports.
 | `IMPL_EFFORT=high` | stronger placement and routing directives for this run |
 | `FASTRAM_ILA=0` | with ILAs on, keep only the CPU ILA (both don't fit in block RAM) |
 | `AP040_PIPE_DIR=<dir>` | build the pipelined core from another checkout |
-| `AP040_PIPE_DIR=none` | build the non-pipelined reference core from `lib/AP68040` |
 | `STOP_AFTER_ROUTE=1` | stop before writing a bitstream (timing experiments) |
 
 **CPU switches.** Without any of them the build is the configuration the

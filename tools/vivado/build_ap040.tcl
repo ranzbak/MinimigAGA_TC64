@@ -1,5 +1,5 @@
-# AP68040 build, the design's only CPU since Stage E4a: the MC68040 in
-# lib/AP68040, with MMU, FPU and its split caches, inside rtl/soc/TG68K.vhd
+# AP68040 build, the design's only CPU since Stage E4a: the pipelined MC68040
+# of lib/AP68040-pipelined, with MMU, FPU and its split caches, inside rtl/soc/TG68K.vhd
 # (which presents a TG68K-shaped port set; the TG68KdotC kernel itself was
 # removed and builds at tag d3_stable).  Fileset generics
 #   HAVEDDR3=1 DDR3_FASTRAM_ILA=<0|1>
@@ -394,23 +394,26 @@ if {$ila} {
 }
 
 #-----------------------------------------------------------------------------
-# AP040_PIPE_DIR=<AP68040-pipelined checkout> in the environment builds the
-# pipelined core (findings/ap040-pipelined/PLAN.md M5, hardware gate 1):
-# TG68K's ap040_pipelined generic, the pipelined sources and its rtl/compat
-# (which carries lifted copies of lib/AP68040's cache and adapters under the
-# same module names -- so lib/AP68040's files are disabled for the run and
-# re-enabled afterwards), MMU and FPU reported absent.
-#
-# Without AP040_PIPE_DIR, the lib/AP68040-pipelined submodule is used when it
-# is checked out (branch 5.0-040-pipelined), so a fresh clone builds the
-# pipelined core.  AP040_PIPE_DIR=none builds the reference core instead.
+# The CPU core: the faster AP68040 (FASTER, above), or else the pipelined
+# one (findings/ap040-pipelined/PLAN.md), its sources and its rtl/compat
+# (wrapper, cache, MMU, adapters).  The pipelined core comes from the
+# lib/AP68040-pipelined submodule, or from the checkout AP040_PIPE_DIR=<dir>
+# in the environment names.  Its rtl/compat carries lifted copies of
+# lib/AP68040's cache and adapters under the same module names, so
+# lib/AP68040's files are disabled for the run and re-enabled afterwards.
+# (The non-pipelined reference core and AP040_PIPE_DIR=none were removed
+# 2026-10-21; lib/AP68040 stays only for ap040_bus16_adapter.v, which the
+# faster build takes from it.)
 #-----------------------------------------------------------------------------
 set pipe_gen ""
 set pipe_off {}
 set pipe_dir ""
 if {[info exists ::env(AP040_PIPE_DIR)] && $::env(AP040_PIPE_DIR) ne ""} {
-    if {$::env(AP040_PIPE_DIR) ne "none"} { set pipe_dir $::env(AP040_PIPE_DIR) }
-} elseif {[file isdirectory $R/lib/AP68040-pipelined/rtl]} {
+    if {$::env(AP040_PIPE_DIR) eq "none"} {
+        error "build_ap040.tcl: AP040_PIPE_DIR=none built the reference core, which was removed; unset it to build lib/AP68040-pipelined"
+    }
+    set pipe_dir $::env(AP040_PIPE_DIR)
+} else {
     set pipe_dir $R/lib/AP68040-pipelined
 }
 if {$faster} {
@@ -462,7 +465,10 @@ if {$faster} {
     set free_core 1
     set pipe_gen " AP040_FASTER=1 AP040_FREE_CORE=1 AP040_FAST_DUAL=$fdual AP040_FAST_DC1ATC=$fdc1 AP040_FAST_BTIC=$fbtic AP040_FAST_ICHIP=$fichip"
     puts "build_ap040.tcl: FASTER core from $P (DUAL=$fdual DC1_ATC=$fdc1 BTIC=$fbtic ICHIP=$fichip, CPU_CLK_DIVIDE $cpudiv, [llength $pipe_off] lib/AP68040 files disabled)"
-} elseif {$pipe_dir ne ""} {
+} else {
+    if {![file isdirectory $pipe_dir/rtl]} {
+        error "build_ap040.tcl: no CPU core sources in $pipe_dir/rtl (git submodule update --init lib/AP68040-pipelined, or AP040_PIPE_DIR=<checkout>)"
+    }
     set P [file normalize $pipe_dir]/rtl
     foreach f [get_files -quiet -of_objects [get_filesets sources_1] $R/lib/AP68040/rtl/*.v] {
         if {[get_property IS_ENABLED $f]} {
@@ -534,28 +540,8 @@ if {$faster} {
     # goes on when the missed longword arrives, the line finishes in the background;
     # M68040UM 4.6.1).  Default 0 until the board says otherwise.
     set cwf [expr {[info exists ::env(CWF)] && $::env(CWF) ne "" ? $::env(CWF) : 0}]
-    set pipe_gen " AP040_PIPELINED=1 AP040_HAS_MMU=$pmmu AP040_HAS_FPU=$pfpu AP040_FREE_CORE=$free_core AP040_STORE_BUF=$store_buf AP040_FWD=$fwd AP040_RAS=$ras AP040_PRECISE=$precise AP040_MISPLIT=$misplit AP040_SB_MMU=$sb_mmu AP040_COPYBACK=$copyback AP040_BTB=$btb AP040_LDX=$ldx AP040_BTFN=$btfn AP040_DFP_MIS=$dfp_mis AP040_WALLOC=$walloc AP040_XC7=$xc7 AP040_POST_CHIP=$post_chip AP040_POST_CI=$post_ci AP040_CWF=$cwf"
+    set pipe_gen " AP040_HAS_MMU=$pmmu AP040_HAS_FPU=$pfpu AP040_FREE_CORE=$free_core AP040_STORE_BUF=$store_buf AP040_FWD=$fwd AP040_RAS=$ras AP040_PRECISE=$precise AP040_MISPLIT=$misplit AP040_SB_MMU=$sb_mmu AP040_COPYBACK=$copyback AP040_BTB=$btb AP040_LDX=$ldx AP040_BTFN=$btfn AP040_DFP_MIS=$dfp_mis AP040_WALLOC=$walloc AP040_XC7=$xc7 AP040_POST_CHIP=$post_chip AP040_POST_CI=$post_ci AP040_CWF=$cwf"
     puts "build_ap040.tcl: PIPELINED build from $P ([llength $pipe_off] lib/AP68040 files disabled), FREE_CORE=$free_core STORE_BUF=$store_buf FWD=$fwd RAS=$ras PRECISE=$precise MISPLIT=$misplit SB_MMU=$sb_mmu COPYBACK=$copyback BTB=$btb LDX=$ldx BTFN=$btfn DFP_MIS=$dfp_mis WALLOC=$walloc XC7=$xc7 POST_CHIP=$post_chip POST_CI=$post_ci CWF=$cwf"
-} else {
-    # (2026-10-06) The reference core: lib/AP68040's files on, the pipelined
-    # core's off.  A pipelined run that dies before its clean-up (a Vivado
-    # crash) leaves lib/AP68040 disabled in project_1, and an earlier
-    # pipelined run leaves its own files in the project, whose rtl/compat
-    # carries modules of the same names; both made the reference build come
-    # out with ap040_tg68k_compat and ap040_bus16_adapter as black boxes.
-    # A later pipelined run re-enables its files itself (above).
-    set ref_on 0
-    set pipe_dis 0
-    foreach f [get_files -quiet -of_objects [get_filesets sources_1] $R/lib/AP68040/rtl/*.v] {
-        if {![get_property IS_ENABLED $f]} { set_property IS_ENABLED true $f; incr ref_on }
-    }
-    foreach f [get_files -quiet -of_objects [get_filesets sources_1] *AP68040-pipelined/rtl/*] {
-        if {[get_property IS_ENABLED $f]} { set_property IS_ENABLED false $f; incr pipe_dis }
-    }
-    puts "build_ap040.tcl: REFERENCE core from lib/AP68040 ($ref_on of its files re-enabled, $pipe_dis pipelined files disabled)"
-}
-if {[info exists ::env(FREE_CORE)] && $::env(FREE_CORE) eq "1" && ![info exists free_core]} {
-    error "build_ap040.tcl: FREE_CORE=1 needs the pipelined core (AP040_PIPE_DIR is none)"
 }
 
 # The one functional difference from build.tcl: which kernel the wrapper

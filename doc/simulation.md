@@ -73,14 +73,16 @@ Zorro III fast RAM with its controller and a DDR3 model. A 68k test program
 ```bash
 cd sim/ddr3_cpu
 export LD_LIBRARY_PATH=$HOME/lib/tinfo5 LC_ALL=C LANG=C
-PIPELINED=1 PIPE_DIR=$(cd ../../lib/AP68040-pipelined && pwd) RUNTAG=mine \
+PIPE_DIR=$(cd ../../lib/AP68040-pipelined && pwd) RUNTAG=mine \
     ./run.sh --ap040 > /tmp/ddr3_cpu.out 2>&1; echo "exit=$?"
 grep "DDR3 CPU TB" xsim_run_pass_ap040_pipe_mine.log
 ```
 
-- **`PIPELINED=1` selects the pipelined core.** Without it the bench builds
-  the reference core from `lib/AP68040`. `PIPE_DIR` defaults to a clone next
-  to the repository (`../AP68040-pipelined`), so point it at the submodule.
+- **The core is the pipelined one** (`PIPELINED=1` is implied and
+  `PIPELINED=0`, the removed reference core, is refused); `FASTER=1
+  CPU_RATIO=2` builds the faster core instead (`_fast` run directories).
+  `PIPE_DIR` defaults to a clone next to the repository
+  (`../AP68040-pipelined`), so point it at the submodule.
 - **Verdict:** the last `DDR3 CPU TB:` line must say `2 passed, 0 failed`;
   the exit code agrees. `PASS (68k program completed all phases)` alone only
   means the program finished.

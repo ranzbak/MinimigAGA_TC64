@@ -1,18 +1,19 @@
-// Project-local replacement for lib/AP68040/rtl/primitives/dpram.v.
+// Project-local dual-port RAM (module dpram) for the AP68040's caches and MMU
+// (lib/AP68040-pipelined rtl/compat: ap040_cache.v ctag_ram, ap040_mmu.v
+// atc_ram).  The build scripts and the benches compile this file, not the
+// core's own primitive.
 //
-// The submodule's version writes both RAM ports in one always block.  Vivado
-// refuses to map that to block RAM ("RAM has multiple writes via different
-// ports in same process") and dissolves it into registers and muxes: the
-// core's ctag_ram (128 x 94) and the MMU's atc_ram together become ~43k LUTs,
-// which is why the core measured 70,832 LUTs as shipped and did not fit the
-// xc7a100t.  With one process per port it infers block RAM and the full
+// The core's original version writes both RAM ports in one always block.
+// Vivado refuses to map that to block RAM ("RAM has multiple writes via
+// different ports in same process") and dissolves it into registers and muxes:
+// the core's ctag_ram (128 x 94) and the MMU's atc_ram together become ~43k
+// LUTs, which is why the core measured 70,832 LUTs as shipped and did not fit
+// the xc7a100t.  With one process per port it infers block RAM and the full
 // configuration -- MMU, FPU, caches -- places and routes at 28,694 LUTs and
 // 10 BRAM tiles.  See findings/ap68040/compatibility.md.
 //
 // The AP68040 README invites this substitution ("replace it with a vendor
-// macro if your flow needs one"), so the submodule is left untouched and this
-// file is compiled in its place; tools/test_ap040.sh runs the core's own test
-// suite against exactly this arrangement.
+// macro if your flow needs one").
 //
 // ONE BEHAVIOURAL DIFFERENCE, deliberate and tested.  The original does both
 // writes before both reads in a single process, so a read of a row another
