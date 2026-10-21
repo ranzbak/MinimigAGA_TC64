@@ -1,0 +1,93 @@
+
+****** Vivado v2023.2 (64-bit)
+  **** SW Build 4029153 on Fri Oct 13 20:13:54 MDT 2023
+  **** IP Build 4028589 on Sat Oct 14 00:45:43 MDT 2023
+  **** SharedData Build 4025554 on Tue Oct 10 17:18:54 MDT 2023
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source /tmp/claude-1000/-home-paul-work-fpga-Xilinx-artix7-MinimigAGA-TC64/07701334-ab8d-4ba4-9b16-963ecb990a1e/scratchpad/jtag_probe8.tcl
+open_hw_manager: Time (s): cpu = 00:00:10 ; elapsed = 00:00:10 . Memory (MB): peak = 1341.465 ; gain = 0.027 ; free physical = 9346 ; free virtual = 34443
+INFO: [Labtools 27-2285] Connecting to hw_server url TCP:localhost:3121
+INFO: [Labtools 27-2222] Launching hw_server...
+INFO: [Labtools 27-2221] Launch Output:
+
+****** Xilinx hw_server v2023.2
+  **** Build date : Oct 13 2023 at 20:26:23
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+
+
+INFO: [Labtools 27-3415] Connecting to cs_server url TCP:localhost:0
+INFO: [Labtools 27-3417] Launching cs_server...
+INFO: [Labtools 27-2221] Launch Output:
+
+
+******** Xilinx cs_server v2023.2.0
+  ****** Build date   : Oct 10 2023-06:01:56
+    **** Build number : 2023.2.1696910516
+      ** Copyright 2017-2022 Xilinx, Inc. All Rights Reserved.
+      ** Copyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved.
+
+
+
+INFO: [Labtoolstcl 44-466] Opening hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301
+INFO: [Labtoolstcl 44-467] Setting hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301 into jtag_mode
+PROBE8: === A: -state paths (as rbb::Emit builds them) and the plain form, per start state
+PROBE8: RESET -> IDLE
+PROBE8:   [run_state_hw_jtag -state IDLE IDLE] -> ok 'IDLE'
+PROBE8:   [run_state_hw_jtag IDLE] -> ok 'IDLE'
+PROBE8: IDLE -> IRPAUSE
+ERROR: [Labtoolstcl 44-271] run_state_hw_jtag failed chain_0
+PROBE8:   [run_state_hw_jtag -state {DRSELECT IRSELECT IRCAPTURE IREXIT1 IRPAUSE} IRPAUSE] -> ERROR
+PROBE8:   [run_state_hw_jtag IRPAUSE] -> ok 'IRPAUSE'
+PROBE8: IDLE -> DRPAUSE
+PROBE8:   [run_state_hw_jtag -state {DRSELECT DRCAPTURE DREXIT1 DRPAUSE} DRPAUSE] -> ok 'DRPAUSE'
+PROBE8:   [run_state_hw_jtag DRPAUSE] -> ok 'DRPAUSE'
+PROBE8: DRPAUSE -> IDLE
+PROBE8:   [run_state_hw_jtag -state {DREXIT2 DRUPDATE IDLE} IDLE] -> ok 'IDLE'
+PROBE8:   [run_state_hw_jtag IDLE] -> ok 'IDLE'
+PROBE8: IRPAUSE -> IDLE
+PROBE8:   [run_state_hw_jtag -state {IREXIT2 IRUPDATE IDLE} IDLE] -> ok 'IDLE'
+PROBE8:   [run_state_hw_jtag IDLE] -> ok 'IDLE'
+PROBE8: DRPAUSE -> DRPAUSE
+PROBE8:   [run_state_hw_jtag -state {DREXIT2 DRUPDATE DRSELECT DRCAPTURE DREXIT1 DRPAUSE} DRPAUSE] -> ok 'DRPAUSE'
+PROBE8:   [run_state_hw_jtag DRPAUSE] -> ok 'DRPAUSE'
+PROBE8: IRPAUSE -> DRPAUSE
+PROBE8:   [run_state_hw_jtag -state {IREXIT2 IRUPDATE DRSELECT DRCAPTURE DREXIT1 DRPAUSE} DRPAUSE] -> ok 'DRPAUSE'
+PROBE8:   [run_state_hw_jtag DRPAUSE] -> ok 'DRPAUSE'
+PROBE8: DRPAUSE -> IRPAUSE
+PROBE8:   [run_state_hw_jtag -state {DREXIT2 DRUPDATE DRSELECT IRSELECT IRCAPTURE IREXIT1 IRPAUSE} IRPAUSE] -> ok 'IRPAUSE'
+PROBE8:   [run_state_hw_jtag IRPAUSE] -> ok 'IRPAUSE'
+PROBE8: IRPAUSE -> IRPAUSE
+PROBE8:   [run_state_hw_jtag -state {IREXIT2 IRUPDATE DRSELECT IRSELECT IRCAPTURE IREXIT1 IRPAUSE} IRPAUSE] -> ok 'IRPAUSE'
+PROBE8:   [run_state_hw_jtag IRPAUSE] -> ok 'IRPAUSE'
+PROBE8: === B: does a plain goto capture? (IR capture 0x35; IDCODE 13631093; BYPASS)
+PROBE8:   [run_state_hw_jtag IDLE] -> ok 'IDLE'
+PROBE8:   [run_state_hw_jtag IRPAUSE] -> ok 'IRPAUSE'
+PROBE8:   [scan_ir_hw_jtag 6 -tdi 2a] -> ok '35'
+PROBE8:   (expect '35' = captured on the way to IRPAUSE)
+PROBE8:   [scan_ir_hw_jtag 6 -tdi 3f] -> ok '35'
+PROBE8:   (scan from IRPAUSE again without a goto: expect '2a' = no capture, shifted value back)
+PROBE8:   [run_state_hw_jtag IRPAUSE] -> ok 'IRPAUSE'
+PROBE8:   [scan_ir_hw_jtag 6 -tdi 3f] -> ok '35'
+PROBE8:   (IRPAUSE -> IRPAUSE plain then scan: '35' = recaptured, '3f' = not)
+PROBE8:   -> BYPASS is now in IR (3f, updated by the IRPAUSE->IRPAUSE goto if it passed IRUPDATE)
+PROBE8:   [run_state_hw_jtag DRPAUSE] -> ok 'DRPAUSE'
+PROBE8:   [scan_dr_hw_jtag 8 -tdi a5] -> ok '4a'
+PROBE8:   (BYPASS, captured 0: expect 4a = a5 delayed one bit, first bit out 0 -> bits 0..7 = 0,1,0,1,0,0,1,0 -> 0x4a)
+PROBE8:   [scan_dr_hw_jtag 8 -tdi 00] -> ok '00'
+PROBE8:   (no goto: continues the same shift: expect 01 or 00 + the last bit of a5 = 1 -> 0x01)
+PROBE8:   [run_state_hw_jtag DRPAUSE] -> ok 'DRPAUSE'
+PROBE8:   [scan_dr_hw_jtag 8 -tdi a5] -> ok '4a'
+PROBE8:   (DRPAUSE -> DRPAUSE plain: capture loads 0 -> 4a again; no capture -> carries the bit left in BYPASS)
+PROBE8: === C: IDCODE through plain gotos
+PROBE8:   [run_state_hw_jtag IDLE] -> ok 'IDLE'
+PROBE8:   [run_state_hw_jtag IRPAUSE] -> ok 'IRPAUSE'
+PROBE8:   [scan_ir_hw_jtag 6 -tdi 09] -> ok '35'
+PROBE8:   [run_state_hw_jtag DRPAUSE] -> ok 'DRPAUSE'
+PROBE8:   [scan_dr_hw_jtag 32 -tdi 00000000] -> ok '13631093'
+PROBE8:   [run_state_hw_jtag IDLE] -> ok 'IDLE'
+PROBE8:   [run_state_hw_jtag RESET] -> ok 'RESET'
+PROBE8: end
+INFO: [Labtoolstcl 44-464] Closing hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301
+INFO: [Common 17-206] Exiting Vivado at Tue Oct 20 15:16:50 2026...

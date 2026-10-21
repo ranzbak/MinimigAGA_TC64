@@ -49,6 +49,11 @@ proc add_xdc {f} {
         [get_files -of_objects [get_filesets XC7A100T] $f]
 }
 
+# The OSD host CPU file groups (hostcpu_apply / hostcpu_restore): the board
+# top builds the RISC-V host CPU (HOSTCPU_RISCV = 1, osd-riscv Phase 5), whose
+# sources project_1 does not list.
+source [file dirname [info script]]/hostcpu.tcl
+
 #-----------------------------------------------------------------------------
 # Constraints
 #-----------------------------------------------------------------------------
@@ -142,6 +147,8 @@ if {$ipr ne "" && [get_property PROGRESS $ipr] ne "100%"} {
 #-----------------------------------------------------------------------------
 # The one functional difference from build.tcl.
 set_property generic {DDR3_BIST_VIO=1} [get_filesets sources_1]
+# The RV host CPU sources in, the 832 ones out, for this run (restored below).
+hostcpu_apply $R
 reset_run synth_1
 launch_runs impl_1 -to_step write_bitstream -jobs 8
 wait_on_run impl_1
@@ -151,4 +158,5 @@ report_timing_summary -file $out/timing_summary.rpt
 report_utilization -file $out/utilization.rpt
 set_property generic {} [get_filesets sources_1]
 puts "build_bist.tcl: DDR3_BIST_VIO generic cleared: '[get_property generic [get_filesets sources_1]]'"
+hostcpu_restore
 puts "=== ALL DONE ==="

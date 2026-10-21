@@ -1,0 +1,50 @@
+
+****** Vivado v2023.2 (64-bit)
+  **** SW Build 4029153 on Fri Oct 13 20:13:54 MDT 2023
+  **** IP Build 4028589 on Sat Oct 14 00:45:43 MDT 2023
+  **** SharedData Build 4025554 on Tue Oct 10 17:18:54 MDT 2023
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source /tmp/claude-1000/-home-paul-work-fpga-Xilinx-artix7-MinimigAGA-TC64/07701334-ab8d-4ba4-9b16-963ecb990a1e/scratchpad/jtag_probe2.tcl
+open_hw_manager: Time (s): cpu = 00:00:10 ; elapsed = 00:00:09 . Memory (MB): peak = 1340.469 ; gain = 0.027 ; free physical = 9224 ; free virtual = 34472
+INFO: [Labtools 27-2285] Connecting to hw_server url TCP:localhost:3121
+INFO: [Labtools 27-2222] Launching hw_server...
+INFO: [Labtools 27-2221] Launch Output:
+
+****** Xilinx hw_server v2023.2
+  **** Build date : Oct 13 2023 at 20:26:23
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+
+
+INFO: [Labtools 27-3415] Connecting to cs_server url TCP:localhost:0
+INFO: [Labtools 27-3417] Launching cs_server...
+INFO: [Labtools 27-2221] Launch Output:
+
+
+******** Xilinx cs_server v2023.2.0
+  ****** Build date   : Oct 10 2023-06:01:56
+    **** Build number : 2023.2.1696910516
+      ** Copyright 2017-2022 Xilinx, Inc. All Rights Reserved.
+      ** Copyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved.
+
+
+
+INFO: [Labtoolstcl 44-466] Opening hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301
+INFO: [Labtoolstcl 44-467] Setting hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301 into jtag_mode
+PROBE: target open
+PROBE:     scans ir=35 dr=13631093
+PROBE: A global proc G: ok 'RESET'
+PROBE:     scans ir=35 dr=13631093
+PROBE: B namespace proc nsx::N: ok 'RESET'
+rvb: raw self-test: scan_ir_hw_jtag 6 -> '35' (IR capture 0x35), scan_dr_hw_jtag 32 -> '13631093' (IDCODE 0x13631093)
+PROBE: C rvb::raw_self_test: ok '1'
+PROBE:     scans ir=35 dr=13631093
+PROBE: D global proc G again: ok 'RESET'
+PROBE: E: rvb::raw_self_test pieces, global, with the bridge's hex helpers
+PROBE: E1 bits_to_hex IR: ok '09'
+PROBE: E2 bits_to_hex DR: ok '00000000'
+PROBE: E3 seq with helper hex: ok 'RESET'
+PROBE: end
+INFO: [Labtoolstcl 44-464] Closing hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301
+INFO: [Common 17-206] Exiting Vivado at Tue Oct 20 15:10:58 2026...

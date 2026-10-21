@@ -4,4 +4,7 @@ set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) 832_bridge
 set_global_assignment -name QIP_FILE [file join $::quartus(qip_path) ../../EightThirtyTwo/RTL/eightthirtytwo.qip]
 set_global_assignment -name QIP_FILE [file join $::quartus(qip_path) ../../EightThirtyTwo/RTL/debug_bridge_jtag.qip]
 set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) ../../fw/ctrl_boot_832/OSDBoot_832_ROM.vhd]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) rv_hostcpu.v]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) vexriscv/VexOsd.v]
+set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) ../../fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd]
 

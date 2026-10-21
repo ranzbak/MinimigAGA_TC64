@@ -1,0 +1,63 @@
+
+****** Vivado v2023.2 (64-bit)
+  **** SW Build 4029153 on Fri Oct 13 20:13:54 MDT 2023
+  **** IP Build 4028589 on Sat Oct 14 00:45:43 MDT 2023
+  **** SharedData Build 4025554 on Tue Oct 10 17:18:54 MDT 2023
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source /tmp/claude-1000/-home-paul-work-fpga-Xilinx-artix7-MinimigAGA-TC64/07701334-ab8d-4ba4-9b16-963ecb990a1e/scratchpad/jtag_probe9.tcl
+open_hw_manager: Time (s): cpu = 00:00:09 ; elapsed = 00:00:08 . Memory (MB): peak = 1340.496 ; gain = 0.027 ; free physical = 9435 ; free virtual = 34538
+INFO: [Labtools 27-2285] Connecting to hw_server url TCP:localhost:3121
+INFO: [Labtools 27-2222] Launching hw_server...
+INFO: [Labtools 27-2221] Launch Output:
+
+****** Xilinx hw_server v2023.2
+  **** Build date : Oct 13 2023 at 20:26:23
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+
+
+INFO: [Labtools 27-3415] Connecting to cs_server url TCP:localhost:0
+INFO: [Labtools 27-3417] Launching cs_server...
+INFO: [Labtools 27-2221] Launch Output:
+
+
+******** Xilinx cs_server v2023.2.0
+  ****** Build date   : Oct 10 2023-06:01:56
+    **** Build number : 2023.2.1696910516
+      ** Copyright 2017-2022 Xilinx, Inc. All Rights Reserved.
+      ** Copyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved.
+
+
+
+INFO: [Labtoolstcl 44-466] Opening hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301
+INFO: [Labtoolstcl 44-467] Setting hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301 into jtag_mode
+PROBE9: 1 after a DR scan from DRPAUSE: is the TAP in DRPAUSE? (path from DRPAUSE accepted)
+PROBE9:   [scan_dr_hw_jtag 8 -tdi a5] -> ok '4a'
+ERROR: [Labtoolstcl 44-271] run_state_hw_jtag failed chain_0
+PROBE9:   [run_state_hw_jtag -state {DREXIT2 DRUPDATE IDLE} IDLE] -> ERROR
+PROBE9: 2 same: is it in IDLE? (one-TCK IDLE path accepted only from IDLE/RESET)
+PROBE9:   [scan_dr_hw_jtag 8 -tdi a5] -> ok '4a'
+PROBE9:   [run_state_hw_jtag -state {IDLE} IDLE] -> ok 'IDLE'
+PROBE9: 3 same, then DREXIT2 DRSHIFT? (-state into a shift state)
+PROBE9:   [scan_dr_hw_jtag 8 -tdi a5] -> ok '4a'
+ERROR: [Labtoolstcl 44-271] run_state_hw_jtag failed chain_0
+PROBE9:   [run_state_hw_jtag -state {DREXIT2 DRSHIFT DREXIT1 DRPAUSE} DRPAUSE] -> ERROR
+PROBE9:   [scan_dr_hw_jtag 8 -tdi 00] -> ok '00'
+PROBE9: 4 IR: after run_state IRPAUSE + scan_ir, where is the TAP? (path from IRPAUSE)
+PROBE9:   [scan_ir_hw_jtag 6 -tdi 09] -> ok '35'
+ERROR: [Labtoolstcl 44-271] run_state_hw_jtag failed chain_0
+PROBE9:   [run_state_hw_jtag -state {IREXIT2 IRUPDATE IDLE} IDLE] -> ERROR
+PROBE9: 5 IR: scan then the one-TCK IDLE path
+PROBE9:   [scan_ir_hw_jtag 6 -tdi 09] -> ok '35'
+PROBE9:   [run_state_hw_jtag -state {IDLE} IDLE] -> ok 'IDLE'
+PROBE9: 6 three DR scans in a row from DRPAUSE, BYPASS, a5/ff/00 (no capture between would give 4a, 01|fe.., ...)
+PROBE9:   [scan_dr_hw_jtag 8 -tdi a5] -> ok '4a'
+PROBE9:   [scan_dr_hw_jtag 8 -tdi ff] -> ok 'fe'
+PROBE9:   [scan_dr_hw_jtag 8 -tdi 00] -> ok '00'
+PROBE9: 7 scan_dr directly from IDLE, end state after it
+PROBE9:   [scan_dr_hw_jtag 32 -tdi 00000000] -> ok '13631093'
+PROBE9:   [run_state_hw_jtag -state {IDLE} IDLE] -> ok 'IDLE'
+PROBE9: end
+INFO: [Labtoolstcl 44-464] Closing hw_target localhost:3121/xilinx_tcf/Xilinx/00001a2af40301
+INFO: [Common 17-206] Exiting Vivado at Tue Oct 20 15:18:07 2026...

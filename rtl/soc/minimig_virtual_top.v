@@ -14,6 +14,12 @@
 module minimig_virtual_top #(
     parameter hostonly=0,
     parameter debug = 0,
+    // OSD host CPU (rtl/host/832_bridge.vhd): 0 = EightThirtyTwo, 1 = the
+    // VexRiscv RV32IMC in rtl/host/rv_hostcpu.v.  0 by default, so every top
+    // that does not set it keeps the 832; minimig_openaars_top sets 1.
+    parameter hostcpu_riscv = 0,
+    // RISC-V debug: 0 none (production), 1 BSCANE2 tunnel (Xilinx only).
+    parameter hostcpu_rvdebug = 0,
     parameter spimux = 0,
     parameter havertg = 1,
     parameter haveaudio = 1,
@@ -1334,7 +1340,11 @@ assign RTG_ENABLE = rtg_ena;
 
 wire host_interrupt;
 
-EightThirtyTwo_Bridge #( debug ? 1'b1 : 1'b0) hostcpu
+EightThirtyTwo_Bridge #(
+    .debug(debug ? 1'b1 : 1'b0),
+    .cpu_riscv(hostcpu_riscv ? 1'b1 : 1'b0),
+    .rv_debug(hostcpu_rvdebug ? 1'b1 : 1'b0)
+) hostcpu
 (
     .clk(CLK_114),
     .nReset(reset_out), // (nReset)

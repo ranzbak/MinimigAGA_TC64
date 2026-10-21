@@ -16,6 +16,18 @@
 # immediately after, so the project is left as it was found (project defaults
 # are HAVEDDR3=1, DDR3_FASTRAM_ILA=0).
 #
+# The OSD host CPU is the VexRiscv RV32IMC (minimig_openaars_top parameter
+# HOSTCPU_RISCV = 1): tools/vivado/hostcpu.tcl puts its sources in and the
+# 832's out for the run and restores the project afterwards.  No 832 mode: the
+# 832 board image is build/stage_spicdc_49b1868 (branch 5.0-040-pipelined).
+#
+# RV_DEBUG=1 in the environment builds the LAB bitstream: the host CPU with the
+# RISC-V debug module (VexOsd_DMT, its DTM tunnelled through the FPGA's own
+# JTAG chain by a BSCANE2 on USER4; generic HOSTCPU_RVDEBUG=1, the bridge's
+# rv_debug = 1), tools/vivado/rv_debug.xdc for its TCK clock, and an extra
+# report rv_debug.rpt.  Unset or 0 builds the shipping image exactly as before
+# (tools/vivado/test/hostcpu_mock_test.tcl checks that call for call).
+#
 # Vivado 2023.2 needs libtinfo.so.5 and must NOT be given -stack.
 #
 # Note the runs use the constraints fileset XC7A100T, not constrs_1.
@@ -78,6 +90,12 @@ proc add_xdc {f} {
     set_property USED_IN {synthesis implementation} \
         [get_files -of_objects [get_filesets XC7A100T] $f]
 }
+
+# The OSD host CPU file groups: hostcpu_apply / hostcpu_restore (the board top
+# builds the RISC-V host CPU, osd-riscv Phase 5).
+source [file dirname [info script]]/hostcpu.tcl
+# RV_DEBUG (0 or 1, checked before anything is changed): 1 is the LAB build.
+set rv_debug [hostcpu_rvdebug]
 
 #-----------------------------------------------------------------------------
 # Constraints
@@ -471,8 +489,24 @@ set fila [expr {[info exists ::env(FASTRAM_ILA)] && $::env(FASTRAM_ILA) ne "" ? 
 # CHIP32=0 in the environment builds the wrapper with every longword as two
 # word cycles (findings/chip32/plan.md); default 1.
 set chip32 [expr {[info exists ::env(CHIP32)] && $::env(CHIP32) ne "" ? $::env(CHIP32) : 1}]
-set_property generic "HAVEDDR3=1 DDR3_BIST_VIO=0 DDR3_FASTRAM_ILA=$fila CPU040_DEBUG_ILA=$ila AP040_POST_STORES=$post CPU_CLK_DIVIDE=$cpudiv CHIP32=$chip32$pipe_gen" \
+# RV_DEBUG=1: the board top's HOSTCPU_RVDEBUG (default 0) set to 1, which
+# minimig_virtual_top hands to the bridge as rv_debug = 1 (rv_hostcpu DEBUG =
+# 1).  The token is appended, so .last_generics differs from the shipping
+# image's and the run re-synthesises.
+set rv_gen ""
+if {$rv_debug} {
+    set rv_gen " HOSTCPU_RVDEBUG=1"
+    puts "build_ap040.tcl: host CPU = RISC-V, DEBUG MODULE (rv_debug = 1, LAB BUILD)"
+}
+set_property generic "HAVEDDR3=1 DDR3_BIST_VIO=0 DDR3_FASTRAM_ILA=$fila CPU040_DEBUG_ILA=$ila AP040_POST_STORES=$post CPU_CLK_DIVIDE=$cpudiv CHIP32=$chip32$pipe_gen$rv_gen" \
     [get_filesets sources_1]
+
+# The host CPU is the top's parameter default (HOSTCPU_RISCV = 1), not a
+# generic: the RV sources in, the 832's out, for this run only (restored below).
+# A run that changed the file groups always re-synthesises (below), so a
+# synthesis of the other CPU is never reused.  RV_DEBUG=1 also puts the debug
+# module's two sources and rv_debug.xdc in, restored the same way.
+set hostcpu_changed [hostcpu_apply $R $rv_debug]
 
 # The debug core adds a few thousand LUTs and flip-flops to clk_114, and with
 # the default implementation strategy (no physical optimisation at all) the
@@ -540,10 +574,11 @@ if {[file exists $gen_file]} {
     set fh [open $gen_file r]; set gen_was [string trim [read $fh]]; close $fh
 }
 if {$gen_now ne $gen_was
+    || $hostcpu_changed
     || [get_property NEEDS_REFRESH $synthrun]
     || [get_property PROGRESS $synthrun] ne "100%"
     || [get_property STATUS $synthrun] eq "Not started"} {
-    puts "build_ap040.tcl: re-synthesising (generics or sources changed)"
+    puts "build_ap040.tcl: re-synthesising (generics, sources or host CPU file groups changed)"
     reset_run synth_1
 } else {
     puts "build_ap040.tcl: synthesis is up to date, implementing only"
@@ -579,13 +614,117 @@ report_cdc -details -from [get_clocks dll_28] -to [get_clocks clk_ddr100] \
     -file $out/cdc_28_to_100.rpt
 report_clock_interaction -delay_type min_max -file $out/clock_interaction.rpt
 
-# Deliverables next to the other stage bitstreams.
+# The host CPU reports (osd-riscv Phase 5): where the resources go, which CPU
+# is in the netlist, the OSD reply handshake crossing (rtl/host/cfide.vhd:
+# osd_rx_seq dll_28 -> osd_tx_seq clk_114 resync, osd_tx_seq/osd_rx_seq ->
+# host_req_q dll_28), every failing path and the DRCs.  Each one in a catch:
+# a report that fails must not cost the bitstream copy or the restores below.
+proc try_report {name body} {
+    if {[catch {uplevel 1 $body} msg]} {
+        puts "build_ap040.tcl: WARNING report $name failed: $msg"
+    }
+}
+try_report util_hier.rpt {
+    report_utilization -hierarchical -hierarchical_depth 4 -file $out/util_hier.rpt
+}
+try_report util_hostcpu.rpt {
+    report_utilization -cells [get_cells openaars_virtual_top/hostcpu] \
+        -hierarchical -hierarchical_depth 3 -file $out/util_hostcpu.rpt
+}
+try_report clocks.rpt {
+    report_clocks -file $out/clocks.rpt
+}
+try_report hostcpu_cells.txt {
+    set fh [open $out/hostcpu_cells.txt w]
+    puts $fh "# openaars_virtual_top/hostcpu: every hierarchical (leaf-parent) cell below it, with its REF_NAME"
+    set hc [get_cells -quiet -hierarchical -filter {IS_PRIMITIVE == 0 && NAME =~ openaars_virtual_top/hostcpu/*}]
+    foreach c [lsort $hc] { puts $fh "$c [get_property REF_NAME $c]" }
+    # The 832 CPU is counted as eightthirtytwo_cpu*, its top entity (the
+    # alu/decode/... entities live inside it): a bare eightthirtytwo* would
+    # also match the bridge, EightThirtyTwo_Bridge, which both CPUs keep.
+    puts $fh "# hierarchical cells in the whole design per REF_NAME pattern (case-insensitive)"
+    puts $fh "# patterns: 832 CPU eightthirtytwo_cpu*, 832 ROM OSDBoot_832_ROM*, 832 JTAG debug_bridge_jtag*;"
+    puts $fh "# RISC-V VexOsd*, rv_hostcpu*, OSDBoot_rv_ROM*; the shared bridge EightThirtyTwo_Bridge* (1 in every image)"
+    set refs [get_property REF_NAME [get_cells -quiet -hierarchical -filter {IS_PRIMITIVE == 0}]]
+    foreach pat {eightthirtytwo_cpu* OSDBoot_832_ROM* debug_bridge_jtag* VexOsd* rv_hostcpu* OSDBoot_rv_ROM* EightThirtyTwo_Bridge*} {
+        set n 0
+        foreach r $refs { if {[string match -nocase $pat $r]} { incr n } }
+        puts $fh "count $pat $n"
+    }
+    close $fh
+}
+try_report handshake_timing.rpt {
+    set hs_to   [get_cells -quiet -hierarchical -filter {NAME =~ *mycfide/osd_tx_seq_reg* || NAME =~ *mycfide/host_req_q_reg*}]
+    set hs_from [get_cells -quiet -hierarchical -filter {NAME =~ *osd_rx_seq_reg*}]
+    set hs_tx   [get_cells -quiet -hierarchical -filter {NAME =~ *mycfide/osd_tx_seq_reg*}]
+    set hs_hq   [get_cells -quiet -hierarchical -filter {NAME =~ *mycfide/host_req_q_reg*}]
+    set fh [open $out/handshake_timing.rpt w]
+    puts $fh "# cells: to [llength $hs_to] (osd_tx_seq_reg*, host_req_q_reg*), from [llength $hs_from] (osd_rx_seq_reg*)"
+    puts $fh "# 1: -from osd_rx_seq -to osd_tx_seq, host_req_q; 2: -from osd_tx_seq -to host_req_q"
+    close $fh
+    if {[llength $hs_to] && [llength $hs_from]} {
+        report_timing -setup -hold -from $hs_from -to $hs_to -max_paths 4 -nworst 1 \
+            -file $out/handshake_timing.rpt -append
+    }
+    if {[llength $hs_tx] && [llength $hs_hq]} {
+        report_timing -setup -hold -from $hs_tx -to $hs_hq -max_paths 4 -nworst 1 \
+            -file $out/handshake_timing.rpt -append
+    }
+}
+try_report failing.rpt {
+    report_timing -setup -hold -max_paths 100 -nworst 1 -slack_lesser_than 0 \
+        -file $out/failing.rpt
+}
+try_report drc.rpt {
+    report_drc -file $out/drc.rpt
+}
+# RV_DEBUG=1: the debug module's evidence in one file -- the BSCANE2 cell(s)
+# and their JTAG_CHAIN (4 = USER4, what OpenOCD's BSCAN tunnel scans), the
+# VexOsd_DMT cell count (1; VexOsd 0), the rv_tck clock rv_debug.xdc creates,
+# and its paths: from it, to it, within it (the JTAG side of the DTM and the
+# tunnel), plus the CDC report of the two crossings the asynchronous clock
+# groups leave untimed (the DTM's FlowCCByToggle/BufferCC synchronisers).
+if {$rv_debug} {
+    try_report rv_debug.rpt {
+        set fh [open $out/rv_debug.rpt w]
+        puts $fh "# RV_DEBUG=1 LAB build: the RISC-V debug module (VexOsd_DMT, BSCANE2 USER4 tunnel, rv_debug = 1)"
+        set bs [get_cells -quiet -hierarchical -filter {REF_NAME == BSCANE2}]
+        puts $fh "# BSCANE2 cells: [llength $bs] (expected 1, JTAG_CHAIN 4)"
+        foreach c [lsort $bs] { puts $fh "bscane2 $c JTAG_CHAIN [get_property JTAG_CHAIN $c]" }
+        puts $fh "# hierarchical cells per REF_NAME (case-insensitive; VexOsd_DMT_* are its submodules)"
+        set refs [get_property REF_NAME [get_cells -quiet -hierarchical -filter {IS_PRIMITIVE == 0}]]
+        foreach pat {VexOsd_DMT VexOsd_DMT_* VexOsd VexOsd_DMJ rv_bscane2} {
+            set n 0
+            foreach r $refs { if {[string match -nocase $pat $r]} { incr n } }
+            puts $fh "count $pat $n"
+        }
+        close $fh
+    }
+    try_report "rv_debug.rpt (rv_tck clock)" {
+        report_clocks -file $out/rv_debug.rpt -append [get_clocks rv_tck]
+    }
+    try_report "rv_debug.rpt (timing from rv_tck)" {
+        report_timing -from [get_clocks rv_tck] -setup -hold -max_paths 10 -nworst 1 -file $out/rv_debug.rpt -append
+    }
+    try_report "rv_debug.rpt (timing to rv_tck)" {
+        report_timing -to [get_clocks rv_tck] -setup -hold -max_paths 10 -nworst 1 -file $out/rv_debug.rpt -append
+    }
+    try_report "rv_debug.rpt (timing within rv_tck)" {
+        report_timing -from [get_clocks rv_tck] -to [get_clocks rv_tck] -setup -hold -max_paths 10 -nworst 1 -file $out/rv_debug.rpt -append
+    }
+    try_report "rv_debug.rpt (CDC rv_tck <-> clk_114)" {
+        report_cdc -details -from [get_clocks rv_tck] -to [get_clocks clk_114] -file $out/rv_debug.rpt -append
+        report_cdc -details -from [get_clocks clk_114] -to [get_clocks rv_tck] -file $out/rv_debug.rpt -append
+    }
+}
+
+# Deliverables next to the reports.
 set impldir $R/project_1/project_1.runs/impl_1
 file mkdir $out
 foreach ext {bit ltx} {
     if {[file exists $impldir/minimig_openaars_top.$ext]} {
         file copy -force $impldir/minimig_openaars_top.$ext $out/
-        puts "build_ap040.tcl: copied minimig_openaars_top.$ext to build/stage_ap040/"
+        puts "build_ap040.tcl: copied minimig_openaars_top.$ext to $out"
     } else {
         puts "build_ap040.tcl: WARNING minimig_openaars_top.$ext not produced"
     }
@@ -597,6 +736,7 @@ if {$pipe_gen ne ""} {
     foreach f [get_files -quiet -of_objects [get_filesets sources_1] $P/*] { set_property IS_ENABLED false $f }
     puts "build_ap040.tcl: lib/AP68040 re-enabled, pipelined sources disabled"
 }
+hostcpu_restore
 foreach {st was} $eff_was { set_property STEPS.$st.ARGS.DIRECTIVE $was $impl }
 if {[dict size $eff_was]} { puts "build_ap040.tcl: implementation directives restored" }
 set_property STEPS.PHYS_OPT_DESIGN.IS_ENABLED $ppo_was $impl
