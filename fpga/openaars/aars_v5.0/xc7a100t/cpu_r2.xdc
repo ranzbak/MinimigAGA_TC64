@@ -25,6 +25,10 @@
 # Endpoint filter: flip-flops, distributed RAM and block RAM.
 set tg68_seq {IS_SEQUENTIAL || PRIMITIVE_TYPE =~ "DMEM.*" || PRIMITIVE_TYPE =~ "BMEM.*"}
 set cpu_wrapper openaars_virtual_top/tg68k
+set tg68_mem    [get_cells -hier -filter "(NAME =~ openaars_virtual_top/sdram/* || \
+                                           NAME =~ openaars_virtual_top/minimig/* || \
+                                           NAME =~ openaars_virtual_top/g_ddr3_fastram.ddr3_fastram_i/*) && ($tg68_seq)"]
+
 
 # The phase marker, unchanged from cpu.xdc: cpu_tgl flips on every clk_38 edge and cpu_tgl_d
 # must catch it on the very next clk_114 edge.  At ratio 2 that is the default anyway; kept so
@@ -33,3 +37,11 @@ set cpu_phase_src [get_cells -quiet -hier -filter "NAME =~ $cpu_wrapper/*cpu_tgl
 set cpu_phase_dst [get_cells -quiet -hier -filter "NAME =~ $cpu_wrapper/*cpu_tgl_d_reg && ($tg68_seq)"]
 set_multicycle_path -quiet -setup 1 -from $cpu_phase_src -to $cpu_phase_dst
 set_multicycle_path -quiet -hold  0 -from $cpu_phase_src -to $cpu_phase_dst
+
+# Wrapper address registers feeding the memory side: unchanged from cpu.xdc and NOT ratio
+# dependent.  `addr` is the 7 MHz chipset machine's address register (clk_114, loaded on
+# ena7WRreg and held for the whole chip cycle), so the two-cycle rule is about that machine,
+# not about the island.  (The first ratio-2 build left it out: 3 paths to sdram/sdaddr_reg and
+# cpu_cache failed at -0.48 ns.)
+set_multicycle_path -setup -start 2 -from [get_cells -quiet -hier -filter "NAME =~ $cpu_wrapper/addr* && ($tg68_seq)"] -to $tg68_mem
+set_multicycle_path -hold  -start 1 -from [get_cells -quiet -hier -filter "NAME =~ $cpu_wrapper/addr* && ($tg68_seq)"] -to $tg68_mem
