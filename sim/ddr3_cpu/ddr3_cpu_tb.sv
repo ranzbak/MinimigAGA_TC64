@@ -1,5 +1,8 @@
-// TG68K.vhd's core generate: g_ref (lib/AP68040) or g_pipe (ap040_pipelined)
-`ifdef AP040_PIPELINED
+// TG68K.vhd's core generate: g_ref (lib/AP68040), g_pipe (ap040_pipelined)
+// or g_fast (ap040_faster, the AP68040 faster core behind its 68040 bus bridge)
+`ifdef AP040_FASTER
+`define AP040_INST g_fast
+`elsif AP040_PIPELINED
 `define AP040_INST g_pipe
 `else
 `define AP040_INST g_ref
@@ -707,10 +710,18 @@ end
 // wrapper's strobe with its own walker-write snoop, so the wrapper's strobe
 // is sampled directly to keep the two apart; snoop_wr is the cache's own
 // invalidate decision on that same edge.
+`ifdef AP040_FASTER
+// the faster core has no snoop port (the bridge keeps chip RAM out of its
+// caches with TCI): the --snoop leg does not apply
+wire core_snp_stb = 1'b0;
+wire core_snp_wr  = 1'b0;
+wire [31:0] core_snp_addr = 32'd0;
+`else
 wire core_snp_stb = ddr3_cpu_tb.tg68k.g_ap040.`AP040_INST.ap040.cache_snoop_stb;
 wire core_snp_wr  = ddr3_cpu_tb.tg68k.g_ap040.`AP040_INST.ap040.g_cache.cache.snoop_wr;
 
 wire [31:0] core_snp_addr = ddr3_cpu_tb.tg68k.g_ap040.`AP040_INST.ap040.cache_snoop_addr;
+`endif
 
 always @(posedge clk_cpu) begin
   if (tg68_rst && core_snp_stb) begin
@@ -882,7 +893,9 @@ localparam integer FWDRAS_GEN = 1;
 `else
 localparam integer FWDRAS_GEN = 0;
 `endif
-`ifdef AP040_PIPELINED
+`ifdef AP040_FASTER
+TG68K #(.cpu_clk_ratio(`CPU_RATIO), .ap040_faster(1), .ap040_free_core(1), .chip32(CHIP32_GEN)) tg68k (
+`elsif AP040_PIPELINED
 TG68K #(.cpu_clk_ratio(`CPU_RATIO), .ap040_pipelined(1), .chip32(CHIP32_GEN), .ap040_free_core(FREE_CORE_GEN),
         .ap040_store_buf(STORE_BUF_GEN), .ap040_fwd(FWDRAS_GEN), .ap040_ras(FWDRAS_GEN),
         .ap040_precise(PREMIS_GEN), .ap040_misplit(MISPLIT_GEN), .ap040_sb_mmu(SBMMU_GEN), .ap040_copyback(CBACK_GEN), .ap040_btb(BTB_GEN), .ap040_ldx(LDX_GEN), .ap040_btfn(BTFN_GEN), .ap040_dfp_mis(DFPMIS_GEN), .ap040_walloc(WALLOC_GEN), .ap040_post_chip(POSTCHIP_GEN), .ap040_post_ci(POSTCI_GEN), .ap040_cwf(CWF_GEN)) tg68k (
@@ -1689,7 +1702,11 @@ end
 localparam [3:0] CST_FILL  = 4'd4;    // C_FILL,  ap040_cache.v:233
 
 integer fill_ad    = 0;
+`ifdef AP040_FASTER
+wire [3:0] cst_w   = 4'd0;    // (no ap040_cache in the faster core)
+`else
 wire [3:0] cst_w   = ddr3_cpu_tb.tg68k.g_ap040.`AP040_INST.ap040.g_cache.cache.cst;
+`endif
 reg  [3:0] cst_d   = 4'd0;
 
 always @(posedge clk) begin

@@ -22,6 +22,7 @@
 #   ./run.sh --c32mutant --chipbus  CHIP32 read data returns word 1 twice; MUST fail
 #   NOCHIP32=1 ./run.sh ...         the wrapper's chip32 generic = 0 (longwords as two word cycles)
 #   FREECORE=1 ./run.sh ...         the wrapper's ap040_free_core = 1 (findings/unfreeze/plan.md)
+#   FASTER=1 CPU_RATIO=2 ./run.sh --ap040   the AP68040 faster core at 56.72 MHz (ap040_faster)
 #   FASTCHIP=1 ./run.sh --ap040 --chipbus   Chip slots "Fast" (findings/fastslot)
 #   FREECORE=1 FCMUTANT=ack|walk|data ./run.sh ...  one free-core qualification undone; MUST fail
 #   XDEFS="-d STOREBUF=1 -d SBMMU -d POSTCHIP=1 -d POSTCI=1 -d CWFF ..." ./run.sh ...  extra xelab defines (core switches;
@@ -207,6 +208,11 @@ if [ "$TURBOCHIP" = "0" ]; then C32PH="-DCHIP32PH=1"; fi
 # sibling clone ../AP68040-pipelined) instead of lib/AP68040's.
 PIPE_DIR=${PIPE_DIR:-$(cd "$(dirname "$0")/../../.." && pwd)/AP68040-pipelined}
 if [ "${PIPELINED:-0}" = "1" ]; then VARIANT="${VARIANT}_pipe"; fi
+# FASTER=1: the AP68040 faster core (lib/AP68040-faster) behind its 68040 bus
+# bridge, TG68K's ap040_faster (implies the free-running handshake).  Run it
+# at its clock: CPU_RATIO=2.
+FAST_DIR=$R/lib/AP68040-faster
+if [ "${FASTER:-0}" = "1" ]; then VARIANT="${VARIANT}_fast"; fi
 # RUNTAG=<word> gives a run its own directory and log, so legs that differ only
 # in environment switches (CPU_RATIO, CPU_PHASE, ...) do not overwrite each other.
 if [ -n "$RUNTAG" ]; then VARIANT="${VARIANT}_$RUNTAG"; fi
@@ -337,7 +343,26 @@ echo "sv work \"$D/ddr3_cpu_tb.sv\""                    >> $PRJ
 # ---- AP68040, when that is the core under test ----------------------------
 # SystemVerilog; ap040_defs.svh is on the include path passed to xelab below.
 # The RAM primitive is the project's, not the submodule's -- rtl/cpu040/dpram.v.
-if [ "$CPU" = "ap040" ] && [ "${PIPELINED:-0}" = "1" ]; then
+if [ "$CPU" = "ap040" ] && [ "${FASTER:-0}" = "1" ]; then
+    # A copy with always_ff written as always: xsim's elaborator rejects a
+    # variable that an initial block AND an always_ff both write (VRFC
+    # 10-3818, LRM 9.2.2.4), which the core does for every RAM it clears at
+    # configuration.  Vivado synthesis, Quartus and Verilator accept it, and
+    # for simulation the two keywords are the same process.
+    FR=$W/fast_rtl
+    cp -r "$FAST_DIR/rtl" "$FR"
+    find "$FR" -name '*.sv' -o -name '*.v' | xargs sed -i 's/\balways_ff\b/always/g'
+    for f in ap68040_pkg.sv gen/ap68040_upkg.sv ap68040_alu.sv ap68040_alu_slow.sv \
+             ap68040_muldiv.sv ap68040_biu.sv ap68040_ram.sv ap68040_atc.sv \
+             ap68040_dmu.sv ap68040_predec.sv ap68040_fetch.sv ap68040_decode.sv \
+             ap68040_useq.sv fpu/ap040_fpu.v ap68040_fpif.sv ap68040_backend.sv \
+             ap68040_snoop.sv ap68040.sv; do
+        echo "sv work \"$FR/$f\""                       >> $PRJ
+    done
+    echo "sv work \"$R/rtl/soc/ap68040_minimig.sv\""    >> $PRJ
+    # the 16-bit adapter the wrapper keeps for chipset traffic
+    echo "sv work \"$R/lib/AP68040/rtl/ap040_bus16_adapter.v\"" >> $PRJ
+elif [ "$CPU" = "ap040" ] && [ "${PIPELINED:-0}" = "1" ]; then
     # the pipelined core, its wrapper and the adapters it lifted from lib/AP68040
     PR=$PIPE_DIR/rtl
     echo "sv work \"$PR/ap040_pipe_pkg.sv\""            >> $PRJ
@@ -384,6 +409,7 @@ EOF
 AP040_ELAB=""
 if [ "$CPU" = "ap040" ]; then AP040_ELAB="-i $R/lib/AP68040/rtl"; fi
 if [ "${PIPELINED:-0}" = "1" ]; then AP040_ELAB="-i $PIPE_DIR/rtl -i $PIPE_DIR/rtl/compat -d AP040_PIPELINED"; fi
+if [ "${FASTER:-0}" = "1" ]; then AP040_ELAB="-i $W/fast_rtl -i $W/fast_rtl/fpu -i $W/fast_rtl/gen -d AP040_FASTER"; fi
 
 "$VIVADO_PATH/bin/xelab" -prj $PRJ -i "$LIB/tb/ddr3_core_xc7" $AP040_ELAB \
     -d SOC_SIM -d REALSDRAM -i $D ${NOCPU:+-d NOCPU} ${DMA_OVERLAP:+-d DMA_OVERLAP} ${P2CBLOCK:+-d P2CBLOCK=$P2CBLOCK} ${CPU_RATIO:+-d CPU_RATIO=$CPU_RATIO} ${CPU_PHASE:+-d CPU_PHASE=$CPU_PHASE} ${NOCHIP32:+-d NOCHIP32} $( [ "${FREECORE:-0}" = "1" ] && echo -d FREECORE ) ${XDEFS:-} -debug typical -relax \

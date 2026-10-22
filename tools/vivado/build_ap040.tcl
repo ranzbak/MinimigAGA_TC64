@@ -421,7 +421,14 @@ if {$faster} {
     # can leave its files enabled; both carry modules the wrapper would not
     # instantiate, but a stale enabled set is how black boxes happened before).
     set P [file normalize $R/lib/AP68040-faster]/rtl
+    # (all but ap040_bus16_adapter.v: the wrapper keeps the 16-bit adapter for
+    # the chipset bus, the NMI vector and undecoded space; its ap040_defs.svh
+    # defines are the faster core's rtl/fpu copy, identical)
     foreach f [get_files -quiet -of_objects [get_filesets sources_1] $R/lib/AP68040/rtl/*.v] {
+        if {[file tail $f] eq "ap040_bus16_adapter.v"} {
+            set_property IS_ENABLED true $f
+            continue
+        }
         if {[get_property IS_ENABLED $f]} { set_property IS_ENABLED false $f; lappend pipe_off $f }
     }
     foreach f [get_files -quiet -of_objects [get_filesets sources_1] *AP68040-pipelined/rtl/*] {
