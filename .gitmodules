@@ -11,3 +11,7 @@
 [submodule "lib/AP68040-pipelined"]
 	path = lib/AP68040-pipelined
 	url = https://github.com/ranzbak/AP68040-pipelined.git
+[submodule "lib/AP68040-faster"]
+	path = lib/AP68040-faster
+	url = https://github.com/ranzbak/AP68040.git
+	branch = minimig-56mhz

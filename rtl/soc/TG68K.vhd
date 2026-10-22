@@ -53,6 +53,17 @@ entity TG68K is
 		-- ap040_pipe_tg68k_compat.v) in place of lib/AP68040's, behind the same
 		-- ports (findings/ap040-pipelined/PLAN.md M5).  0: the reference core.
 		ap040_pipelined    : integer := 0;
+		-- 1: the AP68040 `faster` core (lib/AP68040-faster, branch faster-dual:
+		-- dual issue, 4/8 KB caches, its own table walker) behind its real
+		-- 68040 bus, bridged onto the master channel by rtl/soc/ap68040_minimig.sv.
+		-- Takes precedence over ap040_pipelined; the ap040_* switches below
+		-- belong to the pipelined core and do nothing here.  Needs
+		-- ap040_free_core = 1 (the core runs free of the bus wait) and is built
+		-- at cpu_clk_ratio 2 (56.72 MHz).
+		ap040_faster       : integer := 0;
+		-- (faster core) dual issue, DC1's own ATC port (timing)
+		ap040_fast_dual    : integer := 1;
+		ap040_fast_dc1atc  : integer := 1;
 		-- 1 (pipelined core only; findings/unfreeze/plan.md): the core runs on
 		-- every clk_cpu edge instead of being frozen while an m_* access is
 		-- outstanding.  The answers it takes from the clkena-gated side -- the
@@ -106,7 +117,8 @@ entity TG68K is
 		ap040_cwf          : integer := 0;
 		-- clk / clk_cpu, the AP68040 island's clock ratio.  3 is stage D3 as
 		-- shipped (37.8125 MHz); 4 runs the same architecture at the pre-D3 CPU
-		-- rate.  THE PHASE MARKER BELOW DEPENDS ON THIS AND IS NOT RATIO-AGNOSTIC
+		-- rate; 2 is the faster core's 56.72 MHz (ap040_faster, and see
+		-- cpu.xdc: the island's crossings are single-cycle there).  THE PHASE MARKER BELOW DEPENDS ON THIS AND IS NOT RATIO-AGNOSTIC
 		-- -- getting that wrong produces a core that never executes an
 		-- instruction, because clkena lands one clk cycle before the kernel's
 		-- edge instead of on it.  Must match amiga_clk's CPU_CLK_DIVIDE / 10.
@@ -795,6 +807,45 @@ ARCHITECTURE logic OF TG68K IS
 		);
 	END COMPONENT;
 
+	-- The faster core and its 68040 bus bridge (rtl/soc/ap68040_minimig.sv).
+	COMPONENT ap68040_minimig IS
+		GENERIC(
+			DC1_ATC : bit := '1';
+			DUAL    : bit := '1'
+		);
+		PORT(
+			clk          : in  std_logic;
+			nreset       : in  std_logic;
+			z2ram_ena    : in  std_logic;
+			z3ram_base0  : in  std_logic_vector(4 downto 0);
+			z3ram_ena0   : in  std_logic;
+			z3ram_base1  : in  std_logic_vector(3 downto 0);
+			z3ram_ena1   : in  std_logic;
+			mem_req      : out std_logic;
+			mem_write    : out std_logic;
+			mem_instr    : out std_logic;
+			mem_size     : out std_logic_vector(1 downto 0);
+			mem_addr     : out std_logic_vector(31 downto 0);
+			mem_wdata    : out std_logic_vector(31 downto 0);
+			mem_fc       : out std_logic_vector(2 downto 0);
+			mem_ack      : in  std_logic;
+			mem_rdata    : in  std_logic_vector(31 downto 0);
+			mem_berr     : in  std_logic;
+			ipl_n        : in  std_logic_vector(2 downto 0);
+			nresetout    : out std_logic;
+			cacr_out     : out std_logic_vector(31 downto 0);
+			vbr_out      : out std_logic_vector(31 downto 0);
+			cache_maint  : out std_logic;
+			debug_halted : out std_logic;
+			debug_pc     : out std_logic_vector(31 downto 0)
+		);
+	END COMPONENT;
+
+	FUNCTION to_bit(i : integer) RETURN bit IS
+	BEGIN
+		IF i /= 0 THEN RETURN '1'; ELSE RETURN '0'; END IF;
+	END FUNCTION;
+
 BEGIN
 
 
@@ -1345,7 +1396,16 @@ BEGIN
 			END IF;
 		END PROCESS;
 
-		cpu_ph <= ph_sr(cpu_clk_ratio - 3);
+		-- Ratio 2 (the faster core, 56.72 MHz): (T+N-2, T+N-1) is (T, T+1),
+		-- the XOR itself, with no register behind it.  Its inputs are a
+		-- clk_cpu flop and a clk flop, so the path into clkena_r is one clk
+		-- period like every other crossing at this ratio (cpu.xdc).
+		g_ph2 : IF cpu_clk_ratio = 2 GENERATE
+			cpu_ph <= cpu_tgl XOR cpu_tgl_d;
+		END GENERATE;
+		g_phn : IF cpu_clk_ratio > 2 GENERATE
+			cpu_ph <= ph_sr(cpu_clk_ratio - 3);
+		END GENERATE;
 
 		-- The snoop holder; see the note beside its signals.
 		PROCESS(clk)
@@ -1360,8 +1420,9 @@ BEGIN
 			END IF;
 		END PROCESS;
 
-		-- The core: lib/AP68040's, or the pipelined one (ap040_pipelined).
-		g_ref : IF ap040_pipelined = 0 GENERATE
+		-- The core: lib/AP68040's, the pipelined one (ap040_pipelined), or the
+		-- faster one (ap040_faster).
+		g_ref : IF ap040_pipelined = 0 AND ap040_faster = 0 GENERATE
 			ap040 : COMPONENT ap040_tg68k_compat
 				GENERIC MAP(
 					AP040_HAS_MMU      => ap040_has_mmu,
@@ -1486,7 +1547,7 @@ BEGIN
 				);
 		END GENERATE;
 
-		g_pipe : IF ap040_pipelined /= 0 GENERATE
+		g_pipe : IF ap040_pipelined /= 0 AND ap040_faster = 0 GENERATE
 			ap040 : COMPONENT ap040_pipe_tg68k_compat
 				GENERIC MAP(
 					AP040_HAS_MMU      => ap040_has_mmu,
@@ -1625,6 +1686,57 @@ BEGIN
 					m_ack             => pc_ack,
 					m_rdata           => pc_rdata
 				);
+		END GENERATE;
+
+		-- The faster core.  It walks its own translation tables over its own
+		-- bus, so the wrapper's walker is idle (wk_req tied low: wk_go never
+		-- rises and the master mux is m_* alone), and it has no snoop port:
+		-- the bridge keeps everything but fast RAM out of its caches with TCI,
+		-- and nothing but the CPU writes fast RAM.  Its answers are pc_ack /
+		-- pc_rdata, the free-running core's one-pulse handshake.
+		g_fast : IF ap040_faster /= 0 GENERATE
+			SIGNAL f_pc : std_logic_vector(31 downto 0);
+		BEGIN
+			ap040 : COMPONENT ap68040_minimig
+				GENERIC MAP(
+					DC1_ATC => to_bit(ap040_fast_dc1atc),
+					DUAL    => to_bit(ap040_fast_dual)
+				)
+				PORT MAP(
+					clk          => clk_cpu,
+					nreset       => reset,
+					z2ram_ena    => cz2_ena,
+					z3ram_base0  => "01000",
+					z3ram_ena0   => cz3_ena0,
+					z3ram_base1  => cz3_base1,
+					z3ram_ena1   => cz3_ena1,
+					mem_req      => m_req,
+					mem_write    => m_write,
+					mem_instr    => m_instr,
+					mem_size     => m_size,
+					mem_addr     => m_addr,
+					mem_wdata    => m_wdata,
+					mem_fc       => m_fc,
+					mem_ack      => pc_ack,
+					mem_rdata    => pc_rdata,
+					mem_berr     => '0',
+					ipl_n        => cpuIPL,
+					nresetout    => nResetOut_w,
+					cacr_out     => OPEN,
+					vbr_out      => VBR_out_w,
+					cache_maint  => ap040_maint,
+					debug_halted => ap040_halt,
+					debug_pc     => f_pc
+				);
+
+			wk_req      <= '0';
+			wk_we       <= '0';
+			wk_addr     <= (OTHERS => '0');
+			wk_wdat     <= (OTHERS => '0');
+			ap040_busy  <= '0';
+			ap040_fault <= '0';
+			ap040_dbg1  <= (255 DOWNTO 32 => '0') & f_pc;
+			ap040_dbg2  <= (OTHERS => '0');
 		END GENERATE;
 
 		-- The master mux.  The walker owns it from the ce edge it raises wk_go
@@ -2018,8 +2130,14 @@ BEGIN
 
 	clkena <= clkena_r;
 
-	ASSERT ap040_free_core = 0 OR ap040_pipelined /= 0
-		REPORT "TG68K: ap040_free_core = 1 needs ap040_pipelined = 1 (the reference core samples only on clkena)"
+	ASSERT ap040_free_core = 0 OR ap040_pipelined /= 0 OR ap040_faster /= 0
+		REPORT "TG68K: ap040_free_core = 1 needs ap040_pipelined = 1 or ap040_faster = 1 (the reference core samples only on clkena)"
+		SEVERITY failure;
+
+	-- The faster core's bridge takes pc_ack, which is the one-pulse answer only
+	-- with ap040_free_core = 1 (m_ack, the level, otherwise).
+	ASSERT ap040_faster = 0 OR ap040_free_core /= 0
+		REPORT "TG68K: ap040_faster = 1 needs ap040_free_core = 1"
 		SEVERITY failure;
 
 	-- The phase gate; see unit_gate's declaration.  Open for one clk cycle on

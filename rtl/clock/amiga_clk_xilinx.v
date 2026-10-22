@@ -4,6 +4,7 @@
 
 module amiga_clk_xilinx #(
     // The AP68040 island clock, CLKOUT3.  VCO is 1134.375 MHz, so
+    //   20 -> 56.71875 MHz, clk_114 / 2   (the AP68040 faster core)
     //   30 -> 37.81250 MHz, clk_114 / 3   (stage D3, the shipping value)
     //   40 -> 28.35938 MHz, clk_114 / 4   (the pre-D3 CPU RATE, with the D3
     //        architecture otherwise untouched -- the single-variable bisect

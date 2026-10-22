@@ -76,8 +76,15 @@ module minimig_openaars_top #(
   parameter AP040_POST_CI = 0,
   // critical-word-first data-cache line fills with early restart
   parameter AP040_CWF = 0,
+  // 1: the AP68040 `faster` core (lib/AP68040-faster) behind its 68040 bus
+  // bridge, in place of the pipelined one; built with CPU_CLK_DIVIDE = 20
+  parameter AP040_FASTER = 0,
+  // the faster core's dual issue and DC1 ATC port (TG68K.vhd ap040_fast_*)
+  parameter AP040_FAST_DUAL = 1,
+  parameter AP040_FAST_DC1ATC = 1,
   // AP68040 island clock divider: 30 = clk_114/3 (stage D3),
-  // 40 = clk_114/4 (pre-D3 rate, D3 architecture otherwise intact).
+  // 40 = clk_114/4 (pre-D3 rate, D3 architecture otherwise intact),
+  // 20 = clk_114/2 = 56.72 MHz (the faster core, AP040_FASTER = 1).
   parameter CPU_CLK_DIVIDE = 30,
   // 32-bit CPU cycles on the chip bus (findings/chip32/plan.md); 0 = two word cycles
   parameter CHIP32 = 1,
@@ -579,6 +586,9 @@ minimig_virtual_top
   .ap040_post_chip(AP040_POST_CHIP),
   .ap040_post_ci(AP040_POST_CI),
   .ap040_cwf(AP040_CWF),
+  .ap040_faster(AP040_FASTER),
+  .ap040_fast_dual(AP040_FAST_DUAL),
+  .ap040_fast_dc1atc(AP040_FAST_DC1ATC),
   .cpu_clk_divide(CPU_CLK_DIVIDE),
   .chip32(CHIP32),
   .CPU040_DEBUG_ILA(CPU040_DEBUG_ILA),

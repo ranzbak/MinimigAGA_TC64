@@ -50,7 +50,8 @@ set post [expr {[llength $argv] > 3 ? [lindex $argv 3] : 1}]
 # 40 = clk_114/4, which is the PRE-D3 CPU RATE with the D3 architecture
 # otherwise untouched -- the single-variable bisect for whether the chip
 # RAM corruption is a rate-dependent window or a structural fault.
-set cpudiv [expr {[llength $argv] > 4 ? [lindex $argv 4] : 30}]
+# 20 = clk_114/2 = 56.72 MHz, the faster core's clock and its default (below).
+set cpudiv_arg [expr {[llength $argv] > 4 ? [lindex $argv 4] : ""}]
 # ila_cpu040 capture depth (6th -tclargs, default 4096).  An ILA stores EVERY
 # probe at the full depth, so a wide probe is expensive: the 384-bit dbg_phist
 # histogram at 4096 samples pushed the design to 167 RAMB36 against 135 on the
@@ -64,6 +65,19 @@ if {[llength $argv] > 6} {
 }
 set R [expr {[llength $argv] > 2 ? [file normalize [lindex $argv 2]] \
                                  : [file normalize [file dirname [info script]]/../..]}]
+
+# FASTER: the AP68040 `faster` core (lib/AP68040-faster, branch faster-dual)
+# behind its 68040 bus bridge (rtl/soc/ap68040_minimig.sv), TG68K.vhd's
+# ap040_faster.  Default 1 when the submodule is checked out; FASTER=0 in the
+# environment builds the pipelined core as before.  Its clock is clk_114/2
+# (CPU_CLK_DIVIDE 20) unless the 5th argument says otherwise, and a build at
+# divider 20 takes its CPU constraints from cpu_r2.xdc instead of cpu.xdc.
+set faster [expr {[file isdirectory $R/lib/AP68040-faster/rtl] &&
+                  !([info exists ::env(FASTER)] && $::env(FASTER) eq "0")}]
+if {[info exists ::env(FASTER)] && $::env(FASTER) eq "1" && !$faster} {
+    error "build_ap040.tcl: FASTER=1 but $R/lib/AP68040-faster is not checked out"
+}
+set cpudiv [expr {$cpudiv_arg ne "" ? $cpudiv_arg : ($faster ? 20 : 30)}]
 open_project $R/project_1/project_1.xpr
 
 #-----------------------------------------------------------------------------
@@ -100,7 +114,23 @@ set rv_debug [hostcpu_rvdebug]
 #-----------------------------------------------------------------------------
 # Constraints
 #-----------------------------------------------------------------------------
-add_xdc $R/fpga/openaars/aars_v5.0/xc7a100t/cpu.xdc
+# cpu.xdc relaxes the CPU island's crossings for ratio 3; at ratio 2 they are
+# single-cycle and cpu_r2.xdc says so.  The one not used is disabled for the
+# run and re-enabled at the end (xdc_off).
+set xdc_off {}
+if {$cpudiv == 20} {
+    set cpu_xdc_on  $R/fpga/openaars/aars_v5.0/xc7a100t/cpu_r2.xdc
+    set cpu_xdc_off $R/fpga/openaars/aars_v5.0/xc7a100t/cpu.xdc
+} else {
+    set cpu_xdc_on  $R/fpga/openaars/aars_v5.0/xc7a100t/cpu.xdc
+    set cpu_xdc_off $R/fpga/openaars/aars_v5.0/xc7a100t/cpu_r2.xdc
+}
+add_xdc $cpu_xdc_on
+set_property IS_ENABLED true [get_files -of_objects [get_filesets XC7A100T] $cpu_xdc_on]
+foreach f [get_files -quiet -of_objects [get_filesets XC7A100T] $cpu_xdc_off] {
+    if {[get_property IS_ENABLED $f]} { set_property IS_ENABLED false $f; lappend xdc_off $f }
+}
+puts "build_ap040.tcl: CPU constraints [file tail $cpu_xdc_on] (CPU_CLK_DIVIDE $cpudiv)"
 add_xdc $R/fpga/openaars/aars_v5.0/xc7a100t/ddr3.xdc
 
 #-----------------------------------------------------------------------------
@@ -384,7 +414,44 @@ if {[info exists ::env(AP040_PIPE_DIR)] && $::env(AP040_PIPE_DIR) ne ""} {
 } elseif {[file isdirectory $R/lib/AP68040-pipelined/rtl]} {
     set pipe_dir $R/lib/AP68040-pipelined
 }
-if {$pipe_dir ne ""} {
+if {$faster} {
+    # The faster core: its SystemVerilog sources in the order of its own
+    # bench (tb/build_sim.sh: packages first), the bridge, and lib/AP68040's
+    # and the pipelined core's files off for the run (a crashed pipelined run
+    # can leave its files enabled; both carry modules the wrapper would not
+    # instantiate, but a stale enabled set is how black boxes happened before).
+    set P [file normalize $R/lib/AP68040-faster]/rtl
+    foreach f [get_files -quiet -of_objects [get_filesets sources_1] $R/lib/AP68040/rtl/*.v] {
+        if {[get_property IS_ENABLED $f]} { set_property IS_ENABLED false $f; lappend pipe_off $f }
+    }
+    foreach f [get_files -quiet -of_objects [get_filesets sources_1] *AP68040-pipelined/rtl/*] {
+        set_property IS_ENABLED false $f
+    }
+    set pf {}
+    foreach n {ap68040_pkg.sv gen/ap68040_upkg.sv ap68040_alu.sv ap68040_alu_slow.sv
+               ap68040_muldiv.sv ap68040_biu.sv ap68040_ram.sv ap68040_atc.sv
+               ap68040_dmu.sv ap68040_predec.sv ap68040_fetch.sv ap68040_decode.sv
+               ap68040_useq.sv fpu/ap040_fpu.v ap68040_fpif.sv ap68040_backend.sv
+               ap68040_snoop.sv ap68040.sv} {
+        lappend pf $P/$n
+    }
+    lappend pf $R/rtl/soc/ap68040_minimig.sv
+    foreach f $pf {
+        add_src $f
+        set_property file_type SystemVerilog [get_files -of_objects [get_filesets sources_1] $f]
+        set_property IS_ENABLED true [get_files -of_objects [get_filesets sources_1] $f]
+    }
+    set inc [get_property include_dirs [get_filesets sources_1]]
+    foreach d [list $P $P/fpu $P/gen] { if {[lsearch -exact $inc $d] < 0} { lappend inc $d } }
+    set_property include_dirs $inc [get_filesets sources_1]
+    # The core's own switches (TG68K.vhd ap040_fast_*): DUAL dual issue,
+    # DC1_ATC the data ATC's own port for DC1 (timing).  Both default 1.
+    set fdual [expr {[info exists ::env(FAST_DUAL)] && $::env(FAST_DUAL) eq "0" ? 0 : 1}]
+    set fdc1  [expr {[info exists ::env(FAST_DC1ATC)] && $::env(FAST_DC1ATC) eq "0" ? 0 : 1}]
+    set free_core 1
+    set pipe_gen " AP040_FASTER=1 AP040_FREE_CORE=1 AP040_FAST_DUAL=$fdual AP040_FAST_DC1ATC=$fdc1"
+    puts "build_ap040.tcl: FASTER core from $P (DUAL=$fdual DC1_ATC=$fdc1, CPU_CLK_DIVIDE $cpudiv, [llength $pipe_off] lib/AP68040 files disabled)"
+} elseif {$pipe_dir ne ""} {
     set P [file normalize $pipe_dir]/rtl
     foreach f [get_files -quiet -of_objects [get_filesets sources_1] $R/lib/AP68040/rtl/*.v] {
         if {[get_property IS_ENABLED $f]} {
@@ -734,8 +801,14 @@ set_property generic {} [get_filesets sources_1]
 foreach f $pipe_off { set_property IS_ENABLED true $f }
 if {$pipe_gen ne ""} {
     foreach f [get_files -quiet -of_objects [get_filesets sources_1] $P/*] { set_property IS_ENABLED false $f }
-    puts "build_ap040.tcl: lib/AP68040 re-enabled, pipelined sources disabled"
+    if {$faster} {
+        foreach f [get_files -quiet -of_objects [get_filesets sources_1] $R/rtl/soc/ap68040_minimig.sv] {
+            set_property IS_ENABLED false $f
+        }
+    }
+    puts "build_ap040.tcl: lib/AP68040 re-enabled, [expr {$faster ? {faster} : {pipelined}}] sources disabled"
 }
+foreach f $xdc_off { set_property IS_ENABLED true $f }
 hostcpu_restore
 foreach {st was} $eff_was { set_property STEPS.$st.ARGS.DIRECTIVE $was $impl }
 if {[dict size $eff_was]} { puts "build_ap040.tcl: implementation directives restored" }
