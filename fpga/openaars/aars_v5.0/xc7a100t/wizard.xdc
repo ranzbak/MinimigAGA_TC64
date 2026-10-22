@@ -38,8 +38,6 @@ set_multicycle_path -setup 1 -from [get_cells -quiet {openaars_virtual_top/minim
 set_multicycle_path -hold  0 -from [get_cells -quiet {openaars_virtual_top/minimig/autoconfig/board_configured_reg[2]}] -to [get_cells -quiet {openaars_virtual_top/tg68k/z3ram2_ena_reg}]
 set_multicycle_path -setup 1 -from [get_cells -quiet {openaars_virtual_top/minimig/autoconfig/board_configured_reg[3]}] -to [get_cells -quiet {openaars_virtual_top/tg68k/z3ram3_ena_reg}]
 set_multicycle_path -hold  0 -from [get_cells -quiet {openaars_virtual_top/minimig/autoconfig/board_configured_reg[3]}] -to [get_cells -quiet {openaars_virtual_top/tg68k/z3ram3_ena_reg}]
-set_multicycle_path -setup 1 -from [get_cells -quiet {openaars_virtual_top/tg68k/lds2_reg}] -to [get_cells -quiet {openaars_virtual_top/minimig/CPU1/l_lds2_reg}]
-set_multicycle_path -hold  0 -from [get_cells -quiet {openaars_virtual_top/tg68k/lds2_reg}] -to [get_cells -quiet {openaars_virtual_top/minimig/CPU1/l_lds2_reg}]
 set_multicycle_path -setup 1 -from [get_cells -quiet {openaars_virtual_top/tg68k/uds2_reg}] -to [get_cells -quiet {openaars_virtual_top/minimig/CPU1/l_uds2_reg}]
 set_multicycle_path -hold  0 -from [get_cells -quiet {openaars_virtual_top/tg68k/uds2_reg}] -to [get_cells -quiet {openaars_virtual_top/minimig/CPU1/l_uds2_reg}]
 
