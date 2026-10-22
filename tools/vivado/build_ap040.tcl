@@ -812,6 +812,18 @@ if {$pipe_gen ne ""} {
         foreach f [get_files -quiet -of_objects [get_filesets sources_1] $R/rtl/soc/ap68040_minimig.sv] {
             set_property IS_ENABLED false $f
         }
+        # The project's resting state whatever an earlier run left behind (a
+        # run that dies in wait_on_run never reaches this point, and the next
+        # one finds nothing of its own to restore): lib/AP68040 on, cpu.xdc
+        # on, cpu_r2.xdc off.  Every build mode sets its own state at start.
+        foreach f [get_files -quiet -of_objects [get_filesets sources_1] $R/lib/AP68040/rtl/*.v] {
+            set_property IS_ENABLED true $f
+        }
+        foreach {x on} [list $R/fpga/openaars/aars_v5.0/xc7a100t/cpu.xdc true \
+                             $R/fpga/openaars/aars_v5.0/xc7a100t/cpu_r2.xdc false] {
+            foreach f [get_files -quiet -of_objects [get_filesets XC7A100T] $x] { set_property IS_ENABLED $on $f }
+        }
+        set xdc_off {}
     }
     puts "build_ap040.tcl: lib/AP68040 re-enabled, [expr {$faster ? {faster} : {pipelined}}] sources disabled"
 }

@@ -542,6 +542,7 @@ ARCHITECTURE logic OF TG68K IS
 	SIGNAL c32_done   : std_logic := '0';
 	-- x_req as the clk_114 sequencers may see it; see where it is driven
 	SIGNAL x_fresh    : std_logic := '0';
+	SIGNAL sw_ok      : std_logic;                      -- the Turbo switches may change
 	SIGNAL q_req      : std_logic;
 	SIGNAL q_sdram    : std_logic;                      -- q_req, per destination
 	SIGNAL q_ddr      : std_logic;
@@ -1908,6 +1909,21 @@ BEGIN
 		CACR_out <= ap040_maint & "001";
 	END GENERATE;
 
+	-- When the Turbo/Fast/CHIP32 switches may change: no access anywhere.  At
+	-- ratio 3 that also excludes the two clk edges after a kernel edge, where
+	-- x_req and state are not settled (a two-cycle path).  At ratio 2 the
+	-- island's paths are single-cycle (cpu_r2.xdc) and they are settled one
+	-- edge later -- and clkena_r and x_fresh alternate there, so one of them
+	-- is ALWAYS high on an idle bus and the ratio-3 test would never let the
+	-- switches latch at all (sim/ddr3_cpu FASTER leg: Turbo chip RAM on, every
+	-- chip access still on the 7 MHz bus).
+	g_sw2 : IF cpu_clk_ratio = 2 GENERATE
+		sw_ok <= '1' WHEN x_req = '0' AND state = "01" ELSE '0';
+	END GENERATE;
+	g_swn : IF cpu_clk_ratio > 2 GENERATE
+		sw_ok <= '1' WHEN q_req = '0' AND clkena_r = '0' AND x_fresh = '0' AND state = "01" ELSE '0';
+	END GENERATE;
+
 	PROCESS(clk)
 	BEGIN
 		IF rising_edge(clk) THEN
@@ -1918,7 +1934,7 @@ BEGIN
 				chip32_d      <= '0';
 				turboslow_d   <= '0';
 				cacheline_clr <= '0';
-			ELSIF q_req = '0' AND clkena_r = '0' AND x_fresh = '0' AND state = "01" THEN    -- No mem access, so safe to switch chipram access mode
+			ELSIF sw_ok = '1' THEN    -- No mem access, so safe to switch chipram access mode
 				-- (the master's request, not just the adapter's bus state: a
 				-- RAM access never reaches the adapter, and these switch the
 				-- router's decode.  Not on the two edges after a kernel edge,
