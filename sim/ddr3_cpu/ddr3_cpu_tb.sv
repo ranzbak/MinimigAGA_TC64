@@ -2216,4 +2216,48 @@ initial begin : main
   $finish;
 end
 
+//-----------------------------------------------------------------
+// FTRACE (faster core, +FTRACE): the core's write-back, both slots, and
+// the bridge's transfers, while the program is in phase FTPH (default 5),
+// at most FTMAX lines.  For the dual-issue hunt.
+//-----------------------------------------------------------------
+`ifdef AP040_FASTER
+integer ft_n = 0, ft_max = 400, ft_ph = 5;
+reg     ft_on = 1'b0;
+initial begin
+  ft_on = $test$plusargs("FTRACE");
+  if (!$value$plusargs("FTMAX=%d", ft_max)) ft_max = 400;
+  if (!$value$plusargs("FTPH=%d", ft_ph)) ft_ph = 5;
+end
+wire ft_act = ft_on && (phase_seen == ft_ph) && (ft_n < ft_max);
+`define FBE ddr3_cpu_tb.tg68k.g_ap040.g_fast.ap040.core.be
+`define FBR ddr3_cpu_tb.tg68k.g_ap040.g_fast.ap040
+always @(posedge clk_cpu) begin
+  if (ft_act && `FBE.adv_wb) begin
+    $display("FT %t WB  pc=%08x op=%0d d=%b r%0d=%08x upd=%b r%0d=%08x st=%b exc=%0d redir=%b->%08x",
+             $time, `FBE.wb_u.pc, `FBE.wb_u.op, `FBE.wb_dwe, `FBE.wb_u.d_reg, `FBE.wb_res,
+             `FBE.wb_u.upd_v, `FBE.wb_u.upd_reg, `FBE.wb_upd_val, `FBE.wb_st, `FBE.wb_exc,
+             `FBE.wb_redir, `FBE.wb_redir_pc);
+    ft_n = ft_n + 1;
+  end
+  if (ft_act && `FBE.wb1_commit) begin
+    $display("FT %t WB1 pc=%08x op=%0d dv=%b agop=%b ld=%b r%0d=%08x",
+             $time, `FBE.wb_redir_pc, `FBE.wb_s.op, `FBE.wb_s.d_v, `FBE.wb_s.agop, `FBE.wb_s.ld,
+             `FBE.wb_s.d_reg, `FBE.wb1_res);
+    ft_n = ft_n + 1;
+  end
+  if (ft_act && `FBR.ts_n == 1'b0) begin
+    $display("FT %t TS  a=%08x rw=%b siz=%0d tt=%0d tm=%0d ci=%b lock=%b",
+             $time, `FBR.a_o, `FBR.rw_n, `FBR.siz, `FBR.tt, `FBR.tm, !`FBR.ciout_n, !`FBR.core.lock_n);
+    ft_n = ft_n + 1;
+  end
+  if (ft_act && `FBR.mem_req && `FBR.mem_ack) begin
+    $display("FT %t BUS %s a=%08x w=%08x r=%08x sz=%0d ins=%b",
+             $time, `FBR.mem_write ? "WR" : "RD", `FBR.mem_addr, `FBR.mem_wdata, `FBR.mem_rdata,
+             `FBR.mem_size, `FBR.mem_instr);
+    ft_n = ft_n + 1;
+  end
+end
+`endif
+
 endmodule

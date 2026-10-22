@@ -1696,7 +1696,10 @@ BEGIN
 		-- and nothing but the CPU writes fast RAM.  Its answers are pc_ack /
 		-- pc_rdata, the free-running core's one-pulse handshake.
 		g_fast : IF ap040_faster /= 0 GENERATE
-			SIGNAL f_pc : std_logic_vector(31 downto 0);
+			SIGNAL f_pc  : std_logic_vector(31 downto 0);
+			SIGNAL f_ack : std_logic;
+			SIGNAL f_vec : std_logic;
+			SIGNAL f_dat : std_logic_vector(31 downto 0);
 		BEGIN
 			ap040 : COMPONENT ap68040_minimig
 				GENERIC MAP(
@@ -1734,9 +1737,25 @@ BEGIN
 			wk_we       <= '0';
 			wk_addr     <= (OTHERS => '0');
 			wk_wdat     <= (OTHERS => '0');
-			ap040_busy  <= '0';
-			ap040_fault <= '0';
-			ap040_dbg1  <= (255 DOWNTO 32 => '0') & f_pc;
+			-- ila_cpu040 (CPU040_DEBUG_ILA) as a bus-transfer recorder for this
+			-- core: dbg_pc carries the transfer's data (the write data, or the
+			-- read data at the acknowledge), dbg_rtg the master address,
+			-- dbg_ir the control bits {req, ack, we, instr, size(2), fc(3),
+			-- halted, 000000}, dbg_flags(3) "the access-fault vector is being
+			-- read" (VBR + 8 or + 12, supervisor data), the trigger of
+			-- tools/vivado/ila_cpu040_capture.tcl mode "fast".  Its storage
+			-- qualifier is ack, so each transfer is recorded once per clk_114
+			-- sample of it (twice: the ILA runs at twice the core's clock).
+			f_ack       <= m_req AND pc_ack;
+			f_vec       <= '1' WHEN m_req = '1' AND pc_ack = '1' AND m_write = '0' AND m_fc = "101"
+			                        AND (m_addr = VBR_out_w + X"00000008" OR m_addr = VBR_out_w + X"0000000C")
+			               ELSE '0';
+			ap040_busy  <= m_req;
+			ap040_fault <= f_vec;
+			ap040_dbg1  <= (255 DOWNTO 64 => '0') &
+			               m_req & f_ack & m_write & m_instr & m_size & m_fc & ap040_halt & "000000" &
+			               X"0000" & f_dat;
+			f_dat       <= m_wdata WHEN m_write = '1' ELSE pc_rdata;
 			ap040_dbg2  <= (OTHERS => '0');
 		END GENERATE;
 
@@ -1986,7 +2005,10 @@ BEGIN
 			audio_int      => audio_int
 		);
 
-	dbg_rtg <= akiko_req & akiko_wr & state & cpuaddr(11 downto 0) & akiko_d;
+	-- (the faster core: the master address, for its bus-transfer recorder;
+	-- see g_fast)
+	dbg_rtg <= m_addr WHEN ap040_faster /= 0 ELSE
+	           akiko_req & akiko_wr & state & cpuaddr(11 downto 0) & akiko_d;
 
 	PROCESS(clk)
 	BEGIN

@@ -95,6 +95,16 @@ if {$mode eq "busy"} {
     set_property CONTROL.CAPTURE_MODE ALWAYS $ila
     set_property TRIGGER_COMPARE_VALUE {eq32'bXXXXXXXX110111111111000000110010} [pr $ila *tg68_adr*]
     set_property TRIGGER_COMPARE_VALUE {eq4'b00XX} [pr $ila *bus_ctl*]
+} elseif {$mode eq "fast"} {
+    # The AP68040 faster core (TG68K.vhd g_fast): the probes are its bus-
+    # transfer recorder -- dbg_pc the data, dbg_rtg the address, dbg_ir
+    # {req, ack, we, instr, size(2), fc(3), halted, 000000} -- stored on ack
+    # only, triggered by the access-fault vector fetch (dbg_flags bit 3), so
+    # the window is the transfers before the fault and the stacked frame.
+    set_property CAPTURE_COMPARE_VALUE {} [pr $ila *bus_ctl*]
+    set_property CAPTURE_COMPARE_VALUE {eq16'bX1XXXXXXXXXXXXXX} [pr $ila *dbg_ir*]
+    set_property CONTROL.TRIGGER_POSITION 768 $ila
+    set_property TRIGGER_COMPARE_VALUE {eq4'b1xxx} [pr $ila *dbg_flags*]
 } elseif {$mode eq "now"} {
     set_property CONTROL.CAPTURE_MODE ALWAYS $ila
     set_property CONTROL.TRIGGER_POSITION 0 $ila
