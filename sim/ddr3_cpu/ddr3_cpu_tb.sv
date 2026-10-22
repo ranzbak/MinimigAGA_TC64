@@ -894,7 +894,14 @@ localparam integer FWDRAS_GEN = 1;
 localparam integer FWDRAS_GEN = 0;
 `endif
 `ifdef AP040_FASTER
-TG68K #(.cpu_clk_ratio(`CPU_RATIO), .ap040_faster(1), .ap040_free_core(1), .chip32(CHIP32_GEN)) tg68k (
+// FASTSINGLE: the faster core with dual issue off (ap040_fast_dual = 0)
+`ifdef FASTSINGLE
+localparam integer FAST_DUAL_GEN = 0;
+`else
+localparam integer FAST_DUAL_GEN = 1;
+`endif
+TG68K #(.cpu_clk_ratio(`CPU_RATIO), .ap040_faster(1), .ap040_free_core(1), .ap040_fast_dual(FAST_DUAL_GEN),
+        .chip32(CHIP32_GEN)) tg68k (
 `elsif AP040_PIPELINED
 TG68K #(.cpu_clk_ratio(`CPU_RATIO), .ap040_pipelined(1), .chip32(CHIP32_GEN), .ap040_free_core(FREE_CORE_GEN),
         .ap040_store_buf(STORE_BUF_GEN), .ap040_fwd(FWDRAS_GEN), .ap040_ras(FWDRAS_GEN),
