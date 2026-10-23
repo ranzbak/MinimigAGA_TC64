@@ -54,7 +54,7 @@ module ap68040_minimig
 	parameter bit         DUAL         = 1,      // dual issue
 	parameter bit         BTIC         = 1,      // the fetch BTB's target words
 	parameter bit         PSTAT        = 1,      // debug_fe: dual-issue counters, not the core's dbg_fe
-	parameter logic [2:0] S1_CLASSES   = 3'b111, // the second slot's classes {load, An, Dn} (a debug switch)
+	parameter logic [2:0] S1_CLASSES   = 3'b011, // the second slot's classes {load, An, Dn}: loads off (core 6985f7d)
 	parameter logic [3:0] S1_LDMASK    = 4'b1111, // ... the loads {TST, ALU, MOVEA.L, MOVE} (a debug switch)
 	parameter bit         S1_LDTK      = 1       // ... a load companion at a BTB-taken target (a debug switch)
 )
