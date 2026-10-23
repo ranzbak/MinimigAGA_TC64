@@ -23,6 +23,7 @@
 #   NOCHIP32=1 ./run.sh ...         the wrapper's chip32 generic = 0 (longwords as two word cycles)
 #   FREECORE=1 ./run.sh ...         the wrapper's ap040_free_core = 1 (findings/unfreeze/plan.md)
 #   FASTER=1 CPU_RATIO=2 ./run.sh --ap040   the AP68040 faster core at 56.72 MHz (ap040_faster)
+#   GLNET=<file> FASTER=1 ...                ... Vivado's netlist of the bridge and core instead
 #   FASTCHIP=1 ./run.sh --ap040 --chipbus   Chip slots "Fast" (findings/fastslot)
 #   FREECORE=1 FCMUTANT=ack|walk|data ./run.sh ...  one free-core qualification undone; MUST fail
 #   XDEFS="-d STOREBUF=1 -d SBMMU -d POSTCHIP=1 -d POSTCI=1 -d CWFF ..." ./run.sh ...  extra xelab defines (core switches;
@@ -351,6 +352,12 @@ if [ "$CPU" = "ap040" ] && [ "${FASTER:-0}" = "1" ]; then
     # for simulation the two keywords are the same process.
     FR=$W/fast_rtl
     cp -r "$FAST_DIR/rtl" "$FR"
+  if [ -n "${GLNET:-}" ]; then
+    # GLNET=<netlist.v>: Vivado's funcsim netlist of ap68040_minimig (an
+    # out-of-context synthesis, every submodule renamed gl_*) in place of the
+    # core and the bridge -- the board's logic, not the source's
+    echo "verilog work \"$GLNET\""                     >> $PRJ
+  else
     find "$FR" -name '*.sv' -o -name '*.v' | xargs sed -i 's/\balways_ff\b/always/g'
     for f in ap68040_pkg.sv gen/ap68040_upkg.sv ap68040_alu.sv ap68040_alu_slow.sv \
              ap68040_muldiv.sv ap68040_biu.sv ap68040_ram.sv ap68040_atc.sv \
@@ -360,6 +367,7 @@ if [ "$CPU" = "ap040" ] && [ "${FASTER:-0}" = "1" ]; then
         echo "sv work \"$FR/$f\""                       >> $PRJ
     done
     echo "sv work \"$R/rtl/soc/ap68040_minimig.sv\""    >> $PRJ
+  fi
     # the 16-bit adapter the wrapper keeps for chipset traffic
     echo "sv work \"$R/lib/AP68040/rtl/ap040_bus16_adapter.v\"" >> $PRJ
 elif [ "$CPU" = "ap040" ] && [ "${PIPELINED:-0}" = "1" ]; then
@@ -410,6 +418,7 @@ AP040_ELAB=""
 if [ "$CPU" = "ap040" ]; then AP040_ELAB="-i $R/lib/AP68040/rtl"; fi
 if [ "${PIPELINED:-0}" = "1" ]; then AP040_ELAB="-i $PIPE_DIR/rtl -i $PIPE_DIR/rtl/compat -d AP040_PIPELINED"; fi
 if [ "${FASTER:-0}" = "1" ]; then AP040_ELAB="-i $W/fast_rtl -i $W/fast_rtl/fpu -i $W/fast_rtl/gen -d AP040_FASTER"; fi
+if [ -n "${GLNET:-}" ]; then AP040_ELAB="$AP040_ELAB -d GLNET"; fi
 
 "$VIVADO_PATH/bin/xelab" -prj $PRJ -i "$LIB/tb/ddr3_core_xc7" $AP040_ELAB \
     -d SOC_SIM -d REALSDRAM -i $D ${NOCPU:+-d NOCPU} ${DMA_OVERLAP:+-d DMA_OVERLAP} ${P2CBLOCK:+-d P2CBLOCK=$P2CBLOCK} ${CPU_RATIO:+-d CPU_RATIO=$CPU_RATIO} ${CPU_PHASE:+-d CPU_PHASE=$CPU_PHASE} ${NOCHIP32:+-d NOCHIP32} $( [ "${FREECORE:-0}" = "1" ] && echo -d FREECORE ) ${XDEFS:-} -debug typical -relax \

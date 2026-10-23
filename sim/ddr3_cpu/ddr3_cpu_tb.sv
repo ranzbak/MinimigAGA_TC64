@@ -2221,7 +2221,32 @@ end
 // the bridge's transfers, while the program is in phase FTPH (default 5),
 // at most FTMAX lines.  For the dual-issue hunt.
 //-----------------------------------------------------------------
+`ifdef GLNET
+// a netlist's bridge keeps its ports: its master-port transfers (+GLTRACE,
+// from phase GLPH), the bus-side view of a hang
+reg gl_on = 1'b0;
+integer gl_ph = 2;
+initial begin
+  gl_on = $test$plusargs("GLTRACE");
+  if (!$value$plusargs("GLPH=%d", gl_ph)) gl_ph = 2;
+end
+reg gl_req_d = 1'b0;
+always @(posedge ddr3_cpu_tb.tg68k.g_ap040.g_fast.ap040.clk) begin
+  gl_req_d <= ddr3_cpu_tb.tg68k.g_ap040.g_fast.ap040.mem_req;
+  if (gl_on && phase_seen >= gl_ph) begin
+    if (ddr3_cpu_tb.tg68k.g_ap040.g_fast.ap040.mem_req && !gl_req_d)
+      $display("GL %t REQ %s a=%08x sz=%0d ins=%b w=%08x", $time,
+               ddr3_cpu_tb.tg68k.g_ap040.g_fast.ap040.mem_write ? "WR" : "RD",
+               ddr3_cpu_tb.tg68k.g_ap040.g_fast.ap040.mem_addr, ddr3_cpu_tb.tg68k.g_ap040.g_fast.ap040.mem_size,
+               ddr3_cpu_tb.tg68k.g_ap040.g_fast.ap040.mem_instr, ddr3_cpu_tb.tg68k.g_ap040.g_fast.ap040.mem_wdata);
+    if (ddr3_cpu_tb.tg68k.g_ap040.g_fast.ap040.mem_ack)
+      $display("GL %t ACK r=%08x pc=%08x", $time, ddr3_cpu_tb.tg68k.g_ap040.g_fast.ap040.mem_rdata,
+               ddr3_cpu_tb.tg68k.g_ap040.g_fast.ap040.debug_pc);
+  end
+end
+`endif
 `ifdef AP040_FASTER
+`ifndef GLNET   // (a netlist has none of these names)
 integer ft_n = 0, ft_max = 400, ft_ph = 5;
 reg     ft_on = 1'b0;
 initial begin
@@ -2258,6 +2283,7 @@ always @(posedge clk_cpu) begin
     ft_n = ft_n + 1;
   end
 end
+`endif
 `endif
 
 endmodule

@@ -53,7 +53,8 @@ module ap68040_minimig
 	parameter int         DIV_STEPS    = 2,
 	parameter bit         DUAL         = 1,      // dual issue
 	parameter bit         BTIC         = 1,      // the fetch BTB's target words
-	parameter bit         PSTAT        = 1       // debug_fe: dual-issue counters, not the core's dbg_fe
+	parameter bit         PSTAT        = 1,      // debug_fe: dual-issue counters, not the core's dbg_fe
+	parameter logic [2:0] S1_CLASSES   = 3'b111  // the second slot's classes {load, An, Dn} (a debug switch)
 )
 (
 	input  logic        clk,            // the processor clock (clk_cpu)
@@ -108,7 +109,7 @@ always_ff @(posedge clk) ipl_r <= ipl_n;
 ap68040 #(
 	.FPU_REVISION(FPU_REVISION), .FPU_PIPE(FPU_PIPE), .LOOP_PRED(LOOP_PRED),
 	.EARLY_RES(EARLY_RES), .DC1_ATC(DC1_ATC), .SKID(SKID), .DIV_STEPS(DIV_STEPS),
-	.DUAL(DUAL), .BTIC(BTIC)
+	.DUAL(DUAL), .BTIC(BTIC), .S1_CLASSES(S1_CLASSES)
 ) core (
 	.clk(clk), .bclk_en(1'b1), .rsti_n(nreset),
 	.a_o(a_o), .a_oe(),
