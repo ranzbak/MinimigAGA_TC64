@@ -127,6 +127,14 @@ if {$mode eq "busy"} {
     set_property TRIGGER_COMPARE_VALUE {eq32'h00000100} [pr $ila *dbg_rtg*]
     set_property TRIGGER_COMPARE_VALUE {eq32'b1XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX} [pr $ila *dbg_pc*]
     set_property TRIGGER_COMPARE_VALUE {eq16'bX11XXXXXXXXXXXXX} [pr $ila *dbg_ir*]
+} elseif {$mode eq "alertall"} {
+    # As "alert", but every transfer is stored, instruction fetches too.
+    set_property CAPTURE_COMPARE_VALUE {} [pr $ila *bus_ctl*]
+    set_property CAPTURE_COMPARE_VALUE {eq16'bX1XXXXXXXXXXXXXX} [pr $ila *dbg_ir*]
+    set_property CONTROL.TRIGGER_POSITION [expr {$ila_depth - 16}] $ila
+    set_property TRIGGER_COMPARE_VALUE {eq32'h00000100} [pr $ila *dbg_rtg*]
+    set_property TRIGGER_COMPARE_VALUE {eq32'b1XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX} [pr $ila *dbg_pc*]
+    set_property TRIGGER_COMPARE_VALUE {eq16'bX11XXXXXXXXXXXXX} [pr $ila *dbg_ir*]
 } elseif {$mode eq "now"} {
     set_property CONTROL.CAPTURE_MODE ALWAYS $ila
     set_property CONTROL.TRIGGER_POSITION 0 $ila

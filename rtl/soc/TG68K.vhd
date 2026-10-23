@@ -64,6 +64,8 @@ entity TG68K is
 		-- (faster core) dual issue, DC1's own ATC port (timing)
 		ap040_fast_dual    : integer := 1;
 		ap040_fast_dc1atc  : integer := 1;
+		-- (faster core) the fetch BTB's target words (BTIC)
+		ap040_fast_btic    : integer := 1;
 		-- 1 (pipelined core only; findings/unfreeze/plan.md): the core runs on
 		-- every clk_cpu edge instead of being frozen while an m_* access is
 		-- outstanding.  The answers it takes from the clkena-gated side -- the
@@ -812,7 +814,8 @@ ARCHITECTURE logic OF TG68K IS
 	COMPONENT ap68040_minimig IS
 		GENERIC(
 			DC1_ATC : bit := '1';
-			DUAL    : bit := '1'
+			DUAL    : bit := '1';
+			BTIC    : bit := '1'
 		);
 		PORT(
 			clk          : in  std_logic;
@@ -1704,7 +1707,8 @@ BEGIN
 			ap040 : COMPONENT ap68040_minimig
 				GENERIC MAP(
 					DC1_ATC => to_bit(ap040_fast_dc1atc),
-					DUAL    => to_bit(ap040_fast_dual)
+					DUAL    => to_bit(ap040_fast_dual),
+					BTIC    => to_bit(ap040_fast_btic)
 				)
 				PORT MAP(
 					clk          => clk_cpu,

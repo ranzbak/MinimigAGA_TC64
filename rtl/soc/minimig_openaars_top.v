@@ -82,6 +82,7 @@ module minimig_openaars_top #(
   // the faster core's dual issue and DC1 ATC port (TG68K.vhd ap040_fast_*)
   parameter AP040_FAST_DUAL = 1,
   parameter AP040_FAST_DC1ATC = 1,
+  parameter AP040_FAST_BTIC = 1,
   // AP68040 island clock divider: 30 = clk_114/3 (stage D3),
   // 40 = clk_114/4 (pre-D3 rate, D3 architecture otherwise intact),
   // 20 = clk_114/2 = 56.72 MHz (the faster core, AP040_FASTER = 1).
@@ -589,6 +590,7 @@ minimig_virtual_top
   .ap040_faster(AP040_FASTER),
   .ap040_fast_dual(AP040_FAST_DUAL),
   .ap040_fast_dc1atc(AP040_FAST_DC1ATC),
+  .ap040_fast_btic(AP040_FAST_BTIC),
   .cpu_clk_divide(CPU_CLK_DIVIDE),
   .chip32(CHIP32),
   .CPU040_DEBUG_ILA(CPU040_DEBUG_ILA),
