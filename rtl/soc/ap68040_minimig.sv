@@ -52,7 +52,8 @@ module ap68040_minimig
 	parameter bit         SKID         = 0,
 	parameter int         DIV_STEPS    = 2,
 	parameter bit         DUAL         = 1,      // dual issue
-	parameter bit         BTIC         = 1       // the fetch BTB's target words
+	parameter bit         BTIC         = 1,      // the fetch BTB's target words
+	parameter bit         PSTAT        = 1       // debug_fe: dual-issue counters, not the core's dbg_fe
 )
 (
 	input  logic        clk,            // the processor clock (clk_cpu)
@@ -86,7 +87,7 @@ module ap68040_minimig
 	output logic        cache_maint,    // one-clk pulse per completed CINV/CPUSH
 	output logic        debug_halted,
 	output logic [31:0] debug_pc,
-	output logic [383:0] debug_fe      // the core's dbg_fe (observation only)
+	output logic [383:0] debug_fe      // observation only: PSTAT ? the counters : the core's dbg_fe
 );
 
 //--------------------------------------------------------------------------
@@ -97,6 +98,8 @@ logic        ts_n, rw_n, ciout_n, ta_n, tea_n, tci_n, rsto_n;
 logic  [1:0] siz, tt;
 logic  [2:0] tm;
 logic  [2:0] ipl_r;
+logic [383:0] core_fe;
+logic  [63:0] pev;
 
 // IPL comes from the clk_114 chipset side; one register here, the core's
 // own sampling does the rest
@@ -122,7 +125,7 @@ ap68040 #(
 	.rsto_n(rsto_n), .cdis_n(1'b1), .mdis_n(1'b1), .ipend_n(), .pst(),
 	.dbg_pc(debug_pc), .dbg_retire(), .dbg_halted(debug_halted),
 	.dbg_vbr(vbr_out), .dbg_cacr(cacr_out), .dbg_cmaint(cache_maint),
-	.dbg_fe(debug_fe)
+	.dbg_fe(core_fe), .dbg_pev(pev)
 );
 
 assign nresetout = rsto_n;
@@ -264,5 +267,55 @@ always_ff @(posedge clk) begin
 		endcase
 	end
 end
+
+//--------------------------------------------------------------------------
+// dual-issue counters (PSTAT), for the logic analyser (ila_cpu040 dbg_phist)
+//--------------------------------------------------------------------------
+// Eleven free-running 32-bit counters of the core's dbg_pev strobes, read
+// in two snapshots and differenced (each wraps in 75 s at 56.72 MHz):
+//   [31:0] clocks          [63:32] retired      [95:64] retired, slot 2
+//   [127:96] D1 starts     [159:128] slow       [191:160] next word absent
+//   [223:192] next word not slot-2 class        [255:224] with a companion
+//   [287:256] paired       [319:288] split: register dependency
+//   [351:320] split: the first instruction may not pair
+// and one in 4096 of the slow / not-slot-2 / split-first events sampled:
+//   [367:352] the word (slow: the instruction; not slot 2: the word after
+//   it; split: the first instruction), [380:368] the instruction before a
+//   not-slot-2 word, bits 15:3, [382:381] kind (1 not slot 2, 2 slow,
+//   3 split), [383] the strobe (one clock per sample)
+generate
+	if (PSTAT) begin : g_pstat
+		logic [31:0] cnt [11];
+		logic [15:0] lfsr;
+		logic [31:0] samp;
+		logic        sv;
+		wire  [10:0] ev = {pev[55], pev[54], pev[53], pev[52], pev[51], pev[50], pev[49],
+		                   pev[48], pev[57], pev[56], 1'b1};
+		// (D1's pev[51] ns1, [49] slow, the sequencer's [55] s0 split)
+		wire  hit = (lfsr[11:0] == 12'd0);
+		always_ff @(posedge clk) begin
+			lfsr <= {lfsr[14:0], lfsr[15] ^ lfsr[13] ^ lfsr[12] ^ lfsr[10] ^ (lfsr == 16'd0)};
+			for (int i = 0; i < 11; i++) if (ev[i]) cnt[i] <= cnt[i] + 32'd1;
+			sv <= 1'b0;
+			if (hit && pev[51]) begin
+				sv <= 1'b1; samp <= {2'd1, pev[15:3], pev[31:16]};
+			end
+			else if (hit && pev[49]) begin
+				sv <= 1'b1; samp <= {2'd2, 13'd0, pev[15:0]};
+			end
+			else if (hit && pev[55]) begin
+				sv <= 1'b1; samp <= {2'd3, 13'd0, pev[47:32]};
+			end
+		end
+		always_comb begin
+			for (int i = 0; i < 11; i++) debug_fe[32*i +: 32] = cnt[i];
+			debug_fe[382:352] = samp[30:0];
+			debug_fe[383]     = sv;
+		end
+	end
+	else begin : g_fe
+		assign debug_fe = core_fe;
+	end
+endgenerate
 
 endmodule
