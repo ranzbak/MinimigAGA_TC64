@@ -142,8 +142,18 @@ if {$mode eq "busy"} {
     set_property CAPTURE_COMPARE_VALUE {} [pr $ila *bus_ctl*]
     set_property CONTROL.CAPTURE_MODE ALWAYS $ila
     set_property CONTROL.TRIGGER_POSITION [expr {$ila_depth - 32}] $ila
-    set_property TRIGGER_COMPARE_VALUE {eq32'bXXXXXXXXXXXXXXXXXXXX011111100000} [pr $ila *dbg_rtg*]
+    set_property TRIGGER_COMPARE_VALUE {eq32'bXXXXXXXXXXXX00000000011111100000} [pr $ila *dbg_rtg*]
     set_property TRIGGER_COMPARE_VALUE {eq16'b1101XXXXXXXXXXXX} [pr $ila *dbg_ir*]
+} elseif {$mode eq "fetch7e0ns"} {
+    # As fetch7e0, but only a fetch the miss engine still wants (dbg_fe bit
+    # 161, stale, low): the board's crash, not the stale prefetch every call
+    # through that jump-table line makes.
+    set_property CAPTURE_COMPARE_VALUE {} [pr $ila *bus_ctl*]
+    set_property CONTROL.CAPTURE_MODE ALWAYS $ila
+    set_property CONTROL.TRIGGER_POSITION [expr {$ila_depth - 32}] $ila
+    set_property TRIGGER_COMPARE_VALUE {eq32'bXXXXXXXXXXXX00000000011111100000} [pr $ila *dbg_rtg*]
+    set_property TRIGGER_COMPARE_VALUE {eq16'b1101XXXXXXXXXXXX} [pr $ila *dbg_ir*]
+    set_property TRIGGER_COMPARE_VALUE {eq384'bXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX0XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX} [pr $ila *dbg_phist*]
 } elseif {$mode eq "now"} {
     set_property CONTROL.CAPTURE_MODE ALWAYS $ila
     set_property CONTROL.TRIGGER_POSITION 0 $ila
