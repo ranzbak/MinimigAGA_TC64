@@ -55,7 +55,9 @@ proc pr {ila pat} { return [get_hw_probes -of_objects $ila -filter "NAME =~ $pat
 # WINDOW_COUNT must be 1: the depth is split across windows, so a stale window
 # count leaves one sample per window and the capture looks empty.
 set_property CONTROL.WINDOW_COUNT 1 $ila
-set_property CONTROL.TRIGGER_POSITION 3584 $ila
+# (a 1024-deep core -- build_ap040.tcl's 6th argument -- cannot take 3584)
+set ila_depth [get_property CONTROL.DATA_DEPTH $ila]
+set_property CONTROL.TRIGGER_POSITION [expr {min(3584, $ila_depth * 7 / 8)}] $ila
 foreach p [get_hw_probes -of_objects $ila] {
     set_property TRIGGER_COMPARE_VALUE {} $p
     set_property CAPTURE_COMPARE_VALUE {} $p
@@ -103,8 +105,28 @@ if {$mode eq "busy"} {
     # the window is the transfers before the fault and the stacked frame.
     set_property CAPTURE_COMPARE_VALUE {} [pr $ila *bus_ctl*]
     set_property CAPTURE_COMPARE_VALUE {eq16'bX1XXXXXXXXXXXXXX} [pr $ila *dbg_ir*]
-    set_property CONTROL.TRIGGER_POSITION 768 $ila
+    set_property CONTROL.TRIGGER_POSITION [expr {$ila_depth * 3 / 4}] $ila
     set_property TRIGGER_COMPARE_VALUE {eq4'b1xxx} [pr $ila *dbg_flags*]
+} elseif {$mode eq "guru"} {
+    # The faster core again, triggered by exec's Alert: the write of 'HELP'
+    # ($48454C50) to low chip RAM.  Only DATA transfers are stored (no
+    # instruction fetches: from the uncached ROM they would fill the window),
+    # so the window reaches back to the access that faulted.
+    set_property CAPTURE_COMPARE_VALUE {} [pr $ila *bus_ctl*]
+    set_property CAPTURE_COMPARE_VALUE {eq16'bX1X0XXXXXXXXXXXX} [pr $ila *dbg_ir*]
+    set_property CONTROL.TRIGGER_POSITION [expr {$ila_depth * 7 / 8}] $ila
+    set_property TRIGGER_COMPARE_VALUE {eq32'h48454C50} [pr $ila *dbg_pc*]
+    set_property TRIGGER_COMPARE_VALUE {eq16'bX11XXXXXXXXXXXXX} [pr $ila *dbg_ir*]
+} elseif {$mode eq "alert"} {
+    # The faster core, triggered by the Alert itself: exec's write of the
+    # alert number ($8xxxxxxx, a dead-end alert) to $100.  ("guru" triggers
+    # on 'HELP', which the NEXT boot's recovery also writes.)  Data only.
+    set_property CAPTURE_COMPARE_VALUE {} [pr $ila *bus_ctl*]
+    set_property CAPTURE_COMPARE_VALUE {eq16'bX1X0XXXXXXXXXXXX} [pr $ila *dbg_ir*]
+    set_property CONTROL.TRIGGER_POSITION [expr {$ila_depth * 7 / 8}] $ila
+    set_property TRIGGER_COMPARE_VALUE {eq32'h00000100} [pr $ila *dbg_rtg*]
+    set_property TRIGGER_COMPARE_VALUE {eq32'b1XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX} [pr $ila *dbg_pc*]
+    set_property TRIGGER_COMPARE_VALUE {eq16'bX11XXXXXXXXXXXXX} [pr $ila *dbg_ir*]
 } elseif {$mode eq "now"} {
     set_property CONTROL.CAPTURE_MODE ALWAYS $ila
     set_property CONTROL.TRIGGER_POSITION 0 $ila
