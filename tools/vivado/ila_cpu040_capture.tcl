@@ -204,6 +204,32 @@ if {$mode eq "busy"} {
     set_property TRIGGER_COMPARE_VALUE {eq32'bXXXXXXXXXXXX00000000011111100000} [pr $ila *dbg_rtg*]
     set_property TRIGGER_COMPARE_VALUE {eq16'b1101XXXXXXXXXXXX} [pr $ila *dbg_ir*]
     set_property TRIGGER_COMPARE_VALUE {eq384'bXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX0XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX} [pr $ila *dbg_phist*]
+} elseif {$mode eq "runaway"} {
+    # The faster core under an MMU that maps unused space to one blank page
+    # (descriptor $400C8009 on the 2026-10-23 demo crash): triggered by a
+    # code table walk (TM 4) that returns that descriptor -- the first fetch
+    # into unmapped space -- with every transfer stored, so the window is
+    # what led the PC there.
+    set_property CAPTURE_COMPARE_VALUE {} [pr $ila *bus_ctl*]
+    set_property CAPTURE_COMPARE_VALUE {eq16'bX1XXXXXXXXXXXXXX} [pr $ila *dbg_ir*]
+    set_property CONTROL.TRIGGER_POSITION [expr {$ila_depth - 16}] $ila
+    set_property TRIGGER_COMPARE_VALUE {eq32'h400C8009} [pr $ila *dbg_pc*]
+    set_property TRIGGER_COMPARE_VALUE {eq16'bX10XXX100XXXXXXX} [pr $ila *dbg_ir*]
+} elseif {$mode eq "redircc8"} {
+    # The faster core's dbg_fe (dbg_phist) at every clk_114 sample,
+    # triggered by a back-end redirect to $41E45CC8: the demo livelock of
+    # 2026-10-23 (WB refetching the middle of a DBF), its first occurrence.
+    set_property CAPTURE_COMPARE_VALUE {} [pr $ila *bus_ctl*]
+    set_property CAPTURE_COMPARE_VALUE {} [pr $ila *dbg_ir*]
+    set_property CONTROL.TRIGGER_POSITION [expr {$ila_depth - 128}] $ila
+    set_property TRIGGER_COMPARE_VALUE {eq384'bXXXXXXXXXXXXXXXXXXXXXXXXXXXX1XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX01000001111001000101110011001000XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX} [pr $ila *dbg_phist*]
+} elseif {$mode eq "nowall"} {
+    # The faster core: the next 1024 transfers from now (every acknowledge
+    # stored, instruction fetches included) -- what a hung machine runs.
+    set_property CAPTURE_COMPARE_VALUE {} [pr $ila *bus_ctl*]
+    set_property CAPTURE_COMPARE_VALUE {eq16'bX1XXXXXXXXXXXXXX} [pr $ila *dbg_ir*]
+    set_property CONTROL.TRIGGER_POSITION 0 $ila
+    set_property TRIGGER_COMPARE_VALUE {eq4'bxxxx} [pr $ila *dbg_flags*]
 } elseif {$mode eq "now"} {
     set_property CONTROL.CAPTURE_MODE ALWAYS $ila
     set_property CONTROL.TRIGGER_POSITION 0 $ila
