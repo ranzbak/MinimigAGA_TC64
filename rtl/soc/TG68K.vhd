@@ -545,6 +545,9 @@ ARCHITECTURE logic OF TG68K IS
 	-- x_req as the clk_114 sequencers may see it; see where it is driven
 	SIGNAL x_fresh    : std_logic := '0';
 	SIGNAL sw_ok      : std_logic;                      -- the Turbo switches may change
+	-- the faster core's fetch/decoder observation vector (g_fast), shown on
+	-- dbg_phist (ila_cpu040 probe8) in place of the acknowledge histogram
+	SIGNAL f_dbgfe    : std_logic_vector(383 downto 0) := (others => '0');
 	SIGNAL q_req      : std_logic;
 	SIGNAL q_sdram    : std_logic;                      -- q_req, per destination
 	SIGNAL q_ddr      : std_logic;
@@ -841,7 +844,8 @@ ARCHITECTURE logic OF TG68K IS
 			vbr_out      : out std_logic_vector(31 downto 0);
 			cache_maint  : out std_logic;
 			debug_halted : out std_logic;
-			debug_pc     : out std_logic_vector(31 downto 0)
+			debug_pc     : out std_logic_vector(31 downto 0);
+			debug_fe     : out std_logic_vector(383 downto 0)
 		);
 	END COMPONENT;
 
@@ -1734,7 +1738,8 @@ BEGIN
 					vbr_out      => VBR_out_w,
 					cache_maint  => ap040_maint,
 					debug_halted => ap040_halt,
-					debug_pc     => f_pc
+					debug_pc     => f_pc,
+					debug_fe     => f_dbgfe
 				);
 
 			wk_req      <= '0';
@@ -2249,11 +2254,18 @@ BEGIN
 		END IF;
 	END PROCESS;
 
-	g_phist_ph : FOR i IN 0 TO 15 GENERATE
-		dbg_phist(128 + 16*i + 15 DOWNTO 128 + 16*i) <= ph_snap_ph(i);
+	g_phist : IF ap040_faster = 0 GENERATE
+		g_phist_ph : FOR i IN 0 TO 15 GENERATE
+			dbg_phist(128 + 16*i + 15 DOWNTO 128 + 16*i) <= ph_snap_ph(i);
+		END GENERATE;
+		g_phist_dly : FOR i IN 0 TO 7 GENERATE
+			dbg_phist(16*i + 15 DOWNTO 16*i) <= ph_snap_dly(i);
+		END GENERATE;
 	END GENERATE;
-	g_phist_dly : FOR i IN 0 TO 7 GENERATE
-		dbg_phist(16*i + 15 DOWNTO 16*i) <= ph_snap_dly(i);
+	-- the faster core: its fetch/decoder observation vector instead
+	-- (ap68040.sv dbg_fe), on the same 384-bit ILA probe
+	g_phist_fast : IF ap040_faster /= 0 GENERATE
+		dbg_phist <= f_dbgfe;
 	END GENERATE;
 
 	PROCESS(clk)

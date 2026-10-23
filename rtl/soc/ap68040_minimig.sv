@@ -85,7 +85,8 @@ module ap68040_minimig
 	output logic [31:0] vbr_out,
 	output logic        cache_maint,    // one-clk pulse per completed CINV/CPUSH
 	output logic        debug_halted,
-	output logic [31:0] debug_pc
+	output logic [31:0] debug_pc,
+	output logic [383:0] debug_fe      // the core's dbg_fe (observation only)
 );
 
 //--------------------------------------------------------------------------
@@ -120,7 +121,8 @@ ap68040 #(
 	.br_n(), .bg_n(1'b0), .bb_n_i(1'b1), .bb_n_o(), .bb_oe(),
 	.rsto_n(rsto_n), .cdis_n(1'b1), .mdis_n(1'b1), .ipend_n(), .pst(),
 	.dbg_pc(debug_pc), .dbg_retire(), .dbg_halted(debug_halted),
-	.dbg_vbr(vbr_out), .dbg_cacr(cacr_out), .dbg_cmaint(cache_maint)
+	.dbg_vbr(vbr_out), .dbg_cacr(cacr_out), .dbg_cmaint(cache_maint),
+	.dbg_fe(debug_fe)
 );
 
 assign nresetout = rsto_n;

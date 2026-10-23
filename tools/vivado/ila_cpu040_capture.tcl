@@ -135,6 +135,15 @@ if {$mode eq "busy"} {
     set_property TRIGGER_COMPARE_VALUE {eq32'h00000100} [pr $ila *dbg_rtg*]
     set_property TRIGGER_COMPARE_VALUE {eq32'b1XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX} [pr $ila *dbg_pc*]
     set_property TRIGGER_COMPARE_VALUE {eq16'bX11XXXXXXXXXXXXX} [pr $ila *dbg_ir*]
+} elseif {$mode eq "fetch7e0"} {
+    # The faster core's fetch internals (dbg_phist = ap68040.sv dbg_fe) at
+    # every clk_114 sample, triggered by an instruction fetch whose address
+    # ends in $7E0 (the board's bad fetch at ExecBase - $BC, 2026-10-23).
+    set_property CAPTURE_COMPARE_VALUE {} [pr $ila *bus_ctl*]
+    set_property CONTROL.CAPTURE_MODE ALWAYS $ila
+    set_property CONTROL.TRIGGER_POSITION [expr {$ila_depth - 32}] $ila
+    set_property TRIGGER_COMPARE_VALUE {eq32'bXXXXXXXXXXXXXXXXXXXX011111100000} [pr $ila *dbg_rtg*]
+    set_property TRIGGER_COMPARE_VALUE {eq16'b1101XXXXXXXXXXXX} [pr $ila *dbg_ir*]
 } elseif {$mode eq "now"} {
     set_property CONTROL.CAPTURE_MODE ALWAYS $ila
     set_property CONTROL.TRIGGER_POSITION 0 $ila
