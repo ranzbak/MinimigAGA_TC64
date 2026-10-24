@@ -453,7 +453,8 @@ Per file, `line:bytes`:
 | `hdd.c` | 13 | 471:29, 481:30, 763:20, 765:4, 767:9, 768:9, 861:87, 926:22, 927:21, 928:33, 929:37, 930:17, 935:34 |
 | `main.c` | 2 | 277:29, 290:31 |
 | `menu.c` | 7 | 2928:52, 2968:281, 2970:32, 2972:28, 2973:38, 2974:25, 2975:25 |
-| `mmc.c` | 22 | 87:19, 102:25, 118:24, 123:36, 134:17, 143:29, 161:24, 166:34, 173:18, 180:29, 198:35, 204:25, 229:65, 241:52, 283:45, 296:34, 357:74, 371:61, 422:66, 446:64, 457:57, 532:46 |
+| `mmc.c` | 0 | (findings/sdcard-engine Task 10: its 22 sites went with cfide's SPI card path) |
+| `sdproto.c` | 11 | 144:58, 151:57, 159:32, 206:71, 487:24, 836:24, 844:26, 895:37, 907:30, 932:20, 943:112 (findings/sdcard-engine Task 10, every argument at its widest) |
 
 Maximum 295 bytes (`fat.c:582`, a `FindDirectory` name of 260 characters; no
 caller exists, so the real maximum is `menu.c:2968`, 281). 295 + NUL = 296,
@@ -1078,6 +1079,13 @@ samples from bytes (little-endian, the ring's order) and `atapi.c`'s
 
 ## SD driver timeouts and the TIMER (Task 10)
 
+Superseded (findings/sdcard-engine Task 10, 2026-10-25): the card is on the
+SD card peripheral; `mmc.c` is `sd_sync()` wrappers over `sdproto.c`, whose
+waits are the peripheral's wait ops bounded by its TIMEOUT register (R1
+2.3 ms, data token 250 ms, busy 1.0 s; `findings/sdcard-engine/design.md`
+section 11) and `sdc_wait()`'s TIMER bound.  What follows is the record of
+the cfide SPI path it replaced.
+
 The 832's `mmc.c` bounded its five data-token and busy waits by loop count
 (`timeout = 0; ... if (timeout++ >= 1000000)`): a bound in CPU speed, which
 the ~7x faster RISC-V CPU would have cut to a seventh. They are TIMER bounds
@@ -1144,9 +1152,8 @@ us). Lines are those of the current tree.
 | `main.c:298`, `363`, `366` (`main`) | ADV7511 poll (`adv_timer`) | 250 | 1.451 s |
 | `main.c:302`, `326`, `328` (`main`) | disk statistics report from boot, DebugMode on or off (`diskstat_timer`, armed once before the main loop and re-armed by the pass that fires): `DISKSTAT_PERIOD` (`diskstat.h:10`) | 1000 | 5.804 s; each report stalls the loop about 26 ms (about 300 UART bytes, 87 us each) |
 | `diskstat.c:51`, `57` (`diskstat_period_start`, `diskstat_report`) | start and end of the report period, printed as counts and ms | counts | 5.804 ms per count |
-| `mmc.c:72` (`MMC_Init`) | `WaitTimer(20)` after the 80 clocks | 20 | 116.1 ms |
-| `mmc.c:80`, `88`, `135`, `174` (`MMC_Init`) | init timeout: `GetTimer(1000)`, ACMD41 / CMD1 polls | 1000 | 5.804 s |
-| `mmc.c:235`, `290`, `366`, `452`, `527` | `SD_TIMEOUT` (above) | 173 | 1.004 s |
+| `sdproto.c` (`sd_init`) | ACMD41 / CMD1 polls: `SD_ACMD41_BOUND` (findings/sdcard-engine Task 10; `mmc.c`'s `WaitTimer(20)`, `GetTimer(1000)` and `SD_TIMEOUT` went with cfide's SPI card path) | 345 | 2.002 s |
+| `sdc.c` (`sdc_wait`, `abort_wait`) | the wait for a peripheral event: `SDC_WAIT_BOUND` (`sdc.h`), then ABORT; the ABORT's end | 1800, 2 | 10.45 s, 11.6 ms |
 | `fat.c:723`, `1318` | `GetTimer(0)` inside a comment (dead); `fat.c:96` declares `GetTimer` | | |
 | `menu.c:2744`, `config.c:612`, `fat.c:168` | in comments (dead) | | |
 
@@ -1282,9 +1289,13 @@ make -C fw/ctrl/test mutants
 `rd_*`/`wr_*` forms at offsets 0..3 under UBSan, the legacy swaps without sign
 extension); `fat_test` runs the real `fat.c` + `mmc.c` on three card images
 (FAT16 with MBR, FAT32 with MBR, FAT16 superfloppy) against `mtools` and
-`fsck.fat`; `mmc_test` runs the real `mmc.c` on the card model (`MMC_Init`'s
-command sequence against the L2 boot run's SD log, token delays, busy, the
-five `SD_TIMEOUT` bounds, the direct-mode trace `test/gold/dmode.txt`);
+`fsck.fat`; `mmc_test` runs the real `mmc.c` over `sdproto.c` and the SD
+card peripheral's mock (`MMC_Init`'s command sequence against the L2 boot
+run's SD log, then CMD59 and CMD9, token delays, busy, the to-Gayle read,
+the bounds in peripheral time; findings/sdcard-engine Task 10, which dropped
+the direct-mode trace `test/gold/dmode.txt`); `sdproto_test` the SD protocol
+itself (CRC on, the retry table, CMD25 + ACMD22, the bounds, one op at a
+time);
 `config_test` checks the config file's byte order (`cfgswap.c`, `cfgconv`,
 `LoadConfiguration` on the card model, the big-endian file never written);
 `hdd_test` runs the real `hdd.c` over `fat.c` + `mmc.c` behind a mock Gayle

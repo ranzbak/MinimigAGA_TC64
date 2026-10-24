@@ -94,7 +94,9 @@ extern char debugmsg2[40];
 #define HDD_SLOTS 4
 extern hdfTYPE hdf[HDD_SLOTS];
 
-/* The IDE port the HDD SPI commands go to (0 or 1); set before each command. */
+/* The IDE port the HDD SPI commands go to (0 or 1); set before each command.
+   A card read with no buffer (mmc.h) goes into its Gayle FIFO.  Defined in
+   mmc.c. */
 extern unsigned char ide_port;
 
 #endif

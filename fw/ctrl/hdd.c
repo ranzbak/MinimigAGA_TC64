@@ -30,6 +30,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "hdd.h"
 #include "hdd_internal.h"
 #include "mmc.h"
+#include "sdproto.h"
 #include "menu.h"
 #include "fpga.h"
 #include "config.h"
@@ -45,7 +46,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 hdfTYPE hdf[HDD_SLOTS];
 
 // IDE port of the HDD SPI commands below (bit 0 of every command byte)
-unsigned char ide_port;
+// ide_port: defined in mmc.c (a read with no buffer goes to its FIFO), hdd.h
 
 char debugmsg[40];
 char debugmsg2[40];
@@ -485,6 +486,16 @@ void ATA_SetMultipleMode(unsigned char* tfr, int unit)
 }
 
 
+// A card error ends the ATA command with ERR (the OSD shows ERROR_SDCARD,
+// mmc.c); a read the Amiga abandoned (a new command reset the FIFO: Gayle
+// error, MMCErr SD_E_GAYLE) ends it with nothing: the new command is
+// picked up next (findings/sdcard-engine Task 10).
+static void ata_card_error(void)
+{
+	if (MMCErr != SD_E_GAYLE)
+		WriteStatus(IDE_STATUS_END | IDE_STATUS_IRQ | IDE_STATUS_ERR);
+}
+
 // ATA_ReadSectors()
 void ATA_ReadSectors(unsigned char* tfr, int sector, int cylinder, int head, int unit, int sector_count, int multiple)
 {
@@ -546,8 +557,13 @@ void ATA_ReadSectors(unsigned char* tfr, int sector, int cylinder, int head, int
 					{
 						if(hdf[unit].type==HDF_FILE)
 						{
+							MMCErr = SD_OK;
 							HardFileSeek(&hdf[unit], lba + hdf[unit].offset); // Patch flags and checksum of RDB.  Actually necessary?
-							FileReadEx(&hdf[unit].file, sector_buffer, 1);
+							if (MMCErr != SD_OK || !FileReadEx(&hdf[unit].file, sector_buffer, 1))
+							{
+								ata_card_error();
+								return;
+							}
 							struct RigidDiskBlock *rdb = (struct RigidDiskBlock *)sector_buffer;
 							rdb->rdb_ChkSum = be32(be32(rdb->rdb_ChkSum) + be32(rdb->rdb_Flags) - 0x12);	// big-endian longs
 							rdb->rdb_Flags=be32(0x12);
@@ -567,8 +583,14 @@ void ATA_ReadSectors(unsigned char* tfr, int sector, int cylinder, int head, int
 					}
 					if(blk) // Any blocks left?
 					{
+						MMCErr = SD_OK;
 						HardFileSeek(&hdf[unit], lba + hdf[unit].offset);
-						FileReadEx(&hdf[unit].file, 0, blk); // NULL enables direct transfer to the FPGA
+						// a FAT sector the seek could not read: its position is wrong
+						if (MMCErr != SD_OK || !FileReadEx(&hdf[unit].file, 0, blk)) // NULL: into Gayle's FIFO (mmc.h)
+						{
+							ata_card_error();
+							return;
+						}
 						lba+=blk;
 					}
 				}
@@ -581,7 +603,11 @@ void ATA_ReadSectors(unsigned char* tfr, int sector, int cylinder, int head, int
 			case HDF_CARDPART1:
 			case HDF_CARDPART2:
 			case HDF_CARDPART3:
-				MMC_ReadMultiple(lba+hdf[unit].offset,0,block_count);
+				if (!MMC_ReadMultiple(lba+hdf[unit].offset,0,block_count))
+				{
+					ata_card_error();
+					return;
+				}
 				lba+=block_count;
 				break;
 		}
@@ -635,8 +661,14 @@ void ATA_WriteSectors(unsigned char* tfr, int sector, int cylinder, int head, in
 	if(lba<0)
 		SetError(ERROR_HDD,"Write to auto-generated RDB!",lba,0);
 
+	MMCErr = SD_OK;
 	if (hdf[unit].file.size)	// File size will be 0 in direct card modes
 		HardFileSeek(&hdf[unit], (lba>-1) ? lba : 0);
+	if (MMCErr != SD_OK)	// a FAT sector the seek could not read: its position is wrong
+	{
+		ata_card_error();
+		return;
+	}
 
 	while (sector_count)
 	{
@@ -666,8 +698,18 @@ void ATA_WriteSectors(unsigned char* tfr, int sector, int cylinder, int head, in
 				case HDF_FILE:
 					if (hdf[unit].file.size && (lba>-1))	// Don't attempt to write to fake RDB
 					{
-						FileWrite(&hdf[unit].file, sector_buffer);
-						FileSeek(&hdf[unit].file, 1, SEEK_CUR);
+						MMCErr = SD_OK;
+						if (!FileWrite(&hdf[unit].file, sector_buffer))
+						{
+							ata_card_error();
+							return;
+						}
+						FileSeek(&hdf[unit].file, 1, SEEK_CUR);	// 0 at the end of the chain (no error)
+						if (MMCErr != SD_OK)	// the next FAT sector could not be read
+						{
+							ata_card_error();
+							return;
+						}
 					}
 					++lba;
 					break;
@@ -677,7 +719,11 @@ void ATA_WriteSectors(unsigned char* tfr, int sector, int cylinder, int head, in
 				case HDF_CARDPART2:
 				case HDF_CARDPART3:
 					DEBUG1("Write HDF_Card");
-					MMC_Write(lba,sector_buffer);
+					if (!MMC_Write(lba,sector_buffer))
+					{
+						ata_card_error();
+						return;
+					}
 					++lba;
 					break;
 			}

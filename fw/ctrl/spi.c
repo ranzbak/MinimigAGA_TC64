@@ -123,16 +123,6 @@ void spi_uio_cmd32(unsigned char cmd, unsigned long parm) {
 
 #if 0
 
-volatile void EnableCard()
-{
-	HW_SPI(HW_SPI_CS)=0x02;
-}
-
-volatile void DisableCard()
-{
-	HW_SPI(HW_SPI_CS)=0x03;
-}
-
 volatile void EnableFpga()
 {
 	HW_SPI(HW_SPI_CS)=0x10;
@@ -151,16 +141,6 @@ volatile void EnableOsd()
 volatile void DisableOsd()
 {
 	HW_SPI(HW_SPI_CS)=0x21;
-}
-
-volatile void EnableDMode()
-{
-	HW_SPI(HW_SPI_CS)=0x40;
-}
-
-volatile void DisableDMode()
-{
-	HW_SPI(HW_SPI_CS)=0x41;
 }
 
 #endif

@@ -113,7 +113,7 @@ checkio() {
 control() {
   prep control
   local t rc=0
-  for t in mock_selftest cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_test hwmap_test spireply_test diskstat_test swap_test fat_test mmc_test config_test hdd_test fdd_test drivesounds_test boot_test sdc_test; do
+  for t in mock_selftest cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_test hwmap_test spireply_test diskstat_test swap_test fat_test mmc_test config_test hdd_test fdd_test drivesounds_test boot_test sdc_test sdproto_test; do
     mk control "run64-$t" > "mut/control/log.$t" 2>&1 || { echo "control: run64-$t FAILED (mut/control/log.$t)"; rc=1; }
   done
   mk control fmt > mut/control/log.fmt 2>&1 || { echo "control: fmt FAILED (mut/control/log.fmt)"; rc=1; }
@@ -181,22 +181,34 @@ unit fat_createdate fat_test src fat.c 's/pEntry->CreateDate = le16(FILEDATE(200
 # GetFATLink (fat.c:1366): the second cluster of "Many Long Names" (DELTA) and FAT32's root chain
 unit fat_getfatlink fat_test src fat.c 's/return(fat32 ? le32(fat_buffer.fat32\[buffer_index\]) \& 0x0FFFFFFF : le16(fat_buffer.fat16\[buffer_index\]));/return(fat32 ? SwapBBBB(fat_buffer.fat32[buffer_index]) \& 0x0FFFFFFF : SwapBB(fat_buffer.fat16[buffer_index]));/'
 
-# ---- the SD driver (mmc_test) -------------------------------------------------
-# the brief's mutant: no time at all for the data token -> the 200-byte delay fails
-unit mmc_timeout0 mmc_test src mmc.c 's/^#define SD_TIMEOUT 173$/#define SD_TIMEOUT 0/' "FAIL MMC_Read lba 300, token delay 200"
-# too long a bound passes silently under the auto-advancing TIMER: the byte bound catches it
-unit mmc_timeout_long mmc_test src mmc.c 's/^#define SD_TIMEOUT 173$/#define SD_TIMEOUT 1000/' "FAIL CMD17: wait bytes"
-# each of the five bounds on its own
-unit mmc_bound_read mmc_test src mmc.c '/^unsigned char MMC_Read(/,/^}/ s/GetTimer(SD_TIMEOUT)/GetTimer(2 * SD_TIMEOUT)/' "FAIL CMD17: wait bytes"
-unit mmc_bound_csd mmc_test src mmc.c '/^unsigned char MMC_GetCSD(/,/^}/ s/GetTimer(SD_TIMEOUT)/GetTimer(2 * SD_TIMEOUT)/' "FAIL CMD9: wait bytes"
-unit mmc_bound_multi mmc_test src mmc.c '/^unsigned char MMC_ReadMultiple(/,/^}/ s/GetTimer(SD_TIMEOUT)/GetTimer(2 * SD_TIMEOUT)/' "FAIL CMD18: wait bytes"
-unit mmc_bound_write mmc_test src mmc.c '/^unsigned char MMC_Write(/,/^}/ s/GetTimer(SD_TIMEOUT)/GetTimer(2 * SD_TIMEOUT)/' "FAIL CMD24: wait bytes"
-unit mmc_bound_cmd12 mmc_test src mmc.c '/^unsigned char MMC_CMD12(/,/^}/ s/GetTimer(SD_TIMEOUT)/GetTimer(2 * SD_TIMEOUT)/' "FAIL CMD12: wait bytes"
-# MMC_Init: the command golden (ACMD41 without HCS) and the speed switch
-unit mmc_init_hcs mmc_test src mmc.c 's/MMC_Command(CMD41, 1 << 30)/MMC_Command(CMD41, 0)/' "FAIL the card's commands"
-unit mmc_init_slow mmc_test src mmc.c 's/^\tSPI_slow();$/\t;/' "FAIL SPI slow before CMD0"
-# direct mode: one byte instead of cfide's 4096 clocks -> gold/dmode.txt
-unit mmc_dmode mmc_test t mock_hw.c 's/for (int n = 0; n < 512; n++) {/for (int n = 0; n < 1; n++) {/' "FAIL the direct-mode trace"
+# ---- the SD protocol and mmc.c on it (sdproto_test, mmc_test; sdcard-engine Task 10)
+# the plan's two: a retry count off by one, the read CRC result ignored
+unit sdp_rdcrc_retries sdproto_test src sdproto.c 's/if (s.rd_crc >= 4) {/if (s.rd_crc >= 3) {/' "FAIL read_crc_exhaust: 5 read CRC errors"
+unit sdp_crc_ignored sdproto_test src sdproto.c 's/if (!(st \& SDC_ST_CRC_OK)) {/if (0) {/' "FAIL read_crc_retry: data right"
+# the other rows' retry counts, the SCK step at the 3rd retry
+unit sdp_wrcrc_retries sdproto_test src sdproto.c 's/if (s.wr_crc >= 4) {/if (s.wr_crc >= 5) {/' "FAIL write exhaust: err"
+unit sdp_cmd_retries sdproto_test src sdproto.c '/^static void cmd_fail(/,/^}/ s/if (\*n < 3) {/if (*n < 2) {/' "FAIL timeout_cmd13_gone: R1 timeouts 4"
+unit sdp_slower_at sdproto_test src sdproto.c 's/if (s.rd_crc == 3)/if (s.rd_crc == 4)/' "FAIL read_crc_exhaust: the SCK line with retry 3"
+# CRC on, CRC7, the TX keep (a retry without TX_REWIND sends what follows the block)
+unit sdp_nocmd59 sdproto_test src sdproto.c 's/r1 = icmd(59, 1, 0, 0);/r1 = icmd(59, 0, 0, 0);/' "FAIL init_crc_on: the card checks CRCs"
+unit sdp_crc7 sdproto_test src sdproto.c 's/((((c >> 6) ^ (b >> 7)) \& 1) ? 0x09 : 0)/((((c >> 6) ^ (b >> 7)) \& 1) ? 0x0B : 0)/' "FAIL init_crc_on: sd_init = SDHC"
+unit sdp_norewind sdproto_test src sdproto.c 's/^\t\tstart(SDC_OP_TX_REWIND, 0);$/\t\t;/' "sdc_wait: the mock can make no progress"
+# CMD25: no ACMD22 resume after a rejected block; an abandoned Gayle read
+# reported as a card error; card gone mid-op not seen
+unit sdp_noresume sdproto_test src sdproto.c 's/s.retry22 = 1;/s.retry22 = 0;/' "FAIL cmd25_acmd22"
+unit sdp_noabandon sdproto_test src sdproto.c 's/s.fail = SD_E_GAYLE;/s.fail = SD_E_RETRIES;/' "FAIL gayle abandon: SD_E_GAYLE"
+unit sdp_gone sdproto_test src sdproto.c 's/if (s.gone || (st \& SDC_ST_GONE)) {/if (s.gone) {/' "FAIL gone: SD_E_GONE"
+unit sdp_noprobe sdproto_test src sdproto.c '/^static void cmd_fail(/,/^}/ s/^\tprobe();$/\tfinish(SD_E_GONE);/' "FAIL cmdcrc exhaust: err"
+# the bounds (design 11): one unit off each (mmc_test, in peripheral time),
+# and under the spec's maxima (sdproto_test busy_500ms, token_100ms)
+unit sdp_t_ncr mmc_test src sdproto.c 's/^#define T_NCR    16$/#define T_NCR    15/' "FAIL no answer: MMC_Read: ended after"
+unit sdp_t_token mmc_test src sdproto.c 's/^#define T_TOKEN  1732$/#define T_TOKEN  1731/' "FAIL no token: MMC_Read: ended after"
+unit sdp_t_busy mmc_test src sdproto.c 's/^#define T_BUSY   6926$/#define T_BUSY   6927/' "FAIL busy for ever: MMC_Write: ended after"
+unit sdp_t_token_spec sdproto_test src sdproto.c 's/^#define T_TOKEN  1732$/#define T_TOKEN  600/' "FAIL token_100ms: no error"
+unit sdp_t_busy_spec sdproto_test src sdproto.c 's/^#define T_BUSY   6926$/#define T_BUSY   3000/' "FAIL busy_500ms: no timeout"
+# mmc.c: the OSD's error, the Gayle port of a to-Gayle read
+unit mmc_noseterror mmc_test src mmc.c 's/SetError(ERROR_SDCARD, (char \*)what, (int)(op->lba + op->done_blocks), MMCErr);/;/' "ERROR_SDCARD set, not fatal"
+unit mmc_port mmc_test src mmc.c 's/op.port = ide_port \& 1;/op.port = 0;/' "FAIL ... 512 bytes there"
 
 # ---- the config file's byte order (config_test) ------------------------------
 # the brief's mutant: cfg_swap without hdfdir[3] -> its field differs in cfgconv's RV file
@@ -221,12 +233,18 @@ unit hdd_identswap hdd_test src hdd.c 's/pBuffer\[i\] = be16(pBuffer\[i\]);/;/' 
 unit hdd_patch hdd_test src hdd.c 's/rdb->rdb_ChkSum = be32(be32(rdb->rdb_ChkSum) + be32(rdb->rdb_Flags) - 0x12);/rdb->rdb_ChkSum = rdb->rdb_ChkSum + rdb->rdb_Flags - 0x12;/' "FAIL WORK.HDF unit 0 lba 0 (own RDB, patched)"
 # the FakeRDB boundary loop (hdd.c, Task 4's parenthesis): file block 0 taken for a fake one ...
 unit hdd_boundary hdd_test src hdd.c 's/while(blk \&\& (((lba+hdf\[unit\].offset)<0)/while(blk \&\& (((lba+hdf[unit].offset)<=0)/' "FAIL ODD.HDF READ MULTIPLE 248+8: block 4 (lba 252)"
-# ... and without its blk bound: a read of fake blocks runs past its chunk into HardFileSeek
-unit hdd_boundary_blk hdd_test src hdd.c 's/while(blk \&\& (((lba+hdf\[unit\].offset)<0)/while((((lba+hdf[unit].offset)<0)/' "runtime error: shift exponent"
+# ... and without its blk bound: a read of fake blocks runs past its chunk
+# (since Task 10 the file read with the negative count then fails and ends
+# the command with ERR before the old shift-exponent path: too many blocks)
+unit hdd_boundary_blk hdd_test src hdd.c 's/while(blk \&\& (((lba+hdf\[unit\].offset)<0)/while((((lba+hdf[unit].offset)<0)/' "FAIL FakeRDB small unit 0: blocks"
 # sector count 0 = 256
 unit hdd_count0 hdd_test src hdd.c 's/if (sector_count == 0) sector_count = 0x100;/if (sector_count == 0) sector_count = 0xFF;/' "FAIL ODD.HDF READ MULTIPLE 252+0 (256)"
-# the mock's direct-mode count (mock_dmode_blocks): the Gayle model's FIFO misses the direct blocks
-unit mock_dmode_count hdd_test t mock_hw.c 's/^\t\tdmode_blocks++;$/\t\t;/' "FAIL WORK.HDF READ SECTORS 501+5: chunks"
+# the mock bridge's words (RX_TO_GAYLE): the Gayle model's FIFO misses the card's blocks
+unit mock_gayle_into hdd_test t mock_sdc.c 's/buf_put(\&gay.into\[port\], w, 2);/;/' "FAIL WORK.HDF READ SECTORS 501+5: blocks sent"
+# card errors end the ATA command with ERR; an abandoned read with nothing
+unit hdd_card_error hdd_test src hdd.c '/^static void ata_card_error(/,/^}/ s/WriteStatus(IDE_STATUS_END | IDE_STATUS_IRQ | IDE_STATUS_ERR);/;/' "FAIL card gone: READ: status RDY, then END | IRQ | ERR"
+unit hdd_abandon hdd_test src hdd.c 's/if (MMCErr != SD_E_GAYLE)/if (1)/' "FAIL abandoned: status RDY only"
+unit cd_abandon cdrom_test src cdrom.c 's/return MMCErr == SD_E_GAYLE ? CD_GONE : cd_read_error/return cd_read_error/' "an abandoned READ"
 
 # ---- the floppy emulation (fdd_test) -----------------------------------------
 # the brief's mutant: SendSector one byte short (the odd data bits loop) -> mfm.py's stream
@@ -304,9 +322,8 @@ unit spireply_bit spireply_test src hardware.h 's/define HOST_REQ_OSD_RDY 0x0001
 # ---- the disk statistics of the SD baseline (diskstat_test, findings/sdcard-engine Task 1)
 # the brief's mutant: a bucket bound off by one -> 16 sectors counted as 17-64
 unit diskstat_bucket diskstat_test src diskstat.c 's/{ 1, 2, 4, 8, 16, 64, 256 }/{ 1, 2, 4, 8, 15, 64, 256 }/' "FAIL w 16 sectors: hist\[1\]\[4\]"
-# the hooks: MMC_Write's busy polls without the byte that ends the wait,
-# ATA_WriteSectors' Gayle wait without the polls that found the FIFO not ready
-unit diskstat_busy mmc_test src mmc.c '/^unsigned char MMC_Write(/,/^}/ s/polls = 1;/polls = 0;/' "FAIL ... diskstat busy line"
+# the hook: ATA_WriteSectors' Gayle wait without the polls that found the
+# FIFO not ready (MMC_Write's busy polls went with cfide's SPI, Task 10)
 unit diskstat_amiga hdd_test src hdd.c '/^void ATA_WriteSectors(/,/^}/ s/polls++;/;/' "diskstat amiga polls"
 
 # ---- the SD peripheral driver, the interrupt migration and the mock (sdc_test, sdcard-engine Task 9)
@@ -349,6 +366,7 @@ unit mock_card_wcrc sdc_test t mock_hw.c 's/else if (card.crc_on \&\& card.wrx !
 unit mock_card_rdcrc sdc_test t mock_hw.c 's/card.txb ^= 0x01;/card.txb ^= 0x00;/' "FAIL read bad: no crc_ok"
 unit mock_card_acmd22 sdc_test t mock_hw.c 's/if (card.wmulti) card.wr_ok++;/;/' "FAIL acmd22: 1 block written"
 unit mock_card_noresp sdc_test t mock_hw.c 's/return;\t\t\t\t\/\* no response, no effect \*\//;/' "FAIL noresp: no R1"
+unit mock_idle_traps sdc_test t mock_sdc.c 's/irqc_traps != idle_traps/0/g' "sdc_wait: the mock can make no progress"
 unit mock_irq_edge sdc_test t mock_sdc.c 's/irqc_edge \&= ~p;/;/' "interrupt storm"
 
 # ---- the check_io.awk fixture (check_io.sh, exec-3 deferred #18) --------------

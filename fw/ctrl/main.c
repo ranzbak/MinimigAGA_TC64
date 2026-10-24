@@ -57,6 +57,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "akiko.h"
 #include "irq.h"
 #include "sdc.h"
+#include "sdproto.h"
 #include "drivesounds.h"
 #include "cdrom.h"
 #include "audio.h"
@@ -337,6 +338,7 @@ int main(void)
 		{
 			diskstat_timer = GetTimer(DISKSTAT_PERIOD);
 			diskstat_report();
+			sd_report();	// the SD errors per retry-table row (sdproto.h)
 		}
 		drivesounds_fill();
 		CD_AudioPoll();	// CD audio refill (findings/cdrom/plan.md 13.1)

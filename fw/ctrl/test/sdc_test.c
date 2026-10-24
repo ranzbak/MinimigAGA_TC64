@@ -490,6 +490,32 @@ static void t_default_step(void)
 	check("default step: then it ends", SDC_R(SDC_COUNT), 100);
 }
 
+/* Task 10: an op that ends inside one of sdc_wait's TIMER reads (the
+   default step lets 5.8 ms pass in each) is an event like any other:
+   sdc_wait looks again and returns it (the mock's idle step must not take
+   it for a stall).  A wait op of 60 TIMEOUT units (1.5 TIMER counts) on an
+   idle card: GetTimer's read lets 1 count pass, the first CheckTimer's the
+   rest, and the op ends there. */
+static void t_end_in_timer_read(void)
+{
+	unsigned e, r0;
+
+	mock_reset();
+	mock_card_new(64);
+	sdc_init();
+	sdc_set_div(SDC_DIV_MIN);
+	sdc_select(1);
+	SDC_W(SDC_MATCH, 0x00);		/* the idle card sends FF: never */
+	SDC_W(SDC_TIMEOUT, 60);
+	check("end in a TIMER read: WAIT_EQ 00 started", sdc_start(SDC_OP_WAIT_EQ, 0) == 0 &&
+	      (SDC_R(SDC_STATUS) & SDC_ST_BUSY), 1);
+	r0 = mock_timer_reads();
+	e = (unsigned)sdc_wait(SDC_IRQ_DONE);
+	check("end in a TIMER read: sdc_wait returns DONE", e & SDC_IRQ_DONE, SDC_IRQ_DONE);
+	check("end in a TIMER read: the op timed out", SDC_R(SDC_STATUS) & SDC_ST_TIMEOUT, SDC_ST_TIMEOUT);
+	check("end in a TIMER read: after 2 TIMER reads (GetTimer, one CheckTimer)", mock_timer_reads() - r0, 2);
+}
+
 static void t_watermark(void)
 {
 	unsigned traps;
@@ -1234,6 +1260,7 @@ int main(void)
 	t_refuse();
 	t_wait();
 	t_default_step();
+	t_end_in_timer_read();
 	t_watermark();
 	t_cfg_fifo();
 	t_trace();

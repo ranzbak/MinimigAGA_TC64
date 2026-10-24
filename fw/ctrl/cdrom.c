@@ -30,6 +30,8 @@
 #include "hardware.h"
 #include "fat.h"
 #include "hdd.h"
+#include "mmc.h"
+#include "sdproto.h"
 #include "config.h"
 #include "errors.h"
 #include "rafile.h"
@@ -548,13 +550,18 @@ static int cd_send_sectors(int port, unsigned char *tfr, unsigned long block, un
 		per = CD_FIFO_512;
 	if (!per)
 		per = 1;	/* a limit below 512 bytes: blocks of 512 anyway */
+	MMCErr = SD_OK;
 	HardFileSeek(&cdrom.hdf, block);
+	if (MMCErr != SD_OK)	/* a FAT sector the seek could not read: its position is wrong */
+		return cd_read_error(block);
 	while (left) {
 		unsigned int n = left < per ? (unsigned int)left : per;
 		CD_AudioPoll();	/* between blocks, never inside FileReadEx (13.5) */
 		cd_phase(tfr, n << 9, 0x02, IDE_STATUS_RDY);
-		if (!FileReadEx(&cdrom.hdf.file, 0, n))
-			return cd_read_error(block + count * 4 - left);
+		MMCErr = SD_OK;
+		if (!FileReadEx(&cdrom.hdf.file, 0, n))	/* into Gayle's FIFO of ide_port (mmc.h) */
+			/* a Gayle error: the host wrote a new command, no status for this one */
+			return MMCErr == SD_E_GAYLE ? CD_GONE : cd_read_error(block + count * 4 - left);
 		if ((r = cd_wait(port)) != CD_DONE)
 			return r;
 		left -= n;

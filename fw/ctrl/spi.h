@@ -2,14 +2,10 @@
 #define SPI_H
 
 #if 0
-volatile void EnableCard();
-volatile void DisableCard();
 volatile void EnableFpga();
 volatile void DisableFpga();
 volatile void EnableOsd();
 volatile void DisableOsd();
-volatile void EnableDMode();
-volatile void DisableDMode();
 
 void spi_osd_cmd_cont(unsigned char cmd);
 void spi_osd_cmd(unsigned char cmd);

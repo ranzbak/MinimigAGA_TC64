@@ -72,16 +72,25 @@
 #define     CMD62       0x7e        /*--*/
 #define     CMD63       0x7f        /*--*/
 
-unsigned char MMC_Init(void);
+/* The card through the SD card peripheral (sdproto.h does the protocol;
+   findings/sdcard-engine Task 10).  Each call is one synchronous op and
+   returns 1, or 0 on a card error (MMCErr says which, SD_E_* of sdproto.h;
+   ERROR_SDCARD is set for the OSD, except for SD_E_GAYLE).  lba is in
+   512-byte blocks for every card type.  A read with buffer 0 puts the
+   blocks into the Gayle FIFO of ide_port (hdd.h), each after its CRC. */
+unsigned char MMC_Init(void);	// the card type, CARDTYPE_NONE when none
 unsigned char MMC_Read(unsigned long lba, unsigned char *pReadBuffer);
 unsigned char MMC_Write(unsigned long lba, unsigned char *pWriteBuffer);
 unsigned char MMC_ReadMultiple(unsigned long lba, unsigned char *pReadBuffer, unsigned long nBlockCount);
-unsigned char MMC_GetCSD();
-unsigned long MMC_GetCapacity(); // Returns the capacity in 512 byte blocks
+unsigned char MMC_WriteMultiple(unsigned long lba, unsigned char *pWriteBuffer, unsigned long nBlockCount);
+unsigned char MMC_GetCSD();	// into CSDData
+unsigned long MMC_GetCapacity(); // Returns the capacity in 512 byte blocks, 0 on an error
 
+extern unsigned char CardType;
 extern unsigned char CSDData[16];
 
-extern unsigned char MMCErr;
+extern unsigned char MMCErr;	// the SD_E_* code of the last MMC_* call
+extern unsigned char ide_port;	// the Gayle port a read with buffer 0 goes to (hdd.h)
 
 #endif
 

@@ -40,6 +40,7 @@
 #include "atapi.h"
 #include "cue.h"
 #include "cdaudio.h"
+#include "sdproto.h"
 #include "cdrom.h"
 
 /* ---- bookkeeping ---- */
@@ -79,6 +80,7 @@ static void end(void)
 configTYPE config;
 char DebugMode;
 unsigned char ide_port;
+unsigned char MMCErr;		/* mmc.c's: the SD_E_* code of the last card call */
 hdfTYPE hdf[HDD_SLOTS];
 unsigned char core_caps = CORE_CAPS_IDE2;
 
@@ -100,6 +102,7 @@ unsigned long CheckTimer(unsigned long t) { return ((t - (now_ms << 16)) & 0x800
 static char iso_name[12] = "TESTDISCISO";	/* 8.3 without the dot */
 static unsigned long iso_dir = 0x1234;
 static int fail_read_at = -1;			/* FileReadEx fails on this call */
+static int fail_err = 1;			/* ... with this MMCErr (SD_E_*; 1 = SD_E_RETRIES) */
 static int reads;
 unsigned long iCurrentDirectory, iPreviousDirectory;
 static int clear_errors;			/* ClearError(ERROR_FILESYSTEM) calls */
@@ -556,8 +559,10 @@ unsigned char FileReadEx(fileTYPE *file, unsigned char *pBuffer, unsigned long n
 {
 	const struct fake_file *f = fake_of(file);
 	unsigned long i;
-	if (reads++ == fail_read_at)
+	if (reads++ == fail_read_at) {
+		MMCErr = (unsigned char)fail_err;
 		return 0;
+	}
 	EXPECT(pBuffer == 0, "FileReadEx into a buffer, not the direct transfer");
 	EXPECT(g.pio_in, "direct transfer without pio in");
 	EXPECT(f && f->byte == iso_byte, "direct transfer from %s, not a 2048-byte-sector file", f ? f->short11 : "nothing");
@@ -982,6 +987,28 @@ static void t_read_error(void)
 	end();
 }
 
+/* findings/sdcard-engine Task 10: a read the host abandoned (a new command
+   reset the FIFO: the SD peripheral's Gayle op ends with a Gayle error,
+   MMCErr SD_E_GAYLE) gets no status at all, and no sense */
+static void t_read_abandon(void)
+{
+	uint8_t c[12];
+	begin("an abandoned READ (Gayle error on the transfer): no status, no sense");
+	fresh_drive(1);
+	fail_read_at = 1;
+	fail_err = SD_E_GAYLE;
+	reads = 0;
+	read10(c, 0, 5);
+	packet(c, 0xFFFE);
+	EXPECT(!g.end_seen, "a status for the abandoned command: %02X", g.end_status);
+	fail_read_at = -1;
+	fail_err = SD_E_RETRIES;
+	cdb6(c, 0x03, 18);
+	packet(c, 0xFFFE);
+	EXPECT(h.in[2] == 0x00, "sense key %02X", h.in[2]);
+	end();
+}
+
 static void t_reset_flag(void)
 {
 	begin("CD_Flags: rst_seen on the CD's port resets the unit, on the other port it does not");
@@ -1395,6 +1422,7 @@ int main(void)
 	t_reset_mid_read();
 	t_timeout();
 	t_read_error();
+	t_read_abandon();
 	t_reset_flag();
 	t_cue_bincue();
 	t_cue_mixed();

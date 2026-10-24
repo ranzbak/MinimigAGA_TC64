@@ -31,10 +31,16 @@
  *     card byte unchanged), and the FakeRDB boundary loop (hdd.c, the
  *     Task 4 parenthesis) with READ/WRITE MULTIPLE ranges that cross from
  *     the synthesised first cylinder into the file inside one chunk.
- * The blocks the firmware sends are read back from the SPI trace: the data
- * bytes of CMD_IDE_DATA_WR frames and the direct-mode (cs 42) transfers, in
- * trace order.  The test reports with fprintf(stdout) (say); the
- * firmware's printf (rvlibc.c) goes to the mock UART. */
+ * The blocks the firmware sends are read back in the order they reach
+ * Gayle: the data bytes of CMD_IDE_DATA_WR frames (the SPI trace) and the
+ * card's blocks the SD peripheral's RX_TO_GAYLE moved (the mock bridge,
+ * mock_gayle_into(); findings/sdcard-engine Task 10: what was cfide's
+ * direct mode, cs 42, which must not appear any more).  Card errors: the
+ * card stops answering during a READ and a WRITE (END | IRQ | ERR, no
+ * block, ERROR_SDCARD; the next command initialises the card again), and
+ * a read the Amiga abandons (Gayle error: no status at all).  The test
+ * reports with fprintf(stdout) (say); the firmware's printf (rvlibc.c)
+ * goes to the mock UART. */
 #include <ctype.h>
 #include <limits.h>
 #include <stdarg.h>
@@ -178,7 +184,6 @@ static struct gayle {
 	unsigned char tfr[8];	/* the command the Amiga wrote */
 	int pio;		/* 0, 1 = in, 2 = out */
 	unsigned long rx;	/* CMD_IDE_DATA_WR data bytes */
-	unsigned dm0;		/* mock_dmode_blocks() at the command's start */
 	unsigned drained;	/* sectors the Amiga read */
 	int chunk[MAXCHUNKS], nchunks;
 	unsigned char status[MAXCHUNKS + 2]; int nstatus;
@@ -190,6 +195,20 @@ static struct gayle {
 	char err[160];
 } g;
 
+/* the bytes of the mock bridge (RX_TO_GAYLE) per Gayle port at the
+   command's start, and the port-0 bytes when each CMD_IDE_DATA_WR frame
+   began (the order of the two kinds of blocks) */
+#define MAXBLOCKS 300
+static size_t gay_base[2];
+static size_t dw_at[MAXBLOCKS];
+static int ndw;
+static size_t gay_bytes(unsigned port)
+{
+	size_t n;
+	mock_gayle_into(port, &n);
+	return n - gay_base[port];
+}
+
 static void gayle_err(const char *msg)
 {
 	if (!g.err[0]) snprintf(g.err, sizeof g.err, "%s", msg);
@@ -198,7 +217,8 @@ static void gayle_err(const char *msg)
 static unsigned fifo_sectors(void)
 {
 	if (g.rx % 512) gayle_err("a partial sector in the FIFO at a status poll");
-	return (unsigned)(g.rx / 512) + (mock_dmode_blocks() - g.dm0) - g.drained;
+	if (gay_bytes(0) % 512) gayle_err("a partial card block in the FIFO at a status poll");
+	return (unsigned)(g.rx / 512) + (unsigned)(gay_bytes(0) / 512) - g.drained;
 }
 
 static unsigned char gayle_poll(void)
@@ -236,6 +256,8 @@ static unsigned char gayle_miso(void *ctx, unsigned char out)
 			snprintf(m, sizeof m, "a port-2 command word %02X inside a port-1 command: re-latches hdd_port", out);
 			if (out & 1) gayle_err(m);
 		}
+		if ((out & 0xFE) == CMD_IDE_DATA_WR && ndw < MAXBLOCKS)
+			dw_at[ndw++] = gay_bytes(0);
 		return out == 0 ? gayle_poll() : 0;
 	}
 	if (pos < sizeof g.fb) g.fb[pos] = out;
@@ -268,9 +290,8 @@ static unsigned char gayle_miso(void *ctx, unsigned char out)
 	return 0;
 }
 
-/* ---- the SPI trace of one command ---- */
+/* ---- the blocks of one command ---- */
 static size_t trace_mark;
-#define MAXBLOCKS 300
 static uint8_t blocks[MAXBLOCKS][512];
 static int nblocks;
 static int bad_frames;
@@ -290,18 +311,29 @@ static int hexval(const char **p)
 	return hi << 4 | lo;
 }
 
-/* the data blocks of the trace since trace_mark (the end of the last call):
-   CMD_IDE_DATA_WR frames (cs 10, after the 6 command bytes) and direct-mode
-   frames (cs 42), in order.  Between two commands there is only card
-   traffic (fat.c), which has neither. */
+/* the data blocks since trace_mark (the end of the last call), in the order
+   they reached Gayle: CMD_IDE_DATA_WR frames (cs 10, after the 6 command
+   bytes) of the trace, and between them the card blocks the mock bridge
+   moved into port 0 (dw_at).  A direct-mode frame (cs 42) is a bad frame
+   now: the card is not on cfide's SPI.  Bytes into port 1 are blocks of
+   port 2. */
+static void add_block(const uint8_t *b)
+{
+	if (nblocks < MAXBLOCKS) memcpy(blocks[nblocks++], b, 512);
+}
 static void trace_blocks(void)
 {
 	const char *all = mock_trace(), *t = all + trace_mark;
 	static uint8_t out[1 << 16], in[1 << 16];
 	int latch = 0;	/* HandleHDD's first frame latches port 1 */
+	size_t gn, gpos = 0;
+	const uint8_t *gp = mock_gayle_into(0, &gn);
+	int k = 0;
+	gp += gay_base[0];
+	gn -= gay_base[0];
 	nblocks = 0;
 	bad_frames = 0;
-	port2_blocks = 0;
+	port2_blocks = (int)(gay_bytes(1) / 512);
 	while (*t) {
 		const char *eol = strchr(t, '\n');
 		if (!eol) break;
@@ -315,17 +347,19 @@ static void trace_blocks(void)
 		while (p < eol && (v = hexval(&p)) >= 0) if (ni < sizeof in) in[ni++] = (uint8_t)v;
 		if (cs == 0x10 && no && ((out[0] & 0xC0) == 0x80 || (out[0] & 0xF0) == 0xC0 || (out[0] & 0xF0) == 0xF0))
 			latch = out[0] & 1;
-		if ((cs == 0x10 && no && (out[0] & 0xFE) == CMD_IDE_DATA_WR) || cs == 0x42)
-			port2_blocks += latch;
 		if (cs == 0x10 && no && (out[0] & 0xFE) == CMD_IDE_DATA_WR) {
+			size_t upto = k < ndw ? dw_at[k] : gn;
+			k++;
+			port2_blocks += latch;
+			for (; gpos + 512 <= upto; gpos += 512) add_block(gp + gpos);
 			if (no != 6 + 512) bad_frames++;
-			else if (nblocks < MAXBLOCKS) memcpy(blocks[nblocks++], out + 6, 512);
-		} else if (cs == 0x42) {
-			if (ni != 512) bad_frames++;
-			else if (nblocks < MAXBLOCKS) memcpy(blocks[nblocks++], in, 512);
-		}
+			else add_block(out + 6);
+		} else if (cs == 0x42 || (cs & 0x02))
+			bad_frames++;	/* the card on cfide's SPI */
+		(void)ni;
 		t = eol + 1;
 	}
+	for (; gpos + 512 <= gn; gpos += 512) add_block(gp + gpos);
 	trace_mark = strlen(all);
 }
 
@@ -432,7 +466,9 @@ static void command(int unit, unsigned char cmd, long lba, unsigned char count)
 	g.wdata = wd;
 	g.wlen = wl;
 	memcpy(g.tfr, t, 8);
-	g.dm0 = mock_dmode_blocks();
+	mock_gayle_into(0, &gay_base[0]);
+	mock_gayle_into(1, &gay_base[1]);
+	ndw = 0;
 	audio_polls = 0;
 	full_polls = 0;
 	HandleHDD(CMD_IDECMD, 0);
@@ -477,6 +513,8 @@ static void check_gayle(const char *what)
 	check(w, port2_blocks, 0);
 	snprintf(w, sizeof w, "%s: CD_AudioPoll (reads IDE flags) inside the command, not CD_AudioRefill", what);
 	check(w, full_polls, 0);
+	snprintf(w, sizeof w, "%s: no FPGA frame (IDE command) while a Gayle op runs", what);
+	check(w, (long)mock_gayle_cs_violations(), 0);
 }
 
 static void set_multiple(int unit, unsigned char n)
@@ -710,6 +748,56 @@ static void identify_cases(void)
 	}
 }
 
+/* card errors (findings/sdcard-engine Task 10): the card stops answering
+   (the card-detect pin still says present): a READ and a WRITE end with
+   END | IRQ | ERR and no block, ERROR_SDCARD is set (not fatal), the card
+   is not written; with the card back the next command initialises it
+   again.  A read the Amiga abandons (Gayle error on the first word): no
+   status at all, no error, the card still in use. */
+static uint8_t *wpattern(int n, int seed);
+static void error_cases(void)
+{
+	char w[200];
+	static const unsigned char err = IDE_STATUS_END | IDE_STATUS_IRQ | IDE_STATUS_ERR;
+	uint8_t *d = wpattern(2, 9), *before = malloc((size_t)card_sectors * 512);
+	int same = 1;
+	if (!before) die("out of memory");
+	for (unsigned l = 0; l < card_sectors; l++) memcpy(before + (size_t)l * 512, mock_card_sector(l), 512);
+	ClearError(ERROR_ALL);
+	mock_card_remove();
+	command(1, ACMD_READ_SECTORS, 600, 2);
+	check_gayle("card gone: READ SECTORS 600+2");
+	check("card gone: READ: no block", nblocks, 0);
+	check("card gone: READ: status RDY, then END | IRQ | ERR", g.nstatus == 2 && g.status[0] == IDE_STATUS_RDY && g.status[1] == err, 1);
+	check("card gone: READ: ERROR_SDCARD set", (ErrorMask >> ERROR_SDCARD) & 1, 1);
+	check("card gone: READ: not fatal", ErrorFatal, 0);
+	ClearError(ERROR_ALL);
+	g.wdata = d;
+	g.wlen = 1024;
+	command(1, ACMD_WRITE_SECTORS, 600, 2);
+	check_gayle("card gone: WRITE SECTORS 600+2");
+	check("card gone: WRITE: status REQ, then END | IRQ | ERR", g.nstatus == 2 && g.status[0] == IDE_STATUS_REQ && g.status[1] == err, 1);
+	check("card gone: WRITE: ERROR_SDCARD set", (ErrorMask >> ERROR_SDCARD) & 1, 1);
+	for (unsigned l = 0; l < card_sectors; l++) same &= !memcmp(before + (size_t)l * 512, mock_card_sector(l), 512);
+	check("card gone: WRITE: the card unchanged", same, 1);
+	g.wdata = NULL;
+	g.wlen = 0;
+	ClearError(ERROR_ALL);
+	mock_card_insert();
+	read_case("card back: WORK.HDF READ SECTORS 600+2 (initialised again)", 1, 0, 600, 2);
+	snprintf(w, sizeof w, "card back: no error");
+	check(w, ErrorMask, 0);
+	mock_gayle_end(MOCK_GAYLE_ERR, 0);
+	command(1, ACMD_READ_SECTORS, 610, 2);
+	check_gayle("abandoned: READ SECTORS 610+2");
+	check("abandoned: no block", nblocks, 0);
+	check("abandoned: status RDY only (none for the old command)", g.nstatus == 1 && g.status[0] == IDE_STATUS_RDY, 1);
+	check("abandoned: no error", ErrorMask, 0);
+	read_case("after the abandon: WORK.HDF READ SECTORS 610+2", 1, 0, 610, 2);
+	free(before);
+	free(d);
+}
+
 /* the Amiga's write data: block j = 'W', j, then a pattern */
 static uint8_t *wpattern(int n, int seed)
 {
@@ -777,6 +865,8 @@ int main(int argc, char **argv)
 	cd_audio_busy = 0;
 	snprintf(w, sizeof w, "drive sound steps (cylinder changes)");
 	check(w, hdd_steps > 0, 1);
+	set_multiple(1, 16);
+	error_cases();
 
 	/* writes: the card afterwards is the card before plus the written blocks */
 	uint8_t *d5 = wpattern(5, 1), *d256 = wpattern(256, 2), *d4 = wpattern(4, 3), *d3 = wpattern(3, 4);

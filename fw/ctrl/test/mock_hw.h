@@ -125,7 +125,8 @@ unsigned char *mock_ring(void);
  * Data responses: 05 + busy, 0B (no busy), 0D + busy.
  * Read blocks (CMD17/18/9, ACMD22) carry their real CRC16 when the command
  * came through the SD peripheral; through cfide's SPI() (the old card path,
- * whose goldens hold it, gold/dmode.txt) they carry the old mock's 00 00.
+ * left only for tests that drive the model by hand since Task 10) they
+ * carry the old mock's 00 00.
  * Busy and token-delay bytes are runs, so knobs of a million bytes are cheap
  * (mock_sdc_bytes_for_us() converts a time at the current SCK). */
 enum mock_card_err_kind {

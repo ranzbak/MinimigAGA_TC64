@@ -650,10 +650,15 @@ void mock_run(unsigned long long cycles)
 	irq_deliver();
 }
 
+/* traps taken up to the last hosttest_sdc_idle(): an interrupt since then
+   (an op that ended in sdc_wait's TIMER read, whose time step lets the
+   peripheral run) is progress: sdc_wait looks at sdc_events again */
+static unsigned idle_traps;
 void hosttest_sdc_idle(void)
 {
 	if (!irqc_mie || irqc_in_trap) die("sdc_wait with interrupts off: no event can arrive");
-	if (mock_sdc_step()) return;
+	if (irqc_traps != idle_traps) { idle_traps = irqc_traps; return; }
+	if (mock_sdc_step() || irqc_traps != idle_traps) { idle_traps = irqc_traps; return; }
 	if (sdc.stall_fn && sdc.stall_fn(sdc.stall_ctx)) { irq_deliver(); return; }
 	if (sdc.stall_fatal)
 		die("sdc_wait: the mock can make no progress (nothing busy, no event pending): a firmware bug");
@@ -675,7 +680,7 @@ void mock_sdc_reset(void)
 	memset(&gay, 0, sizeof gay);
 	gay.word_cyc = 12;
 	gayle_violations = 0;
-	irqc_mie = 1; irqc_in_trap = 0; irqc_traps = 0; irqc_stale = 0;
+	irqc_mie = 1; irqc_in_trap = 0; irqc_traps = 0; irqc_stale = 0; idle_traps = 0;
 	irqc_mask = 0; irqc_mode = 0; irqc_edge = 0; irqc_prev = 0; irqc_ext = 0; irqc_last_level = 0;
 	legacy_reg = 0;
 }

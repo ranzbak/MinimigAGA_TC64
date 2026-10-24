@@ -2,7 +2,8 @@
  *   mock_selftest <card.img>      card.img: a tools/sim/mkcard.sh image
  * Scripted replies per chip select, the spi.txt trace format, the timer, the
  * UART, the card image model by hand (CMD0/8/55+41/58/17/18/12/24) and under
- * the real mmc.c (MMC_Init, MMC_Read, MMC_ReadMultiple, MMC_Write). */
+ * the real mmc.c (MMC_Init, MMC_Read, MMC_ReadMultiple, MMC_Write), which
+ * reach the card through sdproto.c and the mock SD peripheral (Task 10). */
 #include <stdio.h>
 #include <string.h>
 
@@ -11,7 +12,7 @@
 #include "mmc.h"
 #include "mock_hw.h"
 
-/* what mmc.c's FatalError macro writes */
+/* what mmc.c's SetError macro writes */
 int ErrorMask, ErrorFatal;
 struct Error Errors[ERROR_MAX + 1];
 
@@ -297,7 +298,12 @@ static void card_under_mmc(const char *img)
 	CardType = 0;
 	check("MMC_Init returns the card type, SDHC", MMC_Init(), CARDTYPE_SDHC);
 	check("CardType", CardType, CARDTYPE_SDHC);
-	check("the SPI ran slow, then fast", mock_spi_speed(), 0x01);
+	{
+		struct mock_sdc_peek p;
+		mock_sdc_peek(&p);
+		check("the SD peripheral at the data rate (div 2), CS off", p.div == 2 && !p.cs, 1);
+	}
+	check("cfide's SPI: no SPEED write (the card is not on it)", mock_spi_speed(), 0);
 
 	check("MMC_Read lba 0", MMC_Read(0, buf), 1);
 	check("MMC_Read 0x55AA", buf[510] << 8 | buf[511], 0x55AA);
