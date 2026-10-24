@@ -131,8 +131,18 @@ static int index_of(unsigned long cl)
 	return (cl >= CL_BASE && cl < CL_BASE + NCL) ? cl_index[cl - CL_BASE] : -1;
 }
 
+/* card errors (Task 10 fix round 1): FileRead number fail_read (counted
+   from 0 per run) returns 0 and leaves the buffer as it was; FileNextSector
+   number fail_next (counted from arm_next) moves the sector but not the
+   cluster (its FAT read failed) and returns 0; FileWrite number fail_write
+   returns 0 and writes nothing */
+static int fail_read = -1, fail_next = -1, fail_write = -1, next_calls;
 unsigned char FileNextSector(fileTYPE *f)
 {
+	if (fail_next >= 0 && next_calls++ == fail_next) {
+		f->sector++;
+		return 0;
+	}
 	f->sector++;
 	if ((f->sector % CL_SECT) == 0) {
 		int k = index_of(f->cluster);
@@ -160,6 +170,7 @@ static long file_lba(const char *op, const fileTYPE *f)
 
 unsigned char FileRead(fileTYPE *f, unsigned char *p)
 {
+	if (file_reads == fail_read) { file_reads++; return 0; }
 	long n = file_lba("FileRead", f);
 	file_reads++;
 	if (n < 0) { memset(p, 0, 512); return 0; }
@@ -170,6 +181,7 @@ unsigned char FileRead(fileTYPE *f, unsigned char *p)
 static int wlog[64], nwlog;
 unsigned char FileWrite(fileTYPE *f, unsigned char *p)
 {
+	if (file_writes == fail_write) { file_writes++; return 0; }
 	long n = file_lba("FileWrite", f);
 	file_writes++;
 	if (n < 0) return 0;
@@ -347,6 +359,79 @@ static void read_track_case(const char *what, int t, unsigned sync, const uint8_
 {
 	insert(&df[SEL], 1);
 	read_case(what, t, 11, sync, -1, 0, want, MFM_TRACK_BYTES, 13);
+}
+
+/* ---- a sector the card could not give (Task 10 fix round 1) ----
+ * The data checksum of a sent sector slot as the Amiga checks it: the XOR
+ * of the data field's longs (odd and even halves, as sent) & 0x55555555
+ * against the decoded checksum ((odd & 0x55..) << 1 | (even & 0x55..)).
+ * Slot layout (SendSector): 4 preamble, 4 sync, 8 info, 32 label, 8 header
+ * checksum, 8 data checksum, 1024 data. */
+static int slot_data_ok(const uint8_t *slot)
+{
+	const uint8_t *cs = slot + 56, *d = slot + 64;
+	for (int k = 0; k < 4; k++) {
+		uint8_t x = 0;
+		for (int i = k; i < 1024; i += 4) x ^= d[i];
+		uint8_t dec = (uint8_t)(((cs[k] & 0x55) << 1) | (cs[4 + k] & 0x55));
+		if ((x & 0x55) != dec) return 0;
+	}
+	return 1;
+}
+
+static void read_error_cases(void)
+{
+	char w[160];
+	struct run r;
+	const uint8_t *t0 = tracks;
+	int ok = 1;
+	check("bad sector: the golden slots pass the checksum check", slot_data_ok(t0) && slot_data_ok(t0 + 5 * MFM_SECTOR_BYTES), 1);
+	/* the 4th sector's read fails */
+	insert(&df[SEL], 1);
+	fail_read = 3;
+	r = read_run(0, 11, 0x4489, -1, 0);
+	fail_read = -1;
+	check("read error: a whole track sent", (long)r.s.n, MFM_TRACK_BYTES);
+	for (int k = 0; k < 11 && r.s.n == MFM_TRACK_BYTES; k++) {
+		const uint8_t *g = r.s.b + (size_t)k * MFM_SECTOR_BYTES;
+		if (k == 3) {
+			check("read error: sector 3's data checksum is wrong (trackdisk: a read error)", slot_data_ok(g), 0);
+			check("read error: sector 3's header as always", memcmp(g, t0 + 3 * MFM_SECTOR_BYTES, 56), 0);
+		} else
+			ok &= !memcmp(g, t0 + (size_t)k * MFM_SECTOR_BYTES, MFM_SECTOR_BYTES);
+	}
+	check("read error: the other sectors as mfm.py's", ok, 1);
+	check("read error: ERROR_FDD set", (r.errmask >> ERROR_FDD) & 1, 1);
+	run_free(&r);
+	/* the FAT read of FileNextSector fails after sector 1: sectors 2..10 bad
+	   (the position is wrong, they are not read), the next read starts the
+	   track over */
+	insert(&df[SEL], 1);
+	next_calls = 0;
+	fail_next = 1;
+	r = read_run(0, 11, 0x4489, -1, 0);
+	fail_next = -1;
+	ok = 1;
+	for (int k = 0; k < 11 && r.s.n == MFM_TRACK_BYTES; k++) {
+		const uint8_t *g = r.s.b + (size_t)k * MFM_SECTOR_BYTES;
+		if (k < 2) ok &= !memcmp(g, t0 + (size_t)k * MFM_SECTOR_BYTES, MFM_SECTOR_BYTES);
+		else ok &= !slot_data_ok(g);
+	}
+	check("FAT error: sectors 0, 1 good, 2..10 with a wrong checksum", r.s.n == MFM_TRACK_BYTES && ok, 1);
+	snprintf(w, sizeof w, "FAT error: no FileRead of the lost sectors (%d reads)", r.reads);
+	check(w, r.reads, 2 + 1);
+	check("FAT error: after the wrap the position is the track's start again",
+	      df[SEL].sector_offset == 0 && df[SEL].cluster_offset == df[SEL].cache[0], 1);
+	run_free(&r);
+	/* the same, the read stopped before the wrap: the next read starts the
+	   track over (the remembered position is wrong) */
+	insert(&df[SEL], 1);
+	next_calls = 0;
+	fail_next = 1;
+	r = read_run(0, 5, 0x4489, -1, 0);
+	fail_next = -1;
+	check("FAT error, stopped at sector 5: the next read starts the track over", df[SEL].track_prev, 0xFF);
+	run_free(&r);
 }
 
 /* ---- the mock write FIFO (paula_floppy_fifo, 2048 words) -------------------
@@ -556,6 +641,8 @@ int main(int argc, char **argv)
 	DEBUG = 0;
 	want_uart = "";
 
+	read_error_cases();
+
 	/* ---- WriteTrack: the cases of mfm.py, each at three FIFO fill rates ---- */
 	static const unsigned rates[] = { FIFO_WORDS, 300, 7 };
 	const size_t ncases = sizeof fdd_wcases / sizeof fdd_wcases[0];
@@ -577,6 +664,18 @@ int main(int argc, char **argv)
 			/* the same stream on a write-protected disk: nothing written */
 			snprintf(w, sizeof w, "WriteTrack %s, write-protected", wc->name);
 			write_case(w, wc->track, stream, ns, 300, 0, disk, 0, 1 << ERROR_FDD, 0, "Disk write protected");
+			/* the card does not take the 2nd sector (Task 10 fix round 1):
+			   the others written, ERROR_FDD for the OSD */
+			uint8_t *exp = malloc(ADF_BYTES);
+			long lba = (long)wc->track * 11 + wc->order[1];
+			if (!exp) die("out of memory");
+			memcpy(exp, want, ADF_BYTES);
+			memcpy(exp + lba * 512, disk + lba * 512, 512);
+			fail_write = 1;
+			snprintf(w, sizeof w, "WriteTrack %s, the card fails the 2nd write", wc->name);
+			write_case(w, wc->track, stream, ns, 300, 1, exp, wc->nsec, 1 << ERROR_FDD, wc->track, "Floppy write error");
+			fail_write = -1;
+			free(exp);
 		}
 		if (!strcmp(wc->name, "subset1")) {
 			/* a flipped data bit in the header checksum (its even long, bit

@@ -32,8 +32,11 @@
  *      SD_ROW_TIMEOUT R1 / token / 3       CMD13 probe: no answer = gone
  *                     busy / data response
  *    A lowered SCK stays lowered until the firmware restarts.  After
- *    SD_E_GONE, SD_E_RETRIES or SD_E_ABORT the card is initialised again
- *    (sd_sync does it) before any further use.
+ *    SD_E_GONE, SD_E_RETRIES, SD_E_ABORT, SD_E_RESET (an R1 with the idle
+ *    bit) or a card-detect change the card is initialised again (sd_sync
+ *    does it) before any further use, and must be the same card (CID).
+ *    ACMD22 counting fewer blocks than the card took: those again from buf,
+ *    each time a write retry (at most 4 per op).
  *
  * Debug output (UART): sd_init's steps ("SD init: CMD0 01": the R1; ff no
  * answer, fe no card / card gone), one line per error (its row and retry),
@@ -69,11 +72,13 @@ enum sd_err {
 	SD_E_NOCARD,		/* no initialised card (sd_init failed) */
 	SD_E_ARG,		/* the op is not one this layer runs */
 	SD_E_ABORT,		/* sdc_wait's bound ran out, the step was aborted */
+	SD_E_RESET,		/* an R1 with the idle bit: the card reset itself (to be
+				   initialised again) */
 	SD_E_INTERNAL		/* the peripheral refused a step: a firmware bug */
 };
 
 /* sd_op.kind */
-enum sd_kind { SD_READ, SD_WRITE, SD_CSD };
+enum sd_kind { SD_READ, SD_WRITE, SD_CSD, SD_CID };
 
 /* One op.  The caller fills lba, count, buf, to_gayle, from_gayle, port,
  * kind; sd_submit sets the rest.
@@ -82,7 +87,7 @@ enum sd_kind { SD_READ, SD_WRITE, SD_CSD };
  *    one RX_TO_GAYLE of 512 bytes per block, each after its CRC.
  *  SD_WRITE: count blocks from buf to lba (CMD24 for 1, CMD25 + stop
  *    token for more).  from_gayle (GAYLE_TO_TX) is Task 11's: SD_E_ARG.
- *  SD_CSD: the 16 bytes of CMD9 into buf.
+ *  SD_CSD: the 16 bytes of CMD9 into buf; SD_CID: CMD10's.
  * state: the step it is in (0 = not running), err: enum sd_err once it
  * ended, done_blocks: blocks delivered (read) / programmed (write). */
 typedef struct sd_op {
@@ -99,8 +104,17 @@ typedef struct sd_op {
    Returns the card type (CARDTYPE_*, mmc.h), 0 when it failed.  Never while
    an op is active. */
 int sd_init(void);
-/* the CSD sd_init read (CMD9, CRC16 checked) */
+/* the CSD sd_init read (CMD9, CRC16 checked); the CID of the first init
+   (CMD10, CRC16 checked) */
 extern unsigned char sd_csd[16];
+extern unsigned char sd_cid[16];
+/* Card swap (the mounted FAT, hardfiles and ADFs describe the card they were
+   opened on): the first sd_init after sd_forget() keeps the CID; every later
+   one reads it again, and on another CID (or none) the card counts as
+   changed: sd_init returns 0 and every op ends SD_E_GONE until sd_forget()
+   (MMC_Init: the firmware's (re)start). */
+void sd_forget(void);
+int sd_card_changed(void);
 /* the card type of the last sd_init, 0 = none / to be initialised again */
 int sd_card_type(void);
 

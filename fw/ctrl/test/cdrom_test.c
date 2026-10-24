@@ -103,6 +103,8 @@ static char iso_name[12] = "TESTDISCISO";	/* 8.3 without the dot */
 static unsigned long iso_dir = 0x1234;
 static int fail_read_at = -1;			/* FileReadEx fails on this call */
 static int fail_err = 1;			/* ... with this MMCErr (SD_E_*; 1 = SD_E_RETRIES) */
+static int eoc_at = -1;				/* FileReadEx delivers, then returns 0 with no card
+					   error (its last seek met the end of the chain) */
 static int reads;
 unsigned long iCurrentDirectory, iPreviousDirectory;
 static int clear_errors;			/* ClearError(ERROR_FILESYSTEM) calls */
@@ -272,7 +274,7 @@ unsigned char FileOpen(fileTYPE *file, const char *name)
 	return 0;
 }
 
-void BuildHardfileIndex(hdfTYPE *h) { (void)h; }
+unsigned char BuildHardfileIndex(hdfTYPE *h) { (void)h; return 1; }
 
 unsigned char HardFileSeek(hdfTYPE *h, unsigned long lba)
 {
@@ -569,7 +571,7 @@ unsigned char FileReadEx(fileTYPE *file, unsigned char *pBuffer, unsigned long n
 	for (i = 0; i < nSize * 512 && g.fifo_len < sizeof(g.fifo); i++)
 		g.fifo[g.fifo_len++] = f ? fake_byte(f, file->sector * 512 + i) : 0;
 	file->sector += nSize;
-	return 1;
+	return reads - 1 == eoc_at ? 0 : 1;
 }
 
 /* ---- driving a command ---- */
@@ -1009,6 +1011,23 @@ static void t_read_abandon(void)
 	end();
 }
 
+/* Task 10 fix round 1: the last cluster of a cluster-aligned file:
+   FileReadEx's seek after its last block meets the end of the chain and
+   returns 0 with no card error; the data is all there: a good end */
+static void t_read_eoc(void)
+{
+	uint8_t c[12];
+	begin("a READ of the file's last cluster (FileReadEx 0 at the end of the chain, no card error): good");
+	fresh_drive(1);
+	reads = 0;
+	eoc_at = 0;
+	read10(c, 0, 1);
+	packet(c, 0xFFFE);
+	EXPECT(good_end(), "status %02X error %02X", g.end_status, g.reg[1]);
+	eoc_at = -1;
+	end();
+}
+
 static void t_reset_flag(void)
 {
 	begin("CD_Flags: rst_seen on the CD's port resets the unit, on the other port it does not");
@@ -1423,6 +1442,7 @@ int main(void)
 	t_timeout();
 	t_read_error();
 	t_read_abandon();
+	t_read_eoc();
 	t_reset_flag();
 	t_cue_bincue();
 	t_cue_mixed();

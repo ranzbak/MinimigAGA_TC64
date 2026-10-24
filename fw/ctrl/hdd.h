@@ -75,7 +75,9 @@ void WriteIDEData(const unsigned char *buf, unsigned int bytes);
 void ReadIDEData(unsigned char *buf, unsigned int bytes);
 void HandleHDD(unsigned int c1, unsigned int c2);
 void GetHardfileGeometry(hdfTYPE *hdf);
-void BuildHardfileIndex(hdfTYPE *hdf);
+/* 0 when a FAT read failed (a card error): the index would hold wrong
+   clusters, the file must not be used */
+unsigned char BuildHardfileIndex(hdfTYPE *hdf);
 unsigned char HardFileSeek(hdfTYPE *hdf, unsigned long lba);
 unsigned char OpenHardfile(unsigned int unit);
 

@@ -310,6 +310,20 @@ $(B)/card.img: $(TOP)/tools/sim/mkcard.sh
 	bash $(TOP)/tools/sim/mkcard.sh $@ 8 $(@D)/HELLO.TXT
 $(B)/mock_selftest $(B)/mock_selftest_32: | $(CARD)
 
+# rom_test: a failed card read during a ROM load (findings/sdcard-engine
+# Task 10 fix round 1): SendFileV2 (fpga.c) and UploadKickstart (config.c)
+# cut out (both files pull in the OSD and boot code) on stub files
+$(B)/sendfile.inc: $(SRC)/fpga.c
+	@mkdir -p $(@D)
+	sed -n '/^int SendFileV2(RAFile\* file/,/^}/p' $(SRC)/fpga.c > $@
+	grep -q '^int SendFileV2' $@
+$(B)/uploadkick.inc: $(SRC)/config.c
+	@mkdir -p $(@D)
+	sed -n '/^int UploadKickstart(unsigned long dir,char \*name)/,/^}/p' $(SRC)/config.c > $@
+	grep -q '^int UploadKickstart' $@
+$(eval $(call TEST,rom_test,,-Wno-pointer-to-int-cast -Wno-int-to-pointer-cast,))
+$(B)/rom_test $(B)/rom_test_32: $(B)/sendfile.inc $(B)/uploadkick.inc
+
 # OpenHardfile alone, with stubs for the FAT calls (the CD slot case): cut
 # out of hdd.c.  hdd.c as a whole builds under HOSTTEST (hdd_test links it);
 # openhf_test keeps the cut so that its stubs stay the only FAT it sees.
@@ -328,7 +342,7 @@ check_io: $(SRC)/check_io.awk $(TD)/check_io.sh $(wildcard $(TD)/check_io/*)
 
 run: fmt check_io cardpath run-mock_selftest run-cue_test run-cdaudio_test run-atapi_test run-cdrom_test \
      run-openhf_test run-lib_test run-hwmap_test run-spireply_test run-diskstat_test run-swap_test run-fat_test run-mmc_test \
-     run-config_test run-hdd_test run-fdd_test run-drivesounds_test run-boot_test run-sdc_test run-sdproto_test
+     run-config_test run-hdd_test run-fdd_test run-drivesounds_test run-boot_test run-sdc_test run-sdproto_test run-rom_test
 
 clean:
 	$(RM) -r out mut

@@ -48,14 +48,19 @@ static unsigned char op_run(sd_op *op, const char *what)
     MMCErr = (unsigned char)sd_sync(op);
     if (MMCErr == SD_OK)
         return 1;
-    if (MMCErr != SD_E_GAYLE)
+    if (MMCErr == SD_E_GONE && sd_card_changed())
+        SetError(ERROR_SDCARD, "SD card changed - reboot", (int)(op->lba + op->done_blocks), MMCErr)
+    else if (MMCErr != SD_E_GAYLE)
         SetError(ERROR_SDCARD, (char *)what, (int)(op->lba + op->done_blocks), MMCErr);
     return 0;
 }
 
-// init memory card: the card type, CARDTYPE_NONE (0) when there is none
+// init memory card (the firmware's start, ColdBoot): the card type,
+// CARDTYPE_NONE (0) when there is none.  A card swapped since the last
+// MMC_Init is accepted here (sd_forget), nowhere else.
 unsigned char MMC_Init(void)
 {
+    sd_forget();
     CardType = (unsigned char)sd_init();
     if (CardType)
         for (int i = 0; i < 16; i++)

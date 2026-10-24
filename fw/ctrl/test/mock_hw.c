@@ -98,6 +98,9 @@ static struct {
 	unsigned cmd_n, rd_blk_n, wr_blk_n;
 	struct { unsigned at, left; } err[MOCK_ERR_KINDS];
 	int gone;			/* mock_card_remove */
+	unsigned char cid[16];		/* CMD10 (mock_card_cid) */
+	unsigned acmd22_less, acmd22_times;	/* mock_card_acmd22_less */
+	unsigned wrrej_every;		/* mock_card_wrrej_every */
 	int sel;			/* selected (cfide's CS bit 1 or the peripheral's CS) */
 } card;
 static int card_via_sdc;		/* the byte being exchanged comes from the SD peripheral */
@@ -172,6 +175,13 @@ static void card_state_reset(void)
 	card.cmd_n = card.rd_blk_n = card.wr_blk_n = 0; card.wr_ok = 0;
 	memset(card.err, 0, sizeof card.err);
 	card.gone = 0; card.sel = 0;
+	{
+		static const unsigned char cid0[16] = { 0x03, 'S', 'D', 'M', 'O', 'C', 'K', '1', 0x10,
+		                                        0x12, 0x34, 0x56, 0x78, 0x01, 0x9A, 0x01 };
+		memcpy(card.cid, cid0, 16);
+	}
+	card.acmd22_less = card.acmd22_times = 0;
+	card.wrrej_every = 0;
 }
 
 static void card_do_cmd(void)
@@ -190,6 +200,13 @@ static void card_do_cmd(void)
 		return;				/* no response, no effect */
 	if (err_hit(MOCK_ERR_CMDCRC, card.cmd_n) || (card.crc_on && (unsigned)(card.cmdb[5] >> 1) != c7)) {
 		c_push_r1(card.idle ? 0x09 : 0x08);
+		return;
+	}
+	/* in idle state (after power-on or CMD0, before ACMD41 / CMD1) a card
+	   takes no data or register command: R1 idle + illegal */
+	if (card.idle && !was_app && (card.cidx == 9 || card.cidx == 10 || card.cidx == 12 ||
+	    card.cidx == 17 || card.cidx == 18 || card.cidx == 24 || card.cidx == 25)) {
+		c_push_r1(0x05);
 		return;
 	}
 	switch (card.cidx) {
@@ -231,11 +248,20 @@ static void card_do_cmd(void)
 		break;
 	case 22:
 		if (was_app) {		/* ACMD22: blocks written by the last CMD25 */
-			unsigned char d[4] = { card.wr_ok >> 24, card.wr_ok >> 16, card.wr_ok >> 8, card.wr_ok };
+			unsigned w = card.wr_ok;
+			if (card.acmd22_times && w >= card.acmd22_less) {	/* mock_card_acmd22_less */
+				w -= card.acmd22_less;
+				card.acmd22_times--;
+			}
+			unsigned char d[4] = { w >> 24, w >> 16, w >> 8, w };
 			c_push_r1(0x00);
 			if (card.tok_dly >= 0) c_push_data(d, 4, 0);
 		} else
 			c_push_r1(0x04);
+		break;
+	case 10:			/* CID */
+		c_push_r1(0x00);
+		if (card.tok_dly >= 0) c_push_data(card.cid, 16, 0);
 		break;
 	case 9: {			/* CSD v2.0 */
 		unsigned csize = card.sectors / 1024 - 1;
@@ -286,6 +312,7 @@ static void card_block_written(void)
 	unsigned char resp, inj = 0;
 	card.wr_blk_n++;
 	if (err_hit(MOCK_ERR_WRREJ, card.wr_blk_n)) inj = 0x0B;
+	else if (card.wrrej_every && card.wr_blk_n % card.wrrej_every == 0) inj = 0x0B;
 	else if (err_hit(MOCK_ERR_WRFAIL, card.wr_blk_n)) inj = 0x0D;
 	if (card.werr) resp = card.werr;
 	else if (card.crc_on && card.wrx != card.wcrc) resp = 0x0B;
@@ -452,6 +479,10 @@ void mock_card_insert(void)
 	card_power_on();
 }
 int mock_card_crc_on(void) { return card.crc_on; }
+void mock_card_cid(const unsigned char cid[16]) { memcpy(card.cid, cid, 16); }
+void mock_card_acmd22_less(unsigned n, unsigned times) { card.acmd22_less = n; card.acmd22_times = times; }
+void mock_card_wrrej_every(unsigned k) { card.wrrej_every = k; }
+unsigned mock_card_blocks_read(void) { return card.rd_blk_n; }
 unsigned mock_card_wr_ok(void) { return card.wr_ok; }
 
 /* the card's chip select: cfide's CS bit 1 (the old path) or the SD

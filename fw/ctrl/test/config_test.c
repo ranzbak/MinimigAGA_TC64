@@ -64,7 +64,7 @@ char BootPrint(const char *text)
 	return 0;
 }
 void BootPrintEx(char *str) { (void)str; }
-void SendFileV2(RAFile *file, unsigned char *key, int keysize, int address, int size) { }
+int SendFileV2(RAFile *file, unsigned char *key, int keysize, int address, int size) { return 1; }
 unsigned char OpenHardfile(unsigned int unit) { return 0; }
 int CD_Open(int slot) { return 0; }
 void ConfigIDE(unsigned char port, unsigned char on, unsigned char master, unsigned char slave, unsigned char atapi) { }
@@ -515,6 +515,23 @@ int main(int argc, char **argv)
 	check_mem("(e) config == the defaults", &config, &defaults_cfg, CFG_SIZE);
 	check_hasnt("(e) no conversion line", mock_uart(), "Converted 832");
 	check_changes("(e)", NULL, 0);
+
+	/* (f) the config file's read fails (a card error, retries out; Task 10
+	   fix round 1): no config, the defaults, the message.  The read is the
+	   load's last block: the blocks of a good load counted first */
+	{
+		unsigned b0, d;
+		card(imgs, "rv");
+		b0 = mock_card_blocks_read();
+		check("(f) a good load first", load(0), 1);
+		d = mock_card_blocks_read() - b0;
+		card(imgs, "rv");
+		mock_card_error(MOCK_ERR_RDCRC, mock_card_blocks_read() + d, 5);
+		check("(f) read error: LoadConfiguration 0", load(0), 0);
+		check_mem("(f) config == the defaults", &config, &defaults_cfg, CFG_SIZE);
+		check_has("(f) the message", bootlog, "Config file read error - using defaults");
+		check_changes("(f)", NULL, 0);
+	}
 
 	snprintf(path, sizeof path, "%s.uart", pre);
 	FILE *u = fopen(path, "wb");

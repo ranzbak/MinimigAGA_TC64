@@ -5,7 +5,9 @@
 
 void ShiftFpga(unsigned char data);
 unsigned char ConfigureFpga(void);
-void SendFileV2(RAFile* file, unsigned char* key, int keysize, int address, int size);
+/* 1, or 0 when a read of the file failed: then ERROR_ROM is set (the
+   error page's Reboot path) and the ROM area holds a part load */
+int SendFileV2(RAFile* file, unsigned char* key, int keysize, int address, int size);
 void SendFileEncrypted(RAFile *file,unsigned char *key,int keysize);
 char BootPrint(const char *text);
 char PrepareBootUpload(unsigned char base, unsigned char size);

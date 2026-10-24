@@ -75,7 +75,11 @@ int UploadKickstart(unsigned long dir,char *name)
 	if(RAOpen(&romfile,"ROM     KEY")) {
 		keysize=romfile.size;
 		if(romfile.size<sizeof(romkey)) {
-			RARead(&romfile, &romkey[0],romfile.size);
+			if (!RARead(&romfile, &romkey[0],romfile.size)) {
+				// a part key decrypts the ROM wrongly (Task 10 fix round 1)
+				SetError(ERROR_ROM,"ROM Key file read error",romfile.size,0);
+				return(0);
+			}
 		} else {
 			SetError(ERROR_ROM,"ROM Key file wrong size",romfile.size,0);
 		}
@@ -92,41 +96,63 @@ int UploadKickstart(unsigned long dir,char *name)
 			// 1MB Kickstart ROM
 			BootPrint("Uploading 1MB Kickstart ...");
 			BootPrintEx("Uploading 1MB Kickstart ...");
-			SendFileV2(&romfile, NULL, 0, 0xe00000, romfile.size>>10);
-			SendFileV2(&romfile, NULL, 0, 0xf80000, romfile.size>>10);
+			if (!SendFileV2(&romfile, NULL, 0, 0xe00000, romfile.size>>10))
+				return(0);
+			if (!SendFileV2(&romfile, NULL, 0, 0xf80000, romfile.size>>10))
+				return(0);
 			ClearVectorTable();
 			return(1024);
 		} else if(romfile.size == 0x80000) {
 			// 512KB Kickstart ROM
 			BootPrintEx("Uploading 512Kb Kickstart ...");
-			SendFileV2(&romfile, NULL, 0, 0xf80000, romfile.size>>9);
-			RAOpen(&romfile, filename);
-			SendFileV2(&romfile, NULL, 0, 0xe00000, romfile.size>>9);
+			if (!SendFileV2(&romfile, NULL, 0, 0xf80000, romfile.size>>9))
+				return(0);
+			if (!RAOpen(&romfile, filename)) {
+				SetError(ERROR_ROM,"ROM reopen failed",0,0);
+				return(0);
+			}
+			if (!SendFileV2(&romfile, NULL, 0, 0xe00000, romfile.size>>9))
+				return(0);
 			ClearVectorTable();
 			return(512);
 		} else if (romfile.size == 0x8000b) {
 			// 512KB Kickstart ROM
 			BootPrintEx("Uploading 512Kb Kickstart b ...");
-			SendFileV2(&romfile, romkey, keysize, 0xf80000, romfile.size>>9);
-			RAOpen(&romfile, filename);
-			SendFileV2(&romfile, romkey, keysize, 0xe00000, romfile.size>>9);
+			if (!SendFileV2(&romfile, romkey, keysize, 0xf80000, romfile.size>>9))
+				return(0);
+			if (!RAOpen(&romfile, filename)) {
+				SetError(ERROR_ROM,"ROM reopen failed",0,0);
+				return(0);
+			}
+			if (!SendFileV2(&romfile, romkey, keysize, 0xe00000, romfile.size>>9))
+				return(0);
 			ClearVectorTable();
 			return(512);
 		} else if (romfile.size == 0x40000) {
 			// 256KB Kickstart ROM
 			BootPrintEx("Uploading 256Kb Kickstart ...");
-			SendFileV2(&romfile, NULL, 0, 0xf80000, romfile.size>>9);
-			RAOpen(&romfile, filename);
-			SendFileV2(&romfile, NULL, 0, 0xfc0000, romfile.size>>9);
+			if (!SendFileV2(&romfile, NULL, 0, 0xf80000, romfile.size>>9))
+				return(0);
+			if (!RAOpen(&romfile, filename)) {
+				SetError(ERROR_ROM,"ROM reopen failed",0,0);
+				return(0);
+			}
+			if (!SendFileV2(&romfile, NULL, 0, 0xfc0000, romfile.size>>9))
+				return(0);
 			ClearVectorTable();
 			ClearKickstartMirrorE0();
 			return(256);
 		} else if (romfile.size == 0x4000b) {
 			// 256KB Kickstart ROM
 			BootPrintEx("Uploading 256Kb Kickstart b ...");
-			SendFileV2(&romfile, romkey, keysize, 0xf80000, romfile.size>>9);
-			RAOpen(&romfile, filename);
-			SendFileV2(&romfile, romkey, keysize, 0xfc0000, romfile.size>>9);
+			if (!SendFileV2(&romfile, romkey, keysize, 0xf80000, romfile.size>>9))
+				return(0);
+			if (!RAOpen(&romfile, filename)) {
+				SetError(ERROR_ROM,"ROM reopen failed",0,0);
+				return(0);
+			}
+			if (!SendFileV2(&romfile, romkey, keysize, 0xfc0000, romfile.size>>9))
+				return(0);
 			ClearVectorTable();
 			ClearKickstartMirrorE0();
 			return(256);
@@ -157,7 +183,8 @@ char UploadExtROM(unsigned long dir,char *name)
 			ClearError(ERROR_FILESYSTEM);
 			if(romfile.size == 0x80000) {
 				// 512KB Extended CD32 ROM
-				SendFileV2(&romfile, NULL, 0, 0xe00000, romfile.size>>9);
+				if (!SendFileV2(&romfile, NULL, 0, 0xe00000, romfile.size>>9))
+				return(0);
 				return(1);
 			}
 			else
@@ -184,7 +211,8 @@ char UploadActionReplay()
 		unsigned char *adr;
 		int data;
 		printf("Uploading HRTmon ROM... ");
-		SendFileV2(&romfile, NULL, 0, 0xa10000, (romfile.file.size+511)>>9);
+		if (!SendFileV2(&romfile, NULL, 0, 0xa10000, (romfile.file.size+511)>>9))
+			return(0);
 
 		// HRTmon config
 		adr = (unsigned char *)(((0xa10000 + 20)&0x7fffff)^HOSTMAP_ADDR);
@@ -325,9 +353,12 @@ unsigned char LoadConfiguration(char *filename)
       configTYPE *tmpconf=(configTYPE *)&sector_buffer;
       BootPrint("Opened configuration file\n");
         printf("Configuration file size: %lu\r", file.size);
-        if (file.size <= sizeof(config))
+        // a read that failed leaves a stale buffer: no config, the defaults
+        // (findings/sdcard-engine Task 10 fix round 1)
+        if (file.size <= sizeof(config) && !FileRead(&file, sector_buffer))
+            BootPrint("Config file read error - using defaults\n");
+        else if (file.size <= sizeof(config))
         {
-            FileRead(&file, sector_buffer);
 			order=cfg_order(sector_buffer, file.size);
 			if (oldname && order==CFG_BE)
 				cfg_swap(sector_buffer);	// the previous firmware's big-endian file, in memory only
@@ -671,7 +702,8 @@ unsigned char SaveConfiguration(char *filename)
 
         memset((void*)&sector_buffer, 0, sizeof(sector_buffer));
         memcpy((void*)&sector_buffer, (void*)&config, sizeof(config));
-        FileWrite(&file, sector_buffer);
+        if (!FileWrite(&file, sector_buffer))
+            return(0);	// the card did not take it (Task 10 fix round 1)
         return(1);
     }
     else

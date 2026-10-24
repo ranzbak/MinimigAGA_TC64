@@ -56,7 +56,10 @@ static unsigned char checksum[4];
 
 // sends the data in the sector buffer to the FPGA, translated into an Amiga floppy format sector
 // note that we do not insert clock bits because they will be stripped by the Amiga software anyway
-void SendSector(unsigned char *pData, unsigned char sector, unsigned char track, unsigned char dsksynch, unsigned char dsksyncl)
+// bad: the sector could not be read from the card: its data checksum is sent
+// wrong (one data bit), so trackdisk reports a read error instead of taking
+// stale bytes for the sector (findings/sdcard-engine Task 10 fix round 1)
+void SendSector(unsigned char *pData, unsigned char sector, unsigned char track, unsigned char dsksynch, unsigned char dsksyncl, int bad)
 {
 //    unsigned char checksum[4];
     unsigned int i;
@@ -138,6 +141,9 @@ void SendSector(unsigned char *pData, unsigned char sector, unsigned char track,
         checksum[3] ^= x ^ x >> 1;
     }
 
+    if (bad)
+        checksum[3] ^= 0x01;	// a data bit (0x55 mask): the Amiga's sum differs
+
     // send data checksum
     SPI(0xAA);
     SPI(0xAA);
@@ -177,6 +183,8 @@ void ReadTrack(adfTYPE *drive)
     unsigned int track;
     unsigned int dsksync;
     unsigned int dsklen;
+    int bad;		// this sector could not be read
+    int lost = 0;	// a FAT read failed: the file position is wrong until the track wraps
     //unsigned short n;
 
     if (drive->track >= drive->tracks)
@@ -224,7 +232,9 @@ void ReadTrack(adfTYPE *drive)
     while (1)
     {
         CD_AudioRefill(); // CD audio refill between sectors (13.5); no IDE flags read (cdrom.h)
-        FileRead(&file, sector_buffer);
+        bad = lost || !FileRead(&file, sector_buffer);
+        if (bad)
+            SetError(ERROR_FDD, "Floppy read error", drive->track, sector);
 
         EnableFpga();
 
@@ -262,7 +272,7 @@ void ReadTrack(adfTYPE *drive)
             {
                 //GenerateHeader(sector_header, sector_buffer, sector, track, dsksync);
                 //SendSector(sector_header, sector_buffer);
-                SendSector(sector_buffer, sector, track, (unsigned char)(dsksync >> 8), (unsigned char)dsksync);
+                SendSector(sector_buffer, sector, track, (unsigned char)(dsksync >> 8), (unsigned char)dsksync, bad);
 
                 if (sector == LAST_SECTOR)
                     SendGap();
@@ -283,13 +293,15 @@ void ReadTrack(adfTYPE *drive)
         sector++;
         if (sector < SECTOR_COUNT)
         {
-            FileNextSector(&file);
+            if (!lost && !FileNextSector(&file))	// 0: its FAT read failed
+                lost = 1;
         }
         else // go to the start of current track
         {
             sector = 0;
             file.cluster = drive->cache[drive->track];
             file.sector = drive->track * SECTOR_COUNT;
+            lost = 0;
         }
 
         // remember current sector and cluster
@@ -299,6 +311,8 @@ void ReadTrack(adfTYPE *drive)
         if (DEBUG)
             printf("->");
     }
+    if (lost)	// the remembered position is wrong: start the track again next time
+        drive->track_prev = -1;
     if (DEBUG)
         printf(":OK\r");
 }
@@ -639,6 +653,7 @@ void WriteTrack(adfTYPE *drive)
     unsigned int sector;
     unsigned int Track;
     unsigned int Sector;
+    int lost = 0;	// a FAT read failed: the file position is wrong, no more writes on this track
 
     // setting file pointer to begining of current track
     file.cluster = drive->cache[drive->track];
@@ -664,7 +679,11 @@ void WriteTrack(adfTYPE *drive)
                 {
                     if (sector < Sector)
                     {
-                        FileNextSector(&file);
+                        if (!lost && !FileNextSector(&file))	// 0: its FAT read failed
+                        {
+                            lost = 1;
+                            SetError(ERROR_FDD, "Floppy write error", drive->track, sector);
+                        }
                         sector++;
                     }
                     else
@@ -672,14 +691,21 @@ void WriteTrack(adfTYPE *drive)
                         file.cluster = drive->cache[drive->track];
                         file.sector = drive->track * 11;
                         sector = 0;
+                        lost = 0;
                     }
                 }
 
                 if (GetData())
                 {
-                    if (drive->status & DSK_WRITABLE)
-                       FileWrite(&file, sector_buffer);
-                    else
+                    // the floppy has no write status for the Amiga: the OSD's
+                    // error page tells (a sector with a wrong position is not
+                    // written at all)
+                    if (!lost && (drive->status & DSK_WRITABLE))
+                    {
+                       if (!FileWrite(&file, sector_buffer))
+                           SetError(ERROR_FDD, "Floppy write error", drive->track, sector);
+                    }
+                    else if (!lost)
 						SetError(ERROR_FDD,"Disk write protected",0,0);
                 }
             }

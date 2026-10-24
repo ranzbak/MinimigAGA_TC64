@@ -50,6 +50,10 @@ unsigned char sd_debug;
 const unsigned char sd_sck_divs[SD_SCK_STEPS] = { 2, 3, 5, 8, 13, 27 };
 
 static unsigned char sd_type;		/* CARDTYPE_*; 0: initialise first */
+unsigned char sd_cid[16];		/* the CID of the card of the first init */
+static unsigned char cid_known;		/* sd_cid holds it */
+static unsigned char inited;		/* a first init since sd_forget(): later ones compare the CID */
+static unsigned char changed;		/* another card (or no CID): no I/O until sd_forget() */
 unsigned char sd_sck_step;		/* sd_sck_divs[] index; only ever up */
 static sd_op *cur;			/* the active op */
 static unsigned char polling;		/* sd_poll's re-entry guard */
@@ -80,7 +84,7 @@ enum {
 /* what follows a command (s.after) */
 enum { A_READ, A_STOP, A_WRITE, A_APP, A_ACMD22, A_CSD, A_PROBE };
 /* what a data block is (s.dkind) */
-enum { D_BLOCK, D_CSD, D_22 };
+enum { D_BLOCK, D_REG, D_22 };
 
 static struct {
 	unsigned char st, after, next;
@@ -91,6 +95,8 @@ static struct {
 	unsigned char t_tok, t_busy, t_resp;	/* timeouts since the last progress */
 	unsigned char rd_crc, wr_crc;		/* the block's CRC retries */
 	unsigned char multi, kept, dresp, retry22, probing, dkind, gone, bad;
+	unsigned char lost;			/* ACMD22 said fewer than taken: write retries */
+	unsigned char regcmd;			/* D_REG: 9 (CSD) or 10 (CID) */
 	unsigned char fail;			/* the error to end with once the card is stopped */
 	unsigned short unsent, txlen, blen;
 	unsigned done, run0;			/* blocks done; done at the start of this CMD25 */
@@ -151,11 +157,14 @@ static void row_out(int row)
 	printf("SD: %s, row %d, retries out, lba %lu\n", row_name[row], row, err_lba());
 }
 
+/* one SCK step down; at the last step nothing (no line); the divider is
+   written while idle, so sdc_set_div cannot refuse it here, but the step
+   only counts when it did not */
 static void slower(void)
 {
-	if (sd_sck_step < SD_SCK_STEPS - 1)
-		sd_sck_step++;
-	sdc_set_div(sd_sck_divs[sd_sck_step]);
+	if (sd_sck_step >= SD_SCK_STEPS - 1 || sdc_set_div(sd_sck_divs[sd_sck_step + 1]))
+		return;
+	sd_sck_step++;
 	printf("SD: SCK one step slower, div %u\n", (unsigned)sd_sck_divs[sd_sck_step]);
 }
 
@@ -192,7 +201,8 @@ static void finish(int err)
 	s.kept = 0;
 	s.st = ST_IDLE;
 	/* the card's state is not known: initialise it before further use */
-	if (err == SD_E_GONE || err == SD_E_RETRIES || err == SD_E_ABORT || err == SD_E_INTERNAL)
+	if (err == SD_E_GONE || err == SD_E_RETRIES || err == SD_E_ABORT || err == SD_E_INTERNAL ||
+	    err == SD_E_RESET)
 		sd_type = 0;
 	/* the Amiga abandoned the command and stopping the card failed too:
 	   still no status for the old command (the caller's rule) */
@@ -237,6 +247,14 @@ static void cmd(unsigned idx, unsigned long arg, unsigned char after)
 	s.c_tmo = 0;
 	s.junk = 0;
 	tx_send(ST_C_TX);
+}
+
+/* the CMD13 probe got no R1 (timeout, or only stream bytes): card gone */
+static void probe_gone(void)
+{
+	sd_err_count[SD_ROW_TIMEOUT]++;
+	printf("SD: CMD13 probe: no answer, lba %lu\n", err_lba());
+	finish(SD_E_GONE);
 }
 
 /* CMD13: does the card answer at all? */
@@ -302,8 +320,8 @@ static void read_end(void)
 /* the data block again (CRC or token retry) */
 static void reread(void)
 {
-	if (s.dkind == D_CSD)
-		cmd(9, 0, A_CSD);
+	if (s.dkind == D_REG)
+		cmd(s.regcmd, 0, A_CSD);
 	else if (s.dkind == D_22)
 		acmd22();
 	else if (s.multi)
@@ -370,6 +388,15 @@ static void acmd22_done(void)
 		return;
 	}
 	if (k < acc) {			/* it lost blocks it took: from buf again */
+		/* each a write retry: bounded by the write CRC budget (the 05s
+		   of the rewritten blocks reset wr_crc, this not) */
+		if (s.lost >= 4) {
+			row_out(SD_ROW_WRCRC);
+			finish(SD_E_RETRIES);
+			return;
+		}
+		s.lost++;
+		row_err(SD_ROW_WRCRC, s.lost);
 		s.done = s.run0 + (unsigned)k;
 		start(SDC_OP_TX_FLUSH, 0);
 		s.unsent = 0;
@@ -402,7 +429,9 @@ static void after_cmd(void)
 		}
 		token_wait();
 		return;
-	case A_STOP:
+	case A_STOP:		/* an R1 error of CMD12 is the op's error too */
+		if (s.r1 && !s.fail)
+			s.fail = SD_E_R1;
 		if (s.fail || s.done == cur->count)
 			finish(s.fail);
 		else
@@ -461,10 +490,9 @@ static void step(unsigned st)
 		return;
 	case ST_C_R1:
 		if (st & SDC_ST_TIMEOUT) {
-			if (s.probing) {
-				sd_err_count[SD_ROW_TIMEOUT]++;
-				finish(SD_E_GONE);
-			} else
+			if (s.probing)
+				probe_gone();
+			else
 				cmd_fail(SD_ROW_TIMEOUT, &s.c_tmo);
 			return;
 		}
@@ -473,9 +501,14 @@ static void step(unsigned st)
 			if (++s.junk < 16)
 				waitop(SDC_OP_WAIT_NE, T_NCR, ST_C_R1);
 			else if (s.probing)
-				finish(SD_E_GONE);
+				probe_gone();
 			else
 				cmd_fail(SD_ROW_TIMEOUT, &s.c_tmo);
+			return;
+		}
+		if (r & 0x01) {		/* idle: the card reset itself (power) */
+			printf("SD: card in idle state (R1 %02x), lba %lu\n", (unsigned)r, err_lba());
+			finish(SD_E_RESET);
 			return;
 		}
 		if ((r & 0x08) && !s.probing) {
@@ -545,7 +578,7 @@ static void step(unsigned st)
 			reread();
 			return;
 		}
-		if (s.dkind == D_CSD) {
+		if (s.dkind == D_REG) {
 			sdc_pop(cur->buf, 16);
 			finish(SD_OK);
 			return;
@@ -695,13 +728,17 @@ int sd_submit(sd_op *op)
 	else if (op->kind == SD_WRITE)
 		bad = op->from_gayle || op->to_gayle || !op->buf;
 	else
-		bad = op->kind != SD_CSD || !op->buf;
+		bad = (op->kind != SD_CSD && op->kind != SD_CID) || !op->buf;
 	if (bad) {
 		op->err = SD_E_ARG;
 		return 0;
 	}
-	if (op->kind != SD_CSD && !op->count)
+	if ((op->kind == SD_READ || op->kind == SD_WRITE) && !op->count)
 		return 0;
+	if (changed) {			/* another card: nothing goes to it */
+		op->err = SD_E_GONE;
+		return 0;
+	}
 	if (!sd_type) {
 		op->err = SD_E_NOCARD;
 		return 0;
@@ -716,9 +753,10 @@ int sd_submit(sd_op *op)
 	else if (op->kind == SD_WRITE)
 		write_cmd();
 	else {
-		s.dkind = D_CSD;
+		s.dkind = D_REG;
 		s.blen = 16;
-		cmd(9, 0, A_CSD);
+		s.regcmd = op->kind == SD_CID ? 10 : 9;
+		cmd(s.regcmd, 0, A_CSD);
 	}
 	after_step();
 	return 0;
@@ -762,7 +800,7 @@ int sd_sync(sd_op *op)
 {
 	sync_cur(0);
 	sd_poll();
-	if (!sd_type)
+	if (!sd_type && !changed)
 		sd_init();
 	if (sd_submit(op)) {
 		op->err = SD_E_INTERNAL;
@@ -844,15 +882,24 @@ static void init_line(const char *what, int r1)
 	printf("SD init: %s %02x\n", what, (unsigned)(r1 & 0xFF));
 }
 
+void sd_forget(void)
+{
+	inited = 0;
+	cid_known = 0;
+	changed = 0;
+}
+
+int sd_card_changed(void) { return changed; }
+
 int sd_init(void)
 {
-	unsigned char r[4];
+	unsigned char r[4], cid[16];
 	unsigned polls = 0, n;
 	unsigned long t;
 	int r1, v2, mmc = 0, type;
 	sd_op op = { 0 };
 
-	if (cur)
+	if (cur || changed)
 		return 0;
 	sd_type = 0;
 	sdc_init();			/* SCK 400 kHz, CS off, FIFOs empty */
@@ -906,7 +953,8 @@ int sd_init(void)
 			type = CARDTYPE_SDHC;
 		printf("SD init: OCR %08lx, type %d\n", (unsigned long)r[0] << 24 | (unsigned long)r[1] << 16 |
 		       (unsigned)r[2] << 8 | r[3], type);
-	}
+	} else
+		printf("SD init: type %d (no OCR)\n", type);
 	r1 = icmd(59, 1, 0, 0);		/* CRC on */
 	init_line("CMD59", r1);
 	if (r1 != 0)
@@ -920,6 +968,29 @@ int sd_init(void)
 	sdc_select(0);
 	sdc_set_div(sd_sck_divs[sd_sck_step]);
 	sd_type = (unsigned char)type;
+	/* the CID: kept at the first init; every later init (after card gone, a
+	   card-detect change, retries out) must find the same card, or nothing
+	   goes to the card any more until sd_forget() (the firmware's restart):
+	   the mounted FAT and hardfiles describe the old card */
+	op.kind = SD_CID;
+	op.buf = cid;
+	if (sd_submit(&op) == 0)
+		sync_cur(&op);
+	if (inited && (op.err || !cid_known || memcmp(cid, sd_cid, 16))) {
+		changed = 1;
+		sd_type = 0;
+		init_line(op.err ? "CID unreadable: card changed? no I/O until a restart" :
+		          "card changed (CID): no I/O until a restart", op.err);
+		return 0;
+	}
+	if (!inited && !op.err) {
+		memcpy(sd_cid, cid, 16);
+		cid_known = 1;
+	}
+	if (op.err)
+		init_line("CMD10", op.err);	/* the first init goes on without it */
+	inited = 1;
+	memset(&op, 0, sizeof op);
 	op.kind = SD_CSD;
 	op.buf = sd_csd;
 	if (sd_submit(&op) == 0)

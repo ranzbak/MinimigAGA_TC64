@@ -856,6 +856,12 @@ int main(int argc, char **argv)
 	set_multiple(1, 16);
 	read_case("WORK.HDF READ MULTIPLE 4000+0 (256)", 1, 1, 4000, 256);
 	read_case("WORK.HDF READ SECTORS 7000+0 (256)", 1, 0, 7000, 256);
+	/* the file's last cluster: FileReadEx's seek after the last block meets
+	   the end of the chain (fat.c), which is no error (Task 10 fix round 1) */
+	read_case("WORK.HDF READ SECTORS 8190+2 (the last cluster)", 1, 0, 8190, 2);
+	set_multiple(1, 4);
+	read_case("WORK.HDF READ MULTIPLE 8188+4 (the last cluster)", 1, 1, 8188, 4);
+	set_multiple(1, 16);
 	/* the board deadlock of 2026-10-20: CD audio plays (CD on port 2), the
 	   Amiga reads its HDF with READ MULTIPLE of more than one block */
 	cd_audio_busy = 1;

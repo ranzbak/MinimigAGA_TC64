@@ -165,7 +165,8 @@ static void init_sequence(const char *img, const char *gold)
 		size_t n = (size_t)(strchr(c58, '\n') + 1 - log);
 		char *head = strndup(log, n);
 		check_str("the card's commands up to CMD58 = gold/mmc_init_cmds.txt (L2 boot run)", head, g);
-		check_str("then CRC on (CMD59 1) and the CSD (CMD9)", log + n, "CMD59 arg=00000001\nCMD9 arg=00000000\n");
+		check_str("then CRC on (CMD59 1), the CID (CMD10) and the CSD (CMD9)", log + n,
+		          "CMD59 arg=00000001\nCMD10 arg=00000000\nCMD9 arg=00000000\n");
 		free(head);
 	}
 	free(g);
@@ -325,9 +326,13 @@ static void timeouts(void)
 	mock_card_params(-1, 8, 1, 2);
 	t0 = mock_now();
 	bound("no token: MMC_GetCSD", MMC_GetCSD(), SD_E_RETRIES, t0, 4 * B_TOKEN * UNIT);
-	/* the card is initialised again first, whose CMD9 meets the same card */
+	/* the card is initialised again first, which cannot read its CID (no
+	   token): it counts as another card, no I/O until MMC_Init */
 	check("no token: MMC_GetCapacity 0", MMC_GetCapacity(), 0);
-	check("no token: ... the init failed at its CMD9", MMCErr, SD_E_NOCARD);
+	check("no token: ... the re-init's CID unreadable: SD_E_GONE", MMCErr, SD_E_GONE);
+	check("no token: ... the card counts as changed", sd_card_changed(), 1);
+	mock_card_params(4, 8, 1, 2);
+	check("no token: MMC_Init (the restart) takes it again", MMC_Init(), CARDTYPE_SDHC);
 
 	/* busy for ever: 4 busy waits, then CMD13 (answered by the busy 00) */
 	ready();
@@ -356,6 +361,37 @@ static void timeouts(void)
 	check("no card: within 1 ms", mock_now() - t0 < 113460, 1);
 	check("no card: MMC_Init 0", MMC_Init(), CARDTYPE_NONE);
 	mock_timer_step(1);
+}
+
+/* ---- a card swapped while out (Task 10 fix round 1): no I/O to it, the
+   OSD's "SD card changed - reboot"; MMC_Init (the firmware's restart)
+   takes it ---- */
+static void card_swap(void)
+{
+	unsigned char buf[512], before[512], cid[16];
+	ready();
+	mock_sdc_pull_card();
+	mock_run(2000000);
+	memcpy(cid, sd_cid, 16);
+	cid[10] ^= 0x5A;
+	mock_card_cid(cid);
+	mock_card_insert();
+	mock_sdc_cd(1);
+	mock_run(2000000);
+	memcpy(before, mock_card_sector(30), 512);
+	memset(buf, 0xC3, sizeof buf);
+	errors_clear();
+	check("swap: MMC_Read 0", MMC_Read(30, buf), 0);
+	check("swap: MMCErr SD_E_GONE", MMCErr, SD_E_GONE);
+	check_str("swap: the OSD's error", Errors[ERROR_SDCARD].string ? Errors[ERROR_SDCARD].string : "",
+	          "SD card changed - reboot");
+	check("swap: not fatal", ErrorFatal, 0);
+	check("swap: MMC_Write 0", MMC_Write(30, buf), 0);
+	check("swap: the new card untouched", memcmp(mock_card_sector(30), before, 512), 0);
+	check("swap: MMC_Init (the restart) takes it", MMC_Init(), CARDTYPE_SDHC);
+	errors_clear();
+	check("swap: then MMC_Read ok", MMC_Read(30, buf), 1);
+	check("swap: the data", sector_is_pattern(buf, 30), 1);
 }
 
 /* ---- the model: CMD0 ends an application command (cfide's SPI by hand) ---- */
@@ -404,6 +440,13 @@ int main(int argc, char **argv)
 		to_gayle();
 	}
 	if (!fails) timeouts();
+	if (!fails) {
+		mock_sdc_cd(1);		/* timeouts() ended with the card pulled */
+		mock_card_insert();
+		mock_run(2000000);
+		check("card back for the swap case: MMC_Init", MMC_Init(), CARDTYPE_SDHC);
+		card_swap();
+	}
 	if (!fails) model_app_cmd();
 	say("\n%d cases: %d failed\n", cases, fails);
 	if (fails) { say("mmc_test FAIL\n"); return 1; }

@@ -5,7 +5,8 @@
  *     HOSTMAP_ADDR -- the host address the firmware writes to.  That page is
  *     mapped here at its own address (mmap MAP_FIXED_NOREPLACE: the window
  *     the firmware sees as Amiga memory), and nothing outside the 24 bytes of
- *     the list changes.  With a COPPER_FILE: its bytes as they are.
+ *     the list changes.  With a COPPER_FILE: its bytes as they are; when its
+ *     read fails (a card error, Task 10 fix round 1): the default list.
  *   - CheckSum() (main.c, cut out by the Makefile into checksum.inc: main.c
  *     holds main()), the kickstart checksum the menu shows as checksum_pre: the
  *     sum of the block's big-endian 32-bit words (the 68k's view of the
@@ -29,6 +30,7 @@
 /* ---- what boot.c needs from the rest of the firmware ---- */
 unsigned char sector_buffer[1024] __attribute__((aligned(4)));
 static const unsigned char *copper_file;   /* NULL: no COPPER_FILE on the card */
+static int copper_read_fails;               /* the read gives half, then fails (a card error) */
 int RAOpen(RAFile *file, const char *filename)
 {
 	(void)file;
@@ -37,6 +39,10 @@ int RAOpen(RAFile *file, const char *filename)
 int RARead(RAFile *file, unsigned char *pBuffer, unsigned long bytes)
 {
 	(void)file;
+	if (copper_read_fails) {
+		memcpy(pBuffer, copper_file, bytes / 2);
+		return 0;
+	}
 	memcpy(pBuffer, copper_file, bytes);
 	return 1;
 }
@@ -115,6 +121,12 @@ static void test_copper(void)
 	copper_file = file;
 	BootUploadCopper();
 	check_mem("COPPER_FILE: its bytes as they are", win, want, len);
+	/* the file's read fails half way (Task 10 fix round 1): the default
+	   list, not a part one */
+	copper_read_fails = 1;
+	BootUploadCopper();
+	copper_read_fails = 0;
+	check_mem("COPPER_FILE read error: the default list", cop, copper_be, sizeof copper_be);
 	munmap(win, len);
 }
 

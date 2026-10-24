@@ -2942,7 +2942,12 @@ void InsertFloppy(adfTYPE *drive)
     {
         drive->cache[i] = file.cluster; // start of the track within image file
         for (j = 0; j < 11; j++)
-            FileNextSector(&file); // advance by track length (11 sectors)
+            if (!FileNextSector(&file)) // advance by track length (11 sectors)
+            {   // a FAT read failed: the index would be wrong (Task 10 fix round 1)
+                SetError(ERROR_FDD, "ADF index read error", i, j);
+                drive->status = 0;
+                return;
+            }
     }
 
     // copy image file name into drive struct

@@ -113,7 +113,7 @@ checkio() {
 control() {
   prep control
   local t rc=0
-  for t in mock_selftest cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_test hwmap_test spireply_test diskstat_test swap_test fat_test mmc_test config_test hdd_test fdd_test drivesounds_test boot_test sdc_test sdproto_test; do
+  for t in mock_selftest cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_test hwmap_test spireply_test diskstat_test swap_test fat_test mmc_test config_test hdd_test fdd_test drivesounds_test boot_test sdc_test sdproto_test rom_test; do
     mk control "run64-$t" > "mut/control/log.$t" 2>&1 || { echo "control: run64-$t FAILED (mut/control/log.$t)"; rc=1; }
   done
   mk control fmt > mut/control/log.fmt 2>&1 || { echo "control: fmt FAILED (mut/control/log.fmt)"; rc=1; }
@@ -164,7 +164,7 @@ unit swap_signext swap_test src swap.c 's/\tunsigned long result=(i>>24)\&0xff;/
 unit fat_startcluster fat_test src fat.c 's/le16(pEntry->StartCluster)/SwapBB(pEntry->StartCluster)/g'
 unit fat_startcluster_scan fat_test src fat.c 's/pEntry->StartCluster = le16(pEntry->StartCluster);/pEntry->StartCluster = SwapBB(pEntry->StartCluster);/'
 unit fat_filesize fat_test src fat.c 's/pEntry->FileSize = le32(pEntry->FileSize);/pEntry->FileSize = SwapBBBB(pEntry->FileSize);/'
-unit fat_link16 fat_test src fat.c 's/file->cluster = le16(fat_buffer.fat16\[i\]);/file->cluster = SwapBB(fat_buffer.fat16[i]);/'
+unit fat_link16 fat_test src fat.c 's/unsigned long next = le16(fat_buffer.fat16\[i\]);/unsigned long next = SwapBB(fat_buffer.fat16[i]);/'
 unit fat_link32 fat_test src fat.c 's/le32(fat_buffer.fat32\[i\]) \& 0x0FFFFFFF : le16/SwapBBBB(fat_buffer.fat32[i]) \& 0x0FFFFFFF : le16/'
 unit fat_eoc32 fat_test src fat.c 's/= le32(0x0FFFFFFF);/= 0xFFFFFF0F;/'
 unit fat_mbr_sig fat_test src fat.c 's/case 0x55aa:/case 0xFFFF0:/; s/case 0xaa55:/case 0x55aa:/; s/case 0xFFFF0:/case 0xaa55:/'
@@ -209,6 +209,31 @@ unit sdp_t_busy_spec sdproto_test src sdproto.c 's/^#define T_BUSY   6926$/#defi
 # mmc.c: the OSD's error, the Gayle port of a to-Gayle read
 unit mmc_noseterror mmc_test src mmc.c 's/SetError(ERROR_SDCARD, (char \*)what, (int)(op->lba + op->done_blocks), MMCErr);/;/' "ERROR_SDCARD set, not fatal"
 unit mmc_port mmc_test src mmc.c 's/op.port = ide_port \& 1;/op.port = 0;/' "FAIL ... 512 bytes there"
+
+# ---- Task 10 fix round 1 (sdproto_test, mmc_test, hdd_test, cdrom_test, rom_test, fdd_test, config_test, boot_test)
+# a read of the file's last cluster: FileReadEx 0 at the end of the chain taken for an error; FileSeek storing the EOC mark
+unit hdd_eoc hdd_test src hdd.c 's/(!FileReadEx(\&hdf\[unit\].file, 0, blk) \&\& MMCErr != SD_OK)/!FileReadEx(\&hdf[unit].file, 0, blk)/' "FAIL WORK.HDF READ SECTORS 8190+2"
+unit cd_eoc cdrom_test src cdrom.c 's/if (!FileReadEx(\&cdrom.hdf.file, 0, n) \&\& MMCErr != SD_OK)/if (!FileReadEx(\&cdrom.hdf.file, 0, n))/' "file's last cluster"
+unit fat_eoc_cluster hdd_test src fat.c 's/if (next == 0xFFFF) \/\/ FAT16 EOC/if ((file->cluster = next) == 0xFFFF) \/\/ FAT16 EOC/' "FAIL WORK.HDF READ MULTIPLE 8188+4"
+# the card swap: no CID compare, the lock not sticky, the OSD's text
+unit sdp_nocid sdproto_test src sdproto.c 's/if (inited \&\& (op.err || !cid_known || memcmp(cid, sd_cid, 16))) {/if (0) {/' "FAIL cid: another card: read SD_E_GONE"
+unit sdp_cid_unsticky sdproto_test src sdproto.c 's/^\tif (changed) {\t\t\t\/\* another card: nothing goes to it \*\/$/\tif (0) {/' "FAIL cid: write SD_E_GONE"
+unit mmc_changed_msg mmc_test src mmc.c 's/SetError(ERROR_SDCARD, "SD card changed - reboot"/SetError(ERROR_SDCARD, "SD card read"/' "FAIL swap: the OSD's error"
+# the idle bit, the ACMD22 loss bound (a hang: the 120 s timeout), the probe's line, the SCK floor
+unit sdp_noidle sdproto_test src sdproto.c 's/if (r \& 0x01) {\t\t\/\* idle/if (0) {\t\t\/* idle/' "FAIL reset: read SD_E_RESET"
+unit sdp_noloss_bound sdproto_test src sdproto.c 's/if (s.lost >= 4) {/if (0) {/'
+unit sdp_probe_line sdproto_test src sdproto.c 's/printf("SD: CMD13 probe: no answer, lba %lu\\n", err_lba());/;/' "FAIL timeout_cmd13_gone: the probe's line"
+unit sdp_floor sdproto_test src sdproto.c 's/if (sd_sck_step >= SD_SCK_STEPS - 1 || sdc_set_div(sd_sck_divs\[sd_sck_step + 1\]))/if (sd_sck_step >= SD_SCK_STEPS)/'
+# ROM loads: the block read, the copies, the key file
+unit rom_sendfile rom_test src fpga.c 's/if (!RARead(file, adr, 512)) {/if (!RARead(file, adr, 512) \&\& 0) {/' "FAIL block read fails"
+unit rom_upload rom_test src config.c 's/if (!SendFileV2(\&romfile, NULL, 0, 0xf80000, romfile.size>>9))/if (!SendFileV2(\&romfile, NULL, 0, 0xf80000, romfile.size>>9) \&\& 0)/' "FAIL block read fails: UploadKickstart 0"
+unit rom_key rom_test src config.c 's/if (!RARead(\&romfile, \&romkey\[0\],romfile.size)) {/if (0) {/' "FAIL ... the message"
+# the floppy: the wrong checksum, the lost position, the write error; the config read; the copper list
+unit fdd_badsum fdd_test src fdd.c 's/^        checksum\[3\] ^= 0x01;/        ;/' "FAIL read error: sector 3's data checksum"
+unit fdd_lost fdd_test src fdd.c 's/bad = lost || !FileRead(\&file, sector_buffer);/bad = !FileRead(\&file, sector_buffer);/' "FAIL FAT error"
+unit fdd_wrerr fdd_test src fdd.c 's/SetError(ERROR_FDD, "Floppy write error", drive->track, sector);/;/' "the card fails the 2nd write"
+unit cfg_readerr config_test src config.c 's/if (file.size <= sizeof(config) \&\& !FileRead(\&file, sector_buffer))/if (file.size <= sizeof(config) \&\& (FileRead(\&file, sector_buffer), 0))/' "FAIL (f) the message"
+unit boot_copper_err boot_test src boot.c 's/if (!RAOpen(\&file, COPPER_FILE) || !RARead(\&file, adr, COPPER_SIZE)) {/if (!RAOpen(\&file, COPPER_FILE) || (RARead(\&file, adr, COPPER_SIZE), 0)) {/' "FAIL COPPER_FILE read error"
 
 # ---- the config file's byte order (config_test) ------------------------------
 # the brief's mutant: cfg_swap without hdfdir[3] -> its field differs in cfgconv's RV file

@@ -559,7 +559,9 @@ void ATA_ReadSectors(unsigned char* tfr, int sector, int cylinder, int head, int
 						{
 							MMCErr = SD_OK;
 							HardFileSeek(&hdf[unit], lba + hdf[unit].offset); // Patch flags and checksum of RDB.  Actually necessary?
-							if (MMCErr != SD_OK || !FileReadEx(&hdf[unit].file, sector_buffer, 1))
+							// FileReadEx is 0 also when its last seek meets the end of
+							// the chain (the block was read): the card error decides
+							if (MMCErr != SD_OK || (!FileReadEx(&hdf[unit].file, sector_buffer, 1) && MMCErr != SD_OK))
 							{
 								ata_card_error();
 								return;
@@ -585,8 +587,10 @@ void ATA_ReadSectors(unsigned char* tfr, int sector, int cylinder, int head, int
 					{
 						MMCErr = SD_OK;
 						HardFileSeek(&hdf[unit], lba + hdf[unit].offset);
-						// a FAT sector the seek could not read: its position is wrong
-						if (MMCErr != SD_OK || !FileReadEx(&hdf[unit].file, 0, blk)) // NULL: into Gayle's FIFO (mmc.h)
+						// a FAT sector the seek could not read: its position is wrong.
+						// FileReadEx is 0 also when its last seek meets the end of the
+						// chain after the last block was read: the card error decides
+						if (MMCErr != SD_OK || (!FileReadEx(&hdf[unit].file, 0, blk) && MMCErr != SD_OK)) // NULL: into Gayle's FIFO (mmc.h)
 						{
 							ata_card_error();
 							return;
@@ -924,7 +928,7 @@ void GetHardfileGeometry(hdfTYPE *pHDF)
 }
 #pragma GCC diagnostic pop
 
-void BuildHardfileIndex(hdfTYPE *pHDF)
+unsigned char BuildHardfileIndex(hdfTYPE *pHDF)
 {
     // builds index to speed up hard file seek
 
@@ -942,11 +946,15 @@ void BuildHardfileIndex(hdfTYPE *pHDF)
         pHDF->index_size++;
     }
 
+    MMCErr = SD_OK;
     for (i = 0; i < file->size; i += j)
     {
         FileSeek(file, i >> 9, SEEK_SET); // FileSeek seeks in 512-byte sectors
+        if (MMCErr != SD_OK)	// a FAT read failed: this entry would be wrong (Task 10 fix round 1)
+            return 0;
         *index++ = file->cluster;
     }
+    return 1;
 }
 
 unsigned char HardFileSeek(hdfTYPE *pHDF, unsigned long lba)
@@ -992,7 +1000,13 @@ unsigned char OpenHardfile(unsigned int unit)
 						printf(" (%lu MB)\r", ((((unsigned long) hdf[unit].cylinders) * hdf[unit].heads * hdf[unit].sectors) >> 11));
 
 						time = GetTimer(0);
-						BuildHardfileIndex(&hdf[unit]);
+						if (!BuildHardfileIndex(&hdf[unit]))
+						{	// wrong clusters in the index would read and write wrong places
+							hdf[unit].type = HDF_DISABLED;
+							hf->present = 0;
+							SetError(ERROR_HDD, "Hardfile index read error", unit, 0);
+							return 0;
+						}
 						time = GetTimer(0) - time;
 						printf("Hardfile indexed in %lu ms\r", time >> 16);
 
@@ -1053,8 +1067,15 @@ unsigned char GetHDFFileType(char *filename)
 		DEBUG1("Hunting for RDB...");
 		for(i=0;i<16;++i)
 		{
-			FileRead(&rdbfile,sector_buffer);
+			// a read that failed: stop, the buffer is stale (not an RDB);
+			// a seek that hit a card error: the next read would be from a
+			// wrong place (Task 10 fix round 1)
+			MMCErr = SD_OK;
+			if (!FileRead(&rdbfile,sector_buffer))
+				return(HDF_FILETYPE_UNKNOWN);
 			FileSeek(&rdbfile,512,SEEK_CUR);
+			if (MMCErr != SD_OK)
+				i = 16;	/* this sector is still looked at, no further one */
 			if(sector_buffer[0]=='R' && sector_buffer[1]=='D' && sector_buffer[2]=='S' && sector_buffer[3]=='K')
 				return(HDF_FILETYPE_RDB);
 			if(sector_buffer[0]=='D' && sector_buffer[1]=='O' && sector_buffer[2]=='S')

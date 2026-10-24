@@ -81,8 +81,10 @@ out:
 }
 
 
-// SendFileV2 (for minimig_v2)
-void SendFileV2(RAFile* file, unsigned char* key, int keysize, int address, int size)
+// SendFileV2 (for minimig_v2): 1, or 0 with ERROR_ROM set when a read of
+// the file failed (findings/sdcard-engine Task 10 fix round 1: the Amiga
+// must not run a part-loaded ROM; the error page reboots on ERROR_ROM)
+int SendFileV2(RAFile* file, unsigned char* key, int keysize, int address, int size)
 {
 	int i,j;
 	unsigned int keyidx=0;
@@ -94,13 +96,21 @@ void SendFileV2(RAFile* file, unsigned char* key, int keysize, int address, int 
 	printf("[");
 	if (keysize) {
 		// read header
-		RARead(file, sector_buffer, 0xb);
+		if (!RARead(file, sector_buffer, 0xb)) {
+			SetError(ERROR_ROM, "ROM read error", address, -1);
+			printf("]\r");
+			return 0;
+		}
 	}
 
 	for (i=0; i<size; i++) {
 		unsigned char *adr = (unsigned char *)(((address + i*512) & 0x7fffff) ^ HOSTMAP_ADDR);
 		if (!(i&31)) printf("*");
-		RARead(file, adr, 512);
+		if (!RARead(file, adr, 512)) {
+			SetError(ERROR_ROM, "ROM read error", address, i);
+			printf("]\r");
+			return 0;
+		}
 		if (keysize) {
 			// decrypt ROM
 			for (j=0; j<512; j++) {
@@ -126,6 +136,7 @@ void SendFileV2(RAFile* file, unsigned char* key, int keysize, int address, int 
 	if (applypatchstr) {
 		printf("%s", applypatchstr);
 	}
+	return 1;
 }
 
 

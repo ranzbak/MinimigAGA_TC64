@@ -34,7 +34,7 @@ void ChangeDirectory(unsigned long dir) { }
 unsigned char FileOpen(fileTYPE *file, const char *name) { file_opens++; return 0; }
 void GetHardfileGeometry(hdfTYPE *pHDF) { }
 unsigned long GetTimer(unsigned long offset) { return 0; }
-void BuildHardfileIndex(hdfTYPE *pHDF) { }
+unsigned char BuildHardfileIndex(hdfTYPE *pHDF) { return 1; }
 
 #include "openhf.inc"
 

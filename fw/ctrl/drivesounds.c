@@ -454,7 +454,11 @@ int drivesounds_init(const char *filename)
 		{
 			printf("Audio file - length %d\n",(int)file.size);		
 			buf-=file.size;
-			RARead(&file,(unsigned char *)buf,file.size);
+			if(!RARead(&file,(unsigned char *)buf,file.size))
+			{
+				printf("Read error in DriveSounds file\n");	// not loaded (Task 10 fix round 1)
+				return(0);
+			}
 			/* The file is big-endian (sw/mkdrivesounds): the header longs
 			   are read byte by byte (buf is at AUDIO_BUFFER - size, and
 			   the sizes are even, not multiples of 4: misaligned longs),

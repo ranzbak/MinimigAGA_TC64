@@ -28,7 +28,7 @@ int RARead(RAFile *file,unsigned char *pBuffer, unsigned long bytes)
 	while(bytes>511)
 	{
 		result&=FileRead(&file->file,pBuffer);	// Read direct to pBuffer
-		FileNextSector(&file->file);
+		result&=FileNextSector(&file->file);	// 0: its FAT read failed (the position is wrong)
 		bytes-=512;
 		file->ptr+=512;
 		pBuffer+=512;
@@ -38,7 +38,7 @@ int RARead(RAFile *file,unsigned char *pBuffer, unsigned long bytes)
 	{
 		int i;
 		result&=FileRead(&file->file,file->buffer);	// Read to temporary buffer, allowing us to preserve any leftover for the next read.
-		FileNextSector(&file->file);
+		result&=FileNextSector(&file->file);
 		for(i=0;(unsigned long)i<bytes;++i)
 		{
 			*pBuffer++=file->buffer[i];
@@ -61,8 +61,9 @@ int RAReadLine(RAFile *file,unsigned char *pBuffer, unsigned long bytes)
 		int l=blockoffset+bytes;
 		if(!blockoffset)
 		{
-			FileRead(&file->file,file->buffer);	// Read to temporary buffer, allowing us to preserve any leftover for the next read.
-			FileNextSector(&file->file);
+			// a failed read or FAT read: no line (Task 10 fix round 1)
+			if (!FileRead(&file->file,file->buffer) || !FileNextSector(&file->file))
+				return(0);
 		}
 		if(l>512)
 			l=512;
@@ -95,7 +96,7 @@ int RASeek(RAFile *file,unsigned long offset,unsigned long origin)
 	if(result && blockoffset)	// If we're seeking into the middle of a block, we need to buffer it...
 	{
 		result&=FileRead(&file->file,file->buffer);
-		FileNextSector(&file->file);
+		result&=FileNextSector(&file->file);
 	}
 	file->ptr=offset;
 	return(result);

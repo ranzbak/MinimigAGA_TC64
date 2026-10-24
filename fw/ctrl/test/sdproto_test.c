@@ -85,6 +85,7 @@ static void card(void)
 	}
 	memset(sd_err_count, 0, sizeof sd_err_count);
 	sd_sck_step = 0;	/* the firmware's power-on value */
+	sd_forget();		/* a new card for each case: its first init */
 }
 static int is_pat(const unsigned char *b, unsigned lba)
 {
@@ -188,8 +189,8 @@ static void t_init_crc_on(void)
 	mock_uart_clear();
 	check("init_crc_on: sd_init = SDHC", sd_init(), CARDTYPE_SDHC);
 	check_has("init_crc_on: CMD0", mock_card_log(), "CMD0 arg=00000000\nCMD8 arg=000001aa\nCMD55 arg=00000000\nACMD41 arg=40000000\n");
-	check_has("init_crc_on: CMD58 then CMD59(1) then CMD9", mock_card_log(),
-	          "CMD58 arg=00000000\nCMD59 arg=00000001\nCMD9 arg=00000000\n");
+	check_has("init_crc_on: CMD58 then CMD59(1), CMD10 (CID), CMD9 (CSD)", mock_card_log(),
+	          "CMD58 arg=00000000\nCMD59 arg=00000001\nCMD10 arg=00000000\nCMD9 arg=00000000\n");
 	check("init_crc_on: the card checks CRCs", mock_card_crc_on(), 1);
 	check("init_crc_on: data rate div 2 (18.9 MHz)", div_now(), 2);
 	check("init_crc_on: sd_sck_div", sd_sck_div(), 2);
@@ -343,6 +344,7 @@ static void t_timeout_cmd13_gone(void)
 	free(w);
 	mock_sdc_wire_on(0);
 	check("timeout_cmd13_gone: card to be initialised again", sd_card_type(), 0);
+	check_has("timeout_cmd13_gone: the probe's line", mock_uart(), "SD: CMD13 probe: no answer, lba 10");
 	mock_card_insert();
 	check("timeout_cmd13_gone: after the card is back: read ok (re-init)", rd(10, 1, b), SD_OK);
 	check("timeout_cmd13_gone: data", is_pat(b, 10), 1);
@@ -369,24 +371,32 @@ static void t_token_100ms(void)
 {
 	unsigned char b[512];
 	sd_op op = { 0 };
-	long loops = 0, ones = 0;
+	long loops = 0, moving = 0;
+	unsigned long long b0;
+	struct mock_sdc_peek p;
 	card(); if (!init()) return;
 	mock_card_params((int)mock_sdc_bytes_for_us(100000), 8, 1, 2);
 	op.lba = 900; op.count = 1; op.buf = b; op.kind = SD_READ;
 	check("token_100ms: submit", sd_submit(&op), 0);
 	for (;;) {
-		int r = sd_poll();
+		int r;
+		mock_sdc_peek(&p);
+		b0 = p.bytes;
+		r = sd_poll();
 		if (!r) break;
-		ones++;
 		loops++;
 		mock_run(100000);	/* the main loop's other work: 0.88 ms */
+		mock_sdc_peek(&p);
+		/* the op active, the card clocked while the loop did other work */
+		if (p.bytes > b0 && op.state != 0) moving++;
 		if (loops > 100000) break;
 	}
 	check("token_100ms: no error", op.err, SD_OK);
 	check("token_100ms: data", is_pat(b, 900), 1);
 	check("token_100ms: no timeout", errs(), 0);
 	check("token_100ms: the loop ran on (> 100 passes of 0.88 ms)", loops > 100, 1);
-	check("token_100ms: sd_poll 1 on every pass", ones, loops);
+	check("token_100ms: the token wait went on in the peripheral during the passes (> 100)", moving > 100, 1);
+	check("token_100ms: ended soon after the token (passes < 200: 176 ms)", loops < 200, 1);
 	check("token_100ms: idle: sd_poll 0", sd_poll(), 0);
 }
 
@@ -529,6 +539,106 @@ static void t_gone(void)
 	uart_dump("gone");
 }
 
+/* Task 10 fix round 1: the card is swapped while out: another CID refuses
+   all further I/O (until sd_forget, MMC_Init's), the card untouched */
+static void t_cid(void)
+{
+	unsigned char b[512], w[512], before[512], other[16];
+	card(); if (!init()) return;
+	check("cid: kept at the first init", memcmp(sd_cid, "\x03SDMOCK1", 8), 0);
+	/* the same card out and in: goes on (t_gone too) */
+	mock_sdc_pull_card();
+	mock_run(2000000);
+	mock_card_insert();
+	mock_sdc_cd(1);
+	mock_run(2000000);
+	check("cid: same card back: read ok", rd(70, 1, b), SD_OK);
+	check("cid: not changed", sd_card_changed(), 0);
+	/* another card */
+	mock_sdc_pull_card();
+	mock_run(2000000);
+	memcpy(other, sd_cid, 16);
+	other[9] ^= 0xFF;	/* another serial number */
+	mock_card_cid(other);
+	mock_card_insert();
+	mock_sdc_cd(1);
+	mock_run(2000000);
+	memcpy(before, mock_card_sector(71), 512);
+	wdata(w, 1, 7);
+	check("cid: another card: read SD_E_GONE", rd(71, 1, b), SD_E_GONE);
+	check("cid: changed", sd_card_changed(), 1);
+	check("cid: write SD_E_GONE", wr(71, 1, w, NULL), SD_E_GONE);
+	check("cid: the card untouched", memcmp(mock_card_sector(71), before, 512), 0);
+	check("cid: sd_init refuses", sd_init(), 0);
+	check("cid: still SD_E_GONE", rd(71, 1, b), SD_E_GONE);
+	{
+		unsigned c = mock_card_commands();
+		rd(72, 1, b);
+		check("cid: no command reaches the card", mock_card_commands(), c);
+	}
+	sd_forget();		/* the firmware's restart */
+	check("cid: after sd_forget: init", sd_init(), CARDTYPE_SDHC);
+	check("cid: the new CID kept", memcmp(sd_cid, other, 16), 0);
+	check("cid: read ok", rd(71, 1, b), SD_OK);
+}
+
+/* the card reset itself (power): an R1 with the idle bit is SD_E_RESET, the
+   next op initialises it again (same CID: goes on) */
+static void t_card_reset(void)
+{
+	unsigned char b[512];
+	card(); if (!init()) return;
+	mock_uart_clear();
+	mock_card_insert();	/* a power-on card: idle, CRC off; same memory, same CID */
+	check("reset: read SD_E_RESET", rd(80, 1, b), SD_E_RESET);
+	check_has("reset: UART line", mock_uart(), "SD: card in idle state (R1 05), lba 80");
+	check("reset: to be initialised", sd_card_type(), 0);
+	check("reset: next read ok", rd(80, 1, b), SD_OK);
+	check("reset: data", is_pat(b, 80), 1);
+	check("reset: CRC on again", mock_card_crc_on(), 1);
+}
+
+/* ACMD22 counts fewer than the card took: those blocks again from buf, each
+   time a write retry, bounded */
+static void t_acmd22_less(void)
+{
+	unsigned char b[5 * 512];
+	int done = -1, ok = 1;
+	card(); if (!init()) return;
+	wdata(b, 5, 8);
+	mock_card_error(MOCK_ERR_WRREJ, 3, 1);
+	mock_card_acmd22_less(1, 1);	/* says 1 where 2 were written */
+	check("acmd22 less: ok", wr(1700, 5, b, &done), SD_OK);
+	check("acmd22 less: done 5", done, 5);
+	for (unsigned k = 0; k < 5; k++) ok &= !memcmp(mock_card_sector(1700 + k), b + 512 * k, 512);
+	check("acmd22 less: card content right", ok, 1);
+	check_has("acmd22 less: CMD25 from the 2nd block", mock_card_log(),
+	          "ACMD22 arg=00000000\nCMD25 arg=000006a5\n");
+	check("acmd22 less: a write retry counted (0B + 1)", sd_err_count[SD_ROW_WRCRC], 2);
+	/* a card that loses a block every time (every 2nd block 0B, ACMD22
+	   one short): without the bound the rewritten blocks' 05s would reset
+	   the write retries for ever */
+	card(); if (!init()) return;	/* the mock's block count from 1 again */
+	mock_card_wrrej_every(2);
+	mock_card_acmd22_less(1, 1000);
+	check("acmd22 lossy: ends SD_E_RETRIES", wr(1800, 3, b, NULL), SD_E_RETRIES);
+	check("acmd22 lossy: 5 rejections + 5 losses (the 5th: retries out)", sd_err_count[SD_ROW_WRCRC], 10);
+	mock_card_wrrej_every(0);
+}
+
+/* SCK at the last step: no further step, no line */
+static void t_sck_floor(void)
+{
+	unsigned char b[512];
+	card(); if (!init()) return;
+	sd_sck_step = SD_SCK_STEPS - 1;
+	mock_uart_clear();
+	mock_card_error(MOCK_ERR_RDCRC, 1, 3);
+	check("sck floor: read ok", rd(90, 1, b), SD_OK);
+	check("sck floor: stays at the slowest", sd_sck_div(), sd_sck_divs[SD_SCK_STEPS - 1]);
+	check_not("sck floor: no step-down line", mock_uart(), "SCK one step slower");
+}
+
 static void t_csd_and_args(void)
 {
 	unsigned char csd[16];
@@ -572,6 +682,10 @@ int main(void)
 	t_write_exhaust();
 	t_gone();
 	t_csd_and_args();
+	t_cid();
+	t_card_reset();
+	t_acmd22_less();
+	t_sck_floor();
 	say("\n%d checks: %d failed\n", cases, fails);
 	say("sdproto_test %s (%d checks)\n", fails ? "FAIL" : "PASS", cases);
 	return fails ? 1 : 0;

@@ -150,6 +150,19 @@ unsigned char *mock_card_wsector(unsigned lba);
 void mock_card_remove(void);
 void mock_card_insert(void);
 int mock_card_crc_on(void);         /* CMD59 state */
+/* CMD10: R1, token, these 16 bytes, CRC16 (a fixed CID after mock_reset();
+   mock_card_insert() keeps it: set another one for "another card") */
+void mock_card_cid(const unsigned char cid[16]);
+/* the next `times` ACMD22 answers count n blocks fewer than written (a card
+   that lost blocks it took) */
+void mock_card_acmd22_less(unsigned n, unsigned times);
+/* every k-th written block (counted as MOCK_ERR_WRREJ counts) gets 0B; 0: off */
+void mock_card_wrrej_every(unsigned k);
+/* CMD17/18 blocks the card has sent (whose last byte left it): what
+   MOCK_ERR_RDCRC counts */
+unsigned mock_card_blocks_read(void);
+/* In idle state (power-on, CMD0, before ACMD41) CMD9/10/12/17/18/24/25 get
+   R1 05 (idle + illegal) and do nothing (Task 10 fix round 1). */
 unsigned mock_card_wr_ok(void);     /* what ACMD22 would answer now */
 
 /* ---- time ----

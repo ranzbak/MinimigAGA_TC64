@@ -1456,17 +1456,23 @@ unsigned char FileSeek(fileTYPE *file, unsigned long offset, unsigned long origi
             buffered_fat_index = sb; // remember current buffer index
         }
 
+        // the end of the chain: 0, the file pointer left at the start of the
+        // last cluster (cluster and sector agree; the EOC mark in
+        // file->cluster made the next seek inside that cluster read from a
+        // wrong address, findings/sdcard-engine Task 10 fix round 1)
         if (fat32)
         {
-            file->cluster = le32(fat_buffer.fat32[i]) & 0x0FFFFFFF; // get FAT32 link (little-endian on disk)
-            if (file->cluster == 0x0FFFFFFF) // FAT32 EOC
+            unsigned long next = le32(fat_buffer.fat32[i]) & 0x0FFFFFFF; // get FAT32 link (little-endian on disk)
+            if (next == 0x0FFFFFFF) // FAT32 EOC
                 return 0;
+            file->cluster = next;
         }
         else
         {
-            file->cluster = le16(fat_buffer.fat16[i]); // get FAT16 link (little-endian on disk)
-            if (file->cluster == 0xFFFF) // FAT16 EOC
+            unsigned long next = le16(fat_buffer.fat16[i]); // get FAT16 link (little-endian on disk)
+            if (next == 0xFFFF) // FAT16 EOC
                 return 0;
+            file->cluster = next;
         }
 
         file->sector += cluster_size; // move file pointer to next cluster

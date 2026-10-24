@@ -141,13 +141,14 @@ void BootUploadLogo()
 	int i=0;
 	unsigned char *adr;
 
-	if (RAOpen(&file, LOGO_FILE)) {
-		RARead(&file, sector_buffer, 512);
+	// a failed read ends the logo there (Task 10 fix round 1: no stale bytes)
+	if (RAOpen(&file, LOGO_FILE) && RARead(&file, sector_buffer, 512)) {
 		for (y=0; y<LOGO_HEIGHT; y++) {
 			adr = (unsigned char *)((SCREEN_BPL1+LOGO_OFFSET+y*(SCREEN_WIDTH/8))^HOSTMAP_ADDR);
 			for (x=0; x<LOGO_WIDTH/16; x++) {
 				if (i == 512) {
-					RARead(&file, sector_buffer, 512);
+					if (!RARead(&file, sector_buffer, 512))
+						goto out;
 					i = 0;
 				}
 				*adr++=sector_buffer[i++];
@@ -158,7 +159,8 @@ void BootUploadLogo()
 			adr = (unsigned char *)((SCREEN_BPL2+LOGO_OFFSET+y*(SCREEN_WIDTH/8))^HOSTMAP_ADDR);
 			for (x=0; x<LOGO_WIDTH/16; x++) {
 				if (i == 512) {
-					RARead(&file, sector_buffer, 512);
+					if (!RARead(&file, sector_buffer, 512))
+						goto out;
 					i = 0;
 				}
 				*adr++=sector_buffer[i++];
@@ -166,6 +168,7 @@ void BootUploadLogo()
 			}
 		}
 	}
+out:
   ClearError(ERROR_FILESYSTEM);
 }
 
@@ -178,7 +181,8 @@ void BootUploadBall()
 
 	if (RAOpen(&file, BALL_FILE)) {
 		adr = (unsigned char *)(BALL_ADDRESS ^ HOSTMAP_ADDR);
-		RARead(&file, adr, BALL_SIZE);
+		if (!RARead(&file, adr, BALL_SIZE))
+			memset(adr, 0, BALL_SIZE);	// no part ball (Task 10 fix round 1)
 	}
 	ClearError(ERROR_FILESYSTEM);
 }
@@ -190,10 +194,10 @@ void BootUploadCopper()
 	RAFile file;
 	unsigned char *adr;
 
-	if (RAOpen(&file, COPPER_FILE)) {
-		adr = (unsigned char *)(COPPER_ADDRESS ^ HOSTMAP_ADDR);
-		RARead(&file, adr, COPPER_SIZE);
-	} else {
+	// a copper list read that failed: the default list, not a part one
+	// (Task 10 fix round 1: stale words would run as copper instructions)
+	adr = (unsigned char *)(COPPER_ADDRESS ^ HOSTMAP_ADDR);
+	if (!RAOpen(&file, COPPER_FILE) || !RARead(&file, adr, COPPER_SIZE)) {
 		/* the 68k's copper list: big-endian words */
 		unsigned short *p = (unsigned short *)(COPPER_ADDRESS ^ HOSTMAP_ADDR);
 		*p++=be16(0x00e0); *p++=be16(0x0008);

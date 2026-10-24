@@ -245,7 +245,8 @@ static int cd_hdf_open(hdfTYPE *h, int *open, int f)
 	}
 	h->type = HDF_FILE;
 	h->offset = 0;
-	BuildHardfileIndex(h);
+	if (!BuildHardfileIndex(h))	/* a FAT read failed: wrong clusters in the index */
+		return 0;
 	*open = f;
 	return 1;
 }
@@ -559,8 +560,12 @@ static int cd_send_sectors(int port, unsigned char *tfr, unsigned long block, un
 		CD_AudioPoll();	/* between blocks, never inside FileReadEx (13.5) */
 		cd_phase(tfr, n << 9, 0x02, IDE_STATUS_RDY);
 		MMCErr = SD_OK;
-		if (!FileReadEx(&cdrom.hdf.file, 0, n))	/* into Gayle's FIFO of ide_port (mmc.h) */
-			/* a Gayle error: the host wrote a new command, no status for this one */
+		/* into Gayle's FIFO of ide_port (mmc.h).  FileReadEx is 0 also when
+		   its last seek meets the end of the chain after the last block was
+		   read (a cluster-aligned file's last cluster): the card error
+		   decides.  A Gayle error: the host wrote a new command, no status
+		   for this one. */
+		if (!FileReadEx(&cdrom.hdf.file, 0, n) && MMCErr != SD_OK)
 			return MMCErr == SD_E_GAYLE ? CD_GONE : cd_read_error(block + count * 4 - left);
 		if ((r = cd_wait(port)) != CD_DONE)
 			return r;
