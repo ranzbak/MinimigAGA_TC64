@@ -1,0 +1,3 @@
+# Paul: copy 1 (OSD closed) start ~16:20:19
+# Paul: copy 1 end / copy 2 (menu open) start ~16:21:20
+# Paul: copy 3 done ~16:22:36
