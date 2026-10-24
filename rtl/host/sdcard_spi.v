@@ -152,7 +152,10 @@
 //     taken (popped / pushed, COUNT + 2), then the op ends.  With g_err it is
 //     a Gayle error.  g_ack in the cycle of the last word's pulse counts as
 //     early (fewer words when it is seen): a Gayle error.  Dir 0 rolls TX
-//     back in both cases, the word included.
+//     back in both cases, the word included.  The same holds for an end by
+//     card gone or by ABORT in the cycle of a g_wnext / g_rvalid: the word is
+//     taken (COUNT + 2), then the op ends with that reason (dir 0: rolled
+//     back).
 //   - g_ack / g_err / g_wnext / g_rvalid outside g_req are ignored.
 //
 // Register timing contract (Task 8, cfide):
@@ -309,14 +312,37 @@ module sdcard_spi #(
     // ------------------------------------------------------------ op decode
     wire [3:0] cmd_op   = reg_d[3:0];
     wire       len_ok   = len_r != 11'd0 && !len_r[0];       // Gayle ops: even, > 0
-    wire       tx_room  = {1'b0, txlvl} + {1'b0, len_r} <= 12'd1024;
+    // The command checks of GAYLE_TO_TX (room for LEN) and RX_TO_GAYLE (LEN
+    // verified bytes) come from registers loaded every cycle (tx_room_r,
+    // rx_ready_r, below), one cycle old at the CMD strobe; poisoned is used
+    // as it is.  Their inputs change only
+    //   - on register accesses: pushes (TXW / TXB: both bytes are in by the
+    //     cycle after the strobe), pops (RXW / RXB, at the strobe), LEN writes,
+    //     TX_COMMIT / TX_FLUSH / RX_FLUSH (CMD strobes).  Strobes are >= 4
+    //     cycles apart, so all of it is in the registers at the next strobe;
+    //   - while an op runs (shifter bytes into RX change RXLVL, not verified;
+    //     Gayle pushes and pops): the CMD is refused for busy then;
+    //   - at an op's end (a rollback lowers TXLVL, a good CRC-checked XFER
+    //     raises verified): one cycle old they show less room / fewer
+    //     verified bytes than there are, so a CMD strobe in the very cycle
+    //     after an op ended can only be refused, never wrongly accepted
+    //     (the firmware learns of the end through a register read, >= 1
+    //     cycle after it, and writes its next CMD >= 4 cycles after that).
+    // The bench checks both at every CMD strobe (exact, or after an op's end
+    // only ever the smaller answer).
+    reg        tx_room_r, rx_ready_r;
+    wire       tx_room  = tx_room_r;
 `ifdef SDC_MUT_NOINTERLOCK
     wire       rx_ready = 1'b1;
 `else
     // RXLVL >= LEN follows: verified <= RXLVL always (set to RXLVL at most,
     // both lowered by every pop; the bench checks it every cycle)
-    wire       rx_ready = !poisoned && verified >= len_r;
+    wire       rx_ready = !poisoned && rx_ready_r;
 `endif
+    always @(posedge clk) begin
+        tx_room_r  <= {1'b0, txlvl} + {1'b0, len_r} <= 12'd1024;
+        rx_ready_r <= verified >= len_r;
+    end
     reg        cmd_ok;
     always @* begin
         case (cmd_op)
@@ -344,14 +370,20 @@ module sdcard_spi #(
 
     // ------------------------------------------------------------ Gayle words
     wire       cpu_lock = g_req_r;                    // CPU data port locked during a Gayle op
-    wire       g_more   = cnt != len_r;               // LEN even, words of 2: an exact compare
-    wire       g_take   = g_req_r && g_dir_r && g_wnext && g_more;
+    // g_more_r = (COUNT != LEN) and g_last_r = (COUNT + 2 == LEN), registers
+    // that hold while a Gayle op runs: COUNT is 0 from the op's accept and
+    // moves only by a word (+ 2) during it (the shifter does not run in a
+    // Gayle op), so both follow from the accept and from each word, with no
+    // compare behind g_wnext / g_rvalid (LEN is even: words of 2, exact).
+    // Outside Gayle ops they are not used.  The bench checks them every cycle.
+    reg        g_more_r, g_last_r;
+    wire       g_take   = g_req_r && g_dir_r && g_wnext && g_more_r;
     wire       g_pop    = g_take && g_wvalid_r;
     wire       g_early  = g_take && !g_wvalid_r;          // no full word: Gayle error, nothing taken
-    wire       g_push   = g_req_r && !g_dir_r && g_rvalid && g_more;
+    wire       g_push   = g_req_r && !g_dir_r && g_rvalid && g_more_r;
     wire       g_word   = g_pop | g_push;
     wire       g_end    = g_req_r && (g_ack || g_err || g_early);
-    wire       g_good   = g_ack && !g_err && !g_early && !g_more;
+    wire       g_good   = g_ack && !g_err && !g_early && !g_more_r;
 
     // ------------------------------------------------------------ TX push (port A)
     reg        pend_v;                  // second byte of a TXW still to write
@@ -369,8 +401,18 @@ module sdcard_spi #(
     wire [7:0] push_byte = pend_v  ? pend_b :
                            src_dfr ? (dfr_w ? dfr_d[15:8] : dfr_d[7:0]) :
                                      (pn_word ? pn_d[15:8] : pn_d[7:0]);
-    wire push_we   = push_go && !txlvl[10];
-    wire tx_over   = push_go && txlvl[10];      // a byte pushed into a full TX: dropped
+    // tx_full_r = (TXLVL == 1024), exact in every cycle (the bench checks it):
+    // TXLVL rises only by a push (one byte per cycle) and falls only by
+    // TX_FLUSH, TX_COMMIT and a GAYLE_TO_TX rollback, below.  A flush or
+    // commit is a CMD strobe, never in a cycle with a push (strobes >= 4
+    // apart, a TXW's second byte goes in the cycle after its strobe, no
+    // Gayle push outside a busy op); a rollback wins over a push in its
+    // cycle and leaves TXLVL at its value when the op was accepted, < 1024
+    // (accepted only with room for LEN >= 2 bytes, nothing else frees or
+    // fills TX during the op).
+    reg  tx_full_r;
+    wire push_we   = push_go && !tx_full_r;
+    wire tx_over   = push_go && tx_full_r;      // a byte pushed into a full TX: dropped
     wire rollback;                              // GAYLE_TO_TX ends abnormally (below)
 
     always @(posedge clk) begin
@@ -395,9 +437,11 @@ module sdcard_spi #(
     reg  [1:0] hc;                      // how many of them are valid
     reg        rf_v;                    // a read of RX is in flight (a_dout next cycle)
     wire [1:0] cpu_want = cpu_lock ? 2'd0 : r_rxw ? 2'd2 : r_rxb ? 2'd1 : 2'd0;
-    wire [1:0] pop_want = g_pop ? 2'd2 : cpu_want;
-    wire [1:0] npop = (pop_want > hc) ? hc : pop_want;
-    wire       rx_short = pop_want > hc;           // a pop finds fewer bytes than it asks for
+    // a CPU pop that finds fewer bytes than it asks for; a Gayle pop never
+    // does (g_pop needs g_wvalid_r, i.e. hc == 2) and never meets a CPU pop
+    // (the data port is locked during Gayle ops)
+    wire       rx_short = cpu_want > hc;
+    wire [1:0] npop = g_pop ? 2'd2 : rx_short ? hc : cpu_want;
     wire       lock_evt = cpu_lock && (w_txw | w_txb | r_rxw | r_rxb);
     wire       misuse_evt = tx_over | rx_short | lock_evt;   // STATUS 8 + IRQ bit 3
     // room after this cycle's pop and arrival: hc - npop + rf_v < 2.  One
@@ -514,6 +558,7 @@ module sdcard_spi #(
 
     // ------------------------------------------------------------ FIFO state
     wire [10:0] tx_wr_n = rollback ? tx_wr0 : tx_wr + {10'd0, push_we};
+    wire [10:0] tx_cm_c = tx_rd - {10'd0, txn_v | tf_v};   // TX_COMMIT: the next unsent byte
     wire [10:0] rxlvl_n = rxlvl + {10'd0, rx_commit} - {9'd0, npop};
     wire [11:0] ver_sub = {1'b0, verified} - {10'd0, npop};
     always @(posedge clk) begin
@@ -523,10 +568,14 @@ module sdcard_spi #(
             txn_v <= 1'b0; tf_v <= 1'b0; hc <= 2'd0; rf_v <= 1'b0;
             h0 <= 8'h00; h1 <= 8'h00;
             verified <= 11'd0; poisoned <= 1'b0;
+            tx_full_r <= 1'b0;
         end else begin
             // TX
             tx_wr <= tx_wr_n;
             if (go && cmd_op == OP_G2TX) tx_wr0 <= tx_wr_n;
+            if (tx_flush || rollback) tx_full_r <= 1'b0;
+            else if (tx_commit)       tx_full_r <= tx_full_r && tx_cm_c == tx_cm;   // full unless it frees a byte
+            else if (push_we)         tx_full_r <= txlvl == 11'd1023;
             if (tx_flush) begin
                 tx_rd <= tx_wr; tx_cm <= tx_wr;
                 txn_v <= 1'b0; tf_v <= 1'b0;
@@ -534,7 +583,7 @@ module sdcard_spi #(
                 tx_rd <= tx_cm;
                 txn_v <= 1'b0; tf_v <= 1'b0;
             end else begin
-                if (tx_commit) tx_cm <= tx_rd - {10'd0, txn_v | tf_v};   // the next unsent byte
+                if (tx_commit) tx_cm <= tx_cm_c;
                 tx_rd <= tx_rd + {10'd0, tf_issue};
                 tf_v  <= tf_issue;
                 if (tf_v) begin txn <= b_dout; txn_v <= 1'b1; end
@@ -566,7 +615,7 @@ module sdcard_spi #(
             op_wait <= 1'b0; op_ne <= 1'b0; g_req_r <= 1'b0; g_dir_r <= 1'b0; g_port_r <= 1'b0;
             g_wvalid_r <= 1'b0;
             cph <= 2'd0; ahead_ok <= 1'b0; abort_pend <= 1'b0; tmo_pend <= 1'b0;
-            cnt <= 11'd0; last_r <= 8'd0;
+            cnt <= 11'd0; last_r <= 8'd0; g_more_r <= 1'b0; g_last_r <= 1'b0;
             st_crc_ok <= 1'b0; st_timeout <= 1'b0; st_aborted <= 1'b0;
             st_gone <= 1'b0; st_refused <= 1'b0; st_gerr <= 1'b0; st_misuse <= 1'b0;
         end else begin
@@ -588,6 +637,13 @@ module sdcard_spi #(
             if (cmd_accept) cnt <= 11'd0;
             else if (byte_done) cnt <= cnt_inc;
             else if (g_word) cnt <= cnt + 11'd2;
+            if (cmd_accept) begin                   // COUNT 0
+                g_more_r <= len_r != 11'd0;
+                g_last_r <= len_r == 11'd2;
+            end else if (g_word) begin              // COUNT + 2
+                g_more_r <= !g_last_r;
+                g_last_r <= cnt + 11'd4 == len_r;
+            end
             if (byte_done) last_r <= rxsh;
             if (cmd_accept) begin
                 st_crc_ok <= 1'b0; st_timeout <= 1'b0; st_aborted <= 1'b0;

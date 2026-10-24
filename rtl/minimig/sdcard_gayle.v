@@ -46,7 +46,7 @@
 //     must lie between: 2r+3 < YOUNG <= 5r+2 (r = 4, openaars: 16; 4r fits
 //     for r = 2..16).  No word, end or error of one op can reach another,
 //     however close the next op starts.  CLK_RATIO must match the clocks: a
-//     wrong one fails silently.
+//     wrong one in 2..16 fails silently (out of 2..16 elaboration stops).
 //   dir 1 words: request / deliver.  The Gayle side flips breq to ask for a
 //     word; the clk_g side, while it owes one (q_req_s != q_wtog) in a live,
 //     not young dir-1 op with g_wvalid, pulses g_wnext and in that same cycle
@@ -163,12 +163,21 @@ module sdcard_gayle #(
     wire       q_live = ^q_gray;        // odd: g_req was high last cycle
     localparam integer YOUNG_I = 4 * CLK_RATIO - 1;   // last young cycle (CLK_RATIO 2..16)
     localparam [5:0] YOUNG = YOUNG_I[5:0];
+    // CLK_RATIO out of 2..16 (the window above no longer holds, YOUNG would
+    // not fit): elaboration stops on a module that does not exist.
+    generate
+        if (CLK_RATIO < 2 || CLK_RATIO > 16) begin : g_bad_clk_ratio
+            sdcard_gayle_CLK_RATIO_must_be_2_to_16 bad_clk_ratio ();
+        end
+    endgenerate
     reg  [5:0] q_age = 6'd0;            // cycles since the rise, saturating
-`ifdef SDG_MUT_NOYOUNG
-    wire       q_old = q_live;
-`else
-    wire       q_old = q_live && q_age == YOUNG;    // live and not young
-`endif
+    // q_old: live and not young (q_live && q_age == YOUNG), as a register
+    // loaded with that value for the next cycle: q_live follows g_req, and
+    // q_age reaches YOUNG next unless g_req rises now (then it restarts), so
+    // the next value is g_req && q_live && q_age >= YOUNG - 1 (q_age
+    // saturates at YOUNG).  q_serve below (= g_wnext) is then one LUT6 of
+    // registers.
+    reg        q_old = 1'b0;
     reg        q_dir = 1'b0, q_port = 1'b0;
     reg  [9:0] q_words = 10'd0;
     reg  [1:0] q_req_s = 2'b00;         // breq, synchronised
@@ -197,6 +206,11 @@ module sdcard_gayle #(
             q_age <= 6'd0;
         end else if (q_age != YOUNG)
             q_age <= q_age + 6'd1;
+`ifdef SDG_MUT_NOYOUNG
+        q_old <= g_req;                 // = the next q_live: no young window
+`else
+        q_old <= g_req && q_live && q_age >= YOUNG - 6'd1;
+`endif
         q_req_s <= {q_req_s[0], breq};
 `ifdef SDG_MUT_REGWNEXT
         q_wnext <= q_serve;

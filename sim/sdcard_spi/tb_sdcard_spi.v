@@ -212,6 +212,47 @@ module tb_sdcard_spi;
         end
     end
 
+    // white box, the registered flags (Task 8 timing hardening):
+    //   tx_full_r == (TXLVL == 1024) in every cycle;
+    //   while g_req: g_more_r == (COUNT != LEN), g_last_r == (COUNT + 2 == LEN);
+    //   a Gayle pop only with hc == 2;
+    //   at every CMD strobe: tx_room_r / rx_ready_r equal what TXLVL, LEN and
+    //   verified give now, except in the cycle after an op's end, where they
+    //   may only be the smaller answer (a refuse, never a wrong accept).
+    reg p_opfin = 1'b0;
+    integer n_cmd_chk = 0, n_cmd_late = 0;
+    always @(posedge clk) if (!reset) begin
+        if (dut.tx_full_r !== (dut.txlvl == 11'd1024)) begin
+            $display("FAIL %0s: tx_full_r %b with TXLVL %0d (cycle %0d)", cur, dut.tx_full_r, dut.txlvl, cyc);
+            errors = errors + 1;
+        end
+        if (dut.g_req_r === 1'b1 && (dut.g_more_r !== (dut.cnt != dut.len_r)
+                                     || dut.g_last_r !== (dut.cnt + 11'd2 == dut.len_r))) begin
+            $display("FAIL %0s: g_more_r %b g_last_r %b with COUNT %0d LEN %0d (cycle %0d)",
+                     cur, dut.g_more_r, dut.g_last_r, dut.cnt, dut.len_r, cyc);
+            errors = errors + 1;
+        end
+        if (dut.g_pop === 1'b1 && dut.hc != 2'd2) begin
+            $display("FAIL %0s: Gayle pop with hc %0d (cycle %0d)", cur, dut.hc, cyc);
+            errors = errors + 1;
+        end
+        if (reg_wstb === 1'b1 && reg_addr == 4'd4) begin
+            n_cmd_chk = n_cmd_chk + 1;
+            if (p_opfin) n_cmd_late = n_cmd_late + 1;
+            if ((dut.tx_room_r && !({1'b0, dut.txlvl} + {1'b0, dut.len_r} <= 12'd1024))
+                || (dut.rx_ready_r && !(dut.verified >= dut.len_r))) begin
+                $display("FAIL %0s: CMD strobe: tx_room_r / rx_ready_r more than there is (cycle %0d)", cur, cyc);
+                errors = errors + 1;
+            end
+            if (!p_opfin && (dut.tx_room_r !== ({1'b0, dut.txlvl} + {1'b0, dut.len_r} <= 12'd1024)
+                             || dut.rx_ready_r !== (dut.verified >= dut.len_r))) begin
+                $display("FAIL %0s: CMD strobe: tx_room_r / rx_ready_r stale (cycle %0d)", cur, cyc);
+                errors = errors + 1;
+            end
+        end
+        p_opfin <= dut.op_fin;
+    end
+
     // MOSI bytes as the card would see them (sampled at SCK rising); a case
     // sets mo_n = 0, mo_bits = 0 while the shifter is idle
     integer mo_n = 0, mo_bits = 0;
@@ -1427,6 +1468,38 @@ module tb_sdcard_spi;
             end_case;
         end
 
+        // ---- a full TX and TX_COMMIT (Task 8: the registered full flag):
+        // a commit with nothing sent leaves TX full, one after bytes were sent
+        // frees exactly those (the prefetched byte stays) and pushes fit again
+        begin_case("t_full_commit", run_it);
+        if (run_it) begin
+            cs_cycle(8'd2);
+            wr(R_CMD, OP_TXFL);
+            for (i = 0; i < 512; i = i + 1) wr(R_DATAW, 16'hFFFF);
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd1024, "TXLVL full");
+            wr(R_CMD, OP_TXCM);         // nothing sent: still full
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd1024, "TXLVL after TX_COMMIT with nothing sent");
+            wr(R_DATAB, 16'h00FF);
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd1024, "TXLVL after a TXB into the full TX");
+            expect_rd(R_CMD, 16'h0100, 16'h0100, "STATUS 8 after the TXB into the full TX");
+            wr(R_LEN, 16'd4);
+            wr(R_CMD, OP_XFER | C_TX);
+            wait_idle(10000);
+            wait_cycles(20);            // byte 5 prefetched by now
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd1024, "TXLVL after sending 4 (kept)");
+            wr(R_CMD, OP_TXCM);         // the 4 sent bytes freed
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd1020, "TXLVL after TX_COMMIT of 4 sent bytes");
+            wr(R_DATAW, 16'hFFFF);
+            wr(R_DATAW, 16'hFFFF);
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd1024, "TXLVL after 4 bytes pushed again");
+            expect_rd(R_CMD, 16'h0100, 16'h0000, "STATUS 8 clear: the 4 fitted");
+            wr(R_DATAB, 16'h00FF);
+            expect_rd(R_CMD, 16'h0100, 16'h0100, "STATUS 8 after one more byte");
+            wr(R_CMD, OP_TXFL);
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd0, "TXLVL after TX_FLUSH");
+            end_case;
+        end
+
         // ---- wait timeout: WAIT_EQ $00 on a card sending $FF
         begin_case("t_wait_timeout", run_it);
         if (run_it) begin
@@ -1842,6 +1915,8 @@ module tb_sdcard_spi;
             end_case;
         end
 
+        $display("=== CMD strobes checked against tx_room_r / rx_ready_r: %0d (%0d in the cycle after an op's end)",
+                 n_cmd_chk, n_cmd_late);
         if (errors == 0) $display("=== PASS tb_sdcard_spi");
         else $display("=== FAIL tb_sdcard_spi (%0d errors)", errors);
         $finish;
