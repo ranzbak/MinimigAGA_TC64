@@ -22,7 +22,9 @@
 //   11  2C    WMARK 15:8 RX high, 7:0 TX low   VERSION
 //             (units of 16 bytes)
 //   12-15     ignored                          0
-//   LEN and MATCH writes are ignored while an op is busy.
+//   LEN and MATCH writes are ignored while an op is busy.  CFG writes
+//   while busy are refused (STATUS bit 6 + IRQ bit 3, CFG unchanged): CS
+//   and the divider never change in the middle of a byte.
 //
 // CMD: 3:0 op -- 1 XFER, 8 RX_FLUSH, 9 TX_FLUSH in this core (Task 6 adds
 //   2 WAIT_EQ, 3 WAIT_NE, 6 TX_REWIND, 7 TX_COMMIT, 15 ABORT; Task 7 adds
@@ -37,9 +39,13 @@
 //   empty the FIFO, including its prefetch registers.
 // STATUS: 0 busy, 1 crc_ok, 2 timeout, 3 card present, 4 aborted, 5 card
 //   gone during the op, 6 refused, 7 Gayle error (1, 2, 4, 5, 7: always 0
-//   in this core; their registers are cleared by every accepted op).
+//   in this core; their registers are cleared by every accepted op),
+//   8 FIFO misuse: a byte pushed into a full TX (dropped; also the second
+//   byte of a TXW) or a pop that found fewer bytes than it asked for (00
+//   returned for each missing byte).  Sticky; IRQ bit 3 with it; cleared by
+//   the next accepted CMD (e.g. a flush).
 // IRQPEND / IRQEN / IRQACK: 0 op done, 1 RX >= high watermark, 2 TX <= low
-//   watermark, 3 error, 4 card-detect change.  irq = |(IRQPEND & IRQEN),
+//   watermark, 3 error (refused CMD / CFG, FIFO misuse), 4 card-detect change.  irq = |(IRQPEND & IRQEN),
 //   registered.  Bits 1 and 2 are set every cycle their condition holds
 //   (an IRQACK only clears them once the level has moved past the mark);
 //   the others are events.  RX high mark 0 is always true.
@@ -52,21 +58,26 @@
 //     the strobe until the next read strobe.  A pop (RXW / RXB) returns the
 //     bytes before the pop; the pop itself takes effect at the same edge.
 //   - Pops come from two prefetch registers (h0, h1) that refill from the
-//     RAM by themselves (one byte per 2 cycles).  A byte counted in RXLVL is
-//     poppable at most 3 cycles later (5 if a TXW is being written): with
-//     cfide's accesses at least 4 cycles apart, a pop after an RXLVL read
-//     or an op-done IRQ always finds its bytes.  A pop finding fewer bytes
-//     prefetched than it asks for returns 00 for the missing ones and pops
-//     only what it returned (on an empty RX: 0000, nothing popped).
+//     RAM by themselves, one byte per cycle: after a pop they are full
+//     again 2 cycles later, and a byte counted in RXLVL is in them 2 cycles
+//     after it is counted (4 if a TXW is being written then).  So with
+//     strobes at least 4 cycles apart (the minimum this block is built
+//     for; cfide's clk_28 ack gives more), back-to-back RXW pops, and a pop
+//     after an RXLVL read or an op-done IRQ, always find their bytes.  A
+//     pop finding fewer bytes than it asks for returns 00 for the missing
+//     ones, pops only what it returned and sets STATUS 8 (on an empty RX:
+//     0000, nothing popped).
 //   - TXW writes its first byte in the strobe cycle and the second one in
 //     the next.  Push strobes are assumed >= 2 cycles apart (cfide: >= 4);
 //     guard: a push strobe in the cycle of a pending second byte is latched
 //     (dfr_*) and written after it.  A push into a full TX is dropped
-//     (TXLVL stays 1024).
+//     (TXLVL stays 1024) and sets STATUS 8.
 //
 // FIFOs: one inferred 2048 x 8 RAM, RX at 0-1023, TX at 1024-2047; true
-// dual port, one clock, registered read, no reset (one RAMB18 on Xilinx,
-// M9K/M10K pairs on Intel).
+// dual port, one clock, registered read, no reset; per port "write, else
+// read" (the output holds on a write cycle, so simulators and the Xilinx
+// and Intel mappings agree; no port reads in a cycle it writes).  One
+// RAMB18 on Xilinx, M9K/M10K pairs on Intel.
 //   port A: CPU side -- TX pushes (write), RX prefetch (read); Task 7's
 //           Gayle DMA belongs here too (TX writes, RX reads through the
 //           prefetch registers like the CPU pops)
@@ -120,6 +131,7 @@ module sdcard_spi #(
     reg [10:0] cnt;                     // COUNT
     reg        busy;
     reg        st_crc_ok, st_timeout, st_aborted, st_gone, st_refused, st_gerr;
+    reg        st_misuse;               // STATUS 8: TX overflow / RX underflow since the last accepted CMD
     reg [15:0] rdq;
 
     wire [3:0] ra = reg_addr;
@@ -139,11 +151,11 @@ module sdcard_spi #(
 
     always @(posedge clk) begin
         if (a_we) ram[a_addr] <= a_din;
-        a_dout <= ram[a_addr];
+        else      a_dout <= ram[a_addr];
     end
     always @(posedge clk) begin
         if (b_we) ram[b_addr] <= b_din;
-        b_dout <= ram[b_addr];
+        else      b_dout <= ram[b_addr];
     end
 
     // FIFO pointers (11 bits: 10 address + wrap) and levels (0..1024)
@@ -156,6 +168,8 @@ module sdcard_spi #(
     wire       cmd_bits_ok = reg_d[7:6] == 2'b00;      // CRC16 bits: Task 6
     wire       cmd_accept  = w_cmd && !busy && cmd_known && cmd_bits_ok;
     wire       cmd_refuse  = w_cmd && !cmd_accept;
+    wire       cfg_refuse  = reg_wstb && ra == 4'd8 && busy;   // CS / divider fixed during an op
+    wire       refuse_evt  = cmd_refuse | cfg_refuse;
     wire       rx_flush    = cmd_accept && cmd_op == OP_RX_FLUSH;
     wire       tx_flush    = cmd_accept && cmd_op == OP_TX_FLUSH;
     wire       xfer_go     = cmd_accept && cmd_op == OP_XFER && len_r != 11'd0;
@@ -174,6 +188,7 @@ module sdcard_spi #(
                            src_dfr ? (dfr_w ? dfr_d[15:8] : dfr_d[7:0]) :
                                      (w_txw ? reg_d[15:8] : reg_d[7:0]);
     wire push_we   = push_go && !txlvl[10];
+    wire tx_over   = push_go && txlvl[10];      // a byte pushed into a full TX: dropped
 
     always @(posedge clk) begin
         if (reset) begin
@@ -196,9 +211,16 @@ module sdcard_spi #(
     reg  [7:0] h0, h1;                  // RX head bytes for the CPU pops
     reg  [1:0] hc;                      // how many of them are valid
     reg        rf_v;                    // a read of RX is in flight (a_dout next cycle)
-    wire rf_issue = !rf_v && hc != 2'd2 && rx_wr != rx_rd && !push_we && !rx_flush;
     wire [1:0] pop_want = r_rxw ? 2'd2 : r_rxb ? 2'd1 : 2'd0;
     wire [1:0] npop = (pop_want > hc) ? hc : pop_want;
+    wire       rx_short = pop_want > hc;           // a pop finds fewer bytes than it asks for
+    wire       misuse_evt = tx_over | rx_short;   // STATUS 8 + IRQ bit 3
+    // room after this cycle's pop and arrival: hc - npop + rf_v < 2.  One
+    // read per cycle (latency 1), so h0/h1 are full again 2 cycles after a
+    // 2-byte pop (invariant hc + rf_v <= 2)
+    wire [1:0] hc_post = hc - npop;
+    wire rf_issue = (rf_v ? hc_post == 2'd0 : hc_post != 2'd2)
+                    && rx_wr != rx_rd && !push_we && !rx_flush;
 
     assign a_we   = push_we;
     assign a_addr = push_we ? {1'b1, tx_wr[9:0]} : {1'b0, rx_rd[9:0]};
@@ -312,7 +334,7 @@ module sdcard_spi #(
         if (reset) begin
             busy <= 1'b0; op_tx <= 1'b0; op_rx <= 1'b0; cnt <= 11'd0; last_r <= 8'd0;
             st_crc_ok <= 1'b0; st_timeout <= 1'b0; st_aborted <= 1'b0;
-            st_gone <= 1'b0; st_refused <= 1'b0; st_gerr <= 1'b0;
+            st_gone <= 1'b0; st_refused <= 1'b0; st_gerr <= 1'b0; st_misuse <= 1'b0;
         end else begin
             if (xfer_go) begin
                 busy <= 1'b1; op_tx <= reg_d[4]; op_rx <= reg_d[5];
@@ -324,8 +346,10 @@ module sdcard_spi #(
             if (cmd_accept) begin
                 st_crc_ok <= 1'b0; st_timeout <= 1'b0; st_aborted <= 1'b0;
                 st_gone <= 1'b0; st_refused <= 1'b0; st_gerr <= 1'b0;
-            end else if (cmd_refuse)
+            end else if (refuse_evt)
                 st_refused <= 1'b1;
+            if (cmd_accept) st_misuse <= 1'b0;
+            if (misuse_evt) st_misuse <= 1'b1;   // after the clear: an event wins
         end
     end
 
@@ -355,7 +379,7 @@ module sdcard_spi #(
     wire       done_evt = op_end || (cmd_accept && !xfer_go);
     wire       rx_high  = {1'b0, rxlvl[10:4]} >= wm_rx;
     wire       tx_low   = {1'b0, txlvl} <= {wm_tx, 4'h0};
-    wire [4:0] irq_set  = {cd_evt, cmd_refuse, tx_low, rx_high, done_evt};
+    wire [4:0] irq_set  = {cd_evt, refuse_evt | misuse_evt, tx_low, rx_high, done_evt};
     always @(posedge clk) begin
         if (reset) begin
             irq_pend <= 5'd0; irq_r <= 1'b0;
@@ -374,7 +398,7 @@ module sdcard_spi #(
             case (ra)
                 4'd5:  if (!busy) len_r <= reg_d[10:0];
                 4'd6:  if (!busy) match_r <= reg_d[7:0];
-                4'd8:  begin cs_n_r <= ~reg_d[8]; cfg_div <= reg_d[7:0]; end
+                4'd8:  if (!busy) begin cs_n_r <= ~reg_d[8]; cfg_div <= reg_d[7:0]; end
                 4'd9:  timeout_r <= reg_d;
                 4'd10: irq_en <= reg_d[4:0];
                 4'd11: begin wm_rx <= reg_d[15:8]; wm_tx <= reg_d[7:0]; end
@@ -393,7 +417,7 @@ module sdcard_spi #(
                 4'd1:  rdq <= {8'h00, (hc != 2'd0) ? h0 : 8'h00};
                 4'd2:  rdq <= {5'd0, rxlvl};
                 4'd3:  rdq <= {5'd0, txlvl};
-                4'd4:  rdq <= {8'h00, st_gerr, st_refused, st_gone, st_aborted,
+                4'd4:  rdq <= {7'd0, st_misuse, st_gerr, st_refused, st_gone, st_aborted,
                                cd_present, st_timeout, st_crc_ok, busy};
                 4'd5:  rdq <= {8'h00, last_r};
                 4'd6:  rdq <= {5'd0, cnt};

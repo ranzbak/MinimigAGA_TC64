@@ -23,8 +23,10 @@ module tb_sdcard_spi;
 
     localparam IMG_SECTORS = 1024;
     localparam IMG_BYTES   = IMG_SECTORS * 512;
-    localparam ACC = 4;                 // cycles per register access (clk_28 ack: >= 4)
-    localparam GAP = 4;                 // idle cycles between accesses
+    // access shape: strobes are ACC + GAP + 1 cycles apart (default 9;
+    // t_min_spacing: 3 + 0 + 1 = 4, the minimum sdcard_spi.v is built for)
+    integer ACC = 4;                    // cycles per register access (clk_28 ack: >= 4)
+    integer GAP = 4;                    // idle cycles between accesses
     localparam integer WATCHDOG_CYC = 3000000;
 
     // register offsets (byte address - 0xFFFFFF00)
@@ -221,6 +223,11 @@ module tb_sdcard_spi;
             r1_at = -1;
             for (i = n - 1; i >= 0; i = i - 1) if (rxbuf[i] != 8'hFF) r1_at = i;
         end
+    endfunction
+
+    // the CMD24 test block of t_min_spacing
+    function [7:0] wpat(input integer i);
+        begin wpat = i * 13 + 5; end
     endfunction
 
     function [15:0] crc16(input [15:0] c, input [7:0] b);
@@ -571,10 +578,21 @@ module tb_sdcard_spi;
             wr(R_CMD, OP_TXFL);
             expect_rd(R_TXLVL, 16'hFFFF, 16'd0, "TXLVL after TX_FLUSH");
             expect_rd(R_IRQ, 16'h0001, 16'h0001, "IRQPEND done after TX_FLUSH");
-            for (i = 0; i < 513; i = i + 1) wr(R_DATAW, i);
-            expect_rd(R_TXLVL, 16'hFFFF, 16'd1024, "TXLVL after 1026 bytes pushed");
+            expect_rd(R_CMD, 16'h0100, 16'h0000, "STATUS 8 (FIFO misuse) clear");
+            for (i = 0; i < 511; i = i + 1) wr(R_DATAW, i);
+            wr(R_DATAB, 16'h0055);
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd1023, "TXLVL after 1023 bytes pushed");
+            expect_rd(R_CMD, 16'h0100, 16'h0000, "STATUS 8 clear with TX not full");
+            wr(R_IRQ, 16'h001F);
+            wr(R_DATAW, 16'h6677);      // 66 fits, 77 is dropped
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd1024, "TXLVL after a TXW into one free place");
+            expect_rd(R_CMD, 16'h0100, 16'h0100, "STATUS 8 after the dropped second TXW byte");
+            expect_rd(R_IRQ, 16'h0008, 16'h0008, "IRQPEND error after the dropped byte");
+            wr(R_DATAW, 16'h8899);
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd1024, "TXLVL after a TXW into a full TX");
             wr(R_CMD, OP_TXFL);
             expect_rd(R_TXLVL, 16'hFFFF, 16'd0, "TXLVL after TX_FLUSH of a full FIFO");
+            expect_rd(R_CMD, 16'h0100, 16'h0000, "STATUS 8 cleared by the accepted TX_FLUSH");
             // the first byte pushed after the flush is the first one sent
             send_cmd(6'd8, 32'h1AA, 8'h87);
             wr(R_LEN, 16'd8);
@@ -592,8 +610,12 @@ module tb_sdcard_spi;
             expect_rd(R_RXLVL, 16'hFFFF, 16'd2, "RXLVL with 2 left");
             wr(R_CMD, OP_RXFL);
             expect_rd(R_RXLVL, 16'hFFFF, 16'd0, "RXLVL after RX_FLUSH");
+            expect_rd(R_CMD, 16'h0100, 16'h0000, "STATUS 8 clear before the empty pop");
+            wr(R_IRQ, 16'h001F);
             expect_rd(R_DATAW, 16'hFFFF, 16'h0000, "RXW on an empty RX");
             expect_rd(R_RXLVL, 16'hFFFF, 16'd0, "RXLVL after RXW on empty");
+            expect_rd(R_CMD, 16'h0100, 16'h0100, "STATUS 8 after RXW on an empty RX");
+            expect_rd(R_IRQ, 16'h0008, 16'h0008, "IRQPEND error after RXW on empty");
             // after the flush only new bytes come out (no stale prefetch)
             send_cmd(6'd8, 32'h1AA, 8'h87);
             wr(R_LEN, 16'd6);
@@ -606,8 +628,10 @@ module tb_sdcard_spi;
             wr(R_LEN, 16'd1);
             wr(R_CMD, OP_XFER | C_RX);
             wait_idle(100000);
+            expect_rd(R_CMD, 16'h0100, 16'h0000, "STATUS 8 cleared by the accepted XFER");
             expect_rd(R_DATAW, 16'hFFFF, 16'hFF00, "RXW with one byte in RX");
             expect_rd(R_RXLVL, 16'hFFFF, 16'd0, "RXLVL after it");
+            expect_rd(R_CMD, 16'h0100, 16'h0100, "STATUS 8 after the short RXW");
             // LEN 0: done at once
             wr(R_IRQ, 16'h001F);
             wr(R_LEN, 16'd0);
@@ -647,8 +671,17 @@ module tb_sdcard_spi;
             wr(R_LEN, 16'd3);           // ignored while busy
             wr(R_CMD, OP_XFER);         // refused, the running op goes on
             expect_rd(R_CMD, 16'h00C1, 16'h0041, "STATUS: busy and refused");
+            wr(R_RXLVL, 16'h0000);      // read-only register: no effect
+            wr(R_CMD, OP_RXFL);         // refused while busy: STATUS 6 stays
+            wr(R_IRQ, 16'h0008);
+            wr(R_CFG, 16'h0005);        // refused while busy: CS and divider stay
+            expect_rd(R_CFG, 16'h01FF, 16'h0110, "CFG after a refused write while busy");
+            expect_rd(R_IRQ, 16'h0008, 16'h0008, "IRQPEND error after CFG while busy");
+            if (sd_cs_n !== 1'b0) fail("CS released by a CFG write while busy");
             wait_idle(100000);
             expect_rd(R_MATCH, 16'hFFFF, 16'd40, "COUNT of the op that was running");
+            wr(R_CFG, 16'h0005);
+            expect_rd(R_CFG, 16'h01FF, 16'h0005, "CFG written when not busy");
             expect_rd(R_IRQ, 16'h0009, 16'h0009, "IRQPEND error + done");
             wr(R_CMD, OP_TXFL);
             expect_rd(R_CMD, 16'h00C1, 16'h0000, "STATUS after the next accepted op");
@@ -679,6 +712,87 @@ module tb_sdcard_spi;
             expect_rd(R_IRQ, 16'h0010, 16'h0010, "change IRQ on insertion");
             wr(R_IRQ, 16'h001F);
             wr(R_IRQEN, 16'h0000);
+            end_case;
+        end
+
+        // ---- every access at the minimum strobe spacing the header promises
+        // (4 cycles): RXW pops of fresh bytes and back-to-back bursts during a
+        // div-0 CMD18 stream; then a CMD24 block pushed by TXW while the XFER
+        // runs, interleaved with RXLVL / RXW pops.  No byte lost or short.
+        begin_case("t_min_spacing", run_it);
+        if (run_it) begin
+            cs_cycle(8'd0);
+            ACC = 3; GAP = 0;
+            send_cmd(6'd18, 32'd9, 8'hFF);
+            make_cmd18_stream(9, 1100);
+            wr(R_CMD, OP_RXFL);
+            wr(R_LEN, 16'd1100);
+            wr(R_CMD, OP_XFER | C_RX);
+            t0 = cyc;                   // let RX fill up first, for the bursts
+            rd(R_RXLVL, q);
+            while (q < 16'd400 && cyc - t0 < 100000) rd(R_RXLVL, q);
+            n = 0; s0 = 0;
+            t0 = cyc;
+            while (n < 1100 && cyc - t0 < 200000) begin
+                rd(R_RXLVL, q);
+                if (q >= 64) begin       // a burst of 32 RXW, no RXLVL in between
+                    for (i = 0; i < 32; i = i + 1) begin
+                        rd(R_DATAW, q2); rxbuf[n] = q2[15:8]; rxbuf[n + 1] = q2[7:0]; n = n + 2;
+                    end
+                    s0 = s0 + 1;
+                end else if (q >= 2) begin
+                    rd(R_DATAW, q2); rxbuf[n] = q2[15:8]; rxbuf[n + 1] = q2[7:0]; n = n + 2;
+                end
+            end
+            wait_idle(1000);
+            if (n != 1100) fail("not 1100 bytes popped");
+            if (s0 == 0) fail("no back-to-back RXW burst happened");
+            per_bad = 0;
+            for (i = 0; i < 1100; i = i + 1)
+                if (rxbuf[i] !== expb[i]) begin
+                    if (per_bad < 5) $display("FAIL %0s: byte %0d = %h, want %h", cur, i, rxbuf[i], expb[i]);
+                    per_bad = per_bad + 1;
+                end
+            if (per_bad) begin errors = errors + 1; $display("FAIL %0s: %0d bytes differ from the CMD18 stream", cur, per_bad); end
+            expect_rd(R_CMD, 16'h0100, 16'h0000, "STATUS 8: no short pop in the RX stream");
+            // CMD24 to LBA 7, data pushed while the XFER runs
+            cs_cycle(8'd0);
+            send_cmd(6'd24, 32'd7, 8'hFF);
+            recv(4);
+            r1 = r1_at(4);
+            if (r1 < 0 || rxbuf[r1] != 8'h00) fail("CMD24 R1 not 00");
+            wr(R_LEN, 16'd515);
+            wr(R_CMD, OP_XFER | C_TX | C_RX);
+            wr(R_DATAB, 16'h00FE);
+            n = 0; per_bad = 0;
+            for (i = 0; i < 257; i = i + 1) begin
+                if (i < 256) wr(R_DATAW, {wpat(2 * i), wpat(2 * i + 1)});
+                else         wr(R_DATAW, 16'hFFFF);       // CRC (model CRC check off)
+                rd(R_RXLVL, q);
+                if (q >= 2) begin
+                    rd(R_DATAW, q2); n = n + 2;
+                    if (q2 !== 16'hFFFF) per_bad = per_bad + 1;
+                end
+            end
+            wait_idle(100000);
+            rd(R_RXLVL, q);
+            while (q >= 2) begin
+                rd(R_DATAW, q2); n = n + 2;
+                if (q2 !== 16'hFFFF) per_bad = per_bad + 1;
+                rd(R_RXLVL, q);
+            end
+            if (q == 1) begin rd(R_DATAB, q2); n = n + 1; if (q2 !== 16'h00FF) per_bad = per_bad + 1; end
+            if (n != 515) begin $display("FAIL %0s: %0d RX bytes during the write, want 515", cur, n); errors = errors + 1; end
+            if (per_bad) begin $display("FAIL %0s: %0d RX words not FFFF during the write", cur, per_bad); errors = errors + 1; end
+            expect_rd(R_CMD, 16'h0100, 16'h0000, "STATUS 8: no overflow / short pop in the write");
+            recv(12);
+            r1 = r1_at(12);
+            if (r1 < 0 || rxbuf[r1] != 8'h05) fail("data response not 05");
+            per_bad = 0;
+            for (i = 0; i < 512; i = i + 1)
+                if (card.mem[7 * 512 + i] !== wpat(i)) per_bad = per_bad + 1;
+            if (per_bad) begin $display("FAIL %0s: %0d bytes of LBA 7 differ from the pushed block", cur, per_bad); errors = errors + 1; end
+            ACC = 4; GAP = 4;
             end_case;
         end
 
