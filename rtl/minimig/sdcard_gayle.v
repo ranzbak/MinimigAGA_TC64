@@ -37,18 +37,24 @@
 //     whose two edges pass between two looks is skipped, it already ended at
 //     the sdcard_spi end).  The count wraps only if 4 ops start within one
 //     look (~28 clk_114 cycles; each start needs a CMD write through cfide).
-//   young op: for its first 16 cycles (q_age) the clk_g side ignores every
-//     event from the Gayle side, and owes no word.  Anything the Gayle side
-//     sent for the previous op before it saw that op end lands at the latest
-//     ~11 cycles after its g_req fell, so it is dropped there; the Gayle
-//     side's first event for a new op comes >= 20 cycles after its rise.  No
-//     word, end or error of one op can reach another, however close the next
-//     op starts.
+//   young op: for its first YOUNG = 4 x CLK_RATIO clk_g cycles (q_age) the
+//     clk_g side ignores every event from the Gayle side and owes no word.
+//     With r = f(clk_g) / f(clk) = CLK_RATIO, anything the Gayle side sent
+//     for the previous op before it saw that op end is decided on at most
+//     ~2r+4 cycles after that op's g_req fell, and the Gayle side's first
+//     event for a new op comes >= ~5r+3 cycles after its rise, so the window
+//     must lie between: 2r+3 < YOUNG <= 5r+2 (r = 4, openaars: 16; 4r fits
+//     for r = 2..16).  No word, end or error of one op can reach another,
+//     however close the next op starts.  CLK_RATIO must match the clocks: a
+//     wrong one fails silently.
 //   dir 1 words: request / deliver.  The Gayle side flips breq to ask for a
 //     word; the clk_g side, while it owes one (q_req_s != q_wtog) in a live,
-//     not young dir-1 op with g_wvalid, takes g_wdata into q_wbuf, flips
-//     q_wtog and pulses g_wnext (registered: the cycle after, g_wvalid still
-//     high, g_wdata unchanged -- nothing pops in between).  Anywhere else it
+//     not young dir-1 op with g_wvalid, pulses g_wnext and in that same cycle
+//     takes g_wdata into q_wbuf and flips q_wtog.  g_wnext is combinational
+//     from clk_g registers only (g_req, g_wvalid and the bridge's own), so a
+//     word is in q_wbuf exactly when sdcard_spi popped it: no word can be
+//     written to Gayle without being popped, whatever cycle g_req falls in.
+//     Anywhere else it
 //     absorbs an owed request (q_wtog follows it, nothing is popped), so a
 //     request never outlives its op.  Exactly one word is popped per request:
 //     g_words in a normal op, never one beyond it.  The Gayle side asks for
@@ -89,6 +95,29 @@
 //   - `reset` (the Amiga reset) only aborts: the crossing registers are never
 //     reset (their power-up values match), or the two sides would disagree.
 //
+// Abandoned command (cmd_since): a new Amiga command (or Gayle reset) on a
+// port while no op runs resets that port's FIFO too, and the next op would
+// fill the new command's FIFO with the old command's data (pio in and the
+// block mark survive a command write: DRQ and the interrupt would follow).
+// So cmd_since[p] is set by a FIFO reset of port p that is not the
+// firmware's own CMD_IDE_XFER_WR, and cleared by the firmware's
+// CMD_IDE_REGS_RD of port p (set wins; Gayle's dev_wr / rst_seen rule).  An
+// op that starts with it set ends in g_err (STATUS 7) without a strobe.
+// Firmware rule: a REGS_RD of a port means "I have seen this port's command":
+// fw/ctrl issues one at the command pickup (HandleHDD), in cd_wait (which
+// checks IDEF_PKT for a new command) and outside commands (CD_AudioPoll,
+// CD_Locked), never inside a transfer loop; keep it so.  After a Gayle error
+// the firmware picks the new command up (REGS_RD), which clears the flag.
+//
+// Timing constraints (Task 8): the crossings are q_gray -> s_gray1 (a Gray
+// bus), q_wtog -> s_wtog, breq -> q_req_s, rtog / atog / etog -> q_rs / q_as
+// / q_es, and the held words q_wbuf -> dout, q_dir / q_port / q_words -> the
+// Gayle side, rbuf -> sdcard_spi (g_rdata).  On openaars the clocks are
+// synchronous MMCM siblings and these paths are timed as such, which is
+// enough.  With unrelated clocks they need set_max_delay -datapath_only of
+// about one clk_114 period (or set_bus_skew on the Gray bus), not a false
+// path: the held words must arrive before their toggle is seen.
+//
 // The latched dir / port / words are read by the Gayle side in the sample it
 // starts an op.  Should the next op already have started by then (two op
 // starts within ~28 clk_114), they may be that op's: harmless, the count has
@@ -97,7 +126,9 @@
 //
 // Plain Verilog-2005, no vendor primitives.  Bench: sim/gayle (run.sh
 // bridge, bridge_async).  SDG_MUT_*: bench teeth only (run.sh bridge_mut_*).
-module sdcard_gayle (
+module sdcard_gayle #(
+    parameter CLK_RATIO = 4             // f(clk_g) / f(clk), rounded, 2..16: sizes the young-op window
+) (
     input  wire        clk,             // clk_28
     input  wire        clk7_en,
     input  wire        reset,           // the Amiga reset: aborts an op (g_err)
@@ -111,7 +142,10 @@ module sdcard_gayle (
     output wire        data_wr, output wire data_rd,      // high for exactly one clk7_en sample
     output wire [15:0] data_out, input wire [15:0] data_in,
     input  wire        dat_req,         // Gayle's hdd_dat_req (of `port` while active)
-    input  wire  [1:0] fifo_reset_seen  // Gayle's hdd_fifo_reset, per port
+    input  wire  [1:0] fifo_reset_seen, // Gayle's hdd_fifo_reset, per port
+    input  wire        fw_port,         // paula_floppy's hdd_port, hdd_xfer_wr, hdd_regs_rd
+    input  wire        fw_xfer_wr,
+    input  wire        fw_regs_rd
 );
 
     // 3-bit Gray code <-> binary
@@ -127,18 +161,22 @@ module sdcard_gayle (
 
     reg  [2:0] q_gray = 3'b000;         // Gray count of g_req edges
     wire       q_live = ^q_gray;        // odd: g_req was high last cycle
-    reg  [3:0] q_age = 4'd0;            // cycles since the rise, saturating
+    localparam integer YOUNG_I = 4 * CLK_RATIO - 1;   // last young cycle (CLK_RATIO 2..16)
+    localparam [5:0] YOUNG = YOUNG_I[5:0];
+    reg  [5:0] q_age = 6'd0;            // cycles since the rise, saturating
 `ifdef SDG_MUT_NOYOUNG
     wire       q_old = q_live;
 `else
-    wire       q_old = q_live && q_age == 4'd15;    // live and not young
+    wire       q_old = q_live && q_age == YOUNG;    // live and not young
 `endif
     reg        q_dir = 1'b0, q_port = 1'b0;
     reg  [9:0] q_words = 10'd0;
     reg  [1:0] q_req_s = 2'b00;         // breq, synchronised
     reg        q_wtog = 1'b0;           // flips per word delivered (or request absorbed)
     reg [15:0] q_wbuf = 16'h0000;
+`ifdef SDG_MUT_REGWNEXT
     reg        q_wnext = 1'b0;
+`endif
     reg  [2:0] q_rs = 3'b000, q_as = 3'b000, q_es = 3'b000;   // rtog / atog / etog: 2 sync + 1
     reg        q_rvalid = 1'b0, q_ack = 1'b0, q_err = 1'b0;
 
@@ -147,6 +185,7 @@ module sdcard_gayle (
 
     wire       q_run1 = g_req && q_old && q_dir;   // a live dir-1 op may pop words
     wire       q_owed = q_req_s[1] != q_wtog;
+    wire       q_serve = q_run1 && q_owed && g_wvalid;    // = g_wnext: pop and take in one cycle
 
     always @(posedge clk_g) begin
         if (g_req != q_live)
@@ -155,11 +194,13 @@ module sdcard_gayle (
             q_dir <= g_dir;
             q_port <= g_port;
             q_words <= g_words;
-            q_age <= 4'd0;
-        end else if (q_age != 4'd15)
-            q_age <= q_age + 4'd1;
+            q_age <= 6'd0;
+        end else if (q_age != YOUNG)
+            q_age <= q_age + 6'd1;
         q_req_s <= {q_req_s[0], breq};
-        q_wnext <= 1'b0;
+`ifdef SDG_MUT_REGWNEXT
+        q_wnext <= q_serve;
+`endif
 `ifdef SDG_MUT_NOABSORB
         if (!q_run1)
             ;
@@ -167,10 +208,9 @@ module sdcard_gayle (
         if (!q_run1)
             q_wtog <= q_req_s[1];       // absorb: no word is owed outside a dir-1 op
 `endif
-        else if (q_owed && g_wvalid) begin
+        else if (q_serve) begin
             q_wbuf <= g_wdata;
             q_wtog <= ~q_wtog;
-            q_wnext <= 1'b1;
         end
         q_rs <= {q_rs[1:0], rtog};
         q_as <= {q_as[1:0], atog};
@@ -180,7 +220,11 @@ module sdcard_gayle (
         q_err <= g_req && q_old && (q_es[2] != q_es[1]);
     end
 
-    assign g_wnext  = q_wnext;
+`ifdef SDG_MUT_REGWNEXT
+    assign g_wnext  = q_wnext;          // bench teeth: the pulse a cycle after the take
+`else
+    assign g_wnext  = q_serve;
+`endif
     assign g_rvalid = q_rvalid;
     assign g_ack    = q_ack;
     assign g_err    = q_err;
@@ -197,6 +241,10 @@ module sdcard_gayle (
     reg        need = 1'b0;             // dir 1: a word asked for in this op and not used yet
     reg        wr_r = 1'b0, rd_r = 1'b0;
     reg [15:0] dout = 16'h0000, rbuf = 16'h0000;
+    reg  [1:0] cmd_since = 2'b00;       // per port: a command since the firmware's last REGS_RD
+    wire [1:0] fw_sel = {fw_port, ~fw_port};
+    wire [1:0] cmd_set = fifo_reset_seen & ~({2{fw_xfer_wr}} & fw_sel);
+    wire [1:0] cmd_clr = {2{fw_regs_rd}} & fw_sel;
 
     wire [2:0] gcnt = g2b(s_gray2);
     wire       w_even = s_wtog[1] == breq;  // every request answered
@@ -204,8 +252,11 @@ module sdcard_gayle (
 `ifdef SDG_MUT_NORST
     wire       abort_new = 1'b0;
     wire       abort_run = 1'b0;
+`elsif SDG_MUT_NOSINCE
+    wire       abort_new = reset || fifo_reset_seen[q_port];
+    wire       abort_run = reset || fifo_reset_seen[b_port] || b_rst;
 `else
-    wire       abort_new = reset || fifo_reset_seen[q_port];   // q_port: see above
+    wire       abort_new = reset || fifo_reset_seen[q_port] || cmd_since[q_port];   // q_port: see above
     wire       abort_run = reset || fifo_reset_seen[b_port] || b_rst;
 `endif
 
@@ -214,6 +265,7 @@ module sdcard_gayle (
         s_gray2 <= s_gray1;
         s_wtog <= {s_wtog[0], q_wtog};
         if (clk7_en) begin
+            cmd_since <= cmd_set | (cmd_since & ~cmd_clr);
             if (gcnt != seen) begin             // an op ended and / or the latest started
                 seen <= gcnt;
                 act <= gcnt[0];
@@ -276,10 +328,16 @@ endmodule
 // The firmware-side data port of Gayle: the bridge's while it is active,
 // paula_floppy's otherwise.  paula_floppy's data strobes are blocked while the
 // bridge is active, so a firmware slip (an IDE data command over SPI during a
-// DMA) can neither add nor take a word.  Its other strobes (task file and
-// status writes, CMD_IDE_XFER_WR, CMD_IDE_REGS_RD) pass unchanged; they use
-// hdd_port and hdd_data_out too, so the firmware sends no HDD command while a
-// Gayle op runs.  minimig.v instantiates this between PAULA1 and GAYLE1.
+// DMA) can neither add nor take a word.  hdd_addr is 0 while the bridge is
+// active, as paula_floppy presents it during its own data commands (after a
+// task file command it stays at that command's register count, and Gayle's
+// hdd_data_in would show a register instead of the FIFO).  paula_floppy's
+// other strobes (task file and status writes, CMD_IDE_XFER_WR,
+// CMD_IDE_REGS_RD) pass unchanged; they use hdd_port and hdd_data_out too,
+// so the firmware sends no HDD command while a Gayle op runs.  Gayle's host
+// register reads during a busy ATA command follow hdd_addr as well; they see
+// what they see during today's SPI data commands.  minimig.v instantiates
+// this between PAULA1 and GAYLE1.
 /* verilator lint_off DECLFILENAME */
 module sdcard_gayle_mux (
     input  wire        sg_active, input wire sg_port,
@@ -288,9 +346,11 @@ module sdcard_gayle_mux (
     input  wire        pf_port,
     input  wire        pf_data_wr, input wire pf_data_rd,
     input  wire [15:0] pf_data_out,
+    input  wire  [2:0] pf_addr,
     output wire        hdd_port,
     output wire        hdd_data_wr, output wire hdd_data_rd,
-    output wire [15:0] hdd_data_out
+    output wire [15:0] hdd_data_out,
+    output wire  [2:0] hdd_addr
 );
 `ifdef SDG_MUT_NOGATE
     assign hdd_data_wr  = pf_data_wr | (sg_active & sg_data_wr);
@@ -301,5 +361,10 @@ module sdcard_gayle_mux (
 `endif
     assign hdd_data_out = sg_active ? sg_data_out : pf_data_out;
     assign hdd_port     = sg_active ? sg_port : pf_port;
+`ifdef SDG_MUT_NOADDR
+    assign hdd_addr     = pf_addr;
+`else
+    assign hdd_addr     = sg_active ? 3'd0 : pf_addr;
+`endif
 endmodule
 /* verilator lint_on DECLFILENAME */

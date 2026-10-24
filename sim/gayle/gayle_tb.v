@@ -34,8 +34,11 @@
 //       dat_req) or an Amiga reset mid-op: g_err, no strobe after the reset
 //   (m) t_two_ports: the other port's command leaves the DMA alone
 //   (n) paula_floppy data strobes during a bridge op have no effect
-//   (o) g_req: one-cycle ops, drops mid-op at every offset, and ops starting
-//       1-8 clk_114 cycles after a drop: each op moves exactly its own words
+//   (o) g_req: one-cycle ops, drops mid-op at every offset (also with long
+//       g_wvalid gaps), and ops starting 1-8 clk_114 cycles after a drop:
+//       each op moves exactly its own words, none written without its pop
+//   (p) dir 0 right after a task file read (paula_floppy's hdd_addr sticky)
+//   (q) a new command between two READ MULTIPLE groups: the next op g_err
 // SDC_ASYNC: clk_114 at 112.4 MHz instead of 4 x clk.
 
 `timescale 1ns/1ps
@@ -72,7 +75,9 @@ wire        hd_fwr, hd_frd;
 // bridge is the other side (see "SD card bridge" below).
 wire        gy_port, gy_data_wr, gy_data_rd;
 wire [15:0] gy_data_out;
+wire  [2:0] gy_addr;
 `ifndef SDC_BRIDGE
+assign gy_addr = hdd_addr;
 assign gy_port = hdd_port;
 assign gy_data_wr = hdd_data_wr;
 assign gy_data_rd = hdd_data_rd;
@@ -105,7 +110,7 @@ gayle dut
 `endif
 	.hdd_cmd_req(hdd_cmd_req),
 	.hdd_dat_req(hdd_dat_req),
-	.hdd_addr(hdd_addr),
+	.hdd_addr(gy_addr),
 	.hdd_data_out(gy_data_out),
 	.hdd_data_in(hdd_data_in),
 	.hdd_wr(hdd_wr),
@@ -265,7 +270,10 @@ sdcard_gayle BRIDGE
 	.data_out(sg_data_out),
 	.data_in(hdd_data_in),
 	.dat_req(hdd_dat_req),
-	.fifo_reset_seen(gy_fifo_reset)
+	.fifo_reset_seen(gy_fifo_reset),
+	.fw_port(hdd_port),
+	.fw_xfer_wr(hdd_xfer_wr),
+	.fw_regs_rd(hdd_regs_rd)
 );
 
 sdcard_gayle_mux MUX
@@ -279,6 +287,8 @@ sdcard_gayle_mux MUX
 	.pf_data_wr(hdd_data_wr),
 	.pf_data_rd(hdd_data_rd),
 	.pf_data_out(hdd_data_out),
+	.pf_addr(hdd_addr),
+	.hdd_addr(gy_addr),
 	.hdd_port(gy_port),
 	.hdd_data_wr(gy_data_wr),
 	.hdd_data_rd(gy_data_rd),
@@ -425,10 +435,14 @@ task hr(input [23:0] a, output [15:0] d);
 	end
 endtask
 
-// the firmware side
+// the firmware side.  hdd_addr is sticky as paula_floppy.v makes it: a task
+// file read or write leaves it at its register (cmd_hdd_rd / cmd_hdd_wr stay
+// set until the next command word); a status, data or XFER_WR command word
+// clears it to 0.
 task fw_status(input p, input [7:0] st);
 	begin
 		hdd_port = p;
+		hdd_addr = 0;
 		hdd_data_out = {7'b1111000, p, st};
 		hdd_status_wr = 1;
 		en;
@@ -444,7 +458,6 @@ task fw_tfr_wr(input p, input [2:0] r, input [7:0] v);
 		hdd_wr = 1;
 		en;
 		hdd_wr = 0;
-		hdd_addr = 0;
 	end
 endtask
 
@@ -464,7 +477,6 @@ task fw_tfr_rd(input p, input [2:0] r, output [15:0] v);
 		hdd_addr = r;
 		#1 v = hdd_data_in;
 		en;
-		hdd_addr = 0;
 		if (tracing) $display("TRACE %0d fw tfr %0d = %h", tcyc, r, v[7:0]);
 	end
 endtask
@@ -487,6 +499,7 @@ endtask
 task fw_data_wr(input p, input [15:0] w);
 	begin
 		hdd_port = p;
+		hdd_addr = 0;
 		hdd_data_out = w;
 		hdd_data_wr = 1;
 		en;
@@ -510,6 +523,7 @@ endtask
 task fw_xfer(input p, input [12:0] words, input pkt);
 	begin
 		hdd_port = p;
+		hdd_addr = 0;
 		hdd_data_out = {pkt, 2'b00, words};
 		hdd_xfer_wr = 1;
 		en;
@@ -1535,8 +1549,139 @@ initial begin
 		for (i = 0; i < 4; i = i + 1)
 			if (m_dst[i] !== 16'h6600 + p1 - 4 + i) check(0, "o5 the close op moves the 4 words it popped, in order");
 	end
+	// o6: g_req drops on the very edge the bridge serves a word (stimulus
+	// timed from the bridge's own "owed" state), the serve swept over every
+	// clk7 phase by the g_wvalid gap: a word is in Gayle's FIFO only if
+	// sdcard_spi popped it
+	do_reset(2'b01, 2'b00, 2'b00, 2'b00);
+	host_cmd(24'hDA2000, 8'd8, 8'd1, 8'd0, 8'd0, 8'hA0, 8'hC4);
+	fw_wait_cmd(ok);
+	fw_read_all(0, w7);
+	fw_status(0, 8'h08);
+	fw_wait_cmd(ok);
+	for (i = 0; i < 1024; i = i + 1) m_src[i] = 16'h3300 + i;
+	k = 0;
+	for (n = 0; n < 48; n = n + 1) begin
+		m_gap = 16 + n % 16;
+		p0 = dut.PORT0.SECBUF.inptr;
+		ops0 = m_ops;
+		w0 = n_sgwr;
+		sdc_start(1, 0, 64, k);
+		wait_sg(w0 + 1 + n / 16, 1 << 30);
+		i = 0;
+		@(negedge clk_g);
+		while (!(m_req && m_wvalid && BRIDGE.q_run1 && BRIDGE.q_owed) && i < 2000) begin
+			@(negedge clk_g);
+			i = i + 1;
+		end
+		sdc_drop;			// taken at the next edge: the serve edge
+		sdc_wait(ops0, 20000);
+		idle(4);
+		p1 = dut.PORT0.SECBUF.inptr;
+		check(p1 - p0 <= m_moved, "o6 no word written to Gayle that was not popped");
+		check(m_moved - (p1 - p0) <= 1, "o6 at most one popped word not written");
+		for (i = 0; i < p1 - p0; i = i + 1)
+			if (dut.PORT0.SECBUF.mem[(p0 + i) % 4096] !== m_src[k + i]) check(0, "o6 the words written");
+		k = m_rd;
+		if (k > 960) k = 0;
+	end
+	m_gap = 0;
 	check(m_viol == nv0, "g_* contract kept");
 	end_case("g_req: one-cycle ops and drops mid-op");
+
+	//======================================================================
+	// (p) dir 0 right after a task file read: paula_floppy's hdd_addr stays
+	// at the register it read; the bridge must still read the FIFO
+	begin_case("p");
+	do_reset(2'b01, 2'b01, 2'b00, 2'b01);
+	nv0 = m_viol;
+	// port 1 PACKET: the 6-word command packet, then the firmware's flags
+	// read (cd_wait's ReadIDEFlags: registers 0 and 1), then the bridge
+	hwb(24'hDA3018, 8'hA0);
+	hwb(24'hDA301C, 8'hA0);
+	fw_wait_cmd(ok);
+	fw_read_all(1, w7);
+	fw_tfr_wr(1, 2, 8'h01);
+	fw_xfer(1, 13'd6, 1'b1);
+	fw_status(1, 8'h04);
+	for (i = 0; i < 6; i = i + 1)
+		hww(24'hDA3000, 16'h1200 + i);
+	fw_regs_rd(1);
+	fw_tfr_rd(1, 3'd1, v);
+	check(v[F_XDONE] == 1'b1, "packet in (xfer_done)");
+	check(hdd_addr == 3'd1, "paula_floppy's hdd_addr left at 1");
+	bridge_out(1, 6);
+	for (i = 0; i < 6; i = i + 1)
+		if (m_dst[i] !== 16'h1200 + i) check(0, "packet words through the bridge after a flags read");
+	// port 0 WRITE, a whole register read just before the bridge
+	host_cmd(24'hDA2000, 8'd1, 8'd2, 8'd0, 8'd0, 8'hA0, 8'h30);
+	hdd_port = 0;
+	fw_status(1, 8'h90);
+	fw_read_all(0, w7);
+	fw_status(0, 8'h04);
+	for (i = 0; i < 256; i = i + 1)
+		hww(24'hDA2000, 16'h5A00 + i);
+	fw_wait_dat(ok);
+	fw_read_all(0, w7);
+	check(hdd_addr == 3'd7, "paula_floppy's hdd_addr left at 7");
+	bridge_out(0, 256);
+	for (i = 0; i < 256; i = i + 1)
+		if (m_dst[i] !== 16'h5A00 + i) check(0, "sector words through the bridge after a register read");
+	check(m_viol == nv0, "g_* contract kept");
+	end_case("dir 0 after a task file read (hdd_addr 0 while active)");
+
+	//======================================================================
+	// (q) the Amiga abandons a READ MULTIPLE between two groups: its new
+	// command resets the FIFO while no op runs; the firmware, still in the
+	// old command's loop, starts the next group: g_err, no word, no DRQ / IRQ
+	begin_case("q");
+	do_reset(2'b01, 2'b00, 2'b00, 2'b00);
+	nv0 = m_viol;
+	host_cmd(24'hDA2000, 8'd2, 8'd1, 8'd0, 8'd0, 8'hA0, 8'hC4);
+	fw_wait_cmd(ok);
+	fw_read_all(0, w7);
+	fw_status(0, 8'h08);
+	fw_wait_cmd(ok);
+	bridge_in(0, 256, 16'h1100);
+	wait_irq;
+	irq_clear;
+	for (i = 0; i < 256; i = i + 1) begin
+		hr(24'hDA2000, v);
+		if (v !== 16'h1100 + i) check(0, "q group 1 data");
+	end
+	host_cmd(24'hDA2000, 8'd1, 8'd40, 8'd0, 8'd0, 8'hA0, 8'h20);	// a new READ SECTORS
+	fw_status(0, 8'h08);			// the old loop: WriteStatus(RDY) ...
+	fw_wait_cmd(ok);			// ... "drained" (the new command's bsy looks the same)
+	check(ok, "q the old loop sees cmd_req");
+	irq0 = n_irq;
+	w0 = n_sgwr;
+	for (i = 0; i < 1024; i = i + 1) m_src[i] = 16'hBAD0 + i;
+	ops0 = m_ops;
+	sdc_start(1, 0, 256, 0);
+	sdc_wait(ops0, 20000);
+	check(m_end == 2'd2 && m_moved == 0, "q g_err, no word popped");
+	idle(20);
+	check(n_sgwr == w0, "q no bridge write");
+	check(dut.PORT0.SECBUF.inptr == 0, "q the new command's FIFO stays empty");
+	check(n_irq == irq0 && !irq, "q no interrupt");
+	hr(24'hDA201C, v);
+	check(v[11] == 1'b0, "q no DRQ");
+	// the firmware picks the new command up, then serves it normally
+	fw_read_all(0, w7);			// (Gayle drops task file writes while BSY: the registers are the old ones)
+	fw_status(0, 8'h08);
+	fw_wait_cmd(ok);
+	bridge_in(0, 256, 16'h4000);
+	wait_irq;
+	irq_clear;
+	for (i = 0; i < 256; i = i + 1) begin
+		hr(24'hDA2000, v);
+		if (v !== 16'h4000 + i) check(0, "q the new command's data");
+	end
+	idle(2);
+	hr(24'hDA201C, v);
+	check(v[15:8] == 8'h40, "q DRDY after the new command");
+	check(m_viol == nv0, "g_* contract kept");
+	end_case("abandoned command between groups: g_err, no data");
 `endif
 
 	//======================================================================

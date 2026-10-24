@@ -161,7 +161,11 @@ module minimig #(
   // Gayle's firmware-side data port, driven by sdcard_spi through the
   // sdc_g_* ports.  0: those ports are ignored (tops without the engine
   // leave them open) and the port is paula_floppy's alone, as before.
-  parameter SD_ENGINE = 1'b0
+  parameter SD_ENGINE = 1'b0,
+  // f(clk_114) / f(clk), rounded: sizes the bridge's young-op window (see
+  // sdcard_gayle.v).  It must match the clocks; a wrong value fails silently.
+  // openaars: 113.4375 / 28.359375 = 4.
+  parameter SD_CLK_RATIO = 4
 )  (
   //m68k pins
   input [23:1] cpu_address, // m68k address bus
@@ -504,6 +508,7 @@ wire  gayle_nrdy; // HDD fifo is not ready for reading
 wire  hdd_cmd_req; //hard disk controller has written command register and requests processing
 wire  hdd_dat_req; //hard disk controller requests data from emulated hard disk drive
 wire  [2:0] hdd_addr; //emulated hard disk drive register address bus
+wire  [2:0] pf_addr; //the same as paula_floppy drives it (sdcard_gayle_mux)
 wire  [15:0] hdd_data_out; //data output port of emulated hard disk drive
 wire  [15:0] hdd_data_in; //data input port of emulated hard disk drive
 wire  hdd_wr; //register write strobe
@@ -708,7 +713,7 @@ paula PAULA1
   .direct_sdi(direct_sdi),
   .hdd_cmd_req(hdd_cmd_req),
   .hdd_dat_req(hdd_dat_req),
-  .hdd_addr(hdd_addr),
+  .hdd_addr(pf_addr),
   .hdd_data_out(pf_data_out),
   .hdd_data_in(hdd_data_in),
   .hdd_wr(hdd_wr),
@@ -1213,7 +1218,7 @@ wire  sg_data_wr;
 wire  sg_data_rd;
 wire  [15:0] sg_data_out;
 
-sdcard_gayle SDCGAYLE1
+sdcard_gayle #(.CLK_RATIO(SD_CLK_RATIO)) SDCGAYLE1
 (
   .clk(clk),
   .clk7_en(clk7_en),
@@ -1237,7 +1242,10 @@ sdcard_gayle SDCGAYLE1
   .data_out(sg_data_out),
   .data_in(hdd_data_in),
   .dat_req(hdd_dat_req),
-  .fifo_reset_seen(hdd_fifo_reset)
+  .fifo_reset_seen(hdd_fifo_reset),
+  .fw_port(pf_port),
+  .fw_xfer_wr(hdd_xfer_wr),
+  .fw_regs_rd(hdd_regs_rd)
 );
 
 sdcard_gayle_mux SDCMUX1
@@ -1251,12 +1259,15 @@ sdcard_gayle_mux SDCMUX1
   .pf_data_wr(pf_data_wr),
   .pf_data_rd(pf_data_rd),
   .pf_data_out(pf_data_out),
+  .pf_addr(pf_addr),
+  .hdd_addr(hdd_addr),
   .hdd_port(hdd_port),
   .hdd_data_wr(hdd_data_wr),
   .hdd_data_rd(hdd_data_rd),
   .hdd_data_out(hdd_data_out)
 );
 end else begin : g_nosdc
+assign hdd_addr = pf_addr;
 assign hdd_port = pf_port;
 assign hdd_data_wr = pf_data_wr;
 assign hdd_data_rd = pf_data_rd;

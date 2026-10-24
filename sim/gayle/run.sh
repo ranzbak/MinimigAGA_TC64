@@ -27,8 +27,14 @@
 #                         -- (o) must fail
 #   ./run.sh bridge_mut_noabsorb teeth: a dir-1 word request outlives its op
 #                         -- (o) must fail
+#   ./run.sh bridge_mut_noaddr   teeth: hdd_addr not forced to 0 while the
+#                         bridge is active -- (p) must fail
+#   ./run.sh bridge_mut_nosince  teeth: no abandoned-command flag -- (q)
+#                         must fail
+#   ./run.sh bridge_mut_regwnext teeth: g_wnext a cycle after the take -- (o)
+#                         must fail
 #   ./run.sh all          normal old mut_nopkt mut_shared bridge bridge_async
-#                         and the four bridge_mut_* modes
+#                         and the seven bridge_mut_* modes
 #
 # iverilog, as sim/osd_keyq: a one-module bench that runs in seconds and can
 # run while a Vivado build holds the machine.  RUNTAG names the run directory.
@@ -40,7 +46,7 @@ OLDREV=8208e2b
 
 MODES="$*"
 [ -z "$MODES" ] && MODES="normal"
-[ "$MODES" = "all" ] && MODES="normal old mut_nopkt mut_shared bridge bridge_async bridge_mut_nogate bridge_mut_norst bridge_mut_noyoung bridge_mut_noabsorb"
+[ "$MODES" = "all" ] && MODES="normal old mut_nopkt mut_shared bridge bridge_async bridge_mut_nogate bridge_mut_norst bridge_mut_noyoung bridge_mut_noabsorb bridge_mut_noaddr bridge_mut_nosince bridge_mut_regwnext"
 
 rc=0
 for mode in $MODES; do
@@ -61,6 +67,9 @@ for mode in $MODES; do
 		bridge_mut_norst)  defs="-DSDC_BRIDGE -DSDG_MUT_NORST";  want=FAIL; mustfail="l" ;;
 		bridge_mut_noyoung)  defs="-DSDC_BRIDGE -DSDG_MUT_NOYOUNG";  want=FAIL; mustfail="o" ;;
 		bridge_mut_noabsorb) defs="-DSDC_BRIDGE -DSDG_MUT_NOABSORB"; want=FAIL; mustfail="o" ;;
+		bridge_mut_noaddr)   defs="-DSDC_BRIDGE -DSDG_MUT_NOADDR";   want=FAIL; mustfail="p" ;;
+		bridge_mut_nosince)  defs="-DSDC_BRIDGE -DSDG_MUT_NOSINCE";  want=FAIL; mustfail="q" ;;
+		bridge_mut_regwnext) defs="-DSDC_BRIDGE -DSDG_MUT_REGWNEXT"; want=FAIL; mustfail="o" ;;
 		*) echo "unknown mode: $mode"; exit 2 ;;
 	esac
 
