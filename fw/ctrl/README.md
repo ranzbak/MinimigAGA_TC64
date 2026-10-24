@@ -1136,7 +1136,8 @@ us). Lines are those of the current tree.
 | `osd.c:1119`, `1085` (`ScrollReset`, `ScrollText`) | name scroll: `SCROLL_DELAY`, `SCROLL_DELAY2` (`osd.c:269`, `270`) | 300, 3 | 1.741 s, 17.4 ms |
 | `menu.c:247`, `269` (`cd_show_msg`, `cd_msg_expired`) | CD message: `CD_MSG_DELAY` (`menu.c:237`) | 4000 | 23.22 s |
 | `menu.c:610`, `617`, `619` (`HandleUI`) | help text: `HELPTEXT_DELAY`, `FRAME_DELAY` (`menu.c:201`, `202`) | 2500, 50 | 14.51 s, 290.2 ms |
-| `menu.c:3021`, `2714` (`InfoMessage`) | info popup | 1000 | 5.804 s |
+| `menu.c:1092`, `1101`, `1103` (`HandleUI`) | about screen stars and logo redraw: `ABOUT_FRAME_DELAY` (`osd.h:63`), re-armed by the pass that fires | 2 | a redraw every 3 counts = 17.4 ms; first frame 11.6..17.4 ms after arming |
+| `menu.c:3028`, `2721` (`InfoMessage`) | info popup | 1000 | 5.804 s |
 | `main.c:107`, `109`, `111` (`FatalError`) | LED blink: `WaitTimer(250)` x2, `WaitTimer(1000)` | 250, 1000 | 1.451 s, 5.804 s |
 | `main.c:297`, `345`, `348` (`main`) | ADV7511 poll (`adv_timer`) | 250 | 1.451 s |
 | `main.c:317`, `319`, `321` (`main`) | disk statistics report while DebugMode is on (`diskstat_timer`): `DISKSTAT_PERIOD` (`diskstat.h:10`) | 1000 | 5.804 s |
@@ -1145,7 +1146,7 @@ us). Lines are those of the current tree.
 | `mmc.c:80`, `88`, `135`, `174` (`MMC_Init`) | init timeout: `GetTimer(1000)`, ACMD41 / CMD1 polls | 1000 | 5.804 s |
 | `mmc.c:235`, `290`, `366`, `452`, `527` | `SD_TIMEOUT` (above) | 173 | 1.004 s |
 | `fat.c:723`, `1318` | `GetTimer(0)` inside a comment (dead); `fat.c:96` declares `GetTimer` | | |
-| `menu.c:2737`, `config.c:612`, `fat.c:168` | in comments (dead) | | |
+| `menu.c:2744`, `config.c:612`, `fat.c:168` | in comments (dead) | | |
 
 The boot ROM (`fw/ctrl_boot`) is not part of this firmware and unchanged.
 

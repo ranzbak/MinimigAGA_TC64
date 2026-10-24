@@ -55,6 +55,13 @@
 #define REPEATRATE 25   // repeat rate in audio ticks
 #define BUTTONDELAY 20  // repeat rate in audio ticks
 
+// About screen (menu.c MENU_ABOUT2): stars and logo redraw timer, in TIMER
+// counts (5.804 ms each). CheckTimer fires one count after the offset (once
+// TIMER has passed the armed count + 2) and the pass that fires re-arms, so 2
+// gives a redraw every 3 counts = 17.4 ms; the first frame after arming comes
+// 11.6..17.4 ms later.
+#define ABOUT_FRAME_DELAY 2
+
 #define KEY_UPSTROKE 0x80 // These codes are from the Amiga key map (not PC)
 #define KEY_MENU 0x69
 #define KEY_PGUP 0x6C

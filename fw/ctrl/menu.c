@@ -411,7 +411,7 @@ void HandleUI(void)
     static unsigned char ctrl = false;
     static unsigned char lalt = false;
     static unsigned char lshift = false;
-    static long helptext_timer;
+    static long helptext_timer, about_timer;
     static const char *helptext;
     static char helpstate = 0;
     char volume_bar[17];
@@ -1089,19 +1089,26 @@ void HandleUI(void)
 
         StarsInit();
         ScrollReset();
+        about_timer = GetTimer(ABOUT_FRAME_DELAY);
 
         parentstate = menustate;
         menustate = MENU_ABOUT2;
         break;
 
     case MENU_ABOUT2:
-        StarsUpdate();
-        OsdDrawLogo(0, 0, 1);
-        OsdDrawLogo(1, 1, 1);
-        OsdDrawLogo(2, 2, 1);
-        OsdDrawLogo(3, 3, 1);
-        OsdDrawLogo(4, 4, 1);
-        OsdDrawLogo(6, 6, 1);
+        // Stars and logo on the ABOUT_FRAME_DELAY timer (osd.h), not on every
+        // main-loop pass; ScrollText keeps its own timer.
+        if (CheckTimer(about_timer))
+        {
+            about_timer = GetTimer(ABOUT_FRAME_DELAY);
+            StarsUpdate();
+            OsdDrawLogo(0, 0, 1);
+            OsdDrawLogo(1, 1, 1);
+            OsdDrawLogo(2, 2, 1);
+            OsdDrawLogo(3, 3, 1);
+            OsdDrawLogo(4, 4, 1);
+            OsdDrawLogo(6, 6, 1);
+        }
         ScrollText(5, "                                 Minimig AGA by Rok Krajnc, ported to Turbo Chameleon 64 by Alastair M. Robinson.  Original Minimig by Dennis van Weeren with chipset improvements by Jakub Bednarski and Sascha Boing.  TG68K softcore by Tobias Gubener.  Menu / disk code by Dennis van Weeren, Jakub Bednarski, Alastair M. Robinson and Christian Vogelgsang.  Minimig logo based on a design by Loriano Pagni.  Minimig is distributed under the terms of the GNU General Public License version 3.", 0, 0, 0);
         if (select || menu)
         {
