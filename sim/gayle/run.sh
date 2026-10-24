@@ -11,7 +11,24 @@
 #   ./run.sh mut_shared   teeth: one register file for both ports (port
 #                         select ignored) -- (g) and (h) must fail
 #   ./run.sh golden       re-record golden_a.txt from the 8208e2b gayle.v
-#   ./run.sh all          normal old mut_nopkt mut_shared
+#   ./run.sh bridge       -DSDC_BRIDGE: the SD card bridge (rtl/minimig/
+#                         sdcard_gayle.v) and its mux in front of Gayle, a
+#                         model of sdcard_spi's g_* side on clk_114 = 4 x clk:
+#                         case (a) moves its data through the bridge and its
+#                         trace must match golden_a.txt event for event
+#                         (cycle numbers differ), (b)-(i) pass through the
+#                         idle mux, (j)-(o) are the bridge cases
+#   ./run.sh bridge_async as bridge, clk_114 at 112.4 MHz drifting against clk
+#   ./run.sh bridge_mut_nogate   teeth: paula_floppy strobes not blocked
+#                         while the bridge is active -- (n) must fail
+#   ./run.sh bridge_mut_norst    teeth: the bridge ignores the FIFO reset --
+#                         (l) must fail
+#   ./run.sh bridge_mut_noyoung  teeth: no young-op guard on the clk_114 side
+#                         -- (o) must fail
+#   ./run.sh bridge_mut_noabsorb teeth: a dir-1 word request outlives its op
+#                         -- (o) must fail
+#   ./run.sh all          normal old mut_nopkt mut_shared bridge bridge_async
+#                         and the four bridge_mut_* modes
 #
 # iverilog, as sim/osd_keyq: a one-module bench that runs in seconds and can
 # run while a Vivado build holds the machine.  RUNTAG names the run directory.
@@ -23,7 +40,7 @@ OLDREV=8208e2b
 
 MODES="$*"
 [ -z "$MODES" ] && MODES="normal"
-[ "$MODES" = "all" ] && MODES="normal old mut_nopkt mut_shared"
+[ "$MODES" = "all" ] && MODES="normal old mut_nopkt mut_shared bridge bridge_async bridge_mut_nogate bridge_mut_norst bridge_mut_noyoung bridge_mut_noabsorb"
 
 rc=0
 for mode in $MODES; do
@@ -38,6 +55,12 @@ for mode in $MODES; do
 			[ "$mode" = golden ] && want=any ;;
 		mut_nopkt)  defs="-DGAYLE_MUT_NOPKT";  want=FAIL; mustfail="b c d" ;;
 		mut_shared) defs="-DGAYLE_MUT_SHARED"; want=FAIL; mustfail="g h" ;;
+		bridge)       defs="-DSDC_BRIDGE" ;;
+		bridge_async) defs="-DSDC_BRIDGE -DSDC_ASYNC" ;;
+		bridge_mut_nogate) defs="-DSDC_BRIDGE -DSDG_MUT_NOGATE"; want=FAIL; mustfail="n" ;;
+		bridge_mut_norst)  defs="-DSDC_BRIDGE -DSDG_MUT_NORST";  want=FAIL; mustfail="l" ;;
+		bridge_mut_noyoung)  defs="-DSDC_BRIDGE -DSDG_MUT_NOYOUNG";  want=FAIL; mustfail="o" ;;
+		bridge_mut_noabsorb) defs="-DSDC_BRIDGE -DSDG_MUT_NOABSORB"; want=FAIL; mustfail="o" ;;
 		*) echo "unknown mode: $mode"; exit 2 ;;
 	esac
 
@@ -53,6 +76,7 @@ for mode in $MODES; do
 	else
 		files="$src/gayle.v $src/gayle_port.v $src/gayle_fifo.v"
 	fi
+	case "$defs" in *SDC_BRIDGE*) files="$files $src/sdcard_gayle.v" ;; esac
 
 	# shellcheck disable=SC2086
 	iverilog -g2005 -o "$run/sim.vvp" $defs -s gayle_tb \
@@ -73,11 +97,20 @@ for mode in $MODES; do
 	grep -E "^(---|  ok|FAIL|=== )" "$run/run.log" | sed "s/^/$mode: /"
 
 	verdict=OK
-	if cmp -s "$run/trace_a.txt" "$HERE/golden_a.txt"; then
-		echo "$mode: case (a) trace matches golden_a.txt ($(wc -l < "$HERE/golden_a.txt") lines)"
+	case "$defs" in
+		*SDC_BRIDGE*)
+			# the bridge's timing is not the bench firmware's: compare the
+			# events and values, not the clk7 cycle numbers
+			sed 's/^TRACE [0-9]* //' "$HERE/golden_a.txt" > "$run/golden_ev.txt"
+			sed 's/^TRACE [0-9]* //' "$run/trace_a.txt" > "$run/trace_ev.txt"
+			ga="$run/golden_ev.txt"; ta="$run/trace_ev.txt"; how="event for event" ;;
+		*)	ga="$HERE/golden_a.txt"; ta="$run/trace_a.txt"; how="" ;;
+	esac
+	if cmp -s "$ta" "$ga"; then
+		echo "$mode: case (a) trace matches golden_a.txt ($(wc -l < "$HERE/golden_a.txt") lines${how:+, $how})"
 	else
 		echo "$mode: case (a) trace DIFFERS from golden_a.txt:"
-		diff "$HERE/golden_a.txt" "$run/trace_a.txt" | head -20
+		diff "$ga" "$ta" | head -20
 		verdict=WRONG
 	fi
 	grep -q "^  ok   a " "$run/run.log" || { echo "$mode: case (a) did not pass"; verdict=WRONG; }

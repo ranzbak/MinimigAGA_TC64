@@ -74,6 +74,7 @@ module gayle
 	input	hdd_port,			// the firmware's port bit (bit 8 of every HDD SPI command)
 	input	hdd_xfer_wr,		// CMD_IDE_XFER_WR: {pkt_mode, 2'b0, words[12:0]} on hdd_data_out
 	input	hdd_regs_rd,		// CMD_IDE_REGS_RD command word (captures and clears the sticky flags)
+	output	[1:0] hdd_fifo_reset,	// per port: its FIFO is reset (sampled on clk7_en; SD card bridge abort)
   output hd_fwr,
   output hd_frd
 );
@@ -217,6 +218,7 @@ wire	bsy0, bsy1;
 wire	dat_req0, dat_req1;
 wire	[7:0] status0;
 wire	fwr0, fwr1, frd0, frd1;
+wire	frst0, frst1;
 
 gayle_port #(.PORT(0)) PORT0
 (
@@ -250,7 +252,8 @@ gayle_port #(.PORT(0)) PORT0
 	.dat_req(dat_req0),
 	.status_o(status0),
 	.fifo_wr_o(fwr0),
-	.fifo_rd_o(frd0)
+	.fifo_rd_o(frd0),
+	.fifo_reset_o(frst0)
 );
 
 generate
@@ -287,7 +290,8 @@ gayle_port #(.PORT(1)) PORT1
 	.dat_req(dat_req1),
 	.status_o(),
 	.fifo_wr_o(fwr1),
-	.fifo_rd_o(frd1)
+	.fifo_rd_o(frd1),
+	.fifo_reset_o(frst1)
 );
 end else begin : g_noport1
 assign host_out1 = 16'h0000;
@@ -299,12 +303,16 @@ assign bsy1 = 1'b0;
 assign dat_req1 = 1'b0;
 assign fwr1 = 1'b0;
 assign frd1 = 1'b0;
+assign frst1 = 1'b0;
 end
 endgenerate
 
 // hd leds
 assign hd_fwr = fwr0 | fwr1;
 assign hd_frd = frd0 | frd1;
+
+// each port's FIFO reset, for the SD card bridge (sdcard_gayle.v aborts on it)
+assign hdd_fifo_reset = {frst1, frst0};
 
 // cmd/status debug
 reg [7:0] status_dbg  /* synthesis noprune */;

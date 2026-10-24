@@ -78,7 +78,8 @@ module gayle_port
 	output	dat_req,
 	output	[7:0] status_o,
 	output	fifo_wr_o,
-	output	fifo_rd_o
+	output	fifo_rd_o,
+	output	fifo_reset_o		// the FIFO reset (Gayle reset, host command, CMD_IDE_XFER_WR), for the SD card bridge
 );
 
 localparam VCC = 1'b1;
@@ -134,6 +135,7 @@ wire	[12:0] fifo_out_ptr;	// words read since the FIFO reset
 
 assign fifo_wr_o = fifo_wr;
 assign fifo_rd_o = fifo_rd;
+assign fifo_reset_o = fifo_reset;
 
 // HDD status register
 assign status = {bsy,drdy,2'b00,drq,2'b00,err};
