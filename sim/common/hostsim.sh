@@ -46,12 +46,20 @@
 hs_die() { echo "FAILED: $*"; exit 1; }
 
 # RTL files a bench copies (the Verilog / VHDL it simulates, never rtl/ itself)
-HS_RTL_FILES="rtl/host/cfide.vhd rtl/host/host_bridge.vhd rtl/host/hostcache.v rtl/sdram/dpram_inf_generic.v rtl/host/rv_hostcpu.v rtl/host/vexriscv/VexOsd.v rtl/host/sdcard_spi.v"
+HS_RTL_FILES="rtl/host/cfide.vhd rtl/host/host_bridge.vhd rtl/host/hostcache.v rtl/sdram/dpram_inf_generic.v rtl/host/rv_hostcpu.v rtl/host/vexriscv/VexOsd.v"
+# ... and those copied only when the revision has them (older trees, e.g.
+# osd-832-final or 745a47c3, have no rtl/host/sdcard_spi.v; the benches that
+# compile it are of trees that do)
+HS_RTL_OPT_FILES="rtl/host/sdcard_spi.v"
 
 hs_copy_rtl() {
 	local run=$1 rev=$2 f
 	mkdir -p "$run/src" || hs_die "mkdir $run/src"
 	for f in $HS_RTL_FILES; do
+		cp "$rev/$f" "$run/src/" || hs_die "copy $f"
+	done
+	for f in $HS_RTL_OPT_FILES; do
+		[ -e "$rev/$f" ] || continue
 		cp "$rev/$f" "$run/src/" || hs_die "copy $f"
 	done
 	sed -i "s/ack <= #1 1'b0;/ack <= 1'b0;/" "$run/src/hostcache.v"

@@ -4,7 +4,8 @@
 # i2s.xdc, sd_card.xdc, ...); CPU exceptions in cpu.xdc; clocks in clocks.xdc.
 
 # Slow serial outputs (I2C, joystick SPI, I2S): no external timing requirement.  The SD
-# card's CMD / DAT3 are timed against its SCK in sd_card.xdc (the SD card engine).
+# card's CMD / DAT3 are in sd_card_engine.tcl: timed against the engine's SCK, or this
+# same false path in a build without the engine.
 set_false_path -to [get_ports {io_scl io_sda js_cs js_mosi js_sck max_i2s max_lrclk}]
 
 ###############################################################################

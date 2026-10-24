@@ -319,6 +319,10 @@ begin
     -- 0.3 ns behind clk_114: it does) would let the bridge take q at E1, the
     -- previous access's value.  The cost is at most one sysclk cycle per
     -- access (none when the first clk_28 edge after E0 is not at E1).
+    -- Static timing: ext_req_d (sysclk) -> ack (clk_28) is timed like req
+    -- -> ack, setup only under the board's 1:4 clk_114 -> dll_28 multicycle
+    -- (wizard.xdc): a late arrival delays ack by one clk_28 cycle, never
+    -- makes it early, since ext_req_d is high for the whole access.
     -- Accesses complete at least 6 sysclk cycles apart (ack falls only at a
     -- clk_28 edge after req dropped), more than the >= 4 the block asks for.
     -- sim/host_bridge t_sdc_regs.

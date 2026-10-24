@@ -32,7 +32,9 @@ module tb_sdcard_spi;
     // t_min_spacing: 3 + 0 + 1 = 4, the minimum sdcard_spi.v is built for)
     integer ACC = 4;                    // cycles per register access (clk_28 ack: >= 4)
     integer GAP = 4;                    // idle cycles between accesses
-    localparam integer WATCHDOG_CYC = 6000000;
+    // watchdog: a passing run takes ~1 M cycles; a mutant run that has lost its
+    // state times out in every later case (mut_nointerlock: ~7.1 M)
+    localparam integer WATCHDOG_CYC = 12000000;
 
     // register offsets (byte address - 0xFFFFFF00)
     localparam [5:0] R_DATAW = 6'h00, R_DATAB = 6'h04, R_RXLVL = 6'h08, R_TXLVL = 6'h0C,
@@ -141,9 +143,12 @@ module tb_sdcard_spi;
     // gr_space cycles after the last pulse.  gr_err_at = k: a g_err pulse
     // instead of word k; gr_ack_at = k: a g_ack instead of word k (too
     // early); gr_stall_at = k: no word k, no ack (the case ends the op).  It
-    // stops when g_req drops.
+    // stops when g_req drops.  gr_errpop_at = k (one shot, cleared when
+    // used): word k is taken (g_wnext / g_rvalid) with a g_err in the same
+    // cycle.  gr_ack_space > 0: the g_ack comes that many cycles after the
+    // last pulse instead of gr_space (1: the cycle right after it).
     integer gr_space = 4, gr_err_at = -1, gr_stall_at = -1, gr_ack_at = -1;
-    integer gr_usevalid = 1, gr_extra = 0;
+    integer gr_usevalid = 1, gr_extra = 0, gr_errpop_at = -1, gr_ack_space = 0, gr_sp;
     integer gr_n = 0, gr_reqs = 0, gr_words = 0, gk, gdone;
     reg     gr_dir = 1'b0, gr_port = 1'b0;
     reg [15:0] gr_buf [0:1023];
@@ -156,7 +161,8 @@ module tb_sdcard_spi;
                 gr_dir = g_dir; gr_port = g_port; gr_words = g_words; gr_n = 0;
                 gdone = 0;
                 while (!gdone) begin
-                    for (gk = 0; gk < gr_space - 1 && g_req === 1'b1; gk = gk + 1) begin @(posedge clk); #1; end
+                    gr_sp = (gr_n == gr_words + gr_extra && gr_ack_space > 0) ? gr_ack_space : gr_space;
+                    for (gk = 0; gk < gr_sp - 1 && g_req === 1'b1; gk = gk + 1) begin @(posedge clk); #1; end
                     if (gr_dir && gr_usevalid && gr_n < gr_words && gr_n != gr_err_at && gr_n != gr_stall_at
                         && gr_n != gr_ack_at) begin
                         gk = 0;
@@ -166,6 +172,16 @@ module tb_sdcard_spi;
                     else if (gr_n == gr_err_at) begin
                         g_err = 1'b1; @(posedge clk); #1; g_err = 1'b0; gdone = 1;
                     end else if (gr_n == gr_stall_at) gdone = 1;
+                    else if (gr_n == gr_errpop_at) begin
+                        gr_errpop_at = -1;
+                        if (gr_dir) begin gr_buf[gr_n] = g_wdata; g_wnext = 1'b1; end
+                        else begin g_rdata = gr_src[gr_n]; g_rvalid = 1'b1; end
+                        g_err = 1'b1;
+                        @(posedge clk); #1;
+                        g_wnext = 1'b0; g_rvalid = 1'b0; g_err = 1'b0; g_rdata = 16'hDEAD;
+                        gr_n = gr_n + 1;
+                        gdone = 1;
+                    end
                     else if (gr_n == gr_words + gr_extra || gr_n == gr_ack_at) begin
                         g_ack = 1'b1; @(posedge clk); #1; g_ack = 1'b0; gdone = 1;
                     end else begin
@@ -217,8 +233,8 @@ module tb_sdcard_spi;
     //   while g_req: g_more_r == (COUNT != LEN), g_last_r == (COUNT + 2 == LEN);
     //   a Gayle pop only with hc == 2;
     //   at every CMD strobe: tx_room_r / rx_ready_r equal what TXLVL, LEN and
-    //   verified give now, except in the cycle after an op's end, where they
-    //   may only be the smaller answer (a refuse, never a wrong accept).
+    //   verified give now, except in the cycle right after an op's end (fin_d),
+    //   where no command but ABORT may be accepted.
     reg p_opfin = 1'b0;
     integer n_cmd_chk = 0, n_cmd_late = 0;
     always @(posedge clk) if (!reset) begin
@@ -239,9 +255,8 @@ module tb_sdcard_spi;
         if (reg_wstb === 1'b1 && reg_addr == 4'd4) begin
             n_cmd_chk = n_cmd_chk + 1;
             if (p_opfin) n_cmd_late = n_cmd_late + 1;
-            if ((dut.tx_room_r && !({1'b0, dut.txlvl} + {1'b0, dut.len_r} <= 12'd1024))
-                || (dut.rx_ready_r && !(dut.verified >= dut.len_r))) begin
-                $display("FAIL %0s: CMD strobe: tx_room_r / rx_ready_r more than there is (cycle %0d)", cur, cyc);
+            if (p_opfin && dut.cmd_accept === 1'b1) begin
+                $display("FAIL %0s: CMD accepted in the cycle right after an op's end (cycle %0d)", cur, cyc);
                 errors = errors + 1;
             end
             if (!p_opfin && (dut.tx_room_r !== ({1'b0, dut.txlvl} + {1'b0, dut.len_r} <= 12'd1024)
@@ -484,6 +499,23 @@ module tb_sdcard_spi;
                 $display("FAIL %0s: %0s: IRQPEND %h, want error and no done (cycle %0d)", cur, what, s, cyc); errors = errors + 1;
             end
             wr(R_IRQ, 16'h001F);
+        end
+    endtask
+
+    // a CMD write whose strobe falls in the cycle right after the running
+    // op's end (op_fin): sdcard_spi must refuse it (fin_d); then the rest of
+    // an access
+    task cmd_after_end(input [15:0] cmd);
+        integer k;
+        begin
+            k = 0;
+            while (p_opfin !== 1'b1 && k < 400000) begin @(posedge clk); #1; k = k + 1; end
+            if (p_opfin !== 1'b1) fail("cmd_after_end: no op end seen");
+            if (dut.busy !== 1'b0) fail("cmd_after_end: busy in the cycle after op_fin");
+            reg_addr = 4'd4; reg_d = cmd; reg_wstb = 1'b1;
+            @(posedge clk); #1;
+            reg_wstb = 1'b0;
+            repeat (ACC - 1 + GAP) @(posedge clk);
         end
     endtask
 
@@ -1500,6 +1532,66 @@ module tb_sdcard_spi;
             end_case;
         end
 
+        // ---- a CMD in the cycle right after an op's end (Task 8 fix round 1):
+        // the end's last effects reach the command checks only a cycle later,
+        // so the command is refused there (fin_d).
+        // (a) RX_TO_GAYLE LEN 384 of a 512-byte verified block ends by g_err
+        //     on word 64, popped in that cycle: verified 384 before, 382
+        //     after.  RX_TO_GAYLE LEN 384 at once: refused (with verified
+        //     still at 384 in the registers it would start on 382 bytes).
+        // (b) GAYLE_TO_TX LEN 2 into TXLVL 1021, g_ack in the cycle after the
+        //     word: its second byte goes in during the end cycle, TXLVL 1023
+        //     a cycle later.  GAYLE_TO_TX LEN 2 at once: refused (the
+        //     registers would still show 1022 + 2 <= 1024).
+        // Both CMDs again later: refused for the plain reason.  Mutant
+        // SDC_MUT_NOFIND (no fin_d) must fail this case.
+        begin_case("t_cmd_after_end", run_it);
+        if (run_it) begin
+            cs_cycle(8'd2);
+            crc_mode(1'b1);
+            wr(R_CMD, OP_RXFL);
+            wr(R_CMD, OP_TXFL);
+            read_block(5, C_RX | C_CRCRX);
+            expect_rd(R_CMD, 16'h0002, 16'h0002, "crc_ok of LBA 5");
+            n = gr_reqs;
+            gr_errpop_at = 64;
+            wr(R_IRQ, 16'h001F);
+            wr(R_LEN, 16'd384);
+            wr(R_CMD, OP_RX2G);
+            cmd_after_end(OP_RX2G);
+            wait_idle(20000);
+            gr_errpop_at = -1;
+            if (gr_reqs != n + 1) fail("(a) the CMD in the cycle after the end started an op");
+            expect_rd(R_CMD, 16'h00C1, 16'h00C0, "(a) STATUS: Gayle error, then refused");
+            expect_rd(R_MATCH, 16'hFFFF, 16'd130, "(a) COUNT: 65 words, the last with g_err");
+            expect_rd(R_RXLVL, 16'hFFFF, 16'd382, "(a) RXLVL 382");
+            check_gr_buf(5, 0, 65, "(a) the 65 words taken");
+            expect_refused(OP_RX2G, "(a) RX_TO_GAYLE LEN 384 with 382 verified");
+            wr(R_CMD, OP_RXFL);
+            crc_mode(1'b0);
+            // (b)
+            wr(R_CMD, OP_TXFL);
+            for (i = 0; i < 510; i = i + 1) wr(R_DATAW, 16'hFFFF);
+            wr(R_DATAB, 16'h00FF);
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd1021, "(b) TXLVL 1021");
+            gr_src[0] = 16'h1234;
+            gr_space = 20; gr_ack_space = 1;
+            n = gr_reqs;
+            wr(R_IRQ, 16'h001F);
+            wr(R_LEN, 16'd2);
+            wr(R_CMD, OP_G2TX);
+            cmd_after_end(OP_G2TX);
+            wait_idle(20000);
+            gr_space = 4; gr_ack_space = 0;
+            if (gr_reqs != n + 1) fail("(b) the CMD in the cycle after the end started an op");
+            expect_rd(R_CMD, 16'h00C1, 16'h0040, "(b) STATUS: good end, then refused");
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd1023, "(b) TXLVL 1023");
+            expect_refused(OP_G2TX, "(b) GAYLE_TO_TX LEN 2 into TXLVL 1023");
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd1023, "(b) TXLVL still 1023");
+            wr(R_CMD, OP_TXFL);
+            end_case;
+        end
+
         // ---- wait timeout: WAIT_EQ $00 on a card sending $FF
         begin_case("t_wait_timeout", run_it);
         if (run_it) begin
@@ -1915,7 +2007,7 @@ module tb_sdcard_spi;
             end_case;
         end
 
-        $display("=== CMD strobes checked against tx_room_r / rx_ready_r: %0d (%0d in the cycle after an op's end)",
+        $display("=== CMD strobes checked against tx_room_r / rx_ready_r: %0d (%0d in the cycle right after an op's end)",
                  n_cmd_chk, n_cmd_late);
         if (errors == 0) $display("=== PASS tb_sdcard_spi");
         else $display("=== FAIL tb_sdcard_spi (%0d errors)", errors);

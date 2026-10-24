@@ -54,7 +54,9 @@
 //    8 RX_FLUSH    RX empty (prefetch included); verified 0, not poisoned
 //    9 TX_FLUSH    TX empty, kept bytes included
 //   15 ABORT       accepted at any time, see below
-//   Ops 1-9 are accepted only while not busy (with the checks above):
+//   Ops 1-9 are accepted only while not busy and not in the cycle right
+//   after an op's end (its last effects are not in the checks yet; see
+//   tx_room_r), with the checks above:
 //   accepting clears STATUS 7:1 and COUNT; 6-9 and XFER LEN 0 complete at
 //   once (IRQ bit 0).  Everything else is REFUSED: STATUS 6 and IRQ bit 3
 //   set, nothing else changes (a running op goes on; no op-done IRQ).
@@ -210,7 +212,8 @@
 // clocks), so a card present at reset gives no change IRQ.
 //
 // Bench mutants (sim/sdcard_spi/run.sh): SDC_MUT_NOCRC (CRC check always
-// ok), SDC_MUT_NOINTERLOCK (RX_TO_GAYLE checks only LEN), SDC_MUT_NOTIMEOUT.
+// ok), SDC_MUT_NOINTERLOCK (RX_TO_GAYLE checks only LEN), SDC_MUT_NOTIMEOUT,
+// SDC_MUT_NOFIND (commands accepted in the cycle right after an op's end).
 module sdcard_spi #(
     parameter VERSION = 16'h5D01,
     parameter CD_DEBOUNCE_LOG2 = 20
@@ -322,14 +325,22 @@ module sdcard_spi #(
     //     cycles apart, so all of it is in the registers at the next strobe;
     //   - while an op runs (shifter bytes into RX change RXLVL, not verified;
     //     Gayle pushes and pops): the CMD is refused for busy then;
-    //   - at an op's end (a rollback lowers TXLVL, a good CRC-checked XFER
-    //     raises verified): one cycle old they show less room / fewer
-    //     verified bytes than there are, so a CMD strobe in the very cycle
-    //     after an op ended can only be refused, never wrongly accepted
-    //     (the firmware learns of the end through a register read, >= 1
-    //     cycle after it, and writes its next CMD >= 4 cycles after that).
-    // The bench checks both at every CMD strobe (exact, or after an op's end
-    // only ever the smaller answer).
+    //   - at an op's end: what happens in op_fin's cycle lands at the edge
+    //     that ends it, with busy dropping at that same edge: the op's last
+    //     Gayle pop or push (a word in the cycle of g_err / g_ack / ABORT /
+    //     card gone is taken), the second byte of the last GAYLE_TO_TX word
+    //     (pend_v, with g_ack one cycle after that word), a rollback, the
+    //     last RX byte and the verified count of a good CRC-checked XFER.
+    //     In the cycle after op_fin the registers still show the values from
+    //     before, either way (more verified bytes or more room than there
+    //     are, too).  So no command is accepted in that cycle: fin_d holds it
+    //     off like busy (refused, STATUS 6 + IRQ bit 3).  From the cycle
+    //     after it the registers are exact.  The firmware never meets this:
+    //     it learns of the end through a register read and writes its next
+    //     CMD >= 4 cycles after that.
+    // The bench checks both at every CMD strobe (exact unless in fin_d's
+    // cycle, where the command must be refused).
+    reg        fin_d;                   // op_fin last cycle: no command accepted now
     reg        tx_room_r, rx_ready_r;
     wire       tx_room  = tx_room_r;
 `ifdef SDC_MUT_NOINTERLOCK
@@ -342,6 +353,7 @@ module sdcard_spi #(
     always @(posedge clk) begin
         tx_room_r  <= {1'b0, txlvl} + {1'b0, len_r} <= 12'd1024;
         rx_ready_r <= verified >= len_r;
+        fin_d      <= !reset && op_fin;
     end
     reg        cmd_ok;
     always @* begin
@@ -355,7 +367,11 @@ module sdcard_spi #(
         endcase
     end
     wire       w_abort     = w_cmd && cmd_op == OP_ABORT;
+`ifdef SDC_MUT_NOFIND
     wire       cmd_accept  = w_cmd && !busy && cmd_ok;
+`else
+    wire       cmd_accept  = w_cmd && !busy && !fin_d && cmd_ok;   // fin_d: see tx_room_r
+`endif
     wire       cmd_refuse  = w_cmd && !cmd_accept && !w_abort;
     wire       cfg_refuse  = reg_wstb && ra == 4'd8 && busy;   // CS / divider fixed during an op
     wire       refuse_evt  = cmd_refuse | cfg_refuse;

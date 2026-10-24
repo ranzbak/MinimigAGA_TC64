@@ -13,10 +13,12 @@
 #   iverilog   the X-check leg: Icarus Verilog (4-state), run with +XCHECK
 #              (no X / Z on reg_q, irq and the pins after reset);
 #              log <run>/tb_iverilog.log
-#   mut_nocrc, mut_nointerlock, mut_notimeout
+#   mut_nocrc, mut_nointerlock, mut_notimeout, mut_nofind
 #              mutant legs: the iverilog leg with -DSDC_MUT_NOCRC (CRC check
 #              always ok), -DSDC_MUT_NOINTERLOCK (RX_TO_GAYLE checks only
-#              LEN), -DSDC_MUT_NOTIMEOUT (wait ops never time out).  A mutant
+#              LEN), -DSDC_MUT_NOTIMEOUT (wait ops never time out),
+#              -DSDC_MUT_NOFIND (commands accepted in the cycle right after
+#              an op's end: t_cmd_after_end).  A mutant
 #              leg passes when the bench CATCHES the mutant: at least one
 #              case FAILs and the run ends with its own verdict (not the
 #              watchdog, not a hang); log <run>/tb_<leg>.log
@@ -24,7 +26,7 @@
 # "=== PASS tb_sdcard_spi"; each mutant leg prints the cases that caught it.
 # The script exits 1 unless every leg passes.  The bench's watchdog turns a
 # hang into "=== FAIL"; the run itself is limited by `timeout` (TMO, 600 s).
-# Default LEGS: all five; with TEST set, verilator and iverilog only.
+# Default LEGS: all six; with TEST set, verilator and iverilog only.
 #
 # Environment: RUNTAG (run directory sim/sdcard_spi/run_${RUNTAG:-wt}),
 # LEGS, TEST, XARGS (extra plusargs, e.g. +SD_LOG=1), VERILATOR (verilator),
@@ -36,7 +38,7 @@ ROOT=$(cd "$HERE/../.." && pwd)
 RUNTAG=${RUNTAG:-wt}
 run=$HERE/run_$RUNTAG
 if [ -n "${TEST:-}" ]; then LEGS=${LEGS:-verilator iverilog}
-else LEGS=${LEGS:-verilator iverilog mut_nocrc mut_nointerlock mut_notimeout}; fi
+else LEGS=${LEGS:-verilator iverilog mut_nocrc mut_nointerlock mut_notimeout mut_nofind}; fi
 VERILATOR=${VERILATOR:-verilator}
 JOBS=${JOBS:-$(nproc)}
 if [ -z "${IVERILOG:-}" ]; then
@@ -87,12 +89,13 @@ leg_mut() {
 leg_mut_nocrc()       { leg_mut mut_nocrc SDC_MUT_NOCRC; }
 leg_mut_nointerlock() { leg_mut mut_nointerlock SDC_MUT_NOINTERLOCK; }
 leg_mut_notimeout()   { leg_mut mut_notimeout SDC_MUT_NOTIMEOUT; }
+leg_mut_nofind()      { leg_mut mut_nofind SDC_MUT_NOFIND; }
 
 pids=()
 for leg in $LEGS; do
 	case $leg in
-		verilator|iverilog|mut_nocrc|mut_nointerlock|mut_notimeout) ;;
-		*) hs_die "unknown leg $leg (verilator | iverilog | mut_nocrc | mut_nointerlock | mut_notimeout)" ;;
+		verilator|iverilog|mut_nocrc|mut_nointerlock|mut_notimeout|mut_nofind) ;;
+		*) hs_die "unknown leg $leg (verilator | iverilog | mut_nocrc | mut_nointerlock | mut_notimeout | mut_nofind)" ;;
 	esac
 	rm -f "$run/tb_$leg.log"
 	( "leg_$leg" ) &

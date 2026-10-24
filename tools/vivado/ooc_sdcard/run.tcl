@@ -14,11 +14,12 @@
 #        35.26 (113.4375 / 28.359375 MHz), as Tasks 5-7 measured.
 #   io   the same wrapper as a top with IO buffers, the card pins on the
 #        board's package pins (fpga/openaars/aars_v5.0/xc7a100t/sd_card.xdc),
-#        every other port LVTTL wherever the placer puts it (untimed), and the
-#        card's pin and timing constraints read from sd_card.xdc itself (its
-#        sdc_pins block): proves those constraints and their slack.
-# Both modes read sd_card.xdc's sdc_bridge block (the Gayle bridge's Gray
-# count bound).
+#        every other port LVTTL wherever the placer puts it (untimed), the
+#        card's pins from sd_card.xdc (its sdc_pins block) and their timing
+#        from sd_card_engine.tcl (its sdc_io block): proves those
+#        constraints and their slack.
+# Both modes read sd_card_engine.tcl's sdc_bridge block (the Gayle bridge's
+# Gray count bound).
 #
 # Results in <outdir>: util.rpt, util_hier.rpt, timing.rpt (summary + the
 # five worst paths per clock), worst5.rpt (the five worst setup paths of the
@@ -53,11 +54,12 @@ set_multicycle_path -hold  -end 3   -from [get_clocks dll_28]  -to [get_clocks c
 set_multicycle_path -setup -start 4 -from [get_clocks clk_114] -to [get_clocks dll_28]
 set_multicycle_path -hold  -start 3 -from [get_clocks clk_114] -to [get_clocks dll_28]
 
-# xdc_block <name>: the lines of sd_card.xdc between "# >>> <name>" and
-# "# <<< <name>", as <outdir>/<name>.xdc, read as constraints
-proc xdc_block {name} {
+# xdc_block <file> <name>: the lines of <file> (fpga/openaars/aars_v5.0/
+# xc7a100t/) between "# >>> <name>" and "# <<< <name>", as <outdir>/<name>
+# with <file>'s extension, read as constraints (a .tcl unmanaged)
+proc xdc_block {file name} {
     global repo outdir
-    set fh [open $repo/fpga/openaars/aars_v5.0/xc7a100t/sd_card.xdc r]; set src [read $fh]; close $fh
+    set fh [open $repo/fpga/openaars/aars_v5.0/xc7a100t/$file r]; set src [read $fh]; close $fh
     set on 0; set out {}
     foreach line [split $src "\n"] {
         if {$line eq "# <<< $name"} { set on 0 }
@@ -65,12 +67,12 @@ proc xdc_block {name} {
         if {$line eq "# >>> $name"} { set on 1 }
     }
     if {[llength $out] == 0} { error "sd_card.xdc: no block $name" }
-    set f $outdir/$name.xdc
+    set f $outdir/$name[file extension $file]
     set fh [open $f w]; puts $fh [join $out "\n"]; close $fh
-    read_xdc $f
-    puts "=== read sd_card.xdc block $name ([llength $out] lines)"
+    if {[file extension $file] eq ".tcl"} { read_xdc -unmanaged $f } else { read_xdc $f }
+    puts "=== read $file block $name ([llength $out] lines)"
 }
-xdc_block sdc_bridge
+xdc_block sd_card_engine.tcl sdc_bridge
 
 if {$mode eq "io"} {
     # two clock-capable pins for the two clock ports, away from the card's
@@ -81,8 +83,9 @@ if {$mode eq "io"} {
     set_property PACKAGE_PIN [lindex $picks 0] [get_ports clk_g]
     set_property PACKAGE_PIN [lindex $picks 1] [get_ports clk]
     set_property IOSTANDARD LVTTL [get_ports *]
-    # the card pins: sd_card.xdc's own lines
-    xdc_block sdc_pins
+    # the card pins and their timing: the board files' own lines
+    xdc_block sd_card.xdc sdc_pins
+    xdc_block sd_card_engine.tcl sdc_io
 }
 
 report_utilization -hierarchical -hierarchical_depth 3 -file $outdir/util_synth_hier.rpt

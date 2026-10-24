@@ -131,6 +131,12 @@ foreach f [get_files -quiet -of_objects [get_filesets XC7A100T] $cpu_xdc_off] {
 }
 puts "build_ap040.tcl: CPU constraints [file tail $cpu_xdc_on] (CPU_CLK_DIVIDE $cpudiv)"
 add_xdc $R/fpga/openaars/aars_v5.0/xc7a100t/ddr3.xdc
+# The SD card's timing (an unmanaged Tcl constraint file: it picks the SD card
+# engine's constraints or today's false paths by what the netlist holds), after
+# the XDC files that define the clocks.
+add_xdc $R/fpga/openaars/aars_v5.0/xc7a100t/sd_card_engine.tcl
+set_property PROCESSING_ORDER LATE \
+    [get_files -of_objects [get_filesets XC7A100T] $R/fpga/openaars/aars_v5.0/xc7a100t/sd_card_engine.tcl]
 
 #-----------------------------------------------------------------------------
 # DDR3 island sources

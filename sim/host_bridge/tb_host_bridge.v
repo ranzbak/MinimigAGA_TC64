@@ -42,7 +42,10 @@
 // exactly one ext strobe (write / read as the access), in its first cycle,
 // and that no other access makes one (t_sdc_regs block below); t_sdc_regs'
 // final check: CS asserted (CFG bit 8 written), SCK low, MOSI high.  The
-// TIME / DONE writes (0xFFFFFF00 / 04) are TXW / TXB pushes for sdcard_spi.
+// TIME / DONE writes (0xFFFFFF00 / 04) are TXW / TXB pushes for sdcard_spi
+// in every test: they fill its TX FIFO, and a long test (> 512 stamps) gets
+// STATUS 8 (FIFO misuse, a push into a full TX) and IRQPEND bit 3 there,
+// harmless while IRQEN is 0 (only t_sdc_regs writes IRQEN).
 //
 // SDCARD (boot runs, +TEST=boot / boot_nofile; the ROM is the committed boot
 // ROM fw/ctrl_boot/OSDBoot_rv_ROM.vhd): sd_spi_model on sd_cs[1] with
