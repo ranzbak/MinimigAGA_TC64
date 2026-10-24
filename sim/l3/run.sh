@@ -64,6 +64,11 @@
 #   TIMEOUT  clk_114 cycles (default per scenario below), at most
 #            2147483647 (tb_l3.v's integer)
 #   L3CHECK  tests of run.sh only: the l3check.py to run (default sim/l3's)
+#   SD_ENGINE=1  the SD card engine wired in (tb_l3.v `SD_ENGINE: sdcard_spi on
+#            cfide's ext port with the card on its pins, sdcard_gayle + mux
+#            between paula_floppy and gayle, as minimig_virtual_top with
+#            SD_ENGINE = 1).  Default 0: every scenario as before.  No
+#            scenario drives the engine yet (plan Task 13)
 #   VIVADO_PATH, GHDL, VERILATOR, JOBS, OBJCACHE as sim/host_bridge/run.sh
 #
 # Scenarios (scenarios.vh), card, checks:
@@ -188,6 +193,11 @@ MM_FILES="rtl/soc/openaars_defines.vh rtl/minimig/userio_osd.v rtl/minimig/useri
           rtl/minimig/paula_floppy.v rtl/minimig/paula_floppy_fifo.v rtl/minimig/gayle.v
           rtl/minimig/gayle_port.v rtl/minimig/gayle_fifo.v rtl/minimig/minimig_syscontrol.v"
 MM_INC="$ROOT/fpga/openaars"     # minimig_version.vh (the board's)
+# SD_ENGINE=1 (header): the bridge joins the slaves; sdcard_spi.v (in the
+# run copies from hs_copy_rtl) is compiled too
+SDE=${SD_ENGINE:-0}
+case "$SDE" in 0|1) ;; *) echo "SD_ENGINE=$SDE: must be 0 or 1"; exit 2 ;; esac
+[ "$SDE" = 1 ] && MM_FILES="$MM_FILES rtl/minimig/sdcard_gayle.v"
 
 # the "=== MARGIN <item> <name>" lines every run must print (mon_l3.vh),
 # and per scenario the ones that must have seen events: their verdict must
@@ -426,6 +436,7 @@ setup() {
 	for f in $MM_FILES; do
 		case "$f" in *.v) sed -i '1i `timescale 1ns/1ps' "$run/src/$(basename "$f")" ;; esac
 	done
+	[ "$SDE" = 1 ] && sed -i '1i `timescale 1ns/1ps' "$run/src/sdcard_spi.v"
 	l3_pin_minimig
 	l3_pin_async
 	l3_retire_tap
@@ -484,7 +495,7 @@ l3_build_key() {
 	        "$ROOT/sim/common/hostsim.sh" "$L2/sdram_host_model.v" "$L2/verilator/blackbox.vhd"
 	        "$L2/verilator/romcheck.py" "$ROM" $I2C_V "$MM_INC"/*.vh "$ROOT"/rtl/minimig/*.vh "$HERE/run.sh")
 	{
-		echo "SIM=$SIM EXTRA_WS=$XW XRAND=${XRAND:-0} generics=$CFIDE_GENERICS"
+		echo "SIM=$SIM EXTRA_WS=$XW XRAND=${XRAND:-0} SD_ENGINE=$SDE generics=$CFIDE_GENERICS"
 		"$GHDL" --version | head -1
 		"$VERILATOR" --version
 		sha256sum "${files[@]}" | sed 's|  .*/|  |'
@@ -520,7 +531,8 @@ build() {
 		return 0
 	fi
 	# the core's files and define (rv_hostcpu's counters)
-	local cpuv=(src/rv_hostcpu.v src/VexOsd.v) def=RV_HOSTCPU_STATS
+	local cpuv=(src/rv_hostcpu.v src/VexOsd.v) def=RV_HOSTCPU_STATS sdv=() sdd=()
+	if [ "$SDE" = 1 ]; then sdv=(src/sdcard_spi.v); sdd=(-DSD_ENGINE); fi
 	if [ "$SIM" = verilator ]; then
 		# the L2 bench's black-box list and ROM check (HERE, for this call only)
 		HS_DIR=$d HS_ROM=$ROM HS_VB=host_bridge.vhd HS_VC=cfide.vhd
@@ -530,21 +542,22 @@ build() {
 		HS_NAME=$snap HS_VLT="$HERE/l3.vlt"
 		HS_VFLAGS="-GEXTRA_WS=$XW -I$ROOT/sim/common -I$HERE -I$MM_INC -I$ROOT/rtl/minimig"
 		# shellcheck disable=SC2086
-		hs_verilate "$run" tb_l3 "-DL3_GHDL -D$def" \
-			"$d/bridge.v" "$d/cfide.v" "${cpuv[@]}" src/hostcache.v src/dpram_inf_generic.v \
+		hs_verilate "$run" tb_l3 "-DL3_GHDL -D$def ${sdd[*]}" \
+			"$d/bridge.v" "$d/cfide.v" "${cpuv[@]}" "${sdv[@]}" src/hostcache.v src/dpram_inf_generic.v \
 			"$L2/sdram_host_model.v" "$ROOT/sim/common/sd_spi_model.v" $i2c \
 			"${mm[@]}" "$HERE/bfm_audio.v" "$HERE/bfm_keys.v" "$HERE/bfm_floppy.v" "$HERE/bfm_ide.v" "$HERE/bfm_akiko.v" "$HERE/rtc_model.v" "$HERE/tb_l3.v"
 		echo "$key" > "$run/buildkey_$snap"
 	else
 		X xvlog -sv $I2C_V
 		X xvhdl src/cfide.vhd
-		X xvlog -d "$def" "${cpuv[@]}" src/hostcache.v src/dpram_inf_generic.v
+		X xvlog -d "$def" "${cpuv[@]}" "${sdv[@]}" src/hostcache.v src/dpram_inf_generic.v
 		X xvhdl src/host_bridge.vhd
 		X xvhdl "$ROM"
 		# --relax: rtl/minimig/gayle_port.v uses the wire err before its
 		# declaration (an error for xvlog, accepted by synthesis and Verilator)
 		X xvlog --relax -i "$MM_INC" -i "$ROOT/rtl/minimig" "${mm[@]}"
-		X xvlog -d "$def" -i "$ROOT/sim/common" -i "$HERE" \
+		[ "$SDE" = 1 ] && sdd=(-d SD_ENGINE)
+		X xvlog -d "$def" "${sdd[@]}" -i "$ROOT/sim/common" -i "$HERE" \
 			"$L2/sdram_host_model.v" "$ROOT/sim/common/sd_spi_model.v" "$HERE/bfm_audio.v" \
 			"$HERE/bfm_keys.v" "$HERE/bfm_floppy.v" "$HERE/bfm_ide.v" "$HERE/bfm_akiko.v" "$HERE/rtc_model.v" "$HERE/tb_l3.v"
 		hs_xsim_build "$run" "$snap" "$XW" tb_l3

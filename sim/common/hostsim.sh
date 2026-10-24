@@ -46,7 +46,7 @@
 hs_die() { echo "FAILED: $*"; exit 1; }
 
 # RTL files a bench copies (the Verilog / VHDL it simulates, never rtl/ itself)
-HS_RTL_FILES="rtl/host/cfide.vhd rtl/host/host_bridge.vhd rtl/host/hostcache.v rtl/sdram/dpram_inf_generic.v rtl/host/rv_hostcpu.v rtl/host/vexriscv/VexOsd.v"
+HS_RTL_FILES="rtl/host/cfide.vhd rtl/host/host_bridge.vhd rtl/host/hostcache.v rtl/sdram/dpram_inf_generic.v rtl/host/rv_hostcpu.v rtl/host/vexriscv/VexOsd.v rtl/host/sdcard_spi.v"
 
 hs_copy_rtl() {
 	local run=$1 rev=$2 f

@@ -159,6 +159,11 @@ add_src $R/rtl/sdram/cpu_enable_cadence.v
 # The second Gayle IDE port (findings/cdrom/plan.md 7.3): gayle.v instantiates
 # gayle_port.v once per port; project_1.xpr predates the file.
 add_src $R/rtl/minimig/gayle_port.v
+# The SD card engine (findings/sdcard-engine): the SPI peripheral
+# minimig_virtual_top instantiates with SD_ENGINE = 1, and its Gayle bridge
+# and mux minimig.v instantiates; project_1.xpr predates both.
+add_src $R/rtl/host/sdcard_spi.v
+add_src $R/rtl/minimig/sdcard_gayle.v
 # Stage E2: the unit splitter TG68K.vhd instantiates for both RAM ports.
 add_src $R/rtl/soc/ap040_ram_seq.vhd
 # The XADC die-temperature reader, for the Chipset OSD menu's first line.

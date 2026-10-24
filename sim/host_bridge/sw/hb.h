@@ -29,6 +29,22 @@
 #define HB_IRQ_RAW_OFS     (-200) /* 0xFFFFFF38 R: synchronised source levels */
 #define HB_IRQ_MODE_OFS    (-196) /* 0xFFFFFF3C R/W: 1 = LEVEL, 0 = EDGE      */
 
+/* SD card peripheral (rtl/host/sdcard_spi.v) through cfide's ext_* port,
+   0xFFFFFF00..2C (the windows 0-2).  0x00 (TXW) and 0x04 (TXB) are also the
+   bench's TIME and DONE: those writes push bytes into its TX FIFO, which no
+   test minds. */
+#define HB_SDC_RXLVL_OFS   (-248) /* 0xFFFFFF08 R: RXLVL                       */
+#define HB_SDC_TXLVL_OFS   (-244) /* 0xFFFFFF0C R: TXLVL                       */
+#define HB_SDC_CMD_OFS     (-240) /* 0xFFFFFF10 W: CMD, R: STATUS              */
+#define HB_SDC_IRQ_OFS     (-228) /* 0xFFFFFF1C W: IRQACK, R: IRQPEND          */
+#define HB_SDC_CFG_OFS     (-224) /* 0xFFFFFF20 R/W: 7:0 divider, 8 CS        */
+#define HB_SDC_TIMEOUT_OFS (-220) /* 0xFFFFFF24 R/W                            */
+#define HB_SDC_IRQEN_OFS   (-216) /* 0xFFFFFF28 R/W                            */
+#define HB_SDC_VERSION_OFS (-212) /* 0xFFFFFF2C W: WMARK, R: VERSION           */
+#define HB_SDC_VERSION     0x5D01
+/* cfide's interrupt controller source of the SD peripheral: irq_src(4) */
+#define HB_SDC_IRQ_BIT     0x10
+
 /* platformdata with the bench's cfide generics (havespirtc = false) and
    menu_button = 1: X"000" & "0" & '0' & '1' & '1' */
 #define HB_PLATFORM_VAL  0x0003

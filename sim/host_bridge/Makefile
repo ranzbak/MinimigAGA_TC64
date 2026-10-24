@@ -16,7 +16,7 @@ TOP := $(abspath $(CURDIR)/../..)
 include $(TOP)/tools/riscv/toolchain.mk
 
 B       ?= build
-TESTS   ?= t_lanes t_hwoff t_b2b t_spibusy t_irq t_irqctl t_irqapi t_osdrdy dhry
+TESTS   ?= t_lanes t_hwoff t_b2b t_spibusy t_irq t_irqctl t_irqapi t_osdrdy t_sdc_regs dhry
 FWTESTS := t_irq t_irqctl t_irqapi
 ARCH_B  := $(B)
 include $(TOP)/fw/ctrl/arch/arch.mk

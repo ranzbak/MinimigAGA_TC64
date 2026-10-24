@@ -100,6 +100,18 @@
 // Parameter EXTRA_WS: the bridge's rv_extra_ws (xelab -generic_top; the
 // GHDL conversion fixes it, checked below).
 //
+// SD_ENGINE (run.sh SD_ENGINE=1; default off, every scenario as before):
+// the SD card engine as minimig_virtual_top wires it with SD_ENGINE = 1:
+// rtl/host/sdcard_spi.v on cfide's ext_* port (0xFFFFFF00..2C, irq on
+// irq_src(4)), the card model on its pins (card present: sd_cd_n 0) instead
+// of cfide's sd_cs[1]; cfide's sd_dimm is the RTC's MISO alone and
+// paula_floppy's direct_sdi is 1 (the card is not on cfide's SPI); sdcard_gayle
+// + sdcard_gayle_mux (rtl/minimig/sdcard_gayle.v, CLK_RATIO 4) between
+// paula_floppy's and gayle's hdd_* data port, as minimig.v.  Without it the
+// hdd_* wires join paula_floppy and gayle directly.  No scenario drives the
+// engine yet (plan Task 13): this tree's firmware still reaches the card
+// through cfide.
+//
 // L3_GHDL (run.sh SIM=verilator): the bridge and cfide are the Verilog that
 // ghdl --synth made of the VHDL (generics fixed at the conversion, lower-case
 // names, generate labels folded into instance names).
@@ -196,7 +208,14 @@ module tb_l3 #(
   wire        spi_do;            // SPI_DO: the Minimig slaves' MISO (cfide sd_di)
   wire        card_miso;         // the card's MISO (paula's direct_sdi)
   wire        rtc_miso;
+`ifdef SD_ENGINE
+  wire        sd_miso = (sd_cs[7] === 1'b0) ? rtc_miso : 1'b1;        // SD_MISO (cfide sd_dimm): the RTC only
+`else
   wire        sd_miso = (sd_cs[7] === 1'b0) ? rtc_miso : card_miso;   // SD_MISO (cfide sd_dimm)
+`endif
+  wire        sdc_wstb, sdc_rstb, sdc_irq;   // cfide ext_* <-> sdcard_spi (SD_ENGINE)
+  wire [5:2]  sdc_addr;
+  wire [15:0] sdc_d, sdc_q;
   wire        scandoubler, audio_ena, audio_clear;
   wire [15:0] aud_addr;
   reg         tick = 1'b1;       // cfide tick_in (tick generator below)
@@ -223,7 +242,7 @@ module tb_l3 #(
     .xadc_temp(16'h0000),
     .scandoubler(scandoubler), .audio_ena(audio_ena), .audio_clear(audio_clear),
     .audio_buf(aud_addr[15]), .audio_amiga(1'b0), .vbl_int(1'b0), .interrupt(cfide_int),
-    .irq_src(12'h000),
+    .irq_src({11'h000, sdc_irq}),
     .c64_keys(64'hFFFFFFFFFFFFFFFF), .amiga_key(), .amiga_key_stb(),
     .amiga_addr(aki_addr), .amiga_d(aki_d), .amiga_q(aki_q),
     .amiga_req(aki_req), .amiga_wr(aki_wr), .amiga_ack(aki_ack),
@@ -232,6 +251,7 @@ module tb_l3 #(
     .i2c_ext_int(1'b0),
     .pos_data_q(),
     .osd_rx_seq(osd_rx_seq),
+    .ext_wstb(sdc_wstb), .ext_rstb(sdc_rstb), .ext_addr(sdc_addr), .ext_d(sdc_d), .ext_q(sdc_q),
     .clk_28(clk28), .tick_in(tick)
   );
 
@@ -254,8 +274,31 @@ module tb_l3 #(
   endtask
 
   // --------------------------------------------------------------- SD card
+`ifdef SD_ENGINE
+  // the SD card engine (header): the card on sdcard_spi's pins
+  wire        card_cs_n, card_sck, card_mosi;
+  wire        sdc_g_req, sdc_g_dir, sdc_g_port, sdc_g_ack, sdc_g_err;
+  wire        sdc_g_wvalid, sdc_g_wnext, sdc_g_rvalid;
+  wire [9:0]  sdc_g_words;
+  wire [15:0] sdc_g_wdata, sdc_g_rdata;
+  sdcard_spi sdc (
+    .clk(clk114), .reset(!n_reset),
+    .reg_wstb(sdc_wstb), .reg_rstb(sdc_rstb), .reg_addr(sdc_addr), .reg_d(sdc_d), .reg_q(sdc_q),
+    .irq(sdc_irq),
+    .sd_sck(card_sck), .sd_cs_n(card_cs_n), .sd_mosi(card_mosi), .sd_miso(card_miso),
+    .sd_cd_n(1'b0),
+    .g_req(sdc_g_req), .g_dir(sdc_g_dir), .g_port(sdc_g_port), .g_words(sdc_g_words),
+    .g_ack(sdc_g_ack), .g_err(sdc_g_err),
+    .g_wdata(sdc_g_wdata), .g_wvalid(sdc_g_wvalid), .g_wnext(sdc_g_wnext),
+    .g_rdata(sdc_g_rdata), .g_rvalid(sdc_g_rvalid)
+  );
+`else
+  wire        card_cs_n = sd_cs[1], card_sck = sd_clk, card_mosi = sd_do;
+  assign sdc_q = 16'h0000;
+  assign sdc_irq = 1'b0;
+`endif
   sd_spi_model #(.IMG_SECTORS(65536)) card (
-    .cs_n(sd_cs[1]), .sck(sd_clk), .mosi(sd_do), .miso(card_miso)
+    .cs_n(card_cs_n), .sck(card_sck), .mosi(card_mosi), .miso(card_miso)
   );
 
   // ------------------------------------------------------------------ RTC
@@ -302,6 +345,11 @@ module tb_l3 #(
   wire [2:0]  hdd_addr;
   wire [15:0] hdd_data_out, hdd_data_in;
   wire        hdd_wr, hdd_status_wr, hdd_data_wr, hdd_data_rd, hdd_port, hdd_xfer_wr, hdd_regs_rd;
+  wire [1:0]  hdd_fifo_reset;
+  // paula_floppy's side of the data port; minimig.v's names (pf_*)
+  wire [2:0]  pf_addr;
+  wire [15:0] pf_data_out;
+  wire        pf_data_wr, pf_data_rd, pf_port;
   wire        fl_track0, fl_change, fl_ready, fl_wprot, fl_index, fl_dmal, fl_dmas;
   wire [3:0]  fl_sel;
   wire        fl_motor, fl_side, fl_step, fl_direc, fl_enable, fl_wordsync, fl_blckint;
@@ -329,12 +377,16 @@ module tb_l3 #(
     .blckint(fl_blckint), .syncint(), .wordsync(fl_wordsync),
     ._scs(sd_cs[4]), .sdi(sd_do), .sdo(paula_sdo), .sck(sck_slv),
     .disk_led(), .floppy_drives(floppy_config[3:2]),
+`ifdef SD_ENGINE
+    .direct_scs(~sd_cs[6]), .direct_sdi(1'b1),
+`else
     .direct_scs(~sd_cs[6]), .direct_sdi(card_miso),
+`endif
     .hdd_cmd_req(hdd_cmd_req), .hdd_dat_req(hdd_dat_req),
-    .hdd_addr(hdd_addr), .hdd_data_out(hdd_data_out), .hdd_data_in(hdd_data_in),
+    .hdd_addr(pf_addr), .hdd_data_out(pf_data_out), .hdd_data_in(hdd_data_in),
     .hdd_wr(hdd_wr), .hdd_status_wr(hdd_status_wr),
-    .hdd_data_wr(hdd_data_wr), .hdd_data_rd(hdd_data_rd),
-    .hdd_port(hdd_port), .hdd_xfer_wr(hdd_xfer_wr), .hdd_regs_rd(hdd_regs_rd),
+    .hdd_data_wr(pf_data_wr), .hdd_data_rd(pf_data_rd),
+    .hdd_port(pf_port), .hdd_xfer_wr(hdd_xfer_wr), .hdd_regs_rd(hdd_regs_rd),
     .trackdisp(), .secdisp(), .floppy_fwr(), .floppy_frd()
   );
 
@@ -364,8 +416,41 @@ module tb_l3 #(
     .hdd_wr(hdd_wr), .hdd_status_wr(hdd_status_wr),
     .hdd_data_wr(hdd_data_wr), .hdd_data_rd(hdd_data_rd),
     .hdd_port(hdd_port), .hdd_xfer_wr(hdd_xfer_wr), .hdd_regs_rd(hdd_regs_rd),
+    .hdd_fifo_reset(hdd_fifo_reset),
     .hd_fwr(), .hd_frd()
   );
+
+  // the data port: the SD card bridge's while it is active, else
+  // paula_floppy's (minimig.v)
+`ifdef SD_ENGINE
+  wire        sg_active, sg_port, sg_data_wr, sg_data_rd;
+  wire [15:0] sg_data_out;
+  sdcard_gayle #(.CLK_RATIO(4)) sdcg (
+    .clk(clk28), .clk7_en(clk7_en), .reset(mm_reset), .clk_g(clk114),
+    .g_req(sdc_g_req), .g_dir(sdc_g_dir), .g_port(sdc_g_port), .g_words(sdc_g_words),
+    .g_ack(sdc_g_ack), .g_err(sdc_g_err),
+    .g_wdata(sdc_g_wdata), .g_wvalid(sdc_g_wvalid), .g_wnext(sdc_g_wnext),
+    .g_rdata(sdc_g_rdata), .g_rvalid(sdc_g_rvalid),
+    .active(sg_active), .port(sg_port), .data_wr(sg_data_wr), .data_rd(sg_data_rd),
+    .data_out(sg_data_out), .data_in(hdd_data_in), .dat_req(hdd_dat_req),
+    .fifo_reset_seen(hdd_fifo_reset),
+    .fw_port(pf_port), .fw_xfer_wr(hdd_xfer_wr), .fw_regs_rd(hdd_regs_rd)
+  );
+  sdcard_gayle_mux sdcmux (
+    .sg_active(sg_active), .sg_port(sg_port), .sg_data_wr(sg_data_wr), .sg_data_rd(sg_data_rd),
+    .sg_data_out(sg_data_out),
+    .pf_port(pf_port), .pf_data_wr(pf_data_wr), .pf_data_rd(pf_data_rd), .pf_data_out(pf_data_out),
+    .pf_addr(pf_addr),
+    .hdd_port(hdd_port), .hdd_data_wr(hdd_data_wr), .hdd_data_rd(hdd_data_rd),
+    .hdd_data_out(hdd_data_out), .hdd_addr(hdd_addr)
+  );
+`else
+  assign hdd_addr = pf_addr;
+  assign hdd_port = pf_port;
+  assign hdd_data_wr = pf_data_wr;
+  assign hdd_data_rd = pf_data_rd;
+  assign hdd_data_out = pf_data_out;
+`endif
 
   // the Amiga side of the Akiko request window (scenario akiko).  ena_wr: a
   // completed write with bit 0 set to the INTERRUPT window (0xFFFFFFA0), the

@@ -558,6 +558,9 @@ minimig_virtual_top
   .havei2c(1'b1),
   .havevpos(1'b1),
   .havespirtc(1'b1),
+  // the SD card on the SD card engine (sdcard_spi + its Gayle DMA), card
+  // detect on sd_m_cdet (F23); fpga/openaars/aars_v5.0/xc7a100t/sd_card.xdc
+  .SD_ENGINE(1),
   .haveddr3(HAVEDDR3),
   .Z3RAM3_FORCE_OFF(Z3RAM3_FORCE_OFF),
   .z3ram3_size_log2(Z3RAM3_SIZE_LOG2),
@@ -660,6 +663,7 @@ minimig_virtual_top
   .SD_CLK(sd_clk),
   .SD_CS(sd_cs),
   .SD_ACK(1'b1),
+  .SD_CDET_N(sd_m_cdet),  // low = card inserted (10k pull-up, 100 nF on the board)
   .SCL_I(scl_i),
   .SCL_O(scl_o),
   .SCL_T(scl_t),

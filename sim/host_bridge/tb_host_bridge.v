@@ -2,6 +2,9 @@
 //
 //   host_bridge (rv_hostcpu + VexOsd, OSDBoot_rv_ROM = the test
 //   program, hostcache.v)  ->  cfide (generics below)
+//                                   ->  sdcard_spi on cfide's ext_* port
+//                                       (0xFFFFFF00..2C), its irq on
+//                                       irq_src(4); no card (t_sdc_regs)
 //                                   ->  sdram_host_model (lanes of sdram_ctrl)
 //   + an SPI byte-capture slave on sd_cs[1] / sd_clk / sd_do, or, compiled
 //     with -d SDCARD, the SD card model (sim/common/sd_spi_model.v) there
@@ -34,6 +37,12 @@
 // t_osdrdy: cfide's HOST_REQ (0xFFFFFFB4, bit 0 OSD_RDY); the bench drives
 // cfide's osd_rx_seq (userio_osd's reply sequence, 0 in every other test) per
 // checkpoint and measures the resync (t_osdrdy block below).
+// t_sdc_regs: sdcard_spi's registers through cfide's ext_* port (Task 8); in
+// every test the bench checks that each access to 0xFFFFFF00..2F makes
+// exactly one ext strobe (write / read as the access), in its first cycle,
+// and that no other access makes one (t_sdc_regs block below); t_sdc_regs'
+// final check: CS asserted (CFG bit 8 written), SCK low, MOSI high.  The
+// TIME / DONE writes (0xFFFFFF00 / 04) are TXW / TXB pushes for sdcard_spi.
 //
 // SDCARD (boot runs, +TEST=boot / boot_nofile; the ROM is the committed boot
 // ROM fw/ctrl_boot/OSDBoot_rv_ROM.vhd): sd_spi_model on sd_cs[1] with
@@ -210,6 +219,10 @@ module tb_host_bridge #(
   reg        i2c_ext_int = 1'b0; // t_irqctl: controller source 3 (ADV7511 INT)
   reg [15:4] irq_src = 12'h0;    // t_irqctl: controller sources 4..15
   reg [1:0]  osd_rx_seq = 2'd0;  // t_osdrdy: userio_osd's reply sequence
+  wire       sdc_wstb, sdc_rstb, sdc_irq;   // cfide ext_* <-> sdcard_spi
+  wire [5:2] sdc_addr;
+  wire [15:0] sdc_d, sdc_q;
+  wire       sdc_sck, sdc_cs_n, sdc_mosi;
   wire [1:0] cfide_rx_seq;       // cfide's: the stub's under FWBOOT, else osd_rx_seq
 
   // The generics below are the only copy: run.sh (cfide_generics) reads them
@@ -240,7 +253,7 @@ module tb_host_bridge #(
     .xadc_temp(16'h0000),
     .scandoubler(scandoubler), .audio_ena(audio_ena), .audio_clear(audio_clear),
     .audio_buf(1'b1), .audio_amiga(1'b0), .vbl_int(vbl_int), .interrupt(cfide_int),
-    .irq_src(irq_src),
+    .irq_src(irq_src | {11'd0, sdc_irq}),
     .c64_keys(64'hFFFFFFFFFFFFFFFF), .amiga_key(), .amiga_key_stb(),
     .amiga_addr(8'h00), .amiga_d(16'h0000), .amiga_q(),
     .amiga_req(amiga_req), .amiga_wr(1'b0), .amiga_ack(),
@@ -249,7 +262,21 @@ module tb_host_bridge #(
     .i2c_ext_int(i2c_ext_int),
     .pos_data_q(),
     .osd_rx_seq(cfide_rx_seq),
+    .ext_wstb(sdc_wstb), .ext_rstb(sdc_rstb), .ext_addr(sdc_addr), .ext_d(sdc_d), .ext_q(sdc_q),
     .clk_28(clk28), .tick_in(1'b1)
+  );
+
+  // ------------------------------------------------------ SD card peripheral
+  // as minimig_virtual_top wires it (SD_ENGINE = 1), without a card and with
+  // the Gayle side idle
+  sdcard_spi sdc (
+    .clk(clk114), .reset(!n_reset),
+    .reg_wstb(sdc_wstb), .reg_rstb(sdc_rstb), .reg_addr(sdc_addr), .reg_d(sdc_d), .reg_q(sdc_q),
+    .irq(sdc_irq),
+    .sd_sck(sdc_sck), .sd_cs_n(sdc_cs_n), .sd_mosi(sdc_mosi), .sd_miso(1'b1), .sd_cd_n(1'b1),
+    .g_req(), .g_dir(), .g_port(), .g_words(),
+    .g_ack(1'b0), .g_err(1'b0), .g_wdata(), .g_wvalid(), .g_wnext(1'b0),
+    .g_rdata(16'h0000), .g_rvalid(1'b0)
   );
 
   // --------------------------------------------------- bench state, errors
@@ -467,6 +494,7 @@ module tb_host_bridge #(
     end
     if (hw_done) begin
       last_done = cyc;
+      if (verbose && !host_we) $display("%0d HW R %h done, q=%h", cyc, hwa, hw_d);
       hm_hw_done;
       if (host_we && hwa == 32'hFFFFFF00) checkpoint(hostWR);
       if (host_we && hwa == 32'hFFFFFF04 && !done) begin
@@ -723,6 +751,31 @@ module tb_host_bridge #(
     end
   endtask
 
+  // ---------------------------------------------- sdcard_spi strobes (all tests)
+  // cfide's ext strobes: exactly one per access to 0xFFFFFF00..2F (cfide
+  // decodes addr(23) and addr(7 downto 4) = 0..2), in the
+  // access's first clk_114 cycle (hw_req high, low the cycle before), wstb
+  // for a write and rstb for a read, none for any other access
+  reg     sdc_req_d = 1'b0, sdc_seen = 1'b0;
+  integer sdc_acc = 0, sdc_stb = 0;
+  wire    sdc_win = hwa[23] && hwa[7:6] == 2'b00 && hwa[5:4] != 2'b11;   // cfide's decode
+  always @(posedge clk114) if (cpu_reset_n) begin
+    sdc_req_d <= hw_req;
+    if (hw_req && !sdc_req_d) sdc_seen = 1'b0;
+    if (sdc_wstb === 1'b1 || sdc_rstb === 1'b1) begin
+      sdc_stb = sdc_stb + 1;
+      if (!(hw_req && !sdc_req_d)) bench_error("sdcard_spi strobe not in the first cycle of an access");
+      if (!sdc_win) bench_error("sdcard_spi strobe for an access outside 0xFFFFFF00..2F");
+      if (sdc_wstb !== host_we || sdc_rstb !== !host_we) bench_error("sdcard_spi strobe of the wrong kind");
+      if (sdc_seen) bench_error("a second sdcard_spi strobe in one access");
+      sdc_seen = 1'b1;
+    end
+    if (hw_done && sdc_win) begin
+      sdc_acc = sdc_acc + 1;
+      if (!sdc_seen) bench_error("an access to 0xFFFFFF00..2F without an sdcard_spi strobe");
+    end
+  end
+
   // ---------------------------------------------------------- t_osdrdy
   // Checkpoints (TIME <n>) of sw/t_osdrdy.S:
   //   10..13  osd_rx_seq <= n - 10 (set at the clk_114 edge of the TIME
@@ -881,6 +934,13 @@ module tb_host_bridge #(
         $display("t_lanes: SDRAM halfwords 0x3000..0x301F checked");
       end
       if (test == "t_irqctl" && !ic_end) bench_error("t_irqctl: no STAMP 99 (the program stopped early)");
+      $display("=== sdcard_spi accesses %0d, strobes %0d", sdc_acc, sdc_stb);
+      if (test == "t_sdc_regs") begin
+        if (sdc_acc < 25) bench_error("t_sdc_regs: fewer than 25 accesses to 0xFFFFFF00..2F");
+        expect_pin("sdc cs_n (CFG bit 8)", sdc_cs_n, 1'b0);
+        expect_pin("sdc sck", sdc_sck, 1'b0);
+        expect_pin("sdc mosi", sdc_mosi, 1'b1);
+      end
       if (test == "t_irqapi" && !ic_end) bench_error("t_irqapi: no STAMP 99 (the program stopped early)");
       if (test == "t_osdrdy" && !or_end) bench_error("t_osdrdy: no STAMP 99 (the program stopped early)");
     end

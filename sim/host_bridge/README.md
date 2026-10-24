@@ -88,19 +88,21 @@ Run only one xsim at a time.
 From the repository root:
 
 ```sh
-# 7 tests x SLAT 2, 8, 20 x SJIT 0, 8: 42 runs, ~5 min
+# 8 tests x SLAT 2, 8, 20 x SJIT 0, 8: 48 runs, ~6 min
 bash sim/host_bridge/run.sh all
 # the four-phase handshake's teeth, 34 runs
 bash sim/host_bridge/run.sh mutant
 # the interrupt controller's teeth, 4 runs, ~2 min
 bash sim/host_bridge/run.sh irqmut
+# the SD card peripheral port's read-ack teeth (t_sdc_regs), 8 runs
+bash sim/host_bridge/run.sh extmut
 ```
 
 Every target also runs under Verilator with `SIM=verilator` in front (e.g.
 `SIM=verilator bash sim/host_bridge/run.sh all`, 14 s with a warm ccache); see
 [Verilator](#verilator).
 
-`all` ends with `=== ALL PASS (42 runs, xsim)` (exit 0) or `=== SOME FAILED`
+`all` ends with `=== ALL PASS (48 runs, xsim)` (exit 0) or `=== SOME FAILED`
 (exit 1). `mutant` ends with `=== MUTANT CAUGHT ...` (exit 0) or
 `=== MUTANT SURVIVED or CONTROL FAILED` (exit 1). `irqmut` ends with
 `=== IRQ MUTANTS CAUGHT ...` (exit 0) or `=== IRQ MUTANT SURVIVED or CONTROL
@@ -175,10 +177,11 @@ installs.
 ### Run
 
 ```sh
-# 42 runs
+# 48 runs
 SIM=verilator bash sim/host_bridge/run.sh all
 SIM=verilator bash sim/host_bridge/run.sh mutant
 SIM=verilator bash sim/host_bridge/run.sh irqmut
+SIM=verilator bash sim/host_bridge/run.sh extmut
 SIM=verilator bash sim/host_bridge/run.sh dhry
 SIM=verilator RUNTAG=vboot  bash sim/host_bridge/run.sh boot
 SIM=verilator RUNTAG=vbootn bash sim/host_bridge/run.sh boot_nofile
@@ -1092,6 +1095,7 @@ unexpected trap writes `0x8000 | mcause`.
 | `t_irqapi` | Started as `t_irq`. The firmware interrupt-controller API of `fw/ctrl/arch/irq.h` against the real controller: legacy `SetIntHandler` path without the dispatcher, vblank handler (8 pulses), dispatch order (bit 0 first), masked EDGE delivered on `IrqEnable`, NULL handler, LEVEL bits 8 and 3 handled until the handler drops the line (called 2..3 times), `IrqEnable` / `IrqDisable` / `IrqSetMode` read-modify-write, bits >= 16 ignored, `SetIntHandler` of a legacy handler clears MASK (test 10: one legacy call per vblank, no storm). Exit code 100 * test + check. | The `t_irqctl` STAMP commands 10, 20, 30, 50, 60/61, 70, 120/121 (pulses and held levels). |
 | `t_spibusy` | `SPI_slow()` (SPEED `0xEF`, about 7700 `clk_114` per byte), CS `0x02`, 8 straight-line `sb` to SPI DATA (`01 80 55 AA FF 00 3C C3`), then a DATA read (`0x1C`, the 8th MISO byte), then CS `0x03`. | The slave got the 8 bytes in order. At least 7 DATA writes found `SD_busy` high. No DATA write completed without cfide accepting it. |
 | `t_osdrdy` | cfide's `HOST_REQ` (`0xFFFFFFB4`, bit 0 `OSD_RDY`: cfide's count of the bytes it started with the OSD selected equals `osd_rx_seq`; resync after 64 deselected cycles). 17 checks: 1 after reset; a byte to `sd_cs[1]` is not counted; one byte with the OSD selected (CS `0x20`) reads 0 until the bench steps `osd_rx_seq`, while `0xFFFFFFB0` (half and byte), `B8` and `BC` still read `audio_q` (1); two bytes outstanding read 0, also with one taken; a byte never taken reads 0, still 0 right after the deselect (CS `0x21`), 1 after the resync (polled, at most 64 reads); counting goes on from the resynced value; byte, half and word reads. Not in `all`. | STAMP 10..13: `osd_rx_seq` = 0..3. STAMP 20 arms, STAMP 21 checks the resync: a read after the deselect returned 0, and the first that returned 1 completed at least 64 cycles after the deselect (`t_osdrdy resync: ... (+65)`). STAMP 99 reached. |
+| `t_sdc_regs` | The SD card peripheral (`rtl/host/sdcard_spi.v`, no card) on cfide's `ext_*` port, `0xFFFFFF00..2C` (Task 8 of findings/sdcard-engine/plan.md). 22 checks: VERSION `5D01`; STATUS, CFG and TIMEOUT after reset; CFG, TIMEOUT and IRQEN written and read back; reads of different registers alternating, back to back (each returns its own access's value, not the previous one's: cfide acks the window from `ext_req_d`, see `extmut`); RXLVL, TXLVL 0; IRQEN 1 + RX_FLUSH: IRQPEND bit 0 and cfide `IRQ_RAW` bit 4 (`irq_src(4)`), cleared by IRQACK. | In every test: exactly one ext strobe per access to the window, in its first cycle, of the access's kind, none elsewhere (`=== sdcard_spi accesses <n>, strobes <n>`). At the end: at least 25 accesses, CS asserted (CFG bit 8), SCK low, MOSI high. The bench's TIME / DONE writes (`0xFFFFFF00` / `04`) are TXW / TXB pushes for the peripheral. |
 | `boot` | The committed boot ROM loads `RV32OSDA.BIN` (`boot/fwtest.c`) from `card.img`; the firmware prints `FW OK`, `PAT`, `IMG`, runs the `t_irq` check, prints `IRQ 20`, writes DONE. Not in `all`; see [Boot](#boot). | STAMP 1/2 as `t_irq`; `ERRORCODE:` lines; `=== BOOT`, `=== STATS`. |
 | `boot_nofile` | The same ROM with `card_nofile.img`: `Can't load firmware`, `ErrorCode(0x0f0)`, retry. Not in `all`. | No DONE before the cycle limit; last ErrorCode `00f0`. |
 

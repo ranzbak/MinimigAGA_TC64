@@ -16,6 +16,7 @@
 #   bash sim/host_bridge/run.sh all          # every test x SLAT {2,8,20} x SJIT {0,8}
 #   bash sim/host_bridge/run.sh mutant       # the four-phase handshake's teeth (below)
 #   bash sim/host_bridge/run.sh irqmut       # the interrupt controller's teeth (below)
+#   bash sim/host_bridge/run.sh extmut       # the ext port's read-ack teeth (below)
 #   bash sim/host_bridge/run.sh t_lanes ...  # named tests at SLAT/SJIT from env
 #   SLAT=20 SJIT=8 EXTRA_WS=3 bash sim/host_bridge/run.sh t_b2b
 #   bash sim/host_bridge/run.sh boot         # committed boot ROM loads RV32OSDA.BIN
@@ -109,6 +110,12 @@
 # "FAIL test 4" = a "BENCH ERROR ... t_irqctl test 4 (set wins)" line;
 # "FAIL test 9" = DONE code 9xx.
 #
+# extmut: t_sdc_regs (sdcard_spi on cfide's ext_* port) at SLAT=8 SJIT=0:
+#   gate     cfide's "-- EXT ACK" line acks the ext window from req itself
+#            ("ack <= '1'", as the other blocks), EXTRA_WS=0..3: every run
+#            must FAIL (a read returns the previous access's value)
+#   control  the real cfide (ack from ext_req_d), EXTRA_WS=0..3: must PASS
+#
 # Steps: copy the RTL into the run directory (src/), apply the simulation
 # fixes below, build the test ROMs there (make B=<run>/build), compile, then
 # per test compile its ROM and elaborate a snapshot; xsim runs one at a time.
@@ -151,7 +158,7 @@ CFIDE_GENERICS=""
 I2C_V="$ROOT/rtl/host/i2c_master_mmio.sv $ROOT/rtl/openaars/adv7511/i2c_master.v"
 VB=host_bridge.vhd VR=rv_hostcpu.v VC=cfide.vhd   # Verilator: the current variant
 
-TESTS="t_lanes t_hwoff t_b2b t_spibusy t_irq t_irqctl t_irqapi"
+TESTS="t_lanes t_hwoff t_b2b t_spibusy t_irq t_irqctl t_irqapi t_sdc_regs"
 MATRIX="2,0 8,0 20,0 2,8 8,8 20,8"
 XW=${EXTRA_WS:-0}
 run="$HERE/run_${RUNTAG:-wt}"
@@ -218,6 +225,12 @@ mutant("b", "-- IRQ SET WINS",
        "irq_pend_nx <= (irq_pend and not irq_clr and not irq_mode) when irq_rd = '1' "
        "else (irq_pend or irq_edge) and not irq_mode;")
 mutant("c", "-- IRQ MODE MUX", "return pend;")
+# ext port mutant (extmut): ack from req, not ext_req_d
+lines = [l for l in s.split("\n") if l.rstrip().endswith("-- EXT ACK")]
+assert len(lines) == 1, "-- EXT ACK"
+ind = re.match(" *", lines[0]).group(0)
+open(sys.argv[1].replace(".vhd", "_extmut.vhd"), "w").write(
+    s.replace(lines[0], ind + "ack <= '1'; -- EXT ACK MUTANT"))
 EOF
 
 	# fast master: dBus command accepted in the ack cycle (see the header)
@@ -249,7 +262,7 @@ EOF
 	make -s -C "$HERE" B="$run/build" > make.log 2>&1 || { tail -20 make.log; die "make test ROMs (make.log)"; }
 	[ "$SIM" = verilator ] && return 0
 	X xvlog -sv "$ROOT/rtl/host/i2c_master_mmio.sv" "$ROOT/rtl/openaars/adv7511/i2c_master.v"
-	X xvlog $XI src/VexOsd.v src/hostcache.v src/dpram_inf_generic.v "$HERE/sdram_host_model.v" "$HERE/tb_host_bridge.v"
+	X xvlog $XI src/VexOsd.v src/hostcache.v src/dpram_inf_generic.v src/sdcard_spi.v "$HERE/sdram_host_model.v" "$HERE/tb_host_bridge.v"
 	X xvhdl src/cfide.vhd
 }
 
@@ -294,7 +307,7 @@ vbuild() {
 	HS_NAME=$name HS_VLT="$HERE/verilator/l2.vlt" HS_VFLAGS="-GEXTRA_WS=$XW -I$ROOT/sim/common"
 	# shellcheck disable=SC2086
 	hs_verilate "$run" tb_host_bridge "-DHB_GHDL $*" \
-		"$d/bridge.v" "$d/cfide.v" "src/$VR" src/VexOsd.v src/hostcache.v src/dpram_inf_generic.v \
+		"$d/bridge.v" "$d/cfide.v" "src/$VR" src/VexOsd.v src/hostcache.v src/dpram_inf_generic.v src/sdcard_spi.v \
 		"$HERE/sdram_host_model.v" $sd $stub $i2c "$HERE/tb_host_bridge.v"
 }
 
@@ -567,6 +580,21 @@ case "${1:-}" in
 		} | tee "$run/results.txt"
 		if grep -q '^BAD' "$run/results.txt"; then echo "=== IRQ MUTANT SURVIVED or CONTROL FAILED"; exit 1; fi
 		echo "=== IRQ MUTANTS CAUGHT (3 mutants FAIL where expected, control PASS)"
+		;;
+	extmut)
+		setup
+		variant host_bridge.vhd rv_hostcpu.v
+		cfide_variant cfide_extmut.vhd
+		for XW in 0 1 2 3; do snapshot t_sdc_regs "tb_t_sdc_regs_extmut_x$XW"; done
+		cfide_variant cfide.vhd
+		for XW in 0 1 2 3; do snapshot t_sdc_regs "tb_t_sdc_regs_x$XW"; done
+		{
+			echo "cfide ext mutant: $(grep -- '-- EXT ACK MUTANT' src/cfide_extmut.vhd | sed 's/^ *//')"
+			for XW in 0 1 2 3; do one "tb_t_sdc_regs_extmut_x$XW" t_sdc_regs 8 0 FAIL "gate    cfide ext mutant: "; done
+			for XW in 0 1 2 3; do one "tb_t_sdc_regs_x$XW" t_sdc_regs 8 0 PASS "control real cfide:      "; done
+		} | tee "$run/results.txt"
+		if grep -q '^BAD' "$run/results.txt"; then echo "=== EXT MUTANT SURVIVED or CONTROL FAILED"; exit 1; fi
+		echo "=== EXT MUTANT CAUGHT (4 gate runs FAIL, 4 control runs PASS)"
 		;;
 	mutant)
 		setup

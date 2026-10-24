@@ -3,8 +3,9 @@
 # Interface-specific timing lives in the interface's own xdc (sdram.xdc, adv7511_video.xdc,
 # i2s.xdc, sd_card.xdc, ...); CPU exceptions in cpu.xdc; clocks in clocks.xdc.
 
-# Slow serial outputs (I2C, joystick SPI, I2S, SD card): no external timing requirement.
-set_false_path -to [get_ports {io_scl io_sda js_cs js_mosi js_sck max_i2s max_lrclk sd_m_cmd sd_m_d3}]
+# Slow serial outputs (I2C, joystick SPI, I2S): no external timing requirement.  The SD
+# card's CMD / DAT3 are timed against its SCK in sd_card.xdc (the SD card engine).
+set_false_path -to [get_ports {io_scl io_sda js_cs js_mosi js_sck max_i2s max_lrclk}]
 
 ###############################################################################
 # Chipset (dll_28) <-> system (clk_114): phase-aligned 1:4 siblings from one MMCM.

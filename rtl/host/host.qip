@@ -1,5 +1,6 @@
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) hostcache.v]
 set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) cfide.vhd]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) sdcard_spi.v]
 set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) host_bridge.vhd]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) rv_hostcpu.v]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) vexriscv/VexOsd.v]
