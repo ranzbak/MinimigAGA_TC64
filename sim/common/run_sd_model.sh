@@ -2,6 +2,10 @@
 # Bench for sd_spi_model: makes a FAT16 card image with tools/sim/mkcard.sh,
 # runs tb_sd_spi_model with iverilog, checks the CMD24 write-back image.
 #   bash sim/common/run_sd_model.sh [vvp plusargs, e.g. +SD_TOKEN_DLY=200 +SD_NCR=8]
+#   bash sim/common/run_sd_model.sh crc [vvp plusargs]
+#        tb_sd_model_crc: the model's CRC7/CRC16, CMD59, ACMD22, CMD13 and
+#        error injection (+SD_ERR_*, remove_card), one vvp run per +CASE on a
+#        512 KB pseudo-random card; logs in <run>/crc_<case>.log
 # Env: RUNTAG (run dir run_${RUNTAG:-wt}), IVERILOG, VVP.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -11,6 +15,37 @@ run=$here/run_${RUNTAG:-wt}
 IVERILOG=${IVERILOG:-/usr/local/bin/iverilog}
 VVP=${VVP:-vvp}
 mkdir -p "$run"
+
+if [ "${1:-}" = crc ]; then
+    shift
+    python3 -I -c '
+import sys
+x = 777; o = bytearray()
+for i in range(1024 * 512):
+    x = (x * 1103515245 + 12345) & 0x7fffffff
+    o.append((x >> 16) & 255)
+open(sys.argv[1], "wb").write(o)' "$run/crc.img"
+    "$IVERILOG" -g2012 -o "$run/tb_crc.vvp" \
+        "$here/tb_sd_model_crc.v" "$here/sd_spi_model.v"
+    fails=0
+    # case and its injection plusargs (see tb_sd_model_crc.v)
+    for leg in "basic" "wrrej +SD_ERR_WRREJ=2" "wrfail +SD_ERR_WRFAIL=1" \
+               "rdcrc +SD_ERR_RDCRC=3" "noresp +SD_ERR_NORESP=11" "remove"; do
+        read -r c pa <<< "$leg"
+        # shellcheck disable=SC2086
+        "$VVP" -N "$run/tb_crc.vvp" +SD_IMG="$run/crc.img" +CASE="$c" $pa "$@" \
+            > "$run/crc_$c.log" 2>&1 || true
+        if grep -q '^=== PASS' "$run/crc_$c.log"; then
+            echo "crc $c: PASS"
+        else
+            echo "crc $c: FAIL"; grep -E '^(FAIL|===)' "$run/crc_$c.log" | head -20
+            fails=$((fails + 1))
+        fi
+    done
+    [ "$fails" = 0 ] || { echo "=== FAIL run_sd_model crc ($fails cases)"; exit 1; }
+    echo "=== PASS run_sd_model crc"
+    exit 0
+fi
 
 # 4 KB test file (deterministic pseudo-random) and its hex dump (1 byte/line)
 python3 -I -c '
