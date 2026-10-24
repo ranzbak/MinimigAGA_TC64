@@ -66,7 +66,10 @@
 //   and the block is sent again byte for byte (XFER 1 + XFER 512 bits 4 + 6);
 //   afterwards TX_FLUSH (or TX_COMMIT, which leaves the unsent copy of the
 //   command) frees it.  The firmware commits after every command it does
-//   not want to resend.
+//   not want to resend.  After any end of a TX-sourced XFER other than the
+//   normal one (abort, card gone) the TX read point stands inside the
+//   block (one byte may sit prefetched): the firmware must TX_REWIND or
+//   TX_FLUSH before the next TX-sourced op.
 //
 // Interlock (no unverified byte reaches Gayle): `verified` counts the bytes
 //   at the RX head that come from CRC-checked blocks, `poisoned` is set by a
@@ -92,11 +95,15 @@
 //   - card gone: the synchronised card-detect level shows no card (not the
 //     debounced one): the op ends at once, mid-byte too (SCK low, MOSI
 //     high), STATUS 5 + IRQ bit 3.  An op started without a card ends so
-//     in its first cycle.
+//     in its first cycle.  The card may have seen part of a byte: the
+//     firmware treats card gone as a card error and initialises the card
+//     again (CS high + >= 74 clocks, CMD0, ...) before any further use.
 //   - Gayle error: g_err, or g_ack with fewer than LEN bytes moved: STATUS
 //     7 + IRQ bit 3.
 //   GAYLE_TO_TX ending any way but normally removes every byte it put in
 //   TX (TX back to its state at the op's start): no partial block.
+//   RX_TO_GAYLE ending early leaves the rest of the block in RX, still
+//   verified.
 //
 // STATUS: 0 busy, 1 crc_ok, 2 timeout, 3 card present (debounced), 4
 //   aborted, 5 card gone during the op, 6 refused, 7 Gayle error, 8 FIFO
@@ -118,14 +125,21 @@
 //     the op ends (done, error, abort, card gone).  g_dir (1: RX -> Gayle,
 //     0: Gayle -> TX), g_port (CMD bit 8) and g_words (LEN / 2, 1..512) are
 //     registers, stable while g_req is high.  The bridge stops at once when
-//     g_req drops (it may do so in any cycle).
-//   - dir 1: g_wdata = the word at the RX head {first byte, second byte},
-//     valid from the first cycle of g_req.  The bridge pulses g_wnext for one
-//     cycle when it has taken the word (it samples g_wdata in that cycle);
-//     the next word is valid from the 3rd cycle after the g_wnext cycle, so
-//     g_wnext pulses are at least 4 cycles apart (3 works; 4 leaves a
-//     cycle).  Pulses beyond g_words are ignored.  An early g_wnext breaks
-//     the contract: it pops what is there and sets STATUS 8.
+//     g_req drops (it may do so in any cycle).  g_req can be high for a
+//     single cycle (an op that ends in its first cycle, e.g. no card): the
+//     bridge must cope with an op that is over before it saw it.
+//   - dir 1: g_wdata = the word at the RX head {first byte, second byte}.
+//     g_wvalid (a register) is high while g_req, g_dir = 1 and the RX head
+//     holds a full word; g_wdata is that word.  The bridge pulses g_wnext
+//     for one cycle when it has taken the word, and only in a cycle with
+//     g_wvalid high (it samples g_wdata in that cycle).  g_wvalid is low in
+//     the cycle after a g_wnext and normally high again from the 3rd cycle
+//     after it (3 cycles per word at best); it is normally high from the
+//     first cycle of g_req.  A g_wnext with g_wvalid low is a Gayle error:
+//     the word is not taken, the op ends (STATUS 7, IRQ bit 3) -- an early
+//     pulse can never end in a "normal" op.  After the last word g_wvalid
+//     may stay high (RX holds more): the bridge counts g_words.  Pulses
+//     beyond g_words are ignored.
 //   - dir 0: the bridge pulses g_rvalid for one cycle with g_rdata = {first
 //     byte, second byte}; pulses at least 2 cycles apart.  The 2 bytes go
 //     into TX.  Pulses beyond g_words are ignored.
@@ -134,6 +148,11 @@
 //     fewer it is a Gayle error.
 //   - g_err (one cycle, any time while g_req): the bridge gave up (the Amiga
 //     abandoned the command, FIFO reset): the op ends with STATUS 7.
+//   - g_err or g_ack in the same cycle as a g_wnext / g_rvalid: the word is
+//     taken (popped / pushed, COUNT + 2), then the op ends.  With g_err it is
+//     a Gayle error.  g_ack in the cycle of the last word's pulse counts as
+//     early (fewer words when it is seen): a Gayle error.  Dir 0 rolls TX
+//     back in both cases, the word included.
 //   - g_ack / g_err / g_wnext / g_rvalid outside g_req are ignored.
 //
 // Register timing contract (Task 8, cfide):
@@ -203,7 +222,7 @@ module sdcard_spi #(
     output wire        g_req, output wire g_dir,        // dir 1: RX FIFO -> Gayle; 0: Gayle -> TX FIFO
     output wire        g_port, output wire [9:0] g_words,
     input  wire        g_ack, input wire g_err,
-    output wire [15:0] g_wdata, input wire g_wnext,
+    output wire [15:0] g_wdata, output wire g_wvalid, input wire g_wnext,
     input  wire [15:0] g_rdata, input wire g_rvalid
 );
 
@@ -277,6 +296,7 @@ module sdcard_spi #(
     reg        op_ctx, op_crx;          // XFER bits 6, 7
     reg        op_wait, op_ne;          // WAIT_EQ / WAIT_NE
     reg        g_req_r, g_dir_r, g_port_r;   // a Gayle op runs (= busy && Gayle op)
+    reg        g_wvalid_r;              // dir 1: the RX head holds a full word (= hc == 2)
     reg  [1:0] cph;                     // the byte being shifted: 0 data, 1 / 2 CRC byte 1 / 2
     reg [15:0] crc;
     reg        ahead_ok;                // at XFER start: RX all verified, not poisoned
@@ -325,11 +345,13 @@ module sdcard_spi #(
     // ------------------------------------------------------------ Gayle words
     wire       cpu_lock = g_req_r;                    // CPU data port locked during a Gayle op
     wire       g_more   = cnt != len_r;               // LEN even, words of 2: an exact compare
-    wire       g_pop    = g_req_r && g_dir_r && g_wnext && g_more;
+    wire       g_take   = g_req_r && g_dir_r && g_wnext && g_more;
+    wire       g_pop    = g_take && g_wvalid_r;
+    wire       g_early  = g_take && !g_wvalid_r;          // no full word: Gayle error, nothing taken
     wire       g_push   = g_req_r && !g_dir_r && g_rvalid && g_more;
     wire       g_word   = g_pop | g_push;
-    wire       g_end    = g_req_r && (g_ack || g_err);
-    wire       g_good   = g_ack && !g_err && !g_more;
+    wire       g_end    = g_req_r && (g_ack || g_err || g_early);
+    wire       g_good   = g_ack && !g_err && !g_early && !g_more;
 
     // ------------------------------------------------------------ TX push (port A)
     reg        pend_v;                  // second byte of a TXW still to write
@@ -455,6 +477,8 @@ module sdcard_spi #(
     wire e_crcbad = !gone_now && nat_end && op_crx && !crc_good;
     wire op_err   = gone_now | e_gerr | e_tmo;
     assign rollback = op_fin && g_req_r && !g_dir_r && !(g_end && g_good && !gone_now);
+    wire g_req_n = (go && is_gayle) || (g_req_r && !op_fin);
+    wire g_dir_n = cmd_accept ? cmd_op[0] : g_dir_r;
 
     assign b_we   = rx_commit;
     assign b_addr = b_we ? {1'b0, rx_wr[9:0]} : {1'b1, tx_rd[9:0]};
@@ -540,6 +564,7 @@ module sdcard_spi #(
         if (reset) begin
             busy <= 1'b0; op_tx <= 1'b0; op_rx <= 1'b0; op_ctx <= 1'b0; op_crx <= 1'b0;
             op_wait <= 1'b0; op_ne <= 1'b0; g_req_r <= 1'b0; g_dir_r <= 1'b0; g_port_r <= 1'b0;
+            g_wvalid_r <= 1'b0;
             cph <= 2'd0; ahead_ok <= 1'b0; abort_pend <= 1'b0; tmo_pend <= 1'b0;
             cnt <= 11'd0; last_r <= 8'd0;
             st_crc_ok <= 1'b0; st_timeout <= 1'b0; st_aborted <= 1'b0;
@@ -554,8 +579,8 @@ module sdcard_spi #(
                 g_dir_r <= cmd_op[0]; g_port_r <= reg_d[8];
                 ahead_ok <= !poisoned && rxlvl == verified;
             end
-            if (go && is_gayle) g_req_r <= 1'b1;
-            else if (op_fin) g_req_r <= 1'b0;
+            g_req_r <= g_req_n;
+            g_wvalid_r <= g_req_n && g_dir_n && hc_n == 2'd2;   // hc next cycle (no flush while busy)
             if (cmd_accept) cph <= 2'd0;
             else if (load_crc) cph <= cph + 2'd1;
             if (!busy || op_fin) abort_pend <= 1'b0;
@@ -690,5 +715,6 @@ module sdcard_spi #(
     assign g_port  = g_port_r;
     assign g_words = len_r[10:1];
     assign g_wdata = {h0, h1};
+    assign g_wvalid = g_wvalid_r;
 
 endmodule

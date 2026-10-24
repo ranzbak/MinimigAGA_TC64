@@ -57,6 +57,7 @@ module tb_sdcard_spi;
     wire g_req, g_dir, g_port;
     wire [9:0] g_words;
     wire [15:0] g_wdata;
+    wire g_wvalid;
     reg  g_ack = 1'b0, g_err = 1'b0, g_wnext = 1'b0, g_rvalid = 1'b0;   // the Gayle responder
     reg [15:0] g_rdata = 16'h0000;
 
@@ -67,7 +68,7 @@ module tb_sdcard_spi;
         .sd_sck(sd_sck), .sd_cs_n(sd_cs_n), .sd_mosi(sd_mosi), .sd_miso(sd_miso),
         .sd_cd_n(sd_cd_n),
         .g_req(g_req), .g_dir(g_dir), .g_port(g_port), .g_words(g_words),
-        .g_ack(g_ack), .g_err(g_err), .g_wdata(g_wdata), .g_wnext(g_wnext),
+        .g_ack(g_ack), .g_err(g_err), .g_wdata(g_wdata), .g_wvalid(g_wvalid), .g_wnext(g_wnext),
         .g_rdata(g_rdata), .g_rvalid(g_rvalid));
 
     sd_spi_model #(.IMG_SECTORS(IMG_SECTORS)) card (
@@ -133,12 +134,16 @@ module tb_sdcard_spi;
     // in the header of sdcard_spi.v.  When g_req rises it does g_words words,
     // one every gr_space cycles (the first gr_space - 1 cycles after it saw
     // g_req): dir 1 takes g_wdata in the cycle of its one-cycle g_wnext pulse
-    // (into gr_buf); dir 0 pulses g_rvalid for one cycle with g_rdata =
-    // gr_src[k] (garbage otherwise).  g_ack gr_space cycles after the last
-    // word.  gr_err_at = k: a g_err pulse instead of word k; gr_ack_at = k: a
-    // g_ack instead of word k (too early); gr_stall_at = k: no word k, no ack
-    // (the case ends the op).  It stops when g_req drops.
+    // (into gr_buf), with gr_usevalid = 1 only in a cycle with g_wvalid high
+    // (it waits for it; 0: blind, by spacing only); dir 0 pulses g_rvalid for
+    // one cycle with g_rdata = gr_src[k] (garbage otherwise).  gr_extra more
+    // pulses after the g_words words (beyond the count, blind), then g_ack
+    // gr_space cycles after the last pulse.  gr_err_at = k: a g_err pulse
+    // instead of word k; gr_ack_at = k: a g_ack instead of word k (too
+    // early); gr_stall_at = k: no word k, no ack (the case ends the op).  It
+    // stops when g_req drops.
     integer gr_space = 4, gr_err_at = -1, gr_stall_at = -1, gr_ack_at = -1;
+    integer gr_usevalid = 1, gr_extra = 0;
     integer gr_n = 0, gr_reqs = 0, gr_words = 0, gk, gdone;
     reg     gr_dir = 1'b0, gr_port = 1'b0;
     reg [15:0] gr_buf [0:1023];
@@ -152,15 +157,20 @@ module tb_sdcard_spi;
                 gdone = 0;
                 while (!gdone) begin
                     for (gk = 0; gk < gr_space - 1 && g_req === 1'b1; gk = gk + 1) begin @(posedge clk); #1; end
+                    if (gr_dir && gr_usevalid && gr_n < gr_words && gr_n != gr_err_at && gr_n != gr_stall_at
+                        && gr_n != gr_ack_at) begin
+                        gk = 0;
+                        while (g_req === 1'b1 && g_wvalid !== 1'b1 && gk < 100000) begin @(posedge clk); #1; gk = gk + 1; end
+                    end
                     if (g_req !== 1'b1) gdone = 1;
                     else if (gr_n == gr_err_at) begin
                         g_err = 1'b1; @(posedge clk); #1; g_err = 1'b0; gdone = 1;
                     end else if (gr_n == gr_stall_at) gdone = 1;
-                    else if (gr_n == gr_words || gr_n == gr_ack_at) begin
+                    else if (gr_n == gr_words + gr_extra || gr_n == gr_ack_at) begin
                         g_ack = 1'b1; @(posedge clk); #1; g_ack = 1'b0; gdone = 1;
                     end else begin
                         if (gr_dir) begin gr_buf[gr_n] = g_wdata; g_wnext = 1'b1; end
-                        else begin g_rdata = gr_src[gr_n]; g_rvalid = 1'b1; end
+                        else begin g_rdata = (gr_n < gr_words) ? gr_src[gr_n] : 16'hBAD0; g_rvalid = 1'b1; end
                         @(posedge clk); #1;
                         g_wnext = 1'b0; g_rvalid = 1'b0; g_rdata = 16'hDEAD;
                         gr_n = gr_n + 1;
@@ -188,12 +198,32 @@ module tb_sdcard_spi;
         errors = errors + 1;
     end
 
-    // white box, the dir 1 timing promise: the RX head word is complete
-    // (dut.hc == 2) from the first cycle of g_req and whenever g_wnext takes it
-    always @(posedge clk) if (!reset && g_req === 1'b1 && g_dir === 1'b1) begin
-        if ((p_greq !== 1'b1 || g_wnext === 1'b1) && dut.hc !== 2'd2) begin
-            $display("FAIL %0s: g_wdata not a complete word (hc %0d) at g_req start / g_wnext (cycle %0d)", cur, dut.hc, cyc);
+    // white box, g_wvalid: exactly "dir 1 Gayle op and the RX head word is
+    // complete" (dut.hc == 2), and high in the first cycle of a dir 1 g_req
+    // (every case has the block in RX well before it starts the op)
+    always @(posedge clk) if (!reset) begin
+        if (g_wvalid !== (g_req === 1'b1 && g_dir === 1'b1 && dut.hc == 2'd2)) begin
+            $display("FAIL %0s: g_wvalid %b with g_req %b g_dir %b hc %0d (cycle %0d)", cur, g_wvalid, g_req, g_dir, dut.hc, cyc);
             errors = errors + 1;
+        end
+        if (g_req === 1'b1 && g_dir === 1'b1 && p_greq !== 1'b1 && g_wvalid !== 1'b1) begin
+            $display("FAIL %0s: g_wvalid low in the first cycle of a dir 1 g_req (cycle %0d)", cur, cyc);
+            errors = errors + 1;
+        end
+    end
+
+    // MOSI bytes as the card would see them (sampled at SCK rising); a case
+    // sets mo_n = 0, mo_bits = 0 while the shifter is idle
+    integer mo_n = 0, mo_bits = 0;
+    reg [7:0] mo_sh = 8'h00;
+    reg [7:0] mo_log [0:2047];
+    always @(posedge sd_sck) begin
+        mo_sh = {mo_sh[6:0], sd_mosi};
+        mo_bits = mo_bits + 1;
+        if (mo_bits == 8) begin
+            mo_bits = 0;
+            if (mo_n < 2048) mo_log[mo_n] = mo_sh;
+            mo_n = mo_n + 1;
         end
     end
 
@@ -1596,6 +1626,153 @@ module tb_sdcard_spi;
             check_mem_pat(30, 9, "LBA 30 = the Gayle words");
             wr(R_CMD, OP_TXCM);
             expect_rd(R_TXLVL, 16'hFFFF, 16'd0, "TXLVL after TX_COMMIT");
+            crc_mode(1'b0);
+            end_case;
+        end
+
+        // ---- CRC16 known answers, independent of the model's CRC code: 512 x
+        // $FF (bit 6 without bit 4) -> 7FA1; "123456789" (bits 4 + 6) -> 31C3
+        // (the CRC-16/XMODEM check value).  CS high: the card ignores it all
+        begin_case("t_crc_known", run_it);
+        if (run_it) begin
+            set_cs(1'b0, 8'd2);
+            wr(R_CMD, OP_TXFL);
+            mo_n = 0; mo_bits = 0;
+            wr(R_LEN, 16'd512);
+            wr(R_CMD, OP_XFER | C_CRCTX);
+            wait_idle(100000);
+            expect_rd(R_MATCH, 16'hFFFF, 16'd514, "COUNT 512 + 2");
+            per_bad = 0;
+            for (i = 0; i < 512; i = i + 1) if (mo_log[i] !== 8'hFF) per_bad = per_bad + 1;
+            if (mo_n != 514 || per_bad) begin $display("FAIL %0s: %0d MOSI bytes, %0d not FF", cur, mo_n, per_bad); errors = errors + 1; end
+            if ({mo_log[512], mo_log[513]} !== 16'h7FA1) begin
+                $display("FAIL %0s: CRC16 of 512 x FF sent as %h%h, want 7FA1", cur, mo_log[512], mo_log[513]); errors = errors + 1;
+            end
+            wr(R_DATAW, 16'h3132); wr(R_DATAW, 16'h3334); wr(R_DATAW, 16'h3536); wr(R_DATAW, 16'h3738);
+            wr(R_DATAB, 16'h0039);
+            mo_n = 0; mo_bits = 0;
+            wr(R_LEN, 16'd9);
+            wr(R_CMD, OP_XFER | C_TX | C_CRCTX);
+            wait_idle(10000);
+            if (mo_n != 11 || mo_log[0] !== 8'h31 || mo_log[8] !== 8'h39 || {mo_log[9], mo_log[10]} !== 16'h31C3) begin
+                $display("FAIL %0s: \"123456789\": %0d bytes, CRC sent as %h%h, want 31C3", cur, mo_n, mo_log[9], mo_log[10]); errors = errors + 1;
+            end
+            wr(R_CMD, OP_TXFL);
+            end_case;
+        end
+
+        // ---- RX_TO_GAYLE ends: a bridge honouring g_wvalid at the fastest
+        // rate; one pulsing g_wnext too fast (Gayle error, the word not taken);
+        // ABORT and card gone mid-block; pulses beyond g_words ignored (both
+        // directions).  Each time the rest of the block is still verified
+        begin_case("t_gayle_rx_ends", run_it);
+        if (run_it) begin
+            cs_cycle(8'd2);
+            crc_mode(1'b1);
+            wr(R_CMD, OP_RXFL);
+            // fastest, by g_wvalid
+            read_block(60, C_RX | C_CRCRX);
+            gr_space = 1;
+            wr(R_IRQ, 16'h001F);
+            wr(R_LEN, 16'd512);
+            t0 = cyc;
+            wr(R_CMD, OP_RX2G);
+            wait_idle(20000);
+            n = cyc - t0;
+            gr_space = 4;
+            expect_rd(R_CMD, 16'h01FF, 16'h0008, "STATUS after RX_TO_GAYLE by g_wvalid");
+            expect_rd(R_IRQ, 16'h0009, 16'h0001, "IRQPEND done only");
+            if (gr_n != 256) fail("not 256 words by g_wvalid");
+            check_gr_buf(60, 0, 256, "words taken by g_wvalid");
+            $display("     %0s: 256 words by g_wvalid in %0d cycles (incl. the CMD write and polling)", cur, n);
+            // too fast, blind: the 2nd g_wnext finds g_wvalid low
+            read_block(61, C_RX | C_CRCRX);
+            gr_space = 2; gr_usevalid = 0;
+            wr(R_IRQ, 16'h001F);
+            wr(R_CMD, OP_RX2G);
+            wait_idle(20000);
+            gr_space = 4; gr_usevalid = 1;
+            if (g_req !== 1'b0) fail("g_req still high after a g_wnext without g_wvalid");
+            expect_rd(R_CMD, 16'h01FF, 16'h0088, "STATUS Gayle error after a g_wnext without g_wvalid");
+            expect_rd(R_IRQ, 16'h0009, 16'h0009, "IRQPEND done + error");
+            expect_rd(R_MATCH, 16'hFFFF, 16'd2, "COUNT 2: the early word not taken");
+            expect_rd(R_RXLVL, 16'hFFFF, 16'd510, "RXLVL 510");
+            wr(R_LEN, 16'd510);
+            wr(R_CMD, OP_RX2G);
+            wait_idle(20000);
+            expect_rd(R_CMD, 16'h01FF, 16'h0008, "STATUS: the other 510 still verified");
+            check_gr_buf(61, 2, 255, "the other 510");
+            // ABORT while the bridge stalls
+            read_block(62, C_RX | C_CRCRX);
+            gr_stall_at = 40;
+            wr(R_IRQ, 16'h001F);
+            wr(R_LEN, 16'd512);
+            wr(R_CMD, OP_RX2G);
+            wait_cycles(400);
+            wr(R_CMD, OP_ABORT);
+            wait_idle(100);
+            wait_cycles(50);
+            gr_stall_at = -1;
+            if (g_req !== 1'b0) fail("g_req not dropped by ABORT (dir 1)");
+            if (gr_n != 40) fail("words taken after the stall / ABORT");
+            expect_rd(R_CMD, 16'h01FF, 16'h0018, "STATUS aborted (dir 1)");
+            expect_rd(R_IRQ, 16'h0009, 16'h0001, "IRQPEND done only (dir 1 ABORT)");
+            expect_rd(R_MATCH, 16'hFFFF, 16'd80, "COUNT 80");
+            expect_rd(R_RXLVL, 16'hFFFF, 16'd432, "RXLVL 432");
+            wr(R_LEN, 16'd432);
+            wr(R_CMD, OP_RX2G);
+            wait_idle(20000);
+            expect_rd(R_CMD, 16'h01FF, 16'h0008, "STATUS: the other 432 still verified");
+            check_gr_buf(62, 80, 216, "the other 432");
+            // card gone (synchronised level, shorter than the debounce)
+            read_block(63, C_RX | C_CRCRX);
+            gr_stall_at = 30;
+            wr(R_IRQ, 16'h001F);
+            wr(R_LEN, 16'd512);
+            wr(R_CMD, OP_RX2G);
+            wait_cycles(300);
+            sd_cd_n <= 1'b1;
+            wait_cycles(10);
+            sd_cd_n <= 1'b0;
+            wait_cycles(20);
+            gr_stall_at = -1;
+            if (g_req !== 1'b0) fail("g_req not dropped on card absence (dir 1)");
+            if (gr_n != 30) fail("words taken after card absence");
+            expect_rd(R_CMD, 16'h01FF, 16'h0028, "STATUS card gone (dir 1), card present (debounced)");
+            expect_rd(R_IRQ, 16'h0019, 16'h0009, "IRQPEND done + error, no change IRQ");
+            expect_rd(R_MATCH, 16'hFFFF, 16'd60, "COUNT 60");
+            expect_rd(R_RXLVL, 16'hFFFF, 16'd452, "RXLVL 452");
+            wait_cycles(200);
+            wr(R_LEN, 16'd452);
+            wr(R_CMD, OP_RX2G);
+            wait_idle(20000);
+            expect_rd(R_CMD, 16'h01FF, 16'h0008, "STATUS: the other 452 still verified");
+            check_gr_buf(63, 60, 226, "the other 452");
+            // pulses beyond g_words: dir 1 (RX holds more than LEN)
+            read_block(64, C_RX | C_CRCRX);
+            gr_extra = 3;
+            wr(R_IRQ, 16'h001F);
+            wr(R_LEN, 16'd256);
+            wr(R_CMD, OP_RX2G);
+            wait_idle(20000);
+            expect_rd(R_CMD, 16'h01FF, 16'h0008, "STATUS after 3 extra g_wnext");
+            expect_rd(R_MATCH, 16'hFFFF, 16'd256, "COUNT 256 with 3 extra g_wnext");
+            expect_rd(R_RXLVL, 16'hFFFF, 16'd256, "RXLVL 256: extra g_wnext took nothing");
+            gr_extra = 0;
+            wr(R_CMD, OP_RX2G);
+            wait_idle(20000);
+            check_gr_buf(64, 256, 128, "the second half");
+            // pulses beyond g_words: dir 0
+            wr(R_CMD, OP_TXFL);
+            gr_extra = 3;
+            wr(R_LEN, 16'd64);
+            wr(R_CMD, OP_G2TX);
+            wait_idle(20000);
+            gr_extra = 0;
+            expect_rd(R_CMD, 16'h01FF, 16'h0008, "STATUS after 3 extra g_rvalid");
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd64, "TXLVL 64: extra g_rvalid pushed nothing");
+            wr(R_CMD, OP_TXFL);
+            wr(R_CMD, OP_RXFL);
             crc_mode(1'b0);
             end_case;
         end
