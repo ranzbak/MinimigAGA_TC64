@@ -297,7 +297,9 @@ int main(void)
 
     adv_timer = GetTimer(250);
 	unsigned char debug_was = 0;
-	unsigned long diskstat_timer = 0;
+	// disk statistics (diskstat.h): the first report period starts here
+	diskstat_period_start();
+	unsigned long diskstat_timer = GetTimer(DISKSTAT_PERIOD);
     while(1)
     {
 		diskstat_loop_pass();
@@ -311,17 +313,21 @@ int main(void)
 			printf(", OSD RDY timeouts 0x");	// SPI_reply() waits that ran out (hardware.c)
 			printf("%X", (unsigned int)osd_rdy_timeouts);
 			printf("\n");
-			// disk statistics (diskstat.h): a report every DISKSTAT_PERIOD
-			// TIMER counts from now on
-			diskstat_period_start();
-			diskstat_timer = GetTimer(DISKSTAT_PERIOD);
 		}
-		else if(DebugMode && CheckTimer(diskstat_timer))
+		debug_was = DebugMode;
+		// A disk report every DISKSTAT_PERIOD TIMER counts (5.804 s), DebugMode
+		// on or off (the SD baseline runs with it off).  It is about 300 UART
+		// bytes, and the CPU waits for each: cfide has no TX FIFO, a write to
+		// UART_TX is not acked while the previous byte shifts out (txbusy;
+		// 247 clk_28 per bit at 115200 baud, 10 bits = about 87 us per byte).
+		// So one report stalls this loop about 26 ms (0.45% of the period);
+		// the stall falls in the next period (diskstat_report reads TIMER
+		// before printing).
+		if(CheckTimer(diskstat_timer))
 		{
 			diskstat_timer = GetTimer(DISKSTAT_PERIOD);
 			diskstat_report();
 		}
-		debug_was = DebugMode;
 		drivesounds_fill();
 		CD_AudioPoll();	// CD audio refill (findings/cdrom/plan.md 13.1)
 		//if(c64keyboard_checkreset())

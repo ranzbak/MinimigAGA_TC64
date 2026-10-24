@@ -105,7 +105,7 @@ int main(void)
 	check_has("second report: hist r", mock_uart(), "disk: r 1:0 2:1 3-4:0");
 	check_has("second report: period", mock_uart(), "disk: loop passes 1 in 10 TIMER counts (58 ms)\n");
 
-	/* diskstat_period_start (DebugMode switched on): a new period */
+	/* diskstat_period_start (main.c, before the main loop): a new period */
 	diskstat_loop_pass();
 	hosttest_advance(500);
 	diskstat_period_start();
