@@ -136,7 +136,7 @@ void c64keyboard_write(struct c64keyboard *r,int in)
 }
 
 
-void c64keys_inthandler()
+void c64keys_inthandler(void)
 {
 	int i;
 	int count=0;
@@ -287,14 +287,16 @@ void c64keys_inthandler()
 int c64keyboard_checkreset()
 {
 	int result=0;
-	DisableInterrupts();
+	/* the vblank handler (c64keys_inthandler) writes these: a CPU critical
+	   section, not the legacy INTERRUPT register (off since IrqInstall) */
+	uint32_t s=irq_save();
 	if(c64keys.active)
 	{
 		if((c64keys.qualifiers&QUAL_MASK)==(QUAL_LSHIFT|QUAL_RSHIFT|QUAL_CTRL))
 			result=1;
 		c64keys.active=0;
 	}
-	EnableInterrupts();
+	irq_restore(s);
 	return(result);
 }
 

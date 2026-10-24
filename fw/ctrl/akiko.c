@@ -4,7 +4,7 @@
 
 #include "akiko.h"
 
-void akiko_inthandler()
+void akiko_inthandler(void)
 {
 	unsigned int aa;
 	unsigned int ad;

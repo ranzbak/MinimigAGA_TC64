@@ -30,6 +30,6 @@ extern struct c64keyboard c64keys;
 void c64keyboard_init(struct c64keyboard *r);
 void c64keyboard_write(struct c64keyboard *r,int in);
 int c64keyboard_checkreset();
-void c64keys_inthandler();
+void c64keys_inthandler(void);  /* IRQ_VBLANK (main.c IrqSetupSources) */
 
 #endif

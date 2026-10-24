@@ -166,7 +166,8 @@ is the path as long as `IrqInstall()` was not called.
 | 1 | `IRQ_I2C` | I2C master transfer event | LEVEL; the handler must read `0xFFFFFFA0` (`GetInterrupts()`), the only thing that clears it (a write does not) |
 | 2 | `IRQ_AKIKO` | Akiko request | EDGE |
 | 3 | `IRQ_ADV7511` | ADV7511 INT pin | LEVEL |
-| 4..15 | | spare (`irq_src`: IDE, floppy, later) | as the device needs |
+| 4 | `IRQ_SDCARD` | SD card peripheral (`rtl/host/sdcard_spi.v`, `irq_src(4)`) | LEVEL; `sdc_init()` (`../sdc.c`) installs it |
+| 5..15 | | spare (`irq_src`: IDE, floppy, later) | as the device needs |
 
 ```c
 #include "irq.h"
@@ -236,6 +237,13 @@ void irq_later(void)
   single pass (the interrupt line would re-enter the trap at once), so it is
   a latency optimisation only.
 * Never read the UART at `0xFFFFFFF0` (cfide does not ack it; bus deadlock).
+* The firmware runs on the controller since the SD card engine (Task 9):
+  `main.c` `IrqSetupSources()` puts vblank on `c64keys_inthandler` and the
+  Akiko request on `akiko_inthandler` (both EDGE), `sdc_init()` the SD
+  peripheral on `IRQ_SDCARD` (LEVEL). The legacy register stays off.
+* This core has no `wfi` (`CsrPluginConfig.small` decodes it as an illegal
+  instruction: mcause 2, mtval `0x10500073`; checked with the L1 `exc`
+  program). A wait for an interrupt polls a RAM flag (`sdc_wait()`).
 
 ## Tests
 

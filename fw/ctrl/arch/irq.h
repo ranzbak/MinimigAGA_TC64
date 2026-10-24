@@ -37,7 +37,9 @@
                                   read 0xFFFFFFA0 (GetInterrupts()) to clear it */
 #define IRQ_AKIKO          2   /* Akiko request, EDGE */
 #define IRQ_ADV7511        3   /* ADV7511 INT pin, LEVEL */
-/* 4..15: spare (cfide's irq_src port) */
+#define IRQ_SDCARD         4   /* SD card peripheral (rtl/host/sdcard_spi.v, cfide
+                                  irq_src(4)), LEVEL; sdc.c's handler */
+/* 5..15: spare (cfide's irq_src port) */
 
 #ifdef __cplusplus
 extern "C" {
@@ -82,6 +84,7 @@ void IrqInstall(void);
 
 /* CPU-side critical section: mstatus.MIE off, returns the old mstatus.
    Nests: irq_restore() sets MIE again only if it was set at irq_save(). */
+#ifndef HOSTTEST
 static inline uint32_t irq_save(void)
 {
     uint32_t s;
@@ -93,9 +96,40 @@ static inline void irq_restore(uint32_t s)
 {
     __asm__ volatile("csrs mstatus, %0" : : "r"(s & 8u) : "memory");
 }
+#else
+/* Host tests (fw/ctrl/test/mock_hw.c): MIE is the mock's; irq_restore()
+   delivers what the mock's interrupt controller has pending */
+uint32_t hosttest_irq_save(void);
+void hosttest_irq_restore(uint32_t s);
+static inline uint32_t irq_save(void) { return hosttest_irq_save(); }
+static inline void irq_restore(uint32_t s) { hosttest_irq_restore(s); }
+#endif
 
 #ifdef __cplusplus
 }
+#endif
+
+/* Host tests (-DHOSTTEST, fw/ctrl/test/mock_hw.c): the registers above go to
+   the mock's interrupt controller (a PENDING read clears the EDGE bits it
+   returns, as cfide's), irq.c builds unchanged.  Not defined in the target
+   build: the image is the same bytes.  hwmap_test #undefs HOSTTEST to check
+   the real expansions. */
+#ifdef HOSTTEST
+volatile unsigned int *hosttest_interrupt(void);   /* the INTERRUPT register, an lvalue */
+uint32_t hosttest_irq_pending(void);               /* IRQ_PENDING read */
+volatile uint32_t *hosttest_irq_mask(void);        /* IRQ_MASK, an lvalue */
+uint32_t hosttest_irq_raw(void);                   /* IRQ_RAW read */
+volatile uint32_t *hosttest_irq_mode(void);        /* IRQ_MODE, an lvalue */
+#undef HW_INTERRUPT
+#undef HW_IRQ_PENDING
+#undef HW_IRQ_MASK
+#undef HW_IRQ_RAW
+#undef HW_IRQ_MODE
+#define HW_INTERRUPT(x)    (*hosttest_interrupt())
+#define HW_IRQ_PENDING     hosttest_irq_pending()
+#define HW_IRQ_MASK        (*hosttest_irq_mask())
+#define HW_IRQ_RAW         hosttest_irq_raw()
+#define HW_IRQ_MODE        (*hosttest_irq_mode())
 #endif
 
 #endif

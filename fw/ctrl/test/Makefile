@@ -73,6 +73,18 @@ $(eval $(call TEST,spireply_test,$$(TD)/mock_hw.c $$(SRC)/hardware.c,,))
 # findings/sdcard-engine Task 1) and their report on the mock UART
 $(eval $(call TEST,diskstat_test,$$(TD)/mock_hw.c $$(SRC)/hardware.c $$(SRC)/uart.c $$(SRC)/rvlibc.c $$(SRC)/diskstat.c,,))
 
+# sdc_test: the SD card peripheral driver (sdc.c, findings/sdcard-engine
+# Task 9) with the real arch/irq.c on the mock's interrupt controller, the
+# mock's model of rtl/host/sdcard_spi.v (registers, FIFOs, shifter, Gayle
+# ops) and of sd_spi_model.v's card; the interrupt set-up IrqSetupSources()
+# is cut out of main.c (main.c holds main())
+$(B)/irqsetup.inc: $(SRC)/main.c
+	@mkdir -p $(@D)
+	sed -n '/^void IrqSetupSources(void)/,/^}/p' $(SRC)/main.c > $@
+	grep -q '^void IrqSetupSources' $@
+$(eval $(call TEST,sdc_test,$$(TD)/mock_hw.c $$(SRC)/hardware.c $$(SRC)/sdc.c $$(SRC)/arch/irq.c,,))
+$(B)/sdc_test $(B)/sdc_test_32: $(B)/irqsetup.inc
+
 # fat_test: the real fat.c + mmc.c on the card model, once per image of
 # fatimg.sh (FAT16 with MBR by mkcard.sh, FAT32 with MBR, FAT16 superfloppy);
 # fat_check.sh adds the checks by mtools and fsck.fat.  The firmware's printf
@@ -301,7 +313,7 @@ check_io: $(SRC)/check_io.awk $(TD)/check_io.sh $(wildcard $(TD)/check_io/*)
 
 run: fmt check_io run-mock_selftest run-cue_test run-cdaudio_test run-atapi_test run-cdrom_test \
      run-openhf_test run-lib_test run-hwmap_test run-spireply_test run-diskstat_test run-swap_test run-fat_test run-mmc_test \
-     run-config_test run-hdd_test run-fdd_test run-drivesounds_test run-boot_test
+     run-config_test run-hdd_test run-fdd_test run-drivesounds_test run-boot_test run-sdc_test
 
 clean:
 	$(RM) -r out mut

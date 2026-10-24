@@ -401,8 +401,10 @@ them are sent), `rv_printf_truncations` is incremented once, and `vprintf`
 still returns the length `vsnprintf` wanted. The audit finds no call site that
 can reach the limit.
 
-**Interrupt context.** `inthandler()` (`main.c`) calls `akiko_inthandler()`,
-which `printf`s, so a `printf` can run between two bytes of another `printf`.
+**Interrupt context.** The interrupt dispatcher (`arch/irq.c`; the sources
+are set up by `IrqSetupSources()` in `main.c` and `sdc_init()`) calls
+`akiko_inthandler()` for the Akiko request, and that `printf`s, so a `printf`
+can run between two bytes of another `printf`.
 `vprintf` keeps a nesting count: a call that starts while another is in
 progress formats into the second buffer (`RV_PRINTF_IRQ_BUF`). The legacy
 interrupt path does not nest deeper (MIE is clear inside the handler); a third

@@ -21,6 +21,7 @@
 #include "akiko.h"
 #include "rtc.h"
 #include "arch/irq.h"
+#include "sdc.h"
 
 static int fails;
 
@@ -66,6 +67,28 @@ static void check_addresses(void)
 	CHECK_REG("IRQ RAW",         HW_IRQ_RAW,     0xFFFFFF38u, 4);
 	CHECK_REG("IRQ MODE",        HW_IRQ_MODE,    0xFFFFFF3Cu, 4);
 	CHECK_REG("RECONFIGURE",     RECONFIGURE,   0xDEE016u,   2);
+	/* the SD card peripheral (sdc.h; rtl/host/sdcard_spi.v's register map) */
+	CHECK_REG("SDC TXW/RXW",     SDC(SDC_TXW),     0xFFFFFF00u, 2);
+	CHECK_REG("SDC RXW",         SDC(SDC_RXW),     0xFFFFFF00u, 2);
+	CHECK_REG("SDC TXB/RXB",     SDC(SDC_TXB),     0xFFFFFF04u, 2);
+	CHECK_REG("SDC RXB",         SDC(SDC_RXB),     0xFFFFFF04u, 2);
+	CHECK_REG("SDC RXLVL",       SDC(SDC_RXLVL),   0xFFFFFF08u, 2);
+	CHECK_REG("SDC TXLVL",       SDC(SDC_TXLVL),   0xFFFFFF0Cu, 2);
+	CHECK_REG("SDC CMD/STATUS",  SDC(SDC_CMD),     0xFFFFFF10u, 2);
+	CHECK_REG("SDC STATUS",      SDC(SDC_STATUS),  0xFFFFFF10u, 2);
+	CHECK_REG("SDC LEN/LAST",    SDC(SDC_LEN),     0xFFFFFF14u, 2);
+	CHECK_REG("SDC LAST",        SDC(SDC_LAST),    0xFFFFFF14u, 2);
+	CHECK_REG("SDC MATCH/COUNT", SDC(SDC_MATCH),   0xFFFFFF18u, 2);
+	CHECK_REG("SDC COUNT",       SDC(SDC_COUNT),   0xFFFFFF18u, 2);
+	CHECK_REG("SDC IRQACK/PEND", SDC(SDC_IRQACK),  0xFFFFFF1Cu, 2);
+	CHECK_REG("SDC IRQPEND",     SDC(SDC_IRQPEND), 0xFFFFFF1Cu, 2);
+	CHECK_REG("SDC CFG",         SDC(SDC_CFG),     0xFFFFFF20u, 2);
+	CHECK_REG("SDC TIMEOUT",     SDC(SDC_TIMEOUT), 0xFFFFFF24u, 2);
+	CHECK_REG("SDC IRQEN",       SDC(SDC_IRQEN),   0xFFFFFF28u, 2);
+	CHECK_REG("SDC WMARK/VER",   SDC(SDC_WMARK),   0xFFFFFF2Cu, 2);
+	CHECK_REG("SDC VER",         SDC(SDC_VER),     0xFFFFFF2Cu, 2);
+	if (SDC_VERSION != 0x5D01) { printf("FAIL SDC_VERSION %x, want 5d01\n", (unsigned)SDC_VERSION); fails++; }
+	if (IRQ_SDCARD != 4) { printf("FAIL IRQ_SDCARD %d, want 4 (cfide irq_src(4))\n", IRQ_SDCARD); fails++; }
 	/* not a register: the audio ring's address (HOSTTEST: the mock's RAM) */
 	if ((uintptr_t)AUDIO_BUFFER != 0x70000u || AUDIO_BUFFER_SIZE != 0x8000) {
 		printf("FAIL AUDIO_BUFFER %lx size %x, want 70000 size 8000\n",
@@ -150,10 +173,30 @@ static const char *sent(void)
 	return tx;
 }
 
+/* SDC_R / SDC_W are one read / one write of SDC(x) (redefined here to an
+   array of the 12 registers after the address checks) */
+static unsigned short sdc_regs[16];
+#undef SDC
+#define SDC(x) (sdc_regs[(x) / 4])
+static void check_sdc_access(void)
+{
+	memset(sdc_regs, 0, sizeof sdc_regs);
+	SDC_W(SDC_LEN, 0x1234);
+	check_value("SDC_W(SDC_LEN) writes LEN (low byte)", sdc_regs[5] & 0xFF, 0x34);
+	check_value("SDC_W(SDC_LEN) writes LEN (high byte)", sdc_regs[5] >> 8, 0x12);
+	sdc_regs[4] = 0x0055;
+	check_value("SDC_R(SDC_STATUS) reads STATUS", SDC_R(SDC_STATUS), 0x55);
+	sdc_regs[11] = 0x5D01;
+	check_value("SDC_R(SDC_VER) reads VERSION (high byte)", SDC_R(SDC_VER) >> 8, 0x5D);
+	for (int k = 0; k < 16; k++)
+		if (k != 4 && k != 5 && k != 11 && sdc_regs[k]) { printf("FAIL SDC_R/SDC_W touched register %d\n", k); fails++; }
+}
+
 int main(void)
 {
 	check_addresses();
 	check_spi_values();
+	check_sdc_access();
 
 	/* RS232(x) is one byte store to UART_TX */
 	uart_n = 0;

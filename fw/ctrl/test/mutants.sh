@@ -113,7 +113,7 @@ checkio() {
 control() {
   prep control
   local t rc=0
-  for t in mock_selftest cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_test hwmap_test spireply_test diskstat_test swap_test fat_test mmc_test config_test hdd_test fdd_test drivesounds_test boot_test; do
+  for t in mock_selftest cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_test hwmap_test spireply_test diskstat_test swap_test fat_test mmc_test config_test hdd_test fdd_test drivesounds_test boot_test sdc_test; do
     mk control "run64-$t" > "mut/control/log.$t" 2>&1 || { echo "control: run64-$t FAILED (mut/control/log.$t)"; rc=1; }
   done
   mk control fmt > mut/control/log.fmt 2>&1 || { echo "control: fmt FAILED (mut/control/log.fmt)"; rc=1; }
@@ -309,6 +309,41 @@ unit diskstat_bucket diskstat_test src diskstat.c 's/{ 1, 2, 4, 8, 16, 64, 256 }
 unit diskstat_busy mmc_test src mmc.c '/^unsigned char MMC_Write(/,/^}/ s/polls = 1;/polls = 0;/' "FAIL ... diskstat busy line"
 unit diskstat_amiga hdd_test src hdd.c '/^void ATA_WriteSectors(/,/^}/ s/polls++;/;/' "diskstat amiga polls"
 
+# ---- the SD peripheral driver, the interrupt migration and the mock (sdc_test, sdcard-engine Task 9)
+# the driver (sdc.c / sdc.h)
+unit sdc_noack sdc_test src sdc.c 's/SDC_W(SDC_IRQACK, p);/;/' "interrupt storm"
+unit sdc_nooneshot sdc_test src sdc.c 's/SDC_W(SDC_IRQEN, en \& ~(p \& (SDC_IRQ_RXHI | SDC_IRQ_TXLO)));/;/' "interrupt storm"
+unit sdc_norefuse sdc_test src sdc.c 's/if (op != SDC_OP_ABORT \&\& (SDC_R(SDC_STATUS) \& SDC_ST_REFUSED)) {/if (0) {/' "FAIL refuse: cycle after an op end -> -1"
+unit sdc_nobusy sdc_test src sdc.c 's/if (op != SDC_OP_ABORT \&\& (st \& SDC_ST_BUSY)) {/if (0) {/' "FAIL refuse: busy -> trace BUSY"
+unit sdc_stale_done sdc_test src sdc.c 's/sdc_events = sdc_events \& ~(SDC_IRQ_DONE | SDC_IRQ_ERR);/;/' "FAIL brief: RXLVL after an RX XFER of 8"
+unit sdc_wait_noerr sdc_test src sdc.c 's/unsigned m = mask | SDC_IRQ_ERR | SDC_IRQ_CD, e;/unsigned m = mask | SDC_IRQ_CD, e;/'
+unit sdc_wait_nocd sdc_test src sdc.c 's/unsigned m = mask | SDC_IRQ_ERR | SDC_IRQ_CD, e;/unsigned m = mask | SDC_IRQ_ERR, e;/'
+unit sdc_bound sdc_test src sdc.h 's/define SDC_WAIT_BOUND 1800/define SDC_WAIT_BOUND 1799/' "FAIL wait bound: TIMER reads"
+unit sdc_clamp sdc_test src sdc.c 's/if (div < SDC_DIV_MIN)/if (div < 1)/' "FAIL cfg: div 1 -> 2"
+unit sdc_trace_head sdc_test src sdc.c 's/sdc_trace_head = sdc_trace_head + 1;/;/' "FAIL trace: two entries"
+unit sdc_edge sdc_test src sdc.c 's/IrqSetMode(IRQ_SDCARD, 1);/IrqSetMode(IRQ_SDCARD, 0);/' "FAIL init: controller bit 4 LEVEL"
+unit sdc_init_noabort sdc_test src sdc.c 's/SDC_W(SDC_CMD, SDC_OP_ABORT);/;/' "FAIL init: not busy (ABORT)"
+# the interrupt migration (main.c IrqSetupSources, cut out by the Makefile)
+unit irq_swap sdc_test src main.c 's/IrqSetHandler(IRQ_VBLANK, c64keys_inthandler);/IrqSetHandler(IRQ_VBLANK, akiko_inthandler);/' "FAIL irq: vblank -> c64keys_inthandler"
+unit irq_noakiko sdc_test src main.c 's/^\tIrqEnable(IRQ_AKIKO);$/\t;/' "FAIL irq: MASK = vblank + Akiko"
+# the mock against the contract texts
+unit mock_sdc_nocrc sdc_test t mock_hw.c 's/if (sdc.crc == 0) {/if (1) {/' "FAIL read bad: no crc_ok"
+unit mock_sdc_nointerlock sdc_test t mock_hw.c 's/!sdc.poisoned \&\& sdc.verified >= sdc.len;/1;/' "FAIL read bad: RX_TO_GAYLE refused"
+unit mock_sdc_noahead sdc_test t mock_hw.c 's/if (rxop \&\& sdc.ahead_ok) sdc.verified/if (rxop) sdc.verified/' "FAIL interlock: nothing verified"
+unit mock_sdc_notimeout sdc_test t mock_hw.c 's/\&\& t > sdc.deadline) sdc_end(END_TMO);/\&\& 0) sdc_end(END_TMO);/' "FAIL wait: wakes on ERR"
+unit mock_sdc_rxhigh sdc_test t mock_hw.c 's/if ((rxlvl() >> 4) >= sdc.wm_rx)/if ((rxlvl() >> 4) > sdc.wm_rx)/' "FAIL reset: IRQPEND 0006"
+unit mock_sdc_rewind sdc_test t mock_hw.c 's/case OP_TXRW: sdc.tx_snd = sdc.tx_cm;/case OP_TXRW: sdc.tx_snd = sdc.tx_snd - 1;/' "FAIL txkeep: REWIND: from the commit point"
+unit mock_sdc_bytetime sdc_test t mock_hw.c 's/return 16u \* (sdc.div + 1);/return 16u * sdc.div;/' "FAIL timing"
+unit mock_sdc_gone sdc_test t mock_hw.c 's/if (!present \&\& sdc.busy) sdc_end(END_GONE);/;/' "FAIL gone: ended at once"
+unit mock_sdc_rollback sdc_test t mock_hw.c 's/if (sdc.op == OP_G2TX \&\& why != END_NORMAL) sdc.tx_wr = sdc.tx_wr0;/;/' "FAIL g_err: TX back"
+unit mock_sdc_lock sdc_test t mock_hw.c 's/if (gayle_op_busy()) { misuse(); break; }\t\/\* the data port is locked \*\//;/' "FAIL locked: push dropped"
+unit mock_card_crc7 sdc_test t mock_hw.c 's/(card.crc_on \&\& (unsigned)(card.cmdb\[5\] >> 1) != c7)/(0)/' "FAIL crc7 bad: R1 08"
+unit mock_card_wcrc sdc_test t mock_hw.c 's/else if (card.crc_on \&\& card.wrx != card.wcrc) resp = 0x0B;/else if (0) resp = 0x0B;/' "FAIL write bad crc16: 0B"
+unit mock_card_rdcrc sdc_test t mock_hw.c 's/card.txb ^= 0x01;/card.txb ^= 0x00;/' "FAIL read bad: no crc_ok"
+unit mock_card_acmd22 sdc_test t mock_hw.c 's/if (card.wmulti) card.wr_ok++;/;/' "FAIL acmd22: 1 block written"
+unit mock_card_noresp sdc_test t mock_hw.c 's/return;\t\t\t\t\/\* no response, no effect \*\//;/' "FAIL noresp: no R1"
+unit mock_irq_edge sdc_test t mock_hw.c 's/irqc_edge \&= ~p;/;/' "interrupt storm"
+
 # ---- the check_io.awk fixture (check_io.sh, exec-3 deferred #18) --------------
 # no forgetting after a j: good.dis's stale s1 is taken for the UART (b)
 checkio checkio_j src check_io.awk 's/(j|jr|ret|mret)/(jr|ret|mret)/' "FAIL check_io fixture"
@@ -401,6 +436,13 @@ hwmap irqctl_pending arch/irq.h 's/IRQCTLBASE + 0x0))/IRQCTLBASE + 0x2))/'
 hwmap irqctl_mask arch/irq.h 's/IRQCTLBASE + 0x4))/IRQCTLBASE + 0x6))/'
 hwmap irqctl_raw arch/irq.h 's/IRQCTLBASE + 0x8))/IRQCTLBASE + 0xA))/'
 hwmap irqctl_mode arch/irq.h 's/IRQCTLBASE + 0xC))/IRQCTLBASE + 0xE))/'
+hwmap sdc_base   sdc.h 's/define SDC_BASE    0xFFFFFF00/define SDC_BASE    0xFFFFFF02/'
+hwmap sdc_width  sdc.h 's/(\*(volatile unsigned short \*)(SDC_BASE/(*(volatile unsigned int *)(SDC_BASE/'
+hwmap sdc_cfg    sdc.h 's/define SDC_CFG     0x20/define SDC_CFG     0x24/'
+hwmap sdc_ver    sdc.h 's/define SDC_VER     0x2C/define SDC_VER     0x28/'
+hwmap sdc_wr     sdc.h 's/define SDC_W(x, v)  (SDC(x) = (v))/define SDC_W(x, v)  ((void)(v))/'
+hwmap sdc_version sdc.h 's/define SDC_VERSION 0x5D01/define SDC_VERSION 0x5D00/'
+hwmap irq_sdcard arch/irq.h 's/define IRQ_SDCARD         4/define IRQ_SDCARD         5/'
 hwmap irqctl_width arch/irq.h 's/HW_IRQ_MASK        (\*(volatile unsigned int/HW_IRQ_MASK        (*(volatile unsigned short/'
 # uart.c
 unit puts_nl hwmap_test src uart.c 's/++result;/++result; if (!*msg) putchar(10);/'

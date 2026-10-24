@@ -56,6 +56,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "c64keys.h"
 #include "akiko.h"
 #include "irq.h"
+#include "sdc.h"
 #include "drivesounds.h"
 #include "cdrom.h"
 #include "audio.h"
@@ -135,13 +136,18 @@ void HandleFpga(void)
 }
 
 
-void inthandler()
+// The interrupt sources on cfide's controller (arch/irq.h; the dispatcher
+// calls one handler per pending bit): vertical blank -> the C64 keyboard
+// scan, the Amiga's Akiko request -> akiko_inthandler.  Both are pulses,
+// EDGE (the reset mode).  The SD peripheral's bit is sdc_init()'s.  This
+// replaces the legacy INTERRUPT register, whose one handler ran both on
+// every event (vblank, Akiko and each I2C transfer event).
+void IrqSetupSources(void)
 {
-	int ints __attribute__((unused)) =GetInterrupts();
-	DisableInterrupts();
-	akiko_inthandler();
-	c64keys_inthandler();
-	EnableInterrupts();
+	IrqSetHandler(IRQ_VBLANK, c64keys_inthandler);
+	IrqSetHandler(IRQ_AKIKO, akiko_inthandler);
+	IrqEnable(IRQ_VBLANK);
+	IrqEnable(IRQ_AKIKO);
 }
 
 
@@ -151,7 +157,12 @@ int ColdBoot()
 	/* Reset the chipset briefly to cancel AGA display modes, then Put the CPU in reset while we initialise */
 	OsdDoReset(SPI_RST_USR | SPI_RST_CPU | SPI_CPU_HLT,SPI_RST_CPU | SPI_CPU_HLT);
 
-	DisableInterrupts();
+	// The keyboard scan and Akiko requests wait for the end of the boot (as
+	// with the legacy DisableInterrupts() here); the SD peripheral's
+	// interrupt is needed during it.
+	IrqDisable(IRQ_VBLANK);
+	IrqDisable(IRQ_AKIKO);
+	sdc_init();
 
 	ClearError(ERROR_ALL);
 
@@ -233,13 +244,12 @@ int ColdBoot()
 	}
 
 	// One exit, always.  Whatever went wrong above -- no card, no filesystem,
-	// no ROM -- the interrupt handler has to be installed and interrupts
-	// re-enabled to match the DisableInterrupts() on the way in.  Leaving them
-	// off was what turned "the boot failed" into "the machine is wedged": the
-	// host CPU kept running but without its timers, so nothing that depends on them
-	// (drive sounds, the RTC, the HDMI re-init poll) worked again.
-	SetIntHandler(inthandler);
-	EnableInterrupts();
+	// no ROM -- the interrupt sources have to be enabled again to match the
+	// IrqDisable()s on the way in.  Leaving them off was what turned "the
+	// boot failed" into "the machine is wedged": the host CPU kept running
+	// but without its timers, so nothing that depends on them (drive sounds,
+	// the RTC, the HDMI re-init poll) worked again.
+	IrqSetupSources();
 
 	return(result);
 }

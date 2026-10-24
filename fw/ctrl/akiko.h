@@ -11,7 +11,7 @@
 #define AKIKO_REQ 0x8000
 #define AKIKO_WRITE 0x4000
 
-void akiko_inthandler();
+void akiko_inthandler(void);   /* IRQ_AKIKO (main.c IrqSetupSources) */
 
 #endif
 

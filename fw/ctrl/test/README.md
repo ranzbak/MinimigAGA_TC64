@@ -66,11 +66,13 @@ Output goes to `fw/ctrl/test/out/` and `mut/` (both ignored by git);
 * **A register that has no `-DHOSTTEST` hook crashes the test.** Hooked are
   `SPI`/`RDSPI`, the chip selects, `SPI_slow`/`SPI_fast`, `TIMER`,
   `HOST_REQ`, `PLATFORM`, `AUDIO`, `RS232` and `AUDIO_BUFFER` (the `HOSTTEST` block at
-  the end of `fw/ctrl/hardware.h`). Every other register macro still
+  the end of `fw/ctrl/hardware.h`), the SD peripheral (`sdc.h`: driver code
+  uses `SDC_R` / `SDC_W`, `SDC(x)` does not compile under `HOSTTEST`) and the
+  interrupt registers with `irq_save` / `irq_restore` (the `HOSTTEST` block of
+  `arch/irq.h`; `arch/irq.c` builds unchanged). Every other register macro still
   dereferences its real address (`0xFFFFFFxx`, or `0xDEExxx`), which is not
   mapped on the host: a test that reaches the keyboard (`HW_KEYBOARD`),
-  Akiko, the RTC, I2C, `VIDEOSCALE`, `FPGA_TEMP_RAW`, the interrupt
-  controller (`GetInterrupts`, `EnableInterrupts`, ...) or `RECONFIGURE` dies
+  Akiko, the RTC, I2C, `VIDEOSCALE`, `FPGA_TEMP_RAW` or `RECONFIGURE` dies
   with SIGSEGV. Such a test needs a new hook: a `HOSTTEST` macro or function
   in `hardware.h` (the target build drops the block, so the image stays the
   same bytes), a model in `mock_hw.c`/`mock_hw.h`, and a mutant for it.
@@ -102,7 +104,7 @@ unchanged with it.
 | `mock_selftest` | the mock below: scripted replies per chip select, the `spi.txt` trace, TIMER, UART, PLATFORM, AUDIO, the card model by hand and under the real `mmc.c` (`MMC_Init`, `MMC_Read`, `MMC_ReadMultiple`, `MMC_Write`) |
 | `cue_test`, `cdaudio_test`, `atapi_test`, `cdrom_test`, `openhf_test` | the CD-ROM code (CUE parser and disc model, CD audio player, ATAPI commands, the Gayle glue, `OpenHardfile` on a CD slot); unchanged from the previous firmware's tests except for the dialect. `openhf_test` still builds `OpenHardfile` alone, cut out of `hdd.c` by `sed`, with stubs for the FAT calls: `hdd.c` as a whole builds under `HOSTTEST` now (`hdd_test` links it), but the cut keeps the stubs the only FAT `OpenHardfile` sees there |
 | `lib_test` | `rvlibc.c` against glibc's `vsnprintf` (output, return value, truncation, nesting, heap stubs) |
-| `hwmap_test` | with the real macros (`-DHOSTTEST` undefined in that file): address and width of every register, the CS/SPEED values of `Enable*()`/`Disable*()`/`SPI_slow()`/`SPI_fast()`, `SPI()`/`RDSPI` order, the real `RS232()` expansion, `uart.c` `puts` |
+| `hwmap_test` | with the real macros (`-DHOSTTEST` undefined in that file): address and width of every register (the SD peripheral's twelve too, `SDC_VERSION`, `IRQ_SDCARD`; `SDC_R` / `SDC_W` are one access of `SDC(x)`), the CS/SPEED values of `Enable*()`/`Disable*()`/`SPI_slow()`/`SPI_fast()`, `SPI()`/`RDSPI` order, the real `RS232()` expansion, `uart.c` `puts` |
 | `fmt` | format strings of the firmware: `gold/formats.txt` current, every format has a case, ILP32 == LP64, every record == `fmtcheck.py`'s model of ISO printf (`fmtcheck.py iso`) |
 | `spireply_test` | `SPI_reply()` (`../hardware.c`, Phase 4 Task 11) on the mock's `HOST_REQ`: ready at once (`1WR`: no TIMER read), ready after 1..3 reads of 0 (polls until 1, only then the DATA write; n TIMER reads, no timeout), never ready at one, two and three TIMER counts per read (returns at the bound: 4 / 3 / 2 TIMER and `HOST_REQ` reads, `osd_rdy_timeouts` 1, the byte still read), and a three-byte frame that waits per byte. The expected orders and counts follow from the rule (2 TIMER counts, `CheckTimer` true once TIMER > T0 + 2) and the mock's TIMER, written in the test's header |
 | `diskstat_test` | the disk statistics of the SD baseline (`../diskstat.c`, findings/sdcard-engine Task 1): every sectors-per-command bucket (1, 2, 3-4, 5-8, 9-16, 17-64, 65-256) at both bounds in both directions, `diskstat_report()`'s text on the mock UART (cumulative totals, the loop passes and TIMER counts of the period, a period across the 16-bit TIMER wrap, `diskstat_period_start`). The hooks: `mmc_test` checks `MMC_Write`'s busy polls (busy bytes + 1 per block), `hdd_test` the bucket of every READ/WRITE command and the Amiga polls (one per FIFO wait plus one per `CD_AudioRefill`) |
@@ -113,6 +115,7 @@ unchanged with it.
 | `fdd_test` | the floppy emulation (Task 13; `fdd_test.c`): `../fdd.c` on the mock, every scenario from `HandleFDD()`. `gold/mfm.py` (an Amiga MFM track encoder written from the track format: sync 0x4489, header info / label / data split into odd and even bits, header and data checksums as the XOR of the MFM longs AND 0x55555555; its header lists the spec facts and the two Minimig choices it takes as parameters: the 12668-byte track and the read stream's clock bits) writes an LBA-tagged ADF, the read stream of every track, write streams with real MFM clock bits and the ADFs after them. ReadTrack, behind a mock `paula_floppy` that answers the six status bytes of each frame and asks (`CMD_RDTRK`) for a number of frames: the bytes after the status bytes of every FPGA frame (`SendSector`, `SendGap`: the plan's `SectorToFpga`/`SectorGapToFpga`) == `mfm.py`, for track 0 side 0 and track 79 side 1 (`gold/mfm_c00_s0.hex`, `gold/mfm_c79_s1.hex`, committed for Phase 4's L3 data check; `mfm.py` must reproduce them, `cmp`), then every track 0..159 (track/side arithmetic, the cluster cache), a read that stops after 4 sectors and goes on at sector 4, a track change in the middle, the Copy Lock workaround (`fdd.c:243`: the mock reports DSKSYNC 0x8914, 0xA144, 0x0000 in its status bytes 2-3, the firmware must send 0x4489) and a sync it passes through (0x4891), DEBUG on (the UART text, a literal; silent without DEBUG); per read, the frames, the six status bytes, no error, one `CD_AudioRefill` per `FileRead` and one `FileRead` per sector sent plus one. WriteTrack (`FindSync`/`GetHeader`/`GetData`) behind a mock write FIFO (2048 words; status `{trackwr}` and `{dmaen & dsklen[14], fifo_cnt}` as `paula_floppy`'s `wr_fifo_status`; the "Amiga" adds 2048, 300 or 7 words per poll): three cases (track 159 whole with 3 new sectors, track 1 sectors 5, 2, 9, track 80 whole from sector 6), the ADF afterwards == `mfm.py`'s (only the written sectors changed), the whole stream read, never past the FIFO count; a write-protected disk; a bad header and a bad data checksum (that sector dropped, `FatalError` 26 / 29). The file layer is a direct ADF mock with FAT semantics (4-sector clusters in a scattered chain; `FileRead`/`FileWrite` address through `file.cluster` and fail when it disagrees with `file.sector`). Also `UpdateDriveStatus` and `HandleFDD`'s drive sounds. Make also checks that every `SPIN` in `fdd.c` is commented out and that there are 28 (`out/fdd/spin.ok`; a literal, the count of the previous firmware's `fdd.c`) |
 | `mmc_test` | the real `mmc.c` on the card model, over a card image it writes itself (byte i of sector n = (37 n + 11 i + (n >> 8)) mod 256): `MMC_Init`'s card commands against `gold/mmc_init_cmds.txt` (the SD model's `+SD_LOG=1` log of the L2 `boot` run, the boot ROM's same protocol: CMD0, CMD8, three CMD55/ACMD41, CMD58) and its SPEED writes (slow before CMD0, fast after CMD58, no other); `MMC_Read` with token delay 0, 4, 200 bytes, `MMC_ReadMultiple` (+ CMD12) with 4 and 200, `MMC_Write` with busy 8 and 2000 bytes, `MMC_GetCapacity` (CMD9, delay 200): data against the image, every frame exactly as long as the protocol says; the five `SD_TIMEOUT` bounds (CMD17/CMD9/CMD18 token, CMD24/CMD12 busy) on a card that never answers: failure, the message, 173..174 wait bytes in the trace and 174..175 TIMER reads (the timer advances once per byte of the loop); `MMC_Read(lba, NULL)` (direct mode) against `gold/dmode.txt` (from `gold/dmode.py`, the SD protocol with an independent CRC7; also the reference trace for Phase 4), written to `out/mmc_<64\|32>_dmode.txt`; the model's CMD55, CMD0, CMD41 = plain CMD41 |
 | `drivesounds_test` | the drive sounds (Task 14; `drivesounds_test.c`): the real `drivesounds.c` (with `audio.c`) loads `sw/mkdrivesounds/drivesnd.bin` and `SYNTH.BIN` through `rafile.c` + `fat.c` + `mmc.c` on the card model (an 8 MB `mkcard.sh` card in `out/ds/`) into the mock's RAM in front of `AUDIO_BUFFER`, where they land as on the target (`DRIVESND.BIN` at 2 mod 4, `SYNTH.BIN` at 0 mod 8), then runs two op lists with the TIMER standing still (step 0, time moves by the ops): events queued (`drivesounds_queueevent`: motor start and stop, steps, insert, eject, HDD steps), `drivesounds_fill()`, the floppy sounds switched off and on, the AUDIO read value (the Amiga owns the ring), `cda_busy()` (the test's stub); the real file's sequence starts at TIMER 65450 (the wrap), renders up to the 127-tick limit, three voices and a fourth switched off, the chains (start -> loop -> loop, loop -> stop), a motor start that cancels a stop, a dropped fourth HDD step, silence until the player stops. `gold/drivesounds.py` computes the ring for the same ops from the file format (big-endian header and samples, as `mkdrivesounds.c` writes them) and the render rules (stated in its header as the big-endian firmware had them: sum, swap, `* 0x10001`, big-endian store), and asserts the coverage of each case and that `pickstep` never depends on its uninitialised `count`. Checks: the load's return value and UART lines (`Audio file - length`, each `Sound <id> ... length <size>`), and after every fill its return value, AUDIO, and the 64 KB ring byte for byte (`ring_<case>.bin`). Then five bad files (final review I1, `drivesounds.py` `bad_files`): `TRUNC.BIN` (`SYNTH.BIN` cut 100 bytes into sound 2), `ODDLEN.BIN` (`SYNTH.BIN` plus one byte), `ODDSND.BIN` (a sound of 801 bytes), `NEGSIZE.BIN` (size -2), `NEGID.BIN` (id -1): the ring, filled with a pattern a byte swap changes, is untouched, and the return value, `drivesounds_loaded()` and the lines (with `Bad length ...`/`Bad sound ...`) are the RV port's bounds rule (`rv_load`; the previous firmware only read the file) |
+| `sdc_test` | the SD card peripheral driver `../sdc.c` (findings/sdcard-engine Task 9) with the real `../arch/irq.c` on the mock's interrupt controller, and the mock itself against the contract texts (`rtl/host/sdcard_spi.v`'s header, `sim/common/sd_spi_model.v`'s): the interrupt migration (`IrqSetupSources()`, cut out of `main.c` into `out/irqsetup.inc`, on stub handlers: vblank -> `c64keys_inthandler`, Akiko -> `akiko_inthandler`, EDGE, bit order, masked EDGE delivered at `IrqEnable`); the plan's step 1 (push + XFER -> the card logs CMD0, `sdc_wait` with `sdc_events` bit 0, an RX XFER pops NCR, R1 and the OCR, IRQEN off -> no event); `sdc_init` over a running op; `sdc_start`'s refusals (busy: not written; the cycle after an op end, bits 6 + 7, unknown ops, the Gayle checks: STATUS 6, its ERR acknowledged); `sdc_wait`'s wake-ups (ERR, card detect) and, in a forked child, the abort when nothing can happen; its TIMER bound (1805 TIMER reads, then ABORT); the one-shot watermark bits; a stale LEVEL report; CFG (clamp, CS, refused while busy); push / pop of odd counts; the event trace (fields, order, wrap). The mock: reset values, byte time, TX keep / commit / rewind, CRC16 out (31 C3) and in, the interlock (poisoned, an unverified byte ahead), wait ops (LAST, COUNT, TIMEOUT 3 units = 1025 bytes at div 2, 0 = 1 unit, writes ignored while busy), a 500 ms card busy (1181875 bytes at div 2) that TIMEOUT 3500 outlasts and 3400 does not (the TIMER moves 86 counts), RX-full and TX-empty pauses, FIFO misuse, ABORT, card gone mid-byte, the card-detect debounce, level-sticky watermarks, Gayle ops (words, the locked data port, g_err / short g_ack with the TX rollback, Amiga pace, ABORT, the cs 0x10 rule), and the card (CMD59 / CRC7, CRC16 on writes, CMD13, CMD25 + stop token, ACMD22, RDCRC, WRREJ, WRFAIL, NORESP, CMDCRC with repeat counts and NORESP winning, remove / insert) |
 | `boot_test` | the Amiga-facing words of `boot.c`, `main.c` and `hexdump.c` (Task 14; `boot_test.c`): `BootUploadCopper()` without a `COPPER_FILE` writes the default copper list as big-endian words (`00 E0 00 08 00 E2 ...`) at `COPPER_ADDRESS ^ HOSTMAP_ADDR` -- the test maps that page at its own address (`mmap` `MAP_FIXED_NOREPLACE`) and checks that nothing else in it changed; with a `COPPER_FILE` (stubbed `RAOpen`/`RARead`) the file's bytes. `CheckSum` (cut out of `main.c` by `sed` into `out/checksum.inc`: `main.c` holds `main()`) of a 512-byte block = its big-endian word sum (computed by python3, in the comment), at an aligned and an odd address; `hexdump()` prints big-endian words, at an aligned and an odd address |
 
 ### `config_test` cases
@@ -224,6 +227,40 @@ build is the same bytes. A test that uses the mock links `mock_hw.c`.
   each, which go to the FPGA): what a chip-select callback (`hdd_test`'s
   Gayle FIFO) cannot see in its own frames.
 
+The SD card engine (Task 9; `mock_hw.h` has every call with its rules):
+
+* **The card's Task 4 behaviour** (`sd_spi_model.v`): CMD59 (CRC7 on
+  commands, CRC16 on written blocks), CMD13, CMD25 with the stop token,
+  ACMD22, `mock_card_error()` (RDCRC, WRREJ, WRFAIL, NORESP, CMDCRC, with
+  the model's n / count semantics), `mock_card_remove()` / `_insert()`,
+  `mock_card_new()` for a blank card. Read blocks carry their real CRC16
+  when the command came through the SD peripheral, the old `00 00` through
+  cfide's `SPI()` (the goldens of the old path, `gold/dmode.txt`). Busy and
+  token-delay bytes are runs: a million of them cost nothing.
+* **One clock** in `clk_114` cycles (`mock_now()`); the TIMER follows it
+  (658629 cycles a count) and every TIMER advance is time for the
+  peripheral. An SD register access takes 16 cycles.
+* **The SD peripheral** (`rtl/host/sdcard_spi.v`'s header) at byte level,
+  behind `sdc.h`'s `SDC_R` / `SDC_W`: every op, TX keep, the interlock,
+  refusals, STATUS 1-8, the level-sticky watermarks, TIMEOUT, pauses, card
+  gone, the card-detect debounce. `mock_sdc_step()` runs it to the next
+  interrupt (at most a TIMER count), `mock_run()` for a time,
+  `mock_sdc_peek()` shows its state, `mock_sdc_log()` its ops and ends,
+  `mock_sdc_wire_on()` / `mock_sdc_wire()` the bytes on the wire.
+  `sdc_wait()` under `HOSTTEST` steps it and aborts the test when nothing
+  can happen (`mock_sdc_on_stall()`, `mock_sdc_stall_fatal(0)` for the
+  exceptions).
+* **The Gayle bridge** of ops 4 and 5: `mock_gayle_from()` / `_into()` per
+  port, `mock_gayle_end()` (g_err, short g_ack), `mock_gayle_hold()` (Amiga
+  pace), `mock_gayle_cs_violations()` (a cs 0x10 frame during a Gayle op).
+* **The interrupt controller and MIE** behind `arch/irq.h`: the real
+  dispatcher is called when the line is up and MIE on, at every mock call
+  that can change it (SD register accesses, TIMER reads, `irq_restore`,
+  stepping); `mock_irq_pulse()` / `_level()` for the other sources;
+  `mock_irq_stale_level()` reports a LEVEL bit once more after it dropped.
+  A source nobody clears ends the test ("interrupt storm") instead of
+  hanging it.
+
 ## Mutants
 
 `mutants.sh` copies the sources, the tests and the gold files into
@@ -244,7 +281,16 @@ again, everywhere and in `ScanDirectory` only, `FileSize`, the FAT16 and FAT32
 links, the FAT32 EOC literal `0xFFFFFF0F`, the MBR signature cases exchanged,
 the new entry's start cluster and size, `HighCluster` everywhere, in
 `FileOpen` only and in `FileCreate`'s write, `FileCreate`'s modify and create
-dates, `GetFATLink`; for `mmc_test`: `SD_TIMEOUT` 0, which must fail the
+dates, `GetFATLink`; for `sdc_test` (Task 9): the handler without its IRQACK
+and without the one-shot watermark rule (both "interrupt storm"), `sdc_start`
+without the refusal read-back and without the busy check, without dropping
+stale events, `sdc_wait` without ERR / CD in its mask, the TIMER bound 1799,
+the divider clamp, the trace head, EDGE mode, `sdc_init` without its ABORT,
+`IrqSetupSources()` with the handlers exchanged and without the Akiko
+enable, and the mock against its contract (CRC check, interlock, ahead-ok,
+timeout, RX high mark, rewind, byte time, card gone, rollback, the locked
+data port, CRC7 and CRC16 checks, RDCRC, ACMD22's count, NORESP, PENDING
+clearing its EDGE bits); for `mmc_test`: `SD_TIMEOUT` 0, which must fail the
 200-byte token delay, `SD_TIMEOUT` 1000, each of the five bounds doubled on its
 own, ACMD41 without HCS, no `SPI_slow`, and the mock's direct mode cut to one
 byte; for `config_test`: `cfg_swap` without `hdfdir[3]` (the brief's), `cfg_order`
@@ -257,5 +303,6 @@ the RDB patch on native longs, the boundary loop with `<= 0` and without its
 `blk` bound, sector count 0 = 255, and the mock's direct-mode count; for `fdd_test`: `SendSector` one byte short, which must fail against `mfm.py`'s streams of tracks 0 and 159 (the brief's), the Copy Lock workaround gone, tracks 128..159 read at the sector of track - 128, `GetHeader`'s sector number and `GetData`'s even data bits decoded from the wrong bits, `WriteTrack` going back one sector off, the header checksum not checked, `GetData` taking 515 words for a 516-word sector (reads past the FIFO count at 7 words per poll), and a stale committed golden stream; for `drivesounds_test`: the previous firmware's per-sample swap kept (the brief's: the ring differs), the header read as `*(long *)` (the brief's: on LP64 an 8-byte load at `SYNTH.BIN`'s 4 mod 8 size field, which UBSan stops) and as `*(int *)` (RV32's 4-byte long: the little-endian sizes, the test's load check), the samples not converted at load, the `& 0xffff` dropped, each of the four `(enabled & DRIVESOUNDS_FLOPPY)` conditions always true, and each bound of the in-place conversion dropped (`ds_noclamp`: `TRUNC.BIN` writes the ring; `ds_oddfile`: `ODDLEN.BIN` loads, on x86 without a trap; `ds_oddsize`, `ds_negsize`: the load lines; `ds_negid`: UBSan, `sounds[-1]`); for `boot_test`: the copper list without `be16`, `CheckSum` and `hexdump` on native words; for `diskstat_test`: a bucket bound off by one (the brief's: 16 sectors counted as 17-64); for `mmc_test` and `hdd_test`, the diskstat hooks: `MMC_Write`'s busy polls without the byte that ends the wait, `ATA_WriteSectors`' FIFO wait without the polls that found it not ready; for `spireply_test`: the poll removed and the bound 0 (the brief's two), the bound 3, the timeout not counted, `HOST_REQ_OSD_RDY` on bit 1; for the `check_io` fixture, through `make check_io`: no forgetting after a `j`, the offset rule by 2, the UART range without `0xFFFFFFF0`, `li` not tracked) and one for every register class of the I/O map (address and width of
 SPI DATA/CS/SPEED, UART, TIMER, `HOST_REQ`, PLATFORM, AUDIO, `FPGA_TEMP_RAW`,
 `VIDEOSCALE`, `RECONFIGURE`, keyboard words and OUT, Akiko, RTC, I2C, the
-interrupt controllers, each CS and SPEED value, `SPI()`/`RDSPI`, and
-`RS232()` itself).
+interrupt controllers, `IRQ_SDCARD`, the SD peripheral (base, width, CFG,
+VERSION's offset, `SDC_VERSION`, `SDC_W`), each CS and SPEED value,
+`SPI()`/`RDSPI`, and `RS232()` itself).
