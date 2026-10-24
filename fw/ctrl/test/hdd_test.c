@@ -55,6 +55,7 @@
 #include "fpga.h"
 #include "menu.h"
 #include "drivesounds.h"
+#include "diskstat.h"
 #include "mock_hw.h"
 
 #include "rdbcases.h"
@@ -488,11 +489,48 @@ static void set_multiple(int unit, unsigned char n)
 	check(w, g.nstatus == 1 ? g.status[0] : -1, IDE_STATUS_END | IDE_STATUS_IRQ);
 }
 
+/* the disk statistics (diskstat.c) of one command: diskstat_mark() before
+   it, diskstat_check() after.  One count in the bucket of n sectors of its
+   direction and no other; the Amiga polls are one per wait for the FIFO
+   plus one per CD_AudioRefill (a poll that found the FIFO not ready) */
+static unsigned ds_hist[2][DISKSTAT_BUCKETS], ds_amiga;
+static unsigned ds_amiga_polls(void)
+{
+	unsigned n = 0;
+	mock_uart_clear();
+	diskstat_report();
+	const char *p = strstr(mock_uart(), "amiga polls ");
+	if (!p || sscanf(p, "amiga polls %u", &n) != 1) die("no amiga polls in diskstat_report()");
+	mock_uart_clear();
+	return n;
+}
+static void diskstat_mark(void)
+{
+	memcpy(ds_hist, diskstat_hist, sizeof ds_hist);
+	ds_amiga = ds_amiga_polls();
+}
+static void diskstat_check(const char *what, int write, int n, int waits)
+{
+	char w[200];
+	int b = n <= 1 ? 0 : n <= 2 ? 1 : n <= 4 ? 2 : n <= 8 ? 3 : n <= 16 ? 4 : n <= 64 ? 5 : 6;
+	int other = 0;
+	for (int d = 0; d < 2; d++)
+		for (int i = 0; i < DISKSTAT_BUCKETS; i++)
+			if ((d != write || i != b) && diskstat_hist[d][i] != ds_hist[d][i]) other = 1;
+	snprintf(w, sizeof w, "%s: diskstat bucket %d of %s", what, b, write ? "w" : "r");
+	check(w, (long)(diskstat_hist[write][b] - ds_hist[write][b]), 1);
+	snprintf(w, sizeof w, "%s: diskstat no other bucket", what);
+	check(w, other, 0);
+	snprintf(w, sizeof w, "%s: diskstat amiga polls (waits + refills)", what);
+	check(w, (long)(ds_amiga_polls() - ds_amiga), waits + audio_polls);
+}
+
 /* a READ SECTORS / READ MULTIPLE of n sectors (count byte n & 255) at lba */
 static void read_case(const char *what, int unit, int multiple, long lba, int n)
 {
 	char w[200];
 	int spb = hdf[unit].sectors_per_block;
+	diskstat_mark();
 	command(unit, multiple ? ACMD_READ_MULTIPLE : ACMD_READ_SECTORS, lba, (unsigned char)n);
 	check_gayle(what);
 	check_taskfile(what, unit, lba + n - 1, (unsigned char)n);
@@ -518,6 +556,7 @@ static void read_case(const char *what, int unit, int multiple, long lba, int n)
 		}
 	snprintf(w, sizeof w, "%s: CD audio polls while the FIFO drains", what);
 	check(w, audio_polls, want_chunks - 1);
+	diskstat_check(what, 0, n, want_chunks);
 }
 
 /* a WRITE SECTORS / WRITE MULTIPLE of n sectors of data at lba: the card
@@ -537,7 +576,9 @@ static void write_case(const char *what, int unit, int multiple, long lba, int n
 	g.wdata = data;
 	g.wlen = (size_t)n * 512;
 	ClearError(ERROR_ALL);
+	diskstat_mark();
 	command(unit, multiple ? ACMD_WRITE_MULTIPLE : ACMD_WRITE_SECTORS, lba, (unsigned char)n);
+	diskstat_check(what, 1, n, n);	/* one wait per block */
 	check_gayle(what);
 	check_taskfile(what, unit, lba + n - 1, (unsigned char)n);
 	snprintf(w, sizeof w, "%s: sectors read from the FIFO", what);

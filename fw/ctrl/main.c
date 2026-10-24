@@ -65,6 +65,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <stdio.h>
 #include "adv7511.h"
 #include "stackcheck.h"
+#include "diskstat.h"
 
 static unsigned long adv_timer = 0;
 static unsigned char adv_first = 1;   // service the ADV7511 once at start-up
@@ -296,8 +297,10 @@ int main(void)
 
     adv_timer = GetTimer(250);
 	unsigned char debug_was = 0;
+	unsigned long diskstat_timer = 0;
     while(1)
     {
+		diskstat_loop_pass();
 		stackhw_poll();
 		if(DebugMode && !debug_was)
 		{
@@ -308,6 +311,15 @@ int main(void)
 			printf(", OSD RDY timeouts 0x");	// SPI_reply() waits that ran out (hardware.c)
 			printf("%X", (unsigned int)osd_rdy_timeouts);
 			printf("\n");
+			// disk statistics (diskstat.h): a report every DISKSTAT_PERIOD
+			// TIMER counts from now on
+			diskstat_period_start();
+			diskstat_timer = GetTimer(DISKSTAT_PERIOD);
+		}
+		else if(DebugMode && CheckTimer(diskstat_timer))
+		{
+			diskstat_timer = GetTimer(DISKSTAT_PERIOD);
+			diskstat_report();
 		}
 		debug_was = DebugMode;
 		drivesounds_fill();

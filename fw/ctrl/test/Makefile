@@ -57,7 +57,7 @@ run-$(1): run64-$(1) run32-$(1)
 .PHONY: run-$(1) run64-$(1) run32-$(1)
 endef
 
-$(eval $(call TEST,mock_selftest,$$(TD)/mock_hw.c $$(SRC)/hardware.c $$(SRC)/mmc.c $$(SRC)/uart.c,,$$(CARD)))
+$(eval $(call TEST,mock_selftest,$$(TD)/mock_hw.c $$(SRC)/hardware.c $$(SRC)/mmc.c $$(SRC)/diskstat.c $$(SRC)/uart.c,,$$(CARD)))
 $(eval $(call TEST,cue_test,$$(SRC)/cue.c,,))
 $(eval $(call TEST,cdaudio_test,$$(SRC)/cdaudio.c $$(SRC)/cue.c,,))
 $(eval $(call TEST,atapi_test,$$(SRC)/atapi.c $$(SRC)/cue.c,,$$(ISO)))
@@ -69,12 +69,15 @@ $(eval $(call TEST,swap_test,$$(SRC)/swap.c,,))
 # spireply_test: SPI_reply() (hardware.c) waits for HOST_REQ's OSD_RDY, at
 # most 2 TIMER counts (Phase 4 Task 11), on the mock's HOST_REQ
 $(eval $(call TEST,spireply_test,$$(TD)/mock_hw.c $$(SRC)/hardware.c,,))
+# diskstat_test: the disk statistics counters of the SD baseline (diskstat.c,
+# findings/sdcard-engine Task 1) and their report on the mock UART
+$(eval $(call TEST,diskstat_test,$$(TD)/mock_hw.c $$(SRC)/hardware.c $$(SRC)/uart.c $$(SRC)/rvlibc.c $$(SRC)/diskstat.c,,))
 
 # fat_test: the real fat.c + mmc.c on the card model, once per image of
 # fatimg.sh (FAT16 with MBR by mkcard.sh, FAT32 with MBR, FAT16 superfloppy);
 # fat_check.sh adds the checks by mtools and fsck.fat.  The firmware's printf
 # is rvlibc.c's (to the mock UART).
-FAT_SRCS = $(TD)/mock_hw.c $(SRC)/hardware.c $(SRC)/mmc.c $(SRC)/uart.c $(SRC)/fat.c $(SRC)/swap.c $(SRC)/rvlibc.c
+FAT_SRCS = $(TD)/mock_hw.c $(SRC)/hardware.c $(SRC)/mmc.c $(SRC)/diskstat.c $(SRC)/uart.c $(SRC)/fat.c $(SRC)/swap.c $(SRC)/rvlibc.c
 $(B)/fat_test: $(TD)/fat_test.c $(FAT_SRCS) $(HDRS)
 	@mkdir -p $(@D)
 	$(HOSTCC) $(CFLAGS) -o $@ $(TD)/fat_test.c $(FAT_SRCS)
@@ -102,7 +105,7 @@ run-fat_test: run64-fat_test run32-fat_test
 # mmc_test: the real mmc.c on the card model (SD_TIMEOUT bounds, token delay,
 # busy, MMC_Init's command sequence against the L2 boot run's SD log, the
 # direct-mode trace gold/dmode.txt, which gold/dmode.py must reproduce)
-MMC_SRCS = $(TD)/mock_hw.c $(SRC)/hardware.c $(SRC)/mmc.c $(SRC)/uart.c $(SRC)/rvlibc.c
+MMC_SRCS = $(TD)/mock_hw.c $(SRC)/hardware.c $(SRC)/mmc.c $(SRC)/diskstat.c $(SRC)/uart.c $(SRC)/rvlibc.c
 $(B)/mmc_test: $(TD)/mmc_test.c $(MMC_SRCS) $(HDRS)
 	@mkdir -p $(@D)
 	$(HOSTCC) $(CFLAGS) -o $@ $(TD)/mmc_test.c $(MMC_SRCS)
@@ -128,7 +131,7 @@ run-mmc_test: run64-mmc_test run32-mmc_test
 # the card images and checks the card config_test saved with mtools and
 # fsck.fat.  CFGBE_DIR=<dir>: the same round trip on real big-endian config
 # files.
-CFG_SRCS = $(TD)/mock_hw.c $(SRC)/hardware.c $(SRC)/mmc.c $(SRC)/uart.c $(SRC)/fat.c $(SRC)/swap.c \
+CFG_SRCS = $(TD)/mock_hw.c $(SRC)/hardware.c $(SRC)/mmc.c $(SRC)/diskstat.c $(SRC)/uart.c $(SRC)/fat.c $(SRC)/swap.c \
            $(SRC)/rvlibc.c $(SRC)/errors.c $(SRC)/rafile.c $(SRC)/config.c $(SRC)/cfgswap.c
 CFGCONV_SRCS = $(SRC)/tools/cfgconv/cfgconv.c $(SRC)/cfgswap.c
 $(B)/cfg/cfgcases.h: $(GOLD)/mkcfgbe.py
@@ -156,7 +159,7 @@ run-config_test: run64-config_test run32-config_test
 # PART blocks against gold/rdb.py, IDENTIFY DEVICE against gold/identify.py,
 # the RDB patch of an HDF's own RDB, READ/WRITE (MULTIPLE) LBA/CHS, chunks
 # and data against the HDF files rdb.py writes (on a mkcard.sh card).
-HDD_SRCS = $(TD)/mock_hw.c $(SRC)/hardware.c $(SRC)/mmc.c $(SRC)/uart.c $(SRC)/fat.c $(SRC)/swap.c \
+HDD_SRCS = $(TD)/mock_hw.c $(SRC)/hardware.c $(SRC)/mmc.c $(SRC)/diskstat.c $(SRC)/uart.c $(SRC)/fat.c $(SRC)/swap.c \
            $(SRC)/rvlibc.c $(SRC)/errors.c $(SRC)/hdd.c
 $(B)/hdd/rdb.ok: $(GOLD)/rdb.py
 	@mkdir -p $(@D)
@@ -236,7 +239,7 @@ run-fdd_test: run64-fdd_test run32-fdd_test
 # the op lists (dscases.h); and five bad files with the RV port's bounded
 # load (dscases.h ds_bad).
 DRIVESND ?= $(TOP)/sw/mkdrivesounds/drivesnd.bin
-DS_SRCS = $(TD)/mock_hw.c $(SRC)/hardware.c $(SRC)/mmc.c $(SRC)/uart.c $(SRC)/fat.c $(SRC)/swap.c \
+DS_SRCS = $(TD)/mock_hw.c $(SRC)/hardware.c $(SRC)/mmc.c $(SRC)/diskstat.c $(SRC)/uart.c $(SRC)/fat.c $(SRC)/swap.c \
           $(SRC)/rvlibc.c $(SRC)/errors.c $(SRC)/rafile.c $(SRC)/audio.c $(SRC)/i2c.c $(SRC)/drivesounds.c
 $(B)/ds/dscases.h: $(GOLD)/drivesounds.py $(DRIVESND)
 	@mkdir -p $(@D)
@@ -297,7 +300,7 @@ check_io: $(SRC)/check_io.awk $(TD)/check_io.sh $(wildcard $(TD)/check_io/*)
 .PHONY: check_io
 
 run: fmt check_io run-mock_selftest run-cue_test run-cdaudio_test run-atapi_test run-cdrom_test \
-     run-openhf_test run-lib_test run-hwmap_test run-spireply_test run-swap_test run-fat_test run-mmc_test \
+     run-openhf_test run-lib_test run-hwmap_test run-spireply_test run-diskstat_test run-swap_test run-fat_test run-mmc_test \
      run-config_test run-hdd_test run-fdd_test run-drivesounds_test run-boot_test
 
 clean:

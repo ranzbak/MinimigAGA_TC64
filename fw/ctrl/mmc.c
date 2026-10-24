@@ -33,6 +33,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "hardware.h"
 #include "mmc.h"
 #include "fat.h"
+#include "diskstat.h"
 //#include "firmware.h"
 
 /* Bound of the data-token and busy waits, in TIMER counts (one count =
@@ -412,6 +413,7 @@ unsigned char MMC_Write(unsigned long lba, unsigned char *pWriteBuffer)
 {
     unsigned long i;
     unsigned long t;
+    unsigned polls;
 
    if (CardType != CARDTYPE_SDHC) // SDHC cards are addressed in sectors not bytes
         lba = lba << 9; // otherwise convert sector adddress to byte address
@@ -451,8 +453,10 @@ unsigned char MMC_Write(unsigned long lba, unsigned char *pWriteBuffer)
     }
 
     t = GetTimer(SD_TIMEOUT);
+    polls = 1;
     while ((SPI(0xFF)) == 0x00) // wait until the card is not busy
     {
+        polls++;
         if (CheckTimer(t))
         {
             printf("CMD24 (WRITE_BLOCK): busy wait timeout! (lba=%lu)\r", lba);
@@ -461,6 +465,7 @@ unsigned char MMC_Write(unsigned long lba, unsigned char *pWriteBuffer)
             return(0);
         }
     }
+    diskstat_busy_polls(polls);
 
     DisableCard();
     return(1);

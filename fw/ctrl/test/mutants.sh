@@ -113,7 +113,7 @@ checkio() {
 control() {
   prep control
   local t rc=0
-  for t in mock_selftest cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_test hwmap_test spireply_test swap_test fat_test mmc_test config_test hdd_test fdd_test drivesounds_test boot_test; do
+  for t in mock_selftest cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_test hwmap_test spireply_test diskstat_test swap_test fat_test mmc_test config_test hdd_test fdd_test drivesounds_test boot_test; do
     mk control "run64-$t" > "mut/control/log.$t" 2>&1 || { echo "control: run64-$t FAILED (mut/control/log.$t)"; rc=1; }
   done
   mk control fmt > mut/control/log.fmt 2>&1 || { echo "control: fmt FAILED (mut/control/log.fmt)"; rc=1; }
@@ -300,6 +300,14 @@ unit spireply_bound0 spireply_test src hardware.c 's/GetTimer(2)/GetTimer(0)/' "
 unit spireply_bound3 spireply_test src hardware.c 's/GetTimer(2)/GetTimer(3)/' "FAIL stuck, TIMER step 1: TIMER reads"
 unit spireply_nocount spireply_test src hardware.c 's/osd_rdy_timeouts++;/;/' "FAIL stuck, TIMER step 1: osd_rdy_timeouts"
 unit spireply_bit spireply_test src hardware.h 's/define HOST_REQ_OSD_RDY 0x0001/define HOST_REQ_OSD_RDY 0x0002/' "FAIL ready: order"
+
+# ---- the disk statistics of the SD baseline (diskstat_test, findings/sdcard-engine Task 1)
+# the brief's mutant: a bucket bound off by one -> 16 sectors counted as 17-64
+unit diskstat_bucket diskstat_test src diskstat.c 's/{ 1, 2, 4, 8, 16, 64, 256 }/{ 1, 2, 4, 8, 15, 64, 256 }/' "FAIL w 16 sectors: hist\[1\]\[4\]"
+# the hooks: MMC_Write's busy polls without the byte that ends the wait,
+# ATA_WriteSectors' Gayle wait without the polls that found the FIFO not ready
+unit diskstat_busy mmc_test src mmc.c '/^unsigned char MMC_Write(/,/^}/ s/polls = 1;/polls = 0;/' "FAIL ... diskstat busy line"
+unit diskstat_amiga hdd_test src hdd.c '/^void ATA_WriteSectors(/,/^}/ s/polls++;/;/' "diskstat amiga polls"
 
 # ---- the check_io.awk fixture (check_io.sh, exec-3 deferred #18) --------------
 # no forgetting after a j: good.dis's stale s1 is taken for the UART (b)

@@ -1139,6 +1139,8 @@ us). Lines are those of the current tree.
 | `menu.c:3021`, `2714` (`InfoMessage`) | info popup | 1000 | 5.804 s |
 | `main.c:107`, `109`, `111` (`FatalError`) | LED blink: `WaitTimer(250)` x2, `WaitTimer(1000)` | 250, 1000 | 1.451 s, 5.804 s |
 | `main.c:297`, `345`, `348` (`main`) | ADV7511 poll (`adv_timer`) | 250 | 1.451 s |
+| `main.c:317`, `319`, `321` (`main`) | disk statistics report while DebugMode is on (`diskstat_timer`): `DISKSTAT_PERIOD` (`diskstat.h:10`) | 1000 | 5.804 s |
+| `diskstat.c:51`, `57` (`diskstat_period_start`, `diskstat_report`) | start and end of the report period, printed as counts and ms | counts | 5.804 ms per count |
 | `mmc.c:72` (`MMC_Init`) | `WaitTimer(20)` after the 80 clocks | 20 | 116.1 ms |
 | `mmc.c:80`, `88`, `135`, `174` (`MMC_Init`) | init timeout: `GetTimer(1000)`, ACMD41 / CMD1 polls | 1000 | 5.804 s |
 | `mmc.c:235`, `290`, `366`, `452`, `527` | `SD_TIMEOUT` (above) | 173 | 1.004 s |

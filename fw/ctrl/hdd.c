@@ -36,6 +36,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "drivesounds.h"
 #include "cdrom.h"
 #include "swap.h"
+#include "diskstat.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -491,7 +492,9 @@ void ATA_ReadSectors(unsigned char* tfr, int sector, int cylinder, int head, int
 	int i;
 	int block_count;
 	int blk;
+	unsigned polls;
 
+	diskstat_cmd(0, sector_count);
 	lba=chs2lba(cylinder, head, sector, unit);
 	DEBUG3(multiple ? "ReadM %ld, %d" : "Read  %ld, %d",lba,sector_count);
 
@@ -523,8 +526,13 @@ void ATA_ReadSectors(unsigned char* tfr, int sector, int cylinder, int head, int
 			block_count = hdf[unit].sectors_per_block;
 
 		WriteStatus(IDE_STATUS_RDY); // pio in (class 1) command type
+		polls = 1;
 		while (!(GetFPGAStatus() & CMD_IDECMD)) // wait for empty sector buffer
+		{
+			polls++;
 			CD_AudioRefill(); // CD audio refill between blocks (13.5); no IDE flags read: it would re-latch the port (cdrom.h)
+		}
+		diskstat_amiga_polls(polls);
 
 		switch(hdf[unit].type)
 		{
@@ -594,7 +602,9 @@ void ATA_WriteSectors(unsigned char* tfr, int sector, int cylinder, int head, in
 	int block_count;
 	int i;
 	int blk;
+	unsigned polls;
 
+	diskstat_cmd(1, sector_count);
 	lba=chs2lba(cylinder, head, sector, unit);
 	DEBUG3(multiple ? "WriteM %ld, %d" : "Write  %ld, %d",lba,sector_count);
 	lba+=hdf[unit].offset;
@@ -636,8 +646,13 @@ void ATA_WriteSectors(unsigned char* tfr, int sector, int cylinder, int head, in
 
 		while(block_count--)
 		{
+			polls = 1;
 			while (!(GetFPGAStatus() & CMD_IDEDAT)) // wait for full write buffer
+			{
+				polls++;
 				CD_AudioRefill(); // CD audio refill between blocks (13.5); no IDE flags read (cdrom.h)
+			}
+			diskstat_amiga_polls(polls);
 			EnableFpga();
 			SPI(CMD_IDE_DATA_RD | ide_port); // read data command
 			SPI(0x00); SPI(0x00); SPI(0x00); SPI(0x00); SPI(0x00);

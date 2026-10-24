@@ -27,6 +27,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "diskstat.h"
 #include "errors.h"
 #include "hardware.h"
 #include "mmc.h"
@@ -240,6 +241,16 @@ static void write_busy(int busy)
 	check("... read back", MMC_Read(lba, back), 1);
 	check("... equal", memcmp(back, buf, 512), 0);
 	check("... no fatal error", ErrorFatal, 0);
+
+	/* the disk statistics (diskstat.c, cumulative): one block more and
+	   busy + 1 polls (the byte that ends the wait is a poll too) */
+	static unsigned polls, blocks;
+	polls += (unsigned)busy + 1;
+	blocks++;
+	snprintf(what, sizeof what, "busy polls %u in %u blocks,", polls, blocks);
+	mock_uart_clear();
+	diskstat_report();
+	check_str("... diskstat busy line", strstr(mock_uart(), what) ? what : mock_uart(), what);
 }
 
 /* ---- the bounds ---- */
