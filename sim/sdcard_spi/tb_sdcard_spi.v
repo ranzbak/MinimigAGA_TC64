@@ -1,7 +1,12 @@
 `timescale 1ns/1ps
 // Unit bench of rtl/host/sdcard_spi.v (the SD card SPI peripheral) with the
-// card model sim/common/sd_spi_model.v (CRC checking off, as at its start).
-// Run by sim/sdcard_spi/run.sh (Verilator leg + iverilog X-check leg).
+// card model sim/common/sd_spi_model.v.  The Task 5 cases run with the
+// model's CRC checking off (as at its start); the Task 6 cases (t_refuse ..
+// t_cardgone_midblock) turn it on with CMD59 and off again with CMD0, and
+// poke the model's error-injection and busy knobs hierarchically.  A
+// behavioural Gayle bridge (the g_* responder below) answers the Gayle ops.
+// Run by sim/sdcard_spi/run.sh (Verilator leg + iverilog X-check leg +
+// mutant legs).
 //
 // The bench is the CPU side of cfide (Task 8 contract, see the header of
 // sdcard_spi.v): a register access lasts ACC clk_114 cycles with reg_addr /
@@ -27,14 +32,17 @@ module tb_sdcard_spi;
     // t_min_spacing: 3 + 0 + 1 = 4, the minimum sdcard_spi.v is built for)
     integer ACC = 4;                    // cycles per register access (clk_28 ack: >= 4)
     integer GAP = 4;                    // idle cycles between accesses
-    localparam integer WATCHDOG_CYC = 3000000;
+    localparam integer WATCHDOG_CYC = 6000000;
 
     // register offsets (byte address - 0xFFFFFF00)
     localparam [5:0] R_DATAW = 6'h00, R_DATAB = 6'h04, R_RXLVL = 6'h08, R_TXLVL = 6'h0C,
                      R_CMD = 6'h10, R_LEN = 6'h14, R_MATCH = 6'h18, R_IRQ = 6'h1C,
                      R_CFG = 6'h20, R_TIMEOUT = 6'h24, R_IRQEN = 6'h28, R_WMARK = 6'h2C;
-    localparam [15:0] OP_XFER = 16'h1, OP_RXFL = 16'h8, OP_TXFL = 16'h9,
-                      C_TX = 16'h10, C_RX = 16'h20, C_CRCTX = 16'h40, C_CRCRX = 16'h80;
+    localparam [15:0] OP_XFER = 16'h1, OP_WEQ = 16'h2, OP_WNE = 16'h3, OP_G2TX = 16'h4,
+                      OP_RX2G = 16'h5, OP_TXRW = 16'h6, OP_TXCM = 16'h7, OP_RXFL = 16'h8,
+                      OP_TXFL = 16'h9, OP_ABORT = 16'hF,
+                      C_TX = 16'h10, C_RX = 16'h20, C_CRCTX = 16'h40, C_CRCRX = 16'h80,
+                      C_GPORT = 16'h100;
 
     reg clk = 1'b0;
     always #4.386 clk = ~clk;           // 114 MHz
@@ -49,6 +57,8 @@ module tb_sdcard_spi;
     wire g_req, g_dir, g_port;
     wire [9:0] g_words;
     wire [15:0] g_wdata;
+    reg  g_ack = 1'b0, g_err = 1'b0, g_wnext = 1'b0, g_rvalid = 1'b0;   // the Gayle responder
+    reg [15:0] g_rdata = 16'h0000;
 
     sdcard_spi #(.VERSION(16'h5D01), .CD_DEBOUNCE_LOG2(6)) dut (
         .clk(clk), .reset(reset),
@@ -57,8 +67,8 @@ module tb_sdcard_spi;
         .sd_sck(sd_sck), .sd_cs_n(sd_cs_n), .sd_mosi(sd_mosi), .sd_miso(sd_miso),
         .sd_cd_n(sd_cd_n),
         .g_req(g_req), .g_dir(g_dir), .g_port(g_port), .g_words(g_words),
-        .g_ack(1'b0), .g_err(1'b0), .g_wdata(g_wdata), .g_wnext(1'b0),
-        .g_rdata(16'h0000), .g_rvalid(1'b0));
+        .g_ack(g_ack), .g_err(g_err), .g_wdata(g_wdata), .g_wnext(g_wnext),
+        .g_rdata(g_rdata), .g_rvalid(g_rvalid));
 
     sd_spi_model #(.IMG_SECTORS(IMG_SECTORS)) card (
         .cs_n(sd_cs_n), .sck(sd_sck), .mosi(sd_mosi), .miso(sd_miso));
@@ -116,6 +126,75 @@ module tb_sdcard_spi;
         $display("FAIL watchdog: no verdict after %0d cycles (case %0s)", WATCHDOG_CYC, cur);
         $display("=== FAIL tb_sdcard_spi (watchdog)");
         $finish;
+    end
+
+    // ---------------------------------------------------------------- Gayle responder
+    // A behavioural stand-in for Task 7's bridge, to the clk_114-side contract
+    // in the header of sdcard_spi.v.  When g_req rises it does g_words words,
+    // one every gr_space cycles (the first gr_space - 1 cycles after it saw
+    // g_req): dir 1 takes g_wdata in the cycle of its one-cycle g_wnext pulse
+    // (into gr_buf); dir 0 pulses g_rvalid for one cycle with g_rdata =
+    // gr_src[k] (garbage otherwise).  g_ack gr_space cycles after the last
+    // word.  gr_err_at = k: a g_err pulse instead of word k; gr_ack_at = k: a
+    // g_ack instead of word k (too early); gr_stall_at = k: no word k, no ack
+    // (the case ends the op).  It stops when g_req drops.
+    integer gr_space = 4, gr_err_at = -1, gr_stall_at = -1, gr_ack_at = -1;
+    integer gr_n = 0, gr_reqs = 0, gr_words = 0, gk, gdone;
+    reg     gr_dir = 1'b0, gr_port = 1'b0;
+    reg [15:0] gr_buf [0:1023];
+    reg [15:0] gr_src [0:1023];
+    initial begin : gayle_resp
+        forever begin
+            @(posedge clk); #1;
+            if (g_req === 1'b1) begin
+                gr_reqs = gr_reqs + 1;
+                gr_dir = g_dir; gr_port = g_port; gr_words = g_words; gr_n = 0;
+                gdone = 0;
+                while (!gdone) begin
+                    for (gk = 0; gk < gr_space - 1 && g_req === 1'b1; gk = gk + 1) begin @(posedge clk); #1; end
+                    if (g_req !== 1'b1) gdone = 1;
+                    else if (gr_n == gr_err_at) begin
+                        g_err = 1'b1; @(posedge clk); #1; g_err = 1'b0; gdone = 1;
+                    end else if (gr_n == gr_stall_at) gdone = 1;
+                    else if (gr_n == gr_words || gr_n == gr_ack_at) begin
+                        g_ack = 1'b1; @(posedge clk); #1; g_ack = 1'b0; gdone = 1;
+                    end else begin
+                        if (gr_dir) begin gr_buf[gr_n] = g_wdata; g_wnext = 1'b1; end
+                        else begin g_rdata = gr_src[gr_n]; g_rvalid = 1'b1; end
+                        @(posedge clk); #1;
+                        g_wnext = 1'b0; g_rvalid = 1'b0; g_rdata = 16'hDEAD;
+                        gr_n = gr_n + 1;
+                    end
+                end
+                gk = 0;                 // until the op has ended
+                while (g_req === 1'b1 && gk < 4000000) begin @(posedge clk); #1; gk = gk + 1; end
+            end
+        end
+    end
+
+    // g_dir, g_port, g_words stable while g_req (the bridge samples them across clocks)
+    reg p_greq = 1'b0, p_gdir = 1'b0, p_gport = 1'b0;
+    reg [9:0] p_gwords = 10'd0;
+    always @(posedge clk) if (!reset) begin
+        if (g_req === 1'b1 && p_greq === 1'b1 && {g_dir, g_port, g_words} !== {p_gdir, p_gport, p_gwords}) begin
+            $display("FAIL %0s: g_dir / g_port / g_words changed while g_req (cycle %0d)", cur, cyc); errors = errors + 1;
+        end
+        p_greq <= g_req; p_gdir <= g_dir; p_gport <= g_port; p_gwords <= g_words;
+    end
+
+    // white box, the interlock invariant: verified bytes never exceed RXLVL
+    always @(posedge clk) if (!reset && dut.verified > dut.rxlvl) begin
+        $display("FAIL %0s: verified %0d > RXLVL %0d (cycle %0d)", cur, dut.verified, dut.rxlvl, cyc);
+        errors = errors + 1;
+    end
+
+    // white box, the dir 1 timing promise: the RX head word is complete
+    // (dut.hc == 2) from the first cycle of g_req and whenever g_wnext takes it
+    always @(posedge clk) if (!reset && g_req === 1'b1 && g_dir === 1'b1) begin
+        if ((p_greq !== 1'b1 || g_wnext === 1'b1) && dut.hc !== 2'd2) begin
+            $display("FAIL %0s: g_wdata not a complete word (hc %0d) at g_req start / g_wnext (cycle %0d)", cur, dut.hc, cyc);
+            errors = errors + 1;
+        end
     end
 
     // ---------------------------------------------------------------- CPU side
@@ -195,6 +274,174 @@ module tb_sdcard_spi;
             wr(R_LEN, 16'd6);
             wr(R_CMD, OP_XFER | C_TX);
             wait_idle(100000);
+            wr(R_CMD, OP_TXCM);         // TX keeps sent bytes until TX_COMMIT
+        end
+    endtask
+
+    // a command frame with its real CRC7 into TX (not sent)
+    function [6:0] crc7(input [6:0] c, input [7:0] b);
+        integer i;
+        reg [6:0] x;
+        begin
+            x = c;
+            for (i = 7; i >= 0; i = i - 1)
+                x = {x[5:0], 1'b0} ^ ((x[6] ^ b[i]) ? 7'h09 : 7'h00);
+            crc7 = x;
+        end
+    endfunction
+
+    task push_cmd(input [5:0] idx, input [31:0] arg);
+        reg [6:0] c;
+        begin
+            c = crc7(crc7(crc7(crc7(crc7(7'd0, {2'b01, idx}), arg[31:24]), arg[23:16]), arg[15:8]), arg[7:0]);
+            wr(R_DATAW, {2'b01, idx, arg[31:24]});
+            wr(R_DATAW, arg[23:8]);
+            wr(R_DATAW, {arg[7:0], c, 1'b1});
+        end
+    endtask
+
+    // a command with a valid CRC7, sent and committed (TX keeps sent bytes)
+    task send_cmdc(input [5:0] idx, input [31:0] arg);
+        begin
+            push_cmd(idx, arg);
+            wr(R_LEN, 16'd6);
+            wr(R_CMD, OP_XFER | C_TX);
+            wait_idle(100000);
+            wr(R_CMD, OP_TXCM);
+        end
+    endtask
+
+    // WAIT_EQ / WAIT_NE with MATCH m, TIMEOUT units; LAST into lastb
+    reg [7:0] lastb;
+    task wait_op(input [15:0] op, input [7:0] m, input [15:0] units);
+        reg [15:0] q;
+        begin
+            wr(R_MATCH, {8'h00, m});
+            wr(R_TIMEOUT, units);
+            wr(R_CMD, op);
+            wait_idle((units + 1) * 16384 + 20000);
+            rd(R_LEN, q);
+            lastb = q[7:0];
+        end
+    endtask
+
+    // the R1 of the command just sent (WAIT_NE $FF)
+    task expect_r1(input [7:0] want, input [8*32-1:0] what);
+        begin
+            wait_op(OP_WNE, 8'hFF, 16'd1);
+            if (lastb !== want) begin
+                $display("FAIL %0s: %0s: R1 %h, want %h (cycle %0d)", cur, what, lastb, want, cyc);
+                errors = errors + 1;
+            end
+        end
+    endtask
+
+    // model CRC checking on (CMD0, CMD59 arg 1) or off (CMD0)
+    task crc_mode(input on);
+        begin
+            send_cmdc(6'd0, 32'd0);
+            expect_r1(8'h01, "CMD0");
+            if (on) begin
+                send_cmdc(6'd59, 32'd1);
+                expect_r1(8'h01, "CMD59");
+            end
+            if (card.crc_on !== on) fail("model CRC mode not as set");
+        end
+    endtask
+
+    // CMD17 lba, R1, data token, then XFER 512 with the given CMD bits
+    task read_block(input integer lba, input [15:0] bits);
+        begin
+            send_cmdc(6'd17, lba);
+            expect_r1(8'h00, "CMD17");
+            wait_op(OP_WNE, 8'hFF, 16'd1);
+            if (lastb !== 8'hFE) fail("no data token FE after CMD17");
+            wr(R_LEN, 16'd512);
+            wr(R_CMD, OP_XFER | bits);
+            wait_idle(200000);
+        end
+    endtask
+
+    // XFER 1 (the token) + XFER 512 bits 4 + 6 from TX
+    task send_block;
+        begin
+            wr(R_LEN, 16'd1);
+            wr(R_CMD, OP_XFER | C_TX);
+            wait_idle(10000);
+            wr(R_LEN, 16'd512);
+            wr(R_CMD, OP_XFER | C_TX | C_CRCTX);
+            wait_idle(200000);
+            expect_rd(R_MATCH, 16'hFFFF, 16'd514, "COUNT of XFER 512 + CRC16");
+        end
+    endtask
+
+    // CMD24 lba (sent and committed), R1, then token FE + 512 bytes wpat(i + po)
+    // pushed and sent with XFER 1 + XFER 512 bits 4 + 6 (CRC16 appended)
+    task write_block(input integer lba, input integer po);
+        integer i;
+        begin
+            send_cmdc(6'd24, lba);
+            expect_r1(8'h00, "CMD24");
+            wr(R_DATAB, 16'h00FE);
+            for (i = 0; i < 256; i = i + 1) wr(R_DATAW, {wpat(2 * i + po), wpat(2 * i + 1 + po)});
+            send_block;
+        end
+    endtask
+
+    // LBA lba on the card holds wpat(i + po)
+    task check_mem_pat(input integer lba, input integer po, input [8*48-1:0] what);
+        integer i, bad;
+        begin
+            bad = 0;
+            for (i = 0; i < 512; i = i + 1) if (card.mem[lba * 512 + i] !== wpat(i + po)) bad = bad + 1;
+            if (bad) begin $display("FAIL %0s: %0s: %0d bytes differ", cur, what, bad); errors = errors + 1; end
+        end
+    endtask
+
+    // a CMD the peripheral must refuse: STATUS 6, IRQ 3 (not 0), not busy
+    task expect_refused(input [15:0] cmd, input [8*64-1:0] what);
+        reg [15:0] s;
+        begin
+            wr(R_IRQ, 16'h001F);
+            wr(R_CMD, cmd);
+            rd(R_CMD, s);
+            if (s[6] !== 1'b1 || s[0] !== 1'b0) begin
+                $display("FAIL %0s: %0s: not refused (STATUS %h) (cycle %0d)", cur, what, s, cyc); errors = errors + 1;
+            end
+            rd(R_IRQ, s);
+            if ((s & 16'h0009) !== 16'h0008) begin
+                $display("FAIL %0s: %0s: IRQPEND %h, want error and no done (cycle %0d)", cur, what, s, cyc); errors = errors + 1;
+            end
+            wr(R_IRQ, 16'h001F);
+        end
+    endtask
+
+    // the next n bytes in RX (popped by RXW) against byte off.. of LBA lba
+    task check_rx_block(input integer lba, input integer off, input integer n, input [8*48-1:0] what);
+        reg [15:0] q;
+        integer i, bad;
+        begin
+            bad = 0;
+            for (i = 0; i < n; i = i + 2) begin
+                rd(R_DATAW, q);
+                if (q !== {img[lba * 512 + off + i], img[lba * 512 + off + i + 1]}) bad = bad + 1;
+            end
+            if (bad) begin $display("FAIL %0s: %0s: %0d words differ", cur, what, bad); errors = errors + 1; end
+        end
+    endtask
+
+    // the words the responder took (dir 1) against byte off.. of LBA lba
+    task check_gr_buf(input integer lba, input integer off, input integer words, input [8*48-1:0] what);
+        integer i, bad;
+        begin
+            bad = 0;
+            for (i = 0; i < words; i = i + 1)
+                if (gr_buf[i] !== {img[lba * 512 + off + 2 * i], img[lba * 512 + off + 2 * i + 1]}) begin
+                    if (bad < 3) $display("FAIL %0s: %0s: word %0d = %h, want %h", cur, what, i, gr_buf[i],
+                                          {img[lba * 512 + off + 2 * i], img[lba * 512 + off + 2 * i + 1]});
+                    bad = bad + 1;
+                end
+            if (bad) begin $display("FAIL %0s: %0s: %0d words differ", cur, what, bad); errors = errors + 1; end
         end
     endtask
 
@@ -362,10 +609,12 @@ module tb_sdcard_spi;
             if (card.cmd_n != s0 + 1) fail("the card saw no command");
             if (card.cidx != 6'd0 || card.carg != 32'd0) fail("the card's command is not CMD0 arg 0");
             if (sck_rises - n != 48) fail("not 48 SCK rising edges for 6 bytes");
-            expect_rd(R_TXLVL, 16'hFFFF, 16'd0, "TXLVL after the XFER");
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd6, "TXLVL after the XFER (sent bytes kept)");
             expect_rd(R_RXLVL, 16'hFFFF, 16'd0, "RXLVL after a TX-only XFER");
             expect_rd(R_MATCH, 16'hFFFF, 16'd6, "COUNT");
             expect_rd(R_IRQ, 16'h0001, 16'h0001, "IRQPEND op done");
+            wr(R_CMD, OP_TXCM);
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd0, "TXLVL after TX_COMMIT");
             recv(4);
             r1 = r1_at(4);
             if (r1 < 0 || rxbuf[r1] != 8'h01) fail("CMD0 R1 is not 01");
@@ -503,9 +752,12 @@ module tb_sdcard_spi;
             if (irq !== 1'b0) fail("irq high with TX above the low mark");
             rd(R_DATAW, q);             // RX empty: no effect on TX
             wr(R_LEN, 16'd2);
-            wr(R_CMD, OP_XFER | C_TX);  // 16 left: <= the mark
+            wr(R_CMD, OP_XFER | C_TX);
             wait_idle(100000);
-            expect_rd(R_TXLVL, 16'hFFFF, 16'd16, "TXLVL after sending 2");
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd18, "TXLVL after sending 2 (kept)");
+            if (irq !== 1'b0) fail("irq high with 2 sent bytes still kept");
+            wr(R_CMD, OP_TXCM);         // 16 left: <= the mark
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd16, "TXLVL after TX_COMMIT");
             if (irq !== 1'b1) fail("irq not high at TX <= low mark");
             wr(R_IRQEN, 16'h0000);
             wr(R_CMD, OP_TXFL);
@@ -537,6 +789,7 @@ module tb_sdcard_spi;
             end
             if (per_bad) begin errors = errors + 1; $display("FAIL %0s: %0d periods off", cur, per_bad); end
             if (hi_bad) begin errors = errors + 1; $display("FAIL %0s: %0d SCK high times not %0d", cur, hi_bad, 8'h8A + 1); end
+            wr(R_CMD, OP_TXCM);
             end_case;
         end
 
@@ -563,6 +816,7 @@ module tb_sdcard_spi;
             expect_rd(R_RXLVL, 16'hFFFF, 16'd10, "RXLVL");
             for (i = 0; i < 5; i = i + 1) begin rd(R_DATAW, q); rxbuf[2*i] = q[15:8]; rxbuf[2*i+1] = q[7:0]; end
             if (rxbuf[7] != 8'h00 || rxbuf[6] != 8'hFF) fail("CMD16 R1 at byte 7 not 00");
+            wr(R_CMD, OP_TXCM);
             end_case;
         end
 
@@ -660,10 +914,10 @@ module tb_sdcard_spi;
             wr(R_IRQ, 16'h001F);
             wr(R_LEN, 16'd4);
             n = sck_rises;
-            wr(R_CMD, OP_XFER | C_CRCRX);
-            expect_rd(R_CMD, 16'h00C1, 16'h0040, "STATUS after XFER with bit 7 (CRC check, Task 6)");
-            wr(R_CMD, OP_XFER | C_CRCTX);
-            expect_rd(R_CMD, 16'h00C1, 16'h0040, "STATUS after XFER with bit 6 (CRC append, Task 6)");
+            wr(R_CMD, OP_XFER | C_CRCRX | C_CRCTX);
+            expect_rd(R_CMD, 16'h00C1, 16'h0040, "STATUS after XFER with bits 6 and 7");
+            wr(R_CMD, 16'h000C);
+            expect_rd(R_CMD, 16'h00C1, 16'h0040, "STATUS after op 12");
             if (sck_rises != n) fail("SCK moved for a refused op");
             set_cs(1'b1, 8'h10);
             wr(R_LEN, 16'd40);
@@ -792,6 +1046,9 @@ module tb_sdcard_spi;
             for (i = 0; i < 512; i = i + 1)
                 if (card.mem[7 * 512 + i] !== wpat(i)) per_bad = per_bad + 1;
             if (per_bad) begin $display("FAIL %0s: %0d bytes of LBA 7 differ from the pushed block", cur, per_bad); errors = errors + 1; end
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd515, "TXLVL after the write (kept)");
+            wr(R_CMD, OP_TXCM);
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd0, "TXLVL after TX_COMMIT");
             ACC = 4; GAP = 4;
             end_case;
         end
@@ -816,6 +1073,7 @@ module tb_sdcard_spi;
             if (card.cmd_n != s0 + 1 || card.cidx != 6'd16 || card.carg != 32'h12345678)
                 fail("CMD16 arg 12345678 not seen by the card (byte order / lost byte)");
             recv(4);
+            wr(R_CMD, OP_TXCM);
             end_case;
         end
 
@@ -832,6 +1090,578 @@ module tb_sdcard_spi;
             wr(R_IRQEN, 16'h0015);
             expect_rd(R_IRQEN, 16'h001F, 16'h0015, "IRQEN");
             wr(R_IRQEN, 16'h0000);
+            end_case;
+        end
+
+        // ============================================================ Task 6
+        // ---- refusals: RX_TO_GAYLE of unverified bytes, LEN 0 / odd, CRC bits
+        // 6 + 7 together, GAYLE_TO_TX without room; never a g_req for them
+        begin_case("t_refuse", run_it);
+        if (run_it) begin
+            cs_cycle(8'd2);
+            wr(R_CMD, OP_RXFL);
+            wr(R_CMD, OP_TXFL);
+            wr(R_LEN, 16'd512);
+            wr(R_CMD, OP_XFER | C_RX);  // 512 x $FF, no CRC check: unverified
+            wait_idle(100000);
+            expect_rd(R_RXLVL, 16'hFFFF, 16'd512, "RXLVL after a plain XFER");
+            n = gr_reqs;
+            expect_refused(OP_RX2G, "RX_TO_GAYLE of unverified bytes");
+            wr(R_LEN, 16'd0);
+            expect_refused(OP_RX2G, "RX_TO_GAYLE LEN 0");
+            wr(R_LEN, 16'd511);
+            expect_refused(OP_RX2G, "RX_TO_GAYLE LEN odd");
+            wr(R_LEN, 16'd4);
+            expect_refused(OP_XFER | C_CRCTX | C_CRCRX, "XFER with bits 6 and 7");
+            wr(R_LEN, 16'd0);
+            expect_refused(OP_G2TX, "GAYLE_TO_TX LEN 0");
+            wr(R_LEN, 16'd3);
+            expect_refused(OP_G2TX, "GAYLE_TO_TX LEN odd");
+            for (i = 0; i < 300; i = i + 1) wr(R_DATAW, 16'hFFFF);    // 600 in TX, 424 free
+            wr(R_LEN, 16'd426);
+            expect_refused(OP_G2TX, "GAYLE_TO_TX LEN 426 with 424 free");
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd600, "TXLVL unchanged by the refusals");
+            expect_rd(R_RXLVL, 16'hFFFF, 16'd512, "RXLVL unchanged by the refusals");
+            if (gr_reqs != n) fail("g_req raised by a refused op");
+            // exactly the free room: accepted, TX full, no overflow
+            for (i = 0; i < 212; i = i + 1) gr_src[i] = i;
+            wr(R_LEN, 16'd424);
+            wr(R_CMD, OP_G2TX);
+            wait_idle(20000);
+            expect_rd(R_CMD, 16'h01FF, 16'h0008, "STATUS after GAYLE_TO_TX into the exact room");
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd1024, "TXLVL full after it");
+            if (gr_reqs != n + 1 || gr_dir !== 1'b0 || gr_words != 212) fail("GAYLE_TO_TX 424: not one g_req, dir 0, 212 words");
+            wr(R_CMD, OP_TXFL);
+            wr(R_CMD, OP_RXFL);
+            end_case;
+        end
+
+        // ---- CMD17 with the model's CRC check on: WAIT_NE for R1 and the token,
+        // XFER 512 bits 5 + 7 -> crc_ok; RX_TO_GAYLE of the verified block;
+        // a Gayle error mid-block; the rest of the block still verified
+        begin_case("t_crc_read_ok", run_it);
+        if (run_it) begin
+            cs_cycle(8'd2);
+            crc_mode(1'b1);
+            wr(R_CMD, OP_RXFL);
+            read_block(3, C_RX | C_CRCRX);
+            expect_rd(R_CMD, 16'h01F7, 16'h0002, "STATUS after a good block (crc_ok)");
+            expect_rd(R_MATCH, 16'hFFFF, 16'd514, "COUNT 512 + 2 CRC bytes");
+            expect_rd(R_RXLVL, 16'hFFFF, 16'd512, "RXLVL: the CRC bytes not stored");
+            wr(R_LEN, 16'd514);
+            expect_refused(OP_RX2G, "RX_TO_GAYLE LEN 514 with 512 verified");
+            n = gr_reqs;
+            wr(R_IRQ, 16'h001F);
+            wr(R_LEN, 16'd512);
+            wr(R_CMD, OP_RX2G | C_GPORT);
+            wait_idle(20000);
+            if (gr_reqs != n + 1 || gr_dir !== 1'b1 || gr_port !== 1'b1 || gr_words != 256 || gr_n != 256)
+                fail("RX_TO_GAYLE: not one g_req, dir 1, port 1, 256 words taken");
+            check_gr_buf(3, 0, 256, "RX_TO_GAYLE words");
+            expect_rd(R_CMD, 16'h01FF, 16'h0008, "STATUS after RX_TO_GAYLE");
+            expect_rd(R_MATCH, 16'hFFFF, 16'd512, "COUNT after RX_TO_GAYLE");
+            expect_rd(R_RXLVL, 16'hFFFF, 16'd0, "RXLVL after RX_TO_GAYLE");
+            expect_rd(R_IRQ, 16'h0009, 16'h0001, "IRQPEND done, no error");
+            // g_err after 10 words: Gayle error, the other 492 bytes stay verified
+            read_block(4, C_RX | C_CRCRX);
+            expect_rd(R_CMD, 16'h0002, 16'h0002, "crc_ok of LBA 4");
+            gr_err_at = 10;
+            wr(R_IRQ, 16'h001F);
+            wr(R_LEN, 16'd512);
+            wr(R_CMD, OP_RX2G);
+            wait_idle(20000);
+            gr_err_at = -1;
+            if (g_req !== 1'b0) fail("g_req still high after g_err");
+            expect_rd(R_CMD, 16'h01FF, 16'h0088, "STATUS after g_err (Gayle error)");
+            expect_rd(R_IRQ, 16'h0009, 16'h0009, "IRQPEND done + error after g_err");
+            expect_rd(R_MATCH, 16'hFFFF, 16'd20, "COUNT after g_err at word 10");
+            expect_rd(R_RXLVL, 16'hFFFF, 16'd492, "RXLVL after g_err at word 10");
+            wr(R_LEN, 16'd492);
+            wr(R_CMD, OP_RX2G);
+            wait_idle(20000);
+            expect_rd(R_CMD, 16'h01FF, 16'h0008, "STATUS after RX_TO_GAYLE of the other 492");
+            check_gr_buf(4, 20, 246, "RX_TO_GAYLE of the other 492");
+            crc_mode(1'b0);
+            end_case;
+        end
+
+        // ---- a block with a CRC error (bit 0 of byte 511 flipped by the model)
+        begin_case("t_crc_read_bad", run_it);
+        if (run_it) begin
+            cs_cycle(8'd2);
+            crc_mode(1'b1);
+            wr(R_CMD, OP_RXFL);
+            card.err_rdcrc = card.rd_blk_n + 1;
+            card.left_rdcrc = 1;
+            read_block(5, C_RX | C_CRCRX);
+            expect_rd(R_CMD, 16'h01F7, 16'h0000, "STATUS after a bad block (crc_ok 0, no error)");
+            expect_rd(R_MATCH, 16'hFFFF, 16'd514, "COUNT");
+            expect_rd(R_RXLVL, 16'hFFFF, 16'd512, "RXLVL");
+            wr(R_LEN, 16'd512);
+            expect_refused(OP_RX2G, "RX_TO_GAYLE of a block with a CRC error");
+            check_rx_block(5, 0, 510, "the bad block's bytes 0-509");
+            expect_rd(R_DATAW, 16'hFFFF, {img[5 * 512 + 510], img[5 * 512 + 511] ^ 8'h01}, "bytes 510-511 (bit flipped)");
+            crc_mode(1'b0);
+            end_case;
+        end
+
+        // ---- read-ahead: bad block A then good block B in RX; A must not go to
+        // Gayle; after RX_FLUSH + a good re-read it does.  Unverified bytes ahead
+        // of a verified block keep it from Gayle too
+        begin_case("t_refuse_readahead", run_it);
+        if (run_it) begin
+            cs_cycle(8'd2);
+            crc_mode(1'b1);
+            wr(R_CMD, OP_RXFL);
+            card.err_rdcrc = card.rd_blk_n + 1;
+            card.left_rdcrc = 1;
+            send_cmdc(6'd18, 32'd40);
+            expect_r1(8'h00, "CMD18");
+            wait_op(OP_WNE, 8'hFF, 16'd1);
+            if (lastb !== 8'hFE) fail("no token for block A");
+            wr(R_LEN, 16'd512);
+            wr(R_CMD, OP_XFER | C_RX | C_CRCRX);
+            wait_idle(200000);
+            expect_rd(R_CMD, 16'h0002, 16'h0000, "crc_ok 0 for block A");
+            wait_op(OP_WNE, 8'hFF, 16'd1);
+            if (lastb !== 8'hFE) fail("no token for block B");
+            wr(R_CMD, OP_XFER | C_RX | C_CRCRX);
+            wait_idle(200000);
+            expect_rd(R_CMD, 16'h0002, 16'h0002, "crc_ok 1 for block B");
+            expect_rd(R_RXLVL, 16'hFFFF, 16'd1024, "RXLVL: A and B");
+            n = gr_reqs;
+            expect_refused(OP_RX2G, "RX_TO_GAYLE: bad A at the head, good B behind");
+            wr(R_LEN, 16'd2);
+            expect_refused(OP_RX2G, "RX_TO_GAYLE of 2 bytes of bad A");
+            if (gr_reqs != n) fail("g_req for a refused RX_TO_GAYLE");
+            cs_cycle(8'd2);             // ends the CMD18 stream
+            wr(R_CMD, OP_RXFL);
+            read_block(40, C_RX | C_CRCRX);
+            expect_rd(R_CMD, 16'h0002, 16'h0002, "crc_ok of the re-read A");
+            wr(R_IRQ, 16'h001F);
+            wr(R_LEN, 16'd512);
+            wr(R_CMD, OP_RX2G);
+            wait_idle(20000);
+            expect_rd(R_CMD, 16'h01FF, 16'h0008, "STATUS after RX_TO_GAYLE of the re-read A");
+            if (gr_reqs != n + 1 || gr_n != 256) fail("re-read A: not one g_req with 256 words");
+            check_gr_buf(40, 0, 256, "re-read A at Gayle");
+            // unverified bytes (a plain bit-5 XFER) ahead of a verified block
+            wr(R_CMD, OP_RXFL);
+            wr(R_LEN, 16'd2);
+            wr(R_CMD, OP_XFER | C_RX);
+            wait_idle(10000);
+            read_block(41, C_RX | C_CRCRX);
+            expect_rd(R_CMD, 16'h0002, 16'h0002, "crc_ok of LBA 41");
+            expect_rd(R_RXLVL, 16'hFFFF, 16'd514, "RXLVL 2 + 512");
+            wr(R_LEN, 16'd512);
+            expect_refused(OP_RX2G, "RX_TO_GAYLE: unverified bytes ahead of the block");
+            wr(R_LEN, 16'd2);
+            expect_refused(OP_RX2G, "RX_TO_GAYLE of the 2 unverified bytes");
+            if (gr_reqs != n + 1) fail("g_req for a refused RX_TO_GAYLE");
+            // poisoned: a bad block popped away still keeps the next good one
+            // from Gayle until RX_FLUSH
+            wr(R_CMD, OP_RXFL);
+            card.err_rdcrc = card.rd_blk_n + 1;
+            card.left_rdcrc = 1;
+            read_block(42, C_RX | C_CRCRX);
+            expect_rd(R_CMD, 16'h0002, 16'h0000, "crc_ok 0 for LBA 42");
+            for (i = 0; i < 256; i = i + 1) rd(R_DATAW, q);
+            expect_rd(R_RXLVL, 16'hFFFF, 16'd0, "RX empty after popping the bad block");
+            read_block(43, C_RX | C_CRCRX);
+            expect_rd(R_CMD, 16'h0002, 16'h0002, "crc_ok of LBA 43");
+            wr(R_LEN, 16'd512);
+            expect_refused(OP_RX2G, "RX_TO_GAYLE of a good block after a popped bad one");
+            // poisoned: a good block AHEAD of a bad one is held back too
+            wr(R_CMD, OP_RXFL);
+            read_block(44, C_RX | C_CRCRX);
+            expect_rd(R_CMD, 16'h0002, 16'h0002, "crc_ok of LBA 44");
+            card.err_rdcrc = card.rd_blk_n + 1;
+            card.left_rdcrc = 1;
+            read_block(45, C_RX | C_CRCRX);
+            expect_rd(R_CMD, 16'h0002, 16'h0000, "crc_ok 0 for LBA 45");
+            wr(R_LEN, 16'd512);
+            expect_refused(OP_RX2G, "RX_TO_GAYLE of a good block with a bad one behind (poisoned)");
+            if (gr_reqs != n + 1) fail("g_req for a refused RX_TO_GAYLE");
+            wr(R_CMD, OP_RXFL);
+            crc_mode(1'b0);
+            end_case;
+        end
+
+        // ---- CRC16 append on a write: the model (CRC on) checks it and answers
+        // 05; a rejected block (SD_ERR_WRREJ) answers 0B and is not written
+        begin_case("t_crc_write", run_it);
+        if (run_it) begin
+            cs_cycle(8'd2);
+            crc_mode(1'b1);
+            wr(R_CMD, OP_TXFL);
+            write_block(20, 0);
+            wait_op(OP_WNE, 8'hFF, 16'd1);
+            if (lastb !== 8'h05) begin $display("FAIL %0s: data response %h, want 05", cur, lastb); errors = errors + 1; end
+            wait_op(OP_WNE, 8'h00, 16'd4);
+            if (lastb !== 8'hFF) fail("busy did not end with FF");
+            check_mem_pat(20, 0, "LBA 20 after the write");
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd513, "TXLVL: token + block kept");
+            wr(R_CMD, OP_TXCM);
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd0, "TXLVL after TX_COMMIT");
+            card.err_wrrej = card.wr_blk_n + 1;
+            card.left_wrrej = 1;
+            write_block(21, 77);
+            wait_op(OP_WNE, 8'hFF, 16'd1);
+            if (lastb !== 8'h0B) begin $display("FAIL %0s: data response %h, want 0B (WRREJ)", cur, lastb); errors = errors + 1; end
+            per_bad = 0;
+            for (i = 0; i < 512; i = i + 1) if (card.mem[21 * 512 + i] !== img[21 * 512 + i]) per_bad = per_bad + 1;
+            if (per_bad) fail("LBA 21 written although rejected");
+            wr(R_CMD, OP_TXFL);
+            crc_mode(1'b0);
+            end_case;
+        end
+
+        // ---- WAIT_NE $00 rides out a long card busy and ends at the first $FF
+        begin_case("t_busy_wait", run_it);
+        if (run_it) begin
+            cs_cycle(8'd2);
+            crc_mode(1'b1);
+            wr(R_CMD, OP_TXFL);
+            card.busy_n = 1500;
+            write_block(22, 5);
+            wait_op(OP_WNE, 8'hFF, 16'd1);
+            if (lastb !== 8'h05) fail("data response not 05");
+            wait_op(OP_WNE, 8'h00, 16'd20);
+            if (lastb !== 8'hFF) fail("busy wait did not end with FF");
+            expect_rd(R_MATCH, 16'hFFFF, 16'd1501, "COUNT: 1500 busy bytes + the FF");
+            expect_rd(R_CMD, 16'h00F5, 16'h0000, "STATUS after the busy wait (no timeout)");
+            card.busy_n = 8;
+            check_mem_pat(22, 5, "LBA 22 after the write");
+            wr(R_CMD, OP_TXFL);
+            crc_mode(1'b0);
+            end_case;
+        end
+
+        // ---- TX keep / rewind / commit.  (a) TX_REWIND drops the prefetched next
+        // byte.  (b) A rejected block is resent from TX: the new CMD24 is pushed
+        // behind the kept block and sent, TX_REWIND goes back to the token, the
+        // card gets identical 514 bytes (data + CRC); TX_COMMIT frees what was sent
+        begin_case("t_tx_rewind", run_it);
+        if (run_it) begin
+            cs_cycle(8'd2);
+            wr(R_CMD, OP_TXFL);
+            push_cmd(6'd16, 32'h200);
+            wr(R_LEN, 16'd3);
+            wr(R_CMD, OP_XFER | C_TX);
+            wait_idle(10000);
+            wait_cycles(20);            // byte 4 prefetched by now
+            cs_cycle(8'd2);             // the model drops the half command
+            s0 = card.cmd_n;
+            wr(R_CMD, OP_TXRW);
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd6, "TXLVL after TX_REWIND");
+            wr(R_LEN, 16'd6);
+            wr(R_CMD, OP_XFER | C_TX);
+            wait_idle(10000);
+            if (card.cmd_n != s0 + 1 || card.cidx != 6'd16 || card.carg != 32'h200)
+                fail("CMD16 not resent whole after TX_REWIND");
+            expect_r1(8'h00, "CMD16 after the rewind");
+            wr(R_CMD, OP_TXCM);
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd0, "TXLVL after TX_COMMIT");
+            // (b)
+            crc_mode(1'b1);
+            card.err_wrrej = card.wr_blk_n + 1;
+            card.left_wrrej = 1;
+            write_block(23, 31);
+            wait_op(OP_WNE, 8'hFF, 16'd1);
+            if (lastb !== 8'h0B) fail("first attempt not rejected with 0B");
+            for (i = 0; i < 512; i = i + 1) expb[i] = card.wbuf[i];
+            expb[512] = card.wrx[15:8]; expb[513] = card.wrx[7:0];
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd513, "TXLVL: token + block kept");
+            push_cmd(6'd24, 32'd23);    // behind the kept block
+            wr(R_LEN, 16'd6);
+            wr(R_CMD, OP_XFER | C_TX);
+            wait_idle(10000);
+            expect_r1(8'h00, "CMD24 (retry)");
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd519, "TXLVL: token + block + CMD24 kept");
+            wr(R_CMD, OP_TXRW);
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd519, "TXLVL after TX_REWIND");
+            send_block;
+            wait_op(OP_WNE, 8'hFF, 16'd1);
+            if (lastb !== 8'h05) fail("resent block not answered 05");
+            wait_op(OP_WNE, 8'h00, 16'd4);
+            per_bad = 0;
+            for (i = 0; i < 512; i = i + 1) if (card.wbuf[i] !== expb[i]) per_bad = per_bad + 1;
+            if (card.wrx !== {expb[512], expb[513]}) per_bad = per_bad + 1;
+            if (per_bad) begin $display("FAIL %0s: resent block: %0d of the 514 bytes differ", cur, per_bad); errors = errors + 1; end
+            check_mem_pat(23, 31, "LBA 23 after the resend");
+            wr(R_CMD, OP_TXCM);         // token + block sent: freed; the CMD24 copy is unsent
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd6, "TXLVL after TX_COMMIT (CMD24 copy left)");
+            wr(R_CMD, OP_TXFL);
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd0, "TXLVL after TX_FLUSH");
+            crc_mode(1'b0);
+            end_case;
+        end
+
+        // ---- wait timeout: WAIT_EQ $00 on a card sending $FF
+        begin_case("t_wait_timeout", run_it);
+        if (run_it) begin
+            cs_cycle(8'd2);
+            wr(R_CMD, OP_RXFL);
+            wr(R_IRQ, 16'h001F);
+            wr(R_MATCH, 16'h0000);
+            wr(R_TIMEOUT, 16'd2);
+            t0 = cyc;
+            wr(R_CMD, OP_WEQ);
+            wr(R_TIMEOUT, 16'd9);       // ignored while busy
+            expect_rd(R_TIMEOUT, 16'hFFFF, 16'd2, "TIMEOUT written while busy (ignored)");
+            wait_idle(3 * 16384 + 2000);
+            n = cyc - t0;
+            rd(R_CMD, q);
+            if (q[0]) begin wr(R_CMD, OP_ABORT); wait_idle(1000); end   // clean up after a failure
+            if (n < 2 * 16384 || n > 2 * 16384 + 300) begin
+                $display("FAIL %0s: TIMEOUT 2 ended after %0d cycles, want 32768..+300", cur, n); errors = errors + 1;
+            end
+            if ((q & 16'h00F7) !== 16'h0004) begin
+                $display("FAIL %0s: STATUS %h after the timeout, want bit 2 only", cur, q); errors = errors + 1;
+            end
+            expect_rd(R_IRQ, 16'h0009, 16'h0009, "IRQPEND done + error after the timeout");
+            expect_rd(R_LEN, 16'h00FF, 16'h00FF, "LAST FF");
+            // TIMEOUT 0 = 1 unit
+            wr(R_IRQ, 16'h001F);
+            wr(R_TIMEOUT, 16'd0);
+            t0 = cyc;
+            wr(R_CMD, OP_WEQ);
+            wait_idle(2 * 16384 + 2000);
+            n = cyc - t0;
+            rd(R_CMD, q);
+            if (q[0]) begin wr(R_CMD, OP_ABORT); wait_idle(1000); end
+            if (n < 16384 || n > 16384 + 300) begin
+                $display("FAIL %0s: TIMEOUT 0 ended after %0d cycles, want 16384..+300", cur, n); errors = errors + 1;
+            end
+            if (q[2] !== 1'b1) fail("no timeout bit for TIMEOUT 0");
+            // a match ends at once: WAIT_EQ $FF, one byte, no timeout
+            wr(R_MATCH, 16'h00FF);
+            wr(R_TIMEOUT, 16'd1);
+            wr(R_CMD, OP_WEQ);
+            wait_idle(1000);
+            expect_rd(R_CMD, 16'h00F7, 16'h0000, "STATUS after WAIT_EQ FF");
+            expect_rd(R_MATCH, 16'hFFFF, 16'd1, "COUNT after WAIT_EQ FF");
+            expect_rd(R_RXLVL, 16'hFFFF, 16'd0, "nothing into RX while waiting");
+            wr(R_IRQ, 16'h001F);
+            end_case;
+        end
+
+        // ---- ABORT: a TX-sourced XFER waiting on an empty TX; a running XFER (SCK
+        // stops at a byte boundary within one byte, CS untouched); a wait; idle
+        begin_case("t_abort", run_it);
+        if (run_it) begin
+            cs_cycle(8'h10);            // 272 cycles per byte
+            wr(R_CMD, OP_TXFL);
+            wr(R_CMD, OP_RXFL);
+            wr(R_IRQ, 16'h001F);
+            s0 = sck_rises;
+            wr(R_LEN, 16'd4);
+            wr(R_CMD, OP_XFER | C_TX);
+            wait_cycles(200);
+            expect_rd(R_CMD, 16'h0001, 16'h0001, "busy waiting for TX");
+            wr(R_CMD, OP_ABORT);
+            wait_idle(100);
+            expect_rd(R_CMD, 16'h01F7, 16'h0010, "STATUS aborted");
+            expect_rd(R_MATCH, 16'hFFFF, 16'd0, "COUNT 0");
+            expect_rd(R_IRQ, 16'h0009, 16'h0001, "IRQPEND done, no error");
+            if (sck_rises != s0) fail("SCK moved for a paused XFER");
+            // a running XFER
+            wr(R_IRQ, 16'h001F);
+            wr(R_LEN, 16'd1000);
+            s0 = sck_rises;
+            wr(R_CMD, OP_XFER | C_RX);
+            wait_cycles(2900);
+            t0 = sck_rises;
+            wr(R_CMD, OP_ABORT);
+            wait_idle(2000);
+            rd(R_MATCH, q);
+            n = q;
+            if (n < 5 || n > 20) begin $display("FAIL %0s: COUNT %0d after the abort, want 5..20", cur, n); errors = errors + 1; end
+            if (sck_rises - s0 != n * 8) begin
+                $display("FAIL %0s: %0d SCK rises for COUNT %0d: not stopped at a byte boundary", cur, sck_rises - s0, n); errors = errors + 1;
+            end
+            if (sck_rises - t0 > 8) begin
+                $display("FAIL %0s: %0d SCK rises after ABORT, more than one byte", cur, sck_rises - t0); errors = errors + 1;
+            end
+            if (sd_cs_n !== 1'b0) fail("CS released by ABORT");
+            expect_rd(R_CMD, 16'h01F7, 16'h0010, "STATUS aborted (running XFER)");
+            expect_rd(R_RXLVL, 16'hFFFF, n, "RXLVL = COUNT");
+            expect_rd(R_IRQ, 16'h0009, 16'h0001, "IRQPEND done, no error (running XFER)");
+            s0 = sck_rises;
+            wait_cycles(2000);
+            if (sck_rises != s0) fail("SCK moved after the abort");
+            // ABORT while idle: a completed no-op, STATUS and COUNT kept
+            wr(R_IRQ, 16'h001F);
+            wr(R_CMD, OP_ABORT);
+            expect_rd(R_CMD, 16'h01F7, 16'h0010, "STATUS kept by an idle ABORT");
+            expect_rd(R_MATCH, 16'hFFFF, n, "COUNT kept by an idle ABORT");
+            expect_rd(R_IRQ, 16'h0009, 16'h0001, "IRQPEND done for an idle ABORT");
+            // a wait
+            wr(R_CMD, OP_RXFL);
+            wr(R_MATCH, 16'h0000);
+            wr(R_TIMEOUT, 16'd100);
+            wr(R_CMD, OP_WEQ);
+            wait_cycles(1000);
+            expect_rd(R_CMD, 16'h0001, 16'h0001, "busy waiting");
+            wr(R_CMD, OP_ABORT);
+            wait_idle(400);
+            expect_rd(R_CMD, 16'h01F7, 16'h0010, "STATUS aborted wait (no timeout)");
+            // FIFO misuse (STATUS 8) is not cleared by ABORT
+            rd(R_DATAW, q);
+            wr(R_CMD, OP_ABORT);
+            expect_rd(R_CMD, 16'h0100, 16'h0100, "STATUS 8 kept by ABORT");
+            wr(R_CMD, OP_RXFL);
+            wr(R_IRQ, 16'h001F);
+            end_case;
+        end
+
+        // ---- GAYLE_TO_TX: g_err and ABORT roll TX back to its state at the op's
+        // start; the CPU data port is locked during a Gayle op; a full transfer
+        // then goes to the card with CRC16 (proves no stray bytes in TX)
+        begin_case("t_gayle_tx", run_it);
+        if (run_it) begin
+            cs_cycle(8'd2);
+            crc_mode(1'b1);
+            wr(R_CMD, OP_TXFL);
+            wr(R_CMD, OP_RXFL);
+            for (i = 0; i < 256; i = i + 1) gr_src[i] = {wpat(2 * i + 9), wpat(2 * i + 10)};
+            push_cmd(6'd24, 32'd30);
+            wr(R_DATAB, 16'h00FE);
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd7, "TXLVL: CMD24 + token");
+            n = gr_reqs;
+            // g_err at word 100
+            gr_err_at = 100;
+            wr(R_IRQ, 16'h001F);
+            wr(R_LEN, 16'd512);
+            wr(R_CMD, OP_G2TX);
+            wait_idle(20000);
+            gr_err_at = -1;
+            if (gr_reqs != n + 1 || gr_dir !== 1'b0 || gr_port !== 1'b0 || gr_words != 256) fail("GAYLE_TO_TX: not dir 0 port 0 256 words");
+            expect_rd(R_CMD, 16'h01FF, 16'h0088, "STATUS Gayle error");
+            expect_rd(R_IRQ, 16'h0009, 16'h0009, "IRQPEND done + error after g_err");
+            expect_rd(R_MATCH, 16'hFFFF, 16'd200, "COUNT 200 at g_err");
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd7, "TXLVL rolled back after g_err");
+            // g_ack after 10 of 256 words: a Gayle error too, rolled back
+            gr_ack_at = 10;
+            wr(R_IRQ, 16'h001F);
+            wr(R_CMD, OP_G2TX);
+            wait_idle(20000);
+            gr_ack_at = -1;
+            expect_rd(R_CMD, 16'h01FF, 16'h0088, "STATUS Gayle error after an early g_ack");
+            expect_rd(R_IRQ, 16'h0009, 16'h0009, "IRQPEND done + error after an early g_ack");
+            expect_rd(R_MATCH, 16'hFFFF, 16'd20, "COUNT 20 at the early g_ack");
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd7, "TXLVL rolled back after an early g_ack");
+            // ABORT while the bridge stalls
+            gr_stall_at = 50;
+            wr(R_IRQ, 16'h001F);
+            wr(R_CMD, OP_G2TX);
+            wait_cycles(400);
+            expect_rd(R_CMD, 16'h0001, 16'h0001, "busy in the stalled Gayle op");
+            if (g_req !== 1'b1) fail("g_req low in the stalled Gayle op");
+            wr(R_CMD, OP_ABORT);
+            wait_idle(100);
+            gr_stall_at = -1;
+            if (g_req !== 1'b0) fail("g_req not dropped by ABORT");
+            expect_rd(R_CMD, 16'h01FF, 16'h0018, "STATUS aborted");
+            expect_rd(R_IRQ, 16'h0009, 16'h0001, "IRQPEND done, no error after ABORT");
+            expect_rd(R_MATCH, 16'hFFFF, 16'd100, "COUNT 100 at the abort");
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd7, "TXLVL rolled back after ABORT");
+            // CPU data port locked while the op runs
+            wr(R_LEN, 16'd2);
+            wr(R_CMD, OP_XFER | C_RX);  // 2 bytes in RX
+            wait_idle(1000);
+            gr_space = 40;
+            wr(R_IRQ, 16'h001F);
+            wr(R_LEN, 16'd512);
+            wr(R_CMD, OP_G2TX);
+            wait_cycles(200);
+            wr(R_DATAW, 16'h1234);
+            expect_rd(R_DATAW, 16'hFFFF, 16'h0000, "RXW during a Gayle op");
+            wait_idle(20000);
+            gr_space = 4;
+            expect_rd(R_CMD, 16'h01FF, 16'h0108, "STATUS 8 (locked data port), op ended normally");
+            expect_rd(R_IRQ, 16'h0009, 16'h0009, "IRQPEND done + error (misuse)");
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd519, "TXLVL: CMD24 + token + 512, the TXW dropped");
+            expect_rd(R_RXLVL, 16'hFFFF, 16'd2, "RXLVL: the RXW popped nothing");
+            wr(R_CMD, OP_RXFL);
+            // the block to the card
+            wr(R_LEN, 16'd6);
+            wr(R_CMD, OP_XFER | C_TX);
+            wait_idle(10000);
+            expect_r1(8'h00, "CMD24");
+            send_block;
+            wait_op(OP_WNE, 8'hFF, 16'd1);
+            if (lastb !== 8'h05) begin $display("FAIL %0s: data response %h, want 05", cur, lastb); errors = errors + 1; end
+            wait_op(OP_WNE, 8'h00, 16'd4);
+            check_mem_pat(30, 9, "LBA 30 = the Gayle words");
+            wr(R_CMD, OP_TXCM);
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd0, "TXLVL after TX_COMMIT");
+            crc_mode(1'b0);
+            end_case;
+        end
+
+        // ---- card gone (last case: the model's card stays removed).  A Gayle
+        // op ends on the synchronised level (a 10-cycle low on sd_cd_n, shorter
+        // than the debounce) with TX rolled back; then the card is pulled in
+        // the middle of a CRC-checked block: the op ends at once, SCK stops
+        begin_case("t_cardgone_midblock", run_it);
+        if (run_it) begin
+            cs_cycle(8'd2);
+            wr(R_CMD, OP_TXFL);
+            wr(R_CMD, OP_RXFL);
+            wr(R_DATAB, 16'h0055);
+            gr_stall_at = 20;
+            wr(R_IRQ, 16'h001F);
+            wr(R_LEN, 16'd512);
+            wr(R_CMD, OP_G2TX);
+            wait_cycles(150);
+            sd_cd_n <= 1'b1;
+            wait_cycles(10);
+            sd_cd_n <= 1'b0;
+            if (g_req !== 1'b0) fail("g_req not dropped on card absence");
+            gr_stall_at = -1;
+            expect_rd(R_CMD, 16'h01FF, 16'h0028, "STATUS card gone (Gayle op), card still present (debounced)");
+            expect_rd(R_IRQ, 16'h0019, 16'h0009, "IRQPEND done + error, no card-detect change");
+            expect_rd(R_TXLVL, 16'hFFFF, 16'd1, "TXLVL rolled back");
+            wr(R_CMD, OP_TXFL);
+            wait_cycles(200);
+            // the card pulled mid-block
+            cs_cycle(8'd4);             // 80 cycles per byte
+            crc_mode(1'b1);
+            wr(R_CMD, OP_RXFL);
+            send_cmdc(6'd17, 32'd50);
+            expect_r1(8'h00, "CMD17");
+            wait_op(OP_WNE, 8'hFF, 16'd1);
+            if (lastb !== 8'hFE) fail("no data token");
+            wr(R_IRQ, 16'h001F);
+            wr(R_LEN, 16'd512);
+            wr(R_CMD, OP_XFER | C_RX | C_CRCRX);
+            wait_cycles(15000);
+            card.remove_card;
+            sd_cd_n <= 1'b1;
+            wait_cycles(6);
+            s0 = sck_rises;
+            wait_cycles(1000);
+            if (sck_rises != s0) fail("SCK still running after the card left");
+            if (sd_sck !== 1'b0) fail("SCK not low after the card left");
+            expect_rd(R_CMD, 16'h01F7, 16'h0020, "STATUS card gone (not busy, crc_ok 0)");
+            expect_rd(R_IRQ, 16'h0009, 16'h0009, "IRQPEND done + error");
+            rd(R_MATCH, q);
+            n = q;
+            if (n < 100 || n > 400) begin $display("FAIL %0s: COUNT %0d at the cut, want 100..400", cur, n); errors = errors + 1; end
+            expect_rd(R_RXLVL, 16'hFFFF, n, "RXLVL = COUNT");
+            expect_rd(R_CMD, 16'h0008, 16'h0000, "card absent (debounced)");
+            expect_rd(R_IRQ, 16'h0010, 16'h0010, "card-detect change IRQ");
+            wr(R_LEN, 16'd2);
+            expect_refused(OP_RX2G, "RX_TO_GAYLE of the cut block");
+            // with the card absent an op ends at once
+            wr(R_IRQ, 16'h001F);
+            wr(R_LEN, 16'd4);
+            s0 = sck_rises;
+            wr(R_CMD, OP_XFER);
+            wait_idle(100);
+            expect_rd(R_CMD, 16'h01F7, 16'h0020, "STATUS card gone for an op started without a card");
+            if (sck_rises != s0) fail("SCK ran with the card absent");
             end_case;
         end
 

@@ -1,10 +1,10 @@
 #!/bin/bash
 # Unit bench of rtl/host/sdcard_spi.v (the SD card SPI peripheral) with the
-# card model sim/common/sd_spi_model.v (CRC off).  See tb_sdcard_spi.v.
+# card model sim/common/sd_spi_model.v.  See tb_sdcard_spi.v.
 #
-#   bash sim/sdcard_spi/run.sh                # both legs, in parallel
-#   LEGS=iverilog bash sim/sdcard_spi/run.sh  # one leg (verilator | iverilog)
-#   TEST=t_sck_pause bash sim/sdcard_spi/run.sh
+#   bash sim/sdcard_spi/run.sh                # all legs, in parallel
+#   LEGS=iverilog bash sim/sdcard_spi/run.sh  # one leg
+#   TEST=t_sck_pause bash sim/sdcard_spi/run.sh   # one case (verilator + iverilog)
 #
 # Legs:
 #   verilator  the speed leg: Verilator 5 --binary --timing (2-state), built
@@ -13,9 +13,18 @@
 #   iverilog   the X-check leg: Icarus Verilog (4-state), run with +XCHECK
 #              (no X / Z on reg_q, irq and the pins after reset);
 #              log <run>/tb_iverilog.log
-# Each leg prints its per-case PASS / FAIL lines; the script exits 1 unless
-# every leg ends with "=== PASS tb_sdcard_spi".  The bench's watchdog turns a
+#   mut_nocrc, mut_nointerlock, mut_notimeout
+#              mutant legs: the iverilog leg with -DSDC_MUT_NOCRC (CRC check
+#              always ok), -DSDC_MUT_NOINTERLOCK (RX_TO_GAYLE checks only
+#              LEN), -DSDC_MUT_NOTIMEOUT (wait ops never time out).  A mutant
+#              leg passes when the bench CATCHES the mutant: at least one
+#              case FAILs and the run ends with its own verdict (not the
+#              watchdog, not a hang); log <run>/tb_<leg>.log
+# Each normal leg prints its per-case PASS / FAIL lines and must end with
+# "=== PASS tb_sdcard_spi"; each mutant leg prints the cases that caught it.
+# The script exits 1 unless every leg passes.  The bench's watchdog turns a
 # hang into "=== FAIL"; the run itself is limited by `timeout` (TMO, 600 s).
+# Default LEGS: all five; with TEST set, verilator and iverilog only.
 #
 # Environment: RUNTAG (run directory sim/sdcard_spi/run_${RUNTAG:-wt}),
 # LEGS, TEST, XARGS (extra plusargs, e.g. +SD_LOG=1), VERILATOR (verilator),
@@ -26,7 +35,8 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
 RUNTAG=${RUNTAG:-wt}
 run=$HERE/run_$RUNTAG
-LEGS=${LEGS:-verilator iverilog}
+if [ -n "${TEST:-}" ]; then LEGS=${LEGS:-verilator iverilog}
+else LEGS=${LEGS:-verilator iverilog mut_nocrc mut_nointerlock mut_notimeout}; fi
 VERILATOR=${VERILATOR:-verilator}
 JOBS=${JOBS:-$(nproc)}
 if [ -z "${IVERILOG:-}" ]; then
@@ -67,11 +77,22 @@ leg_iverilog() {
 	timeout "$TMO" "$VVP" -N "$run/tb.vvp" +XCHECK=1 "${PA[@]}" > "$run/tb_iverilog.log" 2>&1
 }
 
+# a mutant: the iverilog leg built with -D<define>
+leg_mut() {
+	local leg=$1 def=$2
+	"$IVERILOG" -g2005 -Wall -Wno-timescale -D"$def" -o "$run/tb_$leg.vvp" "${SRCS[@]}" > "$run/compile_$leg.log" 2>&1 \
+		|| { cat "$run/compile_$leg.log"; hs_die "iverilog $leg ($run/compile_$leg.log)"; }
+	timeout "$TMO" "$VVP" -N "$run/tb_$leg.vvp" "${PA[@]}" > "$run/tb_$leg.log" 2>&1
+}
+leg_mut_nocrc()       { leg_mut mut_nocrc SDC_MUT_NOCRC; }
+leg_mut_nointerlock() { leg_mut mut_nointerlock SDC_MUT_NOINTERLOCK; }
+leg_mut_notimeout()   { leg_mut mut_notimeout SDC_MUT_NOTIMEOUT; }
+
 pids=()
 for leg in $LEGS; do
 	case $leg in
-		verilator|iverilog) ;;
-		*) hs_die "unknown leg $leg (verilator | iverilog)" ;;
+		verilator|iverilog|mut_nocrc|mut_nointerlock|mut_notimeout) ;;
+		*) hs_die "unknown leg $leg (verilator | iverilog | mut_nocrc | mut_nointerlock | mut_notimeout)" ;;
 	esac
 	rm -f "$run/tb_$leg.log"
 	( "leg_$leg" ) &
@@ -83,6 +104,16 @@ fails=0
 for leg in $LEGS; do
 	log=$run/tb_$leg.log
 	echo "--- $leg ($log)"
+	case $leg in mut_*)
+		caught=$(grep -E '^FAIL t_[a-z0-9_]+ \(' "$log" 2>/dev/null | sed 's/ (.*//; s/^FAIL //' | tr '\n' ' ')
+		if [ -n "$caught" ] && grep -qE '^=== FAIL tb_sdcard_spi \([0-9]+ errors\)' "$log"; then
+			echo "CAUGHT by: $caught"
+		else
+			echo "NOT CAUGHT: $(grep -E '^=== ' "$log" 2>/dev/null || echo 'no verdict')"
+			fails=$((fails + 1))
+		fi
+		continue ;;
+	esac
 	if [ -f "$log" ]; then
 		grep -E '^(PASS|FAIL) t_[a-z0-9_]+( \(|$)' "$log"
 		grep -E '^FAIL' "$log" | grep -vE '^FAIL t_[a-z0-9_]+ \(' | head -20
