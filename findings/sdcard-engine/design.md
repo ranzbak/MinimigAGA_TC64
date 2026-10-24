@@ -1,0 +1,375 @@
+# SD card peripheral: one interrupt-driven SPI path for all card traffic
+
+Status: design, approved by Paul 2026-10-24.  Branch `sdio`
+(worktree `../MinimigAGA_TC64-sdio`, based on `retire-832` 410470a3).
+Board: QMTech XC7A100T on the Open AARS I/O board v4.
+
+## 1. Why
+
+Paul copied a directory of many small files (~500 MB) from the SD card's FAT
+side into an HDF on the same card.  It took about an hour (~140 KB/s) and the
+OSD's about-screen animation crawled meanwhile.
+
+Paul's brief (2026-10-24, verbatim): *"I want a unified way of handling SPI
+bus traffic to and from the card, that doesn't involve the OSD CPU being in
+busy waiting state, while being correct and ruling out corruption on the
+SD-card."*  And: *"Make sure the hardware stays compatible with the Amiga
+hardware."*
+
+Target: the same copy in about **10 minutes** (~850 KB/s; source and
+destination share the card, so ~1.7 MB/s on the card's bus).  The card stays
+in **SPI mode** (section 9).
+
+## 2. What is there today (verified 2026-10-24)
+
+- **OSD CPU:** VexRiscv RV32IMC (`rtl/host/rv_hostcpu.v`), firmware `fw/ctrl`,
+  boot loader `fw/ctrl_boot` (3.6 KB).  The 832 is retired.  The CPU's
+  hardware window is **16 bits wide** (data in bits 15:0, acked on clk_28:
+  `rv_hostcpu.v:15`, `host_bridge.vhd:34`).
+- **One SPI shift register for everything** (`rtl/host/cfide.vhd`), one SCK,
+  chip selects (`fw/ctrl/hardware.h:80-89`):
+
+  | Select | Macro | Goes to | Traffic |
+  | --- | --- | --- | --- |
+  | `scs(1)` | `EnableCard` | the SD card | all card commands and data |
+  | `scs(4)` | `EnableFpga` | SPI slave in `rtl/minimig/paula_floppy.v` | `HandleFpga` poll every main-loop pass, Gayle task file/status/xfer setup, IDENTIFY and packet data, today's HDD write data, floppy MFM tracks |
+  | `scs(5)` | `EnableOsd` | `userio_osd_spi` | OSD text/graphics, config commands, keys |
+  | `scs(6)` | `EnableDMode` | direct mode: `paula_floppy.v` snoops the card's data-out into the Gayle FIFO | HDD/CD reads |
+  | `scs(7)` | `EnableRTC` | not connected on this board (PCF2123 has its own logic) | -- |
+
+  Byte-at-a-time and polled: `SPI(x)` writes the data register and reads it
+  back; the read stalls the CPU until the byte has shifted
+  (`fw/ctrl/hardware.h:99`).  `SPI_fast()` = ~18.9 MHz SCK.
+- **Interrupts today:** VBL, I2C and Akiko set `cfide`'s legacy flag
+  (`cfide.vhd:376-378`); the handler (`main.c` `inthandler`) runs the Akiko
+  and keyboard handlers.  A 16-source controller with spare `irq_src` bits
+  exists (`cfide.vhd:384-408`) but no firmware uses it; using it means
+  `IrqInstall()`, which turns the legacy flag off (`fw/ctrl/arch/irq.c`), so
+  VBL/I2C/Akiko/keyboard handling moves over too.
+- **Direct-mode reads are unchecked:** SPI-mode CRC is off and the read CRC
+  bytes are thrown away; a bad or all-`$FF` block (card pulled) reaches the
+  Amiga's filesystem.
+- **Writes** (`fw/ctrl/hdd.c` `ATA_WriteSectors`): per sector, the CPU reads
+  512 bytes from Gayle over the `scs(4)` link into RAM, sends them with CMD24
+  (`fw/ctrl/mmc.c` `MMC_Write`) and spins on card busy.  No CMD25.  The
+  Amiga gets its per-group IRQ and END only after the card has finished.
+- **Gayle (`rtl/minimig/gayle.v`):** emulates the A600/A1200 IDE port and the
+  drive controller; two ports (`gayle_port.v`), each with a task file, IRQ and
+  an 8 KB sector FIFO (`gayle_fifo.v`).  Firmware-side port is parallel:
+  `hdd_data_out[15:0]`, `hdd_data_in[15:0]`, `hdd_data_wr`, `hdd_data_rd`,
+  `hdd_port`, `hdd_cmd_req`, `hdd_dat_req`, ...; `paula_floppy.v` drives it
+  from its SPI slave.  The firmware sees only busy and data-request, not FIFO
+  levels (`gayle.v:343-345`, `gayle_port.v:337,353`).  Reads:
+  `drq = fifo_full & pio_in` and the Amiga's IRQ fires on a **rising DRQ
+  edge** (`gayle_port.v:278-284,337`): a block put in before the Amiga drained
+  the previous one would keep DRQ high, lose the IRQ and stall READ MULTIPLE,
+  so today's "drain, then refill" order is Amiga-visible behaviour.  Any IDE
+  command over `scs(4)` re-latches `hdd_port` (`paula_floppy.v:373-376`):
+  that is why `CD_AudioPoll` must not run inside a transfer
+  (`fw/ctrl/cdrom.h`).
+- **Main loop (`fw/ctrl/main.c`):** one disk command runs to completion before
+  the UI runs again; the about screen redraws stars and six logo lines on
+  every pass, untimed (`menu.c` `MENU_ABOUT2`).
+- **Boot RAM:** 8 KB shared by the boot code (bottom) and the main firmware's
+  stack, which may grow down to `STACK_FLOOR` 0x1400 (`fw/ctrl/stackcheck.h:8`,
+  `fw/ctrl/arch/firmware.ld:68`).
+- **Board (schematic, Paul):** 10 k pull-ups to 3V3 on CMD, DAT0-3 and CLK;
+  card detect `FPGA_SD_SW` on **pin F23, bank 15**, low = inserted, 10 k
+  pull-up R25 + 100 nF C30 (no `PACKAGE_PIN` for `sd_m_cdet` in the XDC yet,
+  unused in the RTL); card VDD hard-wired to 3V3; no 1.8 V.
+- **Card model in `sim/`:** `sim/common/sd_spi_model.v` (SPI mode, no CRC
+  checking).
+- **Device fill (newest report, `stage_fast56_ld_move`):** LUTs 80 %, slices
+  96.7 %, block RAM 119 / 135.  `retire-832` misses clk_114 by -0.144 ns
+  (Paul's decision on that is pending).
+
+## 3. Requirements
+
+1. **Unified:** every card transfer -- FAT and directory sectors, config, ROM
+   and ADF loading, ADF writes, HDF and ISO sectors, CD audio -- goes through
+   one peripheral with one set of rules, the boot loader included.
+2. **No busy waiting:** the OSD CPU starts a step and is told by interrupt
+   when it is done, needs data, or failed.  It never spins on a byte, a token,
+   card busy or a FIFO flag, and never stalls on the card.  The main loop
+   (keys, OSD, CD audio, drive sounds) keeps running during disk work.
+3. **Correct, and no corruption on the card** -- the overriding requirement:
+   - no partial block is ever sent to the card;
+   - no block whose CRC failed is ever handed to the Amiga or the firmware;
+   - every wait ends in bounded time with a reason;
+   - every error reaches the Amiga as an IDE error, never as good data, and is
+     never silently dropped.
+4. **Amiga-compatible:** what the Amiga sees -- Gayle's registers, IDE
+   status/DRQ/IRQ behaviour and its timing rules, PIO through `$DA0000`, the
+   floppy hardware -- stays exactly as it is.  No new Amiga-visible registers
+   or autoconfig boards.  Drivers (scsi.device, atapi/CD drivers, trackdisk)
+   cannot tell the difference except by speed.
+5. **Fast:** the copy above in ~10 minutes (but see 9.1).
+6. **Fits:** small enough for a nearly full device; no worse clk_114 than
+   placement noise explains.
+
+## 4. The peripheral (RTL)
+
+A new **SPI peripheral** owns the card's pins.  It is **protocol-agnostic**:
+it moves bytes and knows nothing about SD commands; the firmware runs the SD
+protocol.  `cfide`'s shift register keeps the on-chip links (`scs(4)` Gayle /
+floppy, `scs(5)` OSD) unchanged this round.  The card having its own SPI
+master means card transfers and OSD / Gayle-link traffic run at the same time.
+
+### 4.1 Parts
+
+1. **TX and RX FIFOs** in one RAMB18 (2 KB; split is the builder's call, each
+   side at least one 512-byte block plus its CRC).  **High/low watermark
+   interrupts** per side.  For data blocks the FIFO works in block-sized
+   slots: a block is either complete or not there.  The CPU reaches the FIFOs
+   through a data-port register in its 16-bit hardware window.
+2. **Byte shifter:** clocks bytes from TX to the pins and from the pins to RX;
+   pauses SCK when TX is empty or RX is full (SPI mode tolerates any gap in
+   SCK, so pausing is always safe).  A transfer length counter; CS control.
+3. **CRC16 accumulator** (CCITT, as SD uses), switched on per transfer by the
+   CPU: on TX it can append the two CRC bytes after the data; on RX it checks
+   the two CRC bytes following the data and gives one **match / no match**
+   bit.  CRC7 for the 6-byte commands: the builder decides between a small
+   CRC7 option in the same unit or a table in firmware.
+4. **Wait-for-byte mode:** clock `$FF` until the received byte equals / differs
+   from a value the CPU set, with a timeout; nothing enters the RX FIFO while
+   waiting; one interrupt when it ends (with the byte, or "timeout").  Covers
+   waiting for a response, for the data start token and for card busy to end.
+5. **Gayle block DMA** (between the RX/TX FIFO and Gayle's sector FIFO only,
+   never the CPU's RAM), through a mux on Gayle's existing parallel firmware
+   port (`hdd_data_out/in`, `hdd_data_wr/rd`, `hdd_port`):
+   - *read:* after a whole block plus CRC is in RX **and the CRC matched**,
+     one CPU command moves the block into the Gayle FIFO;
+   - *write:* one CPU command moves a full sector (Gayle signals it with
+     `dat_req`) from the Gayle FIFO into TX.  The block stays in TX until the
+     card has accepted it, so a resend after a rejected write is the
+     identical data.
+   - Clock-domain crossing to Gayle's clock is part of this block.
+   - While the DMA owns the Gayle data path, the mux keeps `paula_floppy.v`'s
+     side off it and the firmware sends no IDE command over `scs(4)` that
+     would re-latch `hdd_port`.
+6. **Status, counters, interrupt:** state, last end reason (done, CRC
+   mismatch, wait timeout, card gone, abort), bytes/blocks moved.  One
+   interrupt line to the RISC-V via a spare `cfide` `irq_src` bit, with cause
+   bits: TX low / RX high watermark, transfer done, wait done, DMA done,
+   error, card detect change.
+7. **Abort:** the CPU can stop any transfer, wait or DMA; the peripheral ends
+   cleanly and reports where it stopped.
+8. **Card detect:** `sd_m_cdet` on F23 (bank 15; check its VCCO for the
+   IOSTANDARD), synchronised and debounced.  Pulling the card ends the current
+   operation at once with "card gone" and raises an interrupt.
+9. **Version/capability register** (for the lock-step check in 5.5).
+
+### 4.2 Pins and clock
+
+- SCK, CMD (MOSI), DAT3 (CS), DAT0 (MISO) from the new peripheral; DAT1/DAT2
+  stay high as today.
+- SCK from clk_114 with a divider: ~400 kHz for init, up to 25 MHz (the SPI
+  mode limit) for data, duty cycle within the SD spec; the firmware can lower
+  it (retry table).
+- `sd_card.xdc`: constraints for the new pin registers; today's `spi_sck`
+  generated clock stays for the on-chip slaves, the card gets its own.
+
+### 4.3 Budget and style
+
+Target **under ~600 LUTs plus one RAMB18** for the peripheral and the Gayle
+mux.  If it goes over, stop and report before growing it.  Prove size and
+timing in a small out-of-context project first ("iterate small"), not in full
+builds.  Plain Verilog/VHDL, no vendor primitives (core stays vendor-neutral);
+other board tops keep today's path and must still elaborate.
+
+## 5. Firmware
+
+### 5.1 Card driver
+
+`fw/ctrl/mmc.c` keeps its API (`MMC_Init`, `MMC_Read`, `MMC_ReadMultiple`
+incl. the "to Gayle" form, `MMC_Write`), plus a multi-block write and
+asynchronous start/complete calls.  It runs the whole SD SPI protocol:
+commands, responses, tokens, CRC on (**CMD59** after init, so the card also
+checks every command and written block), CMD25 multi-block writes, ACMD22.
+
+- **Writes:** CMD25 per contiguous run (an HDF is contiguous within a
+  cluster; split at cluster boundaries with the existing cluster index).
+  ACMD23 pre-erase is the builder's call.
+- **Write-done timing stays exactly as today (Paul):** the Amiga gets the
+  per-group IRQ (`WriteStatus(IRQ)`) and END only after the card has finished
+  programming those sectors -- for a CMD25 run, after the stop token's busy is
+  over.  A CMD25 run never spans an IRQ group boundary.  No write-back.
+- **Reads to Gayle keep today's order:** a block (or READ MULTIPLE group) goes
+  into the Gayle FIFO only after the Amiga drained the previous one; the card
+  side may read ahead into RX meanwhile.
+- **Retry policy (Paul):**
+
+  | Failure | Retries | Then |
+  | --- | --- | --- |
+  | Command response CRC wrong | 3 | CMD13; if that times out too, the card is gone |
+  | Read block CRC wrong | 4, re-read from the failed block | 3rd retry also drops SCK one step |
+  | Write block rejected, CRC (`0x0B`) | 4, resend the same block from TX | 3rd retry also drops SCK one step |
+  | Write block rejected, write error (`0x0D`) | 0 (the card failed to program) | error at once |
+  | Timeout (response, token, busy) | 3 | CMD13; if that times out too, the card is gone |
+
+  A lowered SCK stays lowered until the next reboot.  After a failed
+  multi-block write, ACMD22 says where to resume.  When retries run out the
+  IDE command ends with ERR, the OSD shows the error, the counters record it;
+  the Amiga's filesystem shows its normal Retry/Cancel requester.
+  `FatalError` on a card error becomes an error return: a card error must not
+  wedge the firmware.
+
+### 5.2 Interrupt-driven disk commands
+
+HDD and CD command handlers become state machines advanced by the
+peripheral's interrupts (send command -> wait for R1 -> wait for token ->
+receive block -> CRC ok -> DMA to Gayle -> ...).  The main loop runs between
+steps.  The interrupt handler only records causes; the state machines run
+from the main loop or the handler (builder's call, re-entrancy-safe).
+
+- **One card operation at a time:** an operation is one command run on the
+  card (one CMD17/18/24/25 up to its end), not a whole ATA command.  Long ATA
+  transfers are split into bounded runs, so CD audio refill (which today runs
+  between blocks) does not get worse.  Other card users (CD audio refill,
+  file selector, config save, ADF access) queue and get the card between
+  runs.
+- The interrupt controller moves to `irq_src` / `IrqInstall()`, with VBL,
+  I2C, Akiko and keyboard handling moved along.
+- The about screen (stars, logo, scroller) redraws on a timer.
+
+### 5.3 Instrumentation (first, on today's path)
+
+Counters: disk commands per second; **sectors per command, as a histogram,
+read and write separately**; time the card is busy; time waiting for the
+Amiga (Gayle FIFO); CRC errors and retries per kind; main-loop pass time.
+Shown in DebugMode and on the UART.
+
+### 5.4 Boot loader
+
+`fw/ctrl_boot` uses the same peripheral (it may simply wait on its status:
+nothing else runs then), so there is one card path.  Its code must stay
+**below 0x1400** (~1.4 KB more than today).  CRC in the boot loader is the
+builder's call.
+
+### 5.5 Bitstream and firmware in lock-step (Paul)
+
+A firmware file built for the old card path cannot work with the new
+bitstream.  The boot loader (inside the bitstream, so always matching) checks
+the firmware file's version against the version register before jumping to
+it; on a mismatch it **stops with a clear message on the OSD and hangs**.  No
+fallback to the old path.
+
+## 6. Verification
+
+- **Peripheral bench (Verilator; xsim/iverilog as X-check):** extend
+  `sim/common/sd_spi_model.v` with CRC checking, CMD59, CMD25/ACMD22, and
+  error injection (bad response CRC, bad data CRC both ways, data rejected,
+  long busy, no response, card pulled mid-block), so the RV L3 benches get it
+  too.  ZipCPU's `sdspi` bench (GPLv3) is a reference.  Cases: watermarks,
+  SCK pause on full/empty, wait-for-byte with timeout, CRC append/check,
+  Gayle DMA both ways, abort in every state, card detect.
+- **Mutant legs** (project practice): CRC check disabled, DMA allowed before
+  the CRC result, a timeout removed -- the bench must catch each.
+- **Gayle path:** extend `sim/gayle` so whole ATA READ/WRITE MULTIPLE runs go
+  through the peripheral and the card model with the Amiga as PIO master,
+  including the Amiga stopping mid-sector or abandoning a command; DRQ/IRQ
+  timing as today.  The `scs(4)` link regressions stay green.
+- **Firmware host tests** (`fw/ctrl/test`, mock_hw): the SD protocol layer,
+  the retry table, cluster-run splitting, write-done timing, the
+  one-operation-at-a-time rule, error reporting, the lock-step check.  The
+  existing suite stays green.
+- **Full system:** the RV L3 benches boot and run an HDF read/write through
+  the peripheral.
+- **Board:** write tests only on a scratch card or a copy of an HDF, never
+  Paul's real disk; Claude never writes the card itself.  Each step: the
+  small-files copy timed, file checksums against the source, a filesystem
+  check of the HDF.
+
+## 7. Order
+
+1. **Baseline:** instrumentation + about-screen timer on today's path; Paul
+   runs the copy (OSD closed / about screen open).
+2. Peripheral + card model + bench (sim only).
+3. Driver, interrupts and boot loader on the peripheral; reads (sim, then
+   board).
+4. Gayle DMA reads, then writes (sim, then board on a scratch card).
+5. Interrupt-driven command state machines; UI during transfers.
+6. Measure against the target.
+7. **Later, optional:** a second instance of the same peripheral for the
+   on-chip links (`scs(4)` Gayle/floppy, `scs(5)` OSD), so OSD drawing and
+   floppy tracks stop stalling the CPU too and one SPI design serves
+   everything.  Not this round: the card path is where the corruption risk
+   and the speed problem are.
+
+## 8. Goals, non-goals, anti-goals
+
+**Goals:** requirements 1-6.
+
+**Non-goals:** SD native mode; DMA into Amiga or CPU memory; any Amiga-side
+change; the floppy MFM encoding; changing the on-chip links this round;
+hot-swap beyond "a pulled card is an error, not a hang or bad data"; other
+boards beyond "still elaborates".
+
+**Anti-goals (failure even if fast):** any corrupted block on the card or
+handed to the Amiga; data reported written before the card has it; a card
+that worked before and now does not; a hang anywhere in the disk path (the
+lock-step stop is a deliberate, messaged halt, not a hang); an Amiga-visible
+change in Gayle/IDE behaviour; a worse clk_114.
+
+## 9. Notes
+
+### 9.1 Small files are bounded by per-command latency
+
+The filesystem writes small files as many short, synchronous ATA commands
+(headers, bitmap, directory blocks).  CMD25 helps only multi-sector commands;
+each short write still pays the firmware's command handling plus one card
+programming cycle (often a millisecond or more), and with write-done timing
+unchanged the Amiga sees it.  So the baseline histogram (5.3) decides whether
+10 minutes is reachable; cutting the firmware's per-command overhead matters
+as much as the data path; and the card itself matters (A1/A2-rated cards are
+specified for fast small random writes).  Accepted by Paul as long as the OSD
+CPU never stalls on it.
+
+### 9.2 Set aside: SD native 4-bit mode
+
+Considered 2026-10-24, and earlier in
+`findings/sdio/2026-09-19-sdio-implementation-plan.md` (832-era,
+integrity-first).  A faster bus, but a card in SPI mode returns to native mode
+only after a power cycle, which this board cannot do, and it does not touch
+the per-command latency of 9.1.  Revisit only if the measurements after step 6
+show the SPI bus itself is the limit.
+
+### 9.3 Considered and dropped
+
+- **SD-aware framing in hardware / a descriptor list:** more RTL; the
+  protocol-agnostic FIFO plus three helpers does the same with the protocol
+  in firmware (Paul, 2026-10-24).
+- **Gayle's 8 KB FIFO as the verify buffer:** DRQ rises at `fifo_full`
+  (`gayle_port.v:337`), before the block's CRC has arrived; would need a
+  Gayle change to save ~10 us of copying per sector.
+- **DMA into the RISC-V's RAM:** a bus master into host memory; the data port
+  moves a sector in roughly 25 us (estimate), enough.
+- **Yield points instead of interrupt-driven state machines:** with the
+  interrupt-driven peripheral there is no busy waiting to replace (Paul).
+
+## 10. Left to the builder
+
+Register map and its place in the RISC-V hardware window; FIFO split and
+slot handling; CRC7 in hardware or firmware; CDC method; exact SCK dividers;
+timeout values and their hard limits; how the state machines are structured
+within 5.2; ACMD23; CRC in the boot loader.  Each decision goes into this
+document with a one-line reason.
+
+## 11. Decisions
+
+| Decision | By | Why |
+| --- | --- | --- |
+| Stay in SPI mode | Paul | native mode is a big change; SPI with gapless transfers may be enough |
+| Unified path, no busy waiting, correctness first | Paul | his brief |
+| Amiga-visible hardware unchanged | Paul | compatibility |
+| Protocol-agnostic SPI peripheral: FIFOs + watermark IRQs + CRC16 accumulator + wait-for-byte + Gayle block DMA | Paul, Claude | firmware runs the protocol; hardware removes byte stalls, CPU copies and polling |
+| Card on its own SPI master; on-chip links stay on `cfide` this round, second instance later | Claude, Paul agreed | parallel card and OSD traffic; limit what can break at once |
+| CRC on (CMD59) + store-and-forward both ways | Claude | no partial or unverified block reaches the card or the Amiga |
+| Write-done timing as today; no write-back | Paul | nothing reported written before the card has it |
+| Retry table (3 / 4 / 4 / 0 / 3, SCK step-down on the 3rd data retry) | Paul | bounded, safe because of store-and-forward |
+| Bitstream/firmware lock-step; mismatch = OSD message + hang | Paul | |
+| Card detect on F23 (bank 15) | Paul | |
+| Card shared per command run; long ATA transfers split into bounded runs | Claude | CD audio refill must not get worse |
+| Boot loader below 0x1400 | forced | firmware stack floor in the shared boot RAM |
+| Base on `retire-832`, branch `sdio`; timing measured against its build after Paul's timing fix | Claude | the 832 is retired |
+| Baseline with a sectors-per-command histogram first | Claude, Paul agreed | 9.1: small files are latency-bound |
