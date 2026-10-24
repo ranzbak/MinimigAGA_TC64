@@ -22,14 +22,21 @@
  * SDC_TRACE_N peripheral events, sdc_trace_head the number of entries ever
  * written (the newest is sdc_trace[(sdc_trace_head - 1) % SDC_TRACE_N], the
  * oldest still there sdc_trace[sdc_trace_head % SDC_TRACE_N] once the ring
- * has wrapped).  One entry per sdc_start() (what = SDC_TR_START | CMD, or
- * SDC_TR_REFUSED | CMD, or SDC_TR_BUSY | CMD when the driver did not write
- * it; len = LEN; status = STATUS before the CMD write; irqpend 0) and one per
- * handler call that sees bit 0, 3 or 4 (what = SDC_TR_EVENT; len = COUNT;
- * status = STATUS; irqpend = IRQPEND as read).  time = TIMER (5.804 ms
- * counts).  With the board's GDB tunnel (HOSTCPU_RVDEBUG, tools/rvdebug):
+ * has wrapped).  Every entry names its op in what's low 12 bits (the CMD
+ * word: op in 3:0, bits 4-8), so an event is readable after its start entry
+ * wrapped out; the kind is in bits 15:12.  One entry per sdc_start() (what =
+ * SDC_TR_START | CMD, or SDC_TR_REFUSED | CMD, or SDC_TR_BUSY | CMD when the
+ * driver did not write it; len = LEN; status = STATUS before the CMD write,
+ * so a FIFO misuse (bit 8) since the last op shows there; irqpend 0) and one
+ * per handler call that sees bit 0, 3 or 4 (what = SDC_TR_EVENT | CMD of the
+ * last accepted op, or of an ABORT given while idle; len = COUNT; status =
+ * STATUS; irqpend = IRQPEND as read).  time = TIMER (5.804 ms counts).
+ * sdc_misuse counts the starts that found STATUS 8 set (always a firmware
+ * bug: a push into a full TX, a pop past RXLVL, the data port during a
+ * Gayle op).  With the board's GDB tunnel (HOSTCPU_RVDEBUG, tools/rvdebug):
  *     (gdb) p sdc_trace_head
  *     (gdb) p/x sdc_trace
+ *     (gdb) p sdc_misuse
  * No printf: it costs a few register reads per event.
  */
 #ifndef SDC_H
@@ -112,6 +119,7 @@
 #define SDC_R(x)     SDC(x)
 #define SDC_W(x, v)  (SDC(x) = (v))
 #define SDC_IDLE()   ((void)0)
+#define SDC_TRACE_TIME() TIMER
 #else
 unsigned short hosttest_sdc_rd(unsigned off);
 void hosttest_sdc_wr(unsigned off, unsigned short v);
@@ -121,11 +129,18 @@ void hosttest_sdc_idle(void);   /* sdc_wait's loop: the mock steps; aborts the t
 #define SDC_R(x)     hosttest_sdc_rd(x)
 #define SDC_W(x, v)  hosttest_sdc_wr((x), (v))
 #define SDC_IDLE()   hosttest_sdc_idle()
+/* the trace's timestamp must not be a TIMER read on the host: the mock's
+   TIMER read advances time (mock_timer_step), and a running op would end
+   inside sdc_start */
+unsigned short hosttest_timer_peek(void);
+#define SDC_TRACE_TIME() hosttest_timer_peek()
 #endif
 
 /* events the handler latched (IRQPEND bits); the handler ORs, the consumer
    clears (sdc_clear / sdc_take: inside irq_save) */
 extern volatile unsigned sdc_events;
+/* starts that found STATUS 8 (FIFO misuse) set: a firmware bug each */
+extern volatile unsigned sdc_misuse;
 
 /* handler on IRQ_SDCARD (LEVEL), any op stopped (ABORT), both FIFOs
    flushed, CFG = SDC_DIV_INIT with CS off, IRQPEND cleared, sdc_events 0,
@@ -139,6 +154,10 @@ void sdc_init(void);
    (STATUS bit 6 read back after the CMD write: the cycle after an op end,
    XFER bits 6 + 7, a Gayle op's LEN / room / verified check, an unknown
    op); the refusal's own ERR event is acknowledged, STATUS keeps bit 6.
+   STATUS bit 8 (FIFO misuse since the last accepted CMD) found set before
+   the CMD write is counted in sdc_misuse and kept in the start's trace
+   entry; the start goes on (the accepted CMD clears bit 8 in the
+   peripheral; refusing would leave no way out but a separate clear).
    SDC_OP_ABORT is never refused (it stops a running op at the next byte
    boundary, STATUS 4; when idle it only gives a DONE event). */
 int sdc_start(unsigned cmd, unsigned len);
@@ -148,8 +167,9 @@ int sdc_start(unsigned cmd, unsigned len);
    HDD/CD data path.  This core has no WFI (VexRiscv CsrPluginConfig.small
    decodes it as an illegal instruction), so it polls sdc_events with a
    TIMER bound of SDC_WAIT_BOUND counts, above the longest TIMEOUT
-   (65536 x 144.4 us = 9.46 s): when that runs out it ABORTs the op and
-   returns 0.  Needs interrupts on (not from a handler, not inside
+   (65536 x 144.4 us = 9.46 s): when that runs out it ABORTs the op,
+   waits for it to stop (the byte being shifted: at most 36 us, bounded by
+   2 TIMER counts) and returns 0.  Needs interrupts on (not from a handler, not inside
    irq_save).  Under HOSTTEST it steps the mock and fails the test when the
    mock can make no progress. */
 #define SDC_WAIT_BOUND 1800     /* TIMER counts: 10.4 s */
@@ -181,7 +201,8 @@ unsigned sdc_status(void);      /* STATUS */
 #define SDC_TR_START    0x1000  /* | CMD: accepted */
 #define SDC_TR_REFUSED  0x2000  /* | CMD: written, refused */
 #define SDC_TR_BUSY     0x3000  /* | CMD: not written, busy */
-#define SDC_TR_EVENT    0x4000  /* the handler saw DONE / ERR / CD */
+#define SDC_TR_EVENT    0x4000  /* | CMD of the op: the handler saw DONE / ERR / CD */
+#define SDC_TR_KIND     0xF000
 struct sdc_trace_ent {
 	unsigned short time;
 	unsigned short what;

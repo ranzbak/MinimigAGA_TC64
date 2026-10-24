@@ -157,7 +157,15 @@ unsigned mock_card_wr_ok(void);     /* what ACMD22 would answer now */
  * every TIMER advance (mock_timer_step per read, hosttest_advance,
  * mock_timer_spi_rate) is time for the peripheral too.  Each register
  * access of the SD peripheral takes mock_sdc_access_cycles() (16: cfide's
- * clk_28 handshake).  The peripheral runs in that time, byte by byte. */
+ * clk_28 handshake).  The peripheral runs in that time, byte by byte.
+ * So with the default TIMER step (1 count a read) every TIMER read lets
+ * 5.8 ms pass: 13.7 KB at div 2, 290 bytes at div 141.  Code that reads the
+ * TIMER while an op runs sees it end there; sdc.c's trace therefore takes
+ * its timestamp with hosttest_timer_peek() (the value, no time, not
+ * counted in mock_timer_reads()).  Between register accesses without a
+ * TIMER read an op runs at its real speed, and tests that need exact
+ * timing set mock_timer_step(0) and move time with mock_run /
+ * mock_sdc_step. */
 #define MOCK_CLK_HZ        113460000u
 #define MOCK_CYC_PER_TIMER 658629u
 unsigned long long mock_now(void);
@@ -189,6 +197,10 @@ void mock_sdc_refuse_next(void);    /* the next CMD meets the cycle after an op 
    mock_sdc_stall_fatal(0), one TIMER count passes */
 void mock_sdc_on_stall(int (*fn)(void *ctx), void *ctx);
 void mock_sdc_stall_fatal(int on);
+/* FIFO misuse (STATUS 8: a push into a full TX, a pop past RXLVL, the data
+   port during a Gayle op) is a firmware bug: it ends the test (default),
+   or with mock_sdc_misuse_fatal(0) the peripheral does what the RTL does */
+void mock_sdc_misuse_fatal(int on);
 struct mock_sdc_peek {
 	unsigned busy, op, cmd, len, rxlvl, txlvl, txunsent, verified, poisoned,
 	         cs, div, status, irqpend, irqen, count, last, timeout;

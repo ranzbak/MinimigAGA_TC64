@@ -7,6 +7,8 @@
 #include "sdc.h"
 
 volatile unsigned sdc_events;
+volatile unsigned sdc_misuse;
+static unsigned short sdc_cmd;		/* the op the events belong to (trace) */
 struct sdc_trace_ent sdc_trace[SDC_TRACE_N];
 volatile unsigned sdc_trace_head;
 
@@ -15,7 +17,7 @@ static void trace_put(unsigned what, unsigned len, unsigned status, unsigned pen
 {
 	struct sdc_trace_ent *e = &sdc_trace[sdc_trace_head & (SDC_TRACE_N - 1)];
 
-	e->time = TIMER;
+	e->time = SDC_TRACE_TIME();
 	e->what = what;
 	e->len = len;
 	e->status = status;
@@ -40,12 +42,22 @@ static void sdc_irq(void)
 	SDC_W(SDC_IRQACK, p);
 	sdc_events = sdc_events | p;
 	if (p & (SDC_IRQ_DONE | SDC_IRQ_ERR | SDC_IRQ_CD))
-		trace_put(SDC_TR_EVENT, SDC_R(SDC_COUNT), SDC_R(SDC_STATUS), raw);
+		trace_put(SDC_TR_EVENT | sdc_cmd, SDC_R(SDC_COUNT), SDC_R(SDC_STATUS), raw);
+}
+
+/* ABORT, then wait (bounded) until the op stopped: an XFER / wait op ends
+   at the next byte boundary (36 us at the slowest SCK), the rest at once */
+static void abort_wait(void)
+{
+	unsigned long t;
+
+	t = GetTimer(2);
+	while ((SDC_R(SDC_STATUS) & SDC_ST_BUSY) && !CheckTimer(t))
+		;
 }
 
 void sdc_init(void)
 {
-	unsigned long t;
 	uint32_t s;
 
 	SDC_W(SDC_IRQEN, 0);
@@ -55,9 +67,7 @@ void sdc_init(void)
 	   at the next byte boundary (36 us at the slowest SCK), a Gayle op at
 	   once */
 	SDC_W(SDC_CMD, SDC_OP_ABORT);
-	t = GetTimer(2);
-	while ((SDC_R(SDC_STATUS) & SDC_ST_BUSY) && !CheckTimer(t))
-		;
+	abort_wait();
 	SDC_W(SDC_CFG, SDC_DIV_INIT);
 	SDC_W(SDC_WMARK, 0);
 	SDC_W(SDC_CMD, SDC_OP_RX_FLUSH);
@@ -81,6 +91,10 @@ int sdc_start(unsigned cmd, unsigned len)
 		rc = -1;
 		what = SDC_TR_BUSY;
 	} else {
+		/* FIFO misuse since the last accepted CMD: a firmware bug; the
+		   accepted CMD clears it in the peripheral, so count it here */
+		if (st & SDC_ST_MISUSE)
+			sdc_misuse = sdc_misuse + 1;
 		/* a fresh op: no DONE / ERR of an earlier one may stand for it */
 		SDC_W(SDC_IRQACK, SDC_IRQ_DONE | SDC_IRQ_ERR);
 		sdc_events = sdc_events & ~(SDC_IRQ_DONE | SDC_IRQ_ERR);
@@ -93,7 +107,8 @@ int sdc_start(unsigned cmd, unsigned len)
 			SDC_W(SDC_IRQACK, SDC_IRQ_ERR);   /* the refusal's own */
 			rc = -1;
 			what = SDC_TR_REFUSED;
-		}
+		} else if (op != SDC_OP_ABORT || !(st & SDC_ST_BUSY))
+			sdc_cmd = cmd & 0xFFF;	/* an ABORT of a running op: its events stay the op's */
 	}
 	trace_put(what | (cmd & 0xFFF), len, st, 0);
 	irq_restore(s);
@@ -108,6 +123,7 @@ int sdc_wait(unsigned mask)
 	while (!((e = sdc_events) & m)) {
 		if (CheckTimer(t)) {
 			sdc_start(SDC_OP_ABORT, 0);
+			abort_wait();
 			return 0;
 		}
 		SDC_IDLE();

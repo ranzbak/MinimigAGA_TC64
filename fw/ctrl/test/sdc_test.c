@@ -368,19 +368,44 @@ static void t_refuse(void)
 	check("refuse: ABORT idle -> DONE", sdc_wait(SDC_IRQ_DONE), SDC_IRQ_DONE);
 }
 
-static int forked_wait_aborts(void)
+/* fn in a forked child: the signal that ended it, 0 for a normal exit */
+static int forked(void (*fn)(void))
 {
-	pid_t p = fork();
+	pid_t p;
 	int ws;
+	fflush(stdout);
+	p = fork();
 	if (p == 0) {
-		mock_reset();
-		mock_timer_step(0);
-		sdc_init();
-		sdc_wait(SDC_IRQ_DONE);		/* nothing runs: the mock aborts */
+		fn();
 		_exit(0);
 	}
 	if (p < 0 || waitpid(p, &ws, 0) != p) return -1;
 	return WIFSIGNALED(ws) ? WTERMSIG(ws) : 0;
+}
+static void child_wait_nothing(void)
+{
+	mock_reset();
+	mock_timer_step(0);
+	sdc_init();
+	sdc_wait(SDC_IRQ_DONE);		/* nothing runs: the mock aborts */
+}
+static void child_misuse(void)
+{
+	unsigned char b[2] = { 1, 2 };
+	mock_reset();
+	mock_timer_step(0);
+	sdc_init();
+	for (int k = 0; k < 513; k++)
+		sdc_push(b, 2);		/* the 1025th byte: misuse, fatal by default */
+}
+/* the stall hook of the abort test: time passes, one RX byte is popped, so
+   the paused RX op shifts one more byte (in flight when sdc_wait gives up) */
+static int pop_one(void *ctx)
+{
+	(void)ctx;
+	hosttest_advance(2);
+	(void)SDC_R(SDC_RXB);
+	return 1;
 }
 
 static void t_wait(void)
@@ -409,8 +434,7 @@ static void t_wait(void)
 	check("wait: STATUS card bit 0", sdc_status() & SDC_ST_CARD, 0);
 	/* nothing can happen: the mock aborts the test (the firmware bug) */
 	printf("     (a forked child: its \"mock_hw: sdc_wait: ... no progress\" line on stderr is expected)\n");
-	fflush(stdout);
-	check("wait: no progress -> SIGABRT", forked_wait_aborts(), SIGABRT);
+	check("wait: no progress -> SIGABRT", forked(child_wait_nothing), SIGABRT);
 	/* the TIMER bound: an XFER from an empty TX pauses for ever */
 	setup();
 	mock_sdc_stall_fatal(0);
@@ -424,12 +448,46 @@ static void t_wait(void)
 	/* the bound is 1800 TIMER counts (10.4 s): above the longest TIMEOUT,
 	   65535 x 144.4 us = 9.46 s = 1630 counts.  TIMER step 0, one count per
 	   idle call: GetTimer reads T0; CheckTimer is true at the first read
-	   > T0 + 1800, the 1802nd; then the ABORT's trace entry and the
-	   handler's: 1 + 1802 + 2 = 1805 reads */
-	check("wait bound: TIMER reads = 1805", t, 1805);
+	   > T0 + 1800, the 1802nd; then the abort wait's GetTimer (the op was
+	   paused: it stopped at once, no CheckTimer); the trace takes no
+	   TIMER read: 1 + 1802 + 1 = 1804 reads */
+	check("wait bound: TIMER reads = 1804", t, 1804);
 	check("wait bound: then ABORT", sdc_trace[h % SDC_TRACE_N].what, SDC_TR_START | SDC_OP_ABORT);
-	mock_sdc_step();
 	check("wait bound: the op ended aborted", sdc_status() & (SDC_ST_BUSY | SDC_ST_ABORTED), SDC_ST_ABORTED);
+	check("wait bound: its event names the XFER (not the ABORT)",
+	      sdc_trace[(sdc_trace_head - 1) % SDC_TRACE_N].what, SDC_TR_EVENT | SDC_OP_XFER | SDC_X_TX);
+	/* the bound with a byte being shifted: sdc_wait returns only when the
+	   ABORTed op stopped (at the byte boundary, 4096 cycles at div 255) */
+	setup();
+	sdc_select(0);
+	sdc_set_div(255);
+	mock_sdc_on_stall(pop_one, NULL);
+	sdc_start(SDC_OP_XFER | SDC_X_RX, 2047);
+	r = sdc_wait(SDC_IRQ_DONE);
+	mock_sdc_on_stall(NULL, NULL);
+	check("wait bound, byte in flight: returns 0", r, 0);
+	check("wait bound, byte in flight: stopped when it returns", sdc_status() & (SDC_ST_BUSY | SDC_ST_ABORTED), SDC_ST_ABORTED);
+	check("wait bound, byte in flight: the op had not ended by itself", SDC_R(SDC_COUNT) < 2047, 1);
+}
+
+/* Important 1 of the review: with the DEFAULT TIMER step (1 count a read,
+   as mmc_test / hdd_test run) an op must still be running when sdc_start
+   returns: the trace's timestamp is no TIMER read on the host */
+static void t_default_step(void)
+{
+	unsigned r0;
+
+	mock_reset();
+	mock_card_new(2048);
+	sdc_init();
+	sdc_set_div(SDC_DIV_MIN);
+	r0 = mock_timer_reads();
+	check("default step: sdc_start", sdc_start(SDC_OP_XFER, 100), 0);
+	check("default step: still busy after sdc_start", SDC_R(SDC_STATUS) & SDC_ST_BUSY, SDC_ST_BUSY);
+	check("default step: COUNT < 100 then", SDC_R(SDC_COUNT) < 100, 1);
+	check("default step: no TIMER read in sdc_start", mock_timer_reads() - r0, 0);
+	sdc_wait(SDC_IRQ_DONE);
+	check("default step: then it ends", SDC_R(SDC_COUNT), 100);
 }
 
 static void t_watermark(void)
@@ -523,7 +581,7 @@ static void t_trace(void)
 	check("trace: two entries", sdc_trace_head - h, 2);
 	check("trace: start", sdc_trace[h % SDC_TRACE_N].what, SDC_TR_START | SDC_OP_TX_FLUSH);
 	check("trace: start LEN", sdc_trace[h % SDC_TRACE_N].len, 0);
-	check("trace: event", sdc_trace[(h + 1) % SDC_TRACE_N].what, SDC_TR_EVENT);
+	check("trace: event names its op", sdc_trace[(h + 1) % SDC_TRACE_N].what, SDC_TR_EVENT | SDC_OP_TX_FLUSH);
 	check("trace: event IRQPEND has DONE", sdc_trace[(h + 1) % SDC_TRACE_N].irqpend & SDC_IRQ_DONE, SDC_IRQ_DONE);
 	check("trace: time = TIMER", sdc_trace[h % SDC_TRACE_N].time >= 1234, 1);
 	sdc_select(0);
@@ -537,13 +595,17 @@ static void t_trace(void)
 	for (k = 0; k < 20; k++)
 		op(k & 1 ? SDC_OP_RX_FLUSH : SDC_OP_TX_FLUSH, 0);
 	check("trace: head counts every entry", sdc_trace_head - h, 40);
-	check("trace: newest = the last event", sdc_trace[(sdc_trace_head - 1) % SDC_TRACE_N].what, SDC_TR_EVENT);
+	check("trace: newest = the last event (RX_FLUSH)", sdc_trace[(sdc_trace_head - 1) % SDC_TRACE_N].what,
+	      SDC_TR_EVENT | SDC_OP_RX_FLUSH);
 	check("trace: the one before = the last start (RX_FLUSH)",
 	      sdc_trace[(sdc_trace_head - 2) % SDC_TRACE_N].what, SDC_TR_START | SDC_OP_RX_FLUSH);
 	/* the oldest left: entry head - 32 = h + 8, the start of op 4 (TX_FLUSH) */
 	check("trace: oldest left after the wrap",
 	      sdc_trace[sdc_trace_head % SDC_TRACE_N].what, SDC_TR_START | SDC_OP_TX_FLUSH);
 	check("trace: oldest left is op 4", sdc_trace_head - 32 - h, 8);
+	op(SDC_OP_ABORT, 0);
+	check("trace: an idle ABORT's event names the ABORT", sdc_trace[(sdc_trace_head - 1) % SDC_TRACE_N].what,
+	      SDC_TR_EVENT | SDC_OP_ABORT);
 }
 
 /* ---- the peripheral contract (raw registers) ---- */
@@ -845,17 +907,26 @@ static void t_pause(void)
 
 static void t_misuse(void)
 {
-	unsigned k, v;
+	unsigned k, v, h;
 
+	printf("     (a forked child: its \"mock_hw: SD peripheral: FIFO misuse ...\" line on stderr is expected)\n");
+	check("misuse: fatal in the mock by default (SIGABRT)", forked(child_misuse), SIGABRT);
 	setup();
+	mock_sdc_misuse_fatal(0);
 	sdc_select(0);
 	for (k = 0; k < 1025; k++)
 		SDC_W(SDC_TXB, k & 0xFF);
 	check("misuse: TX full at 1024", SDC_R(SDC_TXLVL), 1024);
 	check("misuse: STATUS 8", SDC_R(SDC_STATUS) & SDC_ST_MISUSE, SDC_ST_MISUSE);
 	check("misuse: ERR event", sdc_events & SDC_IRQ_ERR, SDC_IRQ_ERR);
+	v = sdc_misuse;
+	h = sdc_trace_head;
 	op(SDC_OP_TX_FLUSH, 0);
+	check("misuse: sdc_misuse counts it at the next start", sdc_misuse - v, 1);
+	check("misuse: the start's trace entry shows STATUS 8", sdc_trace[h % SDC_TRACE_N].status & SDC_ST_MISUSE, SDC_ST_MISUSE);
 	check("misuse: cleared by an accepted CMD", SDC_R(SDC_STATUS) & SDC_ST_MISUSE, 0);
+	op(SDC_OP_TX_FLUSH, 0);
+	check("misuse: counted once", sdc_misuse - v, 1);
 	v = SDC_R(SDC_RXW);
 	check("misuse: pop of empty RX = 0000", v, 0);
 	check("misuse: pop of empty RX: STATUS 8", SDC_R(SDC_STATUS) & SDC_ST_MISUSE, SDC_ST_MISUSE);
@@ -993,7 +1064,8 @@ static void t_gayle(void)
 	sdc_push(d, 100);
 	check("g2tx: no room for 512 (612 kept) -> refused", sdc_start(SDC_OP_GAYLE_TO_TX, 512), -1);
 	op(SDC_OP_TX_FLUSH, 0);
-	/* held (Amiga pace): the data port is locked meanwhile */
+	/* held (Amiga pace): the data port is locked meanwhile (misuse on purpose) */
+	mock_sdc_misuse_fatal(0);
 	mock_gayle_from(0, d, 512);
 	mock_gayle_hold(1);
 	sdc_start(SDC_OP_GAYLE_TO_TX, 512);
@@ -1161,6 +1233,7 @@ int main(void)
 	t_init();
 	t_refuse();
 	t_wait();
+	t_default_step();
 	t_watermark();
 	t_cfg_fifo();
 	t_trace();
