@@ -30,7 +30,10 @@ open(sys.argv[1], "wb").write(o)' "$run/crc.img"
     fails=0
     # case and its injection plusargs (see tb_sd_model_crc.v)
     for leg in "basic" "wrrej +SD_ERR_WRREJ=2" "wrfail +SD_ERR_WRFAIL=1" \
-               "rdcrc +SD_ERR_RDCRC=3" "noresp +SD_ERR_NORESP=11" "remove"; do
+               "rdcrc +SD_ERR_RDCRC=3" "noresp +SD_ERR_NORESP=11" "remove" \
+               "cmdcrc +SD_ERR_CMDCRC=11" "rdcnt +SD_ERR_RDCRC=2 +SD_ERR_RDCRC_CNT=4" \
+               "nrcnt +SD_ERR_NORESP=11 +SD_ERR_NORESP_CNT=3" "rdcut +SD_ERR_RDCRC=2" \
+               "wrcnt +SD_ERR_WRREJ=1 +SD_ERR_WRREJ_CNT=2 +SD_ERR_WRFAIL=3 +SD_ERR_WRFAIL_CNT=2"; do
         read -r c pa <<< "$leg"
         # shellcheck disable=SC2086
         "$VVP" -N "$run/tb_crc.vvp" +SD_IMG="$run/crc.img" +CASE="$c" $pa "$@" \

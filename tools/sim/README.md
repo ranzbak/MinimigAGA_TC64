@@ -101,12 +101,17 @@ card to `+SD_SAVE`.
 | `+SD_NCR=<n>` | 1 | 0xFF bytes between the command CRC byte and R1 (0..8) |
 | `+SD_INIT_POLLS=<n>` | 2 | ACMD41 polls answered "idle" (R1=01) before ready |
 | `+SD_LOG=1` | 0 | one `SD:` line per command |
-| `+SD_ERR_RDCRC=<n>` | 0 (off) | the n-th CMD17/CMD18 data block the host receives has bit 0 of its first data byte flipped (CRC16 of the true data: a mismatch; the card unchanged); a block dropped before its last CRC byte left (CMD12, CS high) is not counted |
-| `+SD_ERR_WRREJ=<n>` | 0 (off) | the n-th data block the card takes in (CMD24/CMD25) gets data response 0B, not written |
-| `+SD_ERR_WRFAIL=<n>` | 0 (off) | the same with 0D (write error, then busy) |
+| `+SD_ERR_RDCRC=<n>` | 0 (off) | the n-th CMD17/CMD18 data block the host receives has bit 0 of its last data byte flipped (CRC16 of the true data: a mismatch; the card unchanged); a block counts when its last data byte leaves the card, so one cut before that (CMD12, CS high, e.g. the CMD18 block in flight at CMD12) is neither counted nor corrupted |
+| `+SD_ERR_WRREJ=<n>` | 0 (off) | the n-th data block the card takes in (CMD24/CMD25, every block whatever else happens to it) gets data response 0B, not written |
+| `+SD_ERR_WRFAIL=<n>` | 0 (off) | the same with 0D (write error, then busy); on a block WRREJ also hits, WRREJ wins |
 | `+SD_ERR_NORESP=<n>` | 0 (off) | the n-th command frame (CMD0 included) gets no response and has no effect |
+| `+SD_ERR_CMDCRC=<n>` | 0 (off) | the n-th command frame (same count) gets R1 08 (09 while idle) and is not executed, as for a bad CRC7, with or without CMD59; on a command NORESP also hits, NORESP wins |
+| `+SD_ERR_<kind>_CNT=<k>` | 1 | kind = RDCRC, WRREJ, WRFAIL, NORESP, CMDCRC: k consecutive failures |
 
-Each `+SD_ERR_*` fires once; n counts from 1 at time 0 over the whole run.
+n counts events from 1 at time 0 over the whole run. The n-th event and the
+k-1 after it fail; each failure uses up one of the k, so the injection ends
+after exactly k failures (retry exhaustion: e.g. `+SD_ERR_RDCRC=5
++SD_ERR_RDCRC_CNT=4`).
 Task `remove_card` (called hierarchically, `u_sd.remove_card;`): the card is
 gone for the rest of the run, MISO stays 1, nothing it receives is acted on
 or written.
@@ -218,7 +223,12 @@ CRC -> 0B/05, CMD25 x3 + ACMD22 = 3, CMD18, CMD13, CMD9, CMD59(0)),
 `wrrej` (`+SD_ERR_WRREJ=2`: CMD25 x3 -> 05 0B 0B, ACMD22 = 1), `wrfail`
 (`+SD_ERR_WRFAIL=1`), `rdcrc` (`+SD_ERR_RDCRC=3`, a CMD18 block cut by
 CMD12 not counted), `noresp` (`+SD_ERR_NORESP=11`), `remove` (`remove_card`
-mid-read and before a write); every case but `remove` ends with a
+mid-read and before a write), `cmdcrc` (`+SD_ERR_CMDCRC=11`: R1 08, not
+executed), `rdcnt` (`+SD_ERR_RDCRC=2 +SD_ERR_RDCRC_CNT=4`: four bad reads,
+the fifth good), `nrcnt` (`+SD_ERR_NORESP=11 +SD_ERR_NORESP_CNT=3`),
+`rdcut` (a block cut after 100 bytes neither counted nor corrupted, one
+corrupted block, no re-fire), `wrcnt` (`WRREJ=1 CNT=2`, `WRFAIL=3 CNT=2`:
+0B 0B 0D 0D 05); every case but `remove` ends with a
 `remove_card` in the middle of a CMD24 block. Logs in
 `run_${RUNTAG:-wt}/crc_<case>.log`, pass line `=== PASS run_sd_model crc`.
 

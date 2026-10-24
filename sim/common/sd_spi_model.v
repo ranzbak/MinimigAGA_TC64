@@ -13,20 +13,35 @@
 //           +SD_NCR=<n>           0xFF bytes between a command and its R1 (1)
 //           +SD_INIT_POLLS=<n>    ACMD41 polls that answer "idle" (2)
 //           +SD_LOG=1             one line per command
-//           Error injection (each fires once; n counts from 1 at time 0):
+//           Error injection (n counts events from 1 at time 0; the n-th
+//           event and the k-1 after it fail, k = +SD_ERR_<kind>_CNT, 1 by
+//           default; each failing event uses up one of the k, so the
+//           injection ends after k failures):
 //           +SD_ERR_RDCRC=<n>     the n-th CMD17/CMD18 data block the host
-//                                 receives has bit 0 of its first data byte
+//                                 receives has bit 0 of its last data byte
 //                                 flipped (CRC16 of the true data: a
 //                                 mismatch; the card's data unchanged).  A
-//                                 block dropped before its last CRC byte
-//                                 left (CMD12, CS high) is not counted
+//                                 block counts when its last data byte
+//                                 leaves the card: one cut before that
+//                                 (CMD12, CS high; e.g. the CMD18 block in
+//                                 flight when CMD12 arrives) is neither
+//                                 counted nor corrupted
 //           +SD_ERR_WRREJ=<n>     the n-th data block written (CMD24/CMD25,
-//                                 every block the card takes in) gets data
-//                                 response 0B (CRC error), not written
+//                                 every block the card takes in, whatever
+//                                 else happens to it) gets data response 0B
+//                                 (CRC error), not written
 //           +SD_ERR_WRFAIL=<n>    the same with 0D (write error), not written
+//                                 (on a block WRREJ also hits: WRREJ wins,
+//                                 WRFAIL's count is not used up)
 //           +SD_ERR_NORESP=<n>    the n-th command (every 6-byte command
 //                                 frame, CMD0 included) gets no response and
 //                                 has no effect
+//           +SD_ERR_CMDCRC=<n>    the n-th command (same count) gets R1 08
+//                                 (09 while idle) and is not executed, as
+//                                 for a bad CRC7, with or without CMD59
+//                                 (on a command NORESP also hits: NORESP wins)
+//           +SD_ERR_<kind>_CNT=<k>  (RDCRC, WRREJ, WRFAIL, NORESP, CMDCRC)
+//                                 k consecutive failures (1)
 //
 // CRC: every data block sent (CMD17, CMD18, CMD9, ACMD22) carries its real
 // CRC16 (CCITT x^16+x^12+x^5+1, init 0).  CMD59 with arg bit 0 = 1 turns
@@ -54,9 +69,10 @@ module sd_spi_model #(parameter IMG_SECTORS = 65536)
     integer   qh, qt;                   // head (pop) / tail (push)
     reg [7:0] wbuf [0:511];
 
-    reg [1:0] qm  [0:QSZ-1];            // 1: data block token, 2: its last CRC byte
+    reg       qm  [0:QSZ-1];            // 1: last data byte of a CMD17/CMD18 block
     integer tok_dly, busy_n, ncr, init_polls, log_on;
-    integer err_rdcrc, err_wrrej, err_wrfail, err_noresp;
+    integer err_rdcrc, err_wrrej, err_wrfail, err_noresp, err_cmdcrc;
+    integer left_rdcrc, left_wrrej, left_wrfail, left_noresp, left_cmdcrc;   // failures still to come
     reg [8*1024-1:0] imgname, savename;   // plusarg paths, up to 1024 characters
     integer fd, k, nread;
 
@@ -85,10 +101,9 @@ module sd_spi_model #(parameter IMG_SECTORS = 65536)
     reg [15:0] wcrc;                    // CRC16 of the block being received
     reg [15:0] wrx;                     // its CRC bytes as received
     reg [7:0] werr;                     // CMD25: 0, or the error response that stopped it
-    reg [7:0] wresp;
+    reg [7:0] wresp, winj;
     integer   wr_ok;                    // blocks written with 05 by the last CMD25 (ACMD22)
     integer   cmd_n, rd_blk_n, wr_blk_n;   // commands / read blocks / written blocks so far
-    reg       rd_inblk;                 // a counted read block is being sent
     reg       gone;                     // remove_card
 
     initial begin
@@ -98,11 +113,18 @@ module sd_spi_model #(parameter IMG_SECTORS = 65536)
         if ($value$plusargs("SD_NCR=%d", ncr)) ;
         if ($value$plusargs("SD_INIT_POLLS=%d", init_polls)) ;
         if ($value$plusargs("SD_LOG=%d", log_on)) ;
-        err_rdcrc = 0; err_wrrej = 0; err_wrfail = 0; err_noresp = 0;
+        err_rdcrc = 0; err_wrrej = 0; err_wrfail = 0; err_noresp = 0; err_cmdcrc = 0;
+        left_rdcrc = 1; left_wrrej = 1; left_wrfail = 1; left_noresp = 1; left_cmdcrc = 1;
         if ($value$plusargs("SD_ERR_RDCRC=%d", err_rdcrc)) ;
         if ($value$plusargs("SD_ERR_WRREJ=%d", err_wrrej)) ;
         if ($value$plusargs("SD_ERR_WRFAIL=%d", err_wrfail)) ;
         if ($value$plusargs("SD_ERR_NORESP=%d", err_noresp)) ;
+        if ($value$plusargs("SD_ERR_CMDCRC=%d", err_cmdcrc)) ;
+        if ($value$plusargs("SD_ERR_RDCRC_CNT=%d", left_rdcrc)) ;
+        if ($value$plusargs("SD_ERR_WRREJ_CNT=%d", left_wrrej)) ;
+        if ($value$plusargs("SD_ERR_WRFAIL_CNT=%d", left_wrfail)) ;
+        if ($value$plusargs("SD_ERR_NORESP_CNT=%d", left_noresp)) ;
+        if ($value$plusargs("SD_ERR_CMDCRC_CNT=%d", left_cmdcrc)) ;
         nread = 0;
         if ($value$plusargs("SD_IMG=%s", imgname)) begin
             fd = $fopen(imgname, "rb");
@@ -119,9 +141,9 @@ module sd_spi_model #(parameter IMG_SECTORS = 65536)
         qh = 0; qt = 0; bitcnt = 0; cmdcnt = 0; txb = 8'hFF; miso = 1'b1;
         app_cmd = 0; idle = 1; ready = 0; polls = 0;
         rd_multi = 0; wstate = 0; wmulti = 0; rd_lba = 0; wlba = 0; wcnt = 0;
-        crc_on = 0; wcrc = 16'd0; wrx = 16'd0; werr = 8'h00; wresp = 8'h00; wr_ok = 0;
-        cmd_n = 0; rd_blk_n = 0; wr_blk_n = 0; rd_inblk = 0; gone = 0;
-        for (k = 0; k < QSZ; k = k + 1) qm[k] = 2'd0;
+        crc_on = 0; wcrc = 16'd0; wrx = 16'd0; werr = 8'h00; wresp = 8'h00; winj = 8'h00; wr_ok = 0;
+        cmd_n = 0; rd_blk_n = 0; wr_blk_n = 0; gone = 0;
+        for (k = 0; k < QSZ; k = k + 1) qm[k] = 1'b0;
     end
 
     // ---- CRCs (SD spec: CRC7 x^7+x^3+1, CRC16 CCITT x^16+x^12+x^5+1, init 0)
@@ -177,20 +199,17 @@ module sd_spi_model #(parameter IMG_SECTORS = 65536)
     endtask
 
     // ---- tx queue ----
-    task push_m(input [7:0] b, input [1:0] m);
+    task push_m(input [7:0] b, input m);
         begin q[qt % QSZ] = b; qm[qt % QSZ] = m; qt = qt + 1; end
     endtask
 
     task push(input [7:0] b);
-        begin push_m(b, 2'd0); end
+        begin push_m(b, 1'b0); end
     endtask
 
-    // drop everything not yet sent; a read block cut short is not counted
+    // drop everything not yet sent
     task drop_q;
-        begin
-            if (rd_inblk) begin rd_blk_n = rd_blk_n - 1; rd_inblk = 0; end
-            qh = qt;
-        end
+        begin qh = qt; end
     endtask
 
     task push_r1(input [7:0] r);
@@ -215,12 +234,12 @@ module sd_spi_model #(parameter IMG_SECTORS = 65536)
         begin
             c = 16'd0;
             for (n = 0; n < tok_dly; n = n + 1) push(8'hFF);
-            push_m(8'hFE, 2'd1);
+            push(8'hFE);
             for (n = 0; n < 512; n = n + 1) begin
-                push(mem[lba * 512 + n]);
+                push_m(mem[lba * 512 + n], n == 511);
                 c = crc16(c, mem[lba * 512 + n]);
             end
-            push(c[15:8]); push_m(c[7:0], 2'd2);
+            push(c[15:8]); push(c[7:0]);
         end
     endtask
 
@@ -238,8 +257,13 @@ module sd_spi_model #(parameter IMG_SECTORS = 65536)
             c7 = crc7(crc7(crc7(crc7(crc7(7'd0, cmdb[0]), cmdb[1]), cmdb[2]), cmdb[3]), cmdb[4]);
             if (log_on)
                 $display("SD: %0t %0sCMD%0d arg=%h cs=%b", $time, was_app ? "A" : "", cidx, carg, cs_n);
-            if (cmd_n == err_noresp) begin
+            if (err_noresp > 0 && cmd_n >= err_noresp && left_noresp > 0) begin
+                left_noresp = left_noresp - 1;
                 if (log_on) $display("SD: %0t no response (SD_ERR_NORESP=%0d)", $time, err_noresp);
+            end else if (err_cmdcrc > 0 && cmd_n >= err_cmdcrc && left_cmdcrc > 0) begin
+                left_cmdcrc = left_cmdcrc - 1;
+                if (log_on) $display("SD: %0t R1 CRC error (SD_ERR_CMDCRC=%0d)", $time, err_cmdcrc);
+                push_r1(idle ? 8'h09 : 8'h08);
             end else if (crc_on && cmdb[5][7:1] != c7) begin
                 if (log_on) $display("SD: %0t CRC7 error: got %h want %h", $time, cmdb[5][7:1], c7);
                 push_r1(idle ? 8'h09 : 8'h08);
@@ -357,10 +381,15 @@ module sd_spi_model #(parameter IMG_SECTORS = 65536)
                         wcnt = wcnt + 1;
                         if (wcnt == 2) begin
                             wr_blk_n = wr_blk_n + 1;
+                            winj = 8'h00;       // injection: every block is an event
+                            if (err_wrrej > 0 && wr_blk_n >= err_wrrej && left_wrrej > 0) begin
+                                left_wrrej = left_wrrej - 1; winj = 8'h0B;
+                            end else if (err_wrfail > 0 && wr_blk_n >= err_wrfail && left_wrfail > 0) begin
+                                left_wrfail = left_wrfail - 1; winj = 8'h0D;
+                            end
                             if (werr != 8'h00)                    wresp = werr;
                             else if (crc_on && wrx != wcrc)       wresp = 8'h0B;
-                            else if (wr_blk_n == err_wrrej)       wresp = 8'h0B;
-                            else if (wr_blk_n == err_wrfail)      wresp = 8'h0D;
+                            else if (winj != 8'h00)               wresp = winj;
                             else                                  wresp = 8'h05;
                             if (wresp == 8'h05) begin
                                 for (n = 0; n < 512; n = n + 1) mem[wlba * 512 + n] = wbuf[n];
@@ -396,13 +425,14 @@ module sd_spi_model #(parameter IMG_SECTORS = 65536)
             end
             if (qh != qt) begin
                 txb = q[qh % QSZ];
-                if (qm[qh % QSZ] == 2'd1) begin         // a data block starts
-                    rd_blk_n = rd_blk_n + 1; rd_inblk = 1;
-                    if (rd_blk_n == err_rdcrc) begin
-                        q[(qh + 1) % QSZ] = q[(qh + 1) % QSZ] ^ 8'h01;
+                if (qm[qh % QSZ]) begin                 // a read block's last data byte
+                    rd_blk_n = rd_blk_n + 1;
+                    if (err_rdcrc > 0 && rd_blk_n >= err_rdcrc && left_rdcrc > 0) begin
+                        left_rdcrc = left_rdcrc - 1;
+                        txb = txb ^ 8'h01;              // not shifted out yet
                         if (log_on) $display("SD: %0t read block %0d: bit flipped (SD_ERR_RDCRC)", $time, rd_blk_n);
                     end
-                end else if (qm[qh % QSZ] == 2'd2) rd_inblk = 0;
+                end
                 qh = qh + 1;
             end else txb = 8'hFF;
         end

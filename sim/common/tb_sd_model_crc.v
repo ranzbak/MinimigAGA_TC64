@@ -26,6 +26,17 @@
 //   remove  remove_card() 100 bytes into a CMD17 block and 300 bytes into a
 //           CMD24 block: MISO stays 1 from then on (also across CS edges)
 //           and the card is not written
+//   cmdcrc  +SD_ERR_CMDCRC=11: the 11th command (CMD17) gets R1 08 and sends
+//           no data; the same CMD17 again works
+//   rdcnt   +SD_ERR_RDCRC=2 +SD_ERR_RDCRC_CNT=4: block 0 good, then four
+//           CMD17s of block 9 bad (one bit each), the fifth good
+//   nrcnt   +SD_ERR_NORESP=11 +SD_ERR_NORESP_CNT=3: three CMD17s
+//           unanswered, the fourth answered
+//   rdcut   +SD_ERR_RDCRC=2: a CMD18 block cut by CMD12 after 100 bytes is
+//           not counted (its bytes clean); the next block (block 9, the 2nd
+//           counted) has one bit flipped, block 9 again is good (no re-fire)
+//   wrcnt   +SD_ERR_WRREJ=1 +SD_ERR_WRREJ_CNT=2 +SD_ERR_WRFAIL=3
+//           +SD_ERR_WRFAIL_CNT=2: five CMD24s -> 0B 0B 0D 0D 05
 // Every case but remove ends with a remove_card 300 bytes into a CMD24
 // block: MISO 1 from then on, the block not written.
 module tb_sd_model_crc;
@@ -518,6 +529,94 @@ module tb_sd_model_crc;
             cs_n = 1'b1; spi(8'hFF);
             check_mem_orig(6, "remove: block 6 written after removal");
             $display("remove_card: MISO 1, nothing written");
+        end else if (tcase == "cmdcrc") begin
+            init_card(1'b1);
+            cs_n = 1'b0;
+            cmd(6'd17, 2);                              // command 11
+            if (r1 !== 8'h08) begin fail("cmdcrc: 11th command R1 != 08"); $display("  R1=%h", r1); end
+            ones = 0;
+            for (i = 0; i < 1100; i = i + 1) begin spi(8'hFF); if (rxb == 8'hFF) ones = ones + 1; end
+            if (ones != 1100) fail("cmdcrc: 11th command executed");
+            cs_n = 1'b1;
+            spi(8'hFF);
+            rd1(2);
+            check_sec(2, 1'b0, "cmdcrc: block 2 data");
+            if (rcrc !== ccrc) fail("cmdcrc: block 2 CRC");
+            $display("SD_ERR_CMDCRC=11: R1 08, not executed, then the repeat answered");
+        end else if (tcase == "rdcnt") begin
+            init_card(1'b1);
+            rd1(0);
+            if (rcrc !== ccrc) fail("rdcnt: block 0 (1st) CRC");
+            for (s = 0; s < 5; s = s + 1) begin
+                rd1(9);
+                ones = 0;
+                for (i = 0; i < 512; i = i + 1)
+                    for (j = 0; j < 8; j = j + 1)
+                        if (sec[i][j] !== orig[9*512 + i][j]) ones = ones + 1;
+                if (s < 4 && (rcrc === ccrc || ones != 1)) begin
+                    fail("rdcnt: read not corrupted"); $display("  read %0d: %0d bits", s + 2, ones);
+                end
+                if (s == 4 && (rcrc !== ccrc || ones != 0)) begin
+                    fail("rdcnt: 5th read of block 9 not clean"); $display("  %0d bits", ones);
+                end
+            end
+            $display("SD_ERR_RDCRC=2 CNT=4: four bad blocks, the fifth good");
+        end else if (tcase == "nrcnt") begin
+            init_card(1'b1);
+            for (s = 0; s < 3; s = s + 1) begin
+                cs_n = 1'b0;
+                cmd(6'd17, 2);                          // commands 11, 12, 13
+                if (r1 !== 8'hFF) begin fail("nrcnt: command answered"); $display("  try %0d R1=%h", s, r1); end
+                ones = 0;
+                for (i = 0; i < 1100; i = i + 1) begin spi(8'hFF); if (rxb == 8'hFF) ones = ones + 1; end
+                if (ones != 1100) fail("nrcnt: command executed");
+                cs_n = 1'b1;
+                spi(8'hFF);
+            end
+            rd1(2);                                     // command 14
+            check_sec(2, 1'b0, "nrcnt: block 2 data");
+            if (rcrc !== ccrc) fail("nrcnt: block 2 CRC");
+            $display("SD_ERR_NORESP=11 CNT=3: three unanswered, the fourth answered");
+        end else if (tcase == "rdcut") begin
+            init_card(1'b1);
+            rd1(0);                                     // 1st: good
+            if (rcrc !== ccrc) fail("rdcut: block 0 CRC");
+            cs_n = 1'b0;
+            cmd(6'd18, 1);                              // cut: not counted
+            wait_token;
+            ones = 0;
+            for (i = 0; i < 100; i = i + 1) begin spi(8'hFF); if (rxb !== orig[512 + i]) ones = ones + 1; end
+            if (ones != 0) fail("rdcut: cut block's bytes corrupted");
+            cmd(6'd12, 0);
+            j = 0; spi(8'hFF);
+            while (rxb == 8'h00 && j < 100000) begin spi(8'hFF); j = j + 1; end
+            cs_n = 1'b1;
+            spi(8'hFF);
+            rd1(9);                                     // 2nd counted: corrupted
+            ones = 0;
+            for (i = 0; i < 512; i = i + 1)
+                for (j = 0; j < 8; j = j + 1)
+                    if (sec[i][j] !== orig[9*512 + i][j]) ones = ones + 1;
+            if (rcrc === ccrc || ones != 1) begin fail("rdcut: 2nd counted block not corrupted"); $display("  %0d bits", ones); end
+            rd1(9);                                     // fired once: clean
+            check_sec(9, 1'b0, "rdcut: block 9 re-corrupted");
+            if (rcrc !== ccrc) fail("rdcut: block 9 again CRC");
+            $display("SD_ERR_RDCRC=2: cut block not counted, one corrupted block, no re-fire");
+        end else if (tcase == "wrcnt") begin
+            init_card(1'b1);
+            for (s = 0; s < 5; s = s + 1) begin
+                fill_wb(70 + s);
+                wr1(30 + s, 1'b1);
+                resp[s] = dresp;
+            end
+            $display("WRREJ=1 CNT=2, WRFAIL=3 CNT=2: %h %h %h %h %h", resp[0], resp[1], resp[2], resp[3], resp[4]);
+            if ((resp[0] & 8'h1F) !== 8'h0B || (resp[1] & 8'h1F) !== 8'h0B) fail("wrcnt: blocks 1-2 not 0B");
+            if ((resp[2] & 8'h1F) !== 8'h0D || (resp[3] & 8'h1F) !== 8'h0D) fail("wrcnt: blocks 3-4 not 0D");
+            if ((resp[4] & 8'h1F) !== 8'h05) fail("wrcnt: block 5 not 05");
+            for (s = 0; s < 4; s = s + 1) check_mem_orig(30 + s, "wrcnt: failed block written");
+            rd1(34);
+            fill_wb(74);
+            check_sec(34, 1'b1, "wrcnt: block 34 read back");
         end else begin
             fail("unknown +CASE");
         end
