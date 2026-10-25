@@ -24,6 +24,8 @@
 #   FREECORE=1 ./run.sh ...         the wrapper's ap040_free_core = 1 (findings/unfreeze/plan.md)
 #   FASTER=1 CPU_RATIO=2 ./run.sh --ap040   the AP68040 faster core at 56.72 MHz (ap040_faster)
 #   GLNET=<file> FASTER=1 ...                ... Vivado's netlist of the bridge and core instead
+#                                            (tools/vivado/glnet_bridge.tcl + glnet_rename.py make it)
+#   XDEFS="-d FASTNOICHIP" FASTER=1 ...      ... chip code kept out of the I-cache (ichip_ok = 0)
 #   FASTCHIP=1 ./run.sh --ap040 --chipbus   Chip slots "Fast" (findings/fastslot)
 #   FREECORE=1 FCMUTANT=ack|walk|data ./run.sh ...  one free-core qualification undone; MUST fail
 #   XDEFS="-d STOREBUF=1 -d SBMMU -d POSTCHIP=1 -d POSTCI=1 -d CWFF ..." ./run.sh ...  extra xelab defines (core switches;

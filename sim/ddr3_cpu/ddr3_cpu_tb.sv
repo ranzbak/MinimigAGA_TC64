@@ -980,8 +980,13 @@ TG68K #(.cpu_clk_ratio(`CPU_RATIO), .chip32(CHIP32_GEN)) tg68k (
     .turbochipram   (turbochipram     ),
     .fastchip       (fastchip         ),
     // 2 MB chip RAM, no ROM overlay: the faster core caches code from chip
-    // RAM (TG68K.vhd ap040_fast_ichip; findings/aga-perf/fix.md)
+    // RAM (TG68K.vhd ap040_fast_ichip; findings/aga-perf/fix.md).
+    // XDEFS="-d FASTNOICHIP": chip code stays out of the cache, as before
+`ifdef FASTNOICHIP
+    .ichip_ok       (1'b0             ),
+`else
     .ichip_ok       (1'b1             ),
+`endif
     .turbokick      (1'b0             ),
     .cache_inhibit  (cache_inhibit    ),
     .cacheline_clr  (cacheline_clr    ),
@@ -1914,6 +1919,10 @@ initial begin
   timed_out = 1'b1;
 end
 
+`ifdef AP040_FASTER
+// (the ICHIP counters, declared before main reports them; counted below)
+integer ic_fetch = 0, ic_fcach = 0, ic_chip = 0, ic_ccach = 0, ic_xinv = 0;
+`endif
 initial begin : main
   nfail     = 0;
   bd_errs   = 0;
@@ -2195,6 +2204,16 @@ initial begin : main
                cb_rel_n ? cb_l2r_sum / cb_rel_n : 0, cb_rel_n);
     end
   end
+`ifdef AP040_FASTER
+  $display("ICHIP: %0d instruction-fetch transfers, %0d cacheable; from chip RAM %0d, %0d cacheable; %0d I-cache invalidations pushed",
+           ic_fetch, ic_fcach, ic_chip, ic_ccach, ic_xinv);
+`ifndef FASTNOICHIP
+  if (ic_chip > 0 && ic_ccach == 0) begin
+    nfail = nfail + 1;
+    $display("DDR3 CPU TB: FAIL  ICHIP: no instruction fetch from chip RAM was cacheable (ichip_ok / ap040_fast_ichip plumbing)");
+  end
+`endif
+`endif
   $display("CHIP32: %0d wide chipset cycles, %0d narrow, %0d bad (chip32=%0d turbochip=%0d)",
            c32_wide, c32_narrow, c32_bad, CHIP32_GEN, turbochipram);
   if (c32_bad != 0) begin
@@ -2226,6 +2245,25 @@ end
 // the bridge's transfers, while the program is in phase FTPH (default 5),
 // at most FTMAX lines.  For the dual-issue hunt.
 //-----------------------------------------------------------------
+`ifdef AP040_FASTER
+// ICHIP (findings/aga-perf/fix.md): the bridge's instruction fetches, how
+// many it let into the cache (mem_cach), those from chip RAM, and the
+// instruction-cache invalidations it pushed -- the wrapper's ichip_ok
+// plumbing must make chip-RAM code cacheable.  Ports only: RTL and GLNET.
+always @(posedge ddr3_cpu_tb.tg68k.g_ap040.g_fast.ap040.clk) begin
+  if (ddr3_cpu_tb.tg68k.g_ap040.g_fast.ap040.xinv_out === 1'b1) ic_xinv = ic_xinv + 1;
+  if (ddr3_cpu_tb.tg68k.g_ap040.g_fast.ap040.mem_ack === 1'b1 &&
+      ddr3_cpu_tb.tg68k.g_ap040.g_fast.ap040.mem_instr === 1'b1 &&
+      ddr3_cpu_tb.tg68k.g_ap040.g_fast.ap040.mem_write === 1'b0) begin
+    ic_fetch = ic_fetch + 1;
+    if (ddr3_cpu_tb.tg68k.g_ap040.g_fast.ap040.mem_cach === 1'b1) ic_fcach = ic_fcach + 1;
+    if (ddr3_cpu_tb.tg68k.g_ap040.g_fast.ap040.mem_addr < 32'h0020_0000) begin
+      ic_chip = ic_chip + 1;
+      if (ddr3_cpu_tb.tg68k.g_ap040.g_fast.ap040.mem_cach === 1'b1) ic_ccach = ic_ccach + 1;
+    end
+  end
+end
+`endif
 `ifdef GLNET
 // a netlist's bridge keeps its ports: its master-port transfers (+GLTRACE,
 // from phase GLPH), the bus-side view of a hang
