@@ -70,15 +70,17 @@ on). As on a real 68040, those need an FPU emulation library such as
 
 1. Get the bitstream onto the board: build it ([doc/building.md](doc/building.md)),
    then load it over JTAG or write it to the board's flash with Vivado.
-2. Prepare a FAT32 SD card with the OSD firmware `RV32OSDA.BIN` and a Kickstart
-   ROM: [doc/getting-started.md](doc/getting-started.md). The firmware is
+2. Prepare a FAT32 SD card with the OSD firmware `RV32OSDB.BIN` and a Kickstart
+   ROM: [doc/getting-started.md](doc/getting-started.md) (bitstreams from
+   before the SD card peripheral load `RV32OSDA.BIN`; keep both files on the
+   card to boot either). The firmware is
    built with `make -C fw/ctrl` after a one-time toolchain install
    ([doc/building.md](doc/building.md#6-building-the-osd-firmware)):
 
    ```bash
    bash tools/riscv/fetch-xpack.sh     # once: the pinned RISC-V gcc into ~/opt
    make -C fw/ctrl_boot && make -C fw/ctrl
-   cp fw/ctrl/build/RV32OSDA.BIN /path/to/sdcard/
+   cp fw/ctrl/build/RV32OSDB.BIN /path/to/sdcard/
    ```
 3. Boot, press **F12** for the menu, pick a hard disk image or a floppy.
 4. For a Workbench with the FPU, MMU and RTG screen working:

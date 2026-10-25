@@ -116,6 +116,12 @@ passes (checked 2026-10-24).
   in the shared 8 KB boot RAM); today `_end` is `0x1040`.
 - The firmware binary has no header; `_start` must stay at byte 0.  The
   lock-step version therefore goes in an 8-byte trailer (plan Task 12).
+- The firmware file of this chain is `RV32OSDB.BIN` (Paul, 2026-10-25, Task
+  13b; written once in `fw/ctrl/fwname.mk`, read by the firmware build, the
+  boot ROM's `OSDNAME` and the sims; `make -C fw/ctrl check` (i) checks the
+  committed boot ROM against it).  Bitstreams with the card on cfide's SPI
+  load `RV32OSDA.BIN`, so one card boots both: the new file goes next to the
+  old one, not in its place (Paul puts the files on his cards).
 - Card detect: `FPGA_SD_SW`, pin **F23, bank 15**, low = inserted, 10 k
   pull-up + 100 nF on the board; `sd_m_cdet` has no `PACKAGE_PIN` yet.
 - Board SD wiring: 10 k pull-ups on CMD, DAT0-3 and CLK; card VDD hard-wired

@@ -120,7 +120,8 @@ bash sim/l3/run.sh compare sx s
 
 `run.sh <scenario>` builds the firmware from `fw/ctrl` into the run
 directory under a date shim (so two runs of one tree boot the same image;
-`FW=<RV32OSDA.BIN>` takes another one), builds the card into it
+`FW=<image>` takes another one; on the card it is `RV32OSDB.BIN`, the name
+of `fw/ctrl/fwname.mk`), builds the card into it
 (`sim/l3/card`), builds the bench, runs it and then the scenario's checks,
 and prints `=== <scenario> PASS` or `FAILED` (exit 0 / 1). A step that
 fails (firmware, card, conversion, build) ends the run at once with
@@ -146,9 +147,9 @@ write streams `fdd_wr_<cyl>_<head>.hex`, `card_saved.img`,
 
 ## boot
 
-`boot` boots the `boot` card (`RV32OSDA.BIN`, `MINMGAR.CFG`, the legacy
+`boot` boots the `boot` card (`RV32OSDB.BIN`, `MINMGAR.CFG`, the legacy
 `MINMGAA.CFG`, `KICK.ROM`) with the TIMER at 1 (`TICKDIV` 1): the boot ROM
-loads `RV32OSDA.BIN`, the firmware runs `MMC_Init`, `LoadConfiguration`
+loads `RV32OSDB.BIN` (`RV32OSDA.BIN` until SD card engine Task 13b), the firmware runs `MMC_Init`, `LoadConfiguration`
 (finds `MINMGAR.CFG`), `fpga_init` against the real userio_osd, loads the
 kickstart and releases the Amiga, then enters its main loop. The main-loop
 milestone is the first HandleFpga frame (`10` with six 00 bytes); the run
@@ -1524,8 +1525,9 @@ between paula_floppy and gayle (`tb_l3.v` `SD_ENGINE`, wired as
 through it, so on this tree the scenarios without the engine stop in the
 ROM's `SD init` (VERSION 0): `sdc_boot`, `sdc_boot_short` and `sdc_hdd` are
 `boot`, `boot_short` and `hdd` on the engine, the full-system test of the
-lock-step pair (the committed boot ROM and `RV32OSDA.BIN` from the same
-tree, with its `SDCV` trailer).
+lock-step pair (the committed boot ROM and `RV32OSDB.BIN` from the same
+tree, with its `SDCV` trailer; the name is `fw/ctrl/fwname.mk`'s since Task
+13b, the ROM's line `file "RV32OSDBBIN" found`).
 
 | run.sh | bench `+SCENARIO` | card | timeout (`clk_114`) |
 |---|---|---|---|
@@ -1902,7 +1904,7 @@ simulated seconds and cycles as it ends. Every run takes the same
 firmware image. Without `FW`, `grid.sh` builds it from the tree at its
 start, as `run.sh` does (`fw/ctrl` under the `L3_DATE` date shim), into
 `sim/l3/run_<tag>_fw/fwrv`, and refuses to start if that directory
-exists. To reuse an image, pass its path: `FW=<RV32OSDA.BIN> bash
+exists. To reuse an image, pass its path: `FW=<image> bash
 sim/l3/grid.sh <tag>`. `grid_<tag>.txt` names the image, whether it was
 built or given, and its sha256 (the Phase 4 tree built `RV32OSDA.BIN`
 17bf2563..., the image of Task 19's `p4g`; Task 19's run directories are
@@ -1991,14 +1993,14 @@ bash tools/riscv/check-toolchain.sh
 make -C fw/ctrl
 ```
 
-The cards need `fw/ctrl/build/RV32OSDA.BIN` (the last line).
+The cards need `fw/ctrl/build/RV32OSDB.BIN` (the last line).
 
 Build the cards and run the proof (one minute; output in
 `sim/l3/card/build/`, `B=<dir>` puts it elsewhere):
 
 ```sh
-make -C sim/l3/card cards FWRV=fw/ctrl/build/RV32OSDA.BIN
-make -C sim/l3/card check FWRV=fw/ctrl/build/RV32OSDA.BIN
+make -C sim/l3/card cards FWRV=fw/ctrl/build/RV32OSDB.BIN
+make -C sim/l3/card check FWRV=fw/ctrl/build/RV32OSDB.BIN
 ```
 
 `check` builds every card twice, two seconds apart, in two directories and
@@ -2007,19 +2009,21 @@ directory with `mdir` against the names the card should hold; reads the config
 files back from the images and compares `cfgconv --check` with the field
 table `gen/mkcfg.py` was given; prints the CHS of `SYNTH.HDF` and requires
 more than 255 cylinders; and compares `manifest.txt` with a fresh build
-with a stand-in `RV32OSDA.BIN` (`gen/mkblob.py`, so the manifest does not
-change with a firmware build). It ends with `check PASS`. The bytes of `TEST.ISO` depend on the xorriso version (the committed manifest was made with 1.5.6): on another version `check` can fail with "manifest.txt is stale", and `make -C sim/l3/card manifest` regenerates it. After a change to a generator,
+with a stand-in `RV32OSDB.BIN` (`gen/mkblob.py`, so the manifest does not
+change with a firmware build; its content seed is still `STANDIN-RV32OSDA`,
+so its line kept its size and sha256 when Task 13b renamed the file, and the
+card images differ from the earlier ones only in that directory entry). It ends with `check PASS`. The bytes of `TEST.ISO` depend on the xorriso version (the committed manifest was made with 1.5.6): on another version `check` can fail with "manifest.txt is stale", and `make -C sim/l3/card manifest` regenerates it. After a change to a generator,
 `make -C sim/l3/card manifest` rewrites `manifest.txt`.
 
 One card, with another firmware image: put it in its own `B=` directory
 (`make` does not rebuild an image whose name has not changed):
 
 ```sh
-make -C sim/l3/card hdd B=build_real FWRV=path/to/RV32OSDA.BIN
+make -C sim/l3/card hdd B=build_real FWRV=path/to/RV32OSDB.BIN
 mdir -i sim/l3/card/build_real/hdd.img@@1048576 ::
 ```
 
-| Card | Files (all cards also hold `RV32OSDA.BIN` and `KICK.ROM`) |
+| Card | Files (all cards also hold the firmware as `RV32OSDB.BIN`, the name of `fw/ctrl/fwname.mk`, and `KICK.ROM`) |
 |---|---|
 | `boot` | `MINMGAR.CFG` (RISC-V, little-endian), `MINMGAA.CFG` (the previous firmware's, big-endian: the RV firmware loads `MINMGAR.CFG` and converts `MINMGAA.CFG` only when that is missing) |
 | `bootbecfg` | only `MINMGAA.CFG`: the RISC-V first-boot conversion path (no scenario boots it yet) |

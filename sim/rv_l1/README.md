@@ -461,7 +461,7 @@ change; the host tests `cue_test`, `cdaudio_test`, `atapi_test` and
 |---|---|
 | `cdaudio.c` ring writes (`zero`, `copy`, `scale`, `produce`, `fill`) | `uint8_t` stores only; samples stay 16-bit little endian (red book) in the ring, `scale` reads and writes them byte by byte (`p[i] \| p[i + 1] << 8`): neutral, the same bytes on a CPU of either byte order |
 | `CD_AudioPoll` / `cda_poll` timing | TIMER units, the same on both CPUs: one count = 256 x 643 `clk_28` = 5.804 ms = 256 frames at 44.1 kHz (cfide's `timecnt`, not CPU speed); `CDA_HALF_UNITS` = 32 counts per 32 KB half (8192 frames); the 16-bit TIMER wrap is masked (`& 0xFFFF`) |
-| `cda_port_ring()` | `(uint8_t *)AUDIO_BUFFER` = 0x70000; `fw/ctrl/arch/firmware.ld` asserts `_end < 0x70000` (today `_end` = 0x270ac in `build/RV32OSDA.map`) |
+| `cda_port_ring()` | `(uint8_t *)AUDIO_BUFFER` = 0x70000; `fw/ctrl/arch/firmware.ld` asserts `_end < 0x70000` (today `_end` = 0x270ac in `build/RV32OSDB.map`) |
 | `cdrom.c` `CD_TIMEOUT` | 10000 "ms" through `GetTimer`/`CheckTimer` = 10000 TIMER counts = 58 s on the board, on both CPUs (parity; the 16-bit window of `CheckTimer` allows up to 32767) |
 | `cdrom.c` `cd_cue` | `static struct cue_parser` (0x910 = 2320 bytes in the map): stays static, the stack is still the 8 KB boot BRAM |
 | `cd_identify` / `atapi_identify` | words built from values (`ata_string` puts the first character in bits 15:8) and sent low byte first byte by byte: neutral (unlike `hdd.c`'s `memcpy`'d strings, Task 12) |

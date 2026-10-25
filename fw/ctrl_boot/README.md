@@ -37,10 +37,12 @@ All commands from the repository root.
     sudo apt install mtools dosfstools fdisk python3
     make -C fw/ctrl
     make -C fw/ctrl_boot test
-    # 4. the boot ROM on the RTL (Verilator, about 2 minutes for the three)
+    # 4. the boot ROM on the RTL (Verilator, about 2 minutes for the four;
+    #    each RUNTAG names a fresh run directory)
     SIM=verilator RUNTAG=boot  bash sim/host_bridge/run.sh boot
     SIM=verilator RUNTAG=bootn bash sim/host_bridge/run.sh boot_nofile
     SIM=verilator RUNTAG=bootm bash sim/host_bridge/run.sh boot_mismatch
+    SIM=verilator RUNTAG=bootb bash sim/host_bridge/run.sh boot_both
 
 `make` targets in `fw/ctrl_boot`:
 
@@ -250,6 +252,6 @@ superfloppy with a 40000-byte file. The names come from
 `fw/ctrl/fwname.mk` (`test/Makefile` includes it).
 The card path in `spi.c` is not covered by the host tests (it needs the
 peripheral); the L2 boot runs (`sim/host_bridge` `boot`, `boot_nofile`,
-`boot_mismatch`: `sdcard_spi.v` with the SD model of `sim/common` on its
+`boot_mismatch`, `boot_both`: `sdcard_spi.v` with the SD model of `sim/common` on its
 pins, CRC on) run the committed ROM on the RTL; the full system (L3,
 `sim/l3` `sdc_boot`) is the SD card engine plan's Task 13.

@@ -7,10 +7,10 @@ model of the host port. It checks six things at the bridge's bus: the byte
 lanes, the cfide register offsets, back-to-back hw accesses (the four-phase
 handshake), the SPI busy wait, cfide's interrupt through the firmware trap
 entry and cfide's interrupt controller (0xFFFFFF30..3C, see
-[Interrupt controller](#interrupt-controller)). The boot runs (`run.sh boot`, `boot_nofile`, `boot_mismatch`) put the
+[Interrupt controller](#interrupt-controller)). The boot runs (`run.sh boot`, `boot_nofile`, `boot_mismatch`, `boot_both`) put the
 committed boot ROM `fw/ctrl_boot/OSDBoot_rv_ROM.vhd` in the bridge and an SD
 card model on the pins of the SD card peripheral `sdcard_spi` (as the
-openaars top has it, `SD_ENGINE = 1`): the ROM loads `RV32OSDA.BIN` from a
+openaars top has it, `SD_ENGINE = 1`): the ROM loads `RV32OSDB.BIN` from a
 FAT16 card image, checks its lock-step trailer and runs it (see
 [Boot](#boot)). The firmware boot runs (`run.sh fwboot`,
 `fwboot_trap`; **unsupported** since the SD card engine, see
@@ -38,9 +38,9 @@ xsim stays the default and the X-checking reference.
 | `sw/reset_fw.S` | Reset, trap at 0x20 and register clear for tests that start through `fw/ctrl/arch/crt0.S` (`t_irq`, `t_irqctl`) |
 | `sw/dhry.S` | `dhry`: boot-ROM stand-in for `fw/dhrystone_rv` (clear x1-x31, jump to 0x2000; the firmware is preloaded with `+SDRAM_HEX`) |
 | `stub/` | Elaboration check of the bridge with a stub ROM: `stub/elab.sh` (`rv_debug` 0 and 2, neutral sources only), `stub/elab.sh dmt` (`rv_debug` 1: `VexOsd_DMT` + `rtl/host/xilinx/rv_bscane2.v`, BSCANE2/BUFG from `unisims_ver`), `stub/elab.sh all` |
-| `boot/fwtest.c`, `boot/fwfill.S` | Boot runs: the test firmware `RV32OSDA.BIN` (on `fw/ctrl/arch`, `firmware.ld`) |
-| `boot/Makefile` | `RV32OSDA.BIN` (padded to 2552 bytes + the 8-byte lock-step trailer of `fw/ctrl/sdctrailer.c`), `img.txt`, the card images `card.img`, `card_nofile.img` and `card_mismatch.img` (the image without the trailer) (`tools/sim/mkcard.sh`) |
-| `boot/expect.txt`, `boot/expect_nofile.txt`, `boot/expect_mismatch.txt` | The expected `UART:` / `ERRORCODE:` lines of `boot`, `boot_nofile` and `boot_mismatch` |
+| `boot/fwtest.c`, `boot/fwfill.S` | Boot runs: the test firmware `RV32OSDB.BIN` (on `fw/ctrl/arch`, `firmware.ld`) |
+| `boot/Makefile` | `RV32OSDB.BIN` (the name: `fw/ctrl/fwname.mk`; padded to 2552 bytes + the 8-byte lock-step trailer of `fw/ctrl/sdctrailer.c`), `img.txt`, the card images `card.img`, `card_nofile.img` (the firmware under the old name `RV32OSDA.BIN` only), `card_mismatch.img` (the image without the trailer) and `card_both.img` (the image without the trailer as the old `RV32OSDA.BIN`, ahead of `RV32OSDB.BIN`) (`tools/sim/mkcard.sh`) |
+| `boot/expect.txt`, `boot/expect_nofile.txt`, `boot/expect_mismatch.txt` | The expected `UART:` / `ERRORCODE:` lines of `boot` and `boot_both`, `boot_nofile` and `boot_mismatch` |
 | `minimig_spi_stub.v` | `fwboot`: fixed replies of the Minimig SPI slaves (FPGA `sd_cs[4]`, OSD `sd_cs[5]`, RTC `sd_cs[7]`), and `userio_osd`'s reply sequence `osd_rx_seq` for cfide's `OSD_RDY` |
 | `fwboot/Makefile` | `fwboot`: the 16 MB card with `$FW` (`card.img`); `fwboot_trap`: the firmware with `smoke_trap.o` and its card (`card_trap.img`, `trap_expect.txt`); `fwboot_cfg`: `card.img` plus a legacy `MINMGAA.CFG` (`card_cfg.img`, `cfg/`) and `cfgconv` |
 | `fwboot/milestones.txt` | `fwboot`: the UART lines and SPI frames the firmware must produce, in order |
@@ -403,15 +403,23 @@ copy) initialises the SD card model through the SD card peripheral
 (`rtl/host/sdcard_spi.v` on cfide's ext port, the model on its pins, card
 detect low; CRC on: CMD59, every block's CRC16 checked by the peripheral),
 reads the MBR, the boot sector and the root directory of an 8 MB FAT16 card
-image, loads `RV32OSDA.BIN` to 0x2000 through dBus + hostcache, checks its
+image, loads `RV32OSDB.BIN` to 0x2000 through dBus + hostcache, checks its
 lock-step trailer against the peripheral's VERSION register, runs `fence.i`
 and jumps there. The firmware (`boot/fwtest.c` on `fw/ctrl/arch`) prints
 `FW OK`, the `PAT` and `IMG` lines and runs the `t_irq` check with cfide's
-`vbl_int`. `run.sh boot_nofile` boots a card without `RV32OSDA.BIN`: the
+`vbl_int`. `run.sh boot_nofile` boots a card without `RV32OSDB.BIN` (the
+firmware is there under the previous chain's name `RV32OSDA.BIN`): the
 error path, up to the end of its first retry. `run.sh boot_mismatch` boots
-a card whose `RV32OSDA.BIN` has no trailer (the image of an older
+a card whose `RV32OSDB.BIN` has no trailer (the image of an older
 firmware): the ROM must print `Firmware does not match this bitstream (need
 SDC 5D01)`, report `ErrorCode(0x0ff)` and halt (no hw access after it).
+`run.sh boot_both` is `boot` (the same bench test, `+TEST=boot`, and
+`expect.txt`) on a card for old and new bitstreams: an old `RV32OSDA.BIN`
+(the image without the trailer) ahead of `RV32OSDB.BIN` in the directory.
+The ROM must boot the new file; had it taken the old one, the lock-step
+check would refuse it (a run with the previous ROM, which looks for
+`RV32OSDA.BIN`, fails exactly so: `file "RV32OSDABIN" found\rFirmware does
+not match this bitstream`, `ERRORCODE: 00ff`, run `t13b_v_both_teeth`).
 The bench takes the TIME / DONE writes (0xFFFFFF00 / 04) only after the
 jump to 0x2000: before it they are the ROM's own pushes into the
 peripheral's TX FIFO.
@@ -425,65 +433,82 @@ git status --short fw/ctrl_boot
 # 2. the test firmware and the card images, into sim/host_bridge/boot/build
 #    run.sh builds its own copy into boot/ of its run directory
 make -C sim/host_bridge/boot
-# 3. the three runs, one after the other (xsim; SIM=verilator: about 30 s,
-#    65 s and 25 s)
+# 3. the four runs, one after the other (xsim; SIM=verilator: about 20 s,
+#    65 s, 25 s and 20 s)
 RUNTAG=boot bash sim/host_bridge/run.sh boot
 RUNTAG=bootn bash sim/host_bridge/run.sh boot_nofile
 RUNTAG=bootm bash sim/host_bridge/run.sh boot_mismatch
+RUNTAG=bootb bash sim/host_bridge/run.sh boot_both
 ```
 
 Expected end of `boot` (Verilator, boot ROM on the SD card peripheral,
 2026-10-25):
 
 ```
-boot ROM: fw/ctrl_boot/OSDBoot_rv_ROM.vhd unmodified (= git HEAD), sha256 8bd27755999cf23f
+boot ROM: fw/ctrl_boot/OSDBoot_rv_ROM.vhd unmodified (= git HEAD), sha256 3047455441c236dd
 === BOOT first read of 0x2000 at cycle 4375120, irefill 108 dread 13615 dwrite 6241 so far
 === HW accesses 13857, stale acks 0, X 0, SDRAM reads 211 writes 2619, main done 79401, cycles 5125786
 === STATS irefill 135 dread 16256 dwrite 6806 busy_cycles 4595920 (rv_hostcpu, whole run)
 === SD card: 1 ErrorCode calls, last 0fff, hw accesses after 00FF 0
 ok   log = expect.txt (21 lines)
 ok   bench verdict: === PASS
-verilator wall time 28 s
+verilator wall time 14 s
 === boot PASS
 ```
 
 Expected end of `boot_nofile`:
 
 ```
-boot ROM: fw/ctrl_boot/OSDBoot_rv_ROM.vhd unmodified (= git HEAD), sha256 8bd27755999cf23f
+boot ROM: fw/ctrl_boot/OSDBoot_rv_ROM.vhd unmodified (= git HEAD), sha256 3047455441c236dd
 === HW accesses 68380, stale acks 0, X 0, SDRAM reads 0 writes 24, main done 79401, cycles 27778824
 === STATS irefill 185 dread 72047 dwrite 43356 busy_cycles 25323630 (rv_hostcpu, whole run)
 === SD card: 3 ErrorCode calls, last 00f0, hw accesses after 00FF 0
 ok   log = expect_nofile.txt (99 lines)
 ok   bench verdict: === PASS
-verilator wall time 64 s
+verilator wall time 57 s
 === boot_nofile PASS
 ```
 
 Expected end of `boot_mismatch`:
 
 ```
-boot ROM: fw/ctrl_boot/OSDBoot_rv_ROM.vhd unmodified (= git HEAD), sha256 8bd27755999cf23f
+boot ROM: fw/ctrl_boot/OSDBoot_rv_ROM.vhd unmodified (= git HEAD), sha256 3047455441c236dd
 === cycle limit 8000000 reached, no DONE
 === HW accesses 13059, stale acks 0, X 0, SDRAM reads 1 writes 2582, main done 79401, cycles 8000178
 === STATS irefill 110 dread 13615 dwrite 6258 busy_cycles 4088667 (rv_hostcpu, whole run)
 === SD card: 2 ErrorCode calls, last 00ff, hw accesses after 00FF 0
 ok   log = expect_mismatch.txt (18 lines)
 ok   bench verdict: === PASS
-verilator wall time 25 s
+verilator wall time 18 s
 === boot_mismatch PASS
+```
+
+Expected end of `boot_both` (the same cycles as `boot`, a few more data
+reads: one more directory entry):
+
+```
+boot ROM: fw/ctrl_boot/OSDBoot_rv_ROM.vhd unmodified (= git HEAD), sha256 3047455441c236dd
+=== BOOT first read of 0x2000 at cycle 4375120, irefill 108 dread 13633 dwrite 6241 so far
+=== HW accesses 13857, stale acks 0, X 0, SDRAM reads 211 writes 2619, main done 79401, cycles 5125786
+=== STATS irefill 135 dread 16274 dwrite 6806 busy_cycles 4595700 (rv_hostcpu, whole run)
+=== SD card: 1 ErrorCode calls, last 0fff, hw accesses after 00FF 0
+ok   log = expect.txt (21 lines)
+ok   bench verdict: === PASS
+verilator wall time 12 s
+=== boot_both PASS
 ```
 
 The exit code is 0 on PASS, 1 otherwise. Each run leaves in
 `run_<RUNTAG>/`: `results.txt`, the log `tb_boot_x0_s8_j0.log`
-(`tb_boot_nofile_...` for the other), `boot.expect` / `boot.got` /
+(`tb_boot_nofile_...` for the others), `boot.expect` / `boot.got` /
 `boot.diff`, and `boot/` (firmware, `img.txt`, card images). The sha256
 prefix changes with the committed ROM; the cycle numbers change with the
 RTL, the ROM and the firmware. Under xsim the same lines appear, ending
 with `xsim wall time`.
 
 The gate (`run.sh`): every `UART:` and `ERRORCODE:` line of the log equals
-`boot/expect.txt` (or `boot/expect_nofile.txt`) line for line, `@IMG@`
+`boot/expect.txt` (`boot`, `boot_both`; or `boot/expect_nofile.txt`,
+`boot/expect_mismatch.txt`) line for line, `@IMG@`
 replaced by `<run>/boot/img.txt`; no `TRAP`/`EXC` on the UART; the SD model
 loaded the image; the bench verdict is `=== PASS` (`boot`: DONE = 0, no bench
 error; `boot_nofile`: no DONE, no bench error, three ErrorCodes, the last
@@ -510,7 +535,7 @@ UART: Reading boot sector 2048
 UART: Read boot sector from first partition
 UART: Hunting for filesystem
 UART: Reading directory sector 2106
-UART: file "RV32OSDABIN" found\rFirmware SDC 5D01, bitstream SDC 5D01
+UART: file "RV32OSDBBIN" found\rFirmware SDC 5D01, bitstream SDC 5D01
 UART: FW OK
 UART: PAT 00112233445566778899AABBCCDDEEFF
 UART: IMG 0000096C 95813C63
@@ -527,7 +552,7 @@ UART: IRQ 20
   command try or sector read would add its own line.
 - After `found\r` (the ROM's `printf` ends that line with a carriage return,
   which the bench prints as `\r`): six reads, the five sectors of
-  `RV32OSDA.BIN` and one FAT sector (the file starts at cluster 4 behind the
+  `RV32OSDB.BIN` and one FAT sector (the file starts at cluster 4 behind the
   decoy `OSDDECOY.BIN`; clusters are 2 sectors, so the ROM follows the
   chain twice), then the lock-step line (trailer and VERSION both 5D01).
   The Makefile pads the image to 2560 bytes (trailer included) so that
@@ -565,7 +590,12 @@ What it proves:
   file).
 - **The file name**: `card.img` has the decoy `OSDDECOY.BIN` first in the
   directory; `card_nofile.img` has `OSDDECOY.BIN` and the real firmware
-  under the near-miss name `RV32OSDB.BIN`. The ROM loads neither.
+  under the previous chain's name `RV32OSDA.BIN`: the ROM loads neither;
+  `card_both.img` has an old `RV32OSDA.BIN` (no trailer) ahead of
+  `RV32OSDB.BIN`: the ROM boots the new one (`boot_both`). The name is
+  `fw/ctrl/fwname.mk`'s, for the ROM and these cards alike (since
+  2026-10-25, SD card engine Task 13b; before, the ROM loaded
+  `RV32OSDA.BIN` and `RV32OSDB.BIN` was the near-miss decoy).
 
 Since 2026-10-25 the ROM reaches the card through the SD card peripheral:
 the jump to 0x2000 comes at cycle 4,375,120 (Verilator; init at 400 kHz,
@@ -724,7 +754,7 @@ order, each stream on its own. They come from the sources:
 
 | Milestone | From |
 |---|---|
-| `Initializing SD card` ... `file "RV32OSDABIN" found` | the boot ROM, as `boot/expect.txt` without the layout numbers |
+| `Initializing SD card` ... `file "RV32OSDBBIN" found` | the boot ROM, as `boot/expect.txt` without the layout numbers |
 | `Platform lacks SPI RTC support` | `main()`: PLATFORM bit 2 is 0 (`havespirtc = false`) |
 | `SDHC card detected` | `MMC_Init()` (the model answers CMD8 with `0x1AA`) |
 | `partition type: 0x00 (FAT16)` | `FindDrive()`: prints `sector_buffer[450]` after reading the partition's boot sector into it, so 0x00, not the MBR's type 6 |
@@ -1148,8 +1178,9 @@ unexpected trap writes `0x8000 | mcause`.
 | `t_spibusy` | `SPI_slow()` (SPEED `0xEF`, about 7700 `clk_114` per byte), CS `0x02`, 8 straight-line `sb` to SPI DATA (`01 80 55 AA FF 00 3C C3`), then a DATA read (`0x1C`, the 8th MISO byte), then CS `0x03`. | The slave got the 8 bytes in order. At least 7 DATA writes found `SD_busy` high. No DATA write completed without cfide accepting it. |
 | `t_osdrdy` | cfide's `HOST_REQ` (`0xFFFFFFB4`, bit 0 `OSD_RDY`: cfide's count of the bytes it started with the OSD selected equals `osd_rx_seq`; resync after 64 deselected cycles). 17 checks: 1 after reset; a byte to `sd_cs[1]` is not counted; one byte with the OSD selected (CS `0x20`) reads 0 until the bench steps `osd_rx_seq`, while `0xFFFFFFB0` (half and byte), `B8` and `BC` still read `audio_q` (1); two bytes outstanding read 0, also with one taken; a byte never taken reads 0, still 0 right after the deselect (CS `0x21`), 1 after the resync (polled, at most 64 reads); counting goes on from the resynced value; byte, half and word reads. Not in `all`. | STAMP 10..13: `osd_rx_seq` = 0..3. STAMP 20 arms, STAMP 21 checks the resync: a read after the deselect returned 0, and the first that returned 1 completed at least 64 cycles after the deselect (`t_osdrdy resync: ... (+65)`). STAMP 99 reached. |
 | `t_sdc_regs` | The SD card peripheral (`rtl/host/sdcard_spi.v`, no card) on cfide's `ext_*` port, `0xFFFFFF00..2C` (Task 8 of findings/sdcard-engine/plan.md). 22 checks: VERSION `5D01`; STATUS, CFG and TIMEOUT after reset; CFG, TIMEOUT and IRQEN written and read back; reads of different registers alternating, back to back (each returns its own access's value, not the previous one's: cfide acks the window from `ext_req_d`, see `extmut`); RXLVL, TXLVL 0; IRQEN 1 + RX_FLUSH: IRQPEND bit 0 and cfide `IRQ_RAW` bit 4 (`irq_src(4)`), cleared by IRQACK. | In every test: exactly one ext strobe per access to the window, in its first cycle, of the access's kind, none elsewhere (`=== sdcard_spi accesses <n>, strobes <n>`). At the end: at least 25 accesses, CS asserted (CFG bit 8), SCK low, MOSI high. The bench's TIME / DONE writes (`0xFFFFFF00` / `04`) are TXW / TXB pushes for the peripheral. |
-| `boot` | The committed boot ROM loads `RV32OSDA.BIN` (`boot/fwtest.c`) from `card.img`; the firmware prints `FW OK`, `PAT`, `IMG`, runs the `t_irq` check, prints `IRQ 20`, writes DONE. Not in `all`; see [Boot](#boot). | STAMP 1/2 as `t_irq`; `ERRORCODE:` lines; `=== BOOT`, `=== STATS`. |
+| `boot` | The committed boot ROM loads `RV32OSDB.BIN` (`boot/fwtest.c`) from `card.img`; the firmware prints `FW OK`, `PAT`, `IMG`, runs the `t_irq` check, prints `IRQ 20`, writes DONE. Not in `all`; see [Boot](#boot). | STAMP 1/2 as `t_irq`; `ERRORCODE:` lines; `=== BOOT`, `=== STATS`. |
 | `boot_nofile` | The same ROM with `card_nofile.img`: `Can't load firmware`, `ErrorCode(0x0f0)`, retry. Not in `all`. | No DONE before the cycle limit; last ErrorCode `00f0`. |
+| `boot_both` | `boot` (`+TEST=boot`) on `card_both.img`: an old `RV32OSDA.BIN` without the trailer ahead of `RV32OSDB.BIN`; the ROM boots the new one. Not in `all`. | As `boot`. |
 
 ## Interrupt controller
 

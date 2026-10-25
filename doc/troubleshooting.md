@@ -8,7 +8,7 @@ first.
 |---|---|---|
 | No HDMI signal right after loading a bitstream over JTAG | the HDMI side can stay dark after JTAG loads | power-cycle the board, then load the same bitstream again ([1](#1-no-hdmi-after-a-jtag-load)) |
 | Picture dark or lost after unplugging the display | the HDMI chip forgot its settings | wait a moment (the firmware re-sends them), or press Left Shift + keypad `.` |
-| Wrong colours, sparkles along edges, or the picture drops out after some minutes | OSD firmware and bitstream from different versions | use `RV32OSDA.BIN` built from the same commit as the bitstream ([2](#2-firmware-and-bitstream-belong-together)) |
+| Wrong colours, sparkles along edges, or the picture drops out after some minutes | OSD firmware and bitstream from different versions | use `RV32OSDB.BIN` built from the same commit as the bitstream ([2](#2-firmware-and-bitstream-belong-together)) |
 | Right mouse button stuck, odd keys, or "Unknown command" / missing commands at boot, after many JTAG loads | the mouse and SD card kept their state across FPGA reloads | switch the board off and on ([3](#3-odd-input-or-boot-errors-after-many-jtag-loads)) |
 | Swapped the SD card, but it's still the JTAG-loaded bitstream | a card swap doesn't reload the FPGA | expected; only a power cycle brings back the flash image ([4](#4-sd-card-swaps)) |
 | OSD shows a fatal error with no SD card in, and the reset button doesn't clear it | known firmware bug | insert the card and power-cycle the board |
@@ -43,6 +43,13 @@ a mismatched pair the sampling point is wrong: colour errors, artifacts along
 colour edges, or an HDMI signal that drops after a few minutes. Build both
 from the same commit, or take both from the same release.
 
+Since the SD card peripheral the boot loader also checks the pair: it loads
+`RV32OSDB.BIN` and runs it only when the file's 8-byte trailer names the
+bitstream's SD card peripheral version; otherwise it prints `Firmware does
+not match this bitstream (need SDC <v>)` on the UART, turns the screen cyan
+and stops. Older bitstreams load `RV32OSDA.BIN` (no such check), so a card
+can carry both firmwares side by side.
+
 ## 3. Odd input or boot errors after many JTAG loads
 
 A JTAG load resets everything inside the FPGA, but the powered devices
@@ -57,7 +64,7 @@ been seen with the older 68020 core.
 ## 4. SD card swaps
 
 Swapping the SD card resets the Amiga side and the OSD firmware reloads
-`RV32OSDA.BIN` and the Kickstart from the new card, but the bitstream in the
+`RV32OSDB.BIN` and the Kickstart from the new card, but the bitstream in the
 FPGA stays. So after a JTAG load, a card swap doesn't bring back the flash
 image. A firmware change on the card needs no JTAG reload. Only a power cycle
 loads the bitstream from the flash again.

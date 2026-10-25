@@ -16,6 +16,7 @@ branch and they may not build as they are:
   now the AP68040 core.
 - **OSD host CPU:** the EightThirtyTwo (832) host CPU and its firmware were
   replaced by the VexRiscv RV32IMC (`rtl/host/`, firmware in `fw/ctrl` and
-  `fw/ctrl_boot`, `RV32OSDA.BIN` on the SD card). The 832 files are gone from
+  `fw/ctrl_boot`, `RV32OSDA.BIN` on the SD card; since the SD card
+  peripheral `RV32OSDB.BIN`). The 832 files are gone from
   their file lists; `rtl/host/host.qip` now lists the RISC-V host CPU. The last
   commit with the 832 is tag `osd-832-final` (ad6e6cdc).

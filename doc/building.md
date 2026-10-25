@@ -234,9 +234,9 @@ make -C fw/ctrl
 make -C fw/ctrl check
 ```
 
-It writes `fw/ctrl/build/RV32OSDA.BIN` (and `fw/ctrl/build/version.h` with the
+It writes `fw/ctrl/build/RV32OSDB.BIN` (and `fw/ctrl/build/version.h` with the
 build date; `build/` is not in git). Copy it to the root of the SD card as
-`RV32OSDA.BIN`. No bitstream rebuild or JTAG load is needed: the boot loader
+`RV32OSDB.BIN`. No bitstream rebuild or JTAG load is needed: the boot loader
 reads it from the card at every power-on and after a card swap. The host
 tests: `make -C fw/ctrl/test`.
 
@@ -246,7 +246,13 @@ the bitstream's video output timing
 ([troubleshooting.md](troubleshooting.md#2-firmware-and-bitstream-belong-together)).
 
 **The boot loader** (`fw/ctrl_boot`) is part of the bitstream as
-`OSDBoot_rv_ROM.vhd`. It looks for `RV32OSDA.BIN` on the card. Rebuilding it
+`OSDBoot_rv_ROM.vhd`. It looks for `RV32OSDB.BIN` on the card and runs it only
+when the file's lock-step trailer names this bitstream's SD card peripheral
+(otherwise it stops with a message on the UART and a cyan screen). The name
+is written once, in `fw/ctrl/fwname.mk`, for both builds; `make -C fw/ctrl
+check` fails if the committed boot loader looks for another one. Bitstreams
+from before the SD card peripheral load `RV32OSDA.BIN` instead, so one card
+can hold the firmware of both. Rebuilding it
 (`make -C fw/ctrl_boot`) reproduces the committed `OSDBoot_rv.bin` and
 `OSDBoot_rv_ROM.vhd`; when its sources change, commit both with them and
 rebuild the bitstream.

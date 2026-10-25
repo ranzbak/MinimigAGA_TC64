@@ -167,8 +167,8 @@ through to the PCF2123.
 ## The OSD and its controller
 
 A small soft CPU (VexRiscv, RV32IMC, `rtl/host/rv_hostcpu.v`) runs the OSD
-firmware. A boot loader in the bitstream (`fw/ctrl_boot`) loads `RV32OSDA.BIN`
-from the SD card. The firmware (`fw/ctrl`) draws the OSD, loads Kickstart and settings,
+firmware. A boot loader in the bitstream (`fw/ctrl_boot`) loads `RV32OSDB.BIN`
+from the SD card (bitstreams before the SD card peripheral: `RV32OSDA.BIN`). The firmware (`fw/ctrl`) draws the OSD, loads Kickstart and settings,
 serves the floppy and hard disk images, sets up the HDMI chip, plays the drive
 sounds, and prints a log on UART1. It releases the 68040 only after a
 Kickstart has loaded.

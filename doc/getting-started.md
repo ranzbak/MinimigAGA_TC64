@@ -25,11 +25,12 @@ Workbench with the FPU, MMU and RTG screen, is in
 ## Preparing the SD card
 
 The OSD firmware reads these files. Names are case-insensitive and use the
-8.3 format, so `rv32osda.bin` and `RV32OSDA.BIN` are the same file.
+8.3 format, so `rv32osdb.bin` and `RV32OSDB.BIN` are the same file.
 
 | File | Where | Needed? | What it is |
 |---|---|---|---|
-| `RV32OSDA.BIN` | root | **yes** | The OSD firmware. The boot loader in the bitstream loads it at power-on. |
+| `RV32OSDB.BIN` | root | **yes** | The OSD firmware. The boot loader in the bitstream loads it at power-on; it must be built from the same commit as the bitstream. |
+| `RV32OSDA.BIN` | root | no | The OSD firmware of older bitstreams (before the SD card peripheral). Leave it on the card if you still boot such a bitstream: each boot loader loads only its own file. |
 | `KICK.ROM` | root | **yes**, unless a saved configuration names another ROM | The default Kickstart. Any ROM can be chosen later in the OSD. |
 | `ROM.KEY` | **same folder as the ROM** | only for encrypted Amiga Forever ROMs | The Amiga Forever key file. |
 | `HRTMON.ROM` | root | no | The HRTmon debugger ROM. Enable it on the Memory page; Ctrl + Pause enters it. |
@@ -52,7 +53,7 @@ root to be safe.
 A working card, as an example:
 
 ```
-/                    RV32OSDA.BIN  DRIVESND.BIN  ROM.KEY
+/                    RV32OSDB.BIN  DRIVESND.BIN  ROM.KEY
                      MINIMIG.ART  MINIMIG.BAL  MINIMIG.COP
                      MINMGAR.CFG  MINMGAR1.CFG  MINMGAR4.CFG
                      4gb.hdf                    (Workbench hard disk image)
@@ -70,7 +71,7 @@ in the root.
 ## First boot
 
 1. Insert the card and power the board. The FPGA loads the bitstream from the
-   flash (or you load it over JTAG), and its boot loader loads `RV32OSDA.BIN`.
+   flash (or you load it over JTAG), and its boot loader loads `RV32OSDB.BIN`.
 2. The firmware shows a splash screen and reads `MINMGAR.CFG`. Without it, it
    starts with defaults: an A500-style machine (OCS chipset, 1 MB chip RAM,
    0.5 MB slow RAM, 2 MB fast RAM) with `KICK.ROM`.
