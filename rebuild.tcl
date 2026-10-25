@@ -148,8 +148,6 @@
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/minimig/userio_ps2mouse.v"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/bench/ps2mouse/ps2mouse_tb.v"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/fw/ctrl_boot/OSDBoot_rv_ROM.vhd"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/rom-hostcpu-test/memtest_orig_top_tb.vhd"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/rom-hostcpu-test/memtest_top_tb.v"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/openaars/adv7511/i2c_master.v"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/host/i2c_master_mmio.sv"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/hostcpu-i2c-bridge/i2c_slave_tb.v"
@@ -176,7 +174,6 @@
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/tg68/TG68_fast.vhd"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/sdram/sdram_ctrl.v"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/soc/minimig_defines.vh"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/tg68vswf68ksim/tg68kvswf68k_top_tb.v"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/rtc_spi_clock/rtc_spi_clock_tb.sv"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/openaars/pcf2123/oki_pcf_buffer.sv"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/openaars/pcf2123/rtc_spi_clock.sv"
@@ -343,8 +340,6 @@ proc checkRequiredFiles { origin_dir} {
  "[file normalize "$origin_dir/rtl/minimig/userio_ps2mouse.v"]"\
  "[file normalize "$origin_dir/bench/ps2mouse/ps2mouse_tb.v"]"\
  "[file normalize "$origin_dir/fw/ctrl_boot/OSDBoot_rv_ROM.vhd"]"\
- "[file normalize "$origin_dir/sim/rom-hostcpu-test/memtest_orig_top_tb.vhd"]"\
- "[file normalize "$origin_dir/sim/rom-hostcpu-test/memtest_top_tb.v"]"\
  "[file normalize "$origin_dir/rtl/openaars/adv7511/i2c_master.v"]"\
  "[file normalize "$origin_dir/rtl/host/i2c_master_mmio.sv"]"\
  "[file normalize "$origin_dir/sim/hostcpu-i2c-bridge/i2c_slave_tb.v"]"\
@@ -371,7 +366,6 @@ proc checkRequiredFiles { origin_dir} {
  "[file normalize "$origin_dir/rtl/tg68/TG68_fast.vhd"]"\
  "[file normalize "$origin_dir/rtl/sdram/sdram_ctrl.v"]"\
  "[file normalize "$origin_dir/rtl/soc/minimig_defines.vh"]"\
- "[file normalize "$origin_dir/sim/tg68vswf68ksim/tg68kvswf68k_top_tb.v"]"\
  "[file normalize "$origin_dir/sim/rtc_spi_clock/rtc_spi_clock_tb.sv"]"\
  "[file normalize "$origin_dir/rtl/openaars/pcf2123/oki_pcf_buffer.sv"]"\
  "[file normalize "$origin_dir/rtl/openaars/pcf2123/rtc_spi_clock.sv"]"\
@@ -1415,49 +1409,6 @@ set_property -name "top" -value "ps2mouse_tb" -objects $obj
 set_property -name "top_auto_set" -value "0" -objects $obj
 set_property -name "xsim.compile.xvlog.more_options" -value "-d MINIMIG_OPENAARS" -objects $obj
 
-# Create 'rom-hostcpu-test' fileset (if not found)
-if {[string equal [get_filesets -quiet rom-hostcpu-test] ""]} {
-  create_fileset -simset rom-hostcpu-test
-}
-
-# Set 'rom-hostcpu-test' fileset object
-set obj [get_filesets rom-hostcpu-test]
-set files [list \
- [file normalize "${origin_dir}/fw/ctrl_boot/OSDBoot_rv_ROM.vhd"] \
- [file normalize "${origin_dir}/sim/rom-hostcpu-test/memtest_orig_top_tb.vhd"] \
- [file normalize "${origin_dir}/sim/rom-hostcpu-test/memtest_top_tb.v"] \
-]
-add_files -norecurse -fileset $obj $files
-
-# Set 'rom-hostcpu-test' fileset file properties for remote files
-set file "$origin_dir/fw/ctrl_boot/OSDBoot_rv_ROM.vhd"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets rom-hostcpu-test] [list "*$file"]]
-set_property -name "file_type" -value "VHDL" -objects $file_obj
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/sim/rom-hostcpu-test/memtest_orig_top_tb.vhd"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets rom-hostcpu-test] [list "*$file"]]
-set_property -name "file_type" -value "VHDL" -objects $file_obj
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/sim/rom-hostcpu-test/memtest_top_tb.v"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets rom-hostcpu-test] [list "*$file"]]
-set_property -name "library" -value "work" -objects $file_obj
-
-
-# Set 'rom-hostcpu-test' fileset file properties for local files
-# None
-
-# Set 'rom-hostcpu-test' fileset properties
-set obj [get_filesets rom-hostcpu-test]
-set_property -name "source_set" -value "" -objects $obj
-set_property -name "top" -value "memtest_top_tb" -objects $obj
-set_property -name "top_auto_set" -value "0" -objects $obj
-set_property -name "xsim.compile.xvlog.more_options" -value "-d MINIMIG_OPENAARS" -objects $obj
-
 # Create 'hostcpu-i2c-bridge' fileset (if not found)
 if {[string equal [get_filesets -quiet hostcpu-i2c-bridge] ""]} {
   create_fileset -simset hostcpu-i2c-bridge
@@ -1517,163 +1468,6 @@ set obj [get_filesets hostcpu-i2c-bridge]
 set_property -name "nl.mode" -value "funcsim" -objects $obj
 set_property -name "source_set" -value "" -objects $obj
 set_property -name "top" -value "i2c_bridge_tb" -objects $obj
-set_property -name "top_auto_set" -value "0" -objects $obj
-set_property -name "xsim.compile.xvlog.more_options" -value "-d MINIMIG_OPENAARS" -objects $obj
-
-# Create 'tg68vswf68k30sim' fileset (if not found)
-if {[string equal [get_filesets -quiet tg68vswf68k30sim] ""]} {
-  create_fileset -simset tg68vswf68k30sim
-}
-
-# Set 'tg68vswf68k30sim' fileset object
-set obj [get_filesets tg68vswf68k30sim]
-set files [list \
- [file normalize "${origin_dir}/rtl/soc/TG68K.vhd"] \
- [file normalize "${origin_dir}/rtl/sdram/dpram_inf_256x32.v"] \
- [file normalize "${origin_dir}/rtl/sdram/tpram_inf_128x32.v"] \
- [file normalize "${origin_dir}/rtl/sdram/dpram_inf_be_1024x16.v"] \
- [file normalize "${origin_dir}/rtl/sdram/dpram_inf_generic.v"] \
- [file normalize "${origin_dir}/rtl/sdram/tpram_be_512x16.v"] \
- [file normalize "${origin_dir}/rtl/tg68/TG68.vhd"] \
- [file normalize "${origin_dir}/rtl/sdram/cpu_cache_new.v"] \
- [file normalize "${origin_dir}/rtl/sdram/dpram_inf_be_1024x32.v"] \
- [file normalize "${origin_dir}/rtl/minimig/minimig_m68k_bridge.v"] \
- [file normalize "${origin_dir}/rtl/sdram/dpram_256x32.v"] \
- [file normalize "${origin_dir}/rtl/sdram/tpram_inf_be_512x16.v"] \
- [file normalize "${origin_dir}/rtl/sdram/tpram_128x32.v"] \
- [file normalize "${origin_dir}/rtl/sdram/dpram_be_1024x32.v"] \
- [file normalize "${origin_dir}/rtl/sdram/dpram_be_2048x16.v"] \
- [file normalize "${origin_dir}/rtl/sdram/dpram_be_1024x16.v"] \
- [file normalize "${origin_dir}/rtl/sdram/dpram_inf_be_2048x16.v"] \
- [file normalize "${origin_dir}/rtl/tg68/TG68_fast.vhd"] \
- [file normalize "${origin_dir}/rtl/sdram/sdram_ctrl.v"] \
- [file normalize "${origin_dir}/rtl/soc/minimig_defines.vh"] \
- [file normalize "${origin_dir}/sim/tg68vswf68ksim/tg68kvswf68k_top_tb.v"] \
-]
-add_files -norecurse -fileset $obj $files
-
-# Set 'tg68vswf68k30sim' fileset file properties for remote files
-set file "$origin_dir/rtl/soc/TG68K.vhd"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets tg68vswf68k30sim] [list "*$file"]]
-set_property -name "file_type" -value "VHDL" -objects $file_obj
-set_property -name "is_enabled" -value "0" -objects $file_obj
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/rtl/sdram/dpram_inf_256x32.v"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets tg68vswf68k30sim] [list "*$file"]]
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/rtl/sdram/tpram_inf_128x32.v"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets tg68vswf68k30sim] [list "*$file"]]
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/rtl/sdram/dpram_inf_be_1024x16.v"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets tg68vswf68k30sim] [list "*$file"]]
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/rtl/sdram/dpram_inf_generic.v"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets tg68vswf68k30sim] [list "*$file"]]
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/rtl/sdram/tpram_be_512x16.v"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets tg68vswf68k30sim] [list "*$file"]]
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/rtl/tg68/TG68.vhd"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets tg68vswf68k30sim] [list "*$file"]]
-set_property -name "file_type" -value "VHDL" -objects $file_obj
-set_property -name "is_enabled" -value "0" -objects $file_obj
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/rtl/sdram/cpu_cache_new.v"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets tg68vswf68k30sim] [list "*$file"]]
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/rtl/sdram/dpram_inf_be_1024x32.v"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets tg68vswf68k30sim] [list "*$file"]]
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/rtl/minimig/minimig_m68k_bridge.v"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets tg68vswf68k30sim] [list "*$file"]]
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/rtl/sdram/dpram_256x32.v"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets tg68vswf68k30sim] [list "*$file"]]
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/rtl/sdram/tpram_inf_be_512x16.v"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets tg68vswf68k30sim] [list "*$file"]]
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/rtl/sdram/tpram_128x32.v"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets tg68vswf68k30sim] [list "*$file"]]
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/rtl/sdram/dpram_be_1024x32.v"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets tg68vswf68k30sim] [list "*$file"]]
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/rtl/sdram/dpram_be_2048x16.v"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets tg68vswf68k30sim] [list "*$file"]]
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/rtl/sdram/dpram_be_1024x16.v"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets tg68vswf68k30sim] [list "*$file"]]
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/rtl/sdram/dpram_inf_be_2048x16.v"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets tg68vswf68k30sim] [list "*$file"]]
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/rtl/tg68/TG68_fast.vhd"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets tg68vswf68k30sim] [list "*$file"]]
-set_property -name "file_type" -value "VHDL" -objects $file_obj
-set_property -name "is_enabled" -value "0" -objects $file_obj
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/rtl/sdram/sdram_ctrl.v"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets tg68vswf68k30sim] [list "*$file"]]
-set_property -name "library" -value "work" -objects $file_obj
-
-
-set file "$origin_dir/rtl/soc/minimig_defines.vh"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets tg68vswf68k30sim] [list "*$file"]]
-set_property -name "file_type" -value "Verilog Header" -objects $file_obj
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/sim/tg68vswf68ksim/tg68kvswf68k_top_tb.v"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets tg68vswf68k30sim] [list "*$file"]]
-set_property -name "library" -value "work" -objects $file_obj
-
-
-
-# Set 'tg68vswf68k30sim' fileset file properties for local files
-# None
-
-# Set 'tg68vswf68k30sim' fileset properties
-set obj [get_filesets tg68vswf68k30sim]
-set_property -name "top" -value "tg68kvswf68k_top_tb" -objects $obj
 set_property -name "top_auto_set" -value "0" -objects $obj
 set_property -name "xsim.compile.xvlog.more_options" -value "-d MINIMIG_OPENAARS" -objects $obj
 
