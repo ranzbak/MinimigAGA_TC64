@@ -66,7 +66,7 @@ proc xdc_block {file name} {
         if {$on} { lappend out $line }
         if {$line eq "# >>> $name"} { set on 1 }
     }
-    if {[llength $out] == 0} { error "sd_card.xdc: no block $name" }
+    if {[llength $out] == 0} { error "run.tcl: $file has no block $name" }
     set f $outdir/$name[file extension $file]
     set fh [open $f w]; puts $fh [join $out "\n"]; close $fh
     if {[file extension $file] eq ".tcl"} { read_xdc -unmanaged $f } else { read_xdc $f }
