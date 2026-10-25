@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 r"""spitrace.py: the SPI frame log of the L2 firmware boot (tb_host_bridge.v
 +SPI_LOG, run.sh fwboot) and of the L3 bench (sim/l3) -- summary, milestone
-check, and the 832-vs-RV differential.
+check, and the differential of two runs (norm, diff) whose CPU speed
+differs.
 
     python3 -I spitrace.py summary <spi.txt>
     python3 -I spitrace.py check <milestones.txt> <run log> <spi.txt>
@@ -59,12 +60,12 @@ norm: one normalised stream of a run, in frame order, one item per line
     kept item between them, is a repeat and dropped (sim/l3 cdda, runs
     p4t17 / p4t17c and p4t17l / p4t17lc, Task 17 ruling: CD_AudioPoll()
     reads the CD port's flags on every main-loop pass while the player
-    runs, RV 17,174 frames, 832 7,228).  "Kept" is decided on the
+    runs: 17,174 frames on the RV).  "Kept" is decided on the
     finished stream: after every drop above (the poll frames, the RTC
     frames and their HandleRTC unit's hw writes) and every rule of the
     list (DROP, DEDUP, DROPBLOCK, SUBST; a FLOAT run has no place among
     the frames, so it does not separate two polls: its place is what the
-    FLOAT rule declares timing-dependent, and on the other CPU the run
+    FLOAT rule declares timing-dependent, and in the other run it
     sits elsewhere).  So any line of any stream that is printed between two
     equal flag polls (an SPI, SD or OSD frame, a hw write, a UART line)
     keeps the second one; cd_wait()'s polls between data phases stay
@@ -82,8 +83,8 @@ norm: one normalised stream of a run, in frame order, one item per line
     identical-repeat drop of status frames compares the masked bytes
   - a seek in progress (sim/l3 fdd_wr, runs p4t14f / p4t14fc: bfm_floppy
     steps the head every 3 ms right after a track write's blckint, and the
-    RV polls again after 2 to 5 ms, the 832 after 11 to 20 ms, so the
-    intermediate head positions a CPU sees depend on its speed): of a run
+    RV polls again after 2 to 5 ms, so the intermediate head positions a
+    CPU sees depend on its speed): of a run
     of consecutive status frames without a request and without masked DMA
     bytes (10, six 00 bytes, MISO 0 bits 3..0 = 0) whose MISO differs from
     the previous one's in byte 1 (the track) only, by whole cylinders (an
@@ -108,7 +109,7 @@ norm: one normalised stream of a run, in frame order, one item per line
     read from the FIFO stays compared, in order; the line ends where
     anything else happens (the SD write of a sector, a 2-byte frame), so
     the cut points the firmware chooses by content stay too
-  - the HandleRTC unit (fw/ctrl_rv/rtc.c HandleRTC, every 8,192 main-loop
+  - the HandleRTC unit (fw/ctrl/rtc.c HandleRTC, every 8,192 main-loop
     passes, so their number depends on the CPU's speed: p4t13 4, p4t13c
     2): an RTC frame (80) together with exactly the hw writes of that call,
     when they have exactly this shape: "ffffe8" (SPI_slow), "ffff7c",
@@ -126,7 +127,7 @@ norm: one normalised stream of a run, in frame order, one item per line
     MOSI); the deselect clocks (cs 00, every MOSI byte ff: no device
     selected) are not printed
   - OSD_CMD_OSD_WR frames (20 0c 00 00 00 <row> ...) become "OSD <row>
-    <text>", the 8-byte columns decoded with fw/ctrl_rv/charrom.h:
+    <text>", the 8-byte columns decoded with fw/ctrl/charrom.h:
     "stripe=<hash>" for the side stripe, {inv:...} for inverted
     characters, {xx ...} for columns that are no character; trailing
     spaces dropped
@@ -161,8 +162,8 @@ line of <stream> matching <end-regex>, every line (of any stream) is
 dropped; a start without its end is an error (exit 1).  SDFILE: every
 SD access inside the file's clusters is printed "CMD<n> <alias>+<offset>"
 without its data hash, and a run of such accesses (same alias, same
-command) is one line: so RV32OSDA.BIN and 832OSDAD.BIN are both
-"FIRMWARE+00000000 .." whatever their sizes.  DEDUP: a hw write to an
+command) is one line: so two firmware files are both
+"FIRMWARE+00000000 .." whatever their names and sizes.  DEDUP: a hw write to an
 address matching <addr-regex> whose value equals the previous write to
 that address is dropped (a no-op rewrite; a changed value stays).  FLOAT:
 a maximal run of adjacent hw writes to addresses matching <addr-regex> (no
@@ -353,7 +354,7 @@ def check(mpath, logpath, spipath):
 # ------------------------------------------------------------ differential
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CHARROM = os.path.join(HERE, "..", "..", "fw", "ctrl_rv", "charrom.h")
+CHARROM = os.path.join(HERE, "..", "..", "fw", "ctrl", "charrom.h")
 STREAMS = ("uart", "osd", "hw", "sd", "spi", "all")
 
 
@@ -720,8 +721,8 @@ def norm(spi, hw, uart, rules_path, card_path, charrom):
                 inp = inp[:4] + [None] * (len(inp) - 4)
         # the IDE flag polls (the doc above; cdrom.c cd_wait(), runs p4t16 /
         # p4t16c, p4t16i / p4t16ci: the first poll after the INQUIRY and
-        # MODE SENSE data phases, RV 10 01 ..., 832 14 01 ..., byte 8 53 in
-        # both): MISO byte 0's IDE request bits not compared
+        # MODE SENSE data phases, 10 01 ... or 14 01 ... by the CPU's speed,
+        # byte 8 53 in both): MISO byte 0's IDE request bits not compared
         if cs == 0x10 and len(out) == 10 and out[0] in (0x80, 0x81) and not any(out[1:]) and inp and inp[0] is not None:
             inp = [inp[0] & ~0x0C] + list(inp[1:])
         if cs == 0x10 and len(out) == 6 and not any(out):

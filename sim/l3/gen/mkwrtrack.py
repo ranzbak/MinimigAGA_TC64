@@ -8,7 +8,7 @@ track gets new contents, mfm.py's new_sector(lba) (tagged 'W' 'R' lba>>8
 lba&0xff, then a pattern unlike the ADF's), so the written ADF can be told
 from the original in every sector.
 
-The stream (fw/ctrl_rv/test/gold/mfm.py's encoder, clocks "mfm": the real
+The stream (fw/ctrl/test/gold/mfm.py's encoder, clocks "mfm": the real
 MFM clock bits the Amiga's encoder writes):
   - a gap of MFM zero data (0xAAAA words) first, as trackdisk writes a
     track: the gap, then sectors 0..10 back to back (each one's "sectors
@@ -36,7 +36,7 @@ import os
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-GOLD = os.path.join(HERE, "..", "..", "..", "fw", "ctrl_rv", "test", "gold")
+GOLD = os.path.join(HERE, "..", "..", "..", "fw", "ctrl", "test", "gold")
 TRACK_WORDS = 6334            # fdd.c TRACK_SIZE / 2 (mfm.py MINIMIG_TRACK)
 SYNC = 0x4489
 

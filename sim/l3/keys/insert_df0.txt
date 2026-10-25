@@ -1,6 +1,6 @@
 # sim/l3/keys/insert_df0.txt: the key script of scenario fdd_rd (bfm_keys.v,
 # syntax there; README "keys" and "fdd_rd").  The fdd card's menu
-# (fw/ctrl_rv/menu.c), from the main-loop milestone: open the OSD, turn the
+# (fw/ctrl/menu.c), from the main-loop milestone: open the OSD, turn the
 # floppy drive sounds on (the card's config has drivesounds 0; DRIVESND.BIN
 # is loaded, so the Floppy page's "Floppy disk sounds" line is selectable),
 # insert TEST.ADF into df0 through its file selector, close the OSD.
@@ -10,7 +10,7 @@
 # Each key as in menu_tour.txt: WAIT_KEYQ 1 (applied right after a KEYQ
 # frame, so the next KEYQ frame drains it and no level read sees it),
 # KEY <code> 64, WAIT_KEYQ 1 (that frame), WAIT_OSD_IDLE 100000 (the page
-# drawn).  Codes (fw/ctrl_rv/osd.h): 69 KEY_MENU, 4c KEY_UP, 4d KEY_DOWN,
+# drawn).  Codes (fw/ctrl/osd.h): 69 KEY_MENU, 4c KEY_UP, 4d KEY_DOWN,
 # 44 KEY_ENTER.  menusub = the selected line (menu.c).
 # open the OSD (MENU_NONE2 -> MENU_MAIN1; main page, line 0 = df0)
 WAIT_KEYQ 1

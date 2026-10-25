@@ -657,7 +657,7 @@ initial begin
   check16("T6b w1", 24'h0D0010, r_data,  16'h7777);
   check16("T6b w2", 24'h0D0010, r_data2, 16'hA5A5);
 
-  // T7 the Kickstart ROM: uploaded as the 832 does it (gary's cpu_hlt), then
+  // T7 the Kickstart ROM: uploaded as the OSD firmware does it (gary's cpu_hlt), then
   //    read wide at $F80000 and, with the overlay on, at $000000
   hlt = 1'b1;
   for (i = 0; i < 16; i = i + 1) cpu_acc(1, 0, 24'hF80000 + 2*i, {16'hF000 + i[15:0], 16'h0000});

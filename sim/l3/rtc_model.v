@@ -1,4 +1,4 @@
-// rtc_model: the SPI real-time clock fw/ctrl_rv/rtc.c talks to on sd_cs[7]
+// rtc_model: the SPI real-time clock fw/ctrl/rtc.c talks to on sd_cs[7]
 // (simulation only, sim/l3).  The part is the NXP PCF2123 (plan 7.1 item 12,
 // rtl/openaars/pcf2123, doc/hardware.md); its datasheet is not in doc/rtc
 // (README "Monitors", item 12).

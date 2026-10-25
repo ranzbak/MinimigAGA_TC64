@@ -1,6 +1,6 @@
 #!/bin/bash
 # L2 host-bridge bench: the RISC-V host CPU through the real
-# EightThirtyTwo_Bridge, hostcache and cfide.  See tb_host_bridge.v, README.md.
+# host_bridge, hostcache and cfide.  See tb_host_bridge.v, README.md.
 #
 # Simulator: SIM=xsim (default; 4-state, the X-checking reference) or
 # SIM=verilator (Verilator 5, --binary --timing, 2-state: the bench's X
@@ -16,13 +16,18 @@
 #   bash sim/host_bridge/run.sh all          # every test x SLAT {2,8,20} x SJIT {0,8}
 #   bash sim/host_bridge/run.sh mutant       # the four-phase handshake's teeth (below)
 #   bash sim/host_bridge/run.sh irqmut       # the interrupt controller's teeth (below)
+#   bash sim/host_bridge/run.sh extmut       # the ext port's read-ack teeth (below)
 #   bash sim/host_bridge/run.sh t_lanes ...  # named tests at SLAT/SJIT from env
 #   SLAT=20 SJIT=8 EXTRA_WS=3 bash sim/host_bridge/run.sh t_b2b
-#   bash sim/host_bridge/run.sh boot         # committed boot ROM loads RV32OSDA.BIN
-#   bash sim/host_bridge/run.sh boot_nofile  # card without it: error path
-#   bash sim/host_bridge/run.sh fwboot       # the real firmware to its main loop
-#   bash sim/host_bridge/run.sh fwboot_trap  # the same, trap constructor linked in
-#   bash sim/host_bridge/run.sh fwboot_cfg   # fwboot with an 832 config file to convert
+#   bash sim/host_bridge/run.sh boot         # committed boot ROM loads RV32OSDB.BIN
+#   bash sim/host_bridge/run.sh boot_nofile  # card without it (the old RV32OSDA.BIN only): error path
+#   bash sim/host_bridge/run.sh boot_mismatch # firmware without the lock-step trailer: refused
+#   bash sim/host_bridge/run.sh boot_both    # old RV32OSDA.BIN (no trailer) ahead of RV32OSDB.BIN: boots the new one
+#   bash sim/host_bridge/run.sh fwboot       # the real firmware to its main loop  } UNSUPPORTED since
+#   bash sim/host_bridge/run.sh fwboot_trap  # the same, trap constructor linked in } the SD peripheral
+#   bash sim/host_bridge/run.sh fwboot_cfg   # fwboot, legacy config to convert   } boot path: exit 3
+#     (card model on cfide's sd_cs[1]; ROM + firmware use sdcard_spi; covered
+#     by sim/l3 sdc_boot, Task 13; FWBOOT_FORCE=1 runs them anyway: they fail)
 #
 # XRAND=1 (SIM=verilator): the X-sensitivity twin, a build with randomised
 # uninitialised state (--x-assign unique --x-initial unique, run with
@@ -40,20 +45,25 @@
 # e.g. "+VERBOSE=1"), VIVADO_PATH, SIM, GHDL (ghdl), VERILATOR (verilator),
 # JOBS (Verilator build jobs, nproc), OBJCACHE (ccache if present; empty =
 # none); boot runs also BOOT_TIMEOUT (clk_114
-# cycles; boot 40000000, boot_nofile 27000000: the cycle limit that ends it,
-# 0.76 M cycles after the retry's "Initializing SD card" line) and
+# cycles; boot and boot_both 40000000, boot_nofile 40000000, boot_mismatch 8000000: the
+# cycle limit; boot_nofile ends at the retry's ErrorCode (about 27.9 M),
+# boot_mismatch at the limit, 3.4 M cycles of halt after its ErrorCode 00FF)
+# and
 # BOOT_CARD (another card image, e.g. a corrupted copy); fwboot runs also
-# FW (the RV32OSDA.BIN to put on the card, default
-# fw/ctrl_rv/build/RV32OSDA.BIN: make -C fw/ctrl_rv first) and
+# FW (the firmware image to put on the card, default
+# fw/ctrl/build/RV32OSDB.BIN: make -C fw/ctrl first) and
 # FWBOOT_TIMEOUT (clk_114 cycles; defaults below).
 #
-# boot / boot_nofile: the committed fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd,
-# compiled unmodified (VHDL-93), boots from the SD card model (bench compiled
+# boot / boot_nofile / boot_mismatch / boot_both: the committed
+# fw/ctrl_boot/OSDBoot_rv_ROM.vhd, compiled unmodified (VHDL-93), boots from
+# the SD card model on sdcard_spi's pins (bench compiled
 # with -d SDCARD -d RV_HOSTCPU_STATS, rv_hostcpu with -d RV_HOSTCPU_STATS).  sim/host_bridge/boot
-# builds RV32OSDA.BIN and the card images into <run>/boot.  The run's
-# "UART:" and "ERRORCODE:" lines must equal boot/expect.txt (@IMG@ = the
-# line in <run>/boot/img.txt) or boot/expect_nofile.txt line for line, and
-# the bench verdict must be "=== PASS".  Results in <run>/results.txt.
+# builds the test firmware (RV32OSDB.BIN, the name of fw/ctrl/fwname.mk) and
+# the card images into <run>/boot.  The run's
+# "UART:" and "ERRORCODE:" lines must equal boot/expect.txt (boot and
+# boot_both; @IMG@ = the line in <run>/boot/img.txt), boot/expect_nofile.txt or
+# boot/expect_mismatch.txt line for line, and the bench verdict must be
+# "=== PASS".  Results in <run>/results.txt.
 #
 # fwboot / fwboot_trap: the committed boot ROM loads the real firmware from
 # a 16 MB card (sim/host_bridge/fwboot: $FW + the decoy, + DRIVESND.BIN for
@@ -66,13 +76,14 @@
 #                (no X, no stale ack, no bench error; one bench error is an
 #                OSD reply gap below +OSD_MIN_GAP, default 40: XARGS=+OSD_MIN_GAP=<n>)
 #   fwboot_trap  the firmware of the source tree linked with
-#                fwboot/smoke_trap.o (make -C fw/ctrl_rv EXTRA_OBJS=...,
+#                fwboot/smoke_trap.o (make -C fw/ctrl EXTRA_OBJS=...,
 #                into <run>/fwboot/trapfw; FW is not used): the UART shows
 #                the line of <run>/fwboot/trap_expect.txt (EXC mcause 2,
 #                mepc = smoke_trap from the map, mtval FFFFFFFF), no
 #                HandleFpga frame, bench "=== PASS"
-#   fwboot_cfg   fwboot on card_cfg.img (the fwboot card plus an 832
-#                MINMGAA.CFG, gold/mkcfg832.py's l2 case): the milestones of
+#   fwboot_cfg   fwboot on card_cfg.img (the fwboot card plus a legacy
+#                big-endian MINMGAA.CFG of the previous firmware,
+#                gold/mkcfgbe.py's l2 case): the milestones of
 #                fwboot/milestones_cfg.txt (the first-boot conversion),
 #                then the card as the run left it (+SD_SAVE): mtools reads
 #                MINMGAR.CFG == cfgconv --to-rv MINMGAA.CFG and MINMGAA.CFG
@@ -86,7 +97,7 @@
 #            phases of clk_28: the four-phase handshake holds at each)
 #   info     mutant bridge + real rv_hostcpu (EXTRA_WS=0) and mutant bridge
 #            + fast master (EXTRA_WS=1..3), one run each, printed only
-# mutant bridge: 832_bridge.vhd's "-- 4PHASE" line becomes "state <= waiting;"
+# mutant bridge: host_bridge.vhd's "-- 4PHASE" line becomes "state <= waiting;"
 # (two-phase: the next hw request may start while cfide's ack is still high).
 # fast master: rv_hostcpu.v accepts the core's next dBus command in the ack
 # cycle, so a request follows the previous ack with no idle cycle: the
@@ -108,23 +119,29 @@
 # "FAIL test 4" = a "BENCH ERROR ... t_irqctl test 4 (set wins)" line;
 # "FAIL test 9" = DONE code 9xx.
 #
+# extmut: t_sdc_regs (sdcard_spi on cfide's ext_* port) at SLAT=8 SJIT=0:
+#   gate     cfide's "-- EXT ACK" line acks the ext window from req itself
+#            ("ack <= '1'", as the other blocks), EXTRA_WS=0..3: every run
+#            must FAIL (a read returns the previous access's value)
+#   control  the real cfide (ack from ext_req_d), EXTRA_WS=0..3: must PASS
+#
 # Steps: copy the RTL into the run directory (src/), apply the simulation
 # fixes below, build the test ROMs there (make B=<run>/build), compile, then
 # per test compile its ROM and elaborate a snapshot; xsim runs one at a time.
 # Verilator: per snapshot, ghdl -a (verilator/blackbox.vhd, the cfide and
 # bridge variants, the test's ROM) into ghdl_<snapshot>/, ghdl --synth of the
-# bridge (cpu_riscv, rv_extra_ws = EXTRA_WS) and of cfide (the bench's
+# bridge (rv_extra_ws = EXTRA_WS) and of cfide (the bench's
 # generics), then verilator into vl_<snapshot>/Vtb_host_bridge (-DHB_GHDL,
 # waivers in verilator/l2.vlt).  The conversion must find the ROM's RAM and
 # keep its contents (verilator/romcheck.py).
 # Simulation fixes on the copies (never on rtl/); there are no others, the
 # DUT is otherwise the RTL as committed:
-#   hostcache.v  "ack <= #1 1'b0" -> "ack <= 1'b0" (as host832/run.sh: the
-#                delayed default makes the ack a 1 ns glitch in simulation)
+#   hostcache.v  "ack <= #1 1'b0" -> "ack <= 1'b0" (the delayed default
+#                makes the ack a 1 ns glitch in simulation)
 #   hostcache.v, dpram_inf_generic.v: a `timescale line (xelab warning)
-# The test ROMs use the fw/ctrl_boot_rv ROM template, as the committed boot
+# The test ROMs use the fw/ctrl_boot ROM template, as the committed boot
 # ROM does; every program clears x1-x31 at reset (the simulated register
-# file starts as X), as fw/ctrl_boot_rv/crt0.S does.
+# file starts as X), as fw/ctrl_boot/crt0.S does.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
@@ -148,9 +165,9 @@ CFIDE_GENERICS=""
 # the real Verilog of verilator/blackbox.vhd's i2c_master_mmio, linked when the
 # converted cfide instantiates it (havei2c = true)
 I2C_V="$ROOT/rtl/host/i2c_master_mmio.sv $ROOT/rtl/openaars/adv7511/i2c_master.v"
-VB=832_bridge.vhd VR=rv_hostcpu.v VC=cfide.vhd   # Verilator: the current variant
+VB=host_bridge.vhd VR=rv_hostcpu.v VC=cfide.vhd   # Verilator: the current variant
 
-TESTS="t_lanes t_hwoff t_b2b t_spibusy t_irq t_irqctl t_irqapi"
+TESTS="t_lanes t_hwoff t_b2b t_spibusy t_irq t_irqctl t_irqapi t_sdc_regs"
 MATRIX="2,0 8,0 20,0 2,8 8,8 20,8"
 XW=${EXTRA_WS:-0}
 run="$HERE/run_${RUNTAG:-wt}"
@@ -195,10 +212,10 @@ setup() {
 	hs_copy_rtl "$run" "$ROOT"
 
 	# mutant bridge
-	[ "$(grep -c -- '-- 4PHASE' src/832_bridge.vhd)" = 1 ] || die "832_bridge.vhd: not exactly one -- 4PHASE line"
+	[ "$(grep -c -- '-- 4PHASE' src/host_bridge.vhd)" = 1 ] || die "host_bridge.vhd: not exactly one -- 4PHASE line"
 	sed 's/^\( *\)state <= hw_release; -- 4PHASE.*/\1state <= waiting; -- 4PHASE MUTANT/' \
-		src/832_bridge.vhd > src/832_bridge_mutant.vhd
-	grep -q 'state <= waiting; -- 4PHASE MUTANT' src/832_bridge_mutant.vhd || die "mutant sed not applied"
+		src/host_bridge.vhd > src/host_bridge_mutant.vhd
+	grep -q 'state <= waiting; -- 4PHASE MUTANT' src/host_bridge_mutant.vhd || die "mutant sed not applied"
 
 	# interrupt controller mutants (irqmut, see the header)
 	python3 - src/cfide.vhd <<'EOF' || die "cfide mutant patch not applied"
@@ -217,6 +234,12 @@ mutant("b", "-- IRQ SET WINS",
        "irq_pend_nx <= (irq_pend and not irq_clr and not irq_mode) when irq_rd = '1' "
        "else (irq_pend or irq_edge) and not irq_mode;")
 mutant("c", "-- IRQ MODE MUX", "return pend;")
+# ext port mutant (extmut): ack from req, not ext_req_d
+lines = [l for l in s.split("\n") if l.rstrip().endswith("-- EXT ACK")]
+assert len(lines) == 1, "-- EXT ACK"
+ind = re.match(" *", lines[0]).group(0)
+open(sys.argv[1].replace(".vhd", "_extmut.vhd"), "w").write(
+    s.replace(lines[0], ind + "ack <= '1'; -- EXT ACK MUTANT"))
 EOF
 
 	# fast master: dBus command accepted in the ack cycle (see the header)
@@ -248,7 +271,7 @@ EOF
 	make -s -C "$HERE" B="$run/build" > make.log 2>&1 || { tail -20 make.log; die "make test ROMs (make.log)"; }
 	[ "$SIM" = verilator ] && return 0
 	X xvlog -sv "$ROOT/rtl/host/i2c_master_mmio.sv" "$ROOT/rtl/openaars/adv7511/i2c_master.v"
-	X xvlog $XI src/VexOsd.v src/hostcache.v src/dpram_inf_generic.v "$HERE/sdram_host_model.v" "$HERE/tb_host_bridge.v"
+	X xvlog $XI src/VexOsd.v src/hostcache.v src/dpram_inf_generic.v src/sdcard_spi.v "$HERE/sdram_host_model.v" "$HERE/tb_host_bridge.v"
 	X xvhdl src/cfide.vhd
 }
 
@@ -267,7 +290,7 @@ cfide_variant() {
 }
 
 # convert <dir> <rom vhd>: ghdl --synth of the current variant (src/$VB,
-# src/$VC) with that ROM -> <dir>/bridge.v (EightThirtyTwo_Bridge, the ROM
+# src/$VC) with that ROM -> <dir>/bridge.v (host_bridge, the ROM
 # inside, rv_hostcpu and hostcache as instances of the Verilog modules) and
 # <dir>/cfide.v (hs_ghdl_convert).  The entities of verilator/blackbox.vhd
 # come out as empty modules: they are deleted (and checked gone), Verilator
@@ -275,7 +298,7 @@ cfide_variant() {
 convert() {
 	HS_DIR=$1 HS_ROM=$2 HS_VB=$VB HS_VC=$VC
 	# shellcheck disable=SC2086
-	hs_ghdl_convert "$run" true "$XW" $CFIDE_GENERICS
+	hs_ghdl_convert "$run" "$XW" $CFIDE_GENERICS
 }
 
 # vbuild <name> <rom vhd> [defines]: convert, then verilate snapshot <name>
@@ -293,7 +316,7 @@ vbuild() {
 	HS_NAME=$name HS_VLT="$HERE/verilator/l2.vlt" HS_VFLAGS="-GEXTRA_WS=$XW -I$ROOT/sim/common"
 	# shellcheck disable=SC2086
 	hs_verilate "$run" tb_host_bridge "-DHB_GHDL $*" \
-		"$d/bridge.v" "$d/cfide.v" "src/$VR" src/VexOsd.v src/hostcache.v src/dpram_inf_generic.v \
+		"$d/bridge.v" "$d/cfide.v" "src/$VR" src/VexOsd.v src/hostcache.v src/dpram_inf_generic.v src/sdcard_spi.v \
 		"$HERE/sdram_host_model.v" $sd $stub $i2c "$HERE/tb_host_bridge.v"
 }
 
@@ -303,7 +326,7 @@ snapshot() {
 	local t=$1
 	local rom="$run/build/$t/OSDBoot_rv_ROM.vhd"
 	[ -f "$rom" ] || die "no ROM for $t (sw/$t.S or .c, TESTS in Makefile)"
-	grep -q '^shared variable ram' "$rom" || die "$t: ROM not built from the fw/ctrl_boot_rv template"
+	grep -q '^shared variable ram' "$rom" || die "$t: ROM not built from the fw/ctrl_boot template"
 	if [ "$SIM" = verilator ]; then vbuild "$2" "$rom"; return 0; fi
 	X xvhdl "$rom"
 	hs_xsim_build "$run" "$2" "$XW" tb_host_bridge
@@ -346,33 +369,39 @@ matrix() {   # matrix <snapshot> <test> <expect> <label>
 	return $rc
 }
 
-# boot <boot|boot_nofile>: the committed boot ROM from the SD card model
+# boot <boot|boot_nofile|boot_mismatch|boot_both>: the committed boot ROM from the SD card model
 boot() {
-	local t=$1 rom="fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd" exp st
+	local t=$1 rom="fw/ctrl_boot/OSDBoot_rv_ROM.vhd" exp st
 	local log="$run/tb_${t}_x${XW}_s${SLAT:-8}_j${SJIT:-0}.log"
 	local card="$run/boot/card.img" to=40000000
-	[ "$t" = boot_nofile ] && { card="$run/boot/card_nofile.img"; to=27000000; }
+	[ "$t" = boot_nofile ] && { card="$run/boot/card_nofile.img"; to=40000000; }
+	[ "$t" = boot_mismatch ] && { card="$run/boot/card_mismatch.img"; to=8000000; }
+	# boot_both: the bench's boot test (+TEST=boot: DONE, the t_irq check
+	# with vbl_int) on another card
+	local bt=$t
+	[ "$t" = boot_both ] && { card="$run/boot/card_both.img"; bt=boot; }
 	card=${BOOT_CARD:-$card}
 	[ ${#card} -le 1024 ] || die "card image path longer than 1024 characters (sd_spi_model's +SD_IMG buffer): $card"
 	exp="$HERE/boot/expect.txt"
 	[ "$t" = boot_nofile ] && exp="$HERE/boot/expect_nofile.txt"
+	[ "$t" = boot_mismatch ] && exp="$HERE/boot/expect_mismatch.txt"
 	make -s -C "$HERE/boot" B="$run/boot" > make_boot.log 2>&1 || { tail -20 make_boot.log; die "make boot firmware/cards (make_boot.log)"; }
 	# the gate is the committed ROM: a modified one still runs, but the run fails
 	if git -C "$ROOT" diff --quiet HEAD -- "$rom"; then st="unmodified (= git HEAD)"; else st="BAD  MODIFIED against git HEAD"; fi
 	echo "boot ROM: $rom $st, sha256 $(sha256sum "$ROOT/$rom" | cut -c1-16)" | tee "$run/results.txt"
 	if [ "$SIM" = verilator ]; then
-		VB=832_bridge.vhd VR=rv_hostcpu.v VC=cfide.vhd
+		VB=host_bridge.vhd VR=rv_hostcpu.v VC=cfide.vhd
 		vbuild "tb_${t}_x$XW" "$ROOT/$rom" -DSDCARD -DRV_HOSTCPU_STATS
 	else
 		X xvlog -d RV_HOSTCPU_STATS src/rv_hostcpu.v
-		X xvhdl src/832_bridge.vhd
+		X xvhdl src/host_bridge.vhd
 		X xvlog $XI -d SDCARD -d RV_HOSTCPU_STATS "$ROOT/sim/common/sd_spi_model.v" "$HERE/tb_host_bridge.v"
 		X xvhdl "$ROOT/$rom"
 		hs_xsim_build "$run" "tb_${t}_x$XW" "$XW" tb_host_bridge
 	fi
 	local t0=$SECONDS
 	# shellcheck disable=SC2046
-	simrun "tb_${t}_x$XW" "$log" "TEST=$t" "SLAT=${SLAT:-8}" "SJIT=${SJIT:-0}" "SEED=${SEED:-1}" \
+	simrun "tb_${t}_x$XW" "$log" "TEST=$bt" "SLAT=${SLAT:-8}" "SJIT=${SJIT:-0}" "SEED=${SEED:-1}" \
 		"SD_IMG=$card" "TIMEOUT=${BOOT_TIMEOUT:-$to}" $(xargs_list)
 	local secs=$((SECONDS - t0))
 	sed "s/@IMG@/$(cat "$run/boot/img.txt")/" "$exp" > "$run/$t.expect"
@@ -399,7 +428,7 @@ FWBOOT_TO=176400000        # fwboot: 1.5 x the cycle of the 20th KEYQ frame, 117
 FWBOOT_CFG_TO=119600000    # fwboot_cfg: 1.5 x the 20th KEYQ frame of fwboot's card without DRIVESND.BIN, 79,672,738
 FWBOOT_TRAP_TO=65900000   # fwboot_trap: 1.5 x the cycle of the EXC line, 43,926,505 (README)
 fwboot() {
-	local t=$1 rom="fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd" st to card fw
+	local t=$1 rom="fw/ctrl_boot/OSDBoot_rv_ROM.vhd" st to card fw
 	local log="$run/tb_${t}_x${XW}_s${SLAT:-8}_j${SJIT:-0}.log"
 	local ms="$HERE/fwboot/milestones.txt" save=() saved="$run/fwboot/card_cfg_saved.img"
 	local rdy=() map a
@@ -412,12 +441,12 @@ fwboot() {
 		[ -n "$a" ] && rdy=("OSD_RDY_TO_ADDR=${a#0x}")
 	fi
 	if [ "$t" = fwboot ]; then
-		[ -f "$fw" ] || die "no firmware $fw (make -C fw/ctrl_rv, or FW=<RV32OSDA.BIN>)"
+		[ -f "$fw" ] || die "no firmware $fw (make -C fw/ctrl, or FW=<firmware image>)"
 		make -s -C "$HERE/fwboot" B="$run/fwboot" FW="$fw" all > make_fwboot.log 2>&1 \
 			|| { tail -20 make_fwboot.log; die "make fwboot card (make_fwboot.log)"; }
 		card="$run/fwboot/card.img"; to=$FWBOOT_TO
 	elif [ "$t" = fwboot_cfg ]; then
-		[ -f "$fw" ] || die "no firmware $fw (make -C fw/ctrl_rv, or FW=<RV32OSDA.BIN>)"
+		[ -f "$fw" ] || die "no firmware $fw (make -C fw/ctrl, or FW=<firmware image>)"
 		make -s -C "$HERE/fwboot" B="$run/fwboot" FW="$fw" cfg > make_fwboot.log 2>&1 \
 			|| { tail -20 make_fwboot.log; die "make fwboot_cfg card (make_fwboot.log)"; }
 		card="$run/fwboot/card_cfg.img"; to=$FWBOOT_CFG_TO
@@ -436,16 +465,16 @@ fwboot() {
 	if [ "$t" != fwboot_trap ]; then
 		echo "firmware: $fw, $(stat -c %s "$fw") bytes, sha256 $(sha256sum "$fw" | cut -c1-16)" | tee -a "$run/results.txt"
 	else
-		echo "firmware: $run/fwboot/trapfw/RV32OSDA.BIN (+ smoke_trap.o), expect: $(cat "$run/fwboot/trap_expect.txt")" \
+		echo "firmware: $run/fwboot/trapfw/$(hs_fwname) (+ smoke_trap.o), expect: $(cat "$run/fwboot/trap_expect.txt")" \
 			| tee -a "$run/results.txt"
 	fi
 	if [ "$SIM" = verilator ]; then
-		VB=832_bridge.vhd VR=rv_hostcpu.v VC=cfide.vhd
+		VB=host_bridge.vhd VR=rv_hostcpu.v VC=cfide.vhd
 		cfide_generics fwboot     # havei2c = true (the bench's FWBOOT define)
 		vbuild "tb_${t}_x$XW" "$ROOT/$rom" -DSDCARD -DFWBOOT -DRV_HOSTCPU_STATS
 	else
 		X xvlog -d RV_HOSTCPU_STATS src/rv_hostcpu.v
-		X xvhdl src/832_bridge.vhd
+		X xvhdl src/host_bridge.vhd
 		X xvlog $XI -d SDCARD -d FWBOOT -d RV_HOSTCPU_STATS "$ROOT/sim/common/sd_spi_model.v" \
 			"$HERE/minimig_spi_stub.v" "$HERE/tb_host_bridge.v"
 		X xvhdl "$ROOT/$rom"
@@ -492,7 +521,7 @@ fwboot() {
 
 # fwboot_cfg_card <saved card>: the config files on the card the run left
 # (mtools, fsck.fat): the firmware wrote MINMGAR.CFG = cfgconv --to-rv of
-# the 832 file and left MINMGAA.CFG as it was
+# the legacy file and left MINMGAA.CFG as it was
 fwboot_cfg_card() {
 	local img=$1 d="$run/fwboot/cfgcheck" off=$((2048 * 512))
 	if [ ! -f "$img" ]; then echo "BAD  no saved card $img (+SD_SAVE)"; return; fi
@@ -520,29 +549,39 @@ case "${1:-}" in
 		hs_compare "$HERE/run_$2" "$HERE/run_$3"
 		exit $?
 		;;
-	boot|boot_nofile)
+	boot|boot_nofile|boot_mismatch|boot_both)
 		setup
 		boot "$1"
 		exit $?
 		;;
 	fwboot|fwboot_trap|fwboot_cfg)
+		# Unsupported since the SD card engine (plan Task 12): the boot ROM
+		# and the firmware reach the card only through sdcard_spi, while
+		# these legs keep the card model on cfide's sd_cs[1] (their SPI
+		# log milestones read it there).  FWBOOT_FORCE=1 runs them anyway.
+		if [ "${FWBOOT_FORCE:-0}" != 1 ]; then
+			echo "=== $1 UNSUPPORTED: unsupported with the SD peripheral boot path; covered by sim/l3 sdc_boot (Task 13)" >&2
+			echo "    (the card model is on cfide's sd_cs[1]; the boot ROM and the firmware use sdcard_spi; FWBOOT_FORCE=1 runs it anyway, it fails)" >&2
+			exit 3
+		fi
 		# FW relative to the caller's directory (setup changes into the run's)
-		FWBIN=$(realpath -m -- "${FW:-$ROOT/fw/ctrl_rv/build/RV32OSDA.BIN}")
+		FWBIN=$(realpath -m -- "${FW:-$ROOT/fw/ctrl/build/$(hs_fwname)}")
 		setup
 		fwboot "$1"
 		exit $?
 		;;
 	all)
 		setup
-		variant 832_bridge.vhd rv_hostcpu.v
+		variant host_bridge.vhd rv_hostcpu.v
 		for t in $TESTS; do snapshot "$t" "tb_${t}_x$XW"; done
 		for t in $TESTS; do matrix "tb_${t}_x$XW" "$t" PASS ""; done | tee "$run/results.txt"
 		if grep -q '^BAD' "$run/results.txt"; then echo "=== SOME FAILED"; exit 1; fi
-		echo "=== ALL PASS ($(grep -c '^ok' "$run/results.txt") runs, $SIM)"
+		echo "=== ALL PASS ($(grep -c '^ok' "$run/results.txt") runs, $SIM: $TESTS)"
+		echo "    not in 'all': boot, boot_nofile, boot_mismatch, boot_both (run them by name); fwboot, fwboot_trap, fwboot_cfg UNSUPPORTED with the SD peripheral boot path (sim/l3 sdc_boot, Task 13)"
 		;;
 	irqmut)
 		setup
-		variant 832_bridge.vhd rv_hostcpu.v
+		variant host_bridge.vhd rv_hostcpu.v
 		XW=0
 		for m in a b c; do
 			cfide_variant "cfide_irqmut_$m.vhd"
@@ -567,14 +606,29 @@ case "${1:-}" in
 		if grep -q '^BAD' "$run/results.txt"; then echo "=== IRQ MUTANT SURVIVED or CONTROL FAILED"; exit 1; fi
 		echo "=== IRQ MUTANTS CAUGHT (3 mutants FAIL where expected, control PASS)"
 		;;
+	extmut)
+		setup
+		variant host_bridge.vhd rv_hostcpu.v
+		cfide_variant cfide_extmut.vhd
+		for XW in 0 1 2 3; do snapshot t_sdc_regs "tb_t_sdc_regs_extmut_x$XW"; done
+		cfide_variant cfide.vhd
+		for XW in 0 1 2 3; do snapshot t_sdc_regs "tb_t_sdc_regs_x$XW"; done
+		{
+			echo "cfide ext mutant: $(grep -- '-- EXT ACK MUTANT' src/cfide_extmut.vhd | sed 's/^ *//')"
+			for XW in 0 1 2 3; do one "tb_t_sdc_regs_extmut_x$XW" t_sdc_regs 8 0 FAIL "gate    cfide ext mutant: "; done
+			for XW in 0 1 2 3; do one "tb_t_sdc_regs_x$XW" t_sdc_regs 8 0 PASS "control real cfide:      "; done
+		} | tee "$run/results.txt"
+		if grep -q '^BAD' "$run/results.txt"; then echo "=== EXT MUTANT SURVIVED or CONTROL FAILED"; exit 1; fi
+		echo "=== EXT MUTANT CAUGHT (4 gate runs FAIL, 4 control runs PASS)"
+		;;
 	mutant)
 		setup
-		echo "mutant bridge: $(grep -- '-- 4PHASE' src/832_bridge_mutant.vhd | sed 's/^ *//')"
-		variant 832_bridge_mutant.vhd rv_hostcpu_fast.v
+		echo "mutant bridge: $(grep -- '-- 4PHASE' src/host_bridge_mutant.vhd | sed 's/^ *//')"
+		variant host_bridge_mutant.vhd rv_hostcpu_fast.v
 		for XW in 0 1 2 3; do snapshot t_b2b "tb_t_b2b_mutfast_x$XW"; done
-		variant 832_bridge.vhd rv_hostcpu_fast.v
+		variant host_bridge.vhd rv_hostcpu_fast.v
 		for XW in 0 1 2 3; do snapshot t_b2b "tb_t_b2b_fast_x$XW"; done
-		variant 832_bridge_mutant.vhd rv_hostcpu.v
+		variant host_bridge_mutant.vhd rv_hostcpu.v
 		XW=0; snapshot t_b2b "tb_t_b2b_mut_x$XW"
 		{
 			XW=0; matrix "tb_t_b2b_mutfast_x$XW" t_b2b FAIL "gate    mutant bridge + fast master: "
@@ -595,7 +649,7 @@ case "${1:-}" in
 		export SDRAM_HEX_FILE="$ROOT/fw/dhrystone_rv/l2_$opt.hex"
 		XARGS="${XARGS:-} +TIMEOUT=${DHRY_TIMEOUT:-40000000}"
 		setup
-		variant 832_bridge.vhd rv_hostcpu.v
+		variant host_bridge.vhd rv_hostcpu.v
 		snapshot dhry "tb_dhry_x$XW"
 		rc=0
 		one "tb_dhry_x$XW" dhry "${SLAT:-8}" "${SJIT:-0}" PASS "" || rc=1
@@ -612,7 +666,7 @@ case "${1:-}" in
 		;;
 	*)
 		setup
-		variant 832_bridge.vhd rv_hostcpu.v
+		variant host_bridge.vhd rv_hostcpu.v
 		rc=0
 		for t in "$@"; do snapshot "$t" "tb_${t}_x$XW"; done
 		for t in "$@"; do one "tb_${t}_x$XW" "$t" "${SLAT:-8}" "${SJIT:-0}" PASS "" || rc=1; done

@@ -125,9 +125,10 @@ if [ "$1" = "--gatemutant" ]; then IS_GATEMUTANT=1; IS_MUTANT=1; shift; set -- -
 IS_C32MUTANT=0
 if [ "$1" = "--c32mutant" ]; then IS_C32MUTANT=1; IS_MUTANT=1; shift; set -- --ap040 "$@"; fi
 
-# The CPU is the AP68040 (lib/AP68040) inside rtl/soc/TG68K.vhd.  Every leg says
-# so with --ap040 or a flag that implies it; the TG68K legs that ran without it
-# were removed in Stage E4a and are reachable at tag d3_stable.
+# The CPU is the pipelined AP68040 (PIPE_DIR below), or the faster one
+# (FASTER=1), inside rtl/soc/TG68K.vhd.
+# Every leg says so with --ap040 or a flag that implies it; the TG68K legs that
+# ran without it were removed in Stage E4a and are reachable at tag d3_stable.
 #   ./run.sh --ap040    AP68040 -> run_pass_ap040/  xsim_run_pass_ap040.log
 if [ "$1" != "--ap040" ]; then
     echo "run.sh: every leg is an AP68040 leg; pass --ap040 or one of the flags that" >&2
@@ -206,16 +207,27 @@ fi
 # over the chipset bus (findings/chip32/plan.md).
 C32PH=""
 if [ "$TURBOCHIP" = "0" ]; then C32PH="-DCHIP32PH=1"; fi
-# PIPELINED=1: the pipelined core (findings/ap040-pipelined/PLAN.md M5) --
-# TG68K's ap040_pipelined generic, the sources from PIPE_DIR (default the
-# sibling clone ../AP68040-pipelined) instead of lib/AP68040's.
+# The core is the pipelined one, the only one since the non-pipelined
+# reference core was removed (2026-10-21): its sources come from PIPE_DIR
+# (default the sibling clone ../AP68040-pipelined; the submodule is
+# $R/lib/AP68040-pipelined).  PIPELINED=1 is what selected it before; it is
+# now implied (the run directories keep their _pipe suffix), and PIPELINED=0
+# is refused.
 PIPE_DIR=${PIPE_DIR:-$(cd "$(dirname "$0")/../../.." && pwd)/AP68040-pipelined}
-if [ "${PIPELINED:-0}" = "1" ]; then VARIANT="${VARIANT}_pipe"; fi
+if [ "${PIPELINED:-1}" != "1" ]; then
+    echo "run.sh: PIPELINED=${PIPELINED}: the non-pipelined reference core was removed; every leg runs the pipelined core" >&2
+    exit 2
+fi
 # FASTER=1: the AP68040 faster core (lib/AP68040-faster) behind its 68040 bus
-# bridge, TG68K's ap040_faster (implies the free-running handshake).  Run it
-# at its clock: CPU_RATIO=2.
+# bridge, TG68K's ap040_faster (implies the free-running handshake), in place
+# of the pipelined core.  Run it at its clock: CPU_RATIO=2.
 FAST_DIR=$R/lib/AP68040-faster
-if [ "${FASTER:-0}" = "1" ]; then VARIANT="${VARIANT}_fast"; fi
+if [ "${FASTER:-0}" = "1" ]; then
+    VARIANT="${VARIANT}_fast"
+else
+    [ -d "$PIPE_DIR/rtl" ] || { echo "run.sh: PIPE_DIR=$PIPE_DIR has no rtl/ (the AP68040-pipelined checkout)" >&2; exit 2; }
+    VARIANT="${VARIANT}_pipe"
+fi
 # RUNTAG=<word> gives a run its own directory and log, so legs that differ only
 # in environment switches (CPU_RATIO, CPU_PHASE, ...) do not overwrite each other.
 if [ -n "$RUNTAG" ]; then VARIANT="${VARIANT}_$RUNTAG"; fi
@@ -343,10 +355,10 @@ echo "sv work \"$LIB/src_v/ddr3_dfi_seq.sv\""           >> $PRJ
 echo "sv work \"$LIB/src_v/ddr3_core.sv\""              >> $PRJ
 echo "sv work \"$D/ddr3_cpu_tb.sv\""                    >> $PRJ
 
-# ---- AP68040, when that is the core under test ----------------------------
+# ---- the AP68040 ------------------------------------------------------------
 # SystemVerilog; ap040_defs.svh is on the include path passed to xelab below.
 # The RAM primitive is the project's, not the submodule's -- rtl/cpu040/dpram.v.
-if [ "$CPU" = "ap040" ] && [ "${FASTER:-0}" = "1" ]; then
+if [ "${FASTER:-0}" = "1" ]; then
     # A copy with always_ff written as always: xsim's elaborator rejects a
     # variable that an initial block AND an always_ff both write (VRFC
     # 10-3818, LRM 9.2.2.4), which the core does for every RAM it clears at
@@ -372,20 +384,12 @@ if [ "$CPU" = "ap040" ] && [ "${FASTER:-0}" = "1" ]; then
   fi
     # the 16-bit adapter the wrapper keeps for chipset traffic
     echo "sv work \"$R/lib/AP68040/rtl/ap040_bus16_adapter.v\"" >> $PRJ
-elif [ "$CPU" = "ap040" ] && [ "${PIPELINED:-0}" = "1" ]; then
-    # the pipelined core, its wrapper and the adapters it lifted from lib/AP68040
+else
+    # The pipelined core, its wrapper and its adapters (rtl/compat).
     PR=$PIPE_DIR/rtl
     echo "sv work \"$PR/ap040_pipe_pkg.sv\""            >> $PRJ
     for f in $PR/ap040_*.v $PR/compat/*.v; do
         echo "sv work \"$f\""                           >> $PRJ
-    done
-    echo "verilog work \"$R/rtl/cpu040/dpram.v\""        >> $PRJ
-elif [ "$CPU" = "ap040" ]; then
-    AP=$R/lib/AP68040/rtl
-    for f in ap040_tg68k_compat ap040_core ap040_alu ap040_muldiv ap040_regfile \
-             ap040_fpu ap040_mmu ap040_cache ap040_bus16_adapter \
-             ap040_bus_timeout ap040_walker_cdc ap040_fill_cdc; do
-        echo "sv work \"$AP/$f.v\""                      >> $PRJ
     done
     echo "verilog work \"$R/rtl/cpu040/dpram.v\""        >> $PRJ
 fi
@@ -416,9 +420,7 @@ quit
 EOF
 
 # The Micron model includes 2048Mb_ddr3_parameters.vh from its own directory.
-AP040_ELAB=""
-if [ "$CPU" = "ap040" ]; then AP040_ELAB="-i $R/lib/AP68040/rtl"; fi
-if [ "${PIPELINED:-0}" = "1" ]; then AP040_ELAB="-i $PIPE_DIR/rtl -i $PIPE_DIR/rtl/compat -d AP040_PIPELINED"; fi
+AP040_ELAB="-i $PIPE_DIR/rtl -i $PIPE_DIR/rtl/compat"
 if [ "${FASTER:-0}" = "1" ]; then AP040_ELAB="-i $W/fast_rtl -i $W/fast_rtl/fpu -i $W/fast_rtl/gen -d AP040_FASTER"; fi
 if [ -n "${GLNET:-}" ]; then AP040_ELAB="$AP040_ELAB -d GLNET"; fi
 

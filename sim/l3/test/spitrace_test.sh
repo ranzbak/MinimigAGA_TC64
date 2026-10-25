@@ -1,6 +1,6 @@
 #!/bin/bash
-# Fixtures for the differential tools (sim/host_bridge/spitrace.py norm /
-# diff / osd, sim/l3 README "Differential"):
+# Fixtures for the trace tools (sim/host_bridge/spitrace.py norm / diff /
+# osd; sim/l3 README "Trace files"):
 #   (a) the same frames with other poll counts (and other firmware / config
 #       file names, sizes and printf forms, covered by the fixture's rules;
 #       and the timing of a floppy read DMA, as sim/l3 fdd_rd p4t13 / p4t13c:
@@ -53,7 +53,7 @@ set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../../.." && pwd)
 ST=${SPITRACE:-$ROOT/sim/host_bridge/spitrace.py}   # SPITRACE: another spitrace.py (the RED run)
-CHARROM="$ROOT/fw/ctrl_rv/charrom.h"
+CHARROM="$ROOT/fw/ctrl/charrom.h"
 OUT="$HERE/build/spitrace_test"
 rm -rf "$OUT"
 mkdir -p "$OUT/content" || exit 1

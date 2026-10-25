@@ -108,25 +108,9 @@
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/minimig/amiga_keyboard.v"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/openaars/adv7511/pal_to_ddr.sv"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/openaars/adv7511/signal_generator.sv"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/EightThirtyTwo/RTL/eightthirtytwo_pkg.vhd"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/EightThirtyTwo/RTL/eightthirtytwo_aligner_le.vhd"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/EightThirtyTwo/RTL/eightthirtytwo_aligner.vhd"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/EightThirtyTwo/RTL/eightthirtytwo_fetchloadstore.vhd"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/EightThirtyTwo/RTL/eightthirtytwo_decode.vhd"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/EightThirtyTwo/RTL/eightthirtytwo_shifter.vhd"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/EightThirtyTwo/RTL/eightthirtytwo_alu.vhd"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/EightThirtyTwo/RTL/eightthirtytwo_hazard.vhd"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/EightThirtyTwo/RTL/eightthirtytwo_debug.vhd"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/EightThirtyTwo/RTL/eightthirtytwo_cpu.vhd"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/EightThirtyTwo/RTL/debug_virtualjtag.vhd"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/EightThirtyTwo/RTL/debug_fifo_altera.vhd"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/EightThirtyTwo/RTL/debug_bridge_jtag.vhd"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/fw/ctrl_boot_832/OSDBoot_832_ROM.vhd"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/host/832_bridge.vhd"
+#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/fw/ctrl_boot/OSDBoot_rv_ROM.vhd"
+#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/host/host_bridge.vhd"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/audio/AudioMix.vhd"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/tg68k/TG68K_Pack.vhd"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/tg68k/TG68K_ALU.vhd"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/tg68k/TG68KdotC_Kernel.vhd"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/rtg/VideoStream.vhd"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/akiko/cornerturn.vhd"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/akiko/akiko.vhd"
@@ -163,7 +147,7 @@
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/bench/ps2mouse/ps2mouse_ctrl.v"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/minimig/userio_ps2mouse.v"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/bench/ps2mouse/ps2mouse_tb.v"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/fw/ctrl_boot_832/OSDBoot_832_ROM.vhd"
+#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/fw/ctrl_boot/OSDBoot_rv_ROM.vhd"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/rom-hostcpu-test/memtest_orig_top_tb.vhd"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/sim/rom-hostcpu-test/memtest_top_tb.v"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/openaars/adv7511/i2c_master.v"
@@ -319,25 +303,9 @@ proc checkRequiredFiles { origin_dir} {
  "[file normalize "$origin_dir/rtl/minimig/amiga_keyboard.v"]"\
  "[file normalize "$origin_dir/rtl/openaars/adv7511/pal_to_ddr.sv"]"\
  "[file normalize "$origin_dir/rtl/openaars/adv7511/signal_generator.sv"]"\
- "[file normalize "$origin_dir/EightThirtyTwo/RTL/eightthirtytwo_pkg.vhd"]"\
- "[file normalize "$origin_dir/EightThirtyTwo/RTL/eightthirtytwo_aligner_le.vhd"]"\
- "[file normalize "$origin_dir/EightThirtyTwo/RTL/eightthirtytwo_aligner.vhd"]"\
- "[file normalize "$origin_dir/EightThirtyTwo/RTL/eightthirtytwo_fetchloadstore.vhd"]"\
- "[file normalize "$origin_dir/EightThirtyTwo/RTL/eightthirtytwo_decode.vhd"]"\
- "[file normalize "$origin_dir/EightThirtyTwo/RTL/eightthirtytwo_shifter.vhd"]"\
- "[file normalize "$origin_dir/EightThirtyTwo/RTL/eightthirtytwo_alu.vhd"]"\
- "[file normalize "$origin_dir/EightThirtyTwo/RTL/eightthirtytwo_hazard.vhd"]"\
- "[file normalize "$origin_dir/EightThirtyTwo/RTL/eightthirtytwo_debug.vhd"]"\
- "[file normalize "$origin_dir/EightThirtyTwo/RTL/eightthirtytwo_cpu.vhd"]"\
- "[file normalize "$origin_dir/EightThirtyTwo/RTL/debug_virtualjtag.vhd"]"\
- "[file normalize "$origin_dir/EightThirtyTwo/RTL/debug_fifo_altera.vhd"]"\
- "[file normalize "$origin_dir/EightThirtyTwo/RTL/debug_bridge_jtag.vhd"]"\
- "[file normalize "$origin_dir/fw/ctrl_boot_832/OSDBoot_832_ROM.vhd"]"\
- "[file normalize "$origin_dir/rtl/host/832_bridge.vhd"]"\
+ "[file normalize "$origin_dir/fw/ctrl_boot/OSDBoot_rv_ROM.vhd"]"\
+ "[file normalize "$origin_dir/rtl/host/host_bridge.vhd"]"\
  "[file normalize "$origin_dir/rtl/audio/AudioMix.vhd"]"\
- "[file normalize "$origin_dir/rtl/tg68k/TG68K_Pack.vhd"]"\
- "[file normalize "$origin_dir/rtl/tg68k/TG68K_ALU.vhd"]"\
- "[file normalize "$origin_dir/rtl/tg68k/TG68KdotC_Kernel.vhd"]"\
  "[file normalize "$origin_dir/rtl/rtg/VideoStream.vhd"]"\
  "[file normalize "$origin_dir/rtl/akiko/cornerturn.vhd"]"\
  "[file normalize "$origin_dir/rtl/akiko/akiko.vhd"]"\
@@ -374,7 +342,7 @@ proc checkRequiredFiles { origin_dir} {
  "[file normalize "$origin_dir/bench/ps2mouse/ps2mouse_ctrl.v"]"\
  "[file normalize "$origin_dir/rtl/minimig/userio_ps2mouse.v"]"\
  "[file normalize "$origin_dir/bench/ps2mouse/ps2mouse_tb.v"]"\
- "[file normalize "$origin_dir/fw/ctrl_boot_832/OSDBoot_832_ROM.vhd"]"\
+ "[file normalize "$origin_dir/fw/ctrl_boot/OSDBoot_rv_ROM.vhd"]"\
  "[file normalize "$origin_dir/sim/rom-hostcpu-test/memtest_orig_top_tb.vhd"]"\
  "[file normalize "$origin_dir/sim/rom-hostcpu-test/memtest_top_tb.v"]"\
  "[file normalize "$origin_dir/rtl/openaars/adv7511/i2c_master.v"]"\
@@ -653,25 +621,9 @@ set files [list \
  [file normalize "${origin_dir}/rtl/minimig/amiga_keyboard.v"] \
  [file normalize "${origin_dir}/rtl/openaars/adv7511/pal_to_ddr.sv"] \
  [file normalize "${origin_dir}/rtl/openaars/adv7511/signal_generator.sv"] \
- [file normalize "${origin_dir}/EightThirtyTwo/RTL/eightthirtytwo_pkg.vhd"] \
- [file normalize "${origin_dir}/EightThirtyTwo/RTL/eightthirtytwo_aligner_le.vhd"] \
- [file normalize "${origin_dir}/EightThirtyTwo/RTL/eightthirtytwo_aligner.vhd"] \
- [file normalize "${origin_dir}/EightThirtyTwo/RTL/eightthirtytwo_fetchloadstore.vhd"] \
- [file normalize "${origin_dir}/EightThirtyTwo/RTL/eightthirtytwo_decode.vhd"] \
- [file normalize "${origin_dir}/EightThirtyTwo/RTL/eightthirtytwo_shifter.vhd"] \
- [file normalize "${origin_dir}/EightThirtyTwo/RTL/eightthirtytwo_alu.vhd"] \
- [file normalize "${origin_dir}/EightThirtyTwo/RTL/eightthirtytwo_hazard.vhd"] \
- [file normalize "${origin_dir}/EightThirtyTwo/RTL/eightthirtytwo_debug.vhd"] \
- [file normalize "${origin_dir}/EightThirtyTwo/RTL/eightthirtytwo_cpu.vhd"] \
- [file normalize "${origin_dir}/EightThirtyTwo/RTL/debug_virtualjtag.vhd"] \
- [file normalize "${origin_dir}/EightThirtyTwo/RTL/debug_fifo_altera.vhd"] \
- [file normalize "${origin_dir}/EightThirtyTwo/RTL/debug_bridge_jtag.vhd"] \
- [file normalize "${origin_dir}/fw/ctrl_boot_832/OSDBoot_832_ROM.vhd"] \
- [file normalize "${origin_dir}/rtl/host/832_bridge.vhd"] \
+ [file normalize "${origin_dir}/fw/ctrl_boot/OSDBoot_rv_ROM.vhd"] \
+ [file normalize "${origin_dir}/rtl/host/host_bridge.vhd"] \
  [file normalize "${origin_dir}/rtl/audio/AudioMix.vhd"] \
- [file normalize "${origin_dir}/rtl/tg68k/TG68K_Pack.vhd"] \
- [file normalize "${origin_dir}/rtl/tg68k/TG68K_ALU.vhd"] \
- [file normalize "${origin_dir}/rtl/tg68k/TG68KdotC_Kernel.vhd"] \
  [file normalize "${origin_dir}/rtl/rtg/VideoStream.vhd"] \
  [file normalize "${origin_dir}/rtl/akiko/cornerturn.vhd"] \
  [file normalize "${origin_dir}/rtl/akiko/akiko.vhd"] \
@@ -1108,118 +1060,19 @@ set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
 set_property -name "file_type" -value "SystemVerilog" -objects $file_obj
 set_property -name "library" -value "work" -objects $file_obj
 
-set file "$origin_dir/EightThirtyTwo/RTL/eightthirtytwo_pkg.vhd"
+set file "$origin_dir/fw/ctrl_boot/OSDBoot_rv_ROM.vhd"
 set file [file normalize $file]
 set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
 set_property -name "file_type" -value "VHDL" -objects $file_obj
 set_property -name "library" -value "work" -objects $file_obj
 
-set file "$origin_dir/EightThirtyTwo/RTL/eightthirtytwo_aligner_le.vhd"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
-set_property -name "file_type" -value "VHDL" -objects $file_obj
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/EightThirtyTwo/RTL/eightthirtytwo_aligner.vhd"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
-set_property -name "file_type" -value "VHDL" -objects $file_obj
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/EightThirtyTwo/RTL/eightthirtytwo_fetchloadstore.vhd"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
-set_property -name "file_type" -value "VHDL" -objects $file_obj
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/EightThirtyTwo/RTL/eightthirtytwo_decode.vhd"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
-set_property -name "file_type" -value "VHDL" -objects $file_obj
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/EightThirtyTwo/RTL/eightthirtytwo_shifter.vhd"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
-set_property -name "file_type" -value "VHDL" -objects $file_obj
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/EightThirtyTwo/RTL/eightthirtytwo_alu.vhd"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
-set_property -name "file_type" -value "VHDL" -objects $file_obj
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/EightThirtyTwo/RTL/eightthirtytwo_hazard.vhd"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
-set_property -name "file_type" -value "VHDL" -objects $file_obj
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/EightThirtyTwo/RTL/eightthirtytwo_debug.vhd"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
-set_property -name "file_type" -value "VHDL" -objects $file_obj
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/EightThirtyTwo/RTL/eightthirtytwo_cpu.vhd"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
-set_property -name "file_type" -value "VHDL" -objects $file_obj
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/EightThirtyTwo/RTL/debug_virtualjtag.vhd"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
-set_property -name "file_type" -value "VHDL" -objects $file_obj
-set_property -name "is_enabled" -value "0" -objects $file_obj
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/EightThirtyTwo/RTL/debug_fifo_altera.vhd"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
-set_property -name "file_type" -value "VHDL" -objects $file_obj
-set_property -name "is_enabled" -value "0" -objects $file_obj
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/EightThirtyTwo/RTL/debug_bridge_jtag.vhd"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
-set_property -name "file_type" -value "VHDL" -objects $file_obj
-set_property -name "is_enabled" -value "0" -objects $file_obj
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/fw/ctrl_boot_832/OSDBoot_832_ROM.vhd"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
-set_property -name "file_type" -value "VHDL" -objects $file_obj
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/rtl/host/832_bridge.vhd"
+set file "$origin_dir/rtl/host/host_bridge.vhd"
 set file [file normalize $file]
 set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
 set_property -name "file_type" -value "VHDL" -objects $file_obj
 set_property -name "library" -value "work" -objects $file_obj
 
 set file "$origin_dir/rtl/audio/AudioMix.vhd"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
-set_property -name "file_type" -value "VHDL" -objects $file_obj
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/rtl/tg68k/TG68K_Pack.vhd"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
-set_property -name "file_type" -value "VHDL" -objects $file_obj
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/rtl/tg68k/TG68K_ALU.vhd"
-set file [file normalize $file]
-set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
-set_property -name "file_type" -value "VHDL" -objects $file_obj
-set_property -name "library" -value "work" -objects $file_obj
-
-set file "$origin_dir/rtl/tg68k/TG68KdotC_Kernel.vhd"
 set file [file normalize $file]
 set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
 set_property -name "file_type" -value "VHDL" -objects $file_obj
@@ -1570,14 +1423,14 @@ if {[string equal [get_filesets -quiet rom-hostcpu-test] ""]} {
 # Set 'rom-hostcpu-test' fileset object
 set obj [get_filesets rom-hostcpu-test]
 set files [list \
- [file normalize "${origin_dir}/fw/ctrl_boot_832/OSDBoot_832_ROM.vhd"] \
+ [file normalize "${origin_dir}/fw/ctrl_boot/OSDBoot_rv_ROM.vhd"] \
  [file normalize "${origin_dir}/sim/rom-hostcpu-test/memtest_orig_top_tb.vhd"] \
  [file normalize "${origin_dir}/sim/rom-hostcpu-test/memtest_top_tb.v"] \
 ]
 add_files -norecurse -fileset $obj $files
 
 # Set 'rom-hostcpu-test' fileset file properties for remote files
-set file "$origin_dir/fw/ctrl_boot_832/OSDBoot_832_ROM.vhd"
+set file "$origin_dir/fw/ctrl_boot/OSDBoot_rv_ROM.vhd"
 set file [file normalize $file]
 set file_obj [get_files -of_objects [get_filesets rom-hostcpu-test] [list "*$file"]]
 set_property -name "file_type" -value "VHDL" -objects $file_obj

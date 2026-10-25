@@ -113,8 +113,4 @@
 ../../../../rtl/io/indicators.v
 ../../../../rtl/io/sseg_decode.v
 
-../../../../rtl/tg68k/TG68K_Pack.vhd
-../../../../rtl/tg68k/TG68K_ALU.vhd
-../../../../rtl/tg68k/TG68KdotC_Kernel.vhd
-../../../../rtl/tg68k/TG68K.vhd
 

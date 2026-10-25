@@ -9,8 +9,4 @@
 ../../../../rtl/sdram/dpram_inf_256x32.v
 ../../../../rtl/sdram/dpram_inf_be_1024x16.v
 
-../../../../rtl/tg68k/TG68K.vhd
-../../../../rtl/tg68k/TG68K_Pack.vhd
-../../../../rtl/tg68k/TG68KdotC_Kernel.vhd
-../../../../rtl/tg68k/TG68K_ALU.vhd
 

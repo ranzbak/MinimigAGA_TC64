@@ -1,5 +1,5 @@
 /* t_irqctl: cfide's interrupt controller (0xFFFFFF30..3C) through the bridge
- * and the firmware trap entry (fw/ctrl_rv/arch), real cfide.  The bench
+ * and the firmware trap entry (fw/ctrl/arch), real cfide.  The bench
  * drives vbl_int (bit 0), amiga_req (bit 2), i2c_ext_int (bit 3, the
  * ADV7511 INT pin) and irq_src[15:4] on the
  * checkpoints (STAMP n) listed in tb_host_bridge.v's t_irqctl block.

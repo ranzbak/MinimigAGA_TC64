@@ -5,13 +5,13 @@
 #   make RV32OSDA.BIN          board image (-O2, 200000 runs), copy to the SD card
 #   make build/l1_O2_teeth.hex L1 image with -DDHRY_CHECK_TEETH: one result check
 #                              must fail (sim/rv_l1/run.sh dhry)
-# Linked with fw/ctrl_rv/arch (crt0, trap entry, irq API) and its firmware.ld.
+# Linked with fw/ctrl/arch (crt0, trap entry, irq API) and its firmware.ld.
 TOP := $(abspath $(CURDIR)/../..)
 include $(TOP)/tools/riscv/toolchain.mk
 
 B       := build
 ARCH_B  := $(B)
-include $(TOP)/fw/ctrl_rv/arch/arch.mk
+include $(TOP)/fw/ctrl/arch/arch.mk
 .DEFAULT_GOAL := all
 BIN2HEX := $(TOP)/tools/riscv/bin2hex.sh
 BOOTFW  := $(TOP)/sim/rv_l1/build/boot_fw.bin

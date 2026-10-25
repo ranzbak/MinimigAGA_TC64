@@ -17,7 +17,7 @@
 //   xvlog -sv tb_i2c_vol.sv ../../rtl/host/i2c_master_mmio.sv ../../rtl/openaars/adv7511/i2c_master.v
 //   xelab tb_i2c_vol -s vsnap && xsim vsnap -R [-testplusarg fix]
 //
-// was: tb_i2c_fwseq -- the 832 firmware's ADV7511 I2C sequences through
+// was: tb_i2c_fwseq -- the OSD firmware's ADV7511 I2C sequences through
 // rtl/host/i2c_master_mmio.sv against a register-file slave that logs every
 // register WRITE, to see what the bus really does (Paul 2026-09-27: the OSD
 // HDMI clock delay reverts to the default as soon as the menu cursor moves).

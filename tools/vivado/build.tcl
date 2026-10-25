@@ -105,36 +105,6 @@ add_src $R/rtl/sdram/cpu_enable_cadence.v
 add_src $R/rtl/minimig/gayle_port.v
 
 #-----------------------------------------------------------------------------
-# AP68040 (lib/AP68040, submodule pinned at 0e76761): an MC68040 with MMU, FPU
-# and split caches whose top level presents a TG68K-shaped port set.  Built in
-# whenever the sources are present; which core is actually instantiated is the
-# CPU_CORE generic on minimig_openaars_top, so an unused core costs parse time
-# and nothing else.  findings/ap68040/plan-v2-with-ddr3.md.
-#
-# rtl/cpu040/dpram.v replaces the submodule's primitives/dpram.v: the original
-# writes both RAM ports in one process, which Vivado will not infer as block
-# RAM, and the core then does not fit the device.  See that file.
-#-----------------------------------------------------------------------------
-if {[file exists $R/lib/AP68040/rtl/ap040_tg68k_compat.v]} {
-    foreach f [list ap040_tg68k_compat ap040_core ap040_alu ap040_muldiv \
-                    ap040_regfile ap040_fpu ap040_mmu ap040_cache \
-                    ap040_bus16_adapter ap040_bus_timeout ap040_walker_cdc \
-                    ap040_fill_cdc] {
-        add_src $R/lib/AP68040/rtl/$f.v
-    }
-    add_src $R/rtl/cpu040/dpram.v
-    # ap040_defs.svh is `include`d by every one of them.
-    set_property include_dirs [list $R/lib/AP68040/rtl] [get_filesets sources_1]
-    # They use SystemVerilog (packed structs, always_ff); Vivado needs telling.
-    foreach f [get_files -quiet -of_objects [get_filesets sources_1] *ap040_*.v] {
-        set_property file_type SystemVerilog $f
-    }
-} else {
-    puts "build.tcl: lib/AP68040 not checked out; CPU_CORE=AP040 will not build"
-    puts "build.tcl:   git submodule update --init lib/AP68040"
-}
-
-#-----------------------------------------------------------------------------
 # No debug cores here.  The DDR3 bring-up VIO (vio_ddr3, DDR3_BIST_VIO) and
 # the fast-RAM ILA (ila_fastram, DDR3_FASTRAM_ILA) are created and used only
 # by tools/vivado/build_bist.tcl and tools/vivado/build_ila.tcl, which

@@ -45,7 +45,7 @@
 #   no run may print "=== BUS VIOLATION"
 #
 # "irq" = irq irq_sig irq_c exc x WS {0,3,8} (ROMWS, EXTRA_WS, DEBUG from env,
-#   default 1/0/0) must PASS, and irq_sig_mut (fw/ctrl_rv/arch/trap.S without
+#   default 1/0/0) must PASS, and irq_sig_mut (fw/ctrl/arch/trap.S without
 #   the restore of t3) once at WS=3 must end "=== FAIL 11c" (x28 changed);
 #   ends "=== IRQ PASS" or "=== IRQ FAILED"
 #
@@ -57,8 +57,8 @@
 #
 #   bash sim/rv_l1/run.sh units        # the programs of prog/Makefile (atapi_emu
 #                                      # cue_emu cdaudio_emu) in parallel, built from
-#                                      # FWDIR (default fw/ctrl_rv; FWDIR=fw/ctrl_832
-#                                      # for the 832 tree), which it prints first;
+#                                      # FWDIR (default fw/ctrl; another copy of
+#                                      # that tree), which it prints first;
 #                                      # always runs make -C prog FWDIR=... first
 #                                      # (WS=3 ROMWS=1 by default); verdict as the emu
 #                                      # Makefile: no line "FAIL...", a line
@@ -68,15 +68,14 @@
 #
 #   bash sim/rv_l1/run.sh fmt          # fmt_rv: the format-parity cases and newlib-nano's
 #                                      # mem/str functions on rvlibc.c + libc_nano.a
-#                                      # (WS=3 ROMWS=1 by default; LIB832= as for
-#                                      # make -C fw/ctrl_rv/test); its FMT records go to
+#                                      # (WS=3 ROMWS=1 by default); its FMT records go to
 #                                      # run_<RUNTAG>/fmt_rv.txt.  FMT_SUBSET=1 runs
 #                                      # fmt_rv_subset (272 of the 909 cases) instead.  Gates: the bench
 #                                      # PASS, a line "PASS", "MEMSTR ok", "HEAP
 #                                      # calls=0", no "EXC"; fmt_rv.txt (a digest per
 #                                      # record) == fmtcheck.py digest of the host's
-#                                      # fmt_glibc_64.txt; fmtcheck.py diff of the 832
-#                                      # records against that == gold/fmt_diff_expected.txt
+#                                      # fmt_glibc_64.txt; fmtcheck.py iso of that
+#                                      # (every record == the ISO printf model)
 #
 #   bash sim/rv_l1/run.sh dhry         # fw/dhrystone_rv -O2 and -Os, WS=3 ROMWS=1
 #                                      # (WS, ROMWS, EXTRA_WS, DEBUG from env); each
@@ -252,7 +251,7 @@ one() {
 
 # unit <prog> <ws> <romws> <extra_ws> <debug>: a firmware unit (prog/Makefile).
 # Passes when the bench says PASS, no output line starts with FAIL, a line is
-# exactly PASS (the verdict grep of fw/ctrl_832/test/emu/Makefile).  The hex
+# exactly PASS (the emu programs' verdict line).  The hex
 # is $UNIT_HEXDIR/<prog>.hex (units: make print-hexdir of its FWDIR), else
 # build/<prog>.hex (fmt).
 unit() {
@@ -372,7 +371,7 @@ case "${1:-}" in
     x=${EXTRA_WS:-0}; dbg=${DEBUG:-0}
     # FWDIR: the tree the units are built from (relative to the current
     # directory), absolute for make -C
-    fwdir=${FWDIR:-$top/fw/ctrl_rv}
+    fwdir=${FWDIR:-$top/fw/ctrl}
     [ -d "$fwdir" ] || { echo "FAIL FWDIR=$fwdir: no such directory"; exit 1; }
     fwdir=$(cd "$fwdir" && pwd)
     echo "=== UNITS FWDIR $fwdir" | tee "$run/units_fwdir.txt"
@@ -394,15 +393,15 @@ case "${1:-}" in
     ;;
   fmt)
     x=${EXTRA_WS:-0}; dbg=${DEBUG:-0}; ws=${WS:-3}; r=${ROMWS:-1}
-    ft=$top/fw/ctrl_rv/test
+    ft=$top/fw/ctrl/test
     # FMT_SUBSET=1: fmt_rv_subset, the first and last case of each run of equal
     # format strings (272 of 909 cases); default: fmt_rv, all cases
     prog=fmt_rv; sub=
     [ -n "${FMT_SUBSET:-}" ] && { prog=fmt_rv_subset; sub=--subset; }
-    # the host side first: fmt_glibc_64.txt (rvlibc.c over glibc) and the 832
-    # records, gated against each other by make fmt.ok (LIB832= is passed on)
-    if ! make -s -C "$ft" ${LIB832:+LIB832="$LIB832"} fmt.ok > "$run/make_fmt_host.log" 2>&1; then
-      echo "FAIL make -C fw/ctrl_rv/test fmt.ok ($run/make_fmt_host.log)"; tail -5 "$run/make_fmt_host.log"; exit 1
+    # the host side first: fmt_glibc_64.txt (rvlibc.c over glibc), gated by
+    # make fmt.ok (formats.txt, cover, ILP32 == LP64, fmtcheck.py iso)
+    if ! make -s -C "$ft" fmt.ok > "$run/make_fmt_host.log" 2>&1; then
+      echo "FAIL make -C fw/ctrl/test fmt.ok ($run/make_fmt_host.log)"; tail -5 "$run/make_fmt_host.log"; exit 1
     fi
     if ! make -s -C "$here/prog" fmt > "$run/make_prog.log" 2>&1; then
       echo "FAIL make -C sim/rv_l1/prog fmt ($run/make_prog.log)"; tail -5 "$run/make_prog.log"; exit 1
@@ -432,12 +431,12 @@ case "${1:-}" in
     else
       echo "FAIL fmt_rv.txt differs from the digests of fmt_glibc_64.txt"; diff "$run/fmt_rv.txt" "$run/fmt_glibc_digest.txt" | sed -n '1,6p'; rc=1
     fi
-    # the full text of the RV side is the host's glibc run (equal by the gate above)
-    python3 -I "$ft/gold/fmtcheck.py" diff "$ft/out/fmt_832.txt" "$ft/out/fmt_glibc_64.txt" "$ft/fmt_cases.h" > "$run/fmt_diff.txt" 2> "$run/fmt_diff.err"
-    if diff -q "$ft/gold/fmt_diff_expected.txt" "$run/fmt_diff.txt" > /dev/null; then
-      echo "PASS 832-versus-RV differences == gold/fmt_diff_expected.txt ($(wc -l < "$run/fmt_diff.txt") lines)"
+    # the full text of the RV side is the host's glibc run (equal by the gate
+    # above): every record of it == the model of ISO printf
+    if python3 -I "$ft/gold/fmtcheck.py" iso "$ft/out/fmt_glibc_64.txt" "$ft/fmt_cases.h" > "$run/fmt_iso.txt" 2> "$run/fmt_iso.err"; then
+      echo "PASS fmt_glibc_64.txt == the ISO printf model (fmtcheck.py iso)"
     else
-      echo "FAIL 832-versus-RV differences differ from gold/fmt_diff_expected.txt"; diff "$ft/gold/fmt_diff_expected.txt" "$run/fmt_diff.txt" | sed -n '1,6p'; head -3 "$run/fmt_diff.err"; rc=1
+      echo "FAIL fmt_glibc_64.txt differs from the ISO printf model (fmtcheck.py iso)"; head -6 "$run/fmt_iso.err"; rc=1
     fi
     if [ $rc -eq 0 ]; then echo "=== FMT PASS"; else echo "=== FMT FAILED"; fi
     exit $rc

@@ -13,12 +13,8 @@
 
 module minimig_virtual_top #(
     parameter hostonly=0,
-    parameter debug = 0,
-    // OSD host CPU (rtl/host/832_bridge.vhd): 0 = EightThirtyTwo, 1 = the
-    // VexRiscv RV32IMC in rtl/host/rv_hostcpu.v.  0 by default, so every top
-    // that does not set it keeps the 832; minimig_openaars_top sets 1.
-    parameter hostcpu_riscv = 0,
-    // RISC-V debug: 0 none (production), 1 BSCANE2 tunnel (Xilinx only).
+    // OSD host CPU (rtl/host/host_bridge.vhd, the VexRiscv RV32IMC in
+    // rtl/host/rv_hostcpu.v).  RISC-V debug: 0 none (production), 1 BSCANE2 tunnel (Xilinx only).
     parameter hostcpu_rvdebug = 0,
     parameter spimux = 0,
     parameter havertg = 1,
@@ -27,6 +23,15 @@ module minimig_virtual_top #(
     parameter havespirtc = 1,
     parameter havei2c = 1,
     parameter havevpos = 0,
+    // 1: the SD card engine (findings/sdcard-engine/design.md): the card's
+    // pins from rtl/host/sdcard_spi.v (registers at 0xFFFFFF00..2C through
+    // cfide's ext_* port, interrupt on cfide irq_src(4), card detect
+    // SD_CDET_N) and its Gayle block DMA (rtl/minimig/sdcard_gayle.v in
+    // minimig.v).  0 (default): the card on cfide's SPI (sd_cs[1]) as
+    // before, no new module; SD_CDET_N unused.  Only minimig_openaars_top
+    // sets 1.  The firmware must be built for the engine (lock-step,
+    // design.md 5.5).
+    parameter SD_ENGINE = 0,
     parameter ram_64meg = 0,
     // Zorro-III fast RAM on the DDR3 island instead of the SDRAM.
     // findings/ddr3/design.md; the island itself lives in minimig_openaars_top.v.
@@ -40,8 +45,6 @@ module minimig_virtual_top #(
     parameter ap040_has_fpu = 1,
     parameter ap040_enable_cache = 1,
     parameter ap040_post_stores = 1,
-    // 1: the pipelined AP68040 (findings/ap040-pipelined/PLAN.md M5)
-    parameter ap040_pipelined = 0,
     // 1: the pipelined core runs free of the bus wait (findings/unfreeze/plan.md)
     parameter ap040_free_core = 0,
     // the pipelined core's store buffer (findings/storebuf/plan.md; TG68K.vhd)
@@ -169,7 +172,7 @@ module minimig_virtual_top #(
     input                 SDA_I, // Clock in
     output                SDA_O, // Clock out
     output                SDA_T, // Clock tristate
-    input                 I2C_INT, // the ADV7511's INT, readable by the 832
+    input                 I2C_INT, // the ADV7511's INT, readable by the host CPU
 `endif
 
 // `ifdef MINIMIG_RTC_BUS
@@ -193,6 +196,7 @@ module minimig_virtual_top #(
     output wire           SD_CLK,
     output wire           SD_CS,
     input wire            SD_ACK,
+    input wire            SD_CDET_N, // card detect, low = inserted (SD_ENGINE = 1 only)
 
     output wire           RTC_CS,
 
@@ -695,7 +699,6 @@ TG68K #(
     .ap040_has_fpu(ap040_has_fpu),
     .ap040_enable_cache(ap040_enable_cache),
     .ap040_post_stores(ap040_post_stores),
-    .ap040_pipelined(ap040_pipelined),
     .ap040_free_core(ap040_free_core),
     .ap040_store_buf(ap040_store_buf),
     .ap040_fwd(ap040_fwd),
@@ -1061,9 +1064,9 @@ if (CPU040_DEBUG_ILA) begin : g_cpu040_ila
     .probe9 (dbg_rtg),         // 32  {akiko_req, akiko_wr, state, cpuaddr[11:0], akiko_d}
     // (board bring-up 2026-09-23, black-screen investigation) probe10 is
     // repurposed from the RTG group to the signals that say whether the CPU
-    // is even allowed to run: its reset from the 832/minimig side, its clock
+    // is even allowed to run: its reset from the host CPU/minimig side, its clock
     // enable, the SDRAM controller's reset_out (which is what releases the
-    // 832) and DDR3's init_done.  Same width, so the ILA IP is unchanged.
+    // host CPU) and DDR3's init_done.  Same width, so the ILA IP is unchanged.
     //   [28]=tg68_rst  [27]=tg68_nrst_out  [26]=reset_out  [25]=DDR3_INIT_DONE
     //   [24]=tg68_ena28 [23]=tg68_dtack     [22]=rtg_ena    [21:0]=rtg_baseaddr
     .probe10({tg68_rst, tg68_nrst_out, reset_out, DDR3_INIT_DONE, tg68_ena28,
@@ -1131,9 +1134,56 @@ wire CONF_DATA0;
 //assign SPI_DO = (CONF_DATA0 == 1'b0)?user_io_sdo:
 //    (((SPI_SS2 == 1'b0)|| (SPI_SS3 == 1'b0))?minimig_sdo:1'bZ);
 
+// The SD card: cfide's SPI (sd_cs[1]) or, SD_ENGINE = 1, the SD card engine
+// (sdcard_spi below; the card is then on no cfide select)
+wire        sdc_wstb, sdc_rstb, sdc_irq;   // cfide ext_* <-> sdcard_spi
+wire [5:2]  sdc_addr;
+wire [15:0] sdc_d, sdc_q;
+wire        sdc_g_req, sdc_g_dir, sdc_g_port, sdc_g_ack, sdc_g_err;
+wire        sdc_g_wvalid, sdc_g_wnext, sdc_g_rvalid;
+wire [9:0]  sdc_g_words;
+wire [15:0] sdc_g_wdata, sdc_g_rdata;
+wire        sd_dimm;                       // cfide's card MISO
+wire        sd_direct_sdi;                 // paula_floppy's direct-mode card MISO
+
+generate
+if (SD_ENGINE != 0) begin : g_sdc
+wire sdc_sck, sdc_cs_n, sdc_mosi;
+sdcard_spi sdc_spi (
+    .clk(CLK_114),
+    .reset(~reset_out),
+    .reg_wstb(sdc_wstb), .reg_rstb(sdc_rstb), .reg_addr(sdc_addr),
+    .reg_d(sdc_d), .reg_q(sdc_q),
+    .irq(sdc_irq),
+    .sd_sck(sdc_sck), .sd_cs_n(sdc_cs_n), .sd_mosi(sdc_mosi), .sd_miso(SD_MISO),
+    .sd_cd_n(SD_CDET_N),
+    .g_req(sdc_g_req), .g_dir(sdc_g_dir), .g_port(sdc_g_port), .g_words(sdc_g_words),
+    .g_ack(sdc_g_ack), .g_err(sdc_g_err),
+    .g_wdata(sdc_g_wdata), .g_wvalid(sdc_g_wvalid), .g_wnext(sdc_g_wnext),
+    .g_rdata(sdc_g_rdata), .g_rvalid(sdc_g_rvalid)
+);
+assign SD_CLK = sdc_sck;
+assign SD_CS = sdc_cs_n;
+assign SD_MOSI = sdc_mosi;
+assign sd_dimm = 1'b1;
+assign sd_direct_sdi = 1'b1;
+end else begin : g_nosdc
 assign SD_CLK = SPI_SCK;
 assign SD_CS = SPI_CS[1];
 assign SD_MOSI = SPI_DI;
+assign sd_dimm = SD_MISO;
+assign sd_direct_sdi = SD_MISO;
+assign sdc_q = 16'h0000;
+assign sdc_irq = 1'b0;
+assign sdc_g_req = 1'b0;
+assign sdc_g_dir = 1'b0;
+assign sdc_g_port = 1'b0;
+assign sdc_g_words = 10'd0;
+assign sdc_g_wdata = 16'h0000;
+assign sdc_g_wvalid = 1'b0;
+end
+endgenerate
+
 assign SPI_SS4 = SPI_CS[6];
 assign SPI_SS3 = SPI_CS[5];
 assign SPI_SS2 = SPI_CS[4];
@@ -1177,6 +1227,11 @@ assign SPI_DO=1'b1;
 assign osd_rx_seq=2'b00;   // no OSD
 assign _ram_oe=1'b1;
 assign _ram_we=1'b1;
+assign sdc_g_ack=1'b0;     // no minimig: no Gayle side of the SD card engine
+assign sdc_g_err=1'b0;
+assign sdc_g_wnext=1'b0;
+assign sdc_g_rdata=16'h0000;
+assign sdc_g_rvalid=1'b0;
 `else
 
 // What the OSD tells the firmware about this build.  Bit 0 AP68040 fitted,
@@ -1213,7 +1268,10 @@ minimig #(
     // memory that is not there -- which is what forced this board off before
     // (findings/ddr3/z3ram3-on-ddr3-plan.md, supersedes design.md D8).
     .Z3RAM3(Z3RAM3_FORCE_OFF ? 1'b0 : 1'b1),
-    .Z3RAM3_DDR3(haveddr3 ? 1'b1 : 1'b0)
+    .Z3RAM3_DDR3(haveddr3 ? 1'b1 : 1'b0),
+    // the SD card engine's Gayle side; clk_114 / clk_28 = 4 (amiga_clk)
+    .SD_ENGINE(SD_ENGINE != 0 ? 1'b1 : 1'b0),
+    .SD_CLK_RATIO(4)
 ) minimig (
     //m68k pins
     .cpu_address  (tg68_adr[23:1]   ), // M68K address bus
@@ -1287,7 +1345,7 @@ minimig #(
     .kbdclk_o     (PS2_CLK_O        ), // PS2 keyboard clk
     //host controller interface (SPI)
     ._scs         ( {SPI_SS4,SPI_SS3,SPI_SS2}  ), // SPI chip select spi_chipselect(6 downto 4),
-    .direct_sdi   (SD_MISO          ), // SD Card direct in  SPI_SDO
+    .direct_sdi   (sd_direct_sdi    ), // SD Card direct in  SPI_SDO
     .sdi          (SPI_DI           ), // SPI data input
     .sdo          (SPI_DO           ), // SPI data output
     .sck          (SPI_SCK          ), // SPI clock
@@ -1343,7 +1401,20 @@ minimig #(
     .rtg_ena      (rtg_ena_mm       ),
     .ext_int2     (1'b0             ),
     .ext_int6     (aud_int          ),
-    .ram_64meg    (ram_64meg        )
+    .ram_64meg    (ram_64meg        ),
+    // SD card engine Gayle DMA (SD_ENGINE = 1; ignored otherwise)
+    .clk_114      (CLK_114          ),
+    .sdc_g_req    (sdc_g_req        ),
+    .sdc_g_dir    (sdc_g_dir        ),
+    .sdc_g_port   (sdc_g_port       ),
+    .sdc_g_words  (sdc_g_words      ),
+    .sdc_g_ack    (sdc_g_ack        ),
+    .sdc_g_err    (sdc_g_err        ),
+    .sdc_g_wdata  (sdc_g_wdata      ),
+    .sdc_g_wvalid (sdc_g_wvalid     ),
+    .sdc_g_wnext  (sdc_g_wnext      ),
+    .sdc_g_rdata  (sdc_g_rdata      ),
+    .sdc_g_rvalid (sdc_g_rvalid     )
 );
 
 assign rtg_ena = havertg && rtg_ena_mm;
@@ -1353,9 +1424,7 @@ assign RTG_ENABLE = rtg_ena;
 
 wire host_interrupt;
 
-EightThirtyTwo_Bridge #(
-    .debug(debug ? 1'b1 : 1'b0),
-    .cpu_riscv(hostcpu_riscv ? 1'b1 : 1'b0),
+host_bridge #(
     .rv_debug(hostcpu_rvdebug ? 1'b1 : 1'b0)
 ) hostcpu
 (
@@ -1411,7 +1480,7 @@ cfide #(
     .sd_cs(SPI_CS),
     .sd_clk(SPI_SCK),
     .sd_do(SPI_DI),
-    .sd_dimm(SD_MISO),
+    .sd_dimm(sd_dimm),
     .sd_ack(SD_ACK),
 
     .debugTxD(CTRL_TX),
@@ -1425,6 +1494,7 @@ cfide #(
     .audio_amiga(aud_ena_cpu),
     .vbl_int(vblank_out),
     .interrupt(host_interrupt),
+    .irq_src({11'd0, sdc_irq}),   // 4: the SD card engine (0 without it)
 
     .amiga_addr(tg68_host_addr),
     .amiga_d(tg68_host_d),
@@ -1455,6 +1525,12 @@ cfide #(
 `endif
 
     .osd_rx_seq(osd_rx_seq),   // HOST_REQ OSD_RDY (OSD reply-ready handshake)
+    // 0xFFFFFF00..2C: the SD card engine's registers (reads 0 without it)
+    .ext_wstb(sdc_wstb),
+    .ext_rstb(sdc_rstb),
+    .ext_addr(sdc_addr),
+    .ext_d(sdc_d),
+    .ext_q(sdc_q),
     .clk_28(CLK_28),
     .tick_in(aud_tick)
 );

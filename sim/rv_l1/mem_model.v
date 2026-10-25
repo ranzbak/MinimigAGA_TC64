@@ -1,4 +1,4 @@
-// L1 bench memory + sim MMIO, slave side of the 832 req/ack bus contract.
+// L1 bench memory + sim MMIO, slave side of the host bridge's req/ack bus contract.
 //
 // Memory: 1 MB of big-endian words (byte A+0 in bits 31:24: the lane
 // rule's memory side, as rtl/sdram/sdram_ctrl.v), 0x00000000-0x000FFFFF,

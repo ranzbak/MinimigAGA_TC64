@@ -1,10 +1,9 @@
 # Firmware-unit programs on the L1 bench: the CD-ROM emu tests of
 # <FWDIR>/test/emu built with the RISC-V gcc + newlib-nano.
-#   make -C sim/rv_l1/prog [FWDIR=../../../fw/ctrl_rv]
+#   make -C sim/rv_l1/prog [FWDIR=../../../fw/ctrl]
 #   bash sim/rv_l1/run.sh units          (runs this make first, FWDIR= passed on)
-# FWDIR holds <name>.c/.h and test/emu/<name>_emu.c: fw/ctrl_rv (default) or
-# fw/ctrl_832 (the 832 tree, read-only, built as before Phase 3).  Link sets
-# as fw/ctrl_832/test/emu/Makefile.
+# FWDIR holds <name>.c/.h and test/emu/<name>_emu.c: fw/ctrl (default), or
+# another copy of that tree (e.g. a scratch worktree's).
 #
 # Per tree (TREE = the last part of FWDIR): objects, .d files, .elf/.map/.bin
 # in build/<TREE>/, hexes in ../build/<TREE>/<prog>.hex, so two trees never
@@ -13,25 +12,23 @@
 # build/<TREE>/fwdir holds the absolute FWDIR the objects came from: another
 # tree with the same last name rebuilds everything.
 #
-# Flags per tree.  Any tree but ctrl_832 builds as the firmware does
-# ($(RV_CFLAGS_FW) -std=gnu23 --specs=nano.specs -Wall -Wextra -Werror, as
-# fw/ctrl_rv/Makefile); the emu programs add -Wno-unused-parameter (as the
-# host tests in fw/ctrl_rv/test: test code, main(argc, argv), port stubs).
-# TREE ctrl_832 keeps the flags of exec-1 (gcc's default dialect, -Wall):
-# its sources are not -Wextra clean and are not changed.
+# Flags: as the firmware ($(RV_CFLAGS_FW) -std=gnu23 --specs=nano.specs
+# -Wall -Wextra -Werror, as fw/ctrl/Makefile); the emu programs add
+# -Wno-unused-parameter (as the host tests in fw/ctrl/test: test code,
+# main(argc, argv), port stubs).
 #
 #   make -C sim/rv_l1/prog print-progs     the unit programs (run.sh units reads them)
 #   make -C sim/rv_l1/prog print-hexdir    where this FWDIR's hexes go
 #
 # fmt_rv (bash sim/rv_l1/run.sh fmt) is the other kind of program here: it
-# links like the firmware (fw/ctrl_rv/rvlibc.c + newlib-nano's libc_nano.a, no
+# links like the firmware (fw/ctrl/rvlibc.c + newlib-nano's libc_nano.a, no
 # syscalls.o, so a call that needs _sbrk/_write fails the link) and takes its
-# sources from fw/ctrl_rv by explicit path, not FWDIR.  Not part of PROGS/units.
+# sources from fw/ctrl by explicit path, not FWDIR.  Not part of PROGS/units.
 TOP := $(abspath $(CURDIR)/../../..)
 include $(TOP)/tools/riscv/toolchain.mk
 BIN2HEX := $(TOP)/tools/riscv/bin2hex.sh
 
-FWDIR ?= ../../../fw/ctrl_rv
+FWDIR ?= ../../../fw/ctrl
 FWD   := $(patsubst %/,%,$(FWDIR))
 TREE  := $(notdir $(FWD))
 B     := ../build
@@ -42,8 +39,8 @@ HT    := $(B)/$(TREE)
 
 PROGS := atapi_emu cue_emu cdaudio_emu
 
-# fmt_rv: the firmware's C flags and library line (fw/ctrl_rv/Makefile, Task 4)
-RVFW    := ../../../fw/ctrl_rv
+# fmt_rv: the firmware's C flags and library line (fw/ctrl/Makefile, Task 4)
+RVFW    := ../../../fw/ctrl
 FWCFLAGS = $(RV_CFLAGS_FW) -std=gnu23 --specs=nano.specs -g -I$(RVFW) -I$(S) -Wall -Wextra -Werror
 FWLDFLAGS = $(RV_LDFLAGS_FW) --specs=nano.specs -nostartfiles -T $(S)/l1_newlib.ld \
           -Wl,--no-warn-rwx-segments
@@ -52,15 +49,9 @@ FWLIBS   = -lc_nano $(RV_LIBS_FW)
 # the bench runtime (syscalls.o), one build for every tree
 RTCFLAGS = $(RV_ARCH) -Os -g -funsigned-char -ffunction-sections -fdata-sections \
           --specs=nano.specs -I$(S) -Wall
-ifeq ($(TREE),ctrl_832)
-UCFLAGS = $(RV_ARCH) -Os -g -funsigned-char -ffunction-sections -fdata-sections \
-          --specs=nano.specs -I$(FWD) -I$(S) -Wall -MMD -MP
-EMUFLAGS =
-else
 UCFLAGS = $(RV_CFLAGS_FW) -std=gnu23 --specs=nano.specs -g -I$(FWD) -I$(S) \
           -Wall -Wextra -Werror -MMD -MP
 EMUFLAGS = -Wno-unused-parameter
-endif
 LDFLAGS = $(RV_ARCH) --specs=nano.specs -nostartfiles -T $(S)/l1_newlib.ld \
           -Wl,--gc-sections -Wl,--no-warn-rwx-segments
 

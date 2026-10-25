@@ -4,7 +4,8 @@
 # an SD card image.  See tb_l3.v, scenarios.vh, README.md.
 #
 #   bash sim/l3/run.sh <scenario>        boot, boot_short, keys, fdd_rd, fdd_wr, hdd,
-#                                        cd, cdda, cdda_load, akiko
+#                                        cd, cdda, cdda_load, akiko; sdc_boot,
+#                                        sdc_boot_short, sdc_hdd (SD_ENGINE=1)
 #   bash sim/l3/run.sh xpair <scenario>  the scenario and its XRAND twin
 #                                        (run_$RUNTAG, run_${RUNTAG}_xr; in
 #                                        parallel), then compare: both PASS
@@ -13,35 +14,20 @@
 #                                        every tb_*.log and spi.txt of both
 #                                        run directories (sim/common/hostsim.sh
 #                                        hs_compare; exit 1 unless all SAME)
-#   bash sim/l3/run.sh diff [--unused-rules] <RUNTAG rv> <RUNTAG 832>
-#                                        the differential (README
-#                                        "Differential"): each run's spi.txt,
-#                                        hw.txt and uart.txt normalised with
-#                                        expected_diff.txt (spitrace.py norm,
-#                                        <run>/norm.txt), then spitrace.py diff:
-#                                        exit 0 only when empty; with
-#                                        --unused-rules also the rules neither
-#                                        run used (exit 1 when there is one)
+#
+# The host CPU is rv_hostcpu (VexRiscv RV32IMC) with the boot ROM
+# fw/ctrl_boot and the firmware RV32OSDB.BIN (fw/ctrl; the name:
+# fw/ctrl/fwname.mk, read through hostsim.sh's hs_fwname); the logs say
+# "=== CPU rv".
 #
 # Environment:
-#   CPU      rv (default: rv_hostcpu, fw/ctrl_boot_rv, RV32OSDA.BIN) or 832
-#            (the EightThirtyTwo, fw/ctrl_boot_832, 832OSDAD.BIN): the same
-#            scenarios and checks; the logs say "=== CPU <cpu>"
-#   E832     CPU=832: the EightThirtyTwo VHDL (default $ROOT/EightThirtyTwo/RTL)
-#   E832DIR  CPU=832: the EightThirtyTwo checkout whose tools build
-#            832OSDAD.BIN (sim/l3/fw832; default $ROOT/EightThirtyTwo).  The
-#            submodule of a worktree is not initialised: set both to the
-#            main checkout's
 #   SIM      xsim (default, 4-state, the X-checking reference) or verilator
 #            (GHDL --synth converts the VHDL, as sim/host_bridge)
 #   RUNTAG   run directory sim/l3/run_${RUNTAG:-wt}; a new one per code change
-#   FW       an RV32OSDA.BIN to put on the card; default: built from
-#            fw/ctrl_rv into <run>/fwrv under a date shim (hs_fwrv, L3_DATE)
-#   FW832    an 832OSDAD.BIN to put on the card; default with CPU=832:
-#            built from a copy of fw/ctrl_832 into <run>/fw832 (sim/l3/fw832,
-#            the same L3_DATE); with CPU=rv: the card's stand-in
-#   L3_DATE  the date of both firmware builds (default 2026-01-01)
-#   EXTRA_WS the bridge's rv_extra_ws (0; CPU=rv only)
+#   FW       a firmware image to put on the card (as RV32OSDB.BIN); default: built from
+#            fw/ctrl into <run>/fwrv under a date shim (hs_fwrv, L3_DATE)
+#   L3_DATE  the date of the firmware build (default 2026-01-01)
+#   EXTRA_WS the bridge's rv_extra_ws (0)
 #   SLAT, SJIT, SEED   the SDRAM model (8, 0, 1)
 #   XARGS    extra plusargs ("+FAST_HW=1 +OSD_EARLY_OK=1 +TICKDIV=643 ...");
 #            +FAST_HW=1 also puts the models' fast plusargs first (below)
@@ -71,7 +57,7 @@
 #   BUILD_FROM=<RUNTAG>  (verilator) the simulator of run_<RUNTAG> instead
 #            of a build of its own, when that run's build key (a sha256 of
 #            every build input: the run copies in src/, the bench, the
-#            include files, the ROM, the tools' versions, CPU, EXTRA_WS,
+#            include files, the ROM, the tools' versions, EXTRA_WS,
 #            XRAND; <run>/buildkey_<snapshot>, written by every Verilator
 #            build) equals this run's; else it builds its own (results.txt
 #            says so).  Plusargs (the
@@ -80,6 +66,18 @@
 #   TIMEOUT  clk_114 cycles (default per scenario below), at most
 #            2147483647 (tb_l3.v's integer)
 #   L3CHECK  tests of run.sh only: the l3check.py to run (default sim/l3's)
+#   EXPECT_RETRY, EXPECT_RETRY_N  sdc_* with an injection (+SD_ERR_ in
+#            XARGS): the ERE every retry line on the UART must match (the
+#            firmware's "SD: <row>, row <r>, retry <k> of <n>, lba <l>", the
+#            ROM's "SD read <lba>: <what> <v>, try <t>") and their exact
+#            count (default 1); required with an injection (README "sdc")
+#   SD_ENGINE=1  the SD card engine wired in (tb_l3.v `SD_ENGINE: sdcard_spi on
+#            cfide's ext port with the card on its pins, sdcard_gayle + mux
+#            between paula_floppy and gayle, as minimig_virtual_top with
+#            SD_ENGINE = 1).  Default 0, except for the sdc_* scenarios,
+#            which always run with it (SD_ENGINE=0 is refused there).  The
+#            boot ROM since plan Task 12 needs the engine: the scenarios
+#            without the sdc_ prefix stop in the ROM's "SD init" on this tree
 #   VIVADO_PATH, GHDL, VERILATOR, JOBS, OBJCACHE as sim/host_bridge/run.sh
 #
 # Scenarios (scenarios.vh), card, checks:
@@ -157,6 +155,22 @@
 #               flip; checks as cdda (item 3 required too: the HDF sectors
 #               come in direct mode; the cdhdd card's milestones), l3check.py
 #               cdda counts the underruns and checks the HDF sectors
+#   sdc_boot, sdc_boot_short, sdc_hdd   boot, boot_short and hdd on the SD
+#               card engine (SD_ENGINE=1; README "sdc"): the boot ROM and the
+#               firmware reach the card through sdcard_spi, the HDD sectors
+#               go through sdcard_gayle's DMA.  The bench runs +SCENARIO=boot,
+#               boot_short or hdd; the checks are that scenario's, with
+#               milestones_boot.txt's SDE=1 lines (the ROM's and the
+#               firmware's SD lines) and MARGIN item 3 n/a (no direct-mode
+#               transfer: the card is not on cfide's SPI), plus (sdc_check):
+#               the lock-step line = fw/ctrl/sdc.h's SDC_VERSION on both
+#               sides and the firmware file's trailer, no card frame (cs 02)
+#               in spi.txt, the SD error lines (none without +SD_ERR_ in
+#               XARGS; with it exactly EXPECT_RETRY_N (1) retry lines, all
+#               matching EXPECT_RETRY, and nothing out of retries), sdc_hdd:
+#               to_gayle / from_gayle words = the plan's sectors, no g_err.
+#               +SD_ERR_AT=scenario (XARGS) counts the model's
+#               +SD_ERR_<kind>=n from the main-loop milestone
 #   akiko       fdd card, +SCENARIO=akiko +KEYS=sim/l3/keys/insert_df0.txt
 #               +FDD_DUMP=<run>/akiko, TICKDIV 643 from the scenario start:
 #               bfm_akiko block 0 (32 write + 32 read requests on cfide's
@@ -168,7 +182,7 @@
 #               the DATA writes in hw.txt, the latency table, the track read)
 # Logs in the run directory: tb_<scenario>_x<EXTRA_WS>_s<SLAT>_j<SJIT>.log,
 # spi.txt, spi_t.txt (frames with cycles, not compared), hw.txt and uart.txt
-# (sim/common/hostmon.vh +HW_LOG / +UART_LOG, for diff; hw.txt's MEM lines
+# (sim/common/hostmon.vh +HW_LOG / +UART_LOG; hw.txt's MEM lines
 # hashed from sdram.bin by l3check.py memhash), sdram.bin, milestones.txt,
 # results.txt (with the wall time); fdd_wr also fdd_wr_<cyl>_<head>.hex (the
 # write streams) and card_saved.img (the card as the run left it).
@@ -178,7 +192,6 @@ ROOT=$(cd "$HERE/../.." && pwd)
 L2="$ROOT/sim/host_bridge"
 VIVADO_PATH=${VIVADO_PATH:-/opt/Xilinx/Vivado/2023.2}
 SIM=${SIM:-xsim}
-CPU=${CPU:-rv}
 GHDL=${GHDL:-ghdl}
 VERILATOR=${VERILATOR:-verilator}
 JOBS=${JOBS:-$(nproc)}
@@ -186,10 +199,8 @@ case "$SIM" in
 	xsim|verilator) ;;
 	*) echo "SIM=$SIM: must be xsim or verilator"; exit 2 ;;
 esac
-case "$CPU" in
-	rv|832) ;;
-	*) echo "CPU=$CPU: must be rv or 832"; exit 2 ;;
-esac
+# CPU: the RV is the only host CPU (a leftover CPU=rv is accepted)
+[ "${CPU:-rv}" = rv ] || { echo "CPU=$CPU: the host CPU is the RV (rv_hostcpu) only"; exit 2; }
 export LC_ALL=C LANG=C
 export LD_LIBRARY_PATH="$HOME/lib/tinfo5${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 GHDLFLAGS="--std=93c --ieee=synopsys -fexplicit"
@@ -197,16 +208,9 @@ I2C_V="$ROOT/rtl/host/i2c_master_mmio.sv $ROOT/rtl/openaars/adv7511/i2c_master.v
 XW=${EXTRA_WS:-0}
 SL=${SLAT:-8} SJ=${SJIT:-0}
 run="$HERE/run_${RUNTAG:-wt}"
-# the committed boot ROM (ROM, checked against git HEAD) and the file the
-# simulators read (ROM_SIM: the 832's is the run copy of hs_rom832)
-E832=${E832:-$ROOT/EightThirtyTwo/RTL}
-E832DIR=${E832DIR:-$ROOT/EightThirtyTwo}
-if [ "$CPU" = 832 ]; then
-	ROM="$ROOT/fw/ctrl_boot_832/OSDBoot_832_ROM.vhd" ROM_SIM="$run/src/OSDBoot_832_ROM.vhd"
-	[ "$XW" = 0 ] || { echo "EXTRA_WS=$XW: the bridge's rv_extra_ws is the RV's (CPU=832: 0)"; exit 2; }
-else
-	ROM="$ROOT/fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd" ROM_SIM=$ROM
-fi
+# the committed boot ROM (checked against git HEAD; the simulators read it
+# as it is)
+ROM="$ROOT/fw/ctrl_boot/OSDBoot_rv_ROM.vhd"
 
 # the Minimig RTL the bench simulates (copied into <run>/src), after the
 # board's global include (rtl/soc/openaars_defines.vh)
@@ -214,6 +218,17 @@ MM_FILES="rtl/soc/openaars_defines.vh rtl/minimig/userio_osd.v rtl/minimig/useri
           rtl/minimig/paula_floppy.v rtl/minimig/paula_floppy_fifo.v rtl/minimig/gayle.v
           rtl/minimig/gayle_port.v rtl/minimig/gayle_fifo.v rtl/minimig/minimig_syscontrol.v"
 MM_INC="$ROOT/fpga/openaars"     # minimig_version.vh (the board's)
+# SD_ENGINE=1 (header): the bridge joins the slaves; sdcard_spi.v (in the
+# run copies from hs_copy_rtl) is compiled too
+SDE=${SD_ENGINE:-0}
+case "$SDE" in 0|1) ;; *) echo "SD_ENGINE=$SDE: must be 0 or 1"; exit 2 ;; esac
+# the sdc_* scenarios run on the engine
+case "${1:-}" in
+	sdc_*)
+		[ "${SD_ENGINE:-1}" = 1 ] || { echo "SD_ENGINE=$SD_ENGINE: the $1 scenario runs on the SD card engine only"; exit 2; }
+		SDE=1 ;;
+esac
+[ "$SDE" = 1 ] && MM_FILES="$MM_FILES rtl/minimig/sdcard_gayle.v"
 
 # the "=== MARGIN <item> <name>" lines every run must print (mon_l3.vh),
 # and per scenario the ones that must have seen events: their verdict must
@@ -246,46 +261,41 @@ esac
 MARGIN_REQ_cdda="$MARGIN_REQ_boot 9:cd_timeout_left"
 MARGIN_REQ_cdda_load="$MARGIN_REQ_cdda 3:dmode_release"
 MARGIN_REQ_akiko=$MARGIN_REQ_fdd_rd
+# sdc_*: as their base scenario, but no direct-mode transfer (item 3 must be
+# n/a, sdc_check): the HDF sectors go through sdcard_gayle's DMA
+MARGIN_REQ_sdc_boot=$MARGIN_REQ_boot
+MARGIN_REQ_sdc_boot_short=$MARGIN_REQ_boot_short
+MARGIN_REQ_sdc_hdd=$MARGIN_REQ_boot
 
 # fdd_wr's tracks, in order (= scenarios.vh FDD_WPLAN, l3check.py
 # FDD_WR_TRACKS): "<cylinder>:<head>[:<sector with a bad header checksum>]"
 FDD_WR_PLAN="0:0 1:0 2:0 39:0 41:0 77:0 78:0 79:0 79:1 40:0:3"
 
 # cycles per scenario (clk_114): 1.5 x the measured end event (README "boot",
-# Verilator 2026-10-19: RV boot 158,155,012, boot_short 57,659,090; 832
-# boot 202,841,132, boot_short 74,525,542; README "keys": RV keys
-# 164,959,781, 832 214,187,801); fdd_rd: 1.5 x the estimate of README
-# "fdd_rd" (Task 13's measured ends, RV 393,222,555 and 832 442,065,819,
-# plus bfm_floppy's drive-ready waits of Task 14: 500 ms after motor on and
-# 15 ms per head change, 59 M: RV 452 M, 832 501 M); fdd_wr: 1.5 x the
-# estimate of README "fdd_wr" (RV 470 M, 832 520 M);
-# hdd: 832 1.5 x its measured end (p4t15c3: 233,511,245), RV 1.5 x the
-# estimate 200 M (README "hdd"); cd: 1.5 x the estimates RV 210 M, 832
-# 300 M (measured, README "cd": RV 185,153,365, 832 233,680,101); cdda,
-# cdda_load: 1.5 x the estimates RV 345 M, 832 390 M (the plan start as
-# cd, then 7 halves of the board's 21.1 M and the refills; measured, README
-# "cdda": RV 337,017,061, 832 407,912,613)
-if [ "$CPU" = 832 ]; then
-	L3_BOOT_TO=${L3_BOOT_TO:-304300000}
-	L3_SHORT_TO=${L3_SHORT_TO:-111800000}
-	L3_KEYS_TO=${L3_KEYS_TO:-321300000}
-	L3_FDD_TO=${L3_FDD_TO:-750000000}
-	L3_FDDW_TO=${L3_FDDW_TO:-780000000}
-	L3_HDD_TO=${L3_HDD_TO:-350000000}
-	L3_CD_TO=${L3_CD_TO:-450000000}
-	L3_CDDA_TO=${L3_CDDA_TO:-585000000}
-	L3_AKIKO_TO=${L3_AKIKO_TO:-700000000}
-else
-	L3_BOOT_TO=${L3_BOOT_TO:-237300000}
-	L3_SHORT_TO=${L3_SHORT_TO:-86500000}
-	L3_KEYS_TO=${L3_KEYS_TO:-247400000}
-	L3_FDD_TO=${L3_FDD_TO:-680000000}
-	L3_FDDW_TO=${L3_FDDW_TO:-700000000}
-	L3_HDD_TO=${L3_HDD_TO:-300000000}
-	L3_CD_TO=${L3_CD_TO:-315000000}
-	L3_CDDA_TO=${L3_CDDA_TO:-520000000}
-	L3_AKIKO_TO=${L3_AKIKO_TO:-520000000}
-fi
+# Verilator 2026-10-19: boot 158,155,012, boot_short 57,659,090; README
+# "keys": 164,959,781); fdd_rd: 1.5 x the estimate of README "fdd_rd" (Task
+# 13's measured end 393,222,555 plus bfm_floppy's drive-ready waits of Task
+# 14: 500 ms after motor on and 15 ms per head change, 59 M: 452 M); fdd_wr:
+# 1.5 x the estimate of README "fdd_wr" (470 M); hdd: 1.5 x the estimate
+# 200 M (README "hdd"); cd: 1.5 x the estimate 210 M (measured, README
+# "cd": 185,153,365); cdda, cdda_load: 1.5 x the estimate 345 M (the plan
+# start as cd, then 7 halves of the board's 21.1 M and the refills;
+# measured, README "cdda": 337,017,061); akiko: 520 M
+L3_BOOT_TO=${L3_BOOT_TO:-237300000}
+L3_SHORT_TO=${L3_SHORT_TO:-86500000}
+L3_KEYS_TO=${L3_KEYS_TO:-247400000}
+L3_FDD_TO=${L3_FDD_TO:-680000000}
+L3_FDDW_TO=${L3_FDDW_TO:-700000000}
+L3_HDD_TO=${L3_HDD_TO:-300000000}
+L3_CD_TO=${L3_CD_TO:-315000000}
+L3_CDDA_TO=${L3_CDDA_TO:-520000000}
+L3_AKIKO_TO=${L3_AKIKO_TO:-520000000}
+# sdc_*: 1.5 x the measured end events on the SD card engine (README "sdc",
+# Verilator 2026-10-25: sdc_boot 131,750,230, sdc_boot_short 27,971,124,
+# sdc_hdd 165,702,565 with a write retry, 165,090,989 without)
+L3_SDC_BOOT_TO=${L3_SDC_BOOT_TO:-197700000}
+L3_SDC_SHORT_TO=${L3_SDC_SHORT_TO:-42000000}
+L3_SDC_HDD_TO=${L3_SDC_HDD_TO:-248600000}
 
 # shellcheck source=../common/hostsim.sh
 . "$ROOT/sim/common/hostsim.sh"
@@ -293,6 +303,9 @@ fi
 # run with the scenario's verdict line: no step failure is silent
 hs_die() { echo "FAILED: $*"; echo "=== ${SCEN:-run.sh} FAILED"; exit 1; }
 die() { hs_die "$@"; }
+# the firmware's file name (fw/ctrl/fwname.mk): the build output's name and
+# the name the card builder gives it on the card
+FWNAME=$(hs_fwname) || die "fw/ctrl/fwname.mk: no 8.3 FW_FILE"
 L3CHECK=${L3CHECK:-$HERE/l3check.py}   # tests of run.sh only: another l3check.py
 
 # l3_check <name> <out file> <pass regex> <command...>: one offline check
@@ -399,7 +412,7 @@ EOP
 		|| die "async pin: initialisers not inserted"
 }
 
-# l3_retire_tap (CPU=rv): the run copy of rv_hostcpu.v gets a wire
+# l3_retire_tap: the run copy of rv_hostcpu.v gets a wire
 # l3_retire = the VexOsd core's writeBack_arbitration_isFiring (one retired
 # instruction), driven inside the DEBUG = 0 generate branch, for tb_l3.v's
 # "=== RETIRED" count.  A reference from the bench into the branch does not
@@ -408,7 +421,6 @@ EOP
 # instead.  It drives nothing in the design; rtl/ is never edited
 l3_retire_tap() {
 	local v="$run/src/rv_hostcpu.v"
-	[ "$CPU" = rv ] || return 0
 	python3 - "$v" <<'EOP' || die "RETIRED tap: rv_hostcpu.v's generate / DEBUG = 0 branch not found"
 import sys
 p = sys.argv[1]
@@ -449,42 +461,6 @@ l3_paula_txpop() {
 	echo "PAULA_TXPOP: $(grep -- '// PAULA_TXPOP' "$p" | sed 's/^[[:space:]]*//')" >> "$run/compile.log"
 }
 
-# l3_e832_xsim (CPU=832, xsim): copies of the EightThirtyTwo VHDL in
-# <run>/src/e832 for xsim, with the register file's data registers
-# (eightthirtytwo_cpu.vhd regfile: tmp, gpr0..gpr6, which its reset leaves
-# alone) starting at 0 as the FPGA's configuration starts them: the 4-state
-# simulator otherwise has them X, and the boot ROM's first function
-# prologue saves them to the stack, an "X on the bus" bench error (probe
-# p4t6xb: a write of xxxxxxxx to 0x158c at cycle 2627).  The other fields
-# get 0 as well (the reset or a concurrent assignment sets them before
-# use).  Verilator's two-state build starts them at 0 anyway; the XRAND
-# twin randomises them (any effect on the run would show as a difference).
-# Sets E832_XSIM to the copies, in analysis order
-l3_e832_xsim() {
-	local f
-	E832_XSIM=()
-	mkdir -p "$run/src/e832" || die "mkdir $run/src/e832"
-	for f in $HS_E832_FILES; do
-		[ -f "$E832/$f" ] || die "no $E832/$f (E832= the EightThirtyTwo RTL directory)"
-		cp "$E832/$f" "$run/src/e832/" || die "copy $E832/$f"
-		E832_XSIM+=("$run/src/e832/$f")
-	done
-	python3 - "$run/src/e832/eightthirtytwo_cpu.vhd" <<'EOP' || die "l3_e832_xsim: eightthirtytwo_cpu.vhd's regfile declaration not found"
-import sys
-p = sys.argv[1]
-s = open(p).read()
-old = "\nsignal regfile : e32_regfile;\n"
-z = "(others => '0')"
-init = ", ".join(["tmp => " + z, "gpr_a => " + z, "gpr_q => " + z] +
-                 ["gpr%d => %s" % (i, z) for i in range(8)] +
-                 ["gpr7_flags => " + z, "gpr7_readflags => '0'"] +
-                 ["flag_%s => '0'" % f for f in ("z", "c", "cond", "sgn", "interrupting", "halfword", "byte")])
-assert s.count(old) == 1
-s = s.replace(old, "\nsignal regfile : e32_regfile := (" + init + "); -- L3 pin (run.sh l3_e832_xsim)\n")
-open(p, "w").write(s)
-EOP
-}
-
 # setup: run directory, RTL copies, firmware, card
 setup() {
 	local f mk=()
@@ -505,30 +481,19 @@ setup() {
 	for f in $MM_FILES; do
 		case "$f" in *.v) sed -i '1i `timescale 1ns/1ps' "$run/src/$(basename "$f")" ;; esac
 	done
+	[ "$SDE" = 1 ] && sed -i '1i `timescale 1ns/1ps' "$run/src/sdcard_spi.v"
 	l3_pin_minimig
 	l3_pin_async
 	l3_retire_tap
 	l3_rdy_mut
 	l3_paula_txpop
-	[ "$CPU" = 832 ] && hs_rom832 "$run"
 	if [ -n "${FW:-}" ]; then
 		FWBIN=$(realpath -m -- "$FW")
 		[ -f "$FWBIN" ] || die "no firmware $FWBIN (FW=)"
 	else
 		hs_fwrv "$run"
-		FWBIN="$run/fwrv/RV32OSDA.BIN"
+		FWBIN="$run/fwrv/$FWNAME"
 	fi
-	# the 832 firmware: FW832, else (CPU=832) built here, else the stand-in
-	FW832BIN=
-	if [ -n "${FW832:-}" ]; then
-		FW832BIN=$(realpath -m -- "$FW832")
-		[ -f "$FW832BIN" ] || die "no firmware $FW832BIN (FW832=)"
-	elif [ "$CPU" = 832 ]; then
-		make -C "$HERE/fw832" B="$run/fw832" E832DIR="$E832DIR" > "$run/make_fw832.log" 2>&1 \
-			|| { tail -20 "$run/make_fw832.log"; die "make sim/l3/fw832 ($run/make_fw832.log)"; }
-		FW832BIN="$run/fw832/832OSDAD.BIN"
-	fi
-	[ -n "$FW832BIN" ] && mk+=(FW832="$FW832BIN")
 	[ "${NOKICK:-0}" = 1 ] && mk+=(NOKICK=1)
 	# the card of the scenario (sim/l3/card): fdd_rd, fdd_wr and akiko the
 	# fdd card, hdd the hdd card, cd the cd card with CDCFG's configs (image
@@ -536,12 +501,12 @@ setup() {
 	# card, the others boot.  MSCARD: milestones()'s "CARD=<card>" lines (cd:
 	# cd_cue or cd_iso, the disc's files differ)
 	CARDNAME=boot
-	case "${SCEN:-}" in fdd_rd|fdd_wr|akiko) CARDNAME=fdd ;; esac
-	[ "${SCEN:-}" = hdd ] && CARDNAME=hdd
-	[ "${SCEN:-}" = cd ] && CARDNAME=cd
-	[ "${SCEN:-}" = cdda ] && CARDNAME=cd
-	[ "${SCEN:-}" = cdda_load ] && CARDNAME=cdhdd
-	case "${SCEN:-}" in
+	case "${BSCEN:-}" in fdd_rd|fdd_wr|akiko) CARDNAME=fdd ;; esac
+	[ "${BSCEN:-}" = hdd ] && CARDNAME=hdd
+	[ "${BSCEN:-}" = cd ] && CARDNAME=cd
+	[ "${BSCEN:-}" = cdda ] && CARDNAME=cd
+	[ "${BSCEN:-}" = cdda_load ] && CARDNAME=cdhdd
+	case "${BSCEN:-}" in
 		cdda|cdda_load) [ "$CDCFG" = cue ] || die "CDCFG=$CDCFG: ${SCEN} plays TEST.CUE's track 2 (cue only)" ;;
 	esac
 	MSCARD=$CARDNAME IMG=$CARDNAME
@@ -555,7 +520,7 @@ setup() {
 	CARD="$run/card/$IMG.img"
 	[ ${#CARD} -le 1024 ] || die "card image path longer than 1024 characters (+SD_IMG): $CARD"
 	# fdd_wr: the write stream of each track, from the card's TEST.ADF
-	if [ "${SCEN:-}" = fdd_wr ]; then
+	if [ "${BSCEN:-}" = fdd_wr ]; then
 		local e c h b
 		for e in $FDD_WR_PLAN; do
 			c=${e%%:*} h=${e#*:} h=${h%%:*} b=
@@ -573,13 +538,9 @@ l3_build_key() {
 	while IFS= read -r f; do files+=("$f"); done < <(find "$run/src" -maxdepth 1 -type f | LC_ALL=C sort)
 	files+=("$HERE"/*.v "$HERE"/*.vh "$HERE/l3.vlt" "$ROOT"/sim/common/*.v "$ROOT"/sim/common/*.vh
 	        "$ROOT/sim/common/hostsim.sh" "$L2/sdram_host_model.v" "$L2/verilator/blackbox.vhd"
-	        "$L2/verilator/romcheck.py" "$ROM_SIM" $I2C_V "$MM_INC"/*.vh "$ROOT"/rtl/minimig/*.vh "$HERE/run.sh")
-	if [ "$CPU" = 832 ]; then
-		for f in $HS_E832_FILES; do files+=("$E832/$f"); done
-		files+=("$ROOT/$HS_E832_STUB")
-	fi
+	        "$L2/verilator/romcheck.py" "$ROM" $I2C_V "$MM_INC"/*.vh "$ROOT"/rtl/minimig/*.vh "$HERE/run.sh")
 	{
-		echo "SIM=$SIM CPU=$CPU EXTRA_WS=$XW XRAND=${XRAND:-0} generics=$CFIDE_GENERICS"
+		echo "SIM=$SIM EXTRA_WS=$XW XRAND=${XRAND:-0} SD_ENGINE=$SDE generics=$CFIDE_GENERICS"
 		"$GHDL" --version | head -1
 		"$VERILATOR" --version
 		sha256sum "${files[@]}" | sed 's|  .*/|  |'
@@ -614,42 +575,34 @@ build() {
 		echo "BUILD_FROM: run_$BUILD_FROM's simulator, build key $key" | tee -a "$run/compile.log" >> "$run/results.txt"
 		return 0
 	fi
-	# per CPU: the core's files, the defines (CPU=rv: rv_hostcpu's counters;
-	# CPU=832: L3_CPU832, no counters), the bridge's cpu_riscv
-	local cpuv=() def riscv
-	if [ "$CPU" = 832 ]; then
-		def=L3_CPU832 riscv=false
-	else
-		def=RV_HOSTCPU_STATS riscv=true cpuv=(src/rv_hostcpu.v src/VexOsd.v)
-	fi
+	# the core's files and define (rv_hostcpu's counters)
+	local cpuv=(src/rv_hostcpu.v src/VexOsd.v) def=RV_HOSTCPU_STATS sdv=() sdd=()
+	if [ "$SDE" = 1 ]; then sdv=(src/sdcard_spi.v); sdd=(-DSD_ENGINE); fi
 	if [ "$SIM" = verilator ]; then
 		# the L2 bench's black-box list and ROM check (HERE, for this call only)
-		HS_DIR=$d HS_ROM=$ROM_SIM HS_VB=832_bridge.vhd HS_VC=cfide.vhd HS_E832=$E832
+		HS_DIR=$d HS_ROM=$ROM HS_VB=host_bridge.vhd HS_VC=cfide.vhd
 		# shellcheck disable=SC2086
-		HERE=$L2 hs_ghdl_convert "$run" "$riscv" "$XW" $CFIDE_GENERICS
+		HERE=$L2 hs_ghdl_convert "$run" "$XW" $CFIDE_GENERICS
 		grep -qE '^ *i2c_master_mmio +[a-z0-9_]+ *\(' "$d/cfide.v" && i2c=$I2C_V
 		HS_NAME=$snap HS_VLT="$HERE/l3.vlt"
 		HS_VFLAGS="-GEXTRA_WS=$XW -I$ROOT/sim/common -I$HERE -I$MM_INC -I$ROOT/rtl/minimig"
 		# shellcheck disable=SC2086
-		hs_verilate "$run" tb_l3 "-DL3_GHDL -D$def" \
-			"$d/bridge.v" "$d/cfide.v" "${cpuv[@]}" src/hostcache.v src/dpram_inf_generic.v \
+		hs_verilate "$run" tb_l3 "-DL3_GHDL -D$def ${sdd[*]}" \
+			"$d/bridge.v" "$d/cfide.v" "${cpuv[@]}" "${sdv[@]}" src/hostcache.v src/dpram_inf_generic.v \
 			"$L2/sdram_host_model.v" "$ROOT/sim/common/sd_spi_model.v" $i2c \
 			"${mm[@]}" "$HERE/bfm_audio.v" "$HERE/bfm_keys.v" "$HERE/bfm_floppy.v" "$HERE/bfm_ide.v" "$HERE/bfm_akiko.v" "$HERE/rtc_model.v" "$HERE/tb_l3.v"
 		echo "$key" > "$run/buildkey_$snap"
 	else
 		X xvlog -sv $I2C_V
 		X xvhdl src/cfide.vhd
-		X xvlog -d "$def" "${cpuv[@]}" src/hostcache.v src/dpram_inf_generic.v
-		if [ "$CPU" = 832 ]; then
-			l3_e832_xsim
-			X xvhdl "${E832_XSIM[@]}" "$ROOT/$HS_E832_STUB"
-		fi
-		X xvhdl src/832_bridge.vhd
-		X xvhdl "$ROM_SIM"
+		X xvlog -d "$def" "${cpuv[@]}" "${sdv[@]}" src/hostcache.v src/dpram_inf_generic.v
+		X xvhdl src/host_bridge.vhd
+		X xvhdl "$ROM"
 		# --relax: rtl/minimig/gayle_port.v uses the wire err before its
 		# declaration (an error for xvlog, accepted by synthesis and Verilator)
 		X xvlog --relax -i "$MM_INC" -i "$ROOT/rtl/minimig" "${mm[@]}"
-		X xvlog -d "$def" -i "$ROOT/sim/common" -i "$HERE" \
+		[ "$SDE" = 1 ] && sdd=(-d SD_ENGINE)
+		X xvlog -d "$def" "${sdd[@]}" -i "$ROOT/sim/common" -i "$HERE" \
 			"$L2/sdram_host_model.v" "$ROOT/sim/common/sd_spi_model.v" "$HERE/bfm_audio.v" \
 			"$HERE/bfm_keys.v" "$HERE/bfm_floppy.v" "$HERE/bfm_ide.v" "$HERE/bfm_akiko.v" "$HERE/rtc_model.v" "$HERE/tb_l3.v"
 		hs_xsim_build "$run" "$snap" "$XW" tb_l3
@@ -659,18 +612,22 @@ build() {
 
 # milestones <scenario> <log>: the milestone file of the scenario, spitrace
 # check of its UART / SPI lines, and its "NOT UART <text>" lines.  A line
-# "CPU=<cpu> <milestone>" is a milestone of that CPU only (rv or 832): it is
-# kept, without the prefix, for that CPU and dropped for the other; a line
-# "CARD=<card> <milestone>" likewise for the scenario's card (MSCARD)
+# "SDE=<0|1> <milestone>" is a milestone of that SD_ENGINE only (the boot
+# ROM's and the firmware's SD lines), "CARD=<card> <milestone>" one of that
+# card only: each is kept, without the prefix, for the run's engine (SDE)
+# and the scenario's card (MSCARD) and dropped for the others (an SDE= line
+# may carry a CARD= prefix after it).  The 't clr' after the SDE= step
+# clears sed's substitution flag: without it a kept SDE= line (flag set by
+# its own s///) took the CARD= step's 't' to the end of the script and -n
+# dropped it -- every SDE= line was lost (Task 13 review)
 milestones() {
 	local s=$1 log=$2 ms="$run/milestones_$1.txt" t
 	if [ "$s" = boot_short ]; then
 		sed '/^#@ boot_short end/q' "$HERE/milestones_boot.txt"
 	else
 		cat "$HERE/milestones_boot.txt"
-	fi | sed -n -e "s/^CARD=${MSCARD:-boot} //p" -e t -e '/^CARD=/d' -e p \
-		| sed -n -e "s/^CPU=$CPU //p" -e t -e '/^CPU=/d' -e p > "$ms"
-	grep -E '^CPU=' "$HERE/milestones_boot.txt" | grep -vE '^CPU=(rv|832) ' | sed 's/^/BAD  milestones_boot.txt: a CPU= line for neither rv nor 832: /'
+	fi | sed -n -e "s/^SDE=$SDE //" -e '/^SDE=/d' -e 't clr' -e ':clr' \
+		-e "s/^CARD=${MSCARD:-boot} //p" -e t -e '/^CARD=/d' -e p > "$ms"
 	grep -E '^CARD=' "$HERE/milestones_boot.txt" | grep -vE '^CARD=(boot|fdd|hdd|cd_cue|cd_iso|cdhdd) ' \
 		| sed 's/^/BAD  milestones_boot.txt: a CARD= line for none of boot, fdd, hdd, cd_cue, cd_iso, cdhdd: /'
 	grep -v '^NOT ' "$ms" > "$ms.check"
@@ -709,11 +666,122 @@ margins() {
 	[ "$bad" = 0 ] && echo "ok   MARGIN lines: all $k present, none LOW, $(echo $req | wc -w) required ones ok"
 }
 
-# scenario <name>: build, run, checks
+# sdc_check <scenario> <base> <log> (SDE=1): the SD card engine's checks
+# (header, the sdc_* entry; README "sdc").  Prints ok / BAD lines.
+#   - lock-step: fw/ctrl/sdc.h's SDC_VERSION is the trailer of the firmware
+#     file on the card ('SDCV' 00 00 hi lo), the VERSION the ROM read ("SD
+#     init: VERSION <v>, card 1") and both sides of the ROM's "Firmware SDC
+#     <have>, bitstream SDC <need>" (fw/ctrl_boot/lockstep.c)
+#   - no frame with sd_cs[1] low in spi.txt (cs 02: the card on cfide's
+#     SPI) and MARGIN item 3 without events (no direct-mode transfer)
+#   - the SD error lines on the UART (the ROM's "SD CMD<n>: R1 ..., try"
+#     and "SD read <lba>: ..., try", "SD: SCK div 13"; the firmware's "SD:
+#     ..." lines, "SD init: CMD10 / CMD9 <err>", "card changed", "CID
+#     unreadable"): none unless XARGS injects (+SD_ERR_); with an
+#     injection the retry lines (the firmware's "SD: <row>, row <r>, retry
+#     <k> of <n>, lba <l>" or the ROM's "SD read <lba>: <what> <v>, try
+#     <t>", each a failed try the ROM tries again: out of tries it stops
+#     the boot, which the milestones see) exactly EXPECT_RETRY_N (1), all
+#     matching EXPECT_RETRY, and none of "retries out", "op failed", "CMD13
+#     probe", "card changed", "CID unreadable"
+#   - "=== SDC gayle": no g_err; hdd: every card sector the plan moves to
+#     or from the Amiga goes through the bridge, in words: to_gayle
+#     SDC_HDD_RD_SECTORS x 256, from_gayle SDC_HDD_WR_SECTORS x 256 (README
+#     "hdd": the plan reads 274 sectors, 3 of them built by the CPU: the
+#     FakeRDB RDSK and PART and RDB.HDF's patched block 0; it writes 96);
+#     boot, boot_short: no Gayle op
+SDC_HDD_RD_SECTORS=271
+SDC_HDD_WR_SECTORS=96
+sdc_check() {
+	local s=$1 b=$2 log=$3 v t w ls inj=0 rx re n
+	v=$(sed -n 's/^#define SDC_VERSION 0x\([0-9A-Fa-f]\{4\}\).*/\1/p' "$ROOT/fw/ctrl/sdc.h" | tr a-f A-F)
+	[ ${#v} = 4 ] || { echo "BAD  sdc: no SDC_VERSION in fw/ctrl/sdc.h"; return; }
+	t=$(tail -c 8 "$FWBIN" | od -An -v -tx1 | tr -d ' \n' | tr a-f A-F)
+	if [ "$t" = "534443560000$v" ]; then
+		echo "ok   sdc: the firmware file's trailer SDCV 00 00 $v (fw/ctrl/sdc.h SDC_VERSION 0x$v)"
+	else
+		echo "BAD  sdc: the firmware file's last 8 bytes are $t, want 534443560000$v (SDCV 00 00, SDC_VERSION 0x$v)"
+	fi
+	if grep -qE "^UART: SD init: VERSION $v, card 1\$" "$log"; then echo "ok   sdc: the boot ROM read VERSION $v, card present"
+	else echo "BAD  sdc: no UART line 'SD init: VERSION $v, card 1' (the ROM's)"; fi
+	if grep -qF "Firmware SDC $v, bitstream SDC $v" "$log"; then
+		echo "ok   sdc: lock-step 'Firmware SDC $v, bitstream SDC $v'"
+	else
+		echo "BAD  sdc: no lock-step line 'Firmware SDC $v, bitstream SDC $v': $(grep -m1 -E 'Firmware (SDC|does not match)' "$log" || echo none)"
+	fi
+	# a frame's first field is its cs byte (~sd_cs, bit 1 = sd_cs[1] low)
+	n=$(grep -cE '^[0-9a-f][2367abef] ' "$run/spi.txt")
+	if [ "$n" = 0 ]; then echo "ok   sdc: no frame with sd_cs[1] low in spi.txt (the card is not on cfide's SPI)"
+	else echo "BAD  sdc: $n frames with sd_cs[1] low in spi.txt"; fi
+	if grep -qE '^=== MARGIN 3 dmode_release min none ' "$log"; then echo "ok   sdc: MARGIN 3 without events (no direct-mode transfer)"
+	else echo "BAD  sdc: MARGIN 3 saw direct-mode transfers: $(grep -m1 '^=== MARGIN 3 dmode_release' "$log")"; fi
+	# cfide's SPI after the jump to the firmware: SPI_fast (speed 1: SCK 6
+	# clk_114) in every frame but the RTC's (tb_l3.v "=== SPI SCK period");
+	# the boot ROM leaves it at 0xef (fw/ctrl main.c, Task 13 finding)
+	n=$(sed -n 's/^=== SPI SCK period after the firmware.s start (no RTC frame): min [0-9]* max \([0-9]*\) clk_114 over [1-9][0-9]* bits.*/\1/p' "$log")
+	if [ -n "$n" ] && [ "$n" -le 6 ]; then echo "ok   sdc: cfide's SCK period after the firmware's start at most $n clk_114 (SPI_fast: 6)"
+	else echo "BAD  sdc: cfide's SCK slower than SPI_fast (6 clk_114) after the firmware's start: $(grep -m1 '^=== SPI SCK period' "$log" || echo 'no SPI SCK line')"; fi
+	case " ${XARGS:-} " in *" +SD_ERR_"*) inj=1 ;; esac
+	# the UART's lines, each also cut at the firmware's '\r's (hostmon prints
+	# them as the two characters \r: "Set Multiple Mode 16\rSD: read CRC,
+	# ..." is one UART line)
+	re='^(SD CMD[0-9]+: R1 |SD read [0-9]+: |SD: |SD init: (CMD10|CMD9) )|card changed|CID unreadable'
+	ls=$(sed -n 's/^UART: //p' "$log" | sed 's/\\r/\n/g' | grep -E "$re")
+	if [ "$inj" = 0 ]; then
+		if [ -z "$ls" ]; then echo "ok   sdc: no SD error line on the UART"
+		else printf '%s\n' "$ls" | head -20 | sed 's/^/BAD  sdc: SD error line without an injection: /'; fi
+	else
+		# every retry line (the firmware's row lines, the ROM's "try" lines)
+		# must be the leg's: EXPECT_RETRY (an ERE on the SD line), exactly
+		# EXPECT_RETRY_N (1) of them, and no other retry line
+		rx=$(printf '%s\n' "$ls" | grep -E ', row [0-9]+, retry [0-9]+ of [0-9]+, lba |, try [0-9]+$')
+		printf '%s\n' "$rx" | grep . | head -20 | sed 's/^/info sdc: retry line (injection): /'
+		if [ -z "${EXPECT_RETRY:-}" ]; then
+			echo "BAD  sdc: XARGS injects an SD error, but EXPECT_RETRY (the retry line the leg must give) is not set"
+		else
+			n=$(printf '%s\n' "$rx" | grep -cE -- "$EXPECT_RETRY")
+			t=$(printf '%s\n' "$rx" | grep -c .)
+			if [ "$n" = "${EXPECT_RETRY_N:-1}" ] && [ "$t" = "$n" ]; then
+				echo "ok   sdc: $n retry line(s) matching EXPECT_RETRY '$EXPECT_RETRY', no other retry line"
+			else
+				echo "BAD  sdc: $n retry line(s) matching EXPECT_RETRY '$EXPECT_RETRY' (want ${EXPECT_RETRY_N:-1}), $t retry line(s) in all"
+			fi
+		fi
+		printf '%s\n' "$ls" | grep -E 'retries out|op failed|CMD13 probe|card changed|CID unreadable' | head -20 \
+			| sed 's/^/BAD  sdc: the injection ran out of retries: /'
+		printf '%s\n' "$ls" | grep -vE ', row [0-9]+, retry [0-9]+ of [0-9]+, lba |, try [0-9]+$|retries out|op failed|CMD13 probe|card changed|CID unreadable' \
+			| grep . | head -20 | sed 's/^/info sdc: other SD line: /'
+	fi
+	w=$(grep -E '^=== SDC gayle ' "$log")
+	if [ -z "$w" ]; then echo "BAD  sdc: no '=== SDC gayle' line"; return; fi
+	set -- $(printf '%s\n' "$w" | sed -n 's/^=== SDC gayle to_gayle \([0-9]*\) ops \([0-9]*\) words, from_gayle \([0-9]*\) ops \([0-9]*\) words, g_err \([0-9]*\), .*/\1 \2 \3 \4 \5/p')
+	[ $# = 5 ] || { echo "BAD  sdc: cannot read '$w'"; return; }
+	[ "$5" = 0 ] && echo "ok   sdc: no g_err" || echo "BAD  sdc: $5 Gayle errors (g_err)"
+	if [ "$b" = hdd ]; then
+		if [ "$1" -gt 0 ] && [ "$2" = $((SDC_HDD_RD_SECTORS * 256)) ]; then
+			echo "ok   sdc: to_gayle $1 ops, $2 words = $SDC_HDD_RD_SECTORS sectors (READ / READ MULTIPLE through the bridge)"
+		else
+			echo "BAD  sdc: to_gayle $1 ops $2 words, want > 0 ops and $((SDC_HDD_RD_SECTORS * 256)) words ($SDC_HDD_RD_SECTORS sectors)"
+		fi
+		if [ "$3" -gt 0 ] && [ "$4" = $((SDC_HDD_WR_SECTORS * 256)) ]; then
+			echo "ok   sdc: from_gayle $3 ops, $4 words = $SDC_HDD_WR_SECTORS sectors (WRITE / WRITE MULTIPLE through the bridge)"
+		else
+			echo "BAD  sdc: from_gayle $3 ops $4 words, want > 0 ops and $((SDC_HDD_WR_SECTORS * 256)) words ($SDC_HDD_WR_SECTORS sectors)"
+		fi
+	elif [ "$1$3" = 00 ]; then
+		echo "ok   sdc: no Gayle op ($s)"
+	else
+		echo "BAD  sdc: Gayle ops in $s: to_gayle $1, from_gayle $3"
+	fi
+}
+
+# scenario <name>: build, run, checks.  An sdc_<b> scenario is the bench's
+# scenario b on the SD card engine (SDE=1): b's plusargs, card and checks
+# (with b's timeout L3_SDC_<B>_TO), plus sdc_check
 scenario() {
-	local s=$1 to snap="tb_l3_x$XW" pa=() st x
+	local s=$1 b=${1#sdc_} to snap="tb_l3_x$XW" pa=() st x
 	local log="$run/tb_${s}_x${XW}_s${SL}_j${SJ}.log"
-	case "$s" in
+	case "$b" in
 		boot) to=${TIMEOUT:-$L3_BOOT_TO}; pa=("SD_LOG=1") ;;
 		boot_short) to=${TIMEOUT:-$L3_SHORT_TO} ;;
 		keys) to=${TIMEOUT:-$L3_KEYS_TO}; pa=("KEYS=$(realpath -m -- "${KEYS:-$HERE/keys/menu_tour.txt}")" "TICKDIV=643" "TICKDIV_AT=scenario") ;;
@@ -732,27 +800,25 @@ scenario() {
 			    "FDD_DUMP=$run/akiko") ;;
 		*) die "unknown scenario $s" ;;
 	esac
+	case "$s" in
+		sdc_boot) to=${TIMEOUT:-$L3_SDC_BOOT_TO} ;;
+		sdc_boot_short) to=${TIMEOUT:-$L3_SDC_SHORT_TO} ;;   # no SD_LOG: the xsim twin (compare) differs in its spacing
+		sdc_hdd) to=${TIMEOUT:-$L3_SDC_HDD_TO}; pa+=("SD_LOG=1") ;;
+	esac
 	# tb_l3.v reads +TIMEOUT into a 32-bit integer: a larger value wraps
 	# negative and ends the run at once (Task 19, grid run p4g_rv_ws64_fdd_rd)
 	case "$to" in ''|*[!0-9]*) die "TIMEOUT=$to: not a number of cycles" ;; esac
 	[ "${#to}" -lt 10 ] || [ "$to" -le 2147483647 ] || die "TIMEOUT=$to: above 2147483647 (tb_l3.v's 32-bit integer)"
 	if git -C "$ROOT" diff --quiet HEAD -- "${ROM#$ROOT/}"; then st="unmodified (= git HEAD)"; else st="BAD  MODIFIED against git HEAD"; fi
 	{
-		echo "=== CPU $CPU"
-		echo "boot ROM: ${ROM#$ROOT/} $st, sha256 $(sha256sum "$ROM" | cut -c1-16)$( [ "$ROM_SIM" != "$ROM" ] && echo ", simulated as $ROM_SIM (hs_rom832)")"
+		echo "=== CPU rv"
+		echo "boot ROM: ${ROM#$ROOT/} $st, sha256 $(sha256sum "$ROM" | cut -c1-16)"
 		echo "firmware: $FWBIN, $(stat -c %s "$FWBIN") bytes, sha256 $(sha256sum "$FWBIN" | cut -c1-16)"
-		if [ -n "$FW832BIN" ]; then
-			echo "firmware 832: $FW832BIN, $(stat -c %s "$FW832BIN") bytes, sha256 $(sha256sum "$FW832BIN" | cut -c1-16)"
-			[ -f "$run/fw832/832OSDAD.txt" ] && sed 's/^/  /' "$run/fw832/832OSDAD.txt"
-		else
-			echo "firmware 832: the card's stand-in"
-		fi
-		[ "$CPU" = 832 ] && echo "EightThirtyTwo RTL: $E832"
 		echo "card: $CARD$( [ "${NOKICK:-0}" = 1 ] && echo " (NOKICK=1: no KICK.ROM)")"
 		[ "${PAULA_TXPOP:-0}" = 1 ] && echo "PAULA_TXPOP=1: $(sed -n 's/^PAULA_TXPOP: //p' "$run/compile.log")"
 		[ -n "${PATCH:-}" ] && echo "PATCH: $PATCHF, sha256 $(sha256sum "$PATCHF" | cut -c1-16)"
-		[ "$s" = cd ] && echo "cd config: $CDCFG"
-		echo "scenario: $s"
+		[ "$b" = cd ] && echo "cd config: $CDCFG"
+		echo "scenario: $s$( [ "$s" != "$b" ] && echo " (the bench's $b, SD_ENGINE=1)")"
 	} | tee "$run/results.txt"
 	build "$snap"
 	# plusargs without the +: FAST_HW's model timing first (the first match
@@ -760,7 +826,7 @@ scenario() {
 	case " ${XARGS:-} " in
 		*" +FAST_HW=1 "*) pa=(SD_TOKEN_DLY=0 SD_BUSY=1 SD_NCR=1 SLAT=2 SJIT=0 "${pa[@]}") ;;
 	esac
-	pa+=("SCENARIO=$s" "SLAT=$SL" "SJIT=$SJ" "SEED=${SEED:-1}" "SD_IMG=$CARD" "TIMEOUT=$to"
+	pa+=("SCENARIO=$b" "SLAT=$SL" "SJIT=$SJ" "SEED=${SEED:-1}" "SD_IMG=$CARD" "TIMEOUT=$to"
 	     "SPI_LOG=$run/spi.txt" "SPI_T_LOG=$run/spi_t.txt" "HW_LOG=$run/hw.txt" "UART_LOG=$run/uart.txt"
 	     "SDRAM_DUMP=$run/sdram.bin")
 	for x in ${XARGS:-}; do pa+=("${x#+}"); done
@@ -769,44 +835,45 @@ scenario() {
 	local secs=$((SECONDS - t0))
 	python3 -I "$L2/spitrace.py" summary "$run/spi.txt" > "$run/spi_summary.txt" 2>&1
 	{
-		grep -E '^=== (BOOT|MAIN|END|STATS|HW accesses|cycle limit|HandleFpga|SPI frames|OSD GAP|OSD EARLY|OSD REPLY|STACK|RTC|KICK|MARGIN|KEYS script|FDD|IDE|CD|AKIKO block)' "$log"
+		grep -E '^=== (BOOT|MAIN|END|STATS|HW accesses|cycle limit|HandleFpga|SPI frames|SPI SCK|OSD GAP|OSD EARLY|OSD REPLY|STACK|RTC|KICK|MARGIN|KEYS script|FDD|IDE|CD|AKIKO block|SDC|SD_ERR)' "$log"
 		grep -E '^BENCH ERROR' "$log" | sed 's/^/BAD  /'
 		margins "$s" "$log"
 		grep -q '^SD: image .* loaded' "$log" || echo "BAD  the SD model did not load $CARD"
-		milestones "$s" "$log"
+		milestones "$b" "$log"
 		grep -E '^UART: .*(EXC |TRAP )' "$log" | sed 's/^/BAD  /'
 		l3_check memhash "$run/memhash.txt" '^PASS memhash: ' python3 -I "$L3CHECK" memhash "$run"
-		if [ "$s" = boot ] || [ "$s" = keys ] || [ "$s" = fdd_rd ] || [ "$s" = fdd_wr ] || [ "$s" = hdd ] \
-			|| [ "$s" = cd ] || [ "$s" = cdda ] || [ "$s" = cdda_load ] || [ "$s" = akiko ]; then
+		if [ "$b" = boot ] || [ "$b" = keys ] || [ "$b" = fdd_rd ] || [ "$b" = fdd_wr ] || [ "$b" = hdd ] \
+			|| [ "$b" = cd ] || [ "$b" = cdda ] || [ "$b" = cdda_load ] || [ "$b" = akiko ]; then
 			l3_check kick "$run/kick.txt" '^PASS kick: ' python3 -I "$L3CHECK" kick "$run"
 			l3_check order "$run/order.txt" '^PASS order: ' python3 -I "$L3CHECK" order "$run"
 		fi
-		[ "$s" = boot ] && l3_check mmc "$run/mmc.txt" '^PASS mmc: ' python3 -I "$L3CHECK" mmc "$run"
-		if [ "$s" = keys ]; then
+		[ "$b" = boot ] && l3_check mmc "$run/mmc.txt" '^PASS mmc: ' python3 -I "$L3CHECK" mmc "$run"
+		[ "$SDE" = 1 ] && sdc_check "$s" "$b" "$log"
+		if [ "$b" = keys ]; then
 			l3_check keys "$run/keys.txt" '^PASS keys: ' python3 -I "$L3CHECK" keys "$run"
 			grep -E '^REPLY ' "$run/keys.txt"
 		fi
-		if [ "$s" = fdd_rd ]; then
+		if [ "$b" = fdd_rd ]; then
 			l3_check fdd_rd "$run/fdd_rd.txt" '^PASS fdd_rd: ' python3 -I "$L3CHECK" fdd_rd "$run"
 			grep -E '^ok   ' "$run/fdd_rd.txt"
 		fi
-		if [ "$s" = fdd_wr ]; then
+		if [ "$b" = fdd_wr ]; then
 			l3_check fdd_wr "$run/fdd_wr.txt" '^PASS fdd_wr: ' python3 -I "$L3CHECK" fdd_wr "$run"
 			grep -E '^(ok   |HEADER )' "$run/fdd_wr.txt"
 		fi
-		if [ "$s" = hdd ]; then
+		if [ "$b" = hdd ]; then
 			l3_check hdd "$run/hdd.txt" '^PASS hdd: ' python3 -I "$L3CHECK" hdd "$run"
 			grep -E '^ok   ' "$run/hdd.txt"
 		fi
-		if [ "$s" = cd ]; then
+		if [ "$b" = cd ]; then
 			l3_check cd "$run/cd.txt" '^PASS cd: ' python3 -I "$L3CHECK" cd "$run"
 			grep -E '^(ok   |INFO )' "$run/cd.txt"
 		fi
-		if [ "$s" = cdda ] || [ "$s" = cdda_load ]; then
+		if [ "$b" = cdda ] || [ "$b" = cdda_load ]; then
 			l3_check cdda "$run/cdda.txt" '^PASS cdda: ' python3 -I "$L3CHECK" cdda "$run"
 			grep -E '^(ok   |INFO )' "$run/cdda.txt"
 		fi
-		if [ "$s" = akiko ]; then
+		if [ "$b" = akiko ]; then
 			l3_check akiko "$run/akiko.txt" '^PASS akiko: ' python3 -I "$L3CHECK" akiko "$run"
 			grep -E '^ok   ' "$run/akiko.txt"
 		fi
@@ -822,7 +889,7 @@ scenario() {
 # milestone (the fatal-error loop has no HandleFpga frames after its first)
 nokick() {
 	if scenario boot; then echo "BAD  NOKICK=1: boot passed without a kickstart"; return 1; fi
-	if grep -q '^BAD  SPI>=21 10 00 00 00 00 00 00' "$run/milestones.txt" \
+	if grep -qE '^BAD  SPI(>=[0-9]+)? 10 00 00 00 00 00 00' "$run/milestones.txt" \
 		&& grep -q '^UART: .*ROM loading failed' "$run"/tb_boot_*.log; then
 		echo "=== NOKICK=1: boot FAILED as expected (main-loop milestone missing, 'ROM loading failed')"
 		return 0
@@ -837,64 +904,6 @@ case "${1:-}" in
 		[ $# -eq 3 ] || { echo "usage: run.sh compare <RUNTAG a> <RUNTAG b>"; exit 2; }
 		for t in "$2" "$3"; do [ -d "$HERE/run_$t" ] || { echo "no run directory $HERE/run_$t"; exit 2; }; done
 		hs_compare "$HERE/run_$2" "$HERE/run_$3"
-		exit $?
-		;;
-	diff)
-		shift
-		unused=() twin=0
-		while :; do
-			case "${1:-}" in
-				--unused-rules) unused=(--unused-rules); shift ;;
-				--twin) twin=1; shift ;;
-				*) break ;;
-			esac
-		done
-		[ $# -eq 2 ] || { echo "usage: run.sh diff [--unused-rules] [--twin] <RUNTAG rv> <RUNTAG 832>"; exit 2; }
-		cards=() meta=()
-		for t in "$1" "$2"; do
-			d="$HERE/run_$t"
-			[ -d "$d" ] || { echo "no run directory $d"; exit 2; }
-			for f in spi.txt hw.txt uart.txt results.txt; do
-				[ -f "$d/$f" ] || { echo "no $d/$f (a run before hw.txt / uart.txt: run it again)"; exit 2; }
-			done
-			# what the run was (results.txt): its CPU, scenario, CD config,
-			# and that it passed (final review M5).  The scenario: the
-			# "scenario:" line, or (a run before that line) the one
-			# tb_<scenario>_x*.log of the run directory
-			cpu=$(sed -n 's/^=== CPU \([a-z0-9]*\)$/\1/p' "$d/results.txt" | head -1)
-			sc=$(sed -n 's/^scenario: //p' "$d/results.txt" | head -1)
-			if [ -z "$sc" ]; then
-				sc=$(for l in "$d"/tb_*_x*_s*_j*.log; do [ -f "$l" ] && basename "$l" | sed 's/^tb_\(.*\)_x[0-9]*_s[0-9]*_j[0-9]*\.log$/\1/'; done | sort -u)
-				[ "$(printf '%s\n' "$sc" | grep -c .)" = 1 ] || { echo "run_$t: no 'scenario:' line in results.txt and not exactly one tb_<scenario>_x*.log"; exit 2; }
-			fi
-			cdc=$(sed -n 's/^cd config: //p' "$d/results.txt" | head -1)
-			grep -qx 'ok   bench verdict: === PASS' "$d/results.txt" && ! grep -q 'BAD' "$d/results.txt" \
-				|| { echo "run_$t did not PASS (results.txt: a BAD line or no bench verdict PASS): no diff"; exit 2; }
-			meta+=("$cpu" "$sc" "${cdc:-none}")
-		done
-		if [ "$twin" = 1 ]; then
-			[ "${meta[0]}" = "${meta[3]}" ] || { echo "--twin: run_$1 is CPU ${meta[0]}, run_$2 CPU ${meta[3]}"; exit 2; }
-		else
-			[ "${meta[0]}" = rv ] && [ "${meta[3]}" = 832 ] \
-				|| { echo "run_$1 must be CPU rv and run_$2 CPU 832 (they are ${meta[0]:-?} and ${meta[3]:-?}; --twin for two runs of one CPU)"; exit 2; }
-		fi
-		[ "${meta[1]}" = "${meta[4]}" ] || { echo "run_$1 ran scenario ${meta[1]}, run_$2 ${meta[4]}"; exit 2; }
-		[ "${meta[2]}" = "${meta[5]}" ] || { echo "run_$1 has cd config ${meta[2]}, run_$2 ${meta[5]}"; exit 2; }
-		for t in "$1" "$2"; do
-			d="$HERE/run_$t"
-			# the card the run booted (results.txt "card: <image>")
-			c=$(sed -n 's/^card: \([^ ]*\).*/\1/p' "$d/results.txt" | head -1)
-			[ -f "$c" ] || { echo "no card image for $d (results.txt: '${c}')"; exit 2; }
-			cards+=("$c")
-			python3 -I "$L2/spitrace.py" norm "$d/spi.txt" "$d/hw.txt" "$d/uart.txt" \
-				-r "$HERE/expected_diff.txt" --card "$c" > "$d/norm.txt" \
-				|| { echo "spitrace.py norm failed for $d"; exit 2; }
-		done
-		# the same card in both runs (FW= and FW832= the same images), or
-		# the SD reads differ for that reason alone
-		cmp -s "${cards[0]}" "${cards[1]}" \
-			|| { echo "the cards of run_$1 and run_$2 differ: give both runs the same FW= and FW832="; exit 2; }
-		python3 -I "$L2/spitrace.py" diff "${unused[@]}" "$HERE/run_$1/norm.txt" "$HERE/run_$2/norm.txt"
 		exit $?
 		;;
 	xpair)
@@ -915,8 +924,8 @@ case "${1:-}" in
 		echo "=== xpair $2 FAILED (runs $r1 / $r2, compare $rc)"
 		exit 1
 		;;
-	boot|boot_short|keys|fdd_rd|fdd_wr|hdd|cd|cdda|cdda_load|akiko)
-		SCEN=$1
+	boot|boot_short|keys|fdd_rd|fdd_wr|hdd|cd|cdda|cdda_load|akiko|sdc_boot|sdc_boot_short|sdc_hdd)
+		SCEN=$1 BSCEN=${1#sdc_}
 		[ "${NOKICK:-0}" = 1 ] && [ "$1" != boot ] && die "NOKICK=1 is for boot only"
 		setup
 		if [ "${NOKICK:-0}" = 1 ]; then nokick; else scenario "$1"; fi

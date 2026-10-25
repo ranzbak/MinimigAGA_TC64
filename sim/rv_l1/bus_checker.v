@@ -1,4 +1,4 @@
-// Checks the 832 req/ack bus contract every cycle (Global Constraints):
+// Checks the host bridge's req/ack bus contract every cycle (Global Constraints):
 //   - the master holds req, addr, q, sel, wr stable until it samples ack = 1
 //     ("req dropped before ack", "signal change while req")
 //   - ack only while req is high ("ack without req"), one cycle per

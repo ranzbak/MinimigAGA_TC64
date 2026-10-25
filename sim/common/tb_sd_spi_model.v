@@ -1,7 +1,7 @@
 `timescale 1ns/1ps
 // Bench for sd_spi_model.  The master below talks to the model the way
-// fw/ctrl_boot_832/spi.c (init, CMD17) and fw/ctrl_832/mmc.c (CMD18+CMD12,
-// CMD24, CMD25) do, reads the MBR and the FAT16 volume that
+// the OSD firmware's SD code does (fw/ctrl_boot/spi.c: init, CMD17;
+// fw/ctrl/mmc.c: CMD18+CMD12, CMD24, CMD25), reads the MBR and the FAT16 volume that
 // tools/sim/mkcard.sh made, compares a 4 KB file (+HEX=<1 byte/line hex>)
 // and does write + read-back.  Run it with sim/common/run_sd_model.sh.
 module tb_sd_spi_model;

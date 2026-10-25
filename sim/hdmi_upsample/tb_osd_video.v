@@ -1,5 +1,5 @@
 // tb_osd_video.v -- userio_osd's video config command (OSD_CMD_VID, 0x34)
-// over SPI as the 832 firmware sends it: the first data byte
+// over SPI as the OSD firmware sends it: the first data byte
 // {dither, hr_filter, lr_filter, scanline}, the optional second byte
 // {scaling, beam, bloom, mask} for the HDMI CRT emulation and scaler
 // (crt_fx, 8 bits; scaling since 2026-10-13: 0 line rate, 1 sharp, 2 area).

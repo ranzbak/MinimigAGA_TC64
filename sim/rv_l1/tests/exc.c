@@ -1,5 +1,5 @@
 /* exc: synchronous exceptions through the firmware trap entry
- * (fw/ctrl_rv/arch/trap.S -> rv_trap -> rv_exception).  This program
+ * (fw/ctrl/arch/trap.S -> rv_trap -> rv_exception).  This program
  * overrides the weak rv_exception: it records mcause, mepc and mtval, steps
  * mepc over the faulting instruction (4 bytes, or 2 for a compressed one)
  * and returns, so the program continues.

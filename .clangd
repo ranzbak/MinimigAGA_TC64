@@ -1,5 +1,5 @@
 # clangd for the RISC-V firmware, its host tests and tools, and the RISC-V
-# simulation programs (not for the 832 firmware).  Every -I is relative:
+# simulation programs.  Every -I is relative:
 # clangd resolves it against the directory of the file being parsed, so this
 # works in any checkout.  The flags mirror the Makefiles.  Suppressions are
 # limited to two include fragments and two non-self-contained headers (below).
@@ -7,55 +7,55 @@
 # newlib-nano's headers (stdio.h, string.h, ...) for the RISC-V files come
 # from the xPack toolchain, which has an absolute path: add them in your own
 # ~/.config/clangd/config.yaml, not here (no absolute paths in the repo).
-# fw/ctrl_rv/README.md, "Editor (clangd)", has the snippet.
+# fw/ctrl/README.md, "Editor (clangd)", has the snippet.
 
 # RISC-V target code (tools/riscv/toolchain.mk RV_ARCH + RV_CFLAGS_FW).
-# The host tests and the host tool under fw/ctrl_rv are not target code.
+# The host tests and the host tool under fw/ctrl are not target code.
 If:
-  PathMatch: (fw/ctrl_rv|fw/ctrl_boot_rv|fw/dhrystone_rv|sim/host_bridge/(sw|boot)|sim/rv_l1/sw)/.*\.(c|h|S)
-  PathExclude: fw/ctrl_rv/(test/[^/]*|tools/.*)
+  PathMatch: (fw/ctrl|fw/ctrl_boot|fw/dhrystone_rv|sim/host_bridge/(sw|boot)|sim/rv_l1/sw)/.*\.(c|h|S)
+  PathExclude: fw/ctrl/(test/[^/]*|tools/.*)
 CompileFlags:
   Add: [--target=riscv32-unknown-elf, -march=rv32imc_zicsr_zifencei, -mabi=ilp32,
         -ffreestanding, -fno-builtin, -funsigned-char]
 ---
 # Everything here is C: without -xc clangd parses a .h as C++.
 If:
-  PathMatch: (fw/ctrl_rv|fw/ctrl_boot_rv|fw/dhrystone_rv|sim/host_bridge/(sw|boot)|sim/rv_l1/sw)/.*\.h
+  PathMatch: (fw/ctrl|fw/ctrl_boot|fw/dhrystone_rv|sim/host_bridge/(sw|boot)|sim/rv_l1/sw)/.*\.h
 CompileFlags:
   Add: [-xc]
 ---
-# The firmware (fw/ctrl_rv/Makefile CFLAGS).  gcc-only spellings in the
+# The firmware (fw/ctrl/Makefile CFLAGS).  gcc-only spellings in the
 # sources (#pragma GCC diagnostic ignored "-Wmaybe-uninitialized",
 # __attribute__((nonstring))) are not defects; clang knows neither, so its two
 # "unknown" warnings are off, exactly as in the CLANG=1 build.
 If:
-  PathMatch: fw/ctrl_rv/[^/]*\.(c|h)
+  PathMatch: fw/ctrl/[^/]*\.(c|h)
 CompileFlags:
   Add: [-std=gnu23, -I., -Iarch, -Ibuild, -Wall, -Wextra,
         -Wno-unknown-warning-option, -Wno-unknown-attributes]
 ---
 If:
-  PathMatch: fw/ctrl_rv/arch/.*\.(c|h|S)
+  PathMatch: fw/ctrl/arch/.*\.(c|h|S)
 CompileFlags:
   Add: [-std=gnu23, -I., -I.., -Wall, -Wextra]
 ---
 # The L1 unit programs (sim/rv_l1/prog/Makefile UCFLAGS: -I$(FWDIR) -I$(S)).
 If:
-  PathMatch: fw/ctrl_rv/test/emu/.*\.(c|h)
+  PathMatch: fw/ctrl/test/emu/.*\.(c|h)
 CompileFlags:
   Add: [-std=gnu23, -I../.., -I../../arch, -I., -Wall, -Wextra]
 ---
 # fmt_rv, the L1 format-parity program (sim/rv_l1/prog/Makefile FWCFLAGS:
 # -I$(RVFW) -I$(S)); it includes ../fmt_run.h and sim/rv_l1/sw/l1.h.
 If:
-  PathMatch: fw/ctrl_rv/test/rv/.*\.(c|h)
+  PathMatch: fw/ctrl/test/rv/.*\.(c|h)
 CompileFlags:
   Add: [-std=gnu23, -I../.., -I.., -I../../../../sim/rv_l1/sw, -Wall, -Wextra]
 ---
-# Host tests (fw/ctrl_rv/test/Makefile CFLAGS): native gcc, glibc headers.
-# The *cases.h / *.inc files are generated into out/ by `make -C fw/ctrl_rv/test`.
+# Host tests (fw/ctrl/test/Makefile CFLAGS): native gcc, glibc headers.
+# The *cases.h / *.inc files are generated into out/ by `make -C fw/ctrl/test`.
 If:
-  PathMatch: fw/ctrl_rv/test/[^/]*\.(c|h)
+  PathMatch: fw/ctrl/test/[^/]*\.(c|h)
 CompileFlags:
   Add: [-xc, -std=gnu2x, -funsigned-char, -D_DEFAULT_SOURCE, -DHOSTTEST,
         -U_FORTIFY_SOURCE, -D__NO_INLINE__, -fno-builtin,
@@ -66,49 +66,49 @@ CompileFlags:
 # fmt_cases.h / fmt_run.h are X-macro fragments, valid only inside the file
 # that defines FMT_CASE / fmt_write and then includes them.
 If:
-  PathMatch: fw/ctrl_rv/test/fmt_(cases|run)\.h
+  PathMatch: fw/ctrl/test/fmt_(cases|run)\.h
 CompileFlags:
   # no fatal "too many errors" stop (a fatal error cannot be suppressed)
   Add: [-ferror-limit=0]
 Diagnostics:
   Suppress: ["*"]
 ---
-# hdd.h and minimig_cfg.h (copied from fw/ctrl_832) are not self-contained:
+# hdd.h and minimig_cfg.h are not self-contained:
 # they use fileTYPE / uint8_t from headers their includers pull in first.
 # Every .c that includes them builds clean; only the header opened on its own
 # shows "unknown type name".
 If:
-  PathMatch: fw/ctrl_rv/(hdd|minimig_cfg)\.h
+  PathMatch: fw/ctrl/(hdd|minimig_cfg)\.h
 Diagnostics:
   Suppress: [unknown_typename]
 ---
-# Host tool (fw/ctrl_rv/tools/cfgconv/Makefile CFLAGS).
+# Host tool (fw/ctrl/tools/cfgconv/Makefile CFLAGS).
 If:
-  PathMatch: fw/ctrl_rv/tools/cfgconv/.*\.(c|h)
+  PathMatch: fw/ctrl/tools/cfgconv/.*\.(c|h)
 CompileFlags:
   Add: [-xc, -std=gnu2x, -I../.., -Wall, -Wextra]
 ---
 If:
-  PathMatch: fw/ctrl_boot_rv/.*
+  PathMatch: fw/ctrl_boot/.*
 CompileFlags:
   Add:
-    - -I../ctrl_rv/arch
-    # fw/ctrl_boot_rv/Makefile DEFS
+    - -I../ctrl/arch
+    # fw/ctrl_boot/Makefile DEFS
     - -Dprg_start=0x2000
-    - -DOSDNAME="RV32OSDABIN"
+    - -DOSDNAME="RV32OSDBBIN"
 ---
 # the Dhrystone sources are K&R-style (Makefile: -std=gnu89 -w)
 If:
   PathMatch: fw/dhrystone_rv/.*
 CompileFlags:
-  Add: [-I../ctrl_rv/arch, -std=gnu89, -w]
+  Add: [-I../ctrl/arch, -std=gnu89, -w]
 ---
 If:
   PathMatch: sim/host_bridge/sw/.*
 CompileFlags:
-  Add: [-I../../../fw/ctrl_rv/arch]
+  Add: [-I../../../fw/ctrl/arch]
 ---
 If:
   PathMatch: sim/host_bridge/boot/.*
 CompileFlags:
-  Add: [-I../sw, -I../../../fw/ctrl_rv/arch]
+  Add: [-I../sw, -I../../../fw/ctrl/arch]

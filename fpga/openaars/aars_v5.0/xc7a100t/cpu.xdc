@@ -1,7 +1,7 @@
 # CPU timing exceptions.  (The TG68K core and its clk_114 multicycle island were
 # removed in Stage E4a; tag d3_stable has them.)
 #
-# AP68040 (lib/AP68040, the g_ap040 branch)
+# AP68040 (lib/AP68040-pipelined, the g_ap040 branch)
 #   Since stage D3 the kernel is on its OWN CLOCK, clk_38 = 37.8125 MHz = clk_114 / 3, phase
 #   aligned, from the same MMCM (clocks.xdc).  Its enable is a bus handshake and no longer a duty
 #   cycle -- it is high on every clk_38 edge except while a bus request is outstanding -- so

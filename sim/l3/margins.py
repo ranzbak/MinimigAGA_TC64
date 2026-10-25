@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The margin table of the L3 runs (plan 7.1 items 1-15 x CPU and grid point).
+"""The margin table of the L3 runs (plan 7.1 items 1-15 x grid point).
 
     python3 -I sim/l3/margins.py [--long] <run dir>...
 
@@ -194,9 +194,9 @@ def main(argv):
     for _, p, _, _ in runs:
         if p not in points:
             points.append(p)
-    # the default points first (the RV, then the 832), then in order of appearance
+    # the default point first, then in order of appearance
     seen = list(points)
-    points.sort(key=lambda p: ("default" not in p, p.split()[0] != "rv", seen.index(p)))
+    points.sort(key=lambda p: ("default" not in p, seen.index(p)))
     print("| item | measurement | " + " | ".join(points) + " |")
     print("|---|---|" + "---|" * len(points))
     for item, row, kind in ROWS:

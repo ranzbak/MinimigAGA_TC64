@@ -14,7 +14,7 @@
     python3 -I l3check.py akiko <run>
 
 kick: the 256 KB kickstart the firmware uploaded equals the card's KICK.ROM
-byte for byte.  UploadKickstart (fw/ctrl_rv/config.c) sends a 0x40000-byte
+byte for byte.  UploadKickstart (fw/ctrl/config.c) sends a 0x40000-byte
 ROM twice with SendFileV2 (fpga.c), to the Amiga addresses 0xf80000 and
 0xfc0000 (the mirror); SendFileV2 writes Amiga address a at host address
 (a & 0x7fffff) ^ 0x680000 (HOSTMAP_ADDR, hardware.h): 0x100000 and 0x140000.
@@ -38,7 +38,7 @@ CMD58, as "<cmd> arg=<a>"; the golden's lines without '#' comments.
 memhash: the MEM lines of <run>/hw.txt (sim/common/hostmon.vh +HW_LOG:
 "MEM <region> <first host byte> <bytes>", hex, one per SDRAM region the CPU
 wrote) become "MEM <region> <sha256>" of those bytes of <run>/sdram.bin, in
-place (spitrace.py norm reads them; a line already hashed stays).
+place (a line already hashed stays).
 
 keys (scenario keys): the OSD key path, from the run log's "=== KEYS
 script <file>", "=== KEYS step" and "=== KEYS ev <n> <code> at cycle <c>"
@@ -61,8 +61,7 @@ cycles):
   - no OSD_CMD_OSD_WR frame before the first event (the boot draws no OSD
     page: one there is an error page; a page check of the main loop alone
     cannot tell it from the fatal-error loop), and the pages
-    (spitrace.py osd) after the osd / all SUBST and DROP rules of
-    expected_diff.txt = osdtext_expect/keys.txt, which must equal what
+    (spitrace.py osd) = osdtext_expect/keys.txt, which must equal what
     osdtext_expect/osdpages.py keys writes (not stale)
 It prints "REPLY <cmd> byte <k>: <right> of <n> right" per reply byte
 (VERSION 88 bytes 0-5, KEYQ 98 byte 0 = the status, 1.. the per-key bytes)
@@ -73,7 +72,7 @@ The run log's "=== FDD dma <k> cylinder <c> head <h>: <n> words to
 blckint" lines must be the 10 track reads of the scenario (FDD_TRACKS
 below, in order, FDD_WORDS words each), and each dump
 <run>/fdd_rd_<c>_<h>.hex (the words Agnus moved, in order) must:
-  - decode with fw/ctrl_rv/test/gold/mfm.py's decode_sector: the read runs
+  - decode with fw/ctrl/test/gold/mfm.py's decode_sector: the read runs
     with WORDSYNC, so Paula starts the DMA with the word after the sync word
     it matched; the decoder gets that sync word (and two preamble words,
     which it does not read) in front of the dump.  Every sector found
@@ -90,7 +89,7 @@ below, in order, FDD_WORDS words each), and each dump
     is decode-only (said so)
   - for cylinder 0 head 0 and cylinder 79 head 1 also equal, read the same
     way, the committed golden streams of exec-3 Task 13
-    (fw/ctrl_rv/test/gold/mfm_c00_s0.hex, mfm_c79_s1.hex)
+    (fw/ctrl/test/gold/mfm_c00_s0.hex, mfm_c79_s1.hex)
 and the OSD and UART:
   - no OSD_CMD_OSD_WR frame before the first key event (an error page) and
     none after the first track DMA started (the OSD is closed; fdd.c's
@@ -124,10 +123,10 @@ and the OSD and UART:
     are recorded, rows 0, 2, 3 and 4 (title, category, message, code)
   - no UART line with "Illegal track", "Wrong header" or "Second sync"
 It prints "HEADER track <t> sector <s> (LBA <n>): <skipped | written |
-other>; error page: <rows> | none".  With <reference run> (the 832 leg of
-the same scenario on the same card): the saved TEST.ADF must equal the
-reference's byte for byte and the HEADER line must be the reference's (the
-bad-header path taken the same way on both CPUs).
+other>; error page: <rows> | none".  With <reference run> (another run of
+the same scenario on the same card, e.g. at another timing point): the saved
+TEST.ADF must equal the reference's byte for byte and the HEADER line must
+be the reference's (the bad-header path taken the same way in both runs).
 
 hdd (scenario hdd, bfm_ide.v): from the run log's "=== IDE cmd" / "=== IDE
 end" lines and the dumps <run>/hdd_<k>.hex (the 68k's words, first word
@@ -138,7 +137,7 @@ first = the bytes in its memory order):
     out of its kind, and the task file the firmware leaves: the CHS of the
     last sector (hdd.c's CHS advance; the cylinder > 255 reads), the host's
     own registers for IDENTIFY / SET MULTIPLE
-  - IDENTIFY of SYNTH.HDF = fw/ctrl_rv/test/gold/identify.py's stream for
+  - IDENTIFY of SYNTH.HDF = fw/ctrl/test/gold/identify.py's stream for
     HDF_FILE | HDF_SYNTHRDB at CHS 257.1.32 (words 1, 3, 6, little-endian
     in the 68k's memory, = the geometry bfm_ide converts LBAs with)
   - every read sector = the drive: SYNTH.HDF (drive LBA = file block + 32)
@@ -169,9 +168,8 @@ dumps <run>/cd_<k>.hex:
     command found them, device A0); IDENTIFY PACKET DEVICE the host's
   - the data phases: reason 02 (IO), each at most the byte count limit
     and 8 KB (the FIFO); their bytes add up to the answer's length
-  - IDENTIFY PACKET DEVICE = the words atapi_identify() of the run CPU's
-    own source (fw/ctrl_rv/atapi.c or fw/ctrl_832/atapi.c, read field by
-    field: each "id[n] = v", "ata_string(id + n, s, len)" and the loop of
+  - IDENTIFY PACKET DEVICE = the words atapi_identify() of the firmware
+    source (fw/ctrl/atapi.c, read field by field: each "id[n] = v", "ata_string(id + n, s, len)" and the loop of
     id[84..87]), each word little-endian in the 68k's memory as for ATA
     IDENTIFY; the disc name in the model field is the config's (long name,
     else the 8-character name, cdrom.c CD_Open / CD_Insert); and decoded:
@@ -229,8 +227,8 @@ snapshots <run>/cdda_half_<n>.bin:
     frames is the expected one, the half's earlier content (the same ring
     half two halves before in the run) or zero; anything else is a wrong
     half (FAIL in both scenarios).  cdda: no underrun (and no write into the
-    playing half); cdda_load: the underruns are counted (INFO), the gate is
-    a comparison of the two CPUs (README "cdda")
+    playing half); cdda_load: the underruns are counted (INFO, recorded:
+    README "cdda")
   - READ SUB-CHANNEL (format 1, LBA): 16 bytes, audio status 12 (paused),
     adr/control 10, track 2 index 1, the absolute LBA 214 + pos // 588 and
     the relative pos // 588; within one half (8,192 frames) of the player
@@ -239,13 +237,11 @@ snapshots <run>/cdda_half_<n>.bin:
   - the run is at TICKDIV 643 from the scenario's start
   - the ring at the end (<run>/sdram.bin, host 0x70000..0x7ffff) is all
     zero: the STOP's cdaudio.c release() clears it, so that the drive
-    sounds do not start on a remnant of the music (the MEM audio_ring
-    line is not compared between the CPUs, expected_diff.txt: this is
-    its gate; Task 17 review I2)
+    sounds do not start on a remnant of the music (Task 17 review I2)
 
 akiko (scenario akiko): the host's Akiko request service, served from
 cfide's amiga_* window by bfm_akiko.v (README "akiko").  The firmware's
-akiko_inthandler (fw/ctrl_rv/akiko.c) is a logging stub: it prints one UART
+akiko_inthandler (fw/ctrl/akiko.c) is a logging stub: it prints one UART
 line per request and answers DATA = 0 (the ack); there is no C2P in the host
 path (the C2P is rtl/minimig/akiko.v, Amiga side; the virtual top ties the
 host path off).  From the run log's "=== AKIKO req <b> <k> <W|R> ..." lines,
@@ -256,8 +252,8 @@ the "UART: Akiko ..." lines, <run>/hw.txt and the track dumps:
     from the bench); every ack came (lat > 0), every read returned 0
   - the UART shows exactly those requests as the firmware prints them, in
     order, one line each: "Akiko write: <0xC000 | addr>, <data>" and
-    "Akiko read: <0x8000 | addr>" (hex, upper case on both CPUs: lib832's %x
-    prints A-F in upper case), nothing else mentioning Akiko
+    "Akiko read: <0x8000 | addr>" (hex, upper case), nothing else
+    mentioning Akiko
   - hw.txt has exactly 128 writes of 0 to the Akiko DATA register (ffff84):
     one ack each
   - block 1 starts while a track DMA is in progress and at least 16 of its
@@ -284,7 +280,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 L2 = os.path.join(HERE, "..", "host_bridge")
 
-GOLD = os.path.join(HERE, "..", "..", "fw", "ctrl_rv", "test", "gold")
+GOLD = os.path.join(HERE, "..", "..", "fw", "ctrl", "test", "gold")
 
 # scenario fdd_rd (scenarios.vh FDD_PLAN): (cylinder, head) in order
 FDD_TRACKS = [(0, 0), (1, 0), (2, 0), (39, 0), (40, 0), (41, 0), (77, 0), (78, 0), (79, 0), (79, 1)]
@@ -658,8 +654,6 @@ def keys(run):
     if early:
         bad.append("%d OSD_CMD_OSD_WR frame(s) before the first key (an error page?), the first spi.txt line %d"
                    % (len(early), early[0] + 1))
-    rules = [r for r in spitrace.read_rules(os.path.join(HERE, "expected_diff.txt"))
-             if r.kind in ("SUBST", "DROP") and r.applies("osd")]
     glyphs = spitrace.load_charrom(spitrace.CHARROM)
     pages, page, prev = [], 0, None
     for _, _, cs, mosi, _ in frames:
@@ -670,15 +664,7 @@ def keys(run):
             page += 1
             pages.append("--- page %d" % page)
         prev = row
-        t = "%s %s" % (row, text) if text else str(row)
-        for r in rules:
-            if r.kind == "DROP" and r.re.search(t):
-                t = None
-                break
-            if r.kind == "SUBST":
-                t = r.re.sub(r.repl, t)
-        if t is not None:
-            pages.append(t)
+        pages.append("%s %s" % (row, text) if text else str(row))
     with open(expect, encoding="latin-1") as f:
         want_pages = f.read().splitlines()
     gen = subprocess.run([sys.executable, "-I", os.path.join(HERE, "osdtext_expect", "osdpages.py"), "keys"],
@@ -1247,7 +1233,7 @@ def hdd(run):
                 bad.append("%s: differs from identify.py's stream at byte %d (%02x, want %02x)"
                            % (what, k0, dump[k0], want[k0]))
             else:
-                notes.append("%s: = fw/ctrl_rv/test/gold/identify.py (HDF_SYNTHRDB, CHS %d.%d.%d)" % ((what,) + geo[1:4]))
+                notes.append("%s: = fw/ctrl/test/gold/identify.py (HDF_SYNTHRDB, CHS %d.%d.%d)" % ((what,) + geo[1:4]))
             continue
         lba = chs_lba(geo, c, h, s)
         nb = 0
@@ -1335,7 +1321,7 @@ def cue_disc(cue_path, bin_path):
     """TEST.CUE as the CUE sheet standard reads it (FILE, TRACK, PREGAP,
     INDEX 01; one BINARY file of 2352-byte sectors): the tracks (number,
     type, LBA of INDEX 01, the file sector of LBA 0's track), the lead-out
-    LBA.  Independent of fw/ctrl_rv/cue.c"""
+    LBA.  Independent of fw/ctrl/cue.c"""
     def msf(t):
         m, sec, f = (int(x) for x in t.split(":"))
         return (m * 60 + sec) * 75 + f
@@ -1419,8 +1405,8 @@ def cd(run):
     bad, notes, info = [], [], []
     cfg = [ln.split()[3] for ln in lines if ln.startswith("=== CD config ")]
     cpu = [ln.split()[2] for ln in lines if ln.startswith("=== CPU ")]
-    if len(cfg) != 1 or cfg[0] not in ("cue", "iso") or len(cpu) != 1 or cpu[0] not in ("rv", "832"):
-        print("FAIL cd: want one '=== CD config <cue|iso>' and one '=== CPU <rv|832>' line in %s" % log)
+    if len(cfg) != 1 or cfg[0] not in ("cue", "iso") or cpu != ["rv"]:
+        print("FAIL cd: want one '=== CD config <cue|iso>' and one '=== CPU rv' line in %s" % log)
         return 1
     cfg, cpu = cfg[0], cpu[0]
     content = os.path.join(run, "card", "content")
@@ -1557,7 +1543,7 @@ def cd(run):
         print("FAIL cd: the IDE commands in the log are %s, want 1..%d (CD_PLAN)" % (sorted(cmds), len(CD_PLAN)))
         return 1
 
-    id_src = os.path.join(CD_FW, "ctrl_rv" if cpu == "rv" else "ctrl_832", "atapi.c")
+    id_src = os.path.join(CD_FW, "ctrl", "atapi.c")
     ndata = nphase = 0
     for k, (name, pkt, lim, chk) in enumerate(CD_PLAN, 1):
         c, e = cmds[k], ends.get(k)
@@ -1742,8 +1728,8 @@ def cdda(run):
     hdr = [ln for ln in lines if ln.startswith("L3 bench: ")]
     cpu = [ln.split()[2] for ln in lines if ln.startswith("=== CPU ")]
     m = re.search(r" SCENARIO=(\S+) ", hdr[0]) if len(hdr) == 1 else None
-    if not m or m.group(1) not in ("cdda", "cdda_load") or len(cpu) != 1 or cpu[0] not in ("rv", "832"):
-        print("FAIL cdda: want one 'L3 bench: ... SCENARIO=cdda|cdda_load' and one '=== CPU <rv|832>' line in %s" % log)
+    if not m or m.group(1) not in ("cdda", "cdda_load") or cpu != ["rv"]:
+        print("FAIL cdda: want one 'L3 bench: ... SCENARIO=cdda|cdda_load' and one '=== CPU rv' line in %s" % log)
         return 1
     scen, cpu = m.group(1), cpu[0]
     load = scen == "cdda_load"
@@ -1771,7 +1757,7 @@ def cdda(run):
     with open(bin_p, "rb") as f:
         binf = f.read()
     tracks, leadout = cue_disc(os.path.join(content, "TEST.CUE"), bin_p)
-    vol_src = os.path.join(CD_FW, "ctrl_rv" if cpu == "rv" else "ctrl_832", "cdaudio.c")
+    vol_src = os.path.join(CD_FW, "ctrl", "cdaudio.c")
     vol = cdda_volume(vol_src)
     total = (CDDA_END - CDDA_START) * 588
     t2 = [t for t in tracks if t["lba"] <= CDDA_START][-1]
@@ -2079,8 +2065,7 @@ def akiko(run):
         return 1
     log, lines = got
     bad, notes = [], []
-    # both firmwares print upper-case hex: the 832's source says %x, but lib832's
-    # printf prints A-F in upper case (run p4t18c3)
+    # the firmware prints upper-case hex (%X)
     upper = True
     # the bench's requests
     reqs = []

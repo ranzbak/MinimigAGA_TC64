@@ -265,7 +265,7 @@ module paula_floppy
 	// Which channel the word in rx_data came in on, latched with it.  The word
 	// is handed to gayle up to two clk7 cycles after its last bit (rx_flag goes
 	// through a two-stage synchroniser), and a host that deselects the direct
-	// channel quickly after a direct transfer -- the 832 does DisableDMode()
+	// channel quickly after a direct transfer -- the firmware does DisableDMode()
 	// right after the transfer ends -- used to drop scs2 before that, so the
 	// last word of the sector was never written (hdd_data_wr below used the
 	// live chip select).  Sampled on sck: chip selects only change while sck

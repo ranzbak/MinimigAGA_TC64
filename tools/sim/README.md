@@ -83,7 +83,8 @@ iverilog and xsim.
 sd_spi_model #(.IMG_SECTORS(65536)) u_sd (.cs_n(cs_n), .sck(sck), .mosi(mosi), .miso(miso));
 ```
 
-SPI mode 0, MSB first, SDHC (block addressing, CCS=1), CRC ignored. The
+SPI mode 0, MSB first, SDHC (block addressing, CCS=1). CRC checking is off
+until CMD59 turns it on (below); data blocks always carry their real CRC16. The
 image is held in a byte array (`IMG_SECTORS` * 512 bytes, default 32 MB; use
 a smaller parameter and image for fast runs). `miso` is 1 while `cs_n` = 1.
 At the end of a test the bench calls `u_sd.save_image;`, which writes the
@@ -100,26 +101,58 @@ card to `+SD_SAVE`.
 | `+SD_NCR=<n>` | 1 | 0xFF bytes between the command CRC byte and R1 (0..8) |
 | `+SD_INIT_POLLS=<n>` | 2 | ACMD41 polls answered "idle" (R1=01) before ready |
 | `+SD_LOG=1` | 0 | one `SD:` line per command |
+| `+SD_CID_PSN=<hex>` | 00C0FFEE | the CID's product serial number (CMD10); a bench can also set `u_sd.cid_psn` hierarchically to make the card another one (a swap) |
+| `+SD_ERR_RDCRC=<n>` | 0 (off) | the n-th CMD17/CMD18 data block the host receives has bit 0 of its last data byte flipped (CRC16 of the true data: a mismatch; the card unchanged); a block counts when its last data byte leaves the card, so one cut before that (CMD12, CS high, e.g. the CMD18 block in flight at CMD12) is neither counted nor corrupted |
+| `+SD_ERR_WRREJ=<n>` | 0 (off) | the n-th data block the card takes in (CMD24/CMD25, every block whatever else happens to it) gets data response 0B, not written |
+| `+SD_ERR_WRFAIL=<n>` | 0 (off) | the same with 0D (write error, then busy); on a block WRREJ also hits, WRREJ wins |
+| `+SD_ERR_NORESP=<n>` | 0 (off) | the n-th command frame (CMD0 included) gets no response and has no effect |
+| `+SD_ERR_CMDCRC=<n>` | 0 (off) | the n-th command frame (same count) gets R1 08 (09 while idle) and is not executed, as for a bad CRC7, with or without CMD59; on a command NORESP also hits, NORESP wins |
+| `+SD_ERR_<kind>_CNT=<k>` | 1 | kind = RDCRC, WRREJ, WRFAIL, NORESP, CMDCRC: k consecutive failures |
+
+n counts events from 1 at time 0 over the whole run. The n-th event and the
+k-1 after it fail; each failure uses up one of the k, so the injection ends
+after exactly k failures (retry exhaustion: e.g. `+SD_ERR_RDCRC=5
++SD_ERR_RDCRC_CNT=4`).
+Task `remove_card` (called hierarchically, `u_sd.remove_card;`): the card is
+gone for the rest of the run, MISO stays 1, nothing it receives is acted on
+or written.
 
 ### Commands
 
 CMD0 (R1=01; resets the card state, the application-command flag of a
 CMD55 before it too), CMD8 (R1, then 00 00 01 AA), CMD55, ACMD41 (R1=01 for
 `+SD_INIT_POLLS` polls, then 00), CMD58 (R1, OCR C0FF8000 when ready, CCS=1),
-CMD16 (R1=00), CMD9 (R1, token, 16 byte CSD v2.0, 2 CRC), CMD17 (R1, token
+CMD16 (R1=00), CMD9 (R1, token, 16 byte CSD v2.0, 2 CRC), CMD10 (R1=00,
+token, the 16 byte CID, 2 CRC: MID 53, OID "SM", PNM "SDSIM", PRV 10, PSN
+`cid_psn`, MDT 01 AA = 2026-10, byte 15 = its CRC7 << 1 | 1), CMD17 (R1, token
 FE, 512 bytes, 2 CRC), CMD18 (same, repeated until CMD12), CMD12 (one stuff
 byte, R1=00, busy), CMD24 (R1, host: token FE + 512 + 2 CRC, card: data
-response 05, busy), CMD25 (token FC per block, stop token FD, busy). CMD41
+response 05, busy), CMD25 (token FC per block, stop token FD, busy), CMD13
+(R2: R1, 00), CMD59 (R1; arg bit 0 = CRC checking on/off), ACMD22 (R1,
+token FE, 4 bytes big-endian: the blocks written with 05 by the last CMD25,
+CRC16). CMD41
 not right after CMD55 (also CMD55, CMD0, CMD41): plain CMD41, R1=05. Any
 other command: R1=04. Address beyond the card: R1=40. Raising CS aborts a
 running multi-block read or write. Not modelled: byte addressing (SDSC),
-CMD1/MMC, CRC errors, write protect.
+CMD1/MMC, write protect.
+
+CRC (CRC7 x^7+x^3+1; CRC16 CCITT x^16+x^12+x^5+1, init 0): every data
+block the card sends (CMD17, CMD18, CMD9, CMD10, ACMD22) ends in its CRC16. With
+CMD59(1) (CMD0 and CMD59(0) switch it off again) a command whose CRC byte
+bits 7:1 are not its CRC7 gets R1 08 (09 while idle) and is not executed, and
+a written block whose CRC16 does not match gets data response 0B and is not
+written. Data responses: 05 then busy, 0B without busy, 0D then busy. In a
+CMD25, after a 0B or 0D every further block up to the stop token gets the
+same response and is not written.
 
 ### What the firmware sends (derived from the sources)
 
-`fw/ctrl_boot_832/spi.c` (boot ROM, `spi_init` / `sd_read_sector`) and
-`fw/ctrl_832/mmc.c` (`MMC_Init`, `MMC_Read`, `MMC_ReadMultiple`, `MMC_Write`,
-`MMC_GetCSD`). Command byte = 0x40 | n; 4 argument bytes, MSB first; CRC byte.
+`fw/ctrl_boot/spi.c` (boot ROM, `spi_init` / `sd_read_sector`) and
+`fw/ctrl/mmc.c` (`MMC_Init`, `MMC_Read`, `MMC_ReadMultiple`, `MMC_Write`,
+`MMC_GetCSD`); written from the previous firmware's copies,
+from which these were ported with the SD protocol unchanged (the RISC-V
+`mmc.c` bounds its token and busy waits by TIMER, `SD_TIMEOUT`, instead of a
+loop count). Command byte = 0x40 | n; 4 argument bytes, MSB first; CRC byte.
 
 Boot ROM init (`SPI_slow`; no byte addressing is ever used because the
 card answers CMD8 and CCS=1):
@@ -178,6 +211,31 @@ the file is stored contiguously, true for the freshly made `mkcard.sh` image
 (one file, nothing deleted), and does not follow the FAT chain. Pass line:
 `=== PASS`. Outputs in `sim/common/run_${RUNTAG:-wt}/`. Takes about 20 s
 (the 8 MB array is initialised and saved byte by byte).
+
+CRC and error injection (`tb_sd_model_crc.v`, its own CRC7/CRC16 checked
+against the SD spec's examples: CMD0 95, CMD17 55, CMD8 87, 512 x FF ->
+7FA1):
+
+```sh
+bash sim/common/run_sd_model.sh crc
+```
+
+One run per case on a 512 KB pseudo-random card, each with its plusargs:
+`basic` (CRC off by default, CMD59, R1 08, CRC16 of reads, CMD24 bad/good
+CRC -> 0B/05, CMD25 x3 + ACMD22 = 3, CMD18, CMD13, CMD9, CMD10 with the
+default CID, CMD59(0)), `cid` (`+SD_CID_PSN=12345678`: CMD10 with that PSN,
+then `u_sd.cid_psn` set by the bench and the next CMD10 with the new one),
+`wrrej` (`+SD_ERR_WRREJ=2`: CMD25 x3 -> 05 0B 0B, ACMD22 = 1), `wrfail`
+(`+SD_ERR_WRFAIL=1`), `rdcrc` (`+SD_ERR_RDCRC=3`, a CMD18 block cut by
+CMD12 not counted), `noresp` (`+SD_ERR_NORESP=11`), `remove` (`remove_card`
+mid-read and before a write), `cmdcrc` (`+SD_ERR_CMDCRC=11`: R1 08, not
+executed), `rdcnt` (`+SD_ERR_RDCRC=2 +SD_ERR_RDCRC_CNT=4`: four bad reads,
+the fifth good), `nrcnt` (`+SD_ERR_NORESP=11 +SD_ERR_NORESP_CNT=3`),
+`rdcut` (a block cut after 100 bytes neither counted nor corrupted, one
+corrupted block, no re-fire), `wrcnt` (`WRREJ=1 CNT=2`, `WRFAIL=3 CNT=2`:
+0B 0B 0D 0D 05); every case but `remove` ends with a
+`remove_card` in the middle of a CMD24 block. Logs in
+`run_${RUNTAG:-wt}/crc_<case>.log`, pass line `=== PASS run_sd_model crc`.
 
 xsim check (compile and run, Vivado 2023.2):
 

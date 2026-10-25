@@ -1,5 +1,5 @@
-# AP68040 build, the design's only CPU since Stage E4a: the MC68040 in
-# lib/AP68040, with MMU, FPU and its split caches, inside rtl/soc/TG68K.vhd
+# AP68040 build, the design's only CPU since Stage E4a: the pipelined MC68040
+# of lib/AP68040-pipelined, with MMU, FPU and its split caches, inside rtl/soc/TG68K.vhd
 # (which presents a TG68K-shaped port set; the TG68KdotC kernel itself was
 # removed and builds at tag d3_stable).  Fileset generics
 #   HAVEDDR3=1 DDR3_FASTRAM_ILA=<0|1>
@@ -16,10 +16,9 @@
 # immediately after, so the project is left as it was found (project defaults
 # are HAVEDDR3=1, DDR3_FASTRAM_ILA=0).
 #
-# The OSD host CPU is the VexRiscv RV32IMC (minimig_openaars_top parameter
-# HOSTCPU_RISCV = 1): tools/vivado/hostcpu.tcl puts its sources in and the
-# 832's out for the run and restores the project afterwards.  No 832 mode: the
-# 832 board image is build/stage_spicdc_49b1868 (branch 5.0-040-pipelined).
+# The OSD host CPU is the VexRiscv RV32IMC: tools/vivado/hostcpu.tcl puts its
+# sources in (and the files of the retired EightThirtyTwo out, should the
+# project still list them) for the run and restores the project afterwards.
 #
 # RV_DEBUG=1 in the environment builds the LAB bitstream: the host CPU with the
 # RISC-V debug module (VexOsd_DMT, its DTM tunnelled through the FPGA's own
@@ -27,6 +26,21 @@
 # rv_debug = 1), tools/vivado/rv_debug.xdc for its TCK clock, and an extra
 # report rv_debug.rpt.  Unset or 0 builds the shipping image exactly as before
 # (tools/vivado/test/hostcpu_mock_test.tcl checks that call for call).
+#
+# SDC_ILA=1 in the environment adds the SD card path ILA (u_ila_sdc,
+# tools/vivado/sdc_ila.tcl) for this run only: that file becomes impl_1's
+# opt_design TCL.PRE hook, which inserts the core into the linked netlist
+# (registers of sdcard_spi / sdcard_gayle and the host bus, clk_114; no RTL
+# change); opt_design implements it, write_bitstream writes the .ltx, and the
+# core's probe map (sdc_ila_map.txt), a hardware-manager script that names
+# its probes (sdc_ila_hwprobes.tcl), the hardware manager's name of every
+# core bit (sdc_ila_bits.txt, tools/vivado/sdc_ila_names.py; what
+# tools/vivado/sdc_ila_capture.tcl arms the core with) and sdc_ila.rpt land
+# next to the bitstream.  SDC_ILA_DEPTH (default 2048; a power of 2, 1024..16384) is its
+# sample depth.  The hook is restored afterwards.  Unset or 0 builds exactly
+# as before (tools/vivado/test/hostcpu_mock_test.tcl checks that call for
+# call against the script before SDC_ILA); any other value stops the build
+# before the project is touched.
 #
 # Vivado 2023.2 needs libtinfo.so.5 and must NOT be given -stack.
 #
@@ -110,6 +124,25 @@ proc add_xdc {f} {
 source [file dirname [info script]]/hostcpu.tcl
 # RV_DEBUG (0 or 1, checked before anything is changed): 1 is the LAB build.
 set rv_debug [hostcpu_rvdebug]
+# SDC_ILA (0 or 1) and, with 1, SDC_ILA_DEPTH: checked before anything is
+# changed too.  Nothing below runs a Vivado command for SDC_ILA unless it is 1.
+set sdc_ila 0
+if {[info exists ::env(SDC_ILA)]} {
+    switch -exact -- $::env(SDC_ILA) {
+        "" - 0 { }
+        1      { set sdc_ila 1 }
+        default { error "build_ap040.tcl: SDC_ILA='$::env(SDC_ILA)': must be 0 (or unset) or 1 (the SD card path ILA)" }
+    }
+}
+if {$sdc_ila} {
+    set sdc_ila_depth [expr {[info exists ::env(SDC_ILA_DEPTH)] && $::env(SDC_ILA_DEPTH) ne "" ? $::env(SDC_ILA_DEPTH) : 2048}]
+    if {$sdc_ila_depth ni {1024 2048 4096 8192 16384}} {
+        error "build_ap040.tcl: SDC_ILA_DEPTH='$sdc_ila_depth': must be 1024, 2048, 4096, 8192 or 16384"
+    }
+    set ::env(SDC_ILA_DEPTH) $sdc_ila_depth
+    set sdc_ila_hook $R/tools/vivado/sdc_ila.tcl
+    if {![file exists $sdc_ila_hook]} { error "build_ap040.tcl: SDC_ILA=1 but $sdc_ila_hook is missing" }
+}
 
 #-----------------------------------------------------------------------------
 # Constraints
@@ -132,6 +165,12 @@ foreach f [get_files -quiet -of_objects [get_filesets XC7A100T] $cpu_xdc_off] {
 }
 puts "build_ap040.tcl: CPU constraints [file tail $cpu_xdc_on] (CPU_CLK_DIVIDE $cpudiv)"
 add_xdc $R/fpga/openaars/aars_v5.0/xc7a100t/ddr3.xdc
+# The SD card's timing (an unmanaged Tcl constraint file: it picks the SD card
+# engine's constraints or today's false paths by what the netlist holds), after
+# the XDC files that define the clocks.
+add_xdc $R/fpga/openaars/aars_v5.0/xc7a100t/sd_card_engine.tcl
+set_property PROCESSING_ORDER LATE \
+    [get_files -of_objects [get_filesets XC7A100T] $R/fpga/openaars/aars_v5.0/xc7a100t/sd_card_engine.tcl]
 
 #-----------------------------------------------------------------------------
 # DDR3 island sources
@@ -160,6 +199,11 @@ add_src $R/rtl/sdram/cpu_enable_cadence.v
 # The second Gayle IDE port (findings/cdrom/plan.md 7.3): gayle.v instantiates
 # gayle_port.v once per port; project_1.xpr predates the file.
 add_src $R/rtl/minimig/gayle_port.v
+# The SD card engine (findings/sdcard-engine): the SPI peripheral
+# minimig_virtual_top instantiates with SD_ENGINE = 1, and its Gayle bridge
+# and mux minimig.v instantiates; project_1.xpr predates both.
+add_src $R/rtl/host/sdcard_spi.v
+add_src $R/rtl/minimig/sdcard_gayle.v
 # Stage E2: the unit splitter TG68K.vhd instantiates for both RAM ports.
 add_src $R/rtl/soc/ap040_ram_seq.vhd
 # The XADC die-temperature reader, for the Chipset OSD menu's first line.
@@ -395,23 +439,26 @@ if {$ila} {
 }
 
 #-----------------------------------------------------------------------------
-# AP040_PIPE_DIR=<AP68040-pipelined checkout> in the environment builds the
-# pipelined core (findings/ap040-pipelined/PLAN.md M5, hardware gate 1):
-# TG68K's ap040_pipelined generic, the pipelined sources and its rtl/compat
-# (which carries lifted copies of lib/AP68040's cache and adapters under the
-# same module names -- so lib/AP68040's files are disabled for the run and
-# re-enabled afterwards), MMU and FPU reported absent.
-#
-# Without AP040_PIPE_DIR, the lib/AP68040-pipelined submodule is used when it
-# is checked out (branch 5.0-040-pipelined), so a fresh clone builds the
-# pipelined core.  AP040_PIPE_DIR=none builds the reference core instead.
+# The CPU core: the faster AP68040 (FASTER, above), or else the pipelined
+# one (findings/ap040-pipelined/PLAN.md), its sources and its rtl/compat
+# (wrapper, cache, MMU, adapters).  The pipelined core comes from the
+# lib/AP68040-pipelined submodule, or from the checkout AP040_PIPE_DIR=<dir>
+# in the environment names.  Its rtl/compat carries lifted copies of
+# lib/AP68040's cache and adapters under the same module names, so
+# lib/AP68040's files are disabled for the run and re-enabled afterwards.
+# (The non-pipelined reference core and AP040_PIPE_DIR=none were removed
+# 2026-10-21; lib/AP68040 stays only for ap040_bus16_adapter.v, which the
+# faster build takes from it.)
 #-----------------------------------------------------------------------------
 set pipe_gen ""
 set pipe_off {}
 set pipe_dir ""
 if {[info exists ::env(AP040_PIPE_DIR)] && $::env(AP040_PIPE_DIR) ne ""} {
-    if {$::env(AP040_PIPE_DIR) ne "none"} { set pipe_dir $::env(AP040_PIPE_DIR) }
-} elseif {[file isdirectory $R/lib/AP68040-pipelined/rtl]} {
+    if {$::env(AP040_PIPE_DIR) eq "none"} {
+        error "build_ap040.tcl: AP040_PIPE_DIR=none built the reference core, which was removed; unset it to build lib/AP68040-pipelined"
+    }
+    set pipe_dir $::env(AP040_PIPE_DIR)
+} else {
     set pipe_dir $R/lib/AP68040-pipelined
 }
 if {$faster} {
@@ -463,7 +510,10 @@ if {$faster} {
     set free_core 1
     set pipe_gen " AP040_FASTER=1 AP040_FREE_CORE=1 AP040_FAST_DUAL=$fdual AP040_FAST_DC1ATC=$fdc1 AP040_FAST_BTIC=$fbtic AP040_FAST_ICHIP=$fichip"
     puts "build_ap040.tcl: FASTER core from $P (DUAL=$fdual DC1_ATC=$fdc1 BTIC=$fbtic ICHIP=$fichip, CPU_CLK_DIVIDE $cpudiv, [llength $pipe_off] lib/AP68040 files disabled)"
-} elseif {$pipe_dir ne ""} {
+} else {
+    if {![file isdirectory $pipe_dir/rtl]} {
+        error "build_ap040.tcl: no CPU core sources in $pipe_dir/rtl (git submodule update --init lib/AP68040-pipelined, or AP040_PIPE_DIR=<checkout>)"
+    }
     set P [file normalize $pipe_dir]/rtl
     foreach f [get_files -quiet -of_objects [get_filesets sources_1] $R/lib/AP68040/rtl/*.v] {
         if {[get_property IS_ENABLED $f]} {
@@ -535,28 +585,8 @@ if {$faster} {
     # goes on when the missed longword arrives, the line finishes in the background;
     # M68040UM 4.6.1).  Default 0 until the board says otherwise.
     set cwf [expr {[info exists ::env(CWF)] && $::env(CWF) ne "" ? $::env(CWF) : 0}]
-    set pipe_gen " AP040_PIPELINED=1 AP040_HAS_MMU=$pmmu AP040_HAS_FPU=$pfpu AP040_FREE_CORE=$free_core AP040_STORE_BUF=$store_buf AP040_FWD=$fwd AP040_RAS=$ras AP040_PRECISE=$precise AP040_MISPLIT=$misplit AP040_SB_MMU=$sb_mmu AP040_COPYBACK=$copyback AP040_BTB=$btb AP040_LDX=$ldx AP040_BTFN=$btfn AP040_DFP_MIS=$dfp_mis AP040_WALLOC=$walloc AP040_XC7=$xc7 AP040_POST_CHIP=$post_chip AP040_POST_CI=$post_ci AP040_CWF=$cwf"
+    set pipe_gen " AP040_HAS_MMU=$pmmu AP040_HAS_FPU=$pfpu AP040_FREE_CORE=$free_core AP040_STORE_BUF=$store_buf AP040_FWD=$fwd AP040_RAS=$ras AP040_PRECISE=$precise AP040_MISPLIT=$misplit AP040_SB_MMU=$sb_mmu AP040_COPYBACK=$copyback AP040_BTB=$btb AP040_LDX=$ldx AP040_BTFN=$btfn AP040_DFP_MIS=$dfp_mis AP040_WALLOC=$walloc AP040_XC7=$xc7 AP040_POST_CHIP=$post_chip AP040_POST_CI=$post_ci AP040_CWF=$cwf"
     puts "build_ap040.tcl: PIPELINED build from $P ([llength $pipe_off] lib/AP68040 files disabled), FREE_CORE=$free_core STORE_BUF=$store_buf FWD=$fwd RAS=$ras PRECISE=$precise MISPLIT=$misplit SB_MMU=$sb_mmu COPYBACK=$copyback BTB=$btb LDX=$ldx BTFN=$btfn DFP_MIS=$dfp_mis WALLOC=$walloc XC7=$xc7 POST_CHIP=$post_chip POST_CI=$post_ci CWF=$cwf"
-} else {
-    # (2026-10-06) The reference core: lib/AP68040's files on, the pipelined
-    # core's off.  A pipelined run that dies before its clean-up (a Vivado
-    # crash) leaves lib/AP68040 disabled in project_1, and an earlier
-    # pipelined run leaves its own files in the project, whose rtl/compat
-    # carries modules of the same names; both made the reference build come
-    # out with ap040_tg68k_compat and ap040_bus16_adapter as black boxes.
-    # A later pipelined run re-enables its files itself (above).
-    set ref_on 0
-    set pipe_dis 0
-    foreach f [get_files -quiet -of_objects [get_filesets sources_1] $R/lib/AP68040/rtl/*.v] {
-        if {![get_property IS_ENABLED $f]} { set_property IS_ENABLED true $f; incr ref_on }
-    }
-    foreach f [get_files -quiet -of_objects [get_filesets sources_1] *AP68040-pipelined/rtl/*] {
-        if {[get_property IS_ENABLED $f]} { set_property IS_ENABLED false $f; incr pipe_dis }
-    }
-    puts "build_ap040.tcl: REFERENCE core from lib/AP68040 ($ref_on of its files re-enabled, $pipe_dis pipelined files disabled)"
-}
-if {[info exists ::env(FREE_CORE)] && $::env(FREE_CORE) eq "1" && ![info exists free_core]} {
-    error "build_ap040.tcl: FREE_CORE=1 needs the pipelined core (AP040_PIPE_DIR is none)"
 }
 
 # The one functional difference from build.tcl: which kernel the wrapper
@@ -580,8 +610,7 @@ if {$rv_debug} {
 set_property generic "HAVEDDR3=1 DDR3_BIST_VIO=0 DDR3_FASTRAM_ILA=$fila CPU040_DEBUG_ILA=$ila AP040_POST_STORES=$post CPU_CLK_DIVIDE=$cpudiv CHIP32=$chip32$pipe_gen$rv_gen" \
     [get_filesets sources_1]
 
-# The host CPU is the top's parameter default (HOSTCPU_RISCV = 1), not a
-# generic: the RV sources in, the 832's out, for this run only (restored below).
+# The host CPU's sources in, retired ones out, for this run only (restored below).
 # A run that changed the file groups always re-synthesises (below), so a
 # synthesis of the other CPU is never reused.  RV_DEBUG=1 also puts the debug
 # module's two sources and rv_debug.xdc in, restored the same way.
@@ -599,6 +628,23 @@ set ppo_was [get_property STEPS.PHYS_OPT_DESIGN.IS_ENABLED $impl]
 set pro_was [get_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED $impl]
 set_property STEPS.PHYS_OPT_DESIGN.IS_ENABLED true $impl
 set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED true $impl
+
+# SDC_ILA=1: the ILA insertion as impl_1's opt_design TCL.PRE hook, for this
+# run only (restored below).  The run inherits SDC_ILA / SDC_ILA_DEPTH from
+# this process's environment; the hook refuses to run without SDC_ILA=1, so
+# a hook left by a build that died before its restore fails the next build
+# instead of slipping the ILA into it.
+if {$sdc_ila} {
+    set sdc_pre_was [get_property STEPS.OPT_DESIGN.TCL.PRE $impl]
+    # a stale hook of a build that died before its restore is not "the
+    # previous value": restore to none then
+    if {$sdc_pre_was eq $sdc_ila_hook} {
+        puts "build_ap040.tcl: opt_design hook was left set by an earlier SDC_ILA build; it is cleared afterwards"
+        set sdc_pre_was {}
+    }
+    set_property STEPS.OPT_DESIGN.TCL.PRE $sdc_ila_hook $impl
+    puts "build_ap040.tcl: SD card path ILA u_ila_sdc (SDC_ILA=1, depth $sdc_ila_depth, opt_design hook [file tail $sdc_ila_hook]), LAB BUILD"
+}
 
 # IMPL_EFFORT=high in the environment raises the implementation effort for ONE
 # run and restores the previous directives afterwards, exactly like the two
@@ -718,14 +764,10 @@ try_report hostcpu_cells.txt {
     puts $fh "# openaars_virtual_top/hostcpu: every hierarchical (leaf-parent) cell below it, with its REF_NAME"
     set hc [get_cells -quiet -hierarchical -filter {IS_PRIMITIVE == 0 && NAME =~ openaars_virtual_top/hostcpu/*}]
     foreach c [lsort $hc] { puts $fh "$c [get_property REF_NAME $c]" }
-    # The 832 CPU is counted as eightthirtytwo_cpu*, its top entity (the
-    # alu/decode/... entities live inside it): a bare eightthirtytwo* would
-    # also match the bridge, EightThirtyTwo_Bridge, which both CPUs keep.
     puts $fh "# hierarchical cells in the whole design per REF_NAME pattern (case-insensitive)"
-    puts $fh "# patterns: 832 CPU eightthirtytwo_cpu*, 832 ROM OSDBoot_832_ROM*, 832 JTAG debug_bridge_jtag*;"
-    puts $fh "# RISC-V VexOsd*, rv_hostcpu*, OSDBoot_rv_ROM*; the shared bridge EightThirtyTwo_Bridge* (1 in every image)"
+    puts $fh "# patterns: VexOsd*, rv_hostcpu*, OSDBoot_rv_ROM*, the bridge host_bridge*"
     set refs [get_property REF_NAME [get_cells -quiet -hierarchical -filter {IS_PRIMITIVE == 0}]]
-    foreach pat {eightthirtytwo_cpu* OSDBoot_832_ROM* debug_bridge_jtag* VexOsd* rv_hostcpu* OSDBoot_rv_ROM* EightThirtyTwo_Bridge*} {
+    foreach pat {VexOsd* rv_hostcpu* OSDBoot_rv_ROM* host_bridge*} {
         set n 0
         foreach r $refs { if {[string match -nocase $pat $r]} { incr n } }
         puts $fh "count $pat $n"
@@ -797,6 +839,19 @@ if {$rv_debug} {
     }
 }
 
+# SDC_ILA=1: the core's size and the timing of its probe inputs.
+if {$sdc_ila} {
+    try_report sdc_ila.rpt {
+        report_utilization -cells [get_cells u_ila_sdc] -hierarchical -hierarchical_depth 2 -file $out/sdc_ila.rpt
+    }
+    try_report "sdc_ila.rpt (debug cores)" {
+        report_debug_core -file $out/sdc_ila_cores.rpt
+    }
+    try_report "sdc_ila.rpt (timing into the core)" {
+        report_timing -to [get_cells -hierarchical -filter {NAME =~ u_ila_sdc/*}] -setup -hold -max_paths 10 -nworst 1 -file $out/sdc_ila.rpt -append
+    }
+}
+
 # Deliverables next to the reports.
 set impldir $R/project_1/project_1.runs/impl_1
 file mkdir $out
@@ -806,6 +861,22 @@ foreach ext {bit ltx} {
         puts "build_ap040.tcl: copied minimig_openaars_top.$ext to $out"
     } else {
         puts "build_ap040.tcl: WARNING minimig_openaars_top.$ext not produced"
+    }
+}
+if {$sdc_ila} {
+    foreach f {sdc_ila_map.txt sdc_ila_hwprobes.tcl} {
+        if {[file exists $impldir/$f]} {
+            file copy -force $impldir/$f $out/
+            puts "build_ap040.tcl: copied $f to $out"
+        } else {
+            puts "build_ap040.tcl: WARNING $f not produced"
+        }
+    }
+    # the hardware manager's name of every core bit (tools/vivado/sdc_ila_capture.tcl reads it)
+    if {[catch {exec python3 $R/tools/vivado/sdc_ila_names.py $out} msg]} {
+        puts "build_ap040.tcl: WARNING sdc_ila_names.py: $msg"
+    } else {
+        puts "build_ap040.tcl: $msg"
     }
 }
 
@@ -834,6 +905,10 @@ if {$pipe_gen ne ""} {
 }
 foreach f $xdc_off { set_property IS_ENABLED true $f }
 hostcpu_restore
+if {$sdc_ila} {
+    set_property STEPS.OPT_DESIGN.TCL.PRE $sdc_pre_was $impl
+    puts "build_ap040.tcl: opt_design hook restored to '$sdc_pre_was'"
+}
 foreach {st was} $eff_was { set_property STEPS.$st.ARGS.DIRECTIVE $was $impl }
 if {[dict size $eff_was]} { puts "build_ap040.tcl: implementation directives restored" }
 set_property STEPS.PHYS_OPT_DESIGN.IS_ENABLED $ppo_was $impl

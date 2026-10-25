@@ -1,8 +1,8 @@
 #!/bin/bash
-# Elaborate EightThirtyTwo_Bridge with cpu_riscv => true from the RISC-V
-# sources only: no EightThirtyTwo, no OSDBoot_832_ROM, no debug_bridge_jtag.
-# Proves the component-declaration split.  xsim tools, one run at a time;
-# output in run_${RUNTAG:-wt}.
+# Elaborate host_bridge with each rv_debug setting, with a stub boot ROM
+# (OSDBoot_rv_ROM_stub.vhd): proves the bridge's wiring of rv_hostcpu and
+# its debug variants connects.  xsim tools, one run at a time; output in
+# run_${RUNTAG:-wt}.
 #
 #   elab.sh          rv_debug 0 and 2 (vendor-neutral sources only)
 #   elab.sh dmt      rv_debug 1: VexOsd_DMT + rtl/host/xilinx/rv_bscane2.v,
@@ -35,7 +35,7 @@ case " $dbgs " in *" 1 "*)
 	X xvlog "$ROOT/rtl/host/vexriscv/VexOsd_DMT.v" "$ROOT/rtl/host/xilinx/rv_bscane2.v" \
 		"$VIVADO_PATH/data/verilog/src/glbl.v" ;;
 esac
-X xvhdl "$HERE/OSDBoot_rv_ROM_stub.vhd" "$ROOT/rtl/host/832_bridge.vhd" "$HERE/tb_elab_rv.vhd"
+X xvhdl "$HERE/OSDBoot_rv_ROM_stub.vhd" "$ROOT/rtl/host/host_bridge.vhd" "$HERE/tb_elab_rv.vhd"
 for dbg in $dbgs; do
 	if [ "$dbg" = 1 ]; then
 		# tb_elab_rv1 = tb_elab_rv with RV_DEBUG => 1 (no -generic_top: glbl would get it too)

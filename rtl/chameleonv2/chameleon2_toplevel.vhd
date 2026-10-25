@@ -223,8 +223,7 @@ architecture rtl of chameleon2_toplevel is
 
 	COMPONENT minimig_virtual_top
 	generic
-	( debug : integer := 0;
-	  spimux : integer := 0;
+	( spimux : integer := 0;
 	  havespirtc : integer := 0
 	);
 	PORT
@@ -489,7 +488,6 @@ amiser_rxd <= midi_rxd and external_rxd;
 virtual_top : COMPONENT minimig_virtual_top
 generic map
 	(
-		debug => 0,
 		spimux => 0,
 		havespirtc => 1
 	)

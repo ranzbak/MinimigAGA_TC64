@@ -1,15 +1,16 @@
 # L3 co-simulation bench
 
-The L3 bench boots the OSD host CPU (the VexRiscv or, with `CPU=832`, the
-EightThirtyTwo) with its real firmware against the real Minimig SPI slaves
-(Phase 4 of the OSD host CPU migration), runs a scenario, and compares the
-RV and the 832 run of the same scenario. Sections: "Bench", "Run", "boot",
-"832", "Differential", "keys", "fdd_rd", "fdd_wr", "hdd", "cd", "cdda",
-"akiko", "Monitors", "Stress grid" and "Cards". Every command is meant to
-be copied from the repository root of a fresh Ubuntu 24.04 checkout, into
-bash or zsh; the sections after "Run" assume the "Run" setup and, for
-`CPU=832` and the differential, the "832" setup (the shell variables of
-the first block that sets them).
+The L3 bench boots the OSD host CPU (`rv_hostcpu`, the VexRiscv RV32IMC)
+with its real boot ROM and firmware against the real Minimig SPI slaves
+(Phase 4 of the OSD host CPU migration), runs a scenario and checks it.
+The EightThirtyTwo (832), the host CPU before the RV, was retired in Phase
+9 (`doc/osd-riscv-plan.md`); the bench's 832 leg and its RV-vs-832
+differential went with it (the last commit with them: 09f81bbe).
+Sections: "Bench", "Run", "boot", "Trace files", "keys", "fdd_rd",
+"fdd_wr", "hdd", "cd", "cdda", "akiko", "sdc", "Monitors", "Stress grid"
+and "Cards". Every command is meant to be copied from the repository root of
+a fresh Ubuntu 24.04 checkout, into bash or zsh; the sections after "Run"
+assume the "Run" setup.
 
 ## Bench
 
@@ -18,11 +19,11 @@ the committed boot ROM and the real firmware from an SD card image:
 
 | Part | What | From |
 |---|---|---|
-| host CPU | `EightThirtyTwo_Bridge` (`cpu_riscv = true`: `rv_hostcpu` + VexOsd, the boot ROM `fw/ctrl_boot_rv/OSDBoot_rv_ROM.vhd`, `hostcache.v`; `CPU=832`: `cpu_riscv = false`, the EightThirtyTwo and `fw/ctrl_boot_832/OSDBoot_832_ROM.vhd`, section "832") | `rtl/host` |
+| host CPU | `host_bridge` (`rv_hostcpu` + VexOsd, the boot ROM `fw/ctrl_boot/OSDBoot_rv_ROM.vhd`, `hostcache.v`) | `rtl/host` |
 | SDRAM | `sdram_host_model.v` (`+SLAT`, `+SJIT`, `+SEED`; `+SDRAM_DUMP=<file>` writes its 8 MB before the verdict) | `sim/host_bridge` |
 | cfide | the board's generics: `spimux` false, `havespirtc`, `havei2c`, `havevpos` true; no I2C slave (every ADV7511 transfer NACKs) | `rtl/host/cfide.vhd` |
-| card | `sd_spi_model #(.IMG_SECTORS(65536))` on `sd_cs[1]`, a 32 MB card from `sim/l3/card` | `sim/common` |
-| RTC | `rtc_model.v` on `sd_cs[7]`: the SPI RTC `fw/ctrl_rv/rtc.c` reads, a fixed time ("Monitors", item 12); its MISO shares cfide's `sd_dimm` with the card | `sim/l3` |
+| card | `sd_spi_model #(.IMG_SECTORS(65536))` on `sd_cs[1]`, a 32 MB card from `sim/l3/card`; with `SD_ENGINE` (the `sdc_*` scenarios) on `sdcard_spi`'s pins, section "sdc" | `sim/common` |
+| RTC | `rtc_model.v` on `sd_cs[7]`: the SPI RTC `fw/ctrl/rtc.c` reads, a fixed time ("Monitors", item 12); its MISO shares cfide's `sd_dimm` with the card | `sim/l3` |
 | OSD | `userio_osd` (instance `osd1`) on `sd_cs[5]`, `CORE_CAPS` 0xAD | `rtl/minimig` |
 | floppy / HDD | `paula_floppy` on `sd_cs[4]`, direct mode on `~sd_cs[6]` from the card's MISO; `gayle #(.IDE_PORTS(2))` behind it on the `hdd_*` bus | `rtl/minimig` |
 | reset | `minimig_syscontrol` (`mrst` = `usrrst`, `cnt` = sof); chipset reset = `sys_reset \| cpurst` | `rtl/minimig` |
@@ -69,8 +70,8 @@ the bus, the UART lines, the SPI frame log `spi.txt`, `=== OSD GAP`,
 | `spi_t.txt` | the frames of `spi.txt` with `<start> <end>` cycles in front (for Task 20; never compared) |
 | `=== MAIN first HandleFpga frame at cycle <n>` | the main-loop milestone |
 | `=== END <scenario>: ...`, `=== STATS@<scenario>` | the scenario's end event and the `rv_hostcpu` counters up to it |
-| `=== STATS@win_start`, `=== STATS@win_end` | (RV) the counters at the start and end of the scenario's measurement window (Task 20): `boot` the main-loop milestone to the end event, `fdd_rd` the first track DMA's start to the end event, `hdd` the first IDE command's start to the end event, `cdda` the player's flip 2 to flip 6, `keys` the first key event to the end event; sampled at the `clk_114` edge after the event |
-| `=== RETIRED <n> (STATS@<event>, to cycle <c>)`, `=== RETIRED <n> (whole run)` | (RV) after every `STATS@` line and the whole-run `STATS`: the instructions the core retired (VexOsd's `writeBack_arbitration_isFiring`, through the wire `l3_retire` that `run.sh` adds to the run copy of `rv_hostcpu.v`: Verilator 5.020 does not resolve a bench reference into its `g_core` generate branch) |
+| `=== STATS@win_start`, `=== STATS@win_end` | the counters at the start and end of the scenario's measurement window (Task 20): `boot` the main-loop milestone to the end event, `fdd_rd` the first track DMA's start to the end event, `hdd` the first IDE command's start to the end event, `cdda` the player's flip 2 to flip 6, `keys` the first key event to the end event; sampled at the `clk_114` edge after the event |
+| `=== RETIRED <n> (STATS@<event>, to cycle <c>)`, `=== RETIRED <n> (whole run)` | after every `STATS@` line and the whole-run `STATS`: the instructions the core retired (VexOsd's `writeBack_arbitration_isFiring`, through the wire `l3_retire` that `run.sh` adds to the run copy of `rv_hostcpu.v`: Verilator 5.020 does not resolve a bench reference into its `g_core` generate branch) |
 | `=== MARGIN ...`, `=== KICK ...`, `=== RTC ...` | the margin monitors of `mon_l3.vh` and `rtc_model.v` ("Monitors") |
 | `=== OSD EARLY <n> of <m> reply bytes` | in `OSD_CMD_VERSION` (0x88) and `OSD_CMD_KEYQ` (0x98) frames, every byte after the command: userio_osd_spi loads its output register from `in` (negedge of its `sck`, `bit_cnt` 0) while `osd1.spi0.new_byte \| rx_sync \| rx` is 1, i.e. before the previous byte is through the clk7 synchroniser and the reply counters have moved. n > 0 is a bench error unless `+OSD_EARLY_OK=1` |
 
@@ -102,7 +103,7 @@ Prerequisites: Vivado 2023.2 and the `libtinfo.so.5` shim):
 sudo apt install build-essential make git curl python3 mtools dosfstools fdisk xorriso ghdl verilator ccache iverilog
 bash tools/riscv/fetch-xpack.sh
 bash tools/riscv/check-toolchain.sh
-make -C fw/ctrl_rv
+make -C fw/ctrl
 ```
 
 Then:
@@ -117,9 +118,10 @@ RUNTAG=sx bash sim/l3/run.sh boot_short
 bash sim/l3/run.sh compare sx s
 ```
 
-`run.sh <scenario>` builds the firmware from `fw/ctrl_rv` into the run
+`run.sh <scenario>` builds the firmware from `fw/ctrl` into the run
 directory under a date shim (so two runs of one tree boot the same image;
-`FW=<RV32OSDA.BIN>` takes another one), builds the card into it
+`FW=<image>` takes another one; on the card it is `RV32OSDB.BIN`, the name
+of `fw/ctrl/fwname.mk`), builds the card into it
 (`sim/l3/card`), builds the bench, runs it and then the scenario's checks,
 and prints `=== <scenario> PASS` or `FAILED` (exit 0 / 1). A step that
 fails (firmware, card, conversion, build) ends the run at once with
@@ -127,26 +129,27 @@ fails (firmware, card, conversion, build) ends the run at once with
 run.sh's `l3_check`) counts only when it exits 0 and prints its pass line. `xpair` runs the
 scenario and its `XRAND=1` twin in parallel (`run_<RUNTAG>`,
 `run_<RUNTAG>_xr`) and compares them. `compare` diffs every `tb_*.log` and
-`spi.txt` of two run directories (L2's rules). Environment: `CPU=rv`
-(default) or `832` (section "832", with `E832`, `E832DIR`), `SIM=xsim`
-(default) or `verilator`, `RUNTAG`, `FW`, `FW832`, `L3_DATE`, `EXTRA_WS`,
+`spi.txt` of two run directories (L2's rules). Environment: `SIM=xsim`
+(default) or `verilator`, `RUNTAG`, `FW`, `L3_DATE`, `EXTRA_WS`,
 `SLAT`, `SJIT`, `SEED`, `XARGS` (more plusargs), `TIMEOUT`, `NOKICK=1`,
-`XRAND=1`, `XSEED`, `KEYS` (section "keys"), `RDY_MUT=1` (section "keys", teeth), `PAULA_TXPOP=1` (section "fdd_wr", the write-FIFO evidence fix in the run copy), `PATCH=<script>` (teeth: edits the run copies of the RTL) and `BUILD_FROM=<RUNTAG>` (another run's simulator when the build inputs are the same; section "Stress grid"). `TIMEOUT` is at most 2,147,483,647. Every log starts with `=== CPU rv` or `=== CPU 832`.
+`XRAND=1`, `XSEED`, `KEYS` (section "keys"), `RDY_MUT=1` (section "keys", teeth), `PAULA_TXPOP=1` (section "fdd_wr", the write-FIFO evidence fix in the run copy), `PATCH=<script>` (teeth: edits the run copies of the RTL) and `BUILD_FROM=<RUNTAG>` (another run's simulator when the build inputs are the same; section "Stress grid"). `TIMEOUT` is at most 2,147,483,647. Every log starts with `=== CPU rv`
+(the bench's only CPU; `CPU=rv` in the environment is accepted, any other
+`CPU` refused).
 
 A run directory `sim/l3/run_<RUNTAG>/` holds `results.txt`, the log
 `tb_<scenario>_x<EXTRA_WS>_s<SLAT>_j<SJIT>.log`, `spi.txt`,
 `spi_summary.txt`, `spi_t.txt`, `hw.txt` and `uart.txt` (section
-"Differential"), `sdram.bin`, `memhash.txt`, `milestones.txt` (the check's
-output), `kick.txt`, `order.txt` and `mmc.txt` (`boot`), `card/`, `fwrv/` and
-(`CPU=832`) `fw832/`; `fdd_rd` adds the dumps and `fdd_rd.txt`, `fdd_wr` the
+"Trace files"), `sdram.bin`, `memhash.txt`, `milestones.txt` (the check's
+output), `kick.txt`, `order.txt` and `mmc.txt` (`boot`), `card/` and
+`fwrv/`; `fdd_rd` adds the dumps and `fdd_rd.txt`, `fdd_wr` the
 write streams `fdd_wr_<cyl>_<head>.hex`, `card_saved.img`,
 `fdd_wr_saved.adf` and `fdd_wr.txt`.
 
 ## boot
 
-`boot` boots the `boot` card (both firmwares, `MINMGAR.CFG`,
+`boot` boots the `boot` card (`RV32OSDB.BIN`, `MINMGAR.CFG`, the legacy
 `MINMGAA.CFG`, `KICK.ROM`) with the TIMER at 1 (`TICKDIV` 1): the boot ROM
-loads `RV32OSDA.BIN`, the firmware runs `MMC_Init`, `LoadConfiguration`
+loads `RV32OSDB.BIN` (`RV32OSDA.BIN` until SD card engine Task 13b), the firmware runs `MMC_Init`, `LoadConfiguration`
 (finds `MINMGAR.CFG`), `fpga_init` against the real userio_osd, loads the
 kickstart and releases the Amiga, then enters its main loop. The main-loop
 milestone is the first HandleFpga frame (`10` with six 00 bytes); the run
@@ -162,9 +165,8 @@ ends at the 20th after it. Checks:
   kickstart lines (`Boot file size: 262144`, two `File size: 256kB`,
   `##End result : 1`), the release `20 08 03` / `20 08 00`, then 21
   HandleFpga frames; and its `NOT UART` lines: no `ROM loading failed`, no
-  `Fatal error`, and on the RV no `Overriding screenmode` (the 832 prints
-  it on every boot, an 832-only defect that `expected_diff.txt` drops on
-  both CPUs: so the RV's is checked here, final review I2)
+  `Fatal error`, no `Overriding screenmode` (no key is held at ColdBoot's
+  level read; final review I2)
 - no `EXC` / `TRAP` on the UART
 - `l3check.py kick <run>`: the 256 KB the firmware uploaded equals `KICK.ROM`
   byte for byte at both places (Amiga 0xf80000 and the 0xfc0000 mirror,
@@ -176,7 +178,7 @@ ends at the 20th after it. Checks:
 - `l3check.py mmc <run>`: `boot` runs with `+SD_LOG=1`; the firmware's
   `MMC_Init` card commands after the jump to 0x2000, up to the first CMD58,
   equal `gold/mmc_init_rv.txt` (the lines of
-  `fw/ctrl_rv/test/gold/mmc_init_cmds.txt`, mmc_test's golden for the same
+  `fw/ctrl/test/gold/mmc_init_cmds.txt`, mmc_test's golden for the same
   card model)
 - every `=== MARGIN` line present and `ok` ("Monitors")
 - bench `=== PASS`: no X, no stale ack, OSD GAP >= 40, OSD EARLY 0, no
@@ -198,7 +200,7 @@ The plan's cut, the 10th `20 0c` (`OSD_CMD_OSD_WR`) frame after the version
 frame, does not exist on a card with a kickstart: the boot sends no OSD
 text at all (in L2's `fwboot` those frames came from the error page).
 
-### Measured (2026-10-19, RV, SLAT=8 SJIT=0, SCKDLY 1.5 / C28DLY 0.3, TICKDIV 1)
+### Measured (2026-10-19, SLAT=8 SJIT=0, SCKDLY 1.5 / C28DLY 0.3, TICKDIV 1)
 
 | Event | `clk_114` cycle |
 |---|---|
@@ -300,436 +302,27 @@ the MISO of the very first OSD frame: `20 08 06 / a8 00` instead of
   SAME. This models the RTL as synthesised; it is not
   a defect of the RTL (`findings/osd-riscv/phase4.md`).
 
-## 832
+## Trace files
 
-`CPU=832` runs the same scenarios and checks with the 832 host CPU: the
-bridge with `cpu_riscv = false` (the EightThirtyTwo, the committed boot ROM
-`fw/ctrl_boot_832/OSDBoot_832_ROM.vhd`) and `832OSDAD.BIN`, built from a
-copy of the unchanged `fw/ctrl_832`. The card is the same `boot` card,
-with both firmwares built in the run directory: the 832 boot ROM loads
-`832OSDAD.BIN`, and the firmware reads `MINMGAA.CFG` (the RV firmware
-reads `MINMGAR.CFG`; both files have the same fields). This is the other
-leg of the 832-vs-RV differential (Task 7).
-
-### Setup
-
-The EightThirtyTwo tools (vbcc832, 832a / 832l, lib832) and its VHDL come
-from an EightThirtyTwo checkout: the submodule, or in a git worktree
-(where the submodule is not initialised) the main checkout's. On a fresh
-machine, after the "Run" setup, from the repository root:
-
-```sh
-sudo apt install wget patch
-git submodule update --init EightThirtyTwo
-E832DIR=$PWD/EightThirtyTwo
-E832=$E832DIR/RTL
-make -C "$E832DIR" vbcc
-make -C "$E832DIR/832a"
-make -C "$E832DIR/lib832"
-```
-
-`make vbcc` fetches vbcc 0.9g (wget), applies the volatile fix and builds
-it; vbcc's configuration asks questions, the defaults are right on Linux
-(EightThirtyTwo's Makefile). In a worktree set `E832DIR` to the main
-checkout's `EightThirtyTwo` instead of the first three lines (the tools
-are used in place; nothing is built there by the bench).
-
-### Run
-
-```sh
-make -C sim/l3/fw832 E832DIR="$E832DIR"
-CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=b832 bash sim/l3/run.sh boot
-CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=bx832 bash sim/l3/run.sh xpair boot
-CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=s832 bash sim/l3/run.sh boot_short
-CPU=832 E832="$E832" E832DIR="$E832DIR" RUNTAG=sx832 bash sim/l3/run.sh boot_short
-bash sim/l3/run.sh compare sx832 s832
-```
-
-`sim/l3/fw832/Makefile` (`make -C sim/l3/fw832 B=<dir> E832DIR=<dir>`)
-copies the tracked files of `fw/ctrl_832` to `<dir>/src` and builds them
-there with fw/ctrl_832's own Makefile (`832DIR=$E832DIR`, targets
-`version.h` and `832OSDAD.bin` only, so the tracked `bootcustominit.h` is
-used and no 68k assembler is needed) with `date.sh` first on `PATH` as
-`date`: every `date` prints `L3_DATE` (default 2026-01-01), so the version
-strings and the image are the same in every build. Output:
-`<dir>/832OSDAD.BIN`, `.map`, `832OSDAD.txt` (the sources' git state,
-`L3_DATE`, size and sha256) and `make.log`. `fw/ctrl_832` is never built
-in place (its tracked `version.h` would change). `run.sh` builds it into
-`<run>/fw832` for `CPU=832`; `FW832=<file>` takes another image, for
-either CPU (with `CPU=rv` and no `FW832` the card has the stand-in).
-
-### What differs from the RV run
-
-- Milestones: `milestones_boot.txt` lines `CPU=rv <line>` / `CPU=832
-  <line>` hold for that CPU only: the file the boot ROM loads
-  (`RV32OSDABIN` / `832OSDADBIN`) and the config file
-  (`MINMGAR CFG` / `MINMGAA CFG`). The printed firmware version is the
-  same, `Firmware version: 2026-1-1-0-0` in both (one `L3_DATE`).
-- No `rv_hostcpu` counters: no `=== STATS` / `=== STATS@` lines, and the
-  `=== BOOT` line has no counts. `boot_seen` (the first read of 0x2000)
-  works for both CPUs.
-- `EXTRA_WS` is the RV's (`rv_extra_ws`); `CPU=832` refuses another value
-  than 0.
-- `=== STACK low` is not the 832's stack depth: the firmware installs its
-  interrupt handler by writing the vector word at 0x0d (lib832's
-  `_InterruptVector`), the lowest write below 0x2000.
-- Timeouts: `L3_BOOT_TO` / `L3_SHORT_TO` default to 1.5 x the 832's end
-  events (below).
-
-Two bench monitors were RV-shaped and now follow the hardware for both
-CPUs (`sim/common/hostmon.vh`; L2 and the RV runs are unchanged by it):
-the UART line printer takes every write cfide decodes as the transmit
-register (`rs232_select`: address bit 23 and bits 7..4 = F; the RV writes
-the word at 0xFFFFFFF0, the 832 firmware the byte at 0x0FFFFFF3), and the
-OSD reply-gap monitor no longer assumes the command byte's read-back
-(vbcc drops it: `SPI(OSD_CMD_VERSION)`'s result is unused), so a read is
-the read-back of the write before it and every later write is a reply
-byte's.
-
-### The 832 under Verilator and xsim
-
-The VHDL is converted with `ghdl --synth` as for the RV
-(`sim/common/hostsim.sh` `hs_ghdl_convert` with `cpu_riscv=false`: the
-EightThirtyTwo VHDL from `E832`, `sim/spi_cdc/host832/debug_bridge_stub.vhd`
-for the debug bridge entity the bridge names, the ROM). Four things needed
-a bench-side answer; the RTL and the sources in `E832` are not changed:
-
-| What | Where | Why |
-|---|---|---|
-| the boot ROM's RAM is a `signal` written by two port processes | `hs_rom832`, both simulators: the run copy uses the RV ROM's `shared variable` template (same words, ports, processes) | in simulation the two processes are two drivers of the whole signal: a port A write resolves against port B's driver and reads back X (the 832's stack is in this BRAM); `ghdl --synth` refuses it ("multiple assignments for ram"). Synthesis infers one true-dual-port BRAM either way |
-| ALU instance label `alu` | `hs_ghdl_convert`, the conversion's copy: `alu_unit` | GHDL 4.1 names an instance's output nets `<label>_<port>`; with outputs `q1 q2 carry ack` wired to signals `alu_q1` ... the output declares them twice |
-| reset branch of the main process | `hs_ghdl_convert`, the conversion's copy: also clears `thread.d_imm`, `d_reg`, `d_alu_op`, `d_alu_reg1`, `d_alu_reg2`, `d_read_tmp`, `d_read_reg` | GHDL 4.1 drops the flops of the `thread` record's fields from `d_imm` on when some fields are reset and others not (the clock edge becomes a constant 0, each field a mux of itself: the decoded op never reaches the ALU and the CPU runs straight through its boot ROM; found by comparing bus traces with xsim, GHDL's own simulation of the VHDL agrees with xsim). The FPGA starts these flops at 0 and the bench resets once at time 0, so the state at the release is the same; xsim on the original VHDL is the cross-check |
-| the register file's data registers (`regfile.tmp`, `gpr0..gpr6`) have no reset | `run.sh l3_e832_xsim`, xsim only: declaration initial value 0 | the boot ROM's first function prologue stores them to the stack: xsim's X on the bus (`write 0000158c data xxxxxxxx`, cycle 2627). The FPGA starts them at 0; Verilator's two-state build does too, and the XRAND twin randomises them |
-
-`l3.vlt` waives `UNOPTFLAT` for the converted CPU: the `regfile` and
-`thread` records are one vector each, and some fields are concurrent
-assignments from other fields, a vector-level path, not a loop between
-bits.
-
-### Measured (2026-10-19, 832, SLAT=8 SJIT=0, SCKDLY 1.5 / C28DLY 0.3, TICKDIV 1)
-
-| Event | 832 `clk_114` cycle | RV (section "boot") | 832 / RV |
-|---|---|---|---|
-| the boot ROM jumps to the firmware (first read of 0x2000) | 54,832,554 | 43,190,675 | 1.270 |
-| `boot_short` end | 74,525,542 | 57,659,090 | 1.293 |
-| the Amiga CPU released after the kickstart upload (the last cpurst fall) | 198,239,949 | 156,968,829 | 1.263 |
-| main-loop milestone (first HandleFpga frame) | 202,610,912 | 158,044,038 | **1.282** (the 832 factor) |
-| `boot` end | 202,841,132 | 158,155,012 | 1.283 |
-
-`L3_BOOT_TO` = 304,300,000 and `L3_SHORT_TO` = 111,800,000 for `CPU=832`
-(1.5 x the end events). `boot_short` is 74.5 M cycles, under the plan's
-120 M limit, so the xsim cross-check runs the whole of it (no
-`+SHORT_END=version`).
-
-Speed: Verilator 0.29 M cycles/s for the 832 (p4t6e: `boot_short`, 74.5 M cycles in 257 s, with
-one short L2 run alongside; the RV 0.38 M/s alone), 0.106 M cycles/s with
-seven simulations on the machine (`boot` 1,918 s); xsim 2023.2
-33 k cycles/s (`boot_short` in 2,282 s, with Verilator runs alongside; the RV
-48 k cycles/s). The 832 bench is slower per cycle than the RV one: the
-converted CPU is a flat netlist with the two record vectors that Verilator
-re-evaluates (`UNOPTFLAT`).
-
-Gate runs (`p4t6` / `p4t6_xr`, seed 639498575, `=== XRAND pinned 9 regs`;
-`p4t6s`, `p4t6x`): `boot` PASS with milestones 51 / 51, kick, order and
-mmc PASS (the 832's `MMC_Init` sends the 9 commands of
-`gold/mmc_init_rv.txt`), every MARGIN line present and the 7 required ones
-`ok`, X 0, stale 0, `OSD EARLY 0 of 26`, `OSD GAP min 254` (the 832's four
-`SPIN`s per reply byte; the RV 44); the twin SAME (`tb_boot_*.log`,
-`spi.txt`, 1,937 frames). `boot_short` on xsim SAME against Verilator
-(`run.sh compare p4t6x p4t6s`: 2 same; xsim `X 0`).
-
-| MARGIN | 832 `boot` | RV `boot` |
-|---|---|---|
-| 1 stale_acks | 0 of 1,685,709 | 0 of 1,685,611 |
-| 4 paula_cs_release / userio_cs_release | 3.8 / 3.8 | 10.8 / 10.8 |
-| 4 paula_word_spacing / userio_byte_spacing | 121.0 / 49.0 | 117.0 / 57.0 |
-| 5 spi_write_busy | 0 of 844,721 | 0 of 829,924 |
-| 14 kick_order | 13,589,729 | 6,829,787 |
-
-## Differential
-
-The RV and the 832 run of one scenario are compared after normalisation:
-what remains different must be a rule of `sim/l3/expected_diff.txt`, each
-with a comment naming its source. Setup as in "Run" and "832" (the 832
-tools; in a worktree `E832DIR` = the main checkout's `EightThirtyTwo`).
-Both runs must boot the same card, so both firmwares are built once and
-given to both runs (`FW`, `FW832`); `run.sh diff` refuses two different
-card images. From the repository root:
-
-```sh
-E832DIR=$PWD/EightThirtyTwo
-E832=$E832DIR/RTL
-FWD=$PWD/sim/l3/run_fw
-mkdir -p "$FWD/dateshim" "$FWD/fwrv"
-printf '%s\n' '#!/bin/sh' 'TZ=UTC exec /bin/date -d "${L3_DATE:-2026-01-01} 00:00:00" "$@"' > "$FWD/dateshim/date"
-chmod +x "$FWD/dateshim/date"
-PATH="$FWD/dateshim:$PATH" make -s -C fw/ctrl_rv B="$FWD/fwrv"
-make -C sim/l3/fw832 B="$FWD/fw832" E832DIR="$E832DIR"
-SIM=verilator RUNTAG=drv FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh boot &
-CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=d832 FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh boot &
-wait
-bash sim/l3/run.sh diff --unused-rules drv d832
-bash sim/l3/test/spitrace_test.sh
-```
-
-(the date shim is the one `run.sh` uses, so `FWD/fwrv` is the image a
-default RV run would build; the two `boot` runs take about 10 and 15
-minutes side by side.)
-
-What a run writes for it (`sim/common/hostmon.vh`, every L3 scenario):
+Every L3 scenario writes, through `sim/common/hostmon.vh` (`+HW_LOG`,
+`+UART_LOG`), two traces besides `spi.txt`:
 
 | File | Lines |
 |---|---|
 | `spi.txt` | the SPI frames (section "Bench") |
-| `hw.txt` | `<frames> <ev> <addr> <value16>` per hw-register write except SPI DATA / CS, the UART and the L2 bench registers 0x..00 / 04; `addr` = the 24 bits cfide decodes (the RV's 0xFFFFFFB0 and the 832's 0x0FFFFFB3 are both `ffffb0`), `value16` = cfide's d (a byte write: 00 and its byte); at the end `MEM <region> <sha256>` per SDRAM region the CPU wrote (`kickstart` host 0x100000..0x17ffff, `audio_ring` 0x70000..0x7ffff), hashed from `sdram.bin` by `l3check.py memhash` |
+| `hw.txt` | `<frames> <ev> <addr> <value16>` per hw-register write except SPI DATA / CS, the UART and the L2 bench registers 0x..00 / 04; `addr` = the 24 bits cfide decodes (0xFFFFFFB0 is `ffffb0`), `value16` = cfide's d (a byte write: 00 and its byte); at the end `MEM <region> <sha256>` per SDRAM region the CPU wrote (`kickstart` host 0x100000..0x17ffff, `audio_ring` 0x70000..0x7ffff), hashed from `sdram.bin` by `l3check.py memhash` |
 | `uart.txt` | `<frames> <ev> <text>` per UART line |
 
 `<frames>` is the number of `spi.txt` lines before the event and `<ev>`
-one counter over both files: the order without the cycles.
+one counter over both files: the order without the cycles. `l3check.py`
+reads `hw.txt` (`memhash`, `akiko`); `run.sh compare` compares the logs
+and `spi.txt`.
 
-`run.sh diff <rv run> <832 run>` runs `spitrace.py norm` on each
-(`<run>/norm.txt`) and `spitrace.py diff` on the two: a unified diff, exit 0
-only when it is empty. First it checks each run's `results.txt` (final
-review M5) and refuses (exit 2) unless the first run is `CPU rv` and the
-second `CPU 832` (`--twin`: two runs of one CPU, an X twin), both ran the
-same scenario (the `scenario:` line; a run from before that line: its one
-`tb_<scenario>_x*.log`) with the same `cd config`, and both passed (the
-bench verdict `ok` and no `BAD` line). `norm` writes one stream in frame order,
-`<STREAM> <text>` per line:
-
-- **dropped poll frames** (their number depends on the CPU's speed):
-  FPGA status frames (`10` and six 00 bytes) without a request (MISO 0
-  bits 3..0: track read / write, IDE command / data) whose MISO bytes equal
-  the previous status frame's (HandleFDD also acts on the drive count,
-  track and motor bytes, so a frame where one changed is kept; a request
-  is always kept). After an IDE request frame (MISO 0 bits 3..2), a
-  frame without a request that equals it but for those two bits is a poll
-  too (`hdd`, runs `p4t15` / `p4t15c`): the firmware served the request,
-  and whether its wait loop polls once before the 68k has emptied or
-  filled the FIFO follows the CPU's speed (`# dropped ide_served`). FPGA
-  drive-status frames (`10 10 <s>`, after every HandleFpga) whose `<s>`
-  is the previous one's, `OSD_CMD_READ` (`20 00`) whose level is the
-  previous one's, `OSD_CMD_KEYQ` (`20 98`) with status 00 (no event, no
-  overflow), every RTC frame (`80`), the SD deselect clocks (cs `00`, all
-  MOSI ff). A request, a changed status frame, level or drive status, a
-  queued key stays. Every file is read as latin-1, byte for byte (a UART
-  byte >= 0x80 stays itself)
-- **the IDE flag polls' request bits, masked** (`cd`, runs `p4t16` /
-  `p4t16c` and `p4t16i` / `p4t16ci`, Task 16 ruling): in a
-  `ReadIDEFlags()` frame (`10`, MOSI `80` or `81` and nine 00 bytes:
-  `cdrom.c`'s `cd_wait()`, `CD_Locked()`, `CD_AudioPoll()`), MISO byte 0's IDE request
-  bits 3..2 are printed as 0. The firmware keeps only MISO byte 8 (the
-  flags) of that frame; byte 0 is clocked out during the command byte, and
-  whether the 68k has read a data phase's last word by then follows the
-  CPU's speed. Byte 8, the other bits of byte 0 and the number of polls
-  stay compared (`spitrace_test.sh` cases `cdflags`, `cdbit`), except
-  repeats: a flag poll equal (after the mask) to the previous flag poll,
-  with nothing kept between them, is dropped (`# dropped flagpoll`;
-  `cdda`, runs `p4t17` / `p4t17c`, `p4t17l` / `p4t17lc`, Task 17 ruling).
-  While the CD player runs, `CD_AudioPoll()` reads the flags on every
-  main-loop pass: RV 17,174 frames, 832 7,228. "Kept" is decided on the
-  finished stream, after every drop of this list and every rule
-  (`DROP`, `DEDUP`, `DROPBLOCK`, `SUBST`). A `FLOAT` run has no place
-  among the frames, so it does not end a run of repeats either: its place
-  is what the rule declares timing-dependent. So the dropped poll frames and a repeated HandleRTC
-  unit (its RTC frame and hw writes) do not end a run of repeats, while
-  any printed line does: an SPI, SD or OSD frame, a hw write, a UART line
-  (`spitrace_test.sh` cases `cdpollhw`, `cdpolluart`: the line and the
-  poll after it come back; Task 17 review). `cd_wait()`'s polls between
-  data phases stay compared (the `cd` and `hdd` streams are unchanged),
-  and so does a poll with other flags (case `cdpoll`)
-- **paula's floppy DMA progress, masked** (`fdd_rd`, runs `p4t13` /
-  `p4t13c`). The firmware fills the FIFO and Agnus empties it at its own
-  rate, so these bytes follow the CPU's speed. They are masked by byte
-  position, as `--`:
-  - in a status frame (`10`, six 00 bytes) whose MISO byte 4 has bit 7
-    set (word 2 is `{dmaen, dsklen}` or the write FIFO status): MISO bytes
-    4 and 5
-  - in a sector frame (`10`, six 00 bytes, then the data; MISO byte 0 bits
-    1..0 = 01) whose MISO byte 4 has bit 7 set: MISO bytes 4 to the end
-    (word 2 and every word 3)
-
-  MOSI (the sector data) and MISO bytes 0..3 (request, track, sync) stay
-  compared, and so do the motor bits (word 2 without DMA). In the repeat
-  drop above, a masked status frame without a request counts as a repeat
-  when its bytes 0..3 equal the previous status frame's. It holds no motor
-  bits, only the DMA progress, and whether the frame that starts the DMA
-  shows it in word 2 depends on the timing.
-- **paula's floppy write FIFO, merged** (`fdd_wr`, runs `p4t14` /
-  `p4t14c`). Agnus fills the FIFO at its rate; `FindSync`, `GetHeader`
-  and `GetData` empty it in pieces whose size is the FIFO's count when
-  each frame starts, and poll while it fills. So how the stream is cut
-  into frames, and the number of polls, follow the CPU's speed.
-  Consecutive write frames (`10`, every MOSI byte 00, at least six bytes,
-  MISO byte 0 bit 1 set: `CMD_WRTRK`) with no other frame and no hw / UART
-  line between them, and the same MISO bytes 0..3 (request, track, sync),
-  become one line `SPI 10 wrfifo <bytes 0..3> / <n> <the n bytes>`: the
-  MISO bytes after each frame's six header bytes, concatenated. Bytes 4..5
-  (the FIFO count) are dropped. Every word the firmware read from the FIFO
-  stays compared, in order. The line ends wherever anything else happens
-  (the card write of a sector, `WriteTrack`'s last 2-byte frame), so the
-  points where the firmware stops reading because of the content stay
-  compared too. The `# dropped` line counts `wrfifo` (frames merged into
-  the line before them).
-- **a seek in progress, collapsed** (`fdd_wr`, runs `p4t14f` /
-  `p4t14fc`). bfm_floppy steps the head every 3 ms right after a track
-  write's `blckint`; the RV polls again after 2 to 5 ms, the 832 after 11
-  to 20 ms, so which intermediate head positions a CPU sees follows its
-  speed. On the normalised lines, after the rules below (so an AUDIO
-  rewrite that `DEDUP` drops does not cut the run), adjacent status lines
-  without a request and without masked bytes that differ in the track
-  byte only, by whole cylinders (an even step, the head bit unchanged)
-  and always in one direction, keep only the last. The position where the
-  seek ends stays compared, and so do a track byte that goes back or
-  flips the head bit, every request, and every other byte. The `# dropped`
-  line counts `seek`.
-- **the HandleRTC unit**. `HandleRTC()` runs every 8,192 main-loop passes,
-  so the count follows the CPU's speed (`p4t13` 4, `p4t13c` 2). An RTC
-  frame is dropped together with exactly the hw writes of its call, when
-  they have exactly this shape:
-  - before the frame, `ffffe8` (`SPI_slow`), then `ffff7c`, `ffff78`,
-    `ffff74`, `ffff70` (`HW_RTC`)
-  - after it, `ffffe8` (`SPI_fast`) as the next hw write
-
-  A unit is dropped only when its six (address, value) pairs equal the
-  previous kept unit's (a repeat, as with the status frames). The first
-  unit's writes stay, and so does a unit with another value (another RTC
-  time, another speed). With any other shape the hw writes stay too, and
-  the frame is dropped, as every RTC frame. The `# dropped` line counts
-  `rtc_unit`.
-- `SD CMD<n> <lba or arg> R<r1> [rd|wr <sha256 per block>]`: one line per
-  card command (CMD8 / CMD58 with their response bytes, writes with the data
-  response `D<xx>`)
-- `OSD <row> <text>`: `OSD_CMD_OSD_WR` frames decoded with
-  `fw/ctrl_rv/charrom.h` (`stripe=<hash>` for the side stripe,
-  `{inv:...}` inverted characters, `{xx ...}` columns that are no
-  character); `spitrace.py osd <spi.txt>` prints the pages
-- `SPI <cs> <MOSI> / <MISO>`: every other frame, unchanged
-- `HW <addr> <value16>`, `HW MEM <region> <sha256>`, `UART <text>`
-- then the rules of `expected_diff.txt`, in file order:
-  `SUBST <stream> <regex> <replacement>`, `DROP <stream> <regex>` (stream
-  `uart`, `osd`, `hw`, `sd`, `spi` or `all`; the regex has no blanks,
-  `\x20`), `DROPBLOCK <stream> <start-regex> <end-regex>` (from a line of
-  the stream matching the start to the next one matching the end, both
-  included, every line of any stream; a start without its end is an
-  error), `SDFILE <8.3 name> <alias>`: an access inside the file's
-  clusters (read from the run's card) is `CMD<n> <alias>+<offset>` without
-  its data hash, and a run of them is one line (the hw writes and other card
-  accesses inside the run are printed once): `RV32OSDA.BIN` and
-  `832OSDAD.BIN` are both `FIRMWARE+00000000 ..`.
-  - `DEDUP hw <addr-regex>`: a write to a matching address whose value
-    equals the previous write to that address is dropped (a no-op
-    rewrite). A changed value stays.
-  - `FLOAT hw <addr-regex> <anchor-regex>`: a maximal run of adjacent hw
-    writes to matching addresses (no other line between them) that holds
-    at least one write to an address matching `<anchor-regex>` leaves its
-    place among the frames. The runs are printed after everything else, in
-    their order, one line per run: `HW float <addr> <value> ...`. A run's
-    writes, their order and where a run is cut are compared; its place is
-    not. A matching write in a run without an anchor write keeps its place
-    (final review I1). The rules after a `FLOAT`: `SUBST` and `DROP` also
-    apply to the floated writes; a `DEDUP`, `FLOAT` or `DROPBLOCK` that
-    would match a floated write is an error (`norm` exits 1).
-
-  A rule without a comment line above it is refused.
-- `# rule <line> used <n>` and `# dropped ...` lines (not compared):
-  `diff --unused-rules` prints `UNUSED <line>: <rule>` for a rule neither
-  run used, and exits 1
-
-`sim/l3/test/spitrace_test.sh` (a few seconds, `mkcard.sh`'s tools) checks
-the tools on generated fixtures: other poll counts and the fixture's
-rules give an empty diff; one changed byte in an SD read, an FPGA frame, an
-OSD text line, a hw write, a UART line, a KEYQ event, a status frame with
-a request, a new drive status (`10 10 <s>`), a cs `00` frame that is not
-all ff, and the lines just before and after a `DROPBLOCK` block each give a
-diff line; a `DROPBLOCK` start without its end fails `norm`; each rule
-removed in turn brings its difference back; an unused rule is reported.
-For the floppy DMA (Task 13), the fixture's variants also differ in the
-timing of a read DMA, and that gives an empty diff: other countdown bytes,
-other numbers of AUDIO rewrites and HandleRTC units, a FLOAT group at
-another place, another audio ring. Each of these gives a diff line:
-
-- a changed sector data byte
-- a changed track byte in a masked status frame
-- a changed AUDIO value among its rewrites
-- a changed SD-init speed write (`ffffe8` with no RTC frame next to it)
-- a changed, an extra and a missing write of the FLOAT group
-- (final review I1) a DisableInterrupts write (`ffffa0 0000`) moved after
-  an Akiko ack (`ffff84`) or before the frame it follows; a `SUBST` after
-  the `FLOAT` rewrites the floated writes too, a `DEDUP` after it that
-  matches a floated write fails `norm`
-- a repeated HandleRTC unit with a changed RTC value (`ffff70`), or with a
-  changed closing speed write (`ffffe8`)
-- (Task 17) a repeated IDE flag poll with other flags, an AUDIO write or a
-  UART line between two equal flag polls (with the poll after it), and
-  the frames just before and after the READ SUB-CHANNEL .. ENA block;
-  that block without its end fails `norm`
-
-For the write FIFO (Task 14), the variants also read a write DMA's FIFO
-in other pieces, with other polls while it fills; that gives an empty
-diff. Each of these gives a diff line: a changed word read from the FIFO,
-a changed track byte in a write frame, a missing write frame. Against the
-`spitrace.py` of Task 13 (no merge) the variants' diff is not empty. The
-variants also see other head positions during a seek (the seek collapse:
-empty diff; not empty against the `spitrace.py` of commit `49471e9`), and
-each of these gives a diff line: a seek that ends at another track, a
-position that goes back, a head bit that flips during the seek.
-
-The rules of `boot` (`expected_diff.txt`): the firmware file
-(`SDFILE` of both names, the UART line with the name and the boot ROM's
-one `0` per sector), the config file (`SDFILE` of `MINMGAR.CFG` and
-`MINMGAA.CFG`, the UART name), `fmt_diff_expected.txt` line 275 (the
-832's `partition type: 0x0`), the 832's spurious "Overriding screenmode."
-pass (a `DROPBLOCK` up to its `##End result : 0`: an 832-only firmware
-defect, `findings/osd-riscv/phase4.md` "Findings for Paul") and the RV-only
-`IRQ_MASK` write (`HW ffff34 0000`, `fw/ctrl_rv/arch/irq.c`; only that
-value: another one shows). With them, the
-`boot` diff (runs `p4t7r2`, `p4t7c2`) is empty and all 9 rules are used.
-`fdd_rd` adds four rules (section "fdd_rd"):
-
-- `Inserting floppy` (`fmt_diff_expected.txt` lines 37-44)
-- `DEDUP hw ^ffffb0$`: the drive sounds rewrite AUDIO on every pass
-- `FLOAT hw ^ffff(60|90|a0)$ ^ffff60$`: the TIMER-driven I2C run (the
-  ADV7511 poll, `ffff60`) with the interrupt handler next to it
-  (`ffffa0` = cfide's INTERRUPT register, `ffff90` = KEYBOARD_OUT). Only a
-  run with an I2C write floats: every other INTERRUPT-register write
-  (ColdBoot, the Akiko ISR around each request, c64keys) keeps its place.
-  On the gate pairs the floated runs are `ffff60 0b72 0242 1100, ffffa0
-  0000, ffff90 009b, ffffa0 0001` and the boot I2C run `ffff60 0b72 02ba
-  0200 0500`
-- `DROP hw ^MEM audio_ring`: the drive sounds' ring is rendered per
-  TIMER count; `cdda` checks its ring with `l3check.py`
-
-`cd` adds no rule, only the IDE flag poll mask above (section "cd").
-`cdda` and `cdda_load` add one rule (Task 17 ruling P2), besides the
-flag poll repeats above: `DROPBLOCK all` from the READ SUB-CHANNEL data
-frame (`10 a1 ...`, audio status 12 = paused) to the RESUME's ENA write
-(`ffffb0 0001`). The paused position is TIMER-quantised, and the PAUSE is
-served after the refill, so READ SUB-CHANNEL's address and the RESUME's
-fill (TEST.BIN blocks from that position) differ between the CPUs and
-between the 832 twins. `l3check.py cdda` checks both on each CPU. In
-`spitrace_test.sh`, `subpre` and `subpost` (the frames just before and
-after the block) each give a diff line, and `subunterm` (no ENA) fails
-`norm`. With it, the diffs `p4t17` / `p4t17c`, `p4t17l` / `p4t17lc` and
-`p4t17c` / `p4t17c_xs1` are empty.
-
-`hdd` adds three UART rules (section "hdd"): `file: "%.8s.%.3s"`
-(`fmt_diff_expected.txt` lines 45-52), the index time `Hardfile indexed
-in <n> ms` (TIMER counts) and the 832's lone `-` of `Offset: %ld`
-(`fmt_diff_expected.txt` lines 144-145).
-
-The `boot`, `keys` and handshake pairs (`p4t7r2`/`p4t7c2`, `p4t8`/`p4t8c`,
-`p4t12`/`p4t12c`) still give an empty diff. `--unused-rules` lists, for each
-pair, the rules of the other scenarios; Task 19 diffed every pair of its
-grid (section "Stress grid", `findings/osd-riscv/phase4.md` Task 19): every
-rule is used by at least one scenario, so none was removed, and a pair's
-`UNUSED` list (exit 1 of `diff --unused-rules`) is expected.
-
-XRAND twins of `CPU=832`: the EightThirtyTwo's random start can shift its
-timing (section "keys") or stop it (section "fdd_rd"). When a scenario's
-traces carry timing bytes (`fdd_rd`), compare the 832 twin normalised:
-`bash sim/l3/run.sh diff --twin <832 run> <832 twin>` must be empty, and both
-must pass their data checks. RV twins stay `compare` SAME.
+`sim/host_bridge/spitrace.py` also has `norm` and `diff` (a normalised
+comparison of two runs' traces, the RV-vs-832 differential of Phase 4;
+the syntax is in its help). No L3 target uses them any more;
+`sim/l3/test/spitrace_test.sh` (a few seconds) still tests them and
+`spitrace.py osd` on generated fixtures.
 
 ## keys
 
@@ -743,7 +336,7 @@ runs at TICKDIV 1, the script at the board's rate, so the firmware's key
 repeat (`REPEATRATE` 25 counts), help text (`HELPTEXT_DELAY` 2,500) and CD
 message (4,000) timers do not run out inside the script (at TICKDIV 1 the
 help text would start scrolling 2.6 M cycles into an idle page, a number of
-OSD writes that depends on the CPU's speed).
+OSD writes that depends on the firmware's speed).
 
 The script (`bfm_keys.v` has the syntax): `KEY <code> <hold>` (the code,
 then 0 after the hold: two queue events), `BURST <code> ...` (one change
@@ -755,14 +348,14 @@ Floppy page (down twice, `exit`) and the Harddisks page (`KEY_ESC` back),
 sends one `BURST 4c 00 4d 00 4c 00` (three presses, up / down / up, each
 with its release: six events) and closes the OSD with `KEY_MENU`.
 
-Two rules keep the run independent of the CPU's speed, each enforced by a
-bench error:
+Two rules keep the run independent of the firmware's speed, each enforced
+by a bench error:
 
 - Every `KEY` / `BURST` comes right after a KEYQ frame that drained
   nothing (`WAIT_OSD_IDLE`, then `WAIT_KEYQ 1`; `bfm_keys` checks the last
   frame's status byte). The next KEYQ frame then takes all of the step's
-  events: a main-loop pass is at least 5,320 `clk_114` on the RV and
-  11,244 on the 832, the `BURST` takes 192. While the firmware still hands
+  events: a main-loop pass is at least 5,320 `clk_114`, the `BURST` takes
+  192. While the firmware still hands
   out drained events (one per pass), `OSD_CMD_READ` could see a new code
   with no event to deliver, and `OsdGetCtrl` turns that into a key repeat
   when its TIMER says so.
@@ -770,8 +363,7 @@ bench error:
   `clk_114`, far shorter than the time to the next level read, so the key
   repeat never sees a held key.
 
-Found on the way (both firmwares, `findings/osd-riscv/phase4.md` "Shared
-defects"): `OSD_CMD_READ`'s answer is the byte userio_osd_spi loads at the
+Found on the way (`findings/osd-riscv/phase4.md` "Shared defects"): `OSD_CMD_READ`'s answer is the byte userio_osd_spi loads at the
 frame's start, the read data of the *previous* command (`userio_osd.v`
 `rddat` under the old `cmd_dat`). In the main loop that command is the
 previous pass's `OSD_CMD_KEYQ`, so the "level" is the queue's head or 0,
@@ -796,8 +388,7 @@ reached), no `EXC` / `TRAP`, kick and order (as `boot`), every MARGIN line
 - no `OSD_CMD_OSD_WR` frame before the first key: the boot draws no page,
   so one there is an error page, which the main-loop milestones alone
   cannot tell from the main loop
-- the OSD pages (decoded as `spitrace.py osd`, after the `osd` / `all`
-  `SUBST` and `DROP` rules of `expected_diff.txt`) equal
+- the OSD pages (decoded as `spitrace.py osd`) equal
   `osdtext_expect/keys.txt`
 
 It prints `REPLY <cmd> byte <k>: <r> of <n> right` per reply byte, and the
@@ -806,7 +397,7 @@ bench `=== OSD REPLY <cmd> byte <k>: gap min <g> over <n> writes, early
 the "before" table of `findings/osd-riscv/phase4.md` (Task 8).
 
 `osdtext_expect/keys.txt` is written by `osdtext_expect/osdpages.py keys`
-from the sources, before any run: a model of `fw/ctrl_rv/osd.c`'s
+from the sources, before any run: a model of `fw/ctrl/osd.c`'s
 `OsdSetTitle` / `OsdWriteOffset` / `OsdClear` (so the side stripe, arrows,
 inverted and stippled lines come out byte for byte) and of the `menu.c`
 pages the tour passes, with the line numbers they come from and the boot
@@ -820,45 +411,40 @@ menu:
 python3 -I sim/l3/osdtext_expect/osdpages.py keys > sim/l3/osdtext_expect/keys.txt
 ```
 
-Run, setup as in "Run" and "832" (both legs boot the same card, as in
-"Differential"; the RV firmware polls the reply-ready handshake since
-Phase 4 Task 11, so no `+OSD_EARLY_OK=1`: `OSD EARLY` must be 0), from the
-repository root:
+Run, setup as in "Run" (the RV firmware polls the reply-ready handshake
+since Phase 4 Task 11, so no `+OSD_EARLY_OK=1`: `OSD EARLY` must be 0),
+from the repository root:
 
 ```sh
-E832DIR=$PWD/EightThirtyTwo
-E832=$E832DIR/RTL
-FWD=$PWD/sim/l3/run_fw
-mkdir -p "$FWD/dateshim" "$FWD/fwrv"
-printf '%s\n' '#!/bin/sh' 'TZ=UTC exec /bin/date -d "${L3_DATE:-2026-01-01} 00:00:00" "$@"' > "$FWD/dateshim/date"
-chmod +x "$FWD/dateshim/date"
-PATH="$FWD/dateshim:$PATH" make -s -C fw/ctrl_rv B="$FWD/fwrv"
-make -C sim/l3/fw832 B="$FWD/fw832" E832DIR="$E832DIR"
-SIM=verilator RUNTAG=k FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh xpair keys
-CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=kc FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh xpair keys
-bash sim/l3/run.sh diff k kc
+SIM=verilator RUNTAG=k bash sim/l3/run.sh xpair keys
 ```
 
-(the two `xpair`s run four simulations; side by side 22 minutes for the RV
-pair, 31 for the 832 pair, with a fifth run on the machine.)
+(`xpair` runs the scenario and its XRAND twin side by side, about 22
+minutes with other runs on the machine.)
 
 ### The handshake's teeth (Phase 4 Task 12)
 
 `RDY_MUT=1` makes the run copy of cfide (`<run>/src/cfide.vhd`, never the
 tree's) answer `OSD_RDY` = 1 whatever the counts say, like `sim/spi_cdc/run.sh`'s
 `RDY_MUT` (an exact-count check on the `-- OSD RDY` line). The firmware
-without the poll is another image: a copy of `fw/ctrl_rv` from git `HEAD`
-outside the tree, built under the date shim (`FWD` as above):
+without the poll is another image: a copy of `fw/ctrl` from git `HEAD`
+outside the tree, built under `run.sh`'s date shim (`FWD`, the first
+lines; `FWD/fwrv` is then the image a default run builds):
 
 ```sh
+FWD=$PWD/sim/l3/run_fw
+mkdir -p "$FWD/dateshim" "$FWD/fwrv"
+printf '%s\n' '#!/bin/sh' 'TZ=UTC exec /bin/date -d "${L3_DATE:-2026-01-01} 00:00:00" "$@"' > "$FWD/dateshim/date"
+chmod +x "$FWD/dateshim/date"
+PATH="$FWD/dateshim:$PATH" make -s -C fw/ctrl B="$FWD/fwrv"
 D=$FWD/nopoll
 mkdir -p "$D"
-git archive HEAD fw/ctrl_rv tools/riscv | tar -x -C "$D"
-sed -i 's/if (!(HOST_REQ & HOST_REQ_OSD_RDY)) {/if (0) {/' "$D/fw/ctrl_rv/hardware.c"
-grep -c 'if (0) {' "$D/fw/ctrl_rv/hardware.c"
-PATH="$FWD/dateshim:$PATH" make -s -C "$D/fw/ctrl_rv" B="$D/build"
-SIM=verilator RUNTAG=m1c RDY_MUT=1 XARGS=+FAST_HW=1 FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh keys
-SIM=verilator RUNTAG=m2 FW="$D/build/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh keys
+git archive HEAD fw/ctrl tools/riscv | tar -x -C "$D"
+sed -i 's/if (!(HOST_REQ & HOST_REQ_OSD_RDY)) {/if (0) {/' "$D/fw/ctrl/hardware.c"
+grep -c 'if (0) {' "$D/fw/ctrl/hardware.c"
+PATH="$FWD/dateshim:$PATH" make -s -C "$D/fw/ctrl" B="$D/build"
+SIM=verilator RUNTAG=m1c RDY_MUT=1 XARGS=+FAST_HW=1 FW="$FWD/fwrv/RV32OSDB.BIN" bash sim/l3/run.sh keys
+SIM=verilator RUNTAG=m2 FW="$D/build/RV32OSDB.BIN" bash sim/l3/run.sh keys
 ```
 
 (`grep -c` must print 1.) Both must exit 1 (`=== keys FAILED`): `m1c` with
@@ -871,41 +457,28 @@ read too quick for the synchroniser. Figures: `findings/osd-riscv/phase4.md`,
 
 ### Measured (2026-10-19, SLAT=8 SJIT=0, SCKDLY 1.5 / C28DLY 0.3, TICKDIV 1 then 643)
 
-| | RV (`p4t8`, `+OSD_EARLY_OK=1`) | 832 (`p4t8c`) |
-|---|---|---|
-| main-loop milestone (script start) | 158,045,126 | 202,610,912 |
-| end of the script | 165,059,293 (+7.01 M) | 215,391,641 (+12.78 M) |
-| KEYQ frames (with events) | 354 (22) | 144 (22) |
-| main-loop pass in the open menu, min / median (`p4t8d`, `p4t8dc`) | 5,320 / 7,108 | 11,244 / 13,324 |
-| `OSD EARLY` | 0 of 408 | 0 of 198 |
-| `OSD GAP` min: VERSION / KEYQ status / per-key bytes | 44 / 295 / 56 | 254 / 306 / 338 |
-| `l3check.py keys` | PASS: 48 events, BURST one frame, count 6, 24 pages | the same |
-| wall time (Verilator, 5 runs on the machine) | 1,281 s | 1,824 s |
+| | `p4t8`, `+OSD_EARLY_OK=1` |
+|---|---|
+| main-loop milestone (script start) | 158,045,126 |
+| end of the script | 165,059,293 (+7.01 M) |
+| KEYQ frames (with events) | 354 (22) |
+| main-loop pass in the open menu, min / median (`p4t8d`) | 5,320 / 7,108 |
+| `OSD EARLY` | 0 of 408 |
+| `OSD GAP` min: VERSION / KEYQ status / per-key bytes | 44 / 295 / 56 |
+| `l3check.py keys` | PASS: 48 events, BURST one frame, count 6, 24 pages |
+| wall time (Verilator, 5 runs on the machine) | 1,281 s |
 
 After the handshake (Task 12, `p4t12`, no `+OSD_EARLY_OK`): the script
 ends at 164,861,841 (milestone 157,844,924), KEYQ frames 366, `OSD EARLY` 0
 of 420, `OSD GAP` min 43, `l3check.py keys` PASS, wall 1,653 s (six runs on
 the machine); the same `keys` with `+FAST_HW=1`, and in the skew pairs
-0.3 / 4.0 and 9.5 / 0.3, also `OSD EARLY` 0; `run.sh diff p4t12 p4t12c`
-(832) empty. The per-byte before/after table is in
-`findings/osd-riscv/phase4.md`, "Task 12".
+0.3 / 4.0 and 9.5 / 0.3, also `OSD EARLY` 0. The per-byte before/after
+table is in `findings/osd-riscv/phase4.md`, "Task 12".
 
-`L3_KEYS_TO` = 247,400,000 (RV) and 321,300,000 (832): 1.5 x the end of
-the script. The per-byte figures are the "before" table of
-`findings/osd-riscv/phase4.md`. `run.sh diff p4t8 p4t8c` is empty with the
-9 rules of `boot` (all used; `keys` reaches no line of
-`fmt_diff_expected.txt`: the only formatted number on its pages is
-"Floppy drives : 2").
+`L3_KEYS_TO` = 247,400,000: 1.5 x the end of the script. The per-byte
+figures are the "before" table of `findings/osd-riscv/phase4.md`.
 
-XRAND: the RV twin `p4t8_xr` is SAME. The 832 twin `p4t8c_xr` (seed
-505647130) has the same `spi.txt` but other cycles from the first frame on
-(the first hw access at 2,644 instead of 2,641): the EightThirtyTwo starts
-from random state that changes its timing, a property of the 832 build
-that the `boot` twin of Task 6 did not show only because of its seed
-(`findings/osd-riscv/phase4.md`, "Found by the L3 bench (Task 8)"). With a
-seed whose 832 start matches (`XSEED=4`, run `p4t8c_xs4`) the twin is
-SAME: the rest of the bench, userio_osd and `bfm_keys` start from random
-state without effect.
+XRAND: the twin `p4t8_xr` is SAME.
 
 Teeth (not committed): `p4t8red`, a script that applies a key right after
 the KEYQ frame that drained the previous one, fails with `BENCH ERROR:
@@ -1016,7 +589,7 @@ trackdisk does:
   above): the wait the model already makes after the last step. The head
   switch counts as head movement.
 
-Both are far longer than a main-loop pass of either firmware. They cost
+Both are far longer than a main-loop pass of the firmware. They cost
 about 59 M `clk_114` per run (one motor start, a few head changes).
 
 With WORDSYNC on, Paula starts filling the FIFO with the word *after* the
@@ -1030,7 +603,7 @@ second 0x4489, at byte 6 of the firmware's stream.
 - the 10 `=== FDD dma` lines are the scenario's tracks, in order, 6,334
   words each
 - each dump, given the matched sync word in front, decodes with
-  `fw/ctrl_rv/test/gold/mfm.py`'s `decode_sector`. All 11 sectors decode,
+  `fw/ctrl/test/gold/mfm.py`'s `decode_sector`. All 11 sectors decode,
   with header and data checksums, track `cyl * 2 + head`, sector numbers,
   "sectors to the gap", and data equal to `TEST.ADF`
 - each dump is byte-equal to `mfm.py`'s `read_track` stream of that ADF
@@ -1038,7 +611,7 @@ second 0x4489, at byte 6 of the firmware's stream.
   at sector 0). A dump that does not start with the sync word would be
   decode-only, and the check says so
 - tracks 0/0 and 79/1 are also byte-equal, read the same way, to exec-3
-  Task 13's committed golden streams `fw/ctrl_rv/test/gold/mfm_c00_s0.hex`
+  Task 13's committed golden streams `fw/ctrl/test/gold/mfm_c00_s0.hex`
   and `mfm_c79_s1.hex`
 - the OSD shows row 3 "Floppy disk sounds : on" and then row 0 "df0:
   TEST"
@@ -1071,37 +644,14 @@ window, the ramp, and the literal count. A track whose FIFO never reaches
 
 ### Run
 
-Setup as in "Run" and "832". Both legs boot the same card (section
-"Differential"). From the repository root:
+Setup as in "Run". From the repository root:
 
 ```sh
-E832DIR=$PWD/EightThirtyTwo
-E832=$E832DIR/RTL
-FWD=$PWD/sim/l3/run_fw
-mkdir -p "$FWD/dateshim" "$FWD/fwrv"
-printf '%s\n' '#!/bin/sh' 'TZ=UTC exec /bin/date -d "${L3_DATE:-2026-01-01} 00:00:00" "$@"' > "$FWD/dateshim/date"
-chmod +x "$FWD/dateshim/date"
-PATH="$FWD/dateshim:$PATH" make -s -C fw/ctrl_rv B="$FWD/fwrv"
-make -C sim/l3/fw832 B="$FWD/fw832" E832DIR="$E832DIR"
-CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=fc FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh xpair fdd_rd
-SIM=verilator RUNTAG=f FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh xpair fdd_rd
-bash sim/l3/run.sh diff --unused-rules f fc
+SIM=verilator RUNTAG=f bash sim/l3/run.sh xpair fdd_rd
 ```
 
-The four simulations take about 40 to 55 minutes side by side. The 832
-`xpair` twin's default seed (the RUNTAG's `cksum`) can stop the
-EightThirtyTwo at the start (see "Measured"). The 832 twin with the seed
-whose start matches, and its comparison:
-
-```sh
-CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator XRAND=1 XSEED=4 RUNTAG=fc_xs4 FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh fdd_rd
-bash sim/l3/run.sh diff --twin fc fc_xs4
-```
-
-The 832 twin is compared normalised (section "Differential"): its
-`spi.txt` carries paula's timing bytes. With the drive-ready waits of
-Task 14, `run.sh diff f fc` is empty ("Measured"). The data check alone,
-on a run directory:
+The two simulations take about 40 to 55 minutes side by side. The data
+check alone, on a run directory:
 
 ```sh
 python3 -I sim/l3/l3check.py fdd_rd sim/l3/run_f
@@ -1109,88 +659,46 @@ python3 -I sim/l3/l3check.py fdd_rd sim/l3/run_f
 
 ### Measured (2026-10-19, SLAT=8 SJIT=0, SCKDLY 1.5 / C28DLY 0.3, TICKDIV 1 then 643)
 
-| | RV (`p4t13`) | 832 (`p4t13c`) |
-|---|---|---|
-| main-loop milestone (script start) | 193,536,684 | 237,170,112 |
-| bfm_floppy starts (end of the script) | 201,236,597 | 249,698,969 |
-| end event (the 10th `blckint`) | 393,222,555 | 442,065,819 |
-| one track DMA, `DSKLEN` to `blckint` | 15.41 to 15.43 M | 15.45 to 15.46 M |
-| item 6: count / slots at the working level | 0 / 52,058 | 0 / 50,913 |
-| item 6: FIFO minimum at the working level | 992 words | 949 words |
-| ramp (first word to 1,024 words): slots, of them empty | 129, 0 (156 on 77/0) | 258 to 297, 5 to 8 |
-| literal count (all 10 tracks) | 300 | 473 |
-| `OSD EARLY` / `OSD GAP` min | 0 of 26,504 / 43 | 0 of 9,925 / 254 |
-| `l3check.py fdd_rd` | PASS: 110 sectors, 10 streams = `read_track` from byte 6, both golden tracks | the same |
-| wall time (Verilator, four runs on the machine) | 2,490 s | 3,151 s |
+| | `p4t13` |
+|---|---|
+| main-loop milestone (script start) | 193,536,684 |
+| bfm_floppy starts (end of the script) | 201,236,597 |
+| end event (the 10th `blckint`) | 393,222,555 |
+| one track DMA, `DSKLEN` to `blckint` | 15.41 to 15.43 M |
+| item 6: count / slots at the working level | 0 / 52,058 |
+| item 6: FIFO minimum at the working level | 992 words |
+| ramp (first word to 1,024 words): slots, of them empty | 129, 0 (156 on 77/0) |
+| literal count (all 10 tracks) | 300 |
+| `OSD EARLY` / `OSD GAP` min | 0 of 26,504 / 43 |
+| `l3check.py fdd_rd` | PASS: 110 sectors, 10 streams = `read_track` from byte 6, both golden tracks |
+| wall time (Verilator, four runs on the machine) | 2,490 s |
 
 Each DMA takes about 15.4 M `clk_114`. That is 6,334 words at three slots
 per line: 2,111 lines x 454 clk7 cycles x 16 = 15.3 M `clk_114`, plus the
 wait for the firmware's first word. The firmware keeps the FIFO between
-about 950 and 1,600 words. It refills when paula's request comes back
-below 1,024, so the lowest fill at a slot is 949 words. That is about 300
-lines of DMA, roughly 2.2 M `clk_114` of main-loop stall before an empty
-slot. The boot is longer than `boot` (RV 193.5 M against 158.0 M):
+about 990 and 1,600 words. It refills when paula's request comes back
+below 1,024, so the lowest fill at a slot is 992 words. That is about 330
+lines of DMA, roughly 2.4 M `clk_114` of main-loop stall before an empty
+slot. The boot is longer than `boot` (193.5 M against 158.0 M):
 `drivesounds_init` loads `DRIVESND.BIN` (212,098 bytes) from the fdd card.
-`L3_FDD_TO` = 580,000,000 (RV) and 660,000,000 (832): 1.5 x the estimates
-made before the runs, which the measured ends confirm.
+`L3_FDD_TO` = 680,000,000: 1.5 x the estimate 452 M (Task 13's end plus
+the drive-ready waits of Task 14, below).
 
-XRAND: the RV twin `p4t13_xr` is SAME (`tb_fdd_rd` log and `spi.txt`,
-108,785 frames). The 832 twin `p4t13c_xr` (seed 1,528,826,596) never
-started: no hw access and no SDRAM read in 660 M cycles.
-`run_p4t13c_hang` reproduces it in 3 M cycles with `boot_short` and the
-same `XSEED`. The EightThirtyTwo's reset-less state (section "keys",
-XRAND; `findings/osd-riscv/phase4.md`) can apparently stop it at the
-start, not only shift its timing. With `XSEED=4`, the seed whose 832 start
-matches (Task 8), the twin is `p4t13c_xs4`: `fdd_rd` PASS with the same
-checks. Its `hw.txt`, the MOSI of every frame and the ten dumps are equal
-to `p4t13c`'s. It is cycle-identical up to frame 31,795 (cycle
-389,813,554, during track 78/0), then 4 `clk_114` late. After that, 33
-sector frames differ in one or two MISO bytes: paula's `dsklen` countdown
-one word apart at a word boundary, the timing-dependent bytes of the list
-below. `compare` says DIFF for both files (`spi.txt` MISO only), and the
-log differs in those cycle numbers and in the run directory's name in the
-`=== FDD dma` lines. Normalised (`run.sh diff p4t13c p4t13c_xs4`), the twin is
-empty, as `run.sh diff p4t13 p4t13_xr` is for the RV.
+XRAND: the twin `p4t13_xr` is SAME (`tb_fdd_rd` log and `spi.txt`,
+108,785 frames).
 
-The differential `run.sh diff --unused-rules p4t13 p4t13c` with the
-floppy-DMA masking, the HandleRTC unit and the four `fdd_rd` rules
-(section "Differential") leaves two lines. They are the first status frame
-after the motor goes on (track 0/0) and after the side change (79/1),
-where `bfm_floppy` starts the DMA:
-
-```
--SPI 10 00 00 00 00 00 00 / 10 00 44 89 -- --
-+SPI 10 00 00 00 00 00 00 / 10 00 44 89 00 01
--SPI 10 00 00 00 00 00 00 / 10 9f 44 89 -- --
-+SPI 10 00 00 00 00 00 00 / 10 9f 44 89 00 01
-```
-
-The model writes `DSKLEN` about 100 clk7 cycles after the motor / side
-change, which is less than one main-loop pass. So the 832's next status
-frame still shows the motor in word 2, while the RV's shows the DMA
-already running (masked). Both see the same bytes 0..3. The difference is
-real firmware behaviour, not only trace bytes: `HandleFpga` passes byte 5
-to `HandleFDD` as the motor bits even when it is `dsklen`
-(`findings/osd-riscv/phase4.md`, "Shared defects"). A model that waits
-before the DMA, as trackdisk waits for the drive to come ready, would give
-both CPUs the same frames. Everything else is equal:
-
-- the SPI MOSI and every sector's data
-- the masked status sequence
-- every SD command and data hash
-- every OSD and UART line
-- the hw writes, with AUDIO deduplicated and the I2C run (with the
-  interrupt handler next to it) floated
-
-Task 14 made that bench change: `bfm_floppy` waits 500 ms after motor on
-and 15 ms after a head change (section "bfm_floppy"), so the first status
-poll after each sees the new motor / track without a DMA. The pair re-run
-on the same images, RV `p4t14r` (3,568 s, end 453,368,475) and 832
-`p4t14rc` (5,086 s, end 502,284,379), both `fdd_rd` PASS with the same
-checks (item 6: 0 of 52,056 and 0 of 50,904). `run.sh diff
---unused-rules p4t14r p4t14rc` is empty, with all 13 rules used. With
-the RV image of Task 14's write fix (17bf2563), `p4t14fr` also passes
-`fdd_rd` (5,328 s).
+Task 14 added the drive-ready waits: `bfm_floppy` waits 500 ms after
+motor on and 15 ms after a head change (section "bfm_floppy"), so the
+first status poll after each sees the new motor / track without a DMA
+already running. Before, the model wrote `DSKLEN` about 100 clk7 cycles
+after the change, less than one main-loop pass, and whether the poll saw
+the motor bits or the DMA in word 2 depended on the firmware's speed; the
+difference is real firmware behaviour, not only trace bytes:
+`HandleFpga` passes byte 5 to `HandleFDD` as the motor bits even when it
+is `dsklen` (`findings/osd-riscv/phase4.md`, "Shared defects"). The re-run
+`p4t14r` (3,568 s, end 453,368,475) passes `fdd_rd` with the same checks
+(item 6: 0 of 52,056). With the RV image of Task 14's write fix
+(17bf2563), `p4t14fr` also passes `fdd_rd` (5,328 s).
 
 ## fdd_wr
 
@@ -1217,7 +725,7 @@ python3 -I sim/l3/gen/mkwrtrack.py <adf> <cylinder> <head> <out.hex> [--bad-head
 ```
 
 The stream is what the Amiga's write DMA sends when AmigaDOS writes a
-whole track, built with `fw/ctrl_rv/test/gold/mfm.py`'s encoder and the
+whole track, built with `fw/ctrl/test/gold/mfm.py`'s encoder and the
 real MFM clock bits:
 
 - a gap of MFM zero data (0xAAAA words), then sectors 0 to 10 back to
@@ -1261,8 +769,8 @@ other than the file's words.
 ### The bad-header track is the last
 
 The bad header checksum takes `GetHeader`'s "Bad checksum" path
-(`FatalError(ERROR_FDD, "Bad checksum", 26, 0)`, the same code in
-`fw/ctrl_rv/fdd.c` and `fw/ctrl_832/fdd.c`). From the code:
+(`FatalError(ERROR_FDD, "Bad checksum", 26, 0)`, `fw/ctrl/fdd.c`). From
+the code:
 
 - `GetHeader` returns 0, so `WriteTrack` does not write that sector, and
   `FindSync` goes on to the next sync: sectors 4 to 10 are written
@@ -1298,10 +806,10 @@ would be the 20th `HandleFpga` frame after it.
 - no UART "Illegal track", "Wrong header" or "Second sync"
 
 It prints `HEADER track 80 sector 3 (LBA 883): <fate>; error page:
-<rows>`. With a reference run (the 832 leg on the same card) the saved
-`TEST.ADF` must equal the reference's byte for byte and the `HEADER`
-line must be the same: the bad-header path is taken the same way on both
-CPUs. Also: boot's milestones, no `EXC` / `TRAP`, kick, order, every
+<rows>`. With a reference run (another run of `fdd_wr` on the same card,
+e.g. at another grid point) the saved `TEST.ADF` must equal the
+reference's byte for byte and the `HEADER` line must be the same: the
+bad-header path is taken the same way in both runs. Also: boot's milestones, no `EXC` / `TRAP`, kick, order, every
 MARGIN line with item 7 required (`MARGIN_REQ_fdd_wr`), and bench
 `=== PASS`.
 
@@ -1336,10 +844,9 @@ update (1 clk7) and the FIFO's registered output (1 clk7): about 56 to
 64 `clk_114`. A host that starts the next word sooner gets the previous
 word again, and the word it should have had is popped unseen.
 
-- The 832 (`p4t14c`): 220 to 400 `clk_114` per word in its `WriteTrack`
-  frames (at least 85 `clk_114` of gap at the slave, `p4t14fc`). It reads
-  exactly the 12,668 bytes Agnus wrote on each track and passes every
-  check.
+- A slower host (the retired 832 firmware, `p4t14c`: 220 to 400
+  `clk_114` per word, at least 85 of gap at the slave) read exactly the
+  12,668 bytes Agnus wrote on each track and passed every check.
 - The RV without a gap (`p4t14w`, image 0162e53f): about 124 `clk_114`
   per word, the 16 bits included. It reads stale words from byte 704 of
   track 0/0 (`aa aa` where the first `44 89` sync belongs). Every sector
@@ -1358,9 +865,9 @@ change (Decision 8; it stays on Paul's backlog,
 is the RV firmware's (Paul, 2026-10-19: "fix floppy write before I'll try
 it"): `WRFIFO_GAP`, 16 TIMER reads before each word it reads from the
 write FIFO, at least 8 `clk_114` each (two `clk_28` edges), the one
-listed exception to "No new count-based delays" (`fw/ctrl_rv/README.md`
+listed exception to "No new count-based delays" (`fw/ctrl/README.md`
 "Write-FIFO gap"). With it (`p4t14f`, image 17bf2563) the gap at the
-slave is at least 202 `clk_114` and `fdd_wr` passes on both CPUs.
+slave is at least 202 `clk_114` and `fdd_wr` passes.
 
 An RTL fix also works (not taken): `PAULA_TXPOP=1` makes `run.sh` patch
 its run copy of `paula_floppy.v` (never `rtl/`). A track write's FIFO
@@ -1382,52 +889,40 @@ first).
 
 ### Run
 
-Setup as in "fdd_rd" (the same `FWD` images for both legs):
+Setup as in "Run":
 
 ```sh
-SIM=verilator RUNTAG=w FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh xpair fdd_wr
-CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=wc FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh fdd_wr
-CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator XRAND=1 XSEED=4 RUNTAG=wc_xs4 FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh fdd_wr
-bash sim/l3/run.sh diff --unused-rules w wc
-bash sim/l3/run.sh diff --twin wc wc_xs4
-python3 -I sim/l3/l3check.py fdd_wr sim/l3/run_w sim/l3/run_wc
+SIM=verilator RUNTAG=w bash sim/l3/run.sh xpair fdd_wr
+python3 -I sim/l3/l3check.py fdd_wr sim/l3/run_w
 bash sim/l3/test/fdd_wr_test.sh
 ```
 
-The four simulations take about 1.7 to 2.2 hours side by side.
+The two simulations take about 1.7 to 2.2 hours side by side.
 `PAULA_TXPOP=1` (above) is the RTL variant:
 
 ```sh
-SIM=verilator RUNTAG=we PAULA_TXPOP=1 FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh fdd_wr
+SIM=verilator RUNTAG=we PAULA_TXPOP=1 bash sim/l3/run.sh fdd_wr
 ```
 
 ### Measured (2026-10-19/20, SLAT=8 SJIT=0, SCKDLY 1.5 / C28DLY 0.3, TICKDIV 1 then 643)
 
-RV image 17bf2563 (with `WRFIFO_GAP`), 832 image 768c765d; the RV
-without the gap (0162e53f) for comparison:
+RV image 17bf2563 (with `WRFIFO_GAP`); the image without the gap
+(0162e53f) for comparison:
 
-| | RV `p4t14f` | 832 `p4t14fc` | RV without the gap `p4t14w` |
-|---|---|---|---|
-| bfm_floppy starts (end of the key script) | 201,661,805 | 249,698,969 | 201,236,597 |
-| end event (the error page's row 7) | 470,697,752 | 520,161,161 | none (timeout 700 M) |
-| one track write, `DSKLEN` to `blckint` | 15.57 to 15.58 M | 15.59 to 16.20 M | 15.34 M (track 0/0) |
-| `TEST.ADF` on the saved card | 109 sectors new, 1,650 unchanged | the same | 0 written |
-| bad-header sector (40/0 sector 3) | skipped, FATAL "Bad checksum" 1A | the same | - |
-| item 7: full at slots / FIFO max | 0 of 63,340 / 518 words | 0 of 63,340 / 518 | 0 of 6,334 |
-| write-FIFO word gap min (bound 64) | 202 `clk_114` over 61,221 words | 85 over 61,665 | not measured (monitor added after) |
-| `FindSync` / `GetData` per word | 379 / 454 `clk_114` | about 220 to 400 / 494 | 124 / - |
-| XRAND twin | `p4t14f_xr` SAME (log, 342,601 frames) | `p4t14c_xs4` (previous card): normalised diff empty | - |
-| wall time (Verilator, 4 to 6 runs on the machine) | 6,377 s | 7,919 s | 7,299 s |
+| | `p4t14f` | without the gap `p4t14w` |
+|---|---|---|
+| bfm_floppy starts (end of the key script) | 201,661,805 | 201,236,597 |
+| end event (the error page's row 7) | 470,697,752 | none (timeout 700 M) |
+| one track write, `DSKLEN` to `blckint` | 15.57 to 15.58 M | 15.34 M (track 0/0) |
+| `TEST.ADF` on the saved card | 109 sectors new, 1,650 unchanged | 0 written |
+| bad-header sector (40/0 sector 3) | skipped, FATAL "Bad checksum" 1A | - |
+| item 7: full at slots / FIFO max | 0 of 63,340 / 518 words | 0 of 6,334 |
+| write-FIFO word gap min (bound 64) | 202 `clk_114` over 61,221 words | not measured (monitor added after) |
+| `FindSync` / `GetData` per word | 379 / 454 `clk_114` | 124 / - |
+| XRAND twin | `p4t14f_xr` SAME (log, 342,601 frames) | - |
+| wall time (Verilator, 4 to 6 runs on the machine) | 6,377 s | 7,299 s |
 
-`run.sh diff --unused-rules p4t14f p4t14fc` is empty, and all 13 rules
-are used. Two normalisations make it so (section "Differential"): the
-write-FIFO merge, and the seek collapse. The seek collapse is needed
-because the head steps every 3 ms right after a track write's `blckint`.
-The RV polls again after 2 to 5 ms and sees the first positions of the
-seek; the 832 is busy for 11 to 20 ms with its last sector's
-`FileWrite`. The 832 leg on the card with the old RV image (`p4t14c`)
-and its `XSEED=4` twin (`p4t14c_xs4`) gave the same results;
-`run.sh diff p4t14c p4t14c_xs4` is empty.
+`L3_FDDW_TO` = 700,000,000: 1.5 x the estimate 470 M.
 
 ## hdd
 
@@ -1448,14 +943,14 @@ applies to unit 0 only, so `RDB.HDF` is hardfile 0: Task 3's card layout.)
 `bfm_ide.v` (instance `ide`) starts at the main-loop milestone, once the
 chipset reset is low. `minimig_syscontrol` holds it for four frames after
 userio_osd's `usrrst` falls, so the Amiga side is still in reset at the
-milestone (the plan starts RV 6.4 M, 832 2.9 M `clk_114` after it); a
-write then is lost, as on the Amiga (the first gate attempt, `p4t15c2`,
-wrote IDENTIFY into the reset and the firmware never saw a command).
+milestone (the plan starts 6.4 M `clk_114` after it); a write then is
+lost, as on the Amiga (a first gate attempt, `p4t15c2`, wrote IDENTIFY
+into the reset and the firmware never saw a command).
 The plan (`plan_hdd` in `bfm_ide.v`; `HDD_PLAN` in `l3check.py`):
 
 | # | Command | Drive | CHS (LBA) | Count | What it checks |
 |---|---|---|---|---|---|
-| 1 | IDENTIFY DEVICE (EC) | slave | - | - | the 256 words = `fw/ctrl_rv/test/gold/identify.py` (HDF_SYNTHRDB, 257.1.32) |
+| 1 | IDENTIFY DEVICE (EC) | slave | - | - | the 256 words = `fw/ctrl/test/gold/identify.py` (HDF_SYNTHRDB, 257.1.32) |
 | 2 | READ SECTORS (20) | slave | 0/0/1 (0) | 2 | RDSK and PART = `gold/rdb.py` `rdsk` / `part` for 257.1.32 |
 | 3 | READ SECTORS | slave | 3/0/5 (100) | 64 | the file's blocks 68..131 |
 | 4 | SET MULTIPLE (C6) | slave | - | 16 | |
@@ -1471,17 +966,17 @@ Then the run's end saves the card (`+SD_SAVE=<run>/card_saved.img`).
 
 TIMER: `TICKDIV` 1. `hdd.c` is status-driven: every wait is on paula's
 request bits (`CMD_IDECMD`, `CMD_IDEDAT`). Its one TIMER user, in
-`OpenHardfile` (RV `hdd.c:932`, 832 `hdd.c:910`), bounds nothing: it
-measures `BuildHardfileIndex` for the UART line `Hardfile indexed in <n>
-ms`. The number is TIMER counts (one count = 256 `clk_28` at `TICKDIV` 1),
-so it follows the CPU's speed (an `expected_diff.txt` rule).
+`OpenHardfile` (`hdd.c`), bounds nothing: it measures
+`BuildHardfileIndex` for the UART line `Hardfile indexed in <n> ms`. The
+number is TIMER counts (one count = 256 `clk_28` at `TICKDIV` 1), so it
+follows the firmware's speed (only its prefix is a milestone).
 
 The firmware ignores the LBA bit of the device / head register
 (`chs2lba` only), so `bfm_ide` addresses in CHS. `ata_cmd` converts an LBA
 with the drive's geometry (`g_heads`, `g_spt`), and `l3check.py` checks
 that IDENTIFY's words 1, 3 and 6 are that geometry.
 
-Found while reading `hdd.c` (both firmwares, not run): a READ / WRITE
+Found while reading `hdd.c` (not run): a READ / WRITE
 MULTIPLE before any SET MULTIPLE on that unit hangs the firmware.
 `sectors_per_block` starts at 0, so each DRQ block is 0 sectors and the
 loop never ends (ATA says abort). Every driver sends SET MULTIPLE first,
@@ -1542,8 +1037,8 @@ the device's byte count) is for the CD scenarios; `hdd` does not use it.
   the run booted
 
 Also, as `boot`: the milestones (`CARD=hdd` lines: both hardfiles found,
-their `OpenHardfile` lines, the IDE port frame `20 54 07`; the 832 prints
-`file: "8s.3s"`, `fmt_diff_expected.txt` lines 45-52), no `EXC` / `TRAP`,
+their `OpenHardfile` lines, the IDE port frame `20 54 07`), no `EXC` /
+`TRAP`,
 `kick`, `order`, memhash, every MARGIN line with item 3 required
 (`MARGIN_REQ_hdd`: the HDF sectors come in direct mode), bench `=== PASS`.
 
@@ -1561,29 +1056,14 @@ max (the lower median) and the total.
 
 ### Run
 
-Setup as in "Run" and "832". Both legs boot the same card (section
-"Differential"). From the repository root:
+Setup as in "Run". From the repository root:
 
 ```sh
-E832DIR=$PWD/EightThirtyTwo
-E832=$E832DIR/RTL
-FWD=$PWD/sim/l3/run_fw
-mkdir -p "$FWD/dateshim" "$FWD/fwrv"
-printf '%s\n' '#!/bin/sh' 'TZ=UTC exec /bin/date -d "${L3_DATE:-2026-01-01} 00:00:00" "$@"' > "$FWD/dateshim/date"
-chmod +x "$FWD/dateshim/date"
-PATH="$FWD/dateshim:$PATH" make -s -C fw/ctrl_rv B="$FWD/fwrv"
-make -C sim/l3/fw832 B="$FWD/fw832" E832DIR="$E832DIR"
-CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=hc FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh xpair hdd
-SIM=verilator RUNTAG=h FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh xpair hdd
-bash sim/l3/run.sh diff --unused-rules h hc
-bash sim/l3/run.sh diff --twin hc hc_xr
+SIM=verilator RUNTAG=h bash sim/l3/run.sh xpair hdd
 ```
 
-(about 40 minutes for the RV pair and 55 for the 832 pair side by side.)
-The 832 pair's `compare` says DIFF: the EightThirtyTwo's random start
-moves its timing and so the poll counts (section "keys"); its twin is
-compared normalised, the last line, which must be empty. The data check
-alone, on a run directory:
+(about 40 minutes side by side.) The data check alone, on a run
+directory:
 
 ```sh
 python3 -I sim/l3/l3check.py hdd sim/l3/run_h
@@ -1591,60 +1071,57 @@ python3 -I sim/l3/l3check.py hdd sim/l3/run_h
 
 ### Measured (2026-10-19, SLAT=8 SJIT=0, SCKDLY 1.5 / C28DLY 0.3, TICKDIV 1)
 
-| | RV (`p4t15`; item 8 `p4t15f`) | 832 (`p4t15c`; item 8 `p4t15cf`) |
-|---|---|---|
-| main-loop milestone | 157,326,780 | 201,740,552 |
-| `bfm_ide` starts (chipset reset low) | 163,701,501 | 204,626,877 |
-| end event (the end of command 12) | 187,958,349 | 233,511,245 |
-| `l3check.py hdd` | PASS: 12 commands, 274 sectors read, 96 written and read back, on the saved card and nowhere else | the same |
-| item 3 `dmode_release` min | 20.8 over 271 direct transfers | 42.8 over 271 |
-| item 8 `ide_wait` | min 64.0 over 34,313 waits, `rec` | min 64.0 over 34,362 |
-| `OSD EARLY` / `OSD GAP` min | 0 of 1,232 / 63 | 0 of 260 / 254 |
-| wall time (Verilator, 3 to 5 runs on the machine) | 2,289 s | 3,217 s |
+| | `p4t15` (item 8: `p4t15f`) |
+|---|---|
+| main-loop milestone | 157,326,780 |
+| `bfm_ide` starts (chipset reset low) | 163,701,501 |
+| end event (the end of command 12) | 187,958,349 |
+| `l3check.py hdd` | PASS: 12 commands, 274 sectors read, 96 written and read back, on the saved card and nowhere else |
+| item 3 `dmode_release` min | 20.8 over 271 direct transfers |
+| item 8 `ide_wait` | min 64.0 over 34,313 waits, `rec` |
+| `OSD EARLY` / `OSD GAP` min | 0 of 1,232 / 63 |
+| wall time (Verilator, 3 to 5 runs on the machine) | 2,289 s |
 
-`L3_HDD_TO` = 300,000,000 (RV, 1.5 x the 200 M estimate; the end came at
-188.0 M) and 350,000,000 (832, 1.5 x its end in `p4t15c3`, the same
-cycle as `p4t15c`).
+`L3_HDD_TO` = 300,000,000 (1.5 x the 200 M estimate; the end came at
+188.0 M).
 
-Item 8 per command (Task 15 fix round, runs `p4t15f` / `p4t15cf`: the
-same bench, firmware and card as `p4t15` / `p4t15c`, with only the wait
-accounting changed; their `spi.txt` and `hw.txt` are byte-identical to
-those runs'). `clk_114`; waits = interrupt / poll / nrdy; min / median /
+Item 8 per command (Task 15 fix round, run `p4t15f`: the same bench,
+firmware and card as `p4t15`, with only the wait accounting changed; its
+`spi.txt` and `hw.txt` are byte-identical to that run's). `clk_114`; waits = interrupt / poll / nrdy; min / median /
 max; the command's wall in cycles:
 
-| # | Command | RV waits | RV min / median / max | RV cycles | 832 waits | 832 min / median / max | 832 cycles |
-|---|---|---|---|---|---|---|---|
-| 1 | IDENTIFY | 1 / 0 / 0 | 60,464 / 60,464 / 60,464 | 69,024 | 1 / 0 / 0 | 76,928 / 76,928 / 76,928 | 85,488 |
-| 2 | READ 2 (RDB) | 2 / 0 / 0 | 55,296 / 55,296 / 66,192 | 138,288 | 2 / 0 / 0 | 94,512 / 94,512 / 106,032 | 217,344 |
-| 3 | READ 64 | 64 / 0 / 0 | 48,864 / 48,880 / 63,680 | 3,673,088 | 64 / 0 / 0 | 57,936 / 58,464 / 84,784 | 4,292,112 |
-| 4 | SET MULTIPLE 16 | 1 / 0 / 0 | 210,400 / 210,400 / 210,400 | 210,768 | 1 / 0 / 0 | 211,872 / 211,872 / 211,872 | 212,240 |
-| 5 | READ MULTIPLE 64 | 4 / 0 / 15,136 | 80 / 128 / 129,600 | 2,840,912 | 4 / 0 / 15,156 | 64 / 128 / 170,416 | 2,989,568 |
-| 6 | READ MULTIPLE 32 | 2 / 0 / 7,568 | 96 / 128 / 70,272 | 1,399,872 | 2 / 0 / 7,578 | 64 / 128 / 97,472 | 1,474,800 |
-| 7 | WRITE 64 | 64 / 1 / 0 | 16,736 / 98,768 / 160,928 | 6,666,752 | 64 / 1 / 0 | 31,424 / 128,544 / 209,200 | 8,611,776 |
-| 8 | WRITE MULTIPLE 32 | 2 / 1 / 0 | 12,704 / 1,501,568 / 1,502,720 | 3,148,512 | 2 / 1 / 0 | 23,168 / 1,978,032 / 1,978,576 | 4,111,296 |
-| 9 | READ 64 (back) | 64 / 0 / 0 | 48,848 / 48,864 / 66,800 | 3,674,816 | 64 / 0 / 0 | 58,032 / 58,560 / 91,856 | 4,305,296 |
-| 10 | READ MULTIPLE 32 (back) | 2 / 0 / 7,568 | 96 / 128 / 60,192 | 1,389,776 | 2 / 0 / 7,578 | 64 / 128 / 83,168 | 1,460,528 |
-| 11 | SET MULTIPLE 16 (master) | 1 / 0 / 0 | 217,872 / 217,872 / 217,872 | 218,240 | 1 / 0 / 0 | 219,680 / 219,680 / 219,680 | 220,048 |
-| 12 | READ MULTIPLE 16 (RDB.HDF) | 1 / 0 / 3,831 | 64 / 128 / 119,584 | 826,368 | 1 / 0 / 3,840 | 128 / 128 / 154,496 | 903,440 |
+| # | Command | waits | min / median / max | cycles |
+|---|---|---|---|---|
+| 1 | IDENTIFY | 1 / 0 / 0 | 60,464 / 60,464 / 60,464 | 69,024 |
+| 2 | READ 2 (RDB) | 2 / 0 / 0 | 55,296 / 55,296 / 66,192 | 138,288 |
+| 3 | READ 64 | 64 / 0 / 0 | 48,864 / 48,880 / 63,680 | 3,673,088 |
+| 4 | SET MULTIPLE 16 | 1 / 0 / 0 | 210,400 / 210,400 / 210,400 | 210,768 |
+| 5 | READ MULTIPLE 64 | 4 / 0 / 15,136 | 80 / 128 / 129,600 | 2,840,912 |
+| 6 | READ MULTIPLE 32 | 2 / 0 / 7,568 | 96 / 128 / 70,272 | 1,399,872 |
+| 7 | WRITE 64 | 64 / 1 / 0 | 16,736 / 98,768 / 160,928 | 6,666,752 |
+| 8 | WRITE MULTIPLE 32 | 2 / 1 / 0 | 12,704 / 1,501,568 / 1,502,720 | 3,148,512 |
+| 9 | READ 64 (back) | 64 / 0 / 0 | 48,848 / 48,864 / 66,800 | 3,674,816 |
+| 10 | READ MULTIPLE 32 (back) | 2 / 0 / 7,568 | 96 / 128 / 60,192 | 1,389,776 |
+| 11 | SET MULTIPLE 16 (master) | 1 / 0 / 0 | 217,872 / 217,872 / 217,872 | 218,240 |
+| 12 | READ MULTIPLE 16 (RDB.HDF) | 1 / 0 / 3,831 | 64 / 128 / 119,584 | 826,368 |
 
 No command ended with a BSY poll that had to wait: every end-of-command
 status read found the drive ready (poll 0, except the first WRITE block's
-wait for the firmware's DRQ: 16,736 / 31,424, and the WRITE MULTIPLE's
-12,704 / 23,168). A READ waits once per sector for the firmware to send
-it (interrupt; median 49 k RV, 58 k 832: the card's read plus the
-firmware's turn-around), a READ MULTIPLE once per 16 sectors and then on
+wait for the firmware's DRQ: 16,736, and the WRITE MULTIPLE's 12,704). A
+READ waits once per sector for the firmware to send it (interrupt; median
+49 k: the card's read plus the firmware's turn-around), a READ MULTIPLE once per 16 sectors and then on
 `nrdy` for nearly every word (the 68k reads faster than direct mode
 delivers: 128, about one 16-bit SPI word at 6 `clk_114` a bit plus the
 read; the smallest stalls are 64 to 128). A
-WRITE waits per sector for the firmware to read and write it (99 k / 129
-k); a WRITE MULTIPLE block of 16 sectors costs 1.5 M / 2.0 M. SET
+WRITE waits per sector for the firmware to read and write it (99 k); a
+WRITE MULTIPLE block of 16 sectors costs 1.5 M. SET
 MULTIPLE's 210 k is the main loop's turn-around plus the `printf` of "Set
 Multiple Mode 16". Item 8 has no bound: these are throughput figures. (In
-the first gate runs `p4t15` / `p4t15c` every status read that found the
+the first gate run `p4t15` every status read that found the
 drive ready counted as a 32-cycle wait, so the min was 32 everywhere: Task
 15 review I1.)
 
-XRAND: the first RV twin, `p4t15_xr` (seed 1,807,595,372), differed from
+XRAND: the first twin, `p4t15_xr` (seed 1,807,595,372), differed from
 `p4t15` in one frame. The first IDE command's register read (`10 80`,
 `spi.txt` line 6,593) returned gayle's never-written FIFO head word and
 features register (`2c bc`, `39` instead of 0); the ATA path does not use
@@ -1652,35 +1129,7 @@ them, and everything else was SAME. `run.sh l3_pin_minimig` now also pins
 `gayle_port.v`'s task file and `gayle_fifo.v`'s buffer to 0 at time 0
 (`findings/osd-riscv/phase4.md`, "Found by the L3 bench (Task 15)"), and
 the twin `p4t15_xr2` (seed 1,512,261,430, `=== XRAND pinned 8217 regs`) is
-SAME as `p4t15` (log and 8,959 frames). The 832 twin `p4t15c_xr` (seed
-30,418,420) passes every check. From cycle 9.6 M on (a UART line 4,940
-cycles late) its timing differs, the EightThirtyTwo's random start
-(section "keys"), so the poll counts differ (100 frames fewer, the end
-at 236.1 M); its hw writes are the same, only their positions among the
-frames differ, the frames without the polls are identical, and `run.sh
-diff p4t15c p4t15c_xr` is empty.
-
-The differential (`run.sh diff p4t15 p4t15c`) is empty with three new
-rules of `expected_diff.txt` and one addition to the normaliser (section
-"Differential"):
-
-- `file: "%.8s.%.3s"` (`fmt_diff_expected.txt` lines 45-52): the 832
-  prints `file: "8s.3s"`
-- `Hardfile indexed in <n> ms`: TIMER counts, RV 289 / 539, 832 621 /
-  1,174 (`RDB.HDF` / `SYNTH.HDF`)
-- the 832's lone `-` (`fmt_diff_expected.txt` lines 144-145, `Offset: %ld`
-  with `SYNTH.HDF`'s offset -32: lib832's `sprintf` puts the sign on the
-  UART)
-- the normaliser drops the first polls after a served IDE request (a
-  status frame without a request equal to the request frame but for its
-  IDE bits): the RV polled three times before the 68k had emptied or
-  filled the FIFO, where the 832 did not (`# dropped ide_served` 961 /
-  434). Without it the diff is those three `SPI 10 00 00 00 00 00 00 / 10
-  01 44 89 00 00` lines
-
-`--unused-rules` lists the two `fdd_rd` rules `Inserting floppy` and
-`DEDUP hw ^ffffb0$` (unused here; the all-scenario clean-up is Task 19);
-every rule `hdd` needs is used.
+SAME as `p4t15` (log and 8,959 frames).
 
 ## cd
 
@@ -1700,7 +1149,7 @@ chipset reset is low (section "hdd"). The plan (`plan_cd`; `CD_PLAN` in
 
 | # | Command | Packet | What it checks |
 |---|---|---|---|
-| 1 | IDENTIFY PACKET DEVICE (A1) | - | the 256 words = `atapi_identify()` of the run CPU's own `atapi.c`, read field by field from the source; word 0 0x8580 = ATAPI, CD-ROM, removable, 12-byte packets; the model field = the disc's name (`TEST`) |
+| 1 | IDENTIFY PACKET DEVICE (A1) | - | the 256 words = `atapi_identify()` of `fw/ctrl/atapi.c`, read field by field from the source; word 0 0x8580 = ATAPI, CD-ROM, removable, 12-byte packets; the model field = the disc's name (`TEST`) |
 | 2 | TEST UNIT READY | `00` | CHECK CONDITION, error 0x60: UNIT ATTENTION 06/29/00 (below) |
 | 3 | REQUEST SENSE | `03`, 18 | that sense, fixed format |
 | 4 | TEST UNIT READY | `00` | GOOD |
@@ -1753,22 +1202,16 @@ every MARGIN line with item 9 required (and item 3 for `iso`), bench
 
 ### Run
 
-Setup as in "Run", "832" and "hdd" (the shell variables of its block).
-From the repository root:
+Setup as in "Run". From the repository root:
 
 ```sh
-CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=cc CDCFG=cue FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh xpair cd
-CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=cci CDCFG=iso FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh cd
-SIM=verilator RUNTAG=c CDCFG=cue FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh xpair cd
-SIM=verilator RUNTAG=ci CDCFG=iso FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh cd
-bash sim/l3/run.sh diff --unused-rules c cc
-bash sim/l3/run.sh diff --unused-rules ci cci
-bash sim/l3/run.sh diff --twin cc cc_xr
+SIM=verilator RUNTAG=c CDCFG=cue bash sim/l3/run.sh xpair cd
+SIM=verilator RUNTAG=ci CDCFG=iso bash sim/l3/run.sh cd
 ```
 
 `xpair` runs the scenario and its XRAND twin side by side; on a busy
 machine run them one after the other (`XRAND=0` and `XRAND=1` with the
-RUNTAGs `cc` and `cc_xr`, then `bash sim/l3/run.sh compare cc cc_xr`).
+RUNTAGs `c` and `c_xr`, then `bash sim/l3/run.sh compare c c_xr`).
 The data check alone, on a run directory:
 
 ```sh
@@ -1777,62 +1220,38 @@ python3 -I sim/l3/l3check.py cd sim/l3/run_c
 
 ### Measured (2026-10-20, SLAT=8 SJIT=0, SCKDLY 1.5 / C28DLY 0.3, TICKDIV 1 then 643)
 
-Runs `p4t16` (RV, cue), `p4t16c` (832, cue), `p4t16i` (RV, iso),
-`p4t16ci` (832, iso); the same `RV32OSDA.BIN` / `832OSDAD.BIN` (sha256
-0162e53fc0b4ce4d / 768c765d57deb1a0) and so byte-identical cards per
-`CDCFG`. Cycles are `clk_114`:
+Runs `p4t16` (cue) and `p4t16i` (iso), `RV32OSDA.BIN` sha256
+0162e53fc0b4ce4d. Cycles are `clk_114`:
 
-| | RV cue | 832 cue | RV iso | 832 iso |
-|---|---|---|---|---|
-| main-loop milestone | 156,926,388 | 201,742,616 | 156,388,796 | 200,833,308 |
-| `bfm_ide` starts (chipset reset low) | 163,701,501 | 204,626,877 | 163,701,501 | 204,626,877 |
-| end event (the end of command 12) | 185,153,357 | 233,680,093 | 171,271,517 | 212,934,605 |
-| `l3check.py cd` | PASS | PASS | PASS | PASS |
-| READ(10) 32 / READ(12) 8 sectors | 32 x 2,048 / 16 x 1,024 bytes | the same | 8 x 8,192 / 16 x 1,024 | the same |
-| READ(10) / READ(12), cycles | 16,835,376 / 4,277,056 | 22,682,320 / 5,779,104 | 5,644,624 / 1,588,288 | 5,919,264 / 1,799,936 |
-| item 9: phase windows; the longest (in READ(10)) | 65; 161,376 = 0.245 counts | 65; 180,112 = 0.274 | 41; 690,208 = 1.048 | 41; 714,144 = 1.085 |
-| its share of `CD_TIMEOUT` (6,584,320,000) | 2.5e-5 | 2.7e-5 | 1.05e-4 | 1.08e-4 |
-| the longest 68k wait on the firmware (READ(10)) | 419,280 | 602,464 | 127,872 | 166,400 |
-| item 3 `dmode_release` min | n/a | n/a | 20.8 over 160 | 42.8 over 160 |
-| item 8 `ide_wait` min | 16.0 over 25,533 | 128.0 over 25,869 | 112.0 over 33,501 | 64.0 over 33,621 |
-| `OSD EARLY` / `OSD GAP` min | 0 of 1,331 / 63 | 0 of 274 / 254 | 0 of 1,435 / 63 | 0 of 355 / 254 |
-| wall time (Verilator) | 3,025 s | 3,735 s | 1,129 s | 1,621 s |
+| | cue | iso |
+|---|---|---|
+| main-loop milestone | 156,926,388 | 156,388,796 |
+| `bfm_ide` starts (chipset reset low) | 163,701,501 | 163,701,501 |
+| end event (the end of command 12) | 185,153,357 | 171,271,517 |
+| `l3check.py cd` | PASS | PASS |
+| READ(10) 32 / READ(12) 8 sectors | 32 x 2,048 / 16 x 1,024 bytes | 8 x 8,192 / 16 x 1,024 |
+| READ(10) / READ(12), cycles | 16,835,376 / 4,277,056 | 5,644,624 / 1,588,288 |
+| item 9: phase windows; the longest (in READ(10)) | 65; 161,376 = 0.245 counts | 41; 690,208 = 1.048 |
+| its share of `CD_TIMEOUT` (6,584,320,000) | 2.5e-5 | 1.05e-4 |
+| the longest 68k wait on the firmware (READ(10)) | 419,280 | 127,872 |
+| item 3 `dmode_release` min | n/a | 20.8 over 160 |
+| item 8 `ide_wait` min | 16.0 over 25,533 | 112.0 over 33,501 |
+| `OSD EARLY` / `OSD GAP` min | 0 of 1,331 / 63 | 0 of 1,435 / 63 |
+| wall time (Verilator) | 3,025 s | 1,129 s |
 
 The ISO windows are the longest: a phase of 8 KB is set up, filled from
 the card in direct mode (16 FAT sectors) and drained by the 68k inside one
 window; a CUE sector is read into the CPU first and its window is only the
 SPI copy into the FIFO and the drain. The firmware's longest service time is
 the CUE's: the interrupt of a raw sector comes after four or five FAT-sector reads
-through the CPU (`cd_file_read()`) and the copy, 419 k (RV) / 602 k (832)
-`clk_114`, 3.7 / 5.3 ms. Every window is at most about one TIMER count at the
+through the CPU (`cd_file_read()`) and the copy, 419 k `clk_114`, 3.7 ms. Every window is at most about one TIMER count at the
 board's rate, four orders of magnitude below `CD_TIMEOUT`.
 
-`L3_CD_TO` = 315,000,000 (RV) and 450,000,000 (832): 1.5 x the estimates
-210 M / 300 M; the ends came at 185.2 M / 233.7 M.
+`L3_CD_TO` = 315,000,000: 1.5 x the estimate 210 M; the end came at
+185.2 M.
 
-XRAND: the RV twin `p4t16_xr` (seed 816,455,678, `pinned 8217 regs`) is
-`compare` SAME with `p4t16` (log and 7,642 frames). The 832 twin
-`p4t16c_xr` (seed 749,220,476) passes every check with the same dumps; its
-EightThirtyTwo's random start moves the milestone to 204.2 M, so it makes
-100 fewer main-loop poll frames (status `10 00`, OSD read and KEYQ) and
-`compare` says DIFF; `hw.txt` and `uart.txt` are byte-identical and
-`run.sh diff p4t16c p4t16c_xr` is empty (as `hdd`'s 832 twin). All twelve
-dumps are byte-identical between the two CPUs and between each twin pair.
-
-The differential (`run.sh diff p4t16 p4t16c`, `p4t16i p4t16ci`) is empty
-with the IDE flag poll mask (section "Differential"; Task 16 ruling).
-Without it, two lines per disc differed, both timing-only. After the
-INQUIRY (36 bytes) and the MODE SENSE (52 bytes) data phase, `cd_wait()`'s
-first `ReadIDEFlags()` frame (`10 81` and nine 00) of the RV starts before
-the 68k has read the last word, so MISO byte 0 (paula's request byte,
-sampled during the command byte) still has the IDE command bit 0x04 clear
-(`10 01 ...`); the 832's frame starts later and has it set (`14 01 ...`).
-MISO byte 8, the flags the firmware reads, is the same (`53`: xfer done).
-The number of these polls is the same on both CPUs (77 cue, 53 iso: every
-`cd_wait()` sees `xfer_done` at its first read). The mask changes nothing
-in the earlier pairs (`p4t7r2` / `p4t7c2`, `p4t15f` / `p4t15cf`: their
-normalised streams are byte-identical with and without it).
-`--unused-rules` lists the `fdd_rd` and `hdd` rules (Task 19's clean-up).
+XRAND: the twin `p4t16_xr` (seed 816,455,678, `pinned 8217 regs`) is
+`compare` SAME with `p4t16` (log and 7,642 frames).
 
 ## cdda
 
@@ -1864,8 +1283,8 @@ IDE port 2 master, byte count limit 0xFFFE:
 
 After each flip the plan waits 500,000 `clk_114` (4.4 ms) more before its
 next command. By then the firmware has seen the flip and started the
-refill (`main()` calls `CD_AudioPoll()` before `HandleFpga()`), so both
-CPUs serve the command after their refill.
+refill (`main()` calls `CD_AudioPoll()` before `HandleFpga()`), so it
+serves the command after the refill.
 
 **Ring snapshots.** With `+CDDA_DUMP=<run>/cdda_half` the model copies,
 at every half start, the 32 KB half the player is about to play from the
@@ -1905,9 +1324,8 @@ counts only the runs from the PLAY on).
 - every half = what `cdaudio.c` `fill()` puts there: range frame f =
   base + k x 8,192, `TEST.BIN`'s bytes of the CUE's track 2 (LE 16-bit
   stereo; gaps, data sectors, past the file or the range: zeros), scaled
-  with `scale()` when the volume is not 255 / 255 (the run CPU's
-  `cda_init` volume, read from its `cdaudio.c`; the scenario sends no MODE
-  SELECT). The CUE is read by `l3check.py`'s own reader, not `cue.c`. base
+  with `scale()` when the volume is not 255 / 255 (`cda_init`'s volume,
+  read from `fw/ctrl/cdaudio.c`; the scenario sends no MODE SELECT). The CUE is read by `l3check.py`'s own reader, not `cue.c`. base
   is 0 for the PLAY's run. For the RESUME's it is the firmware's paused
   position: a multiple of 256 frames (TIMER units) inside the sector READ
   SUB-CHANNEL reports, and within one half of the frames the player had
@@ -1917,8 +1335,8 @@ counts only the runs from the PLAY on).
   before in the run) or zero. Anything else, or any difference in a run's
   first two halves (filled before ENA), is a **wrong** half, which fails
   both scenarios. `cdda`: no underrun and no write into the playing half.
-  `cdda_load`: the underruns are counted (`INFO`); the gate compares the
-  two CPUs (RV <= 832)
+  `cdda_load`: the underruns are counted (`INFO`) and recorded (0 in every
+  run so far, "Measured")
 - READ SUB-CHANNEL: 16 bytes, audio status 12 (paused), adr/control 10,
   track 2 index 1, LBA 214 + pos / 588, relative LBA
 - one `=== CDDA fill` line per flip (7), each with a write; the min /
@@ -1934,31 +1352,17 @@ the `hdd` card's hardfile lines and `cd_cue`'s disc lines, the IDE port
 frame `20 54 07`), no `EXC` / `TRAP`, `kick`, `order`, memhash, every
 MARGIN line with item 9 required (`cdda_load`: also 3), bench `=== PASS`.
 
-The `audio_ring` MEM line is not compared between the CPUs
-(`expected_diff.txt`, from `fdd_rd`). On each CPU, the per-half check
-against the BIN and the zero ring at the end are the ring's content gates.
+The per-half check against the BIN and the zero ring at the end are the
+ring's content gates.
 
 ### Run
 
-Setup as in "Run", "832" and "hdd" (the shell variables of its block).
-From the repository root:
+Setup as in "Run". From the repository root:
 
 ```sh
-CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=ac FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh cdda
-CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=ac_xs1 XRAND=1 XSEED=1 FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh cdda
-CPU=832 E832="$E832" E832DIR="$E832DIR" SIM=verilator RUNTAG=alc FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh cdda_load
-SIM=verilator RUNTAG=a FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh xpair cdda
-SIM=verilator RUNTAG=al FW="$FWD/fwrv/RV32OSDA.BIN" FW832="$FWD/fw832/832OSDAD.BIN" bash sim/l3/run.sh cdda_load
-bash sim/l3/run.sh diff --unused-rules a ac
-bash sim/l3/run.sh diff --unused-rules al alc
-bash sim/l3/run.sh diff --twin ac ac_xs1
+SIM=verilator RUNTAG=a bash sim/l3/run.sh xpair cdda
+SIM=verilator RUNTAG=al bash sim/l3/run.sh cdda_load
 ```
-
-The 832's XRAND twin is a separate run with `XSEED=1`, not `xpair`.
-`xpair`'s default seed (the RUNTAG's `cksum`), and seed 4 as well, leave
-the EightThirtyTwo stopped at reset, with no hw access at all (below,
-XRAND). Its twin is compared normalised (`diff ac ac_xs1`, empty), as in
-`fdd_rd` and `hdd`. The RV pair stays `xpair` (`compare` SAME).
 
 Each run is long, because the board's TIMER rate makes the play last
 1.5 s of simulated time. See "Measured" for the wall times. The data check
@@ -1970,26 +1374,25 @@ python3 -I sim/l3/l3check.py cdda sim/l3/run_a
 
 ### Measured (2026-10-20, SLAT=8 SJIT=0, SCKDLY 1.5 / C28DLY 0.3, TICKDIV 1 then 643)
 
-Runs `p4t17` / `p4t17_xr` (RV `cdda` and its twin), `p4t17c` (832
-`cdda`), `p4t17l` / `p4t17lc` (`cdda_load`); the same `RV32OSDA.BIN` /
-`832OSDAD.BIN` (sha256 0162e53fc0b4ce4d / 768c765d57deb1a0), so the cards
-are byte-identical per scenario. Cycles are `clk_114`, ms at 113.4375 MHz:
+Runs `p4t17` / `p4t17_xr` (`cdda` and its twin) and `p4t17l`
+(`cdda_load`), `RV32OSDA.BIN` sha256 0162e53fc0b4ce4d. Cycles are
+`clk_114`, ms at 113.4375 MHz:
 
-| | RV `cdda` | 832 `cdda` | RV `cdda_load` | 832 `cdda_load` |
-|---|---|---|---|---|
-| `l3check.py cdda` | PASS | PASS | PASS | PASS |
-| PLAY's `run()` (both halves, CLEAR to ENA) | 84.1 ms | 175.3 ms | 84.1 ms | 175.4 ms |
-| refill after a flip, min / median / max (7 fills) | 4.65 / 42.40 / 42.42 ms | 21.73 / 88.15 / 88.16 ms | 4.66 / 42.39 / 42.96 ms | 21.79 / 88.14 / 96.69 ms |
-| RESUME's `run()` | 80.6 ms | 152.2 ms | 80.6 ms | 152.3 ms |
-| main loop while playing: gaps, median / max | 17,163, 0.063 / 42.44 ms | 7,217, 0.119 / 88.18 ms | 15,585, 0.063 / 42.97 ms | 6,342, 0.119 / 95.23 ms |
-| underruns (late halves) / writes into the playing half | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
-| paused at (READ SUB-CHANNEL) / RESUME from | LBA 300 / frame 50,944 | LBA 304 / frame 52,992 | LBA 300 / 50,944 | LBA 304 / 52,992 |
-| the player at the PAUSE | 51,030 frames | 53,051 | 51,029 | 53,051 |
-| READ MULTIPLE 256 (`cdda_load`) | - | - | 11.20 M cycles, = `SYNTH.HDF` | 11.75 M, = `SYNTH.HDF` |
-| item 3 `dmode_release` min | n/a | n/a | 20.8 over 256 | 42.8 over 256 |
-| `OSD EARLY` | 0 of 18,487 | 0 of 7,485 | 0 of 16,996 | 0 of 6,672 |
-| end event (STOP's end) | 337,017,061 | 407,815,893 | 337,077,525 | 407,912,613 |
-| wall time (Verilator) | 2,665 s | 3,269 s | 2,646 s | 3,272 s |
+| | `cdda` | `cdda_load` |
+|---|---|---|
+| `l3check.py cdda` | PASS | PASS |
+| PLAY's `run()` (both halves, CLEAR to ENA) | 84.1 ms | 84.1 ms |
+| refill after a flip, min / median / max (7 fills) | 4.65 / 42.40 / 42.42 ms | 4.66 / 42.39 / 42.96 ms |
+| RESUME's `run()` | 80.6 ms | 80.6 ms |
+| main loop while playing: gaps, median / max | 17,163, 0.063 / 42.44 ms | 15,585, 0.063 / 42.97 ms |
+| underruns (late halves) / writes into the playing half | 0 / 0 | 0 / 0 |
+| paused at (READ SUB-CHANNEL) / RESUME from | LBA 300 / frame 50,944 | LBA 300 / 50,944 |
+| the player at the PAUSE | 51,030 frames | 51,029 |
+| READ MULTIPLE 256 (`cdda_load`) | - | 11.20 M cycles, = `SYNTH.HDF` |
+| item 3 `dmode_release` min | n/a | 20.8 over 256 |
+| `OSD EARLY` | 0 of 18,487 | 0 of 16,996 |
+| end event (STOP's end) | 337,017,061 | 337,077,525 |
+| wall time (Verilator) | 2,665 s | 2,646 s |
 
 A refill is 64 TEST.BIN sectors read through the CPU (`cda_port_read`, 128
 SD blocks for 32 KB) and copied into the ring. The minimum is the last
@@ -1997,45 +1400,18 @@ fill after the RESUME, which lies past the range's end (all zeros, no SD
 read). Each refill blocks the main loop (`cda_poll` runs inside it): the
 longest main-loop gap is one refill, plus a block of the HDF transfer
 under load. The PAUSE comes 4.4 ms after flip 6 and is served after that
-refill, so the RV pauses 2,048 frames (8 TIMER units, = its 46 ms shorter
-refill) earlier than the 832. The position and the RESUME's fill differ
-between the CPUs for that reason; each CPU's are checked against
-TEST.BIN.
+refill, so the paused position is TIMER-quantised and follows the refill
+time; `l3check.py` checks it, and the RESUME's fill, against TEST.BIN.
 
-XRAND: the RV twin `p4t17_xr` (`pinned 8217 regs`) is `compare` SAME with
-`p4t17` (log and 93,557 frames). The 832 twin of the default seed
-(`p4t17c_xr`, seed 931,151,620) never started, with no hw access in 585 M
-cycles, as `fdd_rd`'s `p4t13c_xr`. So did `p4t17c_xs4` (`XSEED=4`,
-`fdd_rd`'s working seed). 832 `boot_short` probes with a 5 M-cycle limit
-(`p4t17seed1`, `2`, `3`, `5`) started with seeds 1, 2 and 5 and stopped
-with 3. The twin is `p4t17c_xs1` (`XSEED=1`): `cdda` PASS with the same
-checks, milestone at 203.7 M (2.0 M later), halves 1..8 byte-identical to
-`p4t17c`'s. It pauses one TIMER unit later (frame 53,248, the same LBA 304:
-the TIMER phase against the run's start moved), so half 9 and two SD
-blocks of the RESUME's fill differ; both lie inside the READ SUB-CHANNEL
-.. ENA block of the Task 17 ruling.
+XRAND: the twin `p4t17_xr` (`pinned 8217 regs`) is `compare` SAME with
+`p4t17` (log and 93,557 frames).
 
-The differential (`run.sh diff p4t17 p4t17c`, `p4t17l p4t17lc`, and the
-832 twins `p4t17c p4t17c_xs1`) is empty. It needs the two Task 17 rulings
-(section "Differential"). Without them it had 10,033 / 9,327 / 438 lines,
-all timing-only:
+`L3_CDDA_TO` = 520,000,000 (`cdda` and `cdda_load`): 1.5 x the estimate
+345 M; the ends came at 337.0 M / 337.1 M.
 
-- `CD_AudioPoll()` reads the CD port's flags on every main-loop pass while
-  the player runs (`ReadIDEFlags()`, `10 81` and nine 00): the RV makes
-  17,174 such frames, the 832 7,228. They are now dropped as repeats
-  (`flagpoll` 17,158 / 7,212), on the finished stream, so a hw write or
-  UART line between two polls keeps the second.
-- The paused position (above), now the `DROPBLOCK` from READ SUB-CHANNEL
-  to the RESUME's ENA.
-
-`--unused-rules` lists only the other scenarios' rules (Task 19's
-clean-up). The `cd` and `hdd` pairs stay empty, and their normalised
-streams are byte-identical with and without the flag poll drop.
-
-The underrun gate is weak: 0 on both CPUs. The 256-sector READ MULTIPLE
-never blocks the 832's main loop for a whole half (its longest gap is
-95 ms against the half's 186 ms), so the scenario cannot separate the CPUs
-there. Plan 1.2's > 150 ms foreground job would need a longer transfer.
+The underrun gate is weak: 0 underruns. With the 256-sector READ MULTIPLE
+the longest main-loop gap is 43 ms, against the half's 186 ms, so plan
+1.2's > 150 ms foreground job would need a longer transfer.
 
 ### Slow host (`+IDE_HOST_DELAY`, the board deadlock of 2026-10-20)
 
@@ -2060,11 +1436,11 @@ firmware polls, so the loop runs. With the old poll the loop's
 port 2: the run shows the board's signature, `10 00` (status `10`, no
 IDECMD) and `10 81` alternating after the second block's status write,
 and the Amiga's second block never comes. The fix (`CD_AudioRefill` in
-the transfer loops, no flags read; `fw/ctrl_rv/cdrom.h`) leaves the port
+the transfer loops, no flags read; `fw/ctrl/cdrom.h`) leaves the port
 alone.
 
 ```sh
-SIM=verilator RUNTAG=cdf_new XARGS="+IDE_HOST_DELAY=2000000" FW="$FWD/fwrv/RV32OSDA.BIN" bash sim/l3/run.sh cdda_load
+SIM=verilator RUNTAG=cdf_new XARGS="+IDE_HOST_DELAY=2000000" bash sim/l3/run.sh cdda_load
 ```
 
 Measured 2026-10-20 (Verilator, SLAT 8, `+IDE_HOST_DELAY=2000000`; runs
@@ -2081,7 +1457,7 @@ Measured 2026-10-20 (Verilator, SLAT 8, `+IDE_HOST_DELAY=2000000`; runs
 
 `akiko` exercises the host's Akiko request service, the legacy interrupt
 path (plan 7.1 item 13). In this build the host side of Akiko is a logging
-stub: `akiko_inthandler()` (`fw/ctrl_rv/akiko.c`, the 832's the same) reads
+stub: `akiko_inthandler()` (`fw/ctrl/akiko.c`) reads
 cfide's ADDR and DATA registers (`0xFFFFFF80`, `0xFFFFFF84`), prints
 "Akiko write: <addr>, <data>" or "Akiko read: <addr>" (hex), and writes
 DATA = 0, which is the ack (`amiga_ack`, one `clk_28` cycle, and `amiga_q`
@@ -2105,9 +1481,8 @@ Scenario: the `fdd` card (as `fdd_rd`), TICKDIV 643 from the main-loop
 milestone. Block 0 runs at the 20th HandleFpga frame after the milestone
 (`AKIKO_PASSES`), in the idle main loop, after the main loop's first passes
 (the first drive status, OsdHide): during the ISR's UART-bound burst the
-RV's main loop does not advance while the 832's runs a few passes, so a
-block 0 at the milestone put those first frames inside the burst on the 832
-only (Task 19). When it is done the key script `keys/insert_df0.txt`
+main loop does not advance, so block 0 is kept clear of those first frames
+(Task 19). When it is done the key script `keys/insert_df0.txt`
 starts, then `bfm_floppy.v` reads 2 tracks (cylinders 0 and 1, head 0;
 `AKIKO_TRACKS` in `scenarios.vh`), and block 1 starts at the first track
 DMA's DSKLEN write. The end event is the first HandleFpga frame after block
@@ -2117,8 +1492,7 @@ so no frame is in flight when the run ends.
 `l3check.py akiko <run>` checks: the 128 requests in order, none lost or
 repeated (the log's `=== AKIKO req` lines), each with the bench's pattern
 (recomputed in Python) and acked; every read answered 0; the UART lines
-equal to the pattern (upper-case hex on both CPUs: lib832's `%x` prints
-A-F in upper case); exactly 128 DATA writes of 0 in `hw.txt`; block 1's
+equal to the pattern (upper-case hex, `%X`); exactly 128 DATA writes of 0 in `hw.txt`; block 1's
 first request and at least 16 of its requests inside the DMA; both track
 dumps decode to `TEST.ADF`; the OSD pages of `fdd_rd` (no error page); and
 prints the latency table (min / median / max of `amiga_req` to `amiga_ack`,
@@ -2131,23 +1505,187 @@ with their own `BAD` line.
 
 Run (from the repository root; toolchain and packages as in "Run"):
 
-```
-CPU=832 SIM=verilator RUNTAG=p4t18c3 bash sim/l3/run.sh akiko
-CPU=rv  SIM=verilator RUNTAG=p4t18   bash sim/l3/run.sh akiko
-bash sim/l3/run.sh diff --unused-rules p4t18 p4t18c3
+```sh
+SIM=verilator RUNTAG=p4t18 bash sim/l3/run.sh akiko
 ```
 
-with `FW=` and `FW832=` the same images for both (section "Differential")
-and `E832`, `E832DIR` for the 832. `RUNTAG=... XRAND=1` is the twin.
-Verilator wall time 2,611 s (RV, 259.9 M cycles) and 4,133 s (832, 311.6 M
-cycles) on a loaded machine. The MARGIN 6 monitor stays required: the ISR's
-UART prints stall the main loop, and the floppy FIFO never ran empty (0
-slots, fifo min 995 words RV, 981 words 832).
+`XRAND=1` with another `RUNTAG` is the twin (or `run.sh xpair akiko`).
+Verilator wall time 2,611 s (259.9 M cycles) on a loaded machine.
+`L3_AKIKO_TO` = 520,000,000. The MARGIN 6 monitor stays required: the
+ISR's UART prints stall the main loop, and the floppy FIFO never ran empty
+(0 slots, fifo min 995 words).
 
-The diff of the two runs is empty with the rules of the other scenarios
-(no rule of its own): runs `p4t19ak_rv_akiko` / `p4t19ak_832_akiko`
-(Task 19). Before that scenario change it had 3 timing hunks (Task 18's lane
-had 6), `findings/osd-riscv/phase4.md` Task 18.
+## sdc
+
+The SD card engine (`findings/sdcard-engine/design.md`): `sdcard_spi` on
+cfide's ext port with the card model on its pins, `sdcard_gayle` + the mux
+between paula_floppy and gayle (`tb_l3.v` `SD_ENGINE`, wired as
+`minimig_virtual_top` / `minimig.v` with `SD_ENGINE = 1`). The boot ROM
+(since plan Task 12) and the firmware (since Task 10) reach the card only
+through it, so on this tree the scenarios without the engine stop in the
+ROM's `SD init` (VERSION 0): `sdc_boot`, `sdc_boot_short` and `sdc_hdd` are
+`boot`, `boot_short` and `hdd` on the engine, the full-system test of the
+lock-step pair (the committed boot ROM and `RV32OSDB.BIN` from the same
+tree, with its `SDCV` trailer; the name is `fw/ctrl/fwname.mk`'s since Task
+13b, the ROM's line `file "RV32OSDBBIN" found`).
+
+| run.sh | bench `+SCENARIO` | card | timeout (`clk_114`) |
+|---|---|---|---|
+| `sdc_boot` | `boot` (+`SD_LOG=1`) | `boot` | `L3_SDC_BOOT_TO` 197,700,000 |
+| `sdc_boot_short` | `boot_short` (the xsim cross-check; no `SD_LOG`: the model's log lines differ in a space between the simulators) | `boot` | `L3_SDC_SHORT_TO` 42,000,000 |
+| `sdc_hdd` | `hdd` (+`SD_LOG=1`) | `hdd` | `L3_SDC_HDD_TO` 248,600,000 |
+
+`SD_ENGINE` is always 1 there (`SD_ENGINE=0` is refused). The card model
+checks CRCs once the firmware sends CMD59 (both the ROM and the firmware
+do), and answers CMD10 with a CID (`tools/sim/README.md`). Checks: the
+base scenario's (milestones, kick, order, mmc for `sdc_boot`, `l3check.py
+hdd` for `sdc_hdd`, memhash, the MARGIN lines, the bench verdict) with
+
+- `milestones_boot.txt`'s `SDE=1` lines instead of its `SDE=0` ones (`run.sh
+  milestones`; until the Task 13 fix round the filter dropped every `SDE=`
+  line, of both values, so these were not checked in the first runs): the
+  ROM's `SD init: VERSION ...`, `CMD0 01` ... `CMD59 00`, `SD card: SDHC`,
+  the lock-step line `Firmware SDC <v>, bitstream SDC <v>`; the firmware's
+  `sd_init` lines (`ACMD41 00, 3 polls`, `OCR c0ff8000, type 3`, `CMD59
+  00`, `SCK div 2`)
+- MARGIN item 3 not required (`MARGIN_REQ_sdc_hdd` = boot's): there is no
+  direct-mode transfer
+- `run.sh sdc_check`:
+  - lock-step: `fw/ctrl/sdc.h`'s `SDC_VERSION` is the firmware file's
+    trailer (`SDCV 00 00 <v>`), the VERSION the ROM read (`SD init: VERSION
+    <v>, card 1`) and both sides of `Firmware SDC <v>, bitstream SDC <v>`
+  - no frame with `sd_cs[1]` low in `spi.txt` and item 3 without events:
+    the card is not on cfide's SPI
+  - `=== SPI SCK period after the firmware's start (no RTC frame): min <a>
+    max <b> clk_114 over <n> bits` (`tb_l3.v`): `b` at most 6, cfide's
+    `SPI_fast` (Task 13 finding, below)
+  - the SD error lines on the UART (each UART line also cut at the
+    firmware's `\r`): the ROM's `SD CMD<n>: R1 ..., try <t>` and `SD read
+    <lba>: <what> <v>, try <t>`, the firmware's `SD: ...` lines (the retry
+    table's `SD: <row>, row <r>, retry <k> of <n>, lba <l>`, `retries out`,
+    `op failed`, `CMD13 probe`, `SCK one step slower`), `SD init: CMD10 /
+    CMD9 <err>`, `card changed`, `CID unreadable`: none unless `XARGS`
+    injects (`+SD_ERR_`); with an injection the leg says which retry it
+    must give: exactly `EXPECT_RETRY_N` (default 1) retry lines (the
+    firmware's row lines and the ROM's `try` lines together), all matching
+    the ERE `EXPECT_RETRY` (required with an injection), and no `retries
+    out`, `op failed`, `CMD13 probe`, `card changed`, `CID unreadable`
+  - `=== SDC gayle to_gayle <n> ops <w> words, from_gayle <n> ops <w>
+    words, g_err <e>, ended by g_ack <a>; irq rises <i>` (`tb_l3.v`): no
+    `g_err`; `sdc_hdd`: to_gayle 69,376 words (271 sectors: the plan reads
+    274, three of them built by the CPU: the FakeRDB RDSK and PART and
+    RDB.HDF's patched block 0) and from_gayle 24,576 (96 sectors), so every
+    card sector the plan moves passes the bridge (READ / READ MULTIPLE
+    to_gayle, WRITE / WRITE MULTIPLE from_gayle with the 68k as PIO master);
+    `sdc_boot`: no Gayle op
+
+Error injection: the model's `+SD_ERR_<kind>=n` (`tools/sim/README.md`)
+counts from time 0, so `XARGS=+SD_ERR_RDCRC=3` hits the boot ROM's third
+block (the directory sector). `XARGS="+SD_ERR_AT=scenario ..."` (`tb_l3.v`)
+holds the injection off until the main-loop milestone and counts n from
+there (`=== SD_ERR armed at the scenario start ...` gives the absolute
+numbers): `+SD_ERR_RDCRC=70` hits a block of command 5 (READ MULTIPLE),
+`+SD_ERR_WRREJ=67` the third block of command 8's first CMD25 (WRITE
+MULTIPLE). The legs and their expected retry line:
+
+| Leg | `XARGS` | `EXPECT_RETRY` (exactly one) |
+|---|---|---|
+| the ROM's read retry | `+SD_ERR_RDCRC=3` | `^SD read [0-9]+: CRC [0-9A-F]{2}, try 1$` |
+| the firmware's read retry (row 1) | `+SD_ERR_AT=scenario +SD_ERR_RDCRC=70` | `^SD: read CRC, row 1, retry 1 of 4, lba [0-9]+$` |
+| the firmware's write resend (row 2) | `+SD_ERR_AT=scenario +SD_ERR_WRREJ=67` | `^SD: write CRC \(0B\), row 2, retry 1 of 4, lba [0-9]+$` |
+
+### Run
+
+Setup as in "Run". From the repository root, one at a time. Every run
+needs a RUNTAG of its own that no earlier run used (`<t>` below: put a new
+tag for each line, e.g. the date and a letter; a reused run directory is
+deleted and its results can be mistaken for the new ones). `BUILD_FROM`
+takes the simulator of the second line's run (`<t2>`):
+
+```sh
+SIM=verilator RUNTAG=<t1> bash sim/l3/run.sh sdc_boot
+SIM=verilator RUNTAG=<t2> bash sim/l3/run.sh sdc_hdd
+SIM=verilator RUNTAG=<t3> BUILD_FROM=<t2> XARGS=+SD_ERR_RDCRC=3 \
+  EXPECT_RETRY='^SD read [0-9]+: CRC [0-9A-F]{2}, try 1$' bash sim/l3/run.sh sdc_hdd
+SIM=verilator RUNTAG=<t4> BUILD_FROM=<t2> XARGS="+SD_ERR_AT=scenario +SD_ERR_RDCRC=70" \
+  EXPECT_RETRY='^SD: read CRC, row 1, retry 1 of 4, lba [0-9]+$' bash sim/l3/run.sh sdc_hdd
+SIM=verilator RUNTAG=<t5> BUILD_FROM=<t2> XARGS="+SD_ERR_AT=scenario +SD_ERR_WRREJ=67" \
+  EXPECT_RETRY='^SD: write CRC \(0B\), row 2, retry 1 of 4, lba [0-9]+$' bash sim/l3/run.sh sdc_hdd
+SIM=verilator RUNTAG=<t6> BUILD_FROM=<t2> bash sim/l3/run.sh sdc_boot_short
+RUNTAG=<t7> bash sim/l3/run.sh sdc_boot_short
+bash sim/l3/run.sh compare <t7> <t6>
+```
+
+(`sdc_boot_short` under xsim: 677 s; Verilator 139 s.)
+
+### Measured (2026-10-25, SLAT=8 SJIT=0, SCKDLY 1.5 / C28DLY 0.3, TICKDIV 1)
+
+| Event | `sdc_boot` (`sdcb`) | `sdc_hdd` (`sdch`) | `boot` / `hdd` on cfide's SPI (2026-10-19, before Tasks 10-12) |
+|---|---|---|---|
+| the ROM jumps to the firmware (first read of 0x2000) | 12,124,992 | 12,124,992 | 43,190,675 |
+| the Amiga released after the kickstart upload | 130,496,541 | 129,923,501 | 156,968,829 |
+| main-loop milestone (first HandleFpga frame) | 131,554,090 | 130,980,654 | 158,044,038 / 157,326,780 |
+| end event | 131,750,230 | 165,090,989 | 158,155,012 / 187,958,349 |
+| wall time (Verilator, alone on the machine) | 538 s | 689 s | 412 s / 2,289 s (3 to 5 runs) |
+
+`sdc_boot_short` (`sdcs`) ends at 27,971,124 (139 s); the timeouts are 1.5 x
+these ends (`sdc_hdd`'s with the write retry of `sdch_wrrej`, 165,702,565).
+The kickstart upload (1,024 sectors read one at a time into SDRAM) takes
+107 M cycles from the first CPU reset to the release, about 105 k a sector.
+
+`sdc_hdd` per command (`clk_114`; waits = interrupt / poll / nrdy, min /
+median / max; the command's cycles), against `hdd`'s on cfide's direct
+mode (`p4t15f`, section "hdd"):
+
+| # | Command | waits | min / median / max | cycles | cfide (`p4t15f`) cycles |
+|---|---|---|---|---|---|
+| 1 | IDENTIFY | 1 / 0 / 0 | 66,720 / 66,720 / 66,720 | 75,280 | 69,024 |
+| 2 | READ 2 (RDB) | 2 / 0 / 0 | 64,160 / 64,160 / 81,584 | 162,544 | 138,288 |
+| 3 | READ 64 | 64 / 0 / 0 | 72,432 / 72,608 / 173,696 | 5,280,704 | 3,673,088 |
+| 4 | SET MULTIPLE 16 | 1 / 0 / 0 | 219,984 | 220,352 | 210,768 |
+| 5 | READ MULTIPLE 64 | 4 / 0 / 60 | 25,504 / 29,728 / 162,208 | 2,868,976 | 2,840,912 |
+| 6 | READ MULTIPLE 32 | 2 / 0 / 30 | 25,904 / 29,728 / 106,912 | 1,421,648 | 1,399,872 |
+| 7 | WRITE 64 | 64 / 1 / 0 | 33,504 / 96,720 / 191,760 | 6,589,488 | 6,666,752 |
+| 8 | WRITE MULTIPLE 32 | 2 / 1 / 0 | 15,168 / 964,432 / 973,248 | 2,084,368 | 3,148,512 |
+| 9 | READ 64 (back) | 64 / 0 / 0 | 72,576 / 72,592 / 100,496 | 5,207,136 | 3,674,816 |
+| 10 | READ MULTIPLE 32 (back) | 2 / 0 / 30 | 25,904 / 29,728 / 91,584 | 1,406,320 | 1,389,776 |
+| 11 | SET MULTIPLE 16 (master) | 1 / 0 / 0 | 232,848 | 233,216 | 218,240 |
+| 12 | READ MULTIPLE 16 (RDB.HDF) | 1 / 0 / 15 | 29,584 / 29,648 / 146,048 | 848,976 | 826,368 |
+
+The bridge moves a READ MULTIPLE block's words as the 68k reads them
+(`nrdy` waits of one sector, 26 to 30 k, instead of one per word); a
+single-sector READ costs 72.6 k (median) against 48.9 k on direct mode, a
+WRITE MULTIPLE group of 16 0.96 M against 1.5 M. These are simulation
+figures of the card model (`SD_TOKEN_DLY` 4, `SD_BUSY` 8): the board's
+card latency decides (plan Task 14).
+
+Injection legs (`sdc_hdd`, all PASS with the same data checks):
+
+| RUNTAG | XARGS | Where it hit | UART | Then |
+|---|---|---|---|---|
+| `sdch_rdcrc3` | `+SD_ERR_RDCRC=3` | the boot ROM's directory sector, LBA 2120 | `SD read 2120: CRC 08, try 1` | the ROM read it again; boot, lock-step and every check as `sdch` |
+| `sdch_rdfw` | `+SD_ERR_AT=scenario +SD_ERR_RDCRC=70` | block 1,603: command 5 (READ MULTIPLE), LBA 11,011 in a CMD18 from 11,008 | `SD: read CRC, row 1, retry 1 of 4, lba 11011` | CMD12, CMD18 from 11,011 (the failed block); the 64 sectors right |
+| `sdch_wrrej` | `+SD_ERR_AT=scenario +SD_ERR_WRREJ=67` | written block 67: command 8 (WRITE MULTIPLE), LBA 5,850, the third block of the CMD25 from 5,848 | `SD: write CRC (0B), row 2, retry 1 of 4, lba 5850` | stop token, ACMD22, CMD25 from 5,850 (TX_REWIND); the card image right |
+
+### Found by these runs (Task 13)
+
+- **cfide's SPI ran at the boot ROM's slow setting until the main loop.**
+  The ROM sets `SPI_slow` (0xef, about 960 `clk_114` a bit) for its own
+  frames; before Task 12 its card init and the firmware's `MMC_Init` (the
+  card on that SPI) set it fast again. On the engine neither touches it,
+  so every OSD / FPGA / floppy frame of the firmware ran at the ROM's speed
+  until the first `HandleRTC` (the version frame 54,374 `clk_114` instead
+  of 1,026, first run `t13x1`; its OSD GAP fell to 28, a bench error).
+  Fixed in the firmware (`fw/ctrl/main.c`: `SPI_fast()` at the start of
+  `main()`); the SCK monitor and `sdc_check` hold it.
+- **The L3 xsim build had failed since Phase 4 Task 14:** `bfm_floppy.v`
+  set `data_cpu` in an `initial` block above its declaration (xvlog
+  VRFC 10-3380; Verilator accepts it). It now gets its 0 at the
+  declaration, so `SIM=xsim` builds again (`sdcsx`).
+- **The main loop's first pass reads the FPGA before the RTC** since Task
+  11a (`PollDisks()` -> `HandleFpga()`, then `HandleRTC()`):
+  `milestones_boot.txt` has the first HandleFpga frame before the RTC
+  frame and 20 more after it.
 
 ## Monitors
 
@@ -2204,7 +1742,7 @@ Times are taken at the slave pins: an `sck` edge reaches the slaves
 |---|---|---|---|---|
 | 1 | `stale_acks` | hostmon's stale-ack count (an ack no `clk_28` edge saw the request for) | 0 | 0 of 1,685,611 hw accesses |
 | 3 | `dmode_release` | a direct-mode transfer (`sd_cs[6]` low): its last (4096th) `sck` rising edge at paula to `direct_scs` released (`sd_cs[6]` rising), `clk_114` | 0 | n/a (`boot` has no direct transfer); 108.8 ok in the probe run below |
-| 3 | `dmode_L` | the RDSPI ack (a DATA read acked while `sd_cs[6]` is low) to the DisableDMode request (CS write 41), `clk_114`: `sim/spi_cdc/host832/tb_832_dmode.v`'s `L` | 0, `rec` | n/a; 6.0 rec in the probe run |
+| 3 | `dmode_L` | the RDSPI ack (a DATA read acked while `sd_cs[6]` is low) to the DisableDMode request (CS write 41), `clk_114` | 0, `rec` | n/a; 6.0 rec in the probe run |
 | 4 | `paula_cs_release`, `userio_cs_release` | per slave (`sd_cs[4]` paula, `sd_cs[5]` userio_osd): the last `sck` rising edge of a frame at the slave to its select rising, `clk_114` | 0 (derived below) | 10.8 over 41 frames; 10.8 over 72 frames |
 | 4 | `paula_word_spacing`, `userio_byte_spacing` | the last edge of one received word (paula, 16 bits, `sd_cs[4]` or `[6]`) / byte (userio, 8) to the last edge of the next, `clk_114` | 40 (derived below) | 117.0 over 82 words; 57.0 over 129 bytes |
 | 5 | `spi_write_busy` | SPI DATA writes acknowledged without starting a transfer of their own (no `SD_busy` rise from the request to the cycle after its ack): taken while the shifter was busy | 0 | 0 of 829,924 |
@@ -2276,7 +1814,7 @@ case below.
 
 ### Item 12: the RTC
 
-`fw/ctrl_rv/rtc.c` does not name its part. The board's RTC is the NXP
+`fw/ctrl/rtc.c` does not name its part. The board's RTC is the NXP
 PCF2123 (plan 7.1 item 12, `doc/hardware.md`, `rtl/openaars/pcf2123`).
 `rtc.c` sends `0x92` = read, subaddress 001, register 2 (Seconds), then
 reads Seconds, Minutes, Hours, Days, Weekdays, Months, Years. Its comment
@@ -2309,8 +1847,8 @@ PCF2123 is read by `rtl/openaars/pcf2123/rtc_spi_clock.sv` on its own pins
 
 Each monitor was shown to fail, in a run copy of the bench (sim/l3 copied
 elsewhere with `ROOT` pointed back at the tree), with a plusarg, or offline
-on a copy of a log. The "probe" firmware is `fw/ctrl_rv` built with one
-bench-only constructor linked in (`make -C fw/ctrl_rv EXTRA_OBJS=probe.o`,
+on a copy of a log. The "probe" firmware is `fw/ctrl` built with one
+bench-only constructor linked in (`make -C fw/ctrl EXTRA_OBJS=probe.o`,
 as `sim/host_bridge/fwboot/smoke_trap.c`). It runs before `main`: two SPI
 DATA writes back to back with no read-back, one paula frame (`10`, two
 bytes), then `MMC_Init()` and `MMC_Read(0, 0)` (one direct-mode sector).
@@ -2324,7 +1862,7 @@ counts.
 
 | Item | Red case | RUNTAG | Result | Green |
 |---|---|---|---|---|
-| 1 | run copy: `832_bridge.vhd`'s `-- 4PHASE` line becomes `state <= waiting;` and `rv_hostcpu.v` gets the fast master (both exactly as `sim/host_bridge/run.sh` `mutant`'s gate leg), `boot_short`, `TIMEOUT=10000000` | p4t5r1e | `stale_acks min 1184 count (bound 0, LOW)` | p4t5e: 0 |
+| 1 | run copy: `host_bridge.vhd`'s `-- 4PHASE` line becomes `state <= waiting;` and `rv_hostcpu.v` gets the fast master (both exactly as `sim/host_bridge/run.sh` `mutant`'s gate leg), `boot_short`, `TIMEOUT=10000000` | p4t5r1e | `stale_acks min 1184 count (bound 0, LOW)` | p4t5e: 0 |
 | 3, 4 | probe v2, `XARGS=+SCKDLY=1000` (the slaves see `sck` 1 us late) | p4t5r34e | `dmode_release min -4.4 LOW`, `paula_cs_release min -87.4 LOW`, `userio_cs_release min -102.4 LOW` | probe v2 without the plusarg, p4t5p35e: 108.8 / 25.8 / 10.8 ok, `dmode_L` 6.0 rec |
 | 4 spacing | probe v3 (SPI speed 0: 2 `clk_114` per bit) | p4t5r4se | `userio_byte_spacing min 24.0 (bound 40, LOW)`; `paula_word_spacing` 48.0 stays ok (16 bits cannot come closer than 32 plus the access) | p4t5e: 57.0 / 117.0 |
 | 5 | run copy: cfide's support state machine acknowledges an SPI write while `SD_busy` (`IF SD_busy = '0' or wr = '1' THEN`), probe v1 (v2 without the paula frame) | p4t5r5e | `spi_write_busy min 92934 count (bound 0, LOW)`, from the boot ROM on | p4t5p35e: 0 (the probe's second write is held) |
@@ -2346,46 +1884,41 @@ SIM=verilator RUNTAG=rtcred TIMEOUT=300000000 XARGS="+BOOT_END=rtc2 +RTC_CSH_MIN
 `grid.sh` runs a list of `run.sh` runs (Phase 4 Task 19: plan 7.2's
 timing-stress mode), at most `MAXSIM` (6) simulations on the machine at once
 and one Verilator build per build configuration. From the repository root,
-after the "Run" and "832" setup (in a worktree `E832DIR` = the main
-checkout's `EightThirtyTwo`):
+after the "Run" setup:
 
 ```sh
-export E832DIR=$PWD/EightThirtyTwo
-export E832=$E832DIR/RTL
 LIST=1 bash sim/l3/grid.sh p4g
 nohup bash sim/l3/grid.sh p4g > sim/l3/grid_p4g.out 2>&1 &
 python3 -I sim/l3/margins.py sim/l3/run_p4g_*
 ```
 
-The first line prints the run list only. The grid (60 runs) took 19.2
-hours on a 4-core, 8-thread machine (Task 19, with Vivado builds and the
-teeth on the same slots), so it runs in the background; do not edit
+The first line prints the run list only. The grid of Task 19 (60 runs,
+the RV's 46 of the default list below and the retired 832's 14) took 19.2
+hours on a 4-core, 8-thread machine (with Vivado builds and the teeth on
+the same slots), so it runs in the background; do not edit
 `grid.sh` or the bench while it runs (bash reads a running script as it
 goes, and the bench files are build inputs); its runs are
-`sim/l3/run_p4g_<cpu>_<name>`, each with `run.out` (run.sh's output), and
+`sim/l3/run_p4g_<name>`, each with `run.out` (run.sh's output), and
 `sim/l3/grid_p4g.txt` lists every run with its verdict, wall time,
-simulated seconds and cycles as it ends. Every run takes the same two
-firmware images, so each RV / 832 pair boots the same card and `run.sh
-diff` compares them. Without `FW` / `FW832`, `grid.sh` builds both from
-the tree at its start, as `run.sh` does (about 2 minutes: `fw/ctrl_rv`
-under the `L3_DATE` date shim, `fw/ctrl_832` through `sim/l3/fw832` with
-`E832DIR`), into `sim/l3/run_<tag>_fw/fwrv` and `sim/l3/run_<tag>_fw/fw832`,
-and refuses to start if that directory exists. To reuse images, pass both
-paths: `FW=<RV32OSDA.BIN> FW832=<832OSDAD.BIN> bash sim/l3/grid.sh <tag>`.
-`grid_<tag>.txt` names each image, whether it was built or given, and its
-sha256 (the Phase 4 tree builds `RV32OSDA.BIN` 17bf2563... and
-`832OSDAD.BIN` 768c765d..., the images of Task 19's `p4g`).
+simulated seconds and cycles as it ends. Every run takes the same
+firmware image. Without `FW`, `grid.sh` builds it from the tree at its
+start, as `run.sh` does (`fw/ctrl` under the `L3_DATE` date shim), into
+`sim/l3/run_<tag>_fw/fwrv`, and refuses to start if that directory
+exists. To reuse an image, pass its path: `FW=<image> bash
+sim/l3/grid.sh <tag>`. `grid_<tag>.txt` names the image, whether it was
+built or given, and its sha256 (the Phase 4 tree built `RV32OSDA.BIN`
+17bf2563..., the image of Task 19's `p4g`; Task 19's run directories are
+named `run_p4g_<cpu>_<name>`, from before the CPU column was dropped).
 
 The default list (`grid.sh` `default_list`):
 
-| Phase | CPU | Grid point | Scenarios |
-|---|---|---|---|
-| 1 | both | default (`EXTRA_WS` 0, SCKDLY 1.5 / C28DLY 0.3, SLAT 8, SJIT 0) | `boot`, `keys`, `fdd_rd`, `fdd_wr`, `hdd`, `cd` (cue), `cd` (`CDCFG=iso`), `cdda`, `cdda_load`, `akiko` |
-| 2 | RV | `EXTRA_WS` 4, 16, 64 | `boot`, `fdd_rd`, `fdd_wr`, `hdd`, `cdda` |
-| 2 | RV | skew (0.5, 0.2), (0.2, 0.5), (4.0, 0.3), (0.3, 4.0), (9.5, 0.3) (`XARGS="+SCKDLY=<a> +C28DLY=<b>"`) | `fdd_rd`, `hdd`, `keys` |
-| 2 | RV | `+FAST_HW=1` | `boot`, `hdd`, `cd`, `keys` |
-| 2 | RV | `SJIT=8` | `hdd`, `cdda` |
-| 2 | 832 | skew (0.3, 4.0), (9.5, 0.3) | `fdd_rd`, `hdd` |
+| Phase | Grid point | Scenarios |
+|---|---|---|
+| 1 | default (`EXTRA_WS` 0, SCKDLY 1.5 / C28DLY 0.3, SLAT 8, SJIT 0) | `boot`, `keys`, `fdd_rd`, `fdd_wr`, `hdd`, `cd` (cue), `cd` (`CDCFG=iso`), `cdda`, `cdda_load`, `akiko` |
+| 2 | `EXTRA_WS` 4, 16, 64 | `boot`, `fdd_rd`, `fdd_wr`, `hdd`, `cdda` |
+| 2 | skew (0.5, 0.2), (0.2, 0.5), (4.0, 0.3), (0.3, 4.0), (9.5, 0.3) (`XARGS="+SCKDLY=<a> +C28DLY=<b>"`) | `fdd_rd`, `hdd`, `keys` |
+| 2 | `+FAST_HW=1` | `boot`, `hdd`, `cd`, `keys` |
+| 2 | `SJIT=8` | `hdd`, `cdda` |
 
 A phase-2 run starts when every phase-1 run has started. `EXTRA_WS` n
 (and `SJIT` 8) runs get `TIMEOUT` = run.sh's default plus n (8) x the
@@ -2396,7 +1929,7 @@ Slots: a run starts only while fewer than `MAXSIM` simulations run on the
 machine (every `sim/l3/run.sh` of any lane, a build included, and every
 other `Vtb*`); while Vivado runs the cap is `VIVADO_CAP` (2) and the grid's
 own simulators beyond it are stopped (`SIGSTOP`) until Vivado ends.
-Builds: the first run of a configuration (CPU, `EXTRA_WS`, `XRAND`,
+Builds: the first run of a configuration (`EXTRA_WS`, `XRAND`,
 `PATCH`, `RDY_MUT`, `PAULA_TXPOP`) builds; the others start when its
 `buildkey_<snapshot>` is there and run with `BUILD_FROM=<its RUNTAG>`, which
 copies its simulator when the build keys (a sha256 of every build input)
@@ -2404,14 +1937,14 @@ are equal and builds otherwise. So a bench file edited while a grid runs
 gives the later runs their own build (and their `results.txt` says so):
 do not edit the bench under a running grid. A list file
 (`bash sim/l3/grid.sh <tag> <list>`) has one run per line,
-`<phase> <name> <cpu> <scenario> [VAR=value ...]` (`sim/l3/teeth/teeth.list`
-is one).
+`<phase> <name> <scenario> [VAR=value ...]` (`sim/l3/teeth/teeth.list`
+is one); its runs are `run_<tag>_<name>`.
 
 `margins.py <run dirs>` prints the margin table: one row per measurement
 of plan 7.1 (the `=== MARGIN` lines, `OSD GAP` / `OSD EARLY` for item 2,
 the floppy FIFO's lowest fill and the write FIFO's word gap, the CD-DA
 underruns and longest fill, the Akiko request latency, the `keys` check),
-one column per CPU and grid point, each cell the worst value over that
+one column per grid point, each cell the worst value over that
 point's runs with its verdict and scenario; `--long` adds one line per run
 and measurement. A run that has no verdict yet or ended at its `TIMEOUT`
 is listed as incomplete and left out.
@@ -2426,7 +1959,6 @@ changed line (with an empty sed it reproduces the tree's image):
 bash sim/l3/teeth/fwmut.sh sim/l3/run_p4t19fwc fdd.c '0,/i = DATA_SIZE \/ 2;/s//i = DATA_SIZE \/ 2 - 1;/'
 bash sim/l3/teeth/fwmut.sh sim/l3/run_p4t19fwf cdaudio.c 's/^\tcda\.cursor += CDA_HALF_FRAMES;$/\tcda.cursor += CDA_HALF_FRAMES - 1;/'
 nohup bash sim/l3/grid.sh p4t19 sim/l3/teeth/teeth.list > sim/l3/grid_p4t19.out 2>&1 &
-bash sim/l3/teeth/sdbyte.sh p4g_rv_def_hdd p4g_832_def_hdd sim/l3/run_p4t19tg
 ```
 
 | Tooth | How | Must fail on |
@@ -2437,10 +1969,11 @@ bash sim/l3/teeth/sdbyte.sh p4g_rv_def_hdd p4g_832_def_hdd sim/l3/run_p4t19tg
 | (d) | `RDY_MUT=1` (cfide's `osd_rdy` forced 1), `+FAST_HW=1` (Task 12's run `p4t12m1c`, section "keys") | `OSD EARLY` |
 | (e) | `teeth/gayle_shared.sh`: `GAYLE_MUT_SHARED` in `gayle.v` | `cdda_load` (`hdd` uses gayle port 0 only, both units on it, so the shared register file does not show there: the brief's `hdd` run passes) |
 | (f) | `fwmut.sh` on `cdaudio.c`: the cursor one frame short per half | `cdda` data check |
-| (g) | `teeth/sdbyte.sh`: one SD data byte changed in the 832 run's `spi.txt` | `spitrace.py diff` not empty |
 | (h) | the RV image before the write-FIFO fix (`run_fw12/fwrv/RV32OSDA.BIN`, 0162e53f) | `fdd_wr`: item 7's word-gap monitor |
 
-The results are in `findings/osd-riscv/phase4.md` "Teeth".
+The results are in `findings/osd-riscv/phase4.md` "Teeth" (with tooth
+(g), an SD data byte changed in a trace, which tested the RV-vs-832
+differential and went with it).
 
 ## Cards
 
@@ -2457,19 +1990,17 @@ Setup on a fresh Ubuntu 24.04, bash or zsh, from the repository root:
 sudo apt install build-essential make git curl python3 mtools dosfstools fdisk xorriso ghdl verilator ccache iverilog
 bash tools/riscv/fetch-xpack.sh
 bash tools/riscv/check-toolchain.sh
-make -C fw/ctrl_rv
+make -C fw/ctrl
 ```
 
-The cards need `fw/ctrl_rv/build/RV32OSDA.BIN` (the last line) and,
-for the 832 twin, `832OSDAD.BIN` (`make -C sim/l3/fw832`, section "832").
-Without `FW832` a deterministic 84 KB stand-in takes its place.
+The cards need `fw/ctrl/build/RV32OSDB.BIN` (the last line).
 
 Build the cards and run the proof (one minute; output in
 `sim/l3/card/build/`, `B=<dir>` puts it elsewhere):
 
 ```sh
-make -C sim/l3/card cards FWRV=fw/ctrl_rv/build/RV32OSDA.BIN
-make -C sim/l3/card check FWRV=fw/ctrl_rv/build/RV32OSDA.BIN
+make -C sim/l3/card cards FWRV=fw/ctrl/build/RV32OSDB.BIN
+make -C sim/l3/card check FWRV=fw/ctrl/build/RV32OSDB.BIN
 ```
 
 `check` builds every card twice, two seconds apart, in two directories and
@@ -2477,25 +2008,25 @@ compares the bytes; runs `fsck.fat -n` on each image; lists each root
 directory with `mdir` against the names the card should hold; reads the config
 files back from the images and compares `cfgconv --check` with the field
 table `gen/mkcfg.py` was given; prints the CHS of `SYNTH.HDF` and requires
-more than 255 cylinders; and compares `manifest.txt` with a fresh stand-in
-build. It ends with `check PASS`. The bytes of `TEST.ISO` depend on the xorriso version (the committed manifest was made with 1.5.6): on another version `check` can fail with "manifest.txt is stale", and `make -C sim/l3/card manifest` regenerates it. After a change to a generator,
+more than 255 cylinders; and compares `manifest.txt` with a fresh build
+with a stand-in `RV32OSDB.BIN` (`gen/mkblob.py`, so the manifest does not
+change with a firmware build; its content seed is still `STANDIN-RV32OSDA`,
+so its line kept its size and sha256 when Task 13b renamed the file, and the
+card images differ from the earlier ones only in that directory entry). It ends with `check PASS`. The bytes of `TEST.ISO` depend on the xorriso version (the committed manifest was made with 1.5.6): on another version `check` can fail with "manifest.txt is stale", and `make -C sim/l3/card manifest` regenerates it. After a change to a generator,
 `make -C sim/l3/card manifest` rewrites `manifest.txt`.
 
-One card, with real firmware files (the 832 one from your own build,
-`FW832=` an image such as `sim/l3/run_fw/fw832/832OSDAD.BIN` of section
-"Differential"). Put it in its own `B=` directory: in `build/` the cards of
-the commands above already exist with the stand-in, and `make` does not
-rebuild an image whose name has not changed:
+One card, with another firmware image: put it in its own `B=` directory
+(`make` does not rebuild an image whose name has not changed):
 
 ```sh
-make -C sim/l3/card hdd B=build_real FWRV=fw/ctrl_rv/build/RV32OSDA.BIN FW832=path/to/832OSDAD.BIN
+make -C sim/l3/card hdd B=build_real FWRV=path/to/RV32OSDB.BIN
 mdir -i sim/l3/card/build_real/hdd.img@@1048576 ::
 ```
 
-| Card | Files (all cards also hold both firmwares and `KICK.ROM`) |
+| Card | Files (all cards also hold the firmware as `RV32OSDB.BIN`, the name of `fw/ctrl/fwname.mk`, and `KICK.ROM`) |
 |---|---|
-| `boot` | `MINMGAR.CFG` (RISC-V, little-endian), `MINMGAA.CFG` (832, big-endian) |
-| `boot832cfg` | only `MINMGAA.CFG`: the RISC-V first-boot conversion path |
+| `boot` | `MINMGAR.CFG` (RISC-V, little-endian), `MINMGAA.CFG` (the previous firmware's, big-endian: the RV firmware loads `MINMGAR.CFG` and converts `MINMGAA.CFG` only when that is missing) |
+| `bootbecfg` | only `MINMGAA.CFG`: the RISC-V first-boot conversion path (no scenario boots it yet) |
 | `fdd` | boot + `TEST.ADF`, `DRIVESND.BIN` |
 | `hdd` | boot + `SYNTH.HDF`, `RDB.HDF` |
 | `cd` | boot + `TEST.CUE`, `TEST.BIN`, `TEST.ISO`; `CDCFG=iso` (image `cd_iso.img`) names `TEST.ISO` in the configs instead of `TEST.CUE` |
@@ -2509,12 +2040,12 @@ Content (`sim/l3/gen`, python3 stdlib run with `-I`, plus `xorriso`):
 | File | Generator | Content |
 |---|---|---|
 | `KICK.ROM` | `mkkick.py` | 262,144 bytes; word i = `0x4B490000` + i, big-endian; ASCII `L3 SYNTHETIC KICKSTART` at 0x18 |
-| `TEST.ADF` | `mkadf.py` | 901,120 bytes; sector s (LBA) tagged `L` `B` s>>8 s&0xff, then the pattern of `fw/ctrl_rv/test/gold/mfm.py` |
+| `TEST.ADF` | `mkadf.py` | 901,120 bytes; sector s (LBA) tagged `L` `B` s>>8 s&0xff, then the pattern of `fw/ctrl/test/gold/mfm.py` |
 | `SYNTH.HDF` | `mkhdf.py` | 4 MB, no RDB (the firmware synthesises one); CHS 257.1.32 (`mkhdf.py --chs SYNTH.HDF`); block n tagged `H` 2 n>>8 n&0xff |
 | `RDB.HDF` | `mkhdf.py` | 2 MB, own RDSK at block 0 with `rdb_Flags` 0x17 (not 0x12) and a PART at block 1; other blocks tagged `H` 1 n>>8 n&0xff |
 | `TEST.ISO` | `mkiso.sh` | one file `DATA.BIN`, 256 KB, block n of 2048 bytes tagged `L` `B` n>>8 n&0xff |
 | `TEST.BIN`, `TEST.CUE` | `mkcue.py` | 364 raw sectors: 64 MODE1/2352 data, then two AUDIO tracks of 2 s; track 2 has the 2 s PREGAP; audio frame f (from track 2) is left `f & 0xFFFF`, right `~f & 0xFFFF` |
-| `MINMGAA.CFG`, `MINMGAR.CFG` | `mkcfg.py`, `cfgconv --to-rv` | 212 bytes: kickstart `KICK`, IDE on, one floppy at normal speed, hardfile 0 = `RDB` (plain file, own RDB: unit 0, so the firmware patches its `rdb_Flags`), hardfile 1 = `SYNTH` (synthesised RDB), IDE port 2 master = CD with `TEST` (CUE or ISO), the rest the 832 defaults |
+| `MINMGAA.CFG`, `MINMGAR.CFG` | `mkcfg.py`, `cfgconv --to-rv` | 212 bytes: kickstart `KICK`, IDE on, one floppy at normal speed, hardfile 0 = `RDB` (plain file, own RDB: unit 0, so the firmware patches its `rdb_Flags`), hardfile 1 = `SYNTH` (synthesised RDB), IDE port 2 master = CD with `TEST` (CUE or ISO), the rest the defaults of `fw/ctrl/test/gold/mkcfgbe.py` |
 
 Disc map of `TEST.CUE`: LBA 0..63 data, 64..213 silent pregap of track 2,
 214..363 track 2, 364..513 track 3, lead-out 514.

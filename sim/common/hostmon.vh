@@ -33,12 +33,11 @@
 //                    and the L2 bench registers (0x..00 / 04):
 //                      <frames> <ev> <addr> <value16>
 //                    addr = the 24 address bits cfide decodes ({hostaddr,
-//                    2'b00}[23:0]: the RV's 0xFFFFFFB0 and the 832's
-//                    0x0FFFFFB3 are both ffffb0), value16 = hostWR[15:0]
-//                    (cfide's d), for a byte write (one hostsel bit) 00 and
-//                    hostWR[7:0]: the RV's bridge puts a stored byte on
-//                    every lane, the 832's on one, and cfide's byte
-//                    registers take d(7 downto 0); at the end, per SDRAM
+//                    2'b00}[23:0]: 0xFFFFFFB0 is ffffb0), value16 =
+//                    hostWR[15:0] (cfide's d), for a byte write (one
+//                    hostsel bit) 00 and hostWR[7:0]: the bridge puts a
+//                    stored byte on every lane and cfide's byte registers
+//                    take d(7 downto 0); at the end, per SDRAM
 //                    region the CPU wrote
 //                    (host kickstart 0x100000..0x17ffff, AUDIO_BUFFER ring
 //                    0x70000..0x7ffff),
@@ -62,8 +61,8 @@
   wire [31:0] hwa      = {hostaddr, 2'b00};
   wire        spi_data = hostaddr[23] && hostaddr[7:4] == 4'hE && hostaddr[3:2] == 2'b00;
   // the UART transmit register as cfide decodes it (rs232_select: a write
-  // anywhere in 0x..F0..FF with address bit 23 set): the RV firmware
-  // writes the word at 0xFFFFFFF0, the 832's the byte at 0x0FFFFFF3
+  // anywhere in 0x..F0..FF with address bit 23 set): the firmware writes
+  // the word at 0xFFFFFFF0
   wire        uart_tx  = hostaddr[23] && hostaddr[7:4] == 4'hF;
 
   // stale ack: no clk_28 edge saw this request's hw_req.  Re-armed when
@@ -218,10 +217,10 @@
   // SPI DATA accesses while sd_cs[5] is low, numbered from the frame start
   // (og_i): 0 the command write, then per reply byte a write and a read,
   // as SPI(OSD_CMD_x) and SPI_reply() do; between them the command's
-  // read-back, which the RV firmware does and the 832's vbcc drops (its
-  // result is unused).  So a read is the read-back of the write just
-  // before it (two reads in a row, or a read first, is a bench error), and
-  // every write after the first is a reply byte's.  For frames of
+  // read-back, which the firmware does (its result is unused).  So a read
+  // is the read-back of the write just before it (two reads in a row, or a
+  // read first, is a bench error), and every write after the first is a
+  // reply byte's.  For frames of
   // OSD_CMD_VERSION / OSD_CMD_KEYQ, every access from 1 on except the
   // command's read-back gives one gap: the clk_114 edges strictly between
   // the previous SPI DATA access's ack edge (cycle og_done) and the edge
@@ -270,7 +269,7 @@
   // ------------------------------------------------ FWBOOT: stack low-water
   // CPU writes below 0x2000 (the boot BRAM, the bridge's rom state) after
   // the jump: the lowest byte written (sel[i] = byte A+i).  Full-word writes
-  // of 5A5AA5A5 (cpu_q is byte-swapped, the bus is big-endian) are not counted: that is StackFill() (fw/ctrl_rv/stackcheck.c)
+  // of 5A5AA5A5 (cpu_q is byte-swapped, the bus is big-endian) are not counted: that is StackFill() (fw/ctrl/stackcheck.c)
   // painting [0x1400, sp-64), not a stack store.
   integer stack_low = 32'h2000;
   integer sl_b = 0;

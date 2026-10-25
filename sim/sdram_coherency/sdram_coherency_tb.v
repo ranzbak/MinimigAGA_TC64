@@ -367,7 +367,7 @@ endtask
 
 // ---------------------------------------------------------------- port sweep (Stage E2 Task 2)
 // Every size (B, W, L) at every offset of one sixteen-byte line, split onto
-// the 16-bit port exactly as lib/AP68040/rtl/ap040_bus16_adapter.v does it:
+// the 16-bit port exactly as lib/AP68040-pipelined/rtl/compat/ap040_bus16_adapter.v does it:
 // a byte is one cycle (UDS for an even address, LDS for an odd one); a word is
 // one cycle when even and byte + byte when odd; a longword is two word cycles
 // when even and byte + word + byte when odd.  Stage E2 replaces this port with

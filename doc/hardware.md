@@ -109,8 +109,8 @@ Without it, "Maximum, all" gives only the 8 MB Zorro II board. This is what
   60 Hz otherwise, so PAL gives 720p50 and NTSC 720p60. The OSD firmware
   programs the ADV7511 over I2C, and does it again by itself when the display
   is plugged back in (Hot Plug Detect).
-- **Video timing:** the ADV7511's clock delay (register `0xBA` = `0xA0`, set in
-  `fw/ctrl_832/adv7511.c`) matches the centre-aligned output registers in
+- **Video timing:** the ADV7511's clock delay (register `0xBA`, set in
+  `fw/ctrl/adv7511.c`) matches the centre-aligned output registers in
   `rtl/openaars/adv7511/adv_ddr.v`. The firmware and the bitstream have to
   come from the same version: an old firmware with a new bitstream (or the
   reverse) can give colour errors or a picture that drops out.
@@ -166,9 +166,9 @@ through to the PCF2123.
 
 ## The OSD and its controller
 
-A small soft CPU (EightThirtyTwo, "832") runs the OSD firmware. A boot loader
-in the bitstream (`fw/ctrl_boot_832`) loads `832OSDAD.BIN` from the SD card.
-The firmware (`fw/ctrl_832`) draws the OSD, loads Kickstart and settings,
+A small soft CPU (VexRiscv, RV32IMC, `rtl/host/rv_hostcpu.v`) runs the OSD
+firmware. A boot loader in the bitstream (`fw/ctrl_boot`) loads `RV32OSDB.BIN`
+from the SD card (bitstreams before the SD card peripheral: `RV32OSDA.BIN`). The firmware (`fw/ctrl`) draws the OSD, loads Kickstart and settings,
 serves the floppy and hard disk images, sets up the HDMI chip, plays the drive
 sounds, and prints a log on UART1. It releases the 68040 only after a
 Kickstart has loaded.

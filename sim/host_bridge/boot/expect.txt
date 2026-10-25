@@ -1,14 +1,21 @@
 ERRORCODE: 0fff
 UART: Initializing SD card
-UART: 0101cmd_CMD8 response: 1
-UART: 01010101010000Hunting for partition
+UART: SD init: VERSION 5D01, card 1
+UART: SD init: CMD0 01
+UART: SD init: CMD8 01
+UART: SD init: ACMD41 00
+UART: SD init: CMD58 00
+UART: SD init: CMD59 00
+UART: SD card: SDHC
+UART: Hunting for partition
 UART: Reading MBR
-UART: 00Partitioncount 1
+UART: Partitioncount 1
 UART: Reading boot sector 2048
-UART: 00Read boot sector from first partition
+UART: Read boot sector from first partition
 UART: Hunting for filesystem
 UART: Reading directory sector 2106
-UART: 00file "RV32OSDABIN" found\r000000000000FW OK
+UART: file "RV32OSDBBIN" found\rFirmware SDC 5D01, bitstream SDC 5D01
+UART: FW OK
 UART: PAT 00112233445566778899AABBCCDDEEFF
 UART: @IMG@
 UART: IRQ 20

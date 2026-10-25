@@ -2,8 +2,8 @@
 # file byte i in lane i: the romgen order) + .elf + .lst.
 #   make -C sim/rv_l1 tests
 # A program is tests/<name>.S or tests/<name>.c; add its name to PROGS.
-# FWPROGS are linked as firmware: fw/ctrl_rv/arch (crt0, trap entry, irq
-# API) with fw/ctrl_rv/arch/firmware.ld (_start at 0x2000), behind
+# FWPROGS are linked as firmware: fw/ctrl/arch (crt0, trap entry, irq
+# API) with fw/ctrl/arch/firmware.ld (_start at 0x2000), behind
 # sw/boot_fw.S padded to 0x2000 (a boot ROM stand-in: zero x1-x31, jump to
 # 0x2000).  run.sh reads PROGS and FWPROGS (make print-progs) and runs every
 # program in its matrix except the ones it names as teeth or dm programs.
@@ -13,7 +13,7 @@ BIN2HEX := $(TOP)/tools/riscv/bin2hex.sh
 
 B       := build
 ARCH_B  := $(B)
-include $(TOP)/fw/ctrl_rv/arch/arch.mk
+include $(TOP)/fw/ctrl/arch/arch.mk
 .DEFAULT_GOAL := tests
 PROGS   := lanes refill fencei fencei_nofencei irq dm_smoke uart_read
 FWPROGS := irq_sig irq_c exc irq_sig_mut
@@ -24,7 +24,7 @@ CFLAGS  = $(RV_ARCH) -O2 -g -ffreestanding -fno-builtin -funsigned-char \
 ASFLAGS = $(RV_ARCH) -g -Isw
 LDFLAGS = $(RV_ARCH) -nostdlib -nostartfiles -T sw/l1.ld -Wl,--gc-sections -Wl,--no-warn-rwx-segments \
           -Wl,-Map,$(@:.elf=.map)
-# the arch objects (fw/ctrl_rv/arch/arch.mk) are built as the firmware builds them
+# the arch objects (fw/ctrl/arch/arch.mk) are built as the firmware builds them
 FWLDFLAGS   = $(RV_LDFLAGS_FW) $(ARCH_LDFLAGS) -Wl,-Map,$(@:.elf=.map)
 ARCH_DEPS   = $(ARCH_LD)
 FW_LINK     = $(RV_CC) $(FWLDFLAGS) $(FW_EXTRA) -o $@ $(filter %.o,$^) $(RV_LIBS_FW)

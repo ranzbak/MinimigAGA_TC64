@@ -86,18 +86,10 @@ set_false_path -to {n*Sync}
 
 # multicycle paths
 
-set_multicycle_path -from {minimig_virtual_top:virtual_top|EightThirtyTwo_Bridge:hostcpu|eightthirtytwo_cpu:\gen832:my832|*} -to {minimig_virtual_top:virtual_top|EightThirtyTwo_Bridge:hostcpu|eightthirtytwo_cpu:\gen832:my832|eightthirtytwo_alu:alu|mulresult[*]} -setup -end 2
-set_multicycle_path -from {minimig_virtual_top:virtual_top|EightThirtyTwo_Bridge:hostcpu|eightthirtytwo_cpu:\gen832:my832|*} -to {minimig_virtual_top:virtual_top|EightThirtyTwo_Bridge:hostcpu|eightthirtytwo_cpu:\gen832:my832|eightthirtytwo_alu:alu|mulresult[*]} -hold -end 2
 
 # Adjust data window for SDRAM reads by 1 cycle
 set_multicycle_path -from clk_sdram -to [get_clocks $clk_114] -setup 2
 
-set_multicycle_path -from {virtual_top|tg68k|pf68K_Kernel_inst|*} -setup 4
-set_multicycle_path -from {virtual_top|tg68k|pf68K_Kernel_inst|*} -hold 3
-set_multicycle_path -from {virtual_top|tg68k|pf68K_Kernel_inst|memaddr*} -setup 3
-set_multicycle_path -from {virtual_top|tg68k|pf68K_Kernel_inst|memaddr*} -hold 2
-set_multicycle_path -from {virtual_top|tg68k|pf68K_Kernel_inst|memaddr*} -to {virtual_top|tg68k|pf68K_Kernel_inst|*} -setup 4
-set_multicycle_path -from {virtual_top|tg68k|pf68K_Kernel_inst|memaddr*} -to {virtual_top|tg68k|pf68K_Kernel_inst|*} -hold 3
 set_multicycle_path -from {virtual_top|tg68k|addr[*]} -setup 3
 set_multicycle_path -from {virtual_top|tg68k|addr[*]} -hold 2
 
@@ -112,10 +104,6 @@ set_multicycle_path -from [get_clocks $clk_28] -to [get_clocks $clk_114] -hold 3
 
 
 # Neither in nor out of the C2P requires single-cycle speed
-set_multicycle_path -from {minimig_virtual_top:virtual_top|TG68K:tg68k|akiko:myakiko|cornerturn:myc2p|rdptr[*]} -to {minimig_virtual_top:virtual_top|TG68K:tg68k|TG68KdotC_Kernel:pf68K_Kernel_inst|*} -setup -end 2
-set_multicycle_path -from {minimig_virtual_top:virtual_top|TG68K:tg68k|akiko:myakiko|cornerturn:myc2p|rdptr[*]} -to {minimig_virtual_top:virtual_top|TG68K:tg68k|TG68KdotC_Kernel:pf68K_Kernel_inst|*} -hold -end 2
-set_multicycle_path -from {minimig_virtual_top:virtual_top|TG68K:tg68k|akiko:myakiko|cornerturn:myc2p|buf[*][*]} -to {minimig_virtual_top:virtual_top|TG68K:tg68k|TG68KdotC_Kernel:pf68K_Kernel_inst|*} -setup -end 2
-set_multicycle_path -from {minimig_virtual_top:virtual_top|TG68K:tg68k|akiko:myakiko|cornerturn:myc2p|buf[*][*]} -to {minimig_virtual_top:virtual_top|TG68K:tg68k|TG68KdotC_Kernel:pf68K_Kernel_inst|*} -hold -end 2
 
 # Likewise RTG and audio address have 8 cycles of downtime between bursts
 set_multicycle_path -from {minimig_virtual_top:virtual_top|VideoStream:myvs|address_high[*]} -to {minimig_virtual_top:virtual_top|sdram_ctrl:sdram|*} -setup -end 2

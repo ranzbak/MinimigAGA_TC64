@@ -6,8 +6,7 @@ L3 scenario, written from the firmware's sources, in the format of
 
     python3 -I sim/l3/osdtext_expect/osdpages.py keys > sim/l3/osdtext_expect/keys.txt
 
-Two models, both of fw/ctrl_rv (the 832's osd.c / menu.c are the same in
-what is modelled here):
+Two models, both of fw/ctrl:
   - osd.c: OsdSetTitle (the title condensed, centred and rotated into the
     side stripe), OsdWriteOffset (stripe, left arrow on row 7, the
     characters with invert / stipple, the fill, right arrow on row 7) and
@@ -15,7 +14,7 @@ what is modelled here):
     osd_line, so this file and the run are decoded alike
   - menu.c: the pages (title, arrows, the eight rows with the selected line
     inverted and the greyed-out ones stippled) of the states a tour visits,
-    with the line numbers of fw/ctrl_rv/menu.c they come from, and the
+    with the line numbers of fw/ctrl/menu.c they come from, and the
     boot card's configuration (sim/l3/gen/mkcfg.py: two floppy drives, no
     disk; IDE on, hardfile 0 RDB (HDF_FILE), hardfile 1 SYNTH (HDF_FILE |
     HDF_SYNTHRDB), the CD on IDE port 2; none of the three files on the
@@ -33,7 +32,7 @@ ROOT = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
 sys.path.insert(0, os.path.join(ROOT, "sim", "host_bridge"))
 import spitrace  # noqa: E402  (the decoder of the runs)
 
-CHARROM = os.path.join(ROOT, "fw", "ctrl_rv", "charrom.h")
+CHARROM = os.path.join(ROOT, "fw", "ctrl", "charrom.h")
 OSDLINELEN = 256            # osd.h
 OSD_ARROW_LEFT, OSD_ARROW_RIGHT = 1, 2
 STD_EXIT = "            exit"   # menu.c:199

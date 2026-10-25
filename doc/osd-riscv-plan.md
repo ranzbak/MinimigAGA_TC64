@@ -1186,7 +1186,11 @@ Paul 2026-10-17 (decision 12.10): retire the 832 once RISC-V is stable --
 Phase 9 follows Phase 6/7 and does not wait for Phase 8. Rollback is git
 history (and `build/stage_spicdc_49b1868`).
 
-- 9.1 **S** Remove `cpu_riscv=false` branches, the EightThirtyTwo submodule,
+- 9.1 **S** **done 2026-10-21** (branch `retire-832`, off `5.0-040-pipelined` 09f81bbe; merge and tag
+  are Paul's): the 832, its submodule, firmware trees, bench modes and build switches are gone; the
+  bridge is `rtl/host/host_bridge.vhd` (entity `host_bridge`), the firmware trees are `fw/ctrl` and
+  `fw/ctrl_boot` (`RV32OSDA.BIN` unchanged, the images byte-identical); the Quartus ports are
+  unsupported (`fpga/README.md`); the last 832 state is tag `osd-832-final`. Was: Remove `cpu_riscv=false` branches, the EightThirtyTwo submodule,
   `fw/ctrl_832`, `fw/ctrl_boot_832`, `fw/dhrystone_832`, `test/emu`,
   `fw/testbed` 832 bits, `sim/spi_cdc/host832` (keep its results), the
   `debug` generic; rename `fw/ctrl_rv` -> `fw/ctrl`, `fw/ctrl_boot_rv` ->

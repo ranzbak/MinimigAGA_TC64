@@ -36,10 +36,6 @@ project_1/**
 
 # Ignore the built Rom generator
 fw/romgen/romgen
-fw/ctrl_boot_832/OSDBoot_832.bin
-fw/ctrl_boot_832/OSDBoot_832.map
-fw/ctrl_832/832OSDAD.bin
-fw/ctrl_832/832OSDAD.map
 
 # Ignore Xvhdl files
 xvhdl.*
@@ -50,8 +46,6 @@ xvhdl.*
 .vscode/*
 vivado*
 !tools/vivado/
-fw/ctrl_832/*.asm
-fw/ctrl_832/swoopBuf
 xvlog.*
 .library_mapping.xml
 .log*
@@ -124,3 +118,6 @@ findings/**/.tinfo/
 
 # OOC run outputs of tools/vivado/ooc_hostcpu
 tools/vivado/ooc_hostcpu/runs/
+
+# OOC run outputs of tools/vivado/ooc_sdcard
+tools/vivado/ooc_sdcard/runs/

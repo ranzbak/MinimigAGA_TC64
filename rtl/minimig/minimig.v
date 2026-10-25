@@ -156,7 +156,16 @@ module minimig #(
   parameter Z3RAM3_DDR3 = 1'b0,
   // Which CPU core the SoC around this instance is built with, for the OSD to
   // read back: bit 0 AP68040 fitted, bit 1 selectable, bit 2 FPU, bit 3 MMU.
-  parameter [7:0] CORE_CAPS = 8'h00
+  parameter [7:0] CORE_CAPS = 8'h00,
+  // 1: the SD card engine's Gayle DMA (rtl/minimig/sdcard_gayle.v) sits on
+  // Gayle's firmware-side data port, driven by sdcard_spi through the
+  // sdc_g_* ports.  0: those ports are ignored (tops without the engine
+  // leave them open) and the port is paula_floppy's alone, as before.
+  parameter SD_ENGINE = 1'b0,
+  // f(clk_114) / f(clk), rounded: sizes the bridge's young-op window (see
+  // sdcard_gayle.v).  It must match the clocks; a wrong value fails silently.
+  // openaars: 113.4375 / 28.359375 = 4.
+  parameter SD_CLK_RATIO = 4
 )  (
   //m68k pins
   input [23:1] cpu_address, // m68k address bus
@@ -295,7 +304,21 @@ module minimig #(
   output reg ntsc = NTSC, //PAL/NTSC video mode selection
   input   ext_int2, // External interrupt for Akiko
   input   ext_int6, // External interrupt for AHI audio
-  input   ram_64meg
+  input   ram_64meg,
+  // SD card engine Gayle DMA: the g_* handshake of rtl/host/sdcard_spi.v
+  // (its header has the contract), on clk_114.  Only with SD_ENGINE = 1.
+  input   clk_114,
+  input   sdc_g_req,
+  input   sdc_g_dir,
+  input   sdc_g_port,
+  input   [9:0] sdc_g_words,
+  output  sdc_g_ack,
+  output  sdc_g_err,
+  input   [15:0] sdc_g_wdata,
+  input   sdc_g_wvalid,
+  output  sdc_g_wnext,
+  output  [15:0] sdc_g_rdata,
+  output  sdc_g_rvalid
 );
 
 //local signals for data bus
@@ -485,6 +508,7 @@ wire  gayle_nrdy; // HDD fifo is not ready for reading
 wire  hdd_cmd_req; //hard disk controller has written command register and requests processing
 wire  hdd_dat_req; //hard disk controller requests data from emulated hard disk drive
 wire  [2:0] hdd_addr; //emulated hard disk drive register address bus
+wire  [2:0] pf_addr; //the same as paula_floppy drives it (sdcard_gayle_mux)
 wire  [15:0] hdd_data_out; //data output port of emulated hard disk drive
 wire  [15:0] hdd_data_in; //data input port of emulated hard disk drive
 wire  hdd_wr; //register write strobe
@@ -494,6 +518,13 @@ wire  hdd_data_rd; //data port read strobe
 wire  hdd_port; //IDE port of the firmware's current HDD command
 wire  hdd_xfer_wr; //packet-mode transfer length write strobe
 wire  hdd_regs_rd; //task file read command strobe
+wire  [1:0] hdd_fifo_reset; //per IDE port: Gayle resets its FIFO (SD card bridge abort)
+//the firmware-side data port as paula_floppy drives it; with SD_ENGINE the
+//SD card bridge's too, and sdcard_gayle_mux picks (findings/sdcard-engine)
+wire  [15:0] pf_data_out;
+wire  pf_data_wr;
+wire  pf_data_rd;
+wire  pf_port;
 
 wire  [7:0] bank; //memory bank select
 
@@ -682,14 +713,14 @@ paula PAULA1
   .direct_sdi(direct_sdi),
   .hdd_cmd_req(hdd_cmd_req),
   .hdd_dat_req(hdd_dat_req),
-  .hdd_addr(hdd_addr),
-  .hdd_data_out(hdd_data_out),
+  .hdd_addr(pf_addr),
+  .hdd_data_out(pf_data_out),
   .hdd_data_in(hdd_data_in),
   .hdd_wr(hdd_wr),
   .hdd_status_wr(hdd_status_wr),
-  .hdd_data_wr(hdd_data_wr),
-  .hdd_data_rd(hdd_data_rd),
-  .hdd_port(hdd_port),
+  .hdd_data_wr(pf_data_wr),
+  .hdd_data_rd(pf_data_rd),
+  .hdd_port(pf_port),
   .hdd_xfer_wr(hdd_xfer_wr),
   .hdd_regs_rd(hdd_regs_rd),
   // fifo / track display
@@ -1172,9 +1203,82 @@ gayle #(.IDE_PORTS(2)) GAYLE1
   .hdd_port(hdd_port),
   .hdd_xfer_wr(hdd_xfer_wr),
   .hdd_regs_rd(hdd_regs_rd),
+  .hdd_fifo_reset(hdd_fifo_reset),
   .hd_fwr(hd_fwr),
   .hd_frd(hd_frd)
 );
+
+//SD card engine: Gayle side of the block DMA and the data port mux.  Without
+//it the port is paula_floppy's, as before, and no new module is needed.
+generate
+if (SD_ENGINE != 0) begin : g_sdc
+wire  sg_active;
+wire  sg_port;
+wire  sg_data_wr;
+wire  sg_data_rd;
+wire  [15:0] sg_data_out;
+
+sdcard_gayle #(.CLK_RATIO(SD_CLK_RATIO)) SDCGAYLE1
+(
+  .clk(clk),
+  .clk7_en(clk7_en),
+  .reset(reset),
+  .clk_g(clk_114),
+  .g_req(sdc_g_req),
+  .g_dir(sdc_g_dir),
+  .g_port(sdc_g_port),
+  .g_words(sdc_g_words),
+  .g_ack(sdc_g_ack),
+  .g_err(sdc_g_err),
+  .g_wdata(sdc_g_wdata),
+  .g_wvalid(sdc_g_wvalid),
+  .g_wnext(sdc_g_wnext),
+  .g_rdata(sdc_g_rdata),
+  .g_rvalid(sdc_g_rvalid),
+  .active(sg_active),
+  .port(sg_port),
+  .data_wr(sg_data_wr),
+  .data_rd(sg_data_rd),
+  .data_out(sg_data_out),
+  .data_in(hdd_data_in),
+  .dat_req(hdd_dat_req),
+  .fifo_reset_seen(hdd_fifo_reset),
+  .fw_port(pf_port),
+  .fw_xfer_wr(hdd_xfer_wr),
+  .fw_regs_rd(hdd_regs_rd)
+);
+
+sdcard_gayle_mux SDCMUX1
+(
+  .sg_active(sg_active),
+  .sg_port(sg_port),
+  .sg_data_wr(sg_data_wr),
+  .sg_data_rd(sg_data_rd),
+  .sg_data_out(sg_data_out),
+  .pf_port(pf_port),
+  .pf_data_wr(pf_data_wr),
+  .pf_data_rd(pf_data_rd),
+  .pf_data_out(pf_data_out),
+  .pf_addr(pf_addr),
+  .hdd_addr(hdd_addr),
+  .hdd_port(hdd_port),
+  .hdd_data_wr(hdd_data_wr),
+  .hdd_data_rd(hdd_data_rd),
+  .hdd_data_out(hdd_data_out)
+);
+end else begin : g_nosdc
+assign hdd_addr = pf_addr;
+assign hdd_port = pf_port;
+assign hdd_data_wr = pf_data_wr;
+assign hdd_data_rd = pf_data_rd;
+assign hdd_data_out = pf_data_out;
+assign sdc_g_ack = 1'b0;
+assign sdc_g_err = 1'b0;
+assign sdc_g_wnext = 1'b0;
+assign sdc_g_rdata = 16'h0000;
+assign sdc_g_rvalid = 1'b0;
+end
+endgenerate
 
 
 //instantiate system control

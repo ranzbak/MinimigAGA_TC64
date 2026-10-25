@@ -1,11 +1,9 @@
-// TG68K.vhd's core generate: g_ref (lib/AP68040), g_pipe (ap040_pipelined)
-// or g_fast (ap040_faster, the AP68040 faster core behind its 68040 bus bridge)
+// TG68K.vhd's core generate: g_pipe (the pipelined core) or g_fast
+// (ap040_faster, the AP68040 faster core behind its 68040 bus bridge)
 `ifdef AP040_FASTER
 `define AP040_INST g_fast
-`elsif AP040_PIPELINED
-`define AP040_INST g_pipe
 `else
-`define AP040_INST g_ref
+`define AP040_INST g_pipe
 `endif
 //-----------------------------------------------------------------
 // ddr3_cpu_tb -- the TG68K WRAPPER driving the DDR3 Zorro-III fast RAM.
@@ -904,12 +902,10 @@ localparam integer FAST_DUAL_GEN = 1;
 `endif
 TG68K #(.cpu_clk_ratio(`CPU_RATIO), .ap040_faster(1), .ap040_free_core(1), .ap040_fast_dual(FAST_DUAL_GEN),
         .chip32(CHIP32_GEN)) tg68k (
-`elsif AP040_PIPELINED
-TG68K #(.cpu_clk_ratio(`CPU_RATIO), .ap040_pipelined(1), .chip32(CHIP32_GEN), .ap040_free_core(FREE_CORE_GEN),
+`else
+TG68K #(.cpu_clk_ratio(`CPU_RATIO), .chip32(CHIP32_GEN), .ap040_free_core(FREE_CORE_GEN),
         .ap040_store_buf(STORE_BUF_GEN), .ap040_fwd(FWDRAS_GEN), .ap040_ras(FWDRAS_GEN),
         .ap040_precise(PREMIS_GEN), .ap040_misplit(MISPLIT_GEN), .ap040_sb_mmu(SBMMU_GEN), .ap040_copyback(CBACK_GEN), .ap040_btb(BTB_GEN), .ap040_ldx(LDX_GEN), .ap040_btfn(BTFN_GEN), .ap040_dfp_mis(DFPMIS_GEN), .ap040_walloc(WALLOC_GEN), .ap040_post_chip(POSTCHIP_GEN), .ap040_post_ci(POSTCI_GEN), .ap040_cwf(CWF_GEN)) tg68k (
-`else
-TG68K #(.cpu_clk_ratio(`CPU_RATIO), .chip32(CHIP32_GEN)) tg68k (
 `endif
     .clk            (clk              ),
     .clk_cpu        (clk_cpu          ),

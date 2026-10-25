@@ -1,4 +1,4 @@
-/* irq_c: the C interrupt API of fw/ctrl_rv/arch (irq.h) on the L1 bench's
+/* irq_c: the C interrupt API of fw/ctrl/arch (irq.h) on the L1 bench's
  * cfide-like INTERRUPT register, started by the firmware crt0.
  *   1  a constructor ran (crt0 walks .init_array)
  *   2  crt0 left mstatus.MIE and mie.MEIE set

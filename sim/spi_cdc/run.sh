@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPI clock-domain bench: cfide.vhd (the 832's SPI master) driving paula_floppy
+# SPI clock-domain bench: cfide.vhd (the host CPU's SPI master) driving paula_floppy
 # and userio_osd the way the firmware does.  See tb_spi_cdc.v.
 #
 #   ./run.sh                       the grid below on the working tree

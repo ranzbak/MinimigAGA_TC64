@@ -1,5 +1,5 @@
 # sim/l3/keys/menu_tour.txt: the key script of scenario keys (bfm_keys.v,
-# syntax there).  The boot card's menu (fw/ctrl_rv/menu.c), from the
+# syntax there).  The boot card's menu (fw/ctrl/menu.c), from the
 # main-loop milestone: open the OSD, walk down and up the main page, enter
 # and leave the Floppy and the Hard disk pages, one BURST of six events,
 # close the OSD.  The pages it draws are sim/l3/osdtext_expect/keys.txt.
@@ -8,10 +8,10 @@
 # frame drains it and no level read sees it: bfm_keys.v), KEY <code> 64
 # (down for four clk7 periods: a key-down and a key-up event, 2 in one KEYQ
 # frame), WAIT_KEYQ 1 (that frame), WAIT_OSD_IDLE 100000 (the page drawn:
-# no OSD_CMD_OSD_WR frame for 100,000 clk_114, about 14 main-loop passes of
-# the RV, 7 of the 832 in an idle menu; a key's redraw is at most two
-# passes after the frame that drains it).
-# Codes (fw/ctrl_rv/osd.h): 69 KEY_MENU, 4c KEY_UP, 4d KEY_DOWN, 44
+# no OSD_CMD_OSD_WR frame for 100,000 clk_114, about 14 main-loop passes
+# in an idle menu; a key's redraw is at most two passes after the frame
+# that drains it).
+# Codes (fw/ctrl/osd.h): 69 KEY_MENU, 4c KEY_UP, 4d KEY_DOWN, 44
 # KEY_ENTER, 45 KEY_ESC.  menusub = the selected line (menu.c).
 # open the OSD (MENU_NONE2 -> MENU_MAIN1, OsdClear; main page, line 0)
 WAIT_KEYQ 1
@@ -129,8 +129,7 @@ WAIT_OSD_IDLE 100000
 # selection goes Floppy disk settings, Hard disk settings, Floppy disk
 # settings.  BURST changes osd_ctrl every 32 clk_114 (192 in all) right
 # after a KEYQ frame; the next one comes a main-loop pass later (at least
-# 5,320 clk_114 on the RV, 11,244 on the 832: runs p4t8d, p4t8dc), so all
-# six are in it
+# 5,320 clk_114: run p4t8d), so all six are in it
 WAIT_KEYQ 1
 BURST 4c 00 4d 00 4c 00
 WAIT_KEYQ 1

@@ -8,6 +8,10 @@
 # QMTech Artix-7XC7A100T Core Board
 
 # SD-Card interface
+# The lines between the sdc_pins markers are also read on their own by the SD
+# card engine's size and timing check (tools/vivado/ooc_sdcard/run.tcl, io
+# mode): keep them free of other names.
+# >>> sdc_pins
 set_property PACKAGE_PIN D26 [get_ports sd_m_clk]
 set_property PACKAGE_PIN E25 [get_ports sd_m_cmd]
 set_property PACKAGE_PIN E26 [get_ports sd_m_d0]
@@ -15,21 +19,26 @@ set_property PACKAGE_PIN D25 [get_ports sd_m_d1]
 set_property PACKAGE_PIN H26 [get_ports sd_m_d2]
 set_property PACKAGE_PIN G26 [get_ports sd_m_d3]
 
-# Low when card is inserted, otherwise high
+# Card detect: low when a card is inserted, otherwise high (10k pull-up, 100 nF
+# on the board).  F23 is in bank 15, whose VCCO is 3.3 V (bank 15 carries the
+# LVTTL buttons and LEDs, buttons.xdc G20, leds.xdc H22): LVTTL.
+set_property PACKAGE_PIN F23 [get_ports sd_m_cdet]
 
 set_property -dict {IOSTANDARD LVTTL SLEW SLOW} [get_ports {sd_m_clk sd_m_cmd sd_m_d1 sd_m_d2 sd_m_d3}]
 set_property -dict {IOSTANDARD LVTTL} [get_ports {sd_m_d0 sd_m_cdet}]
 
+# <<< sdc_pins
 
-# Port timing
-# Card data in is resampled by the SPI logic; no input timing requirement.
-set_false_path -from [get_ports sd_m_d0]
-# sd_m_cmd / sd_m_d3 are false-pathed with the other slow serial outputs in wizard.xdc.
+# Port timing: in sd_card_engine.tcl, an unmanaged Tcl constraint file (XDC has
+# no "if"): the SD card engine's SCK / CMD / DAT0 / DAT3 / card-detect timing
+# and its Gayle bridge bound when the build has the engine (SD_ENGINE = 1),
+# else today's false paths for the card on cfide's SPI.
 
 # The SPI bit clock.  rtl/host/cfide.vhd's sck_pin is a flip-flop in clk_114,
 # toggled by the SPI master every (2*speed + 1) clk_114 cycles (+2 while the SD
 # card is selected, for the sd_ack handshake); SPI_SCK = NOT sck_pin clocks
-# every SPI slave in the Minimig (paula_floppy, userio_osd_spi) and the card.
+# every SPI slave in the Minimig (paula_floppy, userio_osd_spi), and the card
+# in builds without the SD card engine (SD_ENGINE = 0, not this board's).
 # The firmware's fastest setting is SPI_fast() = speed 1: a half period of 3
 # clk_114 cycles, so clk_114 / 6.  Defined as that, with the source it really
 # has, so the clock is related to clk_114/dll_28 and intra-SPI paths are timed

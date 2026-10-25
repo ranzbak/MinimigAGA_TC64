@@ -20,7 +20,7 @@
 //                            frame, OsdClear's 2,048 bytes, is not idle time)
 //   WAIT_KEYQ <n>            until n more OSD_CMD_KEYQ frames (20 98) closed
 //   # ...                    a comment line (also after a step's arguments)
-// Codes: fw/ctrl_rv/osd.h (KEY_MENU 69, KEY_UP 4c, KEY_DOWN 4d, KEY_ENTER
+// Codes: fw/ctrl/osd.h (KEY_MENU 69, KEY_UP 4c, KEY_DOWN 4d, KEY_ENTER
 // 44, KEY_ESC 45, ...).  Every value is held for at least two clk7 periods
 // (KEY's hold is rounded up to whole clk7 periods), so userio_osd sees each
 // change; a step that would not change osd_ctrl is a bench error (no event).
@@ -33,7 +33,7 @@
 // error: the firmware hands those out one per main-loop pass, and while they
 // last a level read (OSD_CMD_READ) could see the new code with no event to
 // deliver, which OsdGetCtrl turns into a key repeat when its TIMER says so
-// (fw/ctrl_rv/osd.c): a result that would depend on the timing.  The script
+// (fw/ctrl/osd.c): a result that would depend on the timing.  The script
 // therefore waits for an empty KEYQ frame (WAIT_OSD_IDLE, then WAIT_KEYQ 1)
 // before each key.  What it reads back: done (the script has ended), errors,
 // n_ev (osd_ctrl changes made).

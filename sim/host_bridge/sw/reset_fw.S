@@ -1,5 +1,5 @@
 /* L2 boot-ROM start-up for tests linked with the firmware start-up
- * (fw/ctrl_rv/arch/crt0.S, _start) instead of sw/crt0_rom.S:
+ * (fw/ctrl/arch/crt0.S, _start) instead of sw/crt0_rom.S:
  *   0x0000  reset vector: jump to the register clear
  *   0x0020  trap entry until crt0 installs trap_entry (mtvec reset value):
  *           DONE = 0x8000 | mcause[31] << 8 | mcause[7:0], as crt0_rom.S

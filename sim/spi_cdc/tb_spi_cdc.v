@@ -1,12 +1,12 @@
-// The SPI path between the 832 controller and the Minimig SPI slaves, driven
+// The SPI path between the OSD host CPU and the Minimig SPI slaves, driven
 // the way the firmware drives it, at the speed it drives it.
 //
-//   832 bus model --> cfide.vhd (the SPI master: sck is a clk_114 register)
-//                       |  SPI_SCK / SPI_DI / SPI_CS[7:0]
-//                       v
-//                     paula_floppy (HDF sector data, both directions)
-//                     userio_osd   (OSD commands and replies)
-//                     SD card model (direct mode: card -> paula, 4096 bits)
+//   host bus model --> cfide.vhd (the SPI master: sck is a clk_114 register)
+//                        |  SPI_SCK / SPI_DI / SPI_CS[7:0]
+//                        v
+//                      paula_floppy (HDF sector data, both directions)
+//                      userio_osd   (OSD commands and replies)
+//                      SD card model (direct mode: card -> paula, 4096 bits)
 //
 // The slaves are clocked by sck, the Minimig logic around them by clk_28.
 // In hardware sck reaches the slaves through fabric routing some ns after
@@ -19,9 +19,9 @@
 // so a crossing that only works for one ordering of the two edges shows up as
 // a failure for some (SCKDLY, C28DLY) pair.
 //
-// The 832 side is modelled by its bus latency: +GAP=<n> is the number of
+// The CPU side is modelled by its bus latency: +GAP=<n> is the number of
 // clk_114 cycles between one access's ack and the next access's request
-// (instruction fetch, cache, bridge -- everything the 832 does in between).
+// (instruction fetch, cache, bridge -- everything the CPU does in between).
 // Each sector is run for every gap in the GAPS list with a random extra
 // 0..3 cycles per access and a random start phase, so the sck edges move
 // against clk_28 / clk7_en from sector to sector.
@@ -30,7 +30,7 @@
 //   wr     CMD_IDE_DATA_WR + 512 bytes (hdd.c, FakeRDB / buffered read):
 //          the 256 words the gayle model received equal what was sent
 //   rd     CMD_IDE_DATA_RD + 512 bytes read (hdd.c, HDF write): the bytes the
-//          832 read equal the gayle model's buffer
+//          host read equal the gayle model's buffer
 //   direct MMC_ReadMultiple's direct mode (mmc.c): EnableDMode, SPI(0xFF)
 //          (4096 clocks), RDSPI, DisableDMode -- the 256 words the gayle
 //          model received equal the card's sector
@@ -233,8 +233,8 @@ module tb_spi_cdc;
     end
   end
 
-  // ---------------------------------------------------------------- 832 bus model
-  // 832_bridge.vhd: hw_req rises at a clk edge, stays up until hw_ack is seen
+  // --------------------------------------------------------------- host bus model
+  // host_bridge.vhd: hw_req rises at a clk edge, stays up until hw_ack is seen
   // at a clk edge, and drops at that edge.  The CPU then takes `gap' cycles
   // before the next request.
   integer gap = 8;
@@ -367,13 +367,14 @@ module tb_spi_cdc;
       n0 = g_rx_n;
       card_bit = 0;
       card_stream = 1'b1;
-      // As the shipped firmware compiles it (832OSDAD.bin, MMC_Read*):
-      //   li 0x40; byt; st r4      EnableDMode()
-      //   mt r5;   byt; st r3      SPI(0xFF) -- vbcc drops its read-back
-      //   byt; ld r3               i = RDSPI: stalls until the 4096 bits are done
-      //   mr r0; li 8; addt r6; stmpdec r0     i to the stack (an SDRAM write)
-      //   li 1; li 1; byt; st r4   DisableDMode()
-      // so the chip select drops `gap' cycles after the RDSPI ack.
+      // The firmware's direct mode (mmc.c, MMC_Read*): EnableDMode(),
+      // SPI(0xFF), i = RDSPI, DisableDMode().  The model writes the dummy
+      // byte, then makes one read, which stalls until the 4096 bits are
+      // done, and drops the chip select `gap' cycles after its ack.  The
+      // firmware's SPI(0xFF) also reads back (the read that stalls), so its
+      // DisableDMode() comes one access later: the model is the tighter
+      // case (the sequence of the retired 832 firmware, whose compiler
+      // dropped that read-back).
       cs_w(8'h40);                 // EnableDMode
       spi_w(8'hFF);                // dummy write for 4096 clocks
       spi_r(rb);                   // i = RDSPI
@@ -481,9 +482,10 @@ module tb_spi_cdc;
     // first sck edge of that byte, and the byte counter it comes from only
     // moves when the previous byte's rx has been through the clk7 synchroniser
     // and the clk7 logic (up to ~350 ns after its last bit).  A host that
-    // starts the next byte sooner gets a stale reply.  The 832 is slow enough
-    // (fpga_init's version read sees the 0xA4 magic on the board), so the
-    // bench reports osd below 40 cycles but does not fail on it.
+    // starts the next byte sooner gets a stale reply.  The firmware is slow
+    // enough (fpga_init's version read sees the 0xA4 magic on the board; it
+    // also waits for OSD_RDY, +RDY), so the bench reports osd below 40
+    // cycles but does not fail on it.
     if (!$value$plusargs("OSD_MIN_GAP=%d", osd_min_gap)) osd_min_gap = 40;
     if (!$value$plusargs("TESTS=%d", tests_mask)) tests_mask = 15;
     if (!$value$plusargs("GAPMAX=%d", gapmax)) gapmax = 1000;
@@ -491,7 +493,7 @@ module tb_spi_cdc;
     if (!$value$plusargs("RDY=%d", rdy)) rdy = 0;
     dummy = $urandom(seed);
 
-    // From 2: 832_bridge.vhd cannot raise the next hw_req less than two
+    // From 2: host_bridge.vhd cannot raise the next hw_req less than two
     // cycles after it saw hw_ack (cpu_ack, then the waiting state).  Faster
     // than that the bus model would take cfide's previous ack, which is a
     // clk_28 register and stays up until the next clk_28 edge, for the new

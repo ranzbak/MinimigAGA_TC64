@@ -1,4 +1,4 @@
-/* irq_sig: the firmware trap entry (fw/ctrl_rv/arch/trap.S) keeps every
+/* irq_sig: the firmware trap entry (fw/ctrl/arch/trap.S) keeps every
  * register of the interrupted code.
  *
  * x1 and x3..x31 hold distinct patterns PAT(n); sp is the stack.  Each loop

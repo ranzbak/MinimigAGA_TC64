@@ -1,7 +1,7 @@
 ;-----------------------------------------------------------------------------
 ; mmu_walk_test.asm -- stage B bench program for sim/ddr3_cpu.
 ;
-; Proves OUR walker router, not the MMU: lib/AP68040/tb t_mmu already proves
+; Proves OUR walker router, not the MMU: the AP68040 core's own tb t_mmu already proves
 ; the MMU itself against the WinUAE oracle.  What is untested until here is the
 ; path from ap040_mmu's walker port, through rtl/soc/TG68K.vhd, to the two
 ; memories -- two 16-bit sub-cycles per descriptor, an idle gap between them,

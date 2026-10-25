@@ -93,6 +93,19 @@ entity cfide is
         -- see the OSD reply-ready handshake below.  Defaulted: a top without
         -- the port reads OSD_RDY 0 after the first OSD byte (until the resync).
         osd_rx_seq    : in  std_logic_vector(1 downto 0) := "00";
+        -- External register block at 0fffff00..2c (addr(7 downto 4) = 0, 1, 2):
+        -- the SD card peripheral (rtl/host/sdcard_spi.v, its register timing
+        -- contract in its header).  ext_wstb / ext_rstb: one sysclk cycle, the
+        -- first cycle of an access (req rising); ext_addr / ext_d are addr(5
+        -- downto 2) / d, valid in that cycle (and for the whole access).
+        -- ext_q: the block's read data, into the q mux for the whole access.
+        -- Defaulted: a top without the block reads 0 there (and leaves the
+        -- outputs open).
+        ext_wstb      : out std_logic;
+        ext_rstb      : out std_logic;
+        ext_addr      : out std_logic_vector(5 downto 2);
+        ext_d         : out std_logic_vector(15 downto 0);
+        ext_q         : in  std_logic_vector(15 downto 0) := (others => '0');
         -- 28Mhz signals
         clk_28        : in  std_logic;
         tick_in       : in  std_logic   -- 44.1KHz - makes it easy to keep timer in lockstep with audio.
@@ -172,6 +185,8 @@ architecture rtl of cfide is
     signal i2c_int         : std_logic;
     signal xadc_select     : std_logic;
     signal irqctl_select   : std_logic;
+    signal ext_select      : std_logic;
+    signal ext_req_d       : std_logic := '0';  -- req one sysclk cycle ago (no reset)
     signal spirtcpresent   : std_logic;
 
     signal reset : std_logic;
@@ -231,6 +246,7 @@ begin
     -- Peripheral registers are only 16-bits wide.
 
     q(15 downto 0) <= IOdata when rs232_select = '1' or SPI_select = '1' else
+    ext_q when ext_select = '1' else
     I2Cdata when i2c_select = '1' else
     timecnt(23 downto 8) when timer_select = '1' else
     X"000" & "000" & host_req_q when audio_select = '1' and addr(3 downto 2) = "01" else
@@ -253,6 +269,8 @@ begin
             if req = '1' then
                 if rs232_select = '1' or SPI_select = '1' then
                     ack <= IOcpuena;
+                elsif ext_select = '1' then
+                    ack <= ext_req_d;   -- the external block's read data: see below -- EXT ACK
                 else
                     --          if timer_select='1' or platform_select='1' or audio_select='1' then
                     ack <= '1';
@@ -281,6 +299,44 @@ begin
     xadc_select      <= '1' when addr(23) = '1' and addr(7 downto 4) = X"4" else '0';
     -- Interrupt controller at 0fffff30
     irqctl_select    <= '1' when addr(23) = '1' and addr(7 downto 4) = X"3" else '0';
+    -- External register block (the SD card peripheral) at 0fffff00..2c
+    ext_select       <= '1' when addr(23) = '1' and (addr(7 downto 4) = X"0" or addr(7 downto 4) = X"1"
+                                                     or addr(7 downto 4) = X"2") else '0';
+
+    -- External block strobes (sysclk): one cycle, the first of the access.
+    -- req, addr, wr and d are the bridge's sysclk registers, stable for the
+    -- whole access, and req is low for at least one cycle between accesses
+    -- (host_bridge.vhd hw_release), so req and not ext_req_d marks exactly
+    -- one cycle per access.
+    -- Read timing: req rises at sysclk edge E0, the strobe is the cycle
+    -- E0..E1 and the block loads its read register at E1; the bridge takes q
+    -- at the first sysclk edge that sees ack.  ack (the clk_28 register
+    -- above) is loaded from ext_req_d, not req: ext_req_d rises at E1, so ack
+    -- rises at a clk_28 edge at or after E1 whatever the phase of the two
+    -- clocks, and the bridge takes q at E2 at the earliest, one cycle after
+    -- the read register holds this access's value.  With req itself a
+    -- clk_28 edge that takes the new req at E0 (the L2 bench's clk_28 runs
+    -- 0.3 ns behind clk_114: it does) would let the bridge take q at E1, the
+    -- previous access's value.  The cost is at most one sysclk cycle per
+    -- access (none when the first clk_28 edge after E0 is not at E1).
+    -- Static timing: ext_req_d (sysclk) -> ack (clk_28) is timed like req
+    -- -> ack, setup only under the board's 1:4 clk_114 -> dll_28 multicycle
+    -- (wizard.xdc): a late arrival delays ack by one clk_28 cycle, never
+    -- makes it early, since ext_req_d is high for the whole access.
+    -- Accesses complete at least 6 sysclk cycles apart (ack falls only at a
+    -- clk_28 edge after req dropped), more than the >= 4 the block asks for.
+    -- sim/host_bridge t_sdc_regs.
+    ext_wstb <= ext_select and req and not ext_req_d and wr;
+    ext_rstb <= ext_select and req and not ext_req_d and not wr;
+    ext_addr <= addr(5 downto 2);
+    ext_d    <= d;
+
+    process(sysclk)
+    begin
+        if rising_edge(sysclk) then
+            ext_req_d <= req;
+        end if;
+    end process;
 
     -- RTC handling at 0fffff70
 
@@ -358,7 +414,7 @@ begin
         end if;
     end process;
 
-    -- Interrupt handling at 0fffffa0 (legacy, the 832 firmware's)
+    -- Interrupt handling at 0fffffa0 (legacy)
     -- Any access to this range will clear the interrupt flag; a source event
     -- sets it to interrupt_ena.  The access wins over an event in its cycle.
     -- int_legacy_nx is the flag's next state, also used for the interrupt
@@ -400,10 +456,10 @@ begin
     --   2  amiga_req    Akiko request (pulse per request)
     --   3  i2c_ext_int  the ADV7511's INT pin (I2C status bit 0x400 shows it
     --                   too).  Active high as the part is set up: no polarity
-    --                   register is written (fw/ctrl_832/adv7511.c), clearing
+    --                   register is written (fw/ctrl/adv7511.c), clearing
     --                   its interrupt flags takes the pin low (ADV7511
     --                   Programming Guide, CEC and interrupt sections), and
-    --                   i2c_master_mmio and the 832 firmware use it active
+    --                   i2c_master_mmio and the firmware use it active
     --                   high.  So no inversion here.  Meant for LEVEL mode.
     --   4..15 irq_src   spare (IDE, floppy, ...)
     -- Every bit is the same logic: a 2-FF synchroniser into clk_28, then
@@ -422,8 +478,8 @@ begin
     -- cycle.  It is a register of its own (int_out), loaded from the
     -- next-state values of the flag, PENDING, MASK and MODE: the same value
     -- in the same cycle as that OR of the registers, with no logic between
-    -- the register and the CPU (the 832 uses interrupt unregistered).  MASK
-    -- and MODE reset to 0, so firmware that never writes MASK (the 832's)
+    -- the register and the CPU.  MASK
+    -- and MODE reset to 0, so firmware that never writes MASK
     -- sees the legacy flag cycle for cycle.
     -- Once per access: irq_seen = req one cycle ago, so irq_acc is the first
     -- clk_28 cycle of an access; the read value is latched into irq_q and the

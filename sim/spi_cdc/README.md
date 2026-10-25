@@ -1,17 +1,19 @@
-# SPI clock-domain benches (xsim)
+# SPI clock-domain bench (xsim)
 
-Two xsim benches for the SPI path between the host CPU's SPI master
+An xsim bench for the SPI path between the host CPU's SPI master
 (`rtl/host/cfide.vhd`) and the Minimig SPI slaves (`paula_floppy`,
 `userio_osd`). The slaves are clocked by `sck`, the logic around them by
 `clk_28`; in hardware `sck` reaches the slaves a few ns after the `clk_114`
 edge that made it, and where a `clk_28` edge lands relative to that is a
-per-build accident. The benches move the two edges against each other and
-check that nothing depends on one ordering.
+per-build accident. The bench moves the two edges against each other and
+checks that nothing depends on one ordering.
 
 | Bench | What | Host side |
 |---|---|---|
 | `tb_spi_cdc.v`, `run.sh` | cfide + `paula_floppy` + `userio_osd` + the SD card model; HDF sector writes and reads, the direct-mode transfer, the OSD version reply, the cross-frame case, and the OSD reply-ready handshake (`+RDY=1`) | a bus model: the number of `clk_114` cycles between one access's ack and the next request (`gap`) stands for the CPU |
-| `host832/tb_832_dmode.v`, `host832/run.sh` | the direct-mode transfer with the real 832 (`EightThirtyTwo_Bridge`, `hostcache.v`) running the firmware's instruction sequence (`gen832.py`) | the EightThirtyTwo itself, with an SDRAM model of adjustable latency behind the cache |
+
+The real RISC-V host CPU on the real bridge and cfide is the L2 bench,
+`sim/host_bridge`.
 
 ## Prerequisites (fresh Ubuntu 24.04)
 
@@ -25,14 +27,6 @@ is not installable from apt). On Ubuntu 24.04 the tools need
 sudo apt install build-essential git python3
 mkdir -p ~/lib/tinfo5
 ln -s /lib/x86_64-linux-gnu/libtinfo.so.6 ~/lib/tinfo5/libtinfo.so.5
-```
-
-`host832/run.sh` also needs the EightThirtyTwo sources: the submodule, or
-`E832=<dir>/RTL` of another checkout (the submodule is not initialised in a
-git worktree):
-
-```sh
-git submodule update --init EightThirtyTwo
 ```
 
 Run one xsim at a time on the machine; the configurations of one `run.sh`
@@ -56,7 +50,7 @@ pair it runs every gap (2 to 64 `clk_114` cycles between accesses) `REPS`
 (3) times for each test, and prints the failures per gap (`GAP <g> <test>
 fail <n>/<m>`) and `=== PASS` or `=== FAIL`. The default grid takes about
 2.5 minutes and passes. Its `osd` failures below `OSD_MIN_GAP` (default
-40, the OSD reply latency: the 832 and the RV never read a reply byte that
+40, the OSD reply latency: the firmware never reads a reply byte that
 fast) are printed but not counted; `NOTE: ... osd failures below
 OSD_MIN_GAP` says how many.
 
@@ -134,20 +128,3 @@ without `RESYNC_MUT` passes in every pair (`p4fx_rsg`, 112 s):
 RUNTAG=rsmut RESYNC_MUT=1 XARGS="+RDY=1 +TESTS=16 +OSD_MIN_GAP=0" bash sim/spi_cdc/run.sh
 RUNTAG=rsgreen XARGS="+RDY=1 +TESTS=16 +OSD_MIN_GAP=0" bash sim/spi_cdc/run.sh
 ```
-
-## `host832/run.sh`: the real 832
-
-```sh
-bash sim/spi_cdc/host832/run.sh
-```
-
-Seven (`SLAT`, `SJIT`) pairs by default (`0 0`, `2 0`, `4 0`, `8 0`, `16
-0`, `0 16`, `4 32`): the SDRAM host-port latency in `clk_114` cycles and a
-random 0..`SJIT` extra per access (other masters). The bench reports, per
-sector, `L`: the cycles from the RDSPI ack to the 832's `DisableDMode()`
-write, as a histogram per pair, and checks every sector paula_floppy hands
-to the gayle model; `=== PASS` in all pairs is the result (about 3.5
-minutes). `E832=<dir>` is the RTL directory of the EightThirtyTwo
-checkout (default `EightThirtyTwo/RTL`), `REV=<git rev>` and `RUNTAG` as
-above, `./run.sh "<slat> <sjit>" ...` your own pairs. `gen832.py` writes
-the 832 program (ROM) the bench runs.

@@ -20,7 +20,7 @@ lines per run directory:
                     before the next key-down event (Task 8's tour)
   icache_*          per STATS window (win_start .. win_end): refills, retired,
                     refills/retired, 8 x refills/retired, busy cycles, refill share
-                    estimate.  RV only; the 832 has neither I$ nor STATS lines.
+                    estimate.
 
 "Refill share of busy cycles" is an ESTIMATE, not a measurement: the STATS lines
 carry no refill latency.  share = refills x L / busy cycles with the assumed
@@ -136,7 +136,7 @@ def stats_window(logtxt):
 def analyse(run):
     name = os.path.basename(os.path.normpath(run))
     res = read_text(os.path.join(run, "results.txt")) or ""
-    cpu = "rv" if re.search(r"^=== CPU rv", res, re.M) else ("832" if re.search(r"^=== CPU 832", res, re.M) else "?")
+    cpu = "rv" if re.search(r"^=== CPU rv", res, re.M) else "?"
     logs = sorted(glob.glob(os.path.join(run, "tb_*.log")))
     logtxt = read_text(logs[0]) if logs else None
     if logtxt is None:
@@ -158,25 +158,22 @@ def analyse(run):
         L.append("menu_redraw_ms: " + (stat(mr, fmt="%.3f") or "n/a (no key redraw in %s)" % name))
     rf = ring_fills(logtxt)
     L.append("ring_fill_ms: " + (stat(rf, fmt="%.2f") or "n/a (no CDDA fill line in %s)" % name))
-    if cpu == "832":
-        L.append("icache: n/a (the 832 has no I-cache and no STATS lines)")
+    w = stats_window(logtxt)
+    if w is None:
+        L.append("icache: n/a (window line missing in %s)" % name)
     else:
-        w = stats_window(logtxt)
-        if w is None:
-            L.append("icache: n/a (window line missing in %s)" % name)
-        else:
-            a, b = w
-            d = {k: b[k] - a[k] for k in b}
-            ratio = d["irefill"] / d["retired"] if d["retired"] else float("nan")
-            L.append("icache_refills: %d" % d["irefill"])
-            L.append("icache_retired: %d" % d["retired"])
-            L.append("icache_miss_ratio_pct: %.2f" % (100 * ratio))
-            L.append("icache_words_per_instr: %.3f" % (8 * ratio))
-            L.append("icache_window_cycles: %d" % d["cycle"])
-            L.append("icache_busy_cycles: %d" % d["busy"])
-            sh = ", ".join("L=%d: %.1f %%" % (lat, 100.0 * d["irefill"] * lat / d["busy"] if d["busy"] else float("nan"))
-                           for lat in REFILL_LAT_ASSUMED)
-            L.append("icache_refill_share_ESTIMATE (assumed latency, not measured): " + sh)
+        a, b = w
+        d = {k: b[k] - a[k] for k in b}
+        ratio = d["irefill"] / d["retired"] if d["retired"] else float("nan")
+        L.append("icache_refills: %d" % d["irefill"])
+        L.append("icache_retired: %d" % d["retired"])
+        L.append("icache_miss_ratio_pct: %.2f" % (100 * ratio))
+        L.append("icache_words_per_instr: %.3f" % (8 * ratio))
+        L.append("icache_window_cycles: %d" % d["cycle"])
+        L.append("icache_busy_cycles: %d" % d["busy"])
+        sh = ", ".join("L=%d: %.1f %%" % (lat, 100.0 * d["irefill"] * lat / d["busy"] if d["busy"] else float("nan"))
+                       for lat in REFILL_LAT_ASSUMED)
+        L.append("icache_refill_share_ESTIMATE (assumed latency, not measured): " + sh)
     return L
 
 

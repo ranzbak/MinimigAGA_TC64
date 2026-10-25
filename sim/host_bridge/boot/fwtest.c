@@ -1,9 +1,10 @@
-/* fwtest: the test firmware of the L2 boot run (RV32OSDA.BIN).
+/* fwtest: the test firmware of the L2 boot run (RV32OSDB.BIN, the name of
+ * fw/ctrl/fwname.mk).
  *
- * The committed boot ROM (fw/ctrl_boot_rv) loads this image from the SD card
+ * The committed boot ROM (fw/ctrl_boot) loads this image from the SD card
  * model to 0x2000 through dBus + hostcache, runs fence.i and jumps to
- * _start (fw/ctrl_rv/arch/crt0.S).  main then prints:
- *   FW OK                  the image runs: the load, the be32() byte order
+ * _start (fw/ctrl/arch/crt0.S).  main then prints:
+ *   FW OK                  the image runs: the load, the RXW byte order
  *                          of spi.c and fence.i all worked
  *   PAT 0011..EEFF         fw_pattern[] read byte by byte from SDRAM; the
  *                          bytes must be in file order (exit code 1 if the
@@ -26,7 +27,7 @@
 #define HB_REG(ofs) (*(volatile unsigned int *)(int)(ofs))
 #define TIMER()     (HB_REG(HB_TIMER_OFS) & 0xffffu)
 
-void rv_putc(int c);                    /* fw/ctrl_rv/arch/trap.c: cfide UART */
+void rv_putc(int c);                    /* fw/ctrl/arch/trap.c: cfide UART */
 
 extern const char _start[], __init_array_start[];
 extern const volatile uint32_t fw_fill[];
