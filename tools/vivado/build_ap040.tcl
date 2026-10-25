@@ -634,6 +634,12 @@ set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED true $impl
 # instead of slipping the ILA into it.
 if {$sdc_ila} {
     set sdc_pre_was [get_property STEPS.OPT_DESIGN.TCL.PRE $impl]
+    # a stale hook of a build that died before its restore is not "the
+    # previous value": restore to none then
+    if {$sdc_pre_was eq $sdc_ila_hook} {
+        puts "build_ap040.tcl: opt_design hook was left set by an earlier SDC_ILA build; it is cleared afterwards"
+        set sdc_pre_was {}
+    }
     set_property STEPS.OPT_DESIGN.TCL.PRE $sdc_ila_hook $impl
     puts "build_ap040.tcl: SD card path ILA u_ila_sdc (SDC_ILA=1, depth $sdc_ila_depth, opt_design hook [file tail $sdc_ila_hook]), LAB BUILD"
 }

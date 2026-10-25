@@ -53,7 +53,9 @@
 #             launch_runs impl_1 and restored after, the sdc_ila reports),
 #             leaves the project and the generic as the default run does;
 #             SDC_ILA=2 / yes and a bad SDC_ILA_DEPTH stop before any project
-#             change; sdc_ila.tcl as a hook refuses to run without SDC_ILA=1
+#             change; a stale hook (left by a crashed SDC_ILA build) is
+#             cleared, not restored; sdc_ila.tcl as a hook refuses to run
+#             without SDC_ILA=1
 #   faster    the faster-core path (a fake lib/AP68040-faster/rtl): the default
 #             run, and RV_DEBUG=1 SDC_ILA=1 on top, run clean, CPU_CLK_DIVIDE=20
 #             and AP040_FASTER=1 in the generic, cpu_r2.xdc on and cpu.xdc off
@@ -203,6 +205,9 @@ proc get_property {args} {
     if {[dict exists $::mock::files $o]} {
         if {[dict exists $::mock::fsprops $o $k]} { return [dict get $::mock::fsprops $o $k] }
         return ""
+    }
+    if {[info exists ::mock::runprops] && [dict exists $::mock::runprops $o $k]} {
+        return [dict get $::mock::runprops $o $k]
     }
     switch -- $k {
         PROGRESS      { return "100%" }
@@ -834,6 +839,21 @@ foreach ila {0 1} {
         }
     }
 }
+# a hook left set by a build that died before its restore: the next
+# SDC_ILA=1 build clears it at the end instead of restoring it
+set r [run [state fresh] [dict create SDC_ILA 1] [list apply {{script argv hook} {
+    set ::mock::runprops [dict create impl_1 [dict create STEPS.OPT_DESIGN.TCL.PRE $hook]]
+    set ::argv $argv; set ::argc [llength $argv]
+    uplevel #0 [list source $script]
+}} $NEW_BUILD [list $tmp/out/sdcstale 0 $R] $HOOK]]
+save sdcila_stale $r
+set lg [dict get $r log]
+check "sdcila: stale hook in the project: ran clean" [expr {[dict get $r err] eq ""}] [dict get $r err]
+check "sdcila: stale hook: restored to {} (not to the stale hook)" \
+    [expr {[lsearch -exact $lg $HOOKRST] > [lsearch -exact $lg {launch_runs impl_1 -to_step write_bitstream -jobs 8}] \
+           && [llength [lsearch -all -exact $lg $HOOKSET]] == 1}]
+check "sdcila: stale hook: said so" [string match "*opt_design hook was left set by an earlier SDC_ILA build*" [dict get $r out]]
+file delete -force $R/project_1/.last_generics $UNDO
 foreach {envd want} [list [dict create SDC_ILA 2] SDC_ILA [dict create SDC_ILA yes] SDC_ILA [dict create SDC_ILA " 1"] SDC_ILA \
                           [dict create SDC_ILA 1 SDC_ILA_DEPTH 1000] SDC_ILA_DEPTH [dict create SDC_ILA 1 SDC_ILA_DEPTH 32768] SDC_ILA_DEPTH] {
     set r [run_build $NEW_BUILD [state fresh] $envd 0 $tmp/out/sdcbad]

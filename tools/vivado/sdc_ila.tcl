@@ -56,8 +56,11 @@
 #               4 card change), irq_r (the irq line)
 #   Gayle g_*   g_req_r, g_dir_r, g_port_r, g_wvalid_r (sdcard_spi); the
 #               bridge's q_ack (= g_ack), q_err (= g_err), q_rvalid
-#               (= g_rvalid), q_wtog (flips with every g_wnext, which is
-#               combinational)
+#               (= g_rvalid), q_wtog (flips with every g_wnext, but also
+#               when an owed request is absorbed), q_old, q_dir, q_req_s[1]
+#               (q_req_s1): g_wnext is combinational, and from these it is
+#               rebuilt offline exactly: g_wnext = g_req_r & q_old & q_dir &
+#               (q_req_s1 != q_wtog) & g_wvalid_r
 #   counters    cnt[10:0] (COUNT), rxlvl[10:0] (RXLVL)       -- data only
 #   bytes       rxsh[7:0] (the receive shifter: the byte at byte_done),
 #               poisoned
@@ -66,7 +69,7 @@
 #               in the op's first sample), cmd_since[1:0], etog (flips with
 #               every Gayle-side error: fifo_reset_seen / reset / abandoned
 #               command)
-# 102 bits (49 signals) in 12 probe ports, one per group of the table below:
+# 105 bits (52 signals) in 12 probe ports, one per group of the table below:
 # an ILA port costs about 80 LUTs whatever its width, so the signals share
 # ports; the .ltx still lists each signal as its own probe (named after its
 # net, renamed ila_<signal> where synthesis left a name like
@@ -76,8 +79,8 @@
 # port (trigger and capture control), capture control (storage
 # qualification) on, no trigger in / out ports, one input pipeline stage
 # (the core sits in a 96 % full device).  Measured on the OOC check
-# (tools/vivado/ooc_sdcard, SDC_ILA=1 go.sh <name> io; 2048 deep): 1,592 LUT
-# (268 of them SRL), 2,630 FF, 6 RAMB36, plus the debug hub (450 LUT, 741
+# (tools/vivado/ooc_sdcard, SDC_ILA=1 go.sh <name> io; 2048 deep): 1,610 LUT
+# (277 of them SRL), 2,651 FF, 6 RAMB36, plus the debug hub (450 LUT, 741
 # FF) when the design has no other ILA.  The advanced trigger (trigger state
 # machine) would cost 3,569 LUT / 5,170 FF, one port per signal 4,650 LUT /
 # 6,123 FF: both left out.  Depth: 4096 is 11 RAMB36 + 1 RAMB18.
@@ -139,6 +142,9 @@ set ::sdc_ila_probes {
     gayle   q_err         1 T {{*SDCGAYLE1 q_err_reg {}}}
     gayle   q_rvalid      1 T {{*SDCGAYLE1 q_rvalid_reg {}}}
     gayle   q_wtog        1 T {{*SDCGAYLE1 q_wtog_reg {}}}
+    gayle   q_old         1 T {{*SDCGAYLE1 q_old_reg {}}}
+    gayle   q_dir         1 T {{*SDCGAYLE1 q_dir_reg {}}}
+    gayle   q_req_s1      1 T {{*SDCGAYLE1 q_req_s_reg[1] {}}}
     cnt     cnt          11 D {{*sdc_spi cnt_reg[%d] {0 1 2 3 4 5 6 7 8 9 10}}}
     rxlvl   rxlvl        11 D {{*sdc_spi rxlvl_reg[%d] {0 1 2 3 4 5 6 7 8 9 10}}}
     rxsh    rxsh          8 T {{*sdc_spi rxsh_reg[%d] {0 1 2 3 4 5 6 7}}}
