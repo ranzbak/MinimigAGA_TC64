@@ -86,7 +86,9 @@ enum sd_kind { SD_READ, SD_WRITE, SD_CSD, SD_CID };
  *    into buf, or with to_gayle (buf 0) into Gayle's FIFO of port (0/1),
  *    one RX_TO_GAYLE of 512 bytes per block, each after its CRC.
  *  SD_WRITE: count blocks from buf to lba (CMD24 for 1, CMD25 + stop
- *    token for more).  from_gayle (GAYLE_TO_TX) is Task 11's: SD_E_ARG.
+ *    token for more), or with from_gayle (buf 0) from Gayle's FIFO of port:
+ *    always a CMD25 (one block too) ended by the stop token, one
+ *    GAYLE_TO_TX 512 per block, each only after the caller's go (below).
  *  SD_CSD: the 16 bytes of CMD9 into buf; SD_CID: CMD10's.
  * state: the step it is in (0 = not running), err: enum sd_err once it
  * ended, done_blocks: blocks delivered (read) / programmed (write). */
@@ -138,6 +140,33 @@ unsigned sd_sck_div(void);		/* the data-rate divider in use */
 /* its index: 0 at power-on, one up per step down, never back (a test may
    set it) */
 extern unsigned char sd_sck_step;
+
+/* from_gayle writes (the HDD data path, findings/sdcard-engine Task 11a).
+ * A Gayle op is started only when its data is there (ruling T11-R1): the
+ * caller submits the op once the first sector is in Gayle's FIFO (the
+ * submit is that block's go), and gives each next block's go when
+ * sd_gayle_need() is 1 (the previous block was taken from the FIFO) and its
+ * status read shows hdd_dat_req.  Between a block's end and its successor's
+ * go the op is parked: no peripheral op runs.  sd_close() ends the run at
+ * the next block boundary (the stop token, then the op ends SD_OK with
+ * done_blocks < count: the caller starts a new run for the rest); sd_sync()
+ * and sd_drain() close a parked run themselves.  A Gayle error (the Amiga
+ * abandoned the command): the stop token, SD_E_GAYLE.  A card that lost
+ * blocks it took (ACMD22): SD_E_RETRIES (Gayle's sectors are gone). */
+/* 1: op wants its next block's go now */
+int sd_gayle_need(const sd_op *op);
+/* the next block is in Gayle's FIFO: 0, or -1 when op does not want one */
+int sd_gayle_go(sd_op *op);
+/* end op's run at the next block boundary (a from_gayle op; else nothing) */
+void sd_close(sd_op *op);
+/* 1: op is parked (waits for a go, no peripheral op) */
+int sd_gayle_parked(const sd_op *op);
+/* 1 while a Gayle op (RX_TO_GAYLE, GAYLE_TO_TX) of the active op may run:
+   no IDE command on cs 0x10 then (the bridge owns hdd_port, hdd_data_out
+   and hdd_addr; sdcard_gayle.v) */
+int sd_gayle_busy(void);
+/* finish the active op (a parked run closed), CPU-side callers only */
+void sd_drain(void);
 
 /* per-command UART lines when != 0 */
 extern unsigned char sd_debug;

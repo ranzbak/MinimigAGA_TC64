@@ -18,7 +18,15 @@
  * behind the block; TX_REWIND goes back to the block, which is sent again
  * byte for byte, and leaves the commands behind it unsent ("stale").
  * Stale bytes are clocked out with CS off (the card ignores them) before
- * the next command is pushed.  After the card took the block: TX_FLUSH. */
+ * the next command is pushed.  After the card took the block: TX_FLUSH.
+ *
+ * from_gayle (findings/sdcard-engine Task 11a): the block comes from
+ * Gayle's FIFO, GAYLE_TO_TX 512 behind [FF, FC] pushed by the CPU, and is
+ * then kept in TX like a buffer's block.  Every from_gayle op is a CMD25
+ * (one block too): a stop token can end it at any block boundary (the
+ * caller closes a run; the Amiga abandoned the command).  The next block is
+ * taken only after the caller's go (its sector is in the FIFO: ST_WR_PARK
+ * until then, no peripheral op). */
 #include <stdio.h>
 #include <string.h>
 
@@ -79,7 +87,9 @@ enum {
 	ST_WR_RESP,		/* WAIT_NE FF: data response */
 	ST_WR_BUSY,		/* WAIT_EQ FF: programming */
 	ST_STOP_TX,		/* XFER TX 2: stop token FD + a byte */
-	ST_STOP_BUSY		/* WAIT_EQ FF */
+	ST_STOP_BUSY,		/* WAIT_EQ FF */
+	ST_WR_GAYLE,		/* GAYLE_TO_TX 512: a from_gayle block into TX */
+	ST_WR_PARK		/* from_gayle: no peripheral op, waits for sd_gayle_go / sd_close */
 };
 /* what follows a command (s.after) */
 enum { A_READ, A_STOP, A_WRITE, A_APP, A_ACMD22, A_CSD, A_PROBE };
@@ -98,8 +108,10 @@ static struct {
 	unsigned char lost;			/* ACMD22 said fewer than taken: write retries */
 	unsigned char regcmd;			/* D_REG: 9 (CSD) or 10 (CID) */
 	unsigned char fail;			/* the error to end with once the card is stopped */
+	unsigned char closing;			/* from_gayle: end the run at the next block boundary */
 	unsigned short unsent, txlen, blen;
 	unsigned done, run0;			/* blocks done; done at the start of this CMD25 */
+	unsigned gsig, gtaken;			/* from_gayle: blocks the caller said are in the FIFO; taken from it */
 } s;
 
 /* CRC7 of the SD spec (x^7 + x^3 + 1), bitwise (design 11): as the byte
@@ -332,20 +344,37 @@ static void reread(void)
 
 static void write_cmd(void)
 {
-	s.multi = cur->count > 1;
+	s.multi = cur->count > 1 || cur->from_gayle;
 	s.run0 = s.done;
 	s.dkind = D_BLOCK;
 	cmd(s.multi ? 25 : 24, addr(cur->lba + s.done), A_WRITE);
 }
 
-/* [FF, token, 512 bytes]: pushed, or the kept one again */
+static void stop_token(void);
+
+/* [FF, token, 512 bytes]: pushed (from_gayle: the 512 by GAYLE_TO_TX once
+   the caller said the sector is there; parked until then, or the stop
+   token when the caller closed the run), or the kept one again */
 static void send_block(void)
 {
 	if (!s.kept) {
 		unsigned char h[2];
+		if (cur->from_gayle && s.gsig == s.gtaken) {
+			if (s.closing)
+				stop_token();
+			else
+				s.st = ST_WR_PARK;
+			return;
+		}
 		h[0] = 0xFF;
 		h[1] = s.multi ? 0xFC : 0xFE;
 		sdc_push(h, 2);
+		if (cur->from_gayle) {
+			s.unsent += 2;
+			s.st = ST_WR_GAYLE;
+			start(SDC_OP_GAYLE_TO_TX | (cur->port ? SDC_G_PORT1 : 0), 512);
+			return;
+		}
 		sdc_push(cur->buf + 512 * s.done, 512);
 		s.unsent += 514;
 		s.kept = 1;
@@ -384,6 +413,11 @@ static void acmd22_done(void)
 	s.rd_crc = 0;
 	s.t_tok = 0;
 	if (k > acc) {			/* more than it took: no sense in it */
+		finish(SD_E_RETRIES);
+		return;
+	}
+	if (k < acc && cur->from_gayle) {	/* lost: Gayle's sectors are gone, nothing to send again */
+		row_out(SD_ROW_WRCRC);
 		finish(SD_E_RETRIES);
 		return;
 	}
@@ -606,6 +640,21 @@ static void step(unsigned st)
 		block_read();
 		return;
 
+	case ST_WR_GAYLE:
+		if (st & SDC_ST_GERR) {	/* the Amiga abandoned the command (TX rolled back) */
+			start(SDC_OP_TX_FLUSH, 0);	/* the [FF, FC] in front */
+			s.unsent = 0;
+			s.fail = SD_E_GAYLE;
+			stop_token();
+			return;
+		}
+		s.gtaken++;
+		s.unsent += 512;
+		s.kept = 1;
+		xfer(SDC_X_TX, 2, ST_WR_TOKEN);
+		return;
+	case ST_WR_PARK:		/* a TX_FLUSH's own end: nothing runs */
+		return;
 	case ST_WR_TOKEN:
 		xfer(SDC_X_TX | SDC_X_TXCRC, 512, ST_WR_DATA);
 		return;
@@ -709,6 +758,8 @@ static void take_cd(void)
 			s.gone = 1;
 			if (sdc_status() & SDC_ST_BUSY)
 				sdc_start(SDC_OP_ABORT, 0);	/* its DONE ends the op */
+			else if (s.st == ST_WR_PARK)
+				finish(SD_E_GONE);	/* no op runs: no DONE will come */
 		}
 	}
 }
@@ -726,7 +777,7 @@ int sd_submit(sd_op *op)
 	if (op->kind == SD_READ)
 		bad = op->from_gayle || !op->buf == !op->to_gayle;
 	else if (op->kind == SD_WRITE)
-		bad = op->from_gayle || op->to_gayle || !op->buf;
+		bad = op->to_gayle || (op->from_gayle ? op->buf != 0 : !op->buf);
 	else
 		bad = (op->kind != SD_CSD && op->kind != SD_CID) || !op->buf;
 	if (bad) {
@@ -744,6 +795,7 @@ int sd_submit(sd_op *op)
 		return 0;
 	}
 	memset(&s, 0, sizeof s);
+	s.gsig = op->from_gayle ? 1 : 0;	/* the submit is the first block's go */
 	cur = op;
 	sdc_start(SDC_OP_RX_FLUSH, 0);
 	sdc_start(SDC_OP_TX_FLUSH, 0);
@@ -787,13 +839,70 @@ int sd_poll(void)
 	return cur != 0;
 }
 
-/* the active op to its end */
+/* a parked from_gayle op that has its go or was closed: on */
+static void unpark(void)
+{
+	if (polling || !cur || s.st != ST_WR_PARK || (s.gsig == s.gtaken && !s.closing))
+		return;
+	polling = 1;
+	send_block();
+	after_step();
+	polling = 0;
+}
+
+int sd_gayle_need(const sd_op *op)
+{
+	return op && op == cur && op->from_gayle && !s.closing && !s.fail && s.gsig == s.gtaken &&
+	       s.gtaken < op->count;
+}
+
+int sd_gayle_go(sd_op *op)
+{
+	if (!sd_gayle_need(op))
+		return -1;
+	s.gsig++;
+	unpark();
+	return 0;
+}
+
+void sd_close(sd_op *op)
+{
+	if (!op || op != cur || !op->from_gayle)
+		return;
+	s.closing = 1;
+	unpark();
+}
+
+int sd_gayle_parked(const sd_op *op)
+{
+	return op && op == cur && s.st == ST_WR_PARK;
+}
+
+int sd_gayle_busy(void)
+{
+	return cur && (s.st == ST_RD_GAYLE || s.st == ST_WR_GAYLE);
+}
+
+/* the active op to its end; a parked from_gayle run is closed first (its
+   feeder, the HDD path in the main loop, cannot run now) */
 static void sync_cur(const sd_op *op)
 {
 	while (cur && (!op || cur == op)) {
+		if (s.st == ST_WR_PARK) {
+			sd_close(cur);
+			if (s.st == ST_WR_PARK)
+				break;		/* inside sd_poll: cannot be (sd_submit refuses then) */
+			continue;
+		}
 		sdc_wait(SDC_IRQ_DONE);
 		sd_poll();
 	}
+}
+
+void sd_drain(void)
+{
+	sync_cur(0);
+	sd_poll();
 }
 
 int sd_sync(sd_op *op)

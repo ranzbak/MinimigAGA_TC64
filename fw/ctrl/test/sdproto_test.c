@@ -639,6 +639,182 @@ static void t_sck_floor(void)
 	check_not("sck floor: no step-down line", mock_uart(), "SCK one step slower");
 }
 
+/* ---- from_gayle writes (findings/sdcard-engine Task 11a) ----
+ * The Amiga's sectors come from Gayle's FIFO (the mock bridge's from[port])
+ * by GAYLE_TO_TX, one block at a time, each only once it is there (ruling
+ * T11-R1): the submit is the first block's go, sd_gayle_go() the next ones'
+ * when sd_gayle_need() says the previous one was taken.  A run is a CMD25
+ * (also of one block) ended by the stop token. */
+static unsigned g_stops0;
+static void g_mark(void) { g_stops0 = mock_card_stop_ends(); }
+/* run op (from_gayle, set up) on the Amiga's data d: the Amiga writes
+   sector k into the FIFO when the op wants it, for k < feed (then it
+   stops), arming mock_gayle_end(MOCK_GAYLE_ERR, 100) for sector arm's
+   GAYLE_TO_TX; stops at the end, or when parked with nothing to feed
+   (returns 1 then) */
+static unsigned g_fed;		/* sectors the Amiga wrote for the running op */
+static int g_cont(sd_op *op, const unsigned char *d, unsigned feed, int arm)
+{
+	long n = 0;
+	while (op->state) {
+		if (sd_gayle_need(op) && g_fed < feed && g_fed < op->count) {
+			if ((int)g_fed == arm) mock_gayle_end(MOCK_GAYLE_ERR, 100);
+			mock_gayle_from(op->port, d + 512 * g_fed, 512);
+			g_fed++;
+			check("gayle wr: go accepted", sd_gayle_go(op), 0);
+		}
+		if (sd_gayle_parked(op) && g_fed >= feed) return 1;
+		sd_poll();
+		mock_sdc_step();
+		if (++n > 200000) { say("FAIL gayle wr: no end\n"); fails++; return -1; }
+	}
+	return 0;
+}
+static int g_run(sd_op *op, const unsigned char *d, unsigned feed, int arm)
+{
+	if (arm == 0) mock_gayle_end(MOCK_GAYLE_ERR, 100);
+	mock_gayle_from(op->port, d, 512);
+	g_fed = 1;
+	if (sd_submit(op)) return -1;
+	return g_cont(op, d, feed, arm);
+}
+static void g_op(sd_op *op, unsigned lba, unsigned n, int port)
+{
+	memset(op, 0, sizeof *op);
+	op->kind = SD_WRITE; op->from_gayle = 1; op->lba = lba; op->count = n; op->port = port;
+}
+static int on_card(unsigned lba, const unsigned char *d, unsigned n)
+{
+	for (unsigned k = 0; k < n; k++)
+		if (memcmp(mock_card_sector(lba + k), d + 512 * k, 512)) return 0;
+	return 1;
+}
+
+static void t_gayle_write(void)
+{
+	unsigned char d[4 * 512], b[512];
+	sd_op op;
+	struct mock_sdc_peek p;
+	card(); if (!init()) return;
+	wdata(d, 4, 21);
+	/* 3 blocks from port 1 */
+	g_mark();
+	g_op(&op, 1900, 3, 1);
+	check("gayle wr 3: ends", g_run(&op, d, 3, -1), 0);
+	check("gayle wr 3: SD_OK", op.err, SD_OK);
+	check("gayle wr 3: done 3", op.done_blocks, 3);
+	check("gayle wr 3: on the card", on_card(1900, d, 3), 1);
+	check("gayle wr 3: neighbours untouched", is_pat(mock_card_sector(1899), 1899) && is_pat(mock_card_sector(1903), 1903), 1);
+	check_has("gayle wr 3: CMD25", mock_card_log(), "CMD25 arg=0000076c\n");
+	check("gayle wr 3: three GAYLE_TO_TX 512 of port 1", count_str(mock_sdc_log(), "CMD 0104 LEN 512\n"), 3);
+	check("gayle wr 3: each started with its sector in the FIFO (no wait for the Amiga)", mock_gayle_stalls(), 0);
+	check("gayle wr 3: the stop token's busy ended", mock_card_stop_ends() - g_stops0, 1);
+	check("gayle wr 3: the card idle", mock_card_idle(), 1);
+	check("gayle wr 3: all of the Amiga's bytes taken", (long)mock_gayle_from_left(1), 0);
+	/* one block: a CMD25 too (the stop token ends it whatever happens) */
+	g_mark();
+	g_op(&op, 1910, 1, 0);
+	check("gayle wr 1: SD_OK", g_run(&op, d + 512, 1, -1) == 0 && op.err == SD_OK, 1);
+	check("gayle wr 1: on the card", on_card(1910, d + 512, 1), 1);
+	check_has("gayle wr 1: CMD25, not CMD24", mock_card_log(), "CMD25 arg=00000776\n");
+	check("gayle wr 1: no CMD24", count_str(mock_card_log(), "CMD24"), 0);
+	check("gayle wr 1: the stop token's busy ended", mock_card_stop_ends() - g_stops0, 1);
+	/* the Amiga stops after the 1st of 3: parked, no peripheral op; closed:
+	   the stop token, SD_OK with 1 block */
+	g_mark();
+	g_op(&op, 1920, 3, 0);
+	check("gayle park: parked", g_run(&op, d, 1, -1), 1);
+	mock_sdc_peek(&p);
+	check("gayle park: no peripheral op while parked", p.busy, 0);
+	check("gayle park: the 1st block on the card", on_card(1920, d, 1), 1);
+	check("gayle park: needs the 2nd block", sd_gayle_need(&op), 1);
+	sd_close(&op);
+	check("gayle park: closed: ends", g_cont(&op, d, 1, -1), 0);
+	check("gayle park: SD_OK", op.err, SD_OK);
+	check("gayle park: done 1", op.done_blocks, 1);
+	check("gayle park: the 2nd untouched", is_pat(mock_card_sector(1921), 1921), 1);
+	check("gayle park: the stop token's busy ended", mock_card_stop_ends() - g_stops0, 1);
+	check("gayle park: the card idle", mock_card_idle(), 1);
+	/* parked: a CPU-side card user (sd_sync) closes the run first */
+	g_op(&op, 1930, 3, 0);
+	check("gayle park sync: parked", g_run(&op, d, 2, -1), 1);
+	check("gayle park sync: sd_sync of a read", rd(10, 1, b), SD_OK);
+	check("gayle park sync: its data", is_pat(b, 10), 1);
+	check("gayle park sync: the run ended SD_OK with 2", op.state == 0 && op.err == SD_OK && op.done_blocks == 2, 1);
+	check("gayle park sync: 2 blocks on the card", on_card(1930, d, 2) && is_pat(mock_card_sector(1932), 1932), 1);
+	/* the Amiga abandons on the 2nd block (g_err after 100 words): no
+	   partial block, the stop token, SD_E_GAYLE, no card error */
+	g_mark();
+	mock_uart_clear();
+	g_op(&op, 1940, 3, 0);
+	check("gayle abandon 2nd: ends", g_run(&op, d, 3, 1), 0);
+	check("gayle abandon 2nd: SD_E_GAYLE", op.err, SD_E_GAYLE);
+	check("gayle abandon 2nd: done 1", op.done_blocks, 1);
+	check("gayle abandon 2nd: the 1st on the card", on_card(1940, d, 1), 1);
+	check("gayle abandon 2nd: no partial block: the 2nd untouched", is_pat(mock_card_sector(1941), 1941), 1);
+	check("gayle abandon 2nd: the stop token's busy ended", mock_card_stop_ends() - g_stops0, 1);
+	check("gayle abandon 2nd: the card idle", mock_card_idle(), 1);
+	check("gayle abandon 2nd: no card error", errs(), 0);
+	check("gayle abandon 2nd: card still initialised", sd_card_type(), CARDTYPE_SDHC);
+	check_not("gayle abandon 2nd: no op-failed line", mock_uart(), "op failed");
+	/* ... on the 1st block: nothing written, the CMD25 ended */
+	g_mark();
+	g_op(&op, 1950, 2, 0);
+	check("gayle abandon 1st: SD_E_GAYLE", g_run(&op, d, 2, 0) == 0 && op.err == SD_E_GAYLE, 1);
+	check("gayle abandon 1st: done 0", op.done_blocks, 0);
+	check("gayle abandon 1st: nothing written", is_pat(mock_card_sector(1950), 1950), 1);
+	check("gayle abandon 1st: the stop token's busy ended", mock_card_stop_ends() - g_stops0, 1);
+	check("gayle abandon 1st: the card idle", mock_card_idle(), 1);
+	check("gayle abandon 1st: next read ok", rd(1950, 1, b) == SD_OK && is_pat(b, 1950), 1);
+	/* a 0B on the 2nd block: sent again from TX (stop, ACMD22, CMD25) */
+	card(); if (!init()) return;
+	mock_card_error(MOCK_ERR_WRREJ, 2, 1);
+	g_op(&op, 1960, 3, 0);
+	check("gayle 0B: SD_OK", g_run(&op, d, 3, -1) == 0 && op.err == SD_OK, 1);
+	check("gayle 0B: on the card", on_card(1960, d, 3), 1);
+	check_has("gayle 0B: CMD25, ACMD22, CMD25 at the 2nd", mock_card_log(),
+	          "CMD25 arg=000007a8\nCMD55 arg=00000000\nACMD22 arg=00000000\nCMD25 arg=000007a9\n");
+	check("gayle 0B: one 0B", sd_err_count[SD_ROW_WRCRC], 1);
+	/* ACMD22 says the card lost a block it took: Gayle's sector is gone,
+	   nothing to send again: an error */
+	card(); if (!init()) return;
+	mock_card_error(MOCK_ERR_WRREJ, 3, 1);
+	mock_card_acmd22_less(1, 1);
+	g_op(&op, 1970, 4, 0);
+	check("gayle lost: ends", g_run(&op, d, 4, -1), 0);
+	check("gayle lost: SD_E_RETRIES", op.err, SD_E_RETRIES);
+	check("gayle lost: the card idle", mock_card_idle(), 1);
+	/* the card pulled while parked: SD_E_GONE without a step */
+	card(); if (!init()) return;
+	g_op(&op, 1980, 3, 0);
+	check("gayle gone parked: parked", g_run(&op, d, 1, -1), 1);
+	mock_sdc_pull_card();
+	mock_run(2000000);		/* the debounce: the card-detect event */
+	sd_poll();
+	check("gayle gone parked: SD_E_GONE", op.state == 0 && op.err == SD_E_GONE, 1);
+	check("gayle gone parked: sd idle", sd_poll(), 0);
+	/* sd_gayle_busy: while a GAYLE_TO_TX runs (the bridge held) */
+	card(); if (!init()) return;
+	g_op(&op, 1990, 1, 1);
+	mock_gayle_hold(1);
+	mock_gayle_from(1, d, 512);
+	check("gayle busy: submit", sd_submit(&op), 0);
+	for (int k = 0; k < 1000 && !sd_gayle_busy() && op.state; k++) { sd_poll(); mock_sdc_step(); }
+	check("gayle busy: during GAYLE_TO_TX", sd_gayle_busy(), 1);
+	mock_gayle_hold(0);
+	for (int k = 0; k < 100000 && op.state; k++) { sd_poll(); mock_sdc_step(); }
+	check("gayle busy: ended SD_OK", op.err, SD_OK);
+	check("gayle busy: not any more", sd_gayle_busy(), 0);
+	/* bad from_gayle ops */
+	g_op(&op, 1990, 1, 0);
+	op.buf = b;
+	check("gayle args: from_gayle with a buffer", sd_sync(&op), SD_E_ARG);
+	g_op(&op, 1990, 1, 0);
+	op.to_gayle = 1;
+	check("gayle args: from and to Gayle", sd_sync(&op), SD_E_ARG);
+	check("gayle args: go of a op not running", sd_gayle_go(&op), -1);
+}
+
 static void t_csd_and_args(void)
 {
 	unsigned char csd[16];
@@ -647,9 +823,6 @@ static void t_csd_and_args(void)
 	op.kind = SD_CSD; op.buf = csd;
 	check("csd: ok", sd_sync(&op), SD_OK);
 	check("csd: = the init's", memcmp(csd, sd_csd, 16), 0);
-	memset(&op, 0, sizeof op);
-	op.kind = SD_WRITE; op.count = 1; op.from_gayle = 1;
-	check("args: from_gayle not yet", sd_sync(&op), SD_E_ARG);
 	memset(&op, 0, sizeof op);
 	op.kind = SD_READ; op.count = 1;
 	check("args: no buf, not to_gayle", sd_sync(&op), SD_E_ARG);
@@ -686,6 +859,7 @@ int main(void)
 	t_card_reset();
 	t_acmd22_less();
 	t_sck_floor();
+	t_gayle_write();
 	say("\n%d checks: %d failed\n", cases, fails);
 	say("sdproto_test %s (%d checks)\n", fails ? "FAIL" : "PASS", cases);
 	return fails ? 1 : 0;
