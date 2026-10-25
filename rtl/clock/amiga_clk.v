@@ -93,8 +93,11 @@ amiga_clk_altera amiga_clk_i (
   .c2       (clk_28   ),
   .locked   (locked   )
 );
-// The Altera PLL has no fourth output and the AP68040 island is a Xilinx
-// build only; the TG68K never uses clk_38 (rtl/soc/TG68K.vhd, g_tg68k).
+// The Altera PLL has no fourth output.  The Altera ports were made for the
+// TG68K.C kernel (submodule rtl/tg68k, now removed; tag d3_stable), which
+// never used clk_38.  rtl/soc/TG68K.vhd now always holds the AP68040, whose
+// island runs on clk_38, so these unsupported ports would need a real
+// 37.8 MHz output here (fpga/README.md).
 assign clk_38 = clk_114;
 `endif
 
