@@ -124,6 +124,9 @@ static struct {
 	unsigned words;			/* words moved by the running op */
 	unsigned long long next;	/* its next word / g_ack */
 	int stalled;			/* GAYLE_TO_TX waits for the Amiga's bytes */
+	unsigned stalls;		/* times a GAYLE_TO_TX waited so (mock_gayle_stalls) */
+	unsigned errs;			/* Gayle ops ended by a Gayle error (mock_gayle_errs) */
+	int since[2];			/* sdcard_gayle.v cmd_since: abandoned (mock_gayle_abandon) */
 } gay;
 
 int mock_sdc_cs_now(void) { return sdc.cs; }
@@ -207,6 +210,7 @@ static void sdc_end(int why)
 	/* GAYLE_TO_TX ending any way but normally: TX back to its state at the start */
 	if (sdc.op == OP_G2TX && why != END_NORMAL) sdc.tx_wr = sdc.tx_wr0;
 	if (is_gayle(sdc.op)) gay.end_how = MOCK_GAYLE_OK;	/* one shot */
+	if (is_gayle(sdc.op) && why == END_GERR) gay.errs++;
 	sdc.busy = 0;
 	sdc.inflight = 0;
 	sdc.abort_pend = 0;
@@ -272,7 +276,13 @@ static void sdc_byte_done(void)
 static void gayle_event(void)
 {
 	unsigned port = (sdc.cmd >> 8) & 1;
-	if (gay.end_how != MOCK_GAYLE_OK && gay.words == gay.end_words) { sdc_end(END_GERR); return; }
+	if (gay.end_how != MOCK_GAYLE_OK && gay.words == gay.end_words) {
+		/* g_err: the Amiga's FIFO was reset (a new command, a reset): the
+		   rest of its sector is gone with it */
+		if (gay.end_how == MOCK_GAYLE_ERR && sdc.op == OP_G2TX) gay.from_head[port] = gay.from[port].n;
+		sdc_end(END_GERR);
+		return;
+	}
 	if (gay.words == sdc.len / 2) { sdc_end(END_NORMAL); return; }	/* g_ack, all words */
 	if (sdc.op == OP_RX2G) {
 		unsigned char w[2];
@@ -381,6 +391,7 @@ static void sdc_cmd(unsigned v)
 	case OP_TXFL: sdc.tx_cm = sdc.tx_snd = sdc.tx_wr; sdc.pend |= I_DONE; break;
 	}
 	if (sdc.busy && !sdc.cd_raw) sdc_end(END_GONE);	/* no card: ends in its first cycle */
+	else if (sdc.busy && is_gayle(op) && gay.since[(v >> 8) & 1]) sdc_end(END_GERR);	/* abandoned: g_err, no word */
 	else if (sdc.busy) sdc_load(now);
 	sdc_levels();
 }
@@ -537,6 +548,24 @@ void mock_gayle_hold(int on)
 }
 void mock_gayle_word_cycles(unsigned n) { gay.word_cyc = n ? n : 1; }
 unsigned mock_gayle_cs_violations(void) { return gayle_violations; }
+unsigned mock_gayle_stalls(void) { return gay.stalls; }
+unsigned mock_gayle_errs(void) { return gay.errs; }
+size_t mock_gayle_from_left(unsigned port) { return gay.from[port & 1].n - gay.from_head[port & 1]; }
+int mock_gayle_from_pop(unsigned port)
+{
+	port &= 1;
+	if (gay.from_head[port] >= gay.from[port].n) return -1;
+	return gay.from[port].p[gay.from_head[port]++];
+}
+void mock_gayle_abandon(unsigned port)
+{
+	port &= 1;
+	gay.since[port] = 1;
+	gay.from_head[port] = gay.from[port].n;		/* the FIFO reset */
+	if (gayle_op_busy() && ((sdc.cmd >> 8) & 1) == port) sdc_end(END_GERR);
+	irq_deliver();
+}
+void mock_gayle_seen(unsigned port) { gay.since[port & 1] = 0; }
 /* cfide's CS register opened cs 0x10 (an IDE command over scs(4)) */
 void mock_gayle_cs_open(void) { if (gayle_op_busy()) gayle_violations++; }
 

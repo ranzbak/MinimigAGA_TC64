@@ -1,13 +1,14 @@
 /* hdd_test: the hard disk emulation's Amiga-facing bytes and its ATA paths
  * (Task 12, plan 5.2 items 1, 2, 7).
- *   hdd_test <dir>
+ *   hdd_test <dir> <golden of rd_multi_order (gold/hdd_rd_multi32.txt)>
  * <dir> holds what the Makefile made first: gold/rdb.py's rdbcases.h and
  * hdf/{WORK,SYNTH,ODD}.HDF, gold/identify.py's identcases.h (both compiled
  * in) and hdd.img, a tools/sim/mkcard.sh card with the three hardfiles.
  *
  * The real hdd.c runs over the real fat.c and mmc.c on the card model
- * (mock_hw.c), driven through HandleHDD() by a mock Gayle on the FPGA chip
- * select (gayle_miso below).  The checks:
+ * (mock_hw.c), driven by the main loop's FPGA poll (HandleFpga, cut out of
+ * main.c: it picks the command up through HandleHDD()) and a mock Gayle on
+ * the FPGA chip select (gayle_miso below).  The checks:
  *   - FakeRDB: hdf[] set up as OpenHardfile does (type HDF_FILE |
  *     HDF_SYNTHRDB, the file size, GetHardfileGeometry, offset -heads *
  *     sectors) for a 2 MB, a 2 GB and an odd-sized (20001 blocks) hardfile:
@@ -62,6 +63,7 @@
 #include "menu.h"
 #include "drivesounds.h"
 #include "diskstat.h"
+#include "fdd.h"
 #include "mock_hw.h"
 
 #include "rdbcases.h"
@@ -112,6 +114,25 @@ unsigned char GetFPGAStatus(void)
 	return status;
 }
 
+/* main.c's HandleFpga, cut out by the Makefile (main.c holds main()): the
+   main loop's poll of the FPGA's requests, which picks the IDE commands up
+   (HandleHDD); the floppy side is a stub that sends one floppy command
+   frame, as UpdateDriveStatus does (no HDD command word) */
+static int fdd_calls;
+void HandleFDD(unsigned char c1, unsigned char c2, unsigned char c3, unsigned char c4)
+{
+	(void)c1; (void)c2; (void)c3; (void)c4;
+	fdd_calls++;
+}
+void UpdateDriveStatus(void)
+{
+	EnableFpga();
+	SPI(0x10);
+	SPI(0x00);
+	DisableFpga();
+}
+#include "handlefpga.inc"
+
 /* ---- reporting ---- */
 static int fails, cases;
 
@@ -156,42 +177,72 @@ static void die(const char *what)
 /* ---- the mock Gayle (rtl/minimig/gayle_port.v, paula_floppy.v) ----------
  * Every FPGA frame starts with the command byte; its reply is the status
  * byte (paula_floppy spi_tx_data_0 bits 15:8: bit 3 hdd_dat_req =
- * CMD_IDEDAT, bit 2 hdd_cmd_req = CMD_IDECMD), which GetFPGAStatus reads
- * with a 0 command byte.  CMD_IDE_REGS_RD: 5 dummy bytes, then per task
- * file register the flags byte and the register.  CMD_IDE_REGS_WR,
- * CMD_IDE_STATUS_WR, CMD_IDE_DATA_WR: the bytes as hdd.c writes them.
- * CMD_IDE_DATA_RD: 5 dummy bytes, then the FIFO's bytes.
- * The FIFO holds 16 sectors (gayle_fifo.v, 4096 words).  pio in (status
- * write with bit 3, RDY): hdd_cmd_req is bsy = busy & ~drq, drq = at least
- * one sector in the FIFO: so a poll that finds data answers "busy" -- the
- * Amiga then reads all of it (one chunk, logged) -- and the next one
- * "drained".  pio out (bit 2, REQ): every other poll finds a sector the
- * Amiga wrote (hdd_dat_req), which the next CMD_IDE_DATA_RD reads.  The
- * flags of the register reads are 0 (port 1, no other port busy).
+ * CMD_IDEDAT, bit 2 hdd_cmd_req = CMD_IDECMD), which GetFPGAStatus and
+ * HandleFpga read with a 0 command byte.  CMD_IDE_REGS_RD: 5 dummy bytes,
+ * then per task file register the flags byte and the register.
+ * CMD_IDE_REGS_WR, CMD_IDE_STATUS_WR, CMD_IDE_DATA_WR: the bytes as hdd.c
+ * writes them.  CMD_IDE_DATA_RD: 5 dummy bytes, then the FIFO's bytes.
+ * Port 1 only (the IDE port of every command here).
+ *   - A command (amiga_command): busy, no direction yet: hdd_cmd_req (the
+ *     firmware picks it up through HandleFpga, cut out of main.c).  The
+ *     command write resets the FIFO: the bridge's cmd_since
+ *     (mock_gayle_abandon), cleared by the pickup's CMD_IDE_REGS_RD
+ *     (mock_gayle_seen).  END clears busy (and the direction).
+ *   - pio in (status write with bit 3, RDY): hdd_cmd_req is bsy = busy &
+ *     ~drq, drq = a sector in the FIFO.  The Amiga reads a group (READ
+ *     MULTIPLE: SET MULTIPLE MODE's count, else 1; the last one the rest)
+ *     at the first status poll that finds the whole group in the FIFO
+ *     (logged "rd n"), and "drained" is the next poll; a poll that finds
+ *     part of a group answers "busy" (the Amiga is reading); more than a
+ *     group in the FIFO is a refill before the drain (gayle_port.v fires
+ *     the interrupt on the DRQ edge: it would be lost).  The FIFO holds 16
+ *     sectors (gayle_fifo.v, 4096 words).  After the last sector Gayle
+ *     clears busy itself.
+ *   - pio out (bit 2, REQ): every other poll the Amiga writes a sector
+ *     while the FIFO is empty (drq) -- into the bridge's from[0], which
+ *     GAYLE_TO_TX takes and CMD_IDE_DATA_RD pops (mock_gayle_from_pop) --
+ *     and the next group only after the IRQ status write of this one
+ *     (ATA: the host waits for INTRQ between blocks).  hdd_dat_req: a whole
+ *     sector in the FIFO (with hdd_cmd_req: fifo_full makes bsy); after the
+ *     last sector: hdd_cmd_req alone.
+ *   - A Gayle error of the bridge (mock_gayle_end, an abandon) stands for
+ *     the Amiga's new command: the model goes idle (no request), the
+ *     abandon flag stays until the next pickup.
  * The firmware port latch (paula_floppy.v hdd_port_r, gayle.v fw_port): bit
  * 0 of the first byte of every HDD command word (10xx, 1100, 1111) selects
  * the port, and it stays latched for what follows without a command word
- * (the direct-mode blocks, GetFPGAStatus).  Every command here is on port 1:
- * a port-2 command word inside it is an error (on the board: the next block
+ * (GetFPGAStatus).  Every command here is on port 1: a port-2 command word
+ * while the firmware serves it is an error (on the board: the next block
  * went to port 2's FIFO and "drained" hid behind the busy CD port, a
- * deadlock, 2026-10-20). */
+ * deadlock, 2026-10-20).
+ * The Amiga-visible events go to g.log, one line each: "tf <6 bytes>"
+ * (task file write: error, count, sector, cyl lo, cyl hi, dh), "st <status>",
+ * "rd <n>" (the Amiga read n sectors), "reset", "cmd" (a new command). */
 #define FIFO_SECTORS 16
 #define MAXCHUNKS 300
+static int fw_in_command(void);
+static void status_irq(void);
 static struct gayle {
 	int frame;		/* mock_frames() of the open frame */
 	unsigned pos;		/* its byte index */
 	unsigned char cmd, fb[24];
 	unsigned char tfr[8];	/* the command the Amiga wrote */
+	int busy;		/* gayle_port.v busy */
 	int pio;		/* 0, 1 = in, 2 = out */
+	unsigned count, chunk;	/* sectors of the command, of a group */
 	unsigned long rx;	/* CMD_IDE_DATA_WR data bytes */
 	unsigned drained;	/* sectors the Amiga read */
-	int chunk[MAXCHUNKS], nchunks;
+	int chunks[MAXCHUNKS], nchunks;
 	unsigned char status[MAXCHUNKS + 2]; int nstatus;
 	unsigned char tfw[8][6]; int ntfw;	/* task file writes: error, count, sector, cyl lo, cyl hi, dh */
-	const uint8_t *wdata; size_t wlen, wpos;	/* the Amiga's write data */
+	const uint8_t *wdata; size_t wlen;	/* the Amiga's write data */
 	unsigned wready;	/* sectors the Amiga put in the FIFO */
+	unsigned irqs;		/* IRQ status writes of a pio-out command (groups released) */
 	int wtoggle;
-	unsigned long busy_polls;
+	int rst_seen;		/* the next CMD_IDE_REGS_RD reports IDEF_RST_SEEN */
+	unsigned gerrs;		/* mock_gayle_errs() the model has seen */
+	unsigned long busy_polls, polls;
+	struct { char *p; size_t n, cap; } log;
 	char err[160];
 } g;
 
@@ -214,6 +265,27 @@ static void gayle_err(const char *msg)
 	if (!g.err[0]) snprintf(g.err, sizeof g.err, "%s", msg);
 }
 
+static void glog(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+static void glog(const char *fmt, ...)
+{
+	char line[96];
+	va_list ap;
+	int n;
+	va_start(ap, fmt);
+	n = vsnprintf(line, sizeof line, fmt, ap);
+	va_end(ap);
+	if (n < 0) return;
+	if (g.log.n + (size_t)n + 2 > g.log.cap) {
+		g.log.cap = (g.log.cap + (size_t)n + 2) * 2;
+		g.log.p = realloc(g.log.p, g.log.cap);
+		if (!g.log.p) die("out of memory");
+	}
+	memcpy(g.log.p + g.log.n, line, (size_t)n);
+	g.log.n += (size_t)n;
+	g.log.p[g.log.n++] = '\n';
+	g.log.p[g.log.n] = 0;
+}
+
 static unsigned fifo_sectors(void)
 {
 	if (g.rx % 512) gayle_err("a partial sector in the FIFO at a status poll");
@@ -221,22 +293,73 @@ static unsigned fifo_sectors(void)
 	return (unsigned)(g.rx / 512) + (unsigned)(gay_bytes(0) / 512) - g.drained;
 }
 
+/* sectors the firmware took out of the FIFO (the bridge or CMD_IDE_DATA_RD) */
+static unsigned long consumed(void)
+{
+	return (unsigned long)g.wready * 512 - (unsigned long)mock_gayle_from_left(0);
+}
+
+/* a new command on port 1: what Gayle does on the command register write */
+static void amiga_command(const unsigned char *t, unsigned count, unsigned chunk)
+{
+	memcpy(g.tfr, t, 8);
+	g.busy = 1;
+	g.pio = 0;
+	g.count = count;
+	g.chunk = chunk ? chunk : 1;
+	mock_gayle_abandon(0);	/* the FIFO reset: cmd_since until the pickup */
+}
+
+/* a Gayle error since the last look: the Amiga's new command (the model's
+   stand-in: idle until the test's next command) */
+static void look_gerr(void)
+{
+	if (mock_gayle_errs() != g.gerrs) {
+		g.gerrs = mock_gayle_errs();
+		g.busy = 0;
+		g.pio = 0;
+		mock_gayle_abandon(0);
+	}
+}
+
+/* the Amiga writes its next sector into the FIFO */
+static void amiga_write(void)
+{
+	mock_gayle_from(0, g.wdata + (size_t)g.wready * 512, 512);
+	g.wready++;
+}
+
 static unsigned char gayle_poll(void)
 {
 	unsigned char st = 0;
-	if (g.pio == 1) {
-		unsigned n = fifo_sectors();
+	g.polls++;
+	look_gerr();
+	if (!g.busy)
+		st = 0;
+	else if (g.pio == 0)
+		st = CMD_IDECMD;	/* the command, no direction yet */
+	else if (g.pio == 1) {
+		unsigned n = fifo_sectors(), want = g.count - g.drained;
+		if (want > g.chunk) want = g.chunk;
 		if (n > FIFO_SECTORS) gayle_err("more than 16 sectors in the FIFO");
-		if (n) {
-			if (g.nchunks < MAXCHUNKS) g.chunk[g.nchunks++] = (int)n;
+		if (n > want) gayle_err("more than one group in the FIFO: a refill before the drain");
+		if (n && n >= want) {
+			if (g.nchunks < MAXCHUNKS) g.chunks[g.nchunks++] = (int)n;
+			glog("rd %u", n);
 			g.drained += n;
-		} else
+			if (g.drained >= g.count) { g.busy = 0; g.pio = 0; }	/* the last sector read */
+		} else if (!n)
 			st = CMD_IDECMD;
 	} else if (g.pio == 2) {
-		if (g.wtoggle ^= 1) {
-			if (g.wready * 512 < g.wlen) g.wready++;
-		}
-		if (g.wready * 512 > g.wpos) st = CMD_IDEDAT;
+		size_t left = mock_gayle_from_left(0);
+		unsigned total = (unsigned)(g.wlen / 512), allowed = (g.irqs + 1) * g.chunk;
+		if (total > g.count) total = g.count;
+		if (left % 512) gayle_err("a partial sector in the write FIFO at a status poll");
+		if ((g.wtoggle ^= 1) && !left && g.wready < total && g.wready < allowed)
+			amiga_write();
+		left = mock_gayle_from_left(0);
+		if (left >= 512) st = CMD_IDEDAT | CMD_IDECMD;	/* fifo_full: dat_req, and bsy */
+		else if (g.wready >= g.count) st = CMD_IDECMD;	/* the last sector taken */
 	}
 	if (st) g.busy_polls = 0;
 	else if (++g.busy_polls > 100000) die("the firmware polls a Gayle that never gets ready");
@@ -254,38 +377,51 @@ static unsigned char gayle_miso(void *ctx, unsigned char out)
 		if ((out & 0xC0) == 0x80 || (out & 0xF0) == 0xC0 || (out & 0xF0) == 0xF0) {
 			char m[120];
 			snprintf(m, sizeof m, "a port-2 command word %02X inside a port-1 command: re-latches hdd_port", out);
-			if (out & 1) gayle_err(m);
+			if ((out & 1) && fw_in_command()) gayle_err(m);
 		}
 		if ((out & 0xFE) == CMD_IDE_DATA_WR && ndw < MAXBLOCKS)
 			dw_at[ndw++] = gay_bytes(0);
+		if ((out & 0xF0) == CMD_IDE_REGS_RD) {
+			mock_gayle_seen(out & 1);	/* "I have seen this port's command" */
+			g.fb[0] = (unsigned char)((out & 1) ? IDEF_PORT : 0) | (unsigned char)(g.rst_seen && !(out & 1) ? IDEF_RST_SEEN : 0);
+			if (!(out & 1)) g.rst_seen = 0;
+		}
 		return out == 0 ? gayle_poll() : 0;
 	}
-	if (pos < sizeof g.fb) g.fb[pos] = out;
+	if (pos < sizeof g.fb && (g.cmd & 0xF0) != CMD_IDE_REGS_RD) g.fb[pos] = out;
 	switch (g.cmd & 0xFE) {
 	case CMD_IDE_REGS_RD:
 		if (pos < 6 || pos >= 22) return 0;
-		return (pos - 6) & 1 ? g.tfr[(pos - 6) / 2] : 0;
+		return (pos - 6) & 1 ? g.tfr[(pos - 6) / 2] : g.fb[0];
 	case CMD_IDE_REGS_WR:
 		if (pos == 19 && g.ntfw < 8) {
 			unsigned char *t = g.tfw[g.ntfw++];
 			t[0] = g.fb[9]; t[1] = g.fb[11]; t[2] = g.fb[13];
 			t[3] = g.fb[15]; t[4] = g.fb[17]; t[5] = g.fb[19];
+			glog("tf %02x %02x %02x %02x %02x %02x", t[0], t[1], t[2], t[3], t[4], t[5]);
 		}
 		return 0;
 	case CMD_IDE_STATUS_WR:
 		if (pos == 1) {
 			if (g.nstatus < (int)sizeof g.status) g.status[g.nstatus++] = out;
+			glog("st %02x", out);
+			if (!g.busy) gayle_err("a status write while the port is not busy (the old command's, after an abandon?)");
 			if (out & IDE_STATUS_RDY) g.pio = 1;
 			if (out & IDE_STATUS_REQ) g.pio = 2;
+			if (g.pio == 2 && (out & IDE_STATUS_IRQ) && !(out & IDE_STATUS_ERR)) { status_irq(); g.irqs++; }
+			if (out & IDE_STATUS_END) { g.busy = 0; g.pio = 0; }
 		}
 		return 0;
 	case CMD_IDE_DATA_WR:
 		if (pos >= 6) g.rx++;
 		return 0;
-	case CMD_IDE_DATA_RD:
+	case CMD_IDE_DATA_RD: {
+		int b;
 		if (pos < 6) return 0;
-		if (g.wpos >= g.wready * 512) { gayle_err("CMD_IDE_DATA_RD of a sector the Amiga has not written"); return 0; }
-		return g.wdata[g.wpos++];
+		b = mock_gayle_from_pop(0);
+		if (b < 0) { gayle_err("CMD_IDE_DATA_RD of a sector the Amiga has not written"); return 0; }
+		return (unsigned char)b;
+	}
 	}
 	return 0;
 }
@@ -451,6 +587,36 @@ static void lba2chs(int unit, long lba, unsigned *c, unsigned *h, unsigned *s)
 	*c = (unsigned)(lba / uc[unit].secs / uc[unit].heads);
 }
 
+/* the firmware serves a command (the main loop has work for it) */
+static int fw_in_command(void)
+{
+	return 1;	/* HandleHDD runs each command to its end */
+}
+
+/* one pass of the main loop's disk work */
+static long passes;
+static void loop_pass(void)
+{
+	HandleFpga();
+	look_gerr();
+	passes++;
+}
+
+/* the main loop until the firmware and the Amiga are through */
+static void run_loop(void)
+{
+	long n = 0;
+	do {
+		loop_pass();
+		if (++n > 2000000) die("the command never ends (a hang)");
+	} while (g.busy);
+}
+
+/* the unit / LBA / data of the write being served: the IRQ check */
+static int cur_unit;
+static long cur_lba;
+static unsigned irq_early;	/* IRQ status writes before the group was on the card */
+
 /* the task file of a command on unit 0/1 of port 1: CHS of lba, count byte */
 static void command(int unit, unsigned char cmd, long lba, unsigned char count)
 {
@@ -461,21 +627,23 @@ static void command(int unit, unsigned char cmd, long lba, unsigned char count)
 	int frame = g.frame;
 	const uint8_t *wd = g.wdata;
 	size_t wl = g.wlen;
+	unsigned gerrs = g.gerrs;
+	int multiple = cmd == ACMD_READ_MULTIPLE || cmd == ACMD_WRITE_MULTIPLE;
+	free(g.log.p);
 	memset(&g, 0, sizeof g);
 	g.frame = frame;
 	g.wdata = wd;
 	g.wlen = wl;
-	memcpy(g.tfr, t, 8);
+	g.gerrs = gerrs;
+	cur_unit = unit;
+	cur_lba = lba;
 	mock_gayle_into(0, &gay_base[0]);
 	mock_gayle_into(1, &gay_base[1]);
 	ndw = 0;
 	audio_polls = 0;
 	full_polls = 0;
-	HandleHDD(CMD_IDECMD, 0);
-	if (g.pio == 1 && fifo_sectors()) {	/* the Amiga reads the last chunk */
-		if (g.nchunks < MAXCHUNKS) g.chunk[g.nchunks++] = (int)fifo_sectors();
-		g.drained += fifo_sectors();
-	}
+	amiga_command(t, count ? count : 256, multiple ? hdf[unit].sectors_per_block : 1);
+	run_loop();
 	trace_blocks();
 }
 
@@ -487,6 +655,22 @@ static const uint8_t *expect_block(int unit, long lba)
 	if (v < 0) return lba == 0 ? uc[unit].rdsk : lba == 1 ? uc[unit].part : zero;
 	if (unit == 0 && uc[unit].type == HDF_FILE && lba == 0 && uc[unit].file == F_WORK) return work_rdb_patched;
 	return files[uc[unit].file].data + (size_t)v * 512;
+}
+
+/* an IRQ status write of a write command (not an error's): every sector the
+   firmware took so far is on the card with the Amiga's data and the card is
+   idle (programmed: findings/sdcard-engine Task 11a, write-done timing) */
+static void status_irq(void)
+{
+	unsigned k = (unsigned)(consumed() / 512);
+	int ok = mock_card_idle();
+	for (unsigned i = 0; i < k && ok && g.wdata; i++) {
+		long v = cur_lba + (long)i + uc[cur_unit].offset;
+		if (v >= 0 && uc[cur_unit].file >= 0 &&
+		    memcmp(mock_card_sector(files[uc[cur_unit].file].card_lba[v]), g.wdata + (size_t)i * 512, 512))
+			ok = 0;
+	}
+	if (!ok) irq_early++;
 }
 
 static void check_taskfile(const char *what, int unit, long last, unsigned char count)
@@ -584,7 +768,7 @@ static void read_case(const char *what, int unit, int multiple, long lba, int n)
 	if (check(w, g.nchunks, want_chunks))
 		for (int i = 0; i < want_chunks; i++) {
 			snprintf(w, sizeof w, "%s: chunk %d", what, i);
-			check(w, g.chunk[i], i < want_chunks - 1 ? per : n - per * (want_chunks - 1));
+			check(w, g.chunks[i], i < want_chunks - 1 ? per : n - per * (want_chunks - 1));
 		}
 	snprintf(w, sizeof w, "%s: status writes", what);
 	if (check(w, g.nstatus, want_chunks))
@@ -620,7 +804,9 @@ static void write_case(const char *what, int unit, int multiple, long lba, int n
 	check_gayle(what);
 	check_taskfile(what, unit, lba + n - 1, (unsigned char)n);
 	snprintf(w, sizeof w, "%s: sectors read from the FIFO", what);
-	check(w, (long)g.wpos, (long)n * 512);
+	check(w, (long)consumed(), (long)n * 512);
+	snprintf(w, sizeof w, "%s: every IRQ after its group was programmed (the card idle, the data on it)", what);
+	check(w, irq_early, 0);
 	int per = multiple ? spb : 1, want_chunks = (n + per - 1) / per;
 	snprintf(w, sizeof w, "%s: status writes", what);
 	if (check(w, g.nstatus, 1 + want_chunks)) {
@@ -825,7 +1011,7 @@ static void past_end_cases(void)
 	command(1, ACMD_WRITE_SECTORS, 8191, 2);
 	check_gayle("past the end: WRITE SECTORS 8191+2");
 	check("past the end: WRITE SECTORS 8191+2: status REQ, then END | IRQ | ERR", g.nstatus == 2 && g.status[0] == IDE_STATUS_REQ && g.status[1] == err, 1);
-	check("past the end: WRITE SECTORS 8191+2: no sector taken from the FIFO", (long)g.wpos, 0);
+	check("past the end: WRITE SECTORS 8191+2: no sector taken from the FIFO", (long)consumed(), 0);
 	for (unsigned l = 0; l < card_sectors; l++) same &= !memcmp(before + (size_t)l * 512, mock_card_sector(l), 512);
 	check("past the end: WRITE SECTORS 8191+2: the card unchanged", same, 1);
 	g.wdata = NULL;
@@ -872,6 +1058,38 @@ static void short_chain_case(void)
 	open_unit(1, F_WORK, HDF_FILE, "WORK    ");
 }
 
+/* rd_multi_order: the Amiga-visible order of a READ MULTIPLE 32 in groups
+   of 16 (task file, status writes, the Amiga's reads) against the golden
+   recorded on the firmware before findings/sdcard-engine Task 11a (the
+   synchronous HDD path, f8e2f43b) with this model; HDD_GOLD_WRITE=1 writes
+   the golden instead (the record, not a check) */
+static void rd_multi_order(const char *golden)
+{
+	char want[4096];
+	size_t n = 0;
+	FILE *f;
+	set_multiple(1, 16);
+	read_case("rd_multi_order: WORK.HDF READ MULTIPLE 2000+32", 1, 1, 2000, 32);
+	if (!golden) die("rd_multi_order: no golden file argument");
+	if (getenv("HDD_GOLD_WRITE")) {
+		f = fopen(golden, "w");
+		if (!f || fputs(g.log.p, f) < 0 || fclose(f)) die("rd_multi_order: cannot write the golden");
+		say("rd_multi_order: golden written to %s\n", golden);
+		return;
+	}
+	f = fopen(golden, "r");
+	if (!f) die("rd_multi_order: no golden");
+	n = fread(want, 1, sizeof want - 1, f);
+	fclose(f);
+	want[n] = 0;
+	cases++;
+	if (strcmp(g.log.p ? g.log.p : "", want)) {
+		say("FAIL rd_multi_order: the Gayle trace differs from %s\n--- got\n%s--- want\n%s", golden,
+		    g.log.p ? g.log.p : "", want);
+		fails++;
+	}
+}
+
 /* the Amiga's write data: block j = 'W', j, then a pattern */
 static uint8_t *wpattern(int n, int seed)
 {
@@ -886,7 +1104,7 @@ static uint8_t *wpattern(int n, int seed)
 int main(int argc, char **argv)
 {
 	char w[200];
-	if (argc != 2) { fprintf(stderr, "usage: hdd_test <dir>\n"); return 2; }
+	if (argc != 3) { fprintf(stderr, "usage: hdd_test <dir> <golden of rd_multi_order>\n"); return 2; }
 	dir = argv[1];
 
 	card_up();
@@ -929,6 +1147,7 @@ int main(int argc, char **argv)
 	read_case("WORK.HDF READ MULTIPLE 1000+10", 1, 1, 1000, 10);
 	set_multiple(1, 16);
 	read_case("WORK.HDF READ MULTIPLE 4000+0 (256)", 1, 1, 4000, 256);
+	rd_multi_order(argv[2]);
 	read_case("WORK.HDF READ SECTORS 7000+0 (256)", 1, 0, 7000, 256);
 	/* the file's last cluster: FileReadEx's seek after the last block meets
 	   the end of the chain (fat.c), which is no error (Task 10 fix round 1) */

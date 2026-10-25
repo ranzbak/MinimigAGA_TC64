@@ -164,6 +164,12 @@ unsigned mock_card_blocks_read(void);
 /* In idle state (power-on, CMD0, before ACMD41) CMD9/10/12/17/18/24/25 get
    R1 05 (idle + illegal) and do nothing (Task 10 fix round 1). */
 unsigned mock_card_wr_ok(void);     /* what ACMD22 would answer now */
+/* stop tokens (CMD25) whose busy has been sent to its end: the card has
+   finished the run (findings/sdcard-engine Task 11a, write-done timing) */
+unsigned mock_card_stop_ends(void);
+/* the card waits for a command: no write or multi-block read open, no
+   busy or response bytes left to send, not removed */
+int mock_card_idle(void);
 
 /* ---- time ----
  * One clock: clk_114 cycles since mock_reset().  The TIMER register moves
@@ -247,6 +253,22 @@ void mock_gayle_end(int how, unsigned words);
 void mock_gayle_hold(int on);
 void mock_gayle_word_cycles(unsigned n);
 unsigned mock_gayle_cs_violations(void);
+/* GAYLE_TO_TX ops that had to wait for the Amiga's bytes (the firmware
+   started one before the sector was in Gayle's FIFO: ruling T11-R1), and
+   Gayle ops ended by a Gayle error (g_err, a short g_ack, an abandon) */
+unsigned mock_gayle_stalls(void);
+unsigned mock_gayle_errs(void);
+/* the bytes of from[port] no op has taken yet (what is in Gayle's FIFO);
+   one of them taken by the CPU (CMD_IDE_DATA_RD), -1 when there is none */
+size_t mock_gayle_from_left(unsigned port);
+int mock_gayle_from_pop(unsigned port);
+/* sdcard_gayle.v's cmd_since: the Amiga abandoned the port's command (a new
+   command, a reset): its FIFO is reset (from[port] dropped), a running
+   Gayle op of the port ends with g_err, every later one at once (no word)
+   until mock_gayle_seen(port) (the firmware's CMD_IDE_REGS_RD).  A
+   mock_gayle_end(MOCK_GAYLE_ERR) of a GAYLE_TO_TX drops from[port] too. */
+void mock_gayle_abandon(unsigned port);
+void mock_gayle_seen(unsigned port);
 
 /* ---- the interrupt controller (arch/irq.h under HOSTTEST) ----
  * cfide's controller (PENDING read clears the EDGE bits it returns; MASK,

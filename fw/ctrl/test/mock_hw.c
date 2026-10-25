@@ -102,6 +102,8 @@ static struct {
 	unsigned acmd22_less, acmd22_times;	/* mock_card_acmd22_less */
 	unsigned wrrej_every;		/* mock_card_wrrej_every */
 	int sel;			/* selected (cfide's CS bit 1 or the peripheral's CS) */
+	int stop_pend;			/* a stop token's busy is still being sent */
+	unsigned stop_ends;		/* stop-token busy periods sent to their end (mock_card_stop_ends) */
 } card;
 static int card_via_sdc;		/* the byte being exchanged comes from the SD peripheral */
 
@@ -163,7 +165,7 @@ static void card_power_on(void)
 	card.qh = card.qt = 0; card.txb = 0xFF; card.cmdcnt = 0;
 	card.app_cmd = 0; card.idle = 1; card.ready = 0; card.polls = 0;
 	card.rd_multi = 0; card.wstate = 0; card.wmulti = 0;
-	card.busy_stuck = 0; card.crc_on = 0; card.werr = 0;
+	card.busy_stuck = 0; card.crc_on = 0; card.werr = 0; card.stop_pend = 0;
 }
 
 static void card_state_reset(void)
@@ -338,7 +340,7 @@ static void card_on_byte(unsigned char b)
 		switch (card.wstate) {
 		case 1:
 			if (b == 0xFE || (card.wmulti && b == 0xFC)) { card.wstate = 2; card.wcnt = 0; card.wcrc = 0; }
-			else if (card.wmulti && b == 0xFD) { card.wstate = 0; c_push(0xFF); c_push_busy(); }
+			else if (card.wmulti && b == 0xFD) { card.wstate = 0; c_push(0xFF); c_push_busy(); card.stop_pend = 1; }
 			break;
 		case 2:
 			card.wbuf[card.wcnt++] = b;
@@ -377,6 +379,8 @@ static void card_on_byte(unsigned char b)
 		if (--e->n == 0) card.qh++;
 	} else
 		card.txb = card.busy_stuck ? 0x00 : 0xFF;
+	/* the stop token's busy: its last byte is on its way, the next is FF */
+	if (card.stop_pend && card.qh == card.qt && !card.busy_stuck) { card.stop_pend = 0; card.stop_ends++; }
 }
 
 /* the card's side of one byte: what it sends (MISO), then it takes `out` */
@@ -402,7 +406,7 @@ static void card_select(void) { card.cmdcnt = 0; card.txb = 0xFF; }
 static void card_deselect(void)
 {
 	card.cmdcnt = 0; card.qh = card.qt; card.rd_multi = 0; card.wstate = 0;
-	card.busy_stuck = 0;
+	card.busy_stuck = 0; card.stop_pend = 0;
 }
 
 void mock_card_params(int token_dly, int busy, int ncr, int init_polls)
@@ -484,6 +488,12 @@ void mock_card_acmd22_less(unsigned n, unsigned times) { card.acmd22_less = n; c
 void mock_card_wrrej_every(unsigned k) { card.wrrej_every = k; }
 unsigned mock_card_blocks_read(void) { return card.rd_blk_n; }
 unsigned mock_card_wr_ok(void) { return card.wr_ok; }
+unsigned mock_card_stop_ends(void) { return card.stop_ends; }
+int mock_card_idle(void)
+{
+	return !card.gone && card.wstate == 0 && card.qh == card.qt && !card.busy_stuck && !card.rd_multi &&
+	       !card.stop_pend && card.cmdcnt == 0;
+}
 
 /* the card's chip select: cfide's CS bit 1 (the old path) or the SD
    peripheral's CFG bit 8 */

@@ -197,14 +197,21 @@ $(B)/hdd/identcases.h: $(GOLD)/identify.py
 	$(PY) $(GOLD)/identify.py $(@D)
 $(B)/hdd/hdd.img: $(B)/hdd/rdb.ok $(TOP)/tools/sim/mkcard.sh
 	bash $(TOP)/tools/sim/mkcard.sh $@ 32 $(B)/hdd/hdf/WORK.HDF $(B)/hdd/hdf/SYNTH.HDF $(B)/hdd/hdf/ODD.HDF
+# HandleFpga, cut out of main.c (main.c holds main()): the main loop's
+# FPGA poll that picks the IDE commands up
+$(B)/handlefpga.inc: $(SRC)/main.c
+	@mkdir -p $(@D)
+	sed -n '/^void HandleFpga(void)/,/^}/p' $(SRC)/main.c > $@
+	grep -q '^void HandleFpga' $@
+$(B)/hdd_test $(B)/hdd_test_32: $(B)/handlefpga.inc
 $(B)/hdd_test: $(TD)/hdd_test.c $(HDD_SRCS) $(HDRS) $(B)/hdd/rdb.ok $(B)/hdd/identcases.h
 	$(HOSTCC) $(CFLAGS) -I$(B)/hdd -o $@ $(TD)/hdd_test.c $(HDD_SRCS)
 $(B)/hdd_test_32: $(TD)/hdd_test.c $(HDD_SRCS) $(HDRS) $(B)/hdd/rdb.ok $(B)/hdd/identcases.h
 	$(HOSTCC) -m32 $(CFLAGS) -I$(B)/hdd -o $@ $(TD)/hdd_test.c $(HDD_SRCS)
 run64-hdd_test: $(B)/hdd_test $(B)/hdd/hdd.img
-	$(B)/hdd_test $(B)/hdd
+	$(B)/hdd_test $(B)/hdd $(GOLD)/hdd_rd_multi32.txt
 run32-hdd_test: $(B)/hdd_test_32 $(B)/hdd/hdd.img
-	$(B)/hdd_test_32 $(B)/hdd
+	$(B)/hdd_test_32 $(B)/hdd $(GOLD)/hdd_rd_multi32.txt
 run-hdd_test: run64-hdd_test run32-hdd_test
 .PHONY: run-hdd_test run64-hdd_test run32-hdd_test
 
