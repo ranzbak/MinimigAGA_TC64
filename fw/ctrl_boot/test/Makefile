@@ -1,5 +1,8 @@
-# Host test of the boot ROM's FAT code (gcc + ASan/UBSan).  `make` builds, makes
-# four card images with tools/sim/mkcard.sh and runs minfat_test on each.
+# Host tests of the boot ROM (gcc + ASan/UBSan).  `make` builds, makes four
+# card images with tools/sim/mkcard.sh and runs minfat_test on each (the FAT
+# code), then lockstep_test (the bitstream / firmware lock-step check,
+# ../lockstep.c with the ROM's small_printf), also on fw/ctrl's built
+# RV32OSDA.BIN when it exists (FWBIN=<file> for another one).
 # Needs: gcc, mtools, dosfstools, fdisk (see tools/sim/README.md), python3.
 TOP     := $(abspath ../../..)
 MKCARD  := $(TOP)/tools/sim/mkcard.sh
@@ -26,6 +29,20 @@ $(OUT)/minfat_test.o: minfat_test.c $(SRC)/minfat.h | $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 $(OUT)/minfat_test: $(OUT)/minfat_test.o $(OUT)/minfat.o $(OUT)/swap.o
 	$(CC) $(CFLAGS) -o $@ $^
+
+# lockstep.c and small_printf.c print through putchar: renamed, so the test
+# captures the UART text (sdc.h's HOSTTEST register access: SDC_R -> the
+# test's hosttest_sdc_rd)
+LSFLAGS := -DHOSTTEST -Dputchar=rv_putchar
+$(OUT)/lockstep.o: $(SRC)/lockstep.c $(SRC)/lockstep.h $(SRC)/../ctrl/sdc.h $(SRC)/small_printf.h | $(OUT)
+	$(CC) $(CFLAGS) $(LSFLAGS) -c -o $@ $<
+$(OUT)/small_printf.o: $(SRC)/small_printf.c $(SRC)/small_printf.h $(SRC)/uart.h | $(OUT)
+	$(CC) $(CFLAGS) $(LSFLAGS) -c -o $@ $<
+$(OUT)/lockstep_test.o: lockstep_test.c $(SRC)/lockstep.h $(SRC)/../ctrl/sdc.h | $(OUT)
+	$(CC) $(CFLAGS) $(LSFLAGS) -c -o $@ $<
+$(OUT)/lockstep_test: $(OUT)/lockstep_test.o $(OUT)/lockstep.o $(OUT)/small_printf.o
+	$(CC) $(CFLAGS) -o $@ $^
+FWBIN ?= $(TOP)/fw/ctrl/build/RV32OSDA.BIN
 
 # Card images.  Contents: RV32OSDA.BIN = 3000 deterministic pseudo-random bytes,
 # OLDOSDAD.BIN = another firmware-like name ahead of it on the card (a decoy, as
@@ -60,12 +77,14 @@ $(OUT)/fat32.img: $(OUT)/big.bin $(OUT)/decoy1.bin
 	PATH=$$PATH:/usr/sbin:/sbin mkfs.fat -F 32 -s 1 -n MINIMIG $@ >/dev/null
 	MTOOLS_SKIP_CHECK=1 mcopy -i $@ $(OUT)/OLDOSDAD.BIN $(OUT)/RV32OSDA.BIN ::
 
-test: $(OUT)/minfat_test $(OUT)/mbr_file.img $(OUT)/mbr_nofile.img $(OUT)/superfloppy.img $(OUT)/fat32.img
+test: $(OUT)/minfat_test $(OUT)/mbr_file.img $(OUT)/mbr_nofile.img $(OUT)/superfloppy.img $(OUT)/fat32.img $(OUT)/lockstep_test
 	$(OUT)/minfat_test $(OUT)/mbr_file.img $(OUT)/fw.bin
 	$(OUT)/minfat_test $(OUT)/mbr_nofile.img -
 	$(OUT)/minfat_test $(OUT)/superfloppy.img $(OUT)/fw.bin
 	$(OUT)/minfat_test $(OUT)/fat32.img $(OUT)/big.bin
 	@echo "minfat host test: ALL PASS"
+	$(OUT)/lockstep_test $(wildcard $(FWBIN))
+	@[ -f "$(FWBIN)" ] || echo "lockstep host test: $(FWBIN) not built, its two cases skipped (make -C fw/ctrl)"
 
 clean:
 	rm -rf $(OUT)

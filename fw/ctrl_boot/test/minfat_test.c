@@ -30,12 +30,6 @@ int sd_read_sector(unsigned long lba, unsigned char *buf)
 	return fread(buf, 1, 512, img) == 512;
 }
 
-int sd_write_sector(unsigned long lba, unsigned char *buf)
-{
-	(void)lba; (void)buf;
-	return 0;
-}
-
 /* minfat.c is compiled with -Dputs=rv_puts, and printf is small_printf (small_printf.h). */
 int rv_puts(const char *s)
 {

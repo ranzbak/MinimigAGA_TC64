@@ -9,6 +9,7 @@
 #include "checksum.h"
 #include "small_printf.h"
 #include "uart.h"
+#include "lockstep.h"
 
 /* #define STANDALONE to disable anything that requires the Minimig core to be functional,
    to reduce build times when debugging host facilities. */
@@ -51,6 +52,15 @@ void _boot()
 	/* The program was just written through the data side; make the fetch side see it. */
 	__asm__ volatile("fence.i" ::: "memory");
 	entry();
+}
+
+/* The end of the ROM's road (lockstep.c): interrupts off (they are never
+   on in the ROM; this states it), park. */
+void boot_halt(void)
+{
+	__asm__ volatile("csrci mstatus, 8" ::: "memory");
+	for(;;)
+		;
 }
 
 static void puthex8(unsigned int v)
@@ -104,6 +114,7 @@ void cvx(int val,char *buf)
 int main(int argc,char **argv)
 {
 	int err=0;
+	int size;
 	SPI_slow();
 
 #ifndef STANDALONE
@@ -139,11 +150,8 @@ int main(int argc,char **argv)
 			if(FindDrive())
 			{
 				err=0x0f0;
-				if(LoadFile(OSDNAME,(unsigned char *)prg_start))
-				{
-					err=0x0ff;
-					_boot();
-				}
+				if((size=LoadFile(OSDNAME,(unsigned char *)prg_start)))
+					fw_start((unsigned char *)prg_start,size);	/* boots, or ErrorCode(0x0ff) and halts */
 				else
 					puts("Can't load firmware\n");
 			}

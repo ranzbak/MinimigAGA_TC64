@@ -1,12 +1,15 @@
-# L2 boot run (sim/host_bridge/run.sh boot / boot_nofile): the test firmware
-# RV32OSDA.BIN and the two SD card images.
+# L2 boot run (sim/host_bridge/run.sh boot / boot_nofile / boot_mismatch):
+# the test firmware RV32OSDA.BIN and the three SD card images.
 #   make -C sim/host_bridge/boot             # into sim/host_bridge/boot/build
 #   make -C sim/host_bridge/boot B=<dir>     # run.sh: into its run directory
 # Outputs in $(B):
 #   RV32OSDA.BIN       fwtest.c + fwfill.S on fw/ctrl/arch (crt0, trap
 #                      entry, irq API) with firmware.ld, objcopy -O binary,
-#                      padded to $(IMG_BYTES) bytes (5 sectors: the boot ROM
-#                      log then has a fixed number of sector reads)
+#                      padded to $(IMG_BYTES) - 8 bytes, then the lock-step
+#                      trailer of fw/ctrl (fw/ctrl/sdctrailer.c: 'SDCV', 0,
+#                      0, SDC_VERSION of fw/ctrl/sdc.h), $(IMG_BYTES) bytes
+#                      in all (5 sectors: the boot ROM log then has a fixed
+#                      number of sector reads)
 #   img.txt            "IMG <len> <sum>": the line the firmware must print,
 #                      from the file: .text + .rodata length and word sum
 #   card.img           8 MB FAT16: OSDDECOY.BIN (decoy, first in the
@@ -14,6 +17,9 @@
 #   card_nofile.img    8 MB FAT16: OSDDECOY.BIN, RV32OSDB.BIN (the firmware
 #                      under a near-miss name): the boot ROM must not load
 #                      either
+#   card_mismatch.img  8 MB FAT16: OSDDECOY.BIN, RV32OSDA.BIN without the
+#                      trailer (its last 8 bytes are padding): the boot ROM
+#                      loads it and must refuse to run it (ErrorCode 00FF)
 #   fw.elf, fw.map, fw.lst
 TOP := $(abspath $(CURDIR)/../../..)
 include $(TOP)/tools/riscv/toolchain.mk
@@ -35,7 +41,8 @@ OBJS = $(ARCH_OBJS) $(B)/fwtest.o $(B)/fwfill.o
 
 .PHONY: all clean
 .DELETE_ON_ERROR:
-all: $(B)/RV32OSDA.BIN $(B)/img.txt $(B)/fw.lst $(B)/card.img $(B)/card_nofile.img
+all: $(B)/RV32OSDA.BIN $(B)/img.txt $(B)/fw.lst $(B)/card.img $(B)/card_nofile.img \
+     $(B)/card_mismatch.img
 
 $(B)/fwtest.o: fwtest.c ../sw/hb.h $(ARCH)/irq.h
 	@mkdir -p $(@D)
@@ -48,12 +55,25 @@ $(B)/fwfill.o: fwfill.S
 $(B)/fw.elf: $(OBJS) $(ARCH_LD)
 	$(RV_CC) $(LDFLAGS) -o $@ $(OBJS) $(RV_LIBS_FW)
 
-# pad to IMG_BYTES; fail if the image is already larger
-$(B)/RV32OSDA.BIN: $(B)/fw.elf
+# the trailer as fw/ctrl/Makefile makes it (the same source file)
+$(B)/sdctrailer.bin: $(TOP)/fw/ctrl/sdctrailer.c $(TOP)/fw/ctrl/sdc.h
+	@mkdir -p $(@D)
+	$(RV_CC) $(RV_ARCH) -c -o $(B)/sdctrailer.o $<
+	$(RV_OBJCOPY) -O binary -j .sdctrailer $(B)/sdctrailer.o $@
+	@[ `wc -c < $@` = 8 ] || { echo "$@: not 8 bytes"; rm -f $@; exit 1; }
+
+# pad to IMG_BYTES - 8, then the trailer; fail if the image is already
+# larger.  $(B)/plain/RV32OSDA.BIN: the same without the trailer (padded to
+# IMG_BYTES), for card_mismatch.img
+$(B)/RV32OSDA.BIN: $(B)/fw.elf $(B)/sdctrailer.bin
 	$(RV_OBJCOPY) -O binary $< $@.tmp
-	@n=$$(stat -c %s $@.tmp); [ $$n -le $(IMG_BYTES) ] || \
-	  { echo "RV32OSDA.BIN is $$n bytes, more than IMG_BYTES = $(IMG_BYTES)"; rm -f $@.tmp; exit 1; }
-	truncate -s $(IMG_BYTES) $@.tmp
+	@n=$$(stat -c %s $@.tmp); [ $$n -le $$(($(IMG_BYTES) - 8)) ] || \
+	  { echo "RV32OSDA.BIN is $$n bytes, more than IMG_BYTES - 8 = $$(($(IMG_BYTES) - 8))"; rm -f $@.tmp; exit 1; }
+	mkdir -p $(B)/plain
+	cp $@.tmp $(B)/plain/RV32OSDA.BIN
+	truncate -s $(IMG_BYTES) $(B)/plain/RV32OSDA.BIN
+	truncate -s $$(($(IMG_BYTES) - 8)) $@.tmp
+	cat $(B)/sdctrailer.bin >> $@.tmp
 	mv $@.tmp $@
 
 $(B)/img.txt: $(B)/RV32OSDA.BIN $(B)/fw.elf
@@ -76,6 +96,9 @@ $(B)/card_nofile.img: $(B)/OSDDECOY.BIN $(B)/RV32OSDA.BIN $(MKCARD)
 	mkdir -p $(B)/nofile
 	cp $(B)/RV32OSDA.BIN $(B)/nofile/RV32OSDB.BIN
 	bash $(MKCARD) $@ 8 $(B)/OSDDECOY.BIN $(B)/nofile/RV32OSDB.BIN
+
+$(B)/card_mismatch.img: $(B)/OSDDECOY.BIN $(B)/RV32OSDA.BIN $(MKCARD)
+	bash $(MKCARD) $@ 8 $(B)/OSDDECOY.BIN $(B)/plain/RV32OSDA.BIN
 
 .PRECIOUS: $(B)/%.o $(B)/arch/%.o
 

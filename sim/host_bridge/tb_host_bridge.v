@@ -4,7 +4,9 @@
 //   program, hostcache.v)  ->  cfide (generics below)
 //                                   ->  sdcard_spi on cfide's ext_* port
 //                                       (0xFFFFFF00..2C), its irq on
-//                                       irq_src(4); no card (t_sdc_regs)
+//                                       irq_src(4); no card (t_sdc_regs),
+//                                       the SD card model on its pins in
+//                                       the boot runs (SDCARD, not FWBOOT)
 //                                   ->  sdram_host_model (lanes of sdram_ctrl)
 //   + an SPI byte-capture slave on sd_cs[1] / sd_clk / sd_do, or, compiled
 //     with -d SDCARD, the SD card model (sim/common/sd_spi_model.v) there
@@ -20,6 +22,8 @@
 //   TIME  0xFFFFFF00 write -> checkpoint <value>: test-specific pin checks
 //   DONE  0xFFFFFF04 write -> end of run: "=== PASS" when the value is 0 and
 //                             the bench saw no error, else "=== FAIL ..."
+//   (SDCARD: TIME / DONE only after the jump to 0x2000; the boot ROM's
+//   writes there are its TXW / TXB pushes into sdcard_spi)
 // Checks in every test:
 //   stale ack   a hw access completed although no clk_28 edge of cfide saw
 //               its hw_req (the ack belonged to the previous access)
@@ -47,9 +51,12 @@
 // STATUS 8 (FIFO misuse, a push into a full TX) and IRQPEND bit 3 there,
 // harmless while IRQEN is 0 (only t_sdc_regs writes IRQEN).
 //
-// SDCARD (boot runs, +TEST=boot / boot_nofile; the ROM is the committed boot
-// ROM fw/ctrl_boot/OSDBoot_rv_ROM.vhd): sd_spi_model on sd_cs[1] with
-// +SD_IMG=<8 MB card image>, MISO from the model.  Also:
+// SDCARD (boot runs, +TEST=boot / boot_nofile / boot_mismatch; the ROM is the
+// committed boot ROM fw/ctrl_boot/OSDBoot_rv_ROM.vhd): sd_spi_model on
+// sdcard_spi's pins (sd_cs_n / sd_sck / sd_mosi / sd_miso, card detect low:
+// the card as minimig_openaars_top has it with SD_ENGINE = 1) with
+// +SD_IMG=<8 MB card image>; nothing answers on cfide's SPI (MISO 1).  Under
+// FWBOOT the model stays on cfide's sd_cs[1] (see FWBOOT below).  Also:
 //   ERRORCODE: hhll  printed when the boot ROM's ErrorCode() releases the
 //                    chipset: the OSD bytes 08 00 under sd_cs[5]; hhll =
 //                    the SDRAM halfword at 0x10000A (upload[10], upload[11])
@@ -61,8 +68,13 @@
 // hostcpu.myrv.st_*, `HM_RV below); without it they are left out
 // (run.sh boot sets both).
 //   boot:        checkpoints 1 / 2 as t_irq; verdict as every test (DONE)
-//   boot_nofile: the run must end at +TIMEOUT without DONE; "=== PASS" if
-//                no DONE, no bench error and the last ErrorCode is 00F0
+//   boot_nofile: the run ends 8 cycles after the 3rd ErrorCode (0FFF, then
+//                00F0 of the first pass and of the retry); "=== PASS" if
+//                no DONE, no bench error, 3 ErrorCode calls, the last 00F0
+//   boot_mismatch: the run ends at +TIMEOUT; "=== PASS" if no DONE, no
+//                bench error, 2 ErrorCode calls (0FFF, 00FF: the lock-step
+//                check refused the firmware) and no hw access started
+//                after the 00FF one (the ROM halted)
 // A UART carriage return is printed as the two characters \r.
 //
 // FWBOOT (with SDCARD; run.sh fwboot / fwboot_trap / fwboot_cfg, +TEST=fwboot,
@@ -226,6 +238,7 @@ module tb_host_bridge #(
   wire [5:2] sdc_addr;
   wire [15:0] sdc_d, sdc_q;
   wire       sdc_sck, sdc_cs_n, sdc_mosi;
+  wire       sdc_miso, sdc_cd_n;     // the card's (SDCARD, not FWBOOT), else 1 / 1: no card
   wire [1:0] cfide_rx_seq;       // cfide's: the stub's under FWBOOT, else osd_rx_seq
 
   // The generics below are the only copy: run.sh (cfide_generics) reads them
@@ -270,13 +283,13 @@ module tb_host_bridge #(
   );
 
   // ------------------------------------------------------ SD card peripheral
-  // as minimig_virtual_top wires it (SD_ENGINE = 1), without a card and with
-  // the Gayle side idle
+  // as minimig_virtual_top wires it (SD_ENGINE = 1), with the Gayle side
+  // idle; the card in the boot runs (SDCARD, not FWBOOT), else none
   sdcard_spi sdc (
     .clk(clk114), .reset(!n_reset),
     .reg_wstb(sdc_wstb), .reg_rstb(sdc_rstb), .reg_addr(sdc_addr), .reg_d(sdc_d), .reg_q(sdc_q),
     .irq(sdc_irq),
-    .sd_sck(sdc_sck), .sd_cs_n(sdc_cs_n), .sd_mosi(sdc_mosi), .sd_miso(1'b1), .sd_cd_n(1'b1),
+    .sd_sck(sdc_sck), .sd_cs_n(sdc_cs_n), .sd_mosi(sdc_mosi), .sd_miso(sdc_miso), .sd_cd_n(sdc_cd_n),
     .g_req(), .g_dir(), .g_port(), .g_words(),
     .g_ack(1'b0), .g_err(1'b0), .g_wdata(), .g_wvalid(), .g_wnext(1'b0),
     .g_rdata(16'h0000), .g_rvalid(1'b0)
@@ -288,7 +301,7 @@ module tb_host_bridge #(
   always @(posedge clk114) cyc <= cyc + 1;
   reg [8*16-1:0] test;
   integer verbose = 0, timeout = 3000000;
-  reg     is_boot = 1'b0;          // +TEST=boot or boot_nofile
+  reg     is_boot = 1'b0;          // +TEST=boot, boot_nofile, boot_mismatch, fwboot*
 
   task bench_error(input [8*120-1:0] msg);
     begin
@@ -316,9 +329,20 @@ module tb_host_bridge #(
   localparam CARD_SECTORS = 16384;
 `endif
   wire       card_miso;
+`ifdef FWBOOT
   sd_spi_model #(.IMG_SECTORS(CARD_SECTORS)) card (
     .cs_n(sd_cs[1]), .sck(sd_clk), .mosi(sd_do), .miso(card_miso)
   );
+  assign sdc_miso = 1'b1;
+  assign sdc_cd_n = 1'b1;
+`else
+  // the boot ROM reaches the card only through sdcard_spi
+  sd_spi_model #(.IMG_SECTORS(CARD_SECTORS)) card (
+    .cs_n(sdc_cs_n), .sck(sdc_sck), .mosi(sdc_mosi), .miso(card_miso)
+  );
+  assign sdc_miso = card_miso;
+  assign sdc_cd_n = 1'b0;
+`endif
 `ifdef FWBOOT
   wire       stub_miso;
   wire [1:0] stub_rx_seq;
@@ -329,12 +353,14 @@ module tb_host_bridge #(
   assign miso = sd_cs[1] === 1'b0 ? card_miso : stub_miso;
   assign cfide_rx_seq = stub_rx_seq;
 `else
-  assign miso = card_miso;
+  assign miso = 1'b1;
   assign cfide_rx_seq = osd_rx_seq;
 `endif
 `else
   assign miso = miso_r;
   assign cfide_rx_seq = osd_rx_seq;
+  assign sdc_miso = 1'b1;
+  assign sdc_cd_n = 1'b1;
 `endif
 
   function [7:0] miso_script(input integer n);
@@ -378,6 +404,11 @@ module tb_host_bridge #(
   reg [7:0] osd_sr = 8'h00, osd_b0 = 8'h00, osd_b1 = 8'h00;
   reg [15:0] errcode = 16'hFFFF;   // last reported
   integer   n_errcode = 0;
+  // boot_mismatch: the ROM must halt after ErrorCode 00FF: hw accesses
+  // started after it is reported (its last access, the OSD release, is
+  // already under way then)
+  reg       halt_seen = 1'b0;
+  integer   hw_after_halt = 0;
   always @(negedge sd_cs[5]) begin osd_n = 0; osd_bit = 0; end
   always @(posedge sd_clk) if (n_reset && sd_cs[5] === 1'b0) begin
     osd_sr = {osd_sr[6:0], sd_do};
@@ -400,6 +431,7 @@ module tb_host_bridge #(
       n_errcode = n_errcode + 1;
       $display("ERRORCODE: %h", errcode);
       $display("=== ErrorCode at cycle %0d", cyc);
+      if (errcode == 16'h00FF) halt_seen = 1'b1;
     end
   end
 `endif
@@ -485,6 +517,14 @@ module tb_host_bridge #(
     we_d <= host_we;
   end
 
+  // TIME / DONE are the test program's.  SDCARD: only from the jump to the
+  // loaded firmware on (boot_seen): before it they are the boot ROM's own
+  // TXW / TXB pushes into sdcard_spi (its card commands)
+`ifdef SDCARD
+  wire hooks_on = boot_seen;
+`else
+  wire hooks_on = 1'b1;
+`endif
   always @(posedge clk114) begin
     hm_hw_cycle;
     if (hw_req && !hw_req_d) begin
@@ -494,13 +534,18 @@ module tb_host_bridge #(
         if (gap > gap_max) gap_max = gap;
       end
       if (verbose) $display("%0d HW %s %h d=%h", cyc, host_we ? "W" : "R", hwa, hostWR);
+`ifdef SDCARD
+`ifndef FWBOOT
+      if (halt_seen) hw_after_halt = hw_after_halt + 1;
+`endif
+`endif
     end
     if (hw_done) begin
       last_done = cyc;
       if (verbose && !host_we) $display("%0d HW R %h done, q=%h", cyc, hwa, hw_d);
       hm_hw_done;
-      if (host_we && hwa == 32'hFFFFFF00) checkpoint(hostWR);
-      if (host_we && hwa == 32'hFFFFFF04 && !done) begin
+      if (host_we && hwa == 32'hFFFFFF00 && hooks_on) checkpoint(hostWR);
+      if (host_we && hwa == 32'hFFFFFF04 && !done && hooks_on) begin
         done = 1'b1;
         done_code = hostWR;
       end
@@ -960,10 +1005,23 @@ module tb_host_bridge #(
     repeat (8) @(posedge clk114);
     run_end = 1'b1;
   end
+`ifdef SDCARD
+`ifndef FWBOOT
+  // boot_nofile: the run ends 8 cycles after the retry's ErrorCode (the 3rd:
+  // 0FFF, the first pass's 00F0, the retry's 00F0), so the log holds a whole
+  // retry pass, whatever its length
+  always @(run_go) if (test == "boot_nofile") begin
+    wait (n_errcode == 3);
+    repeat (8) @(posedge clk114);
+    run_end = 1'b1;
+  end
+`endif
+`endif
   always @(run_go) begin
     repeat (timeout) @(posedge clk114);
     if (!run_end) begin
-      if (test == "boot_nofile" || test == "fwboot" || test == "fwboot_trap" || test == "fwboot_cfg")
+      if (test == "boot_nofile" || test == "boot_mismatch" || test == "fwboot" || test == "fwboot_trap"
+          || test == "fwboot_cfg")
         $display("=== cycle limit %0d reached, no DONE", timeout);
       else bench_error("timeout, no DONE write");
       run_end = 1'b1;
@@ -977,8 +1035,8 @@ module tb_host_bridge #(
 `ifdef FWBOOT
     if (!$value$plusargs("OSD_RDY_TO_ADDR=%h", rdy_to_addr)) rdy_to_addr = -1;
 `endif
-    is_boot = test == "boot" || test == "boot_nofile" || test == "fwboot" || test == "fwboot_trap"
-              || test == "fwboot_cfg";
+    is_boot = test == "boot" || test == "boot_nofile" || test == "boot_mismatch" || test == "fwboot"
+              || test == "fwboot_trap" || test == "fwboot_cfg";
     hm_init;
     #1;
     $display("host-bridge bench: TEST=%0s SLAT=%0d SJIT=%0d EXTRA_WS=%0d", test, ram.slat, ram.sjit, EXTRA_WS);
@@ -1017,13 +1075,18 @@ module tb_host_bridge #(
       else $display("=== FAIL %0s: DONE %0d, bench errors %0d", test, done, errors);
     end else
 `else
-    $display("=== SD card: %0d ErrorCode calls, last %h", n_errcode, errcode);
+    $display("=== SD card: %0d ErrorCode calls, last %h, hw accesses after 00FF %0d", n_errcode, errcode,
+             hw_after_halt);
 `endif
     // one verdict line: Verilator's $finish ends the run only after the
     // block has gone on, so no verdict may follow a $finish
-    if (test == "boot_nofile") begin
-      if (!done && errors == 0 && n_errcode > 0 && errcode == 16'h00F0) $display("=== PASS");
-      else $display("=== FAIL boot_nofile: DONE %0d, bench errors %0d, last ErrorCode %h", done, errors, errcode);
+    if (test == "boot_nofile" || test == "boot_mismatch") begin
+      if (!done && errors == 0 && n_errcode == 3 && errcode == 16'h00F0 && test == "boot_nofile")
+        $display("=== PASS");
+      else if (!done && errors == 0 && n_errcode == 2 && errcode == 16'h00FF && hw_after_halt == 0
+               && test == "boot_mismatch")
+        $display("=== PASS");
+      else $display("=== FAIL %0s: DONE %0d, bench errors %0d, last ErrorCode %h", test, done, errors, errcode);
     end else
 `endif
     if (done && done_code == 0 && errors == 0) $display("=== PASS");

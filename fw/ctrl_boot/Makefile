@@ -17,7 +17,7 @@ BUILD   ?= build
 CFLAGS  := $(RV_CFLAGS_FW) -Wall $(DEFS) -I.
 LDFLAGS := $(RV_LDFLAGS_FW) -T boot.ld -Wl,--no-warn-rwx-segments -Wl,-Map=$(BUILD)/$(PROJECT).map
 
-SRCS    := boot.c spi.c swap.c minfat.c uart.c checksum.c hexdump.c small_printf.c
+SRCS    := boot.c spi.c lockstep.c swap.c minfat.c uart.c checksum.c hexdump.c small_printf.c
 
 OBJS     = $(addprefix $(BUILD)/,$(SRCS:.c=.o)) $(BUILD)/crt0.o
 HEADERS  = $(wildcard *.h)

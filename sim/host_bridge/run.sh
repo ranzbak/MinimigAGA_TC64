@@ -21,6 +21,7 @@
 #   SLAT=20 SJIT=8 EXTRA_WS=3 bash sim/host_bridge/run.sh t_b2b
 #   bash sim/host_bridge/run.sh boot         # committed boot ROM loads RV32OSDA.BIN
 #   bash sim/host_bridge/run.sh boot_nofile  # card without it: error path
+#   bash sim/host_bridge/run.sh boot_mismatch # firmware without the lock-step trailer: refused
 #   bash sim/host_bridge/run.sh fwboot       # the real firmware to its main loop
 #   bash sim/host_bridge/run.sh fwboot_trap  # the same, trap constructor linked in
 #   bash sim/host_bridge/run.sh fwboot_cfg   # fwboot with a legacy (big-endian) config file to convert
@@ -41,20 +42,24 @@
 # e.g. "+VERBOSE=1"), VIVADO_PATH, SIM, GHDL (ghdl), VERILATOR (verilator),
 # JOBS (Verilator build jobs, nproc), OBJCACHE (ccache if present; empty =
 # none); boot runs also BOOT_TIMEOUT (clk_114
-# cycles; boot 40000000, boot_nofile 27000000: the cycle limit that ends it,
-# 0.76 M cycles after the retry's "Initializing SD card" line) and
+# cycles; boot 40000000, boot_nofile 40000000, boot_mismatch 8000000: the
+# cycle limit; boot_nofile ends at the retry's ErrorCode (about 27.9 M),
+# boot_mismatch at the limit, 3.4 M cycles of halt after its ErrorCode 00FF)
+# and
 # BOOT_CARD (another card image, e.g. a corrupted copy); fwboot runs also
 # FW (the RV32OSDA.BIN to put on the card, default
 # fw/ctrl/build/RV32OSDA.BIN: make -C fw/ctrl first) and
 # FWBOOT_TIMEOUT (clk_114 cycles; defaults below).
 #
-# boot / boot_nofile: the committed fw/ctrl_boot/OSDBoot_rv_ROM.vhd,
-# compiled unmodified (VHDL-93), boots from the SD card model (bench compiled
+# boot / boot_nofile / boot_mismatch: the committed
+# fw/ctrl_boot/OSDBoot_rv_ROM.vhd, compiled unmodified (VHDL-93), boots from
+# the SD card model on sdcard_spi's pins (bench compiled
 # with -d SDCARD -d RV_HOSTCPU_STATS, rv_hostcpu with -d RV_HOSTCPU_STATS).  sim/host_bridge/boot
 # builds RV32OSDA.BIN and the card images into <run>/boot.  The run's
 # "UART:" and "ERRORCODE:" lines must equal boot/expect.txt (@IMG@ = the
-# line in <run>/boot/img.txt) or boot/expect_nofile.txt line for line, and
-# the bench verdict must be "=== PASS".  Results in <run>/results.txt.
+# line in <run>/boot/img.txt), boot/expect_nofile.txt or
+# boot/expect_mismatch.txt line for line, and the bench verdict must be
+# "=== PASS".  Results in <run>/results.txt.
 #
 # fwboot / fwboot_trap: the committed boot ROM loads the real firmware from
 # a 16 MB card (sim/host_bridge/fwboot: $FW + the decoy, + DRIVESND.BIN for
@@ -360,16 +365,18 @@ matrix() {   # matrix <snapshot> <test> <expect> <label>
 	return $rc
 }
 
-# boot <boot|boot_nofile>: the committed boot ROM from the SD card model
+# boot <boot|boot_nofile|boot_mismatch>: the committed boot ROM from the SD card model
 boot() {
 	local t=$1 rom="fw/ctrl_boot/OSDBoot_rv_ROM.vhd" exp st
 	local log="$run/tb_${t}_x${XW}_s${SLAT:-8}_j${SJIT:-0}.log"
 	local card="$run/boot/card.img" to=40000000
-	[ "$t" = boot_nofile ] && { card="$run/boot/card_nofile.img"; to=27000000; }
+	[ "$t" = boot_nofile ] && { card="$run/boot/card_nofile.img"; to=40000000; }
+	[ "$t" = boot_mismatch ] && { card="$run/boot/card_mismatch.img"; to=8000000; }
 	card=${BOOT_CARD:-$card}
 	[ ${#card} -le 1024 ] || die "card image path longer than 1024 characters (sd_spi_model's +SD_IMG buffer): $card"
 	exp="$HERE/boot/expect.txt"
 	[ "$t" = boot_nofile ] && exp="$HERE/boot/expect_nofile.txt"
+	[ "$t" = boot_mismatch ] && exp="$HERE/boot/expect_mismatch.txt"
 	make -s -C "$HERE/boot" B="$run/boot" > make_boot.log 2>&1 || { tail -20 make_boot.log; die "make boot firmware/cards (make_boot.log)"; }
 	# the gate is the committed ROM: a modified one still runs, but the run fails
 	if git -C "$ROOT" diff --quiet HEAD -- "$rom"; then st="unmodified (= git HEAD)"; else st="BAD  MODIFIED against git HEAD"; fi
@@ -534,7 +541,7 @@ case "${1:-}" in
 		hs_compare "$HERE/run_$2" "$HERE/run_$3"
 		exit $?
 		;;
-	boot|boot_nofile)
+	boot|boot_nofile|boot_mismatch)
 		setup
 		boot "$1"
 		exit $?

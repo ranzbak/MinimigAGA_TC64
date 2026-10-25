@@ -1,45 +1,99 @@
 ERRORCODE: 0fff
 UART: Initializing SD card
-UART: 0101cmd_CMD8 response: 1
-UART: 01010101010000Hunting for partition
+UART: SD init: VERSION 5D01, card 1
+UART: SD init: CMD0 01
+UART: SD init: CMD8 01
+UART: SD init: ACMD41 00
+UART: SD init: CMD58 00
+UART: SD init: CMD59 00
+UART: SD card: SDHC
+UART: Hunting for partition
 UART: Reading MBR
-UART: 00Partitioncount 1
+UART: Partitioncount 1
 UART: Reading boot sector 2048
-UART: 00Read boot sector from first partition
+UART: Read boot sector from first partition
 UART: Hunting for filesystem
 UART: Reading directory sector 2106
-UART: 00Reading directory sector 2107
-UART: 00Reading directory sector 2108
-UART: 00Reading directory sector 2109
-UART: 00Reading directory sector 2110
-UART: 00Reading directory sector 2111
-UART: 00Reading directory sector 2112
-UART: 00Reading directory sector 2113
-UART: 00Reading directory sector 2114
-UART: 00Reading directory sector 2115
-UART: 00Reading directory sector 2116
-UART: 00Reading directory sector 2117
-UART: 00Reading directory sector 2118
-UART: 00Reading directory sector 2119
-UART: 00Reading directory sector 2120
-UART: 00Reading directory sector 2121
-UART: 00Reading directory sector 2122
-UART: 00Reading directory sector 2123
-UART: 00Reading directory sector 2124
-UART: 00Reading directory sector 2125
-UART: 00Reading directory sector 2126
-UART: 00Reading directory sector 2127
-UART: 00Reading directory sector 2128
-UART: 00Reading directory sector 2129
-UART: 00Reading directory sector 2130
-UART: 00Reading directory sector 2131
-UART: 00Reading directory sector 2132
-UART: 00Reading directory sector 2133
-UART: 00Reading directory sector 2134
-UART: 00Reading directory sector 2135
-UART: 00Reading directory sector 2136
-UART: 00Reading directory sector 2137
-UART: 00Can't open RV32OSDABIN
+UART: Reading directory sector 2107
+UART: Reading directory sector 2108
+UART: Reading directory sector 2109
+UART: Reading directory sector 2110
+UART: Reading directory sector 2111
+UART: Reading directory sector 2112
+UART: Reading directory sector 2113
+UART: Reading directory sector 2114
+UART: Reading directory sector 2115
+UART: Reading directory sector 2116
+UART: Reading directory sector 2117
+UART: Reading directory sector 2118
+UART: Reading directory sector 2119
+UART: Reading directory sector 2120
+UART: Reading directory sector 2121
+UART: Reading directory sector 2122
+UART: Reading directory sector 2123
+UART: Reading directory sector 2124
+UART: Reading directory sector 2125
+UART: Reading directory sector 2126
+UART: Reading directory sector 2127
+UART: Reading directory sector 2128
+UART: Reading directory sector 2129
+UART: Reading directory sector 2130
+UART: Reading directory sector 2131
+UART: Reading directory sector 2132
+UART: Reading directory sector 2133
+UART: Reading directory sector 2134
+UART: Reading directory sector 2135
+UART: Reading directory sector 2136
+UART: Reading directory sector 2137
+UART: Can't open RV32OSDABIN
 UART: Can't load firmware
 ERRORCODE: 00f0
 UART: Initializing SD card
+UART: SD init: VERSION 5D01, card 1
+UART: SD init: CMD0 01
+UART: SD init: CMD8 01
+UART: SD init: ACMD41 00
+UART: SD init: CMD58 00
+UART: SD init: CMD59 00
+UART: SD card: SDHC
+UART: Hunting for partition
+UART: Reading MBR
+UART: Partitioncount 1
+UART: Reading boot sector 2048
+UART: Read boot sector from first partition
+UART: Hunting for filesystem
+UART: Reading directory sector 2106
+UART: Reading directory sector 2107
+UART: Reading directory sector 2108
+UART: Reading directory sector 2109
+UART: Reading directory sector 2110
+UART: Reading directory sector 2111
+UART: Reading directory sector 2112
+UART: Reading directory sector 2113
+UART: Reading directory sector 2114
+UART: Reading directory sector 2115
+UART: Reading directory sector 2116
+UART: Reading directory sector 2117
+UART: Reading directory sector 2118
+UART: Reading directory sector 2119
+UART: Reading directory sector 2120
+UART: Reading directory sector 2121
+UART: Reading directory sector 2122
+UART: Reading directory sector 2123
+UART: Reading directory sector 2124
+UART: Reading directory sector 2125
+UART: Reading directory sector 2126
+UART: Reading directory sector 2127
+UART: Reading directory sector 2128
+UART: Reading directory sector 2129
+UART: Reading directory sector 2130
+UART: Reading directory sector 2131
+UART: Reading directory sector 2132
+UART: Reading directory sector 2133
+UART: Reading directory sector 2134
+UART: Reading directory sector 2135
+UART: Reading directory sector 2136
+UART: Reading directory sector 2137
+UART: Can't open RV32OSDABIN
+UART: Can't load firmware
+ERRORCODE: 00f0

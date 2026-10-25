@@ -3,7 +3,7 @@
  * The committed boot ROM (fw/ctrl_boot) loads this image from the SD card
  * model to 0x2000 through dBus + hostcache, runs fence.i and jumps to
  * _start (fw/ctrl/arch/crt0.S).  main then prints:
- *   FW OK                  the image runs: the load, the be32() byte order
+ *   FW OK                  the image runs: the load, the RXW byte order
  *                          of spi.c and fence.i all worked
  *   PAT 0011..EEFF         fw_pattern[] read byte by byte from SDRAM; the
  *                          bytes must be in file order (exit code 1 if the

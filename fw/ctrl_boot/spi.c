@@ -1,335 +1,208 @@
+/* The SD card through the SD card peripheral (rtl/host/sdcard_spi.v: its
+   header comment is the contract; register names from fw/ctrl/sdc.h).  The
+   boot ROM polls STATUS (nothing else runs at boot; the peripheral's irq
+   stays off) and runs one op at a time.  Every op ends by itself: XFER
+   after LEN bytes (TX is filled first, RX never fills: 512 + 2 < 1024), the
+   wait ops by TIMEOUT, any op at once when the card is gone; so every poll
+   loop is bounded by the hardware.  Only reads: init, then CMD17 per
+   sector, the block's CRC16 checked by the peripheral (XFER bit 7).
+
+   UART (README "UART lines"): the init steps with their R1, the card type,
+   every failed command try and every failed read try. */
 #include "spi.h"
 #include "uart.h"
-//#include "small_printf.h"
 #include "small_printf.h"
-#include "swap.h"
-int SDHCtype;
+#include "../ctrl/sdc.h"
 
-// #define SPI_WAIT(x) while(HW_PER(PER_SPI_CS)&(1<<PER_SPI_BUSY));
-// #define SPI(x) {while((HW_PER(PER_SPI_CS)&(1<<PER_SPI_BUSY))); HW_PER(PER_SPI)=(x);}
-// #define SPI_READ(x) (HW_PER(PER_SPI)&255)
+/* wait-op bounds, TIMEOUT units of 144.4 us (as fw/ctrl/sdproto.c):
+   R1 2.3 ms, read token 250 ms */
+#define T_NCR    16
+#define T_TOKEN  1732
+/* SCK from a read's 3rd try on, for the rest of the boot: 4.1 MHz */
+#define DIV_SLOW 13
+/* STATUS of a wait op that found no byte */
+#define ST_NONE  (SDC_ST_TIMEOUT | SDC_ST_GONE | SDC_ST_REFUSED)
 
-#define SPI(x) HW_SPI(HW_SPI_DATA)=(x)
-// #define SPI_PUMP(x) HW_SPI(HW_SPI_PUMP)
-#define SPI_READ(x) (HW_SPI(HW_SPI_DATA)&255)
+static unsigned char sdhc;		/* block addressing */
+static unsigned char div;		/* SCK divider of the reads */
 
-#define SPI_CS(x) {while((HW_SPI(HW_SPI_CS)&(1<<HW_SPI_BUSY))); HW_SPI(HW_SPI_CS)=(x);}
-
-#define cmd_reset(x) cmd_write(0x950040,0) // Use SPI mode
-#define cmd_init(x) cmd_write(0xff0041,0)
-#define cmd_read(x) cmd_write(0xff0051,x)
-
-#define cmd_CMD8(x) cmd_write(0x870048,0x1AA)
-#define cmd_CMD16(x) cmd_write(0xFF0050,x)
-#define cmd_CMD41(x) cmd_write(0x870069,0x40000000)
-#define cmd_CMD55(x) cmd_write(0xff0077,0)
-#define cmd_CMD58(x) cmd_write(0xff007A,0)
-
-// #define DBG(x) puts(x)
-#define SPI_DEBUG 0
-#define DBG(X)
-
-
-unsigned char SPI_R1[6];
-
-
-int SPI_PUMP()
+/* one op to its end: STATUS */
+static unsigned run(unsigned cmd, unsigned len)
 {
-	int r=0;
-	SPI(0xFF);
-	r=SPI_READ();
-	SPI(0xFF);
-	r=(r<<8)|SPI_READ();
-	SPI(0xFF);
-	r=(r<<8)|SPI_READ();
-	SPI(0xFF);
-	r=(r<<8)|SPI_READ();
-	return(r);
+	unsigned st;
+
+	SDC_W(SDC_LEN, len);
+	SDC_W(SDC_CMD, cmd);
+	while ((st = SDC_R(SDC_STATUS)) & SDC_ST_BUSY)
+		;
+	return st;
 }
 
-int cmd_write(unsigned long cmd, unsigned long lba)
+/* clock FF until a byte that is not FF (MATCH is FF): STATUS, LAST = it */
+static unsigned wait_ne(unsigned tmo)
 {
-	int ctr;
-	int result=0xff;
-
-	DBG("In cmd_write\n");
-
-	SPI(cmd & 255);
-
-	DBG("Command sent\n");
-
-	if(!SDHCtype)	// If normal SD then we have to use byte offset rather than LBA offset.
-		lba<<=9;
-
-	DBG("Sending LBA!\n");
-
-	SPI((lba>>24)&255);
-	DBG("Sent 1st byte\n");
-	SPI((lba>>16)&255);
-	DBG("Sent 2nd byte\n");
-	SPI((lba>>8)&255);
-	DBG("Sent 3rd byte\n");
-	SPI(lba&255);
-	DBG("Sent 4th byte\n");
-
-	DBG("Sending CRC - if any\n");
-
-	SPI((cmd>>16)&255); // CRC, if any
-
-	ctr=40000;
-
-	result=SPI_READ();
-	while(--ctr && (result==0xff))
-	{
-		SPI(0xff);
-		result=SPI_READ();
-	}
-	#ifdef SPI_DEBUG
-	putchar('0'+(result>>4));
-	putchar('0'+(result&15));
-	#endif
-
-	return(result);
+	SDC_W(SDC_TIMEOUT, tmo);
+	return run(SDC_OP_WAIT_NE, 0);
 }
 
-
-void spi_spin()
+/* CRC7 (x^7 + x^3 + 1) as the command's last byte, (crc << 1) | 1 */
+static unsigned crc7(const unsigned char *p, int n)
 {
-//	puts("SPIspin\n");
+	unsigned c = 0, b;
 	int i;
-	for(i=0;i<200;++i)
-		SPI(0xff);
-//	puts("Done\n");
+
+	while (n--) {
+		b = *p++;
+		for (i = 0; i < 8; i++) {
+			c = ((c << 1) ^ ((((c >> 6) ^ (b >> 7)) & 1) ? 0x09 : 0)) & 0x7F;
+			b <<= 1;
+		}
+	}
+	return (c << 1) | 1;
 }
 
-
-int wait_initV2()
+/* FF, the command, its CRC7; R1, or -1 when 4 tries gave none (no byte in
+   T_NCR, card gone) or only R1s with the CRC bit (08).  Each failed try:
+   "SD CMD<n>: R1 <r1>, try <t>" (R1 FF: no answer). */
+static int cmd(unsigned idx, unsigned long arg)
 {
-	int i=20000;
-	int r;
-	spi_spin();
-	while(--i)
-	{
-		if((r=cmd_CMD55())==1)
-		{
-			if(SPI_DEBUG)
-				printf("CMD55 %d\n",r);
-			SPI(0xff);
-			if((r=cmd_CMD41())==0)
-			{
-				if(SPI_DEBUG)
-					printf("CMD41 %d\n",r);
-				SPI(0xff);
-				return(1);
-			}
-			else
-				if(SPI_DEBUG)
-					printf("CMD41 %d\n",r);
-			spi_spin();
+	unsigned char f[7];
+	int t, i, r;
+
+	f[0] = 0xFF;
+	f[1] = 0x40 | idx;
+	f[2] = arg >> 24;
+	f[3] = arg >> 16;
+	f[4] = arg >> 8;
+	f[5] = arg;
+	f[6] = crc7(f + 1, 5);
+	for (t = 1; t <= 4; t++) {
+		for (i = 0; i < 7; i++)
+			SDC_W(SDC_TXB, f[i]);
+		run(SDC_OP_XFER | SDC_X_TX, 7);
+		run(SDC_OP_TX_FLUSH, 0);	/* TX keeps sent bytes: free them */
+		r = 0xFF;
+		if (!(wait_ne(T_NCR) & ST_NONE)) {
+			r = SDC_R(SDC_LAST);
+			if ((r & 0x88) != 0x08)
+				return r;
 		}
-		else
-			if(SPI_DEBUG)
-				printf("CMD55 %d\n",r);
+		printf("SD CMD%d: R1 %02x, try %d\n", idx, r, t);
 	}
-	return(0);
+	return -1;
 }
 
-
-int wait_init()
-{
-	int i=20;
-	int r;
-	SPI(0xff);
-	puts("Cmd_init\n");
-	while(--i)
-	{
-		if((r=cmd_init())==0)
-		{
-			if(SPI_DEBUG)
-				printf("init %d\n  ",r);
-			SPI(0xff);
-			return(1);
-		}
-		else
-			if(SPI_DEBUG)
-				printf("init %d\n  ",r);
-		spi_spin();
-	}
-	return(0);
-}
-
-
-int is_sdhc()
-{
-	int i,r;
-
-	spi_spin();
-
-	r=cmd_CMD8();		// test for SDHC capability
-	printf("cmd_CMD8 response: %d\n",r);
-	if(r!=1)
-	{
-		wait_init();
-		return(0);
-	}
-
-	r=SPI_PUMP();
-	if((r&0xffff)!=0x01aa)
-	{
-		if(SPI_DEBUG)
-			printf("CMD8_4 response: %d\n",r);
-		wait_init();
-		return(0);
-	}
-
-	SPI(0xff);
-
-	// If we get this far we have a V2 card, which may or may not be SDHC...
-
-	i=50;
-	while(--i)
-	{
-		if(wait_initV2())
-		{
-			if((r=cmd_CMD58())==0)
-			{
-				if(SPI_DEBUG)
-					printf("CMD58 %d\n  ",r);
-				SPI(0xff);
-				r=SPI_READ();
-				if(SPI_DEBUG)
-					printf("CMD58_2 %d\n  ",r);
-				SPI(0xff);
-				SPI(0xff);
-				SPI(0xff);
-				SPI(0xff);
-				if(r&0x40)
-					return(1);
-				else
-					return(0);
-			}
-			else
-				if(SPI_DEBUG)
-					printf("CMD58 %d\n  ",r);
-		}
-		if(i==2)
-		{
-			if(SPI_DEBUG)
-				printf("SDHC Initialization error!\n");
-			return(0);
-		}
-	}
-	return(0);
-}
-
-
-int spi_init()
+/* the 4 bytes after an R1 (R7 / OCR) */
+static void rx4(unsigned char *p)
 {
 	int i;
-	SDHCtype=1;
-	SPI_slow();
-	i=8;
-	while(--i)
-	{
-		DisableCard();
-	//	SPI_CS(0);	// Disable CS
-		spi_spin();
-		DBG("Activating CS\n");
-	//	SPI_CS(1);
-		EnableCard();
-		SPI(0xff);
-		if(cmd_reset()==1) // Enable SPI mode
-			i=1;
-		DBG("Sent reset command\n");
-		if(i==2)
-		{
-			DBG("SD card initialization error!\n");
-			return(0);
+
+	run(SDC_OP_XFER | SDC_X_RX, 4);
+	for (i = 0; i < 4; i++)
+		p[i] = SDC_R(SDC_RXB);
+}
+
+/* "SD init: <step> <r1>" (FF: no R1) */
+static int step(const char *s, int r)
+{
+	printf("SD init: %s %02x\n", s, r & 0xFF);
+	return r;
+}
+
+int spi_init(void)
+{
+	unsigned char r[4];
+	unsigned long hcs;
+	unsigned v = SDC_R(SDC_VER);
+	int n, r1;
+
+	printf("SD init: VERSION %04x, card %d\n", v, (SDC_R(SDC_STATUS) >> 3) & 1);
+	if (v != SDC_VERSION)
+		return 0;		/* no peripheral (reads 0) or another one */
+	run(SDC_OP_ABORT, 0);		/* a re-run of the ROM: the firmware's op */
+	SDC_W(SDC_IRQEN, 0);
+	run(SDC_OP_RX_FLUSH, 0);
+	run(SDC_OP_TX_FLUSH, 0);
+	SDC_W(SDC_MATCH, 0xFF);
+	SDC_W(SDC_CFG, SDC_DIV_INIT);	/* 400 kHz, CS off */
+	run(SDC_OP_XFER, 10);		/* 80 clocks with CS high */
+	SDC_W(SDC_CFG, SDC_CFG_CS | SDC_DIV_INIT);
+	if (step("CMD0", cmd(0, 0)) != 0x01)
+		return 0;
+	r1 = step("CMD8", cmd(8, 0x1AA));
+	if (r1 == 0x01) {
+		rx4(r);
+		if (r[2] != 0x01 || r[3] != 0xAA) {
+			step("CMD8 echo", r[3]);
+			return 0;
 		}
-	}
-	DBG("Card responded to reset\n");
-	SDHCtype=is_sdhc();
-	if(SDHCtype)
-	{
-		DBG("SDHC card detected\n");
-	}
+		hcs = 1ul << 30;
+	} else if (r1 > 0 && r1 < 0x80 && (r1 & 0x04))
+		hcs = 0;		/* illegal command: SD v1 */
 	else
-	{
-		DBG("Sending cmd16\n");
-		cmd_CMD16(1);
+		return 0;
+	n = 5000;			/* >= 0.36 ms per poll at 400 kHz: >= 1.8 s */
+	do {
+		r1 = cmd(55, 0);
+		if (r1 == 0x00 || r1 == 0x01)
+			r1 = cmd(41, hcs);
+	} while (r1 == 0x01 && --n);
+	if (step("ACMD41", r1))
+		return 0;
+	sdhc = 0;
+	if (hcs) {
+		if (step("CMD58", cmd(58, 0)))
+			return 0;
+		rx4(r);
+		sdhc = r[0] & 0x40;
 	}
-	SPI(0xFF);
-	DisableCard();
-//	SPI_CS(0);
-	SPI(0xFF);
-	DBG("Init done\n");
-
-	return(1);
+	if (step("CMD59", cmd(59, 1)))	/* CRC on */
+		return 0;
+	if (!sdhc && step("CMD16", cmd(16, 512)))
+		return 0;
+	puts(sdhc ? "SD card: SDHC\n" : "SD card: SD\n");
+	div = SDC_DIV_MIN;
+	SDC_W(SDC_CFG, SDC_CFG_CS | SDC_DIV_MIN);
+	return 1;
 }
 
-
-int sd_write_sector(unsigned long lba,unsigned char *buf) // FIXME - Stub
+/* CMD17, the data token, 512 bytes + CRC16 checked by the peripheral; 4
+   tries, from the 3rd on at DIV_SLOW.  Each failed try: "SD read <lba>:
+   <what> <value>, try <t>" (R1 <r1>; token <byte> (FF: none in T_TOKEN);
+   CRC <STATUS 7:0>). */
+int sd_read_sector(unsigned long lba, unsigned char *buf)
 {
-	return(0);
-}
+	const char *what;
+	unsigned st, w;
+	int t, i, r;
 
-
-extern void spi_readsector(long *buf);
-
-
-int sd_read_sector(unsigned long lba,unsigned char *buf)
-{
-	int result=0;
-	int i;
-	int r;
-//	printf("sd_read_sector %d, %d\n",lba,buf);
-	SPI(0xff);
-
-	EnableCard();
-	SPI_fast();
-
-//	SPI_CS(1|(1<<HW_SPI_FAST));
-	SPI(0xff);
-
-	r=cmd_read(lba);
-	if(r!=0)
-	{
-		if(SPI_DEBUG)
-			printf("Read command failed at %d (%d)\n",lba,r);
-		return(result);
-	}
-
-	i=1500000;
-	while(--i)
-	{
-		int v;
-		SPI(0xff);
-//		SPI_WAIT();
-		v=SPI_READ();
-		if(v==0xfe)
-		{
-//			puts("Reading sector data\n");
-//			spi_readsector((long *)buf);
-			int j;
-//			SPI(0xff);
-
-			for(j=0;j<128;++j)
-			{
-				int t;
-
-				t=SPI_PUMP();
-				*(unsigned int *)buf=be32(t);	/* SPI_PUMP assembles the 4 bytes big-endian: keep the byte order in memory */
-//				printf("%d: %d\n",buf,t);
-				buf+=4;
+	for (t = 1; t <= 4; t++) {
+		what = "R1";
+		r = cmd(17, sdhc ? lba : lba << 9);
+		if (!r) {
+			what = "token";
+			st = wait_ne(T_TOKEN);
+			r = (st & ST_NONE) ? 0xFF : SDC_R(SDC_LAST);
+			if (r == 0xFE) {
+				what = "CRC";
+				r = run(SDC_OP_XFER | SDC_X_RX | SDC_X_RXCRC, 512);
+				if (r & SDC_ST_CRC_OK) {
+					for (i = 0; i < 512; i += 2) {
+						w = SDC_R(SDC_RXW);	/* first byte in 15:8 */
+						buf[i] = w >> 8;
+						buf[i + 1] = w;
+					}
+					return 1;
+				}
+				run(SDC_OP_RX_FLUSH, 0);	/* poisoned: drop it */
 			}
-
-			i=1; // break out of the loop
-			result=1;
+		}
+		printf("SD read %u: %s %02x, try %d\n", (unsigned)lba, what, r & 0xFF, t);
+		if (t == 2 && div != DIV_SLOW) {
+			div = DIV_SLOW;
+			SDC_W(SDC_CFG, SDC_CFG_CS | DIV_SLOW);
+			printf("SD: SCK div %d\n", DIV_SLOW);
 		}
 	}
-	SPI(0xff);
-	DisableCard();
-//	SPI_CS(0);
-	return(result);
+	return 0;
 }
-

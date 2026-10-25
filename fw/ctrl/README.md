@@ -77,8 +77,13 @@ make -C fw/ctrl check
 ```
 
 Output in `fw/ctrl/build/` (gitignored): `RV32OSDA.BIN` (`objcopy -O
-binary`, loaded by `fw/ctrl_boot` to 0x2000), `RV32OSDA.elf`, `.map`, `.lst`
-(disassembly with source), `version.h`. `B=dir` builds into another directory;
+binary`, then the 8-byte lock-step trailer `SDCV 00 00 <SDC_VERSION>` of
+`sdctrailer.c` appended; loaded by `fw/ctrl_boot` to 0x2000, which runs it
+only when the trailer names the bitstream's SD card peripheral VERSION:
+`fw/ctrl_boot/README.md` "Lock-step check"; `check` (h) checks the
+trailer), `RV32OSDA.elf`, `.map`, `.lst` (disassembly with source),
+`version.h`. The boot ROM (in the bitstream) and `RV32OSDA.BIN` must come
+from the same commit. `B=dir` builds into another directory;
 `EXTRA_CFLAGS=...` adds compiler flags for bench variants (empty for the
 shipped image); `EXTRA_OBJS=...` links extra objects after the firmware's
 (empty for the shipped image; `sim/host_bridge/fwboot` links its trap

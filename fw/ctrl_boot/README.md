@@ -1,8 +1,10 @@
 # fw/ctrl_boot: boot ROM for the RISC-V OSD host CPU
 
 The 8 KB boot BRAM of the VexRiscv RV32IMC host CPU. It initialises the SD
-card, finds the FAT16/FAT32 partition, loads `RV32OSDA.BIN` to `0x2000` and
-jumps to it.
+card through the SD card peripheral (`rtl/host/sdcard_spi.v`), finds the
+FAT16/FAT32 partition, loads `RV32OSDA.BIN` to `0x2000`, checks that the
+file was built for this bitstream (the lock-step check below) and jumps to
+it.
 
 It was ported from the boot ROM of the previous host CPU, the EightThirtyTwo
 (`fw/ctrl_boot_832` at commit **8340590**, retired in Phase 9; last state in
@@ -21,9 +23,15 @@ All commands from the repository root.
     sudo apt install make gcc          # gcc = host compiler for romgen and the host test
     make -C fw/ctrl_boot
     make -C fw/ctrl_boot check size im
-    # 3. host test (needs mtools dosfstools fdisk python3; see tools/sim/README.md)
+    # 3. host tests (needs mtools dosfstools fdisk python3; see tools/sim/README.md);
+    #    build fw/ctrl first so the lock-step test also checks its RV32OSDA.BIN
     sudo apt install mtools dosfstools fdisk python3
+    make -C fw/ctrl
     make -C fw/ctrl_boot test
+    # 4. the boot ROM on the RTL (Verilator, about 2 minutes for the three)
+    SIM=verilator RUNTAG=boot  bash sim/host_bridge/run.sh boot
+    SIM=verilator RUNTAG=bootn bash sim/host_bridge/run.sh boot_nofile
+    SIM=verilator RUNTAG=bootm bash sim/host_bridge/run.sh boot_mismatch
 
 `make` targets in `fw/ctrl_boot`:
 
@@ -33,7 +41,7 @@ All commands from the repository root.
 | `check` | disassembles and fails if a `lr.w/sc.w/amo*` opcode is present (the core has no A extension) |
 | `size` | `size` of the rv32imc image |
 | `im` | rv32im (no compressed) build in `build_im/`, size printed, not committed |
-| `test` | host minfat test (`test/`) |
+| `test` | host tests (`test/`): minfat, lock-step |
 | `clean` | removes `build/`, `build_im/`, `test/out/` (the committed outputs stay) |
 
 The toolchain comes from `tools/riscv/toolchain.mk`
@@ -80,9 +88,11 @@ both ports, fails on any X or wrong lane).
 - `boot.ld`: everything in `0x0-0x1FFF`, `.data` in place (the BRAM is
   initialised RAM), `ASSERT(_end <= 0x1C00)` keeps at least 1 KB of stack,
   `ASSERT(boot_trap == 0x20)`.
-- Hardware windows (value at offset 0 of each 16-byte window): SPI data / CS /
-  speed at `0xFFFFFFE0 / E4 / E8`, UART at `0xFFFFFFF0`, platform at
-  `0xFFFFFFC0`. The UART is write-only: cfide acks a write only once the
+- Hardware windows (value at offset 0 of each 16-byte window): cfide's SPI
+  data / CS / speed at `0xFFFFFFE0 / E4 / E8` (the OSD only: `ErrorCode`,
+  the chipset reset), UART at `0xFFFFFFF0`, platform at `0xFFFFFFC0`. The
+  SD card peripheral's 16-bit registers at `0xFFFFFF00..2C` (offsets and
+  bits from `fw/ctrl/sdc.h`, included by `spi.c` and `lockstep.c`). The UART is write-only: cfide acks a write only once the
   transmitter is free (so `putchar` needs no ready poll), and never acks a
   read, which would hang the CPU. There is no TX-ready bit; never read
   `0xFFFFFFF0`.
@@ -90,24 +100,133 @@ both ports, fails on any X or wrong lane).
   `RV32OSDABIN`; on-disk little-endian fields through `le16/le32` (`swap.h`);
   the MBR partition start (offset 454, misaligned) read bytewise; `minfat.h`
   structs use 32-bit `unsigned int` (so the host test sees the same layout);
-  sector buffer word aligned; `spi.c` stores each SPI word big-endian
-  (`be32`) so the sector bytes land in order on a little-endian CPU; `_boot()`
+  sector buffer word aligned; `spi.c` (since the SD card peripheral) stores
+  the first byte of each RXW pop (bits 15:8) first, so the sector bytes land
+  in order; `_boot()`
   runs `fence.i` before jumping to `0x2000`; `small_printf.c` is a minimal
   printf (the previous ROM linked lib832's); `puts(const char *)`.
 - `bootdiag.h` is the committed 68k byte array; `make` rebuilds it only if
   `bootdiag.s` is newer and `vasmm68k_mot` is installed.
 
+## Card path (`spi.c`)
+
+The card is on the SD card peripheral (`rtl/host/sdcard_spi.v`, its header
+comment is the contract), not on cfide's SPI: the openaars top
+(`SD_ENGINE = 1`) has no card there. Board tops without the peripheral
+(`SD_ENGINE = 0`: VERSION reads 0) are not supported by this ROM: it stops
+with `ErrorCode(0xf00)` (and tries again, as for a missing card).
+
+The ROM polls STATUS bit 0 (nothing else runs at boot; the peripheral's irq
+stays off, IRQEN 0) and runs one op at a time; every op ends in hardware
+(XFER after LEN bytes, the waits by TIMEOUT, any op at once when the card is
+gone), so no poll loop can hang.
+
+- Init: the VERSION check (must be `SDC_VERSION` of `sdc.h`), ABORT (a soft
+  re-run of the ROM: the firmware's op), IRQEN 0, both FIFOs flushed, MATCH
+  FF; 400 kHz (div 141), 80 clocks with CS high, CS on; CMD0; CMD8 (R7 echo
+  `01 AA`; an illegal-command R1 = SD v1); CMD55 + ACMD41 (HCS for v2) until
+  R1 0, at most 5000 polls (at least 1.8 s); CMD58 (CCS: SDHC); CMD59 1 (CRC
+  on: the card checks every command's CRC7); SD v1 / SDSC: CMD16 512; then
+  18.9 MHz (div 2). MMC (CMD1) is not supported.
+- A command: `FF`, the 6 bytes with their CRC7 (`crc7`, bitwise, as
+  `fw/ctrl/sdproto.c`) pushed with TXB, XFER TX 7, TX_FLUSH (TX keeps sent
+  bytes until a flush or commit), WAIT_NE FF with TIMEOUT 16 (2.3 ms) for
+  R1. No R1, card gone, or an R1 with the CRC bit (`08`): the command again,
+  4 tries in all.
+- A sector: CMD17 (byte address for SDSC), WAIT_NE FF with TIMEOUT 1732
+  (250 ms) for the token `FE`, XFER RX 512 with the CRC16 check (CMD bit 7:
+  STATUS bit 1), 256 RXW pops. R1 not 0, no token or an error token, or a
+  CRC mismatch (then RX_FLUSH: the block is poisoned): the sector again, 4
+  tries; from the 3rd try on the SCK is div 13 (4.1 MHz) for the rest of
+  the boot. 4 failed tries: `sd_read_sector` returns 0 and the boot ends in
+  `ErrorCode` (below).
+- `minfat.c`: a failed directory read ends `FileOpen` (it used to go on
+  with the stale buffer), and `LoadFile` stops on a failed FAT read
+  (`GetCluster` 0) instead of reading cluster 0.
+
+## Lock-step check (`lockstep.c`)
+
+A firmware file built for another card path cannot work with this
+bitstream (design 5.5), so the ROM, which is part of the bitstream, refuses
+it. `RV32OSDA.BIN` ends with an 8-byte trailer that `fw/ctrl/Makefile`
+appends after `objcopy` (`_start` stays byte 0):
+
+    'S' 'D' 'C' 'V' 00 00 <SDC_VERSION 15:8> <SDC_VERSION 7:0>
+
+(`fw/ctrl/sdctrailer.c`, compiled from `sdc.h`: the one place the version
+is written; `make -C fw/ctrl check` (h) checks the built file.) After
+`LoadFile`, `fw_start()` takes the last 8 bytes of the file (its length
+from the FAT directory entry, not a fixed offset) and compares them with
+the peripheral's VERSION register:
+
+- match: `Firmware SDC 5D01, bitstream SDC 5D01`, `fence.i`, jump to 0x2000;
+- anything else (another version, no `SDCV` magic, bytes 4-5 not 0, a file
+  shorter than 8 bytes; a firmware from before the trailer has none):
+  `Firmware does not match this bitstream (need SDC 5D01)`,
+  `ErrorCode(0x0ff)` (cyan on the Amiga screen through BootDiag), then
+  `boot_halt()`: interrupts off, the CPU parks. No retry, no fallback.
+
+The boot ROM and `RV32OSDA.BIN` must come from the same commit; a new
+`SDC_VERSION` in `sdc.h` (a new peripheral contract) changes both.
+
+## UART lines
+
+On the controller UART (115200), every line printed by `small_printf`
+(formats `%d %u %x %02x %04x %s`):
+
+| line | when |
+|---|---|
+| `Initializing SD card` | each pass of the boot loop |
+| `SD init: VERSION 5D01, card 1` | the peripheral's VERSION and card-present bit (STATUS 3) |
+| `SD init: CMD0 01`, `CMD8 01`, `ACMD41 00`, `CMD58 00`, `CMD59 00`, (`CMD16 00`) | each init step's R1 (`FF`: no R1) |
+| `SD init: CMD8 echo <b>` | CMD8's echo was not `01 AA` |
+| `SD card: SDHC` / `SD card: SD` | the card type |
+| `SD CMD<n>: R1 <r1>, try <t>` | a command try without a usable R1 (`FF`: none in 2.3 ms or card gone; `08`/`09`: CRC error) |
+| `SD read <lba>: R1 <r1>, try <t>` / `token <b>, try <t>` / `CRC <st>, try <t>` | a failed sector try (token `FF`: none in 250 ms; CRC: the STATUS bits) |
+| `SD: SCK div 13` | the step down at a read's 3rd try |
+| `Firmware SDC <v>, bitstream SDC <v>` | the lock-step check passed |
+| `Firmware does not match this bitstream (need SDC <v>)` | it did not |
+
+## Error codes (`ErrorCode`, the BootDiag colour on the Amiga screen)
+
+| code | meaning |
+|---|---|
+| `0xfff` | booting (set at start) |
+| `0xf00` | SD init failed: no peripheral (VERSION not `SDC_VERSION`), no card, no answer |
+| `0xff0` | no FAT16/FAT32 partition (or a read failed while looking) |
+| `0x0f0` | `RV32OSDA.BIN` not found or a read failed while loading |
+| `0x0ff` | lock-step mismatch: halted |
+| `0xf0f` | CPU trap (`boot_trap`) |
+
+After `0xf00`, `0xff0` and `0x0f0` the ROM starts over (`Initializing SD
+card`); after `0x0ff` and `0xf0f` it halts.
+
 ## Sizes (xPack gcc 15.2.0, `-Os`)
 
 | build | text | data | bss | text+data+bss |
 |---|---|---|---|---|
-| rv32imc (`OSDBoot_rv.bin` = 3580 bytes) | 3556 | 24 | 580 | 4160 |
-| rv32im (`make im`, not committed) | 4972 | 24 | 580 | 5576 |
+| rv32imc (`OSDBoot_rv.bin` = 4324 bytes) | 4300 | 24 | 580 | 4904 |
+| rv32im (`make im`, not committed) | 5872 | 24 | 580 | 6476 |
 
-Gate: text+data+bss at most 6 KB; stack room: `_end = 0x1040` of the `0x1C00`
-limit. (The x1-x31 clear in `crt0.S` added 60 bytes over the first build.)
+Gate: `_end` below `0x1400` (`fw/ctrl/Makefile` check (g): the firmware's
+stack floor in the shared boot BRAM); today `_end = 0x1328` (216 bytes
+left; it was `0x1040` with the card on cfide's SPI). `boot.ld` keeps its
+`0x1C00` assert as the outer limit. (The x1-x31 clear in `crt0.S` added 60
+bytes over the first build.)
 
-## Host test
+## Host tests
+
+`test/lockstep_test.c` runs `fw_start()` (`lockstep.c`, gcc, ASan + UBSan,
+`-DHOSTTEST`: `sdc.h`'s `SDC_R` reads the test's mock VERSION) with the
+ROM's own `small_printf` (`putchar` renamed: the UART text is compared byte
+for byte) and mock `_boot` / `ErrorCode` / `boot_halt`: trailer 5D00 against
+VERSION 5D01 (message + `ErrorCode(0x0ff)` + halt), 5D01 (jumps), VERSION
+5D02 (the message names the register's value), no magic, wrong magic,
+bytes 4-5 not 0, the trailer one byte off the end either way, a trailer
+inside the file but none at its end, an odd length, 8 / 7 / 0 bytes, 16-bit
+compare; and fw/ctrl's built `RV32OSDA.BIN` (`FWBIN=`, default
+`fw/ctrl/build/RV32OSDA.BIN`, skipped with a note when not built) boots with
+VERSION = `SDC_VERSION` and stops with `SDC_VERSION + 1`.
 
 `test/minfat_test.c` links `minfat.c` and `swap.c` (gcc, ASan + UBSan) against a
 mock `sd_read_sector()` that reads a card image made by `tools/sim/mkcard.sh`.
@@ -116,6 +235,8 @@ Images: MBR card with `RV32OSDA.BIN` (3000 random bytes) plus the decoys
 `832OSDAD.BIN`) and `RV32OSDB.BIN` (file loaded byte-identical); MBR card
 without the file (`LoadFile` returns 0, the decoys are not taken); FAT16
 superfloppy (no MBR); FAT32 superfloppy with a 40000-byte file.
-The SD SPI path in `spi.c` is not covered by the host test (it needs the
-hardware windows); the L2 boot bench (sim/host_bridge, with the SD model of
-`sim/common`) exercises it.
+The card path in `spi.c` is not covered by the host tests (it needs the
+peripheral); the L2 boot runs (`sim/host_bridge` `boot`, `boot_nofile`,
+`boot_mismatch`: `sdcard_spi.v` with the SD model of `sim/common` on its
+pins, CRC on) run the committed ROM on the RTL; the full system (L3,
+`sim/l3` `sdc_boot`) is the SD card engine plan's Task 13.

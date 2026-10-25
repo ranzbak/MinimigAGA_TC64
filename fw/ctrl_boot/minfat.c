@@ -261,7 +261,8 @@ unsigned char FileOpen(fileTYPE *file, const char *name)
             if ((iEntry & 0x0F) == 0) // first entry in sector, load the sector
             {
 				printf("Reading directory sector %d\n",iDirectorySector);
-                sd_read_sector(iDirectorySector++, sector_buffer); // root directory is linear
+                if (!sd_read_sector(iDirectorySector++, sector_buffer)) // root directory is linear
+                    return(0);  // a failed read: not "no such file" from a stale buffer
                 pEntry = (DIRENTRY*)sector_buffer;
             }
             else
@@ -355,6 +356,8 @@ int LoadFile(const char *fn, unsigned char *buf)
 		{
 			unsigned long sb;
 
+			if (file.cluster < 2)	// GetCluster: a failed FAT read (0) or a broken chain
+				return(0);
 			sb = data_start;                         // start of data in partition
 			sb += cluster_size * (file.cluster-2);  // cluster offset
 			sb += sector & cluster_mask;      // sector offset in cluster

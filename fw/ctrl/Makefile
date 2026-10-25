@@ -7,7 +7,8 @@
 #                 multiple of 4 (both via check_io.awk), (d) no start-up names
 #                 of the previous (vbcc) toolchain in the sources,
 #                 (e) the C library guard, (f) no #define true/false,
-#                 (g) the boot ROM image ends below the stack floor 0x1400
+#                 (g) the boot ROM image ends below the stack floor 0x1400,
+#                 (h) RV32OSDA.BIN ends with the lock-step trailer (SDC_VERSION)
 #   make stack    the 20 largest stack frames (-fstack-usage, $(B)/*.su)
 #   make clean
 #
@@ -81,8 +82,20 @@ $(B)/$(PROJECT).elf: $(ARCH_OBJS) $(OBJS) $(EXTRA_OBJS) $(ARCH_LD)
 	$(RV_CC) $(LDFLAGS) -o $@ $(ARCH_OBJS) $(OBJS) $(EXTRA_OBJS) $(LIBS)
 	$(RV_OBJDUMP) -d -S $@ > $(B)/$(PROJECT).lst
 
-$(B)/$(PROJECT).BIN: $(B)/$(PROJECT).elf
-	$(RV_OBJCOPY) -O binary $< $@
+# the image, then the lock-step trailer (8 bytes: 'S','D','C','V', 0, 0,
+# SDC_VERSION high, low; sdctrailer.c, from sdc.h): the boot ROM boots the
+# file only when its last 8 bytes name the peripheral's VERSION register
+# (fw/ctrl_boot README "Lock-step check")
+$(B)/sdctrailer.bin: sdctrailer.c sdc.h
+	@mkdir -p $(@D)
+	$(RV_CC) $(RV_ARCH) -c -o $(B)/sdctrailer.o sdctrailer.c
+	$(RV_OBJCOPY) -O binary -j .sdctrailer $(B)/sdctrailer.o $@
+	@[ `wc -c < $@` = 8 ] || { echo "$@: not 8 bytes"; rm -f $@; exit 1; }
+
+$(B)/$(PROJECT).BIN: $(B)/$(PROJECT).elf $(B)/sdctrailer.bin
+	$(RV_OBJCOPY) -O binary $< $@.img
+	cat $@.img $(B)/sdctrailer.bin > $@
+	rm -f $@.img
 
 # version.h: the build date and the version string (suffix "-RV"),
 # written into $(B), never into the source directory.  Regenerated on every
@@ -113,7 +126,7 @@ size: $(B)/$(PROJECT).elf $(B)/$(PROJECT).BIN
 	@echo "$(PROJECT).BIN: `wc -c < $(B)/$(PROJECT).BIN` bytes"
 
 # ---- check: each part is its own target; all run (-k), any red fails ----
-CHECKS := check_a check_b check_c check_d check_e check_f check_g
+CHECKS := check_a check_b check_c check_d check_e check_f check_g check_h
 
 check: $(B)/$(PROJECT).elf
 	@$(MAKE) --no-print-directory -k $(CHECKS)
@@ -192,6 +205,15 @@ check_g:
 	if [ -z "$$end" ]; then echo "check (g) FAIL: no _end in $(BOOT_MAP) (make -C fw/ctrl_boot)"; exit 1; fi; \
 	if [ $$(($$end)) -lt $$((0x1400)) ]; then echo "check (g) pass: boot ROM _end $$end < 0x1400"; \
 	else echo "check (g) FAIL: boot ROM _end $$end is not below 0x1400"; exit 1; fi
+
+# (h) the image ends with the lock-step trailer naming SDC_VERSION of sdc.h
+#     (read here with sed: a second derivation next to sdctrailer.c's)
+check_h: $(B)/$(PROJECT).BIN
+	@v=`sed -n 's/^#define[[:space:]]*SDC_VERSION[[:space:]]*0x\([0-9A-Fa-f]\{4\}\).*/\1/p' sdc.h | tr A-F a-f`; \
+	want="53 44 43 56 00 00 `echo $$v | cut -c1-2` `echo $$v | cut -c3-4`"; \
+	got=`tail -c 8 $< | od -An -tx1 | sed 's/^ *//; s/ *$$//'`; \
+	if [ -n "$$v" ] && [ "$$got" = "$$want" ]; then echo "check (h) pass: trailer SDCV $$v at the end of $(PROJECT).BIN"; \
+	else echo "check (h) FAIL: last 8 bytes of $< are '$$got', want '$$want'"; exit 1; fi
 
 # the 20 largest stack frames of the firmware (-fstack-usage: bytes, kind)
 stack: $(OBJS)

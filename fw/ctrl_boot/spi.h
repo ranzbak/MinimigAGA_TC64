@@ -1,6 +1,9 @@
 #ifndef SPI_H
 #define SPI_H
 
+/* cfide's SPI: the OSD and the other on-chip slaves (the boot ROM uses it
+   for the OSD only).  The SD card is not on it: spi.c reaches the card
+   through the SD card peripheral (fw/ctrl/sdc.h). */
 #define SPIBASE 0xffffffe0
 #define HW_SPI(x) *(volatile unsigned char *)(SPIBASE+x)
 
@@ -13,11 +16,7 @@
 #define EnableOsd()   HW_SPI(HW_SPI_CS)=0x20
 #define DisableOsd()  HW_SPI(HW_SPI_CS)=0x21
 
-#define EnableCard()  HW_SPI(HW_SPI_CS)=0x02
-#define DisableCard() HW_SPI(HW_SPI_CS)=0x03
-
 #define SPI_slow()  HW_SPI(HW_SPI_SPEED)=0xef
-#define SPI_fast()  HW_SPI(HW_SPI_SPEED)=0x07
 
 #define OSD_CMD_WR        0x1c
 
@@ -41,8 +40,11 @@
 
 
 
-int spi_init();
+/* spi.c: the card through the SD card peripheral.  spi_init: 1 = card
+   ready (SCK 18.9 MHz, CS on), 0 = no peripheral / no card / init failed.
+   sd_read_sector: 1 = the 512 bytes in buf (CRC16 good), 0 = 4 tries
+   failed. */
+int spi_init(void);
 int sd_read_sector(unsigned long lba,unsigned char *buf);
-int sd_write_sector(unsigned long lba,unsigned char *buf); // FIXME - stub
 
 #endif
