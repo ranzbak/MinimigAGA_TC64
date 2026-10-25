@@ -176,10 +176,11 @@ the peripheral's VERSION register:
 - match: `Firmware SDC 5D02, bitstream SDC 5D02`, `fence.i`, jump to 0x2000;
 - anything else (another version, no `SDCV` magic, bytes 4-5 not 0, a file
   shorter than 8 bytes; a firmware from before the trailer has none):
-  `Firmware does not match this bitstream (need SDC 5D02)`,
-  `ErrorCode(0x0ff)` (cyan on the Amiga screen through BootDiag), the OSD
-  message (below), then `boot_halt()`: interrupts off, the CPU parks. No
-  retry, no fallback.
+  `Firmware does not match this bitstream (need SDC 5D02)`, the OSD
+  message (below), `ErrorCode(0x0ff)` (cyan on the Amiga screen through
+  BootDiag; the ROM's last hardware access, as `sim/host_bridge`
+  `boot_mismatch` checks), then `boot_halt()`: interrupts off, the CPU
+  parks. No retry, no fallback.
 
 The OSD message (design 5.5; final review fix wave, Paul 2026-10-25):
 `FIRMWARE MISMATCH`, centred on OSD line 3 (`LOCKSTEP_OSD_AT`), the rest of
@@ -189,7 +190,8 @@ and `28 01`, with cfide's SPI at `fw/ctrl`'s `SPI_fast` speed (1). The
 glyphs are `fw/ctrl/charrom.h`'s, columns 0-6 of the 11 letters and the
 space (84 bytes); the message is 17 table offsets. The two-byte OSD command
 frames of `main` / `ErrorCode` and the OSD's enable share `osd_cmd()`
-(`boot.c`), which paid for most of it.
+(`boot.c`), which paid for most of it. `ErrorCode`'s chipset reset does not
+touch the OSD (its enable and buffer have no reset), so the message stays.
 
 The boot ROM and `RV32OSDB.BIN` must come from the same commit; a new
 `SDC_VERSION` in `sdc.h` (a new peripheral contract) changes both, and

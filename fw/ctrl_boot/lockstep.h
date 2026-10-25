@@ -19,8 +19,8 @@
 /* img = the loaded file, size = its length.  Match: one UART line with both
    versions, then _boot().  Mismatch (another version, no 'SDCV' magic, bytes
    4-5 not 0, size < 8): "Firmware does not match this bitstream (need SDC
-   %04x)", ErrorCode(0x0ff) (BootDiag cyan), the OSD message, boot_halt().
-   Never returns. */
+   %04x)", the OSD message, ErrorCode(0x0ff) (BootDiag cyan; the last
+   hardware access), boot_halt().  Never returns. */
 void fw_start(const unsigned char *img, unsigned size);
 
 /* boot.c */

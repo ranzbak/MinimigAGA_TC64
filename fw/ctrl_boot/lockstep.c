@@ -2,8 +2,8 @@
    ROM is part of the bitstream, so the peripheral's VERSION register names
    the card path this bitstream has; RV32OSDB.BIN names the one it was built
    for in its trailer.  Different (or no trailer): stop, never run it, and
-   say so on the UART, with BootDiag's colour (ErrorCode 0x0ff: cyan) and on
-   the OSD. */
+   say so on the UART, on the OSD and with BootDiag's colour (ErrorCode
+   0x0ff: cyan). */
 #include "lockstep.h"
 #include "small_printf.h"
 #include "../ctrl/sdc.h"
@@ -79,7 +79,8 @@ void fw_start(const unsigned char *img, unsigned size)
 		_boot();
 	}
 	printf("Firmware does not match this bitstream (need SDC %04x)\n", need);
+	osd_mismatch();		/* before ErrorCode: that stays the last hardware access (no chipset
+				   reset touches the OSD's enable or buffer) */
 	ErrorCode(0x0ff);
-	osd_mismatch();
 	boot_halt();
 }

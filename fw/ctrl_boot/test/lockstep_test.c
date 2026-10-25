@@ -28,7 +28,7 @@ static jmp_buf env;
 /* cfide's SPI as lockstep.c drives the OSD: the frames (bytes between a
    select and a deselect), the speed writes */
 static unsigned char osd[3][2100];
-static unsigned osdlen[3], nframes, sel, speed, bad_osd;
+static unsigned osdlen[3], nframes, sel, speed, bad_osd, frames_at_err;
 void hosttest_osd(int what, unsigned char b)
 {
 	switch (what) {
@@ -66,6 +66,7 @@ static int osd_ok(char *why, size_t n)
 		if (osd[0][5 + i] != want) { snprintf(why, n, "buffer byte %u (line %u column %u) %02x, want %02x", i, i / 256, i % 256, osd[0][5 + i], want); return 0; }
 	}
 	if (osdlen[1] != 2 || osd[1][0] != 0x28 || osd[1][1] != 0x01) { snprintf(why, n, "frame 2 is not 28 01 (OSD on)"); return 0; }
+	if (frames_at_err != 2) { snprintf(why, n, "ErrorCode(0x0ff) after %u OSD frames, want after both (the ROM's last access)", frames_at_err); return 0; }
 	return 1;
 }
 
@@ -98,6 +99,7 @@ void ErrorCode(int code)
 	if (ncodes < 8)
 		codes[ncodes] = code;
 	ncodes++;
+	frames_at_err = nframes;	/* the OSD's frames before it (ErrorCode: the last access) */
 }
 
 void boot_halt(void)
@@ -118,7 +120,7 @@ static void run(const char *name, const unsigned char *img, unsigned size, unsig
 	outn = 0;
 	out[0] = 0;
 	ncodes = booted = halted = 0;
-	nframes = sel = speed = bad_osd = 0;
+	nframes = sel = speed = bad_osd = frames_at_err = 0;
 	if (setjmp(env) == 0) {
 		fw_start(img, size);
 		printf("FAIL %s: fw_start returned\n", name);
