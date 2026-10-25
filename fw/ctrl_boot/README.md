@@ -220,8 +220,9 @@ bytes over the first build.)
 `-DHOSTTEST`: `sdc.h`'s `SDC_R` reads the test's mock VERSION) with the
 ROM's own `small_printf` (`putchar` renamed: the UART text is compared byte
 for byte) and mock `_boot` / `ErrorCode` / `boot_halt`: trailer 5D00 against
-VERSION 5D01 (message + `ErrorCode(0x0ff)` + halt), 5D01 (jumps), VERSION
-5D02 (the message names the register's value), no magic, wrong magic,
+VERSION 5D01 (message + `ErrorCode(0x0ff)` + halt), 5C01 (the high byte),
+5D01 (jumps), VERSION 5D02 (the message names the register's value), no
+magic, wrong magic,
 bytes 4-5 not 0, the trailer one byte off the end either way, a trailer
 inside the file but none at its end, an odd length, 8 / 7 / 0 bytes, 16-bit
 compare; and fw/ctrl's built `RV32OSDA.BIN` (`FWBIN=`, default

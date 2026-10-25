@@ -115,6 +115,8 @@ int main(int argc, char **argv)
 	fill();
 	trailer(3000, 0, 0, 0x5D00);
 	run("trailer 5D00, VERSION 5D01: mismatch", img, 3000, 0x5D01, 0);
+	trailer(3000, 0, 0, 0x5C01);
+	run("trailer 5C01, VERSION 5D01: mismatch (high byte)", img, 3000, 0x5D01, 0);
 	trailer(3000, 0, 0, 0x5D01);
 	run("trailer 5D01, VERSION 5D01: boots", img, 3000, 0x5D01, 1);
 	run("trailer 5D01, VERSION 5D02: mismatch, need from the register", img, 3000, 0x5D02, 0);
