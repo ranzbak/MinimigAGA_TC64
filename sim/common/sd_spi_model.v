@@ -13,6 +13,9 @@
 //           +SD_NCR=<n>           0xFF bytes between a command and its R1 (1)
 //           +SD_INIT_POLLS=<n>    ACMD41 polls that answer "idle" (2)
 //           +SD_LOG=1             one line per command
+//           +SD_CID_PSN=<hex>     the CID's product serial number (00C0FFEE);
+//                                 a bench may also set the reg cid_psn
+//                                 hierarchically (another card: a swap)
 //           Error injection (n counts events from 1 at time 0; the n-th
 //           event and the k-1 after it fail, k = +SD_ERR_<kind>_CNT, 1 by
 //           default; each failing event uses up one of the k, so the
@@ -43,7 +46,7 @@
 //           +SD_ERR_<kind>_CNT=<k>  (RDCRC, WRREJ, WRFAIL, NORESP, CMDCRC)
 //                                 k consecutive failures (1)
 //
-// CRC: every data block sent (CMD17, CMD18, CMD9, ACMD22) carries its real
+// CRC: every data block sent (CMD17, CMD18, CMD9, CMD10, ACMD22) carries its real
 // CRC16 (CCITT x^16+x^12+x^5+1, init 0).  CMD59 with arg bit 0 = 1 turns
 // checking on (CMD0 and CMD59 arg bit 0 = 0 turn it off; off at start, so
 // benches that send dummy CRCs are unaffected): a command whose CRC7 (byte
@@ -54,6 +57,9 @@
 // the stop token gets the same response and is not written.
 // ACMD22: R1, then a data block of 4 bytes, big-endian, the number of blocks
 // written with 05 by the last CMD25, and its CRC16.  CMD13: R2 = R1, 00.
+// CMD10: R1 00, then the 16-byte CID as a data block (like CMD9's CSD): MID
+// 53, OID "SM", PNM "SDSIM", PRV 10, PSN cid_psn, MDT 2026-10 (01 AA), byte
+// 15 its CRC7 << 1 | 1; then the block's CRC16.
 // Task remove_card (call hierarchically, e.g. tb.card.remove_card): the
 // card is gone for the rest of the run -- MISO stays 1, nothing it receives
 // is acted on, nothing is written.
@@ -105,6 +111,7 @@ module sd_spi_model #(parameter IMG_SECTORS = 65536)
     integer   wr_ok;                    // blocks written with 05 by the last CMD25 (ACMD22)
     integer   cmd_n, rd_blk_n, wr_blk_n;   // commands / read blocks / written blocks so far
     reg       gone;                     // remove_card
+    reg [31:0] cid_psn;                 // CID product serial number (+SD_CID_PSN)
 
     initial begin
         tok_dly = 4; busy_n = 8; ncr = 1; init_polls = 2; log_on = 0;
@@ -113,6 +120,8 @@ module sd_spi_model #(parameter IMG_SECTORS = 65536)
         if ($value$plusargs("SD_NCR=%d", ncr)) ;
         if ($value$plusargs("SD_INIT_POLLS=%d", init_polls)) ;
         if ($value$plusargs("SD_LOG=%d", log_on)) ;
+        cid_psn = 32'h00C0FFEE;
+        if ($value$plusargs("SD_CID_PSN=%h", cid_psn)) ;
         err_rdcrc = 0; err_wrrej = 0; err_wrfail = 0; err_noresp = 0; err_cmdcrc = 0;
         left_rdcrc = 1; left_wrrej = 1; left_wrfail = 1; left_noresp = 1; left_cmdcrc = 1;
         if ($value$plusargs("SD_ERR_RDCRC=%d", err_rdcrc)) ;
@@ -166,6 +175,23 @@ module sd_spi_model #(parameter IMG_SECTORS = 65536)
             for (i = 7; i >= 0; i = i - 1)
                 x = {x[14:0], 1'b0} ^ ((x[15] ^ b[i]) ? 16'h1021 : 16'h0000);
             crc16 = x;
+        end
+    endfunction
+
+    // CID byte n (0..14; byte 15 is the CRC7, do_cmd)
+    function [7:0] cid_byte(input integer n);
+        begin
+            case (n)
+                0: cid_byte = 8'h53;                    // MID
+                1: cid_byte = "S";  2: cid_byte = "M";  // OID
+                3: cid_byte = "S";  4: cid_byte = "D";  5: cid_byte = "S";
+                6: cid_byte = "I";  7: cid_byte = "M";  // PNM
+                8: cid_byte = 8'h10;                    // PRV 1.0
+                9: cid_byte = cid_psn[31:24]; 10: cid_byte = cid_psn[23:16];
+                11: cid_byte = cid_psn[15:8]; 12: cid_byte = cid_psn[7:0];
+                13: cid_byte = 8'h01; 14: cid_byte = 8'hAA;   // MDT: 2026 (26), month 10
+                default: cid_byte = 8'h00;
+            endcase
         end
     endfunction
 
@@ -321,6 +347,19 @@ module sd_spi_model #(parameter IMG_SECTORS = 65536)
                             9: b8 = CSIZE[7:0];
                             default: b8 = 8'h00;
                         endcase
+                        push(b8); c16 = crc16(c16, b8);
+                    end
+                    push(c16[15:8]); push(c16[7:0]);
+                end
+                6'd10: begin            // CID, a 16-byte data block as CMD9's
+                    push_r1(8'h00);
+                    for (n = 0; n < tok_dly; n = n + 1) push(8'hFF);
+                    push(8'hFE);
+                    c16 = 16'd0;
+                    c7 = 7'd0;
+                    for (n = 0; n < 16; n = n + 1) begin
+                        if (n < 15) begin b8 = cid_byte(n); c7 = crc7(c7, b8); end
+                        else b8 = {c7, 1'b1};
                         push(b8); c16 = crc16(c16, b8);
                     end
                     push(c16[15:8]); push(c16[7:0]);

@@ -101,6 +101,7 @@ card to `+SD_SAVE`.
 | `+SD_NCR=<n>` | 1 | 0xFF bytes between the command CRC byte and R1 (0..8) |
 | `+SD_INIT_POLLS=<n>` | 2 | ACMD41 polls answered "idle" (R1=01) before ready |
 | `+SD_LOG=1` | 0 | one `SD:` line per command |
+| `+SD_CID_PSN=<hex>` | 00C0FFEE | the CID's product serial number (CMD10); a bench can also set `u_sd.cid_psn` hierarchically to make the card another one (a swap) |
 | `+SD_ERR_RDCRC=<n>` | 0 (off) | the n-th CMD17/CMD18 data block the host receives has bit 0 of its last data byte flipped (CRC16 of the true data: a mismatch; the card unchanged); a block counts when its last data byte leaves the card, so one cut before that (CMD12, CS high, e.g. the CMD18 block in flight at CMD12) is neither counted nor corrupted |
 | `+SD_ERR_WRREJ=<n>` | 0 (off) | the n-th data block the card takes in (CMD24/CMD25, every block whatever else happens to it) gets data response 0B, not written |
 | `+SD_ERR_WRFAIL=<n>` | 0 (off) | the same with 0D (write error, then busy); on a block WRREJ also hits, WRREJ wins |
@@ -121,7 +122,9 @@ or written.
 CMD0 (R1=01; resets the card state, the application-command flag of a
 CMD55 before it too), CMD8 (R1, then 00 00 01 AA), CMD55, ACMD41 (R1=01 for
 `+SD_INIT_POLLS` polls, then 00), CMD58 (R1, OCR C0FF8000 when ready, CCS=1),
-CMD16 (R1=00), CMD9 (R1, token, 16 byte CSD v2.0, 2 CRC), CMD17 (R1, token
+CMD16 (R1=00), CMD9 (R1, token, 16 byte CSD v2.0, 2 CRC), CMD10 (R1=00,
+token, the 16 byte CID, 2 CRC: MID 53, OID "SM", PNM "SDSIM", PRV 10, PSN
+`cid_psn`, MDT 01 AA = 2026-10, byte 15 = its CRC7 << 1 | 1), CMD17 (R1, token
 FE, 512 bytes, 2 CRC), CMD18 (same, repeated until CMD12), CMD12 (one stuff
 byte, R1=00, busy), CMD24 (R1, host: token FE + 512 + 2 CRC, card: data
 response 05, busy), CMD25 (token FC per block, stop token FD, busy), CMD13
@@ -134,7 +137,7 @@ running multi-block read or write. Not modelled: byte addressing (SDSC),
 CMD1/MMC, write protect.
 
 CRC (CRC7 x^7+x^3+1; CRC16 CCITT x^16+x^12+x^5+1, init 0): every data
-block the card sends (CMD17, CMD18, CMD9, ACMD22) ends in its CRC16. With
+block the card sends (CMD17, CMD18, CMD9, CMD10, ACMD22) ends in its CRC16. With
 CMD59(1) (CMD0 and CMD59(0) switch it off again) a command whose CRC byte
 bits 7:1 are not its CRC7 gets R1 08 (09 while idle) and is not executed, and
 a written block whose CRC16 does not match gets data response 0B and is not
@@ -219,7 +222,9 @@ bash sim/common/run_sd_model.sh crc
 
 One run per case on a 512 KB pseudo-random card, each with its plusargs:
 `basic` (CRC off by default, CMD59, R1 08, CRC16 of reads, CMD24 bad/good
-CRC -> 0B/05, CMD25 x3 + ACMD22 = 3, CMD18, CMD13, CMD9, CMD59(0)),
+CRC -> 0B/05, CMD25 x3 + ACMD22 = 3, CMD18, CMD13, CMD9, CMD10 with the
+default CID, CMD59(0)), `cid` (`+SD_CID_PSN=12345678`: CMD10 with that PSN,
+then `u_sd.cid_psn` set by the bench and the next CMD10 with the new one),
 `wrrej` (`+SD_ERR_WRREJ=2`: CMD25 x3 -> 05 0B 0B, ACMD22 = 1), `wrfail`
 (`+SD_ERR_WRFAIL=1`), `rdcrc` (`+SD_ERR_RDCRC=3`, a CMD18 block cut by
 CMD12 not counted), `noresp` (`+SD_ERR_NORESP=11`), `remove` (`remove_card`

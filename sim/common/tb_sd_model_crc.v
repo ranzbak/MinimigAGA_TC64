@@ -12,7 +12,11 @@
 //           CRC16 -> 0B (block unchanged), correct -> 05; 512 x FF to block 7
 //           reads back with CRC 7FA1 (the SD spec's example); CMD25 x3 + stop
 //           tran -> ACMD22 = 3; CMD18 x3 + CMD12 with CRCs; CMD13; CMD9 CRC16;
+//           CMD10 (the default CID, PSN 00C0FFEE, its CRC7 and CRC16);
 //           CMD59(0) turns checking off again
+//   cid     +SD_CID_PSN=12345678: CMD10 carries that PSN (CRC7, CRC16 right);
+//           then the bench sets u_sd.cid_psn (another card) and the next
+//           CMD10 carries the new PSN, the rest of the CID unchanged
 //   wrrej   +SD_ERR_WRREJ=2: CMD25 x3 -> 05 0B 0B, ACMD22 = 1, only the
 //           first block written
 //   wrfail  +SD_ERR_WRFAIL=1: CMD24 -> 0D, block unchanged; again -> 05
@@ -152,6 +156,31 @@ module tb_sd_model_crc;
 
     task cmd_badcrc(input [5:0] c, input [31:0] arg);
         begin cmdx(c, arg, cmd_crc(c, arg) ^ 8'h02); end
+    endtask
+
+    // ---- CMD10: the CID (sec[0..15]) against the model's fields with PSN psn ----
+    task check_cid(input [31:0] psn, input [8*24-1:0] what);
+        reg [7:0] want [0:15];
+        reg [6:0] c;
+        integer k;
+        begin
+            cmd(6'd10, 0);
+            if (r1 !== 8'h00) begin fail("CMD10 R1"); $display("  %0s R1=%h", what, r1); end
+            read_block(16);
+            if (rcrc !== ccrc) begin fail("CID CRC16"); $display("  %0s got %h computed %h", what, rcrc, ccrc); end
+            want[0] = 8'h53; want[1] = "S"; want[2] = "M"; want[3] = "S"; want[4] = "D";
+            want[5] = "S"; want[6] = "I"; want[7] = "M"; want[8] = 8'h10;
+            want[9] = psn[31:24]; want[10] = psn[23:16]; want[11] = psn[15:8]; want[12] = psn[7:0];
+            want[13] = 8'h01; want[14] = 8'hAA;
+            c = 7'd0;
+            for (k = 0; k < 15; k = k + 1) c = crc7(c, want[k]);
+            want[15] = {c, 1'b1};
+            for (k = 0; k < 16; k = k + 1)
+                if (sec[k] !== want[k]) begin
+                    fail("CID byte");
+                    $display("  %0s byte %0d got %h want %h", what, k, sec[k], want[k]);
+                end
+        end
     endtask
 
     // ---- data blocks ----
@@ -430,6 +459,8 @@ module tb_sd_model_crc;
             read_block(16);
             if (rcrc !== ccrc) begin fail("CSD CRC16"); $display("  got %h computed %h", rcrc, ccrc); end
             if (sec[0] !== 8'h40) fail("CSD v2");
+            // CMD10: the default CID with its CRC7 and CRC16
+            check_cid(32'h00C0FFEE, "default CID");
             // CMD59(0): bad CRC7 accepted again
             cmd(6'd59, 0);
             if (r1 !== 8'h00) fail("CMD59(0) R1");
@@ -438,7 +469,17 @@ module tb_sd_model_crc;
             spin(5);
             cs_n = 1'b1;
             spi(8'hFF);
-            $display("CMD18 x3, CMD13, CMD9, CMD59(0) done");
+            $display("CMD18 x3, CMD13, CMD9, CMD10, CMD59(0) done");
+        end else if (tcase == "cid") begin
+            init_card(1'b1);
+            cs_n = 1'b0;
+            check_cid(32'h12345678, "+SD_CID_PSN=12345678");
+            u_sd.cid_psn = 32'hA5A50001;            // another card
+            check_cid(32'hA5A50001, "cid_psn set");
+            spin(5);
+            cs_n = 1'b1;
+            spi(8'hFF);
+            $display("CMD10: PSN 12345678 from the plusarg, then A5A50001 from cid_psn");
         end else if (tcase == "wrrej") begin
             init_card(1'b1);
             wr_multi(20, 3, 60);

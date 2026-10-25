@@ -3,7 +3,7 @@
 # runs tb_sd_spi_model with iverilog, checks the CMD24 write-back image.
 #   bash sim/common/run_sd_model.sh [vvp plusargs, e.g. +SD_TOKEN_DLY=200 +SD_NCR=8]
 #   bash sim/common/run_sd_model.sh crc [vvp plusargs]
-#        tb_sd_model_crc: the model's CRC7/CRC16, CMD59, ACMD22, CMD13 and
+#        tb_sd_model_crc: the model's CRC7/CRC16, CMD59, ACMD22, CMD13, CMD10 and
 #        error injection (+SD_ERR_*, remove_card), one vvp run per +CASE on a
 #        512 KB pseudo-random card; logs in <run>/crc_<case>.log
 # Env: RUNTAG (run dir run_${RUNTAG:-wt}), IVERILOG, VVP.
@@ -29,7 +29,7 @@ open(sys.argv[1], "wb").write(o)' "$run/crc.img"
         "$here/tb_sd_model_crc.v" "$here/sd_spi_model.v"
     fails=0
     # case and its injection plusargs (see tb_sd_model_crc.v)
-    for leg in "basic" "wrrej +SD_ERR_WRREJ=2" "wrfail +SD_ERR_WRFAIL=1" \
+    for leg in "basic" "cid +SD_CID_PSN=12345678" "wrrej +SD_ERR_WRREJ=2" "wrfail +SD_ERR_WRFAIL=1" \
                "rdcrc +SD_ERR_RDCRC=3" "noresp +SD_ERR_NORESP=11" "remove" \
                "cmdcrc +SD_ERR_CMDCRC=11" "rdcnt +SD_ERR_RDCRC=2 +SD_ERR_RDCRC_CNT=4" \
                "nrcnt +SD_ERR_NORESP=11 +SD_ERR_NORESP_CNT=3" "rdcut +SD_ERR_RDCRC=2" \
