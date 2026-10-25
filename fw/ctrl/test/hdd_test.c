@@ -798,6 +798,45 @@ static void error_cases(void)
 	free(d);
 }
 
+/* sectors past the end of the HDF (findings/sdcard-engine Task 10 fix
+   round 2; a truncated HDF, an RDB whose partitions run past the file):
+   END | IRQ | ERR before any sector is served or written, the card
+   unchanged (WORK.HDF is 8192 sectors) */
+static void past_end_cases(void)
+{
+	static const unsigned char err = IDE_STATUS_END | IDE_STATUS_IRQ | IDE_STATUS_ERR;
+	uint8_t *d = wpattern(2, 11), *before = malloc((size_t)card_sectors * 512);
+	int same = 1;
+	if (!before) die("out of memory");
+	for (unsigned l = 0; l < card_sectors; l++) memcpy(before + (size_t)l * 512, mock_card_sector(l), 512);
+	ClearError(ERROR_ALL);
+	command(1, ACMD_READ_SECTORS, 8191, 2);
+	check_gayle("past the end: READ SECTORS 8191+2");
+	check("past the end: READ SECTORS 8191+2: no block", nblocks, 0);
+	check("past the end: READ SECTORS 8191+2: status END | IRQ | ERR only", g.nstatus == 1 && g.status[0] == err, 1);
+	set_multiple(1, 4);
+	command(1, ACMD_READ_MULTIPLE, 8190, 4);
+	check_gayle("past the end: READ MULTIPLE 8190+4");
+	check("past the end: READ MULTIPLE 8190+4: no block", nblocks, 0);
+	check("past the end: READ MULTIPLE 8190+4: status END | IRQ | ERR only", g.nstatus == 1 && g.status[0] == err, 1);
+	set_multiple(1, 16);
+	g.wdata = d;
+	g.wlen = 1024;
+	command(1, ACMD_WRITE_SECTORS, 8191, 2);
+	check_gayle("past the end: WRITE SECTORS 8191+2");
+	check("past the end: WRITE SECTORS 8191+2: status REQ, then END | IRQ | ERR", g.nstatus == 2 && g.status[0] == IDE_STATUS_REQ && g.status[1] == err, 1);
+	check("past the end: WRITE SECTORS 8191+2: no sector taken from the FIFO", (long)g.wpos, 0);
+	for (unsigned l = 0; l < card_sectors; l++) same &= !memcmp(before + (size_t)l * 512, mock_card_sector(l), 512);
+	check("past the end: WRITE SECTORS 8191+2: the card unchanged", same, 1);
+	g.wdata = NULL;
+	g.wlen = 0;
+	check("past the end: no card error", (ErrorMask >> ERROR_SDCARD) & 1, 0);
+	/* the last sector itself is still good, read and write */
+	read_case("WORK.HDF READ SECTORS 8191+1 (the last sector)", 1, 0, 8191, 1);
+	free(before);
+	free(d);
+}
+
 /* the Amiga's write data: block j = 'W', j, then a pattern */
 static uint8_t *wpattern(int n, int seed)
 {
@@ -862,6 +901,7 @@ int main(int argc, char **argv)
 	set_multiple(1, 4);
 	read_case("WORK.HDF READ MULTIPLE 8188+4 (the last cluster)", 1, 1, 8188, 4);
 	set_multiple(1, 16);
+	past_end_cases();
 	/* the board deadlock of 2026-10-20: CD audio plays (CD on port 2), the
 	   Amiga reads its HDF with READ MULTIPLE of more than one block */
 	cd_audio_busy = 1;

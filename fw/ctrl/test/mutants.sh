@@ -211,9 +211,12 @@ unit mmc_noseterror mmc_test src mmc.c 's/SetError(ERROR_SDCARD, (char \*)what, 
 unit mmc_port mmc_test src mmc.c 's/op.port = ide_port \& 1;/op.port = 0;/' "FAIL ... 512 bytes there"
 
 # ---- Task 10 fix round 1 (sdproto_test, mmc_test, hdd_test, cdrom_test, rom_test, fdd_test, config_test, boot_test)
-# a read of the file's last cluster: FileReadEx 0 at the end of the chain taken for an error; FileSeek storing the EOC mark
-unit hdd_eoc hdd_test src hdd.c 's/(!FileReadEx(\&hdf\[unit\].file, 0, blk) \&\& MMCErr != SD_OK)/!FileReadEx(\&hdf[unit].file, 0, blk)/' "FAIL WORK.HDF READ SECTORS 8190+2"
-unit cd_eoc cdrom_test src cdrom.c 's/if (!FileReadEx(\&cdrom.hdf.file, 0, n) \&\& MMCErr != SD_OK)/if (!FileReadEx(\&cdrom.hdf.file, 0, n))/' "file's last cluster"
+# a read of the file's last cluster: FileReadEx 0 at the end of the chain (blocks left only); FileSeek storing the EOC mark
+unit fat_readex_end hdd_test src fat.c 's/if (!FileSeek(file, bc, SEEK_CUR) \&\& nSize > bc)/if (!FileSeek(file, bc, SEEK_CUR))/' "FAIL WORK.HDF READ SECTORS 8190+2"
+unit cd_eoc cdrom_test src cdrom.c 's/if (!FileReadEx(\&cdrom.hdf.file, 0, n))/if (!FileReadEx(\&cdrom.hdf.file, 0, n) \&\& MMCErr != SD_OK)/' "past the end of the file's chain"
+# fix round 2: sectors past the end of the HDF served / written from its last cluster
+unit hdd_past_end_rd hdd_test src hdd.c 's/lba + hdf\[unit\].offset + sector_count > (long)(hdf\[unit\].file.size >> 9)/0/' "FAIL past the end: READ SECTORS 8191+2"
+unit hdd_past_end_wr hdd_test src hdd.c 's/(lba + sector_count > (long)(hdf\[unit\].file.size >> 9) ||/(0 ||/' "FAIL past the end: WRITE SECTORS 8191+2"
 unit fat_eoc_cluster hdd_test src fat.c 's/if (next == 0xFFFF) \/\/ FAT16 EOC/if ((file->cluster = next) == 0xFFFF) \/\/ FAT16 EOC/' "FAIL WORK.HDF READ MULTIPLE 8188+4"
 # the card swap: no CID compare, the lock not sticky, the OSD's text
 unit sdp_nocid sdproto_test src sdproto.c 's/if (inited \&\& (op.err || !cid_known || memcmp(cid, sd_cid, 16))) {/if (0) {/' "FAIL cid: another card: read SD_E_GONE"

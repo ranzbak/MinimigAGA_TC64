@@ -1456,10 +1456,11 @@ unsigned char FileSeek(fileTYPE *file, unsigned long offset, unsigned long origi
             buffered_fat_index = sb; // remember current buffer index
         }
 
-        // the end of the chain: 0, the file pointer left at the start of the
-        // last cluster (cluster and sector agree; the EOC mark in
+        // the end of the chain: 0, the file pointer left in the last cluster
+        // at its offset there (cluster and sector agree; the EOC mark in
         // file->cluster made the next seek inside that cluster read from a
-        // wrong address, findings/sdcard-engine Task 10 fix round 1)
+        // wrong address, findings/sdcard-engine Task 10 fix round 1).  A
+        // caller seeking past the end gets 0 with no card error (MMCErr 0).
         if (fat32)
         {
             unsigned long next = le32(fat_buffer.fat32[i]) & 0x0FFFFFFF; // get FAT32 link (little-endian on disk)
@@ -1516,7 +1517,10 @@ unsigned char FileReadEx(fileTYPE *file, unsigned char *pBuffer, unsigned long n
         if (!MMC_ReadMultiple(sb, pBuffer, bc))
             return 0;
 
-        if (!FileSeek(file, bc, SEEK_CUR))
+        // 0: a FAT read failed, or the end of the chain with blocks left (a
+        // read ending at the file's last sector is good; findings/sdcard-engine
+        // Task 10 fix round 2)
+        if (!FileSeek(file, bc, SEEK_CUR) && nSize > bc)
             return 0;
 
         nSize -= bc;

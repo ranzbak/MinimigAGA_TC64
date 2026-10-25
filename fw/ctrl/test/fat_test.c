@@ -222,6 +222,22 @@ static void read_big(const char *data)
 	check("FileSeek(3 clusters)", FileSeek(&f, 3 * cluster_size, SEEK_SET), 1);
 	check("FileReadEx(one cluster)", FileReadEx(&f, all, cluster_size), 1);
 	check_mem("FileReadEx(one cluster) data == BIG.BIN", all, ref + 3 * cluster_size * 512, cluster_size * 512);
+	/* the file's last cluster (findings/sdcard-engine Task 10 fix rounds 1
+	   and 2): a read that ends at its end is good (the seek after it meets
+	   the end of the chain); one block more fails; a seek past the end is
+	   0 and leaves the pointer in the last cluster, where the next seek
+	   still finds the right data */
+	{
+		unsigned long last = (nsec + cluster_size - 1) / cluster_size - 1;
+		check("FileSeek(the last cluster)", FileSeek(&f, last * cluster_size, SEEK_SET), 1);
+		check("FileReadEx(the whole last cluster): 1", FileReadEx(&f, all, cluster_size), 1);
+		check_mem("... its data == BIG.BIN", all, ref + last * cluster_size * 512, len - last * cluster_size * 512);
+		check("FileSeek(the last cluster) again", FileSeek(&f, last * cluster_size, SEEK_SET), 1);
+		check("FileReadEx(the last cluster + 1 block): 0", FileReadEx(&f, all, cluster_size + 1), 0);
+		check("FileSeek(past the end): 0", FileSeek(&f, (last + 1) * cluster_size, SEEK_SET), 0);
+		check("... then FileSeek(the last sector) + FileRead", FileSeek(&f, nsec - 1, SEEK_SET) && FileRead(&f, sec), 1);
+		check_mem("... == BIG.BIN's last sector", sec, ref + (nsec - 1) * 512, len - (nsec - 1) * 512);
+	}
 
 	/* FileSeek forward over the fragment boundary and back within the file */
 	static const unsigned long at[] = { 100, 3, 599, 40, 0 };

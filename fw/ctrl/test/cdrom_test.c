@@ -104,7 +104,7 @@ static unsigned long iso_dir = 0x1234;
 static int fail_read_at = -1;			/* FileReadEx fails on this call */
 static int fail_err = 1;			/* ... with this MMCErr (SD_E_*; 1 = SD_E_RETRIES) */
 static int eoc_at = -1;				/* FileReadEx delivers, then returns 0 with no card
-					   error (its last seek met the end of the chain) */
+					   error (blocks left after the end of the chain) */
 static int reads;
 unsigned long iCurrentDirectory, iPreviousDirectory;
 static int clear_errors;			/* ClearError(ERROR_FILESYSTEM) calls */
@@ -1011,19 +1011,20 @@ static void t_read_abandon(void)
 	end();
 }
 
-/* Task 10 fix round 1: the last cluster of a cluster-aligned file:
-   FileReadEx's seek after its last block meets the end of the chain and
-   returns 0 with no card error; the data is all there: a good end */
+/* Task 10 fix rounds 1 and 2: FileReadEx is 0 with no card error only when
+   blocks are left after the end of the file's chain (a read ending at its
+   last sector is 1: fat_test): the READ runs past the file, CHECK
+   CONDITION, not a good end */
 static void t_read_eoc(void)
 {
 	uint8_t c[12];
-	begin("a READ of the file's last cluster (FileReadEx 0 at the end of the chain, no card error): good");
+	begin("a READ past the end of the file's chain (FileReadEx 0, no card error): CHECK 03/11/00");
 	fresh_drive(1);
 	reads = 0;
 	eoc_at = 0;
 	read10(c, 0, 1);
 	packet(c, 0xFFFE);
-	EXPECT(good_end(), "status %02X error %02X", g.end_status, g.reg[1]);
+	EXPECT(check_end(0x30), "status %02X error %02X", g.end_status, g.reg[1]);
 	eoc_at = -1;
 	end();
 }

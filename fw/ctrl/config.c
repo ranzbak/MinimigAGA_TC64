@@ -184,7 +184,7 @@ char UploadExtROM(unsigned long dir,char *name)
 			if(romfile.size == 0x80000) {
 				// 512KB Extended CD32 ROM
 				if (!SendFileV2(&romfile, NULL, 0, 0xe00000, romfile.size>>9))
-				return(0);
+					return(0);
 				return(1);
 			}
 			else

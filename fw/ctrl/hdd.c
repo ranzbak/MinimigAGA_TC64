@@ -530,6 +530,17 @@ void ATA_ReadSectors(unsigned char* tfr, int sector, int cylinder, int head, int
 	/* Update task file with CHS address */
 	WriteTaskFile(0, tfr[2], sector, cylinder, (cylinder >> 8), (tfr[6] & 0xF0) | head);
 
+	/* sectors past the end of a hardfile: ERR before any of them is served
+	   (findings/sdcard-engine Task 10 fix round 2; a truncated HDF, an RDB
+	   whose partitions run past the file) */
+	if ((hdf[unit].type & ~HDF_SYNTHRDB) == HDF_FILE && hdf[unit].file.size &&
+	    lba + hdf[unit].offset + sector_count > (long)(hdf[unit].file.size >> 9))
+	{
+		MMCErr = SD_OK;
+		ata_card_error();
+		return;
+	}
+
 	while (sector_count)
 	{
 		block_count = multiple ? sector_count : 1;
@@ -557,11 +568,12 @@ void ATA_ReadSectors(unsigned char* tfr, int sector, int cylinder, int head, int
 					{
 						if(hdf[unit].type==HDF_FILE)
 						{
+							// Patch flags and checksum of RDB.  Actually necessary?
+							// A seek or read that fails (a card error, or the end of the
+							// chain) leaves a stale buffer: the command ends with ERR
 							MMCErr = SD_OK;
-							HardFileSeek(&hdf[unit], lba + hdf[unit].offset); // Patch flags and checksum of RDB.  Actually necessary?
-							// FileReadEx is 0 also when its last seek meets the end of
-							// the chain (the block was read): the card error decides
-							if (MMCErr != SD_OK || (!FileReadEx(&hdf[unit].file, sector_buffer, 1) && MMCErr != SD_OK))
+							if (!HardFileSeek(&hdf[unit], lba + hdf[unit].offset) ||
+							    !FileReadEx(&hdf[unit].file, sector_buffer, 1))
 							{
 								ata_card_error();
 								return;
@@ -585,12 +597,13 @@ void ATA_ReadSectors(unsigned char* tfr, int sector, int cylinder, int head, int
 					}
 					if(blk) // Any blocks left?
 					{
+						// a seek that fails (a FAT sector it could not read, or past
+						// the end of the chain) leaves a wrong position; FileReadEx
+						// fails on a card error or blocks past the end of the chain
+						// (a read ending at the file's last sector is good)
 						MMCErr = SD_OK;
-						HardFileSeek(&hdf[unit], lba + hdf[unit].offset);
-						// a FAT sector the seek could not read: its position is wrong.
-						// FileReadEx is 0 also when its last seek meets the end of the
-						// chain after the last block was read: the card error decides
-						if (MMCErr != SD_OK || (!FileReadEx(&hdf[unit].file, 0, blk) && MMCErr != SD_OK)) // NULL: into Gayle's FIFO (mmc.h)
+						if (!HardFileSeek(&hdf[unit], lba + hdf[unit].offset) ||
+						    !FileReadEx(&hdf[unit].file, 0, blk)) // NULL: into Gayle's FIFO (mmc.h)
 						{
 							ata_card_error();
 							return;
@@ -665,10 +678,13 @@ void ATA_WriteSectors(unsigned char* tfr, int sector, int cylinder, int head, in
 	if(lba<0)
 		SetError(ERROR_HDD,"Write to auto-generated RDB!",lba,0);
 
+	/* sectors past the end of a hardfile: ERR before any of them is written
+	   (findings/sdcard-engine Task 10 fix round 2); a seek that fails (a card
+	   error, or the chain ends early) leaves a wrong position: ERR too */
 	MMCErr = SD_OK;
-	if (hdf[unit].file.size)	// File size will be 0 in direct card modes
-		HardFileSeek(&hdf[unit], (lba>-1) ? lba : 0);
-	if (MMCErr != SD_OK)	// a FAT sector the seek could not read: its position is wrong
+	if ((hdf[unit].type & ~HDF_SYNTHRDB) == HDF_FILE && hdf[unit].file.size &&
+	    (lba + sector_count > (long)(hdf[unit].file.size >> 9) ||
+	     !HardFileSeek(&hdf[unit], (lba>-1) ? lba : 0)))
 	{
 		ata_card_error();
 		return;
@@ -708,8 +724,11 @@ void ATA_WriteSectors(unsigned char* tfr, int sector, int cylinder, int head, in
 							ata_card_error();
 							return;
 						}
-						FileSeek(&hdf[unit].file, 1, SEEK_CUR);	// 0 at the end of the chain (no error)
-						if (MMCErr != SD_OK)	// the next FAT sector could not be read
+						// 0: the next FAT sector could not be read, or the end of the
+						// chain: an error when sectors are left (they would go to
+						// the last cluster again), none after the file's last one
+						if (!FileSeek(&hdf[unit].file, 1, SEEK_CUR) &&
+						    (MMCErr != SD_OK || sector_count > 1))
 						{
 							ata_card_error();
 							return;
