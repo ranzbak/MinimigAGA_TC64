@@ -33,9 +33,10 @@
 # (registers of sdcard_spi / sdcard_gayle and the host bus, clk_114; no RTL
 # change); opt_design implements it, write_bitstream writes the .ltx, and the
 # core's probe map (sdc_ila_map.txt), a hardware-manager script that names
-# its probes (sdc_ila_hwprobes.tcl), the hardware manager's name of every
-# core bit (sdc_ila_bits.txt, tools/vivado/sdc_ila_names.py; what
-# tools/vivado/sdc_ila_capture.tcl arms the core with) and sdc_ila.rpt land
+# its probes (sdc_ila_hwprobes.tcl: sdc_<signal>, what
+# tools/vivado/sdc_ila_capture.tcl arms the core with), the .ltx net name of
+# every core bit (sdc_ila_bits.txt, tools/vivado/sdc_ila_names.py: for
+# reading a capture's CSV columns) and sdc_ila.rpt land
 # next to the bitstream.  SDC_ILA_DEPTH (default 2048; a power of 2, 1024..16384) is its
 # sample depth.  The hook is restored afterwards.  Unset or 0 builds exactly
 # as before (tools/vivado/test/hostcpu_mock_test.tcl checks that call for
@@ -872,7 +873,8 @@ if {$sdc_ila} {
             puts "build_ap040.tcl: WARNING $f not produced"
         }
     }
-    # the hardware manager's name of every core bit (tools/vivado/sdc_ila_capture.tcl reads it)
+    # the .ltx net name of every core bit (for the CSV columns; the capture
+    # script arms on sdc_ila_hwprobes.tcl's probes, not on these names)
     if {[catch {exec python3 $R/tools/vivado/sdc_ila_names.py $out} msg]} {
         puts "build_ap040.tcl: WARNING sdc_ila_names.py: $msg"
     } else {

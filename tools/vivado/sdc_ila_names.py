@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""sdc_ila_names.py -- the hardware manager's name of every u_ila_sdc bit.
+"""sdc_ila_names.py -- the .ltx net name of every u_ila_sdc bit (CSV columns).
 
     python3 tools/vivado/sdc_ila_names.py <stage dir>
 
@@ -18,7 +18,15 @@ table; this joins them with the .ltx's net names.  A bus net is one probe in
 the hardware manager (named after the bus, its bits in port order, the
 lowest port bit the probe's bit 0); any other net is a 1-bit probe named
 after the net (several such nets in one .ltx entry are listed from the
-highest port bit down).  tools/vivado/sdc_ila_capture.tcl reads the file.
+highest port bit down).
+
+Use: reading a capture's CSV (write_hw_ila_data names its columns after
+these nets).  Both bit orders above are taken from one observed .ltx, not
+checked on hardware (final review M5): where the CSV also has the
+sdc_<signal> columns of sdc_ila_hwprobes.tcl (create_hw_probe -map by port
+bit, no name guessed), those are the ones to trust.  The capture script
+(tools/vivado/sdc_ila_capture.tcl) no longer reads this file: it arms the
+core on those sdc_<signal> probes.
 """
 import json
 import re
