@@ -2,7 +2,7 @@
 """mkblob.py <file> <size> <tag>: a deterministic stand-in firmware file.
 
 <size> bytes of a counter pattern that starts with <tag> (ASCII).  Used by
-the manifest (a stand-in RV32OSDA.BIN, so the manifest does not change with
+the manifest (a stand-in firmware file, so the manifest does not change with
 a firmware build).  python3 -I, standard library only.
 """
 import sys

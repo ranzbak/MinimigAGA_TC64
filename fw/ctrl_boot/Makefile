@@ -1,5 +1,6 @@
-# Boot ROM for the OSD host RISC-V CPU (VexRiscv RV32IMC): loads RV32OSDA.BIN from
-# the SD card to 0x2000 and jumps to it (see README.md).
+# Boot ROM for the OSD host RISC-V CPU (VexRiscv RV32IMC): loads RV32OSDB.BIN
+# (the name: fw/ctrl/fwname.mk) from the SD card to 0x2000 and jumps to it
+# (see README.md).
 #
 #   make            OSDBoot_rv.bin and OSDBoot_rv_ROM.vhd
 #   make check      no A-extension opcodes (lr.w/sc.w/amo*) in the disassembly
@@ -12,7 +13,10 @@ include $(TOP)/tools/riscv/toolchain.mk
 PROJECT := OSDBoot_rv
 ROMGEN  := ../romgen/romgen
 
-DEFS    := -Dprg_start=0x2000 -DOSDNAME=\"RV32OSDABIN\"
+# the firmware's file name, shared with fw/ctrl's build (its check (i)
+# checks the committed image against it); OSDNAME = the 8.3 directory entry
+include $(TOP)/fw/ctrl/fwname.mk
+DEFS    := -Dprg_start=0x2000 -DOSDNAME=\"$(FW_83)\"
 BUILD   ?= build
 CFLAGS  := $(RV_CFLAGS_FW) -Wall $(DEFS) -I.
 LDFLAGS := $(RV_LDFLAGS_FW) -T boot.ld -Wl,--no-warn-rwx-segments -Wl,-Map=$(BUILD)/$(PROJECT).map
@@ -27,7 +31,7 @@ all: $(PROJECT).bin $(PROJECT)_ROM.vhd
 $(BUILD):
 	mkdir -p $(BUILD)
 
-$(BUILD)/%.o: %.c $(HEADERS) | $(BUILD)
+$(BUILD)/%.o: %.c $(HEADERS) $(TOP)/fw/ctrl/fwname.mk | $(BUILD)
 	$(RV_CC) $(CFLAGS) -c -o $@ $<
 
 $(BUILD)/crt0.o: crt0.S | $(BUILD)

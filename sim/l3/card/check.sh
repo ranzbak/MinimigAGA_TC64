@@ -72,9 +72,10 @@ if [ "$cyl" -gt 255 ] && [ "$size" -le 8388608 ] && [ "$size" = "$(echo "$line" 
     echo "ok    SYNTH.HDF $size bytes, $cyl cylinders > 255"
 else bad "SYNTH.HDF CHS rule: $cyl cylinders, $size bytes"; fi
 # manifest
-$make -s --no-print-directory B="$b/manifest" FWRV="$b/manifest/standin/RV32OSDA.BIN" cards CDCFG=cue >/dev/null
-$make -s --no-print-directory B="$b/manifest" FWRV="$b/manifest/standin/RV32OSDA.BIN" cd CDCFG=iso >/dev/null
-"$here/manifest.sh" "$b/manifest" > "$b/check/manifest.new"
+fw=$($make -s --no-print-directory fwname)
+$make -s --no-print-directory B="$b/manifest" FWRV="$b/manifest/standin/$fw" cards CDCFG=cue >/dev/null
+$make -s --no-print-directory B="$b/manifest" FWRV="$b/manifest/standin/$fw" cd CDCFG=iso >/dev/null
+"$here/manifest.sh" "$b/manifest" "$fw" > "$b/check/manifest.new"
 if diff "$b/check/manifest.new" "$here/manifest.txt" >/dev/null; then echo "ok    manifest.txt current"
 else bad "manifest.txt is stale (make manifest)"; diff "$b/check/manifest.new" "$here/manifest.txt" || true; fi
 if [ "$fail" = 0 ]; then echo "check PASS"; else echo "check FAIL"; exit 1; fi

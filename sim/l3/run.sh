@@ -16,14 +16,15 @@
 #                                        hs_compare; exit 1 unless all SAME)
 #
 # The host CPU is rv_hostcpu (VexRiscv RV32IMC) with the boot ROM
-# fw/ctrl_boot and the firmware RV32OSDA.BIN (fw/ctrl); the logs say
+# fw/ctrl_boot and the firmware RV32OSDB.BIN (fw/ctrl; the name:
+# fw/ctrl/fwname.mk, read through hostsim.sh's hs_fwname); the logs say
 # "=== CPU rv".
 #
 # Environment:
 #   SIM      xsim (default, 4-state, the X-checking reference) or verilator
 #            (GHDL --synth converts the VHDL, as sim/host_bridge)
 #   RUNTAG   run directory sim/l3/run_${RUNTAG:-wt}; a new one per code change
-#   FW       an RV32OSDA.BIN to put on the card; default: built from
+#   FW       a firmware image to put on the card (as RV32OSDB.BIN); default: built from
 #            fw/ctrl into <run>/fwrv under a date shim (hs_fwrv, L3_DATE)
 #   L3_DATE  the date of the firmware build (default 2026-01-01)
 #   EXTRA_WS the bridge's rv_extra_ws (0)
@@ -302,6 +303,9 @@ L3_SDC_HDD_TO=${L3_SDC_HDD_TO:-248600000}
 # run with the scenario's verdict line: no step failure is silent
 hs_die() { echo "FAILED: $*"; echo "=== ${SCEN:-run.sh} FAILED"; exit 1; }
 die() { hs_die "$@"; }
+# the firmware's file name (fw/ctrl/fwname.mk): the build output's name and
+# the name the card builder gives it on the card
+FWNAME=$(hs_fwname) || die "fw/ctrl/fwname.mk: no 8.3 FW_FILE"
 L3CHECK=${L3CHECK:-$HERE/l3check.py}   # tests of run.sh only: another l3check.py
 
 # l3_check <name> <out file> <pass regex> <command...>: one offline check
@@ -488,7 +492,7 @@ setup() {
 		[ -f "$FWBIN" ] || die "no firmware $FWBIN (FW=)"
 	else
 		hs_fwrv "$run"
-		FWBIN="$run/fwrv/RV32OSDA.BIN"
+		FWBIN="$run/fwrv/$FWNAME"
 	fi
 	[ "${NOKICK:-0}" = 1 ] && mk+=(NOKICK=1)
 	# the card of the scenario (sim/l3/card): fdd_rd, fdd_wr and akiko the

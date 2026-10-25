@@ -1,4 +1,5 @@
-/* fwtest: the test firmware of the L2 boot run (RV32OSDA.BIN).
+/* fwtest: the test firmware of the L2 boot run (RV32OSDB.BIN, the name of
+ * fw/ctrl/fwname.mk).
  *
  * The committed boot ROM (fw/ctrl_boot) loads this image from the SD card
  * model to 0x2000 through dBus + hostcache, runs fence.i and jumps to

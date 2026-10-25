@@ -50,13 +50,15 @@ TOP     := $(abspath $(CURDIR)/../..)
 include $(TOP)/tools/riscv/toolchain.mk
 ARCH_B  := build
 include $(TOP)/fw/ctrl/arch/arch.mk
-.DEFAULT_GOAL := RV32OSDA.BIN
+# FW_FILE, the name the boot ROM loads (RV32OSDB.BIN)
+include $(TOP)/fw/ctrl/fwname.mk
+.DEFAULT_GOAL := $(FW_FILE)
 
 CFLAGS := $(RV_CFLAGS_FW) -I$(ARCH)
 
 firmware.elf: $(ARCH_OBJS) $(OBJS) $(ARCH_LD)
 	$(RV_CC) $(RV_LDFLAGS_FW) $(ARCH_LDFLAGS) -o $@ $(ARCH_OBJS) $(OBJS) $(RV_LIBS_FW)
-RV32OSDA.BIN: firmware.elf
+$(FW_FILE): firmware.elf
 	$(RV_OBJCOPY) -O binary $< $@
 ```
 
@@ -67,8 +69,11 @@ RWX load segment, the whole image is loaded into RAM; without the option
 binutils 2.45 warns on every link). `$(RV_LIBS_FW)` stays last on the link
 line. A bench that needs a hex image uses `bash tools/riscv/bin2hex.sh in.bin
 out.hex` (one big-endian word per line, file byte i in lane i, last word
-zero-padded). The boot ROM (`fw/ctrl_boot`) loads `RV32OSDA.BIN` to 0x2000
-and jumps there.
+zero-padded). The boot ROM (`fw/ctrl_boot`) loads `RV32OSDB.BIN` (the name:
+`fw/ctrl/fwname.mk`) to 0x2000 and jumps there, but only when the file ends
+with the 8-byte lock-step trailer (`fw/ctrl/Makefile` appends it after
+`objcopy`; `fw/ctrl_boot/README.md` "Lock-step check"): the sketch above
+leaves it out, so its image boots only on a bench that preloads it.
 
 ### Memory layout (`firmware.ld`)
 

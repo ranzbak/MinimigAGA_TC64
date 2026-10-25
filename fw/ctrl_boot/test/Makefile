@@ -2,18 +2,23 @@
 # card images with tools/sim/mkcard.sh and runs minfat_test on each (the FAT
 # code), then lockstep_test (the bitstream / firmware lock-step check,
 # ../lockstep.c with the ROM's small_printf), also on fw/ctrl's built
-# RV32OSDA.BIN when it exists (FWBIN=<file> for another one).
+# firmware file when it exists (FWBIN=<file> for another one).  The file
+# name (RV32OSDB.BIN, 8.3 entry RV32OSDBBIN) comes from fw/ctrl/fwname.mk,
+# as in the ROM's build.
 # Needs: gcc, mtools, dosfstools, fdisk (see tools/sim/README.md), python3.
 TOP     := $(abspath ../../..)
 MKCARD  := $(TOP)/tools/sim/mkcard.sh
 SRC     := ..
-OSDNAME_STR := RV32OSDABIN
+include $(TOP)/fw/ctrl/fwname.mk
+# the previous chain's firmware name (card on cfide's SPI, no trailer):
+# the old firmware may sit beside the new one on the same card
+OLD_FILE := RV32OSDA.BIN
 OUT     := out
 
 CC      ?= gcc
 CFLAGS  := -std=gnu11 -O1 -g -Wall -Wextra -Wno-unused-parameter -Wno-sign-compare \
            -fsanitize=address,undefined -fno-sanitize-recover=undefined \
-           -I$(SRC) -DOSDNAME=\"$(OSDNAME_STR)\"
+           -I$(SRC) -DOSDNAME=\"$(FW_83)\"
 
 all: test
 
@@ -42,12 +47,14 @@ $(OUT)/lockstep_test.o: lockstep_test.c $(SRC)/lockstep.h $(SRC)/../ctrl/sdc.h |
 	$(CC) $(CFLAGS) $(LSFLAGS) -c -o $@ $<
 $(OUT)/lockstep_test: $(OUT)/lockstep_test.o $(OUT)/lockstep.o $(OUT)/small_printf.o
 	$(CC) $(CFLAGS) -o $@ $^
-FWBIN ?= $(TOP)/fw/ctrl/build/RV32OSDA.BIN
+FWBIN ?= $(TOP)/fw/ctrl/build/$(FW_FILE)
 
-# Card images.  Contents: RV32OSDA.BIN = 3000 deterministic pseudo-random bytes,
+# Card images.  Contents: $(FW_FILE) = 3000 deterministic pseudo-random bytes,
 # OLDOSDAD.BIN = another firmware-like name ahead of it on the card (a decoy, as
-# the previous firmware's OLDOSDAD.BIN may be: the ROM must not load it),
-# RV32OSDB.BIN = a near-miss name.  The 'nofile' card holds only the decoys.
+# the previous firmware's 832OSDAD.BIN may be: the ROM must not load it),
+# $(OLD_FILE) = the previous chain's firmware, also ahead of it (a card for old
+# and new bitstreams holds both; the ROM must load its own).  The 'nofile'
+# card holds only the decoys.
 RANDGEN = python3 -I -c 'import random,sys; r=random.Random(sys.argv[1]); open(sys.argv[2],"wb").write(bytes(r.getrandbits(8) for _ in range(int(sys.argv[3]))))'
 $(OUT)/fw.bin: | $(OUT)
 	$(RANDGEN) fw $@ 3000
@@ -59,23 +66,23 @@ $(OUT)/decoy2.bin: | $(OUT)
 	$(RANDGEN) d2 $@ 1500
 
 $(OUT)/mbr_file.img: $(OUT)/fw.bin $(OUT)/decoy1.bin $(OUT)/decoy2.bin $(MKCARD)
-	cp $(OUT)/fw.bin $(OUT)/RV32OSDA.BIN; cp $(OUT)/decoy1.bin $(OUT)/OLDOSDAD.BIN; cp $(OUT)/decoy2.bin $(OUT)/RV32OSDB.BIN
-	$(MKCARD) $@ 8 $(OUT)/OLDOSDAD.BIN $(OUT)/RV32OSDB.BIN $(OUT)/RV32OSDA.BIN
+	cp $(OUT)/fw.bin $(OUT)/$(FW_FILE); cp $(OUT)/decoy1.bin $(OUT)/OLDOSDAD.BIN; cp $(OUT)/decoy2.bin $(OUT)/$(OLD_FILE)
+	$(MKCARD) $@ 8 $(OUT)/OLDOSDAD.BIN $(OUT)/$(OLD_FILE) $(OUT)/$(FW_FILE)
 $(OUT)/mbr_nofile.img: $(OUT)/decoy1.bin $(OUT)/decoy2.bin $(MKCARD)
-	cp $(OUT)/decoy1.bin $(OUT)/OLDOSDAD.BIN; cp $(OUT)/decoy2.bin $(OUT)/RV32OSDB.BIN
-	$(MKCARD) $@ 8 $(OUT)/OLDOSDAD.BIN $(OUT)/RV32OSDB.BIN
+	cp $(OUT)/decoy1.bin $(OUT)/OLDOSDAD.BIN; cp $(OUT)/decoy2.bin $(OUT)/$(OLD_FILE)
+	$(MKCARD) $@ 8 $(OUT)/OLDOSDAD.BIN $(OUT)/$(OLD_FILE)
 # Superfloppy: FAT16 straight at LBA 0, no MBR.
 $(OUT)/superfloppy.img: $(OUT)/fw.bin $(OUT)/decoy1.bin
-	cp $(OUT)/fw.bin $(OUT)/RV32OSDA.BIN; cp $(OUT)/decoy1.bin $(OUT)/OLDOSDAD.BIN
+	cp $(OUT)/fw.bin $(OUT)/$(FW_FILE); cp $(OUT)/decoy1.bin $(OUT)/OLDOSDAD.BIN
 	rm -f $@; truncate -s 8M $@
 	PATH=$$PATH:/usr/sbin:/sbin mkfs.fat -F 16 -s 2 -n MINIMIG $@ >/dev/null
-	MTOOLS_SKIP_CHECK=1 mcopy -i $@ $(OUT)/OLDOSDAD.BIN $(OUT)/RV32OSDA.BIN ::
+	MTOOLS_SKIP_CHECK=1 mcopy -i $@ $(OUT)/OLDOSDAD.BIN $(OUT)/$(FW_FILE) ::
 # FAT32 superfloppy with a 40000-byte file (a longer cluster chain).
 $(OUT)/fat32.img: $(OUT)/big.bin $(OUT)/decoy1.bin
-	cp $(OUT)/big.bin $(OUT)/RV32OSDA.BIN; cp $(OUT)/decoy1.bin $(OUT)/OLDOSDAD.BIN
+	cp $(OUT)/big.bin $(OUT)/$(FW_FILE); cp $(OUT)/decoy1.bin $(OUT)/OLDOSDAD.BIN
 	rm -f $@; truncate -s 40M $@
 	PATH=$$PATH:/usr/sbin:/sbin mkfs.fat -F 32 -s 1 -n MINIMIG $@ >/dev/null
-	MTOOLS_SKIP_CHECK=1 mcopy -i $@ $(OUT)/OLDOSDAD.BIN $(OUT)/RV32OSDA.BIN ::
+	MTOOLS_SKIP_CHECK=1 mcopy -i $@ $(OUT)/OLDOSDAD.BIN $(OUT)/$(FW_FILE) ::
 
 test: $(OUT)/minfat_test $(OUT)/mbr_file.img $(OUT)/mbr_nofile.img $(OUT)/superfloppy.img $(OUT)/fat32.img $(OUT)/lockstep_test
 	$(OUT)/minfat_test $(OUT)/mbr_file.img $(OUT)/fw.bin

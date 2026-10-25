@@ -1,6 +1,6 @@
 /* OSD firmware for the RISC-V host CPU (VexRiscv RV32IMC).
  *
- * The boot ROM (fw/ctrl_boot) loads RV32OSDA.BIN, the flat binary of this
+ * The boot ROM (fw/ctrl_boot) loads RV32OSDB.BIN, the flat binary of this
  * image (objcopy -O binary), to 0x2000 and jumps there; so _start (crt0.S,
  * section .text.start) must be the first byte.  The image is loaded into
  * RAM as a whole: .data stays where it is linked (no copy), .bss is cleared

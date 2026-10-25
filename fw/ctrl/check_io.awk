@@ -1,6 +1,6 @@
 # check_io.awk: static check of the I/O accesses in an objdump -d listing.
-#   awk -v mode=b -f check_io.awk build/RV32OSDA.dis     (b) no load from the UART, 0xFFFFFFF0
-#   awk -v mode=c -f check_io.awk build/RV32OSDA.dis     (c) I/O offsets multiple of 4
+#   awk -v mode=b -f check_io.awk build/RV32OSDB.dis     (b) no load from the UART, 0xFFFFFFF0
+#   awk -v mode=c -f check_io.awk build/RV32OSDB.dis     (c) I/O offsets multiple of 4
 # Tracks, per function and in listing order, the constant held by a register
 # after li / lui / addi / mv from a known register ("zero" is 0), so that
 #   li a4,-112 ; lhu a5,0(a4)      and      lui a5,0xfffff ; lw a0,-16(a5)

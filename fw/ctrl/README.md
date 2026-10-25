@@ -3,8 +3,8 @@
 The firmware of the OSD host CPU (VexRiscv RV32IMC, `rtl/host/rv_hostcpu.v`):
 the OSD menus, the floppy, hard disk and CD-ROM emulation, the SD card and
 FAT layer, the config files, drive sounds, the RTC and the HDMI transmitter
-set-up. The boot ROM (`fw/ctrl_boot`) loads its image, `RV32OSDA.BIN`, from
-the SD card to 0x2000.
+set-up. The boot ROM (`fw/ctrl_boot`) loads its image, `RV32OSDB.BIN`, from
+the SD card to 0x2000 (the name is written once, in `fwname.mk`).
 
 Every command block in this file (and in the READMEs it points to) starts
 from a fresh Ubuntu 24.04 machine, from the repository root, and pastes into
@@ -76,14 +76,17 @@ make -C fw/ctrl clean all size
 make -C fw/ctrl check
 ```
 
-Output in `fw/ctrl/build/` (gitignored): `RV32OSDA.BIN` (`objcopy -O
+Output in `fw/ctrl/build/` (gitignored): `RV32OSDB.BIN` (`objcopy -O
 binary`, then the 8-byte lock-step trailer `SDCV 00 00 <SDC_VERSION>` of
 `sdctrailer.c` appended; loaded by `fw/ctrl_boot` to 0x2000, which runs it
 only when the trailer names the bitstream's SD card peripheral VERSION:
 `fw/ctrl_boot/README.md` "Lock-step check"; `check` (h) checks the
-trailer), `RV32OSDA.elf`, `.map`, `.lst` (disassembly with source),
-`version.h`. The boot ROM (in the bitstream) and `RV32OSDA.BIN` must come
-from the same commit. `B=dir` builds into another directory;
+trailer), `RV32OSDB.elf`, `.map`, `.lst` (disassembly with source),
+`version.h`. The boot ROM (in the bitstream) and `RV32OSDB.BIN` must come
+from the same commit. The file name comes from `fwname.mk` (`FW_FILE`;
+the boot ROM's build reads the same file for its `OSDNAME`, the 8.3 entry
+`RV32OSDBBIN`); `check` (i) fails when the committed boot ROM image
+(`fw/ctrl_boot/OSDBoot_rv.bin`) or `.clangd` looks for another name. `B=dir` builds into another directory;
 `EXTRA_CFLAGS=...` adds compiler flags for bench variants (empty for the
 shipped image); `EXTRA_OBJS=...` links extra objects after the firmware's
 (empty for the shipped image; `sim/host_bridge/fwboot` links its trap
@@ -167,19 +170,24 @@ runs at that slot, so the order is the previous firmware's.
 
 ## On the SD card
 
-The boot ROM (`fw/ctrl_boot`, in the bitstream) looks for `RV32OSDA.BIN`
+The boot ROM (`fw/ctrl_boot`, in the bitstream) looks for `RV32OSDB.BIN`
 in the root directory of the first FAT partition and loads it to 0x2000:
-copy `fw/ctrl/build/RV32OSDA.BIN` to the card root (next to `KICK.ROM`,
-`DRIVESND.BIN`, the ADFs and hardfiles). Names are upper-case 8.3. (Older
-bitstreams, up to tag `osd-832-final`, load `832OSDAD.BIN` instead; a card
-can hold both files.)
+copy `fw/ctrl/build/RV32OSDB.BIN` to the card root (next to `KICK.ROM`,
+`DRIVESND.BIN`, the ADFs and hardfiles). Names are upper-case 8.3.
+
+Other bitstreams load other names, so one card serves them all: the
+RISC-V bitstreams from before the SD card peripheral (the card on cfide's
+SPI, firmware without the lock-step trailer) load `RV32OSDA.BIN`, the 832
+bitstreams (up to tag `osd-832-final`) `832OSDAD.BIN`. Keep the old file
+next to the new one; each boot ROM loads only its own. The config files
+(`MINMGAR.CFG`, ...) are shared by all RISC-V firmwares.
 
 With a card that a desktop mounts (the volume name below is only an
 example; `sync` before the card comes out):
 
 <!-- replay-skip: needs a real SD card -->
 ```sh
-cp fw/ctrl/build/RV32OSDA.BIN "/media/$USER/MINIMIG/RV32OSDA.BIN"
+cp fw/ctrl/build/RV32OSDB.BIN "/media/$USER/MINIMIG/RV32OSDB.BIN"
 sync
 ```
 
@@ -189,7 +197,7 @@ is a placeholder, and the partition must not be mounted):
 <!-- replay-skip: needs a real SD card -->
 ```sh
 lsblk -o NAME,SIZE,FSTYPE,LABEL,MOUNTPOINT
-sudo env MTOOLS_SKIP_CHECK=1 mcopy -o -i /dev/sdX1 fw/ctrl/build/RV32OSDA.BIN ::RV32OSDA.BIN
+sudo env MTOOLS_SKIP_CHECK=1 mcopy -o -i /dev/sdX1 fw/ctrl/build/RV32OSDB.BIN ::RV32OSDB.BIN
 sync
 ```
 
@@ -199,7 +207,7 @@ LBA 2048 = byte 1048576) holding the files given, and mtools reaches
 inside:
 
 ```sh
-bash tools/sim/mkcard.sh fw/ctrl/build/card.img 16 fw/ctrl/build/RV32OSDA.BIN
+bash tools/sim/mkcard.sh fw/ctrl/build/card.img 16 fw/ctrl/build/RV32OSDB.BIN
 MTOOLS_SKIP_CHECK=1 mdir -i fw/ctrl/build/card.img@@1048576 ::
 ```
 
@@ -357,7 +365,7 @@ UART only. `-fstack-usage` writes `build/*.su`; `make stack` lists the 20
 largest frames.
 
 `-DRV_STACK_REPORT` (directory `build_sr`, gitignored; the shipped
-`build/RV32OSDA.BIN` has no such code) prints `STACKHW <hex>` once, at the 5th
+`build/RV32OSDB.BIN` has no such code) prints `STACKHW <hex>` once, at the 5th
 pass of either main loop (the bench card has no kickstart, so the firmware
 sits in the error loop). The bench's `STACK low` monitor ignores full-word
 writes of the pattern, so `StackFill` itself does not count.
@@ -1465,7 +1473,7 @@ A change of the toolchain or of `RV_CFLAGS_FW` needs `make -B` in
 
 ### On the L2 bench
 
-`fwboot` boots the real `RV32OSDA.BIN` (`fw/ctrl/build/`, built as under
+`fwboot` boots the real `RV32OSDB.BIN` (`fw/ctrl/build/`, built as under
 "Building") from a 16 MB FAT16 card with the committed boot ROM and runs it
 into its main loop (the fatal-error loop: the bench card has no kickstart).
 `fwboot_trap` is the same with a constructor that executes an illegal

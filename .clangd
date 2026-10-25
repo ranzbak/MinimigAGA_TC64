@@ -95,7 +95,7 @@ CompileFlags:
     - -I../ctrl/arch
     # fw/ctrl_boot/Makefile DEFS
     - -Dprg_start=0x2000
-    - -DOSDNAME="RV32OSDABIN"
+    - -DOSDNAME="RV32OSDBBIN"
 ---
 # the Dhrystone sources are K&R-style (Makefile: -std=gnu89 -w)
 If:

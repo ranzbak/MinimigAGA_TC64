@@ -2,15 +2,24 @@
 
 The 8 KB boot BRAM of the VexRiscv RV32IMC host CPU. It initialises the SD
 card through the SD card peripheral (`rtl/host/sdcard_spi.v`), finds the
-FAT16/FAT32 partition, loads `RV32OSDA.BIN` to `0x2000`, checks that the
+FAT16/FAT32 partition, loads `RV32OSDB.BIN` to `0x2000`, checks that the
 file was built for this bitstream (the lock-step check below) and jumps to
 it.
+
+The name is written once, in `fw/ctrl/fwname.mk` (`FW_83` = `RV32OSDBBIN`,
+the 8.3 directory entry; the Makefile passes it as `OSDNAME`), which
+`fw/ctrl/Makefile` reads for its output file too; `make -C fw/ctrl check`
+(i) fails when the committed `OSDBoot_rv.bin` looks for another name.
 
 It was ported from the boot ROM of the previous host CPU, the EightThirtyTwo
 (`fw/ctrl_boot_832` at commit **8340590**, retired in Phase 9; last state in
 tag `osd-832-final`). That ROM loads `832OSDAD.BIN`; the file names differ
 because the architectures do, so a card can hold both, and this ROM never
-loads `832OSDAD.BIN`.
+loads `832OSDAD.BIN`. Likewise the RISC-V boot ROM from before the SD card
+peripheral (card on cfide's SPI, firmware without the trailer) loads
+`RV32OSDA.BIN`: this ROM never loads that file (it would refuse it at the
+lock-step check anyway), so old and new bitstreams boot from one card that
+holds both firmwares (decision of 2026-10-25, SD card engine Task 13b).
 
 ## Build from a fresh machine
 
@@ -24,7 +33,7 @@ All commands from the repository root.
     make -C fw/ctrl_boot
     make -C fw/ctrl_boot check size im
     # 3. host tests (needs mtools dosfstools fdisk python3; see tools/sim/README.md);
-    #    build fw/ctrl first so the lock-step test also checks its RV32OSDA.BIN
+    #    build fw/ctrl first so the lock-step test also checks its RV32OSDB.BIN
     sudo apt install mtools dosfstools fdisk python3
     make -C fw/ctrl
     make -C fw/ctrl_boot test
@@ -97,7 +106,7 @@ both ports, fails on any X or wrong lane).
   read, which would hang the CPU. There is no TX-ready bit; never read
   `0xFFFFFFF0`.
 - Changes against the previous boot ROM's sources: `spi.h`/`uart.h` addresses; `OSDNAME`
-  `RV32OSDABIN`; on-disk little-endian fields through `le16/le32` (`swap.h`);
+  `RV32OSDBBIN` (`RV32OSDABIN` until the SD card peripheral); on-disk little-endian fields through `le16/le32` (`swap.h`);
   the MBR partition start (offset 454, misaligned) read bytewise; `minfat.h`
   structs use 32-bit `unsigned int` (so the host test sees the same layout);
   sector buffer word aligned; `spi.c` (since the SD card peripheral) stores
@@ -148,7 +157,7 @@ gone), so no poll loop can hang.
 
 A firmware file built for another card path cannot work with this
 bitstream (design 5.5), so the ROM, which is part of the bitstream, refuses
-it. `RV32OSDA.BIN` ends with an 8-byte trailer that `fw/ctrl/Makefile`
+it. `RV32OSDB.BIN` ends with an 8-byte trailer that `fw/ctrl/Makefile`
 appends after `objcopy` (`_start` stays byte 0):
 
     'S' 'D' 'C' 'V' 00 00 <SDC_VERSION 15:8> <SDC_VERSION 7:0>
@@ -166,7 +175,7 @@ the peripheral's VERSION register:
   `ErrorCode(0x0ff)` (cyan on the Amiga screen through BootDiag), then
   `boot_halt()`: interrupts off, the CPU parks. No retry, no fallback.
 
-The boot ROM and `RV32OSDA.BIN` must come from the same commit; a new
+The boot ROM and `RV32OSDB.BIN` must come from the same commit; a new
 `SDC_VERSION` in `sdc.h` (a new peripheral contract) changes both.
 
 ## UART lines
@@ -194,7 +203,7 @@ On the controller UART (115200), every line printed by `small_printf`
 | `0xfff` | booting (set at start) |
 | `0xf00` | SD init failed: no peripheral (VERSION not `SDC_VERSION`), no card, no answer |
 | `0xff0` | no FAT16/FAT32 partition (or a read failed while looking) |
-| `0x0f0` | `RV32OSDA.BIN` not found or a read failed while loading |
+| `0x0f0` | `RV32OSDB.BIN` not found or a read failed while loading |
 | `0x0ff` | lock-step mismatch: halted |
 | `0xf0f` | CPU trap (`boot_trap`) |
 
@@ -225,17 +234,20 @@ VERSION 5D01 (message + `ErrorCode(0x0ff)` + halt), 5C01 (the high byte),
 magic, wrong magic,
 bytes 4-5 not 0, the trailer one byte off the end either way, a trailer
 inside the file but none at its end, an odd length, 8 / 7 / 0 bytes, 16-bit
-compare; and fw/ctrl's built `RV32OSDA.BIN` (`FWBIN=`, default
-`fw/ctrl/build/RV32OSDA.BIN`, skipped with a note when not built) boots with
+compare; and fw/ctrl's built `RV32OSDB.BIN` (`FWBIN=`, default
+`fw/ctrl/build/RV32OSDB.BIN`, skipped with a note when not built) boots with
 VERSION = `SDC_VERSION` and stops with `SDC_VERSION + 1`.
 
 `test/minfat_test.c` links `minfat.c` and `swap.c` (gcc, ASan + UBSan) against a
 mock `sd_read_sector()` that reads a card image made by `tools/sim/mkcard.sh`.
-Images: MBR card with `RV32OSDA.BIN` (3000 random bytes) plus the decoys
-`OLDOSDAD.BIN` (ahead of it, a firmware-like name such as the previous
-`832OSDAD.BIN`) and `RV32OSDB.BIN` (file loaded byte-identical); MBR card
-without the file (`LoadFile` returns 0, the decoys are not taken); FAT16
-superfloppy (no MBR); FAT32 superfloppy with a 40000-byte file.
+Images: MBR card with `RV32OSDB.BIN` (3000 random bytes) plus the decoys
+`OLDOSDAD.BIN` (a firmware-like name such as the previous `832OSDAD.BIN`)
+and `RV32OSDA.BIN` (the previous RISC-V chain's firmware), both ahead of
+it in the directory (file loaded byte-identical: the old firmware beside it
+is not taken); MBR card without the file, only the decoys (`LoadFile`
+returns 0, the decoys are not taken); FAT16 superfloppy (no MBR); FAT32
+superfloppy with a 40000-byte file. The names come from
+`fw/ctrl/fwname.mk` (`test/Makefile` includes it).
 The card path in `spi.c` is not covered by the host tests (it needs the
 peripheral); the L2 boot runs (`sim/host_bridge` `boot`, `boot_nofile`,
 `boot_mismatch`: `sdcard_spi.v` with the SD model of `sim/common` on its

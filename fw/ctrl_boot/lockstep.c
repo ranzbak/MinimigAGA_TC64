@@ -1,6 +1,6 @@
 /* Bitstream / firmware lock-step check (lockstep.h, design 5.5): the boot
    ROM is part of the bitstream, so the peripheral's VERSION register names
-   the card path this bitstream has; RV32OSDA.BIN names the one it was built
+   the card path this bitstream has; RV32OSDB.BIN names the one it was built
    for in its trailer.  Different (or no trailer): stop, never run it. */
 #include "lockstep.h"
 #include "small_printf.h"

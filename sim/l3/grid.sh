@@ -36,7 +36,7 @@
 # run list, then one line per run as it ends (verdict, wall time, simulated
 # seconds, cycles), then the grid's wall time.  Exit 0 when every run passed.
 #
-# Environment: FW (an RV32OSDA.BIN): the image every run's card gets.
+# Environment: FW (a firmware image): the image every run's card gets.
 # Unset, grid.sh builds it from this tree at its start, as run.sh does
 # (fw/ctrl under run.sh's date shim, L3_DATE), into
 # sim/l3/run_<tag>_fw/fwrv.  grid_<tag>.txt names the image, where it came
@@ -46,7 +46,7 @@ set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
 # shellcheck source=../common/hostsim.sh
-. "$ROOT/sim/common/hostsim.sh"     # hs_fwrv, hs_die
+. "$ROOT/sim/common/hostsim.sh"     # hs_fwrv, hs_fwname, hs_die
 TAG=${1:-}
 LISTFILE=${2:-}
 [ -n "$TAG" ] || { sed -n '2,/^set -u$/{/^set -u$/!p}' "$0"; exit 2; }
@@ -55,7 +55,7 @@ MAXSIM=${MAXSIM:-6} VIVADO_CAP=${VIVADO_CAP:-2} POLL=${POLL:-60}
 export SIM=verilator
 FWDIR="$HERE/run_${TAG}_fw"
 FW_FROM="given (FW=)"
-[ -n "${FW:-}" ] || { FW="$FWDIR/fwrv/RV32OSDA.BIN"; FW_FROM="built from the tree"; }
+[ -n "${FW:-}" ] || { FW="$FWDIR/fwrv/$(hs_fwname)"; FW_FROM="built from the tree"; }
 export FW
 
 # The default grid (doc/osd-riscv-exec-4.md Task 19, its RV runs).

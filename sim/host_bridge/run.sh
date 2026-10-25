@@ -19,9 +19,10 @@
 #   bash sim/host_bridge/run.sh extmut       # the ext port's read-ack teeth (below)
 #   bash sim/host_bridge/run.sh t_lanes ...  # named tests at SLAT/SJIT from env
 #   SLAT=20 SJIT=8 EXTRA_WS=3 bash sim/host_bridge/run.sh t_b2b
-#   bash sim/host_bridge/run.sh boot         # committed boot ROM loads RV32OSDA.BIN
-#   bash sim/host_bridge/run.sh boot_nofile  # card without it: error path
+#   bash sim/host_bridge/run.sh boot         # committed boot ROM loads RV32OSDB.BIN
+#   bash sim/host_bridge/run.sh boot_nofile  # card without it (the old RV32OSDA.BIN only): error path
 #   bash sim/host_bridge/run.sh boot_mismatch # firmware without the lock-step trailer: refused
+#   bash sim/host_bridge/run.sh boot_both    # old RV32OSDA.BIN (no trailer) ahead of RV32OSDB.BIN: boots the new one
 #   bash sim/host_bridge/run.sh fwboot       # the real firmware to its main loop  } UNSUPPORTED since
 #   bash sim/host_bridge/run.sh fwboot_trap  # the same, trap constructor linked in } the SD peripheral
 #   bash sim/host_bridge/run.sh fwboot_cfg   # fwboot, legacy config to convert   } boot path: exit 3
@@ -44,22 +45,23 @@
 # e.g. "+VERBOSE=1"), VIVADO_PATH, SIM, GHDL (ghdl), VERILATOR (verilator),
 # JOBS (Verilator build jobs, nproc), OBJCACHE (ccache if present; empty =
 # none); boot runs also BOOT_TIMEOUT (clk_114
-# cycles; boot 40000000, boot_nofile 40000000, boot_mismatch 8000000: the
+# cycles; boot and boot_both 40000000, boot_nofile 40000000, boot_mismatch 8000000: the
 # cycle limit; boot_nofile ends at the retry's ErrorCode (about 27.9 M),
 # boot_mismatch at the limit, 3.4 M cycles of halt after its ErrorCode 00FF)
 # and
 # BOOT_CARD (another card image, e.g. a corrupted copy); fwboot runs also
-# FW (the RV32OSDA.BIN to put on the card, default
-# fw/ctrl/build/RV32OSDA.BIN: make -C fw/ctrl first) and
+# FW (the firmware image to put on the card, default
+# fw/ctrl/build/RV32OSDB.BIN: make -C fw/ctrl first) and
 # FWBOOT_TIMEOUT (clk_114 cycles; defaults below).
 #
-# boot / boot_nofile / boot_mismatch: the committed
+# boot / boot_nofile / boot_mismatch / boot_both: the committed
 # fw/ctrl_boot/OSDBoot_rv_ROM.vhd, compiled unmodified (VHDL-93), boots from
 # the SD card model on sdcard_spi's pins (bench compiled
 # with -d SDCARD -d RV_HOSTCPU_STATS, rv_hostcpu with -d RV_HOSTCPU_STATS).  sim/host_bridge/boot
-# builds RV32OSDA.BIN and the card images into <run>/boot.  The run's
-# "UART:" and "ERRORCODE:" lines must equal boot/expect.txt (@IMG@ = the
-# line in <run>/boot/img.txt), boot/expect_nofile.txt or
+# builds the test firmware (RV32OSDB.BIN, the name of fw/ctrl/fwname.mk) and
+# the card images into <run>/boot.  The run's
+# "UART:" and "ERRORCODE:" lines must equal boot/expect.txt (boot and
+# boot_both; @IMG@ = the line in <run>/boot/img.txt), boot/expect_nofile.txt or
 # boot/expect_mismatch.txt line for line, and the bench verdict must be
 # "=== PASS".  Results in <run>/results.txt.
 #
@@ -367,13 +369,17 @@ matrix() {   # matrix <snapshot> <test> <expect> <label>
 	return $rc
 }
 
-# boot <boot|boot_nofile|boot_mismatch>: the committed boot ROM from the SD card model
+# boot <boot|boot_nofile|boot_mismatch|boot_both>: the committed boot ROM from the SD card model
 boot() {
 	local t=$1 rom="fw/ctrl_boot/OSDBoot_rv_ROM.vhd" exp st
 	local log="$run/tb_${t}_x${XW}_s${SLAT:-8}_j${SJIT:-0}.log"
 	local card="$run/boot/card.img" to=40000000
 	[ "$t" = boot_nofile ] && { card="$run/boot/card_nofile.img"; to=40000000; }
 	[ "$t" = boot_mismatch ] && { card="$run/boot/card_mismatch.img"; to=8000000; }
+	# boot_both: the bench's boot test (+TEST=boot: DONE, the t_irq check
+	# with vbl_int) on another card
+	local bt=$t
+	[ "$t" = boot_both ] && { card="$run/boot/card_both.img"; bt=boot; }
 	card=${BOOT_CARD:-$card}
 	[ ${#card} -le 1024 ] || die "card image path longer than 1024 characters (sd_spi_model's +SD_IMG buffer): $card"
 	exp="$HERE/boot/expect.txt"
@@ -395,7 +401,7 @@ boot() {
 	fi
 	local t0=$SECONDS
 	# shellcheck disable=SC2046
-	simrun "tb_${t}_x$XW" "$log" "TEST=$t" "SLAT=${SLAT:-8}" "SJIT=${SJIT:-0}" "SEED=${SEED:-1}" \
+	simrun "tb_${t}_x$XW" "$log" "TEST=$bt" "SLAT=${SLAT:-8}" "SJIT=${SJIT:-0}" "SEED=${SEED:-1}" \
 		"SD_IMG=$card" "TIMEOUT=${BOOT_TIMEOUT:-$to}" $(xargs_list)
 	local secs=$((SECONDS - t0))
 	sed "s/@IMG@/$(cat "$run/boot/img.txt")/" "$exp" > "$run/$t.expect"
@@ -435,12 +441,12 @@ fwboot() {
 		[ -n "$a" ] && rdy=("OSD_RDY_TO_ADDR=${a#0x}")
 	fi
 	if [ "$t" = fwboot ]; then
-		[ -f "$fw" ] || die "no firmware $fw (make -C fw/ctrl, or FW=<RV32OSDA.BIN>)"
+		[ -f "$fw" ] || die "no firmware $fw (make -C fw/ctrl, or FW=<firmware image>)"
 		make -s -C "$HERE/fwboot" B="$run/fwboot" FW="$fw" all > make_fwboot.log 2>&1 \
 			|| { tail -20 make_fwboot.log; die "make fwboot card (make_fwboot.log)"; }
 		card="$run/fwboot/card.img"; to=$FWBOOT_TO
 	elif [ "$t" = fwboot_cfg ]; then
-		[ -f "$fw" ] || die "no firmware $fw (make -C fw/ctrl, or FW=<RV32OSDA.BIN>)"
+		[ -f "$fw" ] || die "no firmware $fw (make -C fw/ctrl, or FW=<firmware image>)"
 		make -s -C "$HERE/fwboot" B="$run/fwboot" FW="$fw" cfg > make_fwboot.log 2>&1 \
 			|| { tail -20 make_fwboot.log; die "make fwboot_cfg card (make_fwboot.log)"; }
 		card="$run/fwboot/card_cfg.img"; to=$FWBOOT_CFG_TO
@@ -459,7 +465,7 @@ fwboot() {
 	if [ "$t" != fwboot_trap ]; then
 		echo "firmware: $fw, $(stat -c %s "$fw") bytes, sha256 $(sha256sum "$fw" | cut -c1-16)" | tee -a "$run/results.txt"
 	else
-		echo "firmware: $run/fwboot/trapfw/RV32OSDA.BIN (+ smoke_trap.o), expect: $(cat "$run/fwboot/trap_expect.txt")" \
+		echo "firmware: $run/fwboot/trapfw/$(hs_fwname) (+ smoke_trap.o), expect: $(cat "$run/fwboot/trap_expect.txt")" \
 			| tee -a "$run/results.txt"
 	fi
 	if [ "$SIM" = verilator ]; then
@@ -543,7 +549,7 @@ case "${1:-}" in
 		hs_compare "$HERE/run_$2" "$HERE/run_$3"
 		exit $?
 		;;
-	boot|boot_nofile|boot_mismatch)
+	boot|boot_nofile|boot_mismatch|boot_both)
 		setup
 		boot "$1"
 		exit $?
@@ -559,7 +565,7 @@ case "${1:-}" in
 			exit 3
 		fi
 		# FW relative to the caller's directory (setup changes into the run's)
-		FWBIN=$(realpath -m -- "${FW:-$ROOT/fw/ctrl/build/RV32OSDA.BIN}")
+		FWBIN=$(realpath -m -- "${FW:-$ROOT/fw/ctrl/build/$(hs_fwname)}")
 		setup
 		fwboot "$1"
 		exit $?
@@ -571,7 +577,7 @@ case "${1:-}" in
 		for t in $TESTS; do matrix "tb_${t}_x$XW" "$t" PASS ""; done | tee "$run/results.txt"
 		if grep -q '^BAD' "$run/results.txt"; then echo "=== SOME FAILED"; exit 1; fi
 		echo "=== ALL PASS ($(grep -c '^ok' "$run/results.txt") runs, $SIM: $TESTS)"
-		echo "    not in 'all': boot, boot_nofile, boot_mismatch (run them by name); fwboot, fwboot_trap, fwboot_cfg UNSUPPORTED with the SD peripheral boot path (sim/l3 sdc_boot, Task 13)"
+		echo "    not in 'all': boot, boot_nofile, boot_mismatch, boot_both (run them by name); fwboot, fwboot_trap, fwboot_cfg UNSUPPORTED with the SD peripheral boot path (sim/l3 sdc_boot, Task 13)"
 		;;
 	irqmut)
 		setup

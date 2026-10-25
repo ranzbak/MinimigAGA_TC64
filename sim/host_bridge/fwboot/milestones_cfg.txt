@@ -1,5 +1,5 @@
 # run.sh fwboot_cfg: what the real firmware must do on fwboot/Makefile's
-# card_cfg.img (RV32OSDA.BIN + decoy + the legacy config file MINMGAA.CFG, no
+# card_cfg.img (RV32OSDB.BIN + decoy + the legacy config file MINMGAA.CFG, no
 # kickstart): milestones.txt with the first-boot conversion of the config.
 # Format and matching:
 # spitrace.py (UART and SPI are each an ordered subsequence of their own
@@ -16,7 +16,7 @@ UART Reading boot sector
 UART Read boot sector from first partition
 UART Hunting for filesystem
 UART Reading directory sector
-UART file "RV32OSDABIN" found
+UART file "RV32OSDBBIN" found
 # -- the firmware: main(), PLATFORM bit 2 (SPI RTC) is 0 (havespirtc = false)
 UART Platform lacks SPI RTC support
 # ColdBoot() -> MMC_Init(): the model answers CMD8 with 0x1AA, an SDHC card

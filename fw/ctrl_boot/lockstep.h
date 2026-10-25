@@ -2,7 +2,7 @@
 #define LOCKSTEP_H
 
 /* Bitstream / firmware lock-step (design 5.5, README "Lock-step check").
-   RV32OSDA.BIN ends with an 8-byte trailer, appended by fw/ctrl/Makefile
+   RV32OSDB.BIN ends with an 8-byte trailer, appended by fw/ctrl/Makefile
    after objcopy: 'S','D','C','V', 0, 0, SDC_VERSION >> 8, SDC_VERSION & 0xFF
    (SDC_VERSION from fw/ctrl/sdc.h).  The boot ROM boots the file only when
    that trailer, the last 8 bytes of the file (its length from the FAT

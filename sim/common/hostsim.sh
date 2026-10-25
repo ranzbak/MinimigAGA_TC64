@@ -35,8 +35,10 @@
 #                                        "=== XRAND seed <n>" line first in the log
 #   hs_compare <runA> <runB>             every tb_*.log and spi.txt of two run directories
 #                                        (exit 1 unless all SAME)
-#   hs_fwrv <run>                        the RV firmware into <run>/fwrv (RV32OSDA.BIN) under
+#   hs_fwrv <run>                        the RV firmware into <run>/fwrv (RV32OSDB.BIN) under
 #                                        a date shim (L3_DATE, default 2026-01-01)
+#   hs_fwname                            the firmware's file name, FW_FILE of
+#                                        fw/ctrl/fwname.mk (RV32OSDB.BIN)
 #
 # XRAND=1 (X-sensitivity twin): the build flags --x-assign unique --x-initial
 # unique instead of 0 / 0, and the run plusargs +verilator+rand+reset+2
@@ -226,10 +228,21 @@ hs_compare() {
 	[ "$nd" -eq 0 ] && [ "$no" -eq 0 ] && [ "$n" -gt 0 ]
 }
 
+# hs_fwname: the firmware's file name on the card and of fw/ctrl's build
+# output, FW_FILE of fw/ctrl/fwname.mk, evaluated by make as the Makefiles
+# do (the one place the name is written; the boot ROM looks for the same)
+hs_fwname() {
+	local n
+	n=$(printf 'hs_fwname:\n\t@echo $(FW_FILE)\n' \
+		| make -s --no-print-directory -f "$ROOT/fw/ctrl/fwname.mk" -f - hs_fwname) \
+		|| hs_die "make -f fw/ctrl/fwname.mk"
+	case "$n" in ????????.???) echo "$n" ;; *) hs_die "fw/ctrl/fwname.mk: FW_FILE '$n' is not an 8.3 name" ;; esac
+}
+
 # hs_fwrv <run>: build fw/ctrl into <run>/fwrv with a `date` that always
 # prints L3_DATE (default 2026-01-01), so two builds of one tree are
 # byte-identical (the version string carries the build minute).  The shim
-# is <run>/dateshim/date; the image is <run>/fwrv/RV32OSDA.BIN.
+# is <run>/dateshim/date; the image is <run>/fwrv/$(hs_fwname).
 hs_fwrv() {
 	local run=$1 shim="$1/dateshim"
 	mkdir -p "$shim" "$run/fwrv" || hs_die "mkdir $run/fwrv"
@@ -237,5 +250,7 @@ hs_fwrv() {
 	chmod +x "$shim/date"
 	PATH="$shim:$PATH" make -s -C "$ROOT/fw/ctrl" B="$run/fwrv" > "$run/make_fwrv.log" 2>&1 \
 		|| { tail -20 "$run/make_fwrv.log"; hs_die "make fw/ctrl ($run/make_fwrv.log)"; }
-	[ -f "$run/fwrv/RV32OSDA.BIN" ] || hs_die "no $run/fwrv/RV32OSDA.BIN"
+	local fwn
+	fwn=$(hs_fwname) || hs_die "${fwn#FAILED: }"
+	[ -f "$run/fwrv/$fwn" ] || hs_die "no $run/fwrv/$fwn"
 }

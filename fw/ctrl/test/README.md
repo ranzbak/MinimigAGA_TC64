@@ -49,7 +49,7 @@ make -C fw/ctrl/test mutants
   build `fw/ctrl` before and after a change with the same clock, e.g.
   `make -C fw/ctrl B=/tmp/before` and `... B=/tmp/after` with a `date` that
   does not move (the version string holds the minute), then `cmp` the two
-  `RV32OSDA.BIN`.
+  `RV32OSDB.BIN`.
 
 Output goes to `fw/ctrl/test/out/` and `mut/` (both ignored by git);
 `make -C fw/ctrl/test clean` removes them.

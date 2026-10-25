@@ -3,7 +3,8 @@
    small_printf (both compiled with -Dputchar=rv_putchar: the UART text is
    captured here byte for byte, as the boot ROM prints it).
 
-   usage: lockstep_test [RV32OSDA.BIN]
+   usage: lockstep_test [<firmware file>]   (test/Makefile: FWBIN, fw/ctrl's
+                                           build output, fw/ctrl/fwname.mk)
      no argument: the in-memory cases below
      a file:      also that file (fw/ctrl's build, trailer appended by its
                   Makefile) must boot with VERSION = SDC_VERSION and stop
@@ -157,8 +158,8 @@ int main(int argc, char **argv)
 		n = fread(fw, 1, sizeof fw, f);
 		fclose(f);
 		if (n == sizeof fw) { fprintf(stderr, "%s: larger than 1 MB\n", argv[1]); return 2; }
-		run("built RV32OSDA.BIN, VERSION = SDC_VERSION: boots", fw, (unsigned)n, SDC_VERSION, 1);
-		run("built RV32OSDA.BIN, VERSION = SDC_VERSION + 1: mismatch", fw, (unsigned)n, SDC_VERSION + 1, 0);
+		run("built firmware file, VERSION = SDC_VERSION: boots", fw, (unsigned)n, SDC_VERSION, 1);
+		run("built firmware file, VERSION = SDC_VERSION + 1: mismatch", fw, (unsigned)n, SDC_VERSION + 1, 0);
 	}
 	if (fails) {
 		printf("lockstep host test: %d FAILED\n", fails);

@@ -1,4 +1,4 @@
-# run.sh boot: what the firmware must do on the L3 boot card (RV32OSDA.BIN,
+# run.sh boot: what the firmware must do on the L3 boot card (RV32OSDB.BIN,
 # MINMGAR.CFG + the legacy MINMGAA.CFG, KICK.ROM; sim/l3/card) against the
 # real userio_osd / paula_floppy / gayle.  Format and
 # matching: sim/host_bridge/spitrace.py (UART and SPI each an ordered
@@ -42,7 +42,7 @@ UART Reading boot sector
 UART Read boot sector from first partition
 UART Hunting for filesystem
 UART Reading directory sector
-UART file "RV32OSDABIN" found
+UART file "RV32OSDBBIN" found
 # lockstep.c fw_start: the firmware file's 'SDCV' trailer = the VERSION
 # register (run.sh sdc_check: both = SDC_VERSION), then the jump
 SDE=1 UART Firmware SDC

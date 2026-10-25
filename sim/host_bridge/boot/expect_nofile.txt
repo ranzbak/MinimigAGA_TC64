@@ -45,7 +45,7 @@ UART: Reading directory sector 2134
 UART: Reading directory sector 2135
 UART: Reading directory sector 2136
 UART: Reading directory sector 2137
-UART: Can't open RV32OSDABIN
+UART: Can't open RV32OSDBBIN
 UART: Can't load firmware
 ERRORCODE: 00f0
 UART: Initializing SD card
@@ -94,6 +94,6 @@ UART: Reading directory sector 2134
 UART: Reading directory sector 2135
 UART: Reading directory sector 2136
 UART: Reading directory sector 2137
-UART: Can't open RV32OSDABIN
+UART: Can't open RV32OSDBBIN
 UART: Can't load firmware
 ERRORCODE: 00f0

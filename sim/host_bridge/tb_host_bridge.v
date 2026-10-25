@@ -79,7 +79,7 @@
 //
 // FWBOOT (with SDCARD; run.sh fwboot / fwboot_trap / fwboot_cfg, +TEST=fwboot,
 // fwboot_trap or fwboot_cfg): the committed boot ROM loads the real firmware
-// (fw/ctrl RV32OSDA.BIN) from a 16 MB card; minimig_spi_stub.v answers
+// (fw/ctrl RV32OSDB.BIN) from a 16 MB card; minimig_spi_stub.v answers
 // for the Minimig SPI slaves (FPGA sd_cs[4], OSD sd_cs[5], RTC sd_cs[7]);
 // cfide's MISO is the card's while sd_cs[1] is low, else the stub's.  The
 // firmware never writes DONE: the run ends at +TIMEOUT, "=== PASS" if no

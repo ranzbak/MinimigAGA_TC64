@@ -1,4 +1,4 @@
-/* The lock-step trailer of RV32OSDA.BIN (fw/ctrl_boot README "Lock-step
+/* The lock-step trailer of RV32OSDB.BIN (fw/ctrl_boot README "Lock-step
  * check", design 5.5): the Makefile compiles this file on its own, takes the
  * 8 bytes of .sdctrailer out with objcopy and appends them to the image
  * after objcopy -O binary (so _start stays byte 0).  Not linked into the

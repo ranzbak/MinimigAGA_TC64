@@ -174,7 +174,7 @@ void Reconfigure();
    the firmware makes through these macros go to a mock instead of to the
    addresses above, and AUDIO_BUFFER is the mock's RAM (the audio ring, with
    the room drivesounds_init loads into in front of it).  Not defined in the
-   target build: the preprocessor drops this block and RV32OSDA.BIN is the
+   target build: the preprocessor drops this block and RV32OSDB.BIN is the
    same.  hwmap_test #undefs HOSTTEST to check the real expansions. */
 #ifdef HOSTTEST
 unsigned char hosttest_spi(unsigned char out);	/* SPI(x): write DATA, read DATA */

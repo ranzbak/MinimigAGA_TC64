@@ -1,14 +1,16 @@
-# OSD / host firmware for the VexRiscv host CPU (RV32IMC): RV32OSDA.BIN,
-# loaded by the boot ROM (fw/ctrl_boot) to 0x2000 (see README.md).
+# OSD / host firmware for the VexRiscv host CPU (RV32IMC): RV32OSDB.BIN
+# (the name: fwname.mk), loaded by the boot ROM (fw/ctrl_boot) to 0x2000
+# (see README.md).
 #
-#   make          $(B)/RV32OSDA.BIN (+ .elf, .map, .lst)
+#   make          $(B)/RV32OSDB.BIN (+ .elf, .map, .lst)
 #   make size     section sizes and the bytes of the .BIN
 #   make check    (a) no lr.w/sc.w/amo*.w, (b) no UART read, (c) I/O offsets
 #                 multiple of 4 (both via check_io.awk), (d) no start-up names
 #                 of the previous (vbcc) toolchain in the sources,
 #                 (e) the C library guard, (f) no #define true/false,
 #                 (g) the boot ROM image ends below the stack floor 0x1400,
-#                 (h) RV32OSDA.BIN ends with the lock-step trailer (SDC_VERSION)
+#                 (h) RV32OSDB.BIN ends with the lock-step trailer (SDC_VERSION),
+#                 (i) the committed boot ROM image looks for this file name
 #   make stack    the 20 largest stack frames (-fstack-usage, $(B)/*.su)
 #   make clean
 #
@@ -37,7 +39,9 @@ include $(TOP)/fw/ctrl/arch/arch.mk
 
 RV_NM   = $(RV_GCC_DIR)/bin/$(RV_PREFIX)nm
 
-PROJECT := RV32OSDA
+# the file name, shared with the boot ROM and the sims (fwname.mk)
+include $(TOP)/fw/ctrl/fwname.mk
+PROJECT := $(FW_NAME)
 
 # the firmware's sources (the interrupt API is arch/irq.c, arch.mk), plus
 # the C library glue
@@ -72,7 +76,7 @@ LDFLAGS := $(RV_LDFLAGS_FW) --specs=nano.specs $(ARCH_LDFLAGS) \
            -Wl,-Map,$(B)/$(PROJECT).map
 LIBS    := -lc_nano $(RV_LIBS_FW)
 
-all: $(B)/$(PROJECT).BIN
+all: $(B)/$(FW_FILE)
 
 $(B)/%.o: %.c | $(B)/version.h
 	@mkdir -p $(@D)
@@ -92,7 +96,7 @@ $(B)/sdctrailer.bin: sdctrailer.c sdc.h
 	$(RV_OBJCOPY) -O binary -j .sdctrailer $(B)/sdctrailer.o $@
 	@[ `wc -c < $@` = 8 ] || { echo "$@: not 8 bytes"; rm -f $@; exit 1; }
 
-$(B)/$(PROJECT).BIN: $(B)/$(PROJECT).elf $(B)/sdctrailer.bin
+$(B)/$(FW_FILE): $(B)/$(PROJECT).elf $(B)/sdctrailer.bin
 	$(RV_OBJCOPY) -O binary $< $@.img
 	cat $@.img $(B)/sdctrailer.bin > $@
 	rm -f $@.img
@@ -121,12 +125,12 @@ bootcustominit.h: bootcustominit.s
 	(cd $(B) && xxd -i bootcustominit.bin) > bootcustominit.h
 endif
 
-size: $(B)/$(PROJECT).elf $(B)/$(PROJECT).BIN
+size: $(B)/$(PROJECT).elf $(B)/$(FW_FILE)
 	$(RV_SIZE) $(B)/$(PROJECT).elf
-	@echo "$(PROJECT).BIN: `wc -c < $(B)/$(PROJECT).BIN` bytes"
+	@echo "$(FW_FILE): `wc -c < $(B)/$(FW_FILE)` bytes"
 
 # ---- check: each part is its own target; all run (-k), any red fails ----
-CHECKS := check_a check_b check_c check_d check_e check_f check_g check_h
+CHECKS := check_a check_b check_c check_d check_e check_f check_g check_h check_i
 
 check: $(B)/$(PROJECT).elf
 	@$(MAKE) --no-print-directory -k $(CHECKS)
@@ -208,12 +212,28 @@ check_g:
 
 # (h) the image ends with the lock-step trailer naming SDC_VERSION of sdc.h
 #     (read here with sed: a second derivation next to sdctrailer.c's)
-check_h: $(B)/$(PROJECT).BIN
+check_h: $(B)/$(FW_FILE)
 	@v=`sed -n 's/^#define[[:space:]]*SDC_VERSION[[:space:]]*0x\([0-9A-Fa-f]\{4\}\).*/\1/p' sdc.h | tr A-F a-f`; \
 	want="53 44 43 56 00 00 `echo $$v | cut -c1-2` `echo $$v | cut -c3-4`"; \
 	got=`tail -c 8 $< | od -An -tx1 | sed 's/^ *//; s/ *$$//'`; \
-	if [ -n "$$v" ] && [ "$$got" = "$$want" ]; then echo "check (h) pass: trailer SDCV $$v at the end of $(PROJECT).BIN"; \
+	if [ -n "$$v" ] && [ "$$got" = "$$want" ]; then echo "check (h) pass: trailer SDCV $$v at the end of $(FW_FILE)"; \
 	else echo "check (h) FAIL: last 8 bytes of $< are '$$got', want '$$want'"; exit 1; fi
+
+# (i) the boot ROM and this build agree on the file: the 8.3 directory name
+#     made from the build output's own name ($(notdir) of the file the
+#     image went to, the dot taken out) has 8 + 3 characters and is in the
+#     committed boot ROM image (the .bin the ROM VHDL is generated from,
+#     i.e. what the bitstream gets); .clangd's -DOSDNAME (the editor's copy
+#     of fw/ctrl_boot's DEFS) names it too.  A changed fwname.mk without a
+#     regenerated, committed boot ROM fails here.
+BOOT_BIN := $(TOP)/fw/ctrl_boot/OSDBoot_rv.bin
+check_i: $(B)/$(FW_FILE)
+	@f=$(notdir $<); n=`echo $$f | tr -d .`; rc=0; \
+	case $$f in ????????.???) ;; *) echo "check (i) FAIL: $$f is not an 8.3 name of 8 + 3 characters"; exit 1 ;; esac; \
+	if ! LC_ALL=C grep -qaF "$$n" $(BOOT_BIN); then \
+	  echo "check (i) FAIL: the boot ROM image $(BOOT_BIN) does not look for $$n (its RV32*BIN names: `LC_ALL=C grep -aoE 'RV32[A-Z0-9]{4}BIN' $(BOOT_BIN) | tr '\n' ' '`; make -C fw/ctrl_boot, commit both outputs)"; rc=1; fi; \
+	if ! grep -qF -- "-DOSDNAME=\"$$n\"" $(TOP)/.clangd; then echo "check (i) FAIL: .clangd's -DOSDNAME is not \"$$n\""; rc=1; fi; \
+	if [ $$rc = 0 ]; then echo "check (i) pass: the boot ROM image and .clangd look for $$n = $$f"; fi; exit $$rc
 
 # the 20 largest stack frames of the firmware (-fstack-usage: bytes, kind)
 stack: $(OBJS)
