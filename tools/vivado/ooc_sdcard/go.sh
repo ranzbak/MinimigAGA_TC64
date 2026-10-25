@@ -2,6 +2,8 @@
 # usage: go.sh [<name>] [<ooc|io>] [<t114 ns>] [<t28 ns>]
 #   bash tools/vivado/ooc_sdcard/go.sh                # runs/ooc: the gate numbers
 #   bash tools/vivado/ooc_sdcard/go.sh io io          # runs/io: card pin constraints
+#   SDC_ILA=1 bash tools/vivado/ooc_sdcard/go.sh ila io  # io mode with the build's SD card path ILA
+#                                                     # (tools/vivado/sdc_ila.tcl): its cost, map, .ltx
 #        go.sh <name> guard [<engine|noengine|rename_spi|rename_bridge|rename_spi_impl|all>]
 #   bash tools/vivado/ooc_sdcard/go.sh guard guard    # runs/guard/<case>: sd_card_engine.tcl's
 #                                                     # guard, the five cases in parallel

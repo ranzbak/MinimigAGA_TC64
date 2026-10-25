@@ -27,6 +27,19 @@
 # report rv_debug.rpt.  Unset or 0 builds the shipping image exactly as before
 # (tools/vivado/test/hostcpu_mock_test.tcl checks that call for call).
 #
+# SDC_ILA=1 in the environment adds the SD card path ILA (u_ila_sdc,
+# tools/vivado/sdc_ila.tcl) for this run only: that file becomes impl_1's
+# opt_design TCL.PRE hook, which inserts the core into the linked netlist
+# (registers of sdcard_spi / sdcard_gayle and the host bus, clk_114; no RTL
+# change); opt_design implements it, write_bitstream writes the .ltx, and the
+# core's probe map (sdc_ila_map.txt), a hardware-manager script that names
+# its probes (sdc_ila_hwprobes.tcl) and sdc_ila.rpt land next to the
+# bitstream.  SDC_ILA_DEPTH (default 2048; a power of 2, 1024..16384) is its
+# sample depth.  The hook is restored afterwards.  Unset or 0 builds exactly
+# as before (tools/vivado/test/hostcpu_mock_test.tcl checks that call for
+# call against the script before SDC_ILA); any other value stops the build
+# before the project is touched.
+#
 # Vivado 2023.2 needs libtinfo.so.5 and must NOT be given -stack.
 #
 # Note the runs use the constraints fileset XC7A100T, not constrs_1.
@@ -109,6 +122,25 @@ proc add_xdc {f} {
 source [file dirname [info script]]/hostcpu.tcl
 # RV_DEBUG (0 or 1, checked before anything is changed): 1 is the LAB build.
 set rv_debug [hostcpu_rvdebug]
+# SDC_ILA (0 or 1) and, with 1, SDC_ILA_DEPTH: checked before anything is
+# changed too.  Nothing below runs a Vivado command for SDC_ILA unless it is 1.
+set sdc_ila 0
+if {[info exists ::env(SDC_ILA)]} {
+    switch -exact -- $::env(SDC_ILA) {
+        "" - 0 { }
+        1      { set sdc_ila 1 }
+        default { error "build_ap040.tcl: SDC_ILA='$::env(SDC_ILA)': must be 0 (or unset) or 1 (the SD card path ILA)" }
+    }
+}
+if {$sdc_ila} {
+    set sdc_ila_depth [expr {[info exists ::env(SDC_ILA_DEPTH)] && $::env(SDC_ILA_DEPTH) ne "" ? $::env(SDC_ILA_DEPTH) : 2048}]
+    if {$sdc_ila_depth ni {1024 2048 4096 8192 16384}} {
+        error "build_ap040.tcl: SDC_ILA_DEPTH='$sdc_ila_depth': must be 1024, 2048, 4096, 8192 or 16384"
+    }
+    set ::env(SDC_ILA_DEPTH) $sdc_ila_depth
+    set sdc_ila_hook $R/tools/vivado/sdc_ila.tcl
+    if {![file exists $sdc_ila_hook]} { error "build_ap040.tcl: SDC_ILA=1 but $sdc_ila_hook is missing" }
+}
 
 #-----------------------------------------------------------------------------
 # Constraints
@@ -595,6 +627,17 @@ set pro_was [get_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED $impl]
 set_property STEPS.PHYS_OPT_DESIGN.IS_ENABLED true $impl
 set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED true $impl
 
+# SDC_ILA=1: the ILA insertion as impl_1's opt_design TCL.PRE hook, for this
+# run only (restored below).  The run inherits SDC_ILA / SDC_ILA_DEPTH from
+# this process's environment; the hook refuses to run without SDC_ILA=1, so
+# a hook left by a build that died before its restore fails the next build
+# instead of slipping the ILA into it.
+if {$sdc_ila} {
+    set sdc_pre_was [get_property STEPS.OPT_DESIGN.TCL.PRE $impl]
+    set_property STEPS.OPT_DESIGN.TCL.PRE $sdc_ila_hook $impl
+    puts "build_ap040.tcl: SD card path ILA u_ila_sdc (SDC_ILA=1, depth $sdc_ila_depth, opt_design hook [file tail $sdc_ila_hook]), LAB BUILD"
+}
+
 # IMPL_EFFORT=high in the environment raises the implementation effort for ONE
 # run and restores the previous directives afterwards, exactly like the two
 # switches above.  It is for the case where a build misses timing by a tenth of
@@ -788,6 +831,19 @@ if {$rv_debug} {
     }
 }
 
+# SDC_ILA=1: the core's size and the timing of its probe inputs.
+if {$sdc_ila} {
+    try_report sdc_ila.rpt {
+        report_utilization -cells [get_cells u_ila_sdc] -hierarchical -hierarchical_depth 2 -file $out/sdc_ila.rpt
+    }
+    try_report "sdc_ila.rpt (debug cores)" {
+        report_debug_core -file $out/sdc_ila_cores.rpt
+    }
+    try_report "sdc_ila.rpt (timing into the core)" {
+        report_timing -to [get_cells -hierarchical -filter {NAME =~ u_ila_sdc/*}] -setup -hold -max_paths 10 -nworst 1 -file $out/sdc_ila.rpt -append
+    }
+}
+
 # Deliverables next to the reports.
 set impldir $R/project_1/project_1.runs/impl_1
 file mkdir $out
@@ -797,6 +853,16 @@ foreach ext {bit ltx} {
         puts "build_ap040.tcl: copied minimig_openaars_top.$ext to $out"
     } else {
         puts "build_ap040.tcl: WARNING minimig_openaars_top.$ext not produced"
+    }
+}
+if {$sdc_ila} {
+    foreach f {sdc_ila_map.txt sdc_ila_hwprobes.tcl} {
+        if {[file exists $impldir/$f]} {
+            file copy -force $impldir/$f $out/
+            puts "build_ap040.tcl: copied $f to $out"
+        } else {
+            puts "build_ap040.tcl: WARNING $f not produced"
+        }
     }
 }
 
@@ -825,6 +891,10 @@ if {$pipe_gen ne ""} {
 }
 foreach f $xdc_off { set_property IS_ENABLED true $f }
 hostcpu_restore
+if {$sdc_ila} {
+    set_property STEPS.OPT_DESIGN.TCL.PRE $sdc_pre_was $impl
+    puts "build_ap040.tcl: opt_design hook restored to '$sdc_pre_was'"
+}
 foreach {st was} $eff_was { set_property STEPS.$st.ARGS.DIRECTIVE $was $impl }
 if {[dict size $eff_was]} { puts "build_ap040.tcl: implementation directives restored" }
 set_property STEPS.PHYS_OPT_DESIGN.IS_ENABLED $ppo_was $impl

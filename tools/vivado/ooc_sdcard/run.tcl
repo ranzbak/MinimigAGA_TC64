@@ -89,6 +89,22 @@ if {$mode eq "io"} {
 }
 
 report_utilization -hierarchical -hierarchical_depth 3 -file $outdir/util_synth_hier.rpt
+# SDC_ILA=1 (io mode): the build's SD card path ILA (tools/vivado/sdc_ila.tcl)
+# inserted here as build_ap040.tcl's hook does it, depth SDC_ILA_DEPTH
+# (default 2048): proves the insertion and measures the core's cost
+# (ila.rpt, sdc_ila.ltx, the ILA columns of summary.txt).
+set sdc_ila [expr {[info exists ::env(SDC_ILA)] && $::env(SDC_ILA) eq "1"}]
+if {$sdc_ila} {
+    if {$mode ne "io"} { error "run.tcl: SDC_ILA=1 needs io mode (the debug hub needs a top-level design)" }
+    set ::sdc_ila_lib 1
+    source $repo/tools/vivado/sdc_ila.tcl
+    set ila_args [list [expr {[info exists ::env(SDC_ILA_DEPTH)] && $::env(SDC_ILA_DEPTH) ne "" ? $::env(SDC_ILA_DEPTH) : 2048}]]
+    # cost experiments: SDC_ILA_OPTS="<adv> <mu> <strg>" (sdc_ila_insert's defaults otherwise)
+    if {[info exists ::env(SDC_ILA_OPTS)] && $::env(SDC_ILA_OPTS) ne ""} { foreach o $::env(SDC_ILA_OPTS) { lappend ila_args $o } }
+    while {[llength $ila_args] < 4} { lappend ila_args [lindex {2048 0 2 1} [llength $ila_args]] }
+    lappend ila_args $outdir
+    eval sdc_ila_insert $ila_args
+}
 opt_design
 place_design
 phys_opt_design
@@ -106,7 +122,13 @@ if {$mode eq "io"} {
     report_timing -hold  -max_paths 3 -from [get_ports sd_m_d0] -file $outdir/io_in_hold.rpt
 }
 
-# RAM cells: one RAMB18 expected, no LUTRAM
+if {$sdc_ila} {
+    write_debug_probes -force $outdir/sdc_ila.ltx
+    report_utilization -hierarchical -hierarchical_depth 2 -file $outdir/ila.rpt
+    report_debug_core -file $outdir/debug_core.rpt
+}
+
+# RAM cells: one RAMB18 expected, no LUTRAM (the ILA's own excepted)
 set rams [get_cells -hier -filter {REF_NAME =~ RAMB*}]
 set lutram [get_cells -hier -filter {REF_NAME =~ RAM32* || REF_NAME =~ RAM64* || REF_NAME =~ RAM128* || REF_NAME =~ RAM256* || REF_NAME =~ SRL*}]
 set fh [open $outdir/ram.txt w]
@@ -140,6 +162,21 @@ append s " WNS_gray=[wns_of -from [get_cells SDCGAYLE1/q_gray_reg*] -to [get_cel
 if {$mode eq "io"} {
     append s " WNS_out=[wns_of -to [get_ports {sd_m_cmd sd_m_d3}]] WHS_out=[whs_of -to [get_ports {sd_m_cmd sd_m_d3}]]"
     append s " WNS_in=[wns_of -from [get_ports sd_m_d0]] WHS_in=[whs_of -from [get_ports sd_m_d0]]"
+}
+if {$sdc_ila} {
+    foreach {k pat} {ILA u_ila_sdc HUB dbg_hub} {
+        set cs [get_cells -quiet $pat]
+        if {$cs eq ""} { append s " ${k}=none"; continue }
+        set fh [open $outdir/ila_$k.rpt w]; close $fh
+        report_utilization -cells $cs -file $outdir/ila_$k.rpt
+        set fh [open $outdir/ila_$k.rpt r]; set u2 [read $fh]; close $fh
+        set l 0; set f 0; set b36 0; set b18 0
+        regexp {Slice LUTs\*?\s*\|\s*(\d+)} $u2 -> l
+        regexp {Slice Registers\s*\|\s*(\d+)} $u2 -> f
+        regexp {RAMB36/FIFO\*?\s*\|\s*(\d+)} $u2 -> b36
+        regexp {RAMB18\s*\|\s*(\d+)} $u2 -> b18
+        append s " ${k}_LUT=$l ${k}_FF=$f ${k}_RAMB36=$b36 ${k}_RAMB18=$b18"
+    }
 }
 append s " version=[version -short]"
 set fh [open $outdir/summary.txt w]; puts $fh $s; close $fh

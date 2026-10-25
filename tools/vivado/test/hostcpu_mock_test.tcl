@@ -44,6 +44,20 @@
 #             changed
 #   repo      `echo 'source tools/vivado/hostcpu.tcl' | tclsh` parses silently;
 #             the host CPU and debug sources and rv_debug.xdc exist in the checkout
+#   sdcila    SDC_ILA (the SD card path ILA, tools/vivado/sdc_ila.tcl as
+#             impl_1's opt_design hook): unset, "" and 0 give the default run's
+#             call list and stdout exactly, and so does the build script of
+#             -sdcbase <rev> (default dd3b5147, the last commit without
+#             SDC_ILA; read with git show) -- the shipping build call for
+#             call as before; SDC_ILA=1 only adds calls (the hook set before
+#             launch_runs impl_1 and restored after, the sdc_ila reports),
+#             leaves the project and the generic as the default run does;
+#             SDC_ILA=2 / yes and a bad SDC_ILA_DEPTH stop before any project
+#             change; sdc_ila.tcl as a hook refuses to run without SDC_ILA=1
+#   faster    the faster-core path (a fake lib/AP68040-faster/rtl): the default
+#             run, and RV_DEBUG=1 SDC_ILA=1 on top, run clean, CPU_CLK_DIVIDE=20
+#             and AP040_FASTER=1 in the generic, cpu_r2.xdc on and cpu.xdc off
+#             at launch_runs, the project as found afterwards
 # -keep <dir> writes every call list / stdout pair there (<case>.log) for a
 # manual diff.  Ends "=== HOSTCPU MOCK PASS (<n> checks)" or
 # "=== HOSTCPU MOCK FAIL (<k> of <n> checks)"; exit status 0 / 1.
@@ -51,10 +65,12 @@
 set here [file normalize [file dirname [info script]]]
 set repo [file normalize $here/../../..]
 set keep ""
+set sdcbase dd3b5147
 foreach {k v} $argv {
     switch -- $k {
         -keep { set keep [file normalize $v] }
-        default { puts stderr "usage: tclsh [info script] \[-keep <dir>\]"; exit 2 }
+        -sdcbase { set sdcbase $v }
+        default { puts stderr "usage: tclsh [info script] \[-keep <dir>\] \[-sdcbase <rev>\]"; exit 2 }
     }
 }
 
@@ -252,7 +268,8 @@ set R $tmp/R
 set PIPE $tmp/pipe
 set xdcdir $R/fpga/openaars/aars_v5.0/xc7a100t
 foreach f [list rtl/host/host_bridge.vhd rtl/host/rv_hostcpu.v rtl/host/vexriscv/VexOsd.v fw/ctrl_boot/OSDBoot_rv_ROM.vhd \
-                rtl/host/vexriscv/VexOsd_DMT.v rtl/host/xilinx/rv_bscane2.v tools/vivado/rv_debug.xdc] {
+                rtl/host/vexriscv/VexOsd_DMT.v rtl/host/xilinx/rv_bscane2.v tools/vivado/rv_debug.xdc \
+                tools/vivado/sdc_ila.tcl] {
     file mkdir [file dirname $R/$f]
     close [open $R/$f w]
 }
@@ -312,7 +329,8 @@ proc state {kind} {
 # caller's environment cannot steer a case.
 set SWITCHES {RV_DEBUG AP040_PIPE_DIR AP040_PIPE_MMU AP040_PIPE_FPU FREE_CORE STORE_BUF FWD RAS
               PRECISE MISPLIT SB_MMU COPYBACK BTB LDX BTFN DFP_MIS WALLOC XC7 POST_CHIP POST_CI
-              CWF FASTRAM_ILA CHIP32 IMPL_EFFORT STOP_AFTER_ROUTE}
+              CWF FASTRAM_ILA CHIP32 IMPL_EFFORT STOP_AFTER_ROUTE SDC_ILA SDC_ILA_DEPTH
+              FASTER FAST_DUAL FAST_DC1ATC FAST_BTIC FAST_ICHIP}
 
 # run <st> <envdict> <body>: a fresh interpreter with the mock loaded with
 # state <st> and the environment <envdict>, then <body>.  Returns a dict
@@ -747,6 +765,129 @@ if {[file exists $repo/tools/vivado/rv_debug.xdc]} {
     check "repo: rv_debug.xdc rv_tck asynchronous to clk_114" \
         [expr {[string first {set_clock_groups -asynchronous -group [get_clocks rv_tck] -group [get_clocks clk_114]} $x] >= 0}]
 }
+
+#-----------------------------------------------------------------------------
+# sdcila: SDC_ILA, the SD card path ILA
+#-----------------------------------------------------------------------------
+set HOOK $R/tools/vivado/sdc_ila.tcl
+set HOOKSET [list set_property STEPS.OPT_DESIGN.TCL.PRE $HOOK impl_1]
+set HOOKRST [list set_property STEPS.OPT_DESIGN.TCL.PRE {} impl_1]
+proc changes_of {r} {
+    return [lsearch -all -inline -regexp -index 0 [dict get $r log] {^(add_files|remove_files|set_property|create_ip|launch_runs|reset_run|open_project)$}]
+}
+# the build script of $sdcbase (and its hostcpu.tcl), from git
+set BASEDIR $tmp/base
+file mkdir $BASEDIR
+set base_ok [expr {![catch {
+    exec git -C $repo show $sdcbase:tools/vivado/build_ap040.tcl > $BASEDIR/build_ap040.tcl
+    exec git -C $repo show $sdcbase:tools/vivado/hostcpu.tcl > $BASEDIR/hostcpu.tcl
+} msg]}]
+check "sdcila: build_ap040.tcl / hostcpu.tcl of $sdcbase read from git" $base_ok [expr {$base_ok ? "" : $msg}]
+foreach ila {0 1} {
+    foreach pipe {sub pipe} {
+        foreach kind {fresh pre} {
+            set case sdcila_ila${ila}_${pipe}_$kind
+            set envb [dict create]
+            if {$pipe eq "pipe"} { dict set envb AP040_PIPE_DIR $PIPE }
+            set rd [run_build $NEW_BUILD [state $kind] $envb $ila $tmp/out/$case]
+            foreach v {0 ""} {
+                set rv [run_build $NEW_BUILD [state $kind] [dict merge $envb [dict create SDC_ILA $v]] $ila $tmp/out/$case]
+                check "$case: SDC_ILA='$v' identical to SDC_ILA unset (call list + stdout)" \
+                    [expr {[text $rv] eq [text $rd]}] [first_diff [text $rd] [text $rv]]
+            }
+            set rv [run_build $NEW_BUILD [state $kind] [dict merge $envb [dict create SDC_ILA_DEPTH 1000]] $ila $tmp/out/$case]
+            check "$case: SDC_ILA unset, SDC_ILA_DEPTH=1000 ignored (identical)" [expr {[text $rv] eq [text $rd]}] [first_diff [text $rd] [text $rv]]
+            if {$base_ok} {
+                set rb [run_build $BASEDIR/build_ap040.tcl [state $kind] $envb $ila $tmp/out/$case]
+                save ${case}_base $rb
+                check "$case: SDC_ILA unset identical to the build script of $sdcbase (call list + stdout)" \
+                    [expr {[text $rb] eq [text $rd]}] [first_diff [text $rb] [text $rd]]
+            }
+            foreach rvd {0 1} {
+                set env1 [dict merge $envb [dict create SDC_ILA 1]]
+                set env0 $envb
+                if {$rvd} { dict set env1 RV_DEBUG 1; dict set env0 RV_DEBUG 1 }
+                set r0 [run_build $NEW_BUILD [state $kind] $env0 $ila $tmp/out/$case]
+                set r1 [run_build $NEW_BUILD [state $kind] $env1 $ila $tmp/out/$case]
+                save ${case}_sdc1_rv$rvd $r1
+                set c1 "$case RV_DEBUG=$rvd SDC_ILA=1"
+                check "$c1: ran clean" [expr {[dict get $r1 err] eq ""}] [dict get $r1 err]
+                set extra [additions [dict get $r0 log] [dict get $r1 log]]
+                check "$c1: only additions to the SDC_ILA=0 call list" [expr {[lindex $extra 0] ne "MISSING"}] [lrange $extra 0 1]
+                set log1 [dict get $r1 log]
+                set iset [lsearch -exact $log1 $HOOKSET]
+                set ilaunch [lsearch -exact $log1 {launch_runs impl_1 -to_step write_bitstream -jobs 8}]
+                set irst [lsearch -exact $log1 $HOOKRST]
+                check "$c1: hook set before launch_runs impl_1, restored after" \
+                    [expr {$iset >= 0 && $ilaunch > $iset && $irst > $ilaunch}] "set $iset launch $ilaunch restore $irst"
+                check "$c1: hook set once, restored once" \
+                    [expr {[llength [lsearch -all -exact $log1 $HOOKSET]] == 1 && [llength [lsearch -all -exact $log1 $HOOKRST]] == 1}]
+                check "$c1: generic as without SDC_ILA" [expr {[generic_of $r1] eq [generic_of $r0]}] "'[generic_of $r1]'"
+                check "$c1: the ILA banner" [string match "*SD card path ILA u_ila_sdc (SDC_ILA=1, depth 2048*" [dict get $r1 out]]
+                check "$c1: sdc_ila reports" [expr {[lsearch -glob $extra {report_utilization -cells * -file *sdc_ila.rpt}] >= 0 \
+                                                    && [lsearch -glob $extra {report_debug_core -file *sdc_ila_cores.rpt}] >= 0}]
+                check "$c1: project left as the SDC_ILA=0 run leaves it" [expr {[dict get $r0 state] eq [dict get $r1 state]}]
+                check "$c1: no .hostcpu_undo left" [expr {![file exists $UNDO]}]
+            }
+            set rx [run_build $NEW_BUILD [state $kind] [dict merge $envb [dict create SDC_ILA 1 SDC_ILA_DEPTH 4096]] $ila $tmp/out/$case]
+            check "$case: SDC_ILA_DEPTH=4096 in the banner" [string match "*SD card path ILA u_ila_sdc (SDC_ILA=1, depth 4096*" [dict get $rx out]]
+        }
+    }
+}
+foreach {envd want} [list [dict create SDC_ILA 2] SDC_ILA [dict create SDC_ILA yes] SDC_ILA [dict create SDC_ILA " 1"] SDC_ILA \
+                          [dict create SDC_ILA 1 SDC_ILA_DEPTH 1000] SDC_ILA_DEPTH [dict create SDC_ILA 1 SDC_ILA_DEPTH 32768] SDC_ILA_DEPTH] {
+    set r [run_build $NEW_BUILD [state fresh] $envd 0 $tmp/out/sdcbad]
+    set ch [changes_of $r]
+    set ch [lsearch -all -inline -not -index 0 $ch open_project]
+    check "sdcila: [join [dict values $envd] /] stops with an error naming $want" [string match "*$want=*" [dict get $r err]] [dict get $r err]
+    check "sdcila: [join [dict values $envd] /] ... before any project change" [expr {[llength $ch] == 0}] [lrange $ch 0 1]
+}
+# sdc_ila.tcl itself in plain tclsh: as a hook without SDC_ILA=1 it refuses;
+# as a library it only defines procs
+foreach {what pre envv} {hook {} unset hook0 {} 0 lib {set ::sdc_ila_lib 1} unset} {
+    set i [interp create]
+    if {$envv eq "unset"} { $i eval {unset -nocomplain ::env(SDC_ILA)} } else { $i eval [list set ::env(SDC_ILA) $envv] }
+    $i eval $pre
+    set rc [catch {$i eval [list source $repo/tools/vivado/sdc_ila.tcl]} msg]
+    set procs [$i eval {info procs sdc_ila*}]
+    interp delete $i
+    unset -nocomplain ::env(SDC_ILA)
+    if {$what eq "lib"} {
+        check "sdcila: sdc_ila.tcl as a library: no error, sdc_ila_insert defined" [expr {$rc == 0 && "sdc_ila_insert" in $procs}] $msg
+    } else {
+        check "sdcila: sdc_ila.tcl as a hook with SDC_ILA $envv: refuses" [expr {$rc == 1 && [string match "*SDC_ILA is not 1*" $msg]}] $msg
+    }
+}
+
+#-----------------------------------------------------------------------------
+# faster: the faster-core path (default when lib/AP68040-faster/rtl exists)
+#-----------------------------------------------------------------------------
+file mkdir $R/lib/AP68040-faster/rtl
+set CPU    $xdcdir/cpu.xdc
+set CPU_R2 $xdcdir/cpu_r2.xdc
+foreach {fcase envd} [list default {} lab [dict create RV_DEBUG 1 SDC_ILA 1]] {
+    foreach kind {fresh pre} {
+        set case faster_${fcase}_$kind
+        set st [state $kind]
+        set r [run_build $NEW_BUILD $st $envd 1 $tmp/out/$case]
+        save $case $r
+        check "$case: ran clean" [expr {[dict get $r err] eq ""}] [dict get $r err]
+        set g [generic_of $r]
+        check "$case: generic has AP040_FASTER=1 and CPU_CLK_DIVIDE=20" \
+            [expr {[string first " AP040_FASTER=1 " $g] >= 0 && [string first "CPU_CLK_DIVIDE=20 " $g] >= 0}] $g
+        set al [dict get $r at_launch]
+        set on_r2 [expr {$al ne "" && [in_fs $al XC7A100T $CPU_R2] && [prop $al $CPU_R2 IS_ENABLED] eq "1"}]
+        set on_cpu [expr {$al ne "" && [in_fs $al XC7A100T $CPU] && [prop $al $CPU IS_ENABLED] eq "1"}]
+        check "$case: at launch_runs cpu_r2.xdc on, cpu.xdc off" [expr {$on_r2 && !$on_cpu}] "r2 $on_r2 cpu $on_cpu"
+        set v [left_as_found $st [dict get $r state]]
+        check "$case: project left as found" [expr {$v eq ""}] $v
+        if {$fcase eq "lab"} {
+            check "$case: generic ends with HOSTCPU_RVDEBUG=1" [string match "* HOSTCPU_RVDEBUG=1" $g] $g
+            check "$case: hook set and restored" [expr {[lsearch -exact [dict get $r log] $HOOKSET] >= 0 && [lsearch -exact [dict get $r log] $HOOKRST] >= 0}]
+        }
+    }
+}
+file delete -force $R/lib/AP68040-faster
 
 file delete -force $tmp
 if {$n_fail == 0} {
