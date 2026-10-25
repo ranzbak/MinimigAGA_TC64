@@ -17,7 +17,8 @@ signal by name.  The port and bit of each signal are fixed by sdc_ila.tcl's
 table; this joins them with the .ltx's net names.  A bus net is one probe in
 the hardware manager (named after the bus, its bits in port order, the
 lowest port bit the probe's bit 0); any other net is a 1-bit probe named
-after the net.  tools/vivado/sdc_ila_capture.tcl reads the file.
+after the net (several such nets in one .ltx entry are listed from the
+highest port bit down).  tools/vivado/sdc_ila_capture.tcl reads the file.
 """
 import json
 import re
@@ -43,10 +44,13 @@ def main():
                     for b in range(lo, hi + 1):
                         where[(port, b)] = (nets[0]['name'], hi - lo + 1, b - lo)
                 else:
-                    # one net per bit, listed from leftIndex towards rightIndex
-                    step = 1 if pin['rightIndex'] >= pin['leftIndex'] else -1
+                    # one net per bit, listed from the highest port bit down
+                    # (seen in the Task 14 .ltx: rxlvl's bits 3..0, port
+                    # bits 0..3, listed rxlvl_reg_n_0_[3] first)
+                    if len(nets) != hi - lo + 1:
+                        sys.exit('sdc_ila_names.py: %s: %d nets for %d bits' % (pin['name'], len(nets), hi - lo + 1))
                     for i, n in enumerate(nets):
-                        where[(port, pin['leftIndex'] + i * step)] = (n['name'], 1, 0)
+                        where[(port, hi - i)] = (n['name'], 1, 0)
     if not where:
         sys.exit('sdc_ila_names.py: no u_ila_sdc in the .ltx')
     out = []
