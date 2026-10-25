@@ -597,10 +597,11 @@ void ATA_ReadSectors(unsigned char* tfr, int sector, int cylinder, int head, int
 					}
 					if(blk) // Any blocks left?
 					{
-						// a seek that fails (a FAT sector it could not read, or past
-						// the end of the chain) leaves a wrong position; FileReadEx
-						// fails on a card error or blocks past the end of the chain
-						// (a read ending at the file's last sector is good)
+						// a seek that fails (a FAT sector it could not read) leaves a
+						// wrong position; FileReadEx fails on a card error or blocks
+						// past the end of the chain (a read ending at the file's last
+						// sector is good).  The bound check above keeps the command
+						// inside the file; BuildHardfileIndex refuses a short chain
 						MMCErr = SD_OK;
 						if (!HardFileSeek(&hdf[unit], lba + hdf[unit].offset) ||
 						    !FileReadEx(&hdf[unit].file, 0, blk)) // NULL: into Gayle's FIFO (mmc.h)
@@ -680,7 +681,8 @@ void ATA_WriteSectors(unsigned char* tfr, int sector, int cylinder, int head, in
 
 	/* sectors past the end of a hardfile: ERR before any of them is written
 	   (findings/sdcard-engine Task 10 fix round 2); a seek that fails (a card
-	   error, or the chain ends early) leaves a wrong position: ERR too */
+	   error) leaves a wrong position: ERR too.  A chain shorter than the
+	   file's size never gets here: BuildHardfileIndex refuses the file */
 	MMCErr = SD_OK;
 	if ((hdf[unit].type & ~HDF_SYNTHRDB) == HDF_FILE && hdf[unit].file.size &&
 	    (lba + sector_count > (long)(hdf[unit].file.size >> 9) ||
@@ -727,6 +729,8 @@ void ATA_WriteSectors(unsigned char* tfr, int sector, int cylinder, int head, in
 						// 0: the next FAT sector could not be read, or the end of the
 						// chain: an error when sectors are left (they would go to
 						// the last cluster again), none after the file's last one
+						// (the bound check above and BuildHardfileIndex keep a
+						// command inside the chain; this stays as a guard)
 						if (!FileSeek(&hdf[unit].file, 1, SEEK_CUR) &&
 						    (MMCErr != SD_OK || sector_count > 1))
 						{
@@ -965,11 +969,13 @@ unsigned char BuildHardfileIndex(hdfTYPE *pHDF)
         pHDF->index_size++;
     }
 
-    MMCErr = SD_OK;
     for (i = 0; i < file->size; i += j)
     {
-        FileSeek(file, i >> 9, SEEK_SET); // FileSeek seeks in 512-byte sectors
-        if (MMCErr != SD_OK)	// a FAT read failed: this entry would be wrong (Task 10 fix round 1)
+        // every target lies inside the file: 0 is a failed FAT read or a
+        // chain shorter than the file's size; either way this entry (and
+        // HardFileSeek through it) would be wrong (findings/sdcard-engine
+        // Task 10 fix rounds 1, 3)
+        if (!FileSeek(file, i >> 9, SEEK_SET)) // FileSeek seeks in 512-byte sectors
             return 0;
         *index++ = file->cluster;
     }

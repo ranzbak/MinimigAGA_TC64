@@ -245,7 +245,7 @@ static int cd_hdf_open(hdfTYPE *h, int *open, int f)
 	}
 	h->type = HDF_FILE;
 	h->offset = 0;
-	if (!BuildHardfileIndex(h))	/* a FAT read failed: wrong clusters in the index */
+	if (!BuildHardfileIndex(h))	/* a FAT read failed or a short chain: wrong clusters in the index */
 		return 0;
 	*open = f;
 	return 1;

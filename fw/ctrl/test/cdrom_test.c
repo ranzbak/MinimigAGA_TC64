@@ -1015,6 +1015,23 @@ static void t_read_abandon(void)
    blocks are left after the end of the file's chain (a read ending at its
    last sector is 1: fat_test): the READ runs past the file, CHECK
    CONDITION, not a good end */
+/* Task 10 fix round 3: the last chunk's FileReadEx fails with a card error
+   (its final FAT read): CHECK 03/11/00, not a good end */
+static void t_read_last_chunk_error(void)
+{
+	uint8_t c[12];
+	begin("an SD card error in the last chunk of a READ: CHECK 03/11/00");
+	fresh_drive(1);
+	reads = 0;
+	fail_read_at = 1;	/* 5 CD sectors = 20 blocks: chunks of 16 + 4, the second fails */
+	fail_err = SD_E_RETRIES;
+	read10(c, 0, 5);
+	packet(c, 0xFFFE);
+	EXPECT(check_end(0x30), "status %02X error %02X", g.end_status, g.reg[1]);
+	fail_read_at = -1;
+	end();
+}
+
 static void t_read_eoc(void)
 {
 	uint8_t c[12];
@@ -1444,6 +1461,7 @@ int main(void)
 	t_read_error();
 	t_read_abandon();
 	t_read_eoc();
+	t_read_last_chunk_error();
 	t_reset_flag();
 	t_cue_bincue();
 	t_cue_mixed();

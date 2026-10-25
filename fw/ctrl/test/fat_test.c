@@ -34,6 +34,7 @@
 #include "errors.h"
 #include "hardware.h"
 #include "mmc.h"
+#include "sdproto.h"
 #include "fat.h"
 #include "mock_hw.h"
 
@@ -237,6 +238,23 @@ static void read_big(const char *data)
 		check("FileSeek(past the end): 0", FileSeek(&f, (last + 1) * cluster_size, SEEK_SET), 0);
 		check("... then FileSeek(the last sector) + FileRead", FileSeek(&f, nsec - 1, SEEK_SET) && FileRead(&f, sec), 1);
 		check_mem("... == BIG.BIN's last sector", sec, ref + (nsec - 1) * 512, len - (nsec - 1) * 512);
+	}
+	/* a card error in FileReadEx's last seek (Task 10 fix round 3): the FAT
+	   read after a chunk that ends a cluster fails (the FAT sector not in
+	   fat_buffer, the card's CRC wrong 5 times: retries out): 0, MMCErr set
+	   -- a caller going on would re-read the chunk */
+	{
+		extern unsigned long buffered_fat_index;
+		check("FileSeek(cluster 2)", FileSeek(&f, 2 * cluster_size, SEEK_SET), 1);
+		buffered_fat_index = -1;
+		mock_card_error(MOCK_ERR_RDCRC, mock_card_blocks_read() + cluster_size + 1, 5);
+		check("FileReadEx(cluster 2), its FAT read fails: 0", FileReadEx(&f, all, cluster_size), 0);
+		check("... MMCErr a card error", MMCErr != SD_OK, 1);
+		mock_card_error(MOCK_ERR_RDCRC, 0, 0);
+		buffered_fat_index = -1;
+		check("... then FileSeek(cluster 2) + FileReadEx again: 1", FileSeek(&f, 2 * cluster_size, SEEK_SET) &&
+		      FileReadEx(&f, all, cluster_size), 1);
+		check_mem("... the data", all, ref + 2 * cluster_size * 512, cluster_size * 512);
 	}
 
 	/* FileSeek forward over the fragment boundary and back within the file */

@@ -43,6 +43,7 @@ JB:
 //#include <ctype.h>
 #include "boot.h"
 #include "mmc.h"
+#include "sdproto.h"
 #include "fat.h"
 #include "swap.h"
 #include "hexdump.h"
@@ -1517,10 +1518,12 @@ unsigned char FileReadEx(fileTYPE *file, unsigned char *pBuffer, unsigned long n
         if (!MMC_ReadMultiple(sb, pBuffer, bc))
             return 0;
 
-        // 0: a FAT read failed, or the end of the chain with blocks left (a
-        // read ending at the file's last sector is good; findings/sdcard-engine
-        // Task 10 fix round 2)
-        if (!FileSeek(file, bc, SEEK_CUR) && nSize > bc)
+        // 0: a FAT read failed (MMCErr: set by the reads of this call), or
+        // the end of the chain with blocks left (a read ending at the file's
+        // last sector is good; findings/sdcard-engine Task 10 fix rounds 2,
+        // 3: a failed FAT read after the last chunk left the pointer at the
+        // chunk's start, and a caller going on re-read it as good data)
+        if (!FileSeek(file, bc, SEEK_CUR) && (nSize > bc || MMCErr != SD_OK))
             return 0;
 
         nSize -= bc;

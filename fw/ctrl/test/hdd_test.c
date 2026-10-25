@@ -831,10 +831,45 @@ static void past_end_cases(void)
 	g.wdata = NULL;
 	g.wlen = 0;
 	check("past the end: no card error", (ErrorMask >> ERROR_SDCARD) & 1, 0);
-	/* the last sector itself is still good, read and write */
+	/* commands that end at the file's last sector are good: a write (both
+	   sectors on the card, the end of the chain after the last one is no
+	   error) and the reads back */
+	write_case("WORK.HDF WRITE SECTORS 8190+2 (ends at the file's last sector)", 1, 0, 8190, 2, d);
+	read_case("WORK.HDF READ SECTORS 8190+2 after the write", 1, 0, 8190, 2);
 	read_case("WORK.HDF READ SECTORS 8191+1 (the last sector)", 1, 0, 8191, 1);
 	free(before);
 	free(d);
+}
+
+/* a cluster chain shorter than the file's size (findings/sdcard-engine
+   Task 10 fix round 3): WORK.HDF's chain cut after its block 4095 in the
+   card's first FAT: BuildHardfileIndex refuses it, OpenHardfile fails with
+   ERROR_HDD and the unit is off; with the FAT back the file opens again */
+extern unsigned long fat_start, data_start, buffered_fat_index;
+static void short_chain_case(void)
+{
+	const struct hdfile *h = &files[F_WORK];
+	unsigned long cl = (h->card_lba[4095] - data_start) / cluster_size + 2;
+	unsigned long off = cl * (fat32 ? 4 : 2);
+	unsigned char *fs = mock_card_wsector((unsigned)(fat_start + off / 512)), save[4];
+	memcpy(save, fs + off % 512, 4);
+	memset(fs + off % 512, 0xFF, fat32 ? 4 : 2);	/* EOC (FAT32: the low 28 bits all set) */
+	if (fat32) fs[off % 512 + 3] = 0x0F;
+	buffered_fat_index = -1;
+	ClearError(ERROR_ALL);
+	hardfileTYPE *hf = SlotConfig(1);
+	memset(hf, 0, sizeof *hf);
+	hf->enabled = HDF_FILE;
+	memcpy(hf->name, "WORK    ", 8);
+	config.hdfdir[1] = 0;
+	check("short chain: OpenHardfile(1) fails", OpenHardfile(1), 0);
+	check("short chain: the unit is off", hdf[1].type, HDF_DISABLED);
+	check("short chain: ERROR_HDD set", (ErrorMask >> ERROR_HDD) & 1, 1);
+	check("short chain: the message", Errors[ERROR_HDD].string && !strcmp(Errors[ERROR_HDD].string, "Hardfile index read error"), 1);
+	memcpy(fs + off % 512, save, 4);
+	buffered_fat_index = -1;
+	ClearError(ERROR_ALL);
+	open_unit(1, F_WORK, HDF_FILE, "WORK    ");
 }
 
 /* the Amiga's write data: block j = 'W', j, then a pattern */
@@ -902,6 +937,7 @@ int main(int argc, char **argv)
 	read_case("WORK.HDF READ MULTIPLE 8188+4 (the last cluster)", 1, 1, 8188, 4);
 	set_multiple(1, 16);
 	past_end_cases();
+	short_chain_case();
 	/* the board deadlock of 2026-10-20: CD audio plays (CD on port 2), the
 	   Amiga reads its HDF with READ MULTIPLE of more than one block */
 	cd_audio_busy = 1;

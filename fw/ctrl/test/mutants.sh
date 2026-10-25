@@ -212,7 +212,11 @@ unit mmc_port mmc_test src mmc.c 's/op.port = ide_port \& 1;/op.port = 0;/' "FAI
 
 # ---- Task 10 fix round 1 (sdproto_test, mmc_test, hdd_test, cdrom_test, rom_test, fdd_test, config_test, boot_test)
 # a read of the file's last cluster: FileReadEx 0 at the end of the chain (blocks left only); FileSeek storing the EOC mark
-unit fat_readex_end hdd_test src fat.c 's/if (!FileSeek(file, bc, SEEK_CUR) \&\& nSize > bc)/if (!FileSeek(file, bc, SEEK_CUR))/' "FAIL WORK.HDF READ SECTORS 8190+2"
+unit fat_readex_end hdd_test src fat.c 's/\&\& (nSize > bc || MMCErr != SD_OK))/\&\& 1)/' "FAIL WORK.HDF READ SECTORS 8190+2"
+# fix round 3: a card error in FileReadEx's last seek dropped; a write ending at the file's last sector failed; a short chain indexed
+unit fat_readex_mmcerr fat_test src fat.c 's/\&\& (nSize > bc || MMCErr != SD_OK))/\&\& nSize > bc)/' "FAIL FileReadEx(cluster 2), its FAT read fails: 0"
+unit hdd_write_end hdd_test src hdd.c 's/(MMCErr != SD_OK || sector_count > 1))/1)/' "FAIL WORK.HDF WRITE SECTORS 8190+2"
+unit hdd_index_short hdd_test src hdd.c 's/if (!FileSeek(file, i >> 9, SEEK_SET)) \/\/ FileSeek seeks in 512-byte sectors/FileSeek(file, i >> 9, SEEK_SET); if (0)/' "FAIL short chain: OpenHardfile(1) fails"
 unit cd_eoc cdrom_test src cdrom.c 's/if (!FileReadEx(\&cdrom.hdf.file, 0, n))/if (!FileReadEx(\&cdrom.hdf.file, 0, n) \&\& MMCErr != SD_OK)/' "past the end of the file's chain"
 # fix round 2: sectors past the end of the HDF served / written from its last cluster
 unit hdd_past_end_rd hdd_test src hdd.c 's/lba + hdf\[unit\].offset + sector_count > (long)(hdf\[unit\].file.size >> 9)/0/' "FAIL past the end: READ SECTORS 8191+2"
