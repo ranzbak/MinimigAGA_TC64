@@ -155,41 +155,48 @@ Open: the wait loops still have no exit when the Amiga abandons a command.
 
 ### Reset and boot: a corrupted firmware survives the board reset (2026-10-02)
 
-- 2026-10-21: written for the 832 host CPU, now retired. The RISC-V host CPU
-  has the same layout: the writable 8 KB boot BRAM (`rtl/host/host_bridge.vhd`,
-  `rom_wr <= cpu_wr`), the firmware's stack at its top (down to
-  `STACK_FLOOR` 0x1400, `fw/ctrl/stackcheck.h`, guarded by `make check` (g)),
-  and `fw/ctrl_boot/boot.c` jumping to 0x2000 after the load. Paths below are
-  the 832's (tag `osd-832-final`).
+- 2026-10-21: written for the 832 host CPU, now retired; restated for the
+  RISC-V host CPU on 2026-10-25 (the 832-era files are in tag
+  `osd-832-final`). The symptoms were seen on the 832 and have not been
+  reproduced on the RISC-V host CPU yet; the layout that allows them is the
+  same.
 
-- Symptom: after a half-loaded or corrupted 832 firmware, the reset button
+- Symptom (832): after a half-loaded or corrupted firmware, the reset button
   does not recover; the same firmware error repeats until a power cycle.
-- Known: the 832 "boot ROM" is a writable 8 KB block RAM at 0x0000-0x1FFF
-  (rtl/host/832_bridge.vhd, `rom_wr <= cpu_wr`); the boot code is its first
-  ~4.3 KB, the rest is stack and data. The firmware loads to 0x2000 in SDRAM
-  and fw/ctrl_boot_832/boot.c jumps into it unchecked (`checksum()` exists,
-  unused). The reset button does reset the 832 (gen_reset -> sdctl_rst ->
-  init_done -> nReset), but a firmware that overwrote the boot code leaves
-  a damaged boot ROM, which only the FPGA configuration restores.
-- Plan: write-protect the boot code in 832_bridge.vhd; verify the firmware
-  (size + CRC) and reload it up to N times; SD card recovery in spi_init
-  (CMD12 and extra clocks with CS high before CMD0); a reset matrix (power,
-  button, OSD reboot, Ctrl-Amiga-Amiga: what each one resets).
+- Known: the boot ROM is a writable 8 KB block RAM at 0x0000-0x1FFF
+  (`rtl/host/host_bridge.vhd`, `rom_wr <= cpu_wr`); the boot code is its
+  first ~4.8 KB (`fw/ctrl_boot` `_end` 0x1328 on 2026-10-25), the rest is
+  stack and data.
+  The firmware (`RV32OSDB.BIN`) loads to 0x2000 in SDRAM and
+  `fw/ctrl_boot/boot.c` jumps into it after the lock-step check of its
+  trailer (`lockstep.c`, which names the SD card peripheral's version, not
+  the image's contents; `checksum()` exists, unused). On the 832 the reset
+  button did reset the host CPU (gen_reset -> sdctl_rst -> init_done ->
+  nReset; not re-checked on the RISC-V build), but a firmware that
+  overwrote the boot code leaves a damaged boot ROM, which only the FPGA
+  configuration restores.
+- Plan: write-protect the boot code in `host_bridge.vhd`; verify the
+  firmware (size + CRC) and reload it up to N times; SD card recovery in
+  spi_init (CMD12 and extra clocks with CS high before CMD0); a reset matrix
+  (power, button, OSD reboot, Ctrl-Amiga-Amiga: what each one resets).
 - Also (2026-10-03, Paul): the board reset button must reset the OSD state
   completely; today OSD state survives it, even though the firmware is
-  reloaded. Not the firmware's RAM: its startup (EightThirtyTwo lib832
-  crt0.a, premain.S) zeroes .bss before main (checked in 832OSDAD.map) and
-  .data comes fresh from the file. So the state lives in hardware: the
+  reloaded. Not the firmware's RAM: its start-up (`fw/ctrl/arch/crt0.S`;
+  on the 832 lib832's crt0) zeroes .bss before main and .data comes fresh
+  from the file. So the state lives in hardware: the
   OSD/chipset/memory configuration registers in the Minimig RTL outside the
   reset chain the button drives (and the firmware may read them back at
   start), or a settings file on purpose. First step: list which settings
   survive; check the reset inputs of the userio/OSD registers.
-- Also: the firmware is linked with `-s_STACKTOP=0x2000` (fw/ctrl_832
-  Makefile), so its stack is the top of the writable 8 KB boot block RAM
-  and grows down toward the boot code (its first ~4.3 KB). A deep call path
-  or a large local buffer overwrites the boot code -- a concrete way to the
-  damaged boot ROM above. Write-protecting the boot code catches it; moving
-  the stack or bounding it is the fix.
+- Also: the firmware's stack starts at 0x2000 (`__stack_top`,
+  `fw/ctrl/arch/firmware.ld`; the 832 build had `-s_STACKTOP=0x2000`), so
+  it is the top of the writable 8 KB boot block RAM and grows down toward
+  the boot code. `make -C fw/ctrl check` (g) only checks that the boot code
+  ends below `STACK_FLOOR` 0x1400 (`fw/ctrl/stackcheck.h`); nothing stops a
+  deep call path or a large local buffer at run time from going below it and
+  overwriting the boot code -- a concrete way to the damaged boot ROM above.
+  Write-protecting the boot code catches it; moving the stack or bounding it
+  is the fix.
 
 ### SD card gone after Ctrl-Amiga-Amiga (2026-10-02)
 
