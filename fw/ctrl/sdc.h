@@ -66,7 +66,14 @@
 #define SDC_WMARK   0x2C    /* W: 15:8 RX high, 7:0 TX low, units of 16 bytes */
 #define SDC_VER     0x2C    /* R: VERSION */
 
-#define SDC_VERSION 0x5D01  /* the VERSION register of this contract */
+/* The VERSION register of this contract: the boot ROM boots only a firmware
+   file whose trailer names it (lock-step, design 5.5).  Rule: bump it on any
+   change of this header's contract or the Gayle bridge's (sdcard_spi.v,
+   sdcard_gayle.v: registers, ops, flags the firmware relies on), on both
+   sides at once -- rtl/host/sdcard_spi.v's VERSION parameter
+   (fw/ctrl/Makefile check (j) compares the two).  0x5D02: the bridge's
+   IDEF_CMD_WR (final review M2). */
+#define SDC_VERSION 0x5D02
 
 /* CMD 3:0: ops */
 #define SDC_OP_XFER         1
@@ -167,7 +174,7 @@ int sdc_start(unsigned cmd, unsigned len);
    HDD/CD data path.  This core has no WFI (VexRiscv CsrPluginConfig.small
    decodes it as an illegal instruction), so it polls sdc_events with a
    TIMER bound of SDC_WAIT_BOUND counts, above the longest TIMEOUT
-   (65536 x 144.4 us = 9.46 s): when that runs out it ABORTs the op,
+   (65535 x 144.4 us = 9.46 s): when that runs out it ABORTs the op,
    waits for it to stop (the byte being shifted: at most 36 us, bounded by
    2 TIMER counts) and returns 0.  Needs interrupts on (not from a handler, not inside
    irq_save).  Under HOSTTEST it steps the mock and fails the test when the

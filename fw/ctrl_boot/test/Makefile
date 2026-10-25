@@ -43,7 +43,7 @@ $(OUT)/lockstep.o: $(SRC)/lockstep.c $(SRC)/lockstep.h $(SRC)/../ctrl/sdc.h $(SR
 	$(CC) $(CFLAGS) $(LSFLAGS) -c -o $@ $<
 $(OUT)/small_printf.o: $(SRC)/small_printf.c $(SRC)/small_printf.h $(SRC)/uart.h | $(OUT)
 	$(CC) $(CFLAGS) $(LSFLAGS) -c -o $@ $<
-$(OUT)/lockstep_test.o: lockstep_test.c $(SRC)/lockstep.h $(SRC)/../ctrl/sdc.h | $(OUT)
+$(OUT)/lockstep_test.o: lockstep_test.c $(SRC)/lockstep.h $(SRC)/../ctrl/sdc.h $(SRC)/../ctrl/charrom.h | $(OUT)
 	$(CC) $(CFLAGS) $(LSFLAGS) -c -o $@ $<
 $(OUT)/lockstep_test: $(OUT)/lockstep_test.o $(OUT)/lockstep.o $(OUT)/small_printf.o
 	$(CC) $(CFLAGS) -o $@ $^

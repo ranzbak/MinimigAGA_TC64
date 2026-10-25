@@ -173,15 +173,28 @@ is written; `make -C fw/ctrl check` (h) checks the built file.) After
 from the FAT directory entry, not a fixed offset) and compares them with
 the peripheral's VERSION register:
 
-- match: `Firmware SDC 5D01, bitstream SDC 5D01`, `fence.i`, jump to 0x2000;
+- match: `Firmware SDC 5D02, bitstream SDC 5D02`, `fence.i`, jump to 0x2000;
 - anything else (another version, no `SDCV` magic, bytes 4-5 not 0, a file
   shorter than 8 bytes; a firmware from before the trailer has none):
-  `Firmware does not match this bitstream (need SDC 5D01)`,
-  `ErrorCode(0x0ff)` (cyan on the Amiga screen through BootDiag), then
-  `boot_halt()`: interrupts off, the CPU parks. No retry, no fallback.
+  `Firmware does not match this bitstream (need SDC 5D02)`,
+  `ErrorCode(0x0ff)` (cyan on the Amiga screen through BootDiag), the OSD
+  message (below), then `boot_halt()`: interrupts off, the CPU parks. No
+  retry, no fallback.
+
+The OSD message (design 5.5; final review fix wave, Paul 2026-10-25):
+`FIRMWARE MISMATCH`, centred on OSD line 3 (`LOCKSTEP_OSD_AT`), the rest of
+the OSD blank, then the OSD switched on. One write frame of the whole buffer
+(`0c 00 00 00 00` and 2,048 bytes: the old menu of a soft restart goes too)
+and `28 01`, with cfide's SPI at `fw/ctrl`'s `SPI_fast` speed (1). The
+glyphs are `fw/ctrl/charrom.h`'s, columns 0-6 of the 11 letters and the
+space (84 bytes); the message is 17 table offsets. The two-byte OSD command
+frames of `main` / `ErrorCode` and the OSD's enable share `osd_cmd()`
+(`boot.c`), which paid for most of it.
 
 The boot ROM and `RV32OSDB.BIN` must come from the same commit; a new
-`SDC_VERSION` in `sdc.h` (a new peripheral contract) changes both.
+`SDC_VERSION` in `sdc.h` (a new peripheral contract) changes both, and
+`rtl/host/sdcard_spi.v`'s `VERSION` with it (`fw/ctrl` `make check` (j)).
+0x5D02 since the final review's fix wave (the bridge's `IDEF_CMD_WR`).
 
 ## UART lines
 
@@ -191,7 +204,7 @@ On the controller UART (115200), every line printed by `small_printf`
 | line | when |
 |---|---|
 | `Initializing SD card` | each pass of the boot loop |
-| `SD init: VERSION 5D01, card 1` | the peripheral's VERSION and card-present bit (STATUS 3) |
+| `SD init: VERSION 5D02, card 1` | the peripheral's VERSION and card-present bit (STATUS 3) |
 | `SD init: CMD0 01`, `CMD8 01`, `ACMD41 00`, `CMD58 00`, `CMD59 00`, (`CMD16 00`) | each init step's R1 (`FF`: no R1) |
 | `SD init: CMD8 echo <b>` | CMD8's echo was not `01 AA` |
 | `SD card: SDHC` / `SD card: SD` | the card type |
@@ -219,12 +232,13 @@ card`); after `0x0ff` and `0xf0f` it halts.
 
 | build | text | data | bss | text+data+bss |
 |---|---|---|---|---|
-| rv32imc (`OSDBoot_rv.bin` = 4324 bytes) | 4300 | 24 | 580 | 4904 |
+| rv32imc (`OSDBoot_rv.bin` = 4496 bytes) | 4472 | 24 | 580 | 5076 |
 | rv32im (`make im`, not committed) | 5872 | 24 | 580 | 6476 |
 
 Gate: `_end` below `0x1400` (`fw/ctrl/Makefile` check (g): the firmware's
-stack floor in the shared boot BRAM); today `_end = 0x1328` (216 bytes
-left; it was `0x1040` with the card on cfide's SPI). `boot.ld` keeps its
+stack floor in the shared boot BRAM); today `_end = 0x13D4` (44 bytes
+left; `0x1328` before the OSD message of the lock-step stop, `0x1040` with
+the card on cfide's SPI). `boot.ld` keeps its
 `0x1C00` assert as the outer limit. (The x1-x31 clear in `crt0.S` added 60
 bytes over the first build.)
 
@@ -239,7 +253,10 @@ VERSION 5D01 (message + `ErrorCode(0x0ff)` + halt), 5C01 (the high byte),
 magic, wrong magic,
 bytes 4-5 not 0, the trailer one byte off the end either way, a trailer
 inside the file but none at its end, an odd length, 8 / 7 / 0 bytes, 16-bit
-compare; and fw/ctrl's built `RV32OSDB.BIN` (`FWBIN=`, default
+compare; every mismatch case also checks the OSD bytes (`hosttest_osd`:
+SPI_fast, the one buffer frame against `fw/ctrl/charrom.h`'s glyphs of
+`FIRMWARE MISMATCH` at line 3, every other byte 0, then `28 01`) and every
+boot case that the OSD is not touched; and fw/ctrl's built `RV32OSDB.BIN` (`FWBIN=`, default
 `fw/ctrl/build/RV32OSDB.BIN`, skipped with a note when not built) boots with
 VERSION = `SDC_VERSION` and stops with `SDC_VERSION + 1`.
 

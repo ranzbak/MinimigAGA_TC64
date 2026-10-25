@@ -17,12 +17,57 @@
 
 #include "../lockstep.h"
 #include "../../ctrl/sdc.h"
+#include "../../ctrl/charrom.h"	/* charfont: the OSD message's glyphs */
 
 static unsigned mock_version;
 static char out[512];
 static unsigned outn;
 static int codes[8], ncodes, booted, halted, fails;
 static jmp_buf env;
+
+/* cfide's SPI as lockstep.c drives the OSD: the frames (bytes between a
+   select and a deselect), the speed writes */
+static unsigned char osd[3][2100];
+static unsigned osdlen[3], nframes, sel, speed, bad_osd;
+void hosttest_osd(int what, unsigned char b)
+{
+	switch (what) {
+	case 0: if (sel) bad_osd++; sel = 1; if (nframes < 3) osdlen[nframes] = 0; break;
+	case 1: if (!sel) bad_osd++; sel = 0; nframes++; break;
+	case 2: if (!sel) bad_osd++;
+		else if (nframes < 3 && osdlen[nframes] < sizeof osd[0]) osd[nframes][osdlen[nframes]++] = b;
+		break;
+	case 3: speed = b; break;
+	}
+}
+void osd_cmd(unsigned char cmd, unsigned char v)	/* boot.c's */
+{
+	hosttest_osd(0, 0);
+	hosttest_osd(2, cmd);
+	hosttest_osd(2, v);
+	hosttest_osd(1, 0);
+}
+
+/* the mismatch's OSD: SPI_fast, then one frame 0c 00 00 00 00 + the whole
+   buffer: line 3 holds "FIRMWARE MISMATCH" in fw/ctrl/charrom.h's glyphs
+   (8 columns each), centred, every other byte 0; then 28 01 (enable) */
+static int osd_ok(char *why, size_t n)
+{
+	static const char text[] = "FIRMWARE MISMATCH";
+	unsigned at = 3 * 256 + (256 - 8 * (sizeof text - 1)) / 2, i;
+	if (bad_osd || sel) { snprintf(why, n, "select / deselect out of order"); return 0; }
+	if (nframes != 2) { snprintf(why, n, "%u OSD frames, want 2", nframes); return 0; }
+	if (speed != 1) { snprintf(why, n, "SPI speed %u, want 1 (SPI_fast)", speed); return 0; }
+	if (osdlen[0] != 5 + 2048 || memcmp(osd[0], "\x0c\0\0\0\0", 5)) { snprintf(why, n, "frame 1: %u bytes, not 0c 00 00 00 00 + 2048", osdlen[0]); return 0; }
+	for (i = 0; i < 2048; i++) {
+		unsigned char want = 0;
+		if (i >= at && i < at + 8 * (sizeof text - 1))
+			want = charfont[(unsigned char)text[(i - at) / 8]][(i - at) % 8];
+		if (osd[0][5 + i] != want) { snprintf(why, n, "buffer byte %u (line %u column %u) %02x, want %02x", i, i / 256, i % 256, osd[0][5 + i], want); return 0; }
+	}
+	if (osdlen[1] != 2 || osd[1][0] != 0x28 || osd[1][1] != 0x01) { snprintf(why, n, "frame 2 is not 28 01 (OSD on)"); return 0; }
+	return 1;
+}
 
 /* sdc.h under HOSTTEST: SDC_R() reads come here */
 unsigned short hosttest_sdc_rd(unsigned off)
@@ -67,10 +112,13 @@ static void run(const char *name, const unsigned char *img, unsigned size, unsig
 	char want[128];
 	int ok;
 
+	char why[160] = "";
+
 	mock_version = ver;
 	outn = 0;
 	out[0] = 0;
 	ncodes = booted = halted = 0;
+	nframes = sel = speed = bad_osd = 0;
 	if (setjmp(env) == 0) {
 		fw_start(img, size);
 		printf("FAIL %s: fw_start returned\n", name);
@@ -80,16 +128,18 @@ static void run(const char *name, const unsigned char *img, unsigned size, unsig
 	if (boot) {
 		snprintf(want, sizeof want, "Firmware SDC %04X, bitstream SDC %04X\n", ver, ver);
 		ok = booted == 1 && !halted && ncodes == 0 && !strcmp(out, want);
+		if (nframes || sel || speed) { snprintf(why, sizeof why, "OSD touched on a boot"); ok = 0; }
 	} else {
 		snprintf(want, sizeof want, "Firmware does not match this bitstream (need SDC %04X)\n", ver);
 		ok = !booted && halted == 1 && ncodes == 1 && codes[0] == 0x0ff && !strcmp(out, want);
+		if (!osd_ok(why, sizeof why)) ok = 0;
 	}
 	if (ok)
 		printf("PASS %s\n", name);
 	else {
-		printf("FAIL %s: booted %d, halted %d, ErrorCode calls %d (first %03x)\n"
+		printf("FAIL %s: booted %d, halted %d, ErrorCode calls %d (first %03x)%s%s\n"
 		       "  UART got:  \"%s\"\n  UART want: \"%s\"\n",
-		       name, booted, halted, ncodes, ncodes ? codes[0] : 0, out, want);
+		       name, booted, halted, ncodes, ncodes ? codes[0] : 0, why[0] ? "; OSD: " : "", why, out, want);
 		fails++;
 	}
 }

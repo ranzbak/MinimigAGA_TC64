@@ -578,7 +578,7 @@ hwmap sdc_width  sdc.h 's/(\*(volatile unsigned short \*)(SDC_BASE/(*(volatile u
 hwmap sdc_cfg    sdc.h 's/define SDC_CFG     0x20/define SDC_CFG     0x24/'
 hwmap sdc_ver    sdc.h 's/define SDC_VER     0x2C/define SDC_VER     0x28/'
 hwmap sdc_wr     sdc.h 's/define SDC_W(x, v)  (SDC(x) = (v))/define SDC_W(x, v)  ((void)(v))/'
-hwmap sdc_version sdc.h 's/define SDC_VERSION 0x5D01/define SDC_VERSION 0x5D00/'
+hwmap sdc_version sdc.h 's/define SDC_VERSION 0x5D02/define SDC_VERSION 0x5D01/'
 hwmap irq_sdcard arch/irq.h 's/define IRQ_SDCARD         4/define IRQ_SDCARD         5/'
 hwmap irqctl_width arch/irq.h 's/HW_IRQ_MASK        (\*(volatile unsigned int/HW_IRQ_MASK        (*(volatile unsigned short/'
 # uart.c

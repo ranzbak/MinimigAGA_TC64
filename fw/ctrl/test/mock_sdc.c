@@ -472,7 +472,7 @@ static unsigned sdc_read(unsigned off)
 	case 0x20: v = (sdc.cs << 8) | sdc.div; break;
 	case 0x24: v = sdc.tmo; break;
 	case 0x28: v = sdc.irqen; break;
-	case 0x2C: v = 0x5D01; break;			/* VERSION */
+	case 0x2C: v = 0x5D02; break;			/* VERSION */
 	default: break;
 	}
 	sdc_levels();
