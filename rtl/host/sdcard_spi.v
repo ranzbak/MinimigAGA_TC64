@@ -353,7 +353,6 @@ module sdcard_spi #(
     always @(posedge clk) begin
         tx_room_r  <= {1'b0, txlvl} + {1'b0, len_r} <= 12'd1024;
         rx_ready_r <= verified >= len_r;
-        fin_d      <= !reset && op_fin;
     end
     reg        cmd_ok;
     always @* begin
@@ -530,6 +529,9 @@ module sdcard_spi #(
 
     // op end and its reason
     wire op_fin   = busy && (gone_now || nat_end || stop_bd || stop_idle || g_end);
+    // fin_d (declared with tx_room_r above): here, after op_fin's declaration
+    // (a use before it is an error in xvlog and other strict tools)
+    always @(posedge clk) fin_d <= !reset && op_fin;
     wire e_gerr   = !gone_now && g_end && !g_good;
     wire e_abort  = !gone_now && !g_end && abort_pend && (stop_bd || stop_idle);
     wire e_tmo    = !gone_now && stop_bd && !abort_pend;
