@@ -12,7 +12,8 @@
 1 tf   cdda       FW=$ROOT/sim/l3/run_p4t19fwf/fwrv/RV32OSDB.BIN
 # (h) the RV image before the write-FIFO fix (0162e53f; built then, under the
 # old name; the card builder puts any FW= image on the card as RV32OSDB.BIN):
-# fdd_wr, the word-gap monitor
+# fdd_wr, the word-gap monitor.  The RV32OSDA.BIN path below is deliberate:
+# it is that old run's file name, not the card name.
 1 th   fdd_wr     FW=$ROOT/sim/l3/run_fw12/fwrv/RV32OSDA.BIN
 # (e) again on cdda_load: hdd uses gayle port 0 only (both units on it), so the
 # shared register file cannot show there; cdda_load has the CD on port 1 and

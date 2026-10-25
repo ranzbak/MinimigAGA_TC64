@@ -86,7 +86,9 @@ trailer), `RV32OSDB.elf`, `.map`, `.lst` (disassembly with source),
 from the same commit. The file name comes from `fwname.mk` (`FW_FILE`;
 the boot ROM's build reads the same file for its `OSDNAME`, the 8.3 entry
 `RV32OSDBBIN`); `check` (i) fails when the committed boot ROM image
-(`fw/ctrl_boot/OSDBoot_rv.bin`) or `.clangd` looks for another name. `B=dir` builds into another directory;
+(`fw/ctrl_boot/OSDBoot_rv.bin`) or `.clangd` looks for another name, or
+when the committed `OSDBoot_rv_ROM.vhd` is not the VHDL made from that
+`.bin` (`make -C fw/ctrl_boot romvhd_check`). `B=dir` builds into another directory;
 `EXTRA_CFLAGS=...` adds compiler flags for bench variants (empty for the
 shipped image); `EXTRA_OBJS=...` links extra objects after the firmware's
 (empty for the shipped image; `sim/host_bridge/fwboot` links its trap
@@ -294,7 +296,7 @@ every I/O address into a zero-based access (1340 seen, all `(zero)`), so (b) and
 (c) still check something.
 
 Result: clang image `.text` 96,708 B, `RV32OSDA.BIN` 100,188 B (gcc 92,596 B).
-`SIM=verilator RUNTAG=p3t18 FW=fw/ctrl/build_clang/RV32OSDA.BIN bash
+`SIM=verilator RUNTAG=p3t18 FW=fw/ctrl/build_clang/RV32OSDB.BIN bash
 sim/host_bridge/run.sh fwboot`: PASS, OSD GAP min 40, STACK low 0x1980 (gcc:
 40, 0x1950).
 
@@ -346,10 +348,10 @@ The boot ROM map that `check` (g) reads comes from `make -C fw/ctrl_boot`
 make -C fw/ctrl all stack size check
 make -C fw/ctrl B=build_sr EXTRA_CFLAGS=-DRV_STACK_REPORT
 SIM=verilator RUNTAG=p3t17 bash sim/host_bridge/run.sh fwboot
-SIM=verilator RUNTAG=p3t17s FW=fw/ctrl/build_sr/RV32OSDA.BIN bash sim/host_bridge/run.sh fwboot
+SIM=verilator RUNTAG=p3t17s FW=fw/ctrl/build_sr/RV32OSDB.BIN bash sim/host_bridge/run.sh fwboot
 ```
 
-(The first `fwboot` run uses `fw/ctrl/build/RV32OSDA.BIN`, the second the
+(The first `fwboot` run uses `fw/ctrl/build/RV32OSDB.BIN`, the second the
 sim-only image; about 6 minutes each on Verilator.)
 
 The stack starts at 0x2000 (`__stack_top`) and grows down into the 8 KB boot

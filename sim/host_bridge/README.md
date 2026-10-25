@@ -656,7 +656,7 @@ sudo apt install build-essential curl git python3 mtools dosfstools fdisk ghdl v
 bash tools/riscv/fetch-xpack.sh
 # must pass
 bash tools/riscv/check-toolchain.sh
-# -> fw/ctrl/build/RV32OSDA.BIN
+# -> fw/ctrl/build/RV32OSDB.BIN
 make -C fw/ctrl
 # ~6 min
 SIM=verilator RUNTAG=fwv  bash sim/host_bridge/run.sh fwboot
@@ -676,8 +676,8 @@ bash sim/host_bridge/run.sh compare fwx fwv
 Do not run `make -C fw/ctrl` between the two `fwboot` runs: the
 firmware's `version.h` has the build minute in it, so a rebuild changes
 the image (and the OSD text in `spi.txt`). Another image on the same card
-recipe: `FW=<path to an RV32OSDA.BIN>` (relative to the current
-directory), e.g. `FW=/tmp/b/RV32OSDA.BIN bash sim/host_bridge/run.sh
+recipe: `FW=<path to a firmware image>` (relative to the current
+directory), e.g. `FW=/tmp/b/RV32OSDB.BIN bash sim/host_bridge/run.sh
 fwboot`. `FW=` is read by `fwboot` (and `fwboot_cfg`, whose card is the
 same recipe); `fwboot_trap` ignores it: it relinks the firmware from the
 tree's sources plus `smoke_trap.o` into its run directory, so a `FW=` image
@@ -1004,8 +1004,9 @@ edge. The bench adds three lines (header of `tb_host_bridge.v`):
   `HOST_REQ` reads, and the reply bytes whose last `HOST_REQ` read before the
   write returned 0 (the wait ran into its bound).
 - `=== OSD RDY timeouts <t>`: the firmware's `osd_rdy_timeouts`, read from
-  the SDRAM model at the end (`run.sh` passes its address from
-  `RV32OSDA.map` as `+OSD_RDY_TO_ADDR`); **a BENCH ERROR if t != z**.
+  the SDRAM model at the end (`run.sh` passes its address from the GNU ld
+  map next to the image, `RV32OSDB.map`, as `+OSD_RDY_TO_ADDR`); **a
+  BENCH ERROR if t != z**.
 
 `XARGS=+STUB_RDY_DLY=-1` freezes the stub's sequence at 0: every wait of
 the firmware runs into its bound, except where cfide's 2-bit count wraps
@@ -1041,7 +1042,7 @@ git archive HEAD fw/ctrl tools/riscv | tar -x -C "$D"
 sed -i 's/if (!(HOST_REQ & HOST_REQ_OSD_RDY)) {/if (0) {/' "$D/fw/ctrl/hardware.c"
 grep -c 'if (0) {' "$D/fw/ctrl/hardware.c"
 make -C "$D/fw/ctrl" B="$D/fw/ctrl/build"
-SIM=verilator RUNTAG=fwvnp FW="$D/fw/ctrl/build/RV32OSDA.BIN" XARGS="+STUB_RDY_DLY=200 +OSD_MIN_GAP=0" bash sim/host_bridge/run.sh fwboot
+SIM=verilator RUNTAG=fwvnp FW="$D/fw/ctrl/build/RV32OSDB.BIN" XARGS="+STUB_RDY_DLY=200 +OSD_MIN_GAP=0" bash sim/host_bridge/run.sh fwboot
 ```
 
 (`grep -c` must print 1.) Expected: exit 1, `=== fwboot FAILED`, with

@@ -443,8 +443,8 @@ git archive HEAD fw/ctrl tools/riscv | tar -x -C "$D"
 sed -i 's/if (!(HOST_REQ & HOST_REQ_OSD_RDY)) {/if (0) {/' "$D/fw/ctrl/hardware.c"
 grep -c 'if (0) {' "$D/fw/ctrl/hardware.c"
 PATH="$FWD/dateshim:$PATH" make -s -C "$D/fw/ctrl" B="$D/build"
-SIM=verilator RUNTAG=m1c RDY_MUT=1 XARGS=+FAST_HW=1 FW="$FWD/fwrv/RV32OSDA.BIN" bash sim/l3/run.sh keys
-SIM=verilator RUNTAG=m2 FW="$D/build/RV32OSDA.BIN" bash sim/l3/run.sh keys
+SIM=verilator RUNTAG=m1c RDY_MUT=1 XARGS=+FAST_HW=1 FW="$FWD/fwrv/RV32OSDB.BIN" bash sim/l3/run.sh keys
+SIM=verilator RUNTAG=m2 FW="$D/build/RV32OSDB.BIN" bash sim/l3/run.sh keys
 ```
 
 (`grep -c` must print 1.) Both must exit 1 (`=== keys FAILED`): `m1c` with

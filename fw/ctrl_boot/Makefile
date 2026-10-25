@@ -7,6 +7,10 @@
 #   make size       size of the rv32imc image
 #   make im         rv32im (no compressed) build in build_im/, size printed
 #   make test       host minfat test (test/)
+#   make romvhd_check ROMVHD_OUT=<file>
+#                   the ROM VHDL made from the committed OSDBoot_rv.bin as
+#                   it is (not rebuilt) into <file>: fw/ctrl's check (i)
+#                   compares it with the committed OSDBoot_rv_ROM.vhd
 TOP := $(abspath ../..)
 include $(TOP)/tools/riscv/toolchain.mk
 
@@ -45,13 +49,19 @@ $(PROJECT).bin: $(BUILD)/$(PROJECT).elf
 
 # The ROM VHDL is the template prologue (entity renamed), the romgen word table
 # and the epilogue.  romgen is the shared tool in ../romgen.
+# $(call romvhd,<bin>,<entity>,<out>): the one recipe, for the committed
+# file and for romvhd_check
+romvhd = sed 's/soc_firmware/$(2)/' <rom_prologue.vhd >$(3) && $(ROMGEN) $(1) >>$(3) && cat rom_epilogue.vhd >>$(3)
 $(ROMGEN): ../romgen/romgen.c
 	$(MAKE) -C ../romgen
 
 %_ROM.vhd: %.bin $(ROMGEN) rom_prologue.vhd rom_epilogue.vhd
-	sed 's/soc_firmware/$*_ROM/' <rom_prologue.vhd >$@
-	$(ROMGEN) $*.bin >>$@
-	cat rom_epilogue.vhd >>$@
+	$(call romvhd,$*.bin,$*_ROM,$@)
+
+# no dependency on $(PROJECT).bin: the committed image as it is
+romvhd_check: $(ROMGEN) rom_prologue.vhd rom_epilogue.vhd
+	@[ -n "$(ROMVHD_OUT)" ] || { echo "romvhd_check: ROMVHD_OUT=<file> needed"; exit 1; }
+	@$(call romvhd,$(PROJECT).bin,$(PROJECT)_ROM,$(ROMVHD_OUT))
 
 # bootdiag.h is the committed 68k byte array; rebuild only if the source is
 # newer and vasm exists.
@@ -81,4 +91,4 @@ test:
 clean:
 	$(RM) -r build build_im test/out    # the committed OSDBoot_rv.bin / _ROM.vhd stay
 
-.PHONY: all check size im test clean
+.PHONY: all check size im test clean romvhd_check

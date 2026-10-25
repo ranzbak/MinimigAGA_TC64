@@ -65,7 +65,13 @@ The L2 run takes minutes: the UART prints at 115200 baud.
 
 ## Run on the board
 
-Needs a bitstream of this core (host CPU = VexRiscv).  Then: `make -C fw/dhrystone_rv RV32OSDA.BIN`, copy `RV32OSDA.BIN` to
+Needs a bitstream of this core (host CPU = VexRiscv) **from before the SD
+card peripheral** (the card on cfide's SPI): its boot ROM loads
+`RV32OSDA.BIN` with no lock-step trailer, and that is what this build makes.
+The boot ROM of the SD card peripheral (`fw/ctrl_boot` since SD card engine
+Task 12/13b) loads `RV32OSDB.BIN` and refuses a file without the 'SDCV'
+trailer, so this image does not run on those bitstreams; the build is left
+as it is.  Then: `make -C fw/dhrystone_rv RV32OSDA.BIN`, copy `RV32OSDA.BIN` to
 the root of the SD card, reset.  The boot ROM loads it and Dhrystone runs 200000
 passes (a few seconds) on the serial port; "Dhrystones per Second" and
 "VAX MIPS rating * 1000" (= DMIPS x 1000) are printed from the TIMER (5.8 ms

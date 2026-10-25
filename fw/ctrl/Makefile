@@ -225,15 +225,24 @@ check_h: $(B)/$(FW_FILE)
 #     committed boot ROM image (the .bin the ROM VHDL is generated from,
 #     i.e. what the bitstream gets); .clangd's -DOSDNAME (the editor's copy
 #     of fw/ctrl_boot's DEFS) names it too.  A changed fwname.mk without a
-#     regenerated, committed boot ROM fails here.
+#     regenerated, committed boot ROM fails here.  And the committed
+#     OSDBoot_rv_ROM.vhd (what the bitstream build compiles) must be the one
+#     made from that .bin: fw/ctrl_boot's own recipe (make romvhd_check)
+#     writes it into $(B) and cmp compares.
 BOOT_BIN := $(TOP)/fw/ctrl_boot/OSDBoot_rv.bin
+BOOT_VHD := $(TOP)/fw/ctrl_boot/OSDBoot_rv_ROM.vhd
 check_i: $(B)/$(FW_FILE)
 	@f=$(notdir $<); n=`echo $$f | tr -d .`; rc=0; \
 	case $$f in ????????.???) ;; *) echo "check (i) FAIL: $$f is not an 8.3 name of 8 + 3 characters"; exit 1 ;; esac; \
 	if ! LC_ALL=C grep -qaF "$$n" $(BOOT_BIN); then \
 	  echo "check (i) FAIL: the boot ROM image $(BOOT_BIN) does not look for $$n (its RV32*BIN names: `LC_ALL=C grep -aoE 'RV32[A-Z0-9]{4}BIN' $(BOOT_BIN) | tr '\n' ' '`; make -C fw/ctrl_boot, commit both outputs)"; rc=1; fi; \
 	if ! grep -qF -- "-DOSDNAME=\"$$n\"" $(TOP)/.clangd; then echo "check (i) FAIL: .clangd's -DOSDNAME is not \"$$n\""; rc=1; fi; \
-	if [ $$rc = 0 ]; then echo "check (i) pass: the boot ROM image and .clangd look for $$n = $$f"; fi; exit $$rc
+	v=$(abspath $(B))/OSDBoot_rv_ROM.vhd.check; rm -f $$v; \
+	if ! $(MAKE) -s --no-print-directory -C $(TOP)/fw/ctrl_boot romvhd_check ROMVHD_OUT=$$v >/dev/null || [ ! -s $$v ]; then \
+	  echo "check (i) FAIL: could not make the ROM VHDL from $(BOOT_BIN) (make -C fw/ctrl_boot romvhd_check)"; rc=1; \
+	elif ! cmp -s $$v $(BOOT_VHD); then \
+	  echo "check (i) FAIL: the committed $(BOOT_VHD) is not the one made from OSDBoot_rv.bin ($$v; make -C fw/ctrl_boot, commit both outputs)"; rc=1; fi; \
+	if [ $$rc = 0 ]; then echo "check (i) pass: the boot ROM image and .clangd look for $$n = $$f, OSDBoot_rv_ROM.vhd = the VHDL of OSDBoot_rv.bin"; fi; exit $$rc
 
 # the 20 largest stack frames of the firmware (-fstack-usage: bytes, kind)
 stack: $(OBJS)

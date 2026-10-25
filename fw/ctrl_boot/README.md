@@ -9,7 +9,10 @@ it.
 The name is written once, in `fw/ctrl/fwname.mk` (`FW_83` = `RV32OSDBBIN`,
 the 8.3 directory entry; the Makefile passes it as `OSDNAME`), which
 `fw/ctrl/Makefile` reads for its output file too; `make -C fw/ctrl check`
-(i) fails when the committed `OSDBoot_rv.bin` looks for another name.
+(i) fails when the committed `OSDBoot_rv.bin` looks for another name or the
+committed `OSDBoot_rv_ROM.vhd` is not the VHDL of that `.bin` (`make
+romvhd_check ROMVHD_OUT=<file>` writes it with the same recipe as the
+committed file).
 
 It was ported from the boot ROM of the previous host CPU, the EightThirtyTwo
 (`fw/ctrl_boot_832` at commit **8340590**, retired in Phase 9; last state in
