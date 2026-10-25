@@ -1,0 +1,49 @@
+1 cmd a0
+1 xfer 6 1
+1 tf 00 01 00 fe ff a0
+1 st 04
+1 pkt
+1 xfer 4096 1
+1 tf 00 02 00 00 20 a0
+1 st 08
+1 in 8192
+1 xfer 4096 1
+1 tf 00 02 00 00 20 a0
+1 st 08
+1 in 8192
+1 xfer 1024 1
+1 tf 00 02 00 00 08 a0
+1 st 08
+1 in 2048
+1 tf 00 03 00 fe ff a0
+1 st 90
+1 cmd a0
+1 xfer 6 1
+1 tf 00 01 00 00 10 a0
+1 st 04
+1 pkt
+1 xfer 2048 1
+1 tf 00 02 00 00 10 a0
+1 st 08
+1 in 4096
+1 xfer 1024 1
+1 tf 00 02 00 00 08 a0
+1 st 08
+1 in 2048
+1 tf 00 03 00 00 10 a0
+1 st 90
+1 cmd a0
+1 xfer 6 1
+1 tf 00 01 00 00 08 a0
+1 st 04
+1 pkt
+1 xfer 1024 1
+1 tf 00 02 00 00 08 a0
+1 st 08
+1 in 2048
+1 xfer 1024 1
+1 tf 00 02 00 00 08 a0
+1 st 08
+1 in 2048
+1 tf 00 03 00 00 08 a0
+1 st 90

@@ -217,6 +217,33 @@ run32-hdd_test: $(B)/hdd_test_32 $(B)/hdd/hdd.img
 run-hdd_test: run64-hdd_test run32-hdd_test
 .PHONY: run-hdd_test run64-hdd_test run32-hdd_test
 
+# cdpath_test: the CD-ROM data path on the SD card peripheral
+# (findings/sdcard-engine Task 11b): the real cdrom.c (atapi.c, cue.c,
+# cdaudio.c) and hdd.c over fat.c + mmc.c + sdproto.c on the card model,
+# driven by the main loop's disk pass (PollDisks + HandleFpga, cut out of
+# main.c) and a two-port mock Gayle (the CD in packet mode on port 2, an ATA
+# disk on port 1).  The card: gold/cdcard.py's TEST.ISO (fragmented by
+# cdcard.sh), DISC.CUE, TRACK2.WAV.  cd_read_order against gold/cd_read10.txt,
+# recorded on the synchronous CD path before Task 11b (CD_GOLD_WRITE=1).
+CDP_SRCS = $(HDD_SRCS) $(SRC)/cdrom.c $(SRC)/atapi.c $(SRC)/rafile.c
+$(B)/cd/files.ok: $(GOLD)/cdcard.py
+	@mkdir -p $(@D)
+	$(PY) $(GOLD)/cdcard.py $(@D)
+	touch $@
+$(B)/cd/cd.img: $(B)/cd/files.ok $(TD)/cdcard.sh $(TOP)/tools/sim/mkcard.sh
+	bash $(TD)/cdcard.sh $@ $(B)/cd $(TOP)/tools/sim/mkcard.sh
+$(B)/cdpath_test $(B)/cdpath_test_32: $(B)/handlefpga.inc
+$(B)/cdpath_test: $(TD)/cdpath_test.c $(CDP_SRCS) $(HDRS)
+	$(HOSTCC) $(CFLAGS) -o $@ $(TD)/cdpath_test.c $(CDP_SRCS)
+$(B)/cdpath_test_32: $(TD)/cdpath_test.c $(CDP_SRCS) $(HDRS)
+	$(HOSTCC) -m32 $(CFLAGS) -o $@ $(TD)/cdpath_test.c $(CDP_SRCS)
+run64-cdpath_test: $(B)/cdpath_test $(B)/cd/cd.img
+	$(B)/cdpath_test $(B)/cd $(GOLD)/cd_read10.txt
+run32-cdpath_test: $(B)/cdpath_test_32 $(B)/cd/cd.img
+	$(B)/cdpath_test_32 $(B)/cd $(GOLD)/cd_read10.txt
+run-cdpath_test: run64-cdpath_test run32-cdpath_test
+.PHONY: run-cdpath_test run64-cdpath_test run32-cdpath_test
+
 # fdd_test: the floppy emulation (Task 13): ReadTrack's MFM track streams and
 # WriteTrack's decoder (FindSync/GetHeader/GetData) behind a mock paula_floppy,
 # against gold/mfm.py (an independent Amiga MFM encoder).  The golden streams
@@ -351,7 +378,7 @@ check_io: $(SRC)/check_io.awk $(TD)/check_io.sh $(wildcard $(TD)/check_io/*)
 
 run: fmt check_io cardpath run-mock_selftest run-cue_test run-cdaudio_test run-atapi_test run-cdrom_test \
      run-openhf_test run-lib_test run-hwmap_test run-spireply_test run-diskstat_test run-swap_test run-fat_test run-mmc_test \
-     run-config_test run-hdd_test run-fdd_test run-drivesounds_test run-boot_test run-sdc_test run-sdproto_test run-rom_test
+     run-config_test run-hdd_test run-cdpath_test run-fdd_test run-drivesounds_test run-boot_test run-sdc_test run-sdproto_test run-rom_test
 
 clean:
 	$(RM) -r out mut
