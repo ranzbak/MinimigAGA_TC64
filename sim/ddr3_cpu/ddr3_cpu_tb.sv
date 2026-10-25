@@ -711,8 +711,10 @@ end
 // is sampled directly to keep the two apart; snoop_wr is the cache's own
 // invalidate decision on that same edge.
 `ifdef AP040_FASTER
-// the faster core has no snoop port (the bridge keeps chip RAM out of its
-// caches with TCI): the --snoop leg does not apply
+// the faster core's snoop path is the bridge's side-band invalidation of
+// the instruction cache (rtl/soc/ap68040_minimig.sv; sim/ap040_bridge tests
+// it), not the reference core's cache port the --snoop leg probes: the leg
+// does not apply
 wire core_snp_stb = 1'b0;
 wire core_snp_wr  = 1'b0;
 wire [31:0] core_snp_addr = 32'd0;
@@ -977,6 +979,9 @@ TG68K #(.cpu_clk_ratio(`CPU_RATIO), .chip32(CHIP32_GEN)) tg68k (
     .aga            (1'b1             ),
     .turbochipram   (turbochipram     ),
     .fastchip       (fastchip         ),
+    // 2 MB chip RAM, no ROM overlay: the faster core caches code from chip
+    // RAM (TG68K.vhd ap040_fast_ichip; findings/aga-perf/fix.md)
+    .ichip_ok       (1'b1             ),
     .turbokick      (1'b0             ),
     .cache_inhibit  (cache_inhibit    ),
     .cacheline_clr  (cacheline_clr    ),

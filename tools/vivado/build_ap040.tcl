@@ -457,9 +457,12 @@ if {$faster} {
     set fdc1  [expr {[info exists ::env(FAST_DC1ATC)] && $::env(FAST_DC1ATC) eq "0" ? 0 : 1}]
     # FAST_BTIC=0: the fetch BTB without its target words (BTIC)
     set fbtic [expr {[info exists ::env(FAST_BTIC)] && $::env(FAST_BTIC) eq "0" ? 0 : 1}]
+    # FAST_ICHIP=0: code from chip/slow RAM and the ROM stays out of the
+    # instruction cache, as before (the A/B leg; findings/aga-perf/fix.md)
+    set fichip [expr {[info exists ::env(FAST_ICHIP)] && $::env(FAST_ICHIP) eq "0" ? 0 : 1}]
     set free_core 1
-    set pipe_gen " AP040_FASTER=1 AP040_FREE_CORE=1 AP040_FAST_DUAL=$fdual AP040_FAST_DC1ATC=$fdc1 AP040_FAST_BTIC=$fbtic"
-    puts "build_ap040.tcl: FASTER core from $P (DUAL=$fdual DC1_ATC=$fdc1 BTIC=$fbtic, CPU_CLK_DIVIDE $cpudiv, [llength $pipe_off] lib/AP68040 files disabled)"
+    set pipe_gen " AP040_FASTER=1 AP040_FREE_CORE=1 AP040_FAST_DUAL=$fdual AP040_FAST_DC1ATC=$fdc1 AP040_FAST_BTIC=$fbtic AP040_FAST_ICHIP=$fichip"
+    puts "build_ap040.tcl: FASTER core from $P (DUAL=$fdual DC1_ATC=$fdc1 BTIC=$fbtic ICHIP=$fichip, CPU_CLK_DIVIDE $cpudiv, [llength $pipe_off] lib/AP68040 files disabled)"
 } elseif {$pipe_dir ne ""} {
     set P [file normalize $pipe_dir]/rtl
     foreach f [get_files -quiet -of_objects [get_filesets sources_1] $R/lib/AP68040/rtl/*.v] {

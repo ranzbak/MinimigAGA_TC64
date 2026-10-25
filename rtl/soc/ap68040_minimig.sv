@@ -23,12 +23,26 @@
 //  * TBI is held asserted: a line transfer runs as four long-word          //
 //    transfers (MC68040UM 7.4.4), each a request here.                    //
 //  * TCI (MC68040UM 4.3.2) is asserted for every transfer outside the     //
-//    configured Zorro II/III fast RAM: only fast RAM enters the caches,  //
-//    whatever the MMU and the TTRs say (with translation off a 68040     //
-//    caches everything).  Chip RAM changes under chipset DMA, which this //
-//    core does not snoop, and old programs modify code there without     //
-//    flushing; device registers, the ROM and the RTG space stay out too. //
-//    A TCI line is never allocated, in either cache.                      //
+//    configured Zorro II/III fast RAM, with one exception (ICHIP = 1):   //
+//    instruction fetches from chip RAM, slow RAM and the Kickstart ROM   //
+//    go into the instruction cache, as on every 68020/030/040 Amiga --   //
+//    a stock A1200 runs its chip-RAM loops from the 68020's cache.  Data //
+//    from those stays out (chip RAM changes under chipset DMA, which the //
+//    data cache does not see), and so does everything else: device       //
+//    registers, autoconfig, the RTG space, undecoded space.  A TCI line  //
+//    is never allocated, in either cache.  ICHIP = 0 is the old rule     //
+//    (only fast RAM cached), for an A/B comparison.                       //
+//  * Code in the instruction cache is kept coherent with the writes this //
+//    bridge can see (the core's xinv port): the processor's own bus      //
+//    writes there (presented with TS: the core holds the store at WB     //
+//    until the line is out, and refetches what follows it if the line    //
+//    held code -- old programs modify code without CINV/CPUSH, which a   //
+//    68040 does not promise to run, 4.5), and the chipset's DMA writes    //
+//    to chip RAM (snoop_stb/snoop_addr: every write sdram_ctrl makes in  //
+//    a chip slot -- the blitter, disk DMA, the processor's own over the  //
+//    chip bus).  A 4 KB-page filter keeps writes to chip pages no fetch  //
+//    has cached away from the core (bitplanes, sound buffers, blits).    //
+//    findings/aga-perf/fix.md.                                            //
 //  * An interrupt acknowledge (TT = 3) is answered at once with AVEC: the  //
 //    Amiga autovectors every level.  A breakpoint acknowledge gets TA,     //
 //    which makes BKPT an illegal instruction.                              //
@@ -37,9 +51,9 @@
 //  * Byte and word write data come from the 68040's byte lanes (table     //
 //    7-1); read data is replicated on every lane of its size, so the      //
 //    core's own lane select finds it wherever it looks.                   //
-//  * BG is held asserted and there is no other master: no snooping and no //
-//    arbitration.  A locked sequence needs nothing: this slave runs one   //
-//    transfer at a time.                                                  //
+//  * BG is held asserted and there is no other master: no bus snooping   //
+//    (the side-band xinv above instead) and no arbitration.  A locked     //
+//    sequence needs nothing: this slave runs one transfer at a time.     //
 //--------------------------------------------------------------------------//
 
 module ap68040_minimig
@@ -56,7 +70,8 @@ module ap68040_minimig
 	parameter bit         PSTAT        = 1,      // debug_fe: dual-issue counters, not the core's dbg_fe
 	parameter logic [2:0] S1_CLASSES   = 3'b011, // the second slot's classes {load, An, Dn}: loads off (core 6985f7d)
 	parameter logic [3:0] S1_LDMASK    = 4'b1111, // ... the loads {TST, ALU, MOVEA.L, MOVE} (a debug switch)
-	parameter bit         S1_LDTK      = 1       // ... a load companion at a BTB-taken target (a debug switch)
+	parameter bit         S1_LDTK      = 1,      // ... a load companion at a BTB-taken target (a debug switch)
+	parameter bit         ICHIP        = 1       // code from chip/slow RAM and the ROM into the I-cache (0: fast RAM only)
 )
 (
 	input  logic        clk,            // the processor clock (clk_cpu)
@@ -69,6 +84,16 @@ module ap68040_minimig
 	input  logic        z3ram_ena0,
 	input  logic  [3:0] z3ram_base1,    // 256 MB block
 	input  logic        z3ram_ena1,
+	// the instruction-cacheable window (ICHIP), registered on clk by the
+	// wrapper: chip RAM is 2 MB with the ROM overlay off (no mirrors, and
+	// $000000 is RAM), and gary's slow RAM configuration
+	input  logic        ichip_ena,
+	input  logic  [1:0] slow_cfg,
+
+	// chipset DMA writes to chip RAM (sdram_ctrl's chip-slot writes, held
+	// by the wrapper for exactly one clk edge): the byte address
+	input  logic        snoop_stb,
+	input  logic [31:0] snoop_addr,
 
 	// the wrapper's master port (see above)
 	output logic        mem_req,
@@ -88,6 +113,8 @@ module ap68040_minimig
 	output logic [31:0] cacr_out,
 	output logic [31:0] vbr_out,
 	output logic        cache_maint,    // one-clk pulse per completed CINV/CPUSH
+	output logic        mem_cach,       // the transfer may be cached (TCI negated), with mem_req
+	output logic        xinv_out,       // an instruction-cache invalidation pushed (observation)
 	output logic        debug_halted,
 	output logic [31:0] debug_pc,
 	output logic [383:0] debug_fe      // observation only: PSTAT ? the counters : the core's dbg_fe
@@ -103,6 +130,8 @@ logic  [2:0] tm;
 logic  [2:0] ipl_r;
 logic [383:0] core_fe;
 logic  [63:0] pev;
+logic        xinv;
+logic [31:0] xinv_pa;
 
 // IPL comes from the clk_114 chipset side; one register here, the core's
 // own sampling does the rest
@@ -115,8 +144,9 @@ ap68040 #(
 ) core (
 	.clk(clk), .bclk_en(1'b1), .rsti_n(nreset),
 	.a_o(a_o), .a_oe(),
-	// no other master: nothing to snoop
+	// no other master: nothing to snoop on the bus (xinv instead)
 	.a_i(32'd0), .ts_n_i(1'b1), .rw_n_i(1'b1), .siz_i(2'd0), .tt_i(2'd0), .sc(2'd0),
+	.xinv(xinv), .xinv_pa(xinv_pa),
 	.mi_n(), .ta_n_o(), .ta_oe(),
 	.d_i(d_i), .d_o(d_o), .d_oe(),
 	.rw_n(rw_n), .siz(siz), .tt(tt), .tm(tm), .tln(), .upa(),
@@ -132,6 +162,7 @@ ap68040 #(
 );
 
 assign nresetout = rsto_n;
+assign mem_cach  = cach;
 
 //--------------------------------------------------------------------------
 // the transfer to request conversion
@@ -172,6 +203,22 @@ function automatic logic fastram(input logic [31:0] a, input logic z2, input log
 	          ((a[31:24] == 8'd0) && (a[23] ^ |a[22:21]) && z2);
 endfunction
 
+// the instruction-cacheable window beside fast RAM (ICHIP), as gary and
+// TG68K.vhd decode it: chip RAM $000000-$1FFFFF (2 MB, no overlay), slow
+// RAM $C00000-$D7FFFF as configured, the ROMs $E00000-$E7FFFF and
+// $F00000-$FFFFFF (read-only to the processor)
+function automatic logic chipwin(input logic [31:0] a);
+	chipwin = (a[31:21] == 11'd0);
+endfunction
+function automatic logic slowwin(input logic [31:0] a, input logic [1:0] cfg);
+	slowwin = (a[31:24] == 8'd0) &&
+	          (((a[23:20] == 4'hC) && ((!a[19] && cfg != 2'b00) || (a[19] && cfg[1]))) ||
+	           ((a[23:19] == 5'b11010) && cfg == 2'b11));
+endfunction
+function automatic logic romwin(input logic [31:0] a);
+	romwin = (a[31:24] == 8'd0) && ((a[23:20] == 4'hF) || (a[23:19] == 5'b11100));
+endfunction
+
 localparam logic [1:0] C_IDLE = 2'd0,   // waiting for TS
                        C_REQ  = 2'd1,   // the request is with the wrapper
                        C_ACK  = 2'd2,   // TA or TEA driven this bus clock
@@ -184,6 +231,61 @@ logic       cach;       // the transfer's address is in the cacheable window
 
 wire ts   = !ts_n;
 wire iack = (tt == 2'd3);   // interrupt or breakpoint acknowledge
+wire code = (tm == 3'd2) || (tm == 3'd6);   // user, supervisor program space
+
+//--------------------------------------------------------------------------
+// instruction-cache coherency (ICHIP): the page filter and the pushes
+//--------------------------------------------------------------------------
+// pres: the chip RAM pages (4 KB) an instruction fetch has asked to cache
+// since reset -- a superset of the pages the instruction cache holds lines
+// of (a bit is set as the fetch's TS goes out, before any of its data is
+// read, and stays set: CINV and evictions never clear it).  A write to a
+// page whose bit is clear cannot hit code.  Cleared by a sweep while the
+// processor is held in reset (an interrupted sweep leaves bits set: safe).
+logic       pres [512];
+logic [8:0] pres_sw;
+initial for (int i = 0; i < 512; i++) pres[i] = 1'b0;
+wire  [8:0] pres_wa   = !nreset ? pres_sw : a_o[20:12];
+wire        pres_we   = ICHIP && (!nreset || (ts && !iack && rw_n && code && chipwin(a_o) && ichip_ena));
+always_ff @(posedge clk) begin
+	if (pres_we) pres[pres_wa] <= nreset;
+	pres_sw <= nreset ? 9'd0 : pres_sw + 9'd1;
+end
+
+// the processor's own bus write (self-snoop), with TS: it reaches the core
+// before the write can complete (the core holds the store at WB until the
+// invalidation has run)
+wire        self_v = ICHIP && nreset && ts && !iack && !rw_n &&
+                     ((chipwin(a_o) && pres[a_o[20:12]]) || slowwin(a_o, slow_cfg) || romwin(a_o));
+
+// the chipset's writes: snoop_addr is the chip bus's SDRAM address, which
+// for chip RAM ($000000-$1FFFFF) is the processor's (2 MB, no mirrors);
+// slow RAM and the ROM are the processor's alone (self_v).  One register
+// in, then a pending push that yields to a self-snoop (they come at most
+// one per chip slot, every eight clocks or more; a self-snoop at most
+// every other clock)
+logic        sn_v, dq_v;
+logic [31:0] sn_a, dq_pa;
+always_ff @(posedge clk) begin
+	sn_v <= snoop_stb;
+	sn_a <= snoop_addr;
+	if (!nreset || !ICHIP) dq_v <= 1'b0;
+	else begin
+		if (!self_v) dq_v <= 1'b0;
+		if (sn_v && chipwin(sn_a) && pres[sn_a[20:12]]) begin
+			dq_v  <= 1'b1;
+			dq_pa <= sn_a;
+		end
+	end
+end
+assign xinv     = self_v || dq_v;
+assign xinv_pa  = self_v ? a_o : dq_pa;
+assign xinv_out = xinv;
+// synthesis translate_off
+always_ff @(posedge clk)
+	if (nreset && dq_v && self_v && sn_v && chipwin(sn_a) && pres[sn_a[20:12]])
+		$display("FAIL: ap68040_minimig: a chipset snoop overwrote a pending one");
+// synthesis translate_on
 
 always_ff @(posedge clk) begin
 	ta_n  <= 1'b1;
@@ -213,7 +315,8 @@ always_ff @(posedge clk) begin
 			mem_addr  <= a_o;
 			mem_wdata <= wlane(siz, a_o[1:0], d_o);
 			mem_fc    <= tm;
-			cach      <= fastram(a_o, z2ram_ena, z3ram_base0, z3ram_ena0, z3ram_base1, z3ram_ena1);
+			cach      <= fastram(a_o, z2ram_ena, z3ram_base0, z3ram_ena0, z3ram_base1, z3ram_ena1) ||
+			             (ICHIP && code && ((chipwin(a_o) && ichip_ena) || slowwin(a_o, slow_cfg) || romwin(a_o)));
 		end
 		// an acknowledge cycle is answered at once, in any state
 		if (ts && iack) begin

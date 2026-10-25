@@ -83,6 +83,10 @@ module minimig_openaars_top #(
   parameter AP040_FAST_DUAL = 1,
   parameter AP040_FAST_DC1ATC = 1,
   parameter AP040_FAST_BTIC = 1,
+  // the faster core caches code from chip/slow RAM and the ROM, coherent
+  // with the CPU's own writes and chipset DMA (findings/aga-perf/fix.md);
+  // 0: only fast RAM is cached, as before (the A/B switch)
+  parameter AP040_FAST_ICHIP = 1,
   // AP68040 island clock divider: 30 = clk_114/3 (stage D3),
   // 40 = clk_114/4 (pre-D3 rate, D3 architecture otherwise intact),
   // 20 = clk_114/2 = 56.72 MHz (the faster core, AP040_FASTER = 1).
@@ -591,6 +595,7 @@ minimig_virtual_top
   .ap040_fast_dual(AP040_FAST_DUAL),
   .ap040_fast_dc1atc(AP040_FAST_DC1ATC),
   .ap040_fast_btic(AP040_FAST_BTIC),
+  .ap040_fast_ichip(AP040_FAST_ICHIP),
   .cpu_clk_divide(CPU_CLK_DIVIDE),
   .chip32(CHIP32),
   .CPU040_DEBUG_ILA(CPU040_DEBUG_ILA),

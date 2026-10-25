@@ -66,6 +66,7 @@ module minimig_virtual_top #(
     parameter ap040_fast_dual = 1,
     parameter ap040_fast_dc1atc = 1,
     parameter ap040_fast_btic = 1,
+    parameter ap040_fast_ichip = 1,
     parameter cpu_clk_divide = 30,
     // 1: an aligned longword to chip RAM is one chipset cycle, as on the AGA
     // machines' 32-bit chip bus (TG68K.vhd generic chip32; findings/chip32/plan.md)
@@ -279,6 +280,7 @@ wire [383:0]   dbg_phist;
 // Stage E0 RTG diagnosis; see TG68K.vhd's dbg_rtg and probe9/10.
 wire [31:0]    dbg_rtg;
 wire           turbochipram;
+wire           ichip_ok;
 wire           turbokick;
 wire           fastchip;
 wire [1:0]     slow_config;
@@ -715,6 +717,7 @@ TG68K #(
     .ap040_fast_dual(ap040_fast_dual),
     .ap040_fast_dc1atc(ap040_fast_dc1atc),
     .ap040_fast_btic(ap040_fast_btic),
+    .ap040_fast_ichip(ap040_fast_ichip),
     // The island's clock RATIO, which the phase marker needs; the MMCM
     // divider is clk_114's (10) times it.
     .cpu_clk_ratio(cpu_clk_divide/10),
@@ -765,6 +768,7 @@ TG68K #(
     .turbochipram (turbochipram     ),
     .turbokick    (turbokick        ),
     .fastchip     (fastchip         ),
+    .ichip_ok     (ichip_ok         ),
     .slow_config  (slow_config      ),
     .aga          (aga              ),
     .cache_inhibit(cache_inhibit    ),
@@ -1308,6 +1312,7 @@ minimig #(
     .board_configured(board_configured),
     .z3ram3_base  (z3ram3_base      ), // -> TG68K, which decodes board 3 against it
     .turbochipram (turbochipram     ), // turbo chipRAM
+    .ichip_ok     (ichip_ok         ), // chip code may be cached (TG68K ap040_fast_ichip)
     .turbokick    (turbokick        ), // turbo kickstart
     .fastchip     (fastchip         ), // Chip slots Fast (findings/fastslot)
     .slow_config  (slow_config      ),

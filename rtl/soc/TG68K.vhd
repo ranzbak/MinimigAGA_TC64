@@ -66,6 +66,11 @@ entity TG68K is
 		ap040_fast_dc1atc  : integer := 1;
 		-- (faster core) the fetch BTB's target words (BTIC)
 		ap040_fast_btic    : integer := 1;
+		-- (faster core) code from chip RAM, slow RAM and the Kickstart ROM
+		-- into the instruction cache, kept coherent with the processor's own
+		-- writes and the chipset's DMA (rtl/soc/ap68040_minimig.sv ICHIP;
+		-- findings/aga-perf/fix.md).  0: only fast RAM is cached, as before.
+		ap040_fast_ichip   : integer := 1;
 		-- 1 (pipelined core only; findings/unfreeze/plan.md): the core runs on
 		-- every clk_cpu edge instead of being frozen while an m_* access is
 		-- outstanding.  The answers it takes from the clkena-gated side -- the
@@ -250,6 +255,10 @@ entity TG68K is
 		-- one chip cycle in two CCKs.  '0' (the default, and the hardware reset
 		-- state) is the 7 MHz machine exactly as before.
 		fastchip        : in     std_logic                     := '0';
+		-- Chip RAM is 2 MB and the ROM overlay is off (minimig.v ichip_ok):
+		-- code from chip RAM may enter the faster core's instruction cache
+		-- (ap040_fast_ichip).  '0', the default, keeps it out.
+		ichip_ok        : in     std_logic                     := '0';
 		cache_inhibit   : out    std_logic;
 		cacheline_clr   : out    std_logic;
 		--    ovr           : in      std_logic;
@@ -435,6 +444,10 @@ ARCHITECTURE logic OF TG68K IS
 	SIGNAL cz3_ena0        : std_logic := '0';
 	SIGNAL cz3_base1       : std_logic_vector(3 downto 0) := (others => '0');
 	SIGNAL cz3_ena1        : std_logic := '0';
+	-- the faster core's instruction-cacheable window (ichip_ok, gary's slow
+	-- RAM configuration), registered on clk_cpu the same way
+	SIGNAL cichip_ok       : std_logic := '0';
+	SIGNAL cslow_cfg       : std_logic_vector(1 downto 0) := "00";
 	-- SIGNAL eth_base         : std_logic_vector(7 downto 0);
 	-- SIGNAL eth_cfgd         : std_logic;
 	SIGNAL sel_z2ram       : std_logic;
@@ -818,7 +831,8 @@ ARCHITECTURE logic OF TG68K IS
 		GENERIC(
 			DC1_ATC : bit := '1';
 			DUAL    : bit := '1';
-			BTIC    : bit := '1'
+			BTIC    : bit := '1';
+			ICHIP   : bit := '1'
 		);
 		PORT(
 			clk          : in  std_logic;
@@ -828,6 +842,10 @@ ARCHITECTURE logic OF TG68K IS
 			z3ram_ena0   : in  std_logic;
 			z3ram_base1  : in  std_logic_vector(3 downto 0);
 			z3ram_ena1   : in  std_logic;
+			ichip_ena    : in  std_logic;
+			slow_cfg     : in  std_logic_vector(1 downto 0);
+			snoop_stb    : in  std_logic;
+			snoop_addr   : in  std_logic_vector(31 downto 0);
 			mem_req      : out std_logic;
 			mem_write    : out std_logic;
 			mem_instr    : out std_logic;
@@ -843,6 +861,8 @@ ARCHITECTURE logic OF TG68K IS
 			cacr_out     : out std_logic_vector(31 downto 0);
 			vbr_out      : out std_logic_vector(31 downto 0);
 			cache_maint  : out std_logic;
+			mem_cach     : out std_logic;
+			xinv_out     : out std_logic;
 			debug_halted : out std_logic;
 			debug_pc     : out std_logic_vector(31 downto 0);
 			debug_fe     : out std_logic_vector(383 downto 0)
@@ -904,6 +924,8 @@ BEGIN
 			cz3_ena0  <= z3ram_ena;
 			cz3_base1 <= z3ram3_base(7 downto 4);
 			cz3_ena1  <= z3ram3_ena;
+			cichip_ok <= ichip_ok;
+			cslow_cfg <= slow_config;
 		END IF;
 	END PROCESS;
 
@@ -1698,21 +1720,29 @@ BEGIN
 
 		-- The faster core.  It walks its own translation tables over its own
 		-- bus, so the wrapper's walker is idle (wk_req tied low: wk_go never
-		-- rises and the master mux is m_* alone), and it has no snoop port:
-		-- the bridge keeps everything but fast RAM out of its caches with TCI,
-		-- and nothing but the CPU writes fast RAM.  Its answers are pc_ack /
-		-- pc_rdata, the free-running core's one-pulse handshake.
+		-- rises and the master mux is m_* alone), and it has no bus snoop:
+		-- the bridge keeps everything but fast RAM out of its caches with TCI
+		-- (nothing but the CPU writes fast RAM) -- except, with
+		-- ap040_fast_ichip, code from chip/slow RAM and the ROM, which it keeps
+		-- coherent through the core's side-band invalidation, fed with the
+		-- CPU's own writes and the chipset DMA snoop held below
+		-- (snp_stb_held).  Its answers are pc_ack / pc_rdata, the
+		-- free-running core's one-pulse handshake.
 		g_fast : IF ap040_faster /= 0 GENERATE
 			SIGNAL f_pc  : std_logic_vector(31 downto 0);
 			SIGNAL f_ack : std_logic;
 			SIGNAL f_vec : std_logic;
 			SIGNAL f_dat : std_logic_vector(31 downto 0);
+			SIGNAL f_cach : std_logic;
+			SIGNAL f_xinv : std_logic;
+			SIGNAL f_xsn  : std_logic := '0';
 		BEGIN
 			ap040 : COMPONENT ap68040_minimig
 				GENERIC MAP(
 					DC1_ATC => to_bit(ap040_fast_dc1atc),
 					DUAL    => to_bit(ap040_fast_dual),
-					BTIC    => to_bit(ap040_fast_btic)
+					BTIC    => to_bit(ap040_fast_btic),
+					ICHIP   => to_bit(ap040_fast_ichip)
 				)
 				PORT MAP(
 					clk          => clk_cpu,
@@ -1722,6 +1752,12 @@ BEGIN
 					z3ram_ena0   => cz3_ena0,
 					z3ram_base1  => cz3_base1,
 					z3ram_ena1   => cz3_ena1,
+					ichip_ena    => cichip_ok,
+					slow_cfg     => cslow_cfg,
+					-- the chipset's DMA writes, held for one clk_cpu edge (see
+					-- snp_stb_held): code they hit leaves the instruction cache
+					snoop_stb    => snp_stb_held,
+					snoop_addr   => snp_addr_held,
 					mem_req      => m_req,
 					mem_write    => m_write,
 					mem_instr    => m_instr,
@@ -1737,6 +1773,8 @@ BEGIN
 					cacr_out     => OPEN,
 					vbr_out      => VBR_out_w,
 					cache_maint  => ap040_maint,
+					mem_cach     => f_cach,
+					xinv_out     => f_xinv,
 					debug_halted => ap040_halt,
 					debug_pc     => f_pc,
 					debug_fe     => f_dbgfe
@@ -1750,19 +1788,34 @@ BEGIN
 			-- core: dbg_pc carries the transfer's data (the write data, or the
 			-- read data at the acknowledge), dbg_rtg the master address,
 			-- dbg_ir the control bits {req, ack, we, instr, size(2), fc(3),
-			-- halted, 000000}, dbg_flags(3) "the access-fault vector is being
+			-- halted, cach, xinv, 0000}, dbg_flags(3) "the access-fault vector is being
 			-- read" (VBR + 8 or + 12, supervisor data), the trigger of
 			-- tools/vivado/ila_cpu040_capture.tcl mode "fast".  Its storage
 			-- qualifier is ack, so each transfer is recorded once per clk_114
 			-- sample of it (twice: the ILA runs at twice the core's clock).
+			-- cach: the transfer may be cached (the bridge negates TCI: fast
+			-- RAM, or with ICHIP an instruction fetch from chip/slow RAM or
+			-- the ROM); xinv: an instruction-cache invalidation was pushed
+			-- since the previous acknowledge (or with this one).
 			f_ack       <= m_req AND pc_ack;
+			PROCESS(clk_cpu)
+			BEGIN
+				IF rising_edge(clk_cpu) THEN
+					IF f_ack = '1' THEN
+						f_xsn <= f_xinv;
+					ELSIF f_xinv = '1' THEN
+						f_xsn <= '1';
+					END IF;
+				END IF;
+			END PROCESS;
 			f_vec       <= '1' WHEN m_req = '1' AND pc_ack = '1' AND m_write = '0' AND m_fc = "101"
 			                        AND (m_addr = VBR_out_w + X"00000008" OR m_addr = VBR_out_w + X"0000000C")
 			               ELSE '0';
 			ap040_busy  <= m_req;
 			ap040_fault <= f_vec;
 			ap040_dbg1  <= (255 DOWNTO 64 => '0') &
-			               m_req & f_ack & m_write & m_instr & m_size & m_fc & ap040_halt & "000000" &
+			               m_req & f_ack & m_write & m_instr & m_size & m_fc & ap040_halt &
+			               f_cach & (f_xsn OR f_xinv) & "0000" &
 			               X"0000" & f_dat;
 			f_dat       <= m_wdata WHEN m_write = '1' ELSE pc_rdata;
 			ap040_dbg2  <= (OTHERS => '0');

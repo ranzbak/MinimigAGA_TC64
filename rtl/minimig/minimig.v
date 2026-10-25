@@ -263,6 +263,7 @@ module minimig #(
   output  [4:0] board_configured,
   output  [7:0] z3ram3_base, // A31-A24 the OS gave the third ZIII RAM board
   output  turbochipram,
+  output  ichip_ok,           // chip RAM is 2 MB, no ROM overlay: a CPU may cache code from it
   output  turbokick,
   output  fastchip,           // Chip slots Fast: the CPU wrapper ends a chipset cycle with its slot (findings/fastslot)
   output  [1:0] slow_config,
@@ -541,6 +542,11 @@ assign pwr_led = (_led & !hblank_out) ? 1'b0 : 1'b1; // led dim at off-state and
 // turbo chipram only when in AGA mode, no overlay is active, cpu_config[2] (fast chip) is enabled and Agnus allows CPU on the bus and chipRAM=2MB
 assign turbochipram = chipset_config[4] && !ovl && cpu_config[2] && (&memory_config[1:0]);
 //assign turbochipram = chipset_config[4] && !ovl && (cpu_config[2] || cpu_custom) && (&memory_config[1:0]); // TODO fix turbochipram
+
+// code from chip RAM may enter a CPU's instruction cache (the AP68040 faster
+// core's, TG68K.vhd ap040_fast_ichip): chip RAM is 2 MB, so $000000-$1FFFFF
+// has no mirrors, and no overlay is active, so $000000 is RAM, not the ROM
+assign ichip_ok = !ovl && (&memory_config[1:0]);
 
 // turbo kickstart only when no overlay is active and cpu_config[3] (fast kick) enabled and AGA mode is enabled
 assign turbokick = !ovl && cpu_config[3] && chipset_config[4];
