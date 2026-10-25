@@ -43,9 +43,11 @@ unsigned char MMCErr;
 // read with no buffer goes into that port's Gayle FIFO
 unsigned char ide_port;
 
-static unsigned char op_run(sd_op *op, const char *what)
+// the result of an op that has ended (sd_sync's here; the HDD data path's
+// own async ops, findings/sdcard-engine Task 11a): MMCErr, ERROR_SDCARD
+unsigned char MMC_OpResult(const sd_op *op, const char *what)
 {
-    MMCErr = (unsigned char)sd_sync(op);
+    MMCErr = (unsigned char)op->err;
     if (MMCErr == SD_OK)
         return 1;
     if (MMCErr == SD_E_GONE && sd_card_changed())
@@ -53,6 +55,12 @@ static unsigned char op_run(sd_op *op, const char *what)
     else if (MMCErr != SD_E_GAYLE)
         SetError(ERROR_SDCARD, (char *)what, (int)(op->lba + op->done_blocks), MMCErr);
     return 0;
+}
+
+static unsigned char op_run(sd_op *op, const char *what)
+{
+    sd_sync(op);
+    return MMC_OpResult(op, what);
 }
 
 // init memory card (the firmware's start, ColdBoot): the card type,

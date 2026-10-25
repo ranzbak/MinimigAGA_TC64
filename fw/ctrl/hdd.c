@@ -78,21 +78,21 @@ static void RDBChecksum(uint32_t *p)
 
 
 // If the hardfile doesn't have a RigidDiskBlock,
-// we synthesize one.
-static void FakeRDB(int unit,int block)
+// we synthesize one (into buf, 512 bytes).
+static void FakeRDB(int unit,int block,unsigned char *buf)
 {
 	int i;
 	DEBUG1("Clearing sector buffer");
 	// Start by clearing the sector buffer
 	for(i=0;i<512;++i)
-		sector_buffer[i]=0;
+		buf[i]=0;
 
 	// If we're asked for LBA 0 we create an RDSK block, and if LBA 1, a PART block.
 	switch(block)
 	{
 		case 0: // RDB
 			{
-				struct RigidDiskBlock *rdb=(struct RigidDiskBlock *)sector_buffer;
+				struct RigidDiskBlock *rdb=(struct RigidDiskBlock *)buf;
 				DEBUG1("Creating RDB...");
 				// every long big-endian (be32), as the Amiga reads it
 				rdb->rdb_ID = be32('R'<<24 | 'D' << 16 | 'S' << 8 | 'K');
@@ -134,7 +134,7 @@ static void FakeRDB(int unit,int block)
 			break;
 		case 1: // Partition
 			{
-				struct PartitionBlock *pb=(struct PartitionBlock *)sector_buffer;
+				struct PartitionBlock *pb=(struct PartitionBlock *)buf;
 				DEBUG1("Creating RDB...");
 				// every long big-endian (be32), as the Amiga reads it
 				pb->pb_ID = be32('P'<<24 | 'A' << 16 | 'R' << 8 | 'T');
@@ -486,28 +486,530 @@ void ATA_SetMultipleMode(unsigned char* tfr, int unit)
 }
 
 
-// A card error ends the ATA command with ERR (the OSD shows ERROR_SDCARD,
-// mmc.c); a read the Amiga abandoned (a new command reset the FIFO: Gayle
-// error, MMCErr SD_E_GAYLE) ends it with nothing: the new command is
-// picked up next (findings/sdcard-engine Task 10).
-static void ata_card_error(void)
+/* ---- the HDD data path: READ / WRITE (MULTIPLE) as a state machine ------
+ * findings/sdcard-engine Task 11a (design 5.1, 5.2, 11).  HandleHDD picks a
+ * command up and starts it; hdd_poll(), once per main-loop pass
+ * (main.c PollDisks), advances it a step at a time and returns: the Amiga
+ * waits are one status poll per pass, the card work async SD ops
+ * (sdproto.h), and the main loop (keys, OSD, CD audio, drive sounds, the
+ * floppy) runs between them.  Never sdc_wait / sd_sync here (one exception:
+ * a card to be initialised again after an error, sd_init, before the op
+ * that needs it).
+ *
+ * READ: per group (READ MULTIPLE: sectors_per_block sectors, else 1) the
+ *   status RDY, then -- after the Amiga drained the previous group
+ *   (hdd_cmd_req: "drain, then refill"; Gayle fires the Amiga's interrupt on
+ *   a rising DRQ) -- the group's sectors into Gayle's FIFO: FakeRDB blocks
+ *   and an HDF's own RDB block (patched) by the CPU (CMD_IDE_DATA_WR), the
+ *   others in to_gayle runs (one RX_TO_GAYLE per block after its CRC).
+ * WRITE: the status REQ, then per sector: hdd_dat_req (its data in Gayle's
+ *   FIFO), then a from_gayle CMD25 run started with it, each next block's go
+ *   after its own hdd_dat_req (ruling T11-R1: a Gayle op only when its data
+ *   is there); the group's IRQ (the last one END | IRQ) only after its runs
+ *   ended, i.e. the stop token's busy is over (write-done timing as before,
+ *   no write-back).  A sector of the FakeRDB region (or of an HDF without a
+ *   file) is taken from the FIFO by the CPU and dropped.
+ * Runs: at most HDD_RUN_MAX sectors, inside one cluster (HDF: the cluster
+ *   index of HardFileSeek; the FAT walk reads its FAT sectors into hdd_blk
+ *   by async ops of its own), inside one group.  A write run parked longer
+ *   than HDD_PARK_COUNTS for the Amiga's next sector is closed (sd_close: the
+ *   stop token); the group goes on in a new run.  sd_sync users (the CD
+ *   refill, the menu, the floppy) get the card between runs.
+ * The Amiga leaving a command (a new command, Ctrl-Amiga-Amiga): a Gayle
+ *   error on an op (the bridge's cmd_since), or hdd_cmd_req without
+ *   hdd_dat_req while a write waits for a sector: no status for it (it would
+ *   end the NEW command), a write run is ended on the card first (stop
+ *   token, sd_close).  Before every END a write and every error status
+ *   also look at the flags (amiga_left: CMD_IDE_REGS_RD, after the last
+ *   Gayle op of the command) for a reset.
+ * Errors: WriteTaskFile with the error register (UNC for a read, ABRT for a
+ *   write, IDNF past the end of the file), END | IRQ | ERR; a card error
+ *   also ERROR_SDCARD (MMC_OpResult, the OSD's error page).
+ * The Amiga polls of diskstat are the status polls of these waits (one per
+ * pass).  dbg_flags DBG_ATA: one UART line per ATA command at its end. */
+#define HDD_RUN_MAX 16		/* sectors of one card run (the Gayle FIFO's 16) */
+#define HDD_PARK_COUNTS 3	/* GetTimer counts a write run waits parked for the Amiga's next sector: 17.4..23.2 ms */
+#define ATA_ERR_UNC  0x40	/* error register: uncorrectable data (a read the card failed) */
+#define ATA_ERR_IDNF 0x10	/* ID not found: past the end of the hardfile */
+#define ATA_ERR_ABRT 0x04	/* aborted: a write the card failed, a command given up */
+
+enum {
+	H_IDLE,
+	H_GROUP,	/* the next group: READ RDY, WRITE its first sector */
+	H_DRAIN,	/* READ: the Amiga drains the previous group (hdd_cmd_req) */
+	H_RNEXT,	/* READ: the group's next sector(s) */
+	H_RRUNGO,	/* READ: a run from the file position */
+	H_RRUN,		/* READ: a to_gayle op runs */
+	H_RPATCHGO,	/* READ: the HDF's own RDB block into hdd_blk */
+	H_RPATCH,	/* READ: that op runs */
+	H_WNEXT,	/* WRITE: the group's next sector (or its IRQ) */
+	H_WDATA,	/* WRITE: its data in Gayle's FIFO (hdd_dat_req), then the run */
+	H_WRUN,		/* WRITE: a from_gayle run */
+	H_SEEK,		/* the file position to hc.seek_to: the FAT walk */
+	H_SEEKFAT	/* the FAT sector it needs is being read into hdd_blk */
+};
+
+static struct {
+	unsigned char st, after;	/* the state; H_SEEK's next one */
+	unsigned char write, multiple, unit, port, cmd;
+	unsigned char discard;		/* WRITE: this sector goes nowhere */
+	unsigned char parked;		/* WRITE: park_t runs */
+	unsigned char abandoned;	/* the Amiga left the command during a run */
+	unsigned char rdy;		/* READ: the next group's RDY is written already */
+	long lba;			/* the Amiga LBA of the next sector */
+	unsigned left, grp, n;		/* sectors left in the command, in the group; of the run */
+	long lba0;			/* the trace: the first LBA, the count */
+	unsigned count;
+	unsigned polls;			/* status polls of the current Amiga wait */
+	unsigned short t0;		/* the trace: TIMER at the pickup */
+	int cyl;			/* the last sector's cylinder (the drive sound) */
+	unsigned char tf[6];		/* the task file written at the pickup */
+	unsigned long park_t, seek_to, fat_sb;
+	sd_op op;
+} hc;
+/* the HDD path's own buffer: the FAT sector of its seeks (hdd_fat_sb, ~0:
+   none), or an RDB block (FakeRDB, the HDF's own patched one).  Not
+   sector_buffer or fat_buffer: an sd_sync user between two steps would
+   overwrite those */
+static unsigned char hdd_blk[512] __attribute__((aligned(4)));
+static unsigned long hdd_fat_sb = ~0ul;
+
+int hdd_busy(void)
 {
-	if (MMCErr != SD_E_GAYLE)
-		WriteStatus(IDE_STATUS_END | IDE_STATUS_IRQ | IDE_STATUS_ERR);
+	return hc.st != H_IDLE;
 }
 
-// ATA_ReadSectors()
-void ATA_ReadSectors(unsigned char* tfr, int sector, int cylinder, int head, int unit, int sector_count, int multiple)
+static void ata_trace(unsigned cmd, unsigned long lba, unsigned n, const char *what, unsigned st, unsigned t)
+{
+	if (dbg_flags & DBG_ATA)
+		printf("ATA %02x lba %lu n %u port %u %s st %02x t %u\n", cmd, lba, n, (unsigned)ide_port, what, st, t);
+}
+
+/* the command is over (st: the last status written, 0 none) */
+static void hdd_end(const char *what, unsigned st)
+{
+	ata_trace(hc.cmd, (unsigned long)hc.lba0, hc.count, what, st,
+	          (dbg_flags & DBG_ATA) ? (unsigned short)(TIMER - hc.t0) : 0);	/* the TIMER only for the trace */
+	hc.st = H_IDLE;
+	DISKLED_OFF;
+}
+
+/* a good end: the drive sound of a cylinder change */
+static void hdd_done(unsigned st)
+{
+	if (hc.cyl != lastcyl)
+		drivesounds_queueevent(DRIVESOUND_HDDSTEP);
+	lastcyl = hc.cyl;
+	hdd_end("ok", st);
+}
+
+/* After the command's last Gayle op, before an END: did the Amiga reset
+   since the pickup?  The flags of the port (IDEF_RST_SEEN; the CD unit gets
+   them too, CD_Flags).  The CMD_IDE_REGS_RD clears the bridge's cmd_since
+   of the port: no Gayle op of this command follows */
+static int amiga_left(void)
+{
+	unsigned char flags = ReadIDEFlags(hc.port);
+	CD_Flags(hc.port, flags);
+	return (flags & IDEF_RST_SEEN) != 0;
+}
+
+/* END | IRQ | ERR with the error register; nothing when the Amiga left */
+static void hdd_fail(unsigned char err)
+{
+	if (amiga_left()) {
+		hdd_end("abandoned", 0);
+		return;
+	}
+	WriteTaskFile(err, hc.tf[1], hc.tf[2], hc.tf[3], hc.tf[4], hc.tf[5]);
+	WriteStatus(IDE_STATUS_END | IDE_STATUS_IRQ | IDE_STATUS_ERR);
+	hdd_end("error", IDE_STATUS_END | IDE_STATUS_IRQ | IDE_STATUS_ERR);
+}
+
+/* the command's op ended with an error: the abandon (Gayle error), or a
+   card error (ERROR_SDCARD) */
+static void hdd_op_failed(unsigned char err)
+{
+	if (hc.op.err == SD_E_GAYLE || hc.abandoned) {
+		hdd_end("abandoned", 0);
+		return;
+	}
+	MMC_OpResult(&hc.op, hc.write ? "SD card write" : "SD card read");
+	hdd_fail(err);
+}
+
+/* start the command's card op: 0, or -1 when another op holds the card
+   (the next pass tries again).  A card to be initialised again after an
+   error first (sd_init, synchronous: the one wait in this path) */
+static int op_go(int kind, unsigned long lba, unsigned n, unsigned char *buf)
+{
+	if (!sd_card_type() && !sd_card_changed())
+		sd_init();
+	memset(&hc.op, 0, sizeof hc.op);
+	hc.op.kind = kind;
+	hc.op.lba = lba;
+	hc.op.count = n;
+	hc.op.buf = buf;
+	hc.op.port = hc.port;
+	if (!buf) {
+		hc.op.to_gayle = kind == SD_READ;
+		hc.op.from_gayle = kind == SD_WRITE;
+	}
+	return sd_submit(&hc.op);
+}
+
+static void sectors_done(unsigned k)
+{
+	hc.lba += k;
+	hc.grp -= k;
+	hc.left -= k;
+}
+
+/* the file position of the hardfile to sector target (HardFileSeek: the
+   index, then FileSeek's walk), then state `after` */
+static void seek(unsigned long target, unsigned char after)
+{
+	hdfTYPE *h = &hdf[hc.unit];
+	fileTYPE *f = &h->file;
+	if ((f->sector ^ target) & cluster_mask) {
+		if ((f->sector > target) || ((f->sector ^ target) & (cluster_mask << (fat32 ? 7 : 8)))) {
+			f->cluster = h->index[target >> (h->index_size - 9)];
+			f->sector = target & (int)(~0U << (h->index_size - 9));
+		}
+	}
+	if (f->sector > target) {
+		if ((f->sector ^ target) & cluster_mask) {
+			f->cluster = f->start_cluster;
+			f->sector = 0;
+		} else
+			f->sector = target;
+	}
+	hc.seek_to = target;
+	hc.after = after;
+	hc.st = H_SEEK;
+}
+
+/* FileSeek's walk forward on hdd_blk's FAT sector: 1 there (state hc.after),
+   0 a FAT sector is being read (H_SEEKFAT) or the command failed */
+static int seek_walk(void)
+{
+	fileTYPE *f = &hdf[hc.unit].file;
+	unsigned long t = hc.seek_to, sb, next;
+	unsigned i;
+	while ((f->sector ^ t) & cluster_mask) {
+		sb = fat32 ? f->cluster >> 7 : f->cluster >> 8;
+		i = fat32 ? (f->cluster & 0x7F) : (f->cluster & 0xFF);
+		if (sb != hdd_fat_sb) {
+			hdd_fat_sb = ~0ul;	/* hdd_blk is being overwritten */
+			if (op_go(SD_READ, fat_start + sb, 1, hdd_blk))
+				return 0;	/* the next pass */
+			hc.fat_sb = sb;
+			hc.st = H_SEEKFAT;
+			return 0;
+		}
+		next = fat32 ? le32(((uint32_t *)hdd_blk)[i]) & 0x0FFFFFFF : le16(((uint16_t *)hdd_blk)[i]);
+		if (fat32 ? next == 0x0FFFFFFF : next == 0xFFFF) {
+			/* the end of the chain inside the file's size: a guard, the
+			   bound checks and BuildHardfileIndex keep commands off it */
+			hdd_fail(ATA_ERR_IDNF);
+			return 0;
+		}
+		f->cluster = next;
+		f->sector += cluster_size;
+	}
+	f->sector = t;
+	hc.st = hc.after;
+	return 1;
+}
+
+/* the card sector of the file position, and the sectors to the cluster's
+   end (at most n) */
+static unsigned long file_run(unsigned *n)
+{
+	fileTYPE *f = &hdf[hc.unit].file;
+	unsigned off = f->sector & ~cluster_mask, rest = cluster_size - off;
+	if (*n > rest)
+		*n = rest;
+	return data_start + cluster_size * (f->cluster - 2) + off;
+}
+
+static int is_file(void)
+{
+	return (hdf[hc.unit].type & ~HDF_SYNTHRDB) == HDF_FILE;
+}
+
+/* the run's length: the group's rest, at most HDD_RUN_MAX */
+static unsigned run_len(void)
+{
+	return hc.grp < HDD_RUN_MAX ? hc.grp : HDD_RUN_MAX;
+}
+
+/* one step; 1: the next one at once, 0: wait for the next pass */
+static int hdd_step(void)
+{
+	hdfTYPE *h = &hdf[hc.unit];
+	long v = hc.lba + h->offset;
+	unsigned n, spb;
+	unsigned char st;
+	unsigned long card;
+
+	switch (hc.st) {
+	case H_GROUP:
+		spb = h->sectors_per_block;
+		if (hc.multiple && !spb) {	/* READ / WRITE MULTIPLE before SET MULTIPLE MODE */
+			hdd_fail(ATA_ERR_ABRT);
+			return 0;
+		}
+		hc.grp = hc.multiple && spb < hc.left ? spb : (hc.multiple ? hc.left : 1);
+		hc.polls = 0;
+		if (hc.write) {
+			hc.st = H_WNEXT;
+			return 1;
+		}
+		if (!hc.rdy)
+			WriteStatus(IDE_STATUS_RDY); // pio in (class 1) command type
+		hc.rdy = 0;
+		hc.st = H_DRAIN;
+		return 1;
+
+	case H_DRAIN:
+		if (sd_gayle_busy())
+			return 0;
+		hc.polls++;
+		if (!(GetFPGAStatus() & CMD_IDECMD)) // wait for empty sector buffer
+			return 0;
+		diskstat_amiga_polls(hc.polls);
+		hc.st = H_RNEXT;
+		return 1;
+
+	case H_RNEXT:
+		if (!hc.grp) {
+			if (!hc.left) {
+				hdd_done(0);	/* Gayle ends the command when the Amiga read the last sector */
+				return 0;
+			}
+			hc.st = H_GROUP;
+			return 1;
+		}
+		if (!is_file()) {
+			n = run_len();
+			if (op_go(SD_READ, (unsigned long)v, n, 0))
+				return 0;
+			hc.n = n;
+			hc.st = H_RRUN;
+			return 0;
+		}
+		if (!h->file.size) {
+			WriteStatus(IDE_STATUS_END|IDE_STATUS_RDY|IDE_STATUS_ERR);
+			hdd_end("error", IDE_STATUS_END|IDE_STATUS_RDY|IDE_STATUS_ERR);
+			return 0;
+		}
+		// Deal with FakeRDB and the potential for a read_multiple to cross the boundary into actual data.
+		if (v < 0 || (hc.unit == 0 && h->type == HDF_FILE && hc.lba == 0)) {
+			if (h->type == HDF_FILE) {
+				// Patch flags and checksum of RDB.  Actually necessary?
+				seek((unsigned long)v, H_RPATCHGO);
+				return 1;
+			}
+			FakeRDB(hc.unit, hc.lba, hdd_blk);
+			hdd_fat_sb = ~0ul;
+			WriteIDEData(hdd_blk, 512);
+			sectors_done(1);
+			return 1;
+		}
+		seek((unsigned long)v, H_RRUNGO);
+		return 1;
+
+	case H_RRUNGO:
+		n = run_len();
+		card = file_run(&n);
+		if (op_go(SD_READ, card, n, 0)) // NULL: into Gayle's FIFO (mmc.h)
+			return 0;
+		hc.n = n;
+		hc.st = H_RRUN;
+		return 0;
+
+	case H_RRUN:
+		if (hc.op.state) {
+			/* the group's last block is in the FIFO (the card's CMD12 may
+			   still run): the next group's RDY now, as the synchronous path
+			   wrote it (rd_multi_order); before the drain is fine, Gayle
+			   arms the interrupt for the next rising DRQ */
+			if (!hc.rdy && hc.op.done_blocks == (int)hc.n && hc.grp == hc.n && hc.left > hc.n &&
+			    !sd_gayle_busy()) {
+				WriteStatus(IDE_STATUS_RDY);
+				hc.rdy = 1;
+			}
+			return 0;
+		}
+		if (hc.op.err) {
+			hdd_op_failed(ATA_ERR_UNC);
+			return 0;
+		}
+		sectors_done(hc.n);
+		hc.st = H_RNEXT;
+		return 1;
+
+	case H_RPATCHGO:
+		n = 1;
+		card = file_run(&n);
+		hdd_fat_sb = ~0ul;
+		if (op_go(SD_READ, card, 1, hdd_blk))
+			return 0;
+		hc.st = H_RPATCH;
+		return 0;
+
+	case H_RPATCH:
+		if (hc.op.state)
+			return 0;
+		if (hc.op.err) {
+			hdd_op_failed(ATA_ERR_UNC);
+			return 0;
+		}
+		{
+			struct RigidDiskBlock *rdb = (struct RigidDiskBlock *)hdd_blk;
+			rdb->rdb_ChkSum = be32(be32(rdb->rdb_ChkSum) + be32(rdb->rdb_Flags) - 0x12);	// big-endian longs
+			rdb->rdb_Flags=be32(0x12);
+		}
+		WriteIDEData(hdd_blk, 512);
+		sectors_done(1);
+		hc.st = H_RNEXT;
+		return 1;
+
+	case H_WNEXT:
+		if (!hc.grp) {	/* the group is on the card: its IRQ */
+			if (hc.left) {
+				WriteStatus(IDE_STATUS_IRQ);
+				hc.st = H_GROUP;
+				return 1;
+			}
+			if (amiga_left()) {
+				hdd_end("abandoned", 0);
+				return 0;
+			}
+			WriteStatus(IDE_STATUS_END | IDE_STATUS_IRQ);
+			hdd_done(IDE_STATUS_END | IDE_STATUS_IRQ);
+			return 0;
+		}
+		hc.discard = is_file() && (!h->file.size || v < 0);	// Don't attempt to write to fake RDB
+		if (is_file() && !hc.discard) {
+			seek((unsigned long)v, H_WDATA);
+			return 1;
+		}
+		hc.st = H_WDATA;
+		return 1;
+
+	case H_WDATA:
+		if (sd_gayle_busy())
+			return 0;
+		hc.polls++;
+		st = GetFPGAStatus();
+		if (!(st & CMD_IDEDAT)) {	// wait for full write buffer
+			if (st & CMD_IDECMD)	/* a new command, a reset: the Amiga left this one */
+				hdd_end("abandoned", 0);
+			return 0;
+		}
+		diskstat_amiga_polls(hc.polls);
+		hc.polls = 0;
+		if (hc.discard) {
+			ReadIDEData(0, 512);
+			sectors_done(1);
+			hc.st = H_WNEXT;
+			return 1;
+		}
+		n = run_len();
+		card = is_file() ? file_run(&n) : (unsigned long)v;
+		if (op_go(SD_WRITE, card, n, 0))	/* its first block's go: the sector is there */
+			return 0;
+		hc.n = n;
+		hc.parked = 0;
+		hc.abandoned = 0;
+		hc.st = H_WRUN;
+		return 0;
+
+	case H_WRUN:
+		if (hc.op.state) {
+			if (sd_gayle_need(&hc.op) && !sd_gayle_busy()) {
+				hc.polls++;
+				st = GetFPGAStatus();
+				if (st & CMD_IDEDAT) {
+					diskstat_amiga_polls(hc.polls);
+					hc.polls = 0;
+					sd_gayle_go(&hc.op);
+				} else if (st & CMD_IDECMD) {	/* the Amiga left: end the run on the card */
+					hc.abandoned = 1;
+					sd_close(&hc.op);
+				}
+			}
+			if (sd_gayle_parked(&hc.op)) {
+				if (!hc.parked) {
+					hc.parked = 1;
+					hc.park_t = GetTimer(HDD_PARK_COUNTS);
+				} else if (CheckTimer(hc.park_t))
+					sd_close(&hc.op);	/* the group goes on in a new run */
+			} else
+				hc.parked = 0;
+			return 0;
+		}
+		sectors_done((unsigned)hc.op.done_blocks);
+		if (hc.op.err || hc.abandoned) {
+			hdd_op_failed(ATA_ERR_ABRT);
+			return 0;
+		}
+		hc.st = H_WNEXT;
+		return 1;
+
+	case H_SEEK:
+		return seek_walk();
+
+	case H_SEEKFAT:
+		if (hc.op.state)
+			return 0;
+		if (hc.op.err) {
+			hdd_op_failed(hc.write ? ATA_ERR_ABRT : ATA_ERR_UNC);
+			return 0;
+		}
+		hdd_fat_sb = hc.fat_sb;
+		hc.st = H_SEEK;
+		return 1;
+	}
+	return 0;
+}
+
+void hdd_poll(void)
+{
+	int k;
+	for (k = 0; k < 8 && hc.st != H_IDLE; k++)
+		if (!hdd_step())
+			break;
+}
+
+void hdd_cancel(void)
+{
+	hdd_fat_sb = ~0ul;	/* the card or the FAT may change now */
+	if (hc.st == H_IDLE)
+		return;
+	if (hc.op.state) {
+		sd_close(&hc.op);
+		sd_drain();
+	}
+	hc.abandoned = 0;
+	hdd_fail(ATA_ERR_ABRT);
+}
+
+/* READ / WRITE (MULTIPLE) picked up: the task file, the bound check, then
+   the state machine */
+static void hdd_start(unsigned char* tfr, int sector, int cylinder, int head, int unit, int sector_count, int multiple, int write)
 {
 	long lba;
-	int i;
-	int block_count;
 	int blk;
-	unsigned polls;
 
-	diskstat_cmd(0, sector_count);
+	diskstat_cmd(write, sector_count);
 	lba=chs2lba(cylinder, head, sector, unit);
-	DEBUG3(multiple ? "ReadM %ld, %d" : "Read  %ld, %d",lba,sector_count);
+	if (write)
+		DEBUG3(multiple ? "WriteM %ld, %d" : "Write  %ld, %d",lba,sector_count)
+	else
+		DEBUG3(multiple ? "ReadM %ld, %d" : "Read  %ld, %d",lba,sector_count)
 
 	/* Advance CHS values */
 	blk=sector_count;
@@ -527,244 +1029,40 @@ void ATA_ReadSectors(unsigned char* tfr, int sector, int cylinder, int head, int
 			sector++;
 	}
 
+	memset(&hc, 0, sizeof hc);
+	hc.write = (unsigned char)write;
+	hc.multiple = (unsigned char)multiple;
+	hc.unit = (unsigned char)unit;
+	hc.port = ide_port;
+	hc.cmd = tfr[7];
+	hc.lba = hc.lba0 = lba;
+	hc.left = hc.count = (unsigned)sector_count;
+	hc.cyl = cylinder;
+	if (dbg_flags & DBG_ATA)
+		hc.t0 = TIMER;
+	hc.tf[0] = 0;
+	hc.tf[1] = tfr[2];
+	hc.tf[2] = (unsigned char)sector;
+	hc.tf[3] = (unsigned char)cylinder;
+	hc.tf[4] = (unsigned char)(cylinder >> 8);
+	hc.tf[5] = (tfr[6] & 0xF0) | head;
+	hc.st = H_GROUP;
+
 	/* Update task file with CHS address */
 	WriteTaskFile(0, tfr[2], sector, cylinder, (cylinder >> 8), (tfr[6] & 0xF0) | head);
+
+	if (write) {
+		WriteStatus(IDE_STATUS_REQ); // pio out (class 2) command type
+		if(lba+hdf[unit].offset<0)
+			SetError(ERROR_HDD,"Write to auto-generated RDB!",lba+hdf[unit].offset,0);
+	}
 
 	/* sectors past the end of a hardfile: ERR before any of them is served
-	   (findings/sdcard-engine Task 10 fix round 2; a truncated HDF, an RDB
-	   whose partitions run past the file) */
+	   or written (findings/sdcard-engine Task 10 fix round 2; a truncated
+	   HDF, an RDB whose partitions run past the file) */
 	if ((hdf[unit].type & ~HDF_SYNTHRDB) == HDF_FILE && hdf[unit].file.size &&
 	    lba + hdf[unit].offset + sector_count > (long)(hdf[unit].file.size >> 9))
-	{
-		MMCErr = SD_OK;
-		ata_card_error();
-		return;
-	}
-
-	while (sector_count)
-	{
-		block_count = multiple ? sector_count : 1;
-		if (multiple && block_count > hdf[unit].sectors_per_block)
-			block_count = hdf[unit].sectors_per_block;
-
-		WriteStatus(IDE_STATUS_RDY); // pio in (class 1) command type
-		polls = 1;
-		while (!(GetFPGAStatus() & CMD_IDECMD)) // wait for empty sector buffer
-		{
-			polls++;
-			CD_AudioRefill(); // CD audio refill between blocks (13.5); no IDE flags read: it would re-latch the port (cdrom.h)
-		}
-		diskstat_amiga_polls(polls);
-
-		switch(hdf[unit].type)
-		{
-			case HDF_FILE | HDF_SYNTHRDB:
-			case HDF_FILE:
-				if (hdf[unit].file.size)
-				{
-					blk=block_count;
-					// Deal with FakeRDB and the potential for a read_multiple to cross the boundary into actual data.
-					while(blk && (((lba+hdf[unit].offset)<0) || (unit==0 && hdf[unit].type==HDF_FILE && lba==0)))
-					{
-						if(hdf[unit].type==HDF_FILE)
-						{
-							// Patch flags and checksum of RDB.  Actually necessary?
-							// A seek or read that fails (a card error, or the end of the
-							// chain) leaves a stale buffer: the command ends with ERR
-							MMCErr = SD_OK;
-							if (!HardFileSeek(&hdf[unit], lba + hdf[unit].offset) ||
-							    !FileReadEx(&hdf[unit].file, sector_buffer, 1))
-							{
-								ata_card_error();
-								return;
-							}
-							struct RigidDiskBlock *rdb = (struct RigidDiskBlock *)sector_buffer;
-							rdb->rdb_ChkSum = be32(be32(rdb->rdb_ChkSum) + be32(rdb->rdb_Flags) - 0x12);	// big-endian longs
-							rdb->rdb_Flags=be32(0x12);
-						}
-						else
-							FakeRDB(unit,lba);
-						EnableFpga();
-						SPI(CMD_IDE_DATA_WR | ide_port); // write data command
-						SPI(0x00); SPI(0x00); SPI(0x00); SPI(0x00); SPI(0x00);
-						for (i = 0; i < 512; i++)
-						{
-							SPI(sector_buffer[i]);
-						}
-						DisableFpga();
-						++lba;
-						--blk;
-					}
-					if(blk) // Any blocks left?
-					{
-						// a seek that fails (a FAT sector it could not read) leaves a
-						// wrong position; FileReadEx fails on a card error or blocks
-						// past the end of the chain (a read ending at the file's last
-						// sector is good).  The bound check above keeps the command
-						// inside the file; BuildHardfileIndex refuses a short chain
-						MMCErr = SD_OK;
-						if (!HardFileSeek(&hdf[unit], lba + hdf[unit].offset) ||
-						    !FileReadEx(&hdf[unit].file, 0, blk)) // NULL: into Gayle's FIFO (mmc.h)
-						{
-							ata_card_error();
-							return;
-						}
-						lba+=blk;
-					}
-				}
-				else
-			        WriteStatus(IDE_STATUS_END|IDE_STATUS_RDY|IDE_STATUS_ERR);
-				break;
-
-			case HDF_CARD:
-			case HDF_CARDPART0:
-			case HDF_CARDPART1:
-			case HDF_CARDPART2:
-			case HDF_CARDPART3:
-				if (!MMC_ReadMultiple(lba+hdf[unit].offset,0,block_count))
-				{
-					ata_card_error();
-					return;
-				}
-				lba+=block_count;
-				break;
-		}
-
-		sector_count-=block_count;
-
-	}
-	if(cylinder!=lastcyl)
-		drivesounds_queueevent(DRIVESOUND_HDDSTEP);
-	lastcyl=cylinder;
-}
-
-
-// ATA_WriteSectors()
-void ATA_WriteSectors(unsigned char* tfr, int sector, int cylinder, int head, int unit, int sector_count, int multiple)
-{
-	long lba;
-	int block_count;
-	int i;
-	int blk;
-	unsigned polls;
-
-	diskstat_cmd(1, sector_count);
-	lba=chs2lba(cylinder, head, sector, unit);
-	DEBUG3(multiple ? "WriteM %ld, %d" : "Write  %ld, %d",lba,sector_count);
-	lba+=hdf[unit].offset;
-
-	/* Advance CHS values */
-	blk=sector_count;
-	while(--blk)
-	{
-		if (sector == hdf[unit].sectors)
-		{
-			sector = 1;
-			head++;
-			if (head == hdf[unit].heads)
-			{
-				head = 0;
-				cylinder++;
-			}
-		}
-		else
-			sector++;
-	}
-
-	/* Update task file with CHS address */
-	WriteTaskFile(0, tfr[2], sector, cylinder, (cylinder >> 8), (tfr[6] & 0xF0) | head);
-
-	WriteStatus(IDE_STATUS_REQ); // pio out (class 2) command type
-
-	if(lba<0)
-		SetError(ERROR_HDD,"Write to auto-generated RDB!",lba,0);
-
-	/* sectors past the end of a hardfile: ERR before any of them is written
-	   (findings/sdcard-engine Task 10 fix round 2); a seek that fails (a card
-	   error) leaves a wrong position: ERR too.  A chain shorter than the
-	   file's size never gets here: BuildHardfileIndex refuses the file */
-	MMCErr = SD_OK;
-	if ((hdf[unit].type & ~HDF_SYNTHRDB) == HDF_FILE && hdf[unit].file.size &&
-	    (lba + sector_count > (long)(hdf[unit].file.size >> 9) ||
-	     !HardFileSeek(&hdf[unit], (lba>-1) ? lba : 0)))
-	{
-		ata_card_error();
-		return;
-	}
-
-	while (sector_count)
-	{
-		block_count = multiple ? sector_count : 1;
-		if (multiple && block_count > hdf[unit].sectors_per_block)
-		block_count = hdf[unit].sectors_per_block;
-
-		while(block_count--)
-		{
-			polls = 1;
-			while (!(GetFPGAStatus() & CMD_IDEDAT)) // wait for full write buffer
-			{
-				polls++;
-				CD_AudioRefill(); // CD audio refill between blocks (13.5); no IDE flags read (cdrom.h)
-			}
-			diskstat_amiga_polls(polls);
-			EnableFpga();
-			SPI(CMD_IDE_DATA_RD | ide_port); // read data command
-			SPI(0x00); SPI(0x00); SPI(0x00); SPI(0x00); SPI(0x00);
-			for (i = 0; i < 512; i++)
-			sector_buffer[i] = SPI(0xFF);
-			DisableFpga();
-
-			switch(hdf[unit].type)
-			{
-				case HDF_FILE | HDF_SYNTHRDB:
-				case HDF_FILE:
-					if (hdf[unit].file.size && (lba>-1))	// Don't attempt to write to fake RDB
-					{
-						MMCErr = SD_OK;
-						if (!FileWrite(&hdf[unit].file, sector_buffer))
-						{
-							ata_card_error();
-							return;
-						}
-						// 0: the next FAT sector could not be read, or the end of the
-						// chain: an error when sectors are left (they would go to
-						// the last cluster again), none after the file's last one
-						// (the bound check above and BuildHardfileIndex keep a
-						// command inside the chain; this stays as a guard)
-						if (!FileSeek(&hdf[unit].file, 1, SEEK_CUR) &&
-						    (MMCErr != SD_OK || sector_count > 1))
-						{
-							ata_card_error();
-							return;
-						}
-					}
-					++lba;
-					break;
-				case HDF_CARD:
-				case HDF_CARDPART0:
-				case HDF_CARDPART1:
-				case HDF_CARDPART2:
-				case HDF_CARDPART3:
-					DEBUG1("Write HDF_Card");
-					if (!MMC_Write(lba,sector_buffer))
-					{
-						ata_card_error();
-						return;
-					}
-					++lba;
-					break;
-			}
-			--sector_count;
-		}
-
-		if (sector_count)
-			WriteStatus(IDE_STATUS_IRQ);
-		else
-			WriteStatus(IDE_STATUS_END | IDE_STATUS_IRQ);
-	}
-	if(cylinder!=lastcyl)
-	drivesounds_queueevent(DRIVESOUND_HDDSTEP);
-	lastcyl=cylinder;
+		hdd_fail(ATA_ERR_IDNF);
 }
 
 
@@ -788,7 +1086,7 @@ void HandleHDD(unsigned int c1, unsigned int c2)
     int unit;
 	int sector_count;
 
-    if (c1 & CMD_IDECMD)
+    if ((c1 & CMD_IDECMD) && !hdd_busy())	// the data path serves one command at a time
     {
         unsigned char flags;
         DISKLED_ON;
@@ -840,14 +1138,14 @@ void HandleHDD(unsigned int c1, unsigned int c2)
 		  ATA_Initialize(tfr, unit);
 		} else if (tfr[7] == ACMD_SET_MULTIPLE_MODE) {
 		  ATA_SetMultipleMode(tfr, unit);
-		} else if (tfr[7] == ACMD_READ_SECTORS) {
-		  ATA_ReadSectors(tfr, sector, cylinder, head, unit, sector_count,0);
-		} else if (tfr[7] == ACMD_READ_MULTIPLE) {
-		  ATA_ReadSectors(tfr, sector, cylinder, head, unit, sector_count,1);
-		} else if (tfr[7] == ACMD_WRITE_SECTORS) {
-		  ATA_WriteSectors(tfr, sector, cylinder, head, unit, sector_count,0);
-		} else if (tfr[7] == ACMD_WRITE_MULTIPLE) {
-		  ATA_WriteSectors(tfr, sector, cylinder, head, unit, sector_count,1);
+		} else if (tfr[7] == ACMD_READ_SECTORS || tfr[7] == ACMD_READ_MULTIPLE ||
+		           tfr[7] == ACMD_WRITE_SECTORS || tfr[7] == ACMD_WRITE_MULTIPLE) {
+		  /* the data path: its own trace line at its end */
+		  hdd_start(tfr, sector, cylinder, head, unit, sector_count,
+		            tfr[7] == ACMD_READ_MULTIPLE || tfr[7] == ACMD_WRITE_MULTIPLE,
+		            tfr[7] == ACMD_WRITE_SECTORS || tfr[7] == ACMD_WRITE_MULTIPLE);
+		  DISKLED_OFF;
+		  return;
 		} else {
             printf("Unknown ATA command\r");
 
@@ -858,6 +1156,7 @@ void HandleHDD(unsigned int c1, unsigned int c2)
             WriteTaskFile(0x04, tfr[2], tfr[3], tfr[4], tfr[5], tfr[6]);
             WriteStatus(IDE_STATUS_END | IDE_STATUS_IRQ | IDE_STATUS_ERR);
         }
+        ata_trace(tfr[7], 0, (unsigned)sector_count, "done", 0, 0);	/* ran to its end here */
         DISKLED_OFF;
 		if(cylinder==444 && head==2 && sector==61)
 			trap2();
@@ -1000,6 +1299,7 @@ unsigned char OpenHardfile(unsigned int unit)
     unsigned long time;
     hardfileTYPE *hf = SlotConfig(unit);
 
+	hdd_cancel();	/* a command in progress ends before its file changes */
 	hdf[unit].type = HDF_DISABLED;	// until opened: a stale type would serve the old file
 	switch(hf->enabled)
 	{

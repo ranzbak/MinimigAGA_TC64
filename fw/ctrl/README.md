@@ -427,7 +427,8 @@ byte boundary of the interrupted line's *send* loop, not of its formatting
 Longest output of each `printf` call site that is compiled (found by running
 the preprocessor over every `fw/ctrl/*.c`, 2026-10-17: 136 sites, 138
 with Task 11's two in `config.c` (`ConfigMessage`), 140 with the final
-review's two in `drivesounds.c` (I1, no conversion); a
+review's two in `drivesounds.c` (I1, no conversion), one more with the ATA
+trace in `hdd.c` (findings/sdcard-engine Task 11a); a
 raw `grep` also finds the commented-out ones). Conversions are taken at their
 maximum: `%d`/`%ld` 11 bytes, `%u`/`%lu` 10, `%x`/`%X`/`%lX` 8, a width raises
 the figure to the width. Each `%s` is bounded by its source:
@@ -455,7 +456,7 @@ Per file, `line:bytes`:
 | `fat.c` | 39 | 188:28, 192:4, 195:5, 198:5, 201:5, 205:7, 208:2, 295:21, 296:23, 297:22, 298:33, 299:24, 300:23, 301:25, 302:23, 398:274, 423:278, 461:33, 514:32, 534:35, 582:295, 603:283, 782:28, 789:33, 862:11, 1583:59, 1596:31, 1611:26, 1623:32, 1633:49, 1649:55, 1651:54, 1656:38, 1703:38, 1714:45, 1715:30, 1716:24, 1717:26, 1725:39 |
 | `fdd.c` | 11 | 184:32, 191:12, 222:23, 252:17, 300:2, 303:4, 339:6, 377:29, 433:59, 438:23, 635:13 |
 | `fpga.c` | 8 | 95:25, 96:1, 101:2, 108:2, 111:1, 131:2, 134:21, 137:46 (101, 108: findings/sdcard-engine Task 10 fix round 1) |
-| `hdd.c` | 13 | 471:29, 481:30, 763:20, 765:4, 767:9, 768:9, 861:87, 926:22, 927:21, 928:33, 929:37, 930:17, 935:34 |
+| `hdd.c` | 14 | 474:29, 484:30, 585:92, 1150:20, 1152:4, 1154:9, 1155:9, 1249:87, 1321:22, 1322:21, 1323:33, 1324:37, 1325:17, 1336:34 (585: the ATA trace, findings/sdcard-engine Task 11a, `%s` at most `abandoned`) |
 | `main.c` | 2 | 277:29, 290:31 |
 | `menu.c` | 7 | 2928:52, 2968:281, 2970:32, 2972:28, 2973:38, 2974:25, 2975:25 |
 | `mmc.c` | 0 | (findings/sdcard-engine Task 10: its 22 sites went with cfide's SPI card path) |
@@ -1142,7 +1143,7 @@ us). Lines are those of the current tree.
 | `drivesounds.c:360` | `TIMER & 3`: pseudo-random pick of one of four sounds | | |
 | `cdrom.c:380` (`cda_port_timer`), `cdaudio.c:52`, `179`, `191` | CD audio play position: `CDA_HALF_UNITS` (`cdaudio.h:39`) counts per half buffer | 32 | 185.7 ms (8192 frames) |
 | `cdrom.c:471`, `483` (`cd_wait`) | `CD_TIMEOUT` (`cdrom.c:64`): host data phase | 10000 | 58.04 s |
-| `hdd.c:932`, `934` (`OpenHardfile`) | `GetTimer(0)` difference, printed as "ms" (`time >> 16`) | counts | 5.804 ms per printed "ms" |
+| `hdd.c:1327`, `1335` (`OpenHardfile`) | `GetTimer(0)` difference, printed as "ms" (`time >> 16`) | counts | 5.804 ms per printed "ms" |
 | `fpga.c:207` (`fpga_init`) | `GetTimer(0)`, unused | | |
 | `fpga.c:230`, `232`, `254` (`fpga_init`) | `WaitTimer(50)`, `WaitTimer(100)`, `WaitTimer(1000)` (boot screen) | 50, 100, 1000 | 290.2 ms, 580.4 ms, 5.804 s |
 | `osd.c:1030` (`OsdGetCtrl`) | menu button held: `BUTTONDELAY` (`osd.h:56`) | 20 | 116.1 ms |
@@ -1154,8 +1155,10 @@ us). Lines are those of the current tree.
 | `menu.c:1092`, `1101`, `1103` (`HandleUI`) | about screen stars and logo redraw: `ABOUT_FRAME_DELAY` (`osd.h:63`), re-armed by the pass that fires | 2 | a redraw every 3 counts = 17.4 ms; first frame 11.6..17.4 ms after arming |
 | `menu.c:3028`, `2721` (`InfoMessage`) | info popup | 1000 | 5.804 s |
 | `main.c:107`, `109`, `111` (`FatalError`) | LED blink: `WaitTimer(250)` x2, `WaitTimer(1000)` | 250, 1000 | 1.451 s, 5.804 s |
-| `main.c:298`, `363`, `366` (`main`) | ADV7511 poll (`adv_timer`) | 250 | 1.451 s |
-| `main.c:302`, `326`, `328` (`main`) | disk statistics report from boot, DebugMode on or off (`diskstat_timer`, armed once before the main loop and re-armed by the pass that fires): `DISKSTAT_PERIOD` (`diskstat.h:10`) | 1000 | 5.804 s; each report stalls the loop about 26 ms (about 300 UART bytes, 87 us each) |
+| `main.c:331`, `403`, `406` (`main`) | ADV7511 poll (`adv_timer`) | 250 | 1.451 s |
+| `main.c:335`, `360`, `362` (`main`) | disk statistics report period (`diskstat_timer`, armed once before the main loop and re-armed by the pass that fires): `DISKSTAT_PERIOD` (`diskstat.h`); the report itself only with `dbg_flags & DBG_DISKSTAT` ("Debug flags" below; without it the period starts over, `diskstat_period_start`) | 1000 | 5.804 s; each report stalls the loop about 26 ms (about 300 UART bytes, 87 us each) |
+| `hdd.c:947`, `948` (`hdd_step`, `H_WRUN`) | a write run parked for the Amiga's next sector: `HDD_PARK_COUNTS`, then the run is closed (findings/sdcard-engine Task 11a); read only while parked | 3 | 17.4..23.2 ms (3..4 counts) |
+| `hdd.c:1042`, `592` (`hdd_start`, `hdd_end`) | the ATA trace's time since the pickup, printed as counts; read only with `dbg_flags & DBG_ATA` | counts | 5.804 ms per count |
 | `diskstat.c:51`, `57` (`diskstat_period_start`, `diskstat_report`) | start and end of the report period, printed as counts and ms | counts | 5.804 ms per count |
 | `sdproto.c` (`sd_init`) | ACMD41 / CMD1 polls: `SD_ACMD41_BOUND` (findings/sdcard-engine Task 10; `mmc.c`'s `WaitTimer(20)`, `GetTimer(1000)` and `SD_TIMEOUT` went with cfide's SPI card path) | 345 | 2.002 s |
 | `sdc.c` (`sdc_wait`, `abort_wait`) | the wait for a peripheral event: `SDC_WAIT_BOUND` (`sdc.h`), then ABORT; the ABORT's end | 1800, 2 | 10.45 s, 11.6 ms |
@@ -1163,6 +1166,45 @@ us). Lines are those of the current tree.
 | `menu.c:2744`, `config.c:612`, `fat.c:168` | in comments (dead) | | |
 
 The boot ROM (`fw/ctrl_boot`) is not part of this firmware and unchanged.
+
+## HDD data path (findings/sdcard-engine Task 11a)
+
+READ / WRITE (MULTIPLE) are a state machine (`hdd.c`, the comment above
+`HDD_RUN_MAX`): `HandleHDD` picks a command up only while none is in
+progress, `hdd_poll()` advances it once per main-loop pass. The pass is
+`PollDisks()` (`main.c`, in the main loop and the error page's loop):
+`sd_poll()` (the card op's next step), `hdd_poll()`, the CD audio refill
+(`CD_AudioRefill` while an HDD command is in progress: `CD_AudioPoll`'s CD
+port flags read would re-latch the Gayle's firmware port), and `HandleFpga`
+(floppy, the command pickup) unless a Gayle op may run (`sd_gayle_busy()`:
+no IDE command on cs 0x10 while the bridge owns `hdd_port`). Keys, the OSD,
+drive sounds and the floppy go on during disk work; the other card users
+(`sd_sync`: CD refill, menu, floppy, config) get the card between runs.
+Reads keep "drain, then refill"; writes take each sector from Gayle's FIFO
+by DMA (`GAYLE_TO_TX`) into a CMD25 run and report each group (IRQ, the last
+END | IRQ) only after the card has programmed it. The rules and the
+decisions: `findings/sdcard-engine/design.md` section 11 (Task 11a rows).
+
+### Debug flags
+
+`dbg_flags` (`diskstat.h`) switches the disk path's UART output at run
+time; it is 0 at power-on (quiet: no UART byte from the data path, no disk
+report). Over the GDB tunnel (`tools/rvdebug/README.md`):
+
+```
+(gdb) set var dbg_flags = 1     # DBG_ATA: one line per ATA command
+(gdb) set var dbg_flags = 2     # DBG_DISKSTAT: the disk report every 5.8 s (+ sd_report)
+(gdb) set var dbg_flags = 3     # both
+(gdb) set var dbg_flags = 0     # quiet again
+```
+
+`DBG_ATA`'s line, at the command's end:
+`ATA <cmd> lba <first LBA> n <count> port <0|1> <ok|error|abandoned|done> st <last status written> t <TIMER counts since the pickup>`
+(`done`: a command that ran to its end in `HandleHDD`, IDENTIFY etc., t 0;
+`abandoned`: the Amiga left it, no status was written). `DebugMode` does not
+switch it on; its OSD debug lines (`DEBUG1`..`DEBUG3`) are as before. The SD
+layer's own output is unchanged: `sd_debug` (per card command), the error
+lines, and the event ring `sdc_trace` (`sdc.h`).
 
 ## OSD reply wait (Phase 4 Task 11)
 

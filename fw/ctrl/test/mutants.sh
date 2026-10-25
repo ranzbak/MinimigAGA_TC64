@@ -212,16 +212,16 @@ unit mmc_port mmc_test src mmc.c 's/op.port = ide_port \& 1;/op.port = 0;/' "FAI
 
 # ---- Task 10 fix round 1 (sdproto_test, mmc_test, hdd_test, cdrom_test, rom_test, fdd_test, config_test, boot_test)
 # a read of the file's last cluster: FileReadEx 0 at the end of the chain (blocks left only); FileSeek storing the EOC mark
-unit fat_readex_end hdd_test src fat.c 's/\&\& (nSize > bc || MMCErr != SD_OK))/\&\& 1)/' "FAIL WORK.HDF READ SECTORS 8190+2"
+# (since Task 11a hdd.c reads by its own runs, not FileReadEx: fat_test's case)
+unit fat_readex_end fat_test src fat.c 's/\&\& (nSize > bc || MMCErr != SD_OK))/\&\& 1)/' "FAIL FileReadEx(the whole last cluster): 1"
 # fix round 3: a card error in FileReadEx's last seek dropped; a write ending at the file's last sector failed; a short chain indexed
 unit fat_readex_mmcerr fat_test src fat.c 's/\&\& (nSize > bc || MMCErr != SD_OK))/\&\& nSize > bc)/' "FAIL FileReadEx(cluster 2), its FAT read fails: 0"
-unit hdd_write_end hdd_test src hdd.c 's/(MMCErr != SD_OK || sector_count > 1))/1)/' "FAIL WORK.HDF WRITE SECTORS 8190+2"
 unit hdd_index_short hdd_test src hdd.c 's/if (!FileSeek(file, i >> 9, SEEK_SET)) \/\/ FileSeek seeks in 512-byte sectors/FileSeek(file, i >> 9, SEEK_SET); if (0)/' "FAIL short chain: OpenHardfile(1) fails"
 unit cd_eoc cdrom_test src cdrom.c 's/if (!FileReadEx(\&cdrom.hdf.file, 0, n))/if (!FileReadEx(\&cdrom.hdf.file, 0, n) \&\& MMCErr != SD_OK)/' "past the end of the file's chain"
 # fix round 2: sectors past the end of the HDF served / written from its last cluster
 unit hdd_past_end_rd hdd_test src hdd.c 's/lba + hdf\[unit\].offset + sector_count > (long)(hdf\[unit\].file.size >> 9)/0/' "FAIL past the end: READ SECTORS 8191+2"
-unit hdd_past_end_wr hdd_test src hdd.c 's/(lba + sector_count > (long)(hdf\[unit\].file.size >> 9) ||/(0 ||/' "FAIL past the end: WRITE SECTORS 8191+2"
-unit fat_eoc_cluster hdd_test src fat.c 's/if (next == 0xFFFF) \/\/ FAT16 EOC/if ((file->cluster = next) == 0xFFFF) \/\/ FAT16 EOC/' "FAIL WORK.HDF READ MULTIPLE 8188+4"
+unit hdd_past_end_wr hdd_test src hdd.c 's/lba + hdf\[unit\].offset + sector_count > (long)(hdf\[unit\].file.size >> 9))/!write \&\& &/' "FAIL past the end: WRITE SECTORS 8191+2"
+unit fat_eoc_cluster fat_test src fat.c 's/if (next == 0xFFFF) \/\/ FAT16 EOC/if ((file->cluster = next) == 0xFFFF) \/\/ FAT16 EOC/' "FAIL FileSeek(past the end): 0"
 # the card swap: no CID compare, the lock not sticky, the OSD's text
 unit sdp_nocid sdproto_test src sdproto.c 's/if (inited \&\& (op.err || !cid_known || memcmp(cid, sd_cid, 16))) {/if (0) {/' "FAIL cid: another card: read SD_E_GONE"
 unit sdp_cid_unsticky sdproto_test src sdproto.c 's/^\tif (changed) {\t\t\t\/\* another card: nothing goes to it \*\/$/\tif (0) {/' "FAIL cid: write SD_E_GONE"
@@ -263,20 +263,48 @@ unit hdd_cksum hdd_test src hdd.c 's/result+=be32(p\[c2\]);/result+=p[c2];/' "FA
 unit hdd_identswap hdd_test src hdd.c 's/pBuffer\[i\] = be16(pBuffer\[i\]);/;/' "FAIL IDENTIFY WORK.HDF long name"
 # the patch of an HDF's own RDB on native longs
 unit hdd_patch hdd_test src hdd.c 's/rdb->rdb_ChkSum = be32(be32(rdb->rdb_ChkSum) + be32(rdb->rdb_Flags) - 0x12);/rdb->rdb_ChkSum = rdb->rdb_ChkSum + rdb->rdb_Flags - 0x12;/' "FAIL WORK.HDF unit 0 lba 0 (own RDB, patched)"
-# the FakeRDB boundary loop (hdd.c, Task 4's parenthesis): file block 0 taken for a fake one ...
-unit hdd_boundary hdd_test src hdd.c 's/while(blk \&\& (((lba+hdf\[unit\].offset)<0)/while(blk \&\& (((lba+hdf[unit].offset)<=0)/' "FAIL ODD.HDF READ MULTIPLE 248+8: block 4 (lba 252)"
-# ... and without its blk bound: a read of fake blocks runs past its chunk
-# (since Task 10 the file read with the negative count then fails and ends
-# the command with ERR before the old shift-exponent path: too many blocks)
-unit hdd_boundary_blk hdd_test src hdd.c 's/while(blk \&\& (((lba+hdf\[unit\].offset)<0)/while((((lba+hdf[unit].offset)<0)/' "FAIL FakeRDB small unit 0: blocks"
+# the FakeRDB boundary (hdd.c, Task 4's parenthesis): file block 0 taken for a fake one ...
+unit hdd_boundary hdd_test src hdd.c 's/if (v < 0 || (hc.unit == 0/if (v <= 0 || (hc.unit == 0/' "FAIL ODD.HDF READ MULTIPLE 248+8: block 4 (lba 252)"
+# ... and a card run not bounded by its group (Task 11a): more than a group
+# into Gayle's FIFO (a refill before the drain), reads past the file
+unit hdd_run_group hdd_test src hdd.c 's/return hc.grp < HDD_RUN_MAX ? hc.grp : HDD_RUN_MAX;/return HDD_RUN_MAX;/' "FAIL"
+
 # sector count 0 = 256
 unit hdd_count0 hdd_test src hdd.c 's/if (sector_count == 0) sector_count = 0x100;/if (sector_count == 0) sector_count = 0xFF;/' "FAIL ODD.HDF READ MULTIPLE 252+0 (256)"
 # the mock bridge's words (RX_TO_GAYLE): the Gayle model's FIFO misses the card's blocks
-unit mock_gayle_into hdd_test t mock_sdc.c 's/buf_put(\&gay.into\[port\], w, 2);/;/' "FAIL WORK.HDF READ SECTORS 501+5: blocks sent"
+unit mock_gayle_into hdd_test t mock_sdc.c 's/buf_put(\&gay.into\[port\], w, 2);/;/' "the firmware polls a Gayle that never gets ready"
 # card errors end the ATA command with ERR; an abandoned read with nothing
-unit hdd_card_error hdd_test src hdd.c '/^static void ata_card_error(/,/^}/ s/WriteStatus(IDE_STATUS_END | IDE_STATUS_IRQ | IDE_STATUS_ERR);/;/' "FAIL card gone: READ: status RDY, then END | IRQ | ERR"
-unit hdd_abandon hdd_test src hdd.c 's/if (MMCErr != SD_E_GAYLE)/if (1)/' "FAIL abandoned: status RDY only"
+unit hdd_card_error hdd_test src hdd.c '/^static void hdd_fail(/,/^}/ s/WriteStatus(IDE_STATUS_END | IDE_STATUS_IRQ | IDE_STATUS_ERR);/;/' "the command never ends"
+# the brief's (Task 11a): an END | ERR after an abandon (the NEW command would end with it)
+unit hdd_abandon hdd_test src hdd.c 's/if (hc.op.err == SD_E_GAYLE || hc.abandoned) {/if (0) {/' "FAIL abandoned: status RDY only" "FAIL wr_abandon: no status after the abandon"
 unit cd_abandon cdrom_test src cdrom.c 's/return MMCErr == SD_E_GAYLE ? CD_GONE : cd_read_error/return cd_read_error/' "an abandoned READ"
+
+# ---- the interrupt-driven HDD data path (hdd_test, cdrom_test, sdproto_test; findings/sdcard-engine Task 11a)
+# the brief's: an IRQ before the stop token's busy end (the op ends at the stop token, not after its busy)
+unit hdd_irq_stopbusy hdd_test src sdproto.c '/case ST_STOP_TX:/,/return;/ s/waitop(SDC_OP_WAIT_EQ, T_BUSY, ST_STOP_BUSY);/finish(s.fail);/' "every IRQ after its group was programmed"
+# the brief's: the refill before the drain (the next group into the FIFO without waiting for hdd_cmd_req)
+unit hdd_refill_early hdd_test src hdd.c 's/if (!(GetFPGAStatus() \& CMD_IDECMD)) \/\/ wait for empty sector buffer/if (0)/' "a refill before the drain"
+# a write run started before the sector's hdd_dat_req (ruling T11-R1), and a go given before the previous block was taken
+unit hdd_no_r1 hdd_test src hdd.c 's/if (!(st \& CMD_IDEDAT)) {\t\/\/ wait for full write buffer/if (0) {/' "FAIL ODD.HDF WRITE MULTIPLE 250+4: Gayle model (CMD_IDE_DATA_RD of a sector the Amiga has not written)"
+unit sdp_go_early hdd_test src sdproto.c 's/!s.fail \&\& s.gsig == s.gtaken \&\&/!s.fail \&\&/' "the command never ends"
+# PollDisks: an FPGA command during a Gayle op; CD_AudioPoll (a CD port flags read) during an HDD command
+unit hdd_gate hdd_test src main.c 's/if (fpga \&\& !sd_gayle_busy())/if (fpga)/' "no FPGA frame (IDE command) while a Gayle op runs"
+unit hdd_cd_poll hdd_test src main.c 's/^\tif (hdd_busy())$/\tif (0)/' "inside the command"
+# no cluster split of a run; no park bound; the abandon by hdd_cmd_req not seen
+unit hdd_cluster hdd_test src hdd.c '/^static unsigned long file_run(/,/^}/ s/if (\*n > rest)/if (0)/' "FAIL wr_cluster_split: a run from each cluster boundary"
+unit hdd_park_bound hdd_test src hdd.c 's/} else if (CheckTimer(hc.park_t))/} else if (0)/' "FAIL wr_pause: one run per cluster and one more"
+unit hdd_cmdreq_abandon hdd_test src hdd.c 's/if (st \& CMD_IDECMD)\t\/\* a new command, a reset/if (0)\t\/* a new command, a reset/' "the command never ends"
+# the flags look before the last END dropped (a reset while the last group is programmed)
+unit hdd_reset_end hdd_test src hdd.c '/^\tcase H_WNEXT:/,/hdd_done/ s/if (amiga_left()) {/if (0) {/' "FAIL wr_reset_end: no END for the old command"
+# the error register not set; the trace without its flag
+unit hdd_err_reg hdd_test src hdd.c '/^static void hdd_fail(/,/^}/ s/WriteTaskFile(err,/WriteTaskFile(0,/' "the error register"
+unit hdd_trace_quiet hdd_test src hdd.c '/^static void ata_trace(/,/^}/ s/if (dbg_flags \& DBG_ATA)/if (1)/' "FAIL dbg_flags 0: no UART output from a READ"
+# sdproto: a parked run not closed by an sd_sync user (a deadlock), a Gayle error without the stop token, a card-detect change while parked
+unit sdp_sync_close hdd_test src sdproto.c '/^static void sync_cur(/,/^}/ s/sd_close(cur);/;/' "the CD refill's card read failed"
+unit sdp_gerr_stop sdproto_test src sdproto.c '/case ST_WR_GAYLE:/,/return;/ s/stop_token();/finish(s.fail);/' "FAIL gayle abandon 2nd: the stop token's busy ended"
+unit sdp_park_gone sdproto_test src sdproto.c 's/finish(SD_E_GONE);\t\/\* no op runs: no DONE will come \*\//;/' "FAIL gayle gone parked: SD_E_GONE"
+# CD_Locked's flags read during an HDD command (the port latch)
+unit cd_locked_guard cdrom_test src cdrom.c 's/if (cdrom.unit.locked \&\& !hdd_busy()) {/if (cdrom.unit.locked) {/' "the lock dropped while the HDD command runs"
 
 # ---- the floppy emulation (fdd_test) -----------------------------------------
 # the brief's mutant: SendSector one byte short (the odd data bits loop) -> mfm.py's stream
@@ -356,7 +384,7 @@ unit spireply_bit spireply_test src hardware.h 's/define HOST_REQ_OSD_RDY 0x0001
 unit diskstat_bucket diskstat_test src diskstat.c 's/{ 1, 2, 4, 8, 16, 64, 256 }/{ 1, 2, 4, 8, 15, 64, 256 }/' "FAIL w 16 sectors: hist\[1\]\[4\]"
 # the hook: ATA_WriteSectors' Gayle wait without the polls that found the
 # FIFO not ready (MMC_Write's busy polls went with cfide's SPI, Task 10)
-unit diskstat_amiga hdd_test src hdd.c '/^void ATA_WriteSectors(/,/^}/ s/polls++;/;/' "diskstat amiga polls"
+unit diskstat_amiga hdd_test src hdd.c '/^static int hdd_step(/,/^}/ s/hc.polls++;/;/' "diskstat amiga polls >= the waits"
 
 # ---- the SD peripheral driver, the interrupt migration and the mock (sdc_test, sdcard-engine Task 9)
 # the driver (sdc.c / sdc.h)

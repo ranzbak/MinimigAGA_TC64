@@ -85,6 +85,11 @@ unsigned char MMC_ReadMultiple(unsigned long lba, unsigned char *pReadBuffer, un
 unsigned char MMC_WriteMultiple(unsigned long lba, unsigned char *pWriteBuffer, unsigned long nBlockCount);
 unsigned char MMC_GetCSD();	// into CSDData
 unsigned long MMC_GetCapacity(); // Returns the capacity in 512 byte blocks, 0 on an error
+/* An op that has ended (one its caller ran itself with sd_submit, the HDD
+   data path): MMCErr = its error, ERROR_SDCARD set as by the calls above
+   (not for SD_E_GAYLE); 1 = no error */
+struct sd_op;
+unsigned char MMC_OpResult(const struct sd_op *op, const char *what);
 
 extern unsigned char CardType;
 extern unsigned char CSDData[16];

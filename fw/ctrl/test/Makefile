@@ -197,12 +197,14 @@ $(B)/hdd/identcases.h: $(GOLD)/identify.py
 	$(PY) $(GOLD)/identify.py $(@D)
 $(B)/hdd/hdd.img: $(B)/hdd/rdb.ok $(TOP)/tools/sim/mkcard.sh
 	bash $(TOP)/tools/sim/mkcard.sh $@ 32 $(B)/hdd/hdf/WORK.HDF $(B)/hdd/hdf/SYNTH.HDF $(B)/hdd/hdf/ODD.HDF
-# HandleFpga, cut out of main.c (main.c holds main()): the main loop's
-# FPGA poll that picks the IDE commands up
+# HandleFpga and PollDisks, cut out of main.c (main.c holds main()): the
+# main loop's disk pass (the card op, the HDD data path, the CD refill) and
+# its FPGA poll that picks the IDE commands up
 $(B)/handlefpga.inc: $(SRC)/main.c
 	@mkdir -p $(@D)
-	sed -n '/^void HandleFpga(void)/,/^}/p' $(SRC)/main.c > $@
+	sed -n '/^void HandleFpga(void)/,/^}/p; /^void PollDisks(int fpga)/,/^}/p' $(SRC)/main.c > $@
 	grep -q '^void HandleFpga' $@
+	grep -q '^void PollDisks' $@
 $(B)/hdd_test $(B)/hdd_test_32: $(B)/handlefpga.inc
 $(B)/hdd_test: $(TD)/hdd_test.c $(HDD_SRCS) $(HDRS) $(B)/hdd/rdb.ok $(B)/hdd/identcases.h
 	$(HOSTCC) $(CFLAGS) -I$(B)/hdd -o $@ $(TD)/hdd_test.c $(HDD_SRCS)

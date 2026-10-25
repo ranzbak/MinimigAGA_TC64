@@ -59,7 +59,8 @@ int CD_Eject(void);
 /* Amiga reset seen (Gayle rst_seen): lock cleared, UNIT ATTENTION 06/29/00. */
 void CD_Reset(void);
 
-/* The Amiga holds the lock (PREVENT MEDIUM REMOVAL); looks for a reset first. */
+/* The Amiga holds the lock (PREVENT MEDIUM REMOVAL); looks for a reset first
+   (not while an HDD command is in progress, hdd_busy(): its port latch). */
 int CD_Locked(void);
 
 /* The flags of a task file register read of port: an rst_seen on the CD's
@@ -74,7 +75,9 @@ void CD_HandleCommand(int port, unsigned char *tfr);
    stops the player).  That flags read is a CMD_IDE_REGS_RD of the CD's
    port, whose command word re-latches the Gayle's firmware port
    (paula_floppy.v hdd_port_r): never call this inside an IDE or floppy
-   transfer, use CD_AudioRefill there. */
+   transfer, use CD_AudioRefill there.  The main loop calls it only while no
+   HDD command is in progress (main.c PollDisks; findings/sdcard-engine
+   Task 11a), CD_AudioRefill during one. */
 void CD_AudioPoll(void);
 
 /* CD audio refill only (13.5): no IDE register access, so it is safe

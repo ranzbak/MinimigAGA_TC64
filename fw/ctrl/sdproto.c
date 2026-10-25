@@ -442,6 +442,7 @@ static void acmd22_done(void)
 static void block_read(void)
 {
 	s.done++;
+	cur->done_blocks = (int)s.done;	/* live: the caller sees a block delivered (its CMD12 may follow) */
 	s.rd_crc = 0;
 	s.t_tok = 0;
 	if (s.done == cur->count)

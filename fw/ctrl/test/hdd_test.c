@@ -64,6 +64,7 @@
 #include "drivesounds.h"
 #include "diskstat.h"
 #include "fdd.h"
+#include "sdproto.h"
 #include "mock_hw.h"
 
 #include "rdbcases.h"
@@ -78,6 +79,11 @@ static int audio_polls, full_polls, hdd_steps;
    the CD port's flags, ReadIDEFlags(1) -- a CMD_IDE_REGS_RD | 1, whose command
    word re-latches the Gayle's firmware port.  The stub does the same. */
 static int cd_audio_busy;
+/* the refill reads the card (cdrom.c's cda_port_read: FileRead, an sd_sync
+   user that queues behind the HDD path's card op) */
+static int cd_refill_card;
+static unsigned refill_reads;
+static void die(const char *what);
 
 /* config.c's */
 hardfileTYPE *SlotConfig(int slot)
@@ -88,11 +94,20 @@ void DebugMessage(char *message) { (void)message; }
 void CD_AudioPoll(void)
 {
 	audio_polls++;
-	full_polls++;
+	if (hdd_busy())
+		full_polls++;	/* inside an HDD command: the flags read below re-latches the port */
 	if (cd_audio_busy)
 		ReadIDEFlags(1);	/* the CD on port 2, as cdrom.c CD_AudioPoll */
 }
-void CD_AudioRefill(void) { audio_polls++; }
+void CD_AudioRefill(void)
+{
+	static unsigned char b[512];
+	audio_polls++;
+	if (cd_refill_card) {
+		if (!MMC_Read(20 + refill_reads % 8, b)) die("the CD refill's card read failed");
+		refill_reads++;
+	}
+}
 void CD_Flags(int port, unsigned char flags) { }
 void CD_HandleCommand(int port, unsigned char *tfr) { fprintf(stdout, "FAIL CD_HandleCommand called\n"); exit(1); }
 void drivesounds_queueevent(enum DriveSound_Type type) { if (type == DRIVESOUND_HDDSTEP) hdd_steps++; }
@@ -168,9 +183,11 @@ static int check_mem(const char *what, const uint8_t *got, const uint8_t *want, 
 	return 1;
 }
 
+/* the case running (read_case / write_case), for a die inside it */
+static const char *cur_case = "";
 static void die(const char *what)
 {
-	say("FAIL %s\n", what);
+	say("FAIL %s%s%s\n", cur_case, *cur_case ? ": " : "", what);
 	exit(1);
 }
 
@@ -241,6 +258,11 @@ static struct gayle {
 	int wtoggle;
 	int rst_seen;		/* the next CMD_IDE_REGS_RD reports IDEF_RST_SEEN */
 	unsigned gerrs;		/* mock_gayle_errs() the model has seen */
+	int hook;		/* HOOK_*: what the Amiga does instead of writing sector hook_at */
+	unsigned hook_at;
+	unsigned pause;		/* HOOK_PAUSE: polls the Amiga waits */
+	unsigned stop_mark;	/* mock_card_stop_ends() at the last IRQ status write */
+	unsigned stops_at_reset;	/* mock_card_stop_ends() when the Amiga was reset */
 	unsigned long busy_polls, polls;
 	struct { char *p; size_t n, cap; } log;
 	char err[160];
@@ -307,6 +329,7 @@ static void amiga_command(const unsigned char *t, unsigned count, unsigned chunk
 	g.pio = 0;
 	g.count = count;
 	g.chunk = chunk ? chunk : 1;
+	g.stop_mark = mock_card_stop_ends();
 	mock_gayle_abandon(0);	/* the FIFO reset: cmd_since until the pickup */
 }
 
@@ -322,9 +345,43 @@ static void look_gerr(void)
 	}
 }
 
+/* what the Amiga does when it comes to its sector hook_at (0-based) */
+enum { HOOK_NONE, HOOK_RESET, HOOK_PULL, HOOK_ABANDON, HOOK_PAUSE, HOOK_RESET_END };
+static void amiga_reset(void)
+{
+	glog("reset");
+	g.stops_at_reset = mock_card_stop_ends();
+	g.busy = 0;
+	g.pio = 0;
+	g.rst_seen = 1;
+	mock_gayle_abandon(0);	/* Gayle reset: the FIFO, cmd_since */
+	g.hook = HOOK_NONE;
+}
+
 /* the Amiga writes its next sector into the FIFO */
 static void amiga_write(void)
 {
+	if (g.hook && g.wready == g.hook_at) {
+		switch (g.hook) {
+		case HOOK_RESET:
+			amiga_reset();
+			return;
+		case HOOK_PULL:
+			glog("card pulled");
+			mock_sdc_pull_card();
+			g.hook = HOOK_NONE;
+			break;
+		case HOOK_ABANDON:	/* a new command resets the FIFO while the bridge moves this sector */
+			glog("abandon");
+			mock_gayle_end(MOCK_GAYLE_ERR, 100);
+			g.hook = HOOK_NONE;
+			break;
+		case HOOK_PAUSE:
+			if (g.pause) { g.pause--; return; }
+			g.hook = HOOK_NONE;
+			break;
+		}
+	}
 	mock_gayle_from(0, g.wdata + (size_t)g.wready * 512, 512);
 	g.wready++;
 }
@@ -358,6 +415,10 @@ static unsigned char gayle_poll(void)
 		if ((g.wtoggle ^= 1) && !left && g.wready < total && g.wready < allowed)
 			amiga_write();
 		left = mock_gayle_from_left(0);
+		if (g.hook == HOOK_RESET_END && consumed() >= (unsigned long)g.count * 512) {
+			amiga_reset();	/* while the card programs the last group */
+			return 0;
+		}
 		if (left >= 512) st = CMD_IDEDAT | CMD_IDECMD;	/* fifo_full: dat_req, and bsy */
 		else if (g.wready >= g.count) st = CMD_IDECMD;	/* the last sector taken */
 	}
@@ -590,14 +651,16 @@ static void lba2chs(int unit, long lba, unsigned *c, unsigned *h, unsigned *s)
 /* the firmware serves a command (the main loop has work for it) */
 static int fw_in_command(void)
 {
-	return 1;	/* HandleHDD runs each command to its end */
+	return hdd_busy();
 }
 
-/* one pass of the main loop's disk work */
+/* one pass of the main loop's disk work (main.c PollDisks, cut out with
+   HandleFpga), and the time the rest of the pass takes */
 static long passes;
 static void loop_pass(void)
 {
-	HandleFpga();
+	PollDisks(1);
+	mock_sdc_step();
 	look_gerr();
 	passes++;
 }
@@ -609,7 +672,7 @@ static void run_loop(void)
 	do {
 		loop_pass();
 		if (++n > 2000000) die("the command never ends (a hang)");
-	} while (g.busy);
+	} while (g.busy || hdd_busy());
 }
 
 /* the unit / LBA / data of the write being served: the IRQ check */
@@ -617,8 +680,10 @@ static int cur_unit;
 static long cur_lba;
 static unsigned irq_early;	/* IRQ status writes before the group was on the card */
 
-/* the task file of a command on unit 0/1 of port 1: CHS of lba, count byte */
-static void command(int unit, unsigned char cmd, long lba, unsigned char count)
+/* the task file of a command on unit 0/1 of port 1: CHS of lba, count byte;
+   command_begin only writes it (the Amiga's side), command runs the main
+   loop until the firmware and the Amiga are through */
+static void command_begin(int unit, unsigned char cmd, long lba, unsigned char count)
 {
 	unsigned c, h, s;
 	lba2chs(unit, lba, &c, &h, &s);
@@ -643,6 +708,11 @@ static void command(int unit, unsigned char cmd, long lba, unsigned char count)
 	audio_polls = 0;
 	full_polls = 0;
 	amiga_command(t, count ? count : 256, multiple ? hdf[unit].sectors_per_block : 1);
+}
+
+static void command(int unit, unsigned char cmd, long lba, unsigned char count)
+{
+	command_begin(unit, cmd, lba, count);
 	run_loop();
 	trace_blocks();
 }
@@ -663,13 +733,19 @@ static const uint8_t *expect_block(int unit, long lba)
 static void status_irq(void)
 {
 	unsigned k = (unsigned)(consumed() / 512);
-	int ok = mock_card_idle();
+	int ok = mock_card_idle(), to_card = 0;
 	for (unsigned i = 0; i < k && ok && g.wdata; i++) {
 		long v = cur_lba + (long)i + uc[cur_unit].offset;
 		if (v >= 0 && uc[cur_unit].file >= 0 &&
-		    memcmp(mock_card_sector(files[uc[cur_unit].file].card_lba[v]), g.wdata + (size_t)i * 512, 512))
+		    ((size_t)v >= files[uc[cur_unit].file].len / 512 ||	/* past the end of the file */
+		     memcmp(mock_card_sector(files[uc[cur_unit].file].card_lba[v]), g.wdata + (size_t)i * 512, 512)))
 			ok = 0;
+		if (i >= g.irqs * g.chunk && v >= 0) to_card = 1;	/* this group wrote to the card */
 	}
+	/* a group that went to the card: a CMD25 run (or more), the stop
+	   token's busy over before this status (findings/sdcard-engine 11a) */
+	if (to_card && mock_card_stop_ends() == g.stop_mark) ok = 0;
+	g.stop_mark = mock_card_stop_ends();
 	if (!ok) irq_early++;
 }
 
@@ -699,6 +775,10 @@ static void check_gayle(const char *what)
 	check(w, full_polls, 0);
 	snprintf(w, sizeof w, "%s: no FPGA frame (IDE command) while a Gayle op runs", what);
 	check(w, (long)mock_gayle_cs_violations(), 0);
+	snprintf(w, sizeof w, "%s: no Gayle op started before its data was there (T11-R1)", what);
+	check(w, (long)mock_gayle_stalls(), 0);
+	snprintf(w, sizeof w, "%s: the firmware done (no HDD state machine, no card op left)", what);
+	check(w, hdd_busy() || sd_poll(), 0);
 }
 
 static void set_multiple(int unit, unsigned char n)
@@ -713,8 +793,10 @@ static void set_multiple(int unit, unsigned char n)
 
 /* the disk statistics (diskstat.c) of one command: diskstat_mark() before
    it, diskstat_check() after.  One count in the bucket of n sectors of its
-   direction and no other; the Amiga polls are one per wait for the FIFO
-   plus one per CD_AudioRefill (a poll that found the FIFO not ready) */
+   direction and no other; the Amiga polls are the HDD path's status polls
+   of its waits for the FIFO (one per main-loop pass of a wait,
+   findings/sdcard-engine Task 11a): at least one per wait, at most the
+   status polls Gayle saw */
 static unsigned ds_hist[2][DISKSTAT_BUCKETS], ds_amiga;
 static unsigned ds_amiga_polls(void)
 {
@@ -743,8 +825,10 @@ static void diskstat_check(const char *what, int write, int n, int waits)
 	check(w, (long)(diskstat_hist[write][b] - ds_hist[write][b]), 1);
 	snprintf(w, sizeof w, "%s: diskstat no other bucket", what);
 	check(w, other, 0);
-	snprintf(w, sizeof w, "%s: diskstat amiga polls (waits + refills)", what);
-	check(w, (long)(ds_amiga_polls() - ds_amiga), waits + audio_polls);
+	snprintf(w, sizeof w, "%s: diskstat amiga polls >= the waits", what);
+	check(w, (long)(ds_amiga_polls() - ds_amiga) >= waits, 1);
+	snprintf(w, sizeof w, "%s: diskstat amiga polls <= Gayle's status polls", what);
+	check(w, (long)(ds_amiga_polls() - ds_amiga) <= (long)g.polls, 1);
 }
 
 /* a READ SECTORS / READ MULTIPLE of n sectors (count byte n & 255) at lba */
@@ -753,7 +837,9 @@ static void read_case(const char *what, int unit, int multiple, long lba, int n)
 	char w[200];
 	int spb = hdf[unit].sectors_per_block;
 	diskstat_mark();
+	cur_case = what;
 	command(unit, multiple ? ACMD_READ_MULTIPLE : ACMD_READ_SECTORS, lba, (unsigned char)n);
+	cur_case = "";
 	check_gayle(what);
 	check_taskfile(what, unit, lba + n - 1, (unsigned char)n);
 	snprintf(w, sizeof w, "%s: blocks sent", what);
@@ -776,10 +862,14 @@ static void read_case(const char *what, int unit, int multiple, long lba, int n)
 			snprintf(w, sizeof w, "%s: status write %d", what, i);
 			check(w, g.status[i], IDE_STATUS_RDY);
 		}
-	snprintf(w, sizeof w, "%s: CD audio polls while the FIFO drains", what);
-	check(w, audio_polls, want_chunks - 1);
+	snprintf(w, sizeof w, "%s: CD audio refills while the FIFO drains (the main loop ran)", what);
+	check(w, audio_polls >= want_chunks - 1, 1);
 	diskstat_check(what, 0, n, want_chunks);
 }
+
+static void card_log_mark(void);
+static int card_log_count(const char *needle);
+static int clusters(long a, long n);
 
 /* a WRITE SECTORS / WRITE MULTIPLE of n sectors of data at lba: the card
    afterwards is the card before with the written file blocks replaced */
@@ -799,7 +889,19 @@ static void write_case(const char *what, int unit, int multiple, long lba, int n
 	g.wlen = (size_t)n * 512;
 	ClearError(ERROR_ALL);
 	diskstat_mark();
+	card_log_mark();
+	cur_case = what;
 	command(unit, multiple ? ACMD_WRITE_MULTIPLE : ACMD_WRITE_SECTORS, lba, (unsigned char)n);
+	cur_case = "";
+	if (uc[unit].file == F_WORK && !cd_refill_card) {
+		/* WORK.HDF (offset 0, contiguous): one CMD25 run per cluster of
+		   each group, none split by the park bound (the Amiga keeps up) */
+		int per = multiple ? spb : 1, runs = 0;
+		for (long a = lba; a < lba + n; a += per)
+			runs += clusters(a, a + per <= lba + n ? per : lba + n - a);
+		snprintf(w, sizeof w, "%s: CMD25 runs: one per cluster of each group", what);
+		check(w, card_log_count("CMD25 arg="), runs);
+	}
 	diskstat_check(what, 1, n, n);	/* one wait per block */
 	check_gayle(what);
 	check_taskfile(what, unit, lba + n - 1, (unsigned char)n);
@@ -955,6 +1057,7 @@ static void error_cases(void)
 	check_gayle("card gone: READ SECTORS 600+2");
 	check("card gone: READ: no block", nblocks, 0);
 	check("card gone: READ: status RDY, then END | IRQ | ERR", g.nstatus == 2 && g.status[0] == IDE_STATUS_RDY && g.status[1] == err, 1);
+	check("card gone: READ: the error register UNC (0x40)", g.ntfw == 2 ? g.tfw[1][0] : -1, 0x40);
 	check("card gone: READ: ERROR_SDCARD set", (ErrorMask >> ERROR_SDCARD) & 1, 1);
 	check("card gone: READ: not fatal", ErrorFatal, 0);
 	ClearError(ERROR_ALL);
@@ -963,6 +1066,7 @@ static void error_cases(void)
 	command(1, ACMD_WRITE_SECTORS, 600, 2);
 	check_gayle("card gone: WRITE SECTORS 600+2");
 	check("card gone: WRITE: status REQ, then END | IRQ | ERR", g.nstatus == 2 && g.status[0] == IDE_STATUS_REQ && g.status[1] == err, 1);
+	check("card gone: WRITE: the error register ABRT (0x04)", g.ntfw == 2 ? g.tfw[1][0] : -1, 0x04);
 	check("card gone: WRITE: ERROR_SDCARD set", (ErrorMask >> ERROR_SDCARD) & 1, 1);
 	for (unsigned l = 0; l < card_sectors; l++) same &= !memcmp(before + (size_t)l * 512, mock_card_sector(l), 512);
 	check("card gone: WRITE: the card unchanged", same, 1);
@@ -1000,6 +1104,7 @@ static void past_end_cases(void)
 	check_gayle("past the end: READ SECTORS 8191+2");
 	check("past the end: READ SECTORS 8191+2: no block", nblocks, 0);
 	check("past the end: READ SECTORS 8191+2: status END | IRQ | ERR only", g.nstatus == 1 && g.status[0] == err, 1);
+	check("past the end: READ SECTORS 8191+2: the error register IDNF (0x10)", g.ntfw == 2 ? g.tfw[1][0] : -1, 0x10);
 	set_multiple(1, 4);
 	command(1, ACMD_READ_MULTIPLE, 8190, 4);
 	check_gayle("past the end: READ MULTIPLE 8190+4");
@@ -1011,6 +1116,7 @@ static void past_end_cases(void)
 	command(1, ACMD_WRITE_SECTORS, 8191, 2);
 	check_gayle("past the end: WRITE SECTORS 8191+2");
 	check("past the end: WRITE SECTORS 8191+2: status REQ, then END | IRQ | ERR", g.nstatus == 2 && g.status[0] == IDE_STATUS_REQ && g.status[1] == err, 1);
+	check("past the end: WRITE SECTORS 8191+2: the error register IDNF (0x10)", g.ntfw == 2 ? g.tfw[1][0] : -1, 0x10);
 	check("past the end: WRITE SECTORS 8191+2: no sector taken from the FIFO", (long)consumed(), 0);
 	for (unsigned l = 0; l < card_sectors; l++) same &= !memcmp(before + (size_t)l * 512, mock_card_sector(l), 512);
 	check("past the end: WRITE SECTORS 8191+2: the card unchanged", same, 1);
@@ -1088,6 +1194,371 @@ static void rd_multi_order(const char *golden)
 		    g.log.p ? g.log.p : "", want);
 		fails++;
 	}
+}
+
+/* ---- the interrupt-driven HDD data path (findings/sdcard-engine Task 11a) */
+
+/* the card's command log since a mark: the CMD25 lines */
+static size_t log_mark;
+static void card_log_mark(void) { log_mark = strlen(mock_card_log()); }
+static int card_log_has(const char *needle) { return strstr(mock_card_log() + log_mark, needle) != NULL; }
+static int card_log_count(const char *needle)
+{
+	int n = 0;
+	for (const char *p = mock_card_log() + log_mark; (p = strstr(p, needle)); p++) n++;
+	return n;
+}
+/* the lines of the Gayle log after the last line `after` */
+static const char *log_after(const char *after)
+{
+	const char *p = g.log.p ? g.log.p : "", *q, *at = NULL;
+	for (q = p; (q = strstr(q, after)); q++) at = q;
+	return at ? at + strlen(after) : NULL;
+}
+/* the file blocks lba.. of unit 1 (WORK.HDF) hold d now (after a write the
+   test drove by hand) */
+static void file_now(long lba, const uint8_t *d, unsigned n)
+{
+	for (unsigned i = 0; i < n; i++)
+		memcpy(files[uc[1].file].data + (size_t)(lba + i + uc[1].offset) * 512, d + (size_t)i * 512, 512);
+}
+static int card_has(long lba, const uint8_t *d, unsigned n)
+{
+	for (unsigned i = 0; i < n; i++)
+		if (memcmp(mock_card_sector(files[uc[1].file].card_lba[lba + i + uc[1].offset]), d + (size_t)i * 512, 512))
+			return 0;
+	return 1;
+}
+/* passes of the main loop until cond() or n passes */
+static long run_until(int (*cond)(void), long n)
+{
+	long k = 0;
+	while (k < n && !cond()) { loop_pass(); k++; }
+	return k;
+}
+static int card_and_sd_idle(void) { return mock_card_idle() && !sd_poll() && !g.busy; }
+static int fw_idle(void) { return !hdd_busy() && !sd_poll(); }
+/* the command was picked up (a status written) and the firmware is idle again */
+static int cmd_over(void) { return g.nstatus && fw_idle(); }
+static int never(void) { return 0; }
+static int count_lines(const char *t)
+{
+	int n = 0;
+	for (; *t; t++) n += *t == '\n';
+	return n;
+}
+
+/* every IRQ only after its group was programmed: the stop token's busy
+   over (a slow card: 20000 busy bytes, 8.5 ms at div 2, per block) */
+static void wr_irq_after_program(void)
+{
+	uint8_t *d = wpattern(40, 31);
+	set_multiple(1, 16);
+	mock_card_params(4, 20000, 1, 2);
+	write_case("wr_irq_after_program: WORK.HDF WRITE MULTIPLE 3500+40 (busy 20000 bytes)", 1, 1, 3500, 40, d);
+	check("wr_irq_after_program: three IRQs (16, 16, 8)", g.irqs, 3);
+	mock_card_params(4, 8, 1, 2);
+	free(d);
+}
+
+/* clusters of WORK.HDF (offset 0, file sector = LBA) sectors [a, a + n) touch */
+static int clusters(long a, long n) { return (int)((a + n - 1) / cluster_size - a / cluster_size + 1); }
+
+/* a group over cluster boundaries: a CMD25 run up to each boundary, the
+   next one from it (the file is contiguous on this card: one run would
+   write the right sectors too, the runs' starts are the check) */
+static void wr_cluster_split(void)
+{
+	char w[200];
+	long lba = 4L * cluster_size - 3, b;	/* WORK.HDF: offset 0 */
+	uint8_t *d = wpattern(8, 33);
+	int starts = 1;
+	set_multiple(1, 16);
+	card_log_mark();
+	write_case("wr_cluster_split: WORK.HDF WRITE MULTIPLE over a cluster boundary", 1, 1, lba, 8, d);
+	snprintf(w, sizeof w, "CMD25 arg=%08x\n", files[uc[1].file].card_lba[lba]);
+	check("wr_cluster_split: a run from the first sector", card_log_has(w), 1);
+	for (b = 4L * cluster_size; b < lba + 8; b += cluster_size) {
+		snprintf(w, sizeof w, "CMD25 arg=%08x\n", files[uc[1].file].card_lba[b]);
+		starts &= card_log_has(w);
+	}
+	check("wr_cluster_split: a run from each cluster boundary", starts, 1);
+	check("wr_cluster_split: one run per cluster", card_log_count("CMD25 arg="), clusters(lba, 8));
+	free(d);
+}
+
+/* the card pulled while the Amiga writes the 19th of 32 sectors (the 2nd
+   group's run): no hang, END | IRQ | ERR with ABRT, ERROR_SDCARD, Gayle's
+   port free; with the card back the firmware's restart (MMC_Init) works */
+static void wr_card_gone(void)
+{
+	uint8_t *d = wpattern(32, 35);
+	struct mock_sdc_peek p;
+	long n;
+	set_multiple(1, 16);
+	ClearError(ERROR_ALL);
+	g.wdata = d;
+	g.wlen = 32 * 512;
+	command_begin(1, ACMD_WRITE_MULTIPLE, 4700, 32);
+	g.hook = HOOK_PULL;
+	g.hook_at = 18;
+	n = run_until(cmd_over, 200000);
+	check("wr_card_gone: the command ended (no hang)", n < 200000 && cmd_over(), 1);
+	check_gayle("wr_card_gone");
+	check("wr_card_gone: status END | IRQ | ERR last", g.nstatus ? g.status[g.nstatus - 1] : -1,
+	      IDE_STATUS_END | IDE_STATUS_IRQ | IDE_STATUS_ERR);
+	check("wr_card_gone: the error register ABRT", g.ntfw ? g.tfw[g.ntfw - 1][0] : -1, 0x04);
+	check("wr_card_gone: the 1st group's IRQ came", g.irqs, 1);
+	check("wr_card_gone: ERROR_SDCARD set", (ErrorMask >> ERROR_SDCARD) & 1, 1);
+	mock_sdc_peek(&p);
+	check("wr_card_gone: no Gayle op running (the port is free)", p.busy, 0);
+	check("wr_card_gone: the 1st group (its IRQ came) on the card", card_has(4700, d, 16), 1);
+	check("wr_card_gone: the 19th not", card_has(4718, d + 18 * 512, 1), 0);
+	file_now(4700, d, 16);
+	for (long l = 4716; l < 4718; l++)	/* the 2nd group's run was cut: what the card has */
+		memcpy(files[uc[1].file].data + (size_t)l * 512, mock_card_sector(files[uc[1].file].card_lba[l]), 512);
+	g.busy = 0;	/* the Amiga goes on */
+	g.wdata = NULL;
+	g.wlen = 0;
+	mock_card_insert();
+	mock_sdc_cd(1);
+	mock_run(2000000);	/* the debounce */
+	ClearError(ERROR_ALL);
+	check("wr_card_gone: card back: MMC_Init", MMC_Init(), CARDTYPE_SDHC);
+	check("wr_card_gone: card back: FindDrive", FindDrive(), 1);
+	open_unit(1, F_WORK, HDF_FILE, "WORK    ");
+	set_multiple(1, 16);
+	write_case("wr_card_gone: after the restart: WRITE MULTIPLE 4718+14", 1, 1, 4718, 14, d + 18 * 512);
+	check("wr_card_gone: after the restart: no error", ErrorMask, 0);
+	free(d);
+}
+
+/* the Amiga abandons the command while the bridge moves its 6th sector (a
+   new command resets the FIFO: g_err after 100 words): no partial block on
+   the card, no status for the old command, the engine idle; the next
+   command is served */
+static void wr_abandon(void)
+{
+	uint8_t *d = wpattern(16, 37);
+	const char *after;
+	long n;
+	set_multiple(1, 16);
+	ClearError(ERROR_ALL);
+	g.wdata = d;
+	g.wlen = 16 * 512;
+	command_begin(1, ACMD_WRITE_MULTIPLE, 4800, 16);
+	g.hook = HOOK_ABANDON;
+	g.hook_at = 5;
+	n = run_until(cmd_over, 200000);
+	check("wr_abandon: the firmware idle again", n < 200000 && cmd_over(), 1);
+	check_gayle("wr_abandon");
+	after = log_after("abandon\n");
+	check("wr_abandon: no status after the abandon", after && !strstr(after, "st "), 1);
+	check("wr_abandon: the 5 sectors before it on the card", card_has(4800, d, 5), 1);
+	check("wr_abandon: no partial block: the 6th untouched", card_has(4805, files[uc[1].file].data + 4805 * 512, 1), 1);
+	check("wr_abandon: nothing after it", card_has(4806, files[uc[1].file].data + 4806 * 512, 10), 1);
+	check("wr_abandon: the card idle (the run ended)", mock_card_idle(), 1);
+	check("wr_abandon: no error", ErrorMask, 0);
+	file_now(4800, d, 5);
+	g.wdata = NULL;
+	g.wlen = 0;
+	read_case("wr_abandon: the next command: READ SECTORS 4800+8", 1, 0, 4800, 8);
+	free(d);
+}
+
+/* Ctrl-Amiga-Amiga in the middle of a CMD25 run (the 2nd group's 5th
+   sector never comes): the firmware ends the run cleanly (stop token, the
+   card idle) and writes no status for the old command; the Amiga's next
+   command (after the reset) is served.  Then a reset while the card
+   programs a write's last group: no END for it either. */
+static void wr_reset_mid_run(void)
+{
+	uint8_t *d = wpattern(32, 39);
+	const char *after;
+	unsigned stops;
+	long n;
+	set_multiple(1, 16);
+	ClearError(ERROR_ALL);
+	g.wdata = d;
+	g.wlen = 32 * 512;
+	stops = mock_card_stop_ends();
+	command_begin(1, ACMD_WRITE_MULTIPLE, 4900, 32);
+	g.hook = HOOK_RESET;
+	g.hook_at = 20;
+	n = run_until(card_and_sd_idle, 200000);
+	check("wr_reset_mid_run: the run ended on the card", n < 200000 && card_and_sd_idle(), 1);
+	check("wr_reset_mid_run: by a stop token after the reset", mock_card_stop_ends() > g.stops_at_reset, 1);
+	check("wr_reset_mid_run: the 1st group's runs ended before it", g.stops_at_reset > stops, 1);
+	check("wr_reset_mid_run: the 20 sectors before the reset on the card", card_has(4900, d, 20), 1);
+	check("wr_reset_mid_run: nothing after them", card_has(4920, files[uc[1].file].data + 4920 * 512, 12), 1);
+	n = run_until(never, 50);	/* the Amiga boots: the old command waits for a sector that never comes */
+	after = log_after("reset\n");
+	check("wr_reset_mid_run: no status after the reset", after && !strstr(after, "st "), 1);
+	check("wr_reset_mid_run: no FPGA frame while a Gayle op runs", (long)mock_gayle_cs_violations(), 0);
+	check("wr_reset_mid_run: no Gayle op started before its data was there", (long)mock_gayle_stalls(), 0);
+	file_now(4900, d, 20);
+	g.wdata = NULL;
+	g.wlen = 0;
+	read_case("wr_reset_mid_run: the next command after the reset: READ MULTIPLE 4900+24", 1, 1, 4900, 24);
+	check("wr_reset_mid_run: no error", ErrorMask, 0);
+	/* the reset while the last group is programmed */
+	mock_card_params(4, 20000, 1, 2);
+	g.wdata = d;
+	g.wlen = 2 * 512;
+	command_begin(1, ACMD_WRITE_MULTIPLE, 4950, 2);
+	g.hook = HOOK_RESET_END;
+	n = run_until(cmd_over, 200000);
+	check("wr_reset_end: the firmware idle", n < 200000 && cmd_over(), 1);
+	after = log_after("reset\n");
+	check("wr_reset_end: the reset came during the programming", after != NULL, 1);
+	check("wr_reset_end: no END for the old command", after && !strstr(after, "st "), 1);
+	check("wr_reset_end: both sectors programmed", card_has(4950, d, 2), 1);
+	check("wr_reset_end: the card idle", mock_card_idle(), 1);
+	file_now(4950, d, 2);
+	mock_card_params(4, 8, 1, 2);
+	g.wdata = NULL;
+	g.wlen = 0;
+	read_case("wr_reset_end: the next command: READ SECTORS 4950+2", 1, 0, 4950, 2);
+	free(d);
+}
+
+/* the Amiga pauses in the middle of a group: the parked run is closed
+   after its bound (HDD_PARK_COUNTS) and the group goes on in a new run;
+   one IRQ for the group, after both runs */
+static void wr_pause(void)
+{
+	uint8_t *d = wpattern(16, 41);
+	set_multiple(1, 16);
+	card_log_mark();
+	g.wdata = d;
+	g.wlen = 16 * 512;
+	command_begin(1, ACMD_WRITE_MULTIPLE, 5100, 16);
+	g.hook = HOOK_PAUSE;
+	g.hook_at = 7;
+	g.pause = 40;
+	run_loop();
+	trace_blocks();
+	check_gayle("wr_pause");
+	check("wr_pause: status REQ, END | IRQ", g.nstatus == 2 && g.status[0] == IDE_STATUS_REQ &&
+	      g.status[1] == (IDE_STATUS_END | IDE_STATUS_IRQ), 1);
+	check("wr_pause: one run per cluster and one more (closed in the pause)", card_log_count("CMD25 arg="), clusters(5100, 16) + 1);
+	check("wr_pause: the IRQ after both", irq_early, 0);
+	check("wr_pause: on the card", card_has(5100, d, 16), 1);
+	file_now(5100, d, 16);
+	g.wdata = NULL;
+	g.wlen = 0;
+	free(d);
+}
+
+/* the Amiga slow with a run's first sector (and with each next group's):
+   no run starts before the sector is in the FIFO (T11-R1: the Gayle op
+   would wait for the Amiga) */
+static void wr_slow_amiga(void)
+{
+	uint8_t *d = wpattern(20, 49);
+	set_multiple(1, 16);
+	g.wdata = d;
+	g.wlen = 20 * 512;
+	command_begin(1, ACMD_WRITE_MULTIPLE, 5150, 20);
+	g.hook = HOOK_PAUSE;
+	g.hook_at = 0;
+	g.pause = 40;
+	cur_case = "wr_slow_amiga";	/* a Gayle op waiting for the Amiga blocks the polls: a hang */
+	run_loop();
+	cur_case = "";
+	trace_blocks();
+	check_gayle("wr_slow_amiga");
+	check("wr_slow_amiga: on the card", card_has(5150, d, 20), 1);
+	check("wr_slow_amiga: the IRQs after their groups", irq_early, 0);
+	file_now(5150, d, 20);
+	g.wdata = NULL;
+	g.wlen = 0;
+	free(d);
+}
+
+/* the main loop keeps running during a 64-sector write: passes, the CD
+   refill between runs (which reads the card itself: an sd_sync user that
+   queues behind the runs), no flags read, no FPGA frame during a Gayle op */
+static void main_loop_runs(void)
+{
+	uint8_t *d = wpattern(64, 43);
+	long p0;
+	set_multiple(1, 16);
+	cd_audio_busy = 1;
+	cd_refill_card = 1;
+	refill_reads = 0;
+	p0 = passes;
+	write_case("main_loop_runs: WORK.HDF WRITE MULTIPLE 5200+64, the CD refill reading the card", 1, 1, 5200, 64, d);
+	check("main_loop_runs: main-loop passes during the write >= 64", passes - p0 >= 64, 1);
+	check("main_loop_runs: CD refills during the write >= 64", audio_polls >= 64, 1);
+	check("main_loop_runs: the refill's card reads ran during the write", refill_reads >= 64, 1);
+	cd_audio_busy = 0;
+	cd_refill_card = 0;
+	read_case("main_loop_runs: READ MULTIPLE 5200+0 (256)", 1, 1, 5200, 256);
+	free(d);
+}
+
+/* OpenHardfile (the OSD's hardfile page) while the Amiga writes: the
+   command ends with ERR first (hdd_cancel), the card's run closed */
+static void wr_cancel(void)
+{
+	uint8_t *d = wpattern(16, 45);
+	set_multiple(1, 16);
+	g.wdata = d;
+	g.wlen = 16 * 512;
+	command_begin(1, ACMD_WRITE_MULTIPLE, 5300, 16);
+	g.hook = HOOK_PAUSE;
+	g.hook_at = 4;
+	g.pause = 1000000;
+	run_until(never, 30);
+	check("wr_cancel: the write waits for the Amiga", hdd_busy(), 1);
+	ClearError(ERROR_ALL);
+	open_unit(1, F_WORK, HDF_FILE, "WORK    ");
+	check("wr_cancel: the command ended", fw_idle(), 1);
+	check("wr_cancel: END | IRQ | ERR", g.nstatus ? g.status[g.nstatus - 1] : -1, IDE_STATUS_END | IDE_STATUS_IRQ | IDE_STATUS_ERR);
+	check("wr_cancel: ABRT", g.ntfw ? g.tfw[g.ntfw - 1][0] : -1, 0x04);
+	check("wr_cancel: the card idle", mock_card_idle(), 1);
+	check("wr_cancel: the 4 sectors before on the card", card_has(5300, d, 4), 1);
+	file_now(5300, d, 4);
+	g.busy = 0;
+	g.wdata = NULL;
+	g.wlen = 0;
+	free(d);
+}
+
+/* dbg_flags (ruling T11-R2): quiet by default (no UART byte from a good
+   command); DBG_ATA: one line per ATA command at its end */
+static void dbg_trace(void)
+{
+	uint8_t *d = wpattern(1, 47);
+	dbg_flags = 0;
+	mock_uart_clear();
+	command(1, ACMD_READ_SECTORS, 600, 2);
+	check("dbg_flags 0: no UART output from a READ", (long)mock_uart_len(), 0);
+	command(1, ACMD_IDENTIFY_DEVICE, 0, 1);
+	check("dbg_flags 0: no UART output from an IDENTIFY", (long)mock_uart_len(), 0);
+	dbg_flags = DBG_ATA;
+	mock_uart_clear();
+	command(1, ACMD_READ_SECTORS, 600, 2);
+	check("DBG_ATA: the READ's line", strstr(mock_uart(), "ATA 20 lba 600 n 2 port 0 ok st 00 t ") != NULL, 1);
+	check("DBG_ATA: one line", (long)count_lines(mock_uart()), 1);
+	mock_uart_clear();
+	g.wdata = d;
+	g.wlen = 512;
+	command(1, ACMD_WRITE_SECTORS, 5600, 1);
+	check("DBG_ATA: the WRITE's line", strstr(mock_uart(), "ATA 30 lba 5600 n 1 port 0 ok st 90 t ") != NULL, 1);
+	file_now(5600, d, 1);
+	mock_uart_clear();
+	command(1, ACMD_READ_SECTORS, 8191, 2);
+	check("DBG_ATA: an error's line", strstr(mock_uart(), "ATA 20 lba 8191 n 2 port 0 error st 91 t ") != NULL, 1);
+	check("DBG_ATA: one line for it", (long)count_lines(mock_uart()), 1);
+	mock_uart_clear();
+	command(1, ACMD_IDENTIFY_DEVICE, 0, 1);
+	check("DBG_ATA: a command that ran to its end in HandleHDD", strstr(mock_uart(), "ATA ec lba 0 n 1 port 0 done st 00 t 0") != NULL, 1);
+	dbg_flags = 0;
+	g.wdata = NULL;
+	g.wlen = 0;
+	free(d);
 }
 
 /* the Amiga's write data: block j = 'W', j, then a pattern */
@@ -1192,6 +1663,19 @@ int main(int argc, char **argv)
 	write_case("ODD.HDF WRITE MULTIPLE 250+4", 1, 1, 250, 4, d4);
 	check("ODD.HDF WRITE 250+4: ERROR_HDD set", (ErrorMask >> ERROR_HDD) & 1, 1);
 	check("ODD.HDF WRITE 250+4: error lba", Errors[ERROR_HDD].a, -2);
+	/* the interrupt-driven HDD path (findings/sdcard-engine Task 11a) */
+	open_unit(1, F_WORK, HDF_FILE, "WORK    ");
+	ClearError(ERROR_ALL);
+	wr_irq_after_program();
+	wr_cluster_split();
+	wr_card_gone();
+	wr_abandon();
+	wr_reset_mid_run();
+	wr_pause();
+	wr_slow_amiga();
+	main_loop_runs();
+	wr_cancel();
+	dbg_trace();
 
 	free(d5); free(d256); free(d4); free(d3);
 	for (int k = 0; k < 3; k++) { free(files[k].data); free(files[k].card_lba); }

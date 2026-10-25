@@ -349,9 +349,13 @@ int CD_Locked(void)
 {
 	if (!cdrom.active)
 		return 0;
-	if (cdrom.unit.locked) {
+	if (cdrom.unit.locked && !hdd_busy()) {
 		/* the Amiga may have been reset since its last command: the
-		   lock does not survive that (R-D) */
+		   lock does not survive that (R-D).  Not while an HDD command is
+		   in progress (findings/sdcard-engine Task 11a: the main loop and
+		   the OSD run during it): the flags read's command word would
+		   re-latch the Gayle's firmware port to the CD's; the lock is
+		   kept until the next look */
 		CD_Flags(cdrom.slot >> 1, ReadIDEFlags(cdrom.slot >> 1));
 	}
 	return atapi_locked(&cdrom.unit);

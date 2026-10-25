@@ -137,6 +137,27 @@ void HandleFpga(void)
 }
 
 
+// One pass of the disk work, in the main loop and the error page's loop:
+// the SD card op and the HDD data path (findings/sdcard-engine Task 11a:
+// both advance here, a step per pass, never a wait), the CD audio refill,
+// the FPGA's requests (floppy, the IDE command pickup; fpga 0: not those).
+// During an HDD command the refill only: CD_AudioPoll reads the CD port's
+// flags, whose command word re-latches the Gayle's firmware port (cdrom.h).
+// No FPGA command while a Gayle op runs: the bridge owns hdd_port,
+// hdd_data_out and hdd_addr then (rtl/minimig/sdcard_gayle.v).
+void PollDisks(int fpga)
+{
+	sd_poll();
+	hdd_poll();
+	if (hdd_busy())
+		CD_AudioRefill();
+	else
+		CD_AudioPoll();	// CD audio refill (findings/cdrom/plan.md 13.1)
+	if (fpga && !sd_gayle_busy())
+		HandleFpga();
+}
+
+
 // The interrupt sources on cfide's controller (arch/irq.h; the dispatcher
 // calls one handler per pending bit): vertical blank -> the C64 keyboard
 // scan, the Amiga's Akiko request -> akiko_inthandler.  Both are pulses,
@@ -155,6 +176,7 @@ void IrqSetupSources(void)
 int ColdBoot()
 {
 	int result=0;
+	hdd_cancel();	/* an HDD command in progress ends (ERR) before the card starts over */
 	/* Reset the chipset briefly to cancel AGA display modes, then Put the CPU in reset while we initialise */
 	OsdDoReset(SPI_RST_USR | SPI_RST_CPU | SPI_CPU_HLT,SPI_RST_CPU | SPI_CPU_HLT);
 
@@ -326,29 +348,35 @@ int main(void)
 			printf("\n");
 		}
 		debug_was = DebugMode;
-		// A disk report every DISKSTAT_PERIOD TIMER counts (5.804 s), DebugMode
-		// on or off (the SD baseline runs with it off).  It is about 300 UART
-		// bytes, and the CPU waits for each: cfide has no TX FIFO, a write to
-		// UART_TX is not acked while the previous byte shifts out (txbusy;
-		// 247 clk_28 per bit at 115200 baud, 10 bits = about 87 us per byte).
-		// So one report stalls this loop about 26 ms (0.45% of the period);
-		// the stall falls in the next period (diskstat_report reads TIMER
-		// before printing).
+		// A disk report every DISKSTAT_PERIOD TIMER counts (5.804 s) when
+		// dbg_flags has DBG_DISKSTAT (diskstat.h; off by default, set it over
+		// the GDB tunnel).  It is about 300 UART bytes, and the CPU waits for
+		// each: cfide has no TX FIFO, a write to UART_TX is not acked while
+		// the previous byte shifts out (txbusy; 247 clk_28 per bit at 115200
+		// baud, 10 bits = about 87 us per byte).  So one report stalls this
+		// loop about 26 ms (0.45% of the period); the stall falls in the next
+		// period (diskstat_report reads TIMER before printing).  Off, the
+		// period starts over without the report.
 		if(CheckTimer(diskstat_timer))
 		{
 			diskstat_timer = GetTimer(DISKSTAT_PERIOD);
-			diskstat_report();
-			sd_report();	// the SD errors per retry-table row (sdproto.h)
+			if (dbg_flags & DBG_DISKSTAT)
+			{
+				diskstat_report();
+				sd_report();	// the SD errors per retry-table row (sdproto.h)
+			}
+			else
+				diskstat_period_start();
 		}
 		drivesounds_fill();
-		CD_AudioPoll();	// CD audio refill (findings/cdrom/plan.md 13.1)
 		//if(c64keyboard_checkreset())
 		//	OsdDoReset(SPI_RST_USR | SPI_RST_CPU,0);
+
+		PollDisks(1);	// the card, the HDD data path, the CD refill, HandleFpga
 
 		if(rtc)
 			HandleRTC();
 
-        HandleFpga();
         HandleUI();
 		// The HDMI transmitter forgets its configuration when the monitor goes
 		// away: Hot Plug Detect low RESETS registers 0x00-0x93, 0x94-0x97,
@@ -390,10 +418,10 @@ int main(void)
 			ShowError();
 			while(ErrorMask)
 			{
-				if(!ErrorFatal)
-					HandleFpga();
+				// the disks and the music go on behind an error page
+				// (the FPGA's requests only when the error is not fatal)
+				PollDisks(!ErrorFatal);
 		        HandleUI();
-				CD_AudioPoll();	// the music goes on behind an error page
 				stackhw_poll();
             }
 		}

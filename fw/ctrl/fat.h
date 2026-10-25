@@ -86,6 +86,8 @@ extern unsigned char sector_buffer[1024] __attribute__((aligned(4))); // structs
 extern unsigned char cluster_size;
 extern unsigned long cluster_mask;
 extern unsigned char fat32;
+extern unsigned long fat_start;           // LBA of the first FAT
+extern unsigned long data_start;          // LBA of cluster 2
 
 // constants
 #define DIRECTORY_ROOT 0

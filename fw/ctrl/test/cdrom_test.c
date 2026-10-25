@@ -83,6 +83,10 @@ unsigned char ide_port;
 unsigned char MMCErr;		/* mmc.c's: the SD_E_* code of the last card call */
 hdfTYPE hdf[HDD_SLOTS];
 unsigned char core_caps = CORE_CAPS_IDE2;
+/* hdd.c's: an HDD command in progress (its data path runs from the main
+   loop, findings/sdcard-engine Task 11a) */
+static int hdd_cmd_running;
+int hdd_busy(void) { return hdd_cmd_running; }
 
 hardfileTYPE *SlotConfig(int slot)
 {
@@ -1416,6 +1420,46 @@ static void t_refill_no_flags(void)
 	end();
 }
 
+/* findings/sdcard-engine Task 11a: during an HDD command the main loop
+   (main.c PollDisks) calls CD_AudioRefill on every pass, not CD_AudioPoll:
+   the player stays fed by the refill alone over a long HDD write (100
+   passes of 1 ms, the track 133 ms long: no underrun), no
+   IDE flags are read (a pending rst_seen stays: the music goes on), and
+   CD_Locked reads none either (the lock kept); with the command over the
+   poll and CD_Locked read them again */
+static void t_cd_audio_during_write(void)
+{
+	uint8_t c[12];
+	uint32_t u0;
+	int wav0, k;
+	unsigned long t0;
+	begin("cd_audio_during_write: the refill alone during an HDD command, no IDE flags read");
+	playing_mixed();
+	cdb6(c, 0x1E, 0x01);	/* PREVENT MEDIUM REMOVAL */
+	packet(c, 0xFFFE);
+	EXPECT(CD_Locked(), "not locked");
+	u0 = cda_underruns();
+	wav0 = file_reads[WAV_FILE];
+	hdd_cmd_running = 1;
+	g.rst_pending = 1;	/* would stop the music and the lock at a flags read */
+	t0 = now_ms;
+	for (k = 0; k < 100; k++) {
+		now_ms++;	/* the pass's HDD work */
+		CD_AudioRefill();
+	}
+	EXPECT(CD_Locked(), "the lock dropped while the HDD command runs");
+	EXPECT(g.rst_pending == 1, "IDE flags read during the HDD command");
+	EXPECT(now_ms - t0 == 100, "the refill polled the Gayle (%lu ms)", now_ms - t0 - 100);
+	EXPECT(cda_underruns() == u0, "underruns during the write: %u", (unsigned)(cda_underruns() - u0));
+	EXPECT(file_reads[WAV_FILE] >= wav0, "the WAV reads went backwards");
+	EXPECT(cda_status() == CDA_PLAYING, "player: %02X", (unsigned)cda_status());
+	hdd_cmd_running = 0;
+	EXPECT(!CD_Locked(), "after the command: the reset seen, the lock cleared");
+	CD_AudioPoll();
+	EXPECT(cda_status() == CDA_IDLE, "after the command: the poll's flags stop the music: %02X", (unsigned)cda_status());
+	end();
+}
+
 static void t_playing_track(void)
 {
 	uint8_t c[12];
@@ -1474,6 +1518,7 @@ int main(void)
 	t_play_stops();
 	t_reset_idle();
 	t_refill_no_flags();
+	t_cd_audio_during_write();
 	t_read_cd();
 	t_volume_select();
 	t_playing_track();

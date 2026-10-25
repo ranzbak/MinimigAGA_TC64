@@ -73,7 +73,24 @@ unsigned char ReadTaskFile(int port, unsigned char *tfr);
 unsigned char ReadIDEFlags(int port);
 void WriteIDEData(const unsigned char *buf, unsigned int bytes);
 void ReadIDEData(unsigned char *buf, unsigned int bytes);
+/* the IDE command pickup (HandleFpga's status byte c1): a command is
+   picked up only while no HDD command is in progress; READ / WRITE
+   (MULTIPLE) start the data path's state machine, the others run to their
+   end here */
 void HandleHDD(unsigned int c1, unsigned int c2);
+/* The HDD data path (findings/sdcard-engine Task 11a): READ / WRITE
+   (MULTIPLE) as a state machine advanced once per main-loop pass
+   (PollDisks): the Amiga waits are status polls, the card work async SD ops
+   (sdproto.h; to_gayle reads, from_gayle CMD25 runs of at most 16 sectors
+   split at cluster boundaries), the main loop runs between them.  No IDE
+   command on cs 0x10 while a Gayle op runs (sd_gayle_busy()). */
+void hdd_poll(void);
+/* 1 while an ATA command is in progress (the pickup waits) */
+int hdd_busy(void);
+/* end an ATA command in progress: its card op finished (a run closed),
+   END | IRQ | ERR (ABRT) unless the Amiga left it; for the callers that
+   change what the command works on (OpenHardfile, ColdBoot) */
+void hdd_cancel(void);
 void GetHardfileGeometry(hdfTYPE *hdf);
 /* 0 when a FAT read failed (a card error) or the cluster chain is shorter
    than the file's size: the index would hold wrong clusters, the file must

@@ -35,6 +35,8 @@ unsigned char FileOpen(fileTYPE *file, const char *name) { file_opens++; return 
 void GetHardfileGeometry(hdfTYPE *pHDF) { }
 unsigned long GetTimer(unsigned long offset) { return 0; }
 unsigned char BuildHardfileIndex(hdfTYPE *pHDF) { return 1; }
+static int cancels;
+void hdd_cancel(void) { cancels++; }	/* the HDD data path's command ends first (Task 11a) */
 
 #include "openhf.inc"
 
@@ -68,6 +70,9 @@ int main(void)
 	memset(slots, 0, sizeof(slots));
 	slots[0].present = 1;
 	check("a disabled slot: present cleared", (OpenHardfile(0), slots[0].present), 0);
+	cancels = 0;
+	OpenHardfile(1);
+	check("OpenHardfile ends an HDD command in progress first (hdd_cancel)", cancels, 1);
 	printf(fails ? "FAIL %d\n" : "PASS\n", fails);
 	return fails ? 1 : 0;
 }

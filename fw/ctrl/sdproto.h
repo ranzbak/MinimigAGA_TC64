@@ -91,7 +91,9 @@ enum sd_kind { SD_READ, SD_WRITE, SD_CSD, SD_CID };
  *    GAYLE_TO_TX 512 per block, each only after the caller's go (below).
  *  SD_CSD: the 16 bytes of CMD9 into buf; SD_CID: CMD10's.
  * state: the step it is in (0 = not running), err: enum sd_err once it
- * ended, done_blocks: blocks delivered (read) / programmed (write). */
+ * ended, done_blocks: blocks delivered (read; counted as each block is in
+ * buf / Gayle's FIFO, also while the op still runs: a CMD12 may follow) /
+ * programmed (write; at the end). */
 typedef struct sd_op {
 	unsigned lba, count;
 	unsigned char *buf;

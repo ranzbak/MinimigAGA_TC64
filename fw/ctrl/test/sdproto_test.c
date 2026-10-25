@@ -788,6 +788,8 @@ static void t_gayle_write(void)
 	card(); if (!init()) return;
 	g_op(&op, 1980, 3, 0);
 	check("gayle gone parked: parked", g_run(&op, d, 1, -1), 1);
+	for (int k = 0; k < 4; k++) { sd_poll(); mock_sdc_step(); }	/* the main loop goes on: no event left */
+	check("gayle gone parked: still parked", sd_gayle_parked(&op), 1);
 	mock_sdc_pull_card();
 	mock_run(2000000);		/* the debounce: the card-detect event */
 	sd_poll();

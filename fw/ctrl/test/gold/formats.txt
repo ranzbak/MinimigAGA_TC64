@@ -36,6 +36,7 @@
 "*%u:"
 "*%u:\r"
 ", C: %d, H: %d, S: %d, count: %d\r"
+"ATA %02x lba %lu n %u port %u %s st %02x t %u\n"
 "Akiko read: %X\n"
 "Akiko write: %X, %X\n"
 "Audio file - length %d\n"

@@ -4,6 +4,7 @@
 #include "hardware.h"
 
 unsigned diskstat_hist[2][DISKSTAT_BUCKETS];
+volatile unsigned dbg_flags;
 
 // the largest sector count of each bucket, and its name in the report
 static const unsigned short bucket_top[DISKSTAT_BUCKETS] = { 1, 2, 4, 8, 16, 64, 256 };

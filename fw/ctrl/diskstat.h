@@ -3,11 +3,18 @@
 
 /* Disk statistics for the SD baseline (findings/sdcard-engine, design 5.3):
    counted always, printed on the UART every DISKSTAT_PERIOD TIMER counts
-   from boot, DebugMode on or off (main.c).  The totals are cumulative since
+   from boot when dbg_flags has DBG_DISKSTAT (main.c).  The totals are cumulative since
    power-on (differences of two reports give a copy's numbers); the loop
    passes are per report period. */
 
 #define DISKSTAT_PERIOD 1000	// TIMER counts between two reports (5.804 s)
+
+/* Run-time debug switches (findings/sdcard-engine ruling T11-R2), 0 =
+   quiet: no UART output from the disk data path.  Set over the GDB tunnel
+   (fw/ctrl/README.md "Debug flags"): (gdb) set var dbg_flags = 3 */
+#define DBG_ATA      0x01	/* one UART line per ATA command (hdd.c) */
+#define DBG_DISKSTAT 0x02	/* the disk report every DISKSTAT_PERIOD (main.c) */
+extern volatile unsigned dbg_flags;
 
 /* sectors per ATA command, [write][bucket]; buckets 1, 2, 3-4, 5-8, 9-16,
    17-64, 65-256 sectors */
@@ -18,7 +25,8 @@ extern unsigned diskstat_hist[2][DISKSTAT_BUCKETS];
 void diskstat_cmd(int write, unsigned sectors);
 /* card-busy polls after one written block (each poll is one SPI byte) */
 void diskstat_busy_polls(unsigned n);
-/* GetFPGAStatus() polls of one wait for Gayle's sector FIFO */
+/* status polls of one wait for Gayle's sector FIFO (the HDD data path: one
+   per main-loop pass of the wait, findings/sdcard-engine Task 11a) */
 void diskstat_amiga_polls(unsigned n);
 /* once per main-loop pass */
 void diskstat_loop_pass(void);
