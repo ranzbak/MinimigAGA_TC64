@@ -108,9 +108,17 @@
 // paula_floppy's direct_sdi is 1 (the card is not on cfide's SPI); sdcard_gayle
 // + sdcard_gayle_mux (rtl/minimig/sdcard_gayle.v, CLK_RATIO 4) between
 // paula_floppy's and gayle's hdd_* data port, as minimig.v.  Without it the
-// hdd_* wires join paula_floppy and gayle directly.  No scenario drives the
-// engine yet (plan Task 13): this tree's firmware still reaches the card
-// through cfide.
+// hdd_* wires join paula_floppy and gayle directly.  The run.sh scenarios
+// sdc_boot, sdc_boot_short and sdc_hdd (README "sdc") build with it: the
+// boot ROM and the firmware reach the card through sdcard_spi only.  Lines:
+//   === SDC gayle to_gayle <n> ops <w> words, from_gayle <n> ops <w> words,
+//       g_err <e>, ended by g_ack <a>; irq rises <i>   (the bridge's traffic:
+//       ops = g_req rises by g_dir, words = the words moved (g_wnext with
+//       g_wvalid, g_rvalid), at the end of the run)
+//   +SD_ERR_AT=scenario  the card model's +SD_ERR_<kind>=n count from the
+//       scenario's main-loop milestone (sc_started) instead of time 0: n is
+//       moved by the events (read blocks, written blocks, commands) before
+//       it ("=== SD_ERR armed at the scenario start: ...")
 //
 // L3_GHDL (run.sh SIM=verilator): the bridge and cfide are the Verilog that
 // ghdl --synth made of the VHDL (generics fixed at the conversion, lower-case
@@ -292,10 +300,32 @@ module tb_l3 #(
     .g_wdata(sdc_g_wdata), .g_wvalid(sdc_g_wvalid), .g_wnext(sdc_g_wnext),
     .g_rdata(sdc_g_rdata), .g_rvalid(sdc_g_rvalid)
   );
+  // the bridge's traffic (header: "=== SDC gayle")
+  integer sdcm_ops[0:1], sdcm_words[0:1];   // index g_dir: 1 to_gayle, 0 from_gayle
+  integer sdcm_err = 0, sdcm_ack = 0, sdcm_irq = 0;
+  reg     sdcm_req_d = 1'b0, sdcm_irq_d = 1'b0;
+  initial begin sdcm_ops[0] = 0; sdcm_ops[1] = 0; sdcm_words[0] = 0; sdcm_words[1] = 0; end
+  always @(posedge clk114) begin
+    if (sdc_g_req && !sdcm_req_d) sdcm_ops[sdc_g_dir] = sdcm_ops[sdc_g_dir] + 1;
+    if (sdc_g_req && sdc_g_dir && sdc_g_wnext && sdc_g_wvalid) sdcm_words[1] = sdcm_words[1] + 1;
+    if (sdc_g_req && !sdc_g_dir && sdc_g_rvalid) sdcm_words[0] = sdcm_words[0] + 1;
+    if (sdc_g_req && sdc_g_err) sdcm_err = sdcm_err + 1;
+    if (sdc_g_req && sdc_g_ack) sdcm_ack = sdcm_ack + 1;
+    if (sdc_irq && !sdcm_irq_d) sdcm_irq = sdcm_irq + 1;
+    sdcm_req_d <= sdc_g_req;
+    sdcm_irq_d <= sdc_irq;
+  end
+  task sdc_final;
+    $display("=== SDC gayle to_gayle %0d ops %0d words, from_gayle %0d ops %0d words, g_err %0d, ended by g_ack %0d; irq rises %0d",
+             sdcm_ops[1], sdcm_words[1], sdcm_ops[0], sdcm_words[0], sdcm_err, sdcm_ack, sdcm_irq);
+  endtask
 `else
   wire        card_cs_n = sd_cs[1], card_sck = sd_clk, card_mosi = sd_do;
   assign sdc_q = 16'h0000;
   assign sdc_irq = 1'b0;
+  task sdc_final;
+    ;
+  endtask
 `endif
   sd_spi_model #(.IMG_SECTORS(65536)) card (
     .cs_n(card_cs_n), .sck(card_sck), .mosi(card_mosi), .miso(card_miso)
@@ -521,6 +551,30 @@ module tb_l3 #(
     end
   end
 
+  // +SD_ERR_AT=scenario (header): the model's error counts from sc_started.
+  // At 1 ns (the bench's start, before any SPI clock) the model's counts are
+  // taken and set to 0 (off); at sc_started they come back, moved by the
+  // events so far
+  reg     sd_err_at = 1'b0;
+  integer sea_rdcrc = 0, sea_wrrej = 0, sea_wrfail = 0, sea_noresp = 0, sea_cmdcrc = 0;
+  task sd_err_hold;
+    begin
+      sea_rdcrc = card.err_rdcrc; sea_wrrej = card.err_wrrej; sea_wrfail = card.err_wrfail;
+      sea_noresp = card.err_noresp; sea_cmdcrc = card.err_cmdcrc;
+      card.err_rdcrc = 0; card.err_wrrej = 0; card.err_wrfail = 0; card.err_noresp = 0; card.err_cmdcrc = 0;
+    end
+  endtask
+  always @(posedge sc_started) if (sd_err_at) begin
+    if (sea_rdcrc > 0)  card.err_rdcrc  = sea_rdcrc  + card.rd_blk_n;
+    if (sea_wrrej > 0)  card.err_wrrej  = sea_wrrej  + card.wr_blk_n;
+    if (sea_wrfail > 0) card.err_wrfail = sea_wrfail + card.wr_blk_n;
+    if (sea_noresp > 0) card.err_noresp = sea_noresp + card.cmd_n;
+    if (sea_cmdcrc > 0) card.err_cmdcrc = sea_cmdcrc + card.cmd_n;
+    $display("=== SD_ERR armed at the scenario start (cycle %0d): %0d read blocks, %0d written blocks, %0d commands so far; RDCRC %0d WRREJ %0d WRFAIL %0d NORESP %0d CMDCRC %0d (absolute)",
+             cyc, card.rd_blk_n, card.wr_blk_n, card.cmd_n,
+             card.err_rdcrc, card.err_wrrej, card.err_wrfail, card.err_noresp, card.err_cmdcrc);
+  end
+
   // ----------------------------------------------- hw bus snoop and checks
   // (sim/common/hostmon.vh: the snoop checks, UART printer, FWBOOT monitors,
   // end-of-run counters; hm_frame_hook below)
@@ -531,6 +585,32 @@ module tb_l3 #(
     if (hw_req && !hw_req_d && verbose) $display("%0d HW %s %h d=%h", cyc, host_we ? "W" : "R", hwa, hostWR);
     if (hw_done) hm_hw_done;
   end
+
+  // ------------------------------------------- SPI SCK after the firmware's start
+  // cfide's SCK period (its sd_clk pin, rising to rising edge inside a byte:
+  // a frame is a whole number of bytes, so every 8th rising edge of a frame
+  // starts a byte and is not measured) in the frames after the jump to the
+  // firmware (hostmon boot_seen), the RTC's (sd_cs[7] low) excepted: the
+  // firmware's SPI_fast (speed 1) is 6 clk_114 a bit, the RTC frames run at
+  // SPI_slow (rtc.c).  "=== SPI SCK period ..." at the end of the run
+  integer sk_bit = 0, sk_last = 0, sk_min = -1, sk_max = -1, sk_n = 0;
+  always @(sd_cs) sk_bit = 0;
+  always @(posedge sd_clk) if (n_reset && boot_seen && sd_cs[7] !== 1'b0 && (sd_cs[6:1] & 6'h3F) !== 6'h3F) begin
+    if (sk_bit % 8 != 0) begin
+      sk_n = sk_n + 1;
+      if (sk_min < 0 || cyc - sk_last < sk_min) sk_min = cyc - sk_last;
+      if (cyc - sk_last > sk_max) sk_max = cyc - sk_last;
+    end
+    sk_bit = sk_bit + 1;
+    sk_last = cyc;
+  end
+  task sk_final;
+    begin
+      if (sk_n == 0) $display("=== SPI SCK period after the firmware's start (no RTC frame): min none max none clk_114 over 0 bits");
+      else $display("=== SPI SCK period after the firmware's start (no RTC frame): min %0d max %0d clk_114 over %0d bits",
+                    sk_min, sk_max, sk_n);
+    end
+  endtask
 
   // ------------------------------------------------------ margin monitors
 `include "mon_l3.vh"
@@ -717,6 +797,7 @@ module tb_l3 #(
     if (!$value$plusargs("SOF_CLK7=%d", sof_clk7)) sof_clk7 = 142102;
     if (!$value$plusargs("TICKDIV=%d", tickdiv)) tickdiv = 1;
     tick_at_scen = $test$plusargs("TICKDIV_AT=scenario");
+    sd_err_at = $test$plusargs("SD_ERR_AT=scenario");
     if (!$value$plusargs("FAST_HW=%d", fast_hw)) fast_hw = 0;
     if (!$value$plusargs("OSD_EARLY_OK=%d", oe_ok)) oe_ok = 0;
     osd_early_ok = oe_ok != 0;
@@ -728,6 +809,7 @@ module tb_l3 #(
     mon_init;
     sc_init;
     #1;
+    if (sd_err_at) sd_err_hold;
     // (no empty %0s: Verilator prints a space for it, xsim nothing)
     $display("=== CPU rv");
     $display("L3 bench: CPU=rv SCENARIO=%0s SLAT=%0d SJIT=%0d EXTRA_WS=%0d TICKDIV=%0d TICKDIV_AT=%0s SCKDLY=%0.2f C28DLY=%0.2f",
@@ -754,6 +836,8 @@ module tb_l3 #(
     errors = errors + ram.errors + keys.errors + fdd.errors + aki.errors + ide.errors + audio.errors;
     hm_final_hw;
     card.save_image;
+    sdc_final;
+    sk_final;
 `ifdef RV_HOSTCPU_STATS
     hm_final_stats;
     $display("=== RETIRED %0d (whole run)", rt_n);

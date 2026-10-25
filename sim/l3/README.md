@@ -7,8 +7,8 @@ The EightThirtyTwo (832), the host CPU before the RV, was retired in Phase
 9 (`doc/osd-riscv-plan.md`); the bench's 832 leg and its RV-vs-832
 differential went with it (the last commit with them: 09f81bbe).
 Sections: "Bench", "Run", "boot", "Trace files", "keys", "fdd_rd",
-"fdd_wr", "hdd", "cd", "cdda", "akiko", "Monitors", "Stress grid" and
-"Cards". Every command is meant to be copied from the repository root of
+"fdd_wr", "hdd", "cd", "cdda", "akiko", "sdc", "Monitors", "Stress grid"
+and "Cards". Every command is meant to be copied from the repository root of
 a fresh Ubuntu 24.04 checkout, into bash or zsh; the sections after "Run"
 assume the "Run" setup.
 
@@ -22,7 +22,7 @@ the committed boot ROM and the real firmware from an SD card image:
 | host CPU | `host_bridge` (`rv_hostcpu` + VexOsd, the boot ROM `fw/ctrl_boot/OSDBoot_rv_ROM.vhd`, `hostcache.v`) | `rtl/host` |
 | SDRAM | `sdram_host_model.v` (`+SLAT`, `+SJIT`, `+SEED`; `+SDRAM_DUMP=<file>` writes its 8 MB before the verdict) | `sim/host_bridge` |
 | cfide | the board's generics: `spimux` false, `havespirtc`, `havei2c`, `havevpos` true; no I2C slave (every ADV7511 transfer NACKs) | `rtl/host/cfide.vhd` |
-| card | `sd_spi_model #(.IMG_SECTORS(65536))` on `sd_cs[1]`, a 32 MB card from `sim/l3/card` | `sim/common` |
+| card | `sd_spi_model #(.IMG_SECTORS(65536))` on `sd_cs[1]`, a 32 MB card from `sim/l3/card`; with `SD_ENGINE` (the `sdc_*` scenarios) on `sdcard_spi`'s pins, section "sdc" | `sim/common` |
 | RTC | `rtc_model.v` on `sd_cs[7]`: the SPI RTC `fw/ctrl/rtc.c` reads, a fixed time ("Monitors", item 12); its MISO shares cfide's `sd_dimm` with the card | `sim/l3` |
 | OSD | `userio_osd` (instance `osd1`) on `sd_cs[5]`, `CORE_CAPS` 0xAD | `rtl/minimig` |
 | floppy / HDD | `paula_floppy` on `sd_cs[4]`, direct mode on `~sd_cs[6]` from the card's MISO; `gayle #(.IDE_PORTS(2))` behind it on the `hdd_*` bus | `rtl/minimig` |
@@ -1513,6 +1513,161 @@ Verilator wall time 2,611 s (259.9 M cycles) on a loaded machine.
 `L3_AKIKO_TO` = 520,000,000. The MARGIN 6 monitor stays required: the
 ISR's UART prints stall the main loop, and the floppy FIFO never ran empty
 (0 slots, fifo min 995 words).
+
+## sdc
+
+The SD card engine (`findings/sdcard-engine/design.md`): `sdcard_spi` on
+cfide's ext port with the card model on its pins, `sdcard_gayle` + the mux
+between paula_floppy and gayle (`tb_l3.v` `SD_ENGINE`, wired as
+`minimig_virtual_top` / `minimig.v` with `SD_ENGINE = 1`). The boot ROM
+(since plan Task 12) and the firmware (since Task 10) reach the card only
+through it, so on this tree the scenarios without the engine stop in the
+ROM's `SD init` (VERSION 0): `sdc_boot`, `sdc_boot_short` and `sdc_hdd` are
+`boot`, `boot_short` and `hdd` on the engine, the full-system test of the
+lock-step pair (the committed boot ROM and `RV32OSDA.BIN` from the same
+tree, with its `SDCV` trailer).
+
+| run.sh | bench `+SCENARIO` | card | timeout (`clk_114`) |
+|---|---|---|---|
+| `sdc_boot` | `boot` (+`SD_LOG=1`) | `boot` | `L3_SDC_BOOT_TO` 197,700,000 |
+| `sdc_boot_short` | `boot_short` (the xsim cross-check; no `SD_LOG`: the model's log lines differ in a space between the simulators) | `boot` | `L3_SDC_SHORT_TO` 42,000,000 |
+| `sdc_hdd` | `hdd` (+`SD_LOG=1`) | `hdd` | `L3_SDC_HDD_TO` 248,600,000 |
+
+`SD_ENGINE` is always 1 there (`SD_ENGINE=0` is refused). The card model
+checks CRCs once the firmware sends CMD59 (both the ROM and the firmware
+do), and answers CMD10 with a CID (`tools/sim/README.md`). Checks: the
+base scenario's (milestones, kick, order, mmc for `sdc_boot`, `l3check.py
+hdd` for `sdc_hdd`, memhash, the MARGIN lines, the bench verdict) with
+
+- `milestones_boot.txt`'s `SDE=1` lines instead of its `SDE=0` ones: the
+  ROM's `SD init: VERSION ...`, `CMD0 01` ... `CMD59 00`, `SD card: SDHC`,
+  the lock-step line `Firmware SDC <v>, bitstream SDC <v>`; the firmware's
+  `sd_init` lines (`ACMD41 00, 3 polls`, `OCR c0ff8000, type 3`, `CMD59
+  00`, `SCK div 2`)
+- MARGIN item 3 not required (`MARGIN_REQ_sdc_hdd` = boot's): there is no
+  direct-mode transfer
+- `run.sh sdc_check`:
+  - lock-step: `fw/ctrl/sdc.h`'s `SDC_VERSION` is the firmware file's
+    trailer (`SDCV 00 00 <v>`), the VERSION the ROM read (`SD init: VERSION
+    <v>, card 1`) and both sides of `Firmware SDC <v>, bitstream SDC <v>`
+  - no frame with `sd_cs[1]` low in `spi.txt` and item 3 without events:
+    the card is not on cfide's SPI
+  - `=== SPI SCK period after the firmware's start (no RTC frame): min <a>
+    max <b> clk_114 over <n> bits` (`tb_l3.v`): `b` at most 6, cfide's
+    `SPI_fast` (Task 13 finding, below)
+  - the SD error lines on the UART (each UART line also cut at the
+    firmware's `\r`): the ROM's `SD CMD<n>: R1 ..., try <t>` and `SD read
+    <lba>: <what> <v>, try <t>`, the firmware's `SD: ...` lines (the retry
+    table's `SD: <row>, row <r>, retry <k> of <n>, lba <l>`, `retries out`,
+    `op failed`, `CMD13 probe`, `SCK one step slower`), `SD init: CMD10 /
+    CMD9 <err>`, `card changed`, `CID unreadable`: none unless `XARGS`
+    injects (`+SD_ERR_`); with an injection at least one retry line and no
+    `retries out`, `op failed`, `CMD13 probe`, `card changed`, `CID
+    unreadable`
+  - `=== SDC gayle to_gayle <n> ops <w> words, from_gayle <n> ops <w>
+    words, g_err <e>, ended by g_ack <a>; irq rises <i>` (`tb_l3.v`): no
+    `g_err`; `sdc_hdd`: to_gayle 69,376 words (271 sectors: the plan reads
+    274, three of them built by the CPU: the FakeRDB RDSK and PART and
+    RDB.HDF's patched block 0) and from_gayle 24,576 (96 sectors), so every
+    card sector the plan moves passes the bridge (READ / READ MULTIPLE
+    to_gayle, WRITE / WRITE MULTIPLE from_gayle with the 68k as PIO master);
+    `sdc_boot`: no Gayle op
+
+Error injection: the model's `+SD_ERR_<kind>=n` (`tools/sim/README.md`)
+counts from time 0, so `XARGS=+SD_ERR_RDCRC=3` hits the boot ROM's third
+block (the directory sector). `XARGS="+SD_ERR_AT=scenario ..."` (`tb_l3.v`)
+holds the injection off until the main-loop milestone and counts n from
+there (`=== SD_ERR armed at the scenario start ...` gives the absolute
+numbers): `+SD_ERR_RDCRC=70` hits a block of command 5 (READ MULTIPLE),
+`+SD_ERR_WRREJ=67` the third block of command 8's first CMD25 (WRITE
+MULTIPLE).
+
+### Run
+
+Setup as in "Run". From the repository root, one at a time (each with a
+new `RUNTAG`; `BUILD_FROM` takes the first run's simulator):
+
+```sh
+SIM=verilator RUNTAG=sdcb bash sim/l3/run.sh sdc_boot
+SIM=verilator RUNTAG=sdch bash sim/l3/run.sh sdc_hdd
+SIM=verilator RUNTAG=sdch_rdcrc3 BUILD_FROM=sdch XARGS=+SD_ERR_RDCRC=3 bash sim/l3/run.sh sdc_hdd
+SIM=verilator RUNTAG=sdch_rdfw BUILD_FROM=sdch XARGS="+SD_ERR_AT=scenario +SD_ERR_RDCRC=70" bash sim/l3/run.sh sdc_hdd
+SIM=verilator RUNTAG=sdch_wrrej BUILD_FROM=sdch XARGS="+SD_ERR_AT=scenario +SD_ERR_WRREJ=67" bash sim/l3/run.sh sdc_hdd
+SIM=verilator RUNTAG=sdcs bash sim/l3/run.sh sdc_boot_short
+RUNTAG=sdcsx bash sim/l3/run.sh sdc_boot_short
+bash sim/l3/run.sh compare sdcsx sdcs
+```
+
+(`sdc_boot_short` under xsim: 677 s; Verilator 139 s.)
+
+### Measured (2026-10-25, SLAT=8 SJIT=0, SCKDLY 1.5 / C28DLY 0.3, TICKDIV 1)
+
+| Event | `sdc_boot` (`sdcb`) | `sdc_hdd` (`sdch`) | `boot` / `hdd` on cfide's SPI (2026-10-19, before Tasks 10-12) |
+|---|---|---|---|
+| the ROM jumps to the firmware (first read of 0x2000) | 12,124,992 | 12,124,992 | 43,190,675 |
+| the Amiga released after the kickstart upload | 130,496,541 | 129,923,501 | 156,968,829 |
+| main-loop milestone (first HandleFpga frame) | 131,554,090 | 130,980,654 | 158,044,038 / 157,326,780 |
+| end event | 131,750,230 | 165,090,989 | 158,155,012 / 187,958,349 |
+| wall time (Verilator, alone on the machine) | 538 s | 689 s | 412 s / 2,289 s (3 to 5 runs) |
+
+`sdc_boot_short` (`sdcs`) ends at 27,971,124 (139 s); the timeouts are 1.5 x
+these ends (`sdc_hdd`'s with the write retry of `sdch_wrrej`, 165,702,565).
+The kickstart upload (1,024 sectors read one at a time into SDRAM) takes
+107 M cycles from the first CPU reset to the release, about 105 k a sector.
+
+`sdc_hdd` per command (`clk_114`; waits = interrupt / poll / nrdy, min /
+median / max; the command's cycles), against `hdd`'s on cfide's direct
+mode (`p4t15f`, section "hdd"):
+
+| # | Command | waits | min / median / max | cycles | cfide (`p4t15f`) cycles |
+|---|---|---|---|---|---|
+| 1 | IDENTIFY | 1 / 0 / 0 | 66,720 / 66,720 / 66,720 | 75,280 | 69,024 |
+| 2 | READ 2 (RDB) | 2 / 0 / 0 | 64,160 / 64,160 / 81,584 | 162,544 | 138,288 |
+| 3 | READ 64 | 64 / 0 / 0 | 72,432 / 72,608 / 173,696 | 5,280,704 | 3,673,088 |
+| 4 | SET MULTIPLE 16 | 1 / 0 / 0 | 219,984 | 220,352 | 210,768 |
+| 5 | READ MULTIPLE 64 | 4 / 0 / 60 | 25,504 / 29,728 / 162,208 | 2,868,976 | 2,840,912 |
+| 6 | READ MULTIPLE 32 | 2 / 0 / 30 | 25,904 / 29,728 / 106,912 | 1,421,648 | 1,399,872 |
+| 7 | WRITE 64 | 64 / 1 / 0 | 33,504 / 96,720 / 191,760 | 6,589,488 | 6,666,752 |
+| 8 | WRITE MULTIPLE 32 | 2 / 1 / 0 | 15,168 / 964,432 / 973,248 | 2,084,368 | 3,148,512 |
+| 9 | READ 64 (back) | 64 / 0 / 0 | 72,576 / 72,592 / 100,496 | 5,207,136 | 3,674,816 |
+| 10 | READ MULTIPLE 32 (back) | 2 / 0 / 30 | 25,904 / 29,728 / 91,584 | 1,406,320 | 1,389,776 |
+| 11 | SET MULTIPLE 16 (master) | 1 / 0 / 0 | 232,848 | 233,216 | 218,240 |
+| 12 | READ MULTIPLE 16 (RDB.HDF) | 1 / 0 / 15 | 29,584 / 29,648 / 146,048 | 848,976 | 826,368 |
+
+The bridge moves a READ MULTIPLE block's words as the 68k reads them
+(`nrdy` waits of one sector, 26 to 30 k, instead of one per word); a
+single-sector READ costs 72.6 k (median) against 48.9 k on direct mode, a
+WRITE MULTIPLE group of 16 0.96 M against 1.5 M. These are simulation
+figures of the card model (`SD_TOKEN_DLY` 4, `SD_BUSY` 8): the board's
+card latency decides (plan Task 14).
+
+Injection legs (`sdc_hdd`, all PASS with the same data checks):
+
+| RUNTAG | XARGS | Where it hit | UART | Then |
+|---|---|---|---|---|
+| `sdch_rdcrc3` | `+SD_ERR_RDCRC=3` | the boot ROM's directory sector, LBA 2120 | `SD read 2120: CRC 08, try 1` | the ROM read it again; boot, lock-step and every check as `sdch` |
+| `sdch_rdfw` | `+SD_ERR_AT=scenario +SD_ERR_RDCRC=70` | block 1,603: command 5 (READ MULTIPLE), LBA 11,011 in a CMD18 from 11,008 | `SD: read CRC, row 1, retry 1 of 4, lba 11011` | CMD12, CMD18 from 11,011 (the failed block); the 64 sectors right |
+| `sdch_wrrej` | `+SD_ERR_AT=scenario +SD_ERR_WRREJ=67` | written block 67: command 8 (WRITE MULTIPLE), LBA 5,850, the third block of the CMD25 from 5,848 | `SD: write CRC (0B), row 2, retry 1 of 4, lba 5850` | stop token, ACMD22, CMD25 from 5,850 (TX_REWIND); the card image right |
+
+### Found by these runs (Task 13)
+
+- **cfide's SPI ran at the boot ROM's slow setting until the main loop.**
+  The ROM sets `SPI_slow` (0xef, about 960 `clk_114` a bit) for its own
+  frames; before Task 12 its card init and the firmware's `MMC_Init` (the
+  card on that SPI) set it fast again. On the engine neither touches it,
+  so every OSD / FPGA / floppy frame of the firmware ran at the ROM's speed
+  until the first `HandleRTC` (the version frame 54,374 `clk_114` instead
+  of 1,026, first run `t13x1`; its OSD GAP fell to 28, a bench error).
+  Fixed in the firmware (`fw/ctrl/main.c`: `SPI_fast()` at the start of
+  `main()`); the SCK monitor and `sdc_check` hold it.
+- **The L3 xsim build had failed since Phase 4 Task 14:** `bfm_floppy.v`
+  set `data_cpu` in an `initial` block above its declaration (xvlog
+  VRFC 10-3380; Verilator accepts it). It now gets its 0 at the
+  declaration, so `SIM=xsim` builds again (`sdcsx`).
+- **The main loop's first pass reads the FPGA before the RTC** since Task
+  11a (`PollDisks()` -> `HandleFpga()`, then `HandleRTC()`):
+  `milestones_boot.txt` has the first HandleFpga frame before the RTC
+  frame and 20 more after it.
 
 ## Monitors
 

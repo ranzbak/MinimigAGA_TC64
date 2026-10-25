@@ -4,7 +4,8 @@
 # an SD card image.  See tb_l3.v, scenarios.vh, README.md.
 #
 #   bash sim/l3/run.sh <scenario>        boot, boot_short, keys, fdd_rd, fdd_wr, hdd,
-#                                        cd, cdda, cdda_load, akiko
+#                                        cd, cdda, cdda_load, akiko; sdc_boot,
+#                                        sdc_boot_short, sdc_hdd (SD_ENGINE=1)
 #   bash sim/l3/run.sh xpair <scenario>  the scenario and its XRAND twin
 #                                        (run_$RUNTAG, run_${RUNTAG}_xr; in
 #                                        parallel), then compare: both PASS
@@ -67,8 +68,10 @@
 #   SD_ENGINE=1  the SD card engine wired in (tb_l3.v `SD_ENGINE: sdcard_spi on
 #            cfide's ext port with the card on its pins, sdcard_gayle + mux
 #            between paula_floppy and gayle, as minimig_virtual_top with
-#            SD_ENGINE = 1).  Default 0: every scenario as before.  No
-#            scenario drives the engine yet (plan Task 13)
+#            SD_ENGINE = 1).  Default 0, except for the sdc_* scenarios,
+#            which always run with it (SD_ENGINE=0 is refused there).  The
+#            boot ROM since plan Task 12 needs the engine: the scenarios
+#            without the sdc_ prefix stop in the ROM's "SD init" on this tree
 #   VIVADO_PATH, GHDL, VERILATOR, JOBS, OBJCACHE as sim/host_bridge/run.sh
 #
 # Scenarios (scenarios.vh), card, checks:
@@ -146,6 +149,21 @@
 #               flip; checks as cdda (item 3 required too: the HDF sectors
 #               come in direct mode; the cdhdd card's milestones), l3check.py
 #               cdda counts the underruns and checks the HDF sectors
+#   sdc_boot, sdc_boot_short, sdc_hdd   boot, boot_short and hdd on the SD
+#               card engine (SD_ENGINE=1; README "sdc"): the boot ROM and the
+#               firmware reach the card through sdcard_spi, the HDD sectors
+#               go through sdcard_gayle's DMA.  The bench runs +SCENARIO=boot,
+#               boot_short or hdd; the checks are that scenario's, with
+#               milestones_boot.txt's SDE=1 lines (the ROM's and the
+#               firmware's SD lines) and MARGIN item 3 n/a (no direct-mode
+#               transfer: the card is not on cfide's SPI), plus (sdc_check):
+#               the lock-step line = fw/ctrl/sdc.h's SDC_VERSION on both
+#               sides and the firmware file's trailer, no card frame (cs 02)
+#               in spi.txt, the SD error lines (none without +SD_ERR_ in
+#               XARGS; with it at least one retry and nothing out of
+#               retries), sdc_hdd: "=== SDC gayle" ops in both directions,
+#               no g_err.  +SD_ERR_AT=scenario (XARGS) counts the model's
+#               +SD_ERR_<kind>=n from the main-loop milestone
 #   akiko       fdd card, +SCENARIO=akiko +KEYS=sim/l3/keys/insert_df0.txt
 #               +FDD_DUMP=<run>/akiko, TICKDIV 643 from the scenario start:
 #               bfm_akiko block 0 (32 write + 32 read requests on cfide's
@@ -197,6 +215,12 @@ MM_INC="$ROOT/fpga/openaars"     # minimig_version.vh (the board's)
 # run copies from hs_copy_rtl) is compiled too
 SDE=${SD_ENGINE:-0}
 case "$SDE" in 0|1) ;; *) echo "SD_ENGINE=$SDE: must be 0 or 1"; exit 2 ;; esac
+# the sdc_* scenarios run on the engine
+case "${1:-}" in
+	sdc_*)
+		[ "${SD_ENGINE:-1}" = 1 ] || { echo "SD_ENGINE=$SD_ENGINE: the $1 scenario runs on the SD card engine only"; exit 2; }
+		SDE=1 ;;
+esac
 [ "$SDE" = 1 ] && MM_FILES="$MM_FILES rtl/minimig/sdcard_gayle.v"
 
 # the "=== MARGIN <item> <name>" lines every run must print (mon_l3.vh),
@@ -230,6 +254,11 @@ esac
 MARGIN_REQ_cdda="$MARGIN_REQ_boot 9:cd_timeout_left"
 MARGIN_REQ_cdda_load="$MARGIN_REQ_cdda 3:dmode_release"
 MARGIN_REQ_akiko=$MARGIN_REQ_fdd_rd
+# sdc_*: as their base scenario, but no direct-mode transfer (item 3 must be
+# n/a, sdc_check): the HDF sectors go through sdcard_gayle's DMA
+MARGIN_REQ_sdc_boot=$MARGIN_REQ_boot
+MARGIN_REQ_sdc_boot_short=$MARGIN_REQ_boot_short
+MARGIN_REQ_sdc_hdd=$MARGIN_REQ_boot
 
 # fdd_wr's tracks, in order (= scenarios.vh FDD_WPLAN, l3check.py
 # FDD_WR_TRACKS): "<cylinder>:<head>[:<sector with a bad header checksum>]"
@@ -254,6 +283,12 @@ L3_HDD_TO=${L3_HDD_TO:-300000000}
 L3_CD_TO=${L3_CD_TO:-315000000}
 L3_CDDA_TO=${L3_CDDA_TO:-520000000}
 L3_AKIKO_TO=${L3_AKIKO_TO:-520000000}
+# sdc_*: 1.5 x the measured end events on the SD card engine (README "sdc",
+# Verilator 2026-10-25: sdc_boot 131,750,230, sdc_boot_short 27,971,124,
+# sdc_hdd 165,702,565 with a write retry, 165,090,989 without)
+L3_SDC_BOOT_TO=${L3_SDC_BOOT_TO:-197700000}
+L3_SDC_SHORT_TO=${L3_SDC_SHORT_TO:-42000000}
+L3_SDC_HDD_TO=${L3_SDC_HDD_TO:-248600000}
 
 # shellcheck source=../common/hostsim.sh
 . "$ROOT/sim/common/hostsim.sh"
@@ -456,12 +491,12 @@ setup() {
 	# card, the others boot.  MSCARD: milestones()'s "CARD=<card>" lines (cd:
 	# cd_cue or cd_iso, the disc's files differ)
 	CARDNAME=boot
-	case "${SCEN:-}" in fdd_rd|fdd_wr|akiko) CARDNAME=fdd ;; esac
-	[ "${SCEN:-}" = hdd ] && CARDNAME=hdd
-	[ "${SCEN:-}" = cd ] && CARDNAME=cd
-	[ "${SCEN:-}" = cdda ] && CARDNAME=cd
-	[ "${SCEN:-}" = cdda_load ] && CARDNAME=cdhdd
-	case "${SCEN:-}" in
+	case "${BSCEN:-}" in fdd_rd|fdd_wr|akiko) CARDNAME=fdd ;; esac
+	[ "${BSCEN:-}" = hdd ] && CARDNAME=hdd
+	[ "${BSCEN:-}" = cd ] && CARDNAME=cd
+	[ "${BSCEN:-}" = cdda ] && CARDNAME=cd
+	[ "${BSCEN:-}" = cdda_load ] && CARDNAME=cdhdd
+	case "${BSCEN:-}" in
 		cdda|cdda_load) [ "$CDCFG" = cue ] || die "CDCFG=$CDCFG: ${SCEN} plays TEST.CUE's track 2 (cue only)" ;;
 	esac
 	MSCARD=$CARDNAME IMG=$CARDNAME
@@ -475,7 +510,7 @@ setup() {
 	CARD="$run/card/$IMG.img"
 	[ ${#CARD} -le 1024 ] || die "card image path longer than 1024 characters (+SD_IMG): $CARD"
 	# fdd_wr: the write stream of each track, from the card's TEST.ADF
-	if [ "${SCEN:-}" = fdd_wr ]; then
+	if [ "${BSCEN:-}" = fdd_wr ]; then
 		local e c h b
 		for e in $FDD_WR_PLAN; do
 			c=${e%%:*} h=${e#*:} h=${h%%:*} b=
@@ -567,16 +602,18 @@ build() {
 
 # milestones <scenario> <log>: the milestone file of the scenario, spitrace
 # check of its UART / SPI lines, and its "NOT UART <text>" lines.  A line
-# "CARD=<card> <milestone>" is a milestone of that card only: it is kept,
-# without the prefix, for the scenario's card (MSCARD) and dropped for the
-# others
+# "SDE=<0|1> <milestone>" is a milestone of that SD_ENGINE only (the boot
+# ROM's and the firmware's SD lines), "CARD=<card> <milestone>" one of that
+# card only: each is kept, without the prefix, for the run's engine (SDE)
+# and the scenario's card (MSCARD) and dropped for the others (an SDE= line
+# may carry a CARD= prefix after it)
 milestones() {
 	local s=$1 log=$2 ms="$run/milestones_$1.txt" t
 	if [ "$s" = boot_short ]; then
 		sed '/^#@ boot_short end/q' "$HERE/milestones_boot.txt"
 	else
 		cat "$HERE/milestones_boot.txt"
-	fi | sed -n -e "s/^CARD=${MSCARD:-boot} //p" -e t -e '/^CARD=/d' -e p > "$ms"
+	fi | sed -n -e "s/^SDE=$SDE //" -e '/^SDE=/d' -e "s/^CARD=${MSCARD:-boot} //p" -e t -e '/^CARD=/d' -e p > "$ms"
 	grep -E '^CARD=' "$HERE/milestones_boot.txt" | grep -vE '^CARD=(boot|fdd|hdd|cd_cue|cd_iso|cdhdd) ' \
 		| sed 's/^/BAD  milestones_boot.txt: a CARD= line for none of boot, fdd, hdd, cd_cue, cd_iso, cdhdd: /'
 	grep -v '^NOT ' "$ms" > "$ms.check"
@@ -615,11 +652,108 @@ margins() {
 	[ "$bad" = 0 ] && echo "ok   MARGIN lines: all $k present, none LOW, $(echo $req | wc -w) required ones ok"
 }
 
-# scenario <name>: build, run, checks
+# sdc_check <scenario> <base> <log> (SDE=1): the SD card engine's checks
+# (header, the sdc_* entry; README "sdc").  Prints ok / BAD lines.
+#   - lock-step: fw/ctrl/sdc.h's SDC_VERSION is the trailer of the firmware
+#     file on the card ('SDCV' 00 00 hi lo), the VERSION the ROM read ("SD
+#     init: VERSION <v>, card 1") and both sides of the ROM's "Firmware SDC
+#     <have>, bitstream SDC <need>" (fw/ctrl_boot/lockstep.c)
+#   - no frame with sd_cs[1] low in spi.txt (cs 02: the card on cfide's
+#     SPI) and MARGIN item 3 without events (no direct-mode transfer)
+#   - the SD error lines on the UART (the ROM's "SD CMD<n>: R1 ..., try"
+#     and "SD read <lba>: ..., try", "SD: SCK div 13"; the firmware's "SD:
+#     ..." lines, "SD init: CMD10 / CMD9 <err>", "card changed", "CID
+#     unreadable"): none unless XARGS injects (+SD_ERR_); with an
+#     injection at least one retry line (the firmware's "SD: <row>, row
+#     <r>, retry <k> of <n>, lba <l>" or the ROM's "SD read <lba>: <what>
+#     <v>, try <t>", each a failed try the ROM tries again: out of tries
+#     it stops the boot, which the milestones see) and none of "retries
+#     out", "op failed", "CMD13 probe", "card changed", "CID unreadable"
+#   - "=== SDC gayle": no g_err; hdd: every card sector the plan moves to
+#     or from the Amiga goes through the bridge, in words: to_gayle
+#     SDC_HDD_RD_SECTORS x 256, from_gayle SDC_HDD_WR_SECTORS x 256 (README
+#     "hdd": the plan reads 274 sectors, 3 of them built by the CPU: the
+#     FakeRDB RDSK and PART and RDB.HDF's patched block 0; it writes 96);
+#     boot, boot_short: no Gayle op
+SDC_HDD_RD_SECTORS=271
+SDC_HDD_WR_SECTORS=96
+sdc_check() {
+	local s=$1 b=$2 log=$3 v t w ls inj=0 rx re n
+	v=$(sed -n 's/^#define SDC_VERSION 0x\([0-9A-Fa-f]\{4\}\).*/\1/p' "$ROOT/fw/ctrl/sdc.h" | tr a-f A-F)
+	[ ${#v} = 4 ] || { echo "BAD  sdc: no SDC_VERSION in fw/ctrl/sdc.h"; return; }
+	t=$(tail -c 8 "$FWBIN" | od -An -v -tx1 | tr -d ' \n' | tr a-f A-F)
+	if [ "$t" = "534443560000$v" ]; then
+		echo "ok   sdc: the firmware file's trailer SDCV 00 00 $v (fw/ctrl/sdc.h SDC_VERSION 0x$v)"
+	else
+		echo "BAD  sdc: the firmware file's last 8 bytes are $t, want 534443560000$v (SDCV 00 00, SDC_VERSION 0x$v)"
+	fi
+	if grep -qE "^UART: SD init: VERSION $v, card 1\$" "$log"; then echo "ok   sdc: the boot ROM read VERSION $v, card present"
+	else echo "BAD  sdc: no UART line 'SD init: VERSION $v, card 1' (the ROM's)"; fi
+	if grep -qF "Firmware SDC $v, bitstream SDC $v" "$log"; then
+		echo "ok   sdc: lock-step 'Firmware SDC $v, bitstream SDC $v'"
+	else
+		echo "BAD  sdc: no lock-step line 'Firmware SDC $v, bitstream SDC $v': $(grep -m1 -E 'Firmware (SDC|does not match)' "$log" || echo none)"
+	fi
+	# a frame's first field is its cs byte (~sd_cs, bit 1 = sd_cs[1] low)
+	n=$(grep -cE '^[0-9a-f][2367abef] ' "$run/spi.txt")
+	if [ "$n" = 0 ]; then echo "ok   sdc: no frame with sd_cs[1] low in spi.txt (the card is not on cfide's SPI)"
+	else echo "BAD  sdc: $n frames with sd_cs[1] low in spi.txt"; fi
+	if grep -qE '^=== MARGIN 3 dmode_release min none ' "$log"; then echo "ok   sdc: MARGIN 3 without events (no direct-mode transfer)"
+	else echo "BAD  sdc: MARGIN 3 saw direct-mode transfers: $(grep -m1 '^=== MARGIN 3 dmode_release' "$log")"; fi
+	# cfide's SPI after the jump to the firmware: SPI_fast (speed 1: SCK 6
+	# clk_114) in every frame but the RTC's (tb_l3.v "=== SPI SCK period");
+	# the boot ROM leaves it at 0xef (fw/ctrl main.c, Task 13 finding)
+	n=$(sed -n 's/^=== SPI SCK period after the firmware.s start (no RTC frame): min [0-9]* max \([0-9]*\) clk_114 over [1-9][0-9]* bits.*/\1/p' "$log")
+	if [ -n "$n" ] && [ "$n" -le 6 ]; then echo "ok   sdc: cfide's SCK period after the firmware's start at most $n clk_114 (SPI_fast: 6)"
+	else echo "BAD  sdc: cfide's SCK slower than SPI_fast (6 clk_114) after the firmware's start: $(grep -m1 '^=== SPI SCK period' "$log" || echo 'no SPI SCK line')"; fi
+	case " ${XARGS:-} " in *" +SD_ERR_"*) inj=1 ;; esac
+	# the UART's lines, each also cut at the firmware's '\r's (hostmon prints
+	# them as the two characters \r: "Set Multiple Mode 16\rSD: read CRC,
+	# ..." is one UART line)
+	re='^(SD CMD[0-9]+: R1 |SD read [0-9]+: |SD: |SD init: (CMD10|CMD9) )|card changed|CID unreadable'
+	ls=$(sed -n 's/^UART: //p' "$log" | sed 's/\\r/\n/g' | grep -E "$re")
+	if [ "$inj" = 0 ]; then
+		if [ -z "$ls" ]; then echo "ok   sdc: no SD error line on the UART"
+		else printf '%s\n' "$ls" | head -20 | sed 's/^/BAD  sdc: SD error line without an injection: /'; fi
+	else
+		rx=$(printf '%s\n' "$ls" | grep -E ', row [0-9]+, retry [0-9]+ of [0-9]+, lba |, try [0-9]+$')
+		if [ -n "$rx" ]; then printf '%s\n' "$rx" | head -20 | sed 's/^/ok   sdc: retry line (injection): /'
+		else echo "BAD  sdc: XARGS injects an SD error, but no retry line on the UART"; fi
+		printf '%s\n' "$ls" | grep -E 'retries out|op failed|CMD13 probe|card changed|CID unreadable' | head -20 \
+			| sed 's/^/BAD  sdc: the injection ran out of retries: /'
+		printf '%s\n' "$ls" | grep -vE ', row [0-9]+, retry [0-9]+ of [0-9]+, lba |, try [0-9]+$|retries out|op failed|CMD13 probe|card changed|CID unreadable' \
+			| grep . | head -20 | sed 's/^/info sdc: other SD line: /'
+	fi
+	w=$(grep -E '^=== SDC gayle ' "$log")
+	if [ -z "$w" ]; then echo "BAD  sdc: no '=== SDC gayle' line"; return; fi
+	set -- $(printf '%s\n' "$w" | sed -n 's/^=== SDC gayle to_gayle \([0-9]*\) ops \([0-9]*\) words, from_gayle \([0-9]*\) ops \([0-9]*\) words, g_err \([0-9]*\), .*/\1 \2 \3 \4 \5/p')
+	[ $# = 5 ] || { echo "BAD  sdc: cannot read '$w'"; return; }
+	[ "$5" = 0 ] && echo "ok   sdc: no g_err" || echo "BAD  sdc: $5 Gayle errors (g_err)"
+	if [ "$b" = hdd ]; then
+		if [ "$1" -gt 0 ] && [ "$2" = $((SDC_HDD_RD_SECTORS * 256)) ]; then
+			echo "ok   sdc: to_gayle $1 ops, $2 words = $SDC_HDD_RD_SECTORS sectors (READ / READ MULTIPLE through the bridge)"
+		else
+			echo "BAD  sdc: to_gayle $1 ops $2 words, want > 0 ops and $((SDC_HDD_RD_SECTORS * 256)) words ($SDC_HDD_RD_SECTORS sectors)"
+		fi
+		if [ "$3" -gt 0 ] && [ "$4" = $((SDC_HDD_WR_SECTORS * 256)) ]; then
+			echo "ok   sdc: from_gayle $3 ops, $4 words = $SDC_HDD_WR_SECTORS sectors (WRITE / WRITE MULTIPLE through the bridge)"
+		else
+			echo "BAD  sdc: from_gayle $3 ops $4 words, want > 0 ops and $((SDC_HDD_WR_SECTORS * 256)) words ($SDC_HDD_WR_SECTORS sectors)"
+		fi
+	elif [ "$1$3" = 00 ]; then
+		echo "ok   sdc: no Gayle op ($s)"
+	else
+		echo "BAD  sdc: Gayle ops in $s: to_gayle $1, from_gayle $3"
+	fi
+}
+
+# scenario <name>: build, run, checks.  An sdc_<b> scenario is the bench's
+# scenario b on the SD card engine (SDE=1): b's plusargs, card and checks
+# (with b's timeout L3_SDC_<B>_TO), plus sdc_check
 scenario() {
-	local s=$1 to snap="tb_l3_x$XW" pa=() st x
+	local s=$1 b=${1#sdc_} to snap="tb_l3_x$XW" pa=() st x
 	local log="$run/tb_${s}_x${XW}_s${SL}_j${SJ}.log"
-	case "$s" in
+	case "$b" in
 		boot) to=${TIMEOUT:-$L3_BOOT_TO}; pa=("SD_LOG=1") ;;
 		boot_short) to=${TIMEOUT:-$L3_SHORT_TO} ;;
 		keys) to=${TIMEOUT:-$L3_KEYS_TO}; pa=("KEYS=$(realpath -m -- "${KEYS:-$HERE/keys/menu_tour.txt}")" "TICKDIV=643" "TICKDIV_AT=scenario") ;;
@@ -638,6 +772,11 @@ scenario() {
 			    "FDD_DUMP=$run/akiko") ;;
 		*) die "unknown scenario $s" ;;
 	esac
+	case "$s" in
+		sdc_boot) to=${TIMEOUT:-$L3_SDC_BOOT_TO} ;;
+		sdc_boot_short) to=${TIMEOUT:-$L3_SDC_SHORT_TO} ;;   # no SD_LOG: the xsim twin (compare) differs in its spacing
+		sdc_hdd) to=${TIMEOUT:-$L3_SDC_HDD_TO}; pa+=("SD_LOG=1") ;;
+	esac
 	# tb_l3.v reads +TIMEOUT into a 32-bit integer: a larger value wraps
 	# negative and ends the run at once (Task 19, grid run p4g_rv_ws64_fdd_rd)
 	case "$to" in ''|*[!0-9]*) die "TIMEOUT=$to: not a number of cycles" ;; esac
@@ -650,8 +789,8 @@ scenario() {
 		echo "card: $CARD$( [ "${NOKICK:-0}" = 1 ] && echo " (NOKICK=1: no KICK.ROM)")"
 		[ "${PAULA_TXPOP:-0}" = 1 ] && echo "PAULA_TXPOP=1: $(sed -n 's/^PAULA_TXPOP: //p' "$run/compile.log")"
 		[ -n "${PATCH:-}" ] && echo "PATCH: $PATCHF, sha256 $(sha256sum "$PATCHF" | cut -c1-16)"
-		[ "$s" = cd ] && echo "cd config: $CDCFG"
-		echo "scenario: $s"
+		[ "$b" = cd ] && echo "cd config: $CDCFG"
+		echo "scenario: $s$( [ "$s" != "$b" ] && echo " (the bench's $b, SD_ENGINE=1)")"
 	} | tee "$run/results.txt"
 	build "$snap"
 	# plusargs without the +: FAST_HW's model timing first (the first match
@@ -659,7 +798,7 @@ scenario() {
 	case " ${XARGS:-} " in
 		*" +FAST_HW=1 "*) pa=(SD_TOKEN_DLY=0 SD_BUSY=1 SD_NCR=1 SLAT=2 SJIT=0 "${pa[@]}") ;;
 	esac
-	pa+=("SCENARIO=$s" "SLAT=$SL" "SJIT=$SJ" "SEED=${SEED:-1}" "SD_IMG=$CARD" "TIMEOUT=$to"
+	pa+=("SCENARIO=$b" "SLAT=$SL" "SJIT=$SJ" "SEED=${SEED:-1}" "SD_IMG=$CARD" "TIMEOUT=$to"
 	     "SPI_LOG=$run/spi.txt" "SPI_T_LOG=$run/spi_t.txt" "HW_LOG=$run/hw.txt" "UART_LOG=$run/uart.txt"
 	     "SDRAM_DUMP=$run/sdram.bin")
 	for x in ${XARGS:-}; do pa+=("${x#+}"); done
@@ -668,44 +807,45 @@ scenario() {
 	local secs=$((SECONDS - t0))
 	python3 -I "$L2/spitrace.py" summary "$run/spi.txt" > "$run/spi_summary.txt" 2>&1
 	{
-		grep -E '^=== (BOOT|MAIN|END|STATS|HW accesses|cycle limit|HandleFpga|SPI frames|OSD GAP|OSD EARLY|OSD REPLY|STACK|RTC|KICK|MARGIN|KEYS script|FDD|IDE|CD|AKIKO block)' "$log"
+		grep -E '^=== (BOOT|MAIN|END|STATS|HW accesses|cycle limit|HandleFpga|SPI frames|SPI SCK|OSD GAP|OSD EARLY|OSD REPLY|STACK|RTC|KICK|MARGIN|KEYS script|FDD|IDE|CD|AKIKO block|SDC|SD_ERR)' "$log"
 		grep -E '^BENCH ERROR' "$log" | sed 's/^/BAD  /'
 		margins "$s" "$log"
 		grep -q '^SD: image .* loaded' "$log" || echo "BAD  the SD model did not load $CARD"
-		milestones "$s" "$log"
+		milestones "$b" "$log"
 		grep -E '^UART: .*(EXC |TRAP )' "$log" | sed 's/^/BAD  /'
 		l3_check memhash "$run/memhash.txt" '^PASS memhash: ' python3 -I "$L3CHECK" memhash "$run"
-		if [ "$s" = boot ] || [ "$s" = keys ] || [ "$s" = fdd_rd ] || [ "$s" = fdd_wr ] || [ "$s" = hdd ] \
-			|| [ "$s" = cd ] || [ "$s" = cdda ] || [ "$s" = cdda_load ] || [ "$s" = akiko ]; then
+		if [ "$b" = boot ] || [ "$b" = keys ] || [ "$b" = fdd_rd ] || [ "$b" = fdd_wr ] || [ "$b" = hdd ] \
+			|| [ "$b" = cd ] || [ "$b" = cdda ] || [ "$b" = cdda_load ] || [ "$b" = akiko ]; then
 			l3_check kick "$run/kick.txt" '^PASS kick: ' python3 -I "$L3CHECK" kick "$run"
 			l3_check order "$run/order.txt" '^PASS order: ' python3 -I "$L3CHECK" order "$run"
 		fi
-		[ "$s" = boot ] && l3_check mmc "$run/mmc.txt" '^PASS mmc: ' python3 -I "$L3CHECK" mmc "$run"
-		if [ "$s" = keys ]; then
+		[ "$b" = boot ] && l3_check mmc "$run/mmc.txt" '^PASS mmc: ' python3 -I "$L3CHECK" mmc "$run"
+		[ "$SDE" = 1 ] && sdc_check "$s" "$b" "$log"
+		if [ "$b" = keys ]; then
 			l3_check keys "$run/keys.txt" '^PASS keys: ' python3 -I "$L3CHECK" keys "$run"
 			grep -E '^REPLY ' "$run/keys.txt"
 		fi
-		if [ "$s" = fdd_rd ]; then
+		if [ "$b" = fdd_rd ]; then
 			l3_check fdd_rd "$run/fdd_rd.txt" '^PASS fdd_rd: ' python3 -I "$L3CHECK" fdd_rd "$run"
 			grep -E '^ok   ' "$run/fdd_rd.txt"
 		fi
-		if [ "$s" = fdd_wr ]; then
+		if [ "$b" = fdd_wr ]; then
 			l3_check fdd_wr "$run/fdd_wr.txt" '^PASS fdd_wr: ' python3 -I "$L3CHECK" fdd_wr "$run"
 			grep -E '^(ok   |HEADER )' "$run/fdd_wr.txt"
 		fi
-		if [ "$s" = hdd ]; then
+		if [ "$b" = hdd ]; then
 			l3_check hdd "$run/hdd.txt" '^PASS hdd: ' python3 -I "$L3CHECK" hdd "$run"
 			grep -E '^ok   ' "$run/hdd.txt"
 		fi
-		if [ "$s" = cd ]; then
+		if [ "$b" = cd ]; then
 			l3_check cd "$run/cd.txt" '^PASS cd: ' python3 -I "$L3CHECK" cd "$run"
 			grep -E '^(ok   |INFO )' "$run/cd.txt"
 		fi
-		if [ "$s" = cdda ] || [ "$s" = cdda_load ]; then
+		if [ "$b" = cdda ] || [ "$b" = cdda_load ]; then
 			l3_check cdda "$run/cdda.txt" '^PASS cdda: ' python3 -I "$L3CHECK" cdda "$run"
 			grep -E '^(ok   |INFO )' "$run/cdda.txt"
 		fi
-		if [ "$s" = akiko ]; then
+		if [ "$b" = akiko ]; then
 			l3_check akiko "$run/akiko.txt" '^PASS akiko: ' python3 -I "$L3CHECK" akiko "$run"
 			grep -E '^ok   ' "$run/akiko.txt"
 		fi
@@ -721,7 +861,7 @@ scenario() {
 # milestone (the fatal-error loop has no HandleFpga frames after its first)
 nokick() {
 	if scenario boot; then echo "BAD  NOKICK=1: boot passed without a kickstart"; return 1; fi
-	if grep -q '^BAD  SPI>=21 10 00 00 00 00 00 00' "$run/milestones.txt" \
+	if grep -qE '^BAD  SPI(>=[0-9]+)? 10 00 00 00 00 00 00' "$run/milestones.txt" \
 		&& grep -q '^UART: .*ROM loading failed' "$run"/tb_boot_*.log; then
 		echo "=== NOKICK=1: boot FAILED as expected (main-loop milestone missing, 'ROM loading failed')"
 		return 0
@@ -756,8 +896,8 @@ case "${1:-}" in
 		echo "=== xpair $2 FAILED (runs $r1 / $r2, compare $rc)"
 		exit 1
 		;;
-	boot|boot_short|keys|fdd_rd|fdd_wr|hdd|cd|cdda|cdda_load|akiko)
-		SCEN=$1
+	boot|boot_short|keys|fdd_rd|fdd_wr|hdd|cd|cdda|cdda_load|akiko|sdc_boot|sdc_boot_short|sdc_hdd)
+		SCEN=$1 BSCEN=${1#sdc_}
 		[ "${NOKICK:-0}" = 1 ] && [ "$1" != boot ] && die "NOKICK=1 is for boot only"
 		setup
 		if [ "${NOKICK:-0}" = 1 ]; then nokick; else scenario "$1"; fi

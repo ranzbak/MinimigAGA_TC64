@@ -15,10 +15,26 @@
 # boot_short checks the lines up to "#@ boot_short end" (its run ends at the
 # OSD_CMD_READ frame before that line, scenarios.vh).
 #
-# -- the boot ROM (fw/ctrl_boot), as sim/host_bridge/fwboot/milestones.txt;
-# the file it loads (OSDNAME)
+# "SDE=<0|1> <line>": a line of that SD_ENGINE only (run.sh milestones;
+# the sdc_* scenarios run with 1).  SDE=0: the card on cfide's SPI, the boot
+# ROM and firmware before plan Task 12 / 10 (this tree's ROM stops in its
+# SD init there); SDE=1: the SD card engine (sdcard_spi), the boot ROM's
+# fw/ctrl_boot/spi.c + lockstep.c and the firmware's sdproto.c sd_init.
+#
+# -- the boot ROM (fw/ctrl_boot), as sim/host_bridge/fwboot/milestones.txt
+# (SDE=0) and sim/host_bridge/boot/expect.txt (SDE=1); the file it loads
+# (OSDNAME)
 UART Initializing SD card
-UART cmd_CMD8 response: 1
+SDE=0 UART cmd_CMD8 response: 1
+# spi.c spi_init: the peripheral's VERSION (run.sh sdc_check: = fw/ctrl/sdc.h
+# SDC_VERSION), card present; the card model's answers (SDHC, CMD59 on)
+SDE=1 UART SD init: VERSION
+SDE=1 UART SD init: CMD0 01
+SDE=1 UART SD init: CMD8 01
+SDE=1 UART SD init: ACMD41 00
+SDE=1 UART SD init: CMD58 00
+SDE=1 UART SD init: CMD59 00
+SDE=1 UART SD card: SDHC
 UART Hunting for partition
 UART Reading MBR
 UART Partitioncount 1
@@ -27,10 +43,23 @@ UART Read boot sector from first partition
 UART Hunting for filesystem
 UART Reading directory sector
 UART file "RV32OSDABIN" found
+# lockstep.c fw_start: the firmware file's 'SDCV' trailer = the VERSION
+# register (run.sh sdc_check: both = SDC_VERSION), then the jump
+SDE=1 UART Firmware SDC
+SDE=1 UART , bitstream SDC
 # -- the firmware: main(), PLATFORM bit 2 (SPI RTC) is 1 (havespirtc = true)
 UART Platform has SPI RTC support
-# ColdBoot() -> MMC_Init(): the model answers CMD8 with 0x1AA, an SDHC card
-UART SDHC card detected
+# ColdBoot() -> MMC_Init(): the model answers CMD8 with 0x1AA, an SDHC card.
+# SDE=1: sdproto.c sd_init (the model's defaults: two ACMD41 polls answered
+# idle, the third ready; OCR C0FF8000 = CARDTYPE_SDHC 3; CRC on; the CID
+# and the CSD read with no error line; the peripheral's SCK div 2)
+SDE=0 UART SDHC card detected
+SDE=1 UART SD init: CMD0 01
+SDE=1 UART SD init: CMD8 01
+SDE=1 UART SD init: ACMD41 00, 3 polls
+SDE=1 UART SD init: OCR c0ff8000, type 3
+SDE=1 UART SD init: CMD59 00
+SDE=1 UART SD init: SCK div 2
 # FindDrive(): FAT16 (the type byte it prints is sector_buffer[450] of the
 # boot sector, card-layout data: not checked)
 UART partition type: 0x
@@ -179,12 +208,15 @@ SPI 20 08 06
 # releases the Amiga
 SPI 20 08 03
 SPI 20 08 00
-# main()'s loop, its first pass: HandleRTC() reads the RTC (rtc_model on
+# main()'s loop, its first pass: PollDisks() -> HandleFpga()'s six-byte
+# request read (fw/ctrl main.c; since findings/sdcard-engine Task 11a
+# before HandleRTC), then HandleRTC() reads the RTC (rtc_model on
 # sd_cs[7], the fixed time 2026-01-01 00:00:00, a Thursday): command 92 =
 # read from register 2, then seconds, minutes, hours, day, weekday, month,
 # year in BCD (the command byte answers ff)
+SPI 10 00 00 00 00 00 00
 SPI 80 92 ff ff ff ff ff ff ff / ff 00 00 00 01 04 01 26
-# main()'s loop: HandleFpga's six-byte request read every pass (the fatal
-# error loop of a failed kickstart load does not call HandleFpga): the
-# first and 20 more
-SPI>=21 10 00 00 00 00 00 00
+# main()'s loop: HandleFpga's request read every pass (the fatal error loop
+# of a failed kickstart load does not call HandleFpga): 20 more after the
+# first (the boot scenario ends at the 21st)
+SPI>=20 10 00 00 00 00 00 00

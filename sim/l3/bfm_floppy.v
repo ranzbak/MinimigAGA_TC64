@@ -130,7 +130,7 @@ module bfm_floppy (
 
   initial begin
     _sel = 4'hF; _motor = 1'b1; side = 1'b0; _step = 1'b1; direc = 1'b0;
-    data_cpu = 16'h0000; enable = 1'b0; wordsync = 1'b0;
+    enable = 1'b0; wordsync = 1'b0;   // (data_cpu: 0 at its declaration below; xvlog wants it declared before use)
   end
 
   // written by the bench
@@ -158,7 +158,7 @@ module bfm_floppy (
   wire         slot = h7[0] && (cck_n == 8'h0C || cck_n == 8'h0E || cck_n == 8'h10);
   wire         dma = slot && dmal === 1'b1;
   reg    [8:1] rga_cpu = RGA_IDLE;
-  reg   [15:0] data_cpu;
+  reg   [15:0] data_cpu = 16'h0000;
   // a write: the file's words (wbuf), word wptr in the current slot
   reg   [15:0] wbuf [0:CAP_MAX-1];
   integer      wr_n = 0, wptr = 0;
