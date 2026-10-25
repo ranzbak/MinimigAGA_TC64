@@ -13,7 +13,8 @@ card model on the pins of the SD card peripheral `sdcard_spi` (as the
 openaars top has it, `SD_ENGINE = 1`): the ROM loads `RV32OSDA.BIN` from a
 FAT16 card image, checks its lock-step trailer and runs it (see
 [Boot](#boot)). The firmware boot runs (`run.sh fwboot`,
-`fwboot_trap`) do the same with the real firmware (`fw/ctrl`) on a 16 MB
+`fwboot_trap`; **unsupported** since the SD card engine, see
+[Firmware boot](#firmware-boot-fwboot)) did the same with the real firmware (`fw/ctrl`) on a 16 MB
 card and a stub for the Minimig SPI slaves, up to the firmware's main loop
 (see [Firmware boot](#firmware-boot-fwboot)); `fwboot_cfg` adds a legacy
 (big-endian) config file that the firmware converts on its first boot.
@@ -592,6 +593,16 @@ support state machine serves UART writes only), so a read of `0xFFFFFFF0`
 would hang the CPU.
 
 ## Firmware boot (fwboot)
+
+> **Unsupported since the SD card engine (2026-10-25).** The boot ROM and
+> the firmware reach the card only through the SD card peripheral
+> (`sdcard_spi`), while `fwboot`, `fwboot_trap` and `fwboot_cfg` keep the
+> card model on cfide's `sd_cs[1]` (their SPI-log milestones read it
+> there). `run.sh` refuses them at once (`=== fwboot UNSUPPORTED: ...`,
+> exit 3); `FWBOOT_FORCE=1` runs them anyway, and they fail. The full boot
+> with the real firmware on the peripheral is `sim/l3` `sdc_boot` (SD card
+> engine plan, Task 13). The text below describes these legs as they ran on
+> cfide's SPI.
 
 `run.sh fwboot` is the first end-to-end run of the real firmware: the
 committed boot ROM loads `RV32OSDA.BIN` of `fw/ctrl` (copied, never

@@ -22,9 +22,11 @@
 #   bash sim/host_bridge/run.sh boot         # committed boot ROM loads RV32OSDA.BIN
 #   bash sim/host_bridge/run.sh boot_nofile  # card without it: error path
 #   bash sim/host_bridge/run.sh boot_mismatch # firmware without the lock-step trailer: refused
-#   bash sim/host_bridge/run.sh fwboot       # the real firmware to its main loop
-#   bash sim/host_bridge/run.sh fwboot_trap  # the same, trap constructor linked in
-#   bash sim/host_bridge/run.sh fwboot_cfg   # fwboot with a legacy (big-endian) config file to convert
+#   bash sim/host_bridge/run.sh fwboot       # the real firmware to its main loop  } UNSUPPORTED since
+#   bash sim/host_bridge/run.sh fwboot_trap  # the same, trap constructor linked in } the SD peripheral
+#   bash sim/host_bridge/run.sh fwboot_cfg   # fwboot, legacy config to convert   } boot path: exit 3
+#     (card model on cfide's sd_cs[1]; ROM + firmware use sdcard_spi; covered
+#     by sim/l3 sdc_boot, Task 13; FWBOOT_FORCE=1 runs them anyway: they fail)
 #
 # XRAND=1 (SIM=verilator): the X-sensitivity twin, a build with randomised
 # uninitialised state (--x-assign unique --x-initial unique, run with
@@ -547,6 +549,15 @@ case "${1:-}" in
 		exit $?
 		;;
 	fwboot|fwboot_trap|fwboot_cfg)
+		# Unsupported since the SD card engine (plan Task 12): the boot ROM
+		# and the firmware reach the card only through sdcard_spi, while
+		# these legs keep the card model on cfide's sd_cs[1] (their SPI
+		# log milestones read it there).  FWBOOT_FORCE=1 runs them anyway.
+		if [ "${FWBOOT_FORCE:-0}" != 1 ]; then
+			echo "=== $1 UNSUPPORTED: unsupported with the SD peripheral boot path; covered by sim/l3 sdc_boot (Task 13)" >&2
+			echo "    (the card model is on cfide's sd_cs[1]; the boot ROM and the firmware use sdcard_spi; FWBOOT_FORCE=1 runs it anyway, it fails)" >&2
+			exit 3
+		fi
 		# FW relative to the caller's directory (setup changes into the run's)
 		FWBIN=$(realpath -m -- "${FW:-$ROOT/fw/ctrl/build/RV32OSDA.BIN}")
 		setup
@@ -559,7 +570,8 @@ case "${1:-}" in
 		for t in $TESTS; do snapshot "$t" "tb_${t}_x$XW"; done
 		for t in $TESTS; do matrix "tb_${t}_x$XW" "$t" PASS ""; done | tee "$run/results.txt"
 		if grep -q '^BAD' "$run/results.txt"; then echo "=== SOME FAILED"; exit 1; fi
-		echo "=== ALL PASS ($(grep -c '^ok' "$run/results.txt") runs, $SIM)"
+		echo "=== ALL PASS ($(grep -c '^ok' "$run/results.txt") runs, $SIM: $TESTS)"
+		echo "    not in 'all': boot, boot_nofile, boot_mismatch (run them by name); fwboot, fwboot_trap, fwboot_cfg UNSUPPORTED with the SD peripheral boot path (sim/l3 sdc_boot, Task 13)"
 		;;
 	irqmut)
 		setup
