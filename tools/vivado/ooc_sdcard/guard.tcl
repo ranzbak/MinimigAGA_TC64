@@ -12,6 +12,11 @@
 #                  buffers on the card's package pins: the engine branch, both
 #                  blocks applied; the run must complete, the generated clock
 #                  sdc_sck and the Gray-count bound must be in the design.
+#                  Then replicas of q_gray_reg[0], sck_r_reg and cd_s2_reg
+#                  (phys_opt_design -force_replication_on_nets, as a routed
+#                  build may have them) and the file sourced again, as
+#                  build_ap040.tcl's open_run impl_1 does: no exit, both
+#                  blocks applied.
 #   noengine       a top with the same ports and the card on a plain register
 #                  SPI (no sdc_spi, no SDCGAYLE1): the no-engine branch, the
 #                  two false paths; the run must complete.
@@ -159,8 +164,33 @@ switch -- $case {
         if {[llength [get_clocks -quiet sdc_sck]] != 1} { result 0 "no clock sdc_sck" }
         report_exceptions -file $outdir/exceptions.rpt
         set fh [open $outdir/exceptions.rpt r]; set ex [read $fh]; close $fh
-        if {![regexp {q_gray_reg} $ex] || ![regexp {max_dpo=8.815} $ex]} { result 0 "no q_gray max delay in report_exceptions" }
+        if {![regexp {SDCGAYLE1[^\n]*max_dpo=8\.815} $ex]} { result 0 "no q_gray max delay in report_exceptions" }
         if {![regexp {sd_m_cdet} $ex]} { result 0 "no sd_m_cdet false path in report_exceptions" }
+        # replicas: build_ap040.tcl's open_run impl_1 sources the file again
+        # on the routed design, where phys_opt_design may have replicated a
+        # register; the file must still match exactly its own cells (an exit
+        # there would skip the build's restores).  Place, force a replica
+        # of q_gray_reg[0], sck_r_reg and cd_s2_reg, source the file again
+        # in this batch Vivado: it must not exit, and must apply both blocks.
+        place_design
+        set rep {}
+        foreach c [list SDCGAYLE1/q_gray_reg\[0\] sdc_spi/sck_r_reg sdc_spi/cd_s2_reg] {
+            lappend rep [get_nets -of_objects [get_pins -of_objects [get_cells $c] -filter {REF_PIN_NAME == Q}]]
+        }
+        phys_opt_design -force_replication_on_nets $rep
+        set reps [get_cells -quiet -hierarchical -filter {NAME =~ *replica*}]
+        set loose [get_cells -quiet -hierarchical -filter {NAME =~ *SDCGAYLE1/q_gray_reg*}]
+        puts "guard.tcl: replicas: [llength $reps] ($reps); the old glob *SDCGAYLE1/q_gray_reg* now matches [llength $loose]"
+        if {[llength $reps] < 1 || [llength $loose] < 4} { result 0 "phys_opt_design made no q_gray replica (the case would prove nothing)" }
+        reset_timing
+        source $base
+        set ::sdc_reread ""
+        set fh [open $eng r]; set src [read $fh]; close $fh
+        source $eng
+        if {[llength [get_clocks -quiet sdc_sck]] != 1} { result 0 "after the replicas: no clock sdc_sck" }
+        report_exceptions -file $outdir/exceptions_replica.rpt
+        set fh [open $outdir/exceptions_replica.rpt r]; set ex2 [read $fh]; close $fh
+        if {![regexp {SDCGAYLE1[^\n]*max_dpo=8\.815} $ex2]} { result 0 "after the replicas: no q_gray max delay" }
         result 1 ""
     }
     noengine {

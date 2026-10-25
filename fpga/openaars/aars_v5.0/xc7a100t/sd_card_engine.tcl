@@ -24,7 +24,14 @@
 # that Vivado: the run fails (synth_1 / impl_1 "... ERROR") and wait_on_run
 # fails with it, which ends tools/vivado/build_ap040.tcl.  In the GUI or Tcl
 # mode (a design opened by hand) it must not quit the session: there the
-# message is raised to an ERROR and the file stops with it.  Test:
+# message is raised to an ERROR and the file stops with it.  The batch case
+# includes build_ap040.tcl's own process: its open_run impl_1 sources this
+# file again on the routed design, and an exit there would skip the
+# script's project restores (its next run undoes the host CPU groups from
+# .hostcpu_undo; the other switches are set per run).  Hence every register
+# is matched by its exact name and bit (anchored regular expressions): a
+# replica that phys_opt_design makes (<reg>_replica, ..._rep) cannot match,
+# so a design that passed link_design passes again there.  Test:
 # tools/vivado/ooc_sdcard/go.sh guard (both branches and the error).
 #
 # The blocks between "# >>> <name>" and "# <<< <name>" (each complete
@@ -59,12 +66,18 @@
 # 9 ms debounce.
 set sdc_spi_cells [get_cells -quiet -hierarchical -filter {NAME =~ *sdc_spi/*}]
 if {[llength $sdc_spi_cells] != 0} {
-    set sdc_sck_reg [get_cells -quiet -hierarchical -filter {NAME =~ *sdc_spi/sck_r_reg}]
+    # exact register names (regular expressions, anchored): a replica a
+    # physical optimisation makes (sck_r_reg_replica ...) never matches.  The
+    # instance is preceded by "/" or by "." (the board design's generate
+    # block: openaars_virtual_top/g_sdc.sdc_spi, minimig/g_sdc.SDCGAYLE1),
+    # or is the top's own (the OOC wrapper)
+    set sdc_sck_reg [get_cells -quiet -hierarchical -regexp -filter {NAME =~ "^(.*[/.])?sdc_spi/sck_r_reg$"}]
+    set sdc_cd_s [get_cells -quiet -hierarchical -regexp -filter {NAME =~ "^(.*[/.])?sdc_spi/cd_s[12]_reg$"}]
     set sdc_missing {}
     foreach {sdc_what sdc_obj} [list \
             *sdc_spi/sck_r_reg $sdc_sck_reg \
-            *sdc_spi/cd_s1_reg [get_cells -quiet -hierarchical -filter {NAME =~ *sdc_spi/cd_s1_reg}] \
-            *sdc_spi/cd_s2_reg [get_cells -quiet -hierarchical -filter {NAME =~ *sdc_spi/cd_s2_reg}] \
+            *sdc_spi/cd_s1_reg [get_cells -quiet -hierarchical -regexp -filter {NAME =~ "^(.*[/.])?sdc_spi/cd_s1_reg$"}] \
+            *sdc_spi/cd_s2_reg [get_cells -quiet -hierarchical -regexp -filter {NAME =~ "^(.*[/.])?sdc_spi/cd_s2_reg$"}] \
             {port sd_m_clk}  [get_ports -quiet sd_m_clk] \
             {port sd_m_cmd}  [get_ports -quiet sd_m_cmd] \
             {port sd_m_d3}   [get_ports -quiet sd_m_d3] \
@@ -89,7 +102,7 @@ if {[llength $sdc_spi_cells] != 0} {
     set_multicycle_path -setup -end 3 -from [get_ports sd_m_d0] -to [get_clocks clk_114]
     set_multicycle_path -hold  -end 2 -from [get_ports sd_m_d0] -to [get_clocks clk_114]
     set_false_path -from [get_ports sd_m_cdet]
-    set_property ASYNC_REG TRUE [get_cells -hierarchical -filter {NAME =~ *sdc_spi/cd_s1_reg || NAME =~ *sdc_spi/cd_s2_reg}]
+    set_property ASYNC_REG TRUE $sdc_cd_s
     puts "sd_card_engine.tcl: SD card engine constraints ($sdc_sck_reg)"
 } else {
     # no engine: the card on cfide's SPI, as before (card data in is
@@ -113,8 +126,11 @@ if {[llength $sdc_spi_cells] != 0} {
 # >>> sdc_bridge
 set sdc_bridge_cells [get_cells -quiet -hierarchical -filter {NAME =~ *SDCGAYLE1/*}]
 if {[llength $sdc_bridge_cells] != 0} {
-    set sdc_gray_q [get_cells -quiet -hierarchical -filter {NAME =~ *SDCGAYLE1/q_gray_reg*}]
-    set sdc_gray_s [get_cells -quiet -hierarchical -filter {NAME =~ *SDCGAYLE1/s_gray1_reg*}]
+    # exact bit names (anchored regular expressions): a replica of a Gray
+    # register (q_gray_reg[0]_replica) never matches and so never turns the
+    # count check into an exit in a later open_run
+    set sdc_gray_q [get_cells -quiet -hierarchical -regexp -filter {NAME =~ "^(.*[/.])?SDCGAYLE1/q_gray_reg\[[0-2]\]$"}]
+    set sdc_gray_s [get_cells -quiet -hierarchical -regexp -filter {NAME =~ "^(.*[/.])?SDCGAYLE1/s_gray1_reg\[[0-2]\]$"}]
     if {[llength $sdc_gray_q] != 3 || [llength $sdc_gray_s] != 3} {
         set sdc_msg "sd_card_engine.tcl: the SD card engine's Gayle bridge is in the netlist ([llength $sdc_bridge_cells] cells under *SDCGAYLE1/) but q_gray / s_gray1 match [llength $sdc_gray_q] / [llength $sdc_gray_s] cells, 3 / 3 expected. Fix the names in this file (the Gray count would otherwise go unbounded)."
         if {[info exists ::rdi::mode] && $::rdi::mode eq "batch"} { puts "ERROR: $sdc_msg"; flush stdout; exit 1 }
