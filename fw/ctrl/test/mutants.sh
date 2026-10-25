@@ -585,6 +585,10 @@ hwmap irqctl_width arch/irq.h 's/HW_IRQ_MASK        (\*(volatile unsigned int/HW
 unit puts_nl hwmap_test src uart.c 's/++result;/++result; if (!*msg) putchar(10);/'
 unit puts_words hwmap_test src uart.c 's/(c=(unsigned char)\*msg++)/(c=(unsigned char)*msg++) \&\& result < 1/'
 
+# ---- the final review's fix wave (findings/sdcard-engine, 2026-10-25) -------
+# M7: SET MULTIPLE MODE above 16 accepted (groups larger than Gayle's FIFO)
+unit hdd_setmult_max hdd_test src hdd.c 's/if (tfr\[2\] > HDD_MULTIPLE_MAX) {/if (0) {/' "FAIL SET MULTIPLE MODE 17"
+
 echo "$nkilled mutants killed"
 if [ $bad -eq 0 ]; then echo "=== MUTANTS PASS"; else echo "=== MUTANTS FAILED"; fi
 exit $bad

@@ -98,6 +98,7 @@
 "ScanDirectory(): %lu ms\r"
 "Scanning directory %X\n"
 "Scanning root directory %X\n"
+"Set Multiple Mode %d: ABRT\r"
 "Set Multiple Mode %d\r"
 "Size: %lu MB"
 "Sound %d at %X, length %d\n"

@@ -986,6 +986,45 @@ static void read_case(const char *what, int unit, int multiple, long lba, int n)
 	diskstat_check(what, 0, n, want_chunks);
 }
 
+/* SET MULTIPLE MODE with a count IDENTIFY does not offer (word 47: 16):
+   ABRT -- error register 0x04, END | IRQ | ERR -- and the mode stays, so the
+   next READ MULTIPLE runs in groups of the old count (final review M7: a
+   group of more than 16 sectors overflowed Gayle's FIFO with good status).
+   16 is accepted, 0 too (multiple mode off, as before) */
+static void set_multiple_abrt_cases(void)
+{
+	static const unsigned char bad[] = { 17, 32, 128, 255 };
+	char w[120];
+	set_multiple(1, 4);
+	for (unsigned i = 0; i < sizeof bad; i++) {
+		unsigned char n = bad[i];
+		mock_uart_clear();
+		command(1, ACMD_SET_MULTIPLE_MODE, 0, n);
+		check_gayle("SET MULTIPLE MODE > 16");
+		snprintf(w, sizeof w, "SET MULTIPLE MODE %u: status END | IRQ | ERR only", n);
+		check(w, g.nstatus == 1 && g.status[0] == (IDE_STATUS_END | IDE_STATUS_IRQ | IDE_STATUS_ERR), 1);
+		snprintf(w, sizeof w, "SET MULTIPLE MODE %u: one task file write, error register ABRT (0x04), count kept", n);
+		check(w, g.ntfw == 1 && g.tfw[0][0] == 0x04 && g.tfw[0][1] == n, 1);
+		snprintf(w, sizeof w, "SET MULTIPLE MODE %u: sectors_per_block stays 4", n);
+		check(w, hdf[1].sectors_per_block, 4);
+		snprintf(w, sizeof w, "SET MULTIPLE MODE %u: the UART line", n);
+		char line[48];
+		snprintf(line, sizeof line, "Set Multiple Mode %u: ABRT\r", n);
+		check(w, strstr(mock_uart(), line) != NULL, 1);
+	}
+	read_case("WORK.HDF READ MULTIPLE 1000+10 after SET MULTIPLE 32 was refused (groups of 4)", 1, 1, 1000, 10);
+	set_multiple(1, 16);
+	read_case("WORK.HDF READ MULTIPLE 1000+20 after SET MULTIPLE 16 (groups of 16)", 1, 1, 1000, 20);
+	set_multiple(1, 0);
+	command(1, ACMD_READ_MULTIPLE, 1000, 4);
+	check_gayle("READ MULTIPLE with multiple mode off");
+	check("READ MULTIPLE with multiple mode off: no block", nblocks, 0);
+	check("READ MULTIPLE with multiple mode off: ABRT (0x04), END | IRQ | ERR",
+	      g.nstatus == 1 && g.status[0] == (IDE_STATUS_END | IDE_STATUS_IRQ | IDE_STATUS_ERR) &&
+	      g.ntfw >= 1 && g.tfw[g.ntfw - 1][0] == 0x04, 1);
+	set_multiple(1, 16);
+}
+
 static void card_log_mark(void);
 static int card_log_count(const char *needle);
 static int clusters(long a, long n);
@@ -2017,7 +2056,7 @@ int main(int argc, char **argv)
 	read_case("WORK.HDF READ SECTORS 501+5", 1, 0, 501, 5);
 	set_multiple(1, 4);
 	read_case("WORK.HDF READ MULTIPLE 1000+10", 1, 1, 1000, 10);
-	set_multiple(1, 16);
+	set_multiple_abrt_cases();
 	read_case("WORK.HDF READ MULTIPLE 4000+0 (256)", 1, 1, 4000, 256);
 	rd_multi_order(argv[2]);
 	read_case("WORK.HDF READ SECTORS 7000+0 (256)", 1, 0, 7000, 256);

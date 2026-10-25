@@ -53,6 +53,15 @@ char debugmsg2[40];
 
 #undef SERIALDEBUG
 
+/* READ / WRITE MULTIPLE: the largest block (IDENTIFY word 47) and the only
+   SET MULTIPLE counts accepted (1..16, 0 off): a group must fit Gayle's
+   FIFO of 16 sectors, which the bridge fills without looking at it
+   (findings/sdcard-engine final review M7) */
+#define HDD_MULTIPLE_MAX 16
+#define ATA_ERR_UNC  0x40	/* error register: uncorrectable data (a read the card failed) */
+#define ATA_ERR_IDNF 0x10	/* ID not found: past the end of the hardfile */
+#define ATA_ERR_ABRT 0x04	/* aborted: a write the card failed, a command given up or not supported */
+
 #define DEBUG1(x) {if(DebugMode) DebugMessage(x);}
 #define DEBUG2(x,y) {if(DebugMode) { sprintf(debugmsg2,x,y); DebugMessage(debugmsg2); }}
 #define DEBUG3(x,y,z) {if(DebugMode) { sprintf(debugmsg2,x,y,z); DebugMessage(debugmsg2); }}
@@ -256,7 +265,7 @@ void IdentifyDevice(unsigned short *pBuffer, int unit)
 	for (i = 23; i < 47; i++)
 		pBuffer[i] = be16(pBuffer[i]);
 
-    pBuffer[47] = 0x8010; //maximum sectors per block in Read/Write Multiple command
+    pBuffer[47] = 0x8000 | HDD_MULTIPLE_MAX; //maximum sectors per block in Read/Write Multiple command (0x8010)
     pBuffer[53] = 1;
     pBuffer[54] = hdf[unit].cylinders;
     pBuffer[55] = hdf[unit].heads;
@@ -478,8 +487,18 @@ void ATA_Initialize(unsigned char* tfr, int unit)
 
 
 // ATA_SetMultipleMode()
+// A count above HDD_MULTIPLE_MAX is not a supported block size: ATA's answer
+// is ABRT (error register ABRT, status ERR) and the mode stays as it was.
+// Accepting it made groups larger than Gayle's FIFO: the 17th sector would
+// overwrite one the Amiga had not read, with good status (final review M7).
 void ATA_SetMultipleMode(unsigned char* tfr, int unit)
 {
+    if (tfr[2] > HDD_MULTIPLE_MAX) {
+        printf("Set Multiple Mode %d: ABRT\r", tfr[2]);
+        WriteTaskFile(ATA_ERR_ABRT, tfr[2], tfr[3], tfr[4], tfr[5], tfr[6]);
+        WriteStatus(IDE_STATUS_END | IDE_STATUS_IRQ | IDE_STATUS_ERR);
+        return;
+    }
     hdf[unit].sectors_per_block = tfr[2];
     printf("Set Multiple Mode %d\r",tfr[2]);
     WriteStatus(IDE_STATUS_END | IDE_STATUS_IRQ);
@@ -539,9 +558,6 @@ void ATA_SetMultipleMode(unsigned char* tfr, int unit)
  *   hdd_blk) and the cluster cut of a run (hdd_file_run). */
 #define HDD_RUN_MAX 16		/* sectors of one card run (the Gayle FIFO's 16) */
 #define HDD_PARK_COUNTS 3	/* GetTimer counts a write run waits parked for the Amiga's next sector: 17.4..23.2 ms */
-#define ATA_ERR_UNC  0x40	/* error register: uncorrectable data (a read the card failed) */
-#define ATA_ERR_IDNF 0x10	/* ID not found: past the end of the hardfile */
-#define ATA_ERR_ABRT 0x04	/* aborted: a write the card failed, a command given up */
 
 enum {
 	H_IDLE,
