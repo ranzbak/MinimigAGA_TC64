@@ -217,7 +217,7 @@ unit fat_readex_end fat_test src fat.c 's/\&\& (nSize > bc || MMCErr != SD_OK))/
 # fix round 3: a card error in FileReadEx's last seek dropped; a write ending at the file's last sector failed; a short chain indexed
 unit fat_readex_mmcerr fat_test src fat.c 's/\&\& (nSize > bc || MMCErr != SD_OK))/\&\& nSize > bc)/' "FAIL FileReadEx(cluster 2), its FAT read fails: 0"
 unit hdd_index_short hdd_test src hdd.c 's/if (!FileSeek(file, i >> 9, SEEK_SET)) \/\/ FileSeek seeks in 512-byte sectors/FileSeek(file, i >> 9, SEEK_SET); if (0)/' "FAIL short chain: OpenHardfile(1) fails"
-unit cd_eoc cdrom_test src cdrom.c 's/if (!FileReadEx(\&cdrom.hdf.file, 0, n))/if (!FileReadEx(\&cdrom.hdf.file, 0, n) \&\& MMCErr != SD_OK)/' "past the end of the file's chain"
+unit cd_eoc cdrom_test src cdrom.c '/^\tcase C_SEEK:/,/^\tcase C_PHASE:/ s/if (r < 0) {/if (r == -1) {/' "the end of the file's chain"
 # fix round 2: sectors past the end of the HDF served / written from its last cluster
 unit hdd_past_end_rd hdd_test src hdd.c 's/lba + hdf\[unit\].offset + sector_count > (long)(hdf\[unit\].file.size >> 9)/0/' "FAIL past the end: READ SECTORS 8191+2"
 unit hdd_past_end_wr hdd_test src hdd.c 's/lba + hdf\[unit\].offset + sector_count > (long)(hdf\[unit\].file.size >> 9))/!write \&\& &/' "FAIL past the end: WRITE SECTORS 8191+2"
@@ -277,7 +277,7 @@ unit mock_gayle_into hdd_test t mock_sdc.c 's/buf_put(\&gay.into\[port\], w, 2);
 unit hdd_card_error hdd_test src hdd.c '/^static void hdd_fail(/,/^}/ s/WriteStatus(IDE_STATUS_END | IDE_STATUS_IRQ | IDE_STATUS_ERR);/;/' "the command never ends"
 # the brief's (Task 11a): an END | ERR after an abandon (the NEW command would end with it)
 unit hdd_abandon hdd_test src hdd.c 's/if (hc.op.err == SD_E_GAYLE || hc.abandoned) {/if (0) {/' "FAIL abandoned: status RDY only" "FAIL wr_abandon: no status after the abandon"
-unit cd_abandon cdrom_test src cdrom.c 's/return MMCErr == SD_E_GAYLE ? CD_GONE : cd_read_error/return cd_read_error/' "an abandoned READ"
+unit cd_abandon cdrom_test src cdrom.c '/^\tcase C_RUN:/,/^\tcase C_WAIT:/ s/if (cc.op.err == SD_E_GAYLE)$/if (0)/' "an abandoned READ"
 
 # ---- the interrupt-driven HDD data path (hdd_test, cdrom_test, sdproto_test; findings/sdcard-engine Task 11a)
 # the brief's: an IRQ before the stop token's busy end (the op ends at the stop token, not after its busy)
@@ -303,20 +303,53 @@ unit hdd_rdy_group_guard hdd_test src hdd.c '/^\tcase H_GROUP:/,/^\tcase H_DRAIN
 unit hdd_gate hdd_test src main.c 's/if (fpga \&\& !sd_gayle_busy())/if (fpga)/' "no FPGA frame (IDE command) while a Gayle op runs"
 unit hdd_cd_poll hdd_test src main.c 's/^\tif (hdd_busy())$/\tif (0)/' "inside the command"
 # no cluster split of a run; no park bound; the abandon by hdd_cmd_req not seen
-unit hdd_cluster hdd_test src hdd.c '/^static unsigned long file_run(/,/^}/ s/if (\*n > rest)/if (0)/' "FAIL wr_cluster_split: a run from each cluster boundary"
+unit hdd_cluster hdd_test src hdd.c '/^unsigned long hdd_file_run(/,/^}/ s/if (\*n > rest)/if (0)/' "FAIL wr_cluster_split: a run from each cluster boundary"
 unit hdd_park_bound hdd_test src hdd.c 's/} else if (CheckTimer(hc.park_t))/} else if (0)/' "FAIL wr_pause: one run per cluster and one more"
 unit hdd_cmdreq_abandon hdd_test src hdd.c 's/if (st \& CMD_IDECMD)\t\/\* a new command, a reset/if (0)\t\/* a new command, a reset/' "the command never ends"
 # the flags look before the last END dropped (a reset while the last group is programmed)
 unit hdd_reset_end hdd_test src hdd.c '/^\tcase H_WNEXT:/,/hdd_done/ s/if (amiga_left()) {/if (0) {/' "FAIL wr_reset_end: no END for the old command"
 # the error register not set; the trace without its flag
 unit hdd_err_reg hdd_test src hdd.c '/^static void hdd_fail(/,/^}/ s/WriteTaskFile(err,/WriteTaskFile(0,/' "the error register"
-unit hdd_trace_quiet hdd_test src hdd.c '/^static void ata_trace(/,/^}/ s/if (dbg_flags \& DBG_ATA)/if (1)/' "FAIL dbg_flags 0: no UART output from a READ"
+unit hdd_trace_quiet hdd_test src hdd.c '/^void ata_trace(/,/^}/ s/if (dbg_flags \& DBG_ATA)/if (1)/' "FAIL dbg_flags 0: no UART output from a READ"
 # sdproto: a parked run not closed by an sd_sync user (a deadlock), a Gayle error without the stop token, a card-detect change while parked
 unit sdp_sync_close hdd_test src sdproto.c '/^static void sync_cur(/,/^}/ s/sd_close(cur);/;/' "the CD refill's card read failed"
 unit sdp_gerr_stop sdproto_test src sdproto.c '/case ST_WR_GAYLE:/,/return;/ s/stop_token();/finish(s.fail);/' "FAIL gayle abandon 2nd: the stop token's busy ended"
 unit sdp_park_gone sdproto_test src sdproto.c 's/finish(SD_E_GONE);\t\/\* no op runs: no DONE will come \*\//;/' "FAIL gayle gone parked: SD_E_GONE"
 # CD_Locked's flags read during an HDD command (the port latch)
 unit cd_locked_guard cdrom_test src cdrom.c 's/if (cdrom.unit.locked \&\& !hdd_busy()) {/if (cdrom.unit.locked) {/' "the lock dropped while the HDD command runs"
+
+# ---- the interrupt-driven CD data path (cdpath_test, cdrom_test; findings/sdcard-engine Task 11b)
+# the brief's three: the refill before the drain (the next block's phase without the host's XFER_DONE)
+unit cd_refill_early cdpath_test src cdrom.c 's/r = cd_look(cc.port, cc.timeout);/r = CD_DONE;/' "a refill before the drain"
+unit cd_refill_early_f cdrom_test src cdrom.c 's/r = cd_look(cc.port, cc.timeout);/r = CD_DONE;/' "a refill before the drain"
+# a status after an abandon (the end writes one for CD_GONE too)
+unit cd_status_abandon cdpath_test src cdrom.c '/^static int cd_end(/,/^}/ s/^\tif (r != CD_GONE)$/\tif (1)/' "while not busy"
+unit cd_status_abandon_f cdrom_test src cdrom.c '/^static int cd_end(/,/^}/ s/^\tif (r != CD_GONE)$/\tif (1)/' "a status for the abandoned command"
+# a cs 0x10 frame during a Gayle op: a run's end not waited for and the
+# flags look's sd_gayle_busy() guard gone (either one alone holds the rule);
+# the main loop's FPGA poll not gated during the CD's runs
+unit cd_gayle_cs cdpath_test src cdrom.c '/^\tcase C_RUN:/,/^\tcase C_WAIT:/ s/if (cc.op.state)$/if (0)/; /^\tcase C_WAIT:/,/^\t}/ s/if (sd_gayle_busy())$/if (0)/' "no FPGA frame (IDE command) while a Gayle op runs"
+unit cd_gayle_cs_f cdrom_test src cdrom.c '/^\tcase C_RUN:/,/^\tcase C_WAIT:/ s/if (cc.op.state)$/if (0)/; /^\tcase C_WAIT:/,/^\t}/ s/if (sd_gayle_busy())$/if (0)/' "while a Gayle op runs"
+unit cd_gate cdpath_test src main.c 's/if (fpga \&\& !sd_gayle_busy())/if (fpga)/' "no FPGA frame (IDE command) while a Gayle op runs"
+# no flags look before a card error's status; before a block's phase
+unit cd_left_error cdpath_test src cdrom.c '/^static int cd_card_failed(/,/^}/ s/if (cd_left())/if (0)/' "FAIL cd_error_after_reset"
+unit cd_left_error_f cdrom_test src cdrom.c '/^static int cd_card_failed(/,/^}/ s/if (cd_left())/if (0)/' "a card error at an Amiga reset"
+unit cd_left_phase cdpath_test src cdrom.c '/^\tcase C_PHASE:/,/^\tcase C_RUNGO:/ s/if (cd_left())/if (0)/' "FAIL cd_reset_in_gap"
+# ruling T11-R4: hdd_busy() without the CD's READ; hdd_poll not dispatching it
+unit cd_one_cmd cdpath_test src hdd.c 's/return hc.st != H_IDLE || CD_Busy();/return hc.st != H_IDLE;/' "one IDE command at a time"
+unit cd_dispatch cdpath_test src hdd.c 's/} else if (CD_Busy()) {/} else if (0) {/' "a hang"
+# a run not cut at its cluster (the ISO's chain jumps); a run past its data-in block
+unit cd_cluster cdpath_test src hdd.c '/^unsigned long hdd_file_run(/,/^}/ s/if (\*n > rest)/if (0)/' "the data (TEST.ISO sectors 5..13)"
+unit cd_run_block cdpath_test src cdrom.c 's/^\t\tk = cc.bleft;$/\t\tk = (unsigned)cc.left;/' "FAIL"
+unit cd_run_block_f cdrom_test src cdrom.c 's/^\t\tk = cc.bleft;$/\t\tk = (unsigned)cc.left;/' "a card run of"
+# a seek's failure ignored; a seek that waits for its FAT read taken as there
+unit cd_seek_err cdrom_test src cdrom.c '/^\tcase C_SEEK:/,/^\tcase C_PHASE:/ s/if (r < 0) {/if (0) {/' "a seek's FAT read fails"
+unit cd_seek_wait cdrom_test src cdrom.c 's/r = hdd_seek_step(\&cc.op);/r = 1; hdd_seek_step(\&cc.op);/' "seeks that wait for FAT reads"
+# the OSD's eject without ending the READ first
+unit cd_cancel cdpath_test src cdrom.c 's/^\tCD_Cancel();\t\/\* a READ in progress ends before its file goes \*\/$/\t;/' "FAIL cd_osd_eject"
+unit cd_cancel_f cdrom_test src cdrom.c 's/^\tCD_Cancel();\t\/\* a READ in progress ends before its file goes \*\/$/\t;/' "OSD eject during a READ"
+# the CD READ's trace line
+unit cd_trace_end cdpath_test src cdrom.c '/^static int cd_end(/,/^}/ s/ata_trace(0xA0,/(void)(0xA0,/' "FAIL cd_trace: DBG_ATA: the READ(10)'s line"
 
 # ---- the floppy emulation (fdd_test) -----------------------------------------
 # the brief's mutant: SendSector one byte short (the odd data bits loop) -> mfm.py's stream

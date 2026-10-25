@@ -529,7 +529,14 @@ void ATA_SetMultipleMode(unsigned char* tfr, int unit)
  *   write, IDNF past the end of the file), END | IRQ | ERR; a card error
  *   also ERROR_SDCARD (MMC_OpResult, the OSD's error page).
  * The Amiga polls of diskstat are the status polls of these waits (one per
- * pass).  dbg_flags DBG_ATA: one UART line per ATA command at its end. */
+ * pass).  dbg_flags DBG_ATA: one UART line per ATA command at its end.
+ * One IDE command at a time across both ports (ruling T11-R4): hdd_poll()
+ *   is the dispatcher of the one in progress, this state machine's or the CD
+ *   drive's DATA2048 read (cdrom.c CD_Step, findings/sdcard-engine Task
+ *   11b), and hdd_busy() covers both, so the pickup (HandleHDD) waits.  The
+ *   two share the card op start (hdd_op_go), the file seek with its async
+ *   FAT reads (hdd_seek_begin / hdd_seek_step, the FAT sector cache in
+ *   hdd_blk) and the cluster cut of a run (hdd_file_run). */
 #define HDD_RUN_MAX 16		/* sectors of one card run (the Gayle FIFO's 16) */
 #define HDD_PARK_COUNTS 3	/* GetTimer counts a write run waits parked for the Amiga's next sector: 17.4..23.2 ms */
 #define ATA_ERR_UNC  0x40	/* error register: uncorrectable data (a read the card failed) */
@@ -548,8 +555,7 @@ enum {
 	H_WNEXT,	/* WRITE: the group's next sector (or its IRQ) */
 	H_WDATA,	/* WRITE: its data in Gayle's FIFO (hdd_dat_req), then the run */
 	H_WRUN,		/* WRITE: a from_gayle run */
-	H_SEEK,		/* the file position to hc.seek_to: the FAT walk */
-	H_SEEKFAT	/* the FAT sector it needs is being read into hdd_blk */
+	H_SEEK		/* the file position (hdd_seek_step): the FAT walk, its FAT reads */
 };
 
 static struct {
@@ -567,7 +573,7 @@ static struct {
 	unsigned short t0;		/* the trace: TIMER at the pickup */
 	int cyl;			/* the last sector's cylinder (the drive sound) */
 	unsigned char tf[6];		/* the task file written at the pickup */
-	unsigned long park_t, seek_to, fat_sb;
+	unsigned long park_t;
 	sd_op op;
 } hc;
 /* the HDD path's own buffer: the FAT sector of its seeks (hdd_fat_sb, ~0:
@@ -579,10 +585,10 @@ static unsigned long hdd_fat_sb = ~0ul;
 
 int hdd_busy(void)
 {
-	return hc.st != H_IDLE;
+	return hc.st != H_IDLE || CD_Busy();
 }
 
-static void ata_trace(unsigned cmd, unsigned long lba, unsigned n, const char *what, unsigned st, unsigned t)
+void ata_trace(unsigned cmd, unsigned long lba, unsigned n, const char *what, unsigned st, unsigned t)
 {
 	if (dbg_flags & DBG_ATA)
 		printf("ATA %02x lba %lu n %u port %u %s st %02x t %u\n", cmd, lba, n, (unsigned)ide_port, what, st, t);
@@ -645,24 +651,30 @@ static void hdd_op_failed(unsigned char err)
 	hdd_fail(err);
 }
 
-/* start the command's card op: 0, or -1 when another op holds the card
-   (the next pass tries again).  A card to be initialised again after an
-   error first (sd_init, synchronous: the one wait in this path) */
-static int op_go(int kind, unsigned long lba, unsigned n, unsigned char *buf)
+/* start a data path's card op (hdd.h): 0, or -1 when another op holds the
+   card (the next pass tries again).  A card to be initialised again after
+   an error first (sd_init, synchronous: the one wait in these paths) */
+int hdd_op_go(struct sd_op *op, int kind, unsigned long lba, unsigned n, unsigned char *buf, int port)
 {
 	if (!sd_card_type() && !sd_card_changed())
 		sd_init();
-	memset(&hc.op, 0, sizeof hc.op);
-	hc.op.kind = kind;
-	hc.op.lba = lba;
-	hc.op.count = n;
-	hc.op.buf = buf;
-	hc.op.port = hc.port;
+	memset(op, 0, sizeof *op);
+	op->kind = kind;
+	op->lba = lba;
+	op->count = n;
+	op->buf = buf;
+	op->port = port;
 	if (!buf) {
-		hc.op.to_gayle = kind == SD_READ;
-		hc.op.from_gayle = kind == SD_WRITE;
+		op->to_gayle = kind == SD_READ;
+		op->from_gayle = kind == SD_WRITE;
 	}
-	return sd_submit(&hc.op);
+	return sd_submit(op);
+}
+
+/* the HDD command's card op */
+static int op_go(int kind, unsigned long lba, unsigned n, unsigned char *buf)
+{
+	return hdd_op_go(&hc.op, kind, lba, n, buf, hc.port);
 }
 
 static void sectors_done(unsigned k)
@@ -672,11 +684,18 @@ static void sectors_done(unsigned k)
 	hc.left -= k;
 }
 
-/* the file position of the hardfile to sector target (HardFileSeek: the
-   index, then FileSeek's walk), then state `after` */
-static void seek(unsigned long target, unsigned char after)
+/* The file seek of the command in progress (one at a time: the HDD's or
+   the CD's), hdd.h: HardFileSeek's index jump once (hdd_seek_begin), then
+   FileSeek's walk forward (hdd_seek_step) on hdd_blk's FAT sector, a missing
+   one read by the caller's op */
+static struct {
+	hdfTYPE *h;
+	unsigned long target, sb;	/* the sector to go to; the FAT sector being read */
+	unsigned char reading;		/* sb is being read into hdd_blk */
+} sk;
+
+void hdd_seek_begin(hdfTYPE *h, unsigned long target)
 {
-	hdfTYPE *h = &hdf[hc.unit];
 	fileTYPE *f = &h->file;
 	if ((f->sector ^ target) & cluster_mask) {
 		if ((f->sector > target) || ((f->sector ^ target) & (cluster_mask << (fat32 ? 7 : 8)))) {
@@ -691,53 +710,66 @@ static void seek(unsigned long target, unsigned char after)
 		} else
 			f->sector = target;
 	}
-	hc.seek_to = target;
-	hc.after = after;
-	hc.st = H_SEEK;
+	sk.h = h;
+	sk.target = target;
+	sk.reading = 0;
 }
 
-/* FileSeek's walk forward on hdd_blk's FAT sector: 1 there (state hc.after),
-   0 a FAT sector is being read (H_SEEKFAT) or the command failed */
-static int seek_walk(void)
+int hdd_seek_step(struct sd_op *op)
 {
-	fileTYPE *f = &hdf[hc.unit].file;
-	unsigned long t = hc.seek_to, sb, next;
+	fileTYPE *f = &sk.h->file;
+	unsigned long t = sk.target, sb, next;
 	unsigned i;
+	if (sk.reading) {
+		if (op->state)
+			return 0;
+		sk.reading = 0;
+		if (op->err)
+			return -1;
+		hdd_fat_sb = sk.sb;
+	}
 	while ((f->sector ^ t) & cluster_mask) {
 		sb = fat32 ? f->cluster >> 7 : f->cluster >> 8;
 		i = fat32 ? (f->cluster & 0x7F) : (f->cluster & 0xFF);
 		if (sb != hdd_fat_sb) {
 			hdd_fat_sb = ~0ul;	/* hdd_blk is being overwritten */
-			if (op_go(SD_READ, fat_start + sb, 1, hdd_blk))
-				return 0;	/* the next pass */
-			hc.fat_sb = sb;
-			hc.st = H_SEEKFAT;
+			if (hdd_op_go(op, SD_READ, fat_start + sb, 1, hdd_blk, 0))
+				return 0;	/* the card is another op's: the next pass */
+			sk.sb = sb;
+			sk.reading = 1;
 			return 0;
 		}
 		next = fat32 ? le32(((uint32_t *)hdd_blk)[i]) & 0x0FFFFFFF : le16(((uint16_t *)hdd_blk)[i]);
-		if (fat32 ? next == 0x0FFFFFFF : next == 0xFFFF) {
-			/* the end of the chain inside the file's size: a guard, the
-			   bound checks and BuildHardfileIndex keep commands off it */
-			hdd_fail(ATA_ERR_IDNF);
-			return 0;
-		}
+		if (fat32 ? next == 0x0FFFFFFF : next == 0xFFFF)
+			return -2;	/* the end of the chain inside the file's size */
 		f->cluster = next;
 		f->sector += cluster_size;
 	}
 	f->sector = t;
-	hc.st = hc.after;
 	return 1;
 }
 
-/* the card sector of the file position, and the sectors to the cluster's
-   end (at most n) */
-static unsigned long file_run(unsigned *n)
+unsigned long hdd_file_run(hdfTYPE *h, unsigned *n)
 {
-	fileTYPE *f = &hdf[hc.unit].file;
+	fileTYPE *f = &h->file;
 	unsigned off = f->sector & ~cluster_mask, rest = cluster_size - off;
 	if (*n > rest)
 		*n = rest;
 	return data_start + cluster_size * (f->cluster - 2) + off;
+}
+
+/* the hardfile's position to sector target, then state `after` */
+static void seek(unsigned long target, unsigned char after)
+{
+	hdd_seek_begin(&hdf[hc.unit], target);
+	hc.after = after;
+	hc.st = H_SEEK;
+}
+
+/* the card sector of the hardfile's position, n cut at its cluster's end */
+static unsigned long file_run(unsigned *n)
+{
+	return hdd_file_run(&hdf[hc.unit], n);
 }
 
 static int is_file(void)
@@ -759,6 +791,7 @@ static int hdd_step(void)
 	unsigned n, spb;
 	unsigned char st;
 	unsigned long card;
+	int r;
 
 	switch (hc.st) {
 	case H_GROUP:
@@ -986,28 +1019,40 @@ static int hdd_step(void)
 		return 1;
 
 	case H_SEEK:
-		return seek_walk();
-
-	case H_SEEKFAT:
-		if (hc.op.state)
+		r = hdd_seek_step(&hc.op);
+		if (!r)
 			return 0;
-		if (hc.op.err) {
+		if (r == -1) {	/* a FAT read failed */
 			hdd_op_failed(hc.write ? ATA_ERR_ABRT : ATA_ERR_UNC);
 			return 0;
 		}
-		hdd_fat_sb = hc.fat_sb;
-		hc.st = H_SEEK;
+		if (r == -2) {
+			/* the end of the chain inside the file's size: a guard, the
+			   bound checks and BuildHardfileIndex keep commands off it */
+			hdd_fail(ATA_ERR_IDNF);
+			return 0;
+		}
+		hc.st = hc.after;
 		return 1;
 	}
 	return 0;
 }
 
+/* the dispatcher of the IDE command in progress: this state machine's, or
+   the CD drive's (CD_Step); at most 8 immediate steps a pass */
 void hdd_poll(void)
 {
 	int k;
-	for (k = 0; k < 8 && hc.st != H_IDLE; k++)
-		if (!hdd_step())
+	for (k = 0; k < 8; k++) {
+		if (hc.st != H_IDLE) {
+			if (!hdd_step())
+				break;
+		} else if (CD_Busy()) {
+			if (!CD_Step())
+				break;
+		} else
 			break;
+	}
 }
 
 void hdd_cancel(void)
@@ -1112,7 +1157,7 @@ void HandleHDD(unsigned int c1, unsigned int c2)
     int unit;
 	int sector_count;
 
-    if ((c1 & CMD_IDECMD) && !hdd_busy())	// the data path serves one command at a time
+    if ((c1 & CMD_IDECMD) && !hdd_busy())	// one IDE command at a time, either port (HDD or CD: ruling T11-R4)
     {
         unsigned char flags;
         DISKLED_ON;
@@ -1130,7 +1175,9 @@ void HandleHDD(unsigned int c1, unsigned int c2)
         unit = (ide_port << 1) | (tfr[6] & 0x10 ? 1 : 0); // slot: port, master/slave
         if (unit == CD_SLOT())
         {
-            CD_HandleCommand(ide_port, tfr);
+            CD_HandleCommand(ide_port, tfr);	/* a DATA2048 read goes on in CD_Step (hdd_poll) */
+            if (!CD_Busy())
+                ata_trace(tfr[7], 0, tfr[2], "done", 0, 0);	/* ran to its end here */
             DISKLED_OFF;
             return;
         }

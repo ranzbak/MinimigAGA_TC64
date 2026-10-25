@@ -146,6 +146,10 @@ void CD_AudioRefill(void)
 }
 void CD_Flags(int port, unsigned char flags) { }
 void CD_HandleCommand(int port, unsigned char *tfr) { fprintf(stdout, "FAIL CD_HandleCommand called\n"); exit(1); }
+/* the CD drive's READ states (cdrom.c, findings/sdcard-engine Task 11b):
+   never in progress here (no CD drive); cdpath_test runs the real ones */
+int CD_Busy(void) { return 0; }
+int CD_Step(void) { fprintf(stdout, "FAIL CD_Step called\n"); exit(1); }
 void drivesounds_queueevent(enum DriveSound_Type type) { if (type == DRIVESOUND_HDDSTEP) hdd_steps++; }
 
 /* fpga.c's, as it is (fpga.c itself pulls in the boot and OSD code) */

@@ -23,6 +23,17 @@
  * byte i of sector n is (n * 7 + i) & 0xff with the sector number in its
  * first four bytes; a BIN carries the same user data in raw 2352-byte
  * MODE1 sectors, then audio; CUE sheets are text (phase 3, task 4).
+ *
+ * The READ's states (CD_Step, findings/sdcard-engine Task 11b) run on fakes
+ * of the data path's helpers (hdd.c hdd_op_go / hdd_seek_* / hdd_file_run)
+ * and the card op (sdproto.c sd_gayle_busy / sd_drain): a card run is a
+ * fake op that ends one main-loop pass (cd_pass: the op, CD_Step as hdd.c
+ * hdd_poll calls it, the refill as main.c PollDisks) after its start and
+ * then puts its sectors into the FIFO; hdd_file_run cuts a run at the fake
+ * cluster (fake_cluster sectors).  Every port access (cs 0x10) while a fake
+ * op runs is an error, and so is a run started outside a data-in phase or
+ * past its cluster, and a data-in phase set up before the host read the
+ * last block (a refill before the drain).  The real engine is cdpath_test's.
  */
 
 #include <stdio.h>
@@ -83,10 +94,11 @@ unsigned char ide_port;
 unsigned char MMCErr;		/* mmc.c's: the SD_E_* code of the last card call */
 hdfTYPE hdf[HDD_SLOTS];
 unsigned char core_caps = CORE_CAPS_IDE2;
-/* hdd.c's: an HDD command in progress (its data path runs from the main
-   loop, findings/sdcard-engine Task 11a) */
+/* hdd.c's: an IDE command in progress, an HDD command (its data path runs
+   from the main loop, findings/sdcard-engine Task 11a) or the CD's READ
+   (Task 11b) */
 static int hdd_cmd_running;
-int hdd_busy(void) { return hdd_cmd_running; }
+int hdd_busy(void) { return hdd_cmd_running || CD_Busy(); }
 
 hardfileTYPE *SlotConfig(int slot)
 {
@@ -105,11 +117,12 @@ unsigned long CheckTimer(unsigned long t) { return ((t - (now_ms << 16)) & 0x800
 #define WAV_SECTORS 10
 static char iso_name[12] = "TESTDISCISO";	/* 8.3 without the dot */
 static unsigned long iso_dir = 0x1234;
-static int fail_read_at = -1;			/* FileReadEx fails on this call */
-static int fail_err = 1;			/* ... with this MMCErr (SD_E_*; 1 = SD_E_RETRIES) */
-static int eoc_at = -1;				/* FileReadEx delivers, then returns 0 with no card
-					   error (blocks left after the end of the chain) */
-static int reads;
+static int fail_read_at = -1;			/* this card run (0-based) fails */
+static int fail_err = 1;			/* ... with this sd_op.err (SD_E_*; 1 = SD_E_RETRIES) */
+static int fail_reset;				/* ... and the Amiga is reset at that moment */
+static long eoc_at = -1;			/* a seek to this 512-byte sector or past it meets the end
+					   of the chain (-2), -1: never */
+static int reads;				/* card runs ended */
 unsigned long iCurrentDirectory, iPreviousDirectory;
 static int clear_errors;			/* ClearError(ERROR_FILESYSTEM) calls */
 
@@ -376,6 +389,7 @@ static struct {
 	unsigned block_bytes[64];
 	int      dead;		/* never answers: a crashed driver */
 	int      reset_at_poll;	/* the Amiga resets at this poll (0: never) */
+	int      slow, wait;	/* a slow host: it reads a data-in block only at its slow-th poll after the block is in */
 	int      polls;
 	int      phase_errors;
 } h;
@@ -437,6 +451,9 @@ static void host_act(void)
 	} else if (g.pio_in && g.fifo_len >= want) {
 		/* data in, all of the block in the FIFO: DRQ, and the interrupt
 		   with it (gayle_port.v: block_mark, sim/gayle case c) */
+		if (h.slow && ++h.wait < h.slow)
+			return;
+		h.wait = 0;
 		if (g.block_mark) {
 			g.irq = 1;
 			g.block_mark = 0;
@@ -457,8 +474,12 @@ static void host_act(void)
 	}
 }
 
+static sd_op *fop;
+#define NO_GAYLE_OP(what) EXPECT(!fop, "%s (cs 0x10) while a Gayle op runs", what)
+
 void WriteTaskFile(int error, int sector_count, int sector_number, int cylinder_low, int cylinder_high, int drive_head)
 {
+	NO_GAYLE_OP("task file write");
 	EXPECT(g.busy, "task file written while not busy");
 	g.reg[1] = (uint8_t)error;
 	g.reg[2] = (uint8_t)sector_count;
@@ -470,6 +491,7 @@ void WriteTaskFile(int error, int sector_count, int sector_number, int cylinder_
 
 void WriteStatus(unsigned int status)
 {
+	NO_GAYLE_OP("status write");
 	EXPECT(g.busy, "status written while not busy (%02X)", status);
 	if (!g.busy)
 		return;
@@ -499,7 +521,10 @@ void WriteStatus(unsigned int status)
 
 void WriteXfer(unsigned int words, int pkt)
 {
+	NO_GAYLE_OP("xfer write");
 	EXPECT(g.busy, "xfer written while not busy");
+	EXPECT(!(words && g.pkt && g.pio_in && !g.xfer_done && g.fifo_len),
+	       "a new data phase before the host read the last block (a refill before the drain)");
 	EXPECT(words <= 4096, "xfer of %u words, more than the 8 KB FIFO", words);
 	g.xfer_words = words;
 	g.pkt = pkt;
@@ -512,6 +537,7 @@ void WriteXfer(unsigned int words, int pkt)
 unsigned char ReadIDEFlags(int port)
 {
 	unsigned char f = (unsigned char)(port ? IDEF_PORT : 0);
+	NO_GAYLE_OP("flags read");
 	now_ms++;
 	host_act();
 	if (g.xfer_done)
@@ -533,6 +559,7 @@ unsigned char ReadTaskFile(int port, unsigned char *tfr)
 
 unsigned char GetFPGAStatus(void)
 {
+	NO_GAYLE_OP("status read");
 	now_ms++;
 	host_act();
 	return (unsigned char)((g.pkt && g.pio_out && g.xfer_done) ? 0x08 : 0x00);
@@ -540,6 +567,7 @@ unsigned char GetFPGAStatus(void)
 
 void WriteIDEData(const unsigned char *buf, unsigned int bytes)
 {
+	NO_GAYLE_OP("data write");
 	EXPECT(g.pio_in, "data written without pio in");
 	EXPECT(g.fifo_len + bytes <= sizeof(g.fifo), "FIFO overflow");
 	if (g.fifo_len + bytes > sizeof(g.fifo))
@@ -555,27 +583,166 @@ void WriteIDEData(const unsigned char *buf, unsigned int bytes)
 
 void ReadIDEData(unsigned char *buf, unsigned int bytes)
 {
+	NO_GAYLE_OP("data read");
 	EXPECT(g.pio_out && g.xfer_done, "data read without a complete pio-out phase");
 	EXPECT(bytes <= g.fifo_len, "reading %u bytes of %u", bytes, g.fifo_len);
 	if (buf)
 		memcpy(buf, g.fifo, bytes);
 }
 
-unsigned char FileReadEx(fileTYPE *file, unsigned char *pBuffer, unsigned long nSize)
+/* ---- the data path's helpers and the card op (fakes, see the top) ---- */
+
+volatile unsigned dbg_flags;			/* diskstat.c's: no trace here */
+unsigned short hosttest_timer(void) { return (unsigned short)now_ms; }
+static int traces;				/* ata_trace calls (the READ's end) */
+static char trace_what[16];
+void ata_trace(unsigned cmd, unsigned long lba, unsigned n, const char *what, unsigned st, unsigned t)
 {
-	const struct fake_file *f = fake_of(file);
-	unsigned long i;
-	if (reads++ == fail_read_at) {
-		MMCErr = (unsigned char)fail_err;
+	(void)cmd; (void)lba; (void)n; (void)st; (void)t;
+	traces++;
+	snprintf(trace_what, sizeof trace_what, "%s", what);
+}
+static int sd_errors;				/* MMC_OpResult of a failed op */
+unsigned char MMC_OpResult(const sd_op *op, const char *what)
+{
+	(void)what;
+	MMCErr = (unsigned char)op->err;
+	if (op->err && op->err != SD_E_GAYLE)
+		sd_errors++;
+	return op->err == SD_OK;
+}
+
+/* fop (above, the port fakes'): the card run in flight */
+static unsigned fake_cluster = 64;		/* sectors of a fake cluster */
+static unsigned run_room;			/* hdd_file_run's last cut */
+static unsigned long run_lba;			/*                 its card sector */
+static int runs, max_run, seeks, seek_wait, seek_err_at = -1;
+static int fop_passes;				/* passes the run in flight has left */
+static struct { hdfTYPE *h; unsigned long target; int wait; } fseek_;
+
+/* the card sector: the fake file (start_cluster) and its 512-byte sector */
+unsigned long hdd_file_run(hdfTYPE *h, unsigned *n)
+{
+	unsigned long sec = h->file.sector;
+	unsigned room = fake_cluster - (unsigned)(sec % fake_cluster);
+	if (*n > room)
+		*n = room;
+	run_room = *n;
+	run_lba = h->file.start_cluster << 20 | sec;
+	return run_lba;
+}
+
+void hdd_seek_begin(hdfTYPE *h, unsigned long target)
+{
+	fseek_.h = h;
+	fseek_.target = target;
+	fseek_.wait = seek_wait;
+}
+
+int hdd_seek_step(struct sd_op *op)
+{
+	if (fseek_.wait) {	/* a FAT read: one pass each */
+		fseek_.wait--;
 		return 0;
 	}
-	EXPECT(pBuffer == 0, "FileReadEx into a buffer, not the direct transfer");
-	EXPECT(g.pio_in, "direct transfer without pio in");
-	EXPECT(f && f->byte == iso_byte, "direct transfer from %s, not a 2048-byte-sector file", f ? f->short11 : "nothing");
-	for (i = 0; i < nSize * 512 && g.fifo_len < sizeof(g.fifo); i++)
-		g.fifo[g.fifo_len++] = f ? fake_byte(f, file->sector * 512 + i) : 0;
-	file->sector += nSize;
-	return reads - 1 == eoc_at ? 0 : 1;
+	if (seeks++ == seek_err_at) {
+		memset(op, 0, sizeof *op);
+		op->err = SD_E_RETRIES;
+		return -1;
+	}
+	if (eoc_at >= 0 && (long)fseek_.target >= eoc_at)
+		return -2;
+	fseek_.h->file.sector = fseek_.target;
+	return 1;
+}
+
+int hdd_op_go(struct sd_op *op, int kind, unsigned long lba, unsigned n, unsigned char *buf, int port)
+{
+	if (fop)
+		return -1;
+	EXPECT(kind == SD_READ && !buf && port == 1, "a card op kind %d buf %p port %d, not a to_gayle read of port 2", kind, (void *)buf, port);
+	EXPECT(lba == run_lba && n <= run_room, "a run of %u sectors at %lx, past its cluster (cut %u at %lx)", n, lba, run_room, run_lba);
+	EXPECT(n >= 1 && n <= 16, "a card run of %u sectors", n);
+	EXPECT(g.pio_in, "a run into the FIFO outside a data-in phase");
+	memset(op, 0, sizeof *op);
+	op->kind = kind;
+	op->lba = (unsigned)lba;
+	op->count = n;
+	op->port = port;
+	op->to_gayle = 1;
+	op->state = 1;
+	fop = op;
+	fop_passes = 2;	/* in flight for the rest of this pass and the next one */
+	runs++;
+	if ((int)n > max_run)
+		max_run = (int)n;
+	return 0;
+}
+
+/* the run in flight ends: its sectors into the FIFO, or its error */
+static void fop_finish(void)
+{
+	const struct fake_file *f;
+	unsigned long sec;
+	unsigned long i;
+	if (!fop)
+		return;
+	f = fop->lba >> 20 && (fop->lba >> 20) <= 16 ? &fake_dir[(fop->lba >> 20) - 1] : 0;
+	sec = fop->lba & 0xFFFFF;
+	if (reads++ == fail_read_at) {
+		fop->err = fail_err;
+		if (fail_reset) {	/* Ctrl-Amiga-Amiga at the same moment */
+			g.busy = g.pio_in = g.pio_out = g.pkt = 0;
+			g.fifo_len = g.fifo_rd = 0;
+			g.xfer_done = 0;
+			g.rst_pending = 1;
+		}
+	} else {
+		EXPECT(f && f->byte == iso_byte, "direct transfer from %s, not a 2048-byte-sector file", f ? f->short11 : "nothing");
+		EXPECT(g.pio_in, "direct transfer without pio in");
+		for (i = 0; i < fop->count * 512ul && g.fifo_len < sizeof(g.fifo); i++)
+			g.fifo[g.fifo_len++] = f ? fake_byte(f, sec * 512 + i) : 0;
+		fop->done_blocks = (int)fop->count;
+	}
+	fop->state = 0;
+	fop = 0;
+}
+
+/* a pass: the run in flight goes on, or ends */
+static void fop_end(void)
+{
+	if (fop && --fop_passes <= 0)
+		fop_finish();
+}
+
+int sd_gayle_busy(void) { return fop != 0; }
+void sd_drain(void) { fop_finish(); }
+
+/* one main-loop pass for the CD: the card op, CD_Step as hdd.c hdd_poll
+   calls it (at most 8 steps), the refill (main.c PollDisks) */
+static long passes;
+static void cd_pass(void)
+{
+	int k;
+	fop_end();
+	for (k = 0; k < 8 && CD_Busy(); k++)
+		if (!CD_Step())
+			break;
+	if (CD_Busy())
+		CD_AudioRefill();
+	passes++;
+}
+
+static void run_cd(void)
+{
+	long n = 0;
+	while (CD_Busy()) {
+		cd_pass();
+		if (++n > 200000) {
+			printf("FAIL  %s: the READ never ends -- hung\n", case_name);
+			exit(1);
+		}
+	}
 }
 
 /* ---- driving a command ---- */
@@ -601,19 +768,21 @@ static void host_command(unsigned char *tfr, uint8_t features, unsigned limit, u
 static void packet(const uint8_t *cdb, unsigned limit)
 {
 	unsigned char tfr[8];
-	int dead = h.dead, reset_at = h.reset_at_poll;
+	int dead = h.dead, reset_at = h.reset_at_poll, slow = h.slow;
 	uint8_t out[4096];
 	unsigned out_len = h.out_len;
 	memcpy(out, h.out, sizeof(out));
 	host_reset_model();
 	h.dead = dead;
 	h.reset_at_poll = reset_at;
+	h.slow = slow;
 	memcpy(h.out, out, sizeof(out));
 	h.out_len = out_len;
 	memcpy(h.cdb, cdb, 12);
 	host_command(tfr, 0, limit, 0xA0);
 	ide_port = 1;
 	CD_HandleCommand(1, tfr);
+	run_cd();	/* a READ goes on in the main loop's passes */
 }
 
 /* What the status phase said. */
@@ -658,7 +827,14 @@ static void fresh_drive(int with_disc)
 		config.hdfdir[2] = iso_dir;
 	}
 	fail_read_at = -1;
+	fail_err = SD_E_RETRIES;
+	fail_reset = 0;
 	reads = 0;
+	eoc_at = -1;
+	fake_cluster = 64;
+	seek_wait = 0;
+	seek_err_at = -1;
+	seeks = runs = max_run = sd_errors = traces = 0;
 	CD_Open(2);
 	if (with_disc) {
 		cdb6(c, 0x00, 0);	/* TEST UNIT READY: 06/28/00 once */
@@ -754,6 +930,24 @@ static void t_read_blocks(void)
 	       "blocks %d: %u %u", h.blocks, h.block_bytes[0], h.block_bytes[1]);
 	EXPECT(h.in_len == 5 * 2048 && iso_matches(40, 5 * 2048), "sector data");
 	EXPECT(good_end(), "status phase");
+	end();
+}
+
+/* drain, then refill (findings/sdcard-engine Task 11b): a host that reads
+   each block only at its 5th poll after it is in; the next block's phase
+   only after it did (the model fails a phase set up over an unread block) */
+static void t_slow_host(void)
+{
+	uint8_t c[12];
+	begin("a slow host: READ(10) 10+9, each block read at the 5th poll: blocks in order, no refill before the drain");
+	fresh_drive(1);
+	h.slow = 5;
+	read10(c, 10, 9);
+	packet(c, 0xFFFE);
+	h.slow = 0;
+	EXPECT(h.phase_errors == 0, "phase errors");
+	EXPECT(h.blocks == 3 && h.block_bytes[0] == 8192 && h.block_bytes[2] == 2048, "blocks %d", h.blocks);
+	EXPECT(h.in_len == 9 * 2048 && iso_matches(10, 9 * 2048) && good_end(), "data, status");
 	end();
 }
 
@@ -1039,14 +1233,178 @@ static void t_read_last_chunk_error(void)
 static void t_read_eoc(void)
 {
 	uint8_t c[12];
-	begin("a READ past the end of the file's chain (FileReadEx 0, no card error): CHECK 03/11/00");
+	begin("a READ whose seek meets the end of the file's chain inside its size (no card error): CHECK 03/11/00");
 	fresh_drive(1);
-	reads = 0;
-	eoc_at = 0;
+	fake_cluster = 2;	/* the block's second run needs a seek to sector 2 */
+	eoc_at = 2;
 	read10(c, 0, 1);
 	packet(c, 0xFFFE);
 	EXPECT(check_end(0x30), "status %02X error %02X", g.end_status, g.reg[1]);
+	EXPECT(h.blocks == 0, "%d data-in blocks for a read that failed", h.blocks);
+	EXPECT(sd_errors == 0, "the end of the chain shown as a card error");
 	eoc_at = -1;
+	fake_cluster = 64;
+	end();
+}
+
+/* ---- findings/sdcard-engine Task 11b: the READ's states ---- */
+
+/* card runs: at most 16 sectors, cut at every cluster end (an odd fake
+   cluster of 3), the data right; the main loop ran a pass per run or more */
+static void t_cluster_runs(void)
+{
+	uint8_t c[12];
+	long p0;
+	begin("cluster runs: READ(10) 1+6, 3-sector clusters: 10 runs inside them, the data right");
+	fresh_drive(1);
+	fake_cluster = 3;
+	runs = max_run = 0;
+	p0 = passes;
+	read10(c, 1, 6);
+	packet(c, 0xFFFE);
+	EXPECT(h.phase_errors == 0, "phase errors");
+	EXPECT(h.blocks == 2 && h.block_bytes[0] == 8192 && h.block_bytes[1] == 4096, "blocks %d", h.blocks);
+	EXPECT(h.in_len == 6 * 2048 && iso_matches(1, 6 * 2048), "sector data");
+	EXPECT(good_end(), "status phase");
+	/* sectors 4..19 cut at 6, 9, 12, 15, 18; 20..27 at 21, 24, 27 */
+	EXPECT(runs == 10 && max_run == 3, "%d runs, the longest %d", runs, max_run);
+	EXPECT(passes - p0 >= runs, "%ld passes for %d runs", passes - p0, runs);
+	fake_cluster = 16;
+	runs = max_run = 0;
+	read10(c, 4, 8);	/* sectors 16..47: a block per cluster, one run each */
+	packet(c, 0xFFFE);
+	EXPECT(h.in_len == 8 * 2048 && iso_matches(4, 8 * 2048) && good_end(), "16-sector clusters: data");
+	EXPECT(runs == 2 && max_run == 16, "16-sector clusters: %d runs, the longest %d", runs, max_run);
+	runs = max_run = 0;
+	read10(c, 2, 8);	/* sectors 8..39: 8..15 | 16..23, 24..31 | 32..39 */
+	packet(c, 0xFFFE);
+	EXPECT(h.in_len == 8 * 2048 && iso_matches(2, 8 * 2048) && good_end(), "16-sector clusters, misaligned: data");
+	EXPECT(runs == 4 && max_run == 8, "16-sector clusters, misaligned: %d runs, the longest %d", runs, max_run);
+	fake_cluster = 64;
+	end();
+}
+
+/* FAT reads of the seeks take passes (async): the READ waits for them */
+static void t_seek_wait(void)
+{
+	uint8_t c[12];
+	begin("seeks that wait for FAT reads: READ(10) 0+9 right");
+	fresh_drive(1);
+	seek_wait = 3;
+	fake_cluster = 8;
+	read10(c, 0, 9);
+	packet(c, 0xFFFE);
+	EXPECT(h.phase_errors == 0 && h.blocks == 3, "blocks %d", h.blocks);
+	EXPECT(h.in_len == 9 * 2048 && iso_matches(0, 9 * 2048) && good_end(), "data, status");
+	seek_wait = 0;
+	fake_cluster = 64;
+	end();
+}
+
+/* a seek's FAT read fails: CHECK 03/11/00, the card error shown (MMC_OpResult) */
+static void t_seek_error(void)
+{
+	uint8_t c[12];
+	begin("a seek's FAT read fails in a READ: CHECK 03/11/00, the card error shown");
+	fresh_drive(1);
+	fake_cluster = 8;
+	seek_err_at = 2;	/* the third seek: block 2's first run */
+	seeks = sd_errors = 0;
+	read10(c, 0, 8);
+	packet(c, 0xFFFE);
+	EXPECT(check_end(0x30), "status %02X error %02X", g.end_status, g.reg[1]);
+	EXPECT(h.blocks == 1, "%d blocks before the error", h.blocks);
+	EXPECT(sd_errors == 1, "MMC_OpResult of the failed FAT read: %d", sd_errors);
+	seek_err_at = -1;
+	fake_cluster = 64;
+	end();
+}
+
+/* a card run fails and the Amiga is reset at that moment: no status for
+   the command it left (the flags looked at before the error status) */
+static void t_error_reset(void)
+{
+	uint8_t c[12];
+	begin("a card error at an Amiga reset: no status, the command abandoned");
+	fresh_drive(1);
+	fail_read_at = 1;
+	fail_reset = 1;
+	traces = 0;
+	read10(c, 0, 8);
+	packet(c, 0xFFFE);
+	EXPECT(!g.end_seen, "a status for the command the Amiga left: %02X", g.end_status);
+	EXPECT(traces == 1 && !strcmp(trace_what, "abandoned"), "the end: %d traces, '%s'", traces, trace_what);
+	fail_read_at = -1;
+	fail_reset = 0;
+	cdb6(c, 0x00, 0);
+	packet(c, 0xFFFE);
+	EXPECT(check_end(0x60), "UNIT ATTENTION after the reset: status %02X error %02X", g.end_status, g.reg[1]);
+	end();
+}
+
+/* the OSD tries to eject a locked disc during a READ: refused, no IDE
+   flags read for it (CD_Locked: a pending rst_seen stays for the READ's own
+   look), the READ goes on to its good end */
+static void t_locked_eject(void)
+{
+	uint8_t c[12];
+	unsigned char tfr[8];
+	long k;
+	begin("OSD eject of a locked disc during a READ: refused, no flags read for it, the READ ends good");
+	fresh_drive(1);
+	cdb6(c, 0x1E, 1);	/* PREVENT MEDIUM REMOVAL */
+	packet(c, 0xFFFE);
+	EXPECT(good_end() && CD_Locked(), "not locked");
+	read10(c, 0, 16);
+	host_reset_model();
+	memcpy(h.cdb, c, 12);
+	host_command(tfr, 0, 0xFFFE, 0xA0);
+	ide_port = 1;
+	CD_HandleCommand(1, tfr);
+	for (k = 0; k < 1000 && CD_Busy() && h.blocks < 1; k++)
+		cd_pass();
+	for (k = 0; k < 1000 && CD_Busy() && !fop; k++)
+		cd_pass();
+	EXPECT(CD_Busy() && fop, "the READ is not in a run (blocks %d)", h.blocks);
+	{
+		unsigned long t0 = now_ms;
+		int polls = h.polls;
+		EXPECT(CD_Eject() == CD_LOCKED, "a locked disc ejected");
+		EXPECT(now_ms == t0 && h.polls == polls, "CD_Locked read the IDE flags during the READ");
+	}
+	run_cd();
+	EXPECT(h.in_len == 16 * 2048 && iso_matches(0, 16 * 2048) && good_end(), "the READ after the refused eject");
+	EXPECT(cdrom.unit.media, "the disc left");
+	cdb6(c, 0x1E, 0);	/* ALLOW */
+	packet(c, 0xFFFE);
+	end();
+}
+
+/* the OSD ejects the disc (unlocked) during a READ: the READ ends first
+   (CHECK 0B/00/00, error B4; the card op over), the drive empty */
+static void t_osd_eject(void)
+{
+	uint8_t c[12];
+	unsigned char tfr[8];
+	long k;
+	begin("OSD eject during a READ: CHECK 0B/00/00 first (error B4), the run over, the drive empty");
+	fresh_drive(1);
+	read10(c, 0, 16);
+	host_reset_model();
+	memcpy(h.cdb, c, 12);
+	host_command(tfr, 0, 0xFFFE, 0xA0);
+	ide_port = 1;
+	CD_HandleCommand(1, tfr);
+	for (k = 0; k < 1000 && CD_Busy() && !(h.blocks == 1 && fop); k++)
+		cd_pass();
+	EXPECT(CD_Busy() && fop && h.blocks == 1, "the READ is not in its second block's run (blocks %d)", h.blocks);
+	EXPECT(CD_Eject() == CD_OK, "eject refused");
+	EXPECT(!CD_Busy() && !fop, "the READ or its run still in progress");
+	EXPECT(check_end(0xB4), "status %02X error %02X", g.end_status, g.reg[1]);
+	EXPECT(!cdrom.unit.media && cdrom.hdf.type == HDF_DISABLED, "the disc still in");
+	cdb6(c, 0x03, 18);
+	packet(c, 0xFFFE);
+	EXPECT(good_end() && h.in[2] == 0x0B, "sense key %02X", h.in[2]);
 	end();
 }
 
@@ -1494,6 +1852,7 @@ int main(void)
 	t_read_one_block();
 	t_read_blocks();
 	t_read_limit();
+	t_slow_host();
 	t_read_last();
 	t_no_disc();
 	t_unit_attention();
@@ -1509,6 +1868,12 @@ int main(void)
 	t_read_abandon();
 	t_read_eoc();
 	t_read_last_chunk_error();
+	t_cluster_runs();
+	t_seek_wait();
+	t_seek_error();
+	t_error_reset();
+	t_osd_eject();
+	t_locked_eject();
 	t_reset_flag();
 	t_cue_bincue();
 	t_cue_mixed();

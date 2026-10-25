@@ -437,8 +437,8 @@ the figure to the width. Each `%s` is bounded by its source:
 |---|---|
 | `fat.c:398`, `423`, `582`, `603` (`name` of `FileOpen`/`FindDirectory`) | 260: a CUE `FILE` name is at most 255 characters (`CUE_LINE_MAX 300`), `fat.h` `long_name[261]` |
 | `menu.c:2968` (`file.long_name`) | 260 |
-| `cdrom.c:291` | `shortname` 11, `cd_msg[24]` 23 |
-| `cdrom.c:305` | `shortname` 11, `cdrom.unit.name` 40 |
+| `cdrom.c:303` | `shortname` 11, `cd_msg[24]` 23 |
+| `cdrom.c:317` | `shortname` 11, `cdrom.unit.name` 40 |
 | `fpga.c:124`, `127` | `kick1xfoundstr` 21, `applymemdetectionpatchstr` 46 |
 | `%.8s`, `%.3s`, `%.11s` | the precision |
 | `boot.c:260` (`printf("%s", str)`, `BootPrintEx`) | 80: the longest literal is 75, `s[40]`, `rtl_ver[45]` |
@@ -450,7 +450,7 @@ Per file, `line:bytes`:
 |---|---|---|
 | `akiko.c` | 2 | 17:32, 19:21 |
 | `boot.c` | 2 | 260:80, 261:1 |
-| `cdrom.c` | 17 | 291:50, 305:108, 334:17, 416:27, 485:18, 521:34, 684:17, 686:9, 688:19, 689:29, 690:34, 691:19, 692:33, 693:20, 694:5, 696:2, 777:84 |
+| `cdrom.c` | 17 | 303:50, 317:108, 348:17, 432:27, 517:18, 565:34, 909:17, 911:9, 913:19, 914:29, 915:34, 916:19, 917:33, 918:20, 919:5, 921:2, 1000:84 (line numbers of findings/sdcard-engine Task 11b; the sites unchanged) |
 | `config.c` | 13 | 65:21, 186:24, 257:40, 258:1, 326:36, 679:30, 680:30, 684:57, 687:14, 688:28, 694:27, 698:19, 701:22 (Task 11's lines) |
 | `drivesounds.c` | 7 | 455:32, 461:31, 473:31, 491:30, 494:50, 516:34, 519:28 (473, 491: the final review's I1; 461: findings/sdcard-engine Task 10 fix round 1) |
 | `fat.c` | 39 | 188:28, 192:4, 195:5, 198:5, 201:5, 205:7, 208:2, 295:21, 296:23, 297:22, 298:33, 299:24, 300:23, 301:25, 302:23, 398:274, 423:278, 461:33, 514:32, 534:35, 582:295, 603:283, 782:28, 789:33, 862:11, 1583:59, 1596:31, 1611:26, 1623:32, 1633:49, 1649:55, 1651:54, 1656:38, 1703:38, 1714:45, 1715:30, 1716:24, 1717:26, 1725:39 |
@@ -1141,8 +1141,9 @@ us). Lines are those of the current tree.
 | `audio.c:33`-`34` (`audio_clear`) | waits for the next TIMER change after `AUDIOF_ENA` | <= 1 | <= 5.804 ms |
 | `drivesounds.c:79`, `99`, `435` | event and render timestamps (`drivesounds_render`, `samples = timestamp - drivesounds.timestamp`, `:158`) | 1 = 256 frames | 5.804 ms per count |
 | `drivesounds.c:360` | `TIMER & 3`: pseudo-random pick of one of four sounds | | |
-| `cdrom.c:380` (`cda_port_timer`), `cdaudio.c:52`, `179`, `191` | CD audio play position: `CDA_HALF_UNITS` (`cdaudio.h:39`) counts per half buffer | 32 | 185.7 ms (8192 frames) |
-| `cdrom.c:471`, `483` (`cd_wait`) | `CD_TIMEOUT` (`cdrom.c:64`): host data phase | 10000 | 58.04 s |
+| `cdrom.c:402` (`cda_port_timer`), `cdaudio.c:52`, `179`, `191` | CD audio play position: `CDA_HALF_UNITS` (`cdaudio.h:39`) counts per half buffer | 32 | 185.7 ms (8192 frames) |
+| `cdrom.c:515`, `528` (`cd_look`, `cd_wait`), `836` (`CD_Step`, `C_RUN`) | `CD_TIMEOUT` (`cdrom.c:73`): host data phase (a READ's block: one look per main-loop pass, findings/sdcard-engine Task 11b) | 10000 | 58.04 s |
+| `cdrom.c:706`, `743` (`cd_end`, `cd_read_start`) | the ATA trace's time of a CD READ, printed as counts; read only with `dbg_flags & DBG_ATA` (Task 11b) | counts | 5.804 ms per count |
 | `hdd.c:1353`, `1361` (`OpenHardfile`) | `GetTimer(0)` difference, printed as "ms" (`time >> 16`) | counts | 5.804 ms per printed "ms" |
 | `fpga.c:207` (`fpga_init`) | `GetTimer(0)`, unused | | |
 | `fpga.c:230`, `232`, `254` (`fpga_init`) | `WaitTimer(50)`, `WaitTimer(100)`, `WaitTimer(1000)` (boot screen) | 50, 100, 1000 | 290.2 ms, 580.4 ms, 5.804 s |
@@ -1187,6 +1188,28 @@ by DMA (`GAYLE_TO_TX`) into a CMD25 run and report each group (IRQ, the last
 END | IRQ) only after the card has programmed it. The rules and the
 decisions: `findings/sdcard-engine/design.md` section 11 (Task 11a rows).
 
+## CD data path (findings/sdcard-engine Task 11b)
+
+READ(10)/(12) and READ CD are a state machine too (`cdrom.c`, the comment
+above `enum { C_IDLE, ...`): `CD_HandleCommand` runs the packet phase and
+the ATAPI parse as before and starts it; `CD_Step()` advances it, called by
+`hdd_poll()`, the one dispatcher of the IDE command in progress. One IDE
+command at a time across both ports: `hdd_busy()` is 1 during a CD READ
+too, so the pickup of a port-1 command waits (and a CD command waits for an
+HDD command), `CD_Locked` reads no flags and `PollDisks` refills only. A
+DATA2048 run (an ISO, a CUE's MODE1/2048 track) goes card -> Gayle FIFO
+with no wait in the CPU: per data-in block the port's flags are looked at
+(the Amiga may have left in the gap), the phase is set up, the block's
+sectors go in by to_gayle card runs (at most 16 sectors, inside one
+cluster: the HDD path's `hdd_seek_*` / `hdd_file_run`, FAT reads async),
+and the next block comes only after a flags look saw the host take this
+one (XFER_DONE). The packet phase, the CPU-buffer replies, MODE SELECT and
+the CD-DA / raw / gap runs stay synchronous (`cd_wait`). An OSD eject or
+insert during a READ ends it first (`CD_Cancel`: CHECK 0B/00/00); a locked
+drive refuses the eject as before. Decisions: design.md section 11 (Task
+11b rows); tests: `test/cdpath_test.c` (the real stack) and
+`test/cdrom_test.c`.
+
 ### Debug flags
 
 `dbg_flags` (`diskstat.h`) switches the disk path's UART output at run
@@ -1202,8 +1225,11 @@ report). Over the GDB tunnel (`tools/rvdebug/README.md`):
 
 `DBG_ATA`'s line, at the command's end:
 `ATA <cmd> lba <first LBA> n <count> port <0|1> <ok|error|abandoned|done> st <last status written> t <TIMER counts since the pickup>`
-(`done`: a command that ran to its end in `HandleHDD`, IDENTIFY etc., t 0;
-`abandoned`: the Amiga left it, no status was written). `DebugMode` does not
+(`done`: a command that ran to its end in `HandleHDD`, IDENTIFY etc., st 00
+t 0; `abandoned`: the Amiga left it, no status was written). CD commands
+(port 1) too: a READ's line at its end (`ATA a0 lba <first CD sector> n
+<sectors> port 1 ok|error|abandoned ...`), every other CD command `done`
+(findings/sdcard-engine Task 11b). `DebugMode` does not
 switch it on; its OSD debug lines (`DEBUG1`..`DEBUG3`) are as before. The SD
 layer's own output is unchanged: `sd_debug` (per card command), the error
 lines, and the event ring `sdc_trace` (`sdc.h`).

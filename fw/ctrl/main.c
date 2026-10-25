@@ -138,11 +138,13 @@ void HandleFpga(void)
 
 
 // One pass of the disk work, in the main loop and the error page's loop:
-// the SD card op and the HDD data path (findings/sdcard-engine Task 11a:
+// the SD card op and the IDE command in progress (hdd_poll: the HDD data
+// path, findings/sdcard-engine Task 11a, or the CD drive's READ, Task 11b:
 // both advance here, never a wait), the CD audio refill,
 // the FPGA's requests (floppy, the IDE command pickup; fpga 0: not those).
-// During an HDD command the refill only: CD_AudioPoll reads the CD port's
-// flags, whose command word re-latches the Gayle's firmware port (cdrom.h).
+// During an IDE command (hdd_busy(), either port) the refill only:
+// CD_AudioPoll reads the CD port's flags, whose command word re-latches the
+// Gayle's firmware port (cdrom.h), and would take a CD command's rst_seen.
 // No FPGA command while a Gayle op runs: the bridge owns hdd_port,
 // hdd_data_out and hdd_addr then (rtl/minimig/sdcard_gayle.v).
 // The card op and the HDD path run up to DISK_STEPS times while the card op
@@ -193,6 +195,7 @@ int ColdBoot()
 {
 	int result=0;
 	hdd_cancel();	/* an HDD command in progress ends (ERR) before the card starts over */
+	CD_Cancel();	/* a CD READ in progress too (CHECK 0B/00/00) */
 	/* Reset the chipset briefly to cancel AGA display modes, then Put the CPU in reset while we initialise */
 	OsdDoReset(SPI_RST_USR | SPI_RST_CPU | SPI_CPU_HLT,SPI_RST_CPU | SPI_CPU_HLT);
 

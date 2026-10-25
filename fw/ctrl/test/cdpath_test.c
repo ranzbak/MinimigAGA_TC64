@@ -296,6 +296,7 @@ static struct {
 	int hdd_at;		/* writes a READ SECTORS on port 1 (hdd_lba, hdd_count) */
 	int gap_reset_at;	/* Ctrl-Amiga-Amiga in the next frame after the firmware saw XFER_DONE */
 	int gap_armed;
+	int slow, wait;		/* a slow host: it reads a block only at its slow-th look after the block is in */
 	long hdd_lba;
 	unsigned hdd_count;
 } h;
@@ -313,6 +314,7 @@ static void host_reset(void)
 	h.polls = 0;
 	h.dead_at = h.reset_at = h.newcmd_at = h.hdd_at = h.gap_reset_at = -1;
 	h.gap_armed = 0;
+	h.slow = h.wait = 0;
 }
 
 /* Ctrl-Amiga-Amiga: Gayle's reset (both ports: busy, packet mode, the FIFOs,
@@ -437,6 +439,9 @@ static void host1_act(void)
 		q->xfer_done = 1;
 		glog("1 out %u", want);
 	} else if (q->pio_in && q->flen >= want && want) {
+		if (h.slow && ++h.wait < h.slow)
+			return;
+		h.wait = 0;
 		if (q->block_mark) { q->irq = 1; q->block_mark = 0; }	/* the interrupt with the DRQ edge */
 		if (q->reg[2] != 0x02 || (bc + 1) / 2 != q->xfer_words || !q->irq || bc > h.limit) {
 			h.phase_errors++;
@@ -638,9 +643,9 @@ static void run_loop(void)
 
 static void packet_begin(const uint8_t *cdb, unsigned limit)
 {
-	int dead = h.dead_at, rst = h.reset_at, nc = h.newcmd_at, hd = h.hdd_at, gap = h.gap_reset_at;
+	int dead = h.dead_at, rst = h.reset_at, nc = h.newcmd_at, hd = h.hdd_at, gap = h.gap_reset_at, slow = h.slow;
 	host_reset();
-	h.dead_at = dead; h.reset_at = rst; h.newcmd_at = nc; h.hdd_at = hd; h.gap_reset_at = gap;
+	h.dead_at = dead; h.reset_at = rst; h.newcmd_at = nc; h.hdd_at = hd; h.gap_reset_at = gap; h.slow = slow;
 	glog_clear();
 	model_err[0] = 0;
 	packet_cmd(cdb, limit);
@@ -838,6 +843,9 @@ static void read_cases(void)
 	read_case("READ(10) 299+1 (the last sector)", ISO_SECTORS - 1, 1, 0xFFFE);
 	read_case("READ(10) 3+5, limit 6 KB (12-sector blocks across clusters and the gap)", 3, 5, 0x1800);
 	read_case("READ(10) 20+2, limit 1 KB (2-sector blocks)", 20, 2, 0x0400);
+	h.slow = 6;	/* drain, then refill: the next block only after the host took this one */
+	read_case("slow host: READ(10) 8+24 (the host reads a block at its 6th look)", 8, 24, 0xFFFE);
+	h.slow = 0;
 	read10(c, ISO_SECTORS - 1, 2);
 	packet(c, 0xFFFE);
 	check_cd("READ(10) 299+2 (past the end)");
@@ -1036,6 +1044,153 @@ static void audio_case(void)
 	packet(tur, 0xFFFE);
 }
 
+/* ---- the interrupt-driven CD data path (findings/sdcard-engine Task 11b) ---- */
+
+/* the main loop keeps running during a long READ: passes, HandleFpga (the
+   floppy, which reads the card itself: an sd_sync user that gets the card
+   between the runs), no FPGA frame during a Gayle op (check_cd) */
+static void cd_main_loop_runs(void)
+{
+	long p0 = passes;
+	int f0 = fdd_calls;
+	unsigned r0 = fdd_reads;
+	fdd_card = 1;
+	read_case("cd_main_loop_runs: READ(10) 0+300, the floppy reading the card on every pass", 0, ISO_SECTORS, 0xFFFE);
+	fdd_card = 0;
+	check("cd_main_loop_runs: main-loop passes during the READ >= its 75 blocks", passes - p0 >= 75, 1);
+	check("cd_main_loop_runs: HandleFpga (the floppy) ran during the READ", fdd_calls - f0 >= 75, 1);
+	check("cd_main_loop_runs: the floppy's card reads ran during the READ", (long)(fdd_reads - r0) >= 75, 1);
+}
+
+/* Ctrl-Amiga-Amiga in the gap after the firmware saw a block taken
+   (XFER_DONE) and before the next block's phase: nothing of the READ after
+   the reset (no phase, no status), UNIT ATTENTION next */
+static void cd_reset_in_gap(void)
+{
+	uint8_t c[12];
+	const char *r;
+	h.gap_reset_at = 1;
+	read10(c, 30, 12);
+	packet(c, 0xFFFE);
+	h.gap_reset_at = -1;
+	check_cd("cd_reset_in_gap: READ(10) 30+12");
+	r = strstr(glog_text(), "reset\n");
+	check("cd_reset_in_gap: the reset after block 1", h.blocks == 1 && r != NULL, 1);
+	check("cd_reset_in_gap: nothing of the READ after the reset", r && !strstr(r, "1 "), 1);
+	cdb6(c, 0x00, 0);
+	packet(c, 0xFFFE);
+	check("cd_reset_in_gap: the next command gets UNIT ATTENTION (error 60)", check_end(0x60), 1);
+}
+
+/* the card fails during a run and the Amiga is reset at the same moment
+   (after the READ's 2nd block reached Gayle: the card pulled, Ctrl-Amiga-
+   Amiga): the card error must not end the old command with a status */
+static int gayle_ends;
+static void pull_and_reset(void *ctx)
+{
+	(void)ctx;
+	if (++gayle_ends != 2)
+		return;
+	mock_sdc_pull_card();
+	amiga_reset();
+}
+static void cd_error_after_reset(void)
+{
+	uint8_t c[12];
+	static const uint8_t tur[12] = { 0 };
+	const char *r;
+	ClearError(ERROR_ALL);
+	gayle_ends = 0;
+	mock_gayle_on_end(pull_and_reset, NULL);
+	read10(c, 160, 8);
+	packet(c, 0xFFFE);
+	mock_gayle_on_end(NULL, NULL);
+	check_cd("cd_error_after_reset: READ(10) 160+8");
+	r = strstr(glog_text(), "reset\n");
+	check("cd_error_after_reset: the reset during the run", r != NULL && h.blocks == 0, 1);
+	check("cd_error_after_reset: no status (nor anything else) of the READ after the reset", r && !strstr(r, "1 "), 1);
+	check("cd_error_after_reset: the card error shown (ERROR_SDCARD)", (ErrorMask >> ERROR_SDCARD) & 1, 1);
+	mock_sdc_cd(1);
+	mock_card_insert();
+	ClearError(ERROR_ALL);
+	packet(tur, 0xFFFE);
+	check("cd_error_after_reset: the next command gets UNIT ATTENTION (error 60)", check_end(0x60), 1);
+	read_case("cd_error_after_reset: the card back, READ(10) 160+8", 160, 8, 0xFFFE);
+}
+
+/* the OSD ejects the disc (unlocked) while the Amiga reads: the READ ends
+   first (CHECK 0B/00/00, error B4; its card op finished), the drive is
+   empty, TEST UNIT READY 02/3A/00 (error 20); the disc back in */
+static void cd_osd_eject(void)
+{
+	uint8_t c[12];
+	static const uint8_t tur[12] = { 0 };
+	long k;
+	read10(c, 0, 64);
+	packet_begin(c, 0xFFFE);
+	for (k = 0; k < 2000000 && h.blocks < 2; k++)
+		loop_pass();
+	check("cd_osd_eject: the READ runs (2 blocks read)", h.blocks == 2 && P[1].busy, 1);
+	check("cd_osd_eject: CD_Eject", CD_Eject(), CD_OK);
+	check("cd_osd_eject: the READ ended at once: CHECK error B4", check_end(0xB4) && !P[1].busy, 1);
+	check("cd_osd_eject: no command and no card op left", fw_busy(), 0);
+	run_loop();
+	check_cd("cd_osd_eject: READ(10) 0+64");
+	check("cd_osd_eject: two blocks only", h.blocks, 2);
+	check("cd_osd_eject: the drive empty", cdrom.unit.media, 0);
+	packet(tur, 0xFFFE);
+	check("cd_osd_eject: TEST UNIT READY: no medium (error 20)", check_end(0x20), 1);
+	cd_slot("TEST    ", CD_PRESENT_ISO);
+	check("cd_osd_eject: TEST.ISO again: CD_Open", CD_Open(2), CD_OK);
+	packet(tur, 0xFFFE);
+	read_case("cd_osd_eject: after it, READ(10) 0+4", 0, 4, 0xFFFE);
+}
+
+/* dbg_flags DBG_ATA (ruling T11-R2): one line per CD command at its end
+   too, quiet without the flag */
+static void cd_trace(void)
+{
+	uint8_t c[12];
+	dbg_flags = 0;
+	mock_uart_clear();
+	read10(c, 5, 9);
+	packet(c, 0xFFFE);
+	check("cd_trace: dbg_flags 0: no UART output from a READ(10)", (long)mock_uart_len(), 0);
+	dbg_flags = DBG_ATA;
+	mock_uart_clear();
+	packet(c, 0xFFFE);
+	check("cd_trace: DBG_ATA: the READ(10)'s line", strstr(mock_uart(), "ATA a0 lba 5 n 9 port 1 ok st 90 t ") != NULL, 1);
+	mock_uart_clear();
+	cdb6(c, 0x12, 36);
+	packet(c, 0xFFFE);
+	/* a command that ran to its end in the pickup: "done", as hdd.c's */
+	check("cd_trace: DBG_ATA: INQUIRY's line", strstr(mock_uart(), "ATA a0 lba 0 n 0 port 1 done st 00 t 0\n") != NULL, 1);
+	mock_uart_clear();
+	read10(c, ISO_SECTORS - 1, 2);
+	packet(c, 0xFFFE);
+	check("cd_trace: DBG_ATA: a refused READ's line", strstr(mock_uart(), "ATA a0 lba 0 n 0 port 1 done st 00 t 0\n") != NULL, 1);
+	mock_uart_clear();
+	ClearError(ERROR_ALL);
+	mock_card_remove();
+	read10(c, 40, 8);
+	packet(c, 0xFFFE);
+	mock_card_insert();
+	check("cd_trace: DBG_ATA: a card error's line", strstr(mock_uart(), "ATA a0 lba 40 n 8 port 1 error st 91 t ") != NULL, 1);
+	ClearError(ERROR_ALL);
+	mock_uart_clear();
+	h.reset_at = 1;
+	read10(c, 40, 8);
+	packet(c, 0xFFFE);
+	h.reset_at = -1;
+	check("cd_trace: DBG_ATA: an abandoned READ's line", strstr(mock_uart(), "ATA a0 lba 40 n 8 port 1 abandoned st 00 t ") != NULL, 1);
+	{
+		const char *a = strstr(mock_uart(), "ATA ");
+		if (!check("cd_trace: one ATA line for the command (the card's re-init lines aside)", a && !strstr(a + 1, "ATA "), 1))
+			say("--- the UART\n%s", mock_uart());
+	}
+	dbg_flags = 0;
+}
+
 int main(int argc, char **argv)
 {
 	if (argc != 3) { fprintf(stderr, "usage: cdpath_test <dir> <golden of cd_read_order>\n"); return 2; }
@@ -1048,6 +1203,11 @@ int main(int argc, char **argv)
 	abandon_cases();
 	one_command_cases();
 	audio_case();
+	cd_main_loop_runs();
+	cd_reset_in_gap();
+	cd_error_after_reset();
+	cd_osd_eject();
+	cd_trace();
 	free(iso_card);
 	free(glog_buf.p);
 	say("%s: %d checks, %d failed\n", fails ? "FAIL" : "PASS", cases, fails);

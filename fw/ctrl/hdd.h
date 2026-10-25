@@ -85,12 +85,41 @@ void HandleHDD(unsigned int c1, unsigned int c2);
    split at cluster boundaries), the main loop runs between them.  No IDE
    command on cs 0x10 while a Gayle op runs (sd_gayle_busy()). */
 void hdd_poll(void);
-/* 1 while an ATA command is in progress (the pickup waits) */
+/* 1 while an IDE command is in progress on either port, this state
+   machine's or the CD drive's (cdrom.c CD_Busy): the pickup waits (one IDE
+   command at a time, findings/sdcard-engine ruling T11-R4) */
 int hdd_busy(void);
 /* end an ATA command in progress: its card op finished (a run closed),
    END | IRQ | ERR (ABRT) unless the Amiga left it; for the callers that
    change what the command works on (OpenHardfile, ColdBoot) */
 void hdd_cancel(void);
+
+/* The data paths' shared helpers (the HDD state machine and the CD drive's
+   DATA2048 read, cdrom.c; findings/sdcard-engine Task 11b): */
+struct sd_op;
+/* start an async card op (sdproto.h): kind SD_READ / SD_WRITE, n blocks at
+   card sector lba into / from buf, or with buf 0 to / from Gayle's FIFO of
+   port (to_gayle / from_gayle).  0, or -1 when another op holds the card
+   (try again on the next pass); an op that cannot start ends at once (0,
+   op->err set).  A card to be initialised again after an error first
+   (sd_init, synchronous: the one wait in the data paths) */
+int hdd_op_go(struct sd_op *op, int kind, unsigned long lba, unsigned n, unsigned char *buf, int port);
+/* the file position of h to 512-byte sector target without a wait:
+   hdd_seek_begin does HardFileSeek's index jump (once per seek),
+   hdd_seek_step FileSeek's walk on the FAT sector cached in the data path's
+   buffer, reading a missing one by an async op (op).  hdd_seek_step: 1 at
+   target, 0 a FAT read runs or the card is busy (call again on the next
+   pass), -1 a FAT read failed (op->err), -2 the end of the chain (inside
+   the file's size: a guard).  One seek at a time (one IDE command) */
+void hdd_seek_begin(hdfTYPE *h, unsigned long target);
+int hdd_seek_step(struct sd_op *op);
+/* the card sector of h's file position; *n cut to the sectors left in its
+   cluster (a run never crosses a cluster: the chain may jump) */
+unsigned long hdd_file_run(hdfTYPE *h, unsigned *n);
+/* dbg_flags DBG_ATA (diskstat.h): one UART line for an IDE command at its
+   end, "ATA <cmd> lba <lba> n <count> port <ide_port> <what> st <status> t <TIMER counts>" */
+void ata_trace(unsigned cmd, unsigned long lba, unsigned n, const char *what, unsigned st, unsigned t);
+
 void GetHardfileGeometry(hdfTYPE *hdf);
 /* 0 when a FAT read failed (a card error) or the cluster chain is shorter
    than the file's size: the index would hold wrong clusters, the file must

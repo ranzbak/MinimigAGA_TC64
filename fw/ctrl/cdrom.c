@@ -13,7 +13,8 @@
  *   data in reason 2 (IO), byte count = block, pio in; the interrupt comes
  *           with the DRQ once the block is in the FIFO.  Blocks of at most
  *           the host's byte count limit and 8 KB (the FIFO); sectors go
- *           from the SD card straight into the FIFO (FileReadEx, direct).
+ *           from the SD card straight into the FIFO (to_gayle card runs,
+ *           CD_Step).
  *   data out reason 0, byte count = block, pio out + interrupt
  *   status  reason 3 (IO|CoD), END + interrupt, ERR and the error register
  *           (sense key << 4, ABRT for ILLEGAL REQUEST / ABORTED COMMAND)
@@ -21,7 +22,12 @@
  * While the firmware waits for the host it polls the port's flags: an
  * Amiga reset (rst_seen) or a command written over this one (packet mode
  * gone) ends the command without a status; a host that does nothing for
- * CD_TIMEOUT ms gets the command aborted, so the OSD never hangs on it.
+ * CD_TIMEOUT TIMER counts gets the command aborted.
+ *
+ * READ(10)/(12) and READ CD run as main-loop states (CD_Step, below:
+ * findings/sdcard-engine Task 11b); the packet phase, the CPU-buffer
+ * replies, MODE SELECT's data and the CD-DA / raw 2352 / gap runs of a
+ * read stay synchronous (cd_wait spins on the host, CD_AudioPoll inside).
  */
 
 #include <stdio.h>
@@ -38,6 +44,7 @@
 #include "atapi.h"
 #include "cue.h"
 #include "cdaudio.h"
+#include "diskstat.h"
 #include "cdrom.h"
 #ifndef HOSTTEST
 #include "drivesounds.h"
@@ -63,13 +70,14 @@ static char cd_msg[24];			/* why the last insert was refused */
 static unsigned short cd_id[256];	/* IDENTIFY PACKET DEVICE words */
 static unsigned char cd_cdb[12];
 
-#define CD_TIMEOUT 10000	/* ms the host may take for one phase */
+#define CD_TIMEOUT 10000	/* TIMER counts (GetTimer) the host may take for one phase */
 #define CD_FIFO_512 16		/* 512-byte units in one data-in block: the 8 KB FIFO */
 
 /* cd_wait() and the data phases */
 #define CD_DONE     1
 #define CD_GONE     0	/* reset, or a new command: no status for this one */
 #define CD_FAILED  -1	/* timeout or SD error: the unit's sense says which */
+#define CD_WAITING  2	/* cd_look: the host is not through yet */
 
 /* ---- the slot's config entry (5.3: the disc in the drive at power on) ---- */
 
@@ -98,6 +106,7 @@ int CD_Open(int slot)
 	char name[12];
 	char long_name[sizeof(hf->long_name) + 1];
 
+	CD_Cancel();	/* a READ in progress ends before the drive changes */
 	cda_stop();
 	cda_init();
 	cd_audio.type = HDF_DISABLED;
@@ -324,7 +333,9 @@ static void cd_drop_file(void)
 
 int CD_Eject(void)
 {
-	CD_Locked();	/* an Amiga reset since the last command clears the lock */
+	if (CD_Locked())	/* an Amiga reset since the last command clears the lock */
+		return CD_LOCKED;
+	CD_Cancel();	/* a READ in progress ends before its file goes */
 	if (atapi_eject(&cdrom.unit) != ATAPI_OK)
 		return CD_LOCKED;
 	cd_drop_file();
@@ -351,11 +362,13 @@ int CD_Locked(void)
 		return 0;
 	if (cdrom.unit.locked && !hdd_busy()) {
 		/* the Amiga may have been reset since its last command: the
-		   lock does not survive that (R-D).  Not while an HDD command is
-		   in progress (findings/sdcard-engine Task 11a: the main loop and
-		   the OSD run during it): the flags read's command word would
-		   re-latch the Gayle's firmware port to the CD's; the lock is
-		   kept until the next look */
+		   lock does not survive that (R-D).  Not while an IDE command is
+		   in progress (findings/sdcard-engine Tasks 11a, 11b: the main
+		   loop and the OSD run during it): during an HDD command the flags
+		   read's command word would re-latch the Gayle's firmware port to
+		   the CD's; during a CD command it would take the rst_seen the
+		   command's own look must see; the lock is kept until the next
+		   look */
 		CD_Flags(cdrom.slot >> 1, ReadIDEFlags(cdrom.slot >> 1));
 	}
 	return atapi_locked(&cdrom.unit);
@@ -400,8 +413,9 @@ void cda_port_claim(void)
 }
 #endif
 
-/* Set while CD_HandleCommand runs: cd_wait reads the port's flags itself
-   right after its poll and must see an rst_seen there (the command ends). */
+/* Set while a CD command is in progress (CD_HandleCommand, and a READ's
+   states up to their end): cd_wait / CD_Step read the port's flags
+   themselves and must see an rst_seen there (the command ends). */
 static int cd_in_command;
 
 /* The refill: SD card reads into RAM and the audio registers, no FPGA
@@ -485,29 +499,39 @@ static void cd_complete(unsigned char *tfr, unsigned char error)
 	WriteStatus(IDE_STATUS_END | IDE_STATUS_IRQ | (error ? IDE_STATUS_ERR : 0));
 }
 
-/* Until the host is through with the data phase. */
+/* One look at the port's flags: is the host through with the data phase
+   (CD_DONE), gone (CD_GONE: a reset, or a new command written: packet mode
+   off), past timeout (CD_FAILED, 0B/00/00), or not yet (CD_WAITING)? */
+static int cd_look(int port, unsigned long timeout)
+{
+	unsigned char flags = ReadIDEFlags(port);
+	CD_Flags(port, flags);
+	if (flags & IDEF_RST_SEEN)
+		return CD_GONE;
+	if (!(flags & IDEF_PKT))
+		return CD_GONE;	/* the host wrote a new command */
+	if (flags & IDEF_XFER_DONE)
+		return CD_DONE;
+	if (CheckTimer(timeout)) {
+		if (DebugMode)
+			printf("CD: host timeout\r\n");
+		WriteXfer(0, 1);	/* drop the transfer: no DRQ, no stall */
+		atapi_set_sense(&cdrom.unit, 0x0B, 0x00, 0x00);
+		return CD_FAILED;
+	}
+	return CD_WAITING;
+}
+
+/* Until the host is through with the data phase (the synchronous phases). */
 static int cd_wait(int port)
 {
 	unsigned long timeout = GetTimer(CD_TIMEOUT);
-	unsigned char flags;
-	for (;;) {
+	int r;
+	do {
 		CD_AudioPoll();	/* no SD transfer in flight here (13.5) */
-		flags = ReadIDEFlags(port);
-		CD_Flags(port, flags);
-		if (flags & IDEF_RST_SEEN)
-			return CD_GONE;
-		if (!(flags & IDEF_PKT))
-			return CD_GONE;	/* the host wrote a new command */
-		if (flags & IDEF_XFER_DONE)
-			return CD_DONE;
-		if (CheckTimer(timeout)) {
-			if (DebugMode)
-				printf("CD: host timeout\r\n");
-			WriteXfer(0, 1);	/* drop the transfer: no DRQ, no stall */
-			atapi_set_sense(&cdrom.unit, 0x0B, 0x00, 0x00);
-			return CD_FAILED;
-		}
-	}
+		r = cd_look(port, timeout);
+	} while (r == CD_WAITING);
+	return r;
 }
 
 /* Set up one data phase: length, interrupt reason, byte count, direction. */
@@ -542,39 +566,6 @@ static int cd_read_error(unsigned long block)
 	WriteXfer(0, 1);	/* drop the transfer: no DRQ, no stall */
 	atapi_set_sense(&cdrom.unit, 0x03, 0x11, 0x00);
 	return CD_FAILED;
-}
-
-/* Data in from a DATA2048 file: SD card -> FIFO, 512-byte FAT sectors from
-   block on, four per CD sector, blocks of at most the limit and 8 KB. */
-static int cd_send_sectors(int port, unsigned char *tfr, unsigned long block, unsigned long count, unsigned int limit)
-{
-	unsigned long left = count * 4;
-	unsigned int per = limit >> 9;
-	int r;
-	if (per > CD_FIFO_512)
-		per = CD_FIFO_512;
-	if (!per)
-		per = 1;	/* a limit below 512 bytes: blocks of 512 anyway */
-	/* a seek that fails (a FAT sector it could not read, or past the end of
-	   the chain) leaves a wrong position */
-	if (!HardFileSeek(&cdrom.hdf, block))
-		return cd_read_error(block);
-	while (left) {
-		unsigned int n = left < per ? (unsigned int)left : per;
-		CD_AudioPoll();	/* between blocks, never inside FileReadEx (13.5) */
-		cd_phase(tfr, n << 9, 0x02, IDE_STATUS_RDY);
-		MMCErr = SD_OK;
-		/* into Gayle's FIFO of ide_port (mmc.h).  FileReadEx is 0 on a card
-		   error or blocks past the end of the chain (one ending at the
-		   file's last sector is good).  A Gayle error: the host wrote a new
-		   command, no status for this one. */
-		if (!FileReadEx(&cdrom.hdf.file, 0, n))
-			return MMCErr == SD_E_GAYLE ? CD_GONE : cd_read_error(block + count * 4 - left);
-		if ((r = cd_wait(port)) != CD_DONE)
-			return r;
-		left -= n;
-	}
-	return CD_DONE;
 }
 
 /* len bytes at byte offset off of the data file into dst, through cd_block. */
@@ -649,34 +640,240 @@ static int cd_send_cdda(int port, unsigned char *tfr, const struct cue_loc *l, u
 	return CD_DONE;
 }
 
-/* READ(10)/(12) and READ CD: lba .. lba + count - 1, split where the track,
-   its file or its sector size changes.  Audio sectors only come with READ
-   CD (atapi.c refuses them for READ(10)/(12)): CD-DA. */
-static int cd_read(int port, unsigned char *tfr, unsigned long lba, unsigned long count, unsigned int limit)
+/* ---- READ(10)/(12) and READ CD as main-loop states (findings/sdcard-engine
+ * Task 11b) ----
+ * lba .. lba + count - 1, split where the track, its file or its sector size
+ * changes (cue_locate); audio sectors only come with READ CD (atapi.c
+ * refuses them for READ(10)/(12)): CD-DA.  CD_Step() advances the read a
+ * step at a time from the main loop (hdd.c hdd_poll: the dispatcher of the
+ * one IDE command in progress, ruling T11-R4), never a wait in the CPU for
+ * a DATA2048 run (an ISO, a CUE's MODE1/2048 track):
+ *   per data-in block (at most the host's limit and 8 KB, the FIFO; blocks
+ *   of 512 bytes for a limit below that, as before) the port's flags looked
+ *   at first (the Amiga may have left in the gap since the last look: a
+ *   reset, a new command: nothing more for this command), the phase
+ *   (cd_phase: length, interrupt reason 2, byte count, RDY), then the
+ *   block's sectors SD card -> Gayle's FIFO in to_gayle card runs
+ *   (hdd_op_go: one RX_TO_GAYLE per 512 bytes after its CRC; at most 16
+ *   sectors, inside one cluster: hdd_file_run; the file position by
+ *   hdd_seek_begin / hdd_seek_step, whose FAT reads are async too); once
+ *   the block is in, one flags look per pass until the host has read it
+ *   (XFER_DONE: "drain, then refill") or CD_TIMEOUT.
+ * The other runs (CD-DA, raw 2352, a data track's gap) are sent inside one
+ * step, synchronously as before (FileRead, cd_wait).
+ * Ends: the status in the step that saw the last block taken (as before:
+ * no gap for an abandon between the two); a card error (a run's, a FAT
+ * read's) or a chain that ends inside the file: the transfer dropped,
+ * MEDIUM ERROR 03/11/00 (+ ERROR_SDCARD for a card error), unless the
+ * Amiga left meanwhile (the flags looked at first: no status for a command
+ * it left); a Gayle error on a run (the Amiga abandoned the command: the
+ * bridge's cmd_since), a reset or packet mode gone: no status; the host
+ * past CD_TIMEOUT: 0B/00/00.  No IDE command on cs 0x10 while a Gayle op
+ * runs: every port access is made with the card op over (and
+ * sd_gayle_busy() 0). */
+enum { C_IDLE, C_LOCATE, C_SEEK, C_PHASE, C_RUNGO, C_RUN, C_WAIT };
+
+static struct {
+	unsigned char st;
+	unsigned char port;
+	unsigned char tfr[8];		/* the command's task file (cd_phase, cd_complete) */
+	unsigned limit;			/* the host's byte count limit */
+	unsigned per;			/* 512-byte sectors of a data-in block */
+	unsigned long lba, count;	/* the next CD sector of the read, CD sectors left */
+	unsigned long run;		/* CD sectors of the DATA2048 run in progress */
+	unsigned long block, left;	/* its next 512-byte sector of the file, sectors left */
+	unsigned bleft, n;		/* the data-in block's sectors not yet sent; the card op's */
+	unsigned long timeout;		/* the host's bound for the block (GetTimer) */
+	unsigned long lba0, count0;	/* the trace: the read */
+	unsigned short t0;
+	sd_op op;
+} cc;
+
+int CD_Busy(void)
+{
+	return cc.st != C_IDLE;
+}
+
+/* the read is over (r: CD_DONE / CD_FAILED / CD_GONE): the status (none
+   for CD_GONE), the trace line */
+static int cd_end(int r)
+{
+	unsigned char err = r == CD_FAILED ? cd_error() : 0;
+	unsigned st = r == CD_GONE ? 0 : IDE_STATUS_END | IDE_STATUS_IRQ | (err ? IDE_STATUS_ERR : 0);
+	if (r != CD_GONE)
+		cd_complete(cc.tfr, err);
+	ata_trace(0xA0, cc.lba0, (unsigned)cc.count0, r == CD_GONE ? "abandoned" : r == CD_FAILED ? "error" : "ok", st,
+	          (dbg_flags & DBG_ATA) ? (unsigned short)(TIMER - cc.t0) : 0);	/* the TIMER only for the trace */
+	cc.st = C_IDLE;
+	cd_in_command = 0;
+	return 0;
+}
+
+/* Has the Amiga left the command since the last look (cd_look's rules: a
+   reset, packet mode gone)?  Before what follows a gap: a data-in block's
+   phase, a status after a card error */
+static int cd_left(void)
+{
+	unsigned char flags = ReadIDEFlags(cc.port);
+	CD_Flags(cc.port, flags);
+	return (flags & IDEF_RST_SEEN) || !(flags & IDEF_PKT);
+}
+
+/* a card error (a run's, a FAT read's) or the chain's end inside the file */
+static int cd_card_failed(void)
+{
+	if (cd_left())
+		return cd_end(CD_GONE);
+	return cd_end(cd_read_error(cc.block));
+}
+
+static void cd_read_start(int port, const unsigned char *tfr, unsigned long lba, unsigned long count, unsigned int limit)
+{
+	cc.port = (unsigned char)port;
+	memcpy(cc.tfr, tfr, 8);
+	cc.limit = limit;
+	cc.per = limit >> 9;
+	if (cc.per > CD_FIFO_512)
+		cc.per = CD_FIFO_512;
+	if (!cc.per)
+		cc.per = 1;	/* a limit below 512 bytes: blocks of 512 anyway */
+	cc.lba = cc.lba0 = lba;
+	cc.count = cc.count0 = count;
+	if (dbg_flags & DBG_ATA)
+		cc.t0 = TIMER;
+	cc.st = C_LOCATE;
+}
+
+int CD_Step(void)
 {
 	struct cue_loc l;
+	unsigned long n, card;
+	unsigned k;
 	int r;
-	while (count) {
-		unsigned long n;
-		if (!cue_locate(&cd_disc, lba, &l))
-			return cd_read_error(lba);
-		n = l.run < count ? l.run : count;
+
+	ide_port = cc.port;	/* the HDD SPI commands' port (WriteXfer, WriteStatus, ...) */
+	switch (cc.st) {
+	case C_LOCATE:	/* the next run of the read */
+		if (sd_gayle_busy())
+			return 0;
+		if (cd_left())
+			return cd_end(CD_GONE);
+		if (!cue_locate(&cd_disc, cc.lba, &l))
+			return cd_end(cd_read_error(cc.lba));
+		n = l.run < cc.count ? l.run : cc.count;
 		if (cd_disc.track[l.track].type == CD_AUDIO)
-			r = cd_send_cdda(port, tfr, &l, n, limit);
+			r = cd_send_cdda(cc.port, cc.tfr, &l, n, cc.limit);
 		else if (l.silent)
-			r = cd_send_zero(port, tfr, n, limit);
+			r = cd_send_zero(cc.port, cc.tfr, n, cc.limit);
 		else if (!cd_data_open(l.file))
-			r = cd_read_error(lba);
-		else if (cd_disc.track[l.track].type == CD_DATA2048)
-			r = cd_send_sectors(port, tfr, l.offset >> 9, n, limit);
-		else
-			r = cd_send_raw(port, tfr, l.offset, n, limit);
+			r = cd_read_error(cc.lba);
+		else if (cd_disc.track[l.track].type == CD_DATA2048) {
+			cc.run = n;
+			cc.block = l.offset >> 9;
+			cc.left = n * 4;
+			cc.bleft = 0;
+			hdd_seek_begin(&cdrom.hdf, cc.block);
+			cc.st = C_SEEK;
+			return 1;
+		} else
+			r = cd_send_raw(cc.port, cc.tfr, l.offset, n, cc.limit);
 		if (r != CD_DONE)
-			return r;
-		lba += n;
-		count -= n;
+			return cd_end(r);
+		cc.lba += n;
+		cc.count -= n;
+		if (!cc.count)
+			return cd_end(CD_DONE);
+		return 1;
+
+	case C_SEEK:	/* the file position to cc.block */
+		r = hdd_seek_step(&cc.op);
+		if (!r)
+			return 0;
+		if (r < 0) {
+			if (r == -1)	/* a FAT read failed (-2: the chain ends inside the file) */
+				MMC_OpResult(&cc.op, "SD card read");
+			return cd_card_failed();
+		}
+		cc.st = cc.bleft ? C_RUNGO : C_PHASE;
+		return 1;
+
+	case C_PHASE:	/* the next data-in block */
+		if (sd_gayle_busy())
+			return 0;
+		if (cd_left())
+			return cd_end(CD_GONE);
+		cc.bleft = cc.left < cc.per ? (unsigned)cc.left : cc.per;
+		cd_phase(cc.tfr, cc.bleft << 9, 0x02, IDE_STATUS_RDY);
+		cc.st = C_RUNGO;
+		return 1;
+
+	case C_RUNGO:	/* a card run into the FIFO: the block's rest, inside the cluster */
+		k = cc.bleft;
+		card = hdd_file_run(&cdrom.hdf, &k);
+		if (hdd_op_go(&cc.op, SD_READ, card, k, 0, cc.port))	/* buf 0: into Gayle's FIFO of the port */
+			return 0;
+		cc.n = k;
+		cc.st = C_RUN;
+		return 0;
+
+	case C_RUN:
+		if (cc.op.state)
+			return 0;
+		if (cc.op.err == SD_E_GAYLE)
+			return cd_end(CD_GONE);	/* the Amiga abandoned the command */
+		if (cc.op.err) {
+			MMC_OpResult(&cc.op, "SD card read");
+			return cd_card_failed();
+		}
+		cc.block += cc.n;
+		cc.left -= cc.n;
+		cc.bleft -= cc.n;
+		if (cc.bleft) {
+			hdd_seek_begin(&cdrom.hdf, cc.block);
+			cc.st = C_SEEK;
+			return 1;
+		}
+		cc.timeout = GetTimer(CD_TIMEOUT);
+		cc.st = C_WAIT;
+		return 1;
+
+	case C_WAIT:	/* the host reads the block: one look a pass */
+		if (sd_gayle_busy())
+			return 0;
+		r = cd_look(cc.port, cc.timeout);
+		if (r == CD_WAITING)
+			return 0;
+		if (r != CD_DONE)
+			return cd_end(r);
+		if (cc.left) {
+			hdd_seek_begin(&cdrom.hdf, cc.block);
+			cc.st = C_SEEK;
+			return 1;
+		}
+		cc.lba += cc.run;
+		cc.count -= cc.run;
+		if (!cc.count)
+			return cd_end(CD_DONE);
+		cc.st = C_LOCATE;
+		return 1;
 	}
-	return CD_DONE;
+	return 0;
+}
+
+void CD_Cancel(void)
+{
+	if (cc.st == C_IDLE)
+		return;
+	if (cc.op.state)
+		sd_drain();	/* the card op over (a read needs no close) */
+	ide_port = cc.port;
+	if (cd_left()) {
+		cd_end(CD_GONE);
+		return;
+	}
+	WriteXfer(0, 1);	/* drop the transfer: no DRQ, no stall */
+	atapi_set_sense(&cdrom.unit, 0x0B, 0x00, 0x00);
+	cd_end(CD_FAILED);
 }
 
 /* Data out (MODE SELECT), in blocks of at most the limit: what fits goes to
@@ -766,11 +963,9 @@ static void cd_packet(int port, unsigned char *tfr)
 		done = cd_send_buffer(port, tfr, atapi_buf, r.length, limit);
 		break;
 	case ATAPI_READ:
-		done = cd_read(port, tfr, r.lba, r.count, limit);
-		break;
 	case ATAPI_READ_CD:
-		done = cd_read(port, tfr, r.lba, r.count, limit);
-		break;
+		cd_read_start(port, tfr, r.lba, r.count, limit);
+		return;	/* goes on in CD_Step: the status at its end */
 	case ATAPI_RECEIVE:
 		done = cd_receive(port, tfr, r.length, limit);
 		break;
@@ -834,5 +1029,6 @@ void CD_HandleCommand(int port, unsigned char *tfr)
 		cd_abort(tfr);
 		break;
 	}
-	cd_in_command = 0;
+	if (cc.st == C_IDLE)
+		cd_in_command = 0;	/* else the READ's states clear it at their end */
 }
