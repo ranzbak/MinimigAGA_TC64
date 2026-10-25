@@ -89,6 +89,10 @@ void hdd_poll(void);
    machine's or the CD drive's (cdrom.c CD_Busy): the pickup waits (one IDE
    command at a time, findings/sdcard-engine ruling T11-R4) */
 int hdd_busy(void);
+/* 1 while the Amiga may be reading inside a data block that is still being
+   filled (a READ MULTIPLE group or a CD data-in block part-delivered):
+   the main loop then runs the disk steps only (main.c PollDisks) */
+int hdd_in_block(void);
 /* end an ATA command in progress: its card op finished (a run closed),
    END | IRQ | ERR (ABRT) unless the Amiga left it; for the callers that
    change what the command works on (OpenHardfile, ColdBoot) */

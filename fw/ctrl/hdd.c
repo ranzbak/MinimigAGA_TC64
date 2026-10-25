@@ -565,8 +565,10 @@ static struct {
 	unsigned char parked;		/* WRITE: park_t runs */
 	unsigned char abandoned;	/* the Amiga left the command during a run */
 	unsigned char rdy;		/* READ: the next group's RDY is written already */
+	unsigned char ingrp;		/* READ: the group's drain seen, its sectors going in */
 	long lba;			/* the Amiga LBA of the next sector */
 	unsigned left, grp, n;		/* sectors left in the command, in the group; of the run */
+	unsigned gsize;			/* READ: sectors of the group */
 	long lba0;			/* the trace: the first LBA, the count */
 	unsigned count;
 	unsigned polls;			/* status polls of the current Amiga wait */
@@ -586,6 +588,26 @@ static unsigned long hdd_fat_sb = ~0ul;
 int hdd_busy(void)
 {
 	return hc.st != H_IDLE || CD_Busy();
+}
+
+/* A READ group of more than one sector between its drain and its last
+   sector in Gayle's FIFO (READ MULTIPLE: Gayle's DRQ comes with the first
+   sector, fifo_full is "a sector in"), or the CD's data-in block
+   (CD_InBlock): the Amiga may be reading it, held by nrdy on the empty
+   FIFO, until the rest is in (findings/sdcard-engine Task 11b fix round
+   1).  From the drain on: an sd_sync user in between would finish the
+   group's run itself and leave the group part-delivered behind its own
+   work.  A one-sector group: DRQ only with all of it, no stall */
+int hdd_in_block(void)
+{
+	if (hc.st != H_IDLE && !hc.write && hc.ingrp && hc.gsize > 1) {
+		unsigned d = 0;
+		if (hc.st == H_RRUN)	/* done_blocks is live for reads */
+			d = hc.op.done_blocks > 0 ? (unsigned)hc.op.done_blocks : 0;
+		if (d < hc.grp)
+			return 1;
+	}
+	return CD_InBlock();
 }
 
 void ata_trace(unsigned cmd, unsigned long lba, unsigned n, const char *what, unsigned st, unsigned t)
@@ -801,6 +823,8 @@ static int hdd_step(void)
 			return 0;
 		}
 		hc.grp = hc.multiple && spb < hc.left ? spb : (hc.multiple ? hc.left : 1);
+		hc.gsize = hc.grp;
+		hc.ingrp = 0;
 		hc.polls = 0;
 		if (hc.write) {
 			hc.st = H_WNEXT;
@@ -826,11 +850,13 @@ static int hdd_step(void)
 		if (!(GetFPGAStatus() & CMD_IDECMD)) // wait for empty sector buffer
 			return 0;
 		diskstat_amiga_polls(hc.polls);
+		hc.ingrp = 1;
 		hc.st = H_RNEXT;
 		return 1;
 
 	case H_RNEXT:
 		if (!hc.grp) {
+			hc.ingrp = 0;
 			if (!hc.left) {
 				hdd_done(0);	/* Gayle ends the command when the Amiga read the last sector */
 				return 0;

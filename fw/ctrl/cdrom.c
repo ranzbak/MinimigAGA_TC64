@@ -682,7 +682,7 @@ static struct {
 	unsigned long lba, count;	/* the next CD sector of the read, CD sectors left */
 	unsigned long run;		/* CD sectors of the DATA2048 run in progress */
 	unsigned long block, left;	/* its next 512-byte sector of the file, sectors left */
-	unsigned bleft, n;		/* the data-in block's sectors not yet sent; the card op's */
+	unsigned bsize, bleft, n;	/* the data-in block's sectors; those not yet sent; the card op's */
 	unsigned long timeout;		/* the host's bound for the block (GetTimer) */
 	unsigned long lba0, count0;	/* the trace: the read */
 	unsigned short t0;
@@ -692,6 +692,26 @@ static struct {
 int CD_Busy(void)
 {
 	return cc.st != C_IDLE;
+}
+
+/* A data-in block of more than one sector between its phase and its last
+   sector in Gayle's FIFO.  In packet mode the DRQ comes once 256 words are
+   in, so the Amiga may be reading the block, held by nrdy on the empty
+   FIFO, until the rest is in (findings/sdcard-engine Task 11b fix round
+   1).  From the phase on, not from the first sector in: an sd_sync user
+   running in between would finish the block's run itself and leave the
+   block part-delivered behind its own work.  A one-sector block: DRQ only
+   once all of it is in, no stall */
+int CD_InBlock(void)
+{
+	unsigned d;
+	if ((cc.st != C_SEEK && cc.st != C_RUNGO && cc.st != C_RUN) || !cc.bleft || cc.bsize < 2)
+		return 0;
+	if (cc.st == C_RUN) {	/* done_blocks is live for reads: blocks already in the FIFO */
+		d = cc.op.done_blocks > 0 ? (unsigned)cc.op.done_blocks : 0;
+		return d < cc.bleft;
+	}
+	return 1;
 }
 
 /* the read is over (r: CD_DONE / CD_FAILED / CD_GONE): the status (none
@@ -802,7 +822,7 @@ int CD_Step(void)
 			return 0;
 		if (cd_left())
 			return cd_end(CD_GONE);
-		cc.bleft = cc.left < cc.per ? (unsigned)cc.left : cc.per;
+		cc.bleft = cc.bsize = cc.left < cc.per ? (unsigned)cc.left : cc.per;
 		cd_phase(cc.tfr, cc.bleft << 9, 0x02, IDE_STATUS_RDY);
 		cc.st = C_RUNGO;
 		return 1;
@@ -866,6 +886,12 @@ void CD_Cancel(void)
 		return;
 	if (cc.op.state)
 		sd_drain();	/* the card op over (a read needs no close) */
+	/* its result is not looked at: a run the Amiga abandoned (a Gayle
+	   error) is told apart below by the flags, since every cause of a
+	   Gayle abort -- a host command write, a Gayle reset -- also clears
+	   packet mode, and only the firmware's own CMD_IDE_XFER_WR sets it
+	   again (rtl/minimig/gayle_port.v, pkt_mode_r); a card error ends here
+	   as the cancel's 0B/00/00 */
 	ide_port = cc.port;
 	if (cd_left()) {
 		cd_end(CD_GONE);

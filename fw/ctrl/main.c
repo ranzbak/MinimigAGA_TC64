@@ -155,8 +155,17 @@ void HandleFpga(void)
 // card step ran (the op's step is running in the peripheral), and the bound
 // keeps the pass short, so keys, OSD, CD refill and floppy run every pass
 // (findings/sdcard-engine Task 11a fix round 1).
+// Returns 1 while the Amiga may be reading inside a data block that is still
+// being filled (hdd_in_block: a READ MULTIPLE group or a CD data-in block
+// part-delivered; Gayle holds the 68k by nrdy on the empty FIFO): then the
+// refill and HandleFpga are skipped too, and the caller runs nothing but
+// PollDisks until the block is complete, so the stall is card time, as
+// with the synchronous path, not a floppy track, a menu card read or a
+// 32 KB CD audio refill (findings/sdcard-engine Task 11b fix round 1).
+// Bounded: only card steps finish the block (their own bounds, then an
+// error ends the command); the ring's other half plays 186 ms meanwhile.
 #define DISK_STEPS 8
-void PollDisks(int fpga)
+int PollDisks(int fpga)
 {
 	int k;
 	for (k = 0; k < DISK_STEPS; k++)
@@ -167,12 +176,15 @@ void PollDisks(int fpga)
 		if (sd_steps == n)
 			break;
 	}
+	if (hdd_in_block())
+		return 1;
 	if (hdd_busy())
 		CD_AudioRefill();
 	else
 		CD_AudioPoll();	// CD audio refill (findings/cdrom/plan.md 13.1)
 	if (fpga && !sd_gayle_busy())
 		HandleFpga();
+	return 0;
 }
 
 
@@ -391,7 +403,8 @@ int main(void)
 		//if(c64keyboard_checkreset())
 		//	OsdDoReset(SPI_RST_USR | SPI_RST_CPU,0);
 
-		PollDisks(1);	// the card, the HDD data path, the CD refill, HandleFpga
+		while (PollDisks(1))	// the card, the HDD / CD data paths, the CD refill, HandleFpga
+			;	// nothing else while the Amiga may wait inside a block (PollDisks)
 
 		if(rtc)
 			HandleRTC();
@@ -439,7 +452,8 @@ int main(void)
 			{
 				// the disks and the music go on behind an error page
 				// (the FPGA's requests only when the error is not fatal)
-				PollDisks(!ErrorFatal);
+				while (PollDisks(!ErrorFatal))
+					;	// as above: nothing else inside a block
 		        HandleUI();
 				stackhw_poll();
             }

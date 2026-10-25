@@ -728,7 +728,7 @@ static void cd_pass(void)
 	for (k = 0; k < 8 && CD_Busy(); k++)
 		if (!CD_Step())
 			break;
-	if (CD_Busy())
+	if (CD_Busy() && !CD_InBlock())	/* PollDisks: the disks only inside a block */
 		CD_AudioRefill();
 	passes++;
 }

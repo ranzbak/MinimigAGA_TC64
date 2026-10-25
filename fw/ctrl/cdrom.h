@@ -88,6 +88,12 @@ void CD_HandleCommand(int port, unsigned char *tfr);
    floppy) are gated the same way (main.c PollDisks). */
 int CD_Busy(void);
 int CD_Step(void);
+/* 1 while a data-in block is part-delivered (some of its sectors in
+   Gayle's FIFO, not all): the Amiga may be reading it, held by nrdy, so
+   the main loop does nothing but the disk steps until it is complete
+   (hdd_in_block, main.c PollDisks; findings/sdcard-engine Task 11b fix
+   round 1) */
+int CD_InBlock(void);
 /* End a READ in progress for the callers that change the drive (OSD eject
    and insert, CD_Open, ColdBoot): its card op finished, the transfer
    dropped, CHECK CONDITION 0B/00/00 (ABORTED COMMAND), unless the Amiga

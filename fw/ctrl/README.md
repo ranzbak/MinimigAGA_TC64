@@ -1206,7 +1206,13 @@ and the next block comes only after a flags look saw the host take this
 one (XFER_DONE). The packet phase, the CPU-buffer replies, MODE SELECT and
 the CD-DA / raw / gap runs stay synchronous (`cd_wait`). An OSD eject or
 insert during a READ ends it first (`CD_Cancel`: CHECK 0B/00/00); a locked
-drive refuses the eject as before. Decisions: design.md section 11 (Task
+drive refuses the eject as before. While the Amiga may be held inside a data
+block that is still being filled (Gayle's DRQ comes before all of it is in:
+256 words in packet mode, one sector for READ MULTIPLE; nrdy holds the 68k
+on the empty FIFO), `PollDisks` returns 1 and both main loops run nothing
+but `PollDisks` until the block is complete: no refill, floppy, OSD or RTC
+work in that time (`hdd_in_block`, fix round 1); one-sector blocks are not
+gated. Decisions: design.md section 11 (Task
 11b rows); tests: `test/cdpath_test.c` (the real stack) and
 `test/cdrom_test.c`.
 

@@ -350,6 +350,13 @@ unit cd_cancel cdpath_test src cdrom.c 's/^\tCD_Cancel();\t\/\* a READ in progre
 unit cd_cancel_f cdrom_test src cdrom.c 's/^\tCD_Cancel();\t\/\* a READ in progress ends before its file goes \*\/$/\t;/' "OSD eject during a READ"
 # the CD READ's trace line
 unit cd_trace_end cdpath_test src cdrom.c '/^static int cd_end(/,/^}/ s/ata_trace(0xA0,/(void)(0xA0,/' "FAIL cd_trace: DBG_ATA: the READ(10)'s line"
+# fix round 1: the main loop's other work inside a part-delivered block (the Amiga held by nrdy)
+unit pd_in_block cdpath_test src main.c 's/^\tif (hdd_in_block())$/\tif (0)/' "inside a part-delivered data-in block"
+unit pd_in_block_hdd hdd_test src main.c 's/^\tif (hdd_in_block())$/\tif (0)/' "inside a part-delivered READ group"
+unit hdd_ingrp hdd_test src hdd.c 's/if (hc.st != H_IDLE \&\& !hc.write \&\& hc.ingrp \&\& hc.gsize > 1) {/if (0) {/' "inside a part-delivered READ group"
+unit cd_inblock cdpath_test src cdrom.c 's/if ((cc.st != C_SEEK \&\& cc.st != C_RUNGO \&\& cc.st != C_RUN) || !cc.bleft || cc.bsize < 2)/if (1)/' "inside a part-delivered data-in block"
+# the gate from the first sector in, not from the phase: an sd_sync user finishes the run itself
+unit cd_inblock_late cdpath_test src cdrom.c 's/return d < cc.bleft;/return d \&\& d < cc.bleft;/' "inside a part-delivered data-in block"
 
 # ---- the floppy emulation (fdd_test) -----------------------------------------
 # the brief's mutant: SendSector one byte short (the odd data bits loop) -> mfm.py's stream

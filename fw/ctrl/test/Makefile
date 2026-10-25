@@ -204,7 +204,7 @@ $(B)/handlefpga.inc: $(SRC)/main.c
 	@mkdir -p $(@D)
 	sed -n '/^void HandleFpga(void)/,/^}/p; /^#define DISK_STEPS/,/^}/p' $(SRC)/main.c > $@
 	grep -q '^void HandleFpga' $@
-	grep -q '^void PollDisks' $@
+	grep -q '^int PollDisks' $@
 $(B)/hdd_test $(B)/hdd_test_32: $(B)/handlefpga.inc
 $(B)/hdd_test: $(TD)/hdd_test.c $(HDD_SRCS) $(HDRS) $(B)/hdd/rdb.ok $(B)/hdd/identcases.h
 	$(HOSTCC) $(CFLAGS) -I$(B)/hdd -o $@ $(TD)/hdd_test.c $(HDD_SRCS)

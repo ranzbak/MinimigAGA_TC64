@@ -112,15 +112,27 @@ unsigned char GetFPGAStatus(void)
    side a stub that sends one floppy frame (UpdateDriveStatus) and, with
    fdd_card, reads the card as the floppy does (MMC_Read: an sd_sync user) */
 static int fdd_calls, fdd_card;
+/* floppy work while the Amiga may be held inside a data-in block (Task 11b
+   fix round 1; amiga_in_block, the model's view), the passes PollDisks ran
+   the disks only */
+static int fdd_in_block;
+static long in_block_passes;
+static int amiga_in_block(void);
 static unsigned fdd_reads;
 void HandleFDD(unsigned char c1, unsigned char c2, unsigned char c3, unsigned char c4)
 {
 	static unsigned char b[512];
 	(void)c1; (void)c2; (void)c3; (void)c4;
 	fdd_calls++;
+	if (amiga_in_block())
+		fdd_in_block++;
 	if (fdd_card) {
 		if (!MMC_Read(40 + fdd_reads % 8, b)) die("the floppy's card read failed");
 		fdd_reads++;
+		/* its sd_sync finished whatever op ran: that must not have left a
+		   block part-delivered behind the rest of the floppy's work */
+		if (amiga_in_block())
+			fdd_in_block++;
 	}
 }
 void UpdateDriveStatus(void)
@@ -259,6 +271,17 @@ static int drq(int p)
 	return q->pio_in && avail >= 512;
 }
 static int bsy(int p) { return P[p].busy && !drq(p); }
+
+/* the Amiga may be reading inside a port-2 data-in block that is still
+   being filled, held by nrdy on the empty FIFO: DRQ is up (256 words in)
+   and the block is not all in (port 1 serves one-sector groups here) */
+static int amiga_in_block(void)
+{
+	struct port *q = &P[1];
+	unsigned want = q->xfer_words * 2;
+	sync_bridge(1);
+	return q->busy && q->pkt && q->pio_in && !q->xfer_done && want > 512 && q->flen >= 512 && q->flen < want;
+}
 
 static unsigned char flags_of(int p)
 {
@@ -625,7 +648,8 @@ static int fw_busy(void) { return hdd_busy() || sd_poll(); }
 
 static void loop_pass(void)
 {
-	PollDisks(1);
+	if (PollDisks(1))
+		in_block_passes++;
 	mock_sdc_step();
 	look_gerr();
 	host1_act();	/* the Amiga reads a block when it is there, whether the firmware polls or not */
@@ -750,6 +774,8 @@ static void check_cd(const char *what)
 	check(w, h.phase_errors, 0);
 	snprintf(w, sizeof w, "%s: no FPGA frame (IDE command) while a Gayle op runs", what);
 	check(w, (long)mock_gayle_cs_violations(), 0);
+	snprintf(w, sizeof w, "%s: no HandleFpga (floppy) work inside a part-delivered data-in block", what);
+	check(w, fdd_in_block, 0);
 	snprintf(w, sizeof w, "%s: the firmware done (no command, no card op left)", what);
 	check(w, fw_busy(), 0);
 }
@@ -1146,6 +1172,29 @@ static void cd_osd_eject(void)
 	read_case("cd_osd_eject: after it, READ(10) 0+4", 0, 4, 0xFFFE);
 }
 
+/* fix round 1: in packet mode the DRQ comes once 256 words are in, so the
+   Amiga may be reading a data-in block, held by nrdy, while its later
+   sectors come in (8 KB blocks are two runs here: 4 KB clusters).  While a
+   block is part-delivered PollDisks runs the disks only: the floppy (with
+   a card read of its own pending on every pass) only between blocks */
+static void cd_block_gate(void)
+{
+	static const uint8_t tur[12] = { 0 };
+	long p0;
+	int f0;
+	packet(tur, 0xFFFE);	/* the UNIT ATTENTION of cd_trace's reset */
+	p0 = in_block_passes;
+	f0 = fdd_calls;
+	fdd_card = 1;
+	read_case("cd_block_gate: READ(10) 0+40, the floppy reading the card on every pass", 0, 40, 0xFFFE);
+	fdd_card = 0;
+	check("cd_block_gate: passes of disk steps only inside a block", in_block_passes - p0 > 0, 1);
+	check("cd_block_gate: HandleFpga (the floppy) ran between the blocks", fdd_calls - f0 >= 10, 1);
+	p0 = in_block_passes;
+	read_case("cd_block_gate: READ(10) 0+4, limit 512 (one-sector blocks: no gate)", 0, 4, 0x0200);
+	check("cd_block_gate: no gate for one-sector blocks", in_block_passes - p0, 0);
+}
+
 /* dbg_flags DBG_ATA (ruling T11-R2): one line per CD command at its end
    too, quiet without the flag */
 static void cd_trace(void)
@@ -1208,6 +1257,7 @@ int main(int argc, char **argv)
 	cd_error_after_reset();
 	cd_osd_eject();
 	cd_trace();
+	cd_block_gate();
 	free(iso_card);
 	free(glog_buf.p);
 	say("%s: %d checks, %d failed\n", fails ? "FAIL" : "PASS", cases, fails);

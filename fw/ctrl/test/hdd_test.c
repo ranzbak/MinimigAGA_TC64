@@ -150,6 +150,7 @@ void CD_HandleCommand(int port, unsigned char *tfr) { fprintf(stdout, "FAIL CD_H
    never in progress here (no CD drive); cdpath_test runs the real ones */
 int CD_Busy(void) { return 0; }
 int CD_Step(void) { fprintf(stdout, "FAIL CD_Step called\n"); exit(1); }
+int CD_InBlock(void) { return 0; }
 void drivesounds_queueevent(enum DriveSound_Type type) { if (type == DRIVESOUND_HDDSTEP) hdd_steps++; }
 
 /* fpga.c's, as it is (fpga.c itself pulls in the boot and OSD code) */
@@ -174,10 +175,18 @@ unsigned char GetFPGAStatus(void)
    (HandleHDD); the floppy side is a stub that sends one floppy command
    frame, as UpdateDriveStatus does (no HDD command word) */
 static int fdd_calls;
+/* floppy work (HandleFpga) while a READ MULTIPLE group was part-delivered
+   (hdd_in_block: the Amiga may wait inside it on nrdy; findings/sdcard-engine
+   Task 11b fix round 1), and the passes PollDisks ran the disks only */
+static int fdd_in_block;
+static long in_block_passes;
+static int amiga_in_group(void);
 void HandleFDD(unsigned char c1, unsigned char c2, unsigned char c3, unsigned char c4)
 {
 	(void)c1; (void)c2; (void)c3; (void)c4;
 	fdd_calls++;
+	if (amiga_in_group())
+		fdd_in_block++;
 }
 void UpdateDriveStatus(void)
 {
@@ -359,6 +368,20 @@ static unsigned fifo_sectors(void)
 	if (g.rx % 512) gayle_err("a partial sector in the FIFO at a status poll");
 	if (gay_bytes(0) % 512) gayle_err("a partial card block in the FIFO at a status poll");
 	return (unsigned)(g.rx / 512) + (unsigned)(gay_bytes(0) / 512) - g.drained;
+}
+
+/* the Amiga may be reading inside a READ group that is still being filled,
+   held by nrdy on the empty FIFO: Gayle's DRQ is up (a sector of the group
+   in) and the group is not all in (Task 11b fix round 1) */
+static int amiga_in_group(void)
+{
+	unsigned want, n;
+	if (!g.busy || g.pio != 1)
+		return 0;
+	want = g.count - g.drained;
+	if (want > g.chunk) want = g.chunk;
+	n = (unsigned)(g.rx / 512) + (unsigned)(gay_bytes(0) / 512) - g.drained;
+	return want > 1 && n > 0 && n < want;
 }
 
 /* sectors the firmware took out of the FIFO (the bridge or CMD_IDE_DATA_RD) */
@@ -748,7 +771,8 @@ static long passes;
 static void loop_pass(void)
 {
 	struct mock_sdc_peek p;
-	PollDisks(1);
+	if (PollDisks(1))
+		in_block_passes++;
 	mock_sdc_step();
 	look_gerr();
 	/* the Amiga writes on DRQ whether the firmware polls or not: a
@@ -868,6 +892,8 @@ static void check_gayle(const char *what)
 	check(w, full_polls, 0);
 	snprintf(w, sizeof w, "%s: no FPGA frame (IDE command) while a Gayle op runs", what);
 	check(w, (long)mock_gayle_cs_violations(), 0);
+	snprintf(w, sizeof w, "%s: no HandleFpga (floppy) work inside a part-delivered READ group", what);
+	check(w, fdd_in_block, 0);
 	snprintf(w, sizeof w, "%s: no Gayle op started before its data was there (T11-R1)", what);
 	check(w, (long)mock_gayle_stalls(), 0);
 	snprintf(w, sizeof w, "%s: the firmware done (no HDD state machine, no card op left)", what);
@@ -1917,6 +1943,25 @@ static void dbg_trace(void)
 	free(d);
 }
 
+/* fix round 1 of Task 11b: in READ MULTIPLE Gayle's DRQ comes with a group's
+   first sector (fifo_full: "a sector in"), so the Amiga may be reading the
+   group, held by nrdy, while its later sectors come in: PollDisks runs the
+   disks only then (no refill, no HandleFpga) until the group is complete.
+   A group of 16 over two clusters (two runs): the gate engaged, the floppy
+   ran between the groups, never inside one */
+static void rd_group_gate(void)
+{
+	long p0 = in_block_passes;
+	int f0 = fdd_calls;
+	set_multiple(1, 16);
+	read_case("rd_group_gate: WORK.HDF READ MULTIPLE 2004+48 (groups over cluster ends)", 1, 1, 2004, 48);
+	check("rd_group_gate: passes of disk steps only inside a group", in_block_passes - p0 > 0, 1);
+	check("rd_group_gate: HandleFpga (the floppy) ran between the groups", fdd_calls - f0 > 0, 1);
+	p0 = in_block_passes;
+	read_case("rd_group_gate: READ SECTORS 2004+4 (groups of one sector: no gate)", 1, 0, 2004, 4);
+	check("rd_group_gate: no gate for one-sector groups", in_block_passes - p0, 0);
+}
+
 /* the Amiga's write data: block j = 'W', j, then a pattern */
 static uint8_t *wpattern(int n, int seed)
 {
@@ -2037,6 +2082,7 @@ int main(int argc, char **argv)
 	dbg_trace();
 	rd_reset_to_write();
 	disk_passes();
+	rd_group_gate();
 
 	free(d5); free(d256); free(d4); free(d3);
 	for (int k = 0; k < 3; k++) { free(files[k].data); free(files[k].card_lba); }
