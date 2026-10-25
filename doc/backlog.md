@@ -356,7 +356,8 @@ order suggested: 8, then 1 and 4, then 5 and 6.
 | MOVEM one register per clock | ~20 clocks per run | not planned |
 | Timing margin: a Pblock for the CPU island | release has clk_38 +0.44 ns, earlier builds +0.05 | experiment build |
 | Higher CPU clock (clk_114 / 2 = 57 MHz) or dual issue | the two large levers; weeks of work | measure first |
-| HD/CD throughput (SD -> SPI -> Gayle FIFO -> 040 PIO) | board ~1.1 MB/s on the 832 and the RISC-V OSD alike; reads already bypass the OSD CPU (direct mode), so FIFO/DMA in the host would not help reads. SPI ceiling ~1.4 MB/s from cfide (spi_wait per half-bit at ~11 MHz SCK, derived, not measured); 040 read rate of $DA0000 unmeasured. Levers: drop spi_wait when spimux=0 (slave CDC limits), CMD25 + direct-mode writes, SD 4-bit bus (pinout to check) | measure the 040 $DA0000 rate first; separate from the OSD RISC-V migration (Paul, 2026-10-20) |
+| SD read-ahead: start the next card read during the Amiga's drain (Paul, 2026-10-25) | board with the SD peripheral (sdio, findings/sdcard-engine): xsysinfo 1.1 MB/s HDF, 1.2 MB/s straight from the card, unchanged. SPI ceiling at SCK 18.9 MHz ~2.3 MB/s; the card and the Amiga take turns per READ MULTIPLE group (card ~220 us/sector, then 040 PIO drain ~200 us/sector, inferred). Overlap -> ~2 MB/s. Gayle order stays "drain, then refill": the next group waits in our buffer, not on the card. Needs: RX big enough for a group (8 KB, ~4 RAMB36; RX is 1 KB today) and the HDD state machine (fw/ctrl/hdd.c, Task 11) starting the next CMD18 while the Amiga drains | after the SD path is proven stable on the board |
+| HD/CD throughput (SD -> SPI -> Gayle FIFO -> 040 PIO) | superseded by the SD peripheral (findings/sdcard-engine, 2026-10-25): CMD25 writes, CRC on, no CPU copy or busy spin; reads unchanged at ~1.1 MB/s, see the read-ahead row above. SD 4-bit bus set aside (design 9.2) | done for writes / CPU load |
 
 ## Verification
 
