@@ -42,6 +42,9 @@
 //    a chip slot -- the blitter, disk DMA, the processor's own over the  //
 //    chip bus).  A 4 KB-page filter keeps writes to chip pages no fetch  //
 //    has cached away from the core (bitplanes, sound buffers, blits).    //
+//    Reset empties the instruction cache (the core's RST_ICINV): the      //
+//    host loads ROMs and memory while the processor is held in reset,    //
+//    unsnooped, and the 68040 itself keeps its lines (MC68040UM 4.1).    //
 //    findings/aga-perf/fix.md.                                            //
 //  * An interrupt acknowledge (TT = 3) is answered at once with AVEC: the  //
 //    Amiga autovectors every level.  A breakpoint acknowledge gets TA,     //
@@ -140,7 +143,11 @@ always_ff @(posedge clk) ipl_r <= ipl_n;
 ap68040 #(
 	.FPU_REVISION(FPU_REVISION), .FPU_PIPE(FPU_PIPE), .LOOP_PRED(LOOP_PRED),
 	.EARLY_RES(EARLY_RES), .DC1_ATC(DC1_ATC), .SKID(SKID), .DIV_STEPS(DIV_STEPS),
-	.DUAL(DUAL), .BTIC(BTIC), .S1_CLASSES(S1_CLASSES), .S1_LDMASK(S1_LDMASK), .S1_LDTK(S1_LDTK)
+	.DUAL(DUAL), .BTIC(BTIC), .S1_CLASSES(S1_CLASSES), .S1_LDMASK(S1_LDMASK), .S1_LDTK(S1_LDTK),
+	// (ICHIP: the ROM and chip RAM change while the processor is held in
+	// reset -- a Kickstart or an image loaded by the OSD -- and nothing
+	// snoops that: reset empties the instruction cache)
+	.RST_ICINV(ICHIP)
 ) core (
 	.clk(clk), .bclk_en(1'b1), .rsti_n(nreset),
 	.a_o(a_o), .a_oe(),
