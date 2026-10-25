@@ -155,6 +155,7 @@ static unsigned long addr(unsigned lba)
 }
 
 int sd_card_type(void) { return sd_type; }
+int sd_card_present(void) { return (sdc_status() & SDC_ST_CARD) != 0; }
 unsigned sd_sck_div(void) { return sd_sck_divs[sd_sck_step]; }
 
 /* ---- error lines ---- */
@@ -213,6 +214,10 @@ static void finish(int err)
 {
 	sd_op *op = cur;
 
+	/* nothing of the op left part-way (sdproto.h): no Gayle transfer cut
+	   off, no block taken from Gayle that is not on the card */
+	op->intact = s.st != ST_RD_GAYLE && s.st != ST_WR_GAYLE && s.st != ST_WR_GSTAGE &&
+	             (!op->from_gayle || s.gtaken == s.done);
 	sdc_start(SDC_OP_TX_FLUSH, 0);
 	sdc_start(SDC_OP_RX_FLUSH, 0);
 	sdc_select(0);
@@ -236,6 +241,29 @@ static void finish(int err)
 		       s.done, op->count);
 }
 
+/* n bytes into TX, or the op ends SD_E_INTERNAL (s.bad: after_step) when
+   they do not fit.  TXLVL counts the kept block and the commands sent
+   behind it (a retry chain while a block is kept); the peripheral drops a
+   push into a full TX, and the TX-sourced XFER that follows would wait for
+   bytes that never come, with no TIMEOUT: the HDD / CD state machines wait
+   on the op for ever (final review M1).  Practically unreachable (a retry
+   pile-up of > 500 bytes behind a kept block), but bounded now: the card
+   is initialised again before the next op (finish) */
+static void tx_push(const unsigned char *p, unsigned n)
+{
+	unsigned lvl;
+
+	if (s.bad)
+		return;
+	lvl = SDC_R(SDC_TXLVL);
+	if (lvl + n > SDC_FIFO) {
+		printf("SD: TX full (%u + %u bytes), lba %lu\n", lvl, n, err_lba());
+		s.bad = 1;
+		return;
+	}
+	sdc_push(p, n);
+}
+
 /* send s.f[0..flen), then state `next`; stale TX bytes go out first, CS off */
 static void tx_send(unsigned char next)
 {
@@ -245,7 +273,7 @@ static void tx_send(unsigned char next)
 		xfer(SDC_X_TX, s.unsent, ST_DRAIN);
 		return;
 	}
-	sdc_push(s.f, s.flen);
+	tx_push(s.f, s.flen);
 	s.unsent += s.flen;
 	xfer(SDC_X_TX, s.flen, next);
 }
@@ -364,8 +392,8 @@ static void write_cmd(void)
 		   only when the block is in TX (521 of 1024 bytes) */
 		static const unsigned char h[2] = { 0xFF, 0xFC };
 		cmd_frame(25, addr(cur->lba + s.done), A_WRITE);
-		sdc_push(s.f, s.flen);
-		sdc_push(h, 2);
+		tx_push(s.f, s.flen);
+		tx_push(h, 2);
 		s.unsent += s.flen + 2;
 		s.staged = 1;
 		s.st = ST_WR_GSTAGE;
@@ -393,14 +421,14 @@ static void send_block(void)
 		}
 		h[0] = 0xFF;
 		h[1] = s.multi ? 0xFC : 0xFE;
-		sdc_push(h, 2);
+		tx_push(h, 2);
 		if (cur->from_gayle) {
 			s.unsent += 2;
 			s.st = ST_WR_GAYLE;
 			start(SDC_OP_GAYLE_TO_TX | (cur->port ? SDC_G_PORT1 : 0), 512);
 			return;
 		}
-		sdc_push(cur->buf + 512 * s.done, 512);
+		tx_push(cur->buf + 512 * s.done, 512);
 		s.unsent += 514;
 		s.kept = 1;
 	} else {
@@ -476,6 +504,16 @@ static void block_read(void)
 		token_wait();
 }
 
+/* The CMD12 that ends a CMD18 whose every block was delivered (CRC
+   checked): what it answers cannot touch that data.  The first byte with
+   bit 7 clear after the stuff byte counts as its R1, and a stale data byte
+   below 0x80 there turned a good read into SD_E_R1 / SD_E_RESET, the Amiga
+   an UNC for data it had (final review M6) */
+static int stop_done(void)
+{
+	return s.after == A_STOP && !s.fail && cur->kind == SD_READ && s.done == cur->count;
+}
+
 /* a command's R1 (and its response bytes, busy) is in */
 static void after_cmd(void)
 {
@@ -489,8 +527,9 @@ static void after_cmd(void)
 		}
 		token_wait();
 		return;
-	case A_STOP:		/* an R1 error of CMD12 is the op's error too */
-		if (s.r1 && !s.fail)
+	case A_STOP:		/* an R1 error of CMD12 is the op's error too, but not
+				   once every block is in (stop_done, M6) */
+		if (s.r1 && !s.fail && !stop_done())
 			s.fail = SD_E_R1;
 		if (s.fail || s.done == cur->count)
 			finish(s.fail);
@@ -572,6 +611,11 @@ static void step(unsigned st)
 		}
 		if (r & 0x01) {		/* idle: the card reset itself (power) */
 			printf("SD: card in idle state (R1 %02x), lba %lu\n", (unsigned)r, err_lba());
+			if (stop_done()) {	/* every block is in (M6): the data stands */
+				finish(SD_OK);
+				sd_type = 0;	/* but the card's state is not known */
+				return;
+			}
 			finish(SD_E_RESET);
 			return;
 		}
@@ -817,6 +861,7 @@ int sd_submit(sd_op *op)
 	take_cd();
 	op->err = SD_OK;
 	op->done_blocks = 0;
+	op->intact = 1;
 	op->state = ST_IDLE;
 	if (op->kind == SD_READ)
 		bad = op->from_gayle || !op->buf == !op->to_gayle;
@@ -1037,6 +1082,52 @@ static void init_line(const char *what, int r1)
 	printf("SD init: %s %02x\n", what, (unsigned)(r1 & 0xFF));
 }
 
+/* WAIT_EQ FF bounded by T_BUSY: STATUS, or -1 (run's) */
+static int busy_end(void)
+{
+	SDC_W(SDC_MATCH, 0xFF);
+	SDC_W(SDC_TIMEOUT, T_BUSY);
+	return run(SDC_OP_WAIT_EQ, 0);
+}
+
+/* Before CMD0, with CS asserted: end whatever transfer a card may still be
+   in (final review M3).  A card-gone bounce (contact, card detect) with the
+   card powered leaves it where the aborted op was; CMD0 alone does not get
+   it out of a multi-block write.  In order: 520 FF bytes finish a data
+   block being received (its CRC fails: 0B, nothing programmed) and clock
+   through its response; the busy's end; the stop token FD ends a CMD25,
+   15 more bytes let a card in command state finish what it took FD's bits
+   for (a 48-bit frame and its R1), its busy's end; CMD12 (stuff byte, 15
+   bytes for its R1) ends a CMD18 stream, its busy's end.  On an idle card
+   all of it is ignored or answered with an R1 nobody reads.  Each wait is
+   bounded (T_BUSY), each XFER by its count; -1: the peripheral refused or
+   gave no DONE (no peripheral), else 0 (card gone shows at CMD0).  Only
+   on a re-init (a card in use since sd_forget): the first init after
+   power-on or the firmware's start follows the boot ROM's, which leaves
+   the card idle, and keeps MMC_Init's command sequence (the goldens) */
+static int stop_any(void)
+{
+	static const unsigned char fd = 0xFD;
+	unsigned char f[7];
+
+	if (run(SDC_OP_XFER, 520) < 0 || busy_end() < 0)
+		return -1;
+	sdc_push(&fd, 1);
+	if (run(SDC_OP_XFER | SDC_X_TX, 1) < 0)
+		return -1;
+	sdc_start(SDC_OP_TX_FLUSH, 0);
+	if (run(SDC_OP_XFER, 15) < 0 || busy_end() < 0)
+		return -1;
+	frame(f, 12, 0);
+	sdc_push(f, 7);
+	if (run(SDC_OP_XFER | SDC_X_TX, 7) < 0)
+		return -1;
+	sdc_start(SDC_OP_TX_FLUSH, 0);
+	if (run(SDC_OP_XFER, 16) < 0 || busy_end() < 0)
+		return -1;
+	return 0;
+}
+
 void sd_forget(void)
 {
 	inited = 0;
@@ -1058,8 +1149,8 @@ int sd_init(void)
 		return 0;
 	sd_type = 0;
 	sdc_init();			/* SCK 400 kHz, CS off, FIFOs empty */
-	/* >= 74 clocks with CS high */
-	if (run(SDC_OP_XFER, 10) < 0 || sdc_select(1)) {
+	/* >= 74 clocks with CS high, then CS on (a re-init: any transfer stopped) */
+	if (run(SDC_OP_XFER, 10) < 0 || sdc_select(1) || (inited && stop_any() < 0)) {
 		init_line("no peripheral", 0xFF);
 		return 0;
 	}

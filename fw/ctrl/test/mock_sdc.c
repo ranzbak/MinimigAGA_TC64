@@ -105,6 +105,7 @@ static struct {
 	void *stall_ctx;
 	int stall_fatal;
 	int misuse_fatal;
+	unsigned tx_hold;		/* mock_sdc_tx_hold */
 	unsigned long long bytes;
 	struct buf log;
 	int wire_on;
@@ -133,7 +134,7 @@ static struct {
 
 int mock_sdc_cs_now(void) { return sdc.cs; }
 static unsigned rxlvl(void) { return sdc.rx_wr - sdc.rx_rd; }
-static unsigned txlvl(void) { return sdc.tx_wr - sdc.tx_cm; }
+static unsigned txlvl(void) { return sdc.tx_wr - sdc.tx_cm + sdc.tx_hold; }
 static int is_gayle(unsigned op) { return op == OP_G2TX || op == OP_RX2G; }
 static int gayle_op_busy(void) { return sdc.busy && is_gayle(sdc.op); }
 static int sdc_line(void) { return (sdc.pend & sdc.irqen) != 0; }
@@ -522,6 +523,7 @@ void mock_sdc_refuse_next(void) { sdc.refuse_next = 1; }
 void mock_sdc_on_stall(int (*fn)(void *ctx), void *ctx) { sdc.stall_fn = fn; sdc.stall_ctx = ctx; }
 void mock_sdc_stall_fatal(int on) { sdc.stall_fatal = on; }
 void mock_sdc_misuse_fatal(int on) { sdc.misuse_fatal = on; }
+void mock_sdc_tx_hold(unsigned n) { sdc.tx_hold = n; }
 const char *mock_sdc_log(void) { return buf_str(&sdc.log); }
 void mock_sdc_wire_on(int on) { sdc.wire_on = on; sdc.wire_cs = sdc.cs; }
 const char *mock_sdc_wire(void) { wire_close(); return buf_str(&sdc.wire); }

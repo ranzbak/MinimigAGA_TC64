@@ -780,11 +780,39 @@ static int fw_in_command(void)
 /* one pass of the main loop's disk work (main.c PollDisks, cut out with
    HandleFpga), and the time the rest of the pass takes */
 static long passes;
+/* final review M4: a card-detect bounce (the pin low for 200,000 cycles,
+   below the 9.2 ms debounce), armed by a test: 1 in a token / R1 wait
+   (WAIT_NE) once bounce_after Gayle ops ended, 2 in a stop token's busy,
+   3 in a written block's busy once the CMD25 has 2 blocks on the card */
+static int bounce_arm;
+static unsigned bounce_after, bounce_gops;
+static unsigned long long bounce_until;
+static void count_gop(void *ctx) { (void)ctx; bounce_gops++; }
+static void bounce_look(void)
+{
+	struct mock_sdc_peek p;
+	if (bounce_until && mock_now() >= bounce_until) {
+		mock_sdc_cd(1);
+		bounce_until = 0;
+	}
+	if (!bounce_arm)
+		return;
+	mock_sdc_peek(&p);
+	if (p.busy && ((bounce_arm == 1 && p.op == 3 && bounce_gops >= bounce_after) ||
+	               (bounce_arm == 2 && p.op == 2 && mock_card_stop_busy()) ||
+	               (bounce_arm == 3 && p.op == 2 && !mock_card_stop_busy() && mock_card_wr_ok() >= 2))) {
+		mock_sdc_cd(0);
+		bounce_until = mock_now() + 200000;
+		bounce_arm = 0;
+	}
+}
+
 static void loop_pass(void)
 {
 	struct mock_sdc_peek p;
 	if (PollDisks(1))
 		in_block_passes++;
+	bounce_look();		/* the op PollDisks started is running now */
 	mock_sdc_step();
 	look_gerr();
 	/* the Amiga writes on DRQ whether the firmware polls or not: a
@@ -1863,6 +1891,127 @@ static void rd_reset_to_write(void)
 	free(d);
 }
 
+/* final review M4: a card-detect bounce with the card in (the contact or
+   the detect switch, the card powered: cs_keeps) ends the op SD_E_GONE;
+   the HDD path waits out the debounce, finds the card present, initialises
+   it again (which ends the transfer it was left in) and goes on where the
+   op ended: the command good, no error, one UART line.  A read: in the
+   4th block's token wait of a READ MULTIPLE 32.  A write: in the stop
+   token's busy of a WRITE MULTIPLE 16's first run (WORK.HDF: a run per
+   cluster of 8; no sector taken from Gayle that is not on the card).  A
+   bounce in a written block's transfer or busy (its sector is gone from
+   Gayle's FIFO) stays an error: card gone, wr_card_gone */
+static void bounce_cases(void)
+{
+	uint8_t *d = wpattern(16, 61);
+	int ok = 1;
+	mock_card_cs_keeps(1);
+	set_multiple(1, 16);
+	ClearError(ERROR_ALL);
+	mock_uart_clear();
+	mock_gayle_on_end(count_gop, NULL);
+	bounce_gops = 0;
+	bounce_after = 3;
+	bounce_arm = 1;
+	card_log_mark();
+	command(1, ACMD_READ_MULTIPLE, 1500, 32);
+	mock_gayle_on_end(NULL, NULL);
+	check("rd_bounce: the bounce came", bounce_arm, 0);
+	check_gayle("rd_bounce");
+	check("rd_bounce: 32 blocks", nblocks, 32);
+	for (int i = 0; i < nblocks && i < 32; i++) ok &= !memcmp(blocks[i], expect_block(1, 1500 + i), 512);
+	check("rd_bounce: the blocks", ok, 1);
+	check("rd_bounce: status RDY, RDY (no error)", g.nstatus == 2 && g.status[0] == IDE_STATUS_RDY && g.status[1] == IDE_STATUS_RDY, 1);
+	check("rd_bounce: the line", strstr(mock_uart(), "SD: card detect bounced, going on at lba 1503\n") != NULL, 1);
+	check("rd_bounce: the card initialised again (one CMD0)", card_log_count("CMD0 arg"), 1);
+	check("rd_bounce: no error", ErrorMask, 0);
+	mock_card_params(4, 2000, 1, 2);	/* a stop busy long enough to be hit */
+	ClearError(ERROR_ALL);
+	mock_uart_clear();
+	card_log_mark();
+	g.wdata = d;
+	g.wlen = 16 * 512;
+	bounce_arm = 2;
+	command(1, ACMD_WRITE_MULTIPLE, 5200, 16);
+	check("wr_bounce: the bounce came", bounce_arm, 0);
+	check_gayle("wr_bounce");
+	check("wr_bounce: sectors read from the FIFO", (long)consumed(), 16 * 512);
+	check("wr_bounce: status REQ, END | IRQ (no error)", g.nstatus == 2 && g.status[0] == IDE_STATUS_REQ &&
+	      g.status[1] == (IDE_STATUS_END | IDE_STATUS_IRQ), 1);
+	check("wr_bounce: the END | IRQ after the card was idle (programmed)", irq_early, 0);
+	check("wr_bounce: on the card", card_has(5200, d, 16), 1);
+	check("wr_bounce: the line (the first run's stop: one run per cluster of 8)", strstr(mock_uart(), "SD: card detect bounced, going on at lba 5208\n") != NULL, 1);
+	check("wr_bounce: the card initialised again (one CMD0)", card_log_count("CMD0 arg"), 1);
+	check("wr_bounce: no error", ErrorMask, 0);
+	file_now(5200, d, 16);
+	/* the same in the stop token's busy of the command's only (last) run
+	   (WRITE MULTIPLE 8, one cluster): its END | IRQ only after the card
+	   is up again and idle (the re-init waits out the busy) */
+	ClearError(ERROR_ALL);
+	mock_uart_clear();
+	card_log_mark();
+	g.wdata = d;
+	g.wlen = 8 * 512;
+	bounce_arm = 2;
+	command(1, ACMD_WRITE_MULTIPLE, 5400, 8);
+	check("wr_bounce_last: the bounce came", bounce_arm, 0);
+	check_gayle("wr_bounce_last");
+	check("wr_bounce_last: status REQ, END | IRQ (no error)", g.nstatus == 2 && g.status[0] == IDE_STATUS_REQ &&
+	      g.status[1] == (IDE_STATUS_END | IDE_STATUS_IRQ), 1);
+	check("wr_bounce_last: the END | IRQ after the card was idle (programmed)", irq_early, 0);
+	check("wr_bounce_last: on the card", card_has(5400, d, 8), 1);
+	check("wr_bounce_last: the line", strstr(mock_uart(), "SD: card detect bounced, going on at lba 5408\n") != NULL, 1);
+	check("wr_bounce_last: the card initialised again (one CMD0)", card_log_count("CMD0 arg"), 1);
+	check("wr_bounce_last: no error", ErrorMask, 0);
+	file_now(5400, d, 8);
+	/* in a block's busy: that sector is gone from Gayle's FIFO (not
+	   intact), so no going on: END | IRQ | ERR, ABRT, and nothing of the
+	   command anywhere but its own sectors (going on from the next sector
+	   would shift every later one) */
+	{
+		size_t bytes = (size_t)card_sectors * 512;
+		uint8_t *before = malloc(bytes);
+		int same = 1;
+		long l0 = files[uc[1].file].card_lba[5300], l1 = files[uc[1].file].card_lba[5315];
+		if (!before) die("out of memory");
+		for (unsigned l = 0; l < card_sectors; l++) memcpy(before + (size_t)l * 512, mock_card_sector(l), 512);
+		ClearError(ERROR_ALL);
+		mock_uart_clear();
+		g.wdata = d;
+		g.wlen = 16 * 512;
+		bounce_arm = 3;
+		command(1, ACMD_WRITE_MULTIPLE, 5300, 16);
+		check("wr_bounce_busy: the bounce came", bounce_arm, 0);
+		check_gayle("wr_bounce_busy");
+		check("wr_bounce_busy: status END | IRQ | ERR last", g.nstatus ? g.status[g.nstatus - 1] : -1,
+		      IDE_STATUS_END | IDE_STATUS_IRQ | IDE_STATUS_ERR);
+		check("wr_bounce_busy: the error register ABRT", g.ntfw ? g.tfw[g.ntfw - 1][0] : -1, 0x04);
+		check("wr_bounce_busy: no going on", strstr(mock_uart(), "card detect bounced") == NULL, 1);
+		check("wr_bounce_busy: ERROR_SDCARD set", (ErrorMask >> ERROR_SDCARD) & 1, 1);
+		for (unsigned l = 0; l < card_sectors; l++)
+			if (((long)l < l0 || (long)l > l1) && memcmp(before + (size_t)l * 512, mock_card_sector(l), 512)) same = 0;
+		check("wr_bounce_busy: no sector outside the command's changed", same, 1);
+		for (long i = 0; i < 16; i++) {
+			const unsigned char *c = mock_card_sector(files[uc[1].file].card_lba[5300 + i]);
+			if (memcmp(c, d + i * 512, 512) && memcmp(c, before + (size_t)files[uc[1].file].card_lba[5300 + i] * 512, 512))
+				same = 0;
+		}
+		check("wr_bounce_busy: each of its sectors the new data or the old", same, 1);
+		for (long i = 0; i < 16; i++)	/* what the card has now: later reads expect it */
+			memcpy(files[uc[1].file].data + (size_t)(5300 + i) * 512, mock_card_sector(files[uc[1].file].card_lba[5300 + i]), 512);
+		g.busy = 0;	/* the Amiga goes on */
+		ClearError(ERROR_ALL);
+		free(before);
+	}
+	g.wdata = NULL;
+	g.wlen = 0;
+	mock_card_params(4, 8, 1, 2);
+	bounce_arm = 0;
+	mock_card_cs_keeps(0);
+	read_case("after the bounces: WORK.HDF READ SECTORS 5300+2", 1, 0, 5300, 2);
+	free(d);
+}
+
 /* mock_gayle_on_end: once the bridge has delivered the read's 1st group,
    the next command (g.next) without a reset and without a drive/head write */
 static void newcmd_after_group(void *ctx)
@@ -2192,6 +2341,7 @@ int main(int argc, char **argv)
 	dbg_trace();
 	rd_reset_to_write();
 	rd_newcmd_rdy();
+	bounce_cases();
 	disk_passes();
 	rd_group_gate();
 

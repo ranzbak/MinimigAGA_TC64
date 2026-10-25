@@ -558,6 +558,8 @@ void ATA_SetMultipleMode(unsigned char* tfr, int unit)
  *   hdd_blk) and the cluster cut of a run (hdd_file_run). */
 #define HDD_RUN_MAX 16		/* sectors of one card run (the Gayle FIFO's 16) */
 #define HDD_PARK_COUNTS 3	/* GetTimer counts a write run waits parked for the Amiga's next sector: 17.4..23.2 ms */
+#define HDD_BOUNCE_COUNTS 3	/* GetTimer counts after a card-gone op before the card-present look: 17.4..23.2 ms,
+				   past the peripheral's card-detect debounce (9.2 ms) */
 
 enum {
 	H_IDLE,
@@ -571,7 +573,8 @@ enum {
 	H_WNEXT,	/* WRITE: the group's next sector (or its IRQ) */
 	H_WDATA,	/* WRITE: its data in Gayle's FIFO (hdd_dat_req), then the run */
 	H_WRUN,		/* WRITE: a from_gayle run */
-	H_SEEK		/* the file position (hdd_seek_step): the FAT walk, its FAT reads */
+	H_SEEK,		/* the file position (hdd_seek_step): the FAT walk, its FAT reads */
+	H_BOUNCE	/* a card-gone op: the debounce passes, then go on or fail (M4) */
 };
 
 static struct {
@@ -582,6 +585,8 @@ static struct {
 	unsigned char abandoned;	/* the Amiga left the command during a run */
 	unsigned char rdy;		/* READ: the next group's RDY is written already */
 	unsigned char ingrp;		/* READ: the group's drain seen, its sectors going in */
+	unsigned char bounced;		/* a card-gone op was run again in this command (M4: once) */
+	unsigned char ferr;		/* H_BOUNCE: the ATA error if the card is gone for good */
 	long lba;			/* the Amiga LBA of the next sector */
 	unsigned left, grp, n;		/* sectors left in the command, in the group; of the run */
 	unsigned gsize;			/* READ: sectors of the group */
@@ -682,11 +687,25 @@ static void hdd_fail(unsigned char err)
 }
 
 /* the command's op ended with an error: the abandon (Gayle error), or a
-   card error (ERROR_SDCARD) */
+   card error (ERROR_SDCARD).  A card-gone op (SD_E_GONE) that left nothing
+   part-way (sd_op intact: the sectors done are counted, the rest still on
+   the card / in Gayle's FIFO) waits out the card-detect debounce first
+   (H_BOUNCE): a bounce of the contact or the detect switch with the card
+   still there goes on from where the op ended, once per command; a card
+   that is really out fails as before (final review M4: a glitch was an
+   Amiga I/O error and its Retry/Cancel requester).  The callers have
+   counted done_blocks (sectors_done) before */
 static void hdd_op_failed(unsigned char err)
 {
 	if (hc.op.err == SD_E_GAYLE || hc.abandoned) {
 		hdd_end("abandoned", 0);
+		return;
+	}
+	if (hc.op.err == SD_E_GONE && hc.op.intact && !hc.bounced && !sd_card_changed()) {
+		hc.bounced = 1;
+		hc.ferr = err;
+		hc.park_t = GetTimer(HDD_BOUNCE_COUNTS);
+		hc.st = H_BOUNCE;
 		return;
 	}
 	MMC_OpResult(&hc.op, hc.write ? "SD card write" : "SD card read");
@@ -944,6 +963,7 @@ static int hdd_step(void)
 			return 0;
 		}
 		if (hc.op.err || hc.abandoned) {
+			sectors_done((unsigned)hc.op.done_blocks);	/* in Gayle's FIFO (H_BOUNCE goes on after them) */
 			hdd_op_failed(ATA_ERR_UNC);
 			return 0;
 		}
@@ -1079,6 +1099,22 @@ static int hdd_step(void)
 			return 0;
 		}
 		hc.st = hc.after;
+		return 1;
+
+	case H_BOUNCE:
+		if (!CheckTimer(hc.park_t))
+			return 0;
+		/* gone for good, or the card does not come up again (sd_init: the
+		   one synchronous wait of this path, as in hdd_op_go; it ends any
+		   transfer the card was left in and waits out its busy, so a
+		   group's IRQ after this is still after its programming) */
+		if (!sd_card_present() || sd_card_changed() || (!sd_card_type() && !sd_init())) {
+			MMC_OpResult(&hc.op, hc.write ? "SD card write" : "SD card read");
+			hdd_fail(hc.ferr);
+			return 0;
+		}
+		printf("SD: card detect bounced, going on at lba %lu\n", (unsigned long)hc.lba);
+		hc.st = hc.write ? H_WNEXT : H_RNEXT;	/* a new op (op_go: the card initialised again first) */
 		return 1;
 	}
 	return 0;
