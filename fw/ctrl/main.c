@@ -139,16 +139,32 @@ void HandleFpga(void)
 
 // One pass of the disk work, in the main loop and the error page's loop:
 // the SD card op and the HDD data path (findings/sdcard-engine Task 11a:
-// both advance here, a step per pass, never a wait), the CD audio refill,
+// both advance here, never a wait), the CD audio refill,
 // the FPGA's requests (floppy, the IDE command pickup; fpga 0: not those).
 // During an HDD command the refill only: CD_AudioPoll reads the CD port's
 // flags, whose command word re-latches the Gayle's firmware port (cdrom.h).
 // No FPGA command while a Gayle op runs: the bridge owns hdd_port,
 // hdd_data_out and hdd_addr then (rtl/minimig/sdcard_gayle.v).
+// The card op and the HDD path run up to DISK_STEPS times while the card op
+// makes a step (sd_steps): the short steps (a FLUSH, a 2- or 7-byte XFER,
+// a status poll that found the data) end in microseconds, and one step per
+// pass would leave the HDD speed to the length of the pass (HandleUI, a
+// floppy track).  No wait: the loop stops at the first round in which no
+// card step ran (the op's step is running in the peripheral), and the bound
+// keeps the pass short, so keys, OSD, CD refill and floppy run every pass
+// (findings/sdcard-engine Task 11a fix round 1).
+#define DISK_STEPS 8
 void PollDisks(int fpga)
 {
-	sd_poll();
-	hdd_poll();
+	int k;
+	for (k = 0; k < DISK_STEPS; k++)
+	{
+		unsigned n = sd_steps;
+		sd_poll();
+		hdd_poll();
+		if (sd_steps == n)
+			break;
+	}
 	if (hdd_busy())
 		CD_AudioRefill();
 	else

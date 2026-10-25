@@ -79,8 +79,8 @@ void ReadIDEData(unsigned char *buf, unsigned int bytes);
    end here */
 void HandleHDD(unsigned int c1, unsigned int c2);
 /* The HDD data path (findings/sdcard-engine Task 11a): READ / WRITE
-   (MULTIPLE) as a state machine advanced once per main-loop pass
-   (PollDisks): the Amiga waits are status polls, the card work async SD ops
+   (MULTIPLE) as a state machine advanced from the main loop (PollDisks):
+   the Amiga waits are status polls, the card work async SD ops
    (sdproto.h; to_gayle reads, from_gayle CMD25 runs of at most 16 sectors
    split at cluster boundaries), the main loop runs between them.  No IDE
    command on cs 0x10 while a Gayle op runs (sd_gayle_busy()). */

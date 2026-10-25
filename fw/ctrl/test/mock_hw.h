@@ -269,6 +269,9 @@ int mock_gayle_from_pop(unsigned port);
    mock_gayle_end(MOCK_GAYLE_ERR) of a GAYLE_TO_TX drops from[port] too. */
 void mock_gayle_abandon(unsigned port);
 void mock_gayle_seen(unsigned port);
+/* fn(ctx) at the normal end of every Gayle op (the op over, before the
+   firmware sees it): the test's Amiga can act in that gap; 0: off */
+void mock_gayle_on_end(void (*fn)(void *ctx), void *ctx);
 
 /* ---- the interrupt controller (arch/irq.h under HOSTTEST) ----
  * cfide's controller (PENDING read clears the EDGE bits it returns; MASK,

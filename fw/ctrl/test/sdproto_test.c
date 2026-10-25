@@ -653,11 +653,12 @@ static void g_mark(void) { g_stops0 = mock_card_stop_ends(); }
    GAYLE_TO_TX; stops at the end, or when parked with nothing to feed
    (returns 1 then) */
 static unsigned g_fed;		/* sectors the Amiga wrote for the running op */
+static int g_late;		/* the Amiga writes a sector only once the op is parked for it */
 static int g_cont(sd_op *op, const unsigned char *d, unsigned feed, int arm)
 {
 	long n = 0;
 	while (op->state) {
-		if (sd_gayle_need(op) && g_fed < feed && g_fed < op->count) {
+		if (sd_gayle_need(op) && g_fed < feed && g_fed < op->count && (!g_late || sd_gayle_parked(op))) {
 			if ((int)g_fed == arm) mock_gayle_end(MOCK_GAYLE_ERR, 100);
 			mock_gayle_from(op->port, d + 512 * g_fed, 512);
 			g_fed++;
@@ -711,6 +712,17 @@ static void t_gayle_write(void)
 	check("gayle wr 3: the stop token's busy ended", mock_card_stop_ends() - g_stops0, 1);
 	check("gayle wr 3: the card idle", mock_card_idle(), 1);
 	check("gayle wr 3: all of the Amiga's bytes taken", (long)mock_gayle_from_left(1), 0);
+	/* a slow Amiga: each next sector only once the op is parked for it: no
+	   Gayle op starts before its sector (mock_gayle_stalls) */
+	{
+		unsigned s0 = mock_gayle_stalls();
+		g_late = 1;
+		g_op(&op, 1945, 3, 1);
+		check("gayle late: SD_OK", g_run(&op, d, 3, -1) == 0 && op.err == SD_OK, 1);
+		g_late = 0;
+		check("gayle late: on the card", on_card(1945, d, 3), 1);
+		check("gayle late: no Gayle op waited for the Amiga", mock_gayle_stalls() - s0, 0);
+	}
 	/* one block: a CMD25 too (the stop token ends it whatever happens) */
 	g_mark();
 	g_op(&op, 1910, 1, 0);
@@ -757,15 +769,49 @@ static void t_gayle_write(void)
 	check("gayle abandon 2nd: no card error", errs(), 0);
 	check("gayle abandon 2nd: card still initialised", sd_card_type(), CARDTYPE_SDHC);
 	check_not("gayle abandon 2nd: no op-failed line", mock_uart(), "op failed");
-	/* ... on the 1st block: nothing written, the CMD25 ended */
+	/* ... on the 1st block: it is staged in TX behind the CMD25 frame, so
+	   no command has reached the card (no stop token needed) */
 	g_mark();
-	g_op(&op, 1950, 2, 0);
-	check("gayle abandon 1st: SD_E_GAYLE", g_run(&op, d, 2, 0) == 0 && op.err == SD_E_GAYLE, 1);
+	{
+		unsigned c0 = mock_card_commands();
+		g_op(&op, 1950, 2, 0);
+		check("gayle abandon 1st: SD_E_GAYLE", g_run(&op, d, 2, 0) == 0 && op.err == SD_E_GAYLE, 1);
+		check("gayle abandon 1st: no command reached the card", mock_card_commands() - c0, 0);
+	}
 	check("gayle abandon 1st: done 0", op.done_blocks, 0);
 	check("gayle abandon 1st: nothing written", is_pat(mock_card_sector(1950), 1950), 1);
-	check("gayle abandon 1st: the stop token's busy ended", mock_card_stop_ends() - g_stops0, 1);
+	check("gayle abandon 1st: no stop token", mock_card_stop_ends() - g_stops0, 0);
 	check("gayle abandon 1st: the card idle", mock_card_idle(), 1);
 	check("gayle abandon 1st: next read ok", rd(1950, 1, b) == SD_OK && is_pat(b, 1950), 1);
+	/* the staged first block: GAYLE_TO_TX before the CMD25 frame goes out,
+	   then TX_COMMIT (the commit point at the block) */
+	{
+		size_t m = strlen(mock_sdc_log());
+		const char *l, *gt, *tx, *cm;
+		g_op(&op, 1955, 2, 0);
+		check("gayle staged: SD_OK", g_run(&op, d, 2, -1) == 0 && op.err == SD_OK, 1);
+		l = mock_sdc_log() + m;
+		gt = strstr(l, "CMD 0004 LEN 512\n");
+		tx = strstr(l, "CMD 0011 LEN 7\n");
+		cm = strstr(l, "CMD 0007 LEN");
+		check("gayle staged: the block's GAYLE_TO_TX before the command's XFER", gt && tx && gt < tx, 1);
+		check("gayle staged: TX_COMMIT after the command", tx && cm && tx < cm, 1);
+		check("gayle staged: on the card", on_card(1955, d, 2), 1);
+	}
+	/* a command CRC error and a timeout on the staged CMD25: the command
+	   again (the staged block clocked out with CS off, then rewound to) */
+	card(); if (!init()) return;
+	mock_card_error(MOCK_ERR_CMDCRC, mock_card_commands() + 1, 1);
+	g_op(&op, 1957, 2, 0);
+	check("gayle staged cmdcrc: SD_OK", g_run(&op, d, 2, -1) == 0 && op.err == SD_OK, 1);
+	check("gayle staged cmdcrc: on the card", on_card(1957, d, 2), 1);
+	check("gayle staged cmdcrc: one command CRC error", sd_err_count[SD_ROW_CMDCRC], 1);
+	mock_card_error(MOCK_ERR_NORESP, mock_card_commands() + 1, 1);
+	g_op(&op, 1959, 1, 0);
+	check("gayle staged noresp: SD_OK", g_run(&op, d + 1024, 1, -1) == 0 && op.err == SD_OK, 1);
+	check("gayle staged noresp: on the card", on_card(1959, d + 1024, 1), 1);
+	check("gayle staged noresp: one timeout", sd_err_count[SD_ROW_TIMEOUT], 1);
+	check("gayle staged: no Gayle op waited for the Amiga", mock_gayle_stalls(), 0);
 	/* a 0B on the 2nd block: sent again from TX (stop, ACMD22, CMD25) */
 	card(); if (!init()) return;
 	mock_card_error(MOCK_ERR_WRREJ, 2, 1);

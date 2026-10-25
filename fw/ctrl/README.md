@@ -456,7 +456,7 @@ Per file, `line:bytes`:
 | `fat.c` | 39 | 188:28, 192:4, 195:5, 198:5, 201:5, 205:7, 208:2, 295:21, 296:23, 297:22, 298:33, 299:24, 300:23, 301:25, 302:23, 398:274, 423:278, 461:33, 514:32, 534:35, 582:295, 603:283, 782:28, 789:33, 862:11, 1583:59, 1596:31, 1611:26, 1623:32, 1633:49, 1649:55, 1651:54, 1656:38, 1703:38, 1714:45, 1715:30, 1716:24, 1717:26, 1725:39 |
 | `fdd.c` | 11 | 184:32, 191:12, 222:23, 252:17, 300:2, 303:4, 339:6, 377:29, 433:59, 438:23, 635:13 |
 | `fpga.c` | 8 | 95:25, 96:1, 101:2, 108:2, 111:1, 131:2, 134:21, 137:46 (101, 108: findings/sdcard-engine Task 10 fix round 1) |
-| `hdd.c` | 14 | 474:29, 484:30, 585:92, 1150:20, 1152:4, 1154:9, 1155:9, 1249:87, 1321:22, 1322:21, 1323:33, 1324:37, 1325:17, 1336:34 (585: the ATA trace, findings/sdcard-engine Task 11a, `%s` at most `abandoned`) |
+| `hdd.c` | 14 | 474:29, 484:30, 588:92, 1176:20, 1178:4, 1180:9, 1181:9, 1275:87, 1347:22, 1348:21, 1349:33, 1350:37, 1351:17, 1362:34 (588: the ATA trace, findings/sdcard-engine Task 11a, `%s` at most `abandoned`) |
 | `main.c` | 2 | 277:29, 290:31 |
 | `menu.c` | 7 | 2928:52, 2968:281, 2970:32, 2972:28, 2973:38, 2974:25, 2975:25 |
 | `mmc.c` | 0 | (findings/sdcard-engine Task 10: its 22 sites went with cfide's SPI card path) |
@@ -1143,7 +1143,7 @@ us). Lines are those of the current tree.
 | `drivesounds.c:360` | `TIMER & 3`: pseudo-random pick of one of four sounds | | |
 | `cdrom.c:380` (`cda_port_timer`), `cdaudio.c:52`, `179`, `191` | CD audio play position: `CDA_HALF_UNITS` (`cdaudio.h:39`) counts per half buffer | 32 | 185.7 ms (8192 frames) |
 | `cdrom.c:471`, `483` (`cd_wait`) | `CD_TIMEOUT` (`cdrom.c:64`): host data phase | 10000 | 58.04 s |
-| `hdd.c:1327`, `1335` (`OpenHardfile`) | `GetTimer(0)` difference, printed as "ms" (`time >> 16`) | counts | 5.804 ms per printed "ms" |
+| `hdd.c:1353`, `1361` (`OpenHardfile`) | `GetTimer(0)` difference, printed as "ms" (`time >> 16`) | counts | 5.804 ms per printed "ms" |
 | `fpga.c:207` (`fpga_init`) | `GetTimer(0)`, unused | | |
 | `fpga.c:230`, `232`, `254` (`fpga_init`) | `WaitTimer(50)`, `WaitTimer(100)`, `WaitTimer(1000)` (boot screen) | 50, 100, 1000 | 290.2 ms, 580.4 ms, 5.804 s |
 | `osd.c:1030` (`OsdGetCtrl`) | menu button held: `BUTTONDELAY` (`osd.h:56`) | 20 | 116.1 ms |
@@ -1155,10 +1155,10 @@ us). Lines are those of the current tree.
 | `menu.c:1092`, `1101`, `1103` (`HandleUI`) | about screen stars and logo redraw: `ABOUT_FRAME_DELAY` (`osd.h:63`), re-armed by the pass that fires | 2 | a redraw every 3 counts = 17.4 ms; first frame 11.6..17.4 ms after arming |
 | `menu.c:3028`, `2721` (`InfoMessage`) | info popup | 1000 | 5.804 s |
 | `main.c:107`, `109`, `111` (`FatalError`) | LED blink: `WaitTimer(250)` x2, `WaitTimer(1000)` | 250, 1000 | 1.451 s, 5.804 s |
-| `main.c:331`, `403`, `406` (`main`) | ADV7511 poll (`adv_timer`) | 250 | 1.451 s |
-| `main.c:335`, `360`, `362` (`main`) | disk statistics report period (`diskstat_timer`, armed once before the main loop and re-armed by the pass that fires): `DISKSTAT_PERIOD` (`diskstat.h`); the report itself only with `dbg_flags & DBG_DISKSTAT` ("Debug flags" below; without it the period starts over, `diskstat_period_start`) | 1000 | 5.804 s; each report stalls the loop about 26 ms (about 300 UART bytes, 87 us each) |
-| `hdd.c:947`, `948` (`hdd_step`, `H_WRUN`) | a write run parked for the Amiga's next sector: `HDD_PARK_COUNTS`, then the run is closed (findings/sdcard-engine Task 11a); read only while parked | 3 | 17.4..23.2 ms (3..4 counts) |
-| `hdd.c:1042`, `592` (`hdd_start`, `hdd_end`) | the ATA trace's time since the pickup, printed as counts; read only with `dbg_flags & DBG_ATA` | counts | 5.804 ms per count |
+| `main.c:347`, `419`, `422` (`main`) | ADV7511 poll (`adv_timer`) | 250 | 1.451 s |
+| `main.c:351`, `376`, `378` (`main`) | disk statistics report period (`diskstat_timer`, armed once before the main loop and re-armed by the pass that fires): `DISKSTAT_PERIOD` (`diskstat.h`); the report itself only with `dbg_flags & DBG_DISKSTAT` ("Debug flags" below; without it the period starts over, `diskstat_period_start`) | 1000 | 5.804 s; each report stalls the loop about 26 ms (about 300 UART bytes, 87 us each) |
+| `hdd.c:973`, `974` (`hdd_step`, `H_WRUN`) | a write run parked for the Amiga's next sector: `HDD_PARK_COUNTS`, then the run is closed (findings/sdcard-engine Task 11a); read only while parked | 3 | 17.4..23.2 ms (3..4 counts) |
+| `hdd.c:1068`, `595` (`hdd_start`, `hdd_end`) | the ATA trace's time since the pickup, printed as counts; read only with `dbg_flags & DBG_ATA` | counts | 5.804 ms per count |
 | `diskstat.c:51`, `57` (`diskstat_period_start`, `diskstat_report`) | start and end of the report period, printed as counts and ms | counts | 5.804 ms per count |
 | `sdproto.c` (`sd_init`) | ACMD41 / CMD1 polls: `SD_ACMD41_BOUND` (findings/sdcard-engine Task 10; `mmc.c`'s `WaitTimer(20)`, `GetTimer(1000)` and `SD_TIMEOUT` went with cfide's SPI card path) | 345 | 2.002 s |
 | `sdc.c` (`sdc_wait`, `abort_wait`) | the wait for a peripheral event: `SDC_WAIT_BOUND` (`sdc.h`), then ABORT; the ABORT's end | 1800, 2 | 10.45 s, 11.6 ms |
@@ -1171,9 +1171,11 @@ The boot ROM (`fw/ctrl_boot`) is not part of this firmware and unchanged.
 
 READ / WRITE (MULTIPLE) are a state machine (`hdd.c`, the comment above
 `HDD_RUN_MAX`): `HandleHDD` picks a command up only while none is in
-progress, `hdd_poll()` advances it once per main-loop pass. The pass is
+progress, `hdd_poll()` advances it from the main loop. The pass is
 `PollDisks()` (`main.c`, in the main loop and the error page's loop):
-`sd_poll()` (the card op's next step), `hdd_poll()`, the CD audio refill
+`sd_poll()` (the card op's next step) and `hdd_poll()`, again while the
+card op makes steps (at most `DISK_STEPS`, 8 rounds; no wait: the loop stops
+at the first round without a card step), the CD audio refill
 (`CD_AudioRefill` while an HDD command is in progress: `CD_AudioPoll`'s CD
 port flags read would re-latch the Gayle's firmware port), and `HandleFpga`
 (floppy, the command pickup) unless a Gayle op may run (`sd_gayle_busy()`:

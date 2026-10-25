@@ -66,6 +66,8 @@
 #include "fdd.h"
 #include "sdproto.h"
 #include "mock_hw.h"
+#include "sdc.h"
+#include "cdaudio.h"
 
 #include "rdbcases.h"
 #include "identcases.h"
@@ -99,10 +101,44 @@ void CD_AudioPoll(void)
 	if (cd_audio_busy)
 		ReadIDEFlags(1);	/* the CD on port 2, as cdrom.c CD_AudioPoll */
 }
+/* ---- the CD audio player (cdaudio.c, linked) on the mock's clock ----
+ * cdrom.c's CD_AudioRefill is cda_poll() (and an underrun line in
+ * DebugMode); its cda_port_read is FileRead from the disc file, an sd_sync
+ * user.  Here the disc is one audio track whose blocks are card sectors
+ * (MMC_Read: the same sd_sync path), the TIMER and the hardware's half are
+ * the mock's clock (hosttest_timer_peek: 256 frames a count, no time). */
+static int cd_playing;		/* the refill stub runs the player */
+static unsigned cd_reads, cd_reads_in_cmd;
+static unsigned cd_ena_timer;
+static int cd_ena;
+static uint8_t cd_ring[2 * CDA_HALF_BYTES];
+int32_t cda_port_read(int32_t file, uint32_t block, uint8_t *dst)
+{
+	(void)file;
+	cd_reads++;
+	if (hdd_busy()) cd_reads_in_cmd++;
+	return MMC_Read(100 + block % 512, dst);	/* card sectors of the image (not the HDF ones written) */
+}
+uint32_t cda_port_timer(void) { return hosttest_timer_peek(); }
+uint32_t cda_port_audio(void)
+{
+	unsigned units = (unsigned short)(hosttest_timer_peek() - cd_ena_timer);
+	return cd_ena ? (units / CDA_HALF_UNITS) & 1 : 0;
+}
+void cda_port_control(uint32_t v)
+{
+	if (v & CDA_ENA) { cd_ena = 1; cd_ena_timer = hosttest_timer_peek(); }
+	else cd_ena = 0;
+}
+uint8_t *cda_port_ring(void) { return cd_ring; }
+void cda_port_claim(void) { }
+
 void CD_AudioRefill(void)
 {
 	static unsigned char b[512];
 	audio_polls++;
+	if (cd_playing)
+		cda_poll();	/* as cdrom.c's CD_AudioRefill */
 	if (cd_refill_card) {
 		if (!MMC_Read(20 + refill_reads % 8, b)) die("the CD refill's card read failed");
 		refill_reads++;
@@ -239,6 +275,9 @@ static void die(const char *what)
 #define MAXCHUNKS 300
 static int fw_in_command(void);
 static void status_irq(void);
+/* the unit / LBA of the command being served: the IRQ check */
+static int cur_unit;
+static long cur_lba;
 static struct gayle {
 	int frame;		/* mock_frames() of the open frame */
 	unsigned pos;		/* its byte index */
@@ -263,6 +302,9 @@ static struct gayle {
 	unsigned pause;		/* HOOK_PAUSE: polls the Amiga waits */
 	unsigned stop_mark;	/* mock_card_stop_ends() at the last IRQ status write */
 	unsigned stops_at_reset;	/* mock_card_stop_ends() when the Amiga was reset */
+	int log_dw;		/* log the CPU's data frames ("dw") */
+	struct { int on; unsigned char tfr[8]; unsigned count, chunk; const uint8_t *wdata; size_t wlen; long lba; int unit; }
+	        next;	/* the command the Amiga writes right after a reset (HOOK_RESET_DRAIN) */
 	unsigned long busy_polls, polls;
 	struct { char *p; size_t n, cap; } log;
 	char err[160];
@@ -346,7 +388,7 @@ static void look_gerr(void)
 }
 
 /* what the Amiga does when it comes to its sector hook_at (0-based) */
-enum { HOOK_NONE, HOOK_RESET, HOOK_PULL, HOOK_ABANDON, HOOK_PAUSE, HOOK_RESET_END };
+enum { HOOK_NONE, HOOK_RESET, HOOK_PULL, HOOK_ABANDON, HOOK_PAUSE, HOOK_RESET_END, HOOK_RESET_DRAIN, HOOK_RESET_DW };
 static void amiga_reset(void)
 {
 	glog("reset");
@@ -356,6 +398,37 @@ static void amiga_reset(void)
 	g.rst_seen = 1;
 	mock_gayle_abandon(0);	/* Gayle reset: the FIFO, cmd_since */
 	g.hook = HOOK_NONE;
+}
+
+static void amiga_write(void);
+/* pio out: the Amiga writes its next sector when DRQ is up (the FIFO
+   empty, sectors left, its group released by the last IRQ) */
+static void amiga_try_write(void)
+{
+	unsigned total = (unsigned)(g.wlen / 512), allowed = (g.irqs + 1) * g.chunk;
+	if (total > g.count) total = g.count;
+	if (g.busy && g.pio == 2 && !mock_gayle_from_left(0) && g.wready < total && g.wready < allowed)
+		amiga_write();
+}
+
+/* Ctrl-Amiga-Amiga, then at once the next command (g.next) if one is set */
+static void amiga_reset_next(void)
+{
+	amiga_reset();
+	if (!g.next.on)
+		return;
+	glog("cmd");
+	g.wdata = g.next.wdata;
+	g.wlen = g.next.wlen;
+	g.wready = 0;
+	g.irqs = 0;
+	g.rx = 0;
+	g.drained = 0;
+	cur_unit = g.next.unit;
+	cur_lba = g.next.lba;
+	mock_gayle_into(0, &gay_base[0]);
+	amiga_command(g.next.tfr, g.next.count, g.next.chunk);
+	g.next.on = 0;
 }
 
 /* the Amiga writes its next sector into the FIFO */
@@ -400,6 +473,13 @@ static unsigned char gayle_poll(void)
 		if (want > g.chunk) want = g.chunk;
 		if (n > FIFO_SECTORS) gayle_err("more than 16 sectors in the FIFO");
 		if (n > want) gayle_err("more than one group in the FIFO: a refill before the drain");
+		if (n && n >= want && g.hook == HOOK_RESET_DRAIN && (unsigned)g.nchunks == g.hook_at) {
+			/* Ctrl-Amiga-Amiga instead of reading this group, then at once
+			   the next command (g.next): its request is what the old
+			   command's drain wait sees */
+			amiga_reset_next();
+			return CMD_IDECMD;
+		}
 		if (n && n >= want) {
 			if (g.nchunks < MAXCHUNKS) g.chunks[g.nchunks++] = (int)n;
 			glog("rd %u", n);
@@ -409,11 +489,9 @@ static unsigned char gayle_poll(void)
 			st = CMD_IDECMD;
 	} else if (g.pio == 2) {
 		size_t left = mock_gayle_from_left(0);
-		unsigned total = (unsigned)(g.wlen / 512), allowed = (g.irqs + 1) * g.chunk;
-		if (total > g.count) total = g.count;
 		if (left % 512) gayle_err("a partial sector in the write FIFO at a status poll");
-		if ((g.wtoggle ^= 1) && !left && g.wready < total && g.wready < allowed)
-			amiga_write();
+		if (g.wtoggle ^= 1)
+			amiga_try_write();
 		left = mock_gayle_from_left(0);
 		if (g.hook == HOOK_RESET_END && consumed() >= (unsigned long)g.count * 512) {
 			amiga_reset();	/* while the card programs the last group */
@@ -434,14 +512,20 @@ static unsigned char gayle_miso(void *ctx, unsigned char out)
 	if (f != g.frame) { g.frame = f; g.pos = 0; }
 	unsigned pos = g.pos++;
 	if (pos == 0) {
+		/* HOOK_RESET_DW: the reset after the CPU's hook_at-th data block,
+		   at the next frame (the firmware's next step) */
+		if (g.hook == HOOK_RESET_DW && (out & 0xFE) != CMD_IDE_DATA_WR && ndw >= (int)g.hook_at)
+			amiga_reset_next();
 		g.cmd = out;
 		if ((out & 0xC0) == 0x80 || (out & 0xF0) == 0xC0 || (out & 0xF0) == 0xF0) {
 			char m[120];
 			snprintf(m, sizeof m, "a port-2 command word %02X inside a port-1 command: re-latches hdd_port", out);
 			if ((out & 1) && fw_in_command()) gayle_err(m);
 		}
-		if ((out & 0xFE) == CMD_IDE_DATA_WR && ndw < MAXBLOCKS)
-			dw_at[ndw++] = gay_bytes(0);
+		if ((out & 0xFE) == CMD_IDE_DATA_WR) {
+			if (ndw < MAXBLOCKS) dw_at[ndw++] = gay_bytes(0);
+			if (g.log_dw) glog("dw");	/* the CPU writes a block into the FIFO */
+		}
 		if ((out & 0xF0) == CMD_IDE_REGS_RD) {
 			mock_gayle_seen(out & 1);	/* "I have seen this port's command" */
 			g.fb[0] = (unsigned char)((out & 1) ? IDEF_PORT : 0) | (unsigned char)(g.rst_seen && !(out & 1) ? IDEF_RST_SEEN : 0);
@@ -659,9 +743,16 @@ static int fw_in_command(void)
 static long passes;
 static void loop_pass(void)
 {
+	struct mock_sdc_peek p;
 	PollDisks(1);
 	mock_sdc_step();
 	look_gerr();
+	/* the Amiga writes on DRQ whether the firmware polls or not: a
+	   GAYLE_TO_TX started before its sector (T11-R1 broken) waits for it,
+	   counted in mock_gayle_stalls, instead of holding the polls off */
+	mock_sdc_peek(&p);
+	if (p.busy && p.op == 4)
+		amiga_try_write();
 	passes++;
 }
 
@@ -675,9 +766,7 @@ static void run_loop(void)
 	} while (g.busy || hdd_busy());
 }
 
-/* the unit / LBA / data of the write being served: the IRQ check */
-static int cur_unit;
-static long cur_lba;
+/* the IRQ check's write: cur_unit, cur_lba (above) */
 static unsigned irq_early;	/* IRQ status writes before the group was on the card */
 
 /* the task file of a command on unit 0/1 of port 1: CHS of lba, count byte;
@@ -893,7 +982,7 @@ static void write_case(const char *what, int unit, int multiple, long lba, int n
 	cur_case = what;
 	command(unit, multiple ? ACMD_WRITE_MULTIPLE : ACMD_WRITE_SECTORS, lba, (unsigned char)n);
 	cur_case = "";
-	if (uc[unit].file == F_WORK && !cd_refill_card) {
+	if (uc[unit].file == F_WORK && !cd_refill_card && !cd_playing) {
 		/* WORK.HDF (offset 0, contiguous): one CMD25 run per cluster of
 		   each group, none split by the park bound (the Amiga keeps up) */
 		int per = multiple ? spb : 1, runs = 0;
@@ -1240,6 +1329,8 @@ static int card_and_sd_idle(void) { return mock_card_idle() && !sd_poll() && !g.
 static int fw_idle(void) { return !hdd_busy() && !sd_poll(); }
 /* the command was picked up (a status written) and the firmware is idle again */
 static int cmd_over(void) { return g.nstatus && fw_idle(); }
+/* the old command abandoned, the new one served: the firmware idle, the Amiga done */
+static int cmd_over_both(void) { return !g.next.on && !g.busy && fw_idle(); }
 static int never(void) { return 0; }
 static int count_lines(const char *t)
 {
@@ -1526,6 +1617,267 @@ static void wr_cancel(void)
 	free(d);
 }
 
+/* the Amiga abandons during a run's first block (its GAYLE_TO_TX, staged
+   in TX in front of the CMD25: fix round 1): no command reaches the card,
+   no status for the old command, the engine idle */
+static void wr_abandon_first(void)
+{
+	uint8_t *d = wpattern(4, 51);
+	const char *after;
+	long n;
+	set_multiple(1, 4);
+	ClearError(ERROR_ALL);
+	g.wdata = d;
+	g.wlen = 4 * 512;
+	command_begin(1, ACMD_WRITE_MULTIPLE, 4804, 4);	/* the FAT sector of wr_abandon's: no FAT read */
+	card_log_mark();
+	g.hook = HOOK_ABANDON;
+	g.hook_at = 0;
+	n = run_until(cmd_over, 200000);
+	check("wr_abandon_first: the firmware idle again", n < 200000 && cmd_over(), 1);
+	check_gayle("wr_abandon_first");
+	check("wr_abandon_first: no command reached the card", (long)strlen(mock_card_log() + log_mark), 0);
+	after = log_after("abandon\n");
+	check("wr_abandon_first: no status after the abandon", after && !strstr(after, "st "), 1);
+	check("wr_abandon_first: the card idle", mock_card_idle(), 1);
+	check("wr_abandon_first: nothing written", card_has(4804, files[uc[1].file].data + 4804 * 512, 4), 1);
+	g.wdata = NULL;
+	g.wlen = 0;
+	set_multiple(1, 16);
+	read_case("wr_abandon_first: the next command: READ SECTORS 4804+2", 1, 0, 4804, 2);
+	free(d);
+}
+
+/* mock_gayle_on_end: once the bridge has delivered the read's 1st group,
+   Ctrl-Amiga-Amiga and at once the next command (g.next) */
+static void reset_after_group(void *ctx)
+{
+	(void)ctx;
+	if (!g.next.on || g.pio != 1 || gay_bytes(0) < (size_t)g.chunk * 512)
+		return;
+	amiga_reset_next();
+}
+
+/* Ctrl-Amiga-Amiga while the Amiga should read a READ MULTIPLE's 1st group,
+   the next command a WRITE at once: the old command's drain wait sees the
+   new command's request as "drained"; the FakeRDB blocks of its 2nd group
+   (the CPU's, not guarded by the bridge's cmd_since) and the 3rd group's
+   RDY must not reach the new command (a pio in on a WRITE would drop the
+   Amiga's data).  SYNTH.HDF on unit 0: 32 synthesised blocks */
+static void rd_reset_to_write(void)
+{
+	uint8_t *d = wpattern(1, 53);
+	unsigned c, h, sct;
+	long n;
+	const char *after, *tf;
+	open_unit(0, F_SYNTH, HDF_FILE | HDF_SYNTHRDB, "SYNTH   ");
+	uc[0].rdsk = rdbcases[0].rdsk;
+	uc[0].part = rdbcases[0].part;
+	set_multiple(0, 16);
+	command_begin(0, ACMD_READ_MULTIPLE, 0, 48);
+	g.log_dw = 1;
+	g.hook = HOOK_RESET_DRAIN;
+	g.hook_at = 0;
+	lba2chs(0, 100, &c, &h, &sct);
+	{
+		unsigned char t[8] = { 0, 0, 1, (unsigned char)sct, (unsigned char)c, (unsigned char)(c >> 8),
+		                       (unsigned char)(0xA0 | h), ACMD_WRITE_SECTORS };
+		memcpy(g.next.tfr, t, 8);
+	}
+	g.next.count = 1;
+	g.next.chunk = 1;
+	g.next.wdata = d;
+	g.next.wlen = 512;
+	g.next.lba = 100;
+	g.next.unit = 0;
+	g.next.on = 1;
+	n = run_until(cmd_over_both, 200000);
+	check("rd_reset_to_write: both commands over", n < 200000 && cmd_over_both(), 1);
+	check_gayle("rd_reset_to_write");
+	after = log_after("cmd\n");
+	tf = after ? strstr(after, "tf ") : NULL;
+	check("rd_reset_to_write: the new command picked up", tf != NULL, 1);
+	check("rd_reset_to_write: nothing of the old command between the reset and the new one's pickup",
+	      after && tf && !memmem(after, (size_t)(tf - after), "st ", 3) && !memmem(after, (size_t)(tf - after), "dw", 2), 1);
+	check("rd_reset_to_write: the WRITE's statuses REQ, END | IRQ",
+	      tf && strstr(tf, "st 04\nst 90\n") != NULL && !strstr(tf, "st 08"), 1);
+	check("rd_reset_to_write: its sector on the card",
+	      !memcmp(mock_card_sector(files[F_SYNTH].card_lba[100 + uc[0].offset]), d, 512), 1);
+	memcpy(files[F_SYNTH].data + (size_t)(100 + uc[0].offset) * 512, d, 512);
+	g.log_dw = 0;
+	g.wdata = NULL;
+	g.wlen = 0;
+	open_unit(0, F_WORK, HDF_FILE, "WORK    ");
+	/* the reset in the gap between a group's last block reaching Gayle and
+	   the next group's RDY (written while the run's CMD12 still runs): the
+	   RDY must not go to the new command */
+	set_multiple(1, 16);
+	command_begin(1, ACMD_READ_MULTIPLE, 2000, 32);
+	lba2chs(1, 6100, &c, &h, &sct);
+	{
+		unsigned char t[8] = { 0, 0, 1, (unsigned char)sct, (unsigned char)c, (unsigned char)(c >> 8),
+		                       (unsigned char)(0xB0 | h), ACMD_WRITE_SECTORS };
+		memcpy(g.next.tfr, t, 8);
+	}
+	g.next.count = 1;
+	g.next.chunk = 1;
+	g.next.wdata = d;
+	g.next.wlen = 512;
+	g.next.lba = 6100;
+	g.next.unit = 1;
+	g.next.on = 1;
+	mock_gayle_on_end(reset_after_group, NULL);
+	n = run_until(cmd_over_both, 200000);
+	mock_gayle_on_end(NULL, NULL);
+	check("rd_reset_rdy: both commands over", n < 200000 && cmd_over_both(), 1);
+	check_gayle("rd_reset_rdy");
+	after = log_after("cmd\n");
+	tf = after ? strstr(after, "tf ") : NULL;
+	check("rd_reset_rdy: the new command picked up", tf != NULL, 1);
+	check("rd_reset_rdy: no RDY of the old command after the reset",
+	      after && tf && !memmem(after, (size_t)(tf - after), "st ", 3), 1);
+	check("rd_reset_rdy: the WRITE's statuses REQ, END | IRQ",
+	      tf && strstr(tf, "st 04\nst 90\n") != NULL && !strstr(tf, "st 08"), 1);
+	check("rd_reset_rdy: its sector on the card", card_has(6100, d, 1), 1);
+	file_now(6100, d, 1);
+	/* the reset right after a group of the CPU's blocks (SYNTH.HDF's 2nd
+	   group of 16 synthesised ones), before the 3rd group's RDY */
+	open_unit(0, F_SYNTH, HDF_FILE | HDF_SYNTHRDB, "SYNTH   ");
+	uc[0].rdsk = rdbcases[0].rdsk;
+	uc[0].part = rdbcases[0].part;
+	set_multiple(0, 16);
+	command_begin(0, ACMD_READ_MULTIPLE, 0, 48);
+	g.hook = HOOK_RESET_DW;
+	g.hook_at = 32;
+	lba2chs(0, 101, &c, &h, &sct);
+	{
+		unsigned char t[8] = { 0, 0, 1, (unsigned char)sct, (unsigned char)c, (unsigned char)(c >> 8),
+		                       (unsigned char)(0xA0 | h), ACMD_WRITE_SECTORS };
+		memcpy(g.next.tfr, t, 8);
+	}
+	g.next.count = 1;
+	g.next.chunk = 1;
+	g.next.wdata = d;
+	g.next.wlen = 512;
+	g.next.lba = 101;
+	g.next.unit = 0;
+	g.next.on = 1;
+	n = run_until(cmd_over_both, 200000);
+	check("rd_reset_group: both commands over", n < 200000 && cmd_over_both(), 1);
+	check_gayle("rd_reset_group");
+	after = log_after("cmd\n");
+	tf = after ? strstr(after, "tf ") : NULL;
+	check("rd_reset_group: the new command picked up", tf != NULL, 1);
+	check("rd_reset_group: no RDY of the old command after the reset",
+	      after && tf && !memmem(after, (size_t)(tf - after), "st ", 3), 1);
+	check("rd_reset_group: the WRITE's statuses REQ, END | IRQ",
+	      tf && strstr(tf, "st 04\nst 90\n") != NULL && !strstr(tf, "st 08"), 1);
+	check("rd_reset_group: its sector on the card",
+	      !memcmp(mock_card_sector(files[F_SYNTH].card_lba[101 + uc[0].offset]), d, 512), 1);
+	memcpy(files[F_SYNTH].data + (size_t)(101 + uc[0].offset) * 512, d, 512);
+	g.hook = HOOK_NONE;
+	open_unit(0, F_WORK, HDF_FILE, "WORK    ");
+	g.wdata = NULL;
+	g.wlen = 0;
+	free(d);
+}
+
+/* Review Focus 4 at the HDD level: a card that takes 500 ms to program each
+   block of a WRITE MULTIPLE (and its stop token): no timeout, each IRQ
+   after the busy end, the main loop keeps running meanwhile */
+static void wr_busy_500ms(void)
+{
+	uint8_t *d = wpattern(3, 55);
+	unsigned t0 = sd_err_count[SD_ROW_TIMEOUT];
+	long p0 = passes;
+	set_multiple(1, 4);
+	mock_card_params(4, (int)mock_sdc_bytes_for_us(500000), 1, 2);
+	write_case("wr_busy_500ms: WORK.HDF WRITE MULTIPLE 5500+3, 500 ms busy per block", 1, 1, 5500, 3, d);
+	mock_card_params(4, 8, 1, 2);
+	check("wr_busy_500ms: no timeout", sd_err_count[SD_ROW_TIMEOUT] - t0, 0);
+	/* 3 blocks + the stop token: 2 s; one pass covers at most a TIMER count (5.8 ms) */
+	check("wr_busy_500ms: the main loop ran on (> 300 passes)", passes - p0 > 300, 1);
+	check("wr_busy_500ms: CD refills during it (> 300)", audio_polls > 300, 1);
+	set_multiple(1, 16);
+	free(d);
+}
+
+/* Review Focus 5: CD audio plays (the real player, cdaudio.c) while the
+   Amiga writes 128 sectors through the state machine (from_gayle CMD25
+   runs, a card that takes 8.5 ms a block: about 1.1 s, six halves of the
+   ring): the refill runs between the runs (its card reads during the
+   write), no underrun, no FPGA frame during a Gayle op, the data and the
+   IRQs right.  cdrom_test cannot link the HDD path (it stubs it): this is
+   the HDD side of cdrom_test's cd_audio_during_write */
+static void cd_audio_during_write(void)
+{
+	static struct cd_disc disc;
+	uint8_t *d = wpattern(128, 57);
+	uint32_t u0;
+	unsigned long long t_start;
+	memset(&disc, 0, sizeof disc);
+	disc.tracks = 1;
+	disc.files = 1;
+	disc.leadout = 4000;
+	disc.track[0].number = 1;
+	disc.track[0].type = CD_AUDIO;
+	disc.track[0].sectors = 4000;
+	memcpy(disc.file[0].shortname, "AUDIO   BIN", 12);
+	disc.file[0].data_bytes = 4000u * 2352;
+	/* time as the board has it: the card and the bridge (mock_sdc_step)
+	   move it, a TIMER read does not (the default step lets each one pass
+	   5.8 ms: sd_sync's polls of the refill alone would run the music on) */
+	mock_timer_step(0);
+	cda_init();
+	cda_play(&disc, 0, 4000);
+	check("cd_audio_during_write: the player plays", cda_status(), CDA_PLAYING);
+	u0 = cda_underruns();
+	cd_playing = 1;
+	cd_reads_in_cmd = 0;
+	set_multiple(1, 16);
+	mock_card_params(4, 20000, 1, 2);
+	t_start = mock_now();
+	write_case("cd_audio_during_write: WORK.HDF WRITE MULTIPLE 5600+128 while CD audio plays", 1, 1, 5600, 128, d);
+	mock_card_params(4, 8, 1, 2);
+	check("cd_audio_during_write: the refill read the disc during the write (between runs)", cd_reads_in_cmd > 0, 1);
+	check("cd_audio_during_write: no underrun", cda_underruns() - u0, 0);
+	check("cd_audio_during_write: still playing", cda_status(), CDA_PLAYING);
+	check("cd_audio_during_write: the write lasted three halves of the ring or more",
+	      mock_now() - t_start >= 3ull * CDA_HALF_UNITS * MOCK_CYC_PER_TIMER, 1);
+	if (getenv("HDD_CD_INFO"))
+		say("cd_audio_during_write: %.0f ms, %u disc reads during the write\n",
+		    (double)(mock_now() - t_start) * 1000.0 / MOCK_CLK_HZ, cd_reads_in_cmd);
+	cd_playing = 0;
+	cda_stop();
+	mock_timer_step(1);
+	free(d);
+}
+
+/* fix round 1 (c): PollDisks runs the card op and the HDD path again while
+   the card op makes steps (DISK_STEPS): a step whose next op is short (a
+   2-byte token, a data response, R1) goes on in the same pass.  That needs
+   a loop round as long as such an op (on the board the status poll over
+   cfide's SPI alone takes microseconds; here the SD register accesses are
+   made 100 clk_114 each for it): a WRITE MULTIPLE 64 then needs clearly
+   fewer passes than card steps (one step per pass: as many) */
+static void disk_passes(void)
+{
+	uint8_t *d = wpattern(64, 59);
+	long p0;
+	unsigned st0;
+	set_multiple(1, 16);
+	mock_sdc_access_cycles(100);
+	p0 = passes;
+	st0 = sd_steps;
+	write_case("disk_passes: WORK.HDF WRITE MULTIPLE 2700+64", 1, 1, 2700, 64, d);
+	mock_sdc_access_cycles(16);
+	if (getenv("HDD_INFO"))
+		say("disk_passes: %ld passes, %u card steps\n", passes - p0, sd_steps - st0);
+	check("disk_passes: a quarter of the card steps or more taken in a pass with another",
+	      (long)(sd_steps - st0) - (passes - p0) > (long)(sd_steps - st0) / 4, 1);
+	free(d);
+}
+
 /* dbg_flags (ruling T11-R2): quiet by default (no UART byte from a good
    command); DBG_ATA: one line per ATA command at its end */
 static void dbg_trace(void)
@@ -1673,9 +2025,14 @@ int main(int argc, char **argv)
 	wr_reset_mid_run();
 	wr_pause();
 	wr_slow_amiga();
+	wr_abandon_first();
+	wr_busy_500ms();
+	cd_audio_during_write();
 	main_loop_runs();
 	wr_cancel();
 	dbg_trace();
+	rd_reset_to_write();
+	disk_passes();
 
 	free(d5); free(d256); free(d4); free(d3);
 	for (int k = 0; k < 3; k++) { free(files[k].data); free(files[k].card_lba); }

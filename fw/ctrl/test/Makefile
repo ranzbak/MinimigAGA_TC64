@@ -187,7 +187,7 @@ run-config_test: run64-config_test run32-config_test
 # the RDB patch of an HDF's own RDB, READ/WRITE (MULTIPLE) LBA/CHS, chunks
 # and data against the HDF files rdb.py writes (on a mkcard.sh card).
 HDD_SRCS = $(TD)/mock_hw.c $(TD)/mock_sdc.c $(SRC)/hardware.c $(SRC)/mmc.c $(SRC)/sdc.c $(SRC)/sdproto.c $(SRC)/arch/irq.c $(SRC)/diskstat.c $(SRC)/uart.c $(SRC)/fat.c $(SRC)/swap.c \
-           $(SRC)/rvlibc.c $(SRC)/errors.c $(SRC)/hdd.c
+           $(SRC)/rvlibc.c $(SRC)/errors.c $(SRC)/hdd.c $(SRC)/cdaudio.c $(SRC)/cue.c
 $(B)/hdd/rdb.ok: $(GOLD)/rdb.py
 	@mkdir -p $(@D)
 	$(PY) $(GOLD)/rdb.py $(@D)
@@ -202,7 +202,7 @@ $(B)/hdd/hdd.img: $(B)/hdd/rdb.ok $(TOP)/tools/sim/mkcard.sh
 # its FPGA poll that picks the IDE commands up
 $(B)/handlefpga.inc: $(SRC)/main.c
 	@mkdir -p $(@D)
-	sed -n '/^void HandleFpga(void)/,/^}/p; /^void PollDisks(int fpga)/,/^}/p' $(SRC)/main.c > $@
+	sed -n '/^void HandleFpga(void)/,/^}/p; /^#define DISK_STEPS/,/^}/p' $(SRC)/main.c > $@
 	grep -q '^void HandleFpga' $@
 	grep -q '^void PollDisks' $@
 $(B)/hdd_test $(B)/hdd_test_32: $(B)/handlefpga.inc

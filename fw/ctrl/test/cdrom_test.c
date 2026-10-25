@@ -1421,19 +1421,22 @@ static void t_refill_no_flags(void)
 }
 
 /* findings/sdcard-engine Task 11a: during an HDD command the main loop
-   (main.c PollDisks) calls CD_AudioRefill on every pass, not CD_AudioPoll:
+   (main.c PollDisks) calls CD_AudioRefill on every pass, not CD_AudioPoll
+   (hdd_busy() stubbed here: cdrom_test does not link the HDD path; the real
+   HDD write with the player refilling between its runs is hdd_test's
+   cd_audio_during_write):
    the player stays fed by the refill alone over a long HDD write (100
    passes of 1 ms, the track 133 ms long: no underrun), no
    IDE flags are read (a pending rst_seen stays: the music goes on), and
    CD_Locked reads none either (the lock kept); with the command over the
    poll and CD_Locked read them again */
-static void t_cd_audio_during_write(void)
+static void t_cd_flags_during_hdd(void)
 {
 	uint8_t c[12];
 	uint32_t u0;
 	int wav0, k;
 	unsigned long t0;
-	begin("cd_audio_during_write: the refill alone during an HDD command, no IDE flags read");
+	begin("cd_flags_during_hdd: the refill alone during an HDD command, no IDE flags read, CD_Locked keeps the lock");
 	playing_mixed();
 	cdb6(c, 0x1E, 0x01);	/* PREVENT MEDIUM REMOVAL */
 	packet(c, 0xFFFE);
@@ -1518,7 +1521,7 @@ int main(void)
 	t_play_stops();
 	t_reset_idle();
 	t_refill_no_flags();
-	t_cd_audio_during_write();
+	t_cd_flags_during_hdd();
 	t_read_cd();
 	t_volume_select();
 	t_playing_track();

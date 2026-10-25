@@ -126,6 +126,9 @@ int sd_card_type(void);
    cannot start (no card, bad arguments) ends at once: 0, op->err set,
    op->state 0. */
 int sd_submit(sd_op *op);
+/* steps run since power-on (an op's step on its event, a parked op going
+   on): what a caller loops on (main.c PollDisks) */
+extern unsigned sd_steps;
 /* advance the active op on sdc_events (also takes a card-detect event):
    1 while an op is active, 0 when idle.  Non-reentrant: a nested call
    returns at once.  Never from an interrupt handler. */
@@ -153,7 +156,9 @@ extern unsigned char sd_sck_step;
  * the next block boundary (the stop token, then the op ends SD_OK with
  * done_blocks < count: the caller starts a new run for the rest); sd_sync()
  * and sd_drain() close a parked run themselves.  A Gayle error (the Amiga
- * abandoned the command): the stop token, SD_E_GAYLE.  A card that lost
+ * abandoned the command): the stop token, SD_E_GAYLE; during the op's
+ * first block nothing has reached the card (it is staged in TX behind the
+ * CMD25 frame before the command goes out): SD_E_GAYLE.  A card that lost
  * blocks it took (ACMD22): SD_E_RETRIES (Gayle's sectors are gone). */
 /* 1: op wants its next block's go now */
 int sd_gayle_need(const sd_op *op);

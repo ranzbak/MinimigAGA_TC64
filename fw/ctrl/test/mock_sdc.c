@@ -127,6 +127,8 @@ static struct {
 	unsigned stalls;		/* times a GAYLE_TO_TX waited so (mock_gayle_stalls) */
 	unsigned errs;			/* Gayle ops ended by a Gayle error (mock_gayle_errs) */
 	int since[2];			/* sdcard_gayle.v cmd_since: abandoned (mock_gayle_abandon) */
+	void (*on_end)(void *);		/* mock_gayle_on_end */
+	void *on_end_ctx;
 } gay;
 
 int mock_sdc_cs_now(void) { return sdc.cs; }
@@ -211,6 +213,11 @@ static void sdc_end(int why)
 	if (sdc.op == OP_G2TX && why != END_NORMAL) sdc.tx_wr = sdc.tx_wr0;
 	if (is_gayle(sdc.op)) gay.end_how = MOCK_GAYLE_OK;	/* one shot */
 	if (is_gayle(sdc.op) && why == END_GERR) gay.errs++;
+	if (is_gayle(sdc.op) && why == END_NORMAL && gay.on_end) {
+		void (*fn)(void *) = gay.on_end;
+		sdc.busy = 0;			/* the op is over when the test acts */
+		fn(gay.on_end_ctx);
+	}
 	sdc.busy = 0;
 	sdc.inflight = 0;
 	sdc.abort_pend = 0;
@@ -291,7 +298,7 @@ static void gayle_event(void)
 		sdc.verified = sdc.verified > 2 ? sdc.verified - 2 : 0;
 		buf_put(&gay.into[port], w, 2);
 	} else {
-		if (gay.from[port].n - gay.from_head[port] < 2) { gay.stalled = 1; return; }
+		if (gay.from[port].n - gay.from_head[port] < 2) { gay.stalled = 1; gay.stalls++; return; }
 		sdc.tx[sdc.tx_wr++ & 1023] = gay.from[port].p[gay.from_head[port]++];
 		sdc.tx[sdc.tx_wr++ & 1023] = gay.from[port].p[gay.from_head[port]++];
 	}
@@ -566,6 +573,7 @@ void mock_gayle_abandon(unsigned port)
 	irq_deliver();
 }
 void mock_gayle_seen(unsigned port) { gay.since[port & 1] = 0; }
+void mock_gayle_on_end(void (*fn)(void *ctx), void *ctx) { gay.on_end = fn; gay.on_end_ctx = ctx; }
 /* cfide's CS register opened cs 0x10 (an IDE command over scs(4)) */
 void mock_gayle_cs_open(void) { if (gayle_op_busy()) gayle_violations++; }
 

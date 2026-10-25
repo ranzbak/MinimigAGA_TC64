@@ -285,8 +285,20 @@ unit hdd_irq_stopbusy hdd_test src sdproto.c '/case ST_STOP_TX:/,/return;/ s/wai
 # the brief's: the refill before the drain (the next group into the FIFO without waiting for hdd_cmd_req)
 unit hdd_refill_early hdd_test src hdd.c 's/if (!(GetFPGAStatus() \& CMD_IDECMD)) \/\/ wait for empty sector buffer/if (0)/' "a refill before the drain"
 # a write run started before the sector's hdd_dat_req (ruling T11-R1), and a go given before the previous block was taken
-unit hdd_no_r1 hdd_test src hdd.c 's/if (!(st \& CMD_IDEDAT)) {\t\/\/ wait for full write buffer/if (0) {/' "FAIL ODD.HDF WRITE MULTIPLE 250+4: Gayle model (CMD_IDE_DATA_RD of a sector the Amiga has not written)"
-unit sdp_go_early hdd_test src sdproto.c 's/!s.fail \&\& s.gsig == s.gtaken \&\&/!s.fail \&\&/' "the command never ends"
+unit hdd_no_r1 hdd_test src hdd.c 's/if (!(st \& CMD_IDEDAT)) {\t\/\/ wait for full write buffer/if (0) {/' "no Gayle op started before its data was there"
+unit sdp_go_early hdd_test src sdproto.c 's/!s.fail \&\& s.gsig == s.gtaken \&\&/!s.fail \&\&/' "no Gayle op started before its data was there"
+# fix round 1: the stall assert of sdproto_test (its feeder: a block taken without its go)
+unit sdp_nogo sdproto_test src sdproto.c 's/if (cur->from_gayle \&\& s.gsig == s.gtaken) {/if (0) {/' "FAIL gayle late: no Gayle op waited for the Amiga"
+# fix round 1 (a): the staged first block (an abandon during it sends nothing to the card), its TX_COMMIT, sd_gayle_busy over it
+unit sdp_staged sdproto_test src sdproto.c 's/if (cur->from_gayle \&\& !s.kept \&\& !s.unsent) {/if (0) {/' "FAIL gayle abandon 1st: no command reached the card"
+unit sdp_staged_commit sdproto_test src sdproto.c 's/^\t\t\tstart(SDC_OP_TX_COMMIT, 0);$/\t\t\t;/' "FAIL gayle staged"
+unit sdp_staged_busy hdd_test src sdproto.c 's/ || s.st == ST_WR_GSTAGE);/);/' "no FPGA frame (IDE command) while a Gayle op runs"
+# fix round 1 (b): the flags look before the CPU's blocks and before a READ group's RDY (a reset in a drain wait)
+unit hdd_cpu_block_guard hdd_test src hdd.c '/^\tcase H_RNEXT:/,/^\tcase H_RRUNGO:/ s/if (amiga_left()) {/if (0) {/' "FAIL rd_reset_to_write: nothing of the old command"
+unit hdd_rdy_early_guard hdd_test src hdd.c '/^\tcase H_RRUN:/,/^\tcase H_RPATCHGO:/ s/if (amiga_left())$/if (0)/' "FAIL rd_reset_rdy: no RDY of the old command"
+# fix round 1 (c): one card step per main-loop pass again
+unit pd_steps1 hdd_test src main.c 's/^#define DISK_STEPS 8$/#define DISK_STEPS 1/' "FAIL disk_passes: a quarter of the card steps"
+unit hdd_rdy_group_guard hdd_test src hdd.c '/^\tcase H_GROUP:/,/^\tcase H_DRAIN:/ s/if (hc.left < hc.count \&\& amiga_left()) {/if (0) {/' "FAIL rd_reset_group: no RDY of the old command"
 # PollDisks: an FPGA command during a Gayle op; CD_AudioPoll (a CD port flags read) during an HDD command
 unit hdd_gate hdd_test src main.c 's/if (fpga \&\& !sd_gayle_busy())/if (fpga)/' "no FPGA frame (IDE command) while a Gayle op runs"
 unit hdd_cd_poll hdd_test src main.c 's/^\tif (hdd_busy())$/\tif (0)/' "inside the command"

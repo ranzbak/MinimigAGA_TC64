@@ -26,7 +26,11 @@
  * (one block too): a stop token can end it at any block boundary (the
  * caller closes a run; the Amiga abandoned the command).  The next block is
  * taken only after the caller's go (its sector is in the FIFO: ST_WR_PARK
- * until then, no peripheral op). */
+ * until then, no peripheral op).  The first block of an op is staged: the
+ * CMD25 frame, [FF, FC] and the block (GAYLE_TO_TX) go into TX before the
+ * command is sent, so an Amiga that abandons during that block's DMA has
+ * sent nothing to the card; after the command TX_COMMIT puts the commit
+ * point at the block, which is then kept as any other. */
 #include <stdio.h>
 #include <string.h>
 
@@ -52,6 +56,7 @@
 #define SD_ACMD41_BOUND 345
 
 unsigned sd_err_count[SD_ROWS];
+unsigned sd_steps;
 unsigned char sd_csd[16];
 unsigned char sd_debug;
 /* SCK = 113.46 MHz / (2 (div + 1)): 18.9, 14.2, 9.5, 6.3, 4.1, 2.0 MHz */
@@ -89,6 +94,7 @@ enum {
 	ST_STOP_TX,		/* XFER TX 2: stop token FD + a byte */
 	ST_STOP_BUSY,		/* WAIT_EQ FF */
 	ST_WR_GAYLE,		/* GAYLE_TO_TX 512: a from_gayle block into TX */
+	ST_WR_GSTAGE,		/* GAYLE_TO_TX 512: an op's first block, behind its staged CMD25 */
 	ST_WR_PARK		/* from_gayle: no peripheral op, waits for sd_gayle_go / sd_close */
 };
 /* what follows a command (s.after) */
@@ -109,6 +115,7 @@ static struct {
 	unsigned char regcmd;			/* D_REG: 9 (CSD) or 10 (CID) */
 	unsigned char fail;			/* the error to end with once the card is stopped */
 	unsigned char closing;			/* from_gayle: end the run at the next block boundary */
+	unsigned char staged;			/* from_gayle: the CMD25 frame in TX in front of its first block */
 	unsigned short unsent, txlen, blen;
 	unsigned done, run0;			/* blocks done; done at the start of this CMD25 */
 	unsigned gsig, gtaken;			/* from_gayle: blocks the caller said are in the FIFO; taken from it */
@@ -244,7 +251,7 @@ static void tx_send(unsigned char next)
 }
 
 /* ---- commands ---- */
-static void cmd(unsigned idx, unsigned long arg, unsigned char after)
+static void cmd_frame(unsigned idx, unsigned long arg, unsigned char after)
 {
 	frame(s.f, idx, arg);
 	s.flen = 7;
@@ -258,6 +265,10 @@ static void cmd(unsigned idx, unsigned long arg, unsigned char after)
 	s.c_crc = 0;
 	s.c_tmo = 0;
 	s.junk = 0;
+}
+static void cmd(unsigned idx, unsigned long arg, unsigned char after)
+{
+	cmd_frame(idx, arg, after);
 	tx_send(ST_C_TX);
 }
 
@@ -347,6 +358,20 @@ static void write_cmd(void)
 	s.multi = cur->count > 1 || cur->from_gayle;
 	s.run0 = s.done;
 	s.dkind = D_BLOCK;
+	if (cur->from_gayle && !s.kept && !s.unsent) {
+		/* staged: [FF + CMD25, FF, FC] then the block by GAYLE_TO_TX (its
+		   sector is in the FIFO: the submit's go); the command goes out
+		   only when the block is in TX (521 of 1024 bytes) */
+		static const unsigned char h[2] = { 0xFF, 0xFC };
+		cmd_frame(25, addr(cur->lba + s.done), A_WRITE);
+		sdc_push(s.f, s.flen);
+		sdc_push(h, 2);
+		s.unsent += s.flen + 2;
+		s.staged = 1;
+		s.st = ST_WR_GSTAGE;
+		start(SDC_OP_GAYLE_TO_TX | (cur->port ? SDC_G_PORT1 : 0), 512);
+		return;
+	}
 	cmd(s.multi ? 25 : 24, addr(cur->lba + s.done), A_WRITE);
 }
 
@@ -520,6 +545,10 @@ static void step(unsigned st)
 		if (!s.kept) {
 			start(SDC_OP_TX_FLUSH, 0);
 			s.unsent = 0;
+		} else if (s.staged) {
+			/* the staged CMD25 is out: the commit point to its block */
+			start(SDC_OP_TX_COMMIT, 0);
+			s.staged = 0;
 		}
 		waitop(SDC_OP_WAIT_NE, T_NCR, ST_C_R1);
 		return;
@@ -653,6 +682,20 @@ static void step(unsigned st)
 		s.unsent += 512;
 		s.kept = 1;
 		xfer(SDC_X_TX, 2, ST_WR_TOKEN);
+		return;
+	case ST_WR_GSTAGE:
+		if (st & SDC_ST_GERR) {	/* abandoned before the command went out: nothing reached the card */
+			start(SDC_OP_TX_FLUSH, 0);
+			s.unsent = 0;
+			s.staged = 0;
+			finish(SD_E_GAYLE);
+			return;
+		}
+		s.gtaken++;
+		s.unsent += 512;
+		s.kept = 1;
+		s.next = ST_C_TX;
+		xfer(SDC_X_TX, s.flen, ST_C_TX);	/* the command, then R1 */
 		return;
 	case ST_WR_PARK:		/* a TX_FLUSH's own end: nothing runs */
 		return;
@@ -829,6 +872,7 @@ int sd_poll(void)
 		if (!(st & SDC_ST_BUSY)) {
 			sdc_take(SDC_IRQ_DONE | SDC_IRQ_ERR);
 			s.last = SDC_R(SDC_LAST);
+			sd_steps++;
 			step(st);
 			after_step();
 		}
@@ -846,6 +890,7 @@ static void unpark(void)
 	if (polling || !cur || s.st != ST_WR_PARK || (s.gsig == s.gtaken && !s.closing))
 		return;
 	polling = 1;
+	sd_steps++;
 	send_block();
 	after_step();
 	polling = 0;
@@ -881,7 +926,7 @@ int sd_gayle_parked(const sd_op *op)
 
 int sd_gayle_busy(void)
 {
-	return cur && (s.st == ST_RD_GAYLE || s.st == ST_WR_GAYLE);
+	return cur && (s.st == ST_RD_GAYLE || s.st == ST_WR_GAYLE || s.st == ST_WR_GSTAGE);
 }
 
 /* the active op to its end; a parked from_gayle run is closed first (its

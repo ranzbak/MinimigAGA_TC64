@@ -488,8 +488,8 @@ void ATA_SetMultipleMode(unsigned char* tfr, int unit)
 
 /* ---- the HDD data path: READ / WRITE (MULTIPLE) as a state machine ------
  * findings/sdcard-engine Task 11a (design 5.1, 5.2, 11).  HandleHDD picks a
- * command up and starts it; hdd_poll(), once per main-loop pass
- * (main.c PollDisks), advances it a step at a time and returns: the Amiga
+ * command up and starts it; hdd_poll(), from the main loop (main.c
+ * PollDisks), advances it a step at a time and returns: the Amiga
  * waits are one status poll per pass, the card work async SD ops
  * (sdproto.h), and the main loop (keys, OSD, CD audio, drive sounds, the
  * floppy) runs between them.  Never sdc_wait / sd_sync here (one exception:
@@ -519,9 +519,12 @@ void ATA_SetMultipleMode(unsigned char* tfr, int unit)
  *   error on an op (the bridge's cmd_since), or hdd_cmd_req without
  *   hdd_dat_req while a write waits for a sector: no status for it (it would
  *   end the NEW command), a write run is ended on the card first (stop
- *   token, sd_close).  Before every END a write and every error status
- *   also look at the flags (amiga_left: CMD_IDE_REGS_RD, after the last
- *   Gayle op of the command) for a reset.
+ *   token, sd_close).  The flags (amiga_left: CMD_IDE_REGS_RD, IDEF_RST_SEEN
+ *   or IDEF_DEV_WR) are looked at before what the bridge's cmd_since does not
+ *   guard: a write's END, every error status, a block the CPU writes into
+ *   the FIFO (FakeRDB, the patched RDB) and a READ group's RDY after the
+ *   first (a reset in the drain wait makes the new command's request look
+ *   like "drained").
  * Errors: WriteTaskFile with the error register (UNC for a read, ABRT for a
  *   write, IDNF past the end of the file), END | IRQ | ERR; a card error
  *   also ERROR_SDCARD (MMC_OpResult, the OSD's error page).
@@ -603,15 +606,19 @@ static void hdd_done(unsigned st)
 	hdd_end("ok", st);
 }
 
-/* After the command's last Gayle op, before an END: did the Amiga reset
-   since the pickup?  The flags of the port (IDEF_RST_SEEN; the CD unit gets
-   them too, CD_Flags).  The CMD_IDE_REGS_RD clears the bridge's cmd_since
-   of the port: no Gayle op of this command follows */
+/* Did the Amiga leave the command since the pickup?  The flags of the
+   port: IDEF_RST_SEEN (a reset), IDEF_DEV_WR (the host wrote drive/head:
+   a new command's set-up; no host touches the task file during a command);
+   the CD unit gets them too (CD_Flags).  Before what the bridge's cmd_since
+   does not guard: an END or error status, a block the CPU writes into the
+   FIFO, a READ group's RDY.  The CMD_IDE_REGS_RD clears cmd_since; what
+   happens after it sets it again, what happened before it these flags
+   report (findings/sdcard-engine Task 11a fix round 1) */
 static int amiga_left(void)
 {
 	unsigned char flags = ReadIDEFlags(hc.port);
 	CD_Flags(hc.port, flags);
-	return (flags & IDEF_RST_SEEN) != 0;
+	return (flags & (IDEF_RST_SEEN | IDEF_DEV_WR)) != 0;
 }
 
 /* END | IRQ | ERR with the error register; nothing when the Amiga left */
@@ -766,8 +773,15 @@ static int hdd_step(void)
 			hc.st = H_WNEXT;
 			return 1;
 		}
-		if (!hc.rdy)
+		if (!hc.rdy) {
+			/* after the first group: a reset during the last drain wait
+			   made that "drained" the new command's request */
+			if (hc.left < hc.count && amiga_left()) {
+				hdd_end("abandoned", 0);
+				return 0;
+			}
 			WriteStatus(IDE_STATUS_RDY); // pio in (class 1) command type
+		}
 		hc.rdy = 0;
 		hc.st = H_DRAIN;
 		return 1;
@@ -811,6 +825,10 @@ static int hdd_step(void)
 				seek((unsigned long)v, H_RPATCHGO);
 				return 1;
 			}
+			if (amiga_left()) {	/* the CPU's block: cmd_since does not guard it */
+				hdd_end("abandoned", 0);
+				return 0;
+			}
 			FakeRDB(hc.unit, hc.lba, hdd_blk);
 			hdd_fat_sb = ~0ul;
 			WriteIDEData(hdd_blk, 512);
@@ -835,14 +853,18 @@ static int hdd_step(void)
 			   still run): the next group's RDY now, as the synchronous path
 			   wrote it (rd_multi_order); before the drain is fine, Gayle
 			   arms the interrupt for the next rising DRQ */
-			if (!hc.rdy && hc.op.done_blocks == (int)hc.n && hc.grp == hc.n && hc.left > hc.n &&
-			    !sd_gayle_busy()) {
-				WriteStatus(IDE_STATUS_RDY);
-				hc.rdy = 1;
+			if (!hc.rdy && !hc.abandoned && hc.op.done_blocks == (int)hc.n && hc.grp == hc.n &&
+			    hc.left > hc.n && !sd_gayle_busy()) {
+				if (amiga_left())
+					hc.abandoned = 1;	/* ended when the op has (hc.op is the card's until then) */
+				else {
+					WriteStatus(IDE_STATUS_RDY);
+					hc.rdy = 1;
+				}
 			}
 			return 0;
 		}
-		if (hc.op.err) {
+		if (hc.op.err || hc.abandoned) {
 			hdd_op_failed(ATA_ERR_UNC);
 			return 0;
 		}
@@ -864,6 +886,10 @@ static int hdd_step(void)
 			return 0;
 		if (hc.op.err) {
 			hdd_op_failed(ATA_ERR_UNC);
+			return 0;
+		}
+		if (amiga_left()) {	/* the CPU's block: cmd_since does not guard it */
+			hdd_end("abandoned", 0);
 			return 0;
 		}
 		{
