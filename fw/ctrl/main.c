@@ -337,6 +337,16 @@ int main(void)
 
     DISKLED_ON;
 
+	// cfide's SPI (userio_osd, paula_floppy's FPGA / floppy / HDD frames,
+	// the RTC) at its fast setting (SCK 6 clk_114) from the start.  The boot
+	// ROM leaves it slow (SPI_slow 0xef: about 960 clk_114 a bit) since its
+	// card moved to sdcard_spi (findings/sdcard-engine Task 12); until Task
+	// 10 this firmware's MMC_Init set it fast, the card being on that SPI.
+	// Without this every frame before the main loop's first HandleRTC ran at
+	// the ROM's speed (sim/l3 sdc_boot, Task 13: the version frame took
+	// 54,374 clk_114 instead of 1,026)
+	SPI_fast();
+
 	if(PLATFORM & (1<<PLATFORM_SPIRTC))
 	{
 		printf("Platform has SPI RTC support\n");
