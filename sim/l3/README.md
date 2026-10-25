@@ -1539,7 +1539,9 @@ do), and answers CMD10 with a CID (`tools/sim/README.md`). Checks: the
 base scenario's (milestones, kick, order, mmc for `sdc_boot`, `l3check.py
 hdd` for `sdc_hdd`, memhash, the MARGIN lines, the bench verdict) with
 
-- `milestones_boot.txt`'s `SDE=1` lines instead of its `SDE=0` ones: the
+- `milestones_boot.txt`'s `SDE=1` lines instead of its `SDE=0` ones (`run.sh
+  milestones`; until the Task 13 fix round the filter dropped every `SDE=`
+  line, of both values, so these were not checked in the first runs): the
   ROM's `SD init: VERSION ...`, `CMD0 01` ... `CMD59 00`, `SD card: SDHC`,
   the lock-step line `Firmware SDC <v>, bitstream SDC <v>`; the firmware's
   `sd_init` lines (`ACMD41 00, 3 polls`, `OCR c0ff8000, type 3`, `CMD59
@@ -1561,9 +1563,11 @@ hdd` for `sdc_hdd`, memhash, the MARGIN lines, the bench verdict) with
     table's `SD: <row>, row <r>, retry <k> of <n>, lba <l>`, `retries out`,
     `op failed`, `CMD13 probe`, `SCK one step slower`), `SD init: CMD10 /
     CMD9 <err>`, `card changed`, `CID unreadable`: none unless `XARGS`
-    injects (`+SD_ERR_`); with an injection at least one retry line and no
-    `retries out`, `op failed`, `CMD13 probe`, `card changed`, `CID
-    unreadable`
+    injects (`+SD_ERR_`); with an injection the leg says which retry it
+    must give: exactly `EXPECT_RETRY_N` (default 1) retry lines (the
+    firmware's row lines and the ROM's `try` lines together), all matching
+    the ERE `EXPECT_RETRY` (required with an injection), and no `retries
+    out`, `op failed`, `CMD13 probe`, `card changed`, `CID unreadable`
   - `=== SDC gayle to_gayle <n> ops <w> words, from_gayle <n> ops <w>
     words, g_err <e>, ended by g_ack <a>; irq rises <i>` (`tb_l3.v`): no
     `g_err`; `sdc_hdd`: to_gayle 69,376 words (271 sectors: the plan reads
@@ -1580,22 +1584,34 @@ holds the injection off until the main-loop milestone and counts n from
 there (`=== SD_ERR armed at the scenario start ...` gives the absolute
 numbers): `+SD_ERR_RDCRC=70` hits a block of command 5 (READ MULTIPLE),
 `+SD_ERR_WRREJ=67` the third block of command 8's first CMD25 (WRITE
-MULTIPLE).
+MULTIPLE). The legs and their expected retry line:
+
+| Leg | `XARGS` | `EXPECT_RETRY` (exactly one) |
+|---|---|---|
+| the ROM's read retry | `+SD_ERR_RDCRC=3` | `^SD read [0-9]+: CRC [0-9A-F]{2}, try 1$` |
+| the firmware's read retry (row 1) | `+SD_ERR_AT=scenario +SD_ERR_RDCRC=70` | `^SD: read CRC, row 1, retry 1 of 4, lba [0-9]+$` |
+| the firmware's write resend (row 2) | `+SD_ERR_AT=scenario +SD_ERR_WRREJ=67` | `^SD: write CRC \(0B\), row 2, retry 1 of 4, lba [0-9]+$` |
 
 ### Run
 
-Setup as in "Run". From the repository root, one at a time (each with a
-new `RUNTAG`; `BUILD_FROM` takes the first run's simulator):
+Setup as in "Run". From the repository root, one at a time. Every run
+needs a RUNTAG of its own that no earlier run used (`<t>` below: put a new
+tag for each line, e.g. the date and a letter; a reused run directory is
+deleted and its results can be mistaken for the new ones). `BUILD_FROM`
+takes the simulator of the second line's run (`<t2>`):
 
 ```sh
-SIM=verilator RUNTAG=sdcb bash sim/l3/run.sh sdc_boot
-SIM=verilator RUNTAG=sdch bash sim/l3/run.sh sdc_hdd
-SIM=verilator RUNTAG=sdch_rdcrc3 BUILD_FROM=sdch XARGS=+SD_ERR_RDCRC=3 bash sim/l3/run.sh sdc_hdd
-SIM=verilator RUNTAG=sdch_rdfw BUILD_FROM=sdch XARGS="+SD_ERR_AT=scenario +SD_ERR_RDCRC=70" bash sim/l3/run.sh sdc_hdd
-SIM=verilator RUNTAG=sdch_wrrej BUILD_FROM=sdch XARGS="+SD_ERR_AT=scenario +SD_ERR_WRREJ=67" bash sim/l3/run.sh sdc_hdd
-SIM=verilator RUNTAG=sdcs bash sim/l3/run.sh sdc_boot_short
-RUNTAG=sdcsx bash sim/l3/run.sh sdc_boot_short
-bash sim/l3/run.sh compare sdcsx sdcs
+SIM=verilator RUNTAG=<t1> bash sim/l3/run.sh sdc_boot
+SIM=verilator RUNTAG=<t2> bash sim/l3/run.sh sdc_hdd
+SIM=verilator RUNTAG=<t3> BUILD_FROM=<t2> XARGS=+SD_ERR_RDCRC=3 \
+  EXPECT_RETRY='^SD read [0-9]+: CRC [0-9A-F]{2}, try 1$' bash sim/l3/run.sh sdc_hdd
+SIM=verilator RUNTAG=<t4> BUILD_FROM=<t2> XARGS="+SD_ERR_AT=scenario +SD_ERR_RDCRC=70" \
+  EXPECT_RETRY='^SD: read CRC, row 1, retry 1 of 4, lba [0-9]+$' bash sim/l3/run.sh sdc_hdd
+SIM=verilator RUNTAG=<t5> BUILD_FROM=<t2> XARGS="+SD_ERR_AT=scenario +SD_ERR_WRREJ=67" \
+  EXPECT_RETRY='^SD: write CRC \(0B\), row 2, retry 1 of 4, lba [0-9]+$' bash sim/l3/run.sh sdc_hdd
+SIM=verilator RUNTAG=<t6> BUILD_FROM=<t2> bash sim/l3/run.sh sdc_boot_short
+RUNTAG=<t7> bash sim/l3/run.sh sdc_boot_short
+bash sim/l3/run.sh compare <t7> <t6>
 ```
 
 (`sdc_boot_short` under xsim: 677 s; Verilator 139 s.)

@@ -65,6 +65,11 @@
 #   TIMEOUT  clk_114 cycles (default per scenario below), at most
 #            2147483647 (tb_l3.v's integer)
 #   L3CHECK  tests of run.sh only: the l3check.py to run (default sim/l3's)
+#   EXPECT_RETRY, EXPECT_RETRY_N  sdc_* with an injection (+SD_ERR_ in
+#            XARGS): the ERE every retry line on the UART must match (the
+#            firmware's "SD: <row>, row <r>, retry <k> of <n>, lba <l>", the
+#            ROM's "SD read <lba>: <what> <v>, try <t>") and their exact
+#            count (default 1); required with an injection (README "sdc")
 #   SD_ENGINE=1  the SD card engine wired in (tb_l3.v `SD_ENGINE: sdcard_spi on
 #            cfide's ext port with the card on its pins, sdcard_gayle + mux
 #            between paula_floppy and gayle, as minimig_virtual_top with
@@ -160,9 +165,10 @@
 #               the lock-step line = fw/ctrl/sdc.h's SDC_VERSION on both
 #               sides and the firmware file's trailer, no card frame (cs 02)
 #               in spi.txt, the SD error lines (none without +SD_ERR_ in
-#               XARGS; with it at least one retry and nothing out of
-#               retries), sdc_hdd: "=== SDC gayle" ops in both directions,
-#               no g_err.  +SD_ERR_AT=scenario (XARGS) counts the model's
+#               XARGS; with it exactly EXPECT_RETRY_N (1) retry lines, all
+#               matching EXPECT_RETRY, and nothing out of retries), sdc_hdd:
+#               to_gayle / from_gayle words = the plan's sectors, no g_err.
+#               +SD_ERR_AT=scenario (XARGS) counts the model's
 #               +SD_ERR_<kind>=n from the main-loop milestone
 #   akiko       fdd card, +SCENARIO=akiko +KEYS=sim/l3/keys/insert_df0.txt
 #               +FDD_DUMP=<run>/akiko, TICKDIV 643 from the scenario start:
@@ -606,14 +612,18 @@ build() {
 # ROM's and the firmware's SD lines), "CARD=<card> <milestone>" one of that
 # card only: each is kept, without the prefix, for the run's engine (SDE)
 # and the scenario's card (MSCARD) and dropped for the others (an SDE= line
-# may carry a CARD= prefix after it)
+# may carry a CARD= prefix after it).  The 't clr' after the SDE= step
+# clears sed's substitution flag: without it a kept SDE= line (flag set by
+# its own s///) took the CARD= step's 't' to the end of the script and -n
+# dropped it -- every SDE= line was lost (Task 13 review)
 milestones() {
 	local s=$1 log=$2 ms="$run/milestones_$1.txt" t
 	if [ "$s" = boot_short ]; then
 		sed '/^#@ boot_short end/q' "$HERE/milestones_boot.txt"
 	else
 		cat "$HERE/milestones_boot.txt"
-	fi | sed -n -e "s/^SDE=$SDE //" -e '/^SDE=/d' -e "s/^CARD=${MSCARD:-boot} //p" -e t -e '/^CARD=/d' -e p > "$ms"
+	fi | sed -n -e "s/^SDE=$SDE //" -e '/^SDE=/d' -e 't clr' -e ':clr' \
+		-e "s/^CARD=${MSCARD:-boot} //p" -e t -e '/^CARD=/d' -e p > "$ms"
 	grep -E '^CARD=' "$HERE/milestones_boot.txt" | grep -vE '^CARD=(boot|fdd|hdd|cd_cue|cd_iso|cdhdd) ' \
 		| sed 's/^/BAD  milestones_boot.txt: a CARD= line for none of boot, fdd, hdd, cd_cue, cd_iso, cdhdd: /'
 	grep -v '^NOT ' "$ms" > "$ms.check"
@@ -664,11 +674,12 @@ margins() {
 #     and "SD read <lba>: ..., try", "SD: SCK div 13"; the firmware's "SD:
 #     ..." lines, "SD init: CMD10 / CMD9 <err>", "card changed", "CID
 #     unreadable"): none unless XARGS injects (+SD_ERR_); with an
-#     injection at least one retry line (the firmware's "SD: <row>, row
-#     <r>, retry <k> of <n>, lba <l>" or the ROM's "SD read <lba>: <what>
-#     <v>, try <t>", each a failed try the ROM tries again: out of tries
-#     it stops the boot, which the milestones see) and none of "retries
-#     out", "op failed", "CMD13 probe", "card changed", "CID unreadable"
+#     injection the retry lines (the firmware's "SD: <row>, row <r>, retry
+#     <k> of <n>, lba <l>" or the ROM's "SD read <lba>: <what> <v>, try
+#     <t>", each a failed try the ROM tries again: out of tries it stops
+#     the boot, which the milestones see) exactly EXPECT_RETRY_N (1), all
+#     matching EXPECT_RETRY, and none of "retries out", "op failed", "CMD13
+#     probe", "card changed", "CID unreadable"
 #   - "=== SDC gayle": no g_err; hdd: every card sector the plan moves to
 #     or from the Amiga goes through the bridge, in words: to_gayle
 #     SDC_HDD_RD_SECTORS x 256, from_gayle SDC_HDD_WR_SECTORS x 256 (README
@@ -716,9 +727,22 @@ sdc_check() {
 		if [ -z "$ls" ]; then echo "ok   sdc: no SD error line on the UART"
 		else printf '%s\n' "$ls" | head -20 | sed 's/^/BAD  sdc: SD error line without an injection: /'; fi
 	else
+		# every retry line (the firmware's row lines, the ROM's "try" lines)
+		# must be the leg's: EXPECT_RETRY (an ERE on the SD line), exactly
+		# EXPECT_RETRY_N (1) of them, and no other retry line
 		rx=$(printf '%s\n' "$ls" | grep -E ', row [0-9]+, retry [0-9]+ of [0-9]+, lba |, try [0-9]+$')
-		if [ -n "$rx" ]; then printf '%s\n' "$rx" | head -20 | sed 's/^/ok   sdc: retry line (injection): /'
-		else echo "BAD  sdc: XARGS injects an SD error, but no retry line on the UART"; fi
+		printf '%s\n' "$rx" | grep . | head -20 | sed 's/^/info sdc: retry line (injection): /'
+		if [ -z "${EXPECT_RETRY:-}" ]; then
+			echo "BAD  sdc: XARGS injects an SD error, but EXPECT_RETRY (the retry line the leg must give) is not set"
+		else
+			n=$(printf '%s\n' "$rx" | grep -cE -- "$EXPECT_RETRY")
+			t=$(printf '%s\n' "$rx" | grep -c .)
+			if [ "$n" = "${EXPECT_RETRY_N:-1}" ] && [ "$t" = "$n" ]; then
+				echo "ok   sdc: $n retry line(s) matching EXPECT_RETRY '$EXPECT_RETRY', no other retry line"
+			else
+				echo "BAD  sdc: $n retry line(s) matching EXPECT_RETRY '$EXPECT_RETRY' (want ${EXPECT_RETRY_N:-1}), $t retry line(s) in all"
+			fi
+		fi
 		printf '%s\n' "$ls" | grep -E 'retries out|op failed|CMD13 probe|card changed|CID unreadable' | head -20 \
 			| sed 's/^/BAD  sdc: the injection ran out of retries: /'
 		printf '%s\n' "$ls" | grep -vE ', row [0-9]+, retry [0-9]+ of [0-9]+, lba |, try [0-9]+$|retries out|op failed|CMD13 probe|card changed|CID unreadable' \
