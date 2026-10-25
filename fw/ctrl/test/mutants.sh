@@ -588,6 +588,8 @@ unit puts_words hwmap_test src uart.c 's/(c=(unsigned char)\*msg++)/(c=(unsigned
 # ---- the final review's fix wave (findings/sdcard-engine, 2026-10-25) -------
 # M7: SET MULTIPLE MODE above 16 accepted (groups larger than Gayle's FIFO)
 unit hdd_setmult_max hdd_test src hdd.c 's/if (tfr\[2\] > HDD_MULTIPLE_MAX) {/if (0) {/' "FAIL SET MULTIPLE MODE 17"
+# M2: amiga_left ignores IDEF_CMD_WR (a command without drive/head write before its look)
+unit hdd_cmd_wr hdd_test src hdd.c 's/return (flags \& (IDEF_RST_SEEN | IDEF_DEV_WR | IDEF_CMD_WR)) != 0;/return (flags \& (IDEF_RST_SEEN | IDEF_DEV_WR)) != 0;/' "FAIL rd_newcmd_rdy: no RDY of the old command after the new command"
 
 echo "$nkilled mutants killed"
 if [ $bad -eq 0 ]; then echo "=== MUTANTS PASS"; else echo "=== MUTANTS FAILED"; fi

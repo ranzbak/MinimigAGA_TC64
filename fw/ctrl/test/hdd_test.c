@@ -309,6 +309,7 @@ static struct gayle {
 	unsigned irqs;		/* IRQ status writes of a pio-out command (groups released) */
 	int wtoggle;
 	int rst_seen;		/* the next CMD_IDE_REGS_RD reports IDEF_RST_SEEN */
+	int cmd_wr;		/* the next CMD_IDE_REGS_RD reports IDEF_CMD_WR (the bridge's cmd_seen) */
 	unsigned gerrs;		/* mock_gayle_errs() the model has seen */
 	int hook;		/* HOOK_*: what the Amiga does instead of writing sector hook_at */
 	unsigned hook_at;
@@ -399,6 +400,7 @@ static void amiga_command(const unsigned char *t, unsigned count, unsigned chunk
 	g.count = count;
 	g.chunk = chunk ? chunk : 1;
 	g.stop_mark = mock_card_stop_ends();
+	g.cmd_wr = 1;		/* Gayle's cmd_new: the bridge's IDEF_CMD_WR at the next flags read */
 	mock_gayle_abandon(0);	/* the FIFO reset: cmd_since until the pickup */
 }
 
@@ -423,6 +425,7 @@ static void amiga_reset(void)
 	g.busy = 0;
 	g.pio = 0;
 	g.rst_seen = 1;
+	g.cmd_wr = 1;		/* cmd_new is reset | command */
 	mock_gayle_abandon(0);	/* Gayle reset: the FIFO, cmd_since */
 	g.hook = HOOK_NONE;
 }
@@ -438,10 +441,11 @@ static void amiga_try_write(void)
 		amiga_write();
 }
 
-/* Ctrl-Amiga-Amiga, then at once the next command (g.next) if one is set */
-static void amiga_reset_next(void)
+/* the next command (g.next), if one is set: after a reset (amiga_reset_next)
+   or with none (amiga_newcmd_next: only the command byte, no drive/head
+   write, no reset -- final review M2) */
+static void amiga_next(void)
 {
-	amiga_reset();
 	if (!g.next.on)
 		return;
 	glog("cmd");
@@ -456,6 +460,13 @@ static void amiga_reset_next(void)
 	mock_gayle_into(0, &gay_base[0]);
 	amiga_command(g.next.tfr, g.next.count, g.next.chunk);
 	g.next.on = 0;
+}
+
+/* Ctrl-Amiga-Amiga, then at once the next command (g.next) if one is set */
+static void amiga_reset_next(void)
+{
+	amiga_reset();
+	amiga_next();
 }
 
 /* the Amiga writes its next sector into the FIFO */
@@ -555,8 +566,9 @@ static unsigned char gayle_miso(void *ctx, unsigned char out)
 		}
 		if ((out & 0xF0) == CMD_IDE_REGS_RD) {
 			mock_gayle_seen(out & 1);	/* "I have seen this port's command" */
-			g.fb[0] = (unsigned char)((out & 1) ? IDEF_PORT : 0) | (unsigned char)(g.rst_seen && !(out & 1) ? IDEF_RST_SEEN : 0);
-			if (!(out & 1)) g.rst_seen = 0;
+			g.fb[0] = (unsigned char)((out & 1) ? IDEF_PORT : 0) | (unsigned char)(g.rst_seen && !(out & 1) ? IDEF_RST_SEEN : 0) |
+			          (unsigned char)(g.cmd_wr && !(out & 1) ? IDEF_CMD_WR : 0);
+			if (!(out & 1)) g.rst_seen = g.cmd_wr = 0;
 		}
 		return out == 0 ? gayle_poll() : 0;
 	}
@@ -1851,6 +1863,65 @@ static void rd_reset_to_write(void)
 	free(d);
 }
 
+/* mock_gayle_on_end: once the bridge has delivered the read's 1st group,
+   the next command (g.next) without a reset and without a drive/head write */
+static void newcmd_after_group(void *ctx)
+{
+	(void)ctx;
+	if (!g.next.on || g.pio != 1 || gay_bytes(0) < (size_t)g.chunk * 512)
+		return;
+	amiga_next();
+}
+
+/* final review M2: as rd_reset_rdy, but the Amiga's new command comes with
+   no reset and no drive/head write (only the command byte), after the
+   group's last block reached Gayle and before the firmware's flags read
+   (amiga_left) that precedes the next group's RDY.  That read clears the
+   bridge's cmd_since; before IDEF_CMD_WR nothing in it told of the command,
+   so the RDY and the next group went to the new command.  Now: no status of
+   the old command after the new one, the new one served */
+static void rd_newcmd_rdy(void)
+{
+	uint8_t *d = wpattern(1, 57);
+	unsigned c, h, sct;
+	long n;
+	const char *after, *tf;
+	set_multiple(1, 16);
+	command_begin(1, ACMD_READ_MULTIPLE, 2100, 32);
+	lba2chs(1, 6110, &c, &h, &sct);
+	{
+		unsigned char t[8] = { 0, 0, 1, (unsigned char)sct, (unsigned char)c, (unsigned char)(c >> 8),
+		                       (unsigned char)(0xB0 | h), ACMD_WRITE_SECTORS };
+		memcpy(g.next.tfr, t, 8);
+	}
+	g.next.count = 1;
+	g.next.chunk = 1;
+	g.next.wdata = d;
+	g.next.wlen = 512;
+	g.next.lba = 6110;
+	g.next.unit = 1;
+	g.next.on = 1;
+	mock_gayle_on_end(newcmd_after_group, NULL);
+	n = run_until(cmd_over_both, 200000);
+	mock_gayle_on_end(NULL, NULL);
+	check("rd_newcmd_rdy: both commands over", n < 200000 && cmd_over_both(), 1);
+	check_gayle("rd_newcmd_rdy");
+	after = log_after("cmd\n");
+	tf = after ? strstr(after, "tf ") : NULL;
+	check("rd_newcmd_rdy: the new command picked up", tf != NULL, 1);
+	check("rd_newcmd_rdy: no RDY of the old command after the new command",
+	      after && tf && !memmem(after, (size_t)(tf - after), "st ", 3), 1);
+	check("rd_newcmd_rdy: no block into the FIFO after the new command (the old command's 2nd group)",
+	      (long)gay_bytes(0), 0);
+	check("rd_newcmd_rdy: the WRITE's statuses REQ, END | IRQ",
+	      tf && strstr(tf, "st 04\nst 90\n") != NULL && !strstr(tf, "st 08"), 1);
+	check("rd_newcmd_rdy: its sector on the card", card_has(6110, d, 1), 1);
+	file_now(6110, d, 1);
+	g.wdata = NULL;
+	g.wlen = 0;
+	free(d);
+}
+
 /* Review Focus 4 at the HDD level: a card that takes 500 ms to program each
    block of a WRITE MULTIPLE (and its stop token): no timeout, each IRQ
    after the busy end, the main loop keeps running meanwhile */
@@ -2120,6 +2191,7 @@ int main(int argc, char **argv)
 	wr_cancel();
 	dbg_trace();
 	rd_reset_to_write();
+	rd_newcmd_rdy();
 	disk_passes();
 	rd_group_gate();
 

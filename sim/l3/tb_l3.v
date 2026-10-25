@@ -375,10 +375,10 @@ module tb_l3 #(
   wire [2:0]  hdd_addr;
   wire [15:0] hdd_data_out, hdd_data_in;
   wire        hdd_wr, hdd_status_wr, hdd_data_wr, hdd_data_rd, hdd_port, hdd_xfer_wr, hdd_regs_rd;
-  wire [1:0]  hdd_fifo_reset;
+  wire [1:0]  hdd_fifo_reset, hdd_cmd_new;
   // paula_floppy's side of the data port; minimig.v's names (pf_*)
   wire [2:0]  pf_addr;
-  wire [15:0] pf_data_out;
+  wire [15:0] pf_data_out, pf_data_in;
   wire        pf_data_wr, pf_data_rd, pf_port;
   wire        fl_track0, fl_change, fl_ready, fl_wprot, fl_index, fl_dmal, fl_dmas;
   wire [3:0]  fl_sel;
@@ -413,7 +413,7 @@ module tb_l3 #(
     .direct_scs(~sd_cs[6]), .direct_sdi(card_miso),
 `endif
     .hdd_cmd_req(hdd_cmd_req), .hdd_dat_req(hdd_dat_req),
-    .hdd_addr(pf_addr), .hdd_data_out(pf_data_out), .hdd_data_in(hdd_data_in),
+    .hdd_addr(pf_addr), .hdd_data_out(pf_data_out), .hdd_data_in(pf_data_in),
     .hdd_wr(hdd_wr), .hdd_status_wr(hdd_status_wr),
     .hdd_data_wr(pf_data_wr), .hdd_data_rd(pf_data_rd),
     .hdd_port(pf_port), .hdd_xfer_wr(hdd_xfer_wr), .hdd_regs_rd(hdd_regs_rd),
@@ -446,7 +446,7 @@ module tb_l3 #(
     .hdd_wr(hdd_wr), .hdd_status_wr(hdd_status_wr),
     .hdd_data_wr(hdd_data_wr), .hdd_data_rd(hdd_data_rd),
     .hdd_port(hdd_port), .hdd_xfer_wr(hdd_xfer_wr), .hdd_regs_rd(hdd_regs_rd),
-    .hdd_fifo_reset(hdd_fifo_reset),
+    .hdd_fifo_reset(hdd_fifo_reset), .hdd_cmd_new(hdd_cmd_new),
     .hd_fwr(), .hd_frd()
   );
 
@@ -455,6 +455,7 @@ module tb_l3 #(
 `ifdef SD_ENGINE
   wire        sg_active, sg_port, sg_data_wr, sg_data_rd;
   wire [15:0] sg_data_out;
+  wire [1:0]  sg_cmd_seen;
   sdcard_gayle #(.CLK_RATIO(4)) sdcg (
     .clk(clk28), .clk7_en(clk7_en), .reset(mm_reset), .clk_g(clk114),
     .g_req(sdc_g_req), .g_dir(sdc_g_dir), .g_port(sdc_g_port), .g_words(sdc_g_words),
@@ -463,14 +464,14 @@ module tb_l3 #(
     .g_rdata(sdc_g_rdata), .g_rvalid(sdc_g_rvalid),
     .active(sg_active), .port(sg_port), .data_wr(sg_data_wr), .data_rd(sg_data_rd),
     .data_out(sg_data_out), .data_in(hdd_data_in), .dat_req(hdd_dat_req),
-    .fifo_reset_seen(hdd_fifo_reset),
-    .fw_port(pf_port), .fw_xfer_wr(hdd_xfer_wr), .fw_regs_rd(hdd_regs_rd)
+    .fifo_reset_seen(hdd_fifo_reset), .cmd_new(hdd_cmd_new),
+    .fw_port(pf_port), .fw_regs_rd(hdd_regs_rd), .cmd_seen(sg_cmd_seen)
   );
   sdcard_gayle_mux sdcmux (
     .sg_active(sg_active), .sg_port(sg_port), .sg_data_wr(sg_data_wr), .sg_data_rd(sg_data_rd),
-    .sg_data_out(sg_data_out),
+    .sg_data_out(sg_data_out), .sg_cmd_seen(sg_cmd_seen),
     .pf_port(pf_port), .pf_data_wr(pf_data_wr), .pf_data_rd(pf_data_rd), .pf_data_out(pf_data_out),
-    .pf_addr(pf_addr),
+    .pf_addr(pf_addr), .pf_data_in(pf_data_in), .gy_data_in(hdd_data_in),
     .hdd_port(hdd_port), .hdd_data_wr(hdd_data_wr), .hdd_data_rd(hdd_data_rd),
     .hdd_data_out(hdd_data_out), .hdd_addr(hdd_addr)
   );
@@ -480,6 +481,7 @@ module tb_l3 #(
   assign hdd_data_wr = pf_data_wr;
   assign hdd_data_rd = pf_data_rd;
   assign hdd_data_out = pf_data_out;
+  assign pf_data_in = hdd_data_in;
 `endif
 
   // the Amiga side of the Akiko request window (scenario akiko).  ena_wr: a

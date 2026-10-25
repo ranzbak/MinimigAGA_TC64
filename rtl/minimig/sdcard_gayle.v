@@ -99,15 +99,25 @@
 // port while no op runs resets that port's FIFO too, and the next op would
 // fill the new command's FIFO with the old command's data (pio in and the
 // block mark survive a command write: DRQ and the interrupt would follow).
-// So cmd_since[p] is set by a FIFO reset of port p that is not the
-// firmware's own CMD_IDE_XFER_WR, and cleared by the firmware's
-// CMD_IDE_REGS_RD of port p (set wins; Gayle's dev_wr / rst_seen rule).  An
-// op that starts with it set ends in g_err (STATUS 7) without a strobe.
-// Firmware rule: a REGS_RD of a port means "I have seen this port's command":
-// fw/ctrl issues one at the command pickup (HandleHDD), in cd_wait (which
-// checks IDEF_PKT for a new command) and outside commands (CD_AudioPoll,
-// CD_Locked), never inside a transfer loop; keep it so.  After a Gayle error
-// the firmware picks the new command up (REGS_RD), which clears the flag.
+// So cmd_since[p] is set by Gayle's new-command event of port p (cmd_new:
+// the host's command write or the Gayle reset, gayle_port.v cmd_new_o), and
+// cleared by the firmware's CMD_IDE_REGS_RD of port p (set wins; Gayle's
+// dev_wr / rst_seen rule).  An op that starts with it set ends in g_err
+// (STATUS 7) without a strobe.  (Until the final review's fix wave it was
+// set by a FIFO reset that was not the firmware's own CMD_IDE_XFER_WR: a
+// command in the same clk7 sample as an XFER_WR of its port was lost, T7.)
+// The REGS_RD also captures the flag (cmd_seen[p], as gayle_port.v captures
+// dev_wr), and sdcard_gayle_mux shows it to the firmware as bit 15 of that
+// port's task file register words (flags bit 7, IDEF_CMD_WR; Gayle's own bit
+// 15 is 0 there): a command written before a REGS_RD inside a transfer
+// (fw/ctrl hdd.c amiga_left) is seen by that read, one written after it
+// sets cmd_since again for the next op -- no window between the two (final
+// review M2).  Firmware rule: a REGS_RD of a port means "I have seen this
+// port's command" unless its IDEF_CMD_WR is looked at: fw/ctrl issues one at
+// the command pickup (HandleHDD), in cd_wait (which checks IDEF_PKT for a
+// new command), in amiga_left (which checks IDEF_CMD_WR) and outside
+// commands (CD_AudioPoll, CD_Locked); keep it so.  After a Gayle error the
+// firmware picks the new command up (REGS_RD), which clears the flag.
 //
 // Timing constraints (Task 8): the crossings are q_gray -> s_gray1 (a Gray
 // bus), q_wtog -> s_wtog, breq -> q_req_s, rtog / atog / etog -> q_rs / q_as
@@ -143,9 +153,10 @@ module sdcard_gayle #(
     output wire [15:0] data_out, input wire [15:0] data_in,
     input  wire        dat_req,         // Gayle's hdd_dat_req (of `port` while active)
     input  wire  [1:0] fifo_reset_seen, // Gayle's hdd_fifo_reset, per port
-    input  wire        fw_port,         // paula_floppy's hdd_port, hdd_xfer_wr, hdd_regs_rd
-    input  wire        fw_xfer_wr,
-    input  wire        fw_regs_rd
+    input  wire  [1:0] cmd_new,         // Gayle's hdd_cmd_new, per port: a host command write or reset
+    input  wire        fw_port,         // paula_floppy's hdd_port, hdd_regs_rd
+    input  wire        fw_regs_rd,
+    output wire  [1:0] cmd_seen         // per port: cmd_since as the last REGS_RD found it (sdcard_gayle_mux)
 );
 
     // 3-bit Gray code <-> binary
@@ -256,8 +267,9 @@ module sdcard_gayle #(
     reg        wr_r = 1'b0, rd_r = 1'b0;
     reg [15:0] dout = 16'h0000, rbuf = 16'h0000;
     reg  [1:0] cmd_since = 2'b00;       // per port: a command since the firmware's last REGS_RD
+    reg  [1:0] cmd_snap = 2'b00;        // per port: cmd_since captured by the last REGS_RD
     wire [1:0] fw_sel = {fw_port, ~fw_port};
-    wire [1:0] cmd_set = fifo_reset_seen & ~({2{fw_xfer_wr}} & fw_sel);
+    wire [1:0] cmd_set = cmd_new;
     wire [1:0] cmd_clr = {2{fw_regs_rd}} & fw_sel;
 
     wire [2:0] gcnt = g2b(s_gray2);
@@ -280,6 +292,7 @@ module sdcard_gayle #(
         s_wtog <= {s_wtog[0], q_wtog};
         if (clk7_en) begin
             cmd_since <= cmd_set | (cmd_since & ~cmd_clr);
+            cmd_snap <= (cmd_since & cmd_clr) | (cmd_snap & ~cmd_clr);
             if (gcnt != seen) begin             // an op ended and / or the latest started
                 seen <= gcnt;
                 act <= gcnt[0];
@@ -331,6 +344,11 @@ module sdcard_gayle #(
     end
 
     assign g_rdata  = rbuf;
+`ifdef SDG_MUT_NOSNAP
+    assign cmd_seen = 2'b00;            // bench teeth: the firmware never sees IDEF_CMD_WR
+`else
+    assign cmd_seen = cmd_snap;
+`endif
     assign active   = act;
     assign port     = b_port;
     assign data_wr  = wr_r;
@@ -351,16 +369,23 @@ endmodule
 // so the firmware sends no HDD command while a Gayle op runs.  Gayle's host
 // register reads during a busy ATA command follow hdd_addr as well; they see
 // what they see during today's SPI data commands.  minimig.v instantiates
-// this between PAULA1 and GAYLE1.
+// this between PAULA1 and GAYLE1.  Towards paula_floppy it passes Gayle's
+// hdd_data_in, with bit 15 of a task file register word (hdd_addr 1..7,
+// where Gayle's bit 15 is 0) the bridge's cmd_seen of the port read
+// (IDEF_CMD_WR, the firmware's flags bit 7; sdcard_gayle "Abandoned
+// command"); FIFO words (hdd_addr 0) pass whole.
 /* verilator lint_off DECLFILENAME */
 module sdcard_gayle_mux (
     input  wire        sg_active, input wire sg_port,
     input  wire        sg_data_wr, input wire sg_data_rd,
     input  wire [15:0] sg_data_out,
+    input  wire  [1:0] sg_cmd_seen,
     input  wire        pf_port,
     input  wire        pf_data_wr, input wire pf_data_rd,
     input  wire [15:0] pf_data_out,
     input  wire  [2:0] pf_addr,
+    output wire [15:0] pf_data_in,      // to paula_floppy's hdd_data_in
+    input  wire [15:0] gy_data_in,      // Gayle's hdd_data_in
     output wire        hdd_port,
     output wire        hdd_data_wr, output wire hdd_data_rd,
     output wire [15:0] hdd_data_out,
@@ -380,5 +405,6 @@ module sdcard_gayle_mux (
 `else
     assign hdd_addr     = sg_active ? 3'd0 : pf_addr;
 `endif
+    assign pf_data_in   = {hdd_addr != 3'd0 ? sg_cmd_seen[hdd_port] : gy_data_in[15], gy_data_in[14:0]};
 endmodule
 /* verilator lint_on DECLFILENAME */

@@ -33,8 +33,14 @@
 #                         must fail
 #   ./run.sh bridge_mut_regwnext teeth: g_wnext a cycle after the take -- (o)
 #                         must fail
+#   ./run.sh bridge_mut_nosnap   teeth: the firmware never sees IDEF_CMD_WR
+#                         (no cmd_seen) -- (r) must fail
+#   ./run.sh bridge_mut_oldset   teeth: cmd_since set as before the final
+#                         review's fix wave (a FIFO reset that is not the
+#                         firmware's XFER_WR; the bench wires it) -- (s) must
+#                         fail
 #   ./run.sh all          normal old mut_nopkt mut_shared bridge bridge_async
-#                         and the seven bridge_mut_* modes
+#                         and the nine bridge_mut_* modes
 #
 # iverilog, as sim/osd_keyq: a one-module bench that runs in seconds and can
 # run while a Vivado build holds the machine.  RUNTAG names the run directory.
@@ -46,7 +52,7 @@ OLDREV=8208e2b
 
 MODES="$*"
 [ -z "$MODES" ] && MODES="normal"
-[ "$MODES" = "all" ] && MODES="normal old mut_nopkt mut_shared bridge bridge_async bridge_mut_nogate bridge_mut_norst bridge_mut_noyoung bridge_mut_noabsorb bridge_mut_noaddr bridge_mut_nosince bridge_mut_regwnext"
+[ "$MODES" = "all" ] && MODES="normal old mut_nopkt mut_shared bridge bridge_async bridge_mut_nogate bridge_mut_norst bridge_mut_noyoung bridge_mut_noabsorb bridge_mut_noaddr bridge_mut_nosince bridge_mut_regwnext bridge_mut_nosnap bridge_mut_oldset"
 
 rc=0
 for mode in $MODES; do
@@ -70,6 +76,8 @@ for mode in $MODES; do
 		bridge_mut_noaddr)   defs="-DSDC_BRIDGE -DSDG_MUT_NOADDR";   want=FAIL; mustfail="p" ;;
 		bridge_mut_nosince)  defs="-DSDC_BRIDGE -DSDG_MUT_NOSINCE";  want=FAIL; mustfail="q" ;;
 		bridge_mut_regwnext) defs="-DSDC_BRIDGE -DSDG_MUT_REGWNEXT"; want=FAIL; mustfail="o" ;;
+		bridge_mut_nosnap)   defs="-DSDC_BRIDGE -DSDG_MUT_NOSNAP";   want=FAIL; mustfail="r" ;;
+		bridge_mut_oldset)   defs="-DSDC_BRIDGE -DSDG_TB_OLDSET";    want=FAIL; mustfail="s" ;;
 		*) echo "unknown mode: $mode"; exit 2 ;;
 	esac
 

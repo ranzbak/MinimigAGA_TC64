@@ -538,8 +538,8 @@ void ATA_SetMultipleMode(unsigned char* tfr, int unit)
  *   error on an op (the bridge's cmd_since), or hdd_cmd_req without
  *   hdd_dat_req while a write waits for a sector: no status for it (it would
  *   end the NEW command), a write run is ended on the card first (stop
- *   token, sd_close).  The flags (amiga_left: CMD_IDE_REGS_RD, IDEF_RST_SEEN
- *   or IDEF_DEV_WR) are looked at before what the bridge's cmd_since does not
+ *   token, sd_close).  The flags (amiga_left: CMD_IDE_REGS_RD, IDEF_RST_SEEN,
+ *   IDEF_DEV_WR or IDEF_CMD_WR) are looked at before what the bridge's cmd_since does not
  *   guard: a write's END, every error status, a block the CPU writes into
  *   the FIFO (FakeRDB, the patched RDB) and a READ group's RDY after the
  *   first (a reset in the drain wait makes the new command's request look
@@ -652,17 +652,21 @@ static void hdd_done(unsigned st)
 
 /* Did the Amiga leave the command since the pickup?  The flags of the
    port: IDEF_RST_SEEN (a reset), IDEF_DEV_WR (the host wrote drive/head:
-   a new command's set-up; no host touches the task file during a command);
-   the CD unit gets them too (CD_Flags).  Before what the bridge's cmd_since
-   does not guard: an END or error status, a block the CPU writes into the
-   FIFO, a READ group's RDY.  The CMD_IDE_REGS_RD clears cmd_since; what
-   happens after it sets it again, what happened before it these flags
-   report (findings/sdcard-engine Task 11a fix round 1) */
+   a new command's set-up; no host touches the task file during a command),
+   IDEF_CMD_WR (a command was written, with or without drive/head: the
+   bridge's cmd_since as this read found it); the CD unit gets them too
+   (CD_Flags).  Before what the bridge's cmd_since does not guard: an END or
+   error status, a block the CPU writes into the FIFO, a READ group's RDY.
+   The CMD_IDE_REGS_RD clears cmd_since; what happens after it sets it
+   again, what happened before it these flags report (findings/sdcard-engine
+   Task 11a fix round 1; IDEF_CMD_WR: final review M2 -- before it a command
+   without a drive/head write, written before this read, was seen by neither
+   and the old command's next group went into the new command's FIFO) */
 static int amiga_left(void)
 {
 	unsigned char flags = ReadIDEFlags(hc.port);
 	CD_Flags(hc.port, flags);
-	return (flags & (IDEF_RST_SEEN | IDEF_DEV_WR)) != 0;
+	return (flags & (IDEF_RST_SEEN | IDEF_DEV_WR | IDEF_CMD_WR)) != 0;
 }
 
 /* END | IRQ | ERR with the error register; nothing when the Amiga left */

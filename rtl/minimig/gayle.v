@@ -75,6 +75,7 @@ module gayle
 	input	hdd_xfer_wr,		// CMD_IDE_XFER_WR: {pkt_mode, 2'b0, words[12:0]} on hdd_data_out
 	input	hdd_regs_rd,		// CMD_IDE_REGS_RD command word (captures and clears the sticky flags)
 	output	[1:0] hdd_fifo_reset,	// per port: its FIFO is reset (sampled on clk7_en; SD card bridge abort)
+	output	[1:0] hdd_cmd_new,	// per port: a host command write or reset (sampled on clk7_en; SD card bridge cmd_since)
   output hd_fwr,
   output hd_frd
 );
@@ -219,6 +220,7 @@ wire	dat_req0, dat_req1;
 wire	[7:0] status0;
 wire	fwr0, fwr1, frd0, frd1;
 wire	frst0, frst1;
+wire	cnew0, cnew1;
 
 gayle_port #(.PORT(0)) PORT0
 (
@@ -253,7 +255,8 @@ gayle_port #(.PORT(0)) PORT0
 	.status_o(status0),
 	.fifo_wr_o(fwr0),
 	.fifo_rd_o(frd0),
-	.fifo_reset_o(frst0)
+	.fifo_reset_o(frst0),
+	.cmd_new_o(cnew0)
 );
 
 generate
@@ -291,7 +294,8 @@ gayle_port #(.PORT(1)) PORT1
 	.status_o(),
 	.fifo_wr_o(fwr1),
 	.fifo_rd_o(frd1),
-	.fifo_reset_o(frst1)
+	.fifo_reset_o(frst1),
+	.cmd_new_o(cnew1)
 );
 end else begin : g_noport1
 assign host_out1 = 16'h0000;
@@ -304,6 +308,7 @@ assign dat_req1 = 1'b0;
 assign fwr1 = 1'b0;
 assign frd1 = 1'b0;
 assign frst1 = 1'b0;
+assign cnew1 = 1'b0;
 end
 endgenerate
 
@@ -313,6 +318,9 @@ assign hd_frd = frd0 | frd1;
 
 // each port's FIFO reset, for the SD card bridge (sdcard_gayle.v aborts on it)
 assign hdd_fifo_reset = {frst1, frst0};
+// each port's new command (host command write or reset), for the SD card
+// bridge's abandoned-command flag (sdcard_gayle.v cmd_since)
+assign hdd_cmd_new = {cnew1, cnew0};
 
 // cmd/status debug
 reg [7:0] status_dbg  /* synthesis noprune */;
