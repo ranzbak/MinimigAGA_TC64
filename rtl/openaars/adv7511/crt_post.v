@@ -46,7 +46,7 @@
 // sim/hdmi_upsample/crt_mkroms.py; the files (crt_wrom.mem, crt_lut.mem,
 // crt_bloom.mem) are design sources next to this file.
 module crt_post #(
-  parameter HAS_VBLEND = 1,          // 0: next-line input and w1 ignored (3 DSP, not 6)
+  parameter HAS_VBLEND = 1,          // 0: w1 ignored (3 DSP, not 6); HAS_LIN still takes the next line
   parameter HAS_HBLUR  = 1,
   parameter HAS_MASK   = 1,          // phosphor mask (needs HAS_LUT)
   parameter HAS_BLOOM  = 1,
@@ -112,7 +112,7 @@ wire [8:0] w1 = HAS_VBLEND ? w_r[17:9] : 9'd0;
 reg [23:0] a_cur = 0, a_nxt = 0;
 always @(posedge clk) if (i_stb) begin
   a_cur <= i_cur;
-  a_nxt <= HAS_VBLEND ? i_nxt : 24'd0;
+  a_nxt <= (HAS_VBLEND || HAS_LIN) ? i_nxt : 24'd0;
 end
 
 // ---- linear weights table, block RAM 2048 x 36 -----------------------------------

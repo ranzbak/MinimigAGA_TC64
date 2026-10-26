@@ -93,7 +93,6 @@ module osd_keyq_tb;
     ._scs(_scs), .sdi(sdi), .sdo(sdo), .sck(sck),
     .osd_blank(), .osd_pixel(),
     .osd_enable(), .key_disable(),
-    .lr_filter(), .hr_filter(),
     .memory_config(), .chipset_config(), .floppy_config(),
     .scanline(), .dither(),
     .osd_rx_seq(rx_seq),

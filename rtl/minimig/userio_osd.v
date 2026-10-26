@@ -36,8 +36,6 @@ module userio_osd #(
 	output	osd_pixel,			//osd video pixel
 	output	reg osd_enable = 0,			//osd enable
   output  reg key_disable = 0,      // keyboard disable
-	output	reg [1:0] lr_filter = 0,
-	output	reg [1:0] hr_filter = 0,
 	// bit 7 is "fast RAM: DDR3 board only" -- see minimig_autoconfig.v.  It is
 	// applied under reset with the rest of the memory map, because changing
 	// which boards autoconfig offers cannot take effect mid-session.
@@ -302,7 +300,7 @@ end
 // 8'b0_000_0100 | XXXXEANT || chipset config  | E - ECS, A - OCS A1000, N - NTSC, T - turbo
 // 8'b0_001_0100 | XXXXXSTT || cpu config      | S - CPU speed, TT - CPU type (00=68k, 01=68k10, 10=68k20)
 // 8'b0_010_0100 | XXFFSSCC || memory config   | FF - fast, CC - chip, SS - slow
-// 8'b0_011_0100 | XXHHLLSS || video config    | HH - hires interp. filter, LL - lowres interp. filter, SS - scanline mode
+// 8'b0_011_0100 | XXrrrrSS || video config    | rrrr - reserved (were HHLL, the interp. filters; ignored), SS - scanline mode
 // 8'b0_100_0100 | XXXXXFFS || floppy config   | FF - drive number, S - floppy speed
 // 8'b0_101_0100 | XXXBASMC || harddisk config | B/A - slave/master is ATAPI, S - enable slave HDD, M - enable master HDD, C - enable HDD controler
 // 8'b0_101_1000 | XXXBASMC || harddisk config, IDE port 2 (same layout)
@@ -438,7 +436,8 @@ end
 // 8'b0_000_0100 | XXXGEANT || chipset config  | G - AGA, E - ECS, A - OCS A1000, N - NTSC, T - turbo
 // 8'b0_001_0100 | XXXXKCTT || cpu config      | K - fast kickstart enable, C - CPU cache enable, TT - CPU type (00=68k, 01=68k10, 10=68k20)
 // 8'b0_010_0100 | XHFFSSCC || memory config   | H - HRTmon, FF - fast, SS - slow, CC - chip
-// 8'b0_011_0100 | DDHHLLSS || video config    | DD - dither, HH - hires interp. filter, LL - lowres interp. filter, SS - scanline mode
+// 8'b0_011_0100 | DDrrrrSS || video config    | DD - dither, rrrr - reserved (were HH LL, the hires / lowres interp.
+//                |          ||                 | filters, removed 2026-10-26; ignored, firmware sends 0), SS - scanline mode
 //               | XXWWBBMM    (optional second byte) WW - HDMI beam width (0 off, 1 sharp, 2 medium, 3 soft), BB - HDMI bloom (0 off, 1 low, 2 high), MM - HDMI CRT mask (0 off, 1 grille, 2 grille strong, 3 shadow)
 // 8'b0_100_0100 | XXXXXFFS || floppy config   | FF - drive number, S - floppy speed
 // 8'b0_101_0100 | XXXXXSMC || harddisk config | S - enable slave HDD, M - enable master HDD, C - enable HDD controler
@@ -458,7 +457,7 @@ always @ (posedge clk) begin
       if (spi_chip_cfg_sel)     begin if (dat_cnt == 0) t_chipset_config <= #1 wrdat[4:0]; end
       if (spi_cpu_cfg_sel)      begin if (dat_cnt == 0) t_cpu_config <= #1 wrdat[4:0]; end
       if (spi_memory_cfg_sel)   begin if (dat_cnt == 0) t_memory_config <= #1 wrdat[7:0]; end
-      if (spi_video_cfg_sel)    begin if (dat_cnt == 0) {dither, hr_filter, lr_filter, scanline} <= #1 wrdat[7:0];
+      if (spi_video_cfg_sel)    begin if (dat_cnt == 0) {dither, scanline} <= #1 {wrdat[7:6], wrdat[1:0]};
                                       if (dat_cnt == 1) crt_fx <= #1 wrdat[7:0]; end
       if (spi_floppy_cfg_sel)   begin if (dat_cnt == 0) floppy_config <= #1 wrdat[3:0]; end
       if (spi_harddisk0_cfg_sel)begin if (dat_cnt == 0) t_ide_config0 <= #1 wrdat[4:0]; end
