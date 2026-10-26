@@ -71,6 +71,9 @@ typedef struct
   char          id[8];
   uint32_t      version;	// uint32_t: the file layout (cfgswap.h) on every ABI
   kickstartTYPE kickstart;
+  // the Lores / Hires Filter, removed from the menu and the core 2026-10-26
+  // (findings/osd-redesign/plan.md 3.13): the bytes stay so the file layout
+  // does not move; LoadConfiguration clears them, SaveConfiguration writes 0
   filterTYPE    filter;
   unsigned char memory;
   unsigned char chipset;

@@ -78,7 +78,6 @@ char DiskInfo[5];                    // disk number info of selected entry
 
 extern const char version[];
 
-const char *config_filter_msg[] = {"none", "HORIZONTAL", "VERTICAL", "H+V"};
 const char *config_memory_chip_msg[] = {"0.5 MB", "1.0 MB", "1.5 MB", "2.0 MB"};
 const char *config_memory_slow_msg[] = {"none  ", "0.5 MB", "1.0 MB", "1.5 MB"};
 const char *config_on_off_msg[] = {"off", "on "};
@@ -125,7 +124,7 @@ const char *helptexts[] = {
 #else
     "                                Minimig can make use of up to 2 megabytes of Chip RAM, up to 1.5 megabytes of Slow RAM (A500 Trapdoor RAM), and up to 28 megabytes of true Fast RAM.  To use the HRTMon feature you will need an appropriate ROM file on the SD card.  To activate the monitor hold Ctrl and press the Pause key.",
 #endif
-    "                                Minimig's video features include a blur filter, to simulate the poorer picture quality on older monitors, and also scanline generation to simulate the appearance of a screen with low vertical resolution.  On HDMI, CRT Mask adds a phosphor mask (grille: red, green and blue stripes; shadow: magenta and green) and Bloom lets bright pixels fill their scanline gaps; bloom needs scanlines or a vertical filter.  Beam width gives each pixel the soft spot of a CRT's beam, so dithered patterns blend as on a monitor; with it on, Bloom also widens the spot of bright pixels.  Video Pos moves the HDMI picture: Hpos in HD pixels (+ right), Vpos in Amiga lines (+ down).  Scaling (HDMI): Sharp and Area scale the picture exactly 2.5 times (PAL) or 3 times (NTSC) vertically, every line the same height; Sharp keeps edges crisp, Area is the most even.  Line rate is the older, slightly smaller picture.  Sharp and Area need the 15 kHz picture: the core turns the scandoubler off for them.",
+    "                                Minimig's video features include scanline generation to simulate the appearance of a screen with low vertical resolution.  On HDMI, CRT Mask adds a phosphor mask (grille: red, green and blue stripes; shadow: magenta and green) and Bloom lets bright pixels fill their scanline gaps; bloom needs scanlines or Beam width.  Beam width gives each pixel the soft spot of a CRT's beam, so dithered patterns blend as on a monitor; with it on, Bloom also widens the spot of bright pixels.  Video Pos moves the HDMI picture: Hpos in HD pixels (+ right), Vpos in Amiga lines (+ down).  Scaling (HDMI): Sharp and Area scale the picture exactly 2.5 times (PAL) or 3 times (NTSC) vertically, every line the same height; Sharp keeps edges crisp, Area is the most even.  Line rate is the older, slightly smaller picture.  Sharp and Area need the 15 kHz picture: the core turns the scandoubler off for them.",
     "                                The clock delay sets where the HDMI transmitter samples each pixel.  Too early or too late shows as sparkling colours, light yellows first.  Step through the values, note where the picture is clean, and settle in the middle of that range.  Save the configuration to keep it.",
     "                                CD-ROM drive.  Insert an ISO image or a CUE sheet (BIN, or ISO + WAV tracks) from the SD card.  On IDE port 2 the Amiga needs AtapiMagic (3.1.4/3.2) or IDEfix97 (3.1).  The Amiga cannot boot from it.",
     0};
@@ -2222,7 +2221,7 @@ void HandleUI(void)
         /******************************************************************/
     case MENU_SETTINGS_VIDEO1:
         OsdColor(OSDCOLOR_SUBMENU);
-        menumask = 0xff;
+        menumask = 0x3f;
         parentstate = menustate;
         helptext = helptexts[HELPTEXT_VIDEO];
         // config files from older firmware hold 0 here; anything else: off
@@ -2231,28 +2230,24 @@ void HandleUI(void)
         if (config.crt_beam > 3) config.crt_beam = 0;
 
         OsdSetTitle("Video", OSD_ARROW_LEFT | OSD_ARROW_RIGHT);
-        strcpy(s, "   Lores Filter : ");
-        strcat(s, config_filter_msg[config.filter.lores & 0x03]);
-        OsdWrite(0, s, menusub == 0, 0);
-        strcpy(s, "   Hires Filter : ");
-        strcat(s, config_filter_msg[config.filter.hires & 0x03]);
-        OsdWrite(1, s, menusub == 1, 0);
         strcpy(s, "   Scanlines    : ");
         strcat(s, config_scanlines_msg[config.scanlines & 3]);
-        OsdWrite(2, s, menusub == 2, 0);
+        OsdWrite(0, s, menusub == 0, 0);
         strcpy(s, "   Scaling      : ");
         strcat(s, config_scaling_msg[CONFIG_SCALING(config.scanlines)]);
-        OsdWrite(3, s, menusub == 3, 0);
+        OsdWrite(1, s, menusub == 1, 0);
         strcpy(s, "   CRT Mask     : ");
         strcat(s, config_crt_mask_msg[config.crt_mask & 3]);
-        OsdWrite(4, s, menusub == 4, 0);
+        OsdWrite(2, s, menusub == 2, 0);
         strcpy(s, "   Bloom        : ");
         strcat(s, config_crt_bloom_msg[config.crt_bloom]);
-        OsdWrite(5, s, menusub == 5, 0);
+        OsdWrite(3, s, menusub == 3, 0);
         strcpy(s, "   Beam width   : ");
         strcat(s, config_crt_beam_msg[config.crt_beam & 3]);
-        OsdWrite(6, s, menusub == 6, 0);
-        OsdWrite(7, STD_BACK, menusub == 7, 0);
+        OsdWrite(4, s, menusub == 4, 0);
+        OsdWrite(5, "", 0, 0);
+        OsdWrite(6, "", 0, 0);
+        OsdWrite(7, STD_BACK, menusub == 5, 0);
 
         menustate = MENU_SETTINGS_VIDEO2;
         break;
@@ -2262,58 +2257,43 @@ void HandleUI(void)
         {
             if (menusub == 0)
             {
-                config.filter.lores++;
-                config.filter.lores &= 0x03;
-                menustate = MENU_SETTINGS_VIDEO1;
-                ConfigVideo(config.filter.hires, config.filter.lores, config.scanlines, config.crt_mask, config.crt_bloom, config.crt_beam);
-            }
-            else if (menusub == 1)
-            {
-                config.filter.hires++;
-                config.filter.hires &= 0x03;
-                menustate = MENU_SETTINGS_VIDEO1;
-                ConfigVideo(config.filter.hires, config.filter.lores, config.scanlines, config.crt_mask, config.crt_bloom, config.crt_beam);
-                //                ConfigFilter(config.filter.lores, config.filter.hires);
-            }
-            else if (menusub == 2)
-            {
                 short tmp = config.scanlines + 1;
                 if ((tmp & 3) == 3)
                     tmp = 0;
                 config.scanlines = (config.scanlines & 0xfc) | (tmp & 3);
                 menustate = MENU_SETTINGS_VIDEO1;
-                ConfigVideo(config.filter.hires, config.filter.lores, config.scanlines, config.crt_mask, config.crt_bloom, config.crt_beam);
+                ConfigVideo(config.scanlines, config.crt_mask, config.crt_bloom, config.crt_beam);
                 //                ConfigScanlines(config.scanlines);
             }
-            else if (menusub == 3)
+            else if (menusub == 1)
             {
                 // Scaling: line rate -> sharp -> area -> line rate
                 unsigned char sc = CONFIG_SCALING(config.scanlines);
                 sc = (sc == SCALING_LINE) ? SCALING_SHARP : (sc == SCALING_SHARP) ? SCALING_AREA : SCALING_LINE;
                 config.scanlines = (config.scanlines & ~SCALING_MASK) | (sc << SCALING_SHIFT);
                 menustate = MENU_SETTINGS_VIDEO1;
-                ConfigVideo(config.filter.hires, config.filter.lores, config.scanlines, config.crt_mask, config.crt_bloom, config.crt_beam);
+                ConfigVideo(config.scanlines, config.crt_mask, config.crt_bloom, config.crt_beam);
             }
 
-            else if (menusub == 4)
+            else if (menusub == 2)
             {
                 config.crt_mask = (config.crt_mask + 1) & 3;
                 menustate = MENU_SETTINGS_VIDEO1;
-                ConfigVideo(config.filter.hires, config.filter.lores, config.scanlines, config.crt_mask, config.crt_bloom, config.crt_beam);
+                ConfigVideo(config.scanlines, config.crt_mask, config.crt_bloom, config.crt_beam);
             }
-            else if (menusub == 5)
+            else if (menusub == 3)
             {
                 config.crt_bloom = (config.crt_bloom >= 2) ? 0 : config.crt_bloom + 1;
                 menustate = MENU_SETTINGS_VIDEO1;
-                ConfigVideo(config.filter.hires, config.filter.lores, config.scanlines, config.crt_mask, config.crt_bloom, config.crt_beam);
+                ConfigVideo(config.scanlines, config.crt_mask, config.crt_bloom, config.crt_beam);
             }
-            else if (menusub == 6)
+            else if (menusub == 4)
             {
                 config.crt_beam = (config.crt_beam + 1) & 3;
                 menustate = MENU_SETTINGS_VIDEO1;
-                ConfigVideo(config.filter.hires, config.filter.lores, config.scanlines, config.crt_mask, config.crt_bloom, config.crt_beam);
+                ConfigVideo(config.scanlines, config.crt_mask, config.crt_bloom, config.crt_beam);
             }
-            else if (menusub == 7)
+            else if (menusub == 5)
             {
                 menustate = MENU_MAIN2_1;
                 menusub = 4;

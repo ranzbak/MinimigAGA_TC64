@@ -849,13 +849,15 @@ void OsdReconfig()
 // mask} (rtl/minimig/userio_osd.v); a core without it ignores the byte, an
 // older core the beam or scaling bits.  The core's scaling code: 0 line
 // rate, 1 sharp, 2 area (0 = the picture of before, for older firmware);
-// config.scanlines bits 5:4 hold SCALING_* (config.h), Sharp = 0.
-void ConfigVideo(unsigned char hires, unsigned char lores, unsigned char scanlines, unsigned char crt_mask, unsigned char crt_bloom, unsigned char crt_beam)
+// config.scanlines bits 5:4 hold SCALING_* (config.h), Sharp = 0.  Bits 5:2
+// of the first byte were the Hires and Lores Filter (removed 2026-10-26,
+// findings/osd-redesign/plan.md 3.13): always 0, so an older core keeps
+// its filters off too.
+void ConfigVideo(unsigned char scanlines, unsigned char crt_mask, unsigned char crt_bloom, unsigned char crt_beam)
 {
     EnableOsd();
-    //SPI(OSDCMDCFGFLT | ((hires & 0x03) << 2) | (lores & 0x03));
     SPI(OSD_CMD_VID);
-    SPI(((hires & 0x03) << 4) | ((lores & 0x03)<<2) | (scanlines & 0x03));
+    SPI(scanlines & 0x03);
     {
         unsigned char sc = CONFIG_SCALING(scanlines);
         unsigned char hw = (sc == SCALING_LINE) ? 0 : (sc == SCALING_AREA) ? 2 : 1;
