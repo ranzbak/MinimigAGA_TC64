@@ -356,14 +356,8 @@ void OsdSetTitle(char *s,int a)
 }
 
 
-void OsdWrite(unsigned char n, char *s, unsigned char invert, unsigned char stipple)
-{
-	OsdWriteOffset(n,s,invert,stipple,0);
-}
-
-
 // write a null-terminated string <s> to the OSD buffer starting at line <n>
-void OsdWriteOffset(unsigned char n, char *s, unsigned char invert, unsigned char stipple,char offset)
+void OsdWrite(unsigned char n, char *s, unsigned char invert, unsigned char stipple)
 {
     unsigned short i;
     unsigned char b;
@@ -425,11 +419,11 @@ void OsdWriteOffset(unsigned char n, char *s, unsigned char invert, unsigned cha
 			SPI(0);
 			SPI(0);
 		    p = &charfont[0x10][0];
-	        SPI(*p++<<offset); SPI(*p++<<offset); SPI(*p++<<offset); SPI(*p++<<offset);
-	        SPI(*p++<<offset); SPI(*p++<<offset); SPI(*p++<<offset); SPI(*p++<<offset);
+	        SPI(*p++); SPI(*p++); SPI(*p++); SPI(*p++);
+	        SPI(*p++); SPI(*p++); SPI(*p++); SPI(*p++);
 		    p = &charfont[0x14][0];
-	        SPI(*p++<<offset); SPI(*p++<<offset); SPI(*p++<<offset); SPI(*p++<<offset);
-	        SPI(*p++<<offset); SPI(*p++<<offset); SPI(*p++<<offset); SPI(*p++<<offset);
+	        SPI(*p++); SPI(*p++); SPI(*p++); SPI(*p++);
+	        SPI(*p++); SPI(*p++); SPI(*p++); SPI(*p++);
 			SPI(0);
 			SPI(0);
 			SPI(0);
@@ -464,14 +458,14 @@ void OsdWriteOffset(unsigned char n, char *s, unsigned char invert, unsigned cha
 			else if(i<(linelimit-8)) // normal character
 		    {
 		        p = &charfont[b][0];
-		        SPI(((*p++<<offset)&stipplemask)^invert);	stipplemask^=stipple;
-		        SPI(((*p++<<offset)&stipplemask)^invert);	stipplemask^=stipple;
-		        SPI(((*p++<<offset)&stipplemask)^invert);	stipplemask^=stipple;
-		        SPI(((*p++<<offset)&stipplemask)^invert);	stipplemask^=stipple;
-		        SPI(((*p++<<offset)&stipplemask)^invert);	stipplemask^=stipple;
-		        SPI(((*p++<<offset)&stipplemask)^invert);	stipplemask^=stipple;
-		        SPI(((*p++<<offset)&stipplemask)^invert);	stipplemask^=stipple;
-		        SPI(((*p++<<offset)&stipplemask)^invert);	stipplemask^=stipple;
+		        SPI((*p++&stipplemask)^invert);	stipplemask^=stipple;
+		        SPI((*p++&stipplemask)^invert);	stipplemask^=stipple;
+		        SPI((*p++&stipplemask)^invert);	stipplemask^=stipple;
+		        SPI((*p++&stipplemask)^invert);	stipplemask^=stipple;
+		        SPI((*p++&stipplemask)^invert);	stipplemask^=stipple;
+		        SPI((*p++&stipplemask)^invert);	stipplemask^=stipple;
+		        SPI((*p++&stipplemask)^invert);	stipplemask^=stipple;
+		        SPI((*p++&stipplemask)^invert);	stipplemask^=stipple;
 		        i += 8;
 		    }
 		}
@@ -484,11 +478,11 @@ void OsdWriteOffset(unsigned char n, char *s, unsigned char invert, unsigned cha
 		SPI(0);
 		SPI(0);
         p = &charfont[0x15][0];
-        SPI(*p++<<offset); SPI(*p++<<offset); SPI(*p++<<offset); SPI(*p++<<offset);
-        SPI(*p++<<offset); SPI(*p++<<offset); SPI(*p++<<offset); SPI(*p++<<offset);
+        SPI(*p++); SPI(*p++); SPI(*p++); SPI(*p++);
+        SPI(*p++); SPI(*p++); SPI(*p++); SPI(*p++);
         p = &charfont[0x11][0];
-        SPI(*p++<<offset); SPI(*p++<<offset); SPI(*p++<<offset); SPI(*p++<<offset);
-        SPI(*p++<<offset); SPI(*p++<<offset); SPI(*p++<<offset); SPI(*p++<<offset);
+        SPI(*p++); SPI(*p++); SPI(*p++); SPI(*p++);
+        SPI(*p++); SPI(*p++); SPI(*p++); SPI(*p++);
 		SPI(0);
 		SPI(0);
 		SPI(0);
@@ -1073,12 +1067,11 @@ unsigned char GetASCIIKey(unsigned char keycode)
 void ScrollText(char n,const char *str, int len,int max_len,unsigned char invert)
 {
 // this function is called periodically when a string longer than the window is displayed.
+// (the file selector's long names, ScrollLongName: len and max_len are given)
 
     #define BLANKSPACE 10 // number of spaces between the end and start of repeated name
 
     long offset;
-	if(!max_len)
-		max_len=30;
 
     if (str && str[0] && CheckTimer(scroll_timer)) // scroll if long name and timer delay elapsed
     {
@@ -1086,9 +1079,6 @@ void ScrollText(char n,const char *str, int len,int max_len,unsigned char invert
 
         scroll_offset++; // increase scroll position (1 pixel unit)
         memset(s, ' ', 32); // clear buffer
-
-		if(!len)
-	        len = strlen(str); // get name length
 
         if (len > max_len) // scroll name if longer than display size
         {

@@ -121,7 +121,6 @@
 /*functions*/
 void OsdSetTitle(char *s, int arrow); // arrow > 0 = display right arrow in bottom right, < 0 = display left arrow
 void OsdWrite(unsigned char n, char *s, unsigned char inver, unsigned char stipple);
-void OsdWriteOffset(unsigned char n, char *s, unsigned char inver, unsigned char stipple, char offset); // Used for scrolling "Exit" text downwards...
 void OsdClear(void);
 void OsdShow(unsigned char mode);
 void OsdHide(void);
@@ -157,6 +156,9 @@ void OsdWriteDoubleSize(unsigned char n, char *s, unsigned char pass);
 void OsdDrawLogo(unsigned char n, char row, char superimpose);
 void ScrollText(char n, const char *str, int len, int max_len, unsigned char invert);
 void ScrollReset();
+// OR a string, centred, into row <n> of the star/fireworks framebuffer that
+// OsdDrawLogo(n, row, 1) superimposes; 28 characters at most.
+void OsdWriteFramebuffer(unsigned char n, const char *s);
 void StarsInit();
 void StarsUpdate();
 void FireworksInit();
