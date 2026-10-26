@@ -120,3 +120,6 @@ tools/vivado/ooc_hostcpu/runs/
 
 # OOC run outputs of tools/vivado/ooc_sdcard
 tools/vivado/ooc_sdcard/runs/
+
+# OOC run outputs of tools/vivado/ooc_osd
+tools/vivado/ooc_osd/runs/
