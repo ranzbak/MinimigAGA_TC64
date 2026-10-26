@@ -158,6 +158,13 @@ void mock_card_cid(const unsigned char cid[16]);
 void mock_card_acmd22_less(unsigned n, unsigned times);
 /* every k-th written block (counted as MOCK_ERR_WRREJ counts) gets 0B; 0: off */
 void mock_card_wrrej_every(unsigned k);
+/* the next `times` CMD12s answer the stuff byte, then `b` (a stale data
+   byte of the stopped stream), then their R1 (final review M6) */
+void mock_card_cmd12_stale(unsigned char b, unsigned times);
+/* on: CS high does not end an open CMD25 / CMD18 or drop what the card has
+   left to send (a real card: CS only gates the bus); off (default): it
+   does, the model's simplification (final review M3's bounce) */
+void mock_card_cs_keeps(int on);
 /* CMD17/18 blocks the card has sent (whose last byte left it): what
    MOCK_ERR_RDCRC counts */
 unsigned mock_card_blocks_read(void);
@@ -167,6 +174,7 @@ unsigned mock_card_wr_ok(void);     /* what ACMD22 would answer now */
 /* stop tokens (CMD25) whose busy has been sent to its end: the card has
    finished the run (findings/sdcard-engine Task 11a, write-done timing) */
 unsigned mock_card_stop_ends(void);
+int mock_card_stop_busy(void);      /* a stop token's busy is being sent */
 /* the card waits for a command: no write or multi-block read open, no
    busy or response bytes left to send, not removed */
 int mock_card_idle(void);
@@ -221,6 +229,9 @@ void mock_sdc_stall_fatal(int on);
    port during a Gayle op) is a firmware bug: it ends the test (default),
    or with mock_sdc_misuse_fatal(0) the peripheral does what the RTL does */
 void mock_sdc_misuse_fatal(int on);
+/* n bytes of TX taken (TXLVL reads n more, a push finds n bytes less room):
+   a kept block with a retry pile-up behind it (final review M1); 0: off */
+void mock_sdc_tx_hold(unsigned n);
 struct mock_sdc_peek {
 	unsigned busy, op, cmd, len, rxlvl, txlvl, txunsent, verified, poisoned,
 	         cs, div, status, irqpend, irqen, count, last, timeout;

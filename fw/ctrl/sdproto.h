@@ -93,13 +93,19 @@ enum sd_kind { SD_READ, SD_WRITE, SD_CSD, SD_CID };
  * state: the step it is in (0 = not running), err: enum sd_err once it
  * ended, done_blocks: blocks delivered (read; counted as each block is in
  * buf / Gayle's FIFO, also while the op still runs: a CMD12 may follow) /
- * programmed (write; at the end). */
+ * programmed (write; at the end).  intact (at the end): 1 when nothing of
+ * the op was left part-way -- no RX_TO_GAYLE / GAYLE_TO_TX cut off (part
+ * of a block in Gayle's FIFO, or words taken from it), and for from_gayle
+ * no block taken from Gayle's FIFO that is not on the card -- so the rest
+ * can be run again from done_blocks (hdd.c, a card-detect bounce: final
+ * review M4); 0 otherwise. */
 typedef struct sd_op {
 	unsigned lba, count;
 	unsigned char *buf;
 	int to_gayle, from_gayle, port;
 	int state, err, done_blocks;
 	int kind;
+	int intact;
 } sd_op;
 
 /* CMD0, CMD8, ACMD41 (HCS), CMD58, CMD59(1), CMD16 (byte-addressed cards),
@@ -121,6 +127,8 @@ void sd_forget(void);
 int sd_card_changed(void);
 /* the card type of the last sd_init, 0 = none / to be initialised again */
 int sd_card_type(void);
+/* the peripheral's debounced card-present bit (STATUS 3) */
+int sd_card_present(void);
 
 /* start op: 0, or -1 when another op is active (op untouched).  An op that
    cannot start (no card, bad arguments) ends at once: 0, op->err set,

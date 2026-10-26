@@ -28,20 +28,23 @@ void BootDiag()
 }
 #endif
 
+/* one two-byte command frame to the OSD (userio_osd.v) on cfide's SPI */
+void osd_cmd(unsigned char cmd, unsigned char v)
+{
+	EnableOsd();
+	HW_SPI(HW_SPI_DATA)=cmd;
+	HW_SPI(HW_SPI_DATA)=v;
+	DisableOsd();
+}
+
 void ErrorCode(int code)
 {
 #ifndef STANDALONE
 	unsigned char *upload=(unsigned char *)(0x780000^0x680000);
-	EnableOsd();
-	HW_SPI(HW_SPI_DATA)=OSD_CMD_RST;
-	HW_SPI(HW_SPI_DATA)=SPI_RST_CPU|SPI_CPU_HLT; // Reset the chipset to allow the NTSC flag to take effect.
-	DisableOsd();
+	osd_cmd(OSD_CMD_RST, SPI_RST_CPU|SPI_CPU_HLT); // Reset the chipset to allow the NTSC flag to take effect.
 	upload[10]=code>>8;
 	upload[11]=code&255;
-	EnableOsd();
-	HW_SPI(HW_SPI_DATA)=OSD_CMD_RST;
-	HW_SPI(HW_SPI_DATA)=0; // Reset the chipset to allow the NTSC flag to take effect.
-	DisableOsd();
+	osd_cmd(OSD_CMD_RST, 0); // Reset the chipset to allow the NTSC flag to take effect.
 #endif
 }
 
@@ -118,22 +121,13 @@ int main(int argc,char **argv)
 	SPI_slow();
 
 #ifndef STANDALONE
-	EnableOsd();
-	HW_SPI(HW_SPI_DATA)=OSD_CMD_RST;
-	HW_SPI(HW_SPI_DATA)=SPI_RST_CPU|SPI_CPU_HLT; // Allow the Chipset to start up
-	DisableOsd();
+	osd_cmd(OSD_CMD_RST, SPI_RST_CPU|SPI_CPU_HLT); // Allow the Chipset to start up
 
 	PLATFORM=(1<<PLATFORM_SCANDOUBLER);
 
-	EnableOsd();
-	HW_SPI(HW_SPI_DATA)=OSD_CMD_CHIP;
-	HW_SPI(HW_SPI_DATA)=CONFIG_NTSC;
-	DisableOsd();
+	osd_cmd(OSD_CMD_CHIP, CONFIG_NTSC);
 
-	EnableOsd();
-	HW_SPI(HW_SPI_DATA)=OSD_CMD_RST;
-	HW_SPI(HW_SPI_DATA)=SPI_RST_USR|SPI_RST_CPU|SPI_CPU_HLT; // Reset the chipset to allow the NTSC flag to take effect.
-	DisableOsd();
+	osd_cmd(OSD_CMD_RST, SPI_RST_USR|SPI_RST_CPU|SPI_CPU_HLT); // Reset the chipset to allow the NTSC flag to take effect.
 
 	BootDiag();
 	ErrorCode(0xfff);

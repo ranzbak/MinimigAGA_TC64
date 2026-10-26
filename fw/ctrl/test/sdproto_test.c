@@ -883,6 +883,141 @@ static void t_csd_and_args(void)
 	check("args: not a retry-table error", errs(), 0);
 }
 
+/* final review M1: a push that does not fit TX (TXLVL counts the kept
+   block and the commands behind it) ends the op SD_E_INTERNAL with a line,
+   never a drop and an XFER waiting for bytes that never come (the mock's
+   misuse is fatal: a drop would end this test); the card initialised
+   again, the next write good.  504 bytes held: CMD24 (7) and the kept
+   block (514) fit, the resend's CMD24 behind the block after its 0B not */
+static void t_tx_full(void)
+{
+	unsigned char b[512];
+	card(); if (!init()) return;
+	wdata(b, 1, 21);
+	mock_uart_clear();
+	mock_card_error(MOCK_ERR_WRREJ, 1, 1);
+	mock_sdc_tx_hold(1024 - 520);
+	check("tx full: SD_E_INTERNAL", wr(1900, 1, b, NULL), SD_E_INTERNAL);
+	check_has("tx full: the line", mock_uart(), "SD: TX full (1018 + 7 bytes), lba 1900\n");
+	check("tx full: to be initialised", sd_card_type(), 0);
+	check("tx full: not on the card", is_pat(mock_card_sector(1900), 1900), 1);
+	mock_sdc_tx_hold(0);
+	check("tx full: next write ok", wr(1900, 1, b, NULL), SD_OK);
+	check("tx full: on the card", memcmp(mock_card_sector(1900), b, 512), 0);
+}
+
+/* final review M3: a card-detect bounce in the middle of a CMD25, the card
+   powered all along (the mock card keeps its state: in the data block, its
+   busy or between blocks).  The op ends SD_E_GONE; the re-init ends the
+   card's write (fill, stop token, CMD12) before CMD0, so the card comes up
+   again: a read and the write again are good.  Several offsets into the
+   run hit the different phases */
+static void t_bounce_cmd25(void)
+{
+	unsigned char b[8 * 512], r[8 * 512];
+	for (unsigned k = 0; k < 12; k++) {
+		char w[96];
+		sd_op op = { 0 };
+		unsigned n = 0, t = 0;
+		int ok = 1;
+		card(); if (!init()) return;
+		mock_card_params(4, 200, 1, 2);		/* 200 busy bytes a block */
+		mock_card_cs_keeps(1);
+		wdata(b, 8, 30 + k);
+		op.lba = 1000; op.count = 8; op.buf = b; op.kind = SD_WRITE;
+		check("bounce: submit", sd_submit(&op), 0);
+		while (sd_poll() && n < 100000) {
+			if (!t && mock_card_wr_ok() >= 2) t = 1;
+			else if (t && ++t == 2 + k) {	/* k steps of 3000 cycles into the 3rd block */
+				mock_sdc_cd(0);
+				mock_run(20000);
+				mock_sdc_cd(1);		/* < the 9.2 ms debounce: no card-detect event */
+			}
+			mock_run(3000);
+			n++;
+		}
+		snprintf(w, sizeof w, "bounce %u: the op SD_E_GONE", k);
+		check(w, op.err, SD_E_GONE);
+		snprintf(w, sizeof w, "bounce %u: the card left in its CMD25", k);
+		check(w, mock_card_idle(), 0);
+		snprintf(w, sizeof w, "bounce %u: a read after it (re-init) ok", k);
+		check(w, rd(1000, 2, r), SD_OK);
+		snprintf(w, sizeof w, "bounce %u: the write again ok", k);
+		check(w, wr(1000, 8, b, NULL), SD_OK);
+		for (unsigned i = 0; i < 8; i++) ok &= !memcmp(mock_card_sector(1000 + i), b + 512 * i, 512);
+		snprintf(w, sizeof w, "bounce %u: the card content", k);
+		check(w, ok, 1);
+		snprintf(w, sizeof w, "bounce %u: the next sectors untouched", k);
+		check(w, is_pat(mock_card_sector(1008), 1008), 1);
+	}
+	mock_card_params(4, 8, 1, 2);
+	mock_card_cs_keeps(0);
+}
+
+/* M3 for a read: the bounce in the middle of a CMD18, the card streaming
+   on (cs_keeps); the re-init's CMD12 stops the stream before CMD0 */
+static void t_bounce_cmd18(void)
+{
+	unsigned char b[8 * 512];
+	for (unsigned k = 0; k < 8; k++) {
+		char w[96];
+		sd_op op = { 0 };
+		unsigned n = 0, t = 0;
+		int ok = 1;
+		card(); if (!init()) return;
+		mock_card_cs_keeps(1);
+		op.lba = 1200; op.count = 8; op.buf = b; op.kind = SD_READ;
+		check("bounce rd: submit", sd_submit(&op), 0);
+		while (sd_poll() && n < 100000) {
+			if (!t && mock_card_blocks_read() >= 2) t = 1;
+			else if (t && ++t == 2 + k) {
+				mock_sdc_cd(0);
+				mock_run(20000);
+				mock_sdc_cd(1);
+			}
+			mock_run(3000);
+			n++;
+		}
+		snprintf(w, sizeof w, "bounce rd %u: the op SD_E_GONE", k);
+		check(w, op.err, SD_E_GONE);
+		snprintf(w, sizeof w, "bounce rd %u: the card still streaming", k);
+		check(w, mock_card_idle(), 0);
+		memset(b, 0, sizeof b);
+		snprintf(w, sizeof w, "bounce rd %u: the read again (re-init) ok", k);
+		check(w, rd(1200, 8, b), SD_OK);
+		for (unsigned i = 0; i < 8; i++) ok &= is_pat(b + 512 * i, 1200 + i);
+		snprintf(w, sizeof w, "bounce rd %u: the data", k);
+		check(w, ok, 1);
+	}
+	mock_card_cs_keeps(0);
+}
+
+/* final review M6: after a CMD18 whose every block is in, a stale stream
+   byte below 0x80 after CMD12's stuff byte (taken as its R1): the read is
+   good, not SD_E_R1 / SD_E_RESET; with the idle bit the card is
+   initialised again before the next op.  A CMD12 of a re-read (not every
+   block in) keeps its R1 check */
+static void t_cmd12_stale(void)
+{
+	unsigned char b[4 * 512];
+	int ok = 1;
+	card(); if (!init()) return;
+	mock_card_cmd12_stale(0x04, 1);
+	check("cmd12 stale 04: read ok", rd(400, 4, b), SD_OK);
+	for (unsigned i = 0; i < 4; i++) ok &= is_pat(b + 512 * i, 400 + i);
+	check("cmd12 stale 04: data", ok, 1);
+	check("cmd12 stale 04: no re-init", sd_card_type(), CARDTYPE_SDHC);
+	mock_card_cmd12_stale(0x01, 1);
+	check("cmd12 stale 01: read ok", rd(410, 4, b), SD_OK);
+	check("cmd12 stale 01: to be initialised", sd_card_type(), 0);
+	check("cmd12 stale 01: next read ok", rd(420, 1, b), SD_OK);
+	check("cmd12 stale 01: re-initialised (a second CMD0)", count_str(mock_card_log(), "CMD0 arg"), 2);
+	card(); if (!init()) return;
+	mock_card_error(MOCK_ERR_RDCRC, 2, 1);	/* block 2 of 4: CMD12, CMD18 from it */
+	mock_card_cmd12_stale(0x04, 1);		/* the re-read's CMD12: its R1 counts */
+	check("cmd12 stale on a re-read: SD_E_R1", rd(430, 4, b), SD_E_R1);
+}
+
 int main(void)
 {
 	setvbuf(stdout, NULL, _IOLBF, 0);
@@ -908,6 +1043,10 @@ int main(void)
 	t_acmd22_less();
 	t_sck_floor();
 	t_gayle_write();
+	t_tx_full();
+	t_bounce_cmd25();
+	t_bounce_cmd18();
+	t_cmd12_stale();
 	say("\n%d checks: %d failed\n", cases, fails);
 	say("sdproto_test %s (%d checks)\n", fails ? "FAIL" : "PASS", cases);
 	return fails ? 1 : 0;

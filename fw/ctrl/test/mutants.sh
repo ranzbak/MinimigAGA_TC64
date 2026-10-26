@@ -578,12 +578,34 @@ hwmap sdc_width  sdc.h 's/(\*(volatile unsigned short \*)(SDC_BASE/(*(volatile u
 hwmap sdc_cfg    sdc.h 's/define SDC_CFG     0x20/define SDC_CFG     0x24/'
 hwmap sdc_ver    sdc.h 's/define SDC_VER     0x2C/define SDC_VER     0x28/'
 hwmap sdc_wr     sdc.h 's/define SDC_W(x, v)  (SDC(x) = (v))/define SDC_W(x, v)  ((void)(v))/'
-hwmap sdc_version sdc.h 's/define SDC_VERSION 0x5D01/define SDC_VERSION 0x5D00/'
+hwmap sdc_version sdc.h 's/define SDC_VERSION 0x5D02/define SDC_VERSION 0x5D01/'
 hwmap irq_sdcard arch/irq.h 's/define IRQ_SDCARD         4/define IRQ_SDCARD         5/'
 hwmap irqctl_width arch/irq.h 's/HW_IRQ_MASK        (\*(volatile unsigned int/HW_IRQ_MASK        (*(volatile unsigned short/'
 # uart.c
 unit puts_nl hwmap_test src uart.c 's/++result;/++result; if (!*msg) putchar(10);/'
 unit puts_words hwmap_test src uart.c 's/(c=(unsigned char)\*msg++)/(c=(unsigned char)*msg++) \&\& result < 1/'
+
+# ---- the final review's fix wave (findings/sdcard-engine, 2026-10-25) -------
+# M7: SET MULTIPLE MODE above 16 accepted (groups larger than Gayle's FIFO)
+unit hdd_setmult_max hdd_test src hdd.c 's/if (tfr\[2\] > HDD_MULTIPLE_MAX) {/if (0) {/' "FAIL SET MULTIPLE MODE 17"
+# M2: amiga_left ignores IDEF_CMD_WR (a command without drive/head write before its look)
+unit hdd_cmd_wr hdd_test src hdd.c 's/return (flags \& (IDEF_RST_SEEN | IDEF_DEV_WR | IDEF_CMD_WR)) != 0;/return (flags \& (IDEF_RST_SEEN | IDEF_DEV_WR)) != 0;/' "FAIL rd_newcmd_rdy: no RDY of the old command after the new command"
+# M1: a push that does not fit TX dropped (the XFER after it waits for ever)
+unit sdp_tx_room sdproto_test src sdproto.c 's/if (lvl + n > SDC_FIFO) {/if (0) {/' "FIFO misuse"
+# M3: no stop sequence before a re-init's CMD0, or parts of it
+unit sdp_no_stop_any sdproto_test src sdproto.c 's/(inited \&\& stop_any() < 0)/0/' "FAIL bounce"
+unit sdp_no_fill sdproto_test src sdproto.c 's/if (run(SDC_OP_XFER, 520) < 0 || busy_end() < 0)/if (busy_end() < 0)/' "FAIL bounce"
+unit sdp_no_fd sdproto_test src sdproto.c 's/static const unsigned char fd = 0xFD;/static const unsigned char fd = 0xFF;/' "FAIL bounce"
+unit sdp_no_cmd12 sdproto_test src sdproto.c 's/frame(f, 12, 0);/frame(f, 63, 0);/' "FAIL bounce rd"
+# M6: CMD12's R1 after a fully delivered CMD18 counted (error bits, idle bit)
+unit sdp_cmd12_r1 sdproto_test src sdproto.c 's/if (s.r1 \&\& !s.fail \&\& !stop_done())/if (s.r1 \&\& !s.fail)/' "FAIL cmd12 stale 04: read ok"
+unit sdp_cmd12_idle sdproto_test src sdproto.c 's/if (stop_done()) {\t\/\* every block/if (0) {\t\/* every block/' "FAIL cmd12 stale 01: read ok"
+# M4: no going on after a card-detect bounce; going on although the op left
+# data part-way; no re-init before going on (the last run's END | IRQ)
+unit hdd_bounce hdd_test src hdd.c 's/if (hc.op.err == SD_E_GONE \&\& hc.op.intact \&\& !hc.bounced \&\& !sd_card_changed()) {/if (0) {/' "FAIL rd_bounce" "FAIL wr_bounce"
+unit hdd_bounce_intact hdd_test src hdd.c 's/if (hc.op.err == SD_E_GONE \&\& hc.op.intact \&\& /if (hc.op.err == SD_E_GONE \&\& /' "the command never ends"
+unit sdp_intact hdd_test src sdproto.c 's/op->intact = s.st != ST_RD_GAYLE/op->intact = 1 || s.st != ST_RD_GAYLE/' "the command never ends"
+unit hdd_bounce_reinit hdd_test src hdd.c 's/ || (!sd_card_type() \&\& !sd_init())) {/) {/' "FAIL wr_bounce_last"
 
 echo "$nkilled mutants killed"
 if [ $bad -eq 0 ]; then echo "=== MUTANTS PASS"; else echo "=== MUTANTS FAILED"; fi

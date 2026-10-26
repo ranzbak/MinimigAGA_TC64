@@ -37,10 +37,12 @@ module ooc_sdcard_top (
     input  wire [15:0] hdd_data_in,
     input  wire        hdd_dat_req,
     input  wire  [1:0] hdd_fifo_reset,
+    input  wire  [1:0] hdd_cmd_new,
     input  wire        pf_port, input wire pf_data_wr, input wire pf_data_rd,
     input  wire [15:0] pf_data_out,
     input  wire  [2:0] pf_addr,
-    input  wire        hdd_xfer_wr, input wire hdd_regs_rd,
+    input  wire        hdd_regs_rd,
+    output reg  [15:0] pf_data_in_q,
     output reg         hdd_port_q, output reg hdd_data_wr_q, output reg hdd_data_rd_q,
     output reg  [15:0] hdd_data_out_q,
     output reg   [2:0] hdd_addr_q
@@ -93,8 +95,8 @@ module ooc_sdcard_top (
     reg        clk7_en = 1'b0;
     reg        g_reset_r;
     reg [15:0] din_r;
-    reg        dreq_r, xwr_r, rrd_r;
-    reg  [1:0] frs_r;
+    reg        dreq_r, rrd_r;
+    reg  [1:0] frs_r, cnew_r;
     reg        pf_port_r, pf_wr_r, pf_rd_r;
     reg [15:0] pf_out_r;
     reg  [2:0] pf_addr_r;
@@ -103,13 +105,14 @@ module ooc_sdcard_top (
         clk7_en <= div == 2'd3;
         g_reset_r <= g_reset;
         din_r <= hdd_data_in; dreq_r <= hdd_dat_req; frs_r <= hdd_fifo_reset;
-        xwr_r <= hdd_xfer_wr; rrd_r <= hdd_regs_rd;
+        cnew_r <= hdd_cmd_new; rrd_r <= hdd_regs_rd;
         pf_port_r <= pf_port; pf_wr_r <= pf_data_wr; pf_rd_r <= pf_data_rd;
         pf_out_r <= pf_data_out; pf_addr_r <= pf_addr;
     end
 
     wire        sg_active, sg_port, sg_data_wr, sg_data_rd;
-    wire [15:0] sg_data_out;
+    wire [15:0] sg_data_out, pf_data_in;
+    wire  [1:0] sg_cmd_seen;
     wire        hdd_port, hdd_data_wr, hdd_data_rd;
     wire [15:0] hdd_data_out;
     wire  [2:0] hdd_addr;
@@ -123,22 +126,24 @@ module ooc_sdcard_top (
         .active(sg_active), .port(sg_port),
         .data_wr(sg_data_wr), .data_rd(sg_data_rd),
         .data_out(sg_data_out), .data_in(din_r),
-        .dat_req(dreq_r), .fifo_reset_seen(frs_r),
-        .fw_port(pf_port_r), .fw_xfer_wr(xwr_r), .fw_regs_rd(rrd_r)
+        .dat_req(dreq_r), .fifo_reset_seen(frs_r), .cmd_new(cnew_r),
+        .fw_port(pf_port_r), .fw_regs_rd(rrd_r), .cmd_seen(sg_cmd_seen)
     );
 
     sdcard_gayle_mux sdc_mux (
         .sg_active(sg_active), .sg_port(sg_port),
         .sg_data_wr(sg_data_wr), .sg_data_rd(sg_data_rd), .sg_data_out(sg_data_out),
+        .sg_cmd_seen(sg_cmd_seen),
         .pf_port(pf_port_r), .pf_data_wr(pf_wr_r), .pf_data_rd(pf_rd_r),
         .pf_data_out(pf_out_r), .pf_addr(pf_addr_r),
+        .pf_data_in(pf_data_in), .gy_data_in(din_r),
         .hdd_port(hdd_port), .hdd_data_wr(hdd_data_wr), .hdd_data_rd(hdd_data_rd),
         .hdd_data_out(hdd_data_out), .hdd_addr(hdd_addr)
     );
 
     always @(posedge clk) begin
         hdd_port_q <= hdd_port; hdd_data_wr_q <= hdd_data_wr; hdd_data_rd_q <= hdd_data_rd;
-        hdd_data_out_q <= hdd_data_out; hdd_addr_q <= hdd_addr;
+        hdd_data_out_q <= hdd_data_out; hdd_addr_q <= hdd_addr; pf_data_in_q <= pf_data_in;
     end
 
 endmodule

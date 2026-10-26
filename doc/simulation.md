@@ -142,10 +142,10 @@ unverified. Drop `+nobg` to add background chipset load.
 
 **Without a runner script:** `sim/rtc_spi_clock`, `sim/toccata`,
 `sim/i2c_sender`, `sim/hostcpu-i2c-bridge` (Vivado simulator projects with
-`.wcfg` waveform setups), `sim/tg68vswf68ksim` (its bench file is empty),
-`sim/autoconfig_add_snd`. `sim/rom-hostcpu-test` compared the boot ROM of
-the retired EightThirtyTwo host CPU (`OSDBoot_832_ROM`, gone from the tree;
-tag `osd-832-final`) with an older copy and no longer builds. The benches of
+`.wcfg` waveform setups), `sim/autoconfig_add_snd`. (`sim/tg68vswf68ksim`,
+an empty bench, and `sim/rom-hostcpu-test`, which compared the retired
+EightThirtyTwo's boot ROM with an older copy, were deleted 2026-10-25; tag
+`osd-832-final` has them.) The benches of
 the RISC-V OSD host CPU, its boot ROM and firmware are `sim/rv_l1`,
 `sim/rv_dbg`, `sim/host_bridge` and `sim/l3`; their READMEs say how to run
 them. The directories containing only an `nc` folder

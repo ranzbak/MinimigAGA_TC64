@@ -101,6 +101,9 @@ static struct {
 	unsigned char cid[16];		/* CMD10 (mock_card_cid) */
 	unsigned acmd22_less, acmd22_times;	/* mock_card_acmd22_less */
 	unsigned wrrej_every;		/* mock_card_wrrej_every */
+	unsigned char stale12;		/* mock_card_cmd12_stale */
+	int cs_keep;			/* mock_card_cs_keeps */
+	unsigned stale12_n;
 	int sel;			/* selected (cfide's CS bit 1 or the peripheral's CS) */
 	int stop_pend;			/* a stop token's busy is still being sent */
 	unsigned stop_ends;		/* stop-token busy periods sent to their end (mock_card_stop_ends) */
@@ -184,6 +187,8 @@ static void card_state_reset(void)
 	}
 	card.acmd22_less = card.acmd22_times = 0;
 	card.wrrej_every = 0;
+	card.stale12_n = 0;
+	card.cs_keep = 0;
 }
 
 static void card_do_cmd(void)
@@ -290,6 +295,7 @@ static void card_do_cmd(void)
 		card.rd_multi = 0;
 		card.qh = card.qt;	/* drop the rest of the stream */
 		c_push(0xFF);		/* stuff byte */
+		if (card.stale12_n) { card.stale12_n--; c_push(card.stale12); }	/* mock_card_cmd12_stale */
 		c_push_r1(0x00);
 		c_push_busy();
 		break;
@@ -405,7 +411,10 @@ unsigned char mock_card_xchg_sdc(unsigned char out)
 static void card_select(void) { card.cmdcnt = 0; card.txb = 0xFF; }
 static void card_deselect(void)
 {
-	card.cmdcnt = 0; card.qh = card.qt; card.rd_multi = 0; card.wstate = 0;
+	card.cmdcnt = 0;
+	if (card.cs_keep)	/* mock_card_cs_keeps: a write / read run stays open */
+		return;
+	card.qh = card.qt; card.rd_multi = 0; card.wstate = 0;
 	card.busy_stuck = 0; card.stop_pend = 0;
 }
 
@@ -486,9 +495,12 @@ int mock_card_crc_on(void) { return card.crc_on; }
 void mock_card_cid(const unsigned char cid[16]) { memcpy(card.cid, cid, 16); }
 void mock_card_acmd22_less(unsigned n, unsigned times) { card.acmd22_less = n; card.acmd22_times = times; }
 void mock_card_wrrej_every(unsigned k) { card.wrrej_every = k; }
+void mock_card_cmd12_stale(unsigned char b, unsigned times) { card.stale12 = b; card.stale12_n = times; }
+void mock_card_cs_keeps(int on) { card.cs_keep = on; }
 unsigned mock_card_blocks_read(void) { return card.rd_blk_n; }
 unsigned mock_card_wr_ok(void) { return card.wr_ok; }
 unsigned mock_card_stop_ends(void) { return card.stop_ends; }
+int mock_card_stop_busy(void) { return card.stop_pend; }
 int mock_card_idle(void)
 {
 	return !card.gone && card.wstate == 0 && card.qh == card.qt && !card.busy_stuck && !card.rd_multi &&

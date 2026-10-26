@@ -87,7 +87,7 @@ static void check_addresses(void)
 	CHECK_REG("SDC IRQEN",       SDC(SDC_IRQEN),   0xFFFFFF28u, 2);
 	CHECK_REG("SDC WMARK/VER",   SDC(SDC_WMARK),   0xFFFFFF2Cu, 2);
 	CHECK_REG("SDC VER",         SDC(SDC_VER),     0xFFFFFF2Cu, 2);
-	if (SDC_VERSION != 0x5D01) { printf("FAIL SDC_VERSION %x, want 5d01\n", (unsigned)SDC_VERSION); fails++; }
+	if (SDC_VERSION != 0x5D02) { printf("FAIL SDC_VERSION %x, want 5d02\n", (unsigned)SDC_VERSION); fails++; }
 	if (IRQ_SDCARD != 4) { printf("FAIL IRQ_SDCARD %d, want 4 (cfide irq_src(4))\n", IRQ_SDCARD); fails++; }
 	/* not a register: the audio ring's address (HOSTTEST: the mock's RAM) */
 	if ((uintptr_t)AUDIO_BUFFER != 0x70000u || AUDIO_BUFFER_SIZE != 0x8000) {
@@ -186,7 +186,7 @@ static void check_sdc_access(void)
 	check_value("SDC_W(SDC_LEN) writes LEN (high byte)", sdc_regs[5] >> 8, 0x12);
 	sdc_regs[4] = 0x0055;
 	check_value("SDC_R(SDC_STATUS) reads STATUS", SDC_R(SDC_STATUS), 0x55);
-	sdc_regs[11] = 0x5D01;
+	sdc_regs[11] = 0x5D02;
 	check_value("SDC_R(SDC_VER) reads VERSION (high byte)", SDC_R(SDC_VER) >> 8, 0x5D);
 	for (int k = 0; k < 16; k++)
 		if (k != 4 && k != 5 && k != 11 && sdc_regs[k]) { printf("FAIL SDC_R/SDC_W touched register %d\n", k); fails++; }

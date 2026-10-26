@@ -519,12 +519,14 @@ wire  hdd_port; //IDE port of the firmware's current HDD command
 wire  hdd_xfer_wr; //packet-mode transfer length write strobe
 wire  hdd_regs_rd; //task file read command strobe
 wire  [1:0] hdd_fifo_reset; //per IDE port: Gayle resets its FIFO (SD card bridge abort)
+wire  [1:0] hdd_cmd_new; //per IDE port: a host command write or reset (SD card bridge cmd_since)
 //the firmware-side data port as paula_floppy drives it; with SD_ENGINE the
 //SD card bridge's too, and sdcard_gayle_mux picks (findings/sdcard-engine)
 wire  [15:0] pf_data_out;
 wire  pf_data_wr;
 wire  pf_data_rd;
 wire  pf_port;
+wire  [15:0] pf_data_in; //what paula_floppy reads: Gayle's hdd_data_in (with SD_ENGINE through sdcard_gayle_mux)
 
 wire  [7:0] bank; //memory bank select
 
@@ -715,7 +717,7 @@ paula PAULA1
   .hdd_dat_req(hdd_dat_req),
   .hdd_addr(pf_addr),
   .hdd_data_out(pf_data_out),
-  .hdd_data_in(hdd_data_in),
+  .hdd_data_in(pf_data_in),
   .hdd_wr(hdd_wr),
   .hdd_status_wr(hdd_status_wr),
   .hdd_data_wr(pf_data_wr),
@@ -1204,6 +1206,7 @@ gayle #(.IDE_PORTS(2)) GAYLE1
   .hdd_xfer_wr(hdd_xfer_wr),
   .hdd_regs_rd(hdd_regs_rd),
   .hdd_fifo_reset(hdd_fifo_reset),
+  .hdd_cmd_new(hdd_cmd_new),
   .hd_fwr(hd_fwr),
   .hd_frd(hd_frd)
 );
@@ -1217,6 +1220,7 @@ wire  sg_port;
 wire  sg_data_wr;
 wire  sg_data_rd;
 wire  [15:0] sg_data_out;
+wire  [1:0] sg_cmd_seen;
 
 sdcard_gayle #(.CLK_RATIO(SD_CLK_RATIO)) SDCGAYLE1
 (
@@ -1243,9 +1247,10 @@ sdcard_gayle #(.CLK_RATIO(SD_CLK_RATIO)) SDCGAYLE1
   .data_in(hdd_data_in),
   .dat_req(hdd_dat_req),
   .fifo_reset_seen(hdd_fifo_reset),
+  .cmd_new(hdd_cmd_new),
   .fw_port(pf_port),
-  .fw_xfer_wr(hdd_xfer_wr),
-  .fw_regs_rd(hdd_regs_rd)
+  .fw_regs_rd(hdd_regs_rd),
+  .cmd_seen(sg_cmd_seen)
 );
 
 sdcard_gayle_mux SDCMUX1
@@ -1255,11 +1260,14 @@ sdcard_gayle_mux SDCMUX1
   .sg_data_wr(sg_data_wr),
   .sg_data_rd(sg_data_rd),
   .sg_data_out(sg_data_out),
+  .sg_cmd_seen(sg_cmd_seen),
   .pf_port(pf_port),
   .pf_data_wr(pf_data_wr),
   .pf_data_rd(pf_data_rd),
   .pf_data_out(pf_data_out),
   .pf_addr(pf_addr),
+  .pf_data_in(pf_data_in),
+  .gy_data_in(hdd_data_in),
   .hdd_addr(hdd_addr),
   .hdd_port(hdd_port),
   .hdd_data_wr(hdd_data_wr),
@@ -1272,6 +1280,7 @@ assign hdd_port = pf_port;
 assign hdd_data_wr = pf_data_wr;
 assign hdd_data_rd = pf_data_rd;
 assign hdd_data_out = pf_data_out;
+assign pf_data_in = hdd_data_in;
 assign sdc_g_ack = 1'b0;
 assign sdc_g_err = 1'b0;
 assign sdc_g_wnext = 1'b0;

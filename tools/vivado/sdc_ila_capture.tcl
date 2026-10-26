@@ -29,12 +29,19 @@
 # cable (the RISC-V GDB bridge, tools/rvdebug/rv_jtag_bridge.tcl, another
 # hardware manager): close those first.
 #
-# Signals are found through <ltx dir>/sdc_ila_bits.txt (written for the build by
-# tools/vivado/sdc_ila_names.py from the .ltx and sdc_ila_map.txt): synthesis
-# names the probes' nets differently in every build, so names are never
-# guessed here.  A compare value is built per hardware probe from the signal
-# bits it holds (X for the others), MSB first.
-# Not run on hardware yet (written with the build, Task 14).
+# Signals are the probes sdc_<signal> that <ltx dir>/sdc_ila_hwprobes.tcl
+# makes (written by tools/vivado/sdc_ila.tcl with the core:
+# create_hw_probe -map from each signal's ILA port bits, bit k of the probe
+# = bit k of the signal), their widths from <ltx dir>/sdc_ila_map.txt (the
+# same insertion's table).  Synthesis names the probes' nets differently in
+# every build; neither file depends on those names, so nothing is guessed
+# (final review M5: the arming used sdc_ila_names.py's reading of the .ltx,
+# whose bit order was an assumption).  A compare value is built per signal
+# probe from the bits given (X for the others), MSB first.
+# On a wait timeout the core is triggered by hand (run_hw_ila -trigger_now)
+# so the upload has data: the NOT TRIGGERED capture is written too.
+# Not run on hardware yet (written with the build, Task 14; checked in
+# tclsh against a mocked hardware manager and the stage's files).
 set ltx    [file normalize [lindex $argv 0]]
 set outdir [file normalize [lindex $argv 1]]
 set trig   [lindex $argv 2]
@@ -58,44 +65,49 @@ set ila [get_hw_ilas -of_objects $dev -filter {CELL_NAME =~ *u_ila_sdc*}]
 if {[llength $ila] != 1} { error "sdc_ila_capture.tcl: [llength $ila] ILAs named u_ila_sdc (the lab bitstream and its .ltx loaded?)" }
 puts "=== ILA: $ila, [get_property CONTROL.DATA_DEPTH $ila] samples ==="
 
-# signal bit -> {hw probe name, width, bit in the probe}
-set bitsf [file dirname $ltx]/sdc_ila_bits.txt
-if {![file exists $bitsf]} { error "sdc_ila_capture.tcl: no $bitsf (python3 tools/vivado/sdc_ila_names.py [file dirname $ltx])" }
-set fh [open $bitsf r]
+# the build's signal probes: sdc_<signal> on the core (create_hw_probe), and
+# each signal's width from the insertion's map ("probe<n> [hi:lo] <signal> ...")
+set sdir [file dirname $ltx]
+foreach f {sdc_ila_hwprobes.tcl sdc_ila_map.txt} {
+    if {![file exists $sdir/$f]} { error "sdc_ila_capture.tcl: no $sdir/$f (tools/vivado/sdc_ila.tcl writes it with the core; build_ap040.tcl copies it next to the .ltx)" }
+}
+source $sdir/sdc_ila_hwprobes.tcl
+set fh [open $sdir/sdc_ila_map.txt r]
 foreach line [split [read $fh] "\n"] {
-    if {$line eq "" || [string index $line 0] eq "#"} continue
-    lassign $line sig bit name width pos
-    set ::sigbit($sig,$bit) [list $name $width $pos]
+    if {[regexp {^probe\d+\s+\[(\d+)(?::(\d+))?\]\s+(\S+)} $line -> hi lo sig]} {
+        if {$lo eq ""} { set lo $hi }
+        set ::sigw($sig) [expr {$hi - $lo + 1}]
+    }
 }
 close $fh
-proc hwprobe {name} {
+proc hwprobe {sig} {
     global ila
-    foreach p [get_hw_probes -of_objects $ila] {
-        set n [get_property NAME $p]
-        if {$n eq $name || [regsub {\[[0-9:]+\]$} $n {}] eq $name} { return $p }
-    }
-    error "sdc_ila_capture.tcl: no hardware probe $name"
+    set p [get_hw_probes -quiet sdc_$sig -of_objects $ila]
+    if {[llength $p] != 1} { error "sdc_ila_capture.tcl: no hardware probe sdc_$sig (sdc_ila_hwprobes.tcl sourced?)" }
+    return $p
 }
 # compare <TRIGGER|CAPTURE> {<signal> <value bits, MSB first, of signal bits
-# lo..> <lo>} ...: e.g. {addr 000100 0}, {irq_pend R 3}
+# lo..> <lo>} ...: e.g. {addr 000100 0}, {irq_pend R 3}; on the probe
+# sdc_<signal>, bit k = signal bit k
 proc compare {kind args} {
     array set cv {}
-    array set wd {}
     foreach a $args {
         lassign $a sig val lo
+        if {![info exists ::sigw($sig)]} { error "sdc_ila_capture.tcl: no signal $sig in sdc_ila_map.txt" }
+        set w $::sigw($sig)
         set n [string length $val]
+        if {$lo < 0 || $lo + $n > $w} { error "sdc_ila_capture.tcl: $sig\[[expr {$lo + $n - 1}]:$lo\] outside its $w bits" }
+        if {![info exists cv($sig)]} { set cv($sig) [string repeat X $w] }
         for {set i 0} {$i < $n} {incr i} {
             set bit [expr {$lo + $n - 1 - $i}]
-            if {![info exists ::sigbit($sig,$bit)]} { error "sdc_ila_capture.tcl: no $sig bit $bit in sdc_ila_bits.txt" }
-            lassign $::sigbit($sig,$bit) name width pos
-            if {![info exists cv($name)]} { set cv($name) [string repeat X $width]; set wd($name) $width }
-            set k [expr {$width - 1 - $pos}]
-            set cv($name) [string replace $cv($name) $k $k [string index $val $i]]
+            set k [expr {$w - 1 - $bit}]
+            set cv($sig) [string replace $cv($sig) $k $k [string index $val $i]]
         }
     }
-    foreach name [array names cv] {
-        set_property ${kind}_COMPARE_VALUE "eq$wd($name)'b$cv($name)" [hwprobe $name]
-        puts "sdc_ila_capture.tcl: $kind $name = eq$wd($name)'b$cv($name)"
+    foreach sig [lsort [array names cv]] {
+        set w $::sigw($sig)
+        set_property ${kind}_COMPARE_VALUE "eq$w'b$cv($sig)" [hwprobe $sig]
+        puts "sdc_ila_capture.tcl: $kind sdc_$sig = eq$w'b$cv($sig)"
     }
 }
 
@@ -145,8 +157,18 @@ if {$capt eq "events"} {
 run_hw_ila $ila
 puts "=== ARMED: trigger $trig, capture $capt, position $pos, timeout $tmo min: act now ==="
 set triggered 1
-if {[catch {wait_on_hw_ila -timeout $tmo $ila} msg]} { puts "=== wait ended: $msg ==="; set triggered 0 }
-upload_hw_ila_data $ila
+if {[catch {wait_on_hw_ila -timeout $tmo $ila} msg]} {
+    # not triggered: trigger by hand, so the upload has a buffer to read
+    # (an un-triggered core has none; the upload would fail before any file)
+    puts "=== wait ended: $msg: triggering now ==="
+    set triggered 0
+    run_hw_ila -trigger_now $ila
+    if {[catch {wait_on_hw_ila -timeout 1 $ila} msg2]} { puts "=== the manual trigger: $msg2 ===" }
+}
+if {[catch {upload_hw_ila_data $ila} msg]} {
+    close_hw_manager
+    error "sdc_ila_capture.tcl: upload_hw_ila_data: $msg (nothing written)"
+}
 set base $outdir/sdc_ila_$trig
 write_hw_ila_data -csv_file $base.csv -force [current_hw_ila_data]
 write_hw_ila_data $base.ila -force [current_hw_ila_data]

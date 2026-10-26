@@ -130,7 +130,7 @@ size: $(B)/$(PROJECT).elf $(B)/$(FW_FILE)
 	@echo "$(FW_FILE): `wc -c < $(B)/$(FW_FILE)` bytes"
 
 # ---- check: each part is its own target; all run (-k), any red fails ----
-CHECKS := check_a check_b check_c check_d check_e check_f check_g check_h check_i
+CHECKS := check_a check_b check_c check_d check_e check_f check_g check_h check_i check_j
 
 check: $(B)/$(PROJECT).elf
 	@$(MAKE) --no-print-directory -k $(CHECKS)
@@ -243,6 +243,17 @@ check_i: $(B)/$(FW_FILE)
 	elif ! cmp -s $$v $(BOOT_VHD); then \
 	  echo "check (i) FAIL: the committed $(BOOT_VHD) is not the one made from OSDBoot_rv.bin ($$v; make -C fw/ctrl_boot, commit both outputs)"; rc=1; fi; \
 	if [ $$rc = 0 ]; then echo "check (i) pass: the boot ROM image and .clangd look for $$n = $$f, OSDBoot_rv_ROM.vhd = the VHDL of OSDBoot_rv.bin"; fi; exit $$rc
+
+# (j) the lock-step key on the bitstream side: rtl/host/sdcard_spi.v's VERSION
+#     parameter default (what the VERSION register reads) is sdc.h's
+#     SDC_VERSION, so a contract bump made on one side only fails here
+#     (sdc.h's rule; final review M8)
+SDC_RTL := $(TOP)/rtl/host/sdcard_spi.v
+check_j:
+	@v=`sed -n 's/^#define[[:space:]]*SDC_VERSION[[:space:]]*0x\([0-9A-Fa-f]\{4\}\).*/\1/p' sdc.h | tr a-f A-F`; \
+	r=`sed -n "s/^[[:space:]]*parameter[[:space:]]*VERSION[[:space:]]*=[[:space:]]*16'h\([0-9A-Fa-f]\{4\}\).*/\1/p" $(SDC_RTL) | tr a-f A-F`; \
+	if [ -n "$$v" ] && [ "$$v" = "$$r" ]; then echo "check (j) pass: SDC_VERSION $$v = sdcard_spi.v's VERSION"; \
+	else echo "check (j) FAIL: sdc.h SDC_VERSION '$$v', rtl/host/sdcard_spi.v VERSION '$$r' (bump both: sdc.h's rule)"; exit 1; fi
 
 # the 20 largest stack frames of the firmware (-fstack-usage: bytes, kind)
 stack: $(OBJS)

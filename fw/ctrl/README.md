@@ -125,7 +125,7 @@ constructor `smoke_trap.o` this way, into its own `B=` directory).
 Plan estimate 85-95 KB; the gcc image is +8,906 B (+10.6 %) over the 832's.
 The figure moves by a few bytes with the date strings of `version.h`. `_end` =
 0x271DC (from the map; 0x27150 at the gate; < 0x70000, `AUDIO_BUFFER`, a linker ASSERT); the boot
-ROM's `_end` is 0x1040 (< 0x1400). Stack high-water mark on `fwboot`: 0x1950
+ROM's `_end` is 0x13D4 (< 0x1400; `fw/ctrl_boot/README.md` "Sizes"). Stack high-water mark on `fwboot`: 0x1950
 (1712 B used). History: Task 4 93,764 B, Task 9 91,368 B (`le16`/`le32` are
 the identity on RV32, so the `SwapBB`/`SwapBBBB` calls of `fat.c` are gone),
 Task 14 92,436 B, Task 17 92,588 B, Task 18 92,596 B (`StackFill`, below),
@@ -359,7 +359,7 @@ BRAM. `stackcheck.c`: `StackFill()` (first statement of `main()`) paints
 `[0x1400, sp - 64)` with `0x5A5AA5A5`; `StackHighWater()` returns the lowest
 address that no longer holds the pattern. The floor 0x1400 is where the boot
 ROM image has to end below (`make check` (g) reads `_end` from
-`fw/ctrl_boot/build/OSDBoot_rv.map`: 0x1040), so a soft re-run of the boot
+`fw/ctrl_boot/build/OSDBoot_rv.map`: 0x13D4), so a soft re-run of the boot
 ROM stays possible. The value is printed on the UART (`Stack high water <hex>`)
 when DebugMode is switched on (main loop, on the 0 -> 1 edge). The Debug OSD
 page has no free text line (`_showdebugmessages` writes all eight rows), so
@@ -379,7 +379,7 @@ Measured (2026-10-18, gcc 15.2.0-1, `-Os`, after the Task 18 fix):
 | `size` text / data / bss | 89,112 / 3,484 / 59,292 |
 | `RV32OSDA.BIN` | 92,596 B (83,830 B for the 832 image: +8,766 B) |
 | `_end` | 0x27150 (< 0x70000, the linker ASSERT) |
-| boot ROM `_end` | 0x1040 (< 0x1400) |
+| boot ROM `_end` | 0x1040 (< 0x1400; 0x13D4 since the SD card peripheral's lock-step OSD message) |
 | L2 `fwboot` `STACK low` | 0x1950 (1712 B used); `STACKHW` 0x1950; 0x550 above the 0x1400 floor |
 
 After the final review's fix (92,736 B, `_end` 0x271DC): L2 `fwboot`

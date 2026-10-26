@@ -5,7 +5,9 @@
 #
 #   bash sim/l3/run.sh <scenario>        boot, boot_short, keys, fdd_rd, fdd_wr, hdd,
 #                                        cd, cdda, cdda_load, akiko; sdc_boot,
-#                                        sdc_boot_short, sdc_hdd (SD_ENGINE=1)
+#                                        sdc_boot_short, sdc_hdd, sdc_fdd_rd,
+#                                        sdc_fdd_wr, sdc_cd, sdc_cdda,
+#                                        sdc_cdda_load (SD_ENGINE=1)
 #   bash sim/l3/run.sh xpair <scenario>  the scenario and its XRAND twin
 #                                        (run_$RUNTAG, run_${RUNTAG}_xr; in
 #                                        parallel), then compare: both PASS
@@ -155,11 +157,15 @@
 #               flip; checks as cdda (item 3 required too: the HDF sectors
 #               come in direct mode; the cdhdd card's milestones), l3check.py
 #               cdda counts the underruns and checks the HDF sectors
-#   sdc_boot, sdc_boot_short, sdc_hdd   boot, boot_short and hdd on the SD
-#               card engine (SD_ENGINE=1; README "sdc"): the boot ROM and the
-#               firmware reach the card through sdcard_spi, the HDD sectors
-#               go through sdcard_gayle's DMA.  The bench runs +SCENARIO=boot,
-#               boot_short or hdd; the checks are that scenario's, with
+#   sdc_boot, sdc_boot_short, sdc_hdd, sdc_fdd_rd, sdc_fdd_wr, sdc_cd,
+#   sdc_cdda, sdc_cdda_load   boot, boot_short, hdd, fdd_rd, fdd_wr, cd
+#               (CDCFG as there), cdda and cdda_load on the SD card engine
+#               (SD_ENGINE=1; README "sdc"): the boot ROM and the firmware
+#               reach the card through sdcard_spi, the HDD sectors and the
+#               ISO's DATA2048 sectors go through sdcard_gayle's DMA, the
+#               floppy tracks, CD audio and CUE sectors through the CPU's
+#               sd_sync.  The bench runs +SCENARIO=<base>; the checks are
+#               that scenario's (the floppy's, the CD's, ...), with
 #               milestones_boot.txt's SDE=1 lines (the ROM's and the
 #               firmware's SD lines) and MARGIN item 3 n/a (no direct-mode
 #               transfer: the card is not on cfide's SPI), plus (sdc_check):
@@ -266,6 +272,11 @@ MARGIN_REQ_akiko=$MARGIN_REQ_fdd_rd
 MARGIN_REQ_sdc_boot=$MARGIN_REQ_boot
 MARGIN_REQ_sdc_boot_short=$MARGIN_REQ_boot_short
 MARGIN_REQ_sdc_hdd=$MARGIN_REQ_boot
+MARGIN_REQ_sdc_fdd_rd=$MARGIN_REQ_fdd_rd
+MARGIN_REQ_sdc_fdd_wr=$MARGIN_REQ_fdd_wr
+MARGIN_REQ_sdc_cd="$MARGIN_REQ_boot 9:cd_timeout_left"
+MARGIN_REQ_sdc_cdda=$MARGIN_REQ_cdda
+MARGIN_REQ_sdc_cdda_load=$MARGIN_REQ_cdda
 
 # fdd_wr's tracks, in order (= scenarios.vh FDD_WPLAN, l3check.py
 # FDD_WR_TRACKS): "<cylinder>:<head>[:<sector with a bad header checksum>]"
@@ -689,9 +700,13 @@ margins() {
 #     SDC_HDD_RD_SECTORS x 256, from_gayle SDC_HDD_WR_SECTORS x 256 (README
 #     "hdd": the plan reads 274 sectors, 3 of them built by the CPU: the
 #     FakeRDB RDSK and PART and RDB.HDF's patched block 0; it writes 96);
-#     boot, boot_short: no Gayle op
+#     cdda_load: to_gayle SDC_CDDA_LOAD_RD_SECTORS x 256 (its READ
+#     MULTIPLE), no from_gayle; cd with CDCFG=iso: to_gayle of whole
+#     2048-byte sectors (> 0), no from_gayle; boot, boot_short, fdd_rd,
+#     fdd_wr, cdda and cd with CDCFG=cue: no Gayle op
 SDC_HDD_RD_SECTORS=271
 SDC_HDD_WR_SECTORS=96
+SDC_CDDA_LOAD_RD_SECTORS=256
 sdc_check() {
 	local s=$1 b=$2 log=$3 v t w ls inj=0 rx re n
 	v=$(sed -n 's/^#define SDC_VERSION 0x\([0-9A-Fa-f]\{4\}\).*/\1/p' "$ROOT/fw/ctrl/sdc.h" | tr a-f A-F)
@@ -768,8 +783,24 @@ sdc_check() {
 		else
 			echo "BAD  sdc: from_gayle $3 ops $4 words, want > 0 ops and $((SDC_HDD_WR_SECTORS * 256)) words ($SDC_HDD_WR_SECTORS sectors)"
 		fi
+	elif [ "$b" = cdda_load ]; then
+		# the HDF's READ MULTIPLE of 256 sectors (scenarios.vh) through the
+		# bridge; the CD's audio and packet replies go through the CPU
+		if [ "$1" -gt 0 ] && [ "$2" = $((SDC_CDDA_LOAD_RD_SECTORS * 256)) ] && [ "$3" = 0 ]; then
+			echo "ok   sdc: to_gayle $1 ops, $2 words = $SDC_CDDA_LOAD_RD_SECTORS sectors (the READ MULTIPLE through the bridge), no from_gayle"
+		else
+			echo "BAD  sdc: to_gayle $1 ops $2 words, from_gayle $3 ops, want > 0 ops and $((SDC_CDDA_LOAD_RD_SECTORS * 256)) words, no from_gayle"
+		fi
+	elif [ "$b" = cd ] && [ "$CDCFG" = iso ]; then
+		# the ISO's DATA2048 sectors (cdrom.c cd_send_sectors): to_gayle runs,
+		# 4 blocks a sector; the answers' bytes are l3check.py cd's
+		if [ "$1" -gt 0 ] && [ $(($2 % 1024)) = 0 ] && [ "$2" -gt 0 ] && [ "$3" = 0 ]; then
+			echo "ok   sdc: to_gayle $1 ops, $2 words = $(($2 / 1024)) DATA2048 sectors through the bridge, no from_gayle"
+		else
+			echo "BAD  sdc: to_gayle $1 ops $2 words, from_gayle $3 ops, want > 0 ops of whole 2048-byte sectors, no from_gayle"
+		fi
 	elif [ "$1$3" = 00 ]; then
-		echo "ok   sdc: no Gayle op ($s)"
+		echo "ok   sdc: no Gayle op ($s$( [ "$b" = cd ] && echo ", CDCFG=$CDCFG: the MODE1/2352 sectors through the CPU"))"
 	else
 		echo "BAD  sdc: Gayle ops in $s: to_gayle $1, from_gayle $3"
 	fi
@@ -924,7 +955,7 @@ case "${1:-}" in
 		echo "=== xpair $2 FAILED (runs $r1 / $r2, compare $rc)"
 		exit 1
 		;;
-	boot|boot_short|keys|fdd_rd|fdd_wr|hdd|cd|cdda|cdda_load|akiko|sdc_boot|sdc_boot_short|sdc_hdd)
+	boot|boot_short|keys|fdd_rd|fdd_wr|hdd|cd|cdda|cdda_load|akiko|sdc_boot|sdc_boot_short|sdc_hdd|sdc_fdd_rd|sdc_fdd_wr|sdc_cd|sdc_cdda|sdc_cdda_load)
 		SCEN=$1 BSCEN=${1#sdc_}
 		[ "${NOKICK:-0}" = 1 ] && [ "$1" != boot ] && die "NOKICK=1 is for boot only"
 		setup

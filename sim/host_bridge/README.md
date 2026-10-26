@@ -412,7 +412,9 @@ firmware is there under the previous chain's name `RV32OSDA.BIN`): the
 error path, up to the end of its first retry. `run.sh boot_mismatch` boots
 a card whose `RV32OSDB.BIN` has no trailer (the image of an older
 firmware): the ROM must print `Firmware does not match this bitstream (need
-SDC 5D01)`, report `ErrorCode(0x0ff)` and halt (no hw access after it).
+SDC 5D02)`, write its OSD message (two OSD frames: the buffer, the enable;
+since the final review's fix wave), report `ErrorCode(0x0ff)` and halt (no
+hw access after it).
 `run.sh boot_both` is `boot` (the same bench test, `+TEST=boot`, and
 `expect.txt`) on a card for old and new bitstreams: an old `RV32OSDA.BIN`
 (the image without the trailer) ahead of `RV32OSDB.BIN` in the directory.
@@ -442,13 +444,14 @@ RUNTAG=bootb bash sim/host_bridge/run.sh boot_both
 ```
 
 Expected end of `boot` (Verilator, boot ROM on the SD card peripheral,
-2026-10-25):
+2026-10-25; re-measured with the final review's fix wave: SDC_VERSION
+5D02, the lock-step OSD message):
 
 ```
-boot ROM: fw/ctrl_boot/OSDBoot_rv_ROM.vhd unmodified (= git HEAD), sha256 3047455441c236dd
-=== BOOT first read of 0x2000 at cycle 4375120, irefill 108 dread 13615 dwrite 6241 so far
-=== HW accesses 13857, stale acks 0, X 0, SDRAM reads 211 writes 2619, main done 79401, cycles 5125786
-=== STATS irefill 135 dread 16256 dwrite 6806 busy_cycles 4595920 (rv_hostcpu, whole run)
+boot ROM: fw/ctrl_boot/OSDBoot_rv_ROM.vhd unmodified (= git HEAD), sha256 25c97ead5442cc0d
+=== BOOT first read of 0x2000 at cycle 4374133, irefill 107 dread 13617 dwrite 6243 so far
+=== HW accesses 13857, stale acks 0, X 0, SDRAM reads 211 writes 2619, main done 79569, cycles 5124798
+=== STATS irefill 134 dread 16258 dwrite 6808 busy_cycles 4575608 (rv_hostcpu, whole run)
 === SD card: 1 ErrorCode calls, last 0fff, hw accesses after 00FF 0
 ok   log = expect.txt (21 lines)
 ok   bench verdict: === PASS
@@ -459,27 +462,27 @@ verilator wall time 14 s
 Expected end of `boot_nofile`:
 
 ```
-boot ROM: fw/ctrl_boot/OSDBoot_rv_ROM.vhd unmodified (= git HEAD), sha256 3047455441c236dd
-=== HW accesses 68380, stale acks 0, X 0, SDRAM reads 0 writes 24, main done 79401, cycles 27778824
-=== STATS irefill 185 dread 72047 dwrite 43356 busy_cycles 25323630 (rv_hostcpu, whole run)
+boot ROM: fw/ctrl_boot/OSDBoot_rv_ROM.vhd unmodified (= git HEAD), sha256 25c97ead5442cc0d
+=== HW accesses 68380, stale acks 0, X 0, SDRAM reads 0 writes 24, main done 79569, cycles 27796767
+=== STATS irefill 184 dread 72053 dwrite 43362 busy_cycles 25254173 (rv_hostcpu, whole run)
 === SD card: 3 ErrorCode calls, last 00f0, hw accesses after 00FF 0
 ok   log = expect_nofile.txt (99 lines)
 ok   bench verdict: === PASS
-verilator wall time 57 s
+verilator wall time 78 s
 === boot_nofile PASS
 ```
 
 Expected end of `boot_mismatch`:
 
 ```
-boot ROM: fw/ctrl_boot/OSDBoot_rv_ROM.vhd unmodified (= git HEAD), sha256 3047455441c236dd
+boot ROM: fw/ctrl_boot/OSDBoot_rv_ROM.vhd unmodified (= git HEAD), sha256 25c97ead5442cc0d
 === cycle limit 8000000 reached, no DONE
-=== HW accesses 13059, stale acks 0, X 0, SDRAM reads 1 writes 2582, main done 79401, cycles 8000178
-=== STATS irefill 110 dread 13615 dwrite 6258 busy_cycles 4088667 (rv_hostcpu, whole run)
+=== HW accesses 15119, stale acks 0, X 0, SDRAM reads 1 writes 2582, main done 79569, cycles 8000178
+=== STATS irefill 112 dread 13857 dwrite 8322 busy_cycles 4136687 (rv_hostcpu, whole run)
 === SD card: 2 ErrorCode calls, last 00ff, hw accesses after 00FF 0
 ok   log = expect_mismatch.txt (18 lines)
 ok   bench verdict: === PASS
-verilator wall time 18 s
+verilator wall time 25 s
 === boot_mismatch PASS
 ```
 
@@ -487,14 +490,14 @@ Expected end of `boot_both` (the same cycles as `boot`, a few more data
 reads: one more directory entry):
 
 ```
-boot ROM: fw/ctrl_boot/OSDBoot_rv_ROM.vhd unmodified (= git HEAD), sha256 3047455441c236dd
-=== BOOT first read of 0x2000 at cycle 4375120, irefill 108 dread 13633 dwrite 6241 so far
-=== HW accesses 13857, stale acks 0, X 0, SDRAM reads 211 writes 2619, main done 79401, cycles 5125786
-=== STATS irefill 135 dread 16274 dwrite 6806 busy_cycles 4595700 (rv_hostcpu, whole run)
+boot ROM: fw/ctrl_boot/OSDBoot_rv_ROM.vhd unmodified (= git HEAD), sha256 25c97ead5442cc0d
+=== BOOT first read of 0x2000 at cycle 4374133, irefill 107 dread 13635 dwrite 6243 so far
+=== HW accesses 13857, stale acks 0, X 0, SDRAM reads 211 writes 2619, main done 79569, cycles 5124798
+=== STATS irefill 134 dread 16276 dwrite 6808 busy_cycles 4575395 (rv_hostcpu, whole run)
 === SD card: 1 ErrorCode calls, last 0fff, hw accesses after 00FF 0
 ok   log = expect.txt (21 lines)
 ok   bench verdict: === PASS
-verilator wall time 12 s
+verilator wall time 21 s
 === boot_both PASS
 ```
 

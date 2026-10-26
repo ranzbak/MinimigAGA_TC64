@@ -5,7 +5,7 @@
  * the previous one's: reads of registers with different values alternate,
  * back to back.  The bench counts the ext strobes (one per access, in its
  * first cycle) and checks the CS pin at the end (final_checks).
- *   1      VERSION = 0x5D01
+ *   1      VERSION = 0x5D02
  *   2-4    STATUS 0 (idle, no card), CFG 0x00FF and TIMEOUT 0 after reset
  *   5-7    CFG := 0x0102, read back; VERSION again; CFG again
  *   8-9    TIMEOUT := 0x1234, IRQEN := 0x001F, read back

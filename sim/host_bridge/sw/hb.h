@@ -41,7 +41,7 @@
 #define HB_SDC_TIMEOUT_OFS (-220) /* 0xFFFFFF24 R/W                            */
 #define HB_SDC_IRQEN_OFS   (-216) /* 0xFFFFFF28 R/W                            */
 #define HB_SDC_VERSION_OFS (-212) /* 0xFFFFFF2C W: WMARK, R: VERSION           */
-#define HB_SDC_VERSION     0x5D01
+#define HB_SDC_VERSION     0x5D02
 /* cfide's interrupt controller source of the SD peripheral: irq_src(4) */
 #define HB_SDC_IRQ_BIT     0x10
 

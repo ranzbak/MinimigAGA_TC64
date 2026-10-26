@@ -1,6 +1,6 @@
 ERRORCODE: 0fff
 UART: Initializing SD card
-UART: SD init: VERSION 5D01, card 1
+UART: SD init: VERSION 5D02, card 1
 UART: SD init: CMD0 01
 UART: SD init: CMD8 01
 UART: SD init: ACMD41 00
@@ -14,5 +14,5 @@ UART: Reading boot sector 2048
 UART: Read boot sector from first partition
 UART: Hunting for filesystem
 UART: Reading directory sector 2106
-UART: file "RV32OSDBBIN" found\rFirmware does not match this bitstream (need SDC 5D01)
+UART: file "RV32OSDBBIN" found\rFirmware does not match this bitstream (need SDC 5D02)
 ERRORCODE: 00ff

@@ -215,7 +215,7 @@
 // ok), SDC_MUT_NOINTERLOCK (RX_TO_GAYLE checks only LEN), SDC_MUT_NOTIMEOUT,
 // SDC_MUT_NOFIND (commands accepted in the cycle right after an op's end).
 module sdcard_spi #(
-    parameter VERSION = 16'h5D01,
+    parameter VERSION = 16'h5D02,          // = fw/ctrl/sdc.h SDC_VERSION (its rule; fw/ctrl make check (j))
     parameter CD_DEBOUNCE_LOG2 = 20
 ) (
     input  wire        clk, input wire reset,

@@ -28,7 +28,10 @@ LDFLAGS := $(RV_LDFLAGS_FW) -T boot.ld -Wl,--no-warn-rwx-segments -Wl,-Map=$(BUI
 SRCS    := boot.c spi.c lockstep.c swap.c minfat.c uart.c checksum.c hexdump.c small_printf.c
 
 OBJS     = $(addprefix $(BUILD)/,$(SRCS:.c=.o)) $(BUILD)/crt0.o
-HEADERS  = $(wildcard *.h)
+# fw/ctrl/sdc.h too (spi.c and lockstep.c include it: the peripheral's
+# registers and SDC_VERSION, which spi_init checks): without it a bumped
+# SDC_VERSION left a stale spi.o in the ROM (final review fix wave)
+HEADERS  = $(wildcard *.h) $(TOP)/fw/ctrl/sdc.h
 
 all: $(PROJECT).bin $(PROJECT)_ROM.vhd
 

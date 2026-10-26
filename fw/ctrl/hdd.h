@@ -21,6 +21,8 @@
 #define IDEF_PKT       0x10	/* packet mode is on */
 #define IDEF_BSY0      0x20	/* port 1 has a command waiting */
 #define IDEF_BSY1      0x40	/* port 2 has a command waiting */
+#define IDEF_CMD_WR    0x80	/* the host wrote a command (or reset) since this port's last read (read clears;
+				   the SD card bridge's, rtl/minimig/sdcard_gayle.v cmd_seen: 0 without SD_ENGINE) */
 
 #define IDE_STATUS_END 0x80
 #define IDE_STATUS_SIG 0x20	/* the host reads the ATA/ATAPI signature (two-port Gayle) */

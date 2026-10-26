@@ -8,6 +8,10 @@ Release 0.1 ships with these open (see doc/release-0.1.md).
 
 ## Stability and correctness
 
+### HDF RDB hunt looks only at blocks 0, 512, 1024, ... (pre-existing; known, left by Paul 2026-10-25)
+
+`fw/ctrl/hdd.c` (the RDB hunt, `FileSeek(&rdbfile, 512, SEEK_CUR)`) steps 512 sectors instead of one: an RDB in block 0 is found, one in blocks 1-15 is missed and the HDF is taken as a plain partition image. Changing it changes which HDFs are seen as RDB disks (Amiga-visible); Paul 2026-10-25: leave (final review of the SD card peripheral, ledger Task 10).
+
 ### CD audio + HDF read deadlock (2026-10-20) -- FIXED (fix-cdpoll 05e8780)
 
 With CD audio playing, a port-1 READ MULTIPLE of more than one block hangs the firmware (OSD dead,

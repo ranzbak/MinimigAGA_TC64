@@ -39,7 +39,15 @@
 //       each op moves exactly its own words, none written without its pop
 //   (p) dir 0 right after a task file read (paula_floppy's hdd_addr sticky)
 //   (q) a new command between two READ MULTIPLE groups: the next op g_err
+//   (r) a new command (no drive/head write, no reset) before / after / in the
+//       sample of the firmware's flags read inside the command: the read
+//       shows it in bit 15 (IDEF_CMD_WR, through the mux) or the next op
+//       g_err -- never neither (final review M2)
+//   (s) a host command in the same clk7 sample as the firmware's XFER_WR of
+//       its port: the next op g_err (final review T7)
 // SDC_ASYNC: clk_114 at 112.4 MHz instead of 4 x clk.
+// SDG_TB_OLDSET: the bridge's cmd_new is the approximation before the fix
+// wave (a FIFO reset that is not the firmware's XFER_WR): (s)'s tooth.
 
 `timescale 1ns/1ps
 
@@ -64,7 +72,8 @@ reg   [1:0] hdd0_atapi = 2'b00, hdd1_atapi = 2'b00;
 wire        hdd_cmd_req, hdd_dat_req;
 reg   [2:0] hdd_addr = 0;
 reg  [15:0] hdd_data_out = 0;
-wire [15:0] hdd_data_in;
+wire [15:0] hdd_data_in;		// Gayle's
+wire [15:0] pf_data_in;			// what paula_floppy reads (the bridge's mux in front with SDC_BRIDGE)
 reg         hdd_wr = 0, hdd_status_wr = 0, hdd_data_wr = 0, hdd_data_rd = 0;
 reg         hdd_port = 0, hdd_xfer_wr = 0, hdd_regs_rd = 0;
 wire        hd_fwr, hd_frd;
@@ -82,6 +91,7 @@ assign gy_port = hdd_port;
 assign gy_data_wr = hdd_data_wr;
 assign gy_data_rd = hdd_data_rd;
 assign gy_data_out = hdd_data_out;
+assign pf_data_in = hdd_data_in;
 `endif
 
 gayle dut
@@ -119,6 +129,7 @@ gayle dut
 	.hdd_data_rd(gy_data_rd),
 `ifdef SDC_BRIDGE
 	.hdd_fifo_reset(gy_fifo_reset),
+	.hdd_cmd_new(gy_cmd_new),
 `endif
 	.hd_fwr(hd_fwr),
 	.hd_frd(hd_frd)
@@ -150,7 +161,8 @@ wire        g_ack, g_err, g_wnext, g_rvalid;
 wire [15:0] g_rdata;
 wire        sg_active, sg_port, sg_data_wr, sg_data_rd;
 wire [15:0] sg_data_out;
-wire  [1:0] gy_fifo_reset;
+wire  [1:0] gy_fifo_reset, gy_cmd_new;
+wire  [1:0] sg_cmd_seen;
 
 reg         m_req = 0, m_dir = 0, m_port = 0;
 reg   [9:0] m_words = 0;
@@ -271,9 +283,14 @@ sdcard_gayle BRIDGE
 	.data_in(hdd_data_in),
 	.dat_req(hdd_dat_req),
 	.fifo_reset_seen(gy_fifo_reset),
+`ifdef SDG_TB_OLDSET
+	.cmd_new(gy_fifo_reset & ~({2{hdd_xfer_wr}} & {hdd_port, ~hdd_port})),
+`else
+	.cmd_new(gy_cmd_new),
+`endif
 	.fw_port(hdd_port),
-	.fw_xfer_wr(hdd_xfer_wr),
-	.fw_regs_rd(hdd_regs_rd)
+	.fw_regs_rd(hdd_regs_rd),
+	.cmd_seen(sg_cmd_seen)
 );
 
 sdcard_gayle_mux MUX
@@ -283,11 +300,14 @@ sdcard_gayle_mux MUX
 	.sg_data_wr(sg_data_wr),
 	.sg_data_rd(sg_data_rd),
 	.sg_data_out(sg_data_out),
+	.sg_cmd_seen(sg_cmd_seen),
 	.pf_port(hdd_port),
 	.pf_data_wr(hdd_data_wr),
 	.pf_data_rd(hdd_data_rd),
 	.pf_data_out(hdd_data_out),
 	.pf_addr(hdd_addr),
+	.pf_data_in(pf_data_in),
+	.gy_data_in(hdd_data_in),
 	.hdd_addr(gy_addr),
 	.hdd_port(gy_port),
 	.hdd_data_wr(gy_data_wr),
@@ -345,7 +365,8 @@ task end_case(input [8*64-1:0] what);
 endtask
 
 // firmware flag bits in hdd_data_in[15:8] of a task file register read
-localparam F_PORT = 8, F_XDONE = 9, F_DEVWR = 10, F_RST = 11, F_PKT = 12, F_BSY0 = 13, F_BSY1 = 14;
+// (F_CMD: the bridge's IDEF_CMD_WR, through sdcard_gayle_mux; 0 without it)
+localparam F_PORT = 8, F_XDONE = 9, F_DEVWR = 10, F_RST = 11, F_PKT = 12, F_BSY0 = 13, F_BSY1 = 14, F_CMD = 15;
 
 //----------------------------------------------------------------------------
 // Golden trace (case a)
@@ -475,7 +496,7 @@ task fw_tfr_rd(input p, input [2:0] r, output [15:0] v);
 	begin
 		hdd_port = p;
 		hdd_addr = r;
-		#1 v = hdd_data_in;
+		#1 v = pf_data_in;
 		en;
 		if (tracing) $display("TRACE %0d fw tfr %0d = %h", tcyc, r, v[7:0]);
 	end
@@ -511,7 +532,7 @@ task fw_data_rd(input p, output [15:0] w);
 	begin
 		hdd_port = p;
 		hdd_addr = 0;
-		#1 w = hdd_data_in;
+		#1 w = pf_data_in;
 		hdd_data_rd = 1;
 		en;
 		hdd_data_rd = 0;
@@ -1682,6 +1703,134 @@ initial begin
 	check(v[15:8] == 8'h40, "q DRDY after the new command");
 	check(m_viol == nv0, "g_* contract kept");
 	end_case("abandoned command between groups: g_err, no data");
+
+	//======================================================================
+	// (r) final review M2: the firmware's flags read inside a command
+	// (hdd.c amiga_left, a CMD_IDE_REGS_RD) clears cmd_since.  A new command
+	// with no drive/head write and no reset, written before that read, must
+	// show in it (bit 15, IDEF_CMD_WR); one written after it must stop the
+	// next op (g_err); one in the read's own sample shows in the next read
+	// and stops the op too.  Before the fix the first was seen by nobody.
+	begin_case("r");
+	do_reset(2'b01, 2'b00, 2'b00, 2'b00);
+	nv0 = m_viol;
+	host_cmd(24'hDA2000, 8'd2, 8'd1, 8'd0, 8'd0, 8'hA0, 8'hC4);	// READ MULTIPLE 2
+	fw_wait_cmd(ok);
+	fw_read_all(0, w7);			// the pickup
+	check(w7[F_CMD] == 1'b1, "r the pickup's read shows the command (bit 15)");
+	fw_read_all(0, w7);
+	check(w7[F_CMD] == 1'b0, "r the next read: no command since (bit 15 clear)");
+	fw_status(0, 8'h08);
+	fw_wait_cmd(ok);
+	bridge_in(0, 256, 16'h1100);
+	wait_irq;
+	irq_clear;
+	for (i = 0; i < 256; i = i + 1) begin
+		hr(24'hDA2000, v);
+		if (v !== 16'h1100 + i) check(0, "r group 1 data");
+	end
+	// before the look: only the command byte (a READ SECTORS)
+	hwb(24'hDA201C, 8'h20);
+	fw_read_all(0, w7);			// amiga_left
+	check(w7[F_CMD] == 1'b1, "r a command before the firmware's look: its read shows bit 15");
+	check(w7[F_DEVWR] == 1'b0 && w7[F_RST] == 1'b0, "r ... and nothing else (no dev_wr, no rst_seen)");
+	for (k = 1; k < 8; k = k + 1) begin
+		fw_tfr_rd(0, k, v);
+		if (v[F_CMD] !== 1'b1) check(0, "r bit 15 in every register word of that read");
+	end
+	fw_read_all(0, w7);
+	check(w7[F_CMD] == 1'b0, "r bit 15 only in the read after the command");
+	// after the look: the next op ends in g_err
+	hwb(24'hDA201C, 8'h20);
+	for (i = 0; i < 1024; i = i + 1) m_src[i] = 16'hBAD0 + i;
+	w0 = n_sgwr;
+	ops0 = m_ops;
+	sdc_start(1, 0, 256, 0);
+	sdc_wait(ops0, 20000);
+	check(m_end == 2'd2 && m_moved == 0, "r a command after the look: g_err, no word popped");
+	check(n_sgwr == w0, "r ... no bridge write");
+	fw_read_all(0, w7);
+	check(w7[F_CMD] == 1'b1, "r ... and the next read shows it");
+	// in the look's own sample: the read shows the state before it (as
+	// dev_wr), the command shows in the next read and stops the op between
+	set_addr(24'hDA201C);
+	data_in = {8'h20, 8'h20};
+	hwr = 1;
+	hdd_port = 0;
+	hdd_regs_rd = 1;
+	en;
+	hdd_regs_rd = 0;
+	bus_off;
+	fw_tfr_rd(0, 3'd1, v);
+	check(v[F_CMD] == 1'b0, "r a command in the read's sample: not in that read");
+	ops0 = m_ops;
+	sdc_start(1, 0, 256, 0);
+	sdc_wait(ops0, 20000);
+	check(m_end == 2'd2 && m_moved == 0, "r a command in the read's sample: the next op g_err");
+	fw_read_all(0, w7);
+	check(w7[F_CMD] == 1'b1, "r a command in the read's sample: in the next read");
+	check(dut.PORT0.SECBUF.inptr == 0, "r nothing of the old command in the new command's FIFO");
+	// served normally from here
+	fw_status(0, 8'h08);
+	fw_wait_cmd(ok);
+	bridge_in(0, 256, 16'h4000);
+	wait_irq;
+	irq_clear;
+	for (i = 0; i < 256; i = i + 1) begin
+		hr(24'hDA2000, v);
+		if (v !== 16'h4000 + i) check(0, "r the new command's data");
+	end
+	check(m_viol == nv0, "g_* contract kept");
+	end_case("new command around the firmware's flags read: seen or stopped");
+
+	//======================================================================
+	// (s) final review T7: the Amiga's command in the same clk7 sample as
+	// the firmware's CMD_IDE_XFER_WR of that port (a CD data-in phase being
+	// set up on port 1).  The FIFO reset is both; the command must still set
+	// cmd_since: the firmware's next op on the port g_err, nothing written
+	begin_case("s");
+	do_reset(2'b01, 2'b01, 2'b00, 2'b01);
+	nv0 = m_viol;
+	hwb(24'hDA3018, 8'hA0);
+	hwb(24'hDA301C, 8'hA0);			// PACKET
+	fw_wait_cmd(ok);
+	fw_read_all(1, w7);			// the pickup
+	fw_tfr_wr(1, 2, 8'h01);
+	fw_xfer(1, 13'd6, 1'b1);
+	fw_status(1, 8'h04);
+	for (i = 0; i < 6; i = i + 1)
+		hww(24'hDA3000, 16'h1200 + i);
+	fw_regs_rd(1);
+	fw_tfr_rd(1, 3'd1, v);
+	check(v[F_XDONE] == 1'b1, "s packet in");
+	bridge_out(1, 6);
+	fw_read_all(1, w7);			// cd_wait's look: no new command yet
+	check(w7[F_CMD] == 1'b0 && w7[F_PKT] == 1'b1, "s no new command before the data-in phase");
+	// the data-in phase's XFER_WR and the Amiga's new command, one sample
+	set_addr(24'hDA301C);
+	data_in = {8'hA0, 8'hA0};
+	hwr = 1;
+	hdd_port = 1;
+	hdd_addr = 0;
+	hdd_data_out = {1'b1, 2'b00, 13'd256};
+	hdd_xfer_wr = 1;
+	en;
+	hdd_xfer_wr = 0;
+	bus_off;
+	fw_status(1, 8'h08);
+	for (i = 0; i < 1024; i = i + 1) m_src[i] = 16'hBAD0 + i;
+	w0 = n_sgwr;
+	ops0 = m_ops;
+	sdc_start(1, 1, 256, 0);
+	sdc_wait(ops0, 20000);
+	check(m_end == 2'd2 && m_moved == 0, "s a command in the XFER_WR's sample: the next op g_err, no word popped");
+	idle(20);
+	check(n_sgwr == w0, "s no bridge write");
+	check(dut.g_port1.PORT1.SECBUF.inptr == 0, "s the new command's FIFO stays empty");
+	fw_read_all(1, w7);
+	check(w7[F_CMD] == 1'b1 && w7[F_PKT] == 1'b0, "s the next read shows the new command (bit 15, packet mode off)");
+	check(m_viol == nv0, "g_* contract kept");
+	end_case("command in the sample of the firmware's XFER_WR: g_err, no data");
 `endif
 
 	//======================================================================
