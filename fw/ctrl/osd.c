@@ -356,14 +356,8 @@ void OsdSetTitle(char *s,int a)
 }
 
 
-void OsdWrite(unsigned char n, char *s, unsigned char invert, unsigned char stipple)
-{
-	OsdWriteOffset(n,s,invert,stipple,0);
-}
-
-
 // write a null-terminated string <s> to the OSD buffer starting at line <n>
-void OsdWriteOffset(unsigned char n, char *s, unsigned char invert, unsigned char stipple,char offset)
+void OsdWrite(unsigned char n, char *s, unsigned char invert, unsigned char stipple)
 {
     unsigned short i;
     unsigned char b;
@@ -425,11 +419,11 @@ void OsdWriteOffset(unsigned char n, char *s, unsigned char invert, unsigned cha
 			SPI(0);
 			SPI(0);
 		    p = &charfont[0x10][0];
-	        SPI(*p++<<offset); SPI(*p++<<offset); SPI(*p++<<offset); SPI(*p++<<offset);
-	        SPI(*p++<<offset); SPI(*p++<<offset); SPI(*p++<<offset); SPI(*p++<<offset);
+	        SPI(*p++); SPI(*p++); SPI(*p++); SPI(*p++);
+	        SPI(*p++); SPI(*p++); SPI(*p++); SPI(*p++);
 		    p = &charfont[0x14][0];
-	        SPI(*p++<<offset); SPI(*p++<<offset); SPI(*p++<<offset); SPI(*p++<<offset);
-	        SPI(*p++<<offset); SPI(*p++<<offset); SPI(*p++<<offset); SPI(*p++<<offset);
+	        SPI(*p++); SPI(*p++); SPI(*p++); SPI(*p++);
+	        SPI(*p++); SPI(*p++); SPI(*p++); SPI(*p++);
 			SPI(0);
 			SPI(0);
 			SPI(0);
@@ -464,14 +458,14 @@ void OsdWriteOffset(unsigned char n, char *s, unsigned char invert, unsigned cha
 			else if(i<(linelimit-8)) // normal character
 		    {
 		        p = &charfont[b][0];
-		        SPI(((*p++<<offset)&stipplemask)^invert);	stipplemask^=stipple;
-		        SPI(((*p++<<offset)&stipplemask)^invert);	stipplemask^=stipple;
-		        SPI(((*p++<<offset)&stipplemask)^invert);	stipplemask^=stipple;
-		        SPI(((*p++<<offset)&stipplemask)^invert);	stipplemask^=stipple;
-		        SPI(((*p++<<offset)&stipplemask)^invert);	stipplemask^=stipple;
-		        SPI(((*p++<<offset)&stipplemask)^invert);	stipplemask^=stipple;
-		        SPI(((*p++<<offset)&stipplemask)^invert);	stipplemask^=stipple;
-		        SPI(((*p++<<offset)&stipplemask)^invert);	stipplemask^=stipple;
+		        SPI((*p++&stipplemask)^invert);	stipplemask^=stipple;
+		        SPI((*p++&stipplemask)^invert);	stipplemask^=stipple;
+		        SPI((*p++&stipplemask)^invert);	stipplemask^=stipple;
+		        SPI((*p++&stipplemask)^invert);	stipplemask^=stipple;
+		        SPI((*p++&stipplemask)^invert);	stipplemask^=stipple;
+		        SPI((*p++&stipplemask)^invert);	stipplemask^=stipple;
+		        SPI((*p++&stipplemask)^invert);	stipplemask^=stipple;
+		        SPI((*p++&stipplemask)^invert);	stipplemask^=stipple;
 		        i += 8;
 		    }
 		}
@@ -484,11 +478,11 @@ void OsdWriteOffset(unsigned char n, char *s, unsigned char invert, unsigned cha
 		SPI(0);
 		SPI(0);
         p = &charfont[0x15][0];
-        SPI(*p++<<offset); SPI(*p++<<offset); SPI(*p++<<offset); SPI(*p++<<offset);
-        SPI(*p++<<offset); SPI(*p++<<offset); SPI(*p++<<offset); SPI(*p++<<offset);
+        SPI(*p++); SPI(*p++); SPI(*p++); SPI(*p++);
+        SPI(*p++); SPI(*p++); SPI(*p++); SPI(*p++);
         p = &charfont[0x11][0];
-        SPI(*p++<<offset); SPI(*p++<<offset); SPI(*p++<<offset); SPI(*p++<<offset);
-        SPI(*p++<<offset); SPI(*p++<<offset); SPI(*p++<<offset); SPI(*p++<<offset);
+        SPI(*p++); SPI(*p++); SPI(*p++); SPI(*p++);
+        SPI(*p++); SPI(*p++); SPI(*p++); SPI(*p++);
 		SPI(0);
 		SPI(0);
 		SPI(0);
