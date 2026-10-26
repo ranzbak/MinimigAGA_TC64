@@ -93,6 +93,13 @@
 #   osdbeam    OSD config 0 -> beam medium during HD frame 3: frame 3
 #              bit-identical, frame 4 changed, the beam latch moves once,
 #              in the vertical blank (input lines 2..6)
+#   nosync     the Amiga hsync and vsync stop from HD frame 4 on (RTG mode
+#              with its sync start past the frame size), RGB runs on: the
+#              signal generator's watchdog ends one frame of 1500 lines
+#              (vt_count 0..1499, the last one cut at its start like every
+#              frame's: 1499 hsyncs, as a 750-line frame counts 749), then
+#              the raster free-runs: every later frame 749 hsyncs, all with
+#              one vsync, at least 6 of them; no frame longer than 1500
 #
 # Usage: crt_run.sh [leg ...] (default: all).  Needs iverilog, verilator,
 # python3 with numpy and PIL.  Pictures and logs: build/img/.  ~6 min on 4
@@ -134,6 +141,7 @@ declare -A ARGS=(
 	[vposchgzm]="+voff=-4 +voff2=0 +vofframe=8 +voffline=300 +first=7 +frames=5 +out=$I/vposchgzm"
 	[vposglide]="+voff=-8 +voff2=8 +vofframe=8 +voffline=300 +first=7 +frames=8 +out=$I/vposglide"
 	[osdbeam]="+cfg=000 +cfg2=800 +cfgframe=3 +cfgline=300 +frames=2"
+	[nosync]="+nosync=4 +first=2 +frames=12"
 	[dim]="+cfg=01 +out=$I/dim"
 	[dim_hv]="+cfg=3d +out=$I/dim_hv"
 	[lace]="+cfg=01 +lace +frames=2 +out=$I/lace"
@@ -154,7 +162,7 @@ for w in 1 2 3; do for b in 0 1 2; do
 	BEAMS="$BEAMS beam_w${w}b${b}"
 	ARGS[beam_w${w}b${b}]="$DITHER +cfg=$(printf %03x $(( (w << 10) | (b << 8) ))) +out=$I/beam_w${w}b${b} +sdump=$I/beam_w${w}b${b}.sd"
 done; done
-ALL="unit osdspi ripple bypass15 bypass31 gate31 bypass60 rtg beamfx15 beamfx31 beamfx60 dim dim_hv lace split osd osdfx osdbeam mask mask2 maskmg mask_dim bloom bloom_lo bloom_hv $BEAMS beamalign beammetric hposm hposp hposv hposm60 hposp60 vposp vposm vposp60 vposm60 vposdbl vposlace vposlacem vposchg vposchg0 vposchgz vposchgzm vposglide"
+ALL="unit osdspi ripple bypass15 bypass31 gate31 bypass60 rtg beamfx15 beamfx31 beamfx60 dim dim_hv lace split osd osdfx osdbeam mask mask2 maskmg mask_dim bloom bloom_lo bloom_hv $BEAMS beamalign beammetric hposm hposp hposv hposm60 hposp60 vposp vposm vposp60 vposm60 vposdbl vposlace vposlacem vposchg vposchg0 vposchgz vposchgzm vposglide nosync"
 legs=("$@"); [ ${#legs[@]} -eq 0 ] && legs=($ALL)
 # the bloom legs compare against the same picture without bloom
 want() { local x; for x in "${legs[@]}"; do [ "$x" = "$1" ] && return 0; done; return 1; }
@@ -304,6 +312,19 @@ for l in "${legs[@]}"; do
 		cmp -s $I/${l}_13.hex $I/vposp_6.hex && cmp -s $I/${l}_14.hex $I/vposp_6.hex || ok=0
 		[ $ok -eq 1 ] && pass "$l: each frame clean, -8 -> +8 monotonic, <= 5 a frame, frames 13, 14 = vposp's" || bad "$l"
 		m=$(hdframes $l 1 14) && pass "$l: $m" || bad "$l: $m"
+		;;
+	nosync)
+		# from HD frame 4 (nosync) on: one watchdog frame (1500 lines, the
+		# bench counts 1499 hsyncs), then free-run frames of 749 hsyncs,
+		# each with 1 vsync; no frame longer than 1500
+		m=$(awk '/^hd frame / { n = $3 + 0; l = $4 + 0; v = $6 + 0; if (l > 1500) bad = 1
+			if (n >= 4) { s = s " " l "/" v
+				if (!wd) { if (l == 1499 && v == 1) wd = n; else bad = 1 }
+				else { c++; if (l != 749 || v != 1) bad = 1 } } }
+			END { printf "HD lines/vsyncs per frame from 4:%s (watchdog frame %d, %d free-run)\n", s, wd, c
+				exit bad || !wd || c < 6 }' $I/$l.log) && ok=1 || ok=0
+		grep '^hd frame ' $I/$l.log | sed 's/^/        /'
+		[ $ok -eq 1 ] && pass "$l: syncs stopped, $m" || bad "$l: $m"
 		;;
 	osdspi)
 		u=$(vvp -n build/tb_osd_video.vvp)

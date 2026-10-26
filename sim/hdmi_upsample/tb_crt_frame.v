@@ -56,6 +56,14 @@
 //                line per clk_148 half-cycle, "C D V H XXX" (o_clk_pixel
 //                o_de o_vsync o_hsync, o_data in hex), to PATH (default
 //                build/pins_<F>.txt); pins_diff.py compares two dumps
+//   +nosync=F    from HD frame F of the new path on, its Amiga hsync and
+//                vsync are held inactive (the chipset's syncs stopped, as in
+//                RTG mode with the sync start past the frame size) while RGB
+//                runs on; the reference path keeps them.  The signal
+//                generator's watchdog then ends one frame of 1500 lines
+//                (1499 hsyncs counted) and the raster free-runs at 750
+//                lines (749 counted); a frame reaching 4000 lines ends the
+//                run ("hd frame N: L lines, V vsync, no frame end")
 // Prints "frame N: D pixels differ" per compared frame, "pic N: H P" for
 // EVERY HD frame of the new path (a 64-bit FNV-1a hash of its captured
 // pixels in raster order, and their count), "sig N: H C" for every HD frame
@@ -211,6 +219,11 @@ end
 wire [7:0]  sd_rp = sd_wp - srcdelay[7:0];
 wire [26:0] src = (srcdelay > 0) ? sd_line[sd_rp] : src_now;
 wire        pal_hs = src[26], pal_vs = src[25], src_hires = src[24];
+// +nosync: the new path's syncs from HD frame nosync on (set below)
+integer     nosync = -1;
+reg         ns_on = 1'b0;
+initial if (!$value$plusargs("nosync=%d", nosync)) nosync = -1;
+wire        dut_hs = ns_on ? 1'b0 : pal_hs, dut_vs = ns_on ? 1'b0 : pal_vs;
 wire [23:0] src_rgb = src[23:0];
 
 // ---- the two HDMI paths ----
@@ -226,7 +239,7 @@ pal_to_ddr #(.CRT_WROM_FILE("../../rtl/openaars/adv7511/crt_wrom.mem"),
              .CRT_SENC_FILE("../../rtl/openaars/adv7511/crt_senc.mem"),
              .CRT_SWROM_FILE("../../rtl/openaars/adv7511/crt_swrom.mem")) dut (
 	.clk_148(clk_148), .clk_114(clk_114), .reset(reset), .vga_clk_pixel(1'b0),
-	.i_pal_hsync(pal_hs), .i_pal_vsync(pal_vs),
+	.i_pal_hsync(dut_hs), .i_pal_vsync(dut_vs),
 	.i_pal_r(src_rgb[23:16]), .i_pal_g(src_rgb[15:8]), .i_pal_b(src_rgb[7:0]),
 	.i_hoffset(hoff[7:0]), .i_voffset(voff[7:0]), .i_rtg_enable(rtg),
 	.i_crt_cfg(crt_cfg), .i_pal_hires(src_hires), .i_pal_shres(1'b0),
@@ -410,6 +423,12 @@ always @(posedge clk_148) begin
 			        rg_vc[dut.myupsample.w_r16_o ? dut.myupsample.r_rslot + 4'd1 : {1'b0, dut.myupsample.r_rslot[2:0] + 3'd1}]);
 		end
 		hdl = hdl + 1;
+	end
+	if (nosync >= 0 && fno_n >= nosync) ns_on <= 1'b1;
+	// +nosync without a frame restart: the frame never ends, stop here
+	if (nosync >= 0 && hdl >= 4000) begin
+		$display("hd frame %0d: %0d lines, %0d vsync, no frame end", hdfno, hdl, hdvs);
+		$finish;
 	end
 end
 // the OSD-change leg
