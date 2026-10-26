@@ -4,6 +4,8 @@
 #
 #   golden.sh record [leg ...]   run the legs, write golden/<leg>.txt
 #   golden.sh check  [leg ...]   run the legs, compare with golden/<leg>.txt
+#   GOLDEN_KINDS=pic,hd golden.sh check ...   compare only those record kinds
+#                                (of pic,hd,sig,fsig; golden.py)
 #
 # Each leg runs tb_crt_frame (Verilator) for 8 HD frames (mode legs 26) and
 # keeps, from HD frame / input field 2 on: the picture hash of every HD

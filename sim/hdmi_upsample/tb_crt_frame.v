@@ -52,6 +52,10 @@
 //                per HD line "frame line phase hires vphase ratio y cur next"
 //                (y: the exact-ratio stepping's position, 1/2^20 line; cur,
 //                next: the source lines (vcnt) in the two buffers read)
+//   +pins=F +pinsfile=PATH   dump the pins "sig F" hashes (see below), one
+//                line per clk_148 half-cycle, "C D V H XXX" (o_clk_pixel
+//                o_de o_vsync o_hsync, o_data in hex), to PATH (default
+//                build/pins_<F>.txt); pins_diff.py compares two dumps
 // Prints "frame N: D pixels differ" per compared frame, "pic N: H P" for
 // EVERY HD frame of the new path (a 64-bit FNV-1a hash of its captured
 // pixels in raster order, and their count), "sig N: H C" for every HD frame
@@ -313,16 +317,39 @@ reg [63:0] sg_h = FNV0;
 integer    sg_n = 0, sg_c = 0;
 reg        sg_vs = 1'b0;
 wire [15:0] pins = {n_clk, n_de, n_vs, n_hs, n_d};
+// +pins=F: the samples sig F folds in, as text, one line each
+integer    pn_f = -1, pn_fd = 0, pn_c = 0;
+reg [8*200-1:0] pn_fn;
+initial if ($value$plusargs("pins=%d", pn_f)) begin
+	if (!$value$plusargs("pinsfile=%s", pn_fn)) $sformat(pn_fn, "build/pins_%0d.txt", pn_f);
+	pn_fd = $fopen(pn_fn, "w");
+	if (pn_fd == 0) $display("pins: cannot open %0s", pn_fn);
+end
+task pins_line;
+	begin
+		$fwrite(pn_fd, "%b %b %b %b %03h\n", pins[15], pins[14], pins[13], pins[12], pins[11:0]);
+		pn_c = pn_c + 1;
+	end
+endtask
 always @(posedge clk_148) begin
 	sg_vs <= n_vs;
 	if (n_vs && !sg_vs) begin
 		$display("sig %0d: %016h %0d", sg_n, sg_h, sg_c);
 		sg_n = sg_n + 1; sg_h = FNV0; sg_c = 0;
+		if (pn_fd != 0 && sg_n == pn_f + 1) begin
+			$fclose(pn_fd); pn_fd = 0;
+			$display("pins %0d: %0d lines", pn_f, pn_c);
+		end
 	end
+	if (pn_fd != 0 && sg_n == pn_f) pins_line;
 	sg_h = (sg_h ^ {48'd0, pins}) * FNVP;
 	sg_c = sg_c + 1;
 end
-always @(negedge clk_148) sg_h = (sg_h ^ {47'd0, 1'b1, pins}) * FNVP;
+always @(negedge clk_148) begin
+	if (pn_fd != 0 && sg_n == pn_f) pins_line;
+	sg_h = (sg_h ^ {47'd0, 1'b1, pins}) * FNVP;
+end
+final if (pn_fd != 0) $display("pins %0d: the run ended inside the window (%0d lines)", pn_f, pn_c);
 // the same per INPUT field ("fsig N": field N of the Amiga side, from its
 // first clk_148 to its last): windows at fixed times, so a design that
 // puts out one vsync more or less (the two-chain design's splice at a
