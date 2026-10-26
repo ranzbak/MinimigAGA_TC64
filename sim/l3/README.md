@@ -1523,17 +1523,28 @@ between paula_floppy and gayle (`tb_l3.v` `SD_ENGINE`, wired as
 `minimig_virtual_top` / `minimig.v` with `SD_ENGINE = 1`). The boot ROM
 (since plan Task 12) and the firmware (since Task 10) reach the card only
 through it, so on this tree the scenarios without the engine stop in the
-ROM's `SD init` (VERSION 0): `sdc_boot`, `sdc_boot_short` and `sdc_hdd` are
-`boot`, `boot_short` and `hdd` on the engine, the full-system test of the
-lock-step pair (the committed boot ROM and `RV32OSDB.BIN` from the same
-tree, with its `SDCV` trailer; the name is `fw/ctrl/fwname.mk`'s since Task
-13b, the ROM's line `file "RV32OSDBBIN" found`).
+ROM's `SD init` (VERSION 0): `sdc_boot`, `sdc_boot_short`, `sdc_hdd`,
+`sdc_fdd_rd`, `sdc_fdd_wr`, `sdc_cd`, `sdc_cdda` and `sdc_cdda_load` are
+`boot`, `boot_short`, `hdd`, `fdd_rd`, `fdd_wr`, `cd`, `cdda` and
+`cdda_load` on the engine, the full-system test of the lock-step pair (the
+committed boot ROM and `RV32OSDB.BIN` from the same tree, with its `SDCV`
+trailer; the name is `fw/ctrl/fwname.mk`'s since Task 13b, the ROM's line
+`file "RV32OSDBBIN" found`) and of every data path on the new card path
+(final review I1, 2026-10-25: the floppy's track reads and writes, the
+ROM / config / drive-sound loads and the CD's CUE sectors and audio go
+through the CPU's `sd_sync`, the HDD's and the ISO's DATA2048 sectors
+through `sdcard_gayle`'s DMA).
 
 | run.sh | bench `+SCENARIO` | card | timeout (`clk_114`) |
 |---|---|---|---|
 | `sdc_boot` | `boot` (+`SD_LOG=1`) | `boot` | `L3_SDC_BOOT_TO` 197,700,000 |
 | `sdc_boot_short` | `boot_short` (the xsim cross-check; no `SD_LOG`: the model's log lines differ in a space between the simulators) | `boot` | `L3_SDC_SHORT_TO` 42,000,000 |
 | `sdc_hdd` | `hdd` (+`SD_LOG=1`) | `hdd` | `L3_SDC_HDD_TO` 248,600,000 |
+| `sdc_fdd_rd` | `fdd_rd` | `fdd` | `L3_FDD_TO` 680,000,000 (the base's) |
+| `sdc_fdd_wr` | `fdd_wr` | `fdd` | `L3_FDDW_TO` 700,000,000 |
+| `sdc_cd` | `cd` (`CDCFG=iso` or `cue`, as there) | `cd` / `cd_iso` | `L3_CD_TO` 315,000,000 |
+| `sdc_cdda` | `cdda` | `cd` (cue) | `L3_CDDA_TO` 520,000,000 |
+| `sdc_cdda_load` | `cdda_load` (CD audio refills during an HDF READ MULTIPLE 256) | `cdhdd` | `L3_CDDA_TO` 520,000,000 |
 
 `SD_ENGINE` is always 1 there (`SD_ENGINE=0` is refused). The card model
 checks CRCs once the firmware sends CMD59 (both the ROM and the firmware
@@ -1548,8 +1559,9 @@ hdd` for `sdc_hdd`, memhash, the MARGIN lines, the bench verdict) with
   the lock-step line `Firmware SDC <v>, bitstream SDC <v>`; the firmware's
   `sd_init` lines (`ACMD41 00, 3 polls`, `OCR c0ff8000, type 3`, `CMD59
   00`, `SCK div 2`)
-- MARGIN item 3 not required (`MARGIN_REQ_sdc_hdd` = boot's): there is no
-  direct-mode transfer
+- MARGIN item 3 not required (`MARGIN_REQ_sdc_hdd` = boot's; the others
+  their base's without it: `MARGIN_REQ_sdc_cd` = boot's + item 9 for both
+  `CDCFG`s, `sdc_cdda_load` = `cdda`'s): there is no direct-mode transfer
 - `run.sh sdc_check`:
   - lock-step: `fw/ctrl/sdc.h`'s `SDC_VERSION` is the firmware file's
     trailer (`SDCV 00 00 <v>`), the VERSION the ROM read (`SD init: VERSION
@@ -1577,7 +1589,12 @@ hdd` for `sdc_hdd`, memhash, the MARGIN lines, the bench verdict) with
     RDB.HDF's patched block 0) and from_gayle 24,576 (96 sectors), so every
     card sector the plan moves passes the bridge (READ / READ MULTIPLE
     to_gayle, WRITE / WRITE MULTIPLE from_gayle with the 68k as PIO master);
-    `sdc_boot`: no Gayle op
+    `sdc_cdda_load`: to_gayle 65,536 words (its READ MULTIPLE of 256
+    sectors), no from_gayle; `sdc_cd` with `CDCFG=iso`: to_gayle of whole
+    2048-byte sectors (the DATA2048 reads), no from_gayle (the answers'
+    bytes are `l3check.py cd`'s); `sdc_boot`, `sdc_fdd_rd`, `sdc_fdd_wr`,
+    `sdc_cdda`, `sdc_cd` with `CDCFG=cue`: no Gayle op (their sectors come
+    through the CPU)
 
 Error injection: the model's `+SD_ERR_<kind>=n` (`tools/sim/README.md`)
 counts from time 0, so `XARGS=+SD_ERR_RDCRC=3` hits the boot ROM's third
@@ -1614,6 +1631,13 @@ SIM=verilator RUNTAG=<t5> BUILD_FROM=<t2> XARGS="+SD_ERR_AT=scenario +SD_ERR_WRR
 SIM=verilator RUNTAG=<t6> BUILD_FROM=<t2> bash sim/l3/run.sh sdc_boot_short
 RUNTAG=<t7> bash sim/l3/run.sh sdc_boot_short
 bash sim/l3/run.sh compare <t7> <t6>
+# the other data paths on the engine (final review I1)
+SIM=verilator RUNTAG=<t8> BUILD_FROM=<t2> bash sim/l3/run.sh sdc_fdd_rd
+SIM=verilator RUNTAG=<t9> BUILD_FROM=<t2> bash sim/l3/run.sh sdc_fdd_wr
+SIM=verilator RUNTAG=<t10> BUILD_FROM=<t2> CDCFG=iso bash sim/l3/run.sh sdc_cd
+SIM=verilator RUNTAG=<t11> BUILD_FROM=<t2> CDCFG=cue bash sim/l3/run.sh sdc_cd
+SIM=verilator RUNTAG=<t12> BUILD_FROM=<t2> bash sim/l3/run.sh sdc_cdda
+SIM=verilator RUNTAG=<t13> BUILD_FROM=<t2> bash sim/l3/run.sh sdc_cdda_load
 ```
 
 (`sdc_boot_short` under xsim: 677 s; Verilator 139 s.)
@@ -1666,6 +1690,33 @@ Injection legs (`sdc_hdd`, all PASS with the same data checks):
 | `sdch_rdcrc3` | `+SD_ERR_RDCRC=3` | the boot ROM's directory sector, LBA 2120 | `SD read 2120: CRC 08, try 1` | the ROM read it again; boot, lock-step and every check as `sdch` |
 | `sdch_rdfw` | `+SD_ERR_AT=scenario +SD_ERR_RDCRC=70` | block 1,603: command 5 (READ MULTIPLE), LBA 11,011 in a CMD18 from 11,008 | `SD: read CRC, row 1, retry 1 of 4, lba 11011` | CMD12, CMD18 from 11,011 (the failed block); the 64 sectors right |
 | `sdch_wrrej` | `+SD_ERR_AT=scenario +SD_ERR_WRREJ=67` | written block 67: command 8 (WRITE MULTIPLE), LBA 5,850, the third block of the CMD25 from 5,848 | `SD: write CRC (0B), row 2, retry 1 of 4, lba 5850` | stop token, ACMD22, CMD25 from 5,850 (TX_REWIND); the card image right |
+
+On the tree of the final review's fix wave (`ffw3_sdch_rdcrc3`,
+`ffw3_sdch_rdfw`, `ffw3_sdch_wrrej`, all PASS) the same blocks are hit at
+card LBAs 11,019 and 5,858: `RV32OSDB.BIN` grew past a cluster boundary,
+so the HDFs behind it on the card image sit 8 sectors (one cluster) later.
+
+### The other data paths on the engine (final review I1, 2026-10-26)
+
+Verilator, SLAT=8 SJIT=0, the tree of the final review's fix wave
+(SDC_VERSION 5D02; RUNTAGs `ffw3_*`), every one PASS:
+
+| Scenario (`RUNTAG`) | end event (`clk_114`) | wall time | what went through the engine |
+|---|---|---|---|
+| `sdc_boot` (`ffw3_sdcb`) | 137,389,132 | 637 s | the ROM's loads, the kickstart (1,024 sectors), configs |
+| `sdc_hdd` (`ffw3_sdch`) | 171,535,613 | 767 s | to_gayle 271 sectors, from_gayle 96 |
+| `sdc_fdd_rd` (`ffw3_sdcf`) | 435,542,747 | 1,786 s | 10 tracks = TEST.ADF (`sd_sync`), drive sounds on |
+| `sdc_fdd_wr` (`ffw3_sdcw`) | 452,295,608 | 1,922 s | 10 track writes: TEST.ADF on the saved card = the original + 109 sectors, the bad-header sector skipped |
+| `sdc_cd` iso (`ffw3_sdcci`) | 151,846,125 | 627 s | 40 DATA2048 sectors = TEST.ISO, to_gayle 160 runs (40,960 words) |
+| `sdc_cd` cue (`ffw3_sdccc`) | 166,032,029 | 643 s | 40 MODE1/2352 sectors = TEST.BIN (CPU), no Gayle op |
+| `sdc_cdda` (`ffw3_sdcda`) | 318,510,861 | 1,312 s | track 2 halves = TEST.BIN, 0 underruns |
+| `sdc_cdda_load` (`ffw3_sdcdl`) | 318,573,149 | 1,285 s | 9 halves, 0 underruns, while a READ MULTIPLE 256 (to_gayle 65,536 words = SYNTH.HDF) runs |
+
+`sdc_boot` and `sdc_hdd` end later than on the Task 13 tree (131.75 M,
+165.09 M): the firmware grew by 964 bytes and its code layout moved, and
+the 4 KB instruction cache refills 54 % more often in the boot (125,084
+-> 192,290; the kickstart upload 100.3 M -> 105.1 M cycles); the HDD
+commands take 5-11 % longer in this model.
 
 ### Found by these runs (Task 13)
 
