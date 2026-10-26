@@ -518,7 +518,6 @@ module tb_l3 #(
     .osd_rx_seq(osd_rx_seq),   // reply sequence -> cfide's HOST_REQ OSD_RDY (as minimig_virtual_top)
     .osd_blank(), .osd_pixel(),
     .osd_enable(), .key_disable(),
-    .lr_filter(), .hr_filter(),
     .memory_config(), .chipset_config(), .floppy_config(userio_floppy_config),
     .scanline(), .dither(), .crt_fx(),
     .ide_config0(userio_ide_config0), .ide_config1(userio_ide_config1),

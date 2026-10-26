@@ -72,8 +72,6 @@ module userio #(
   output wire [  2-1:0] osd_rx_seq,         // OSD reply sequence (userio_osd.v)
   output wire           osd_blank,          // osd overlay, normal video blank output
   output wire           osd_pixel,          // osd video pixel
-  output wire [  2-1:0] lr_filter,
-  output wire [  2-1:0] hr_filter,
   // EIGHT bits, not seven.  userio_osd drives eight and minimig.v declares
   // eight; this port sat in the middle and truncated bit 7 -- "fast RAM: DDR3
   // board only" -- so ddr3_only could never be anything but 0 and the OSD
@@ -605,8 +603,6 @@ userio_osd #(.CORE_CAPS(CORE_CAPS)) osd1
   .osd_pixel        (osd_pixel),
   .osd_enable       (osd_enable),
   .key_disable      (key_disable),
-  .lr_filter        (lr_filter),
-  .hr_filter        (hr_filter),
   .memory_config    (memory_config),
   .chipset_config   (chipset_config),
   .floppy_config    (floppy_config),

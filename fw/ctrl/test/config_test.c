@@ -72,14 +72,15 @@ void ConfigMemory(unsigned char memory) { }
 void ConfigCPU(unsigned char cpu) { }
 void ConfigChipset(unsigned char chipset) { }
 void ConfigFloppy(unsigned char drives, unsigned char speed) { }
-void ConfigVideo(unsigned char hires, unsigned char lores, unsigned char scanlines, unsigned char crt_mask,
-                 unsigned char crt_bloom, unsigned char crt_beam) { }
+void ConfigVideo(unsigned char scanlines, unsigned char crt_mask, unsigned char crt_bloom,
+                 unsigned char crt_beam) { }
 void ConfigVideoPos(unsigned char hpos, unsigned char vpos) { }
 void ConfigAutofire(unsigned char autofire) { }
 void adv7511_set_clkdelay(unsigned char step) { }
 
 /* the layout cfgswap.h and the files rely on, on this ABI too */
 _Static_assert(sizeof(configTYPE) == CFG_SIZE, "configTYPE is 212 bytes");
+_Static_assert(offsetof(configTYPE, filter) == 36, "config_check.sh zeroes the filter bytes at 36");
 
 static int fails, cases;
 
@@ -410,6 +411,13 @@ int main(int argc, char **argv)
 	uint8_t *v3s_rv = slurp(dir, "v3_208.rv", &n2);
 	uint8_t *v3s_be = slurp(dir, "v3_208.cfg", &n2);
 	uint8_t *l2_be = slurp(dir, "l2.cfg", &n);
+	/* distinct has the Lores/Hires Filter bytes set, as a file from before
+	   their removal (plan.md 3.13) can: it loads, and they read and save as 0 */
+	configTYPE distinct_want;
+	memcpy(&distinct_want, distinct_rv, CFG_SIZE);
+	check("distinct.rv: the filter bytes set (an old file)",
+	      distinct_want.filter.lores != 0 && distinct_want.filter.hires != 0, 1);
+	distinct_want.filter.lores = distinct_want.filter.hires = 0;
 
 	/* no config file: the defaults == mkcfgbe.py's defaults (converted) */
 	card(imgs, "empty");
@@ -423,7 +431,7 @@ int main(int argc, char **argv)
 	card(imgs, "rv");
 	check("(a) ConfigurationExists(slot 0)", (SetConfigurationFilename(0), ConfigurationExists(0)), 1);
 	check("(a) LoadConfiguration", load(0), 1);
-	check_mem("(a) config == distinct.rv", &config, distinct_rv, CFG_SIZE);
+	check_mem("(a) config == distinct.rv, filters 0", &config, &distinct_want, CFG_SIZE);
 	check_hasnt("(a) no conversion line", mock_uart(), "Converted 832");
 	check_changes("(a)", NULL, 0);
 
@@ -434,10 +442,10 @@ int main(int argc, char **argv)
 		check(path, (SetConfigurationFilename(slot), ConfigurationExists(0)), slot <= 2);
 	}
 	check("(b) LoadConfiguration slot 0", load(0), 1);
-	check_mem("(b) slot 0: config == distinct.rv (cfgconv --to-rv)", &config, distinct_rv, CFG_SIZE);
+	check_mem("(b) slot 0: config == distinct.rv (cfgconv --to-rv), filters 0", &config, &distinct_want, CFG_SIZE);
 	check_has("(b) slot 0: UART conversion line", mock_uart(), "Converted 832 configuration MINMGAA.CFG\n");
 	check_has("(b) slot 0: BootPrint conversion line", bootlog, "|Converted 832 configuration MINMGAA.CFG|");
-	check_fat_file("(b) slot 0", "MINMGAR CFG", distinct_rv, CFG_SIZE);
+	check_fat_file("(b) slot 0", "MINMGAR CFG", &distinct_want, CFG_SIZE);
 	{
 		/* slot 1: a version 2 file -- swapped first, then the old-format
 		   rules (ROM paths, secondary hardfiles, drive sounds) and version 4 */
@@ -451,6 +459,7 @@ int main(int argc, char **argv)
 			want.secondaryhardfile[i].name[0] = want.secondaryhardfile[i].long_name[0] = 0;
 		}
 		want.drivesounds = 0;
+		want.filter.lores = want.filter.hires = 0;
 		check("(b) LoadConfiguration slot 1 (version 2)", load(1), 1);
 		check_mem("(b) slot 1: config == v2.rv after the version-2 rules", &config, &want, CFG_SIZE);
 		check_has("(b) slot 1: UART conversion line", mock_uart(), "Converted 832 configuration MINMGAA1.CFG\n");
@@ -460,6 +469,7 @@ int main(int argc, char **argv)
 		memset(&want, 0, sizeof want);
 		memcpy(&want, v3s_rv, n2);
 		want.version = CONFIG_VERSION;
+		want.filter.lores = want.filter.hires = 0;
 		check("(b) LoadConfiguration slot 2 (208 bytes, version 3)", load(2), 1);
 		check_mem("(b) slot 2: config == v3_208.rv, version 4", &config, &want, CFG_SIZE);
 		check_fat_file("(b) slot 2", "MINMGAR2CFG", &want, CFG_SIZE);
@@ -481,7 +491,7 @@ int main(int argc, char **argv)
 		for (size_t o = 0; o < img0_len; o++)
 			before[o] = card_byte(o);
 		check("(b) second boot: LoadConfiguration slot 0", load(0), 1);
-		check_mem("(b) second boot: config == distinct.rv", &config, distinct_rv, CFG_SIZE);
+		check_mem("(b) second boot: config == distinct.rv, filters 0", &config, &distinct_want, CFG_SIZE);
 		check_hasnt("(b) second boot: no conversion line", mock_uart(), "Converted 832");
 		unsigned long changed = 0;
 		for (size_t o = 0; o < img0_len; o++)
@@ -503,7 +513,7 @@ int main(int argc, char **argv)
 	/* (d) both files: the RV one wins, nothing converted or written */
 	card(imgs, "both");
 	check("(d) LoadConfiguration", load(0), 1);
-	check_mem("(d) config == distinct.rv (the RV file)", &config, distinct_rv, CFG_SIZE);
+	check_mem("(d) config == distinct.rv (the RV file), filters 0", &config, &distinct_want, CFG_SIZE);
 	check_hasnt("(d) no conversion line", mock_uart(), "Converted 832");
 	check_changes("(d)", NULL, 0);
 	check_untouched("(d)", "MINMGAA CFG", l2_be, CFG_SIZE);
