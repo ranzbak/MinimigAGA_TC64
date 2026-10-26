@@ -9,7 +9,9 @@ have.  The dumps' lengths may differ by up to |k|; a length difference
 beyond that counts as that many more differing lines.  Prints
 'offset k: N of M lines differ' for the best k (the fewest N, the smallest
 |k| on a tie) and the first 10 differing lines; exits 0 only when N == 0,
-printing 'IDENTICAL' (k == 0) or 'UNIFORM SHIFT k'.  Needs numpy.
+printing 'IDENTICAL' (k == 0) or 'UNIFORM SHIFT k'; an offset with no
+overlap is never a match.  Exit 2: a missing, unreadable or empty dump.
+Needs numpy.  pins_diff_test.sh is its self-test.
 """
 import sys
 import numpy as np
@@ -32,10 +34,18 @@ def main():
     if len(sys.argv) != 3:
         print(__doc__.strip().split('\n')[0]); sys.exit(2)
     ids = {}
-    a, b = load(sys.argv[1], ids), load(sys.argv[2], ids)
+    try:
+        a, b = load(sys.argv[1], ids), load(sys.argv[2], ids)
+    except OSError as e:
+        print('pins_diff: %s' % e); sys.exit(2)
+    for fn, x in ((sys.argv[1], a), (sys.argv[2], b)):
+        if len(x) == 0:
+            print('pins_diff: %s is empty' % fn); sys.exit(2)
     best = None
     for k in sorted(range(-KMAX, KMAX + 1), key=abs):
         d, m, ex = mismatches(a, b, k)
+        if m == 0:
+            continue    # no overlap at this offset: nothing compared, never a match
         n = len(d) + ex
         if best is None or n < best[0]:
             best = (n, k, d, m, ex)

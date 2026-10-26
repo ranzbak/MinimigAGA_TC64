@@ -349,7 +349,10 @@ always @(negedge clk_148) begin
 	if (pn_fd != 0 && sg_n == pn_f) pins_line;
 	sg_h = (sg_h ^ {47'd0, 1'b1, pins}) * FNVP;
 end
-final if (pn_fd != 0) $display("pins %0d: the run ended inside the window (%0d lines)", pn_f, pn_c);
+final if (pn_fd != 0) begin
+	$fclose(pn_fd);
+	$display("pins %0d: the run ended inside the window (%0d lines)", pn_f, pn_c);
+end
 // the same per INPUT field ("fsig N": field N of the Amiga side, from its
 // first clk_148 to its last): windows at fixed times, so a design that
 // puts out one vsync more or less (the two-chain design's splice at a
