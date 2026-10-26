@@ -471,7 +471,10 @@ if {$faster} {
     set P [file normalize $R/lib/AP68040-faster]/rtl
     # (all but ap040_bus16_adapter.v: the wrapper keeps the 16-bit adapter for
     # the chipset bus, the NMI vector and undecoded space; its ap040_defs.svh
-    # defines are the faster core's rtl/fpu copy, identical)
+    # defines are the faster core's rtl/fpu copy, identical).  Added here, not
+    # taken on trust from the project: a project_1 without lib/AP68040's files
+    # left the adapter a black box (opt_design DRC INBB-3, 2026-10-26).
+    add_src $R/lib/AP68040/rtl/ap040_bus16_adapter.v
     foreach f [get_files -quiet -of_objects [get_filesets sources_1] $R/lib/AP68040/rtl/*.v] {
         if {[file tail $f] eq "ap040_bus16_adapter.v"} {
             set_property IS_ENABLED true $f
