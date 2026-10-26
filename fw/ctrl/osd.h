@@ -157,6 +157,9 @@ void OsdWriteDoubleSize(unsigned char n, char *s, unsigned char pass);
 void OsdDrawLogo(unsigned char n, char row, char superimpose);
 void ScrollText(char n, const char *str, int len, int max_len, unsigned char invert);
 void ScrollReset();
+// OR a string, centred, into row <n> of the star/fireworks framebuffer that
+// OsdDrawLogo(n, row, 1) superimposes; 28 characters at most.
+void OsdWriteFramebuffer(unsigned char n, const char *s);
 void StarsInit();
 void StarsUpdate();
 void FireworksInit();

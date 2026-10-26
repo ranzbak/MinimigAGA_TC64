@@ -1162,8 +1162,7 @@ us). Lines are those of the current tree.
 | `osd.c:1044`, `1048` (`OsdGetCtrl`) | key repeat: `REPEATDELAY`, `REPEATRATE` (`osd.h:54`, `55`) | 100, 25 | 580.4 ms, 145.1 ms |
 | `osd.c:1119`, `1085` (`ScrollReset`, `ScrollText`) | name scroll: `SCROLL_DELAY`, `SCROLL_DELAY2` (`osd.c:269`, `270`) | 300, 3 | 1.741 s, 17.4 ms |
 | `menu.c:247`, `269` (`cd_show_msg`, `cd_msg_expired`) | CD message: `CD_MSG_DELAY` (`menu.c:237`) | 4000 | 23.22 s |
-| `menu.c:610`, `617`, `619` (`HandleUI`) | help text: `HELPTEXT_DELAY`, `FRAME_DELAY` (`menu.c:201`, `202`) | 2500, 50 | 14.51 s, 290.2 ms |
-| `menu.c:1092`, `1101`, `1103` (`HandleUI`) | about screen stars and logo redraw: `ABOUT_FRAME_DELAY` (`osd.h:63`), re-armed by the pass that fires | 2 | a redraw every 3 counts = 17.4 ms; first frame 11.6..17.4 ms after arming |
+| `menu.c:1018`, `1029`, `1031` (`HandleUI`) | about screen stars, logo and credits redraw: `ABOUT_FRAME_DELAY` (`osd.h:63`), re-armed by the pass that fires | 2 | a redraw every 3 counts = 17.4 ms; first frame 11.6..17.4 ms after arming |
 | `menu.c:3028`, `2721` (`InfoMessage`) | info popup | 1000 | 5.804 s |
 | `main.c:107`, `109`, `111` (`FatalError`) | LED blink: `WaitTimer(250)` x2, `WaitTimer(1000)` | 250, 1000 | 1.451 s, 5.804 s |
 | `main.c:347`, `419`, `422` (`main`) | ADV7511 poll (`adv_timer`) | 250 | 1.451 s |

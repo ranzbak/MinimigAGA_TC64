@@ -104,32 +104,6 @@ const char *config_hdmi_clkdelay_msg[] = {"-1.2", "-0.8", "-0.4", " 0.0", "+0.4"
 
 char *config_autofire_msg[] = {"        AUTOFIRE OFF", "        AUTOFIRE FAST", "        AUTOFIRE MEDIUM", "        AUTOFIRE SLOW"};
 
-enum HelpText_Message
-{
-    HELPTEXT_NONE,
-    HELPTEXT_MAIN,
-    HELPTEXT_HARDFILE,
-    HELPTEXT_CHIPSET,
-    HELPTEXT_MEMORY,
-    HELPTEXT_VIDEO,
-    HELPTEXT_HDMI,
-    HELPTEXT_CDROM
-};
-const char *helptexts[] = {
-    0,
-    "                                Welcome to Minimig!  Use the cursor keys to navigate the menus.  Use space bar or enter to select an item.  Press Esc or F12 to exit the menus.  Mouse emulation on the numeric keypad can be toggled with the numlock key, while pressing Ctrl-Alt-0 (numeric keypad) toggles autofire mode.",
-    "                                Minimig can emulate an A600 IDE harddisk interface.  The emulation can make use of Minimig-style hardfiles (complete disk images) or UAE-style hardfiles (filesystem images with no partition table).  It is also possible to use either the entire SD card or an individual partition as an emulated harddisk.",
-    "                                Minimig's processor core can emulate a 68000 or 68020 processor.  Access to both Chip RAM and Kickstart ROM can be sped up with the Turbo function.  Chip slots Fast lets the CPU use every chip bus slot an AGA machine gives it (one in two colour clocks) without touching DMA timing; Turbo CHIPRAM bypasses the chip bus altogether.  The emulated chipset can be either A500 or A1000 OCS, ECS or AGA.",
-#ifdef ACTIONREPLAY_BROKEN
-    "                                Minimig can make use of up to 2 megabytes of Chip RAM, up to 1.5 megabytes of Slow RAM (A500 Trapdoor RAM), and up to 28 megabytes of true Fast RAM.",
-#else
-    "                                Minimig can make use of up to 2 megabytes of Chip RAM, up to 1.5 megabytes of Slow RAM (A500 Trapdoor RAM), and up to 28 megabytes of true Fast RAM.  To use the HRTMon feature you will need an appropriate ROM file on the SD card.  To activate the monitor hold Ctrl and press the Pause key.",
-#endif
-    "                                Minimig's video features include a blur filter, to simulate the poorer picture quality on older monitors, and also scanline generation to simulate the appearance of a screen with low vertical resolution.  On HDMI, CRT Mask adds a phosphor mask (grille: red, green and blue stripes; shadow: magenta and green) and Bloom lets bright pixels fill their scanline gaps; bloom needs scanlines or a vertical filter.  Beam width gives each pixel the soft spot of a CRT's beam, so dithered patterns blend as on a monitor; with it on, Bloom also widens the spot of bright pixels.  Video Pos moves the HDMI picture: Hpos in HD pixels (+ right), Vpos in Amiga lines (+ down).  Scaling (HDMI): Sharp and Area scale the picture exactly 2.5 times (PAL) or 3 times (NTSC) vertically, every line the same height; Sharp keeps edges crisp, Area is the most even.  Line rate is the older, slightly smaller picture.  Sharp and Area need the 15 kHz picture: the core turns the scandoubler off for them.",
-    "                                The clock delay sets where the HDMI transmitter samples each pixel.  Too early or too late shows as sparkling colours, light yellows first.  Step through the values, note where the picture is clean, and settle in the middle of that range.  Save the configuration to keep it.",
-    "                                CD-ROM drive.  Insert an ISO image or a CUE sheet (BIN, or ISO + WAV tracks) from the SD card.  On IDE port 2 the Amiga needs AtapiMagic (3.1.4/3.2) or IDEfix97 (3.1).  The Amiga cannot boot from it.",
-    0};
-
 void SanityCheck();
 
 void ColdBoot();
@@ -198,8 +172,6 @@ void VolumeBar(unsigned char vol, char *bar)
 
 #define STD_EXIT "            exit"
 #define STD_BACK "            back"
-#define HELPTEXT_DELAY 2500
-#define FRAME_DELAY 50
 
 void ShowSplash()
 {
@@ -371,12 +343,6 @@ static void hdf_select(int slot)
     SelectFile(t_hardfile[slot].enabled == HDF_CDROM ? "ISOCUE" : "HDF", SCAN_DIR | SCAN_LFN, MENU_HARDFILE_SELECTED, hdf_page(slot));
 }
 
-// The help text for a Harddisks page: the CD's when the cursor is on a CD slot.
-static const char *hdf_help(int slot)
-{
-    return (slot >= 0 && t_hardfile[slot].enabled == HDF_CDROM) ? helptexts[HELPTEXT_CDROM] : helptexts[HELPTEXT_HARDFILE];
-}
-
 // Does leaving the Harddisks pages need a reset?  A changed slot type or
 // hardfile does (the Amiga must probe the bus again); a new disc in a CD
 // slot does not -- it is a media change, applied at once in the live
@@ -411,9 +377,7 @@ void HandleUI(void)
     static unsigned char ctrl = false;
     static unsigned char lalt = false;
     static unsigned char lshift = false;
-    static long helptext_timer, about_timer;
-    static const char *helptext;
-    static char helpstate = 0;
+    static long about_timer;
     char volume_bar[17];
 
     // get user control codes
@@ -602,34 +566,6 @@ void HandleUI(void)
         break;
     }
 
-    if (menu || select || up || down || left || right)
-    {
-        if (helpstate)
-            OsdWrite(7, STD_EXIT, (menumask - ((1 << (menusub + 1)) - 1)) <= 0, 0); // Redraw the Exit line...
-        helpstate = 0;
-        helptext_timer = GetTimer(HELPTEXT_DELAY);
-    }
-
-    if (helptext)
-    {
-        if (helpstate < 9)
-        {
-            if (CheckTimer(helptext_timer))
-            {
-                helptext_timer = GetTimer(FRAME_DELAY);
-                OsdWriteOffset(7, STD_EXIT, 0, 0, helpstate);
-                ++helpstate;
-            }
-        }
-        else if (helpstate == 9)
-        {
-            ScrollReset();
-            ++helpstate;
-        }
-        else
-            ScrollText(7, helptext, 0, 0, 0);
-    }
-
     // Standardised menu up/down.
     // The screen should set menumask, bit 0 to make the top line selectable, bit 1 for the 2nd line, etc.
     // (Lines in this context don't have to correspond to rows on the OSD.)
@@ -662,14 +598,10 @@ void HandleUI(void)
         /* no menu selected                                               */
         /******************************************************************/
     case MENU_NONE1:
-        helptext = helptexts[HELPTEXT_NONE];
         menumask = 0;
         t_memory_valid = 0;     // the OSD closed: the next Memory menu visit starts afresh
         if (DebugMode)
-        {
-            helptext = helptexts[HELPTEXT_NONE];
             OsdShow(0);
-        }
         else
             OsdHide();
         menustate = MENU_NONE2;
@@ -694,7 +626,6 @@ void HandleUI(void)
         OsdColor(OSDCOLOR_TOPLEVEL);
         menumask = 0xb0; // b10110000 Floppy turbo, Harddisk options & Exit; the CD-ROM line below.
         OsdSetTitle("Minimig", OSD_ARROW_RIGHT);
-        helptext = helptexts[menusub == 6 ? HELPTEXT_CDROM : HELPTEXT_MAIN];
 
         // floppy drive info
         // We display a line for each drive that's active
@@ -857,7 +788,6 @@ void HandleUI(void)
 
     case MENU_FLOPPY1: // Floppy drive options
         OsdColor(OSDCOLOR_TOPLEVEL);
-        helptext = helptexts[HELPTEXT_MAIN];
         menumask = 0x0f;
         OsdSetTitle("Floppy", 0);
         OsdWrite(0, "", 0, 0);
@@ -932,7 +862,6 @@ void HandleUI(void)
         /******************************************************************/
     case MENU_MAIN2_1:
         OsdColor(OSDCOLOR_TOPLEVEL);
-        helptext = helptexts[HELPTEXT_MAIN];
         menumask = 0x7f;
         OsdSetTitle("Settings", OSD_ARROW_LEFT | OSD_ARROW_RIGHT);
         OsdWrite(0, "    load configuration", menusub == 0, 0);
@@ -998,7 +927,6 @@ void HandleUI(void)
 
     case MENU_MISC1:
         OsdColor(OSDCOLOR_TOPLEVEL);
-        helptext = helptexts[HELPTEXT_MAIN];
         menumask = 0x3f; // Reset, about and exit.
         OsdSetTitle("Misc", OSD_ARROW_LEFT);
         OsdWrite(0, "    Reset", menusub == 0, 0);
@@ -1070,7 +998,6 @@ void HandleUI(void)
 
     case MENU_ABOUT1:
         OsdColor(OSDCOLOR_SUBMENU);
-        helptext = helptexts[HELPTEXT_NONE];
         menumask = 0x01; // Just Exit
         OsdSetTitle("About", 0);
         OsdDrawLogo(0, 0, 1);
@@ -1088,7 +1015,6 @@ void HandleUI(void)
         OsdWrite(7, STD_BACK, menusub == 0, 0);
 
         StarsInit();
-        ScrollReset();
         about_timer = GetTimer(ABOUT_FRAME_DELAY);
 
         parentstate = menustate;
@@ -1096,20 +1022,24 @@ void HandleUI(void)
         break;
 
     case MENU_ABOUT2:
-        // Stars and logo on the ABOUT_FRAME_DELAY timer (osd.h), not on every
-        // main-loop pass; ScrollText keeps its own timer.
+        // Stars, logo and credits on the ABOUT_FRAME_DELAY timer (osd.h), not
+        // on every main-loop pass.  The credits are static lines under the
+        // logo, in the star field: OsdWriteFramebuffer centres them, at most
+        // 28 characters (the line is 234 pixels wide after the title stripe).
         if (CheckTimer(about_timer))
         {
             about_timer = GetTimer(ABOUT_FRAME_DELAY);
             StarsUpdate();
+            OsdWriteFramebuffer(5, "Minimig by Dennis van Weeren");
+            OsdWriteFramebuffer(6, "AGA: Krajnc, TC64: Robinson");
             OsdDrawLogo(0, 0, 1);
             OsdDrawLogo(1, 1, 1);
             OsdDrawLogo(2, 2, 1);
             OsdDrawLogo(3, 3, 1);
             OsdDrawLogo(4, 4, 1);
+            OsdDrawLogo(5, 5, 1);
             OsdDrawLogo(6, 6, 1);
         }
-        ScrollText(5, "                                 Minimig AGA by Rok Krajnc, ported to Turbo Chameleon 64 by Alastair M. Robinson.  Original Minimig by Dennis van Weeren with chipset improvements by Jakub Bednarski and Sascha Boing.  TG68K softcore by Tobias Gubener.  Menu / disk code by Dennis van Weeren, Jakub Bednarski, Alastair M. Robinson and Christian Vogelgsang.  Minimig logo based on a design by Loriano Pagni.  Minimig is distributed under the terms of the GNU General Public License version 3.", 0, 0, 0);
         if (select || menu)
         {
             menusub = parentsub;
@@ -1119,7 +1049,6 @@ void HandleUI(void)
 
     case MENU_SUPPORTERS1:
         OsdColor(OSDCOLOR_SUBMENU);
-        helptext = helptexts[HELPTEXT_NONE];
         menumask = 0x01; // Just Exit
         OsdSetTitle("Thanks to", 0);
         OsdDrawLogo(0, 0, 1);
@@ -1137,21 +1066,24 @@ void HandleUI(void)
         OsdWrite(7, STD_BACK, menusub == 0, 0);
 
         FireworksInit();
-        ScrollReset();
 
         parentstate = menustate;
         menustate = MENU_SUPPORTERS2;
         break;
 
     case MENU_SUPPORTERS2:
+        // The donation lines are static, in the fireworks like the names
+        // (at most 28 characters, as on the About page).
         FireworksUpdate();
+        OsdWriteFramebuffer(5, "Donate: paypal.me/robinsonb5");
+        OsdWriteFramebuffer(6, "Patreon: coresforchameleon");
         OsdDrawLogo(0, 8, 1);
         OsdDrawLogo(1, 8, 1);
         OsdDrawLogo(2, 8, 1);
         OsdDrawLogo(3, 8, 1);
         OsdDrawLogo(4, 8, 1);
+        OsdDrawLogo(5, 8, 1);
         OsdDrawLogo(6, 8, 1);
-        ScrollText(5, "                                 I'm very grateful to these people for their support, which will give me the means and motivation to continue working on this core and others.  If you would like to contribute then one-off donations at paypal.me/robinsonb5 are very welcome, or if you wish you can contribute regularly at patreon.com/coresforchameleon - if you donate 20UKP or more, or join the second tier at Patreon your name will be included on this screen, or the equivalent screen of future projects.", 0, 0, 0);
         if (select || menu)
         {
             menusub = parentsub;
@@ -1161,7 +1093,6 @@ void HandleUI(void)
 
     case MENU_LOADCONFIG_1:
         OsdColor(OSDCOLOR_SUBMENU);
-        helptext = helptexts[HELPTEXT_NONE];
         if (parentstate != menustate) // First run?
         {
             menumask = 0x20;
@@ -1239,7 +1170,6 @@ void HandleUI(void)
         /******************************************************************/
     case MENU_FILE_SELECT1:
         OsdColor(OSDCOLOR_SUBMENU);
-        helptext = helptexts[HELPTEXT_NONE];
         OsdSetTitle("Select", 0);
         PrintDirectory();
         menustate = MENU_FILE_SELECT2;
@@ -1404,7 +1334,6 @@ void HandleUI(void)
         /******************************************************************/
     case MENU_CONFIRM1:
         OsdColor(OSDCOLOR_WARNING);
-        helptext = helptexts[HELPTEXT_NONE];
         OsdSetTitle("Reset", 0);
         menumask = 0x03; // Yes / No
         parentstate = menustate;
@@ -1443,7 +1372,6 @@ void HandleUI(void)
 #if 0
     case MENU_RECONF1 :
         OsdColor(OSDCOLOR_WARNING);
-		helptext=helptexts[HELPTEXT_NONE];
 		OsdSetTitle("Exit",0);
 		menumask=0x03;	// Yes / No
 		parentstate=menustate;
@@ -1480,7 +1408,6 @@ void HandleUI(void)
 
     case MENU_SAVECONFIG_1:
         OsdColor(OSDCOLOR_SUBMENU);
-        helptext = helptexts[HELPTEXT_NONE];
         menumask = 0x3f;
         parentstate = menustate;
         OsdSetTitle("Save", 0);
@@ -1554,7 +1481,6 @@ void HandleUI(void)
         /******************************************************************/
     case MENU_SETTINGS_CHIPSET1:
         OsdColor(OSDCOLOR_SUBMENU);
-        helptext = helptexts[HELPTEXT_CHIPSET];
         parentstate = menustate;
         // With a 68040 that cannot be switched away from, the CPU line still
         // says what the machine is -- but it is not a choice, so it is not
@@ -1743,7 +1669,6 @@ void HandleUI(void)
             t_memory_valid = 1;
         }
         OsdColor(OSDCOLOR_SUBMENU);
-        helptext = helptexts[HELPTEXT_MEMORY];
         menumask = 0x7f;
         parentstate = menustate;
 
@@ -1871,7 +1796,6 @@ void HandleUI(void)
     // memory configuration has changed: offer the reset it needs, the same way
     // the hardfile menu does (autoconfig and the memory map change at reset)
     case MENU_MEMORY_CHANGED1:
-        helptext = helptexts[HELPTEXT_NONE];
         OsdColor(OSDCOLOR_WARNING);
         menumask = 0x03;
         parentstate = menustate;
@@ -1912,7 +1836,6 @@ void HandleUI(void)
 
     case MENU_SETTINGS_HARDFILE1:
         OsdColor(OSDCOLOR_SUBMENU);
-        helptext = hdf_help((menusub >= 1 && menusub <= 4) ? (menusub - 1) >> 1 : -1);
         // page 2 (IDE port 2) only on a core that has it
         OsdSetTitle("Harddisks", (core_caps & CORE_CAPS_IDE2) ? OSD_ARROW_RIGHT : 0);
 
@@ -1997,7 +1920,6 @@ void HandleUI(void)
         /******************************************************************/
     case MENU_SETTINGS_HARDFILE3:
         OsdColor(OSDCOLOR_SUBMENU);
-        helptext = hdf_help(menusub <= 3 ? 2 + (menusub >> 1) : -1);
         OsdSetTitle("IDE port 2", OSD_ARROW_LEFT);
 
         parentstate = menustate;
@@ -2115,7 +2037,6 @@ void HandleUI(void)
 
     // hardfile configuration has changed, ask user if he wants to use the new settings
     case MENU_HARDFILE_CHANGED1:
-        helptext = helptexts[HELPTEXT_NONE];
         OsdColor(OSDCOLOR_WARNING);
         menumask = 0x03;
         parentstate = menustate;
@@ -2176,7 +2097,6 @@ void HandleUI(void)
         break;
 
     case MENU_SYNTHRDB1:
-        helptext = helptexts[HELPTEXT_NONE];
         menumask = 0x01;
         parentstate = menustate;
         OsdSetTitle("Warning", 0);
@@ -2193,7 +2113,6 @@ void HandleUI(void)
         break;
 
     case MENU_SYNTHRDB2_1:
-        helptext = helptexts[HELPTEXT_NONE];
         menumask = 0x01;
         parentstate = menustate;
         OsdSetTitle("Warning", 0);
@@ -2224,7 +2143,6 @@ void HandleUI(void)
         OsdColor(OSDCOLOR_SUBMENU);
         menumask = 0xff;
         parentstate = menustate;
-        helptext = helptexts[HELPTEXT_VIDEO];
         // config files from older firmware hold 0 here; anything else: off
         if (config.crt_mask > 3) config.crt_mask = 0;
         if (config.crt_bloom > 2) config.crt_bloom = 0;
@@ -2345,7 +2263,6 @@ void HandleUI(void)
         OsdColor(OSDCOLOR_SUBMENU);
         menumask = 0x1f;
         parentstate = menustate;
-        helptext = helptexts[HELPTEXT_VIDEO];
 
         OsdSetTitle("Video Pos", OSD_ARROW_LEFT | OSD_ARROW_RIGHT);
         /* Both signed: Hpos in HD pixels (negative moves the picture left),
@@ -2432,7 +2349,6 @@ void HandleUI(void)
         OsdColor(OSDCOLOR_SUBMENU);
         menumask = 0x07;
         parentstate = menustate;
-        helptext = helptexts[HELPTEXT_HDMI];
 
         OsdSetTitle("HDMI", OSD_ARROW_LEFT | OSD_ARROW_RIGHT);
         OsdWrite(0, "", 0, 0);
@@ -2521,7 +2437,6 @@ void HandleUI(void)
             config.audio.volume = 15;
         }
         // setup menu
-        helptext = helptexts[HELPTEXT_NONE];
         parentstate = menustate;
         // Enable/Disable selectable items
         menumask = 0x07;
@@ -2601,7 +2516,6 @@ void HandleUI(void)
         __attribute__((fallthrough)); // no break intended
 
     case MENU_ROMFILE_SELECTED1:
-        helptext = helptexts[HELPTEXT_NONE];
         OsdColor(OSDCOLOR_WARNING);
         menumask = 0x03;
         parentstate = menustate;
