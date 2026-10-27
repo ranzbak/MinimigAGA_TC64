@@ -278,12 +278,14 @@ module pal_to_ddr #(
   localparam DE_X = 60;
   // RTG 1:1 (pal_to_hd_upsample.sv "RTG 1:1"; calibrated by scaler_run.sh's
   // rtg* legs): the read offset that puts an RTG line's first pixel at HD
-  // x 0 of the window, per path, and the restart's move (input lines) that
-  // puts line 0 of a 750-line mode with its vsync 5 lines after the
-  // picture on HD row 0
-  localparam RTG_BASE50 = 157;
-  localparam RTG_BASE60 = 155;
-  localparam signed [7:0] RTG_VB = -8'sd9;
+  // x 0 of the window, per path (less CRT_LAT and DE_X like the chipset
+  // offsets), and the restart's move (input lines) that puts line 0 of the
+  // 720-line modes (1504 x 754 at 50 Hz, 2496 x 757 at 60 Hz, vsync 12
+  // lines after the picture: Picasso96 vertical sync position 12) on HD row 0
+  localparam RTG_BASE50 = 226 - CRT_LAT - DE_X;
+  localparam RTG_BASE60 = 224 - CRT_LAT - DE_X;
+  localparam signed [7:0] RTG_VB50 = -8'sd6;
+  localparam signed [7:0] RTG_VB60 = -8'sd9;
   pal_to_hd_upsample #(
     .PAL_HD_H_RES(1685),
     .PAL_HD_H_RES60(1980),
@@ -293,8 +295,8 @@ module pal_to_ddr #(
     .RTG_1TO1(1),
     .RTG_BASE50(RTG_BASE50),
     .RTG_BASE60(RTG_BASE60),
-    .RTG_VB50(RTG_VB),
-    .RTG_VB60(RTG_VB)
+    .RTG_VB50(RTG_VB50),
+    .RTG_VB60(RTG_VB60)
   ) myupsample (
     .clk_in(clk_114),
     .clk_out(clk_148),

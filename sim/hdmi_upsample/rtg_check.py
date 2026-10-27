@@ -50,7 +50,9 @@ def main():
     hx = np.arange(1280)
     sx = hx - x0 - dx                         # the source column each HD column shows
     colok = (sx >= 0) & (sx < w - dx)         # ... written (DX > 0: the last DX lost)
-    colok[0] = False                          # the generator's first pixel (above)
+    # HD column 0 black: signal_generator's column-0 quirk (see the docstring);
+    # remove this line when the generator is fixed
+    colok[0] = False
     y0 = None
     bad = []
     for f in frames:

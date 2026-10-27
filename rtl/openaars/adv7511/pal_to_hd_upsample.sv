@@ -50,9 +50,10 @@ module pal_to_hd_upsample #(
   // line's first pixel at HD x 0 (holds pal_to_ddr's CRT_LAT and the
   // generator's window; the rtg* legs of scaler_run.sh calibrate it),
   // RTG_VB* the restart's move, in input lines (negative: later, the
-  // picture up), that puts source line 0 of a 750-line mode with its vsync
-  // 5 lines after the last active line (Picasso96 vert. sync pos 5) on HD
-  // row 0 (the ring's lag otherwise puts it lower)
+  // picture up), that puts source line 0 of the 720-line mode with its vsync
+  // 12 lines after the last active line (Picasso96 vert. sync pos 12) on HD
+  // row 0 (the ring's lag otherwise puts it lower).  It applies to every
+  // RTG mode: one under 400 lines (counted as 15 kHz) moves by as many lines
   parameter RTG_BASE50 = 0,
   parameter RTG_BASE60 = 0,
   parameter signed [7:0] RTG_VB50 = 8'sd0,
@@ -130,10 +131,11 @@ function automatic slot_t next_slot(slot_t s, logic ring16);
   next_slot = (s != (ring16 ? 4'd15 : 4'd7)) ? s + 4'd1 : 4'd0;
 endfunction
 
-// where a line's read starts in buffer s: {s, 11'b0} - off, a 15-bit
-// subtract in the ring of 16, a 14-bit one (zero-extended) in the ring of 8
+// where a line's read starts in buffer s: {s, 11'b0} - off (off signed), a
+// 15-bit subtract in the ring of 16, a 14-bit one (zero-extended) in the
+// ring of 8
 function automatic logic [14:0] rd_start(slot_t s, logic [13:0] off, logic ring16);
-  rd_start = ring16 ? {s, 11'b0} - {1'b0, off} : {1'b0, {s[2:0], 11'b0} - off};
+  rd_start = ring16 ? {s, 11'b0} - {off[13], off} : {1'b0, {s[2:0], 11'b0} - off};
 endfunction
 
 // the mode bits in clk_in
@@ -151,9 +153,8 @@ always_ff @(posedge clk_in) begin
   r_rat_in <= s_rat_in[1];
 end
 logic w_r16_in, w_rat_in, w_r16_o, w_rat_o;
-assign w_r16_in = s_r16_in[1];     // clk_in
+// w_r16_in / w_r16_o: i_ring16, or RTG 1:1 (assigned there)
 assign w_rat_in = r_rat_in;        // clk_in
-assign w_r16_o  = i_ring16;        // clk_out
 assign w_rat_o  = i_ratio;         // clk_out
 
 // The line buffers: port A writes (clk_in), port B reads (clk_out)
@@ -314,6 +315,9 @@ logic [10:0] r_wend [0:15] = '{default: 11'd0};
 // the RTG picture's own VPOS (i_hd_voffset_rtg instead of the chipset's;
 // "Video Pos VPOS").
 // ---------------------------------------------------------------------------
+if (RTG_STB_LAT < 1) begin : g_bad_lat
+  $error("pal_to_hd_upsample: RTG_STB_LAT must be at least 1");
+end
 logic [RTG_STB_LAT-1:0] r_stb_d = '0;
 always_ff @(posedge clk_in)
   r_stb_d <= RTG_STB_LAT'({r_stb_d, i_pix_stb});
@@ -330,14 +334,15 @@ assign w_line_end = r_pal_hneg_in && (~i_pal_vsync || w_rat_in);
 // The written extent W (clk_in): r_rtg_wmax the widest line so far in this
 // frame, r_rtg_w / r_rtg_on the last frame's W and whether it was written
 // 1:1.  Both change only at the write side's restart (and W only with the
-// mode); clk_out reads them through r_rd_off at the HD lines' starts.  An
-// HD line that starts within the clock or two of the change is the old
-// frame's last, in the HD vertical blank (the read side restarts the HD
-// raster a 2-3 clk_out synchroniser later): like r_wend they are settled
-// wherever they are shown (wizard.xdc bounds the clk_114 -> clk_148 path).
+// mode).  clk_out reads W through r_rd_off at the HD lines' starts, as is
+// (r_rtg_on through a synchroniser, below): an HD line that starts within
+// the clock or two of the change is the old frame's last, in the HD
+// vertical blank (the read side restarts the HD raster a 2-3 clk_out
+// synchroniser later), so like r_wend it is settled wherever it is shown
+// (wizard.xdc bounds the clk_114 -> clk_148 path).
 logic [10:0] r_rtg_wmax = 11'd0;
 logic [10:0] r_rtg_w    = 11'd0;
-logic        r_rtg_on   = 1'b0;
+(* max_fanout = 16 *) logic r_rtg_on = 1'b0;
 always_ff @(posedge clk_in) begin
   if (w_line_end && r_wcnt > r_rtg_wmax)
     r_rtg_wmax <= r_wcnt;
@@ -347,6 +352,21 @@ always_ff @(posedge clk_in) begin
     r_rtg_wmax <= 11'd0;
   end
 end
+// RTG 1:1 runs on the ring of 16, both sides switching at the restart
+// (r_rtg_on; clk_out through a synchroniser): its input lines are a little
+// shorter than the HD lines (a 1504-pixel line, the nearest the RTG driver
+// can make to 720p50's: 94 colour clocks), so a frame brings ~4 lines more
+// than the HD frame shows and the reader, which moves at most one line per
+// HD line, falls behind by that much -- from 4 to ~8 lines, past the ring
+// of 8.  With RTG off this is i_ring16 as before.
+(* ASYNC_REG = "TRUE" *) logic [1:0] s_rtg_o = 2'b00;
+(* max_fanout = 16 *) logic r_rtg_o = 1'b0;   // r_rtg_on in clk_out
+always_ff @(posedge clk_out) begin
+  s_rtg_o <= {s_rtg_o[0], r_rtg_on};
+  r_rtg_o <= s_rtg_o[1];
+end
+assign w_r16_in = s_r16_in[1] | r_rtg_on;   // clk_in
+assign w_r16_o  = i_ring16 | r_rtg_o;       // clk_out
 
 always_ff @(posedge clk_in) begin
   r_wea <= 1'b0;
@@ -564,7 +584,7 @@ assign w_rtg_x0 = $signed(13'd1280 - {2'b00, r_rtg_w}) >>> 1;
 logic [13:0] r_rd_off  = OFF50;
 logic [11:0] r_win_end = WIN50;
 always_ff @(posedge clk_out) begin
-  r_rd_off  <= r_rtg_on ? (i_hz60 ? RB60 : RB50) + {w_rtg_x0[12], w_rtg_x0}
+  r_rd_off  <= r_rtg_o ? (i_hz60 ? RB60 : RB50) + {w_rtg_x0[12], w_rtg_x0}
                          + {{6{i_hd_hoffset_rtg[7]}}, i_hd_hoffset_rtg}
                        : (i_hz60 ? OFF60 : OFF50) + {{6{i_hd_hoffset[7]}}, i_hd_hoffset}
                          - (i_ratio ? RDX : 14'd0);

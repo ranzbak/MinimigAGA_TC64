@@ -111,20 +111,30 @@ These worked on Paul's display (enter them in Picasso96Mode):
 | | | | | | | | vert | 560 | 0 | 38 | 8 | | 50hz |
 | 720x480 | HiColor | 720 | 480 | 28.36 | | | hor | 940 | 0 | 72 | 64 | | 30kHz |
 | | | | | | | | vert | 588 | 0 | 98 | 8 | | 51hz |
-| 1280x720 | HiColor | 1280 | 720 | 56.72 | | | hor | 1512 | 0 | 104 | 64 | | 37.5kHz |
-| | | | | | | | vert | 750 | 0 | 5 | 5 | | 50Hz |
-| 1280x720 (to be tried) | 256Col | 1280 | 720 | 113.44 | | | hor | 2521 | 0 | 1113 | 64 | | 45kHz |
-| | | | | | | | vert | 750 | 0 | 5 | 5 | | 60Hz |
 
 Since October 2026 the RTG picture is shown 1:1 (one HD pixel per RTG
 pixel) and centred automatically, with its own Video Pos pair (its OSD
-items come with a later firmware): the OSD's
-chipset Video Pos items do not move it. The two 1280x720 modes fill the
-720p screen exactly (50 Hz HiColor, 60 Hz 256 colours); they come from the
-simulation bench (sim/hdmi_upsample, scaler_run.sh rtg legs) and have not
-been tried on the board yet. Their vertical sync position (5) matters: the
-picture's top line lands on the screen's top line with it. Smaller modes
-show centred with a black border; wider ones lose their left and right edges.
+items come with a later firmware): the OSD's chipset Video Pos items do not
+move it. Smaller modes show centred with a black border; wider ones lose
+their left and right edges.
+
+**To be tried: 1280x720 modes that fill the screen 1:1.** These come from
+the simulation bench (sim/hdmi_upsample, scaler_run.sh rtg legs), not yet
+from the board. The driver sets the line length in colour clocks, so the
+horizontal framesize moves in steps of 16 pixels at 56.72 MHz (32 at
+113.44 MHz): 720p50's line falls between 1504 and 1520, and 720p60's between
+2496 and 2528. The shorter one is the one to use: with 1520, four lines a
+frame show twice. The vertical sync position (12) matters: with it the
+picture's top line lands on the screen's top line, and with less (5) the
+bottom two lines show twice. The horizontal position does not move the
+picture (it is centred from the line's pixels).
+
+| Resolution | Depth | Width | Height | Clock | il | ds | or | Framesize | BorderSize | pos | syncsize | syncpol | freq |
+| ---------- | ------- | ----- | ------ | ----- | --- | --- | ---- | --------- | ---------- | --- | -------- | ------- | ----- |
+| 1280x720 | HiColor | 1280 | 720 | 56.72 | | | hor | 1504 | 0 | 96 | 64 | | 37.7kHz |
+| | | | | | | | vert | 754 | 0 | 12 | 5 | | 50Hz |
+| 1280x720 | 256Col | 1280 | 720 | 113.44 | | | hor | 2496 | 0 | 96 | 64 | | 45.4kHz |
+| | | | | | | | vert | 757 | 0 | 12 | 5 | | 60Hz |
 
 **Things to know:**
 
