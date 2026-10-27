@@ -1,12 +1,17 @@
 `timescale 1ns / 1ps
 // signal_generator -- the 720p50 / 720p60 raster of the HDMI output (i_hz60
 // selects the 720p60 front porch), genlocked to the input: every i_frame_end
-// restarts the frame (hz_count, vt_count, vsync).  Pixel enable = clk / 2
+// restarts the frame (hz_count, vt_count).  Pixel enable = clk / 2
 // (o_adv_clk); o_adv_de rises one clock before the pixel's video.
 // Sync watchdog: without an i_frame_end for WD_LINES lines (two frames) the
 // frame restarts and the raster free-runs (r_freerun) with frames of 749 lines
 // + 2 clocks (the normal frame length as the bench counts it) until the next
 // i_frame_end, so the display keeps its 50/60 Hz vsync.
+// vsync: PAL_VT_SYNC_WIDTH lines from the line after the front porch, switched
+// at hsync starts.  Every frame gets exactly one: a restart before the frame's
+// vsync line (a short frame: the 50/60 Hz splice, VPOS gliding) puts it on the
+// new frame's first lines (blank above the window, PAL_VT_TOP), and a restart
+// inside a vsync lets it finish its lines in the new frame.
 // One generator for both rates: findings/scaler/plan.md (step 2).
 // Paul Honig, deFEEST 8-bit entertainment, 2020.
 
@@ -54,6 +59,9 @@ module signal_generator
 localparam PAL_HZ_TOTAL = PAL_HZ_ACT_PIX + PAL_HZ_FRONT_PORCH + PAL_HZ_SYNC_WIDTH + PAL_HZ_BACK_PORCH;
 localparam PAL_HZ_TOTAL60 = PAL_HZ_ACT_PIX + PAL_HZ_FRONT_PORCH60 + PAL_HZ_SYNC_WIDTH + PAL_HZ_BACK_PORCH;
 localparam PAL_VT_TOTAL = PAL_VT_ACT_LN + PAL_VT_FRONT_PORCH + PAL_VT_SYNC_WIDTH + PAL_VT_BACK_PORCH;
+if (PAL_VT_TOP > PAL_VT_BACK_PORCH) begin : g_top_check
+    $error("signal_generator: PAL_VT_TOP (%0d) must not exceed PAL_VT_BACK_PORCH (%0d)", PAL_VT_TOP, PAL_VT_BACK_PORCH);
+end
 
 // Watchdog: the chipset's syncs can stop (RTG mode with its sync start past the
 // frame size, agnus_beamcounter.v:412-424); without this the counter ran past
@@ -71,8 +79,7 @@ localparam VW = $clog2(WD_LINES + 1);    // vt_count holds WD_LINES
 // lines, the front porch, vsync, the rest of the back porch
 localparam logic [VW-1:0] VT_TOP   = VW'(PAL_VT_TOP);                            // active lines VT_TOP ..
 localparam logic [VW-1:0] VT_ACT   = VW'(PAL_VT_TOP + PAL_VT_ACT_LN);            // ... VT_ACT-1
-localparam logic [VW-1:0] VT_VS0   = VW'(PAL_VT_TOP + PAL_VT_ACT_LN + PAL_VT_FRONT_PORCH);   // vsync lines VT_VS0 ..
-localparam logic [VW-1:0] VT_VS1   = VW'(PAL_VT_TOP + PAL_VT_ACT_LN + PAL_VT_FRONT_PORCH + PAL_VT_SYNC_WIDTH);   // ... VT_VS1-1
+localparam logic [VW-1:0] VT_VS0   = VW'(PAL_VT_TOP + PAL_VT_ACT_LN + PAL_VT_FRONT_PORCH);   // vsync from this line, VS_LINES lines
 localparam logic [VW-1:0] VT_WD    = VW'(WD_LINES);
 localparam logic [VW-1:0] VT_LAST  = VW'(PAL_VT_TOTAL - 1);                      // free-run frame: 0 .. VT_LAST
 
@@ -116,6 +123,10 @@ logic          r_frame_end = 1'b0;   // restart the frame at the next clock
 logic          r_freerun = 1'b0;     // syncs lost: free-run 749 lines + 2 clocks
 logic          r_hsync = 1'b0;
 logic          r_vsync = 1'b0;
+localparam int SWW = $clog2(PAL_VT_SYNC_WIDTH + 1);
+localparam logic [SWW-1:0] VS_LINES = SWW'(PAL_VT_SYNC_WIDTH);
+logic [SWW-1:0] r_vs_rem  = '0;      // vsync lines still to give, from the next hsync start
+logic           r_vs_done = 1'b1;    // this frame's vsync has started (none owed after reset)
 logic          hz_region_act;
 logic          vt_region_act;
 logic [7:0]    r_r, r_g, r_b;
@@ -125,12 +136,16 @@ logic [VW-1:0] w_vt_y;   // the line in the active window
 logic w_vt_act;          // an active line
 logic w_watchdog;        // no frame end for WD_LINES lines
 logic w_restart;         // restart the frame: input frame end, watchdog, free run
+logic w_hs_win;          // the hsync window
+logic w_hs_start;        // its first clock: a line's hsync start
 always_comb begin
     vt_count_enable = r_vid_enable && (hz_count == c_total);
     w_vt_y          = vt_count - VT_TOP;            // wraps high above the window
     w_vt_act        = (w_vt_y < VT_ACT - VT_TOP);
     w_watchdog      = (vt_count == VT_WD);
     w_restart       = i_frame_end || w_watchdog || (r_freerun && vt_count == VT_LAST);
+    w_hs_win        = (hz_count >= c_fp && hz_count < c_fps);
+    w_hs_start      = w_hs_win && (r_hsync != SYNC_POL);
 end
 
 always_ff @(posedge clk) begin
@@ -140,6 +155,8 @@ always_ff @(posedge clk) begin
         r_frame       <= 1'b0;
         r_frame_end   <= 1'b0;
         r_freerun     <= 1'b0;
+        r_vs_rem      <= '0;
+        r_vs_done     <= 1'b1;
         hz_region_act <= 1'b0;
         vt_region_act <= 1'b0;
     end else begin
@@ -168,15 +185,30 @@ always_ff @(posedge clk) begin
         hz_region_act <= (hz_count > c_act) && w_vt_act;
         r_x <= ((hz_count > c_act) && w_vt_act) ? hz_count - c_act : '0;
 
-        // syncs: vsync switches in a line's hsync (lines VT_VS0 .. VT_VS1-1);
-        // a frame restart ends it
+        // syncs: hsync in the window; vsync switches at hsync starts, on for
+        // VS_LINES of them from line VT_VS0
         r_hsync <= !SYNC_POL;
-        if (hz_count >= c_fp && hz_count < c_fps) begin
+        if (w_hs_win)
             r_hsync <= SYNC_POL;
-            r_vsync <= (vt_count >= VT_VS0 && vt_count < VT_VS1) ? SYNC_POL : !SYNC_POL;
+        if (w_hs_start && !r_frame_end) begin
+            if (vt_count == VT_VS0 && !r_vs_done) begin
+                r_vsync   <= SYNC_POL;
+                r_vs_rem  <= VS_LINES - 1'b1;
+                r_vs_done <= 1'b1;
+            end else if (r_vs_rem != '0) begin
+                r_vsync   <= SYNC_POL;
+                r_vs_rem  <= r_vs_rem - 1'b1;
+            end else begin
+                r_vsync   <= !SYNC_POL;
+            end
         end
-        if (w_restart)
-            r_vsync <= !SYNC_POL;
+        // the restart: a frame that had no vsync gets it on the new frame's
+        // first lines; one in progress goes on (r_vs_rem)
+        if (r_frame_end) begin
+            r_vs_done <= 1'b0;
+            if (!r_vs_done)
+                r_vs_rem <= VS_LINES;
+        end
 
         // vertical active region
         vt_region_act <= w_vt_act;

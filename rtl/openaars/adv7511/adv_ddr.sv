@@ -42,7 +42,7 @@ module adv_ddr (
 logic [1:0]  clk_pixel_s;
 logic [1:0]  vsync_s;
 logic [1:0]  hsync_s;
-logic        de_d1, de_d2;
+logic        de_d1 = 1'b0, de_d2 = 1'b0;
 logic [23:0] data_d1, data_d2;
 
 always_ff @(posedge clk_out) begin
