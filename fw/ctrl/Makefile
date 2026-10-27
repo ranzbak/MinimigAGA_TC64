@@ -49,7 +49,7 @@ SRCS := hardware.c config.c fat.c fdd.c fpga.c boot.c hdd.c main.c menu.c \
         mmc.c spi.c osd.c rafile.c swap.c hexdump.c uart.c errors.c \
         c64keys.c akiko.c audio.c drivesounds.c rtc.c i2c.c adv7511.c \
         atapi.c cdrom.c cue.c cdaudio.c rvlibc.c cfgswap.c stackcheck.c \
-        diskstat.c sdc.c sdproto.c osd2.c menu_model.c
+        diskstat.c sdc.c sdproto.c osd2.c menu_model.c ui.c ui_tabs.c
 OBJS := $(addprefix $(B)/,$(SRCS:.c=.o))
 
 ifeq ($(CLANG),1)

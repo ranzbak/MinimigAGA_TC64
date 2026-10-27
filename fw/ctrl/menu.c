@@ -43,6 +43,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "i2c.h"
 #include "cdrom.h"
 #include "menu_model.h"
+#include "osd2.h"
+#include "ui.h"
 
 #define OSDCOLOR_TOPLEVEL 0x01
 #define OSDCOLOR_SUBMENU 0x03
@@ -322,7 +324,37 @@ static int hdf_needs_reset(char ide_on)
     return 0;
 }
 
+// The classic menu, opened by the new one (ui.c) at one of its pages for
+// what the new one does not do yet.  HandleUI below runs this menu until it
+// closes, then the new one again.
+void menu_classic_open(unsigned char page, unsigned char sub)
+{
+    fs_pFileExt = NULL;     // the directory table holds the new menu's 16 entries: scan again
+    OsdClear();
+    OsdShow(DISABLE_KEYBOARD);
+    menustate = page;
+    menusub = sub;
+}
+
+static void HandleUI_legacy(void);
+
+// The OSD menu, once per main-loop pass: the new one on the 720p text layer
+// (ui.c) when the core has it, else (or while the new one has handed over)
+// this file's classic menu on the bitmap OSD.
 void HandleUI(void)
+{
+    if (osd2_caps && !ui_legacy_active)
+    {
+        ui_handle();
+        return;
+    }
+    fat_dir_window = 8;     // the file selector below shows 8 lines
+    HandleUI_legacy();
+    if (ui_legacy_active && menustate == MENU_NONE2)
+        ui_legacy_active = 0;   // closed: the new menu next time
+}
+
+static void HandleUI_legacy(void)
 {
     unsigned char i, c, up, down, select, menu, right, left, plus, minus;
     unsigned long len;
@@ -2611,6 +2643,7 @@ void ErrorMessage(char *message, unsigned char code)
 {
     (void)message;
     (void)code;
+    ui_legacy_takeover();   // the error page is this menu's
     menustate = MENU_ERROR;
     OsdShow(DISABLE_KEYBOARD); // do not disable KEYBOARD
     OsdColor(OSDCOLOR_WARNING);
@@ -2625,6 +2658,7 @@ void ShowError(void)
         t >>= 1;
         ++errorpage;
     }
+    ui_legacy_takeover();   // the error page is this menu's
     menustate = MENU_ERROR;
     OsdShow(DISABLE_KEYBOARD);
     OsdColor(OSDCOLOR_WARNING);
