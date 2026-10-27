@@ -4,7 +4,7 @@ chars
                  ^  Chipset                               AGA   
  ^^ Main         ^  Video standard                        PAL   
                  ^                                              
-                 ^  Chip RAM                         ^ 1.5 MB ^ 
+                 ^  Chip RAM                           1.5 MB   
  ^^ Storage      ^   ^^^^^^^^^^^^^^^^^ Reset ^^^^^^^^^^^^^^^^   
                  ^   ^                                      ^   
                  ^   ^    Memory or chipset changed: this   ^   

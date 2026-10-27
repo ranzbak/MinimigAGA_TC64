@@ -17,8 +17,8 @@ chars
  ^^ Acceleration ^  About                                     ^ 
                  ^  Supporters                                ^ 
                  ^  Classic menu                              ^ 
- Up/Down select  Right/Enter open  Left/Right change  Esc back  
- F1-F5 category  PgUp/PgDn previous/next  F12 close             
+ Up/Down select  Right/Enter open  F12 close                    
+                                                                
 fg
 1111111111111111131122221111111111111111111111111111111111111331
 1111111111111111133333333333333333333333333333333333333333333333

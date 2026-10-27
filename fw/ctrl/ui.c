@@ -50,6 +50,8 @@ void SanityCheck(void);             /* menu.c */
 #define A_DIRTAG  A(BLUE, BLACK)
 #define A_ERR     A(RED, BLACK)
 #define A_POPUP   A(WHITE, BLUE)
+#define A_EDIT    A(BLACK, YELLOW)    /* the value in EDIT */
+#define A_EDARR   A(YELLOW, BLUE)     /* EDIT's change arrows */
 
 /* the file selector's name fields (from UI_LABEL_COL): files to the
    marker column, directories 6 less ("<DIR>" right-aligned) */
@@ -61,7 +63,7 @@ void SanityCheck(void);             /* menu.c */
 
 unsigned char ui_legacy_active;
 unsigned char ui_cfg_mask;
-unsigned char ui_open_now, ui_tab, ui_focus, ui_help_on;
+unsigned char ui_open_now, ui_tab, ui_focus, ui_hints_on, ui_edit;
 
 static unsigned char cur[UI_TABS];          /* the cursor of each category */
 static unsigned char dirty, started, popup;
@@ -250,14 +252,16 @@ void ui_draw_item(unsigned i)
 {
 	const struct ui_item *it = item(i);
 	unsigned row = UI_LIST_ROW + i, lw, vs = UI_MARK_COL, n, k;
-	unsigned char av = 0, sel, a;
+	unsigned char av = 0, sel, a, ed, va;
 
 	if (i >= UI_LIST_ROWS)
 		return;
 	rfill(UI_PANEL_COL, UI_PANEL_W, ' ', A_BASE);
 	if (it && it->kind != UI_SEP && ((av = avail(it)) || !(it->flags & UI_HIDE))) {
 		sel = list_focus() && cur[ui_tab] == i;
+		ed = sel && ui_edit;
 		a = sel ? A_SEL : av ? A_BASE : A_GREY;
+		va = ed ? A_EDIT : a;
 		rfill(UI_PANEL_COL, UI_PANEL_W, ' ', a);
 		lw = rput(UI_LABEL_COL, it->label, UI_VALUE_END - UI_LABEL_COL, a);
 		if (it->flags & UI_BAR) {
@@ -271,7 +275,7 @@ void ui_draw_item(unsigned i)
 			}
 			p = mm_utoa(p, v);
 			*p = 0;
-			rput(UI_VALUE_END + 1 - (unsigned)(p - nb), nb, 3, a);
+			rput(UI_VALUE_END + 1 - (unsigned)(p - nb), nb, 3, va);
 			vs = UI_BAR_COL;
 		} else if (it->text || it->values) {
 			/* right-aligned, trailing spaces dropped, cut to leave two
@@ -284,13 +288,13 @@ void ui_draw_item(unsigned i)
 			if (n > max)
 				n = max;
 			vs = UI_VALUE_END + 1 - n;
-			rput(vs, t, n, a);
+			rput(vs, t, n, va);
 		}
 		if (it->flags & UI_SUB)
 			rfill(UI_MARK_COL, 1, OSD_G_SUB, a);
-		else if (sel && it->kind == UI_CYCLE) {
-			rfill(vs - 2, 1, OSD_G_LEFT, a);
-			rfill(UI_MARK_COL, 1, OSD_G_RIGHT, a);
+		else if (ed) {
+			rfill(vs - 2, 1, OSD_G_LEFT, A_EDARR);
+			rfill(UI_MARK_COL, 1, OSD_G_RIGHT, A_EDARR);
 		}
 	}
 	dialog_row(row);
@@ -373,9 +377,9 @@ static void draw_header(void)
 	rout(UI_HEAD_ROW, UI_PANEL_COL, UI_COLS);
 }
 
-static const char ui_hints[] =
-	"Up/Down select  Right/Enter open  Left/Right change  Esc back\n"
-	"F1-F5 category  PgUp/PgDn previous/next  F12 close";
+static const char hint_side[] = "Up/Down select  Right/Enter open  F12 close";
+static const char hint_list[] = "Up/Down move  Right/Enter edit  Left back";
+static const char hint_edit[] = "Left/Right change  Enter done";
 
 static const char *help_text(void)
 {
@@ -385,6 +389,12 @@ static const char *help_text(void)
 		"Choose a Kickstart ROM image; loading it restarts the Amiga. Backspace goes up, a letter jumps."
 	};
 	const struct ui_item *it;
+	if (ui_focus == UI_F_LIST && ui_edit)
+		return hint_edit;
+	if (ui_hints_on && ui_focus == UI_F_SIDEBAR)
+		return hint_side;
+	if (ui_hints_on && ui_focus == UI_F_LIST)
+		return hint_list;
 	switch (ui_focus) {
 	case UI_F_DIALOG:
 		return "Left/Right choose a button  Enter confirm  Esc cancel";
@@ -397,8 +407,9 @@ static const char *help_text(void)
 	return it && it->help ? it->help : ui_tabs[ui_tab].help;
 }
 
-/* the help field: the key hints until the first key, then the focused
-   item's help; a toast over either for 1 s */
+/* the help field: the focus's key hints when the focus moved, the focused
+   item's help after the next key, EDIT's hint while editing; a toast over
+   any of them for 1 s */
 void ui_draw_help(void)
 {
 	unsigned r;
@@ -407,7 +418,7 @@ void ui_draw_help(void)
 		osd2_fill(r, UI_HELP_COL + UI_HELP_W, UI_COLS - UI_HELP_COL - UI_HELP_W, ' ', A_HELP);
 	}
 	osd2_wrap(UI_HELP_ROW, UI_HELP_COL, UI_HELP_W, UI_HELP_ROWS,
-	          toast_on ? toast : ui_help_on ? help_text() : ui_hints, toast_on ? A_TOAST : A_HELP);
+	          toast_on ? toast : help_text(), toast_on ? A_TOAST : A_HELP);
 }
 
 /* the file selector: a directory entry's name and its shown length (a
@@ -527,7 +538,8 @@ static void ui_open(void)
 	popup = 0;
 	toast_on = 0;
 	ui_focus = UI_F_SIDEBAR;        /* on the last category */
-	ui_help_on = 0;                 /* the key hints until a key */
+	ui_hints_on = 1;                /* the sidebar's key hints until a key */
+	ui_edit = 0;
 	ui_cfg_mask = mm_config_scan();
 	if (ui_tab == UI_TAB_SYSTEM)
 		sys_snapshot();
@@ -632,8 +644,27 @@ static void dialog_end(unsigned char b)
 static void enter_list(void)
 {
 	ui_focus = UI_F_LIST;
+	ui_edit = 0;
 	fix_cursor();
+	ui_hints_on = 1;                /* the focus moved: its key hints */
 	dirty = 1;
+}
+
+static void to_sidebar(void)
+{
+	ui_focus = UI_F_SIDEBAR;
+	ui_edit = 0;
+	ui_hints_on = 1;
+	dirty = 1;
+}
+
+/* EDIT the focused value item (a read-only one: the toast) */
+static void edit_item(const struct ui_item *it)
+{
+	if (it->kind == UI_INFO)
+		ui_toast("Read-only here: see Open classic menu");
+	else
+		ui_edit = 1;
 }
 
 static void switch_tab(unsigned char t)
@@ -868,13 +899,10 @@ static void change(const struct ui_item *it, int dir)
 	dirty = 1;
 }
 
+/* an action item, a submenu, or Load/Save configuration's act */
 static void activate(const struct ui_item *it)
 {
-	if (it->kind == UI_CYCLE && !(it->flags & UI_ENTERACT))
-		change(it, 1);
-	else if (it->kind == UI_INFO)
-		change(it, 1);
-	else if (it->act)
+	if (it->act)
 		it->act(it->arg);
 	dirty = 1;
 }
@@ -930,9 +958,32 @@ static void key_list(unsigned char c)
 {
 	const struct ui_item *it = item(cur[ui_tab]);
 	int i;
+	if (ui_edit) {
+		switch (c) {
+		case KEY_LEFT:
+		case KEY_RIGHT:
+			if (it)
+				change(it, c == KEY_RIGHT ? 1 : -1);
+			return;
+		case KEY_ENTER:
+		case KEY_SPACE:
+		case KEY_ESC:
+			ui_edit = 0;        /* done: the change stays */
+			return;
+		case KEY_UP:
+		case KEY_DOWN:
+			ui_edit = 0;        /* done, and move */
+			break;
+		default:
+			return;
+		}
+	}
 	switch (c) {
+	case KEY_LEFT:              /* back to the sidebar, whatever the item */
+		to_sidebar();
+		break;
 	case KEY_ESC:
-		ui_focus = UI_F_SIDEBAR;
+		to_sidebar();
 		break;
 	case KEY_UP:
 		i = find_sel(cur[ui_tab] - 1, -1);
@@ -944,18 +995,17 @@ static void key_list(unsigned char c)
 		if (i >= 0)
 			cur[ui_tab] = (unsigned char)i;
 		break;
-	case KEY_LEFT:
 	case KEY_RIGHT:
 		if (it && has_value(it))
-			change(it, c == KEY_RIGHT ? 1 : -1);
-		else if (c == KEY_LEFT)
-			ui_focus = UI_F_SIDEBAR;    /* no value to change: back to the sidebar */
+			edit_item(it);
 		else if (it && (it->flags & UI_SUB))
 			activate(it);
 		break;
 	case KEY_ENTER:
 	case KEY_SPACE:
-		if (it)
+		if (it && has_value(it) && !(it->flags & UI_ENTERACT))
+			edit_item(it);
+		else if (it)
 			activate(it);
 		break;
 	}
@@ -966,8 +1016,12 @@ static void key_open(unsigned char c)
 	int i;
 	unsigned char t = ui_tab;
 
-	ui_help_on = 1;                     /* a key: the help field shows the help */
+	ui_hints_on = 0;                    /* a key: the help field shows the help */
 	dirty = 1;
+	/* EDIT keeps only its own keys (key_list); any other ends it */
+	if (ui_edit && c != KEY_LEFT && c != KEY_RIGHT && c != KEY_UP && c != KEY_DOWN &&
+	    c != KEY_ENTER && c != KEY_SPACE && c != KEY_ESC)
+		ui_edit = 0;
 	if (c == KEY_MENU) {
 		/* F12 (and the menu button, the same code) closes from anywhere:
 		   a dialog is cancelled first (the System prompt may close) */

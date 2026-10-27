@@ -634,9 +634,13 @@ unit ui_debugtoast ui_test src ui.c 's/^\t\t\t\tdebug2_show(1);     \/\* the deb
 unit ui_bitmap ui_test src ui.c 's/SPI(to_osd ? DISABLE_KEYBOARD : 0);/SPI(to_osd ? DISABLE_KEYBOARD | 1 : 0);/' "FAIL open: OSD_CMD_OSD 0x02"
 # Left on an item without a value stays in the list (a joystick's way back
 # to the sidebar)
-unit ui_noback ui_test src ui.c 's/^\t\t\tui_focus = UI_F_SIDEBAR;    \/\* no value to change/\t\t\t;    \/* no value to change/' "FAIL Left on DF0 (no value): back to the sidebar"
+unit ui_noback ui_test src ui.c '/^static void key_list/,/^}/s/^\tcase KEY_LEFT:              \/\* back to the sidebar, whatever the item \*\/$/\tcase KEY_LEFT: break;/' "FAIL Left on DF0 (no value): back to the sidebar"
+# Left on a value item changes it instead of going back (the pre-10-27 model)
+unit ui_leftchange ui_test src ui.c '/^static void key_list/,/^}/s/^\tcase KEY_LEFT:              \/\* back to the sidebar, whatever the item \*\/$/\tcase KEY_LEFT: if (it \&\& has_value(it)) { change(it, -1); break; }/' "FAIL Left on Chip RAM (a value): back to the sidebar"
+# EDIT never ends on Enter
+unit ui_editstuck ui_test src ui.c 's/^\t\t\tui_edit = 0;        \/\* done: the change stays \*\//\t\t\t;/' "FAIL Enter in EDIT: done"
 # the help field never switches from the key hints to the focused item's help
-unit ui_nohelp ui_test src ui.c 's/^\tui_help_on = 1;  /\tui_help_on = 0;  /' "FAIL Right: the help field shows DF0's help"
+unit ui_nohelp ui_test src ui.c 's/^\tui_hints_on = 0;  /\tui_hints_on = 1;  /' "FAIL Up/Down in the list: the item's help"
 # the sidebar's Up/Down do not show the category's items until the list has the focus
 unit ui_nopreview ui_test src ui.c 's/^\t\t\tui_draw_item(i);$/\t\t\tif (ui_focus != UI_F_SIDEBAR) ui_draw_item(i);/' "FAIL sidebar Down: Storage's items shown at once"
 # F12 in the list goes back to the sidebar instead of closing

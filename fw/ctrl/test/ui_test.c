@@ -599,8 +599,8 @@ int main(int argc, char **argv)
 	}
 	check("open: the focus in the sidebar", ui_focus, UI_F_SIDEBAR);
 	check("open: on Main", ui_tab, UI_TAB_MAIN);
-	check_str("open: the key hints in the help field", cells(18, 1, 14), "Up/Down select");
-	check_str("open: the second hint line", cells(19, 1, 15), "F1-F5 category ");
+	check_str("open: the sidebar's key hints in the help field", cells(18, 1, 44), "Up/Down select  Right/Enter open  F12 close ");
+	check_str("open: the second line empty", cells(19, 1, 15), "               ");
 	check("open: Main's bar blue", osd2_atr[3][5], A_SEL);
 	check("open: Main's icon, left glyph", osd2_chr[3][1], OSD_ICON_MAIN);
 	check("open: Main's icon yellow on the bar", osd2_atr[3][2], OSD2_ATTR(OSD2_C_YELLOW, OSD2_C_BLUE));
@@ -624,8 +624,12 @@ int main(int argc, char **argv)
 	key(KEY_RIGHT);
 	check("Right: the list", ui_focus, UI_F_LIST);
 	check("Right: DF0 highlighted", sel_row(), 2);
-	check_str("Right: the help field shows DF0's help", cells(18, 1, 15), "Floppy drive 0.");
+	check_str("Right: the list's key hints", cells(18, 1, 42), "Up/Down move  Right/Enter edit  Left back ");
 	check("Right: Main's bar dark blue (the focus in its list)", osd2_atr[3][5], OSD2_ATTR(OSD2_C_WHITE, OSD2_C_DKBLUE));
+	key(KEY_DOWN);
+	key(KEY_UP);
+	check("Down, Up: DF0", sel_row(), 2);
+	check_str("Up/Down in the list: the item's help", cells(18, 1, 15), "Floppy drive 0.");
 	screen("main");
 	key(KEY_LEFT);
 	check("Left on DF0 (no value): back to the sidebar", ui_focus, UI_F_SIDEBAR);
@@ -645,17 +649,21 @@ int main(int argc, char **argv)
 	key(KEY_MENU);
 	check("reopened: the sidebar", ui_focus, UI_F_SIDEBAR);
 	check_str("reopened: the key hints again", cells(18, 1, 14), "Up/Down select");
+	check("reopened: not in EDIT", ui_edit, 0);
 
 	/* ---- Storage: read-only values, the toast in the help field ---- */
 	key(KEY_DOWN);
 	key(KEY_RIGHT);
 	check("Storage list", ui_tab == UI_TAB_STORAGE && ui_focus == UI_F_LIST, 1);
 	screen("storage");
-	key(KEY_LEFT);
-	check_str("Storage Left: read-only toast", cells(18, 1, 37), "Read-only here: see Open classic menu");
-	check("Storage Left: the toast yellow", osd2_atr[18][1], OSD2_ATTR(OSD2_C_YELLOW, OSD2_C_DKBLUE));
-	check("Storage Left: config unchanged", config.floppy.drives, 1);
-	check("Storage Left (a value): still in the list", ui_focus, UI_F_LIST);
+	key(KEY_RIGHT);
+	check_str("Storage Right: read-only toast", cells(18, 1, 37), "Read-only here: see Open classic menu");
+	check("Storage Right: the toast yellow", osd2_atr[18][1], OSD2_ATTR(OSD2_C_YELLOW, OSD2_C_DKBLUE));
+	check("Storage Right: config unchanged", config.floppy.drives, 1);
+	check("Storage Right (read-only): no EDIT", ui_edit, 0);
+	check("Storage Right: still in the list", ui_focus, UI_F_LIST);
+	key(KEY_ENTER);
+	check("Storage Enter (read-only): no EDIT", ui_edit, 0);
 	wait_counts(UI_T(1000) + 1);
 	check_str("the toast gone: the item's help again", cells(18, 1, 15), "How many floppy");
 	key(KEY_F3);
@@ -681,10 +689,35 @@ int main(int argc, char **argv)
 	key(KEY_DOWN);
 	key(KEY_DOWN);                  /* past the separator: Chip RAM */
 	check_str("System: Chip RAM selected", cells(5, 20, 8), "Chip RAM");
-	check("System: the change arrows", osd2_chr[5][53] == OSD_G_LEFT && osd2_chr[5][62] == OSD_G_RIGHT, 1);
+	check("Chip RAM: no change arrows outside EDIT", osd2_chr[5][53] != OSD_G_LEFT && osd2_chr[5][62] != OSD_G_RIGHT, 1);
+	key(KEY_LEFT);
+	check("Left on Chip RAM (a value): back to the sidebar", ui_focus, UI_F_SIDEBAR);
+	check("Left on Chip RAM: the value unchanged", config.memory & 3, 3);
+	key(KEY_RIGHT);
+	check("Right: the list, on Chip RAM", sel_row(), 5);
+	check("Right: not in EDIT yet", ui_edit, 0);
+	key(KEY_RIGHT);
+	check("Right on Chip RAM: EDIT", ui_edit, 1);
+	check("Right on Chip RAM: the value unchanged", config.memory & 3, 3);
+	check("EDIT: the change arrows", osd2_chr[5][53] == OSD_G_LEFT && osd2_chr[5][62] == OSD_G_RIGHT, 1);
+	check("EDIT: the value black on yellow", osd2_atr[5][55], OSD2_ATTR(OSD2_C_BLACK, OSD2_C_YELLOW));
+	check_str("EDIT: its hint", cells(18, 1, 30), "Left/Right change  Enter done ");
 	key(KEY_LEFT);
 	check("Chip RAM Left: 1.5 MB", config.memory & 3, 2);
 	check_has("Chip RAM Left: ConfigMemory(22)", calls, "ConfigMemory(22);", 1);
+	check("EDIT Left: still in EDIT, the list", ui_edit == 1 && ui_focus == UI_F_LIST, 1);
+	key(KEY_ENTER);
+	check("Enter in EDIT: done", ui_edit, 0);
+	check("Enter in EDIT: the change stays", config.memory & 3, 2);
+	check("done: still on Chip RAM", sel_row(), 5);
+	key(KEY_ENTER);
+	check("Enter on Chip RAM: EDIT again", ui_edit, 1);
+	key(KEY_DOWN);
+	check("Down in EDIT: done and moved", ui_edit == 0 && sel_row() == 6, 1);
+	key(KEY_UP);
+	key(KEY_SPACE);
+	key(KEY_ESC);
+	check("Space then Esc in EDIT: done, in the list", ui_edit == 0 && ui_focus == UI_F_LIST, 1);
 	key(KEY_F1);
 	check("leaving System after a change: the dialog", ui_focus, UI_F_DIALOG);
 	check("leaving System: still on System", ui_tab, UI_TAB_SYSTEM);
@@ -695,7 +728,9 @@ int main(int argc, char **argv)
 	check("No: into Main's list (F1)", ui_focus, UI_F_LIST);
 	check_has("No: no reset", calls, "OsdReset", 0);
 	key(KEY_F3);
+	key(KEY_RIGHT);                 /* EDIT */
 	key(KEY_RIGHT);                 /* Chip RAM back to 2.0 MB: changed against 1.5 */
+	check("EDIT, Right: 2.0 MB", config.memory & 3, 3);
 	calls_clear();
 	mock_reset();
 	mock_timer_step(0);
@@ -710,6 +745,8 @@ int main(int argc, char **argv)
 	key(KEY_MENU);
 	check("reopened on System", ui_tab, UI_TAB_SYSTEM);
 	check("System: Volume", go("Volume"), 14);
+	key(KEY_RIGHT);
+	check("Right on Volume: EDIT", ui_edit, 1);
 	calls_clear();
 	key(KEY_RIGHT);
 	check("Volume Right: 21", config.audio.volume, 21);
@@ -729,6 +766,8 @@ int main(int argc, char **argv)
 	check_has("Volume at 31: no ConfigAudio", calls, "ConfigAudio", 0);
 	check("Volume 31: the bar full", osd2_chr[14][UI_BAR_COL + 15], OSD_G_BAR0 + 8);
 	config.audio.volume = 20;
+	key(KEY_ENTER);
+	check("Enter: EDIT done", ui_edit, 0);
 	key(KEY_LSHIFT);
 	key(KEY_KPPLUS);
 	key(KEY_LSHIFT | KEY_UPSTROKE);
@@ -864,12 +903,16 @@ int main(int argc, char **argv)
 	/* ---- Load configuration: the slots that exist ---- */
 	key(KEY_DOWN);
 	check_str("Load selected, Default", cells(8, 54, 7), "Default");
-	check("Load: the left change arrow", osd2_chr[8][52], OSD_G_LEFT);
+	key(KEY_RIGHT);
+	check("Load Right: EDIT (choose the slot)", ui_edit, 1);
+	check("Load EDIT: the left change arrow", osd2_chr[8][52], OSD_G_LEFT);
 	key(KEY_RIGHT);
 	check_str("Load Right: slot 2 (1 has no file)", cells(8, 60, 1), "2");
 	key(KEY_LEFT);
 	key(KEY_LEFT);
 	check_str("Load Left twice: back over Default to 2", cells(8, 60, 1), "2");
+	key(KEY_ENTER);
+	check("Load Enter in EDIT: done, no dialog", ui_edit == 0 && ui_focus == UI_F_LIST, 1);
 	key(KEY_ENTER);
 	check("Load Enter: a dialog", ui_focus, UI_F_DIALOG);
 	check_str("Load dialog: the dialog's hints", cells(18, 1, 26), "Left/Right choose a button");
@@ -893,7 +936,10 @@ int main(int argc, char **argv)
 	key(KEY_ESC);
 	check_has("Esc: not saved", calls, "Save", 0);
 	check("Esc in a dialog: back to the list", ui_focus, UI_F_LIST);
-	key(KEY_RIGHT);
+	key(KEY_RIGHT);                 /* EDIT */
+	key(KEY_RIGHT);                 /* slot 1 */
+	key(KEY_ENTER);                 /* done */
+	check_has("Save: EDIT done saves nothing", calls, "Save", 0);
 	key(KEY_ENTER);
 	check_has("Save to 1: saved at once", calls, "Save(1);", 1);
 	check_str("Save: the toast", cells(18, 1, 19), "Configuration saved");

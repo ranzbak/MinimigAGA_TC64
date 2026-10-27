@@ -36,9 +36,13 @@
  *   The menu opens with the focus in the sidebar, on the last category.
  *   Sidebar: Up/Down the category (its items shown at once); Right, Enter
  *   or Space into its list; Esc closes.
- *   List: Up/Down the item; Left/Right change a value (a read-only value:
- *   a toast); Enter/Space activate; Left on an item without a value, or
- *   Esc, back to the sidebar.
+ *   List (Samsung, Paul 10-27): Up/Down the item; Left or Esc back to the
+ *   sidebar, whatever the item; Right on a value item EDIT (a read-only
+ *   value: a toast), on a submenu item opens it; Enter/Space: a value item
+ *   EDIT, anything else activates (Load/Save configuration: Enter loads /
+ *   saves, Right chooses the slot in EDIT).
+ *   EDIT: Left/Right change the value (live); Enter, Space or Esc done (the
+ *   change stays); Up/Down done and move; any other key ends it too.
  *   Anywhere: F1-F5 a category and into its list; PgUp/PgDn the previous/
  *   next category; F12 (the menu button) closes.
  *   Dialog: Left/Right (Up/Down) the button, Enter/Space it, Esc cancels.
@@ -176,9 +180,11 @@ void ui_close(void);
 void ui_classic(unsigned char page, unsigned char sub);
 /* the configuration files found when the menu opened (bit = slot) */
 extern unsigned char ui_cfg_mask;
-/* the state the item tables show (the engine's); ui_help_on: the help
-   field shows the focused item's help (0: the key hints, until a key) */
-extern unsigned char ui_open_now, ui_tab, ui_focus, ui_help_on;
+/* the state the item tables show (the engine's); ui_hints_on: the help
+   field shows the key hints of the focus (set when the focus moves between
+   sidebar and list, cleared by the next key: then the item's help);
+   ui_edit: the focused value item is being changed (EDIT, list focus) */
+extern unsigned char ui_open_now, ui_tab, ui_focus, ui_hints_on, ui_edit;
 
 /* provided by menu.c: the classic menu, opened at a page */
 void menu_classic_open(unsigned char page, unsigned char sub);

@@ -17,7 +17,7 @@ chars
  ^^ Acceleration ^                                              
                  ^                                              
                  ^                                              
- Dark lines between the picture's lines, as on a CRT.           
+ Up/Down move  Right/Enter edit  Left back                      
                                                                 
 fg
 1111111111111111131122222111111111111111111111111111111111111331

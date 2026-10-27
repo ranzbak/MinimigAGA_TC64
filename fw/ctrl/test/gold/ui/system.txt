@@ -1,7 +1,7 @@
 chars
  Minimig AGA     ^  System                                   F3 
                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-                 ^  Chipset                             ^ AGA ^ 
+                 ^  Chipset                               AGA   
  ^^ Main         ^  Video standard                        PAL   
                  ^                                              
                  ^  Chip RAM                           2.0 MB   
@@ -17,8 +17,8 @@ chars
  ^^ Acceleration ^                                              
                  ^                                              
                  ^                                              
- OCS (A500 or A1000), ECS or AGA. Takes full effect after a     
- reset: leaving System offers one.                              
+ Up/Down move  Right/Enter edit  Left back                      
+                                                                
 fg
 1111111111111111131122222211111111111111111111111111111111111331
 1111111111111111133333333333333333333333333333333333333333333333
