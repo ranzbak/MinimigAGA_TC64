@@ -78,6 +78,24 @@ $(eval $(call TEST,diskstat_test,$$(TD)/mock_hw.c $$(TD)/mock_sdc.c $$(SRC)/hard
 # dirty rows and lane modes, clipping, word wrap
 $(eval $(call TEST,osd2_test,$$(SRC)/osd2.c $$(TD)/mock_hw.c $$(TD)/mock_sdc.c $$(SRC)/hardware.c,,))
 
+# ui_test: the new OSD menu (ui.c, ui_tabs.c, menu_model.c; findings/osd-redesign
+# Phase 3) on the real osd2.c and the mock's SPI trace, the rest of the firmware
+# stubbed in ui_test.c (a FAT directory model among them): key sequences, the
+# golden screens of gold/ui, the long-name scroll on the mock TIMER
+UI_SRCS = $(SRC)/ui.c $(SRC)/ui_tabs.c $(SRC)/menu_model.c $(SRC)/osd2.c $(SRC)/errors.c \
+          $(TD)/mock_hw.c $(TD)/mock_sdc.c $(SRC)/hardware.c
+$(eval $(call TEST,ui_test,$$(UI_SRCS),,$$(GOLD)/ui))
+
+# dispatch_test: menu.c's HandleUI (cut out: menu.c holds the whole classic
+# menu): the classic menu on a core without the text layer, the new one on a
+# core with it, the hand-over between them
+$(B)/handleui.inc: $(SRC)/menu.c
+	@mkdir -p $(@D)
+	sed -n '/^void HandleUI(void)/,/^}/p' $(SRC)/menu.c > $@
+	grep -q '^void HandleUI' $@
+$(eval $(call TEST,dispatch_test,,,))
+$(B)/dispatch_test $(B)/dispatch_test_32: $(B)/handleui.inc
+
 # sdc_test: the SD card peripheral driver (sdc.c, findings/sdcard-engine
 # Task 9) with the real arch/irq.c on the mock's interrupt controller, the
 # mock's model of rtl/host/sdcard_spi.v (registers, FIFOs, shifter, Gayle
@@ -383,7 +401,7 @@ check_io: $(SRC)/check_io.awk $(TD)/check_io.sh $(wildcard $(TD)/check_io/*)
 
 run: fmt check_io cardpath run-mock_selftest run-cue_test run-cdaudio_test run-atapi_test run-cdrom_test \
      run-openhf_test run-lib_test run-hwmap_test run-spireply_test run-diskstat_test run-swap_test run-fat_test run-mmc_test \
-     run-config_test run-hdd_test run-cdpath_test run-fdd_test run-drivesounds_test run-boot_test run-sdc_test run-sdproto_test run-rom_test run-osd2_test
+     run-config_test run-hdd_test run-cdpath_test run-fdd_test run-drivesounds_test run-boot_test run-sdc_test run-sdproto_test run-rom_test run-osd2_test run-ui_test run-dispatch_test
 
 clean:
 	$(RM) -r out mut

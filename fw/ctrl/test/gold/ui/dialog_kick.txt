@@ -1,0 +1,63 @@
+chars
+  Main   Storage   System   Video   Acceleration          F1-F5 
+----------------------------------------+-----------------------
+  Chipset             AGA               | Kickstart ROM         
+  Video standard      PAL               |                       
+                                        | Enter chooses a       
+  Chip RAM            2.0 MB            | Kickstart ROM image   
+  Slow RAM  +-------------- Kickstart -------------+d. Loading  
+  Fast RAM  |                                      |s the       
+  Fast-RAM b|   Load this Kickstart and restart?   |            
+  HRTmon    |                Kick31                |            
+  Kickstart |                                      |            
+            |               Yes    No              |            
+  CD32 pad  |                                      |            
+  Autofire  +--------------------------------------+            
+  Volume              21 #########      |                       
+                                        |                       
+                                        |                       
+                                        |                       
+----------------------------------------+-----------------------
+                   Left/Right choose  Enter confirm  Esc cancel 
+fg
+222222222222222222ffffffff22222222222222222222222222222222999992
+cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+2222222222222222222222888888888888888822c23333333333333222222222
+2222222222222222222222888888888888888822c22222222222222222222222
+2222222222222222222222222222222222222222c22222222222222222222222
+2222222222222222222222888888888888888822c22222222222222222222222
+222222222222aaaaaaaaaaaaaaa33333333333aaaaaaaaaaaaaa222222222222
+222222222222a22222222222222222222222222222222222222a222222222222
+222222222222a22222222222222222222222222222222222222a222222222222
+222222222222a22222222222222222222222222222222222222a222222222222
+777777777777a22222222222222222222222222222222222222a222222222222
+222222222222a22222222222222222222277772222222222222a222222222222
+222222222222a22222222222222222222222222222222222222a222222222222
+222222222222aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa222222222222
+2222222222222222222222888888888888888822c22222222222222222222222
+2222222222222222222222222222222222222222c22222222222222222222222
+2222222222222222222222222222222222222222c22222222222222222222222
+2222222222222222222222222222222222222222c22222222222222222222222
+cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+2222222222222222222999999999999999999999999999999999999999999992
+bg
+4444444444444444445555555544444444444444444444444444444444444444
+1111111111111111111111111111111111111111111111111111111111111111
+11111111111111111111111111111111111111111eeeeeeeeeeeeeeeeeeeeeee
+11111111111111111111111111111111111111111eeeeeeeeeeeeeeeeeeeeeee
+11111111111111111111111111111111111111111eeeeeeeeeeeeeeeeeeeeeee
+11111111111111111111111111111111111111111eeeeeeeeeeeeeeeeeeeeeee
+111111111111dddddddddddddddaaaaaaaaaaaddddddddddddddeeeeeeeeeeee
+111111111111ddddddddddddddddddddddddddddddddddddddddeeeeeeeeeeee
+111111111111ddddddddddddddddddddddddddddddddddddddddeeeeeeeeeeee
+111111111111ddddddddddddddddddddddddddddddddddddddddeeeeeeeeeeee
+666666666666ddddddddddddddddddddddddddddddddddddddddeeeeeeeeeeee
+111111111111ddddddddddddddd44444dd6666ddddddddddddddeeeeeeeeeeee
+111111111111ddddddddddddddddddddddddddddddddddddddddeeeeeeeeeeee
+111111111111ddddddddddddddddddddddddddddddddddddddddeeeeeeeeeeee
+11111111111111111111111111111111111111111eeeeeeeeeeeeeeeeeeeeeee
+11111111111111111111111111111111111111111eeeeeeeeeeeeeeeeeeeeeee
+11111111111111111111111111111111111111111eeeeeeeeeeeeeeeeeeeeeee
+11111111111111111111111111111111111111111eeeeeeeeeeeeeeeeeeeeeee
+1111111111111111111111111111111111111111111111111111111111111111
+dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd

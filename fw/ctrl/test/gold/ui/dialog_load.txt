@@ -1,0 +1,63 @@
+chars
+  Main   Storage   System   Video   Acceleration          F1-F5 
+----------------------------------------+-----------------------
+  DF0   Lemmings                        | Load configuration    
+  DF1   * no disk *                     |                       
+  DF2   * active after reset *          | Left/Right choose a   
+  DF3   not fitted (keypad + adds one)  | saved configuration,  
+  CD    lock+---------------- Load ----------------+s it. The   
+            |                                      |arts with   
+  Load confi|         Load configuration 2?        |            
+  Save confi|      The Amiga restarts with it.     |            
+            |                                      |            
+  Reset     |            Load    Cancel            |            
+  Reboot    |                                      |            
+            +--------------------------------------+            
+                                        |                       
+  About                                 |                       
+  Supporters                            |                       
+  Classic menu                          |                       
+----------------------------------------+-----------------------
+                   Left/Right choose  Enter confirm  Esc cancel 
+fg
+2ffffff222222222222222222222222222222222222222222222222222999992
+cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+2222222288888888888888888888888888888822c23333333333333333332222
+2222222288888888888888888888888888888822c22222222222222222222222
+9999999999999999999999999999999999999999c22222222222222222222222
+9999999999999999999999999999999999999999c22222222222222222222222
+222222228888aaaaaaaaaaaaaaaaa333333aaaaaaaaaaaaaaaaa222222222222
+222222222222a22222222222222222222222222222222222222a222222222222
+777777777777a22222222222222222222222222222222222222a222222222222
+222222222222a22222222222222222222222222222222222222a222222222222
+222222222222a22222222222222222222222222222222222222a222222222222
+222222222222a22222222222777777222222222222222222222a222222222222
+222222222222a22222222222222222222222222222222222222a222222222222
+222222222222aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa222222222222
+2222222222222222222222222222222222222222c22222222222222222222222
+2222222222222222222222222222222222222222c22222222222222222222222
+2222222222222222222222222222222222222222c22222222222222222222222
+2222222222222222222222222222222222222222c22222222222222222222222
+cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+2222222222222222222999999999999999999999999999999999999999999992
+bg
+4555555444444444444444444444444444444444444444444444444444444444
+1111111111111111111111111111111111111111111111111111111111111111
+11111111111111111111111111111111111111111eeeeeeeeeeeeeeeeeeeeeee
+11111111111111111111111111111111111111111eeeeeeeeeeeeeeeeeeeeeee
+11111111111111111111111111111111111111111eeeeeeeeeeeeeeeeeeeeeee
+11111111111111111111111111111111111111111eeeeeeeeeeeeeeeeeeeeeee
+111111111111dddddddddddddddddaaaaaadddddddddddddddddeeeeeeeeeeee
+111111111111ddddddddddddddddddddddddddddddddddddddddeeeeeeeeeeee
+666666666666ddddddddddddddddddddddddddddddddddddddddeeeeeeeeeeee
+111111111111ddddddddddddddddddddddddddddddddddddddddeeeeeeeeeeee
+111111111111ddddddddddddddddddddddddddddddddddddddddeeeeeeeeeeee
+111111111111dddddddddddd666666dd44444444ddddddddddddeeeeeeeeeeee
+111111111111ddddddddddddddddddddddddddddddddddddddddeeeeeeeeeeee
+111111111111ddddddddddddddddddddddddddddddddddddddddeeeeeeeeeeee
+11111111111111111111111111111111111111111eeeeeeeeeeeeeeeeeeeeeee
+11111111111111111111111111111111111111111eeeeeeeeeeeeeeeeeeeeeee
+11111111111111111111111111111111111111111eeeeeeeeeeeeeeeeeeeeeee
+11111111111111111111111111111111111111111eeeeeeeeeeeeeeeeeeeeeee
+1111111111111111111111111111111111111111111111111111111111111111
+dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
