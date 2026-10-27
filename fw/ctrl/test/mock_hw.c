@@ -18,6 +18,7 @@ volatile unsigned short *hosttest_platform(void);
 volatile unsigned char *hosttest_audio(void);
 void hosttest_uart(int c);
 unsigned char *hosttest_audio_buffer(void);
+volatile unsigned int *hosttest_vpos(int rtg);
 unsigned short hosttest_timer_peek(void);
 /* the SD peripheral, its Gayle bridge and the interrupt controller are in
    mock_sdc.c; what the two files share is mock_int.h */
@@ -767,6 +768,11 @@ void mock_audio_set(unsigned char v) { audio_reg = v; }
 char __bss_end[MOCK_LOAD_AREA + MOCK_RING_BYTES] __attribute__((aligned(16)));
 unsigned char *hosttest_audio_buffer(void) { return (unsigned char *)__bss_end + MOCK_LOAD_AREA; }
 unsigned char *mock_ring(void) { return hosttest_audio_buffer(); }
+/* the two Video Pos registers (cfide pos_data_q / pos_rtg_q) */
+static unsigned int vpos_reg[2];
+volatile unsigned int *hosttest_vpos(int rtg) { return &vpos_reg[rtg ? 1 : 0]; }
+unsigned mock_vpos(int rtg) { return vpos_reg[rtg ? 1 : 0]; }
+void mock_vpos_set(int rtg, unsigned v) { vpos_reg[rtg ? 1 : 0] = v; }
 
 void mock_reset(void)
 {
@@ -791,6 +797,7 @@ void mock_reset(void)
 	free(order.p); memset(&order, 0, sizeof order); order_on = 0;
 	mock_uart_clear();
 	platform_reg = 0; audio_reg = 0;
+	vpos_reg[0] = vpos_reg[1] = 0;
 	memset(__bss_end, 0, sizeof __bss_end);
 	mock_sdc_reset();
 }

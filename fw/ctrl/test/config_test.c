@@ -74,7 +74,7 @@ void ConfigChipset(unsigned char chipset) { }
 void ConfigFloppy(unsigned char drives, unsigned char speed) { }
 void ConfigVideo(unsigned char scanlines, unsigned char crt_mask, unsigned char crt_bloom,
                  unsigned char crt_beam) { }
-void ConfigVideoPos(unsigned char hpos, unsigned char vpos) { }
+void ConfigVideoPos(void) { }
 void ConfigAutofire(unsigned char autofire) { }
 void adv7511_set_clkdelay(unsigned char step) { }
 
@@ -426,6 +426,17 @@ int main(int argc, char **argv)
 	check_mem("empty: config == the defaults of mkcfgbe.py", &config, defaults_rv, CFG_SIZE);
 	check_changes("empty", NULL, 0);
 	defaults_cfg = config;
+
+	/* the RTG screen's Video Pos (Phase 4): the two bytes before kickdir, a
+	   212-byte struct still; a file of older firmware holds 0 there (the
+	   defaults' bytes): centred; distinct's bytes land in it */
+	check("videopos_rtg at offset 130", offsetof(configTYPE, videopos_rtg), 130);
+	check("configTYPE still 212 bytes", sizeof(configTYPE), 212);
+	check("defaults: videopos_rtg centred", config.videopos_rtg.hpos | config.videopos_rtg.vpos, 0);
+	check("defaults.rv: bytes 130-131 0", defaults_rv[130] | defaults_rv[131], 0);
+	check("distinct.rv: videopos_rtg = bytes 130-131",
+	      distinct_want.videopos_rtg.hpos == distinct_rv[130] && distinct_want.videopos_rtg.vpos == distinct_rv[131] &&
+	      distinct_rv[130] && distinct_rv[131], 1);
 
 	/* (a) only the RV file */
 	card(imgs, "rv");

@@ -316,6 +316,7 @@ static const char config_id[] = "MNMGCFGA"; /* New signature for AGA core */
 _Static_assert(sizeof(configTYPE) == CFG_SIZE, "configTYPE is 212 bytes");
 _Static_assert(CONFIG_VERSION == CFG_VERSION_MAX, "cfg_order knows the versions");
 _Static_assert(offsetof(configTYPE, version) == CFG_OFF_VERSION, "version @8");
+_Static_assert(offsetof(configTYPE, videopos_rtg) == 130, "videopos_rtg in the hole before kickdir");
 _Static_assert(offsetof(configTYPE, kickdir) == CFG_OFF_KICKDIR, "kickdir @132");
 _Static_assert(offsetof(configTYPE, extromdir) == CFG_OFF_EXTROMDIR, "extromdir @136");
 _Static_assert(offsetof(configTYPE, hdfdir[0]) == CFG_OFF_HDFDIR, "hdfdir[0] @140");
@@ -630,8 +631,10 @@ int ApplyConfiguration(char reloadkickstart, char applydrives)
     // it by 8 up to 248, when it did nothing): 0
     if ((signed char)config.videopos.vpos > VPOS_MAX || (signed char)config.videopos.vpos < -VPOS_MAX)
         config.videopos.vpos = 0;
+    if ((signed char)config.videopos_rtg.vpos > VPOS_MAX || (signed char)config.videopos_rtg.vpos < -VPOS_MAX)
+        config.videopos_rtg.vpos = 0;
     ConfigVideo(config.scanlines, config.crt_mask, config.crt_bloom, config.crt_beam);
-	ConfigVideoPos(config.videopos.hpos, config.videopos.vpos);
+	ConfigVideoPos();
     // 0 (a config file from older firmware) or out of range: firmware default
     adv7511_set_clkdelay((config.hdmi_clkdelay >= 1 && config.hdmi_clkdelay <= 8)
                          ? config.hdmi_clkdelay - 1 : ADV_CLKDELAY_DEFAULT);

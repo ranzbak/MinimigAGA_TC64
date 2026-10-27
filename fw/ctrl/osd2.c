@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "hardware.h"
+#include "osd.h"
 #include "osd2.h"
 
 unsigned char osd2_caps;
@@ -289,4 +290,19 @@ void osd2_init(unsigned char attr)
 	pal_sent = 0;
 	osd2_pal_default();
 	osd2_commit(0, 1, 0, 0, 0, 0);
+}
+
+unsigned char osd2_rtg_active(void)
+{
+	unsigned i;
+	unsigned char st;
+	if (osd2_caps < OSD2_V_STATUS)
+		return 0;
+	EnableOsd();
+	SPI(OSD_CMD_VERSION);
+	for (i = 0; i < 14; i++)
+		SPI_reply();
+	st = SPI_reply();
+	DisableOsd();
+	return (st & OSD2_ST_RTG) ? 1 : 0;
 }

@@ -2247,14 +2247,14 @@ static void HandleUI_legacy(void)
                 if ((signed char)config.videopos.hpos < 0x78)
                     config.videopos.hpos = (config.videopos.hpos + 0x08);
                 menustate = MENU_SETTINGS_VIDEO3;
-                ConfigVideoPos(config.videopos.hpos, config.videopos.vpos);
+                ConfigVideoPos();
             }
             else if (menusub == 1)
             {
                 if ((signed char)config.videopos.hpos > -0x80)
                     config.videopos.hpos = (config.videopos.hpos - 0x08);
                 menustate = MENU_SETTINGS_VIDEO3;
-                ConfigVideoPos(config.videopos.hpos, config.videopos.vpos);
+                ConfigVideoPos();
             }
             /* Vpos: -VPOS_MAX..VPOS_MAX in steps of 2 lines, stopping at the ends */
             else if (menusub == 2)
@@ -2262,14 +2262,14 @@ static void HandleUI_legacy(void)
                 if ((signed char)config.videopos.vpos < VPOS_MAX)
                     config.videopos.vpos = (config.videopos.vpos + VPOS_STEP);
                 menustate = MENU_SETTINGS_VIDEO3;
-                ConfigVideoPos(config.videopos.hpos, config.videopos.vpos);
+                ConfigVideoPos();
             }
             else if (menusub == 3)
             {
                 if ((signed char)config.videopos.vpos > -VPOS_MAX)
                     config.videopos.vpos = (config.videopos.vpos - VPOS_STEP);
                 menustate = MENU_SETTINGS_VIDEO3;
-                ConfigVideoPos(config.videopos.hpos, config.videopos.vpos);
+                ConfigVideoPos();
             }
 
             else if (menusub == 4)

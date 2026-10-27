@@ -41,6 +41,7 @@ static const struct field fields[] = {
 	{ "extrom.name", 102, 8 },      { "extrom.long_name", 110, 16 },
 	{ "drivesounds", 126, 1 },      { "crt_beam", 127, 1 },
 	{ "crt_mask", 128, 1 },         { "crt_bloom", 129, 1 },
+	{ "videopos_rtg.hpos", 130, 1 }, { "videopos_rtg.vpos", 131, 1 },
 	{ "kickdir", CFG_OFF_KICKDIR, 4 }, { "extromdir", CFG_OFF_EXTROMDIR, 4 },
 	{ "hdfdir[0]", CFG_OFF_HDFDIR, 4 },      { "hdfdir[1]", CFG_OFF_HDFDIR + 4, 4 },
 	{ "hdfdir[2]", CFG_OFF_HDFDIR + 8, 4 },  { "hdfdir[3]", CFG_OFF_HDFDIR + 12, 4 },
