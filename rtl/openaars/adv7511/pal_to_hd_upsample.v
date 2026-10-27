@@ -32,7 +32,6 @@
 module pal_to_hd_upsample #(
   parameter PAL_OFFSET_HZ = 'h80,     // read offset, 50 Hz (i_hz60 = 0)
   parameter PAL_OFFSET_HZ60 = 'h80,   // ... 60 Hz
-  parameter PAL_OFFSET_VT = 0,
   parameter PAL_HD_H_RES  = 1980,     // sample step and read window, 50 Hz
   parameter PAL_HD_H_RES60 = 1980,    // ... 60 Hz
   parameter PAL_HD_H_FP   = 50,
@@ -86,7 +85,6 @@ module pal_to_hd_upsample #(
   output [7:0]    o_hd_g,
   output [7:0]    o_hd_b,
   output          o_hd_vsync,
-  //output [6:0]    o_vblank_width,
   output          o_frame_end,
   // HD sync pulse
   input           i_hd_hsync,
@@ -137,7 +135,6 @@ reg         r_frame_end;
 
 // Buffer to hold 2 lines of data
 reg         r_wea;
-reg         r_ena;
 // (2026-10-09) The write address drives all 12 line-buffer BRAMs of its
 // instance; in stage_combo1 that was one register with 8.1 ns of pure
 // routing to a far BRAM (clk_114 -0.147 ns).  max_fanout lets Vivado copy
@@ -148,47 +145,21 @@ reg  [14:0] r_addrb = 0;
 wire [23:0] w_doutb;
 wire [14:0] w_addrb;   // port B address: r_addrb, or the next line's word (CRT)
 
-// Detect edges in Vsync and Hsync
-reg r_pal_hpos;
-reg r_pal_hneg;
-reg r_pal_vpos;
+// The input vsync's falling edge in clk_out (the read side's restart)
 reg r_pal_vneg;
 
 // Sync to 148Mhz clock
-(* ASYNC_REG = "TRUE" *) reg   [2:0] s_pal_hsync;
 (* ASYNC_REG = "TRUE" *) reg   [2:0] s_pal_vsync;
-wire [2:0] s_pal_hsync_next = {s_pal_hsync[1], s_pal_hsync[0], i_pal_hsync};
 wire [2:0] s_pal_vsync_next = {s_pal_vsync[1], s_pal_vsync[0], i_pal_vsync};
 always @(posedge clk_out) begin
   // Sync registers
-  s_pal_hsync <= s_pal_hsync_next;
   s_pal_vsync <= s_pal_vsync_next;
 end
 
-// Detect edges in Vsync and Hsync
+// Detect the falling edge of Vsync
 always @(posedge clk_out)
 begin
-  // Reset registers
-  r_pal_hpos <= 1'b0;
-  r_pal_hneg <= 1'b0;
-  r_pal_vpos <= 1'b0;
   r_pal_vneg <= 1'b0;
-
-  // Hsync
-  if (s_pal_hsync[2:1] == 2'b01)
-  begin
-    r_pal_hpos<= 1'b1;
-  end
-  if (s_pal_hsync[2:1] == 2'b10)
-  begin
-    r_pal_hneg <= 1'b1;
-  end
-
-  // Vsync
-  if (s_pal_vsync[2:1] == 2'b01)
-  begin
-    r_pal_vpos <= 1'b1;
-  end
   if (s_pal_vsync[2:1] == 2'b10)
   begin
     r_pal_vneg <= 1'b1;
@@ -223,6 +194,8 @@ always @(posedge clk_in) s_rat_in <= {s_rat_in[0], i_ratio};
 always @(posedge clk_in) r_rat_in <= s_rat_in[1];
 wire w_rat_in = r_rat_in;          // clk_in
 wire w_r16_o  = i_ring16;          // clk_out
+// port A writes (clk_in), port B reads (clk_out); A's read and B's write unused
+wire [23:0] w_douta_unused;
 bram_tdp #(
   .DATA(24),
   .ADDR(15)
@@ -231,12 +204,12 @@ bram_tdp #(
   .a_wr(r_wea), // input wire [0 : 0] wea
   .a_addr(r_addra), // input wire [11 : 0] addra
   .a_din(r_dina), // input wire [23 : 0] dina
-  .a_dout(),
+  .a_dout(w_douta_unused),
   .b_clk(clk_out), // input wire clkb
+  .b_wr(1'b0),
   .b_addr(w_addrb), // r_addrb, or the next line's word in the update clock (CRT)
-  .b_din(),
-  .b_dout(w_doutb), // output wire [23 : 0] doutb
-  .b_wr()
+  .b_din(24'd0),
+  .b_dout(w_doutb) // output wire [23 : 0] doutb
 );
 
 
@@ -244,10 +217,8 @@ bram_tdp #(
 // To sample the same amount of pixels as wanted on the output stream
 // results in v_div_var >> 2
 reg         r_line_active = 1'b0;
-reg         r_act_active = 1'b0;
 reg [13:0]  r_line_count = 14'b0;
 reg [5:0]   r_pix_clock_dev = 6'd0;
-reg [13:0]  r_pal_h_pos = 14'b0;
 reg [11:0]  v_div_var = 12'b0;
 reg         r_pal_hpos_in = 1'b0;
 reg         r_pal_hneg_in = 1'b0;
@@ -266,7 +237,6 @@ begin
   end
 
   // end of the horizontal line
-  // if (r_pal_hsync_ == 1'b0 && i_pal_hsync == 1'b1) begin
   if (r_pal_hpos_in)
   begin
     r_line_active   <= 1'b0; // Stop counter
@@ -279,17 +249,10 @@ begin
   if (r_line_active == 1'b1)
   begin
     r_line_count <= r_line_count + 1;
-    // active part of the horiz0ntal line
-    if (r_line_count > 300)
-    begin
-      r_pal_h_pos <= r_pal_h_pos + 1;
-      r_act_active <= 1'b1;
-    end
   end
   else
   begin
     r_line_count <= 0;
-    r_act_active <= 0;
   end
 end
 
@@ -360,7 +323,6 @@ begin
 
   // write the pixel
   r_wea <= 1'b0;
-  r_ena <= 1'b1;
 
   // Detect negative edge on horizontal sync
   s_pal_hsync_in <= {s_pal_hsync_in[0], i_pal_hsync};
@@ -818,7 +780,8 @@ assign o_pix_stb = w_upd;
 assign o_hd_next = CRT ? r_hd_next : 24'd0;
 
 wire       w_toggle = (s_next_buf[3] != s_next_buf[2]);
-reg [13:0] r_c_new = 14'h3FFF, r_c_old = 14'h3FFF, r_lphase = 14'd0;
+reg [13:0] r_c_new = 14'h3FFF, r_c_old = 14'h3FFF;
+reg [6:0]  r_lphase = 7'd0;   // the line's phase, /128 (bits 13:7 of the count)
 reg        r_line_start = 1'b0;
 reg        r_lres = 1'b0;
 always @(posedge clk_out) begin
@@ -831,11 +794,11 @@ always @(posedge clk_out) begin
   end
   r_line_start <= hd_hsync_negedge;
   if (hd_hsync_negedge) begin
-    r_lphase <= r_next_buf ? r_c_old : r_c_new;
+    r_lphase <= r_next_buf ? r_c_old[13:7] : r_c_new[13:7];
     r_lres   <= r_wres[w_rat_o ? r_ry_slot : r_cur_read_buf];   // the buffer this line reads (r_rslot)
   end
 end
-assign o_line_phase = r_lphase[13:7];
+assign o_line_phase = r_lphase;
 assign o_line_start = r_line_start;
 assign o_line_hires = CRT ? r_lres : 1'b0;
 
@@ -902,6 +865,5 @@ assign o_hd_b = r_hd_b;
 assign o_frame_end = r_frame_end;
 //assign o_vblank_width = r_vblank_width;
 
-// assign o_hd_vsync = i_hd_vsync;
 assign o_hd_vsync = i_rtg_enable ? s_hd_vsync[1] : r_del_vsync;
 endmodule
