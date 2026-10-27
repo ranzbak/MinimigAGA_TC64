@@ -22,7 +22,11 @@ module signal_generator
     parameter PAL_VT_ACT_LN = 720,
     parameter PAL_VT_FRONT_PORCH = 3,
     parameter PAL_VT_SYNC_WIDTH = 5,
-    parameter PAL_VT_BACK_PORCH = 20
+    parameter PAL_VT_BACK_PORCH = 20,
+    // blank lines at the frame's start, before the active lines (part of the
+    // back porch: PAL_VT_TOP <= PAL_VT_BACK_PORCH; the frame stays PAL_VT_TOTAL);
+    // pal_to_ddr.sv sets 15
+    parameter PAL_VT_TOP = 0
 )(
     input  logic       clk,
     input  logic       reset,
@@ -63,10 +67,12 @@ localparam DE_POL   = 1'b1; // Sync polarity 1'b1 = positive, 1'b0 is negative
 localparam HW = $clog2(PAL_HZ_TOTAL > PAL_HZ_TOTAL60 ? PAL_HZ_TOTAL : PAL_HZ_TOTAL60) + 1;
 localparam VW = $clog2(WD_LINES + 1);    // vt_count holds WD_LINES
 
-// the vertical positions, at vt_count's width
-localparam logic [VW-1:0] VT_ACT   = VW'(PAL_VT_ACT_LN);                         // active lines 0 .. VT_ACT-1
-localparam logic [VW-1:0] VT_VS0   = VW'(PAL_VT_ACT_LN + PAL_VT_FRONT_PORCH);     // vsync after this line ...
-localparam logic [VW-1:0] VT_VS1   = VW'(PAL_VT_ACT_LN + PAL_VT_FRONT_PORCH + PAL_VT_SYNC_WIDTH);   // ... before this
+// the vertical positions, at vt_count's width: TOP blank lines, the active
+// lines, the front porch, vsync, the rest of the back porch
+localparam logic [VW-1:0] VT_TOP   = VW'(PAL_VT_TOP);                            // active lines VT_TOP ..
+localparam logic [VW-1:0] VT_ACT   = VW'(PAL_VT_TOP + PAL_VT_ACT_LN);            // ... VT_ACT-1
+localparam logic [VW-1:0] VT_VS0   = VW'(PAL_VT_TOP + PAL_VT_ACT_LN + PAL_VT_FRONT_PORCH);   // vsync lines VT_VS0 ..
+localparam logic [VW-1:0] VT_VS1   = VW'(PAL_VT_TOP + PAL_VT_ACT_LN + PAL_VT_FRONT_PORCH + PAL_VT_SYNC_WIDTH);   // ... VT_VS1-1
 localparam logic [VW-1:0] VT_WD    = VW'(WD_LINES);
 localparam logic [VW-1:0] VT_LAST  = VW'(PAL_VT_TOTAL - 1);                      // free-run frame: 0 .. VT_LAST
 
@@ -100,7 +106,7 @@ end
 // (b) counters, syncs, active flags, RGB gate
 //
 // Horizontal order : Front Porch   | Sync        | Back Porch | Active region
-// Vertical order   : Active region | Front Porch | Sync       | Back Porch
+// Vertical order   : Top (VT_TOP) | Active region | Front Porch | Sync | Back Porch (less VT_TOP)
 logic [HW-1:0] hz_count = '0;
 logic [VW-1:0] vt_count = '0;
 logic [HW-1:0] r_x = '0;
@@ -115,10 +121,14 @@ logic          vt_region_act;
 logic [7:0]    r_r, r_g, r_b;
 
 logic vt_count_enable;   // the line's last pixel: the vertical counter steps
+logic [VW-1:0] w_vt_y;   // the line in the active window
+logic w_vt_act;          // an active line
 logic w_watchdog;        // no frame end for WD_LINES lines
 logic w_restart;         // restart the frame: input frame end, watchdog, free run
 always_comb begin
     vt_count_enable = r_vid_enable && (hz_count == c_total);
+    w_vt_y          = vt_count - VT_TOP;            // wraps high above the window
+    w_vt_act        = (w_vt_y < VT_ACT - VT_TOP);
     w_watchdog      = (vt_count == VT_WD);
     w_restart       = i_frame_end || w_watchdog || (r_freerun && vt_count == VT_LAST);
 end
@@ -155,22 +165,22 @@ always_ff @(posedge clk) begin
         end
 
         // horizontal active region
-        hz_region_act <= (hz_count > c_act) && (vt_count < VT_ACT);
-        r_x <= ((hz_count > c_act) && (vt_count < VT_ACT)) ? hz_count - c_act : '0;
+        hz_region_act <= (hz_count > c_act) && w_vt_act;
+        r_x <= ((hz_count > c_act) && w_vt_act) ? hz_count - c_act : '0;
 
-        // syncs: vsync rises in a line's hsync and holds until the frame end
+        // syncs: vsync switches in a line's hsync (lines VT_VS0 .. VT_VS1-1);
+        // a frame restart ends it
         r_hsync <= !SYNC_POL;
         if (hz_count >= c_fp && hz_count < c_fps) begin
             r_hsync <= SYNC_POL;
-            if (vt_count > VT_VS0 && vt_count < VT_VS1)
-                r_vsync <= SYNC_POL;
+            r_vsync <= (vt_count >= VT_VS0 && vt_count < VT_VS1) ? SYNC_POL : !SYNC_POL;
         end
         if (w_restart)
             r_vsync <= !SYNC_POL;
 
         // vertical active region
-        vt_region_act <= (vt_count < VT_ACT);
-        r_y <= (vt_count < VT_ACT) ? HW'(vt_count) : '0;
+        vt_region_act <= w_vt_act;
+        r_y <= w_vt_act ? HW'(w_vt_y) : '0;
 
         // pass the data through while active
         r_r <= (vt_region_act && hz_region_act) ? i_r : 8'h00;

@@ -68,7 +68,6 @@ module pal_to_hd_upsample #(
 
   // clk_out domain, inputs (i_hz60 / i_ring16 / i_ratio static, synchronised
   // into clk_in where the write side uses them)
-  input  logic        i_rtg_enable,  // o_hd_vsync undelayed
   input  logic        i_hz60,        // 60 Hz HD timing
   input  logic        i_ring16,      // 1: all 16 line buffers, 0: the first 8 (line rate)
   input  logic        i_ratio,       // exact-ratio mode (needs i_ring16), static per frame
@@ -506,14 +505,12 @@ end
 assign w_vp_virt_o = (s_vp_tgl_o[2] != s_vp_tgl_o[1]);
 assign w_vp_ev_o   = (r_pal_vneg && s_vp_real_o[1]) || w_vp_virt_o;
 
-// HD hsync edges
+// HD hsync's falling edge (the next line)
 (* ASYNC_REG = "TRUE" *) logic [1:0] s_hd_hsync;
-logic hd_hsync_posedge = 1'b0;
 logic hd_hsync_negedge = 1'b0;
 always_ff @(posedge clk_out) begin
   s_hd_hsync       <= {s_hd_hsync[0], i_hd_hsync};
   hd_hsync_negedge <= (s_hd_hsync == 2'b10);
-  hd_hsync_posedge <= (s_hd_hsync == 2'b01);
 end
 
 // where a line's read starts: the fixed offset plus the OSD's signed one,
@@ -760,41 +757,13 @@ assign o_line_start = r_line_start;
 assign o_line_hires = CRT ? r_lres : 1'b0;
 
 // ---------------------------------------------------------------------------
-// o_hd_vsync: the HD vsync delayed by Y_TRANS HD lines (each edge counted
-// in HD hsync edges after it), or undelayed with i_rtg_enable
+// o_hd_vsync: the HD vsync, two clk_out later (the generator's vsync lines sit
+// against its active window as the display needs them; until 2026-10-27 this
+// delayed it 10 HD lines to suit adv_ddr's own regenerated DE)
 // ---------------------------------------------------------------------------
-localparam logic [4:0] Y_TRANS = 5'd10;
 (* ASYNC_REG = "TRUE" *) logic [1:0] s_hd_vsync;
-logic [4:0] pos_y_cnt   = 5'd0;
-logic       pos_y_en    = 1'b0;
-logic [4:0] neg_y_cnt   = 5'd0;
-logic       neg_y_en    = 1'b0;
-logic       r_del_vsync = 1'b0;
-always_ff @(posedge clk_out) begin
+always_ff @(posedge clk_out)
   s_hd_vsync <= {s_hd_vsync[0], i_hd_vsync};
-
-  // rising edge: count Y_TRANS HD hsync rising edges, then set
-  if (s_hd_vsync == 2'b01)
-    pos_y_en <= 1'b1;
-  if (hd_hsync_posedge && pos_y_en)
-    pos_y_cnt <= pos_y_cnt + 5'd1;
-  if (pos_y_cnt == Y_TRANS) begin
-    pos_y_cnt   <= 5'd0;
-    pos_y_en    <= 1'b0;
-    r_del_vsync <= 1'b1;
-  end
-
-  // falling edge: count Y_TRANS HD hsync falling edges, then clear
-  if (s_hd_vsync == 2'b10)
-    neg_y_en <= 1'b1;
-  if (hd_hsync_negedge && neg_y_en)
-    neg_y_cnt <= neg_y_cnt + 5'd1;
-  if (neg_y_cnt == Y_TRANS) begin
-    neg_y_cnt   <= 5'd0;
-    neg_y_en    <= 1'b0;
-    r_del_vsync <= 1'b0;
-  end
-end
-assign o_hd_vsync = i_rtg_enable ? s_hd_vsync[1] : r_del_vsync;
+assign o_hd_vsync = s_hd_vsync[1];
 
 endmodule

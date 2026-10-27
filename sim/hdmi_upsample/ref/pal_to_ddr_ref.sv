@@ -193,9 +193,13 @@ module pal_to_ddr_ref(
   // Upscale the video signal using a line buffer
   // 'h80 -> 4cm -> right border
   // 'h00 -> 8cm -> right border
+  // (2026-10-27: both read 60 HD pixels later and both generators start
+  // their window 15 lines into the frame, as pal_to_ddr.sv does since its
+  // DE is the generator's window: the picture in the window is then the
+  // same as the new path's)
   pal_to_hd_upsample_ref #(
   .PAL_HD_H_RES(1685),
-  .PAL_OFFSET_HZ('hd0)
+  .PAL_OFFSET_HZ('hd0 - 60)
   ) my50hzupsample(
     .clk_in(clk_114),
     .clk_out(clk_148),
@@ -229,6 +233,7 @@ module pal_to_ddr_ref(
   .PAL_HZ_FRONT_PORCH(440),
   .PAL_HZ_SYNC_WIDTH(40),
   .PAL_HZ_BACK_PORCH(220),
+  .PAL_VT_TOP(15),
   .PAL_VT_ACT_LN(720),
   .PAL_VT_FRONT_PORCH(5),
   .PAL_VT_SYNC_WIDTH(5),
@@ -255,7 +260,8 @@ module pal_to_ddr_ref(
 
   // Upscale the video signal using a line buffer
   pal_to_hd_upsample_ref #(
-  .PAL_HD_H_RES(1980) // Total pixels in a line
+  .PAL_HD_H_RES(1980), // Total pixels in a line
+  .PAL_OFFSET_HZ('h80 - 60)
   ) my60hzupsample (
     .clk_out(clk_148),
     .clk_in(clk_114),
@@ -289,6 +295,7 @@ module pal_to_ddr_ref(
   .PAL_HZ_FRONT_PORCH(110),
   .PAL_HZ_SYNC_WIDTH(40),
   .PAL_HZ_BACK_PORCH(220),
+  .PAL_VT_TOP(15),
   .PAL_VT_ACT_LN(720),
   .PAL_VT_FRONT_PORCH(5),
   .PAL_VT_SYNC_WIDTH(5),
@@ -329,24 +336,19 @@ module pal_to_ddr_ref(
   (r_50hz ? w_50_o_g : w_60_o_g);
   assign w_o_b     =
   (r_50hz ? w_50_o_b : w_60_o_b);
+  assign w_adv_de  =
+  (r_50hz ? w_50_adv_de : w_60_adv_de);
 
-  // ADV DDR output
-  adv_ddr #(
-  .PX_TO_DE(280),
-  .PX_ACT_DE(1280),
-  .PX_TOTAL(1980),
-
-  .PY_TO_DE(5),
-  .ACT_720P(720),
-  .V_LINES_TOTAL(750)
-  ) myadr_ddr (
+  // ADV DDR output (the current adv_ddr: DE from the generator since 2026-10-27;
+  // tb_crt_frame reads none of these pins, the 60 Hz upsampler reads o_hsync)
+  adv_ddr myadr_ddr (
     // INPUT
     .clk_out(clk_148), // DDR clock at 4xpixel clock
     .clk_in(w_adv_clk), // Pixel clock
 
     .reset(reset),
 
-    // .de_in(w_adv_de),       // Used to generate DE
+    .de_in(w_adv_de),
     .hsync(w_hd_hsync),
     .vsync(w_vsync),
     .data({w_o_r, w_o_g, w_o_b}), // Pixel data in 24-bpp

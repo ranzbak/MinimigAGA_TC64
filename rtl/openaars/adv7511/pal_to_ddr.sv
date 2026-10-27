@@ -262,12 +262,15 @@ module pal_to_ddr #(
   logic w_hd_gen_hsync, w_hd_vsync, w_adv_clk, w_adv_hsync;
   // line-buffer ring: 8 at line rate, 16 in the exact-ratio modes (tb +ring16 forces 16)
   logic r_ring16 = 1'b0;
-  // Line buffer upsampler, clk_114 in, clk_148 out (offsets: 'hd0 50 Hz, 'h80 60 Hz)
+  // Line buffer upsampler, clk_114 in, clk_148 out (offsets: 'hd0 50 Hz, 'h80 60 Hz,
+  // less DE_X: the pin DE is the generator's window since 2026-10-27, DE_X pixels
+  // left of the old regenerated one, and the picture stays where it was on screen)
+  localparam DE_X = 60;
   pal_to_hd_upsample #(
     .PAL_HD_H_RES(1685),
     .PAL_HD_H_RES60(1980),
-    .PAL_OFFSET_HZ('hd0 - CRT_LAT),
-    .PAL_OFFSET_HZ60('h80 - CRT_LAT),
+    .PAL_OFFSET_HZ('hd0 - CRT_LAT - DE_X),
+    .PAL_OFFSET_HZ60('h80 - CRT_LAT - DE_X),
     .RATIO_RDX(LIN_LAT)
   ) myupsample (
     .clk_in(clk_114),
@@ -280,7 +283,6 @@ module pal_to_ddr #(
     .i_pal_b(w_bh_b),
     .i_pix_stb(vga_clk_pixel),
     .i_rtg_1to1(s_rtg_114[1]),
-    .i_rtg_enable(w_hz60 & s_crt_rtg[1]),  // RTG at 60 Hz: the undelayed HD vsync
     .i_hz60(w_hz60),
     .i_ring16(r_ring16 | r_ratio),
     .i_ratio(r_ratio),
@@ -304,12 +306,14 @@ module pal_to_ddr #(
     .o_vphase(w_m_vphase)
   );
 
-  // not read here: tb_crt_frame.v's DE probe (n_dee); OSD phase 2 taps it
-  /* verilator lint_off UNUSEDSIGNAL */
+  // the generator's active window: the pin DE (adv_ddr); tb_crt_frame.v's DE probe (n_dee)
   logic       w_adv_de;
-  /* verilator lint_on UNUSEDSIGNAL */
   logic [7:0] w_o_r, w_o_g, w_o_b;
-  // 720p50 / 720p60 raster (front porch by w_hz60), restarted at the upsampler's frame end
+  // 720p50 / 720p60 raster (front porch by w_hz60), restarted at the upsampler's frame end.
+  // Vertically: 15 blank lines, the 720 active ones (the rows the display showed when
+  // adv_ddr made its own DE), vsync right after them, the back porch: 750 lines.  No
+  // front porch: VPOS can end a frame after 307 input lines (737 HD lines at 50 Hz),
+  // and every frame needs its vsync.
   /* verilator lint_off PINCONNECTEMPTY */
   signal_generator #(
     .PAL_HZ_ACT_PIX(1280),
@@ -317,10 +321,11 @@ module pal_to_ddr #(
     .PAL_HZ_FRONT_PORCH60(110),
     .PAL_HZ_SYNC_WIDTH(40),
     .PAL_HZ_BACK_PORCH(220),
+    .PAL_VT_TOP(15),
     .PAL_VT_ACT_LN(720),
-    .PAL_VT_FRONT_PORCH(5),
+    .PAL_VT_FRONT_PORCH(0),
     .PAL_VT_SYNC_WIDTH(5),
-    .PAL_VT_BACK_PORCH(20)
+    .PAL_VT_BACK_PORCH(25)
   ) hd_gen (
     .clk(clk_148),
     .reset(reset),
@@ -341,20 +346,14 @@ module pal_to_ddr #(
     .o_frame()
   );
 
-  // 12-bit DDR to the ADV7511; DE from its own counters, the pins from IOB pad registers
-  adv_ddr #(
-    .PX_TO_DE(280),
-    .PX_ACT_DE(1280),
-    .PX_TOTAL(1980),
-    .PY_TO_DE(5),
-    .ACT_720P(720),
-    .V_LINES_TOTAL(750)
-  ) myadr_ddr (
+  // 12-bit DDR to the ADV7511; DE the generator's window, the pins from IOB pad registers
+  adv_ddr myadr_ddr (
     .clk_out(clk_148),
     .clk_in(w_adv_clk),
     .reset(reset),
     .hsync(w_hd_gen_hsync),
     .vsync(w_vsync),
+    .de_in(w_adv_de),
     .data({w_o_r, w_o_g, w_o_b}),
     .clk_pixel_out(),
     .de_out(),
