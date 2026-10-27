@@ -89,6 +89,17 @@ add_src $R/rtl/sdram/cpu_enable_cadence.v
 # The second Gayle IDE port (findings/cdrom/plan.md 7.3): gayle.v instantiates
 # gayle_port.v once per port; project_1.xpr predates the file.
 add_src $R/rtl/minimig/gayle_port.v
+# The HDMI chain clean-up (2026-10-26/27) renamed frame_freq.v, adv_ddr.v and
+# pal_to_hd_upsample.v to .sv; project_1.xpr may still name the .v files,
+# which no longer exist (the same swap as build_ap040.tcl).
+foreach f {frame_freq adv_ddr pal_to_hd_upsample} {
+    set old [get_files -quiet -of_objects [get_filesets sources_1] */rtl/openaars/adv7511/$f.v]
+    if {$old ne ""} {
+        remove_files -fileset sources_1 $old
+        puts "build.tcl: removed source $old"
+    }
+    add_src $R/rtl/openaars/adv7511/$f.sv
+}
 
 #-----------------------------------------------------------------------------
 # vio_ddr3: the bring-up VIO for the BIST and the PHY tap sweep

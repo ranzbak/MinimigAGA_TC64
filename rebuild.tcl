@@ -29,7 +29,7 @@
 #
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/soc/openaars_defines.vh"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/fpga/openaars/minimig_version.vh"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/openaars/adv7511/adv_ddr.v"
+#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/openaars/adv7511/adv_ddr.sv"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/minimig/agnus.v"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/minimig/agnus_audiodma.v"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/minimig/agnus_beamcounter.v"
@@ -88,7 +88,7 @@
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/minimig/minimig_sram_bridge.v"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/minimig/minimig_syscontrol.v"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/soc/minimig_virtual_top.v"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/openaars/adv7511/pal_to_hd_upsample.v"
+#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/openaars/adv7511/pal_to_hd_upsample.sv"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/minimig/paula.v"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/minimig/paula_audio.v"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/minimig/paula_audio_channel.v"
@@ -121,7 +121,7 @@
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/soc/TG68K.vhd"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/soc/minimig_openaars_top.v"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/minimig/denise_hamgenerator_ram_mf.v"
-#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/openaars/adv7511/frame_freq.v"
+#    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/openaars/adv7511/frame_freq.sv"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/soc/minimig_defines.vh"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/openaars/sync_buttons.v"
 #    "/home/paul/work/fpga/Xilinx/artix7/MinimigAGA_TC64/rtl/openaars/pcf2123/oki_pcf_buffer.sv"
@@ -210,7 +210,7 @@ proc checkRequiredFiles { origin_dir} {
   set files [list \
  "[file normalize "$origin_dir/rtl/soc/openaars_defines.vh"]"\
  "[file normalize "$origin_dir/fpga/openaars/minimig_version.vh"]"\
- "[file normalize "$origin_dir/rtl/openaars/adv7511/adv_ddr.v"]"\
+ "[file normalize "$origin_dir/rtl/openaars/adv7511/adv_ddr.sv"]"\
  "[file normalize "$origin_dir/rtl/minimig/agnus.v"]"\
  "[file normalize "$origin_dir/rtl/minimig/agnus_audiodma.v"]"\
  "[file normalize "$origin_dir/rtl/minimig/agnus_beamcounter.v"]"\
@@ -269,7 +269,7 @@ proc checkRequiredFiles { origin_dir} {
  "[file normalize "$origin_dir/rtl/minimig/minimig_sram_bridge.v"]"\
  "[file normalize "$origin_dir/rtl/minimig/minimig_syscontrol.v"]"\
  "[file normalize "$origin_dir/rtl/soc/minimig_virtual_top.v"]"\
- "[file normalize "$origin_dir/rtl/openaars/adv7511/pal_to_hd_upsample.v"]"\
+ "[file normalize "$origin_dir/rtl/openaars/adv7511/pal_to_hd_upsample.sv"]"\
  "[file normalize "$origin_dir/rtl/openaars/adv7511/crt_post.v"]"\
  "[file normalize "$origin_dir/rtl/openaars/adv7511/crt_wrom.mem"]"\
  "[file normalize "$origin_dir/rtl/openaars/adv7511/crt_lut.mem"]"\
@@ -313,7 +313,7 @@ proc checkRequiredFiles { origin_dir} {
  "[file normalize "$origin_dir/rtl/soc/TG68K.vhd"]"\
  "[file normalize "$origin_dir/rtl/soc/minimig_openaars_top.v"]"\
  "[file normalize "$origin_dir/rtl/minimig/denise_hamgenerator_ram_mf.v"]"\
- "[file normalize "$origin_dir/rtl/openaars/adv7511/frame_freq.v"]"\
+ "[file normalize "$origin_dir/rtl/openaars/adv7511/frame_freq.sv"]"\
  "[file normalize "$origin_dir/rtl/soc/minimig_defines.vh"]"\
  "[file normalize "$origin_dir/rtl/openaars/sync_buttons.v"]"\
  "[file normalize "$origin_dir/rtl/openaars/pcf2123/oki_pcf_buffer.sv"]"\
@@ -525,7 +525,7 @@ set obj [get_filesets sources_1]
 set files [list \
  [file normalize "${origin_dir}/rtl/soc/openaars_defines.vh"] \
  [file normalize "${origin_dir}/fpga/openaars/minimig_version.vh"] \
- [file normalize "${origin_dir}/rtl/openaars/adv7511/adv_ddr.v"] \
+ [file normalize "${origin_dir}/rtl/openaars/adv7511/adv_ddr.sv"] \
  [file normalize "${origin_dir}/rtl/minimig/agnus.v"] \
  [file normalize "${origin_dir}/rtl/minimig/agnus_audiodma.v"] \
  [file normalize "${origin_dir}/rtl/minimig/agnus_beamcounter.v"] \
@@ -584,7 +584,7 @@ set files [list \
  [file normalize "${origin_dir}/rtl/minimig/minimig_sram_bridge.v"] \
  [file normalize "${origin_dir}/rtl/minimig/minimig_syscontrol.v"] \
  [file normalize "${origin_dir}/rtl/soc/minimig_virtual_top.v"] \
- [file normalize "${origin_dir}/rtl/openaars/adv7511/pal_to_hd_upsample.v"] \
+ [file normalize "${origin_dir}/rtl/openaars/adv7511/pal_to_hd_upsample.sv"] \
  [file normalize "${origin_dir}/rtl/openaars/adv7511/crt_post.v"] \
  [file normalize "${origin_dir}/rtl/openaars/adv7511/crt_wrom.mem"] \
  [file normalize "${origin_dir}/rtl/openaars/adv7511/crt_lut.mem"] \
@@ -628,7 +628,7 @@ set files [list \
  [file normalize "${origin_dir}/rtl/soc/TG68K.vhd"] \
  [file normalize "${origin_dir}/rtl/soc/minimig_openaars_top.v"] \
  [file normalize "${origin_dir}/rtl/minimig/denise_hamgenerator_ram_mf.v"] \
- [file normalize "${origin_dir}/rtl/openaars/adv7511/frame_freq.v"] \
+ [file normalize "${origin_dir}/rtl/openaars/adv7511/frame_freq.sv"] \
  [file normalize "${origin_dir}/rtl/soc/minimig_defines.vh"] \
  [file normalize "${origin_dir}/rtl/openaars/sync_buttons.v"] \
  [file normalize "${origin_dir}/rtl/openaars/pcf2123/oki_pcf_buffer.sv"] \
@@ -655,9 +655,10 @@ set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
 set_property -name "file_type" -value "Verilog Header" -objects $file_obj
 set_property -name "library" -value "work" -objects $file_obj
 
-set file "$origin_dir/rtl/openaars/adv7511/adv_ddr.v"
+set file "$origin_dir/rtl/openaars/adv7511/adv_ddr.sv"
 set file [file normalize $file]
 set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
+set_property -name "file_type" -value "SystemVerilog" -objects $file_obj
 set_property -name "library" -value "work" -objects $file_obj
 
 set file "$origin_dir/rtl/minimig/agnus.v"
@@ -951,9 +952,10 @@ set file [file normalize $file]
 set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
 set_property -name "library" -value "work" -objects $file_obj
 
-set file "$origin_dir/rtl/openaars/adv7511/pal_to_hd_upsample.v"
+set file "$origin_dir/rtl/openaars/adv7511/pal_to_hd_upsample.sv"
 set file [file normalize $file]
 set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
+set_property -name "file_type" -value "SystemVerilog" -objects $file_obj
 set_property -name "library" -value "work" -objects $file_obj
 
 set file "$origin_dir/rtl/minimig/paula.v"
@@ -1131,9 +1133,10 @@ set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
 set_property -name "is_enabled" -value "0" -objects $file_obj
 set_property -name "library" -value "work" -objects $file_obj
 
-set file "$origin_dir/rtl/openaars/adv7511/frame_freq.v"
+set file "$origin_dir/rtl/openaars/adv7511/frame_freq.sv"
 set file [file normalize $file]
 set file_obj [get_files -of_objects [get_filesets sources_1] [list "*$file"]]
+set_property -name "file_type" -value "SystemVerilog" -objects $file_obj
 set_property -name "library" -value "work" -objects $file_obj
 
 

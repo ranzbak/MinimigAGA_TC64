@@ -169,6 +169,7 @@ slot_t      r_cur_write_buf = 4'd4;   // clk_in: the buffer the next input line 
 slot_t      r_cur_read_buf  = 4'd0;   // clk_out: the line-rate read buffer
 logic       r_next_buf      = 1'b0;   // clk_out: a toggle seen, the reader moves at the next HD line
 logic       r_nb_tgl        = 1'b0;   // clk_in
+(* ASYNC_REG = "TRUE" *)
 logic [2:0] s_nb_o          = 3'd0;   // clk_out
 logic [3:0] s_next_buf;
 assign s_next_buf = {s_nb_o, r_nb_tgl};
@@ -256,8 +257,22 @@ end
 // bounds the path).
 slot_t       r_wslot = 4'd4;    // the buffer the current input line goes to
 logic [10:0] r_wcnt  = 11'd0;   // pixels written into it so far
+// r_wend and r_wres (below) power up 0 through a declaration initialiser:
+// an always_ff variable may not be written by another process, an initial
+// loop included (IEEE 1800 9.2.2.4).  iverilog 12 and Yosys 0.33 cannot
+// parse an unpacked-array initialiser and do not check that rule, so they
+// keep the loop.
+`ifdef __ICARUS__
+ `define P2HU_ARRAY_INIT_LOOP
+`elsif YOSYS
+ `define P2HU_ARRAY_INIT_LOOP
+`endif
+`ifdef P2HU_ARRAY_INIT_LOOP
 logic [10:0] r_wend [0:15];
 initial for (int k = 0; k < 16; k++) r_wend[k] = 11'd0;
+`else
+logic [10:0] r_wend [0:15] = '{default: 11'd0};
+`endif
 
 logic w_vp_wr_reset;   // the write side's restart (Video Pos VPOS, below)
 logic w_line_end;      // an input line ends (in the exact-ratio mode every
@@ -426,7 +441,7 @@ end
 // ---------------------------------------------------------------------------
 // the input vsync's falling edge (the read side's restart, r_vp_real)
 (* ASYNC_REG = "TRUE" *) logic [2:0] s_pal_vsync;
-logic r_pal_vneg;
+logic r_pal_vneg = 1'b0;
 always_ff @(posedge clk_out) begin
   s_pal_vsync <= {s_pal_vsync[1:0], i_pal_vsync};
   r_pal_vneg  <= (s_pal_vsync[2:1] == 2'b10);
@@ -436,7 +451,7 @@ end
 (* ASYNC_REG = "TRUE" *) logic [1:0] s_vp_real_o = 2'b11;
 (* ASYNC_REG = "TRUE" *) logic [2:0] s_vp_tgl_o  = 3'b000;
 logic w_vp_virt_o, w_vp_ev_o;
-logic r_frame_end;
+logic r_frame_end = 1'b0;
 always_ff @(posedge clk_out) begin
   s_vp_real_o <= {s_vp_real_o[0], r_vp_real};
   s_vp_tgl_o  <= {s_vp_tgl_o[1:0], r_vp_tgl};
@@ -447,8 +462,8 @@ assign w_vp_ev_o   = (r_pal_vneg && s_vp_real_o[1]) || w_vp_virt_o;
 
 // HD hsync edges
 (* ASYNC_REG = "TRUE" *) logic [1:0] s_hd_hsync;
-logic hd_hsync_posedge;
-logic hd_hsync_negedge;
+logic hd_hsync_posedge = 1'b0;
+logic hd_hsync_negedge = 1'b0;
 always_ff @(posedge clk_out) begin
   s_hd_hsync       <= {s_hd_hsync[0], i_hd_hsync};
   hd_hsync_negedge <= (s_hd_hsync == 2'b10);
@@ -617,8 +632,13 @@ assign o_frame_end = r_frame_end;
 // ---------------------------------------------------------------------------
 logic [1:0] r_res_s    = 2'b00;
 logic       r_res_line = 1'b0;
+`ifdef P2HU_ARRAY_INIT_LOOP
 logic       r_wres [0:15];
 initial for (int k = 0; k < 16; k++) r_wres[k] = 1'b0;
+`undef P2HU_ARRAY_INIT_LOOP
+`else
+logic       r_wres [0:15] = '{default: 1'b0};
+`endif
 always_ff @(posedge clk_in) begin
   r_res_s <= {i_pal_shres, i_pal_hires};
   if (r_wcnt == 11'd512) r_res_line <= |r_res_s;
