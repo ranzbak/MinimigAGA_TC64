@@ -609,7 +609,12 @@ reg         r_yn_neg2 = 1'b0;          // r_yn < -1 (line a + 1 too)
 reg         r_cblank  = 1'b0;          // this HD line: o_hd_* black
 reg         r_nblank  = 1'b0;          // ... o_hd_next black
 reg  [7:0]  r_vph     = 8'd0;          // this HD line's phase
-reg  [29:0] r_yl      = 30'd0;         // this HD line's y (the bench reads it; a = r_yl[29:20])
+`ifndef SYNTHESIS
+// this HD line's y, for sim/hdmi_upsample/tb_crt_frame only (a = r_yl[29:20])
+/* verilator lint_off UNUSEDSIGNAL */
+reg  [29:0] r_yl      = 30'd0;
+/* verilator lint_on UNUSEDSIGNAL */
+`endif
 reg [10:0]  r_rend  = 11'd0;
 // the word w_doutb holds belongs to r_addrb (one-clock BRAM read, and
 // r_addrb moves only every other clk_out): inside this line's buffer and
@@ -879,7 +884,9 @@ always @(posedge clk_out) begin
     r_cblank <= w_rat_o && r_yn_neg;
     r_nblank <= w_rat_o && r_yn_neg2;
     r_vph    <= r_yn[19:12];
+`ifndef SYNTHESIS
     r_yl     <= r_yn;
+`endif
   end
 end
 assign o_vphase = r_vph;
@@ -889,7 +896,6 @@ assign o_hd_r = r_hd_r;
 assign o_hd_g = r_hd_g;
 assign o_hd_b = r_hd_b;
 assign o_frame_end = r_frame_end;
-//assign o_vblank_width = r_vblank_width;
 
 assign o_hd_vsync = i_rtg_enable ? s_hd_vsync[1] : r_del_vsync;
 endmodule
