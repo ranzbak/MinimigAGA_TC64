@@ -42,7 +42,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "adv7511.h"
 #include "i2c.h"
 #include "cdrom.h"
+#include "menu_model.h"
 #include "osd2.h"
+#include "ui.h"
 
 #define OSDCOLOR_TOPLEVEL 0x01
 #define OSDCOLOR_SUBMENU 0x03
@@ -75,7 +77,6 @@ extern unsigned char iSelectedEntry;
 extern unsigned long iCurrentDirectory;
 extern char DirEntryLFN[MAXDIRENTRIES][261];
 char DirEntryInfo[MAXDIRENTRIES][5]; // disk number info of dir entries
-char DiskInfo[5];                    // disk number info of selected entry
 
 extern const char version[];
 
@@ -265,47 +266,7 @@ static hardfileTYPE t_hardfile[HDD_SLOTS];
 static unsigned long t_hdfdir[HDD_SLOTS];
 static int hdf_select_slot;	// the slot whose file selector is open
 
-// A message in place of a CD line, for 4 s: "locked by the Amiga" (D5),
-// or why an insert was refused (13.1: the cause, at most 23 characters).
-#define CD_MSG_DELAY 4000
-static unsigned long cd_msg_timer;
-static char cd_msg_on;
-static const char *cd_msg_text;
 static int cd_shown_track;	// the track in the main page's play mark, 0 = none
-
-static void cd_show_msg(const char *text)
-{
-    cd_msg_text = text;
-    cd_msg_on = 1;
-    cd_msg_timer = GetTimer(CD_MSG_DELAY);
-}
-
-static void cd_locked_msg(void)
-{
-    cd_show_msg("locked by the Amiga");
-}
-
-// The OSD's answer to CD_Insert: nothing when the disc went in.
-static void cd_insert_msg(int r)
-{
-    if (r == CD_LOCKED)
-        cd_locked_msg();
-    else if (r == CD_BADCUE)
-        cd_show_msg(CD_Message());
-    else if (r == CD_NOFILE)
-        cd_show_msg("file not found");
-}
-
-// The message is over: redraw.
-static int cd_msg_expired(void)
-{
-    if (cd_msg_on && CheckTimer(cd_msg_timer))
-    {
-        cd_msg_on = 0;
-        return 1;
-    }
-    return 0;
-}
 
 static const char *hdf_type_name(unsigned char enabled)
 {
@@ -424,7 +385,37 @@ static int hdf_needs_reset(char ide_on)
     return 0;
 }
 
+// The classic menu, opened by the new one (ui.c) at one of its pages for
+// what the new one does not do yet.  HandleUI below runs this menu until it
+// closes, then the new one again.
+void menu_classic_open(unsigned char page, unsigned char sub)
+{
+    fs_pFileExt = NULL;     // the directory table holds the new menu's 16 entries: scan again
+    OsdClear();
+    OsdShow(DISABLE_KEYBOARD);
+    menustate = page;
+    menusub = sub;
+}
+
+static void HandleUI_legacy(void);
+
+// The OSD menu, once per main-loop pass: the new one on the 720p text layer
+// (ui.c) when the core has it, else (or while the new one has handed over)
+// this file's classic menu on the bitmap OSD.
 void HandleUI(void)
+{
+    if (osd2_caps && !ui_legacy_active)
+    {
+        ui_handle();
+        return;
+    }
+    fat_dir_window = 8;     // the file selector below shows 8 lines
+    HandleUI_legacy();
+    if (ui_legacy_active && menustate == MENU_NONE2)
+        ui_legacy_active = 0;   // closed: the new menu next time
+}
+
+static void HandleUI_legacy(void)
 {
     unsigned char i, c, up, down, select, menu, right, left, plus, minus;
     unsigned long len;
@@ -1261,16 +1252,8 @@ void HandleUI(void)
 
         if (c == KEY_BACK)
         {
-            if (iCurrentDirectory) // if not root directory
-            {
-                ScanDirectory(SCAN_INIT, fs_pFileExt, fs_Options);
-                ChangeDirectory(DirEntry[sort_table[iSelectedEntry]].StartCluster +
-                                (fat32 ? (DirEntry[sort_table[iSelectedEntry]].HighCluster & 0x0FFF) << 16 : 0));
-                if (ScanDirectory(SCAN_INIT_FIRST, fs_pFileExt, fs_Options))
-                    ScanDirectory(SCAN_INIT_NEXT, fs_pFileExt, fs_Options);
-
+            if (mm_fs_parent(fs_pFileExt, fs_Options)) // not in the root directory
                 menustate = MENU_FILE_SELECT1;
-            }
         }
 
         if (c == KEY_PGUP)
@@ -1299,100 +1282,19 @@ void HandleUI(void)
 
         if ((i = GetASCIIKey(c)))
         { // find an entry beginning with given character
-            if (nDirEntries)
-            {
-                if (DirEntry[sort_table[iSelectedEntry]].Attributes & ATTR_DIRECTORY)
-                { // it's a directory
-                    if (i < DirEntry[sort_table[iSelectedEntry]].Name[0])
-                    {
-                        if (!ScanDirectory(i, fs_pFileExt, fs_Options | FIND_FILE))
-                            ScanDirectory(i, fs_pFileExt, fs_Options | FIND_DIR);
-                    }
-                    else if (i > DirEntry[sort_table[iSelectedEntry]].Name[0])
-                    {
-                        if (!ScanDirectory(i, fs_pFileExt, fs_Options | FIND_DIR))
-                            ScanDirectory(i, fs_pFileExt, fs_Options | FIND_FILE);
-                    }
-                    else
-                    {
-                        if (!ScanDirectory(i, fs_pFileExt, fs_Options)) // find nexr
-                            if (!ScanDirectory(i, fs_pFileExt, fs_Options | FIND_FILE))
-                                ScanDirectory(i, fs_pFileExt, fs_Options | FIND_DIR);
-                    }
-                }
-                else
-                { // it's a file
-                    if (i < DirEntry[sort_table[iSelectedEntry]].Name[0])
-                    {
-                        if (!ScanDirectory(i, fs_pFileExt, fs_Options | FIND_DIR))
-                            ScanDirectory(i, fs_pFileExt, fs_Options | FIND_FILE);
-                    }
-                    else if (i > DirEntry[sort_table[iSelectedEntry]].Name[0])
-                    {
-                        if (!ScanDirectory(i, fs_pFileExt, fs_Options | FIND_FILE))
-                            ScanDirectory(i, fs_pFileExt, fs_Options | FIND_DIR);
-                    }
-                    else
-                    {
-                        if (!ScanDirectory(i, fs_pFileExt, fs_Options)) // find next
-                            if (!ScanDirectory(i, fs_pFileExt, fs_Options | FIND_DIR))
-                                ScanDirectory(i, fs_pFileExt, fs_Options | FIND_FILE);
-                    }
-                }
-            }
+            mm_fs_find(i, fs_pFileExt, fs_Options);
             menustate = MENU_FILE_SELECT1;
         }
 
         if (select)
         {
-            if (DirEntry[sort_table[iSelectedEntry]].Attributes & ATTR_DIRECTORY)
-            {
-                ChangeDirectory(DirEntry[sort_table[iSelectedEntry]].StartCluster +
-                                (fat32 ? (DirEntry[sort_table[iSelectedEntry]].HighCluster & 0x0FFF) << 16 : 0));
-                {
-                    if (strncmp((char *)DirEntry[sort_table[iSelectedEntry]].Name, "..", 2) == 0)
-                    { // parent dir selected
-                        if (ScanDirectory(SCAN_INIT_FIRST, fs_pFileExt, fs_Options))
-                            ScanDirectory(SCAN_INIT_NEXT, fs_pFileExt, fs_Options);
-                        else
-                            ScanDirectory(SCAN_INIT, fs_pFileExt, fs_Options);
-                    }
-                    else
-                        ScanDirectory(SCAN_INIT, fs_pFileExt, fs_Options);
-
-                    menustate = MENU_FILE_SELECT1;
-                }
-            }
+            i = mm_fs_enter(fs_pFileExt, fs_Options);
+            if (i == MM_FS_DIR)
+                menustate = MENU_FILE_SELECT1;
+            else if (i == MM_FS_FILE)
+                menustate = fs_MenuSelect;
             else
-            {
-                if (nDirEntries)
-                {
-                    file.long_name[0] = 0;
-                    len = strlen(DirEntryLFN[sort_table[iSelectedEntry]]);
-                    if (len > 4)
-                        if (DirEntryLFN[sort_table[iSelectedEntry]][len - 4] == '.')
-                            len -= 4; // remove extension
-
-                    if (len > sizeof(file.long_name))
-                        len = sizeof(file.long_name);
-
-                    strncpy(file.name, (const char *)DirEntry[sort_table[iSelectedEntry]].Name, sizeof(file.name));
-                    memset(file.long_name, 0, sizeof(file.long_name));
-                    strncpy(file.long_name, DirEntryLFN[sort_table[iSelectedEntry]], len);
-                    strncpy(DiskInfo, DirEntryInfo[iSelectedEntry], sizeof(DiskInfo));
-
-                    file.size = DirEntry[sort_table[iSelectedEntry]].FileSize;
-                    file.attributes = DirEntry[sort_table[iSelectedEntry]].Attributes;
-                    file.start_cluster = DirEntry[sort_table[iSelectedEntry]].StartCluster +
-                                         (fat32 ? (DirEntry[sort_table[iSelectedEntry]].HighCluster & 0x0FFF) << 16 : 0);
-                    file.cluster = file.start_cluster;
-                    file.sector = 0;
-
-                    menustate = fs_MenuSelect;
-                }
-                else
-                    menustate = MENU_MAIN1; // Return to main menu if user selects the "No files!" line
-            }
+                menustate = MENU_MAIN1; // Return to main menu if user selects the "No files!" line
         }
 
         if (menu)
@@ -2726,72 +2628,6 @@ void ScrollLongName(void)
     }
 }
 
-char *GetDiskInfo(char *lfn, long len)
-{
-    // extracts disk number substring form file name
-    // if file name contains "X of Y" substring where X and Y are one or two digit number
-    // then the number substrings are extracted and put into the temporary buffer for further processing
-    // comparision is case sensitive
-
-    short i, k;
-    static char info[] = "XX/XX";     // temporary buffer
-    static char template[4] __attribute__((nonstring)) = " of "; // template substring to search for
-    char *ptr1, *ptr2, c;
-    unsigned char cmp;
-
-    if (len > 20) // scan only names which can't be fully displayed
-    {
-        for (i = (unsigned short)len - 1 - sizeof(template); i > 0; i--) // scan through the file name starting from its end
-        {
-            ptr1 = &lfn[i]; // current start position
-            ptr2 = template;
-            cmp = 0;
-            for (k = 0; (unsigned int)k < sizeof(template); k++) // scan through template
-            {
-                cmp |= *ptr1++ ^ *ptr2++; // compare substrings' characters one by one
-                if (cmp)
-                    break; // stop further comparing if difference already found
-            }
-
-            if (!cmp) // match found
-            {
-                k = i - 1; // no need to check if k is valid since i is greater than zero
-
-                c = lfn[k];               // get the first character to the left of the matched template substring
-                if (c >= '0' && c <= '9') // check if a digit
-                {
-                    info[1] = c;   // copy to buffer
-                    info[0] = ' '; // clear previous character
-                    k--;           // go to the preceding character
-                    if (k >= 0)    // check if index is valid
-                    {
-                        c = lfn[k];
-                        if (c >= '0' && c <= '9') // check if a digit
-                            info[0] = c;          // copy to buffer
-                    }
-
-                    k = i + sizeof(template); // get first character to the right of the mached template substring
-                    c = lfn[k];               // no need to check if index is valid
-                    if (c >= '0' && c <= '9') // check if a digit
-                    {
-                        info[3] = c;   // copy to buffer
-                        info[4] = ' '; // clear next char
-                        k++;           // go to the followwing character
-                        if (k < len)   // check if index is valid
-                        {
-                            c = lfn[k];
-                            if (c >= '0' && c <= '9') // check if a digit
-                                info[4] = c;          // copy to buffer
-                        }
-                        return info;
-                    }
-                }
-            }
-        }
-    }
-    return NULL;
-}
-
 // print directory contents
 void PrintDirectory(void)
 {
@@ -2875,92 +2711,12 @@ void PrintDirectory(void)
     }
 }
 
-void _strncpy(char *pStr1, const char *pStr2, size_t nCount)
-{
-    // customized strncpy() function to fill remaing destination string part with spaces
-
-    while (*pStr2 && nCount)
-    {
-        *pStr1++ = *pStr2++; // copy strings
-        nCount--;
-    }
-
-    while (nCount--)
-        *pStr1++ = ' '; // fill remaining space with spaces
-}
-
-// insert floppy image pointed to to by global <file> into <drive>
-void InsertFloppy(adfTYPE *drive)
-{
-    unsigned char i, j;
-    unsigned long tracks;
-
-    // calculate number of tracks in the ADF image file
-    tracks = file.size / (512 * 11);
-    if (tracks > MAX_TRACKS)
-    {
-        SetError(ERROR_FDD, "ADF has too many tracks!", tracks, 0);
-        printf("UNSUPPORTED ADF SIZE!!! Too many tracks: %lu\r", tracks);
-        tracks = MAX_TRACKS;
-    }
-    drive->tracks = (unsigned char)tracks;
-
-    // fill index cache
-    for (i = 0; i < tracks; i++) // for every track get its start position within image file
-    {
-        drive->cache[i] = file.cluster; // start of the track within image file
-        for (j = 0; j < 11; j++)
-            if (!FileNextSector(&file)) // advance by track length (11 sectors)
-            {   // a FAT read failed: the index would be wrong (Task 10 fix round 1)
-                SetError(ERROR_FDD, "ADF index read error", i, j);
-                drive->status = 0;
-                return;
-            }
-    }
-
-    // copy image file name into drive struct
-    if (file.long_name[0])                                          // file has long name
-        _strncpy(drive->name, file.long_name, sizeof(drive->name)); // copy long name
-    else
-    {
-        strncpy(drive->name, file.name, 8);                    // copy base name
-        memset(&drive->name[8], ' ', sizeof(drive->name) - 8); // fill the rest of the name with spaces
-    }
-
-    if (DiskInfo[0]) // if selected file has valid disk number info then copy it to its name in drive struct
-    {
-        drive->name[16] = ' ';                                 // precede disk number info with space character
-        strncpy(&drive->name[17], DiskInfo, sizeof(DiskInfo)); // copy disk number info
-    }
-
-    // initialize the rest of drive struct
-    drive->status = DSK_INSERTED;
-    if (!(file.attributes & ATTR_READONLY)) // read-only attribute
-        drive->status |= DSK_WRITABLE;
-
-    drive->cluster_offset = drive->cache[0];
-    drive->sector_offset = 0;
-    drive->track = 0;
-    drive->track_prev = -1;
-
-    // some debug info
-    if (file.long_name[0])
-        printf("Inserting floppy: \"%s\"\r", file.long_name);
-    else
-        printf("Inserting floppy: \"%.11s\"\r", file.name);
-
-    printf("file attributes: 0x%02X\r", file.attributes);
-    printf("file size: %lu (%lu KB)\r", file.size, file.size >> 10);
-    printf("drive tracks: %u\r", drive->tracks);
-    printf("drive status: 0x%02X\r", drive->status);
-    drivesounds_queueevent(DRIVESOUND_INSERT);
-}
-
 /*  Error Message */
 void ErrorMessage(char *message, unsigned char code)
 {
     (void)message;
     (void)code;
+    ui_legacy_takeover();   // the error page is this menu's
     menustate = MENU_ERROR;
     OsdShow(DISABLE_KEYBOARD); // do not disable KEYBOARD
     OsdColor(OSDCOLOR_WARNING);
@@ -2975,6 +2731,7 @@ void ShowError(void)
         t >>= 1;
         ++errorpage;
     }
+    ui_legacy_takeover();   // the error page is this menu's
     menustate = MENU_ERROR;
     OsdShow(DISABLE_KEYBOARD);
     OsdColor(OSDCOLOR_WARNING);

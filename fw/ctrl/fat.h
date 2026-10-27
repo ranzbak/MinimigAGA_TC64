@@ -3,7 +3,11 @@
 
 #include "hardware.h"
 #include <stdint.h>
-#define MAXDIRENTRIES 8
+// The directory table of the file selectors: 16 entries (the new OSD's list,
+// findings/osd-redesign/plan.md 5); a scan keeps fat_dir_window of them (8
+// for the classic menu's 8 lines)
+#define MAXDIRENTRIES 16
+extern unsigned char fat_dir_window;
 
 extern unsigned char secbuf[512];
 

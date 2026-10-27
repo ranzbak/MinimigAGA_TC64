@@ -113,7 +113,7 @@ checkio() {
 control() {
   prep control
   local t rc=0
-  for t in mock_selftest cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_test hwmap_test spireply_test diskstat_test swap_test fat_test mmc_test config_test hdd_test cdpath_test fdd_test drivesounds_test boot_test sdc_test sdproto_test rom_test osd2_test; do
+  for t in mock_selftest cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_test hwmap_test spireply_test diskstat_test swap_test fat_test mmc_test config_test hdd_test cdpath_test fdd_test drivesounds_test boot_test sdc_test sdproto_test rom_test osd2_test ui_test dispatch_test; do
     mk control "run64-$t" > "mut/control/log.$t" 2>&1 || { echo "control: run64-$t FAILED (mut/control/log.$t)"; rc=1; }
   done
   mk control fmt > mut/control/log.fmt 2>&1 || { echo "control: fmt FAILED (mut/control/log.fmt)"; rc=1; }
@@ -616,6 +616,26 @@ unit osd2_skiprow osd2_test src osd2.c 's/if (!k)$/if (!k || r > 2)/' "FAIL init
 unit osd2_nocompare osd2_test src osd2.c 's/if ((kinds \& K_CHR) \&\& osd2_chr\[row\]\[col\] != ch)/if (kinds \& K_CHR)/' "FAIL unchanged redraw: bytes"
 # the commit sends the palette but never the window
 unit osd2_nowin osd2_test src osd2.c 's/^\tsend_win();$/\t;/' "FAIL commit: entry 5 blend"
+
+# ---- the new OSD menu (ui_test, dispatch_test; findings/osd-redesign Phase 3) ----
+# the long name's start held 250 ms instead of 500
+unit ui_scrollhold ui_test src ui.h 's/^#define UI_T_SCROLL_HOLD UI_T(500)/#define UI_T_SCROLL_HOLD UI_T(250)/' "FAIL scroll: the start held 500 ms"
+# a cursor move does not restart the scroll
+unit ui_scrollkeep ui_test src ui.c '/^static void key_files/,/^}/s/^\tscroll_reset();$/\t;/' "FAIL scroll: a cursor move resets it"
+# closing leaves the layer on
+unit ui_noclose ui_test src ui.c '/^void ui_close(void)/,/^}/s/^\tosd2_disable();$/\t;/' "FAIL closing: the window off"
+# opening switches the classic bitmap OSD on too
+unit ui_bitmap ui_test src ui.c 's/SPI(to_osd ? DISABLE_KEYBOARD : 0);/SPI(to_osd ? DISABLE_KEYBOARD | 1 : 0);/' "FAIL open: OSD_CMD_OSD 0x02"
+# Up past the first item stays in the list (no way to the tabs for a joystick)
+unit ui_notabbar ui_test src ui.c 's/^\t\t\tui_focus = UI_F_TABBAR;     \/\* past the first item/\t\t\t;     \/* past the first item/' "FAIL Up from DF0: focus on the tab bar"
+# the file selector ignores sort_table
+unit ui_nosort ui_test src ui.c 's/name = entry_name(sort_table\[i\], /name = entry_name(i, /' "FAIL screen filesel"
+# leaving System after a memory change: no reset offered
+unit ui_noprompt ui_test src ui.c 's/(config.memory == sys_mem \&\& /(1 || /' "FAIL leaving System after a change: the dialog"
+# a core without the text layer gets the new menu
+unit dispatch_nocaps dispatch_test src menu.c 's/if (osd2_caps \&\& !ui_legacy_active)/if (!ui_legacy_active)/' "FAIL no layer: the classic menu each pass"
+# the classic menu never hands back
+unit dispatch_stuck dispatch_test src menu.c 's/        ui_legacy_active = 0;   \/\/ closed: the new menu next time/        ;/' "FAIL the classic menu closed"
 
 echo "$nkilled mutants killed"
 if [ $bad -eq 0 ]; then echo "=== MUTANTS PASS"; else echo "=== MUTANTS FAILED"; fi

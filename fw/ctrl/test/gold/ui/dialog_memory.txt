@@ -1,0 +1,63 @@
+chars
+  Main   Storage   System   Video   Acceleration          F1-F5 
+----------------------------------------+-----------------------
+  Chipset             AGA               | Chip RAM              
+  Video standard      PAL               |                       
+                                        | Chip memory           
+  Chip RAM           <1.5 MB          > | (graphics, sound, the 
+  Slow RAM  +---------------- Reset ---------------+ps). Memory 
+  Fast RAM  |                                      |ed a reset: 
+  Fast-RAM b|    Memory or chipset changed: this   |e tab       
+  HRTmon    |    needs a reset. Reset the Amiga?   |.           
+  Kickstart |                                      |            
+            |               Yes    No              |            
+  CD32 pad  |                                      |            
+  Autofire  +--------------------------------------+            
+  Volume              20 #########      |                       
+                                        |                       
+                                        |                       
+                                        |                       
+----------------------------------------+-----------------------
+                   Left/Right choose  Enter confirm  Esc cancel 
+fg
+222222222222222222ffffffff22222222222222222222222222222222999992
+cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+2222222222222222222222888888888888888822c23333333322222222222222
+2222222222222222222222888888888888888822c22222222222222222222222
+2222222222222222222222222222222222222222c22222222222222222222222
+7777777777777777777777777777777777777777c22222222222222222222222
+222222222222aaaaaaaaaaaaaaaaa3333333aaaaaaaaaaaaaaaa222222222222
+222222222222a22222222222222222222222222222222222222a222222222222
+222222222222a22222222222222222222222222222222222222a222222222222
+222222222222a22222222222222222222222222222222222222a222222222222
+222222222222a22222222222222222222222222222222222222a222222222222
+222222222222a22222222222222777772222222222222222222a222222222222
+222222222222a22222222222222222222222222222222222222a222222222222
+222222222222aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa222222222222
+2222222222222222222222888888888888888822c22222222222222222222222
+2222222222222222222222222222222222222222c22222222222222222222222
+2222222222222222222222222222222222222222c22222222222222222222222
+2222222222222222222222222222222222222222c22222222222222222222222
+cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+2222222222222222222999999999999999999999999999999999999999999992
+bg
+4444444444444444445555555544444444444444444444444444444444444444
+1111111111111111111111111111111111111111111111111111111111111111
+11111111111111111111111111111111111111111eeeeeeeeeeeeeeeeeeeeeee
+11111111111111111111111111111111111111111eeeeeeeeeeeeeeeeeeeeeee
+11111111111111111111111111111111111111111eeeeeeeeeeeeeeeeeeeeeee
+66666666666666666666666666666666666666661eeeeeeeeeeeeeeeeeeeeeee
+111111111111dddddddddddddddddaaaaaaaddddddddddddddddeeeeeeeeeeee
+111111111111ddddddddddddddddddddddddddddddddddddddddeeeeeeeeeeee
+111111111111ddddddddddddddddddddddddddddddddddddddddeeeeeeeeeeee
+111111111111ddddddddddddddddddddddddddddddddddddddddeeeeeeeeeeee
+111111111111ddddddddddddddddddddddddddddddddddddddddeeeeeeeeeeee
+111111111111ddddddddddddddd66666dd4444ddddddddddddddeeeeeeeeeeee
+111111111111ddddddddddddddddddddddddddddddddddddddddeeeeeeeeeeee
+111111111111ddddddddddddddddddddddddddddddddddddddddeeeeeeeeeeee
+11111111111111111111111111111111111111111eeeeeeeeeeeeeeeeeeeeeee
+11111111111111111111111111111111111111111eeeeeeeeeeeeeeeeeeeeeee
+11111111111111111111111111111111111111111eeeeeeeeeeeeeeeeeeeeeee
+11111111111111111111111111111111111111111eeeeeeeeeeeeeeeeeeeeeee
+1111111111111111111111111111111111111111111111111111111111111111
+dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
