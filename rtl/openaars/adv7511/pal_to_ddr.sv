@@ -28,9 +28,7 @@ module pal_to_ddr #(
 ) (
   // clk_114: the Amiga video stream
   input  logic        clk_114,
-  /* verilator lint_off UNUSEDSIGNAL */
-  input  logic        vga_clk_pixel,  // RTG pixel strobe, unused here; for the RTG 1:1 step (phase 2)
-  /* verilator lint_on UNUSEDSIGNAL */
+  input  logic        vga_clk_pixel,  // RTG pixel strobe (VGA_PIXEL): the RTG 1:1 write
   input  logic        i_pal_hsync,
   input  logic        i_pal_vsync,
   input  logic [7:0]  i_pal_r,
@@ -133,6 +131,11 @@ module pal_to_ddr #(
     s_voff0 <= i_voffset;
     s_voff1 <= s_voff0;
   end
+  // RTG into clk_114: the upsampler's write side takes one word per RTG
+  // pixel (vga_clk_pixel) while it is on
+  (* ASYNC_REG = "TRUE" *) logic [1:0] s_rtg_114 = 2'b00;
+  always_ff @(posedge clk_114)
+    s_rtg_114 <= {s_rtg_114[0], i_rtg_enable};
 
   // the upsampler's stream and line / frame marks (clk_148)
   logic [7:0]  w_up_r, w_up_g, w_up_b;
@@ -275,6 +278,8 @@ module pal_to_ddr #(
     .i_pal_r(w_bh_r),
     .i_pal_g(w_bh_g),
     .i_pal_b(w_bh_b),
+    .i_pix_stb(vga_clk_pixel),
+    .i_rtg_1to1(s_rtg_114[1]),
     .i_rtg_enable(w_hz60 & s_crt_rtg[1]),  // RTG at 60 Hz: the undelayed HD vsync
     .i_hz60(w_hz60),
     .i_ring16(r_ring16 | r_ratio),

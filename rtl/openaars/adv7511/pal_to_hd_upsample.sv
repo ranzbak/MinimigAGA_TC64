@@ -61,6 +61,10 @@ module pal_to_hd_upsample #(
   // OSD Video Pos VPOS, signed: 64 us steps (one 15 kHz input line),
   // positive moves the picture down (see "Video Pos VPOS")
   input  logic [7:0]  i_hd_voffset,
+  // RTG 1:1 (see "RTG 1:1"): the RTG pixel strobe (minimig_virtual_top.v
+  // VGA_PIXEL, one clock per pixel, blank-gated) and RTG on, synchronised
+  input  logic        i_pix_stb,
+  input  logic        i_rtg_1to1,
 
   // clk_out domain, inputs (i_hz60 / i_ring16 / i_ratio static, synchronised
   // into clk_in where the write side uses them)
@@ -274,13 +278,55 @@ initial for (int k = 0; k < 16; k++) r_wend[k] = 11'd0;
 logic [10:0] r_wend [0:15] = '{default: 11'd0};
 `endif
 
+// ---------------------------------------------------------------------------
+// RTG 1:1 (bench scaler_run.sh rtg* legs, rtg_check.py).  With i_rtg_1to1
+// the write side takes one word per RTG pixel instead of sampling by time:
+// the RTG pixel strobe, delayed by RTG_STB_LAT, writes; the DDA above runs
+// on unused, and the line_active / hsync gates do not apply (the strobe
+// only comes in the active area).  The pixel is in minimig_virtual_top's
+// red/green/blue_reg 3 clk_114 after its strobe in the 16-bit modes, 4 in
+// the CLUT modes (one more register stage): those show one pixel to the
+// right, the first column black (known, pinned by the rtglat4 leg).
+// crt_beamh is bypassed with RTG, combinationally (no delay).  The line's
+// words are W = the widest line of the frame (r_wcnt at the line ends,
+// latched at the frame's restart); the read side centres them ("RTG read").
+// ---------------------------------------------------------------------------
+localparam int unsigned RTG_STB_LAT = 3;
+logic [RTG_STB_LAT-1:0] r_stb_d = '0;
+always_ff @(posedge clk_in)
+  r_stb_d <= RTG_STB_LAT'({r_stb_d, i_pix_stb});
+logic w_wr;   // write the sample now
+assign w_wr = i_rtg_1to1 ? r_stb_d[RTG_STB_LAT-1] : (r_pix_en && ~i_pal_hsync);
+
 logic w_vp_wr_reset;   // the write side's restart (Video Pos VPOS, below)
 logic w_line_end;      // an input line ends (in the exact-ratio mode every
                        // line, vsync or not: its reader counts lines by time)
 assign w_line_end = r_pal_hneg_in && (~i_pal_vsync || w_rat_in);
+
+// The written extent W (clk_in): r_rtg_wmax the widest line so far in this
+// frame, r_rtg_w / r_rtg_on the last frame's W and whether it was written
+// 1:1.  Both change only at the write side's restart (and W only with the
+// mode); clk_out reads them through r_rd_off at the HD lines' starts.  An
+// HD line that starts within the clock or two of the change is the old
+// frame's last, in the HD vertical blank (the read side restarts the HD
+// raster a 2-3 clk_out synchroniser later): like r_wend they are settled
+// wherever they are shown (wizard.xdc bounds the clk_114 -> clk_148 path).
+logic [10:0] r_rtg_wmax = 11'd0;
+logic [10:0] r_rtg_w    = 11'd0;
+logic        r_rtg_on   = 1'b0;
+always_ff @(posedge clk_in) begin
+  if (w_line_end && r_wcnt > r_rtg_wmax)
+    r_rtg_wmax <= r_wcnt;
+  if (w_vp_wr_reset) begin
+    r_rtg_w    <= r_rtg_wmax;
+    r_rtg_on   <= i_rtg_1to1;
+    r_rtg_wmax <= 11'd0;
+  end
+end
+
 always_ff @(posedge clk_in) begin
   r_wea <= 1'b0;
-  if (r_pix_en && ~i_pal_hsync) begin
+  if (w_wr) begin
     // (2026-10-15) Bits 13:0 count the same in both rings; only bit 14
     // (the ring of 16's carry) depends on w_r16_in.  Written as a mux of
     // two 15-bit sums, the synchroniser flop fed every copy of r_addra next
@@ -479,10 +525,23 @@ localparam logic [13:0] OFF60 = 14'(PAL_OFFSET_HZ60);
 localparam logic [13:0] RDX   = 14'(RATIO_RDX);
 localparam logic [11:0] WIN50 = 12'(PAL_HD_H_RES - PAL_HD_H_FP);
 localparam logic [11:0] WIN60 = 12'(PAL_HD_H_RES60 - PAL_HD_H_FP);
+// RTG read (RTG 1:1 above): the offset that puts ring word 1 (a line's
+// first pixel) at HD pixel 0 of DE, per path; it holds crt_post's delay
+// (pal_to_ddr CRT_LAT) and the generator's DE position, and was
+// calibrated with the rtg* legs (scaler_run.sh), which fail if either
+// moves.  The frame's W words then start at HD x0 = (1280 - W) / 2: the
+// offset grows by x0 (W > 1280: x0 < 0, a centred crop); the read window
+// and r_wend black the rest.
+localparam logic [13:0] RTG_BASE50 = 14'd0;
+localparam logic [13:0] RTG_BASE60 = 14'd0;
+logic signed [12:0] w_rtg_x0;
+assign w_rtg_x0 = $signed(13'd1280 - {2'b00, r_rtg_w}) >>> 1;
 logic [13:0] r_rd_off  = OFF50;
 logic [11:0] r_win_end = WIN50;
 always_ff @(posedge clk_out) begin
-  r_rd_off  <= (i_hz60 ? OFF60 : OFF50) + {{6{i_hd_hoffset[7]}}, i_hd_hoffset} - (i_ratio ? RDX : 14'd0);
+  r_rd_off  <= (r_rtg_on ? (i_hz60 ? RTG_BASE60 : RTG_BASE50) + {w_rtg_x0[12], w_rtg_x0}
+                         : (i_hz60 ? OFF60 : OFF50) - (i_ratio ? RDX : 14'd0))
+               + {{6{i_hd_hoffset[7]}}, i_hd_hoffset};
   r_win_end <= i_hz60 ? WIN60 : WIN50;
 end
 
