@@ -485,8 +485,9 @@ wire               w_vp_x    = w_vp_zero ? r_pal_vneg_in : (w_vp_lvl && !r_vp_lv
 wire               w_vp_realf = r_pal_vneg_in && r_vp_real;
 assign w_vp_wr_reset = w_vp_realf || r_vp_fire;
 
+// Measure: where the input is (hsyncs since the real negedge, clk_in since
+// the hsync), and at each real negedge the last two fields
 always @(posedge clk_in) begin
-  // where the input is: hsyncs since the real negedge, clk_in since the hsync
   r_vp_cyc <= (r_vp_cyc != 13'h1FFF) ? r_vp_cyc + 1'b1 : r_vp_cyc;
   if (r_pal_hneg_in) begin
     r_vp_cyc <= 13'd0;
@@ -500,8 +501,11 @@ always @(posedge clk_in) begin
     r_vp_p1   <= r_vp_p0;
     if (r_vp_seen != 2'd3) r_vp_seen <= r_vp_seen + 1'b1;
   end
+end
 
-  // the decision inputs, taken at each input hsync
+// Decide: the decision inputs, taken at each input hsync; the window, the
+// choice of the real negedge (r_vp_real), the target
+always @(posedge clk_in) begin
   r_vp_hsd <= r_pal_hneg_in;
   if (r_pal_hneg_in) begin
     r_vp_s     <= i_hd_voffset + r_vp_bias;
@@ -529,7 +533,13 @@ always @(posedge clk_in) begin
   end
   r_vp_lvl <= w_vp_lvl;
 
-  // restarts
+  // a restart in this line (after the hsync's clear above: it wins)
+  if (w_vp_realf || r_vp_fire)
+    r_vp_fline <= 1'b1;
+end
+
+// Fire: the restarts other than the real negedge
+always @(posedge clk_in) begin
   r_vp_fire <= 1'b0;
   // a deferred or replaced restart keeps the target's place in the line
   // (r_vp_ph), so every frame sits a whole number of lines from it (and
@@ -542,7 +552,6 @@ always @(posedge clk_in) begin
     r_vp_pend <= 1'b1;
   if (w_vp_realf || r_vp_fire) begin
     r_vp_pend  <= 1'b0;
-    r_vp_fline <= 1'b1;
     r_vp_vlast <= r_vp_fire;
   end
   if (r_vp_fire) r_vp_tgl <= ~r_vp_tgl;
