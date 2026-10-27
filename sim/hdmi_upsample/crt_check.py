@@ -3,7 +3,7 @@
 dumps: 1280x720, one RRGGBB hex word per line, raster order.
 
 crt_check.py flat X.hex
-    The left border (COLOR00 $05A, x 120..200, HD rows 70..710), blue channel
+    The left border (COLOR00 $05A, BORDER below), blue channel
     in linear light (gamma 2.4): light relative to the source colour, and the
     low-frequency beat (spectral content below 0.3 cycles per HD row, RMS /
     mean): the scanline structure the eye does not blur away.
@@ -23,16 +23,16 @@ crt_check.py split X.hex
     blue C8 (switched to hires before the mid-line sample) hires, blue 64
     (switched after it) lowres.
 crt_check.py mask X.hex PERIOD
-    Phosphor mask, scanlines off: in the left border (COLOR00 $05A, x
-    120..200, HD rows 70..710) green and blue each repeat with PERIOD HD
+    Phosphor mask, scanlines off: in the left border (COLOR00 $05A,
+    BORDER below) green and blue each repeat with PERIOD HD
     pixels and no shorter period, lit columns at least 1.15x the dimmed
     ones (linear), green and blue lit in different columns, and the mean
     light of each within 3 % of the source (the LUT's compensation).
 crt_check.py bloom X.hex REF.hex [MAXRATIO [BORDER]]
     Bloom against the same picture without it: on the white colour bar
-    (x 240..345, HD rows 104..172) the scanline modulation (linear light,
+    (WHITE below) the scanline modulation (linear light,
     (max - min) / mean over rows) is at most MAXRATIO (default 0.5) of
-    REF's; the dark grey ramp steps (x 300..420, rows 182..206, values
+    REF's; the dark grey ramp steps (RAMP below, values
     below the bloom threshold) are bit-identical to REF; the blue border
     ($A blue, 0.38 light: bloom high lifts it a little) changes by less
     than BORDER (default 0.03) in light.
@@ -40,13 +40,22 @@ crt_check.py bloom X.hex REF.hex [MAXRATIO [BORDER]]
 import sys, math, collections, statistics
 import numpy as np
 
+# The regions below are in the frame dump's coordinates.  Since 2026-10-27
+# the dump is the display window (adv_ddr's DE = the generator's window):
+# the picture sits 60 HD pixels left of and 15 HD lines above where the
+# regions were chosen, so every region is moved by that much.
+DX, DY = 60, 15
+BORDER = np.s_[70 - DY:710 - DY, 120 - DX:200 - DX]      # the left border, COLOR00 $05A
+WHITE  = np.s_[104 - DY:172 - DY, 240 - DX:345 - DX]     # the white colour bar
+RAMP   = np.s_[182 - DY:206 - DY, 300 - DX:420 - DX]     # the dark grey ramp steps
+
 def load(fn):
     a = np.array([int(l, 16) for l in open(fn)], dtype=np.uint32).reshape(720, 1280)
     return np.stack([(a >> 16) & 255, (a >> 8) & 255, a & 255], -1).astype(np.int32)
 
 def flat(fn):
     a = load(fn).astype(float)
-    col = (a[70:710, 120:200, 2] / 255) ** 2.4
+    col = (a[BORDER][..., 2] / 255) ** 2.4
     r = col.mean(1); m = r.mean()
     F = np.fft.rfft(r - m); f = np.fft.rfftfreq(len(r))
     low = np.sqrt((np.abs(F[(f > 0) & (f < 0.3)]) ** 2).sum() * 2) / len(r)
@@ -128,8 +137,8 @@ def mask(fn, period):
     ok = True
     lit = {}
     for ch, name, src in ((1, 'green', 0x55), (2, 'blue', 0xAA)):
-        L = ((a[70:710, 120:200, ch] / 255) ** 2.4).mean(0)      # column profile
-        rows = (a[70:710, 120:200, ch] != a[70:710, 120:200, ch][0:1]).any(1).sum()
+        L = ((a[BORDER][..., ch] / 255) ** 2.4).mean(0)      # column profile
+        rows = (a[BORDER][..., ch] != a[BORDER][..., ch][0:1]).any(1).sum()
         def same(p): return np.abs(L[p:] - L[:-p]).max() <= 0.002 * L.max() + 1e-9
         per = next((p for p in range(1, 7) if same(p)), 0)
         hi, lo = L.max(), L.min()
@@ -143,11 +152,11 @@ def mask(fn, period):
 def bloom(fn, ref, maxratio=0.5, border=0.03):
     a, r = load(fn).astype(float), load(ref).astype(float)
     def mod(x):
-        p = ((x[104:172, 240:345] / 255) ** 2.4).mean((1, 2))
+        p = ((x[WHITE] / 255) ** 2.4).mean((1, 2))
         return (p.max() - p.min()) / p.mean()
     ma, mr = mod(a), mod(r)
-    dark = (a[182:206, 300:420] != r[182:206, 300:420]).any(-1).sum()
-    lb = lambda x: ((x[70:710, 120:200, 2] / 255) ** 2.4).mean()
+    dark = (a[RAMP] != r[RAMP]).any(-1).sum()
+    lb = lambda x: ((x[BORDER][..., 2] / 255) ** 2.4).mean()
     bl = lb(a) / lb(r)
     print('bloom: white bar modulation %.4f (without %.4f, ratio %.3f), dark ramp pixels changed %d, border light x%.4f'
           % (ma, mr, ma / mr, dark, bl))

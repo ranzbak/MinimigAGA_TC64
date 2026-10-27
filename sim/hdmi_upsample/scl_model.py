@@ -37,12 +37,17 @@ def load(fn):
     return np.stack([(a >> 16) & 255, (a >> 8) & 255, a & 255], -1).astype(np.uint8)
 
 
+# the picture's row 0 is HD line TOP of the frame (pal_to_ddr.sv's generator
+# window, PAL_VT_TOP, since 2026-10-27); the phase file counts frame lines
+TOP = 15
+
+
 def phases(fn, frame):
     out = {}
     for l in open(fn):
         f = l.split()
         if int(f[0]) == frame:
-            out[int(f[1])] = [int(x) for x in f[2:]]   # the tb's line count is the HD row
+            out[int(f[1]) - TOP] = [int(x) for x in f[2:]]   # keyed by picture row
     return out
 
 

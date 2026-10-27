@@ -45,13 +45,19 @@ import numpy as np
 
 STEP = {50: 419430, 60: 349525}
 
-def phases(fn, frame):
+# the picture's row 0 is HD line TOP of the frame (pal_to_ddr.sv's generator
+# window, PAL_VT_TOP, since 2026-10-27); geom keeps the frame's lines (its
+# wanted y0 is the y of the frame's line 0, RATIO_YB)
+TOP = 15
+
+def phases(fn, frame, top=0):
+    """per HD line: f h phase hires vphase ratio y cur next, keyed h - top
+    (h: the frame's line, line starts since the restart)"""
     out = {}
     for l in open(fn):
         f = l.split()
         if int(f[0]) == frame:
-            # f h phase hires vphase ratio y cur next; h: the HD row (line starts so far)
-            out[int(f[1])] = [int(x) for x in f[2:]]   # the tb's line count is the HD row
+            out[int(f[1]) - top] = [int(x) for x in f[2:]]
     return out
 
 def geom(fn, frame, hz, y0w, tol=0.002):
@@ -78,7 +84,7 @@ def load(fn):
 
 def rows(ref, refph, x, xph, frame, hz=50):
     R, X = load(ref), load(x)
-    pr, px = phases(refph, frame), phases(xph, frame)
+    pr, px = phases(refph, frame, TOP), phases(xph, frame, TOP)   # keyed by picture row
     byline = {}
     # reference rows: not the line-rate picture's top rows (they show
     # buffers written before the restart, whatever the bookkeeping says)
