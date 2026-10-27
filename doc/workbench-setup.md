@@ -126,14 +126,16 @@ horizontal framesize moves in steps of 16 pixels at 56.72 MHz (32 at
 2496 and 2528. The shorter one is the one to use: with 1520, four lines a
 frame show twice. The vertical sync position (12) matters: with it the
 picture's top line lands on the screen's top line, and with less (5) the
-bottom two lines show twice. The horizontal position does not move the
-picture (it is centred from the line's pixels).
+bottom two lines show twice. In general, an RTG mode whose frame has more
+lines than the HD frame (750) needs a vertical sync position of 12 or more:
+the picture falls a few lines behind during the frame. The horizontal
+position does not move the picture (it is centred from the line's pixels).
 
 | Resolution | Depth | Width | Height | Clock | il | ds | or | Framesize | BorderSize | pos | syncsize | syncpol | freq |
 | ---------- | ------- | ----- | ------ | ----- | --- | --- | ---- | --------- | ---------- | --- | -------- | ------- | ----- |
 | 1280x720 | HiColor | 1280 | 720 | 56.72 | | | hor | 1504 | 0 | 96 | 64 | | 37.7kHz |
 | | | | | | | | vert | 754 | 0 | 12 | 5 | | 50Hz |
-| 1280x720 | 256Col | 1280 | 720 | 113.44 | | | hor | 2496 | 0 | 96 | 64 | | 45.4kHz |
+| 1280x720 | 256Col | 1280 | 720 | 113.44 | | | hor | 2496 | 0 | 1088 | 64 | | 45.4kHz |
 | | | | | | | | vert | 757 | 0 | 12 | 5 | | 60Hz |
 
 **Things to know:**
