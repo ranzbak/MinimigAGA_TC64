@@ -41,7 +41,8 @@ module pal_to_hd_upsample #(
   // the exact-ratio mode's read offset is this many HD pixels smaller
   // (crt_post's linear-light path is that much longer than its gamma path:
   // the picture then sits where the line-rate one does)
-  parameter RATIO_RDX = 0
+  parameter RATIO_RDX = 0,
+  parameter RTG_1TO1 = 0   // 1 enables the per-pixel RTG path (Task 7); 0 = the time-based path for RTG as before
 )(
   // clocks
   input  logic        clk_in,        // the input picture (clk_114)
@@ -294,8 +295,10 @@ localparam int unsigned RTG_STB_LAT = 3;
 logic [RTG_STB_LAT-1:0] r_stb_d = '0;
 always_ff @(posedge clk_in)
   r_stb_d <= RTG_STB_LAT'({r_stb_d, i_pix_stb});
+logic w_rtg_1to1;   // the per-pixel path is built in (RTG_1TO1) and asked for
+assign w_rtg_1to1 = (RTG_1TO1 != 0) && i_rtg_1to1;
 logic w_wr;   // write the sample now
-assign w_wr = i_rtg_1to1 ? r_stb_d[RTG_STB_LAT-1] : (r_pix_en && ~i_pal_hsync);
+assign w_wr = w_rtg_1to1 ? r_stb_d[RTG_STB_LAT-1] : (r_pix_en && ~i_pal_hsync);
 
 logic w_vp_wr_reset;   // the write side's restart (Video Pos VPOS, below)
 logic w_line_end;      // an input line ends (in the exact-ratio mode every
@@ -318,7 +321,7 @@ always_ff @(posedge clk_in) begin
     r_rtg_wmax <= r_wcnt;
   if (w_vp_wr_reset) begin
     r_rtg_w    <= r_rtg_wmax;
-    r_rtg_on   <= i_rtg_1to1;
+    r_rtg_on   <= w_rtg_1to1;
     r_rtg_wmax <= 11'd0;
   end
 end
