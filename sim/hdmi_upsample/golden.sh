@@ -74,6 +74,8 @@ for l in "${legs[@]}"; do
 		echo "  recorded $l: $(grep -c . $G/$l.txt) lines"
 	else
 		m=$(python3 golden.py check $B/$l.log $G/$l.txt) && echo "  pass  $l: $m" || { echo "  FAIL  $l: $m"; fail=1; }
+		# the vsync check at the pins (tb_crt_frame.v): one 5-line pulse per HD frame
+		grep -q "^vsync FAIL" $B/$l.log && { echo "  FAIL  $l: $(grep -c '^vsync FAIL' $B/$l.log) vsync faults, first: $(grep -m1 '^vsync FAIL' $B/$l.log)"; fail=1; }
 	fi
 done
 [ $mode = record ] && exit 0

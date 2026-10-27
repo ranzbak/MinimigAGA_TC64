@@ -90,6 +90,11 @@
 // frame-latched config ("cfg latched ... at frame end: 1" when it happened
 // the clock after a frame end; "beam latched ..." for the beam filter's own
 // latch in clk_114, with the input line it happened in).
+// The vsync check at the pins: every HD frame from 1 on gets exactly one
+// o_vsync pulse, 5 HD lines long (o_hsync rises while it is high), where a
+// pulse that starts in a frame's lines 0..4 is the frame before's (late:
+// signal_generator.sv).  "vsync FAIL: ..." for each fault, and at the end
+// "vsync check: N frames, F faults" (golden.sh fails a leg on any FAIL).
 //
 // RTG source (+rtg720, +rtg720c): what minimig_virtual_top.v gives
 // pal_to_ddr in RTG mode.  One strobe (vga_clk_pixel = VGA_PIXEL) per RTG
@@ -465,6 +470,39 @@ always @(posedge clk_148) begin
 		px_r = px_r + 1;
 	end
 end
+
+// ---- the vsync check at the pins (see the header) ----
+localparam VC_N = 4096;
+integer vc_cnt [0:VC_N-1];
+integer vc_f = 0, vc_hs = 0, vc_bad = 0, vc_k, vc_done = 0;
+reg     vc_vq = 1'b0, vc_hq = 1'b0;
+initial for (vc_k = 0; vc_k < VC_N; vc_k = vc_k + 1) vc_cnt[vc_k] = 0;
+always @(posedge clk_148) begin
+	vc_vq <= n_vs;
+	vc_hq <= n_hs;
+	if (n_hs && !vc_hq) vc_hs = vc_hs + 1;
+	if (n_vs && !vc_vq) begin
+		vc_hs = 0;
+		vc_k = (dut.hd_gen.vt_count < 5) ? vc_f - 1 : vc_f;
+		if (vc_k >= 0 && vc_k < VC_N) vc_cnt[vc_k] = vc_cnt[vc_k] + 1;
+	end
+	if (!n_vs && vc_vq && vc_hs != 5) begin
+		vc_bad = vc_bad + 1;
+		$display("vsync FAIL: a pulse of %0d lines, ending in HD frame %0d", vc_hs, vc_f);
+	end
+	if (n_frame) begin
+		// HD frame vc_f + 1 starts: frame vc_f - 1's late lines are over
+		if (vc_f >= 2 && vc_f - 1 < VC_N) begin
+			vc_done = vc_done + 1;
+			if (vc_cnt[vc_f - 1] != 1) begin
+				vc_bad = vc_bad + 1;
+				$display("vsync FAIL: HD frame %0d has %0d vsync pulses", vc_f - 1, vc_cnt[vc_f - 1]);
+			end
+		end
+		vc_f = vc_f + 1;
+	end
+end
+final $display("vsync check: %0d frames, %0d faults", vc_done, vc_bad);
 
 // ---- logs: line phase (new path), frame ends and the config latch ----
 integer fdp = 0;

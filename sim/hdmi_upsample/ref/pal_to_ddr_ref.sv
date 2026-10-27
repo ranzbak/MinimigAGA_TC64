@@ -235,9 +235,9 @@ module pal_to_ddr_ref(
   .PAL_HZ_BACK_PORCH(220),
   .PAL_VT_TOP(15),
   .PAL_VT_ACT_LN(720),
-  .PAL_VT_FRONT_PORCH(5),
+  .PAL_VT_FRONT_PORCH(0),
   .PAL_VT_SYNC_WIDTH(5),
-  .PAL_VT_BACK_PORCH(20)
+  .PAL_VT_BACK_PORCH(25)
   ) hd_50hz_gen(
     .clk(clk_148),
     .reset(reset),
@@ -297,9 +297,9 @@ module pal_to_ddr_ref(
   .PAL_HZ_BACK_PORCH(220),
   .PAL_VT_TOP(15),
   .PAL_VT_ACT_LN(720),
-  .PAL_VT_FRONT_PORCH(5),
+  .PAL_VT_FRONT_PORCH(0),
   .PAL_VT_SYNC_WIDTH(5),
-  .PAL_VT_BACK_PORCH(20)
+  .PAL_VT_BACK_PORCH(25)
   ) hd_60hz_gen (
     .clk(clk_148),
     .reset(reset),
