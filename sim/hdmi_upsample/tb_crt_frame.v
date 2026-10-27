@@ -37,7 +37,7 @@
 //                signed, -128..127; default 0, the reference path keeps 0)
 //   +voff2=N +vofframe=F +voffline=L   change VPOS to voff2 during HD frame
 //                F, line L of the new path (the VPOS-change legs)
-//   +force60     both paths use the 60 Hz upsampler (r_50hz forced 0)
+//   +force60     both paths use the 60 Hz upsampler (r_50hz 0: forced)
 //   +ring16      the line-rate mode on all 16 line buffers (see "ring")
 //   +ntsc        NTSC input: 262-line fields (263 long with +lace), the
 //                picture's lines 0..261; the line stays 227 CCK as Agnus
@@ -260,7 +260,9 @@ end
 initial begin
 	#1;
 	if ($test$plusargs("force60")) begin
-		force dut.r_50hz = 1'b0;
+		// the new path's r_50hz is a wire (~myfreq.o_hz60): Verilator's force
+		// reaches a register's readers, not a wire's, so force the register
+		force dut.myfreq.r_hz60 = 1'b1;
 		force ref0.r_50hz = 1'b0;
 	end
 end

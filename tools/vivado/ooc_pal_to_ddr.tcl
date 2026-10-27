@@ -19,8 +19,8 @@ set part xc7a100tfgg676-2
 file mkdir $outdir
 
 set A $repo/rtl/openaars/adv7511
-read_verilog -sv $A/pal_to_ddr.sv $A/signal_generator.sv
-read_verilog $A/pal_to_hd_upsample.v $A/crt_post.v $A/crt_beamh.v $A/bram_tdp.v $A/adv_ddr.v $A/frame_freq.v
+read_verilog -sv $A/pal_to_ddr.sv $A/signal_generator.sv $A/frame_freq.sv
+read_verilog $A/pal_to_hd_upsample.v $A/crt_post.v $A/crt_beamh.v $A/bram_tdp.v $A/adv_ddr.v
 # The CRT tables: pal_to_ddr's CRT_*_FILE parameters name them without a
 # path ($readmemh by name); as memory files of the design synthesis finds
 # them, as build_ap040.tcl's add_src does in the project.

@@ -145,36 +145,17 @@ module pal_to_ddr #(
     end
   end
 
-  // Detect FPS
-  wire [$clog2(100):0] cur_fps;
-  wire                 fps_valid;
-  reg                  r_50hz = 1'b0;
-  reg                  r_60hz = 1'b0;
+  // Detect the frame rate: the 60 Hz path for an input frame of 12.5 .. 19.5
+  // ms, else the 50 Hz path.  r_50hz is what the chain below switches on (and
+  // what tb_crt_frame.v reads; its +force60 forces myfreq.o_hz60).
+  wire                 w_freq_hz60;
+  wire                 r_50hz = ~w_freq_hz60;
   frame_freq myfreq(
     .clk(clk_148),
     .reset(reset),
     .i_vsync(w_pal_vsync),
-    .o_freq(cur_fps), // 7 bits frequency, 2 bits fraction
-    .o_valid(fps_valid) //
+    .o_hz60(w_freq_hz60)
   );
-
-  // Depending on frame rate switch 50/60Hz
-  always @(posedge clk_148)
-  begin
-    r_50hz <= 1'b0;
-    r_60hz <= 1'b0;
-    if (fps_valid == 1'b1)
-    begin
-      if (cur_fps < 53)
-        begin
-          r_50hz <= 1'b1;
-        end
-      else
-        begin
-          r_60hz <= 1'b1;
-        end
-    end
-  end
 
   // One upsampler and one 720p signal generator for both rates
   // (findings/scaler/plan.md step 2, 2026-10-13), switched by r_50hz.  Up

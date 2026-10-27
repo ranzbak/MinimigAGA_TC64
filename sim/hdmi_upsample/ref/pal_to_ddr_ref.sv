@@ -134,7 +134,7 @@ module pal_to_ddr_ref(
   wire                 fps_valid;
   reg                  r_50hz = 1'b0;
   reg                  r_60hz = 1'b0;
-  frame_freq myfreq(
+  frame_freq_ref myfreq(
     .clk(clk_148),
     .reset(reset),
     .i_vsync(w_pal_vsync),

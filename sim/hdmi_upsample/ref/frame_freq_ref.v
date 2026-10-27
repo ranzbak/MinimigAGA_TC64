@@ -5,7 +5,7 @@
 //
 // Create Date: 07/12/2021 09:08:37 PM
 // Design Name: Frame freq counter
-// Module Name: frame_freq
+// Module Name: frame_freq_ref (the pre-clean-up frame_freq.v, 2026-10-26, for tb_frame_freq.v and pal_to_ddr_ref.sv)
 // Project Name: Open Aars
 // Target Devices: Xilinx Artix 7 series
 // Tool Versions: Vivado
@@ -19,7 +19,7 @@
 //
 //////////////////////////////////////////////////////////////////////////////////
 
-module frame_freq #(
+module frame_freq_ref #(
   parameter CLK_FREQ_IN = 148 // Clock in frequency in MHz
 ) (
   input  wire reset,
