@@ -74,6 +74,7 @@
 "MINMGAR%dCFG"
 "Minimig AGA%s version 20%d-%d-%d for Turbo Chameleon 64"
 "New directory sector: %x\n"
+"OSD2: %02X %02X %02X %02X"
 "Offset: %ld"
 "Parent directory is %ld \r"
 "Partition: %ld"

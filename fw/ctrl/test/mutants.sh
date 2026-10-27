@@ -113,7 +113,7 @@ checkio() {
 control() {
   prep control
   local t rc=0
-  for t in mock_selftest cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_test hwmap_test spireply_test diskstat_test swap_test fat_test mmc_test config_test hdd_test cdpath_test fdd_test drivesounds_test boot_test sdc_test sdproto_test rom_test; do
+  for t in mock_selftest cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_test hwmap_test spireply_test diskstat_test swap_test fat_test mmc_test config_test hdd_test cdpath_test fdd_test drivesounds_test boot_test sdc_test sdproto_test rom_test osd2_test; do
     mk control "run64-$t" > "mut/control/log.$t" 2>&1 || { echo "control: run64-$t FAILED (mut/control/log.$t)"; rc=1; }
   done
   mk control fmt > mut/control/log.fmt 2>&1 || { echo "control: fmt FAILED (mut/control/log.fmt)"; rc=1; }
@@ -606,6 +606,16 @@ unit hdd_bounce hdd_test src hdd.c 's/if (hc.op.err == SD_E_GONE \&\& hc.op.inta
 unit hdd_bounce_intact hdd_test src hdd.c 's/if (hc.op.err == SD_E_GONE \&\& hc.op.intact \&\& /if (hc.op.err == SD_E_GONE \&\& /' "the command never ends"
 unit sdp_intact hdd_test src sdproto.c 's/op->intact = s.st != ST_RD_GAYLE/op->intact = 1 || s.st != ST_RD_GAYLE/' "the command never ends"
 unit hdd_bounce_reinit hdd_test src hdd.c 's/ || (!sd_card_type() \&\& !sd_init())) {/) {/' "FAIL wr_bounce_last"
+
+# ---- the OSD text layer driver (osd2_test; findings/osd-redesign Phase 2) ----
+# lane swap: a chars-only run sent as attrs and the other way round
+unit osd2_lanes osd2_test src osd2.c 's/k == K_CHR ? OSD2_TXT_CHARS : OSD2_TXT_ATTRS/k == K_CHR ? OSD2_TXT_ATTRS : OSD2_TXT_CHARS/' "FAIL attrs only: mode 2"
+# a flush that skips every dirty row after the first
+unit osd2_skiprow osd2_test src osd2.c 's/if (!k)$/if (!k || r > 2)/' "FAIL init flush: frames"
+# no compare: an unchanged redraw is sent again
+unit osd2_nocompare osd2_test src osd2.c 's/if ((kinds \& K_CHR) \&\& osd2_chr\[row\]\[col\] != ch)/if (kinds \& K_CHR)/' "FAIL unchanged redraw: bytes"
+# the commit sends the palette but never the window
+unit osd2_nowin osd2_test src osd2.c 's/^\tsend_win();$/\t;/' "FAIL commit: entry 5 blend"
 
 echo "$nkilled mutants killed"
 if [ $bad -eq 0 ]; then echo "=== MUTANTS PASS"; else echo "=== MUTANTS FAILED"; fi

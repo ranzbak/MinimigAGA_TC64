@@ -73,6 +73,11 @@ $(eval $(call TEST,spireply_test,$$(TD)/mock_hw.c $$(TD)/mock_sdc.c $$(SRC)/hard
 # findings/sdcard-engine Task 1) and their report on the mock UART
 $(eval $(call TEST,diskstat_test,$$(TD)/mock_hw.c $$(TD)/mock_sdc.c $$(SRC)/hardware.c $$(SRC)/uart.c $$(SRC)/rvlibc.c $$(SRC)/diskstat.c,,))
 
+# osd2_test: the OSD text layer driver (osd2.c, findings/osd-redesign Phase 2):
+# detection, the 0x2C/0x3C/0x4C/0x5C byte streams on the mock's SPI trace,
+# dirty rows and lane modes, clipping, word wrap
+$(eval $(call TEST,osd2_test,$$(SRC)/osd2.c $$(TD)/mock_hw.c $$(TD)/mock_sdc.c $$(SRC)/hardware.c,,))
+
 # sdc_test: the SD card peripheral driver (sdc.c, findings/sdcard-engine
 # Task 9) with the real arch/irq.c on the mock's interrupt controller, the
 # mock's model of rtl/host/sdcard_spi.v (registers, FIFOs, shifter, Gayle
@@ -378,7 +383,7 @@ check_io: $(SRC)/check_io.awk $(TD)/check_io.sh $(wildcard $(TD)/check_io/*)
 
 run: fmt check_io cardpath run-mock_selftest run-cue_test run-cdaudio_test run-atapi_test run-cdrom_test \
      run-openhf_test run-lib_test run-hwmap_test run-spireply_test run-diskstat_test run-swap_test run-fat_test run-mmc_test \
-     run-config_test run-hdd_test run-cdpath_test run-fdd_test run-drivesounds_test run-boot_test run-sdc_test run-sdproto_test run-rom_test
+     run-config_test run-hdd_test run-cdpath_test run-fdd_test run-drivesounds_test run-boot_test run-sdc_test run-sdproto_test run-rom_test run-osd2_test
 
 clean:
 	$(RM) -r out mut

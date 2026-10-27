@@ -35,6 +35,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "fpga.h"
 #include "osd.h"
+#include "osd2.h"
 #include "config.h"
 
 #define CMD_HDRID 0xAACA
@@ -218,6 +219,8 @@ void fpga_init() {
 	unsigned long time __attribute__((unused)) = GetTimer(0);
 	char ver_beta,ver_major,ver_minor,ver_minion;
 	char ver_magic,ver_caps;
+	unsigned char osd2_ver[4];
+	int i;
 	char rtl_ver[45];
 
 	EnableOsd();
@@ -232,9 +235,19 @@ void fpga_init() {
 	// minion version happens to spell.
 	ver_magic  = SPI_reply();
 	ver_caps   = SPI_reply();
+	// Bytes 10-13: the OSD text layer (osd2.h; 0xB5, version, 64, 32).  An
+	// older core answers MINION_VER (a day, <= 31) there, never 0xB5.  Bytes
+	// 6-9 (the input diagnostic) are read only to get there; reading byte 9
+	// clears its sticky half, which at boot holds nothing anyone has seen.
+	for (i = 6; i < 10; i++)
+		SPI_reply();
+	for (i = 0; i < 4; i++)
+		osd2_ver[i] = SPI_reply();
 	DisableOsd();
 	core_caps = (ver_magic == (char)0xA4) ? ver_caps : 0;
 	SPIN; SPIN; SPIN; SPIN;
+	if (osd2_detect(ver_magic == (char)0xA4, osd2_ver))
+		osd2_init(OSD2_ATTR(OSD2_C_TEXT, OSD2_C_PANEL));   // the window off, the cell RAM to be cleared
 
 	OsdDoReset(SPI_RST_USR | SPI_RST_CPU | SPI_CPU_HLT,SPI_RST_CPU | SPI_CPU_HLT);
 
@@ -255,6 +268,9 @@ void fpga_init() {
 			(core_caps & CORE_CAPS_MMU) ? " + MMU" : "");
 		BootPrintEx(rtl_ver);
 	}
+	// the text layer's reply bytes, whatever the core (an old one: MINION_VER)
+	sprintf(rtl_ver, "OSD2: %02X %02X %02X %02X", osd2_ver[0], osd2_ver[1], osd2_ver[2], osd2_ver[3]);
+	BootPrintEx(rtl_ver);
 	BootPrintEx(" ");
 	BootPrintEx("Minimig AGA by Rok Krajnc.  Original Minimig by Dennis van Weeren");
 	BootPrintEx("Updates by Jakub Bednarski, Tobias Gubener, Sascha Boing, A.M. Robinson & others");
