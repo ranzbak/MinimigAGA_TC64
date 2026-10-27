@@ -70,4 +70,21 @@ for l in $FF_LEGS; do
 	if grep -q "ALL TESTS PASSED" $F/$l.log; then echo "  pass  frame_freq $l: $(grep 'clocks compared' $F/$l.log)"
 	else echo "  FAIL  frame_freq $l"; grep -E "FAIL|compared" $F/$l.log | head -20; fail=1; fi
 done
+
+# adv_ddr.sv against the old adv_ddr.v (tb_adv_ddr_eq.sv, ref/adv_ddr_ref.v):
+# every output at both clk_out edges, random clk_in / syncs / data / resets,
+# 4 M clocks for each of two DE windows (iverilog, both at once: ~1.5 min).
+EQ_SETS=("10 40 3 20" "0 55 0 28")
+for k in 0 1; do
+	read -r ptd pad py act <<< "${EQ_SETS[$k]}"
+	iverilog -g2012 -Ptb_adv_ddr_eq.PTD=$ptd -Ptb_adv_ddr_eq.PAD=$pad -Ptb_adv_ddr_eq.PY=$py \
+		-Ptb_adv_ddr_eq.ACT=$act -o build/tb_adv_ddr_eq_$k.vvp \
+		tb_adv_ddr_eq.sv ref/adv_ddr_ref.v $A/adv_ddr.sv
+	vvp -n build/tb_adv_ddr_eq_$k.vvp +n=4000000 > build/tb_adv_ddr_eq_$k.log 2>&1 &
+done
+wait
+for k in 0 1; do
+	if grep -q "ALL TESTS PASSED" build/tb_adv_ddr_eq_$k.log; then echo "  pass  adv_ddr eq: $(grep compares build/tb_adv_ddr_eq_$k.log)"
+	else echo "  FAIL  adv_ddr eq ${EQ_SETS[$k]}"; grep -E "FAIL|compares" build/tb_adv_ddr_eq_$k.log | head -12; fail=1; fi
+done
 [ $fail -eq 0 ] && echo "ALL TESTS PASSED" || { echo "FAILURES"; exit 1; }
