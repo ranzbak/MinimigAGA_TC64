@@ -17,7 +17,7 @@ chars
  ^^ Acceleration ^  Hard disk sounds                      off   
                  ^                                              
                  ^  Open classic menu                         ^ 
- How many floppy drives the Amiga has (keypad + and - on Main). 
+ Up/Down move  Right/Enter edit  Left back                      
                                                                 
 fg
 1111111111111111131122222221111111111111111111111111111111111331
