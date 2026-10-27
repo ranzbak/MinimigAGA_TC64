@@ -185,6 +185,7 @@ int ColdBoot(void) { logc("ColdBoot"); return 1; }
 void SanityCheck(void) { logc("SanityCheck"); }
 static int debug_draws;
 void _showdebugmessages(void) { debug_draws++; }
+void debug2_show(int on) { logc("debug2_show(%d)", on); }
 void menu_classic_open(unsigned char page, unsigned char sub) { logc("classic(%d,%d)", page, sub); }
 
 /* ---- the FAT directory model ---- */
@@ -613,7 +614,7 @@ int main(int argc, char **argv)
 	key(KEY_ESC);
 	check("Esc after a change: the dialog", ui_focus, UI_F_DIALOG);
 	key(KEY_ENTER);                 /* Yes (the default) */
-	check_has("Yes: closed, then OsdReset", calls, "OsdHide;OsdReset;", 1);
+	check_has("Yes: closed, then OsdReset", calls, "OsdHide;debug2_show(0);OsdReset;", 1);
 	check("Yes: the menu closed", ui_open_now, 0);
 	check_has("closing: the window off", mock_trace(), WIN_MENU_OFF, 1);
 
@@ -806,7 +807,7 @@ int main(int argc, char **argv)
 	calls_clear();
 	key(KEY_ENTER);
 	key(KEY_ENTER);
-	check_has("Reset: closed, then OsdReset", calls, "OsdHide;OsdReset;", 1);
+	check_has("Reset: closed, then OsdReset", calls, "OsdHide;debug2_show(0);OsdReset;", 1);
 
 	/* ---- Kickstart: the selector, the dialog (No first) ---- */
 	key(KEY_MENU);
@@ -885,15 +886,46 @@ int main(int argc, char **argv)
 	key(KEY_CTRL | KEY_UPSTROKE);
 	key(KEY_LALT | KEY_UPSTROKE);
 	check("Ctrl-Alt-F12: DebugMode", DebugMode, 1);
-	check_has("Ctrl-Alt-F12: SanityCheck, the debug page shown", calls, "SanityCheck;OsdShow(0);", 1);
+	check_has("Ctrl-Alt-F12: SanityCheck, the debug page on the layer", calls, "SanityCheck;OsdHide;debug2_show(1);", 1);
 	debug_draws = 0;
 	pass(3);
 	check("debug mode: the lines drawn every pass", debug_draws, 3);
 	key(KEY_MENU);
-	check_has("menu over debug mode: the bitmap off again", mock_trace(), KEYS_TO_OSD, 1);
+	check_has("menu over debug mode: the keyboard to the OSD, bitmap off", mock_trace(), KEYS_TO_OSD, 1);
+	check_has("menu over debug mode: the menu's window", mock_trace(), WIN_MENU_ON, 1);
+	calls_clear();
+	mock_reset();
+	mock_timer_step(0);
 	key(KEY_ESC);
-	check_has("closing in debug mode: the debug page back", calls, "OsdShow(0);", 1);
-	DebugMode = 0;
+	check_has("closing in debug mode: the debug page back on the layer", calls, "OsdHide;debug2_show(1);", 1);
+	check_has("closing in debug mode: the layer not switched off", mock_trace(), WIN_MENU_OFF, 0);
+	check_has("debug mode: the bitmap OSD never on", calls, "OsdShow", 0);
+	/* a toast in debug mode: the debug lines wait, then the page comes back */
+	calls_clear();
+	mock_reset();
+	mock_timer_step(0);
+	key(KEY_LSHIFT);
+	key(KEY_KPPLUS);
+	key(KEY_LSHIFT | KEY_UPSTROKE);
+	check_has("debug mode toast: its window on", mock_trace(), WIN_TOAST_ON, 1);
+	check_str("debug mode toast: on row 0", cells(0, 11, 7), "vol 22 ");
+	debug_draws = 0;
+	pass(3);
+	check("debug mode toast: the debug lines not drawn over it", debug_draws, 0);
+	wait_counts(UI_T(1000) + 1);
+	check_has("debug mode toast ends: the debug page back", calls, "debug2_show(1);", 1);
+	check_has("debug mode toast ends: the layer not switched off", mock_trace(), WIN_TOAST_OFF, 0);
+	pass(1);
+	check("debug mode toast ended: the debug lines again", debug_draws > 0, 1);
+	/* debug mode off: the layer off */
+	calls_clear();
+	key(KEY_CTRL);
+	key(KEY_LALT);
+	key(KEY_MENU);
+	key(KEY_CTRL | KEY_UPSTROKE);
+	key(KEY_LALT | KEY_UPSTROKE);
+	check("Ctrl-Alt-F12 again: DebugMode off", DebugMode, 0);
+	check_has("debug mode off: the page off", calls, "OsdHide;debug2_show(0);", 1);
 
 	/* ---- the error page takes over ---- */
 	key(KEY_MENU);

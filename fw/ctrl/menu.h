@@ -99,6 +99,9 @@ void ErrorMessage(char *message, unsigned char code);
 void InfoMessage(char *message);
 void DebugMessage(char *message);
 void _showdebugmessages();
+// The Ctrl-Alt-F12 debug page on the OSD text layer (osd2_caps): on draws it
+// and switches the 64 x 20 window on, off switches it off if it was on.
+void debug2_show(int on);
 void ShowSplash();
 void HideSplash();
 

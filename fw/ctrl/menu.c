@@ -167,8 +167,9 @@ static void debug2_draw(void)
     osd2_flush();
 }
 
-// the debug page on the text layer, on (1) or off (0)
-static void debug2_show(int on)
+// the debug page on the text layer, on (1) or off (0); also the new menu's
+// (ui.c) when it closes, or a toast ends, in debug mode
+void debug2_show(int on)
 {
     if (on)
     {

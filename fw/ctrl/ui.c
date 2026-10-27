@@ -413,11 +413,13 @@ void ui_close(void)
 	toast_on = 0;
 	if (ui_focus != UI_F_TABBAR)
 		ui_focus = UI_F_LIST;
-	osd2_disable();
+	OsdHide();                      /* the keyboard back to the Amiga */
 	if (DebugMode)
-		OsdShow(0);                 /* the debug lines on the classic OSD, as the classic menu */
-	else
-		OsdHide();                  /* the keyboard back to the Amiga */
+		debug2_show(1);             /* the debug page on the layer (menu.c), in place of the menu */
+	else {
+		osd2_disable();
+		debug2_show(0);
+	}
 }
 
 void ui_toast(const char *text)
@@ -929,7 +931,10 @@ void ui_tick(void)
 		toast_on = 0;
 		if (popup) {
 			popup = 0;
-			osd2_disable();
+			if (DebugMode)
+				debug2_show(1);     /* the debug page back over the toast's row */
+			else
+				osd2_disable();
 		}
 		if (ui_open_now)
 			ui_draw_status();
@@ -968,6 +973,6 @@ void ui_handle(void)
 	dirty = 0;
 	if (ui_open_now || popup)
 		osd2_flush();
-	if (!ui_open_now && DebugMode)
-		_showdebugmessages();
+	if (!ui_open_now && !popup && DebugMode)
+		_showdebugmessages();       /* (not under a toast: it draws row 0 too) */
 }

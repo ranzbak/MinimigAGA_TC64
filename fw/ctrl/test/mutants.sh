@@ -623,7 +623,12 @@ unit ui_scrollhold ui_test src ui.h 's/^#define UI_T_SCROLL_HOLD UI_T(500)/#defi
 # a cursor move does not restart the scroll
 unit ui_scrollkeep ui_test src ui.c '/^static void key_files/,/^}/s/^\tscroll_reset();$/\t;/' "FAIL scroll: a cursor move resets it"
 # closing leaves the layer on
-unit ui_noclose ui_test src ui.c '/^void ui_close(void)/,/^}/s/^\tosd2_disable();$/\t;/' "FAIL closing: the window off"
+unit ui_noclose ui_test src ui.c '/^void ui_close(void)/,/^}/s/^\t\tosd2_disable();$/\t\t;/' "FAIL closing: the window off"
+# debug mode: closing the menu puts the classic bitmap OSD on again (the
+# debug page belongs on the layer since osd-p2's 5ab0e127)
+unit ui_debugbitmap ui_test src ui.c '/^void ui_close(void)/,/^}/s/^\t\tdebug2_show(1);  /\t\tOsdShow(0);  /' "FAIL closing in debug mode: the debug page back on the layer"
+# debug mode: a toast's end switches the layer off instead of the debug page back
+unit ui_debugtoast ui_test src ui.c 's/^\t\t\t\tdebug2_show(1);     \/\* the debug page back over/\t\t\t\tosd2_disable();     \/* the debug page back over/' "FAIL debug mode toast ends: the debug page back"
 # opening switches the classic bitmap OSD on too
 unit ui_bitmap ui_test src ui.c 's/SPI(to_osd ? DISABLE_KEYBOARD : 0);/SPI(to_osd ? DISABLE_KEYBOARD | 1 : 0);/' "FAIL open: OSD_CMD_OSD 0x02"
 # Up past the first item stays in the list (no way to the tabs for a joystick)
