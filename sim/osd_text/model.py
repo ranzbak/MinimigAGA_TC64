@@ -40,6 +40,10 @@ LEGS = {
     "hz60": ((3, 16, 5, 64, 20), (3, 96, 3, 40, 5)),
     # layer off: A disabled with a window set, B enabled with cols 0
     "off": ((2, 0, 0, 64, 32), (3, 0, 0, 0, 20)),
+    # bench +vtop=15: the DE starts 15 lines after the frame pulse (the
+    # generator's PAL_VT_TOP); the window follows the DE.  A: s1full's B;
+    # B: scale 1 at the top edge (y0 = 0) and the bottom rows
+    "vtop": ((3, 16, 5, 64, 20), (1, 2, 0, 40, 32)),
 }
 
 

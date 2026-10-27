@@ -53,12 +53,18 @@
 //     cal pixels from the hsync's start to the DE's start, measured on each
 //         line with DE (HS_DE until the first one): no porch constants, the
 //         same in 720p50 and 720p60.
-//     ny  the line: all ones at i_frame (the generator's frame pulse, its
-//         line 0), + 1 at each hsync start, so it is valid from the line's
-//         hsync on, well before its first pixel.
+//     ny  the line, 0 = the first line with DE after i_frame: set at
+//         i_frame to -1 - vcal, + 1 at each hsync start, so it is valid
+//         from the line's hsync on, well before its first pixel.
+//     vcal hsyncs from i_frame to the first line with DE (its hsync
+//         included) less one, measured in each frame (VS_DE until the
+//         first one): row 0 follows the DE wherever the generator puts
+//         its active lines (signal_generator PAL_VT_TOP: DE from vt_count
+//         15), no vertical porch constants either.
 //   This reproduces the generator's own counters (hz_count - c_act - 1,
-//   vt_count) exactly; signal_generator's DE rises one clock before the
-//   pixel's video, which is what cal's "+ 1" takes into account.
+//   vt_count - the first active line) exactly; signal_generator's DE rises
+//   one clock before the pixel's video, which is what cal's "+ 1" takes
+//   into account.
 //
 // Timing
 //   The video, i_hs, i_vs and i_de leave LAT pixels (2*LAT clocks) later, so
@@ -96,7 +102,8 @@ module osd_text #(
   parameter LAT   = 3,          // video and sync delay, pixels (0..5; 0: see "LAT 0")
   parameter H_ACT = 1280,       // the raster
   parameter V_ACT = 720,
-  parameter HS_DE = 261         // cal at power-up (720p50/60: sync 40 + back porch 220, + 1)
+  parameter HS_DE = 261,        // cal at power-up (720p50/60: sync 40 + back porch 220, + 1)
+  parameter VS_DE = 0           // vcal at power-up (the first line with DE after i_frame)
 )(
   input             clk,        // clk_148
   input             i_pe,       // pixel enable (~signal_generator o_adv_clk)
@@ -214,6 +221,9 @@ reg [11:0] cal  = HS_DE;                  // pixels from the hsync's start to th
 reg [11:0] nx0  = 12'd1 - HS_DE;          // nx at the hsync's start
 reg [11:0] nx   = 12'd0;
 reg [11:0] ny   = 12'hfff;
+reg [11:0] lcnt = 12'hfff;                // hsyncs since i_frame, less one
+reg [11:0] vcal = VS_DE;                  // lcnt at the frame's first DE
+reg        vseen = 1'b1;                  // vcal measured in this frame (none before the first i_frame)
 always @(posedge clk) begin
   if (i_pe) begin
     hs_p <= i_hs;
@@ -224,13 +234,22 @@ always @(posedge clk) begin
       hcnt <= 12'd0;
       nx   <= nx0;
       ny   <= ny + 1'b1;
+      lcnt <= lcnt + 1'b1;
     end
-    if (i_de && !de_p)
+    if (i_de && !de_p) begin
       cal <= hcnt + 1'b1;
+      if (!vseen) begin
+        vcal  <= lcnt;
+        vseen <= 1'b1;
+      end
+    end
   end
   nx0 <= 12'd1 - cal;
-  if (i_frame)
-    ny <= 12'hfff;
+  if (i_frame) begin
+    ny    <= ~vcal;                       // -1 - vcal: 0 at the hsync of the first DE line
+    lcnt  <= 12'hfff;
+    vseen <= 1'b0;
+  end
 end
 
 // ---- overlay pipeline ----------------------------------------------------------------------

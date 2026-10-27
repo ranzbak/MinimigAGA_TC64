@@ -22,6 +22,8 @@
 #   hz60    720p60 (generator i_hz60: other line length, same porches):
 #           scale 2 64 x 20 centred; scale 2 cut by the right edge
 #   off     layer disabled (window set); enabled with cols 0
+#   vtop    the frame pulse 15 lines before the DE starts (bench +vtop=15, as
+#           signal_generator's PAL_VT_TOP): row 0 must be the first DE line
 # Every palette has all four modes; the cells are random chars and attributes
 # written in three lane passes, glyphs 0x80..0xff are rewritten through the
 # font port, the rest come from osd_font.mem.
@@ -66,6 +68,7 @@ leg() {     # leg <name> <leg>: exit 0 if the leg passes
 	rm -rf "$d"; python3 "$HERE/model.py" gen "$l" "$d" || return 1
 	[ "$l" = off ] && pa=+off
 	[ "$l" = hz60 ] && pa=+hz60
+	[ "$l" = vtop ] && pa=+vtop=15
 	simrun "$n" "$d" $pa > "$d/tb.log" 2>&1
 	grep -q "^=== PASS" "$d/tb.log" || return 1
 	python3 "$HERE/model.py" check "$d" > "$d/model.log" 2>&1

@@ -3,6 +3,11 @@
 // (signal_generator.sv, 720p50; +hz60: 720p60), as pal_to_ddr.sv will wire it in Phase 2:
 // the generator's video, syncs, pixel enable (~o_adv_clk) and frame pulse
 // into osd_text.
+// +vtop=N: the layer's frame pulse comes N lines before the generator's
+// (the same clock in the line), so the DE starts N lines after it, as with
+// signal_generator's PAL_VT_TOP = N; the window must follow the DE (row 0 =
+// the first line with DE).  The bench's frames, writes and captures go by
+// the layer's pulse.
 // Run it in a leg directory made by model.py gen (run.sh does all of it):
 //
 //   cells_g.hex  2048 x 16  pass 1, both lanes (garbage)
@@ -69,7 +74,7 @@ reg [39:0] txt_cfg = 40'd0;
 wire [7:0] o_r, o_g, o_b;
 wire       o_hs, o_vs, o_de;
 osd_text #(.LAT(LAT)) dut (
-  .clk(clk), .i_pe(g_pe), .i_frame(g_frame),
+  .clk(clk), .i_pe(g_pe), .i_frame(l_frame),
   .i_r(g_r), .i_g(g_g), .i_b(g_b), .i_hs(g_hs), .i_vs(g_vs), .i_de(g_de),
   .o_r(o_r), .o_g(o_g), .o_b(o_b), .o_hs(o_hs), .o_vs(o_vs), .o_de(o_de),
   .wclk(wclk),
@@ -88,7 +93,9 @@ reg [7:0]  pal_a [0:63];
 reg [7:0]  pal_b [0:63];
 reg [39:0] cfg [0:1];
 reg        off, hz60;
+integer    vtop = 0;          // +vtop=N: the layer's frame pulse N lines early
 integer    FRAME_CLK;         // one frame_end pulse per 750 lines
+integer    LINE_CLK;
 integer    errs = 0;
 initial begin
   $readmemh("cells_g.hex", cells_g);
@@ -100,8 +107,20 @@ initial begin
   $readmemh("cfg.hex", cfg);
   off = $test$plusargs("off");
   hz60 = $test$plusargs("hz60");
-  FRAME_CLK = 750 * (hz60 ? 1651 : 1981) * 2;
+  if (!$value$plusargs("vtop=%d", vtop)) vtop = 0;
+  LINE_CLK = (hz60 ? 1651 : 1981) * 2;
+  FRAME_CLK = 750 * LINE_CLK;
 end
+
+// ---- the layer's frame pulse: the generator's, or (+vtop) vtop lines before it --
+// (the generator is genlocked to frame_end: its frame is FRAME_CLK clocks)
+reg     e_frame = 1'b0;
+integer e_cnt = -1;           // clocks since the generator's last frame pulse
+always @(posedge clk) begin
+  e_cnt   <= g_frame ? 1 : (e_cnt >= 0 ? e_cnt + 1 : -1);
+  e_frame <= vtop > 0 && e_cnt == FRAME_CLK - vtop * LINE_CLK - 1;
+end
+wire    l_frame = (vtop > 0) ? e_frame : g_frame;
 
 // ---- frame pacing: one frame_end pulse per 750 lines of 1981 pixels (+hz60: 1651) --
 integer clkn = 0;
@@ -110,14 +129,14 @@ integer g_ny = 0;             // hsyncs since the frame pulse (the line, for the
 reg     hs_q = 1'b0;
 always @(posedge clk) begin
   hs_q <= g_hs;
-  if (g_frame) g_ny <= 0;
+  if (l_frame) g_ny <= 0;
   else if (g_hs && !hs_q) g_ny <= g_ny + 1;
 end
 always @(posedge clk) begin
   clkn <= clkn + 1;
   if (clkn == 8) reset <= 1'b0;
   frame_end <= (clkn % FRAME_CLK) == 40;
-  if (g_frame) frames <= frames + 1;
+  if (l_frame) frames <= frames + 1;
 end
 
 // input video: a new random value per pixel, at the edge before the
@@ -201,7 +220,7 @@ reg        live = 0;          // delay line filled
 always @(posedge clk) begin
   if (clkn > D + 20) live <= 1'b1;
   // new frame
-  if (g_frame && (frames == 1 || frames == 2)) begin
+  if (l_frame && (frames == 1 || frames == 2)) begin
     if (fi >= 0) begin $fclose(fi); $fclose(fo); end
     capf <= frames + 1;
     fi = $fopen((frames == 1) ? "in_1.hex" : "in_2.hex", "w");
