@@ -157,6 +157,8 @@ module minimig #(
   // Which CPU core the SoC around this instance is built with, for the OSD to
   // read back: bit 0 AP68040 fitted, bit 1 selectable, bit 2 FPU, bit 3 MMU.
   parameter [7:0] CORE_CAPS = 8'h00,
+  // 1: the top shows the 720p OSD text layer of osd_txt (userio_osd.v)
+  parameter OSD_TEXT = 0,
   // 1: the SD card engine's Gayle DMA (rtl/minimig/sdcard_gayle.v) sits on
   // Gayle's firmware-side data port, driven by sdcard_spi through the
   // sdc_g_* ports.  0: those ports are ignored (tops without the engine
@@ -244,6 +246,7 @@ module minimig #(
   inout sdo, //SPI data output
   input sck, //SPI clock
   output [1:0] osd_rx_seq, // OSD reply sequence, clk domain (userio_osd.v)
+  output [106:0] osd_txt,  // OSD text layer write side, clk domain (userio_osd.v)
   // // host
   // output wire           host_cs,
   // output wire [ 24-1:0] host_adr,
@@ -760,7 +763,7 @@ end
 localparam [7:0] CAPS_IDE2 = 8'h80;
 
 //instantiate user IO
-userio #(.CORE_CAPS(CORE_CAPS | CAPS_IDE2)) USERIO1
+userio #(.CORE_CAPS(CORE_CAPS | CAPS_IDE2), .OSD_TEXT(OSD_TEXT)) USERIO1
 (
   .clk(clk),
   .clk7_en(clk7_en),
@@ -803,6 +806,7 @@ userio #(.CORE_CAPS(CORE_CAPS | CAPS_IDE2)) USERIO1
   .sdo(user_sdo),
   .sck(sck),
   .osd_rx_seq(osd_rx_seq),
+  .osd_txt(osd_txt),
   .osd_blank(osd_blank),
   .osd_pixel(osd_pixel),
   .memory_config(userio_memory_config),

@@ -21,11 +21,11 @@ file mkdir $outdir
 set A $repo/rtl/openaars/adv7511
 read_verilog -sv $A/pal_to_ddr.sv $A/signal_generator.sv $A/frame_freq.sv $A/adv_ddr.sv \
     $A/pal_to_hd_upsample.sv
-read_verilog $A/crt_post.v $A/crt_beamh.v $A/bram_tdp.v
+read_verilog $A/crt_post.v $A/crt_beamh.v $A/bram_tdp.v $A/osd_text.v
 # The CRT tables: pal_to_ddr's CRT_*_FILE parameters name them without a
 # path ($readmemh by name); as memory files of the design synthesis finds
 # them, as build_ap040.tcl's add_src does in the project.
-foreach m {crt_wrom crt_lut crt_bloom crt_hdec crt_henc crt_hk crt_sdec crt_senc crt_swrom} {
+foreach m {crt_wrom crt_lut crt_bloom crt_hdec crt_henc crt_hk crt_sdec crt_senc crt_swrom osd_font} {
     read_mem $A/$m.mem
 }
 

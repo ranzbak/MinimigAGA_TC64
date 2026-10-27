@@ -89,6 +89,18 @@
 #   osdbeam    OSD config 0 -> beam medium during HD frame 3: frame 3
 #              bit-identical, frame 4 changed, the beam latch moves once,
 #              in the vertical blank (input lines 2..6)
+#   osd2spi    userio_osd's OSD text layer commands over SPI
+#              (tb_osd_text_spi.v): cells by lane, font, palette staging,
+#              cfg + commit toggle, VERSION bytes 10-13, an unknown command
+#              and 0x0C untouched; the two mutants (commit, lane) must fail
+#   osd2off    the OSD text layer (osd_text.v) loaded, committed disabled:
+#              the picture = the reference path's, and every record of the
+#              golden p50 (pictures, frame lengths, pin signatures) equal
+#   osd2win    the layer on, scale 2, 64 x 20 at (128, 40): adv_ddr's
+#              picture = osd_text model.py over the generator's picture
+#              (osd2_check.py, no stored golden); osd2win60 the same on the
+#              60 Hz path; both print where the pin raster sits on the
+#              generator's ("osd2 pins")
 #   nosync     the Amiga hsync and vsync stop from HD frame 4 on (RTG mode
 #              with its sync start past the frame size), RGB runs on: the
 #              signal generator's watchdog ends one frame of 1500 lines
@@ -152,6 +164,9 @@ declare -A ARGS=(
 	[mask_dim]="+cfg=041 +out=$I/mask_dim"
 	[bloom]="+cfg=201 +out=$I/bloom"
 	[bloom_lo]="+cfg=101 +out=$I/bloom_lo"
+	[osd2off]="+osd2=$I/osd2off.d +first=6"
+	[osd2win]="+osd2=$I/osd2win.d +out=$I/osd2win +osd2gen=$I/osd2win_gen"
+	[osd2win60]="+force60 +osd2=$I/osd2win.d +out=$I/osd2win60 +osd2gen=$I/osd2win60_gen"
 )
 DITHER="+frame=build/dither.hex +hires=build/dither_hires.hex"
 BEAMS=""
@@ -159,7 +174,7 @@ for w in 1 2 3; do for b in 0 1 2; do
 	BEAMS="$BEAMS beam_w${w}b${b}"
 	ARGS[beam_w${w}b${b}]="$DITHER +cfg=$(printf %03x $(( (w << 10) | (b << 8) ))) +out=$I/beam_w${w}b${b} +sdump=$I/beam_w${w}b${b}.sd"
 done; done
-ALL="unit osdspi ripple bypass15 bypass31 gate31 bypass60 rtg beamfx15 beamfx31 beamfx60 dim lace osd osdfx osdbeam mask mask2 maskmg mask_dim bloom bloom_lo $BEAMS beamalign beammetric hposm hposp hposv hposm60 hposp60 vposp vposm vposp60 vposm60 vposdbl vposlace vposlacem vposchg vposchg0 vposchgz vposchgzm vposglide nosync"
+ALL="unit osdspi ripple bypass15 bypass31 gate31 bypass60 rtg beamfx15 beamfx31 beamfx60 dim lace osd osdfx osdbeam mask mask2 maskmg mask_dim bloom bloom_lo $BEAMS beamalign beammetric hposm hposp hposv hposm60 hposp60 vposp vposm vposp60 vposm60 vposdbl vposlace vposlacem vposchg vposchg0 vposchgz vposchgzm vposglide nosync osd2spi osd2off osd2win osd2win60"
 legs=("$@"); [ ${#legs[@]} -eq 0 ] && legs=($ALL)
 # the bloom legs compare against the same picture without bloom
 want() { local x; for x in "${legs[@]}"; do [ "$x" = "$1" ] && return 0; done; return 1; }
@@ -175,6 +190,9 @@ want vposglide && ! want vposp && legs+=(vposp)
 # beamalign and beammetric use the beam legs' pictures
 want beamalign && { want beam_w2b0 || legs+=(beam_w2b0); want beam_w3b2 || legs+=(beam_w3b2); }
 want beammetric && for x in beam_w1b0 beam_w2b0 beam_w3b0 beam_w1b1; do want $x || legs+=($x); done
+# the OSD text layer legs' data (osd2_check.py)
+want osd2off && python3 osd2_check.py gen $I/osd2off.d off
+{ want osd2win || want osd2win60; } && python3 osd2_check.py gen $I/osd2win.d win
 # the Verilator legs, CRT_JOBS (4) at a time (one core each)
 P=${CRT_JOBS:-4}
 sims=(); for l in "${legs[@]}"; do [ -n "${ARGS[$l]}" ] && sims+=("$l"); done
@@ -324,6 +342,23 @@ for l in "${legs[@]}"; do
 		u=$(vvp -n build/tb_osd_video.vvp)
 		echo "$u" | grep FAIL | sed 's/^/        /'
 		echo "$u" | grep -q "osd video: 0 errors" && pass "osdspi: second byte -> {scaling, beam, bloom, mask}, one byte leaves them off" || bad "osdspi"
+		;;
+	osd2spi)
+		u=$(vvp -n build/tb_osd_text_spi.vvp)
+		echo "$u" | grep FAIL | sed 's/^/        /'
+		echo "$u" | grep -q "osd text spi: 0 errors" && pass "osd2spi: 0x2C/0x3C/0x4C/0x5C, VERSION 10-13, 0x6C and 0x0C" || bad "osd2spi"
+		for m in OSD_TXT_MUTANT_COMMIT OSD_TXT_MUTANT_LANE; do
+			vvp -n build/tb_osd_text_spi_$m.vvp | grep -q "osd text spi: 0 errors" && bad "osd2spi: mutant $m not caught" \
+				|| pass "osd2spi: mutant $m caught"
+		done
+		;;
+	osd2off)
+		if allzero $l 1; then pass "$l: layer loaded, off: $(diffs $l | sed 's/ (.*//')"; else bad "$l"; diffs $l; fi
+		m=$(python3 golden.py check $I/$l.log golden/p50.txt) && pass "$l: golden p50 $m" || bad "$l: golden p50 $m"
+		;;
+	osd2win|osd2win60)
+		grep -m1 '^osd2 pins' $I/$l.log | sed 's/^/        /'
+		m=$(python3 osd2_check.py check $I/osd2win.d $I/${l}_gen_3.hex $I/${l}_3.hex) && pass "$l: picture $m" || bad "$l: $m"
 		;;
 	ripple)
 		r=$(python3 crt_check.py ripple ../../rtl/openaars/adv7511/crt_wrom.mem)

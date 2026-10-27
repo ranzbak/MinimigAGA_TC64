@@ -1,14 +1,18 @@
 `timescale 1ns / 1ps
 // pal_to_ddr: the HDMI output chain.  Amiga video (PAL / NTSC, 15 / 31 kHz,
 // RTG) to 720p50 / 720p60 for the ADV7511, 12-bit DDR at the pins:
-//   crt_beamh -> pal_to_hd_upsample -> crt_post -> signal_generator -> adv_ddr,
+//   crt_beamh -> pal_to_hd_upsample -> crt_post -> signal_generator
+//     -> osd_text (the OSD's 720p text layer) -> adv_ddr,
 // with frame_freq choosing the 50 / 60 Hz raster from the input frame period.
 // Clock domains:
 //   clk_114  the Amiga stream: input delay, crt_beamh, the upsampler's write
 //            side and its VPOS decision
 //   CLK_28   Denise's HIRES / SHRES and the OSD / RTG bits (phase-aligned
 //            with clk_114; the static bits get 2-FF synchronisers anyway)
-//   clk_148  720p: frame_freq, upsampler read side, crt_post, generator, adv_ddr
+//   clk_148  720p: frame_freq, upsampler read side, crt_post, generator,
+//            osd_text, adv_ddr
+//   i_osd_clk (CLK_28) osd_text's write side: cell / font RAM, staging
+//            palette and window, from userio_osd.v
 // Design notes: findings/scaler/plan.md (one chain, exact-ratio scaling),
 // findings/adv7511/.  Benches: sim/hdmi_upsample (crt_build.sh, golden.sh,
 // crt_run.sh, scaler_run.sh, run.sh).
@@ -24,7 +28,9 @@ module pal_to_ddr #(
   // crt_post's linear-light tables (sim/hdmi_upsample/scl_mkroms.py)
   parameter CRT_SDEC_FILE  = "crt_sdec.mem",
   parameter CRT_SENC_FILE  = "crt_senc.mem",
-  parameter CRT_SWROM_FILE = "crt_swrom.mem"
+  parameter CRT_SWROM_FILE = "crt_swrom.mem",
+  // the OSD text layer's font RAM power-up content (fw/ctrl/tools/mkfontmem.py)
+  parameter OSD_FONT_FILE  = "osd_font.mem"
 ) (
   // clk_114: the Amiga video stream
   input  logic        clk_114,
@@ -43,6 +49,9 @@ module pal_to_ddr #(
   input  logic [7:0]  i_voffset,      // OSD Video Pos VPOS: signed 64 us steps, positive down
   input  logic        i_rtg_enable,
   input  logic [13:0] i_crt_cfg,      // OSD Video page, as osd_cfg_t below
+  // CLK_28: the OSD text layer's write side (userio_osd.v "OSD text layer")
+  input  logic        i_osd_clk,
+  input  logic [106:0] i_osd_txt,
   // clk_148: 720p to the ADV7511 (adv_ddr's pad registers); reset: system reset
   input  logic        clk_148,
   input  logic        reset,
@@ -300,11 +309,11 @@ module pal_to_ddr #(
     .o_vphase(w_m_vphase)
   );
 
-  // not read here: tb_crt_frame.v's DE probe (n_dee); OSD phase 2 taps it
-  /* verilator lint_off UNUSEDSIGNAL */
+  // the generator's DE (osd_text's position; tb_crt_frame.v's DE probe n_dee)
   logic       w_adv_de;
-  /* verilator lint_on UNUSEDSIGNAL */
-  logic [7:0] w_o_r, w_o_g, w_o_b;
+  logic [7:0] w_o_r, w_o_g, w_o_b;      // the picture adv_ddr gets: the generator's + the OSD layer
+  logic [7:0] w_gen_r, w_gen_g, w_gen_b;
+  logic       w_gen_frame;
   // 720p50 / 720p60 raster (front porch by w_hz60), restarted at the upsampler's frame end
   /* verilator lint_off PINCONNECTEMPTY */
   signal_generator #(
@@ -327,14 +336,64 @@ module pal_to_ddr #(
     .i_b(w_crt_b),
     .o_x(),
     .o_y(),
-    .o_r(w_o_r),
-    .o_g(w_o_g),
-    .o_b(w_o_b),
+    .o_r(w_gen_r),
+    .o_g(w_gen_g),
+    .o_b(w_gen_b),
     .o_adv_clk(w_adv_clk),
     .o_hsync(w_hd_gen_hsync),
     .o_vsync(w_hd_vsync),
     .o_adv_de(w_adv_de),
-    .o_frame()
+    .o_frame(w_gen_frame)
+  );
+
+  // The OSD's text layer (findings/osd-redesign/plan.md 3.1, 4.2), over the
+  // finished 720p picture: pixel-exact whatever the Amiga mode, the scaler
+  // and the CRT effects.  It finds its position from the generator's pixel
+  // enable, hsync, DE and frame pulse.  LAT 0: the overlay pipeline runs
+  // ahead of the pixel, the last step is a combinational blend with the
+  // generator's video, the syncs are not touched -- adv_ddr, the 60 Hz
+  // upsampler (hsync_out) and the pins keep the generator's timing exactly,
+  // and with the layer off w_o_* = w_gen_*.  (A LAT above 0 would delay the
+  // video 2*LAT clk_148 and need the delayed o_hs / o_vs into adv_ddr.)
+  // Write side: userio_osd's registered bus in CLK_28; palette and window
+  // cross into clk_148 by a commit toggle at the frame pulse (wizard.xdc's
+  // dll_28 -> clk_148 set_max_delay covers the static staging bits).
+  localparam OSD_LAT = 0;
+  osd_text #(
+    .FONT_FILE(OSD_FONT_FILE),
+    .LAT(OSD_LAT)
+  ) my_osd_text (
+    .clk(clk_148),
+    .i_pe(~w_adv_clk),
+    .i_frame(w_gen_frame),
+    .i_r(w_gen_r),
+    .i_g(w_gen_g),
+    .i_b(w_gen_b),
+    .i_hs(w_hd_gen_hsync),
+    .i_vs(w_hd_vsync),
+    .i_de(w_adv_de),
+    .o_r(w_o_r),
+    .o_g(w_o_g),
+    .o_b(w_o_b),
+    .o_hs(),
+    .o_vs(),
+    .o_de(),
+    .wclk(i_osd_clk),
+    // i_osd_txt: {commit, cfg[39:0], pal_we, pal_adr[5:0], pal_dat[7:0],
+    //             font_we, font_adr[11:0], font_dat[7:0],
+    //             txt_we, txt_lane[1:0], txt_adr[10:0], txt_dat[15:0]}
+    .txt_commit(i_osd_txt[106]),
+    .txt_cfg(i_osd_txt[105:66]),
+    .pal_we(i_osd_txt[65]),
+    .pal_adr(i_osd_txt[64:59]),
+    .pal_dat(i_osd_txt[58:51]),
+    .font_we(i_osd_txt[50]),
+    .font_adr(i_osd_txt[49:38]),
+    .font_dat(i_osd_txt[37:30]),
+    .txt_we(i_osd_txt[29]),
+    .txt_lane(i_osd_txt[28:27]),
+    .txt_adr(i_osd_txt[26:16]),
+    .txt_dat(i_osd_txt[15:0])
   );
 
   // 12-bit DDR to the ADV7511; DE from its own counters, the pins from IOB pad registers

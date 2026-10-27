@@ -6,7 +6,11 @@ module userio_osd #(
 	// fitted, bit 1 AP68040 selectable (a dual-core build), bit 2 FPU,
 	// bit 3 MMU.  Read back as byte 5 of OSD_CMD_VERSION, behind the magic
 	// byte 4; see findings/ap68040/plan-v2-with-ddr3.md, "OSD and firmware".
-	parameter [7:0] CORE_CAPS = 8'h00
+	parameter [7:0] CORE_CAPS = 8'h00,
+	// 1: the top has the 720p OSD text layer (rtl/openaars/adv7511/osd_text.v)
+	// on osd_txt; VERSION bytes 10-13 say so (0xB5, 1, 64, 32).  0: they
+	// stay MINION_VER and the firmware keeps the legacy OSD.
+	parameter       OSD_TEXT  = 0
 )
 (
 	input 	clk,		    	// 28MHz clock
@@ -32,6 +36,9 @@ module userio_osd #(
 	// only: the host compares increments, never the absolute value.  See
 	// "reply sequence" below and findings/osd-riscv/phase4.md "Handshake design".
 	output	reg [1:0] osd_rx_seq = 2'd0,
+	// The OSD text layer's write side (commands 0x2C/0x3C/0x4C/0x5C below),
+	// clk domain, every field registered; layout in "OSD text layer".
+	output	wire [106:0] osd_txt,
 	output	osd_blank,			//osd overlay, normal video blank output
 	output	osd_pixel,			//osd video pixel
 	output	reg osd_enable = 0,			//osd enable
@@ -624,6 +631,165 @@ assign host_adr  = mem_adr[23:0];
 
 `endif // MINIMIG_HOST_DIRECT
 
+//----------------------------------------------------------------------------
+// OSD text layer (findings/osd-redesign/plan.md 4.1): the write side of the
+// 720p text layer osd_text.v, which sits in the HDMI chain (clk_148) and
+// takes these registers on its own write port (clk).
+//
+//   0x2C TXT_WR   d0 mode (0 char,attr pairs; 1 chars only; 2 attrs only;
+//                 3 writes nothing), d1 cell[10:8], d2 cell[7:0], d3..
+//                 data: one cell per pair (written at its second byte, both
+//                 lanes) or per byte (one lane); the cell +1 each, mod 2048
+//   0x3C FONT_WR  d0 adr[11:8], d1 adr[7:0], d2.. bytes, adr +1 each
+//   0x4C PAL_WR   d0 the first entry (0..15), then 4 bytes per entry {mode
+//                 in bits 7:6, r, g, b} into the layer's staging palette
+//   0x5C TXT_CFG  d0..d4 = txt_cfg bytes 0..4 {ctrl (bit 0 enable, bit 1
+//                 scale 2), x0/8, y0/8, cols, rows}; the 5th byte toggles
+//                 txt_commit (the layer copies palette and cfg at its next
+//                 frame); bytes after the 5th are ignored
+// dat_cnt stops at 4, so the streams run on their own "on" flags (set by
+// the last header byte, as wr_en_r for 0x0C) and TXT_CFG on its own count.
+// The write enables are one clk pulse at the clk7 edge that takes the byte.
+// osd_txt = {txt_commit, txt_cfg[39:0], pal_we, pal_adr[5:0], pal_dat[7:0],
+//            font_we, font_adr[11:0], font_dat[7:0],
+//            txt_we, txt_lane[1:0], txt_adr[10:0], txt_dat[15:0]}
+// (107 bits; pal_to_ddr.sv unpacks it).  Lane 0 = char [7:0], 1 = attr [15:8].
+//----------------------------------------------------------------------------
+localparam [5:0]
+  SPI_TXT_WR_ADR  = 6'b0_010_11,   // 0x2C
+  SPI_FONT_WR_ADR = 6'b0_011_11,   // 0x3C
+  SPI_PAL_WR_ADR  = 6'b0_100_11,   // 0x4C
+  SPI_TXT_CFG_ADR = 6'b0_101_11;   // 0x5C
+wire spi_txt_wr_sel  = (cmd_dat == SPI_TXT_WR_ADR);
+wire spi_font_wr_sel = (cmd_dat == SPI_FONT_WR_ADR);
+wire spi_pal_wr_sel  = (cmd_dat == SPI_PAL_WR_ADR);
+wire spi_txt_cfg_sel = (cmd_dat == SPI_TXT_CFG_ADR);
+
+reg        txt_we = 1'b0, font_we = 1'b0, pal_we = 1'b0, txt_commit = 1'b0;
+reg [1:0]  txt_lane = 2'b00;
+reg [10:0] txt_adr = 11'd0;
+reg [15:0] txt_dat = 16'd0;
+reg [11:0] font_adr = 12'd0;
+reg [7:0]  font_dat = 8'd0;
+reg [5:0]  pal_adr = 6'd0;
+reg [7:0]  pal_dat = 8'd0;
+reg [39:0] txt_cfg = 40'd0;
+// stream state
+reg        txt_on = 1'b0, txt_ph = 1'b0, font_on = 1'b0, pal_on = 1'b0;
+reg [1:0]  txt_mode = 2'd0;
+reg [10:0] txt_ptr = 11'd0;
+reg [7:0]  txt_chr = 8'd0;
+reg [11:0] font_ptr = 12'd0;
+reg [5:0]  pal_ptr = 6'd0;
+reg [2:0]  cfg_cnt = 3'd0;
+
+always @(posedge clk) begin
+  txt_we  <= 1'b0;
+  font_we <= 1'b0;
+  pal_we  <= 1'b0;
+  if (clk7_en) begin
+    if (rx && cmd) begin
+      txt_on  <= 1'b0;
+      txt_ph  <= 1'b0;
+      font_on <= 1'b0;
+      pal_on  <= 1'b0;
+      cfg_cnt <= 3'd0;
+    end else if (rx) begin
+      // 0x2C
+      if (spi_txt_wr_sel) begin
+        if (txt_on) begin
+          case (txt_mode)
+            2'd0: if (!txt_ph) begin
+                    txt_chr <= wrdat;
+                    txt_ph  <= 1'b1;
+                  end else begin
+                    txt_we   <= 1'b1;
+                    txt_lane <= 2'b11;
+                    txt_adr  <= txt_ptr;
+                    txt_dat  <= {wrdat, txt_chr};
+                    txt_ptr  <= txt_ptr + 11'd1;
+                    txt_ph   <= 1'b0;
+                  end
+            2'd1: begin
+                    txt_we   <= 1'b1;
+                    txt_lane <= 2'b01;
+                    txt_adr  <= txt_ptr;
+                    txt_dat  <= {8'h00, wrdat};
+                    txt_ptr  <= txt_ptr + 11'd1;
+                  end
+            2'd2: begin
+                    txt_we   <= 1'b1;
+                    txt_lane <= 2'b10;
+                    txt_adr  <= txt_ptr;
+                    txt_dat  <= {wrdat, 8'h00};
+                    txt_ptr  <= txt_ptr + 11'd1;
+                  end
+            default: ;
+          endcase
+        end else begin
+          if (dat_cnt == 3'd0) txt_mode <= wrdat[1:0];
+          if (dat_cnt == 3'd1) txt_ptr[10:8] <= wrdat[2:0];
+          if (dat_cnt == 3'd2) begin
+            txt_ptr[7:0] <= wrdat;
+            txt_on <= 1'b1;
+          end
+        end
+      end
+      // 0x3C
+      if (spi_font_wr_sel) begin
+        if (font_on) begin
+          font_we  <= 1'b1;
+          font_adr <= font_ptr;
+          font_dat <= wrdat;
+          font_ptr <= font_ptr + 12'd1;
+        end else begin
+          if (dat_cnt == 3'd0) font_ptr[11:8] <= wrdat[3:0];
+          if (dat_cnt == 3'd1) begin
+            font_ptr[7:0] <= wrdat;
+            font_on <= 1'b1;
+          end
+        end
+      end
+      // 0x4C
+      if (spi_pal_wr_sel) begin
+        if (pal_on) begin
+          pal_we  <= 1'b1;
+          pal_adr <= pal_ptr;
+          pal_dat <= wrdat;
+          pal_ptr <= pal_ptr + 6'd1;
+        end else begin
+          pal_ptr <= {wrdat[3:0], 2'b00};
+          pal_on  <= 1'b1;
+        end
+      end
+      // 0x5C
+      if (spi_txt_cfg_sel && cfg_cnt != 3'd5) begin
+        case (cfg_cnt)
+          3'd0: txt_cfg[7:0]   <= wrdat;
+          3'd1: txt_cfg[15:8]  <= wrdat;
+          3'd2: txt_cfg[23:16] <= wrdat;
+          3'd3: txt_cfg[31:24] <= wrdat;
+          default: txt_cfg[39:32] <= wrdat;
+        endcase
+        cfg_cnt <= cfg_cnt + 3'd1;
+`ifndef OSD_TXT_MUTANT_COMMIT
+        if (cfg_cnt == 3'd4)
+          txt_commit <= ~txt_commit;
+`endif
+      end
+    end
+  end
+end
+
+`ifdef OSD_TXT_MUTANT_LANE
+// bench mutant (sim/hdmi_upsample/tb_osd_text_spi.v): char and attr lanes swapped
+assign osd_txt = {txt_commit, txt_cfg, pal_we, pal_adr, pal_dat, font_we, font_adr, font_dat,
+                  txt_we, txt_lane[0], txt_lane[1], txt_adr, txt_dat[7:0], txt_dat[15:8]};
+`else
+assign osd_txt = {txt_commit, txt_cfg, pal_we, pal_adr, pal_dat, font_we, font_adr, font_dat,
+                  txt_we, txt_lane, txt_adr, txt_dat};
+`endif
+
 // rtl version
 //`ifndef MINIMIG_XILINX
 `include "minimig_version.vh"
@@ -676,6 +842,11 @@ always @ (*) begin
     4'd7    : rtl_ver = in_diag[15:8];
     4'd8    : rtl_ver = in_diag[23:16];
     4'd9    : rtl_ver = in_diag[31:24];
+    // the OSD text layer (see above); MINION_VER without it, as before
+    4'd10   : rtl_ver = OSD_TEXT ? 8'hB5  : MINION_VER;
+    4'd11   : rtl_ver = OSD_TEXT ? 8'd1   : MINION_VER;
+    4'd12   : rtl_ver = OSD_TEXT ? 8'd64  : MINION_VER;
+    4'd13   : rtl_ver = OSD_TEXT ? 8'd32  : MINION_VER;
     default : rtl_ver = MINION_VER;
   endcase
 end

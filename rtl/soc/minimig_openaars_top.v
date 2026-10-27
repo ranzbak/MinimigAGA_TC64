@@ -247,6 +247,7 @@ wire [7:0]  voffset;
 // RTG
 wire        rtg_ena;
 wire [13:0] crt_cfg;     // HDMI CRT emulation and scaler: OSD video config (CLK_28)
+wire [106:0] osd_txt;    // OSD text layer write side (CLK_28, userio_osd.v)
 wire        vid_hires;   // Denise BPLCON0 HIRES (CLK_28)
 wire        vid_shres;   // Denise BPLCON0 SHRES (CLK_28)
 
@@ -539,6 +540,9 @@ pal_to_ddr my_pal_to_ddr (
   .i_crt_cfg(crt_cfg),
   .i_pal_hires(vid_hires),
   .i_pal_shres(vid_shres),
+  // OSD text layer: its write side (CLK_28)
+  .i_osd_clk(clk_28),
+  .i_osd_txt(osd_txt),
   //.i_pal_cs(vga_cs),
   // Output HDMI
   .o_clk_pixel(dv_clk),
@@ -557,6 +561,7 @@ minimig_virtual_top
   .havec2p(1'b0),
   .havei2c(1'b1),
   .havevpos(1'b1),
+  .osd_text(1),
   .havespirtc(1'b1),
   // the SD card on the SD card engine (sdcard_spi + its Gayle DMA), card
   // detect on sd_m_cdet (F23); fpga/openaars/aars_v5.0/xc7a100t/sd_card.xdc
@@ -619,6 +624,7 @@ minimig_virtual_top
   .VGA_B(vga_b),
   .RTG_ENABLE(rtg_ena),
   .CRT_CFG(crt_cfg),
+  .OSD_TXT(osd_txt),
   .VID_HIRES(vid_hires),
   .VID_SHRES(vid_shres),
   .SDRAM_DQ(dr_d),

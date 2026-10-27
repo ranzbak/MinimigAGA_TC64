@@ -27,7 +27,8 @@
 
 module userio #(
   // Passed straight through to the OSD controller; see userio_osd.v.
-  parameter [7:0] CORE_CAPS = 8'h00
+  parameter [7:0] CORE_CAPS = 8'h00,
+  parameter       OSD_TEXT  = 0     // the 720p OSD text layer is on osd_txt (userio_osd.v)
 ) (
   input  wire           clk,                // bus clock
   input  wire           reset,              // reset
@@ -70,6 +71,7 @@ module userio #(
   output wire           sdo,                // SPI data out
   input  wire           sck,                // SPI clock
   output wire [  2-1:0] osd_rx_seq,         // OSD reply sequence (userio_osd.v)
+  output wire [107-1:0] osd_txt,            // OSD text layer write side, clk (userio_osd.v)
   output wire           osd_blank,          // osd overlay, normal video blank output
   output wire           osd_pixel,          // osd video pixel
   // EIGHT bits, not seven.  userio_osd drives eight and minimig.v declares
@@ -579,7 +581,7 @@ wire [31:0] in_diag = {in_sticky,
                        _fire0, potcap[1], _mleft0, _mright0, _lmb, _rmb, joy1enable, key_disable};
 
 //instantiate osd controller
-userio_osd #(.CORE_CAPS(CORE_CAPS)) osd1
+userio_osd #(.CORE_CAPS(CORE_CAPS), .OSD_TEXT(OSD_TEXT)) osd1
 (
   .in_diag          (in_diag),
   .in_diag_clr      (in_diag_clr),
@@ -599,6 +601,7 @@ userio_osd #(.CORE_CAPS(CORE_CAPS)) osd1
   .sdo              (sdo),
   .sck              (sck),
   .osd_rx_seq       (osd_rx_seq),
+  .osd_txt          (osd_txt),
   .osd_blank        (osd_blank),
   .osd_pixel        (osd_pixel),
   .osd_enable       (osd_enable),

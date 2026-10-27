@@ -23,6 +23,9 @@ module minimig_virtual_top #(
     parameter havespirtc = 1,
     parameter havei2c = 1,
     parameter havevpos = 0,
+    // 1: the top shows the OSD text layer of OSD_TXT (720p, osd_text.v in
+    // pal_to_ddr.sv); the OSD then says so in its VERSION reply
+    parameter osd_text = 0,
     // 1: the SD card engine (findings/sdcard-engine/design.md): the card's
     // pins from rtl/host/sdcard_spi.v (registers at 0xFFFFFF00..2C through
     // cfide's ext_* port, interrupt on cfide irq_src(4), card detect
@@ -123,6 +126,8 @@ module minimig_virtual_top #(
     // HDMI CRT emulation (CLK_28 domain): OSD video config
     // {beam, bloom, mask, hr_filter, lr_filter, scanline} and Denise BPLCON0 HIRES / SHRES
     output wire [ 14-1:0] CRT_CFG,
+    // OSD text layer write side (CLK_28 domain, userio_osd.v "OSD text layer")
+    output wire [107-1:0] OSD_TXT,
     output wire           VID_HIRES,
     output wire           VID_SHRES,
 
@@ -1225,6 +1230,7 @@ wire [1:0] osd_rx_seq;
 `ifdef HOSTONLY
 assign SPI_DO=1'b1;
 assign osd_rx_seq=2'b00;   // no OSD
+assign OSD_TXT=107'd0;     // no OSD text layer writes
 assign _ram_oe=1'b1;
 assign _ram_we=1'b1;
 assign sdc_g_ack=1'b0;     // no minimig: no Gayle side of the SD card engine
@@ -1262,6 +1268,7 @@ fpga_temp fpga_temp_inst (
 minimig #(
     .NTSC(1'b0),
     .CORE_CAPS(CORE_CAPS),
+    .OSD_TEXT(osd_text ? 1 : 0),
     // The third Zorro-III board is offered either way now: SDRAM scraps
     // (2/4 MB) without the DDR3, the DDR3 fast RAM board (16 MB) with it.
     // Both are decoded against the base the OS assigns, so neither adds
@@ -1350,6 +1357,7 @@ minimig #(
     .sdo          (SPI_DO           ), // SPI data output
     .sck          (SPI_SCK          ), // SPI clock
     .osd_rx_seq   (osd_rx_seq       ), // OSD reply sequence -> cfide HOST_REQ
+    .osd_txt      (OSD_TXT          ), // OSD text layer write side -> pal_to_ddr
     //video
     .selcsync     (VGA_SELCS        ), // composite sync
     ._csync       (cs               ), // horizontal sync
