@@ -32,6 +32,7 @@ module osd_text_tb;
 
 parameter LAT = 3;
 localparam D = 2 * LAT;
+localparam DD = (D > 0) ? D : 1;    // LAT 0: no delay line, the checks use the input as it is
 localparam NPIX = 1280 * 720;
 
 reg clk = 1'b0, wclk = 1'b0, reset = 1'b1;
@@ -181,14 +182,14 @@ initial begin
 end
 
 // ---- checks and capture --------------------------------------------------------------
-reg [26:0] dl [0:D-1];        // {rgb, hs, vs, de} of the input, D clocks
+reg [26:0] dl [0:DD-1];       // {rgb, hs, vs, de} of the input, D clocks
 integer j;
 always @(posedge clk) begin
   dl[0] <= {g_r, g_g, g_b, g_hs, g_vs, g_de};
   for (j = 1; j < D; j = j + 1) dl[j] <= dl[j-1];
 end
-wire [23:0] din = dl[D-1][26:3];
-wire [2:0]  dsy = dl[D-1][2:0];
+wire [23:0] din = (D > 0) ? dl[DD-1][26:3] : {g_r, g_g, g_b};
+wire [2:0]  dsy = (D > 0) ? dl[DD-1][2:0] : {g_hs, g_vs, g_de};
 
 integer fi = -1, fo = -1;     // capture files
 integer ni = 0, no = 0;       // pixels captured in this frame

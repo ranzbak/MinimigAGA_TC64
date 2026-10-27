@@ -83,11 +83,17 @@
 //   +11 effective mode (2 outside the window), colour + video sum
 //   +12 o_r/g/b
 //
+//   LAT 0 (pal_to_ddr.sv): no delay at all.  The overlay's mode and colour
+//   are registered once more (+12) and blended with the input video
+//   combinationally (mode 3: an 8-bit add per channel); the syncs and DE
+//   pass through as wires.  The chain behind the layer sees exactly the
+//   generator's timing, and with the layer off exactly its video.
+//
 // Bench: sim/osd_text (model.py renders the same frames; LAT check with the
 // layer off).  OOC size/timing: tools/vivado/ooc_osd.
 module osd_text #(
   parameter FONT_FILE = "osd_font.mem",
-  parameter LAT   = 3,          // video and sync delay, pixels (1..5)
+  parameter LAT   = 3,          // video and sync delay, pixels (0..5; 0: see "LAT 0")
   parameter H_ACT = 1280,       // the raster
   parameter V_ACT = 720,
   parameter HS_DE = 261         // cal at power-up (720p50/60: sync 40 + back porch 220, + 1)
@@ -101,9 +107,9 @@ module osd_text #(
   input             i_hs,
   input             i_vs,
   input             i_de,
-  output reg [7:0]  o_r = 8'd0,
-  output reg [7:0]  o_g = 8'd0,
-  output reg [7:0]  o_b = 8'd0,
+  output     [7:0]  o_r,
+  output     [7:0]  o_g,
+  output     [7:0]  o_b,
   output            o_hs,
   output            o_vs,
   output            o_de,
@@ -261,17 +267,7 @@ reg [23:0] pc10 = 24'd0;
 // +11
 reg [1:0]  me11 = 2'd2;
 reg [23:0] pc11 = 24'd0;
-reg [23:0] vd11 = 24'd0;
-reg [8:0]  sr11 = 9'd0, sg11 = 9'd0, sb11 = 9'd0;
 initial for (i = 1; i <= ADLY; i = i + 1) attr[i] = 8'd0;
-
-// the video and syncs: D1 registers, then +11 and +12 (the blend)
-reg  [23:0] vdl [0:(D1 > 0 ? D1 - 1 : 0)];
-wire [23:0] vdel = (D1 > 0) ? vdl[(D1 > 0 ? D1 - 1 : 0)] : {i_r, i_g, i_b};
-reg  [2:0]  sdl [0:2*LAT-1];
-initial for (i = 0; i < (D1 > 0 ? D1 : 1); i = i + 1) vdl[i] = 24'd0;
-initial for (i = 0; i < 2*LAT; i = i + 1) sdl[i] = 3'd0;
-assign {o_hs, o_vs, o_de} = sdl[2*LAT-1];
 
 always @(posedge clk) begin
   // +1
@@ -318,25 +314,57 @@ always @(posedge clk) begin
   pm10  <= live_m[idx9];
   pc10  <= live_c[idx9];
   win10 <= win9;
-  // +11: mode, sum
+  // +11: the effective mode (2 outside the window)
   me11 <= win10 ? pm10 : 2'd2;
   pc11 <= pc10;
-  vd11 <= vdel;
-  sr11 <= pc10[23:16] + vdel[23:16];
-  sg11 <= pc10[15:8]  + vdel[15:8];
-  sb11 <= pc10[7:0]   + vdel[7:0];
-  // +12: blend
-  case (me11)
-    2'd0: {o_r, o_g, o_b} <= pc11;
-    2'd1: {o_r, o_g, o_b} <= {1'b0, vd11[23:17], 1'b0, vd11[15:9], 1'b0, vd11[7:1]};
-    2'd2: {o_r, o_g, o_b} <= vd11;
-    2'd3: {o_r, o_g, o_b} <= {sr11[8:1], sg11[8:1], sb11[8:1]};
-  endcase
-  // video and sync delay lines
-  vdl[0] <= {i_r, i_g, i_b};
-  for (i = 1; i < D1; i = i + 1) vdl[i] <= vdl[i-1];
-  sdl[0] <= {i_hs, i_vs, i_de};
-  for (i = 1; i < 2*LAT; i = i + 1) sdl[i] <= sdl[i-1];
 end
+
+// +12: the blend with the video
+generate if (LAT == 0) begin : g_lat0
+  // the overlay registered once more, then combinational with the input
+  reg  [1:0]  me12 = 2'd2;
+  reg  [23:0] pc12 = 24'd0;
+  always @(posedge clk) begin
+    me12 <= me11;
+    pc12 <= pc11;
+  end
+  wire [8:0] sr = {1'b0, pc12[23:16]} + {1'b0, i_r};
+  wire [8:0] sg = {1'b0, pc12[15:8]}  + {1'b0, i_g};
+  wire [8:0] sb = {1'b0, pc12[7:0]}   + {1'b0, i_b};
+  assign {o_r, o_g, o_b} = (me12 == 2'd0) ? pc12 :
+                           (me12 == 2'd1) ? {1'b0, i_r[7:1], 1'b0, i_g[7:1], 1'b0, i_b[7:1]} :
+                           (me12 == 2'd2) ? {i_r, i_g, i_b} :
+                                            {sr[8:1], sg[8:1], sb[8:1]};
+  assign {o_hs, o_vs, o_de} = {i_hs, i_vs, i_de};
+end else begin : g_lat
+  // the video: D1 registers, then +11 (with the sum) and +12; the syncs 2*LAT
+  reg  [23:0] vdl [0:(D1 > 0 ? D1 - 1 : 0)];
+  wire [23:0] vdel = (D1 > 0) ? vdl[(D1 > 0 ? D1 - 1 : 0)] : {i_r, i_g, i_b};
+  reg  [2:0]  sdl [0:(LAT > 0 ? 2*LAT-1 : 0)];
+  reg  [23:0] vd11 = 24'd0;
+  reg  [8:0]  sr11 = 9'd0, sg11 = 9'd0, sb11 = 9'd0;
+  reg  [23:0] orgb = 24'd0;
+  integer k;
+  initial for (k = 0; k < (D1 > 0 ? D1 : 1); k = k + 1) vdl[k] = 24'd0;
+  initial for (k = 0; k < 2*LAT; k = k + 1) sdl[k] = 3'd0;
+  always @(posedge clk) begin
+    vd11 <= vdel;
+    sr11 <= pc10[23:16] + vdel[23:16];
+    sg11 <= pc10[15:8]  + vdel[15:8];
+    sb11 <= pc10[7:0]   + vdel[7:0];
+    case (me11)
+      2'd0: orgb <= pc11;
+      2'd1: orgb <= {1'b0, vd11[23:17], 1'b0, vd11[15:9], 1'b0, vd11[7:1]};
+      2'd2: orgb <= vd11;
+      2'd3: orgb <= {sr11[8:1], sg11[8:1], sb11[8:1]};
+    endcase
+    vdl[0] <= {i_r, i_g, i_b};
+    for (k = 1; k < D1; k = k + 1) vdl[k] <= vdl[k-1];
+    sdl[0] <= {i_hs, i_vs, i_de};
+    for (k = 1; k < 2*LAT; k = k + 1) sdl[k] <= sdl[k-1];
+  end
+  assign {o_r, o_g, o_b} = orgb;
+  assign {o_hs, o_vs, o_de} = sdl[(LAT > 0 ? 2*LAT-1 : 0)];
+end endgenerate
 
 endmodule
