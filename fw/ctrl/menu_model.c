@@ -269,6 +269,7 @@ static const struct { unsigned char off, shift, bits, apply; } fields[MMF_FIELDS
     [MMF_BEAM]        = { offsetof(configTYPE, crt_beam),    0, 2, F_VIDEO },
     [MMF_FLOPPYTURBO] = { offsetof(configTYPE, floppy.speed), 0, 1, F_FLOPPY },
     [MMF_IDE]         = { offsetof(configTYPE, enable_ide),  0, 1, F_NONE },
+    [MMF_DRIVES]      = { offsetof(configTYPE, floppy.drives), 0, 2, F_FLOPPY },
 };
 
 unsigned char mm_get_field(unsigned char f)
@@ -354,11 +355,99 @@ unsigned char mm_get_sound(unsigned char arg)
     return (config.drivesounds & arg) ? 1 : 0;
 }
 
+void mm_set_sound(unsigned char arg, unsigned char v)
+{
+    if (v)
+    {
+        config.drivesounds |= arg;
+        drivesounds_enable(arg);
+    }
+    else
+    {
+        config.drivesounds &= ~arg;
+        drivesounds_disable(arg);
+    }
+}
+
+void mm_set_cpu(unsigned char arg, unsigned char v)
+{
+    static const unsigned char cpus[3] = { 0, 1, 3 };
+    (void)arg;
+    config.cpu = (config.cpu & ~3) | cpus[v > 2 ? 2 : v];
+    ConfigCPU(config.cpu);
+}
+
+static void video(void)
+{
+    ConfigVideo(config.scanlines, config.crt_mask, config.crt_bloom, config.crt_beam);
+}
+
+void mm_set_scaling(unsigned char arg, unsigned char v)
+{
+    (void)arg;
+    config.scanlines = (config.scanlines & ~SCALING_MASK) | ((v & 3) << SCALING_SHIFT);
+    video();
+}
+
+void mm_set_bloom(unsigned char arg, unsigned char v)
+{
+    (void)arg;
+    config.crt_bloom = v > 2 ? 2 : v;
+    video();
+}
+
+unsigned char mm_bloom_avail(unsigned char arg)
+{
+    (void)arg;
+    return (config.scanlines & 3) || (config.crt_beam & 3) || CONFIG_SCALING(config.scanlines) != SCALING_LINE;
+}
+
+unsigned char mm_get_ide(unsigned char arg)
+{
+    (void)arg;
+    return mm_ide_on ? 1 : 0;
+}
+
+void mm_set_ide(unsigned char arg, unsigned char v)
+{
+    (void)arg;
+    mm_ide_on = v ? 1 : 0;
+}
+
+void mm_step_pos(unsigned char vertical, int dir, unsigned char rtg)
+{
+    videoPosTYPE *p = rtg ? &config.videopos_rtg : &config.videopos;
+    if (!vertical)
+    {
+        if (dir > 0 && (signed char)p->hpos < 0x78)
+            p->hpos = p->hpos + 0x08;
+        else if (dir < 0 && (signed char)p->hpos > -0x80)
+            p->hpos = p->hpos - 0x08;
+    }
+    else
+    {
+        if (dir > 0 && (signed char)p->vpos < VPOS_MAX)
+            p->vpos = p->vpos + VPOS_STEP;
+        else if (dir < 0 && (signed char)p->vpos > -VPOS_MAX)
+            p->vpos = p->vpos - VPOS_STEP;
+    }
+    ConfigVideoPos();
+}
+
+void mm_step_clkdelay(int dir)
+{
+    if (dir > 0 && adv_clkdelay < 7)
+        adv7511_set_clkdelay(adv_clkdelay + 1);
+    else if (dir < 0 && adv_clkdelay > 0)
+        adv7511_set_clkdelay(adv_clkdelay - 1);
+    config.hdmi_clkdelay = adv_clkdelay + 1;  // saved with the config
+}
+
 /******************************************************************/
 /* value texts                                                    */
 /******************************************************************/
 
-static char buf[40];
+static char buf[64];          // the longest: mm_text_hdmi_readback, 50
 
 char *mm_utoa(char *p, unsigned v)
 {
@@ -424,24 +513,29 @@ const char *mm_text_drives(unsigned char arg)
 const char *mm_text_hdf_type(unsigned char slot)
 {
     static const char *const names[] = {
-        "Disabled", "Hardfile", "SD card", "SD partition 1", "SD partition 2",
+        "Disabled", "Hardfile (disk img)", "SD card", "SD partition 1", "SD partition 2",
         "SD partition 3", "SD partition 4", "CD-ROM (ISO)"
     };
-    unsigned char e = SlotConfig(slot)->enabled;
+    unsigned char e = mm_hdf[slot & 3].enabled;
     if (e == (HDF_FILE | HDF_SYNTHRDB))
-        return "Hardfile (fs)";
+        return "Hardfile (filesys)";
     if ((e & HDF_TYPEMASK) > HDF_CDROM)
         return "---";
     return names[e & HDF_TYPEMASK];
 }
 
+// as the classic Harddisks page's second line of a slot
 const char *mm_text_hdf_file(unsigned char slot)
 {
-    hardfileTYPE *h = SlotConfig(slot);
+    hardfileTYPE *h = &mm_hdf[slot & 3];
     if ((h->enabled & HDF_TYPEMASK) != HDF_FILE && h->enabled != HDF_CDROM)
         return "";
-    if (!h->name[0])
-        return h->enabled == HDF_CDROM ? "* no disc *" : "* none *";
+    if (h->enabled == HDF_CDROM && cd_msg_on && mm_hdf_cd_live(slot & 3))
+        return cd_msg_text;
+    if (h->enabled == HDF_CDROM && !h->name[0])
+        return "* no disc *";
+    if (!h->present)
+        return "** file not found **";
     return config_name(h->name, h->long_name, sizeof(h->long_name));
 }
 
@@ -460,9 +554,37 @@ static const char *signed_text(int v)
     return buf;
 }
 
-const char *mm_text_pos(unsigned char vertical)
+const char *mm_text_pos(unsigned char vertical, unsigned char rtg)
 {
-    return signed_text((signed char)(vertical ? config.videopos.vpos : config.videopos.hpos));
+    const videoPosTYPE *p = rtg ? &config.videopos_rtg : &config.videopos;
+    signed_text((signed char)(vertical ? p->vpos : p->hpos));
+    strcat(buf, vertical ? " lines" : " px");
+    return buf;
+}
+
+static char *hex2(char *p, unsigned char v)
+{
+    static const char hex[] = "0123456789abcdef";
+    *p++ = hex[v >> 4];
+    *p++ = hex[v & 15];
+    return p;
+}
+
+const char *mm_text_hdmi_readback(void)
+{
+    extern unsigned long adv_services;   // main.c
+    extern unsigned char adv_int_now;
+    char *p = buf;
+    memcpy(p, "Chip 0xBA: ", 11);
+    p = hex2(p + 11, adv7511_read_clkdelay());
+    memcpy(p, "  set: ", 7);
+    p = hex2(p + 7, (unsigned char)(adv_clkdelay << 5));
+    memcpy(p, "  INT ", 6);
+    p = mm_utoa(p + 6, adv_int_now);
+    memcpy(p, "  serviced ", 11);
+    p = mm_utoa(p + 11, (unsigned)adv_services);
+    *p = 0;
+    return buf;
 }
 
 const char *mm_text_clkdelay(unsigned char arg)

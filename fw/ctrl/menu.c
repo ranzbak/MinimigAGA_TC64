@@ -2583,12 +2583,30 @@ void PrintDirectory(void)
     }
 }
 
+// The error page of the new menu (ui.c), on the text layer; a classic page
+// open over it (About, Supporters) is closed first, so that the new menu
+// gets the keys.
+static void error_on_layer(void)
+{
+    if (ui_legacy_active)
+    {
+        OsdHide();
+        menustate = MENU_NONE2;
+        ui_legacy_active = 0;
+    }
+    ui_error_show(errorpage);
+}
+
 /*  Error Message */
 void ErrorMessage(char *message, unsigned char code)
 {
     (void)message;
     (void)code;
-    ui_legacy_takeover();   // the error page is this menu's
+    if (osd2_caps)
+    {
+        error_on_layer();
+        return;
+    }
     menustate = MENU_ERROR;
     OsdShow(DISABLE_KEYBOARD); // do not disable KEYBOARD
     OsdColor(OSDCOLOR_WARNING);
@@ -2603,7 +2621,11 @@ void ShowError(void)
         t >>= 1;
         ++errorpage;
     }
-    ui_legacy_takeover();   // the error page is this menu's
+    if (osd2_caps)
+    {
+        error_on_layer();
+        return;
+    }
     menustate = MENU_ERROR;
     OsdShow(DISABLE_KEYBOARD);
     OsdColor(OSDCOLOR_WARNING);

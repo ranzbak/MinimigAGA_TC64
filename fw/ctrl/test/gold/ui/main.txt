@@ -16,7 +16,7 @@ chars
                  ^                                              
  ^^ Acceleration ^  About                                     ^ 
                  ^  Supporters                                ^ 
-                 ^  Classic menu                              ^ 
+                 ^                                              
  Floppy drive 0. Enter inserts a disk image (ADF) or ejects it. 
  Backspace ejects all; keypad + and - add or remove drives.     
 fg

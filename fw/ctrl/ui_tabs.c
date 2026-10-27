@@ -1,7 +1,6 @@
 /* ui_tabs: the new OSD menu's tabs and items (ui.h; plan 5's tab map).
- * Main and System work here; Storage, Video and Acceleration show their
- * values and hand over to the classic menu to change them (Phase 4 brings
- * them here: an item's kind UI_INFO -> UI_CYCLE and a set function). */
+ * Every setting of the classic menu is here (OSD redesign Phase 4); Main's
+ * About and Supporters still open the classic pages until their own port. */
 #include <string.h>
 
 #include "hardware.h"
@@ -12,6 +11,7 @@
 #include "config.h"
 #include "cdrom.h"
 #include "drivesounds.h"
+#include "hdd.h"
 #include "menu.h"
 #include "menu_model.h"
 #include "ui.h"
@@ -254,7 +254,9 @@ static unsigned char reconfig_avail(unsigned char arg)
 	return (PLATFORM & (1 << PLATFORM_RECONFIG)) != 0;
 }
 
-/* the classic menu's pages the items hand over to: {page, cursor} */
+/* the classic menu's pages the items hand over to: {page, cursor}; only
+   About (4) and Supporters (5) still do (Phase 4: every setting is native),
+   0-3 are the hand-overs of before, kept so the two items stay as they are */
 static const unsigned char classic_pages[][2] = {
 	{ MENU_MAIN1, 0 },               /* 0 Main */
 	{ MENU_MAIN1, 5 },               /* 1 Storage: "Hard disk settings" on its main page */
@@ -297,8 +299,6 @@ static const struct ui_item main_items[] = {
 	SEP,
 	{ "About", "Who made this (the classic page).", .act = classic_act, .kind = UI_ACTION, .arg = 4, .flags = UI_SUB },
 	{ "Supporters", "Thanks (the classic page).", .act = classic_act, .kind = UI_ACTION, .arg = 5, .flags = UI_SUB },
-	{ "Classic menu", "The previous OSD menu, with every setting. Esc there comes back here.",
-	  .act = classic_act, .kind = UI_ACTION, .arg = 0, .flags = UI_SUB },
 };
 
 /* ---- System ---- */
@@ -345,15 +345,11 @@ static const struct ui_item system_items[] = {
 	  .get = mm_get_volume, .set = mm_set_volume, .kind = UI_CYCLE, .nvalues = 32, .flags = UI_CLAMP | UI_BAR },
 };
 
-/* ---- Storage, Video, Acceleration: shown here, changed in the classic menu ---- */
+/* ---- Storage: the floppies (applied at once), the IDE slots (an edit
+   copy, mm_hdf: leaving the tab after a change offers the reset that
+   applies it, ui.c leave_check) ---- */
 
-static const char *const v_scanlines[] = { "off", "dim", "black", "off" };
-static const char *const v_scaling[] = { "sharp", "area", "line rate", "sharp" };
-static const char *const v_mask[] = { "off", "grille", "grille+", "shadow" };
-static const char *const v_bloom[] = { "off", "low", "high" };
-static const char *const v_beam[] = { "off", "sharp", "medium", "soft" };
-static const char *const v_turbo[] = { "none", "CHIPRAM", "KICK", "BOTH" };
-static const char *const v_chipslots[] = { "Standard", "Fast" };
+static const char *const v_drives[] = { "1", "2", "3", "4" };
 
 static unsigned char sounds_avail(unsigned char arg)
 {
@@ -361,60 +357,163 @@ static unsigned char sounds_avail(unsigned char arg)
 	return drivesounds_loaded() != 0;
 }
 
-static unsigned char ide2_avail(unsigned char arg)
+/* the IDE slots' items: greyed while IDE is off (the classic page) */
+static unsigned char ide_avail(unsigned char arg)
 {
 	(void)arg;
-	return (core_caps & CORE_CAPS_IDE2) != 0;
+	return mm_ide_on != 0;
 }
 
-#define INFO_V(l, h, vals, g, a, n) { l, h, .values = vals, .get = g, .kind = UI_INFO, .arg = a, .nvalues = n }
-#define INFO_T(l, h, t, a) { l, h, .text = t, .kind = UI_INFO, .arg = a }
+/* a slot's file: a hardfile or a CD slot, IDE on */
+static unsigned char hdf_file_avail(unsigned char slot)
+{
+	unsigned char e = mm_hdf[slot].enabled;
+	return mm_ide_on && ((e & HDF_TYPEMASK) == HDF_FILE || e == HDF_CDROM);
+}
+
+/* the type: Right the classic cycle, Left the cycle backwards (the type
+   whose next is the current one) */
+static void hdf_type_step(unsigned char slot, int dir)
+{
+	unsigned char cur = mm_hdf[slot].enabled, e = cur, k;
+	if (dir > 0) {
+		mm_hdf_next_type(slot);
+		return;
+	}
+	for (k = 0; k < 16; k++) {
+		unsigned char nx = mm_hdf_type_after(slot, e);
+		if (nx == cur)
+			break;
+		e = nx;
+	}
+	if (e != cur)
+		mm_hdf_set_type(slot, e);
+}
+
+static void hdf_file_act(unsigned char slot)
+{
+	ui_fs_open(mm_hdf[slot].enabled == HDF_CDROM ? UI_FS_HDCD : UI_FS_HDF, slot);
+}
+
+#define HDF_TYPE(l, h, s, f) { l, h, .text = mm_text_hdf_type, .avail = ide_avail, .step = hdf_type_step, \
+                               .kind = UI_CYCLE, .arg = s, .flags = f }
+#define HDF_FILE_(h, s, f) { "  file", h, .text = mm_text_hdf_file, .act = hdf_file_act, .avail = hdf_file_avail, \
+                             .kind = UI_ACTION, .arg = s, .flags = (f) | UI_SUB }
 
 static const struct ui_item storage_items[] = {
-	INFO_T("Floppy drives", "How many floppy drives the Amiga has (keypad + and - on Main).", mm_text_drives, 0),
-	INFO_V("Floppy turbo", "Faster floppy reads than a real drive.", v_off_on, mm_get_field, MMF_FLOPPYTURBO, 2),
+	{ "Floppy drives", "How many floppy drives the Amiga has (also keypad + and - on Main). More drives need a reset.",
+	  .values = v_drives, .get = mm_get_field, .set = mm_set_field, .kind = UI_CYCLE, .arg = MMF_DRIVES, .nvalues = 4 },
+	{ "Floppy turbo", "Faster floppy reads than a real drive.",
+	  .values = v_off_on, .get = mm_get_field, .set = mm_set_field, .kind = UI_CYCLE, .arg = MMF_FLOPPYTURBO, .nvalues = 2 },
 	{ "Floppy sounds", "Drive noises for the floppies (needs the drive sounds file on the card).",
-	  .values = v_off_on, .get = mm_get_sound, .avail = sounds_avail, .kind = UI_INFO, .arg = DRIVESOUNDS_FLOPPY, .nvalues = 2 },
+	  .values = v_off_on, .get = mm_get_sound, .set = mm_set_sound, .avail = sounds_avail,
+	  .kind = UI_CYCLE, .arg = DRIVESOUNDS_FLOPPY, .nvalues = 2 },
 	SEP,
-	INFO_V("IDE", "The Gayle IDE controller (hard disks, CD-ROM). Changes need a reset.", v_off_on, mm_get_field, MMF_IDE, 2),
-	INFO_T("Port 1 master", "What the first IDE drive is: a hardfile, the SD card or a partition of it, or the CD-ROM.", mm_text_hdf_type, 0),
-	INFO_T("  file", "The image file of the drive above.", mm_text_hdf_file, 0),
-	INFO_T("Port 1 slave", "What the second IDE drive is.", mm_text_hdf_type, 1),
-	INFO_T("  file", "The image file of the drive above.", mm_text_hdf_file, 1),
-	{ "Port 2 master", "IDE port 2 (needs AtapiMagic or IDEfix97 on the Amiga; not bootable).",
-	  .text = mm_text_hdf_type, .avail = ide2_avail, .kind = UI_INFO, .arg = 2, .flags = UI_HIDE },
-	{ "  file", "The image file of the drive above.", .text = mm_text_hdf_file, .avail = ide2_avail, .kind = UI_INFO, .arg = 2, .flags = UI_HIDE },
-	{ "Port 2 slave", "IDE port 2, second drive.", .text = mm_text_hdf_type, .avail = ide2_avail, .kind = UI_INFO, .arg = 3, .flags = UI_HIDE },
-	{ "  file", "The image file of the drive above.", .text = mm_text_hdf_file, .avail = ide2_avail, .kind = UI_INFO, .arg = 3, .flags = UI_HIDE },
-	{ "Hard disk sounds", "Drive noises for the hard disks.",
-	  .values = v_off_on, .get = mm_get_sound, .avail = sounds_avail, .kind = UI_INFO, .arg = DRIVESOUNDS_HDD, .nvalues = 2 },
-	SEP,
-	{ "Open classic menu", "Changes the drives in the classic menu (its main page: Floppy and Hard disk settings).",
-	  .act = classic_act, .kind = UI_ACTION, .arg = 1, .flags = UI_SUB },
+	{ "IDE", "The Gayle IDE controller (hard disks, CD-ROM). A change here or below takes effect with the reset offered on leaving.",
+	  .values = v_off_on, .get = mm_get_ide, .set = mm_set_ide, .kind = UI_CYCLE, .nvalues = 2 },
+	HDF_TYPE("Port 1 master", "The first IDE drive: a hardfile (with a partition table, or one filesystem), the SD card or a partition.", 0, 0),
+	HDF_FILE_("The image file of the drive above. Enter chooses one (HDF; ISO or CUE for a CD-ROM).", 0, 0),
+	HDF_TYPE("Port 1 slave", "The second IDE drive (types as the master).", 1, 0),
+	HDF_FILE_("The image file of the drive above. Enter chooses one.", 1, 0),
+	HDF_TYPE("Port 2 master", "IDE port 2 (needs AtapiMagic or IDEfix97 on the Amiga; not bootable). Also the CD-ROM drive.", 2, UI_IDE2),
+	HDF_FILE_("The image file of the drive above. Enter chooses one (ISO or CUE for the CD-ROM).", 2, UI_IDE2),
+	HDF_TYPE("Port 2 slave", "IDE port 2, second drive (needs AtapiMagic or IDEfix97; not bootable).", 3, UI_IDE2),
+	HDF_FILE_("The image file of the drive above. Enter chooses one.", 3, UI_IDE2),
+	{ "Hard disk sounds", "Drive noises for the hard disks (needs the drive sounds file on the card).",
+	  .values = v_off_on, .get = mm_get_sound, .set = mm_set_sound, .avail = ide_avail,
+	  .kind = UI_CYCLE, .arg = DRIVESOUNDS_HDD, .nvalues = 2 },
 };
+
+/* ---- Video ---- */
+
+static const char *const v_scanlines[] = { "off", "dim", "black" };
+static const char *const v_scaling[] = { "sharp", "area", "line rate" };
+static const char *const v_mask[] = { "off", "grille", "grille+", "shadow" };
+static const char *const v_bloom[] = { "off", "low", "high" };
+static const char *const v_beam[] = { "off", "sharp", "medium", "soft" };
+
+/* the position items edit the pair of the screen that is on (ui_rtg, read
+   by ui.c when Video is shown and here at every step); their labels say
+   which.  The labels are these buffers, "PAL" or "RTG" at POS_MODE. */
+static char pos_h_label[] = "Position (PAL) horizontal";
+static char pos_v_label[] = "Position (PAL) vertical";
+#define POS_MODE 10
+
+void ui_video_mode(void)
+{
+	const char *m = ui_rtg ? "RTG" : "PAL";
+	memcpy(pos_h_label + POS_MODE, m, 3);
+	memcpy(pos_v_label + POS_MODE, m, 3);
+}
+
+static const char *pos_text(unsigned char vertical)
+{
+	return mm_text_pos(vertical, ui_rtg);
+}
+
+static void pos_step(unsigned char vertical, int dir)
+{
+	ui_rtg = osd2_rtg_active();
+	ui_video_mode();
+	mm_step_pos(vertical, dir, ui_rtg);
+}
+
+static void clkdelay_step(unsigned char arg, int dir)
+{
+	(void)arg;
+	mm_step_clkdelay(dir);
+}
+
+static char hdmi_help[128];
+
+static const char *clkdelay_help(unsigned char arg)
+{
+	(void)arg;
+	strcpy(hdmi_help, "The HDMI chip's sampling point (sparkles: too near an edge).\n");
+	strcat(hdmi_help, mm_text_hdmi_readback());
+	return hdmi_help;
+}
 
 static const struct ui_item video_items[] = {
-	INFO_V("Scanlines", "Dark lines between the picture's lines, as on a CRT.", v_scanlines, mm_get_field, MMF_SCANLINES, 4),
-	INFO_V("Scaling", "How the picture is scaled to 720p: sharp, area (smooth), or line rate.", v_scaling, mm_get_scaling, 0, 4),
-	INFO_V("CRT mask", "The phosphor mask of a CRT.", v_mask, mm_get_field, MMF_MASK, 4),
-	INFO_V("Bloom", "Bright parts glow into their neighbours.", v_bloom, mm_get_bloom, 0, 3),
-	INFO_V("Beam width", "The width of the CRT beam spot.", v_beam, mm_get_field, MMF_BEAM, 4),
+	{ "Scanlines", "Dark lines between the picture's lines, as on a CRT.",
+	  .values = v_scanlines, .get = mm_get_field, .set = mm_set_field, .kind = UI_CYCLE, .arg = MMF_SCANLINES, .nvalues = 3 },
+	{ "Scaling", "How the picture is scaled to 720p: sharp or area (exactly 2.5x / 3x), or line rate.",
+	  .values = v_scaling, .get = mm_get_scaling, .set = mm_set_scaling, .kind = UI_CYCLE, .nvalues = 3 },
+	{ "CRT mask", "The phosphor mask of a CRT.",
+	  .values = v_mask, .get = mm_get_field, .set = mm_set_field, .kind = UI_CYCLE, .arg = MMF_MASK, .nvalues = 4 },
+	{ "Bloom", "Bright parts glow into the gaps between the lines (needs Scanlines, Beam width, or Scaling sharp or area).",
+	  .values = v_bloom, .get = mm_get_bloom, .set = mm_set_bloom, .avail = mm_bloom_avail, .kind = UI_CYCLE, .nvalues = 3 },
+	{ "Beam width", "The width of the CRT beam spot.",
+	  .values = v_beam, .get = mm_get_field, .set = mm_set_field, .kind = UI_CYCLE, .arg = MMF_BEAM, .nvalues = 4 },
 	SEP,
-	INFO_T("Horizontal pos", "Moves the picture left or right (HD pixels).", mm_text_pos, 0),
-	INFO_T("Vertical pos", "Moves the picture up or down (Amiga lines).", mm_text_pos, 1),
-	INFO_T("HDMI clock delay", "Where the HDMI transmitter samples the pixel data. Sparkles mean too close to an edge.", mm_text_clkdelay, 0),
-	SEP,
-	{ "Open classic menu", "Changes these in the classic menu (Video; Right: Video Pos, HDMI).",
-	  .act = classic_act, .kind = UI_ACTION, .arg = 2, .flags = UI_SUB },
+	{ pos_h_label, "Moves the picture left or right, 8 HD pixels a step. The RTG screen keeps its own position.",
+	  .text = pos_text, .step = pos_step, .kind = UI_CYCLE, .arg = 0 },
+	{ pos_v_label, "Moves the picture up or down, 2 Amiga lines a step. The RTG screen keeps its own position.",
+	  .text = pos_text, .step = pos_step, .kind = UI_CYCLE, .arg = 1 },
+	{ "HDMI clock delay", 0, .text = mm_text_clkdelay, .step = clkdelay_step, .helpf = clkdelay_help, .kind = UI_CYCLE },
 };
 
+/* ---- Acceleration ---- */
+
+static const char *const v_cpu[] = { "68000", "68010", "68020" };
+static const char *const v_turbo[] = { "none", "CHIPRAM", "KICK", "BOTH" };
+static const char *const v_chipslots[] = { "Standard", "Fast" };
+
+/* a core with a fixed 68040: the line says so, greyed (the classic page) */
+static unsigned char cpu_avail(unsigned char arg)
+{
+	(void)arg;
+	return !CORE_CPU_FIXED_040();
+}
+
 static const struct ui_item accel_items[] = {
-	INFO_T("CPU", "The CPU the Amiga has.", mm_text_cpu, 0),
-	INFO_V("Turbo", "Chip RAM and/or Kickstart ROM at fast-RAM speed for the CPU.", v_turbo, mm_get_field, MMF_TURBO, 4),
-	INFO_V("Chip slots", "Standard: the 7 MHz machine. Fast: a chip cycle ends with its slot (the AGA rate).", v_chipslots, mm_get_field, MMF_CHIPSLOTS, 2),
-	SEP,
-	{ "Open classic menu", "Changes these in the classic menu (its Chipset page).",
-	  .act = classic_act, .kind = UI_ACTION, .arg = 3, .flags = UI_SUB },
+	{ "CPU", "The CPU the Amiga has (a core with the 68040 has only that).",
+	  .values = v_cpu, .get = mm_get_cpu, .set = mm_set_cpu, .text = mm_text_cpu, .avail = cpu_avail,
+	  .kind = UI_CYCLE, .nvalues = 3 },
+	{ "Turbo", "Chip RAM and/or Kickstart ROM at fast-RAM speed for the CPU.",
+	  .values = v_turbo, .get = mm_get_field, .set = mm_set_field, .kind = UI_CYCLE, .arg = MMF_TURBO, .nvalues = 4 },
+	{ "Chip slots", "Standard: the 7 MHz machine. Fast: a chip cycle ends with its slot (the AGA rate).",
+	  .values = v_chipslots, .get = mm_get_field, .set = mm_set_field, .kind = UI_CYCLE, .arg = MMF_CHIPSLOTS, .nvalues = 2 },
 };
 
 #define N(a) (sizeof(a) / sizeof((a)[0]))
@@ -422,8 +521,8 @@ static const struct ui_item accel_items[] = {
 /* the icons' colours: osd_icons.h (house, floppy, chip, monitor, bolt) */
 const struct ui_tab ui_tabs[UI_TABS] = {
 	{ "Main", "Floppies, the CD-ROM, configurations, reset.", main_items, N(main_items), OSD2_C_YELLOW },
-	{ "Storage", "Floppy and hard disk drives (shown here; changed in the classic menu for now).", storage_items, N(storage_items), OSD2_C_WHITE },
+	{ "Storage", "Floppy and hard disk drives.", storage_items, N(storage_items), OSD2_C_WHITE },
 	{ "System", "Chipset, memory, Kickstart, joystick, volume.", system_items, N(system_items), OSD2_C_GREEN },
-	{ "Video", "The HDMI picture (shown here; changed in the classic menu for now).", video_items, N(video_items), OSD2_C_WHITE },
-	{ "Acceleration", "CPU and chip-bus speed (shown here; changed in the classic menu for now).", accel_items, N(accel_items), OSD2_C_RED },
+	{ "Video", "The HDMI picture: CRT effects, scaling, position, the HDMI clock.", video_items, N(video_items), OSD2_C_WHITE },
+	{ "Acceleration", "CPU and chip-bus speed.", accel_items, N(accel_items), OSD2_C_RED },
 };

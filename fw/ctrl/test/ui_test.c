@@ -184,7 +184,49 @@ const char *CD_Message(void) { return "bad CUE"; }
 int CD_Locked(void) { return cdrom.unit.locked; }
 int CD_PlayingTrack(void) { return 0; }
 void drivesounds_queueevent(enum DriveSound_Type t) { logc("drivesound(%d)", (int)t); }
-int drivesounds_loaded(void) { return 0; }
+static int ds_loaded;
+int drivesounds_loaded(void) { return ds_loaded; }
+void drivesounds_enable(int type) { logc("ds_enable(%d)", type); }
+void drivesounds_disable(int type) { logc("ds_disable(%d)", type); }
+/* adv7511.c, main.c: the HDMI clock delay and its readback */
+unsigned long adv_services = 12;
+unsigned char adv_int_now;
+static unsigned char adv_chip = 0xff;   /* what 0xBA reads: ff = no answer */
+void adv7511_set_clkdelay(unsigned char step) { adv_clkdelay = step; adv_chip = (unsigned char)(step << 5); logc("clkdelay(%d)", step); }
+unsigned char adv7511_read_clkdelay(void) { return adv_chip; }
+/* osd.c ConfigVideoPos: both pairs as they are (the RTG gate is osd.c's:
+   migrate_test runs the real one) */
+void ConfigVideoPos(void)
+{
+	logc("VPos(%02x%02x,%02x%02x)", config.videopos.vpos, config.videopos.hpos,
+	     config.videopos_rtg.vpos, config.videopos_rtg.hpos);
+}
+/* the core's VERSION reply (cs 0x20) after 0x88: bytes 0..14, byte 14 the
+   text layer's status (osd2_rtg_active) */
+static unsigned char ver_status;
+static int ver_n = 99, ver_reads;
+static unsigned char ver_miso(void *ctx, unsigned char out)
+{
+	static const unsigned char v[15] = { 1, 26, 10, 2, 0xA4, 0x80, 0, 0, 0, 0, 0xB5, 2, 64, 32, 0 };
+	(void)ctx;
+	if (out == 0x88 && ver_n >= 15) {
+		ver_n = 0;
+		ver_reads++;
+		return 0xff;
+	}
+	if (ver_n < 15) {
+		unsigned char b = ver_n == 14 ? ver_status : v[ver_n];
+		ver_n++;
+		return b;
+	}
+	return 0xff;
+}
+/* the layer version: 1 (the bitstream of 10-27: no byte 14) or 2 */
+static void layer_version(unsigned char ver)
+{
+	unsigned char v[4] = { 0xB5, ver, 64, 32 };
+	osd2_detect(1, v);
+}
 void i2c_bus_recover(void) { logc("i2c_bus_recover"); }
 void adv7511_init(void) { logc("adv7511_init"); }
 int ColdBoot(void) { logc("ColdBoot"); return 1; }
@@ -552,7 +594,16 @@ static void setup(void)
 	osd2_init(OSD2_ATTR(OSD2_C_WHITE, OSD2_C_BLACK));
 	mock_reset();
 	mock_timer_step(0);
+	mock_script_fn(0x20, ver_miso, NULL);
 	calls_clear();
+}
+
+/* the mock back to an empty trace, keeping the OSD's VERSION model */
+static void trace_reset(void)
+{
+	mock_reset();
+	mock_timer_step(0);
+	mock_script_fn(0x20, ver_miso, NULL);
 }
 
 
@@ -658,21 +709,16 @@ int main(int argc, char **argv)
 	check_str("reopened: the key hints again", cells(18, 1, 14), "Up/Down select");
 	check("reopened: not in EDIT", ui_edit, 0);
 
-	/* ---- Storage: read-only values, the toast in the help field ---- */
+	/* ---- Storage: the list, EDIT and back without a change ---- */
 	key(KEY_DOWN);
 	key(KEY_RIGHT);
 	check("Storage list", ui_tab == UI_TAB_STORAGE && ui_focus == UI_F_LIST, 1);
 	screen("storage");
 	key(KEY_RIGHT);
-	check_str("Storage Right: read-only toast", cells(18, 1, 37), "Read-only here: see Open classic menu");
-	check("Storage Right: the toast yellow", osd2_atr[18][1], OSD2_ATTR(OSD2_C_YELLOW, OSD2_C_DKBLUE));
-	check("Storage Right: config unchanged", config.floppy.drives, 1);
-	check("Storage Right (read-only): no EDIT", ui_edit, 0);
-	check("Storage Right: still in the list", ui_focus, UI_F_LIST);
-	key(KEY_ENTER);
-	check("Storage Enter (read-only): no EDIT", ui_edit, 0);
-	wait_counts(UI_T(1000) + 1);
-	check_str("the toast gone: the item's help again", cells(18, 1, 15), "How many floppy");
+	check("Storage Right on Floppy drives: EDIT", ui_edit, 1);
+	key(KEY_ESC);
+	check("Storage Esc: done, config unchanged", ui_edit == 0 && config.floppy.drives == 1, 1);
+	check_str("Storage: the item's help", cells(18, 1, 15), "How many floppy");
 	key(KEY_F3);
 	check("F3: System", ui_tab, UI_TAB_SYSTEM);
 	check("F3: into its list", ui_focus, UI_F_LIST);
@@ -1010,19 +1056,31 @@ int main(int argc, char **argv)
 	check("F12 in a dialog: closed", ui_open_now, 0);
 	check_has("F12 in a dialog: cancelled, no reset", calls, "OsdReset", 0);
 
-	/* ---- Storage: hand over to the classic menu ---- */
+	/* ---- About: hands over to the classic page (until its own port) ---- */
 	key(KEY_MENU);
-	key(KEY_F2);
-	check("Open classic menu selected", go("Open classic menu"), 17);
+	key(KEY_F1);
+	check("About selected", go("About"), 15);
 	calls_clear();
-	mock_reset();
-	mock_timer_step(0);
+	trace_reset();
 	key(KEY_ENTER);
-	check_has("classic: the Main page, Hard disk settings", calls, "classic(2,5);", 1);
+	{
+		char want[32];
+		snprintf(want, sizeof want, "classic(%d,0);", MENU_ABOUT1);
+		check_has("classic: the About page", calls, want, 1);
+	}
 	check("classic: ui_legacy_active", ui_legacy_active, 1);
 	check("classic: the new menu closed", ui_open_now, 0);
 	check_has("classic: the layer off", mock_trace(), WIN_MENU_OFF, 1);
 	ui_legacy_active = 0;           /* menu.c's HandleUI does this when the classic menu closes */
+	/* no other hand-over is left: no item of any category is "classic" */
+	{
+		int n = 0;
+		for (t = 0; t < UI_TABS; t++)
+			for (i = 0; i < ui_tabs[t].n; i++)
+				if (ui_tabs[t].items[i].label && strstr(ui_tabs[t].items[i].label, "lassic"))
+					n++;
+		check("no Classic menu item left", n, 0);
+	}
 
 	/* ---- toasts with the menu closed: their own window ---- */
 	mock_reset();
@@ -1095,15 +1153,342 @@ int main(int argc, char **argv)
 	check("Ctrl-Alt-F12 again: DebugMode off", DebugMode, 0);
 	check_has("debug mode off: the page off", calls, "OsdHide;debug2_show(0);", 1);
 
-	/* ---- the error page takes over ---- */
+	/* ================= Phase 4: every setting native ================= */
+
+	/* ---- the error page (menu.c ShowError on a core with the layer) ---- */
+	key(KEY_MENU);                  /* the menu open on Main ... */
+	key(KEY_F1);
+	SetError(ERROR_FDD, "ADF has too many tracks!", 170, 0);
+	calls_clear();
+	ui_error_show(ERROR_FDD);       /* ... the error page over it */
+	pass(1);
+	check("error: the menu open", ui_open_now, 1);
+	check("error: the error page", ui_focus, UI_F_ERROR);
+	check_str("error: the header", cells(0, 20, 6), "Error ");
+	check_str("error: the category", cells(5, 20, 16), "Floppy emulation");
+	check_str("error: its text", cells(6, 20, 24), "ADF has too many tracks!");
+	check_str("error: a in hex", cells(7, 20, 5), "0xAA ");
+	check_str("error: the page number", cells(5, 55, 6), "4 of 5");
+	check_str("error: OK", cells(11, 20, 4), " OK ");
+	screen("error");
 	key(KEY_MENU);
-	mock_reset();
-	mock_timer_step(0);
-	ui_legacy_takeover();
-	check("takeover: ui_legacy_active", ui_legacy_active, 1);
-	check("takeover: closed", ui_open_now, 0);
-	check_has("takeover: the layer off", mock_trace(), WIN_MENU_OFF, 1);
-	ui_legacy_active = 0;
+	key(KEY_ESC);
+	check("error: F12 and Esc leave it open (as the classic page)", ui_open_now == 1 && ui_focus == UI_F_ERROR, 1);
+	key(KEY_LEFT);
+	check_str("error Left: Kickstart ROM", cells(5, 20, 13), "Kickstart ROM");
+	check("error Left: greyed (no error there)", osd2_atr[5][20], A_GREY);
+	key(KEY_RIGHT);
+	key(KEY_RIGHT);
+	key(KEY_RIGHT);
+	check_str("error Right x3: Harddrive, then wraps to SD Card", cells(5, 20, 7), "SD Card");
+	key(KEY_ENTER);
+	check("error Enter: closed", ui_open_now, 0);
+	check("error Enter: the error cleared", ErrorMask, 0);
+	check_has("error Enter: no reboot", calls, "ColdBoot", 0);
+	FatalError(ERROR_SDCARD, "no card", 1, 2);
+	ui_error_show(ERROR_SDCARD);
+	pass(1);
+	check_str("fatal: the header", cells(0, 20, 11), "Fatal error");
+	check_str("fatal: Reboot", cells(11, 20, 8), " Reboot ");
+	calls_clear();
+	key(KEY_SPACE);
+	check_has("fatal Space: reboots", calls, "ColdBoot", 1);
+	ClearError(ERROR_ALL);
+
+	/* ---- Storage: the floppies at once ---- */
+	key(KEY_MENU);
+	key(KEY_F2);
+	calls_clear();
+	check("Storage: Floppy drives", go("Floppy drives"), 2);
+	config.floppy.drives = 3;       /* 4 drives: Right wraps to 1 (the classic cycle) */
+	key(KEY_RIGHT);
+	key(KEY_RIGHT);
+	check("Floppy drives Right: 4 -> 1", config.floppy.drives, 0);
+	check_has("Floppy drives: ConfigFloppy(0,0)", calls, "ConfigFloppy(0,0);", 1);
+	key(KEY_LEFT);
+	check("Floppy drives Left: 4 again", config.floppy.drives, 3);
+	key(KEY_LEFT);
+	key(KEY_LEFT);
+	check("Floppy drives Left twice: 2", config.floppy.drives, 1);
+	key(KEY_DOWN);                  /* EDIT done, Floppy turbo */
+	key(KEY_RIGHT);
+	key(KEY_RIGHT);
+	check("Floppy turbo: on", config.floppy.speed, 1);
+	check_has("Floppy turbo: ConfigFloppy(1,1)", calls, "ConfigFloppy(1,1);", 1);
+	key(KEY_LEFT);
+	key(KEY_ENTER);
+	check("Floppy sounds without the sounds file: greyed", osd2_atr[4][20], A_GREY);
+	key(KEY_DOWN);
+	check("Down from Floppy turbo: over the greyed sounds, IDE", sel_row(), 6);
+	ds_loaded = 1;
+	key(KEY_UP);
+	check("with the sounds file: Floppy sounds selectable", sel_row(), 4);
+	calls_clear();
+	key(KEY_RIGHT);
+	key(KEY_RIGHT);
+	check("Floppy sounds on", config.drivesounds & DRIVESOUNDS_FLOPPY, DRIVESOUNDS_FLOPPY);
+	check_has("Floppy sounds on: enabled", calls, "ds_enable(1);", 1);
+	key(KEY_LEFT);
+	check_has("Floppy sounds off: disabled", calls, "ds_disable(1);", 1);
+	key(KEY_ENTER);
+	ds_loaded = 0;
+	key(KEY_F1);
+	check("leaving Storage, floppies changed only: no dialog", ui_tab == UI_TAB_MAIN && ui_focus == UI_F_LIST, 1);
+
+	/* ---- Storage: IDE on/off greys the drives; back unchanged: no dialog ---- */
+	key(KEY_F2);
+	go("IDE");
+	key(KEY_RIGHT);
+	key(KEY_RIGHT);
+	check("IDE Right: off (the edit copy)", mm_ide_on, 0);
+	check("IDE off: config not yet", config.enable_ide, 1);
+	check("IDE off: Port 1 master greyed", osd2_atr[7][20], A_GREY);
+	check("IDE off: Hard disk sounds greyed", osd2_atr[15][20], A_GREY);
+	key(KEY_RIGHT);
+	key(KEY_ENTER);
+	calls_clear();
+	key(KEY_F1);
+	check("IDE back on: no dialog on leaving", ui_tab == UI_TAB_MAIN && ui_focus == UI_F_LIST, 1);
+	check_has("no change: no reset", calls, "OsdReset", 0);
+
+	/* ---- Storage: a hardfile without a partition table, the reset prompt, No ---- */
+	key(KEY_F2);
+	check("Port 1 slave", go("Port 1 slave"), 9);
+	check_str("Port 1 slave: Disabled", cells(9, 53, 8), "Disabled");
+	check("its file: not selectable while Disabled", osd2_atr[10][20], A_GREY);
+	key(KEY_RIGHT);
+	key(KEY_RIGHT);
+	check_str("type Right: Hardfile (disk img)", cells(9, 42, 19), "Hardfile (disk img)");
+	key(KEY_LEFT);
+	key(KEY_LEFT);
+	check_str("type Left twice: backwards round to SD partition 1", cells(9, 47, 14), "SD partition 1");
+	key(KEY_RIGHT);
+	key(KEY_RIGHT);
+	check_str("type Right twice: Hardfile (disk img)", cells(9, 42, 19), "Hardfile (disk img)");
+	key(KEY_DOWN);
+	check_str("its file: not found yet", cells(10, 41, 20), "** file not found **");
+	key(KEY_ENTER);
+	check("file Enter: the selector", ui_focus, UI_F_FILESEL);
+	check_str("selector: Hard disk image: Port 1 slave", cells(0, 20, 30), "Hard disk image: Port 1 slave ");
+	key(KEY_HOME);
+	key(KEY_DOWN);
+	key(KEY_DOWN);
+	key(KEY_DOWN);                  /* Arkanoid */
+	hdf_filetype = HDF_FILETYPE_UNKNOWN;
+	calls_clear();
+	key(KEY_ENTER);
+	check_has("chosen: its type probed", calls, "GetHDFFileType(ARKANOIDADF);", 1);
+	check("no partition table: the warning", ui_focus, UI_F_DIALOG);
+	screen("dialog_nordb");
+	key(KEY_ENTER);
+	check("OK: back to the list, on the file", ui_focus == UI_F_LIST && sel_row() == 10, 1);
+	check_str("the file: Arkanoid", cells(10, 53, 8), "Arkanoid");
+	check("config not yet changed", config.hardfile[1].enabled, 0);
+	key(KEY_F1);
+	check("leaving Storage after a change: the reset dialog", ui_focus, UI_F_DIALOG);
+	check("leaving: still on Storage", ui_tab, UI_TAB_STORAGE);
+	screen("dialog_hdf");
+	calls_clear();
+	key(KEY_ENTER);                 /* No, the default (the classic menusub 1) */
+	check("No: on to Main", ui_tab == UI_TAB_MAIN && ui_focus == UI_F_LIST, 1);
+	check("No: config unchanged", config.hardfile[1].enabled, 0);
+	check_has("No: no reset, nothing opened", calls, "OpenHardfile", 0);
+	key(KEY_F2);
+	check_str("back on Storage: the change dropped", cells(9, 53, 8), "Disabled");
+
+	/* ---- the same with an RDB hardfile, F12, Yes: applied and reset ---- */
+	go("Port 1 slave");
+	key(KEY_RIGHT);
+	key(KEY_RIGHT);
+	key(KEY_DOWN);
+	key(KEY_ENTER);
+	key(KEY_HOME);
+	key(KEY_DOWN);
+	key(KEY_DOWN);
+	key(KEY_DOWN);
+	hdf_filetype = HDF_FILETYPE_RDB;
+	key(KEY_ENTER);
+	check("an RDB hardfile: no warning", ui_focus, UI_F_LIST);
+	calls_clear();
+	trace_reset();
+	key(KEY_MENU);
+	check("F12 after a change: the reset dialog", ui_focus, UI_F_DIALOG);
+	key(KEY_LEFT);
+	key(KEY_ENTER);                 /* Yes */
+	check_has("Yes: closed, slot 1 opened, CD, ports, reset",
+	          calls, "OsdHide;debug2_show(0);OpenHardfile(1);ApplyCDROM;ConfigIDEPorts;OsdReset;", 1);
+	check("Yes: config has the hardfile", config.hardfile[1].enabled == HDF_FILE && config.hardfile[1].present == 1 &&
+	      !memcmp(config.hardfile[1].name, "ARKANOID", 8), 1);
+	check("Yes: the menu closed", ui_open_now, 0);
+
+	/* ---- the live CD slot: a disc at once, no reset ---- */
+	cd_msg_on = 0;                  /* (the locked message of the Main test) */
+	key(KEY_MENU);
+	check("reopened on Storage", ui_tab, UI_TAB_STORAGE);
+	check("Port 2 master", go("Port 2 master"), 11);
+	check_str("Port 2 master: the CD-ROM", cells(11, 49, 12), "CD-ROM (ISO)");
+	key(KEY_DOWN);
+	check_str("its disc: none", cells(12, 50, 11), "* no disc *");
+	key(KEY_ENTER);
+	check_str("CD slot: the selector's header", cells(0, 20, 27), "CD-ROM image: Port 2 master");
+	key(KEY_HOME);
+	key(KEY_DOWN);
+	key(KEY_DOWN);
+	calls_clear();
+	key(KEY_ENTER);
+	check_has("live CD slot: CD_Insert at once", calls, "CD_Insert(ANOTHE~1ADF,Another World (1991)(Delphine),0);", 1);
+	key(KEY_F1);
+	check("live disc change: no reset dialog", ui_tab == UI_TAB_MAIN && ui_focus == UI_F_LIST, 1);
+	key(KEY_F2);
+	calls_clear();
+	go("Hard disk sounds");
+	key(KEY_RIGHT);
+	key(KEY_RIGHT);
+	check("Hard disk sounds on", config.drivesounds & DRIVESOUNDS_HDD, DRIVESOUNDS_HDD);
+	check_has("Hard disk sounds: enabled", calls, "ds_enable(2);", 1);
+	key(KEY_LEFT);
+	key(KEY_ENTER);
+
+	/* ---- Video ---- */
+	key(KEY_F4);
+	screen("video_edit");
+	calls_clear();
+	check("Scanlines", go("Scanlines"), 2);
+	key(KEY_RIGHT);
+	key(KEY_RIGHT);
+	check("Scanlines Right: black", config.scanlines & 3, 2);
+	check_has("Scanlines: ConfigVideo", calls, "ConfigVideo(18,1,0,0);", 1);
+	key(KEY_RIGHT);
+	check("Scanlines Right: wraps to off (3 values)", config.scanlines & 3, 0);
+	key(KEY_RIGHT);
+	key(KEY_DOWN);                  /* dim again; Scaling */
+	key(KEY_RIGHT);
+	key(KEY_RIGHT);
+	check("Scaling Right: area -> line rate", CONFIG_SCALING(config.scanlines), SCALING_LINE);
+	key(KEY_RIGHT);
+	check("Scaling Right: line rate -> sharp (the classic cycle)", CONFIG_SCALING(config.scanlines), SCALING_SHARP);
+	key(KEY_RIGHT);
+	key(KEY_DOWN);                  /* area again; CRT mask */
+	key(KEY_RIGHT);
+	key(KEY_LEFT);
+	check("CRT mask Left: off", config.crt_mask, 0);
+	key(KEY_RIGHT);
+	key(KEY_DOWN);                  /* grille again; Bloom */
+	key(KEY_RIGHT);
+	key(KEY_RIGHT);
+	check("Bloom Right: low", config.crt_bloom, 1);
+	key(KEY_LEFT);
+	key(KEY_ENTER);
+	/* Bloom needs a gap to fill: scanlines off, beam off, line rate -> greyed */
+	config.scanlines = (unsigned char)(SCALING_LINE << SCALING_SHIFT);
+	key(KEY_UP);
+	check("no scanlines, no beam, line rate: Bloom greyed", osd2_atr[5][20], A_GREY);
+	key(KEY_DOWN);
+	check("Down from CRT mask: over Bloom", sel_row(), 6);
+	config.scanlines = 1 | (SCALING_AREA << SCALING_SHIFT);
+	/* the position: the PAL pair on a version-1 layer (no byte 14 asked) */
+	calls_clear();
+	ver_reads = 0;
+	check("Position (PAL) horizontal", go("Position (PAL) horizontal"), 8);
+	key(KEY_RIGHT);
+	key(KEY_RIGHT);
+	check("H Right: -8 -> 0", (signed char)config.videopos.hpos, 0);
+	check_str("H: 0 px", cells(8, 57, 4), "0 px");
+	key(KEY_LEFT);
+	key(KEY_LEFT);
+	check("H Left twice: -16", (signed char)config.videopos.hpos, -16);
+	check_has("H: both pairs to the core", calls, "VPos(04f0,0000);", 1);
+	key(KEY_DOWN);
+	key(KEY_RIGHT);
+	key(KEY_RIGHT);
+	check("V Right: 4 -> 6 (VPOS_STEP)", config.videopos.vpos, 4 + VPOS_STEP);
+	check_str("V: +6 lines", cells(9, 53, 8), "+6 lines");
+	check("version-1 layer: byte 14 never asked", ver_reads, 0);
+	config.videopos.vpos = VPOS_MAX;
+	key(KEY_RIGHT);
+	check("V clamps at VPOS_MAX", config.videopos.vpos, VPOS_MAX);
+	config.videopos.vpos = 4;
+	key(KEY_ENTER);
+	/* a version-2 layer: byte 14 asked, the RTG screen on: its own pair */
+	layer_version(2);
+	ver_status = 1;
+	key(KEY_F1);
+	key(KEY_F4);
+	check("Video shown: byte 14 asked", ver_reads, 1);
+	check_str("RTG on: the label says RTG", cells(8, 20, 25), "Position (RTG) horizontal");
+	go("Position (RTG) horizontal");
+	calls_clear();
+	key(KEY_RIGHT);
+	key(KEY_RIGHT);
+	check("RTG: H Right edits the RTG pair", (signed char)config.videopos_rtg.hpos, 8);
+	check("RTG: the PAL pair untouched", (signed char)config.videopos.hpos, -16);
+	check_has("RTG: both pairs to the core", calls, "VPos(04f0,0008);", 1);
+	check("RTG: byte 14 asked again at the step", ver_reads, 2);
+	ver_status = 0;                 /* RTG off meanwhile: the next step is PAL's */
+	key(KEY_RIGHT);
+	check("RTG off: H Right edits PAL", (signed char)config.videopos.hpos, -8);
+	check("RTG off: the RTG pair kept", (signed char)config.videopos_rtg.hpos, 8);
+	check_str("RTG off: the label says PAL", cells(8, 20, 25), "Position (PAL) horizontal");
+	key(KEY_ENTER);
+	layer_version(1);
+	/* the HDMI clock delay: the readback in the help field */
+	check("HDMI clock delay", go("HDMI clock delay"), 10);
+	check_str("HDMI: the readback (ff: no answer)", cells(19, 1, 42), "Chip 0xBA: ff  set: 80  INT 0  serviced 12");
+	calls_clear();
+	key(KEY_RIGHT);
+	key(KEY_RIGHT);
+	check("HDMI Right: 5", adv_clkdelay, 5);
+	check("HDMI: saved + 1", config.hdmi_clkdelay, 6);
+	check_str("HDMI: +0.8 ns", cells(10, 54, 7), "+0.8 ns");
+	check_str("HDMI: the help in EDIT is EDIT's hint", cells(18, 1, 17), "Left/Right change");
+	key(KEY_ENTER);
+	key(KEY_UP);
+	key(KEY_DOWN);
+	check_str("HDMI: the readback after the change", cells(19, 1, 23), "Chip 0xBA: a0  set: a0 ");
+	adv_services = 13;
+	wait_counts(UI_T(1000) + 1);
+	check_str("HDMI: the readback live, every second", cells(19, 32, 11), "serviced 13");
+	key(KEY_RIGHT);
+	for (i = 0; i < 5; i++)
+		key(KEY_RIGHT);
+	check("HDMI clamps at 7", adv_clkdelay, 7);
+	key(KEY_ENTER);
+	adv7511_set_clkdelay(4);
+	adv_chip = 0xff;
+
+	/* ---- Acceleration ---- */
+	key(KEY_F5);
+	calls_clear();
+	check("CPU", go("CPU"), 2);
+	key(KEY_RIGHT);
+	key(KEY_RIGHT);
+	check("CPU Right: 68020 -> 68000", config.cpu & 3, 0);
+	check_has("CPU: ConfigCPU(00)", calls, "ConfigCPU(00);", 1);
+	key(KEY_RIGHT);
+	check("CPU Right: 68010", config.cpu & 3, 1);
+	key(KEY_RIGHT);
+	check("CPU Right: 68020 (config 3)", config.cpu & 3, 3);
+	key(KEY_DOWN);
+	key(KEY_RIGHT);
+	key(KEY_RIGHT);
+	check("Turbo Right: CHIPRAM", (config.cpu >> 2) & 3, 1);
+	check("Turbo: the CPU kept", config.cpu & 3, 3);
+	key(KEY_LEFT);
+	key(KEY_DOWN);
+	key(KEY_RIGHT);
+	key(KEY_RIGHT);
+	check("Chip slots Right: Fast", config.cpu & CONFIG_CPU_FASTCHIP, CONFIG_CPU_FASTCHIP);
+	key(KEY_LEFT);
+	key(KEY_ENTER);
+	core_caps |= CORE_CAPS_AP040 | CORE_CAPS_FPU | CORE_CAPS_MMU;
+	key(KEY_UP);
+	key(KEY_UP);
+	check("fixed 68040: the CPU line not selectable", sel_row(), 3);
+	check_str("fixed 68040: what it is", cells(2, 48, 13), "68040/FPU/MMU");
+	check("fixed 68040: greyed", osd2_atr[2][20], A_GREY);
+	screen("accel_040");
+	core_caps = CORE_CAPS_IDE2;
+	key(KEY_MENU);
 
 	/* ---- every help text fits the help field ---- */
 	{
@@ -1113,13 +1498,15 @@ int main(int argc, char **argv)
 			help_fits(ui_tabs[t].name, ui_tabs[t].help);
 			for (i = 0; i < ui_tabs[t].n; i++) {
 				snprintf(what, sizeof what, "%s: %s", ui_tabs[t].name, ui_tabs[t].items[i].label ? ui_tabs[t].items[i].label : "-");
-				help_fits(what, ui_tabs[t].items[i].help);
+				help_fits(what, ui_tabs[t].items[i].helpf ? ui_tabs[t].items[i].helpf(ui_tabs[t].items[i].arg)
+				                                          : ui_tabs[t].items[i].help);
 			}
 		}
 		check("every help text fits two lines of 62", fails - before, 0);
 	}
 
 	(void)keys;
+	(void)ver_reads;
 	printf("%s: %d cases, %d failed\n", fails ? "FAIL ui_test" : "ui_test passed", cases, fails);
 	return fails ? 1 : 0;
 }

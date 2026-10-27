@@ -5,7 +5,7 @@ chars
  ^^ Main         ^  Turbo                                none   
                  ^  Chip slots                       Standard   
                  ^                                              
- ^^ Storage      ^  Open classic menu                         ^ 
+ ^^ Storage      ^                                              
                  ^                                              
                  ^                                              
  ^^ System       ^                                              

@@ -17,6 +17,7 @@
 #include "i2c.h"
 #include "menu.h"
 #include "menu_model.h"
+#include "errors.h"
 #include "osd_icons.h"
 #include "ui.h"
 
@@ -30,6 +31,8 @@ extern char DirEntryLFN[MAXDIRENTRIES][261];
 extern char *fs_pFileExt;           /* menu.c: what the directory table was scanned for */
 extern int ui_cd_shown_track;       /* ui_tabs.c */
 void SanityCheck(void);             /* menu.c */
+int ColdBoot(void);                 /* main.c */
+void ui_video_mode(void);           /* ui_tabs.c: the position items' labels for ui_rtg */
 
 /* attributes: black, white and blue carry it; dark blue for the help
    field, the bar track and what is not available; yellow / red accents */
@@ -64,6 +67,7 @@ void SanityCheck(void);             /* menu.c */
 unsigned char ui_legacy_active;
 unsigned char ui_cfg_mask;
 unsigned char ui_open_now, ui_tab, ui_focus, ui_hints_on, ui_edit;
+unsigned char ui_rtg;
 
 static unsigned char cur[UI_TABS];          /* the cursor of each category */
 static unsigned char dirty, started, popup;
@@ -72,7 +76,8 @@ static unsigned char toast_on;
 static char toast[UI_TOAST_COLS + 1];
 static unsigned long toast_timer, status_timer;
 static unsigned char sys_mem, sys_chip;     /* System as it was entered */
-static unsigned char pending, pending_into; /* after the System prompt: a category (into its list) or PENDING_CLOSE */
+static unsigned char pending, pending_into; /* after a leaving prompt: a category (into its list) or PENDING_CLOSE */
+static signed char err_page;                /* the error page's category (errors.h) */
 
 static struct {
 	const char *title, *l1, *l2;
@@ -81,8 +86,8 @@ static struct {
 	void (*done)(unsigned char b);
 } dlg;
 
-static char ext_adf[] = "ADF", ext_cd[] = "ISOCUE", ext_rom[] = "ROM";
-static char *const fs_ext[] = { ext_adf, ext_cd, ext_rom };
+static char ext_adf[] = "ADF", ext_cd[] = "ISOCUE", ext_rom[] = "ROM", ext_hdf[] = "HDF";
+static char *const fs_ext[] = { ext_adf, ext_cd, ext_rom, ext_hdf, ext_cd };
 static unsigned char fs_target, fs_arg, fs_window_ok;
 static unsigned short sc_pos;               /* the selected long name's first cell */
 static unsigned long sc_timer;
@@ -108,10 +113,21 @@ static unsigned char avail(const struct ui_item *it)
 	return it->avail ? it->avail(it->arg) : 1;
 }
 
+/* an empty row: UI_HIDE and not available, UI_IDE2 on a one-port core */
+static int hidden(const struct ui_item *it, unsigned char av)
+{
+	return ((it->flags & UI_HIDE) && !av) ||
+	       ((it->flags & UI_IDE2) && !(core_caps & CORE_CAPS_IDE2));
+}
+
 static int selectable(unsigned i)
 {
 	const struct ui_item *it = item(i);
-	return it && it->kind != UI_SEP && avail(it);
+	unsigned char av;
+	if (!it || it->kind == UI_SEP)
+		return 0;
+	av = avail(it);
+	return av && !hidden(it, av);
 }
 
 /* the next selectable item from `from` in direction dir, or -1 */
@@ -124,10 +140,10 @@ static int find_sel(int from, int dir)
 	return -1;
 }
 
-/* Left/Right change it (a read-only one: a toast) */
+/* EDIT changes it */
 static int has_value(const struct ui_item *it)
 {
-	return it->kind == UI_CYCLE || it->kind == UI_INFO;
+	return it->kind == UI_CYCLE;
 }
 
 static const char *value_text(const struct ui_item *it)
@@ -257,7 +273,7 @@ void ui_draw_item(unsigned i)
 	if (i >= UI_LIST_ROWS)
 		return;
 	rfill(UI_PANEL_COL, UI_PANEL_W, ' ', A_BASE);
-	if (it && it->kind != UI_SEP && ((av = avail(it)) || !(it->flags & UI_HIDE))) {
+	if (it && it->kind != UI_SEP && !hidden(it, av = avail(it))) {
 		sel = list_focus() && cur[ui_tab] == i;
 		ed = sel && ui_edit;
 		a = sel ? A_SEL : av ? A_BASE : A_GREY;
@@ -360,15 +376,22 @@ static void draw_lines(void)
 
 /* the category's name in blue (the F key at the right), or the file
    selector's target */
+static const char *const slot_name[] = { "Port 1 master", "Port 1 slave", "Port 2 master", "Port 2 slave" };
+
 static void draw_header(void)
 {
-	static const char *const fs_head[] = { "Floppy DF", "CD-ROM image", "Kickstart ROM" };
+	static const char *const fs_head[] = { "Floppy DF", "CD-ROM image", "Kickstart ROM",
+	                                       "Hard disk image: ", "CD-ROM image: " };
 	unsigned n;
 	rfill(UI_PANEL_COL, UI_PANEL_W, ' ', A_BASE);
-	if (ui_focus == UI_F_FILESEL) {
+	if (ui_focus == UI_F_ERROR)
+		rput(UI_LABEL_COL, ErrorFatal ? "Fatal error" : "Error", UI_PANEL_W, A_ERR);
+	else if (ui_focus == UI_F_FILESEL) {
 		n = rput(UI_LABEL_COL, fs_head[fs_target], UI_PANEL_W, A_HEAD);
 		if (fs_target == UI_FS_FLOPPY)
 			rfill(UI_LABEL_COL + n, 1, (unsigned char)('0' + fs_arg), A_HEAD);
+		else if (fs_target >= UI_FS_HDF)
+			rput(UI_LABEL_COL + n, slot_name[fs_arg & 3], UI_PANEL_W - n, A_HEAD);
 	} else {
 		rput(UI_LABEL_COL, ui_tabs[ui_tab].name, UI_PANEL_W, A_HEAD);
 		rfill(UI_MARK_COL - 1, 1, 'F', A_DIM);
@@ -386,7 +409,9 @@ static const char *help_text(void)
 	static const char *const fs_help[] = {
 		"Choose a disk image (ADF). Enter opens a folder, Backspace goes up, a letter jumps to the next name with it.",
 		"Choose a CD image (ISO, or CUE with its tracks). Enter opens a folder, Backspace goes up, a letter jumps.",
-		"Choose a Kickstart ROM image; loading it restarts the Amiga. Backspace goes up, a letter jumps."
+		"Choose a Kickstart ROM image; loading it restarts the Amiga. Backspace goes up, a letter jumps.",
+		"Choose a hard disk image (HDF). Leaving Storage then offers the reset that applies it.",
+		"Choose a CD image (ISO, or CUE) for this CD-ROM slot. Backspace goes up, a letter jumps."
 	};
 	const struct ui_item *it;
 	if (ui_focus == UI_F_LIST && ui_edit)
@@ -396,6 +421,10 @@ static const char *help_text(void)
 	if (ui_hints_on && ui_focus == UI_F_LIST)
 		return hint_list;
 	switch (ui_focus) {
+	case UI_F_ERROR:
+		return (ErrorFatal || (ErrorMask & (1 << ERROR_ROM)))
+		       ? "Left/Right show the other kinds of error. Enter reboots (the Kickstart is loaded again)."
+		       : "Left/Right show the other kinds of error. Enter: OK (the error is cleared).";
 	case UI_F_DIALOG:
 		return "Left/Right choose a button  Enter confirm  Esc cancel";
 	case UI_F_FILESEL:
@@ -404,6 +433,8 @@ static const char *help_text(void)
 		return ui_tabs[ui_tab].help;
 	}
 	it = item(cur[ui_tab]);
+	if (it && it->helpf)
+		return it->helpf(it->arg);
 	return it && it->help ? it->help : ui_tabs[ui_tab].help;
 }
 
@@ -482,6 +513,62 @@ static void draw_file_row(unsigned i)
 	rout(row, UI_PANEL_COL, UI_COLS);
 }
 
+/* "0x" and v in hex, no leading zeros (the classic page's %X) */
+static unsigned hexput(char *p, unsigned long v)
+{
+	static const char hex[] = "0123456789ABCDEF";
+	char t[8];
+	unsigned n = 0, k = 2;
+	do
+		t[n++] = hex[v & 15];
+	while ((v >>= 4) && n < 8);
+	p[0] = '0';
+	p[1] = 'x';
+	while (n)
+		p[k++] = t[--n];
+	p[k] = 0;
+	return k;
+}
+
+/* the error page in the item rows (the classic MENU_ERROR): the category's
+   name, its text and two numbers, greyed when that category has no error */
+static void draw_error_row(unsigned i)
+{
+	static char b[24];
+	unsigned row = UI_LIST_ROW + i;
+	int pg = err_page;
+	unsigned char a = (ErrorMask & (1 << pg)) ? A_BASE : A_GREY;
+	const char *t;
+	rfill(UI_PANEL_COL, UI_PANEL_W, ' ', A_BASE);
+	switch (i) {
+	case 1:
+		rput(UI_LABEL_COL, ErrorFatal ? "*** FATAL ERROR ***" : "*** ERROR ***", UI_PANEL_W, A_ERR);
+		break;
+	case 3:
+		rput(UI_LABEL_COL, ErrorMessages[pg], UI_VALUE_END - UI_LABEL_COL, a);
+		memcpy(b, "1 of 5", 7);
+		b[0] = (char)('1' + pg);
+		b[5] = (char)('1' + ERROR_MAX);
+		rput(UI_VALUE_END + 1 - 6, b, 6, A_DIM);
+		break;
+	case 4:
+		t = Errors[pg].string;
+		rput(UI_LABEL_COL, t ? t : "", UI_VALUE_END - UI_LABEL_COL, a);
+		break;
+	case 5:
+	case 6:
+		hexput(b, (unsigned long)(i == 5 ? Errors[pg].a : Errors[pg].b));
+		rput(UI_LABEL_COL, b, 12, a);
+		break;
+	case 9:
+		t = (ErrorFatal || (ErrorMask & (1 << ERROR_ROM))) ? "Reboot" : "OK";
+		rfill(UI_LABEL_COL, strlen(t) + 2, ' ', A_SEL);
+		rput(UI_LABEL_COL + 1, t, 8, A_SEL);
+		break;
+	}
+	rout(row, UI_PANEL_COL, UI_COLS);
+}
+
 void ui_draw_all(void)
 {
 	unsigned i;
@@ -491,6 +578,8 @@ void ui_draw_all(void)
 	for (i = 0; i < UI_LIST_ROWS; i++) {
 		if (ui_focus == UI_F_FILESEL)
 			draw_file_row(i);
+		else if (ui_focus == UI_F_ERROR)
+			draw_error_row(i);
 		else
 			ui_draw_item(i);
 	}
@@ -517,6 +606,20 @@ static void sys_snapshot(void)
 	sys_chip = config.chipset & 0x1c;
 }
 
+/* a category is shown: System as it was (its leaving prompt), Storage's
+   edit copy of the IDE slots, Video's RTG question */
+static void tab_enter(unsigned char t)
+{
+	if (t == UI_TAB_SYSTEM)
+		sys_snapshot();
+	else if (t == UI_TAB_STORAGE)
+		mm_hdf_begin();
+	else if (t == UI_TAB_VIDEO) {
+		ui_rtg = osd2_rtg_active();
+		ui_video_mode();
+	}
+}
+
 /* the cursor on a selectable item, else the focus back to the sidebar */
 static void fix_cursor(void)
 {
@@ -541,8 +644,7 @@ static void ui_open(void)
 	ui_hints_on = 1;                /* the sidebar's key hints until a key */
 	ui_edit = 0;
 	ui_cfg_mask = mm_config_scan();
-	if (ui_tab == UI_TAB_SYSTEM)
-		sys_snapshot();
+	tab_enter(ui_tab);
 	osd_keys(1);
 	ui_glyphs();
 	osd2_pal_default();
@@ -606,10 +708,41 @@ void ui_classic(unsigned char page, unsigned char sub)
 	menu_classic_open(page, sub);
 }
 
-void ui_legacy_takeover(void)
+void ui_error_show(int page)
 {
-	if (osd2_caps)
-		quiet_close();
+	started = 1;                    /* (ui_handle's first pass would close it) */
+	if (!ui_open_now)
+		ui_open();
+	err_page = (signed char)(page < 0 ? 0 : page > ERROR_MAX ? ERROR_MAX : page);
+	ui_focus = UI_F_ERROR;
+	ui_edit = 0;
+	popup = 0;
+	dirty = 1;
+}
+
+/* Enter on the error page (the classic MENU_ERROR2): a Kickstart or a fatal
+   error retries the boot (the CPU is held without a usable Kickstart); any
+   other error is cleared, else main()'s error loop never ends */
+static void key_error(unsigned char c)
+{
+	switch (c) {
+	case KEY_LEFT:
+		err_page = err_page > 0 ? err_page - 1 : ERROR_MAX;
+		break;
+	case KEY_RIGHT:
+		err_page = err_page < ERROR_MAX ? err_page + 1 : 0;
+		break;
+	case KEY_ENTER:
+	case KEY_SPACE:
+		ui_focus = UI_F_SIDEBAR;
+		ui_close();
+		if (ErrorFatal || (ErrorMask & (1 << ERROR_ROM)))
+			ColdBoot();             /* does its own ClearError(ERROR_ALL) */
+		else
+			ClearError(ERROR_ALL);
+		return;
+	}
+	dirty = 1;
 }
 
 /* ------------------------------------------------------------------ */
@@ -658,22 +791,31 @@ static void to_sidebar(void)
 	dirty = 1;
 }
 
-/* EDIT the focused value item (a read-only one: the toast) */
+/* EDIT the focused value item */
 static void edit_item(const struct ui_item *it)
 {
-	if (it->kind == UI_INFO)
-		ui_toast("Read-only here: see Open classic menu");
-	else
-		ui_edit = 1;
+	(void)it;
+	ui_edit = 1;
 }
 
 static void switch_tab(unsigned char t)
 {
 	ui_tab = t;
-	if (t == UI_TAB_SYSTEM)
-		sys_snapshot();
+	tab_enter(t);
 	fix_cursor();
 	dirty = 1;
+}
+
+/* on to where the user was going, after a leaving prompt's No */
+static void leave_go_on(void)
+{
+	if (pending == PENDING_CLOSE)
+		ui_close();
+	else {
+		switch_tab(pending);
+		if (pending_into)
+			enter_list();
+	}
 }
 
 /* leaving System (another category, or closing) after a change of memory
@@ -683,31 +825,45 @@ static void leave_done(unsigned char b)
 	if (b == 0) {
 		ui_close();
 		OsdReset();
-	} else if (pending == PENDING_CLOSE)
-		ui_close();
-	else {
-		switch_tab(pending);
-		if (pending_into)
-			enter_list();
-	}
+	} else
+		leave_go_on();
 }
 
-static int leave_system(unsigned char to, unsigned char into)
+/* leaving Storage after a change of the IDE slots (the classic
+   MENU_HARDFILE_CHANGED): Yes applies them and resets, No drops them */
+static void leave_hdf_done(unsigned char b)
+{
+	if (b == 0) {
+		ui_close();
+		mm_hdf_apply();
+	} else
+		leave_go_on();
+}
+
+static int leave_check(unsigned char to, unsigned char into)
 {
 	static const char *const b[] = { "Yes", "No" };
-	if (ui_tab != UI_TAB_SYSTEM || (config.memory == sys_mem && (config.chipset & 0x1c) == sys_chip))
-		return 0;
 	pending = to;
 	pending_into = into;
-	ui_dialog("Reset", "Memory or chipset changed: this", "needs a reset. Reset the Amiga?", b, 2, 0, leave_done);
-	return 1;
+	if (ui_tab == UI_TAB_SYSTEM && (config.memory != sys_mem || (config.chipset & 0x1c) != sys_chip)) {
+		ui_dialog("Reset", "Memory or chipset changed: this", "needs a reset. Reset the Amiga?", b, 2, 0, leave_done);
+		return 1;
+	}
+	if (ui_tab == UI_TAB_STORAGE) {
+		if (mm_hdf_needs_reset()) {
+			ui_dialog("Reset", "Changing the drives needs a reset.", "Reset the Amiga?", b, 2, 1, leave_hdf_done);
+			return 1;
+		}
+		mm_hdf_keep();          /* only discs of CD slots differ: kept, no reset */
+	}
+	return 0;
 }
 
 /* category t; into: the focus into its list */
 static void goto_tab(unsigned char t, unsigned char into)
 {
 	if (t != ui_tab) {
-		if (leave_system(t, into))
+		if (leave_check(t, into))
 			return;
 		switch_tab(t);
 	}
@@ -717,7 +873,7 @@ static void goto_tab(unsigned char t, unsigned char into)
 
 static void request_close(void)
 {
-	if (!leave_system(PENDING_CLOSE, 0))
+	if (!leave_check(PENDING_CLOSE, 0))
 		ui_close();
 }
 
@@ -786,6 +942,13 @@ static void kick_done(unsigned char b)
 	ui_close();
 }
 
+static const char *const ok_btn[] = { "OK" };
+
+static void warn_done(unsigned char b)
+{
+	(void)b;
+}
+
 static void fs_chosen(void)
 {
 	static char name[37];
@@ -800,6 +963,17 @@ static void fs_chosen(void)
 		break;
 	case UI_FS_CD:
 		cd_insert_msg(CD_Insert(file.name, file.long_name[0] ? file.long_name : 0, CurrentDirectory()));
+		break;
+	case UI_FS_HDF:
+	case UI_FS_HDCD:
+		switch (mm_hdf_selected(fs_arg)) {
+		case MM_HDF_NORDB:
+			ui_dialog("Warning", "No partition table found: prepare", "it with HDToolbox, then format it.", ok_btn, 1, 0, warn_done);
+			break;
+		case MM_HDF_NOFS:
+			ui_dialog("Warning", "No filesystem recognised: the image", "may need formatting (or is unknown).", ok_btn, 1, 0, warn_done);
+			break;
+		}
 		break;
 	case UI_FS_KICK:
 		if (file.long_name[0]) {
@@ -873,11 +1047,14 @@ static void key_files(unsigned char c)
 static void change(const struct ui_item *it, int dir)
 {
 	unsigned char v, n = it->nvalues;
-	if (it->kind == UI_INFO) {
-		ui_toast("Read-only here: see Open classic menu");
+	if (it->kind != UI_CYCLE)
+		return;
+	if (it->step) {
+		it->step(it->arg, dir);
+		dirty = 1;
 		return;
 	}
-	if (it->kind != UI_CYCLE || !n)
+	if (!n)
 		return;
 	v = it->get(it->arg);
 	if (dir > 0) {
@@ -1022,9 +1199,13 @@ static void key_open(unsigned char c)
 	if (ui_edit && c != KEY_LEFT && c != KEY_RIGHT && c != KEY_UP && c != KEY_DOWN &&
 	    c != KEY_ENTER && c != KEY_SPACE && c != KEY_ESC)
 		ui_edit = 0;
+	if (ui_focus == UI_F_ERROR) {
+		key_error(c);           /* F12 and Esc too: the page waits for Enter */
+		return;
+	}
 	if (c == KEY_MENU) {
 		/* F12 (and the menu button, the same code) closes from anywhere:
-		   a dialog is cancelled first (the System prompt may close) */
+		   a dialog is cancelled first (a leaving prompt may close) */
 		if (ui_focus == UI_F_DIALOG) {
 			dialog_end(dlg.n - 1);
 			if (!ui_open_now || ui_focus == UI_F_DIALOG)
@@ -1172,10 +1353,15 @@ void ui_tick(void)
 	else if (ui_tab == UI_TAB_MAIN &&
 	         (cd_msg_expired() || (CD_SLOT() >= 0 && CD_PlayingTrack() != ui_cd_shown_track)))
 		dirty = 1;      /* a CD message ended, or the play mark changed */
+	else if (ui_tab == UI_TAB_STORAGE && cd_msg_expired())
+		dirty = 1;      /* the live CD slot's message ended */
 	if (CheckTimer(status_timer)) {
+		const struct ui_item *it = item(cur[ui_tab]);
 		status_timer = GetTimer(UI_T_STATUS);
 		if (core_caps & CORE_CAPS_TEMP)
 			draw_temp();
+		if (ui_focus == UI_F_LIST && !toast_on && !ui_hints_on && !ui_edit && it && it->helpf)
+			ui_draw_help(); /* a live help (the HDMI readback) */
 	}
 }
 

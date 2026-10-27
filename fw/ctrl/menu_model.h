@@ -98,7 +98,7 @@ void mm_hdf_apply(void);
 enum {
 	MMF_NTSC, MMF_CHIP, MMF_SLOW, MMF_FAST, MMF_HRTMON, MMF_BOARDS,
 	MMF_CD32PAD, MMF_AUTOFIRE, MMF_TURBO, MMF_CHIPSLOTS, MMF_SCANLINES,
-	MMF_MASK, MMF_BEAM, MMF_FLOPPYTURBO, MMF_IDE,
+	MMF_MASK, MMF_BEAM, MMF_FLOPPYTURBO, MMF_IDE, MMF_DRIVES,
 	MMF_FIELDS
 };
 unsigned char mm_get_field(unsigned char f);
@@ -113,17 +113,46 @@ void mm_set_volume(unsigned char arg, unsigned char v);
 unsigned char mm_get_cpu(unsigned char arg);
 unsigned char mm_get_scaling(unsigned char arg);
 unsigned char mm_get_bloom(unsigned char arg);
-/* arg = DRIVESOUNDS_FLOPPY / DRIVESOUNDS_HDD: off, on */
+/* arg = DRIVESOUNDS_FLOPPY / DRIVESOUNDS_HDD: off, on (the set switches
+   the drive's sounds on or off at once, as the classic pages) */
 unsigned char mm_get_sound(unsigned char arg);
+void mm_set_sound(unsigned char arg, unsigned char v);
+/* the set: 68000, 68010, 68020 (config.cpu 0, 1, 3; Turbo and Chip slots kept) */
+void mm_set_cpu(unsigned char arg, unsigned char v);
+/* SCALING_*: 0 sharp, 1 area, 2 line rate (the classic cycle line rate ->
+   sharp -> area is the index + 1) */
+void mm_set_scaling(unsigned char arg, unsigned char v);
+void mm_set_bloom(unsigned char arg, unsigned char v);
+/* Bloom shows only where there is a gap between the lines to fill:
+   Scanlines on, Beam width on, or Scaling sharp / area (crt_post.v f_en,
+   crt_beamh.v); otherwise it does nothing and the item is greyed */
+unsigned char mm_bloom_avail(unsigned char arg);
+/* the IDE on/off being edited (mm_ide_on): off, on */
+unsigned char mm_get_ide(unsigned char arg);
+void mm_set_ide(unsigned char arg, unsigned char v);
+/* Video Pos, one step (dir +1 / -1) of the PAL/NTSC picture's pair (rtg 0)
+   or the RTG screen's (rtg 1): horizontal +-8 HD pixels within -128..120,
+   vertical +-VPOS_STEP lines within +-VPOS_MAX (the classic Video Pos page),
+   then both pairs to the core (ConfigVideoPos) */
+void mm_step_pos(unsigned char vertical, int dir, unsigned char rtg);
+/* the ADV7511's clock delay, one step within 0..7, saved with the config
+   (the classic HDMI page) */
+void mm_step_clkdelay(int dir);
 
 /* value texts, in one shared static buffer (valid until the next call) */
 const char *mm_text_kickstart(unsigned char arg);
 const char *mm_text_drives(unsigned char arg);     /* "1".."4" */
+/* the IDE slots as being edited (mm_hdf): the type, the file (the CD
+   drive's message in a live CD slot; "* no disc *", "** file not found **") */
 const char *mm_text_hdf_type(unsigned char slot);
 const char *mm_text_hdf_file(unsigned char slot);
-const char *mm_text_pos(unsigned char vertical);   /* signed: "-8" */
+/* a Video Pos value, signed with its unit: "-8 px", "+4 lines" */
+const char *mm_text_pos(unsigned char vertical, unsigned char rtg);
 const char *mm_text_clkdelay(unsigned char arg);   /* "+0.4 ns" */
 const char *mm_text_cpu(unsigned char arg);        /* with a fixed 68040: "68040/FPU/MMU" */
+/* the HDMI page's readback: "Chip 0xBA: 80  set: 80  INT 0  serviced 12"
+   (0xBA as the chip holds it, ff = no answer; as written) */
+const char *mm_text_hdmi_readback(void);
 /* the volume bar of the shortcut's message: "vol 23 ################" */
 const char *mm_text_volume_msg(void);
 
