@@ -36,17 +36,21 @@ static unsigned char floppy_avail(unsigned char i)
 
 static const char *floppy_text(unsigned char i)
 {
+	size_t n;
 	if (i > drives)
 		return i <= config.floppy.drives ? "* active after reset *" : "not fitted (keypad + adds one)";
 	if (!(df[i].status & DSK_INSERTED))
 		return "* no disk *";
-	memcpy(tbuf, df[i].name, sizeof(df[i].name));
-	tbuf[sizeof(df[i].name)] = 0;
+	/* the name without its padding, the padlock after it */
+	n = sizeof(df[i].name);
+	memcpy(tbuf, df[i].name, n);
+	while (n && tbuf[n - 1] == ' ')
+		n--;
 	if (!(df[i].status & DSK_WRITABLE)) {
-		tbuf[sizeof(df[i].name)] = ' ';
-		tbuf[sizeof(df[i].name) + 1] = 0x17;     /* the padlock (charrom.h) */
-		tbuf[sizeof(df[i].name) + 2] = 0;
+		tbuf[n++] = ' ';
+		tbuf[n++] = 0x17;                        /* the padlock (font8x16.h) */
 	}
+	tbuf[n] = 0;
 	return tbuf;
 }
 
@@ -80,21 +84,23 @@ static const char *cd_text(unsigned char arg)
 		return cd_msg_text;
 	if (!cdrom.unit.media)
 		return "* no disc *";
-	/* the name, the play mark (note + track) at 26-28, the lock mark at 29 */
+	/* the name (25 at most), the play mark (note + track), the lock mark */
 	ui_cd_shown_track = CD_PlayingTrack();
 	n = strlen(cdrom.unit.name);
 	if (n > 25)
 		n = 25;
-	memset(tbuf, ' ', 30);
 	memcpy(tbuf, cdrom.unit.name, n);
-	tbuf[30] = 0;
 	if (ui_cd_shown_track) {
-		tbuf[26] = 0x19;                          /* a note (charrom.h) */
-		tbuf[27] = (char)('0' + ui_cd_shown_track / 10 % 10);
-		tbuf[28] = (char)('0' + ui_cd_shown_track % 10);
+		tbuf[n++] = ' ';
+		tbuf[n++] = 0x19;                         /* a note (font8x16.h) */
+		tbuf[n++] = (char)('0' + ui_cd_shown_track / 10 % 10);
+		tbuf[n++] = (char)('0' + ui_cd_shown_track % 10);
 	}
-	if (CD_Locked())
-		tbuf[29] = 0x17;
+	if (CD_Locked()) {
+		tbuf[n++] = ' ';
+		tbuf[n++] = 0x17;
+	}
+	tbuf[n] = 0;
 	return tbuf;
 }
 
@@ -266,33 +272,33 @@ static void classic_act(unsigned char i)
 #define SEP { .kind = UI_SEP }
 
 static const struct ui_item main_items[] = {
-	{ "DF0", "Floppy drive 0. Enter inserts a disk image (ADF) from the card, or ejects the disk in the drive. Backspace ejects every drive; keypad + and - add or remove drives (after a reset).",
-	  .text = floppy_text, .act = floppy_act, .avail = floppy_avail, .kind = UI_ACTION, .arg = 0, .flags = UI_WIDE },
+	{ "DF0", "Floppy drive 0. Enter inserts a disk image (ADF) or ejects it. Backspace ejects all; keypad + and - add or remove drives.",
+	  .text = floppy_text, .act = floppy_act, .avail = floppy_avail, .kind = UI_ACTION, .arg = 0 },
 	{ "DF1", "Floppy drive 1. Enter inserts or ejects. Keypad + and - add or remove drives (after a reset).",
-	  .text = floppy_text, .act = floppy_act, .avail = floppy_avail, .kind = UI_ACTION, .arg = 1, .flags = UI_WIDE },
+	  .text = floppy_text, .act = floppy_act, .avail = floppy_avail, .kind = UI_ACTION, .arg = 1 },
 	{ "DF2", "Floppy drive 2. Enter inserts or ejects. Keypad + and - add or remove drives (after a reset).",
-	  .text = floppy_text, .act = floppy_act, .avail = floppy_avail, .kind = UI_ACTION, .arg = 2, .flags = UI_WIDE },
+	  .text = floppy_text, .act = floppy_act, .avail = floppy_avail, .kind = UI_ACTION, .arg = 2 },
 	{ "DF3", "Floppy drive 3. Enter inserts or ejects. Keypad + and - add or remove drives (after a reset).",
-	  .text = floppy_text, .act = floppy_act, .avail = floppy_avail, .kind = UI_ACTION, .arg = 3, .flags = UI_WIDE },
-	{ "CD", "The CD-ROM drive. Enter inserts an ISO or CUE image, or ejects the disc (not while the Amiga has locked the drive). The drive itself is set up on the Storage tab.",
-	  .text = cd_text, .act = cd_act, .avail = cd_avail, .kind = UI_ACTION, .flags = UI_WIDE },
+	  .text = floppy_text, .act = floppy_act, .avail = floppy_avail, .kind = UI_ACTION, .arg = 3 },
+	{ "CD", "The CD-ROM drive. Enter inserts an ISO or CUE image, or ejects the disc (not while the Amiga locks it). Set up in Storage.",
+	  .text = cd_text, .act = cd_act, .avail = cd_avail, .kind = UI_ACTION },
 	SEP,
 	{ "Load configuration", "Left/Right choose a saved configuration, Enter loads it. The Amiga restarts with it.",
 	  .get = load_get, .set = load_set, .text = load_text, .act = load_act, .avail = load_avail,
 	  .kind = UI_CYCLE, .nvalues = MM_CONFIG_SLOTS, .flags = UI_ENTERACT },
-	{ "Save configuration", "Left/Right choose the slot, Enter saves the settings there (over a file that exists: asks first). Default is the one loaded at power-on.",
+	{ "Save configuration", "Left/Right choose the slot, Enter saves the settings there (asks before overwriting). Default is loaded at power-on.",
 	  .get = save_get, .set = save_set, .text = save_text, .act = save_act,
 	  .kind = UI_CYCLE, .nvalues = MM_CONFIG_SLOTS, .flags = UI_ENTERACT },
 	SEP,
-	{ "Reset", "Resets the Amiga. Disks stay inserted.", .act = confirm_act, .kind = UI_ACTION, .arg = 0 },
-	{ "Reboot", "Restarts the whole machine and loads the Kickstart again.", .act = confirm_act, .kind = UI_ACTION, .arg = 1 },
+	{ "Reset", "Resets the Amiga. Disks stay inserted.", .act = confirm_act, .kind = UI_ACTION, .arg = 0, .flags = UI_SUB },
+	{ "Reboot", "Restarts the whole machine and loads the Kickstart again.", .act = confirm_act, .kind = UI_ACTION, .arg = 1, .flags = UI_SUB },
 	{ "Return to Chameleon", "Leaves this core for the Chameleon menu.", .act = confirm_act, .avail = reconfig_avail,
-	  .kind = UI_ACTION, .arg = 2, .flags = UI_HIDE },
+	  .kind = UI_ACTION, .arg = 2, .flags = UI_HIDE | UI_SUB },
 	SEP,
-	{ "About", "Who made this (the classic page).", .act = classic_act, .kind = UI_ACTION, .arg = 4 },
-	{ "Supporters", "Thanks (the classic page).", .act = classic_act, .kind = UI_ACTION, .arg = 5 },
+	{ "About", "Who made this (the classic page).", .act = classic_act, .kind = UI_ACTION, .arg = 4, .flags = UI_SUB },
+	{ "Supporters", "Thanks (the classic page).", .act = classic_act, .kind = UI_ACTION, .arg = 5, .flags = UI_SUB },
 	{ "Classic menu", "The previous OSD menu, with every setting. Esc there comes back here.",
-	  .act = classic_act, .kind = UI_ACTION, .arg = 0 },
+	  .act = classic_act, .kind = UI_ACTION, .arg = 0, .flags = UI_SUB },
 };
 
 /* ---- System ---- */
@@ -313,12 +319,12 @@ static void kick_act(unsigned char arg)
 }
 
 static const struct ui_item system_items[] = {
-	{ "Chipset", "OCS (A500 or A1000), ECS or AGA. Takes full effect after a reset: leaving the tab offers one.",
+	{ "Chipset", "OCS (A500 or A1000), ECS or AGA. Takes full effect after a reset: leaving System offers one.",
 	  .values = v_chipset, .get = mm_get_chipset, .set = mm_set_chipset, .kind = UI_CYCLE, .nvalues = 4 },
 	{ "Video standard", "PAL (50 Hz) or NTSC (60 Hz).",
 	  .values = v_video, .get = mm_get_field, .set = mm_set_field, .kind = UI_CYCLE, .arg = MMF_NTSC, .nvalues = 2 },
 	SEP,
-	{ "Chip RAM", "Chip memory (graphics, sound, the custom chips). Memory changes need a reset: leaving the tab offers one.",
+	{ "Chip RAM", "Chip memory (graphics, sound, the custom chips). Memory changes need a reset: leaving System offers one.",
 	  .values = v_chip, .get = mm_get_field, .set = mm_set_field, .kind = UI_CYCLE, .arg = MMF_CHIP, .nvalues = 4 },
 	{ "Slow RAM", "Memory at 0xC00000 (A500 trapdoor style). Needs a reset.",
 	  .values = v_slow, .get = mm_get_field, .set = mm_set_field, .kind = UI_CYCLE, .arg = MMF_SLOW, .nvalues = 4 },
@@ -329,14 +335,14 @@ static const struct ui_item system_items[] = {
 	{ "HRTmon", "The HRTmon debugger/monitor. Needs a reset.",
 	  .values = v_hrtmon, .get = mm_get_field, .set = mm_set_field, .kind = UI_CYCLE, .arg = MMF_HRTMON, .nvalues = 2 },
 	{ "Kickstart ROM", "Enter chooses a Kickstart ROM image on the card. Loading it restarts the Amiga.",
-	  .text = mm_text_kickstart, .act = kick_act, .kind = UI_ACTION },
+	  .text = mm_text_kickstart, .act = kick_act, .kind = UI_ACTION, .flags = UI_SUB },
 	SEP,
 	{ "CD32 pad", "Joystick port 2 as a CD32 game pad.",
 	  .values = v_off_on, .get = mm_get_field, .set = mm_set_field, .kind = UI_CYCLE, .arg = MMF_CD32PAD, .nvalues = 2 },
 	{ "Autofire", "Autofire rate of the fire button (also Ctrl-Alt-keypad 0 with the menu closed).",
 	  .values = v_autofire, .get = mm_get_field, .set = mm_set_field, .kind = UI_CYCLE, .arg = MMF_AUTOFIRE, .nvalues = 4 },
 	{ "Volume", "The audio volume, 0-31 (also LShift and keypad + or -).",
-	  .get = mm_get_volume, .set = mm_set_volume, .text = mm_text_volume, .kind = UI_CYCLE, .nvalues = 32, .flags = UI_CLAMP },
+	  .get = mm_get_volume, .set = mm_set_volume, .kind = UI_CYCLE, .nvalues = 32, .flags = UI_CLAMP | UI_BAR },
 };
 
 /* ---- Storage, Video, Acceleration: shown here, changed in the classic menu ---- */
@@ -384,7 +390,7 @@ static const struct ui_item storage_items[] = {
 	  .values = v_off_on, .get = mm_get_sound, .avail = sounds_avail, .kind = UI_INFO, .arg = DRIVESOUNDS_HDD, .nvalues = 2 },
 	SEP,
 	{ "Open classic menu", "Changes the drives in the classic menu (its main page: Floppy and Hard disk settings).",
-	  .act = classic_act, .kind = UI_ACTION, .arg = 1 },
+	  .act = classic_act, .kind = UI_ACTION, .arg = 1, .flags = UI_SUB },
 };
 
 static const struct ui_item video_items[] = {
@@ -399,7 +405,7 @@ static const struct ui_item video_items[] = {
 	INFO_T("HDMI clock delay", "Where the HDMI transmitter samples the pixel data. Sparkles mean too close to an edge.", mm_text_clkdelay, 0),
 	SEP,
 	{ "Open classic menu", "Changes these in the classic menu (Video; Right: Video Pos, HDMI).",
-	  .act = classic_act, .kind = UI_ACTION, .arg = 2 },
+	  .act = classic_act, .kind = UI_ACTION, .arg = 2, .flags = UI_SUB },
 };
 
 static const struct ui_item accel_items[] = {
@@ -408,15 +414,16 @@ static const struct ui_item accel_items[] = {
 	INFO_V("Chip slots", "Standard: the 7 MHz machine. Fast: a chip cycle ends with its slot (the AGA rate).", v_chipslots, mm_get_field, MMF_CHIPSLOTS, 2),
 	SEP,
 	{ "Open classic menu", "Changes these in the classic menu (its Chipset page).",
-	  .act = classic_act, .kind = UI_ACTION, .arg = 3 },
+	  .act = classic_act, .kind = UI_ACTION, .arg = 3, .flags = UI_SUB },
 };
 
 #define N(a) (sizeof(a) / sizeof((a)[0]))
 
+/* the icons' colours: osd_icons.h (house, floppy, chip, monitor, bolt) */
 const struct ui_tab ui_tabs[UI_TABS] = {
-	{ "Main", "Floppies, the CD-ROM, configurations, reset.", main_items, N(main_items) },
-	{ "Storage", "Floppy and hard disk drives (shown here; changed in the classic menu for now).", storage_items, N(storage_items) },
-	{ "System", "Chipset, memory, Kickstart, joystick, volume.", system_items, N(system_items) },
-	{ "Video", "The HDMI picture (shown here; changed in the classic menu for now).", video_items, N(video_items) },
-	{ "Acceleration", "CPU and chip-bus speed (shown here; changed in the classic menu for now).", accel_items, N(accel_items) },
+	{ "Main", "Floppies, the CD-ROM, configurations, reset.", main_items, N(main_items), OSD2_C_YELLOW },
+	{ "Storage", "Floppy and hard disk drives (shown here; changed in the classic menu for now).", storage_items, N(storage_items), OSD2_C_WHITE },
+	{ "System", "Chipset, memory, Kickstart, joystick, volume.", system_items, N(system_items), OSD2_C_GREEN },
+	{ "Video", "The HDMI picture (shown here; changed in the classic menu for now).", video_items, N(video_items), OSD2_C_WHITE },
+	{ "Acceleration", "CPU and chip-bus speed (shown here; changed in the classic menu for now).", accel_items, N(accel_items), OSD2_C_RED },
 };

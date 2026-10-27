@@ -378,19 +378,6 @@ static char *bar(char *p, unsigned n)
     return p;
 }
 
-const char *mm_text_volume(unsigned char arg)
-{
-    unsigned v = mm_get_volume(arg);
-    char *p = buf;
-    if (v < 10)
-        *p++ = ' ';
-    p = mm_utoa(p, v);
-    *p++ = ' ';
-    p = bar(p, (v * 13 + 30) / 31);      // 0..13 cells: the field is 16 wide
-    *p = 0;
-    return buf;
-}
-
 const char *mm_text_volume_msg(void)
 {
     char *p = buf;

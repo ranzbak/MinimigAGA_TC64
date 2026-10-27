@@ -58,24 +58,21 @@
 #define OSD2_VIDEO  2         /* the video as it is (transparent) */
 #define OSD2_BLEND  3         /* (colour + video) / 2 */
 
-/* the recommended scheme (plan 3.5), as loaded by osd2_pal_default() */
+/* the menu's eight colours (Paul, 2026-10-27: black, white, blue, dark blue,
+   yellow, green, red, transparent), as loaded by osd2_pal_default().
+   Black, white and blue carry the menu; yellow, green and red are accents
+   (icons, toasts, errors).  Entries 8-15 are free (loaded black): the
+   About/Supporters effects cycle them. */
 enum {
-	OSD2_C_FRAME = 0,     /* dimmed video: the outer frame */
-	OSD2_C_PANEL,         /* 0x1A2434 */
-	OSD2_C_TEXT,          /* 0xC8CCD0 */
-	OSD2_C_WHITE,
-	OSD2_C_TABBAR,        /* 0x101820 */
-	OSD2_C_TAB,           /* 0xF0A030 the active tab (amber) */
-	OSD2_C_HILITE,        /* 0x3060C0 the highlight bar */
-	OSD2_C_HITEXT,        /* white on the highlight bar */
-	OSD2_C_VALUE,         /* 0x60D0E0 */
-	OSD2_C_GREY,          /* 0x707880 greyed items */
-	OSD2_C_WARN,          /* 0xE04040 */
-	OSD2_C_OK,            /* 0x40C060 */
-	OSD2_C_BORDER,        /* 0x506070 */
-	OSD2_C_STATUS,        /* 0x202830 */
-	OSD2_C_HELP,          /* 0x141C28 */
-	OSD2_C_BLACK
+	OSD2_C_BLACK = 0,     /* the background */
+	OSD2_C_WHITE,         /* 0xF0F0F0 text */
+	OSD2_C_BLUE,          /* 0x1478E6 the selection bar, headers */
+	OSD2_C_DKBLUE,        /* 0x3C5A9A the help field, bar tracks, greyed text */
+	OSD2_C_YELLOW,        /* 0xF0C828 */
+	OSD2_C_GREEN,         /* 0x3CC85A */
+	OSD2_C_RED,           /* 0xE03C3C errors, the dialog frame */
+	OSD2_C_CLEAR,         /* transparent: the video unchanged (OSD2_VIDEO) */
+	OSD2_C_FREE           /* 8..15: free */
 };
 
 /* a cell attribute from foreground and background palette indices */

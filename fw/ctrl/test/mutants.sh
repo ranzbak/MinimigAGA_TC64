@@ -617,7 +617,8 @@ unit osd2_nocompare osd2_test src osd2.c 's/if ((kinds \& K_CHR) \&\& osd2_chr\[
 # the commit sends the palette but never the window
 unit osd2_nowin osd2_test src osd2.c 's/^\tsend_win();$/\t;/' "FAIL commit: entry 5 blend"
 
-# ---- the new OSD menu (ui_test, dispatch_test; findings/osd-redesign Phase 3) ----
+# ---- the new OSD menu (ui_test, dispatch_test; findings/osd-redesign Phase 3,
+# the sidebar layout of 2026-10-27) ----
 # the long name's start held 250 ms instead of 500
 unit ui_scrollhold ui_test src ui.h 's/^#define UI_T_SCROLL_HOLD UI_T(500)/#define UI_T_SCROLL_HOLD UI_T(250)/' "FAIL scroll: the start held 500 ms"
 # a cursor move does not restart the scroll
@@ -631,8 +632,15 @@ unit ui_debugbitmap ui_test src ui.c '/^void ui_close(void)/,/^}/s/^\t\tdebug2_s
 unit ui_debugtoast ui_test src ui.c 's/^\t\t\t\tdebug2_show(1);     \/\* the debug page back over/\t\t\t\tosd2_disable();     \/* the debug page back over/' "FAIL debug mode toast ends: the debug page back"
 # opening switches the classic bitmap OSD on too
 unit ui_bitmap ui_test src ui.c 's/SPI(to_osd ? DISABLE_KEYBOARD : 0);/SPI(to_osd ? DISABLE_KEYBOARD | 1 : 0);/' "FAIL open: OSD_CMD_OSD 0x02"
-# Up past the first item stays in the list (no way to the tabs for a joystick)
-unit ui_notabbar ui_test src ui.c 's/^\t\t\tui_focus = UI_F_TABBAR;     \/\* past the first item/\t\t\t;     \/* past the first item/' "FAIL Up from DF0: focus on the tab bar"
+# Left on an item without a value stays in the list (a joystick's way back
+# to the sidebar)
+unit ui_noback ui_test src ui.c 's/^\t\t\tui_focus = UI_F_SIDEBAR;    \/\* no value to change/\t\t\t;    \/* no value to change/' "FAIL Left on DF0 (no value): back to the sidebar"
+# the help field never switches from the key hints to the focused item's help
+unit ui_nohelp ui_test src ui.c 's/^\tui_help_on = 1;  /\tui_help_on = 0;  /' "FAIL Right: the help field shows DF0's help"
+# the sidebar's Up/Down do not show the category's items until the list has the focus
+unit ui_nopreview ui_test src ui.c 's/^\t\t\tui_draw_item(i);$/\t\t\tif (ui_focus != UI_F_SIDEBAR) ui_draw_item(i);/' "FAIL sidebar Down: Storage's items shown at once"
+# F12 in the list goes back to the sidebar instead of closing
+unit ui_f12back ui_test src ui.c '/^static void key_open/,/^}/s/^\t\tif (ui_focus == UI_F_FILESEL)$/\t\tif (ui_focus == UI_F_LIST) { ui_focus = UI_F_SIDEBAR; return; }\n\t\tif (ui_focus == UI_F_FILESEL)/' "FAIL F12 in the list: closed"
 # the file selector ignores sort_table
 unit ui_nosort ui_test src ui.c 's/name = entry_name(sort_table\[i\], /name = entry_name(i, /' "FAIL screen filesel"
 # leaving System after a memory change: no reset offered

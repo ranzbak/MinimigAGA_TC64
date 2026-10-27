@@ -78,7 +78,6 @@ unsigned char mm_get_bloom(unsigned char arg);
 unsigned char mm_get_sound(unsigned char arg);
 
 /* value texts, in one shared static buffer (valid until the next call) */
-const char *mm_text_volume(unsigned char arg);     /* "23 ##########" */
 const char *mm_text_kickstart(unsigned char arg);
 const char *mm_text_drives(unsigned char arg);     /* "1".."4" */
 const char *mm_text_hdf_type(unsigned char slot);

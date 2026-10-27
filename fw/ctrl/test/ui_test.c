@@ -1,15 +1,20 @@
 /* ui_test: the new OSD menu (ui.c, ui_tabs.c, menu_model.c; findings/
- * osd-redesign/plan.md Phase 3) on the real osd2.c and the mock's SPI trace.
+ * osd-redesign/plan.md Phase 3, the sidebar layout of 2026-10-27) on the
+ * real osd2.c and the mock's SPI trace.
  * The rest of the firmware is stubbed here: osd.c's Config* calls and
  * OsdShow/OsdHide, config files, the CD-ROM, and a FAT directory model
  * (ScanDirectory's window semantics over two directories, the entries
  * stored out of order behind sort_table).  Keys go in through the stub
  * OsdGetCtrl, one per ui_handle() pass, as on the board.
  *
- * Checks: golden screens (gold/ui/<name>.txt: the 64 x 20 characters, then
- * the foreground and the background palette index of every cell), the SPI
- * frames that switch the layer and the keyboard, the calls the menu makes
- * (Config*, InsertFloppy's drive, CD_Insert, the reset sequences), and the
+ * Checks: golden screens (gold/ui/<name>.txt: the 64 x 20 characters, a
+ * glyph outside ASCII as ^, then the foreground and the background palette
+ * index of every cell), the SPI frames that switch the layer and the
+ * keyboard and upload the menu's glyphs, the calls the menu makes (Config*,
+ * InsertFloppy's drive, CD_Insert, the reset sequences), the navigation
+ * (sidebar with its preview, list, Left/Esc back, F keys, F12 closing from
+ * anywhere), the help field (key hints until a key, then the focused
+ * item's help, toasts for 1 s; every help text fits its two lines), and the
  * selected long name's scroll on the mock TIMER (start 500 ms, a cell per
  * 128 ms, end 1 s, restart; reset by a cursor move).
  *   make -C fw/ctrl/test run-ui_test
@@ -34,6 +39,7 @@
 #include "menu.h"
 #include "menu_model.h"
 #include "osd2.h"
+#include "osd_icons.h"
 #include "ui.h"
 #include "mock_hw.h"
 
@@ -389,17 +395,21 @@ static const char *cells(unsigned r, unsigned c, unsigned n)
 	return cellbuf;
 }
 
-/* the list row the cursor is on (its label cell highlighted), or -1 */
+#define A_SEL  OSD2_ATTR(OSD2_C_WHITE, OSD2_C_BLUE)
+#define A_GREY OSD2_ATTR(OSD2_C_DKBLUE, OSD2_C_BLACK)
+
+/* the list row the cursor is on (its label cell on the blue bar), or -1 */
 static int sel_row(void)
 {
 	unsigned r;
 	for (r = UI_LIST_ROW; r < UI_LIST_ROW + UI_LIST_ROWS; r++)
-		if (osd2_atr[r][UI_LABEL_COL] == OSD2_ATTR(OSD2_C_HITEXT, OSD2_C_HILITE))
+		if (osd2_atr[r][UI_LABEL_COL] == A_SEL)
 			return (int)r;
 	return -1;
 }
 
-/* the cursor onto the item whose label starts with `label` */
+/* the cursor onto the item whose label starts with `label` (from the
+   sidebar: into the list first) */
 static int go(const char *label)
 {
 	int i, dir;
@@ -408,8 +418,8 @@ static int go(const char *label)
 			int r = sel_row();
 			if (r >= 0 && !strncmp(row((unsigned)r) + UI_LABEL_COL, label, strlen(label)))
 				return r;
-			if (ui_focus == UI_F_TABBAR)
-				key(KEY_DOWN);
+			if (ui_focus == UI_F_SIDEBAR)
+				key(KEY_RIGHT);
 			else
 				key(dir ? KEY_UP : KEY_DOWN);
 		}
@@ -532,15 +542,33 @@ static void setup(void)
 	cfg_exists = 0x05;              /* Default and 2 */
 	core_caps = CORE_CAPS_IDE2;
 	osd2_detect(1, v);
-	osd2_init(OSD2_ATTR(OSD2_C_TEXT, OSD2_C_PANEL));
+	osd2_init(OSD2_ATTR(OSD2_C_WHITE, OSD2_C_BLACK));
 	mock_reset();
 	mock_timer_step(0);
 	calls_clear();
 }
 
+
+/* every help text fits the help field's two lines (osd2_wrap into the
+   off-window scratch rows 30-31) */
+static void help_fits(const char *what, const char *help)
+{
+	unsigned n;
+	char name[96];
+	if (!help)
+		return;
+	n = osd2_wrap(30, 0, UI_HELP_W, UI_HELP_ROWS, help, 0);
+	if (n > UI_HELP_ROWS) {
+		snprintf(name, sizeof name, "help of %s fits two lines (%u)", what, n);
+		check(name, n, UI_HELP_ROWS);
+	}
+	cases++;
+}
+
 int main(int argc, char **argv)
 {
 	int i;
+	unsigned t;
 	golddir = argc > 1 ? argv[1] : "gold/ui";
 	setup();
 
@@ -549,7 +577,7 @@ int main(int argc, char **argv)
 	check_has("start: OsdHide", calls, "OsdHide;", 1);
 	check("start: the menu closed", ui_open_now, 0);
 
-	/* ---- F12 opens: the keyboard to the OSD (bitmap off), cells, window ---- */
+	/* ---- F12 opens: the keyboard to the OSD (bitmap off), glyphs, cells, window ---- */
 	mock_reset();
 	mock_timer_step(0);
 	calls_clear();
@@ -558,43 +586,102 @@ int main(int argc, char **argv)
 	check_has("open: OSD_CMD_OSD 0x02 (keyboard to the OSD, bitmap off)", mock_trace(), KEYS_TO_OSD, 1);
 	check_has("open: the window 64 x 20 at (16, 5), scale 2, on", mock_trace(), WIN_MENU_ON, 1);
 	check_has("open: no OsdShow (the bitmap stays off)", calls, "OsdShow", 0);
+	/* 0x04 empty, 0x05 1/8: rows 3-12 0x80 */
+	check_has("open: the bar glyphs uploaded (0x04..)", mock_trace(),
+	          "20 3c 00 40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 80 80 ", 1);
+	check_has("open: the icons uploaded (0xC0..)", mock_trace(), "20 3c 0c 00 00 01 03 07 0e ", 1);
+	check_has("open: the submenu arrow uploaded (0x16)", mock_trace(), "20 3c 01 60 00 00 00 00 60 70 38 1c ", 1);
 	{
 		const char *t = mock_trace();
-		const char *w = strstr(t, WIN_MENU_ON), *c = strstr(t, "20 2c ");
+		const char *w = strstr(t, WIN_MENU_ON), *c = strstr(t, "20 2c "), *f = strstr(t, "20 3c ");
 		check("open: the cells before the window is switched on", c && w && c < w, 1);
+		check("open: the glyphs before the cells", f && c && f < c, 1);
 	}
-	screen("main");
+	check("open: the focus in the sidebar", ui_focus, UI_F_SIDEBAR);
+	check("open: on Main", ui_tab, UI_TAB_MAIN);
+	check_str("open: the key hints in the help field", cells(18, 1, 14), "Up/Down select");
+	check_str("open: the second hint line", cells(19, 1, 15), "F1-F5 category ");
+	check("open: Main's bar blue", osd2_atr[3][5], A_SEL);
+	check("open: Main's icon, left glyph", osd2_chr[3][1], OSD_ICON_MAIN);
+	check("open: Main's icon yellow on the bar", osd2_atr[3][2], OSD2_ATTR(OSD2_C_YELLOW, OSD2_C_BLUE));
+	check("open: no item highlighted", sel_row(), -1);
+	screen("open");
 
-	/* ---- the tab bar: Up from the first item, Left/Right, Down ---- */
-	key(KEY_UP);
-	check("Up from DF0: focus on the tab bar", ui_focus, UI_F_TABBAR);
-	key(KEY_RIGHT);
-	check("tab bar Right: Storage", ui_tab, UI_TAB_STORAGE);
+	/* ---- the sidebar: Up/Down choose the category, its items at once ---- */
 	key(KEY_DOWN);
-	check("tab bar Down: the list", ui_focus, UI_F_LIST);
+	check("sidebar Down: Storage", ui_tab, UI_TAB_STORAGE);
+	check("sidebar Down: the focus stays in the sidebar", ui_focus, UI_F_SIDEBAR);
+	check_str("sidebar Down: the header", cells(0, 20, 8), "Storage ");
+	check_str("sidebar Down: Storage's items shown at once", cells(2, 20, 13), "Floppy drives");
+	check_str("sidebar Down: the category's help", cells(18, 1, 10), "Floppy and");
+	check("sidebar Down: Storage's bar blue, Main's black", osd2_atr[6][5] == A_SEL && osd2_atr[3][5] == OSD2_ATTR(OSD2_C_WHITE, OSD2_C_BLACK), 1);
+	key(KEY_UP);
+	key(KEY_UP);
+	check("sidebar Up at the top: Main", ui_tab, UI_TAB_MAIN);
+	check_str("sidebar Up: Main's items again", cells(2, 20, 3), "DF0");
+
+	/* ---- into the list and back ---- */
+	key(KEY_RIGHT);
+	check("Right: the list", ui_focus, UI_F_LIST);
+	check("Right: DF0 highlighted", sel_row(), 2);
+	check_str("Right: the help field shows DF0's help", cells(18, 1, 15), "Floppy drive 0.");
+	check("Right: Main's bar dark blue (the focus in its list)", osd2_atr[3][5], OSD2_ATTR(OSD2_C_WHITE, OSD2_C_DKBLUE));
+	screen("main");
+	key(KEY_LEFT);
+	check("Left on DF0 (no value): back to the sidebar", ui_focus, UI_F_SIDEBAR);
+	key(KEY_ENTER);
+	check("Enter in the sidebar: the list", ui_focus, UI_F_LIST);
+	check("Enter in the sidebar: the cursor where it was", sel_row(), 2);
+	key(KEY_ESC);
+	check("Esc in the list: the sidebar", ui_focus, UI_F_SIDEBAR);
+	check("Esc in the list: still open", ui_open_now, 1);
+	key(KEY_ESC);
+	check("Esc in the sidebar: closed", ui_open_now, 0);
+	key(KEY_MENU);
+	key(KEY_SPACE);
+	check("Space in the sidebar: the list", ui_focus, UI_F_LIST);
+	key(KEY_MENU);
+	check("F12 in the list: closed", ui_open_now, 0);
+	key(KEY_MENU);
+	check("reopened: the sidebar", ui_focus, UI_F_SIDEBAR);
+	check_str("reopened: the key hints again", cells(18, 1, 14), "Up/Down select");
+
+	/* ---- Storage: read-only values, the toast in the help field ---- */
+	key(KEY_DOWN);
+	key(KEY_RIGHT);
+	check("Storage list", ui_tab == UI_TAB_STORAGE && ui_focus == UI_F_LIST, 1);
 	screen("storage");
 	key(KEY_LEFT);
-	check_str("Storage Left: read-only toast", cells(19, 1, 37), "Read-only here: see Open classic menu");
+	check_str("Storage Left: read-only toast", cells(18, 1, 37), "Read-only here: see Open classic menu");
+	check("Storage Left: the toast yellow", osd2_atr[18][1], OSD2_ATTR(OSD2_C_YELLOW, OSD2_C_DKBLUE));
 	check("Storage Left: config unchanged", config.floppy.drives, 1);
+	check("Storage Left (a value): still in the list", ui_focus, UI_F_LIST);
 	wait_counts(UI_T(1000) + 1);
-	check_str("the toast gone", cells(19, 1, 8), "        ");
+	check_str("the toast gone: the item's help again", cells(18, 1, 15), "How many floppy");
 	key(KEY_F3);
 	check("F3: System", ui_tab, UI_TAB_SYSTEM);
+	check("F3: into its list", ui_focus, UI_F_LIST);
 	screen("system");
 	key(KEY_PGDN);
 	check("PgDn: Video", ui_tab, UI_TAB_VIDEO);
+	check("PgDn in the list: the list", ui_focus, UI_F_LIST);
 	screen("video");
 	key(KEY_F5);
 	screen("accel");
 	key(KEY_PGDN);
 	check("PgDn wraps: Main", ui_tab, UI_TAB_MAIN);
+	key(KEY_ESC);
+	key(KEY_PGUP);
+	check("PgUp wraps: Acceleration", ui_tab, UI_TAB_ACCEL);
+	check("PgUp in the sidebar: the sidebar", ui_focus, UI_F_SIDEBAR);
 
 	/* ---- System: a memory change and the reset prompt on leaving ---- */
 	key(KEY_F3);
 	calls_clear();
 	key(KEY_DOWN);
 	key(KEY_DOWN);                  /* past the separator: Chip RAM */
-	check_str("System: Chip RAM selected", cells(5, 2, 8), "Chip RAM");
+	check_str("System: Chip RAM selected", cells(5, 20, 8), "Chip RAM");
+	check("System: the change arrows", osd2_chr[5][53] == OSD_G_LEFT && osd2_chr[5][62] == OSD_G_RIGHT, 1);
 	key(KEY_LEFT);
 	check("Chip RAM Left: 1.5 MB", config.memory & 3, 2);
 	check_has("Chip RAM Left: ConfigMemory(22)", calls, "ConfigMemory(22);", 1);
@@ -605,48 +692,54 @@ int main(int argc, char **argv)
 	key(KEY_RIGHT);
 	key(KEY_ENTER);                 /* No */
 	check("No: on to Main", ui_tab, UI_TAB_MAIN);
+	check("No: into Main's list (F1)", ui_focus, UI_F_LIST);
 	check_has("No: no reset", calls, "OsdReset", 0);
 	key(KEY_F3);
 	key(KEY_RIGHT);                 /* Chip RAM back to 2.0 MB: changed against 1.5 */
 	calls_clear();
 	mock_reset();
 	mock_timer_step(0);
-	key(KEY_ESC);
-	check("Esc after a change: the dialog", ui_focus, UI_F_DIALOG);
+	key(KEY_MENU);
+	check("F12 after a change: the dialog", ui_focus, UI_F_DIALOG);
 	key(KEY_ENTER);                 /* Yes (the default) */
 	check_has("Yes: closed, then OsdReset", calls, "OsdHide;debug2_show(0);OsdReset;", 1);
 	check("Yes: the menu closed", ui_open_now, 0);
 	check_has("closing: the window off", mock_trace(), WIN_MENU_OFF, 1);
 
-	/* ---- Volume: Left/Right, clamped; the LShift shortcut's toast ---- */
+	/* ---- Volume: a bar, Left/Right, clamped; the LShift shortcut's toast ---- */
 	key(KEY_MENU);
 	check("reopened on System", ui_tab, UI_TAB_SYSTEM);
-	for (i = 0; i < 10; i++)
-		key(KEY_DOWN);
-	check_str("System: Volume selected", cells(14, 2, 6), "Volume");
+	check("System: Volume", go("Volume"), 14);
 	calls_clear();
 	key(KEY_RIGHT);
 	check("Volume Right: 21", config.audio.volume, 21);
 	check_has("Volume Right: ConfigAudio(21)", calls, "ConfigAudio(21);", 1);
-	check_str("Volume value: 21 and a bar", cells(14, 21, 18), "<21 #########    >");
+	check_str("Volume value: 21", cells(14, 59, 2), "21");
+	/* 21 / 31 of 16 cells = 87 eighths: 10 full, one 7/8, the rest empty */
+	check("Volume bar: cell 0 full", osd2_chr[14][UI_BAR_COL], OSD_G_BAR0 + 8);
+	check("Volume bar: cell 9 full", osd2_chr[14][UI_BAR_COL + 9], OSD_G_BAR0 + 8);
+	check("Volume bar: cell 10 7/8", osd2_chr[14][UI_BAR_COL + 10], OSD_G_BAR0 + 7);
+	check("Volume bar: cell 11 empty", osd2_chr[14][UI_BAR_COL + 11], OSD_G_BAR0);
+	check("Volume bar: white on the dark blue track", osd2_atr[14][UI_BAR_COL], OSD2_ATTR(OSD2_C_WHITE, OSD2_C_DKBLUE));
+	check("Volume: the change arrows", osd2_chr[14][UI_BAR_COL - 2] == OSD_G_LEFT && osd2_chr[14][62] == OSD_G_RIGHT, 1);
 	config.audio.volume = 31;
 	calls_clear();
 	key(KEY_RIGHT);
 	check("Volume clamps at 31", config.audio.volume, 31);
 	check_has("Volume at 31: no ConfigAudio", calls, "ConfigAudio", 0);
+	check("Volume 31: the bar full", osd2_chr[14][UI_BAR_COL + 15], OSD_G_BAR0 + 8);
 	config.audio.volume = 20;
 	key(KEY_LSHIFT);
 	key(KEY_KPPLUS);
 	key(KEY_LSHIFT | KEY_UPSTROKE);
 	check("LShift keypad +: 21", config.audio.volume, 21);
-	check_str("LShift keypad +: the toast in the status line", cells(19, 1, 22), "vol 21 ###########    ");
+	check_str("LShift keypad +: the toast in the help field", cells(18, 1, 22), "vol 21 ###########    ");
 	wait_counts(UI_T(1000) + 1);
-	check_str("the toast gone after 1 s", cells(19, 1, 8), "        ");
+	check_str("the toast gone after 1 s: the help again", cells(18, 1, 9), "The audio");
 
 	/* ---- Main: eject DF0, the file selector, insert ---- */
 	key(KEY_F1);
-	key(KEY_UP);                    /* the tab bar ... */
-	key(KEY_DOWN);                  /* ... and back: DF0 */
+	check("F1: DF0 selected", sel_row(), 2);
 	calls_clear();
 	key(KEY_ENTER);
 	check("DF0 Enter: ejected", df[0].status, 0);
@@ -657,83 +750,85 @@ int main(int argc, char **argv)
 	check("file selector: from the root", iCurrentDirectory, 0);
 	check("file selector: 16 entries", nDirEntries, 16);
 	check("file selector: fat_dir_window 16", fat_dir_window, 16);
+	check_str("file selector: the header", cells(0, 20, 10), "Floppy DF0");
+	check_str("file selector: its help", cells(18, 1, 26), "Choose a disk image (ADF).");
 	screen("filesel");
 
 	/* the selected long name scrolls; unselected long names are cut with ~ */
-	check_str("an unselected long name: cut, ~", cells(4, 2, 36), "Another World (1991)(Delphine)      ");
-	check_str("Shadow of the Beast: cut with ~", cells(13, 37, 1), "~");
+	check_str("a long name that fits: whole", cells(4, 20, 42), "Another World (1991)(Delphine)            ");
+	check_str("Shadow of the Beast: cut with ~", cells(13, 61, 1), "~");
 	for (i = 0; i < 11; i++)
 		key(KEY_DOWN);
-	check_str("Shadow of the Beast selected, from its start", cells(13, 2, 36), "Shadow of the Beast (1989)(Psygnosis");
+	check_str("Shadow of the Beast selected, from its start", cells(13, 20, 42), "Shadow of the Beast (1989)(Psygnosis)(Disk");
 	{
 		/* "Shadow of the Beast (1989)(Psygnosis)(Disk 1 of 2)": 50 cells,
-		   field 36: 14 steps */
-		int t = 0, step = 0, at[20], back = -1;
+		   field 42: 8 steps */
+		int tm = 0, step = 0, at[20], back = -1;
 		const char *full = "Shadow of the Beast (1989)(Psygnosis)(Disk 1 of 2)";
-		while (t < 1200 && back < 0) {
-			char want[37];
+		char want[43];
+		while (tm < 1200 && back < 0) {
 			wait_counts(1);
-			t++;
-			memcpy(want, full + step + 1, 36);
-			want[36] = 0;
-			if (step < 14 && !strcmp(cells(13, 2, 36), want))
-				at[step++] = t;
-			else if (step == 14 && !strcmp(cells(13, 2, 36), "Shadow of the Beast (1989)(Psygnosis"))
-				back = t;
+			tm++;
+			memcpy(want, full + step + 1, 42);
+			want[42] = 0;
+			if (step < 8 && !strcmp(cells(13, 20, 42), want))
+				at[step++] = tm;
+			else if (step == 8 && !strncmp(cells(13, 20, 42), full, 42))
+				back = tm;
 		}
-		check("scroll: 14 steps to the end", step, 14);
-		if (step == 14) {
+		check("scroll: 8 steps to the end", step, 8);
+		if (step == 8) {
 			check("scroll: the start held 500 ms (86 counts)", at[0], 86);
 			check("scroll: a step every 128 ms (22 counts)", at[1] - at[0], 22);
-			check("scroll: the last step on time", at[13] - at[12], 22);
-			check("scroll: the end held 1 s (172 counts), then the start", back - at[13], 172);
+			check("scroll: the last step on time", at[7] - at[6], 22);
+			check("scroll: the end held 1 s (172 counts), then the start", back - at[7], 172);
 		}
 		wait_counts(86 - 1);
-		check_str("scroll: the start held again", cells(13, 2, 36), "Shadow of the Beast (1989)(Psygnosis");
+		check("scroll: the start held again", strncmp(cells(13, 20, 42), full, 42), 0);
 		wait_counts(1);
-		check_str("scroll: and again", cells(13, 2, 36), "hadow of the Beast (1989)(Psygnosis)");
+		check("scroll: and again", strncmp(cells(13, 20, 42), full + 1, 42), 0);
 		wait_counts(30);
 		key(KEY_DOWN);
 		key(KEY_UP);
-		check_str("scroll: a cursor move resets it", cells(13, 2, 36), "Shadow of the Beast (1989)(Psygnosis");
+		check("scroll: a cursor move resets it", strncmp(cells(13, 20, 42), full, 42), 0);
 		wait_counts(85);
-		check_str("scroll: and holds the start again", cells(13, 2, 36), "Shadow of the Beast (1989)(Psygnosis");
+		check("scroll: and holds the start again", strncmp(cells(13, 20, 42), full, 42), 0);
 	}
 
 	/* a letter, a directory and back, then insert */
 	key(0x24);                      /* G: after Shadow, round to Games */
-	check_str("letter G: Games", cells(2 + iSelectedEntry, 2, 5), "Games");
+	check_str("letter G: Games", cells(2 + iSelectedEntry, 20, 5), "Games");
 	key(0x24);
-	check_str("letter G again: Gods", cells(2 + iSelectedEntry, 2, 4), "Gods");
+	check_str("letter G again: Gods", cells(2 + iSelectedEntry, 20, 4), "Gods");
 	key(KEY_HOME);
 	check("Home: the first entry", iSelectedEntry, 0);
 	key(KEY_ENTER);                 /* Games */
 	check("Enter on a directory: in it", iCurrentDirectory, 5);
-	check_str("in Games: the parent first", cells(2, 2, 7), "..     ");
-	check_str("in Games: <DIR>", cells(2, 33, 5), "<DIR>");
+	check_str("in Games: the parent first", cells(2, 20, 7), "..     ");
+	check_str("in Games: <DIR>", cells(2, 57, 5), "<DIR>");
 	key(KEY_BACK);
 	check("Backspace: the root", iCurrentDirectory, 0);
-	check_str("Backspace: on Games", cells(2 + iSelectedEntry, 2, 5), "Games");
+	check_str("Backspace: on Games", cells(2 + iSelectedEntry, 20, 5), "Games");
 	key(0x28);                      /* L */
-	check_str("letter L: Lemmings", cells(2 + iSelectedEntry, 2, 8), "Lemmings");
+	check_str("letter L: Lemmings", cells(2 + iSelectedEntry, 20, 8), "Lemmings");
 	calls_clear();
 	key(KEY_ENTER);
 	check("insert: back to the list", ui_focus, UI_F_LIST);
 	check("insert: DF0 inserted, writable", df[0].status, DSK_INSERTED | DSK_WRITABLE);
-	check_str("insert: DF0's name", cells(2, 8, 12), "Lemmings    ");
+	check_str("insert: DF0's name, right-aligned", cells(2, 49, 12), "    Lemmings");
 	check("insert: 160 tracks", df[0].tracks, 160);
 	check_has("insert: the insert sound", calls, "drivesound(0);", 1);
-	check_str("insert: the cursor on DF1", cells(3, 2, 3), "DF1");
-	check("insert: highlighted", osd2_atr[3][2], OSD2_ATTR(OSD2_C_HITEXT, OSD2_C_HILITE));
+	check_str("insert: the cursor on DF1", cells(3, 20, 3), "DF1");
+	check("insert: highlighted", osd2_atr[3][20], A_SEL);
 
 	/* the selector again with the same kind of file: where it was */
 	scans = 0;
 	key(KEY_ENTER);
 	check("DF1: the selector without a new scan", scans, 0);
-	check_str("DF1: still on Lemmings", cells(2 + iSelectedEntry, 2, 8), "Lemmings");
+	check_str("DF1: still on Lemmings", cells(2 + iSelectedEntry, 20, 8), "Lemmings");
 	key(KEY_PGDN);
 	key(KEY_PGDN);
-	check_str("PgDn twice: the last entry", cells(2 + iSelectedEntry, 2, 6), "Zool 2");
+	check_str("PgDn twice: the last entry", cells(2 + iSelectedEntry, 20, 6), "Zool 2");
 	key(KEY_ESC);
 	check("Esc: back to the list", ui_focus, UI_F_LIST);
 	check("Esc: DF1 still empty", df[1].status, 0);
@@ -743,23 +838,24 @@ int main(int argc, char **argv)
 	key(KEY_KPPLUS);
 	check("keypad +: 3 drives", config.floppy.drives, 2);
 	check_has("keypad +: ConfigFloppy(2,0)", calls, "ConfigFloppy(2,0);", 1);
-	check_str("DF2: active after reset", cells(4, 8, 22), "* active after reset *");
-	check("DF2: greyed", osd2_atr[4][8], OSD2_ATTR(OSD2_C_GREY, OSD2_C_PANEL));
+	check_str("DF2: active after reset", cells(4, 39, 22), "* active after reset *");
+	check("DF2: greyed (dark blue)", osd2_atr[4][39], A_GREY);
 
 	/* ---- the CD-ROM: insert, eject, locked ---- */
 	key(KEY_DOWN);                  /* DF2, DF3 are not selectable: the CD */
-	check_str("CD selected", cells(6, 2, 2), "CD");
+	check_str("CD selected", cells(6, 20, 2), "CD");
 	key(KEY_ENTER);
 	check("CD Enter: the selector", ui_focus, UI_F_FILESEL);
+	check_str("CD selector: the header", cells(0, 20, 12), "CD-ROM image");
 	key(KEY_DOWN);
 	key(KEY_DOWN);
 	calls_clear();
 	key(KEY_ENTER);                 /* Another World */
 	check_has("CD: CD_Insert", calls, "CD_Insert(ANOTHE~1ADF,Another World (1991)(Delphine),0);", 1);
-	check_str("CD: its name", cells(6, 8, 30), "Another World (1991)(Delp     ");
+	check_str("CD: its name (25 cells), right-aligned", cells(6, 36, 25), "Another World (1991)(Delp");
 	cdrom.unit.locked = 1;
 	key(KEY_ENTER);
-	check_str("CD locked: the message", cells(6, 8, 19), "locked by the Amiga");
+	check_str("CD locked: the message", cells(6, 42, 19), "locked by the Amiga");
 	check("CD locked: still in", cdrom.unit.media, 1);
 	cdrom.unit.locked = 0;
 	key(KEY_ENTER);
@@ -767,14 +863,16 @@ int main(int argc, char **argv)
 
 	/* ---- Load configuration: the slots that exist ---- */
 	key(KEY_DOWN);
-	check_str("Load selected, Default", cells(8, 21, 9), "<Default ");
+	check_str("Load selected, Default", cells(8, 54, 7), "Default");
+	check("Load: the left change arrow", osd2_chr[8][52], OSD_G_LEFT);
 	key(KEY_RIGHT);
-	check_str("Load Right: slot 2 (1 has no file)", cells(8, 22, 1), "2");
+	check_str("Load Right: slot 2 (1 has no file)", cells(8, 60, 1), "2");
 	key(KEY_LEFT);
 	key(KEY_LEFT);
-	check_str("Load Left twice: back over Default to 2", cells(8, 22, 1), "2");
+	check_str("Load Left twice: back over Default to 2", cells(8, 60, 1), "2");
 	key(KEY_ENTER);
 	check("Load Enter: a dialog", ui_focus, UI_F_DIALOG);
+	check_str("Load dialog: the dialog's hints", cells(18, 1, 26), "Left/Right choose a button");
 	screen("dialog_load");
 	calls_clear();
 	mock_reset();
@@ -785,27 +883,31 @@ int main(int argc, char **argv)
 
 	/* ---- Save: overwrite asks, a new slot does not ---- */
 	key(KEY_MENU);
+	key(KEY_RIGHT);                 /* the list, on Load */
 	key(KEY_DOWN);
-	check_str("Save selected", cells(9, 2, 4), "Save");
-	check_str("Save: Default (exists)", cells(9, 22, 16), "Default (exists)");
+	check_str("Save selected", cells(9, 20, 4), "Save");
+	check_str("Save: Default (exists)", cells(9, 45, 16), "Default (exists)");
 	calls_clear();
 	key(KEY_ENTER);
 	check("Save over a file: a dialog", ui_focus, UI_F_DIALOG);
 	key(KEY_ESC);
 	check_has("Esc: not saved", calls, "Save", 0);
+	check("Esc in a dialog: back to the list", ui_focus, UI_F_LIST);
 	key(KEY_RIGHT);
 	key(KEY_ENTER);
 	check_has("Save to 1: saved at once", calls, "Save(1);", 1);
-	check_str("Save: the toast", cells(19, 1, 19), "Configuration saved");
-	check_str("Save: 1 (exists) now", cells(9, 22, 10), "1 (exists)");
+	check_str("Save: the toast", cells(18, 1, 19), "Configuration saved");
+	check_str("Save: 1 (exists) now", cells(9, 51, 10), "1 (exists)");
 
-	/* ---- Reset: the dialog, Yes ---- */
+	/* ---- Reset: Right opens its dialog (a submenu item), Yes ---- */
 	key(KEY_DOWN);
 	key(KEY_DOWN);                  /* Reboot; Chameleon is hidden on this platform */
-	check_str("Reboot selected", cells(12, 2, 6), "Reboot");
+	check_str("Reboot selected", cells(12, 20, 6), "Reboot");
+	check("Reboot: the submenu arrow", osd2_chr[12][62], OSD_G_SUB);
 	key(KEY_UP);
 	calls_clear();
-	key(KEY_ENTER);
+	key(KEY_RIGHT);
+	check("Right on Reset: its dialog", ui_focus, UI_F_DIALOG);
 	key(KEY_ENTER);
 	check_has("Reset: closed, then OsdReset", calls, "OsdHide;debug2_show(0);OsdReset;", 1);
 
@@ -813,20 +915,15 @@ int main(int argc, char **argv)
 	key(KEY_MENU);
 	key(KEY_F3);
 	check("Kickstart selected", go("Kickstart ROM"), 10);
-	check_str("Kickstart: kick31.rom", cells(10, 22, 10), "kick31.rom");
+	check_str("Kickstart: kick31.rom, right-aligned", cells(10, 51, 10), "kick31.rom");
+	check("Kickstart: the submenu arrow", osd2_chr[10][62], OSD_G_SUB);
 	scans = 0;
 	key(KEY_ENTER);
 	check("Kickstart: another kind of file, scanned again", scans > 0, 1);
 	key(0x14);                      /* T: Turrican */
-	key(KEY_UP);
-	key(KEY_UP);
-	key(KEY_UP);
-	key(KEY_UP);
-	key(KEY_UP);
-	key(KEY_UP);
-	key(KEY_UP);
-	key(KEY_UP);                    /* Kick31.rom */
-	check_str("Kick31.rom selected", cells(2 + iSelectedEntry, 2, 6), "Kick31");
+	for (i = 0; i < 8; i++)
+		key(KEY_UP);                /* Kick31.rom */
+	check_str("Kick31.rom selected", cells(2 + iSelectedEntry, 20, 6), "Kick31");
 	key(KEY_ENTER);
 	check("chosen: the dialog", ui_focus, UI_F_DIALOG);
 	screen("dialog_kick");
@@ -841,6 +938,24 @@ int main(int argc, char **argv)
 	key(KEY_ENTER);                 /* Yes */
 	check_has("Yes: the reload sequence", calls, "OsdDoReset(0,6);Apply(1,0);OsdDoReset(3,0);OsdHide;", 1);
 	check_str("Yes: the Kickstart's name", config.kickstart.long_name, "Kick31");
+
+	/* ---- F12 in the file selector and in a dialog: closed ---- */
+	key(KEY_MENU);
+	key(KEY_F3);
+	go("Kickstart ROM");
+	key(KEY_ENTER);
+	check("the selector open", ui_focus, UI_F_FILESEL);
+	key(KEY_MENU);
+	check("F12 in the file selector: closed", ui_open_now, 0);
+	key(KEY_MENU);
+	key(KEY_F1);
+	go("Reset");
+	key(KEY_ENTER);
+	check("the Reset dialog", ui_focus, UI_F_DIALOG);
+	calls_clear();
+	key(KEY_MENU);
+	check("F12 in a dialog: closed", ui_open_now, 0);
+	check_has("F12 in a dialog: cancelled, no reset", calls, "OsdReset", 0);
 
 	/* ---- Storage: hand over to the classic menu ---- */
 	key(KEY_MENU);
@@ -937,7 +1052,20 @@ int main(int argc, char **argv)
 	check_has("takeover: the layer off", mock_trace(), WIN_MENU_OFF, 1);
 	ui_legacy_active = 0;
 
-	/* ---- the bitmap OSD was never switched on with the layer ---- */
+	/* ---- every help text fits the help field ---- */
+	{
+		int before = fails;
+		char what[64];
+		for (t = 0; t < UI_TABS; t++) {
+			help_fits(ui_tabs[t].name, ui_tabs[t].help);
+			for (i = 0; i < ui_tabs[t].n; i++) {
+				snprintf(what, sizeof what, "%s: %s", ui_tabs[t].name, ui_tabs[t].items[i].label ? ui_tabs[t].items[i].label : "-");
+				help_fits(what, ui_tabs[t].items[i].help);
+			}
+		}
+		check("every help text fits two lines of 62", fails - before, 0);
+	}
+
 	(void)keys;
 	printf("%s: %d cases, %d failed\n", fails ? "FAIL ui_test" : "ui_test passed", cases, fails);
 	return fails ? 1 : 0;

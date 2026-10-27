@@ -216,17 +216,16 @@ void osd2_pal(unsigned i, unsigned mode, unsigned long rgb)
 	}
 }
 
-/* the plan 3.5 recommendation (Paul may swap it for the Workbench four) */
-static const unsigned long pal_scheme[16] = {
-	0x000000, 0x1A2434, 0xC8CCD0, 0xFFFFFF, 0x101820, 0xF0A030, 0x3060C0, 0xFFFFFF,
-	0x60D0E0, 0x707880, 0xE04040, 0x40C060, 0x506070, 0x202830, 0x141C28, 0x000000
+/* the menu's eight colours (osd2.h); 8-15 free, loaded black */
+static const unsigned long pal_scheme[8] = {
+	0x000000, 0xF0F0F0, 0x1478E6, 0x3C5A9A, 0xF0C828, 0x3CC85A, 0xE03C3C, 0x000000
 };
 
 void osd2_pal_default(void)
 {
 	unsigned i;
 	for (i = 0; i < 16; i++)
-		osd2_pal(i, i == OSD2_C_FRAME ? OSD2_DIM : OSD2_OPAQUE, pal_scheme[i]);
+		osd2_pal(i, i == OSD2_C_CLEAR ? OSD2_VIDEO : OSD2_OPAQUE, i < 8 ? pal_scheme[i] : 0);
 }
 
 static void send_win(void)

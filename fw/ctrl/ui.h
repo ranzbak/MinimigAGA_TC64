@@ -3,35 +3,52 @@
 
 /*
  * ui: the OSD menu on the 720p text layer (osd2.h; findings/osd-redesign/
- * plan.md 3.6, 3.7, 3.11, 5).  A 64 x 20 window of cells at scale 2:
+ * plan.md 3.6, 3.7, 3.11, 5), in the layout of Paul's Samsung monitor OSD
+ * (2026-10-27).  A 64 x 20 window of cells at scale 2:
  *
- *   row 0       the tab bar: Main, Storage, System, Video, Acceleration
- *   row 1       a separator
- *   rows 2-17   the items (cols 0-39: label at 2, value at 22) and the help
- *               panel (cols 41-63: the item's help, word-wrapped)
- *   row 18      a separator
- *   row 19      the status line: die temperature, key hints, or a message
- *               (a "toast", 1 s)
+ *   cols 0-16   the sidebar: row 0 the title; the five categories (Main,
+ *               Storage, System, Video, Acceleration) as 3-row bars from
+ *               row 2 (icon at cols 1-2, the name from col 4 on the middle
+ *               row); the selected one on a blue bar (dark blue while the
+ *               focus is in its list); row 17 the die temperature
+ *   col 17      a vertical line
+ *   cols 18-63  the item panel: row 0 the category's name (blue), row 1 a
+ *               line, rows 2-17 the items: label at col 20, the value
+ *               right-aligned to col 60 (numbers as a bar and the number),
+ *               col 62 the marker (the submenu arrow; the change arrows
+ *               around the focused value: one cell before the value and
+ *               at col 62)
+ *   rows 18-19  the help field (dark blue), full width: the key hints when
+ *               the menu opens, then the focused item's help; a toast for
+ *               1 s
  *
- * Over the list: one dialog at a time (a box over rows 6-13), or the file
- * selector (16 entries, the selected long name scrolls).  With the menu
- * closed a toast shows as a one-row window of its own.
+ * Over the panel: one dialog at a time (a red box over rows 6-13), or the
+ * file selector (16 entries in the item rows, the selected long name
+ * scrolls).  With the menu closed a toast shows as a one-row window of its
+ * own.
  *
  * menu.c's HandleUI() runs ui_handle() on a core with the text layer
  * (osd2_caps) unless the classic menu was asked for (ui_legacy_active);
  * on any other core the classic menu is all there is.
  *
- * Keys (plan 3.11): F1-F5 a tab; PgUp/PgDn the previous/next tab; Up past
- * the first item onto the tab bar, where Left/Right change the tab and
- * Down/Enter go back to the list (the joystick's way: it has no F keys);
- * Left/Right change the focused value; Enter/Space activate; Esc, F12 or
- * the menu button close (or back out of a dialog / the file selector).
- * File selector: Up/Down, PgUp/PgDn (and Left/Right) a page, Home the top,
- * Backspace the parent directory, a letter the next name with it.  Main:
- * keypad +/- add or remove a floppy drive, Backspace ejects all floppies.
- * The classic shortcuts as in menu.c: Ctrl-Alt-keypad +/- turbo,
- * LShift-keypad +/- volume, LShift-keypad . refreshes the ADV7511,
- * Ctrl-Alt-keypad 0 autofire (menu closed), Ctrl-Alt-F12 debug mode.
+ * Keys (Paul, 2026-10-27; joystick: Up/Down/Left/Right, fire = Enter,
+ * fire 2 = the menu button, which sends F12's code):
+ *   The menu opens with the focus in the sidebar, on the last category.
+ *   Sidebar: Up/Down the category (its items shown at once); Right, Enter
+ *   or Space into its list; Esc closes.
+ *   List: Up/Down the item; Left/Right change a value (a read-only value:
+ *   a toast); Enter/Space activate; Left on an item without a value, or
+ *   Esc, back to the sidebar.
+ *   Anywhere: F1-F5 a category and into its list; PgUp/PgDn the previous/
+ *   next category; F12 (the menu button) closes.
+ *   Dialog: Left/Right (Up/Down) the button, Enter/Space it, Esc cancels.
+ *   File selector: Up/Down, PgUp/PgDn (and Left/Right) a page, Home the
+ *   top, Backspace the parent directory, a letter the next name with it,
+ *   Esc back to the list.  Main: keypad +/- add or remove a floppy drive,
+ *   Backspace ejects all floppies.
+ *   The classic shortcuts as in menu.c: Ctrl-Alt-keypad +/- turbo,
+ *   LShift-keypad +/- volume, LShift-keypad . refreshes the ADV7511,
+ *   Ctrl-Alt-keypad 0 autofire (menu closed), Ctrl-Alt-F12 debug mode.
  */
 
 #include "osd2.h"
@@ -47,18 +64,36 @@
 #define UI_TOAST_X0   40
 #define UI_TOAST_Y0   75
 
-/* list geometry */
+/* the sidebar */
+#define UI_SIDE_W     17      /* cols 0-16 */
+#define UI_CAT_ROW    2       /* category k: rows 2 + 3k .. 4 + 3k */
+#define UI_CAT_H      3
+#define UI_ICON_COL   1
+#define UI_CAT_COL    4
+#define UI_TEMP_ROW   17
+#define UI_LINE_COL   17      /* the vertical line */
+/* the item panel */
+#define UI_PANEL_COL  18
+#define UI_PANEL_W    46
+#define UI_HEAD_ROW   0
 #define UI_LIST_ROW   2
 #define UI_LIST_ROWS  16
-#define UI_LIST_W     40
-#define UI_LABEL_COL  2
-#define UI_VALUE_COL  22
-#define UI_VALUE_W    16
-#define UI_WIDE_COL   8       /* UI_WIDE items: the value from here */
-#define UI_WIDE_W     30
-#define UI_HELP_COL   42
-#define UI_HELP_W     21
-#define UI_STATUS_ROW 19
+#define UI_LABEL_COL  20
+#define UI_VALUE_END  60      /* values end here (right-aligned), a space after */
+#define UI_MARK_COL   62      /* the submenu / change arrow */
+#define UI_BAR_W      16      /* UI_BAR: 16 cells, a space, 2 digits */
+#define UI_BAR_COL    (UI_VALUE_END - 2 - UI_BAR_W)
+/* the help field */
+#define UI_HELP_ROW   18
+#define UI_HELP_ROWS  2
+#define UI_HELP_COL   1
+#define UI_HELP_W     62
+/* the dialog box */
+#define UI_DLG_R0     6
+#define UI_DLG_R1     13
+#define UI_DLG_C0     21
+#define UI_DLG_C1     60
+#define UI_DLG_MID    41      /* text centred here */
 
 /* GetTimer offsets for ms milliseconds: TIMER counts of 5.804 ms, less the
    one count CheckTimer adds (it fires once TIMER passed the armed count) */
@@ -77,10 +112,11 @@ enum {
 	UI_ACTION     /* Enter runs act(); a value text if text() */
 };
 /* item flags */
-#define UI_WIDE     0x01      /* the value from col 8, 30 wide (floppies, CD) */
 #define UI_CLAMP    0x02      /* Left/Right stop at the ends (volume) */
 #define UI_HIDE     0x04      /* not available: an empty row, not greyed */
 #define UI_ENTERACT 0x08      /* UI_CYCLE: Enter runs act() */
+#define UI_BAR      0x10      /* the value 0..nvalues-1 as a bar and the number */
+#define UI_SUB      0x20      /* Enter opens something: the submenu arrow */
 
 struct ui_item {
 	const char *label;
@@ -99,6 +135,7 @@ struct ui_tab {
 	const char *help;
 	const struct ui_item *items;
 	unsigned char n;
+	unsigned char icon_fg;          /* the icon's colour (osd_icons.h: OSD_ICON_MAIN + 2 * tab) */
 };
 
 #define UI_TABS 5
@@ -106,7 +143,7 @@ enum { UI_TAB_MAIN, UI_TAB_STORAGE, UI_TAB_SYSTEM, UI_TAB_VIDEO, UI_TAB_ACCEL };
 extern const struct ui_tab ui_tabs[UI_TABS];
 
 /* focus */
-enum { UI_F_LIST, UI_F_TABBAR, UI_F_DIALOG, UI_F_FILESEL };
+enum { UI_F_LIST, UI_F_SIDEBAR, UI_F_DIALOG, UI_F_FILESEL };
 
 /* the engine, once per main-loop pass (menu.c HandleUI) */
 void ui_handle(void);
@@ -116,7 +153,7 @@ void ui_tick(void);
 /* draw into the shadow (osd2_flush sends it) */
 void ui_draw_all(void);
 void ui_draw_item(unsigned i);
-void ui_draw_status(void);
+void ui_draw_help(void);
 
 /* set while the classic menu runs instead (menu.c clears it when it closes) */
 extern unsigned char ui_legacy_active;
@@ -139,8 +176,9 @@ void ui_close(void);
 void ui_classic(unsigned char page, unsigned char sub);
 /* the configuration files found when the menu opened (bit = slot) */
 extern unsigned char ui_cfg_mask;
-/* the state the item tables show (the engine's) */
-extern unsigned char ui_open_now, ui_tab, ui_focus;
+/* the state the item tables show (the engine's); ui_help_on: the help
+   field shows the focused item's help (0: the key hints, until a key) */
+extern unsigned char ui_open_now, ui_tab, ui_focus, ui_help_on;
 
 /* provided by menu.c: the classic menu, opened at a page */
 void menu_classic_open(unsigned char page, unsigned char sub);

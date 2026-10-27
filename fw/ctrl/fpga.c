@@ -247,7 +247,7 @@ void fpga_init() {
 	core_caps = (ver_magic == (char)0xA4) ? ver_caps : 0;
 	SPIN; SPIN; SPIN; SPIN;
 	if (osd2_detect(ver_magic == (char)0xA4, osd2_ver))
-		osd2_init(OSD2_ATTR(OSD2_C_TEXT, OSD2_C_PANEL));   // the window off, the cell RAM to be cleared
+		osd2_init(OSD2_ATTR(OSD2_C_WHITE, OSD2_C_BLACK));   // the window off, the cell RAM to be cleared
 
 	OsdDoReset(SPI_RST_USR | SPI_RST_CPU | SPI_CPU_HLT,SPI_RST_CPU | SPI_CPU_HLT);
 
