@@ -224,6 +224,13 @@ if {$ad_v ne ""} {
     puts "build.tcl: removed source $ad_v"
 }
 add_src $R/rtl/openaars/adv7511/adv_ddr.sv
+# pal_to_hd_upsample.v became pal_to_hd_upsample.sv (2026-10-27); the same.
+set up_v [get_files -quiet -of_objects [get_filesets sources_1] */rtl/openaars/adv7511/pal_to_hd_upsample.v]
+if {$up_v ne ""} {
+    remove_files -fileset sources_1 $up_v
+    puts "build.tcl: removed source $up_v"
+}
+add_src $R/rtl/openaars/adv7511/pal_to_hd_upsample.sv
 # HDMI CRT emulation (2026-10-09): the post stage pal_to_ddr.sv instantiates,
 # and its three tables ($readmemh by name: as memory files of the project,
 # synthesis finds them; a missing one leaves its effect black, the plain

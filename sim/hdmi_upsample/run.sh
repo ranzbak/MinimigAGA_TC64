@@ -10,7 +10,7 @@ set -e
 cd "$(dirname "$0")"
 A=../../rtl/openaars/adv7511
 mkdir -p build
-iverilog -g2012 -o build/tb_upsample_stale.vvp tb_upsample_stale.v $A/pal_to_hd_upsample.v $A/bram_tdp.v $A/signal_generator.sv
+iverilog -g2012 -o build/tb_upsample_stale.vvp tb_upsample_stale.v $A/pal_to_hd_upsample.sv $A/bram_tdp.v $A/signal_generator.sv
 fail=0
 for L in 64000 32000; do
 	for h in 0 40 -40; do

@@ -28,7 +28,7 @@ iverilog -g2005 -I ../../fpga/openaars -I ../../rtl/minimig -DMINIMIG_XILINX -o 
 	tb_osd_video.v ../../rtl/minimig/userio_osd.v ../../rtl/minimig/userio_osd_spi.v ../../rtl/fifo/sync_fifo.v
 verilator --binary --timing -j 4 -Wno-fatal -Wno-lint -Wno-style -Wno-MULTIDRIVEN \
 	--Mdir build/tb_crt_frame --top-module tb_crt_frame -o Vtb \
-	tb_crt_frame.v $A/pal_to_ddr.sv $A/pal_to_hd_upsample.v $A/crt_post.v $A/crt_beamh.v $A/bram_tdp.v \
+	tb_crt_frame.v $A/pal_to_ddr.sv $A/pal_to_hd_upsample.sv $A/crt_post.v $A/crt_beamh.v $A/bram_tdp.v \
 	$A/signal_generator.sv $A/adv_ddr.sv $A/frame_freq.sv ref/pal_to_ddr_ref.sv ref/pal_to_hd_upsample_ref.v ref/frame_freq_ref.v \
 	> build/verilator.log 2>&1 || { tail -30 build/verilator.log; exit 1; }
 echo "built"
