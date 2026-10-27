@@ -213,20 +213,22 @@ bram_tdp #(
 );
 
 
-// Calculate the sample interval on the input stream
-// To sample the same amount of pixels as wanted on the output stream
-// results in v_div_var >> 2
+// Calculate the sample interval on the input stream, to sample as many
+// pixels per line as the output reads: r_pix_clock_dev = (line length / 64)
+// / (H_RES >> 8) - 1, in quarter clk_in (the sample enable steps 4 a clock)
 reg         r_line_active = 1'b0;
 reg [13:0]  r_line_count = 14'b0;
 reg [5:0]   r_pix_clock_dev = 6'd0;
-reg [11:0]  v_div_var = 12'b0;
 reg         r_pal_hpos_in = 1'b0;
 reg         r_pal_hneg_in = 1'b0;
 // i_hz60 into clk_in: it only picks the divisor below, read at input line ends
 (* ASYNC_REG = "TRUE" *) reg [1:0] s_hz60_in = 2'b00;
 always @(posedge clk_in) s_hz60_in <= {s_hz60_in[0], i_hz60};
-wire [7:0]  w_div_50 = r_line_count[13:6] / (PAL_HD_H_RES>>8);
-wire [7:0]  w_div_60 = r_line_count[13:6] / (PAL_HD_H_RES60>>8);
+// the input line's length / 64, per sample step, kept mod 64 (6 bits):
+// only the low six bits of quotient - 1 were ever used
+reg  [5:0]  w_div;
+always @*
+  w_div = r_line_count[13:6] / (s_hz60_in[1] ? (PAL_HD_H_RES60>>8) : (PAL_HD_H_RES>>8));
 always @(posedge clk_in)
 begin
   // start of the horizontal line
@@ -241,8 +243,10 @@ begin
   begin
     r_line_active   <= 1'b0; // Stop counter
     r_line_count    <= 0; // Reset counter
-    v_div_var        = (s_hz60_in[1] ? w_div_60 : w_div_50) - 1; // Shift numbers to make devider circuit faster
-    r_pix_clock_dev <= v_div_var[5:0]; // Get the pixel clock relative to the system clock
+    // (div - 1) mod 64, as before: the old 12-bit v_div_var = div - 1 was
+    // only used in bits 5:0, and a difference's low bits do not depend on
+    // the width it is computed in
+    r_pix_clock_dev <= w_div - 6'd1;
   end
 
   // when active inclease counter
