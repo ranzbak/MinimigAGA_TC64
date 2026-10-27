@@ -180,6 +180,16 @@ end
 // lines (the golden frames differ there).  i_ring16 = 1 is the exact-ratio
 // modes' ring (step 4).
 // ---------------------------------------------------------------------------
+// the next buffer of a ring pointer: +1, wrapping 15 -> 0 (ring of 16) or
+// 7 -> 0 (ring of 8)
+function automatic [3:0] next_slot(input [3:0] s, input ring16);
+  next_slot = (s != (ring16 ? 4'd15 : 4'd7)) ? s + 4'd1 : 4'd0;
+endfunction
+// where a line's read starts in buffer s: {s, 11'b0} - off, a 15-bit
+// subtract in the ring of 16, a 14-bit one (zero-extended) in the ring of 8
+function automatic [14:0] rd_start(input [3:0] s, input [13:0] off, input ring16);
+  rd_start = ring16 ? {s, 11'b0} - {1'b0, off} : {1'b0, {s[2:0], 11'b0} - off};
+endfunction
 (* ASYNC_REG = "TRUE" *) reg [1:0] s_r16_in = 2'b00;
 always @(posedge clk_in) s_r16_in <= {s_r16_in[0], i_ring16};
 wire w_r16_in = s_r16_in[1];       // clk_in
@@ -376,10 +386,7 @@ begin
     s_next_buf[0] <= ~s_next_buf[0]; // Switch buffer
 
     // Switch to next write buffer (ring of 16, or of 8: i_ring16)
-    if (r_cur_write_buf != (w_r16_in ? 4'd15 : 4'd7))
-      r_cur_write_buf <= r_cur_write_buf + 1'b1;
-    else
-      r_cur_write_buf <= 4'd0;
+    r_cur_write_buf <= next_slot(r_cur_write_buf, w_r16_in);
 
     // Switch the current write buffer
     r_addra <= {r_cur_write_buf, 11'b0};
@@ -585,6 +592,9 @@ reg  signed [29:0] r_y0 = 30'sd0;      // y of HD line 0 if the restart were now
 reg  signed [29:0] r_yn = 30'sd0;      // y of the next HD line
 reg  [4:0]  r_ryg   = 5'd0;            // clocks since a restart, to 31
 reg  [3:0]  r_ry_slot = 4'd0;          // r_yn's slot
+// the buffer this HD line reads: r_yn's slot in the exact-ratio mode, else
+// the read pointer
+wire [3:0]  w_rd_slot = w_rat_o ? r_ry_slot : r_cur_read_buf;
 reg         r_yn_neg  = 1'b0;          // r_yn < 0 (line a before the frame)
 reg         r_yn_neg2 = 1'b0;          // r_yn < -1 (line a + 1 too)
 reg         r_cblank  = 1'b0;          // this HD line: o_hd_* black
@@ -636,17 +646,15 @@ begin
     begin
       r_next_buf <= 1'b0;
 
-      if (r_cur_read_buf != (w_r16_o ? 4'd15 : 4'd7))
-        r_cur_read_buf <= r_cur_read_buf + 1'b1;
-      else
-        r_cur_read_buf <= 4'd0;
+      r_cur_read_buf <= next_slot(r_cur_read_buf, w_r16_o);
     end
     r_h_pos <= 0; // Reset horizontal counter
     // the buffer read this line (r_addrb below), and its written extent
-    r_rslot <= w_rat_o ? r_ry_slot : r_cur_read_buf;
-    r_rend  <= r_wend[w_rat_o ? r_ry_slot : r_cur_read_buf];
-    r_addrb <= w_r16_o ? {(w_rat_o ? r_ry_slot : r_cur_read_buf), 11'b0} - {1'b0, r_rd_off}
-                       : {1'b0, {r_cur_read_buf[2:0], 11'b0} - r_rd_off};
+    r_rslot <= w_rd_slot;
+    r_rend  <= r_wend[w_rd_slot];
+    // the ring of 8 starts from the read pointer even with i_ratio (which
+    // needs i_ring16), exactly as before
+    r_addrb <= rd_start(w_r16_o ? w_rd_slot : r_cur_read_buf, r_rd_off, w_r16_o);
   end
 
 
@@ -758,9 +766,14 @@ wire w_hdfall = (r_hd_clk_ == 1'b1 && i_hd_clk == 1'b0);   // the update clock, 
 wire w_upd    = w_hdfall && ~i_hd_hsync;
 wire w_in_win = (r_h_pos > PAL_HD_H_FP && r_h_pos < r_win_end);
 reg  [10:0] r_rend2 = 11'd0;   // written extent of the next buffer
+// The next buffer: in the ring of 16 (and the exact-ratio mode) slot + 1
+// wraps 15 -> 0 by its width, which is next_slot(s, 1).  In the ring of 8
+// {0, slot[2:0] + 1} is next_slot(s, 0) only for slots 0..7 and 15: a
+// pointer left at 8..14 by an i_ring16 change gives 1..7 here, where
+// next_slot would give 9..15.  Kept as it was.
 always @(posedge clk_out)
-  if (hd_hsync_negedge) r_rend2 <= r_wend[w_rat_o ? r_ry_slot + 4'd1 :
-                                          w_r16_o ? r_cur_read_buf + 4'd1 : {1'b0, r_cur_read_buf[2:0] + 3'd1}];
+  if (hd_hsync_negedge) r_rend2 <= r_wend[(w_rat_o || w_r16_o) ? next_slot(w_rd_slot, 1'b1) :
+                                          {1'b0, r_cur_read_buf[2:0] + 3'd1}];
 wire w_rd_valid2 = (r_addrb[14:11] == r_rslot) && (r_addrb[10:0] != 11'd0) &&
                    (r_addrb[10:0] <= r_rend2);
 // The second read goes out in every update clock, hsync or not: the
@@ -799,7 +812,7 @@ always @(posedge clk_out) begin
   r_line_start <= hd_hsync_negedge;
   if (hd_hsync_negedge) begin
     r_lphase <= r_next_buf ? r_c_old[13:7] : r_c_new[13:7];
-    r_lres   <= r_wres[w_rat_o ? r_ry_slot : r_cur_read_buf];   // the buffer this line reads (r_rslot)
+    r_lres   <= r_wres[w_rd_slot];   // the buffer this line reads (r_rslot)
   end
 end
 assign o_line_phase = r_lphase;
