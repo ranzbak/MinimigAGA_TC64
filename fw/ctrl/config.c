@@ -414,6 +414,7 @@ unsigned char LoadConfiguration(char *filename)
 				result=0;	// only a BE-order file is converted
 
 			tmpconf->version=CONFIG_VERSION;
+			tmpconf->filter.lores=tmpconf->filter.hires=0;	// the Lores/Hires Filter are gone (config.h)
 			if(result)
                 memcpy((void*)&config, (void*)sector_buffer, sizeof(config));
         }
@@ -629,7 +630,7 @@ int ApplyConfiguration(char reloadkickstart, char applydrives)
     // it by 8 up to 248, when it did nothing): 0
     if ((signed char)config.videopos.vpos > VPOS_MAX || (signed char)config.videopos.vpos < -VPOS_MAX)
         config.videopos.vpos = 0;
-    ConfigVideo(config.filter.hires, config.filter.lores, config.scanlines, config.crt_mask, config.crt_bloom, config.crt_beam);
+    ConfigVideo(config.scanlines, config.crt_mask, config.crt_bloom, config.crt_beam);
 	ConfigVideoPos(config.videopos.hpos, config.videopos.vpos);
     // 0 (a config file from older firmware) or out of range: firmware default
     adv7511_set_clkdelay((config.hdmi_clkdelay >= 1 && config.hdmi_clkdelay <= 8)
@@ -688,6 +689,7 @@ unsigned char SaveConfiguration(char *filename)
 {
 	if(!filename)
 		filename=configfilename;	// Use slot-based filename if none provided.
+	config.filter.lores=config.filter.hires=0;	// written as 0 (config.h)
 
     // save configuration data
 	ChangeDirectory(0); // Config files always live in the root directory

@@ -204,7 +204,6 @@ module tb_spi_cdc;
     .osd_rx_seq(osd_rx_seq),
     .osd_blank(), .osd_pixel(),
     .osd_enable(), .key_disable(),
-    .lr_filter(), .hr_filter(),
     .memory_config(), .chipset_config(), .floppy_config(),
     .scanline(), .dither(),
     .ide_config0(), .ide_config1(),

@@ -5,8 +5,8 @@
 #   unit       crt_post alone: all controls 0 = input unchanged (9-pixel
 #              latency, all 256 values), also with all tables zero (a
 #              build that lost the .mem files keeps today's picture);
-#              bloom alone (no vertical effect) unchanged too; [1 6 1]/8
-#              and [1 2 1]/4 on a step; each mask mode's column pattern;
+#              bloom alone (no vertical effect) unchanged too; each mask
+#              mode's column pattern;
 #              bloom fills the scanline gap of white (more on high), not
 #              of a dark grey
 #   ripple     two-line beam profiles in crt_wrom.mem: light per input line
@@ -25,11 +25,8 @@
 #              same at 31 kHz and on the 60 Hz upsampler
 #   dim        Scanlines dim (beam profile 2 + LUT page 2): flat-field beat
 #              <= 2 %, light within 2 % of the source
-#   dim_hv     dim + H and V filters (two-line beam, blur): same limits
 #   lace       interlaced, dim: the two fields' line phases 0.5 +- 0.02
 #              input line apart (their scanlines interleave)
-#   split      lowres/hires split screen with mid-line BPLCON0 switches,
-#              H filters on: each HD row gets the kernel of its own line only
 #   osd        OSD config 0 -> dim during HD frame 3: frame 3 bit-identical,
 #              frame 4 changed, the latch moves once, at a frame end
 #   osdfx      the same for the new bits: 0 -> mask shadow + bloom high
@@ -44,7 +41,6 @@
 #   bloom      dim + bloom high: white-bar scanline modulation <= 0.5 x
 #              dim's, dark ramp bit-identical to dim, border light +- 6 %
 #   bloom_lo   dim + bloom low: modulation <= 0.85 x dim's, border +- 3 %
-#   bloom_hv   dim + H/V filters + bloom high against dim_hv: as bloom
 #   beam_wWbB  horizontal beam spot (crt_beamh.v), Beam width W (1 sharp,
 #              2 medium, 3 soft), Bloom B (0 off, 1 low, 2 high), on the
 #              dither frame (crt_mkdither.py): its output stream over a whole
@@ -101,6 +97,10 @@
 #              the raster free-runs: every later frame 749 hsyncs, all with
 #              one vsync, at least 6 of them; no frame longer than 1500
 #
+# The Lores/Hires Filter legs (dim_hv, bloom_hv, split, the unit's [1 6 1]/8
+# and [1 2 1]/4 steps) went with the filters on 2026-10-26
+# (findings/osd-redesign/plan.md 3.13); cfg bits 5:2 are reserved since.
+#
 # Usage: crt_run.sh [leg ...] (default: all).  Needs iverilog, verilator,
 # python3 with numpy and PIL.  Pictures and logs: build/img/.  ~6 min on 4
 # cores (CRT_JOBS=N for N parallel simulations).
@@ -143,9 +143,7 @@ declare -A ARGS=(
 	[osdbeam]="+cfg=000 +cfg2=800 +cfgframe=3 +cfgline=300 +frames=2"
 	[nosync]="+nosync=4 +first=2 +frames=12"
 	[dim]="+cfg=01 +out=$I/dim"
-	[dim_hv]="+cfg=3d +out=$I/dim_hv"
 	[lace]="+cfg=01 +lace +frames=2 +out=$I/lace"
-	[split]="+cfg=14 +split +out=$I/split"
 	[osd]="+cfg=00 +cfg2=01 +cfgframe=3 +cfgline=300 +frames=2"
 	[osdfx]="+cfg=000 +cfg2=2c0 +cfgframe=3 +cfgline=300 +frames=2"
 	[mask]="+cfg=040 +out=$I/mask"
@@ -154,7 +152,6 @@ declare -A ARGS=(
 	[mask_dim]="+cfg=041 +out=$I/mask_dim"
 	[bloom]="+cfg=201 +out=$I/bloom"
 	[bloom_lo]="+cfg=101 +out=$I/bloom_lo"
-	[bloom_hv]="+cfg=23d +out=$I/bloom_hv"
 )
 DITHER="+frame=build/dither.hex +hires=build/dither_hires.hex"
 BEAMS=""
@@ -162,12 +159,11 @@ for w in 1 2 3; do for b in 0 1 2; do
 	BEAMS="$BEAMS beam_w${w}b${b}"
 	ARGS[beam_w${w}b${b}]="$DITHER +cfg=$(printf %03x $(( (w << 10) | (b << 8) ))) +out=$I/beam_w${w}b${b} +sdump=$I/beam_w${w}b${b}.sd"
 done; done
-ALL="unit osdspi ripple bypass15 bypass31 gate31 bypass60 rtg beamfx15 beamfx31 beamfx60 dim dim_hv lace split osd osdfx osdbeam mask mask2 maskmg mask_dim bloom bloom_lo bloom_hv $BEAMS beamalign beammetric hposm hposp hposv hposm60 hposp60 vposp vposm vposp60 vposm60 vposdbl vposlace vposlacem vposchg vposchg0 vposchgz vposchgzm vposglide nosync"
+ALL="unit osdspi ripple bypass15 bypass31 gate31 bypass60 rtg beamfx15 beamfx31 beamfx60 dim lace osd osdfx osdbeam mask mask2 maskmg mask_dim bloom bloom_lo $BEAMS beamalign beammetric hposm hposp hposv hposm60 hposp60 vposp vposm vposp60 vposm60 vposdbl vposlace vposlacem vposchg vposchg0 vposchgz vposchgzm vposglide nosync"
 legs=("$@"); [ ${#legs[@]} -eq 0 ] && legs=($ALL)
 # the bloom legs compare against the same picture without bloom
 want() { local x; for x in "${legs[@]}"; do [ "$x" = "$1" ] && return 0; done; return 1; }
 { want bloom || want bloom_lo; } && ! want dim && legs+=(dim)
-want bloom_hv && ! want dim_hv && legs+=(dim_hv)
 # the Video Pos legs compare against the picture at offset 0
 for x in hposm hposp hposv; do want $x && ! want hpos0 && legs+=(hpos0); done
 for x in hposm60 hposp60; do want $x && ! want hpos060 && legs+=(hpos060); done
@@ -227,8 +223,6 @@ for l in "${legs[@]}"; do
 	unit)
 		u=$(vvp -n build/tb_crt_post_unit.vvp)
 		echo "$u" | grep -q "bypass identity: 0 mismatches" && pass "unit bypass identity" || bad "unit bypass identity"
-		echo "$u" | grep -q "hblur=1 step: 0 0 0 31 223 255" && pass "unit [1 6 1]/8 step" || bad "unit [1 6 1]/8 step"
-		echo "$u" | grep -q "hblur=2 step: 0 0 0 63 191 255" && pass "unit [1 2 1]/4 step" || bad "unit [1 2 1]/4 step"
 		echo "$u" | grep -q "bloom alone identity: 0 mismatches" && pass "unit bloom alone: identity" || bad "unit bloom alone: identity"
 		for n in 1 2 3; do
 			echo "$u" | grep -q "^mask=$n: .* OK" && pass "unit mask $n: column pattern" || { bad "unit mask $n"; echo "$u" | grep "^mask=$n"; }
@@ -377,7 +371,7 @@ for l in "${legs[@]}"; do
 			exit !ok }') && ok2=1 || ok2=0
 		[ $ok -eq 1 ] && [ $ok2 -eq 1 ] && pass "beammetric: $r" || bad "beammetric: $r"
 		;;
-	dim|dim_hv|mask_dim)
+	dim|mask_dim)
 		m=$(python3 crt_check.py flat $I/${l}_3.hex)
 		echo "        $m"
 		echo "$m" | awk '{ L = $3 + 0; B = $5 + 0; exit !(L >= 0.98 && L <= 1.02 && B <= 2.0) }' \
@@ -388,11 +382,6 @@ for l in "${legs[@]}"; do
 		echo "        $m"
 		echo "$m" | awk '{ v = $(NF-6) + 0; exit !(v >= 0.48 && v <= 0.52) }' \
 			&& pass "lace: phase 0.5 +- 0.02" || bad "lace"
-		;;
-	split)
-		m=$(python3 crt_check.py split $I/split_3.hex) && ok=1 || ok=0
-		echo "$m" | sed 's/^/        /'
-		[ $ok -eq 1 ] && pass "split: each row its own kernel" || bad "split"
 		;;
 	osdbeam)
 		f3=$(grep -E '^frame 3: ' $I/$l.log | awk '{ print $3 }')
@@ -419,8 +408,8 @@ for l in "${legs[@]}"; do
 		echo "$m" | sed 's/^/        /'
 		[ $ok -eq 1 ] && pass "$l: period $p, lit > dimmed, light within 3 %" || bad "$l"
 		;;
-	bloom|bloom_lo|bloom_hv)
-		r=dim; [ $l = bloom_hv ] && r=dim_hv
+	bloom|bloom_lo)
+		r=dim
 		x=0.5; bd=0.06; [ $l = bloom_lo ] && { x=0.85; bd=0.03; }
 		m=$(python3 crt_check.py bloom $I/${l}_3.hex $I/${r}_3.hex $x $bd) && ok=1 || ok=0
 		echo "$m" | sed 's/^/        /'
@@ -430,6 +419,6 @@ for l in "${legs[@]}"; do
 done
 # pictures of the effects, for the eye
 for l in "${legs[@]}"; do
-	case $l in dim|dim_hv|mask*|bloom*) [ -f $I/${l}_3.hex ] && python3 crt_tohex2img.py $I/${l}_3.hex > /dev/null ;; esac
+	case $l in dim|mask*|bloom*) [ -f $I/${l}_3.hex ] && python3 crt_tohex2img.py $I/${l}_3.hex > /dev/null ;; esac
 done
 [ $fail -eq 0 ] && echo "ALL TESTS PASSED" || { echo "FAILURES"; exit 1; }

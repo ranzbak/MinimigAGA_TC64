@@ -186,12 +186,11 @@ module pal_to_ddr #(
 
   // controls: static per frame (OSD) and per HD line (resolution, latched
   // by the upsampler at the HD hsync); registered, they change in hblank
-  wire [1:0] w_crt_filt = w_m_lhires ? r_crt_cfg[5:4] : r_crt_cfg[3:2];
+  // r_crt_cfg[5:2] (the Lores/Hires Filter: H blur, V blend) are reserved
+  // since 2026-10-26 (findings/osd-redesign/plan.md 3.13): ignored
   wire [1:0] w_crt_scan = (r_crt_cfg[1:0] == 2'd0) ? 2'd0 :
                           (r_crt_cfg[1:0] == 2'd1) ? 2'd2 : 2'd3;
   reg  [1:0] r_ctl_scan  = 2'd0;
-  reg        r_ctl_vb    = 1'b0;
-  reg  [1:0] r_ctl_hblur = 2'd0;
   reg  [1:0] r_ctl_mask  = 2'd0;
   reg  [1:0] r_ctl_bloom = 2'd0;
   reg        r_ctl_hz60  = 1'b0;
@@ -200,16 +199,18 @@ module pal_to_ddr #(
     r_ctl_scan  <= r_crt_ok ? w_crt_scan : 2'd0;
     r_ctl_kern  <= (w_crt_scan == 2'd0) ? {1'b0, r_crt_cfg[11:10] == 2'd2} :
                    (w_crt_scan == 2'd3) ? 2'd3 : 2'd2;
-    r_ctl_vb    <= r_crt_ok & !r_ratio & w_crt_filt[1];
-    r_ctl_hblur <= (r_crt_ok & w_crt_filt[0]) ? (w_m_lhires ? 2'd1 : 2'd2) : 2'd0;
     r_ctl_mask  <= r_crt_ok ? r_crt_cfg[7:6] : 2'd0;
     r_ctl_bloom <= r_crt_ok ? r_crt_cfg[9:8] : 2'd0;
     r_ctl_hz60  <= ~r_50hz;
   end
 
   wire [23:0] w_crt_rgb;
+  // HAS_VBLEND 0: without the V filter nothing selects the two-line gamma
+  // blend; the weight table's single-line scanline profiles have w1 = 0
+  // (crt_mkroms.py), so the picture is bit-identical without the next-line
+  // multiply (3 DSP48).  HAS_HBLUR 0: the H filter's blur.
   crt_post #(
-    .HAS_VBLEND(1), .HAS_HBLUR(1), .HAS_MASK(1), .HAS_BLOOM(1), .HAS_LUT(1),
+    .HAS_VBLEND(0), .HAS_HBLUR(0), .HAS_MASK(1), .HAS_BLOOM(1), .HAS_LUT(1),
     .WROM_FILE(CRT_WROM_FILE), .LUT_FILE(CRT_LUT_FILE), .BLOOM_FILE(CRT_BLOOM_FILE),
     .HAS_LIN(1), .SDEC_FILE(CRT_SDEC_FILE), .SENC_FILE(CRT_SENC_FILE), .SWROM_FILE(CRT_SWROM_FILE)
   ) my_crt_post (
@@ -221,8 +222,8 @@ module pal_to_ddr #(
     .i_nxt(w_m_nxt),
     .i_hz60(r_ctl_hz60),
     .i_scan(r_ctl_scan),
-    .i_vblend(r_ctl_vb),
-    .i_hblur(r_ctl_hblur),
+    .i_vblend(1'b0),
+    .i_hblur(2'd0),
     .i_mask(r_ctl_mask),
     .i_bloom(r_ctl_bloom),
     .i_lut(r_ctl_scan),       // the LUT page that goes with the beam profile

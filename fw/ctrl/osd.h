@@ -121,18 +121,15 @@
 /*functions*/
 void OsdSetTitle(char *s, int arrow); // arrow > 0 = display right arrow in bottom right, < 0 = display left arrow
 void OsdWrite(unsigned char n, char *s, unsigned char inver, unsigned char stipple);
-void OsdWriteOffset(unsigned char n, char *s, unsigned char inver, unsigned char stipple, char offset); // Used for scrolling "Exit" text downwards...
 void OsdClear(void);
 void OsdShow(unsigned char mode);
 void OsdHide(void);
 void OsdWaitVBL(void);
 void OsdReset();
-// void ConfigFilter(unsigned char lores, unsigned char hires);
 void OsdReconfig(); // Reset to Chameleon core.
 // deprecated functions from Minimig 1
-void MM1_ConfigFilter(unsigned char lores, unsigned char hires);
 void MM1_ConfigScanlines(unsigned char scanlines);
-void ConfigVideo(unsigned char hires, unsigned char lores, unsigned char scanlines, unsigned char crt_mask, unsigned char crt_bloom, unsigned char crt_beam);
+void ConfigVideo(unsigned char scanlines, unsigned char crt_mask, unsigned char crt_bloom, unsigned char crt_beam);
 void ConfigVideoPos(unsigned char hpos, unsigned char vpos);
 void ConfigAudio(unsigned char volume);
 void ConfigMemory(unsigned char memory);
@@ -157,6 +154,9 @@ void OsdWriteDoubleSize(unsigned char n, char *s, unsigned char pass);
 void OsdDrawLogo(unsigned char n, char row, char superimpose);
 void ScrollText(char n, const char *str, int len, int max_len, unsigned char invert);
 void ScrollReset();
+// OR a string, centred, into row <n> of the star/fireworks framebuffer that
+// OsdDrawLogo(n, row, 1) superimposes; 28 characters at most.
+void OsdWriteFramebuffer(unsigned char n, const char *s);
 void StarsInit();
 void StarsUpdate();
 void FireworksInit();
