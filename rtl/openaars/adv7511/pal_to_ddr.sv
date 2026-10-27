@@ -39,6 +39,8 @@ module pal_to_ddr #(
   input  logic        i_pal_shres,    // BPLCON0 SHRES
   input  logic [7:0]  i_hoffset,      // OSD Video Pos HPOS: signed HD pixels
   input  logic [7:0]  i_voffset,      // OSD Video Pos VPOS: signed 64 us steps, positive down
+  input  logic [7:0]  i_hoffset_rtg,  // the same pair for the RTG picture (RTG 1:1 applies
+  input  logic [7:0]  i_voffset_rtg,  //   these instead; 0: centred), same encodings
   input  logic        i_rtg_enable,
   input  logic [13:0] i_crt_cfg,      // OSD Video page, as osd_cfg_t below
   // clk_148: 720p to the ADV7511 (adv_ddr's pad registers); reset: system reset
@@ -121,15 +123,23 @@ module pal_to_ddr #(
   // the HD raster restarts (pal_to_hd_upsample.sv, "Video Pos VPOS").
   (* ASYNC_REG = "TRUE" *) logic [7:0] s_hoff0 = 8'd0;
   (* ASYNC_REG = "TRUE" *) logic [7:0] s_hoff1 = 8'd0;
+  (* ASYNC_REG = "TRUE" *) logic [7:0] s_hoffr0 = 8'd0;
+  (* ASYNC_REG = "TRUE" *) logic [7:0] s_hoffr1 = 8'd0;
   always_ff @(posedge clk_148) begin
-    s_hoff0 <= i_hoffset;
-    s_hoff1 <= s_hoff0;
+    s_hoff0  <= i_hoffset;
+    s_hoff1  <= s_hoff0;
+    s_hoffr0 <= i_hoffset_rtg;
+    s_hoffr1 <= s_hoffr0;
   end
   (* ASYNC_REG = "TRUE" *) logic [7:0] s_voff0 = 8'd0;
   (* ASYNC_REG = "TRUE" *) logic [7:0] s_voff1 = 8'd0;
+  (* ASYNC_REG = "TRUE" *) logic [7:0] s_voffr0 = 8'd0;
+  (* ASYNC_REG = "TRUE" *) logic [7:0] s_voffr1 = 8'd0;
   always_ff @(posedge clk_114) begin
-    s_voff0 <= i_voffset;
-    s_voff1 <= s_voff0;
+    s_voff0  <= i_voffset;
+    s_voff1  <= s_voff0;
+    s_voffr0 <= i_voffset_rtg;
+    s_voffr1 <= s_voffr0;
   end
   // RTG into clk_114: the upsampler's write side takes one word per RTG
   // pixel (vga_clk_pixel) while it is on
@@ -266,12 +276,25 @@ module pal_to_ddr #(
   // less DE_X: the pin DE is the generator's window since 2026-10-27, DE_X pixels
   // left of the old regenerated one, and the picture stays where it was on screen)
   localparam DE_X = 60;
+  // RTG 1:1 (pal_to_hd_upsample.sv "RTG 1:1"; calibrated by scaler_run.sh's
+  // rtg* legs): the read offset that puts an RTG line's first pixel at HD
+  // x 0 of the window, per path, and the restart's move (input lines) that
+  // puts line 0 of a 750-line mode with its vsync 5 lines after the
+  // picture on HD row 0
+  localparam RTG_BASE50 = 157;
+  localparam RTG_BASE60 = 155;
+  localparam signed [7:0] RTG_VB = -8'sd9;
   pal_to_hd_upsample #(
     .PAL_HD_H_RES(1685),
     .PAL_HD_H_RES60(1980),
     .PAL_OFFSET_HZ('hd0 - CRT_LAT - DE_X),
     .PAL_OFFSET_HZ60('h80 - CRT_LAT - DE_X),
-    .RATIO_RDX(LIN_LAT)
+    .RATIO_RDX(LIN_LAT),
+    .RTG_1TO1(1),
+    .RTG_BASE50(RTG_BASE50),
+    .RTG_BASE60(RTG_BASE60),
+    .RTG_VB50(RTG_VB),
+    .RTG_VB60(RTG_VB)
   ) myupsample (
     .clk_in(clk_114),
     .clk_out(clk_148),
@@ -296,6 +319,8 @@ module pal_to_ddr #(
     .i_hd_clk(w_adv_clk),
     .i_hd_hoffset(s_hoff1),
     .i_hd_voffset(s_voff1),
+    .i_hd_hoffset_rtg(s_hoffr1),
+    .i_hd_voffset_rtg(s_voffr1),
     .i_pal_hires(w_bh_hires),
     .i_pal_shres(w_bh_shres),
     .o_hd_next(w_m_nxt),

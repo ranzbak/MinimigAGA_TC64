@@ -15,6 +15,10 @@ taken from the first frame and must be the same in every frame.  ONCE 1:
 every source line 0..719 appears in exactly one HD row of every frame (no
 line dropped or repeated: y0 = 0).  Prints x0, y0, the frames; exit 1 on
 any mismatch, with the first few.
+HD column 0 is black in every mode, RTG or not: signal_generator.sv gates
+its data with hz_region_act, the register DE comes from, one clk_148 after
+DE rises -- the window's first pixel is sampled before the gate opens
+(outside this gate's reach; the column is expected black here).
 """
 import sys
 import numpy as np
@@ -46,6 +50,7 @@ def main():
     hx = np.arange(1280)
     sx = hx - x0 - dx                         # the source column each HD column shows
     colok = (sx >= 0) & (sx < w - dx)         # ... written (DX > 0: the last DX lost)
+    colok[0] = False                          # the generator's first pixel (above)
     y0 = None
     bad = []
     for f in frames:

@@ -111,6 +111,20 @@ These worked on Paul's display (enter them in Picasso96Mode):
 | | | | | | | | vert | 560 | 0 | 38 | 8 | | 50hz |
 | 720x480 | HiColor | 720 | 480 | 28.36 | | | hor | 940 | 0 | 72 | 64 | | 30kHz |
 | | | | | | | | vert | 588 | 0 | 98 | 8 | | 51hz |
+| 1280x720 | HiColor | 1280 | 720 | 56.72 | | | hor | 1512 | 0 | 104 | 64 | | 37.5kHz |
+| | | | | | | | vert | 750 | 0 | 5 | 5 | | 50Hz |
+| 1280x720 (to be tried) | 256Col | 1280 | 720 | 113.44 | | | hor | 2521 | 0 | 1113 | 64 | | 45kHz |
+| | | | | | | | vert | 750 | 0 | 5 | 5 | | 60Hz |
+
+Since October 2026 the RTG picture is shown 1:1 (one HD pixel per RTG
+pixel) and centred automatically, with its own Video Pos pair (its OSD
+items come with a later firmware): the OSD's
+chipset Video Pos items do not move it. The two 1280x720 modes fill the
+720p screen exactly (50 Hz HiColor, 60 Hz 256 colours); they come from the
+simulation bench (sim/hdmi_upsample, scaler_run.sh rtg legs) and have not
+been tried on the board yet. Their vertical sync position (5) matters: the
+picture's top line lands on the screen's top line with it. Smaller modes
+show centred with a black border; wider ones lose their left and right edges.
 
 **Things to know:**
 

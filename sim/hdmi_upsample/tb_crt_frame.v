@@ -43,6 +43,8 @@
 //   +rtglat=N    RGB N clk_114 after the strobe (default 3, 16-bit; 4 is
 //                the CLUT modes' latency)
 //   +rtgvbp=N    lines from the end of vsync to the first active line
+//                (default 20: Picasso96 vertical sync position 5)
+//   +hoffrtg=N +voffrtg=N   the RTG picture's Video Pos pair (default 0)
 //   +hoff=N +voff=N   the OSD Video Pos offsets of the new path (8 bit,
 //                signed, -128..127; default 0, the reference path keeps 0)
 //   +voff2=N +vofframe=F +voffline=L   change VPOS to voff2 during HD frame
@@ -124,6 +126,7 @@ integer frames = 1, first = 3, cfgframe = -1, cfgline = 0, cfg = 0, cfg2 = 0;
 reg lace = 0, dbl = 0, split = 0, rtg = 0, force60 = 0, dump = 0;
 integer srcdelay = 0;
 integer hoff = 0, voff = 0, voff2 = 0, vofframe = -1, voffline = 0;
+integer hoffrtg = 0, voffrtg = 0;
 integer ntscfrom = -1, ntscto = -1;
 reg ntsc = 0;
 reg [8*160-1:0] out;
@@ -142,6 +145,8 @@ initial begin
 	force60 = $test$plusargs("force60");
 	if (!$value$plusargs("srcdelay=%d", srcdelay)) srcdelay = 0;
 	if (!$value$plusargs("hoff=%d", hoff)) hoff = 0;
+	if (!$value$plusargs("hoffrtg=%d", hoffrtg)) hoffrtg = 0;
+	if (!$value$plusargs("voffrtg=%d", voffrtg)) voffrtg = 0;
 	if (!$value$plusargs("voff=%d", voff)) voff = 0;
 	if (!$value$plusargs("voff2=%d", voff2)) voff2 = 0;
 	if (!$value$plusargs("vofframe=%d", vofframe)) vofframe = -1;
@@ -309,6 +314,7 @@ pal_to_ddr #(.CRT_WROM_FILE("../../rtl/openaars/adv7511/crt_wrom.mem"),
 	.i_pal_hsync(dut_hs), .i_pal_vsync(dut_vs),
 	.i_pal_r(src_rgb[23:16]), .i_pal_g(src_rgb[15:8]), .i_pal_b(src_rgb[7:0]),
 	.i_hoffset(hoff[7:0]), .i_voffset(voff[7:0]), .i_rtg_enable(rtg),
+	.i_hoffset_rtg(hoffrtg[7:0]), .i_voffset_rtg(voffrtg[7:0]),
 	.i_crt_cfg(crt_cfg), .i_pal_hires(src_hires), .i_pal_shres(1'b0),
 	.o_clk_pixel(n_clk), .o_de(n_de), .o_vsync(n_vs), .o_hsync(n_hs), .o_data(n_d)
 );

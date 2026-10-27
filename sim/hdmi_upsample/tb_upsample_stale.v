@@ -65,7 +65,7 @@ pal_to_hd_upsample #(.PAL_HD_H_RES(1980), .PAL_HD_H_RES60(1685)) dut (
 	.i_hz60(1'b0), .i_ring16(1'b0), .i_ratio(1'b0),
 	.o_hd_r(up_r), .o_hd_g(up_g), .o_hd_b(up_b), .o_hd_vsync(), .o_frame_end(frame_end),
 	.i_hd_hsync(hd_hs), .i_hd_vsync(hd_vs), .i_hd_clk(hd_clk),
-	.i_hd_hoffset(hoff[7:0]), .i_hd_voffset(8'd0)
+	.i_hd_hoffset(hoff[7:0]), .i_hd_voffset(8'd0), .i_hd_hoffset_rtg(8'd0), .i_hd_voffset_rtg(8'd0)
 );
 
 // stale content: every buffer word is the marker
