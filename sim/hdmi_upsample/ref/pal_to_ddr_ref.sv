@@ -18,6 +18,9 @@
 // Additional Comments:
 //
 //////////////////////////////////////////////////////////////////////////////////
+// NOTE: this reference path instantiates the CURRENT signal_generator and adv_ddr
+// (only pal_to_ddr/pal_to_hd_upsample are frozen copies), so the per-frame picture
+// comparison is not independent for those two modules; the golden records are the guard.
 module pal_to_ddr_ref(
   input clk_148,
   input clk_114,

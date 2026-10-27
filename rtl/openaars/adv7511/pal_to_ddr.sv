@@ -29,7 +29,7 @@ module pal_to_ddr #(
   // clk_114: the Amiga video stream
   input  logic        clk_114,
   /* verilator lint_off UNUSEDSIGNAL */
-  input  logic        vga_clk_pixel,  // RTG pixel strobe, used by the RTG 1:1 step
+  input  logic        vga_clk_pixel,  // RTG pixel strobe, unused here; for the RTG 1:1 step (phase 2)
   /* verilator lint_on UNUSEDSIGNAL */
   input  logic        i_pal_hsync,
   input  logic        i_pal_vsync,

@@ -4,8 +4,9 @@
 // restarts the frame (hz_count, vt_count, vsync).  Pixel enable = clk / 2
 // (o_adv_clk); o_adv_de rises one clock before the pixel's video.
 // Sync watchdog: without an i_frame_end for WD_LINES lines (two frames) the
-// frame restarts and the raster free-runs (r_freerun) at the nominal 750-line
-// frame until the next i_frame_end, so the display keeps its 50/60 Hz vsync.
+// frame restarts and the raster free-runs (r_freerun) with frames of 749 lines
+// + 2 clocks (the normal frame length as the bench counts it) until the next
+// i_frame_end, so the display keeps its 50/60 Hz vsync.
 // One generator for both rates: findings/scaler/plan.md (step 2).
 // Paul Honig, deFEEST 8-bit entertainment, 2020.
 
@@ -50,7 +51,9 @@ localparam PAL_HZ_TOTAL = PAL_HZ_ACT_PIX + PAL_HZ_FRONT_PORCH + PAL_HZ_SYNC_WIDT
 localparam PAL_HZ_TOTAL60 = PAL_HZ_ACT_PIX + PAL_HZ_FRONT_PORCH60 + PAL_HZ_SYNC_WIDTH + PAL_HZ_BACK_PORCH;
 localparam PAL_VT_TOTAL = PAL_VT_ACT_LN + PAL_VT_FRONT_PORCH + PAL_VT_SYNC_WIDTH + PAL_VT_BACK_PORCH;
 
-// Watchdog: the chipset's syncs can stop (RTG mode with its sync start past the frame size, agnus_beamcounter.v:412-424); without this the counter ran past 750 forever and the display saw no vsync and slept.
+// Watchdog: the chipset's syncs can stop (RTG mode with its sync start past the
+// frame size, agnus_beamcounter.v:412-424); without this the counter ran past
+// 750 forever and the display saw no vsync and slept.
 localparam WD_LINES = 2*PAL_VT_TOTAL - 1;
 
 // SYNC POLARITY
@@ -104,7 +107,7 @@ logic [HW-1:0] r_x = '0;
 logic [HW-1:0] r_y = '0;
 logic          r_frame = 1'b0;       // one clock: the frame restarted (line 0)
 logic          r_frame_end = 1'b0;   // restart the frame at the next clock
-logic          r_freerun = 1'b0;     // syncs lost: free-run 750-line frames
+logic          r_freerun = 1'b0;     // syncs lost: free-run 749 lines + 2 clocks
 logic          r_hsync = 1'b0;
 logic          r_vsync = 1'b0;
 logic          hz_region_act;
