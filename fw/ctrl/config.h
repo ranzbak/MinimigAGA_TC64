@@ -1,3 +1,6 @@
+#ifndef CONFIG_H
+#define CONFIG_H
+
 #include <stdint.h>
 
 #include "fat.h"
@@ -148,3 +151,4 @@ void ConfigIDEPorts(void);
 // Open the CD-ROM drive of the config (CD_Open), or none.
 void ApplyCDROM(void);
 
+#endif

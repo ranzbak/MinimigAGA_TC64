@@ -193,6 +193,13 @@ static int debug_draws;
 void _showdebugmessages(void) { debug_draws++; }
 void debug2_show(int on) { logc("debug2_show(%d)", on); }
 void menu_classic_open(unsigned char page, unsigned char sub) { logc("classic(%d,%d)", page, sub); }
+/* hdd.c, config.c: the Storage tab's hardfile flow (menu_model.c mm_hdf_*) */
+int partitioncount = 1;
+static unsigned char hdf_filetype = HDF_FILETYPE_RDB;
+unsigned char GetHDFFileType(char *name) { logc("GetHDFFileType(%.11s)", name); return hdf_filetype; }
+unsigned char OpenHardfile(unsigned int unit) { logc("OpenHardfile(%u)", unit); return 1; }
+void ApplyCDROM(void) { logc("ApplyCDROM"); }
+void ConfigIDEPorts(void) { logc("ConfigIDEPorts"); }
 
 /* ---- the FAT directory model ---- */
 struct fent { const char *lfn; const char *n83; unsigned char dir; unsigned short cl; };

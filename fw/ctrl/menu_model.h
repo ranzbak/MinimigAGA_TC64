@@ -13,6 +13,8 @@
 
 #include "fat.h"
 #include "fdd.h"
+#include "config.h"
+#include "hdd.h"
 
 /* ---- floppies ---- */
 /* the disk number ("XX/XX") of a long file name of more than 20 characters
@@ -53,6 +55,43 @@ void mm_save_config(int slot);
 /* the ROM in `file` (just chosen) becomes the Kickstart: halt, upload,
    reset (the OSD should be closed) */
 void mm_reload_kickstart(void);
+
+/* ---- the IDE slots as edited (the classic Harddisks pages, the new
+   Storage tab; were menu.c's t_hardfile, t_hdfdir, t_enable_ide) ----
+   The four slots (slot = port << 1 | slave) and the IDE on/off as changed,
+   applied when leaving: a change of type or hardfile needs a reset (the
+   Amiga probes the bus again), a new disc in a CD slot does not (a media
+   change, applied at once in the live drive). */
+extern hardfileTYPE mm_hdf[HDD_SLOTS];
+extern unsigned long mm_hdfdir[HDD_SLOTS];
+extern char mm_ide_on;
+/* the copy from config (entering the pages / the tab) */
+void mm_hdf_begin(void);
+/* the type cycle: Disabled, Hardfile (disk img), Hardfile (filesys), SD
+   card, its partitions, CD-ROM (ISO), Disabled.  CD-ROM only on a core with
+   two IDE ports, and not while another slot is the CD drive (one drive, D3).
+   mm_hdf_type_after: the type after e (nothing changed); mm_hdf_set_type: a
+   CD slot starts empty (an HDF name is not a disc); mm_hdf_next_type: both */
+unsigned char mm_hdf_type_after(int slot, unsigned char e);
+void mm_hdf_set_type(int slot, unsigned char e);
+void mm_hdf_next_type(int slot);
+/* the CD slot is the live drive: same slot, same type as in use */
+int mm_hdf_cd_live(int slot);
+/* does leaving need a reset? */
+int mm_hdf_needs_reset(void);
+/* the file in `file` (just chosen) for slot: a disc (a live CD drive takes
+   it now, refused while locked), or a hardfile, its type from its first
+   blocks.  MM_HDF_OK, or the warning to show: no partition table (a
+   Hardfile (disk img) slot), no filesystem (a Hardfile (filesys) slot) */
+#define MM_HDF_OK    0
+#define MM_HDF_NORDB 1
+#define MM_HDF_NOFS  2
+int mm_hdf_selected(int slot);
+/* leaving without a reset: the discs of CD slots that are not live yet */
+void mm_hdf_keep(void);
+/* leaving with the reset (its dialog's Yes): the slots and IDE on/off into
+   config, the changed hardfiles opened, the CD drive, the ports, OsdReset */
+void mm_hdf_apply(void);
 
 /* ---- config fields: value index get / set (the set applies it) ----
    The `arg` of the new menu's items (ui_tabs.c). */
