@@ -98,9 +98,13 @@
 #              golden p50 (pictures, frame lengths, pin signatures) equal
 #   osd2win    the layer on, scale 2, 64 x 20 at (128, 40): adv_ddr's
 #              picture = osd_text model.py over the generator's picture
-#              (osd2_check.py, no stored golden); osd2win60 the same on the
-#              60 Hz path; both print where the pin raster sits on the
-#              generator's ("osd2 pins")
+#              (osd2_check.py, no stored golden); and at the pins, both
+#              bus words of every pixel (adv_ddr's {r, g[7:4]}, {g[3:0], b})
+#              = the model over the generator's picture, pin x = model x
+#              (osd2_check.py pins: a layer pixel straddling two pin pixels
+#              fails here, the one-clock-per-pixel picture cannot see it);
+#              osd2win60 the same on the 60 Hz path; both print where the
+#              pin raster sits on the generator's ("osd2 pins")
 #   nosync     the Amiga hsync and vsync stop from HD frame 4 on (RTG mode
 #              with its sync start past the frame size), RGB runs on: the
 #              signal generator's watchdog ends one frame of 1500 lines
@@ -165,8 +169,8 @@ declare -A ARGS=(
 	[bloom]="+cfg=201 +out=$I/bloom"
 	[bloom_lo]="+cfg=101 +out=$I/bloom_lo"
 	[osd2off]="+osd2=$I/osd2off.d +first=6"
-	[osd2win]="+osd2=$I/osd2win.d +out=$I/osd2win +osd2gen=$I/osd2win_gen"
-	[osd2win60]="+force60 +osd2=$I/osd2win.d +out=$I/osd2win60 +osd2gen=$I/osd2win60_gen"
+	[osd2win]="+osd2=$I/osd2win.d +out=$I/osd2win +osd2gen=$I/osd2win_gen +pins=2 +pinsfile=$I/osd2win_pins.txt"
+	[osd2win60]="+force60 +osd2=$I/osd2win.d +out=$I/osd2win60 +osd2gen=$I/osd2win60_gen +pins=2 +pinsfile=$I/osd2win60_pins.txt"
 )
 DITHER="+frame=build/dither.hex +hires=build/dither_hires.hex"
 BEAMS=""
@@ -359,6 +363,8 @@ for l in "${legs[@]}"; do
 	osd2win|osd2win60)
 		grep -m1 '^osd2 pins' $I/$l.log | sed 's/^/        /'
 		m=$(python3 osd2_check.py check $I/osd2win.d $I/${l}_gen_3.hex $I/${l}_3.hex) && pass "$l: picture $m" || bad "$l: $m"
+		# the pins (pin frame 2 = HD frame 3): both bus words of every pixel
+		m=$(python3 osd2_check.py pins $I/osd2win.d $I/${l}_gen_3.hex $I/${l}_gen_3b.hex $I/${l}_pins.txt) && pass "$l: $m" || bad "$l: $m"
 		;;
 	ripple)
 		r=$(python3 crt_check.py ripple ../../rtl/openaars/adv7511/crt_wrom.mem)

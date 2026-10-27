@@ -5,17 +5,22 @@ osd2win60; findings/osd-redesign Phase 2).
     osd2_check.py gen <dir> win|off     the layer's data for tb_crt_frame
                                         +osd2=<dir>: cells.hex, font_w.hex,
                                         pal.hex, cfg.hex
+    osd2_check.py pins <dir> GEN GEN2 PINS
+                                        PINS (the pins, +pins: both bus words
+                                        of every pixel) = the model of the
+                                        layer over GEN (first words) and GEN2
+                                        (second words), pixel for pixel
     osd2_check.py check <dir> GEN OUT   OUT (adv_ddr's input picture, +out)
                                         = the Phase 1 model
                                         (sim/osd_text/model.py render) of
                                         the layer over GEN (the generator's
                                         picture, +osd2gen), pixel for pixel
 
-tb_crt_frame takes a pixel on the second clk_148 of its pixel clock with
-the generator's DE, which rises one clock before the picture: dump column c
-is generator pixel x = c - 1 (column 0 is the blank pixel before the line,
-generator x 1279 is not dumped).  The check realigns both dumps to
-generator coordinates (the model's) and compares x 0..1278.
+tb_crt_frame takes a pixel on the clk_148 of adv_ddr's first bus word
+under the generator's DE (+out, +osd2gen; +osd2gen's ...b.hex: the next
+clock, the second word's): dump column x = pin pixel x = the layer's and
+the model's x (osd_text PE_PHASE 1, since 2026-10-28; before, the layer ran
+one clock late and the check read column c as x = c - 1).
 
 No stored golden: the expected picture is computed from the frame without
 the layer, so the check holds wherever the chain puts the picture.
@@ -65,14 +70,9 @@ def check(d, gfile, ofile):
     if len(dg) != n or len(do) != n:
         print(f"{len(dg)} generator / {len(do)} output pixels, expected {n}")
         return False
-    # dump column c = generator x c - 1: x = column + 1, x 1279 left 0 in both
-    vin, vout = [0] * n, [0] * n
-    for y in range(model.H):
-        vin[y * W:y * W + W - 1] = dg[y * W + 1:y * W + W]
-        vout[y * W:y * W + W - 1] = do[y * W + 1:y * W + W]
+    # dump column x = the model's x
+    vin, vout = dg, do
     exp = model.render(vin, cells, font, pal, cfg)
-    for y in range(model.H):
-        exp[y * W + W - 1] = vout[y * W + W - 1]
     nwin = sum(1 for a, b in zip(exp, vin) if a != b)
     bad = [i for i in range(n) if exp[i] != vout[i]]
     if bad:
@@ -84,11 +84,83 @@ def check(d, gfile, ofile):
     return nwin > 0 or not (cfg & 1)
 
 
+def pin_words(fn):
+    """The two bus words of every pixel under the pin DE of a tb_crt_frame
+    +pins dump (frame_shift.py load_pins: a DE rise shows in sample R, the
+    words in R+1, R+3, ...; {r, g[7:4]} with o_clk_pixel low, then
+    {g[3:0], b}): two lists of 1280 x 720 words, or a message."""
+    with open(fn) as f:
+        rows = f.read().split("\n")
+    de = [len(r) == 11 and r[2] == "1" for r in rows]
+    word = [int(r[8:11], 16) if len(r) == 11 else 0 for r in rows]
+    rises = [i for i in range(1, len(de)) if de[i] and not de[i - 1]]
+    if de and de[0]:
+        rises.insert(0, 0)
+    W, H = model.W, model.H
+    if len(rises) < H:
+        return None, None, f"{len(rises)} DE pulses, expected {H}"
+    hi, lo = [0] * (W * H), [0] * (W * H)
+    for y, r in enumerate(rises[:H]):
+        n = 0
+        while r + n < len(de) and de[r + n]:
+            n += 1
+        if n != 4 * W:
+            return None, None, f"DE pulse {y}: {n} samples, expected {4 * W}"
+        for x in range(W):
+            hi[y * W + x] = word[r + 1 + 4 * x]
+            lo[y * W + x] = word[r + 3 + 4 * x]
+    return hi, lo, None
+
+
+def check_pins(d, gfile, gfile2, pfile):
+    """BOTH bus words of every pixel at the pins (+pins: what the ADV7511
+    gets) = the model of the layer over the generator's picture, pin pixel
+    x = GEN column x = model x: the first word {r, g[7:4]} of the model over
+    GEN (+osd2gen, the first word's clock), the second {g[3:0], b} of the
+    model over GEN2 (+osd2gen's ...b.hex, the next clock; the two differ in
+    pin pixel 0, whose first clock signal_generator still blanks).  A layer whose pixels change on the other clk_148 of
+    adv_ddr's word pair shows here: one word of the pixel, the other of its
+    neighbour (the one-clock-per-pixel +out dump cannot see that)."""
+    cells = model.rd_hex(os.path.join(d, "cells.hex"))
+    font = model.rd_hex(model.FONT_MEM)
+    for w in model.rd_hex(os.path.join(d, "font_w.hex")):
+        font[w >> 8] = w & 0xff
+    pal = model.rd_hex(os.path.join(d, "pal.hex"))
+    cfg = model.rd_hex(os.path.join(d, "cfg.hex"))[0]
+    dg, dg2 = model.rd_hex(gfile), model.rd_hex(gfile2)
+    W, n = model.W, model.W * model.H
+    if len(dg) != n or len(dg2) != n:
+        print(f"{len(dg)} / {len(dg2)} generator pixels, expected {n}")
+        return False
+    hi, lo, err = pin_words(pfile)
+    if err:
+        print(f"pins: {err}")
+        return False
+    exp = model.render(dg, cells, font, pal, cfg)
+    exp2 = model.render(dg2, cells, font, pal, cfg)
+    nwin = sum(1 for a, b in zip(exp, dg) if a != b)
+    bh = [i for i in range(n) if hi[i] != exp[i] >> 12]
+    bl = [i for i in range(n) if lo[i] != exp2[i] & 0xfff]
+    if bh or bl:
+        i = min((bh or [n]) + (bl or [n]))
+        print(f"pins: {len(bh)} first words ({{r, g[7:4]}}) and {len(bl)} second words ({{g[3:0], b}}) "
+              f"differ from the model, first at x {i % W} y {i // W}: words {hi[i]:03x} {lo[i]:03x}, "
+              f"expected {exp[i] >> 12:03x} {exp2[i] & 0xfff:03x}")
+        return False
+    ch = [i for i in range(n) if exp[i] != dg[i]]
+    where = (f", at pin x {min(i % W for i in ch)}..{max(i % W for i in ch)}, "
+             f"y {ch[0] // W}..{ch[-1] // W}") if ch else ""
+    print(f"pins = model, both words of all {n} pixels ({nwin} pixels changed by the layer{where})")
+    return nwin > 0 or not (cfg & 1)
+
+
 def main():
     if len(sys.argv) == 4 and sys.argv[1] == "gen":
         gen(sys.argv[2], sys.argv[3])
     elif len(sys.argv) == 5 and sys.argv[1] == "check":
         sys.exit(0 if check(sys.argv[2], sys.argv[3], sys.argv[4]) else 1)
+    elif len(sys.argv) == 6 and sys.argv[1] == "pins":
+        sys.exit(0 if check_pins(*sys.argv[2:6]) else 1)
     else:
         sys.exit(__doc__)
 

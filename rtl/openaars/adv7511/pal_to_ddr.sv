@@ -371,10 +371,16 @@ module pal_to_ddr #(
   // Write side: userio_osd's registered bus in CLK_28; palette and window
   // cross into clk_148 by a commit toggle at the frame pulse (wizard.xdc's
   // dll_28 -> clk_148 set_max_delay covers the static staging bits).
+  // PE_PHASE 1: the video here changes at the pixel boundaries of adv_ddr's
+  // word pairs, i.e. on the clock with ~w_adv_clk high (osd_text "Position");
+  // VS_DE 15: the window's first frame after power-up already starts at the
+  // generator's first DE line (PAL_VT_TOP 15; osd_text measures it from then on).
   localparam OSD_LAT = 0;
   osd_text #(
     .FONT_FILE(OSD_FONT_FILE),
-    .LAT(OSD_LAT)
+    .LAT(OSD_LAT),
+    .PE_PHASE(1),
+    .VS_DE(15)
   ) my_osd_text (
     .clk(clk_148),
     .i_pe(~w_adv_clk),

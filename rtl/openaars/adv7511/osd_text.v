@@ -43,9 +43,26 @@
 //   for one frame (accepted, plan 7.3); palette and window never tear.
 //
 // Position (the layer needs nothing from the generator but its outputs)
-//   i_pe is the pixel enable: high on the second clock of each pixel, so a
-//   pixel's video changes at the edge that samples i_pe high (pal_to_ddr:
-//   ~w_adv_clk, signal_generator's r_vid_enable).  At those edges the layer
+//   i_pe is the pixel enable (~signal_generator o_adv_clk, its r_vid_enable).
+//   Which of a pixel's two clocks it is high on is the video's, not the
+//   generator's (the generator registers its input every clock), so it is a
+//   parameter:
+//     PE_PHASE 0  i_pe high on the second clock of each video pixel: the
+//                 video changes at the edge that samples i_pe high
+//                 (sim/osd_text's leg pe0)
+//     PE_PHASE 1  i_pe high on the first clock of each video pixel: the
+//                 video changes at the edge that samples i_pe low.  This is
+//                 pal_to_ddr's: the upsampler's video changes at the pixel
+//                 boundaries of the generator's DE, which rises in a clock
+//                 with i_pe high, and adv_ddr takes a pixel's two bus words
+//                 from that clock and the next.  Under PE_PHASE 0 the
+//                 layer's pixels would straddle two of adv_ddr's: each pin
+//                 pixel {r, g[7:4]} of one layer pixel, {g[3:0], b} of the
+//                 next (2026-10-28, crt_run.sh osd2win's pin check).
+//   The layer runs its counters on pe = i_pe (PE_PHASE 0) or ~i_pe (1), so
+//   with PE_PHASE 1 they move one clock later, and works one pixel further
+//   ahead (LEAD + 1): the overlay then changes one clock earlier than under
+//   PE_PHASE 0, on the video's pixel boundaries.  At pe edges the layer
 //   samples i_hs and i_de and keeps two counters:
 //     nx  the next pixel's x, 0-based on the raster, counting on through the
 //         blanking modulo 4096: the pixel whose video reaches i_r/g/b one
@@ -103,7 +120,8 @@ module osd_text #(
   parameter H_ACT = 1280,       // the raster
   parameter V_ACT = 720,
   parameter HS_DE = 261,        // cal at power-up (720p50/60: sync 40 + back porch 220, + 1)
-  parameter VS_DE = 0           // vcal at power-up (the first line with DE after i_frame)
+  parameter VS_DE = 0,          // vcal at power-up (the first line with DE after i_frame)
+  parameter PE_PHASE = 0        // 0: i_pe high on a video pixel's second clock, 1: on its first (see Position)
 )(
   input             clk,        // clk_148
   input             i_pe,       // pixel enable (~signal_generator o_adv_clk)
@@ -137,7 +155,14 @@ module osd_text #(
 );
 
 localparam PIPE = 12;                 // clocks from nx to o_r/g/b
-localparam LEAD = PIPE / 2 - 1 - LAT; // pixels; nx leads its video by one
+`ifdef OSD_TEXT_MUTANT_PHASE
+// MUTANT (bench only): PE_PHASE ignored, the layer before 2026-10-28 -- under
+// PE_PHASE 1 video its pixels straddle two video pixels
+localparam PH = 0;
+`else
+localparam PH = (PE_PHASE != 0);
+`endif
+localparam LEAD = PIPE / 2 - 1 - LAT + PH; // pixels; nx leads its video by one
 localparam [11:0] LEADV = LEAD;
 localparam D1   = 2 * LAT - 2;        // video registers before the blend's two
 localparam [11:0] XEND = H_ACT - LEADV;    // xi on the raster: [4096-LEAD, 4096) U [0, XEND)
@@ -224,8 +249,9 @@ reg [11:0] ny   = 12'hfff;
 reg [11:0] lcnt = 12'hfff;                // hsyncs since i_frame, less one
 reg [11:0] vcal = VS_DE;                  // lcnt at the frame's first DE
 reg        vseen = 1'b1;                  // vcal measured in this frame (none before the first i_frame)
+wire       pe = PH ? ~i_pe : i_pe;        // high on a video pixel's second clock
 always @(posedge clk) begin
-  if (i_pe) begin
+  if (pe) begin
     hs_p <= i_hs;
     de_p <= i_de;
     hcnt <= hcnt + 1'b1;
