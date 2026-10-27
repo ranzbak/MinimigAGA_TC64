@@ -1,255 +1,166 @@
 `timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Company:
-// Engineer:
-//
-// Create Date: 01/02/2020 06:22:06 PM
-// Design Name:
-// Module Name: aars_video_top
-// Project Name:
-// Target Devices:
-// Tool Versions:
-// Description:
-//
-// Dependencies:
-//
-// Revision:
-// Revision 0.01 - File Created
-// Additional Comments:
-//
-//////////////////////////////////////////////////////////////////////////////////
+// pal_to_ddr: the HDMI output chain.  Amiga video (PAL / NTSC, 15 / 31 kHz,
+// RTG) to 720p50 / 720p60 for the ADV7511, 12-bit DDR at the pins:
+//   crt_beamh -> pal_to_hd_upsample -> crt_post -> signal_generator -> adv_ddr,
+// with frame_freq choosing the 50 / 60 Hz raster from the input frame period.
+// Clock domains:
+//   clk_114  the Amiga stream: input delay, crt_beamh, the upsampler's write
+//            side and its VPOS decision
+//   CLK_28   Denise's HIRES / SHRES and the OSD / RTG bits (phase-aligned
+//            with clk_114; the static bits get 2-FF synchronisers anyway)
+//   clk_148  720p: frame_freq, upsampler read side, crt_post, generator, adv_ddr
+// Design notes: findings/scaler/plan.md (one chain, exact-ratio scaling),
+// findings/adv7511/.  Benches: sim/hdmi_upsample (crt_build.sh, golden.sh,
+// crt_run.sh, scaler_run.sh, run.sh).
 module pal_to_ddr #(
-  // CRT emulation tables (crt_post.v); design sources next to this file
-  parameter CRT_WROM_FILE = "crt_wrom.mem",
-  parameter CRT_LUT_FILE  = "crt_lut.mem",
+  // crt_post tables (design sources next to this file)
+  parameter CRT_WROM_FILE  = "crt_wrom.mem",
+  parameter CRT_LUT_FILE   = "crt_lut.mem",
   parameter CRT_BLOOM_FILE = "crt_bloom.mem",
-  // horizontal beam spot tables (crt_beamh.v)
-  parameter CRT_HDEC_FILE = "crt_hdec.mem",
-  parameter CRT_HENC_FILE = "crt_henc.mem",
-  parameter CRT_HK_FILE   = "crt_hk.mem",
-  // the scaler's linear-light tables (crt_post.v; sim/hdmi_upsample/scl_mkroms.py)
+  // crt_beamh's horizontal beam spot tables
+  parameter CRT_HDEC_FILE  = "crt_hdec.mem",
+  parameter CRT_HENC_FILE  = "crt_henc.mem",
+  parameter CRT_HK_FILE    = "crt_hk.mem",
+  // crt_post's linear-light tables (sim/hdmi_upsample/scl_mkroms.py)
   parameter CRT_SDEC_FILE  = "crt_sdec.mem",
   parameter CRT_SENC_FILE  = "crt_senc.mem",
   parameter CRT_SWROM_FILE = "crt_swrom.mem"
-)(
-  input clk_148,
-  input clk_114,
-  input reset,
-  // VGA input
-  input vga_clk_pixel,
-  // Pal input
-  input i_pal_hsync,
-  input i_pal_vsync,
-  input [7:0] i_pal_r,
-  input [7:0] i_pal_g,
-  input [7:0] i_pal_b,
-  // Offset
-  input [7:0] i_hoffset,
-  input [7:0] i_voffset,
-  // RTG
-  input       i_rtg_enable,
-  // CRT emulation (CLK_28 domain): the OSD video config as userio_osd
-  // latches it, {scaling[1:0], beam[1:0], bloom[1:0], mask[1:0],
-  // hr_filter[1:0], lr_filter[1:0], scanline[1:0]}, and Denise's BPLCON0
-  // HIRES / SHRES for the per-line filter choice.  scaling (2026-10-13,
-  // findings/scaler/plan.md): 0 line rate (the picture of before), 1 sharp,
-  // 2 area (3 as 1): exact 2.5x (PAL) / 3x (NTSC) vertical scaling
-  input [13:0] i_crt_cfg,
-  input       i_pal_hires,
-  input       i_pal_shres,
-  // OUTPUT
-  output o_clk_pixel, // Output pixel clock after synchronization to clk_ddr
-  output o_de, // Data enable signal
-  output o_vsync,
-  output o_hsync,
-  output [11:0] o_data // DDR data stream out
+) (
+  // clk_114: the Amiga video stream
+  input  logic        clk_114,
+  /* verilator lint_off UNUSEDSIGNAL */
+  input  logic        vga_clk_pixel,  // RTG pixel strobe, used by the RTG 1:1 step
+  /* verilator lint_on UNUSEDSIGNAL */
+  input  logic        i_pal_hsync,
+  input  logic        i_pal_vsync,
+  input  logic [7:0]  i_pal_r,
+  input  logic [7:0]  i_pal_g,
+  input  logic [7:0]  i_pal_b,
+  // CLK_28 / static: Denise's resolution per line, OSD settings, RTG
+  input  logic        i_pal_hires,    // BPLCON0 HIRES
+  input  logic        i_pal_shres,    // BPLCON0 SHRES
+  input  logic [7:0]  i_hoffset,      // OSD Video Pos HPOS: signed HD pixels
+  input  logic [7:0]  i_voffset,      // OSD Video Pos VPOS: signed 64 us steps, positive down
+  input  logic        i_rtg_enable,
+  input  logic [13:0] i_crt_cfg,      // OSD Video page, as osd_cfg_t below
+  // clk_148: 720p to the ADV7511 (adv_ddr's pad registers); reset: system reset
+  input  logic        clk_148,
+  input  logic        reset,
+  output logic        o_clk_pixel,
+  output logic        o_de,
+  output logic        o_vsync,
+  output logic        o_hsync,
+  output logic [11:0] o_data
 );
-  // Generated RGB values
-  wire [7:0] w_r;
-  wire [7:0] w_g;
-  wire [7:0] w_b;
-  wire       w_vsync;
+  // The OSD Video page as userio_osd latches it, msb first (bit 13 down)
+  typedef struct packed {
+    logic [1:0] scaling;  // 0 line rate, 1 sharp, 2 area (3 as 1)
+    logic [1:0] beam;     // beam width off / sharp / medium / soft
+    logic [1:0] bloom;    // off / low / high
+    logic [1:0] mask;     // off / grille / grille strong / shadow
+    logic [1:0] hr_filt;  // Hires Filter {V, H}
+    logic [1:0] lr_filt;  // Lores Filter {V, H}
+    logic [1:0] scan;     // scanlines off / dim / black
+  } osd_cfg_t;
+  // Its clk_148 part (the beam goes to crt_beamh in clk_114), 12 bits
+  typedef struct packed {
+    logic [1:0] scaling;
+    logic [1:0] bloom;
+    logic [1:0] mask;
+    logic [1:0] hr_filt;
+    logic [1:0] lr_filt;
+    logic [1:0] scan;
+  } crt_cfg_t;
 
-  // Upsample routine
-  wire [6:0] w_vblank_width;
-  wire w_hd_hsync;
-  wire w_hd_vsync;
+  osd_cfg_t w_osd_cfg;
+  assign w_osd_cfg = i_crt_cfg;
 
-  // enable to indicate the next data point is needed
-  wire w_adv_de;
-  wire w_adv_clk;
-
-  // RGB signal in 720p before DDR
-  wire [7:0] w_o_r;
-  wire [7:0] w_o_g;
-  wire [7:0] w_o_b;
-
-  (* ASYNC_REG = "TRUE" *) reg [2:0] s_pal_hsync;
-  wire       w_pal_hsync;
-  (* ASYNC_REG = "TRUE" *) reg  [2:0] s_pal_vsync;
-  wire       w_pal_vsync;
-  (* ASYNC_REG = "TRUE" *) reg  [7:0] s_pal_r [0:1];
-  wire [7:0] w_pal_r;
-  (* ASYNC_REG = "TRUE" *) reg  [7:0] s_pal_g [0:1];
-  wire [7:0] w_pal_g;
-  (* ASYNC_REG = "TRUE" *) reg  [7:0] s_pal_b [0:1];
-  wire [7:0] w_pal_b;
-
-  // Synchronize the signal
-  wire [2:0] w_pal_hsync_next = {s_pal_hsync[1], s_pal_hsync[0], i_pal_hsync};
-  wire [2:0] w_pal_vsync_next = {s_pal_vsync[1], s_pal_vsync[0], i_pal_vsync};
-  always @(posedge clk_114)
-  begin
-    // Hsync/Vsync
-    s_pal_hsync <= w_pal_hsync_next;
-    s_pal_vsync <= w_pal_vsync_next;
-    // Red/Green/Blue
-    s_pal_r     <= { s_pal_r[0], i_pal_r };
-    s_pal_g     <= { s_pal_g[0], i_pal_g };
-    s_pal_b     <= { s_pal_b[0], i_pal_b };
+  // The input in its own clock: hsync / vsync two clk_114 later, RGB as it
+  // comes.  A delay, not a CDC; its depth sets the input-side edge latency,
+  // which decides the ring buffer each HD line shows.
+  logic [1:0] r_pal_hs_dly;
+  logic [1:0] r_pal_vs_dly;
+  always_ff @(posedge clk_114) begin
+    r_pal_hs_dly <= {r_pal_hs_dly[0], i_pal_hsync};
+    r_pal_vs_dly <= {r_pal_vs_dly[0], i_pal_vsync};
   end
+  logic       w_pal_hsync, w_pal_vsync;
+  logic [7:0] w_pal_r, w_pal_g, w_pal_b;
+  assign w_pal_hsync = r_pal_hs_dly[1];
+  assign w_pal_vsync = r_pal_vs_dly[1];
+  assign w_pal_r     = i_pal_r;
+  assign w_pal_g     = i_pal_g;
+  assign w_pal_b     = i_pal_b;
 
-  // assign w_pal_r = s_pal_r[1];
-  // assign w_pal_g = s_pal_g[1];
-  // assign w_pal_b = s_pal_b[1];
-  assign w_pal_hsync = s_pal_hsync[1];
-  assign w_pal_vsync = s_pal_vsync[1];
-
-  assign w_pal_r = i_pal_r;
-  assign w_pal_g = i_pal_g;
-  assign w_pal_b = i_pal_b;
-  // assign w_pal_hsync = i_pal_hsync;
-  // assign w_pal_vsync = i_pal_vsync;
-
-  // Detect number of horizontal lines in video in
-  reg [$clog2(1000):0] hz_in_count = 0;
-  reg                  r_passthrough = 1'b0;
-
-  always @(posedge clk_148)
-  begin
-    if (s_pal_hsync[2] == 1'b0 && s_pal_hsync[1] == 1'b1)
-    begin
-      hz_in_count <= hz_in_count + 1;
-    end
-
-    if (s_pal_vsync[2] == 1'b1 && s_pal_vsync[1] == 1'b0)
-    begin
-      r_passthrough <= 1'b0;
-      // When there are more than 400 lines in the video signal,
-      // Assume it's VGA and pass it through
-      if (hz_in_count > 700)
-      begin
-        r_passthrough <= 1'b1;
-      end
-      hz_in_count <= 0;
-    end
-  end
-
-  // Detect the frame rate: the 60 Hz path for an input frame of 12.5 .. 19.5
-  // ms, else the 50 Hz path.  r_50hz is what the chain below switches on (and
-  // what tb_crt_frame.v reads; its +force60 forces myfreq.o_hz60).
-  wire                 w_freq_hz60;
-  wire                 r_50hz = ~w_freq_hz60;
-  frame_freq myfreq(
+  // 50 / 60 Hz raster from the input frame period (12.5 .. 19.5 ms: 60 Hz).
+  // r_50hz is what tb_crt_frame.v reads (its +force60 forces myfreq.r_hz60).
+  logic w_freq_hz60, r_50hz, w_hz60;
+  assign r_50hz = ~w_freq_hz60;
+  assign w_hz60 = ~r_50hz;
+  frame_freq myfreq (
     .clk(clk_148),
     .reset(reset),
     .i_vsync(w_pal_vsync),
     .o_hz60(w_freq_hz60)
   );
 
-  // One upsampler and one 720p signal generator for both rates
-  // (findings/scaler/plan.md step 2, 2026-10-13), switched by r_50hz.  Up
-  // to then a 50 Hz and a 60 Hz chain both ran on the same input, each with
-  // its own line-buffer ring, and r_50hz picked the outputs; they differed
-  // only in the generator's front porch (440 / 110), the upsampler's sample
-  // step and read window (H_RES 1685 / 1980), its read offset ('hd0 / 'h80
-  // minus CRT_LAT), its HD hsync (its own generator's / adv_ddr's
-  // hsync_out) and RTG's undelayed vsync (60 Hz only).  The one chain takes
-  // all of these by r_50hz.  A rate change refills the ring (one frame).
-  wire        w_frame_end;
-  wire        w_hd_gen_hsync;
-  wire        w_hz60 = ~r_50hz;
-
-  // -------------------------------------------------------------------------
-  // CRT emulation (2026-10-09).  One crt_post on the upsampler's stream;
-  // its output feeds the signal generator.  crt_post delays the stream by
-  // CRT_LAT pixels, and the upsampler reads CRT_LAT pixels earlier (PAL_OFFSET_HZ),
-  // so with every effect off the picture is bit-identical to the design
-  // without it (sim/hdmi_upsample/crt_run.sh, bypass legs).
-  //
-  // OSD mapping (the Video page):
-  //   Scanlines   off / dim / black -> beam profile 0 / 2 / 3 and the
-  //               brightness LUT page of the same number (page 0 = identity)
-  //   Lores/Hires Filter, per input line by its resolution (lowres: the
-  //   Lores item, hires and superhires: the Hires item):
-  //     bit 0 (H) -> horizontal blur, [1 2 1]/4 lowres, [1 6 1]/8 hires
-  //     bit 1 (V) -> two-line beam (with scanlines off: linear blend)
-  //   CRT mask    off / grille / grille strong / shadow -> crt_post i_mask
-  //               (3-px R G B stripes, 30 / 55 % gaps; 2-px magenta / green,
-  //               40 %; the LUT divides each mode's mean light back out)
-  //   Bloom       off / low / high -> crt_post i_bloom: bright pixels fill
-  //               their scanline gap (needs scanlines or the V filter); with
-  //               the beam on also crt_beamh's horizontal bloom
-  //   Beam width  off / sharp / medium / soft -> crt_beamh (2026-10-09): the
-  //               horizontal beam spot on the Amiga stream BEFORE the
-  //               upsamplers (clk_114), gaussian sigma 0.5 / 0.6 / 0.8
-  //               lowres pixels, the same on screen in every resolution.
-  //               It has its own synchronisers and frame latch in clk_114
-  //               and the same 15 kHz / no-RTG condition; off, the
-  //               upsamplers get the input unchanged.
-  // The effects need 15 kHz input (one input line = 2.4 HD lines): minimig.v
-  // turns amber's scandoubler off while any of them is selected
-  // (MINIMIG_OPENAARS), and here they apply only while the last input frame
-  // had fewer than 400 lines and RTG is off -- otherwise today's picture.
-  // The OSD bits are static: 2-FF synchronisers into clk_148, then a latch
-  // at the frame end, so a change applies from the next frame on.  The
-  // crossings are bounded by wizard.xdc (set_max_delay -datapath_only from
-  // dll_28/clk_114 to clk_148).
-  // -------------------------------------------------------------------------
+  // CRT emulation, OSD Video page -> hardware (frame-latched; applied only
+  // while the last input frame had < 400 lines and RTG is off):
+  //   Scanlines    off / dim / black -> crt_post beam profile and LUT page 0 / 2 / 3
+  //   Lores/Hires Filter, by the line's resolution: H blur / V two-line beam
+  //   CRT mask     off / grille / grille strong / shadow -> crt_post i_mask
+  //   Bloom        off / low / high -> crt_post i_bloom (+ crt_beamh's, beam on)
+  //   Beam width   off / sharp / medium / soft -> crt_beamh (clk_114, before the upsampler)
+  //   Scaling      line rate / sharp / area -> exact 2.5x / 3x (ring16, crt_post i_lin)
+  // crt_post delays the stream CRT_LAT pixels and the upsampler reads CRT_LAT
+  // earlier: everything off is the picture without it (crt_run.sh bypass legs).
   localparam CRT_LAT = 9;   // crt_post pipeline, HD pixels
   localparam LIN_LAT = 3;   // ... its linear-light path's extra (the exact-ratio modes)
 
-  // The OSD Video Pos HPOS (signed HD pixels; static, written by the host
-  // through VPOS_DATA): one 2-FF synchroniser into clk_148.  VPOS: the
-  // same into clk_114.
-  (* ASYNC_REG = "TRUE" *) reg [7:0] s_hoff0 = 8'd0;
-  (* ASYNC_REG = "TRUE" *) reg [7:0] s_hoff1 = 8'd0;
-  always @(posedge clk_148) begin
+  // Static settings into their clock, 2-FF synchronisers (wizard.xdc bounds
+  // the crossings with set_max_delay -datapath_only): HPOS into clk_148;
+  // VPOS into clk_114, where the upsampler decides at each input hsync where
+  // the HD raster restarts (pal_to_hd_upsample.sv, "Video Pos VPOS").
+  (* ASYNC_REG = "TRUE" *) logic [7:0] s_hoff0 = 8'd0;
+  (* ASYNC_REG = "TRUE" *) logic [7:0] s_hoff1 = 8'd0;
+  always_ff @(posedge clk_148) begin
     s_hoff0 <= i_hoffset;
     s_hoff1 <= s_hoff0;
   end
-  // VPOS (signed 64 us steps, positive down): a 2-FF synchroniser into
-  // clk_114, where the upsampler takes it at each input hsync and decides
-  // where the HD raster restarts (pal_to_hd_upsample.v, "Video Pos VPOS");
-  // its clk_148 side only follows that decision.  The register is in
-  // CLK_28 (cfide), a phase-aligned sibling of clk_114 (wizard.xdc's
-  // multicycle paths time the crossing), but the value is static and the
-  // synchroniser costs nothing.
-  (* ASYNC_REG = "TRUE" *) reg [7:0] s_voff0 = 8'd0;
-  (* ASYNC_REG = "TRUE" *) reg [7:0] s_voff1 = 8'd0;
-  always @(posedge clk_114) begin
+  (* ASYNC_REG = "TRUE" *) logic [7:0] s_voff0 = 8'd0;
+  (* ASYNC_REG = "TRUE" *) logic [7:0] s_voff1 = 8'd0;
+  always_ff @(posedge clk_114) begin
     s_voff0 <= i_voffset;
     s_voff1 <= s_voff0;
   end
 
-  wire [7:0]  w_up_r, w_up_g, w_up_b;
-  wire [23:0] w_m_nxt;
-  wire        w_m_stb;
-  wire        w_m_lstart;
-  wire [6:0]  w_m_phase;
-  wire        w_m_lhires;
-  wire [7:0]  w_crt_r, w_crt_g, w_crt_b;
+  // the upsampler's stream and line / frame marks (clk_148)
+  logic [7:0]  w_up_r, w_up_g, w_up_b;
+  logic [23:0] w_m_nxt;
+  logic        w_m_stb;
+  logic        w_m_lstart;
+  logic [6:0]  w_m_phase;
+  logic        w_m_lhires;
+  logic [7:0]  w_m_vphase;
+  logic        w_vsync;
+  logic        w_frame_end;
+  logic [7:0]  w_crt_r, w_crt_g, w_crt_b;
 
-  (* ASYNC_REG = "TRUE" *) reg [11:0] s_crt_cfg0 = 12'd0;  // {scaling, crt_post's bits}; the beam's: crt_beamh
-  (* ASYNC_REG = "TRUE" *) reg [11:0] s_crt_cfg1 = 12'd0;
-  (* ASYNC_REG = "TRUE" *) reg [1:0] s_crt_rtg  = 2'b00;
-  (* ASYNC_REG = "TRUE" *) reg [2:0] s_crt_hs   = 3'b000;
-  reg  [11:0] r_crt_cfg  = 12'd0;  // frame-latched OSD bits
-  reg        r_crt_ok    = 1'b0;   // last frame: 15 kHz and no RTG
-  reg  [9:0] r_crt_lines = 10'd0;  // input lines in this frame
-  wire       w_crt_fend  = w_frame_end;
-  always @(posedge clk_148) begin
-    s_crt_cfg0 <= {i_crt_cfg[13:12], i_crt_cfg[9:0]};
+  // OSD bits and RTG into clk_148, latched at the frame end (a change applies
+  // from the next frame); r_crt_ok: the last frame had < 400 input lines and
+  // RTG off, the condition of the CRT effects and the exact-ratio scaling.
+  (* ASYNC_REG = "TRUE" *) crt_cfg_t   s_crt_cfg0 = '0;
+  (* ASYNC_REG = "TRUE" *) crt_cfg_t   s_crt_cfg1 = '0;
+  (* ASYNC_REG = "TRUE" *) logic [1:0] s_crt_rtg  = 2'b00;
+  (* ASYNC_REG = "TRUE" *) logic [2:0] s_crt_hs   = 3'b000;
+  crt_cfg_t   r_crt_cfg   = '0;     // frame-latched OSD bits
+  logic       r_crt_ok    = 1'b0;   // last frame: 15 kHz and no RTG
+  logic [9:0] r_crt_lines = 10'd0;  // input lines in this frame
+  logic       w_crt_fend;
+  assign w_crt_fend = w_frame_end;
+  always_ff @(posedge clk_148) begin
+    s_crt_cfg0 <= {w_osd_cfg.scaling, w_osd_cfg.bloom, w_osd_cfg.mask,   // crt_cfg_t order
+                   w_osd_cfg.hr_filt, w_osd_cfg.lr_filt, w_osd_cfg.scan};
     s_crt_cfg1 <= s_crt_cfg0;
     s_crt_rtg  <= {s_crt_rtg[0], i_rtg_enable};
     s_crt_hs   <= {s_crt_hs[1:0], w_pal_hsync};
@@ -263,20 +174,15 @@ module pal_to_ddr #(
   end
 
   // the upsampler's stream
-  wire [23:0] w_m_cur    = {w_up_b, w_up_g, w_up_r};
+  logic [23:0] w_m_cur;
+  assign w_m_cur = {w_up_b, w_up_g, w_up_r};
 
-  // Exact-ratio scaling (findings/scaler/plan.md steps 4, 5): the
-  // frame-latched Scaling item, under the CRT effects' condition (the last
-  // frame had fewer than 400 lines, RTG off) -- otherwise the line-rate
-  // picture.  It switches the upsampler to the 16-line ring and the exact
-  // 2.5x / 3x stepping, and crt_post to its linear-light blend of the two
-  // lines at the HD line's phase: the Scaling kernel (sharp-bilinear 0.5 or
-  // area) with scanlines off, the two-line beam in linear light (gap 0.60
-  // dim / 0.80 black) with them on.  The V filter bit has no say there (the
-  // kernel decides); the H filter, mask and bloom work as before.
-  reg        r_ratio = 1'b0;
-  always @(posedge clk_148)
-    r_ratio <= r_crt_ok && (r_crt_cfg[11:10] != 2'd0);
+  // Exact-ratio scaling (findings/scaler/plan.md steps 4, 5) under r_crt_ok:
+  // the upsampler's 16-line ring and exact 2.5x / 3x steps, crt_post's
+  // linear-light two-line blend; otherwise the line-rate picture.
+  logic r_ratio = 1'b0;
+  always_ff @(posedge clk_148)
+    r_ratio <= r_crt_ok && (r_crt_cfg.scaling != 2'd0);
 
   // controls: static per frame (OSD) and per HD line (resolution, latched
   // by the upsampler at the HD hsync); registered, they change in hblank
@@ -330,10 +236,9 @@ module pal_to_ddr #(
   );
   assign {w_crt_b, w_crt_g, w_crt_r} = w_crt_rgb;
 
-  // Horizontal beam spot on the Amiga stream, before the upsampler.  Off
-  // (OSD Beam width off, 31 kHz, RTG): w_bh_* = the input, bit for bit.
-  wire [7:0] w_bh_r, w_bh_g, w_bh_b;
-  wire       w_bh_hs, w_bh_vs, w_bh_hires, w_bh_shres;
+  // Horizontal beam spot on the Amiga stream (off, 31 kHz, RTG: w_bh_* = the input)
+  logic [7:0] w_bh_r, w_bh_g, w_bh_b;
+  logic       w_bh_hs, w_bh_vs, w_bh_hires, w_bh_shres;
   crt_beamh #(
     .HAS_BLOOM(1),
     .DEC_FILE(CRT_HDEC_FILE), .ENC_FILE(CRT_HENC_FILE), .K_FILE(CRT_HK_FILE)
@@ -342,62 +247,48 @@ module pal_to_ddr #(
     .i_r(w_pal_r), .i_g(w_pal_g), .i_b(w_pal_b),
     .i_hs(w_pal_hsync), .i_vs(w_pal_vsync),
     .i_hires(i_pal_hires), .i_shres(i_pal_shres),
-    .i_width(i_crt_cfg[11:10]),
-    .i_bloom(i_crt_cfg[9:8]),
+    .i_width(w_osd_cfg.beam),
+    .i_bloom(w_osd_cfg.bloom),
     .i_rtg(i_rtg_enable),
     .o_r(w_bh_r), .o_g(w_bh_g), .o_b(w_bh_b),
     .o_hs(w_bh_hs), .o_vs(w_bh_vs),
     .o_hires(w_bh_hires), .o_shres(w_bh_shres)
   );
 
-  // Upscale the video signal using a line buffer
-  // 'h80 -> 4cm -> right border
-  // 'h00 -> 8cm -> right border
-  // The 60 Hz rate samples the HD hsync from adv_ddr's internal copy
-  // (hsync_out), as the 60 Hz upsampler always did; the pin dv_hsync comes
-  // from its pad copy (pad_hsync), so the pin timing and this input stay
-  // independent of each other.  The 50 Hz rate takes the generator's own.
-  wire w_adv_hsync;
-  // the line-buffer ring: 8 buffers, as before, in the line-rate mode, 16
-  // in the exact-ratio modes; the bench forces 16 in the line-rate mode
-  // too (tb_crt_frame +ring16)
-  reg  r_ring16 = 1'b0;
-  wire [7:0] w_m_vphase;
+  // HD hsync the upsampler samples: 50 Hz the generator's, 60 Hz adv_ddr's hsync_out
+  logic w_hd_gen_hsync, w_hd_vsync, w_adv_clk, w_adv_hsync;
+  // line-buffer ring: 8 at line rate, 16 in the exact-ratio modes (tb +ring16 forces 16)
+  logic r_ring16 = 1'b0;
+  // Line buffer upsampler, clk_114 in, clk_148 out (offsets: 'hd0 50 Hz, 'h80 60 Hz)
   pal_to_hd_upsample #(
-  .PAL_HD_H_RES(1685),
-  .PAL_HD_H_RES60(1980), // Total pixels in a line
-  .PAL_OFFSET_HZ('hd0 - CRT_LAT),
-  .PAL_OFFSET_HZ60('h80 - CRT_LAT),
-  .RATIO_RDX(LIN_LAT)
+    .PAL_HD_H_RES(1685),
+    .PAL_HD_H_RES60(1980),
+    .PAL_OFFSET_HZ('hd0 - CRT_LAT),
+    .PAL_OFFSET_HZ60('h80 - CRT_LAT),
+    .RATIO_RDX(LIN_LAT)
   ) myupsample (
     .clk_in(clk_114),
     .clk_out(clk_148),
     .reset(reset),
-    // Pal input
     .i_pal_hsync(w_bh_hs),
     .i_pal_vsync(w_bh_vs),
     .i_pal_r(w_bh_r),
     .i_pal_g(w_bh_g),
     .i_pal_b(w_bh_b),
-    // RTG: the undelayed HD vsync, at 60 Hz only (as before)
-    .i_rtg_enable(w_hz60 & i_rtg_enable),
+    .i_rtg_enable(w_hz60 & s_crt_rtg[1]),  // RTG at 60 Hz: the undelayed HD vsync
     .i_hz60(w_hz60),
     .i_ring16(r_ring16 | r_ratio),
     .i_ratio(r_ratio),
-    // HD upsampled output
     .o_hd_r(w_up_r),
     .o_hd_g(w_up_g),
     .o_hd_b(w_up_b),
     .o_hd_vsync(w_vsync),
     .o_frame_end(w_frame_end),
-    // HD sync pulse
     .i_hd_hsync(r_50hz ? w_hd_gen_hsync : w_adv_hsync),
     .i_hd_vsync(w_hd_vsync),
     .i_hd_clk(w_adv_clk),
-    // horizontal and vertical offsets
     .i_hd_hoffset(s_hoff1),
     .i_hd_voffset(s_voff1),
-    // CRT
     .i_pal_hires(w_bh_hires),
     .i_pal_shres(w_bh_shres),
     .o_hd_next(w_m_nxt),
@@ -408,17 +299,23 @@ module pal_to_ddr #(
     .o_vphase(w_m_vphase)
   );
 
-  // Generate the 720p Hsync and Vsync signals (720p50 / 720p60 by w_hz60)
+  // not read here: tb_crt_frame.v's DE probe (n_dee); OSD phase 2 taps it
+  /* verilator lint_off UNUSEDSIGNAL */
+  logic       w_adv_de;
+  /* verilator lint_on UNUSEDSIGNAL */
+  logic [7:0] w_o_r, w_o_g, w_o_b;
+  // 720p50 / 720p60 raster (front porch by w_hz60), restarted at the upsampler's frame end
+  /* verilator lint_off PINCONNECTEMPTY */
   signal_generator #(
-  .PAL_HZ_ACT_PIX(1280),
-  .PAL_HZ_FRONT_PORCH(440),
-  .PAL_HZ_FRONT_PORCH60(110),
-  .PAL_HZ_SYNC_WIDTH(40),
-  .PAL_HZ_BACK_PORCH(220),
-  .PAL_VT_ACT_LN(720),
-  .PAL_VT_FRONT_PORCH(5),
-  .PAL_VT_SYNC_WIDTH(5),
-  .PAL_VT_BACK_PORCH(20)
+    .PAL_HZ_ACT_PIX(1280),
+    .PAL_HZ_FRONT_PORCH(440),
+    .PAL_HZ_FRONT_PORCH60(110),
+    .PAL_HZ_SYNC_WIDTH(40),
+    .PAL_HZ_BACK_PORCH(220),
+    .PAL_VT_ACT_LN(720),
+    .PAL_VT_FRONT_PORCH(5),
+    .PAL_VT_SYNC_WIDTH(5),
+    .PAL_VT_BACK_PORCH(20)
   ) hd_gen (
     .clk(clk_148),
     .reset(reset),
@@ -427,7 +324,6 @@ module pal_to_ddr #(
     .i_r(w_crt_r),
     .i_g(w_crt_g),
     .i_b(w_crt_b),
-    // Output signals
     .o_x(),
     .o_y(),
     .o_r(w_o_r),
@@ -439,41 +335,32 @@ module pal_to_ddr #(
     .o_adv_de(w_adv_de),
     .o_frame()
   );
-  assign w_hd_hsync = w_hd_gen_hsync;
 
-  // ADV DDR output
+  // 12-bit DDR to the ADV7511; DE from its own counters, the pins from IOB pad registers
   adv_ddr #(
-  .PX_TO_DE(280),
-  .PX_ACT_DE(1280),
-  .PX_TOTAL(1980),
-
-  .PY_TO_DE(5),
-  .ACT_720P(720),
-  .V_LINES_TOTAL(750)
+    .PX_TO_DE(280),
+    .PX_ACT_DE(1280),
+    .PX_TOTAL(1980),
+    .PY_TO_DE(5),
+    .ACT_720P(720),
+    .V_LINES_TOTAL(750)
   ) myadr_ddr (
-    // INPUT
-    .clk_out(clk_148), // DDR clock at 4xpixel clock
-    .clk_in(w_adv_clk), // Pixel clock
-
+    .clk_out(clk_148),
+    .clk_in(w_adv_clk),
     .reset(reset),
-
-    // .de_in(w_adv_de),       // Used to generate DE
-    .hsync(w_hd_hsync),
+    .hsync(w_hd_gen_hsync),
     .vsync(w_vsync),
-    .data({w_o_r, w_o_g, w_o_b}), // Pixel data in 24-bpp
-
-    // OUTPUT
-    // internal (60 Hz upsampler's hsync; the rest read inside adv_ddr only)
+    .data({w_o_r, w_o_g, w_o_b}),
     .clk_pixel_out(),
     .de_out(),
     .vsync_out(),
     .hsync_out(w_adv_hsync),
     .data_out(),
-    // the pins: pad registers in the IOBs
-    .pad_clk(o_clk_pixel), // Output pixel clock after synchronization to clk_ddr
-    .pad_de(o_de), // Data enable signal
+    .pad_clk(o_clk_pixel),
+    .pad_de(o_de),
     .pad_vsync(o_vsync),
     .pad_hsync(o_hsync),
-    .pad_data(o_data) // DDR data stream out
+    .pad_data(o_data)
   );
+  /* verilator lint_on PINCONNECTEMPTY */
 endmodule
