@@ -1,13 +1,17 @@
 `timescale 1ps / 1ps
 // osd_text_tb -- rtl/openaars/adv7511/osd_text.v on the 720p generator
-// (signal_generator.sv, 720p50; +hz60: 720p60), as pal_to_ddr.sv will wire it in Phase 2:
+// (signal_generator.sv, 720p50; +hz60: 720p60), as pal_to_ddr.sv wires it:
 // the generator's video, syncs, pixel enable (~o_adv_clk) and frame pulse
 // into osd_text.
+// The generator's vertical raster is pal_to_ddr.sv's hd_gen (parameters
+// VT_TOP 15, VT_FP 0, VT_SYNC 5, VT_BP 25: active lines 15..734, vsync
+// 735..739, 750 lines; the horizontal raster and the 60 Hz front porch are
+// pal_to_ddr's too).  run.sh's leg "oldrast" builds it with the raster from
+// before 2026-10-27 (TOP 0, FP 5, SYNC 5, BP 20: active lines 0..719).
 // +vtop=N: the layer's frame pulse comes N lines before the generator's
-// (the same clock in the line), so the DE starts N lines after it, as with
-// signal_generator's PAL_VT_TOP = N; the window must follow the DE (row 0 =
-// the first line with DE).  The bench's frames, writes and captures go by
-// the layer's pulse.
+// (the same clock in the line), so the DE starts VT_TOP + N lines after it;
+// the window must follow the DE (row 0 = the first line with DE).  The
+// bench's frames, writes and captures go by the layer's pulse.
 // Run it in a leg directory made by model.py gen (run.sh does all of it):
 //
 //   cells_g.hex  2048 x 16  pass 1, both lanes (garbage)
@@ -36,6 +40,11 @@
 module osd_text_tb;
 
 parameter LAT = 3;
+// the generator's vertical raster (default: pal_to_ddr.sv's hd_gen)
+parameter VT_TOP  = 15;
+parameter VT_FP   = 0;
+parameter VT_SYNC = 5;
+parameter VT_BP   = 25;
 localparam D = 2 * LAT;
 localparam DD = (D > 0) ? D : 1;    // LAT 0: no delay line, the checks use the input as it is
 localparam NPIX = 1280 * 720;
@@ -53,7 +62,8 @@ wire       g_pe = ~g_clk;       // the pixel enable (r_vid_enable)
 signal_generator #(
   .PAL_HZ_ACT_PIX(1280), .PAL_HZ_FRONT_PORCH(440), .PAL_HZ_FRONT_PORCH60(110),
   .PAL_HZ_SYNC_WIDTH(40), .PAL_HZ_BACK_PORCH(220),
-  .PAL_VT_ACT_LN(720), .PAL_VT_FRONT_PORCH(5), .PAL_VT_SYNC_WIDTH(5), .PAL_VT_BACK_PORCH(20)
+  .PAL_VT_TOP(VT_TOP), .PAL_VT_ACT_LN(720), .PAL_VT_FRONT_PORCH(VT_FP),
+  .PAL_VT_SYNC_WIDTH(VT_SYNC), .PAL_VT_BACK_PORCH(VT_BP)
 ) hd_gen (
   .clk(clk), .reset(reset), .i_hz60(hz60), .i_frame_end(frame_end),
   .i_r(vi_r), .i_g(vi_g), .i_b(vi_b),
@@ -269,7 +279,7 @@ always @(posedge clk) begin
   if (frames == 3 && no == NPIX) begin
     $fclose(fi); $fclose(fo);
     if (ni != NPIX) begin errs = errs + 1; $display("FAIL: %0d input pixels in frame 2", ni); end
-    if (errs == 0) $display("=== PASS osd_text_tb (LAT %0d, %0d clocks)", LAT, clkn);
+    if (errs == 0) $display("=== PASS osd_text_tb (LAT %0d, VT_TOP %0d, %0d clocks)", LAT, VT_TOP, clkn);
     else $display("=== FAIL osd_text_tb: %0d errors", errs);
     $finish;
   end

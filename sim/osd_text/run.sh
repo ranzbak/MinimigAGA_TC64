@@ -22,8 +22,15 @@
 #   hz60    720p60 (generator i_hz60: other line length, same porches):
 #           scale 2 64 x 20 centred; scale 2 cut by the right edge
 #   off     layer disabled (window set); enabled with cols 0
-#   vtop    the frame pulse 15 lines before the DE starts (bench +vtop=15, as
-#           signal_generator's PAL_VT_TOP): row 0 must be the first DE line
+#   vtop    the layer's frame pulse 10 lines before the generator's (bench
+#           +vtop=10): the DE starts 25 lines after it; row 0 must still be
+#           the first DE line.  (Not 15: with PAL_VT_TOP 15 the DE would then
+#           end on the last clock before the next pulse, and the bench's
+#           capture, which goes by the pulse, would cut its last pixel.)
+#   oldrast the generator on the raster from before 2026-10-27 (active lines
+#           0..719, DE right after the frame pulse; a build of its own)
+# Every leg but oldrast runs pal_to_ddr.sv's hd_gen raster (PAL_VT_TOP 15,
+# FP 0, SYNC 5, BP 25: the DE starts 15 lines after the frame pulse).
 # Every palette has all four modes; the cells are random chars and attributes
 # written in three lane passes, glyphs 0x80..0xff are rewritten through the
 # font port, the rest come from osd_font.mem.
@@ -68,14 +75,22 @@ leg() {     # leg <name> <leg>: exit 0 if the leg passes
 	rm -rf "$d"; python3 "$HERE/model.py" gen "$l" "$d" || return 1
 	[ "$l" = off ] && pa=+off
 	[ "$l" = hz60 ] && pa=+hz60
-	[ "$l" = vtop ] && pa=+vtop=15
+	[ "$l" = vtop ] && pa=+vtop=10
+	[ "$l" = oldrast ] && n=${n}_old
 	simrun "$n" "$d" $pa > "$d/tb.log" 2>&1
 	grep -q "^=== PASS" "$d/tb.log" || return 1
 	python3 "$HERE/model.py" check "$d" > "$d/model.log" 2>&1
 }
 
+# OLD: the generator's vertical raster before 2026-10-27 (leg oldrast)
+if [ "$SIM" = verilator ]; then OLD="-GVT_TOP=0 -GVT_FP=5 -GVT_SYNC=5 -GVT_BP=20"
+else OLD="-Posd_text_tb.VT_TOP=0 -Posd_text_tb.VT_FP=5 -Posd_text_tb.VT_SYNC=5 -Posd_text_tb.VT_BP=20"; fi
 build ok
 build mut +define+OSD_TEXT_MUTANT
+if [[ " $LEGS " == *" oldrast "* ]]; then
+	build ok_old $OLD
+	build mut_old $OLD +define+OSD_TEXT_MUTANT
+fi
 echo "osd_text bench ($SIM, LAT $LAT, $JOBS jobs, nice $NICE)"
 # at most JOBS simulations at a time; each writes <dir>/result (0 = pass)
 for l in $LEGS; do

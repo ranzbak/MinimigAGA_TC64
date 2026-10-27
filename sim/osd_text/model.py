@@ -13,6 +13,9 @@ findings/osd-redesign/plan.md 3.2-3.5): a window of cols x rows cells of
 8x16 pixels (16x32 at scale 2) at (x0*8, y0*8), clipped to 1280x720; cell
 (c, r) = cell word r*64 + c {attr, char}; glyph bit 7 = left pixel; palette
 entry {mode, r, g, b}: 0 colour, 1 video >> 1, 2 video, 3 (colour + video) >> 1.
+Coordinates are the DE window's: x 0 = the first pixel with DE, y 0 = the
+first line with DE after the frame pulse, wherever the generator puts its
+active lines (the bench dumps exactly the 1280 x 720 DE pixels).
 """
 import os
 import random
@@ -40,10 +43,13 @@ LEGS = {
     "hz60": ((3, 16, 5, 64, 20), (3, 96, 3, 40, 5)),
     # layer off: A disabled with a window set, B enabled with cols 0
     "off": ((2, 0, 0, 64, 32), (3, 0, 0, 0, 20)),
-    # bench +vtop=15: the DE starts 15 lines after the frame pulse (the
-    # generator's PAL_VT_TOP); the window follows the DE.  A: s1full's B;
-    # B: scale 1 at the top edge (y0 = 0) and the bottom rows
+    # bench +vtop=10: the layer's frame pulse 10 lines before the
+    # generator's, the DE starts 25 lines after it; the window follows the
+    # DE.  A: s1full's B; B: scale 1 at the top edge (y0 = 0) and the bottom rows
     "vtop": ((3, 16, 5, 64, 20), (1, 2, 0, 40, 32)),
+    # the generator's raster before 2026-10-27 (active lines 0..719, its own
+    # build in run.sh): A the firmware's window, B scale 1 at the top edge
+    "oldrast": ((3, 16, 5, 64, 20), (1, 2, 0, 40, 32)),
 }
 
 
