@@ -243,6 +243,8 @@ wire [7:0]  vga_g;
 wire [7:0]  vga_b;
 wire [7:0]  hoffset;
 wire [7:0]  voffset;
+wire [7:0]  hoffset_rtg;
+wire [7:0]  voffset_rtg;
 
 // RTG
 wire        rtg_ena;
@@ -296,7 +298,7 @@ wire        dv_sda_o;
 
 // Display scaler: the PAL/NTSC picture's Video Pos, and the RTG screen's
 wire [15:0] vpos_data;
-wire [15:0] w_vpos_rtg;     // {vpos, hpos}; see the TODO at hoffset below
+wire [15:0] w_vpos_rtg;     // {vpos, hpos}, as vpos_data: pal_to_ddr's RTG pair
 
 // Floppy /HD activity
 wire  floppy_frd;
@@ -535,6 +537,8 @@ pal_to_ddr my_pal_to_ddr (
   // Video offset
   .i_hoffset(hoffset),
   .i_voffset(voffset),
+  .i_hoffset_rtg(hoffset_rtg),
+  .i_voffset_rtg(voffset_rtg),
   // RTG
   .i_rtg_enable(rtg_ena),
   // CRT emulation: OSD video config and Denise resolution (CLK_28 domain)
@@ -824,9 +828,8 @@ endgenerate
 // Assign video position data
 assign hoffset = vpos_data[7:0];
 assign voffset = vpos_data[15:8];
-// TODO (HDMI session, Task 7): w_vpos_rtg into pal_to_ddr's i_hoffset_rtg[7:0]
-// (= w_vpos_rtg[7:0]) and i_voffset_rtg[7:0] (= w_vpos_rtg[15:8]) once those
-// ports exist; until then the RTG screen's position is written and held
-// here (cfide pos_rtg_q) but drives nothing.
+// the RTG screen's (cfide pos_rtg_q), split the same way
+assign hoffset_rtg = w_vpos_rtg[7:0];
+assign voffset_rtg = w_vpos_rtg[15:8];
 
 endmodule
