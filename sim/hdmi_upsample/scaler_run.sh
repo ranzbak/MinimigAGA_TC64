@@ -32,14 +32,24 @@
 #              where the line-rate one does sideways), the rows before the
 #              window black
 #   rtg*       RTG shown 1:1 (tb_crt_frame +rtg720*: the Picasso96 mode
-#              1280x720 at 56.72 MHz, 1512 x 750; rtg_check.py on HD frames
-#              8, 9): every HD pixel is the source pixel (x - x0, y - y0),
-#              x0 = (1280 - W) / 2, black outside the W columns, every source
-#              line in exactly one HD row (y0 = 0).  rtg720: 720p50; rtg1024:
-#              1024 wide, centred; rtg720c: 113.44 MHz, 2521 x 750, 720p60;
+#              1280x720 at 56.72 MHz, 1504 x 754, vsync position 12 --
+#              5 shows the last two lines twice: the writer reaches its vsync
+#              lines, which do not advance the reader, while the reader,
+#              ~8 lines behind by then, still shows the picture;
+#              rtg_check.py on HD frames 8, 9): every HD pixel is the source
+#              pixel (x - x0, y - y0), x0 = (1280 - W) / 2, black outside the
+#              W columns (and HD column 0, the generator's), every source line
+#              in exactly one HD row (y0 = 0).  rtg720: 720p50 (the input
+#              brings 754 lines a frame, the HD frame 750: the reader falls
+#              behind 4 lines a frame, inside the ring of 16); rtg1024: 1024
+#              wide, centred; rtg720c: 113.44 MHz, 2496 x 757, 720p60;
 #              rtglat4: the pixel 4 clk_114 after its strobe (the CLUT
 #              modes) against the write side's tap of 3 -- the known
-#              limitation, pinned: one pixel to the right (dx 1)
+#              limitation, pinned: one pixel to the right (dx 1).
+#              rtg1520 (1520 x 750, the other framesize next to 720p50's
+#              line): its lines are longer than the HD lines, so 4 lines a
+#              frame show twice -- an expected failure, printed as WARN and
+#              not counted
 #   tables     the linear-light tables (step 5): decode -> MAC -> encode
 #              (scanlines: and crt_lut.mem's page) for every code pair,
 #              phase, kernel, both ratios, bit-exact, against the float
@@ -89,7 +99,8 @@ ARGS[ratvp50]="$FP +cfg=1000 +voff=64 +first=24 +frames=3 +out=$B/ratvp50"
 ARGS[ratvm50]="$FP +cfg=1000 +voff=-64 +first=24 +frames=3 +out=$B/ratvm50"
 ARGS[ratvp60]="$FN +cfg=1000 +voff=64 +first=24 +frames=3 +out=$B/ratvp60"
 ARGS[ratvm60]="$FN +cfg=1000 +voff=-64 +first=24 +frames=3 +out=$B/ratvm60"
-for k in rtg720:+rtg720 rtg1024:"+rtg720 +rtgw=1024" rtg720c:+rtg720c rtglat4:"+rtg720 +rtglat=4"; do
+for k in rtg720:+rtg720 rtg1024:"+rtg720 +rtgw=1024" rtg720c:+rtg720c rtglat4:"+rtg720 +rtglat=4" \
+	rtg1520:"+rtg720 +rtght=1520 +rtgvt=750"; do
 	ARGS[${k%%:*}]="${k#*:} +first=8 +frames=2 +out=$B/${k%%:*}"
 done
 ARGS[lr50]="$FP +first=8 +frames=1 +out=$B/lr50"
@@ -103,7 +114,7 @@ done
 LIN="lin_sharp50 lin_area50 lin_dim50 lin_black50 lin_sharp60 lin_area60 lin_dim60"
 ALL="ring50 ring60 ringf60 ringlace ringdbl ringvm ringvp ring50_16 ring60_16 ringf60_16 ringlace_16 ringdbl_16 ringvm_16 ringvp_16"
 ALL="$ALL rat50 rat60 ratarea50 ratlace50 ratlace60 ratf60 ratvp50 ratvm50 ratvp60 ratvm60 ratrows tables unitlin $LIN"
-ALL="$ALL rtg720 rtg1024 rtg720c rtglat4"
+ALL="$ALL rtg720 rtg1024 rtg720c rtglat4 rtg1520"
 legs=("$@"); [ ${#legs[@]} -eq 0 ] && legs=($ALL)
 want() { local x; for x in "${legs[@]}"; do [ "$x" = "$1" ] && return 0; done; return 1; }
 want ratrows && { want rat50 || legs+=(rat50); want lr50 || legs+=(lr50); }
@@ -125,7 +136,12 @@ for l in "${legs[@]}"; do
 		w=1280; dx=0
 		[ $l = rtg1024 ] && w=1024
 		[ $l = rtglat4 ] && dx=1
-		m=$(python3 rtg_check.py $w $dx 1 $B/$l 8 9) && pass "$l: $m" || bad "$l: $m"
+		if [ $l = rtg1520 ]; then
+			m=$(python3 rtg_check.py $w $dx 1 $B/$l 8 9) && echo "  WARN  $l: passes, expected to repeat lines: $m" \
+				|| echo "  WARN  $l (expected): $m"
+		else
+			m=$(python3 rtg_check.py $w $dx 1 $B/$l 8 9) && pass "$l: $m" || bad "$l: $m"
+		fi
 		;;
 	tables)
 		m=$(python3 scl_mkroms.py check) && pass "$l: $m" || bad "$l: $m"

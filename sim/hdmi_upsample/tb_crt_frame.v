@@ -37,12 +37,17 @@
 //                one clk_114 in 4 (minimig_virtual_top.v; one in 8 with
 //                +dbl).  Without +rtg / +rtg720* the strobe is 0
 //   +rtg720      an RTG source instead (see "RTG source" below): the
-//                Picasso96 mode 1280x720 HiColor at 56.72 MHz, i_rtg_enable 1
-//   +rtg720c     the same at 113.44 MHz (256 colours), 60 Hz
+//                Picasso96 mode 1280x720 HiColor at 56.72 MHz, 1504 x 754
+//                (50.0 Hz), i_rtg_enable 1
+//   +rtg720c     the same at 113.44 MHz (256 colours), 2496 x 757 (60.04 Hz)
+//   +rtght=N +rtgvt=N   N pixels per line / lines per frame instead
 //   +rtgw=N      N active pixels per line (default 1280)
 //   +rtglat=N    RGB N clk_114 after the strobe (default 3, 16-bit; 4 is
 //                the CLUT modes' latency)
 //   +rtgvbp=N    lines from the end of vsync to the first active line
+//                (default: the frame's rest after 720 active lines, 12
+//                front porch, 5 vsync -- Picasso96 vertical sync position 12)
+//   +hoffrtg=N +voffrtg=N   the RTG picture's Video Pos pair (default 0)
 //   +hoff=N +voff=N   the OSD Video Pos offsets of the new path (8 bit,
 //                signed, -128..127; default 0, the reference path keeps 0)
 //   +voff2=N +vofframe=F +voffline=L   change VPOS to voff2 during HD frame
@@ -100,10 +105,12 @@
 // pal_to_ddr in RTG mode.  One strobe (vga_clk_pixel = VGA_PIXEL) per RTG
 // pixel, only in the active area (VGA_PIXEL is rtg_blank-gated); the pixel
 // is on i_pal_r/g/b from +rtglat clk_114 after its strobe until the next
-// one's, black elsewhere.  Lines of 1512 pixels of 2 clk_114 (+rtg720c:
-// 2521 of 1); hsync pixels 0..63, the active pixels from 128 on; 750
-// lines: vsync lines 0..4 (both edges at an hsync start, as Agnus's
-// programmable sync), then +rtgvbp lines, 720 active lines, the rest.
+// one's, black elsewhere.  Lines of +rtght pixels of 2 clk_114 (+rtg720c:
+// of 1); hsync pixels 0..63, the active pixels from 128 on; +rtgvt lines:
+// vsync lines 0..4 (both edges at an hsync start, as Agnus's programmable
+// sync), then +rtgvbp lines, 720 active lines, the rest.  (minimig.card
+// programs the line length in colour clocks: 16 pixels at 56.72 MHz, 32
+// at 113.44 MHz -- 1504 and 2496 are the nearest to 720p50 / 720p60.)
 // Syncs active high, as pal_to_ddr gets them.  The pixel at (x, y) is
 // 800000 | y << 11 | x (never black; rtg_check.py decodes it).
 //
@@ -124,6 +131,7 @@ integer frames = 1, first = 3, cfgframe = -1, cfgline = 0, cfg = 0, cfg2 = 0;
 reg lace = 0, dbl = 0, split = 0, rtg = 0, force60 = 0, dump = 0;
 integer srcdelay = 0;
 integer hoff = 0, voff = 0, voff2 = 0, vofframe = -1, voffline = 0;
+integer hoffrtg = 0, voffrtg = 0;
 integer ntscfrom = -1, ntscto = -1;
 reg ntsc = 0;
 reg [8*160-1:0] out;
@@ -142,6 +150,8 @@ initial begin
 	force60 = $test$plusargs("force60");
 	if (!$value$plusargs("srcdelay=%d", srcdelay)) srcdelay = 0;
 	if (!$value$plusargs("hoff=%d", hoff)) hoff = 0;
+	if (!$value$plusargs("hoffrtg=%d", hoffrtg)) hoffrtg = 0;
+	if (!$value$plusargs("voffrtg=%d", voffrtg)) voffrtg = 0;
 	if (!$value$plusargs("voff=%d", voff)) voff = 0;
 	if (!$value$plusargs("voff2=%d", voff2)) voff2 = 0;
 	if (!$value$plusargs("vofframe=%d", vofframe)) vofframe = -1;
@@ -247,20 +257,25 @@ wire [26:0] src_pal = (srcdelay > 0) ? sd_line[sd_rp] : src_now;
 
 // ---- RTG source (+rtg720, +rtg720c; see the header) ----
 reg     rtgsrc = 0;
-integer rt_cpp = 2, rt_ht = 1512, rt_w = 1280, rt_lat = 3, rt_vbp = 20;
-localparam RT_VT = 750, RT_VA = 720, RT_VS = 5, RT_HS = 64, RT_HA0 = 128;
+integer rt_cpp = 2, rt_ht = 1504, rt_vt = 754, rt_w = 1280, rt_lat = 3, rt_vbp = 24;
+localparam RT_VA = 720, RT_VS = 5, RT_HS = 64, RT_HA0 = 128;
+localparam RT_FP = 12;   // lines from the picture to vsync: Picasso96 vert. sync position
 initial begin
 	rtgsrc = $test$plusargs("rtg720");
-	if ($test$plusargs("rtg720c")) begin rt_cpp = 1; rt_ht = 2521; end
+	if ($test$plusargs("rtg720c")) rt_cpp = 1;
+	if (!$value$plusargs("rtght=%d", rt_ht)) rt_ht = (rt_cpp == 1) ? 2496 : 1504;
+	if (!$value$plusargs("rtgvt=%d", rt_vt)) rt_vt = (rt_cpp == 1) ? 757 : 754;
 	if (!$value$plusargs("rtgw=%d", rt_w)) rt_w = 1280;
 	if (!$value$plusargs("rtglat=%d", rt_lat)) rt_lat = 3;
-	if (!$value$plusargs("rtgvbp=%d", rt_vbp)) rt_vbp = 20;
+	if (!$value$plusargs("rtgvbp=%d", rt_vbp)) rt_vbp = rt_vt - RT_VA - RT_VS - RT_FP;
+	if (rtgsrc) $display("rtg source: %0d x %0d pixels of %0d clk_114, %0d wide, back porch %0d, latency %0d",
+	                     rt_ht, rt_vt, rt_cpp, rt_w, rt_vbp, rt_lat);
 end
 integer rt_c = 0, rt_v = 0;   // clk_114 in the line, line in the frame
 always @(posedge clk_114) begin
 	if (rt_c == rt_ht * rt_cpp - 1) begin
 		rt_c <= 0;
-		rt_v <= (rt_v == RT_VT - 1) ? 0 : rt_v + 1;
+		rt_v <= (rt_v == rt_vt - 1) ? 0 : rt_v + 1;
 	end else rt_c <= rt_c + 1;
 end
 integer rt_y, rt_q, rt_p;
@@ -280,7 +295,10 @@ end
 wire [26:0] src = rtgsrc ? {rt_hs, rt_vs, 1'b0, rt_rgb} : src_pal;
 // the pixel strobe: VGA_PIXEL as minimig_virtual_top.v makes it.  RTG
 // source: rtg_pixel_d (above); the Amiga picture with +rtg: vga_strobe,
-// its counter as there (_15khz: steps of 2 -> one clk_114 in 4)
+// its counter as there (_15khz: steps of 2 -> one clk_114 in 4).  The
+// hardware never gets that pair (with RTG on VGA_PIXEL is the RTG strobe);
+// it only keeps the golden +rtg legs (r50, r60, r60crt) running -- the
+// strobe runs through the vsync lines too, so their W saturates (2047)
 reg [2:0] vga_strobe_ctr = 3'd0;
 always @(posedge clk_114)
 	vga_strobe_ctr <= !dbl ? {vga_strobe_ctr[2:1], 1'b0} + 3'b010 : vga_strobe_ctr + 3'b001;
@@ -310,6 +328,7 @@ pal_to_ddr #(.CRT_WROM_FILE("../../rtl/openaars/adv7511/crt_wrom.mem"),
 	.i_pal_hsync(dut_hs), .i_pal_vsync(dut_vs),
 	.i_pal_r(src_rgb[23:16]), .i_pal_g(src_rgb[15:8]), .i_pal_b(src_rgb[7:0]),
 	.i_hoffset(hoff[7:0]), .i_voffset(voff[7:0]), .i_rtg_enable(rtg),
+	.i_hoffset_rtg(hoffrtg[7:0]), .i_voffset_rtg(voffrtg[7:0]),
 	.i_crt_cfg(crt_cfg), .i_pal_hires(src_hires), .i_pal_shres(1'b0),
 	.i_osd_clk(osd_clk), .i_osd_txt(osd_txt),   // the OSD text layer: tb_crt_osd2.vh
 	.o_clk_pixel(n_clk), .o_de(n_de), .o_vsync(n_vs), .o_hsync(n_hs), .o_data(n_d)
