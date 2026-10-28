@@ -191,8 +191,10 @@ module minimig_virtual_top #(
 // `endif
 
 `ifdef MINIMIG_VPOS
-    // Video scaler positions
+    // Video scaler positions: the PAL/NTSC picture's, the RTG screen's
+    // (cfide pos_data_q 0x0fffff50 / pos_rtg_q 0x0fffff54), {vpos, hpos}
     output    [ 16-1:0]   VPOS_DATA,
+    output    [ 16-1:0]   VPOS_RTG_DATA,
 `endif
 
     // SPI
@@ -1530,6 +1532,7 @@ cfide #(
 `ifdef MINIMIG_VPOS
     // Video v and h offset
     .pos_data_q(VPOS_DATA),
+    .pos_rtg_q(VPOS_RTG_DATA),
 `endif
 
     .osd_rx_seq(osd_rx_seq),   // HOST_REQ OSD_RDY (OSD reply-ready handshake)

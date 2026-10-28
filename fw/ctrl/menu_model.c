@@ -18,6 +18,7 @@
 #include "adv7511.h"
 #include "menu.h"
 #include "menu_model.h"
+#include "hdd.h"
 
 extern fileTYPE file;
 extern DIRENTRY DirEntry[MAXDIRENTRIES];
@@ -268,6 +269,7 @@ static const struct { unsigned char off, shift, bits, apply; } fields[MMF_FIELDS
     [MMF_BEAM]        = { offsetof(configTYPE, crt_beam),    0, 2, F_VIDEO },
     [MMF_FLOPPYTURBO] = { offsetof(configTYPE, floppy.speed), 0, 1, F_FLOPPY },
     [MMF_IDE]         = { offsetof(configTYPE, enable_ide),  0, 1, F_NONE },
+    [MMF_DRIVES]      = { offsetof(configTYPE, floppy.drives), 0, 2, F_FLOPPY },
 };
 
 unsigned char mm_get_field(unsigned char f)
@@ -353,11 +355,99 @@ unsigned char mm_get_sound(unsigned char arg)
     return (config.drivesounds & arg) ? 1 : 0;
 }
 
+void mm_set_sound(unsigned char arg, unsigned char v)
+{
+    if (v)
+    {
+        config.drivesounds |= arg;
+        drivesounds_enable(arg);
+    }
+    else
+    {
+        config.drivesounds &= ~arg;
+        drivesounds_disable(arg);
+    }
+}
+
+void mm_set_cpu(unsigned char arg, unsigned char v)
+{
+    static const unsigned char cpus[3] = { 0, 1, 3 };
+    (void)arg;
+    config.cpu = (config.cpu & ~3) | cpus[v > 2 ? 2 : v];
+    ConfigCPU(config.cpu);
+}
+
+static void video(void)
+{
+    ConfigVideo(config.scanlines, config.crt_mask, config.crt_bloom, config.crt_beam);
+}
+
+void mm_set_scaling(unsigned char arg, unsigned char v)
+{
+    (void)arg;
+    config.scanlines = (config.scanlines & ~SCALING_MASK) | ((v & 3) << SCALING_SHIFT);
+    video();
+}
+
+void mm_set_bloom(unsigned char arg, unsigned char v)
+{
+    (void)arg;
+    config.crt_bloom = v > 2 ? 2 : v;
+    video();
+}
+
+unsigned char mm_bloom_avail(unsigned char arg)
+{
+    (void)arg;
+    return (config.scanlines & 3) || (config.crt_beam & 3) || CONFIG_SCALING(config.scanlines) != SCALING_LINE;
+}
+
+unsigned char mm_get_ide(unsigned char arg)
+{
+    (void)arg;
+    return mm_ide_on ? 1 : 0;
+}
+
+void mm_set_ide(unsigned char arg, unsigned char v)
+{
+    (void)arg;
+    mm_ide_on = v ? 1 : 0;
+}
+
+void mm_step_pos(unsigned char vertical, int dir, unsigned char rtg)
+{
+    videoPosTYPE *p = rtg ? &config.videopos_rtg : &config.videopos;
+    if (!vertical)
+    {
+        if (dir > 0 && (signed char)p->hpos < 0x78)
+            p->hpos = p->hpos + 0x08;
+        else if (dir < 0 && (signed char)p->hpos > -0x80)
+            p->hpos = p->hpos - 0x08;
+    }
+    else
+    {
+        if (dir > 0 && (signed char)p->vpos < VPOS_MAX)
+            p->vpos = p->vpos + VPOS_STEP;
+        else if (dir < 0 && (signed char)p->vpos > -VPOS_MAX)
+            p->vpos = p->vpos - VPOS_STEP;
+    }
+    ConfigVideoPos();
+}
+
+void mm_step_clkdelay(int dir)
+{
+    if (dir > 0 && adv_clkdelay < 7)
+        adv7511_set_clkdelay(adv_clkdelay + 1);
+    else if (dir < 0 && adv_clkdelay > 0)
+        adv7511_set_clkdelay(adv_clkdelay - 1);
+    config.hdmi_clkdelay = adv_clkdelay + 1;  // saved with the config
+}
+
 /******************************************************************/
 /* value texts                                                    */
 /******************************************************************/
 
-static char buf[40];
+static char buf[64];          // the longest: mm_text_hdmi_readback, 50
 
 char *mm_utoa(char *p, unsigned v)
 {
@@ -423,24 +513,29 @@ const char *mm_text_drives(unsigned char arg)
 const char *mm_text_hdf_type(unsigned char slot)
 {
     static const char *const names[] = {
-        "Disabled", "Hardfile", "SD card", "SD partition 1", "SD partition 2",
+        "Disabled", "Hardfile (disk img)", "SD card", "SD partition 1", "SD partition 2",
         "SD partition 3", "SD partition 4", "CD-ROM (ISO)"
     };
-    unsigned char e = SlotConfig(slot)->enabled;
+    unsigned char e = mm_hdf[slot & 3].enabled;
     if (e == (HDF_FILE | HDF_SYNTHRDB))
-        return "Hardfile (fs)";
+        return "Hardfile (filesys)";
     if ((e & HDF_TYPEMASK) > HDF_CDROM)
         return "---";
     return names[e & HDF_TYPEMASK];
 }
 
+// as the classic Harddisks page's second line of a slot
 const char *mm_text_hdf_file(unsigned char slot)
 {
-    hardfileTYPE *h = SlotConfig(slot);
+    hardfileTYPE *h = &mm_hdf[slot & 3];
     if ((h->enabled & HDF_TYPEMASK) != HDF_FILE && h->enabled != HDF_CDROM)
         return "";
-    if (!h->name[0])
-        return h->enabled == HDF_CDROM ? "* no disc *" : "* none *";
+    if (h->enabled == HDF_CDROM && cd_msg_on && mm_hdf_cd_live(slot & 3))
+        return cd_msg_text;
+    if (h->enabled == HDF_CDROM && !h->name[0])
+        return "* no disc *";
+    if (!h->present)
+        return "** file not found **";
     return config_name(h->name, h->long_name, sizeof(h->long_name));
 }
 
@@ -459,9 +554,37 @@ static const char *signed_text(int v)
     return buf;
 }
 
-const char *mm_text_pos(unsigned char vertical)
+const char *mm_text_pos(unsigned char vertical, unsigned char rtg)
 {
-    return signed_text((signed char)(vertical ? config.videopos.vpos : config.videopos.hpos));
+    const videoPosTYPE *p = rtg ? &config.videopos_rtg : &config.videopos;
+    signed_text((signed char)(vertical ? p->vpos : p->hpos));
+    strcat(buf, vertical ? " lines" : " px");
+    return buf;
+}
+
+static char *hex2(char *p, unsigned char v)
+{
+    static const char hex[] = "0123456789abcdef";
+    *p++ = hex[v >> 4];
+    *p++ = hex[v & 15];
+    return p;
+}
+
+const char *mm_text_hdmi_readback(void)
+{
+    extern unsigned long adv_services;   // main.c
+    extern unsigned char adv_int_now;
+    char *p = buf;
+    memcpy(p, "Chip 0xBA: ", 11);
+    p = hex2(p + 11, adv7511_read_clkdelay());
+    memcpy(p, "  set: ", 7);
+    p = hex2(p + 7, (unsigned char)(adv_clkdelay << 5));
+    memcpy(p, "  INT ", 6);
+    p = mm_utoa(p + 6, adv_int_now);
+    memcpy(p, "  serviced ", 11);
+    p = mm_utoa(p + 11, (unsigned)adv_services);
+    *p = 0;
+    return buf;
 }
 
 const char *mm_text_clkdelay(unsigned char arg)
@@ -634,4 +757,161 @@ void InsertFloppy(adfTYPE *drive)
     printf("drive tracks: %u\r", drive->tracks);
     printf("drive status: 0x%02X\r", drive->status);
     drivesounds_queueevent(DRIVESOUND_INSERT);
+}
+
+/******************************************************************/
+/* the IDE slots as edited (were menu.c's, MENU_SETTINGS_HARDFILE*) */
+/******************************************************************/
+
+hardfileTYPE mm_hdf[HDD_SLOTS];
+unsigned long mm_hdfdir[HDD_SLOTS];
+char mm_ide_on;
+
+void mm_hdf_begin(void)
+{
+    int i;
+    for (i = 0; i < HDD_SLOTS; i++)
+    {
+        mm_hdf[i] = *SlotConfig(i);
+        mm_hdfdir[i] = config.hdfdir[i];
+    }
+    mm_ide_on = config.enable_ide;
+}
+
+unsigned char mm_hdf_type_after(int slot, unsigned char e)
+{
+    int i, cd_elsewhere = 0;
+    for (i = 0; i < HDD_SLOTS; i++)
+        if (i != slot && mm_hdf[i].enabled == HDF_CDROM)
+            cd_elsewhere = 1;
+    if (e == HDF_FILE)
+        return HDF_FILE | HDF_SYNTHRDB;
+    if (e == (HDF_FILE | HDF_SYNTHRDB))
+        return HDF_CARD;
+    if (e == HDF_CDROM)
+        return HDF_DISABLED;
+    e += 1;
+    if (e >= HDF_CARDPART0 + partitioncount)
+        e = (!cd_elsewhere && (core_caps & CORE_CAPS_IDE2)) ? HDF_CDROM : HDF_DISABLED;
+    return e;
+}
+
+void mm_hdf_set_type(int slot, unsigned char e)
+{
+    hardfileTYPE *t = &mm_hdf[slot];
+    if (e == HDF_CDROM)
+    {   // a CD slot starts empty: an HDF name is not a disc
+        memset(t->name, 0, sizeof(t->name));
+        memset(t->long_name, 0, sizeof(t->long_name));
+        t->present = 0;
+    }
+    t->enabled = e;
+}
+
+void mm_hdf_next_type(int slot)
+{
+    mm_hdf_set_type(slot, mm_hdf_type_after(slot, mm_hdf[slot].enabled));
+}
+
+int mm_hdf_cd_live(int slot)
+{
+    return slot == CD_SLOT() && SlotConfig(slot)->enabled == HDF_CDROM && mm_hdf[slot].enabled == HDF_CDROM;
+}
+
+int mm_hdf_needs_reset(void)
+{
+    int slot;
+    if (mm_ide_on != config.enable_ide)
+        return 1;
+    for (slot = 0; slot < HDD_SLOTS; slot++)
+    {
+        hardfileTYPE *c = SlotConfig(slot);
+        if (mm_hdf[slot].enabled != c->enabled)
+            return 1;
+        if (c->enabled != HDF_CDROM && memcmp(c, &mm_hdf[slot], sizeof(*c)) != 0)
+            return 1;
+    }
+    return 0;
+}
+
+int mm_hdf_selected(int slot)
+{
+    hardfileTYPE *t = &mm_hdf[slot];
+    if (t->enabled == HDF_CDROM)
+    {
+        if (mm_hdf_cd_live(slot))
+        {   // a disc change in the live drive: now, no reset (refused while locked, D5)
+            cd_insert_msg(CD_Insert(file.name, file.long_name[0] ? file.long_name : 0, CurrentDirectory()));
+            *t = *SlotConfig(slot);
+            mm_hdfdir[slot] = config.hdfdir[slot];
+        }
+        else
+        {   // the disc for a CD slot that is not live yet
+            memcpy((void *)t->name, (void *)file.name, sizeof(t->name));
+            memcpy((void *)t->long_name, (void *)file.long_name, sizeof(t->long_name));
+            t->present = CD_PRESENT(file.name); // ISO or CUE: the config's name has no extension
+            mm_hdfdir[slot] = CurrentDirectory();
+        }
+        return MM_HDF_OK;
+    }
+    // Read RDB from selected drive and determine type...
+    memcpy((void *)t->name, (void *)file.name, sizeof(t->name));
+    memcpy((void *)t->long_name, (void *)file.long_name, sizeof(t->long_name));
+    mm_hdfdir[slot] = CurrentDirectory();
+    switch (GetHDFFileType(file.name))
+    {
+    case HDF_FILETYPE_RDB:
+        t->enabled = HDF_FILE;
+        t->present = 1;
+        break;
+    case HDF_FILETYPE_DOS:
+        t->enabled = HDF_FILE | HDF_SYNTHRDB;
+        t->present = 1;
+        break;
+    case HDF_FILETYPE_UNKNOWN:
+        t->present = 1;
+        // warn if we can't detect the type
+        return t->enabled == HDF_FILE ? MM_HDF_NORDB : MM_HDF_NOFS;
+    case HDF_FILETYPE_NOTFOUND:
+    default:
+        t->present = 0;
+        break;
+    }
+    return MM_HDF_OK;
+}
+
+void mm_hdf_keep(void)
+{
+    int i;
+    for (i = 0; i < HDD_SLOTS; i++)
+        if (mm_hdf[i].enabled == HDF_CDROM && !mm_hdf_cd_live(i))
+        {
+            *SlotConfig(i) = mm_hdf[i];
+            config.hdfdir[i] = mm_hdfdir[i];
+        }
+}
+
+void mm_hdf_apply(void)
+{
+    unsigned char upd[HDD_SLOTS];
+    int i;
+    for (i = 0; i < HDD_SLOTS; i++)
+    {
+        hardfileTYPE *c = SlotConfig(i);
+        upd[i] = (config.enable_ide != mm_ide_on && mm_hdf[i].enabled)
+              || c->enabled != mm_hdf[i].enabled
+              || strncmp(c->name, mm_hdf[i].name, sizeof(c->name)) != 0;
+        *c = mm_hdf[i];                  // apply new configuration
+        config.hdfdir[i] = mm_hdfdir[i];
+    }
+    config.enable_ide = mm_ide_on;       // Apply new IDE on/off
+
+    // FIXME - waiting for user-confirmation increases the window of opportunity for file corruption!
+
+    for (i = 0; i < HDD_SLOTS; i++)
+        if (upd[i] && (i < 2 || (core_caps & CORE_CAPS_IDE2)))
+            OpenHardfile(i);
+    ApplyCDROM();       // the CD drive's slot and disc
+    ConfigIDEPorts();
+    OsdReset();
 }

@@ -16,7 +16,7 @@ chars
                  ^                                              
  ^^ Acceleration ^  About                                     ^ 
                  ^  Supporters                                ^ 
-                 ^  Classic menu                              ^ 
+                 ^                                              
  Up/Down select  Right/Enter open  F12 close                    
                                                                 
 fg

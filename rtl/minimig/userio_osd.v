@@ -8,8 +8,9 @@ module userio_osd #(
 	// byte 4; see findings/ap68040/plan-v2-with-ddr3.md, "OSD and firmware".
 	parameter [7:0] CORE_CAPS = 8'h00,
 	// 1: the top has the 720p OSD text layer (rtl/openaars/adv7511/osd_text.v)
-	// on osd_txt; VERSION bytes 10-13 say so (0xB5, 1, 64, 32).  0: they
-	// stay MINION_VER and the firmware keeps the legacy OSD.
+	// on osd_txt; VERSION bytes 10-13 say so (0xB5, 2, 64, 32) and byte 14
+	// is the status {7'd0, rtg_ena}.  0: bytes 10-14 stay MINION_VER and the
+	// firmware keeps the legacy OSD.
 	parameter       OSD_TEXT  = 0
 )
 (
@@ -842,11 +843,19 @@ always @ (*) begin
     4'd7    : rtl_ver = in_diag[15:8];
     4'd8    : rtl_ver = in_diag[23:16];
     4'd9    : rtl_ver = in_diag[31:24];
-    // the OSD text layer (see above); MINION_VER without it, as before
+    // the OSD text layer (see above); MINION_VER without it, as before.
+    // Byte 11, the layer version: 2 since byte 14 is the status byte and
+    // cfide has the RTG screen's Video Pos register (0x0fffff54); the
+    // firmware reads byte 14 only from version 2 on (fw/ctrl/osd2.h
+    // OSD2_V_STATUS), a version-1 core answers MINION_VER there.
     4'd10   : rtl_ver = OSD_TEXT ? 8'hB5  : MINION_VER;
-    4'd11   : rtl_ver = OSD_TEXT ? 8'd1   : MINION_VER;
+    4'd11   : rtl_ver = OSD_TEXT ? 8'd2   : MINION_VER;
     4'd12   : rtl_ver = OSD_TEXT ? 8'd64  : MINION_VER;
     4'd13   : rtl_ver = OSD_TEXT ? 8'd32  : MINION_VER;
+    // byte 14, the status: bit 0 the RTG screen is on (agnus' rtg_ena, the
+    // signal the OSD's own beam offset above uses; clk domain, no
+    // synchroniser needed)
+    4'd14   : rtl_ver = OSD_TEXT ? {7'd0, rtg_ena} : MINION_VER;
     default : rtl_ver = MINION_VER;
   endcase
 end

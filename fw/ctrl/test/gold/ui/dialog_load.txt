@@ -16,7 +16,7 @@ chars
                  ^                                              
  ^^ Acceleration ^  About                                     ^ 
                  ^  Supporters                                ^ 
-                 ^  Classic menu                              ^ 
+                 ^                                              
  Left/Right choose a button  Enter confirm  Esc cancel          
                                                                 
 fg

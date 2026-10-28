@@ -149,6 +149,10 @@ extern unsigned long osd_rdy_timeouts;
 // 15kHz to HDMI Video position
 #define VIDEOSCALE (*(volatile unsigned int *)0xFFFFFF50)
 #define VIDEOSCALE_SET_POS (VIDEOSCALE)
+// the RTG screen's Video Pos (cfide pos_rtg_q, a core of osd2.h
+// OSD2_V_STATUS; an older core takes this address as VIDEOSCALE)
+#define VIDEOSCALE_RTG (*(volatile unsigned int *)0xFFFFFF54)
+#define VIDEOSCALE_SET_RTG (VIDEOSCALE_RTG)
 
 //void USART_Init(unsigned long baudrate);
 //void USART_Write(unsigned char c);
@@ -187,6 +191,7 @@ volatile unsigned short *hosttest_platform(void);	/* PLATFORM, an lvalue */
 volatile unsigned char *hosttest_audio(void);		/* AUDIO, an lvalue */
 void hosttest_uart(int c);			/* RS232(x) */
 unsigned char *hosttest_audio_buffer(void);	/* AUDIO_BUFFER: the mock's ring */
+volatile unsigned int *hosttest_vpos(int rtg);	/* VIDEOSCALE (0) / VIDEOSCALE_RTG (1) */
 
 #undef SPI
 #undef RDSPI
@@ -208,6 +213,8 @@ unsigned char *hosttest_audio_buffer(void);	/* AUDIO_BUFFER: the mock's ring */
 #undef AUDIO
 #undef RS232
 #undef AUDIO_BUFFER
+#undef VIDEOSCALE
+#undef VIDEOSCALE_RTG
 #define SPI(x)         hosttest_spi(x)
 #define RDSPI          hosttest_rdspi()
 #define EnableCard()   hosttest_cs(0x02)
@@ -228,6 +235,8 @@ unsigned char *hosttest_audio_buffer(void);	/* AUDIO_BUFFER: the mock's ring */
 #define AUDIO          (*hosttest_audio())
 #define RS232(x)       hosttest_uart(x)
 #define AUDIO_BUFFER   (hosttest_audio_buffer())
+#define VIDEOSCALE     (*hosttest_vpos(0))
+#define VIDEOSCALE_RTG (*hosttest_vpos(1))
 #endif /* HOSTTEST */
 
 #endif /* HARDWARE_H */

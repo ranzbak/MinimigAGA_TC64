@@ -7,11 +7,11 @@ chars
                  ^  Bloom                                 off   
  ^^ Storage      ^  Beam width                            off   
                  ^                                              
-                 ^  Horizontal pos                         -8   
- ^^ System       ^  Vertical pos                           +4   
+                 ^  Position (PAL) horizontal           -8 px   
+ ^^ System       ^  Position (PAL) vertical          +4 lines   
                  ^  HDMI clock delay                  +0.4 ns   
                  ^                                              
- ^^ Video        ^  Open classic menu                         ^ 
+ ^^ Video        ^                                              
                  ^                                              
                  ^                                              
  ^^ Acceleration ^                                              

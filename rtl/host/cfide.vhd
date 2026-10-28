@@ -86,8 +86,13 @@ entity cfide is
         sda_o         : out std_logic;
         sda_t         : out std_logic;
         i2c_ext_int   : in  std_logic := '0';  -- the ADV7511's INT (status 0x400)
-        -- Video scaler coordinates
+        -- Video scaler coordinates: the PAL/NTSC picture's (0x0fffff50 and,
+        -- as before, every 0x0fffff5x but 54) and the RTG screen's
+        -- (0x0fffff54, OSD redesign Phase 4; firmware writes it only on a
+        -- core whose OSD text layer is version >= 2, fw/ctrl/osd2.h).
+        -- {vpos[7:0], hpos[7:0]} each, signed.
         pos_data_q    : out std_logic_vector(15 downto 0);
+        pos_rtg_q     : out std_logic_vector(15 downto 0);
         -- userio_osd's reply sequence (rtl/minimig/userio_osd.v osd_rx_seq):
         -- +1 per OSD byte it has taken; clk_28 domain.  For HOST_REQ (0x0fffffb4),
         -- see the OSD reply-ready handshake below.  Defaulted: a top without
@@ -854,14 +859,24 @@ begin
 
     vpos_interface : if (havevpos) generate
 
+        signal pos_rtg : std_logic_vector(15 downto 0) := (others => '0');  -- centred at power-up
+
+    begin
+
         process(clk_28)
         begin
             if rising_edge(clk_28) then
                 if videoscl_select = '1' and wr = '1' then
-                    pos_data_q <= d(15 downto 0);
+                    if addr(3 downto 2) = "01" then
+                        pos_rtg <= d(15 downto 0);
+                    else
+                        pos_data_q <= d(15 downto 0);
+                    end if;
                 end if;
             end if;
         end process;
+
+        pos_rtg_q <= pos_rtg;
 
     end generate;
 

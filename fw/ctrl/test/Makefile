@@ -86,6 +86,20 @@ UI_SRCS = $(SRC)/ui.c $(SRC)/ui_tabs.c $(SRC)/menu_model.c $(SRC)/osd2.c $(SRC)/
           $(TD)/mock_hw.c $(TD)/mock_sdc.c $(SRC)/hardware.c
 $(eval $(call TEST,ui_test,$$(UI_SRCS),,$$(GOLD)/ui))
 
+# migrate_test: the migration check (findings/osd-redesign Phase 4): every
+# setting changed once in the classic menu (menu.c, whole) and once in the
+# new one (ui.c), the same effect: config, the Config* SPI stream of osd.c's
+# own Config* functions (cut out: osdcfg.inc; osd.c holds the bitmap OSD),
+# the Video Pos registers, the calls with an effect
+MIG_SRCS = $(SRC)/menu.c $(UI_SRCS)
+$(B)/osdcfg.inc: $(SRC)/osd.c
+	@mkdir -p $(@D)
+	sed -n '/^void ConfigVideo(unsigned char scanlines/,/^unsigned char osd_keyq_lost/p' $(SRC)/osd.c | sed '$$d' > $@
+	grep -q '^void ConfigVideoPos' $@
+	grep -q '^void ConfigAutofire' $@
+$(eval $(call TEST,migrate_test,$$(MIG_SRCS),,))
+$(B)/migrate_test $(B)/migrate_test_32: $(B)/osdcfg.inc
+
 # dispatch_test: menu.c's HandleUI (cut out: menu.c holds the whole classic
 # menu): the classic menu on a core without the text layer, the new one on a
 # core with it, the hand-over between them
@@ -401,7 +415,7 @@ check_io: $(SRC)/check_io.awk $(TD)/check_io.sh $(wildcard $(TD)/check_io/*)
 
 run: fmt check_io cardpath run-mock_selftest run-cue_test run-cdaudio_test run-atapi_test run-cdrom_test \
      run-openhf_test run-lib_test run-hwmap_test run-spireply_test run-diskstat_test run-swap_test run-fat_test run-mmc_test \
-     run-config_test run-hdd_test run-cdpath_test run-fdd_test run-drivesounds_test run-boot_test run-sdc_test run-sdproto_test run-rom_test run-osd2_test run-ui_test run-dispatch_test
+     run-config_test run-hdd_test run-cdpath_test run-fdd_test run-drivesounds_test run-boot_test run-sdc_test run-sdproto_test run-rom_test run-osd2_test run-ui_test run-migrate_test run-dispatch_test
 
 clean:
 	$(RM) -r out mut

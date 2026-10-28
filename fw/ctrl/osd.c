@@ -42,7 +42,8 @@ This is the Minimig OSD (on-screen-display) handler.
 #include "charrom.h"
 #include "logo.h"
 #include "audio.h"
-#include "config.h"   // CONFIG_SCALING (ConfigVideo)
+#include "config.h"   // CONFIG_SCALING (ConfigVideo), videopos (ConfigVideoPos)
+#include "osd2.h"     // osd2_caps (ConfigVideoPos)
 
 #include "string.h"
 
@@ -860,13 +861,16 @@ void ConfigVideo(unsigned char scanlines, unsigned char crt_mask, unsigned char 
     DisableOsd();
 }
 
-void ConfigVideoPos(unsigned char hpos, unsigned char vpos)
+// Both Video Pos pairs: the RTG screen's first (only on a core whose text
+// layer says it has the register, osd2.h OSD2_V_STATUS), then the PAL/NTSC
+// picture's.  An older core decodes every address of 0xFFFFFF5x as the PAL
+// register, so the PAL pair is written last either way.
+void ConfigVideoPos(void)
 {
 	EnableOsd();
-	VIDEOSCALE_SET_POS = (hpos + ((unsigned short)vpos << 8));
-	//VIDEOSCALE_SET_POS = 0x3280;
-	//*((volatile unsigned int *)0x0fffff50) = 0x3281;
-
+	if (osd2_caps >= OSD2_V_STATUS)
+		VIDEOSCALE_SET_RTG = (config.videopos_rtg.hpos + ((unsigned short)config.videopos_rtg.vpos << 8));
+	VIDEOSCALE_SET_POS = (config.videopos.hpos + ((unsigned short)config.videopos.vpos << 8));
 	DisableOsd();
 }
 

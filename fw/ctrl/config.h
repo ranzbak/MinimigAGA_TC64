@@ -1,3 +1,6 @@
+#ifndef CONFIG_H
+#define CONFIG_H
+
 #include <stdint.h>
 
 #include "fat.h"
@@ -106,6 +109,12 @@ typedef struct
 	// ignores the two bytes.
 	unsigned char crt_mask;
 	unsigned char crt_bloom;
+	// Video Pos of the RTG screen (Paul, 2026-10-27): the PAL/NTSC picture
+	// and the RTG screen each keep their own position; the menu edits the
+	// pair of the mode that is on (VERSION byte 14, osd2.h).  These were the
+	// two alignment bytes before kickdir (offsets 130-131): config files from
+	// older firmware hold 0 here (centred), the struct stays 212 bytes.
+	videoPosTYPE  videopos_rtg;
 	uint32_t kickdir;	// Directory of kick file.
 	uint32_t extromdir;	// Directory of ext rom file.
 	uint32_t hdfdir[4]; // Directory for HDF files.  Space for expansion to four devices.
@@ -142,3 +151,4 @@ void ConfigIDEPorts(void);
 // Open the CD-ROM drive of the config (CD_Open), or none.
 void ApplyCDROM(void);
 
+#endif

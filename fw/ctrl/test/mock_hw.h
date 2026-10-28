@@ -99,6 +99,10 @@ size_t mock_uart_len(void);
 void mock_uart_clear(void);
 void mock_platform_set(unsigned short v);
 void mock_audio_set(unsigned char v);   /* what reads of AUDIO return (until a write) */
+/* the Video Pos registers VIDEOSCALE (0) and VIDEOSCALE_RTG (1): their last
+   written value (0 after mock_reset; _set: a sentinel a test can look for) */
+unsigned mock_vpos(int rtg);
+void mock_vpos_set(int rtg, unsigned v);
 
 /* ---- RAM: AUDIO_BUFFER and the room in front of it ---- */
 /* AUDIO_BUFFER (hardware.h under HOSTTEST) is the ring, MOCK_RING_BYTES; the

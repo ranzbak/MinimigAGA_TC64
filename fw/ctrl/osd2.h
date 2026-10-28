@@ -32,7 +32,10 @@
  *   0x4C PAL_WR   first entry, then {mode << 6, r, g, b} per entry
  *   0x5C TXT_CFG  ctrl {bit 0 enable, bit 1 scale 2}, x0/8, y0/8, cols, rows
  *                 (the fifth byte commits palette and window)
- *   0x88 VERSION  reply bytes 10..13: 0xB5, layer version, 64, 32
+ *   0x88 VERSION  reply bytes 10..13: 0xB5, layer version, 64, 32;
+ *                 layer version >= 2 (OSD2_V_STATUS): byte 14 the status
+ *                 {bit 0 the RTG screen is on}, and the RTG screen has its
+ *                 own Video Pos register (hardware.h VIDEOSCALE_RTG)
  */
 
 #define OSD2_COLS 64          /* the cell RAM's stride and width */
@@ -40,6 +43,12 @@
 
 /* VERSION reply byte 10 of a core with the layer */
 #define OSD2_MAGIC 0xB5
+/* the layer version (byte 11) from which byte 14 is the status byte and the
+   RTG Video Pos register exists.  A version-1 core (the bitstream of
+   2026-10-27) answers MINION_VER at byte 14 and decodes every address of
+   0xFFFFFF5x as the PAL position: neither is used below this version. */
+#define OSD2_V_STATUS 2
+#define OSD2_ST_RTG   0x01    /* status bit 0: the RTG screen is on */
 
 /* SPI command bytes */
 #define OSD2_CMD_TXT  0x2C
@@ -134,5 +143,11 @@ void osd2_commit(int enable, int scale, unsigned x0, unsigned y0, unsigned cols,
 void osd2_disable(void);
 /* n glyphs from glyph `first`, 16 bytes each (row-major, bit 7 = left) */
 void osd2_font(unsigned first, unsigned n, const unsigned char *data);
+
+/* 1: the RTG screen is on now (VERSION byte 14, one SPI transaction of 15
+   bytes; it reads byte 9 too, which clears the input diagnostic's sticky
+   half: nothing in this firmware reads it).  0 on a core below
+   OSD2_V_STATUS, without asking. */
+unsigned char osd2_rtg_active(void);
 
 #endif

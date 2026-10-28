@@ -22,14 +22,15 @@
  *               the menu opens, then the focused item's help; a toast for
  *               1 s
  *
- * Over the panel: one dialog at a time (a red box over rows 6-13), or the
+ * Over the panel: one dialog at a time (a red box over rows 6-13), the
  * file selector (16 entries in the item rows, the selected long name
- * scrolls).  With the menu closed a toast shows as a one-row window of its
- * own.
+ * scrolls), or the error page (menu.c ShowError).  With the menu closed a
+ * toast shows as a one-row window of its own.
  *
  * menu.c's HandleUI() runs ui_handle() on a core with the text layer
- * (osd2_caps) unless the classic menu was asked for (ui_legacy_active);
- * on any other core the classic menu is all there is.
+ * (osd2_caps) unless the classic menu was asked for (ui_legacy_active:
+ * Main's About and Supporters still open the classic pages, until their
+ * own port); on any other core the classic menu is all there is.
  *
  * Keys (Paul, 2026-10-27; joystick: Up/Down/Left/Right, fire = Enter,
  * fire 2 = the menu button, which sends F12's code):
@@ -46,6 +47,12 @@
  *   Anywhere: F1-F5 a category and into its list; PgUp/PgDn the previous/
  *   next category; F12 (the menu button) closes.
  *   Dialog: Left/Right (Up/Down) the button, Enter/Space it, Esc cancels.
+ *   Error page: Left/Right the other error categories, Enter/Space OK (or
+ *   Reboot); nothing else, as the classic page.
+ *   Leaving a category (another one, or closing): System after a memory or
+ *   chipset change offers the reset (MENU_MEMORY_CHANGED), Storage after a
+ *   change of the IDE slots the reset that applies it (MENU_HARDFILE_CHANGED,
+ *   No drops the change).
  *   File selector: Up/Down, PgUp/PgDn (and Left/Right) a page, Home the
  *   top, Backspace the parent directory, a letter the next name with it,
  *   Esc back to the list.  Main: keypad +/- add or remove a floppy drive,
@@ -111,8 +118,8 @@
 /* item kinds */
 enum {
 	UI_SEP,       /* an empty row */
-	UI_CYCLE,     /* a value: Left/Right step it, Enter the next (or act, UI_ENTERACT) */
-	UI_INFO,      /* a value shown, changed in the classic menu (Phase 4 brings it here) */
+	UI_CYCLE,     /* a value: EDIT's Left/Right step it (get/set over nvalues,
+	                 or step()); Enter EDIT (or act, UI_ENTERACT) */
 	UI_ACTION     /* Enter runs act(); a value text if text() */
 };
 /* item flags */
@@ -121,6 +128,7 @@ enum {
 #define UI_ENTERACT 0x08      /* UI_CYCLE: Enter runs act() */
 #define UI_BAR      0x10      /* the value 0..nvalues-1 as a bar and the number */
 #define UI_SUB      0x20      /* Enter opens something: the submenu arrow */
+#define UI_IDE2     0x40      /* only on a core with IDE port 2 (else an empty row) */
 
 struct ui_item {
 	const char *label;
@@ -131,6 +139,12 @@ struct ui_item {
 	const char *(*text)(unsigned char arg);   /* the value as text */
 	void (*act)(unsigned char arg);
 	unsigned char (*avail)(unsigned char arg); /* 0: greyed, not selectable */
+	/* EDIT's Left (-1) / Right (+1) when the value is no index (Video Pos,
+	   the IDE slot type): in place of get/set */
+	void (*step)(unsigned char arg, int dir);
+	/* the help with a live part (the HDMI readback): in place of help,
+	   drawn again every second while the item is focused */
+	const char *(*helpf)(unsigned char arg);
 	unsigned char kind, arg, nvalues, flags;
 };
 
@@ -147,7 +161,7 @@ enum { UI_TAB_MAIN, UI_TAB_STORAGE, UI_TAB_SYSTEM, UI_TAB_VIDEO, UI_TAB_ACCEL };
 extern const struct ui_tab ui_tabs[UI_TABS];
 
 /* focus */
-enum { UI_F_LIST, UI_F_SIDEBAR, UI_F_DIALOG, UI_F_FILESEL };
+enum { UI_F_LIST, UI_F_SIDEBAR, UI_F_DIALOG, UI_F_FILESEL, UI_F_ERROR };
 
 /* the engine, once per main-loop pass (menu.c HandleUI) */
 void ui_handle(void);
@@ -161,14 +175,16 @@ void ui_draw_help(void);
 
 /* set while the classic menu runs instead (menu.c clears it when it closes) */
 extern unsigned char ui_legacy_active;
-/* the classic menu takes over (an error page, menu.c ShowError) */
-void ui_legacy_takeover(void);
+/* the error page (menu.c ShowError / ErrorMessage on a core with the
+   layer): the menu opens on it at error category `page` (errors.h) */
+void ui_error_show(int page);
 
 /* for the item tables (ui_tabs.c) */
 void ui_toast(const char *text);
 /* the file selector; on a chosen file: InsertFloppy / CD_Insert / the
-   Kickstart reload dialog */
-enum { UI_FS_FLOPPY, UI_FS_CD, UI_FS_KICK };
+   Kickstart reload dialog / the IDE slot arg's image (mm_hdf_selected:
+   a hardfile, or a disc of a CD slot) */
+enum { UI_FS_FLOPPY, UI_FS_CD, UI_FS_KICK, UI_FS_HDF, UI_FS_HDCD };
 void ui_fs_open(unsigned char target, unsigned char arg);
 /* a dialog: title, two lines, buttons; done(button) on Enter, done(n - 1)
    on Esc */
@@ -180,6 +196,9 @@ void ui_close(void);
 void ui_classic(unsigned char page, unsigned char sub);
 /* the configuration files found when the menu opened (bit = slot) */
 extern unsigned char ui_cfg_mask;
+/* Video: the RTG screen is on (osd2_rtg_active), read when the category
+   is shown and at each position step; the position items edit its pair */
+extern unsigned char ui_rtg;
 /* the state the item tables show (the engine's); ui_hints_on: the help
    field shows the key hints of the focus (set when the focus moves between
    sidebar and list, cleared by the next key: then the item's help);

@@ -12,7 +12,9 @@
 # -Wno-error: a mutant must be killed by the test, not by an unused-variable
 # warning.  Every run starts from a fresh copy; mut/<name>/log keeps the last
 # output.  The controls (the unmutated copy) build and pass first.
-# Environment: ISO, HOSTCC (make -C fw/ctrl/test mutants passes them).
+# Environment: ISO, HOSTCC (make -C fw/ctrl/test mutants passes them);
+# ONLY=<extended regex>: only the unit mutants whose name matches (the
+# controls still run; a partial run while working on one test).
 set -u
 cd "$(dirname "$0")" || exit 1
 HERE=$PWD
@@ -63,12 +65,15 @@ verdict() {  # <name> <rc of the check> <what>
 # when there are several) is BROKEN (the mutant must be killed by that case)
 unit() {
   local n=$1 test=$2
+  if [ -n "${ONLY:-}" ] && ! [[ $n =~ $ONLY ]]; then return; fi
   prep "$n"; mutate "$n" "$3" "$4" "$5" || return
   if ! mk "$n" "mut/$n/b/$test" > "mut/$n/log" 2>&1; then
     echo "mutant $n: BROKEN (does not build: mut/$n/log)"; bad=1; return
   fi
-  # a mutant may hang a loop that waits for the mock: the timeout is a kill
-  timeout 120 make -s -f Makefile SRC="mut/$n/src" TD="mut/$n/t" GOLD="mut/$n/gold" B="mut/$n/b" \
+  # a mutant may hang a loop that waits for the mock: the timeout is a kill.
+  # 300 s: hdd_card_error needs ~106 s of CPU before its own hang check
+  # speaks, more under nice 19 on a loaded machine (120 s cut it short)
+  timeout 300 make -s -f Makefile SRC="mut/$n/src" TD="mut/$n/t" GOLD="mut/$n/gold" B="mut/$n/b" \
        WERROR=-Wno-error CARD="$CARD" FATIMG="$FATIMG" FATIMG_DEPS= "run64-$test" > "mut/$n/log" 2>&1
   local rc=$? text
   if [ $rc -ne 0 ]; then
@@ -113,7 +118,7 @@ checkio() {
 control() {
   prep control
   local t rc=0
-  for t in mock_selftest cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_test hwmap_test spireply_test diskstat_test swap_test fat_test mmc_test config_test hdd_test cdpath_test fdd_test drivesounds_test boot_test sdc_test sdproto_test rom_test osd2_test ui_test dispatch_test; do
+  for t in mock_selftest cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_test hwmap_test spireply_test diskstat_test swap_test fat_test mmc_test config_test hdd_test cdpath_test fdd_test drivesounds_test boot_test sdc_test sdproto_test rom_test osd2_test ui_test migrate_test dispatch_test; do
     mk control "run64-$t" > "mut/control/log.$t" 2>&1 || { echo "control: run64-$t FAILED (mut/control/log.$t)"; rc=1; }
   done
   mk control fmt > mut/control/log.fmt 2>&1 || { echo "control: fmt FAILED (mut/control/log.fmt)"; rc=1; }
@@ -648,7 +653,45 @@ unit ui_f12back ui_test src ui.c '/^static void key_open/,/^}/s/^\t\tif (ui_focu
 # the file selector ignores sort_table
 unit ui_nosort ui_test src ui.c 's/name = entry_name(sort_table\[i\], /name = entry_name(i, /' "FAIL screen filesel"
 # leaving System after a memory change: no reset offered
-unit ui_noprompt ui_test src ui.c 's/(config.memory == sys_mem \&\& /(1 || /' "FAIL leaving System after a change: the dialog"
+unit ui_noprompt ui_test src ui.c 's/(config.memory != sys_mem || /(0 \&\& /' "FAIL leaving System after a change: the dialog"
+# ---- OSD redesign Phase 4: Storage, Video, Acceleration, the error page,
+# the migration check (ui_test, migrate_test) ----
+# leaving Storage after a change of the IDE slots: no reset offered (and so
+# nothing applied)
+unit ui_hdfnoprompt ui_test src ui.c 's/^\t\tif (mm_hdf_needs_reset()) {$/\t\tif (0) {/' "FAIL leaving Storage after a change: the reset dialog"
+# the hardfile prompt's default Yes (the classic menu's is No)
+unit ui_hdfdefault ui_test src ui.c 's/"Reset the Amiga?", b, 2, 1, leave_hdf_done/"Reset the Amiga?", b, 2, 0, leave_hdf_done/' "FAIL No: config unchanged"
+# the slot type's Left steps forward too
+unit ui_hdfleft ui_test src ui_tabs.c 's/^\tif (dir > 0) {$/\tif (dir) {/' "FAIL type Left twice: backwards round to SD partition 1"
+# the RTG pair edited while PAL is on (the position items always RTG's)
+unit ui_rtgpal ui_test src ui_tabs.c 's/mm_step_pos(vertical, dir, ui_rtg);/mm_step_pos(vertical, dir, 1);/' "FAIL H Right: -8 -> 0"
+# byte 14 asked on a version-1 layer (its MINION_VER taken as the status)
+unit osd2_statusgate ui_test src osd2.c 's/^\tif (osd2_caps < OSD2_V_STATUS)$/\tif (0)/' "FAIL version-1 layer: byte 14 never asked"
+# the position's label not following the RTG status
+unit ui_rtglabel ui_test src ui_tabs.c 's/memcpy(pos_h_label + POS_MODE, m, 3);/;/' "FAIL RTG on: the label says RTG"
+# Bloom never greyed
+unit ui_bloomavail ui_test src menu_model.c 's/return (config.scanlines \& 3) || (config.crt_beam \& 3) || /return 1 || /' "FAIL no scanlines, no beam, line rate: Bloom greyed"
+# the HDMI readback not refreshed while the item is focused
+unit ui_hdmilive ui_test src ui.c 's/^\t\t\tui_draw_help(); \/\* a live help/\t\t\t; \/* a live help/' "FAIL HDMI: the readback live, every second"
+# the error page's OK does not clear the error (main()'s error loop never ends)
+unit ui_errnoclear ui_test src ui.c 's/^\t\t\tClearError(ERROR_ALL);$/\t\t\t;/' "FAIL error Enter: the error cleared"
+# a fixed 68040's CPU line selectable
+unit ui_cpufixed ui_test src ui_tabs.c 's/return !CORE_CPU_FIXED_040();/return 1;/' "FAIL fixed 68040: the CPU line not selectable"
+# the migration check sees a wrong field: Bloom's set writes the beam width
+unit mig_wrongfield migrate_test src menu_model.c 's/config.crt_bloom = v > 2 ? 2 : v;/config.crt_beam = v > 2 ? 2 : v;/' "FAIL Bloom off -> high: config"
+# ... a wrong value: Chip slots' bit one place off
+unit mig_wrongbit migrate_test src menu_model.c 's/\[MMF_CHIPSLOTS\]   = { offsetof(configTYPE, cpu),         4, 1, F_CPU },/[MMF_CHIPSLOTS]   = { offsetof(configTYPE, cpu),         5, 1, F_CPU },/' "FAIL Chip slots Fast: config"
+# ... a Config* call missing: the Storage floppy turbo set applies nothing
+unit mig_noapply migrate_test src menu_model.c 's/^    case F_FLOPPY:  ConfigFloppy(config.floppy.drives, config.floppy.speed); break;$/    case F_FLOPPY:  break;/' "FAIL Floppy turbo on: the Config\* SPI stream"
+# ... the new menu's hardfile prompt resets without applying the slots
+unit mig_hdfnoapply migrate_test src ui.c '/^static void leave_hdf_done/,/^}/s/^\t\tmm_hdf_apply();$/\t\tOsdReset();/' "FAIL IDE off, reset Yes: config"
+# the shared hardfile apply without its reset: both menus lose it alike (the
+# migration check cannot see a fault both share), ui_test's sequence must
+unit ui_hdfnoreset ui_test src menu_model.c '/^void mm_hdf_apply(void)/,/^}/s/^    OsdReset();$/    ;/' "FAIL Yes: closed, slot 1 opened, CD, ports, reset"
+# ... the RTG register written on a version-1 layer (an old core takes it as PAL)
+unit mig_rtgalways migrate_test src osd.c 's/^\tif (osd2_caps >= OSD2_V_STATUS)$/\tif (1)/' "FAIL Video Pos: the RTG register not written on a version-1 layer"
+# ... the PAL register given the RTG pair
+unit mig_rtgorder migrate_test src osd.c 's/^\tVIDEOSCALE_SET_POS = (config.videopos.hpos + ((unsigned short)config.videopos.vpos << 8));$/\tVIDEOSCALE_SET_POS = (config.videopos_rtg.hpos + ((unsigned short)config.videopos_rtg.vpos << 8));/' "FAIL RTG: VIDEOSCALE = the PAL pair"
 # a core without the text layer gets the new menu
 unit dispatch_nocaps dispatch_test src menu.c 's/if (osd2_caps \&\& !ui_legacy_active)/if (!ui_legacy_active)/' "FAIL no layer: the classic menu each pass"
 # the classic menu never hands back
