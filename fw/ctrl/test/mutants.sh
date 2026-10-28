@@ -692,6 +692,29 @@ unit ui_hdfnoreset ui_test src menu_model.c '/^void mm_hdf_apply(void)/,/^}/s/^ 
 unit mig_rtgalways migrate_test src osd.c 's/^\tif (osd2_caps >= OSD2_V_STATUS)$/\tif (1)/' "FAIL Video Pos: the RTG register not written on a version-1 layer"
 # ... the PAL register given the RTG pair
 unit mig_rtgorder migrate_test src osd.c 's/^\tVIDEOSCALE_SET_POS = (config.videopos.hpos + ((unsigned short)config.videopos.vpos << 8));$/\tVIDEOSCALE_SET_POS = (config.videopos_rtg.hpos + ((unsigned short)config.videopos_rtg.vpos << 8));/' "FAIL RTG: VIDEOSCALE = the PAL pair"
+# ---- the About and Supporters pages (ui_test; findings/osd-redesign Phase 7) ----
+# the effect never advances
+unit ui_fxfrozen ui_test src ui.c '/^static void page_tick/,/^}/s/^\tpage->step();$/\t;/' "FAIL About: a step after 3 counts"
+# closing a page leaves its glyphs in the font
+unit ui_fxnorestore ui_test src ui.c '/^static void page_end/,/^}/s/^\tui_fx_font(0, n < 64 ? n : 64, /\tif (0) ui_fx_font(0, n < 64 ? n : 64, /' "FAIL About Esc: the font as before"
+# the slots past 0xBF run into the icons (0xC0-0xC9)
+unit ui_fxicons ui_test src ui.c 's/return (unsigned char)(slot < 64 ? 0x80 + slot : 0xCA + (slot - 64));/return (unsigned char)(slot < 64 ? 0x80 + slot : 0xC0 + (slot - 64));/' "FAIL About: the icons (0xC0-0xC9) untouched"
+# closing a page leaves its palette
+unit ui_fxnopal ui_test src ui.c '/^static void page_end/,/^}/s/^\tosd2_pal_default();$/\t;/' "FAIL About Esc: the palette as before"
+# the menu drawn over a page
+unit ui_fxmenu ui_test src ui.c '/^void ui_draw_all(void)/,/^}/s/^\tif (ui_focus == UI_F_PAGE) {$/\tif (0) {/' "FAIL screen about"
+# Esc does not close a page
+unit ui_fxnoesc ui_test src ui.c '/^static void key_page/,/^}/s/^\tcase KEY_ESC:$/\tcase 0xfe:/' "FAIL About Esc: the list"
+# stars over the text
+unit ui_fxstars ui_test src ui_about.c 's/if (blank(r, c - 2) \&\& blank(r, c - 1) \&\& blank(r, c) \&\& blank(r, c + 1) \&\& blank(r, c + 2))/if (r != 99)/' "FAIL About: never on the logo, the text, the bar or the help"
+# the copper never turns
+unit ui_fxcopper ui_test src ui_about.c '/^static void about_step/,/^}/s/^\tphase++;$/\t;/' "FAIL About: the copper moved one step"
+# a step redraws the whole page (the per-step bound)
+unit ui_fxcost ui_test src ui_about.c '/^static void about_step/,/^}/s/^\tphase++;$/\tphase++;\n\tosd2_invalidate();/' "FAIL About: a step at most 640 SPI bytes"
+# the plasma's palette never cycles
+unit ui_fxplasma ui_test src ui_supporters.c 's/^\tt = (unsigned char)((t + 1) % RAMP);$/\t;/' "FAIL Supporters: 16 steps cycle the plasma one colour"
+# the names never fade in
+unit ui_fxfade ui_test src ui_supporters.c 's/^\tif (fade < 255)$/\tif (0)/' "FAIL Supporters: faded in: the names white"
 # a core without the text layer gets the new menu
 unit dispatch_nocaps dispatch_test src menu.c 's/if (osd2_caps \&\& !ui_legacy_active)/if (!ui_legacy_active)/' "FAIL no layer: the classic menu each pass"
 # the classic menu never hands back

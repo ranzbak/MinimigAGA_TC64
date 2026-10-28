@@ -1,6 +1,6 @@
 /* ui_tabs: the new OSD menu's tabs and items (ui.h; plan 5's tab map).
  * Every setting of the classic menu is here (OSD redesign Phase 4); Main's
- * About and Supporters still open the classic pages until their own port. */
+ * About and Supporters are pages of their own (ui_about.c, ui_supporters.c). */
 #include <string.h>
 
 #include "hardware.h"
@@ -221,7 +221,7 @@ static void save_act(unsigned char arg)
 	ui_dialog("Save", l1, "Overwrite it?", b, 2, 0, save_done);
 }
 
-/* ---- Main: reset, reboot, Chameleon, classic pages ---- */
+/* ---- Main: reset, reboot, Chameleon ---- */
 
 static const char *const yes_no[] = { "Yes", "No" };
 static unsigned char confirm_what;
@@ -254,23 +254,6 @@ static unsigned char reconfig_avail(unsigned char arg)
 	return (PLATFORM & (1 << PLATFORM_RECONFIG)) != 0;
 }
 
-/* the classic menu's pages the items hand over to: {page, cursor}; only
-   About (4) and Supporters (5) still do (Phase 4: every setting is native),
-   0-3 are the hand-overs of before, kept so the two items stay as they are */
-static const unsigned char classic_pages[][2] = {
-	{ MENU_MAIN1, 0 },               /* 0 Main */
-	{ MENU_MAIN1, 5 },               /* 1 Storage: "Hard disk settings" on its main page */
-	{ MENU_SETTINGS_VIDEO1, 0 },     /* 2 Video (Video Pos and HDMI to its right) */
-	{ MENU_SETTINGS_CHIPSET1, 0 },   /* 3 Acceleration: CPU, Turbo, Chip slots */
-	{ MENU_ABOUT1, 0 },              /* 4 */
-	{ MENU_SUPPORTERS1, 0 },         /* 5 */
-};
-
-static void classic_act(unsigned char i)
-{
-	ui_classic(classic_pages[i][0], classic_pages[i][1]);
-}
-
 #define SEP { .kind = UI_SEP }
 
 static const struct ui_item main_items[] = {
@@ -297,8 +280,10 @@ static const struct ui_item main_items[] = {
 	{ "Return to Chameleon", "Leaves this core for the Chameleon menu.", .act = confirm_act, .avail = reconfig_avail,
 	  .kind = UI_ACTION, .arg = 2, .flags = UI_HIDE | UI_SUB },
 	SEP,
-	{ "About", "Who made this (the classic page).", .act = classic_act, .kind = UI_ACTION, .arg = 4, .flags = UI_SUB },
-	{ "Supporters", "Thanks (the classic page).", .act = classic_act, .kind = UI_ACTION, .arg = 5, .flags = UI_SUB },
+	{ "About", "Who made Minimig AGA: the credits, over a starfield.",
+	  .act = ui_page_open, .kind = UI_ACTION, .arg = UI_PAGE_ABOUT, .flags = UI_SUB },
+	{ "Supporters", "The supporters of this core, and how to support it, over a plasma.",
+	  .act = ui_page_open, .kind = UI_ACTION, .arg = UI_PAGE_SUPPORTERS, .flags = UI_SUB },
 };
 
 /* ---- System ---- */

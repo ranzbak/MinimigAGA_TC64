@@ -16,7 +16,13 @@
  * anywhere), the help field (key hints until a key, then the focused
  * item's help, toasts for 1 s; every help text fits its two lines), and the
  * selected long name's scroll on the mock TIMER (start 500 ms, a cell per
- * 128 ms, end 1 s, restart; reset by a cursor move).
+ * 128 ms, end 1 s, restart; reset by a cursor move), and Main's About and
+ * Supporters pages: their first frames, the effects' steps on the mock
+ * TIMER (the copper's and the plasma's palette rotation, the stars never
+ * on the text), the SPI bytes per step against the plan's budget, and the
+ * menu after a page exactly as before it: cells, the font RAM and the
+ * palette, modelled from the trace (UI_PRETTY=1 prints the pages with
+ * their glyphs as text).
  *   make -C fw/ctrl/test run-ui_test
  *   UI_GOLD_WRITE=1 out/ui_test gold/ui     writes the golden screens
  */
@@ -40,6 +46,8 @@
 #include "menu_model.h"
 #include "osd2.h"
 #include "osd_icons.h"
+#include "osd_logo.h"
+#include "font8x16.h"
 #include "ui.h"
 #include "mock_hw.h"
 
@@ -108,6 +116,8 @@ unsigned char drives;
 adfTYPE df[4];
 cdromTYPE cdrom;
 unsigned char core_caps;
+unsigned char core_version[4] = { 0, 26, 10, 27 };
+const char fw_version[] = "2026-10-28-12-0";
 unsigned char adv_clkdelay = 4;
 unsigned char osd_keyq_lost;
 char *fs_pFileExt;
@@ -623,6 +633,365 @@ static void help_fits(const char *what, const char *help)
 	cases++;
 }
 
+
+/* ---- the About and Supporters pages ---------------------------------- */
+
+/* the layer's font RAM and palette as the trace wrote them: the font from
+   the ROM font (osd_font.mem = font8x16.h), the palette from the menu's
+   scheme (committed when the menu first opened); model_sync() applies the
+   trace so far (call it before every trace reset) */
+static unsigned char m_font[256 * 16];
+static unsigned char m_pal[16][4];
+
+static void model_init(void)
+{
+	static const unsigned long scheme[8] = {
+		0x000000, 0xF0F0F0, 0x1478E6, 0x3C5A9A, 0xF0C828, 0x3CC85A, 0xE03C3C, 0x000000
+	};
+	unsigned i;
+	memcpy(m_font, font8x16, sizeof m_font);
+	for (i = 0; i < 16; i++) {
+		unsigned long c = i < 8 ? scheme[i] : 0;
+		m_pal[i][0] = i == OSD2_C_CLEAR ? OSD2_VIDEO << 6 : 0;
+		m_pal[i][1] = (unsigned char)(c >> 16);
+		m_pal[i][2] = (unsigned char)(c >> 8);
+		m_pal[i][3] = (unsigned char)c;
+	}
+}
+
+/* the out bytes of each OSD frame of the trace: fn(bytes, n) */
+static unsigned char fb[8192];
+static void frames(void (*fn)(const unsigned char *b, unsigned n))
+{
+	const char *p = mock_trace();
+	while (*p) {
+		const char *e = strchr(p, '\n');
+		unsigned n = 0, v, cs;
+		int k;
+		if (!e)
+			e = p + strlen(p);
+		if (sscanf(p, "%x%n", &cs, &k) == 1 && cs == 0x20) {
+			const char *q = p + k;
+			while (q < e && sscanf(q, " %2x%n", &v, &k) == 1 && n < sizeof fb) {
+				fb[n++] = (unsigned char)v;
+				q += k;
+			}
+			fn(fb, n);
+		}
+		p = *e ? e + 1 : e;
+	}
+}
+
+static void model_frame(const unsigned char *b, unsigned n)
+{
+	unsigned i;
+	if (n >= 3 && b[0] == OSD2_CMD_FONT) {
+		unsigned adr = ((b[1] & 0x0f) << 8) | b[2];
+		for (i = 3; i < n; i++)
+			m_font[(adr + i - 3) & 0xfff] = b[i];
+	} else if (n >= 2 && b[0] == OSD2_CMD_PAL) {
+		for (i = 2; i + 3 < n + 0 && b[1] + (i - 2) / 4 < 16; i += 4)
+			memcpy(m_pal[b[1] + (i - 2) / 4], b + i, 4);
+	}
+}
+
+/* the trace emptied, the TIMER kept (mock_reset sets it to 0: the page's
+   frame timer would wait for it) */
+unsigned short hosttest_timer_peek(void);
+static void model_sync(void)
+{
+	unsigned t = hosttest_timer_peek();
+	frames(model_frame);
+	trace_reset();
+	hosttest_advance(t);
+}
+
+/* the SPI bytes of the trace (each frame's out bytes, the command included) */
+static unsigned spi_n, win_n;
+static void count_frame(const unsigned char *b, unsigned n)
+{
+	spi_n += n;
+	if (n && b[0] == OSD2_CMD_CFG)
+		win_n++;
+}
+static unsigned trace_spi_bytes(void)
+{
+	spi_n = win_n = 0;
+	frames(count_frame);
+	return spi_n;
+}
+
+static unsigned char snap_chr[UI_ROWS][OSD2_COLS], snap_atr[UI_ROWS][OSD2_COLS];
+static unsigned char snap_font[256 * 16], snap_pal[16][4];
+static void snapshot(void)
+{
+	memcpy(snap_chr, osd2_chr, sizeof snap_chr);
+	memcpy(snap_atr, osd2_atr, sizeof snap_atr);
+	memcpy(snap_font, m_font, sizeof snap_font);
+	memcpy(snap_pal, m_pal, sizeof snap_pal);
+}
+static int same_cells(void)
+{
+	return !memcmp(snap_chr, osd2_chr, sizeof snap_chr) && !memcmp(snap_atr, osd2_atr, sizeof snap_atr);
+}
+
+/* UI_PRETTY=1: a page's cells with its glyphs as text (logo #, stars . : *,
+   the copper bar =, the dithers - + %) */
+static void pretty(const char *name, int about)
+{
+	unsigned r, c;
+	if (!getenv("UI_PRETTY"))
+		return;
+	printf("---- %s\n", name);
+	for (r = 0; r < UI_ROWS; r++) {
+		for (c = 0; c < UI_COLS; c++) {
+			unsigned char ch = osd2_chr[r][c];
+			unsigned s = ch >= 0xCA ? ch - 0xCAu + 64 : (ch >= 0x80 && ch < 0xC0) ? ch - 0x80u : 999;
+			char o = (ch >= 0x20 && ch < 0x7f) ? (char)ch : '^';
+			if (s < 999 && about)       /* 55 logo, 16 far, 16 mid, 8 near, the shade */
+				o = s < 55 ? '#' : s < 71 ? '.' : s < 87 ? ':' : s < 95 ? '*' : '=';
+			else if (s < 3)
+				o = "-+%"[s];
+			putchar(o);
+		}
+		putchar('\n');
+	}
+}
+
+/* About: a space or a star (slots 55-94: after the logo's 55 glyphs) */
+static int sky(unsigned char ch)
+{
+	unsigned i;
+	if (ch == ' ')
+		return 1;
+	for (i = OSD_LOGO_GLYPHS; i < OSD_LOGO_GLYPHS + 40; i++)
+		if (ch == ui_fx_code(i))
+			return 1;
+	return 0;
+}
+
+static void test_pages(void)
+{
+	unsigned i, k, steps, mx, sum, cost;
+	unsigned char p0[16][4], vol;
+	int moved, ontext;
+	static unsigned char first[UI_ROWS][OSD2_COLS];
+
+	/* the menu opens: its glyphs over the ROM font, its palette */
+	model_init();
+	trace_reset();
+	key(KEY_MENU);
+	key(KEY_F1);
+	check("About selected", go("About"), 15);
+	model_sync();
+	snapshot();
+
+	/* ---- About: the first frame ---- */
+	key(KEY_ENTER);
+	check("About: the page", ui_focus, UI_F_PAGE);
+	check("About: the menu stays open", ui_open_now, 1);
+	{
+		const char *t = mock_trace();
+		const char *f = strstr(t, "20 3c 08 00 "), *pal = strstr(t, "20 4c 08 "), *c = strstr(t, "20 2c ");
+		check("About: the logo's first glyph to 0x80", f != NULL, 1);
+		check("About: glyphs, palette, then the cells", f && pal && c && f < pal && pal < c, 1);
+	}
+	model_sync();
+	for (k = 0, i = 0; i < OSD_LOGO_GLYPHS; i++)
+		k += !memcmp(m_font + ui_fx_code(i) * 16, osd_logo_glyph[i], 16);
+	check("About: the 55 logo glyphs in their slots", k, OSD_LOGO_GLYPHS);
+	check("About: the icons (0xC0-0xC9) untouched", !memcmp(m_font + 0xC0 * 16, snap_font + 0xC0 * 16, 10 * 16), 1);
+	check("About: the menu's glyphs (0x00-0x7F) untouched", !memcmp(m_font, snap_font, 0x80 * 16), 1);
+	check("About: the logo row 1, col 18 = logo glyph 0", osd2_chr[1][18], ui_fx_code(osd_logo_map[0][0]));
+	check_str("About: the title on the bar", cells(4, 29, 5), "About");
+	check_str("About: the credits", cells(6, 19, 26), "Minimig AGA by Rok Krajnc,");
+	check_str("About: the cut credits back (TG68K)", cells(10, 15, 33), "TG68K softcore by Tobias Gubener.");
+	check_str("About: the cut credits back (logo)", cells(13, 8, 48), "Minimig logo based on a design by Loriano Pagni.");
+	check_str("About: the licence", cells(16, 13, 37), "GNU General Public License version 3.");
+	check_str("About: the versions", cells(17, 11, 42), "Core 2026-10-27   Firmware 2026-10-28-12-0");
+	check("About: a name yellow", osd2_atr[6][34], OSD2_ATTR(OSD2_C_YELLOW, OSD2_C_BLACK));
+	check_str("About: the help", cells(18, 1, 9), "Esc back ");
+	check("About: the bar's centre band (entry 8)", osd2_atr[4][31] >> 4, 8);
+	check("About: the bar's edge band (entry 15)", osd2_atr[4][0] >> 4, 15);
+	screen("about");
+	pretty("about, the first frame", 1);
+	memcpy(first, osd2_chr, sizeof first);
+
+	/* ---- About: the effect, a step per UI_T_FX + 1 counts ---- */
+	memcpy(p0, m_pal, sizeof p0);
+	wait_counts(UI_T_FX);
+	check("About: no step before 3 counts", trace_spi_bytes(), 0);
+	wait_counts(1);
+	trace_spi_bytes();
+	check("About: a step after 3 counts (one window commit)", win_n, 1);
+	model_sync();
+	check("About: the copper moved one step", memcmp(p0[8], m_pal[8], 4) != 0, 1);
+	/* 32 steps later entry 8 + k holds what 8 + k - 1 held: the colours
+	   flow outward one band per 32 steps */
+	memcpy(p0, m_pal, sizeof p0);
+	for (i = 0; i < 32; i++) {
+		wait_counts(UI_T_FX + 1);
+		model_sync();
+	}
+	for (k = 0, i = 9; i < 16; i++)
+		k += !memcmp(m_pal[i], p0[i - 1], 4);
+	check("About: 32 steps rotate the copper one band", k, 7);
+	check("About: the menu's colours (0-7) untouched", !memcmp(m_pal, snap_pal, 8 * 4), 1);
+	/* the cost of a step, and the stars: they move, never onto the text */
+	mx = sum = 0;
+	moved = ontext = 0;
+	for (steps = 0; steps < 400; steps++) {
+		wait_counts(UI_T_FX + 1);
+		k = trace_spi_bytes();
+		model_sync();
+		sum += k;
+		if (k > mx)
+			mx = k;
+		for (i = 0; i < UI_ROWS * OSD2_COLS; i++) {
+			unsigned r = i / OSD2_COLS, c = i % OSD2_COLS;
+			if (osd2_chr[r][c] != first[r][c]) {
+				moved = 1;
+				if (!sky(first[r][c]) || !sky(osd2_chr[r][c]) || r >= UI_HELP_ROW || r == 4)
+					ontext++;
+			}
+		}
+	}
+	check("About: the stars move", moved, 1);
+	check("About: never on the logo, the text, the bar or the help", ontext, 0);
+	printf("     About: SPI bytes per step: max %u, mean %u\n", mx, sum / steps);
+	/* ~65 CPU cycles per SPI byte (plan 3.8): < 50 k cycles per step */
+	cost = mx * 65;
+	check("About: a step under 50 k cycles of SPI (max bytes x 65)", cost < 50000, 1);
+	check("About: a step at most 640 SPI bytes", mx <= 640, 1);
+
+	/* ---- About: Esc back, the menu as it was: cells, glyphs, palette ---- */
+	key(KEY_ESC);
+	check("About Esc: the list", ui_focus, UI_F_LIST);
+	check("About Esc: on About", sel_row(), 15);
+	model_sync();
+	check("About Esc: the menu's cells as before", same_cells(), 1);
+	check("About Esc: the font as before (every glyph)", !memcmp(m_font, snap_font, sizeof m_font), 1);
+	check("About Esc: the icons as before", !memcmp(m_font + 0xC0 * 16, snap_font + 0xC0 * 16, 10 * 16), 1);
+	check("About Esc: the palette as before", !memcmp(m_pal, snap_pal, sizeof m_pal), 1);
+	pass(3);
+	check("About Esc: no step after it", trace_spi_bytes(), 0);
+	/* Left, Enter and Space close it too; F12 closes the menu; F3 a category */
+	key(KEY_ENTER);
+	key(KEY_LEFT);
+	check("About Left: the list", ui_focus == UI_F_LIST && same_cells(), 1);
+	key(KEY_ENTER);
+	key(KEY_ENTER);
+	check("About Enter: the list", ui_focus == UI_F_LIST && same_cells(), 1);
+	key(KEY_ENTER);
+	key(KEY_SPACE);
+	check("About Space: the list", ui_focus == UI_F_LIST && same_cells(), 1);
+	key(KEY_ENTER);
+	key(KEY_UP);
+	key(KEY_RIGHT);
+	check("About Up/Right: still the page", ui_focus, UI_F_PAGE);
+	key(KEY_F3);
+	check("About F3: System's list", ui_tab == UI_TAB_SYSTEM && ui_focus == UI_F_LIST, 1);
+	key(KEY_F1);
+	go("About");
+	key(KEY_ENTER);
+	wait_counts(10);
+	model_sync();
+	key(KEY_MENU);
+	check("About F12: closed", ui_open_now, 0);
+	model_sync();
+	check("About F12: the font as before", !memcmp(m_font, snap_font, sizeof m_font), 1);
+	key(KEY_MENU);
+	model_sync();
+	check("About F12, opened again: the palette as before", !memcmp(m_pal, snap_pal, sizeof m_pal), 1);
+
+	/* ---- Supporters ---- */
+	key(KEY_F1);
+	check("Supporters selected", go("Supporters"), 16);
+	model_sync();
+	snapshot();
+	key(KEY_ENTER);
+	check("Supporters: the page", ui_focus, UI_F_PAGE);
+	model_sync();
+	check_str("Supporters: the title", cells(0, 27, 9), "Thanks to");
+	check_str("Supporters: the first name", cells(2, 2, 15), "Jens Schoenfeld");
+	check_str("Supporters: the longest name", cells(5, 2, 23), "Juan Jose Velez Ramirez");
+	check_str("Supporters: column 2", cells(2, 26, 12), "Dirk Vroomen");
+	check_str("Supporters: the last name", cells(9, 46, 10), "Tad Watson");
+	check_str("Supporters: the other contributors", cells(11, 19, 25), "+ all other contributors.");
+	check_str("Supporters: the donation line", cells(17, 3, 28), "Donate: paypal.me/robinsonb5");
+	check("Supporters: a name on entry 14, the plasma behind", osd2_atr[2][2] & 15, 14);
+	check("Supporters: the plasma's colours behind the text", (osd2_atr[2][2] >> 4) >= 8 && (osd2_atr[2][2] >> 4) <= 13, 1);
+	check("Supporters: the icons untouched", !memcmp(m_font + 0xC0 * 16, snap_font + 0xC0 * 16, 10 * 16), 1);
+	check_str("Supporters: the help", cells(18, 1, 26), "Down the message  Esc back");
+	screen("supporters");
+	pretty("supporters, the first frame", 0);
+	memcpy(first, osd2_chr, sizeof first);
+	/* the plasma: no cell changes, the palette cycles: 16 steps on, entry
+	   8 + k holds what 8 + k + 1 held */
+	memcpy(p0, m_pal, sizeof p0);
+	for (i = 0; i < 16; i++) {
+		wait_counts(UI_T_FX + 1);
+		model_sync();
+	}
+	for (k = 0, i = 8; i < 13; i++)
+		k += !memcmp(m_pal[i], p0[i + 1], 4);
+	check("Supporters: 16 steps cycle the plasma one colour", k, 5);
+	check("Supporters: the names faded in part (entry 14 brighter)", m_pal[14][1] > p0[14][1], 1);
+	mx = sum = 0;
+	for (steps = 0; steps < 200; steps++) {
+		wait_counts(UI_T_FX + 1);
+		k = trace_spi_bytes();
+		model_sync();
+		sum += k;
+		if (k > mx)
+			mx = k;
+	}
+	check("Supporters: no cell written by the effect", !memcmp(first, osd2_chr, sizeof first), 1);
+	printf("     Supporters: SPI bytes per step: max %u, mean %u\n", mx, sum / steps);
+	check("Supporters: a step under 10 k cycles of SPI (max bytes x 65)", mx * 65 < 10000, 1);
+	check("Supporters: faded in: the names white", m_pal[14][1] == 0xF0 && m_pal[14][2] == 0xF0 && m_pal[14][3] == 0xF0, 1);
+	check("Supporters: faded in: the rest yellow", m_pal[15][1] == 0xF0 && m_pal[15][2] == 0xC8 && m_pal[15][3] == 0x28, 1);
+	/* Down: the message; Up: the names again */
+	key(KEY_DOWN);
+	check("Supporters Down: still the page", ui_focus, UI_F_PAGE);
+	check_str("Supporters Down: the message", cells(2, 1, 31), "I'm very grateful to these peop");
+	check_str("Supporters Down: its last line", cells(9, 1, 60), "on this screen, or the equivalent screen of future projects.");
+	check_str("Supporters Down: the help", cells(18, 1, 22), "Up the names  Esc back");
+	screen("supporters_msg");
+	pretty("supporters, the message", 0);
+	model_sync();
+	key(KEY_UP);
+	check_str("Supporters Up: the names", cells(2, 2, 15), "Jens Schoenfeld");
+	key(KEY_ESC);
+	check("Supporters Esc: the list", ui_focus, UI_F_LIST);
+	model_sync();
+	check("Supporters Esc: the menu's cells as before", same_cells(), 1);
+	check("Supporters Esc: the font as before", !memcmp(m_font, snap_font, sizeof m_font), 1);
+	check("Supporters Esc: the palette as before", !memcmp(m_pal, snap_pal, sizeof m_pal), 1);
+
+	/* a toast over a page: in its help field, then the page's help again */
+	key(KEY_ENTER);
+	vol = config.audio.volume;
+	key(KEY_LSHIFT);
+	key(KEY_KPPLUS);
+	key(KEY_LSHIFT | KEY_UPSTROKE);
+	check_str("page toast: in the help field", cells(18, 1, 4), "vol ");
+	config.audio.volume = vol;          /* (the later cases count from it) */
+	check("page toast: the page stays", ui_focus, UI_F_PAGE);
+	wait_counts(UI_T_TOAST + 1);
+	check_str("page toast: gone, the page's help", cells(18, 1, 8), "Down the");
+	/* an error while a page shows: the error page, the menu's glyphs back */
+	ui_error_show(0);
+	model_sync();
+	check("page error: the error page", ui_focus, UI_F_ERROR);
+	check("page error: the font as before", !memcmp(m_font, snap_font, sizeof m_font), 1);
+	key(KEY_ENTER);
+	check("page error: Enter closes", ui_open_now, 0);
+	ClearError(ERROR_ALL);
+	trace_reset();
+	calls_clear();
+}
+
 int main(int argc, char **argv)
 {
 	int i;
@@ -1056,22 +1425,8 @@ int main(int argc, char **argv)
 	check("F12 in a dialog: closed", ui_open_now, 0);
 	check_has("F12 in a dialog: cancelled, no reset", calls, "OsdReset", 0);
 
-	/* ---- About: hands over to the classic page (until its own port) ---- */
-	key(KEY_MENU);
-	key(KEY_F1);
-	check("About selected", go("About"), 15);
-	calls_clear();
-	trace_reset();
-	key(KEY_ENTER);
-	{
-		char want[32];
-		snprintf(want, sizeof want, "classic(%d,0);", MENU_ABOUT1);
-		check_has("classic: the About page", calls, want, 1);
-	}
-	check("classic: ui_legacy_active", ui_legacy_active, 1);
-	check("classic: the new menu closed", ui_open_now, 0);
-	check_has("classic: the layer off", mock_trace(), WIN_MENU_OFF, 1);
-	ui_legacy_active = 0;           /* menu.c's HandleUI does this when the classic menu closes */
+	/* ---- About and Supporters: pages of their own (plan 3.8) ---- */
+	test_pages();
 	/* no other hand-over is left: no item of any category is "classic" */
 	{
 		int n = 0;

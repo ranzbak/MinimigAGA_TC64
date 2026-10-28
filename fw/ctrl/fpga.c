@@ -214,6 +214,8 @@ unsigned char GetFPGAStatus(void)
 // What the core told us about itself, 0 if it is too old to be asked.  See
 // CORE_CAPS_* in fpga.h and userio_osd.v's rtl_ver.
 unsigned char core_caps = 0;
+unsigned char core_version[4];
+const char fw_version[] = MM_FIRMWARE_VERSION;
 
 void fpga_init() {
 	unsigned long time __attribute__((unused)) = GetTimer(0);
@@ -245,6 +247,10 @@ void fpga_init() {
 		osd2_ver[i] = SPI_reply();
 	DisableOsd();
 	core_caps = (ver_magic == (char)0xA4) ? ver_caps : 0;
+	core_version[0] = (unsigned char)ver_beta;
+	core_version[1] = (unsigned char)ver_major;
+	core_version[2] = (unsigned char)ver_minor;
+	core_version[3] = (unsigned char)ver_minion;
 	SPIN; SPIN; SPIN; SPIN;
 	if (osd2_detect(ver_magic == (char)0xA4, osd2_ver))
 		osd2_init(OSD2_ATTR(OSD2_C_WHITE, OSD2_C_BLACK));   // the window off, the cell RAM to be cleared

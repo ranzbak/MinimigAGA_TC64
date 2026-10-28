@@ -161,7 +161,40 @@ enum { UI_TAB_MAIN, UI_TAB_STORAGE, UI_TAB_SYSTEM, UI_TAB_VIDEO, UI_TAB_ACCEL };
 extern const struct ui_tab ui_tabs[UI_TABS];
 
 /* focus */
-enum { UI_F_LIST, UI_F_SIDEBAR, UI_F_DIALOG, UI_F_FILESEL, UI_F_ERROR };
+enum { UI_F_LIST, UI_F_SIDEBAR, UI_F_DIALOG, UI_F_FILESEL, UI_F_ERROR, UI_F_PAGE };
+
+/* Main's About and Supporters pages (ui_about.c, ui_supporters.c; plan
+   3.8): the whole window (rows 0-17 the page, 18-19 the help field), an
+   effect animated from ui_tick() every UI_T_FX, drawn through the shadow
+   (cells that change) and palette entries 8-15 (the menu uses 0-7).
+   Esc, Left, Enter or Space back to Main's list, F1-F5 a category, F12
+   closes; a page may take other keys first (Supporters: Up/Down its other
+   view).  Its glyphs go into font slots the menu does not use (ui_fx_code)
+   when it opens, and the ROM font (font8x16.h) back into them when it
+   ends, with the menu's palette: the menu after a page is the menu before
+   it, cell, glyph and colour. */
+enum { UI_PAGE_ABOUT, UI_PAGE_SUPPORTERS };
+void ui_page_open(unsigned char which);      /* an item's act */
+struct ui_page {
+	void (*open)(void);           /* glyphs, palette (committed), rows 0-17 into the shadow */
+	void (*step)(void);           /* one frame of the effect */
+	int (*key)(unsigned char c);  /* the page's own keys (1: taken), or NULL */
+	const char *(*help)(void);    /* the help field's text */
+	unsigned char slots;          /* the glyph slots 0..slots-1 it uploads */
+};
+extern const struct ui_page ui_about, ui_supporters;
+/* the frame time: GetTimer(2) fires after 3 TIMER counts, 17.4 ms (57 Hz;
+   the layer latches the palette at its next frame, 50 or 60 Hz) */
+#define UI_T_FX 2
+/* glyph slots: the font codes the menu leaves alone, 0x80-0xBF and, past
+   the icons (0xC0-0xC9), 0xCA-0xFF */
+#define UI_FX_SLOTS 118
+unsigned char ui_fx_code(unsigned slot);
+/* n glyphs (16 rows each) into slots slot.. (split around the icons) */
+void ui_fx_font(unsigned slot, unsigned n, const unsigned char *rows);
+/* xorshift32: the effects' random numbers (deterministic: the goldens) */
+unsigned long ui_fx_rand(void);
+void ui_fx_seed(unsigned long seed);
 
 /* the engine, once per main-loop pass (menu.c HandleUI) */
 void ui_handle(void);

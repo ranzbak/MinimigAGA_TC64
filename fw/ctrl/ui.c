@@ -4,6 +4,7 @@
  * written once, so redrawing what is already there marks nothing and a
  * cursor move costs the SPI bytes of the cells it changed.  All state is in
  * bss (the stack has ~1.3 KB spare). */
+#include <stdio.h>
 #include <string.h>
 
 #include "hardware.h"
@@ -19,6 +20,7 @@
 #include "menu_model.h"
 #include "errors.h"
 #include "osd_icons.h"
+#include "font8x16.h"               /* the ROM font: a page's glyph slots back to it */
 #include "ui.h"
 
 extern unsigned char drives;
@@ -78,6 +80,10 @@ static unsigned long toast_timer, status_timer;
 static unsigned char sys_mem, sys_chip;     /* System as it was entered */
 static unsigned char pending, pending_into; /* after a leaving prompt: a category (into its list) or PENDING_CLOSE */
 static signed char err_page;                /* the error page's category (errors.h) */
+static const struct ui_page *page;          /* the page shown (UI_F_PAGE) */
+static unsigned long page_timer;
+static unsigned long fx_rnd = 1;
+#define UI_FX_BENCH 256             /* DebugMode: steps timed when a page opens */
 
 static struct {
 	const char *title, *l1, *l2;
@@ -414,6 +420,8 @@ static const char *help_text(void)
 		"Choose a CD image (ISO, or CUE) for this CD-ROM slot. Backspace goes up, a letter jumps."
 	};
 	const struct ui_item *it;
+	if (ui_focus == UI_F_PAGE)
+		return page->help();
 	if (ui_focus == UI_F_LIST && ui_edit)
 		return hint_edit;
 	if (ui_hints_on && ui_focus == UI_F_SIDEBAR)
@@ -572,6 +580,10 @@ static void draw_error_row(unsigned i)
 void ui_draw_all(void)
 {
 	unsigned i;
+	if (ui_focus == UI_F_PAGE) {
+		ui_draw_help();         /* the rest is the page's (drawn once, then its effect) */
+		return;
+	}
 	draw_sidebar();
 	draw_lines();
 	draw_header();
@@ -584,6 +596,119 @@ void ui_draw_all(void)
 			ui_draw_item(i);
 	}
 	ui_draw_help();
+}
+
+/* ------------------------------------------------------------------ */
+/* the About and Supporters pages (ui.h)                              */
+/* ------------------------------------------------------------------ */
+
+unsigned char ui_fx_code(unsigned slot)
+{
+	return (unsigned char)(slot < 64 ? 0x80 + slot : 0xCA + (slot - 64));
+}
+
+void ui_fx_font(unsigned slot, unsigned n, const unsigned char *rows)
+{
+	while (n) {
+		/* the run of slots with consecutive codes: to slot 63, then to the end */
+		unsigned k = slot < 64 ? 64 - slot : UI_FX_SLOTS - slot;
+		if (k > n)
+			k = n;
+		osd2_font(ui_fx_code(slot), k, rows);
+		rows += k * 16;
+		slot += k;
+		n -= k;
+	}
+}
+
+unsigned long ui_fx_rand(void)
+{
+	/* 32 bits on any host (the goldens are the same for -m32 and LP64) */
+	fx_rnd ^= (fx_rnd << 13) & 0xffffffffUL;
+	fx_rnd ^= fx_rnd >> 17;
+	fx_rnd ^= (fx_rnd << 5) & 0xffffffffUL;
+	return fx_rnd;
+}
+
+void ui_fx_seed(unsigned long seed)
+{
+	fx_rnd = seed ? seed : 1;
+}
+
+void ui_page_open(unsigned char which)
+{
+	page = which == UI_PAGE_ABOUT ? &ui_about : &ui_supporters;
+	ui_focus = UI_F_PAGE;
+	ui_edit = 0;
+	/* the glyphs and the palette first: the menu's cells use neither */
+	page->open();
+	if (DebugMode) {
+		/* the cost of a step on the board (plan Phase 7): UI_FX_BENCH steps
+		   back to back, sent; TIMER counts of 5.804 ms on the UART (a step
+		   in cycles: counts x 5.804 ms x the CPU clock / UI_FX_BENCH) */
+		unsigned short t0 = TIMER;
+		unsigned i;
+		for (i = 0; i < UI_FX_BENCH; i++) {
+			page->step();
+			osd2_flush();
+		}
+		t0 = (unsigned short)(TIMER - t0);
+		printf(which == UI_PAGE_ABOUT ? "About" : "Supporters");
+		printf(": 256 steps, TIMER counts 0x");
+		printf("%X", (unsigned int)t0);
+		printf("\n");
+	}
+	page_timer = GetTimer(UI_T_FX);
+	dirty = 1;                      /* the help field (ui_draw_all) */
+}
+
+/* the page's glyph slots back to the ROM font, the menu's palette; with
+   menu: the menu redrawn first (on screen before its glyphs change) and the
+   palette committed (else the window goes off next) */
+static void page_end(int menu)
+{
+	unsigned n = page->slots;
+	page = 0;
+	ui_focus = UI_F_LIST;
+	if (menu) {
+		ui_draw_all();
+		osd2_flush();
+	}
+	ui_fx_font(0, n < 64 ? n : 64, (const unsigned char *)font8x16 + 0x80 * 16);
+	if (n > 64)
+		ui_fx_font(64, n - 64, (const unsigned char *)font8x16 + 0xCA * 16);
+	osd2_pal_default();
+	if (menu)
+		osd2_commit(1, UI_SCALE, UI_X0, UI_Y0, UI_COLS, UI_ROWS);
+	dirty = 1;
+}
+
+static void goto_tab(unsigned char t, unsigned char into);
+
+static void key_page(unsigned char c)
+{
+	if (page->key && page->key(c))
+		return;
+	switch (c) {
+	case KEY_ESC:
+	case KEY_LEFT:
+	case KEY_ENTER:
+	case KEY_SPACE:
+		page_end(1);
+		return;
+	}
+	if (c >= KEY_F1 && c <= KEY_F5) {
+		page_end(1);
+		goto_tab(c - KEY_F1, 1);
+	}
+}
+
+static void page_tick(void)
+{
+	if (!CheckTimer(page_timer))
+		return;
+	page_timer = GetTimer(UI_T_FX);
+	page->step();
 }
 
 /* ------------------------------------------------------------------ */
@@ -657,6 +782,8 @@ static void ui_open(void)
 
 void ui_close(void)
 {
+	if (page)
+		page_end(0);
 	ui_open_now = 0;
 	popup = 0;
 	toast_on = 0;
@@ -708,12 +835,14 @@ void ui_classic(unsigned char page, unsigned char sub)
 	menu_classic_open(page, sub);
 }
 
-void ui_error_show(int page)
+void ui_error_show(int pg)
 {
 	started = 1;                    /* (ui_handle's first pass would close it) */
 	if (!ui_open_now)
 		ui_open();
-	err_page = (signed char)(page < 0 ? 0 : page > ERROR_MAX ? ERROR_MAX : page);
+	else if (ui_focus == UI_F_PAGE)
+		page_end(1);
+	err_page = (signed char)(pg < 0 ? 0 : pg > ERROR_MAX ? ERROR_MAX : pg);
 	ui_focus = UI_F_ERROR;
 	ui_edit = 0;
 	popup = 0;
@@ -1216,6 +1345,10 @@ static void key_open(unsigned char c)
 		request_close();
 		return;
 	}
+	if (ui_focus == UI_F_PAGE) {
+		key_page(c);
+		return;
+	}
 	if (ui_focus == UI_F_DIALOG) {
 		key_dialog(c);
 		return;
@@ -1348,6 +1481,10 @@ void ui_tick(void)
 	}
 	if (!ui_open_now)
 		return;
+	if (ui_focus == UI_F_PAGE) {
+		page_tick();            /* the page has the window: no temperature, no live help */
+		return;
+	}
 	if (ui_focus == UI_F_FILESEL)
 		scroll_tick();
 	else if (ui_tab == UI_TAB_MAIN &&
