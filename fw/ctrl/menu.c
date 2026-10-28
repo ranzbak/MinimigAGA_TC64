@@ -325,18 +325,6 @@ static void hdf_select(int slot)
     SelectFile(mm_hdf[slot].enabled == HDF_CDROM ? "ISOCUE" : "HDF", SCAN_DIR | SCAN_LFN, MENU_HARDFILE_SELECTED, hdf_page(slot));
 }
 
-// The classic menu, opened by the new one (ui.c) at one of its pages for
-// what the new one does not do yet.  HandleUI below runs this menu until it
-// closes, then the new one again.
-void menu_classic_open(unsigned char page, unsigned char sub)
-{
-    fs_pFileExt = NULL;     // the directory table holds the new menu's 16 entries: scan again
-    OsdClear();
-    OsdShow(DISABLE_KEYBOARD);
-    menustate = page;
-    menusub = sub;
-}
-
 static void HandleUI_legacy(void);
 
 // The OSD menu, once per main-loop pass: the new one on the 720p text layer

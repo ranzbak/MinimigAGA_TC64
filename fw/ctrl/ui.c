@@ -712,7 +712,7 @@ static void page_tick(void)
 }
 
 /* ------------------------------------------------------------------ */
-/* open, close, toasts, the classic menu                              */
+/* open, close, toasts                                                */
 /* ------------------------------------------------------------------ */
 
 /* the keyboard (and joystick 2) to the OSD or back to the Amiga; the
@@ -816,23 +816,6 @@ void ui_toast(const char *text)
 	if (!popup)
 		osd2_commit(1, UI_SCALE, UI_TOAST_X0, UI_TOAST_Y0, UI_TOAST_COLS, 1);
 	popup = 1;
-}
-
-static void quiet_close(void)
-{
-	if (ui_open_now || popup)
-		osd2_disable();
-	ui_open_now = 0;
-	popup = 0;
-	toast_on = 0;
-	fs_window_ok = 0;               /* the classic menu scans 8 entries */
-	ui_legacy_active = 1;
-}
-
-void ui_classic(unsigned char page, unsigned char sub)
-{
-	quiet_close();
-	menu_classic_open(page, sub);
 }
 
 void ui_error_show(int pg)

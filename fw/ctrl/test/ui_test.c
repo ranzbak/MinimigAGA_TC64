@@ -244,7 +244,6 @@ void SanityCheck(void) { logc("SanityCheck"); }
 static int debug_draws;
 void _showdebugmessages(void) { debug_draws++; }
 void debug2_show(int on) { logc("debug2_show(%d)", on); }
-void menu_classic_open(unsigned char page, unsigned char sub) { logc("classic(%d,%d)", page, sub); }
 /* hdd.c, config.c: the Storage tab's hardfile flow (menu_model.c mm_hdf_*) */
 int partitioncount = 1;
 static unsigned char hdf_filetype = HDF_FILETYPE_RDB;

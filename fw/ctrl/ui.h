@@ -24,13 +24,15 @@
  *
  * Over the panel: one dialog at a time (a red box over rows 6-13), the
  * file selector (16 entries in the item rows, the selected long name
- * scrolls), or the error page (menu.c ShowError).  With the menu closed a
- * toast shows as a one-row window of its own.
+ * scrolls), or the error page (menu.c ShowError).  Main's About and
+ * Supporters are pages over the whole window (below).  With the menu
+ * closed a toast shows as a one-row window of its own.
  *
  * menu.c's HandleUI() runs ui_handle() on a core with the text layer
- * (osd2_caps) unless the classic menu was asked for (ui_legacy_active:
- * Main's About and Supporters still open the classic pages, until their
- * own port); on any other core the classic menu is all there is.
+ * (osd2_caps); on any other core the classic menu is all there is.  (Its
+ * ui_legacy_active, the hand-over to the classic pages About and
+ * Supporters had, is never set since they are native; Phase 6 deletes the
+ * classic menu with it.)
  *
  * Keys (Paul, 2026-10-27; joystick: Up/Down/Left/Right, fire = Enter,
  * fire 2 = the menu button, which sends F12's code):
@@ -206,7 +208,8 @@ void ui_draw_all(void);
 void ui_draw_item(unsigned i);
 void ui_draw_help(void);
 
-/* set while the classic menu runs instead (menu.c clears it when it closes) */
+/* menu.c HandleUI: the classic menu instead (nothing sets it since About
+   and Supporters are native; Phase 6 deletes it with the classic menu) */
 extern unsigned char ui_legacy_active;
 /* the error page (menu.c ShowError / ErrorMessage on a core with the
    layer): the menu opens on it at error category `page` (errors.h) */
@@ -225,8 +228,6 @@ void ui_dialog(const char *title, const char *l1, const char *l2,
                const char *const *buttons, unsigned char n, unsigned char sel,
                void (*done)(unsigned char button));
 void ui_close(void);
-/* hand over to the classic menu at one of its pages (menu.h MENU_*) */
-void ui_classic(unsigned char page, unsigned char sub);
 /* the configuration files found when the menu opened (bit = slot) */
 extern unsigned char ui_cfg_mask;
 /* Video: the RTG screen is on (osd2_rtg_active), read when the category
@@ -237,8 +238,5 @@ extern unsigned char ui_rtg;
    sidebar and list, cleared by the next key: then the item's help);
    ui_edit: the focused value item is being changed (EDIT, list focus) */
 extern unsigned char ui_open_now, ui_tab, ui_focus, ui_hints_on, ui_edit;
-
-/* provided by menu.c: the classic menu, opened at a page */
-void menu_classic_open(unsigned char page, unsigned char sub);
 
 #endif
