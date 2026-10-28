@@ -619,6 +619,8 @@ unit osd2_lanes osd2_test src osd2.c 's/k == K_CHR ? OSD2_TXT_CHARS : OSD2_TXT_A
 unit osd2_skiprow osd2_test src osd2.c 's/if (!k)$/if (!k || r > 2)/' "FAIL init flush: frames"
 # no compare: an unchanged redraw is sent again
 unit osd2_nocompare osd2_test src osd2.c 's/if ((kinds \& K_CHR) \&\& osd2_chr\[row\]\[col\] != ch)/if (kinds \& K_CHR)/' "FAIL unchanged redraw: bytes"
+# osd2_char marks a cell that does not change
+unit osd2_charnocmp osd2_test src osd2.c '/^void osd2_char/,/^}/s/^\tif (osd2_chr\[row\]\[col\] != ch) {$/\tif (1) {/' "FAIL osd2_char unchanged: bytes"
 # the commit sends the palette but never the window
 unit osd2_nowin osd2_test src osd2.c 's/^\tsend_win();$/\t;/' "FAIL commit: entry 5 blend"
 
@@ -706,7 +708,7 @@ unit ui_fxmenu ui_test src ui.c '/^void ui_draw_all(void)/,/^}/s/^\tif (ui_focus
 # Esc does not close a page
 unit ui_fxnoesc ui_test src ui.c '/^static void key_page/,/^}/s/^\tcase KEY_ESC:$/\tcase 0xfe:/' "FAIL About Esc: the list"
 # stars over the text
-unit ui_fxstars ui_test src ui_about.c 's/if (blank(r, c - 2) \&\& blank(r, c - 1) \&\& blank(r, c) \&\& blank(r, c + 1) \&\& blank(r, c + 2))/if (r != 99)/' "FAIL About: never on the logo, the text, the bar or the help"
+unit ui_fxstars ui_test src ui_about.c 's/sky\[r\]\[c\] = r != R_BAR \&\& blank(r, c - 2)/sky[r][c] = r != R_BAR || blank(r, c - 2)/' "FAIL About: never on the logo, the text, the bar or the help"
 # the copper never turns
 unit ui_fxcopper ui_test src ui_about.c '/^static void about_step/,/^}/s/^\tphase++;$/\t;/' "FAIL About: the copper moved one step"
 # a step redraws the whole page (the per-step bound)

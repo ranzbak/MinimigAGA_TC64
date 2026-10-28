@@ -115,6 +115,9 @@ void osd2_put(unsigned row, unsigned col, const char *text, unsigned char attr);
 void osd2_putn(unsigned row, unsigned col, unsigned n, const char *text, unsigned char attr);
 void osd2_fill(unsigned row, unsigned col, unsigned n, unsigned char ch, unsigned char attr);
 void osd2_attr(unsigned row, unsigned col, unsigned n, unsigned char attr);
+/* one cell's char (row, col in range: not clipped), marked if it changes;
+   the attribute kept.  The effects' fast path (ui_about.c's stars). */
+void osd2_char(unsigned row, unsigned col, unsigned char ch);
 /* a frame from (r0, c0) to (r1, c1) inclusive, inside untouched */
 void osd2_box(unsigned r0, unsigned c0, unsigned r1, unsigned c1, unsigned char attr);
 /* every cell of rows r0..r1 to ch / attr */

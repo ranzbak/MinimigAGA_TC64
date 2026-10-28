@@ -146,6 +146,20 @@ int main(void)
 	check("unchanged redraw: bytes", osd2_flush(), 0);
 	check("unchanged redraw: frames", mock_frames(), 0);
 
+	/* osd2_char (the effects' fast path): a char only, the attr kept; the
+	   same char again marks nothing */
+	mock_reset();
+	osd2_char(2, 6, 'Z');
+	osd2_char(2, 5, 'X');
+	want_reset();
+	FRAME(0x2c, 0x01, 0x00, 0x86, 'Z');
+	osd2_flush();
+	check_str("osd2_char: chars only, the changed cell", mock_trace(), want);
+	check("osd2_char: the attr kept", osd2_atr[2][6], 0x33);
+	mock_reset();
+	osd2_char(2, 6, 'Z');
+	check("osd2_char unchanged: bytes", osd2_flush(), 0);
+
 	/* one run per row over the changed span, the cells between included */
 	fresh(0x12);
 	osd2_put(20, 10, "Q", 0x12);                   /* char only, col 10 */

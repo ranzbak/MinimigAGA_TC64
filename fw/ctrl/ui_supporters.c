@@ -36,9 +36,11 @@
 #define P_NCOL    6
 #define P_NAME    14                  /* the names, the message */
 #define P_TEXT    15                  /* the title and the rest */
-#define RAMP_STEP 16                  /* ramp colours per key */
+#define RAMP_LG   4
+#define RAMP_STEP (1 << RAMP_LG)      /* ramp colours per key: 16 */
 #define RAMP      (P_NCOL * RAMP_STEP)
-#define FADE      32                  /* steps of a fade */
+#define FADE_LG   5
+#define FADE      (1 << FADE_LG)      /* steps of a fade: 32 */
 #define FADE2     16                  /* entry 15 starts this much later */
 
 /* glyph slots: the three dithers */
@@ -176,13 +178,14 @@ static void draw_view(void)
 	fade = 0;
 }
 
-static unsigned long mix(unsigned long a, unsigned long b, unsigned f, unsigned n)
+/* f / 2^lg of the way from colour a to b (f <= 2^lg) */
+static unsigned long mix(unsigned long a, unsigned long b, unsigned f, unsigned lg)
 {
 	unsigned long out = 0;
-	unsigned sh;
+	unsigned sh, n = 1u << lg;
 	for (sh = 0; sh < 24; sh += 8) {
 		unsigned x = (a >> sh) & 255, y = (b >> sh) & 255;
-		out |= (unsigned long)((x * (n - f) + y * f) / n) << sh;
+		out |= (unsigned long)((x * (n - f) + y * f) >> lg) << sh;
 	}
 	return out;
 }
@@ -193,10 +196,10 @@ static void palette(void)
 	for (k = 0; k < P_NCOL; k++) {
 		unsigned j = (k * RAMP_STEP + t) % RAMP;
 		osd2_pal(P_FIELD + k, OSD2_OPAQUE,
-		         mix(key_col[j / RAMP_STEP], key_col[(j / RAMP_STEP + 1) % P_NCOL], j % RAMP_STEP, RAMP_STEP));
+		         mix(key_col[j / RAMP_STEP], key_col[(j / RAMP_STEP + 1) % P_NCOL], j % RAMP_STEP, RAMP_LG));
 	}
-	osd2_pal(P_NAME, OSD2_OPAQUE, mix(FADE_FROM, NAME_TO, fade < FADE ? fade : FADE, FADE));
-	osd2_pal(P_TEXT, OSD2_OPAQUE, mix(FADE_FROM, TEXT_TO, f2 < FADE ? f2 : FADE, FADE));
+	osd2_pal(P_NAME, OSD2_OPAQUE, mix(FADE_FROM, NAME_TO, fade < FADE ? fade : FADE, FADE_LG));
+	osd2_pal(P_TEXT, OSD2_OPAQUE, mix(FADE_FROM, TEXT_TO, f2 < FADE ? f2 : FADE, FADE_LG));
 	osd2_commit(1, UI_SCALE, UI_X0, UI_Y0, UI_COLS, UI_ROWS);
 }
 

@@ -29,7 +29,12 @@
  *    per step, so the colours flow outward, one band per 32 steps (a full
  *    cycle of the hues 256 steps, 4.5 s).
  * Per step the palette (8 entries: 34 SPI bytes and the window's 6) and
- * the changed star cells; ui_test measures the bytes.  All state in bss.
+ * the changed star cells: ui_test measures 287 SPI bytes a step on average,
+ * 430 at most.  The CPU's part, on the L1 bench (sim/rv_l1, WS=3): about
+ * 20 k cycles a step without the SPI bytes' own time.  The step uses no
+ * variable shifts (this VexRiscv's shifter takes a cycle per bit): tables
+ * for the hues, the glyph codes and the pixel of a sub position.  All state
+ * in bss.
  */
 #include <string.h>
 
@@ -69,16 +74,24 @@ _Static_assert(SLOTS <= UI_FX_SLOTS, "the About page's glyphs fit the free slots
 #define Y_TOP   4                           /* the two heights in the cell */
 #define Y_LOW   11
 
+/* x = col * 128 + sub: kept apart, no shifts in a step (the CPU's shifter
+   takes a cycle per bit) */
 struct star {
-	unsigned short x;
-	unsigned char row, h;                   /* where it flies: cell row, height 0/1 */
+	unsigned char col, sub;                 /* the cell, 1/16 font pixels in it (0..127) */
+	unsigned char row, g;                   /* where it flies: cell row; its glyphs (star_code) */
 	unsigned char drow, dcol, dch;          /* where it is drawn (dch 0: nowhere) */
 };
 static struct star stars[NSTARS];
 static const unsigned char speed[3] = { 8, 16, 32 };
-/* the cells a star shows in: bit c & 31 of word c >> 5 */
-static unsigned long sky[R_SKY][2];
+/* the cells a star shows in (1) */
+static unsigned char sky[R_SKY][UI_COLS];
 static unsigned char sky_row[R_SKY], n_sky;
+/* the stars' glyph codes: g + the pixel (far, mid: 16 each, x 0..7 at the
+   two heights; near: 8, x 0, 2, 4, 6 at the two heights, by the pixel
+   twice); and by sub the pixel */
+static unsigned char star_code[16 + 16 + 16];
+static unsigned char px_of[128];
+static unsigned long hue_tab[256];          /* the copper's colours */
 static unsigned char phase;
 static unsigned char gl[16];
 static char ver[64];
@@ -119,7 +132,7 @@ static void copper(void)
 {
 	unsigned k;
 	for (k = 0; k < 8; k++)
-		osd2_pal(OSD2_C_FREE + k, OSD2_OPAQUE, hue((unsigned)(phase - 32 * k)));
+		osd2_pal(OSD2_C_FREE + k, OSD2_OPAQUE, hue_tab[(unsigned char)(phase - 32 * k)]);
 	osd2_commit(1, UI_SCALE, UI_X0, UI_Y0, UI_COLS, UI_ROWS);
 }
 
@@ -207,54 +220,61 @@ static void sky_map(void)
 {
 	unsigned r;
 	int c;
+	unsigned any;
 	n_sky = 0;
 	for (r = 0; r < R_SKY; r++) {
-		sky[r][0] = sky[r][1] = 0;
-		if (r == R_BAR)
-			continue;
-		for (c = 0; c < UI_COLS; c++)
-			if (blank(r, c - 2) && blank(r, c - 1) && blank(r, c) && blank(r, c + 1) && blank(r, c + 2))
-				sky[r][c >> 5] |= 1UL << (c & 31);
-		if (sky[r][0] | sky[r][1])
+		any = 0;
+		for (c = 0; c < UI_COLS; c++) {
+			sky[r][c] = r != R_BAR && blank(r, c - 2) && blank(r, c - 1) && blank(r, c) &&
+			            blank(r, c + 1) && blank(r, c + 2);
+			any |= sky[r][c];
+		}
+		if (any)
 			sky_row[n_sky++] = (unsigned char)r;
 	}
 }
 
-static void star_new_row(struct star *s)
+static void star_new_row(struct star *s, unsigned layer)
 {
 	unsigned long v = ui_fx_rand();
+	unsigned h = (v >> 8) & 1;
 	s->row = sky_row[v % n_sky];
-	s->h = (unsigned char)((v >> 8) & 1);
+	s->g = (unsigned char)(layer * 16 + h * 8);     /* near: 32 + h * 8, a code per pixel pair */
 }
 
-/* the star's glyph and column now */
-static unsigned char star_ch(const struct star *s, unsigned layer)
-{
-	unsigned px = (s->x >> 4) & 7;
-	if (layer == 0)
-		return ui_fx_code(S_FAR + s->h * 8 + px);
-	if (layer == 1)
-		return ui_fx_code(S_MID + s->h * 8 + px);
-	return ui_fx_code(S_NEAR + s->h * 4 + px / 2);
-}
 
-static void star_draw(struct star *s, unsigned layer)
+/* where the star shows now: its cell and glyph, the glyph 0 when the cell
+   is not sky; a star that left its cell or changed its glyph clears the old
+   cell first (osd2_char writes only what differs) */
+static void star_place(struct star *s)
 {
-	unsigned col = s->x >> 7;
-	if (!((sky[s->row][col >> 5] >> (col & 31)) & 1)) {
-		s->dch = 0;
+	unsigned col = s->col, row = s->row;
+	unsigned char ch = sky[row][col] ? star_code[s->g + px_of[s->sub]] : 0;
+	if (ch == s->dch && row == s->drow && col == s->dcol)
 		return;
-	}
-	s->drow = s->row;
+	if (s->dch)
+		osd2_char(s->drow, s->dcol, ' ');
+	s->drow = (unsigned char)row;
 	s->dcol = (unsigned char)col;
-	s->dch = star_ch(s, layer);
-	osd2_fill(s->drow, s->dcol, 1, s->dch, osd2_atr[s->drow][s->dcol]);
+	s->dch = ch;
+}
+
+/* every shown star into its cell (one another star's clearing hit comes
+   back; one that did not move costs a compare), far to near */
+static void stars_draw(void)
+{
+	unsigned i;
+	for (i = 0; i < NSTARS; i++)
+		if (stars[i].dch)
+			osd2_char(stars[i].drow, stars[i].dcol, stars[i].dch);
 }
 
 static void about_open(void)
 {
 	unsigned i, r, c;
 	ui_fx_seed(0x2C0FFEEUL);
+	for (i = 0; i < 256; i++)
+		hue_tab[i] = hue(i);
 	glyphs();
 	phase = 0;
 	copper();
@@ -274,37 +294,48 @@ static void about_open(void)
 		osd2_put(R_LIC + i, (UI_COLS - strlen(licence[i])) / 2, licence[i], A_LIC);
 	version_line();
 	sky_map();
+	for (i = 0; i < 32; i++)
+		star_code[i] = ui_fx_code(S_FAR + i);
+	for (i = 0; i < 16; i++)                /* near: pixel p shows pair p / 2 */
+		star_code[32 + i] = ui_fx_code(S_NEAR + (i >> 3) * 4 + (i & 7) / 2);
+	for (i = 0; i < 128; i++)
+		px_of[i] = (unsigned char)(i >> 4);
 	for (i = 0; i < NSTARS; i++) {
 		struct star *s = &stars[i];
-		s->x = (unsigned short)(ui_fx_rand() % X_SPAN);
+		unsigned x = (unsigned)(ui_fx_rand() % X_SPAN);
 		if (i / 16 == 2)
-			s->x &= (unsigned short)~31u;   /* near: whole pixel pairs (2 x 2 at x 0, 2, 4, 6) */
-		star_new_row(s);
-		star_draw(s, i / 16);
+			x &= ~31u;                      /* near: whole pixel pairs (2 x 2 at x 0, 2, 4, 6) */
+		s->col = (unsigned char)(x >> 7);
+		s->sub = (unsigned char)(x & 127);
+		star_new_row(s, i / 16);
+		s->dch = 0;
+		star_place(s);
 	}
+	stars_draw();
 }
 
 static void about_step(void)
 {
 	unsigned i;
-	/* the stars that move to another cell or glyph leave theirs first, */
+	/* the stars move; those that change cell or glyph clear the old one, */
 	for (i = 0; i < NSTARS; i++) {
 		struct star *s = &stars[i];
 		unsigned v = speed[i / 16];
-		if (s->x < v) {
-			s->x = (unsigned short)(s->x + X_SPAN - v);
-			star_new_row(s);
-		} else
-			s->x = (unsigned short)(s->x - v);
-		if (s->dch && (s->drow != s->row || s->dcol != s->x >> 7 || s->dch != star_ch(s, i / 16))) {
-			osd2_fill(s->drow, s->dcol, 1, ' ', osd2_atr[s->drow][s->dcol]);
-			s->dch = 0;
+		if (s->sub >= v)
+			s->sub = (unsigned char)(s->sub - v);
+		else {
+			s->sub = (unsigned char)(s->sub + 128 - v);
+			if (s->col)
+				s->col--;
+			else {                          /* past the left edge: from the right */
+				s->col = UI_COLS - 1;
+				star_new_row(s, i / 16);
+			}
 		}
+		star_place(s);
 	}
-	/* then all are drawn, far to near (a star the erasing hit comes back;
-	   one that did not move writes nothing) */
-	for (i = 0; i < NSTARS; i++)
-		star_draw(&stars[i], i / 16);
+	/* then all are drawn */
+	stars_draw();
 	phase++;
 	copper();
 }
