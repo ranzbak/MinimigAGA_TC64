@@ -70,8 +70,10 @@ unit() {
   if ! mk "$n" "mut/$n/b/$test" > "mut/$n/log" 2>&1; then
     echo "mutant $n: BROKEN (does not build: mut/$n/log)"; bad=1; return
   fi
-  # a mutant may hang a loop that waits for the mock: the timeout is a kill
-  timeout 120 make -s -f Makefile SRC="mut/$n/src" TD="mut/$n/t" GOLD="mut/$n/gold" B="mut/$n/b" \
+  # a mutant may hang a loop that waits for the mock: the timeout is a kill.
+  # 300 s: hdd_card_error needs ~106 s of CPU before its own hang check
+  # speaks, more under nice 19 on a loaded machine (120 s cut it short)
+  timeout 300 make -s -f Makefile SRC="mut/$n/src" TD="mut/$n/t" GOLD="mut/$n/gold" B="mut/$n/b" \
        WERROR=-Wno-error CARD="$CARD" FATIMG="$FATIMG" FATIMG_DEPS= "run64-$test" > "mut/$n/log" 2>&1
   local rc=$? text
   if [ $rc -ne 0 ]; then
