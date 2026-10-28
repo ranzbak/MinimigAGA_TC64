@@ -91,6 +91,8 @@ unsigned char drives;
 adfTYPE df[4];
 cdromTYPE cdrom;
 unsigned char core_caps;
+unsigned char core_version[4];
+const char fw_version[] = "";
 unsigned char adv_clkdelay = 4;
 unsigned long adv_services;
 unsigned char adv_int_now;

@@ -10,7 +10,8 @@
 #                 (e) the C library guard, (f) no #define true/false,
 #                 (g) the boot ROM image ends below the stack floor 0x1400,
 #                 (h) RV32OSDB.BIN ends with the lock-step trailer (SDC_VERSION),
-#                 (i) the committed boot ROM image looks for this file name
+#                 (i) the committed boot ROM image looks for this file name,
+#                 (k) osd_logo.h is tools/mklogo.py's output of logo.h
 #   make stack    the 20 largest stack frames (-fstack-usage, $(B)/*.su)
 #   make clean
 #
@@ -49,7 +50,8 @@ SRCS := hardware.c config.c fat.c fdd.c fpga.c boot.c hdd.c main.c menu.c \
         mmc.c spi.c osd.c rafile.c swap.c hexdump.c uart.c errors.c \
         c64keys.c akiko.c audio.c drivesounds.c rtc.c i2c.c adv7511.c \
         atapi.c cdrom.c cue.c cdaudio.c rvlibc.c cfgswap.c stackcheck.c \
-        diskstat.c sdc.c sdproto.c osd2.c menu_model.c ui.c ui_tabs.c
+        diskstat.c sdc.c sdproto.c osd2.c menu_model.c ui.c ui_tabs.c \
+        ui_about.c ui_supporters.c
 OBJS := $(addprefix $(B)/,$(SRCS:.c=.o))
 
 ifeq ($(CLANG),1)
@@ -130,7 +132,7 @@ size: $(B)/$(PROJECT).elf $(B)/$(FW_FILE)
 	@echo "$(FW_FILE): `wc -c < $(B)/$(FW_FILE)` bytes"
 
 # ---- check: each part is its own target; all run (-k), any red fails ----
-CHECKS := check_a check_b check_c check_d check_e check_f check_g check_h check_i check_j
+CHECKS := check_a check_b check_c check_d check_e check_f check_g check_h check_i check_j check_k
 
 check: $(B)/$(PROJECT).elf
 	@$(MAKE) --no-print-directory -k $(CHECKS)
@@ -254,6 +256,12 @@ check_j:
 	r=`sed -n "s/^[[:space:]]*parameter[[:space:]]*VERSION[[:space:]]*=[[:space:]]*16'h\([0-9A-Fa-f]\{4\}\).*/\1/p" $(SDC_RTL) | tr a-f A-F`; \
 	if [ -n "$$v" ] && [ "$$v" = "$$r" ]; then echo "check (j) pass: SDC_VERSION $$v = sdcard_spi.v's VERSION"; \
 	else echo "check (j) FAIL: sdc.h SDC_VERSION '$$v', rtl/host/sdcard_spi.v VERSION '$$r' (bump both: sdc.h's rule)"; exit 1; fi
+
+# (k) the About page's logo glyphs (osd_logo.h) are tools/mklogo.py's
+#     output of logo.h (the legacy OSD's bitmap): one source
+check_k:
+	@if python3 -I tools/mklogo.py --check; then echo "check (k) pass: osd_logo.h = mklogo.py's output of logo.h"; \
+	else echo "check (k) FAIL: osd_logo.h is not made from logo.h (python3 fw/ctrl/tools/mklogo.py, commit it)"; exit 1; fi
 
 # the 20 largest stack frames of the firmware (-fstack-usage: bytes, kind)
 stack: $(OBJS)

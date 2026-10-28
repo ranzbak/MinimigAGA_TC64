@@ -82,7 +82,8 @@ $(eval $(call TEST,osd2_test,$$(SRC)/osd2.c $$(TD)/mock_hw.c $$(TD)/mock_sdc.c $
 # Phase 3) on the real osd2.c and the mock's SPI trace, the rest of the firmware
 # stubbed in ui_test.c (a FAT directory model among them): key sequences, the
 # golden screens of gold/ui, the long-name scroll on the mock TIMER
-UI_SRCS = $(SRC)/ui.c $(SRC)/ui_tabs.c $(SRC)/menu_model.c $(SRC)/osd2.c $(SRC)/errors.c \
+UI_SRCS = $(SRC)/ui.c $(SRC)/ui_tabs.c $(SRC)/ui_about.c $(SRC)/ui_supporters.c \
+          $(SRC)/menu_model.c $(SRC)/osd2.c $(SRC)/errors.c \
           $(TD)/mock_hw.c $(TD)/mock_sdc.c $(SRC)/hardware.c
 $(eval $(call TEST,ui_test,$$(UI_SRCS),,$$(GOLD)/ui))
 

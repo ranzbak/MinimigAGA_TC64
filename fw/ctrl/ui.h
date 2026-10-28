@@ -24,13 +24,15 @@
  *
  * Over the panel: one dialog at a time (a red box over rows 6-13), the
  * file selector (16 entries in the item rows, the selected long name
- * scrolls), or the error page (menu.c ShowError).  With the menu closed a
- * toast shows as a one-row window of its own.
+ * scrolls), or the error page (menu.c ShowError).  Main's About and
+ * Supporters are pages over the whole window (below).  With the menu
+ * closed a toast shows as a one-row window of its own.
  *
  * menu.c's HandleUI() runs ui_handle() on a core with the text layer
- * (osd2_caps) unless the classic menu was asked for (ui_legacy_active:
- * Main's About and Supporters still open the classic pages, until their
- * own port); on any other core the classic menu is all there is.
+ * (osd2_caps); on any other core the classic menu is all there is.  (Its
+ * ui_legacy_active, the hand-over to the classic pages About and
+ * Supporters had, is never set since they are native; Phase 6 deletes the
+ * classic menu with it.)
  *
  * Keys (Paul, 2026-10-27; joystick: Up/Down/Left/Right, fire = Enter,
  * fire 2 = the menu button, which sends F12's code):
@@ -161,7 +163,40 @@ enum { UI_TAB_MAIN, UI_TAB_STORAGE, UI_TAB_SYSTEM, UI_TAB_VIDEO, UI_TAB_ACCEL };
 extern const struct ui_tab ui_tabs[UI_TABS];
 
 /* focus */
-enum { UI_F_LIST, UI_F_SIDEBAR, UI_F_DIALOG, UI_F_FILESEL, UI_F_ERROR };
+enum { UI_F_LIST, UI_F_SIDEBAR, UI_F_DIALOG, UI_F_FILESEL, UI_F_ERROR, UI_F_PAGE };
+
+/* Main's About and Supporters pages (ui_about.c, ui_supporters.c; plan
+   3.8): the whole window (rows 0-17 the page, 18-19 the help field), an
+   effect animated from ui_tick() every UI_T_FX, drawn through the shadow
+   (cells that change) and palette entries 8-15 (the menu uses 0-7).
+   Esc, Left, Enter or Space back to Main's list, F1-F5 a category, F12
+   closes; a page may take other keys first (Supporters: Up/Down its other
+   view).  Its glyphs go into font slots the menu does not use (ui_fx_code)
+   when it opens, and the ROM font (font8x16.h) back into them when it
+   ends, with the menu's palette: the menu after a page is the menu before
+   it, cell, glyph and colour. */
+enum { UI_PAGE_ABOUT, UI_PAGE_SUPPORTERS };
+void ui_page_open(unsigned char which);      /* an item's act */
+struct ui_page {
+	void (*open)(void);           /* glyphs, palette (committed), rows 0-17 into the shadow */
+	void (*step)(void);           /* one frame of the effect */
+	int (*key)(unsigned char c);  /* the page's own keys (1: taken), or NULL */
+	const char *(*help)(void);    /* the help field's text */
+	unsigned char slots;          /* the glyph slots 0..slots-1 it uploads */
+};
+extern const struct ui_page ui_about, ui_supporters;
+/* the frame time: GetTimer(2) fires after 3 TIMER counts, 17.4 ms (57 Hz;
+   the layer latches the palette at its next frame, 50 or 60 Hz) */
+#define UI_T_FX 2
+/* glyph slots: the font codes the menu leaves alone, 0x80-0xBF and, past
+   the icons (0xC0-0xC9), 0xCA-0xFF */
+#define UI_FX_SLOTS 118
+unsigned char ui_fx_code(unsigned slot);
+/* n glyphs (16 rows each) into slots slot.. (split around the icons) */
+void ui_fx_font(unsigned slot, unsigned n, const unsigned char *rows);
+/* xorshift32: the effects' random numbers (deterministic: the goldens) */
+unsigned long ui_fx_rand(void);
+void ui_fx_seed(unsigned long seed);
 
 /* the engine, once per main-loop pass (menu.c HandleUI) */
 void ui_handle(void);
@@ -173,7 +208,8 @@ void ui_draw_all(void);
 void ui_draw_item(unsigned i);
 void ui_draw_help(void);
 
-/* set while the classic menu runs instead (menu.c clears it when it closes) */
+/* menu.c HandleUI: the classic menu instead (nothing sets it since About
+   and Supporters are native; Phase 6 deletes it with the classic menu) */
 extern unsigned char ui_legacy_active;
 /* the error page (menu.c ShowError / ErrorMessage on a core with the
    layer): the menu opens on it at error category `page` (errors.h) */
@@ -192,8 +228,6 @@ void ui_dialog(const char *title, const char *l1, const char *l2,
                const char *const *buttons, unsigned char n, unsigned char sel,
                void (*done)(unsigned char button));
 void ui_close(void);
-/* hand over to the classic menu at one of its pages (menu.h MENU_*) */
-void ui_classic(unsigned char page, unsigned char sub);
 /* the configuration files found when the menu opened (bit = slot) */
 extern unsigned char ui_cfg_mask;
 /* Video: the RTG screen is on (osd2_rtg_active), read when the category
@@ -204,8 +238,5 @@ extern unsigned char ui_rtg;
    sidebar and list, cleared by the next key: then the item's help);
    ui_edit: the focused value item is being changed (EDIT, list focus) */
 extern unsigned char ui_open_now, ui_tab, ui_focus, ui_hints_on, ui_edit;
-
-/* provided by menu.c: the classic menu, opened at a page */
-void menu_classic_open(unsigned char page, unsigned char sub);
 
 #endif

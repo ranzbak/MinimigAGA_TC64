@@ -97,6 +97,14 @@ void osd2_attr(unsigned row, unsigned col, unsigned n, unsigned char attr)
 		cell(row, col + i, 0, attr, K_ATR);
 }
 
+void osd2_char(unsigned row, unsigned col, unsigned char ch)
+{
+	if (osd2_chr[row][col] != ch) {
+		osd2_chr[row][col] = ch;
+		mark(row, col, K_CHR);
+	}
+}
+
 void osd2_box(unsigned r0, unsigned c0, unsigned r1, unsigned c1, unsigned char attr)
 {
 	unsigned r, c;

@@ -1,0 +1,63 @@
+chars
+^^^^^^^^^^^^  ^^^^^^ ^^^ ^^Thanks to^^^^^^^^^ ^^^ ^^^^  ^^^ ^^ ^
+^^^^^^^^^^^  ^^^^^^ ^^ ^^ ^^^^^^^^^ ^^^^  ^^^^^^ ^^ ^^^^^^^^ ^ ^
+^I'm very grateful to these people for their support, which^ ^^^
+ will give me the means and motivation to continue working on ^^
+^this core and others.  If you would like to contribute then^^ ^
+^one-off donations at paypal.me/robinsonb5 are very welcome,^^^^
+^or if you wish you can contribute regularly at   ^^^ ^^^^  ^^^ 
+^patreon.com/coresforchameleon - if you donate 20UKP or more,^^ 
+^or join the second tier at Patreon your name will be included^ 
+^on this screen, or the equivalent screen of future projects.^ ^
+^^^ ^^^^^^^^ ^^^^^^^^ ^^  ^^^ ^^ ^ ^^^^ ^^^^^^  ^^^^^^^^  ^^  ^^
+ ^^^^  ^^^^^  ^^^^Donate: paypal.me/robinsonb5 ^^  ^^^^^   ^^^^^
+  ^^^   ^^^^  ^^^^^Patreon: coresforchameleon ^^^^^^ ^^^^^^^^^ ^
+  ^^^^  ^^^    ^^^^^^^^^^^^^^^^^^^ ^^^^    ^^^^ ^^ ^^^^  ^^^^ ^^
+^^^^^^^ ^^^^^ ^ ^^^^^^^^^^^^^^^^  ^^^^^^^^^^^ ^^^ ^^^     ^^^ ^^
+^^^^   ^^^^^^^^^^  ^^^^^^^^^   ^^^^^^^^^^^^ ^^^ ^^^^^^^^^  ^^^  
+^     ^^^^^^^^ ^^^^^^ ^^^^^^    ^^^^^^^^^  ^^^ ^^^^ ^^^^^^^  ^^^
+^^^   ^ ^^^^   ^    ^^^^  ^^^^  ^^^^^^    ^^^^^^^ ^^^^^^^^^^^^  
+ Up the names  Esc back                                         
+                                                                
+fg
+8888888888889999999998888ddfffffffffddddddddddccccbbbbbbbbbcccdd
+88888888888999999999888dddcccccccccddddd88dddddddcccbbbbbbbbccdd
+8eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeebcccd
+8eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeccc
+deeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeebbcc
+deeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeebbbc
+deeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeedddccccbbbbbbbbbc
+deeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeebbc
+deeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeebc
+deeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeebcc
+ddddccccccccdcccccccccbbbbaaabbbccddd8899999999988dddcccccbbcccc
+8ddddddcccccddddddffffffffffffffffffffffffffff98888ddccccccccccd
+88ddddddccccdddddddffffffffffffffffffffffffff9888ddddcccccccccdd
+88ddddddcccddddddddddddddddddddddd88888999988888dddccccccccccddd
+ddddddddcccccdcddddddddddddddddd88888888888888ddddcccccccccccddd
+dddddddccccccccccddddddddddd8888888888888888ddddccccbbbbbcccccdd
+cdddddcccccccccccccccddddddd888888888888888ddddcccbcbbbbbbbccccc
+cccdddcdcccccccbccccccccdddddd888888888888ddddccccbbbbbbbbbbbbcc
+1111111111111111111111111111111111111111111111111111111111111111
+1111111111111111111111111111111111111111111111111111111111111111
+bg
+dddddddddddd888888888ddddcccccbbbcccccccccccccbbbbaaaaaaaaabbbcc
+ddddddddddd888888888dddcccbbbbbbbbbcccccddcccccccbbbaaaaaaaabbcc
+ddddddddddd888888ddddcccbbaaaaaabbbbccccddddcccccbbbbaaaaaaabbbc
+dddddcdddddddddddddccbbbaaaa99aaabbbcccccdccccccccbbbbaaaaaaabbb
+cccccccccccccddccccbbbaa99999999aabbbcccccccccccccbbbbbaaaaaaabb
+cccccccbcccccccccbbbaaa9988888999aabbbccccccbbbbcbbbbbaaaaaaaaab
+cccbbbbbbbbbbbbbbbbaaa99888888899aabbbcccccbbbbcccbbbbaaaaaaaaab
+ccbbbbbbbbbbbbbbbbaaa999888888899aabbcccccccccccccccbbbaaaaaaaab
+ccbbbbbbbbbbbbbbbbaaa99988888899aabbcccdddddddddcccccbbbaaaaaaab
+cccbbbbbbbbbbbbbbbbbaa999999999aabbcccddddddddddddccccbbbaaaaabb
+ccccbbbbbbbbcbbbbbbbbbaaaa999aaabbcccdd888888888ddcccbbbbbaabbbb
+dccccccbbbbbccccccccbbbbbaaaaabbbcccddd88888888ddddccbbbbbbbbbbc
+ddccccccbbbbccccccccccccbbbbbbbccccddd88888888dddccccbbbbbbbbbcc
+ddccccccbbbcccccccccccccccccccccccddddd8888dddddcccbbbbbbbbbbccc
+ccccccccbbbbbcbcccccccccccccccccddddddddddddddccccbbbbbbbbbbbccc
+cccccccbbbbbbbbbbcccccccccccddddddddddddddddccccbbbbaaaaabbbbbcc
+bcccccbbbbbbbbbbbbbbbcccccccdddddddddddddddccccbbbabaaaaaaabbbbb
+bbbcccbcbbbbbbbabbbbbbbbccccccddddddddddddccccbbbbaaaaaaaaaaaabb
+3333333333333333333333333333333333333333333333333333333333333333
+3333333333333333333333333333333333333333333333333333333333333333
