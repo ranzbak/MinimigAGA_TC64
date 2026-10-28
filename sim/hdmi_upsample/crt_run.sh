@@ -18,8 +18,10 @@
 #   gate31     every CRT item selected (mask, bloom, beam too) but 31 kHz
 #              input: still bit-identical, the beam filter never on
 #   bypass60   OSD config 0 on the 60 Hz upsampler: bit-identical
-#   rtg        every CRT item selected (mask, bloom, beam too) with RTG on:
-#              bit-identical, the beam filter never on
+#   rtg        RTG 1:1 path (per-pixel sampling, no reference to compare):
+#              every CRT item selected (mask, bloom, beam too) and CRT off
+#              (+cfg=0), both with RTG on: frame 3 byte-identical, so the
+#              CRT effects stay gated off; the beam filter never on
 #   beamfx15   every other CRT effect on, beam off: the beam filter's output
 #              = its input every clk_114 (15 kHz); beamfx31, beamfx60 the
 #              same at 31 kHz and on the 60 Hz upsampler
@@ -115,7 +117,8 @@ declare -A ARGS=(
 	[bypass31]="+dbl +frames=2"
 	[gate31]="+dbl +cfg=fff"
 	[bypass60]="+force60 +frames=2"
-	[rtg]="+rtg +cfg=fff"
+	[rtg]="+rtg +cfg=fff +out=$I/rtg"
+	[rtg0]="+rtg +cfg=0 +out=$I/rtg0"
 	[beamfx15]="+cfg=3ff"
 	[beamfx31]="+dbl +cfg=3ff"
 	[beamfx60]="+force60 +cfg=3ff"
@@ -167,6 +170,7 @@ legs=("$@"); [ ${#legs[@]} -eq 0 ] && legs=($ALL)
 # the bloom legs compare against the same picture without bloom
 want() { local x; for x in "${legs[@]}"; do [ "$x" = "$1" ] && return 0; done; return 1; }
 { want bloom || want bloom_lo; } && ! want dim && legs+=(dim)
+want rtg && ! want rtg0 && legs+=(rtg0)
 want bloom_hv && ! want dim_hv && legs+=(dim_hv)
 # the Video Pos legs compare against the picture at offset 0
 for x in hposm hposp hposv; do want $x && ! want hpos0 && legs+=(hpos0); done
@@ -337,10 +341,17 @@ for l in "${legs[@]}"; do
 		echo "$r" | awk '/scan [23]:/ { if ($7 + 0 > 1.1) b = 1 } END { exit b }' \
 			&& pass "ripple <= 1.1 (two-line beam, scan 2 and 3, 50 and 60 Hz)" || bad "ripple"
 		;;
-	bypass15|bypass31|gate31|bypass60|rtg)
+	bypass15|bypass31|gate31|bypass60)
 		n=1; [[ "${ARGS[$l]}" == *frames=2* ]] && n=2
 		if allzero $l $n; then pass "$l: $(diffs $l | sed 's/ (.*//' | paste -sd, -)"
 		else bad "$l"; diffs $l; tail -3 $I/$l.log; fi
+		grep -q "non-black" $I/$l.log && ! grep -q " 0 non-black" $I/$l.log || bad "$l: empty picture"
+		beamoff $l 1 && pass "$l: beam filter off, its output = its input ($(grep '^beam bypass:' $I/$l.log | cut -d: -f2))" \
+			|| { bad "$l: beam bypass"; grep '^beam bypass:' $I/$l.log; }
+		;;
+	rtg)
+		if cmp -s $I/rtg_3.hex $I/rtg0_3.hex; then pass "rtg: CRT effects all on = CRT off, frame 3 byte-identical"
+		else bad "rtg: CRT on differs from CRT off"; fi
 		grep -q "non-black" $I/$l.log && ! grep -q " 0 non-black" $I/$l.log || bad "$l: empty picture"
 		beamoff $l 1 && pass "$l: beam filter off, its output = its input ($(grep '^beam bypass:' $I/$l.log | cut -d: -f2))" \
 			|| { bad "$l: beam bypass"; grep '^beam bypass:' $I/$l.log; }
