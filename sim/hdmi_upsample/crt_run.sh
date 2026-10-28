@@ -91,7 +91,7 @@
 #              in the vertical blank (input lines 2..6)
 #   osd2spi    userio_osd's OSD text layer commands over SPI
 #              (tb_osd_text_spi.v): cells by lane, font, palette staging,
-#              cfg + commit toggle, VERSION bytes 10-13, an unknown command
+#              cfg + commit toggle, VERSION bytes 10-14, an unknown command
 #              and 0x0C untouched; the two mutants (commit, lane) must fail
 #   osd2off    the OSD text layer (osd_text.v) loaded, committed disabled:
 #              the picture = the reference path's, and every record of the
@@ -350,7 +350,7 @@ for l in "${legs[@]}"; do
 	osd2spi)
 		u=$(vvp -n build/tb_osd_text_spi.vvp)
 		echo "$u" | grep FAIL | sed 's/^/        /'
-		echo "$u" | grep -q "osd text spi: 0 errors" && pass "osd2spi: 0x2C/0x3C/0x4C/0x5C, VERSION 10-13, 0x6C and 0x0C" || bad "osd2spi"
+		echo "$u" | grep -q "osd text spi: 0 errors" && pass "osd2spi: 0x2C/0x3C/0x4C/0x5C, VERSION 10-14, 0x6C and 0x0C" || bad "osd2spi"
 		for m in OSD_TXT_MUTANT_COMMIT OSD_TXT_MUTANT_LANE; do
 			vvp -n build/tb_osd_text_spi_$m.vvp | grep -q "osd text spi: 0 errors" && bad "osd2spi: mutant $m not caught" \
 				|| pass "osd2spi: mutant $m caught"

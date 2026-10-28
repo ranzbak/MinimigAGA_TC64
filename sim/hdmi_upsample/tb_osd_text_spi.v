@@ -4,8 +4,11 @@
 // what osd_text.v would hold -- cell RAM (lane writes), font RAM, staging
 // palette, txt_cfg at each commit toggle -- from the osd_txt bus, and checks
 // every byte against the spec:
-//   1. VERSION (0x88) reply bytes 10..13: B5 01 40 20 with OSD_TEXT = 1;
-//      MINION_VER on an instance with OSD_TEXT = 0 (an old core's answer)
+//   1. VERSION (0x88) reply bytes 10..13: B5 02 40 20 with OSD_TEXT = 1
+//      (layer version 2 since OSD Phase 4), byte 14 the status
+//      {7'd0, rtg_ena} (rtg_ena 0 here; sim/osd_status runs both levels);
+//      bytes 10..14 MINION_VER on an instance with OSD_TEXT = 0 (an old
+//      core's answer)
 //   2. 0x2C mode 0: char,attr pairs, both lanes per cell, the cell + 1 and
 //      wrapping 0x7FF -> 0x000; an odd last byte writes nothing and the
 //      next transfer starts with a char again; mode 1 writes lane 0 only,
@@ -120,19 +123,20 @@ task check(input [8*48:1] what, input [39:0] got, input [39:0] want);
 	end
 endtask
 
-reg [7:0] ver [0:13];
-reg [7:0] ver0 [0:13];
+reg [7:0] ver [0:14];
+reg [7:0] ver0 [0:14];
 integer b0, b1, b2, b3, bo;
 initial begin
 	#5000;
 	// 1. VERSION
 	open(8'h88);
-	for (i = 0; i < 14; i = i + 1) begin spi_byte(8'hFF); ver[i] = rxb; ver0[i] = rxb0; end
+	for (i = 0; i < 15; i = i + 1) begin spi_byte(8'hFF); ver[i] = rxb; ver0[i] = rxb0; end
 	close;
 	check("VERSION byte 4 (magic)", ver[4], 8'hA4);
-	check("VERSION bytes 10..13", {ver[10], ver[11], ver[12], ver[13]}, 32'hB5014020);
-	check("OSD_TEXT 0: bytes 10..13 = MINION_VER", {ver0[10], ver0[11], ver0[12], ver0[13]},
-	      {4{ver0[3]}});   // byte 3 is MINION_VER on every core
+	check("VERSION bytes 10..13", {ver[10], ver[11], ver[12], ver[13]}, 32'hB5024020);
+	check("VERSION byte 14 (status, rtg_ena 0)", ver[14], 8'h00);
+	check("OSD_TEXT 0: bytes 10..14 = MINION_VER", {ver0[10], ver0[11], ver0[12], ver0[13], ver0[14]},
+	      {5{ver0[3]}});   // byte 3 is MINION_VER on every core
 	check("OSD_TEXT 0: bytes 0..5 as with the layer", {ver0[0], ver0[1], ver0[2], ver0[4], ver0[5]},
 	      {ver[0], ver[1], ver[2], ver[4], ver[5]});
 
