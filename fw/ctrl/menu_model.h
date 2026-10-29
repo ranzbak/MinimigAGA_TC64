@@ -3,9 +3,9 @@
 
 /*
  * menu_model: what the OSD menus DO, without drawing anything
- * (findings/osd-redesign/plan.md 5).  Both engines use it while the
- * classic menu (menu.c HandleUI_legacy) and the new one on the 720p text
- * layer (ui.c) live side by side: the floppy insert, the CD-ROM messages,
+ * (findings/osd-redesign/plan.md 5).  Taken out of the classic menu (menu.c,
+ * deleted in Phase 6) for the new one on the 720p text layer (ui.c): the
+ * floppy insert, the CD-ROM messages,
  * the file selector's Enter / Backspace / letter keys, configuration files,
  * the Kickstart reload, and the config fields the new menu's items show and
  * change (their Config* calls).

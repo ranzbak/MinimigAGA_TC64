@@ -1520,8 +1520,13 @@ void ui_handle(void)
 		ui_close();
 	}
 	c = OsdGetCtrl();
-	/* the core's key queue overflowed: an event was dropped; the flag is
-	   only cleared (menu.c says why the modifiers are kept) */
+	/* the core's key queue overflowed: an event was dropped.  The flag is
+	   only cleared, the modifiers are kept (the classic menu's rule, moved
+	   here with it in Phase 6): clearing ctrl/lalt/lshift on overflow wiped
+	   modifiers still HELD -- LSHIFT + keypad +/- changed the volume once,
+	   then nothing until shift went up and down again.  The queue delivers
+	   key-ups reliably; a stuck modifier would need a deeper queue, not
+	   state thrown away. */
 	if (osd_keyq_lost)
 		osd_keyq_lost = 0;
 	if (c)

@@ -94,7 +94,7 @@ unsigned char OsdGetCtrl(void);
 // boot", where the answer is a state and not a change.
 unsigned char OsdGetKeyLevel(void);
 // Set when the core's key queue overflowed and events were lost.  ui_handle
-// clears it.
+// clears it and keeps the modifiers (ui.c says why).
 extern unsigned char osd_keyq_lost;
 unsigned char GetASCIIKey(unsigned char c);
 void OsdDoReset(int enter, int leave);
