@@ -23,7 +23,7 @@ Cases:
                    configuration")
   distinct         every field non-zero and distinct (floppy.drives 3: the
                    sanity check wants <= 4; version 4), the 32-bit fields
-                   with four different bytes each, the two pad bytes too
+                   with four different bytes each
   v2, v3           distinct with version 2 / 3 (the old-format paths of
                    LoadConfiguration: extrom, kickdir, hdfdir, drivesounds)
   v3_208           v3 cut to 208 bytes, the file of the firmware before
@@ -54,7 +54,9 @@ for i in range(2):
 FIELDS += [("cpu", "B"), ("fastram", "B"), ("kick13patch", "B"), ("autofire", "B"),
            ("extrom.name", "8s"), ("extrom.long_name", "16s"),
            ("drivesounds", "B"), ("crt_beam", "B"), ("crt_mask", "B"), ("crt_bloom", "B"),
-           (None, "2s"),     # padding before kickdir (4-byte alignment), not a field
+           # the RTG screen's Video Pos: the two alignment bytes before kickdir
+           # (0 in a file of older firmware: centred)
+           ("videopos_rtg.hpos", "B"), ("videopos_rtg.vpos", "B"),
            ("kickdir", "L"), ("extromdir", "L")]
 FIELDS += [(f"hdfdir[{i}]", "L") for i in range(4)]
 for i in range(2):

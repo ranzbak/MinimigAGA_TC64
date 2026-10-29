@@ -6,6 +6,11 @@ module userio_osd #(
 	// fitted, bit 1 AP68040 selectable (a dual-core build), bit 2 FPU,
 	// bit 3 MMU.  Read back as byte 5 of OSD_CMD_VERSION, behind the magic
 	// byte 4; see findings/ap68040/plan-v2-with-ddr3.md, "OSD and firmware".
+	// The OSD's picture is the 720p text layer (rtl/openaars/adv7511/osd_text.v)
+	// on osd_txt; VERSION bytes 10-13 say so (0xB5, 2, 64, 32) and byte 14
+	// is the status {7'd0, rtg_ena}.  The bitmap OSD that was here (osdbuf,
+	// its beam counters and video output, the 0x0C write) went in OSD
+	// redesign Phase 6; the last commit with it is osd-int bc677a44.
 	parameter [7:0] CORE_CAPS = 8'h00
 )
 (
@@ -13,12 +18,7 @@ module userio_osd #(
 	input	clk7_en,
   input clk7n_en,
 	input	reset,				//reset
-	input	c1,					//clk28m domain clock enable
-	input	c3,
-	input	sol,				//start of video line
-	input	sof,				//start of video frame 
-  input varbeamen,
-   input rtg_ena,
+	input	rtg_ena,			//the RTG screen is on (VERSION byte 14)
 	input	[7:0] osd_ctrl,		//keycode for OSD control (Amiga keyboard codes + additional keys coded as values > 80h)
 	input	[31:0] in_diag,		//input-path diagnostic: bytes 6-9 of OSD_CMD_VERSION (see userio.v)
 	output	reg in_diag_clr = 1'b0,	//one clk7 pulse after byte 9 was read: clear the sticky bits
@@ -32,12 +32,10 @@ module userio_osd #(
 	// only: the host compares increments, never the absolute value.  See
 	// "reply sequence" below and findings/osd-riscv/phase4.md "Handshake design".
 	output	reg [1:0] osd_rx_seq = 2'd0,
-	output	osd_blank,			//osd overlay, normal video blank output
-	output	osd_pixel,			//osd video pixel
-	output	reg osd_enable = 0,			//osd enable
-  output  reg key_disable = 0,      // keyboard disable
-	output	reg [1:0] lr_filter = 0,
-	output	reg [1:0] hr_filter = 0,
+	// The OSD text layer's write side (commands 0x2C/0x3C/0x4C/0x5C below),
+	// clk domain, every field registered; layout in "OSD text layer".
+	output	wire [106:0] osd_txt,
+  output  reg key_disable = 0,      // keyboard disable (the keys to the OSD)
 	// bit 7 is "fast RAM: DDR3 board only" -- see minimig_autoconfig.v.  It is
 	// applied under reset with the rest of the memory map, because changing
 	// which boards autoconfig offers cannot take effect mid-session.
@@ -71,21 +69,7 @@ module userio_osd #(
 
 
 //local signals
-reg		[10:0] horbeam;			//horizontal beamcounter
-reg		[9:0] verbeam;			//vertical beamcounter
-reg		[7:0] osdbuf [0:2048-1];	//osd video buffer
-wire	osdframe;				//true if beamcounters within osd frame
-reg		[7:0] bufout;			//osd buffer read data
-reg 	[10:0] wraddr;			//osd buffer write address
-wire	[7:0] wrdat;			//osd buffer write data
-wire	wren;					//osd buffer write enable
-
-//reg		[3:0] highlight;		//highlighted line number
-//reg		invert;					//invertion of highlighted line
-reg		[5:0] vpos;
-reg		vena;
-
-wire  [9:0] verbeam_osdclk;
+wire	[7:0] wrdat;			//SPI data byte received
 
 reg   [8-1:0] t_memory_config = 8'b0_0_00_01_01;
 reg   [4:0] t_ide_config0 = 0;
@@ -122,113 +106,6 @@ always @(posedge clk) begin
   end
 end
 
-
-
-//--------------------------------------------------------------------------------------
-//OSD video generator
-//--------------------------------------------------------------------------------------
-
-//osd local horizontal beamcounter
-always @(posedge clk)
-	if (sol && !c1 && !c3)
-		horbeam <= rtg_ena ? 11'd220 : 11'd0;
-	else
-		horbeam <= horbeam + 11'd1;
-
-//osd local vertical beamcounter
-always @(posedge clk)
-  if (clk7_en) begin
-  	if (sof)
-  		verbeam <= 10'd0;
-  	else if (sol)
-  		verbeam <= verbeam + 10'd1;
-  end
-
-always @(posedge clk)
-  if (clk7_en) begin
-  	if (sol)
-  		vpos[5:0] <= verbeam_osdclk[5:0];
-  end
-
-
-//--------------------------------------------------------------------------------------
-//generate osd video frame
-
-
-//horizontal part..
-
-// in normal mode the OSD is output at clk/2
-wire [9:0] horbeam_osdclk = varbeamen?horbeam[9:0]:horbeam[10:1];
-
-// left OSD border is at horbeam == 448 (== 896 in normal mode)
-wire hframe = (horbeam_osdclk >= 10'd448) && (horbeam_osdclk < 10'd448 + 10'd256);
-
-// horizontal beam position inside OSD
-wire [7:0] horbeam_osd = horbeam_osdclk[7:0] - (varbeamen?8'd191:8'd192);
-
-//vertical part..
-reg vframe;
-
-assign verbeam_osdclk = varbeamen?{1'b0, verbeam[9:1]}:verbeam;
-
-always @(posedge clk)
-  if (clk7_en) begin
-    if (!verbeam_osdclk[8] && verbeam_osdclk[7] && !verbeam_osdclk[6])
-  		vframe <= 1;
-  	else if (verbeam[0])
-  		vframe <= 0;
-  end
-		
-always @(posedge clk)
-  if (clk7_en) begin
-  	if (sol)
-  		vena <= vframe;
-  end
-
-
-// combine..
-reg osd_enabled;
-always @(posedge clk)
-  if (clk7_en) begin
-    if (sof)
-      osd_enabled <= osd_enable;
-  end
-    
-assign osdframe = vframe & hframe & osd_enabled;
-
-//always @(posedge clk)
-//  if (clk7_en) begin
-//    if (~highlight[3] && verbeam_osdclk[5:3]==highlight[2:0] && !verbeam_osdclk[6])
-//  		invert <= 1;
-//  	else if (verbeam[0])
-//  		invert <= 0;
-//  end
-
-
-//--------------------------------------------------------------------------------------
-
-//assign osd blank and pixel outputs
-//assign osd_pixel = invert ^ (vena & bufout[vpos[2:0]]);
-assign osd_pixel = vena & bufout[vpos[2:0]];
-assign osd_blank = osdframe;
-
-
-//--------------------------------------------------------------------------------------
-//video buffer
-//--------------------------------------------------------------------------------------
-
-//dual ported osd video buffer
-//video buffer is 1024*8
-//this buffer should be a single blockram
-always @(posedge clk) begin//input part
-  if (clk7_en) begin
-  	if (wren)
-  		osdbuf[wraddr[10:0]] <= wrdat[7:0];
-  end
-end
-
-always @(posedge clk)//output part
-	bufout[7:0] <= osdbuf[{vpos[5:3],horbeam_osd}];
 
 
 //--------------------------------------------------------------------------------------
@@ -298,16 +175,16 @@ end
 // write regs
 // 8'b0_000_1000 | XXXXXRBC || reset control   | R - reset, B - reset to bootloader, C - reset control block
 // 8'b0_001_1000 | XXXXXXXX || clock control   | unused
-// 8'b0_010_1000 | XXXXXXKE || osd control     | K - disable Amiga keyboard, E - enable OSD
+// 8'b0_010_1000 | XXXXXXK0 || osd control     | K - disable Amiga keyboard (the keys to the OSD); bit 0 was E, the bitmap OSD's enable (gone, Phase 6)
 // 8'b0_000_0100 | XXXXEANT || chipset config  | E - ECS, A - OCS A1000, N - NTSC, T - turbo
 // 8'b0_001_0100 | XXXXXSTT || cpu config      | S - CPU speed, TT - CPU type (00=68k, 01=68k10, 10=68k20)
 // 8'b0_010_0100 | XXFFSSCC || memory config   | FF - fast, CC - chip, SS - slow
-// 8'b0_011_0100 | XXHHLLSS || video config    | HH - hires interp. filter, LL - lowres interp. filter, SS - scanline mode
+// 8'b0_011_0100 | XXrrrrSS || video config    | rrrr - reserved (were HHLL, the interp. filters; ignored), SS - scanline mode
 // 8'b0_100_0100 | XXXXXFFS || floppy config   | FF - drive number, S - floppy speed
 // 8'b0_101_0100 | XXXBASMC || harddisk config | B/A - slave/master is ATAPI, S - enable slave HDD, M - enable master HDD, C - enable HDD controler
 // 8'b0_101_1000 | XXXBASMC || harddisk config, IDE port 2 (same layout)
 // 8'b0_110_0100 | XXXXXXAA || joystick config | AA - autofire rate
-// 8'b0_000_1100 | XXXXXAAA_AAAAAAAA B,B,... || write OSD buffer, AAAAAAAAAAA - 11bit OSD buffer address, B - variable number of bytes
+// (8'b0_000_1100 was the bitmap OSD buffer write: gone with the bitmap OSD, Phase 6; the text layer is 0x2C..0x5C below)
 // 8'b0_001_1100 | A_A_A_A B,B,... || write system memory, A - 32 bit memory address, B - variable number of bytes
 // 8'b1_000_1000 read RTL version
 
@@ -325,7 +202,6 @@ localparam [5:0]
   SPI_HARDDISK0_CFG_ADR= 6'b0_101_01,
   SPI_HARDDISK1_CFG_ADR= 6'b0_101_10,
   SPI_JOYSTICK_CFG_ADR = 6'b0_110_01,
-  SPI_OSD_BUFFER_ADR   = 6'b0_000_11,
   SPI_MEM_WRITE_ADR    = 6'b0_001_11,
   SPI_VERSION_ADR      = 6'b1_000_10,
   // The OSD key-event QUEUE (command byte 0x98).  OSD_CMD_READ (osd_ctrl) is a
@@ -372,7 +248,6 @@ reg spi_floppy_cfg_sel    = 1'b0;
 reg spi_harddisk0_cfg_sel = 1'b0;
 reg spi_harddisk1_cfg_sel = 1'b0;
 reg spi_joystick_cfg_sel  = 1'b0;
-reg spi_osd_buffer_sel    = 1'b0;
 reg spi_mem_write_sel     = 1'b0;
 reg spi_version_sel       = 1'b0;
 reg spi_mem_read_sel      = 1'b0;
@@ -389,7 +264,6 @@ always @ (*) begin
   spi_harddisk0_cfg_sel= 1'b0;
   spi_harddisk1_cfg_sel= 1'b0;
   spi_joystick_cfg_sel = 1'b0;
-  spi_osd_buffer_sel   = 1'b0;
   spi_mem_write_sel    = 1'b0;
   spi_version_sel      = 1'b0;
   spi_mem_read_sel     = 1'b0;
@@ -406,7 +280,6 @@ always @ (*) begin
     SPI_HARDDISK0_CFG_ADR: spi_harddisk0_cfg_sel= 1'b1;
     SPI_HARDDISK1_CFG_ADR: spi_harddisk1_cfg_sel= 1'b1;
     SPI_JOYSTICK_CFG_ADR : spi_joystick_cfg_sel = 1'b1;
-    SPI_OSD_BUFFER_ADR   : spi_osd_buffer_sel   = 1'b1;
     SPI_MEM_WRITE_ADR    : spi_mem_write_sel    = 1'b1;
     SPI_VERSION_ADR      : spi_version_sel      = 1'b1;
     SPI_KEYQ_ADR         : spi_keyq_sel         = 1'b1;
@@ -423,8 +296,7 @@ always @ (*) begin
       spi_harddisk0_cfg_sel= 1'b0;
       spi_harddisk1_cfg_sel= 1'b0;
       spi_joystick_cfg_sel = 1'b0;
-      spi_osd_buffer_sel   = 1'b0;
-      spi_mem_write_sel    = 1'b0;
+          spi_mem_write_sel    = 1'b0;
       spi_version_sel      = 1'b0;
       spi_mem_read_sel     = 1'b0;
       spi_keyq_sel         = 1'b0;
@@ -434,16 +306,17 @@ end
 
 // 8'b0_000_1000 | XXXXHRBC || reset control   | H - CPU halt, R - reset, B - reset to bootloader, C - reset control block
 // 8'b0_001_1000 | XXXXXXXX || clock control   | unused
-// 8'b0_010_1000 | XXXXXXKE || osd control     | K - disable Amiga keyboard, E - enable OSD
+// 8'b0_010_1000 | XXXXXXK0 || osd control     | K - disable Amiga keyboard (the keys to the OSD); bit 0 was E, the bitmap OSD's enable (gone, Phase 6)
 // 8'b0_000_0100 | XXXGEANT || chipset config  | G - AGA, E - ECS, A - OCS A1000, N - NTSC, T - turbo
 // 8'b0_001_0100 | XXXXKCTT || cpu config      | K - fast kickstart enable, C - CPU cache enable, TT - CPU type (00=68k, 01=68k10, 10=68k20)
 // 8'b0_010_0100 | XHFFSSCC || memory config   | H - HRTmon, FF - fast, SS - slow, CC - chip
-// 8'b0_011_0100 | DDHHLLSS || video config    | DD - dither, HH - hires interp. filter, LL - lowres interp. filter, SS - scanline mode
+// 8'b0_011_0100 | DDrrrrSS || video config    | DD - dither, rrrr - reserved (were HH LL, the hires / lowres interp.
+//                |          ||                 | filters, removed 2026-10-26; ignored, firmware sends 0), SS - scanline mode
 //               | XXWWBBMM    (optional second byte) WW - HDMI beam width (0 off, 1 sharp, 2 medium, 3 soft), BB - HDMI bloom (0 off, 1 low, 2 high), MM - HDMI CRT mask (0 off, 1 grille, 2 grille strong, 3 shadow)
 // 8'b0_100_0100 | XXXXXFFS || floppy config   | FF - drive number, S - floppy speed
 // 8'b0_101_0100 | XXXXXSMC || harddisk config | S - enable slave HDD, M - enable master HDD, C - enable HDD controler
 // 8'b0_110_0100 | XXXXXCAA || joystick config | C - CD32pad mode, AA - autofire rate
-// 8'b0_000_1100 | XXXXXAAA_AAAAAAAA B,B,... || write OSD buffer, AAAAAAAAAAA - 11bit OSD buffer address, B - variable number of bytes
+// (8'b0_000_1100 was the bitmap OSD buffer write: gone with the bitmap OSD, Phase 6; the text layer is 0x2C..0x5C below)
 // 8'b0_001_1100 | A_A_A_A B,B,... || write system memory, A - 32 bit memory address, B - variable number of bytes
 // 8'b1_000_1000 read RTL version
 
@@ -454,18 +327,17 @@ always @ (posedge clk) begin
     if (rx && !cmd) begin
       if (spi_reset_ctrl_sel)   begin if (dat_cnt == 0) {cpuhlt, cpurst, usrrst} <= #1 wrdat[2:0]; end
   //    if (spi_clock_ctrl_sel)   begin if (dat_cnt == 0) end
-      if (spi_osd_ctrl_sel)     begin if (dat_cnt == 0) {key_disable, osd_enable} <= #1 wrdat[1:0]; end
+      if (spi_osd_ctrl_sel)     begin if (dat_cnt == 0) key_disable <= #1 wrdat[1]; end
       if (spi_chip_cfg_sel)     begin if (dat_cnt == 0) t_chipset_config <= #1 wrdat[4:0]; end
       if (spi_cpu_cfg_sel)      begin if (dat_cnt == 0) t_cpu_config <= #1 wrdat[4:0]; end
       if (spi_memory_cfg_sel)   begin if (dat_cnt == 0) t_memory_config <= #1 wrdat[7:0]; end
-      if (spi_video_cfg_sel)    begin if (dat_cnt == 0) {dither, hr_filter, lr_filter, scanline} <= #1 wrdat[7:0];
+      if (spi_video_cfg_sel)    begin if (dat_cnt == 0) {dither, scanline} <= #1 {wrdat[7:6], wrdat[1:0]};
                                       if (dat_cnt == 1) crt_fx <= #1 wrdat[7:0]; end
       if (spi_floppy_cfg_sel)   begin if (dat_cnt == 0) floppy_config <= #1 wrdat[3:0]; end
       if (spi_harddisk0_cfg_sel)begin if (dat_cnt == 0) t_ide_config0 <= #1 wrdat[4:0]; end
       if (spi_harddisk1_cfg_sel)begin if (dat_cnt == 0) t_ide_config1 <= #1 wrdat[4:0]; end
       if (spi_joystick_cfg_sel) begin if (dat_cnt == 0) {cd32pad, autofire_config} <= #1 wrdat[2:0]; end
       //if (spi_joystick_cfg_sel) begin if (dat_cnt == 0) {autofire_config} <= #1 wrdat[1:0]; end
-  //    if (spi_osd_buffer_sel)   begin if (dat_cnt == 3) highlight <= #1 wrdat[3:0]; end
   //    if (spi_mem_write_sel)    begin if (dat_cnt == 0) end
   //    if (spi_version_sel)      begin if (dat_cnt == 0) end
   //    if (spi_mem_read_sel)     begin if (dat_cnt == 0) end
@@ -478,41 +350,6 @@ end
 //assign usrrst  = rx && !cmd && spi_reset_ctrl_sel && (dat_cnt == 0);
 //assign bootrst = rx && !cmd && spi_reset_ctrl_sel && wrdat[0] && (dat_cnt == 0);
 
-
-// OSD buffer write
-reg wr_en_r = 1'b0;
-always @ (posedge clk) begin
-  if (clk7_en) begin
-    if (rx && (dat_cnt == 3) && spi_osd_buffer_sel)
-      wr_en_r <= #1 1'b1;
-    else if (rx && cmd)
-      wr_en_r <= #1 1'b0;
-  end
-end
-
-assign wren = wr_en_r && rx && !cmd;
-
-
-// address counter and buffer write control (write line <NNN> command)
-always @ (posedge clk) begin
-  if (clk7_en) begin
-    if (rx && !cmd && (spi_osd_buffer_sel || spi_mem_read_sel) && (dat_cnt == 3))
-      wraddr[10:0] <= {wrdat[2:0],8'b0000_0000};
-    else if (rx)	//increment for every data byte that comes in
-      wraddr[10:0] <= wraddr[10:0] + 11'd1;
-  end
-end
-
-
-// highlight - TODO remove!
-//always @ (posedge clk) begin
-//  if (clk7_en) begin
-//    if (~osd_enable)
-//      highlight <= #1 4'b1000;
-//    else if (rx && !cmd && spi_osd_buffer_sel && (dat_cnt == 3) && wrdat[4])
-//      highlight <= #1 wrdat[3:0];
-//  end
-//end
 
 `ifdef MINIMIG_HOST_DIRECT  // Does the host CPU have direct access to the Minimig's memory?
 
@@ -625,6 +462,165 @@ assign host_adr  = mem_adr[23:0];
 
 `endif // MINIMIG_HOST_DIRECT
 
+//----------------------------------------------------------------------------
+// OSD text layer (findings/osd-redesign/plan.md 4.1): the write side of the
+// 720p text layer osd_text.v, which sits in the HDMI chain (clk_148) and
+// takes these registers on its own write port (clk).
+//
+//   0x2C TXT_WR   d0 mode (0 char,attr pairs; 1 chars only; 2 attrs only;
+//                 3 writes nothing), d1 cell[10:8], d2 cell[7:0], d3..
+//                 data: one cell per pair (written at its second byte, both
+//                 lanes) or per byte (one lane); the cell +1 each, mod 2048
+//   0x3C FONT_WR  d0 adr[11:8], d1 adr[7:0], d2.. bytes, adr +1 each
+//   0x4C PAL_WR   d0 the first entry (0..15), then 4 bytes per entry {mode
+//                 in bits 7:6, r, g, b} into the layer's staging palette
+//   0x5C TXT_CFG  d0..d4 = txt_cfg bytes 0..4 {ctrl (bit 0 enable, bit 1
+//                 scale 2), x0/8, y0/8, cols, rows}; the 5th byte toggles
+//                 txt_commit (the layer copies palette and cfg at its next
+//                 frame); bytes after the 5th are ignored
+// dat_cnt stops at 4, so the streams run on their own "on" flags (set by
+// the last header byte) and TXT_CFG on its own count.
+// The write enables are one clk pulse at the clk7 edge that takes the byte.
+// osd_txt = {txt_commit, txt_cfg[39:0], pal_we, pal_adr[5:0], pal_dat[7:0],
+//            font_we, font_adr[11:0], font_dat[7:0],
+//            txt_we, txt_lane[1:0], txt_adr[10:0], txt_dat[15:0]}
+// (107 bits; pal_to_ddr.sv unpacks it).  Lane 0 = char [7:0], 1 = attr [15:8].
+//----------------------------------------------------------------------------
+localparam [5:0]
+  SPI_TXT_WR_ADR  = 6'b0_010_11,   // 0x2C
+  SPI_FONT_WR_ADR = 6'b0_011_11,   // 0x3C
+  SPI_PAL_WR_ADR  = 6'b0_100_11,   // 0x4C
+  SPI_TXT_CFG_ADR = 6'b0_101_11;   // 0x5C
+wire spi_txt_wr_sel  = (cmd_dat == SPI_TXT_WR_ADR);
+wire spi_font_wr_sel = (cmd_dat == SPI_FONT_WR_ADR);
+wire spi_pal_wr_sel  = (cmd_dat == SPI_PAL_WR_ADR);
+wire spi_txt_cfg_sel = (cmd_dat == SPI_TXT_CFG_ADR);
+
+reg        txt_we = 1'b0, font_we = 1'b0, pal_we = 1'b0, txt_commit = 1'b0;
+reg [1:0]  txt_lane = 2'b00;
+reg [10:0] txt_adr = 11'd0;
+reg [15:0] txt_dat = 16'd0;
+reg [11:0] font_adr = 12'd0;
+reg [7:0]  font_dat = 8'd0;
+reg [5:0]  pal_adr = 6'd0;
+reg [7:0]  pal_dat = 8'd0;
+reg [39:0] txt_cfg = 40'd0;
+// stream state
+reg        txt_on = 1'b0, txt_ph = 1'b0, font_on = 1'b0, pal_on = 1'b0;
+reg [1:0]  txt_mode = 2'd0;
+reg [10:0] txt_ptr = 11'd0;
+reg [7:0]  txt_chr = 8'd0;
+reg [11:0] font_ptr = 12'd0;
+reg [5:0]  pal_ptr = 6'd0;
+reg [2:0]  cfg_cnt = 3'd0;
+
+always @(posedge clk) begin
+  txt_we  <= 1'b0;
+  font_we <= 1'b0;
+  pal_we  <= 1'b0;
+  if (clk7_en) begin
+    if (rx && cmd) begin
+      txt_on  <= 1'b0;
+      txt_ph  <= 1'b0;
+      font_on <= 1'b0;
+      pal_on  <= 1'b0;
+      cfg_cnt <= 3'd0;
+    end else if (rx) begin
+      // 0x2C
+      if (spi_txt_wr_sel) begin
+        if (txt_on) begin
+          case (txt_mode)
+            2'd0: if (!txt_ph) begin
+                    txt_chr <= wrdat;
+                    txt_ph  <= 1'b1;
+                  end else begin
+                    txt_we   <= 1'b1;
+                    txt_lane <= 2'b11;
+                    txt_adr  <= txt_ptr;
+                    txt_dat  <= {wrdat, txt_chr};
+                    txt_ptr  <= txt_ptr + 11'd1;
+                    txt_ph   <= 1'b0;
+                  end
+            2'd1: begin
+                    txt_we   <= 1'b1;
+                    txt_lane <= 2'b01;
+                    txt_adr  <= txt_ptr;
+                    txt_dat  <= {8'h00, wrdat};
+                    txt_ptr  <= txt_ptr + 11'd1;
+                  end
+            2'd2: begin
+                    txt_we   <= 1'b1;
+                    txt_lane <= 2'b10;
+                    txt_adr  <= txt_ptr;
+                    txt_dat  <= {wrdat, 8'h00};
+                    txt_ptr  <= txt_ptr + 11'd1;
+                  end
+            default: ;
+          endcase
+        end else begin
+          if (dat_cnt == 3'd0) txt_mode <= wrdat[1:0];
+          if (dat_cnt == 3'd1) txt_ptr[10:8] <= wrdat[2:0];
+          if (dat_cnt == 3'd2) begin
+            txt_ptr[7:0] <= wrdat;
+            txt_on <= 1'b1;
+          end
+        end
+      end
+      // 0x3C
+      if (spi_font_wr_sel) begin
+        if (font_on) begin
+          font_we  <= 1'b1;
+          font_adr <= font_ptr;
+          font_dat <= wrdat;
+          font_ptr <= font_ptr + 12'd1;
+        end else begin
+          if (dat_cnt == 3'd0) font_ptr[11:8] <= wrdat[3:0];
+          if (dat_cnt == 3'd1) begin
+            font_ptr[7:0] <= wrdat;
+            font_on <= 1'b1;
+          end
+        end
+      end
+      // 0x4C
+      if (spi_pal_wr_sel) begin
+        if (pal_on) begin
+          pal_we  <= 1'b1;
+          pal_adr <= pal_ptr;
+          pal_dat <= wrdat;
+          pal_ptr <= pal_ptr + 6'd1;
+        end else begin
+          pal_ptr <= {wrdat[3:0], 2'b00};
+          pal_on  <= 1'b1;
+        end
+      end
+      // 0x5C
+      if (spi_txt_cfg_sel && cfg_cnt != 3'd5) begin
+        case (cfg_cnt)
+          3'd0: txt_cfg[7:0]   <= wrdat;
+          3'd1: txt_cfg[15:8]  <= wrdat;
+          3'd2: txt_cfg[23:16] <= wrdat;
+          3'd3: txt_cfg[31:24] <= wrdat;
+          default: txt_cfg[39:32] <= wrdat;
+        endcase
+        cfg_cnt <= cfg_cnt + 3'd1;
+`ifndef OSD_TXT_MUTANT_COMMIT
+        if (cfg_cnt == 3'd4)
+          txt_commit <= ~txt_commit;
+`endif
+      end
+    end
+  end
+end
+
+`ifdef OSD_TXT_MUTANT_LANE
+// bench mutant (sim/hdmi_upsample/tb_osd_text_spi.v): char and attr lanes swapped
+assign osd_txt = {txt_commit, txt_cfg, pal_we, pal_adr, pal_dat, font_we, font_adr, font_dat,
+                  txt_we, txt_lane[0], txt_lane[1], txt_adr, txt_dat[7:0], txt_dat[15:8]};
+`else
+assign osd_txt = {txt_commit, txt_cfg, pal_we, pal_adr, pal_dat, font_we, font_adr, font_dat,
+                  txt_we, txt_lane, txt_adr, txt_dat};
+`endif
+
 // rtl version
 //`ifndef MINIMIG_XILINX
 `include "minimig_version.vh"
@@ -677,6 +673,19 @@ always @ (*) begin
     4'd7    : rtl_ver = in_diag[15:8];
     4'd8    : rtl_ver = in_diag[23:16];
     4'd9    : rtl_ver = in_diag[31:24];
+    // the OSD text layer (see above): bytes 10/11 are what the boot ROM's
+    // lock-step checks against the firmware's OSD2_REQUIRED
+    // (fw/ctrl_boot/lockstep.c).  Byte 11, the layer version: 2 since byte 14 is the status byte and
+    // cfide has the RTG screen's Video Pos register (0x0fffff54); the
+    // firmware reads byte 14 only from version 2 on (fw/ctrl/osd2.h
+    // OSD2_V_STATUS), a version-1 core answers MINION_VER there.
+    4'd10   : rtl_ver = 8'hB5;
+    4'd11   : rtl_ver = 8'd2;
+    4'd12   : rtl_ver = 8'd64;
+    4'd13   : rtl_ver = 8'd32;
+    // byte 14, the status: bit 0 the RTG screen is on (agnus' rtg_ena; clk
+    // domain, no synchroniser needed)
+    4'd14   : rtl_ver = {7'd0, rtg_ena};
     default : rtl_ver = MINION_VER;
   endcase
 end

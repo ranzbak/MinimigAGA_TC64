@@ -93,6 +93,7 @@ char t_DirEntryLFN[MAXDIRENTRIES][261];
 DIRENTRY t_DirEntry[MAXDIRENTRIES];
 unsigned char t_sort_table[MAXDIRENTRIES];
 
+
 // external functions
 extern unsigned long GetTimer(unsigned long);
 
@@ -1271,7 +1272,7 @@ char ScanDirectory(unsigned long mode, char *extension, unsigned char options)
         else if (mode == (unsigned long)SCAN_PREV_PAGE)
         { // note: temporary buffer entries are in reverse order
             unsigned char j = nNewEntries - 1;
-            for (i = 7; i > j; i--)
+            for (i = MAXDIRENTRIES - 1; i > j; i--)
             {
                 x = sort_table[i];
                 sort_table[i] = sort_table[i - nNewEntries];

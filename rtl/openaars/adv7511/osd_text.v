@@ -43,9 +43,26 @@
 //   for one frame (accepted, plan 7.3); palette and window never tear.
 //
 // Position (the layer needs nothing from the generator but its outputs)
-//   i_pe is the pixel enable: high on the second clock of each pixel, so a
-//   pixel's video changes at the edge that samples i_pe high (pal_to_ddr:
-//   ~w_adv_clk, signal_generator's r_vid_enable).  At those edges the layer
+//   i_pe is the pixel enable (~signal_generator o_adv_clk, its r_vid_enable).
+//   Which of a pixel's two clocks it is high on is the video's, not the
+//   generator's (the generator registers its input every clock), so it is a
+//   parameter:
+//     PE_PHASE 0  i_pe high on the second clock of each video pixel: the
+//                 video changes at the edge that samples i_pe high
+//                 (sim/osd_text's leg pe0)
+//     PE_PHASE 1  i_pe high on the first clock of each video pixel: the
+//                 video changes at the edge that samples i_pe low.  This is
+//                 pal_to_ddr's: the upsampler's video changes at the pixel
+//                 boundaries of the generator's DE, which rises in a clock
+//                 with i_pe high, and adv_ddr takes a pixel's two bus words
+//                 from that clock and the next.  Under PE_PHASE 0 the
+//                 layer's pixels would straddle two of adv_ddr's: each pin
+//                 pixel {r, g[7:4]} of one layer pixel, {g[3:0], b} of the
+//                 next (2026-10-28, crt_run.sh osd2win's pin check).
+//   The layer runs its counters on pe = i_pe (PE_PHASE 0) or ~i_pe (1), so
+//   with PE_PHASE 1 they move one clock later, and works one pixel further
+//   ahead (LEAD + 1): the overlay then changes one clock earlier than under
+//   PE_PHASE 0, on the video's pixel boundaries.  At pe edges the layer
 //   samples i_hs and i_de and keeps two counters:
 //     nx  the next pixel's x, 0-based on the raster, counting on through the
 //         blanking modulo 4096: the pixel whose video reaches i_r/g/b one
@@ -53,12 +70,18 @@
 //     cal pixels from the hsync's start to the DE's start, measured on each
 //         line with DE (HS_DE until the first one): no porch constants, the
 //         same in 720p50 and 720p60.
-//     ny  the line: all ones at i_frame (the generator's frame pulse, its
-//         line 0), + 1 at each hsync start, so it is valid from the line's
-//         hsync on, well before its first pixel.
+//     ny  the line, 0 = the first line with DE after i_frame: set at
+//         i_frame to -1 - vcal, + 1 at each hsync start, so it is valid
+//         from the line's hsync on, well before its first pixel.
+//     vcal hsyncs from i_frame to the first line with DE (its hsync
+//         included) less one, measured in each frame (VS_DE until the
+//         first one): row 0 follows the DE wherever the generator puts
+//         its active lines (signal_generator PAL_VT_TOP: DE from vt_count
+//         15), no vertical porch constants either.
 //   This reproduces the generator's own counters (hz_count - c_act - 1,
-//   vt_count) exactly; signal_generator's DE rises one clock before the
-//   pixel's video, which is what cal's "+ 1" takes into account.
+//   vt_count - the first active line) exactly; signal_generator's DE rises
+//   one clock before the pixel's video, which is what cal's "+ 1" takes
+//   into account.
 //
 // Timing
 //   The video, i_hs, i_vs and i_de leave LAT pixels (2*LAT clocks) later, so
@@ -83,14 +106,22 @@
 //   +11 effective mode (2 outside the window), colour + video sum
 //   +12 o_r/g/b
 //
+//   LAT 0 (pal_to_ddr.sv): no delay at all.  The overlay's mode and colour
+//   are registered once more (+12) and blended with the input video
+//   combinationally (mode 3: an 8-bit add per channel); the syncs and DE
+//   pass through as wires.  The chain behind the layer sees exactly the
+//   generator's timing, and with the layer off exactly its video.
+//
 // Bench: sim/osd_text (model.py renders the same frames; LAT check with the
 // layer off).  OOC size/timing: tools/vivado/ooc_osd.
 module osd_text #(
   parameter FONT_FILE = "osd_font.mem",
-  parameter LAT   = 3,          // video and sync delay, pixels (1..5)
+  parameter LAT   = 3,          // video and sync delay, pixels (0..5; 0: see "LAT 0")
   parameter H_ACT = 1280,       // the raster
   parameter V_ACT = 720,
-  parameter HS_DE = 261         // cal at power-up (720p50/60: sync 40 + back porch 220, + 1)
+  parameter HS_DE = 261,        // cal at power-up (720p50/60: sync 40 + back porch 220, + 1)
+  parameter VS_DE = 0,          // vcal at power-up (the first line with DE after i_frame)
+  parameter PE_PHASE = 0        // 0: i_pe high on a video pixel's second clock, 1: on its first (see Position)
 )(
   input             clk,        // clk_148
   input             i_pe,       // pixel enable (~signal_generator o_adv_clk)
@@ -101,9 +132,9 @@ module osd_text #(
   input             i_hs,
   input             i_vs,
   input             i_de,
-  output reg [7:0]  o_r = 8'd0,
-  output reg [7:0]  o_g = 8'd0,
-  output reg [7:0]  o_b = 8'd0,
+  output     [7:0]  o_r,
+  output     [7:0]  o_g,
+  output     [7:0]  o_b,
   output            o_hs,
   output            o_vs,
   output            o_de,
@@ -124,7 +155,14 @@ module osd_text #(
 );
 
 localparam PIPE = 12;                 // clocks from nx to o_r/g/b
-localparam LEAD = PIPE / 2 - 1 - LAT; // pixels; nx leads its video by one
+`ifdef OSD_TEXT_MUTANT_PHASE
+// MUTANT (bench only): PE_PHASE ignored, the layer before 2026-10-28 -- under
+// PE_PHASE 1 video its pixels straddle two video pixels
+localparam PH = 0;
+`else
+localparam PH = (PE_PHASE != 0);
+`endif
+localparam LEAD = PIPE / 2 - 1 - LAT + PH; // pixels; nx leads its video by one
 localparam [11:0] LEADV = LEAD;
 localparam D1   = 2 * LAT - 2;        // video registers before the blend's two
 localparam [11:0] XEND = H_ACT - LEADV;    // xi on the raster: [4096-LEAD, 4096) U [0, XEND)
@@ -208,8 +246,12 @@ reg [11:0] cal  = HS_DE;                  // pixels from the hsync's start to th
 reg [11:0] nx0  = 12'd1 - HS_DE;          // nx at the hsync's start
 reg [11:0] nx   = 12'd0;
 reg [11:0] ny   = 12'hfff;
+reg [11:0] lcnt = 12'hfff;                // hsyncs since i_frame, less one
+reg [11:0] vcal = VS_DE;                  // lcnt at the frame's first DE
+reg        vseen = 1'b1;                  // vcal measured in this frame (none before the first i_frame)
+wire       pe = PH ? ~i_pe : i_pe;        // high on a video pixel's second clock
 always @(posedge clk) begin
-  if (i_pe) begin
+  if (pe) begin
     hs_p <= i_hs;
     de_p <= i_de;
     hcnt <= hcnt + 1'b1;
@@ -218,13 +260,22 @@ always @(posedge clk) begin
       hcnt <= 12'd0;
       nx   <= nx0;
       ny   <= ny + 1'b1;
+      lcnt <= lcnt + 1'b1;
     end
-    if (i_de && !de_p)
+    if (i_de && !de_p) begin
       cal <= hcnt + 1'b1;
+      if (!vseen) begin
+        vcal  <= lcnt;
+        vseen <= 1'b1;
+      end
+    end
   end
   nx0 <= 12'd1 - cal;
-  if (i_frame)
-    ny <= 12'hfff;
+  if (i_frame) begin
+    ny    <= ~vcal;                       // -1 - vcal: 0 at the hsync of the first DE line
+    lcnt  <= 12'hfff;
+    vseen <= 1'b0;
+  end
 end
 
 // ---- overlay pipeline ----------------------------------------------------------------------
@@ -261,17 +312,7 @@ reg [23:0] pc10 = 24'd0;
 // +11
 reg [1:0]  me11 = 2'd2;
 reg [23:0] pc11 = 24'd0;
-reg [23:0] vd11 = 24'd0;
-reg [8:0]  sr11 = 9'd0, sg11 = 9'd0, sb11 = 9'd0;
 initial for (i = 1; i <= ADLY; i = i + 1) attr[i] = 8'd0;
-
-// the video and syncs: D1 registers, then +11 and +12 (the blend)
-reg  [23:0] vdl [0:(D1 > 0 ? D1 - 1 : 0)];
-wire [23:0] vdel = (D1 > 0) ? vdl[(D1 > 0 ? D1 - 1 : 0)] : {i_r, i_g, i_b};
-reg  [2:0]  sdl [0:2*LAT-1];
-initial for (i = 0; i < (D1 > 0 ? D1 : 1); i = i + 1) vdl[i] = 24'd0;
-initial for (i = 0; i < 2*LAT; i = i + 1) sdl[i] = 3'd0;
-assign {o_hs, o_vs, o_de} = sdl[2*LAT-1];
 
 always @(posedge clk) begin
   // +1
@@ -318,25 +359,57 @@ always @(posedge clk) begin
   pm10  <= live_m[idx9];
   pc10  <= live_c[idx9];
   win10 <= win9;
-  // +11: mode, sum
+  // +11: the effective mode (2 outside the window)
   me11 <= win10 ? pm10 : 2'd2;
   pc11 <= pc10;
-  vd11 <= vdel;
-  sr11 <= pc10[23:16] + vdel[23:16];
-  sg11 <= pc10[15:8]  + vdel[15:8];
-  sb11 <= pc10[7:0]   + vdel[7:0];
-  // +12: blend
-  case (me11)
-    2'd0: {o_r, o_g, o_b} <= pc11;
-    2'd1: {o_r, o_g, o_b} <= {1'b0, vd11[23:17], 1'b0, vd11[15:9], 1'b0, vd11[7:1]};
-    2'd2: {o_r, o_g, o_b} <= vd11;
-    2'd3: {o_r, o_g, o_b} <= {sr11[8:1], sg11[8:1], sb11[8:1]};
-  endcase
-  // video and sync delay lines
-  vdl[0] <= {i_r, i_g, i_b};
-  for (i = 1; i < D1; i = i + 1) vdl[i] <= vdl[i-1];
-  sdl[0] <= {i_hs, i_vs, i_de};
-  for (i = 1; i < 2*LAT; i = i + 1) sdl[i] <= sdl[i-1];
 end
+
+// +12: the blend with the video
+generate if (LAT == 0) begin : g_lat0
+  // the overlay registered once more, then combinational with the input
+  reg  [1:0]  me12 = 2'd2;
+  reg  [23:0] pc12 = 24'd0;
+  always @(posedge clk) begin
+    me12 <= me11;
+    pc12 <= pc11;
+  end
+  wire [8:0] sr = {1'b0, pc12[23:16]} + {1'b0, i_r};
+  wire [8:0] sg = {1'b0, pc12[15:8]}  + {1'b0, i_g};
+  wire [8:0] sb = {1'b0, pc12[7:0]}   + {1'b0, i_b};
+  assign {o_r, o_g, o_b} = (me12 == 2'd0) ? pc12 :
+                           (me12 == 2'd1) ? {1'b0, i_r[7:1], 1'b0, i_g[7:1], 1'b0, i_b[7:1]} :
+                           (me12 == 2'd2) ? {i_r, i_g, i_b} :
+                                            {sr[8:1], sg[8:1], sb[8:1]};
+  assign {o_hs, o_vs, o_de} = {i_hs, i_vs, i_de};
+end else begin : g_lat
+  // the video: D1 registers, then +11 (with the sum) and +12; the syncs 2*LAT
+  reg  [23:0] vdl [0:(D1 > 0 ? D1 - 1 : 0)];
+  wire [23:0] vdel = (D1 > 0) ? vdl[(D1 > 0 ? D1 - 1 : 0)] : {i_r, i_g, i_b};
+  reg  [2:0]  sdl [0:(LAT > 0 ? 2*LAT-1 : 0)];
+  reg  [23:0] vd11 = 24'd0;
+  reg  [8:0]  sr11 = 9'd0, sg11 = 9'd0, sb11 = 9'd0;
+  reg  [23:0] orgb = 24'd0;
+  integer k;
+  initial for (k = 0; k < (D1 > 0 ? D1 : 1); k = k + 1) vdl[k] = 24'd0;
+  initial for (k = 0; k < 2*LAT; k = k + 1) sdl[k] = 3'd0;
+  always @(posedge clk) begin
+    vd11 <= vdel;
+    sr11 <= pc10[23:16] + vdel[23:16];
+    sg11 <= pc10[15:8]  + vdel[15:8];
+    sb11 <= pc10[7:0]   + vdel[7:0];
+    case (me11)
+      2'd0: orgb <= pc11;
+      2'd1: orgb <= {1'b0, vd11[23:17], 1'b0, vd11[15:9], 1'b0, vd11[7:1]};
+      2'd2: orgb <= vd11;
+      2'd3: orgb <= {sr11[8:1], sg11[8:1], sb11[8:1]};
+    endcase
+    vdl[0] <= {i_r, i_g, i_b};
+    for (k = 1; k < D1; k = k + 1) vdl[k] <= vdl[k-1];
+    sdl[0] <= {i_hs, i_vs, i_de};
+    for (k = 1; k < 2*LAT; k = k + 1) sdl[k] <= sdl[k-1];
+  end
+  assign {o_r, o_g, o_b} = orgb;
+  assign {o_hs, o_vs, o_de} = sdl[(LAT > 0 ? 2*LAT-1 : 0)];
+end endgenerate
 
 endmodule

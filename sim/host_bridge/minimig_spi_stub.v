@@ -7,9 +7,14 @@
 //   cs[4]  FPGA (EnableFpga, CS 0x10)   every byte 0x00: no drive request
 //   cs[5]  OSD  (EnableOsd,  CS 0x20)   byte 0 (the command) answers 0x00;
 //          after it, by command:
-//            OSD_CMD_VERSION 0x88  01 1A 0A 02 A4 7D, then 0x00
-//                                  (the board's reply, 174322f: beta 1,
-//                                  2026-10-02, magic A4, caps 7D)
+//            OSD_CMD_VERSION 0x88  01 1A 0A 02 A4 7D, 4 x 00, B5 02 40 20
+//                                  00, then 0x00 (the board's reply,
+//                                  174322f: beta 1, 2026-10-02, magic A4,
+//                                  caps 7D; the input diagnostic 0; the
+//                                  OSD text layer version 2, 64 x 32,
+//                                  status 0 -- the layer the boot ROM's
+//                                  lock-step wants, OSD2_REQUIRED, since
+//                                  OSD redesign Phase 6)
 //            OSD_CMD_KEYQ    0x98  0x00 (queue empty)
 //            anything else         0x00 (OSD_CMD_READ 0x00 reads its level
 //                                  during byte 0: 0x00, no key)
@@ -101,6 +106,10 @@ module minimig_spi_stub (
           4: osd_reply = 8'h02;
           5: osd_reply = 8'hA4;
           6: osd_reply = 8'h7D;
+          11: osd_reply = 8'hB5;
+          12: osd_reply = 8'h02;
+          13: osd_reply = 8'h40;
+          14: osd_reply = 8'h20;
           default: osd_reply = 8'h00;
         endcase
     end

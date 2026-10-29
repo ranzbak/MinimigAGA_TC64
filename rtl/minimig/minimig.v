@@ -244,6 +244,7 @@ module minimig #(
   inout sdo, //SPI data output
   input sck, //SPI clock
   output [1:0] osd_rx_seq, // OSD reply sequence, clk domain (userio_osd.v)
+  output [106:0] osd_txt,  // OSD text layer write side, clk domain (userio_osd.v)
   // // host
   // output wire           host_cs,
   // output wire [ 24-1:0] host_adr,
@@ -295,11 +296,9 @@ module minimig #(
   output  hd_frd,
   output  hblank_out,
   output  vblank_out,
-  output  [13:0] crt_cfg, // OSD video config {scaling, beam, bloom, mask, hr_filter, lr_filter, scanline} for the HDMI CRT emulation and scaler
-  output  vid_hires,     // Denise BPLCON0 HIRES / SHRES (HDMI CRT emulation, per-line filter choice)
+  output  [13:0] crt_cfg, // OSD video config {scaling, beam, bloom, mask, 4'b0 (reserved: were hr/lr_filter), scanline} for the HDMI CRT emulation and scaler
+  output  vid_hires,     // Denise BPLCON0 HIRES / SHRES (HDMI CRT emulation; carried with the picture)
   output  vid_shres,
-  output  osd_blank_out, // Let the toplevel dither module handle drawing the OSD.
-  output  osd_pixel_out,
   output  rtg_ena,
   output reg ntsc = NTSC, //PAL/NTSC video mode selection
   input   ext_int2, // External interrupt for Akiko
@@ -419,8 +418,6 @@ wire  strhor_paula; //horizontal strobe for Paula
 wire  [7:0]red_i; //denise red (internal)
 wire  [7:0]green_i; //denise green (internal)
 wire  [7:0]blue_i; //denise blue (internal)
-wire  osd_blank; //osd blanking
-wire  osd_pixel; //osd pixel(video) data
 wire  _hsync_i; //horizontal sync (internal)
 wire  _vsync_i; //vertical sync (internal)
 wire  _csync_i; //composite sync (internal)
@@ -463,27 +460,27 @@ wire  sel_cart; //Action Replay RAM select
 wire  [16-1:0] cart_data_out;
 
 wire  usrrst; //user reset from osd interface
-wire  [1:0] lr_filter; //lowres interpolation filter mode: bit 0 - horizontal, bit 1 - vertical
-wire  [1:0] hr_filter; //hires interpolation filter mode: bit 0 - horizontal, bit 1 - vertical
 wire  [1:0] scanline; //scanline effect configuration
 wire  [1:0] dither; // video output dither
 wire  [7:0] crt_fx; // HDMI CRT emulation {scaling, beam, bloom, mask}
-wire  hires; //hires signal from Denise for interpolation filter enable in Amber
+wire  hires; //hires signal from Denise (HDMI CRT emulation)
 wire  shres; //superhires signal from Denise (HDMI CRT emulation)
 
 // HDMI CRT emulation (rtl/openaars/adv7511/pal_to_ddr.sv, crt_post.v): the
-// OSD's scanline, filter, mask, bloom and beam width items drive it, and the
+// OSD's scanline, mask, bloom and beam width items drive it, and the
 // HDMI Scaling item (sharp / area: exact 2.5x / 3x; findings/scaler/plan.md).
 // They need the 15 kHz picture, so
 // on openaars amber's scandoubler is off while any of them is selected (the
 // firmware's scandoubler setting stays as it is), and amber's own scanlines
-// are tied off so no effect applies twice.  Amber's filters only work on the
-// scandoubled picture, so they never apply while the CRT effects do.
-assign crt_cfg   = {crt_fx, hr_filter, lr_filter, scanline};
+// are tied off so no effect applies twice.  The Lores/Hires interpolation
+// filters (amber, and their HDMI blur/blend) were removed 2026-10-26
+// (findings/osd-redesign/plan.md 3.13); their bits 5:2 of crt_cfg stay,
+// reserved and driven 0, so the layout does not move.
+assign crt_cfg   = {crt_fx, 4'b0000, scanline};
 assign vid_hires = hires;
 assign vid_shres = shres;
 `ifdef MINIMIG_OPENAARS
-wire  crt_any = |{crt_fx, hr_filter, lr_filter, scanline};
+wire  crt_any = |{crt_fx, scanline};
 wire  [1:0] amber_scanline = 2'b00;
 `else
 wire  crt_any = 1'b0;
@@ -766,11 +763,7 @@ userio #(.CORE_CAPS(CORE_CAPS | CAPS_IDE2)) USERIO1
   .clk7_en(clk7_en),
   .clk7n_en(clk7n_en),
   .reset(reset),
-  .c1(c1),
-  .c3(c3),
-  .sol(sol),
   .sof(sof),
-  .varbeamen(varbeamen),
   .rtg_ena(rtg_ena),
   .reg_address_in(reg_address),
   .data_in(custom_data_in),
@@ -803,10 +796,7 @@ userio #(.CORE_CAPS(CORE_CAPS | CAPS_IDE2)) USERIO1
   .sdo(user_sdo),
   .sck(sck),
   .osd_rx_seq(osd_rx_seq),
-  .osd_blank(osd_blank),
-  .osd_pixel(osd_pixel),
-  .lr_filter(lr_filter),
-  .hr_filter(hr_filter),
+  .osd_txt(osd_txt),
   .memory_config(userio_memory_config),
   .chipset_config(userio_chipset_config),
   .floppy_config(userio_floppy_config),
@@ -873,14 +863,9 @@ amber AMBER1
   .clk(clk),
   .dblscan(_15khz && !varbeamen && !crt_any),
   .varbeamen(varbeamen),
-  .lr_filter(lr_filter),
-  .hr_filter(hr_filter),
   .scanline(amber_scanline),
   .dither(dither),
   .htotal(htotal),
-  .hires(hires),
-  .osd_blank(osd_blank),
-  .osd_pixel(osd_pixel),
   .red_in(red_i),
   .blue_in(blue_i),
   .green_in(green_i),
@@ -893,9 +878,7 @@ amber AMBER1
   ._hsync_out(_hsync),
   ._vsync_out(_vsync),
   ._csync_out(_csync),
-  .selcsync(selcsync),
-  .osd_blank_out(osd_blank_out),
-  .osd_pixel_out(osd_pixel_out)
+  .selcsync(selcsync)
 );
 
 // Amiga keyboard

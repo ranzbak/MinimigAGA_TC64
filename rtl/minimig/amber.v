@@ -21,7 +21,8 @@
 //                                                                            //
 // This is Amber                                                              //
 // Amber is a scandoubler to allow connection to a VGA monitor.               //
-// In addition, it can overlay an OSD (on-screen-display) menu.               //
+// (The OSD overlay it had went with the bitmap OSD, OSD redesign Phase 6:   //
+// the OSD is the HDMI chain's 720p text layer, osd_text.v.)                 //
 // Amber also has a pass-through mode in which                                //
 // the video output can be connected to an RGB SCART input.                   //
 // The meaning of _hsync_out and _vsync_out is then:                          //
@@ -49,6 +50,11 @@
 // RK:                                                                        //
 // 2013-03-03  - cleanup                                                      //
 //                                                                            //
+// 2026-10-26  - horizontal and vertical interpolation removed (the HDMI CRT  //
+//               emulation replaces them; findings/osd-redesign/plan.md 3.13) //
+// 2026-10-29  - the OSD overlay removed (OSD redesign Phase 6; the last      //
+//               commit with it: osd-int bc677a44)                            //
+//                                                                            //
 ////////////////////////////////////////////////////////////////////////////////
 
 
@@ -58,16 +64,10 @@ module amber
   // config
   input  wire           dblscan,        // enable VGA output (enable scandoubler)
   input  wire           varbeamen,      // variable beam enabled
-  input  wire [  2-1:0] lr_filter,      // interpolation filter settings for low resolution
-  input  wire [  2-1:0] hr_filter,      // interpolation filter settings for high resolution
   input  wire [  2-1:0] scanline,       // scanline effect enable
   input  wire [  2-1:0] dither,         // dither enable (00 = off, 01 = temporal, 10 = random, 11 = temporal + random)
   // control
   input  wire [  9-1:0] htotal,         // video line length
-  input  wire           hires,          // display is in hires mode (from bplcon0)
-  // osd
-  input  wire           osd_blank,      // OSD overlay enable (blank normal video)
-  input  wire           osd_pixel,      // OSD pixel(video) data
   // input
   input  wire [  8-1:0] red_in,         // red componenent video in
   input  wire [  8-1:0] green_in,       // green component video in
@@ -82,16 +82,8 @@ module amber
   output reg            _hsync_out=0,   // horizontal synchronisation out
   output reg            _vsync_out=0,   // vertical synchronisation out
   output reg			_csync_out=0,
-  output wire            selcsync,
-  output wire			osd_blank_out,
-  output wire			osd_pixel_out
+  output wire            selcsync
 );
-
-
-//// params ////
-localparam [  8-1:0] OSD_R = 8'b11110000;
-localparam [  8-1:0] OSD_G = 8'b11110000;
-localparam [  8-1:0] OSD_B = 8'b11110000;
 
 
 //// control ////
@@ -109,44 +101,11 @@ always @ (posedge clk) begin
 end
 
 
-//// horizontal interpolation ////
-reg            hi_en=0;                 // horizontal interpolation enable
-reg  [  8-1:0] r_in_d=0;                // pixel data delayed by 70ns for horizontal interpolation
-reg  [  8-1:0] g_in_d=0;                // pixel data delayed by 70ns for horizontal interpolation
-reg  [  8-1:0] b_in_d=0;                // pixel data delayed by 70ns for horizontal interpolation
-wire [  9-1:0] hi_r;                    // horizontal interpolation output
-wire [  9-1:0] hi_g;                    // horizontal interpolation output
-wire [  9-1:0] hi_b;                    // horizontal interpolation output
-reg  [ 11-1:0] sd_lbuf_wr=0;            // line buffer write pointer
-
-// horizontal interpolation enable
-always @ (posedge clk) begin
-`ifdef MINIMIG_VIDEO_FILTER
-  if (hss) hi_en <= #1 hires ? hr_filter[0] : lr_filter[0];
-`else
-  hi_en <= #1 1'b0;
-`endif
-end
-
-// pixel data delayed by one hires pixel for horizontal interpolation
-always @ (posedge clk) begin
-  if (sd_lbuf_wr[0])  begin // sampled at 14MHz (hires clock rate)
-    r_in_d <= red_in;
-    g_in_d <= green_in;
-    b_in_d <= blue_in;
-  end
-end
-
-// interpolate & mux
-assign hi_r = hi_en ? ({1'b0, red_in}   + {1'b0, r_in_d}) : {red_in[7:0]  , 1'b0};
-assign hi_g = hi_en ? ({1'b0, green_in} + {1'b0, g_in_d}) : {green_in[7:0], 1'b0};
-assign hi_b = hi_en ? ({1'b0, blue_in}  + {1'b0, b_in_d}) : {blue_in[7:0] , 1'b0};
-
-
 //// scandoubler ////
-reg  [ 30-1:0] sd_lbuf [0:1024-1];      // line buffer for scan doubling (there are 908/910 hires pixels in every line)
-reg  [ 30-1:0] sd_lbuf_o=0;             // line buffer output register
-reg  [ 30-1:0] sd_lbuf_o_d=0;           // compensantion for one clock delay of the second line buffer
+reg  [ 25-1:0] sd_lbuf [0:1024-1];      // line buffer for scan doubling (there are 908/910 hires pixels in every line)
+reg  [ 25-1:0] sd_lbuf_o=0;             // line buffer output register
+reg  [ 25-1:0] sd_lbuf_o_d=0;           // one more clock, as when the vertical interpolation's line buffer was here
+reg  [ 11-1:0] sd_lbuf_wr=0;            // line buffer write pointer
 reg  [ 11-1:0] sd_lbuf_rd=0;            // line buffer read pointer
 
 // scandoubler line buffer write pointer
@@ -169,7 +128,7 @@ end
 always @ (posedge clk) begin
   if (dblscan) begin
     // write
-    sd_lbuf[sd_lbuf_wr[10:1]] <= #1 {_hsync_in, osd_blank, osd_pixel, hi_r, hi_g, hi_b};
+    sd_lbuf[sd_lbuf_wr[10:1]] <= #1 {_hsync_in, red_in, green_in, blue_in};
     // read
     sd_lbuf_o <= #1 sd_lbuf[sd_lbuf_rd[9:0]];
     // delayed data
@@ -178,43 +137,10 @@ always @ (posedge clk) begin
 end
 
 
-//// vertical interpolation ////
-reg            vi_en=0;                 // vertical interpolation enable
-reg  [ 30-1:0] vi_lbuf [0:1024-1];      // vertical interpolation line buffer
-reg  [ 30-1:0] vi_lbuf_o=0;             // vertical interpolation line buffer output register
-wire [ 10-1:0] vi_r_tmp;                // vertical interpolation temp data
-wire [ 10-1:0] vi_g_tmp;                // vertical interpolation temp data
-wire [ 10-1:0] vi_b_tmp;                // vertical interpolation temp data
-wire [  8-1:0] vi_r;                    // vertical interpolation outputs
-wire [  8-1:0] vi_g;                    // vertical interpolation outputs
-wire [  8-1:0] vi_b;                    // vertical interpolation outputs
-
-//vertical interpolation enable
-always @ (posedge clk) begin
-`ifdef MINIMIG_VIDEO_FILTER
-  if (hss) vi_en <= #1 hires ? hr_filter[1] : lr_filter[1];
-`else
-  vi_en <= #1 1'b0;
-`endif
-end
-
-// vertical interpolation line buffer write/read
-always @ (posedge clk) begin
-  // write
-  vi_lbuf[sd_lbuf_rd[9:0]] <= #1 sd_lbuf_o;
-  // read
-  vi_lbuf_o <= #1 vi_lbuf[sd_lbuf_rd[9:0]];
-end
-
-// interpolate & mux
-assign vi_r_tmp = vi_en ? ({1'b0, sd_lbuf_o_d[26:18]} + {1'b0, vi_lbuf_o[26:18]}) : {sd_lbuf_o_d[26:18], 1'b0};
-assign vi_g_tmp = vi_en ? ({1'b0, sd_lbuf_o_d[17:09]} + {1'b0, vi_lbuf_o[17:09]}) : {sd_lbuf_o_d[17:09], 1'b0};
-assign vi_b_tmp = vi_en ? ({1'b0, sd_lbuf_o_d[ 8: 0]} + {1'b0, vi_lbuf_o[ 8: 0]}) : {sd_lbuf_o_d[ 8: 0], 1'b0};
-
-// cut unneeded bits
-assign vi_r = vi_r_tmp[8+2-1:2];
-assign vi_g = vi_g_tmp[8+2-1:2];
-assign vi_b = vi_b_tmp[8+2-1:2];
+// scandoubled pixel data
+wire [  8-1:0] sd_r = sd_lbuf_o_d[23:16];
+wire [  8-1:0] sd_g = sd_lbuf_o_d[15: 8];
+wire [  8-1:0] sd_b = sd_lbuf_o_d[ 7: 0];
 
 `ifdef MINIMIG_TOPLEVEL_DITHER
 
@@ -223,9 +149,9 @@ wire [ 8-1:0] dither_g;
 wire [ 8-1:0] dither_b;
 wire f_cnt;
 
-assign dither_r = vi_r;
-assign dither_g = vi_g;
-assign dither_b = vi_b;
+assign dither_r = sd_r;
+assign dither_g = sd_g;
+assign dither_b = sd_b;
 assign f_cnt=1'b0;
 
 `else
@@ -281,9 +207,9 @@ always @ (posedge clk) begin
 end
 
 // dither add previous error / 2
-assign r_dither_err = &vi_r[7:2] ? vi_r[7:0] : vi_r[7:0] + {6'b000000, r_err[1:0]};
-assign g_dither_err = &vi_g[7:2] ? vi_g[7:0] : vi_g[7:0] + {6'b000000, g_err[1:0]};
-assign b_dither_err = &vi_b[7:2] ? vi_b[7:0] : vi_b[7:0] + {6'b000000, b_err[1:0]};
+assign r_dither_err = &sd_r[7:2] ? sd_r[7:0] : sd_r[7:0] + {6'b000000, r_err[1:0]};
+assign g_dither_err = &sd_g[7:2] ? sd_g[7:0] : sd_g[7:0] + {6'b000000, g_err[1:0]};
+assign b_dither_err = &sd_b[7:2] ? sd_b[7:0] : sd_b[7:0] + {6'b000000, b_err[1:0]};
 
 // temporal/spatial dithering
 assign r_dither_tsp = &r_dither_err[7:2] ? r_dither_err[7:0] : r_dither_err[7:0] + {6'b000000, (dither[0] & (f_cnt ^ v_cnt ^ h_cnt) & r_dither_err[1]), 1'b0};
@@ -323,8 +249,6 @@ reg  [  8-1:0] ns_r;
 reg  [  8-1:0] ns_g;
 reg  [  8-1:0] ns_b;
 reg            ns_csync;
-reg            ns_osd_blank;
-reg            ns_osd_pixel;
 
 // scanline enable
 always @ (posedge clk) begin
@@ -347,8 +271,6 @@ always @ (posedge clk) begin
   ns_g          <= #1 ((!dblscan && f_cnt && scanline[1]) ? 8'h00 : ((!dblscan && f_cnt && scanline[0]) ? {1'b0, green_in[7:1]} : green_in));
   ns_b          <= #1 ((!dblscan && f_cnt && scanline[1]) ? 8'h00 : ((!dblscan && f_cnt && scanline[0]) ? {1'b0, blue_in[7:1]}  : blue_in));
   ns_csync      <= #1 _csync_in;
-  ns_osd_blank  <= #1 osd_blank;
-  ns_osd_pixel  <= #1 osd_pixel;
 end
 
 
@@ -358,54 +280,25 @@ wire           bm_vsync;
 wire [  8-1:0] bm_r;
 wire [  8-1:0] bm_g;
 wire [  8-1:0] bm_b;
-wire           bm_osd_blank;
-wire           bm_osd_pixel;
 
 assign selcsync     = dblscan ? 1'b0 : varbeamen ? 1'b0 : 1'b1;
-assign bm_hsync     = dblscan ? sd_lbuf_o_d[29] : _hsync_in;
+assign bm_hsync     = dblscan ? sd_lbuf_o_d[24] : _hsync_in;
 assign bm_vsync     = dblscan ? _vsync_in       : _vsync_in;
-//assign bm_hsync     = dblscan ? sd_lbuf_o_d[29] : varbeamen ? _hsync_in : ns_csync;
+//assign bm_hsync     = dblscan ? sd_lbuf_o_d[24] : varbeamen ? _hsync_in : ns_csync;
 //assign bm_vsync     = dblscan ? _vsync_in       : varbeamen ? _vsync_in : 1'b1;
 assign bm_r         = dblscan ? sl_r            : varbeamen ? red_in    : ns_r;
 assign bm_g         = dblscan ? sl_g            : varbeamen ? green_in  : ns_g;
 assign bm_b         = dblscan ? sl_b            : varbeamen ? blue_in   : ns_b;
-assign bm_osd_blank = dblscan ? sd_lbuf_o_d[28] : varbeamen ? osd_blank : ns_osd_blank;
-assign bm_osd_pixel = dblscan ? sd_lbuf_o_d[27] : varbeamen ? osd_pixel : ns_osd_pixel;
-assign osd_blank_out = dblscan ? sd_lbuf_o_d[28] : osd_blank;
-assign osd_pixel_out = dblscan ? sd_lbuf_o_d[27] : osd_pixel;
 
-
-`ifdef MINIMIG_TOPLEVEL_DITHER
-`define MINIMIG_TOPLEVEL_OSD
-`endif
-
-//// osd ////
-wire [  8-1:0] osd_r;
-wire [  8-1:0] osd_g;
-wire [  8-1:0] osd_b;
-
-`ifdef MINIMIG_TOPLEVEL_OSD
-
-assign osd_r = bm_r;
-assign osd_g = bm_g;
-assign osd_b = bm_b;
-
-`else
-
-assign osd_r = (bm_osd_blank ? (bm_osd_pixel ? OSD_R : {2'b00, bm_r[7:2]}) : bm_r);
-assign osd_g = (bm_osd_blank ? (bm_osd_pixel ? OSD_G : {2'b00, bm_g[7:2]}) : bm_g);
-assign osd_b = (bm_osd_blank ? (bm_osd_pixel ? OSD_B : {2'b10, bm_b[7:2]}) : bm_b);
-
-`endif
 
 //// output registers ////
 always @ (posedge clk) begin
   _hsync_out <= #1 bm_hsync;
   _vsync_out <= #1 bm_vsync;
   _csync_out <= #1 dblscan ? ~(~bm_hsync ^ ~bm_vsync) : _csync_in;
-  red_out    <= #1 osd_r;
-  green_out  <= #1 osd_g;
-  blue_out   <= #1 osd_b;
+  red_out    <= #1 bm_r;
+  green_out  <= #1 bm_g;
+  blue_out   <= #1 bm_b;
 end
 
 endmodule

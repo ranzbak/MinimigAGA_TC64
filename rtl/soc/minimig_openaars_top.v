@@ -243,10 +243,13 @@ wire [7:0]  vga_g;
 wire [7:0]  vga_b;
 wire [7:0]  hoffset;
 wire [7:0]  voffset;
+wire [7:0]  hoffset_rtg;
+wire [7:0]  voffset_rtg;
 
 // RTG
 wire        rtg_ena;
 wire [13:0] crt_cfg;     // HDMI CRT emulation and scaler: OSD video config (CLK_28)
+wire [106:0] osd_txt;    // OSD text layer write side (CLK_28, userio_osd.v)
 wire        vid_hires;   // Denise BPLCON0 HIRES (CLK_28)
 wire        vid_shres;   // Denise BPLCON0 SHRES (CLK_28)
 
@@ -293,8 +296,9 @@ wire        dv_sda_i;
 wire        dv_sda_t;
 wire        dv_sda_o;
 
-// Display scaler
+// Display scaler: the PAL/NTSC picture's Video Pos, and the RTG screen's
 wire [15:0] vpos_data;
+wire [15:0] w_vpos_rtg;     // {vpos, hpos}, as vpos_data: pal_to_ddr's RTG pair
 
 // Floppy /HD activity
 wire  floppy_frd;
@@ -533,12 +537,17 @@ pal_to_ddr my_pal_to_ddr (
   // Video offset
   .i_hoffset(hoffset),
   .i_voffset(voffset),
+  .i_hoffset_rtg(hoffset_rtg),
+  .i_voffset_rtg(voffset_rtg),
   // RTG
   .i_rtg_enable(rtg_ena),
   // CRT emulation: OSD video config and Denise resolution (CLK_28 domain)
   .i_crt_cfg(crt_cfg),
   .i_pal_hires(vid_hires),
   .i_pal_shres(vid_shres),
+  // OSD text layer: its write side (CLK_28)
+  .i_osd_clk(clk_28),
+  .i_osd_txt(osd_txt),
   //.i_pal_cs(vga_cs),
   // Output HDMI
   .o_clk_pixel(dv_clk),
@@ -619,6 +628,7 @@ minimig_virtual_top
   .VGA_B(vga_b),
   .RTG_ENABLE(rtg_ena),
   .CRT_CFG(crt_cfg),
+  .OSD_TXT(osd_txt),
   .VID_HIRES(vid_hires),
   .VID_SHRES(vid_shres),
   .SDRAM_DQ(dr_d),
@@ -673,6 +683,7 @@ minimig_virtual_top
   .I2C_INT(dv_int),     // the host CPU services the ADV7511 when it raises INT
   .RTC_CS(),
   .VPOS_DATA(vpos_data),
+  .VPOS_RTG_DATA(w_vpos_rtg),
   .floppy_frd(),
   .floppy_fwr(),
   .hd_fwr(hd_fwr),
@@ -816,5 +827,8 @@ endgenerate
 // Assign video position data
 assign hoffset = vpos_data[7:0];
 assign voffset = vpos_data[15:8];
+// the RTG screen's (cfide pos_rtg_q), split the same way
+assign hoffset_rtg = w_vpos_rtg[7:0];
+assign voffset_rtg = w_vpos_rtg[15:8];
 
 endmodule

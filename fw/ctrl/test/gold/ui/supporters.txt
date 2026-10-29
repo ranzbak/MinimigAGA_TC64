@@ -1,0 +1,63 @@
+chars
+^^^^^^^^^^^^  ^^^^^^ ^^^ ^^Thanks to^^^^^^^^^ ^^^ ^^^^  ^^^ ^^ ^
+^^^^^^^^^^^  ^^^^^^ ^^ ^^ ^^^^^^^^^ ^^^^  ^^^^^^ ^^ ^^^^^^^^ ^ ^
+^^Jens Schoenfeld^^^ ^^ ^^Dirk Vroomen^^    ^^Sebastian Hermann^
+  Jim Farley^^^^^^ ^^^^ ^^Nils Andreas^^^ ^^^^Graham Campbell ^^
+^^SIDKidd64^^  ^^^^^^ ^ ^^Alvaro Fussen^^^^^^^gamma0511^^^^^^^ ^
+^^Juan Jose Velez Ramirez^Sebastian ^^ ^^   ^^Steve Jones^  ^^^^
+^^Dag Jacobsen^^^^ ^^ ^ ^^Sebastian Bessler^^^Arkadiusz Kwasny^ 
+^ Bartol Filipovic^^ ^^ ^^Valentin Angelovski^Harry Fisch^  ^^^ 
+^ Pasi Ylinen^^^^^^^^^^ ^^Claudio Russo  ^^^^ Sonke Smiletzki^^ 
+^^Andreas Beck^^^^^ ^^^^^ Dominic Skilton^^^^^Tad Watson ^^^^^ ^
+^^^ ^^^^^^^^ ^^^^^^^^ ^^  ^^^ ^^ ^ ^^^^ ^^^^^^  ^^^^^^^^  ^^  ^^
+ ^^^^  ^^^^^  ^^^^ + all other contributors.^^ ^^  ^^^^^   ^^^^^
+  ^^^   ^^^^  ^^^^^^^^^ ^^^^^^^ ^^^ ^^  ^^^^  ^^^^^^ ^^^^^^^^^ ^
+  ^^^Thanks also to Espen Skog, Jens Drossler and everyone^^^ ^^
+^^^^^^^ ^^^^on the Turbo Chameleon 64 facebook group^     ^^^ ^^
+^^^^   ^^^^^^for their enthusiasm and suggestions.^^^^^^^  ^^^  
+^     ^^^^^^^^ ^^^^^^ ^^^^^^    ^^^^^^^^^  ^^^ ^^^^ ^^^^^^^  ^^^
+^^^Donate: paypal.me/robinsonb5 ^^^Patreon: coresforchameleon^  
+ Down the message  Esc back                                     
+                                                                
+fg
+8888888888889999999998888ddfffffffffddddddddddccccbbbbbbbbbcccdd
+88888888888999999999888dddcccccccccddddd88dddddddcccbbbbbbbbccdd
+88eeeeeeeeeeeeeee8888dddcceeeeeeeeeeeedd8888ddeeeeeeeeeeeeeeeeed
+88eeeeeeeeee8888888ddcccbbeeeeeeeeeeeeddd8ddddeeeeeeeeeeeeeeeccc
+ddeeeeeeeeedd88ddddcccbbaaeeeeeeeeeeeeedddddddeeeeeeeeebbbbbbbcc
+ddeeeeeeeeeeeeeeeeeeeeeee9eeeeeeeeecccddddddcceeeeeeeeeeebbbbbbc
+ddeeeeeeeeeeeecccccbbbaa99eeeeeeeeeeeeeeeeeccceeeeeeeeeeeeeeeebc
+ddeeeeeeeeeeeeeeeebbbaaa99eeeeeeeeeeeeeeeeeeedeeeeeeeeeeebbbbbbc
+ddeeeeeeeeeeecccccbbbaaa99eeeeeeeeeeeee8888888eeeeeeeeeeeeeeebbc
+ddeeeeeeeeeeeeccccccbbaaaaeeeeeeeeeeeeeee88888eeeeeeeeeecbbbbbcc
+ddddccccccccdcccccccccbbbbaaabbbccddd8899999999988dddcccccbbcccc
+8ddddddcccccdddddddfffffffffffffffffffffffff9998888ddccccccccccd
+88ddddddccccddddddddddddcccccccdddd88899999999888ddddcccccccccdd
+88dddfffffffffffffffffffffffffffffffffffffffffffffffffffffcccddd
+ddddddddccccffffffffffffffffffffffffffffffffffffffffcccccccccddd
+dddddddccccccfffffffffffffffffffffffffffffffffffffccbbbbbcccccdd
+cdddddcccccccccccccccddddddd888888888888888ddddcccbcbbbbbbbccccc
+cccffffffffffffffffffffffffffff8888ffffffffffffffffffffffffffbcc
+1111111111111111111111111111111111111111111111111111111111111111
+1111111111111111111111111111111111111111111111111111111111111111
+bg
+dddddddddddd888888888ddddcccccbbbcccccccccccccbbbbaaaaaaaaabbbcc
+ddddddddddd888888888dddcccbbbbbbbbbcccccddcccccccbbbaaaaaaaabbcc
+ddddddddddd888888ddddcccbbaaaaaabbbbccccddddcccccbbbbaaaaaaabbbc
+dddddcdddddddddddddccbbbaaaa99aaabbbcccccdccccccccbbbbaaaaaaabbb
+cccccccccccccddccccbbbaa99999999aabbbcccccccccccccbbbbbaaaaaaabb
+cccccccbcccccccccbbbaaa9988888999aabbbccccccbbbbcbbbbbaaaaaaaaab
+cccbbbbbbbbbbbbbbbbaaa99888888899aabbbcccccbbbbcccbbbbaaaaaaaaab
+ccbbbbbbbbbbbbbbbbaaa999888888899aabbcccccccccccccccbbbaaaaaaaab
+ccbbbbbbbbbbbbbbbbaaa99988888899aabbcccdddddddddcccccbbbaaaaaaab
+cccbbbbbbbbbbbbbbbbbaa999999999aabbcccddddddddddddccccbbbaaaaabb
+ccccbbbbbbbbcbbbbbbbbbaaaa999aaabbcccdd888888888ddcccbbbbbaabbbb
+dccccccbbbbbccccccccbbbbbaaaaabbbcccddd88888888ddddccbbbbbbbbbbc
+ddccccccbbbbccccccccccccbbbbbbbccccddd88888888dddccccbbbbbbbbbcc
+ddccccccbbbcccccccccccccccccccccccddddd8888dddddcccbbbbbbbbbbccc
+ccccccccbbbbbcbcccccccccccccccccddddddddddddddccccbbbbbbbbbbbccc
+cccccccbbbbbbbbbbcccccccccccddddddddddddddddccccbbbbaaaaabbbbbcc
+bcccccbbbbbbbbbbbbbbbcccccccdddddddddddddddccccbbbabaaaaaaabbbbb
+bbbcccbcbbbbbbbabbbbbbbbccccccddddddddddddccccbbbbaaaaaaaaaaaabb
+3333333333333333333333333333333333333333333333333333333333333333
+3333333333333333333333333333333333333333333333333333333333333333

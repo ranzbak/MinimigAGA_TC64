@@ -1,14 +1,18 @@
 `timescale 1ns / 1ps
 // pal_to_ddr: the HDMI output chain.  Amiga video (PAL / NTSC, 15 / 31 kHz,
 // RTG) to 720p50 / 720p60 for the ADV7511, 12-bit DDR at the pins:
-//   crt_beamh -> pal_to_hd_upsample -> crt_post -> signal_generator -> adv_ddr,
+//   crt_beamh -> pal_to_hd_upsample -> crt_post -> signal_generator
+//     -> osd_text (the OSD's 720p text layer) -> adv_ddr,
 // with frame_freq choosing the 50 / 60 Hz raster from the input frame period.
 // Clock domains:
 //   clk_114  the Amiga stream: input delay, crt_beamh, the upsampler's write
 //            side and its VPOS decision
 //   CLK_28   Denise's HIRES / SHRES and the OSD / RTG bits (phase-aligned
 //            with clk_114; the static bits get 2-FF synchronisers anyway)
-//   clk_148  720p: frame_freq, upsampler read side, crt_post, generator, adv_ddr
+//   clk_148  720p: frame_freq, upsampler read side, crt_post, generator,
+//            osd_text, adv_ddr
+//   i_osd_clk (CLK_28) osd_text's write side: cell / font RAM, staging
+//            palette and window, from userio_osd.v
 // Design notes: findings/scaler/plan.md (one chain, exact-ratio scaling),
 // findings/adv7511/.  Benches: sim/hdmi_upsample (crt_build.sh, golden.sh,
 // crt_run.sh, scaler_run.sh, run.sh).
@@ -24,7 +28,9 @@ module pal_to_ddr #(
   // crt_post's linear-light tables (sim/hdmi_upsample/scl_mkroms.py)
   parameter CRT_SDEC_FILE  = "crt_sdec.mem",
   parameter CRT_SENC_FILE  = "crt_senc.mem",
-  parameter CRT_SWROM_FILE = "crt_swrom.mem"
+  parameter CRT_SWROM_FILE = "crt_swrom.mem",
+  // the OSD text layer's font RAM power-up content (fw/ctrl/tools/mkfontmem.py)
+  parameter OSD_FONT_FILE  = "osd_font.mem"
 ) (
   // clk_114: the Amiga video stream
   input  logic        clk_114,
@@ -43,6 +49,9 @@ module pal_to_ddr #(
   input  logic [7:0]  i_voffset_rtg,  //   while RTG is on; 0: centred 1:1), same encodings
   input  logic        i_rtg_enable,
   input  logic [13:0] i_crt_cfg,      // OSD Video page, as osd_cfg_t below
+  // CLK_28: the OSD text layer's write side (userio_osd.v "OSD text layer")
+  input  logic        i_osd_clk,
+  input  logic [106:0] i_osd_txt,
   // clk_148: 720p to the ADV7511 (adv_ddr's pad registers); reset: system reset
   input  logic        clk_148,
   input  logic        reset,
@@ -199,12 +208,11 @@ module pal_to_ddr #(
 
   // controls: static per frame (OSD) and per HD line (resolution, latched
   // by the upsampler at the HD hsync); registered, they change in hblank
-  wire [1:0] w_crt_filt = w_m_lhires ? r_crt_cfg[5:4] : r_crt_cfg[3:2];
+  // r_crt_cfg[5:2] (the Lores/Hires Filter: H blur, V blend) are reserved
+  // since 2026-10-26 (findings/osd-redesign/plan.md 3.13): ignored
   wire [1:0] w_crt_scan = (r_crt_cfg[1:0] == 2'd0) ? 2'd0 :
                           (r_crt_cfg[1:0] == 2'd1) ? 2'd2 : 2'd3;
   reg  [1:0] r_ctl_scan  = 2'd0;
-  reg        r_ctl_vb    = 1'b0;
-  reg  [1:0] r_ctl_hblur = 2'd0;
   reg  [1:0] r_ctl_mask  = 2'd0;
   reg  [1:0] r_ctl_bloom = 2'd0;
   reg        r_ctl_hz60  = 1'b0;
@@ -213,16 +221,18 @@ module pal_to_ddr #(
     r_ctl_scan  <= r_crt_ok ? w_crt_scan : 2'd0;
     r_ctl_kern  <= (w_crt_scan == 2'd0) ? {1'b0, r_crt_cfg[11:10] == 2'd2} :
                    (w_crt_scan == 2'd3) ? 2'd3 : 2'd2;
-    r_ctl_vb    <= r_crt_ok & !r_ratio & w_crt_filt[1];
-    r_ctl_hblur <= (r_crt_ok & w_crt_filt[0]) ? (w_m_lhires ? 2'd1 : 2'd2) : 2'd0;
     r_ctl_mask  <= r_crt_ok ? r_crt_cfg[7:6] : 2'd0;
     r_ctl_bloom <= r_crt_ok ? r_crt_cfg[9:8] : 2'd0;
     r_ctl_hz60  <= ~r_50hz;
   end
 
   wire [23:0] w_crt_rgb;
+  // HAS_VBLEND 0: without the V filter nothing selects the two-line gamma
+  // blend; the weight table's single-line scanline profiles have w1 = 0
+  // (crt_mkroms.py), so the picture is bit-identical without the next-line
+  // multiply (3 DSP48).  HAS_HBLUR 0: the H filter's blur.
   crt_post #(
-    .HAS_VBLEND(1), .HAS_HBLUR(1), .HAS_MASK(1), .HAS_BLOOM(1), .HAS_LUT(1),
+    .HAS_VBLEND(0), .HAS_HBLUR(0), .HAS_MASK(1), .HAS_BLOOM(1), .HAS_LUT(1),
     .WROM_FILE(CRT_WROM_FILE), .LUT_FILE(CRT_LUT_FILE), .BLOOM_FILE(CRT_BLOOM_FILE),
     .HAS_LIN(1), .SDEC_FILE(CRT_SDEC_FILE), .SENC_FILE(CRT_SENC_FILE), .SWROM_FILE(CRT_SWROM_FILE)
   ) my_crt_post (
@@ -234,8 +244,8 @@ module pal_to_ddr #(
     .i_nxt(w_m_nxt),
     .i_hz60(r_ctl_hz60),
     .i_scan(r_ctl_scan),
-    .i_vblend(r_ctl_vb),
-    .i_hblur(r_ctl_hblur),
+    .i_vblend(1'b0),
+    .i_hblur(2'd0),
     .i_mask(r_ctl_mask),
     .i_bloom(r_ctl_bloom),
     .i_lut(r_ctl_scan),       // the LUT page that goes with the beam profile
@@ -333,9 +343,12 @@ module pal_to_ddr #(
     .o_vphase(w_m_vphase)
   );
 
-  // the generator's active window: the pin DE (adv_ddr); tb_crt_frame.v's DE probe (n_dee)
+  // the generator's active window: the pin DE (adv_ddr), osd_text's position;
+  // tb_crt_frame.v's DE probe (n_dee)
   logic       w_adv_de;
-  logic [7:0] w_o_r, w_o_g, w_o_b;
+  logic [7:0] w_o_r, w_o_g, w_o_b;      // the picture adv_ddr gets: the generator's + the OSD layer
+  logic [7:0] w_gen_r, w_gen_g, w_gen_b;
+  logic       w_gen_frame;
   // 720p50 / 720p60 raster (front porch by w_hz60), restarted at the upsampler's frame end.
   // Vertically: 15 blank lines, the 720 active ones (the rows the display showed when
   // adv_ddr made its own DE), vsync right after them, the back porch: 750 lines.  No
@@ -363,14 +376,70 @@ module pal_to_ddr #(
     .i_b(w_crt_b),
     .o_x(),
     .o_y(),
-    .o_r(w_o_r),
-    .o_g(w_o_g),
-    .o_b(w_o_b),
+    .o_r(w_gen_r),
+    .o_g(w_gen_g),
+    .o_b(w_gen_b),
     .o_adv_clk(w_adv_clk),
     .o_hsync(w_hd_gen_hsync),
     .o_vsync(w_hd_vsync),
     .o_adv_de(w_adv_de),
-    .o_frame()
+    .o_frame(w_gen_frame)
+  );
+
+  // The OSD's text layer (findings/osd-redesign/plan.md 3.1, 4.2), over the
+  // finished 720p picture: pixel-exact whatever the Amiga mode, the scaler
+  // and the CRT effects.  It finds its position from the generator's pixel
+  // enable, hsync, DE and frame pulse.  LAT 0: the overlay pipeline runs
+  // ahead of the pixel, the last step is a combinational blend with the
+  // generator's video, the syncs are not touched -- adv_ddr, the 60 Hz
+  // upsampler (hsync_out) and the pins keep the generator's timing exactly,
+  // and with the layer off w_o_* = w_gen_*.  (A LAT above 0 would delay the
+  // video 2*LAT clk_148 and need the delayed o_hs / o_vs into adv_ddr.)
+  // Write side: userio_osd's registered bus in CLK_28; palette and window
+  // cross into clk_148 by a commit toggle at the frame pulse (wizard.xdc's
+  // dll_28 -> clk_148 set_max_delay covers the static staging bits).
+  // PE_PHASE 1: the video here changes at the pixel boundaries of adv_ddr's
+  // word pairs, i.e. on the clock with ~w_adv_clk high (osd_text "Position");
+  // VS_DE 15: the window's first frame after power-up already starts at the
+  // generator's first DE line (PAL_VT_TOP 15; osd_text measures it from then on).
+  localparam OSD_LAT = 0;
+  osd_text #(
+    .FONT_FILE(OSD_FONT_FILE),
+    .LAT(OSD_LAT),
+    .PE_PHASE(1),
+    .VS_DE(15)
+  ) my_osd_text (
+    .clk(clk_148),
+    .i_pe(~w_adv_clk),
+    .i_frame(w_gen_frame),
+    .i_r(w_gen_r),
+    .i_g(w_gen_g),
+    .i_b(w_gen_b),
+    .i_hs(w_hd_gen_hsync),
+    .i_vs(w_hd_vsync),
+    .i_de(w_adv_de),
+    .o_r(w_o_r),
+    .o_g(w_o_g),
+    .o_b(w_o_b),
+    .o_hs(),
+    .o_vs(),
+    .o_de(),
+    .wclk(i_osd_clk),
+    // i_osd_txt: {commit, cfg[39:0], pal_we, pal_adr[5:0], pal_dat[7:0],
+    //             font_we, font_adr[11:0], font_dat[7:0],
+    //             txt_we, txt_lane[1:0], txt_adr[10:0], txt_dat[15:0]}
+    .txt_commit(i_osd_txt[106]),
+    .txt_cfg(i_osd_txt[105:66]),
+    .pal_we(i_osd_txt[65]),
+    .pal_adr(i_osd_txt[64:59]),
+    .pal_dat(i_osd_txt[58:51]),
+    .font_we(i_osd_txt[50]),
+    .font_adr(i_osd_txt[49:38]),
+    .font_dat(i_osd_txt[37:30]),
+    .txt_we(i_osd_txt[29]),
+    .txt_lane(i_osd_txt[28:27]),
+    .txt_adr(i_osd_txt[26:16]),
+    .txt_dat(i_osd_txt[15:0])
   );
 
   // 12-bit DDR to the ADV7511; DE the generator's window, the pins from IOB pad registers

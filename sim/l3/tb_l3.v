@@ -510,15 +510,12 @@ module tb_l3 #(
   userio_osd #(.CORE_CAPS(8'hAD)) osd1 (
     .clk(clk28), .clk7_en(clk7_en), .clk7n_en(clk7n_en),
     .reset(mm_reset),
-    .c1(1'b0), .c3(1'b0), .sol(1'b0), .sof(sof),
-    .varbeamen(1'b0), .rtg_ena(1'b0),
+    .rtg_ena(1'b0),
     .osd_ctrl(osd_ctrl),
     .in_diag(32'h00000000), .in_diag_clr(),
     ._scs(sd_cs[5]), .sdi(sd_do), .sdo(user_sdo), .sck(sck_slv),
     .osd_rx_seq(osd_rx_seq),   // reply sequence -> cfide's HOST_REQ OSD_RDY (as minimig_virtual_top)
-    .osd_blank(), .osd_pixel(),
-    .osd_enable(), .key_disable(),
-    .lr_filter(), .hr_filter(),
+    .key_disable(),
     .memory_config(), .chipset_config(), .floppy_config(userio_floppy_config),
     .scanline(), .dither(), .crt_fx(),
     .ide_config0(userio_ide_config0), .ide_config1(userio_ide_config1),

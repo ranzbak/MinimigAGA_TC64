@@ -1,8 +1,17 @@
 `timescale 1ps / 1ps
 // osd_text_tb -- rtl/openaars/adv7511/osd_text.v on the 720p generator
-// (signal_generator.sv, 720p50; +hz60: 720p60), as pal_to_ddr.sv will wire it in Phase 2:
+// (signal_generator.sv, 720p50; +hz60: 720p60), as pal_to_ddr.sv wires it:
 // the generator's video, syncs, pixel enable (~o_adv_clk) and frame pulse
 // into osd_text.
+// The generator's vertical raster is pal_to_ddr.sv's hd_gen (parameters
+// VT_TOP 15, VT_FP 0, VT_SYNC 5, VT_BP 25: active lines 15..734, vsync
+// 735..739, 750 lines; the horizontal raster and the 60 Hz front porch are
+// pal_to_ddr's too).  run.sh's leg "oldrast" builds it with the raster from
+// before 2026-10-27 (TOP 0, FP 5, SYNC 5, BP 20: active lines 0..719).
+// +vtop=N: the layer's frame pulse comes N lines before the generator's
+// (the same clock in the line), so the DE starts VT_TOP + N lines after it;
+// the window must follow the DE (row 0 = the first line with DE).  The
+// bench's frames, writes and captures go by the layer's pulse.
 // Run it in a leg directory made by model.py gen (run.sh does all of it):
 //
 //   cells_g.hex  2048 x 16  pass 1, both lanes (garbage)
@@ -17,21 +26,39 @@
 // palette A, cfg A) and toggles txt_commit; frame 1 shows A and, from line
 // 300 on, gets palette B and cfg B written plus a commit toggle (it must
 // still show A: live copy only at the frame pulse); frame 2 shows B.
+// The video's pixel phase is PE_PHASE's (default 1, pal_to_ddr's: a video
+// pixel is the clock with the pixel enable ~o_adv_clk high and the next;
+// leg pe0 builds 0: the clock with it low and the next).
 // in_<f>.hex / out_<f>.hex (f = 1, 2): the 1280 x 720 pixels at osd_text's
 // input and output, "rrggbb" per line, one per pixel: the first clock of
-// each pixel (pe low) with DE high.  model.py renders out_<f> from in_<f>.
+// each video pixel with DE high; in2_<f>.hex / out2_<f>.hex: its second
+// clock.  model.py renders out_<f> from in_<f> and out2_<f> from in2_<f>
+// (adv_ddr sends a pixel's two bus words from its two clocks, so a layer
+// pixel that straddles two video pixels fails there).
 //
 // Checks here, every clock:
 //   * o_hs, o_vs, o_de = the inputs 2*LAT clocks earlier
-//   * each captured pixel holds for both of its clocks (in and out)
+//   * each captured input pixel holds for both of its clocks (but x 0 under
+//     PE_PHASE 1: signal_generator blanks its first clock)
 //   * outside the captured pixels, o_r/g/b = the input 2*LAT clocks earlier
 //   * +off: o_r/g/b = the input 2*LAT clocks earlier on every clock
+//   * at the end, the layer's vcal = VT_TOP + vtop (its row 0 = the first DE line)
 // The input video is a random value per pixel, changing at the pixel
 // boundary (one clock before the generator registers it).
 module osd_text_tb;
 
 parameter LAT = 3;
+// the video's pixel phase against the pixel enable (osd_text PE_PHASE):
+// 1 = pal_to_ddr's, the video changes at the edge that samples ~o_adv_clk
+// low; 0 = at the edge that samples it high (leg pe0)
+parameter PE_PHASE = 1;
+// the generator's vertical raster (default: pal_to_ddr.sv's hd_gen)
+parameter VT_TOP  = 15;
+parameter VT_FP   = 0;
+parameter VT_SYNC = 5;
+parameter VT_BP   = 25;
 localparam D = 2 * LAT;
+localparam DD = (D > 0) ? D : 1;    // LAT 0: no delay line, the checks use the input as it is
 localparam NPIX = 1280 * 720;
 
 reg clk = 1'b0, wclk = 1'b0, reset = 1'b1;
@@ -44,10 +71,12 @@ reg        frame_end = 1'b0;
 wire [7:0] g_r, g_g, g_b;
 wire       g_hs, g_vs, g_de, g_frame, g_clk;
 wire       g_pe = ~g_clk;       // the pixel enable (r_vid_enable)
+wire       vpe = (PE_PHASE != 0) ? ~g_pe : g_pe;   // high on a video pixel's second clock
 signal_generator #(
   .PAL_HZ_ACT_PIX(1280), .PAL_HZ_FRONT_PORCH(440), .PAL_HZ_FRONT_PORCH60(110),
   .PAL_HZ_SYNC_WIDTH(40), .PAL_HZ_BACK_PORCH(220),
-  .PAL_VT_ACT_LN(720), .PAL_VT_FRONT_PORCH(5), .PAL_VT_SYNC_WIDTH(5), .PAL_VT_BACK_PORCH(20)
+  .PAL_VT_TOP(VT_TOP), .PAL_VT_ACT_LN(720), .PAL_VT_FRONT_PORCH(VT_FP),
+  .PAL_VT_SYNC_WIDTH(VT_SYNC), .PAL_VT_BACK_PORCH(VT_BP)
 ) hd_gen (
   .clk(clk), .reset(reset), .i_hz60(hz60), .i_frame_end(frame_end),
   .i_r(vi_r), .i_g(vi_g), .i_b(vi_b),
@@ -67,8 +96,8 @@ reg [7:0]  pal_dat = 8'd0;
 reg [39:0] txt_cfg = 40'd0;
 wire [7:0] o_r, o_g, o_b;
 wire       o_hs, o_vs, o_de;
-osd_text #(.LAT(LAT)) dut (
-  .clk(clk), .i_pe(g_pe), .i_frame(g_frame),
+osd_text #(.LAT(LAT), .PE_PHASE(PE_PHASE)) dut (
+  .clk(clk), .i_pe(g_pe), .i_frame(l_frame),
   .i_r(g_r), .i_g(g_g), .i_b(g_b), .i_hs(g_hs), .i_vs(g_vs), .i_de(g_de),
   .o_r(o_r), .o_g(o_g), .o_b(o_b), .o_hs(o_hs), .o_vs(o_vs), .o_de(o_de),
   .wclk(wclk),
@@ -87,7 +116,9 @@ reg [7:0]  pal_a [0:63];
 reg [7:0]  pal_b [0:63];
 reg [39:0] cfg [0:1];
 reg        off, hz60;
+integer    vtop = 0;          // +vtop=N: the layer's frame pulse N lines early
 integer    FRAME_CLK;         // one frame_end pulse per 750 lines
+integer    LINE_CLK;
 integer    errs = 0;
 initial begin
   $readmemh("cells_g.hex", cells_g);
@@ -99,8 +130,20 @@ initial begin
   $readmemh("cfg.hex", cfg);
   off = $test$plusargs("off");
   hz60 = $test$plusargs("hz60");
-  FRAME_CLK = 750 * (hz60 ? 1651 : 1981) * 2;
+  if (!$value$plusargs("vtop=%d", vtop)) vtop = 0;
+  LINE_CLK = (hz60 ? 1651 : 1981) * 2;
+  FRAME_CLK = 750 * LINE_CLK;
 end
+
+// ---- the layer's frame pulse: the generator's, or (+vtop) vtop lines before it --
+// (the generator is genlocked to frame_end: its frame is FRAME_CLK clocks)
+reg     e_frame = 1'b0;
+integer e_cnt = -1;           // clocks since the generator's last frame pulse
+always @(posedge clk) begin
+  e_cnt   <= g_frame ? 1 : (e_cnt >= 0 ? e_cnt + 1 : -1);
+  e_frame <= vtop > 0 && e_cnt == FRAME_CLK - vtop * LINE_CLK - 1;
+end
+wire    l_frame = (vtop > 0) ? e_frame : g_frame;
 
 // ---- frame pacing: one frame_end pulse per 750 lines of 1981 pixels (+hz60: 1651) --
 integer clkn = 0;
@@ -109,20 +152,20 @@ integer g_ny = 0;             // hsyncs since the frame pulse (the line, for the
 reg     hs_q = 1'b0;
 always @(posedge clk) begin
   hs_q <= g_hs;
-  if (g_frame) g_ny <= 0;
+  if (l_frame) g_ny <= 0;
   else if (g_hs && !hs_q) g_ny <= g_ny + 1;
 end
 always @(posedge clk) begin
   clkn <= clkn + 1;
   if (clkn == 8) reset <= 1'b0;
   frame_end <= (clkn % FRAME_CLK) == 40;
-  if (g_frame) frames <= frames + 1;
+  if (l_frame) frames <= frames + 1;
 end
 
 // input video: a new random value per pixel, at the edge before the
-// generator takes it (g_pe low), so it changes at the pixel boundary
+// generator takes it (vpe low), so it changes at the pixel boundary
 reg [31:0] lfsr = 32'h1234_5678;
-always @(posedge clk) if (!g_pe) begin
+always @(posedge clk) if (!vpe) begin
   lfsr <= {lfsr[30:0], lfsr[31] ^ lfsr[21] ^ lfsr[1] ^ lfsr[0]};
   {vi_r, vi_g, vi_b} <= {lfsr[7:0], lfsr[15:8], lfsr[23:16]} ^ {lfsr[31:24], lfsr[31:24], lfsr[31:24]};
 end
@@ -181,31 +224,37 @@ initial begin
 end
 
 // ---- checks and capture --------------------------------------------------------------
-reg [26:0] dl [0:D-1];        // {rgb, hs, vs, de} of the input, D clocks
+reg [26:0] dl [0:DD-1];       // {rgb, hs, vs, de} of the input, D clocks
 integer j;
 always @(posedge clk) begin
   dl[0] <= {g_r, g_g, g_b, g_hs, g_vs, g_de};
   for (j = 1; j < D; j = j + 1) dl[j] <= dl[j-1];
 end
-wire [23:0] din = dl[D-1][26:3];
-wire [2:0]  dsy = dl[D-1][2:0];
+wire [23:0] din = (D > 0) ? dl[DD-1][26:3] : {g_r, g_g, g_b};
+wire [2:0]  dsy = (D > 0) ? dl[DD-1][2:0] : {g_hs, g_vs, g_de};
 
-integer fi = -1, fo = -1;     // capture files
+integer fi = -1, fo = -1;     // capture files: first clock of each pixel
+integer fi2 = -1, fo2 = -1;   // second clock
 integer ni = 0, no = 0;       // pixels captured in this frame
+integer ni2 = 0, no2 = 0;
 integer capf = 0;             // frame being captured (1, 2), 0 = none
-reg [23:0] li = 0, lo = 0;    // last captured pixel (in, out)
-reg        hi = 0, ho = 0;    // second clock of a captured pixel
+reg [23:0] li = 0;            // last captured input pixel
+reg        hi = 0, ho = 0;    // second clock of a captured pixel (in, out)
+reg        lx0 = 0;           // ... and it is the line's first (x 0)
+reg        de_q = 0;          // g_de at the last first clock
 reg        act_o = 0;         // output: this clock belongs to a captured pixel
 reg        live = 0;          // delay line filled
 always @(posedge clk) begin
   if (clkn > D + 20) live <= 1'b1;
   // new frame
-  if (g_frame && (frames == 1 || frames == 2)) begin
-    if (fi >= 0) begin $fclose(fi); $fclose(fo); end
+  if (l_frame && (frames == 1 || frames == 2)) begin
+    if (fi >= 0) begin $fclose(fi); $fclose(fo); $fclose(fi2); $fclose(fo2); end
     capf <= frames + 1;
-    fi = $fopen((frames == 1) ? "in_1.hex" : "in_2.hex", "w");
-    fo = $fopen((frames == 1) ? "out_1.hex" : "out_2.hex", "w");
-    ni = 0; no = 0;
+    fi  = $fopen((frames == 1) ? "in_1.hex" : "in_2.hex", "w");
+    fo  = $fopen((frames == 1) ? "out_1.hex" : "out_2.hex", "w");
+    fi2 = $fopen((frames == 1) ? "in2_1.hex" : "in2_2.hex", "w");
+    fo2 = $fopen((frames == 1) ? "out2_1.hex" : "out2_2.hex", "w");
+    ni = 0; no = 0; ni2 = 0; no2 = 0;
   end
   if (live) begin
     if ({o_hs, o_vs, o_de} !== dsy) begin
@@ -216,40 +265,54 @@ always @(posedge clk) begin
       errs = errs + 1;
       if (errs < 10) $display("FAIL clk %0d: off, rgb %h, expected %h", clkn, {o_r, o_g, o_b}, din);
     end
-    // input pixels
-    if (hi && {g_r, g_g, g_b} !== li) begin
+    // input pixels: both clocks captured; a pixel holds for both, except x 0
+    // under PE_PHASE 1, whose first clock signal_generator blanks (its RGB
+    // gate is one clock behind its DE)
+    if (hi && {g_r, g_g, g_b} !== li && !(PE_PHASE != 0 && lx0)) begin
       errs = errs + 1;
       if (errs < 10) $display("FAIL clk %0d: input pixel changes within its two clocks", clkn);
     end
+    if (hi && capf != 0 && ni2 < NPIX) begin
+      $fdisplay(fi2, "%h", {g_r, g_g, g_b});
+      ni2 = ni2 + 1;
+    end
     hi <= 1'b0;
-    if (!g_pe && g_de && capf != 0 && ni < NPIX) begin
+    if (!vpe) de_q <= g_de;
+    if (!vpe && g_de && capf != 0 && ni < NPIX) begin
       $fdisplay(fi, "%h", {g_r, g_g, g_b});
       ni = ni + 1;
       li <= {g_r, g_g, g_b};
       hi <= 1'b1;
+      lx0 <= !de_q;
     end
-    // output pixels (the delay is an even number of clocks: same pe phase)
-    if (ho && {o_r, o_g, o_b} !== lo) begin
-      errs = errs + 1;
-      if (errs < 10) $display("FAIL clk %0d: output pixel changes within its two clocks", clkn);
+    // output pixels (the delay is an even number of clocks: same phase), both
+    // clocks captured: model.py renders each from the input's same clock, so
+    // a layer whose pixels straddle two video pixels fails there
+    if (ho && capf != 0 && no2 < NPIX) begin
+      $fdisplay(fo2, "%h", {o_r, o_g, o_b});
+      no2 = no2 + 1;
     end
     ho <= 1'b0;
-    if (!g_pe) act_o <= o_de;
-    if (!g_pe && o_de && capf != 0 && no < NPIX) begin
+    if (!vpe) act_o <= o_de;
+    if (!vpe && o_de && capf != 0 && no < NPIX) begin
       $fdisplay(fo, "%h", {o_r, o_g, o_b});
       no = no + 1;
-      lo <= {o_r, o_g, o_b};
       ho <= 1'b1;
     end
-    if (!(g_pe ? act_o : o_de) && {o_r, o_g, o_b} !== din) begin
+    if (!(vpe ? act_o : o_de) && {o_r, o_g, o_b} !== din) begin
       errs = errs + 1;
       if (errs < 10) $display("FAIL clk %0d: outside the picture, rgb %h, expected %h", clkn, {o_r, o_g, o_b}, din);
     end
   end
-  if (frames == 3 && no == NPIX) begin
-    $fclose(fi); $fclose(fo);
-    if (ni != NPIX) begin errs = errs + 1; $display("FAIL: %0d input pixels in frame 2", ni); end
-    if (errs == 0) $display("=== PASS osd_text_tb (LAT %0d, %0d clocks)", LAT, clkn);
+  if (frames == 3 && no == NPIX && no2 == NPIX) begin
+    $fclose(fi); $fclose(fo); $fclose(fi2); $fclose(fo2);
+    if (ni != NPIX || ni2 != NPIX) begin errs = errs + 1; $display("FAIL: %0d / %0d input pixels in frame 2", ni, ni2); end
+    // the first DE line, as the layer measured it (row 0 follows the DE)
+    if (dut.vcal !== VT_TOP + vtop) begin
+      errs = errs + 1;
+      $display("FAIL: vcal %0d, expected %0d (VT_TOP + vtop)", dut.vcal, VT_TOP + vtop);
+    end
+    if (errs == 0) $display("=== PASS osd_text_tb (LAT %0d, PE_PHASE %0d, VT_TOP %0d, %0d clocks)", LAT, PE_PHASE, VT_TOP, clkn);
     else $display("=== FAIL osd_text_tb: %0d errors", errs);
     $finish;
   end

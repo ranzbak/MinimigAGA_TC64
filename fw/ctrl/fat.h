@@ -3,7 +3,9 @@
 
 #include "hardware.h"
 #include <stdint.h>
-#define MAXDIRENTRIES 8
+// The directory table of the file selector: 16 entries (the OSD's list,
+// findings/osd-redesign/plan.md 5), the window a scan keeps
+#define MAXDIRENTRIES 16
 
 extern unsigned char secbuf[512];
 

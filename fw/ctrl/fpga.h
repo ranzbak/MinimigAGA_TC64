@@ -32,6 +32,12 @@ extern unsigned char core_caps;
 #define CORE_CAPS_TEMP       0x20   // the XADC die-temperature register is decoded
 #define CORE_CAPS_IDE2       0x80   // two Gayle IDE ports with ATAPI packet mode
 
+// The core's version (OSD_CMD_VERSION bytes 0-3: beta flag, year - 2000,
+// month, day) and this firmware's (version.h MM_FIRMWARE_VERSION, the build
+// time): the About page shows both.
+extern unsigned char core_version[4];
+extern const char fw_version[];
+
 // True when the core has a 68040 that cannot be switched away from: the CPU
 // menu line is then a statement of fact, not a choice.
 #define CORE_CPU_FIXED_040() \

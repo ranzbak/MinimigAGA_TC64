@@ -329,13 +329,15 @@ pal_to_ddr #(.CRT_WROM_FILE("../../rtl/openaars/adv7511/crt_wrom.mem"),
              .CRT_HK_FILE("../../rtl/openaars/adv7511/crt_hk.mem"),
              .CRT_SDEC_FILE("../../rtl/openaars/adv7511/crt_sdec.mem"),
              .CRT_SENC_FILE("../../rtl/openaars/adv7511/crt_senc.mem"),
-             .CRT_SWROM_FILE("../../rtl/openaars/adv7511/crt_swrom.mem")) dut (
+             .CRT_SWROM_FILE("../../rtl/openaars/adv7511/crt_swrom.mem"),
+             .OSD_FONT_FILE("../../rtl/openaars/adv7511/osd_font.mem")) dut (
 	.clk_148(clk_148), .clk_114(clk_114), .reset(reset), .vga_clk_pixel(pix_stb),
 	.i_pal_hsync(dut_hs), .i_pal_vsync(dut_vs),
 	.i_pal_r(src_rgb[23:16]), .i_pal_g(src_rgb[15:8]), .i_pal_b(src_rgb[7:0]),
 	.i_hoffset(hoff[7:0]), .i_voffset(voff[7:0]), .i_rtg_enable(rtg),
 	.i_hoffset_rtg(hoffrtg[7:0]), .i_voffset_rtg(voffrtg[7:0]),
 	.i_crt_cfg(crt_cfg), .i_pal_hires(src_hires), .i_pal_shres(1'b0),
+	.i_osd_clk(osd_clk), .i_osd_txt(osd_txt),   // the OSD text layer: tb_crt_osd2.vh
 	.o_clk_pixel(n_clk), .o_de(n_de), .o_vsync(n_vs), .o_hsync(n_hs), .o_data(n_d)
 );
 pal_to_ddr_ref ref0 (
@@ -755,4 +757,6 @@ initial begin
 	$display("done: %0d frames", frames);
 	$finish;
 end
+// the OSD text layer: +osd2, +osd2gen, the pin raster position (crt_run.sh osd2*)
+`include "tb_crt_osd2.vh"
 endmodule

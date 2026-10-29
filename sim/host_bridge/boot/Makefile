@@ -9,8 +9,8 @@
 #   $(FW_FILE)         fwtest.c + fwfill.S on fw/ctrl/arch (crt0, trap
 #                      entry, irq API) with firmware.ld, objcopy -O binary,
 #                      padded to $(IMG_BYTES) - 8 bytes, then the lock-step
-#                      trailer of fw/ctrl (fw/ctrl/sdctrailer.c: 'SDCV', 0,
-#                      0, SDC_VERSION of fw/ctrl/sdc.h), $(IMG_BYTES) bytes
+#                      trailer of fw/ctrl (fw/ctrl/sdctrailer.c: 'SDCV',
+#                      OSD2_REQUIRED of osd2.h, SDC_VERSION of sdc.h), $(IMG_BYTES) bytes
 #                      in all (5 sectors: the boot ROM log then has a fixed
 #                      number of sector reads)
 #   plain/$(FW_FILE)   the same without the trailer, padded to $(IMG_BYTES)
@@ -69,7 +69,7 @@ $(B)/fw.elf: $(OBJS) $(ARCH_LD)
 	$(RV_CC) $(LDFLAGS) -o $@ $(OBJS) $(RV_LIBS_FW)
 
 # the trailer as fw/ctrl/Makefile makes it (the same source file)
-$(B)/sdctrailer.bin: $(TOP)/fw/ctrl/sdctrailer.c $(TOP)/fw/ctrl/sdc.h
+$(B)/sdctrailer.bin: $(TOP)/fw/ctrl/sdctrailer.c $(TOP)/fw/ctrl/sdc.h $(TOP)/fw/ctrl/osd2.h
 	@mkdir -p $(@D)
 	$(RV_CC) $(RV_ARCH) -c -o $(B)/sdctrailer.o $<
 	$(RV_OBJCOPY) -O binary -j .sdctrailer $(B)/sdctrailer.o $@

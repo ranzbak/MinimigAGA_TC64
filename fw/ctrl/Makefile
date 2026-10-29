@@ -9,8 +9,12 @@
 #                 of the previous (vbcc) toolchain in the sources,
 #                 (e) the C library guard, (f) no #define true/false,
 #                 (g) the boot ROM image ends below the stack floor 0x1400,
-#                 (h) RV32OSDB.BIN ends with the lock-step trailer (SDC_VERSION),
-#                 (i) the committed boot ROM image looks for this file name
+#                 (h) RV32OSDB.BIN ends with the lock-step trailer
+#                     (OSD2_REQUIRED, SDC_VERSION),
+#                 (i) the committed boot ROM image looks for this file name,
+#                 (k) osd_logo.h is tools/mklogo.py's output of logo.h,
+#                 (l) font8x16.h and rtl/.../osd_font.mem are tools/mkfontmem.py's
+#                 output of font/ and osd_icons.h
 #   make stack    the 20 largest stack frames (-fstack-usage, $(B)/*.su)
 #   make clean
 #
@@ -49,7 +53,8 @@ SRCS := hardware.c config.c fat.c fdd.c fpga.c boot.c hdd.c main.c menu.c \
         mmc.c spi.c osd.c rafile.c swap.c hexdump.c uart.c errors.c \
         c64keys.c akiko.c audio.c drivesounds.c rtc.c i2c.c adv7511.c \
         atapi.c cdrom.c cue.c cdaudio.c rvlibc.c cfgswap.c stackcheck.c \
-        diskstat.c sdc.c sdproto.c
+        diskstat.c sdc.c sdproto.c osd2.c menu_model.c ui.c ui_tabs.c \
+        ui_about.c ui_supporters.c
 OBJS := $(addprefix $(B)/,$(SRCS:.c=.o))
 
 ifeq ($(CLANG),1)
@@ -86,11 +91,12 @@ $(B)/$(PROJECT).elf: $(ARCH_OBJS) $(OBJS) $(EXTRA_OBJS) $(ARCH_LD)
 	$(RV_CC) $(LDFLAGS) -o $@ $(ARCH_OBJS) $(OBJS) $(EXTRA_OBJS) $(LIBS)
 	$(RV_OBJDUMP) -d -S $@ > $(B)/$(PROJECT).lst
 
-# the image, then the lock-step trailer (8 bytes: 'S','D','C','V', 0, 0,
-# SDC_VERSION high, low; sdctrailer.c, from sdc.h): the boot ROM boots the
-# file only when its last 8 bytes name the peripheral's VERSION register
-# (fw/ctrl_boot README "Lock-step check")
-$(B)/sdctrailer.bin: sdctrailer.c sdc.h
+# the image, then the lock-step trailer (8 bytes: 'S','D','C','V',
+# OSD2_REQUIRED high, low, SDC_VERSION high, low; sdctrailer.c, from sdc.h
+# and osd2.h): the boot ROM boots the file only when its last 8 bytes name
+# the peripheral's VERSION register and the core's OSD text layer is at
+# least OSD2_REQUIRED (fw/ctrl_boot README "Lock-step check")
+$(B)/sdctrailer.bin: sdctrailer.c sdc.h osd2.h
 	@mkdir -p $(@D)
 	$(RV_CC) $(RV_ARCH) -c -o $(B)/sdctrailer.o sdctrailer.c
 	$(RV_OBJCOPY) -O binary -j .sdctrailer $(B)/sdctrailer.o $@
@@ -130,7 +136,7 @@ size: $(B)/$(PROJECT).elf $(B)/$(FW_FILE)
 	@echo "$(FW_FILE): `wc -c < $(B)/$(FW_FILE)` bytes"
 
 # ---- check: each part is its own target; all run (-k), any red fails ----
-CHECKS := check_a check_b check_c check_d check_e check_f check_g check_h check_i check_j
+CHECKS := check_a check_b check_c check_d check_e check_f check_g check_h check_i check_j check_k check_l
 
 check: $(B)/$(PROJECT).elf
 	@$(MAKE) --no-print-directory -k $(CHECKS)
@@ -210,13 +216,17 @@ check_g:
 	if [ $$(($$end)) -lt $$((0x1400)) ]; then echo "check (g) pass: boot ROM _end $$end < 0x1400"; \
 	else echo "check (g) FAIL: boot ROM _end $$end is not below 0x1400"; exit 1; fi
 
-# (h) the image ends with the lock-step trailer naming SDC_VERSION of sdc.h
-#     (read here with sed: a second derivation next to sdctrailer.c's)
+# (h) the image ends with the lock-step trailer naming OSD2_REQUIRED of
+#     osd2.h (bytes 4-5, not 0: the classic menu is gone, a core without
+#     the text layer has no menu) and SDC_VERSION of sdc.h (read here with
+#     sed: a second derivation next to sdctrailer.c's)
 check_h: $(B)/$(FW_FILE)
 	@v=`sed -n 's/^#define[[:space:]]*SDC_VERSION[[:space:]]*0x\([0-9A-Fa-f]\{4\}\).*/\1/p' sdc.h | tr A-F a-f`; \
-	want="53 44 43 56 00 00 `echo $$v | cut -c1-2` `echo $$v | cut -c3-4`"; \
+	o=`sed -n 's/^#define[[:space:]]*OSD2_REQUIRED[[:space:]]*\([0-9]\{1,3\}\)\b.*/\1/p' osd2.h`; \
+	if [ -z "$$o" ] || [ "$$o" -lt 1 ] || [ "$$o" -gt 255 ]; then echo "check (h) FAIL: no OSD2_REQUIRED 1..255 in osd2.h ('$$o')"; exit 1; fi; \
+	want="53 44 43 56 00 `printf %02x $$o` `echo $$v | cut -c1-2` `echo $$v | cut -c3-4`"; \
 	got=`tail -c 8 $< | od -An -tx1 | sed 's/^ *//; s/ *$$//'`; \
-	if [ -n "$$v" ] && [ "$$got" = "$$want" ]; then echo "check (h) pass: trailer SDCV $$v at the end of $(FW_FILE)"; \
+	if [ -n "$$v" ] && [ "$$got" = "$$want" ]; then echo "check (h) pass: trailer SDCV, OSD2_REQUIRED $$o, SDC $$v at the end of $(FW_FILE)"; \
 	else echo "check (h) FAIL: last 8 bytes of $< are '$$got', want '$$want'"; exit 1; fi
 
 # (i) the boot ROM and this build agree on the file: the 8.3 directory name
@@ -254,6 +264,20 @@ check_j:
 	r=`sed -n "s/^[[:space:]]*parameter[[:space:]]*VERSION[[:space:]]*=[[:space:]]*16'h\([0-9A-Fa-f]\{4\}\).*/\1/p" $(SDC_RTL) | tr a-f A-F`; \
 	if [ -n "$$v" ] && [ "$$v" = "$$r" ]; then echo "check (j) pass: SDC_VERSION $$v = sdcard_spi.v's VERSION"; \
 	else echo "check (j) FAIL: sdc.h SDC_VERSION '$$v', rtl/host/sdcard_spi.v VERSION '$$r' (bump both: sdc.h's rule)"; exit 1; fi
+
+# (k) the About page's logo glyphs (osd_logo.h) are tools/mklogo.py's
+#     output of logo.h (the legacy OSD's bitmap): one source
+check_k:
+	@if python3 -I tools/mklogo.py --check; then echo "check (k) pass: osd_logo.h = mklogo.py's output of logo.h"; \
+	else echo "check (k) FAIL: osd_logo.h is not made from logo.h (python3 fw/ctrl/tools/mklogo.py, commit it)"; exit 1; fi
+
+# (l) the text layer's ROM font: font8x16.h (the firmware's copy) and
+#     rtl/openaars/adv7511/osd_font.mem (the RTL font RAM's initial content)
+#     are tools/mkfontmem.py's output of font/spleen-8x16.bdf, font/symbols.txt
+#     and osd_icons.h: one source (a change to the RTL file changes the bitstream)
+check_l:
+	@if python3 -I tools/mkfontmem.py --check; then echo "check (l) pass: font8x16.h and osd_font.mem = mkfontmem.py's output"; \
+	else echo "check (l) FAIL: font8x16.h / osd_font.mem are not made from font/ and osd_icons.h (python3 fw/ctrl/tools/mkfontmem.py, commit both)"; exit 1; fi
 
 # the 20 largest stack frames of the firmware (-fstack-usage: bytes, kind)
 stack: $(OBJS)

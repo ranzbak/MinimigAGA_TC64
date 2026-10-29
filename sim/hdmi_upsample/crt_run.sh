@@ -5,8 +5,8 @@
 #   unit       crt_post alone: all controls 0 = input unchanged (9-pixel
 #              latency, all 256 values), also with all tables zero (a
 #              build that lost the .mem files keeps today's picture);
-#              bloom alone (no vertical effect) unchanged too; [1 6 1]/8
-#              and [1 2 1]/4 on a step; each mask mode's column pattern;
+#              bloom alone (no vertical effect) unchanged too; each mask
+#              mode's column pattern;
 #              bloom fills the scanline gap of white (more on high), not
 #              of a dark grey
 #   ripple     two-line beam profiles in crt_wrom.mem: light per input line
@@ -28,11 +28,8 @@
 #              same at 31 kHz and on the 60 Hz upsampler
 #   dim        Scanlines dim (beam profile 2 + LUT page 2): flat-field beat
 #              <= 2 %, light within 2 % of the source
-#   dim_hv     dim + H and V filters (two-line beam, blur): same limits
 #   lace       interlaced, dim: the two fields' line phases 0.5 +- 0.02
 #              input line apart (their scanlines interleave)
-#   split      lowres/hires split screen with mid-line BPLCON0 switches,
-#              H filters on: each HD row gets the kernel of its own line only
 #   osd        OSD config 0 -> dim during HD frame 3: frame 3 bit-identical,
 #              frame 4 changed, the latch moves once, at a frame end
 #   osdfx      the same for the new bits: 0 -> mask shadow + bloom high
@@ -47,7 +44,6 @@
 #   bloom      dim + bloom high: white-bar scanline modulation <= 0.5 x
 #              dim's, dark ramp bit-identical to dim, border light +- 6 %
 #   bloom_lo   dim + bloom low: modulation <= 0.85 x dim's, border +- 3 %
-#   bloom_hv   dim + H/V filters + bloom high against dim_hv: as bloom
 #   beam_wWbB  horizontal beam spot (crt_beamh.v), Beam width W (1 sharp,
 #              2 medium, 3 soft), Bloom B (0 off, 1 low, 2 high), on the
 #              dither frame (crt_mkdither.py): its output stream over a whole
@@ -96,6 +92,22 @@
 #   osdbeam    OSD config 0 -> beam medium during HD frame 3: frame 3
 #              bit-identical, frame 4 changed, the beam latch moves once,
 #              in the vertical blank (input lines 2..6)
+#   osd2spi    userio_osd's OSD text layer commands over SPI
+#              (tb_osd_text_spi.v): cells by lane, font, palette staging,
+#              cfg + commit toggle, VERSION bytes 10-14, an unknown command
+#              and 0x0C untouched; the two mutants (commit, lane) must fail
+#   osd2off    the OSD text layer (osd_text.v) loaded, committed disabled:
+#              the picture = the reference path's, and every record of the
+#              golden p50 (pictures, frame lengths, pin signatures) equal
+#   osd2win    the layer on, scale 2, 64 x 20 at (128, 40): adv_ddr's
+#              picture = osd_text model.py over the generator's picture
+#              (osd2_check.py, no stored golden); and at the pins, both
+#              bus words of every pixel (adv_ddr's {r, g[7:4]}, {g[3:0], b})
+#              = the model over the generator's picture, pin x = model x
+#              (osd2_check.py pins: a layer pixel straddling two pin pixels
+#              fails here, the one-clock-per-pixel picture cannot see it);
+#              osd2win60 the same on the 60 Hz path; both print where the
+#              pin raster sits on the generator's ("osd2 pins")
 #   nosync     the Amiga hsync and vsync stop from HD frame 4 on (RTG mode
 #              with its sync start past the frame size), RGB runs on: the
 #              signal generator's watchdog ends one frame of 1500 lines
@@ -103,6 +115,10 @@
 #              frame's: 1499 hsyncs, as a 750-line frame counts 749), then
 #              the raster free-runs: every later frame 749 hsyncs, all with
 #              one vsync, at least 6 of them; no frame longer than 1500
+#
+# The Lores/Hires Filter legs (dim_hv, bloom_hv, split, the unit's [1 6 1]/8
+# and [1 2 1]/4 steps) went with the filters on 2026-10-26
+# (findings/osd-redesign/plan.md 3.13); cfg bits 5:2 are reserved since.
 #
 # Usage: crt_run.sh [leg ...] (default: all).  Needs iverilog, verilator,
 # python3 with numpy and PIL.  Pictures and logs: build/img/.  ~6 min on 4
@@ -147,9 +163,7 @@ declare -A ARGS=(
 	[osdbeam]="+cfg=000 +cfg2=800 +cfgframe=3 +cfgline=300 +frames=2"
 	[nosync]="+nosync=4 +first=2 +frames=12"
 	[dim]="+cfg=01 +out=$I/dim"
-	[dim_hv]="+cfg=3d +out=$I/dim_hv"
 	[lace]="+cfg=01 +lace +frames=2 +out=$I/lace"
-	[split]="+cfg=14 +split +out=$I/split"
 	[osd]="+cfg=00 +cfg2=01 +cfgframe=3 +cfgline=300 +frames=2"
 	[osdfx]="+cfg=000 +cfg2=2c0 +cfgframe=3 +cfgline=300 +frames=2"
 	[mask]="+cfg=040 +out=$I/mask"
@@ -158,7 +172,9 @@ declare -A ARGS=(
 	[mask_dim]="+cfg=041 +out=$I/mask_dim"
 	[bloom]="+cfg=201 +out=$I/bloom"
 	[bloom_lo]="+cfg=101 +out=$I/bloom_lo"
-	[bloom_hv]="+cfg=23d +out=$I/bloom_hv"
+	[osd2off]="+osd2=$I/osd2off.d +first=6"
+	[osd2win]="+osd2=$I/osd2win.d +out=$I/osd2win +osd2gen=$I/osd2win_gen +pins=2 +pinsfile=$I/osd2win_pins.txt"
+	[osd2win60]="+force60 +osd2=$I/osd2win.d +out=$I/osd2win60 +osd2gen=$I/osd2win60_gen +pins=2 +pinsfile=$I/osd2win60_pins.txt"
 )
 DITHER="+frame=build/dither.hex +hires=build/dither_hires.hex"
 BEAMS=""
@@ -166,13 +182,12 @@ for w in 1 2 3; do for b in 0 1 2; do
 	BEAMS="$BEAMS beam_w${w}b${b}"
 	ARGS[beam_w${w}b${b}]="$DITHER +cfg=$(printf %03x $(( (w << 10) | (b << 8) ))) +out=$I/beam_w${w}b${b} +sdump=$I/beam_w${w}b${b}.sd"
 done; done
-ALL="unit osdspi ripple bypass15 bypass31 gate31 bypass60 rtg beamfx15 beamfx31 beamfx60 dim dim_hv lace split osd osdfx osdbeam mask mask2 maskmg mask_dim bloom bloom_lo bloom_hv $BEAMS beamalign beammetric hposm hposp hposv hposm60 hposp60 vposp vposm vposp60 vposm60 vposdbl vposlace vposlacem vposchg vposchg0 vposchgz vposchgzm vposglide nosync"
+ALL="unit osdspi ripple bypass15 bypass31 gate31 bypass60 rtg beamfx15 beamfx31 beamfx60 dim lace osd osdfx osdbeam mask mask2 maskmg mask_dim bloom bloom_lo $BEAMS beamalign beammetric hposm hposp hposv hposm60 hposp60 vposp vposm vposp60 vposm60 vposdbl vposlace vposlacem vposchg vposchg0 vposchgz vposchgzm vposglide nosync osd2spi osd2off osd2win osd2win60"
 legs=("$@"); [ ${#legs[@]} -eq 0 ] && legs=($ALL)
 # the bloom legs compare against the same picture without bloom
 want() { local x; for x in "${legs[@]}"; do [ "$x" = "$1" ] && return 0; done; return 1; }
 { want bloom || want bloom_lo; } && ! want dim && legs+=(dim)
 want rtg && ! want rtg0 && legs+=(rtg0)
-want bloom_hv && ! want dim_hv && legs+=(dim_hv)
 # the Video Pos legs compare against the picture at offset 0
 for x in hposm hposp hposv; do want $x && ! want hpos0 && legs+=(hpos0); done
 for x in hposm60 hposp60; do want $x && ! want hpos060 && legs+=(hpos060); done
@@ -184,6 +199,9 @@ want vposglide && ! want vposp && legs+=(vposp)
 # beamalign and beammetric use the beam legs' pictures
 want beamalign && { want beam_w2b0 || legs+=(beam_w2b0); want beam_w3b2 || legs+=(beam_w3b2); }
 want beammetric && for x in beam_w1b0 beam_w2b0 beam_w3b0 beam_w1b1; do want $x || legs+=($x); done
+# the OSD text layer legs' data (osd2_check.py)
+want osd2off && python3 osd2_check.py gen $I/osd2off.d off
+{ want osd2win || want osd2win60; } && python3 osd2_check.py gen $I/osd2win.d win
 # the Verilator legs, CRT_JOBS (4) at a time (one core each)
 P=${CRT_JOBS:-4}
 sims=(); for l in "${legs[@]}"; do [ -n "${ARGS[$l]}" ] && sims+=("$l"); done
@@ -232,8 +250,6 @@ for l in "${legs[@]}"; do
 	unit)
 		u=$(vvp -n build/tb_crt_post_unit.vvp)
 		echo "$u" | grep -q "bypass identity: 0 mismatches" && pass "unit bypass identity" || bad "unit bypass identity"
-		echo "$u" | grep -q "hblur=1 step: 0 0 0 31 223 255" && pass "unit [1 6 1]/8 step" || bad "unit [1 6 1]/8 step"
-		echo "$u" | grep -q "hblur=2 step: 0 0 0 63 191 255" && pass "unit [1 2 1]/4 step" || bad "unit [1 2 1]/4 step"
 		echo "$u" | grep -q "bloom alone identity: 0 mismatches" && pass "unit bloom alone: identity" || bad "unit bloom alone: identity"
 		for n in 1 2 3; do
 			echo "$u" | grep -q "^mask=$n: .* OK" && pass "unit mask $n: column pattern" || { bad "unit mask $n"; echo "$u" | grep "^mask=$n"; }
@@ -336,6 +352,25 @@ for l in "${legs[@]}"; do
 		echo "$u" | grep FAIL | sed 's/^/        /'
 		echo "$u" | grep -q "osd video: 0 errors" && pass "osdspi: second byte -> {scaling, beam, bloom, mask}, one byte leaves them off" || bad "osdspi"
 		;;
+	osd2spi)
+		u=$(vvp -n build/tb_osd_text_spi.vvp)
+		echo "$u" | grep FAIL | sed 's/^/        /'
+		echo "$u" | grep -q "osd text spi: 0 errors" && pass "osd2spi: 0x2C/0x3C/0x4C/0x5C, VERSION 10-14, 0x6C and 0x0C" || bad "osd2spi"
+		for m in OSD_TXT_MUTANT_COMMIT OSD_TXT_MUTANT_LANE; do
+			vvp -n build/tb_osd_text_spi_$m.vvp | grep -q "osd text spi: 0 errors" && bad "osd2spi: mutant $m not caught" \
+				|| pass "osd2spi: mutant $m caught"
+		done
+		;;
+	osd2off)
+		if allzero $l 1; then pass "$l: layer loaded, off: $(diffs $l | sed 's/ (.*//')"; else bad "$l"; diffs $l; fi
+		m=$(python3 golden.py check $I/$l.log golden/p50.txt) && pass "$l: golden p50 $m" || bad "$l: golden p50 $m"
+		;;
+	osd2win|osd2win60)
+		grep -m1 '^osd2 pins' $I/$l.log | sed 's/^/        /'
+		m=$(python3 osd2_check.py check $I/osd2win.d $I/${l}_gen_3.hex $I/${l}_3.hex) && pass "$l: picture $m" || bad "$l: $m"
+		# the pins (pin frame 2 = HD frame 3): both bus words of every pixel
+		m=$(python3 osd2_check.py pins $I/osd2win.d $I/${l}_gen_3.hex $I/${l}_gen_3b.hex $I/${l}_pins.txt) && pass "$l: $m" || bad "$l: $m"
+		;;
 	ripple)
 		r=$(python3 crt_check.py ripple ../../rtl/openaars/adv7511/crt_wrom.mem)
 		echo "$r" | sed 's/^/        /'
@@ -389,7 +424,7 @@ for l in "${legs[@]}"; do
 			exit !ok }') && ok2=1 || ok2=0
 		[ $ok -eq 1 ] && [ $ok2 -eq 1 ] && pass "beammetric: $r" || bad "beammetric: $r"
 		;;
-	dim|dim_hv|mask_dim)
+	dim|mask_dim)
 		m=$(python3 crt_check.py flat $I/${l}_3.hex)
 		echo "        $m"
 		echo "$m" | awk '{ L = $3 + 0; B = $5 + 0; exit !(L >= 0.98 && L <= 1.02 && B <= 2.0) }' \
@@ -400,11 +435,6 @@ for l in "${legs[@]}"; do
 		echo "        $m"
 		echo "$m" | awk '{ v = $(NF-6) + 0; exit !(v >= 0.48 && v <= 0.52) }' \
 			&& pass "lace: phase 0.5 +- 0.02" || bad "lace"
-		;;
-	split)
-		m=$(python3 crt_check.py split $I/split_3.hex) && ok=1 || ok=0
-		echo "$m" | sed 's/^/        /'
-		[ $ok -eq 1 ] && pass "split: each row its own kernel" || bad "split"
 		;;
 	osdbeam)
 		f3=$(grep -E '^frame 3: ' $I/$l.log | awk '{ print $3 }')
@@ -431,8 +461,8 @@ for l in "${legs[@]}"; do
 		echo "$m" | sed 's/^/        /'
 		[ $ok -eq 1 ] && pass "$l: period $p, lit > dimmed, light within 3 %" || bad "$l"
 		;;
-	bloom|bloom_lo|bloom_hv)
-		r=dim; [ $l = bloom_hv ] && r=dim_hv
+	bloom|bloom_lo)
+		r=dim
 		x=0.5; bd=0.06; [ $l = bloom_lo ] && { x=0.85; bd=0.03; }
 		m=$(python3 crt_check.py bloom $I/${l}_3.hex $I/${r}_3.hex $x $bd) && ok=1 || ok=0
 		echo "$m" | sed 's/^/        /'
@@ -442,6 +472,6 @@ for l in "${legs[@]}"; do
 done
 # pictures of the effects, for the eye
 for l in "${legs[@]}"; do
-	case $l in dim|dim_hv|mask*|bloom*) [ -f $I/${l}_3.hex ] && python3 crt_tohex2img.py $I/${l}_3.hex > /dev/null ;; esac
+	case $l in dim|mask*|bloom*) [ -f $I/${l}_3.hex ] && python3 crt_tohex2img.py $I/${l}_3.hex > /dev/null ;; esac
 done
 [ $fail -eq 0 ] && echo "ALL TESTS PASSED" || { echo "FAILURES"; exit 1; }

@@ -1,9 +1,9 @@
 // tb_osd_video.v -- userio_osd's video config command (OSD_CMD_VID, 0x34)
 // over SPI as the OSD firmware sends it: the first data byte
-// {dither, hr_filter, lr_filter, scanline}, the optional second byte
+// {dither, 4 reserved bits (were hr_filter, lr_filter: ignored), scanline}, the optional second byte
 // {scaling, beam, bloom, mask} for the HDMI CRT emulation and scaler
 // (crt_fx, 8 bits; scaling since 2026-10-13: 0 line rate, 1 sharp, 2 area).
-//   1. one data byte (an older firmware): filters and scanlines set, crt_fx
+//   1. one data byte (an older firmware): filter bits and scanlines set, crt_fx
 //      stays 0 (mask and bloom off, scaling line rate)
 //   2. two data bytes: crt_fx = the second byte, all 8 bits (the scaling
 //      in bits 7:6), the first byte as before
@@ -19,15 +19,15 @@ always @(posedge clk) ph <= ph + 2'd1;
 wire clk7_en = (ph == 2'd0), clk7n_en = (ph == 2'd2);
 reg _scs = 1'b1, sdi = 1'b0, sck = 1'b1;
 wire sdo;
-wire [1:0] lr, hr, scan, dith;
+wire [1:0] scan, dith;
 wire [7:0] fx;
 userio_osd dut (
 	.clk(clk), .clk7_en(clk7_en), .clk7n_en(clk7n_en), .reset(1'b0),
-	.c1(1'b0), .c3(1'b0), .sol(1'b0), .sof(1'b0), .varbeamen(1'b0), .rtg_ena(1'b0),
+	.rtg_ena(1'b0),
 	.osd_ctrl(8'h00), .in_diag(32'h0), .in_diag_clr(),
 	._scs(_scs), .sdi(sdi), .sdo(sdo), .sck(sck),
-	.osd_blank(), .osd_pixel(), .osd_enable(), .key_disable(),
-	.lr_filter(lr), .hr_filter(hr), .memory_config(), .chipset_config(), .floppy_config(),
+	.key_disable(),
+	.memory_config(), .chipset_config(), .floppy_config(),
 	.scanline(scan), .dither(dith), .crt_fx(fx),
 	.ide_config0(), .ide_config1(), .cpu_config(), .autofire_config(), .cd32pad(),
 	.usrrst(), .cpurst(), .cpuhlt(), .fifo_full(),
@@ -62,11 +62,11 @@ task check(input [8*40:1] what, input [9:0] got, input [9:0] want);
 endtask
 initial begin
 	#5000;
-	xfer(1, 8'h34, 8'h1D, 8'h00, 8'h00);                 // H filter hires, H+V lores, dim
-	check("1 byte: {hr, lr, scan}", {hr, lr, scan}, 10'h1D);
+	xfer(1, 8'h34, 8'hDD, 8'h00, 8'h00);                 // dither 3, the old filter bits, dim
+	check("1 byte: {dither, scan}", {dith, scan}, 10'hD);
 	check("1 byte: crt_fx", fx, 10'h0);
 	xfer(2, 8'h34, 8'h01, 8'h0B, 8'h00);                 // dim; 0x0B: bloom 2 (high), mask 3 (shadow)
-	check("2 bytes: {hr, lr, scan}", {hr, lr, scan}, 10'h01);
+	check("2 bytes: {dither, scan}", {dith, scan}, 10'h01);
 	check("2 bytes: crt_fx", fx, 10'hB);
 	xfer(2, 8'h34, 8'h00, 8'hA6, 8'h00);                 // 0xA6: scaling 2 (area), beam 2 (medium), bloom 1, mask 2
 	check("2 bytes: crt_fx scaling area + beam", fx, 10'hA6);
@@ -77,10 +77,10 @@ initial begin
 	xfer(2, 8'h34, 8'h01, 8'h0B, 8'h00);
 	xfer(3, 8'h34, 8'h00, 8'h06, 8'h0F);                 // the third byte is not the second
 	check("3 bytes: crt_fx", fx, 10'h6);
-	check("3 bytes: {hr, lr, scan}", {hr, lr, scan}, 10'h0);
+	check("3 bytes: {dither, scan}", {dith, scan}, 10'h0);
 	xfer(2, 8'h44, 8'h01, 8'h0F, 8'h00);                 // another command (0x44, floppy config)
 	check("other command: crt_fx", fx, 10'h6);
-	check("other command: {hr, lr, scan}", {hr, lr, scan}, 10'h0);
+	check("other command: {dither, scan}", {dith, scan}, 10'h0);
 	$display("osd video: %0d errors", err);
 	$finish;
 end

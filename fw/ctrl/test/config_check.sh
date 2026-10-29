@@ -16,8 +16,8 @@
 #      the list), then config_test: cfg_order, the fields through configTYPE,
 #      LoadConfiguration on the card model
 #   4. the card config_test saved after case (b): mtools reads MINMGAR.CFG ==
-#      cfgconv --to-rv MINMGAA.CFG, the BE files == the originals, fsck.fat -n
-#      clean
+#      cfgconv --to-rv MINMGAA.CFG with the filter bytes 0, the BE files ==
+#      the originals, fsck.fat -n clean
 set -euo pipefail
 if [ $# -ne 6 ]; then
     echo "usage: $0 <config_test> <cfgconv> <case dir> <out dir> <tag> <mkcard.sh>" >&2; exit 2
@@ -114,7 +114,9 @@ saved=$w/out_abe.img
 off=$((2048 * 512))
 mcopy -n -i "$saved@@$off" ::MINMGAR.CFG "$w/MINMGAR.CFG" || fail "mcopy ::MINMGAR.CFG from the saved card"
 "$conv" --to-rv "$c/distinct.cfg" "$w/expect_rv.cfg"
-cmp "$w/MINMGAR.CFG" "$w/expect_rv.cfg" || fail "MINMGAR.CFG on the card is not cfgconv --to-rv MINMGAA.CFG"
+# the Lores/Hires Filter bytes (offset 36, 37; removed, plan.md 3.13) save as 0
+printf '\0\0' | dd of="$w/expect_rv.cfg" bs=1 seek=36 conv=notrunc status=none
+cmp "$w/MINMGAR.CFG" "$w/expect_rv.cfg" || fail "MINMGAR.CFG on the card is not cfgconv --to-rv MINMGAA.CFG, filters 0"
 for p in MINMGAA.CFG=distinct MINMGAA1.CFG=v2 MINMGAA2.CFG=v3_208; do
     mcopy -n -i "$saved@@$off" "::${p%%=*}" "$w/${p%%=*}" || fail "mcopy ::${p%%=*}"
     cmp "$w/${p%%=*}" "$c/${p#*=}.cfg" || fail "${p%%=*} on the card changed"

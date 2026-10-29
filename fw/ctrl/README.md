@@ -77,9 +77,11 @@ make -C fw/ctrl check
 ```
 
 Output in `fw/ctrl/build/` (gitignored): `RV32OSDB.BIN` (`objcopy -O
-binary`, then the 8-byte lock-step trailer `SDCV 00 00 <SDC_VERSION>` of
-`sdctrailer.c` appended; loaded by `fw/ctrl_boot` to 0x2000, which runs it
-only when the trailer names the bitstream's SD card peripheral VERSION:
+binary`, then the 8-byte lock-step trailer `SDCV <OSD2_REQUIRED>
+<SDC_VERSION>` (16 bits each) of `sdctrailer.c` appended; loaded by
+`fw/ctrl_boot` to 0x2000, which runs it only when the trailer names the
+bitstream's SD card peripheral VERSION and the core's OSD text layer is at
+least `OSD2_REQUIRED` (`osd2.h`, 2: the menu is the layer's only):
 `fw/ctrl_boot/README.md` "Lock-step check"; `check` (h) checks the
 trailer), `RV32OSDB.elf`, `.map`, `.lst` (disassembly with source),
 `version.h`. The boot ROM (in the bitstream) and `RV32OSDB.BIN` must come
@@ -169,6 +171,31 @@ before `c64keys`. Here `arch/irq.c` (101) installs the default handler,
 and gcc at `-Os` drops the `.init_array` entry of an empty constructor (the
 function itself stays; at `-O0` `akiko.o` has `.init_array.00102`). Nothing
 runs at that slot, so the order is the previous firmware's.
+
+## The OSD text layer's font
+
+The 720p text layer (`osd2.c`, `rtl/openaars/adv7511/osd_text.v`) draws
+8x16 glyphs from a font RAM that the bitstream initialises from
+`rtl/openaars/adv7511/osd_font.mem`; the firmware keeps the same font as
+`font8x16.h` (the About and Supporters pages restore their glyph slots from
+it). Both files are generated, from one source:
+
+| Codes | From |
+|---|---|
+| 0x20-0x7E | [Spleen](https://github.com/fcambus/spleen) 8x16 2.2.0, `font/spleen-8x16.bdf` as released, BSD 2-Clause (`font/LICENSE.spleen`; the notice is repeated in `font8x16.h`) |
+| 0x04-0x11, 0x16, 0x1A-0x1D, 0xC0-0xC9 | `osd_icons.h`: the glyphs the menu uploads when it opens (value bar, lines, corners, arrows, category icons), so the ROM font and an open menu's font RAM are the same |
+| 0x01-0x03, 0x12-0x15, 0x17-0x19, 0x7F | `font/symbols.txt` (stripes, up/down arrows, padlocks, the note, a block), drawn for this project |
+| the rest | blank: 0x80-0xBF and 0xCA-0xFF are the About / Supporters glyph slots (no Latin-1) |
+
+After a change to any of them (python3 only; the preview needs PIL):
+
+```sh
+python3 fw/ctrl/tools/mkfontmem.py            # writes font8x16.h and osd_font.mem
+python3 fw/ctrl/tools/mkfontmem.py --png /tmp/font.png   # 16 x 16 grid at 2x
+make -C fw/ctrl check                         # (l): both are the script's output
+```
+
+`osd_font.mem` is an RTL input: a font change changes the bitstream.
 
 ## On the SD card
 
@@ -1162,8 +1189,7 @@ us). Lines are those of the current tree.
 | `osd.c:1044`, `1048` (`OsdGetCtrl`) | key repeat: `REPEATDELAY`, `REPEATRATE` (`osd.h:54`, `55`) | 100, 25 | 580.4 ms, 145.1 ms |
 | `osd.c:1119`, `1085` (`ScrollReset`, `ScrollText`) | name scroll: `SCROLL_DELAY`, `SCROLL_DELAY2` (`osd.c:269`, `270`) | 300, 3 | 1.741 s, 17.4 ms |
 | `menu.c:247`, `269` (`cd_show_msg`, `cd_msg_expired`) | CD message: `CD_MSG_DELAY` (`menu.c:237`) | 4000 | 23.22 s |
-| `menu.c:610`, `617`, `619` (`HandleUI`) | help text: `HELPTEXT_DELAY`, `FRAME_DELAY` (`menu.c:201`, `202`) | 2500, 50 | 14.51 s, 290.2 ms |
-| `menu.c:1092`, `1101`, `1103` (`HandleUI`) | about screen stars and logo redraw: `ABOUT_FRAME_DELAY` (`osd.h:63`), re-armed by the pass that fires | 2 | a redraw every 3 counts = 17.4 ms; first frame 11.6..17.4 ms after arming |
+| `menu.c:1018`, `1029`, `1031` (`HandleUI`) | about screen stars, logo and credits redraw: `ABOUT_FRAME_DELAY` (`osd.h:63`), re-armed by the pass that fires | 2 | a redraw every 3 counts = 17.4 ms; first frame 11.6..17.4 ms after arming |
 | `menu.c:3028`, `2721` (`InfoMessage`) | info popup | 1000 | 5.804 s |
 | `main.c:107`, `109`, `111` (`FatalError`) | LED blink: `WaitTimer(250)` x2, `WaitTimer(1000)` | 250, 1000 | 1.451 s, 5.804 s |
 | `main.c:347`, `419`, `422` (`main`) | ADV7511 poll (`adv_timer`) | 250 | 1.451 s |

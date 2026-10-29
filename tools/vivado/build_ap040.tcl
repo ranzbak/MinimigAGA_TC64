@@ -249,6 +249,11 @@ add_src $R/rtl/openaars/adv7511/crt_hk.mem
 add_src $R/rtl/openaars/adv7511/crt_sdec.mem
 add_src $R/rtl/openaars/adv7511/crt_senc.mem
 add_src $R/rtl/openaars/adv7511/crt_swrom.mem
+# The OSD text layer (findings/osd-redesign Phase 2): osd_text.v, which
+# pal_to_ddr.sv puts after the signal generator, and its font RAM's power-up
+# content ($readmemh by name, from fw/ctrl/tools/mkfontmem.py).
+add_src $R/rtl/openaars/adv7511/osd_text.v
+add_src $R/rtl/openaars/adv7511/osd_font.mem
 # The dual-port RAM the AP040 MMU's ATC and the caches instantiate (module
 # dpram); project_1 had it only as a hand-added source, so a fresh clone's
 # project did not.

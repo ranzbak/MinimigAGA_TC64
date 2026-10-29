@@ -1,22 +1,22 @@
-# tb_crt_frame +cfg=a7d (RTL 3987b84, the HDMI path before the scaler work)
+# tb_crt_frame +cfg=a7d (re-based 2026-10-28: RTL hdmi-cleanup 426798f1 at a41, i.e. without the Lores/Hires Filter bits 5:2, reserved since)
 path 50 60 0 0
 path 60 50 0 0
-pic 2 e724acbce5eef3b3 921600
-pic 3 6cdf47941a6f549e 921600
-pic 4 1cb95984ada544a6 921600
-pic 5 71b7201568b23c4c 921600
-pic 6 e724acbce5eef3b3 921600
+pic 2 0e0e81a2db9d53c8 921600
+pic 3 3af98e71cbcc52d2 921600
+pic 4 d7f25b8af94c2895 921600
+pic 5 7f438cdf89825a6d 921600
+pic 6 0e0e81a2db9d53c8 921600
 hd 2 749 1
 hd 3 749 1
 hd 4 749 1
 hd 5 749 1
 hd 6 749 1
-sig 2 70f1339ab8681da7 2967078
-sig 3 0f4ccd500740d147 2967078
-sig 4 8937e0fb648f7c3f 2967076
-sig 5 30652de96fc7fad7 2967078
-fsig 2 f8b69c8e12913f17 2967078
-fsig 3 a27095172a61488f 2967077
-fsig 4 ced46215427e1217 2967078
-fsig 5 20044e533708fedf 2967078
-fsig 6 ac71c7cbfd9f75ef 2967077
+sig 2 273d7e4a2f6696eb 2967078
+sig 3 95091ed1f69c4f2d 2967078
+sig 4 bfb34f278a644baf 2967076
+sig 5 9e26f75f00f13e47 2967078
+fsig 2 cfb50b6f83a2ee07 2967078
+fsig 3 fee2e880520fecb3 2967077
+fsig 4 fbed9be2d527f08d 2967078
+fsig 5 c6ef58e9adb49aaf 2967078
+fsig 6 1be5caa983d552df 2967077

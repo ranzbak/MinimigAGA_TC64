@@ -2,17 +2,21 @@
 """Reference model of rtl/openaars/adv7511/osd_text.v (sim/osd_text).
 
     model.py gen <leg> <dir>    the leg's data files for osd_text_tb.v
-    model.py check <dir>        render frames 1 and 2 from in_<f>.hex and the
-                                leg's cells / font / palette / window, write
-                                exp_<f>.ppm, out_<f>.ppm (from the bench's
-                                out_<f>.hex) and in_<f>.ppm, and compare
-                                exp and out byte for byte (exit 1 if not)
+    model.py check <dir>        render frames 1 and 2 from in_<f>.hex (each
+                                video pixel's first clock) and in2_<f>.hex
+                                (its second) and the leg's cells / font /
+                                palette / window, write exp*, out*, in*.ppm,
+                                and compare exp and out byte for byte, both
+                                clocks (exit 1 if not)
 
 The model is the specification of the layer (osd_text.v header,
 findings/osd-redesign/plan.md 3.2-3.5): a window of cols x rows cells of
 8x16 pixels (16x32 at scale 2) at (x0*8, y0*8), clipped to 1280x720; cell
 (c, r) = cell word r*64 + c {attr, char}; glyph bit 7 = left pixel; palette
 entry {mode, r, g, b}: 0 colour, 1 video >> 1, 2 video, 3 (colour + video) >> 1.
+Coordinates are the DE window's: x 0 = the first pixel with DE, y 0 = the
+first line with DE after the frame pulse, wherever the generator puts its
+active lines (the bench dumps exactly the 1280 x 720 DE pixels).
 """
 import os
 import random
@@ -40,6 +44,16 @@ LEGS = {
     "hz60": ((3, 16, 5, 64, 20), (3, 96, 3, 40, 5)),
     # layer off: A disabled with a window set, B enabled with cols 0
     "off": ((2, 0, 0, 64, 32), (3, 0, 0, 0, 20)),
+    # bench +vtop=10: the layer's frame pulse 10 lines before the
+    # generator's, the DE starts 25 lines after it; the window follows the
+    # DE.  A: s1full's B; B: scale 1 at the top edge (y0 = 0) and the bottom rows
+    "vtop": ((3, 16, 5, 64, 20), (1, 2, 0, 40, 32)),
+    # the generator's raster before 2026-10-27 (active lines 0..719, its own
+    # build in run.sh): A the firmware's window, B scale 1 at the top edge
+    "oldrast": ((3, 16, 5, 64, 20), (1, 2, 0, 40, 32)),
+    # the video's pixel phase PE_PHASE 0 (its own build in run.sh; every
+    # other leg runs pal_to_ddr's 1): A the firmware's window, B s1full's A
+    "pe0": ((3, 16, 5, 64, 20), (1, 0, 0, 64, 32)),
 }
 
 
@@ -140,25 +154,27 @@ def check(d):
     cfgs = rd_hex(os.path.join(d, "cfg.hex"))
     ok = True
     for f in (1, 2):
-        vin = rd_hex(os.path.join(d, f"in_{f}.hex"))
-        vout = rd_hex(os.path.join(d, f"out_{f}.hex"))
-        if len(vin) != W * H or len(vout) != W * H:
-            print(f"  frame {f}: {len(vin)} input / {len(vout)} output pixels, expected {W * H}")
-            ok = False
-            continue
-        exp = render(vin, cells, font, pals[f - 1], cfgs[f - 1])
-        ppm(os.path.join(d, f"in_{f}.ppm"), vin)
-        be = ppm(os.path.join(d, f"exp_{f}.ppm"), exp)
-        bo = ppm(os.path.join(d, f"out_{f}.ppm"), vout)
-        if be == bo:
-            nwin = sum(1 for a, b in zip(exp, vin) if a != b)
-            print(f"  frame {f}: identical ({nwin} pixels differ from the input)")
-        else:
-            bad = [i for i in range(W * H) if exp[i] != vout[i]]
-            i = bad[0]
-            print(f"  frame {f}: {len(bad)} pixels differ, first at x {i % W} y {i // W}: "
-                  f"{vout[i]:06x}, expected {exp[i]:06x}")
-            ok = False
+        for c, sfx in ((1, ""), (2, "2")):   # the video pixel's first and second clock
+            vin = rd_hex(os.path.join(d, f"in{sfx}_{f}.hex"))
+            vout = rd_hex(os.path.join(d, f"out{sfx}_{f}.hex"))
+            tag = f"frame {f} clock {c}"
+            if len(vin) != W * H or len(vout) != W * H:
+                print(f"  {tag}: {len(vin)} input / {len(vout)} output pixels, expected {W * H}")
+                ok = False
+                continue
+            exp = render(vin, cells, font, pals[f - 1], cfgs[f - 1])
+            ppm(os.path.join(d, f"in{sfx}_{f}.ppm"), vin)
+            be = ppm(os.path.join(d, f"exp{sfx}_{f}.ppm"), exp)
+            bo = ppm(os.path.join(d, f"out{sfx}_{f}.ppm"), vout)
+            if be == bo:
+                nwin = sum(1 for a, b in zip(exp, vin) if a != b)
+                print(f"  {tag}: identical ({nwin} pixels differ from the input)")
+            else:
+                bad = [i for i in range(W * H) if exp[i] != vout[i]]
+                i = bad[0]
+                print(f"  {tag}: {len(bad)} pixels differ, first at x {i % W} y {i // W}: "
+                      f"{vout[i]:06x}, expected {exp[i]:06x}")
+                ok = False
     return ok
 
 

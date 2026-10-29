@@ -12,7 +12,9 @@
 # -Wno-error: a mutant must be killed by the test, not by an unused-variable
 # warning.  Every run starts from a fresh copy; mut/<name>/log keeps the last
 # output.  The controls (the unmutated copy) build and pass first.
-# Environment: ISO, HOSTCC (make -C fw/ctrl/test mutants passes them).
+# Environment: ISO, HOSTCC (make -C fw/ctrl/test mutants passes them);
+# ONLY=<extended regex>: only the unit mutants whose name matches (the
+# controls still run; a partial run while working on one test).
 set -u
 cd "$(dirname "$0")" || exit 1
 HERE=$PWD
@@ -63,12 +65,15 @@ verdict() {  # <name> <rc of the check> <what>
 # when there are several) is BROKEN (the mutant must be killed by that case)
 unit() {
   local n=$1 test=$2
+  if [ -n "${ONLY:-}" ] && ! [[ $n =~ $ONLY ]]; then return; fi
   prep "$n"; mutate "$n" "$3" "$4" "$5" || return
   if ! mk "$n" "mut/$n/b/$test" > "mut/$n/log" 2>&1; then
     echo "mutant $n: BROKEN (does not build: mut/$n/log)"; bad=1; return
   fi
-  # a mutant may hang a loop that waits for the mock: the timeout is a kill
-  timeout 120 make -s -f Makefile SRC="mut/$n/src" TD="mut/$n/t" GOLD="mut/$n/gold" B="mut/$n/b" \
+  # a mutant may hang a loop that waits for the mock: the timeout is a kill.
+  # 300 s: hdd_card_error needs ~106 s of CPU before its own hang check
+  # speaks, more under nice 19 on a loaded machine (120 s cut it short)
+  timeout 300 make -s -f Makefile SRC="mut/$n/src" TD="mut/$n/t" GOLD="mut/$n/gold" B="mut/$n/b" \
        WERROR=-Wno-error CARD="$CARD" FATIMG="$FATIMG" FATIMG_DEPS= "run64-$test" > "mut/$n/log" 2>&1
   local rc=$? text
   if [ $rc -ne 0 ]; then
@@ -113,7 +118,7 @@ checkio() {
 control() {
   prep control
   local t rc=0
-  for t in mock_selftest cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_test hwmap_test spireply_test diskstat_test swap_test fat_test mmc_test config_test hdd_test cdpath_test fdd_test drivesounds_test boot_test sdc_test sdproto_test rom_test; do
+  for t in mock_selftest cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_test hwmap_test spireply_test diskstat_test swap_test fat_test mmc_test config_test hdd_test cdpath_test fdd_test drivesounds_test boot_test sdc_test sdproto_test rom_test osd2_test ui_test migrate_test; do
     mk control "run64-$t" > "mut/control/log.$t" 2>&1 || { echo "control: run64-$t FAILED (mut/control/log.$t)"; rc=1; }
   done
   mk control fmt > mut/control/log.fmt 2>&1 || { echo "control: fmt FAILED (mut/control/log.fmt)"; rc=1; }
@@ -133,7 +138,9 @@ control
 fmt buf16 src rvlibc.h 's/^#define RV_PRINTF_BUF .*/#define RV_PRINTF_BUF 16/' "disagrees"
 fmt model_upper gold fmtcheck.py "s/digs = '0123456789abcdef' if c == 'x'/digs = '0123456789ABCDEF' if c == 'x'/" "disagrees"
 fmt formats_stale gold formats.txt '$d' "differ\|EOF"
-fmt cover_case t fmt_cases.h '/^FMT_CASE("          1 %s"/d' "no case"
+# (a format still in the sources: the classic menu's "          1 %s" went in
+# OSD Phase 6, and a case of a format nobody uses is no gap)
+fmt cover_case t fmt_cases.h '/^FMT_CASE("  Start: %ld"/d' "no case"
 
 # ---- lib_test ----------------------------------------------------------------
 unit notrunc lib_test src rvlibc.c 's/rv_printf_truncations++;/;/'
@@ -606,6 +613,151 @@ unit hdd_bounce hdd_test src hdd.c 's/if (hc.op.err == SD_E_GONE \&\& hc.op.inta
 unit hdd_bounce_intact hdd_test src hdd.c 's/if (hc.op.err == SD_E_GONE \&\& hc.op.intact \&\& /if (hc.op.err == SD_E_GONE \&\& /' "the command never ends"
 unit sdp_intact hdd_test src sdproto.c 's/op->intact = s.st != ST_RD_GAYLE/op->intact = 1 || s.st != ST_RD_GAYLE/' "the command never ends"
 unit hdd_bounce_reinit hdd_test src hdd.c 's/ || (!sd_card_type() \&\& !sd_init())) {/) {/' "FAIL wr_bounce_last"
+
+# ---- the OSD text layer driver (osd2_test; findings/osd-redesign Phase 2) ----
+# lane swap: a chars-only run sent as attrs and the other way round
+unit osd2_lanes osd2_test src osd2.c 's/k == K_CHR ? OSD2_TXT_CHARS : OSD2_TXT_ATTRS/k == K_CHR ? OSD2_TXT_ATTRS : OSD2_TXT_CHARS/' "FAIL attrs only: mode 2"
+# a flush that skips every dirty row after the first
+unit osd2_skiprow osd2_test src osd2.c 's/if (!k)$/if (!k || r > 2)/' "FAIL init flush: frames"
+# no compare: an unchanged redraw is sent again
+unit osd2_nocompare osd2_test src osd2.c 's/if ((kinds \& K_CHR) \&\& osd2_chr\[row\]\[col\] != ch)/if (kinds \& K_CHR)/' "FAIL unchanged redraw: bytes"
+# osd2_char marks a cell that does not change
+unit osd2_charnocmp osd2_test src osd2.c '/^void osd2_char/,/^}/s/^\tif (osd2_chr\[row\]\[col\] != ch) {$/\tif (1) {/' "FAIL osd2_char unchanged: bytes"
+# the commit sends the palette but never the window
+unit osd2_nowin osd2_test src osd2.c 's/^\tsend_win();$/\t;/' "FAIL commit: entry 5 blend"
+
+# ---- the new OSD menu (ui_test; findings/osd-redesign Phase 3,
+# the sidebar layout of 2026-10-27) ----
+# the long name's start held 250 ms instead of 500
+unit ui_scrollhold ui_test src ui.h 's/^#define UI_T_SCROLL_HOLD UI_T(500)/#define UI_T_SCROLL_HOLD UI_T(250)/' "FAIL scroll: the start held 500 ms"
+# a cursor move does not restart the scroll
+unit ui_scrollkeep ui_test src ui.c '/^static void key_files/,/^}/s/^\tscroll_reset();$/\t;/' "FAIL scroll: a cursor move resets it"
+# closing leaves the layer on
+unit ui_noclose ui_test src ui.c '/^void ui_close(void)/,/^}/s/^\t\tosd2_disable();$/\t\t;/' "FAIL closing: the window off"
+# debug mode: closing the menu leaves the layer without the debug page (it
+# belongs on the layer since osd-p2's 5ab0e127; the bitmap OSD it once went
+# back to is gone, Phase 6)
+unit ui_debugbitmap ui_test src ui.c '/^void ui_close(void)/,/^}/s/^\t\tdebug2_show(1);  /\t\tosd2_disable();  /' "FAIL closing in debug mode: the debug page back on the layer"
+# debug mode: a toast's end switches the layer off instead of the debug page back
+unit ui_debugtoast ui_test src ui.c 's/^\t\t\t\tdebug2_show(1);     \/\* the debug page back over/\t\t\t\tosd2_disable();     \/* the debug page back over/' "FAIL debug mode toast ends: the debug page back"
+# opening sets OSD control bit 0 too (the bitmap OSD's enable before Phase 6;
+# the firmware keeps it 0)
+unit ui_bitmap ui_test src ui.c 's/SPI(to_osd ? DISABLE_KEYBOARD : 0);/SPI(to_osd ? DISABLE_KEYBOARD | 1 : 0);/' "FAIL open: OSD_CMD_OSD 0x02"
+# Left on an item without a value stays in the list (a joystick's way back
+# to the sidebar)
+unit ui_noback ui_test src ui.c '/^static void key_list/,/^}/s/^\tcase KEY_LEFT:              \/\* back to the sidebar, whatever the item \*\/$/\tcase KEY_LEFT: break;/' "FAIL Left on DF0 (no value): back to the sidebar"
+# Left on a value item changes it instead of going back (the pre-10-27 model)
+unit ui_leftchange ui_test src ui.c '/^static void key_list/,/^}/s/^\tcase KEY_LEFT:              \/\* back to the sidebar, whatever the item \*\/$/\tcase KEY_LEFT: if (it \&\& has_value(it)) { change(it, -1); break; }/' "FAIL Left on Chip RAM (a value): back to the sidebar"
+# EDIT never ends on Enter
+unit ui_editstuck ui_test src ui.c 's/^\t\t\tui_edit = 0;        \/\* done: the change stays \*\//\t\t\t;/' "FAIL Enter in EDIT: done"
+# the help field never switches from the key hints to the focused item's help
+unit ui_nohelp ui_test src ui.c 's/^\tui_hints_on = 0;  /\tui_hints_on = 1;  /' "FAIL Up/Down in the list: the item's help"
+# the sidebar's Up/Down do not show the category's items until the list has the focus
+unit ui_nopreview ui_test src ui.c 's/^\t\t\tui_draw_item(i);$/\t\t\tif (ui_focus != UI_F_SIDEBAR) ui_draw_item(i);/' "FAIL sidebar Down: Storage's items shown at once"
+# F12 in the list goes back to the sidebar instead of closing
+unit ui_f12back ui_test src ui.c '/^static void key_open/,/^}/s/^\t\tif (ui_focus == UI_F_FILESEL)$/\t\tif (ui_focus == UI_F_LIST) { ui_focus = UI_F_SIDEBAR; return; }\n\t\tif (ui_focus == UI_F_FILESEL)/' "FAIL F12 in the list: closed"
+# the file selector ignores sort_table
+unit ui_nosort ui_test src ui.c 's/name = entry_name(sort_table\[i\], /name = entry_name(i, /' "FAIL screen filesel"
+# leaving System after a memory change: no reset offered
+unit ui_noprompt ui_test src ui.c 's/(config.memory != sys_mem || /(0 \&\& /' "FAIL leaving System after a change: the dialog"
+# ---- OSD redesign Phase 4: Storage, Video, Acceleration, the error page,
+# the migration check (ui_test, migrate_test) ----
+# leaving Storage after a change of the IDE slots: no reset offered (and so
+# nothing applied)
+unit ui_hdfnoprompt ui_test src ui.c 's/^\t\tif (mm_hdf_needs_reset()) {$/\t\tif (0) {/' "FAIL leaving Storage after a change: the reset dialog"
+# the hardfile prompt's default Yes (the classic menu's is No)
+unit ui_hdfdefault ui_test src ui.c 's/"Reset the Amiga?", b, 2, 1, leave_hdf_done/"Reset the Amiga?", b, 2, 0, leave_hdf_done/' "FAIL No: config unchanged"
+# the slot type's Left steps forward too
+unit ui_hdfleft ui_test src ui_tabs.c 's/^\tif (dir > 0) {$/\tif (dir) {/' "FAIL type Left twice: backwards round to SD partition 1"
+# the RTG pair edited while PAL is on (the position items always RTG's)
+unit ui_rtgpal ui_test src ui_tabs.c 's/mm_step_pos(vertical, dir, ui_rtg);/mm_step_pos(vertical, dir, 1);/' "FAIL H Right: -8 -> 0"
+# byte 14 asked on a version-1 layer (its MINION_VER taken as the status)
+unit osd2_statusgate ui_test src osd2.c 's/^\tif (osd2_caps < OSD2_V_STATUS)$/\tif (0)/' "FAIL version-1 layer: byte 14 never asked"
+# the position's label not following the RTG status
+unit ui_rtglabel ui_test src ui_tabs.c 's/memcpy(pos_h_label + POS_MODE, m, 3);/;/' "FAIL RTG on: the label says RTG"
+# Bloom never greyed
+unit ui_bloomavail ui_test src menu_model.c 's/return (config.scanlines \& 3) || (config.crt_beam \& 3) || /return 1 || /' "FAIL no scanlines, no beam, line rate: Bloom greyed"
+# the HDMI readback not refreshed while the item is focused
+unit ui_hdmilive ui_test src ui.c 's/^\t\t\tui_draw_help(); \/\* a live help/\t\t\t; \/* a live help/' "FAIL HDMI: the readback live, every second"
+# the error page's OK does not clear the error (main()'s error loop never ends)
+unit ui_errnoclear ui_test src ui.c 's/^\t\t\tClearError(ERROR_ALL);$/\t\t\t;/' "FAIL error Enter: the error cleared"
+# a fixed 68040's CPU line selectable
+unit ui_cpufixed ui_test src ui_tabs.c 's/return !CORE_CPU_FIXED_040();/return 1;/' "FAIL fixed 68040: the CPU line not selectable"
+# the migration check sees a wrong field: Bloom's set writes the beam width
+unit mig_wrongfield migrate_test src menu_model.c 's/config.crt_bloom = v > 2 ? 2 : v;/config.crt_beam = v > 2 ? 2 : v;/' "FAIL Bloom off -> high: config"
+# ... a wrong value: Chip slots' bit one place off
+unit mig_wrongbit migrate_test src menu_model.c 's/\[MMF_CHIPSLOTS\]   = { offsetof(configTYPE, cpu),         4, 1, F_CPU },/[MMF_CHIPSLOTS]   = { offsetof(configTYPE, cpu),         5, 1, F_CPU },/' "FAIL Chip slots Fast: config"
+# ... a Config* call missing: the Storage floppy turbo set applies nothing
+unit mig_noapply migrate_test src menu_model.c 's/^    case F_FLOPPY:  ConfigFloppy(config.floppy.drives, config.floppy.speed); break;$/    case F_FLOPPY:  break;/' "FAIL Floppy turbo on: the Config\* SPI stream"
+# ... the new menu's hardfile prompt resets without applying the slots
+unit mig_hdfnoapply migrate_test src ui.c '/^static void leave_hdf_done/,/^}/s/^\t\tmm_hdf_apply();$/\t\tOsdReset();/' "FAIL IDE off, reset Yes: config"
+# the shared hardfile apply without its reset: both menus lose it alike (the
+# migration check cannot see a fault both share), ui_test's sequence must
+unit ui_hdfnoreset ui_test src menu_model.c '/^void mm_hdf_apply(void)/,/^}/s/^    OsdReset();$/    ;/' "FAIL Yes: closed, slot 1 opened, CD, ports, reset"
+# ... the RTG register written on a version-1 layer (an old core takes it as PAL)
+unit mig_rtgalways migrate_test src osd.c 's/^\tif (osd2_caps >= OSD2_V_STATUS)$/\tif (1)/' "FAIL Video Pos: the RTG register not written on a version-1 layer"
+# ... the PAL register given the RTG pair
+unit mig_rtgorder migrate_test src osd.c 's/^\tVIDEOSCALE_SET_POS = (config.videopos.hpos + ((unsigned short)config.videopos.vpos << 8));$/\tVIDEOSCALE_SET_POS = (config.videopos_rtg.hpos + ((unsigned short)config.videopos_rtg.vpos << 8));/' "FAIL RTG: VIDEOSCALE = the PAL pair"
+# ---- the About and Supporters pages (ui_test; findings/osd-redesign Phase 7) ----
+# the effect never advances
+unit ui_fxfrozen ui_test src ui.c '/^static void page_tick/,/^}/s/^\tpage->step();$/\t;/' "FAIL About: a step after 3 counts"
+# closing a page leaves its glyphs in the font
+unit ui_fxnorestore ui_test src ui.c '/^static void page_end/,/^}/s/^\tui_fx_font(0, n < 64 ? n : 64, /\tif (0) ui_fx_font(0, n < 64 ? n : 64, /' "FAIL About Esc: the font as before"
+# the slots past 0xBF run into the icons (0xC0-0xC9)
+unit ui_fxicons ui_test src ui.c 's/return (unsigned char)(slot < 64 ? 0x80 + slot : 0xCA + (slot - 64));/return (unsigned char)(slot < 64 ? 0x80 + slot : 0xC0 + (slot - 64));/' "FAIL About: the icons (0xC0-0xC9) untouched"
+# closing a page leaves its palette
+unit ui_fxnopal ui_test src ui.c '/^static void page_end/,/^}/s/^\tmenu_pal();$/\t;/' "FAIL About Esc: the palette as before"
+# the menu drawn over a page
+unit ui_fxmenu ui_test src ui.c '/^void ui_draw_all(void)/,/^}/s/^\tif (ui_focus == UI_F_PAGE) {$/\tif (0) {/' "FAIL screen about"
+# Esc does not close a page
+unit ui_fxnoesc ui_test src ui.c '/^static void key_page/,/^}/s/^\tcase KEY_ESC:$/\tcase 0xfe:/' "FAIL About Esc: the list"
+# stars over the text
+unit ui_fxstars ui_test src ui_about.c 's/sky\[r\]\[c\] = r != R_BAR \&\& blank(r, c - 2)/sky[r][c] = r != R_BAR || blank(r, c - 2)/' "FAIL About: never on the logo, the text, the bar or the help"
+# the copper never turns
+unit ui_fxcopper ui_test src ui_about.c '/^static void about_step/,/^}/s/^\tphase++;$/\t;/' "FAIL About: the copper moved one step"
+# a step redraws the whole page (the per-step bound)
+unit ui_fxcost ui_test src ui_about.c '/^static void about_step/,/^}/s/^\tphase++;$/\tphase++;\n\tosd2_invalidate();/' "FAIL About: a step at most 640 SPI bytes"
+# the plasma's palette never cycles
+unit ui_fxplasma ui_test src ui_supporters.c 's/^\tt = (unsigned char)((t + 1) % RAMP);$/\t;/' "FAIL Supporters: 16 steps cycle the plasma one colour"
+# the names never fade in
+unit ui_fxfade ui_test src ui_supporters.c 's/^\tif (fade < 255)$/\tif (0)/' "FAIL Supporters: faded in: the names white"
+# ---- F6 see-through (ui_test) ----
+# F6 ignored
+unit ui_f6ignored ui_test src ui.c 's/^\tif (c == KEY_F6 \&\& ui_focus != UI_F_PAGE) {$/\tif (0) {/' "FAIL F6: entry 0 transparent"
+# F6 ends EDIT (handled after EDIT's key filter)
+unit ui_f6editend ui_test src ui.c 's/^\tif (c == KEY_F6 \&\& ui_focus != UI_F_PAGE) {$/\tif (c == KEY_F6) ui_edit = 0;\n\tif (c == KEY_F6 \&\& ui_focus != UI_F_PAGE) {/' "FAIL F6 in EDIT: EDIT stays"
+# the toggle not re-applied after About / Supporters
+unit ui_f6pagelost ui_test src ui.c '/^static void page_end/,/^}/s/^\tmenu_pal();$/\tosd2_pal_default();/' "FAIL About Esc with see-through: entry 0 transparent again"
+# the toggle not re-applied when the menu opens again
+unit ui_f6openlost ui_test src ui.c '/^static void ui_open(void)/,/^}/s/^\tmenu_pal();$/\tosd2_pal_default();/' "FAIL reopened with see-through: entry 0 transparent"
+# a page shown see-through (its black not forced opaque)
+unit ui_f6pageclear ui_test src ui.c 's/^\tosd2_pal(OSD2_C_BLACK, OSD2_OPAQUE, 0x000000);$/\t;/' "FAIL About with see-through: entry 0 opaque"
+# EDIT's black value on the background's entry (see-through inside its strokes)
+unit ui_f6ink ui_test src ui.c 's/^#define A_EDIT    A(INK, YELLOW) /#define A_EDIT    A(BLACK, YELLOW) /' "FAIL EDIT: the value's black on the ink"
+
+# ---- OSD redesign Phase 5: the ROM font, OSD size and position ------------------
+# the firmware's copy of the font is not osd_font.mem (a glyph of 'A' changed)
+unit font_copy ui_test src font8x16.h 's/^        {0x00,0x00,0x7C,0xC6,0xC6,0xC6,0xFE,0xC6,/        {0x00,0x00,0x7C,0xC6,0xC6,0xC6,0xFE,0xC7,/' "FAIL ROM font: osd_font.mem = font8x16.h"
+# the menu's bar glyphs not the ROM font's (one row more)
+unit font_bar ui_test src ui.c 's/(r >= 3 \&\& r <= 12) ? (unsigned char)(0xff00u >> i)/(r >= 2 \&\& r <= 12) ? (unsigned char)(0xff00u >> i)/' "FAIL open: the font RAM still osd_font.mem"
+# About's slots restored from the wrong part of the ROM font
+unit font_restore ui_test src ui.c 's/ui_fx_font(0, n < 64 ? n : 64, (const unsigned char \*)font8x16 + 0x80 \* 16);/ui_fx_font(0, n < 64 ? n : 64, (const unsigned char *)font8x16 + 0x40 * 16);/' "FAIL About Esc: the font RAM = osd_font.mem again"
+# OSD size not applied: always scale 2
+unit ui_osdscale ui_test src ui.c 's/osd2_commit(1, small ? 1 : UI_SCALE, small ? UI_X0_SMALL : UI_X0,/osd2_commit(1, UI_SCALE, small ? UI_X0_SMALL : UI_X0,/' "FAIL OSD size small: the window at once, scale 1, (48, 25)"
+# OSD position not applied: always centred
+unit ui_osdpos ui_test src ui.c 's/y0\[small\]\[CONFIG_OSD_POS(config.autofire)\], UI_COLS, UI_ROWS);/y0[small][0], UI_COLS, UI_ROWS);/' "FAIL OSD position top: small at (48, 4)"
+# not live: the window only at the next open
+unit ui_osdlive ui_test src ui_tabs.c '/^static void osd_set/,/^}/s/^\tui_window();$/\t;/' "FAIL OSD size small: the window at once"
+# the setting not in the config (not saved): kept in a variable of its own
+unit ui_osdnotsaved ui_test src ui_tabs.c '/^static void osd_set/,/^}/s/^\tmm_set_field(arg, v);$/\tstatic unsigned char k; k = v; (void)k;/' "FAIL OSD size Right: small"
+# the position's unwritten value 3 shown as is
+unit ui_osdpos3 ui_test src ui_tabs.c 's/return arg == MMF_OSDPOS \&\& v > CONFIG_OSD_BOTTOM ? CONFIG_OSD_CENTRE : v;/return v;/' "FAIL position bits 3: shown as centre"
+# Ctrl-Alt-keypad 0 clears the OSD bits (as it did)
+unit ui_osdkp0 ui_test src ui.c 's/config.autofire = (config.autofire \& ~0x03) | ((config.autofire + 1) \& 0x03);/config.autofire = (config.autofire \& 0x04) | ((config.autofire + 1) \& 0x03);/' "FAIL Ctrl-Alt-keypad 0: the OSD bits kept"
+# the toast with the menu closed ignores the size
+unit ui_osdtoast ui_test src ui.c 's/^\t\tif (config.autofire \& CONFIG_OSD_SMALL)$/\t\tif (0)/' "FAIL small: the toast's window at scale 1"
+# the OSD bits dropped when a config file loads
+unit cfg_osdbits config_test src config.c 's/^\t\t\ttmpconf->filter.lores=tmpconf->filter.hires=0;/\t\t\ttmpconf->autofire \&= 7; tmpconf->filter.lores=tmpconf->filter.hires=0;/' "FAIL (a) the OSD bits loaded as the file holds them"
 
 echo "$nkilled mutants killed"
 if [ $bad -eq 0 ]; then echo "=== MUTANTS PASS"; else echo "=== MUTANTS FAILED"; fi

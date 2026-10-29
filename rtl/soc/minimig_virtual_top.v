@@ -123,6 +123,8 @@ module minimig_virtual_top #(
     // HDMI CRT emulation (CLK_28 domain): OSD video config
     // {beam, bloom, mask, hr_filter, lr_filter, scanline} and Denise BPLCON0 HIRES / SHRES
     output wire [ 14-1:0] CRT_CFG,
+    // OSD text layer write side (CLK_28 domain, userio_osd.v "OSD text layer")
+    output wire [107-1:0] OSD_TXT,
     output wire           VID_HIRES,
     output wire           VID_SHRES,
 
@@ -186,8 +188,10 @@ module minimig_virtual_top #(
 // `endif
 
 `ifdef MINIMIG_VPOS
-    // Video scaler positions
+    // Video scaler positions: the PAL/NTSC picture's, the RTG screen's
+    // (cfide pos_data_q 0x0fffff50 / pos_rtg_q 0x0fffff54), {vpos, hpos}
     output    [ 16-1:0]   VPOS_DATA,
+    output    [ 16-1:0]   VPOS_RTG_DATA,
 `endif
 
     // SPI
@@ -555,23 +559,18 @@ always @ (posedge CLK_114) begin
 end
 
 
-// OSD glue
-wire osd_window;
-wire osd_pixel;
-wire [1:0] osd_r;
-wire [1:0] osd_g;
-wire [1:0] osd_b;
-assign osd_r = osd_pixel ? 2'b11 : 2'b00;
-assign osd_g = osd_pixel ? 2'b11 : 2'b00;
-assign osd_b = osd_pixel ? 2'b11 : 2'b10;
+// The picture out: the registers above, unchanged.  (The bitmap OSD's mix
+// was here, combinational on these outputs -- osd_window ? {osd_r,
+// red_reg[7:2]} : red_reg -- and went with the bitmap OSD in OSD redesign
+// Phase 6, so VGA_R/G/B keep their one register stage, red_reg & co., from
+// VGA_PIXEL's domain: the RTG 1:1 path's strobe tap RTG_STB_LAT is the same.
+// The OSD is the 720p text layer in the HDMI chain, written through OSD_TXT.)
 assign VGA_CS           = cs_reg;
 assign VGA_VS           = vsyncpol ^ vs_reg;
 assign VGA_HS           = hsyncpol ^ hs_reg;
-//assign VGA_R[7:0]       = osd_window ? {osd_r,red_reg[7:2]} : red_reg[7:0];
-assign VGA_G[7:0]       = osd_window ? {osd_g,green_reg[7:2]} : green_reg[7:0];
-assign VGA_B[7:0]       = osd_window ? {osd_b,blue_reg[7:2]} : blue_reg[7:0];
-// The lengths we go to in order to make an otherwise unused signal visible in signaltap!
-assign VGA_R[7:0]       = osd_window ? {osd_r,red_reg[7:2]} : red_reg[7:0];
+assign VGA_R[7:0]       = red_reg[7:0];
+assign VGA_G[7:0]       = green_reg[7:0];
+assign VGA_B[7:0]       = blue_reg[7:0];
 
 
 
@@ -1225,6 +1224,7 @@ wire [1:0] osd_rx_seq;
 `ifdef HOSTONLY
 assign SPI_DO=1'b1;
 assign osd_rx_seq=2'b00;   // no OSD
+assign OSD_TXT=107'd0;     // no OSD text layer writes
 assign _ram_oe=1'b1;
 assign _ram_we=1'b1;
 assign sdc_g_ack=1'b0;     // no minimig: no Gayle side of the SD card engine
@@ -1350,6 +1350,7 @@ minimig #(
     .sdo          (SPI_DO           ), // SPI data output
     .sck          (SPI_SCK          ), // SPI clock
     .osd_rx_seq   (osd_rx_seq       ), // OSD reply sequence -> cfide HOST_REQ
+    .osd_txt      (OSD_TXT          ), // OSD text layer write side -> pal_to_ddr
     //video
     .selcsync     (VGA_SELCS        ), // composite sync
     ._csync       (cs               ), // horizontal sync
@@ -1396,8 +1397,6 @@ minimig #(
     .crt_cfg      (CRT_CFG          ), // HDMI CRT emulation: OSD video config
     .vid_hires    (VID_HIRES        ), // HDMI CRT emulation: Denise HIRES
     .vid_shres    (VID_SHRES        ), // HDMI CRT emulation: Denise SHRES
-    .osd_blank_out(osd_window       ), // Let the toplevel dither module handle drawing the OSD.
-    .osd_pixel_out(osd_pixel        ),
     .rtg_ena      (rtg_ena_mm       ),
     .ext_int2     (1'b0             ),
     .ext_int6     (aud_int          ),
@@ -1522,6 +1521,7 @@ cfide #(
 `ifdef MINIMIG_VPOS
     // Video v and h offset
     .pos_data_q(VPOS_DATA),
+    .pos_rtg_q(VPOS_RTG_DATA),
 `endif
 
     .osd_rx_seq(osd_rx_seq),   // HOST_REQ OSD_RDY (OSD reply-ready handshake)
