@@ -45,8 +45,8 @@ module pal_to_ddr #(
   input  logic        i_pal_shres,    // BPLCON0 SHRES
   input  logic [7:0]  i_hoffset,      // OSD Video Pos HPOS: signed HD pixels
   input  logic [7:0]  i_voffset,      // OSD Video Pos VPOS: signed 64 us steps, positive down
-  input  logic [7:0]  i_hoffset_rtg,  // the same pair for the RTG picture (RTG 1:1 applies
-  input  logic [7:0]  i_voffset_rtg,  //   these instead; 0: centred), same encodings
+  input  logic [7:0]  i_hoffset_rtg,  // the same pair for the RTG picture (applied instead
+  input  logic [7:0]  i_voffset_rtg,  //   while RTG is on; 0: centred 1:1), same encodings
   input  logic        i_rtg_enable,
   input  logic [13:0] i_crt_cfg,      // OSD Video page, as osd_cfg_t below
   // CLK_28: the OSD text layer's write side (userio_osd.v "OSD text layer")
@@ -151,7 +151,7 @@ module pal_to_ddr #(
     s_voffr1 <= s_voffr0;
   end
   // RTG into clk_114: the upsampler's write side takes one word per RTG
-  // pixel (vga_clk_pixel) while it is on
+  // pixel (vga_clk_pixel) while it is on in a 720-line mode (RTG 1:1)
   (* ASYNC_REG = "TRUE" *) logic [1:0] s_rtg_114 = 2'b00;
   always_ff @(posedge clk_114)
     s_rtg_114 <= {s_rtg_114[0], i_rtg_enable};
@@ -317,7 +317,7 @@ module pal_to_ddr #(
     .i_pal_g(w_bh_g),
     .i_pal_b(w_bh_b),
     .i_pix_stb(vga_clk_pixel),
-    .i_rtg_1to1(s_rtg_114[1]),
+    .i_rtg(s_rtg_114[1]),
     .i_hz60(w_hz60),
     .i_ring16(r_ring16 | r_ratio),
     .i_ratio(r_ratio),

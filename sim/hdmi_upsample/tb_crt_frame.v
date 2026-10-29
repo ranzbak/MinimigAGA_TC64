@@ -39,13 +39,13 @@
 //   +rtg720      an RTG source instead (see "RTG source" below): the
 //                Picasso96 mode 1280x720 HiColor at 56.72 MHz, 1504 x 754
 //                (50.0 Hz), i_rtg_enable 1
-//   +rtg720c     the same at 113.44 MHz (256 colours), 2496 x 757 (60.04 Hz)
+//   +rtg720c     the same at 113.44 MHz (256 colours, a CLUT mode), 2496 x
+//                757 (60.04 Hz)
 //   +rtght=N +rtgvt=N   N pixels per line / lines per frame instead
-//   +rtgw=N      N active pixels per line (default 1280)
-//   +rtglat=N    RGB N clk_114 after the strobe (default 3, 16-bit; 4 is
-//                the CLUT modes' latency)
+//   +rtgw=N +rtgh=N     N active pixels per line / active lines (default
+//                1280 / 720)
 //   +rtgvbp=N    lines from the end of vsync to the first active line
-//                (default: the frame's rest after 720 active lines, 12
+//                (default: the frame's rest after the active lines, 12
 //                front porch, 5 vsync -- Picasso96 vertical sync position 12)
 //   +hoffrtg=N +voffrtg=N   the RTG picture's Video Pos pair (default 0)
 //   +hoff=N +voff=N   the OSD Video Pos offsets of the new path (8 bit,
@@ -91,7 +91,8 @@
 // long field), "lines N" (pixels
 // captured, non-black), the path (50/60), "hd frame N: L lines, V vsync"
 // for every HD frame of the new path (HD lines, and rising edges of the
-// selected signal generator's vsync in it), and every change of the
+// selected signal generator's vsync in it), with an RTG source "rtg path N:
+// 1:1|time" (the upsampler's path in HD frame N, at line 360), every change of the
 // frame-latched config ("cfg latched ... at frame end: 1" when it happened
 // the clock after a frame end; "beam latched ..." for the beam filter's own
 // latch in clk_114, with the input line it happened in).
@@ -103,12 +104,17 @@
 //
 // RTG source (+rtg720, +rtg720c): what minimig_virtual_top.v gives
 // pal_to_ddr in RTG mode.  One strobe (vga_clk_pixel = VGA_PIXEL) per RTG
-// pixel, only in the active area (VGA_PIXEL is rtg_blank-gated); the pixel
-// is on i_pal_r/g/b from +rtglat clk_114 after its strobe until the next
-// one's, black elsewhere.  Lines of +rtght pixels of 2 clk_114 (+rtg720c:
-// of 1); hsync pixels 0..63, the active pixels from 128 on; +rtgvt lines:
-// vsync lines 0..4 (both edges at an hsync start, as Agnus's programmable
-// sync), then +rtgvbp lines, 720 active lines, the rest.  (minimig.card
+// pixel, in clock S, only in the active area (VGA_PIXEL is rtg_blank-gated).
+// Its pixel on i_pal_r/g/b, black elsewhere, as the RTL times it (whatever
+// pal_to_hd_upsample's tap): a 16-bit pixel (2 clk_114) in clocks S and
+// S + 1 -- VideoStream.vhd's word is out ahead of the fetch strobe, VGA_PIXEL
+// is rtg_pixel_d (one clock after it), red_reg one more -- except a line's
+// first pixel, only in S + 1 (red_reg's blank gate, rtg_blank_d2); a CLUT
+// pixel (+rtg720c, 1 clk_114) only in S + 2 (akiko.vhd's CLUT register).
+// Lines of +rtght pixels of 2 clk_114 (+rtg720c: of 1); hsync pixels
+// 0..63, the active pixels from 128 on; +rtgvt lines: vsync lines 0..4
+// (both edges at an hsync start, as Agnus's programmable sync), then
+// +rtgvbp lines, +rtgh active lines, the rest.  (minimig.card
 // programs the line length in colour clocks: 16 pixels at 56.72 MHz, 32
 // at 113.44 MHz -- 1504 and 2496 are the nearest to 720p50 / 720p60.)
 // Syncs active high, as pal_to_ddr gets them.  The pixel at (x, y) is
@@ -257,8 +263,8 @@ wire [26:0] src_pal = (srcdelay > 0) ? sd_line[sd_rp] : src_now;
 
 // ---- RTG source (+rtg720, +rtg720c; see the header) ----
 reg     rtgsrc = 0;
-integer rt_cpp = 2, rt_ht = 1504, rt_vt = 754, rt_w = 1280, rt_lat = 3, rt_vbp = 24;
-localparam RT_VA = 720, RT_VS = 5, RT_HS = 64, RT_HA0 = 128;
+integer rt_cpp = 2, rt_ht = 1504, rt_vt = 754, rt_w = 1280, rt_va = 720, rt_vbp = 24;
+localparam RT_VS = 5, RT_HS = 64, RT_HA0 = 128;
 localparam RT_FP = 12;   // lines from the picture to vsync: Picasso96 vert. sync position
 initial begin
 	rtgsrc = $test$plusargs("rtg720");
@@ -266,10 +272,10 @@ initial begin
 	if (!$value$plusargs("rtght=%d", rt_ht)) rt_ht = (rt_cpp == 1) ? 2496 : 1504;
 	if (!$value$plusargs("rtgvt=%d", rt_vt)) rt_vt = (rt_cpp == 1) ? 757 : 754;
 	if (!$value$plusargs("rtgw=%d", rt_w)) rt_w = 1280;
-	if (!$value$plusargs("rtglat=%d", rt_lat)) rt_lat = 3;
-	if (!$value$plusargs("rtgvbp=%d", rt_vbp)) rt_vbp = rt_vt - RT_VA - RT_VS - RT_FP;
-	if (rtgsrc) $display("rtg source: %0d x %0d pixels of %0d clk_114, %0d wide, back porch %0d, latency %0d",
-	                     rt_ht, rt_vt, rt_cpp, rt_w, rt_vbp, rt_lat);
+	if (!$value$plusargs("rtgh=%d", rt_va)) rt_va = 720;
+	if (!$value$plusargs("rtgvbp=%d", rt_vbp)) rt_vbp = rt_vt - rt_va - RT_VS - RT_FP;
+	if (rtgsrc) $display("rtg source: %0d x %0d pixels of %0d clk_114, %0d x %0d active, back porch %0d, %s",
+	                     rt_ht, rt_vt, rt_cpp, rt_w, rt_va, rt_vbp, (rt_cpp == 1) ? "CLUT" : "16-bit");
 end
 integer rt_c = 0, rt_v = 0;   // clk_114 in the line, line in the frame
 always @(posedge clk_114) begin
@@ -282,14 +288,15 @@ integer rt_y, rt_q, rt_p;
 reg [23:0] rt_rgb;
 reg        rt_stb, rt_hs, rt_vs;
 always @* begin
-	rt_y   = rt_v - (RT_VS + rt_vbp);   // active line, 0..719
-	rt_q   = rt_c - rt_lat;             // the strobe this clock's RGB belongs to
-	rt_p   = (rt_q >= 0) ? rt_q / rt_cpp - RT_HA0 : -1;
+	rt_y   = rt_v - (RT_VS + rt_vbp);   // active line, 0 .. +rtgh - 1
+	rt_q   = rt_c - RT_HA0 * rt_cpp;    // clk_114 since the line's first strobe
+	// the pixel on RGB this clock (see the header), -1 none
+	if (rt_cpp == 1) rt_p = rt_q - 2;                                     // CLUT: S + 2
+	else             rt_p = (rt_q >= 1 && rt_q < rt_w * 2) ? rt_q / 2 : -1;   // 16-bit: S, S + 1
 	rt_hs  = (rt_c < RT_HS * rt_cpp);
 	rt_vs  = (rt_v < RT_VS);
-	rt_stb = (rt_y >= 0 && rt_y < RT_VA && rt_c >= RT_HA0 * rt_cpp && rt_c < (RT_HA0 + rt_w) * rt_cpp &&
-	          rt_c % rt_cpp == 0);
-	rt_rgb = (rt_y >= 0 && rt_y < RT_VA && rt_p >= 0 && rt_p < rt_w) ?
+	rt_stb = (rt_y >= 0 && rt_y < rt_va && rt_q >= 0 && rt_q < rt_w * rt_cpp && rt_q % rt_cpp == 0);
+	rt_rgb = (rt_y >= 0 && rt_y < rt_va && rt_p >= 0 && rt_p < rt_w) ?
 	         24'h800000 | (rt_y[9:0] << 11) | rt_p[10:0] : 24'h0;
 end
 wire [26:0] src = rtgsrc ? {rt_hs, rt_vs, 1'b0, rt_rgb} : src_pal;
@@ -297,8 +304,8 @@ wire [26:0] src = rtgsrc ? {rt_hs, rt_vs, 1'b0, rt_rgb} : src_pal;
 // source: rtg_pixel_d (above); the Amiga picture with +rtg: vga_strobe,
 // its counter as there (_15khz: steps of 2 -> one clk_114 in 4).  The
 // hardware never gets that pair (with RTG on VGA_PIXEL is the RTG strobe);
-// it only keeps the golden +rtg legs (r50, r60, r60crt) running -- the
-// strobe runs through the vsync lines too, so their W saturates (2047)
+// its 312-line frames take the time-based path, which does not use the
+// strobe (crt_run.sh rtg, rtg0: the CRT effects gated off with RTG on)
 reg [2:0] vga_strobe_ctr = 3'd0;
 always @(posedge clk_114)
 	vga_strobe_ctr <= !dbl ? {vga_strobe_ctr[2:1], 1'b0} + 3'b010 : vga_strobe_ctr + 3'b001;
@@ -545,6 +552,9 @@ always @(posedge clk_148) begin
 			        dut.w_m_vphase, dut.r_ratio, $signed(dut.myupsample.r_yl), rg_vc[dut.myupsample.r_rslot],
 			        rg_vc[dut.myupsample.w_r16_o ? dut.myupsample.r_rslot + 4'd1 : {1'b0, dut.myupsample.r_rslot[2:0] + 3'd1}]);
 		end
+		// the RTG source: the path this HD frame shows it on (mid-frame)
+		if (rtgsrc && hdl == 360)
+			$display("rtg path %0d: %0s", hdfno, dut.myupsample.r_rtg_o ? "1:1" : "time");
 		hdl = hdl + 1;
 	end
 	if (nosync >= 0 && fno_n >= nosync) ns_on <= 1'b1;

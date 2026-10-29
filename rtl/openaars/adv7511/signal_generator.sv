@@ -29,8 +29,10 @@ module signal_generator
     parameter PAL_VT_SYNC_WIDTH = 5,
     parameter PAL_VT_BACK_PORCH = 20,
     // blank lines at the frame's start, before the active lines (part of the
-    // back porch: PAL_VT_TOP <= PAL_VT_BACK_PORCH; the frame stays PAL_VT_TOTAL);
-    // pal_to_ddr.sv sets 15
+    // back porch: PAL_VT_TOP <= PAL_VT_BACK_PORCH; the frame stays PAL_VT_TOTAL),
+    // 0 or at least PAL_VT_SYNC_WIDTH (checks below); pal_to_ddr.sv sets 15.
+    // 0 (the window from line 0) suits fixed-length frames only: osd_text.v
+    // and its bench sim/osd_text count the picture's rows from line 0
     parameter PAL_VT_TOP = 0
 )(
     input  logic       clk,
@@ -59,9 +61,29 @@ module signal_generator
 localparam PAL_HZ_TOTAL = PAL_HZ_ACT_PIX + PAL_HZ_FRONT_PORCH + PAL_HZ_SYNC_WIDTH + PAL_HZ_BACK_PORCH;
 localparam PAL_HZ_TOTAL60 = PAL_HZ_ACT_PIX + PAL_HZ_FRONT_PORCH60 + PAL_HZ_SYNC_WIDTH + PAL_HZ_BACK_PORCH;
 localparam PAL_VT_TOTAL = PAL_VT_ACT_LN + PAL_VT_FRONT_PORCH + PAL_VT_SYNC_WIDTH + PAL_VT_BACK_PORCH;
-if (PAL_VT_TOP > PAL_VT_BACK_PORCH) begin : g_top_check
-    $error("signal_generator: PAL_VT_TOP (%0d) must not exceed PAL_VT_BACK_PORCH (%0d)", PAL_VT_TOP, PAL_VT_BACK_PORCH);
+// Geometry checks.  An instance of a module that does not exist stops the
+// elaboration of a bad parameter set in every tool, its name the rule
+// broken; $error in a generate block is not portable (Quartus 20.1 rejects
+// it as a syntax error, 10170).
+//  - the top blank lines are part of the back porch;
+//  - when there are any, they hold a whole vsync (a restart before a
+//    frame's vsync line gives the vsync on the new frame's first lines,
+//    above the window).  0 top lines is the window from line 0, for frames
+//    of the full length (sim/osd_text; a short frame's late vsync then
+//    lies on the first picture lines);
+//  - the vsync lines end inside the frame (follows from the first while the
+//    frame is the sum below; kept should that change).
+generate
+if (PAL_VT_TOP > PAL_VT_BACK_PORCH) begin : g_chk_top_in_back_porch
+    PARAM_ERROR_pal_vt_top_must_not_exceed_back_porch u_param_error ();
 end
+if (PAL_VT_TOP != 0 && PAL_VT_TOP < PAL_VT_SYNC_WIDTH) begin : g_chk_top_holds_vsync
+    PARAM_ERROR_pal_vt_top_must_be_ge_sync_width u_param_error ();
+end
+if (PAL_VT_TOP + PAL_VT_ACT_LN + PAL_VT_FRONT_PORCH + PAL_VT_SYNC_WIDTH > PAL_VT_TOTAL) begin : g_chk_vsync_in_frame
+    PARAM_ERROR_vsync_must_end_inside_the_frame u_param_error ();
+end
+endgenerate
 
 // Watchdog: the chipset's syncs can stop (RTG mode with its sync start past the
 // frame size, agnus_beamcounter.v:412-424); without this the counter ran past

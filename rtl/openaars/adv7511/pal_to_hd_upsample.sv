@@ -42,18 +42,30 @@ module pal_to_hd_upsample #(
   // (crt_post's linear-light path is that much longer than its gamma path:
   // the picture then sits where the line-rate one does)
   parameter RATIO_RDX = 0,
-  // RTG 1:1 (see "RTG 1:1"): 1 builds the per-pixel RTG path, 0 leaves RTG
-  // on the time-based one; the pixel's latency after its strobe, in clk_in
+  // RTG 1:1 (see "RTG 1:1"): 1 builds the per-pixel RTG path and the RTG
+  // picture's own Video Pos pair, 0 leaves RTG as any other input (the
+  // time-based path, the chipset's pair).  The per-pixel path is taken for
+  // RTG frames of RTG_1TO1_MINL..RTG_1TO1_MAXL input lines (the 720-line
+  // modes: 754 at 50 Hz, 757 at 60 Hz); other RTG modes stay time-based.
   parameter RTG_1TO1 = 0,
-  parameter int unsigned RTG_STB_LAT = 3,
+  parameter int unsigned RTG_1TO1_MINL = 736,
+  parameter int unsigned RTG_1TO1_MAXL = 775,
+  // the write's tap: clk_in from the RTG pixel strobe to the clock that
+  // samples the pixel.  1: the 16-bit modes' pixel is on i_pal_r/g/b in its
+  // strobe's clock and the next (VideoStream.vhd's word is out ahead of the
+  // fetch strobe; VGA_PIXEL = rtg_pixel_d, minimig_virtual_top.v; red_reg),
+  // a line's first pixel only in the next.  The CLUT modes' pixel arrives
+  // one clock later (akiko.vhd's CLUT register), 2 after its strobe: at the
+  // tap of 1 the CLUT modes land one HD pixel right (the first column black,
+  // the line's last pixel lost; scaler_run.sh rtg720c pins it)
+  parameter int unsigned RTG_STB_LAT = 1,
   // ... where its picture sits: RTG_BASE* the read offset that puts a
   // line's first pixel at HD x 0 (holds pal_to_ddr's CRT_LAT and the
   // generator's window; the rtg* legs of scaler_run.sh calibrate it),
   // RTG_VB* the restart's move, in input lines (negative: later, the
   // picture up), that puts source line 0 of the 720-line mode with its vsync
   // 12 lines after the last active line (Picasso96 vert. sync pos 12) on HD
-  // row 0 (the ring's lag otherwise puts it lower).  It applies to every
-  // RTG mode: one under 400 lines (counted as 15 kHz) moves by as many lines
+  // row 0 (the ring's lag otherwise puts it lower).  Per-pixel path only
   parameter RTG_BASE50 = 0,
   parameter RTG_BASE60 = 0,
   parameter signed [7:0] RTG_VB50 = 8'sd0,
@@ -77,12 +89,12 @@ module pal_to_hd_upsample #(
   // OSD Video Pos VPOS, signed: 64 us steps (one 15 kHz input line),
   // positive moves the picture down (see "Video Pos VPOS")
   input  logic [7:0]  i_hd_voffset,
-  // ... the RTG 1:1 picture's own VPOS (same encoding), instead of i_hd_voffset there
+  // ... the RTG picture's own VPOS (same encoding), instead of i_hd_voffset there
   input  logic [7:0]  i_hd_voffset_rtg,
   // RTG 1:1 (see "RTG 1:1"): the RTG pixel strobe (minimig_virtual_top.v
   // VGA_PIXEL, one clock per pixel, blank-gated) and RTG on, synchronised
   input  logic        i_pix_stb,
-  input  logic        i_rtg_1to1,
+  input  logic        i_rtg,
 
   // clk_out domain, inputs (i_hz60 / i_ring16 / i_ratio static, synchronised
   // into clk_in where the write side uses them)
@@ -94,7 +106,7 @@ module pal_to_hd_upsample #(
   input  logic        i_hd_clk,      // the HD pixel clock (one pixel = two clk_out)
   // OSD Video Pos HPOS, signed HD pixels: positive moves the picture right
   input  logic [7:0]  i_hd_hoffset,
-  // ... the RTG 1:1 picture's own HPOS, instead of i_hd_hoffset there
+  // ... the RTG picture's own HPOS, instead of i_hd_hoffset there
   input  logic [7:0]  i_hd_hoffset_rtg,
 
   // clk_out domain, outputs
@@ -298,57 +310,69 @@ logic [10:0] r_wend [0:15] = '{default: 11'd0};
 `endif
 
 // ---------------------------------------------------------------------------
-// RTG 1:1 (bench scaler_run.sh rtg* legs, rtg_check.py).  With RTG_1TO1
-// and i_rtg_1to1 the write side takes one word per RTG pixel instead of
-// sampling by time: the RTG pixel strobe, delayed by RTG_STB_LAT, writes;
-// the DDA above runs on unused, and the line_active / hsync gates do not
-// apply (the strobe only comes in the active area).  The pixel is in
-// minimig_virtual_top's red/green/blue_reg 3 clk_114 after its strobe in
-// the 16-bit modes, 4 in the CLUT modes (one more register stage): those
-// show one pixel to the right, the first column black (known, pinned by the
-// rtglat4 leg).  (A reading of VideoStream.vhd gives 1 for the 16-bit
-// modes: the board decides; 3 as briefed.)  crt_beamh is bypassed with
-// RTG, combinationally (no delay).  The line's words are W = the widest
-// line of the frame (r_wcnt at the line ends, latched at the frame's
-// restart); the read side centres them ("RTG read").  Vertically the
-// line-rate ring as before; the restart moves by RTG_VB* input lines plus
-// the RTG picture's own VPOS (i_hd_voffset_rtg instead of the chipset's;
-// "Video Pos VPOS").
+// RTG 1:1 (bench scaler_run.sh rtg* legs, rtg_check.py).  With RTG_1TO1,
+// RTG on (i_rtg) and an input frame of RTG_1TO1_MINL..RTG_1TO1_MAXL lines
+// (r_rtg_fit: the last field's input hsyncs, VPOS's r_vp_n) the write side
+// takes one word per RTG pixel instead of sampling by time: the RTG pixel
+// strobe, delayed by RTG_STB_LAT (see the parameter: 1 for the 16-bit
+// modes; the CLUT modes land one pixel right), writes; the DDA above runs
+// on unused, and the line_active / hsync gates do not apply (the strobe
+// only comes in the active area).  crt_beamh is bypassed with RTG,
+// combinationally (no delay).  The line's words are W = the widest line of
+// the frame (r_wcnt at the line ends, latched at the frame's restart); the
+// read side centres them ("RTG read").  Vertically the line-rate ring as
+// before, on 16 buffers; the restart moves by RTG_VB* input lines.  Other
+// RTG modes (640x480: ~525 lines, 1024x768: ~806) keep the time-based path
+// (ring of 8, the chipset's line-rate picture).  Either path takes the RTG
+// picture's own Video Pos pair (i_hd_hoffset_rtg, i_hd_voffset_rtg) while
+// RTG is on, the chipset's never; "Video Pos VPOS".
 // ---------------------------------------------------------------------------
-if (RTG_STB_LAT < 1) begin : g_bad_lat
-  $error("pal_to_hd_upsample: RTG_STB_LAT must be at least 1");
+generate
+// $error in a generate block is not portable (Quartus 20.1 rejects it as a
+// syntax error, 10170): an instance of a module that does not exist stops
+// the elaboration of a bad parameter in every tool, its name the rule
+if (RTG_STB_LAT < 1) begin : g_chk_rtg_stb_lat
+  PARAM_ERROR_rtg_stb_lat_must_be_ge_1 u_param_error ();
 end
+endgenerate
 logic [RTG_STB_LAT-1:0] r_stb_d = '0;
 always_ff @(posedge clk_in)
   r_stb_d <= RTG_STB_LAT'({r_stb_d, i_pix_stb});
-logic w_rtg_1to1;   // the per-pixel path is built in (RTG_1TO1) and asked for
-assign w_rtg_1to1 = (RTG_1TO1 != 0) && i_rtg_1to1;
+logic w_rtg_in;   // RTG on (and the RTG path built in: RTG_1TO1)
+assign w_rtg_in = (RTG_1TO1 != 0) && i_rtg;
+logic r_rtg_fit = 1'b0;   // the last field had a 1:1 frame's lines (set in "Measure")
+
+// The decision and the written extent W (clk_in), all changed only at the
+// write side's restart (no switch inside a frame): r_rtg_on this frame is
+// written 1:1, r_rtg_any RTG is on (either path: the RTG Video Pos pair);
+// r_rtg_wmax the widest 1:1 line so far in this frame, r_rtg_w the last
+// frame's W.  clk_out reads W through r_rd_off at the HD lines' starts, as
+// is (r_rtg_on, r_rtg_any through synchronisers, below): an HD line that
+// starts within the clock or two of the change is the old frame's last, in
+// the HD vertical blank (the read side restarts the HD raster a 2-3 clk_out
+// synchroniser later), so like r_wend it is settled wherever it is shown
+// (wizard.xdc bounds the clk_114 -> clk_148 path).  The first 1:1 frame
+// after a switch reads W 0 (the frame before wrote no 1:1 line): one frame
+// off centre, at the mode change.
+logic [10:0] r_rtg_wmax = 11'd0;
+logic [10:0] r_rtg_w    = 11'd0;
+(* max_fanout = 16 *) logic r_rtg_on = 1'b0;
+logic        r_rtg_any  = 1'b0;
 logic w_wr;   // write the sample now
-assign w_wr = w_rtg_1to1 ? r_stb_d[RTG_STB_LAT-1] : (r_pix_en && ~i_pal_hsync);
+assign w_wr = r_rtg_on ? r_stb_d[RTG_STB_LAT-1] : (r_pix_en && ~i_pal_hsync);
 
 logic w_vp_wr_reset;   // the write side's restart (Video Pos VPOS, below)
 logic w_line_end;      // an input line ends (in the exact-ratio mode every
                        // line, vsync or not: its reader counts lines by time)
 assign w_line_end = r_pal_hneg_in && (~i_pal_vsync || w_rat_in);
 
-// The written extent W (clk_in): r_rtg_wmax the widest line so far in this
-// frame, r_rtg_w / r_rtg_on the last frame's W and whether it was written
-// 1:1.  Both change only at the write side's restart (and W only with the
-// mode).  clk_out reads W through r_rd_off at the HD lines' starts, as is
-// (r_rtg_on through a synchroniser, below): an HD line that starts within
-// the clock or two of the change is the old frame's last, in the HD
-// vertical blank (the read side restarts the HD raster a 2-3 clk_out
-// synchroniser later), so like r_wend it is settled wherever it is shown
-// (wizard.xdc bounds the clk_114 -> clk_148 path).
-logic [10:0] r_rtg_wmax = 11'd0;
-logic [10:0] r_rtg_w    = 11'd0;
-(* max_fanout = 16 *) logic r_rtg_on = 1'b0;
 always_ff @(posedge clk_in) begin
-  if (w_line_end && r_wcnt > r_rtg_wmax)
+  if (w_line_end && r_rtg_on && r_wcnt > r_rtg_wmax)
     r_rtg_wmax <= r_wcnt;
   if (w_vp_wr_reset) begin
     r_rtg_w    <= r_rtg_wmax;
-    r_rtg_on   <= w_rtg_1to1;
+    r_rtg_on   <= w_rtg_in && r_rtg_fit;
+    r_rtg_any  <= w_rtg_in;
     r_rtg_wmax <= 11'd0;
   end
 end
@@ -358,12 +382,16 @@ end
 // can make to 720p50's: 94 colour clocks), so a frame brings ~4 lines more
 // than the HD frame shows and the reader, which moves at most one line per
 // HD line, falls behind by that much -- from 4 to ~8 lines, past the ring
-// of 8.  With RTG off this is i_ring16 as before.
+// of 8.  Otherwise this is i_ring16 as before.
 (* ASYNC_REG = "TRUE" *) logic [1:0] s_rtg_o = 2'b00;
+(* ASYNC_REG = "TRUE" *) logic [1:0] s_rtga_o = 2'b00;
 (* max_fanout = 16 *) logic r_rtg_o = 1'b0;   // r_rtg_on in clk_out
+logic r_rtga_o = 1'b0;                         // r_rtg_any in clk_out
 always_ff @(posedge clk_out) begin
-  s_rtg_o <= {s_rtg_o[0], r_rtg_on};
-  r_rtg_o <= s_rtg_o[1];
+  s_rtg_o  <= {s_rtg_o[0], r_rtg_on};
+  r_rtg_o  <= s_rtg_o[1];
+  s_rtga_o <= {s_rtga_o[0], r_rtg_any};
+  r_rtga_o <= s_rtga_o[1];
 end
 assign w_r16_in = s_r16_in[1] | r_rtg_on;   // clk_in
 assign w_r16_o  = i_ring16 | r_rtg_o;       // clk_out
@@ -414,10 +442,10 @@ localparam signed [11:0] VP_M = 12'sd5;
 logic [7:0]  r_vp_bias  = 8'd0;
 always_ff @(posedge clk_in)
   r_vp_bias <= !w_rat_in ? 8'd0 : w_hz60_in ? RATIO_VB60 : RATIO_VB50;
-// RTG 1:1 adds its move in input lines, after VPOS's 31 kHz doubling
+// the RTG 1:1 path adds its move in input lines, after VPOS's 31 kHz doubling
 logic [7:0]  r_vp_lb    = 8'd0;
 always_ff @(posedge clk_in)
-  r_vp_lb <= !w_rtg_1to1 ? 8'd0 : w_hz60_in ? RTG_VB60 : RTG_VB50;
+  r_vp_lb <= !r_rtg_on ? 8'd0 : w_hz60_in ? RTG_VB60 : RTG_VB50;
 logic [7:0]  r_vp_s     = 8'd0;     // VPOS, taken at each input hsync
 logic [1:0]  r_vp_seen  = 2'd0;     // real vsync negedges seen (to 3)
 logic [1:0]  r_vp_seenl = 2'd0;     // ... taken at each input hsync
@@ -475,6 +503,9 @@ always_ff @(posedge clk_in) begin
     r_vp_p1   <= r_vp_p0;
     if (r_vp_seen != 2'd3) r_vp_seen <= r_vp_seen + 2'd1;
   end
+  // RTG 1:1's frame length (RTG 1:1 above): r_vp_n, the last field's input
+  // hsyncs as the decisions take it
+  r_rtg_fit <= (r_vp_n >= 11'(RTG_1TO1_MINL)) && (r_vp_n <= 11'(RTG_1TO1_MAXL));
 end
 
 // Decide: the decision inputs, taken at each input hsync; the window, the
@@ -482,7 +513,7 @@ end
 always_ff @(posedge clk_in) begin
   r_vp_hsd <= r_pal_hneg_in;
   if (r_pal_hneg_in) begin
-    r_vp_s     <= (w_rtg_1to1 ? i_hd_voffset_rtg : i_hd_voffset) + r_vp_bias;
+    r_vp_s     <= (w_rtg_in ? i_hd_voffset_rtg : i_hd_voffset) + r_vp_bias;
     r_vp_seenl <= r_vp_seen;
     r_vp_n     <= r_vp_n1;
     r_vp_dbl   <= (r_vp_n1 > 11'd400);
@@ -576,7 +607,8 @@ localparam logic [11:0] WIN60 = 12'(PAL_HD_H_RES60 - PAL_HD_H_FP);
 // pixel) at HD x 0; the frame's W words then start at HD x0 = (1280 - W) /
 // 2, so the offset grows by x0 (W > 1280: x0 < 0, a centred crop; the read
 // window and r_wend black the rest), and by the RTG picture's own HPOS
-// (i_hd_hoffset_rtg) instead of the chipset's.
+// (i_hd_hoffset_rtg) instead of the chipset's.  The time-based path takes
+// the RTG HPOS too while RTG is on (r_rtga_o), on its own offset.
 localparam logic [13:0] RB50 = 14'(RTG_BASE50);
 localparam logic [13:0] RB60 = 14'(RTG_BASE60);
 logic signed [12:0] w_rtg_x0;
@@ -586,7 +618,9 @@ logic [11:0] r_win_end = WIN50;
 always_ff @(posedge clk_out) begin
   r_rd_off  <= r_rtg_o ? (i_hz60 ? RB60 : RB50) + {w_rtg_x0[12], w_rtg_x0}
                          + {{6{i_hd_hoffset_rtg[7]}}, i_hd_hoffset_rtg}
-                       : (i_hz60 ? OFF60 : OFF50) + {{6{i_hd_hoffset[7]}}, i_hd_hoffset}
+                       : (i_hz60 ? OFF60 : OFF50)
+                         + (r_rtga_o ? {{6{i_hd_hoffset_rtg[7]}}, i_hd_hoffset_rtg}
+                                     : {{6{i_hd_hoffset[7]}}, i_hd_hoffset})
                          - (i_ratio ? RDX : 14'd0);
   r_win_end <= i_hz60 ? WIN60 : WIN50;
 end
