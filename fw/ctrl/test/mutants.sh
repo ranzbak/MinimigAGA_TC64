@@ -735,6 +735,30 @@ unit dispatch_nocaps dispatch_test src menu.c 's/if (osd2_caps \&\& !ui_legacy_a
 # the classic menu never hands back
 unit dispatch_stuck dispatch_test src menu.c 's/        ui_legacy_active = 0;   \/\/ closed: the new menu next time/        ;/' "FAIL the classic menu closed"
 
+# ---- OSD redesign Phase 5: the ROM font, OSD size and position ------------------
+# the firmware's copy of the font is not osd_font.mem (a glyph of 'A' changed)
+unit font_copy ui_test src font8x16.h 's/^        {0x00,0x00,0x7C,0xC6,0xC6,0xC6,0xFE,0xC6,/        {0x00,0x00,0x7C,0xC6,0xC6,0xC6,0xFE,0xC7,/' "FAIL ROM font: osd_font.mem = font8x16.h"
+# the menu's bar glyphs not the ROM font's (one row more)
+unit font_bar ui_test src ui.c 's/(r >= 3 \&\& r <= 12) ? (unsigned char)(0xff00u >> i)/(r >= 2 \&\& r <= 12) ? (unsigned char)(0xff00u >> i)/' "FAIL open: the font RAM still osd_font.mem"
+# About's slots restored from the wrong part of the ROM font
+unit font_restore ui_test src ui.c 's/ui_fx_font(0, n < 64 ? n : 64, (const unsigned char \*)font8x16 + 0x80 \* 16);/ui_fx_font(0, n < 64 ? n : 64, (const unsigned char *)font8x16 + 0x40 * 16);/' "FAIL About Esc: the font RAM = osd_font.mem again"
+# OSD size not applied: always scale 2
+unit ui_osdscale ui_test src ui.c 's/osd2_commit(1, small ? 1 : UI_SCALE, small ? UI_X0_SMALL : UI_X0,/osd2_commit(1, UI_SCALE, small ? UI_X0_SMALL : UI_X0,/' "FAIL OSD size small: the window at once, scale 1, (48, 25)"
+# OSD position not applied: always centred
+unit ui_osdpos ui_test src ui.c 's/y0\[small\]\[CONFIG_OSD_POS(config.autofire)\], UI_COLS, UI_ROWS);/y0[small][0], UI_COLS, UI_ROWS);/' "FAIL OSD position top: small at (48, 4)"
+# not live: the window only at the next open
+unit ui_osdlive ui_test src ui_tabs.c '/^static void osd_set/,/^}/s/^\tui_window();$/\t;/' "FAIL OSD size small: the window at once"
+# the setting not in the config (not saved): kept in a variable of its own
+unit ui_osdnotsaved ui_test src ui_tabs.c '/^static void osd_set/,/^}/s/^\tmm_set_field(arg, v);$/\tstatic unsigned char k; k = v; (void)k;/' "FAIL OSD size Right: small"
+# the position's unwritten value 3 shown as is
+unit ui_osdpos3 ui_test src ui_tabs.c 's/return arg == MMF_OSDPOS \&\& v > CONFIG_OSD_BOTTOM ? CONFIG_OSD_CENTRE : v;/return v;/' "FAIL position bits 3: shown as centre"
+# Ctrl-Alt-keypad 0 clears the OSD bits (as it did)
+unit ui_osdkp0 ui_test src ui.c 's/config.autofire = (config.autofire \& ~0x03) | ((config.autofire + 1) \& 0x03);/config.autofire = (config.autofire \& 0x04) | ((config.autofire + 1) \& 0x03);/' "FAIL Ctrl-Alt-keypad 0: the OSD bits kept"
+# the toast with the menu closed ignores the size
+unit ui_osdtoast ui_test src ui.c 's/^\t\tif (config.autofire \& CONFIG_OSD_SMALL)$/\t\tif (0)/' "FAIL small: the toast's window at scale 1"
+# the OSD bits dropped when a config file loads
+unit cfg_osdbits config_test src config.c 's/^\t\t\ttmpconf->filter.lores=tmpconf->filter.hires=0;/\t\t\ttmpconf->autofire \&= 7; tmpconf->filter.lores=tmpconf->filter.hires=0;/' "FAIL (a) the OSD bits loaded as the file holds them"
+
 echo "$nkilled mutants killed"
 if [ $bad -eq 0 ]; then echo "=== MUTANTS PASS"; else echo "=== MUTANTS FAILED"; fi
 exit $bad

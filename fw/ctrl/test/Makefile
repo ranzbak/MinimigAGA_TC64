@@ -85,7 +85,8 @@ $(eval $(call TEST,osd2_test,$$(SRC)/osd2.c $$(TD)/mock_hw.c $$(TD)/mock_sdc.c $
 UI_SRCS = $(SRC)/ui.c $(SRC)/ui_tabs.c $(SRC)/ui_about.c $(SRC)/ui_supporters.c \
           $(SRC)/menu_model.c $(SRC)/osd2.c $(SRC)/errors.c \
           $(TD)/mock_hw.c $(TD)/mock_sdc.c $(SRC)/hardware.c
-$(eval $(call TEST,ui_test,$$(UI_SRCS),,$$(GOLD)/ui))
+# (second argument: the RTL font RAM's initial content, the ROM font)
+$(eval $(call TEST,ui_test,$$(UI_SRCS),,$$(GOLD)/ui $$(TOP)/rtl/openaars/adv7511/osd_font.mem))
 
 # migrate_test: the migration check (findings/osd-redesign Phase 4): every
 # setting changed once in the classic menu (menu.c, whole) and once in the

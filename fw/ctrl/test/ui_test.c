@@ -641,6 +641,29 @@ static void help_fits(const char *what, const char *help)
    trace so far (call it before every trace reset) */
 static unsigned char m_font[256 * 16];
 static unsigned char m_pal[16][4];
+/* rtl/openaars/adv7511/osd_font.mem: the font RAM's content after the
+   bitstream loads ($readmemh), read by main (its second argument) */
+static unsigned char rom_mem[256 * 16];
+static int rom_lines;
+
+static void load_mem(const char *path)
+{
+	FILE *f = fopen(path, "r");
+	unsigned v;
+	char line[16];
+	rom_lines = 0;
+	if (!f) {
+		printf("FAIL ROM font: cannot open %s\n", path);
+		fails++;
+		return;
+	}
+	while (fgets(line, sizeof line, f))
+		if (sscanf(line, "%2x", &v) == 1 && rom_lines < (int)sizeof rom_mem)
+			rom_mem[rom_lines++] = (unsigned char)v;
+		else
+			rom_lines = -1000000;   /* not a line of two hex digits, or too many */
+	fclose(f);
+}
 
 static void model_init(void)
 {
@@ -648,7 +671,7 @@ static void model_init(void)
 		0x000000, 0xF0F0F0, 0x1478E6, 0x3C5A9A, 0xF0C828, 0x3CC85A, 0xE03C3C, 0x000000
 	};
 	unsigned i;
-	memcpy(m_font, font8x16, sizeof m_font);
+	memcpy(m_font, rom_mem, sizeof m_font);     /* after the bitstream loads */
 	for (i = 0; i < 16; i++) {
 		unsigned long c = i < 8 ? scheme[i] : 0;
 		m_pal[i][0] = i == OSD2_C_CLEAR ? OSD2_VIDEO << 6 : 0;
@@ -769,6 +792,46 @@ static int sky(unsigned char ch)
 	return 0;
 }
 
+/* the ROM font: osd_font.mem (the RTL font RAM after boot) = font8x16.h
+   (the firmware's copy), and the menu's uploads are its glyphs */
+static void test_rom_font(void)
+{
+	unsigned i, n, same;
+	check("ROM font: osd_font.mem has 4096 lines", rom_lines, 256 * 16);
+	check("ROM font: osd_font.mem = font8x16.h", !memcmp(rom_mem, font8x16, sizeof rom_mem), 1);
+	/* the menu opens on a core whose font RAM starts from osd_font.mem */
+	model_init();
+	trace_reset();
+	key(KEY_MENU);
+	model_sync();
+	check("open: the font RAM still osd_font.mem (the uploads are the ROM font's glyphs)",
+	      !memcmp(m_font, rom_mem, sizeof m_font), 1);
+	key(KEY_MENU);
+	/* ... and on a core with another font (an older bitstream): every glyph
+	   the menu draws with besides the text is uploaded, as the ROM font has it */
+	memset(m_font, 0xAA, sizeof m_font);
+	trace_reset();
+	key(KEY_MENU);
+	model_sync();
+	for (i = n = same = 0; i < 256; i++) {
+		static const unsigned char aa[16] = {
+			0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA
+		};
+		if (memcmp(m_font + i * 16, aa, 16)) {
+			n++;
+			same += !memcmp(m_font + i * 16, rom_mem + i * 16, 16);
+		}
+	}
+	check("old font: glyphs uploaded (bar 9, lines/arrows 10, icons 10)", n, 29);
+	check("old font: each the ROM font's", same, 29);
+	check("old font: the bar, the lines, the icons among them",
+	      !memcmp(m_font + OSD_G_BAR0 * 16, rom_mem + OSD_G_BAR0 * 16, OSD_G_BARS * 16) &&
+	      !memcmp(m_font + OSD_G_HLINE * 16, rom_mem + OSD_G_HLINE * 16, 16) &&
+	      !memcmp(m_font + OSD_ICON_MAIN * 16, rom_mem + OSD_ICON_MAIN * 16, 10 * 16), 1);
+	key(KEY_MENU);
+	trace_reset();
+}
+
 static void test_pages(void)
 {
 	unsigned i, k, steps, mx, sum, cost;
@@ -870,6 +933,7 @@ static void test_pages(void)
 	model_sync();
 	check("About Esc: the menu's cells as before", same_cells(), 1);
 	check("About Esc: the font as before (every glyph)", !memcmp(m_font, snap_font, sizeof m_font), 1);
+	check("About Esc: the font RAM = osd_font.mem again", !memcmp(m_font, rom_mem, sizeof m_font), 1);
 	check("About Esc: the icons as before", !memcmp(m_font + 0xC0 * 16, snap_font + 0xC0 * 16, 10 * 16), 1);
 	check("About Esc: the palette as before", !memcmp(m_pal, snap_pal, sizeof m_pal), 1);
 	pass(3);
@@ -966,6 +1030,7 @@ static void test_pages(void)
 	model_sync();
 	check("Supporters Esc: the menu's cells as before", same_cells(), 1);
 	check("Supporters Esc: the font as before", !memcmp(m_font, snap_font, sizeof m_font), 1);
+	check("Supporters Esc: the font RAM = osd_font.mem again", !memcmp(m_font, rom_mem, sizeof m_font), 1);
 	check("Supporters Esc: the palette as before", !memcmp(m_pal, snap_pal, sizeof m_pal), 1);
 
 	/* a toast over a page: in its help field, then the page's help again */
@@ -1115,6 +1180,7 @@ int main(int argc, char **argv)
 	int i;
 	unsigned t;
 	golddir = argc > 1 ? argv[1] : "gold/ui";
+	load_mem(argc > 2 ? argv[2] : "../../../rtl/openaars/adv7511/osd_font.mem");
 	setup();
 
 	/* ---- start: closed, the bitmap OSD off ---- */
@@ -1543,6 +1609,8 @@ int main(int argc, char **argv)
 	check("F12 in a dialog: closed", ui_open_now, 0);
 	check_has("F12 in a dialog: cancelled, no reset", calls, "OsdReset", 0);
 
+	/* ---- the ROM font and the menu's glyphs ---- */
+	test_rom_font();
 	/* ---- About and Supporters: pages of their own (plan 3.8) ---- */
 	test_pages();
 	/* ---- F6 see-through ---- */
