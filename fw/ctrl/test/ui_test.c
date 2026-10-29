@@ -2,7 +2,7 @@
  * osd-redesign/plan.md Phase 3, the sidebar layout of 2026-10-27) on the
  * real osd2.c and the mock's SPI trace.
  * The rest of the firmware is stubbed here: osd.c's Config* calls and
- * OsdShow/OsdHide, config files, the CD-ROM, and a FAT directory model
+ * OsdHide, config files, the CD-ROM, and a FAT directory model
  * (ScanDirectory's window semantics over two directories, the entries
  * stored out of order behind sort_table).  Keys go in through the stub
  * OsdGetCtrl, one per ui_handle() pass, as on the board.
@@ -127,7 +127,6 @@ unsigned char sort_table[MAXDIRENTRIES];
 unsigned char nDirEntries, iSelectedEntry;
 unsigned long iCurrentDirectory;
 unsigned char fat32;
-unsigned char fat_dir_window = MAXDIRENTRIES;
 
 hardfileTYPE *SlotConfig(int slot)
 {
@@ -138,7 +137,6 @@ hardfileTYPE *SlotConfig(int slot)
 static unsigned char keyq[8];
 static int kq_n, kq_i;
 unsigned char OsdGetCtrl(void) { return kq_i < kq_n ? keyq[kq_i++] : 0; }
-void OsdShow(unsigned char mode) { logc("OsdShow(%d)", mode); }
 void OsdHide(void) { logc("OsdHide"); }
 void OsdReset(void) { logc("OsdReset"); }
 void OsdDoReset(int enter, int leave) { logc("OsdDoReset(%d,%d)", enter, leave); }
@@ -294,8 +292,8 @@ static int scans;
 static void fill(void)
 {
 	int i, n = tbl_n - win;
-	if (n > fat_dir_window)
-		n = fat_dir_window;
+	if (n > MAXDIRENTRIES)
+		n = MAXDIRENTRIES;
 	nDirEntries = (unsigned char)n;
 	memset(DirEntry, 0, sizeof DirEntry);
 	for (i = 0; i < n; i++) {
@@ -330,8 +328,8 @@ static char first_upper(const struct fent *f)
 static void select_abs(int idx)
 {
 	win = idx;
-	if (win > tbl_n - fat_dir_window)
-		win = tbl_n - fat_dir_window;
+	if (win > tbl_n - MAXDIRENTRIES)
+		win = tbl_n - MAXDIRENTRIES;
 	if (win < 0)
 		win = 0;
 	fill();
@@ -370,12 +368,12 @@ char ScanDirectory(unsigned long mode, char *ext, unsigned char opts)
 		if (iSelectedEntry + 1 < nDirEntries)
 			iSelectedEntry = nDirEntries - 1;
 		else
-			select_abs(win + nDirEntries - 1 + fat_dir_window - 1 < tbl_n ? win + nDirEntries - 1 + fat_dir_window - 1 : tbl_n - 1);
+			select_abs(win + nDirEntries - 1 + MAXDIRENTRIES - 1 < tbl_n ? win + nDirEntries - 1 + MAXDIRENTRIES - 1 : tbl_n - 1);
 	} else if (mode == (unsigned long)SCAN_PREV_PAGE) {
 		if (iSelectedEntry)
 			iSelectedEntry = 0;
 		else {
-			win = win > fat_dir_window - 1 ? win - (fat_dir_window - 1) : 0;
+			win = win > MAXDIRENTRIES - 1 ? win - (MAXDIRENTRIES - 1) : 0;
 			fill();
 		}
 	} else if (mode == SCAN_INIT_FIRST) {
@@ -1130,7 +1128,6 @@ int main(int argc, char **argv)
 	check("open: ui_open_now", ui_open_now, 1);
 	check_has("open: OSD_CMD_OSD 0x02 (keyboard to the OSD, bitmap off)", mock_trace(), KEYS_TO_OSD, 1);
 	check_has("open: the window 64 x 20 at (16, 5), scale 2, on", mock_trace(), WIN_MENU_ON, 1);
-	check_has("open: no OsdShow (the bitmap stays off)", calls, "OsdShow", 0);
 	/* 0x04 empty, 0x05 1/8: rows 3-12 0x80 */
 	check_has("open: the bar glyphs uploaded (0x04..)", mock_trace(),
 	          "20 3c 00 40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 80 80 ", 1);
@@ -1328,7 +1325,6 @@ int main(int argc, char **argv)
 	check("DF0 Enter again: the file selector", ui_focus, UI_F_FILESEL);
 	check("file selector: from the root", iCurrentDirectory, 0);
 	check("file selector: 16 entries", nDirEntries, 16);
-	check("file selector: fat_dir_window 16", fat_dir_window, 16);
 	check_str("file selector: the header", cells(0, 20, 10), "Floppy DF0");
 	check_str("file selector: its help", cells(18, 1, 26), "Choose a disk image (ADF).");
 	screen("filesel");
@@ -1577,7 +1573,6 @@ int main(int argc, char **argv)
 	check_has("toast: still on before 1 s", mock_trace(), WIN_TOAST_OFF, 0);
 	wait_counts(1);
 	check_has("toast: its window off after 1 s", mock_trace(), WIN_TOAST_OFF, 1);
-	check_has("toast: the bitmap OSD never on", calls, "OsdShow", 0);
 
 	/* ---- Ctrl-Alt-F12: debug mode on the classic OSD, closed ---- */
 	calls_clear();
@@ -1600,7 +1595,6 @@ int main(int argc, char **argv)
 	key(KEY_ESC);
 	check_has("closing in debug mode: the debug page back on the layer", calls, "OsdHide;debug2_show(1);", 1);
 	check_has("closing in debug mode: the layer not switched off", mock_trace(), WIN_MENU_OFF, 0);
-	check_has("debug mode: the bitmap OSD never on", calls, "OsdShow", 0);
 	/* a toast in debug mode: the debug lines wait, then the page comes back */
 	calls_clear();
 	mock_reset();

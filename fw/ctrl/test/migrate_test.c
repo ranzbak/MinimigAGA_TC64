@@ -1,8 +1,11 @@
 /* migrate_test: the migration check of the OSD redesign (findings/
  * osd-redesign/plan.md Phase 4 "Done"): every setting the classic menu
- * offers, changed once through the classic menu (menu.c HandleUI_legacy,
- * osd2_caps 0) and once through the new one (ui.c, osd2_caps 1), from the
- * same start; the two runs must leave the same effect:
+ * offered, changed through the new menu (ui.c on the text layer), must
+ * leave the effect the classic menu (menu.c HandleUI_legacy) had from the
+ * same start.  The classic menu is gone (Phase 6); its effects are recorded
+ * in gold/migrate.txt (migrate_gold.h has the format), taken from the
+ * classic runs of this test at osd-int bc677a44, where both menus were
+ * compared case by case and agreed.  The effect:
  *   - the config struct, byte for byte (212 bytes);
  *   - the Config* SPI byte stream to the core: every OSD frame whose
  *     command is a config register (0x04 chipset, 0x14 CPU, 0x24 memory,
@@ -14,17 +17,18 @@
  *     drive sounds, the audio volume, the HDMI clock delay, config files
  *     (Load, Save, Apply), the CD drive (CD_Insert, CD_Eject);
  *   - the floppy drives (df[], drives), adv_clkdelay.
- * The drawing of both menus is not compared (it differs by design): the
- * classic bitmap OSD is stubbed, the new menu draws on the real osd2.c into
- * the mock's SPI trace, whose text-layer frames (0x2C..0x5C), keyboard
- * frames (0x28) and VERSION reads (0x88) are left out.
- * The keys go in through the stub OsdGetCtrl, one per HandleUI() pass, each
- * followed by passes without a key until the menu has settled (the classic
- * menu draws a page in one pass and reads its keys in the next).
+ * The new menu draws on the real osd2.c into the mock's SPI trace, whose
+ * text-layer frames (0x2C..0x5C), keyboard frames (0x28) and VERSION
+ * reads (0x88) are left out.  The keys go in through the stub OsdGetCtrl,
+ * one per HandleUI() pass (menu.c's, whole), each followed by passes
+ * without a key until the menu has settled.
  * A RTG case (layer version 2, VERSION byte 14 = 1) checks that the new
- * menu then edits the RTG pair and only that: the one case whose effect
- * differs on purpose (the classic menu has no RTG pair).
+ * menu then edits the RTG pair and only that (the classic menu had no RTG
+ * pair: no record).
  *   make -C fw/ctrl/test run-migrate_test
+ *   MIGRATE_GOLD_WRITE=<file>: write the new menu's effects there instead
+ *   of comparing (a deliberate change of an effect: review the diff of
+ *   gold/migrate.txt)
  */
 #include <stdarg.h>
 #include <stdio.h>
@@ -104,7 +108,6 @@ unsigned char sort_table[MAXDIRENTRIES];
 unsigned char nDirEntries, iSelectedEntry;
 unsigned long iCurrentDirectory;
 unsigned char fat32;
-unsigned char fat_dir_window = MAXDIRENTRIES;
 int partitioncount = 1;
 hdfTYPE hdf[HDD_SLOTS];
 extern char *fs_pFileExt;   /* menu.c */
@@ -115,31 +118,14 @@ hardfileTYPE *SlotConfig(int slot)
 }
 
 /* ---- osd.c: the Config* functions as they are (osdcfg.inc, cut out by the
-   Makefile), the rest stubbed: the bitmap OSD draws nothing here ---- */
+   Makefile), the rest stubbed ---- */
 void audio_volume(unsigned char v) { logc("audio_volume(%d)", v); }
 #include "osdcfg.inc"
 
 static unsigned char keyq[2];
 static int kq_n, kq_i;
 unsigned char OsdGetCtrl(void) { return kq_i < kq_n ? keyq[kq_i++] : 0; }
-void OsdShow(unsigned char mode) { (void)mode; }
 void OsdHide(void) { }
-void OsdClear(void) { }
-void OsdWaitVBL(void) { }
-void OsdColor(unsigned char c) { (void)c; }
-void OsdSetTitle(char *t, int a) { (void)t; (void)a; }
-void OsdWrite(unsigned char n, char *t, unsigned char inv, unsigned char st) { (void)n; (void)t; (void)inv; (void)st; }
-void OsdDrawLogo(unsigned char n, char row, char sup) { (void)n; (void)row; (void)sup; }
-void OsdWriteFramebuffer(unsigned char n, const char *t) { (void)n; (void)t; }
-void StarsInit(void) { }
-void StarsUpdate(void) { }
-void FireworksInit(void) { }
-void FireworksUpdate(void) { }
-void ScrollText(char n, const char *str, int len, int max_len, unsigned char invert)
-{
-	(void)n; (void)str; (void)len; (void)max_len; (void)invert;
-}
-void ScrollReset(void) { }
 void OsdReset(void) { logc("OsdReset"); }
 void OsdDoReset(int enter, int leave) { logc("OsdDoReset(%d,%d)", enter, leave); }
 /* Amiga raw key -> ASCII: the letters the scripts type */
@@ -217,8 +203,8 @@ static int win;
 static void fill(void)
 {
 	int i, n = NE(root_dir) - win;
-	if (n > fat_dir_window)
-		n = fat_dir_window;
+	if (n > MAXDIRENTRIES)
+		n = MAXDIRENTRIES;
 	nDirEntries = (unsigned char)n;
 	memset(DirEntry, 0, sizeof DirEntry);
 	for (i = 0; i < n; i++) {
@@ -239,8 +225,8 @@ unsigned long CurrentDirectory(void) { return iCurrentDirectory; }
 static void select_abs(int idx)
 {
 	win = idx;
-	if (win > NE(root_dir) - fat_dir_window)
-		win = NE(root_dir) - fat_dir_window;
+	if (win > NE(root_dir) - MAXDIRENTRIES)
+		win = NE(root_dir) - MAXDIRENTRIES;
 	if (win < 0)
 		win = 0;
 	fill();
@@ -304,7 +290,11 @@ struct effect {
 	char spi[4096];
 	char calls[2048];
 };
-static struct effect e_old, e_new;
+static struct effect e_old, e_new;     /* e_old: the classic menu's, from the gold file */
+#include "migrate_gold.h"
+static struct dfrec gold_df[4];
+static const char *gold_path;
+static FILE *gold_out;                  /* MIGRATE_GOLD_WRITE */
 
 /* the trace's config frames (cs 20, the first byte a config register),
    their bytes out */
@@ -377,7 +367,6 @@ static unsigned char ver_miso(void *ctx, unsigned char out)
 static void start(unsigned char caps)
 {
 	unsigned char v[4] = { 0xB5, caps, 64, 32 };
-	extern unsigned char menustate, menusub;
 	config = base;
 	memcpy(df, base_df, sizeof df);
 	drives = base_drives;
@@ -393,8 +382,6 @@ static void start(unsigned char caps)
 	osd2_detect(caps != 0, v);
 	if (caps)
 		osd2_init(OSD2_ATTR(OSD2_C_WHITE, OSD2_C_BLACK));
-	menustate = MENU_NONE1;
-	menusub = 0;
 	ui_tab = UI_TAB_MAIN;
 	pass();
 	pass();
@@ -467,7 +454,16 @@ static void compare(const char *name, int want_same_config)
 	if (!check(what, e_old.vpos[0] == e_new.vpos[0] && e_old.vpos[1] == e_new.vpos[1], 1))
 		printf("     classic %04x %04x, new %04x %04x\n", e_old.vpos[0], e_old.vpos[1], e_new.vpos[0], e_new.vpos[1]);
 	snprintf(what, sizeof what, "%s: the floppy drives", name);
-	check(what, !memcmp(e_old.df, e_new.df, sizeof e_old.df) && e_old.drives == e_new.drives, 1);
+	{
+		int i, same = e_old.drives == e_new.drives;
+		struct dfrec r;
+		for (i = 0; i < 4; i++) {
+			dfrec_of(&e_new.df[i], &r);
+			if (memcmp(&r, &gold_df[i], sizeof r))
+				same = 0;
+		}
+		check(what, same, 1);
+	}
 	snprintf(what, sizeof what, "%s: the HDMI clock delay", name);
 	check(what, e_new.clkdelay, e_old.clkdelay);
 }
@@ -476,34 +472,52 @@ static void compare(const char *name, int want_same_config)
 static void changed(const char *name)
 {
 	char what[160];
+	int i, df_changed = 0;
+	struct dfrec r;
+	for (i = 0; i < 4; i++) {
+		dfrec_of(&base_df[i], &r);
+		if (memcmp(&r, &gold_df[i], sizeof r))
+			df_changed = 1;
+	}
 	snprintf(what, sizeof what, "%s: the classic run changed something", name);
 	check(what, memcmp(&e_old.config, &base, sizeof base) != 0 || e_old.calls[0] || e_old.spi[0] ||
-	      memcmp(e_old.df, base_df, sizeof base_df) != 0 || e_old.clkdelay != 4, 1);
+	      df_changed || e_old.clkdelay != 4, 1);
 }
 
-#define LEGACY(...) do { static const unsigned char k_[] = { __VA_ARGS__ }; \
-	start(0); keys(k_, (int)sizeof k_); finish(&e_old); } while (0)
+/* the classic menu's effect of case `name` (gold/migrate.txt) into e_old;
+   with MIGRATE_GOLD_WRITE the new menu's (e_new) is written instead and
+   nothing is compared: returns 0 then */
+static int gold(const char *name)
+{
+	char what[160];
+	if (gold_out) {
+		effect_write(gold_out, name, &e_new);
+		return 0;
+	}
+	snprintf(what, sizeof what, "%s: its record in %s", name, gold_path);
+	return check(what, effect_read(gold_path, name, &e_old, gold_df), 1);
+}
+
 #define NEWK(...) do { static const unsigned char k_[] = { __VA_ARGS__ }; keys(k_, (int)sizeof k_); } while (0)
 #define NEW_BEGIN(tab) do { start(1); key(KEY_MENU); key(tab); } while (0)
 #define NEW_END() finish(&e_new)
-#define CASE(name) compare(name, 1), changed(name)
+#define CASE(name) do { if (gold(name)) { compare(name, 1); changed(name); } } while (0)
 
-/* the classic menu's ways in (from closed) */
-#define C_SETTINGS KEY_MENU, KEY_RIGHT                       /* MAIN2_1, menusub 0 */
-#define C_CHIPSET  C_SETTINGS, KEY_DOWN, KEY_DOWN, KEY_ENTER   /* CHIPSET1, menusub 0 */
-#define C_MEMORY   C_SETTINGS, KEY_DOWN, KEY_DOWN, KEY_DOWN, KEY_ENTER
-#define C_VIDEO    C_SETTINGS, KEY_DOWN, KEY_DOWN, KEY_DOWN, KEY_DOWN, KEY_ENTER
-#define C_AUDIO    C_SETTINGS, KEY_DOWN, KEY_DOWN, KEY_DOWN, KEY_DOWN, KEY_DOWN, KEY_ENTER
-/* Main: DF0, DF1 (drives 1), then Floppy disk settings, Hard disk settings */
-#define C_FLOPPY   KEY_MENU, KEY_DOWN, KEY_DOWN, KEY_ENTER
-#define C_HARDFILE KEY_MENU, KEY_DOWN, KEY_DOWN, KEY_DOWN, KEY_ENTER
-#define C_MISC     C_SETTINGS, KEY_RIGHT
 /* the new menu: EDIT, n steps, done */
 #define R1 KEY_RIGHT, KEY_RIGHT, KEY_ENTER
 #define R2 KEY_RIGHT, KEY_RIGHT, KEY_RIGHT, KEY_ENTER
 
-int main(void)
+int main(int argc, char **argv)
 {
+	if (argc < 2) {
+		fprintf(stderr, "usage: migrate_test <gold/migrate.txt>\n");
+		return 2;
+	}
+	gold_path = argv[1];
+	if (getenv("MIGRATE_GOLD_WRITE") && !(gold_out = fopen(getenv("MIGRATE_GOLD_WRITE"), "w"))) {
+		perror(getenv("MIGRATE_GOLD_WRITE"));
+		return 2;
+	}
 	memset(&base, 0, sizeof base);
 	base.chipset = CONFIG_ECS;
 	base.memory = 0x15;
@@ -528,79 +542,55 @@ int main(void)
 	core_caps = CORE_CAPS_IDE2;
 
 	/* ================= System (classic Chipset, Memory, Audio pages) ================= */
-	LEGACY(C_CHIPSET, KEY_DOWN, KEY_DOWN, KEY_ENTER, KEY_MENU, KEY_MENU);
 	NEW_BEGIN(KEY_F3); go("Video standard"); NEWK(R1, KEY_MENU); NEW_END();
 	CASE("Video standard NTSC");
 
 	/* a chipset change: no prompt in the classic menu, the new one asks
 	   (memory or chipset): No is the classic effect */
-	LEGACY(C_CHIPSET, KEY_DOWN, KEY_DOWN, KEY_DOWN, KEY_ENTER, KEY_MENU, KEY_MENU);
 	NEW_BEGIN(KEY_F3); go("Chipset"); NEWK(R1, KEY_MENU, KEY_RIGHT, KEY_ENTER); NEW_END();
 	CASE("Chipset ECS -> AGA (the new prompt: No)");
 
-	LEGACY(C_CHIPSET, KEY_DOWN, KEY_DOWN, KEY_DOWN, KEY_DOWN, KEY_ENTER, KEY_MENU, KEY_MENU);
 	NEW_BEGIN(KEY_F3); go("CD32 pad"); NEWK(R1, KEY_MENU); NEW_END();
 	CASE("CD32 pad on");
 
 	/* Chip RAM 1.0 -> 1.5 MB, the memory-changed prompt, Yes */
-	LEGACY(C_MEMORY, KEY_ENTER, KEY_MENU, KEY_ENTER);
 	NEW_BEGIN(KEY_F3); go("Chip RAM"); NEWK(R1, KEY_MENU, KEY_ENTER); NEW_END();
 	CASE("Chip RAM, reset Yes");
 
 	/* Slow RAM, the prompt, No */
-	LEGACY(C_MEMORY, KEY_DOWN, KEY_ENTER, KEY_MENU, KEY_DOWN, KEY_ENTER, KEY_MENU);
 	NEW_BEGIN(KEY_F3); go("Slow RAM"); NEWK(R1, KEY_MENU, KEY_RIGHT, KEY_ENTER); NEW_END();
 	CASE("Slow RAM, reset No");
 
 	/* Fast RAM, HRTmon, boards together, Yes */
-	LEGACY(C_MEMORY, KEY_DOWN, KEY_DOWN, KEY_ENTER, KEY_DOWN, KEY_DOWN, KEY_ENTER, KEY_DOWN, KEY_ENTER,
-	       KEY_MENU, KEY_ENTER);
 	NEW_BEGIN(KEY_F3); go("Fast RAM"); NEWK(R1); go("HRTmon"); NEWK(R1); go("Fast-RAM boards"); NEWK(R1, KEY_MENU, KEY_ENTER); NEW_END();
 	CASE("Fast RAM, HRTmon, boards, reset Yes");
 
 	/* the Kickstart: the file, the reload prompt (No by default), Yes */
-	LEGACY(C_MEMORY, KEY_DOWN, KEY_DOWN, KEY_DOWN, KEY_ENTER, KEY_K, KEY_ENTER, KEY_UP, KEY_ENTER);
 	NEW_BEGIN(KEY_F3); go("Kickstart ROM"); NEWK(KEY_ENTER, KEY_K, KEY_ENTER, KEY_LEFT, KEY_ENTER); NEW_END();
 	CASE("Kickstart reload");
 
-	LEGACY(C_AUDIO, KEY_ENTER, KEY_ENTER, KEY_ENTER, KEY_DOWN, KEY_ENTER, KEY_MENU, KEY_MENU);
 	NEW_BEGIN(KEY_F3); go("Volume"); NEWK(KEY_RIGHT, KEY_RIGHT, KEY_RIGHT, KEY_RIGHT, KEY_LEFT, KEY_ENTER, KEY_MENU); NEW_END();
 	CASE("Volume +3 -1");
 
 	/* ================= Storage (classic Floppy and Harddisks pages) ================= */
-	LEGACY(C_FLOPPY, KEY_ENTER, KEY_MENU);
 	NEW_BEGIN(KEY_F2); go("Floppy drives"); NEWK(R1, KEY_MENU); NEW_END();
 	CASE("Floppy drives 2 -> 3");
 
-	LEGACY(C_FLOPPY, KEY_DOWN, KEY_ENTER, KEY_MENU);
 	NEW_BEGIN(KEY_F2); go("Floppy turbo"); NEWK(R1, KEY_MENU); NEW_END();
 	CASE("Floppy turbo on");
 
-	LEGACY(C_FLOPPY, KEY_DOWN, KEY_DOWN, KEY_ENTER, KEY_MENU);
 	NEW_BEGIN(KEY_F2); go("Floppy sounds"); NEWK(R1, KEY_MENU); NEW_END();
 	CASE("Floppy sounds on");
 
 	/* IDE off, leaving: the hardfile-changed prompt (No by default), Yes */
-	LEGACY(C_HARDFILE, KEY_ENTER, KEY_MENU, KEY_UP, KEY_ENTER);
 	NEW_BEGIN(KEY_F2); go("IDE"); NEWK(R1, KEY_MENU, KEY_LEFT, KEY_ENTER); NEW_END();
 	CASE("IDE off, reset Yes");
 
 	/* Port 1 slave: Hardfile, its file (an RDB), Yes */
-	LEGACY(C_HARDFILE, KEY_DOWN, KEY_DOWN, KEY_DOWN, KEY_ENTER, KEY_DOWN, KEY_ENTER, KEY_A, KEY_ENTER,
-	       KEY_MENU, KEY_UP, KEY_ENTER);
 	NEW_BEGIN(KEY_F2); go("Port 1 slave"); NEWK(R1, KEY_DOWN, KEY_ENTER, KEY_A, KEY_ENTER, KEY_MENU, KEY_LEFT, KEY_ENTER); NEW_END();
 	CASE("Port 1 slave hardfile, reset Yes");
 
 	/* Port 1 master's file, no partition table: the warning, then No */
-	hdf_filetype = HDF_FILETYPE_UNKNOWN;
-	{
-		static const unsigned char k_[] = { C_HARDFILE, KEY_DOWN, KEY_DOWN, KEY_ENTER, KEY_A, KEY_ENTER,
-		                                    KEY_ENTER, KEY_MENU, KEY_ENTER, KEY_MENU };
-		start(0);
-		hdf_filetype = HDF_FILETYPE_UNKNOWN;
-		keys(k_, (int)sizeof k_);
-		finish(&e_old);
-	}
 	start(1);
 	hdf_filetype = HDF_FILETYPE_UNKNOWN;
 	key(KEY_MENU);
@@ -610,44 +600,38 @@ int main(void)
 	check("no partition table: the new menu's warning", ui_focus, UI_F_DIALOG);
 	NEWK(KEY_ENTER, KEY_MENU, KEY_ENTER);
 	NEW_END();
-	compare("Port 1 master no RDB, warning, reset No", 1);
-	check("no RDB, No: config unchanged", memcmp(&e_new.config, &base, sizeof base), 0);
-	check("no RDB, No: the type was probed in both", strstr(e_old.calls, "GetHDFFileType") && strstr(e_new.calls, "GetHDFFileType") ? 1 : 0, 1);
+	if (gold("Port 1 master no RDB, warning, reset No")) {
+		compare("Port 1 master no RDB, warning, reset No", 1);
+		check("no RDB, No: config unchanged", memcmp(&e_new.config, &base, sizeof base), 0);
+		check("no RDB, No: the type was probed in both", strstr(e_old.calls, "GetHDFFileType") && strstr(e_new.calls, "GetHDFFileType") ? 1 : 0, 1);
+	}
 
 	/* the live CD slot (port 2 master): a disc at once, no prompt */
-	LEGACY(C_HARDFILE, KEY_RIGHT, KEY_DOWN, KEY_ENTER, KEY_ENTER, KEY_MENU, KEY_MENU);
 	NEW_BEGIN(KEY_F2); go("Port 2 master"); NEWK(KEY_DOWN, KEY_ENTER, KEY_ENTER, KEY_MENU); NEW_END();
 	CASE("live CD slot disc");
 
 	/* (the slave is Disabled: its file line is not selectable) */
-	LEGACY(C_HARDFILE, KEY_DOWN, KEY_DOWN, KEY_DOWN, KEY_DOWN, KEY_ENTER, KEY_MENU, KEY_MENU);
 	NEW_BEGIN(KEY_F2); go("Hard disk sounds"); NEWK(R1, KEY_MENU); NEW_END();
 	CASE("Hard disk sounds on");
 
 	/* ================= Video (classic Video, Video Pos, HDMI pages) ================= */
-	LEGACY(C_VIDEO, KEY_ENTER, KEY_MENU, KEY_MENU);
 	NEW_BEGIN(KEY_F4); go("Scanlines"); NEWK(R1, KEY_MENU); NEW_END();
 	CASE("Scanlines dim -> black");
 
-	LEGACY(C_VIDEO, KEY_DOWN, KEY_ENTER, KEY_ENTER, KEY_MENU, KEY_MENU);
 	NEW_BEGIN(KEY_F4); go("Scaling"); NEWK(R2, KEY_MENU); NEW_END();
 	CASE("Scaling area -> line rate -> sharp");
 
-	LEGACY(C_VIDEO, KEY_DOWN, KEY_DOWN, KEY_ENTER, KEY_ENTER, KEY_ENTER, KEY_MENU, KEY_MENU);
 	/* (the classic page only steps forward: three steps, each sent) */
 	NEW_BEGIN(KEY_F4); go("CRT mask"); NEWK(KEY_RIGHT, KEY_RIGHT, KEY_RIGHT, KEY_RIGHT, KEY_ENTER, KEY_MENU); NEW_END();
 	CASE("CRT mask grille -> grille+ -> shadow -> off");
 
-	LEGACY(C_VIDEO, KEY_DOWN, KEY_DOWN, KEY_DOWN, KEY_ENTER, KEY_ENTER, KEY_MENU, KEY_MENU);
 	NEW_BEGIN(KEY_F4); go("Bloom"); NEWK(R2, KEY_MENU); NEW_END();
 	CASE("Bloom off -> high");
 
-	LEGACY(C_VIDEO, KEY_DOWN, KEY_DOWN, KEY_DOWN, KEY_DOWN, KEY_ENTER, KEY_MENU, KEY_MENU);
 	NEW_BEGIN(KEY_F4); go("Beam width"); NEWK(R1, KEY_MENU); NEW_END();
 	CASE("Beam width sharp");
 
 	/* Video Pos: H +8 -8 -8, V +2 (the classic page's +/- lines) */
-	LEGACY(C_VIDEO, KEY_RIGHT, KEY_ENTER, KEY_DOWN, KEY_ENTER, KEY_ENTER, KEY_DOWN, KEY_ENTER, KEY_MENU, KEY_MENU);
 	NEW_BEGIN(KEY_F4); go("Position (PAL) horizontal");
 	NEWK(KEY_RIGHT, KEY_RIGHT, KEY_LEFT, KEY_LEFT, KEY_ENTER); go("Position (PAL) vertical"); NEWK(R1, KEY_MENU); NEW_END();
 	CASE("Video Pos H -8, V +2 (PAL)");
@@ -678,52 +662,46 @@ int main(void)
 	}
 
 	/* the HDMI clock delay: +2 -1 */
-	LEGACY(C_VIDEO, KEY_RIGHT, KEY_RIGHT, KEY_ENTER, KEY_ENTER, KEY_DOWN, KEY_ENTER, KEY_MENU, KEY_MENU);
 	NEW_BEGIN(KEY_F4); go("HDMI clock delay"); NEWK(KEY_RIGHT, KEY_RIGHT, KEY_RIGHT, KEY_LEFT, KEY_ENTER, KEY_MENU); NEW_END();
 	CASE("HDMI clock delay +2 -1");
 
 	/* ================= Acceleration (classic Chipset page) ================= */
-	LEGACY(C_CHIPSET, KEY_ENTER, KEY_ENTER, KEY_MENU, KEY_MENU);
 	NEW_BEGIN(KEY_F5); go("CPU"); NEWK(R2, KEY_MENU); NEW_END();
 	CASE("CPU 68020 -> 68000 -> 68010");
 
-	LEGACY(C_CHIPSET, KEY_DOWN, KEY_ENTER, KEY_ENTER, KEY_ENTER, KEY_MENU, KEY_MENU);
 	NEW_BEGIN(KEY_F5); go("Turbo"); NEWK(KEY_RIGHT, KEY_RIGHT, KEY_RIGHT, KEY_RIGHT, KEY_ENTER, KEY_MENU); NEW_END();
 	CASE("Turbo -> BOTH");
 
-	LEGACY(C_CHIPSET, KEY_DOWN, KEY_DOWN, KEY_DOWN, KEY_DOWN, KEY_DOWN, KEY_ENTER, KEY_MENU, KEY_MENU);
 	NEW_BEGIN(KEY_F5); go("Chip slots"); NEWK(R1, KEY_MENU); NEW_END();
 	CASE("Chip slots Fast");
 
 	/* ================= Main ================= */
-	LEGACY(KEY_MENU, KEY_ENTER, KEY_MENU);
 	NEW_BEGIN(KEY_F1); go("DF0"); NEWK(KEY_ENTER, KEY_MENU); NEW_END();
 	CASE("DF0 eject");
 
-	LEGACY(KEY_MENU, KEY_DOWN, KEY_ENTER, KEY_L, KEY_ENTER, KEY_MENU);
 	NEW_BEGIN(KEY_F1); go("DF1"); NEWK(KEY_ENTER, KEY_L, KEY_ENTER, KEY_MENU); NEW_END();
 	CASE("DF1 insert Lemmings");
 
-	LEGACY(KEY_MENU, KEY_KPPLUS, KEY_MENU);
 	NEW_BEGIN(KEY_F1); NEWK(KEY_KPPLUS, KEY_MENU); NEW_END();
 	CASE("keypad +: a drive more");
 
-	LEGACY(C_SETTINGS, KEY_ENTER, KEY_DOWN, KEY_ENTER);
 	NEW_BEGIN(KEY_F1); go("Load configuration"); NEWK(KEY_RIGHT, KEY_RIGHT, KEY_ENTER, KEY_ENTER, KEY_ENTER); NEW_END();
 	CASE("Load configuration 2");
 
-	LEGACY(C_SETTINGS, KEY_DOWN, KEY_ENTER, KEY_DOWN, KEY_ENTER);
 	NEW_BEGIN(KEY_F1); go("Save configuration"); NEWK(KEY_RIGHT, KEY_RIGHT, KEY_ENTER, KEY_ENTER, KEY_MENU); NEW_END();
 	CASE("Save configuration 1");
 
-	LEGACY(C_MISC, KEY_ENTER, KEY_ENTER);
 	NEW_BEGIN(KEY_F1); go("Reset"); NEWK(KEY_ENTER, KEY_ENTER); NEW_END();
 	CASE("Reset");
 
-	LEGACY(C_MISC, KEY_DOWN, KEY_ENTER, KEY_ENTER);
 	NEW_BEGIN(KEY_F1); go("Reboot"); NEWK(KEY_ENTER, KEY_ENTER); NEW_END();
 	CASE("Reboot");
 
+	if (gold_out) {
+		fclose(gold_out);
+		printf("migrate_test: the new menu's effects written to %s\n", getenv("MIGRATE_GOLD_WRITE"));
+		return fails ? 1 : 0;
+	}
 	printf("%s: %d cases, %d failed\n", fails ? "FAIL migrate_test" : "migrate_test passed", cases, fails);
 	return fails ? 1 : 0;
 }

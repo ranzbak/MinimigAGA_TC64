@@ -52,8 +52,8 @@
 #define R_NAMES   2
 #define N_ROWS    8                   /* names per column */
 
-/* the supporters, as osd.c's supporters[] (the classic page; Phase 6
-   deletes that one): three columns of eight, top to bottom */
+/* the supporters, as the classic page's list had them (osd.c's
+   supporters[], deleted in Phase 6): three columns of eight, top to bottom */
 static const char *const names[24] = {
 	"Jens Schoenfeld", "Jim Farley", "SIDKidd64", "Juan Jose Velez Ramirez",
 	"Dag Jacobsen", "Bartol Filipovic", "Pasi Ylinen", "Andreas Beck",
