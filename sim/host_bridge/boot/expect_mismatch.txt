@@ -14,5 +14,5 @@ UART: Reading boot sector 2048
 UART: Read boot sector from first partition
 UART: Hunting for filesystem
 UART: Reading directory sector 2106
-UART: file "RV32OSDBBIN" found\rFirmware does not match this bitstream (need SDC 5D02, OSD layer <= 0)
+UART: file "RV32OSDBBIN" found\rFirmware does not match this bitstream (need SDC 5D02, OSD layer <= 2)
 ERRORCODE: 00ff

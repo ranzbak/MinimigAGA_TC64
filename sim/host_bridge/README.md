@@ -41,7 +41,7 @@ xsim stays the default and the X-checking reference.
 | `boot/fwtest.c`, `boot/fwfill.S` | Boot runs: the test firmware `RV32OSDB.BIN` (on `fw/ctrl/arch`, `firmware.ld`) |
 | `boot/Makefile` | `RV32OSDB.BIN` (the name: `fw/ctrl/fwname.mk`; padded to 2552 bytes + the 8-byte lock-step trailer of `fw/ctrl/sdctrailer.c`), `img.txt`, the card images `card.img`, `card_nofile.img` (the firmware under the old name `RV32OSDA.BIN` only), `card_mismatch.img` (the image without the trailer) and `card_both.img` (the image without the trailer as the old `RV32OSDA.BIN`, ahead of `RV32OSDB.BIN`) (`tools/sim/mkcard.sh`) |
 | `boot/expect.txt`, `boot/expect_nofile.txt`, `boot/expect_mismatch.txt` | The expected `UART:` / `ERRORCODE:` lines of `boot` and `boot_both`, `boot_nofile` and `boot_mismatch` |
-| `minimig_spi_stub.v` | `fwboot`: fixed replies of the Minimig SPI slaves (FPGA `sd_cs[4]`, OSD `sd_cs[5]`, RTC `sd_cs[7]`), and `userio_osd`'s reply sequence `osd_rx_seq` for cfide's `OSD_RDY` |
+| `minimig_spi_stub.v` | `fwboot` and the boot runs (the ROM's lock-step VERSION read: the OSD text layer version 2): fixed replies of the Minimig SPI slaves (FPGA `sd_cs[4]`, OSD `sd_cs[5]`, RTC `sd_cs[7]`), and `userio_osd`'s reply sequence `osd_rx_seq` for cfide's `OSD_RDY` |
 | `fwboot/Makefile` | `fwboot`: the 16 MB card with `$FW` (`card.img`); `fwboot_trap`: the firmware with `smoke_trap.o` and its card (`card_trap.img`, `trap_expect.txt`); `fwboot_cfg`: `card.img` plus a legacy `MINMGAA.CFG` (`card_cfg.img`, `cfg/`) and `cfgconv` |
 | `fwboot/milestones.txt` | `fwboot`: the UART lines and SPI frames the firmware must produce, in order |
 | `fwboot/milestones_cfg.txt` | `fwboot_cfg`: the same with the first-boot conversion of the config file |
@@ -412,7 +412,7 @@ firmware is there under the previous chain's name `RV32OSDA.BIN`): the
 error path, up to the end of its first retry. `run.sh boot_mismatch` boots
 a card whose `RV32OSDB.BIN` has no trailer (the image of an older
 firmware): the ROM must print `Firmware does not match this bitstream (need
-SDC 5D02, OSD layer <= 0)` (the stub's VERSION reply has no text layer),
+SDC 5D02, OSD layer <= 2)` (the stub answers VERSION with the text layer, version 2),
 write its OSD message (three text layer frames: palette, cells, window;
 since OSD redesign Phase 6, before it the bitmap buffer and the enable),
 report `ErrorCode(0x0ff)` and halt (no hw access after it). Every boot

@@ -277,6 +277,7 @@ module tb_host_bridge #(
     .scl_i(1'b1), .scl_o(), .scl_t(), .sda_i(1'b1), .sda_o(), .sda_t(),
     .i2c_ext_int(i2c_ext_int),
     .pos_data_q(),
+    .pos_rtg_q(),
     .osd_rx_seq(cfide_rx_seq),
     .ext_wstb(sdc_wstb), .ext_rstb(sdc_rstb), .ext_addr(sdc_addr), .ext_d(sdc_d), .ext_q(sdc_q),
     .clk_28(clk28), .tick_in(1'b1)
@@ -343,17 +344,19 @@ module tb_host_bridge #(
   assign sdc_miso = card_miso;
   assign sdc_cd_n = 1'b0;
 `endif
-`ifdef FWBOOT
+  // the Minimig SPI slaves' fixed replies: the firmware's (FWBOOT), and the
+  // boot ROM's lock-step VERSION read (the OSD text layer, bytes 10/11)
   wire       stub_miso;
   wire [1:0] stub_rx_seq;
   minimig_spi_stub stub (
     .clk(clk114), .n_reset(n_reset), .cs(sd_cs), .sck(sd_clk), .mosi(sd_do), .miso(stub_miso),
     .osd_rx_seq(stub_rx_seq)
   );
+`ifdef FWBOOT
   assign miso = sd_cs[1] === 1'b0 ? card_miso : stub_miso;
   assign cfide_rx_seq = stub_rx_seq;
 `else
-  assign miso = 1'b1;
+  assign miso = stub_miso;
   assign cfide_rx_seq = osd_rx_seq;
 `endif
 `else
