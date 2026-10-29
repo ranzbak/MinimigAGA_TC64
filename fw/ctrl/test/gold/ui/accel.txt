@@ -17,7 +17,7 @@ chars
  ^^ Acceleration ^                                              
                  ^                                              
                  ^                                              
- Up/Down move  Right/Enter edit  Left back                      
+ Up/Down move  Right/Enter edit  Left back  F6 see-through      
                                                                 
 fg
 1111111111111111131122222222222211111111111111111111111111111331

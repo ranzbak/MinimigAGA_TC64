@@ -991,6 +991,125 @@ static void test_pages(void)
 	calls_clear();
 }
 
+/* ---- F6 see-through: the black background (entry 0) transparent ---------
+   the palette as the trace wrote it (model_sync); entry 0 {mode << 6, r, g,
+   b}: 0x00 opaque, 0x80 the video unchanged.  Starts with the menu closed. */
+static int pal0(void)
+{
+	model_sync();
+	return m_pal[0][0];
+}
+
+static void test_see_through(void)
+{
+	static const unsigned char black[4] = { 0, 0, 0, 0 };
+	unsigned char before[16][4], sl;
+	unsigned k;
+
+	model_init();
+	trace_reset();
+	key(KEY_MENU);
+	check("F6: opened, entry 0 opaque", pal0(), 0x00);
+	check_str("F6: the sidebar's hint names it", cells(18, 1, 59), "Up/Down select  Right/Enter open  F12 close  F6 see-through");
+	memcpy(before, m_pal, sizeof before);
+	key(KEY_F6);
+	check_has("F6: entry 0 alone sent, the video mode", mock_trace(), "20 4c 00 80 00 00 00 /", 1);
+	check("F6: entry 0 transparent", pal0(), 0x80);
+	for (k = 1; k < 16 && !memcmp(m_pal[k], before[k], 4); k++)
+		;
+	check("F6: entries 1-15 unchanged", k, 16);
+	check("F6: the black ink (entry 8) opaque black", !memcmp(m_pal[OSD2_C_INK], black, 4), 1);
+	check_str("F6: the toast", cells(18, 1, 20), "See-through on (F6) ");
+	check("F6: the focus stays in the sidebar", ui_focus == UI_F_SIDEBAR && ui_open_now, 1);
+	wait_counts(UI_T_TOAST + 1);
+	check_str("F6: the toast gone, the sidebar's hints again", cells(18, 1, 14), "Up/Down select");
+	check("F6: still transparent after the toast", pal0(), 0x80);
+	key(KEY_F6);
+	check("F6 again: entry 0 opaque", pal0(), 0x00);
+	check_str("F6 again: the toast", cells(18, 1, 20), "See-through off (F6)");
+
+	/* the list and EDIT: EDIT stays on, its value on the opaque black ink */
+	key(KEY_F4);
+	check("Video Scanlines", go("Scanlines"), 2);
+	key(KEY_F6);
+	check("F6 in the list: transparent", pal0(), 0x80);
+	check("F6 in the list: still the list", ui_focus == UI_F_LIST && ui_tab == UI_TAB_VIDEO, 1);
+	key(KEY_RIGHT);
+	check("Scanlines Right: EDIT", ui_edit, 1);
+	wait_counts(UI_T_TOAST + 1);    /* F6's toast gone */
+	check_str("EDIT: the hint names F6", cells(18, 1, 45), "Left/Right change  Enter done  F6 see-through");
+	check("EDIT: the value's black on the ink (8), not the background (0)",
+	      osd2_atr[2][UI_VALUE_END] & 15, OSD2_C_INK);
+	key(KEY_F6);
+	check("F6 in EDIT: opaque", pal0(), 0x00);
+	check("F6 in EDIT: EDIT stays", ui_edit == 1 && ui_focus == UI_F_LIST, 1);
+	key(KEY_F6);
+	check("F6 in EDIT again: transparent", pal0(), 0x80);
+	sl = config.scanlines & 3;
+	key(KEY_RIGHT);
+	check("EDIT after F6: Right still changes", (config.scanlines & 3) != sl, 1);
+	key(KEY_LEFT);
+	key(KEY_ENTER);
+	check("EDIT done: scanlines back", ui_edit == 0 && (config.scanlines & 3) == sl, 1);
+
+	/* the file selector and a dialog: the focus stays */
+	key(KEY_F3);
+	go("Kickstart ROM");
+	key(KEY_ENTER);
+	check("F6 file selector: open", ui_focus, UI_F_FILESEL);
+	key(KEY_F6);
+	check("F6 in the file selector: opaque, the selector stays", pal0() == 0x00 && ui_focus == UI_F_FILESEL, 1);
+	key(KEY_F6);
+	key(KEY_ESC);
+	key(KEY_F1);
+	go("Reset");
+	key(KEY_ENTER);
+	check("F6 dialog: open", ui_focus, UI_F_DIALOG);
+	key(KEY_F6);
+	check("F6 in a dialog: opaque, the dialog stays", pal0() == 0x00 && ui_focus == UI_F_DIALOG, 1);
+	key(KEY_F6);
+	check("F6 in a dialog again: transparent", pal0(), 0x80);
+	key(KEY_ESC);
+	check("F6 dialog: cancelled", ui_focus, UI_F_LIST);
+
+	/* About: opaque black while it shows, F6 ignored there; Esc: the menu's
+	   palette with see-through, exactly as before the page */
+	go("About");
+	wait_counts(UI_T_TOAST + 1);    /* F6's toast gone */
+	model_sync();
+	memcpy(before, m_pal, sizeof before);
+	key(KEY_ENTER);
+	check("About with see-through: the page", ui_focus, UI_F_PAGE);
+	check("About with see-through: entry 0 opaque", pal0(), 0x00);
+	key(KEY_F6);
+	check("About F6: ignored (opaque, the page stays)", pal0() == 0x00 && ui_focus == UI_F_PAGE, 1);
+	check_str("About F6: no toast", cells(18, 1, 9), "Esc back ");
+	wait_counts(10);
+	key(KEY_ESC);
+	check("About Esc with see-through: entry 0 transparent again", pal0(), 0x80);
+	check("About Esc with see-through: the palette as before the page", !memcmp(m_pal, before, sizeof m_pal), 1);
+	go("Supporters");
+	key(KEY_ENTER);
+	check("Supporters with see-through: entry 0 opaque", pal0(), 0x00);
+	key(KEY_ESC);
+	check("Supporters Esc with see-through: entry 0 transparent again", pal0(), 0x80);
+
+	/* closed and opened again: re-applied, also after something else (the
+	   debug page, menu.c debug2_show) loaded the scheme into the layer */
+	key(KEY_MENU);
+	check("F6: closed", ui_open_now, 0);
+	osd2_pal_default();
+	osd2_commit(0, 1, 0, 0, 0, 0);
+	check("closed: the debug page's opaque scheme", pal0(), 0x00);
+	key(KEY_MENU);
+	check("reopened with see-through: entry 0 transparent", pal0(), 0x80);
+	key(KEY_F6);
+	check("F6 off for the rest", pal0(), 0x00);
+	key(KEY_MENU);
+	trace_reset();
+	calls_clear();
+}
+
 int main(int argc, char **argv)
 {
 	int i;
@@ -1121,7 +1240,7 @@ int main(int argc, char **argv)
 	check("Right on Chip RAM: EDIT", ui_edit, 1);
 	check("Right on Chip RAM: the value unchanged", config.memory & 3, 3);
 	check("EDIT: the change arrows", osd2_chr[5][53] == OSD_G_LEFT && osd2_chr[5][62] == OSD_G_RIGHT, 1);
-	check("EDIT: the value black on yellow", osd2_atr[5][55], OSD2_ATTR(OSD2_C_BLACK, OSD2_C_YELLOW));
+	check("EDIT: the value black (the ink, entry 8) on yellow", osd2_atr[5][55], OSD2_ATTR(OSD2_C_INK, OSD2_C_YELLOW));
 	check_str("EDIT: its hint", cells(18, 1, 30), "Left/Right change  Enter done ");
 	key(KEY_LEFT);
 	check("Chip RAM Left: 1.5 MB", config.memory & 3, 2);
@@ -1426,6 +1545,8 @@ int main(int argc, char **argv)
 
 	/* ---- About and Supporters: pages of their own (plan 3.8) ---- */
 	test_pages();
+	/* ---- F6 see-through ---- */
+	test_see_through();
 	/* no other hand-over is left: no item of any category is "classic" */
 	{
 		int n = 0;

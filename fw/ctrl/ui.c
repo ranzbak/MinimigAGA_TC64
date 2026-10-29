@@ -55,7 +55,7 @@ void ui_video_mode(void);           /* ui_tabs.c: the position items' labels for
 #define A_DIRTAG  A(BLUE, BLACK)
 #define A_ERR     A(RED, BLACK)
 #define A_POPUP   A(WHITE, BLUE)
-#define A_EDIT    A(BLACK, YELLOW)    /* the value in EDIT */
+#define A_EDIT    A(INK, YELLOW)      /* the value in EDIT (black ink: opaque under F6) */
 #define A_EDARR   A(YELLOW, BLUE)     /* EDIT's change arrows */
 
 /* the file selector's name fields (from UI_LABEL_COL): files to the
@@ -75,6 +75,7 @@ static unsigned char cur[UI_TABS];          /* the cursor of each category */
 static unsigned char dirty, started, popup;
 static unsigned char m_ctrl, m_lalt, m_lshift;
 static unsigned char toast_on;
+static unsigned char see_through;           /* F6: the black background transparent (not saved) */
 static char toast[UI_TOAST_COLS + 1];
 static unsigned long toast_timer, status_timer;
 static unsigned char sys_mem, sys_chip;     /* System as it was entered */
@@ -406,9 +407,9 @@ static void draw_header(void)
 	rout(UI_HEAD_ROW, UI_PANEL_COL, UI_COLS);
 }
 
-static const char hint_side[] = "Up/Down select  Right/Enter open  F12 close";
-static const char hint_list[] = "Up/Down move  Right/Enter edit  Left back";
-static const char hint_edit[] = "Left/Right change  Enter done";
+static const char hint_side[] = "Up/Down select  Right/Enter open  F12 close  F6 see-through";
+static const char hint_list[] = "Up/Down move  Right/Enter edit  Left back  F6 see-through";
+static const char hint_edit[] = "Left/Right change  Enter done  F6 see-through";
 
 static const char *help_text(void)
 {
@@ -598,6 +599,27 @@ void ui_draw_all(void)
 	ui_draw_help();
 }
 
+/* the menu's palette into the shadow (sent at the next commit): the scheme,
+   and with see-through (F6) the black background transparent, the picture
+   with its CRT effects behind the panel.  Black text is on OSD2_C_INK
+   (osd2.h), never on the background's entry. */
+static void menu_pal(void)
+{
+	osd2_pal_default();
+	if (see_through)
+		osd2_pal(OSD2_C_BLACK, OSD2_VIDEO, 0x000000);
+}
+
+/* F6: see-through on or off, live from the next frame, in every focus but
+   a page's (the pages keep their black sky) */
+static void toggle_see_through(void)
+{
+	see_through ^= 1;
+	menu_pal();
+	osd2_commit(1, UI_SCALE, UI_X0, UI_Y0, UI_COLS, UI_ROWS);
+	ui_toast(see_through ? "See-through on (F6)" : "See-through off (F6)");
+}
+
 /* ------------------------------------------------------------------ */
 /* the About and Supporters pages (ui.h)                              */
 /* ------------------------------------------------------------------ */
@@ -640,7 +662,10 @@ void ui_page_open(unsigned char which)
 	page = which == UI_PAGE_ABOUT ? &ui_about : &ui_supporters;
 	ui_focus = UI_F_PAGE;
 	ui_edit = 0;
-	/* the glyphs and the palette first: the menu's cells use neither */
+	/* the glyphs and the palette first: the menu's cells use neither.  The
+	   page's black opaque whatever F6 says (the page's open commits it;
+	   page_end gives the menu its see-through back) */
+	osd2_pal(OSD2_C_BLACK, OSD2_OPAQUE, 0x000000);
 	page->open();
 	if (DebugMode) {
 		/* the cost of a step on the board (plan Phase 7): UI_FX_BENCH steps
@@ -677,7 +702,7 @@ static void page_end(int menu)
 	ui_fx_font(0, n < 64 ? n : 64, (const unsigned char *)font8x16 + 0x80 * 16);
 	if (n > 64)
 		ui_fx_font(64, n - 64, (const unsigned char *)font8x16 + 0xCA * 16);
-	osd2_pal_default();
+	menu_pal();
 	if (menu)
 		osd2_commit(1, UI_SCALE, UI_X0, UI_Y0, UI_COLS, UI_ROWS);
 	dirty = 1;
@@ -772,7 +797,7 @@ static void ui_open(void)
 	tab_enter(ui_tab);
 	osd_keys(1);
 	ui_glyphs();
-	osd2_pal_default();
+	menu_pal();
 	status_timer = GetTimer(UI_T_STATUS);
 	ui_draw_all();
 	dirty = 0;
@@ -1305,6 +1330,12 @@ static void key_open(unsigned char c)
 	int i;
 	unsigned char t = ui_tab;
 
+	if (c == KEY_F6 && ui_focus != UI_F_PAGE) {
+		/* first: EDIT, the hints and the focus stay as they are (the
+		   effect's value can be changed with the picture behind it) */
+		toggle_see_through();
+		return;
+	}
 	ui_hints_on = 0;                    /* a key: the help field shows the help */
 	dirty = 1;
 	/* EDIT keeps only its own keys (key_list); any other ends it */

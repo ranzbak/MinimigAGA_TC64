@@ -84,6 +84,14 @@ enum {
 	OSD2_C_FREE           /* 8..15: free */
 };
 
+/* black ink: the menu's black text (EDIT's value, black on yellow) on entry
+   8, never OSD2_C_BLACK.  Entry 0 is the menu's background and turns
+   transparent with the see-through toggle (ui.c, F6); black text on it would
+   show the picture inside its strokes.  Entry 8 is opaque black whenever the
+   menu's cells are on screen: osd2_pal_default() loads 8-15 opaque black,
+   and the About/Supporters pages, which cycle 8-15, end with it. */
+#define OSD2_C_INK OSD2_C_FREE
+
 /* a cell attribute from foreground and background palette indices */
 #define OSD2_ATTR(fg, bg) ((unsigned char)((((bg) & 15) << 4) | ((fg) & 15)))
 

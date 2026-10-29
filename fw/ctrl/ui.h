@@ -47,7 +47,11 @@
  *   EDIT: Left/Right change the value (live); Enter, Space or Esc done (the
  *   change stays); Up/Down done and move; any other key ends it too.
  *   Anywhere: F1-F5 a category and into its list; PgUp/PgDn the previous/
- *   next category; F12 (the menu button) closes.
+ *   next category; F12 (the menu button) closes; F6 see-through on/off
+ *   (the black background transparent: the picture with its CRT effects
+ *   behind the menu; in every focus, EDIT kept; not on the About and
+ *   Supporters pages, which keep their black; not saved, kept until the
+ *   firmware restarts).
  *   Dialog: Left/Right (Up/Down) the button, Enter/Space it, Esc cancels.
  *   Error page: Left/Right the other error categories, Enter/Space OK (or
  *   Reboot); nothing else, as the classic page.
@@ -168,7 +172,8 @@ enum { UI_F_LIST, UI_F_SIDEBAR, UI_F_DIALOG, UI_F_FILESEL, UI_F_ERROR, UI_F_PAGE
 /* Main's About and Supporters pages (ui_about.c, ui_supporters.c; plan
    3.8): the whole window (rows 0-17 the page, 18-19 the help field), an
    effect animated from ui_tick() every UI_T_FX, drawn through the shadow
-   (cells that change) and palette entries 8-15 (the menu uses 0-7).
+   (cells that change) and palette entries 8-15 (the menu uses 0-7, and 8
+   as its black ink, OSD2_C_INK); entry 0 opaque black on a page, F6 ignored.
    Esc, Left, Enter or Space back to Main's list, F1-F5 a category, F12
    closes; a page may take other keys first (Supporters: Up/Down its other
    view).  Its glyphs go into font slots the menu does not use (ui_fx_code)

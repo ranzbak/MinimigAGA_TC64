@@ -17,7 +17,7 @@ chars
  ^^ Acceleration ^  About                                     ^ 
                  ^  Supporters                                ^ 
                  ^                                              
- Up/Down select  Right/Enter open  F12 close                    
+ Up/Down select  Right/Enter open  F12 close  F6 see-through    
                                                                 
 fg
 1111111111111111131122221111111111111111111111111111111111111331

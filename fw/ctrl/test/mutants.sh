@@ -702,7 +702,7 @@ unit ui_fxnorestore ui_test src ui.c '/^static void page_end/,/^}/s/^\tui_fx_fon
 # the slots past 0xBF run into the icons (0xC0-0xC9)
 unit ui_fxicons ui_test src ui.c 's/return (unsigned char)(slot < 64 ? 0x80 + slot : 0xCA + (slot - 64));/return (unsigned char)(slot < 64 ? 0x80 + slot : 0xC0 + (slot - 64));/' "FAIL About: the icons (0xC0-0xC9) untouched"
 # closing a page leaves its palette
-unit ui_fxnopal ui_test src ui.c '/^static void page_end/,/^}/s/^\tosd2_pal_default();$/\t;/' "FAIL About Esc: the palette as before"
+unit ui_fxnopal ui_test src ui.c '/^static void page_end/,/^}/s/^\tmenu_pal();$/\t;/' "FAIL About Esc: the palette as before"
 # the menu drawn over a page
 unit ui_fxmenu ui_test src ui.c '/^void ui_draw_all(void)/,/^}/s/^\tif (ui_focus == UI_F_PAGE) {$/\tif (0) {/' "FAIL screen about"
 # Esc does not close a page
@@ -717,6 +717,19 @@ unit ui_fxcost ui_test src ui_about.c '/^static void about_step/,/^}/s/^\tphase+
 unit ui_fxplasma ui_test src ui_supporters.c 's/^\tt = (unsigned char)((t + 1) % RAMP);$/\t;/' "FAIL Supporters: 16 steps cycle the plasma one colour"
 # the names never fade in
 unit ui_fxfade ui_test src ui_supporters.c 's/^\tif (fade < 255)$/\tif (0)/' "FAIL Supporters: faded in: the names white"
+# ---- F6 see-through (ui_test) ----
+# F6 ignored
+unit ui_f6ignored ui_test src ui.c 's/^\tif (c == KEY_F6 \&\& ui_focus != UI_F_PAGE) {$/\tif (0) {/' "FAIL F6: entry 0 transparent"
+# F6 ends EDIT (handled after EDIT's key filter)
+unit ui_f6editend ui_test src ui.c 's/^\tif (c == KEY_F6 \&\& ui_focus != UI_F_PAGE) {$/\tif (c == KEY_F6) ui_edit = 0;\n\tif (c == KEY_F6 \&\& ui_focus != UI_F_PAGE) {/' "FAIL F6 in EDIT: EDIT stays"
+# the toggle not re-applied after About / Supporters
+unit ui_f6pagelost ui_test src ui.c '/^static void page_end/,/^}/s/^\tmenu_pal();$/\tosd2_pal_default();/' "FAIL About Esc with see-through: entry 0 transparent again"
+# the toggle not re-applied when the menu opens again
+unit ui_f6openlost ui_test src ui.c '/^static void ui_open(void)/,/^}/s/^\tmenu_pal();$/\tosd2_pal_default();/' "FAIL reopened with see-through: entry 0 transparent"
+# a page shown see-through (its black not forced opaque)
+unit ui_f6pageclear ui_test src ui.c 's/^\tosd2_pal(OSD2_C_BLACK, OSD2_OPAQUE, 0x000000);$/\t;/' "FAIL About with see-through: entry 0 opaque"
+# EDIT's black value on the background's entry (see-through inside its strokes)
+unit ui_f6ink ui_test src ui.c 's/^#define A_EDIT    A(INK, YELLOW) /#define A_EDIT    A(BLACK, YELLOW) /' "FAIL EDIT: the value's black on the ink"
 # a core without the text layer gets the new menu
 unit dispatch_nocaps dispatch_test src menu.c 's/if (osd2_caps \&\& !ui_legacy_active)/if (!ui_legacy_active)/' "FAIL no layer: the classic menu each pass"
 # the classic menu never hands back
