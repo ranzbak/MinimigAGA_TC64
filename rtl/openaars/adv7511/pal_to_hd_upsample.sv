@@ -315,9 +315,14 @@ logic [10:0] r_wend [0:15] = '{default: 11'd0};
 // the RTG picture's own VPOS (i_hd_voffset_rtg instead of the chipset's;
 // "Video Pos VPOS").
 // ---------------------------------------------------------------------------
-if (RTG_STB_LAT < 1) begin : g_bad_lat
-  $error("pal_to_hd_upsample: RTG_STB_LAT must be at least 1");
+generate
+// $error in a generate block is not portable (Quartus 20.1 rejects it as a
+// syntax error, 10170): an instance of a module that does not exist stops
+// the elaboration of a bad parameter in every tool, its name the rule
+if (RTG_STB_LAT < 1) begin : g_chk_rtg_stb_lat
+  PARAM_ERROR_rtg_stb_lat_must_be_ge_1 u_param_error ();
 end
+endgenerate
 logic [RTG_STB_LAT-1:0] r_stb_d = '0;
 always_ff @(posedge clk_in)
   r_stb_d <= RTG_STB_LAT'({r_stb_d, i_pix_stb});
