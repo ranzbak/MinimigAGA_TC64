@@ -112,11 +112,20 @@ These worked on Paul's display (enter them in Picasso96Mode):
 | 720x480 | HiColor | 720 | 480 | 28.36 | | | hor | 940 | 0 | 72 | 64 | | 30kHz |
 | | | | | | | | vert | 588 | 0 | 98 | 8 | | 51hz |
 
-Since October 2026 the RTG picture is shown 1:1 (one HD pixel per RTG
-pixel) and centred automatically, with its own Video Pos pair (its OSD
-items come with a later firmware): the OSD's chipset Video Pos items do not
-move it. Smaller modes show centred with a black border; wider ones lose
-their left and right edges.
+Since October 2026 an RTG mode whose frame has 736 to 775 lines (the
+1280x720 modes below: 754 lines at 50 Hz, 757 at 60 Hz) is shown 1:1 (one
+HD pixel per RTG pixel) and centred automatically; the core picks this
+from the frame length by itself. Narrower 1:1 modes show centred with a
+black border, wider ones lose their left and right edges. Every other RTG
+mode is shown as before: the line's width by time and one RTG line per HD
+line. So 640x480 shows tall and narrow, and 1024x768 is cut at 720 rows
+(its bottom lines lost) and sits to the left (about 35 columns cut at
+1280-pixel lines). Two details of the 1:1 picture: 256-colour (CLUT) modes
+sit one pixel further right than HiColor ones (the first column black, the
+last pixel lost), and modes with the active area one clock longer
+(`rtg_ext`) show one extra column. The RTG picture has its own Video Pos
+pair (its OSD items come with a later firmware), on either path: the OSD's
+chipset Video Pos items do not move it.
 
 **To be tried: 1280x720 modes that fill the screen 1:1.** These come from
 the simulation bench (sim/hdmi_upsample, scaler_run.sh rtg legs), not yet
@@ -126,7 +135,7 @@ horizontal framesize moves in steps of 16 pixels at 56.72 MHz (32 at
 2496 and 2528. The shorter one is the one to use: with 1520, four lines a
 frame show twice. The vertical sync position (12) matters: with it the
 picture's top line lands on the screen's top line, and with less (5) the
-bottom two lines show twice. In general, an RTG mode whose frame has more
+bottom two lines show twice. In general, a 1:1 mode whose frame has more
 lines than the HD frame (750) needs a vertical sync position of 12 or more:
 the picture falls a few lines behind during the frame. The horizontal
 position does not move the picture (it is centred from the line's pixels).

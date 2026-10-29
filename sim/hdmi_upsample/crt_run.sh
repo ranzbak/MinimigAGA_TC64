@@ -18,10 +18,11 @@
 #   gate31     every CRT item selected (mask, bloom, beam too) but 31 kHz
 #              input: still bit-identical, the beam filter never on
 #   bypass60   OSD config 0 on the 60 Hz upsampler: bit-identical
-#   rtg        RTG 1:1 path (per-pixel sampling, no reference to compare):
-#              every CRT item selected (mask, bloom, beam too) and CRT off
-#              (+cfg=0), both with RTG on: frame 3 byte-identical, so the
-#              CRT effects stay gated off; the beam filter never on
+#   rtg        RTG on (+rtg: the Amiga picture, 312-line frames, so the
+#              time-based path; RTG 1:1 is scaler_run.sh's): every CRT item
+#              selected (mask, bloom, beam too) and CRT off (+cfg=0), both
+#              with RTG on: frame 3 byte-identical, so the CRT effects stay
+#              gated off; the beam filter never on
 #   beamfx15   every other CRT effect on, beam off: the beam filter's output
 #              = its input every clk_114 (15 kHz); beamfx31, beamfx60 the
 #              same at 31 kHz and on the 60 Hz upsampler
