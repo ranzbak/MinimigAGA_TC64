@@ -32,10 +32,10 @@ for mode in $MODES; do
 	case "$mode" in
 		normal) ;;
 		mutant_ver)
-			sed "s/4'd11   : rtl_ver = OSD_TEXT ? 8'd2 /4'd11   : rtl_ver = OSD_TEXT ? 8'd1 /" "$osd" > "$run/userio_osd.v"
+			sed "s/4'd11   : rtl_ver = 8'd2;/4'd11   : rtl_ver = 8'd1;/" "$osd" > "$run/userio_osd.v"
 			osd="$run/userio_osd.v"; want=FAIL; mustfail="(a)" ;;
 		mutant_rtg)
-			sed "s/OSD_TEXT ? {7'd0, rtg_ena} : MINION_VER/OSD_TEXT ? 8'd0 : MINION_VER/" "$osd" > "$run/userio_osd.v"
+			sed "s/4'd14   : rtl_ver = {7'd0, rtg_ena};/4'd14   : rtl_ver = 8'd0;/" "$osd" > "$run/userio_osd.v"
 			osd="$run/userio_osd.v"; want=FAIL; mustfail="(b)" ;;
 		mutant_alias)
 			sed 's/if addr(3 downto 2) = "01" then/if false then/' "$cfide" > "$run/cfide.vhd"

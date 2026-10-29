@@ -157,8 +157,6 @@ module minimig #(
   // Which CPU core the SoC around this instance is built with, for the OSD to
   // read back: bit 0 AP68040 fitted, bit 1 selectable, bit 2 FPU, bit 3 MMU.
   parameter [7:0] CORE_CAPS = 8'h00,
-  // 1: the top shows the 720p OSD text layer of osd_txt (userio_osd.v)
-  parameter OSD_TEXT = 0,
   // 1: the SD card engine's Gayle DMA (rtl/minimig/sdcard_gayle.v) sits on
   // Gayle's firmware-side data port, driven by sdcard_spi through the
   // sdc_g_* ports.  0: those ports are ignored (tops without the engine
@@ -301,8 +299,6 @@ module minimig #(
   output  [13:0] crt_cfg, // OSD video config {scaling, beam, bloom, mask, 4'b0 (reserved: were hr/lr_filter), scanline} for the HDMI CRT emulation and scaler
   output  vid_hires,     // Denise BPLCON0 HIRES / SHRES (HDMI CRT emulation; carried with the picture)
   output  vid_shres,
-  output  osd_blank_out, // Let the toplevel dither module handle drawing the OSD.
-  output  osd_pixel_out,
   output  rtg_ena,
   output reg ntsc = NTSC, //PAL/NTSC video mode selection
   input   ext_int2, // External interrupt for Akiko
@@ -422,8 +418,6 @@ wire  strhor_paula; //horizontal strobe for Paula
 wire  [7:0]red_i; //denise red (internal)
 wire  [7:0]green_i; //denise green (internal)
 wire  [7:0]blue_i; //denise blue (internal)
-wire  osd_blank; //osd blanking
-wire  osd_pixel; //osd pixel(video) data
 wire  _hsync_i; //horizontal sync (internal)
 wire  _vsync_i; //vertical sync (internal)
 wire  _csync_i; //composite sync (internal)
@@ -763,17 +757,13 @@ end
 localparam [7:0] CAPS_IDE2 = 8'h80;
 
 //instantiate user IO
-userio #(.CORE_CAPS(CORE_CAPS | CAPS_IDE2), .OSD_TEXT(OSD_TEXT)) USERIO1
+userio #(.CORE_CAPS(CORE_CAPS | CAPS_IDE2)) USERIO1
 (
   .clk(clk),
   .clk7_en(clk7_en),
   .clk7n_en(clk7n_en),
   .reset(reset),
-  .c1(c1),
-  .c3(c3),
-  .sol(sol),
   .sof(sof),
-  .varbeamen(varbeamen),
   .rtg_ena(rtg_ena),
   .reg_address_in(reg_address),
   .data_in(custom_data_in),
@@ -807,8 +797,6 @@ userio #(.CORE_CAPS(CORE_CAPS | CAPS_IDE2), .OSD_TEXT(OSD_TEXT)) USERIO1
   .sck(sck),
   .osd_rx_seq(osd_rx_seq),
   .osd_txt(osd_txt),
-  .osd_blank(osd_blank),
-  .osd_pixel(osd_pixel),
   .memory_config(userio_memory_config),
   .chipset_config(userio_chipset_config),
   .floppy_config(userio_floppy_config),
@@ -878,8 +866,6 @@ amber AMBER1
   .scanline(amber_scanline),
   .dither(dither),
   .htotal(htotal),
-  .osd_blank(osd_blank),
-  .osd_pixel(osd_pixel),
   .red_in(red_i),
   .blue_in(blue_i),
   .green_in(green_i),
@@ -892,9 +878,7 @@ amber AMBER1
   ._hsync_out(_hsync),
   ._vsync_out(_vsync),
   ._csync_out(_csync),
-  .selcsync(selcsync),
-  .osd_blank_out(osd_blank_out),
-  .osd_pixel_out(osd_pixel_out)
+  .selcsync(selcsync)
 );
 
 // Amiga keyboard

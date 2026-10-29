@@ -86,13 +86,11 @@ module osd_keyq_tb;
   userio_osd #(.CORE_CAPS(CAPS)) dut (
     .clk(clk), .clk7_en(clk7_en), .clk7n_en(clk7n_en),
     .reset(osd_reset),
-    .c1(1'b0), .c3(1'b0), .sol(1'b0), .sof(1'b0),
-    .varbeamen(1'b0), .rtg_ena(1'b0),
+    .rtg_ena(1'b0),
     .osd_ctrl(osd_ctrl),
     .in_diag(32'h9A785634), .in_diag_clr(diag_clr),
     ._scs(_scs), .sdi(sdi), .sdo(sdo), .sck(sck),
-    .osd_blank(), .osd_pixel(),
-    .osd_enable(), .key_disable(),
+    .key_disable(),
     .memory_config(), .chipset_config(), .floppy_config(),
     .scanline(), .dither(),
     .osd_rx_seq(rx_seq),
@@ -406,13 +404,15 @@ module osd_keyq_tb;
     expect_byte("(a) KEYQ count", b0, 8'h06);
     expect_int("(a) steps, KEYQ (command + count + 6)", seq_incs - n0, 8);
 
-    // OSD_CMD_OSD_WR as OsdWriteOffset sends it: 0x0c, 00 00 00 <line>, text
+    // a long write frame, as osd2_flush sends the text layer's cells: 0x2C,
+    // mode 1 (chars), cell 0x080, 36 characters (the bitmap OSD's 0x0C write
+    // was this frame before Phase 6)
     n0 = seq_incs;
-    spi_open(8'h0c);
-    spi_byte(8'h00, rb);  spi_byte(8'h00, rb);  spi_byte(8'h00, rb);  spi_byte(8'h02, rb);
-    for (k = 0; k < 35; k = k + 1) spi_byte(8'h41 + k[7:0], rb);
+    spi_open(8'h2c);
+    spi_byte(8'h01, rb);  spi_byte(8'h00, rb);  spi_byte(8'h80, rb);
+    for (k = 0; k < 36; k = k + 1) spi_byte(8'h41 + k[7:0], rb);
     spi_close;  #2000;
-    expect_int("(a) steps, OSD_WR (40 bytes)", seq_incs - n0, 40);
+    expect_int("(a) steps, TXT_WR (40 bytes)", seq_incs - n0, 40);
 
     // ---- 10. (b) polling the sequence, gap 0: every reply byte right --------
     $display("--- (b) fast host, polls osd_rx_seq, gap 0 ---");
@@ -471,6 +471,9 @@ module osd_keyq_tb;
     // frame's last byte is taken up to ~40 clk_114 after its last edge, i.e.
     // inside the KEYQ frame: a "byte done" flag would say the KEYQ command
     // has been taken when it has not.  The sequence cannot be fooled that way.
+    // (0x0C, the bitmap OSD's buffer write, is an unused command since Phase
+    // 6: its frame is still counted byte by byte, which is all (d) and (d')
+    // need.)
     $display("--- (d) OSD_WR, CS up, KEYQ 8 clk_114 later ---");
     key(8'h71);  key(8'h72);
     fopen(8'h0c);

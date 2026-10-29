@@ -566,7 +566,6 @@ minimig_virtual_top
   .havec2p(1'b0),
   .havei2c(1'b1),
   .havevpos(1'b1),
-  .osd_text(1),
   .havespirtc(1'b1),
   // the SD card on the SD card engine (sdcard_spi + its Gayle DMA), card
   // detect on sd_m_cdet (F23); fpga/openaars/aars_v5.0/xc7a100t/sd_card.xdc

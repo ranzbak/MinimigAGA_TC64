@@ -27,18 +27,13 @@
 
 module userio #(
   // Passed straight through to the OSD controller; see userio_osd.v.
-  parameter [7:0] CORE_CAPS = 8'h00,
-  parameter       OSD_TEXT  = 0     // the 720p OSD text layer is on osd_txt (userio_osd.v)
+  parameter [7:0] CORE_CAPS = 8'h00
 ) (
   input  wire           clk,                // bus clock
   input  wire           reset,              // reset
   input  wire           clk7_en,
   input  wire           clk7n_en,
-  input  wire           c1,
-  input  wire           c3,
-  input  wire           sol,                // start of video line
   input  wire           sof,                // start of video frame
-  input  wire           varbeamen,
   input  wire           rtg_ena,
   input  wire [  9-1:1] reg_address_in,     // register adress inputs
   input  wire [ 16-1:0] data_in,            // bus data in
@@ -72,8 +67,6 @@ module userio #(
   input  wire           sck,                // SPI clock
   output wire [  2-1:0] osd_rx_seq,         // OSD reply sequence (userio_osd.v)
   output wire [107-1:0] osd_txt,            // OSD text layer write side, clk (userio_osd.v)
-  output wire           osd_blank,          // osd overlay, normal video blank output
-  output wire           osd_pixel,          // osd video pixel
   // EIGHT bits, not seven.  userio_osd drives eight and minimig.v declares
   // eight; this port sat in the middle and truncated bit 7 -- "fast RAM: DDR3
   // board only" -- so ddr3_only could never be anything but 0 and the OSD
@@ -142,7 +135,6 @@ wire  _mthird1;          //middle mouse button
 wire  _mright1;          //right mouse buttons
 reg    joy1enable;          //joystick 1 enable (mouse/joy switch)
 reg    joy2enable;          //joystick 2 enable when no osd
-wire  osd_enable;          // OSD display enable
 wire  key_disable;        // Amiga keyboard disable
 // Mouse buttons and the OSD (Paul, 2026-09-24): while the OSD has the input
 // the Amiga sees no mouse buttons -- clicks in the OSD used to reach the
@@ -581,7 +573,7 @@ wire [31:0] in_diag = {in_sticky,
                        _fire0, potcap[1], _mleft0, _mright0, _lmb, _rmb, joy1enable, key_disable};
 
 //instantiate osd controller
-userio_osd #(.CORE_CAPS(CORE_CAPS), .OSD_TEXT(OSD_TEXT)) osd1
+userio_osd #(.CORE_CAPS(CORE_CAPS)) osd1
 (
   .in_diag          (in_diag),
   .in_diag_clr      (in_diag_clr),
@@ -589,11 +581,6 @@ userio_osd #(.CORE_CAPS(CORE_CAPS), .OSD_TEXT(OSD_TEXT)) osd1
   .clk7_en          (clk7_en),
   .clk7n_en         (clk7n_en),
   .reset            (reset),
-  .c1               (c1),
-  .c3               (c3),
-  .sol              (sol),
-  .sof              (sof),
-  .varbeamen        (varbeamen),
   .rtg_ena          (rtg_ena),
   .osd_ctrl         (t_osd_ctrl),
   ._scs             (_scs),
@@ -602,9 +589,6 @@ userio_osd #(.CORE_CAPS(CORE_CAPS), .OSD_TEXT(OSD_TEXT)) osd1
   .sck              (sck),
   .osd_rx_seq       (osd_rx_seq),
   .osd_txt          (osd_txt),
-  .osd_blank        (osd_blank),
-  .osd_pixel        (osd_pixel),
-  .osd_enable       (osd_enable),
   .key_disable      (key_disable),
   .memory_config    (memory_config),
   .chipset_config   (chipset_config),
