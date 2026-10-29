@@ -7,10 +7,13 @@
  * 3.3 (glyph map: 0x00-0x1F symbols and lines, 0xC0-0xFF icons) and 3.10.
  * Bitmaps are 1 bpp, bit 7 (icons: bit 15) = the left pixel, 16 rows; on
  * screen at scale 2 a glyph is 16 x 32 pixels.  The ROM font (font8x16.h,
- * osd_font.mem) keeps its glyphs at these codes until the first upload;
- * the classic menu draws with charrom.h on the bitmap OSD and never sees
- * this font, the debug page on the layer uses ASCII only.  Kept from the
- * ROM font: 0x17 the padlock, 0x19 the note (value texts).
+ * osd_font.mem) is made from this file too (tools/mkfontmem.py, make check
+ * (l)): it holds these same glyphs at these codes, so the upload changes
+ * nothing on a core whose font RAM starts from today's osd_font.mem and
+ * puts them in place on one with an older font.  The classic menu draws with
+ * charrom.h on the bitmap OSD and never sees this font, the debug page on
+ * the layer uses ASCII only.  From the ROM font (font/symbols.txt): 0x17 the
+ * padlock, 0x19 the note (value texts).
  *
  * Glyph map of the menu:
  *   0x04-0x0C  the value bar: OSD_G_BAR0 + k = k/8 of the cell filled from

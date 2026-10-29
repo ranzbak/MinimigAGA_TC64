@@ -11,7 +11,9 @@
 #                 (g) the boot ROM image ends below the stack floor 0x1400,
 #                 (h) RV32OSDB.BIN ends with the lock-step trailer (SDC_VERSION),
 #                 (i) the committed boot ROM image looks for this file name,
-#                 (k) osd_logo.h is tools/mklogo.py's output of logo.h
+#                 (k) osd_logo.h is tools/mklogo.py's output of logo.h,
+#                 (l) font8x16.h and rtl/.../osd_font.mem are tools/mkfontmem.py's
+#                 output of font/ and osd_icons.h
 #   make stack    the 20 largest stack frames (-fstack-usage, $(B)/*.su)
 #   make clean
 #
@@ -132,7 +134,7 @@ size: $(B)/$(PROJECT).elf $(B)/$(FW_FILE)
 	@echo "$(FW_FILE): `wc -c < $(B)/$(FW_FILE)` bytes"
 
 # ---- check: each part is its own target; all run (-k), any red fails ----
-CHECKS := check_a check_b check_c check_d check_e check_f check_g check_h check_i check_j check_k
+CHECKS := check_a check_b check_c check_d check_e check_f check_g check_h check_i check_j check_k check_l
 
 check: $(B)/$(PROJECT).elf
 	@$(MAKE) --no-print-directory -k $(CHECKS)
@@ -262,6 +264,14 @@ check_j:
 check_k:
 	@if python3 -I tools/mklogo.py --check; then echo "check (k) pass: osd_logo.h = mklogo.py's output of logo.h"; \
 	else echo "check (k) FAIL: osd_logo.h is not made from logo.h (python3 fw/ctrl/tools/mklogo.py, commit it)"; exit 1; fi
+
+# (l) the text layer's ROM font: font8x16.h (the firmware's copy) and
+#     rtl/openaars/adv7511/osd_font.mem (the RTL font RAM's initial content)
+#     are tools/mkfontmem.py's output of font/spleen-8x16.bdf, font/symbols.txt
+#     and osd_icons.h: one source (a change to the RTL file changes the bitstream)
+check_l:
+	@if python3 -I tools/mkfontmem.py --check; then echo "check (l) pass: font8x16.h and osd_font.mem = mkfontmem.py's output"; \
+	else echo "check (l) FAIL: font8x16.h / osd_font.mem are not made from font/ and osd_icons.h (python3 fw/ctrl/tools/mkfontmem.py, commit both)"; exit 1; fi
 
 # the 20 largest stack frames of the firmware (-fstack-usage: bytes, kind)
 stack: $(OBJS)

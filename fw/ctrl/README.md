@@ -170,6 +170,31 @@ and gcc at `-Os` drops the `.init_array` entry of an empty constructor (the
 function itself stays; at `-O0` `akiko.o` has `.init_array.00102`). Nothing
 runs at that slot, so the order is the previous firmware's.
 
+## The OSD text layer's font
+
+The 720p text layer (`osd2.c`, `rtl/openaars/adv7511/osd_text.v`) draws
+8x16 glyphs from a font RAM that the bitstream initialises from
+`rtl/openaars/adv7511/osd_font.mem`; the firmware keeps the same font as
+`font8x16.h` (the About and Supporters pages restore their glyph slots from
+it). Both files are generated, from one source:
+
+| Codes | From |
+|---|---|
+| 0x20-0x7E | [Spleen](https://github.com/fcambus/spleen) 8x16 2.2.0, `font/spleen-8x16.bdf` as released, BSD 2-Clause (`font/LICENSE.spleen`; the notice is repeated in `font8x16.h`) |
+| 0x04-0x11, 0x16, 0x1A-0x1D, 0xC0-0xC9 | `osd_icons.h`: the glyphs the menu uploads when it opens (value bar, lines, corners, arrows, category icons), so the ROM font and an open menu's font RAM are the same |
+| 0x01-0x03, 0x12-0x15, 0x17-0x19, 0x7F | `font/symbols.txt` (stripes, up/down arrows, padlocks, the note, a block), drawn for this project |
+| the rest | blank: 0x80-0xBF and 0xCA-0xFF are the About / Supporters glyph slots (no Latin-1) |
+
+After a change to any of them (python3 only; the preview needs PIL):
+
+```sh
+python3 fw/ctrl/tools/mkfontmem.py            # writes font8x16.h and osd_font.mem
+python3 fw/ctrl/tools/mkfontmem.py --png /tmp/font.png   # 16 x 16 grid at 2x
+make -C fw/ctrl check                         # (l): both are the script's output
+```
+
+`osd_font.mem` is an RTL input: a font change changes the bitstream.
+
 ## On the SD card
 
 The boot ROM (`fw/ctrl_boot`, in the bitstream) looks for `RV32OSDB.BIN`
