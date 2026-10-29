@@ -123,3 +123,14 @@ tools/vivado/ooc_sdcard/runs/
 
 # OOC run outputs of tools/vivado/ooc_osd
 tools/vivado/ooc_osd/runs/
+
+# Claude Code: agent worktrees, session files, local MCP config
+.claude/
+.mcp.json
+
+# Old Vivado project copies
+project_1_old/
+
+# Local datasheet copies under doc/ (the PDFs already tracked stay tracked)
+doc/**/*.pdf
+doc/**/*.PDF
