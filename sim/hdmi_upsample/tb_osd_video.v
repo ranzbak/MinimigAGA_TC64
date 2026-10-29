@@ -23,10 +23,10 @@ wire [1:0] scan, dith;
 wire [7:0] fx;
 userio_osd dut (
 	.clk(clk), .clk7_en(clk7_en), .clk7n_en(clk7n_en), .reset(1'b0),
-	.c1(1'b0), .c3(1'b0), .sol(1'b0), .sof(1'b0), .varbeamen(1'b0), .rtg_ena(1'b0),
+	.rtg_ena(1'b0),
 	.osd_ctrl(8'h00), .in_diag(32'h0), .in_diag_clr(),
 	._scs(_scs), .sdi(sdi), .sdo(sdo), .sck(sck),
-	.osd_blank(), .osd_pixel(), .osd_enable(), .key_disable(),
+	.key_disable(),
 	.memory_config(), .chipset_config(), .floppy_config(),
 	.scanline(scan), .dither(dith), .crt_fx(fx),
 	.ide_config0(), .ide_config1(), .cpu_config(), .autofire_config(), .cd32pad(),

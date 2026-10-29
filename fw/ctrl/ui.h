@@ -29,10 +29,8 @@
  * closed a toast shows as a one-row window of its own.
  *
  * menu.c's HandleUI() runs ui_handle() on a core with the text layer
- * (osd2_caps); on any other core the classic menu is all there is.  (Its
- * ui_legacy_active, the hand-over to the classic pages About and
- * Supporters had, is never set since they are native; Phase 6 deletes the
- * classic menu with it.)
+ * (osd2_caps); a core without it has no menu (the classic bitmap menu went
+ * in Phase 6, and the boot ROM does not start this firmware there).
  *
  * Keys (Paul, 2026-10-27; joystick: Up/Down/Left/Right, fire = Enter,
  * fire 2 = the menu button, which sends F12's code):
@@ -63,7 +61,7 @@
  *   top, Backspace the parent directory, a letter the next name with it,
  *   Esc back to the list.  Main: keypad +/- add or remove a floppy drive,
  *   Backspace ejects all floppies.
- *   The classic shortcuts as in menu.c: Ctrl-Alt-keypad +/- turbo,
+ *   The classic menu's shortcuts: Ctrl-Alt-keypad +/- turbo,
  *   LShift-keypad +/- volume, LShift-keypad . refreshes the ADV7511,
  *   Ctrl-Alt-keypad 0 autofire (menu closed), Ctrl-Alt-F12 debug mode.
  */
@@ -228,11 +226,8 @@ void ui_draw_all(void);
 void ui_draw_item(unsigned i);
 void ui_draw_help(void);
 
-/* menu.c HandleUI: the classic menu instead (nothing sets it since About
-   and Supporters are native; Phase 6 deletes it with the classic menu) */
-extern unsigned char ui_legacy_active;
-/* the error page (menu.c ShowError / ErrorMessage on a core with the
-   layer): the menu opens on it at error category `page` (errors.h) */
+/* the error page (menu.c ShowError on a core with the layer): the menu
+   opens on it at error category `page` (errors.h) */
 void ui_error_show(int page);
 
 /* for the item tables (ui_tabs.c) */

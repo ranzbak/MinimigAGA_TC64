@@ -254,6 +254,8 @@ void fpga_init() {
 	SPIN; SPIN; SPIN; SPIN;
 	if (osd2_detect(ver_magic == (char)0xA4, osd2_ver))
 		osd2_init(OSD2_ATTR(OSD2_C_WHITE, OSD2_C_BLACK));   // the window off, the cell RAM to be cleared
+	else	// (the boot ROM does not start this firmware there: OSD2_REQUIRED)
+		printf("No OSD text layer (VERSION byte 10 is not B5): no menu\n");
 
 	OsdDoReset(SPI_RST_USR | SPI_RST_CPU | SPI_CPU_HLT,SPI_RST_CPU | SPI_CPU_HLT);
 

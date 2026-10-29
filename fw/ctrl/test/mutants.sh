@@ -118,7 +118,7 @@ checkio() {
 control() {
   prep control
   local t rc=0
-  for t in mock_selftest cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_test hwmap_test spireply_test diskstat_test swap_test fat_test mmc_test config_test hdd_test cdpath_test fdd_test drivesounds_test boot_test sdc_test sdproto_test rom_test osd2_test ui_test migrate_test dispatch_test; do
+  for t in mock_selftest cue_test cdaudio_test atapi_test cdrom_test openhf_test lib_test hwmap_test spireply_test diskstat_test swap_test fat_test mmc_test config_test hdd_test cdpath_test fdd_test drivesounds_test boot_test sdc_test sdproto_test rom_test osd2_test ui_test migrate_test; do
     mk control "run64-$t" > "mut/control/log.$t" 2>&1 || { echo "control: run64-$t FAILED (mut/control/log.$t)"; rc=1; }
   done
   mk control fmt > mut/control/log.fmt 2>&1 || { echo "control: fmt FAILED (mut/control/log.fmt)"; rc=1; }
@@ -138,7 +138,9 @@ control
 fmt buf16 src rvlibc.h 's/^#define RV_PRINTF_BUF .*/#define RV_PRINTF_BUF 16/' "disagrees"
 fmt model_upper gold fmtcheck.py "s/digs = '0123456789abcdef' if c == 'x'/digs = '0123456789ABCDEF' if c == 'x'/" "disagrees"
 fmt formats_stale gold formats.txt '$d' "differ\|EOF"
-fmt cover_case t fmt_cases.h '/^FMT_CASE("          1 %s"/d' "no case"
+# (a format still in the sources: the classic menu's "          1 %s" went in
+# OSD Phase 6, and a case of a format nobody uses is no gap)
+fmt cover_case t fmt_cases.h '/^FMT_CASE("  Start: %ld"/d' "no case"
 
 # ---- lib_test ----------------------------------------------------------------
 unit notrunc lib_test src rvlibc.c 's/rv_printf_truncations++;/;/'
@@ -624,7 +626,7 @@ unit osd2_charnocmp osd2_test src osd2.c '/^void osd2_char/,/^}/s/^\tif (osd2_ch
 # the commit sends the palette but never the window
 unit osd2_nowin osd2_test src osd2.c 's/^\tsend_win();$/\t;/' "FAIL commit: entry 5 blend"
 
-# ---- the new OSD menu (ui_test, dispatch_test; findings/osd-redesign Phase 3,
+# ---- the new OSD menu (ui_test; findings/osd-redesign Phase 3,
 # the sidebar layout of 2026-10-27) ----
 # the long name's start held 250 ms instead of 500
 unit ui_scrollhold ui_test src ui.h 's/^#define UI_T_SCROLL_HOLD UI_T(500)/#define UI_T_SCROLL_HOLD UI_T(250)/' "FAIL scroll: the start held 500 ms"
@@ -632,12 +634,14 @@ unit ui_scrollhold ui_test src ui.h 's/^#define UI_T_SCROLL_HOLD UI_T(500)/#defi
 unit ui_scrollkeep ui_test src ui.c '/^static void key_files/,/^}/s/^\tscroll_reset();$/\t;/' "FAIL scroll: a cursor move resets it"
 # closing leaves the layer on
 unit ui_noclose ui_test src ui.c '/^void ui_close(void)/,/^}/s/^\t\tosd2_disable();$/\t\t;/' "FAIL closing: the window off"
-# debug mode: closing the menu puts the classic bitmap OSD on again (the
-# debug page belongs on the layer since osd-p2's 5ab0e127)
-unit ui_debugbitmap ui_test src ui.c '/^void ui_close(void)/,/^}/s/^\t\tdebug2_show(1);  /\t\tOsdShow(0);  /' "FAIL closing in debug mode: the debug page back on the layer"
+# debug mode: closing the menu leaves the layer without the debug page (it
+# belongs on the layer since osd-p2's 5ab0e127; the bitmap OSD it once went
+# back to is gone, Phase 6)
+unit ui_debugbitmap ui_test src ui.c '/^void ui_close(void)/,/^}/s/^\t\tdebug2_show(1);  /\t\tosd2_disable();  /' "FAIL closing in debug mode: the debug page back on the layer"
 # debug mode: a toast's end switches the layer off instead of the debug page back
 unit ui_debugtoast ui_test src ui.c 's/^\t\t\t\tdebug2_show(1);     \/\* the debug page back over/\t\t\t\tosd2_disable();     \/* the debug page back over/' "FAIL debug mode toast ends: the debug page back"
-# opening switches the classic bitmap OSD on too
+# opening sets OSD control bit 0 too (the bitmap OSD's enable before Phase 6;
+# the firmware keeps it 0)
 unit ui_bitmap ui_test src ui.c 's/SPI(to_osd ? DISABLE_KEYBOARD : 0);/SPI(to_osd ? DISABLE_KEYBOARD | 1 : 0);/' "FAIL open: OSD_CMD_OSD 0x02"
 # Left on an item without a value stays in the list (a joystick's way back
 # to the sidebar)
@@ -730,10 +734,6 @@ unit ui_f6openlost ui_test src ui.c '/^static void ui_open(void)/,/^}/s/^\tmenu_
 unit ui_f6pageclear ui_test src ui.c 's/^\tosd2_pal(OSD2_C_BLACK, OSD2_OPAQUE, 0x000000);$/\t;/' "FAIL About with see-through: entry 0 opaque"
 # EDIT's black value on the background's entry (see-through inside its strokes)
 unit ui_f6ink ui_test src ui.c 's/^#define A_EDIT    A(INK, YELLOW) /#define A_EDIT    A(BLACK, YELLOW) /' "FAIL EDIT: the value's black on the ink"
-# a core without the text layer gets the new menu
-unit dispatch_nocaps dispatch_test src menu.c 's/if (osd2_caps \&\& !ui_legacy_active)/if (!ui_legacy_active)/' "FAIL no layer: the classic menu each pass"
-# the classic menu never hands back
-unit dispatch_stuck dispatch_test src menu.c 's/        ui_legacy_active = 0;   \/\/ closed: the new menu next time/        ;/' "FAIL the classic menu closed"
 
 # ---- OSD redesign Phase 5: the ROM font, OSD size and position ------------------
 # the firmware's copy of the font is not osd_font.mem (a glyph of 'A' changed)

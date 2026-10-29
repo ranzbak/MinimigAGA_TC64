@@ -77,9 +77,11 @@ make -C fw/ctrl check
 ```
 
 Output in `fw/ctrl/build/` (gitignored): `RV32OSDB.BIN` (`objcopy -O
-binary`, then the 8-byte lock-step trailer `SDCV 00 00 <SDC_VERSION>` of
-`sdctrailer.c` appended; loaded by `fw/ctrl_boot` to 0x2000, which runs it
-only when the trailer names the bitstream's SD card peripheral VERSION:
+binary`, then the 8-byte lock-step trailer `SDCV <OSD2_REQUIRED>
+<SDC_VERSION>` (16 bits each) of `sdctrailer.c` appended; loaded by
+`fw/ctrl_boot` to 0x2000, which runs it only when the trailer names the
+bitstream's SD card peripheral VERSION and the core's OSD text layer is at
+least `OSD2_REQUIRED` (`osd2.h`, 2: the menu is the layer's only):
 `fw/ctrl_boot/README.md` "Lock-step check"; `check` (h) checks the
 trailer), `RV32OSDB.elf`, `.map`, `.lst` (disassembly with source),
 `version.h`. The boot ROM (in the bitstream) and `RV32OSDB.BIN` must come

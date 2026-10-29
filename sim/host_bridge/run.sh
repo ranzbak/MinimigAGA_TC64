@@ -308,8 +308,9 @@ convert() {
 vbuild() {
 	local name=$1 rom=$2 sd="" i2c="" stub=""; shift 2
 	local d="$run/ghdl_$name"
-	case " $* " in *" -DSDCARD "*) sd="$ROOT/sim/common/sd_spi_model.v" ;; esac
-	case " $* " in *" -DFWBOOT "*) stub="$HERE/minimig_spi_stub.v" ;; esac
+	# SDCARD: the SD model, and the stub's fixed Minimig SPI replies (the
+	# boot ROM's lock-step reads the OSD's VERSION; FWBOOT's firmware the rest)
+	case " $* " in *" -DSDCARD "*) sd="$ROOT/sim/common/sd_spi_model.v"; stub="$HERE/minimig_spi_stub.v" ;; esac
 	convert "$d" "$rom"
 	# havei2c = true: cfide.v instantiates i2c_master_mmio, link the real one
 	grep -qE '^ *i2c_master_mmio +[a-z0-9_]+ *\(' "$d/cfide.v" && i2c=$I2C_V
@@ -395,7 +396,8 @@ boot() {
 	else
 		X xvlog -d RV_HOSTCPU_STATS src/rv_hostcpu.v
 		X xvhdl src/host_bridge.vhd
-		X xvlog $XI -d SDCARD -d RV_HOSTCPU_STATS "$ROOT/sim/common/sd_spi_model.v" "$HERE/tb_host_bridge.v"
+		X xvlog $XI -d SDCARD -d RV_HOSTCPU_STATS "$ROOT/sim/common/sd_spi_model.v" \
+			"$HERE/minimig_spi_stub.v" "$HERE/tb_host_bridge.v"
 		X xvhdl "$ROOT/$rom"
 		hs_xsim_build "$run" "tb_${t}_x$XW" "$XW" tb_host_bridge
 	fi

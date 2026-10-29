@@ -1,8 +1,9 @@
 // The OSD text layer's status (findings/osd-redesign Phase 4): VERSION
-// (0x88) reply bytes 10..14 of userio_osd.v.  With OSD_TEXT = 1: B5, the
-// layer version 2, 64, 32, then byte 14 = {7'd0, rtg_ena}, following
-// rtg_ena both ways; with OSD_TEXT = 0 (a core without the layer): MINION_VER
-// in all five, as before.  The firmware (fw/ctrl/osd2.c osd2_rtg_active)
+// (0x88) reply bytes 10..14 of userio_osd.v: B5, the layer version 2, 64,
+// 32, then byte 14 = {7'd0, rtg_ena}, following rtg_ena both ways; byte 3
+// and byte 15 MINION_VER.  (The OSD_TEXT = 0 instance, a core without the
+// layer, went with the parameter in OSD redesign Phase 6: the layer is
+// always there.)  The firmware (fw/ctrl/osd2.c osd2_rtg_active)
 // reads byte 14 only from layer version 2 on.  The RTG screen's Video Pos
 // register is cfide's (VHDL): cfide_tb.vhd, run by run.sh under GHDL.
 //
@@ -26,27 +27,13 @@ module osd_status_tb;
   wire sdo_txt, sdo_old;
   integer errors = 0;
 
-  // one instance with the text layer, one without
-  userio_osd #(.CORE_CAPS(8'h0d), .OSD_TEXT(1)) dut (
+  assign sdo_old = 1'b0;   // (the OSD_TEXT = 0 instance's, gone)
+  userio_osd #(.CORE_CAPS(8'h0d)) dut (
     .clk(clk), .clk7_en(clk7_en), .clk7n_en(clk7n_en), .reset(1'b0),
-    .c1(1'b0), .c3(1'b0), .sol(1'b0), .sof(1'b0),
-    .varbeamen(1'b0), .rtg_ena(rtg_ena), .osd_ctrl(8'h00),
+    .rtg_ena(rtg_ena), .osd_ctrl(8'h00),
     .in_diag(32'h0), .in_diag_clr(),
     ._scs(scs_txt), .sdi(sdi), .sdo(sdo_txt), .sck(sck),
-    .osd_rx_seq(), .osd_txt(), .osd_blank(), .osd_pixel(), .osd_enable(), .key_disable(),
-    .memory_config(), .chipset_config(), .floppy_config(), .scanline(), .dither(),
-    .ide_config0(), .ide_config1(), .cpu_config(), .autofire_config(), .cd32pad(),
-    .usrrst(), .cpurst(), .cpuhlt(), .fifo_full(),
-    .host_cs(), .host_adr(), .host_we(), .host_bs(), .host_wdat(),
-    .host_rdat(16'h0000), .host_ack(1'b0)
-  );
-  userio_osd #(.CORE_CAPS(8'h0d), .OSD_TEXT(0)) old (
-    .clk(clk), .clk7_en(clk7_en), .clk7n_en(clk7n_en), .reset(1'b0),
-    .c1(1'b0), .c3(1'b0), .sol(1'b0), .sof(1'b0),
-    .varbeamen(1'b0), .rtg_ena(rtg_ena), .osd_ctrl(8'h00),
-    .in_diag(32'h0), .in_diag_clr(),
-    ._scs(scs_old), .sdi(sdi), .sdo(sdo_old), .sck(sck),
-    .osd_rx_seq(), .osd_txt(), .osd_blank(), .osd_pixel(), .osd_enable(), .key_disable(),
+    .osd_rx_seq(), .osd_txt(), .key_disable(),
     .memory_config(), .chipset_config(), .floppy_config(), .scanline(), .dither(),
     .ide_config0(), .ide_config1(), .cpu_config(), .autofire_config(), .cd32pad(),
     .usrrst(), .cpurst(), .cpuhlt(), .fifo_full(),
@@ -67,7 +54,7 @@ module osd_status_tb;
     end
   endtask
 
-  reg [7:0] ver [0:14];
+  reg [7:0] ver [0:15];
   task read_version(input which);
     integer k;
     reg [7:0] b;
@@ -75,7 +62,7 @@ module osd_status_tb;
       if (which) scs_txt = 1'b0; else scs_old = 1'b0;
       #200;
       spi_byte(which, 8'h88, b);
-      for (k = 0; k < 15; k = k + 1) begin
+      for (k = 0; k < 16; k = k + 1) begin
         spi_byte(which, 8'h00, b);
         ver[k] = b;
       end
@@ -111,12 +98,7 @@ module osd_status_tb;
     #2000;
     read_version(1);
     check("(c) byte 14 follows rtg_ena back", {32'd0, ver[14]}, 40'd0);
-    $display("--- no text layer (OSD_TEXT = 0), RTG on");
-    rtg_ena = 1'b1;
-    #2000;
-    read_version(0);
-    check("(d) bytes 10..14 MINION_VER", {ver[10], ver[11], ver[12], ver[13], ver[14]},
-          {MINION_VER, MINION_VER, MINION_VER, MINION_VER, MINION_VER});
+    check("(d) bytes 3 and 15 MINION_VER", {24'd0, ver[3], ver[15]}, {24'd0, MINION_VER, MINION_VER});
     if (errors == 0) $display("=== PASS");
     else $display("=== FAIL (%0d)", errors);
     $finish;

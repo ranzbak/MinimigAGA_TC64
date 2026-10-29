@@ -66,7 +66,6 @@ void ui_video_mode(void);           /* ui_tabs.c: the position items' labels for
 
 #define PENDING_CLOSE 0xff
 
-unsigned char ui_legacy_active;
 unsigned char ui_cfg_mask;
 unsigned char ui_open_now, ui_tab, ui_focus, ui_hints_on, ui_edit;
 unsigned char ui_rtg;
@@ -95,7 +94,7 @@ static struct {
 
 static char ext_adf[] = "ADF", ext_cd[] = "ISOCUE", ext_rom[] = "ROM", ext_hdf[] = "HDF";
 static char *const fs_ext[] = { ext_adf, ext_cd, ext_rom, ext_hdf, ext_cd };
-static unsigned char fs_target, fs_arg, fs_window_ok;
+static unsigned char fs_target, fs_arg;
 static unsigned short sc_pos;               /* the selected long name's first cell */
 static unsigned long sc_timer;
 static char namebuf[13];
@@ -751,8 +750,8 @@ static void page_tick(void)
 /* open, close, toasts                                                */
 /* ------------------------------------------------------------------ */
 
-/* the keyboard (and joystick 2) to the OSD or back to the Amiga; the
-   classic bitmap OSD stays off (its enable bit, OSD_CMD_OSD bit 0) */
+/* the keyboard (and joystick 2) to the OSD or back to the Amiga (OSD
+   control; bit 0, the bitmap OSD's enable before Phase 6, stays 0) */
 static void osd_keys(unsigned char to_osd)
 {
 	EnableOsd();
@@ -1042,15 +1041,12 @@ static void scroll_reset(void)
 void ui_fs_open(unsigned char target, unsigned char arg)
 {
 	char *ext = fs_ext[target];
-	fat_dir_window = MAXDIRENTRIES;
 	if (!fs_pFileExt || strcmp(ext, fs_pFileExt) != 0) {
-		/* another kind of file: from the root (as the classic menu) */
+		/* another kind of file: from the root */
 		ChangeDirectory(DIRECTORY_ROOT);
 		ScanDirectory(SCAN_INIT, ext, FS_OPTS);
-	} else if (!fs_window_ok)
-		ScanDirectory(SCAN_INIT, ext, FS_OPTS);   /* scanned by the classic menu: 8 entries */
+	}
 	fs_pFileExt = ext;
-	fs_window_ok = 1;
 	fs_target = target;
 	fs_arg = arg;
 	ui_focus = UI_F_FILESEL;
@@ -1422,7 +1418,7 @@ void ui_key(unsigned char c)
 	static const char *const autofire_msg[] = { "AUTOFIRE OFF", "AUTOFIRE FAST", "AUTOFIRE MEDIUM", "AUTOFIRE SLOW" };
 	unsigned char v;
 
-	/* the modifiers and the classic shortcuts (menu.c's key decode) */
+	/* the modifiers and the classic menu's shortcuts */
 	switch (c) {
 	case KEY_CTRL:                  m_ctrl = 1; return;
 	case KEY_CTRL | KEY_UPSTROKE:   m_ctrl = 0; return;
@@ -1539,8 +1535,13 @@ void ui_handle(void)
 		ui_close();
 	}
 	c = OsdGetCtrl();
-	/* the core's key queue overflowed: an event was dropped; the flag is
-	   only cleared (menu.c says why the modifiers are kept) */
+	/* the core's key queue overflowed: an event was dropped.  The flag is
+	   only cleared, the modifiers are kept (the classic menu's rule, moved
+	   here with it in Phase 6): clearing ctrl/lalt/lshift on overflow wiped
+	   modifiers still HELD -- LSHIFT + keypad +/- changed the volume once,
+	   then nothing until shift went up and down again.  The queue delivers
+	   key-ups reliably; a stuck modifier would need a deeper queue, not
+	   state thrown away. */
 	if (osd_keyq_lost)
 		osd_keyq_lost = 0;
 	if (c)

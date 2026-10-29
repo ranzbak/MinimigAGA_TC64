@@ -4,11 +4,10 @@
 // what osd_text.v would hold -- cell RAM (lane writes), font RAM, staging
 // palette, txt_cfg at each commit toggle -- from the osd_txt bus, and checks
 // every byte against the spec:
-//   1. VERSION (0x88) reply bytes 10..13: B5 02 40 20 with OSD_TEXT = 1
-//      (layer version 2 since OSD Phase 4), byte 14 the status
-//      {7'd0, rtg_ena} (rtg_ena 0 here; sim/osd_status runs both levels);
-//      bytes 10..14 MINION_VER on an instance with OSD_TEXT = 0 (an old
-//      core's answer)
+//   1. VERSION (0x88) reply bytes 10..13: B5 02 40 20 (layer version 2
+//      since OSD Phase 4), byte 14 the status {7'd0, rtg_ena} (rtg_ena 0
+//      here; sim/osd_status runs both levels).  (The OSD_TEXT = 0 instance,
+//      MINION_VER there, went with the parameter in Phase 6.)
 //   2. 0x2C mode 0: char,attr pairs, both lanes per cell, the cell + 1 and
 //      wrapping 0x7FF -> 0x000; an odd last byte writes nothing and the
 //      next transfer starts with a char again; mode 1 writes lane 0 only,
@@ -18,8 +17,8 @@
 //   5. 0x5C: five bytes = txt_cfg[39:0], the fifth toggles txt_commit once;
 //      a sixth byte is ignored; four bytes change the staging but no commit
 //   6. an unknown command (0x6C) writes nothing
-//   7. 0x0C (the legacy bitmap OSD) still writes osdbuf, and no text-layer
-//      command touches osdbuf
+//   7. 0x0C (the bitmap OSD's buffer write until Phase 6) is an unknown
+//      command now: it writes nothing
 // Every write enable is one clk wide (the counts are clk samples).
 // Mutants (iverilog -D): OSD_TXT_MUTANT_COMMIT (commit never toggles),
 // OSD_TXT_MUTANT_LANE (char / attr lanes swapped): each must FAIL.
@@ -32,28 +31,15 @@ reg [1:0] ph = 0;
 always @(posedge clk) ph <= ph + 2'd1;
 wire clk7_en = (ph == 2'd0), clk7n_en = (ph == 2'd2);
 reg _scs = 1'b1, sdi = 1'b0, sck = 1'b1;
-wire sdo, sdo0;
-wire [106:0] txt, txt0;
+wire sdo;
+wire [106:0] txt;
 
-userio_osd #(.OSD_TEXT(1)) dut (
+userio_osd dut (
 	.clk(clk), .clk7_en(clk7_en), .clk7n_en(clk7n_en), .reset(1'b0),
-	.c1(1'b0), .c3(1'b0), .sol(1'b0), .sof(1'b0), .varbeamen(1'b0), .rtg_ena(1'b0),
+	.rtg_ena(1'b0),
 	.osd_ctrl(8'h00), .in_diag(32'h0), .in_diag_clr(),
 	._scs(_scs), .sdi(sdi), .sdo(sdo), .sck(sck), .osd_rx_seq(), .osd_txt(txt),
-	.osd_blank(), .osd_pixel(), .osd_enable(), .key_disable(),
-	.memory_config(), .chipset_config(), .floppy_config(),
-	.scanline(), .dither(), .crt_fx(),
-	.ide_config0(), .ide_config1(), .cpu_config(), .autofire_config(), .cd32pad(),
-	.usrrst(), .cpurst(), .cpuhlt(), .fifo_full(),
-	.host_cs(), .host_adr(), .host_we(), .host_bs(), .host_wdat(),
-	.host_rdat(16'h0000), .host_ack(1'b0));
-// the same SPI on a core without the layer (OSD_TEXT 0): only its VERSION reply is read
-userio_osd #(.OSD_TEXT(0)) dut0 (
-	.clk(clk), .clk7_en(clk7_en), .clk7n_en(clk7n_en), .reset(1'b0),
-	.c1(1'b0), .c3(1'b0), .sol(1'b0), .sof(1'b0), .varbeamen(1'b0), .rtg_ena(1'b0),
-	.osd_ctrl(8'h00), .in_diag(32'h0), .in_diag_clr(),
-	._scs(_scs), .sdi(sdi), .sdo(sdo0), .sck(sck), .osd_rx_seq(), .osd_txt(txt0),
-	.osd_blank(), .osd_pixel(), .osd_enable(), .key_disable(),
+	.key_disable(),
 	.memory_config(), .chipset_config(), .floppy_config(),
 	.scanline(), .dither(), .crt_fx(),
 	.ide_config0(), .ide_config1(), .cpu_config(), .autofire_config(), .cd32pad(),
@@ -96,18 +82,15 @@ always @(posedge clk) begin
 	commit_q <= t_commit;
 	if (t_commit != commit_q) begin n_commit = n_commit + 1; cfg_at_commit = t_cfg; end
 end
-// the legacy bitmap: count its writes
-integer n_osdbuf = 0;
-always @(posedge clk) if (clk7_en && dut.wren) n_osdbuf = n_osdbuf + 1;
 
 // ---- SPI as cfide clocks it --------------------------------------------------------------
-reg [7:0] rxb, rxb0;
+reg [7:0] rxb;
 task spi_byte(input [7:0] tx);
 	integer k;
 	begin
 		for (k = 7; k >= 0; k = k - 1) begin
 			sck = 1'b0; sdi = tx[k]; #500;
-			rxb[k] = sdo; rxb0[k] = sdo0;
+			rxb[k] = sdo;
 			sck = 1'b1; #500;
 		end
 	end
@@ -124,24 +107,19 @@ task check(input [8*48:1] what, input [39:0] got, input [39:0] want);
 endtask
 
 reg [7:0] ver [0:14];
-reg [7:0] ver0 [0:14];
-integer b0, b1, b2, b3, bo;
+integer b0, b1, b2, b3;
 initial begin
 	#5000;
 	// 1. VERSION
 	open(8'h88);
-	for (i = 0; i < 15; i = i + 1) begin spi_byte(8'hFF); ver[i] = rxb; ver0[i] = rxb0; end
+	for (i = 0; i < 15; i = i + 1) begin spi_byte(8'hFF); ver[i] = rxb; end
 	close;
 	check("VERSION byte 4 (magic)", ver[4], 8'hA4);
 	check("VERSION bytes 10..13", {ver[10], ver[11], ver[12], ver[13]}, 32'hB5024020);
 	check("VERSION byte 14 (status, rtg_ena 0)", ver[14], 8'h00);
-	check("OSD_TEXT 0: bytes 10..14 = MINION_VER", {ver0[10], ver0[11], ver0[12], ver0[13], ver0[14]},
-	      {5{ver0[3]}});   // byte 3 is MINION_VER on every core
-	check("OSD_TEXT 0: bytes 0..5 as with the layer", {ver0[0], ver0[1], ver0[2], ver0[4], ver0[5]},
-	      {ver[0], ver[1], ver[2], ver[4], ver[5]});
 
 	// 2. 0x2C
-	b0 = n_twe; bo = n_osdbuf;
+	b0 = n_twe;
 	open(8'h2C); spi_byte(8'h00); spi_byte(8'h07); spi_byte(8'hFE);        // pairs at 0x7FE
 	spi_byte(8'h41); spi_byte(8'h1F); spi_byte(8'h42); spi_byte(8'h2E); spi_byte(8'h43); spi_byte(8'h3D);
 	close;
@@ -216,15 +194,13 @@ initial begin
 	open(8'h6C); for (i = 0; i < 8; i = i + 1) spi_byte(8'h01 + i); close;
 	check("0x6C: no writes", (n_twe - b0) + (n_fwe - b1) + (n_pwe - b2) + (n_commit - b3), 0);
 	check("0x6C: txt_cfg unchanged", t_cfg, 40'h010C0B0A02);
-	check("text commands: no osdbuf writes", n_osdbuf - bo, 0);
 
-	// 7. 0x0C, the legacy bitmap
-	b0 = n_twe; b1 = n_fwe; b2 = n_pwe; b3 = n_commit; bo = n_osdbuf;
+	// 7. 0x0C, the bitmap OSD's write until Phase 6: an unknown command
+	b0 = n_twe; b1 = n_fwe; b2 = n_pwe; b3 = n_commit;
 	open(8'h0C); spi_byte(8'h00); spi_byte(8'h00); spi_byte(8'h00); spi_byte(8'h03);
 	spi_byte(8'hA1); spi_byte(8'hB2); spi_byte(8'hC3); close;
-	check("0x0C: 3 osdbuf writes", n_osdbuf - bo, 3);
-	check("0x0C: line 3 bytes 0..2", {dut.osdbuf[11'h300], dut.osdbuf[11'h301], dut.osdbuf[11'h302]}, 24'hA1B2C3);
 	check("0x0C: no text layer writes", (n_twe - b0) + (n_fwe - b1) + (n_pwe - b2) + (n_commit - b3), 0);
+	check("0x0C: txt_cfg unchanged", t_cfg, 40'h010C0B0A02);
 
 	$display("osd text spi: %0d errors", err);
 	$finish;

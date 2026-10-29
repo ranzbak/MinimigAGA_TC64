@@ -1,86 +1,101 @@
 /* Bitstream / firmware lock-step check (lockstep.h, design 5.5): the boot
    ROM is part of the bitstream, so the peripheral's VERSION register names
-   the card path this bitstream has; RV32OSDB.BIN names the one it was built
-   for in its trailer.  Different (or no trailer): stop, never run it, and
-   say so on the UART, on the OSD and with BootDiag's colour (ErrorCode
-   0x0ff: cyan). */
+   the card path this bitstream has and the OSD's VERSION reply its text
+   layer; RV32OSDB.BIN names the card path it was built for and the layer
+   it needs in its trailer.  Different (or no trailer): stop, never run it,
+   and say so on the UART, on the OSD text layer and with BootDiag's colour
+   (ErrorCode 0x0ff: cyan). */
 #include "lockstep.h"
 #include "small_printf.h"
 #include "../ctrl/sdc.h"
 
 #ifdef HOSTTEST
 /* test/lockstep_test.c: what goes to cfide's SPI (the OSD) */
-void hosttest_osd(int what, unsigned char b);	/* 0 select, 1 deselect, 2 a byte, 3 the SPI speed */
+void hosttest_osd(int what, unsigned char b);	/* 0 select, 1 deselect, 2 a byte */
+unsigned char hosttest_osd_rx(void);		/* a byte 0xff out, the reply in */
 #define OSD_ON()     hosttest_osd(0, 0)
 #define OSD_OFF()    hosttest_osd(1, 0)
 #define OSD_TX(b)    hosttest_osd(2, (b))
-#define OSD_FAST()   hosttest_osd(3, 1)
+#define OSD_RX()     hosttest_osd_rx()
 #else
 #include "spi.h"
 #define OSD_ON()     EnableOsd()
 #define OSD_OFF()    DisableOsd()
 #define OSD_TX(b)    (HW_SPI(HW_SPI_DATA) = (b))
-#define OSD_FAST()   (HW_SPI(HW_SPI_SPEED) = 1)	/* fw/ctrl's SPI_fast(): the OSD takes it */
+/* at the ROM's slow SPI (SPI_slow, ~8 us a bit) userio_osd has the next
+   reply byte in place long before the byte starts: no OSD_RDY wait */
+#define OSD_RX()     (HW_SPI(HW_SPI_DATA) = 0xff, HW_SPI(HW_SPI_DATA))
 #endif
 
-/* "FIRMWARE MISMATCH": the glyphs of fw/ctrl/charrom.h (columns 0-6 of
-   each, LSB the top pixel; column 7 is 0 in all of them), the message as
-   offsets into the table */
-static const unsigned char glyph[] = {
-	0x00, 0x7f, 0x7f, 0x09, 0x09, 0x01, 0x01,	/*  0 F */
-	0x00, 0x00, 0x41, 0x7f, 0x7f, 0x41, 0x00,	/*  7 I */
-	0x00, 0x7f, 0x7f, 0x09, 0x19, 0x7f, 0x66,	/* 14 R */
-	0x7f, 0x7f, 0x06, 0x0c, 0x06, 0x7f, 0x7f,	/* 21 M */
-	0x7f, 0x7f, 0x30, 0x18, 0x30, 0x7f, 0x7f,	/* 28 W */
-	0x00, 0x7e, 0x7f, 0x09, 0x09, 0x7f, 0x7e,	/* 35 A */
-	0x00, 0x7f, 0x7f, 0x49, 0x49, 0x41, 0x41,	/* 42 E */
-	0x00, 0x26, 0x6f, 0x4d, 0x59, 0x7b, 0x32,	/* 49 S */
-	0x00, 0x01, 0x01, 0x7f, 0x7f, 0x01, 0x01,	/* 56 T */
-	0x00, 0x1c, 0x3e, 0x63, 0x41, 0x41, 0x41,	/* 63 C */
-	0x00, 0x7f, 0x7f, 0x08, 0x08, 0x7f, 0x7f,	/* 70 H */
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,	/* 77 space */
-};
-static const unsigned char msg[LOCKSTEP_OSD_CHARS] = {
-	0, 7, 14, 21, 28, 35, 14, 42, 77, 21, 7, 49, 21, 35, 56, 63, 70
-};
-
-/* The whole OSD buffer (8 lines of 256 bytes, userio_osd.v: line 0 from the
-   write command's 4th data byte on, the address counting on through the
-   lines) in one frame: blank, the message from LOCKSTEP_OSD_AT; then the
-   OSD on.  Stale menu lines from before a soft restart go too. */
-static void osd_mismatch(void)
+/* the core's text layer version: OSD_CMD_VERSION (0x88) reply byte 11 when
+   byte 10 is the magic, else 0 (no layer: an older core answers MINION_VER,
+   a day <= 31, there) */
+static unsigned osd2_version(void)
 {
+	unsigned char b10 = 0, b11 = 0;
 	int i;
-	unsigned k;
 
-	OSD_FAST();
 	OSD_ON();
-	OSD_TX(0x0c);			/* write the OSD buffer: 4 bytes, the 4th line 0 ... */
-	for (i = -4; i < 2048; i++) {	/* ... then the 2048 buffer bytes */
-		k = (unsigned)(i - LOCKSTEP_OSD_AT);	/* before the message: wraps high */
-		OSD_TX(k < 8 * LOCKSTEP_OSD_CHARS && (k & 7) != 7 ? glyph[msg[k >> 3] + (k & 7)] : 0);
+	OSD_TX(0x88);
+	for (i = 0; i < 12; i++) {
+		b10 = b11;
+		b11 = OSD_RX();
 	}
 	OSD_OFF();
-	osd_cmd(0x28, 0x01);		/* OSD control: enable */
+	return b10 == LOCKSTEP_OSD2_MAGIC ? b11 : 0;
+}
+
+/* the OSD frames of the message, each {length, bytes}, 0 ends:
+   the palette (0x4C from entry 0, {mode << 6, r, g, b}): entry 0 (the
+   cells' background) red, entry 1 white, both opaque;
+   the message into cells 0..16 (0x2C, char/attr pairs from cell 0; attr
+   0x01: foreground 1, background 0);
+   the window (0x5C): enabled, scale 2, at (x0, y0), 17 x 1 cells; its 5th
+   byte commits palette and window at the layer's next frame.
+   Cells outside the 17 x 1 window (a soft restart's menu) stay hidden. */
+#define M(c) (c), 0x01
+static const unsigned char osd_msg[] = {
+	10, 0x4c, 0, 0x00, 0xe0, 0x3c, 0x3c, 0x00, 0xf0, 0xf0, 0xf0,
+	4 + 2 * LOCKSTEP_OSD_CHARS, 0x2c, 0, 0, 0,
+	M('F'), M('I'), M('R'), M('M'), M('W'), M('A'), M('R'), M('E'), M(' '),
+	M('M'), M('I'), M('S'), M('M'), M('A'), M('T'), M('C'), M('H'),
+	6, 0x5c, 0x03, LOCKSTEP_OSD_X0, LOCKSTEP_OSD_Y0, LOCKSTEP_OSD_CHARS, 1,
+	0
+};
+
+static void osd_mismatch(void)
+{
+	const unsigned char *p = osd_msg;
+	unsigned n;
+
+	while ((n = *p++)) {
+		OSD_ON();
+		while (n--)
+			OSD_TX(*p++);
+		OSD_OFF();
+	}
 }
 
 void fw_start(const unsigned char *img, unsigned size)
 {
 	unsigned need = SDC_R(SDC_VER);
 	unsigned have = ~0u;	/* no trailer: matches no 16-bit VERSION */
+	unsigned osd_need = 0, osd_have = osd2_version();
 
 	if (size >= FW_TRAILER_LEN) {
 		const unsigned char *t = img + size - FW_TRAILER_LEN;
-		if (t[0] == 'S' && t[1] == 'D' && t[2] == 'C' && t[3] == 'V' && !t[4] && !t[5])
+		if (t[0] == 'S' && t[1] == 'D' && t[2] == 'C' && t[3] == 'V') {
+			osd_need = t[4] << 8 | t[5];
 			have = t[6] << 8 | t[7];
+		}
 	}
-	if (have == need) {
+	if (have == need && osd_have >= osd_need) {
 		printf("Firmware SDC %04x, bitstream SDC %04x\n", have, need);
 		_boot();
 	}
-	printf("Firmware does not match this bitstream (need SDC %04x)\n", need);
+	printf("Firmware does not match this bitstream (need SDC %04x, OSD layer <= %d)\n", need, osd_have);
 	osd_mismatch();		/* before ErrorCode: that stays the last hardware access (no chipset
-				   reset touches the OSD's enable or buffer) */
+				   reset touches the text layer) */
 	ErrorCode(0x0ff);
 	boot_halt();
 }

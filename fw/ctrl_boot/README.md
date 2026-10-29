@@ -161,37 +161,51 @@ gone), so no poll loop can hang.
 ## Lock-step check (`lockstep.c`)
 
 A firmware file built for another card path cannot work with this
-bitstream (design 5.5), so the ROM, which is part of the bitstream, refuses
-it. `RV32OSDB.BIN` ends with an 8-byte trailer that `fw/ctrl/Makefile`
-appends after `objcopy` (`_start` stays byte 0):
+bitstream (design 5.5), and since the classic bitmap OSD is gone (OSD
+redesign Phase 6) a firmware whose menu needs the 720p text layer cannot
+work on a core without it, so the ROM, which is part of the bitstream,
+refuses both. `RV32OSDB.BIN` ends with an 8-byte trailer that
+`fw/ctrl/Makefile` appends after `objcopy` (`_start` stays byte 0):
 
-    'S' 'D' 'C' 'V' 00 00 <SDC_VERSION 15:8> <SDC_VERSION 7:0>
+    'S' 'D' 'C' 'V' <OSD2_REQUIRED 15:8> <OSD2_REQUIRED 7:0> <SDC_VERSION 15:8> <SDC_VERSION 7:0>
 
-(`fw/ctrl/sdctrailer.c`, compiled from `sdc.h`: the one place the version
-is written; `make -C fw/ctrl check` (h) checks the built file.) After
-`LoadFile`, `fw_start()` takes the last 8 bytes of the file (its length
+(`fw/ctrl/sdctrailer.c`, compiled from `sdc.h` and `osd2.h`: the one place
+each is written; `make -C fw/ctrl check` (h) checks the built file).
+`OSD2_REQUIRED` is the text layer version the firmware needs (2 today), 0
+= none: what a firmware from before the text layer has there. After
+`LoadFile`, `fw_start()` reads the core's text layer from the OSD
+(`OSD_CMD_VERSION` 0x88, reply byte 10 the magic 0xB5, byte 11 the layer
+version; no magic = no layer = 0; at the ROM's slow SPI, where the reply
+needs no `OSD_RDY` wait), takes the last 8 bytes of the file (its length
 from the FAT directory entry, not a fixed offset) and compares them with
-the peripheral's VERSION register:
+the peripheral's VERSION register and that layer version:
 
-- match: `Firmware SDC 5D02, bitstream SDC 5D02`, `fence.i`, jump to 0x2000;
-- anything else (another version, no `SDCV` magic, bytes 4-5 not 0, a file
-  shorter than 8 bytes; a firmware from before the trailer has none):
-  `Firmware does not match this bitstream (need SDC 5D02)`, the OSD
-  message (below), `ErrorCode(0x0ff)` (cyan on the Amiga screen through
-  BootDiag; the ROM's last hardware access, as `sim/host_bridge`
+- match (SDC equal, layer >= `OSD2_REQUIRED`): `Firmware SDC 5D02,
+  bitstream SDC 5D02`, `fence.i`, jump to 0x2000. An old firmware (bytes
+  4-5 = 0) boots on any core with its SDC version;
+- anything else (another version, no `SDCV` magic, a file shorter than 8
+  bytes, a firmware from before the trailer; a layer older than
+  `OSD2_REQUIRED` or none): `Firmware does not match this bitstream (need
+  SDC 5D02, OSD layer <= 2)` (the bitstream's SDC version and text layer),
+  the OSD message (below), `ErrorCode(0x0ff)` (cyan on the Amiga screen
+  through BootDiag; the ROM's last hardware access, as `sim/host_bridge`
   `boot_mismatch` checks), then `boot_halt()`: interrupts off, the CPU
   parks. No retry, no fallback.
 
-The OSD message (design 5.5; final review fix wave, Paul 2026-10-25):
-`FIRMWARE MISMATCH`, centred on OSD line 3 (`LOCKSTEP_OSD_AT`), the rest of
-the OSD blank, then the OSD switched on. One write frame of the whole buffer
-(`0c 00 00 00 00` and 2,048 bytes: the old menu of a soft restart goes too)
-and `28 01`, with cfide's SPI at `fw/ctrl`'s `SPI_fast` speed (1). The
-glyphs are `fw/ctrl/charrom.h`'s, columns 0-6 of the 11 letters and the
-space (84 bytes); the message is 17 table offsets. The two-byte OSD command
-frames of `main` / `ErrorCode` and the OSD's enable share `osd_cmd()`
-(`boot.c`), which paid for most of it. `ErrorCode`'s chipset reset does not
-touch the OSD (its enable and buffer have no reset), so the message stays.
+A boot ROM from before `OSD2_REQUIRED` (bitstreams up to osd-int bc677a44)
+wants bytes 4-5 = 0: it refuses every firmware that needs the text layer,
+with its own message.
+
+The OSD message (design 5.5; on the text layer since OSD redesign Phase 6):
+`FIRMWARE MISMATCH`, white on red, in a 17 x 1 cell window at scale 2,
+centred on the 720p raster (x0 63, y0 43 in 8-pixel units). Three frames
+from one table (`osd_msg`): the palette (`4c 00`, entry 0 red, entry 1
+white, opaque), the 17 cells (`2c 00 00 00`, char/attr pairs from cell 0,
+attr `01`), the window (`5c 03 3f 2b 11 01`, its fifth byte the commit).
+No font upload: the layer's font RAM comes up with `osd_font.mem`
+(`test/` checks the message's glyphs there). Cells outside the window (a
+soft restart's menu) stay hidden. `ErrorCode`'s chipset reset does not
+touch the text layer, so the message stays.
 
 The boot ROM and `RV32OSDB.BIN` must come from the same commit; a new
 `SDC_VERSION` in `sdc.h` (a new peripheral contract) changes both, and
@@ -214,7 +228,7 @@ On the controller UART (115200), every line printed by `small_printf`
 | `SD read <lba>: R1 <r1>, try <t>` / `token <b>, try <t>` / `CRC <st>, try <t>` | a failed sector try (token `FF`: none in 250 ms; CRC: the STATUS bits) |
 | `SD: SCK div 13` | the step down at a read's 3rd try |
 | `Firmware SDC <v>, bitstream SDC <v>` | the lock-step check passed |
-| `Firmware does not match this bitstream (need SDC <v>)` | it did not |
+| `Firmware does not match this bitstream (need SDC <v>, OSD layer <= <n>)` | it did not (`<n>`: the core's text layer, 0 = none) |
 
 ## Error codes (`ErrorCode`, the BootDiag colour on the Amiga screen)
 
@@ -239,7 +253,8 @@ card`); after `0x0ff` and `0xf0f` it halts.
 
 Gate: `_end` below `0x1400` (`fw/ctrl/Makefile` check (g): the firmware's
 stack floor in the shared boot BRAM); today `_end = 0x13D4` (44 bytes
-left; `0x1328` before the OSD message of the lock-step stop, `0x1040` with
+left, as before the text layer's message replaced the bitmap one;
+`0x1328` before the OSD message of the lock-step stop, `0x1040` with
 the card on cfide's SPI). `boot.ld` keeps its
 `0x1C00` assert as the outer limit. (The x1-x31 clear in `crt0.S` added 60
 bytes over the first build.)
@@ -249,18 +264,25 @@ bytes over the first build.)
 `test/lockstep_test.c` runs `fw_start()` (`lockstep.c`, gcc, ASan + UBSan,
 `-DHOSTTEST`: `sdc.h`'s `SDC_R` reads the test's mock VERSION) with the
 ROM's own `small_printf` (`putchar` renamed: the UART text is compared byte
-for byte) and mock `_boot` / `ErrorCode` / `boot_halt`: trailer 5D00 against
-VERSION 5D01 (message + `ErrorCode(0x0ff)` + halt), 5C01 (the high byte),
-5D01 (jumps), VERSION 5D02 (the message names the register's value), no
-magic, wrong magic,
-bytes 4-5 not 0, the trailer one byte off the end either way, a trailer
-inside the file but none at its end, an odd length, 8 / 7 / 0 bytes, 16-bit
-compare; every mismatch case also checks the OSD bytes (`hosttest_osd`:
-SPI_fast, the one buffer frame against `fw/ctrl/charrom.h`'s glyphs of
-`FIRMWARE MISMATCH` at line 3, every other byte 0, then `28 01`) and every
-boot case that the OSD is not touched; and fw/ctrl's built `RV32OSDB.BIN` (`FWBIN=`, default
-`fw/ctrl/build/RV32OSDB.BIN`, skipped with a note when not built) boots with
-VERSION = `SDC_VERSION` and stops with `SDC_VERSION + 1`.
+for byte), mock `_boot` / `ErrorCode` / `boot_halt` and a mock OSD whose
+`OSD_CMD_VERSION` reply has the text layer version 2, 1, 3 or none
+(`hosttest_osd_rx`): trailer 5D00 against VERSION 5D01 (message +
+`ErrorCode(0x0ff)` + halt), 5C01 (the high byte), 5D01 (jumps), VERSION
+5D02 (the message names the register's value), no magic, wrong magic, the
+trailer one byte off the end either way, a trailer inside the file but none
+at its end, an odd length, 8 / 7 / 0 bytes, 16-bit compare; then
+`OSD2_REQUIRED` x the core: an old firmware (00 00) boots on layer 2, 1 and
+none, a new one (00 02) only on layer 2 and stops on 1 and none (and with
+the wrong SDC on all three), 3 against layers 2 and 3, 0x0100 (16 bits
+compared), 1 against layer 1 and none. Every run checks the VERSION read
+(`88` + 12 reply bytes) as the first OSD frame, every boot that it is the
+only one, every mismatch the three message frames above and that
+`ErrorCode` comes after them. The message's glyphs must not be blank in the
+layer's power-up font (`rtl/openaars/adv7511/osd_font.mem`, the test's
+first argument). fw/ctrl's built `RV32OSDB.BIN` (`FWBIN=`, default
+`fw/ctrl/build/RV32OSDB.BIN`, skipped with a note when not built) must
+carry `OSD2_REQUIRED` 2, boot with VERSION = `SDC_VERSION` on layer 2 and
+stop with `SDC_VERSION + 1`, on layer 1 and without a layer.
 
 `test/minfat_test.c` links `minfat.c` and `swap.c` (gcc, ASan + UBSan) against a
 mock `sd_read_sector()` that reads a card image made by `tools/sim/mkcard.sh`.

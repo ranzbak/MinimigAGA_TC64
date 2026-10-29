@@ -23,9 +23,6 @@ module minimig_virtual_top #(
     parameter havespirtc = 1,
     parameter havei2c = 1,
     parameter havevpos = 0,
-    // 1: the top shows the OSD text layer of OSD_TXT (720p, osd_text.v in
-    // pal_to_ddr.sv); the OSD then says so in its VERSION reply
-    parameter osd_text = 0,
     // 1: the SD card engine (findings/sdcard-engine/design.md): the card's
     // pins from rtl/host/sdcard_spi.v (registers at 0xFFFFFF00..2C through
     // cfide's ext_* port, interrupt on cfide irq_src(4), card detect
@@ -562,23 +559,18 @@ always @ (posedge CLK_114) begin
 end
 
 
-// OSD glue
-wire osd_window;
-wire osd_pixel;
-wire [1:0] osd_r;
-wire [1:0] osd_g;
-wire [1:0] osd_b;
-assign osd_r = osd_pixel ? 2'b11 : 2'b00;
-assign osd_g = osd_pixel ? 2'b11 : 2'b00;
-assign osd_b = osd_pixel ? 2'b11 : 2'b10;
+// The picture out: the registers above, unchanged.  (The bitmap OSD's mix
+// was here, combinational on these outputs -- osd_window ? {osd_r,
+// red_reg[7:2]} : red_reg -- and went with the bitmap OSD in OSD redesign
+// Phase 6, so VGA_R/G/B keep their one register stage, red_reg & co., from
+// VGA_PIXEL's domain: the RTG 1:1 path's strobe tap RTG_STB_LAT is the same.
+// The OSD is the 720p text layer in the HDMI chain, written through OSD_TXT.)
 assign VGA_CS           = cs_reg;
 assign VGA_VS           = vsyncpol ^ vs_reg;
 assign VGA_HS           = hsyncpol ^ hs_reg;
-//assign VGA_R[7:0]       = osd_window ? {osd_r,red_reg[7:2]} : red_reg[7:0];
-assign VGA_G[7:0]       = osd_window ? {osd_g,green_reg[7:2]} : green_reg[7:0];
-assign VGA_B[7:0]       = osd_window ? {osd_b,blue_reg[7:2]} : blue_reg[7:0];
-// The lengths we go to in order to make an otherwise unused signal visible in signaltap!
-assign VGA_R[7:0]       = osd_window ? {osd_r,red_reg[7:2]} : red_reg[7:0];
+assign VGA_R[7:0]       = red_reg[7:0];
+assign VGA_G[7:0]       = green_reg[7:0];
+assign VGA_B[7:0]       = blue_reg[7:0];
 
 
 
@@ -1270,7 +1262,6 @@ fpga_temp fpga_temp_inst (
 minimig #(
     .NTSC(1'b0),
     .CORE_CAPS(CORE_CAPS),
-    .OSD_TEXT(osd_text ? 1 : 0),
     // The third Zorro-III board is offered either way now: SDRAM scraps
     // (2/4 MB) without the DDR3, the DDR3 fast RAM board (16 MB) with it.
     // Both are decoded against the base the OS assigns, so neither adds
@@ -1406,8 +1397,6 @@ minimig #(
     .crt_cfg      (CRT_CFG          ), // HDMI CRT emulation: OSD video config
     .vid_hires    (VID_HIRES        ), // HDMI CRT emulation: Denise HIRES
     .vid_shres    (VID_SHRES        ), // HDMI CRT emulation: Denise SHRES
-    .osd_blank_out(osd_window       ), // Let the toplevel dither module handle drawing the OSD.
-    .osd_pixel_out(osd_pixel        ),
     .rtg_ena      (rtg_ena_mm       ),
     .ext_int2     (1'b0             ),
     .ext_int6     (aud_int          ),
