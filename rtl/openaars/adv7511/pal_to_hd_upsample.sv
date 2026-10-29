@@ -217,6 +217,10 @@ assign w_toggle = (s_next_buf[3] != s_next_buf[2]);
 // input sync edges
 logic [1:0] s_pal_hsync_in = 2'd0;
 logic [1:0] s_pal_vsync_in = 2'd0;
+// (2026-10-29) r_pal_hneg_in reloads every copy of r_addra at the line end,
+// like r_rat_in above: with one flop a re-placed build (osd-int 402ea88f,
+// ExtraTimingOpt) missed clk_114 by 0.139 ns on three r_addra replicas.
+(* max_fanout = 16 *)
 logic       r_pal_hneg_in  = 1'b0;   // input hsync falling edge: a line ends
 logic       r_pal_hpos_in  = 1'b0;   // ... rising edge
 logic       r_pal_vneg_in  = 1'b0;   // input vsync falling edge
