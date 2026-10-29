@@ -412,9 +412,12 @@ firmware is there under the previous chain's name `RV32OSDA.BIN`): the
 error path, up to the end of its first retry. `run.sh boot_mismatch` boots
 a card whose `RV32OSDB.BIN` has no trailer (the image of an older
 firmware): the ROM must print `Firmware does not match this bitstream (need
-SDC 5D02)`, write its OSD message (two OSD frames: the buffer, the enable;
-since the final review's fix wave), report `ErrorCode(0x0ff)` and halt (no
-hw access after it).
+SDC 5D02, OSD layer <= 0)` (the stub's VERSION reply has no text layer),
+write its OSD message (three text layer frames: palette, cells, window;
+since OSD redesign Phase 6, before it the bitmap buffer and the enable),
+report `ErrorCode(0x0ff)` and halt (no hw access after it). Every boot
+run's ROM first reads the OSD's VERSION reply (the text layer version,
+`fw/ctrl_boot` README "Lock-step check").
 `run.sh boot_both` is `boot` (the same bench test, `+TEST=boot`, and
 `expect.txt`) on a card for old and new bitstreams: an old `RV32OSDA.BIN`
 (the image without the trailer) ahead of `RV32OSDB.BIN` in the directory.

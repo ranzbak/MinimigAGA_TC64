@@ -24,7 +24,7 @@
  * they never tear.
  *
  * Rows and columns are cell coordinates (0..OSD2_ROWS-1, 0..OSD2_COLS-1);
- * anything outside is clipped.  Nothing here touches the legacy bitmap OSD.
+ * anything outside is clipped.
  *
  * SPI commands (userio_osd.v, the OSD chip select):
  *   0x2C TXT_WR   mode (0 pairs, 1 chars, 2 attrs), cell[10:8], cell[7:0], data...
@@ -48,6 +48,12 @@
    2026-10-27) answers MINION_VER at byte 14 and decodes every address of
    0xFFFFFF5x as the PAL position: neither is used below this version. */
 #define OSD2_V_STATUS 2
+/* the layer version this firmware needs: the lock-step trailer's bytes 4-5
+   (sdctrailer.c; the boot ROM refuses the file on a core whose layer is
+   older or missing, fw/ctrl_boot/lockstep.c).  The menu is the layer's
+   only (the classic bitmap OSD is gone, OSD redesign Phase 6), and it uses
+   the status byte and the RTG Video Pos register: version 2. */
+#define OSD2_REQUIRED 2
 #define OSD2_ST_RTG   0x01    /* status bit 0: the RTG screen is on */
 
 /* SPI command bytes */
@@ -100,8 +106,9 @@ enum {
 #define OSD2_BOX_V      '|'
 #define OSD2_BOX_CORNER '+'
 
-/* 0: the core has no text layer (or predates the question): use the legacy
-   OSD.  Otherwise the layer's version (VERSION reply byte 11). */
+/* 0: the core has no text layer (or predates the question): no menu (the
+   boot ROM does not start this firmware on such a core, see OSD2_REQUIRED).
+   Otherwise the layer's version (VERSION reply byte 11). */
 extern unsigned char osd2_caps;
 
 /* the shadow of the cell RAM, [row][col]; read only outside osd2.c (the

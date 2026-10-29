@@ -1,7 +1,8 @@
 # Host tests of the boot ROM (gcc + ASan/UBSan).  `make` builds, makes four
 # card images with tools/sim/mkcard.sh and runs minfat_test on each (the FAT
 # code), then lockstep_test (the bitstream / firmware lock-step check,
-# ../lockstep.c with the ROM's small_printf), also on fw/ctrl's built
+# ../lockstep.c with the ROM's small_printf; the mismatch message's glyphs
+# in the text layer's power-up font), also on fw/ctrl's built
 # firmware file when it exists (FWBIN=<file> for another one).  The file
 # name (RV32OSDB.BIN, 8.3 entry RV32OSDBBIN) comes from fw/ctrl/fwname.mk,
 # as in the ROM's build.
@@ -43,11 +44,14 @@ $(OUT)/lockstep.o: $(SRC)/lockstep.c $(SRC)/lockstep.h $(SRC)/../ctrl/sdc.h $(SR
 	$(CC) $(CFLAGS) $(LSFLAGS) -c -o $@ $<
 $(OUT)/small_printf.o: $(SRC)/small_printf.c $(SRC)/small_printf.h $(SRC)/uart.h | $(OUT)
 	$(CC) $(CFLAGS) $(LSFLAGS) -c -o $@ $<
-$(OUT)/lockstep_test.o: lockstep_test.c $(SRC)/lockstep.h $(SRC)/../ctrl/sdc.h $(SRC)/../ctrl/charrom.h | $(OUT)
+$(OUT)/lockstep_test.o: lockstep_test.c $(SRC)/lockstep.h $(SRC)/../ctrl/sdc.h | $(OUT)
 	$(CC) $(CFLAGS) $(LSFLAGS) -c -o $@ $<
 $(OUT)/lockstep_test: $(OUT)/lockstep_test.o $(OUT)/lockstep.o $(OUT)/small_printf.o
 	$(CC) $(CFLAGS) -o $@ $^
 FWBIN ?= $(TOP)/fw/ctrl/build/$(FW_FILE)
+# the OSD text layer's power-up font (osd_text.v's FONT_FILE): the mismatch
+# message needs no font upload, so its glyphs must be there
+OSD_FONT := $(TOP)/rtl/openaars/adv7511/osd_font.mem
 
 # Card images.  Contents: $(FW_FILE) = 3000 deterministic pseudo-random bytes,
 # OLDOSDAD.BIN = another firmware-like name ahead of it on the card (a decoy, as
@@ -90,7 +94,7 @@ test: $(OUT)/minfat_test $(OUT)/mbr_file.img $(OUT)/mbr_nofile.img $(OUT)/superf
 	$(OUT)/minfat_test $(OUT)/superfloppy.img $(OUT)/fw.bin
 	$(OUT)/minfat_test $(OUT)/fat32.img $(OUT)/big.bin
 	@echo "minfat host test: ALL PASS"
-	$(OUT)/lockstep_test $(wildcard $(FWBIN))
+	$(OUT)/lockstep_test $(OSD_FONT) $(wildcard $(FWBIN))
 	@[ -f "$(FWBIN)" ] || echo "lockstep host test: $(FWBIN) not built, its two cases skipped (make -C fw/ctrl)"
 
 clean:

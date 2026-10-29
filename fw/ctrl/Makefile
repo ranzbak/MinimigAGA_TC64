@@ -9,7 +9,8 @@
 #                 of the previous (vbcc) toolchain in the sources,
 #                 (e) the C library guard, (f) no #define true/false,
 #                 (g) the boot ROM image ends below the stack floor 0x1400,
-#                 (h) RV32OSDB.BIN ends with the lock-step trailer (SDC_VERSION),
+#                 (h) RV32OSDB.BIN ends with the lock-step trailer
+#                     (OSD2_REQUIRED, SDC_VERSION),
 #                 (i) the committed boot ROM image looks for this file name,
 #                 (k) osd_logo.h is tools/mklogo.py's output of logo.h
 #   make stack    the 20 largest stack frames (-fstack-usage, $(B)/*.su)
@@ -88,11 +89,12 @@ $(B)/$(PROJECT).elf: $(ARCH_OBJS) $(OBJS) $(EXTRA_OBJS) $(ARCH_LD)
 	$(RV_CC) $(LDFLAGS) -o $@ $(ARCH_OBJS) $(OBJS) $(EXTRA_OBJS) $(LIBS)
 	$(RV_OBJDUMP) -d -S $@ > $(B)/$(PROJECT).lst
 
-# the image, then the lock-step trailer (8 bytes: 'S','D','C','V', 0, 0,
-# SDC_VERSION high, low; sdctrailer.c, from sdc.h): the boot ROM boots the
-# file only when its last 8 bytes name the peripheral's VERSION register
-# (fw/ctrl_boot README "Lock-step check")
-$(B)/sdctrailer.bin: sdctrailer.c sdc.h
+# the image, then the lock-step trailer (8 bytes: 'S','D','C','V',
+# OSD2_REQUIRED high, low, SDC_VERSION high, low; sdctrailer.c, from sdc.h
+# and osd2.h): the boot ROM boots the file only when its last 8 bytes name
+# the peripheral's VERSION register and the core's OSD text layer is at
+# least OSD2_REQUIRED (fw/ctrl_boot README "Lock-step check")
+$(B)/sdctrailer.bin: sdctrailer.c sdc.h osd2.h
 	@mkdir -p $(@D)
 	$(RV_CC) $(RV_ARCH) -c -o $(B)/sdctrailer.o sdctrailer.c
 	$(RV_OBJCOPY) -O binary -j .sdctrailer $(B)/sdctrailer.o $@
@@ -212,13 +214,17 @@ check_g:
 	if [ $$(($$end)) -lt $$((0x1400)) ]; then echo "check (g) pass: boot ROM _end $$end < 0x1400"; \
 	else echo "check (g) FAIL: boot ROM _end $$end is not below 0x1400"; exit 1; fi
 
-# (h) the image ends with the lock-step trailer naming SDC_VERSION of sdc.h
-#     (read here with sed: a second derivation next to sdctrailer.c's)
+# (h) the image ends with the lock-step trailer naming OSD2_REQUIRED of
+#     osd2.h (bytes 4-5, not 0: the classic menu is gone, a core without
+#     the text layer has no menu) and SDC_VERSION of sdc.h (read here with
+#     sed: a second derivation next to sdctrailer.c's)
 check_h: $(B)/$(FW_FILE)
 	@v=`sed -n 's/^#define[[:space:]]*SDC_VERSION[[:space:]]*0x\([0-9A-Fa-f]\{4\}\).*/\1/p' sdc.h | tr A-F a-f`; \
-	want="53 44 43 56 00 00 `echo $$v | cut -c1-2` `echo $$v | cut -c3-4`"; \
+	o=`sed -n 's/^#define[[:space:]]*OSD2_REQUIRED[[:space:]]*\([0-9]\{1,3\}\)\b.*/\1/p' osd2.h`; \
+	if [ -z "$$o" ] || [ "$$o" -lt 1 ] || [ "$$o" -gt 255 ]; then echo "check (h) FAIL: no OSD2_REQUIRED 1..255 in osd2.h ('$$o')"; exit 1; fi; \
+	want="53 44 43 56 00 `printf %02x $$o` `echo $$v | cut -c1-2` `echo $$v | cut -c3-4`"; \
 	got=`tail -c 8 $< | od -An -tx1 | sed 's/^ *//; s/ *$$//'`; \
-	if [ -n "$$v" ] && [ "$$got" = "$$want" ]; then echo "check (h) pass: trailer SDCV $$v at the end of $(FW_FILE)"; \
+	if [ -n "$$v" ] && [ "$$got" = "$$want" ]; then echo "check (h) pass: trailer SDCV, OSD2_REQUIRED $$o, SDC $$v at the end of $(FW_FILE)"; \
 	else echo "check (h) FAIL: last 8 bytes of $< are '$$got', want '$$want'"; exit 1; fi
 
 # (i) the boot ROM and this build agree on the file: the 8.3 directory name
