@@ -138,7 +138,9 @@ control
 fmt buf16 src rvlibc.h 's/^#define RV_PRINTF_BUF .*/#define RV_PRINTF_BUF 16/' "disagrees"
 fmt model_upper gold fmtcheck.py "s/digs = '0123456789abcdef' if c == 'x'/digs = '0123456789ABCDEF' if c == 'x'/" "disagrees"
 fmt formats_stale gold formats.txt '$d' "differ\|EOF"
-fmt cover_case t fmt_cases.h '/^FMT_CASE("          1 %s"/d' "no case"
+# (a format still in the sources: the classic menu's "          1 %s" went in
+# OSD Phase 6, and a case of a format nobody uses is no gap)
+fmt cover_case t fmt_cases.h '/^FMT_CASE("  Start: %ld"/d' "no case"
 
 # ---- lib_test ----------------------------------------------------------------
 unit notrunc lib_test src rvlibc.c 's/rv_printf_truncations++;/;/'
