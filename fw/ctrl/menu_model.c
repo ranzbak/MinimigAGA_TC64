@@ -270,6 +270,10 @@ static const struct { unsigned char off, shift, bits, apply; } fields[MMF_FIELDS
     [MMF_FLOPPYTURBO] = { offsetof(configTYPE, floppy.speed), 0, 1, F_FLOPPY },
     [MMF_IDE]         = { offsetof(configTYPE, enable_ide),  0, 1, F_NONE },
     [MMF_DRIVES]      = { offsetof(configTYPE, floppy.drives), 0, 2, F_FLOPPY },
+    // the OSD menu's size and position (config.h CONFIG_OSD_*): ui_tabs.c
+    // applies them (the window), nothing goes to the core
+    [MMF_OSDSIZE]     = { offsetof(configTYPE, autofire),    3, 1, F_NONE },
+    [MMF_OSDPOS]      = { offsetof(configTYPE, autofire),    4, 2, F_NONE },
 };
 
 unsigned char mm_get_field(unsigned char f)

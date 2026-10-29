@@ -11,8 +11,8 @@ chars
  ^^ System       ^  Position (PAL) vertical          +4 lines   
                  ^  HDMI clock delay                  +0.4 ns   
                  ^                                              
- ^^ Video        ^                                              
-                 ^                                              
+ ^^ Video        ^  OSD size                            large   
+                 ^  OSD position                       centre   
                  ^                                              
  ^^ Acceleration ^                                              
                  ^                                              

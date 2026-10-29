@@ -1931,6 +1931,78 @@ int main(int argc, char **argv)
 	adv7511_set_clkdelay(4);
 	adv_chip = 0xff;
 
+	/* ---- OSD size and position (config.autofire bits 5:3): live, in the
+	   config (saved with it); bits 0, a config file of older firmware:
+	   Large, Centre ---- */
+	config.autofire = 0x05;         /* CD32 pad on, autofire fast: kept */
+	check("OSD size", go("OSD size"), 12);
+	check_str("OSD size: large (the bits 0)", cells(12, 56, 5), "large");
+	check_str("OSD position: centre (the bits 0)", cells(13, 55, 6), "centre");
+	key(KEY_RIGHT);                 /* EDIT */
+	trace_reset();
+	key(KEY_RIGHT);
+	check("OSD size Right: small", config.autofire & CONFIG_OSD_SMALL, CONFIG_OSD_SMALL);
+	check("OSD size: autofire and CD32 pad kept", config.autofire & 0x07, 0x05);
+	check_has("OSD size small: the window at once, scale 1, (48, 25)", mock_trace(), "20 5c 01 30 19 40 14 /", 1);
+	check_has("OSD size: nothing to the core", calls, "ConfigAutofire", 0);
+	check_str("OSD size: small shown", cells(12, 56, 5), "small");
+	key(KEY_DOWN);                  /* done; OSD position */
+	check("OSD position", sel_row(), 13);
+	key(KEY_RIGHT);
+	trace_reset();
+	key(KEY_RIGHT);
+	check("OSD position Right: top", CONFIG_OSD_POS(config.autofire), CONFIG_OSD_TOP);
+	check_has("OSD position top: small at (48, 4)", mock_trace(), "20 5c 01 30 04 40 14 /", 1);
+	trace_reset();
+	key(KEY_RIGHT);
+	check("OSD position Right: bottom", CONFIG_OSD_POS(config.autofire), CONFIG_OSD_BOTTOM);
+	check_has("OSD position bottom: small at (48, 46)", mock_trace(), "20 5c 01 30 2e 40 14 /", 1);
+	check("OSD position: the size kept", config.autofire & CONFIG_OSD_SMALL, CONFIG_OSD_SMALL);
+	check("OSD position: autofire and CD32 pad kept", config.autofire & 0x07, 0x05);
+	screen("video_osd");
+	key(KEY_RIGHT);
+	check("OSD position Right: round to centre (3 values)", (config.autofire & CONFIG_OSD_POS_MASK) >> CONFIG_OSD_POS_SHIFT, CONFIG_OSD_CENTRE);
+	key(KEY_LEFT);
+	key(KEY_ENTER);
+	key(KEY_UP);                    /* OSD size: back to large, at the bottom */
+	key(KEY_RIGHT);
+	trace_reset();
+	key(KEY_LEFT);
+	check("OSD size Left: large", config.autofire & CONFIG_OSD_SMALL, 0);
+	check_has("OSD large at the bottom: scale 2, (16, 10)", mock_trace(), "20 5c 03 10 0a 40 14 /", 1);
+	key(KEY_DOWN);
+	key(KEY_RIGHT);
+	trace_reset();
+	key(KEY_LEFT);
+	check_has("OSD large at the top: (16, 2)", mock_trace(), "20 5c 03 10 02 40 14 /", 1);
+	key(KEY_ENTER);
+	/* the menu opens where the config says */
+	key(KEY_MENU);
+	trace_reset();
+	key(KEY_MENU);
+	check_has("reopened: large at the top", mock_trace(), "20 5c 03 10 02 40 14 /", 1);
+	key(KEY_MENU);
+	/* a toast with the menu closed: at the menu's scale */
+	config.autofire |= CONFIG_OSD_SMALL;
+	trace_reset();
+	key(KEY_CTRL);
+	key(KEY_LALT);
+	key(KEY_KP0);
+	check("Ctrl-Alt-keypad 0: the OSD bits kept", config.autofire & ~0x03, 0x04 | CONFIG_OSD_SMALL | (CONFIG_OSD_TOP << CONFIG_OSD_POS_SHIFT));
+	check_has("small: the toast's window at scale 1, (60, 77)", mock_trace(), "20 5c 01 3c 4d 28 01 /", 1);
+	key(KEY_CTRL | KEY_UPSTROKE);
+	key(KEY_LALT | KEY_UPSTROKE);
+	wait_counts(UI_T(1000) + 1);
+	/* position 3 (never written) is Centre */
+	config.autofire = (unsigned char)(3 << CONFIG_OSD_POS_SHIFT);
+	trace_reset();
+	key(KEY_MENU);
+	check_has("position bits 3: large, centred", mock_trace(), WIN_MENU_ON, 1);
+	key(KEY_F4);
+	check("position bits 3", go("OSD position"), 13);
+	check_str("position bits 3: shown as centre", cells(13, 55, 6), "centre");
+	config.autofire = 0;            /* the same window: large, centred */
+
 	/* ---- Acceleration ---- */
 	key(KEY_F5);
 	calls_clear();

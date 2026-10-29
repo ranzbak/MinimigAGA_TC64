@@ -133,7 +133,7 @@ static void copper(void)
 	unsigned k;
 	for (k = 0; k < 8; k++)
 		osd2_pal(OSD2_C_FREE + k, OSD2_OPAQUE, hue_tab[(unsigned char)(phase - 32 * k)]);
-	osd2_commit(1, UI_SCALE, UI_X0, UI_Y0, UI_COLS, UI_ROWS);
+	ui_window();
 }
 
 /* a star glyph: a dot w pixels wide at x, rows y..y+h-1 */

@@ -459,6 +459,23 @@ static const char *clkdelay_help(unsigned char arg)
 	return hdmi_help;
 }
 
+/* the OSD menu itself (config.h CONFIG_OSD_*): live, the window moves at
+   once (ui_window); Large / Small, Centre / Top / Bottom (3 shows Centre) */
+static const char *const v_osdsize[] = { "large", "small" };
+static const char *const v_osdpos[] = { "centre", "top", "bottom" };
+
+static unsigned char osd_get(unsigned char arg)
+{
+	unsigned char v = mm_get_field(arg);
+	return arg == MMF_OSDPOS && v > CONFIG_OSD_BOTTOM ? CONFIG_OSD_CENTRE : v;
+}
+
+static void osd_set(unsigned char arg, unsigned char v)
+{
+	mm_set_field(arg, v);
+	ui_window();
+}
+
 static const struct ui_item video_items[] = {
 	{ "Scanlines", "Dark lines between the picture's lines, as on a CRT.",
 	  .values = v_scanlines, .get = mm_get_field, .set = mm_set_field, .kind = UI_CYCLE, .arg = MMF_SCANLINES, .nvalues = 3 },
@@ -476,6 +493,11 @@ static const struct ui_item video_items[] = {
 	{ pos_v_label, "Moves the picture up or down, 2 Amiga lines a step. The RTG screen keeps its own position.",
 	  .text = pos_text, .step = pos_step, .kind = UI_CYCLE, .arg = 1 },
 	{ "HDMI clock delay", 0, .text = mm_text_clkdelay, .step = clkdelay_step, .helpf = clkdelay_help, .kind = UI_CYCLE },
+	SEP,
+	{ "OSD size", "This menu: large (1024 x 640 pixels) or small (512 x 320), the same text. Saved with the configuration.",
+	  .values = v_osdsize, .get = osd_get, .set = osd_set, .kind = UI_CYCLE, .arg = MMF_OSDSIZE, .nvalues = 2 },
+	{ "OSD position", "Where this menu sits on the screen: in the centre, at the top or at the bottom.",
+	  .values = v_osdpos, .get = osd_get, .set = osd_set, .kind = UI_CYCLE, .arg = MMF_OSDPOS, .nvalues = 3 },
 };
 
 /* ---- Acceleration ---- */

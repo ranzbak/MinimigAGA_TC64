@@ -69,6 +69,27 @@ typedef struct
 #define SCALING_LINE  2
 #define CONFIG_SCALING(scanlines) (((scanlines) & SCALING_MASK) >> SCALING_SHIFT)
 
+// The OSD menu's size and position on the 720p text layer (the Video page's
+// "OSD size" and "OSD position", ui.c; findings/osd-redesign Phase 5), in
+// config.autofire bits 5:3, as the struct has no byte left (sizeof stays
+// 212, CONFIG_VERSION 4).  Those bits were never written: every firmware
+// before sends autofire & 3 or & 7 to the core and reads only bits 2:0, and
+// its writers either keep the upper bits or clear them (the classic menu's
+// Ctrl-Alt-keypad 0 and CD32 pad, on a core without the text layer, where
+// they mean nothing), so config files from older firmware load as Large,
+// Centre and older firmware ignores them.  Large = scale 2 (1024 x 640
+// pixels), Small = scale 1 (512 x 320), the same 64 x 20 cells; Centre, Top,
+// Bottom (3 loads as Centre).
+#define CONFIG_OSD_SMALL      0x08
+#define CONFIG_OSD_POS_SHIFT  4
+#define CONFIG_OSD_POS_MASK   (3 << CONFIG_OSD_POS_SHIFT)
+#define CONFIG_OSD_CENTRE     0
+#define CONFIG_OSD_TOP        1
+#define CONFIG_OSD_BOTTOM     2
+#define CONFIG_OSD_POS(autofire) \
+    ((((autofire) & CONFIG_OSD_POS_MASK) >> CONFIG_OSD_POS_SHIFT) > CONFIG_OSD_BOTTOM ? CONFIG_OSD_CENTRE \
+     : (((autofire) & CONFIG_OSD_POS_MASK) >> CONFIG_OSD_POS_SHIFT))
+
 typedef struct
 {
   char          id[8];
@@ -93,6 +114,9 @@ typedef struct
   unsigned char cpu;
 	unsigned char fastram;	// Contains fast mem (bit 0 & 1) and turbo chipram (bit 7) settings.
 	unsigned char kick13patch;
+	// bits 1:0 the autofire rate, bit 2 the CD32 pad (ConfigAutofire sends
+	// bits 2:0 to the core); bits 5:3 the new OSD menu's size and position
+	// (CONFIG_OSD_* below); bits 7:6 free
 	unsigned char autofire;
   kickstartTYPE extrom;		// Added in V2 config
 	unsigned char drivesounds;	// Added in V3 config

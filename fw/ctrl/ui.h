@@ -70,16 +70,31 @@
 
 #include "osd2.h"
 
-/* the window (cells at scale 2: 16 x 32 pixels; x0, y0 in 8-pixel units) */
+/* the window: 64 x 20 cells; x0, y0 in 8-pixel units.  Its size and place
+   are the Video items OSD size and OSD position (config.h CONFIG_OSD_*):
+   Large = scale 2 (a cell 16 x 32 pixels, the window 1024 x 640), Small =
+   scale 1 (8 x 16, 512 x 320); Centre, Top, Bottom (ui_window) */
 #define UI_COLS  64
 #define UI_ROWS  20
-#define UI_SCALE 2
-#define UI_X0    16           /* (1280 - 64 * 16) / 2 / 8 */
-#define UI_Y0    5            /* (720 - 20 * 32) / 2 / 8 */
-/* the toast window with the menu closed: row 0, 40 cells, lower middle */
+#define UI_SCALE 2            /* Large, the default (config bits 0) */
+#define UI_X0    16           /* Large: (1280 - 64 * 16) / 2 / 8 */
+#define UI_Y0    5            /* Large, Centre: (720 - 20 * 32) / 2 / 8 */
+#define UI_X0_SMALL  48       /* Small: (1280 - 64 * 8) / 2 / 8 */
+#define UI_Y0_SMALL  25       /* Small, Centre: (720 - 20 * 16) / 2 / 8 */
+/* Top and Bottom: Large 2 and 10 (the 80 spare lines; the top 15 of the
+   generator's rows never reach the pins, plan 7.2: 2 keeps the first row
+   clear), Small 4 and 46 (32 pixels from the edges) */
+#define UI_Y0_TOP     2
+#define UI_Y0_BOTTOM  10
+#define UI_Y0_TOP_SMALL     4
+#define UI_Y0_BOTTOM_SMALL  46
+/* the toast window with the menu closed: row 0, 40 cells, lower middle, at
+   the menu's scale (its bottom edge at line 632 either way) */
 #define UI_TOAST_COLS 40
-#define UI_TOAST_X0   40
+#define UI_TOAST_X0   40      /* Large: (1280 - 40 * 16) / 2 / 8 */
 #define UI_TOAST_Y0   75
+#define UI_TOAST_X0_SMALL 60  /* Small: (1280 - 40 * 8) / 2 / 8 */
+#define UI_TOAST_Y0_SMALL 77
 
 /* the sidebar */
 #define UI_SIDE_W     17      /* cols 0-16 */
@@ -233,6 +248,10 @@ void ui_dialog(const char *title, const char *l1, const char *l2,
                const char *const *buttons, unsigned char n, unsigned char sel,
                void (*done)(unsigned char button));
 void ui_close(void);
+/* the menu's window on, at the OSD size and position of the config, with
+   the palette's shadow (osd2_commit): the menu, its pages, the Video items
+   (live) */
+void ui_window(void);
 /* the configuration files found when the menu opened (bit = slot) */
 extern unsigned char ui_cfg_mask;
 /* Video: the RTG screen is on (osd2_rtg_active), read when the category

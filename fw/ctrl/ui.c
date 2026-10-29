@@ -599,6 +599,17 @@ void ui_draw_all(void)
 	ui_draw_help();
 }
 
+void ui_window(void)
+{
+	static const unsigned char y0[2][3] = {
+		{ UI_Y0, UI_Y0_TOP, UI_Y0_BOTTOM },
+		{ UI_Y0_SMALL, UI_Y0_TOP_SMALL, UI_Y0_BOTTOM_SMALL }
+	};
+	unsigned small = (config.autofire & CONFIG_OSD_SMALL) ? 1 : 0;
+	osd2_commit(1, small ? 1 : UI_SCALE, small ? UI_X0_SMALL : UI_X0,
+	            y0[small][CONFIG_OSD_POS(config.autofire)], UI_COLS, UI_ROWS);
+}
+
 /* the menu's palette into the shadow (sent at the next commit): the scheme,
    and with see-through (F6) the black background transparent, the picture
    with its CRT effects behind the panel.  Black text is on OSD2_C_INK
@@ -616,7 +627,7 @@ static void toggle_see_through(void)
 {
 	see_through ^= 1;
 	menu_pal();
-	osd2_commit(1, UI_SCALE, UI_X0, UI_Y0, UI_COLS, UI_ROWS);
+	ui_window();
 	ui_toast(see_through ? "See-through on (F6)" : "See-through off (F6)");
 }
 
@@ -704,7 +715,7 @@ static void page_end(int menu)
 		ui_fx_font(64, n - 64, (const unsigned char *)font8x16 + 0xCA * 16);
 	menu_pal();
 	if (menu)
-		osd2_commit(1, UI_SCALE, UI_X0, UI_Y0, UI_COLS, UI_ROWS);
+		ui_window();
 	dirty = 1;
 }
 
@@ -802,7 +813,7 @@ static void ui_open(void)
 	ui_draw_all();
 	dirty = 0;
 	osd2_flush();
-	osd2_commit(1, UI_SCALE, UI_X0, UI_Y0, UI_COLS, UI_ROWS);
+	ui_window();
 }
 
 void ui_close(void)
@@ -838,8 +849,12 @@ void ui_toast(const char *text)
 	osd2_fill(0, 0, UI_TOAST_COLS, ' ', A_POPUP);
 	osd2_put(0, (UI_TOAST_COLS - n) / 2, toast, A_POPUP);
 	osd2_flush();
-	if (!popup)
-		osd2_commit(1, UI_SCALE, UI_TOAST_X0, UI_TOAST_Y0, UI_TOAST_COLS, 1);
+	if (!popup) {
+		if (config.autofire & CONFIG_OSD_SMALL)
+			osd2_commit(1, 1, UI_TOAST_X0_SMALL, UI_TOAST_Y0_SMALL, UI_TOAST_COLS, 1);
+		else
+			osd2_commit(1, UI_SCALE, UI_TOAST_X0, UI_TOAST_Y0, UI_TOAST_COLS, 1);
+	}
 	popup = 1;
 }
 
@@ -1449,8 +1464,8 @@ void ui_key(unsigned char c)
 		return;
 	case KEY_KP0:
 		if (m_ctrl && m_lalt && !ui_open_now) {
-			/* bits 1:0 the rate; bit 2 the CD32 pad, kept */
-			config.autofire = (config.autofire & 0x04) | ((config.autofire + 1) & 0x03);
+			/* bits 1:0 the rate; the CD32 pad and the OSD bits kept (config.h) */
+			config.autofire = (config.autofire & ~0x03) | ((config.autofire + 1) & 0x03);
 			ConfigAutofire(config.autofire);
 			ui_toast(autofire_msg[config.autofire & 0x03]);
 		}

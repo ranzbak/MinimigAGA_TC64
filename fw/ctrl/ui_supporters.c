@@ -200,7 +200,7 @@ static void palette(void)
 	}
 	osd2_pal(P_NAME, OSD2_OPAQUE, mix(FADE_FROM, NAME_TO, fade < FADE ? fade : FADE, FADE_LG));
 	osd2_pal(P_TEXT, OSD2_OPAQUE, mix(FADE_FROM, TEXT_TO, f2 < FADE ? f2 : FADE, FADE_LG));
-	osd2_commit(1, UI_SCALE, UI_X0, UI_Y0, UI_COLS, UI_ROWS);
+	ui_window();
 }
 
 static void sup_open(void)

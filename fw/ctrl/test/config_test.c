@@ -434,6 +434,11 @@ int main(int argc, char **argv)
 	check("configTYPE still 212 bytes", sizeof(configTYPE), 212);
 	check("defaults: videopos_rtg centred", config.videopos_rtg.hpos | config.videopos_rtg.vpos, 0);
 	check("defaults.rv: bytes 130-131 0", defaults_rv[130] | defaults_rv[131], 0);
+	/* the OSD menu's size and position (config.h CONFIG_OSD_*): autofire
+	   bits 5:3, 0 in the defaults and in files of older firmware: Large,
+	   Centre */
+	check("defaults: OSD large, centre", config.autofire & (CONFIG_OSD_SMALL | CONFIG_OSD_POS_MASK), 0);
+	check("OSD bits inside autofire's free bits 7:3", (CONFIG_OSD_SMALL | CONFIG_OSD_POS_MASK) & 0x07, 0);
 	check("distinct.rv: videopos_rtg = bytes 130-131",
 	      distinct_want.videopos_rtg.hpos == distinct_rv[130] && distinct_want.videopos_rtg.vpos == distinct_rv[131] &&
 	      distinct_rv[130] && distinct_rv[131], 1);
@@ -443,6 +448,8 @@ int main(int argc, char **argv)
 	check("(a) ConfigurationExists(slot 0)", (SetConfigurationFilename(0), ConfigurationExists(0)), 1);
 	check("(a) LoadConfiguration", load(0), 1);
 	check_mem("(a) config == distinct.rv, filters 0", &config, &distinct_want, CFG_SIZE);
+	check("(a) distinct's autofire has OSD bits set", (distinct_want.autofire & (CONFIG_OSD_SMALL | CONFIG_OSD_POS_MASK)) != 0, 1);
+	check("(a) the OSD bits loaded as the file holds them", config.autofire, distinct_want.autofire);
 	check_hasnt("(a) no conversion line", mock_uart(), "Converted 832");
 	check_changes("(a)", NULL, 0);
 
