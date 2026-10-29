@@ -209,6 +209,28 @@ add_src $R/rtl/minimig/sdcard_gayle.v
 add_src $R/rtl/soc/ap040_ram_seq.vhd
 # The XADC die-temperature reader, for the Chipset OSD menu's first line.
 add_src $R/rtl/soc/fpga_temp.v
+# frame_freq.v became frame_freq.sv (HDMI chain clean-up, 2026-10-26);
+# project_1.xpr still names the .v, which no longer exists.
+set ff_v [get_files -quiet -of_objects [get_filesets sources_1] */rtl/openaars/adv7511/frame_freq.v]
+if {$ff_v ne ""} {
+    remove_files -fileset sources_1 $ff_v
+    puts "build.tcl: removed source $ff_v"
+}
+add_src $R/rtl/openaars/adv7511/frame_freq.sv
+# adv_ddr.v became adv_ddr.sv (HDMI chain clean-up, 2026-10-27); the same.
+set ad_v [get_files -quiet -of_objects [get_filesets sources_1] */rtl/openaars/adv7511/adv_ddr.v]
+if {$ad_v ne ""} {
+    remove_files -fileset sources_1 $ad_v
+    puts "build.tcl: removed source $ad_v"
+}
+add_src $R/rtl/openaars/adv7511/adv_ddr.sv
+# pal_to_hd_upsample.v became pal_to_hd_upsample.sv (2026-10-27); the same.
+set up_v [get_files -quiet -of_objects [get_filesets sources_1] */rtl/openaars/adv7511/pal_to_hd_upsample.v]
+if {$up_v ne ""} {
+    remove_files -fileset sources_1 $up_v
+    puts "build.tcl: removed source $up_v"
+}
+add_src $R/rtl/openaars/adv7511/pal_to_hd_upsample.sv
 # HDMI CRT emulation (2026-10-09): the post stage pal_to_ddr.sv instantiates,
 # and its three tables ($readmemh by name: as memory files of the project,
 # synthesis finds them; a missing one leaves its effect black, the plain

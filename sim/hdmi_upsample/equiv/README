@@ -1,0 +1,5 @@
+Yosys sequential equivalence of two pal_to_hd_upsample versions (Task 5 clean-up): ./chk.sh [FILE [GOLD]] (lint, formal, iverilog) or ./eq.sh GOLD GATE.
+It proves every output and every register matched by name equal (equiv_simple + equiv_induct, 4 steps) under the parameter sets chk.sh names.
+Limit 1: bram_tdp is a blackbox (bb.v) whose cells equiv_make merges, so its input pins are not compared (a .b_wr(1'b1) mutant still proves).
+Limit 2: the BRAM read address w_addrb is therefore checked only textually (diff it by eye); initial values are not covered either.
+blacklist.txt names registers left unmatched (r_lphase changed width in 5f); work files go to ../build/equiv (EQ_OUT).

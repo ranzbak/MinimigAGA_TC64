@@ -18,8 +18,11 @@
 #   gate31     every CRT item selected (mask, bloom, beam too) but 31 kHz
 #              input: still bit-identical, the beam filter never on
 #   bypass60   OSD config 0 on the 60 Hz upsampler: bit-identical
-#   rtg        every CRT item selected (mask, bloom, beam too) with RTG on:
-#              bit-identical, the beam filter never on
+#   rtg        RTG on (+rtg: the Amiga picture, 312-line frames, so the
+#              time-based path; RTG 1:1 is scaler_run.sh's): every CRT item
+#              selected (mask, bloom, beam too) and CRT off (+cfg=0), both
+#              with RTG on: frame 3 byte-identical, so the CRT effects stay
+#              gated off; the beam filter never on
 #   beamfx15   every other CRT effect on, beam off: the beam filter's output
 #              = its input every clk_114 (15 kHz); beamfx31, beamfx60 the
 #              same at 31 kHz and on the 60 Hz upsampler
@@ -93,6 +96,13 @@
 #   osdbeam    OSD config 0 -> beam medium during HD frame 3: frame 3
 #              bit-identical, frame 4 changed, the beam latch moves once,
 #              in the vertical blank (input lines 2..6)
+#   nosync     the Amiga hsync and vsync stop from HD frame 4 on (RTG mode
+#              with its sync start past the frame size), RGB runs on: the
+#              signal generator's watchdog ends one frame of 1500 lines
+#              (vt_count 0..1499, the last one cut at its start like every
+#              frame's: 1499 hsyncs, as a 750-line frame counts 749), then
+#              the raster free-runs: every later frame 749 hsyncs, all with
+#              one vsync, at least 6 of them; no frame longer than 1500
 #
 # Usage: crt_run.sh [leg ...] (default: all).  Needs iverilog, verilator,
 # python3 with numpy and PIL.  Pictures and logs: build/img/.  ~6 min on 4
@@ -108,7 +118,8 @@ declare -A ARGS=(
 	[bypass31]="+dbl +frames=2"
 	[gate31]="+dbl +cfg=fff"
 	[bypass60]="+force60 +frames=2"
-	[rtg]="+rtg +cfg=fff"
+	[rtg]="+rtg +cfg=fff +out=$I/rtg"
+	[rtg0]="+rtg +cfg=0 +out=$I/rtg0"
 	[beamfx15]="+cfg=3ff"
 	[beamfx31]="+dbl +cfg=3ff"
 	[beamfx60]="+force60 +cfg=3ff"
@@ -134,6 +145,7 @@ declare -A ARGS=(
 	[vposchgzm]="+voff=-4 +voff2=0 +vofframe=8 +voffline=300 +first=7 +frames=5 +out=$I/vposchgzm"
 	[vposglide]="+voff=-8 +voff2=8 +vofframe=8 +voffline=300 +first=7 +frames=8 +out=$I/vposglide"
 	[osdbeam]="+cfg=000 +cfg2=800 +cfgframe=3 +cfgline=300 +frames=2"
+	[nosync]="+nosync=4 +first=2 +frames=12"
 	[dim]="+cfg=01 +out=$I/dim"
 	[dim_hv]="+cfg=3d +out=$I/dim_hv"
 	[lace]="+cfg=01 +lace +frames=2 +out=$I/lace"
@@ -154,11 +166,12 @@ for w in 1 2 3; do for b in 0 1 2; do
 	BEAMS="$BEAMS beam_w${w}b${b}"
 	ARGS[beam_w${w}b${b}]="$DITHER +cfg=$(printf %03x $(( (w << 10) | (b << 8) ))) +out=$I/beam_w${w}b${b} +sdump=$I/beam_w${w}b${b}.sd"
 done; done
-ALL="unit osdspi ripple bypass15 bypass31 gate31 bypass60 rtg beamfx15 beamfx31 beamfx60 dim dim_hv lace split osd osdfx osdbeam mask mask2 maskmg mask_dim bloom bloom_lo bloom_hv $BEAMS beamalign beammetric hposm hposp hposv hposm60 hposp60 vposp vposm vposp60 vposm60 vposdbl vposlace vposlacem vposchg vposchg0 vposchgz vposchgzm vposglide"
+ALL="unit osdspi ripple bypass15 bypass31 gate31 bypass60 rtg beamfx15 beamfx31 beamfx60 dim dim_hv lace split osd osdfx osdbeam mask mask2 maskmg mask_dim bloom bloom_lo bloom_hv $BEAMS beamalign beammetric hposm hposp hposv hposm60 hposp60 vposp vposm vposp60 vposm60 vposdbl vposlace vposlacem vposchg vposchg0 vposchgz vposchgzm vposglide nosync"
 legs=("$@"); [ ${#legs[@]} -eq 0 ] && legs=($ALL)
 # the bloom legs compare against the same picture without bloom
 want() { local x; for x in "${legs[@]}"; do [ "$x" = "$1" ] && return 0; done; return 1; }
 { want bloom || want bloom_lo; } && ! want dim && legs+=(dim)
+want rtg && ! want rtg0 && legs+=(rtg0)
 want bloom_hv && ! want dim_hv && legs+=(dim_hv)
 # the Video Pos legs compare against the picture at offset 0
 for x in hposm hposp hposv; do want $x && ! want hpos0 && legs+=(hpos0); done
@@ -305,6 +318,19 @@ for l in "${legs[@]}"; do
 		[ $ok -eq 1 ] && pass "$l: each frame clean, -8 -> +8 monotonic, <= 5 a frame, frames 13, 14 = vposp's" || bad "$l"
 		m=$(hdframes $l 1 14) && pass "$l: $m" || bad "$l: $m"
 		;;
+	nosync)
+		# from HD frame 4 (nosync) on: one watchdog frame (1500 lines, the
+		# bench counts 1499 hsyncs), then free-run frames of 749 hsyncs,
+		# each with 1 vsync; no frame longer than 1500
+		m=$(awk '/^hd frame / { n = $3 + 0; l = $4 + 0; v = $6 + 0; if (l > 1500) bad = 1
+			if (n >= 4) { s = s " " l "/" v
+				if (!wd) { if (l == 1499 && v == 1) wd = n; else bad = 1 }
+				else { c++; if (l != 749 || v != 1) bad = 1 } } }
+			END { printf "HD lines/vsyncs per frame from 4:%s (watchdog frame %d, %d free-run)\n", s, wd, c
+				exit bad || !wd || c < 6 }' $I/$l.log) && ok=1 || ok=0
+		grep '^hd frame ' $I/$l.log | sed 's/^/        /'
+		[ $ok -eq 1 ] && pass "$l: syncs stopped, $m" || bad "$l: $m"
+		;;
 	osdspi)
 		u=$(vvp -n build/tb_osd_video.vvp)
 		echo "$u" | grep FAIL | sed 's/^/        /'
@@ -316,10 +342,17 @@ for l in "${legs[@]}"; do
 		echo "$r" | awk '/scan [23]:/ { if ($7 + 0 > 1.1) b = 1 } END { exit b }' \
 			&& pass "ripple <= 1.1 (two-line beam, scan 2 and 3, 50 and 60 Hz)" || bad "ripple"
 		;;
-	bypass15|bypass31|gate31|bypass60|rtg)
+	bypass15|bypass31|gate31|bypass60)
 		n=1; [[ "${ARGS[$l]}" == *frames=2* ]] && n=2
 		if allzero $l $n; then pass "$l: $(diffs $l | sed 's/ (.*//' | paste -sd, -)"
 		else bad "$l"; diffs $l; tail -3 $I/$l.log; fi
+		grep -q "non-black" $I/$l.log && ! grep -q " 0 non-black" $I/$l.log || bad "$l: empty picture"
+		beamoff $l 1 && pass "$l: beam filter off, its output = its input ($(grep '^beam bypass:' $I/$l.log | cut -d: -f2))" \
+			|| { bad "$l: beam bypass"; grep '^beam bypass:' $I/$l.log; }
+		;;
+	rtg)
+		if cmp -s $I/rtg_3.hex $I/rtg0_3.hex; then pass "rtg: CRT effects all on = CRT off, frame 3 byte-identical"
+		else bad "rtg: CRT on differs from CRT off"; fi
 		grep -q "non-black" $I/$l.log && ! grep -q " 0 non-black" $I/$l.log || bad "$l: empty picture"
 		beamoff $l 1 && pass "$l: beam filter off, its output = its input ($(grep '^beam bypass:' $I/$l.log | cut -d: -f2))" \
 			|| { bad "$l: beam bypass"; grep '^beam bypass:' $I/$l.log; }

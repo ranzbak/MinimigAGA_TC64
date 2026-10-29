@@ -26,11 +26,9 @@ iverilog -g2012 -o build/tb_crt_post_unit_zero.vvp -Ptb_crt_post_unit.WROM=\"bui
 # the OSD video command over SPI (userio_osd.v: the second byte, mask and bloom)
 iverilog -g2005 -I ../../fpga/openaars -I ../../rtl/minimig -DMINIMIG_XILINX -o build/tb_osd_video.vvp \
 	tb_osd_video.v ../../rtl/minimig/userio_osd.v ../../rtl/minimig/userio_osd_spi.v ../../rtl/fifo/sync_fifo.v
-# -Wno-BLKANDNBLK: signal_generator.sv mixes = and <= on two registers in
-# its reset branch only
-verilator --binary --timing -j 4 -Wno-fatal -Wno-lint -Wno-style -Wno-MULTIDRIVEN -Wno-BLKANDNBLK \
+verilator --binary --timing -j 4 -Wno-fatal -Wno-lint -Wno-style -Wno-MULTIDRIVEN \
 	--Mdir build/tb_crt_frame --top-module tb_crt_frame -o Vtb \
-	tb_crt_frame.v $A/pal_to_ddr.sv $A/pal_to_hd_upsample.v $A/crt_post.v $A/crt_beamh.v $A/bram_tdp.v \
-	$A/signal_generator.sv $A/adv_ddr.v $A/frame_freq.v ref/pal_to_ddr_ref.sv ref/pal_to_hd_upsample_ref.v \
+	tb_crt_frame.v $A/pal_to_ddr.sv $A/pal_to_hd_upsample.sv $A/crt_post.v $A/crt_beamh.v $A/bram_tdp.v \
+	$A/signal_generator.sv $A/adv_ddr.sv $A/frame_freq.sv ref/pal_to_ddr_ref.sv ref/pal_to_hd_upsample_ref.v ref/frame_freq_ref.v \
 	> build/verilator.log 2>&1 || { tail -30 build/verilator.log; exit 1; }
 echo "built"

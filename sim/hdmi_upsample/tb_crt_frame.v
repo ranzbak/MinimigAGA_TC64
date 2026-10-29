@@ -32,12 +32,27 @@
 //   +lace        interlaced: long and short fields alternate
 //   +split       a generated lowres/hires split screen instead of the picture
 //                (see below), with Denise's HIRES driven to match
-//   +rtg         i_rtg_enable = 1
+//   +rtg         i_rtg_enable = 1 on the Amiga picture above, with the pixel
+//                strobe (vga_clk_pixel) VGA_PIXEL's chipset one: vga_strobe,
+//                one clk_114 in 4 (minimig_virtual_top.v; one in 8 with
+//                +dbl).  Without +rtg / +rtg720* the strobe is 0
+//   +rtg720      an RTG source instead (see "RTG source" below): the
+//                Picasso96 mode 1280x720 HiColor at 56.72 MHz, 1504 x 754
+//                (50.0 Hz), i_rtg_enable 1
+//   +rtg720c     the same at 113.44 MHz (256 colours, a CLUT mode), 2496 x
+//                757 (60.04 Hz)
+//   +rtght=N +rtgvt=N   N pixels per line / lines per frame instead
+//   +rtgw=N +rtgh=N     N active pixels per line / active lines (default
+//                1280 / 720)
+//   +rtgvbp=N    lines from the end of vsync to the first active line
+//                (default: the frame's rest after the active lines, 12
+//                front porch, 5 vsync -- Picasso96 vertical sync position 12)
+//   +hoffrtg=N +voffrtg=N   the RTG picture's Video Pos pair (default 0)
 //   +hoff=N +voff=N   the OSD Video Pos offsets of the new path (8 bit,
 //                signed, -128..127; default 0, the reference path keeps 0)
 //   +voff2=N +vofframe=F +voffline=L   change VPOS to voff2 during HD frame
 //                F, line L of the new path (the VPOS-change legs)
-//   +force60     both paths use the 60 Hz upsampler (r_50hz forced 0)
+//   +force60     both paths use the 60 Hz upsampler (r_50hz 0: forced)
 //   +ring16      the line-rate mode on all 16 line buffers (see "ring")
 //   +ntsc        NTSC input: 262-line fields (263 long with +lace), the
 //                picture's lines 0..261; the line stays 227 CCK as Agnus
@@ -52,6 +67,18 @@
 //                per HD line "frame line phase hires vphase ratio y cur next"
 //                (y: the exact-ratio stepping's position, 1/2^20 line; cur,
 //                next: the source lines (vcnt) in the two buffers read)
+//   +pins=F +pinsfile=PATH   dump the pins "sig F" hashes (see below), one
+//                line per clk_148 half-cycle, "C D V H XXX" (o_clk_pixel
+//                o_de o_vsync o_hsync, o_data in hex), to PATH (default
+//                build/pins_<F>.txt); pins_diff.py compares two dumps
+//   +nosync=F    from HD frame F of the new path on, its Amiga hsync and
+//                vsync are held inactive (the chipset's syncs stopped, as in
+//                RTG mode with the sync start past the frame size) while RGB
+//                runs on; the reference path keeps them.  The signal
+//                generator's watchdog then ends one frame of 1500 lines
+//                (1499 hsyncs counted) and the raster free-runs at 750
+//                lines (749 counted); a frame reaching 4000 lines ends the
+//                run ("hd frame N: L lines, V vsync, no frame end")
 // Prints "frame N: D pixels differ" per compared frame, "pic N: H P" for
 // EVERY HD frame of the new path (a 64-bit FNV-1a hash of its captured
 // pixels in raster order, and their count), "sig N: H C" for every HD frame
@@ -64,10 +91,34 @@
 // long field), "lines N" (pixels
 // captured, non-black), the path (50/60), "hd frame N: L lines, V vsync"
 // for every HD frame of the new path (HD lines, and rising edges of the
-// selected signal generator's vsync in it), and every change of the
+// selected signal generator's vsync in it), with an RTG source "rtg path N:
+// 1:1|time" (the upsampler's path in HD frame N, at line 360), every change of the
 // frame-latched config ("cfg latched ... at frame end: 1" when it happened
 // the clock after a frame end; "beam latched ..." for the beam filter's own
 // latch in clk_114, with the input line it happened in).
+// The vsync check at the pins: every HD frame from 1 on gets exactly one
+// o_vsync pulse, 5 HD lines long (o_hsync rises while it is high), where a
+// pulse that starts in a frame's lines 0..4 is the frame before's (late:
+// signal_generator.sv).  "vsync FAIL: ..." for each fault, and at the end
+// "vsync check: N frames, F faults" (golden.sh fails a leg on any FAIL).
+//
+// RTG source (+rtg720, +rtg720c): what minimig_virtual_top.v gives
+// pal_to_ddr in RTG mode.  One strobe (vga_clk_pixel = VGA_PIXEL) per RTG
+// pixel, in clock S, only in the active area (VGA_PIXEL is rtg_blank-gated).
+// Its pixel on i_pal_r/g/b, black elsewhere, as the RTL times it (whatever
+// pal_to_hd_upsample's tap): a 16-bit pixel (2 clk_114) in clocks S and
+// S + 1 -- VideoStream.vhd's word is out ahead of the fetch strobe, VGA_PIXEL
+// is rtg_pixel_d (one clock after it), red_reg one more -- except a line's
+// first pixel, only in S + 1 (red_reg's blank gate, rtg_blank_d2); a CLUT
+// pixel (+rtg720c, 1 clk_114) only in S + 2 (akiko.vhd's CLUT register).
+// Lines of +rtght pixels of 2 clk_114 (+rtg720c: of 1); hsync pixels
+// 0..63, the active pixels from 128 on; +rtgvt lines: vsync lines 0..4
+// (both edges at an hsync start, as Agnus's programmable sync), then
+// +rtgvbp lines, +rtgh active lines, the rest.  (minimig.card
+// programs the line length in colour clocks: 16 pixels at 56.72 MHz, 32
+// at 113.44 MHz -- 1504 and 2496 are the nearest to 720p50 / 720p60.)
+// Syncs active high, as pal_to_ddr gets them.  The pixel at (x, y) is
+// 800000 | y << 11 | x (never black; rtg_check.py decodes it).
 //
 // +split picture: 32-superhires-pixel stripes (0 / 255).  Lowres lines carry
 // them in green, hires lines in red; line 150 switches lowres -> hires at
@@ -86,6 +137,7 @@ integer frames = 1, first = 3, cfgframe = -1, cfgline = 0, cfg = 0, cfg2 = 0;
 reg lace = 0, dbl = 0, split = 0, rtg = 0, force60 = 0, dump = 0;
 integer srcdelay = 0;
 integer hoff = 0, voff = 0, voff2 = 0, vofframe = -1, voffline = 0;
+integer hoffrtg = 0, voffrtg = 0;
 integer ntscfrom = -1, ntscto = -1;
 reg ntsc = 0;
 reg [8*160-1:0] out;
@@ -100,10 +152,12 @@ initial begin
 	lace    = $test$plusargs("lace");
 	dbl     = $test$plusargs("dbl");
 	split   = $test$plusargs("split");
-	rtg     = $test$plusargs("rtg");
+	rtg     = $test$plusargs("rtg");   // +rtg720* match too
 	force60 = $test$plusargs("force60");
 	if (!$value$plusargs("srcdelay=%d", srcdelay)) srcdelay = 0;
 	if (!$value$plusargs("hoff=%d", hoff)) hoff = 0;
+	if (!$value$plusargs("hoffrtg=%d", hoffrtg)) hoffrtg = 0;
+	if (!$value$plusargs("voffrtg=%d", voffrtg)) voffrtg = 0;
 	if (!$value$plusargs("voff=%d", voff)) voff = 0;
 	if (!$value$plusargs("voff2=%d", voff2)) voff2 = 0;
 	if (!$value$plusargs("vofframe=%d", vofframe)) vofframe = -1;
@@ -205,8 +259,63 @@ always @(posedge clk_114) begin
 end
 // sd_line[sd_wp - n] holds src_now of n clocks ago
 wire [7:0]  sd_rp = sd_wp - srcdelay[7:0];
-wire [26:0] src = (srcdelay > 0) ? sd_line[sd_rp] : src_now;
+wire [26:0] src_pal = (srcdelay > 0) ? sd_line[sd_rp] : src_now;
+
+// ---- RTG source (+rtg720, +rtg720c; see the header) ----
+reg     rtgsrc = 0;
+integer rt_cpp = 2, rt_ht = 1504, rt_vt = 754, rt_w = 1280, rt_va = 720, rt_vbp = 24;
+localparam RT_VS = 5, RT_HS = 64, RT_HA0 = 128;
+localparam RT_FP = 12;   // lines from the picture to vsync: Picasso96 vert. sync position
+initial begin
+	rtgsrc = $test$plusargs("rtg720");
+	if ($test$plusargs("rtg720c")) rt_cpp = 1;
+	if (!$value$plusargs("rtght=%d", rt_ht)) rt_ht = (rt_cpp == 1) ? 2496 : 1504;
+	if (!$value$plusargs("rtgvt=%d", rt_vt)) rt_vt = (rt_cpp == 1) ? 757 : 754;
+	if (!$value$plusargs("rtgw=%d", rt_w)) rt_w = 1280;
+	if (!$value$plusargs("rtgh=%d", rt_va)) rt_va = 720;
+	if (!$value$plusargs("rtgvbp=%d", rt_vbp)) rt_vbp = rt_vt - rt_va - RT_VS - RT_FP;
+	if (rtgsrc) $display("rtg source: %0d x %0d pixels of %0d clk_114, %0d x %0d active, back porch %0d, %s",
+	                     rt_ht, rt_vt, rt_cpp, rt_w, rt_va, rt_vbp, (rt_cpp == 1) ? "CLUT" : "16-bit");
+end
+integer rt_c = 0, rt_v = 0;   // clk_114 in the line, line in the frame
+always @(posedge clk_114) begin
+	if (rt_c == rt_ht * rt_cpp - 1) begin
+		rt_c <= 0;
+		rt_v <= (rt_v == rt_vt - 1) ? 0 : rt_v + 1;
+	end else rt_c <= rt_c + 1;
+end
+integer rt_y, rt_q, rt_p;
+reg [23:0] rt_rgb;
+reg        rt_stb, rt_hs, rt_vs;
+always @* begin
+	rt_y   = rt_v - (RT_VS + rt_vbp);   // active line, 0 .. +rtgh - 1
+	rt_q   = rt_c - RT_HA0 * rt_cpp;    // clk_114 since the line's first strobe
+	// the pixel on RGB this clock (see the header), -1 none
+	if (rt_cpp == 1) rt_p = rt_q - 2;                                     // CLUT: S + 2
+	else             rt_p = (rt_q >= 1 && rt_q < rt_w * 2) ? rt_q / 2 : -1;   // 16-bit: S, S + 1
+	rt_hs  = (rt_c < RT_HS * rt_cpp);
+	rt_vs  = (rt_v < RT_VS);
+	rt_stb = (rt_y >= 0 && rt_y < rt_va && rt_q >= 0 && rt_q < rt_w * rt_cpp && rt_q % rt_cpp == 0);
+	rt_rgb = (rt_y >= 0 && rt_y < rt_va && rt_p >= 0 && rt_p < rt_w) ?
+	         24'h800000 | (rt_y[9:0] << 11) | rt_p[10:0] : 24'h0;
+end
+wire [26:0] src = rtgsrc ? {rt_hs, rt_vs, 1'b0, rt_rgb} : src_pal;
+// the pixel strobe: VGA_PIXEL as minimig_virtual_top.v makes it.  RTG
+// source: rtg_pixel_d (above); the Amiga picture with +rtg: vga_strobe,
+// its counter as there (_15khz: steps of 2 -> one clk_114 in 4).  The
+// hardware never gets that pair (with RTG on VGA_PIXEL is the RTG strobe);
+// its 312-line frames take the time-based path, which does not use the
+// strobe (crt_run.sh rtg, rtg0: the CRT effects gated off with RTG on)
+reg [2:0] vga_strobe_ctr = 3'd0;
+always @(posedge clk_114)
+	vga_strobe_ctr <= !dbl ? {vga_strobe_ctr[2:1], 1'b0} + 3'b010 : vga_strobe_ctr + 3'b001;
+wire pix_stb = rtgsrc ? rt_stb : rtg ? (vga_strobe_ctr == 3'b000) : 1'b0;
 wire        pal_hs = src[26], pal_vs = src[25], src_hires = src[24];
+// +nosync: the new path's syncs from HD frame nosync on (set below)
+integer     nosync = -1;
+reg         ns_on = 1'b0;
+initial if (!$value$plusargs("nosync=%d", nosync)) nosync = -1;
+wire        dut_hs = ns_on ? 1'b0 : pal_hs, dut_vs = ns_on ? 1'b0 : pal_vs;
 wire [23:0] src_rgb = src[23:0];
 
 // ---- the two HDMI paths ----
@@ -221,10 +330,11 @@ pal_to_ddr #(.CRT_WROM_FILE("../../rtl/openaars/adv7511/crt_wrom.mem"),
              .CRT_SDEC_FILE("../../rtl/openaars/adv7511/crt_sdec.mem"),
              .CRT_SENC_FILE("../../rtl/openaars/adv7511/crt_senc.mem"),
              .CRT_SWROM_FILE("../../rtl/openaars/adv7511/crt_swrom.mem")) dut (
-	.clk_148(clk_148), .clk_114(clk_114), .reset(reset), .vga_clk_pixel(1'b0),
-	.i_pal_hsync(pal_hs), .i_pal_vsync(pal_vs),
+	.clk_148(clk_148), .clk_114(clk_114), .reset(reset), .vga_clk_pixel(pix_stb),
+	.i_pal_hsync(dut_hs), .i_pal_vsync(dut_vs),
 	.i_pal_r(src_rgb[23:16]), .i_pal_g(src_rgb[15:8]), .i_pal_b(src_rgb[7:0]),
 	.i_hoffset(hoff[7:0]), .i_voffset(voff[7:0]), .i_rtg_enable(rtg),
+	.i_hoffset_rtg(hoffrtg[7:0]), .i_voffset_rtg(voffrtg[7:0]),
 	.i_crt_cfg(crt_cfg), .i_pal_hires(src_hires), .i_pal_shres(1'b0),
 	.o_clk_pixel(n_clk), .o_de(n_de), .o_vsync(n_vs), .o_hsync(n_hs), .o_data(n_d)
 );
@@ -243,7 +353,9 @@ end
 initial begin
 	#1;
 	if ($test$plusargs("force60")) begin
-		force dut.r_50hz = 1'b0;
+		// the new path's r_50hz is a wire (~myfreq.o_hz60): Verilator's force
+		// reaches a register's readers, not a wire's, so force the register
+		force dut.myfreq.r_hz60 = 1'b1;
 		force ref0.r_50hz = 1'b0;
 	end
 end
@@ -313,16 +425,42 @@ reg [63:0] sg_h = FNV0;
 integer    sg_n = 0, sg_c = 0;
 reg        sg_vs = 1'b0;
 wire [15:0] pins = {n_clk, n_de, n_vs, n_hs, n_d};
+// +pins=F: the samples sig F folds in, as text, one line each
+integer    pn_f = -1, pn_fd = 0, pn_c = 0;
+reg [8*200-1:0] pn_fn;
+initial if ($value$plusargs("pins=%d", pn_f)) begin
+	if (!$value$plusargs("pinsfile=%s", pn_fn)) $sformat(pn_fn, "build/pins_%0d.txt", pn_f);
+	pn_fd = $fopen(pn_fn, "w");
+	if (pn_fd == 0) $display("pins: cannot open %0s", pn_fn);
+end
+task pins_line;
+	begin
+		$fwrite(pn_fd, "%b %b %b %b %03h\n", pins[15], pins[14], pins[13], pins[12], pins[11:0]);
+		pn_c = pn_c + 1;
+	end
+endtask
 always @(posedge clk_148) begin
 	sg_vs <= n_vs;
 	if (n_vs && !sg_vs) begin
 		$display("sig %0d: %016h %0d", sg_n, sg_h, sg_c);
 		sg_n = sg_n + 1; sg_h = FNV0; sg_c = 0;
+		if (pn_fd != 0 && sg_n == pn_f + 1) begin
+			$fclose(pn_fd); pn_fd = 0;
+			$display("pins %0d: %0d lines", pn_f, pn_c);
+		end
 	end
+	if (pn_fd != 0 && sg_n == pn_f) pins_line;
 	sg_h = (sg_h ^ {48'd0, pins}) * FNVP;
 	sg_c = sg_c + 1;
 end
-always @(negedge clk_148) sg_h = (sg_h ^ {47'd0, 1'b1, pins}) * FNVP;
+always @(negedge clk_148) begin
+	if (pn_fd != 0 && sg_n == pn_f) pins_line;
+	sg_h = (sg_h ^ {47'd0, 1'b1, pins}) * FNVP;
+end
+final if (pn_fd != 0) begin
+	$fclose(pn_fd);
+	$display("pins %0d: the run ended inside the window (%0d lines)", pn_f, pn_c);
+end
 // the same per INPUT field ("fsig N": field N of the Amiga side, from its
 // first clk_148 to its last): windows at fixed times, so a design that
 // puts out one vsync more or less (the two-chain design's splice at a
@@ -357,6 +495,39 @@ always @(posedge clk_148) begin
 	end
 end
 
+// ---- the vsync check at the pins (see the header) ----
+localparam VC_N = 4096;
+integer vc_cnt [0:VC_N-1];
+integer vc_f = 0, vc_hs = 0, vc_bad = 0, vc_k, vc_done = 0;
+reg     vc_vq = 1'b0, vc_hq = 1'b0;
+initial for (vc_k = 0; vc_k < VC_N; vc_k = vc_k + 1) vc_cnt[vc_k] = 0;
+always @(posedge clk_148) begin
+	vc_vq <= n_vs;
+	vc_hq <= n_hs;
+	if (n_hs && !vc_hq) vc_hs = vc_hs + 1;
+	if (n_vs && !vc_vq) begin
+		vc_hs = 0;
+		vc_k = (dut.hd_gen.vt_count < 5) ? vc_f - 1 : vc_f;
+		if (vc_k >= 0 && vc_k < VC_N) vc_cnt[vc_k] = vc_cnt[vc_k] + 1;
+	end
+	if (!n_vs && vc_vq && vc_hs != 5) begin
+		vc_bad = vc_bad + 1;
+		$display("vsync FAIL: a pulse of %0d lines, ending in HD frame %0d", vc_hs, vc_f);
+	end
+	if (n_frame) begin
+		// HD frame vc_f + 1 starts: frame vc_f - 1's late lines are over
+		if (vc_f >= 2 && vc_f - 1 < VC_N) begin
+			vc_done = vc_done + 1;
+			if (vc_cnt[vc_f - 1] != 1) begin
+				vc_bad = vc_bad + 1;
+				$display("vsync FAIL: HD frame %0d has %0d vsync pulses", vc_f - 1, vc_cnt[vc_f - 1]);
+			end
+		end
+		vc_f = vc_f + 1;
+	end
+end
+final $display("vsync check: %0d frames, %0d faults", vc_done, vc_bad);
+
 // ---- logs: line phase (new path), frame ends and the config latch ----
 integer fdp = 0;
 reg [8*200-1:0] fname;
@@ -379,7 +550,16 @@ always @(posedge clk_148) begin
 			        dut.w_m_vphase, dut.r_ratio, $signed(dut.myupsample.r_yl), rg_vc[dut.myupsample.r_rslot],
 			        rg_vc[dut.myupsample.w_r16_o ? dut.myupsample.r_rslot + 4'd1 : {1'b0, dut.myupsample.r_rslot[2:0] + 3'd1}]);
 		end
+		// the RTG source: the path this HD frame shows it on (mid-frame)
+		if (rtgsrc && hdl == 360)
+			$display("rtg path %0d: %0s", hdfno, dut.myupsample.r_rtg_o ? "1:1" : "time");
 		hdl = hdl + 1;
+	end
+	if (nosync >= 0 && fno_n >= nosync) ns_on <= 1'b1;
+	// +nosync without a frame restart: the frame never ends, stop here
+	if (nosync >= 0 && hdl >= 4000) begin
+		$display("hd frame %0d: %0d lines, %0d vsync, no frame end", hdfno, hdl, hdvs);
+		$finish;
 	end
 end
 // the OSD-change leg

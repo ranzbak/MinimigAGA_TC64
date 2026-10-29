@@ -4,6 +4,8 @@
 #
 #   golden.sh record [leg ...]   run the legs, write golden/<leg>.txt
 #   golden.sh check  [leg ...]   run the legs, compare with golden/<leg>.txt
+#   GOLDEN_KINDS=pic,hd golden.sh check ...   compare only those record kinds
+#                                (of pic,hd,sig,fsig; golden.py)
 #
 # Each leg runs tb_crt_frame (Verilator) for 8 HD frames (mode legs 26) and
 # keeps, from HD frame / input field 2 on: the picture hash of every HD
@@ -21,9 +23,12 @@
 # Legs: 50 Hz (PAL), 60 Hz (NTSC, and PAL forced onto the 60 Hz path), CRT
 # off / scanlines dim / every effect (a7d: beam medium, bloom high, mask
 # grille, both filters H+V, scanlines dim) / black + shadow + bloom low
-# (1c2), RTG on (every effect selected: gated off), interlace, 31 kHz,
-# Video Pos HPOS/VPOS, a VPOS change, and PAL -> NTSC -> PAL (input fields
-# 8..15 NTSC) with CRT off and on.  ~4 min on 8 cores (GOLDEN_JOBS).
+# (1c2), interlace, 31 kHz, Video Pos HPOS/VPOS, a VPOS change, and PAL ->
+# NTSC -> PAL (input fields 8..15 NTSC) with CRT off and on.  RTG has no
+# leg here (the RTG-on legs r50, r60, r60crt fed the chipset picture with
+# RTG on, a state the hardware never has; crt_run.sh rtg / rtg0 cover the
+# CRT gating under RTG, scaler_run.sh rtg* the RTG picture).  ~4 min on 8
+# cores (GOLDEN_JOBS).
 set -e
 cd "$(dirname "$0")"
 mode=$1; shift || true
@@ -42,9 +47,6 @@ declare -A ARGS=(
 	[n60crt]="+ntsc +cfg=a7d"
 	[f60]="+force60"
 	[f60crt]="+force60 +cfg=a7d"
-	[r50]="+rtg +cfg=a7d"
-	[r60]="+ntsc +rtg"
-	[r60crt]="+ntsc +rtg +cfg=a7d"
 	[lace]="+lace +cfg=01"
 	[nlace]="+ntsc +lace"
 	[dbl]="+dbl"
@@ -59,7 +61,7 @@ declare -A ARGS=(
 	[mode]="+swfrom=8 +swto=16 +first=24"
 	[modecrt]="+swfrom=8 +swto=16 +first=24 +cfg=a7d"
 )
-ALL="p50 p50dim p50crt p50blk n60 n60dim n60crt f60 f60crt r50 r60 r60crt lace nlace dbl dblcrt vp50 vm50 vp60 vm60 hp50 hm60 vchg mode modecrt"
+ALL="p50 p50dim p50crt p50blk n60 n60dim n60crt f60 f60crt lace nlace dbl dblcrt vp50 vm50 vp60 vm60 hp50 hm60 vchg mode modecrt"
 legs=("$@"); [ ${#legs[@]} -eq 0 ] && legs=($ALL)
 for l in "${legs[@]}"; do
 	a="${ARGS[$l]}"; [[ "$a" == *first=* ]] || a="$a +first=6"
@@ -72,6 +74,8 @@ for l in "${legs[@]}"; do
 		echo "  recorded $l: $(grep -c . $G/$l.txt) lines"
 	else
 		m=$(python3 golden.py check $B/$l.log $G/$l.txt) && echo "  pass  $l: $m" || { echo "  FAIL  $l: $m"; fail=1; }
+		# the vsync check at the pins (tb_crt_frame.v): one 5-line pulse per HD frame
+		grep -q "^vsync FAIL" $B/$l.log && { echo "  FAIL  $l: $(grep -c '^vsync FAIL' $B/$l.log) vsync faults, first: $(grep -m1 '^vsync FAIL' $B/$l.log)"; fail=1; }
 	fi
 done
 [ $mode = record ] && exit 0

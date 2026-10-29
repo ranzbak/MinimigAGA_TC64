@@ -4,6 +4,10 @@ Scope: `rtl/openaars/adv7511/` — `pal_to_ddr.sv`, `pal_to_hd_upsample.v`,
 `signal_generator.sv`, `adv_ddr.v`, `frame_freq.v` — plus
 `fpga/openaars/aars_v5.0/xc7a100t/wizard.xdc`.
 
+(2026-10-27: these are now `pal_to_hd_upsample.sv`, `adv_ddr.sv` and `frame_freq.sv`
+(SystemVerilog rewrite, branch hdmi-cleanup); the `.v` names and line numbers in the
+fix notes below describe the files as they were then.)
+
 Symptoms under investigation:
 
 * Lines flicker on some input resolutions.

@@ -351,6 +351,14 @@ order suggested: 8, then 1 and 4, then 5 and 6.
    1080p: not on this hardware (decided 2026-10-10) -- the 12-bit DDR bus
    over the 2.54 mm header is hold-limited at 148.5 MT/s already.
 
+- **2026-10-26: chain rewritten in SystemVerilog** (branch hdmi-cleanup):
+  signal_generator, frame_freq, adv_ddr and pal_to_hd_upsample are .sv,
+  behaviour-identical (sim/hdmi_upsample golden unchanged in all four kinds,
+  pins included; DE from the generator was tried and dropped, it moves the
+  picture).  signal_generator has a sync watchdog: 1500 lines without an
+  input frame end and the HD raster free-runs until one returns.  Next step:
+  RTG 1:1 (per-pixel capture + centring, items 1 and 6).
+
 ## Performance (measured: findings/loadstore/plan.md section 11)
 
 | Step | Measured / estimated | State |

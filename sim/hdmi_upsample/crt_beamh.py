@@ -233,8 +233,10 @@ def metrics(regfn, fns):
     the linear-light mean against the ideal linear mix (err, codes) and the
     residual pattern contrast cv (%)"""
     REG = json.load(open(regfn))
-    def col(lx): return 110.6 + 3.2 * lx
-    def row(v): return 101 + (v - 44) * 2.4
+    # dump coordinates; the dump is the display window since 2026-10-27,
+    # 60 HD pixels left of and 15 lines above the old one (crt_check.py DX, DY)
+    def col(lx): return 110.6 - 60 + 3.2 * lx
+    def row(v): return 101 - 15 + (v - 44) * 2.4
     def dec(a): return (a.astype(float) / 255) ** G
     def enc(l): return np.round(255 * np.clip(l, 0, 1) ** (1 / G)).astype(int)
     pats = [r for r in REG if r['kind'] == 'dither50']
